@@ -81,7 +81,7 @@ ENV_KEY_DEFINITIONS = {
     "WORLD_UNIQUE_NAME": {"group": "World", "secret": False, "restart": True, "why": "Stable internal server/world identifier used for registration and routing."},
     "WORLD_REGION": {"group": "World", "secret": False, "restart": True, "why": "Farm region/datacenter label passed into game services."},
     "EXTERNAL_ADDRESS": {"group": "Network", "secret": False, "restart": True, "why": "Address advertised to clients/FLS for game traffic."},
-    "DUNE_SERVER_LOGIN_PASSWORD": {"group": "Access", "secret": True, "restart": True, "why": "Optional player login password passed into game server console variables."},
+    "DUNE_SERVER_LOGIN_PASSWORD": {"group": "Access", "secret": False, "restart": True, "why": "Player login password passed into game server console variables."},
     "FLS_SECRET": {"group": "Secrets", "secret": True, "restart": True, "why": "Funcom Live Services host token. Required for service auth and routing."},
     "POSTGRES_SUPER_PASSWORD": {"group": "Secrets", "secret": True, "restart": True, "why": "Postgres superuser password used during database initialization."},
     "POSTGRES_DUNE_PASSWORD": {"group": "Secrets", "secret": True, "restart": True, "why": "Application database password used by game services and admin tooling."},
@@ -274,7 +274,8 @@ def validate_director_transfer_settings(updates):
 
 def write_director_transfer_settings(updates):
     path = ALLOWED_CONFIGS["director.ini"]
-    values = validate_director_transfer_settings(updates)
+    values = read_director_transfer_settings()
+    values.update(validate_director_transfer_settings(updates))
     original = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
     rendered = []
     seen = set()
@@ -501,6 +502,13 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/settings/configs":
                 self.require_token()
                 self.json({name: path.read_text(encoding="utf-8") for name, path in ALLOWED_CONFIGS.items() if path.exists()})
+            elif parsed.path == "/api/settings/director-transfer":
+                self.require_token()
+                self.json({
+                    "values": read_director_transfer_settings(),
+                    "definitions": DIRECTOR_TRANSFER_SETTINGS,
+                    "rulesets": DIRECTOR_TRANSFER_RULESETS,
+                })
             elif parsed.path == "/api/admin/reference":
                 self.require_token()
                 self.json(self.admin_reference())
@@ -544,6 +552,13 @@ class Handler(BaseHTTPRequestHandler):
                 write_safe_env(updates)
                 self.audit("env-write", keys=sorted(updates))
                 self.json({"ok": True})
+            elif parsed.path == "/api/settings/director-transfer":
+                self.require_token()
+                body = parse_body(self)
+                updates = {key: body[key] for key in DIRECTOR_TRANSFER_SETTINGS if key in body}
+                write_director_transfer_settings(updates)
+                self.audit("director-transfer-write", keys=sorted(updates))
+                self.json({"ok": True, "values": read_director_transfer_settings()})
             elif parsed.path == "/api/admin/currency":
                 self.require_token()
                 self.require_mutations()
@@ -955,6 +970,7 @@ class Handler(BaseHTTPRequestHandler):
             {"name": "destructive action confirmation", "ok": True, "value": "server-side"},
             {"name": "FLS token represented in admin settings", "ok": "FLS_SECRET" in SAFE_ENV_KEYS},
             {"name": "server login password editable", "ok": "DUNE_SERVER_LOGIN_PASSWORD" in SAFE_ENV_KEYS},
+            {"name": "director transfer settings editable", "ok": "director.ini" in ALLOWED_CONFIGS and bool(DIRECTOR_TRANSFER_SETTINGS)},
             {"name": "backup path under ignored backups/", "ok": str(BACKUP_ROOT).startswith(str(ROOT / "backups"))},
             {"name": "audit log under ignored backups/", "ok": str(AUDIT_LOG).startswith(str(ROOT / "backups")), "value": str(AUDIT_LOG.relative_to(ROOT))},
             {"name": "RabbitMQ secret represented in admin settings", "ok": "RMQ_HTTP_TOKEN_AUTH_SECRET" in SAFE_ENV_KEYS},
@@ -994,6 +1010,7 @@ class Handler(BaseHTTPRequestHandler):
             "knobs": [
                 {"name": "compose.limits.example.yaml", "value": "optional", "why": "Conservative memory guardrails without changing default topology."},
                 {"name": "admin env settings", "value": sorted(SAFE_ENV_KEYS), "why": "Editable operational values, including protected secret fields behind the admin token."},
+                {"name": "director transfer settings", "value": list(DIRECTOR_TRANSFER_SETTINGS), "why": "Typed character transfer policy controls written into config/director.ini."},
             ],
         }
 
@@ -1253,6 +1270,7 @@ INDEX = r"""<!doctype html>
 let token = sessionStorage.getItem('duneAdminToken') || '';
 document.getElementById('token').value = token;
 let current = 'overview';
+const view = document.getElementById('view');
 
 function saveToken(){ token = document.getElementById('token').value; sessionStorage.setItem('duneAdminToken', token); load(); }
 async function api(path, opts={}) {
@@ -1323,6 +1341,22 @@ function envEditor(payload){
     return `<label>${esc(key)}${restart}<input id="env_${esc(key)}" data-secret="${meta.secret ? 'true' : 'false'}" type="${type}" value="${esc(values[key] || '')}" placeholder="${esc(configuredText.trim())}"><span class="muted">${esc(meta.why || '')}${esc(configuredText)}</span></label>`;
   }).join('')}</div></div>`).join('');
 }
+function directorTransferEditor(payload){
+  const values = payload.values || {};
+  const definitions = payload.definitions || {};
+  const rulesets = payload.rulesets || [];
+  return `<div class="card"><h2>Director Character Transfers</h2><div class="grid">${Object.entries(definitions).map(([key, meta]) => {
+    let control = '';
+    if (meta.type === 'bool') {
+      control = `<select id="transfer_${esc(key)}"><option value="true"${values[key] === 'true' ? ' selected' : ''}>true</option><option value="false"${values[key] === 'false' ? ' selected' : ''}>false</option></select>`;
+    } else if (meta.type === 'ruleset') {
+      control = `<select id="transfer_${esc(key)}">${rulesets.map(v => `<option value="${esc(v)}"${values[key] === v ? ' selected' : ''}>${esc(v)}</option>`).join('')}</select>`;
+    } else {
+      control = `<input id="transfer_${esc(key)}" type="number" min="0" value="${esc(values[key] || meta.default || '')}">`;
+    }
+    return `<label>${esc(key)}${control}<span class="muted">${esc(meta.why || '')}</span></label>`;
+  }).join('')}</div><p><button id="saveDirectorTransferBtn" class="primary">Save transfer settings</button></p></div>`;
+}
 function show(name){ current=name; document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active', b.dataset.tab === name)); load(); }
 function renderStatus(data){
   document.getElementById('statusSummary').innerHTML = [
@@ -1366,14 +1400,15 @@ async function ops(){
 async function security(){
   const audit = await api('/api/ops/security');
   const events = await api('/api/ops/audit');
-  view.innerHTML = `<div class="card"><h2>Security Checks</h2>${checks(audit.checks)}</div><div class="card"><h2>Recent Audit Events</h2>${table(events.events)}</div><div class="card"><h2>Notes</h2><ul>${audit.notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul></div><div class="card"><h2>Editable Env Keys</h2><pre>${esc(JSON.stringify(audit.safeEnvKeys, null, 2))}</pre></div><div class="card"><h2>Editable Config Files</h2><pre>${esc(JSON.stringify(audit.allowedConfigFiles, null, 2))}</pre></div>`;
+  const failed = (audit.checks || []).filter(c => !c.ok).length;
+  view.innerHTML = `<div class="sectionHeader"><h2>Security</h2><span class="pill ${failed ? 'warn' : 'ok'}">${failed ? failed + ' checks need attention' : 'checks OK'}</span></div><div class="card"><h2>Security Checks</h2>${checks(audit.checks)}</div><div class="card"><h2>Recent Audit Events</h2>${table(events.events)}</div><div class="card"><h2>Notes</h2><ul>${audit.notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul></div><div class="card"><h2>Editable Env Keys</h2><div class="toolbar">${audit.safeEnvKeys.map(k => `<span class="pill">${esc(k)}</span>`).join('')}</div></div><div class="card"><h2>Editable Config Files</h2><div class="toolbar">${audit.allowedConfigFiles.map(k => `<span class="pill">${esc(k)}</span>`).join('')}</div></div>`;
 }
 async function runbook(){
   const data = await api('/api/ops/runbook');
-  view.innerHTML = `<div class="card"><h2>Operational Runbook</h2><p class="muted">${esc(data.why)}</p>${table(data.commands)}</div>`;
+  view.innerHTML = `<div class="sectionHeader"><h2>Runbook</h2><span class="pill">copy/paste commands</span></div><div class="card"><p class="muted">${esc(data.why)}</p>${table(data.commands)}</div>`;
 }
 async function characters(){
-  view.innerHTML = `<div class="card"><div class="row"><input id="q" placeholder="Character, Funcom ID, platform ID"><button id="characterSearchBtn" class="primary">Search</button></div><div id="results"></div></div><div id="detail"></div>`;
+  view.innerHTML = `<div class="sectionHeader"><h2>Characters</h2><span class="pill">lookup and inspect</span></div><div class="card"><div class="row"><input id="q" placeholder="Character, Funcom ID, platform ID"><button id="characterSearchBtn" class="primary">Search</button></div><div id="results"></div></div><div id="detail"></div>`;
   document.getElementById('characterSearchBtn').addEventListener('click', searchCharacters);
 }
 async function searchCharacters(){
@@ -1398,11 +1433,13 @@ async function pickCharacter(row){
 }
 async function settings(){
   const env = await api('/api/settings/env');
+  const transfer = await api('/api/settings/director-transfer');
   const configs = await api('/api/settings/configs');
-  view.innerHTML = `<div class="card"><h2>Operations Settings</h2><p class="muted">These write <code>.env</code> with a backup under <code>backups/admin-panel</code>. Most service settings need the affected containers recreated before running processes pick them up.</p><p><button id="saveEnvBtn" class="primary">Save env settings</button></p></div>${envEditor(env)}<div class="card"><h2>Config Files</h2><select id="cfg">${Object.keys(configs).map(k=>`<option>${esc(k)}</option>`).join('')}</select><textarea id="cfgText"></textarea><p><button id="saveCfgBtn" class="primary">Save config with backup</button></p></div>`;
+  view.innerHTML = `<div class="sectionHeader"><h2>Settings</h2><button id="saveEnvBtn" class="primary">Save env settings</button></div><div class="card"><p class="muted">These write <code>.env</code> or <code>config/director.ini</code> with a backup under <code>backups/admin-panel</code>. Most service settings need the affected containers recreated before running processes pick them up.</p></div>${envEditor(env)}${directorTransferEditor(transfer)}<div class="card"><h2>Config Files</h2><select id="cfg">${Object.keys(configs).map(k=>`<option>${esc(k)}</option>`).join('')}</select><textarea id="cfgText"></textarea><p><button id="saveCfgBtn" class="primary">Save config with backup</button></p></div>`;
   window.configs = configs; selectCfg();
   document.getElementById('cfg').addEventListener('change', selectCfg);
   document.getElementById('saveEnvBtn').addEventListener('click', saveEnv);
+  document.getElementById('saveDirectorTransferBtn').addEventListener('click', saveDirectorTransfer);
   document.getElementById('saveCfgBtn').addEventListener('click', saveCfg);
 }
 function selectCfg(){ const name=document.getElementById('cfg').value; document.getElementById('cfgText').value = window.configs[name] || ''; }
@@ -1412,12 +1449,18 @@ async function saveEnv(){
     if (i.dataset.secret === 'true' && !i.value) return;
     body[i.id.slice(4)] = i.value;
   });
-  await api('/api/settings/env', {method:'POST', body:JSON.stringify(body)}); alert('Saved .env safe keys');
+  await api('/api/settings/env', {method:'POST', body:JSON.stringify(body)}); alert('Saved .env settings');
 }
 async function saveCfg(){
   const name=document.getElementById('cfg').value;
   await api('/api/settings/configs/' + encodeURIComponent(name), {method:'POST', body:JSON.stringify({content:document.getElementById('cfgText').value})});
   alert('Saved ' + name);
+}
+async function saveDirectorTransfer(){
+  const body={};
+  document.querySelectorAll('[id^=transfer_]').forEach(i => body[i.id.slice(9)] = i.value);
+  await api('/api/settings/director-transfer', {method:'POST', body:JSON.stringify(body)});
+  alert('Saved director transfer settings');
 }
 async function mutations(){
   const ref = await api('/api/admin/reference');

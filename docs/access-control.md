@@ -13,12 +13,18 @@ This repository wires that setting through `.env` as:
 DUNE_SERVER_LOGIN_PASSWORD=
 ```
 
-`scripts/run_server_safe.sh` writes the value into the generated server config before launching the game process:
+The live server build currently needs the value passed as a launch `-ini:` override for the Director/FLS password-protection flag to come up correctly:
+
+```text
+-ini:engine:[ConsoleVariables]:Bgd.ServerLoginPassword=${DUNE_SERVER_LOGIN_PASSWORD}
+```
+
+`scripts/run_server_safe.sh` also writes the value into the generated server config before launching the game process:
 
 - `DuneSandbox/Saved/Config/LinuxServer/Engine.ini`
 - `DuneSandbox/Saved/UserSettings/UserEngine.ini`
 
-Do not pass the password as a command-line `-ini:` argument. Unreal logs the full startup command line, so command-line secrets leak into container logs.
+Operational caveat: Unreal logs the full startup command line. Treat local Docker logs as sensitive while this launch override is required.
 
 ## Admin Panel
 

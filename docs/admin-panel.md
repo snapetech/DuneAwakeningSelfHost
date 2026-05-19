@@ -62,6 +62,7 @@ server {
 - Character search and detail view.
 - Currency/progression table visibility.
 - `.env` operations editor for install, world, network, access, secret, and admin-panel knobs. Secret fields are admin-token protected, rendered as password inputs, and returned blank unless a replacement is typed.
+- Typed Director character-transfer settings editor for `config/director.ini`.
 - Config editor for selected local config files, with backups under `backups/admin-panel`.
 - Token-gated currency and XP mutation endpoints.
 - Token-gated Postgres custom-format backup under `backups/admin-panel`.

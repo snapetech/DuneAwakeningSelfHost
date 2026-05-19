@@ -12,6 +12,7 @@ x-game-server-command:
   farm-region: &cmd-farm-region -FarmRegion=${WORLD_REGION}
   fls-token: &cmd-fls-token -ini:engine:[FuncomLiveServices]:ServiceAuthToken=${FLS_SECRET}
   server-name: &cmd-server-name -ini:engine:[OnlineSubsystem]:ServerName=${WORLD_UNIQUE_NAME}
+  server-login-password: &cmd-server-login-password -ini:engine:[ConsoleVariables]:Bgd.ServerLoginPassword=${DUNE_SERVER_LOGIN_PASSWORD:-}
   datacenter: &cmd-datacenter -ini:engine:[OnlineSubsystem]:DatacenterId=${WORLD_REGION}
   db-host: &cmd-db-host -ini:game:[DuneDatabaseInterfacePSQL]:DatabaseHost=postgres:5432
   db-user: &cmd-db-user -ini:game:[DuneDatabaseInterfacePSQL]:DatabaseUser=dune
@@ -224,6 +225,7 @@ services:
       - *cmd-farm-region
       - *cmd-fls-token
       - *cmd-server-name
+      - *cmd-server-login-password
       - *cmd-datacenter
       - *cmd-db-host
       - *cmd-db-user
@@ -257,6 +259,7 @@ services:
       - *cmd-farm-region
       - *cmd-fls-token
       - *cmd-server-name
+      - *cmd-server-login-password
       - *cmd-datacenter
       - *cmd-db-host
       - *cmd-db-user
@@ -293,6 +296,7 @@ services:
       - *cmd-farm-region
       - *cmd-fls-token
       - *cmd-server-name
+      - *cmd-server-login-password
       - *cmd-datacenter
       - *cmd-db-host
       - *cmd-db-user
@@ -329,6 +333,7 @@ services:
       - *cmd-farm-region
       - *cmd-fls-token
       - *cmd-server-name
+      - *cmd-server-login-password
       - *cmd-datacenter
       - *cmd-db-host
       - *cmd-db-user
@@ -365,6 +370,7 @@ services:
       - *cmd-farm-region
       - *cmd-fls-token
       - *cmd-server-name
+      - *cmd-server-login-password
       - *cmd-datacenter
       - *cmd-db-host
       - *cmd-db-user
@@ -401,6 +407,7 @@ services:
       - *cmd-farm-region
       - *cmd-fls-token
       - *cmd-server-name
+      - *cmd-server-login-password
       - *cmd-datacenter
       - *cmd-db-host
       - *cmd-db-user
@@ -437,6 +444,7 @@ services:
       - *cmd-farm-region
       - *cmd-fls-token
       - *cmd-server-name
+      - *cmd-server-login-password
       - *cmd-datacenter
       - *cmd-db-host
       - *cmd-db-user
@@ -473,6 +481,7 @@ services:
       - *cmd-farm-region
       - *cmd-fls-token
       - *cmd-server-name
+      - *cmd-server-login-password
       - *cmd-datacenter
       - *cmd-db-host
       - *cmd-db-user
@@ -509,6 +518,7 @@ services:
       - *cmd-farm-region
       - *cmd-fls-token
       - *cmd-server-name
+      - *cmd-server-login-password
       - *cmd-datacenter
       - *cmd-db-host
       - *cmd-db-user
