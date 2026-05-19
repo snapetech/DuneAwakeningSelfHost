@@ -66,6 +66,35 @@ The shim is a local compatibility workaround for internal `sg.<world>.*`, `bgd.<
 
 RabbitMQ auth cache TTL is intentionally long in `config/rabbitmq-admin.conf` and `config/rabbitmq-game.conf` to avoid hammering the HTTP auth path during 30-map warm-pool startup. Those config files are read by RabbitMQ at container start, so changing them requires a RabbitMQ restart during a maintenance window.
 
+## Docker Bridge Neighbor Learning Failure
+
+Symptoms:
+
+```text
+gateway exits with psycopg2.OperationalError: connection to server at "postgres" timed out
+game-rmq cannot reach rmq-auth-shim
+director logs RabbitMQ BrokerUnreachableException / Host is unreachable
+```
+
+Observed on May 19, 2026: existing map containers continued to talk to Postgres, but newly recreated/control-plane containers could not reliably reach existing peers on `dune_server_default`. Packet captures showed SYN packets entering the bridge with no reply, and manually seeding neighbor entries restored connectivity immediately.
+
+Working recovery:
+
+```bash
+docker compose -f compose.yaml -f compose.allmaps.yaml --env-file .env up -d --no-recreate \
+  postgres admin-rmq game-rmq rmq-auth-shim text-router director gateway
+
+./scripts/seed-gateway-neighbor.sh
+
+docker exec dune_server-gateway-1 sh -lc 'nc -vz -w 2 postgres 5432'
+docker exec dune_server-game-rmq-1 sh -lc 'nc -vz -w 2 rmq-auth-shim 8080; nc -vz -w 2 text-router 8080'
+docker exec dune_server-director-1 sh -lc 'nc -vz -w 2 game-rmq 5672'
+```
+
+Normal startup runs `scripts/seed-gateway-neighbor.sh` from `scripts/start-full-warm-pool.sh`. If a control-plane container is force-recreated manually, run the seed script again before judging the service unhealthy.
+
+Long-term fix: rebuild the Docker network during a maintenance window and remove the manual neighbor seeding only after new/recreated containers can ping and TCP-connect to `postgres`, `game-rmq`, `rmq-auth-shim`, and `text-router` without seeded neighbors.
+
 ## Database Already Initialized
 
 `db-init` is idempotent for an existing schema. If you need a fresh world, stop Compose and remove local runtime data:
@@ -194,6 +223,36 @@ LogFuncomLiveServices: Error: Setting 'GgwpApiKey' was not found
 ```
 
 The current server image does not ship values for several optional `FuncomLiveServices_retail` keys. Do not invent these values locally. Treat the warning as non-fatal when Director FLS calls succeed, the gateway sees the server come up, and `Battlegroups_DeclareBattlegroupUpdates` includes the public game address.
+
+## Voice Chat Token Generation Fails
+
+Symptoms:
+
+```text
+GmeAuthTokenHandler failed token generation for PlayerId ... with VoiceChatId ... and RoomId ...
+```
+
+This warning comes from Director's voice-auth path. The server build calls the Tencent GME token generator from `BattlegroupDirector.GmeAuthToken.GmeAuthHandler`, and it returns no token when Director has no `[ GmeSettings ]` credentials.
+
+Check the local config without printing secrets:
+
+```bash
+./scripts/check-gme-config.sh config/director.ini
+```
+
+Fix only when Funcom or the hosting provider gives you real GME voice credentials. Add them to `config/director.ini`, then recreate Director:
+
+```ini
+[ GmeSettings ]
+GmeAppId=123456789
+GmeAppKey="replace-with-provider-gme-key"
+```
+
+```bash
+docker compose --env-file .env up -d --force-recreate director
+```
+
+Do not invent these values. Missing GME credentials affect voice-chat auth token generation; they are separate from world login, map travel, RabbitMQ game auth, and FLS registration.
 
 ## World Region With Spaces Breaks Startup
 

@@ -59,23 +59,26 @@ docker compose --env-file .env up -d \
 Expected status:
 
 ```text
-farm_ready_alive=9 active_servers=9 partitions=9
+current_alive_active=9 active_servers=9 partitions=9
 ```
 
 Full 30-partition warm pool:
 
 ```bash
-./scripts/full-world-partitions.sh .env
+./scripts/start-full-warm-pool.sh .env
+```
 
-docker compose -f compose.yaml -f compose.allmaps.yaml --env-file .env up -d
+If any control-plane container is force-recreated outside the startup helper,
+refresh the host-side bridge neighbor entries:
 
-COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' ./scripts/status.sh .env
+```bash
+./scripts/seed-gateway-neighbor.sh
 ```
 
 Expected status:
 
 ```text
-farm_ready_alive=30 active_servers=30 partitions=30
+current_alive_active=30 active_servers=30 partitions=30
 ```
 
 ## Network
@@ -93,13 +96,13 @@ Forward `31982/tcp` when using the live client through Funcom/FLS. Gateway adver
 
 ## Known-Good Baseline
 
-On May 19, 2026, the local live build registered all 30 official self-host partitions ready/alive with the warm-pool overlay:
+On May 19, 2026, the local live build registered all 30 official self-host partitions alive and active with the warm-pool overlay:
 
 ```text
-farm_ready_alive=30 active_servers=30 partitions=30
+current_alive_active=30 active_servers=30 partitions=30
 ```
 
-Earlier the same day, the nine-map base farm also registered ready/alive with `farm_ready_alive=9 active_servers=9 partitions=9`.
+Earlier the same day, the nine-map base farm also registered alive/active with `current_alive_active=9 active_servers=9 partitions=9`.
 
 ## Validation Boundary
 

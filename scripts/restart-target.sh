@@ -46,8 +46,10 @@ default_services = [
     "overland-s-04", "overland-s-06", "bandit-fortress", "overland-s-07",
     "overland-s-08", "dungeon-thepit",
     "director", "gateway", "text-router", "rmq-auth-shim",
-    "game-rmq", "admin-rmq", "postgres", "admin-panel",
+    "admin-panel",
 ]
+stateful_services = {"postgres", "admin-rmq", "game-rmq"}
+allow_stateful = os.environ.get("DUNE_RESTART_ALLOW_STATEFUL", "").lower() in ("1", "true", "yes", "on")
 
 services = services_arg.split() if services_arg else []
 if target == "all":
@@ -55,6 +57,14 @@ if target == "all":
 if not services:
     print(f"no services mapped for target {target}", file=sys.stderr)
     sys.exit(65)
+blocked_stateful = sorted(stateful_services.intersection(services))
+if blocked_stateful and not allow_stateful:
+    print(
+        "refusing to restart stateful services without DUNE_RESTART_ALLOW_STATEFUL=true: "
+        + " ".join(blocked_stateful),
+        file=sys.stderr,
+    )
+    sys.exit(66)
 
 
 def decode_chunked(payload):
@@ -159,7 +169,7 @@ IFS="$old_ifs"
 set -- "$@" --env-file "${ENV_FILE:-.env}"
 
 if [ "$target" = "all" ]; then
-  exec "$@" up -d --force-recreate
+  services="survival overmap arrakeen harko-village testing-hephaestus testing-carthag testing-waterfat deep-desert proces-verbal lostharvest-ecolab-a lostharvest-ecolab-b lostharvest-forgottenlab art-of-kanly dungeon-hephaestus dungeon-oldcarthag faction-outpost-atre faction-outpost-hark heighliner-dungeon ecolab-green-089 ecolab-green-152 ecolab-green-024 ecolab-green-195 ecolab-green-136 overland-m-01 overland-s-04 overland-s-06 bandit-fortress overland-s-07 overland-s-08 dungeon-thepit director gateway text-router rmq-auth-shim admin-panel"
 fi
 
 if [ -z "$services" ]; then
@@ -168,4 +178,16 @@ if [ -z "$services" ]; then
 fi
 
 # shellcheck disable=SC2086
+case " $services " in
+  *" postgres "*|*" admin-rmq "*|*" game-rmq "*)
+    if [ "${DUNE_RESTART_ALLOW_STATEFUL:-}" != "true" ] && [ "${DUNE_RESTART_ALLOW_STATEFUL:-}" != "1" ]; then
+      printf 'refusing to restart stateful services without DUNE_RESTART_ALLOW_STATEFUL=true: %s\n' "$services" >&2
+      exit 66
+    fi
+    ;;
+esac
+if [ "${DUNE_RESTART_DRY_RUN:-}" = "true" ] || [ "${DUNE_RESTART_DRY_RUN:-}" = "1" ]; then
+  printf '{"ok":true,"target":"%s","dryRun":true,"services":"%s"}\n' "$target" "$services"
+  exit 0
+fi
 exec "$@" up -d --force-recreate $services

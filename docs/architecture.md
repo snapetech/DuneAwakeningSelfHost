@@ -49,7 +49,7 @@ Only RabbitMQ and Postgres debug/admin ports bind to `127.0.0.1`. Game UDP ports
 
 ## Validation Boundary
 
-- Server-side base-farm registration is proven when status reports `farm_ready_alive=9 active_servers=9 partitions=9`.
-- Server-side 30-partition warm-pool registration is proven when status reports `farm_ready_alive=30 active_servers=30 partitions=30` with `COMPOSE_FILES='compose.yaml:compose.allmaps.yaml'`.
+- Server-side base-farm registration is proven when status reports `current_alive_active=9 active_servers=9 partitions=9`.
+- Server-side 30-partition warm-pool registration is proven when status reports `current_alive_active=30 active_servers=30 partitions=30` with `COMPOSE_FILES='compose.yaml:compose.allmaps.yaml'`.
 - Client login and travel between maps still need live game-client validation.
 - The live token in `.env` is sensitive and should be rotated if it was exposed outside the host.

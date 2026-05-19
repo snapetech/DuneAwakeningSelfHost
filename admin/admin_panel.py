@@ -40,7 +40,7 @@ ITEM_GRANTS_ENABLED = os.environ.get("DUNE_ADMIN_ITEM_GRANTS_ENABLED", "true").l
 MAX_BODY_BYTES = int(os.environ.get("DUNE_ADMIN_MAX_BODY_BYTES", "65536"))
 ALLOWED_HOSTS = {
     host.strip().lower()
-    for host in os.environ.get("DUNE_ADMIN_ALLOWED_HOSTS", "127.0.0.1:18080,localhost:18080,admin.example.test").split(",")
+    for host in os.environ.get("DUNE_ADMIN_ALLOWED_HOSTS", "127.0.0.1:18080,localhost:18080,admin.example.test,admin-panel:8080").split(",")
     if host.strip()
 }
 AUTH_FAILURE_WINDOW_SECONDS = 60
@@ -80,8 +80,8 @@ ANNOUNCEMENT_DELAYS = {
     "12hr": 12 * 60 * 60,
 }
 RESTART_TARGETS = {
-    "all": {"label": "All Components", "services": []},
-    "core": {"label": "Core Services", "services": ["postgres", "admin-rmq", "game-rmq", "rmq-auth-shim", "text-router", "gateway", "director"]},
+    "all": {"label": "All Restart-Safe Components", "services": []},
+    "core": {"label": "Restart-Safe Core Services", "services": ["rmq-auth-shim", "text-router", "gateway", "director"]},
     "service-layer": {"label": "Service Layer", "services": ["rmq-auth-shim", "text-router", "gateway", "director"]},
     "game-all": {"label": "All Game Maps", "services": [
         "survival", "overmap", "arrakeen", "harko-village", "testing-hephaestus", "testing-carthag", "testing-waterfat",
@@ -166,6 +166,8 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ADMIN_AUDIT_EVENT_LIMIT": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Default number of audit events returned by the panel."},
     "DUNE_ADMIN_REFERENCE_LIMIT": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum reference rows returned by admin helper endpoints."},
     "DUNE_ADMIN_CHARACTER_SEARCH_LIMIT": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum character search rows returned."},
+    "DUNE_ADMIN_BIND_ADDRESS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Host interface used for the admin-panel published port. Keep this on 127.0.0.1 unless a trusted reverse proxy or VPN owns access."},
+    "DUNE_ADMIN_HOST_PORT": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Host TCP port that publishes admin-panel:8080. Change this if another local service already owns 18080."},
     "DUNE_ADMIN_ALLOWED_HOSTS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Host header allowlist for the admin HTTP service."},
     "DUNE_ADMIN_ANNOUNCE_COMMAND": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Executable hook used by the restart-announcement scheduler to deliver in-game messages."},
     "DUNE_ADMIN_ANNOUNCEMENT_MAX_MESSAGE_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum UTF-8 size for a scheduled restart-announcement message."},
@@ -1682,7 +1684,8 @@ class Handler(BaseHTTPRequestHandler):
         active_ids = {row.get("server_id") for row in active}
         map_status = self.map_health_rows(farm, partitions, active_ids)
         expected = len(partitions)
-        ready_alive = sum(1 for row in farm if row.get("ready") and row.get("alive"))
+        current_ready_alive = sum(1 for row in map_status if row.get("ready") and row.get("alive") and row.get("active"))
+        current_alive_active = sum(1 for row in map_status if row.get("alive") and row.get("active"))
         active_count = len(active)
         player_counts = query("""
             select
@@ -1692,10 +1695,11 @@ class Handler(BaseHTTPRequestHandler):
               (select count(*) from dune.get_player_online_state_within_grace_period_for_each_server()) as grace_period_entries
         """)[0]
         verdicts = [
-            {"name": "all partitions have ready/alive farm rows", "ok": expected > 0 and ready_alive == expected, "value": f"{ready_alive}/{expected}"},
+            {"name": "current partitions have alive active farm rows", "ok": expected > 0 and current_alive_active == expected, "value": f"{current_alive_active}/{expected}"},
+            {"name": "current partitions have ready/alive farm rows", "ok": expected > 0 and current_ready_alive == expected, "value": f"{current_ready_alive}/{expected}"},
             {"name": "active server ids match partitions", "ok": expected > 0 and active_count == expected, "value": f"{active_count}/{expected}"},
             {"name": "map health rows", "ok": expected > 0 and all(row.get("online") for row in map_status), "value": f"{sum(1 for row in map_status if row.get('online'))}/{len(map_status)}"},
-            {"name": "RabbitMQ-backed farm registration", "ok": expected > 0 and ready_alive == expected and active_count == expected, "value": "inferred from farm_state and active_server_ids"},
+            {"name": "RabbitMQ-backed farm registration", "ok": expected > 0 and current_alive_active == expected and active_count == expected, "value": "inferred from current world_partition rows, farm_state, and active_server_ids"},
             {"name": "player counts query", "ok": True},
         ]
         network = self.network_health()
@@ -1704,7 +1708,8 @@ class Handler(BaseHTTPRequestHandler):
             "verdicts": verdicts,
             "playerCounts": player_counts,
             "summary": {
-                "readyAlive": ready_alive,
+                "readyAlive": current_ready_alive,
+                "aliveActive": current_alive_active,
                 "expectedPartitions": expected,
                 "activeServers": active_count,
                 "onlineMaps": sum(1 for row in map_status if row.get("online")),
@@ -1726,7 +1731,7 @@ class Handler(BaseHTTPRequestHandler):
             ready = bool(farm_row.get("ready"))
             alive = bool(farm_row.get("alive"))
             active = server_id in active_ids
-            online = bool(server_id) and ready and alive and active and not bool(part.get("blocked"))
+            online = bool(server_id) and alive and active and not bool(part.get("blocked"))
             rows.append({
                 "partition_id": part.get("partition_id"),
                 "map": part.get("map"),
@@ -2060,26 +2065,41 @@ INDEX = r"""<!doctype html>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Dune Admin</title>
   <style nonce="__NONCE__">
-    :root { color-scheme: dark; --bg:#101310; --panel:#191d19; --panel2:#141814; --muted:#9da89e; --line:#30382f; --text:#ecf2e8; --accent:#d7a64a; --danger:#d66b5f; --ok:#7bbf74; --warn:#e0b45e; }
+    :root { color-scheme: dark; --bg:#0f1110; --nav:#141814; --panel:#1a1f1a; --panel2:#131713; --panel3:#20261f; --muted:#a3aea4; --line:#323b32; --text:#edf3ea; --accent:#d5a13e; --danger:#d96f62; --ok:#7fc27a; --warn:#e1b75f; }
     * { box-sizing:border-box; }
     body { margin:0; font:14px/1.45 system-ui, sans-serif; background:var(--bg); color:var(--text); }
-    header { display:flex; justify-content:space-between; align-items:center; gap:16px; padding:14px 18px; border-bottom:1px solid var(--line); background:#151915; position:sticky; top:0; z-index:3; }
-    h1 { font-size:18px; margin:0; }
+    body.highContrast { --bg:#050605; --nav:#090b09; --panel:#101410; --panel2:#0b0e0b; --line:#6b7867; --text:#ffffff; --muted:#d5ded4; --accent:#ffd166; --danger:#ff8a80; --ok:#8cff8a; --warn:#ffe082; }
+    body.denseMode { font-size:13px; }
+    body.denseMode .card, body.denseMode .panelBand, body.denseMode .vizCard, body.denseMode .metric { padding:10px; }
+    body.denseMode .metric { min-height:64px; }
+    body.denseMode .metric .value { font-size:17px; }
+    .skipLink { position:absolute; left:12px; top:-60px; z-index:20; background:var(--accent); color:#16120a; padding:8px 10px; border-radius:6px; font-weight:700; }
+    .skipLink:focus { top:10px; }
+    header { display:flex; justify-content:space-between; align-items:center; gap:16px; padding:13px 18px; border-bottom:1px solid var(--line); background:#161a16; position:sticky; top:0; z-index:3; }
+    h1 { font-size:18px; margin:0; letter-spacing:0; }
     h2 { font-size:16px; margin:0 0 10px; }
     h3 { font-size:13px; margin:0 0 8px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
     main { display:grid; grid-template-columns:280px minmax(0,1fr); min-height:calc(100vh - 58px); }
-    nav { border-right:1px solid var(--line); padding:14px; background:#121612; position:sticky; top:58px; height:calc(100vh - 58px); overflow:auto; }
-    section { padding:18px; min-width:0; }
+    nav { border-right:1px solid var(--line); padding:14px; background:var(--nav); position:sticky; top:58px; height:calc(100vh - 58px); overflow:auto; }
+    section { padding:18px; min-width:0; max-width:1680px; }
     button, input, select, textarea { font:inherit; border:1px solid var(--line); background:#101310; color:var(--text); border-radius:6px; padding:8px 10px; }
+    button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible, a:focus-visible, tr[tabindex]:focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
     button { cursor:pointer; background:#22291f; white-space:nowrap; }
+    button:hover { border-color:#53614d; }
     button.primary { background:var(--accent); color:#16120a; border-color:#e0b45e; font-weight:700; }
     button.danger { background:#35201e; color:#ffd5d0; border-color:#78423c; }
     input, select { width:100%; box-sizing:border-box; }
     textarea { width:100%; min-height:340px; box-sizing:border-box; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; }
-    .tabs { display:grid; gap:8px; }
-    .tab { padding:9px 10px; text-align:left; }
+    .brand { display:flex; align-items:baseline; gap:10px; }
+    .brand .subtle { color:var(--muted); font-size:12px; }
+    .tabs { display:grid; gap:6px; }
+    .tab { padding:10px 11px; text-align:left; border-radius:7px; }
     .tab.active { border-color:var(--accent); color:var(--accent); background:#252416; }
     .card { border:1px solid var(--line); border-radius:8px; background:var(--panel); padding:14px; margin-bottom:14px; }
+    .panelBand { border:1px solid var(--line); border-radius:8px; background:var(--panel); padding:14px; margin-bottom:14px; }
+    .pageStack { display:grid; gap:14px; }
+    .twoCol { display:grid; grid-template-columns:minmax(0,1.2fr) minmax(360px,.8fr); gap:14px; align-items:start; }
+    .threeCol { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; align-items:start; }
     .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:12px; }
     .metricGrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-bottom:14px; }
     .metric { border:1px solid var(--line); border-radius:8px; background:var(--panel2); padding:12px; min-height:82px; }
@@ -2093,8 +2113,54 @@ INDEX = r"""<!doctype html>
     .toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:12px; }
     .sectionHeader { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; }
     .sectionHeader .toolbar { margin-bottom:0; }
-    .actionGrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:8px; }
-    .actionGrid button { text-align:left; white-space:normal; min-height:42px; }
+    .commandBar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:14px; }
+    .commandBar button { min-height:38px; }
+    .splitHeader { display:flex; justify-content:space-between; gap:10px; align-items:center; margin-bottom:10px; }
+    .subgrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:14px; align-items:start; }
+    .dangerZone { border-color:#74413b; background:#211816; }
+    .dataDense th, .dataDense td { padding:6px; font-size:13px; }
+    .vizGrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:14px; margin-bottom:14px; }
+    .vizCard { border:1px solid var(--line); border-radius:8px; background:var(--panel2); padding:14px; min-height:140px; }
+    .vizCard h3 { margin-bottom:10px; }
+    .donutWrap { display:flex; gap:14px; align-items:center; min-height:110px; }
+    .donut { width:112px; height:112px; flex:0 0 auto; }
+    .donut text { fill:var(--text); font:700 13px system-ui, sans-serif; text-anchor:middle; dominant-baseline:middle; }
+    .legend { display:grid; gap:7px; min-width:0; }
+    .legendRow { display:flex; align-items:center; gap:8px; min-width:0; }
+    .swatch { width:10px; height:10px; border-radius:2px; flex:0 0 auto; background:var(--accent); }
+    .barList { display:grid; gap:9px; }
+    .barRow { display:grid; grid-template-columns:minmax(100px,1fr) minmax(130px,2fr) auto; gap:10px; align-items:center; }
+    .barTrack { height:10px; border-radius:999px; background:#0d100d; border:1px solid var(--line); overflow:hidden; }
+    .barFill { height:100%; width:0%; background:var(--accent); }
+    .barFill.ok { background:var(--ok); }
+    .barFill.warn { background:var(--warn); }
+    .barFill.bad { background:var(--danger); }
+    .spark { display:flex; height:58px; gap:3px; align-items:end; padding:8px; border:1px solid var(--line); border-radius:8px; background:#0d100d; }
+    .spark span { flex:1; min-width:3px; background:var(--accent); border-radius:2px 2px 0 0; opacity:.9; }
+    .spark.compact { height:42px; }
+    tr.selected td { background:#252416; }
+    .mapGrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:8px; }
+    .mapTile { border:1px solid var(--line); border-radius:7px; padding:9px; background:#101310; min-height:62px; }
+    .mapTile.ok { border-color:#315e31; }
+    .mapTile.bad { border-color:#743932; }
+    .mapTile .name { font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .mapTile .meta { color:var(--muted); font-size:12px; margin-top:4px; }
+    .filterInput { max-width:280px; }
+    .toast { position:fixed; right:18px; bottom:18px; z-index:10; display:grid; gap:8px; max-width:min(420px,calc(100vw - 36px)); }
+    .toastItem { border:1px solid var(--line); border-radius:8px; background:#151915; box-shadow:0 10px 30px rgba(0,0,0,.35); padding:10px 12px; }
+    .toastItem.ok { border-color:#315e31; }
+    .toastItem.bad { border-color:#743932; }
+    .modalBackdrop { position:fixed; inset:0; z-index:12; display:none; place-items:center; background:rgba(0,0,0,.62); padding:18px; }
+    .modalBackdrop.open { display:grid; }
+    .modal { width:min(720px,100%); max-height:min(760px,92vh); overflow:auto; border:1px solid var(--line); border-radius:8px; background:var(--panel); padding:16px; box-shadow:0 18px 60px rgba(0,0,0,.5); }
+    .shortcutGrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; }
+    .shortcut { display:flex; justify-content:space-between; gap:12px; border:1px solid var(--line); border-radius:7px; padding:9px; background:var(--panel2); }
+    kbd { border:1px solid var(--line); border-bottom-width:2px; border-radius:5px; padding:2px 6px; background:#0d100d; color:var(--text); font:12px ui-monospace, SFMono-Regular, Menlo, monospace; white-space:nowrap; }
+    .copyWrap { position:relative; }
+    .copyBtn { position:absolute; right:8px; top:8px; z-index:1; padding:5px 8px; font-size:12px; }
+    .copyWrap pre { padding-top:42px; }
+    .filterMeta { font-size:12px; color:var(--muted); }
+    .srOnly { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
     .muted { color:var(--muted); }
     .ok { color:var(--ok); }
     .dangerText { color:var(--danger); }
@@ -2103,42 +2169,70 @@ INDEX = r"""<!doctype html>
     th, td { text-align:left; border-bottom:1px solid var(--line); padding:7px 6px; vertical-align:top; }
     .tableWrap { overflow:auto; border:1px solid var(--line); border-radius:8px; }
     .tableWrap table th { background:#151915; position:sticky; top:0; }
+    th.sortable { cursor:pointer; user-select:none; }
+    th.sortable[data-sort-dir="asc"]::after { content:" ↑"; color:var(--accent); }
+    th.sortable[data-sort-dir="desc"]::after { content:" ↓"; color:var(--accent); }
     pre { white-space:pre-wrap; overflow:auto; background:#0d100d; border:1px solid var(--line); padding:10px; border-radius:6px; max-height:360px; }
     #statusSummary { display:grid; gap:8px; }
     #statusRaw { max-height:180px; font-size:12px; }
     .hostNote { font-size:13px; line-height:1.35; }
     .hidden { display:none; }
-    @media (max-width: 820px) { header { align-items:flex-start; flex-direction:column; } main { grid-template-columns:1fr; } nav { position:static; height:auto; border-right:0; border-bottom:1px solid var(--line); } .tabs { grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); } }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior:auto !important; transition:none !important; animation:none !important; } }
+    @media (max-width: 1100px) { .twoCol, .threeCol { grid-template-columns:1fr; } }
+    @media (max-width: 820px) { header { align-items:flex-start; flex-direction:column; } main { grid-template-columns:1fr; } nav { position:static; height:auto; border-right:0; border-bottom:1px solid var(--line); } .tabs { grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); } .row { flex-wrap:wrap; } .barRow { grid-template-columns:1fr; gap:4px; } }
   </style>
 </head>
 <body>
+  <a class="skipLink" href="#view">Skip to dashboard</a>
   <header>
-    <h1>Dune Admin</h1>
+    <div class="brand"><h1>DASH Admin</h1><span class="subtle">Dune Awakening Self Host</span></div>
     <div class="row"><input id="token" type="password" placeholder="Admin token"><button id="saveTokenBtn">Use token</button><button id="clearTokenBtn">Clear</button></div>
   </header>
   <main>
-    <nav>
-      <div class="tabs">
-        <button class="tab active" data-tab="overview">Overview</button>
-        <button class="tab" data-tab="ops">Ops</button>
-        <button class="tab" data-tab="security">Security</button>
-        <button class="tab" data-tab="runbook">Runbook</button>
-        <button class="tab" data-tab="characters">Characters</button>
-        <button class="tab" data-tab="settings">Settings</button>
-        <button class="tab" data-tab="mutations">Admin Actions</button>
+    <nav aria-label="Admin panel navigation">
+      <div class="tabs" role="tablist" aria-label="DASH sections">
+        <button class="tab active" role="tab" aria-selected="true" data-tab="overview">Overview</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="ops">Ops</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="security">Security</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="runbook">Runbook</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="characters">Players</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="settings">Settings</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="mutations">Admin Actions</button>
       </div>
+      <div class="card"><h3>Display</h3><div class="toolbar"><button id="contrastBtn">High contrast</button><button id="densityBtn">Dense mode</button><button id="expandAllBtn">Expand all</button><button id="collapseAllBtn">Collapse all</button><button id="helpBtn">Shortcuts</button></div></div>
       <div class="card hostNote"><div class="muted"><b>admin.example.test</b><br>LAN/VPN admin surface. Use the token to unlock data and writes.</div></div>
       <div class="card">
         <h3>Runtime</h3>
         <div id="statusSummary"></div>
+        <div class="muted" id="lastRefresh">Not refreshed yet</div>
         <details>
           <summary class="muted">Raw status</summary>
           <pre id="statusRaw"></pre>
         </details>
       </div>
     </nav>
-    <section id="view"></section>
+    <section id="view" tabindex="-1" role="tabpanel" aria-live="polite"></section>
   </main>
+  <div id="toast" class="toast" aria-live="polite" aria-atomic="true"></div>
+  <div id="srStatus" class="srOnly" aria-live="polite" aria-atomic="true"></div>
+  <div id="helpModal" class="modalBackdrop" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
+    <div class="modal">
+      <div class="sectionHeader"><h2 id="helpTitle">Keyboard and Display Controls</h2><button id="closeHelpBtn">Close</button></div>
+      <div class="shortcutGrid">
+        <div class="shortcut"><span>Open this dialog</span><kbd>?</kbd></div>
+        <div class="shortcut"><span>Refresh current page</span><kbd>R</kbd></div>
+        <div class="shortcut"><span>Focus player/search filter</span><kbd>/</kbd></div>
+        <div class="shortcut"><span>Overview</span><kbd>1</kbd></div>
+        <div class="shortcut"><span>Operations</span><kbd>2</kbd></div>
+        <div class="shortcut"><span>Players</span><kbd>5</kbd></div>
+        <div class="shortcut"><span>High contrast</span><kbd>H</kbd></div>
+        <div class="shortcut"><span>Dense mode</span><kbd>D</kbd></div>
+        <div class="shortcut"><span>Expand details</span><kbd>E</kbd></div>
+        <div class="shortcut"><span>Collapse details</span><kbd>C</kbd></div>
+        <div class="shortcut"><span>Close dialog</span><kbd>Esc</kbd></div>
+      </div>
+    </div>
+  </div>
 <script nonce="__NONCE__">
 let token = sessionStorage.getItem('duneAdminToken') || '';
 document.getElementById('token').value = token;
@@ -2147,10 +2241,27 @@ let current = validTabs.has(location.hash.slice(1)) ? location.hash.slice(1) : (
 if (!validTabs.has(current)) current = 'overview';
 let pendingAdminAccountId = '';
 let resourceTimer = null;
+let autoRefresh = sessionStorage.getItem('duneAdminAutoRefresh') !== 'off';
+const resourceHistory = [];
 const view = document.getElementById('view');
 
+document.body.classList.toggle('highContrast', sessionStorage.getItem('duneAdminHighContrast') === 'on');
+document.body.classList.toggle('denseMode', sessionStorage.getItem('duneAdminDenseMode') === 'on');
 function saveToken(){ token = document.getElementById('token').value; sessionStorage.setItem('duneAdminToken', token); load(); }
-function clearToken(){ token = ''; document.getElementById('token').value = ''; sessionStorage.removeItem('duneAdminToken'); load(); }
+function clearToken(){ token = ''; document.getElementById('token').value = ''; sessionStorage.removeItem('duneAdminToken'); notify('Admin token cleared'); load(); }
+function announce(message){ document.getElementById('srStatus').textContent = message; }
+function notify(message, tone='ok'){
+  const box = document.getElementById('toast');
+  const item = document.createElement('div');
+  item.className = `toastItem ${tone}`;
+  item.textContent = message;
+  box.appendChild(item);
+  announce(message);
+  setTimeout(() => item.remove(), 4200);
+}
+function updateLastRefresh(label='Refreshed'){
+  document.getElementById('lastRefresh').textContent = `${label}: ${new Date().toLocaleTimeString()}`;
+}
 async function api(path, opts={}) {
   opts.headers = Object.assign({'Content-Type':'application/json'}, opts.headers || {});
   if (token) opts.headers['X-Admin-Token'] = token;
@@ -2165,8 +2276,179 @@ function table(rows){
   const keys = Object.keys(rows[0]);
   return `<div class="tableWrap"><table><thead><tr>${keys.map(k=>`<th>${esc(k)}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr data-id="${esc(r.account_id ?? '')}">${keys.map(k=>`<td>${esc(r[k])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
 }
+function filterKey(input){
+  const panel = input.closest('.rosterPanel, .resourcePanel, .panelBand, .card, section');
+  const title = panel?.querySelector('h2, h3')?.textContent?.trim() || input.placeholder || 'filter';
+  return `duneAdminFilter:${current}:${title}:${input.placeholder || ''}`;
+}
+function bindTextFilter(input, rows){
+  if (input.dataset.filterBound) return;
+  input.dataset.filterBound = 'true';
+  const key = filterKey(input);
+  const stored = sessionStorage.getItem(key);
+  if (stored !== null && !input.value) input.value = stored;
+  let meta = input.parentElement?.querySelector('.filterMeta');
+  if (!meta) {
+    meta = document.createElement('span');
+    meta.className = 'filterMeta';
+    input.insertAdjacentElement('afterend', meta);
+  }
+  const apply = () => {
+    const term = input.value.trim().toLowerCase();
+    sessionStorage.setItem(key, input.value);
+    let visible = 0;
+    rows.forEach(row => {
+      row.hidden = term && !row.textContent.toLowerCase().includes(term);
+      if (!row.hidden) visible++;
+    });
+    meta.textContent = `${visible}/${rows.length} visible`;
+    announce(`${visible} of ${rows.length} rows visible`);
+  };
+  input.addEventListener('input', apply);
+  apply();
+}
+async function copyText(text){
+  try {
+    await navigator.clipboard.writeText(text);
+    notify('Copied to clipboard');
+  } catch (e) {
+    notify('Copy failed', 'bad');
+  }
+}
+function enhanceCopyBlocks(root=document){
+  root.querySelectorAll('pre').forEach((pre, index) => {
+    if (pre.closest('.copyWrap')) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'copyWrap';
+    const button = document.createElement('button');
+    button.className = 'copyBtn';
+    button.type = 'button';
+    button.textContent = 'Copy';
+    button.setAttribute('aria-label', 'Copy block to clipboard');
+    pre.parentNode.insertBefore(wrap, pre);
+    wrap.appendChild(button);
+    wrap.appendChild(pre);
+    button.addEventListener('click', () => copyText(pre.textContent || ''));
+  });
+}
+function makeSortableTables(root=document){
+  root.querySelectorAll('table').forEach(table => {
+    if (table.dataset.sortableBound) return;
+    table.dataset.sortableBound = 'true';
+    table.querySelectorAll('th').forEach((th, index) => {
+      th.classList.add('sortable');
+      th.tabIndex = 0;
+      th.setAttribute('role', 'button');
+      th.setAttribute('aria-label', `Sort by ${th.textContent.trim() || 'column'}`);
+      th.addEventListener('click', () => {
+        const tbody = table.tBodies[0];
+        if (!tbody) return;
+        const dir = th.dataset.sortDir === 'asc' ? 'desc' : 'asc';
+        table.querySelectorAll('th').forEach(header => delete header.dataset.sortDir);
+        th.dataset.sortDir = dir;
+        const rows = Array.from(tbody.rows);
+        const cellValue = row => row.cells[index]?.textContent.trim() || '';
+        rows.sort((a, b) => {
+          const av = cellValue(a);
+          const bv = cellValue(b);
+          const an = Number.parseFloat(av.replace(/[^0-9.-]/g, ''));
+          const bn = Number.parseFloat(bv.replace(/[^0-9.-]/g, ''));
+          const bothNumeric = av && bv && !Number.isNaN(an) && !Number.isNaN(bn);
+          const cmp = bothNumeric ? an - bn : av.localeCompare(bv, undefined, {numeric:true, sensitivity:'base'});
+          return dir === 'asc' ? cmp : -cmp;
+        });
+        rows.forEach(row => tbody.appendChild(row));
+        announce(`Sorted by ${th.textContent.trim() || 'column'} ${dir === 'asc' ? 'ascending' : 'descending'}`);
+      });
+      th.addEventListener('keydown', e => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          th.click();
+        }
+      });
+    });
+  });
+}
+function makeRowsKeyboardFriendly(root=document){
+  root.querySelectorAll('tbody tr[data-id]').forEach(row => {
+    if (row.dataset.keyboardBound) return;
+    row.dataset.keyboardBound = 'true';
+    row.tabIndex = 0;
+    row.setAttribute('role', 'button');
+    row.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        row.click();
+      }
+    });
+  });
+}
+function bindRosterFilters(root=document){
+  root.querySelectorAll('.rosterFilter').forEach(input => {
+    const panel = input.closest('.rosterPanel');
+    if (panel) bindTextFilter(input, panel.querySelectorAll('tbody tr'));
+  });
+  makeSortableTables(root);
+}
+function bindResourceFilters(root=document){
+  root.querySelectorAll('.resourceFilter').forEach(input => {
+    const panel = input.closest('.resourcePanel');
+    if (panel) bindTextFilter(input, panel.querySelectorAll('tbody tr'));
+  });
+  makeSortableTables(root);
+}
 function metric(label, value, tone=''){
   return `<div class="metric"><div class="label">${esc(label)}</div><div class="value ${tone}">${esc(value)}</div></div>`;
+}
+function clamp(n, min=0, max=100){ return Math.max(min, Math.min(max, Number(n || 0))); }
+function toneForPercent(value){ value = Number(value || 0); return value >= 90 ? 'bad' : value >= 70 ? 'warn' : 'ok'; }
+function bar(label, value, max=100, detail=''){
+  const pct = max ? clamp((Number(value || 0) / max) * 100) : 0;
+  const tone = toneForPercent(pct);
+  return `<div class="barRow"><div title="${esc(label)}">${esc(label)}</div><div class="barTrack"><div class="barFill ${tone}" style="width:${pct.toFixed(1)}%"></div></div><div class="muted">${esc(detail || pct.toFixed(0) + '%')}</div></div>`;
+}
+function donut(label, segments){
+  const total = segments.reduce((sum, s) => sum + Number(s.value || 0), 0);
+  let offset = 25;
+  const circles = segments.map((s, i) => {
+    const value = total ? (Number(s.value || 0) / total) * 100 : 0;
+    const circle = `<circle r="15.9" cx="18" cy="18" fill="transparent" stroke="${esc(s.color)}" stroke-width="6" stroke-dasharray="${value} ${100 - value}" stroke-dashoffset="${offset}"></circle>`;
+    offset -= value;
+    return circle;
+  }).join('');
+  const legend = segments.map(s => `<div class="legendRow"><span class="swatch" style="background:${esc(s.color)}"></span><span>${esc(s.label)}</span><span class="muted">${esc(s.value)}</span></div>`).join('');
+  return `<div class="vizCard"><h3>${esc(label)}</h3><div class="donutWrap"><svg class="donut" viewBox="0 0 36 36">${circles}<text x="18" y="18">${esc(total)}</text></svg><div class="legend">${legend}</div></div></div>`;
+}
+function spark(values){
+  const vals = (values || []).map(v => Number(v || 0));
+  const max = Math.max(...vals, 1);
+  return `<div class="spark">${vals.map(v => `<span style="height:${Math.max(4, (v / max) * 100).toFixed(1)}%"></span>`).join('')}</div>`;
+}
+function historySpark(values){
+  const vals = (values || []).map(v => Number(v || 0));
+  const max = Math.max(...vals, 1);
+  return `<div class="spark compact">${vals.map(v => `<span style="height:${Math.max(4, (v / max) * 100).toFixed(1)}%"></span>`).join('')}</div>`;
+}
+function rememberResourceSample(data){
+  const host = data.host || {};
+  const mem = host.memory || {};
+  const disk = host.disk || {};
+  const load = host.load || {};
+  const docker = data.docker || {};
+  const containers = docker.containers || [];
+  resourceHistory.push({
+    at: data.generatedAt || new Date().toISOString(),
+    memory: Number(mem.usedPercent || 0),
+    disk: Number(disk.usedPercent || 0),
+    load: Number(load.one || 0),
+    containers: containers.length,
+  });
+  while (resourceHistory.length > 36) resourceHistory.shift();
+}
+function resourceHistoryPanel(){
+  if (!resourceHistory.length) return '';
+  const latest = resourceHistory[resourceHistory.length - 1];
+  return `<div class="vizGrid"><div class="vizCard"><h3>Memory Trend</h3>${historySpark(resourceHistory.map(r => r.memory))}<div class="muted">${esc(latest.memory.toFixed(1))}% latest</div></div><div class="vizCard"><h3>Load Trend</h3>${historySpark(resourceHistory.map(r => r.load))}<div class="muted">${esc(latest.load.toFixed(2))} latest</div></div><div class="vizCard"><h3>Container Count</h3>${historySpark(resourceHistory.map(r => r.containers))}<div class="muted">${esc(latest.containers)} latest</div></div></div>`;
 }
 function fmtBytes(v){
   let value = Number(v || 0);
@@ -2255,13 +2537,35 @@ function mapStatusTable(rows){
   if (!rows || !rows.length) return '<div class="muted">No map status rows.</div>';
   return `<div class="tableWrap"><table><thead><tr><th>Map</th><th>Status</th><th>Ready</th><th>Alive</th><th>Active</th><th>Players</th><th>Game</th><th>IGW</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.label || r.map)}<br><span class="muted">${esc(r.map)} #${esc(r.partition_id)}</span></td><td>${healthCell(r.online)}</td><td>${healthCell(r.ready, 'yes', 'no')}</td><td>${healthCell(r.alive, 'yes', 'no')}</td><td>${healthCell(r.active, 'yes', 'no')}</td><td>${esc(r.players ?? 0)}</td><td>${esc(r.game)}</td><td>${esc(r.igw)}</td></tr>`).join('')}</tbody></table></div>`;
 }
+function mapTiles(rows){
+  if (!rows || !rows.length) return '<div class="muted">No map rows.</div>';
+  return `<div class="mapGrid">${rows.map(r => `<div class="mapTile ${r.online ? 'ok' : 'bad'}"><div class="name">${esc(r.label || r.map)}</div><div class="meta">${r.online ? 'online' : 'offline'} | ${esc(r.players ?? 0)} players</div></div>`).join('')}</div>`;
+}
+function healthViz(health){
+  const verdicts = health.verdicts || [];
+  const maps = health.mapStatus || [];
+  const okVerdicts = verdicts.filter(v => v.ok).length;
+  const onlineMaps = maps.filter(m => m.online).length;
+  const playerValues = maps.map(m => Number(m.players || 0));
+  return `<div class="vizGrid">${donut('Map State', [
+    {label:'Online', value:onlineMaps, color:'var(--ok)'},
+    {label:'Offline', value:Math.max(maps.length - onlineMaps, 0), color:'var(--danger)'}
+  ])}${donut('Health Verdicts', [
+    {label:'OK', value:okVerdicts, color:'var(--ok)'},
+    {label:'Attention', value:Math.max(verdicts.length - okVerdicts, 0), color:'var(--warn)'}
+  ])}<div class="vizCard"><h3>Players By Map</h3>${spark(playerValues)}<div class="muted">${esc(playerValues.reduce((a,b)=>a+b,0))} reported players across ${esc(maps.length)} maps</div></div></div>`;
+}
 function characterRosterTable(rows){
   if (!rows || !rows.length) return '<div class="muted">No characters in this group.</div>';
-  return `<div class="tableWrap"><table><thead><tr><th>Character</th><th>Status</th><th>Life</th><th>Map</th><th>Account</th><th>Last Login</th></tr></thead><tbody>${rows.map(r=>`<tr data-id="${esc(r.account_id ?? '')}"><td>${esc(r.character_name || 'unnamed')}<br><span class="muted">${esc(r.platform_name || '')} ${esc(r.platform_id || '')}</span></td><td>${esc(r.online_status || '')}</td><td>${esc(r.life_state || '')}</td><td>${esc(r.map || r.server_id || '')}</td><td>${esc(r.account_id || '')}</td><td>${esc(r.last_login_time || '')}</td></tr>`).join('')}</tbody></table></div>`;
+  return `<div class="tableWrap"><table class="dataDense"><thead><tr><th>Character</th><th>Status</th><th>Life</th><th>Map</th><th>Account</th><th>Last Login</th></tr></thead><tbody>${rows.map(r=>`<tr data-id="${esc(r.account_id ?? '')}"><td>${esc(r.character_name || 'unnamed')}<br><span class="muted">${esc(r.platform_name || '')} ${esc(r.platform_id || '')}</span></td><td>${esc(r.online_status || '')}</td><td>${esc(r.life_state || '')}</td><td>${esc(r.map || r.server_id || '')}</td><td>${esc(r.account_id || '')}</td><td>${esc(r.last_login_time || '')}</td></tr>`).join('')}</tbody></table></div>`;
 }
 function characterRosterPanel(roster){
   const counts = roster.counts || {};
-  return `<div class="metricGrid">${metric('Online Players', counts.online ?? 0, Number(counts.online || 0) ? 'ok' : '')}${metric('Offline Players', counts.offline ?? 0)}${metric('Total Characters', counts.total ?? 0)}</div><div class="card"><div class="sectionHeader"><h2>Online Players</h2><span class="pill ok">${esc(counts.online ?? 0)} online</span></div>${characterRosterTable(roster.online)}</div><div class="card"><div class="sectionHeader"><h2>Offline Players</h2><span class="pill">${esc(counts.offline ?? 0)} offline</span></div>${characterRosterTable(roster.offline)}</div>`;
+  const chart = donut('Player State', [
+    {label:'Online', value:Number(counts.online || 0), color:'var(--ok)'},
+    {label:'Offline', value:Number(counts.offline || 0), color:'var(--muted)'}
+  ]);
+  return `<div class="rosterPanel"><div class="sectionHeader"><h2>Players</h2><div class="toolbar"><input class="filterInput rosterFilter" placeholder="Filter players, IDs, maps"></div></div><div class="metricGrid">${metric('Online Players', counts.online ?? 0, Number(counts.online || 0) ? 'ok' : '')}${metric('Offline Players', counts.offline ?? 0)}${metric('Total Characters', counts.total ?? 0)}</div><div class="vizGrid">${chart}<div class="vizCard"><h3>Roster Ratio</h3><div class="barList">${bar('Online', counts.online || 0, counts.total || 1)}${bar('Offline', counts.offline || 0, counts.total || 1)}</div></div></div><div class="twoCol"><div class="panelBand"><div class="splitHeader"><h2>Online Players</h2><span class="pill ok">${esc(counts.online ?? 0)} online</span></div>${characterRosterTable(roster.online)}</div><div class="panelBand"><div class="splitHeader"><h2>Offline Players</h2><span class="pill">${esc(counts.offline ?? 0)} offline</span></div>${characterRosterTable(roster.offline)}</div></div></div>`;
 }
 function probeTable(rows){
   if (!rows || !rows.length) return '<div class="muted">No probes.</div>';
@@ -2298,15 +2602,40 @@ function restartPanel(state){
 function signalList(groups){
   return Object.entries(groups || {}).map(([group, rows]) => `<div class="card"><h2>${esc(group)}</h2><table><thead><tr><th>Name</th><th>Value</th><th>Why</th></tr></thead><tbody>${(rows || []).map(r=>`<tr><td>${esc(r.name)}</td><td>${esc(Array.isArray(r.value) ? r.value.join(', ') : r.value)}</td><td>${esc(r.why)}</td></tr>`).join('')}</tbody></table></div>`).join('');
 }
+function resourceViz(data){
+  const host = data.host || {};
+  const mem = host.memory || {};
+  const disk = host.disk || {};
+  const load = host.load || {};
+  const cpuCount = Number(host.cpuCount || 1);
+  const docker = data.docker || {};
+  const containers = docker.containers || [];
+  const cpuRows = containers
+    .filter(r => r.cpuPercent !== undefined && r.cpuPercent !== null && !r.error)
+    .sort((a, b) => Number(b.cpuPercent || 0) - Number(a.cpuPercent || 0))
+    .slice(0, 8);
+  const memRows = containers
+    .filter(r => r.memoryPercent !== undefined && r.memoryPercent !== null && !r.error)
+    .sort((a, b) => Number(b.memoryPercent || 0) - Number(a.memoryPercent || 0))
+    .slice(0, 8);
+  const running = containers.filter(r => String(r.status || '').toLowerCase() === 'running').length;
+  const errored = containers.filter(r => r.error).length;
+  return `<div class="vizGrid">${donut('Container State', [
+    {label:'Running', value:running, color:'var(--ok)'},
+    {label:'Other', value:Math.max(containers.length - running - errored, 0), color:'var(--warn)'},
+    {label:'Errors', value:errored, color:'var(--danger)'}
+  ])}<div class="vizCard"><h3>Host Pressure</h3><div class="barList">${bar('Memory', mem.usedPercent || 0, 100, `${mem.usedPercent ?? '?'}%`)}${bar('Workspace Disk', disk.usedPercent || 0, 100, `${disk.usedPercent ?? '?'}%`)}${bar('Load / CPU', load.one || 0, cpuCount, `${load.one ?? '?'} / ${cpuCount}`)}</div></div><div class="vizCard"><h3>Top Container CPU</h3><div class="barList">${cpuRows.length ? cpuRows.map(r => bar(r.service || r.name, r.cpuPercent || 0, 100, `${r.cpuPercent ?? 0}%`)).join('') : '<div class="muted">No CPU samples.</div>'}</div></div><div class="vizCard"><h3>Top Container Memory</h3><div class="barList">${memRows.length ? memRows.map(r => bar(r.service || r.name, r.memoryPercent || 0, 100, `${r.memoryPercent ?? 0}%`)).join('') : '<div class="muted">No memory samples.</div>'}</div></div></div>`;
+}
 function resourcePanel(data){
+  rememberResourceSample(data);
   const host = data.host || {};
   const mem = host.memory || {};
   const disk = host.disk || {};
   const load = host.load || {};
   const docker = data.docker || {};
   const containers = docker.containers || [];
-  const containerRows = containers.length ? `<div class="tableWrap"><table><thead><tr><th>Service</th><th>Status</th><th>CPU</th><th>Memory</th><th>Net I/O</th><th>Block I/O</th><th>PIDs</th></tr></thead><tbody>${containers.map(r => `<tr><td>${esc(r.service || r.name)}</td><td>${esc(r.status || r.error || '')}</td><td>${esc(r.cpuPercent ?? '')}%</td><td>${esc(r.memory || '')}<br><span class="muted">${esc(r.memoryPercent ?? '')}%</span></td><td>${esc(r.netIO || '')}</td><td>${esc(r.blockIO || '')}</td><td>${esc(r.pids ?? '')}</td></tr>`).join('')}</tbody></table></div>` : `<div class="muted">${esc(docker.error || 'No container stats available.')}</div>`;
-  return `<div class="card"><div class="sectionHeader"><h2>Realtime Resources</h2><div class="toolbar"><span class="pill">${esc(data.generatedAt || '')}</span><button id="refreshResourcesBtn">Refresh</button></div></div><div class="metricGrid">${metric('Host Load', `${load.one ?? '?'} / ${load.five ?? '?'} / ${load.fifteen ?? '?'}`)}${metric('Host Memory', `${fmtBytes(mem.usedBytes)} / ${fmtBytes(mem.totalBytes)}`, (mem.usedPercent || 0) > 90 ? 'dangerText' : '')}${metric('Workspace Disk', `${fmtBytes(disk.usedBytes)} / ${fmtBytes(disk.totalBytes)}`, (disk.usedPercent || 0) > 90 ? 'dangerText' : '')}${metric('Containers', containers.length)}</div>${containerRows}</div>`;
+  const containerRows = containers.length ? `<div class="tableWrap"><table class="dataDense"><thead><tr><th>Service</th><th>Status</th><th>CPU</th><th>Memory</th><th>Net I/O</th><th>Block I/O</th><th>PIDs</th></tr></thead><tbody>${containers.map(r => `<tr><td>${esc(r.service || r.name)}</td><td>${esc(r.status || r.error || '')}</td><td>${esc(r.cpuPercent ?? '')}%</td><td>${esc(r.memory || '')}<br><span class="muted">${esc(r.memoryPercent ?? '')}%</span></td><td>${esc(r.netIO || '')}</td><td>${esc(r.blockIO || '')}</td><td>${esc(r.pids ?? '')}</td></tr>`).join('')}</tbody></table></div>` : `<div class="muted">${esc(docker.error || 'No container stats available.')}</div>`;
+  return `<div class="card resourcePanel"><div class="sectionHeader"><h2>Realtime Resources</h2><div class="toolbar"><input class="filterInput resourceFilter" placeholder="Filter containers"><span class="pill">${esc(data.generatedAt || '')}</span><button id="toggleAutoRefreshBtn">${autoRefresh ? 'Pause live refresh' : 'Resume live refresh'}</button><button id="refreshResourcesBtn">Refresh</button></div></div><div class="metricGrid">${metric('Host Load', `${load.one ?? '?'} / ${load.five ?? '?'} / ${load.fifteen ?? '?'}`)}${metric('Host Memory', `${fmtBytes(mem.usedBytes)} / ${fmtBytes(mem.totalBytes)}`, (mem.usedPercent || 0) > 90 ? 'dangerText' : '')}${metric('Workspace Disk', `${fmtBytes(disk.usedBytes)} / ${fmtBytes(disk.totalBytes)}`, (disk.usedPercent || 0) > 90 ? 'dangerText' : '')}${metric('Containers', containers.length)}</div>${resourceHistoryPanel()}${resourceViz(data)}<details><summary>Container Table</summary>${containerRows}</details></div>`;
 }
 function envEditor(payload){
   const values = payload.values || {};
@@ -2352,10 +2681,14 @@ function playerOnlineStateEditor(payload){
   }).join('')}</div><p><button id="savePlayerOnlineStateBtn" class="primary">Save logout timers</button></p></div>`;
 }
 function actionGrid(actions){
-  return `<div class="card"><h2>Quick Actions</h2><div class="actionGrid">${actions.map(a => `<button class="${esc(a.className || '')}" data-jump="${esc(a.tab)}">${esc(a.label)}</button>`).join('')}</div></div>`;
+  return `<div class="commandBar">${actions.map(a => `<button class="${esc(a.className || '')}" data-jump="${esc(a.tab)}">${esc(a.label)}</button>`).join('')}</div>`;
 }
 function syncTabs(){
-  document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active', b.dataset.tab === current));
+  document.querySelectorAll('.tab').forEach(b=>{
+    const active = b.dataset.tab === current;
+    b.classList.toggle('active', active);
+    b.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
 }
 function show(name){
   if (!validTabs.has(name)) return;
@@ -2365,6 +2698,81 @@ function show(name){
   syncTabs();
   load();
 }
+function modal(open){
+  const dialog = document.getElementById('helpModal');
+  dialog.classList.toggle('open', open);
+  if (open) {
+    document.getElementById('closeHelpBtn').focus();
+    announce('Shortcut help opened');
+  } else {
+    announce('Shortcut help closed');
+  }
+}
+function focusFirstFilter(){
+  const input = view.querySelector('.rosterFilter, .resourceFilter, #q, input:not([type="hidden"]), select, textarea');
+  if (input) {
+    input.focus();
+    if (input.select) input.select();
+    announce('Focused first filter or input');
+  }
+}
+function toggleClassSetting(className, key, label){
+  const enabled = !document.body.classList.contains(className);
+  document.body.classList.toggle(className, enabled);
+  sessionStorage.setItem(key, enabled ? 'on' : 'off');
+  notify(`${label} ${enabled ? 'enabled' : 'disabled'}`);
+}
+function setDetails(open){
+  view.querySelectorAll('details').forEach(d => { d.open = open; });
+  notify(open ? 'Expanded dashboard details' : 'Collapsed dashboard details');
+}
+function wireResourceControls(root=document){
+  root.querySelector('#refreshResourcesBtn')?.addEventListener('click', refreshResources);
+  root.querySelector('#toggleAutoRefreshBtn')?.addEventListener('click', () => {
+    autoRefresh = !autoRefresh;
+    sessionStorage.setItem('duneAdminAutoRefresh', autoRefresh ? 'on' : 'off');
+    notify(autoRefresh ? 'Live resource refresh resumed' : 'Live resource refresh paused');
+    refreshResources().catch(e => notify(e.message, 'bad'));
+  });
+}
+function wireGlobalAffordances(){
+  document.getElementById('contrastBtn')?.addEventListener('click', () => toggleClassSetting('highContrast', 'duneAdminHighContrast', 'High contrast'));
+  document.getElementById('densityBtn')?.addEventListener('click', () => toggleClassSetting('denseMode', 'duneAdminDenseMode', 'Dense mode'));
+  document.getElementById('expandAllBtn')?.addEventListener('click', () => setDetails(true));
+  document.getElementById('collapseAllBtn')?.addEventListener('click', () => setDetails(false));
+  document.getElementById('helpBtn')?.addEventListener('click', () => modal(true));
+  document.getElementById('closeHelpBtn')?.addEventListener('click', () => modal(false));
+  document.getElementById('helpModal')?.addEventListener('click', e => {
+    if (e.target.id === 'helpModal') modal(false);
+  });
+  document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('keydown', e => {
+      const tabs = Array.from(document.querySelectorAll('.tab'));
+      const index = tabs.indexOf(tab);
+      const next = e.key === 'ArrowDown' || e.key === 'ArrowRight' ? tabs[index + 1] || tabs[0] : e.key === 'ArrowUp' || e.key === 'ArrowLeft' ? tabs[index - 1] || tabs[tabs.length - 1] : null;
+      if (next) {
+        e.preventDefault();
+        next.focus();
+        show(next.dataset.tab);
+      }
+    });
+  });
+  document.addEventListener('keydown', e => {
+    const tag = e.target.tagName;
+    const typing = ['INPUT','TEXTAREA','SELECT'].includes(tag);
+    if (e.key === 'Escape' && document.getElementById('helpModal').classList.contains('open')) { modal(false); return; }
+    if (typing && e.key !== 'Escape') return;
+    const tabMap = {'1':'overview','2':'ops','3':'security','4':'runbook','5':'characters','6':'settings','7':'mutations'};
+    if (tabMap[e.key]) { e.preventDefault(); show(tabMap[e.key]); return; }
+    if (e.key === '?') { e.preventDefault(); modal(true); return; }
+    if (e.key === '/') { e.preventDefault(); focusFirstFilter(); return; }
+    if (e.key.toLowerCase() === 'r') { e.preventDefault(); load(); return; }
+    if (e.key.toLowerCase() === 'h') { e.preventDefault(); toggleClassSetting('highContrast', 'duneAdminHighContrast', 'High contrast'); return; }
+    if (e.key.toLowerCase() === 'd') { e.preventDefault(); toggleClassSetting('denseMode', 'duneAdminDenseMode', 'Dense mode'); return; }
+    if (e.key.toLowerCase() === 'e') { e.preventDefault(); setDetails(true); return; }
+    if (e.key.toLowerCase() === 'c') { e.preventDefault(); setDetails(false); }
+  });
+}
 function renderStatus(data){
   document.getElementById('statusSummary').innerHTML = [
     statusPill('admin token configured', data.adminTokenConfigured),
@@ -2373,6 +2781,7 @@ function renderStatus(data){
     `<span class="pill">db: ${esc(data.database)}</span>`
   ].join('');
   document.getElementById('statusRaw').textContent = JSON.stringify(data, null, 2);
+  updateLastRefresh('Status refreshed');
 }
 async function refreshStatus(){ renderStatus(await api('/api/status')); }
 async function load(){
@@ -2380,29 +2789,45 @@ async function load(){
     clearInterval(resourceTimer);
     resourceTimer = null;
   }
+  view.setAttribute('aria-busy', 'true');
   syncTabs();
   await refreshStatus().catch(e => {
     document.getElementById('statusSummary').innerHTML = `<span class="pill bad">${esc(e.message)}</span>`;
     document.getElementById('statusRaw').textContent = e.message;
   });
   try {
-    if (current === 'overview') { await overview(); return; }
-    if (current === 'ops') { await ops(); return; }
-    if (current === 'security') { await security(); return; }
-    if (current === 'runbook') { await runbook(); return; }
-    if (current === 'characters') { await characters(); return; }
-    if (current === 'settings') { await settings(); return; }
-    if (current === 'mutations') { await mutations(); return; }
+    if (current === 'overview') await overview();
+    else if (current === 'ops') await ops();
+    else if (current === 'security') await security();
+    else if (current === 'runbook') await runbook();
+    else if (current === 'characters') await characters();
+    else if (current === 'settings') await settings();
+    else if (current === 'mutations') await mutations();
   } catch (e) {
     view.innerHTML = `<div class="card"><h2>Admin Token Required</h2><p class="dangerText">${esc(e.message)}</p><p class="muted">Paste the admin token in the header and press <b>Use token</b>. The panel is reachable, but server data and write controls stay locked until the token is present.</p></div><div class="metricGrid">${metric('Endpoint', location.host)}${metric('Item Grants', 'enabled', 'ok')}${metric('Mutations', 'off', 'ok')}</div>`;
   }
+  makeSortableTables(view);
+  makeRowsKeyboardFriendly(view);
+  enhanceCopyBlocks(view);
+  announce(`${current} loaded`);
+  view.setAttribute('aria-busy', 'false');
 }
 async function overview(){
   const health = await api('/api/ops/health');
+  const roster = await api('/api/characters/roster');
+  const resources = await api('/api/ops/resources');
   const state = health;
   const summary = health.summary || {};
   const players = (state.farmState || []).reduce((sum, r) => sum + Number(r.connected_players || 0), 0);
-  view.innerHTML = `<div class="sectionHeader"><h2>Overview</h2><div class="toolbar"><button data-jump="ops">Ops detail</button><button data-jump="characters">Find character</button><button data-jump="mutations" class="primary">Admin Actions</button></div></div><div class="metricGrid">${metric('Ready Servers', `${summary.readyAlive ?? 0}/${summary.expectedPartitions ?? 0}`, summary.readyAlive === summary.expectedPartitions ? 'ok' : 'dangerText')}${metric('Online Maps', `${summary.onlineMaps ?? 0}/${summary.totalMaps ?? 0}`, summary.onlineMaps === summary.totalMaps ? 'ok' : 'dangerText')}${metric('Active IDs', `${summary.activeServers ?? 0}/${summary.expectedPartitions ?? 0}`)}${metric('Reported Players', players)}</div>${actionGrid([{tab:'ops',label:'Open detailed map and network health'},{tab:'security',label:'Review security checks and audit trail'},{tab:'settings',label:'Edit server settings and configs'},{tab:'runbook',label:'Open operational runbook'}])}<div class="card"><h2>Map Health</h2>${mapStatusTable(health.mapStatus)}</div><div class="card"><h2>Network and Upstream</h2>${probeTable(health.network?.probes)}</div><div class="card"><h2>Health Verdict</h2>${checks(health.verdicts)}</div>`;
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Overview</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="ops">Operations</button><button data-jump="mutations" class="primary">Admin Actions</button></div></div><div class="metricGrid">${metric('Ready Servers', `${summary.readyAlive ?? 0}/${summary.expectedPartitions ?? 0}`, summary.readyAlive === summary.expectedPartitions ? 'ok' : 'dangerText')}${metric('Online Maps', `${summary.onlineMaps ?? 0}/${summary.totalMaps ?? 0}`, summary.onlineMaps === summary.totalMaps ? 'ok' : 'dangerText')}${metric('Active IDs', `${summary.activeServers ?? 0}/${summary.expectedPartitions ?? 0}`)}${metric('Reported Players', players)}</div>${healthViz(health)}<div id="overviewRoster">${characterRosterPanel(roster)}</div><div id="detail"></div><div id="resources">${resourcePanel(resources)}</div>${actionGrid([{tab:'characters',label:'Player search and detail'},{tab:'ops',label:'Service controls and map health'},{tab:'security',label:'Security and audit'},{tab:'settings',label:'Server settings'}])}<div class="twoCol"><div class="panelBand"><h2>Map Health</h2>${mapTiles(health.mapStatus)}<details><summary>Map Table</summary>${mapStatusTable(health.mapStatus)}</details></div><div class="panelBand"><h2>Health Verdict</h2>${checks(health.verdicts)}</div></div><div class="panelBand"><h2>Network and Upstream</h2>${probeTable(health.network?.probes)}</div></div>`;
+  document.querySelectorAll('#overviewRoster tbody tr').forEach(row => row.onclick = () => pickCharacter(row));
+  makeRowsKeyboardFriendly(view);
+  wireResourceControls(view);
+  bindRosterFilters(view);
+  bindResourceFilters(view);
+  resourceTimer = setInterval(() => {
+    if (autoRefresh && current === 'overview') refreshResources().catch(() => {});
+  }, 5000);
 }
 async function ops(){
   const health = await api('/api/ops/health');
@@ -2411,36 +2836,55 @@ async function ops(){
   const restart = await api('/api/ops/restart');
   const resources = await api('/api/ops/resources');
   const pc = health.playerCounts || {};
-  view.innerHTML = `<div class="sectionHeader"><h2>Operations</h2><div class="toolbar"><button data-jump="overview">Overview</button><button data-jump="runbook">Runbook</button><button data-jump="settings">Settings</button></div></div><div class="metricGrid">${metric('Connected Players', pc.connected_players_reported ?? 0)}${metric('Online Controllers', pc.online_controller_ids ?? 0)}${metric('Recent Online State', pc.online_or_recently_disconnected ?? 0)}${metric('Grace Entries', pc.grace_period_entries ?? 0)}</div>${actionGrid([{tab:'characters',label:'Inspect characters currently represented in DB'},{tab:'security',label:'Check audit events and exposed settings'},{tab:'mutations',label:'Create a backup before writes',className:'primary'}])}<div id="resources">${resourcePanel(resources)}</div>${restartPanel(restart)}${announcementPanel(announcement)}<div class="card"><h2>Health Verdict</h2>${checks(health.verdicts)}</div><div class="card"><h2>Map Online/Offline</h2>${mapStatusTable(health.mapStatus)}</div><div class="card"><h2>Local and Upstream Network</h2>${probeTable(health.network?.probes)}</div><div class="card"><h2>Farm State</h2>${table(health.farmState)}</div><div class="card"><h2>Partitions</h2>${table(health.partitions)}</div>${signalList(opt)}`;
-  document.getElementById('refreshResourcesBtn').addEventListener('click', refreshResources);
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Operations</h2><div class="toolbar"><button data-jump="overview">Overview</button><button data-jump="characters">Players</button><button data-jump="runbook">Runbook</button><button data-jump="settings">Settings</button></div></div><div class="metricGrid">${metric('Connected Players', pc.connected_players_reported ?? 0)}${metric('Online Controllers', pc.online_controller_ids ?? 0)}${metric('Recent Online State', pc.online_or_recently_disconnected ?? 0)}${metric('Grace Entries', pc.grace_period_entries ?? 0)}</div>${healthViz(health)}<div id="resources">${resourcePanel(resources)}</div><div class="twoCol">${restartPanel(restart)}${announcementPanel(announcement)}</div><div class="twoCol"><div class="panelBand"><h2>Health Verdict</h2>${checks(health.verdicts)}</div><div class="panelBand"><h2>Local and Upstream Network</h2>${probeTable(health.network?.probes)}</div></div><div class="panelBand"><h2>Map Online/Offline</h2>${mapTiles(health.mapStatus)}<details><summary>Map Table</summary>${mapStatusTable(health.mapStatus)}</details></div><details class="panelBand"><summary>Raw Farm State</summary>${table(health.farmState)}</details><details class="panelBand"><summary>Partitions</summary>${table(health.partitions)}</details>${signalList(opt)}</div>`;
+  wireResourceControls(view);
+  bindResourceFilters(view);
   document.getElementById('scheduleAnnouncementBtn').addEventListener('click', scheduleAnnouncement);
   document.getElementById('cancelAnnouncementBtn').addEventListener('click', cancelAnnouncement);
   document.getElementById('scheduleRestartBtn').addEventListener('click', scheduleRestart);
   document.getElementById('cancelRestartBtn').addEventListener('click', cancelRestart);
   resourceTimer = setInterval(() => {
-    if (current === 'ops') refreshResources().catch(() => {});
+    if (autoRefresh && current === 'ops') refreshResources().catch(() => {});
   }, 5000);
 }
 async function refreshResources(){
-  const resources = await api('/api/ops/resources');
-  const container = document.getElementById('resources');
-  if (!container) return;
-  container.innerHTML = resourcePanel(resources);
-  document.getElementById('refreshResourcesBtn')?.addEventListener('click', refreshResources);
+  const button = document.getElementById('refreshResourcesBtn');
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'Refreshing';
+  }
+  try {
+    const resources = await api('/api/ops/resources');
+    const container = document.getElementById('resources');
+    if (!container) return;
+    container.innerHTML = resourcePanel(resources);
+    wireResourceControls(container);
+    bindResourceFilters(container);
+    enhanceCopyBlocks(container);
+    updateLastRefresh('Resources refreshed');
+    announce('Resource panel refreshed');
+  } catch (e) {
+    notify(`Resource refresh failed: ${e.message}`, 'bad');
+  } finally {
+    if (button && document.body.contains(button)) {
+      button.disabled = false;
+      button.textContent = 'Refresh';
+    }
+  }
 }
 async function security(){
   const audit = await api('/api/ops/security');
   const events = await api('/api/ops/audit');
   const failed = (audit.checks || []).filter(c => !c.ok).length;
-  view.innerHTML = `<div class="sectionHeader"><h2>Security</h2><div class="toolbar"><span class="pill ${failed ? 'warn' : 'ok'}">${failed ? failed + ' checks need attention' : 'checks OK'}</span><button data-jump="settings">Edit settings</button><button data-jump="mutations">Backup</button></div></div>${actionGrid([{tab:'settings',label:'Open editable env and config allowlists'},{tab:'runbook',label:'Open commands for service operations'},{tab:'ops',label:'Review health before exposing services'}])}<div class="card"><h2>Security Checks</h2>${checks(audit.checks)}</div><div class="card"><h2>Recent Audit Events</h2>${table(events.events)}</div><div class="card"><h2>Notes</h2><ul>${audit.notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul></div><div class="card"><h2>Editable Env Keys</h2><div class="toolbar">${audit.safeEnvKeys.map(k => `<span class="pill">${esc(k)}</span>`).join('')}</div></div><div class="card"><h2>Editable Config Files</h2><div class="toolbar">${audit.allowedConfigFiles.map(k => `<span class="pill">${esc(k)}</span>`).join('')}</div></div>`;
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Security</h2><div class="toolbar"><span class="pill ${failed ? 'warn' : 'ok'}">${failed ? failed + ' checks need attention' : 'checks OK'}</span><button data-jump="settings">Settings</button><button data-jump="mutations">Backup</button></div></div><div class="twoCol"><div class="panelBand"><h2>Security Checks</h2>${checks(audit.checks)}</div><div class="panelBand"><h2>Recent Audit Events</h2>${table(events.events)}</div></div><div class="panelBand"><h2>Operating Notes</h2><ul>${audit.notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul></div><details class="panelBand"><summary>Editable Env Keys</summary><div class="toolbar">${audit.safeEnvKeys.map(k => `<span class="pill">${esc(k)}</span>`).join('')}</div></details><details class="panelBand"><summary>Editable Config Files</summary><div class="toolbar">${audit.allowedConfigFiles.map(k => `<span class="pill">${esc(k)}</span>`).join('')}</div></details></div>`;
 }
 async function runbook(){
   const data = await api('/api/ops/runbook');
-  view.innerHTML = `<div class="sectionHeader"><h2>Runbook</h2><div class="toolbar"><span class="pill">copy/paste commands</span><button data-jump="ops">Ops</button><button data-jump="settings">Settings</button></div></div>${actionGrid([{tab:'overview',label:'Check server health first'},{tab:'mutations',label:'Create DB backup before risky work',className:'primary'},{tab:'security',label:'Review recent admin audit events'}])}<div class="card"><p class="muted">${esc(data.why)}</p>${table(data.commands)}</div>`;
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Runbook</h2><div class="toolbar"><span class="pill">copy/paste commands</span><button data-jump="ops">Ops</button><button data-jump="settings">Settings</button></div></div>${actionGrid([{tab:'overview',label:'Overview'},{tab:'mutations',label:'Create DB backup',className:'primary'},{tab:'security',label:'Audit'}])}<div class="panelBand"><p class="muted">${esc(data.why)}</p>${table(data.commands)}</div></div>`;
 }
 async function characters(){
   const lastQuery = sessionStorage.getItem('duneAdminCharacterQuery') || '';
-  view.innerHTML = `<div class="sectionHeader"><h2>Characters</h2><div class="toolbar"><span class="pill">online and offline roster</span><button id="refreshRosterBtn">Refresh roster</button><button data-jump="mutations" class="primary">Admin Actions</button><button data-jump="settings">Settings</button></div></div>${actionGrid([{tab:'mutations',label:'Open grants, XP, currency, and item maintenance'},{tab:'security',label:'Review audit trail for recent writes'},{tab:'ops',label:'Check server state before changing players'}])}<div id="roster"></div><div class="card"><h2>Search</h2><div class="row"><input id="q" placeholder="Character, Funcom ID, platform ID" value="${esc(lastQuery)}"><button id="characterSearchBtn" class="primary">Search</button><button id="characterListAllBtn">List all</button></div><div id="results"></div></div><div id="detail"></div>`;
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Players</h2><div class="toolbar"><span class="pill">online and offline roster</span><button id="refreshRosterBtn">Refresh roster</button><button data-jump="mutations" class="primary">Admin Actions</button><button data-jump="settings">Settings</button></div></div><div id="roster"></div><div class="panelBand"><h2>Player Search</h2><div class="row"><input id="q" placeholder="Character, Funcom ID, platform ID" value="${esc(lastQuery)}"><button id="characterSearchBtn" class="primary">Search</button><button id="characterListAllBtn">List all</button></div><div id="results"></div></div><div id="detail"></div></div>`;
   document.getElementById('refreshRosterBtn').addEventListener('click', loadCharacterRoster);
   document.getElementById('characterSearchBtn').addEventListener('click', searchCharacters);
   document.getElementById('characterListAllBtn').addEventListener('click', () => {
@@ -2458,6 +2902,8 @@ async function loadCharacterRoster(){
   const container = document.getElementById('roster');
   container.innerHTML = characterRosterPanel(roster);
   container.querySelectorAll('tbody tr').forEach(row => row.onclick = () => pickCharacter(row));
+  bindRosterFilters(container);
+  makeRowsKeyboardFriendly(container);
 }
 async function searchCharacters(){
   const query = document.getElementById('q').value;
@@ -2466,15 +2912,22 @@ async function searchCharacters(){
   const results = document.getElementById('results');
   results.innerHTML = table(rows);
   results.querySelectorAll('tbody tr').forEach(row => row.onclick = () => pickCharacter(row));
+  makeSortableTables(results);
+  makeRowsKeyboardFriendly(results);
 }
 async function pickCharacter(row){
+  document.querySelectorAll('tbody tr.selected').forEach(r => r.classList.remove('selected'));
+  row.classList.add('selected');
   const id = row.dataset.id || row.children[0].textContent;
   if (!id) return;
   const d = await api('/api/characters/' + encodeURIComponent(id));
   const ref = await api('/api/admin/reference');
   const p = d.player || {};
+  announce(`Selected ${p.character_name || 'character'}`);
   const firstTrack = (d.specialization && d.specialization[0]) || {};
   document.getElementById('detail').innerHTML = `<datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><div class="card"><h2>${esc(p.character_name || 'Character')}</h2><div class="grid"><div><b>Account</b><br>${esc(p.account_id)}</div><div><b>Controller</b><br>${esc(p.player_controller_id)}</div><div><b>Pawn</b><br>${esc(p.player_pawn_id)}</div><div><b>Status</b><br>${esc(p.online_status)}</div></div><p><button id="detailOpenAdminActionsBtn" class="primary">Open in Admin Actions</button></p></div><div class="card"><h2>Quick Admin</h2><p class="dangerText">Back up first. Mutations require server-side enablement.</p><div class="grid"><label>Currency<select id="detailCurId">${currencyBalanceOptions(d.currency, ref.currencyIds)}</select></label><label>Amount<input id="detailCurAmount" value="1000"></label><label>Mode<select id="detailCurMode"><option>add</option><option>set</option></select></label></div><p><button id="detailCurrencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Track<select id="detailTrack">${specializationOptions(d.specialization, ref.specializationTrackTypes)}</select></label><label>XP amount<input id="detailXpAmount" value="1000"></label><label>Level for set/new track<input id="detailXpLevel" value="${esc(firstTrack.level ?? 0)}"></label><label>Mode<select id="detailXpMode"><option>add</option><option>set</option></select></label></div><p><button id="detailXpBtn" class="primary">Apply XP</button></p><div class="grid"><label>Owned inventory<select id="detailGrantInventory"><option value="">All owned inventories</option>${inventoryOptions(d.inventories)}</select></label><label>Owned item<select id="detailItemSelect">${inventoryItemOptions(d.inventoryItems)}</select></label><label>Template ID<input id="detailGrantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="detailGrantStack" value="1"></label><label>Delete count<input id="detailDeleteCount" placeholder="blank/all"></label></div><p><button id="detailDryRunBtn" class="primary">Dry run item</button> <button id="detailGrantBtn" class="danger">Grant item</button> <button id="detailSetStackBtn" class="primary">Set selected stack</button> <button id="detailDeleteItemBtn" class="danger">Delete selected item/count</button></p><pre id="detailGrantResult"></pre></div><div class="card"><h2>Inventories</h2>${table(d.inventories)}</div><div class="card"><h2>Inventory Items</h2>${table(d.inventoryItems)}</div><div class="card"><h2>Raw Detail</h2><pre>${esc(JSON.stringify(d, null, 2))}</pre></div>`;
+  makeSortableTables(document.getElementById('detail'));
+  enhanceCopyBlocks(document.getElementById('detail'));
   const detailInventory = document.getElementById('detailGrantInventory');
   const detailItem = document.getElementById('detailItemSelect');
   const setDetailItemOptions = () => {
@@ -2511,7 +2964,7 @@ async function settings(){
   const transfer = await api('/api/settings/director-transfer');
   const onlineState = await api('/api/settings/player-online-state');
   const configs = await api('/api/settings/configs');
-  view.innerHTML = `<div class="sectionHeader"><h2>Settings</h2><div class="toolbar"><button data-jump="security">Security</button><button data-jump="ops">Ops</button><button id="saveEnvBtn" class="primary">Save env settings</button></div></div><div class="card"><p class="muted">These write <code>.env</code>, <code>config/director.ini</code>, or <code>config/UserGame.ini</code> with a backup under <code>backups/admin-panel</code>. Most service settings need the affected containers recreated before running processes pick them up.</p></div>${actionGrid([{tab:'ops',label:'Check live state after settings changes'},{tab:'mutations',label:'Create a DB backup before admin writes',className:'primary'},{tab:'characters',label:'Inspect player state affected by settings'}])}${envEditor(env)}${playerOnlineStateEditor(onlineState)}${directorTransferEditor(transfer)}<div class="card"><h2>Config Files</h2><select id="cfg">${Object.keys(configs).map(k=>`<option>${esc(k)}</option>`).join('')}</select><textarea id="cfgText"></textarea><p><button id="saveCfgBtn" class="primary">Save config with backup</button></p></div>`;
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Settings</h2><div class="toolbar"><button data-jump="security">Security</button><button data-jump="ops">Ops</button><button id="saveEnvBtn" class="primary">Save env settings</button></div></div><div class="panelBand"><p class="muted">These write <code>.env</code>, <code>config/director.ini</code>, or <code>config/UserGame.ini</code> with a backup under <code>backups/admin-panel</code>. Most service settings need the affected containers recreated before running processes pick them up.</p></div>${actionGrid([{tab:'ops',label:'Check live state'},{tab:'mutations',label:'Create backup',className:'primary'},{tab:'characters',label:'Inspect players'}])}${envEditor(env)}<div class="twoCol">${playerOnlineStateEditor(onlineState)}${directorTransferEditor(transfer)}</div><div class="panelBand"><h2>Config Files</h2><select id="cfg">${Object.keys(configs).map(k=>`<option>${esc(k)}</option>`).join('')}</select><textarea id="cfgText"></textarea><p><button id="saveCfgBtn" class="primary">Save config with backup</button></p></div></div>`;
   window.configs = configs; selectCfg();
   document.getElementById('cfg').addEventListener('change', selectCfg);
   document.getElementById('saveEnvBtn').addEventListener('click', saveEnv);
@@ -2526,30 +2979,30 @@ async function saveEnv(){
     if (i.dataset.secret === 'true' && !i.value) return;
     body[i.id.slice(4)] = i.value;
   });
-  await api('/api/settings/env', {method:'POST', body:JSON.stringify(body)}); alert('Saved .env settings');
+  await api('/api/settings/env', {method:'POST', body:JSON.stringify(body)}); notify('Saved .env settings');
 }
 async function saveCfg(){
   const name=document.getElementById('cfg').value;
   await api('/api/settings/configs/' + encodeURIComponent(name), {method:'POST', body:JSON.stringify({content:document.getElementById('cfgText').value})});
-  alert('Saved ' + name);
+  notify('Saved ' + name);
 }
 async function saveDirectorTransfer(){
   const body={};
   document.querySelectorAll('[id^=transfer_]').forEach(i => body[i.id.slice(9)] = i.value);
   await api('/api/settings/director-transfer', {method:'POST', body:JSON.stringify(body)});
-  alert('Saved director transfer settings');
+  notify('Saved director transfer settings');
 }
 async function savePlayerOnlineState(){
   const body={};
   document.querySelectorAll('[id^=online_]').forEach(i => body[i.id.slice(7)] = i.value);
   await api('/api/settings/player-online-state', {method:'POST', body:JSON.stringify(body)});
-  alert('Saved logout timers');
+  notify('Saved logout timers');
 }
 async function mutations(){
   const ref = await api('/api/admin/reference');
   const characterRows = await api('/api/characters?q=');
   const referenceErrors = ref.errors && Object.keys(ref.errors).length ? `<div class="card"><h2>Reference Errors</h2><pre>${esc(JSON.stringify(ref.errors, null, 2))}</pre></div>` : '';
-  view.innerHTML = `${referenceErrors}<div class="sectionHeader"><h2>Admin Actions</h2><div class="toolbar"><button data-jump="characters">Characters</button><button data-jump="settings">Settings</button><button data-jump="security">Audit</button></div></div>${actionGrid([{tab:'characters',label:'Look up a character and inspect raw state'},{tab:'settings',label:'Enable or review mutation-related settings'},{tab:'runbook',label:'Open service commands after writes'}])}<div class="card"><h2>Backups</h2><p>Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button id="backupBtn" class="primary">Create DB backup</button><pre id="backupResult"></pre></div><div class="card"><h2>Currency and XP</h2><p class="dangerText">Writes require <code>DUNE_ADMIN_MUTATIONS_ENABLED=true</code> and a valid admin token. Back up first.</p><div class="grid"><label>Character<select id="adminCharacterSelect">${characterOptions(characterRows)}</select></label><label>Player controller ID<input id="pcid"></label><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button id="currencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Level for set/new track<input id="xplevel" value="0"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button id="xpBtn" class="primary">Apply XP</button></p></div><div class="card"><h2>Specialization Keystones</h2><div class="grid"><label>Player/controller ID<input id="keyPlayer"></label><label>Keystone<select id="keystone">${options(ref.keystones, 'name')}</select></label></div><p><button id="purchaseKeystoneBtn" class="primary">Purchase keystone</button> <button id="resetKeystonesBtn" class="danger">Reset all keystones</button></p><pre id="keystoneResult"></pre></div><div class="card"><h2>Item Grants</h2><p class="dangerText">Use exact server template IDs. Public item databases: <a href="${esc(ref.publicItemDatabase)}" target="_blank" rel="noreferrer">gaming.tools</a> and <a href="${esc(ref.publicItemDatabaseAlt)}" target="_blank" rel="noreferrer">Arrakis Atlas</a>. Dry run first when using IDs not observed locally.</p><div class="grid"><label>Character<select id="grantCharacterSelect">${characterOptions(characterRows)}</select></label><label>Known inventory<select id="grantInventorySelect">${inventoryOptions(ref.recentInventories)}</select></label><label>Inventory ID<input id="grantInventory" placeholder="explicit inventory"></label><label>Account ID<input id="grantAccount" placeholder="auto-select player inventory"></label><label>Character name<input id="grantCharacter" placeholder="auto-select by name"></label><label>Inventory type<select id="grantInventoryType">${inventoryTypeOptions(ref.inventoryTypes)}</select></label><label>Template ID<input id="grantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><label>Stats JSON<textarea id="grantStats">{}</textarea></label><p><button id="dryRunItemBtn" class="primary">Dry run</button> <button id="grantItemBtn" class="danger">Grant item</button></p><pre id="grantResult"></pre></div><div class="card"><h2>Item Maintenance</h2><div class="grid"><label>Character<select id="itemCharacterSelect">${characterOptions(characterRows)}</select></label><label>Owned item<select id="itemEditSelect"><option value="">Select a character first</option></select></label><label>Item ID<input id="itemEditId"></label><label>New stack size<input id="itemEditStack" value="1"></label><label>Delete count<input id="itemDeleteCount" placeholder="blank/all"></label></div><p><button id="setItemStackBtn" class="primary">Set stack</button> <button id="deleteItemBtn" class="danger">Delete item/count</button></p><pre id="itemEditResult"></pre></div><datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><div class="card"><h2>Known Item Templates</h2><p class="muted">Exact template IDs observed in local item, reward, vendor, vehicle, or exchange tables.</p>${table(ref.knownItemTemplates)}</div><div class="card"><h2>Observed Item Templates</h2><p class="muted">Read-only reference from this server's current <code>dune.items</code> rows.</p>${table(ref.observedItemTemplates)}</div><div class="card"><h2>Recent Inventories</h2>${table(ref.recentInventories)}</div><div class="card"><h2>Inventory Types</h2>${table(ref.inventoryTypes)}</div><div class="card"><h2>Recipe Unlocks</h2><p class="muted">Not implemented yet. The DB exposes removal helpers and actor JSON recipe arrays, but no safe grant function has been mapped.</p><button id="unsupportedBtn" class="danger">Test unsupported endpoint</button></div>`;
+  view.innerHTML = `<div class="pageStack">${referenceErrors}<div class="sectionHeader"><h2>Admin Actions</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="settings">Settings</button><button data-jump="security">Audit</button></div></div>${actionGrid([{tab:'characters',label:'Player lookup'},{tab:'settings',label:'Mutation settings'},{tab:'runbook',label:'Runbook'}])}<div class="panelBand"><h2>Backup First</h2><p class="muted">Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button id="backupBtn" class="primary">Create DB backup</button><pre id="backupResult"></pre></div><div class="panelBand"><h2>Target Player</h2><div class="grid"><label>Character<select id="adminCharacterSelect">${characterOptions(characterRows)}</select></label><label>Player controller ID<input id="pcid"></label><label>Account ID<input id="grantAccount" placeholder="auto-select player inventory"></label><label>Character name<input id="grantCharacter" placeholder="auto-select by name"></label></div></div><div class="twoCol"><div class="panelBand"><h2>Currency and XP</h2><p class="dangerText">Writes require <code>DUNE_ADMIN_MUTATIONS_ENABLED=true</code> and a valid admin token.</p><div class="grid"><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button id="currencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Level for set/new track<input id="xplevel" value="0"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button id="xpBtn" class="primary">Apply XP</button></p></div><div class="panelBand dangerZone"><h2>Specialization Keystones</h2><div class="grid"><label>Player/controller ID<input id="keyPlayer"></label><label>Keystone<select id="keystone">${options(ref.keystones, 'name')}</select></label></div><p><button id="purchaseKeystoneBtn" class="primary">Purchase keystone</button> <button id="resetKeystonesBtn" class="danger">Reset all keystones</button></p><pre id="keystoneResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Item Grants</h2><p class="dangerText">Use exact server template IDs. Dry run first when using IDs not observed locally.</p><div class="grid"><label>Known inventory<select id="grantInventorySelect">${inventoryOptions(ref.recentInventories)}</select></label><label>Inventory ID<input id="grantInventory" placeholder="explicit inventory"></label><label class="hidden">Character<select id="grantCharacterSelect">${characterOptions(characterRows)}</select></label><label>Inventory type<select id="grantInventoryType">${inventoryTypeOptions(ref.inventoryTypes)}</select></label><label>Template ID<input id="grantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><label>Stats JSON<textarea id="grantStats">{}</textarea></label><p><button id="dryRunItemBtn" class="primary">Dry run</button> <button id="grantItemBtn" class="danger">Grant item</button></p><pre id="grantResult"></pre></div><div class="panelBand dangerZone"><h2>Item Maintenance</h2><div class="grid"><label class="hidden">Character<select id="itemCharacterSelect">${characterOptions(characterRows)}</select></label><label>Owned item<select id="itemEditSelect"><option value="">Select a character first</option></select></label><label>Item ID<input id="itemEditId"></label><label>New stack size<input id="itemEditStack" value="1"></label><label>Delete count<input id="itemDeleteCount" placeholder="blank/all"></label></div><p><button id="setItemStackBtn" class="primary">Set stack</button> <button id="deleteItemBtn" class="danger">Delete item/count</button></p><pre id="itemEditResult"></pre></div></div><datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><details class="panelBand"><summary>Known Item Templates</summary>${table(ref.knownItemTemplates)}</details><details class="panelBand"><summary>Observed Item Templates</summary>${table(ref.observedItemTemplates)}</details><details class="panelBand"><summary>Recent Inventories</summary>${table(ref.recentInventories)}</details><details class="panelBand"><summary>Inventory Types</summary>${table(ref.inventoryTypes)}</details></div>`;
   const loadCharacterAdminDetails = async (accountId) => {
     const itemSelect = document.getElementById('itemEditSelect');
     const inventorySelect = document.getElementById('grantInventorySelect');
@@ -2636,7 +3089,6 @@ async function mutations(){
   document.getElementById('grantItemBtn').addEventListener('click', () => grantItem(false));
   document.getElementById('setItemStackBtn').addEventListener('click', setItemStack);
   document.getElementById('deleteItemBtn').addEventListener('click', deleteItem);
-  document.getElementById('unsupportedBtn').addEventListener('click', unsupported);
   if (pendingAdminAccountId) {
     const target = document.getElementById('adminCharacterSelect');
     target.value = pendingAdminAccountId;
@@ -2646,19 +3098,19 @@ async function mutations(){
 }
 async function currency(){
   await api('/api/admin/currency', {method:'POST', body:JSON.stringify({player_controller_id:pcid.value,currency_id:curid.value,amount:amount.value,mode:mode.value})});
-  alert('Currency updated');
+  notify('Currency updated');
 }
 async function currencyFor(playerControllerId){
   await api('/api/admin/currency', {method:'POST', body:JSON.stringify({player_controller_id:playerControllerId,currency_id:detailCurId.value,amount:detailCurAmount.value,mode:detailCurMode.value})});
-  alert('Currency updated');
+  notify('Currency updated');
 }
 async function xp(){
   await api('/api/admin/xp', {method:'POST', body:JSON.stringify({player_id:xpid.value,track_type:track.value,amount:xpamount.value,level:xplevel.value,mode:xpmode.value})});
-  alert('XP updated');
+  notify('XP updated');
 }
 async function xpFor(playerId){
   await api('/api/admin/xp', {method:'POST', body:JSON.stringify({player_id:playerId,track_type:detailTrack.value,amount:detailXpAmount.value,level:detailXpLevel.value,mode:detailXpMode.value})});
-  alert('XP updated');
+  notify('XP updated');
 }
 async function backup(){
   const result = await api('/api/admin/backup', {method:'POST', body:'{}'});
@@ -2670,7 +3122,7 @@ async function scheduleAnnouncement(){
     repeat_seconds: announceRepeat.value,
     message: announceMessage.value
   })});
-  alert('Announcement scheduled');
+  notify('Announcement scheduled');
   await ops();
 }
 async function cancelAnnouncement(){
@@ -2693,7 +3145,7 @@ async function scheduleRestart(){
     announce: restartAnnounce.checked,
     execute
   })});
-  alert('Restart scheduled');
+  notify('Restart scheduled');
   await ops();
 }
 async function cancelRestart(){
@@ -2731,21 +3183,21 @@ async function deleteItem(){
 }
 async function setDetailItemStack(){
   const itemId = document.getElementById('detailItemSelect')?.value || '';
-  if (!itemId) { alert('Select an owned item first'); return; }
+  if (!itemId) { notify('Select an owned item first', 'bad'); return; }
   if (!confirm('Set this selected item stack size?')) return;
   const result = await api('/api/admin/item/stack', {method:'POST', body:JSON.stringify({item_id:itemId,stack_size:detailGrantStack.value,confirm:'SET STACK'})});
   document.getElementById('detailGrantResult').textContent = JSON.stringify(result, null, 2);
 }
 async function deleteDetailItem(){
   const itemId = document.getElementById('detailItemSelect')?.value || '';
-  if (!itemId) { alert('Select an owned item first'); return; }
+  if (!itemId) { notify('Select an owned item first', 'bad'); return; }
   if (!confirm('Delete this selected item or count from the stack?')) return;
   const result = await api('/api/admin/item/delete', {method:'POST', body:JSON.stringify({item_id:itemId,count:detailDeleteCount.value,confirm:'DELETE ITEM'})});
   document.getElementById('detailGrantResult').textContent = JSON.stringify(result, null, 2);
 }
-async function unsupported(){ try { await api('/api/admin/unsupported', {method:'POST', body:'{}'}); } catch(e) { alert(e.message); } }
 document.getElementById('saveTokenBtn').addEventListener('click', saveToken);
 document.getElementById('clearTokenBtn').addEventListener('click', clearToken);
+wireGlobalAffordances();
 document.addEventListener('click', e => {
   const target = e.target.closest('[data-jump]');
   if (target) show(target.dataset.jump);

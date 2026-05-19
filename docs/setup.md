@@ -92,7 +92,7 @@ docker compose --env-file .env up -d \
 Expected server-side status:
 
 ```text
-farm_ready_alive=9 active_servers=9 partitions=9
+current_alive_active=9 active_servers=9 partitions=9
 ```
 
 This proves server-side registration and partition assignment. It does not by itself prove client travel; test login and each travel path from the live game client.
@@ -103,4 +103,4 @@ This proves server-side registration and partition assignment. It does not by it
 docker compose --env-file .env up -d admin-panel
 ```
 
-Open `http://127.0.0.1:18080`, or put a trusted LAN/VPN reverse proxy in front of it with your own hostname. See `docs/admin-panel.md`.
+Open `http://127.0.0.1:${DUNE_ADMIN_HOST_PORT:-18080}`, or put a trusted LAN/VPN reverse proxy in front of it with your own hostname. See `docs/admin-panel.md`.

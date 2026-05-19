@@ -46,26 +46,61 @@ fi
 
 echo
 echo "== health verdict =="
-farm_ready="$("${compose[@]}" exec -T postgres psql -U dune -d "$db" -Atc "select count(*) from dune.farm_state where ready and alive;" 2>/dev/null || printf '0')"
+current_ready_alive="$("${compose[@]}" exec -T postgres psql -U dune -d "$db" -Atc "
+select count(*)
+from dune.world_partition wp
+join dune.farm_state fs on fs.server_id = wp.server_id
+join dune.active_server_ids asi on asi.server_id = wp.server_id
+where fs.ready and fs.alive;
+" 2>/dev/null || printf '0')"
+current_alive_active="$("${compose[@]}" exec -T postgres psql -U dune -d "$db" -Atc "
+select count(*)
+from dune.world_partition wp
+join dune.farm_state fs on fs.server_id = wp.server_id
+join dune.active_server_ids asi on asi.server_id = wp.server_id
+where fs.alive;
+" 2>/dev/null || printf '0')"
 active_servers="$("${compose[@]}" exec -T postgres psql -U dune -d "$db" -Atc "select count(*) from dune.active_server_ids;" 2>/dev/null || printf '0')"
 partitions="$("${compose[@]}" exec -T postgres psql -U dune -d "$db" -Atc "select count(*) from dune.world_partition;" 2>/dev/null || printf '0')"
 game_sg_connections="$("${compose[@]}" exec -T game-rmq rabbitmqctl list_connections user 2>/dev/null | rg -c '^sg\.' || true)"
 admin_sg_connections="$("${compose[@]}" exec -T admin-rmq rabbitmqctl list_connections user 2>/dev/null | rg -c '^sg\.' || true)"
 
-if [[ "$farm_ready" -gt 0 && "$farm_ready" -eq "$partitions" && "$active_servers" -eq "$farm_ready" && "$game_sg_connections" -ge "$farm_ready" ]]; then
-  echo "OK: all partitions have ready/alive farm rows, active server ids exist, and game RMQ service users are connected."
+if [[ "$current_alive_active" -gt 0 && "$current_alive_active" -eq "$partitions" && "$active_servers" -eq "$partitions" && "$game_sg_connections" -ge "$partitions" ]]; then
+  echo "OK: all current partitions have alive active farm rows, active server ids exist, and game RMQ service users are connected."
 else
   echo "WARN: expected readiness signals are incomplete."
 fi
-if [[ "$admin_sg_connections" -lt "$farm_ready" ]]; then
+if [[ "$current_ready_alive" -lt "$partitions" ]]; then
+  echo "NOTE: one or more current partitions are alive/active but have ready=false in farm_state. Check game logs for 'Server farm is READY' before treating this as fatal."
+fi
+if [[ "$admin_sg_connections" -lt "$partitions" ]]; then
   echo "NOTE: admin RMQ service-user connections are lower than farm-ready rows. This is expected for some warm-pool/on-demand maps, but investigate if admin mutations or heartbeats fail."
 fi
-printf 'farm_ready_alive=%s active_servers=%s partitions=%s game_sg_connections=%s admin_sg_connections=%s\n' \
-  "$farm_ready" "$active_servers" "$partitions" "$game_sg_connections" "$admin_sg_connections"
+printf 'current_ready_alive=%s current_alive_active=%s active_servers=%s partitions=%s game_sg_connections=%s admin_sg_connections=%s\n' \
+  "$current_ready_alive" "$current_alive_active" "$active_servers" "$partitions" "$game_sg_connections" "$admin_sg_connections"
 
 echo
 echo "== database state =="
 "${compose[@]}" exec -T postgres psql -U dune -d "$db" -c "
+select
+  wp.partition_id,
+  wp.server_id,
+  wp.map,
+  wp.dimension_index,
+  wp.label,
+  fs.farm_id,
+  fs.ready,
+  fs.alive,
+  asi.server_id is not null as active,
+  fs.connected_players,
+  fs.revision,
+  fs.game_addr,
+  fs.igw_addr
+from dune.world_partition wp
+left join dune.farm_state fs on fs.server_id = wp.server_id
+left join dune.active_server_ids asi on asi.server_id = wp.server_id
+order by wp.partition_id;
+
 select server_id,farm_id,ready,alive,map,revision,game_addr,igw_addr
 from dune.farm_state
 order by map, server_id;

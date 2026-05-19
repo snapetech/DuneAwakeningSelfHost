@@ -5,6 +5,7 @@ x-game-server-base: &game-server-base
     - 8.8.8.8
   environment:
     DUNE_SERVER_LOGIN_PASSWORD: ${DUNE_SERVER_LOGIN_PASSWORD:-}
+    WORLD_NAME: ${WORLD_NAME}
   depends_on:
     - postgres
     - admin-rmq
@@ -32,6 +33,7 @@ services:
 
   postgres:
     image: registry.funcom.com/funcom/self-hosting/igw-postgres:17.4-alpine-fc-13
+    restart: unless-stopped
     environment:
       POSTGRES_DB: dune
       POSTGRES_USER: dune
@@ -41,6 +43,7 @@ services:
       - ./data/postgres:/var/lib/postgresql/data
     ports:
       - "127.0.0.1:15431:5432"
+      - "${POSTGRES_BRIDGE_BIND_ADDRESS:-172.31.240.1}:${POSTGRES_BRIDGE_PUBLIC_PORT:-15432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U dune -d dune || exit 1"]
       interval: 10s
@@ -142,6 +145,7 @@ services:
       Database__password: ${POSTGRES_DUNE_PASSWORD}
       RMQ_HTTP_TOKEN_AUTH_SECRET: ${RMQ_HTTP_TOKEN_AUTH_SECRET}
       BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
+      WORLD_NAME: ${WORLD_NAME}
       OPT_SERVERNAME: ${WORLD_UNIQUE_NAME}
       OPT_DISPLAY_NAME: ${WORLD_NAME}
       FuncomLiveServices__ServiceAuthToken: ${FLS_SECRET}
@@ -182,6 +186,7 @@ services:
       Database__user: dune
       Database__password: ${POSTGRES_DUNE_PASSWORD}
       BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
+      WORLD_NAME: ${WORLD_NAME}
       OPT_SERVERNAME: ${WORLD_UNIQUE_NAME}
       OPT_DISPLAY_NAME: ${WORLD_NAME}
       BATTLEGROUP_REGION_NAME: ${WORLD_REGION}
@@ -197,19 +202,19 @@ services:
 
   gateway:
     image: registry.funcom.com/funcom/self-hosting/seabass-server-gateway:${DUNE_IMAGE_TAG}
+    mac_address: 02:42:ac:1f:f0:28
     dns:
       - 1.1.1.1
       - 8.8.8.8
     command:
-      - python
-      - -m
-      - service
-      - -c
-      - /Tools/Battlegroups/GatewayService/service/configs/service.conf
-      - --RMQGameHostname
-      - ${GAME_RMQ_PUBLIC_HOST:-${EXTERNAL_ADDRESS}}
-      - --RMQGamePort
-      - "${GAME_RMQ_PUBLIC_PORT:-31982}"
+      - sh
+      - -lc
+      - >-
+        sleep 30;
+        exec python -m service
+        -c /Tools/Battlegroups/GatewayService/service/configs/service.conf
+        --RMQGameHostname ${GAME_RMQ_PUBLIC_HOST:-${EXTERNAL_ADDRESS}}
+        --RMQGamePort ${GAME_RMQ_PUBLIC_PORT:-31982}
     environment:
       DuneDatabaseInterfacePSQL_DatabaseHost: postgres
       DuneDatabaseInterfacePSQL_DatabasePort: "5432"
@@ -231,6 +236,9 @@ services:
     depends_on:
       - postgres
       - game-rmq
+    networks:
+      default:
+        ipv4_address: 172.31.240.40
 
   survival:
     <<: *game-server-base
@@ -256,6 +264,7 @@ services:
       POD_IP: 172.31.240.10
       NODE_NAME: dune-node
       BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
+      WORLD_NAME: ${WORLD_NAME}
     ports:
       - "7777:7777/udp"
       - "7888:7888/udp"
@@ -293,6 +302,7 @@ services:
       POD_IP: 172.31.240.11
       NODE_NAME: dune-node
       BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
+      WORLD_NAME: ${WORLD_NAME}
     ports:
       - "7778:7778/udp"
       - "7889:7889/udp"
@@ -330,6 +340,7 @@ services:
       POD_IP: 172.31.240.12
       NODE_NAME: dune-node
       BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
+      WORLD_NAME: ${WORLD_NAME}
     ports:
       - "7779:7779/udp"
       - "7890:7890/udp"
@@ -367,6 +378,7 @@ services:
       POD_IP: 172.31.240.13
       NODE_NAME: dune-node
       BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
+      WORLD_NAME: ${WORLD_NAME}
     ports:
       - "7780:7780/udp"
       - "7891:7891/udp"
@@ -404,6 +416,7 @@ services:
       POD_IP: 172.31.240.14
       NODE_NAME: dune-node
       BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
+      WORLD_NAME: ${WORLD_NAME}
     ports:
       - "7781:7781/udp"
       - "7892:7892/udp"
@@ -441,6 +454,7 @@ services:
       POD_IP: 172.31.240.15
       NODE_NAME: dune-node
       BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
+      WORLD_NAME: ${WORLD_NAME}
     ports:
       - "7782:7782/udp"
       - "7893:7893/udp"
@@ -478,6 +492,7 @@ services:
       POD_IP: 172.31.240.16
       NODE_NAME: dune-node
       BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
+      WORLD_NAME: ${WORLD_NAME}
     ports:
       - "7783:7783/udp"
       - "7894:7894/udp"
@@ -515,6 +530,7 @@ services:
       POD_IP: 172.31.240.17
       NODE_NAME: dune-node
       BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
+      WORLD_NAME: ${WORLD_NAME}
     ports:
       - "7784:7784/udp"
       - "7895:7895/udp"
@@ -552,6 +568,7 @@ services:
       POD_IP: 172.31.240.18
       NODE_NAME: dune-node
       BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
+      WORLD_NAME: ${WORLD_NAME}
     ports:
       - "7785:7785/udp"
       - "7896:7896/udp"
@@ -564,11 +581,15 @@ services:
 
   admin-panel:
     image: registry.funcom.com/funcom/self-hosting/seabass-server-db-utils:${DUNE_IMAGE_TAG}
+    restart: unless-stopped
+    network_mode: host
     working_dir: /workspace
     environment:
       ADMIN_WORKSPACE: /workspace
-      DUNE_ADMIN_DB_HOST: postgres
-      DUNE_ADMIN_DB_PORT: "5432"
+      DUNE_ADMIN_BIND: ${DUNE_ADMIN_BIND_ADDRESS:-127.0.0.1}
+      DUNE_ADMIN_PORT: ${DUNE_ADMIN_HOST_PORT:-18080}
+      DUNE_ADMIN_DB_HOST: ${DUNE_ADMIN_DB_HOST:-127.0.0.1}
+      DUNE_ADMIN_DB_PORT: ${DUNE_ADMIN_DB_PORT:-15431}
       DUNE_ADMIN_DB_USER: dune
       DUNE_ADMIN_DB_PASSWORD: ${POSTGRES_DUNE_PASSWORD}
       DUNE_ADMIN_TOKEN: ${DUNE_ADMIN_TOKEN}
@@ -606,6 +627,9 @@ services:
       DUNE_RESTART_DOCKER_SOCKET: ${DUNE_RESTART_DOCKER_SOCKET:-/var/run/docker.sock}
     command:
       - /workspace/admin/admin_panel.py
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
       - ./admin:/workspace/admin:ro
       - ./scripts:/workspace/scripts:ro
@@ -613,15 +637,8 @@ services:
       - ./.env:/workspace/.env
       - ./backups:/workspace/backups
       - /var/run/docker.sock:/var/run/docker.sock
-    depends_on:
-      - postgres
-    ports:
-      - "127.0.0.1:18080:8080"
-    networks:
-      default:
-        ipv4_address: 172.31.240.9
     healthcheck:
-      test: ["CMD-SHELL", "python - <<'PY'\nimport urllib.request\nreq=urllib.request.Request('http://127.0.0.1:8080/api/status', headers={'Host':'127.0.0.1:18080'})\nurllib.request.urlopen(req, timeout=3).read()\nPY"]
+      test: ["CMD-SHELL", "python - <<'PY'\nimport os, urllib.request\nport=os.environ.get('DUNE_ADMIN_PORT','18080')\nhost=f\"127.0.0.1:{port}\"\nreq=urllib.request.Request(f'http://{host}/api/status', headers={'Host':host})\nurllib.request.urlopen(req, timeout=3).read()\nPY"]
       interval: 30s
       timeout: 5s
       retries: 3

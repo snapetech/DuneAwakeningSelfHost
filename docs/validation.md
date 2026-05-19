@@ -13,7 +13,7 @@ COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' ./scripts/status.sh .env
 Expected server-side baseline:
 
 ```text
-farm_ready_alive=30 active_servers=30 partitions=30
+current_alive_active=30 active_servers=30 partitions=30
 ```
 
 Create a baseline capture:

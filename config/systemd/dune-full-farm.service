@@ -1,0 +1,15 @@
+[Unit]
+Description=Dune full 30-map farm startup
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/keith/Documents/code/DuneAwakeningSelfHost
+ExecStart=/home/keith/Documents/code/DuneAwakeningSelfHost/scripts/start-full-warm-pool.sh /home/keith/Documents/code/DuneAwakeningSelfHost/.env
+RemainAfterExit=yes
+TimeoutStartSec=1800
+
+[Install]
+WantedBy=multi-user.target

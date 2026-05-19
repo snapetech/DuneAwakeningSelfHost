@@ -33,7 +33,7 @@ For a concise runtime verdict, use:
 ./scripts/status.sh .env
 ```
 
-The `health verdict` section expects these signals at the same time: every partition has a ready/alive farm row, every active server id is present, and game RabbitMQ service-user connections exist.
+The `health verdict` section expects these signals at the same time: every current partition has an alive farm row joined through `world_partition`, every active server id is present, and game RabbitMQ service-user connections exist. A separate `current_ready_alive` line is still useful, but some live builds can leave `farm_state.ready=false` for a current map after the game log has already reported `Server farm is READY`.
 
 For RabbitMQ-specific checks, use:
 
@@ -52,13 +52,13 @@ The same Ops area has a scheduled restart planner. Restart jobs store in `backup
 For the expanded standing farm, the expected summary is:
 
 ```text
-farm_ready_alive=9 active_servers=9 partitions=9
+current_alive_active=9 active_servers=9 partitions=9
 ```
 
 For the 30-partition warm pool, the expected summary is:
 
 ```text
-farm_ready_alive=30 active_servers=30 partitions=30
+current_alive_active=30 active_servers=30 partitions=30
 ```
 
 ## Survival Recovery
@@ -97,7 +97,13 @@ COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' \
   ./scripts/watch-maps.sh .env
 ```
 
-The watchdog only recovers services that already have containers and are `exited` or `dead`; it does not start maps that were intentionally never launched. Recovery delegates to `scripts/recover-map.sh`, so the old partition owner is marked dead and aged out before the service starts again.
+The watchdog only recovers services that already have containers; it does not start maps that were intentionally never launched. It recovers containers that are `exited` or `dead`, and it also checks running maps against Postgres for partition registration. A running map is recovered when its partition is not alive or is missing from `active_server_ids`. Recovery delegates to `scripts/recover-map.sh`, so the old partition owner is marked dead and aged out before the service starts again.
+
+By default the watchdog does not recover solely on `farm_state.ready=false`, because some live builds can report `ready=false` after the map log has reached `Server farm is READY`. To make readiness strict, set:
+
+```bash
+DUNE_WATCH_REQUIRE_READY=true
+```
 
 Check what it is monitoring without changing state:
 
@@ -149,10 +155,46 @@ Capture the known-good state after all nine maps register:
 For the 30-partition warm pool:
 
 ```bash
-./scripts/full-world-partitions.sh .env
-docker compose -f compose.yaml -f compose.allmaps.yaml --env-file .env up -d
-COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' ./scripts/status.sh .env
+./scripts/start-full-warm-pool.sh .env
 COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' ./scripts/rmq-health.sh .env
+```
+
+The helper starts Postgres and both RabbitMQ services first, waits for their
+health checks, writes the 30-partition layout, starts the service layer, then
+starts maps in batches: `survival`/`overmap`, partitions 3-9, then partitions
+10-30. It uses `--no-recreate` for normal startup so a routine online operation
+does not replace Postgres under running game servers.
+
+The helper also seeds required Docker bridge neighbor entries after the
+control-plane services start. This is a site-specific guard for the current
+`dune_server_default` bridge, where recreated containers have sometimes failed
+to learn existing peers. Run the same step manually after force-recreating
+`gateway`, `director`, `game-rmq`, `rmq-auth-shim`, or `text-router`:
+
+```bash
+./scripts/seed-gateway-neighbor.sh
+```
+
+Known working baseline as of May 19, 2026:
+
+```text
+gateway declares Snapetech Dune Awakening Server 1.25x PVE to FLS
+gateway reaches postgres:5432
+game-rmq reaches rmq-auth-shim:8080 and text-router:8080
+director reaches game-rmq:5672, admin-rmq:5672, and postgres:5432
+director heartbeat to FLS succeeds
+current_alive_active=30 active_servers=30 partitions=30
+```
+
+Known brittle area: Docker bridge peer discovery on this host. Do not remove
+the neighbor-seeding step until a maintenance-window network rebuild proves
+that newly recreated control-plane containers can connect without it.
+
+For unattended operation, run the map watchdog as a host service after startup:
+
+```bash
+./scripts/install-map-watchdog-service.sh .env
+sudo systemctl enable --now dune-map-watchdog.service
 ```
 
 ## Network Ports

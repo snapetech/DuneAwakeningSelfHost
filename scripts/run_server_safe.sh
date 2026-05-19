@@ -5,6 +5,7 @@ main() {
   install_cert
   install_user_configs
   install_server_login_password "$@"
+  install_server_display_name "$@"
 
   mkdir -p /home/dune/server/DuneSandbox/Saved/UserSettings
   chown -R dune:nogroup /home/dune/server/DuneSandbox/Saved
@@ -19,9 +20,12 @@ main() {
   local pod_ip="${POD_IP:-127.0.0.1}"
   local args=()
   local arg
+  local login_prefix='-ini:engine:[ConsoleVariables]:Bgd.ServerLoginPassword='
   for arg in "$@"; do
     if [ "$arg" = '-MultiHome=$POD_IP' ]; then
       args+=("-MultiHome=$pod_ip")
+    elif [[ "${arg:0:${#login_prefix}}" == "$login_prefix" ]] && [ -n "${DUNE_SERVER_LOGIN_PASSWORD:-}" ]; then
+      args+=("-ini:engine:[ConsoleVariables]:Bgd.ServerLoginPassword=${DUNE_SERVER_LOGIN_PASSWORD}")
     else
       args+=("$arg")
     fi
@@ -53,6 +57,16 @@ copy_user_config() {
 
 install_server_login_password() {
   local password="${DUNE_SERVER_LOGIN_PASSWORD:-}"
+  local arg
+  local prefix='-ini:engine:[ConsoleVariables]:Bgd.ServerLoginPassword='
+  if [ -z "$password" ]; then
+    for arg in "$@"; do
+      if [[ "${arg:0:${#prefix}}" == "$prefix" ]]; then
+        password="${arg:${#prefix}}"
+        break
+      fi
+    done
+  fi
   [ -n "$password" ] || return 0
 
   local config_dir=/home/dune/server/DuneSandbox/Saved/Config/LinuxServer
@@ -68,14 +82,43 @@ install_server_login_password() {
   set_ini_console_variable "$user_engine_ini" Bgd.ServerLoginPassword "$quoted_password"
 }
 
+install_server_display_name() {
+  local display_name="${WORLD_NAME:-}"
+  local arg
+  local prefix='-ini:engine:[ConsoleVariables]:Bgd.ServerDisplayName='
+  if [ -z "$display_name" ]; then
+    for arg in "$@"; do
+      if [[ "${arg:0:${#prefix}}" == "$prefix" ]]; then
+        display_name="${arg:${#prefix}}"
+        break
+      fi
+    done
+  fi
+  [ -n "$display_name" ] || return 0
+
+  local config_dir=/home/dune/server/DuneSandbox/Saved/Config/LinuxServer
+  local engine_ini="${config_dir}/Engine.ini"
+  local user_settings_dir=/home/dune/server/DuneSandbox/Saved/UserSettings
+  local user_engine_ini="${user_settings_dir}/UserEngine.ini"
+  local quoted_display_name
+  quoted_display_name="$(engine_ini_quote "$display_name")"
+  mkdir -p "$config_dir"
+  mkdir -p "$user_settings_dir"
+
+  set_ini_console_variable "$engine_ini" Bgd.ServerDisplayName "$quoted_display_name"
+  set_ini_console_variable "$user_engine_ini" Bgd.ServerDisplayName "$quoted_display_name"
+}
+
 set_ini_console_variable() {
   local ini_file="$1"
   local key="$2"
   local value="$3"
 
+  local escaped_key="${key//./\\.}"
+
   if [ -f "$ini_file" ] && grep -q '^\[ConsoleVariables\]' "$ini_file"; then
-    if grep -q "^${key//./\\.}=" "$ini_file"; then
-      sed -i -E "s/^${key//./\\.}=.*/${key}=\"${value}\"/" "$ini_file"
+    if grep -q -E "^;?${escaped_key}=" "$ini_file"; then
+      sed -i -E "0,/^;?${escaped_key}=.*/s//${key}=\"${value}\"/" "$ini_file"
     else
       sed -i "/^\[ConsoleVariables\]/a ${key}=\"${value}\"" "$ini_file"
     fi

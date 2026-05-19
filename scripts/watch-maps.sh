@@ -5,8 +5,9 @@ usage() {
   cat >&2 <<'USAGE'
 Usage: scripts/watch-maps.sh ENV_FILE [--once|--status|--dry-run]
 
-Watches fixed-partition map containers and recovers crashed/exited services with
-scripts/recover-map.sh. It does not start services that were never launched.
+Watches fixed-partition map containers and recovers crashed/exited services or
+degraded partition registration with scripts/recover-map.sh. It does not start
+services that were never launched.
 
 Modes:
   --once      Run one recovery pass, quiet unless recovery is needed.
@@ -19,7 +20,9 @@ Environment:
   DUNE_WATCH_INTERVAL        Seconds between checks. Default: 30
   DUNE_WATCH_RECOVERY_WAIT   Seconds recover-map waits per recovery. Default: 180
   DUNE_WATCH_COOLDOWN        Minimum seconds between recoveries per service. Default: 300
+  DUNE_WATCH_STARTUP_GRACE   Seconds to let running maps warm before DB recovery. Default: 300
   DUNE_WATCH_LOCK_DIR        Single-instance lock dir. Default: /tmp/dune-map-watchdog.lock
+  DUNE_WATCH_REQUIRE_READY    Recover running maps with ready=false. Default: false
 USAGE
 }
 
@@ -46,10 +49,12 @@ compose+=(--env-file "$env_file")
 interval="${DUNE_WATCH_INTERVAL:-30}"
 recovery_wait="${DUNE_WATCH_RECOVERY_WAIT:-180}"
 cooldown="${DUNE_WATCH_COOLDOWN:-300}"
+startup_grace="${DUNE_WATCH_STARTUP_GRACE:-300}"
 lock_dir="${DUNE_WATCH_LOCK_DIR:-/tmp/dune-map-watchdog.lock}"
+require_ready="${DUNE_WATCH_REQUIRE_READY:-false}"
 
-if [[ ! "$interval" =~ ^[0-9]+$ || ! "$recovery_wait" =~ ^[0-9]+$ || ! "$cooldown" =~ ^[0-9]+$ ]]; then
-  printf 'DUNE_WATCH_INTERVAL, DUNE_WATCH_RECOVERY_WAIT, and DUNE_WATCH_COOLDOWN must be numeric\n' >&2
+if [[ ! "$interval" =~ ^[0-9]+$ || ! "$recovery_wait" =~ ^[0-9]+$ || ! "$cooldown" =~ ^[0-9]+$ || ! "$startup_grace" =~ ^[0-9]+$ ]]; then
+  printf 'DUNE_WATCH_INTERVAL, DUNE_WATCH_RECOVERY_WAIT, DUNE_WATCH_COOLDOWN, and DUNE_WATCH_STARTUP_GRACE must be numeric\n' >&2
   exit 2
 fi
 
@@ -104,7 +109,7 @@ container_status() {
   local service="$1"
   local container_id
 
-  container_id="$("${compose[@]}" ps -q "$service" 2>/dev/null || true)"
+  container_id="$("${compose[@]}" ps -aq "$service" 2>/dev/null || true)"
   if [[ -z "$container_id" ]]; then
     printf 'missing'
     return
@@ -113,9 +118,85 @@ container_status() {
   "$container_runtime" inspect --format '{{ .State.Status }}' "$container_id" 2>/dev/null || printf 'missing'
 }
 
+container_age_seconds() {
+  local service="$1"
+  local container_id
+  local started_at
+  local started_epoch
+  local now
+
+  container_id="$("${compose[@]}" ps -aq "$service" 2>/dev/null || true)"
+  if [[ -z "$container_id" ]]; then
+    printf '0'
+    return
+  fi
+
+  started_at="$("$container_runtime" inspect --format '{{ .State.StartedAt }}' "$container_id" 2>/dev/null || true)"
+  if [[ -z "$started_at" || "$started_at" == "0001-01-01T00:00:00Z" ]]; then
+    printf '0'
+    return
+  fi
+
+  started_epoch="$(date -d "$started_at" +%s 2>/dev/null || printf '0')"
+  now="$(date +%s)"
+  if (( started_epoch <= 0 || now < started_epoch )); then
+    printf '0'
+    return
+  fi
+
+  printf '%s' "$((now - started_epoch))"
+}
+
+partition_health() {
+  local partition_id="$1"
+
+  "${compose[@]}" exec -T postgres psql -U dune -d dune_sb_1_4_0_0 -Atc "
+    select
+      coalesce(fs.ready, false) || ' ' ||
+      coalesce(fs.alive, false) || ' ' ||
+      (asi.server_id is not null)
+    from dune.world_partition wp
+    left join dune.farm_state fs on fs.server_id = wp.server_id
+    left join dune.active_server_ids asi on asi.server_id = wp.server_id
+    where wp.partition_id = ${partition_id};
+  " 2>/dev/null || printf 'unknown unknown unknown'
+}
+
+partition_degraded_reason() {
+  local partition_id="$1"
+  local ready
+  local alive
+  local active
+
+  read -r ready alive active <<< "$(partition_health "$partition_id")"
+
+  if [[ "$alive" == "unknown" || "$active" == "unknown" ]]; then
+    printf 'health_unknown'
+    return
+  fi
+
+  if [[ "$alive" != "t" && "$alive" != "true" ]]; then
+    printf 'not_alive'
+    return
+  fi
+
+  if [[ "$active" != "t" && "$active" != "true" ]]; then
+    printf 'not_active'
+    return
+  fi
+
+  if [[ "$require_ready" == "true" && "$ready" != "t" && "$ready" != "true" ]]; then
+    printf 'not_ready'
+    return
+  fi
+
+  printf 'ok'
+}
+
 recover_service() {
   local service="$1"
   local partition_id="$2"
+  local reason="${3:-crashed}"
   local now
   local last
 
@@ -128,11 +209,11 @@ recover_service() {
 
   LAST_RECOVERY[$service]="$now"
   if [[ "$mode" == "--dry-run" ]]; then
-    log "would recover crashed map: service=$service partition=$partition_id"
+    log "would recover map: service=$service partition=$partition_id reason=$reason"
     return
   fi
 
-  log "recovering crashed map: service=$service partition=$partition_id"
+  log "recovering map: service=$service partition=$partition_id reason=$reason"
   COMPOSE_FILES="${COMPOSE_FILES:-compose.yaml}" CONTAINER_RUNTIME="$container_runtime" \
     "$(dirname "$0")/recover-map.sh" "$env_file" "$service" "$partition_id" "$recovery_wait"
 }
@@ -142,6 +223,8 @@ check_once() {
   local service
   local partition_id
   local status
+  local health
+  local reason
 
   for item in "${MAP_PARTITIONS[@]}"; do
     service="${item%%:*}"
@@ -149,15 +232,33 @@ check_once() {
     status="$(container_status "$service")"
 
     if [[ "$mode" == "--status" ]]; then
-      printf '%-32s partition=%-2s status=%s\n' "$service" "$partition_id" "$status"
+      health="$(partition_health "$partition_id")"
+      printf '%-32s partition=%-2s status=%-10s db=\"%s\"\n' "$service" "$partition_id" "$status" "$health"
       continue
     fi
 
     case "$status" in
-      running|created|restarting|removing|paused)
+      running)
+        if (( $(container_age_seconds "$service") < startup_grace )); then
+          log "skip DB recovery during startup grace: service=$service partition=$partition_id"
+          continue
+        fi
+        reason="$(partition_degraded_reason "$partition_id")"
+        case "$reason" in
+          ok)
+            ;;
+          health_unknown)
+            log "skip recovery because partition health is unavailable: service=$service partition=$partition_id"
+            ;;
+          *)
+            recover_service "$service" "$partition_id" "$reason"
+            ;;
+        esac
+        ;;
+      created|restarting|removing|paused)
         ;;
       exited|dead)
-        recover_service "$service" "$partition_id"
+        recover_service "$service" "$partition_id" "$status"
         ;;
       missing)
         ;;

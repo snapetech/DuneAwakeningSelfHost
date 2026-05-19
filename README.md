@@ -76,6 +76,7 @@ Research indexes at the repo root:
 - [`SERVER_BINARY_CONFIG_CANDIDATES.md`](SERVER_BINARY_CONFIG_CANDIDATES.md): binary-only candidate config strings for focused validation.
 - [`DEEP_DESERT_EVENT_KNOBS.md`](DEEP_DESERT_EVENT_KNOBS.md): Deep Desert spice/event tuning research.
 - [`RESOURCE_RESPAWN_KNOBS.md`](RESOURCE_RESPAWN_KNOBS.md): ore, scrap, fuel, resource-node, and loot respawn timer research.
+- [`HYDRATION_WATER_KNOBS.md`](HYDRATION_WATER_KNOBS.md): dehydration, shelter, thirst-in-base, and base water generation/evaporation research.
 
 ## Key Files
 
@@ -138,13 +139,13 @@ Do not expect full gameplay until `FLS_SECRET` is set. The gateway/director/text
 For the expanded standing farm and 30-partition warm pool, see `docs/full-farm.md`. The known-good nine-map server-side target is:
 
 ```text
-farm_ready_alive=9 active_servers=9 partitions=9
+current_alive_active=9 active_servers=9 partitions=9
 ```
 
 The known-good warm-pool target with `compose.allmaps.yaml` is:
 
 ```text
-farm_ready_alive=30 active_servers=30 partitions=30
+current_alive_active=30 active_servers=30 partitions=30
 ```
 
 That means server registration is green. Client travel still needs validation from the live game client.
@@ -155,7 +156,7 @@ Start the local admin helper panel:
 docker compose --env-file .env up -d admin-panel
 ```
 
-It binds to `127.0.0.1:18080` by default and is intended to sit behind trusted LAN/VPN ingress. If you want a LAN hostname such as `admin.example.test`, point your own DNS or reverse proxy at the host. Do not expose this panel directly to the public internet.
+It binds to `127.0.0.1:${DUNE_ADMIN_HOST_PORT:-18080}` by default and is intended to sit behind trusted LAN/VPN ingress. If another local process owns `18080`, set `DUNE_ADMIN_HOST_PORT=18081` and include that host in `DUNE_ADMIN_ALLOWED_HOSTS`. If you want a LAN hostname such as `admin.example.test`, point your own DNS or reverse proxy at the host. Do not expose this panel directly to the public internet.
 
 Open the panel at:
 
@@ -169,18 +170,18 @@ The panel is the operator-facing Web UI for this repo:
 
 | Tab | Use it for |
 | --- | --- |
-| **Overview** | Fast health check: Ready Servers, Online Maps, Active IDs, Reported Players, and the Map Health list derived from `world_partition`, `farm_state`, and `active_server_ids`. |
-| **Ops** | Detailed map/network health, farm state, partition state, restart planning, and restart announcement helpers. |
+| **Overview** | Operator dashboard with online/offline players, realtime host/container resource use, headline health metrics, map health, network checks, and health verdicts. |
+| **Ops** | Detailed resource use, map/network health, farm state, partition state, restart planning, and restart announcement helpers. |
 | **Security** | Host/origin checks, mutation-gate status, token status, audit events, and editable-setting allowlists. |
 | **Runbook** | Copy/paste operational commands for health, backups, restores, profiling, logs, and routing capture. |
-| **Characters** | Search/list existing characters and inspect controller, account, currency, inventory, and progression state before changing anything. |
+| **Players** | Search/list existing players and inspect controller, account, currency, inventory, and progression state before changing anything. |
 | **Settings** | Edit `.env`, `config/director.ini`, `config/UserGame.ini`, and selected config overlays with backups under `backups/admin-panel`. Runtime-only settings may apply immediately, but many game-server values require recreating or restarting affected containers. |
 | **Admin Actions** | Create DB backups and perform guarded writes such as XP, currency, keystones, item grants, item stack edits, and item deletion. Back up the database before broad writes; item and inventory operations are guarded by the admin token and mutation safety flags. |
 
 Typical admin flow:
 
 1. Open **Overview** and confirm the Map Health list is sane.
-2. Use **Characters** to select the character instead of typing IDs by hand.
+2. Use **Players** to select the player instead of typing IDs by hand.
 3. Use **Admin Actions** for dry-runs and guarded writes.
 4. Check **Security** after failed auth, blocked host/origin requests, config edits, backups, or mutation runs.
 5. Restart or recreate affected containers after settings that are loaded only at process startup.
