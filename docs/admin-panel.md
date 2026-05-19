@@ -33,7 +33,13 @@ The Compose service binds to localhost:
 127.0.0.1:18080 -> admin-panel:8080
 ```
 
-To use `http://duneadmin.home`, point local DNS or `/etc/hosts` at the host running a reverse proxy. Keep it on trusted LAN/VPN only.
+To use `http://duneadmin.home`, point LAN DNS or `/etc/hosts` at the host running the reverse proxy. This lab uses Pi-hole/dnsmasq with a specific override:
+
+```text
+duneadmin.home -> 192.168.50.148
+```
+
+Keep it on trusted LAN/VPN only. The panel still runs behind the local ingress and should not be exposed directly to the internet.
 
 Example nginx site:
 
@@ -55,12 +61,12 @@ server {
 - Server/farm state view.
 - Character search and detail view.
 - Currency/progression table visibility.
-- Safe `.env` key editor for non-secret world settings.
+- `.env` operations editor for install, world, network, access, secret, and admin-panel knobs. Secret fields are admin-token protected, rendered as password inputs, and returned blank unless a replacement is typed.
 - Config editor for selected local config files, with backups under `backups/admin-panel`.
 - Token-gated currency and XP mutation endpoints.
 - Token-gated Postgres custom-format backup under `backups/admin-panel`.
 - Redacted JSONL audit trail for rejected requests and admin writes under `backups/admin-panel/audit.jsonl`.
-- Observed item template, inventory, and inventory-type references.
+- Known item template, observed item template, inventory, and inventory-type references.
 - Exact-template item grants, dry-runs, stack edits, and item deletion behind admin gates.
 
 ## Write Safety
@@ -80,7 +86,7 @@ Current mutation support is intentionally narrow:
 - Item grant dry-runs that resolve the target inventory and warnings without requiring `DUNE_ADMIN_MUTATIONS_ENABLED=true`.
 - Item stack changes and item/count deletion through the server's existing item functions.
 
-Item grants require an exact server `template_id`. You can enter an inventory ID directly, or let the panel resolve a player-owned inventory from account ID or character name. Public databases such as `https://dune.gaming.tools/items` and `https://dune.geno.gg/items/` expose item pages whose URL slugs/item IDs look like server-style template IDs, but dry-run and verify against observed local server data before bulk grants.
+Item grants require an exact server `template_id`. You can enter an inventory ID directly, or let the panel resolve a player-owned inventory from account ID or character name. The mutation page now offers exact local template IDs from item, Landsraad reward, vendor, vehicle, and exchange tables. Public databases such as `https://dune.gaming.tools/items` and `https://dune.geno.gg/items/` are still useful for names and research, but dry-run and verify against local server data before bulk grants.
 
 Recipe unlocks are not implemented yet. Those need validated unlock tables and server refresh semantics before writes are safe.
 

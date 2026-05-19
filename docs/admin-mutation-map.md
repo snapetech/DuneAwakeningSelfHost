@@ -22,6 +22,19 @@ group by template_id
 order by count desc, template_id;
 ```
 
+The admin panel also builds a known-template catalog from local server tables that expose exact `template_id` values:
+
+```sql
+dune.items
+dune.landsraad_task_rewards
+dune.landsraad_house_rewards
+dune.vendor_stock_state
+dune.vehicle_modules
+dune.dune_exchange_orders
+```
+
+On the current clean local database, `dune.landsraad_task_rewards` is the useful populated source. It exposes schematics, swatches, resources, and currency-like rewards such as `SolarisCoin`. Gear grants are handled by the same item grant path when an exact gear `template_id` is known.
+
 ## Inventory Ownership
 
 The mapped read function is:
@@ -32,7 +45,7 @@ dune.admin_get_inventory_details(in_account_id bigint)
 
 It joins `dune.items`, `dune.inventories`, and `dune.player_state` through `player_state.player_pawn_id`, so player inventory grants should target an inventory owned by the player pawn.
 
-The panel shows recent inventory IDs from `dune.inventories` joined to `dune.player_state`, and character detail includes `dune.admin_get_inventory_details(account_id)`. Grants can target an explicit `inventory_id` or resolve the first owned inventory for an `account_id` / character name, optionally filtered by `inventory_type`.
+The panel shows recent inventory IDs from `dune.inventories` joined to `dune.player_state`, and character detail includes `dune.admin_get_inventory_details(account_id)`. Grants can target an explicit `inventory_id` or resolve the first owned inventory for an `account_id` / character name, optionally filtered by `inventory_type`. Template inputs use an HTML datalist populated from known local template sources.
 
 ## Item Grants
 

@@ -32,35 +32,37 @@ main() {
 
 install_server_login_password() {
   local password="${DUNE_SERVER_LOGIN_PASSWORD:-}"
-  local arg
-  for arg in "$@"; do
-    case "$arg" in
-      *Bgd.ServerLoginPassword=*)
-        password="${arg#*Bgd.ServerLoginPassword=}"
-        password="${password%\"}"
-        password="${password#\"}"
-        ;;
-    esac
-  done
   [ -n "$password" ] || return 0
 
   local config_dir=/home/dune/server/DuneSandbox/Saved/Config/LinuxServer
   local engine_ini="${config_dir}/Engine.ini"
+  local user_settings_dir=/home/dune/server/DuneSandbox/Saved/UserSettings
+  local user_engine_ini="${user_settings_dir}/UserEngine.ini"
   local quoted_password
   quoted_password="$(engine_ini_quote "$password")"
   mkdir -p "$config_dir"
+  mkdir -p "$user_settings_dir"
 
-  if [ -f "$engine_ini" ] && grep -q '^\[ConsoleVariables\]' "$engine_ini"; then
-    if grep -q '^Bgd\.ServerLoginPassword=' "$engine_ini"; then
-      sed -i -E 's/^Bgd\.ServerLoginPassword=.*/Bgd.ServerLoginPassword="'"${quoted_password}"'"/' "$engine_ini"
+  set_ini_console_variable "$engine_ini" Bgd.ServerLoginPassword "$quoted_password"
+  set_ini_console_variable "$user_engine_ini" Bgd.ServerLoginPassword "$quoted_password"
+}
+
+set_ini_console_variable() {
+  local ini_file="$1"
+  local key="$2"
+  local value="$3"
+
+  if [ -f "$ini_file" ] && grep -q '^\[ConsoleVariables\]' "$ini_file"; then
+    if grep -q "^${key//./\\.}=" "$ini_file"; then
+      sed -i -E "s/^${key//./\\.}=.*/${key}=\"${value}\"/" "$ini_file"
     else
-      sed -i '/^\[ConsoleVariables\]/a Bgd.ServerLoginPassword="'"${quoted_password}"'"' "$engine_ini"
+      sed -i "/^\[ConsoleVariables\]/a ${key}=\"${value}\"" "$ini_file"
     fi
   else
     {
       printf '[ConsoleVariables]\n'
-      printf 'Bgd.ServerLoginPassword="%s"\n' "$quoted_password"
-    } >> "$engine_ini"
+      printf '%s="%s"\n' "$key" "$value"
+    } >> "$ini_file"
   fi
 }
 

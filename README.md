@@ -141,7 +141,7 @@ Start the local admin helper panel:
 docker compose --env-file .env up -d admin-panel
 ```
 
-It binds to `127.0.0.1:18080` by default. Put a trusted local reverse proxy or LAN DNS entry in front of it if you want `http://duneadmin.home`.
+It binds to `127.0.0.1:18080` by default and is intended to sit behind trusted LAN/VPN ingress. In this lab, `duneadmin.home` is routed through the host Caddy ingress and Pi-hole override to the admin panel.
 
 For the single `Survival_1` test layout, forward:
 

@@ -13,13 +13,12 @@ This repository wires that setting through `.env` as:
 DUNE_SERVER_LOGIN_PASSWORD=
 ```
 
-It is passed to every game-server container as a command argument:
+`scripts/run_server_safe.sh` writes the value into the generated server config before launching the game process:
 
-```text
--ini:engine:[ConsoleVariables]:Bgd.ServerLoginPassword=${DUNE_SERVER_LOGIN_PASSWORD}
-```
+- `DuneSandbox/Saved/Config/LinuxServer/Engine.ini`
+- `DuneSandbox/Saved/UserSettings/UserEngine.ini`
 
-`scripts/run_server_safe.sh` also writes the same value into the container's generated `DuneSandbox/Saved/Config/LinuxServer/Engine.ini` before launching the server. That keeps the setting available even if the live server build reads this console variable from saved config instead of the command-line override path.
+Do not pass the password as a command-line `-ini:` argument. Unreal logs the full startup command line, so command-line secrets leak into container logs.
 
 ## Admin Panel
 

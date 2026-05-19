@@ -54,14 +54,31 @@ ALLOWED_CONFIGS = {
     "rabbitmq-game.conf": CONFIG_ROOT / "rabbitmq-game.conf",
 }
 
-SAFE_ENV_KEYS = {
-    "DUNE_IMAGE_TAG",
-    "WORLD_NAME",
-    "WORLD_UNIQUE_NAME",
-    "WORLD_REGION",
-    "DUNE_SERVER_LOGIN_PASSWORD",
-    "EXTERNAL_ADDRESS",
+ENV_KEY_DEFINITIONS = {
+    "DUNE_STEAM_SERVER_DIR": {"group": "Install", "secret": False, "restart": False, "why": "Local Steam tool path used by image loading and preflight scripts."},
+    "DUNE_IMAGE_TAG": {"group": "Install", "secret": False, "restart": True, "why": "Funcom container image tag used by Compose services."},
+    "WORLD_NAME": {"group": "World", "secret": False, "restart": True, "why": "Public display name shown by Director/Text Router/Gateway."},
+    "WORLD_UNIQUE_NAME": {"group": "World", "secret": False, "restart": True, "why": "Stable internal server/world identifier used for registration and routing."},
+    "WORLD_REGION": {"group": "World", "secret": False, "restart": True, "why": "Farm region/datacenter label passed into game services."},
+    "EXTERNAL_ADDRESS": {"group": "Network", "secret": False, "restart": True, "why": "Address advertised to clients/FLS for game traffic."},
+    "DUNE_SERVER_LOGIN_PASSWORD": {"group": "Access", "secret": True, "restart": True, "why": "Optional player login password passed into game server console variables."},
+    "FLS_SECRET": {"group": "Secrets", "secret": True, "restart": True, "why": "Funcom Live Services host token. Required for service auth and routing."},
+    "POSTGRES_SUPER_PASSWORD": {"group": "Secrets", "secret": True, "restart": True, "why": "Postgres superuser password used during database initialization."},
+    "POSTGRES_DUNE_PASSWORD": {"group": "Secrets", "secret": True, "restart": True, "why": "Application database password used by game services and admin tooling."},
+    "RMQ_HTTP_TOKEN_AUTH_SECRET": {"group": "Secrets", "secret": True, "restart": True, "why": "RabbitMQ token auth shared secret."},
+    "DUNE_ADMIN_TOKEN": {"group": "Admin Panel", "secret": True, "restart": True, "why": "Token required for admin panel APIs."},
+    "DUNE_ADMIN_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Master gate for writes that mutate game/admin state."},
+    "DUNE_ADMIN_ITEM_GRANTS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Item grant feature gate. Defaults to true in this repo."},
+    "DUNE_ADMIN_MAX_BODY_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum accepted request body size."},
+    "DUNE_ADMIN_AUDIT_MAX_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Audit log rotation threshold."},
+    "DUNE_ADMIN_REQUEST_TIMEOUT_SECONDS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Socket timeout to limit slow client abuse."},
+    "DUNE_ADMIN_MAX_ITEM_STACK_SIZE": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum item stack mutation allowed through the panel."},
+    "DUNE_ADMIN_AUDIT_EVENT_LIMIT": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Default number of audit events returned by the panel."},
+    "DUNE_ADMIN_REFERENCE_LIMIT": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum reference rows returned by admin helper endpoints."},
+    "DUNE_ADMIN_CHARACTER_SEARCH_LIMIT": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum character search rows returned."},
+    "DUNE_ADMIN_ALLOWED_HOSTS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Host header allowlist for the admin HTTP service."},
 }
+SAFE_ENV_KEYS = set(ENV_KEY_DEFINITIONS)
 
 AUDIT_FIELD_LIMIT = 240
 
@@ -341,7 +358,18 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/settings/env":
                 self.require_token()
                 env_values = read_env()
-                self.json({key: env_values.get(key, "") for key in sorted(SAFE_ENV_KEYS)})
+                values = {}
+                configured = {}
+                for key in sorted(SAFE_ENV_KEYS):
+                    current = env_values.get(key, "")
+                    is_secret = bool(ENV_KEY_DEFINITIONS.get(key, {}).get("secret"))
+                    values[key] = "" if is_secret else current
+                    configured[key] = bool(current)
+                self.json({
+                    "values": values,
+                    "configured": configured,
+                    "definitions": ENV_KEY_DEFINITIONS,
+                })
             elif parsed.path == "/api/settings/configs":
                 self.require_token()
                 self.json({name: path.read_text(encoding="utf-8") for name, path in ALLOWED_CONFIGS.items() if path.exists()})
@@ -518,6 +546,26 @@ class Handler(BaseHTTPRequestHandler):
                 order by count desc, template_id
                 limit %s
             """, (ADMIN_REFERENCE_LIMIT,)),
+            "knownItemTemplates": reference_query(errors, "knownItemTemplates", """
+                with templates as (
+                    select template_id, 'landsraad_task_reward' as source from dune.landsraad_task_rewards where template_id is not null
+                    union all
+                    select template_id, 'landsraad_house_reward' as source from dune.landsraad_house_rewards where template_id is not null
+                    union all
+                    select template_id, 'vendor_stock' as source from dune.vendor_stock_state where template_id is not null
+                    union all
+                    select template_id, 'vehicle_module' as source from dune.vehicle_modules where template_id is not null
+                    union all
+                    select template_id, 'exchange_order' as source from dune.dune_exchange_orders where template_id is not null
+                    union all
+                    select template_id, 'observed_item' as source from dune.items where template_id is not null
+                )
+                select template_id, count(*) as references, string_agg(distinct source, ', ' order by source) as sources
+                from templates
+                group by template_id
+                order by template_id
+                limit %s
+            """, (ADMIN_REFERENCE_LIMIT,)),
             "recentInventories": reference_query(errors, "recentInventories", """
                 with recent_players as (
                     select account_id, character_name, player_pawn_id, player_controller_id
@@ -673,9 +721,25 @@ class Handler(BaseHTTPRequestHandler):
             warnings.append("inventory is not directly tied to a player pawn/controller")
         if inventory.get("online_status") and str(inventory["online_status"]).lower() != "offline":
             warnings.append("player may be online; prefer grants while offline, then reconnect")
-        observed = query("select 1 from dune.items where lower(template_id)=lower(%s) limit 1", (template_id,))
-        if not observed:
-            warnings.append("template_id has not been observed locally; verify against a public item database or a known item row")
+        known = query("""
+            select 1 from (
+                select template_id from dune.items where template_id is not null
+                union
+                select template_id from dune.landsraad_task_rewards where template_id is not null
+                union
+                select template_id from dune.landsraad_house_rewards where template_id is not null
+                union
+                select template_id from dune.vendor_stock_state where template_id is not null
+                union
+                select template_id from dune.vehicle_modules where template_id is not null
+                union
+                select template_id from dune.dune_exchange_orders where template_id is not null
+            ) known_templates
+            where lower(template_id)=lower(%s)
+            limit 1
+        """, (template_id,))
+        if not known:
+            warnings.append("template_id has not been observed in local item/reward tables; verify against a public item database before granting")
         return warnings
 
     def delete_item(self, body):
@@ -761,12 +825,12 @@ class Handler(BaseHTTPRequestHandler):
             {"name": "character search response limit", "ok": 1 <= CHARACTER_SEARCH_LIMIT <= 1000, "value": CHARACTER_SEARCH_LIMIT},
             {"name": "JSON-only POST enforcement", "ok": True},
             {"name": "destructive action confirmation", "ok": True, "value": "server-side"},
-            {"name": "FLS token not editable here", "ok": "FLS_SECRET" not in SAFE_ENV_KEYS},
+            {"name": "FLS token represented in admin settings", "ok": "FLS_SECRET" in SAFE_ENV_KEYS},
             {"name": "server login password editable", "ok": "DUNE_SERVER_LOGIN_PASSWORD" in SAFE_ENV_KEYS},
             {"name": "backup path under ignored backups/", "ok": str(BACKUP_ROOT).startswith(str(ROOT / "backups"))},
             {"name": "audit log under ignored backups/", "ok": str(AUDIT_LOG).startswith(str(ROOT / "backups")), "value": str(AUDIT_LOG.relative_to(ROOT))},
-            {"name": "RabbitMQ secret not editable here", "ok": "RMQ_HTTP_TOKEN_AUTH_SECRET" not in SAFE_ENV_KEYS},
-            {"name": "database password not editable here", "ok": "POSTGRES_DUNE_PASSWORD" not in SAFE_ENV_KEYS},
+            {"name": "RabbitMQ secret represented in admin settings", "ok": "RMQ_HTTP_TOKEN_AUTH_SECRET" in SAFE_ENV_KEYS},
+            {"name": "database password represented in admin settings", "ok": "POSTGRES_DUNE_PASSWORD" in SAFE_ENV_KEYS},
             {"name": "external address set", "ok": bool(env_values.get("EXTERNAL_ADDRESS", "")), "value": env_values.get("EXTERNAL_ADDRESS", "")},
         ]
         return {
@@ -774,7 +838,7 @@ class Handler(BaseHTTPRequestHandler):
             "allowedConfigFiles": sorted(ALLOWED_CONFIGS),
             "safeEnvKeys": sorted(SAFE_ENV_KEYS),
             "notes": [
-                "Keep the panel bound to localhost or trusted LAN/VPN only.",
+                "Keep the panel on trusted LAN/VPN only.",
                 "Do not expose RabbitMQ, Postgres, or this panel directly to the internet.",
                 "Use mutations only for deliberate admin edits after taking a backup.",
             ],
@@ -801,7 +865,7 @@ class Handler(BaseHTTPRequestHandler):
             ],
             "knobs": [
                 {"name": "compose.limits.example.yaml", "value": "optional", "why": "Conservative memory guardrails without changing default topology."},
-                {"name": "safe env settings", "value": sorted(SAFE_ENV_KEYS), "why": "Editable operational values that do not include secrets."},
+                {"name": "admin env settings", "value": sorted(SAFE_ENV_KEYS), "why": "Editable operational values, including protected secret fields behind the admin token."},
             ],
         }
 
@@ -1065,11 +1129,38 @@ function inventoryTypeOptions(rows){
   if (!vals.length) return '<option value="">Auto</option>';
   return '<option value="">Auto</option>' + vals.map(r => `<option value="${esc(r.inventory_type)}">type ${esc(r.inventory_type)} | ${esc(r.count)} inventories | cap ${esc(r.max_item_count)}</option>`).join('');
 }
+function templateDatalist(ref){
+  const templates = new Map();
+  (ref.knownItemTemplates || []).forEach(r => templates.set(r.template_id, r.sources || 'known'));
+  (ref.observedItemTemplates || []).forEach(r => templates.set(r.template_id, `observed ${r.count}`));
+  return Array.from(templates.entries())
+    .sort((a, b) => String(a[0]).localeCompare(String(b[0])))
+    .map(([id, label]) => `<option value="${esc(id)}" label="${esc(label)}"></option>`)
+    .join('');
+}
 function checks(rows){
   return `<table><thead><tr><th>Check</th><th>Status</th><th>Value</th></tr></thead><tbody>${(rows || []).map(r=>`<tr><td>${esc(r.name)}</td><td class="${r.ok ? 'ok' : 'dangerText'}">${r.ok ? 'OK' : 'Needs attention'}</td><td>${esc(r.value ?? '')}</td></tr>`).join('')}</tbody></table>`;
 }
 function signalList(groups){
   return Object.entries(groups || {}).map(([group, rows]) => `<div class="card"><h2>${esc(group)}</h2><table><thead><tr><th>Name</th><th>Value</th><th>Why</th></tr></thead><tbody>${(rows || []).map(r=>`<tr><td>${esc(r.name)}</td><td>${esc(Array.isArray(r.value) ? r.value.join(', ') : r.value)}</td><td>${esc(r.why)}</td></tr>`).join('')}</tbody></table></div>`).join('');
+}
+function envEditor(payload){
+  const values = payload.values || {};
+  const configured = payload.configured || {};
+  const definitions = payload.definitions || {};
+  const groups = {};
+  Object.keys(definitions).sort().forEach(key => {
+    const meta = definitions[key] || {};
+    const group = meta.group || 'Other';
+    groups[group] = groups[group] || [];
+    groups[group].push([key, meta]);
+  });
+  return Object.entries(groups).map(([group, rows]) => `<div class="card"><h2>${esc(group)}</h2><div class="grid">${rows.map(([key, meta]) => {
+    const type = meta.secret ? 'password' : 'text';
+    const restart = meta.restart ? '<span class="muted"> restart/recreate applies</span>' : '';
+    const configuredText = meta.secret && configured[key] ? ' configured, leave blank to keep' : '';
+    return `<label>${esc(key)}${restart}<input id="env_${esc(key)}" data-secret="${meta.secret ? 'true' : 'false'}" type="${type}" value="${esc(values[key] || '')}" placeholder="${esc(configuredText.trim())}"><span class="muted">${esc(meta.why || '')}${esc(configuredText)}</span></label>`;
+  }).join('')}</div></div>`).join('');
 }
 function show(name){ current=name; document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active', b.dataset.tab === name)); load(); }
 async function refreshStatus(){ document.getElementById('status').textContent = JSON.stringify(await api('/api/status'), null, 2); }
@@ -1119,10 +1210,11 @@ async function pickCharacter(row){
   const id = row.dataset.id || row.children[0].textContent;
   if (!id) return;
   const d = await api('/api/characters/' + encodeURIComponent(id));
+  const ref = await api('/api/admin/reference');
   const p = d.player || {};
   const firstCurrency = (d.currency && d.currency[0]) || {};
   const firstTrack = (d.specialization && d.specialization[0]) || {};
-  document.getElementById('detail').innerHTML = `<div class="card"><h2>${esc(p.character_name || 'Character')}</h2><div class="grid"><div><b>Account</b><br>${esc(p.account_id)}</div><div><b>Controller</b><br>${esc(p.player_controller_id)}</div><div><b>Pawn</b><br>${esc(p.player_pawn_id)}</div><div><b>Status</b><br>${esc(p.online_status)}</div></div></div><div class="card"><h2>Quick Admin</h2><p class="dangerText">Back up first. Mutations require server-side enablement.</p><div class="grid"><label>Currency ID<input id="detailCurId" value="${esc(firstCurrency.currency_id ?? 1)}"></label><label>Amount<input id="detailCurAmount" value="1000"></label><label>Mode<select id="detailCurMode"><option>add</option><option>set</option></select></label></div><p><button id="detailCurrencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Track type<input id="detailTrack" value="${esc(firstTrack.track_type ?? '')}"></label><label>XP amount<input id="detailXpAmount" value="1000"></label><label>Mode<select id="detailXpMode"><option>add</option><option>set</option></select></label></div><p><button id="detailXpBtn" class="primary">Apply XP</button></p><div class="grid"><label>Template ID<input id="detailGrantTemplate" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="detailGrantStack" value="1"></label></div><p><button id="detailDryRunBtn" class="primary">Dry run item</button> <button id="detailGrantBtn" class="danger">Grant item</button></p><pre id="detailGrantResult"></pre></div><div class="card"><h2>Inventories</h2>${table(d.inventories)}</div><div class="card"><h2>Inventory Items</h2>${table(d.inventoryItems)}</div><div class="card"><h2>Raw Detail</h2><pre>${esc(JSON.stringify(d, null, 2))}</pre></div>`;
+  document.getElementById('detail').innerHTML = `<datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><div class="card"><h2>${esc(p.character_name || 'Character')}</h2><div class="grid"><div><b>Account</b><br>${esc(p.account_id)}</div><div><b>Controller</b><br>${esc(p.player_controller_id)}</div><div><b>Pawn</b><br>${esc(p.player_pawn_id)}</div><div><b>Status</b><br>${esc(p.online_status)}</div></div></div><div class="card"><h2>Quick Admin</h2><p class="dangerText">Back up first. Mutations require server-side enablement.</p><div class="grid"><label>Currency ID<input id="detailCurId" value="${esc(firstCurrency.currency_id ?? 1)}"></label><label>Amount<input id="detailCurAmount" value="1000"></label><label>Mode<select id="detailCurMode"><option>add</option><option>set</option></select></label></div><p><button id="detailCurrencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Track type<input id="detailTrack" value="${esc(firstTrack.track_type ?? '')}"></label><label>XP amount<input id="detailXpAmount" value="1000"></label><label>Mode<select id="detailXpMode"><option>add</option><option>set</option></select></label></div><p><button id="detailXpBtn" class="primary">Apply XP</button></p><div class="grid"><label>Template ID<input id="detailGrantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="detailGrantStack" value="1"></label></div><p><button id="detailDryRunBtn" class="primary">Dry run item</button> <button id="detailGrantBtn" class="danger">Grant item</button></p><pre id="detailGrantResult"></pre></div><div class="card"><h2>Inventories</h2>${table(d.inventories)}</div><div class="card"><h2>Inventory Items</h2>${table(d.inventoryItems)}</div><div class="card"><h2>Raw Detail</h2><pre>${esc(JSON.stringify(d, null, 2))}</pre></div>`;
   document.getElementById('detailCurrencyBtn').addEventListener('click', () => currencyFor(p.player_controller_id));
   document.getElementById('detailXpBtn').addEventListener('click', () => xpFor(p.player_controller_id));
   document.getElementById('detailDryRunBtn').addEventListener('click', () => grantItemForAccount(p.account_id, true));
@@ -1131,7 +1223,7 @@ async function pickCharacter(row){
 async function settings(){
   const env = await api('/api/settings/env');
   const configs = await api('/api/settings/configs');
-  view.innerHTML = `<div class="card"><h2>Safe Env Settings</h2><div class="grid">${Object.entries(env).map(([k,v])=>`<label>${esc(k)}<input id="env_${esc(k)}" value="${esc(v)}"></label>`).join('')}</div><p><button id="saveEnvBtn" class="primary">Save env settings</button></p></div><div class="card"><h2>Config Files</h2><select id="cfg">${Object.keys(configs).map(k=>`<option>${esc(k)}</option>`).join('')}</select><textarea id="cfgText"></textarea><p><button id="saveCfgBtn" class="primary">Save config with backup</button></p></div>`;
+  view.innerHTML = `<div class="card"><h2>Operations Settings</h2><p class="muted">These write <code>.env</code> with a backup under <code>backups/admin-panel</code>. Most service settings need the affected containers recreated before running processes pick them up.</p><p><button id="saveEnvBtn" class="primary">Save env settings</button></p></div>${envEditor(env)}<div class="card"><h2>Config Files</h2><select id="cfg">${Object.keys(configs).map(k=>`<option>${esc(k)}</option>`).join('')}</select><textarea id="cfgText"></textarea><p><button id="saveCfgBtn" class="primary">Save config with backup</button></p></div>`;
   window.configs = configs; selectCfg();
   document.getElementById('cfg').addEventListener('change', selectCfg);
   document.getElementById('saveEnvBtn').addEventListener('click', saveEnv);
@@ -1139,7 +1231,11 @@ async function settings(){
 }
 function selectCfg(){ const name=document.getElementById('cfg').value; document.getElementById('cfgText').value = window.configs[name] || ''; }
 async function saveEnv(){
-  const body={}; document.querySelectorAll('[id^=env_]').forEach(i=>body[i.id.slice(4)]=i.value);
+  const body={};
+  document.querySelectorAll('[id^=env_]').forEach(i => {
+    if (i.dataset.secret === 'true' && !i.value) return;
+    body[i.id.slice(4)] = i.value;
+  });
   await api('/api/settings/env', {method:'POST', body:JSON.stringify(body)}); alert('Saved .env safe keys');
 }
 async function saveCfg(){
@@ -1150,7 +1246,7 @@ async function saveCfg(){
 async function mutations(){
   const ref = await api('/api/admin/reference');
   const referenceErrors = ref.errors && Object.keys(ref.errors).length ? `<div class="card"><h2>Reference Errors</h2><pre>${esc(JSON.stringify(ref.errors, null, 2))}</pre></div>` : '';
-  view.innerHTML = `${referenceErrors}<div class="card"><h2>Backups</h2><p>Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button id="backupBtn" class="primary">Create DB backup</button><pre id="backupResult"></pre></div><div class="card"><h2>Currency and XP</h2><p class="dangerText">Writes require <code>DUNE_ADMIN_MUTATIONS_ENABLED=true</code> and a valid admin token. Back up first.</p><div class="grid"><label>Player controller ID<input id="pcid"></label><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button id="currencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Level for set/new track<input id="xplevel" value="0"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button id="xpBtn" class="primary">Apply XP</button></p></div><div class="card"><h2>Specialization Keystones</h2><div class="grid"><label>Player/controller ID<input id="keyPlayer"></label><label>Keystone<select id="keystone">${options(ref.keystones, 'name')}</select></label></div><p><button id="purchaseKeystoneBtn" class="primary">Purchase keystone</button> <button id="resetKeystonesBtn" class="danger">Reset all keystones</button></p><pre id="keystoneResult"></pre></div><div class="card"><h2>Item Grants</h2><p class="dangerText">Use exact server template IDs. Public item databases: <a href="${esc(ref.publicItemDatabase)}" target="_blank" rel="noreferrer">gaming.tools</a> and <a href="${esc(ref.publicItemDatabaseAlt)}" target="_blank" rel="noreferrer">Arrakis Atlas</a>. Dry run first when using IDs not observed locally.</p><div class="grid"><label>Known inventory<select id="grantInventorySelect">${inventoryOptions(ref.recentInventories)}</select></label><label>Inventory ID<input id="grantInventory" placeholder="explicit inventory"></label><label>Account ID<input id="grantAccount" placeholder="auto-select player inventory"></label><label>Character name<input id="grantCharacter" placeholder="auto-select by name"></label><label>Inventory type<select id="grantInventoryType">${inventoryTypeOptions(ref.inventoryTypes)}</select></label><label>Template ID<input id="grantTemplate" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><label>Stats JSON<textarea id="grantStats">{}</textarea></label><p><button id="dryRunItemBtn" class="primary">Dry run</button> <button id="grantItemBtn" class="danger">Grant item</button></p><pre id="grantResult"></pre></div><div class="card"><h2>Item Maintenance</h2><div class="grid"><label>Item ID<input id="itemEditId"></label><label>New stack size<input id="itemEditStack" value="1"></label><label>Delete count<input id="itemDeleteCount" placeholder="blank/all"></label></div><p><button id="setItemStackBtn" class="primary">Set stack</button> <button id="deleteItemBtn" class="danger">Delete item/count</button></p><pre id="itemEditResult"></pre></div><div class="card"><h2>Observed Item Templates</h2><p class="muted">Read-only reference from this server's current <code>dune.items</code> rows.</p>${table(ref.observedItemTemplates)}</div><div class="card"><h2>Recent Inventories</h2>${table(ref.recentInventories)}</div><div class="card"><h2>Inventory Types</h2>${table(ref.inventoryTypes)}</div><div class="card"><h2>Recipe Unlocks</h2><p class="muted">Not implemented yet. The DB exposes removal helpers and actor JSON recipe arrays, but no safe grant function has been mapped.</p><button id="unsupportedBtn" class="danger">Test unsupported endpoint</button></div>`;
+  view.innerHTML = `${referenceErrors}<div class="card"><h2>Backups</h2><p>Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button id="backupBtn" class="primary">Create DB backup</button><pre id="backupResult"></pre></div><div class="card"><h2>Currency and XP</h2><p class="dangerText">Writes require <code>DUNE_ADMIN_MUTATIONS_ENABLED=true</code> and a valid admin token. Back up first.</p><div class="grid"><label>Player controller ID<input id="pcid"></label><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button id="currencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Level for set/new track<input id="xplevel" value="0"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button id="xpBtn" class="primary">Apply XP</button></p></div><div class="card"><h2>Specialization Keystones</h2><div class="grid"><label>Player/controller ID<input id="keyPlayer"></label><label>Keystone<select id="keystone">${options(ref.keystones, 'name')}</select></label></div><p><button id="purchaseKeystoneBtn" class="primary">Purchase keystone</button> <button id="resetKeystonesBtn" class="danger">Reset all keystones</button></p><pre id="keystoneResult"></pre></div><div class="card"><h2>Item Grants</h2><p class="dangerText">Use exact server template IDs. Public item databases: <a href="${esc(ref.publicItemDatabase)}" target="_blank" rel="noreferrer">gaming.tools</a> and <a href="${esc(ref.publicItemDatabaseAlt)}" target="_blank" rel="noreferrer">Arrakis Atlas</a>. Dry run first when using IDs not observed locally.</p><div class="grid"><label>Known inventory<select id="grantInventorySelect">${inventoryOptions(ref.recentInventories)}</select></label><label>Inventory ID<input id="grantInventory" placeholder="explicit inventory"></label><label>Account ID<input id="grantAccount" placeholder="auto-select player inventory"></label><label>Character name<input id="grantCharacter" placeholder="auto-select by name"></label><label>Inventory type<select id="grantInventoryType">${inventoryTypeOptions(ref.inventoryTypes)}</select></label><label>Template ID<input id="grantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><label>Stats JSON<textarea id="grantStats">{}</textarea></label><p><button id="dryRunItemBtn" class="primary">Dry run</button> <button id="grantItemBtn" class="danger">Grant item</button></p><pre id="grantResult"></pre></div><div class="card"><h2>Item Maintenance</h2><div class="grid"><label>Item ID<input id="itemEditId"></label><label>New stack size<input id="itemEditStack" value="1"></label><label>Delete count<input id="itemDeleteCount" placeholder="blank/all"></label></div><p><button id="setItemStackBtn" class="primary">Set stack</button> <button id="deleteItemBtn" class="danger">Delete item/count</button></p><pre id="itemEditResult"></pre></div><datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><div class="card"><h2>Known Item Templates</h2><p class="muted">Exact template IDs observed in local item, reward, vendor, vehicle, or exchange tables.</p>${table(ref.knownItemTemplates)}</div><div class="card"><h2>Observed Item Templates</h2><p class="muted">Read-only reference from this server's current <code>dune.items</code> rows.</p>${table(ref.observedItemTemplates)}</div><div class="card"><h2>Recent Inventories</h2>${table(ref.recentInventories)}</div><div class="card"><h2>Inventory Types</h2>${table(ref.inventoryTypes)}</div><div class="card"><h2>Recipe Unlocks</h2><p class="muted">Not implemented yet. The DB exposes removal helpers and actor JSON recipe arrays, but no safe grant function has been mapped.</p><button id="unsupportedBtn" class="danger">Test unsupported endpoint</button></div>`;
   const invSelect = document.getElementById('grantInventorySelect');
   if (invSelect && invSelect.value) document.getElementById('grantInventory').value = invSelect.value;
   invSelect?.addEventListener('change', () => { document.getElementById('grantInventory').value = invSelect.value; });
