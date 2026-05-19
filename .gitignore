@@ -10,6 +10,8 @@ config/tls/
 *.log
 *.pid
 *.tmp
+__pycache__/
+*.py[cod]
 
 # Funcom/Steam-distributed server package and container exports.
 Dune Awakening Self-Hosted Server/
