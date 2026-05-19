@@ -173,6 +173,21 @@ For the 30-partition warm pool, forward:
 
 The Compose files also expose `7888-7917/udp` on the host as IGW/S2S ports for debugging. Keep those closed on the router unless client testing proves the live routing path needs them. Never forward RabbitMQ (`31982/tcp`) or Postgres.
 
+### Internal Clients and LAN Reflection
+
+For a public server, keep `EXTERNAL_ADDRESS` set to the public WAN address even
+for internal players. Internal players joining through the server listing will
+still be handed that public address by the Dune/FLS path.
+
+Do not make changing `EXTERNAL_ADDRESS` part of normal operations. Instead,
+choose one LAN reflection mode and document it for the site:
+
+- router UDP hairpin/NAT reflection;
+- router static route for the public `/32` to the Dune host;
+- per-client route for the public `/32` to the Dune host.
+
+See `docs/lan-reflection.md` for the standard setup and validation commands.
+
 ## Backup
 
 Use the backup helper for routine snapshots:

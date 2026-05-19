@@ -52,6 +52,7 @@ The first target here is Docker Compose parity for those pieces. After that, sys
 - `docs/benchmarking.md`: repeatable resource and transition benchmark notes.
 - `docs/improvements.md`: improvement roadmap with the reason behind each workstream.
 - `docs/network-investigation.md`: connection-level DB/RabbitMQ/routing investigation notes.
+- `docs/lan-reflection.md`: standard options for joining the public-advertised server from inside the same LAN without changing `EXTERNAL_ADDRESS`.
 - `docs/optimization-targets.md`: practical memory, storage, network, and routing optimization targets.
 - `docs/operations.md`: health-check, backup, restore, and upgrade notes.
 - `docs/documentation-audit.md`: current docs coverage gaps and audit checklist.
@@ -167,6 +168,11 @@ For the full 30-partition warm pool, forward these game UDP ports:
 The Compose files also expose the current IGW/S2S UDP ports on the host for debugging (`7888-7917/udp` in the 30-partition layout), but those are server-to-server paths on the Docker network. Do not forward them publicly unless a client test proves Funcom's routing requires it.
 
 Do not forward RabbitMQ (`31982/tcp`) or the local debug/admin ports. Compose binds RabbitMQ and database debug ports to `127.0.0.1` where host publication is needed.
+
+If LAN players join through the public server listing, keep `EXTERNAL_ADDRESS`
+set to the public address and use the standard LAN reflection options in
+`docs/lan-reflection.md`. Do not flip `EXTERNAL_ADDRESS` between public and LAN
+addresses for normal operation.
 
 ## Repository Boundaries
 

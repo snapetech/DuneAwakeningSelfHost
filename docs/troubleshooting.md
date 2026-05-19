@@ -89,6 +89,25 @@ Check:
 
 The game can log a warning that binding directly to the public `EXTERNAL_ADDRESS` failed. In this Compose layout that is expected when the public address belongs to the router rather than the container. The important checks are that Docker publishes the relevant game UDP port, the game reports `listening for Clients on <EXTERNAL_ADDRESS>:<port>`, and Director/Gateway declare that same address to FLS.
 
+### Hangs at `Connecting to Sietch` from the same LAN
+
+If the client is on the same LAN as the server and the server advertises the
+public WAN address, first prove whether packets reach the host:
+
+```bash
+sudo timeout 75 tcpdump -ni enp17s0 'host <public-ip> and udp'
+sudo iptables -t nat -L DOCKER -n -v | rg 'dpt:(7777|7888|7778|7889)'
+```
+
+If tcpdump captures `0` packets and Docker counters stay at `0`, the client is
+not reaching the Dune host. This is a LAN hairpin/routing issue, not a password,
+map readiness, or RabbitMQ issue.
+
+Use one of the standard internal-join approaches in
+`docs/lan-reflection.md`: router UDP hairpin NAT, router static route for the
+public `/32` to the Dune host, or per-client `/32` route. Keep
+`EXTERNAL_ADDRESS` set to the public address for a public server.
+
 ## Survival Crashes After Database Restart
 
 Symptoms:

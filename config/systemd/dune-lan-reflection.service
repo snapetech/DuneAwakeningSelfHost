@@ -1,0 +1,13 @@
+[Unit]
+Description=Dune Awakening LAN reflection host route support
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/home/keith/Documents/code/DuneAwakeningSelfHost
+ExecStart=/home/keith/Documents/code/DuneAwakeningSelfHost/scripts/setup-lan-reflection.sh
+
+[Install]
+WantedBy=multi-user.target
