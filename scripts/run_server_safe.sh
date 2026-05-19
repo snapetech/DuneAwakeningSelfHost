@@ -3,6 +3,7 @@ set -euo pipefail
 
 main() {
   install_cert
+  install_user_configs
   install_server_login_password "$@"
 
   mkdir -p /home/dune/server/DuneSandbox/Saved/UserSettings
@@ -28,6 +29,26 @@ main() {
   args+=("-IGWBindAddress=$pod_ip")
 
   exec runuser -u dune -- ./DuneSandboxServer.sh "${args[@]}"
+}
+
+install_user_configs() {
+  local source_dir=/workspace/config
+  local config_dir=/home/dune/server/DuneSandbox/Saved/Config/LinuxServer
+  local user_settings_dir=/home/dune/server/DuneSandbox/Saved/UserSettings
+  mkdir -p "$config_dir"
+  mkdir -p "$user_settings_dir"
+
+  copy_user_config "${source_dir}/UserEngine.ini" "${config_dir}/Engine.ini"
+  copy_user_config "${source_dir}/UserEngine.ini" "${user_settings_dir}/UserEngine.ini"
+  copy_user_config "${source_dir}/UserGame.ini" "${config_dir}/Game.ini"
+  copy_user_config "${source_dir}/UserGame.ini" "${user_settings_dir}/UserGame.ini"
+}
+
+copy_user_config() {
+  local source="$1"
+  local target="$2"
+  [ -f "$source" ] || return 0
+  cp "$source" "$target"
 }
 
 install_server_login_password() {

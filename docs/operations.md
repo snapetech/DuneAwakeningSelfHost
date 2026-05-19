@@ -43,6 +43,8 @@ COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' ./scripts/rmq-health.sh .env
 
 Admin RabbitMQ can have fewer active service-user connections than farm partitions in the 30-map warm-pool layout. Treat it as unhealthy when recent auth/connectivity errors appear or when a failed client transition correlates with missing admin queue consumers.
 
+The admin panel Overview and Ops tabs expose the same high-level readiness from a browser. The map table is derived from `world_partition`, `farm_state`, and `active_server_ids`; the network table probes local Postgres plus upstream HTTP reachability for the Dune account portal and public Dune/Funcom sites. Treat those probes as operator signals, not proof that FLS registration or client travel is healthy.
+
 For the expanded standing farm, the expected summary is:
 
 ```text
@@ -66,6 +68,19 @@ Use:
 ```
 
 The helper starts Postgres and both RabbitMQ services, waits for their health checks, starts the service layer, force-recreates only `survival`, waits for registration, and then prints `./scripts/status.sh`.
+
+## Fixed-Partition Map Recovery
+
+If a specific map process crashes with `Local partition is not found`, recover it with the fixed-partition helper instead of immediately force-recreating the container. The failure means the process started with a new server id while its `world_partition` row was still assigned to an old server id that had not aged out of `active_server_ids`.
+
+For example, partition 18 is `heighliner-dungeon`:
+
+```bash
+COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' \
+  ./scripts/recover-map.sh .env heighliner-dungeon 18
+```
+
+The helper marks the old partition owner dead, stops the map service, waits until the old id is no longer active, starts the service, and waits for the partition to become ready/alive/active again.
 
 ## Expanded Farm Startup
 

@@ -42,8 +42,11 @@ The first target here is Docker Compose parity for those pieces. After that, sys
 - `docs/teardown.md`: notes extracted from the Steam install and image metadata.
 - `docs/publication.md`: what is safe to publish and what must stay local.
 - `docs/setup.md`: step-by-step local startup flow.
+- `docs/reproducibility.md`: fresh-host, migration, validation, and version-drift checklist.
 - `docs/architecture.md`: Compose service map and runtime state notes.
+- `docs/kubernetes.md`: unsupported but documented path for translating the Compose pod set to a Kubernetes cluster.
 - `docs/access-control.md`: server login password and current restriction limits.
+- `docs/character-transfers.md`: Director inbound/outbound character-transfer policy.
 - `docs/full-farm.md`: expanded standing farm / 30-partition warm-pool runbook and validation boundary.
 - `docs/validation.md`: live-client route validation checklist and failed-transition capture flow.
 - `docs/benchmarking.md`: repeatable resource and transition benchmark notes.
@@ -51,6 +54,10 @@ The first target here is Docker Compose parity for those pieces. After that, sys
 - `docs/network-investigation.md`: connection-level DB/RabbitMQ/routing investigation notes.
 - `docs/optimization-targets.md`: practical memory, storage, network, and routing optimization targets.
 - `docs/operations.md`: health-check, backup, restore, and upgrade notes.
+- `docs/documentation-audit.md`: current docs coverage gaps and audit checklist.
+- `docs/admin-panel.md`: admin helper panel setup, security notes, and write-safety gates.
+- `docs/admin-mutation-map.md`: database contracts used or deliberately avoided by admin mutations.
+- `docs/server-knobs-audit.md`: audited Funcom, Compose, and reverse-proxy settings worth exposing in admin.
 - `docs/routing-investigation.md`: Deep Desert, Arrakeen, and Testing Station transition investigation notes.
 - `docs/troubleshooting.md`: common startup failures and where to look.
 - `scripts/load-images.sh`: loads the Steam image tarballs into Docker.
@@ -96,7 +103,7 @@ Then bring up the service layer:
 
 ```bash
 docker compose --env-file .env up -d rmq-auth-shim text-router gateway director
-./scripts/status.sh
+./scripts/status.sh .env
 ```
 
 Pass a custom env file when needed:
@@ -105,7 +112,7 @@ Pass a custom env file when needed:
 ./scripts/status.sh .env.production
 ```
 
-The `survival` service is present as an experimental direct game-server launch target:
+The `survival` service is the minimal direct game-server launch target:
 
 ```bash
 docker compose --env-file .env up -d survival
@@ -114,7 +121,7 @@ docker compose --env-file .env up -d survival
 For a single-server test world, prune the unused generated `Survival_1` dimensions after DB bootstrap:
 
 ```bash
-./scripts/single-survival-partition.sh
+./scripts/single-survival-partition.sh .env
 ```
 
 The script writes a `backups/partition-surgery/world-partitions-before-single-survival-*.sql` backup before deleting only unassigned `Survival_1` dimensions greater than zero. This removes recurring Director warnings for dimensions that are not being launched.
@@ -141,7 +148,7 @@ Start the local admin helper panel:
 docker compose --env-file .env up -d admin-panel
 ```
 
-It binds to `127.0.0.1:18080` by default and is intended to sit behind trusted LAN/VPN ingress. In this lab, `duneadmin.home` is routed through the host Caddy ingress and Pi-hole override to the admin panel.
+It binds to `127.0.0.1:18080` by default and is intended to sit behind trusted LAN/VPN ingress. If you want a LAN hostname such as `admin.example.test`, point your own DNS or reverse proxy at the host.
 
 For the single `Survival_1` test layout, forward:
 
@@ -182,3 +189,5 @@ make validate
 ```
 
 This checks the Compose config against `.env.example` and scans publishable files for obvious secret patterns.
+
+For a fresh install on different hardware, use `docs/reproducibility.md`. For a future move back into a normal Kubernetes cluster, use `docs/kubernetes.md` as the service mapping and gap list.

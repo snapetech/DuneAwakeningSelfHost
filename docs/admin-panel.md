@@ -25,7 +25,7 @@ http://127.0.0.1:18080
 
 The panel uses `X-Admin-Token` for protected APIs. The browser stores the token in session storage when entered in the header.
 
-## `duneadmin.home`
+## LAN Hostname
 
 The Compose service binds to localhost:
 
@@ -33,10 +33,10 @@ The Compose service binds to localhost:
 127.0.0.1:18080 -> admin-panel:8080
 ```
 
-To use `http://duneadmin.home`, point LAN DNS or `/etc/hosts` at the host running the reverse proxy. This lab uses Pi-hole/dnsmasq with a specific override:
+To use a LAN hostname such as `http://admin.example.test`, point LAN DNS or `/etc/hosts` at the host running the reverse proxy:
 
 ```text
-duneadmin.home -> 192.168.50.148
+admin.example.test -> <your-server-lan-ip>
 ```
 
 Keep it on trusted LAN/VPN only. The panel still runs behind the local ingress and should not be exposed directly to the internet.
@@ -46,7 +46,7 @@ Example nginx site:
 ```nginx
 server {
     listen 80;
-    server_name duneadmin.home;
+    server_name admin.example.test;
 
     location / {
         proxy_pass http://127.0.0.1:18080;
@@ -58,18 +58,19 @@ server {
 
 ## Current Features
 
-- Server/farm state view.
+- Server/farm state view with per-map online/offline health derived from `world_partition`, `farm_state`, and `active_server_ids`.
+- Local/upstream health checks for Postgres reachability, the Dune account portal, and public Dune/Funcom HTTP reachability.
 - Character search and detail view.
 - Currency/progression table visibility.
 - `.env` operations editor for install, world, network, access, secret, and admin-panel knobs. Secret fields are admin-token protected, rendered as password inputs, and returned blank unless a replacement is typed.
 - Typed Director character-transfer settings editor for `config/director.ini`.
-- Config editor for selected local config files, with backups under `backups/admin-panel`.
+- Config editor for selected local config files, including official `UserEngine.ini` and `UserGame.ini` overlays, with backups under `backups/admin-panel`.
 - Token-gated currency and XP mutation endpoints.
 - Token-gated Postgres custom-format backup under `backups/admin-panel`.
 - Redacted JSONL audit trail for rejected requests and admin writes under `backups/admin-panel/audit.jsonl`.
 - Known item template, observed item template, inventory, and inventory-type references.
 - Character dropdowns in Admin Actions for currency, XP, keystones, item grant targeting, and item maintenance.
-- Selected characters pre-populate controller/account/name fields, replace the grant inventory picker with owned inventories, and load owned inventory items for stack edits or deletion.
+- Selected characters pre-populate controller/account/name fields, current currency and specialization selectors, owned inventories, and owned inventory items for stack edits or deletion.
 - Exact-template item grants, dry-runs, stack edits, and item deletion behind admin gates.
 
 ## Write Safety
@@ -98,7 +99,7 @@ See `docs/admin-mutation-map.md` for the current DB contract map.
 Back up before enabling mutations:
 
 ```bash
-./scripts/backup-state.sh
+./scripts/backup-state.sh .env
 ```
 
 ## Security Notes
@@ -107,12 +108,14 @@ Back up before enabling mutations:
 - Use a long random `DUNE_ADMIN_TOKEN`.
 - Keep `DUNE_ADMIN_MUTATIONS_ENABLED=false` unless actively making admin edits.
 - `DUNE_ADMIN_ITEM_GRANTS_ENABLED` defaults to `true` in this repo so item tooling is visible and ready; keep general writes gated with `DUNE_ADMIN_MUTATIONS_ENABLED`.
+- Director character-transfer settings write `config/director.ini`; recreate the Director container before relying on a changed transfer policy.
+- `UserEngine.ini` and `UserGame.ini` edits are copied into game containers during game-service startup. Recreate affected game containers before relying on changed gameplay knobs.
 - Keep `DUNE_ADMIN_MAX_BODY_BYTES` small unless editing unusually large config files; the default is `65536`.
 - Keep `DUNE_ADMIN_AUDIT_MAX_BYTES` bounded; the default rotates the JSONL audit log at 5 MiB.
 - Keep `DUNE_ADMIN_REQUEST_TIMEOUT_SECONDS` bounded; the default is `10` seconds to limit slow-body and idle connection abuse.
 - Keep `DUNE_ADMIN_MAX_ITEM_STACK_SIZE` bounded; the default is `1000000` to prevent accidental enormous stack writes.
 - Keep `DUNE_ADMIN_AUDIT_EVENT_LIMIT`, `DUNE_ADMIN_REFERENCE_LIMIT`, and `DUNE_ADMIN_CHARACTER_SEARCH_LIMIT` bounded so read endpoints stay predictable as local data grows.
-- Set `DUNE_ADMIN_ALLOWED_HOSTS` to the exact hostnames used to reach the panel, for example `127.0.0.1:18080,localhost:18080,duneadmin.home`.
+- Set `DUNE_ADMIN_ALLOWED_HOSTS` to the exact hostnames used to reach the panel, for example `127.0.0.1:18080,localhost:18080,admin.example.test`.
 - Review the Security tab's recent audit events after failed login attempts, blocked host/origin requests, config edits, backups, or mutation runs.
 - Restart affected game services after config changes when the target service does not hot-reload.
 - POST APIs require `application/json`; form posts, chunked bodies, duplicate `Content-Length`, and oversized requests are rejected before mutation routing.

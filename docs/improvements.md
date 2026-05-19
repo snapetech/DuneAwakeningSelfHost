@@ -9,6 +9,7 @@ Why: the official package is oriented around a Hyper-V Linux VM and Kubernetes-s
 Current work:
 
 - `compose.yaml` defines the extracted service topology directly.
+- `compose.allmaps.yaml` provides a 30-partition warm-pool overlay for the official single-dimension self-host partitions.
 - The host-facing ports are intentionally narrow: gameplay UDP is public, while Postgres and RabbitMQ debug/admin ports bind to `127.0.0.1`.
 - `scripts/preflight.sh` and `make validate` guard common local mistakes before startup.
 
@@ -25,6 +26,7 @@ Why: self-host operators need hard numbers for CPU, memory, restarts, ports, log
 Current work:
 
 - `scripts/status.sh` now reports container state, Docker CPU and memory snapshots, restart counts, OOM state, selected DB rows, RabbitMQ connections, and filtered logs.
+- The admin panel overview surfaces per-map online/offline state and local/upstream network probes.
 - `docs/benchmarking.md` defines a repeatable capture format for resource and routing comparisons.
 - `docs/optimization-targets.md` records current memory, storage, network, and routing optimization targets.
 - `scripts/profile-runtime.sh` captures process, image, filesystem, socket, and resource profiles under ignored `captures/`.
@@ -32,7 +34,7 @@ Current work:
 Next steps:
 
 - Add optional Prometheus scrape targets for container, Postgres, and RabbitMQ metrics.
-- Add a lightweight world/player snapshot once the relevant DB tables and service endpoints are confirmed.
+- Compare the admin-panel and script player-count probes against real client presence.
 - Capture repeatable benchmark notes per map count and player count.
 
 ## 3. Remove Windows/Hyper-V Overhead
@@ -80,6 +82,7 @@ Current work:
 - Logs are filtered for registration, auth, RabbitMQ, partition, readiness, heartbeat, and failure signals.
 - `scripts/capture-routing.sh` writes local redacted captures for transition attempts.
 - `scripts/discover-player-state.sh` lists candidate player/session/account schema objects.
+- The admin panel exposes map health derived from `world_partition`, `farm_state`, and `active_server_ids`.
 
 Next steps:
 
@@ -95,16 +98,17 @@ Public docs support treating this as incomplete self-host plumbing, not missing 
 
 Current work:
 
-- `docs/architecture.md` records the known service map and current blockers.
-- `survival` is isolated as an experimental direct game-server launch target.
+- `docs/architecture.md` records the known service map and validation boundary.
+- The direct game-server launch path is sufficient for server-side registration in the base farm and 30-partition warm pool.
 - `docs/routing-investigation.md` defines the evidence to collect for broken instance transitions.
+- `docs/validation.md` lists the live-client route checks that still need proof.
 
 Next steps:
 
 - Capture the transition path from Hagga Basin into Deep Desert, Arrakeen, and Testing Stations.
 - Trace director, FLS, gateway, text-router, and game-server logs during each transition attempt.
 - Capture generated world name, world unique name, FLS battlegroup identity, instance registration, auth/token handoff, advertised address, and port routing.
-- Capture operator-generated launch arguments for every map type.
+- Compare against operator-generated launch arguments for every map type if a client route fails despite server-side readiness.
 - Compare registered partitions, farm state, advertised addresses, and RabbitMQ users across working and broken maps.
 - Document each failure mode in `docs/troubleshooting.md` with the exact status output that identifies it.
 

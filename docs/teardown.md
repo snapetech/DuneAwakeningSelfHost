@@ -57,15 +57,15 @@ Game server base arguments:
 
 The Compose path uses `scripts/run_server_safe.sh` as a local replacement wrapper because list-form Compose arguments with spaces need to remain intact through the final `DuneSandboxServer.sh` exec.
 
-## Known Missing Pieces
+## Compose Parity Notes
 
-These are the items the k8s operators normally synthesize and still need to be reproduced:
+These are the items the k8s operators normally synthesize. The Compose topology now represents the required values explicitly in `compose.yaml`, local config files, or helper scripts:
 
-- Postgres schema/database bootstrap using `server-db-utils`.
-- RabbitMQ auth endpoint readiness through `text-router`.
-- TLS material for the game RabbitMQ if strict TLS is required outside k8s.
-- Exact database connection env/config expected by director, gateway, and text-router.
-- Public port mapping after the game process dynamically chooses its UDP game and IGW ports.
+- Postgres schema/database bootstrap using `server-db-utils` through the `db-init` service.
+- RabbitMQ auth endpoint readiness through `text-router` plus the local `rmq-auth-shim`.
+- TLS material for the game RabbitMQ under `config/tls/rabbitmq`.
+- Database connection env/config for Director, Gateway, and TextRouter.
+- Static game and IGW UDP port mapping per Compose service.
 
 ## Service-Layer Smoke Test Notes
 
@@ -87,10 +87,10 @@ Those values are now represented in `compose.yaml`.
 
 After bootstrap, the branch database needs `search_path = dune, public` because the SQL setup creates functions such as `dune.update_universe_time`.
 
-Current service-layer blockers:
+Current service-layer caveats:
 
 - `director` reaches Postgres and RabbitMQ setup, then fails FLS initialization when `FLS_SECRET` is blank.
-- exact game-server map launch arguments still need to be reproduced from the server operator before starting `seabass-server` directly.
+- The direct game-server launch path is functional for server-side registration, but client travel still needs live-client validation for each route.
 
 The Compose path now generates equivalent local RabbitMQ TLS material under `config/tls/rabbitmq`:
 

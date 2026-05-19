@@ -28,7 +28,7 @@ Operational caveat: Unreal logs the full startup command line. Treat local Docke
 
 ## Admin Panel
 
-The `duneadmin.home` panel exposes `DUNE_SERVER_LOGIN_PASSWORD` under Settings -> Safe Env Settings. It is protected by the admin token like the rest of the settings API.
+The admin panel exposes `DUNE_SERVER_LOGIN_PASSWORD` under Settings -> Safe Env Settings. It is protected by the admin token like the rest of the settings API.
 
 Changing the value updates `.env`, but it does not update already-running game-server processes. Recreate the game containers after a password change:
 
@@ -49,8 +49,28 @@ Then verify:
 COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' ./scripts/status.sh .env
 ```
 
+## Character Transfers
+
+The login password is not the character-transfer policy. Director has separate inbound and outbound transfer controls in `config/director.ini`.
+
+This repository currently defaults inbound character transfers to disabled:
+
+```ini
+[ Battlegroup ]
+IncomingCharacterTransfers=DenyAll
+```
+
+The admin panel exposes the Director character-transfer settings under Settings -> Director Character Transfers. See `docs/character-transfers.md` for the full setting list and the inbound rulesets:
+
+```text
+DenyAll
+AllowFromPrivateOnly
+AllowFromOfficialOnly
+AllowFromPrivateAndOfficial
+```
+
 ## Limitations
 
-No native allowlist/whitelist setting has been identified in the shipped config surface yet. Treat the login password as the primary supported restriction.
+No native player allowlist/whitelist setting has been identified in the shipped config surface yet. Treat the login password as the primary supported login restriction.
 
 Network-level source-IP allowlisting is possible at the router/firewall, but it is brittle for players with dynamic IP addresses and should be used only if password protection is not enough.

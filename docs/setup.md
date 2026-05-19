@@ -1,6 +1,6 @@
 # Setup
 
-This flow assumes you already installed the official Dune: Awakening Self-Hosted Server Steam tool and have Docker Compose available on the Linux host.
+This flow assumes you already installed the official Dune: Awakening Self-Hosted Server Steam tool and have Docker Compose available on the Linux host. For a fresh install on different hardware, read `docs/reproducibility.md` first.
 
 ## 1. Create Local Env and TLS
 
@@ -50,14 +50,14 @@ The bootstrap runs inside Funcom's `server-db-utils` image and uses the database
 
 ```bash
 docker compose --env-file .env up -d rmq-auth-shim text-router gateway director
-./scripts/status.sh
+./scripts/status.sh .env
 ```
 
 ## 7. Single Survival Server
 
 ```bash
 docker compose --env-file .env up -d survival
-./scripts/status.sh
+./scripts/status.sh .env
 ```
 
 This starts only the `Survival_1` map. It is useful for proving the core service layer, token, RabbitMQ auth, and public game address before expanding the farm.
@@ -103,4 +103,4 @@ This proves server-side registration and partition assignment. It does not by it
 docker compose --env-file .env up -d admin-panel
 ```
 
-Open `http://127.0.0.1:18080`, or put a trusted LAN/VPN reverse proxy in front of it as `http://duneadmin.home`. See `docs/admin-panel.md`.
+Open `http://127.0.0.1:18080`, or put a trusted LAN/VPN reverse proxy in front of it with your own hostname. See `docs/admin-panel.md`.

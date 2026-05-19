@@ -1,0 +1,43 @@
+# Documentation Audit
+
+Last audited: 2026-05-19.
+
+This page records documentation coverage gaps found during repo review and the current status of each.
+
+## Fixed In This Audit
+
+| Area | Gap | Status |
+| --- | --- | --- |
+| Character transfers | `docs/access-control.md` said no native restriction knob had been found, but Director exposes character-transfer policy settings. | Fixed with `docs/character-transfers.md` and updated access-control notes. |
+| Quick-start commands | Some examples called helper scripts without an env file while nearby commands used `--env-file .env`. | Standardized common setup/troubleshooting examples to pass `.env`. |
+| Teardown notes | `docs/teardown.md` still described reproduced Compose pieces as missing. | Reworded as Compose parity notes and kept only current caveats. |
+| Admin panel | Character-transfer settings were exposed in the UI but only lightly documented. | `docs/admin-panel.md` now calls out Director restart/recreate requirements, and `docs/character-transfers.md` has the setting table. |
+| Reproducible installs | Fresh-host setup, state migration, publishable placeholders, and version drift were spread across README/setup/operations. | Added `docs/reproducibility.md` and linked it from README and setup. |
+| Kubernetes migration | The repo referenced the official Kubernetes-oriented package but did not map Compose services back to a real cluster deployment. | Added `docs/kubernetes.md` as an unsupported design map and gap list. |
+| Architecture/routing | Architecture and routing docs only described the base nine maps even though the 30-partition warm pool exists. | Updated `docs/architecture.md` and `docs/routing-investigation.md` to distinguish base-farm registration from 30-partition warm-pool registration. |
+| Improvement plan | Roadmap text still described only the isolated `survival` launch as current work. | Updated `docs/improvements.md` with warm-pool, admin map health, transfer-policy, and live-validation boundaries. |
+
+## Remaining Gaps
+
+| Area | Gap | Next Action |
+| --- | --- | --- |
+| Live client validation | `docs/validation.md` is still a checklist with `TODO` route rows. | Fill each row after live-client testing and link failed-transition capture directories. |
+| Route behavior | Deep Desert, Arrakeen, Harko Village, and testing-station travel remain documented as investigation surfaces. | Keep `docs/routing-investigation.md` current with exact client symptoms and first failing service boundary. |
+| Admin mutations | Recipe unlocks and journey/skill-like unlocks are intentionally not implemented. | Extend `docs/admin-mutation-map.md` only after safe DB contracts and refresh semantics are proven. |
+| Image/version drift | README and teardown pin observations to image tag `1963158-0-shipping`. | Re-run `scripts/inspect-images.sh`, `scripts/discover-player-state.sh`, and validation after every Steam tool update. |
+| Kubernetes manifests | The Kubernetes doc is currently design documentation only. | Add generated manifests or a Helm chart only after the Compose topology is stable enough to avoid duplicating service definitions by hand. |
+| Public networking | IGW/S2S UDP forwarding is still conservative and based on local observations. | Update `docs/operations.md` and `docs/full-farm.md` after live-client tests prove whether public IGW forwarding is needed. |
+| Admin panel network probes | The panel exposes local/upstream health probes, but no real-outage examples are recorded. | Add examples once probe output has been observed during a real outage. |
+
+## Audit Checklist
+
+Run this when changing orchestration, config defaults, or admin-panel behavior:
+
+```bash
+rg -n "TODO|missing|blocker|not implemented|No native|still need|Current service-layer blockers" README.md docs
+rg -n "IncomingCharacterTransfers|DUNE_SERVER_LOGIN_PASSWORD|compose.allmaps|7777-7806|admin-panel" README.md docs config admin
+docker compose --env-file .env.example config --quiet
+make validate
+```
+
+For docs that mention shipped Funcom behavior, include the image tag and date when possible.

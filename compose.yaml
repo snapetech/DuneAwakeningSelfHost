@@ -240,7 +240,7 @@ services:
       - -PartitionIndex=1
     environment:
       POD_IP: 172.31.240.10
-      NODE_NAME: dune-local
+      NODE_NAME: dune-node
       BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
     ports:
       - "7777:7777/udp"
@@ -277,7 +277,7 @@ services:
       - -PartitionIndex=2
     environment:
       POD_IP: 172.31.240.11
-      NODE_NAME: dune-local
+      NODE_NAME: dune-node
       BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
     ports:
       - "7778:7778/udp"
@@ -314,7 +314,7 @@ services:
       - -PartitionIndex=3
     environment:
       POD_IP: 172.31.240.12
-      NODE_NAME: dune-local
+      NODE_NAME: dune-node
       BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
     ports:
       - "7779:7779/udp"
@@ -351,7 +351,7 @@ services:
       - -PartitionIndex=4
     environment:
       POD_IP: 172.31.240.13
-      NODE_NAME: dune-local
+      NODE_NAME: dune-node
       BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
     ports:
       - "7780:7780/udp"
@@ -388,7 +388,7 @@ services:
       - -PartitionIndex=5
     environment:
       POD_IP: 172.31.240.14
-      NODE_NAME: dune-local
+      NODE_NAME: dune-node
       BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
     ports:
       - "7781:7781/udp"
@@ -425,7 +425,7 @@ services:
       - -PartitionIndex=6
     environment:
       POD_IP: 172.31.240.15
-      NODE_NAME: dune-local
+      NODE_NAME: dune-node
       BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
     ports:
       - "7782:7782/udp"
@@ -462,7 +462,7 @@ services:
       - -PartitionIndex=7
     environment:
       POD_IP: 172.31.240.16
-      NODE_NAME: dune-local
+      NODE_NAME: dune-node
       BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
     ports:
       - "7783:7783/udp"
@@ -499,7 +499,7 @@ services:
       - -PartitionIndex=8
     environment:
       POD_IP: 172.31.240.17
-      NODE_NAME: dune-local
+      NODE_NAME: dune-node
       BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
     ports:
       - "7784:7784/udp"
@@ -536,7 +536,7 @@ services:
       - -PartitionIndex=9
     environment:
       POD_IP: 172.31.240.18
-      NODE_NAME: dune-local
+      NODE_NAME: dune-node
       BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
     ports:
       - "7785:7785/udp"
@@ -567,7 +567,7 @@ services:
       DUNE_ADMIN_AUDIT_EVENT_LIMIT: ${DUNE_ADMIN_AUDIT_EVENT_LIMIT:-100}
       DUNE_ADMIN_REFERENCE_LIMIT: ${DUNE_ADMIN_REFERENCE_LIMIT:-200}
       DUNE_ADMIN_CHARACTER_SEARCH_LIMIT: ${DUNE_ADMIN_CHARACTER_SEARCH_LIMIT:-100}
-      DUNE_ADMIN_ALLOWED_HOSTS: ${DUNE_ADMIN_ALLOWED_HOSTS:-127.0.0.1:18080,localhost:18080,duneadmin.home}
+      DUNE_ADMIN_ALLOWED_HOSTS: ${DUNE_ADMIN_ALLOWED_HOSTS:-127.0.0.1:18080,localhost:18080,admin.example.test}
     command:
       - /workspace/admin/admin_panel.py
     volumes:

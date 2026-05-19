@@ -1,0 +1,122 @@
+# Reproducible Install Checklist
+
+This project should be installable on a different Linux host without copying local state from another machine. Treat the repository as orchestration and documentation only; the official Steam package, Funcom images, secrets, database, and saves are local inputs.
+
+## Supported Baseline
+
+- Linux host with AVX2-capable CPU.
+- Docker Engine with Docker Compose v2.
+- Official `Dune: Awakening Self-Hosted Server` Steam tool installed on the same host or on storage mounted into the host.
+- Valid self-hosting token from the Dune account portal.
+- `bash`, `openssl`, `jq`, `rg`, `docker`, and the Docker Compose plugin.
+
+The current Compose files are pinned by `.env` values, not by local machine names:
+
+- `DUNE_STEAM_SERVER_DIR`: path to the official Steam tool install.
+- `DUNE_IMAGE_TAG`: Funcom image tag from that install.
+- `WORLD_NAME`, `WORLD_UNIQUE_NAME`, `WORLD_REGION`: your world metadata.
+- `EXTERNAL_ADDRESS`: address clients should reach from outside the host.
+- `FLS_SECRET`: self-hosting token. Keep this secret and rotate it if exposed.
+
+## Fresh Host Procedure
+
+1. Clone this repository.
+2. Install Docker Engine and the Compose plugin.
+3. Install the official Steam tool on that host.
+4. Generate local secrets:
+
+```bash
+./scripts/populate-local-env.sh
+```
+
+5. Edit `.env` for the host-specific values listed above.
+6. Validate the local inputs:
+
+```bash
+./scripts/preflight.sh .env
+docker compose --env-file .env config --quiet
+```
+
+7. Load the official Funcom image tarballs into Docker:
+
+```bash
+./scripts/load-images.sh
+```
+
+8. Start and bootstrap the state layer:
+
+```bash
+docker compose --env-file .env up -d postgres admin-rmq game-rmq
+docker compose --env-file .env run --rm db-init
+```
+
+9. Start the service layer and check status:
+
+```bash
+docker compose --env-file .env up -d rmq-auth-shim text-router gateway director
+./scripts/status.sh .env
+```
+
+10. Start the desired game-server layout:
+
+```bash
+docker compose --env-file .env up -d survival
+```
+
+For the standing nine-map layout, follow `docs/full-farm.md`.
+
+## Host-Specific Inputs
+
+Do not commit these values:
+
+- `.env`
+- `config/tls/`
+- `data/`
+- `backups/`
+- `captures/`
+- Steam package files
+- Funcom image tarballs
+
+Only `.env.example` should contain defaults, and those defaults must remain installable placeholders. Use `admin.example.test`, `sh-example-dune`, and `My Dune Awakening Server` style examples instead of real hostnames or world names.
+
+## Moving State Between Hosts
+
+Use the backup helper on the old host:
+
+```bash
+./scripts/backup-state.sh .env
+```
+
+Move the chosen backup directory to the new host, load the same or explicitly upgraded Funcom image tag, then restore:
+
+```bash
+./scripts/restore-state.sh --dry-run .env backups/YYYYMMDDTHHMMSSZ
+./scripts/restore-state.sh .env backups/YYYYMMDDTHHMMSSZ
+```
+
+Use `--rabbitmq --server-saved` only when intentionally replacing those local state directories too.
+
+Do not mix a downgraded image tag with a database captured after an upgrade unless the schema compatibility has been verified.
+
+## Reproducibility Checks
+
+Run these before sharing changes:
+
+```bash
+make validate
+rg -n "192\\.168\\.|/home/[^d]|/Users/|C:\\\\Users\\\\" README.md docs .env.example compose.yaml compose.allmaps.yaml config scripts admin
+```
+
+Expected result: `make validate` exits cleanly, and the second command finds no real LAN IPs or personal home paths. Also check for any real hostnames, usernames, world names, or organization names before publishing. The Compose subnet `172.31.240.0/24`, `127.0.0.1`, `localhost`, and container path `/home/dune` are intentional generic runtime values.
+
+## Version Drift
+
+When Steam updates the self-hosted server tool:
+
+1. Update `DUNE_IMAGE_TAG` in `.env`.
+2. Re-run `./scripts/load-images.sh`.
+3. Re-run `./scripts/inspect-images.sh` and compare the output with `docs/teardown.md`.
+4. Run `docker compose --env-file .env config --quiet`.
+5. Start only Postgres and RabbitMQ, run `db-init`, then start the service layer.
+6. Confirm `./scripts/status.sh .env`.
+7. Update docs that cite image tags, ports, settings, or observed behavior.

@@ -3,8 +3,8 @@
 Start with:
 
 ```bash
-./scripts/preflight.sh
-./scripts/status.sh
+./scripts/preflight.sh .env
+./scripts/status.sh .env
 ```
 
 The preflight helper catches missing tools, missing image tarballs, default credentials, empty tokens, and unsafe host bindings. The status helper prints container state, selected database rows, RabbitMQ connections, and recent high-signal logs with known token/password patterns redacted.
@@ -107,6 +107,27 @@ The current game-server process does not reliably survive a lost Postgres connec
 
 The script does not wipe state. It restarts dependencies if needed, waits for Postgres and RabbitMQ health checks, force-recreates `survival`, and then prints status.
 
+## Map Crashes With Local Partition Is Not Found
+
+Symptoms:
+
+```text
+LoadPartitionDefinition: Sql::load_world_partition(<map>, <new-server-id>, 0, <partition-id>) got 0 rows, expected exactly 1.
+Fatal error: ... S2sController.cpp
+Local partition is not found
+```
+
+Cause: the map process started with a fresh server id while its fixed `world_partition` row was still assigned to an older server id. If the old id is still in `active_server_ids`, `load_world_partition()` will not reassign the partition, so the game server cannot find its local partition and crashes.
+
+Recover with the fixed-partition helper. For example, partition 18 is `heighliner-dungeon`:
+
+```bash
+COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' \
+  ./scripts/recover-map.sh .env heighliner-dungeon 18
+```
+
+Avoid repeatedly force-recreating the same map while the old server id is still active. That can reproduce the same crash loop.
+
 ## Director Repeats Unassigned Partition Warnings
 
 Symptoms:
@@ -121,7 +142,7 @@ The bundled `initialize_partitions_basic_survival_1()` function creates four `Su
 For a one-server test world, run:
 
 ```bash
-./scripts/single-survival-partition.sh
+./scripts/single-survival-partition.sh .env
 ```
 
 The script backs up `world_partition` state under `backups/partition-surgery/`, deletes only unassigned `Survival_1` dimensions greater than zero, and restarts Director plus Survival. Afterward, status should show one `world_partition` row and the game log should say `Server farm is READY (1 server(s))`.

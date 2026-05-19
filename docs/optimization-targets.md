@@ -19,7 +19,7 @@ Memory:
 
 - Use `compose.limits.example.yaml` as optional guardrails while profiling. The `survival` limit starts at 12Gi because that matches Funcom's official `Survival_1` workload limit.
 - Tighten limits only after measuring startup, idle, one-player, and transition attempts. The game process can spike far above later idle RSS.
-- Keep only the map processes actually needed for the test. Do not start Overmap or instanced maps until their launch arguments are known.
+- Keep only the map processes actually needed for the test. Use the base nine-map farm or 30-partition warm pool deliberately; each extra game-server process has meaningful memory cost.
 - Investigate Unreal command-line flags that disable unattended reporting, crash upload paths, or unused subsystems only if the image already exposes supported toggles.
 
 Storage:
@@ -43,7 +43,7 @@ Network:
 Peering and routing:
 
 - Treat `game_addr` and `igw_addr` separately. `game_addr` is the client-facing address; `igw_addr` is the server-to-server address.
-- Broken Deep Desert, Arrakeen, and Testing Station travel should be investigated as registration and handoff failures before performance tuning.
+- Broken Deep Desert, Arrakeen, Testing Station, or warm-pool travel should be investigated as registration and handoff failures before performance tuning.
 - Capture RabbitMQ users, queues, director FLS calls, and `world_partition`/`farm_state` rows around every transition attempt.
 
 ## Profiling Command

@@ -12,6 +12,7 @@ The official self-hosted package is Kubernetes-oriented. This repository transla
 - `director`: battlegroup director service.
 - `text-router`: text/auth routing service.
 - `gateway`: gateway service.
+- `admin-panel`: local LAN/VPN admin helper UI.
 - `survival`: `Survival_1`, the Hagga Basin starting map.
 - `overmap`: `Overmap`, the overland travel map.
 - `arrakeen`: `SH_Arrakeen`, the Arrakeen social hub.
@@ -21,6 +22,8 @@ The official self-hosted package is Kubernetes-oriented. This repository transla
 - `testing-waterfat`: `CB_Story_WaterFatManor`.
 - `deep-desert`: `DeepDesert_1`.
 - `proces-verbal`: `Story_ProcesVerbal`.
+
+`compose.allmaps.yaml` extends this base topology with the remaining warm-pool map servers for partitions 10-30. See `docs/full-farm.md` for the full service, map, partition, game-port, and IGW-port table.
 
 The game-server services use `scripts/run_server_safe.sh` instead of the image's default `/home/dune/run.sh`. The local launcher preserves command arguments containing spaces, prepares the saved/config symlink expected by Unreal, appends `-IGWBindAddress=$POD_IP`, and then starts `DuneSandboxServer.sh` as the `dune` user.
 
@@ -46,6 +49,7 @@ Only RabbitMQ and Postgres debug/admin ports bind to `127.0.0.1`. Game UDP ports
 
 ## Validation Boundary
 
-- Server-side full-farm registration is proven when status reports `farm_ready_alive=9 active_servers=9 partitions=9`.
+- Server-side base-farm registration is proven when status reports `farm_ready_alive=9 active_servers=9 partitions=9`.
+- Server-side 30-partition warm-pool registration is proven when status reports `farm_ready_alive=30 active_servers=30 partitions=30` with `COMPOSE_FILES='compose.yaml:compose.allmaps.yaml'`.
 - Client login and travel between maps still need live game-client validation.
 - The live token in `.env` is sensitive and should be rotated if it was exposed outside the host.

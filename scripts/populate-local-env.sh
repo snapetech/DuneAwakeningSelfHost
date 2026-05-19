@@ -16,7 +16,7 @@ else
   sed -i "s/^POSTGRES_SUPER_PASSWORD=.*/POSTGRES_SUPER_PASSWORD=$postgres_super_password/" "$env_file"
   sed -i "s/^POSTGRES_DUNE_PASSWORD=.*/POSTGRES_DUNE_PASSWORD=$postgres_dune_password/" "$env_file"
   sed -i "s/^RMQ_HTTP_TOKEN_AUTH_SECRET=.*/RMQ_HTTP_TOKEN_AUTH_SECRET=$rmq_secret/" "$env_file"
-  sed -i "s/^WORLD_UNIQUE_NAME=.*/WORLD_UNIQUE_NAME=sh-local-$world_suffix/" "$env_file"
+  sed -i "s/^WORLD_UNIQUE_NAME=.*/WORLD_UNIQUE_NAME=sh-example-$world_suffix/" "$env_file"
 fi
 
 mkdir -p "$tls_dir"
@@ -24,7 +24,7 @@ mkdir -p "$tls_dir"
 if [[ ! -f "$tls_dir/ca.crt" || ! -f "$tls_dir/server.crt" || ! -f "$tls_dir/server.key" ]]; then
   openssl genrsa -out "$tls_dir/ca.key" 4096
   openssl req -x509 -new -nodes -key "$tls_dir/ca.key" -sha256 -days 3650 \
-    -subj "/CN=dune-local-rabbitmq-ca" \
+    -subj "/CN=dune-example-rabbitmq-ca" \
     -out "$tls_dir/ca.crt"
 
   openssl genrsa -out "$tls_dir/server.key" 2048

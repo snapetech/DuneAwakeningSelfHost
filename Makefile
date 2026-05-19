@@ -1,7 +1,7 @@
 COMPOSE ?= docker compose
 ENV_FILE ?= .env.example
 
-.PHONY: validate compose-config secret-scan list-publishable preflight status recover-survival full-world-partitions verify-local-state-ignored
+.PHONY: validate compose-config secret-scan list-publishable preflight status recover-survival recover-map full-world-partitions verify-local-state-ignored
 
 validate: compose-config secret-scan verify-local-state-ignored
 
@@ -13,6 +13,13 @@ status:
 
 recover-survival:
 	./scripts/recover-survival.sh $(ENV_FILE)
+
+recover-map:
+	@if [ -z "$(SERVICE)" ] || [ -z "$(PARTITION_ID)" ]; then \
+		echo "Usage: make recover-map ENV_FILE=.env SERVICE=heighliner-dungeon PARTITION_ID=18"; \
+		exit 2; \
+	fi
+	./scripts/recover-map.sh $(ENV_FILE) $(SERVICE) $(PARTITION_ID)
 
 full-world-partitions:
 	./scripts/full-world-partitions.sh $(ENV_FILE)

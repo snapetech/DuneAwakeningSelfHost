@@ -7,10 +7,13 @@ import os
 import pathlib
 import secrets
 import shutil
+import socket
 import subprocess
 import threading
 import time
+import urllib.error
 import urllib.parse
+import urllib.request
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -36,7 +39,7 @@ ITEM_GRANTS_ENABLED = os.environ.get("DUNE_ADMIN_ITEM_GRANTS_ENABLED", "true").l
 MAX_BODY_BYTES = int(os.environ.get("DUNE_ADMIN_MAX_BODY_BYTES", "65536"))
 ALLOWED_HOSTS = {
     host.strip().lower()
-    for host in os.environ.get("DUNE_ADMIN_ALLOWED_HOSTS", "127.0.0.1:18080,localhost:18080,duneadmin.home").split(",")
+    for host in os.environ.get("DUNE_ADMIN_ALLOWED_HOSTS", "127.0.0.1:18080,localhost:18080,admin.example.test").split(",")
     if host.strip()
 }
 AUTH_FAILURE_WINDOW_SECONDS = 60
@@ -52,6 +55,8 @@ ALLOWED_CONFIGS = {
     "gateway.ini": CONFIG_ROOT / "gateway.ini",
     "rabbitmq-admin.conf": CONFIG_ROOT / "rabbitmq-admin.conf",
     "rabbitmq-game.conf": CONFIG_ROOT / "rabbitmq-game.conf",
+    "UserEngine.ini": CONFIG_ROOT / "UserEngine.ini",
+    "UserGame.ini": CONFIG_ROOT / "UserGame.ini",
 }
 
 DIRECTOR_TRANSFER_RULESETS = (
@@ -81,7 +86,7 @@ ENV_KEY_DEFINITIONS = {
     "WORLD_UNIQUE_NAME": {"group": "World", "secret": False, "restart": True, "why": "Stable internal server/world identifier used for registration and routing."},
     "WORLD_REGION": {"group": "World", "secret": False, "restart": True, "why": "Farm region/datacenter label passed into game services."},
     "EXTERNAL_ADDRESS": {"group": "Network", "secret": False, "restart": True, "why": "Address advertised to clients/FLS for game traffic."},
-    "DUNE_SERVER_LOGIN_PASSWORD": {"group": "Access", "secret": True, "restart": True, "why": "Optional player login password passed into game server console variables."},
+    "DUNE_SERVER_LOGIN_PASSWORD": {"group": "Access", "secret": False, "restart": True, "why": "Optional player login password passed into game server console variables. Visible here so trusted operators can share and rotate it."},
     "FLS_SECRET": {"group": "Secrets", "secret": True, "restart": True, "why": "Funcom Live Services host token. Required for service auth and routing."},
     "POSTGRES_SUPER_PASSWORD": {"group": "Secrets", "secret": True, "restart": True, "why": "Postgres superuser password used during database initialization."},
     "POSTGRES_DUNE_PASSWORD": {"group": "Secrets", "secret": True, "restart": True, "why": "Application database password used by game services and admin tooling."},
@@ -208,6 +213,10 @@ def write_safe_env(updates):
             rendered.append(f"{key}={updates[key]}")
     backup_file(ENV_FILE)
     ENV_FILE.write_text("\n".join(rendered) + "\n", encoding="utf-8")
+    try:
+        ENV_FILE.chmod(0o600)
+    except OSError:
+        pass
 
 
 def backup_file(path):
@@ -463,6 +472,9 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/ops/health":
                 self.require_token()
                 self.json(self.ops_health())
+            elif parsed.path == "/api/ops/network":
+                self.require_token()
+                self.json(self.network_health())
             elif parsed.path == "/api/ops/security":
                 self.require_token()
                 self.json(self.security_audit())
@@ -927,9 +939,14 @@ class Handler(BaseHTTPRequestHandler):
         return {"ok": True, "item_id": item_id, "stack_size": stack_size, "item": query("select * from dune.load_item(%s)", (item_id,))}
 
     def ops_health(self):
-        farm = query("select server_id,farm_id,ready,alive,map,revision,game_addr,igw_addr,connected_players from dune.farm_state order by map, server_id")
-        partitions = query("select partition_id,server_id,map,dimension_index,label from dune.world_partition order by partition_id")
+        farm = query("select server_id,farm_id,ready,alive,map,revision,game_addr,game_port,igw_addr,igw_port,connected_players from dune.farm_state order by map, server_id")
+        partitions = query("select partition_id,server_id,map,dimension_index,label,blocked from dune.world_partition order by partition_id")
         active = query("select * from dune.active_server_ids order by server_id")
+        active_ids = {row.get("server_id") for row in active}
+        map_status = self.map_health_rows(farm, partitions, active_ids)
+        expected = len(partitions)
+        ready_alive = sum(1 for row in farm if row.get("ready") and row.get("alive"))
+        active_count = len(active)
         player_counts = query("""
             select
               coalesce((select sum(connected_players) from dune.farm_state), 0) as connected_players_reported,
@@ -938,18 +955,103 @@ class Handler(BaseHTTPRequestHandler):
               (select count(*) from dune.get_player_online_state_within_grace_period_for_each_server()) as grace_period_entries
         """)[0]
         verdicts = [
-            {"name": "farm ready/alive", "ok": any(row.get("ready") and row.get("alive") for row in farm)},
-            {"name": "active server ids", "ok": bool(active)},
-            {"name": "world partitions", "ok": bool(partitions)},
+            {"name": "all partitions have ready/alive farm rows", "ok": expected > 0 and ready_alive == expected, "value": f"{ready_alive}/{expected}"},
+            {"name": "active server ids match partitions", "ok": expected > 0 and active_count == expected, "value": f"{active_count}/{expected}"},
+            {"name": "map health rows", "ok": expected > 0 and all(row.get("online") for row in map_status), "value": f"{sum(1 for row in map_status if row.get('online'))}/{len(map_status)}"},
+            {"name": "RabbitMQ-backed farm registration", "ok": expected > 0 and ready_alive == expected and active_count == expected, "value": "inferred from farm_state and active_server_ids"},
             {"name": "player counts query", "ok": True},
         ]
+        network = self.network_health()
+        verdicts.extend(network["verdicts"])
         return {
             "verdicts": verdicts,
             "playerCounts": player_counts,
+            "summary": {
+                "readyAlive": ready_alive,
+                "expectedPartitions": expected,
+                "activeServers": active_count,
+                "onlineMaps": sum(1 for row in map_status if row.get("online")),
+                "totalMaps": len(map_status),
+            },
+            "mapStatus": map_status,
+            "network": network,
             "farmState": farm,
             "partitions": partitions,
             "activeServers": active,
         }
+
+    def map_health_rows(self, farm, partitions, active_ids):
+        farm_by_server = {row.get("server_id"): row for row in farm}
+        rows = []
+        for part in partitions:
+            server_id = part.get("server_id")
+            farm_row = farm_by_server.get(server_id, {})
+            ready = bool(farm_row.get("ready"))
+            alive = bool(farm_row.get("alive"))
+            active = server_id in active_ids
+            online = bool(server_id) and ready and alive and active and not bool(part.get("blocked"))
+            rows.append({
+                "partition_id": part.get("partition_id"),
+                "map": part.get("map"),
+                "label": part.get("label"),
+                "dimension": part.get("dimension_index"),
+                "server_id": server_id,
+                "online": online,
+                "ready": ready,
+                "alive": alive,
+                "active": active,
+                "blocked": bool(part.get("blocked")),
+                "players": farm_row.get("connected_players", 0),
+                "game": self.addr_port(farm_row.get("game_addr"), farm_row.get("game_port")),
+                "igw": self.addr_port(farm_row.get("igw_addr"), farm_row.get("igw_port")),
+            })
+        return rows
+
+    def addr_port(self, addr, port):
+        if not addr or not port:
+            return ""
+        return f"{addr}:{port}"
+
+    def network_health(self):
+        probes = [
+            self.tcp_probe("postgres", "postgres", 5432),
+            self.http_probe("dune account portal", "https://account.duneawakening.com/"),
+            self.http_probe("Dune website", "https://duneawakening.com/"),
+            self.http_probe("Funcom website", "https://funcom.com/"),
+        ]
+        okish = [probe for probe in probes if probe.get("ok") or probe.get("httpStatus") in (401, 403, 404)]
+        return {
+            "generatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "probes": probes,
+            "verdicts": [
+                {"name": "local database network", "ok": probes[0].get("ok"), "value": "postgres:5432"},
+                {"name": "upstream HTTP reachable", "ok": len(okish) >= len(probes) - 1, "value": f"{len(okish)}/{len(probes)}"},
+            ],
+        }
+
+    def tcp_probe(self, name, host, port):
+        start = time.monotonic()
+        try:
+            with socket.create_connection((host, port), timeout=3):
+                latency_ms = int((time.monotonic() - start) * 1000)
+                return {"name": name, "type": "tcp", "target": f"{host}:{port}", "ok": True, "latencyMs": latency_ms}
+        except OSError as exc:
+            latency_ms = int((time.monotonic() - start) * 1000)
+            return {"name": name, "type": "tcp", "target": f"{host}:{port}", "ok": False, "latencyMs": latency_ms, "error": str(exc)}
+
+    def http_probe(self, name, url):
+        start = time.monotonic()
+        req = urllib.request.Request(url, headers={"User-Agent": "dune-admin-health/1.0"})
+        try:
+            with urllib.request.urlopen(req, timeout=5) as response:
+                latency_ms = int((time.monotonic() - start) * 1000)
+                return {"name": name, "type": "http", "target": url, "ok": 200 <= response.status < 400, "httpStatus": response.status, "latencyMs": latency_ms}
+        except urllib.error.HTTPError as exc:
+            latency_ms = int((time.monotonic() - start) * 1000)
+            return {"name": name, "type": "http", "target": url, "ok": 200 <= exc.code < 400, "httpStatus": exc.code, "latencyMs": latency_ms, "error": exc.reason}
+        except Exception as exc:
+            latency_ms = int((time.monotonic() - start) * 1000)
+            return {"name": name, "type": "http", "target": url, "ok": False, "latencyMs": latency_ms, "error": str(exc)}
 
     def security_audit(self):
         env_values = read_env()
@@ -1254,7 +1356,7 @@ INDEX = r"""<!doctype html>
         <button class="tab" data-tab="settings">Settings</button>
         <button class="tab" data-tab="mutations">Admin Actions</button>
       </div>
-      <div class="card hostNote"><div class="muted"><b>duneadmin.home</b><br>LAN/VPN admin surface. Use the token to unlock data and writes.</div></div>
+      <div class="card hostNote"><div class="muted"><b>admin.example.test</b><br>LAN/VPN admin surface. Use the token to unlock data and writes.</div></div>
       <div class="card">
         <h3>Runtime</h3>
         <div id="statusSummary"></div>
@@ -1297,6 +1399,23 @@ function options(rows, key, fallback=''){
   const vals = (rows || []).map(r => r[key]).filter(v => v !== undefined && v !== null);
   if (!vals.length && fallback) vals.push(fallback);
   return vals.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+}
+function currencyBalanceOptions(rows, fallbackRows){
+  const vals = rows || [];
+  if (!vals.length) return options(fallbackRows, 'currency_id', '1');
+  return vals.map(r => {
+    const balance = r.balance ?? '';
+    return `<option value="${esc(r.currency_id)}" data-balance="${esc(balance)}">currency ${esc(r.currency_id)} | balance ${esc(balance)}</option>`;
+  }).join('');
+}
+function specializationOptions(rows, fallbackRows){
+  const vals = rows || [];
+  if (!vals.length) return options(fallbackRows, 'track_type');
+  return vals.map(r => {
+    const xp = r.xp_amount ?? '';
+    const level = r.level ?? '';
+    return `<option value="${esc(r.track_type)}" data-xp="${esc(xp)}" data-level="${esc(level)}">${esc(r.track_type)} | xp ${esc(xp)} | level ${esc(level)}</option>`;
+  }).join('');
 }
 function inventoryOptions(rows){
   const vals = rows || [];
@@ -1346,6 +1465,17 @@ function templateDatalist(ref){
 function checks(rows){
   return `<table><thead><tr><th>Check</th><th>Status</th><th>Value</th></tr></thead><tbody>${(rows || []).map(r=>`<tr><td>${esc(r.name)}</td><td class="${r.ok ? 'ok' : 'dangerText'}">${r.ok ? 'OK' : 'Needs attention'}</td><td>${esc(r.value ?? '')}</td></tr>`).join('')}</tbody></table>`;
 }
+function healthCell(ok, yes='online', no='offline'){
+  return `<span class="pill ${ok ? 'ok' : 'bad'}">${ok ? yes : no}</span>`;
+}
+function mapStatusTable(rows){
+  if (!rows || !rows.length) return '<div class="muted">No map status rows.</div>';
+  return `<div class="tableWrap"><table><thead><tr><th>Map</th><th>Status</th><th>Ready</th><th>Alive</th><th>Active</th><th>Players</th><th>Game</th><th>IGW</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.label || r.map)}<br><span class="muted">${esc(r.map)} #${esc(r.partition_id)}</span></td><td>${healthCell(r.online)}</td><td>${healthCell(r.ready, 'yes', 'no')}</td><td>${healthCell(r.alive, 'yes', 'no')}</td><td>${healthCell(r.active, 'yes', 'no')}</td><td>${esc(r.players ?? 0)}</td><td>${esc(r.game)}</td><td>${esc(r.igw)}</td></tr>`).join('')}</tbody></table></div>`;
+}
+function probeTable(rows){
+  if (!rows || !rows.length) return '<div class="muted">No probes.</div>';
+  return `<div class="tableWrap"><table><thead><tr><th>Name</th><th>Status</th><th>Target</th><th>Latency</th><th>HTTP</th><th>Error</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.name)}</td><td>${healthCell(r.ok || [401,403,404].includes(r.httpStatus), r.ok ? 'OK' : 'reachable', 'down')}</td><td>${esc(r.target)}</td><td>${esc(r.latencyMs)}ms</td><td>${esc(r.httpStatus ?? '')}</td><td>${esc(r.error ?? '')}</td></tr>`).join('')}</tbody></table></div>`;
+}
 function signalList(groups){
   return Object.entries(groups || {}).map(([group, rows]) => `<div class="card"><h2>${esc(group)}</h2><table><thead><tr><th>Name</th><th>Value</th><th>Why</th></tr></thead><tbody>${(rows || []).map(r=>`<tr><td>${esc(r.name)}</td><td>${esc(Array.isArray(r.value) ? r.value.join(', ') : r.value)}</td><td>${esc(r.why)}</td></tr>`).join('')}</tbody></table></div>`).join('');
 }
@@ -1386,7 +1516,7 @@ function directorTransferEditor(payload){
 function show(name){ current=name; document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active', b.dataset.tab === name)); load(); }
 function renderStatus(data){
   document.getElementById('statusSummary').innerHTML = [
-    statusPill('token', data.adminTokenConfigured),
+    statusPill('admin token configured', data.adminTokenConfigured),
     statusPill('item grants', data.itemGrantsEnabled),
     `<span class="pill ${data.mutationsEnabled ? 'warn' : 'ok'}">mutations: ${data.mutationsEnabled ? 'enabled' : 'off'}</span>`,
     `<span class="pill">db: ${esc(data.database)}</span>`
@@ -1412,16 +1542,17 @@ async function load(){
   }
 }
 async function overview(){
-  const state = await api('/api/server/state');
-  const ready = (state.farmState || []).filter(r => r.ready && r.alive).length;
+  const health = await api('/api/ops/health');
+  const state = health;
+  const summary = health.summary || {};
   const players = (state.farmState || []).reduce((sum, r) => sum + Number(r.connected_players || 0), 0);
-  view.innerHTML = `<div class="sectionHeader"><h2>Overview</h2><span class="pill">server: duneadmin.home</span></div><div class="metricGrid">${metric('Ready Servers', `${ready}/${(state.farmState || []).length}`, ready ? 'ok' : 'dangerText')}${metric('World Partitions', (state.partitions || []).length)}${metric('Active IDs', (state.activeServers || []).length)}${metric('Reported Players', players)}</div><div class="card"><h2>Farm State</h2>${table(state.farmState)}</div><div class="card"><h2>Partitions</h2>${table(state.partitions)}</div><div class="card"><h2>Active Servers</h2>${table(state.activeServers)}</div>`;
+  view.innerHTML = `<div class="sectionHeader"><h2>Overview</h2><span class="pill">server: admin.example.test</span></div><div class="metricGrid">${metric('Ready Servers', `${summary.readyAlive ?? 0}/${summary.expectedPartitions ?? 0}`, summary.readyAlive === summary.expectedPartitions ? 'ok' : 'dangerText')}${metric('Online Maps', `${summary.onlineMaps ?? 0}/${summary.totalMaps ?? 0}`, summary.onlineMaps === summary.totalMaps ? 'ok' : 'dangerText')}${metric('Active IDs', `${summary.activeServers ?? 0}/${summary.expectedPartitions ?? 0}`)}${metric('Reported Players', players)}</div><div class="card"><h2>Map Health</h2>${mapStatusTable(health.mapStatus)}</div><div class="card"><h2>Network and Upstream</h2>${probeTable(health.network?.probes)}</div><div class="card"><h2>Health Verdict</h2>${checks(health.verdicts)}</div>`;
 }
 async function ops(){
   const health = await api('/api/ops/health');
   const opt = await api('/api/ops/optimization');
   const pc = health.playerCounts || {};
-  view.innerHTML = `<div class="sectionHeader"><h2>Operations</h2><span class="pill">health and cost signals</span></div><div class="metricGrid">${metric('Connected Players', pc.connected_players_reported ?? 0)}${metric('Online Controllers', pc.online_controller_ids ?? 0)}${metric('Recent Online State', pc.online_or_recently_disconnected ?? 0)}${metric('Grace Entries', pc.grace_period_entries ?? 0)}</div><div class="card"><h2>Health Verdict</h2>${checks(health.verdicts)}</div><div class="card"><h2>Farm State</h2>${table(health.farmState)}</div><div class="card"><h2>Partitions</h2>${table(health.partitions)}</div>${signalList(opt)}`;
+  view.innerHTML = `<div class="sectionHeader"><h2>Operations</h2><span class="pill">health and cost signals</span></div><div class="metricGrid">${metric('Connected Players', pc.connected_players_reported ?? 0)}${metric('Online Controllers', pc.online_controller_ids ?? 0)}${metric('Recent Online State', pc.online_or_recently_disconnected ?? 0)}${metric('Grace Entries', pc.grace_period_entries ?? 0)}</div><div class="card"><h2>Health Verdict</h2>${checks(health.verdicts)}</div><div class="card"><h2>Map Online/Offline</h2>${mapStatusTable(health.mapStatus)}</div><div class="card"><h2>Local and Upstream Network</h2>${probeTable(health.network?.probes)}</div><div class="card"><h2>Farm State</h2>${table(health.farmState)}</div><div class="card"><h2>Partitions</h2>${table(health.partitions)}</div>${signalList(opt)}`;
 }
 async function security(){
   const audit = await api('/api/ops/security');
@@ -1496,6 +1627,8 @@ async function mutations(){
   const loadCharacterAdminDetails = async (accountId) => {
     const itemSelect = document.getElementById('itemEditSelect');
     const inventorySelect = document.getElementById('grantInventorySelect');
+    const currencySelect = document.getElementById('curid');
+    const trackSelect = document.getElementById('track');
     if (!itemSelect || !accountId) return;
     itemSelect.innerHTML = '<option value="">Loading items...</option>';
     if (inventorySelect) inventorySelect.innerHTML = '<option value="">Loading inventories...</option>';
@@ -1504,7 +1637,17 @@ async function mutations(){
       const detail = await api('/api/characters/' + encodeURIComponent(accountId));
       const items = detail.inventoryItems || [];
       const inventories = detail.inventories || [];
+      const currency = detail.currency || [];
+      const specialization = detail.specialization || [];
       itemSelect.innerHTML = inventoryItemOptions(items);
+      if (currencySelect) {
+        currencySelect.innerHTML = currencyBalanceOptions(currency, ref.currencyIds);
+      }
+      if (trackSelect) {
+        trackSelect.innerHTML = specializationOptions(specialization, ref.specializationTrackTypes);
+        const level = trackSelect.selectedOptions?.[0]?.dataset.level || '';
+        if (level) document.getElementById('xplevel').value = level;
+      }
       if (inventorySelect) {
         inventorySelect.innerHTML = inventoryOptions(inventories);
         document.getElementById('grantInventory').value = inventorySelect.value || '';
@@ -1513,6 +1656,8 @@ async function mutations(){
       }
       document.getElementById('itemEditResult').textContent = JSON.stringify({
         character: detail.player?.character_name || accountId,
+        currencyBalances: currency.length,
+        specializationTracks: specialization.length,
         inventories: inventories.length,
         inventoryItems: items.length
       }, null, 2);
@@ -1542,6 +1687,12 @@ async function mutations(){
     const option = e.target.selectedOptions?.[0];
     document.getElementById('itemEditId').value = e.target.value || '';
     if (option?.dataset.stack) document.getElementById('itemEditStack').value = option.dataset.stack;
+    if (option?.dataset.template && document.getElementById('grantTemplate')) document.getElementById('grantTemplate').value = option.dataset.template;
+    if (option?.dataset.inventory && document.getElementById('grantInventory')) document.getElementById('grantInventory').value = option.dataset.inventory;
+  });
+  document.getElementById('track').addEventListener('change', e => {
+    const level = e.target.selectedOptions?.[0]?.dataset.level || '';
+    if (level) document.getElementById('xplevel').value = level;
   });
   const invSelect = document.getElementById('grantInventorySelect');
   if (invSelect && invSelect.value) document.getElementById('grantInventory').value = invSelect.value;

@@ -1,6 +1,6 @@
 # Routing Investigation
 
-This document tracks client travel validation after the Compose farm has server-side registration for Hagga Basin, Overmap, Deep Desert, Arrakeen, Harko Village, and the first testing/story maps.
+This document tracks client travel validation after the Compose farm has server-side registration for Hagga Basin, Overmap, Deep Desert, Arrakeen, Harko Village, testing/story maps, and the optional 30-partition warm pool.
 
 ## Current Read
 
@@ -8,7 +8,7 @@ The initial issue looked like buggy or incomplete self-host plumbing, not unrele
 
 Funcom's private-server docs say a rented/private server contains one Hagga Basin. That server belongs to a larger World where the provider supplies shared social hubs and the Deep Desert. CubeCoders' self-host guide lists Deep Desert, Arrakeen, and Testing Stations as currently unreachable, and also lists broken FLS world-name generation.
 
-As of May 19, 2026, the Compose layout can stand up one ready/alive server for each of:
+As of May 19, 2026, the base Compose layout can stand up one ready/alive server for each of:
 
 - `Survival_1`
 - `Overmap`
@@ -19,6 +19,8 @@ As of May 19, 2026, the Compose layout can stand up one ready/alive server for e
 - `CB_Story_WaterFatManor`
 - `DeepDesert_1`
 - `Story_ProcesVerbal`
+
+With `compose.allmaps.yaml`, the warm-pool layout can stand up all 30 self-host partition rows documented in `docs/full-farm.md`.
 
 The remaining question is whether the live client can travel through those registrations. Likely failure surfaces are:
 
@@ -34,6 +36,7 @@ Capture each transition separately. Do not combine logs from multiple attempts u
 - Hagga Basin to Deep Desert.
 - Hagga Basin to Arrakeen.
 - Hagga Basin to Testing Station.
+- Lost Harvest, Art of Kanly, faction outposts, ecolabs, overland islands, and dungeons represented by partitions 10-30.
 - Arrakeen or Harko Village back to overland, if reachable later.
 - Deep Desert server-to-server movement, if reachable later.
 
@@ -58,6 +61,12 @@ Use the capture helper:
 ./scripts/capture-routing.sh .env hagga-to-deep-desert-before
 # Attempt the transition in the client.
 ./scripts/capture-routing.sh .env hagga-to-deep-desert-after
+```
+
+For the 30-partition warm pool, include the all-maps overlay:
+
+```bash
+COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' ./scripts/capture-routing.sh .env failed-survival-to-arrakeen
 ```
 
 Captures are written under `captures/`, which is ignored by git. Review every capture before sharing it because logs and database rows can still contain world names, addresses, character names, or account/session identifiers.
@@ -123,7 +132,7 @@ Answer these with `rabbitmqctl` and logs:
 
 ## Launch Parity Questions
 
-The direct game-server launch is still experimental. For unreachable maps, compare against the official operator output:
+The direct game-server launch path is sufficient for server-side registration in this Compose topology. For unreachable client routes, compare against the official operator output:
 
 - Map name and partition index.
 - `ServerName`, `DatacenterId`, `FarmRegion`, and battlegroup display name.
