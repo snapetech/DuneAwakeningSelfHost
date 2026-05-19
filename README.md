@@ -4,7 +4,7 @@ Work-in-progress Linux/Compose harness for the Steam-installed Dune: Awakening s
 
 The goal is a reproducible Linux host layout that starts from Funcom's current container images but avoids the Hyper-V/k3s/operator wrapper where possible. This repository does not contain, mirror, or license any Funcom server binaries, container images, Steam package files, game assets, or secrets.
 
-As of 2026-05-19, Steam exposes `Dune: Awakening Self-Hosted Server` as a released live tool, not only a PTC-only server package. Funcom's current live self-hosting FAQ still points token generation at `https://account-pts.duneawakening.com/`, so the hostname is PTS-looking even when the package being run is the live self-hosted server tool.
+As of 2026-05-19, Steam exposes `Dune: Awakening Self-Hosted Server` as a released live tool, not only a PTC-only server package. Funcom's current live self-hosting FAQ still points token generation at `https://account-pts.duneawakening.com/`, but the proper live token generator is in the Dune Awakening Accounts at 'https://account.duneawakening.com/'.
 
 ## Current State
 
