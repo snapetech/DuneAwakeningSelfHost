@@ -54,6 +54,26 @@ ALLOWED_CONFIGS = {
     "rabbitmq-game.conf": CONFIG_ROOT / "rabbitmq-game.conf",
 }
 
+DIRECTOR_TRANSFER_RULESETS = (
+    "DenyAll",
+    "AllowFromPrivateOnly",
+    "AllowFromOfficialOnly",
+    "AllowFromPrivateAndOfficial",
+)
+
+DIRECTOR_TRANSFER_SETTINGS = {
+    "ShouldDeleteOriginCharactersDuringTransfers": {"type": "bool", "default": "true", "why": "Deletes the origin character after a successful transfer into this battlegroup."},
+    "AcceptOutgoingCharacterTransfers": {"type": "bool", "default": "true", "why": "Allows characters on this battlegroup to transfer out."},
+    "IncomingCharacterTransfers": {"type": "ruleset", "default": "DenyAll", "why": "Controls which origin server types can transfer characters into this battlegroup."},
+    "ExportCharacterTimeout": {"type": "int", "default": "900", "why": "Seconds before the export query times out."},
+    "ImportCharacterTimeout": {"type": "int", "default": "900", "why": "Seconds before the import query times out."},
+    "FreeToTransferCharactersFrom": {"type": "bool", "default": "false", "why": "Skips transfer token cost for transfers from this battlegroup."},
+    "FreeToTransferCharactersTo": {"type": "bool", "default": "false", "why": "Skips transfer token cost for transfers to this battlegroup."},
+    "ValidateBeforeImportCharacterTimeout": {"type": "int", "default": "180", "why": "Seconds before canceling a transfer stuck in validation before import starts."},
+    "ActiveTransfersResolveProcessFrequencySeconds": {"type": "int", "default": "10", "why": "Seconds between resolving unhandled active transfers."},
+    "CharacterTransferDbFunctionTimeLogThresholdMs": {"type": "int", "default": "10000", "why": "Milliseconds before character transfer DB function timing is logged."},
+}
+
 ENV_KEY_DEFINITIONS = {
     "DUNE_STEAM_SERVER_DIR": {"group": "Install", "secret": False, "restart": False, "why": "Local Steam tool path used by image loading and preflight scripts."},
     "DUNE_IMAGE_TAG": {"group": "Install", "secret": False, "restart": True, "why": "Funcom container image tag used by Compose services."},
@@ -194,6 +214,114 @@ def backup_file(path):
     BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     shutil.copy2(path, BACKUP_ROOT / f"{stamp}-{path.name}")
+
+
+def strip_ini_comment(value):
+    for marker in (";;", ";"):
+        if marker in value:
+            value = value.split(marker, 1)[0]
+    return value.strip()
+
+
+def read_director_transfer_settings():
+    values = {key: meta["default"] for key, meta in DIRECTOR_TRANSFER_SETTINGS.items()}
+    path = ALLOWED_CONFIGS["director.ini"]
+    if not path.exists():
+        return values
+    in_battlegroup = False
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            in_battlegroup = line.strip("[]").strip().lower() == "battlegroup"
+            continue
+        if not in_battlegroup or "=" not in raw_line:
+            continue
+        key, value = raw_line.split("=", 1)
+        key = key.strip()
+        if key in DIRECTOR_TRANSFER_SETTINGS:
+            values[key] = strip_ini_comment(value)
+    return values
+
+
+def validate_director_transfer_settings(updates):
+    validated = {}
+    for key, value in updates.items():
+        if key not in DIRECTOR_TRANSFER_SETTINGS:
+            continue
+        meta = DIRECTOR_TRANSFER_SETTINGS[key]
+        text = str(value).strip()
+        if meta["type"] == "bool":
+            lowered = text.lower()
+            if lowered not in ("true", "false"):
+                raise ValueError(f"{key} must be true or false")
+            validated[key] = lowered
+        elif meta["type"] == "int":
+            try:
+                number = int(text)
+            except ValueError as exc:
+                raise ValueError(f"{key} must be an integer") from exc
+            if number < 0:
+                raise ValueError(f"{key} must be >= 0")
+            validated[key] = str(number)
+        elif meta["type"] == "ruleset":
+            if text not in DIRECTOR_TRANSFER_RULESETS:
+                raise ValueError(f"{key} must be one of: {', '.join(DIRECTOR_TRANSFER_RULESETS)}")
+            validated[key] = text
+    return validated
+
+
+def write_director_transfer_settings(updates):
+    path = ALLOWED_CONFIGS["director.ini"]
+    values = validate_director_transfer_settings(updates)
+    original = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    rendered = []
+    seen = set()
+    in_battlegroup = False
+    inserted = False
+
+    def append_missing():
+        nonlocal inserted
+        if inserted:
+            return
+        for key in DIRECTOR_TRANSFER_SETTINGS:
+            if key in seen:
+                continue
+            rendered.append(f"{key}={values.get(key, DIRECTOR_TRANSFER_SETTINGS[key]['default'])}")
+            seen.add(key)
+        inserted = True
+
+    for raw_line in original:
+        stripped = raw_line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            if in_battlegroup:
+                append_missing()
+            in_battlegroup = stripped.strip("[]").strip().lower() == "battlegroup"
+            rendered.append(raw_line)
+            continue
+        if in_battlegroup and "=" in raw_line:
+            key, _ = raw_line.split("=", 1)
+            key = key.strip()
+            if key in DIRECTOR_TRANSFER_SETTINGS:
+                rendered.append(f"{key}={values.get(key, DIRECTOR_TRANSFER_SETTINGS[key]['default'])}")
+                seen.add(key)
+                continue
+        rendered.append(raw_line)
+
+    if not original:
+        rendered.extend(["[ Battlegroup ]"])
+        in_battlegroup = True
+    if in_battlegroup:
+        append_missing()
+    elif not inserted:
+        if rendered and rendered[-1].strip():
+            rendered.append("")
+        rendered.append("[ Battlegroup ]")
+        append_missing()
+
+    backup_file(path)
+    path.write_text("\n".join(rendered) + "\n", encoding="utf-8")
 
 
 def parse_body(handler):
@@ -1045,32 +1173,52 @@ INDEX = r"""<!doctype html>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Dune Admin</title>
   <style nonce="__NONCE__">
-    :root { color-scheme: dark; --bg:#111411; --panel:#191d19; --muted:#9da89e; --line:#30382f; --text:#ecf2e8; --accent:#d7a64a; --danger:#d66b5f; --ok:#7bbf74; }
+    :root { color-scheme: dark; --bg:#101310; --panel:#191d19; --panel2:#141814; --muted:#9da89e; --line:#30382f; --text:#ecf2e8; --accent:#d7a64a; --danger:#d66b5f; --ok:#7bbf74; --warn:#e0b45e; }
+    * { box-sizing:border-box; }
     body { margin:0; font:14px/1.45 system-ui, sans-serif; background:var(--bg); color:var(--text); }
-    header { display:flex; justify-content:space-between; align-items:center; gap:16px; padding:14px 18px; border-bottom:1px solid var(--line); background:#151915; position:sticky; top:0; }
+    header { display:flex; justify-content:space-between; align-items:center; gap:16px; padding:14px 18px; border-bottom:1px solid var(--line); background:#151915; position:sticky; top:0; z-index:3; }
     h1 { font-size:18px; margin:0; }
-    main { display:grid; grid-template-columns:320px 1fr; min-height:calc(100vh - 58px); }
-    nav { border-right:1px solid var(--line); padding:14px; }
-    section { padding:18px; }
+    h2 { font-size:16px; margin:0 0 10px; }
+    h3 { font-size:13px; margin:0 0 8px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
+    main { display:grid; grid-template-columns:280px minmax(0,1fr); min-height:calc(100vh - 58px); }
+    nav { border-right:1px solid var(--line); padding:14px; background:#121612; position:sticky; top:58px; height:calc(100vh - 58px); overflow:auto; }
+    section { padding:18px; min-width:0; }
     button, input, select, textarea { font:inherit; border:1px solid var(--line); background:#101310; color:var(--text); border-radius:6px; padding:8px 10px; }
-    button { cursor:pointer; background:#22291f; }
+    button { cursor:pointer; background:#22291f; white-space:nowrap; }
     button.primary { background:var(--accent); color:#16120a; border-color:#e0b45e; font-weight:700; }
     button.danger { background:#35201e; color:#ffd5d0; border-color:#78423c; }
     input, select { width:100%; box-sizing:border-box; }
     textarea { width:100%; min-height:340px; box-sizing:border-box; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; }
-    .tabs { display:flex; gap:8px; flex-wrap:wrap; }
-    .tab { padding:8px 10px; }
-    .tab.active { border-color:var(--accent); color:var(--accent); }
+    .tabs { display:grid; gap:8px; }
+    .tab { padding:9px 10px; text-align:left; }
+    .tab.active { border-color:var(--accent); color:var(--accent); background:#252416; }
     .card { border:1px solid var(--line); border-radius:8px; background:var(--panel); padding:14px; margin-bottom:14px; }
-    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:12px; }
+    .metricGrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-bottom:14px; }
+    .metric { border:1px solid var(--line); border-radius:8px; background:var(--panel2); padding:12px; min-height:82px; }
+    .metric .label { color:var(--muted); font-size:12px; }
+    .metric .value { font-size:20px; font-weight:700; margin-top:6px; overflow-wrap:anywhere; }
+    .pill { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line); border-radius:999px; padding:5px 9px; background:#101310; color:var(--muted); font-size:12px; }
+    .pill.ok { border-color:#315e31; color:var(--ok); }
+    .pill.warn { border-color:#6d5624; color:var(--warn); }
+    .pill.bad { border-color:#743932; color:var(--danger); }
     .row { display:flex; gap:8px; align-items:center; margin:8px 0; }
+    .toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:12px; }
+    .sectionHeader { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; }
     .muted { color:var(--muted); }
     .ok { color:var(--ok); }
     .dangerText { color:var(--danger); }
+    label span { display:block; margin-top:5px; font-size:12px; }
     table { width:100%; border-collapse:collapse; }
     th, td { text-align:left; border-bottom:1px solid var(--line); padding:7px 6px; vertical-align:top; }
-    pre { white-space:pre-wrap; overflow:auto; background:#0d100d; border:1px solid var(--line); padding:10px; border-radius:6px; }
-    @media (max-width: 820px) { main { grid-template-columns:1fr; } nav { border-right:0; border-bottom:1px solid var(--line); } }
+    .tableWrap { overflow:auto; border:1px solid var(--line); border-radius:8px; }
+    .tableWrap table th { background:#151915; position:sticky; top:0; }
+    pre { white-space:pre-wrap; overflow:auto; background:#0d100d; border:1px solid var(--line); padding:10px; border-radius:6px; max-height:360px; }
+    #statusSummary { display:grid; gap:8px; }
+    #statusRaw { max-height:180px; font-size:12px; }
+    .hostNote { font-size:13px; line-height:1.35; }
+    .hidden { display:none; }
+    @media (max-width: 820px) { header { align-items:flex-start; flex-direction:column; } main { grid-template-columns:1fr; } nav { position:static; height:auto; border-right:0; border-bottom:1px solid var(--line); } .tabs { grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); } }
   </style>
 </head>
 <body>
@@ -1089,8 +1237,15 @@ INDEX = r"""<!doctype html>
         <button class="tab" data-tab="settings">Settings</button>
         <button class="tab" data-tab="mutations">Admin Actions</button>
       </div>
-      <div class="card"><div class="muted">Host this behind local DNS as <code>duneadmin.home</code>. Keep it LAN/VPN-only.</div></div>
-      <pre id="status"></pre>
+      <div class="card hostNote"><div class="muted"><b>duneadmin.home</b><br>LAN/VPN admin surface. Use the token to unlock data and writes.</div></div>
+      <div class="card">
+        <h3>Runtime</h3>
+        <div id="statusSummary"></div>
+        <details>
+          <summary class="muted">Raw status</summary>
+          <pre id="statusRaw"></pre>
+        </details>
+      </div>
     </nav>
     <section id="view"></section>
   </main>
@@ -1112,7 +1267,13 @@ function esc(v){ return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','
 function table(rows){
   if (!rows || !rows.length) return '<div class="muted">No rows.</div>';
   const keys = Object.keys(rows[0]);
-  return `<table><thead><tr>${keys.map(k=>`<th>${esc(k)}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr data-id="${esc(r.account_id ?? '')}">${keys.map(k=>`<td>${esc(r[k])}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+  return `<div class="tableWrap"><table><thead><tr>${keys.map(k=>`<th>${esc(k)}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr data-id="${esc(r.account_id ?? '')}">${keys.map(k=>`<td>${esc(r[k])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+}
+function metric(label, value, tone=''){
+  return `<div class="metric"><div class="label">${esc(label)}</div><div class="value ${tone}">${esc(value)}</div></div>`;
+}
+function statusPill(label, ok){
+  return `<span class="pill ${ok ? 'ok' : 'bad'}">${esc(label)}: ${ok ? 'OK' : 'No'}</span>`;
 }
 function options(rows, key, fallback=''){
   const vals = (rows || []).map(r => r[key]).filter(v => v !== undefined && v !== null);
@@ -1163,9 +1324,21 @@ function envEditor(payload){
   }).join('')}</div></div>`).join('');
 }
 function show(name){ current=name; document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active', b.dataset.tab === name)); load(); }
-async function refreshStatus(){ document.getElementById('status').textContent = JSON.stringify(await api('/api/status'), null, 2); }
+function renderStatus(data){
+  document.getElementById('statusSummary').innerHTML = [
+    statusPill('token', data.adminTokenConfigured),
+    statusPill('item grants', data.itemGrantsEnabled),
+    `<span class="pill ${data.mutationsEnabled ? 'warn' : 'ok'}">mutations: ${data.mutationsEnabled ? 'enabled' : 'off'}</span>`,
+    `<span class="pill">db: ${esc(data.database)}</span>`
+  ].join('');
+  document.getElementById('statusRaw').textContent = JSON.stringify(data, null, 2);
+}
+async function refreshStatus(){ renderStatus(await api('/api/status')); }
 async function load(){
-  await refreshStatus().catch(e => document.getElementById('status').textContent = e.message);
+  await refreshStatus().catch(e => {
+    document.getElementById('statusSummary').innerHTML = `<span class="pill bad">${esc(e.message)}</span>`;
+    document.getElementById('statusRaw').textContent = e.message;
+  });
   try {
     if (current === 'overview') return overview();
     if (current === 'ops') return ops();
@@ -1175,17 +1348,20 @@ async function load(){
     if (current === 'settings') return settings();
     if (current === 'mutations') return mutations();
   } catch (e) {
-    view.innerHTML = `<div class="card"><h2>Access Required</h2><p class="dangerText">${esc(e.message)}</p><p class="muted">Enter the admin token in the header. Data APIs require <code>X-Admin-Token</code>.</p></div>`;
+    view.innerHTML = `<div class="card"><h2>Admin Token Required</h2><p class="dangerText">${esc(e.message)}</p><p class="muted">Paste the admin token in the header and press <b>Use token</b>. The panel is reachable, but server data and write controls stay locked until the token is present.</p></div><div class="metricGrid">${metric('Endpoint', location.host)}${metric('Item Grants', 'enabled', 'ok')}${metric('Mutations', 'off', 'ok')}</div>`;
   }
 }
 async function overview(){
   const state = await api('/api/server/state');
-  view.innerHTML = `<div class="card"><h2>Farm State</h2>${table(state.farmState)}</div><div class="card"><h2>Partitions</h2>${table(state.partitions)}</div><div class="card"><h2>Active Servers</h2>${table(state.activeServers)}</div>`;
+  const ready = (state.farmState || []).filter(r => r.ready && r.alive).length;
+  const players = (state.farmState || []).reduce((sum, r) => sum + Number(r.connected_players || 0), 0);
+  view.innerHTML = `<div class="sectionHeader"><h2>Overview</h2><span class="pill">server: duneadmin.home</span></div><div class="metricGrid">${metric('Ready Servers', `${ready}/${(state.farmState || []).length}`, ready ? 'ok' : 'dangerText')}${metric('World Partitions', (state.partitions || []).length)}${metric('Active IDs', (state.activeServers || []).length)}${metric('Reported Players', players)}</div><div class="card"><h2>Farm State</h2>${table(state.farmState)}</div><div class="card"><h2>Partitions</h2>${table(state.partitions)}</div><div class="card"><h2>Active Servers</h2>${table(state.activeServers)}</div>`;
 }
 async function ops(){
   const health = await api('/api/ops/health');
   const opt = await api('/api/ops/optimization');
-  view.innerHTML = `<div class="card"><h2>Health Verdict</h2>${checks(health.verdicts)}</div><div class="card"><h2>Player Counts</h2><pre>${esc(JSON.stringify(health.playerCounts, null, 2))}</pre></div><div class="card"><h2>Farm State</h2>${table(health.farmState)}</div><div class="card"><h2>Partitions</h2>${table(health.partitions)}</div>${signalList(opt)}`;
+  const pc = health.playerCounts || {};
+  view.innerHTML = `<div class="sectionHeader"><h2>Operations</h2><span class="pill">health and cost signals</span></div><div class="metricGrid">${metric('Connected Players', pc.connected_players_reported ?? 0)}${metric('Online Controllers', pc.online_controller_ids ?? 0)}${metric('Recent Online State', pc.online_or_recently_disconnected ?? 0)}${metric('Grace Entries', pc.grace_period_entries ?? 0)}</div><div class="card"><h2>Health Verdict</h2>${checks(health.verdicts)}</div><div class="card"><h2>Farm State</h2>${table(health.farmState)}</div><div class="card"><h2>Partitions</h2>${table(health.partitions)}</div>${signalList(opt)}`;
 }
 async function security(){
   const audit = await api('/api/ops/security');
