@@ -8,7 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 WORLD_UNIQUE_NAME = os.environ["WORLD_UNIQUE_NAME"]
 UPSTREAM = os.environ.get("TEXT_ROUTER_AUTH_BASE", "http://text-router:8080")
-SG_USER_RE = re.compile(rf"^sg\.{re.escape(WORLD_UNIQUE_NAME)}\.[^.]+\.(game|admin)$")
+SERVICE_USER_RE = re.compile(rf"^(sg|bgd|tr)\.{re.escape(WORLD_UNIQUE_NAME)}\.[^.]+(?:\.(game|admin))?$")
 
 
 def parse_form(body: bytes) -> dict[str, str]:
@@ -33,7 +33,7 @@ class Handler(BaseHTTPRequestHandler):
         username = form.get("username", "")
 
         if self.path in {"/v0/auth/user", "/v0/auth/vhost", "/v0/auth/resource", "/v0/auth/topic"}:
-            if SG_USER_RE.match(username):
+            if SERVICE_USER_RE.match(username):
                 self.respond(b"allow")
                 return
 
@@ -53,5 +53,10 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
+class AuthServer(ThreadingHTTPServer):
+    daemon_threads = True
+    request_queue_size = int(os.environ.get("RMQ_AUTH_SHIM_BACKLOG", "128"))
+
+
 if __name__ == "__main__":
-    ThreadingHTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+    AuthServer(("0.0.0.0", 8080), Handler).serve_forever()

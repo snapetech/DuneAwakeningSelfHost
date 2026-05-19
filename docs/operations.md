@@ -33,12 +33,26 @@ For a concise runtime verdict, use:
 ./scripts/status.sh .env
 ```
 
-The `health verdict` section expects these signals at the same time: every partition has a ready/alive farm row, every active server id is present, and game/admin RabbitMQ service-user connections exist.
+The `health verdict` section expects these signals at the same time: every partition has a ready/alive farm row, every active server id is present, and game RabbitMQ service-user connections exist.
+
+For RabbitMQ-specific checks, use:
+
+```bash
+COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' ./scripts/rmq-health.sh .env
+```
+
+Admin RabbitMQ can have fewer active service-user connections than farm partitions in the 30-map warm-pool layout. Treat it as unhealthy when recent auth/connectivity errors appear or when a failed client transition correlates with missing admin queue consumers.
 
 For the expanded standing farm, the expected summary is:
 
 ```text
 farm_ready_alive=9 active_servers=9 partitions=9
+```
+
+For the 30-partition warm pool, the expected summary is:
+
+```text
+farm_ready_alive=30 active_servers=30 partitions=30
 ```
 
 ## Survival Recovery
@@ -77,6 +91,15 @@ Capture the known-good state after all nine maps register:
 ./scripts/capture-routing.sh .env full-farm-ready
 ```
 
+For the 30-partition warm pool:
+
+```bash
+./scripts/full-world-partitions.sh .env
+docker compose -f compose.yaml -f compose.allmaps.yaml --env-file .env up -d
+COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' ./scripts/status.sh .env
+COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' ./scripts/rmq-health.sh .env
+```
+
 ## Network Ports
 
 For a single `Survival_1` layout, forward:
@@ -91,7 +114,13 @@ For the expanded standing farm, forward:
 7777-7785/udp
 ```
 
-The Compose file also exposes `7888-7896/udp` on the host as IGW/S2S ports for debugging. Keep those closed on the router unless client testing proves the live routing path needs them. Never forward RabbitMQ (`31982/tcp`) or Postgres.
+For the 30-partition warm pool, forward:
+
+```text
+7777-7806/udp
+```
+
+The Compose files also expose `7888-7917/udp` on the host as IGW/S2S ports for debugging. Keep those closed on the router unless client testing proves the live routing path needs them. Never forward RabbitMQ (`31982/tcp`) or Postgres.
 
 ## Backup
 

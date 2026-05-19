@@ -26,6 +26,9 @@ AUDIT_LOG = BACKUP_ROOT / "audit.jsonl"
 AUDIT_MAX_BYTES = int(os.environ.get("DUNE_ADMIN_AUDIT_MAX_BYTES", str(5 * 1024 * 1024)))
 REQUEST_TIMEOUT_SECONDS = int(os.environ.get("DUNE_ADMIN_REQUEST_TIMEOUT_SECONDS", "10"))
 MAX_ITEM_STACK_SIZE = int(os.environ.get("DUNE_ADMIN_MAX_ITEM_STACK_SIZE", "1000000"))
+AUDIT_EVENT_LIMIT = int(os.environ.get("DUNE_ADMIN_AUDIT_EVENT_LIMIT", "100"))
+ADMIN_REFERENCE_LIMIT = int(os.environ.get("DUNE_ADMIN_REFERENCE_LIMIT", "200"))
+CHARACTER_SEARCH_LIMIT = int(os.environ.get("DUNE_ADMIN_CHARACTER_SEARCH_LIMIT", "100"))
 DATABASE = os.environ.get("DUNE_DATABASE", "dune_sb_1_4_0_0")
 ADMIN_TOKEN = os.environ.get("DUNE_ADMIN_TOKEN", "")
 MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_MUTATIONS_ENABLED", "false").lower() == "true"
@@ -56,6 +59,7 @@ SAFE_ENV_KEYS = {
     "WORLD_NAME",
     "WORLD_UNIQUE_NAME",
     "WORLD_REGION",
+    "DUNE_SERVER_LOGIN_PASSWORD",
     "EXTERNAL_ADDRESS",
 }
 
@@ -103,7 +107,8 @@ def rotate_audit_log():
     AUDIT_LOG.rename(BACKUP_ROOT / f"{stamp}-audit.jsonl")
 
 
-def recent_audit_events(limit=100):
+def recent_audit_events(limit=None):
+    limit = max(1, min(int(limit or AUDIT_EVENT_LIMIT), 1000))
     if not AUDIT_LOG.exists():
         return []
     lines = AUDIT_LOG.read_text(encoding="utf-8", errors="replace").splitlines()[-limit:]
@@ -233,6 +238,14 @@ def execute(sql, params=None):
         with conn.cursor() as cursor:
             cursor.execute(sql, params or ())
             return cursor.rowcount
+
+
+def reference_query(errors, name, sql, params=None):
+    try:
+        return query(sql, params)
+    except Exception as exc:
+        errors[name] = str(exc)
+        return []
 
 
 def create_db_backup():
@@ -464,9 +477,9 @@ class Handler(BaseHTTPRequestHandler):
             left join dune.accounts a on a.id = ps.account_id
             where (%s = '' or ps.character_name ilike %s or a.funcom_id ilike %s or a.platform_id ilike %s)
             order by ps.last_login_time desc nulls last, ps.account_id
-            limit 100
+            limit %s
         """
-        return query(sql, (term, like, like, like))
+        return query(sql, (term, like, like, like, CHARACTER_SEARCH_LIMIT))
 
     def character_detail(self, account_id):
         player = query("select * from dune.player_state where account_id=%s", (account_id,))
@@ -487,40 +500,48 @@ class Handler(BaseHTTPRequestHandler):
         }
 
     def admin_reference(self):
+        errors = {}
         return {
-            "currencyIds": query("select distinct currency_id from dune.player_virtual_currency_balances order by currency_id"),
-            "specializationTrackTypes": query("""
+            "currencyIds": reference_query(errors, "currencyIds", "select distinct currency_id from dune.player_virtual_currency_balances order by currency_id"),
+            "specializationTrackTypes": reference_query(errors, "specializationTrackTypes", """
                 select enumlabel as track_type
                 from pg_enum e
                 join pg_type t on t.oid = e.enumtypid
                 where t.typname = 'specializationtracktype'
                 order by enumsortorder
             """),
-            "observedItemTemplates": query("""
+            "observedItemTemplates": reference_query(errors, "observedItemTemplates", """
                 select template_id, count(*) as count
                 from dune.items
                 where template_id is not null
                 group by template_id
                 order by count desc, template_id
-                limit 200
-            """),
-            "recentInventories": query("""
+                limit %s
+            """, (ADMIN_REFERENCE_LIMIT,)),
+            "recentInventories": reference_query(errors, "recentInventories", """
+                with recent_players as (
+                    select account_id, character_name, player_pawn_id, player_controller_id
+                    from dune.player_state
+                    order by last_login_time desc nulls last, account_id
+                    limit %s
+                )
                 select ps.account_id, ps.character_name, inv.id as inventory_id, inv.actor_id,
                        inv.inventory_type, inv.max_item_count, count(i.id) as item_count
                 from dune.inventories inv
                 left join dune.items i on i.inventory_id = inv.id
-                left join dune.player_state ps on ps.player_pawn_id = inv.actor_id or ps.player_controller_id = inv.actor_id
+                join recent_players ps on ps.player_pawn_id = inv.actor_id or ps.player_controller_id = inv.actor_id
                 group by ps.account_id, ps.character_name, inv.id, inv.actor_id, inv.inventory_type, inv.max_item_count
                 order by ps.character_name nulls last, inv.id
-                limit 200
-            """),
-            "inventoryTypes": query("""
+                limit %s
+            """, (CHARACTER_SEARCH_LIMIT, ADMIN_REFERENCE_LIMIT)),
+            "inventoryTypes": reference_query(errors, "inventoryTypes", """
                 select inventory_type, count(*) as count, max(max_item_count) as max_item_count
                 from dune.inventories
                 group by inventory_type
                 order by inventory_type
             """),
-            "keystones": query("select id, name from dune.specialization_keystones_map order by name"),
+            "keystones": reference_query(errors, "keystones", "select id, name from dune.specialization_keystones_map order by name"),
+            "errors": errors,
             "publicItemDatabase": "https://dune.gaming.tools/items",
             "publicItemDatabaseAlt": "https://dune.geno.gg/items/",
         }
@@ -735,9 +756,13 @@ class Handler(BaseHTTPRequestHandler):
             {"name": "audit log rotation limit", "ok": 0 < AUDIT_MAX_BYTES <= 50 * 1024 * 1024, "value": AUDIT_MAX_BYTES},
             {"name": "request timeout bounded", "ok": 1 <= REQUEST_TIMEOUT_SECONDS <= 60, "value": REQUEST_TIMEOUT_SECONDS},
             {"name": "item stack mutation limit", "ok": 1 <= MAX_ITEM_STACK_SIZE <= 10000000, "value": MAX_ITEM_STACK_SIZE},
+            {"name": "audit event response limit", "ok": 1 <= AUDIT_EVENT_LIMIT <= 1000, "value": AUDIT_EVENT_LIMIT},
+            {"name": "admin reference response limit", "ok": 1 <= ADMIN_REFERENCE_LIMIT <= 1000, "value": ADMIN_REFERENCE_LIMIT},
+            {"name": "character search response limit", "ok": 1 <= CHARACTER_SEARCH_LIMIT <= 1000, "value": CHARACTER_SEARCH_LIMIT},
             {"name": "JSON-only POST enforcement", "ok": True},
             {"name": "destructive action confirmation", "ok": True, "value": "server-side"},
             {"name": "FLS token not editable here", "ok": "FLS_SECRET" not in SAFE_ENV_KEYS},
+            {"name": "server login password editable", "ok": "DUNE_SERVER_LOGIN_PASSWORD" in SAFE_ENV_KEYS},
             {"name": "backup path under ignored backups/", "ok": str(BACKUP_ROOT).startswith(str(ROOT / "backups"))},
             {"name": "audit log under ignored backups/", "ok": str(AUDIT_LOG).startswith(str(ROOT / "backups")), "value": str(AUDIT_LOG.relative_to(ROOT))},
             {"name": "RabbitMQ secret not editable here", "ok": "RMQ_HTTP_TOKEN_AUTH_SECRET" not in SAFE_ENV_KEYS},
@@ -1124,7 +1149,8 @@ async function saveCfg(){
 }
 async function mutations(){
   const ref = await api('/api/admin/reference');
-  view.innerHTML = `<div class="card"><h2>Backups</h2><p>Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button id="backupBtn" class="primary">Create DB backup</button><pre id="backupResult"></pre></div><div class="card"><h2>Currency and XP</h2><p class="dangerText">Writes require <code>DUNE_ADMIN_MUTATIONS_ENABLED=true</code> and a valid admin token. Back up first.</p><div class="grid"><label>Player controller ID<input id="pcid"></label><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button id="currencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Level for set/new track<input id="xplevel" value="0"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button id="xpBtn" class="primary">Apply XP</button></p></div><div class="card"><h2>Specialization Keystones</h2><div class="grid"><label>Player/controller ID<input id="keyPlayer"></label><label>Keystone<select id="keystone">${options(ref.keystones, 'name')}</select></label></div><p><button id="purchaseKeystoneBtn" class="primary">Purchase keystone</button> <button id="resetKeystonesBtn" class="danger">Reset all keystones</button></p><pre id="keystoneResult"></pre></div><div class="card"><h2>Item Grants</h2><p class="dangerText">Use exact server template IDs. Public item databases: <a href="${esc(ref.publicItemDatabase)}" target="_blank" rel="noreferrer">gaming.tools</a> and <a href="${esc(ref.publicItemDatabaseAlt)}" target="_blank" rel="noreferrer">Arrakis Atlas</a>. Dry run first when using IDs not observed locally.</p><div class="grid"><label>Known inventory<select id="grantInventorySelect">${inventoryOptions(ref.recentInventories)}</select></label><label>Inventory ID<input id="grantInventory" placeholder="explicit inventory"></label><label>Account ID<input id="grantAccount" placeholder="auto-select player inventory"></label><label>Character name<input id="grantCharacter" placeholder="auto-select by name"></label><label>Inventory type<select id="grantInventoryType">${inventoryTypeOptions(ref.inventoryTypes)}</select></label><label>Template ID<input id="grantTemplate" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><label>Stats JSON<textarea id="grantStats">{}</textarea></label><p><button id="dryRunItemBtn" class="primary">Dry run</button> <button id="grantItemBtn" class="danger">Grant item</button></p><pre id="grantResult"></pre></div><div class="card"><h2>Item Maintenance</h2><div class="grid"><label>Item ID<input id="itemEditId"></label><label>New stack size<input id="itemEditStack" value="1"></label><label>Delete count<input id="itemDeleteCount" placeholder="blank/all"></label></div><p><button id="setItemStackBtn" class="primary">Set stack</button> <button id="deleteItemBtn" class="danger">Delete item/count</button></p><pre id="itemEditResult"></pre></div><div class="card"><h2>Observed Item Templates</h2><p class="muted">Read-only reference from this server's current <code>dune.items</code> rows.</p>${table(ref.observedItemTemplates)}</div><div class="card"><h2>Recent Inventories</h2>${table(ref.recentInventories)}</div><div class="card"><h2>Inventory Types</h2>${table(ref.inventoryTypes)}</div><div class="card"><h2>Recipe Unlocks</h2><p class="muted">Not implemented yet. The DB exposes removal helpers and actor JSON recipe arrays, but no safe grant function has been mapped.</p><button id="unsupportedBtn" class="danger">Test unsupported endpoint</button></div>`;
+  const referenceErrors = ref.errors && Object.keys(ref.errors).length ? `<div class="card"><h2>Reference Errors</h2><pre>${esc(JSON.stringify(ref.errors, null, 2))}</pre></div>` : '';
+  view.innerHTML = `${referenceErrors}<div class="card"><h2>Backups</h2><p>Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button id="backupBtn" class="primary">Create DB backup</button><pre id="backupResult"></pre></div><div class="card"><h2>Currency and XP</h2><p class="dangerText">Writes require <code>DUNE_ADMIN_MUTATIONS_ENABLED=true</code> and a valid admin token. Back up first.</p><div class="grid"><label>Player controller ID<input id="pcid"></label><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button id="currencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Level for set/new track<input id="xplevel" value="0"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button id="xpBtn" class="primary">Apply XP</button></p></div><div class="card"><h2>Specialization Keystones</h2><div class="grid"><label>Player/controller ID<input id="keyPlayer"></label><label>Keystone<select id="keystone">${options(ref.keystones, 'name')}</select></label></div><p><button id="purchaseKeystoneBtn" class="primary">Purchase keystone</button> <button id="resetKeystonesBtn" class="danger">Reset all keystones</button></p><pre id="keystoneResult"></pre></div><div class="card"><h2>Item Grants</h2><p class="dangerText">Use exact server template IDs. Public item databases: <a href="${esc(ref.publicItemDatabase)}" target="_blank" rel="noreferrer">gaming.tools</a> and <a href="${esc(ref.publicItemDatabaseAlt)}" target="_blank" rel="noreferrer">Arrakis Atlas</a>. Dry run first when using IDs not observed locally.</p><div class="grid"><label>Known inventory<select id="grantInventorySelect">${inventoryOptions(ref.recentInventories)}</select></label><label>Inventory ID<input id="grantInventory" placeholder="explicit inventory"></label><label>Account ID<input id="grantAccount" placeholder="auto-select player inventory"></label><label>Character name<input id="grantCharacter" placeholder="auto-select by name"></label><label>Inventory type<select id="grantInventoryType">${inventoryTypeOptions(ref.inventoryTypes)}</select></label><label>Template ID<input id="grantTemplate" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><label>Stats JSON<textarea id="grantStats">{}</textarea></label><p><button id="dryRunItemBtn" class="primary">Dry run</button> <button id="grantItemBtn" class="danger">Grant item</button></p><pre id="grantResult"></pre></div><div class="card"><h2>Item Maintenance</h2><div class="grid"><label>Item ID<input id="itemEditId"></label><label>New stack size<input id="itemEditStack" value="1"></label><label>Delete count<input id="itemDeleteCount" placeholder="blank/all"></label></div><p><button id="setItemStackBtn" class="primary">Set stack</button> <button id="deleteItemBtn" class="danger">Delete item/count</button></p><pre id="itemEditResult"></pre></div><div class="card"><h2>Observed Item Templates</h2><p class="muted">Read-only reference from this server's current <code>dune.items</code> rows.</p>${table(ref.observedItemTemplates)}</div><div class="card"><h2>Recent Inventories</h2>${table(ref.recentInventories)}</div><div class="card"><h2>Inventory Types</h2>${table(ref.inventoryTypes)}</div><div class="card"><h2>Recipe Unlocks</h2><p class="muted">Not implemented yet. The DB exposes removal helpers and actor JSON recipe arrays, but no safe grant function has been mapped.</p><button id="unsupportedBtn" class="danger">Test unsupported endpoint</button></div>`;
   const invSelect = document.getElementById('grantInventorySelect');
   if (invSelect && invSelect.value) document.getElementById('grantInventory').value = invSelect.value;
   invSelect?.addEventListener('change', () => { document.getElementById('grantInventory').value = invSelect.value; });

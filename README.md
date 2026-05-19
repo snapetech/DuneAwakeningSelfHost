@@ -43,7 +43,9 @@ The first target here is Docker Compose parity for those pieces. After that, sys
 - `docs/publication.md`: what is safe to publish and what must stay local.
 - `docs/setup.md`: step-by-step local startup flow.
 - `docs/architecture.md`: Compose service map and runtime state notes.
+- `docs/access-control.md`: server login password and current restriction limits.
 - `docs/full-farm.md`: expanded standing farm / 30-partition warm-pool runbook and validation boundary.
+- `docs/validation.md`: live-client route validation checklist and failed-transition capture flow.
 - `docs/benchmarking.md`: repeatable resource and transition benchmark notes.
 - `docs/improvements.md`: improvement roadmap with the reason behind each workstream.
 - `docs/network-investigation.md`: connection-level DB/RabbitMQ/routing investigation notes.
@@ -63,6 +65,7 @@ The first target here is Docker Compose parity for those pieces. After that, sys
 - `scripts/summarize-runtime-profile.sh`: prints a compact summary from a runtime profile capture.
 - `scripts/watch-network.sh`: prints current socket-state counts for routing/DB/RabbitMQ churn.
 - `scripts/recover-survival.sh`: restarts the game-server process after dependency restarts or a database disconnect crash.
+- `scripts/rmq-health.sh`: summarizes RabbitMQ service-user coverage and recent auth/connectivity errors.
 - `scripts/full-world-partitions.sh`: adds the official single-dimension travel target partitions for Overmap, social hubs, testing stations, Deep Desert, and Proces Verbal.
 - `scripts/rmq_auth_shim.py`: local RabbitMQ HTTP auth compatibility shim.
 - `scripts/restore-state.sh`: restores a local backup made by `scripts/backup-state.sh`.

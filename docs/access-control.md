@@ -1,0 +1,49 @@
+# Access Control
+
+The supported access-control knob found in the official server package is a battlegroup login password:
+
+```ini
+[ConsoleVariables]
+Bgd.ServerLoginPassword="..."
+```
+
+This repository wires that setting through `.env` as:
+
+```env
+DUNE_SERVER_LOGIN_PASSWORD=
+```
+
+It is passed to every game-server container as:
+
+```text
+-ini:engine:[ConsoleVariables]:Bgd.ServerLoginPassword=${DUNE_SERVER_LOGIN_PASSWORD}
+```
+
+## Admin Panel
+
+The `duneadmin.home` panel exposes `DUNE_SERVER_LOGIN_PASSWORD` under Settings -> Safe Env Settings. It is protected by the admin token like the rest of the settings API.
+
+Changing the value updates `.env`, but it does not update already-running game-server processes. Recreate the game containers after a password change:
+
+```bash
+docker compose -f compose.yaml -f compose.allmaps.yaml --env-file .env up -d --force-recreate \
+  survival overmap arrakeen harko-village \
+  testing-hephaestus testing-carthag testing-waterfat deep-desert proces-verbal \
+  lostharvest-ecolab-a lostharvest-ecolab-b lostharvest-forgottenlab art-of-kanly \
+  dungeon-hephaestus dungeon-oldcarthag faction-outpost-atre faction-outpost-hark \
+  heighliner-dungeon ecolab-green-089 ecolab-green-152 ecolab-green-024 \
+  ecolab-green-195 ecolab-green-136 overland-m-01 overland-s-04 overland-s-06 \
+  bandit-fortress overland-s-07 overland-s-08 dungeon-thepit
+```
+
+Then verify:
+
+```bash
+COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' ./scripts/status.sh .env
+```
+
+## Limitations
+
+No native allowlist/whitelist setting has been identified in the shipped config surface yet. Treat the login password as the primary supported restriction.
+
+Network-level source-IP allowlisting is possible at the router/firewall, but it is brittle for players with dynamic IP addresses and should be used only if password protection is not enough.

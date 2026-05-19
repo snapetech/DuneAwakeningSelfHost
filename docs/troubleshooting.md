@@ -60,8 +60,11 @@ Check:
 - `text-router` is running before game-server startup.
 - `WORLD_UNIQUE_NAME` matches the expected service-user prefix.
 - RabbitMQ ports are not exposed publicly.
+- `COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' ./scripts/rmq-health.sh .env` has no recent auth/connectivity errors.
 
-The shim is a local compatibility workaround for `sg.<world>.<server-id>.game` and `sg.<world>.<server-id>.admin` users. Keep it paired with localhost-only RabbitMQ host bindings.
+The shim is a local compatibility workaround for internal `sg.<world>.*`, `bgd.<world>.*`, and `tr.<world>.*` service users. Keep it paired with localhost-only RabbitMQ host bindings.
+
+RabbitMQ auth cache TTL is intentionally long in `config/rabbitmq-admin.conf` and `config/rabbitmq-game.conf` to avoid hammering the HTTP auth path during 30-map warm-pool startup. Those config files are read by RabbitMQ at container start, so changing them requires a RabbitMQ restart during a maintenance window.
 
 ## Database Already Initialized
 
