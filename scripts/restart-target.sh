@@ -33,6 +33,7 @@ target = sys.argv[1]
 services_arg = sys.argv[2]
 project = os.environ.get("DUNE_RESTART_COMPOSE_PROJECT", "dune_server")
 socket_path = os.environ.get("DUNE_RESTART_DOCKER_SOCKET", "/var/run/docker.sock")
+dry_run = os.environ.get("DUNE_RESTART_DRY_RUN", "").lower() in ("1", "true", "yes", "on")
 
 default_services = [
     "survival", "overmap", "arrakeen", "harko-village", "testing-hephaestus",
@@ -54,6 +55,21 @@ if target == "all":
 if not services:
     print(f"no services mapped for target {target}", file=sys.stderr)
     sys.exit(65)
+
+
+def decode_chunked(payload):
+    decoded = bytearray()
+    rest = payload
+    while rest:
+        line, sep, rest = rest.partition(b"\r\n")
+        if not sep:
+            raise ValueError("truncated chunked response")
+        size = int(line.split(b";", 1)[0], 16)
+        if size == 0:
+            return bytes(decoded)
+        decoded.extend(rest[:size])
+        rest = rest[size + 2:]
+    return bytes(decoded)
 
 
 def docker(method, path, body=None):
@@ -80,7 +96,15 @@ def docker(method, path, body=None):
     sock.close()
     raw = b"".join(chunks)
     header, _, payload = raw.partition(b"\r\n\r\n")
-    status = int(header.split(b" ", 2)[1])
+    header_text = header.decode("iso-8859-1")
+    status = int(header_text.split(" ", 2)[1])
+    headers = {}
+    for line in header_text.split("\r\n")[1:]:
+        name, sep, value = line.partition(":")
+        if sep:
+            headers[name.strip().lower()] = value.strip().lower()
+    if headers.get("transfer-encoding") == "chunked":
+        payload = decode_chunked(payload)
     return status, payload
 
 
@@ -110,13 +134,16 @@ for service in services:
         continue
     for container in containers:
         container_id = container["Id"]
+        if dry_run:
+            restarted.append(service)
+            continue
         status, payload = docker("POST", f"/containers/{container_id}/restart?t=30")
         if status not in (204, 304):
             print(f"failed restarting {service}: HTTP {status} {payload[:200]!r}", file=sys.stderr)
             sys.exit(75)
         restarted.append(service)
 
-print(json.dumps({"ok": True, "target": target, "restarted": restarted, "missing": missing}, separators=(",", ":")))
+print(json.dumps({"ok": True, "target": target, "dryRun": dry_run, "restarted": restarted, "missing": missing}, separators=(",", ":")))
 PY
   exit $?
 fi

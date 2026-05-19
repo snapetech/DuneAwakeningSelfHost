@@ -35,11 +35,12 @@ duration = int(os.environ.get("DUNE_ANNOUNCE_DURATION_SECONDS", "12"))
 title = os.environ.get("DUNE_ANNOUNCE_TITLE", "Maintenance")
 command = os.environ.get("DUNE_ANNOUNCE_COMMAND_NAME", "ServiceBroadcast")
 template = os.environ.get("DUNE_ANNOUNCE_PAYLOAD_TEMPLATE", "")
-mode = os.environ.get("DUNE_ANNOUNCE_PAYLOAD_MODE", "command-payload")
-reply_to = os.environ.get("DUNE_ANNOUNCE_RMQ_REPLY_TO", "")
+mode = os.environ.get("DUNE_ANNOUNCE_PAYLOAD_MODE", "jsonrpc-notify-array")
+rmq_type = os.environ.get("DUNE_ANNOUNCE_RMQ_TYPE", "json_rpc")
+reply_to = os.environ.get("DUNE_ANNOUNCE_RMQ_REPLY_TO", "bgdRpc")
 correlation_id = os.environ.get("DUNE_ANNOUNCE_RMQ_CORRELATION_ID", job_id)
 app_id = os.environ.get("DUNE_ANNOUNCE_RMQ_APP_ID", "")
-user_id = os.environ.get("DUNE_ANNOUNCE_RMQ_USER_ID", "")
+user_id = os.environ.get("DUNE_ANNOUNCE_RMQ_USER_ID", rmq_user)
 
 if not targets:
     print("missing DUNE_ANNOUNCE_RMQ_ROUTING_KEYS", file=sys.stderr)
@@ -81,6 +82,27 @@ else:
         envelope = {"jsonrpc": "2.0", "method": command, "params": service_payload, "id": job_id}
     elif mode == "jsonrpc-array":
         envelope = {"jsonrpc": "2.0", "method": command, "params": [service_payload], "id": job_id}
+    elif mode == "jsonrpc-notify-object":
+        envelope = {"jsonrpc": "2.0", "method": command, "params": service_payload}
+    elif mode == "jsonrpc-notify-array":
+        envelope = {"jsonrpc": "2.0", "method": command, "params": [service_payload]}
+    elif mode == "dune-server-command":
+        envelope = {
+            "jsonrpc": "2.0",
+            "method": "SendDuneServerCommand",
+            "params": [
+                json.dumps({"ServerCommand": command, "Payload": service_payload}, separators=(",", ":"))
+            ],
+        }
+    elif mode == "dune-server-command-payload":
+        envelope = {
+            "jsonrpc": "2.0",
+            "method": "SendDuneServerCommand",
+            "params": [
+                command,
+                json.dumps(service_payload, separators=(",", ":")),
+            ],
+        }
     elif mode == "payload-only":
         envelope = service_payload
     else:
@@ -104,7 +126,7 @@ for routing_key in targets:
         "content_type": "application/json",
         "delivery_mode": 1,
         "timestamp": int(time.time()),
-        "type": command,
+        "type": rmq_type,
         "correlation_id": correlation_id,
     }
     if reply_to:

@@ -75,6 +75,7 @@ Research indexes at the repo root:
 - [`SERVER_CONFIG_KEY_INDEX.md`](SERVER_CONFIG_KEY_INDEX.md): generated shipped `DefaultGame.ini` key inventory.
 - [`SERVER_BINARY_CONFIG_CANDIDATES.md`](SERVER_BINARY_CONFIG_CANDIDATES.md): binary-only candidate config strings for focused validation.
 - [`DEEP_DESERT_EVENT_KNOBS.md`](DEEP_DESERT_EVENT_KNOBS.md): Deep Desert spice/event tuning research.
+- [`RESOURCE_RESPAWN_KNOBS.md`](RESOURCE_RESPAWN_KNOBS.md): ore, scrap, fuel, resource-node, and loot respawn timer research.
 
 ## Key Files
 
@@ -154,7 +155,40 @@ Start the local admin helper panel:
 docker compose --env-file .env up -d admin-panel
 ```
 
-It binds to `127.0.0.1:18080` by default and is intended to sit behind trusted LAN/VPN ingress. If you want a LAN hostname such as `admin.example.test`, point your own DNS or reverse proxy at the host.
+It binds to `127.0.0.1:18080` by default and is intended to sit behind trusted LAN/VPN ingress. If you want a LAN hostname such as `admin.example.test`, point your own DNS or reverse proxy at the host. Do not expose this panel directly to the public internet.
+
+Open the panel at:
+
+```text
+http://127.0.0.1:18080/
+```
+
+The header token box uses `DUNE_ADMIN_TOKEN` from `.env`. After you click **Use token**, the browser stores it in session storage and sends protected API requests with `X-Admin-Token`. Keep the token private; it gates sensitive reads and all mutation endpoints.
+
+The panel is the operator-facing Web UI for this repo:
+
+| Tab | Use it for |
+| --- | --- |
+| **Overview** | Fast health check: Ready Servers, Online Maps, Active IDs, Reported Players, and the Map Health list derived from `world_partition`, `farm_state`, and `active_server_ids`. |
+| **Ops** | Detailed map/network health, farm state, partition state, restart planning, and restart announcement helpers. |
+| **Security** | Host/origin checks, mutation-gate status, token status, audit events, and editable-setting allowlists. |
+| **Runbook** | Copy/paste operational commands for health, backups, restores, profiling, logs, and routing capture. |
+| **Characters** | Search/list existing characters and inspect controller, account, currency, inventory, and progression state before changing anything. |
+| **Settings** | Edit `.env`, `config/director.ini`, `config/UserGame.ini`, and selected config overlays with backups under `backups/admin-panel`. Runtime-only settings may apply immediately, but many game-server values require recreating or restarting affected containers. |
+| **Admin Actions** | Create DB backups and perform guarded writes such as XP, currency, keystones, item grants, item stack edits, and item deletion. Back up the database before broad writes; item and inventory operations are guarded by the admin token and mutation safety flags. |
+
+Typical admin flow:
+
+1. Open **Overview** and confirm the Map Health list is sane.
+2. Use **Characters** to select the character instead of typing IDs by hand.
+3. Use **Admin Actions** for dry-runs and guarded writes.
+4. Check **Security** after failed auth, blocked host/origin requests, config edits, backups, or mutation runs.
+5. Restart or recreate affected containers after settings that are loaded only at process startup.
+
+Current headless captures of the Map Health list screen are saved locally under:
+
+- `captures/admin-panel-webui/map-health-overview-desktop.png`
+- `captures/admin-panel-webui/map-health-overview-mobile-tall.png`
 
 For the single `Survival_1` test layout, forward:
 

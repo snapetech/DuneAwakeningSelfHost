@@ -59,10 +59,11 @@ server {
 ## Current Features
 
 - Server/farm state view with per-map online/offline health derived from `world_partition`, `farm_state`, and `active_server_ids`.
+- Realtime Ops resource view for host load, host memory, workspace disk, and Docker container CPU/memory/network/block I/O when the Docker socket is available.
 - Local/upstream health checks for Postgres reachability, the Dune account portal, and public Dune/Funcom HTTP reachability.
 - Restart-announcement scheduler under Ops. It accepts a restart time, message, and repeat interval, persists state under `backups/admin-panel/announcements.json`, and invokes `DUNE_ADMIN_ANNOUNCE_COMMAND` for each delivery attempt.
 - Scheduled restart planner under Ops. It targets all components, core services, the service layer, all game maps, or key individual maps. Jobs persist under `backups/admin-panel/restart-jobs.json` and invoke `DUNE_ADMIN_RESTART_COMMAND` only when execution is explicitly enabled.
-- Character search and detail view.
+- Character roster split into currently online players and offline players, plus search and detail views.
 - Currency/progression table visibility.
 - `.env` operations editor for install, world, network, access, secret, and admin-panel knobs. Secret fields are admin-token protected, rendered as password inputs, and returned blank unless a replacement is typed.
 - Typed logout/reconnect timer editor for `config/UserGame.ini` under Settings -> Logout and Reconnect Timers.
@@ -96,21 +97,23 @@ Default announcement transport settings:
 
 ```env
 DUNE_ANNOUNCE_RMQ_URL=http://admin-rmq:15672
-DUNE_ANNOUNCE_RMQ_USER=dune-announcer
+DUNE_ANNOUNCE_RMQ_USER=bgd.<world-unique-name>.duneadmin.admin
 DUNE_ANNOUNCE_RMQ_PASSWORD=<local secret>
 DUNE_ANNOUNCE_RMQ_EXCHANGE=rpc
 DUNE_ANNOUNCE_RMQ_ROUTING_KEYS=Survival_11
-DUNE_ANNOUNCE_RMQ_REPLY_TO=
+DUNE_ANNOUNCE_RMQ_REPLY_TO=bgdRpc
+DUNE_ANNOUNCE_RMQ_CORRELATION_ID=
+DUNE_ANNOUNCE_RMQ_TYPE=json_rpc
 DUNE_ANNOUNCE_RMQ_APP_ID=
 DUNE_ANNOUNCE_RMQ_USER_ID=
 DUNE_ANNOUNCE_COMMAND_NAME=ServiceBroadcast
 DUNE_ANNOUNCE_TITLE=Maintenance
 DUNE_ANNOUNCE_DURATION_SECONDS=12
-DUNE_ANNOUNCE_PAYLOAD_MODE=command-payload
+DUNE_ANNOUNCE_PAYLOAD_MODE=jsonrpc-notify-array
 DUNE_ANNOUNCE_PAYLOAD_TEMPLATE=
 ```
 
-`DUNE_ANNOUNCE_RMQ_ROUTING_KEYS` is comma-separated. Add map RPC routing keys when you want announcements delivered through more standing maps. `DUNE_ANNOUNCE_PAYLOAD_MODE` selects one of the built-in probe envelopes: `command-payload`, `server-command`, `message-type`, `flat-command`, `jsonrpc-object`, `jsonrpc-array`, or `payload-only`. `DUNE_ANNOUNCE_PAYLOAD_TEMPLATE` can override the default JSON body without editing the hook if a newer server build requires a different `ServiceBroadcast` envelope.
+`DUNE_ANNOUNCE_RMQ_ROUTING_KEYS` is comma-separated. Add map RPC routing keys when you want announcements delivered through more standing maps. The live server's RPC consumer expects AMQP `type=json_rpc`, a non-empty `reply_to`, and a trusted `user_id` prefix; the default `bgd.<world-unique-name>.duneadmin.admin` identity satisfies that through the local RabbitMQ auth shim. `DUNE_ANNOUNCE_PAYLOAD_MODE` selects one of the built-in probe envelopes: `command-payload`, `server-command`, `message-type`, `flat-command`, `jsonrpc-object`, `jsonrpc-array`, `jsonrpc-notify-object`, `jsonrpc-notify-array`, `dune-server-command`, `dune-server-command-payload`, or `payload-only`. `DUNE_ANNOUNCE_PAYLOAD_TEMPLATE` can override the default JSON body without editing the hook if a newer server build requires a different `ServiceBroadcast` envelope.
 
 After changing the announcer credentials, recreate `rmq-auth-shim` and `admin-panel`. If RabbitMQ has cached a previous denial for that user, restart only `admin-rmq` during a maintenance window; the game servers reconnect their admin queues afterward.
 
@@ -141,7 +144,7 @@ DUNE_RESTART_COMPOSE_PROJECT=dune_server
 DUNE_RESTART_DOCKER_SOCKET=/var/run/docker.sock
 ```
 
-The Docker socket is privileged host control. Keep the admin panel bound to localhost or a trusted reverse proxy, require the admin token, and do not expose `duneadmin.home` publicly. The script receives `DUNE_RESTART_JOB_ID`, `DUNE_RESTART_TARGET`, and `DUNE_RESTART_SERVICES`, plus the target as its first argument.
+The Docker socket is privileged host control. Keep the admin panel bound to localhost or a trusted reverse proxy, require the admin token, and do not expose the admin hostname publicly. The script receives `DUNE_RESTART_JOB_ID`, `DUNE_RESTART_TARGET`, and `DUNE_RESTART_SERVICES`, plus the target as its first argument.
 
 The Docker-socket fallback restarts existing containers. It does not recreate containers or apply changed environment variables; use `docker compose up -d --force-recreate ...` from the host for config changes.
 

@@ -123,6 +123,7 @@ validating the shipped config.
 | Area | DB evidence | Status | Why it matters |
 | --- | --- | --- | --- |
 | Spice fields | `spicefield_types`, `spicefield_server_availability`, `resourcefield_state`; functions such as `try_prime_spicefield`, `try_spawn_spicefield`, `update_global_spice_field_rules` | Known | Confirms `m_PerMapSystemSettings` caps are authoritative and live-observable. |
+| Ordinary resource nodes | `actor_spawners`, `actor_spawner_actors`; runtime logs for `BP_AzuriteOre_*_Spawner`, `BP_ScrapMetal_*_Spawner`, and `BP_ImpureFuel_*_Spawner` | Inferred / investigate | Resource-node spawn chance keys are shipped, and binary strings prove `FResourceRespawnTimer`, but no safe respawn timer override is confirmed yet. See `RESOURCE_RESPAWN_KNOBS.md`. |
 | Items/inventory | `items`, `inventories`, `actor_inventories`; functions such as `load_items`, `update_inventory`, `move_inventory_item`, `merge_inventory_items` | Known | Admin item grants should account for inventory ownership, free/mergeable slots, stack size, stats JSON, and quality. |
 | Encounters | `encounters_static`; static encounter load/save functions only | Known / limited | Confirms static encounter persistence exists, but dynamic random encounter weights/caps are not in DB. |
 | Buried treasure | No treasure tables/functions found; empty `DUNE-153318_nuke_persisted_buried_treasure.sql` migration | Inferred | Supports the current conclusion that buried treasure is runtime/asset driven in this build. |

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import configparser
+import concurrent.futures
 import hmac
 import html
 import json
@@ -60,6 +61,8 @@ ANNOUNCEMENT_COMMAND_TIMEOUT_SECONDS = int(os.environ.get("DUNE_ADMIN_ANNOUNCEME
 ANNOUNCEMENT_COMMAND = os.environ.get("DUNE_ADMIN_ANNOUNCE_COMMAND", str(ROOT / "scripts" / "announce.sh"))
 RESTART_COMMAND_TIMEOUT_SECONDS = int(os.environ.get("DUNE_ADMIN_RESTART_COMMAND_TIMEOUT_SECONDS", "1800"))
 RESTART_COMMAND = os.environ.get("DUNE_ADMIN_RESTART_COMMAND", str(ROOT / "scripts" / "restart-target.sh"))
+DOCKER_SOCKET = os.environ.get("DUNE_RESTART_DOCKER_SOCKET", "/var/run/docker.sock")
+DOCKER_COMPOSE_PROJECT = os.environ.get("DUNE_RESTART_COMPOSE_PROJECT", "dune_server")
 ANNOUNCEMENT_DELAYS = {
     "immediate": 0,
     "30s": 30,
@@ -168,13 +171,15 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ADMIN_ANNOUNCEMENT_MAX_MESSAGE_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum UTF-8 size for a scheduled restart-announcement message."},
     "DUNE_ADMIN_ANNOUNCEMENT_COMMAND_TIMEOUT_SECONDS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Timeout for each announcement delivery hook invocation."},
     "DUNE_ANNOUNCE_RMQ_URL": {"group": "Announcements", "secret": False, "restart": True, "why": "RabbitMQ management API URL used by the announcement hook."},
-    "DUNE_ANNOUNCE_RMQ_USER": {"group": "Announcements", "secret": False, "restart": True, "why": "RabbitMQ management user used by the announcement hook."},
+    "DUNE_ANNOUNCE_RMQ_USER": {"group": "Announcements", "secret": False, "restart": True, "why": "RabbitMQ management user used by the announcement hook. Use a bgd.<world>.*.admin identity so JSON-RPC sender permissions pass."},
     "DUNE_ANNOUNCE_RMQ_PASSWORD": {"group": "Announcements", "secret": True, "restart": True, "why": "RabbitMQ management password used by the announcement hook."},
     "DUNE_ANNOUNCE_RMQ_EXCHANGE": {"group": "Announcements", "secret": False, "restart": True, "why": "RabbitMQ exchange used for server-command announcements."},
     "DUNE_ANNOUNCE_RMQ_ROUTING_KEYS": {"group": "Announcements", "secret": False, "restart": True, "why": "Comma-separated map RPC routing keys that receive announcements."},
     "DUNE_ANNOUNCE_RMQ_REPLY_TO": {"group": "Announcements", "secret": False, "restart": True, "why": "Optional AMQP reply_to property for RPC-style announcement probes."},
+    "DUNE_ANNOUNCE_RMQ_CORRELATION_ID": {"group": "Announcements", "secret": False, "restart": True, "why": "Optional fixed AMQP correlation_id property for RPC-style announcement probes. Defaults to the scheduled job id."},
+    "DUNE_ANNOUNCE_RMQ_TYPE": {"group": "Announcements", "secret": False, "restart": True, "why": "AMQP type property used by the announcement hook. Defaults to the command name."},
     "DUNE_ANNOUNCE_RMQ_APP_ID": {"group": "Announcements", "secret": False, "restart": True, "why": "Optional AMQP app_id property for RPC-style announcement probes."},
-    "DUNE_ANNOUNCE_RMQ_USER_ID": {"group": "Announcements", "secret": False, "restart": True, "why": "Optional AMQP user_id property for RPC-style announcement probes."},
+    "DUNE_ANNOUNCE_RMQ_USER_ID": {"group": "Announcements", "secret": False, "restart": True, "why": "Optional AMQP user_id property for RPC-style announcement probes. Defaults to DUNE_ANNOUNCE_RMQ_USER."},
     "DUNE_ANNOUNCE_COMMAND_NAME": {"group": "Announcements", "secret": False, "restart": True, "why": "Server command name sent by the announcement hook."},
     "DUNE_ANNOUNCE_TITLE": {"group": "Announcements", "secret": False, "restart": True, "why": "Default title for generic in-game service broadcasts."},
     "DUNE_ANNOUNCE_DURATION_SECONDS": {"group": "Announcements", "secret": False, "restart": True, "why": "Default on-screen duration for generic in-game service broadcasts."},
@@ -538,6 +543,184 @@ def ensure_announcement_thread():
     ANNOUNCEMENT_THREAD_STARTED = True
     thread = threading.Thread(target=announcement_worker, name="announcement-worker", daemon=True)
     thread.start()
+
+
+def read_meminfo():
+    values = {}
+    try:
+        for line in pathlib.Path("/proc/meminfo").read_text(encoding="utf-8").splitlines():
+            key, raw = line.split(":", 1)
+            parts = raw.strip().split()
+            if parts and parts[0].isdigit():
+                values[key] = int(parts[0]) * 1024
+    except (OSError, ValueError):
+        return {}
+    total = values.get("MemTotal", 0)
+    available = values.get("MemAvailable", 0)
+    used = max(total - available, 0) if total else 0
+    return {"totalBytes": total, "availableBytes": available, "usedBytes": used, "usedPercent": round((used / total) * 100, 1) if total else None}
+
+
+def read_loadavg():
+    try:
+        parts = pathlib.Path("/proc/loadavg").read_text(encoding="utf-8").split()
+        return {"one": float(parts[0]), "five": float(parts[1]), "fifteen": float(parts[2]), "runnable": parts[3], "lastPid": parts[4]}
+    except (OSError, ValueError, IndexError):
+        return {}
+
+
+def docker_api(path):
+    sock_path = pathlib.Path(DOCKER_SOCKET)
+    if not sock_path.exists():
+        raise FileNotFoundError(f"Docker socket not found: {sock_path}")
+    request = f"GET {path} HTTP/1.1\r\nHost: docker\r\nConnection: close\r\n\r\n".encode()
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        sock.settimeout(2)
+        sock.connect(str(sock_path))
+        sock.sendall(request)
+        chunks = []
+        header = b""
+        body = b""
+        headers = {}
+        content_length = None
+        chunked = False
+        while True:
+            try:
+                chunk = sock.recv(65536)
+            except socket.timeout:
+                break
+            if not chunk:
+                break
+            chunks.append(chunk)
+            raw = b"".join(chunks)
+            if not header and b"\r\n\r\n" in raw:
+                header, _, body = raw.partition(b"\r\n\r\n")
+                for line in header.split(b"\r\n")[1:]:
+                    key, sep, value = line.partition(b":")
+                    if sep:
+                        headers[key.decode("utf-8", errors="replace").strip().lower()] = value.decode("utf-8", errors="replace").strip()
+                if "content-length" in headers:
+                    try:
+                        content_length = int(headers["content-length"])
+                    except ValueError:
+                        content_length = None
+                chunked = headers.get("transfer-encoding", "").lower() == "chunked"
+            elif header:
+                body += chunk
+            if content_length is not None and len(body) >= content_length:
+                body = body[:content_length]
+                break
+            if chunked and b"\r\n0\r\n\r\n" in body:
+                break
+    if not header:
+        raw = b"".join(chunks)
+        header, _, body = raw.partition(b"\r\n\r\n")
+    if b" 200 " not in header.split(b"\r\n", 1)[0]:
+        raise RuntimeError(header.split(b"\r\n", 1)[0].decode("utf-8", errors="replace"))
+    if b"transfer-encoding: chunked" in header.lower():
+        body = decode_chunked_body(body)
+    return json.loads(body.decode("utf-8") or "null")
+
+
+def decode_chunked_body(body):
+    out = b""
+    rest = body
+    while rest:
+        size_raw, sep, rest = rest.partition(b"\r\n")
+        if not sep:
+            break
+        try:
+            size = int(size_raw.split(b";", 1)[0], 16)
+        except ValueError:
+            break
+        if size == 0:
+            break
+        out += rest[:size]
+        rest = rest[size + 2:]
+    return out
+
+
+def fmt_bytes(value):
+    try:
+        value = float(value or 0)
+    except (TypeError, ValueError):
+        value = 0
+    units = ("B", "KiB", "MiB", "GiB", "TiB")
+    unit = 0
+    while value >= 1024 and unit < len(units) - 1:
+        value /= 1024
+        unit += 1
+    return f"{value:.1f} {units[unit]}" if unit else f"{int(value)} {units[unit]}"
+
+
+def docker_container_stats():
+    containers = docker_api(f"/containers/json?all=1&filters={urllib.parse.quote(json.dumps({'label': [f'com.docker.compose.project={DOCKER_COMPOSE_PROJECT}']}))}")
+    rows = []
+
+    def container_row(container):
+        container_id = container.get("Id", "")
+        labels = container.get("Labels") or {}
+        name = (container.get("Names") or [""])[0].lstrip("/")
+        try:
+            stats = docker_api(f"/containers/{container_id}/stats?stream=false")
+        except Exception as exc:
+            return {"service": labels.get("com.docker.compose.service", name), "name": name, "status": container.get("State"), "error": str(exc)}
+        memory = stats.get("memory_stats") or {}
+        cpu = stats.get("cpu_stats") or {}
+        precpu = stats.get("precpu_stats") or {}
+        networks = stats.get("networks") or {}
+        blkio = ((stats.get("blkio_stats") or {}).get("io_service_bytes_recursive") or [])
+        mem_usage = int(memory.get("usage") or 0)
+        mem_limit = int(memory.get("limit") or 0)
+        cpu_total = int((cpu.get("cpu_usage") or {}).get("total_usage") or 0)
+        precpu_total = int((precpu.get("cpu_usage") or {}).get("total_usage") or 0)
+        system_total = int(cpu.get("system_cpu_usage") or 0)
+        presystem_total = int(precpu.get("system_cpu_usage") or 0)
+        online_cpus = int(cpu.get("online_cpus") or len(((cpu.get("cpu_usage") or {}).get("percpu_usage") or [])) or 1)
+        cpu_delta = cpu_total - precpu_total
+        system_delta = system_total - presystem_total
+        cpu_percent = round((cpu_delta / system_delta) * online_cpus * 100, 1) if cpu_delta > 0 and system_delta > 0 else 0.0
+        net_rx = sum(int(v.get("rx_bytes") or 0) for v in networks.values())
+        net_tx = sum(int(v.get("tx_bytes") or 0) for v in networks.values())
+        block_read = sum(int(v.get("value") or 0) for v in blkio if str(v.get("op", "")).lower() == "read")
+        block_write = sum(int(v.get("value") or 0) for v in blkio if str(v.get("op", "")).lower() == "write")
+        return {
+            "service": labels.get("com.docker.compose.service", name),
+            "name": name,
+            "status": container.get("State"),
+            "cpuPercent": cpu_percent,
+            "memory": f"{fmt_bytes(mem_usage)} / {fmt_bytes(mem_limit)}",
+            "memoryPercent": round((mem_usage / mem_limit) * 100, 1) if mem_limit else None,
+            "netIO": f"{fmt_bytes(net_rx)} / {fmt_bytes(net_tx)}",
+            "blockIO": f"{fmt_bytes(block_read)} / {fmt_bytes(block_write)}",
+            "pids": int((stats.get("pids_stats") or {}).get("current") or 0),
+        }
+
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=min(48, max(len(containers), 1)))
+    try:
+        future_map = {executor.submit(container_row, container): container for container in containers}
+        deadline = time.monotonic() + 4
+        while future_map and time.monotonic() < deadline:
+            timeout = max(deadline - time.monotonic(), 0)
+            done, _ = concurrent.futures.wait(future_map, timeout=timeout, return_when=concurrent.futures.FIRST_COMPLETED)
+            if not done:
+                break
+            for future in done:
+                container = future_map.pop(future)
+                labels = container.get("Labels") or {}
+                name = (container.get("Names") or [""])[0].lstrip("/")
+                try:
+                    rows.append(future.result())
+                except Exception as exc:
+                    rows.append({"service": labels.get("com.docker.compose.service", name), "name": name, "status": container.get("State"), "error": str(exc)})
+        for future, container in list(future_map.items()):
+            future.cancel()
+            labels = container.get("Labels") or {}
+            name = (container.get("Names") or [""])[0].lstrip("/")
+            rows.append({"service": labels.get("com.docker.compose.service", name), "name": name, "status": container.get("State"), "error": "stats timed out"})
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+    return sorted(rows, key=lambda r: str(r.get("service", "")))
 
 
 def db_connect():
@@ -960,6 +1143,9 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/ops/optimization":
                 self.require_token()
                 self.json(self.optimization_signals())
+            elif parsed.path == "/api/ops/resources":
+                self.require_token()
+                self.json(self.resource_snapshot())
             elif parsed.path == "/api/ops/runbook":
                 self.require_token()
                 self.json(self.ops_runbook())
@@ -976,6 +1162,9 @@ class Handler(BaseHTTPRequestHandler):
                 params = urllib.parse.parse_qs(parsed.query)
                 term = (params.get("q", [""])[0] or "").strip()
                 self.json(self.characters(term))
+            elif parsed.path == "/api/characters/roster":
+                self.require_token()
+                self.json(self.character_roster())
             elif parsed.path.startswith("/api/characters/"):
                 self.require_token()
                 account_id = int(parsed.path.rsplit("/", 1)[-1])
@@ -1186,6 +1375,31 @@ class Handler(BaseHTTPRequestHandler):
             limit %s
         """
         return query(sql, (term, like, like, like, CHARACTER_SEARCH_LIMIT))
+
+    def character_roster(self):
+        sql = """
+            select ps.account_id, ps.character_name, ps.online_status::text, ps.life_state::text,
+                   ps.server_id, fs.map, fs.game_addr, fs.game_port,
+                   ps.player_controller_id, ps.player_pawn_id,
+                   ps.last_login_time, ps.logoff_persistence_end_time, ps.reconnect_grace_period_end,
+                   a.funcom_id, a.platform_name, a.platform_id
+            from dune.player_state ps
+            left join dune.accounts a on a.id = ps.account_id
+            left join dune.farm_state fs on fs.server_id = ps.server_id
+            order by ps.last_login_time desc nulls last, ps.character_name nulls last, ps.account_id
+        """
+        rows = query(sql)
+        online = [row for row in rows if str(row.get("online_status") or "").lower() == "online"]
+        offline = [row for row in rows if str(row.get("online_status") or "").lower() != "online"]
+        return {
+            "counts": {
+                "total": len(rows),
+                "online": len(online),
+                "offline": len(offline),
+            },
+            "online": online,
+            "offline": offline,
+        }
 
     def character_detail(self, account_id):
         player = query("select * from dune.player_state where account_id=%s", (account_id,))
@@ -1639,6 +1853,37 @@ class Handler(BaseHTTPRequestHandler):
             ],
         }
 
+    def resource_snapshot(self):
+        disk = shutil.disk_usage(ROOT)
+        docker_error = None
+        try:
+            containers = docker_container_stats()
+        except Exception as exc:
+            docker_error = str(exc)
+            containers = []
+        return {
+            "generatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "host": {
+                "hostname": socket.gethostname(),
+                "cpuCount": os.cpu_count(),
+                "load": read_loadavg(),
+                "memory": read_meminfo(),
+                "disk": {
+                    "path": str(ROOT),
+                    "totalBytes": disk.total,
+                    "usedBytes": disk.used,
+                    "freeBytes": disk.free,
+                    "usedPercent": round((disk.used / disk.total) * 100, 1) if disk.total else None,
+                },
+            },
+            "docker": {
+                "socket": DOCKER_SOCKET,
+                "composeProject": DOCKER_COMPOSE_PROJECT,
+                "error": docker_error,
+                "containers": containers,
+            },
+        }
+
     def ops_runbook(self):
         return {
             "safeCliOnly": True,
@@ -1901,6 +2146,7 @@ const validTabs = new Set(['overview', 'ops', 'security', 'runbook', 'characters
 let current = validTabs.has(location.hash.slice(1)) ? location.hash.slice(1) : (sessionStorage.getItem('duneAdminTab') || 'overview');
 if (!validTabs.has(current)) current = 'overview';
 let pendingAdminAccountId = '';
+let resourceTimer = null;
 const view = document.getElementById('view');
 
 function saveToken(){ token = document.getElementById('token').value; sessionStorage.setItem('duneAdminToken', token); load(); }
@@ -1921,6 +2167,13 @@ function table(rows){
 }
 function metric(label, value, tone=''){
   return `<div class="metric"><div class="label">${esc(label)}</div><div class="value ${tone}">${esc(value)}</div></div>`;
+}
+function fmtBytes(v){
+  let value = Number(v || 0);
+  const units = ['B','KiB','MiB','GiB','TiB'];
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
+  return unit ? `${value.toFixed(1)} ${units[unit]}` : `${Math.round(value)} ${units[unit]}`;
 }
 function statusPill(label, ok){
   return `<span class="pill ${ok ? 'ok' : 'bad'}">${esc(label)}: ${ok ? 'OK' : 'No'}</span>`;
@@ -2002,6 +2255,14 @@ function mapStatusTable(rows){
   if (!rows || !rows.length) return '<div class="muted">No map status rows.</div>';
   return `<div class="tableWrap"><table><thead><tr><th>Map</th><th>Status</th><th>Ready</th><th>Alive</th><th>Active</th><th>Players</th><th>Game</th><th>IGW</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.label || r.map)}<br><span class="muted">${esc(r.map)} #${esc(r.partition_id)}</span></td><td>${healthCell(r.online)}</td><td>${healthCell(r.ready, 'yes', 'no')}</td><td>${healthCell(r.alive, 'yes', 'no')}</td><td>${healthCell(r.active, 'yes', 'no')}</td><td>${esc(r.players ?? 0)}</td><td>${esc(r.game)}</td><td>${esc(r.igw)}</td></tr>`).join('')}</tbody></table></div>`;
 }
+function characterRosterTable(rows){
+  if (!rows || !rows.length) return '<div class="muted">No characters in this group.</div>';
+  return `<div class="tableWrap"><table><thead><tr><th>Character</th><th>Status</th><th>Life</th><th>Map</th><th>Account</th><th>Last Login</th></tr></thead><tbody>${rows.map(r=>`<tr data-id="${esc(r.account_id ?? '')}"><td>${esc(r.character_name || 'unnamed')}<br><span class="muted">${esc(r.platform_name || '')} ${esc(r.platform_id || '')}</span></td><td>${esc(r.online_status || '')}</td><td>${esc(r.life_state || '')}</td><td>${esc(r.map || r.server_id || '')}</td><td>${esc(r.account_id || '')}</td><td>${esc(r.last_login_time || '')}</td></tr>`).join('')}</tbody></table></div>`;
+}
+function characterRosterPanel(roster){
+  const counts = roster.counts || {};
+  return `<div class="metricGrid">${metric('Online Players', counts.online ?? 0, Number(counts.online || 0) ? 'ok' : '')}${metric('Offline Players', counts.offline ?? 0)}${metric('Total Characters', counts.total ?? 0)}</div><div class="card"><div class="sectionHeader"><h2>Online Players</h2><span class="pill ok">${esc(counts.online ?? 0)} online</span></div>${characterRosterTable(roster.online)}</div><div class="card"><div class="sectionHeader"><h2>Offline Players</h2><span class="pill">${esc(counts.offline ?? 0)} offline</span></div>${characterRosterTable(roster.offline)}</div>`;
+}
 function probeTable(rows){
   if (!rows || !rows.length) return '<div class="muted">No probes.</div>';
   return `<div class="tableWrap"><table><thead><tr><th>Name</th><th>Status</th><th>Target</th><th>Latency</th><th>HTTP</th><th>Error</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.name)}</td><td>${healthCell(r.ok || [401,403,404].includes(r.httpStatus), r.ok ? 'OK' : 'reachable', 'down')}</td><td>${esc(r.target)}</td><td>${esc(r.latencyMs)}ms</td><td>${esc(r.httpStatus ?? '')}</td><td>${esc(r.error ?? '')}</td></tr>`).join('')}</tbody></table></div>`;
@@ -2036,6 +2297,16 @@ function restartPanel(state){
 }
 function signalList(groups){
   return Object.entries(groups || {}).map(([group, rows]) => `<div class="card"><h2>${esc(group)}</h2><table><thead><tr><th>Name</th><th>Value</th><th>Why</th></tr></thead><tbody>${(rows || []).map(r=>`<tr><td>${esc(r.name)}</td><td>${esc(Array.isArray(r.value) ? r.value.join(', ') : r.value)}</td><td>${esc(r.why)}</td></tr>`).join('')}</tbody></table></div>`).join('');
+}
+function resourcePanel(data){
+  const host = data.host || {};
+  const mem = host.memory || {};
+  const disk = host.disk || {};
+  const load = host.load || {};
+  const docker = data.docker || {};
+  const containers = docker.containers || [];
+  const containerRows = containers.length ? `<div class="tableWrap"><table><thead><tr><th>Service</th><th>Status</th><th>CPU</th><th>Memory</th><th>Net I/O</th><th>Block I/O</th><th>PIDs</th></tr></thead><tbody>${containers.map(r => `<tr><td>${esc(r.service || r.name)}</td><td>${esc(r.status || r.error || '')}</td><td>${esc(r.cpuPercent ?? '')}%</td><td>${esc(r.memory || '')}<br><span class="muted">${esc(r.memoryPercent ?? '')}%</span></td><td>${esc(r.netIO || '')}</td><td>${esc(r.blockIO || '')}</td><td>${esc(r.pids ?? '')}</td></tr>`).join('')}</tbody></table></div>` : `<div class="muted">${esc(docker.error || 'No container stats available.')}</div>`;
+  return `<div class="card"><div class="sectionHeader"><h2>Realtime Resources</h2><div class="toolbar"><span class="pill">${esc(data.generatedAt || '')}</span><button id="refreshResourcesBtn">Refresh</button></div></div><div class="metricGrid">${metric('Host Load', `${load.one ?? '?'} / ${load.five ?? '?'} / ${load.fifteen ?? '?'}`)}${metric('Host Memory', `${fmtBytes(mem.usedBytes)} / ${fmtBytes(mem.totalBytes)}`, (mem.usedPercent || 0) > 90 ? 'dangerText' : '')}${metric('Workspace Disk', `${fmtBytes(disk.usedBytes)} / ${fmtBytes(disk.totalBytes)}`, (disk.usedPercent || 0) > 90 ? 'dangerText' : '')}${metric('Containers', containers.length)}</div>${containerRows}</div>`;
 }
 function envEditor(payload){
   const values = payload.values || {};
@@ -2105,6 +2376,10 @@ function renderStatus(data){
 }
 async function refreshStatus(){ renderStatus(await api('/api/status')); }
 async function load(){
+  if (resourceTimer) {
+    clearInterval(resourceTimer);
+    resourceTimer = null;
+  }
   syncTabs();
   await refreshStatus().catch(e => {
     document.getElementById('statusSummary').innerHTML = `<span class="pill bad">${esc(e.message)}</span>`;
@@ -2134,12 +2409,24 @@ async function ops(){
   const opt = await api('/api/ops/optimization');
   const announcement = await api('/api/ops/announcement');
   const restart = await api('/api/ops/restart');
+  const resources = await api('/api/ops/resources');
   const pc = health.playerCounts || {};
-  view.innerHTML = `<div class="sectionHeader"><h2>Operations</h2><div class="toolbar"><button data-jump="overview">Overview</button><button data-jump="runbook">Runbook</button><button data-jump="settings">Settings</button></div></div><div class="metricGrid">${metric('Connected Players', pc.connected_players_reported ?? 0)}${metric('Online Controllers', pc.online_controller_ids ?? 0)}${metric('Recent Online State', pc.online_or_recently_disconnected ?? 0)}${metric('Grace Entries', pc.grace_period_entries ?? 0)}</div>${actionGrid([{tab:'characters',label:'Inspect characters currently represented in DB'},{tab:'security',label:'Check audit events and exposed settings'},{tab:'mutations',label:'Create a backup before writes',className:'primary'}])}${restartPanel(restart)}${announcementPanel(announcement)}<div class="card"><h2>Health Verdict</h2>${checks(health.verdicts)}</div><div class="card"><h2>Map Online/Offline</h2>${mapStatusTable(health.mapStatus)}</div><div class="card"><h2>Local and Upstream Network</h2>${probeTable(health.network?.probes)}</div><div class="card"><h2>Farm State</h2>${table(health.farmState)}</div><div class="card"><h2>Partitions</h2>${table(health.partitions)}</div>${signalList(opt)}`;
+  view.innerHTML = `<div class="sectionHeader"><h2>Operations</h2><div class="toolbar"><button data-jump="overview">Overview</button><button data-jump="runbook">Runbook</button><button data-jump="settings">Settings</button></div></div><div class="metricGrid">${metric('Connected Players', pc.connected_players_reported ?? 0)}${metric('Online Controllers', pc.online_controller_ids ?? 0)}${metric('Recent Online State', pc.online_or_recently_disconnected ?? 0)}${metric('Grace Entries', pc.grace_period_entries ?? 0)}</div>${actionGrid([{tab:'characters',label:'Inspect characters currently represented in DB'},{tab:'security',label:'Check audit events and exposed settings'},{tab:'mutations',label:'Create a backup before writes',className:'primary'}])}<div id="resources">${resourcePanel(resources)}</div>${restartPanel(restart)}${announcementPanel(announcement)}<div class="card"><h2>Health Verdict</h2>${checks(health.verdicts)}</div><div class="card"><h2>Map Online/Offline</h2>${mapStatusTable(health.mapStatus)}</div><div class="card"><h2>Local and Upstream Network</h2>${probeTable(health.network?.probes)}</div><div class="card"><h2>Farm State</h2>${table(health.farmState)}</div><div class="card"><h2>Partitions</h2>${table(health.partitions)}</div>${signalList(opt)}`;
+  document.getElementById('refreshResourcesBtn').addEventListener('click', refreshResources);
   document.getElementById('scheduleAnnouncementBtn').addEventListener('click', scheduleAnnouncement);
   document.getElementById('cancelAnnouncementBtn').addEventListener('click', cancelAnnouncement);
   document.getElementById('scheduleRestartBtn').addEventListener('click', scheduleRestart);
   document.getElementById('cancelRestartBtn').addEventListener('click', cancelRestart);
+  resourceTimer = setInterval(() => {
+    if (current === 'ops') refreshResources().catch(() => {});
+  }, 5000);
+}
+async function refreshResources(){
+  const resources = await api('/api/ops/resources');
+  const container = document.getElementById('resources');
+  if (!container) return;
+  container.innerHTML = resourcePanel(resources);
+  document.getElementById('refreshResourcesBtn')?.addEventListener('click', refreshResources);
 }
 async function security(){
   const audit = await api('/api/ops/security');
@@ -2153,7 +2440,8 @@ async function runbook(){
 }
 async function characters(){
   const lastQuery = sessionStorage.getItem('duneAdminCharacterQuery') || '';
-  view.innerHTML = `<div class="sectionHeader"><h2>Characters</h2><div class="toolbar"><span class="pill">lookup and inspect</span><button data-jump="mutations" class="primary">Admin Actions</button><button data-jump="settings">Settings</button></div></div>${actionGrid([{tab:'mutations',label:'Open grants, XP, currency, and item maintenance'},{tab:'security',label:'Review audit trail for recent writes'},{tab:'ops',label:'Check server state before changing players'}])}<div class="card"><div class="row"><input id="q" placeholder="Character, Funcom ID, platform ID" value="${esc(lastQuery)}"><button id="characterSearchBtn" class="primary">Search</button><button id="characterListAllBtn">List all</button></div><div id="results"></div></div><div id="detail"></div>`;
+  view.innerHTML = `<div class="sectionHeader"><h2>Characters</h2><div class="toolbar"><span class="pill">online and offline roster</span><button id="refreshRosterBtn">Refresh roster</button><button data-jump="mutations" class="primary">Admin Actions</button><button data-jump="settings">Settings</button></div></div>${actionGrid([{tab:'mutations',label:'Open grants, XP, currency, and item maintenance'},{tab:'security',label:'Review audit trail for recent writes'},{tab:'ops',label:'Check server state before changing players'}])}<div id="roster"></div><div class="card"><h2>Search</h2><div class="row"><input id="q" placeholder="Character, Funcom ID, platform ID" value="${esc(lastQuery)}"><button id="characterSearchBtn" class="primary">Search</button><button id="characterListAllBtn">List all</button></div><div id="results"></div></div><div id="detail"></div>`;
+  document.getElementById('refreshRosterBtn').addEventListener('click', loadCharacterRoster);
   document.getElementById('characterSearchBtn').addEventListener('click', searchCharacters);
   document.getElementById('characterListAllBtn').addEventListener('click', () => {
     document.getElementById('q').value = '';
@@ -2162,7 +2450,14 @@ async function characters(){
   document.getElementById('q').addEventListener('keydown', e => {
     if (e.key === 'Enter') searchCharacters();
   });
+  await loadCharacterRoster();
   if (lastQuery) await searchCharacters();
+}
+async function loadCharacterRoster(){
+  const roster = await api('/api/characters/roster');
+  const container = document.getElementById('roster');
+  container.innerHTML = characterRosterPanel(roster);
+  container.querySelectorAll('tbody tr').forEach(row => row.onclick = () => pickCharacter(row));
 }
 async function searchCharacters(){
   const query = document.getElementById('q').value;
