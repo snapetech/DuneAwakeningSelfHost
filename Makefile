@@ -1,9 +1,12 @@
 COMPOSE ?= docker compose
 ENV_FILE ?= .env.example
 
-.PHONY: validate compose-config secret-scan list-publishable
+.PHONY: validate compose-config secret-scan list-publishable preflight
 
 validate: compose-config secret-scan
+
+preflight:
+	./scripts/preflight.sh
 
 compose-config:
 	$(COMPOSE) --env-file $(ENV_FILE) config --quiet

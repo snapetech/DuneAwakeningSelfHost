@@ -55,6 +55,8 @@ Game server base arguments:
 
 `/home/dune/run.sh` rewrites `-MultiHome=$POD_IP`, appends `-IGWBindAddress=$POD_IP`, starts `DuneSandboxServer.sh`, then discovers the UDP game and IGW ports from `lsof`.
 
+The Compose path uses `scripts/run_server_safe.sh` as a local replacement wrapper because list-form Compose arguments with spaces need to remain intact through the final `DuneSandboxServer.sh` exec.
+
 ## Known Missing Pieces
 
 These are the items the k8s operators normally synthesize and still need to be reproduced:

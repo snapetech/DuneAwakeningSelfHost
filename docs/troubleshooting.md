@@ -3,10 +3,11 @@
 Start with:
 
 ```bash
+./scripts/preflight.sh
 ./scripts/status.sh
 ```
 
-The status helper prints container state, selected database rows, RabbitMQ connections, and recent high-signal logs with known token/password patterns redacted.
+The preflight helper catches missing tools, missing image tarballs, default credentials, empty tokens, and unsafe host bindings. The status helper prints container state, selected database rows, RabbitMQ connections, and recent high-signal logs with known token/password patterns redacted.
 
 ## Image Tarball Not Found
 
@@ -81,6 +82,10 @@ Check:
 - `EXTERNAL_ADDRESS` matches the address clients should use.
 - `./scripts/status.sh` shows `farm_state.ready` and non-empty game/IGW addresses.
 - RabbitMQ and Postgres ports remain local-only.
+
+## World Region With Spaces Breaks Startup
+
+Use the Compose list-form command and `scripts/run_server_safe.sh`. The local wrapper preserves arguments such as `-FarmRegion=North America` through the final server exec.
 
 ## Permission Denied Under `data/postgres`
 

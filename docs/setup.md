@@ -16,7 +16,15 @@ Edit `.env` after generation:
 - Paste the Funcom self-hosting token into `FLS_SECRET`.
 - Set `EXTERNAL_ADDRESS` to the address clients should reach.
 
-## 2. Load Official Images
+## 2. Run Preflight
+
+```bash
+./scripts/preflight.sh
+```
+
+This checks local commands, required env values, expected Steam image tarballs, and unsafe host bindings.
+
+## 3. Load Official Images
 
 ```bash
 ./scripts/load-images.sh
@@ -24,13 +32,13 @@ Edit `.env` after generation:
 
 The script expects Funcom's image tarballs under the official Steam package directory. It does not download or redistribute images.
 
-## 3. Start Core State Services
+## 4. Start Core State Services
 
 ```bash
 docker compose --env-file .env up -d postgres admin-rmq game-rmq
 ```
 
-## 4. Bootstrap Database
+## 5. Bootstrap Database
 
 ```bash
 docker compose --env-file .env run --rm db-init
@@ -38,14 +46,14 @@ docker compose --env-file .env run --rm db-init
 
 The bootstrap runs inside Funcom's `server-db-utils` image and uses the database setup modules bundled there.
 
-## 5. Start Service Layer
+## 6. Start Service Layer
 
 ```bash
 docker compose --env-file .env up -d rmq-auth-shim text-router gateway director
 ./scripts/status.sh
 ```
 
-## 6. Experimental Game Server
+## 7. Experimental Game Server
 
 ```bash
 docker compose --env-file .env up -d survival

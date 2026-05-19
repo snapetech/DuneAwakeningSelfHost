@@ -14,6 +14,8 @@ The official self-hosted package is Kubernetes-oriented. This repository transla
 - `gateway`: gateway service.
 - `survival`: experimental direct launch of the game server image.
 
+The `survival` service uses `scripts/run_server_safe.sh` instead of the image's default `/home/dune/run.sh`. The local launcher preserves command arguments containing spaces, prepares the saved/config symlink expected by Unreal, appends `-IGWBindAddress=$POD_IP`, and then starts `DuneSandboxServer.sh` as the `dune` user.
+
 ## Local State
 
 Runtime state is intentionally outside git:

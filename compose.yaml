@@ -175,7 +175,7 @@ services:
   survival:
     image: registry.funcom.com/funcom/self-hosting/seabass-server:${DUNE_IMAGE_TAG}
     command:
-      - /home/dune/run.sh
+      - /workspace/scripts/run_server_safe.sh
       - -FarmRegion=${WORLD_REGION}
       - -ini:engine:[FuncomLiveServices]:ServiceAuthToken=${FLS_SECRET}
       - -ini:engine:[OnlineSubsystem]:ServerName=${WORLD_UNIQUE_NAME}
@@ -199,6 +199,7 @@ services:
       - "7777:7777/udp"
       - "7888:7888/udp"
     volumes:
+      - .:/workspace:ro
       - ./data/server-saved:/home/dune/server/DuneSandbox/Saved
     depends_on:
       - postgres

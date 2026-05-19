@@ -46,7 +46,9 @@ The first target here is Docker Compose parity for those pieces. After that, sys
 - `scripts/inspect-images.sh`: prints entrypoints, env, ports, and volumes from the loaded images.
 - `scripts/bootstrap_db.py`: one-shot Compose DB bootstrap using Funcom's bundled SQL setup API.
 - `scripts/populate-local-env.sh`: generates local passwords/RabbitMQ secret and RabbitMQ TLS files.
+- `scripts/preflight.sh`: checks local tools, env values, Steam image tarballs, and unsafe bindings.
 - `scripts/rmq_auth_shim.py`: local RabbitMQ HTTP auth compatibility shim.
+- `scripts/run_server_safe.sh`: local game-server launcher that preserves arguments containing spaces.
 - `scripts/status.sh`: redacted status/log inspection helper.
 
 ## Requirements
@@ -62,6 +64,7 @@ Generate local secrets, fill in the self-hosting token in `.env`, load the offic
 
 ```bash
 ./scripts/populate-local-env.sh
+./scripts/preflight.sh
 ./scripts/load-images.sh
 docker compose --env-file .env up -d postgres admin-rmq game-rmq
 docker compose --env-file .env run --rm db-init

@@ -1,0 +1,163 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+env_file="${1:-.env}"
+failures=0
+
+ok() {
+  printf 'ok: %s\n' "$*"
+}
+
+warn() {
+  printf 'warn: %s\n' "$*" >&2
+}
+
+fail() {
+  printf 'fail: %s\n' "$*" >&2
+  failures=$((failures + 1))
+}
+
+require_command() {
+  if command -v "$1" >/dev/null 2>&1; then
+    ok "$1 found"
+  else
+    fail "$1 is required"
+  fi
+}
+
+load_env() {
+  if [[ ! -f "$env_file" ]]; then
+    fail "$env_file does not exist; run ./scripts/populate-local-env.sh"
+    return
+  fi
+
+  local line key value
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+    [[ "$line" == *"="* ]] || continue
+    key="${line%%=*}"
+    value="${line#*=}"
+    key="${key#"${key%%[![:space:]]*}"}"
+    key="${key%"${key##*[![:space:]]}"}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    value="${value%\"}"
+    value="${value#\"}"
+    value="${value%\'}"
+    value="${value#\'}"
+    if [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+      printf -v "$key" '%s' "$value"
+    fi
+  done <"$env_file"
+
+  ok "$env_file loaded"
+}
+
+check_env_value() {
+  local name="$1"
+  local value="${!name:-}"
+  if [[ -z "$value" ]]; then
+    fail "$name is empty"
+  else
+    ok "$name set"
+  fi
+}
+
+check_not_default() {
+  local name="$1"
+  local default="$2"
+  local value="${!name:-}"
+  if [[ "$value" == "$default" ]]; then
+    fail "$name still uses default placeholder"
+  fi
+}
+
+check_image_tarballs() {
+  local server_dir="${DUNE_STEAM_SERVER_DIR:-}"
+  local images=(
+    "images/battlegroup/server-rabbitmq.tar"
+    "images/battlegroup/server-text-router.tar"
+    "images/battlegroup/server-bg-director.tar"
+    "images/battlegroup/server-gateway.tar"
+    "images/battlegroup/server-db-utils.tar"
+    "images/battlegroup/server.tar"
+    "images/prerequisites/igw-postgres.tar"
+  )
+
+  if [[ -z "$server_dir" ]]; then
+    fail "DUNE_STEAM_SERVER_DIR is empty"
+    return
+  fi
+
+  if [[ ! -d "$server_dir" ]]; then
+    fail "DUNE_STEAM_SERVER_DIR does not exist: $server_dir"
+    return
+  fi
+
+  ok "Steam server directory exists"
+
+  for image in "${images[@]}"; do
+    if [[ -f "$server_dir/$image" ]]; then
+      ok "found $image"
+    else
+      fail "missing $server_dir/$image"
+    fi
+  done
+}
+
+check_compose_bindings() {
+  local rendered
+  rendered="$(mktemp)"
+
+  if docker compose --env-file "$env_file" config >"$rendered"; then
+    ok "Compose config renders"
+  else
+    fail "Compose config failed to render"
+    rm -f "$rendered"
+    return
+  fi
+
+  if rg -n '0\.0\.0\.0:(15431|15672|15673|5673|31982):' "$rendered" >/dev/null; then
+    fail "debug/database/RabbitMQ port appears bound on all interfaces"
+  else
+    ok "debug/database/RabbitMQ host ports are not bound on all interfaces"
+  fi
+
+  rm -f "$rendered"
+}
+
+require_command docker
+require_command openssl
+require_command rg
+require_command jq
+
+load_env
+
+check_env_value DUNE_STEAM_SERVER_DIR
+check_env_value DUNE_IMAGE_TAG
+check_env_value WORLD_NAME
+check_env_value WORLD_UNIQUE_NAME
+check_env_value WORLD_REGION
+check_env_value FLS_SECRET
+check_env_value POSTGRES_SUPER_PASSWORD
+check_env_value POSTGRES_DUNE_PASSWORD
+check_env_value RMQ_HTTP_TOKEN_AUTH_SECRET
+check_env_value EXTERNAL_ADDRESS
+
+check_not_default POSTGRES_SUPER_PASSWORD change-me-postgres-super
+check_not_default POSTGRES_DUNE_PASSWORD change-me-dune-db
+check_not_default RMQ_HTTP_TOKEN_AUTH_SECRET change-me-rmq-secret
+
+if [[ "${EXTERNAL_ADDRESS:-}" == "127.0.0.1" ]]; then
+  warn "EXTERNAL_ADDRESS is 127.0.0.1; clients outside this host will not be able to connect"
+fi
+
+check_image_tarballs
+check_compose_bindings
+
+if [[ "$failures" -gt 0 ]]; then
+  printf '\npreflight failed with %s issue(s)\n' "$failures" >&2
+  exit 1
+fi
+
+printf '\npreflight passed\n'
