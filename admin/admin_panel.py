@@ -1301,7 +1301,12 @@ function options(rows, key, fallback=''){
 function inventoryOptions(rows){
   const vals = rows || [];
   if (!vals.length) return '<option value="">No inventories observed</option>';
-  return vals.map(r => `<option value="${esc(r.inventory_id)}">${esc(r.character_name || 'unowned')} | inv ${esc(r.inventory_id)} | type ${esc(r.inventory_type)} | ${esc(r.item_count)} items</option>`).join('');
+  return vals.map(r => {
+    const inventoryId = r.inventory_id ?? r.id ?? '';
+    const owner = r.character_name || r.actor_id || 'unowned';
+    const count = r.item_count ?? '';
+    return `<option value="${esc(inventoryId)}" data-type="${esc(r.inventory_type ?? '')}">${esc(owner)} | inv ${esc(inventoryId)} | type ${esc(r.inventory_type)} | ${esc(count)} items</option>`;
+  }).join('');
 }
 function inventoryTypeOptions(rows){
   const vals = rows || [];
@@ -1488,17 +1493,27 @@ async function mutations(){
   const characterRows = await api('/api/characters?q=');
   const referenceErrors = ref.errors && Object.keys(ref.errors).length ? `<div class="card"><h2>Reference Errors</h2><pre>${esc(JSON.stringify(ref.errors, null, 2))}</pre></div>` : '';
   view.innerHTML = `${referenceErrors}<div class="card"><h2>Backups</h2><p>Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button id="backupBtn" class="primary">Create DB backup</button><pre id="backupResult"></pre></div><div class="card"><h2>Currency and XP</h2><p class="dangerText">Writes require <code>DUNE_ADMIN_MUTATIONS_ENABLED=true</code> and a valid admin token. Back up first.</p><div class="grid"><label>Character<select id="adminCharacterSelect">${characterOptions(characterRows)}</select></label><label>Player controller ID<input id="pcid"></label><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button id="currencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Level for set/new track<input id="xplevel" value="0"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button id="xpBtn" class="primary">Apply XP</button></p></div><div class="card"><h2>Specialization Keystones</h2><div class="grid"><label>Player/controller ID<input id="keyPlayer"></label><label>Keystone<select id="keystone">${options(ref.keystones, 'name')}</select></label></div><p><button id="purchaseKeystoneBtn" class="primary">Purchase keystone</button> <button id="resetKeystonesBtn" class="danger">Reset all keystones</button></p><pre id="keystoneResult"></pre></div><div class="card"><h2>Item Grants</h2><p class="dangerText">Use exact server template IDs. Public item databases: <a href="${esc(ref.publicItemDatabase)}" target="_blank" rel="noreferrer">gaming.tools</a> and <a href="${esc(ref.publicItemDatabaseAlt)}" target="_blank" rel="noreferrer">Arrakis Atlas</a>. Dry run first when using IDs not observed locally.</p><div class="grid"><label>Character<select id="grantCharacterSelect">${characterOptions(characterRows)}</select></label><label>Known inventory<select id="grantInventorySelect">${inventoryOptions(ref.recentInventories)}</select></label><label>Inventory ID<input id="grantInventory" placeholder="explicit inventory"></label><label>Account ID<input id="grantAccount" placeholder="auto-select player inventory"></label><label>Character name<input id="grantCharacter" placeholder="auto-select by name"></label><label>Inventory type<select id="grantInventoryType">${inventoryTypeOptions(ref.inventoryTypes)}</select></label><label>Template ID<input id="grantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><label>Stats JSON<textarea id="grantStats">{}</textarea></label><p><button id="dryRunItemBtn" class="primary">Dry run</button> <button id="grantItemBtn" class="danger">Grant item</button></p><pre id="grantResult"></pre></div><div class="card"><h2>Item Maintenance</h2><div class="grid"><label>Character<select id="itemCharacterSelect">${characterOptions(characterRows)}</select></label><label>Owned item<select id="itemEditSelect"><option value="">Select a character first</option></select></label><label>Item ID<input id="itemEditId"></label><label>New stack size<input id="itemEditStack" value="1"></label><label>Delete count<input id="itemDeleteCount" placeholder="blank/all"></label></div><p><button id="setItemStackBtn" class="primary">Set stack</button> <button id="deleteItemBtn" class="danger">Delete item/count</button></p><pre id="itemEditResult"></pre></div><datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><div class="card"><h2>Known Item Templates</h2><p class="muted">Exact template IDs observed in local item, reward, vendor, vehicle, or exchange tables.</p>${table(ref.knownItemTemplates)}</div><div class="card"><h2>Observed Item Templates</h2><p class="muted">Read-only reference from this server's current <code>dune.items</code> rows.</p>${table(ref.observedItemTemplates)}</div><div class="card"><h2>Recent Inventories</h2>${table(ref.recentInventories)}</div><div class="card"><h2>Inventory Types</h2>${table(ref.inventoryTypes)}</div><div class="card"><h2>Recipe Unlocks</h2><p class="muted">Not implemented yet. The DB exposes removal helpers and actor JSON recipe arrays, but no safe grant function has been mapped.</p><button id="unsupportedBtn" class="danger">Test unsupported endpoint</button></div>`;
-  const loadCharacterItems = async (accountId) => {
+  const loadCharacterAdminDetails = async (accountId) => {
     const itemSelect = document.getElementById('itemEditSelect');
+    const inventorySelect = document.getElementById('grantInventorySelect');
     if (!itemSelect || !accountId) return;
     itemSelect.innerHTML = '<option value="">Loading items...</option>';
+    if (inventorySelect) inventorySelect.innerHTML = '<option value="">Loading inventories...</option>';
     document.getElementById('itemEditId').value = '';
     try {
       const detail = await api('/api/characters/' + encodeURIComponent(accountId));
       const items = detail.inventoryItems || [];
+      const inventories = detail.inventories || [];
       itemSelect.innerHTML = inventoryItemOptions(items);
+      if (inventorySelect) {
+        inventorySelect.innerHTML = inventoryOptions(inventories);
+        document.getElementById('grantInventory').value = inventorySelect.value || '';
+        const inventoryType = inventorySelect.selectedOptions?.[0]?.dataset.type || '';
+        if (inventoryType) document.getElementById('grantInventoryType').value = inventoryType;
+      }
       document.getElementById('itemEditResult').textContent = JSON.stringify({
         character: detail.player?.character_name || accountId,
+        inventories: inventories.length,
         inventoryItems: items.length
       }, null, 2);
     } catch (e) {
@@ -1518,7 +1533,7 @@ async function mutations(){
     if (document.getElementById('pcid')) document.getElementById('pcid').value = option.dataset.controller || '';
     if (document.getElementById('xpid')) document.getElementById('xpid').value = option.dataset.controller || '';
     if (document.getElementById('keyPlayer')) document.getElementById('keyPlayer').value = option.dataset.controller || '';
-    await loadCharacterItems(option.value);
+    await loadCharacterAdminDetails(option.value);
   };
   document.getElementById('adminCharacterSelect').addEventListener('change', e => fillCharacter(e.target));
   document.getElementById('grantCharacterSelect').addEventListener('change', e => fillCharacter(e.target));
@@ -1530,7 +1545,11 @@ async function mutations(){
   });
   const invSelect = document.getElementById('grantInventorySelect');
   if (invSelect && invSelect.value) document.getElementById('grantInventory').value = invSelect.value;
-  invSelect?.addEventListener('change', () => { document.getElementById('grantInventory').value = invSelect.value; });
+  invSelect?.addEventListener('change', () => {
+    document.getElementById('grantInventory').value = invSelect.value;
+    const inventoryType = invSelect.selectedOptions?.[0]?.dataset.type || '';
+    if (inventoryType) document.getElementById('grantInventoryType').value = inventoryType;
+  });
   document.getElementById('backupBtn').addEventListener('click', backup);
   document.getElementById('currencyBtn').addEventListener('click', currency);
   document.getElementById('xpBtn').addEventListener('click', xp);
