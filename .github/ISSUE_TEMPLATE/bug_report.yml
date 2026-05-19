@@ -1,0 +1,43 @@
+name: Bug report
+description: Report a reproducible problem with the Linux/Compose tooling.
+title: "[bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not paste FLS tokens, passwords, private keys, full logs, database dumps, or Funcom-distributed files.
+  - type: input
+    id: image-tag
+    attributes:
+      label: Dune image tag
+      description: Example: 1963158-0-shipping
+    validations:
+      required: true
+  - type: input
+    id: host
+    attributes:
+      label: Host OS and Docker version
+      description: Example: Ubuntu 24.04, Docker 28.x
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: List the exact commands you ran.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include redacted output from `./scripts/status.sh` when possible.
+    validations:
+      required: true

@@ -41,6 +41,7 @@ The first target here is Docker Compose parity for those pieces. After that, sys
 - `docs/publication.md`: what is safe to publish and what must stay local.
 - `docs/setup.md`: step-by-step local startup flow.
 - `docs/architecture.md`: Compose service map and runtime state notes.
+- `docs/troubleshooting.md`: common startup failures and where to look.
 - `scripts/load-images.sh`: loads the Steam image tarballs into Docker.
 - `scripts/inspect-images.sh`: prints entrypoints, env, ports, and volumes from the loaded images.
 - `scripts/bootstrap_db.py`: one-shot Compose DB bootstrap using Funcom's bundled SQL setup API.
@@ -71,6 +72,12 @@ Then bring up the service layer:
 ```bash
 docker compose --env-file .env up -d rmq-auth-shim text-router gateway director
 ./scripts/status.sh
+```
+
+Pass a custom env file when needed:
+
+```bash
+./scripts/status.sh .env.production
 ```
 
 The `survival` service is present as an experimental direct game-server launch target:

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-compose=(docker compose --env-file .env)
+env_file="${1:-.env}"
+compose=(docker compose --env-file "$env_file")
 db=dune_sb_1_4_0_0
 
 redact() {

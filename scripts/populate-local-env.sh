@@ -47,3 +47,4 @@ EOF
 fi
 
 echo "Populated $env_file and $tls_dir"
+echo "Next: edit $env_file and set FLS_SECRET, EXTERNAL_ADDRESS, and any world metadata."
