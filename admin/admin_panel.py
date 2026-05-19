@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import configparser
+import hmac
 import html
 import json
 import os
@@ -22,6 +23,16 @@ BACKUP_ROOT = ROOT / "backups" / "admin-panel"
 DATABASE = os.environ.get("DUNE_DATABASE", "dune_sb_1_4_0_0")
 ADMIN_TOKEN = os.environ.get("DUNE_ADMIN_TOKEN", "")
 MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_MUTATIONS_ENABLED", "false").lower() == "true"
+ITEM_GRANTS_ENABLED = os.environ.get("DUNE_ADMIN_ITEM_GRANTS_ENABLED", "false").lower() == "true"
+MAX_BODY_BYTES = int(os.environ.get("DUNE_ADMIN_MAX_BODY_BYTES", "65536"))
+ALLOWED_HOSTS = {
+    host.strip().lower()
+    for host in os.environ.get("DUNE_ADMIN_ALLOWED_HOSTS", "127.0.0.1:18080,localhost:18080,duneadmin.home").split(",")
+    if host.strip()
+}
+AUTH_FAILURE_WINDOW_SECONDS = 60
+AUTH_FAILURE_LIMIT = 5
+AUTH_FAILURES = {}
 
 ALLOWED_CONFIGS = {
     "director.ini": CONFIG_ROOT / "director.ini",
@@ -97,6 +108,8 @@ def backup_file(path):
 
 def parse_body(handler):
     length = int(handler.headers.get("Content-Length", "0"))
+    if length > MAX_BODY_BYTES:
+        raise ValueError("request body too large")
     data = handler.rfile.read(length) if length else b"{}"
     content_type = handler.headers.get("Content-Type", "")
     if "application/json" in content_type:
@@ -143,43 +156,85 @@ def create_db_backup():
 class Handler(BaseHTTPRequestHandler):
     server_version = "dune-admin-panel"
 
+    def handle_one_request(self):
+        try:
+            super().handle_one_request()
+        except ConnectionError:
+            raise
+        except Exception as exc:
+            try:
+                self.error(HTTPStatus.BAD_REQUEST, str(exc))
+            except Exception:
+                pass
+
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
-        if parsed.path == "/":
-            self.html(INDEX)
-        elif parsed.path == "/api/status":
-            self.json({
-                "database": DATABASE,
-                "mutationsEnabled": MUTATIONS_ENABLED,
-                "safeEnvKeys": sorted(SAFE_ENV_KEYS),
-                "configs": sorted(ALLOWED_CONFIGS),
-            })
-        elif parsed.path == "/api/server/state":
-            self.json({
-                "farmState": query("select server_id,farm_id,ready,alive,map,revision,game_addr,igw_addr from dune.farm_state order by map, server_id"),
-                "partitions": query("select partition_id,server_id,map,dimension_index,label from dune.world_partition order by partition_id"),
-                "activeServers": query("select * from dune.active_server_ids order by server_id"),
-            })
-        elif parsed.path == "/api/characters":
-            params = urllib.parse.parse_qs(parsed.query)
-            term = (params.get("q", [""])[0] or "").strip()
-            self.json(self.characters(term))
-        elif parsed.path.startswith("/api/characters/"):
-            account_id = int(parsed.path.rsplit("/", 1)[-1])
-            self.json(self.character_detail(account_id))
-        elif parsed.path == "/api/settings/env":
-            env_values = read_env()
-            self.json({key: env_values.get(key, "") for key in sorted(SAFE_ENV_KEYS)})
-        elif parsed.path == "/api/settings/configs":
-            self.json({name: path.read_text(encoding="utf-8") for name, path in ALLOWED_CONFIGS.items() if path.exists()})
-        elif parsed.path == "/api/admin/reference":
-            self.json(self.admin_reference())
-        else:
-            self.error(HTTPStatus.NOT_FOUND, "not found")
+        try:
+            self.validate_host()
+            if parsed.path == "/":
+                self.html(INDEX)
+            elif parsed.path == "/api/status":
+                self.json({
+                    "database": DATABASE,
+                    "mutationsEnabled": MUTATIONS_ENABLED,
+                    "itemGrantsEnabled": ITEM_GRANTS_ENABLED,
+                    "adminTokenConfigured": bool(ADMIN_TOKEN),
+                    "safeEnvKeys": sorted(SAFE_ENV_KEYS),
+                    "configs": sorted(ALLOWED_CONFIGS),
+                })
+            elif parsed.path == "/api/server/state":
+                self.require_token()
+                self.json({
+                    "farmState": query("select server_id,farm_id,ready,alive,map,revision,game_addr,igw_addr from dune.farm_state order by map, server_id"),
+                    "partitions": query("select partition_id,server_id,map,dimension_index,label from dune.world_partition order by partition_id"),
+                    "activeServers": query("select * from dune.active_server_ids order by server_id"),
+                })
+            elif parsed.path == "/api/ops/health":
+                self.require_token()
+                self.json(self.ops_health())
+            elif parsed.path == "/api/ops/security":
+                self.require_token()
+                self.json(self.security_audit())
+            elif parsed.path == "/api/ops/optimization":
+                self.require_token()
+                self.json(self.optimization_signals())
+            elif parsed.path == "/api/characters":
+                self.require_token()
+                params = urllib.parse.parse_qs(parsed.query)
+                term = (params.get("q", [""])[0] or "").strip()
+                self.json(self.characters(term))
+            elif parsed.path.startswith("/api/characters/"):
+                self.require_token()
+                account_id = int(parsed.path.rsplit("/", 1)[-1])
+                self.json(self.character_detail(account_id))
+            elif parsed.path == "/api/settings/env":
+                self.require_token()
+                env_values = read_env()
+                self.json({key: env_values.get(key, "") for key in sorted(SAFE_ENV_KEYS)})
+            elif parsed.path == "/api/settings/configs":
+                self.require_token()
+                self.json({name: path.read_text(encoding="utf-8") for name, path in ALLOWED_CONFIGS.items() if path.exists()})
+            elif parsed.path == "/api/admin/reference":
+                self.require_token()
+                self.json(self.admin_reference())
+            else:
+                self.error(HTTPStatus.NOT_FOUND, "not found")
+        except PermissionError as exc:
+            self.error(HTTPStatus.UNAUTHORIZED, str(exc))
+        except Exception as exc:
+            self.error(HTTPStatus.BAD_REQUEST, str(exc))
+
+    def do_HEAD(self):
+        self.validate_host()
+        self.send_response(HTTPStatus.NO_CONTENT)
+        self.security_headers()
+        self.end_headers()
 
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
         try:
+            self.validate_host()
+            self.validate_same_origin()
             if parsed.path.startswith("/api/settings/configs/"):
                 self.require_token()
                 name = parsed.path.rsplit("/", 1)[-1]
@@ -210,6 +265,12 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/admin/backup":
                 self.require_token()
                 self.json(create_db_backup())
+            elif parsed.path == "/api/admin/item":
+                self.require_token()
+                self.require_mutations()
+                self.require_item_grants()
+                body = parse_body(self)
+                self.json(self.grant_item(body))
             else:
                 self.error(HTTPStatus.NOT_FOUND, "not found")
         except PermissionError as exc:
@@ -268,6 +329,124 @@ class Handler(BaseHTTPRequestHandler):
                 order by count desc, template_id
                 limit 200
             """),
+            "publicItemDatabase": "https://dune.gaming.tools/items",
+        }
+
+    def grant_item(self, body):
+        inventory_id = int(body["inventory_id"])
+        template_id = str(body["template_id"]).strip()
+        stack_size = max(1, int(body.get("stack_size", 1)))
+        quality_level = max(0, int(body.get("quality_level", 0)))
+        position_index = body.get("position_index", "")
+        stats = body.get("stats", {}) or {}
+        if isinstance(stats, str):
+            stats = json.loads(stats or "{}")
+        if not template_id:
+            raise ValueError("template_id is required")
+        if not query("select 1 from dune.inventories where id=%s", (inventory_id,)):
+            raise ValueError("inventory_id does not exist")
+        if position_index in ("", None):
+            rows = query("select coalesce(max(position_index), -1) + 1 as next_position from dune.items where inventory_id=%s", (inventory_id,))
+            position_index = int(rows[0]["next_position"])
+        else:
+            position_index = int(position_index)
+        item_id = query("select dune.advance_items_id_sequencer(1) as item_id")[0]["item_id"]
+        acquisition_time = int(body.get("acquisition_time") or time.time() * 1000)
+        execute("""
+            select dune.save_item((
+                %s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s
+            )::dune.inventoryitem)
+        """, (
+            item_id,
+            inventory_id,
+            stack_size,
+            position_index,
+            template_id,
+            True,
+            acquisition_time,
+            json.dumps(stats),
+            quality_level,
+            None,
+        ))
+        return {
+            "item_id": item_id,
+            "inventory_id": inventory_id,
+            "template_id": template_id,
+            "stack_size": stack_size,
+            "position_index": position_index,
+            "quality_level": quality_level,
+        }
+
+    def ops_health(self):
+        farm = query("select server_id,farm_id,ready,alive,map,revision,game_addr,igw_addr,connected_players from dune.farm_state order by map, server_id")
+        partitions = query("select partition_id,server_id,map,dimension_index,label from dune.world_partition order by partition_id")
+        active = query("select * from dune.active_server_ids order by server_id")
+        player_counts = query("""
+            select
+              coalesce((select sum(connected_players) from dune.farm_state), 0) as connected_players_reported,
+              (select count(*) from dune.get_online_player_controller_ids_on_farm()) as online_controller_ids,
+              (select count(*) from dune.get_all_online_or_recently_disconnected_player_online_state()) as online_or_recently_disconnected,
+              (select count(*) from dune.get_player_online_state_within_grace_period_for_each_server()) as grace_period_entries
+        """)[0]
+        verdicts = [
+            {"name": "farm ready/alive", "ok": any(row.get("ready") and row.get("alive") for row in farm)},
+            {"name": "active server ids", "ok": bool(active)},
+            {"name": "world partitions", "ok": bool(partitions)},
+            {"name": "player counts query", "ok": True},
+        ]
+        return {
+            "verdicts": verdicts,
+            "playerCounts": player_counts,
+            "farmState": farm,
+            "partitions": partitions,
+            "activeServers": active,
+        }
+
+    def security_audit(self):
+        env_values = read_env()
+        checks = [
+            {"name": "admin token configured", "ok": bool(ADMIN_TOKEN)},
+            {"name": "admin token not placeholder", "ok": ADMIN_TOKEN not in ("", "change-me-admin-token")},
+            {"name": "mutations disabled by default", "ok": not MUTATIONS_ENABLED, "value": MUTATIONS_ENABLED},
+            {"name": "item grants disabled by default", "ok": not ITEM_GRANTS_ENABLED, "value": ITEM_GRANTS_ENABLED},
+            {"name": "allowed hosts configured", "ok": bool(ALLOWED_HOSTS), "value": ", ".join(sorted(ALLOWED_HOSTS))},
+            {"name": "request body limit", "ok": MAX_BODY_BYTES <= 262144, "value": MAX_BODY_BYTES},
+            {"name": "FLS token not editable here", "ok": "FLS_SECRET" not in SAFE_ENV_KEYS},
+            {"name": "backup path under ignored backups/", "ok": str(BACKUP_ROOT).startswith(str(ROOT / "backups"))},
+            {"name": "RabbitMQ secret not editable here", "ok": "RMQ_HTTP_TOKEN_AUTH_SECRET" not in SAFE_ENV_KEYS},
+            {"name": "database password not editable here", "ok": "POSTGRES_DUNE_PASSWORD" not in SAFE_ENV_KEYS},
+            {"name": "external address set", "ok": bool(env_values.get("EXTERNAL_ADDRESS", "")), "value": env_values.get("EXTERNAL_ADDRESS", "")},
+        ]
+        return {
+            "checks": checks,
+            "allowedConfigFiles": sorted(ALLOWED_CONFIGS),
+            "safeEnvKeys": sorted(SAFE_ENV_KEYS),
+            "notes": [
+                "Keep the panel bound to localhost or trusted LAN/VPN only.",
+                "Do not expose RabbitMQ, Postgres, or this panel directly to the internet.",
+                "Use mutations only for deliberate admin edits after taking a backup.",
+            ],
+        }
+
+    def optimization_signals(self):
+        return {
+            "memory": [
+                {"name": "Survival guardrail", "value": "12Gi", "why": "Matches Funcom's official Survival_1 workload limit."},
+                {"name": "Tight caps", "value": "avoid initially", "why": "Observed high-water memory can be much higher than later idle RSS."},
+            ],
+            "storage": [
+                {"name": "Game image", "value": "~10.3GB", "why": "Large content/tooling layers dominate local image storage."},
+                {"name": "Delete-in-child image", "value": "not enough", "why": "Deleting files in a child layer does not reclaim base image size."},
+            ],
+            "network": [
+                {"name": "Gateway Postgres TIME_WAIT", "value": "watch", "why": "May indicate short-lived DB connections."},
+                {"name": "TextRouter Postgres CLOSE_WAIT", "value": "watch", "why": "A growing count would indicate stale socket cleanup trouble."},
+                {"name": "Public ports", "value": "7777/udp and 7888/udp only", "why": "RabbitMQ, Postgres, and admin surfaces should remain private."},
+            ],
+            "knobs": [
+                {"name": "compose.limits.example.yaml", "value": "optional", "why": "Conservative memory guardrails without changing default topology."},
+                {"name": "safe env settings", "value": sorted(SAFE_ENV_KEYS), "why": "Editable operational values that do not include secrets."},
+            ],
         }
 
     def update_currency(self, body):
@@ -317,18 +496,52 @@ class Handler(BaseHTTPRequestHandler):
     def require_token(self):
         if not ADMIN_TOKEN:
             raise PermissionError("DUNE_ADMIN_TOKEN is not configured")
+        peer = self.client_address[0] if self.client_address else "unknown"
+        now = time.time()
+        failures = [ts for ts in AUTH_FAILURES.get(peer, []) if now - ts < AUTH_FAILURE_WINDOW_SECONDS]
+        AUTH_FAILURES[peer] = failures
+        if len(failures) >= AUTH_FAILURE_LIMIT:
+            raise PermissionError("too many failed admin token attempts")
         provided = self.headers.get("X-Admin-Token", "")
-        if provided != ADMIN_TOKEN:
+        if not hmac.compare_digest(provided, ADMIN_TOKEN):
+            failures.append(now)
+            AUTH_FAILURES[peer] = failures
             raise PermissionError("invalid admin token")
+        AUTH_FAILURES.pop(peer, None)
 
     def require_mutations(self):
         if not MUTATIONS_ENABLED:
             raise PermissionError("mutations are disabled; set DUNE_ADMIN_MUTATIONS_ENABLED=true")
 
+    def require_item_grants(self):
+        if not ITEM_GRANTS_ENABLED:
+            raise PermissionError("item grants are disabled; set DUNE_ADMIN_ITEM_GRANTS_ENABLED=true")
+
+    def validate_host(self):
+        if not ALLOWED_HOSTS:
+            return
+        host = self.headers.get("Host", "").lower()
+        if host not in ALLOWED_HOSTS:
+            raise PermissionError("host is not allowed for admin panel")
+
+    def validate_same_origin(self):
+        host = self.headers.get("Host", "").lower()
+        expected = {f"http://{host}", f"https://{host}"}
+        origin = self.headers.get("Origin")
+        if origin and origin.rstrip("/") not in expected:
+            raise PermissionError("cross-origin admin request rejected")
+        referer = self.headers.get("Referer")
+        if referer:
+            parsed = urllib.parse.urlparse(referer)
+            referer_origin = f"{parsed.scheme}://{parsed.netloc}".lower()
+            if referer_origin not in expected:
+                raise PermissionError("cross-origin admin request rejected")
+
     def html(self, body):
         data = body.encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.security_headers()
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
@@ -337,6 +550,7 @@ class Handler(BaseHTTPRequestHandler):
         data = json.dumps(value, default=json_default, indent=2).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.security_headers()
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
@@ -345,9 +559,17 @@ class Handler(BaseHTTPRequestHandler):
         data = json.dumps({"error": message}).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.security_headers()
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
+
+    def security_headers(self):
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline' 'self'; connect-src 'self'; frame-ancestors 'none'")
 
     def log_message(self, fmt, *args):
         return
@@ -397,6 +619,8 @@ INDEX = r"""<!doctype html>
     <nav>
       <div class="tabs">
         <button class="tab active" onclick="show('overview')">Overview</button>
+        <button class="tab" onclick="show('ops')">Ops</button>
+        <button class="tab" onclick="show('security')">Security</button>
         <button class="tab" onclick="show('characters')">Characters</button>
         <button class="tab" onclick="show('settings')">Settings</button>
         <button class="tab" onclick="show('mutations')">Admin Actions</button>
@@ -407,11 +631,11 @@ INDEX = r"""<!doctype html>
     <section id="view"></section>
   </main>
 <script>
-let token = localStorage.getItem('duneAdminToken') || '';
+let token = sessionStorage.getItem('duneAdminToken') || '';
 document.getElementById('token').value = token;
 let current = 'overview';
 
-function saveToken(){ token = document.getElementById('token').value; localStorage.setItem('duneAdminToken', token); }
+function saveToken(){ token = document.getElementById('token').value; sessionStorage.setItem('duneAdminToken', token); load(); }
 async function api(path, opts={}) {
   opts.headers = Object.assign({'Content-Type':'application/json'}, opts.headers || {});
   if (token) opts.headers['X-Admin-Token'] = token;
@@ -431,18 +655,39 @@ function options(rows, key, fallback=''){
   if (!vals.length && fallback) vals.push(fallback);
   return vals.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
 }
+function checks(rows){
+  return `<table><thead><tr><th>Check</th><th>Status</th><th>Value</th></tr></thead><tbody>${(rows || []).map(r=>`<tr><td>${esc(r.name)}</td><td class="${r.ok ? 'ok' : 'dangerText'}">${r.ok ? 'OK' : 'Needs attention'}</td><td>${esc(r.value ?? '')}</td></tr>`).join('')}</tbody></table>`;
+}
+function signalList(groups){
+  return Object.entries(groups || {}).map(([group, rows]) => `<div class="card"><h2>${esc(group)}</h2><table><thead><tr><th>Name</th><th>Value</th><th>Why</th></tr></thead><tbody>${(rows || []).map(r=>`<tr><td>${esc(r.name)}</td><td>${esc(Array.isArray(r.value) ? r.value.join(', ') : r.value)}</td><td>${esc(r.why)}</td></tr>`).join('')}</tbody></table></div>`).join('');
+}
 function show(name){ current=name; document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active', b.textContent.toLowerCase().startsWith(name.slice(0,6)))); load(); }
 async function refreshStatus(){ document.getElementById('status').textContent = JSON.stringify(await api('/api/status'), null, 2); }
 async function load(){
   await refreshStatus().catch(e => document.getElementById('status').textContent = e.message);
-  if (current === 'overview') return overview();
-  if (current === 'characters') return characters();
-  if (current === 'settings') return settings();
-  if (current === 'mutations') return mutations();
+  try {
+    if (current === 'overview') return overview();
+    if (current === 'ops') return ops();
+    if (current === 'security') return security();
+    if (current === 'characters') return characters();
+    if (current === 'settings') return settings();
+    if (current === 'mutations') return mutations();
+  } catch (e) {
+    view.innerHTML = `<div class="card"><h2>Access Required</h2><p class="dangerText">${esc(e.message)}</p><p class="muted">Enter the admin token in the header. Data APIs require <code>X-Admin-Token</code>.</p></div>`;
+  }
 }
 async function overview(){
   const state = await api('/api/server/state');
   view.innerHTML = `<div class="card"><h2>Farm State</h2>${table(state.farmState)}</div><div class="card"><h2>Partitions</h2>${table(state.partitions)}</div><div class="card"><h2>Active Servers</h2>${table(state.activeServers)}</div>`;
+}
+async function ops(){
+  const health = await api('/api/ops/health');
+  const opt = await api('/api/ops/optimization');
+  view.innerHTML = `<div class="card"><h2>Health Verdict</h2>${checks(health.verdicts)}</div><div class="card"><h2>Player Counts</h2><pre>${esc(JSON.stringify(health.playerCounts, null, 2))}</pre></div><div class="card"><h2>Farm State</h2>${table(health.farmState)}</div><div class="card"><h2>Partitions</h2>${table(health.partitions)}</div>${signalList(opt)}`;
+}
+async function security(){
+  const audit = await api('/api/ops/security');
+  view.innerHTML = `<div class="card"><h2>Security Checks</h2>${checks(audit.checks)}</div><div class="card"><h2>Notes</h2><ul>${audit.notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul></div><div class="card"><h2>Editable Env Keys</h2><pre>${esc(JSON.stringify(audit.safeEnvKeys, null, 2))}</pre></div><div class="card"><h2>Editable Config Files</h2><pre>${esc(JSON.stringify(audit.allowedConfigFiles, null, 2))}</pre></div>`;
 }
 async function characters(){
   view.innerHTML = `<div class="card"><div class="row"><input id="q" placeholder="Character, Funcom ID, platform ID"><button class="primary" onclick="searchCharacters()">Search</button></div><div id="results"></div></div><div id="detail"></div>`;
@@ -480,7 +725,7 @@ async function saveCfg(){
 }
 async function mutations(){
   const ref = await api('/api/admin/reference');
-  view.innerHTML = `<div class="card"><h2>Backups</h2><p>Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button class="primary" onclick="backup()">Create DB backup</button><pre id="backupResult"></pre></div><div class="card"><h2>Admin Actions</h2><p class="dangerText">Writes require <code>DUNE_ADMIN_MUTATIONS_ENABLED=true</code> and a valid admin token. Back up first.</p><div class="grid"><label>Player controller ID<input id="pcid"></label><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button class="primary" onclick="currency()">Apply currency</button></p><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button class="primary" onclick="xp()">Apply XP</button></p></div><div class="card"><h2>Observed Item Templates</h2><p class="muted">Read-only reference for future gear grants. Writes are blocked until inventory semantics are mapped.</p>${table(ref.observedItemTemplates)}</div><div class="card"><h2>Gear and Skill Grants</h2><p class="muted">Not implemented yet. We need validated template IDs and table contracts before this panel writes item rows or unlock data.</p><button class="danger" onclick="unsupported()">Test unsupported endpoint</button></div>`;
+  view.innerHTML = `<div class="card"><h2>Backups</h2><p>Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button class="primary" onclick="backup()">Create DB backup</button><pre id="backupResult"></pre></div><div class="card"><h2>Admin Actions</h2><p class="dangerText">Writes require <code>DUNE_ADMIN_MUTATIONS_ENABLED=true</code> and a valid admin token. Back up first.</p><div class="grid"><label>Player controller ID<input id="pcid"></label><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button class="primary" onclick="currency()">Apply currency</button></p><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button class="primary" onclick="xp()">Apply XP</button></p></div><div class="card"><h2>Experimental Item Grant</h2><p class="dangerText">Requires <code>DUNE_ADMIN_ITEM_GRANTS_ENABLED=true</code>. Use exact server template IDs. Public databases such as <a href="${esc(ref.publicItemDatabase)}" target="_blank" rel="noreferrer">gaming.tools</a> expose useful item slugs, but verify against observed server data before bulk grants.</p><div class="grid"><label>Inventory ID<input id="grantInventory"></label><label>Template ID<input id="grantTemplate" placeholder="smg_unique_largemag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><label>Stats JSON<textarea id="grantStats">{}</textarea></label><p><button class="danger" onclick="grantItem()">Grant item</button></p><pre id="grantResult"></pre></div><div class="card"><h2>Observed Item Templates</h2><p class="muted">Read-only reference from this server's current <code>dune.items</code> rows.</p>${table(ref.observedItemTemplates)}</div><div class="card"><h2>Skill and Recipe Unlocks</h2><p class="muted">Not implemented yet. We still need validated unlock tables and server refresh behavior.</p><button class="danger" onclick="unsupported()">Test unsupported endpoint</button></div>`;
 }
 async function currency(){
   await api('/api/admin/currency', {method:'POST', body:JSON.stringify({player_controller_id:pcid.value,currency_id:curid.value,amount:amount.value,mode:mode.value})});
@@ -501,6 +746,10 @@ async function xpFor(playerId){
 async function backup(){
   const result = await api('/api/admin/backup', {method:'POST', body:'{}'});
   document.getElementById('backupResult').textContent = JSON.stringify(result, null, 2);
+}
+async function grantItem(){
+  const result = await api('/api/admin/item', {method:'POST', body:JSON.stringify({inventory_id:grantInventory.value,template_id:grantTemplate.value,stack_size:grantStack.value,quality_level:grantQuality.value,position_index:grantPosition.value,stats:grantStats.value})});
+  document.getElementById('grantResult').textContent = JSON.stringify(result, null, 2);
 }
 async function unsupported(){ try { await api('/api/admin/unsupported', {method:'POST', body:'{}'}); } catch(e) { alert(e.message); } }
 load();

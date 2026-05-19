@@ -60,6 +60,7 @@ server {
 - Token-gated currency and XP mutation endpoints.
 - Token-gated Postgres custom-format backup under `backups/admin-panel`.
 - Read-only observed item template reference for future gear grant mapping.
+- Experimental exact-template item grants behind a separate opt-in flag.
 
 ## Write Safety
 
@@ -74,8 +75,11 @@ Current mutation support is intentionally narrow:
 - Currency balance add/set through `dune.player_virtual_currency_balances`.
 - Specialization XP add/set through existing `dune.specialization_tracks` rows.
 - Database backup through `pg_dump -Fc`.
+- Experimental item grants through `dune.save_item(dune.inventoryitem)` when `DUNE_ADMIN_ITEM_GRANTS_ENABLED=true`.
 
-Gear grants, skill unlocks, recipes, and item insertion are not implemented yet. Those need validated template IDs, inventory ownership rules, uniqueness behavior, and server refresh semantics before writes are safe.
+Item grants require an exact server `template_id` and a target inventory ID. Public databases such as `https://dune.gaming.tools/items` expose item pages whose URL slugs look like server-style template IDs, but verify against observed local server data before bulk grants.
+
+Skill unlocks and recipe unlocks are not implemented yet. Those need validated unlock tables and server refresh semantics before writes are safe.
 
 Back up before enabling mutations:
 
@@ -88,4 +92,7 @@ Back up before enabling mutations:
 - Do not expose this service to the public internet.
 - Use a long random `DUNE_ADMIN_TOKEN`.
 - Keep `DUNE_ADMIN_MUTATIONS_ENABLED=false` unless actively making admin edits.
+- Keep `DUNE_ADMIN_ITEM_GRANTS_ENABLED=false` unless deliberately testing item grants on a backed-up world.
+- Keep `DUNE_ADMIN_MAX_BODY_BYTES` small unless editing unusually large config files; the default is `65536`.
+- Set `DUNE_ADMIN_ALLOWED_HOSTS` to the exact hostnames used to reach the panel, for example `127.0.0.1:18080,localhost:18080,duneadmin.home`.
 - Restart affected game services after config changes when the target service does not hot-reload.
