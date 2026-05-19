@@ -79,7 +79,9 @@ Current mutation support is intentionally narrow:
 
 Item grants require an exact server `template_id` and a target inventory ID. Public databases such as `https://dune.gaming.tools/items` expose item pages whose URL slugs look like server-style template IDs, but verify against observed local server data before bulk grants.
 
-Skill unlocks and recipe unlocks are not implemented yet. Those need validated unlock tables and server refresh semantics before writes are safe.
+Recipe unlocks are not implemented yet. Those need validated unlock tables and server refresh semantics before writes are safe.
+
+See `docs/admin-mutation-map.md` for the current DB contract map.
 
 Back up before enabling mutations:
 

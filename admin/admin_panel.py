@@ -198,6 +198,9 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/ops/optimization":
                 self.require_token()
                 self.json(self.optimization_signals())
+            elif parsed.path == "/api/ops/runbook":
+                self.require_token()
+                self.json(self.ops_runbook())
             elif parsed.path == "/api/characters":
                 self.require_token()
                 params = urllib.parse.parse_qs(parsed.query)
@@ -258,6 +261,17 @@ class Handler(BaseHTTPRequestHandler):
                 self.require_mutations()
                 body = parse_body(self)
                 self.update_xp(body)
+                self.json({"ok": True})
+            elif parsed.path == "/api/admin/keystone":
+                self.require_token()
+                self.require_mutations()
+                body = parse_body(self)
+                self.json(self.purchase_keystone(body))
+            elif parsed.path == "/api/admin/reset-keystones":
+                self.require_token()
+                self.require_mutations()
+                body = parse_body(self)
+                self.reset_keystones(body)
                 self.json({"ok": True})
             elif parsed.path == "/api/admin/unsupported":
                 self.require_token()
@@ -329,6 +343,7 @@ class Handler(BaseHTTPRequestHandler):
                 order by count desc, template_id
                 limit 200
             """),
+            "keystones": query("select id, name from dune.specialization_keystones_map order by name"),
             "publicItemDatabase": "https://dune.gaming.tools/items",
         }
 
@@ -449,6 +464,21 @@ class Handler(BaseHTTPRequestHandler):
             ],
         }
 
+    def ops_runbook(self):
+        return {
+            "safeCliOnly": True,
+            "why": "The panel deliberately does not mount the container runtime socket or execute arbitrary shell commands.",
+            "commands": [
+                {"name": "Status", "command": "./scripts/status.sh .env", "when": "Quick health and high-signal logs."},
+                {"name": "Routing capture before transition", "command": "./scripts/capture-routing.sh .env hagga-to-deep-desert-before", "when": "Before attempting a broken transition."},
+                {"name": "Routing capture after transition", "command": "./scripts/capture-routing.sh .env hagga-to-deep-desert-after", "when": "Immediately after a failed transition."},
+                {"name": "Runtime profile", "command": "./scripts/profile-runtime.sh .env", "when": "Memory/storage/network/process teardown."},
+                {"name": "Summarize runtime profile", "command": "./scripts/summarize-runtime-profile.sh captures/YYYYMMDDTHHMMSSZ-runtime-profile", "when": "Compare profile captures."},
+                {"name": "Network watch", "command": "./scripts/watch-network.sh .env", "when": "Check Postgres/RabbitMQ socket churn."},
+                {"name": "Backup state", "command": "./scripts/backup-state.sh .env", "when": "Before upgrades, config surgery, or admin mutations."},
+            ],
+        }
+
     def update_currency(self, body):
         controller_id = int(body["player_controller_id"])
         currency_id = int(body["currency_id"])
@@ -473,15 +503,29 @@ class Handler(BaseHTTPRequestHandler):
         player_id = int(body["player_id"])
         track_type = str(body["track_type"])
         amount = int(body["amount"])
+        level = float(body.get("level", 0))
         mode = body.get("mode", "add")
         if mode == "set":
-            count = execute("update dune.specialization_tracks set xp_amount=%s where player_id=%s and track_type::text=%s", (amount, player_id, track_type))
+            execute("select dune.set_specialization_xp_and_level(%s, %s::dune.specializationtracktype, %s, %s)", (player_id, track_type, amount, level))
         elif mode == "add":
-            count = execute("update dune.specialization_tracks set xp_amount=xp_amount + %s where player_id=%s and track_type::text=%s", (amount, player_id, track_type))
+            existing = query("select xp_amount, level from dune.specialization_tracks where player_id=%s and track_type::text=%s", (player_id, track_type))
+            current_xp = existing[0]["xp_amount"] if existing else 0
+            current_level = existing[0]["level"] if existing else level
+            execute("select dune.set_specialization_xp_and_level(%s, %s::dune.specializationtracktype, %s, %s)", (player_id, track_type, current_xp + amount, current_level))
         else:
             raise ValueError("mode must be add or set")
-        if count == 0:
-            raise ValueError("no specialization track row matched; create/unlock semantics are not mapped yet")
+
+    def purchase_keystone(self, body):
+        player_id = int(body["player_id"])
+        keystone = str(body["keystone"]).strip()
+        result = query("select dune.purchase_specialization_keystone(%s, %s) as purchased", (player_id, keystone))[0]["purchased"]
+        if not result:
+            raise ValueError("keystone was not purchased; it may be unknown or already present")
+        return {"ok": True, "player_id": player_id, "keystone": keystone}
+
+    def reset_keystones(self, body):
+        player_id = int(body["player_id"])
+        execute("select dune.reset_specialization_keystones(%s)", (player_id,))
 
     def write_config(self, name, content):
         if name not in ALLOWED_CONFIGS:
@@ -621,6 +665,7 @@ INDEX = r"""<!doctype html>
         <button class="tab active" onclick="show('overview')">Overview</button>
         <button class="tab" onclick="show('ops')">Ops</button>
         <button class="tab" onclick="show('security')">Security</button>
+        <button class="tab" onclick="show('runbook')">Runbook</button>
         <button class="tab" onclick="show('characters')">Characters</button>
         <button class="tab" onclick="show('settings')">Settings</button>
         <button class="tab" onclick="show('mutations')">Admin Actions</button>
@@ -669,6 +714,7 @@ async function load(){
     if (current === 'overview') return overview();
     if (current === 'ops') return ops();
     if (current === 'security') return security();
+    if (current === 'runbook') return runbook();
     if (current === 'characters') return characters();
     if (current === 'settings') return settings();
     if (current === 'mutations') return mutations();
@@ -688,6 +734,10 @@ async function ops(){
 async function security(){
   const audit = await api('/api/ops/security');
   view.innerHTML = `<div class="card"><h2>Security Checks</h2>${checks(audit.checks)}</div><div class="card"><h2>Notes</h2><ul>${audit.notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul></div><div class="card"><h2>Editable Env Keys</h2><pre>${esc(JSON.stringify(audit.safeEnvKeys, null, 2))}</pre></div><div class="card"><h2>Editable Config Files</h2><pre>${esc(JSON.stringify(audit.allowedConfigFiles, null, 2))}</pre></div>`;
+}
+async function runbook(){
+  const data = await api('/api/ops/runbook');
+  view.innerHTML = `<div class="card"><h2>Operational Runbook</h2><p class="muted">${esc(data.why)}</p>${table(data.commands)}</div>`;
 }
 async function characters(){
   view.innerHTML = `<div class="card"><div class="row"><input id="q" placeholder="Character, Funcom ID, platform ID"><button class="primary" onclick="searchCharacters()">Search</button></div><div id="results"></div></div><div id="detail"></div>`;
@@ -725,7 +775,7 @@ async function saveCfg(){
 }
 async function mutations(){
   const ref = await api('/api/admin/reference');
-  view.innerHTML = `<div class="card"><h2>Backups</h2><p>Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button class="primary" onclick="backup()">Create DB backup</button><pre id="backupResult"></pre></div><div class="card"><h2>Admin Actions</h2><p class="dangerText">Writes require <code>DUNE_ADMIN_MUTATIONS_ENABLED=true</code> and a valid admin token. Back up first.</p><div class="grid"><label>Player controller ID<input id="pcid"></label><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button class="primary" onclick="currency()">Apply currency</button></p><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button class="primary" onclick="xp()">Apply XP</button></p></div><div class="card"><h2>Experimental Item Grant</h2><p class="dangerText">Requires <code>DUNE_ADMIN_ITEM_GRANTS_ENABLED=true</code>. Use exact server template IDs. Public databases such as <a href="${esc(ref.publicItemDatabase)}" target="_blank" rel="noreferrer">gaming.tools</a> expose useful item slugs, but verify against observed server data before bulk grants.</p><div class="grid"><label>Inventory ID<input id="grantInventory"></label><label>Template ID<input id="grantTemplate" placeholder="smg_unique_largemag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><label>Stats JSON<textarea id="grantStats">{}</textarea></label><p><button class="danger" onclick="grantItem()">Grant item</button></p><pre id="grantResult"></pre></div><div class="card"><h2>Observed Item Templates</h2><p class="muted">Read-only reference from this server's current <code>dune.items</code> rows.</p>${table(ref.observedItemTemplates)}</div><div class="card"><h2>Skill and Recipe Unlocks</h2><p class="muted">Not implemented yet. We still need validated unlock tables and server refresh behavior.</p><button class="danger" onclick="unsupported()">Test unsupported endpoint</button></div>`;
+  view.innerHTML = `<div class="card"><h2>Backups</h2><p>Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button class="primary" onclick="backup()">Create DB backup</button><pre id="backupResult"></pre></div><div class="card"><h2>Currency and XP</h2><p class="dangerText">Writes require <code>DUNE_ADMIN_MUTATIONS_ENABLED=true</code> and a valid admin token. Back up first.</p><div class="grid"><label>Player controller ID<input id="pcid"></label><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button class="primary" onclick="currency()">Apply currency</button></p><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Level for set/new track<input id="xplevel" value="0"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button class="primary" onclick="xp()">Apply XP</button></p></div><div class="card"><h2>Specialization Keystones</h2><div class="grid"><label>Player/controller ID<input id="keyPlayer"></label><label>Keystone<select id="keystone">${options(ref.keystones, 'name')}</select></label></div><p><button class="primary" onclick="purchaseKeystone()">Purchase keystone</button> <button class="danger" onclick="resetKeystones()">Reset all keystones</button></p><pre id="keystoneResult"></pre></div><div class="card"><h2>Experimental Item Grant</h2><p class="dangerText">Requires <code>DUNE_ADMIN_ITEM_GRANTS_ENABLED=true</code>. Use exact server template IDs. Public databases such as <a href="${esc(ref.publicItemDatabase)}" target="_blank" rel="noreferrer">gaming.tools</a> expose useful item slugs, but verify against observed server data before bulk grants.</p><div class="grid"><label>Inventory ID<input id="grantInventory"></label><label>Template ID<input id="grantTemplate" placeholder="smg_unique_largemag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><label>Stats JSON<textarea id="grantStats">{}</textarea></label><p><button class="danger" onclick="grantItem()">Grant item</button></p><pre id="grantResult"></pre></div><div class="card"><h2>Observed Item Templates</h2><p class="muted">Read-only reference from this server's current <code>dune.items</code> rows.</p>${table(ref.observedItemTemplates)}</div><div class="card"><h2>Recipe Unlocks</h2><p class="muted">Not implemented yet. The DB exposes removal helpers and actor JSON recipe arrays, but no safe grant function has been mapped.</p><button class="danger" onclick="unsupported()">Test unsupported endpoint</button></div>`;
 }
 async function currency(){
   await api('/api/admin/currency', {method:'POST', body:JSON.stringify({player_controller_id:pcid.value,currency_id:curid.value,amount:amount.value,mode:mode.value})});
@@ -736,7 +786,7 @@ async function currencyFor(playerControllerId){
   alert('Currency updated');
 }
 async function xp(){
-  await api('/api/admin/xp', {method:'POST', body:JSON.stringify({player_id:xpid.value,track_type:track.value,amount:xpamount.value,mode:xpmode.value})});
+  await api('/api/admin/xp', {method:'POST', body:JSON.stringify({player_id:xpid.value,track_type:track.value,amount:xpamount.value,level:xplevel.value,mode:xpmode.value})});
   alert('XP updated');
 }
 async function xpFor(playerId){
@@ -746,6 +796,15 @@ async function xpFor(playerId){
 async function backup(){
   const result = await api('/api/admin/backup', {method:'POST', body:'{}'});
   document.getElementById('backupResult').textContent = JSON.stringify(result, null, 2);
+}
+async function purchaseKeystone(){
+  const result = await api('/api/admin/keystone', {method:'POST', body:JSON.stringify({player_id:keyPlayer.value,keystone:keystone.value})});
+  document.getElementById('keystoneResult').textContent = JSON.stringify(result, null, 2);
+}
+async function resetKeystones(){
+  if (!confirm('Reset all purchased keystones for this player?')) return;
+  const result = await api('/api/admin/reset-keystones', {method:'POST', body:JSON.stringify({player_id:keyPlayer.value})});
+  document.getElementById('keystoneResult').textContent = JSON.stringify(result, null, 2);
 }
 async function grantItem(){
   const result = await api('/api/admin/item', {method:'POST', body:JSON.stringify({inventory_id:grantInventory.value,template_id:grantTemplate.value,stack_size:grantStack.value,quality_level:grantQuality.value,position_index:grantPosition.value,stats:grantStats.value})});
