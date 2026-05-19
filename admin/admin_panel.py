@@ -1477,7 +1477,7 @@ INDEX = r"""<!doctype html>
 <body>
   <header>
     <h1>Dune Admin</h1>
-    <div class="row"><input id="token" type="password" placeholder="Admin token"><button id="saveTokenBtn">Use token</button></div>
+    <div class="row"><input id="token" type="password" placeholder="Admin token"><button id="saveTokenBtn">Use token</button><button id="clearTokenBtn">Clear</button></div>
   </header>
   <main>
     <nav>
@@ -1512,6 +1512,7 @@ let pendingAdminAccountId = '';
 const view = document.getElementById('view');
 
 function saveToken(){ token = document.getElementById('token').value; sessionStorage.setItem('duneAdminToken', token); load(); }
+function clearToken(){ token = ''; document.getElementById('token').value = ''; sessionStorage.removeItem('duneAdminToken'); load(); }
 async function api(path, opts={}) {
   opts.headers = Object.assign({'Content-Type':'application/json'}, opts.headers || {});
   if (token) opts.headers['X-Admin-Token'] = token;
@@ -1725,11 +1726,22 @@ async function runbook(){
   view.innerHTML = `<div class="sectionHeader"><h2>Runbook</h2><div class="toolbar"><span class="pill">copy/paste commands</span><button data-jump="ops">Ops</button><button data-jump="settings">Settings</button></div></div>${actionGrid([{tab:'overview',label:'Check server health first'},{tab:'mutations',label:'Create DB backup before risky work',className:'primary'},{tab:'security',label:'Review recent admin audit events'}])}<div class="card"><p class="muted">${esc(data.why)}</p>${table(data.commands)}</div>`;
 }
 async function characters(){
-  view.innerHTML = `<div class="sectionHeader"><h2>Characters</h2><span class="pill">lookup and inspect</span></div><div class="card"><div class="row"><input id="q" placeholder="Character, Funcom ID, platform ID"><button id="characterSearchBtn" class="primary">Search</button></div><div id="results"></div></div><div id="detail"></div>`;
+  const lastQuery = sessionStorage.getItem('duneAdminCharacterQuery') || '';
+  view.innerHTML = `<div class="sectionHeader"><h2>Characters</h2><div class="toolbar"><span class="pill">lookup and inspect</span><button data-jump="mutations" class="primary">Admin Actions</button><button data-jump="settings">Settings</button></div></div>${actionGrid([{tab:'mutations',label:'Open grants, XP, currency, and item maintenance'},{tab:'security',label:'Review audit trail for recent writes'},{tab:'ops',label:'Check server state before changing players'}])}<div class="card"><div class="row"><input id="q" placeholder="Character, Funcom ID, platform ID" value="${esc(lastQuery)}"><button id="characterSearchBtn" class="primary">Search</button><button id="characterListAllBtn">List all</button></div><div id="results"></div></div><div id="detail"></div>`;
   document.getElementById('characterSearchBtn').addEventListener('click', searchCharacters);
+  document.getElementById('characterListAllBtn').addEventListener('click', () => {
+    document.getElementById('q').value = '';
+    searchCharacters();
+  });
+  document.getElementById('q').addEventListener('keydown', e => {
+    if (e.key === 'Enter') searchCharacters();
+  });
+  if (lastQuery) await searchCharacters();
 }
 async function searchCharacters(){
-  const rows = await api('/api/characters?q=' + encodeURIComponent(document.getElementById('q').value));
+  const query = document.getElementById('q').value;
+  sessionStorage.setItem('duneAdminCharacterQuery', query);
+  const rows = await api('/api/characters?q=' + encodeURIComponent(query));
   const results = document.getElementById('results');
   results.innerHTML = table(rows);
   results.querySelectorAll('tbody tr').forEach(row => row.onclick = () => pickCharacter(row));
@@ -1778,7 +1790,7 @@ async function settings(){
   const transfer = await api('/api/settings/director-transfer');
   const onlineState = await api('/api/settings/player-online-state');
   const configs = await api('/api/settings/configs');
-  view.innerHTML = `<div class="sectionHeader"><h2>Settings</h2><button id="saveEnvBtn" class="primary">Save env settings</button></div><div class="card"><p class="muted">These write <code>.env</code>, <code>config/director.ini</code>, or <code>config/UserGame.ini</code> with a backup under <code>backups/admin-panel</code>. Most service settings need the affected containers recreated before running processes pick them up.</p></div>${envEditor(env)}${playerOnlineStateEditor(onlineState)}${directorTransferEditor(transfer)}<div class="card"><h2>Config Files</h2><select id="cfg">${Object.keys(configs).map(k=>`<option>${esc(k)}</option>`).join('')}</select><textarea id="cfgText"></textarea><p><button id="saveCfgBtn" class="primary">Save config with backup</button></p></div>`;
+  view.innerHTML = `<div class="sectionHeader"><h2>Settings</h2><div class="toolbar"><button data-jump="security">Security</button><button data-jump="ops">Ops</button><button id="saveEnvBtn" class="primary">Save env settings</button></div></div><div class="card"><p class="muted">These write <code>.env</code>, <code>config/director.ini</code>, or <code>config/UserGame.ini</code> with a backup under <code>backups/admin-panel</code>. Most service settings need the affected containers recreated before running processes pick them up.</p></div>${actionGrid([{tab:'ops',label:'Check live state after settings changes'},{tab:'mutations',label:'Create a DB backup before admin writes',className:'primary'},{tab:'characters',label:'Inspect player state affected by settings'}])}${envEditor(env)}${playerOnlineStateEditor(onlineState)}${directorTransferEditor(transfer)}<div class="card"><h2>Config Files</h2><select id="cfg">${Object.keys(configs).map(k=>`<option>${esc(k)}</option>`).join('')}</select><textarea id="cfgText"></textarea><p><button id="saveCfgBtn" class="primary">Save config with backup</button></p></div>`;
   window.configs = configs; selectCfg();
   document.getElementById('cfg').addEventListener('change', selectCfg);
   document.getElementById('saveEnvBtn').addEventListener('click', saveEnv);
@@ -1975,6 +1987,7 @@ async function deleteDetailItem(){
 }
 async function unsupported(){ try { await api('/api/admin/unsupported', {method:'POST', body:'{}'}); } catch(e) { alert(e.message); } }
 document.getElementById('saveTokenBtn').addEventListener('click', saveToken);
+document.getElementById('clearTokenBtn').addEventListener('click', clearToken);
 document.addEventListener('click', e => {
   const target = e.target.closest('[data-jump]');
   if (target) show(target.dataset.jump);
