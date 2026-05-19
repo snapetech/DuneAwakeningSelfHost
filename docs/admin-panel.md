@@ -97,6 +97,7 @@ Back up before enabling mutations:
 - Keep `DUNE_ADMIN_MUTATIONS_ENABLED=false` unless actively making admin edits.
 - `DUNE_ADMIN_ITEM_GRANTS_ENABLED` defaults to `true` in this repo; leave it enabled only on trusted LAN/VPN deployments and keep general mutations gated with `DUNE_ADMIN_MUTATIONS_ENABLED`.
 - Keep `DUNE_ADMIN_MAX_BODY_BYTES` small unless editing unusually large config files; the default is `65536`.
+- Keep `DUNE_ADMIN_AUDIT_MAX_BYTES` bounded; the default rotates the JSONL audit log at 5 MiB.
 - Set `DUNE_ADMIN_ALLOWED_HOSTS` to the exact hostnames used to reach the panel, for example `127.0.0.1:18080,localhost:18080,duneadmin.home`.
 - Review the Security tab's recent audit events after failed login attempts, blocked host/origin requests, config edits, backups, or mutation runs.
 - Restart affected game services after config changes when the target service does not hot-reload.

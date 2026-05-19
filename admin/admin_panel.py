@@ -21,6 +21,7 @@ CONFIG_ROOT = ROOT / "config"
 ENV_FILE = ROOT / ".env"
 BACKUP_ROOT = ROOT / "backups" / "admin-panel"
 AUDIT_LOG = BACKUP_ROOT / "audit.jsonl"
+AUDIT_MAX_BYTES = int(os.environ.get("DUNE_ADMIN_AUDIT_MAX_BYTES", str(5 * 1024 * 1024)))
 DATABASE = os.environ.get("DUNE_DATABASE", "dune_sb_1_4_0_0")
 ADMIN_TOKEN = os.environ.get("DUNE_ADMIN_TOKEN", "")
 MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_MUTATIONS_ENABLED", "false").lower() == "true"
@@ -72,6 +73,7 @@ def audit_safe(value):
 
 def audit_event(action, ok=True, **fields):
     BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
+    rotate_audit_log()
     event = {
         "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "action": action,
@@ -80,6 +82,13 @@ def audit_event(action, ok=True, **fields):
     event.update({key: audit_safe(value) for key, value in fields.items()})
     with AUDIT_LOG.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(event, sort_keys=True, default=json_default) + "\n")
+
+
+def rotate_audit_log():
+    if AUDIT_MAX_BYTES <= 0 or not AUDIT_LOG.exists() or AUDIT_LOG.stat().st_size <= AUDIT_MAX_BYTES:
+        return
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    AUDIT_LOG.rename(BACKUP_ROOT / f"{stamp}-audit.jsonl")
 
 
 def recent_audit_events(limit=100):
@@ -499,6 +508,7 @@ class Handler(BaseHTTPRequestHandler):
             {"name": "item grants flag", "ok": ITEM_GRANTS_ENABLED, "value": ITEM_GRANTS_ENABLED},
             {"name": "allowed hosts configured", "ok": bool(ALLOWED_HOSTS), "value": ", ".join(sorted(ALLOWED_HOSTS))},
             {"name": "request body limit", "ok": MAX_BODY_BYTES <= 262144, "value": MAX_BODY_BYTES},
+            {"name": "audit log rotation limit", "ok": 0 < AUDIT_MAX_BYTES <= 50 * 1024 * 1024, "value": AUDIT_MAX_BYTES},
             {"name": "FLS token not editable here", "ok": "FLS_SECRET" not in SAFE_ENV_KEYS},
             {"name": "backup path under ignored backups/", "ok": str(BACKUP_ROOT).startswith(str(ROOT / "backups"))},
             {"name": "audit log under ignored backups/", "ok": str(AUDIT_LOG).startswith(str(ROOT / "backups")), "value": str(AUDIT_LOG.relative_to(ROOT))},
