@@ -1,0 +1,22 @@
+.env
+.env.*
+!.env.example
+
+data/
+config/tls/
+
+*.log
+*.pid
+*.tmp
+
+# Funcom/Steam-distributed server package and container exports.
+Dune Awakening Self-Hosted Server/
+images/
+*.tar
+*.tar.gz
+*.tgz
+
+# Local editor/OS state.
+.DS_Store
+.idea/
+.vscode/

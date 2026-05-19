@@ -1,0 +1,215 @@
+services:
+  postgres:
+    image: registry.funcom.com/funcom/self-hosting/igw-postgres:17.4-alpine-fc-13
+    environment:
+      POSTGRES_DB: dune
+      POSTGRES_USER: dune
+      POSTGRES_PASSWORD: ${POSTGRES_DUNE_PASSWORD}
+      POSTGRES_SUPER_PASSWORD: ${POSTGRES_SUPER_PASSWORD}
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:15431:5432"
+
+  admin-rmq:
+    image: registry.funcom.com/funcom/self-hosting/seabass-server-rabbitmq:${DUNE_IMAGE_TAG}
+    hostname: admin-rmq
+    environment:
+      RMQ_AUTH_BACKEND_1: cache
+      RMQ_HTTP_TOKEN_AUTH_SECRET: ${RMQ_HTTP_TOKEN_AUTH_SECRET}
+      FuncomLiveServices__RmqTlsEnabled: "false"
+    volumes:
+      - ./config/rabbitmq-enabled-plugins:/etc/rabbitmq/enabled_plugins:ro
+      - ./config/rabbitmq-admin.conf:/etc/rabbitmq/conf.d/99-dune.conf:ro
+      - ./data/rabbitmq/admin:/var/lib/rabbitmq
+    ports:
+      - "127.0.0.1:15672:15672"
+      - "127.0.0.1:5673:5672"
+
+  game-rmq:
+    image: registry.funcom.com/funcom/self-hosting/seabass-server-rabbitmq:${DUNE_IMAGE_TAG}
+    hostname: game-rmq
+    environment:
+      RMQ_AUTH_BACKEND_1: cache
+      RMQ_HTTP_TOKEN_AUTH_SECRET: ${RMQ_HTTP_TOKEN_AUTH_SECRET}
+      FuncomLiveServices__RmqTlsEnabled: "true"
+    volumes:
+      - ./config/rabbitmq-enabled-plugins:/etc/rabbitmq/enabled_plugins:ro
+      - ./config/rabbitmq-game.conf:/etc/rabbitmq/conf.d/99-dune.conf:ro
+      - ./config/tls/rabbitmq/ca.crt:/etc/rabbitmq/cacert.pem:ro
+      - ./config/tls/rabbitmq/server.crt:/etc/rabbitmq/cert.pem:ro
+      - ./config/tls/rabbitmq/server.key:/etc/rabbitmq/key.pem:ro
+      - ./data/rabbitmq/game:/var/lib/rabbitmq
+    ports:
+      - "127.0.0.1:15673:15672"
+      - "127.0.0.1:31982:5672"
+
+  rmq-auth-shim:
+    image: registry.funcom.com/funcom/self-hosting/seabass-server-db-utils:${DUNE_IMAGE_TAG}
+    working_dir: /workspace
+    environment:
+      WORLD_UNIQUE_NAME: ${WORLD_UNIQUE_NAME}
+      TEXT_ROUTER_AUTH_BASE: http://text-router:8080
+    command:
+      - /workspace/scripts/rmq_auth_shim.py
+    volumes:
+      - .:/workspace:ro
+    depends_on:
+      - text-router
+
+  db-init:
+    image: registry.funcom.com/funcom/self-hosting/seabass-server-db-utils:${DUNE_IMAGE_TAG}
+    working_dir: /root/PSQL
+    environment:
+      PYTHONPATH: /root/PSQL
+      POSTGRES_DUNE_PASSWORD: ${POSTGRES_DUNE_PASSWORD}
+    command:
+      - /workspace/scripts/bootstrap_db.py
+    volumes:
+      - .:/workspace:ro
+    depends_on:
+      - postgres
+
+  director:
+    image: registry.funcom.com/funcom/self-hosting/seabass-server-bg-director:${DUNE_IMAGE_TAG}
+    command:
+      - --RMQGameHostname
+      - game-rmq
+      - --RMQGamePort
+      - "5672"
+      - --RMQAdminHostname
+      - admin-rmq
+      - --RMQAdminPort
+      - "5672"
+    environment:
+      Database__address: postgres
+      Database__port: "5432"
+      Database__user: dune
+      Database__password: ${POSTGRES_DUNE_PASSWORD}
+      RMQ_HTTP_TOKEN_AUTH_SECRET: ${RMQ_HTTP_TOKEN_AUTH_SECRET}
+      BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
+      OPT_SERVERNAME: ${WORLD_UNIQUE_NAME}
+      OPT_DISPLAY_NAME: ${WORLD_NAME}
+      FuncomLiveServices__ServiceAuthToken: ${FLS_SECRET}
+      FuncomLiveServices__RmqTlsEnabled: "true"
+      BATTLEGROUP_REGION_NAME: ${WORLD_REGION}
+      HOST_DATACENTER_ID: dune-testing
+      HOST_DATACENTER_IP_ADDRESS: ${EXTERNAL_ADDRESS}
+    volumes:
+      - ./config/director.ini:/etc/app/conf.d/director.ini:ro
+    depends_on:
+      - postgres
+      - admin-rmq
+      - game-rmq
+
+  text-router:
+    image: registry.funcom.com/funcom/self-hosting/seabass-server-text-router:${DUNE_IMAGE_TAG}
+    command:
+      - --RMQGameHostname
+      - game-rmq
+      - --RMQGamePort
+      - "5672"
+      - --RMQAdminHostname
+      - admin-rmq
+      - --RMQAdminPort
+      - "5672"
+    environment:
+      DuneDatabaseInterfacePSQL_DatabaseHost: postgres
+      DuneDatabaseInterfacePSQL_DatabasePort: "5432"
+      DuneDatabaseInterfacePSQL_DatabaseUser: dune
+      DuneDatabaseInterfacePSQL_DatabasePassword: ${POSTGRES_DUNE_PASSWORD}
+      DuneDatabaseInterfacePSQL_DatabaseName: dune_sb_1_4_0_0
+      RMQ_HTTP_TOKEN_AUTH_SECRET: ${RMQ_HTTP_TOKEN_AUTH_SECRET}
+      Database__address: postgres
+      Database__port: "5432"
+      Database__user: dune
+      Database__password: ${POSTGRES_DUNE_PASSWORD}
+      BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
+      OPT_SERVERNAME: ${WORLD_UNIQUE_NAME}
+      OPT_DISPLAY_NAME: ${WORLD_NAME}
+      BATTLEGROUP_REGION_NAME: ${WORLD_REGION}
+      FuncomLiveServices__ServiceAuthToken: ${FLS_SECRET}
+      FuncomLiveServices__RmqTlsEnabled: "true"
+      BATTLEGROUP_LANGUAGE: en-US
+      HOST_DATACENTER_ID: dune-testing
+      HOST_DATACENTER_IP_ADDRESS: ${EXTERNAL_ADDRESS}
+    depends_on:
+      - postgres
+      - admin-rmq
+      - game-rmq
+
+  gateway:
+    image: registry.funcom.com/funcom/self-hosting/seabass-server-gateway:${DUNE_IMAGE_TAG}
+    command:
+      - python
+      - -m
+      - service
+      - -c
+      - /Tools/Battlegroups/GatewayService/service/configs/service.conf
+      - --RMQGameHostname
+      - game-rmq
+      - --RMQGamePort
+      - "5672"
+    environment:
+      DuneDatabaseInterfacePSQL_DatabaseHost: postgres
+      DuneDatabaseInterfacePSQL_DatabasePort: "5432"
+      DuneDatabaseInterfacePSQL_DatabaseUser: dune
+      DuneDatabaseInterfacePSQL_DatabasePassword: ${POSTGRES_DUNE_PASSWORD}
+      DuneDatabaseInterfacePSQL_DatabaseName: dune_sb_1_4_0_0
+      FuncomLiveServices__ServiceAuthToken: ${FLS_SECRET}
+      FuncomLiveServices__RmqTlsEnabled: "true"
+      FuncomLiveServices__BattlegroupAuthorizationPreset: BattlegroupInternal
+      BATTLEGROUP_DISPLAY_NAME: ${WORLD_NAME}
+      OPT_SERVERNAME: ${WORLD_UNIQUE_NAME}
+      OPT_DISPLAY_NAME: ${WORLD_NAME}
+      gateway_farm_api_key: ${FLS_SECRET}
+      RMQ_HTTP_TOKEN_AUTH_SECRET: ${RMQ_HTTP_TOKEN_AUTH_SECRET}
+      HOST_DATACENTER_ID: dune-testing
+      HOST_DATACENTER_IP_ADDRESS: ${EXTERNAL_ADDRESS}
+    volumes:
+      - ./config/gateway.ini:/etc/app/conf.d/gateway.ini:ro
+    depends_on:
+      - postgres
+      - game-rmq
+
+  survival:
+    image: registry.funcom.com/funcom/self-hosting/seabass-server:${DUNE_IMAGE_TAG}
+    command:
+      - /home/dune/run.sh
+      - -FarmRegion=${WORLD_REGION}
+      - -ini:engine:[FuncomLiveServices]:ServiceAuthToken=${FLS_SECRET}
+      - -ini:engine:[OnlineSubsystem]:ServerName=${WORLD_UNIQUE_NAME}
+      - -ini:engine:[OnlineSubsystem]:DatacenterId=${WORLD_REGION}
+      - -ini:game:[DuneDatabaseInterfacePSQL]:DatabaseHost=postgres:5432
+      - -ini:game:[DuneDatabaseInterfacePSQL]:DatabaseUser=dune
+      - -ini:game:[DuneDatabaseInterfacePSQL]:DatabasePassword=${POSTGRES_DUNE_PASSWORD}
+      - -RMQGameTlsEnabled=true
+      - -ExternalAddress=${EXTERNAL_ADDRESS}
+      - --RMQGameHostname=game-rmq
+      - --RMQGamePort=5672
+      - --RMQAdminHostname=admin-rmq
+      - --RMQAdminPort=5672
+      - -MultiHome=$$POD_IP
+      - -PartitionIndex=1
+    environment:
+      POD_IP: 172.31.240.10
+      NODE_NAME: dune-local
+      BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
+    ports:
+      - "7777:7777/udp"
+      - "7888:7888/udp"
+    volumes:
+      - ./data/server-saved:/home/dune/server/DuneSandbox/Saved
+    depends_on:
+      - postgres
+      - admin-rmq
+      - game-rmq
+    networks:
+      default:
+        ipv4_address: 172.31.240.10
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.31.240.0/24
