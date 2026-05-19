@@ -87,8 +87,9 @@ Forward `7777-7806/udp` from the router to the host for the full 30-partition wa
 Keep these closed publicly unless client testing proves otherwise:
 
 - `7888-7917/udp`: IGW/S2S ports, currently working on the Docker network.
-- `31982/tcp`: game RabbitMQ, bound to localhost only.
 - `15431/tcp`, `15672/tcp`, `15673/tcp`, `18080/tcp`: local debug/admin surfaces.
+
+Forward `31982/tcp` when using the live client through Funcom/FLS. Gateway advertises this as the game RabbitMQ endpoint during login; if it advertises Docker-internal `game-rmq:5672`, the client fails before gameplay UDP starts.
 
 ## Known-Good Baseline
 

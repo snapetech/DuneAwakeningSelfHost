@@ -15,7 +15,7 @@ As of 2026-05-19, Steam exposes `Dune: Awakening Self-Hosted Server` as a releas
 - Docker is installed and the Funcom images have been loaded locally
 - Postgres, both RabbitMQ instances, gateway, and text-router start under Compose; FLS registration still needs a valid self-host token
 - `Survival_1` reaches farm-ready with public address advertisement when `FLS_SECRET` and `EXTERNAL_ADDRESS` are set
-- `rmq-auth-shim` is a local compatibility workaround for game-server S2S RabbitMQ users; keep RabbitMQ ports internal only
+- `rmq-auth-shim` is a local compatibility workaround for game-server S2S RabbitMQ users; the game RabbitMQ AMQPS port must be client-reachable for live self-host joins
 
 Adjust the path and image tag in `.env` for your install. The values above document the package version used during this teardown.
 
@@ -33,55 +33,58 @@ The official package creates a Kubernetes `BattleGroup` custom resource. The use
 
 The first target here is Docker Compose parity for those pieces. After that, systemd units can wrap either Docker/Podman containers or native extracted binaries if that proves viable.
 
-## Files
+## Documentation
 
-- `compose.yaml`: first-pass container topology.
-- `compose.limits.example.yaml`: optional local memory guardrails for profiling and small-host testing.
-- `admin/admin_panel.py`: local admin helper web panel.
-- `.env.example`: required world/token/password settings.
-- `docs/teardown.md`: notes extracted from the Steam install and image metadata.
-- `docs/publication.md`: what is safe to publish and what must stay local.
-- `docs/setup.md`: step-by-step local startup flow.
-- `docs/reproducibility.md`: fresh-host, migration, validation, and version-drift checklist.
-- `docs/architecture.md`: Compose service map and runtime state notes.
-- `docs/kubernetes.md`: unsupported but documented path for translating the Compose pod set to a Kubernetes cluster.
-- `docs/access-control.md`: server login password and current restriction limits.
-- `docs/character-transfers.md`: Director inbound/outbound character-transfer policy.
-- `docs/full-farm.md`: expanded standing farm / 30-partition warm-pool runbook and validation boundary.
-- `docs/validation.md`: live-client route validation checklist and failed-transition capture flow.
-- `docs/benchmarking.md`: repeatable resource and transition benchmark notes.
-- `docs/improvements.md`: improvement roadmap with the reason behind each workstream.
-- `docs/network-investigation.md`: connection-level DB/RabbitMQ/routing investigation notes.
-- `docs/lan-reflection.md`: standard options for joining the public-advertised server from inside the same LAN without changing `EXTERNAL_ADDRESS`.
-- `docs/optimization-targets.md`: practical memory, storage, network, and routing optimization targets.
-- `docs/operations.md`: health-check, backup, restore, and upgrade notes.
-- `docs/documentation-audit.md`: current docs coverage gaps and audit checklist.
-- `docs/admin-panel.md`: admin helper panel setup, security notes, and write-safety gates.
-- `docs/admin-mutation-map.md`: database contracts used or deliberately avoided by admin mutations.
-- `docs/server-knobs-audit.md`: audited Funcom, Compose, and reverse-proxy settings worth exposing in admin.
-- `docs/routing-investigation.md`: Deep Desert, Arrakeen, and Testing Station transition investigation notes.
-- `docs/troubleshooting.md`: common startup failures and where to look.
-- `scripts/load-images.sh`: loads the Steam image tarballs into Docker.
-- `scripts/inspect-images.sh`: prints entrypoints, env, ports, and volumes from the loaded images.
-- `scripts/bootstrap_db.py`: one-shot Compose DB bootstrap using Funcom's bundled SQL setup API.
-- `scripts/backup-state.sh`: writes a timestamped local backup under `backups/`.
-- `scripts/populate-local-env.sh`: generates local passwords/RabbitMQ secret and RabbitMQ TLS files.
-- `scripts/preflight.sh`: checks local tools, env values, Steam image tarballs, and unsafe bindings.
-- `scripts/capture-routing.sh`: writes local redacted transition/debug captures under `captures/`.
-- `scripts/discover-player-state.sh`: lists candidate player/session/account DB objects for observability work.
-- `scripts/profile-runtime.sh`: captures local memory, storage, image, process, port, and socket profiles under `captures/`.
-- `scripts/summarize-runtime-profile.sh`: prints a compact summary from a runtime profile capture.
-- `scripts/watch-network.sh`: prints current socket-state counts for routing/DB/RabbitMQ churn.
-- `scripts/recover-survival.sh`: restarts the game-server process after dependency restarts or a database disconnect crash.
-- `scripts/recover-map.sh`: safely recovers a crashed fixed-partition map after stale server-id ownership.
-- `scripts/watch-maps.sh`: host-side fixed-partition map watchdog that delegates to `recover-map.sh`.
-- `scripts/rmq-health.sh`: summarizes RabbitMQ service-user coverage and recent auth/connectivity errors.
-- `scripts/full-world-partitions.sh`: adds the official single-dimension travel target partitions for Overmap, social hubs, testing stations, Deep Desert, and Proces Verbal.
-- `scripts/rmq_auth_shim.py`: local RabbitMQ HTTP auth compatibility shim.
-- `scripts/restore-state.sh`: restores a local backup made by `scripts/backup-state.sh`.
-- `scripts/run_server_safe.sh`: local game-server launcher that preserves arguments containing spaces.
-- `scripts/single-survival-partition.sh`: backs up and prunes unused `Survival_1` dimensions for a one-server test world.
-- `scripts/status.sh`: redacted status/log inspection helper.
+Start with these:
+
+- [`docs/setup.md`](docs/setup.md): step-by-step local startup flow.
+- [`docs/operations.md`](docs/operations.md): health checks, recovery, backup, restore, ports, and upgrades.
+- [`docs/admin-panel.md`](docs/admin-panel.md): local admin helper panel setup, security notes, and write-safety gates.
+- [`docs/full-farm.md`](docs/full-farm.md): expanded standing farm and 30-partition warm-pool runbook.
+- [`docs/troubleshooting.md`](docs/troubleshooting.md): common startup failures and where to look.
+
+Planning and architecture:
+
+- [`docs/architecture.md`](docs/architecture.md): Compose service map, partition layout, local state, and validation boundary.
+- [`docs/reproducibility.md`](docs/reproducibility.md): fresh-host, migration, validation, and version-drift checklist.
+- [`docs/kubernetes.md`](docs/kubernetes.md): unsupported design map for translating the Compose pod set to Kubernetes.
+- [`docs/improvements.md`](docs/improvements.md): improvement roadmap with the reason behind each workstream.
+- [`docs/optimization-targets.md`](docs/optimization-targets.md): practical memory, storage, network, and routing optimization targets.
+- [`docs/publication.md`](docs/publication.md): what is safe to publish and what must stay local.
+- [`docs/teardown.md`](docs/teardown.md): notes extracted from the Steam install and image metadata.
+
+Networking, routing, and validation:
+
+- [`docs/lan-reflection.md`](docs/lan-reflection.md): LAN reflection options for joining the public-advertised server from inside the same LAN.
+- [`docs/network-investigation.md`](docs/network-investigation.md): DB/RabbitMQ/socket-level routing investigation notes.
+- [`docs/routing-investigation.md`](docs/routing-investigation.md): Deep Desert, Arrakeen, and Testing Station transition investigation notes.
+- [`docs/validation.md`](docs/validation.md): live-client route validation checklist and failed-transition capture flow.
+- [`docs/benchmarking.md`](docs/benchmarking.md): repeatable resource and transition benchmark notes.
+
+Admin, access, and gameplay knobs:
+
+- [`docs/access-control.md`](docs/access-control.md): server login password and current restriction limits.
+- [`docs/character-transfers.md`](docs/character-transfers.md): Director inbound/outbound character-transfer policy.
+- [`docs/admin-mutation-map.md`](docs/admin-mutation-map.md): database contracts used or deliberately avoided by admin mutations.
+- [`docs/server-knobs-audit.md`](docs/server-knobs-audit.md): audited Funcom, Compose, and reverse-proxy settings worth exposing in admin.
+- [`docs/documentation-audit.md`](docs/documentation-audit.md): docs coverage gaps and audit checklist.
+
+Research indexes at the repo root:
+
+- [`SERVER_CONFIG_KEYS.md`](SERVER_CONFIG_KEYS.md): known local `UserGame.ini` override keys and evidence level.
+- [`SERVER_CONFIG_KEY_INDEX.md`](SERVER_CONFIG_KEY_INDEX.md): generated shipped `DefaultGame.ini` key inventory.
+- [`SERVER_BINARY_CONFIG_CANDIDATES.md`](SERVER_BINARY_CONFIG_CANDIDATES.md): binary-only candidate config strings for focused validation.
+- [`DEEP_DESERT_EVENT_KNOBS.md`](DEEP_DESERT_EVENT_KNOBS.md): Deep Desert spice/event tuning research.
+
+## Key Files
+
+- [`compose.yaml`](compose.yaml): base container topology.
+- [`compose.allmaps.yaml`](compose.allmaps.yaml): 30-partition warm-pool extension.
+- [`compose.limits.example.yaml`](compose.limits.example.yaml): optional local memory guardrails for profiling and small-host testing.
+- [`admin/admin_panel.py`](admin/admin_panel.py): local admin helper web panel.
+- [`.env.example`](.env.example): required world/token/password settings.
+- [`Makefile`](Makefile): validation targets.
+- [`scripts/`](scripts): helper scripts for image loading, preflight, DB bootstrap, backups, status, recovery, profiling, and routing capture.
 
 ## Requirements
 
@@ -167,7 +170,7 @@ For the full 30-partition warm pool, forward these game UDP ports:
 
 The Compose files also expose the current IGW/S2S UDP ports on the host for debugging (`7888-7917/udp` in the 30-partition layout), but those are server-to-server paths on the Docker network. Do not forward them publicly unless a client test proves Funcom's routing requires it.
 
-Do not forward RabbitMQ (`31982/tcp`) or the local debug/admin ports. Compose binds RabbitMQ and database debug ports to `127.0.0.1` where host publication is needed.
+Forward the game RabbitMQ AMQPS port (`GAME_RMQ_PUBLIC_PORT`, default `31982/tcp`) when using live self-host joins; the client receives this address from FLS before gameplay UDP starts. Do not forward Postgres, RabbitMQ management, admin panel, or other local debug ports.
 
 If LAN players join through the public server listing, keep `EXTERNAL_ADDRESS`
 set to the public address and use the standard LAN reflection options in

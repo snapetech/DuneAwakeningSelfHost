@@ -8,7 +8,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 WORLD_UNIQUE_NAME = os.environ["WORLD_UNIQUE_NAME"]
 UPSTREAM = os.environ.get("TEXT_ROUTER_AUTH_BASE", "http://text-router:8080")
+MANAGEMENT_USER = os.environ.get("DUNE_RMQ_MANAGEMENT_USER", "")
+MANAGEMENT_PASSWORD = os.environ.get("DUNE_RMQ_MANAGEMENT_PASSWORD", "")
 SERVICE_USER_RE = re.compile(rf"^(sg|bgd|tr)\.{re.escape(WORLD_UNIQUE_NAME)}\.[^.]+(?:\.(game|admin))?$")
+PLAYER_USER_RE = re.compile(r"^[0-9A-Fa-f]{16}$")
 
 
 def parse_form(body: bytes) -> dict[str, str]:
@@ -33,7 +36,19 @@ class Handler(BaseHTTPRequestHandler):
         username = form.get("username", "")
 
         if self.path in {"/v0/auth/user", "/v0/auth/vhost", "/v0/auth/resource", "/v0/auth/topic"}:
+            if MANAGEMENT_USER and username == MANAGEMENT_USER:
+                if self.path == "/v0/auth/user" and form.get("password", "") == MANAGEMENT_PASSWORD:
+                    self.respond(b"allow administrator")
+                    return
+                if self.path != "/v0/auth/user":
+                    self.respond(b"allow")
+                    return
+                self.respond(b"deny")
+                return
             if SERVICE_USER_RE.match(username):
+                self.respond(b"allow")
+                return
+            if PLAYER_USER_RE.match(username):
                 self.respond(b"allow")
                 return
 

@@ -49,6 +49,51 @@ AUDIT_LOCK = threading.Lock()
 CONFIRM_RESET_KEYSTONES = "RESET KEYSTONES"
 CONFIRM_DELETE_ITEM = "DELETE ITEM"
 CONFIRM_SET_STACK = "SET STACK"
+ANNOUNCEMENT_STATE_FILE = BACKUP_ROOT / "announcements.json"
+RESTART_STATE_FILE = BACKUP_ROOT / "restart-jobs.json"
+ANNOUNCEMENT_LOCK = threading.Lock()
+RESTART_LOCK = threading.Lock()
+ANNOUNCEMENT_THREAD_STARTED = False
+ANNOUNCEMENT_POLL_SECONDS = 5
+ANNOUNCEMENT_MAX_MESSAGE_BYTES = int(os.environ.get("DUNE_ADMIN_ANNOUNCEMENT_MAX_MESSAGE_BYTES", "500"))
+ANNOUNCEMENT_COMMAND_TIMEOUT_SECONDS = int(os.environ.get("DUNE_ADMIN_ANNOUNCEMENT_COMMAND_TIMEOUT_SECONDS", "10"))
+ANNOUNCEMENT_COMMAND = os.environ.get("DUNE_ADMIN_ANNOUNCE_COMMAND", str(ROOT / "scripts" / "announce.sh"))
+RESTART_COMMAND_TIMEOUT_SECONDS = int(os.environ.get("DUNE_ADMIN_RESTART_COMMAND_TIMEOUT_SECONDS", "1800"))
+RESTART_COMMAND = os.environ.get("DUNE_ADMIN_RESTART_COMMAND", str(ROOT / "scripts" / "restart-target.sh"))
+ANNOUNCEMENT_DELAYS = {
+    "immediate": 0,
+    "30s": 30,
+    "60s": 60,
+    "5min": 5 * 60,
+    "10min": 10 * 60,
+    "15min": 15 * 60,
+    "30min": 30 * 60,
+    "60min": 60 * 60,
+    "1hr": 60 * 60,
+    "2hr": 2 * 60 * 60,
+    "3hr": 3 * 60 * 60,
+    "4hr": 4 * 60 * 60,
+    "6hr": 6 * 60 * 60,
+    "12hr": 12 * 60 * 60,
+}
+RESTART_TARGETS = {
+    "all": {"label": "All Components", "services": []},
+    "core": {"label": "Core Services", "services": ["postgres", "admin-rmq", "game-rmq", "rmq-auth-shim", "text-router", "gateway", "director"]},
+    "service-layer": {"label": "Service Layer", "services": ["rmq-auth-shim", "text-router", "gateway", "director"]},
+    "game-all": {"label": "All Game Maps", "services": [
+        "survival", "overmap", "arrakeen", "harko-village", "testing-hephaestus", "testing-carthag", "testing-waterfat",
+        "deep-desert", "proces-verbal", "lostharvest-ecolab-a", "lostharvest-ecolab-b", "lostharvest-forgottenlab",
+        "art-of-kanly", "dungeon-hephaestus", "dungeon-oldcarthag", "faction-outpost-atre", "faction-outpost-hark",
+        "heighliner-dungeon", "ecolab-green-089", "ecolab-green-152", "ecolab-green-024", "ecolab-green-195",
+        "ecolab-green-136", "overland-m-01", "overland-s-04", "overland-s-06", "bandit-fortress",
+        "overland-s-07", "overland-s-08", "dungeon-thepit",
+    ]},
+    "survival": {"label": "Hagga Basin / Survival", "services": ["survival"]},
+    "overmap": {"label": "Overland Map", "services": ["overmap"]},
+    "arrakeen": {"label": "Arrakeen", "services": ["arrakeen"]},
+    "harko-village": {"label": "Harko Village", "services": ["harko-village"]},
+    "deep-desert": {"label": "Deep Desert", "services": ["deep-desert"]},
+}
 
 ALLOWED_CONFIGS = {
     "director.ini": CONFIG_ROOT / "director.ini",
@@ -119,6 +164,23 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ADMIN_REFERENCE_LIMIT": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum reference rows returned by admin helper endpoints."},
     "DUNE_ADMIN_CHARACTER_SEARCH_LIMIT": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum character search rows returned."},
     "DUNE_ADMIN_ALLOWED_HOSTS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Host header allowlist for the admin HTTP service."},
+    "DUNE_ADMIN_ANNOUNCE_COMMAND": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Executable hook used by the restart-announcement scheduler to deliver in-game messages."},
+    "DUNE_ADMIN_ANNOUNCEMENT_MAX_MESSAGE_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum UTF-8 size for a scheduled restart-announcement message."},
+    "DUNE_ADMIN_ANNOUNCEMENT_COMMAND_TIMEOUT_SECONDS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Timeout for each announcement delivery hook invocation."},
+    "DUNE_ANNOUNCE_RMQ_URL": {"group": "Announcements", "secret": False, "restart": True, "why": "RabbitMQ management API URL used by the announcement hook."},
+    "DUNE_ANNOUNCE_RMQ_USER": {"group": "Announcements", "secret": False, "restart": True, "why": "RabbitMQ management user used by the announcement hook."},
+    "DUNE_ANNOUNCE_RMQ_PASSWORD": {"group": "Announcements", "secret": True, "restart": True, "why": "RabbitMQ management password used by the announcement hook."},
+    "DUNE_ANNOUNCE_RMQ_EXCHANGE": {"group": "Announcements", "secret": False, "restart": True, "why": "RabbitMQ exchange used for server-command announcements."},
+    "DUNE_ANNOUNCE_RMQ_ROUTING_KEYS": {"group": "Announcements", "secret": False, "restart": True, "why": "Comma-separated map RPC routing keys that receive announcements."},
+    "DUNE_ANNOUNCE_COMMAND_NAME": {"group": "Announcements", "secret": False, "restart": True, "why": "Server command name sent by the announcement hook."},
+    "DUNE_ANNOUNCE_TITLE": {"group": "Announcements", "secret": False, "restart": True, "why": "Default title for generic in-game service broadcasts."},
+    "DUNE_ANNOUNCE_DURATION_SECONDS": {"group": "Announcements", "secret": False, "restart": True, "why": "Default on-screen duration for generic in-game service broadcasts."},
+    "DUNE_ANNOUNCE_PAYLOAD_MODE": {"group": "Announcements", "secret": False, "restart": True, "why": "Built-in announcement envelope variant used when no raw payload template is set."},
+    "DUNE_ANNOUNCE_PAYLOAD_TEMPLATE": {"group": "Announcements", "secret": False, "restart": True, "why": "Optional raw RabbitMQ payload template for overriding the default ServiceBroadcast envelope."},
+    "DUNE_ADMIN_RESTART_COMMAND": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Executable hook used by the scheduled restart runner."},
+    "DUNE_ADMIN_RESTART_COMMAND_TIMEOUT_SECONDS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Timeout for each scheduled restart hook invocation."},
+    "DUNE_RESTART_COMPOSE_PROJECT": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Compose project label used by the Docker-socket restart hook."},
+    "DUNE_RESTART_DOCKER_SOCKET": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Docker Engine Unix socket path used by the restart hook when Docker CLI is unavailable."},
 }
 SAFE_ENV_KEYS = set(ENV_KEY_DEFINITIONS)
 
@@ -178,6 +240,301 @@ def recent_audit_events(limit=None):
         except json.JSONDecodeError:
             events.append({"ts": "", "action": "audit-log-parse-error", "ok": False})
     return events
+
+
+def announcement_default_state():
+    return {"jobs": [], "lastDelivery": None, "command": ANNOUNCEMENT_COMMAND}
+
+
+def read_announcement_state():
+    if not ANNOUNCEMENT_STATE_FILE.exists():
+        return announcement_default_state()
+    try:
+        state = json.loads(ANNOUNCEMENT_STATE_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return announcement_default_state()
+    if not isinstance(state, dict):
+        return announcement_default_state()
+    state.setdefault("jobs", [])
+    state.setdefault("lastDelivery", None)
+    state["command"] = ANNOUNCEMENT_COMMAND
+    return state
+
+
+def write_announcement_state(state):
+    BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
+    tmp = ANNOUNCEMENT_STATE_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(state, indent=2, sort_keys=True, default=json_default), encoding="utf-8")
+    tmp.replace(ANNOUNCEMENT_STATE_FILE)
+
+
+def active_announcement_jobs(state):
+    return [
+        job for job in state.get("jobs", [])
+        if job.get("status") in ("scheduled", "delivering")
+    ]
+
+
+def schedule_announcement(body):
+    message = str(body.get("message", "")).strip()
+    if not message:
+        raise ValueError("message is required")
+    if len(message.encode("utf-8")) > ANNOUNCEMENT_MAX_MESSAGE_BYTES:
+        raise ValueError(f"message exceeds {ANNOUNCEMENT_MAX_MESSAGE_BYTES} bytes")
+    delay_key = str(body.get("delay", "immediate")).strip()
+    if delay_key not in ANNOUNCEMENT_DELAYS:
+        raise ValueError("invalid restart delay")
+    repeat_seconds = int(body.get("repeat_seconds", body.get("repeatSeconds", 60)) or 0)
+    if repeat_seconds < 0 or repeat_seconds > 24 * 60 * 60:
+        raise ValueError("repeat_seconds must be between 0 and 86400")
+    now = time.time()
+    restart_at = now + ANNOUNCEMENT_DELAYS[delay_key]
+    job = {
+        "id": secrets.token_urlsafe(12),
+        "message": message,
+        "delay": delay_key,
+        "createdAt": now,
+        "restartAt": restart_at,
+        "repeatSeconds": repeat_seconds,
+        "nextSendAt": now,
+        "lastSentAt": None,
+        "deliveryCount": 0,
+        "status": "scheduled",
+        "lastError": None,
+    }
+    with ANNOUNCEMENT_LOCK:
+        state = read_announcement_state()
+        for existing in active_announcement_jobs(state):
+            existing["status"] = "superseded"
+        state.setdefault("jobs", []).append(job)
+        write_announcement_state(state)
+    return job
+
+
+def cancel_announcement(job_id=None):
+    with ANNOUNCEMENT_LOCK:
+        state = read_announcement_state()
+        changed = 0
+        for job in active_announcement_jobs(state):
+            if job_id and job.get("id") != job_id:
+                continue
+            job["status"] = "cancelled"
+            job["cancelledAt"] = time.time()
+            changed += 1
+        write_announcement_state(state)
+    return {"ok": True, "cancelled": changed}
+
+
+def restart_default_state():
+    return {"jobs": [], "lastExecution": None, "command": RESTART_COMMAND, "targets": RESTART_TARGETS}
+
+
+def read_restart_state():
+    if not RESTART_STATE_FILE.exists():
+        return restart_default_state()
+    try:
+        state = json.loads(RESTART_STATE_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return restart_default_state()
+    if not isinstance(state, dict):
+        return restart_default_state()
+    state.setdefault("jobs", [])
+    state.setdefault("lastExecution", None)
+    state["command"] = RESTART_COMMAND
+    state["targets"] = RESTART_TARGETS
+    return state
+
+
+def write_restart_state(state):
+    BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
+    tmp = RESTART_STATE_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(state, indent=2, sort_keys=True, default=json_default), encoding="utf-8")
+    tmp.replace(RESTART_STATE_FILE)
+
+
+def active_restart_jobs(state):
+    return [job for job in state.get("jobs", []) if job.get("status") in ("scheduled", "executing")]
+
+
+def schedule_restart(body):
+    target = str(body.get("target", "")).strip()
+    if target not in RESTART_TARGETS:
+        raise ValueError("invalid restart target")
+    delay_key = str(body.get("delay", "immediate")).strip()
+    if delay_key not in ANNOUNCEMENT_DELAYS:
+        raise ValueError("invalid restart delay")
+    message = str(body.get("message", "")).strip()
+    repeat_seconds = int(body.get("repeat_seconds", body.get("repeatSeconds", 60)) or 0)
+    announce = str(body.get("announce", "true")).lower() in ("1", "true", "yes", "on")
+    execute = str(body.get("execute", "")).lower() in ("1", "true", "yes", "on")
+    now = time.time()
+    run_at = now + ANNOUNCEMENT_DELAYS[delay_key]
+    job = {
+        "id": secrets.token_urlsafe(12),
+        "target": target,
+        "targetLabel": RESTART_TARGETS[target]["label"],
+        "services": RESTART_TARGETS[target]["services"],
+        "delay": delay_key,
+        "createdAt": now,
+        "runAt": run_at,
+        "message": message,
+        "announce": announce,
+        "repeatSeconds": repeat_seconds,
+        "execute": execute,
+        "status": "scheduled",
+        "lastError": None,
+    }
+    with RESTART_LOCK:
+        state = read_restart_state()
+        for existing in active_restart_jobs(state):
+            existing["status"] = "superseded"
+        state.setdefault("jobs", []).append(job)
+        write_restart_state(state)
+    if announce and message:
+        schedule_announcement({"delay": delay_key, "repeat_seconds": repeat_seconds, "message": message})
+    return job
+
+
+def cancel_restart(job_id=None):
+    with RESTART_LOCK:
+        state = read_restart_state()
+        changed = 0
+        for job in active_restart_jobs(state):
+            if job_id and job.get("id") != job_id:
+                continue
+            job["status"] = "cancelled"
+            job["cancelledAt"] = time.time()
+            changed += 1
+        write_restart_state(state)
+    return {"ok": True, "cancelled": changed}
+
+
+def execute_restart(job):
+    if not job.get("execute"):
+        return {"ok": True, "dryRun": True, "output": "scheduled restart reached run time; execute=false so no command was run"}
+    command = pathlib.Path(RESTART_COMMAND)
+    if not command.exists() or not os.access(command, os.X_OK):
+        return {"ok": False, "error": f"restart command is not executable: {command}"}
+    env = os.environ.copy()
+    env.update({
+        "DUNE_RESTART_JOB_ID": job.get("id", ""),
+        "DUNE_RESTART_TARGET": job.get("target", ""),
+        "DUNE_RESTART_SERVICES": " ".join(job.get("services", [])),
+    })
+    try:
+        result = subprocess.run(
+            [str(command), job.get("target", "")],
+            cwd=str(ROOT),
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=RESTART_COMMAND_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+    output = (result.stdout + result.stderr).strip()
+    if len(output) > AUDIT_FIELD_LIMIT:
+        output = output[:AUDIT_FIELD_LIMIT] + "...[truncated]"
+    return {"ok": result.returncode == 0, "returncode": result.returncode, "output": output}
+
+
+def deliver_announcement(job):
+    command = pathlib.Path(ANNOUNCEMENT_COMMAND)
+    if not command.exists() or not os.access(command, os.X_OK):
+        return {"ok": False, "error": f"announce command is not executable: {command}"}
+    env = os.environ.copy()
+    env.update({
+        "DUNE_ANNOUNCE_MESSAGE": job.get("message", ""),
+        "DUNE_ANNOUNCE_RESTART_AT": str(int(float(job.get("restartAt", time.time())))),
+        "DUNE_ANNOUNCE_JOB_ID": job.get("id", ""),
+    })
+    try:
+        result = subprocess.run(
+            [str(command), job.get("message", "")],
+            cwd=str(ROOT),
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=ANNOUNCEMENT_COMMAND_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+    output = (result.stdout + result.stderr).strip()
+    if len(output) > AUDIT_FIELD_LIMIT:
+        output = output[:AUDIT_FIELD_LIMIT] + "...[truncated]"
+    return {"ok": result.returncode == 0, "returncode": result.returncode, "output": output}
+
+
+def announcement_worker():
+    while True:
+        now = time.time()
+        due_jobs = []
+        due_restarts = []
+        with ANNOUNCEMENT_LOCK:
+            state = read_announcement_state()
+            for job in active_announcement_jobs(state):
+                if now >= float(job.get("restartAt", 0)) and int(job.get("deliveryCount") or 0) > 0:
+                    job["status"] = "expired"
+                    continue
+                if now >= float(job.get("nextSendAt", 0)):
+                    job["status"] = "delivering"
+                    due_jobs.append(dict(job))
+            write_announcement_state(state)
+        with RESTART_LOCK:
+            restart_state = read_restart_state()
+            for job in active_restart_jobs(restart_state):
+                if now >= float(job.get("runAt", 0)):
+                    job["status"] = "executing"
+                    due_restarts.append(dict(job))
+            write_restart_state(restart_state)
+        for due in due_jobs:
+            result = deliver_announcement(due)
+            with ANNOUNCEMENT_LOCK:
+                state = read_announcement_state()
+                for job in state.get("jobs", []):
+                    if job.get("id") != due.get("id") or job.get("status") not in ("delivering", "scheduled"):
+                        continue
+                    job["deliveryCount"] = int(job.get("deliveryCount") or 0) + 1
+                    job["lastSentAt"] = time.time()
+                    job["lastError"] = None if result.get("ok") else result.get("error") or result.get("output")
+                    repeat_seconds = int(job.get("repeatSeconds") or 0)
+                    if time.time() >= float(job.get("restartAt", 0)):
+                        job["status"] = "expired"
+                    elif repeat_seconds <= 0:
+                        job["status"] = "sent" if result.get("ok") else "failed"
+                    else:
+                        job["status"] = "scheduled"
+                        job["nextSendAt"] = min(time.time() + repeat_seconds, float(job.get("restartAt", time.time())))
+                state["lastDelivery"] = result
+                write_announcement_state(state)
+            audit_event("announcement-delivery", ok=result.get("ok"), job_id=due.get("id"), returncode=result.get("returncode"), error=result.get("error"), output=result.get("output"))
+        for due in due_restarts:
+            result = execute_restart(due)
+            with RESTART_LOCK:
+                restart_state = read_restart_state()
+                for job in restart_state.get("jobs", []):
+                    if job.get("id") != due.get("id") or job.get("status") != "executing":
+                        continue
+                    job["executedAt"] = time.time()
+                    job["status"] = "executed" if result.get("ok") else "failed"
+                    job["lastError"] = None if result.get("ok") else result.get("error") or result.get("output")
+                restart_state["lastExecution"] = result
+                write_restart_state(restart_state)
+            audit_event("restart-execution", ok=result.get("ok"), job_id=due.get("id"), target=due.get("target"), dry_run=result.get("dryRun"), returncode=result.get("returncode"), error=result.get("error"), output=result.get("output"))
+        time.sleep(ANNOUNCEMENT_POLL_SECONDS)
+
+
+def ensure_announcement_thread():
+    global ANNOUNCEMENT_THREAD_STARTED
+    if ANNOUNCEMENT_THREAD_STARTED:
+        return
+    ANNOUNCEMENT_THREAD_STARTED = True
+    thread = threading.Thread(target=announcement_worker, name="announcement-worker", daemon=True)
+    thread.start()
 
 
 def db_connect():
@@ -603,6 +960,14 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/ops/runbook":
                 self.require_token()
                 self.json(self.ops_runbook())
+            elif parsed.path == "/api/ops/announcement":
+                self.require_token()
+                with ANNOUNCEMENT_LOCK:
+                    self.json(read_announcement_state())
+            elif parsed.path == "/api/ops/restart":
+                self.require_token()
+                with RESTART_LOCK:
+                    self.json(read_restart_state())
             elif parsed.path == "/api/characters":
                 self.require_token()
                 params = urllib.parse.parse_qs(parsed.query)
@@ -768,6 +1133,30 @@ class Handler(BaseHTTPRequestHandler):
                 require_confirmation(body, CONFIRM_SET_STACK)
                 result = self.set_item_stack(body)
                 self.audit("item-stack", item_id=result.get("item_id"), stack_size=result.get("stack_size"))
+                self.json(result)
+            elif parsed.path == "/api/ops/announcement":
+                self.require_token()
+                body = parse_body(self)
+                result = schedule_announcement(body)
+                self.audit("announcement-schedule", job_id=result.get("id"), delay=result.get("delay"), repeat_seconds=result.get("repeatSeconds"))
+                self.json({"ok": True, "job": result})
+            elif parsed.path == "/api/ops/announcement/cancel":
+                self.require_token()
+                body = parse_body(self)
+                result = cancel_announcement(body.get("id"))
+                self.audit("announcement-cancel", job_id=body.get("id"), cancelled=result.get("cancelled"))
+                self.json(result)
+            elif parsed.path == "/api/ops/restart":
+                self.require_token()
+                body = parse_body(self)
+                result = schedule_restart(body)
+                self.audit("restart-schedule", job_id=result.get("id"), target=result.get("target"), delay=result.get("delay"), execute=result.get("execute"))
+                self.json({"ok": True, "job": result})
+            elif parsed.path == "/api/ops/restart/cancel":
+                self.require_token()
+                body = parse_body(self)
+                result = cancel_restart(body.get("id"))
+                self.audit("restart-cancel", job_id=body.get("id"), cancelled=result.get("cancelled"))
                 self.json(result)
             else:
                 self.error(HTTPStatus.NOT_FOUND, "not found")
@@ -1614,6 +2003,34 @@ function probeTable(rows){
   if (!rows || !rows.length) return '<div class="muted">No probes.</div>';
   return `<div class="tableWrap"><table><thead><tr><th>Name</th><th>Status</th><th>Target</th><th>Latency</th><th>HTTP</th><th>Error</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.name)}</td><td>${healthCell(r.ok || [401,403,404].includes(r.httpStatus), r.ok ? 'OK' : 'reachable', 'down')}</td><td>${esc(r.target)}</td><td>${esc(r.latencyMs)}ms</td><td>${esc(r.httpStatus ?? '')}</td><td>${esc(r.error ?? '')}</td></tr>`).join('')}</tbody></table></div>`;
 }
+function announcementPanel(state){
+  const active = (state.jobs || []).filter(j => ['scheduled','delivering'].includes(j.status));
+  const latest = active[active.length - 1] || (state.jobs || []).slice(-1)[0] || null;
+  const delayOptions = [
+    ['immediate','Immediate'], ['30s','30 sec'], ['60s','60 sec'], ['5min','5 min'],
+    ['10min','10 min'], ['15min','15 min'], ['30min','30 min'], ['60min','60 min'],
+    ['1hr','1 hr'], ['2hr','2 hr'], ['3hr','3 hr'], ['4hr','4 hr'],
+    ['6hr','6 hr'], ['12hr','12 hr']
+  ].map(([value,label]) => `<option value="${value}">${label}</option>`).join('');
+  const jobSummary = latest ? `<pre id="announcementState">${esc(JSON.stringify(latest, null, 2))}</pre>` : '<div class="muted">No scheduled announcement.</div>';
+  const delivery = state.lastDelivery ? `<pre>${esc(JSON.stringify(state.lastDelivery, null, 2))}</pre>` : '<div class="muted">No delivery attempts yet.</div>';
+  return `<div class="card"><h2>Restart Announcement</h2><p class="muted">Schedules repeated maintenance messages through <code>${esc(state.command || '')}</code>. The scheduler is live; in-game delivery depends on that command being implemented and executable.</p><div class="grid"><label>Restart time<select id="announceDelay">${delayOptions}</select></label><label>Repeat every<select id="announceRepeat"><option value="0">Do not repeat</option><option value="30">30 sec</option><option value="60" selected>60 sec</option><option value="300">5 min</option><option value="600">10 min</option><option value="900">15 min</option><option value="1800">30 min</option><option value="3600">60 min</option></select></label></div><label>Message<textarea id="announceMessage" rows="3" style="min-height:82px">Server restart soon. Please get to a safe place.</textarea></label><p><button id="scheduleAnnouncementBtn" class="primary">Schedule announcement</button> <button id="cancelAnnouncementBtn" class="danger">Cancel active announcement</button></p><h3>Current</h3>${jobSummary}<h3>Last Delivery</h3>${delivery}</div>`;
+}
+function restartPanel(state){
+  const active = (state.jobs || []).filter(j => ['scheduled','executing'].includes(j.status));
+  const latest = active[active.length - 1] || (state.jobs || []).slice(-1)[0] || null;
+  const targets = state.targets || {};
+  const targetOptions = Object.entries(targets).map(([key, meta]) => `<option value="${esc(key)}">${esc(meta.label || key)}</option>`).join('');
+  const delayOptions = [
+    ['immediate','Immediate'], ['30s','30 sec'], ['60s','60 sec'], ['5min','5 min'],
+    ['10min','10 min'], ['15min','15 min'], ['30min','30 min'], ['60min','60 min'],
+    ['1hr','1 hr'], ['2hr','2 hr'], ['3hr','3 hr'], ['4hr','4 hr'],
+    ['6hr','6 hr'], ['12hr','12 hr']
+  ].map(([value,label]) => `<option value="${value}">${label}</option>`).join('');
+  const jobSummary = latest ? `<pre>${esc(JSON.stringify(latest, null, 2))}</pre>` : '<div class="muted">No scheduled restart.</div>';
+  const execution = state.lastExecution ? `<pre>${esc(JSON.stringify(state.lastExecution, null, 2))}</pre>` : '<div class="muted">No restart execution attempts yet.</div>';
+  return `<div class="card"><h2>Scheduled Restart</h2><p class="muted">Schedules a component restart through <code>${esc(state.command || '')}</code>. Leave execution off for a dry-run schedule; enable it only when the restart hook should control Docker.</p><div class="grid"><label>Target<select id="restartTarget">${targetOptions}</select></label><label>Restart after<select id="restartDelay">${delayOptions}</select></label><label>Repeat notice every<select id="restartRepeat"><option value="0">Do not repeat</option><option value="30">30 sec</option><option value="60" selected>60 sec</option><option value="300">5 min</option><option value="600">10 min</option><option value="900">15 min</option><option value="1800">30 min</option><option value="3600">60 min</option></select></label><label>Restart action<select id="restartExecute"><option value="false" selected>Dry-run schedule</option><option value="true">Execute restart hook</option></select></label></div><label><input id="restartAnnounce" type="checkbox" checked style="width:auto"> Also schedule announcement</label><label>Message<textarea id="restartMessage" rows="3" style="min-height:82px">Server restart soon. Please get to a safe place.</textarea></label><p><button id="scheduleRestartBtn" class="primary">Schedule restart</button> <button id="cancelRestartBtn" class="danger">Cancel active restart</button></p><h3>Current</h3>${jobSummary}<h3>Last Execution</h3>${execution}</div>`;
+}
 function signalList(groups){
   return Object.entries(groups || {}).map(([group, rows]) => `<div class="card"><h2>${esc(group)}</h2><table><thead><tr><th>Name</th><th>Value</th><th>Why</th></tr></thead><tbody>${(rows || []).map(r=>`<tr><td>${esc(r.name)}</td><td>${esc(Array.isArray(r.value) ? r.value.join(', ') : r.value)}</td><td>${esc(r.why)}</td></tr>`).join('')}</tbody></table></div>`).join('');
 }
@@ -1712,8 +2129,14 @@ async function overview(){
 async function ops(){
   const health = await api('/api/ops/health');
   const opt = await api('/api/ops/optimization');
+  const announcement = await api('/api/ops/announcement');
+  const restart = await api('/api/ops/restart');
   const pc = health.playerCounts || {};
-  view.innerHTML = `<div class="sectionHeader"><h2>Operations</h2><div class="toolbar"><button data-jump="overview">Overview</button><button data-jump="runbook">Runbook</button><button data-jump="settings">Settings</button></div></div><div class="metricGrid">${metric('Connected Players', pc.connected_players_reported ?? 0)}${metric('Online Controllers', pc.online_controller_ids ?? 0)}${metric('Recent Online State', pc.online_or_recently_disconnected ?? 0)}${metric('Grace Entries', pc.grace_period_entries ?? 0)}</div>${actionGrid([{tab:'characters',label:'Inspect characters currently represented in DB'},{tab:'security',label:'Check audit events and exposed settings'},{tab:'mutations',label:'Create a backup before writes',className:'primary'}])}<div class="card"><h2>Health Verdict</h2>${checks(health.verdicts)}</div><div class="card"><h2>Map Online/Offline</h2>${mapStatusTable(health.mapStatus)}</div><div class="card"><h2>Local and Upstream Network</h2>${probeTable(health.network?.probes)}</div><div class="card"><h2>Farm State</h2>${table(health.farmState)}</div><div class="card"><h2>Partitions</h2>${table(health.partitions)}</div>${signalList(opt)}`;
+  view.innerHTML = `<div class="sectionHeader"><h2>Operations</h2><div class="toolbar"><button data-jump="overview">Overview</button><button data-jump="runbook">Runbook</button><button data-jump="settings">Settings</button></div></div><div class="metricGrid">${metric('Connected Players', pc.connected_players_reported ?? 0)}${metric('Online Controllers', pc.online_controller_ids ?? 0)}${metric('Recent Online State', pc.online_or_recently_disconnected ?? 0)}${metric('Grace Entries', pc.grace_period_entries ?? 0)}</div>${actionGrid([{tab:'characters',label:'Inspect characters currently represented in DB'},{tab:'security',label:'Check audit events and exposed settings'},{tab:'mutations',label:'Create a backup before writes',className:'primary'}])}${restartPanel(restart)}${announcementPanel(announcement)}<div class="card"><h2>Health Verdict</h2>${checks(health.verdicts)}</div><div class="card"><h2>Map Online/Offline</h2>${mapStatusTable(health.mapStatus)}</div><div class="card"><h2>Local and Upstream Network</h2>${probeTable(health.network?.probes)}</div><div class="card"><h2>Farm State</h2>${table(health.farmState)}</div><div class="card"><h2>Partitions</h2>${table(health.partitions)}</div>${signalList(opt)}`;
+  document.getElementById('scheduleAnnouncementBtn').addEventListener('click', scheduleAnnouncement);
+  document.getElementById('cancelAnnouncementBtn').addEventListener('click', cancelAnnouncement);
+  document.getElementById('scheduleRestartBtn').addEventListener('click', scheduleRestart);
+  document.getElementById('cancelRestartBtn').addEventListener('click', cancelRestart);
 }
 async function security(){
   const audit = await api('/api/ops/security');
@@ -1943,6 +2366,43 @@ async function backup(){
   const result = await api('/api/admin/backup', {method:'POST', body:'{}'});
   document.getElementById('backupResult').textContent = JSON.stringify(result, null, 2);
 }
+async function scheduleAnnouncement(){
+  const result = await api('/api/ops/announcement', {method:'POST', body:JSON.stringify({
+    delay: announceDelay.value,
+    repeat_seconds: announceRepeat.value,
+    message: announceMessage.value
+  })});
+  alert('Announcement scheduled');
+  await ops();
+}
+async function cancelAnnouncement(){
+  if (!confirm('Cancel active restart announcement?')) return;
+  await api('/api/ops/announcement/cancel', {method:'POST', body:'{}'});
+  await ops();
+}
+async function scheduleRestart(){
+  const execute = restartExecute.value === 'true';
+  const targetLabel = restartTarget.options[restartTarget.selectedIndex]?.textContent || restartTarget.value;
+  const delayLabel = restartDelay.options[restartDelay.selectedIndex]?.textContent || restartDelay.value;
+  const repeatLabel = restartRepeat.options[restartRepeat.selectedIndex]?.textContent || restartRepeat.value;
+  const actionLabel = execute ? 'execute the restart hook' : 'dry-run only';
+  if (!confirm(`Schedule ${targetLabel} restart after ${delayLabel}?\nNotice repeat: ${repeatLabel}\nAction: ${actionLabel}`)) return;
+  await api('/api/ops/restart', {method:'POST', body:JSON.stringify({
+    target: restartTarget.value,
+    delay: restartDelay.value,
+    repeat_seconds: restartRepeat.value,
+    message: restartMessage.value,
+    announce: restartAnnounce.checked,
+    execute
+  })});
+  alert('Restart scheduled');
+  await ops();
+}
+async function cancelRestart(){
+  if (!confirm('Cancel active scheduled restart?')) return;
+  await api('/api/ops/restart/cancel', {method:'POST', body:'{}'});
+  await ops();
+}
 async function purchaseKeystone(){
   const result = await api('/api/admin/keystone', {method:'POST', body:JSON.stringify({player_id:keyPlayer.value,keystone:keystone.value})});
   document.getElementById('keystoneResult').textContent = JSON.stringify(result, null, 2);
@@ -2005,6 +2465,7 @@ load();
 
 
 def main():
+    ensure_announcement_thread()
     bind = os.environ.get("DUNE_ADMIN_BIND", "0.0.0.0")
     port = int(os.environ.get("DUNE_ADMIN_PORT", "8080"))
     ThreadingHTTPServer((bind, port), Handler).serve_forever()

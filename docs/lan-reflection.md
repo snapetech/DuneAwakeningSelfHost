@@ -73,6 +73,8 @@ The script:
 - adds the public `/32` to the LAN interface;
 - disables strict reverse-path filtering for the LAN reflection path;
 - ensures Dune container replies are masqueraded back through the LAN interface.
+- redirects local same-host client traffic for `GAME_RMQ_PUBLIC_PORT` TCP and
+  the gameplay UDP range back into the host-published services.
 
 ## Per-Client Route Mode
 
@@ -134,4 +136,7 @@ The current Compose layout also publishes IGW/S2S UDP ports `7888-7917` for
 diagnostics. Keep those closed publicly unless client testing proves they are
 required by the live routing path.
 
-Never forward RabbitMQ (`31982/tcp`) publicly.
+For live-client login, the game RabbitMQ endpoint advertised by Gateway must be
+reachable from the client. In the public self-host layout that means forwarding
+`GAME_RMQ_PUBLIC_PORT`, default `31982/tcp`, to the host. Keep RabbitMQ
+management, Postgres, and admin panel ports private.

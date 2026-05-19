@@ -16,6 +16,7 @@ This page records documentation coverage gaps found during repo review and the c
 | Kubernetes migration | The repo referenced the official Kubernetes-oriented package but did not map Compose services back to a real cluster deployment. | Added `docs/kubernetes.md` as an unsupported design map and gap list. |
 | Architecture/routing | Architecture and routing docs only described the base nine maps even though the 30-partition warm pool exists. | Updated `docs/architecture.md` and `docs/routing-investigation.md` to distinguish base-farm registration from 30-partition warm-pool registration. |
 | Improvement plan | Roadmap text still described only the isolated `survival` launch as current work. | Updated `docs/improvements.md` with warm-pool, admin map health, transfer-policy, and live-validation boundaries. |
+| README docs index | README had a flat file list and did not cover every markdown document or root research index. | Replaced it with grouped documentation, research-index, and key-file sections. |
 
 ## Remaining Gaps
 
@@ -28,6 +29,7 @@ This page records documentation coverage gaps found during repo review and the c
 | Kubernetes manifests | The Kubernetes doc is currently design documentation only. | Add generated manifests or a Helm chart only after the Compose topology is stable enough to avoid duplicating service definitions by hand. |
 | Public networking | IGW/S2S UDP forwarding is still conservative and based on local observations. | Update `docs/operations.md` and `docs/full-farm.md` after live-client tests prove whether public IGW forwarding is needed. |
 | Admin panel network probes | The panel exposes local/upstream health probes, but no real-outage examples are recorded. | Add examples once probe output has been observed during a real outage. |
+| Research docs location | `SERVER_CONFIG_KEYS.md`, `SERVER_CONFIG_KEY_INDEX.md`, `SERVER_BINARY_CONFIG_CANDIDATES.md`, and `DEEP_DESERT_EVENT_KNOBS.md` live at repo root because they are generated/research-heavy. | Move them under `docs/` later if they become stable operator docs rather than research indexes. |
 
 ## Audit Checklist
 
@@ -36,6 +38,7 @@ Run this when changing orchestration, config defaults, or admin-panel behavior:
 ```bash
 rg -n "TODO|missing|blocker|not implemented|No native|still need|Current service-layer blockers" README.md docs
 rg -n "IncomingCharacterTransfers|DUNE_SERVER_LOGIN_PASSWORD|compose.allmaps|7777-7806|admin-panel" README.md docs config admin
+find docs -maxdepth 1 -type f -name '*.md' | sort
 docker compose --env-file .env.example config --quiet
 make validate
 ```

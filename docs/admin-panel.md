@@ -60,6 +60,8 @@ server {
 
 - Server/farm state view with per-map online/offline health derived from `world_partition`, `farm_state`, and `active_server_ids`.
 - Local/upstream health checks for Postgres reachability, the Dune account portal, and public Dune/Funcom HTTP reachability.
+- Restart-announcement scheduler under Ops. It accepts a restart time, message, and repeat interval, persists state under `backups/admin-panel/announcements.json`, and invokes `DUNE_ADMIN_ANNOUNCE_COMMAND` for each delivery attempt.
+- Scheduled restart planner under Ops. It targets all components, core services, the service layer, all game maps, or key individual maps. Jobs persist under `backups/admin-panel/restart-jobs.json` and invoke `DUNE_ADMIN_RESTART_COMMAND` only when execution is explicitly enabled.
 - Character search and detail view.
 - Currency/progression table visibility.
 - `.env` operations editor for install, world, network, access, secret, and admin-panel knobs. Secret fields are admin-token protected, rendered as password inputs, and returned blank unless a replacement is typed.
@@ -73,6 +75,72 @@ server {
 - Character dropdowns in Admin Actions for currency, XP, keystones, item grant targeting, and item maintenance.
 - Selected characters pre-populate controller/account/name fields, current currency and specialization selectors, owned inventories, and owned inventory items for stack edits or deletion.
 - Exact-template item grants, dry-runs, stack edits, and item deletion behind admin gates.
+
+## Restart Announcements
+
+The Ops tab includes a restart-announcement scheduler with these restart-time presets:
+
+```text
+immediate, 30s, 60s, 5min, 10min, 15min, 30min, 60min, 1hr, 2hr, 3hr, 4hr, 6hr, 12hr
+```
+
+The scheduler is real and token-gated, but in-game delivery is delegated to:
+
+```env
+DUNE_ADMIN_ANNOUNCE_COMMAND=/workspace/scripts/announce.sh
+```
+
+`scripts/announce.sh` publishes a `ServiceBroadcast` command envelope to the admin RabbitMQ `rpc` exchange. The live server binary exposes `UDuneServerCommandSubsystem`, `SendDuneServerCommand`, and `ServiceBroadcast`; the repo keeps the command body configurable because Funcom can change the exact envelope between builds.
+
+Default announcement transport settings:
+
+```env
+DUNE_ANNOUNCE_RMQ_URL=http://admin-rmq:15672
+DUNE_ANNOUNCE_RMQ_USER=dune-announcer
+DUNE_ANNOUNCE_RMQ_PASSWORD=<local secret>
+DUNE_ANNOUNCE_RMQ_EXCHANGE=rpc
+DUNE_ANNOUNCE_RMQ_ROUTING_KEYS=Survival_11
+DUNE_ANNOUNCE_COMMAND_NAME=ServiceBroadcast
+DUNE_ANNOUNCE_TITLE=Maintenance
+DUNE_ANNOUNCE_DURATION_SECONDS=12
+DUNE_ANNOUNCE_PAYLOAD_MODE=command-payload
+DUNE_ANNOUNCE_PAYLOAD_TEMPLATE=
+```
+
+`DUNE_ANNOUNCE_RMQ_ROUTING_KEYS` is comma-separated. Add map RPC routing keys when you want announcements delivered through more standing maps. `DUNE_ANNOUNCE_PAYLOAD_MODE` selects one of the built-in probe envelopes: `command-payload`, `server-command`, `message-type`, `flat-command`, `jsonrpc-object`, `jsonrpc-array`, or `payload-only`. `DUNE_ANNOUNCE_PAYLOAD_TEMPLATE` can override the default JSON body without editing the hook if a newer server build requires a different `ServiceBroadcast` envelope.
+
+After changing the announcer credentials, recreate `rmq-auth-shim` and `admin-panel`. If RabbitMQ has cached a previous denial for that user, restart only `admin-rmq` during a maintenance window; the game servers reconnect their admin queues afterward.
+
+The admin panel passes:
+
+- `DUNE_ANNOUNCE_MESSAGE`
+- `DUNE_ANNOUNCE_RESTART_AT`
+- `DUNE_ANNOUNCE_JOB_ID`
+
+The script also receives the message as its first argument. Delivery attempts and failures are recorded in the admin audit log.
+
+## Scheduled Restarts
+
+The Ops tab can also schedule restart jobs for all components, core services, the service layer, all game maps, or key individual maps such as Survival, Overmap, Arrakeen, Harko Village, and Deep Desert.
+
+Scheduled restarts default to dry-run mode. In dry-run mode, the job matures, records that it would have run, and does not touch containers.
+
+Actual execution is delegated to:
+
+```env
+DUNE_ADMIN_RESTART_COMMAND=/workspace/scripts/restart-target.sh
+```
+
+`scripts/restart-target.sh` first uses Docker Compose when the Docker CLI is available. Inside the admin-panel container it falls back to the mounted Docker Engine socket and restarts containers by Compose labels:
+
+```env
+DUNE_RESTART_COMPOSE_PROJECT=dune_server
+DUNE_RESTART_DOCKER_SOCKET=/var/run/docker.sock
+```
+
+The Docker socket is privileged host control. Keep the admin panel bound to localhost or a trusted reverse proxy, require the admin token, and do not expose `duneadmin.home` publicly. The script receives `DUNE_RESTART_JOB_ID`, `DUNE_RESTART_TARGET`, and `DUNE_RESTART_SERVICES`, plus the target as its first argument.
+
+The Docker-socket fallback restarts existing containers. It does not recreate containers or apply changed environment variables; use `docker compose up -d --force-recreate ...` from the host for config changes.
 
 ## Write Safety
 

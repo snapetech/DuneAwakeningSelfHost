@@ -1,0 +1,166 @@
+# Server Config Keys
+
+This file tracks the known `config/UserGame.ini` override keys in this repo.
+Values here are server-side overrides unless a note says the client also needs
+the same value.
+
+For the exhaustive generated index of every key present in Funcom's shipped
+`DefaultGame.ini`, see `SERVER_CONFIG_KEY_INDEX.md`. That file lists 2,242 raw
+key entries across 156 sections and marks each as known, inferred, UI/visual,
+asset/reference, or unknown/investigate.
+
+For binary-only research candidates, see `SERVER_BINARY_CONFIG_CANDIDATES.md`.
+That file is generated from strings in `DuneSandboxServer-Linux-Shipping` after
+excluding keys already present in `DefaultGame.ini`. Treat those entries as
+leads, not confirmed config keys.
+
+For runtime/database notes, see `SERVER_RUNTIME_SURFACES.md`. That file maps
+high-value config sections to shipped DB tables/functions and records observed
+live state from the local all-maps stack.
+
+Evidence levels:
+
+- Known: present in Funcom's shipped default/setup config or already validated in local use.
+- Inferred: exposed by shipped server binaries or naming, but still needs live validation.
+- Unknown / investigate: carried from shipped config or repo history, but exact gameplay effect needs testing.
+
+## Current Overrides
+
+| INI section | Key | Current value | Status | Description |
+| --- | --- | --- | --- | --- |
+| `[/Script/DuneSandbox.PvpPveSettings]` | `m_bShouldForceEnablePvpOnAllPartitions` | `False` | Known | Global PvP override. `True` should force PvP on all partitions; `False` leaves normal partition/security-zone rules in control. |
+| `[/Script/DuneSandbox.PvpPveSettings]` | `+m_PvpEnabledPartitions` | commented examples `1`, `2` | Unknown / investigate | Per-partition PvP allow-list. Present as commented examples in the shipped setup config. Needs live validation before enabling. |
+| `[/Script/DuneSandbox.SecurityZonesSubsystem]` | `m_bAreSecurityZonesEnabled` | `True` | Known | Enables security zones. Turning this off should disable the server-side security-zone system. |
+| `[/DeteriorationSystem.ItemDeteriorationConstants]` | `UpdateRateInSeconds` | `1.0` | Known | Item deterioration tick/update cadence in seconds. Lower values update more frequently; higher values update less frequently. |
+| `[/Script/DuneSandbox.SandStormConfig]` | `m_bCoriolisAutoSpawnEnabled` | `False` | Known | Controls automatic Coriolis storm spawning. Shipped setup default is `True`; this repo disables auto-spawn. |
+| `[/Script/DuneSandbox.PlayerOnlineStateSettings]` | `m_DefaultReconnectGracePeriodSeconds` | `0` | Known | Normal-map reconnect grace period before the server stops preserving an offline/disconnected session. Shipped default observed in build `1963158` is `300`. |
+| `[/Script/DuneSandbox.PlayerOnlineStateSettings]` | `m_OvermapReturnGracePeriodSeconds` | `0` | Known | Overmap return/reconnect grace period. Shipped default observed in build `1963158` is `90`. |
+| `[/Script/DuneSandbox.PlayerOnlineStateSettings]` | `m_InstancedMapReconnectGracePeriodSeconds` | `0` | Known | Instanced-map reconnect grace period. Shipped default observed in build `1963158` is `300`. |
+| `[/Script/DuneSandbox.BuildingSettings]` | `m_MaxLandclaimSegmentsPerMap` | `(((Name="HaggaBasin"), 6),((Name="Survival_1"), 6))` | Inferred / validate | Active landclaim/base cap per map. This key is exposed by the shipped server binary as a `BuildingSettings` map property, but is not present in the shipped default INI. Intended repo value is 6 active bases on Hagga Basin / Survival. Needs live validation after restart. |
+| `[/Script/DuneSandbox.BuildingSettings]` | `m_MaxNumLandclaimSegments` | `10` | Known | Maximum connected landclaim segments per base/landclaim. Shipped default is `6`. Funcom's setup comment says this must also be applied to each client. |
+| `[/Script/DuneSandbox.BuildingSettings]` | `m_BuildingBlueprintMaxExtensions` | `4` | Known | Maximum number of times a building blueprint / landclaim can be expanded. Shipped default is `4`. This is not the active base-count knob. |
+| `[/Script/DuneSandbox.BuildingSettings]` | `m_BaseBackupMaxExtensions` | `8` | Known | Maximum extension count used by base backup/reconstruction-related data. Shipped default is `8`. This is not the active base-count knob. |
+| `[/Script/DuneSandbox.BuildingSettings]` | `m_bBuildingRestrictionLimitsEnabled` | `True` | Known | Enables server-side building restriction limits. Funcom's setup comment says this must also be applied to each client. |
+
+## Building Knob Notes
+
+- Target policy for this repo: 6 active bases and 10 landclaim segments per base.
+- Segment cap: `m_MaxNumLandclaimSegments=10`.
+- Active base cap candidate: `m_MaxLandclaimSegmentsPerMap=...6...`.
+- `m_BuildingBlueprintMaxExtensions` and `m_BaseBackupMaxExtensions` are extension/reconstruction limits, not the active base-count cap.
+- `m_MaxLandclaimSegmentsPerMap` is binary-confirmed but still should be verified in game by placing more than three active landclaims after a full server restart.
+
+## Nearby Shipped Keys
+
+These keys are present in Funcom's shipped default config near the settings this
+repo already overrides. They are not currently overridden here unless listed in
+the current override table above.
+
+| INI section | Key | Shipped value | Status | Description |
+| --- | --- | --- | --- | --- |
+| `[/Script/DuneSandbox.BuildingSettings]` | `m_BuildingBlueprintRangeMultiplier` | `0.660000` | Unknown / investigate | Likely scales building blueprint range or allowed extension distance. Needs live validation. |
+| `[/Script/DuneSandbox.BuildingSettings]` | `m_BuildingCategoryLimitWarningPercentageVisible` | `0.650000` | Inferred | UI warning threshold for category/building-limit pressure. Likely visual only. |
+| `[/Script/DuneSandbox.BuildingSettings]` | `m_PlacementHelperAliveThresholdTimeInSecs` | `900.000000` | Inferred | Lifetime threshold for placement-helper state. Exact player-facing effect needs validation. |
+| `[/Script/DuneSandbox.BuildingSettings]` | `m_BuildingSystemSecurityZoneUpdateRateInSeconds` | `1.000000` | Known | Server update cadence for building/security-zone interaction checks. |
+| `[/Script/DuneSandbox.BuildingSettings]` | `m_NearbyBuildingDetectionHeightRange` | `25000.000000` | Inferred | Vertical range used when detecting nearby buildings. |
+| `[/Script/DuneSandbox.BuildingSettings]` | `m_DefaultBuildAndFillTimeInSeconds` | `0.500000` | Inferred | Default build/fill interaction time. Exact coverage by buildable type needs validation. |
+| `[/Script/DuneSandbox.BuildingSettings]` | `m_BuildAndFillStartThresholdTimerInSeconds` | `0.200000` | Inferred | Delay/threshold before build/fill action starts. |
+| `[/Script/DuneSandbox.BuildingSettings]` | `m_BuildableBuildAndFillHoldTimes` | `Short=0.875`, `Medium=1.250`, `Long=2.000`, `VeryLong=2.000` | Inferred | Hold-time buckets for build/fill interactions. |
+| `[/Script/DuneSandbox.BuildingSettings]` | `m_BuildRange` | `2000.000000` | Known | Player build placement range in centimeters. |
+| `[/Script/DuneSandbox.BuildingSettings]` | `m_bEnableBuildingNearServerBorders` | `False` | Known | Allows/disallows building near server/map borders. |
+| `[/Script/DuneSandbox.BuildingSettings]` | `m_bMinBuildableDistanceFromServerBorder` | `1000.000000` | Inferred | Minimum build distance from a server border. Name looks boolean-prefixed, but value is numeric in shipped config; treat carefully. |
+| `[/Script/DuneSandbox.BuildingSettings]` | `m_bCustomMinBuildableDistanceFromServerBorder` | `(((Name="DeepDesert"), 10000.000000))` | Inferred | Per-map custom minimum build distance from server border. |
+| `[/Script/DuneSandbox.BuildingSettings]` | `m_LandclaimThresholdDistance` | `512.000000` | Inferred | Distance threshold used by landclaim placement/validation. Needs live testing before changing. |
+| `[/Script/DuneSandbox.BuildingSettings]` | `m_LandclaimFoundationDistanceFromBorder` | `35.000000` | Inferred | Required foundation distance from a landclaim border. |
+| `[/Script/DuneSandbox.BuildingSettings]` | `m_ThresholdDistanceVFXTotemRadius` | `5000.000000` | Inferred | Radius for landclaim/totem threshold visual effects. Likely visual feedback. |
+| `[/Script/DuneSandbox.BuildingSettings]` | `+m_StakingUnitExtensionDefaultTimes` | `60` through `30720` | Inferred | Default horizontal staking-unit/landclaim extension durations. Units appear to be seconds. |
+| `[/Script/DuneSandbox.BuildingSettings]` | `+m_StakingUnitVerticalExtensionDefaultTimes` | `60` through `30720` | Inferred | Default vertical staking-unit extension durations. Units appear to be seconds. |
+| `[/Script/DuneSandbox.BuildingSettings]` | `m_bCanRemoveBuildablesWithNoOwner` | `True` | Known | Allows server/game systems to remove ownerless buildables. |
+| `[/Script/DuneSandbox.BuildingSettings]` | `m_StakingUnitType` | `(Name="StakingUnit_Placeable")` | Known | Item/template name for the normal staking unit. |
+| `[/Script/DuneSandbox.BuildingSettings]` | `m_StakingUnitVerticalType` | `(Name="StakingUnitVertical_Placeable")` | Known | Item/template name for the vertical staking unit. |
+| `[/Script/DuneSandbox.PlayerOnlineStateSettings]` | `m_DefaultReconnectGracePeriodSeconds` | `300` | Known | Shipped normal-map reconnect grace default. This repo overrides to `0`. |
+| `[/Script/DuneSandbox.PlayerOnlineStateSettings]` | `m_OvermapReturnGracePeriodSeconds` | `90` | Known | Shipped overmap return grace default. This repo overrides to `0`. |
+| `[/Script/DuneSandbox.PlayerOnlineStateSettings]` | `m_InstancedMapReconnectGracePeriodSeconds` | `300` | Known | Shipped instanced-map reconnect grace default. This repo overrides to `0`. |
+
+## Other High-Value Shipped Sections
+
+The exhaustive index has every key. These are the sections most likely to matter
+for self-host tuning, based on shipped section/key names and defaults.
+
+| INI section | Key(s) | Shipped value / summary | Status | Description |
+| --- | --- | --- | --- | --- |
+| `[/Script/Engine.GameNetworkManager]` | movement/network timing keys | `ClientErrorUpdateRateLimit=0.35f`, `MaxMoveDeltaTime=0.25f`, movement discrepancy checks enabled | Inferred | Unreal network movement correction/throttling. Useful only if diagnosing movement/network desync; risky to tune blindly. |
+| `[/Script/DuneSandbox.MapFpsSettings]` | `+m_Maps` | 32 map FPS caps, commonly `20` for gameplay maps and `10` for hubs/overland | Inferred | Per-map dedicated server FPS cap. Candidate performance knob, but changing it changes CPU budget and simulation cadence. |
+| `[/Script/DuneSandbox.MapFeatures]` | `m_Maps` | Per-map feature flags: taxation, Deep Desert gameplay, shifting sands, social-only, story gameplay, instancing, outdoors, transfer flags | Inferred | Map capability matrix. High impact; do not override casually. |
+| `[/Script/DuneSandbox.PingSystemSettings]` | ping limits/ranges/expiry | limit `5`, max distance `2000`, world expiry `5`, map expiry `60` | Inferred | Player ping system limits and expiry timers. |
+| `[/Script/DuneSandbox.ShelterSettings]` | shelter traces/thresholds | trace length `10000`, building threshold `0.9`, placeable threshold `0.65` | Inferred | Shelter detection traces and thresholds. Could affect exposure/wind/sandstorm shelter behavior. |
+| `[/Script/DuneSandbox.SpiceHarvestingSystem]` | spice field settings | per-map and default spice field active/primed counts | Inferred | Spice field spawning/activation system. Candidate economy/resource knob; needs live validation. |
+| `[/Script/DuneSandbox.HydrationSubsystem]` | hydration settings | water/hydration subsystem keys | Inferred | Player hydration/water behavior. Exact safe knobs need targeted testing. |
+| `[/Script/DuneSandbox.DewHarvestSettings]` | dew harvesting settings | dew harvesting keys | Inferred | Dew collection behavior. Exact safe knobs need targeted testing. |
+| `[/Script/DuneSandbox.CraftingSettings]` | crafting output multipliers | recipe multiplier lists and chance attributes | Inferred | Crafting output/economy tuning. Many values are data-table driven; validate before overriding. |
+| `[/Script/DuneSandbox.DuneVehicleSettings]` | vehicle settings | vehicle behavior and recovery-related keys | Inferred | Vehicle behavior, persistence, and recovery candidates. Needs focused testing. |
+| `[/DeteriorationSystem.ItemDeteriorationConstants]` | `UpdateRateInSeconds` | `1.0` | Known | Deterioration rate/cadence. Shipped setup says `0=off`. |
+| `[/Script/DuneSandbox.SandwormSettings]` | sandworm settings | worm behavior tuning keys | Inferred | Sandworm behavior/threat tuning. High gameplay impact; validate carefully. |
+| `[/Script/DuneSandbox.SandStormConfig]` | storm settings | includes `m_bCoriolisAutoSpawnEnabled=True` in shipped setup/default | Known / inferred | Coriolis storm auto-spawn and related storm behavior. |
+| `[/Script/DuneSandbox.EncountersSubsystem]` | encounter settings | encounter subsystem keys | Inferred | World encounter spawning/selection. Needs targeted testing. |
+| `[/Script/DuneSandbox.ContractsSubsystem]` | contract settings | contract subsystem keys | Inferred | Contract generation/limits/rewards. Needs targeted testing. |
+| `[/Script/DuneSandbox.SecurityZonesSubsystem]` | security-zone settings | `m_bAreSecurityZonesEnabled=True` | Known | Security-zone system. Shipped setup says disabling allows PvP and ability use everywhere. |
+| `[/Script/DuneSandbox.InventorySystemSettings]` | inventory/economy settings | item stack/resource/vendor/mining settings | Inferred | Inventory/resource/economy behavior. Useful for admin tooling research, but unsafe to bulk-change. |
+| `[/Script/DuneSandbox.RespawnSettings]` | respawn maps/location limits | cross-map respawn enabled for Hagga Basin, Deep Desert disables checkpoint group, location group limits all `1` | Inferred | Respawn routing and allowed respawn location groups. High impact. |
+| `[/Script/DuneSandbox.CoriolisSubsystem]` | Coriolis cycle/wipe keys | cycle starts day `3` hour `5`, duration `7` days, restart on cycle end `True`, DB wipe `True` | Known / inferred | Deep Desert Coriolis cycle and wipe behavior. Very high impact; do not change without backup/testing. |
+| `[/Script/DuneSandbox.CoriolisSettings]` | `+m_IgnoredMarkersList` | many ignored marker types | Inferred | Marker categories ignored by Coriolis behavior/reset handling. |
+| `[/Script/DuneSandbox.PartySettings]` | `m_SocialRange` | `1000000.000000` | Inferred | Social/party interaction range. |
+| `[/Script/DuneSandbox.LootSettings]` | `GlobalLootRightsBehaviour` | `PerPlayerChestAndNpcDrop` | Known / inferred | Global loot-rights behavior. Strong candidate for loot policy tuning. |
+| `[/Script/DuneSandbox.GuildSettings]` | guild limits | creation cost `1000`, max guilds `3`, max members `32`, pending invites `10` | Inferred | Guild economy and capacity limits. Good self-host candidate after live validation. |
+| `[/Script/DuneSandbox.PlayerRequestSubsystem]` | request timeout/static data | notification timeout buffer `0.25` | Inferred | Player request UI/interaction behavior, such as duel/share request notifications. |
+| `[/Script/DuneSandbox.TravelDestinationSubsystem]` | travel destination asset | data asset reference | Asset/reference | Travel destination data source. Important for routing research, but not a simple scalar knob. |
+
+## Runtime/Database Findings
+
+These are not additional config keys; they are persistence surfaces found while
+validating the shipped config.
+
+| Area | DB evidence | Status | Why it matters |
+| --- | --- | --- | --- |
+| Spice fields | `spicefield_types`, `spicefield_server_availability`, `resourcefield_state`; functions such as `try_prime_spicefield`, `try_spawn_spicefield`, `update_global_spice_field_rules` | Known | Confirms `m_PerMapSystemSettings` caps are authoritative and live-observable. |
+| Items/inventory | `items`, `inventories`, `actor_inventories`; functions such as `load_items`, `update_inventory`, `move_inventory_item`, `merge_inventory_items` | Known | Admin item grants should account for inventory ownership, free/mergeable slots, stack size, stats JSON, and quality. |
+| Encounters | `encounters_static`; static encounter load/save functions only | Known / limited | Confirms static encounter persistence exists, but dynamic random encounter weights/caps are not in DB. |
+| Buried treasure | No treasure tables/functions found; empty `DUNE-153318_nuke_persisted_buried_treasure.sql` migration | Inferred | Supports the current conclusion that buried treasure is runtime/asset driven in this build. |
+| Patrol/crash sites | No patrol/crash-site tables/functions found | Inferred | Frequency/selection likely lives in level assets or runtime subsystem state, not Postgres. |
+| Respawn | `player_respawn_locations`, `travel_return_info`, `player_travel_state` | Known | Provides the DB side for respawn/travel admin investigation. |
+| Guilds | `guilds`, `guild_members`, `guild_invites` plus guild functions | Known | Config limits have matching persistence surfaces. |
+| Vehicles | `vehicles`, `vehicle_modules`, `vehicle_module_inventories`, `backup_vehicles`, `recovered_vehicles` | Known / needs live examples | Schema is known, but this test farm has no vehicle rows yet. |
+| Access codes | `player_access_codes` plus create/get/reset/delete functions | Known | Good candidate for admin-panel management through DB functions. |
+
+## Binary-Only Keys Found So Far
+
+These keys were found in the shipped server binary but not in the shipped
+`DefaultGame.ini`. They can often still be valid Unreal config properties, but
+they need live validation because Funcom did not ship default values for them.
+
+| INI section | Key | Evidence | Status | Description |
+| --- | --- | --- | --- | --- |
+| `[/Script/DuneSandbox.BuildingSettings]` | `m_MaxLandclaimSegmentsPerMap` | Binary contains `m_MaxLandclaimSegmentsPerMap` and `m_MaxLandclaimSegmentsPerMap_Key` near `UBuildingSettings` strings | Inferred / validate | Likely active landclaim/base cap per map. Repo sets Hagga Basin / Survival to `6`; validate by placing more than three active landclaims after restart. |
+| Unknown, likely building-related | `m_BuildableStructureLimitsPerMap` | Binary contains `m_BuildableStructureLimitsPerMap` and `m_BuildableStructureLimitsPerMap_Key` | Candidate / investigate | Possible per-map buildable structure limit map. Needs section discovery and live validation before use. |
+| Unknown, likely admin-related | `m_AdminPasswords` | Binary contains `m_AdminPasswords` and `m_AdminPasswords_Key` | Candidate / investigate | Possible admin-password map/list used by an internal admin path. Do not use until section and auth behavior are understood. |
+
+## Validation Notes From This Pass
+
+- I did not mark binary-only strings as validated unless they also appear in shipped config or have strong section evidence.
+- `_Key` companion strings are useful evidence that a property is a map/set-like Unreal field, but they are not themselves the override key.
+- The exhaustive shipped-config index is stronger evidence than the binary-only candidate index.
+- Live validation still requires a restart and in-game test, especially for building, inventory, travel, and Coriolis/wipe behavior.
+
+## Validation Checklist
+
+- Restart the server after changing `config/UserGame.ini`; these are startup config values.
+- Validate `m_MaxLandclaimSegmentsPerMap` by attempting to maintain more than three active landclaims on Hagga Basin.
+- Validate `m_MaxNumLandclaimSegments=10` with a client carrying the same setting, because Funcom's shipped setup comments require the segment cap on both server and client.
+- Avoid changing `m_BuildingBlueprintMaxExtensions` or `m_BaseBackupMaxExtensions` while testing base count; they control extension/reconstruction limits, not the active base cap.
+
+## Source Evidence
+
+- Repo override file: `config/UserGame.ini`.
+- Shipped setup file: `Dune Awakening Self-Hosted Server/scripts/setup/config/UserGame.ini`.
+- Shipped default config extracted from server image: `DuneSandbox/Config/DefaultGame.ini`.
+- Shipped server binary string evidence: `DuneSandboxServer-Linux-Shipping` contains `m_MaxLandclaimSegmentsPerMap` and `m_MaxLandclaimSegmentsPerMap_Key`.

@@ -85,7 +85,7 @@ services:
       - ./data/rabbitmq/game:/var/lib/rabbitmq
     ports:
       - "127.0.0.1:15673:15672"
-      - "127.0.0.1:31982:5672"
+      - "${GAME_RMQ_BIND_ADDRESS:-0.0.0.0}:${GAME_RMQ_PUBLIC_PORT:-31982}:5672"
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s
@@ -99,6 +99,8 @@ services:
     environment:
       WORLD_UNIQUE_NAME: ${WORLD_UNIQUE_NAME}
       TEXT_ROUTER_AUTH_BASE: http://text-router:8080
+      DUNE_RMQ_MANAGEMENT_USER: ${DUNE_ANNOUNCE_RMQ_USER:-}
+      DUNE_RMQ_MANAGEMENT_PASSWORD: ${DUNE_ANNOUNCE_RMQ_PASSWORD:-}
     command:
       - /workspace/scripts/rmq_auth_shim.py
     volumes:
@@ -205,9 +207,9 @@ services:
       - -c
       - /Tools/Battlegroups/GatewayService/service/configs/service.conf
       - --RMQGameHostname
-      - game-rmq
+      - ${GAME_RMQ_PUBLIC_HOST:-${EXTERNAL_ADDRESS}}
       - --RMQGamePort
-      - "5672"
+      - "${GAME_RMQ_PUBLIC_PORT:-31982}"
     environment:
       DuneDatabaseInterfacePSQL_DatabaseHost: postgres
       DuneDatabaseInterfacePSQL_DatabasePort: "5432"
@@ -580,13 +582,32 @@ services:
       DUNE_ADMIN_REFERENCE_LIMIT: ${DUNE_ADMIN_REFERENCE_LIMIT:-200}
       DUNE_ADMIN_CHARACTER_SEARCH_LIMIT: ${DUNE_ADMIN_CHARACTER_SEARCH_LIMIT:-100}
       DUNE_ADMIN_ALLOWED_HOSTS: ${DUNE_ADMIN_ALLOWED_HOSTS:-127.0.0.1:18080,localhost:18080,duneadmin.home}
+      DUNE_ADMIN_ANNOUNCE_COMMAND: ${DUNE_ADMIN_ANNOUNCE_COMMAND:-/workspace/scripts/announce.sh}
+      DUNE_ADMIN_ANNOUNCEMENT_MAX_MESSAGE_BYTES: ${DUNE_ADMIN_ANNOUNCEMENT_MAX_MESSAGE_BYTES:-500}
+      DUNE_ADMIN_ANNOUNCEMENT_COMMAND_TIMEOUT_SECONDS: ${DUNE_ADMIN_ANNOUNCEMENT_COMMAND_TIMEOUT_SECONDS:-10}
+      DUNE_ANNOUNCE_RMQ_URL: ${DUNE_ANNOUNCE_RMQ_URL:-http://admin-rmq:15672}
+      DUNE_ANNOUNCE_RMQ_USER: ${DUNE_ANNOUNCE_RMQ_USER:-guest}
+      DUNE_ANNOUNCE_RMQ_PASSWORD: ${DUNE_ANNOUNCE_RMQ_PASSWORD:-guest}
+      DUNE_ANNOUNCE_RMQ_EXCHANGE: ${DUNE_ANNOUNCE_RMQ_EXCHANGE:-rpc}
+      DUNE_ANNOUNCE_RMQ_ROUTING_KEYS: ${DUNE_ANNOUNCE_RMQ_ROUTING_KEYS:-Survival_11}
+      DUNE_ANNOUNCE_COMMAND_NAME: ${DUNE_ANNOUNCE_COMMAND_NAME:-ServiceBroadcast}
+      DUNE_ANNOUNCE_TITLE: ${DUNE_ANNOUNCE_TITLE:-Maintenance}
+      DUNE_ANNOUNCE_DURATION_SECONDS: ${DUNE_ANNOUNCE_DURATION_SECONDS:-12}
+      DUNE_ANNOUNCE_PAYLOAD_MODE: ${DUNE_ANNOUNCE_PAYLOAD_MODE:-command-payload}
+      DUNE_ANNOUNCE_PAYLOAD_TEMPLATE: ${DUNE_ANNOUNCE_PAYLOAD_TEMPLATE:-}
+      DUNE_ADMIN_RESTART_COMMAND: ${DUNE_ADMIN_RESTART_COMMAND:-/workspace/scripts/restart-target.sh}
+      DUNE_ADMIN_RESTART_COMMAND_TIMEOUT_SECONDS: ${DUNE_ADMIN_RESTART_COMMAND_TIMEOUT_SECONDS:-1800}
+      DUNE_RESTART_COMPOSE_PROJECT: ${DUNE_RESTART_COMPOSE_PROJECT:-dune_server}
+      DUNE_RESTART_DOCKER_SOCKET: ${DUNE_RESTART_DOCKER_SOCKET:-/var/run/docker.sock}
     command:
       - /workspace/admin/admin_panel.py
     volumes:
       - ./admin:/workspace/admin:ro
+      - ./scripts:/workspace/scripts:ro
       - ./config:/workspace/config
       - ./.env:/workspace/.env
       - ./backups:/workspace/backups
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       - postgres
     ports:
