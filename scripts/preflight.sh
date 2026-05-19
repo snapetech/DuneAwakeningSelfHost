@@ -142,11 +142,13 @@ check_env_value FLS_SECRET
 check_env_value POSTGRES_SUPER_PASSWORD
 check_env_value POSTGRES_DUNE_PASSWORD
 check_env_value RMQ_HTTP_TOKEN_AUTH_SECRET
+check_env_value DUNE_ADMIN_TOKEN
 check_env_value EXTERNAL_ADDRESS
 
 check_not_default POSTGRES_SUPER_PASSWORD change-me-postgres-super
 check_not_default POSTGRES_DUNE_PASSWORD change-me-dune-db
 check_not_default RMQ_HTTP_TOKEN_AUTH_SECRET change-me-rmq-secret
+check_not_default DUNE_ADMIN_TOKEN change-me-admin-token
 
 if [[ "${EXTERNAL_ADDRESS:-}" == "127.0.0.1" ]]; then
   warn "EXTERNAL_ADDRESS is 127.0.0.1; clients outside this host will not be able to connect"

@@ -209,6 +209,29 @@ services:
       default:
         ipv4_address: 172.31.240.10
 
+  admin-panel:
+    image: registry.funcom.com/funcom/self-hosting/seabass-server-db-utils:${DUNE_IMAGE_TAG}
+    working_dir: /workspace
+    environment:
+      ADMIN_WORKSPACE: /workspace
+      DUNE_ADMIN_DB_HOST: postgres
+      DUNE_ADMIN_DB_PORT: "5432"
+      DUNE_ADMIN_DB_USER: dune
+      DUNE_ADMIN_DB_PASSWORD: ${POSTGRES_DUNE_PASSWORD}
+      DUNE_ADMIN_TOKEN: ${DUNE_ADMIN_TOKEN}
+      DUNE_ADMIN_MUTATIONS_ENABLED: ${DUNE_ADMIN_MUTATIONS_ENABLED:-false}
+    command:
+      - /workspace/admin/admin_panel.py
+    volumes:
+      - ./admin:/workspace/admin:ro
+      - ./config:/workspace/config
+      - ./.env:/workspace/.env
+      - ./backups:/workspace/backups
+    ports:
+      - "127.0.0.1:18080:8080"
+    depends_on:
+      - postgres
+
 networks:
   default:
     ipam:

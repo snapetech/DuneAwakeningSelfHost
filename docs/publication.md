@@ -15,6 +15,7 @@ This repository is for original tooling around the official Dune: Awakening self
 - `.env` with FLS tokens, passwords, IPs, or real world identifiers.
 - `config/tls/` private keys and generated certs.
 - `data/` runtime state, Postgres data, RabbitMQ data, saved server data, logs, crash reports, and dumps.
+- `backups/` and `captures/` runtime exports.
 - Steam-installed server package files.
 - Funcom image tarballs or extracted container contents.
 - Decompiled, reverse-engineered, or patched proprietary files.

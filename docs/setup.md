@@ -61,3 +61,11 @@ docker compose --env-file .env up -d survival
 ```
 
 The direct game-server launch is still experimental. The remaining work is reproducing the exact map launch/runtime behavior normally synthesized by Funcom's Kubernetes operator.
+
+## 8. Admin Panel
+
+```bash
+docker compose --env-file .env up -d admin-panel
+```
+
+Open `http://127.0.0.1:18080`, or put a trusted LAN/VPN reverse proxy in front of it as `http://duneadmin.home`. See `docs/admin-panel.md`.

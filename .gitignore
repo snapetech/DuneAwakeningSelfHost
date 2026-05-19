@@ -3,6 +3,8 @@
 !.env.example
 
 data/
+captures/
+backups/
 config/tls/
 
 *.log
