@@ -60,8 +60,8 @@ server {
 - Token-gated currency and XP mutation endpoints.
 - Token-gated Postgres custom-format backup under `backups/admin-panel`.
 - Redacted JSONL audit trail for rejected requests and admin writes under `backups/admin-panel/audit.jsonl`.
-- Read-only observed item template reference for future gear grant mapping.
-- Experimental exact-template item grants behind a separate opt-in flag.
+- Observed item template, inventory, and inventory-type references.
+- Exact-template item grants, dry-runs, stack edits, and item deletion behind admin gates.
 
 ## Write Safety
 
@@ -76,9 +76,11 @@ Current mutation support is intentionally narrow:
 - Currency balance add/set through `dune.player_virtual_currency_balances`.
 - Specialization XP add/set through existing `dune.specialization_tracks` rows.
 - Database backup through `pg_dump -Fc`.
-- Experimental item grants through `dune.save_item(dune.inventoryitem)` when `DUNE_ADMIN_ITEM_GRANTS_ENABLED=true`.
+- Item grants through `dune.save_item(dune.inventoryitem)` when `DUNE_ADMIN_ITEM_GRANTS_ENABLED=true`.
+- Item grant dry-runs that resolve the target inventory and warnings without requiring `DUNE_ADMIN_MUTATIONS_ENABLED=true`.
+- Item stack changes and item/count deletion through the server's existing item functions.
 
-Item grants require an exact server `template_id` and a target inventory ID. Public databases such as `https://dune.gaming.tools/items` expose item pages whose URL slugs look like server-style template IDs, but verify against observed local server data before bulk grants.
+Item grants require an exact server `template_id`. You can enter an inventory ID directly, or let the panel resolve a player-owned inventory from account ID or character name. Public databases such as `https://dune.gaming.tools/items` and `https://dune.geno.gg/items/` expose item pages whose URL slugs/item IDs look like server-style template IDs, but dry-run and verify against observed local server data before bulk grants.
 
 Recipe unlocks are not implemented yet. Those need validated unlock tables and server refresh semantics before writes are safe.
 
@@ -98,6 +100,14 @@ Back up before enabling mutations:
 - `DUNE_ADMIN_ITEM_GRANTS_ENABLED` defaults to `true` in this repo so item tooling is visible and ready; keep general writes gated with `DUNE_ADMIN_MUTATIONS_ENABLED`.
 - Keep `DUNE_ADMIN_MAX_BODY_BYTES` small unless editing unusually large config files; the default is `65536`.
 - Keep `DUNE_ADMIN_AUDIT_MAX_BYTES` bounded; the default rotates the JSONL audit log at 5 MiB.
+- Keep `DUNE_ADMIN_REQUEST_TIMEOUT_SECONDS` bounded; the default is `10` seconds to limit slow-body and idle connection abuse.
+- Keep `DUNE_ADMIN_MAX_ITEM_STACK_SIZE` bounded; the default is `1000000` to prevent accidental enormous stack writes.
 - Set `DUNE_ADMIN_ALLOWED_HOSTS` to the exact hostnames used to reach the panel, for example `127.0.0.1:18080,localhost:18080,duneadmin.home`.
 - Review the Security tab's recent audit events after failed login attempts, blocked host/origin requests, config edits, backups, or mutation runs.
 - Restart affected game services after config changes when the target service does not hot-reload.
+- POST APIs require `application/json`; form posts, chunked bodies, duplicate `Content-Length`, and oversized requests are rejected before mutation routing.
+- Destructive item/keystone actions require server-side confirmation phrases in addition to browser prompts.
+
+## Container Hardening
+
+The admin panel container runs with a read-only root filesystem, drops Linux capabilities, sets `no-new-privileges`, uses a small no-exec `/tmp`, and has process/memory guardrails. Only the explicit bind mounts for `admin/`, `config/`, `.env`, and `backups/` are writable where needed.

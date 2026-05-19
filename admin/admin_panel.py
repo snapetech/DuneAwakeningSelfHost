@@ -5,8 +5,10 @@ import html
 import json
 import os
 import pathlib
+import secrets
 import shutil
 import subprocess
+import threading
 import time
 import urllib.parse
 from http import HTTPStatus
@@ -22,6 +24,8 @@ ENV_FILE = ROOT / ".env"
 BACKUP_ROOT = ROOT / "backups" / "admin-panel"
 AUDIT_LOG = BACKUP_ROOT / "audit.jsonl"
 AUDIT_MAX_BYTES = int(os.environ.get("DUNE_ADMIN_AUDIT_MAX_BYTES", str(5 * 1024 * 1024)))
+REQUEST_TIMEOUT_SECONDS = int(os.environ.get("DUNE_ADMIN_REQUEST_TIMEOUT_SECONDS", "10"))
+MAX_ITEM_STACK_SIZE = int(os.environ.get("DUNE_ADMIN_MAX_ITEM_STACK_SIZE", "1000000"))
 DATABASE = os.environ.get("DUNE_DATABASE", "dune_sb_1_4_0_0")
 ADMIN_TOKEN = os.environ.get("DUNE_ADMIN_TOKEN", "")
 MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_MUTATIONS_ENABLED", "false").lower() == "true"
@@ -35,6 +39,10 @@ ALLOWED_HOSTS = {
 AUTH_FAILURE_WINDOW_SECONDS = 60
 AUTH_FAILURE_LIMIT = 5
 AUTH_FAILURES = {}
+AUDIT_LOCK = threading.Lock()
+CONFIRM_RESET_KEYSTONES = "RESET KEYSTONES"
+CONFIRM_DELETE_ITEM = "DELETE ITEM"
+CONFIRM_SET_STACK = "SET STACK"
 
 ALLOWED_CONFIGS = {
     "director.ini": CONFIG_ROOT / "director.ini",
@@ -72,16 +80,20 @@ def audit_safe(value):
 
 
 def audit_event(action, ok=True, **fields):
-    BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
-    rotate_audit_log()
-    event = {
-        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "action": action,
-        "ok": bool(ok),
-    }
-    event.update({key: audit_safe(value) for key, value in fields.items()})
-    with AUDIT_LOG.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(event, sort_keys=True, default=json_default) + "\n")
+    try:
+        BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
+        rotate_audit_log()
+        event = {
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "action": action,
+            "ok": bool(ok),
+        }
+        event.update({key: audit_safe(value) for key, value in fields.items()})
+        with AUDIT_LOCK:
+            with AUDIT_LOG.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(event, sort_keys=True, default=json_default) + "\n")
+    except OSError:
+        return
 
 
 def rotate_audit_log():
@@ -111,6 +123,8 @@ def db_connect():
         database=DATABASE,
         user=os.environ.get("DUNE_ADMIN_DB_USER", "dune"),
         password=os.environ.get("DUNE_ADMIN_DB_PASSWORD", os.environ.get("POSTGRES_DUNE_PASSWORD", "")),
+        connect_timeout=5,
+        options="-c statement_timeout=15000",
     )
 
 
@@ -161,15 +175,48 @@ def backup_file(path):
 
 
 def parse_body(handler):
-    length = int(handler.headers.get("Content-Length", "0"))
-    if length > MAX_BODY_BYTES:
-        raise ValueError("request body too large")
+    length = validate_body_framing(handler)
     data = handler.rfile.read(length) if length else b"{}"
     content_type = handler.headers.get("Content-Type", "")
     if "application/json" in content_type:
-        return json.loads(data.decode("utf-8") or "{}")
+        body = json.loads(data.decode("utf-8") or "{}")
+        if not isinstance(body, dict):
+            raise ValueError("JSON request body must be an object")
+        return body
     parsed = urllib.parse.parse_qs(data.decode("utf-8"), keep_blank_values=True)
     return {key: values[-1] if values else "" for key, values in parsed.items()}
+
+
+def validate_body_framing(handler):
+    if handler.headers.get("Transfer-Encoding"):
+        raise ValueError("transfer-encoding is not supported")
+    content_lengths = handler.headers.get_all("Content-Length", [])
+    if len(content_lengths) > 1:
+        raise ValueError("multiple content-length headers are not supported")
+    try:
+        length = int(content_lengths[0]) if content_lengths else 0
+    except ValueError as exc:
+        raise ValueError("invalid content-length") from exc
+    if length < 0:
+        raise ValueError("invalid content-length")
+    if length > MAX_BODY_BYTES:
+        raise ValueError("request body too large")
+    return length
+
+
+def validate_json_post(handler):
+    length = validate_body_framing(handler)
+    content_type = handler.headers.get("Content-Type", "")
+    if content_type and "application/json" not in content_type.lower():
+        raise ValueError("POST requests must use application/json")
+    if length and not content_type:
+        raise ValueError("POST requests must use application/json")
+    return length
+
+
+def require_confirmation(body, phrase):
+    if str(body.get("confirm", "")).strip() != phrase:
+        raise PermissionError(f"confirmation required: {phrase}")
 
 
 def query(sql, params=None):
@@ -192,6 +239,7 @@ def create_db_backup():
     BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     path = BACKUP_ROOT / f"{stamp}-{DATABASE}.dump"
+    temp_path = BACKUP_ROOT / f".{stamp}-{DATABASE}.dump.tmp"
     env = os.environ.copy()
     env["PGPASSWORD"] = os.environ.get("DUNE_ADMIN_DB_PASSWORD", os.environ.get("POSTGRES_DUNE_PASSWORD", ""))
     cmd = [
@@ -201,14 +249,24 @@ def create_db_backup():
         "-U", os.environ.get("DUNE_ADMIN_DB_USER", "dune"),
         "-d", DATABASE,
         "-Fc",
-        "-f", str(path),
+        "-f", str(temp_path),
     ]
-    subprocess.run(cmd, check=True, env=env, capture_output=True, text=True)
+    try:
+        subprocess.run(cmd, check=True, env=env, capture_output=True, text=True, timeout=120)
+        temp_path.rename(path)
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        raise
     return {"path": str(path), "bytes": path.stat().st_size}
 
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "dune-admin-panel"
+    protocol_version = "HTTP/1.1"
+
+    def setup(self):
+        super().setup()
+        self.connection.settimeout(REQUEST_TIMEOUT_SECONDS)
 
     def handle_one_request(self):
         try:
@@ -290,11 +348,19 @@ class Handler(BaseHTTPRequestHandler):
         self.security_headers()
         self.end_headers()
 
+    def do_OPTIONS(self):
+        self.validate_host()
+        self.send_response(HTTPStatus.NO_CONTENT)
+        self.security_headers()
+        self.send_header("Allow", "GET, HEAD, POST, OPTIONS")
+        self.end_headers()
+
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
         try:
             self.validate_host()
             self.validate_same_origin()
+            validate_json_post(self)
             if parsed.path.startswith("/api/settings/configs/"):
                 self.require_token()
                 name = parsed.path.rsplit("/", 1)[-1]
@@ -334,24 +400,47 @@ class Handler(BaseHTTPRequestHandler):
                 self.require_token()
                 self.require_mutations()
                 body = parse_body(self)
+                require_confirmation(body, CONFIRM_RESET_KEYSTONES)
                 self.reset_keystones(body)
                 self.audit("keystone-reset", player_id=body.get("player_id"))
                 self.json({"ok": True})
             elif parsed.path == "/api/admin/unsupported":
                 self.require_token()
+                parse_body(self)
                 self.error(HTTPStatus.NOT_IMPLEMENTED, "gear/skill grants need mapped template IDs and table contracts before writes are safe")
             elif parsed.path == "/api/admin/backup":
                 self.require_token()
+                parse_body(self)
                 result = create_db_backup()
                 self.audit("database-backup", path=result.get("path"), bytes=result.get("bytes"))
                 self.json(result)
             elif parsed.path == "/api/admin/item":
                 self.require_token()
+                body = parse_body(self)
+                dry_run = str(body.get("dry_run", "")).lower() in ("1", "true", "yes", "on")
+                if not dry_run:
+                    self.require_mutations()
+                    self.require_item_grants()
+                result = self.grant_item(body)
+                self.audit("item-grant", inventory_id=result.get("inventory_id"), template_id=result.get("template_id"), item_id=result.get("item_id"), stack_size=result.get("stack_size"))
+                self.json(result)
+            elif parsed.path == "/api/admin/item/delete":
+                self.require_token()
                 self.require_mutations()
                 self.require_item_grants()
                 body = parse_body(self)
-                result = self.grant_item(body)
-                self.audit("item-grant", inventory_id=result.get("inventory_id"), template_id=result.get("template_id"), item_id=result.get("item_id"), stack_size=result.get("stack_size"))
+                require_confirmation(body, CONFIRM_DELETE_ITEM)
+                result = self.delete_item(body)
+                self.audit("item-delete", item_id=result.get("item_id"), count=result.get("count"), deleted=result.get("deleted"))
+                self.json(result)
+            elif parsed.path == "/api/admin/item/stack":
+                self.require_token()
+                self.require_mutations()
+                self.require_item_grants()
+                body = parse_body(self)
+                require_confirmation(body, CONFIRM_SET_STACK)
+                result = self.set_item_stack(body)
+                self.audit("item-stack", item_id=result.get("item_id"), stack_size=result.get("stack_size"))
                 self.json(result)
             else:
                 self.error(HTTPStatus.NOT_FOUND, "not found")
@@ -425,28 +514,57 @@ class Handler(BaseHTTPRequestHandler):
                 order by ps.character_name nulls last, inv.id
                 limit 200
             """),
+            "inventoryTypes": query("""
+                select inventory_type, count(*) as count, max(max_item_count) as max_item_count
+                from dune.inventories
+                group by inventory_type
+                order by inventory_type
+            """),
             "keystones": query("select id, name from dune.specialization_keystones_map order by name"),
             "publicItemDatabase": "https://dune.gaming.tools/items",
+            "publicItemDatabaseAlt": "https://dune.geno.gg/items/",
         }
 
     def grant_item(self, body):
-        inventory_id = int(body["inventory_id"])
+        inventory_id = self.resolve_inventory_id(body)
         template_id = str(body["template_id"]).strip()
         stack_size = max(1, int(body.get("stack_size", 1)))
+        if stack_size > MAX_ITEM_STACK_SIZE:
+            raise ValueError(f"stack_size exceeds DUNE_ADMIN_MAX_ITEM_STACK_SIZE={MAX_ITEM_STACK_SIZE}")
         quality_level = max(0, int(body.get("quality_level", 0)))
         position_index = body.get("position_index", "")
         stats = body.get("stats", {}) or {}
+        dry_run = str(body.get("dry_run", "")).lower() in ("1", "true", "yes", "on")
         if isinstance(stats, str):
             stats = json.loads(stats or "{}")
+        if not isinstance(stats, dict):
+            raise ValueError("stats must be a JSON object")
         if not template_id:
             raise ValueError("template_id is required")
-        if not query("select 1 from dune.inventories where id=%s", (inventory_id,)):
-            raise ValueError("inventory_id does not exist")
+        inventory = self.inventory_for_grant(inventory_id)
         if position_index in ("", None):
             rows = query("select coalesce(max(position_index), -1) + 1 as next_position from dune.items where inventory_id=%s", (inventory_id,))
             position_index = int(rows[0]["next_position"])
         else:
             position_index = int(position_index)
+        if position_index < 0:
+            raise ValueError("position_index must be >= 0")
+        max_count = inventory.get("max_item_count")
+        if max_count is not None and position_index >= max_count:
+            raise ValueError(f"position_index {position_index} is outside inventory capacity {max_count}")
+        if query("select 1 from dune.items where inventory_id=%s and position_index=%s", (inventory_id, position_index)):
+            raise ValueError("target inventory position is already occupied")
+        result = {
+            "inventory_id": inventory_id,
+            "template_id": template_id,
+            "stack_size": stack_size,
+            "position_index": position_index,
+            "quality_level": quality_level,
+            "dry_run": dry_run,
+            "warnings": self.item_grant_warnings(inventory, template_id),
+        }
+        if dry_run:
+            return result
         item_id = query("select dune.advance_items_id_sequencer(1) as item_id")[0]["item_id"]
         acquisition_time = int(body.get("acquisition_time") or time.time() * 1000)
         execute("""
@@ -465,14 +583,120 @@ class Handler(BaseHTTPRequestHandler):
             quality_level,
             None,
         ))
-        return {
+        result.update({
             "item_id": item_id,
-            "inventory_id": inventory_id,
-            "template_id": template_id,
-            "stack_size": stack_size,
-            "position_index": position_index,
-            "quality_level": quality_level,
-        }
+            "item": query("select * from dune.load_item(%s)", (item_id,)),
+        })
+        return result
+
+    def resolve_inventory_id(self, body):
+        if str(body.get("inventory_id", "")).strip():
+            return int(body["inventory_id"])
+        account_id = body.get("account_id")
+        character_name = str(body.get("character_name", "")).strip()
+        inventory_type = body.get("inventory_type")
+        if account_id in ("", None) and not character_name:
+            raise ValueError("inventory_id, account_id, or character_name is required")
+        player = self.resolve_player(account_id=account_id, character_name=character_name)
+        params = [player["player_pawn_id"], player["player_controller_id"]]
+        type_clause = ""
+        if inventory_type not in ("", None):
+            type_clause = "and inv.inventory_type=%s"
+            params.append(int(inventory_type))
+        rows = query(f"""
+            select inv.id as inventory_id, inv.actor_id, inv.inventory_type, inv.max_item_count,
+                   count(i.id) as item_count
+            from dune.inventories inv
+            left join dune.items i on i.inventory_id = inv.id
+            where inv.actor_id in (%s,%s) {type_clause}
+            group by inv.id, inv.actor_id, inv.inventory_type, inv.max_item_count
+            order by
+              case when inv.actor_id=%s then 0 else 1 end,
+              inv.inventory_type nulls last,
+              inv.id
+            limit 1
+        """, (*params, player["player_pawn_id"]))
+        if not rows:
+            raise ValueError("no owned inventory found for character; log in once or enter an explicit inventory_id")
+        return int(rows[0]["inventory_id"])
+
+    def resolve_player(self, account_id=None, character_name=""):
+        if account_id not in ("", None):
+            rows = query("select * from dune.player_state where account_id=%s", (int(account_id),))
+        else:
+            rows = query("select * from dune.player_state where character_name ilike %s order by last_login_time desc nulls last limit 2", (character_name,))
+            if len(rows) > 1:
+                raise ValueError("character_name matched multiple players; use account_id")
+        if not rows:
+            raise ValueError("player not found")
+        return rows[0]
+
+    def inventory_for_grant(self, inventory_id):
+        rows = query("""
+            select inv.id as inventory_id, inv.actor_id, inv.item_id, inv.inventory_type,
+                   inv.max_item_count, inv.max_item_volume, count(i.id) as item_count,
+                   ps.account_id, ps.character_name, ps.online_status::text
+            from dune.inventories inv
+            left join dune.items i on i.inventory_id = inv.id
+            left join dune.player_state ps on ps.player_pawn_id = inv.actor_id or ps.player_controller_id = inv.actor_id
+            where inv.id=%s
+            group by inv.id, ps.account_id, ps.character_name, ps.online_status
+        """, (inventory_id,))
+        if not rows:
+            raise ValueError("inventory_id does not exist")
+        return rows[0]
+
+    def item_grant_warnings(self, inventory, template_id):
+        warnings = []
+        if not inventory.get("account_id"):
+            warnings.append("inventory is not directly tied to a player pawn/controller")
+        if inventory.get("online_status") and str(inventory["online_status"]).lower() != "offline":
+            warnings.append("player may be online; prefer grants while offline, then reconnect")
+        observed = query("select 1 from dune.items where lower(template_id)=lower(%s) limit 1", (template_id,))
+        if not observed:
+            warnings.append("template_id has not been observed locally; verify against a public item database or a known item row")
+        return warnings
+
+    def delete_item(self, body):
+        item_id = int(body["item_id"])
+        count = int(body.get("count") or 0)
+        if count < 0:
+            raise ValueError("count must be >= 0")
+        item = query("select * from dune.load_item(%s)", (item_id,))
+        if not item:
+            raise ValueError("item_id does not exist")
+        if count <= 0 or count >= int(item[0]["stack_size"]):
+            execute("select dune.delete_item(%s)", (item_id,))
+            return {"ok": True, "item_id": item_id, "count": count, "deleted": True}
+        remaining = query("select dune.delete_inventory_item(%s,%s) as remaining_stack", (item_id, count))[0]["remaining_stack"]
+        return {"ok": True, "item_id": item_id, "count": count, "deleted": False, "remaining_stack": remaining}
+
+    def set_item_stack(self, body):
+        item_id = int(body["item_id"])
+        stack_size = max(1, int(body["stack_size"]))
+        if stack_size > MAX_ITEM_STACK_SIZE:
+            raise ValueError(f"stack_size exceeds DUNE_ADMIN_MAX_ITEM_STACK_SIZE={MAX_ITEM_STACK_SIZE}")
+        item = query("select * from dune.load_item(%s)", (item_id,))
+        if not item:
+            raise ValueError("item_id does not exist")
+        row = item[0]
+        execute("""
+            select dune.save_item((
+                %s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s
+            )::dune.inventoryitem)
+        """, (
+            item_id,
+            row["inventory_id"],
+            stack_size,
+            row["position_index"],
+            row["template_id"],
+            row.get("is_new", True),
+            row["acquisition_time"],
+            json.dumps(row.get("stats") or {}),
+            row["quality_level"],
+            row.get("volume_override"),
+        ))
+        return {"ok": True, "item_id": item_id, "stack_size": stack_size, "item": query("select * from dune.load_item(%s)", (item_id,))}
 
     def ops_health(self):
         farm = query("select server_id,farm_id,ready,alive,map,revision,game_addr,igw_addr,connected_players from dune.farm_state order by map, server_id")
@@ -509,6 +733,10 @@ class Handler(BaseHTTPRequestHandler):
             {"name": "allowed hosts configured", "ok": bool(ALLOWED_HOSTS), "value": ", ".join(sorted(ALLOWED_HOSTS))},
             {"name": "request body limit", "ok": MAX_BODY_BYTES <= 262144, "value": MAX_BODY_BYTES},
             {"name": "audit log rotation limit", "ok": 0 < AUDIT_MAX_BYTES <= 50 * 1024 * 1024, "value": AUDIT_MAX_BYTES},
+            {"name": "request timeout bounded", "ok": 1 <= REQUEST_TIMEOUT_SECONDS <= 60, "value": REQUEST_TIMEOUT_SECONDS},
+            {"name": "item stack mutation limit", "ok": 1 <= MAX_ITEM_STACK_SIZE <= 10000000, "value": MAX_ITEM_STACK_SIZE},
+            {"name": "JSON-only POST enforcement", "ok": True},
+            {"name": "destructive action confirmation", "ok": True, "value": "server-side"},
             {"name": "FLS token not editable here", "ok": "FLS_SECRET" not in SAFE_ENV_KEYS},
             {"name": "backup path under ignored backups/", "ok": str(BACKUP_ROOT).startswith(str(ROOT / "backups"))},
             {"name": "audit log under ignored backups/", "ok": str(AUDIT_LOG).startswith(str(ROOT / "backups")), "value": str(AUDIT_LOG.relative_to(ROOT))},
@@ -675,10 +903,12 @@ class Handler(BaseHTTPRequestHandler):
                 raise PermissionError("cross-origin admin request rejected")
 
     def html(self, body):
+        nonce = secrets.token_urlsafe(16)
+        body = body.replace("__NONCE__", nonce)
         data = body.encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.security_headers()
+        self.security_headers(nonce=nonce)
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
@@ -701,12 +931,19 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def security_headers(self):
+    def security_headers(self, nonce=None):
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
-        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline' 'self'; connect-src 'self'; frame-ancestors 'none'")
+        self.send_header("Cross-Origin-Resource-Policy", "same-origin")
+        self.send_header("X-Permitted-Cross-Domain-Policies", "none")
+        self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
+        script_src = f"'self' 'nonce-{nonce}'" if nonce else "'self'"
+        style_src = f"'self' 'nonce-{nonce}'" if nonce else "'self'"
+        self.send_header("Content-Security-Policy", f"default-src 'self'; script-src {script_src}; style-src {style_src}; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+        self.send_header("Connection", "close")
+        self.close_connection = True
 
     def log_message(self, fmt, *args):
         return
@@ -718,7 +955,7 @@ INDEX = r"""<!doctype html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Dune Admin</title>
-  <style>
+  <style nonce="__NONCE__">
     :root { color-scheme: dark; --bg:#111411; --panel:#191d19; --muted:#9da89e; --line:#30382f; --text:#ecf2e8; --accent:#d7a64a; --danger:#d66b5f; --ok:#7bbf74; }
     body { margin:0; font:14px/1.45 system-ui, sans-serif; background:var(--bg); color:var(--text); }
     header { display:flex; justify-content:space-between; align-items:center; gap:16px; padding:14px 18px; border-bottom:1px solid var(--line); background:#151915; position:sticky; top:0; }
@@ -750,25 +987,25 @@ INDEX = r"""<!doctype html>
 <body>
   <header>
     <h1>Dune Admin</h1>
-    <div class="row"><input id="token" type="password" placeholder="Admin token"><button onclick="saveToken()">Use token</button></div>
+    <div class="row"><input id="token" type="password" placeholder="Admin token"><button id="saveTokenBtn">Use token</button></div>
   </header>
   <main>
     <nav>
       <div class="tabs">
-        <button class="tab active" onclick="show('overview')">Overview</button>
-        <button class="tab" onclick="show('ops')">Ops</button>
-        <button class="tab" onclick="show('security')">Security</button>
-        <button class="tab" onclick="show('runbook')">Runbook</button>
-        <button class="tab" onclick="show('characters')">Characters</button>
-        <button class="tab" onclick="show('settings')">Settings</button>
-        <button class="tab" onclick="show('mutations')">Admin Actions</button>
+        <button class="tab active" data-tab="overview">Overview</button>
+        <button class="tab" data-tab="ops">Ops</button>
+        <button class="tab" data-tab="security">Security</button>
+        <button class="tab" data-tab="runbook">Runbook</button>
+        <button class="tab" data-tab="characters">Characters</button>
+        <button class="tab" data-tab="settings">Settings</button>
+        <button class="tab" data-tab="mutations">Admin Actions</button>
       </div>
       <div class="card"><div class="muted">Host this behind local DNS as <code>duneadmin.home</code>. Keep it LAN/VPN-only.</div></div>
       <pre id="status"></pre>
     </nav>
     <section id="view"></section>
   </main>
-<script>
+<script nonce="__NONCE__">
 let token = sessionStorage.getItem('duneAdminToken') || '';
 document.getElementById('token').value = token;
 let current = 'overview';
@@ -798,13 +1035,18 @@ function inventoryOptions(rows){
   if (!vals.length) return '<option value="">No inventories observed</option>';
   return vals.map(r => `<option value="${esc(r.inventory_id)}">${esc(r.character_name || 'unowned')} | inv ${esc(r.inventory_id)} | type ${esc(r.inventory_type)} | ${esc(r.item_count)} items</option>`).join('');
 }
+function inventoryTypeOptions(rows){
+  const vals = rows || [];
+  if (!vals.length) return '<option value="">Auto</option>';
+  return '<option value="">Auto</option>' + vals.map(r => `<option value="${esc(r.inventory_type)}">type ${esc(r.inventory_type)} | ${esc(r.count)} inventories | cap ${esc(r.max_item_count)}</option>`).join('');
+}
 function checks(rows){
   return `<table><thead><tr><th>Check</th><th>Status</th><th>Value</th></tr></thead><tbody>${(rows || []).map(r=>`<tr><td>${esc(r.name)}</td><td class="${r.ok ? 'ok' : 'dangerText'}">${r.ok ? 'OK' : 'Needs attention'}</td><td>${esc(r.value ?? '')}</td></tr>`).join('')}</tbody></table>`;
 }
 function signalList(groups){
   return Object.entries(groups || {}).map(([group, rows]) => `<div class="card"><h2>${esc(group)}</h2><table><thead><tr><th>Name</th><th>Value</th><th>Why</th></tr></thead><tbody>${(rows || []).map(r=>`<tr><td>${esc(r.name)}</td><td>${esc(Array.isArray(r.value) ? r.value.join(', ') : r.value)}</td><td>${esc(r.why)}</td></tr>`).join('')}</tbody></table></div>`).join('');
 }
-function show(name){ current=name; document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active', b.textContent.toLowerCase().startsWith(name.slice(0,6)))); load(); }
+function show(name){ current=name; document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active', b.dataset.tab === name)); load(); }
 async function refreshStatus(){ document.getElementById('status').textContent = JSON.stringify(await api('/api/status'), null, 2); }
 async function load(){
   await refreshStatus().catch(e => document.getElementById('status').textContent = e.message);
@@ -839,7 +1081,8 @@ async function runbook(){
   view.innerHTML = `<div class="card"><h2>Operational Runbook</h2><p class="muted">${esc(data.why)}</p>${table(data.commands)}</div>`;
 }
 async function characters(){
-  view.innerHTML = `<div class="card"><div class="row"><input id="q" placeholder="Character, Funcom ID, platform ID"><button class="primary" onclick="searchCharacters()">Search</button></div><div id="results"></div></div><div id="detail"></div>`;
+  view.innerHTML = `<div class="card"><div class="row"><input id="q" placeholder="Character, Funcom ID, platform ID"><button id="characterSearchBtn" class="primary">Search</button></div><div id="results"></div></div><div id="detail"></div>`;
+  document.getElementById('characterSearchBtn').addEventListener('click', searchCharacters);
 }
 async function searchCharacters(){
   const rows = await api('/api/characters?q=' + encodeURIComponent(document.getElementById('q').value));
@@ -854,13 +1097,20 @@ async function pickCharacter(row){
   const p = d.player || {};
   const firstCurrency = (d.currency && d.currency[0]) || {};
   const firstTrack = (d.specialization && d.specialization[0]) || {};
-  document.getElementById('detail').innerHTML = `<div class="card"><h2>${esc(p.character_name || 'Character')}</h2><div class="grid"><div><b>Account</b><br>${esc(p.account_id)}</div><div><b>Controller</b><br>${esc(p.player_controller_id)}</div><div><b>Pawn</b><br>${esc(p.player_pawn_id)}</div><div><b>Status</b><br>${esc(p.online_status)}</div></div></div><div class="card"><h2>Quick Admin</h2><p class="dangerText">Back up first. Mutations require server-side enablement.</p><div class="grid"><label>Currency ID<input id="detailCurId" value="${esc(firstCurrency.currency_id ?? 1)}"></label><label>Amount<input id="detailCurAmount" value="1000"></label><label>Mode<select id="detailCurMode"><option>add</option><option>set</option></select></label></div><p><button class="primary" onclick="currencyFor('${esc(p.player_controller_id)}')">Apply currency</button></p><div class="grid"><label>Track type<input id="detailTrack" value="${esc(firstTrack.track_type ?? '')}"></label><label>XP amount<input id="detailXpAmount" value="1000"></label><label>Mode<select id="detailXpMode"><option>add</option><option>set</option></select></label></div><p><button class="primary" onclick="xpFor('${esc(p.player_controller_id)}')">Apply XP</button></p></div><div class="card"><h2>Inventory Items</h2>${table(d.inventoryItems)}</div><div class="card"><h2>Raw Detail</h2><pre>${esc(JSON.stringify(d, null, 2))}</pre></div>`;
+  document.getElementById('detail').innerHTML = `<div class="card"><h2>${esc(p.character_name || 'Character')}</h2><div class="grid"><div><b>Account</b><br>${esc(p.account_id)}</div><div><b>Controller</b><br>${esc(p.player_controller_id)}</div><div><b>Pawn</b><br>${esc(p.player_pawn_id)}</div><div><b>Status</b><br>${esc(p.online_status)}</div></div></div><div class="card"><h2>Quick Admin</h2><p class="dangerText">Back up first. Mutations require server-side enablement.</p><div class="grid"><label>Currency ID<input id="detailCurId" value="${esc(firstCurrency.currency_id ?? 1)}"></label><label>Amount<input id="detailCurAmount" value="1000"></label><label>Mode<select id="detailCurMode"><option>add</option><option>set</option></select></label></div><p><button id="detailCurrencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Track type<input id="detailTrack" value="${esc(firstTrack.track_type ?? '')}"></label><label>XP amount<input id="detailXpAmount" value="1000"></label><label>Mode<select id="detailXpMode"><option>add</option><option>set</option></select></label></div><p><button id="detailXpBtn" class="primary">Apply XP</button></p><div class="grid"><label>Template ID<input id="detailGrantTemplate" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="detailGrantStack" value="1"></label></div><p><button id="detailDryRunBtn" class="primary">Dry run item</button> <button id="detailGrantBtn" class="danger">Grant item</button></p><pre id="detailGrantResult"></pre></div><div class="card"><h2>Inventories</h2>${table(d.inventories)}</div><div class="card"><h2>Inventory Items</h2>${table(d.inventoryItems)}</div><div class="card"><h2>Raw Detail</h2><pre>${esc(JSON.stringify(d, null, 2))}</pre></div>`;
+  document.getElementById('detailCurrencyBtn').addEventListener('click', () => currencyFor(p.player_controller_id));
+  document.getElementById('detailXpBtn').addEventListener('click', () => xpFor(p.player_controller_id));
+  document.getElementById('detailDryRunBtn').addEventListener('click', () => grantItemForAccount(p.account_id, true));
+  document.getElementById('detailGrantBtn').addEventListener('click', () => grantItemForAccount(p.account_id, false));
 }
 async function settings(){
   const env = await api('/api/settings/env');
   const configs = await api('/api/settings/configs');
-  view.innerHTML = `<div class="card"><h2>Safe Env Settings</h2><div class="grid">${Object.entries(env).map(([k,v])=>`<label>${esc(k)}<input id="env_${esc(k)}" value="${esc(v)}"></label>`).join('')}</div><p><button class="primary" onclick="saveEnv()">Save env settings</button></p></div><div class="card"><h2>Config Files</h2><select id="cfg" onchange="selectCfg()">${Object.keys(configs).map(k=>`<option>${esc(k)}</option>`).join('')}</select><textarea id="cfgText"></textarea><p><button class="primary" onclick="saveCfg()">Save config with backup</button></p></div>`;
+  view.innerHTML = `<div class="card"><h2>Safe Env Settings</h2><div class="grid">${Object.entries(env).map(([k,v])=>`<label>${esc(k)}<input id="env_${esc(k)}" value="${esc(v)}"></label>`).join('')}</div><p><button id="saveEnvBtn" class="primary">Save env settings</button></p></div><div class="card"><h2>Config Files</h2><select id="cfg">${Object.keys(configs).map(k=>`<option>${esc(k)}</option>`).join('')}</select><textarea id="cfgText"></textarea><p><button id="saveCfgBtn" class="primary">Save config with backup</button></p></div>`;
   window.configs = configs; selectCfg();
+  document.getElementById('cfg').addEventListener('change', selectCfg);
+  document.getElementById('saveEnvBtn').addEventListener('click', saveEnv);
+  document.getElementById('saveCfgBtn').addEventListener('click', saveCfg);
 }
 function selectCfg(){ const name=document.getElementById('cfg').value; document.getElementById('cfgText').value = window.configs[name] || ''; }
 async function saveEnv(){
@@ -874,9 +1124,20 @@ async function saveCfg(){
 }
 async function mutations(){
   const ref = await api('/api/admin/reference');
-  view.innerHTML = `<div class="card"><h2>Backups</h2><p>Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button class="primary" onclick="backup()">Create DB backup</button><pre id="backupResult"></pre></div><div class="card"><h2>Currency and XP</h2><p class="dangerText">Writes require <code>DUNE_ADMIN_MUTATIONS_ENABLED=true</code> and a valid admin token. Back up first.</p><div class="grid"><label>Player controller ID<input id="pcid"></label><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button class="primary" onclick="currency()">Apply currency</button></p><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Level for set/new track<input id="xplevel" value="0"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button class="primary" onclick="xp()">Apply XP</button></p></div><div class="card"><h2>Specialization Keystones</h2><div class="grid"><label>Player/controller ID<input id="keyPlayer"></label><label>Keystone<select id="keystone">${options(ref.keystones, 'name')}</select></label></div><p><button class="primary" onclick="purchaseKeystone()">Purchase keystone</button> <button class="danger" onclick="resetKeystones()">Reset all keystones</button></p><pre id="keystoneResult"></pre></div><div class="card"><h2>Experimental Item Grant</h2><p class="dangerText">Use exact server template IDs. Public databases such as <a href="${esc(ref.publicItemDatabase)}" target="_blank" rel="noreferrer">gaming.tools</a> expose useful item slugs, but verify against observed server data before bulk grants.</p><div class="grid"><label>Known inventory<select id="grantInventorySelect" onchange="grantInventory.value=this.value">${inventoryOptions(ref.recentInventories)}</select></label><label>Inventory ID<input id="grantInventory"></label><label>Template ID<input id="grantTemplate" placeholder="smg_unique_largemag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><label>Stats JSON<textarea id="grantStats">{}</textarea></label><p><button class="danger" onclick="grantItem()">Grant item</button></p><pre id="grantResult"></pre></div><div class="card"><h2>Observed Item Templates</h2><p class="muted">Read-only reference from this server's current <code>dune.items</code> rows.</p>${table(ref.observedItemTemplates)}</div><div class="card"><h2>Recent Inventories</h2>${table(ref.recentInventories)}</div><div class="card"><h2>Recipe Unlocks</h2><p class="muted">Not implemented yet. The DB exposes removal helpers and actor JSON recipe arrays, but no safe grant function has been mapped.</p><button class="danger" onclick="unsupported()">Test unsupported endpoint</button></div>`;
+  view.innerHTML = `<div class="card"><h2>Backups</h2><p>Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button id="backupBtn" class="primary">Create DB backup</button><pre id="backupResult"></pre></div><div class="card"><h2>Currency and XP</h2><p class="dangerText">Writes require <code>DUNE_ADMIN_MUTATIONS_ENABLED=true</code> and a valid admin token. Back up first.</p><div class="grid"><label>Player controller ID<input id="pcid"></label><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button id="currencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Level for set/new track<input id="xplevel" value="0"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button id="xpBtn" class="primary">Apply XP</button></p></div><div class="card"><h2>Specialization Keystones</h2><div class="grid"><label>Player/controller ID<input id="keyPlayer"></label><label>Keystone<select id="keystone">${options(ref.keystones, 'name')}</select></label></div><p><button id="purchaseKeystoneBtn" class="primary">Purchase keystone</button> <button id="resetKeystonesBtn" class="danger">Reset all keystones</button></p><pre id="keystoneResult"></pre></div><div class="card"><h2>Item Grants</h2><p class="dangerText">Use exact server template IDs. Public item databases: <a href="${esc(ref.publicItemDatabase)}" target="_blank" rel="noreferrer">gaming.tools</a> and <a href="${esc(ref.publicItemDatabaseAlt)}" target="_blank" rel="noreferrer">Arrakis Atlas</a>. Dry run first when using IDs not observed locally.</p><div class="grid"><label>Known inventory<select id="grantInventorySelect">${inventoryOptions(ref.recentInventories)}</select></label><label>Inventory ID<input id="grantInventory" placeholder="explicit inventory"></label><label>Account ID<input id="grantAccount" placeholder="auto-select player inventory"></label><label>Character name<input id="grantCharacter" placeholder="auto-select by name"></label><label>Inventory type<select id="grantInventoryType">${inventoryTypeOptions(ref.inventoryTypes)}</select></label><label>Template ID<input id="grantTemplate" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><label>Stats JSON<textarea id="grantStats">{}</textarea></label><p><button id="dryRunItemBtn" class="primary">Dry run</button> <button id="grantItemBtn" class="danger">Grant item</button></p><pre id="grantResult"></pre></div><div class="card"><h2>Item Maintenance</h2><div class="grid"><label>Item ID<input id="itemEditId"></label><label>New stack size<input id="itemEditStack" value="1"></label><label>Delete count<input id="itemDeleteCount" placeholder="blank/all"></label></div><p><button id="setItemStackBtn" class="primary">Set stack</button> <button id="deleteItemBtn" class="danger">Delete item/count</button></p><pre id="itemEditResult"></pre></div><div class="card"><h2>Observed Item Templates</h2><p class="muted">Read-only reference from this server's current <code>dune.items</code> rows.</p>${table(ref.observedItemTemplates)}</div><div class="card"><h2>Recent Inventories</h2>${table(ref.recentInventories)}</div><div class="card"><h2>Inventory Types</h2>${table(ref.inventoryTypes)}</div><div class="card"><h2>Recipe Unlocks</h2><p class="muted">Not implemented yet. The DB exposes removal helpers and actor JSON recipe arrays, but no safe grant function has been mapped.</p><button id="unsupportedBtn" class="danger">Test unsupported endpoint</button></div>`;
   const invSelect = document.getElementById('grantInventorySelect');
   if (invSelect && invSelect.value) document.getElementById('grantInventory').value = invSelect.value;
+  invSelect?.addEventListener('change', () => { document.getElementById('grantInventory').value = invSelect.value; });
+  document.getElementById('backupBtn').addEventListener('click', backup);
+  document.getElementById('currencyBtn').addEventListener('click', currency);
+  document.getElementById('xpBtn').addEventListener('click', xp);
+  document.getElementById('purchaseKeystoneBtn').addEventListener('click', purchaseKeystone);
+  document.getElementById('resetKeystonesBtn').addEventListener('click', resetKeystones);
+  document.getElementById('dryRunItemBtn').addEventListener('click', () => grantItem(true));
+  document.getElementById('grantItemBtn').addEventListener('click', () => grantItem(false));
+  document.getElementById('setItemStackBtn').addEventListener('click', setItemStack);
+  document.getElementById('deleteItemBtn').addEventListener('click', deleteItem);
+  document.getElementById('unsupportedBtn').addEventListener('click', unsupported);
 }
 async function currency(){
   await api('/api/admin/currency', {method:'POST', body:JSON.stringify({player_controller_id:pcid.value,currency_id:curid.value,amount:amount.value,mode:mode.value})});
@@ -904,14 +1165,30 @@ async function purchaseKeystone(){
 }
 async function resetKeystones(){
   if (!confirm('Reset all purchased keystones for this player?')) return;
-  const result = await api('/api/admin/reset-keystones', {method:'POST', body:JSON.stringify({player_id:keyPlayer.value})});
+  const result = await api('/api/admin/reset-keystones', {method:'POST', body:JSON.stringify({player_id:keyPlayer.value,confirm:'RESET KEYSTONES'})});
   document.getElementById('keystoneResult').textContent = JSON.stringify(result, null, 2);
 }
-async function grantItem(){
-  const result = await api('/api/admin/item', {method:'POST', body:JSON.stringify({inventory_id:grantInventory.value,template_id:grantTemplate.value,stack_size:grantStack.value,quality_level:grantQuality.value,position_index:grantPosition.value,stats:grantStats.value})});
+async function grantItem(dryRun=false){
+  const result = await api('/api/admin/item', {method:'POST', body:JSON.stringify({inventory_id:grantInventory.value,account_id:grantAccount.value,character_name:grantCharacter.value,inventory_type:grantInventoryType.value,template_id:grantTemplate.value,stack_size:grantStack.value,quality_level:grantQuality.value,position_index:grantPosition.value,stats:grantStats.value,dry_run:dryRun})});
   document.getElementById('grantResult').textContent = JSON.stringify(result, null, 2);
 }
+async function grantItemForAccount(accountId, dryRun=false){
+  const result = await api('/api/admin/item', {method:'POST', body:JSON.stringify({account_id:accountId,template_id:detailGrantTemplate.value,stack_size:detailGrantStack.value,dry_run:dryRun,stats:{}})});
+  document.getElementById('detailGrantResult').textContent = JSON.stringify(result, null, 2);
+}
+async function setItemStack(){
+  if (!confirm('Set this item stack size?')) return;
+  const result = await api('/api/admin/item/stack', {method:'POST', body:JSON.stringify({item_id:itemEditId.value,stack_size:itemEditStack.value,confirm:'SET STACK'})});
+  document.getElementById('itemEditResult').textContent = JSON.stringify(result, null, 2);
+}
+async function deleteItem(){
+  if (!confirm('Delete this item or count from the stack?')) return;
+  const result = await api('/api/admin/item/delete', {method:'POST', body:JSON.stringify({item_id:itemEditId.value,count:itemDeleteCount.value,confirm:'DELETE ITEM'})});
+  document.getElementById('itemEditResult').textContent = JSON.stringify(result, null, 2);
+}
 async function unsupported(){ try { await api('/api/admin/unsupported', {method:'POST', body:'{}'}); } catch(e) { alert(e.message); } }
+document.getElementById('saveTokenBtn').addEventListener('click', saveToken);
+document.querySelectorAll('.tab').forEach(button => button.addEventListener('click', () => show(button.dataset.tab)));
 load();
 </script>
 </body>

@@ -32,7 +32,7 @@ dune.admin_get_inventory_details(in_account_id bigint)
 
 It joins `dune.items`, `dune.inventories`, and `dune.player_state` through `player_state.player_pawn_id`, so player inventory grants should target an inventory owned by the player pawn.
 
-The panel shows recent inventory IDs from `dune.inventories` joined to `dune.player_state`, and character detail includes `dune.admin_get_inventory_details(account_id)`. Grants still require selecting or entering an explicit `inventory_id`; the panel does not guess backpack/equipment slots yet.
+The panel shows recent inventory IDs from `dune.inventories` joined to `dune.player_state`, and character detail includes `dune.admin_get_inventory_details(account_id)`. Grants can target an explicit `inventory_id` or resolve the first owned inventory for an `account_id` / character name, optionally filtered by `inventory_type`.
 
 ## Item Grants
 
@@ -62,7 +62,22 @@ item_id, inventory_id, stack_size, position_index, template_id,
 is_new, acquisition_time, stats, quality_level, volume_override
 ```
 
+The panel dry-run path resolves inventory, position, capacity, and local-template warnings without writing. Actual writes check that the target slot is empty and that the chosen position is inside `max_item_count` when the inventory has a capacity.
+
 Remaining risk: server-side refresh behavior is not fully proven. Prefer granting while the player is offline, then restart or reload affected game services if the item does not appear.
+
+## Item Maintenance
+
+Implemented item maintenance endpoints:
+
+```sql
+dune.load_item(item_id)
+dune.save_item(in_item dune.inventoryitem)
+dune.delete_item(item_id)
+dune.delete_inventory_item(item_id, count)
+```
+
+The panel exposes stack-size replacement and full/partial deletion. These are mutation-gated and require explicit confirmation phrases.
 
 ## Currency
 
