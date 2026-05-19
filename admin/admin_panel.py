@@ -118,6 +118,26 @@ def execute(sql, params=None):
     with db_connect() as conn:
         with conn.cursor() as cursor:
             cursor.execute(sql, params or ())
+            return cursor.rowcount
+
+
+def create_db_backup():
+    BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    path = BACKUP_ROOT / f"{stamp}-{DATABASE}.dump"
+    env = os.environ.copy()
+    env["PGPASSWORD"] = os.environ.get("DUNE_ADMIN_DB_PASSWORD", os.environ.get("POSTGRES_DUNE_PASSWORD", ""))
+    cmd = [
+        "pg_dump",
+        "-h", os.environ.get("DUNE_ADMIN_DB_HOST", "postgres"),
+        "-p", os.environ.get("DUNE_ADMIN_DB_PORT", "5432"),
+        "-U", os.environ.get("DUNE_ADMIN_DB_USER", "dune"),
+        "-d", DATABASE,
+        "-Fc",
+        "-f", str(path),
+    ]
+    subprocess.run(cmd, check=True, env=env, capture_output=True, text=True)
+    return {"path": str(path), "bytes": path.stat().st_size}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -152,6 +172,8 @@ class Handler(BaseHTTPRequestHandler):
             self.json({key: env_values.get(key, "") for key in sorted(SAFE_ENV_KEYS)})
         elif parsed.path == "/api/settings/configs":
             self.json({name: path.read_text(encoding="utf-8") for name, path in ALLOWED_CONFIGS.items() if path.exists()})
+        elif parsed.path == "/api/admin/reference":
+            self.json(self.admin_reference())
         else:
             self.error(HTTPStatus.NOT_FOUND, "not found")
 
@@ -185,6 +207,9 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/admin/unsupported":
                 self.require_token()
                 self.error(HTTPStatus.NOT_IMPLEMENTED, "gear/skill grants need mapped template IDs and table contracts before writes are safe")
+            elif parsed.path == "/api/admin/backup":
+                self.require_token()
+                self.json(create_db_backup())
             else:
                 self.error(HTTPStatus.NOT_FOUND, "not found")
         except PermissionError as exc:
@@ -225,6 +250,26 @@ class Handler(BaseHTTPRequestHandler):
             "inventories": query("select * from dune.inventories where actor_id in (%s,%s) order by id", (controller_id, pawn_id)),
         }
 
+    def admin_reference(self):
+        return {
+            "currencyIds": query("select distinct currency_id from dune.player_virtual_currency_balances order by currency_id"),
+            "specializationTrackTypes": query("""
+                select enumlabel as track_type
+                from pg_enum e
+                join pg_type t on t.oid = e.enumtypid
+                where t.typname = 'specializationtracktype'
+                order by enumsortorder
+            """),
+            "observedItemTemplates": query("""
+                select template_id, count(*) as count
+                from dune.items
+                where template_id is not null
+                group by template_id
+                order by count desc, template_id
+                limit 200
+            """),
+        }
+
     def update_currency(self, body):
         controller_id = int(body["player_controller_id"])
         currency_id = int(body["currency_id"])
@@ -251,11 +296,13 @@ class Handler(BaseHTTPRequestHandler):
         amount = int(body["amount"])
         mode = body.get("mode", "add")
         if mode == "set":
-            execute("update dune.specialization_tracks set xp_amount=%s where player_id=%s and track_type::text=%s", (amount, player_id, track_type))
+            count = execute("update dune.specialization_tracks set xp_amount=%s where player_id=%s and track_type::text=%s", (amount, player_id, track_type))
         elif mode == "add":
-            execute("update dune.specialization_tracks set xp_amount=xp_amount + %s where player_id=%s and track_type::text=%s", (amount, player_id, track_type))
+            count = execute("update dune.specialization_tracks set xp_amount=xp_amount + %s where player_id=%s and track_type::text=%s", (amount, player_id, track_type))
         else:
             raise ValueError("mode must be add or set")
+        if count == 0:
+            raise ValueError("no specialization track row matched; create/unlock semantics are not mapped yet")
 
     def write_config(self, name, content):
         if name not in ALLOWED_CONFIGS:
@@ -379,6 +426,11 @@ function table(rows){
   const keys = Object.keys(rows[0]);
   return `<table><thead><tr>${keys.map(k=>`<th>${esc(k)}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr data-id="${esc(r.account_id ?? '')}">${keys.map(k=>`<td>${esc(r[k])}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
 }
+function options(rows, key, fallback=''){
+  const vals = (rows || []).map(r => r[key]).filter(v => v !== undefined && v !== null);
+  if (!vals.length && fallback) vals.push(fallback);
+  return vals.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+}
 function show(name){ current=name; document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active', b.textContent.toLowerCase().startsWith(name.slice(0,6)))); load(); }
 async function refreshStatus(){ document.getElementById('status').textContent = JSON.stringify(await api('/api/status'), null, 2); }
 async function load(){
@@ -405,7 +457,10 @@ async function pickCharacter(row){
   const id = row.dataset.id || row.children[0].textContent;
   if (!id) return;
   const d = await api('/api/characters/' + encodeURIComponent(id));
-  document.getElementById('detail').innerHTML = `<div class="card"><h2>Character Detail</h2><pre>${esc(JSON.stringify(d, null, 2))}</pre></div>`;
+  const p = d.player || {};
+  const firstCurrency = (d.currency && d.currency[0]) || {};
+  const firstTrack = (d.specialization && d.specialization[0]) || {};
+  document.getElementById('detail').innerHTML = `<div class="card"><h2>${esc(p.character_name || 'Character')}</h2><div class="grid"><div><b>Account</b><br>${esc(p.account_id)}</div><div><b>Controller</b><br>${esc(p.player_controller_id)}</div><div><b>Pawn</b><br>${esc(p.player_pawn_id)}</div><div><b>Status</b><br>${esc(p.online_status)}</div></div></div><div class="card"><h2>Quick Admin</h2><p class="dangerText">Back up first. Mutations require server-side enablement.</p><div class="grid"><label>Currency ID<input id="detailCurId" value="${esc(firstCurrency.currency_id ?? 1)}"></label><label>Amount<input id="detailCurAmount" value="1000"></label><label>Mode<select id="detailCurMode"><option>add</option><option>set</option></select></label></div><p><button class="primary" onclick="currencyFor('${esc(p.player_controller_id)}')">Apply currency</button></p><div class="grid"><label>Track type<input id="detailTrack" value="${esc(firstTrack.track_type ?? '')}"></label><label>XP amount<input id="detailXpAmount" value="1000"></label><label>Mode<select id="detailXpMode"><option>add</option><option>set</option></select></label></div><p><button class="primary" onclick="xpFor('${esc(p.player_controller_id)}')">Apply XP</button></p></div><div class="card"><h2>Raw Detail</h2><pre>${esc(JSON.stringify(d, null, 2))}</pre></div>`;
 }
 async function settings(){
   const env = await api('/api/settings/env');
@@ -424,11 +479,28 @@ async function saveCfg(){
   alert('Saved ' + name);
 }
 async function mutations(){
-  view.innerHTML = `<div class="card"><h2>Admin Actions</h2><p class="dangerText">Writes require <code>DUNE_ADMIN_MUTATIONS_ENABLED=true</code> and a valid admin token. Back up first.</p><div class="grid"><label>Player controller ID<input id="pcid"></label><label>Currency ID<input id="curid" value="1"></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button class="primary" onclick="currency()">Apply currency</button></p></div><div class="card"><h2>Gear and Skill Grants</h2><p class="muted">Not implemented yet. We need validated template IDs and table contracts before this panel writes item rows or unlock data.</p><button class="danger" onclick="unsupported()">Test unsupported endpoint</button></div>`;
+  const ref = await api('/api/admin/reference');
+  view.innerHTML = `<div class="card"><h2>Backups</h2><p>Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button class="primary" onclick="backup()">Create DB backup</button><pre id="backupResult"></pre></div><div class="card"><h2>Admin Actions</h2><p class="dangerText">Writes require <code>DUNE_ADMIN_MUTATIONS_ENABLED=true</code> and a valid admin token. Back up first.</p><div class="grid"><label>Player controller ID<input id="pcid"></label><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button class="primary" onclick="currency()">Apply currency</button></p><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button class="primary" onclick="xp()">Apply XP</button></p></div><div class="card"><h2>Observed Item Templates</h2><p class="muted">Read-only reference for future gear grants. Writes are blocked until inventory semantics are mapped.</p>${table(ref.observedItemTemplates)}</div><div class="card"><h2>Gear and Skill Grants</h2><p class="muted">Not implemented yet. We need validated template IDs and table contracts before this panel writes item rows or unlock data.</p><button class="danger" onclick="unsupported()">Test unsupported endpoint</button></div>`;
 }
 async function currency(){
   await api('/api/admin/currency', {method:'POST', body:JSON.stringify({player_controller_id:pcid.value,currency_id:curid.value,amount:amount.value,mode:mode.value})});
   alert('Currency updated');
+}
+async function currencyFor(playerControllerId){
+  await api('/api/admin/currency', {method:'POST', body:JSON.stringify({player_controller_id:playerControllerId,currency_id:detailCurId.value,amount:detailCurAmount.value,mode:detailCurMode.value})});
+  alert('Currency updated');
+}
+async function xp(){
+  await api('/api/admin/xp', {method:'POST', body:JSON.stringify({player_id:xpid.value,track_type:track.value,amount:xpamount.value,mode:xpmode.value})});
+  alert('XP updated');
+}
+async function xpFor(playerId){
+  await api('/api/admin/xp', {method:'POST', body:JSON.stringify({player_id:playerId,track_type:detailTrack.value,amount:detailXpAmount.value,mode:detailXpMode.value})});
+  alert('XP updated');
+}
+async function backup(){
+  const result = await api('/api/admin/backup', {method:'POST', body:'{}'});
+  document.getElementById('backupResult').textContent = JSON.stringify(result, null, 2);
 }
 async function unsupported(){ try { await api('/api/admin/unsupported', {method:'POST', body:'{}'}); } catch(e) { alert(e.message); } }
 load();
