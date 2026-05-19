@@ -32,7 +32,7 @@ dune.admin_get_inventory_details(in_account_id bigint)
 
 It joins `dune.items`, `dune.inventories`, and `dune.player_state` through `player_state.player_pawn_id`, so player inventory grants should target an inventory owned by the player pawn.
 
-The panel currently requires an explicit `inventory_id` for item grants. It does not guess backpack/equipment slots yet.
+The panel shows recent inventory IDs from `dune.inventories` joined to `dune.player_state`, and character detail includes `dune.admin_get_inventory_details(account_id)`. Grants still require selecting or entering an explicit `inventory_id`; the panel does not guess backpack/equipment slots yet.
 
 ## Item Grants
 

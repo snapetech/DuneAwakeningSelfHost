@@ -20,10 +20,11 @@ ROOT = pathlib.Path(os.environ.get("ADMIN_WORKSPACE", "/workspace"))
 CONFIG_ROOT = ROOT / "config"
 ENV_FILE = ROOT / ".env"
 BACKUP_ROOT = ROOT / "backups" / "admin-panel"
+AUDIT_LOG = BACKUP_ROOT / "audit.jsonl"
 DATABASE = os.environ.get("DUNE_DATABASE", "dune_sb_1_4_0_0")
 ADMIN_TOKEN = os.environ.get("DUNE_ADMIN_TOKEN", "")
 MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_MUTATIONS_ENABLED", "false").lower() == "true"
-ITEM_GRANTS_ENABLED = os.environ.get("DUNE_ADMIN_ITEM_GRANTS_ENABLED", "false").lower() == "true"
+ITEM_GRANTS_ENABLED = os.environ.get("DUNE_ADMIN_ITEM_GRANTS_ENABLED", "true").lower() == "true"
 MAX_BODY_BYTES = int(os.environ.get("DUNE_ADMIN_MAX_BODY_BYTES", "65536"))
 ALLOWED_HOSTS = {
     host.strip().lower()
@@ -48,6 +49,50 @@ SAFE_ENV_KEYS = {
     "WORLD_REGION",
     "EXTERNAL_ADDRESS",
 }
+
+AUDIT_FIELD_LIMIT = 240
+
+
+def audit_safe(value):
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, (list, tuple)):
+        return [audit_safe(item) for item in value[:20]]
+    if isinstance(value, dict):
+        return {
+            str(key): audit_safe(item)
+            for key, item in value.items()
+            if "token" not in str(key).lower() and "password" not in str(key).lower() and "secret" not in str(key).lower()
+        }
+    text = str(value)
+    if len(text) > AUDIT_FIELD_LIMIT:
+        return text[:AUDIT_FIELD_LIMIT] + "...[truncated]"
+    return text
+
+
+def audit_event(action, ok=True, **fields):
+    BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
+    event = {
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "action": action,
+        "ok": bool(ok),
+    }
+    event.update({key: audit_safe(value) for key, value in fields.items()})
+    with AUDIT_LOG.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(event, sort_keys=True, default=json_default) + "\n")
+
+
+def recent_audit_events(limit=100):
+    if not AUDIT_LOG.exists():
+        return []
+    lines = AUDIT_LOG.read_text(encoding="utf-8", errors="replace").splitlines()[-limit:]
+    events = []
+    for line in lines:
+        try:
+            events.append(json.loads(line))
+        except json.JSONDecodeError:
+            events.append({"ts": "", "action": "audit-log-parse-error", "ok": False})
+    return events
 
 
 def db_connect():
@@ -195,6 +240,9 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/ops/security":
                 self.require_token()
                 self.json(self.security_audit())
+            elif parsed.path == "/api/ops/audit":
+                self.require_token()
+                self.json({"events": recent_audit_events()})
             elif parsed.path == "/api/ops/optimization":
                 self.require_token()
                 self.json(self.optimization_signals())
@@ -243,55 +291,69 @@ class Handler(BaseHTTPRequestHandler):
                 name = parsed.path.rsplit("/", 1)[-1]
                 body = parse_body(self)
                 self.write_config(name, body.get("content", ""))
+                self.audit("config-write", config=name)
                 self.json({"ok": True})
             elif parsed.path == "/api/settings/env":
                 self.require_token()
                 body = parse_body(self)
                 updates = {key: str(body.get(key, "")) for key in SAFE_ENV_KEYS if key in body}
                 write_safe_env(updates)
+                self.audit("env-write", keys=sorted(updates))
                 self.json({"ok": True})
             elif parsed.path == "/api/admin/currency":
                 self.require_token()
                 self.require_mutations()
                 body = parse_body(self)
                 self.update_currency(body)
+                self.audit("currency-update", player_controller_id=body.get("player_controller_id"), currency_id=body.get("currency_id"), amount=body.get("amount"), mode=body.get("mode", "add"))
                 self.json({"ok": True})
             elif parsed.path == "/api/admin/xp":
                 self.require_token()
                 self.require_mutations()
                 body = parse_body(self)
                 self.update_xp(body)
+                self.audit("xp-update", player_id=body.get("player_id"), track_type=body.get("track_type"), amount=body.get("amount"), mode=body.get("mode", "add"))
                 self.json({"ok": True})
             elif parsed.path == "/api/admin/keystone":
                 self.require_token()
                 self.require_mutations()
                 body = parse_body(self)
-                self.json(self.purchase_keystone(body))
+                result = self.purchase_keystone(body)
+                self.audit("keystone-purchase", player_id=body.get("player_id"), keystone=body.get("keystone"))
+                self.json(result)
             elif parsed.path == "/api/admin/reset-keystones":
                 self.require_token()
                 self.require_mutations()
                 body = parse_body(self)
                 self.reset_keystones(body)
+                self.audit("keystone-reset", player_id=body.get("player_id"))
                 self.json({"ok": True})
             elif parsed.path == "/api/admin/unsupported":
                 self.require_token()
                 self.error(HTTPStatus.NOT_IMPLEMENTED, "gear/skill grants need mapped template IDs and table contracts before writes are safe")
             elif parsed.path == "/api/admin/backup":
                 self.require_token()
-                self.json(create_db_backup())
+                result = create_db_backup()
+                self.audit("database-backup", path=result.get("path"), bytes=result.get("bytes"))
+                self.json(result)
             elif parsed.path == "/api/admin/item":
                 self.require_token()
                 self.require_mutations()
                 self.require_item_grants()
                 body = parse_body(self)
-                self.json(self.grant_item(body))
+                result = self.grant_item(body)
+                self.audit("item-grant", inventory_id=result.get("inventory_id"), template_id=result.get("template_id"), item_id=result.get("item_id"), stack_size=result.get("stack_size"))
+                self.json(result)
             else:
                 self.error(HTTPStatus.NOT_FOUND, "not found")
         except PermissionError as exc:
+            self.audit("post-rejected", ok=False, error=str(exc))
             self.error(HTTPStatus.UNAUTHORIZED, str(exc))
         except NotImplementedError as exc:
+            self.audit("post-not-implemented", ok=False, error=str(exc))
             self.error(HTTPStatus.NOT_IMPLEMENTED, str(exc))
         except Exception as exc:
+            self.audit("post-failed", ok=False, error=str(exc))
             self.error(HTTPStatus.BAD_REQUEST, str(exc))
 
     def characters(self, term):
@@ -323,6 +385,7 @@ class Handler(BaseHTTPRequestHandler):
             "faction": query("select * from dune.player_faction where actor_id=%s order by faction_id", (pawn_id,)),
             "reputation": query("select * from dune.player_faction_reputation where actor_id=%s order by faction_id", (pawn_id,)),
             "inventories": query("select * from dune.inventories where actor_id in (%s,%s) order by id", (controller_id, pawn_id)),
+            "inventoryItems": query("select * from dune.admin_get_inventory_details(%s)", (account_id,)),
         }
 
     def admin_reference(self):
@@ -341,6 +404,16 @@ class Handler(BaseHTTPRequestHandler):
                 where template_id is not null
                 group by template_id
                 order by count desc, template_id
+                limit 200
+            """),
+            "recentInventories": query("""
+                select ps.account_id, ps.character_name, inv.id as inventory_id, inv.actor_id,
+                       inv.inventory_type, inv.max_item_count, count(i.id) as item_count
+                from dune.inventories inv
+                left join dune.items i on i.inventory_id = inv.id
+                left join dune.player_state ps on ps.player_pawn_id = inv.actor_id or ps.player_controller_id = inv.actor_id
+                group by ps.account_id, ps.character_name, inv.id, inv.actor_id, inv.inventory_type, inv.max_item_count
+                order by ps.character_name nulls last, inv.id
                 limit 200
             """),
             "keystones": query("select id, name from dune.specialization_keystones_map order by name"),
@@ -423,11 +496,12 @@ class Handler(BaseHTTPRequestHandler):
             {"name": "admin token configured", "ok": bool(ADMIN_TOKEN)},
             {"name": "admin token not placeholder", "ok": ADMIN_TOKEN not in ("", "change-me-admin-token")},
             {"name": "mutations disabled by default", "ok": not MUTATIONS_ENABLED, "value": MUTATIONS_ENABLED},
-            {"name": "item grants disabled by default", "ok": not ITEM_GRANTS_ENABLED, "value": ITEM_GRANTS_ENABLED},
+            {"name": "item grants flag", "ok": ITEM_GRANTS_ENABLED, "value": ITEM_GRANTS_ENABLED},
             {"name": "allowed hosts configured", "ok": bool(ALLOWED_HOSTS), "value": ", ".join(sorted(ALLOWED_HOSTS))},
             {"name": "request body limit", "ok": MAX_BODY_BYTES <= 262144, "value": MAX_BODY_BYTES},
             {"name": "FLS token not editable here", "ok": "FLS_SECRET" not in SAFE_ENV_KEYS},
             {"name": "backup path under ignored backups/", "ok": str(BACKUP_ROOT).startswith(str(ROOT / "backups"))},
+            {"name": "audit log under ignored backups/", "ok": str(AUDIT_LOG).startswith(str(ROOT / "backups")), "value": str(AUDIT_LOG.relative_to(ROOT))},
             {"name": "RabbitMQ secret not editable here", "ok": "RMQ_HTTP_TOKEN_AUTH_SECRET" not in SAFE_ENV_KEYS},
             {"name": "database password not editable here", "ok": "POSTGRES_DUNE_PASSWORD" not in SAFE_ENV_KEYS},
             {"name": "external address set", "ok": bool(env_values.get("EXTERNAL_ADDRESS", "")), "value": env_values.get("EXTERNAL_ADDRESS", "")},
@@ -442,6 +516,10 @@ class Handler(BaseHTTPRequestHandler):
                 "Use mutations only for deliberate admin edits after taking a backup.",
             ],
         }
+
+    def audit(self, action, ok=True, **fields):
+        peer = self.client_address[0] if self.client_address else "unknown"
+        audit_event(action, ok=ok, peer=peer, method=self.command, path=urllib.parse.urlparse(self.path).path, **fields)
 
     def optimization_signals(self):
         return {
@@ -545,11 +623,13 @@ class Handler(BaseHTTPRequestHandler):
         failures = [ts for ts in AUTH_FAILURES.get(peer, []) if now - ts < AUTH_FAILURE_WINDOW_SECONDS]
         AUTH_FAILURES[peer] = failures
         if len(failures) >= AUTH_FAILURE_LIMIT:
+            self.audit("auth-throttled", ok=False, failures=len(failures))
             raise PermissionError("too many failed admin token attempts")
         provided = self.headers.get("X-Admin-Token", "")
         if not hmac.compare_digest(provided, ADMIN_TOKEN):
             failures.append(now)
             AUTH_FAILURES[peer] = failures
+            self.audit("auth-failed", ok=False, failures=len(failures))
             raise PermissionError("invalid admin token")
         AUTH_FAILURES.pop(peer, None)
 
@@ -566,6 +646,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         host = self.headers.get("Host", "").lower()
         if host not in ALLOWED_HOSTS:
+            self.audit("host-rejected", ok=False, host=host)
             raise PermissionError("host is not allowed for admin panel")
 
     def validate_same_origin(self):
@@ -573,12 +654,14 @@ class Handler(BaseHTTPRequestHandler):
         expected = {f"http://{host}", f"https://{host}"}
         origin = self.headers.get("Origin")
         if origin and origin.rstrip("/") not in expected:
+            self.audit("origin-rejected", ok=False, origin=origin)
             raise PermissionError("cross-origin admin request rejected")
         referer = self.headers.get("Referer")
         if referer:
             parsed = urllib.parse.urlparse(referer)
             referer_origin = f"{parsed.scheme}://{parsed.netloc}".lower()
             if referer_origin not in expected:
+                self.audit("referer-rejected", ok=False, referer_origin=referer_origin)
                 raise PermissionError("cross-origin admin request rejected")
 
     def html(self, body):
@@ -700,6 +783,11 @@ function options(rows, key, fallback=''){
   if (!vals.length && fallback) vals.push(fallback);
   return vals.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
 }
+function inventoryOptions(rows){
+  const vals = rows || [];
+  if (!vals.length) return '<option value="">No inventories observed</option>';
+  return vals.map(r => `<option value="${esc(r.inventory_id)}">${esc(r.character_name || 'unowned')} | inv ${esc(r.inventory_id)} | type ${esc(r.inventory_type)} | ${esc(r.item_count)} items</option>`).join('');
+}
 function checks(rows){
   return `<table><thead><tr><th>Check</th><th>Status</th><th>Value</th></tr></thead><tbody>${(rows || []).map(r=>`<tr><td>${esc(r.name)}</td><td class="${r.ok ? 'ok' : 'dangerText'}">${r.ok ? 'OK' : 'Needs attention'}</td><td>${esc(r.value ?? '')}</td></tr>`).join('')}</tbody></table>`;
 }
@@ -733,7 +821,8 @@ async function ops(){
 }
 async function security(){
   const audit = await api('/api/ops/security');
-  view.innerHTML = `<div class="card"><h2>Security Checks</h2>${checks(audit.checks)}</div><div class="card"><h2>Notes</h2><ul>${audit.notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul></div><div class="card"><h2>Editable Env Keys</h2><pre>${esc(JSON.stringify(audit.safeEnvKeys, null, 2))}</pre></div><div class="card"><h2>Editable Config Files</h2><pre>${esc(JSON.stringify(audit.allowedConfigFiles, null, 2))}</pre></div>`;
+  const events = await api('/api/ops/audit');
+  view.innerHTML = `<div class="card"><h2>Security Checks</h2>${checks(audit.checks)}</div><div class="card"><h2>Recent Audit Events</h2>${table(events.events)}</div><div class="card"><h2>Notes</h2><ul>${audit.notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul></div><div class="card"><h2>Editable Env Keys</h2><pre>${esc(JSON.stringify(audit.safeEnvKeys, null, 2))}</pre></div><div class="card"><h2>Editable Config Files</h2><pre>${esc(JSON.stringify(audit.allowedConfigFiles, null, 2))}</pre></div>`;
 }
 async function runbook(){
   const data = await api('/api/ops/runbook');
@@ -755,7 +844,7 @@ async function pickCharacter(row){
   const p = d.player || {};
   const firstCurrency = (d.currency && d.currency[0]) || {};
   const firstTrack = (d.specialization && d.specialization[0]) || {};
-  document.getElementById('detail').innerHTML = `<div class="card"><h2>${esc(p.character_name || 'Character')}</h2><div class="grid"><div><b>Account</b><br>${esc(p.account_id)}</div><div><b>Controller</b><br>${esc(p.player_controller_id)}</div><div><b>Pawn</b><br>${esc(p.player_pawn_id)}</div><div><b>Status</b><br>${esc(p.online_status)}</div></div></div><div class="card"><h2>Quick Admin</h2><p class="dangerText">Back up first. Mutations require server-side enablement.</p><div class="grid"><label>Currency ID<input id="detailCurId" value="${esc(firstCurrency.currency_id ?? 1)}"></label><label>Amount<input id="detailCurAmount" value="1000"></label><label>Mode<select id="detailCurMode"><option>add</option><option>set</option></select></label></div><p><button class="primary" onclick="currencyFor('${esc(p.player_controller_id)}')">Apply currency</button></p><div class="grid"><label>Track type<input id="detailTrack" value="${esc(firstTrack.track_type ?? '')}"></label><label>XP amount<input id="detailXpAmount" value="1000"></label><label>Mode<select id="detailXpMode"><option>add</option><option>set</option></select></label></div><p><button class="primary" onclick="xpFor('${esc(p.player_controller_id)}')">Apply XP</button></p></div><div class="card"><h2>Raw Detail</h2><pre>${esc(JSON.stringify(d, null, 2))}</pre></div>`;
+  document.getElementById('detail').innerHTML = `<div class="card"><h2>${esc(p.character_name || 'Character')}</h2><div class="grid"><div><b>Account</b><br>${esc(p.account_id)}</div><div><b>Controller</b><br>${esc(p.player_controller_id)}</div><div><b>Pawn</b><br>${esc(p.player_pawn_id)}</div><div><b>Status</b><br>${esc(p.online_status)}</div></div></div><div class="card"><h2>Quick Admin</h2><p class="dangerText">Back up first. Mutations require server-side enablement.</p><div class="grid"><label>Currency ID<input id="detailCurId" value="${esc(firstCurrency.currency_id ?? 1)}"></label><label>Amount<input id="detailCurAmount" value="1000"></label><label>Mode<select id="detailCurMode"><option>add</option><option>set</option></select></label></div><p><button class="primary" onclick="currencyFor('${esc(p.player_controller_id)}')">Apply currency</button></p><div class="grid"><label>Track type<input id="detailTrack" value="${esc(firstTrack.track_type ?? '')}"></label><label>XP amount<input id="detailXpAmount" value="1000"></label><label>Mode<select id="detailXpMode"><option>add</option><option>set</option></select></label></div><p><button class="primary" onclick="xpFor('${esc(p.player_controller_id)}')">Apply XP</button></p></div><div class="card"><h2>Inventory Items</h2>${table(d.inventoryItems)}</div><div class="card"><h2>Raw Detail</h2><pre>${esc(JSON.stringify(d, null, 2))}</pre></div>`;
 }
 async function settings(){
   const env = await api('/api/settings/env');
@@ -775,7 +864,9 @@ async function saveCfg(){
 }
 async function mutations(){
   const ref = await api('/api/admin/reference');
-  view.innerHTML = `<div class="card"><h2>Backups</h2><p>Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button class="primary" onclick="backup()">Create DB backup</button><pre id="backupResult"></pre></div><div class="card"><h2>Currency and XP</h2><p class="dangerText">Writes require <code>DUNE_ADMIN_MUTATIONS_ENABLED=true</code> and a valid admin token. Back up first.</p><div class="grid"><label>Player controller ID<input id="pcid"></label><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button class="primary" onclick="currency()">Apply currency</button></p><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Level for set/new track<input id="xplevel" value="0"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button class="primary" onclick="xp()">Apply XP</button></p></div><div class="card"><h2>Specialization Keystones</h2><div class="grid"><label>Player/controller ID<input id="keyPlayer"></label><label>Keystone<select id="keystone">${options(ref.keystones, 'name')}</select></label></div><p><button class="primary" onclick="purchaseKeystone()">Purchase keystone</button> <button class="danger" onclick="resetKeystones()">Reset all keystones</button></p><pre id="keystoneResult"></pre></div><div class="card"><h2>Experimental Item Grant</h2><p class="dangerText">Requires <code>DUNE_ADMIN_ITEM_GRANTS_ENABLED=true</code>. Use exact server template IDs. Public databases such as <a href="${esc(ref.publicItemDatabase)}" target="_blank" rel="noreferrer">gaming.tools</a> expose useful item slugs, but verify against observed server data before bulk grants.</p><div class="grid"><label>Inventory ID<input id="grantInventory"></label><label>Template ID<input id="grantTemplate" placeholder="smg_unique_largemag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><label>Stats JSON<textarea id="grantStats">{}</textarea></label><p><button class="danger" onclick="grantItem()">Grant item</button></p><pre id="grantResult"></pre></div><div class="card"><h2>Observed Item Templates</h2><p class="muted">Read-only reference from this server's current <code>dune.items</code> rows.</p>${table(ref.observedItemTemplates)}</div><div class="card"><h2>Recipe Unlocks</h2><p class="muted">Not implemented yet. The DB exposes removal helpers and actor JSON recipe arrays, but no safe grant function has been mapped.</p><button class="danger" onclick="unsupported()">Test unsupported endpoint</button></div>`;
+  view.innerHTML = `<div class="card"><h2>Backups</h2><p>Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button class="primary" onclick="backup()">Create DB backup</button><pre id="backupResult"></pre></div><div class="card"><h2>Currency and XP</h2><p class="dangerText">Writes require <code>DUNE_ADMIN_MUTATIONS_ENABLED=true</code> and a valid admin token. Back up first.</p><div class="grid"><label>Player controller ID<input id="pcid"></label><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button class="primary" onclick="currency()">Apply currency</button></p><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Level for set/new track<input id="xplevel" value="0"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button class="primary" onclick="xp()">Apply XP</button></p></div><div class="card"><h2>Specialization Keystones</h2><div class="grid"><label>Player/controller ID<input id="keyPlayer"></label><label>Keystone<select id="keystone">${options(ref.keystones, 'name')}</select></label></div><p><button class="primary" onclick="purchaseKeystone()">Purchase keystone</button> <button class="danger" onclick="resetKeystones()">Reset all keystones</button></p><pre id="keystoneResult"></pre></div><div class="card"><h2>Experimental Item Grant</h2><p class="dangerText">Use exact server template IDs. Public databases such as <a href="${esc(ref.publicItemDatabase)}" target="_blank" rel="noreferrer">gaming.tools</a> expose useful item slugs, but verify against observed server data before bulk grants.</p><div class="grid"><label>Known inventory<select id="grantInventorySelect" onchange="grantInventory.value=this.value">${inventoryOptions(ref.recentInventories)}</select></label><label>Inventory ID<input id="grantInventory"></label><label>Template ID<input id="grantTemplate" placeholder="smg_unique_largemag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><label>Stats JSON<textarea id="grantStats">{}</textarea></label><p><button class="danger" onclick="grantItem()">Grant item</button></p><pre id="grantResult"></pre></div><div class="card"><h2>Observed Item Templates</h2><p class="muted">Read-only reference from this server's current <code>dune.items</code> rows.</p>${table(ref.observedItemTemplates)}</div><div class="card"><h2>Recent Inventories</h2>${table(ref.recentInventories)}</div><div class="card"><h2>Recipe Unlocks</h2><p class="muted">Not implemented yet. The DB exposes removal helpers and actor JSON recipe arrays, but no safe grant function has been mapped.</p><button class="danger" onclick="unsupported()">Test unsupported endpoint</button></div>`;
+  const invSelect = document.getElementById('grantInventorySelect');
+  if (invSelect && invSelect.value) document.getElementById('grantInventory').value = invSelect.value;
 }
 async function currency(){
   await api('/api/admin/currency', {method:'POST', body:JSON.stringify({player_controller_id:pcid.value,currency_id:curid.value,amount:amount.value,mode:mode.value})});

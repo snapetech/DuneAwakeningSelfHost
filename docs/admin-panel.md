@@ -23,7 +23,7 @@ Open:
 http://127.0.0.1:18080
 ```
 
-The panel uses `X-Admin-Token` for write operations. The browser stores the token in local storage when entered in the header.
+The panel uses `X-Admin-Token` for protected APIs. The browser stores the token in session storage when entered in the header.
 
 ## `duneadmin.home`
 
@@ -59,6 +59,7 @@ server {
 - Config editor for selected local config files, with backups under `backups/admin-panel`.
 - Token-gated currency and XP mutation endpoints.
 - Token-gated Postgres custom-format backup under `backups/admin-panel`.
+- Redacted JSONL audit trail for rejected requests and admin writes under `backups/admin-panel/audit.jsonl`.
 - Read-only observed item template reference for future gear grant mapping.
 - Experimental exact-template item grants behind a separate opt-in flag.
 
@@ -94,7 +95,8 @@ Back up before enabling mutations:
 - Do not expose this service to the public internet.
 - Use a long random `DUNE_ADMIN_TOKEN`.
 - Keep `DUNE_ADMIN_MUTATIONS_ENABLED=false` unless actively making admin edits.
-- Keep `DUNE_ADMIN_ITEM_GRANTS_ENABLED=false` unless deliberately testing item grants on a backed-up world.
+- `DUNE_ADMIN_ITEM_GRANTS_ENABLED` defaults to `true` in this repo; leave it enabled only on trusted LAN/VPN deployments and keep general mutations gated with `DUNE_ADMIN_MUTATIONS_ENABLED`.
 - Keep `DUNE_ADMIN_MAX_BODY_BYTES` small unless editing unusually large config files; the default is `65536`.
 - Set `DUNE_ADMIN_ALLOWED_HOSTS` to the exact hostnames used to reach the panel, for example `127.0.0.1:18080,localhost:18080,duneadmin.home`.
+- Review the Security tab's recent audit events after failed login attempts, blocked host/origin requests, config edits, backups, or mutation runs.
 - Restart affected game services after config changes when the target service does not hot-reload.
