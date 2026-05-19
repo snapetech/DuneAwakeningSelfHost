@@ -81,7 +81,7 @@ ENV_KEY_DEFINITIONS = {
     "WORLD_UNIQUE_NAME": {"group": "World", "secret": False, "restart": True, "why": "Stable internal server/world identifier used for registration and routing."},
     "WORLD_REGION": {"group": "World", "secret": False, "restart": True, "why": "Farm region/datacenter label passed into game services."},
     "EXTERNAL_ADDRESS": {"group": "Network", "secret": False, "restart": True, "why": "Address advertised to clients/FLS for game traffic."},
-    "DUNE_SERVER_LOGIN_PASSWORD": {"group": "Access", "secret": False, "restart": True, "why": "Player login password passed into game server console variables."},
+    "DUNE_SERVER_LOGIN_PASSWORD": {"group": "Access", "secret": True, "restart": True, "why": "Optional player login password passed into game server console variables."},
     "FLS_SECRET": {"group": "Secrets", "secret": True, "restart": True, "why": "Funcom Live Services host token. Required for service auth and routing."},
     "POSTGRES_SUPER_PASSWORD": {"group": "Secrets", "secret": True, "restart": True, "why": "Postgres superuser password used during database initialization."},
     "POSTGRES_DUNE_PASSWORD": {"group": "Secrets", "secret": True, "restart": True, "why": "Application database password used by game services and admin tooling."},
@@ -1374,13 +1374,13 @@ async function load(){
     document.getElementById('statusRaw').textContent = e.message;
   });
   try {
-    if (current === 'overview') return overview();
-    if (current === 'ops') return ops();
-    if (current === 'security') return security();
-    if (current === 'runbook') return runbook();
-    if (current === 'characters') return characters();
-    if (current === 'settings') return settings();
-    if (current === 'mutations') return mutations();
+    if (current === 'overview') { await overview(); return; }
+    if (current === 'ops') { await ops(); return; }
+    if (current === 'security') { await security(); return; }
+    if (current === 'runbook') { await runbook(); return; }
+    if (current === 'characters') { await characters(); return; }
+    if (current === 'settings') { await settings(); return; }
+    if (current === 'mutations') { await mutations(); return; }
   } catch (e) {
     view.innerHTML = `<div class="card"><h2>Admin Token Required</h2><p class="dangerText">${esc(e.message)}</p><p class="muted">Paste the admin token in the header and press <b>Use token</b>. The panel is reachable, but server data and write controls stay locked until the token is present.</p></div><div class="metricGrid">${metric('Endpoint', location.host)}${metric('Item Grants', 'enabled', 'ok')}${metric('Mutations', 'off', 'ok')}</div>`;
   }
