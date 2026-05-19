@@ -13,11 +13,13 @@ This repository wires that setting through `.env` as:
 DUNE_SERVER_LOGIN_PASSWORD=
 ```
 
-It is passed to every game-server container as:
+It is passed to every game-server container as a command argument:
 
 ```text
 -ini:engine:[ConsoleVariables]:Bgd.ServerLoginPassword=${DUNE_SERVER_LOGIN_PASSWORD}
 ```
+
+`scripts/run_server_safe.sh` also writes the same value into the container's generated `DuneSandbox/Saved/Config/LinuxServer/Engine.ini` before launching the server. That keeps the setting available even if the live server build reads this console variable from saved config instead of the command-line override path.
 
 ## Admin Panel
 

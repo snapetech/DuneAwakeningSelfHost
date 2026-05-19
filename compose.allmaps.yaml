@@ -1,5 +1,7 @@
 x-game-server-base: &game-server-base
   image: registry.funcom.com/funcom/self-hosting/seabass-server:${DUNE_IMAGE_TAG}
+  environment:
+    DUNE_SERVER_LOGIN_PASSWORD: ${DUNE_SERVER_LOGIN_PASSWORD:-}
   depends_on:
     - postgres
     - admin-rmq

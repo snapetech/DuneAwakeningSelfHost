@@ -3,6 +3,7 @@ set -euo pipefail
 
 main() {
   install_cert
+  install_server_login_password "$@"
 
   mkdir -p /home/dune/server/DuneSandbox/Saved/UserSettings
   chown -R dune:nogroup /home/dune/server/DuneSandbox/Saved
@@ -27,6 +28,44 @@ main() {
   args+=("-IGWBindAddress=$pod_ip")
 
   exec runuser -u dune -- ./DuneSandboxServer.sh "${args[@]}"
+}
+
+install_server_login_password() {
+  local password="${DUNE_SERVER_LOGIN_PASSWORD:-}"
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      *Bgd.ServerLoginPassword=*)
+        password="${arg#*Bgd.ServerLoginPassword=}"
+        password="${password%\"}"
+        password="${password#\"}"
+        ;;
+    esac
+  done
+  [ -n "$password" ] || return 0
+
+  local config_dir=/home/dune/server/DuneSandbox/Saved/Config/LinuxServer
+  local engine_ini="${config_dir}/Engine.ini"
+  local quoted_password
+  quoted_password="$(engine_ini_quote "$password")"
+  mkdir -p "$config_dir"
+
+  if [ -f "$engine_ini" ] && grep -q '^\[ConsoleVariables\]' "$engine_ini"; then
+    if grep -q '^Bgd\.ServerLoginPassword=' "$engine_ini"; then
+      sed -i -E 's/^Bgd\.ServerLoginPassword=.*/Bgd.ServerLoginPassword="'"${quoted_password}"'"/' "$engine_ini"
+    else
+      sed -i '/^\[ConsoleVariables\]/a Bgd.ServerLoginPassword="'"${quoted_password}"'"' "$engine_ini"
+    fi
+  else
+    {
+      printf '[ConsoleVariables]\n'
+      printf 'Bgd.ServerLoginPassword="%s"\n' "$quoted_password"
+    } >> "$engine_ini"
+  fi
+}
+
+engine_ini_quote() {
+  printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/[&/]/\\&/g'
 }
 
 install_cert() {
