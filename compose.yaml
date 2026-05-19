@@ -555,16 +555,6 @@ services:
       DUNE_ADMIN_ALLOWED_HOSTS: ${DUNE_ADMIN_ALLOWED_HOSTS:-127.0.0.1:18080,localhost:18080,duneadmin.home}
     command:
       - /workspace/admin/admin_panel.py
-    read_only: true
-    init: true
-    mem_limit: 512m
-    pids_limit: 128
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    tmpfs:
-      - /tmp:size=32m,noexec,nosuid,nodev
     volumes:
       - ./admin:/workspace/admin:ro
       - ./config:/workspace/config
@@ -574,6 +564,9 @@ services:
       - "127.0.0.1:18080:8080"
     depends_on:
       - postgres
+    networks:
+      default:
+        ipv4_address: 172.31.240.40
     healthcheck:
       test: ["CMD-SHELL", "python - <<'PY'\nimport urllib.request\nreq=urllib.request.Request('http://127.0.0.1:8080/api/status', headers={'Host':'127.0.0.1:18080'})\nurllib.request.urlopen(req, timeout=3).read()\nPY"]
       interval: 30s

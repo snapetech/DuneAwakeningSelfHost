@@ -550,7 +550,7 @@ class Handler(BaseHTTPRequestHandler):
         if position_index < 0:
             raise ValueError("position_index must be >= 0")
         max_count = inventory.get("max_item_count")
-        if max_count is not None and position_index >= max_count:
+        if max_count is not None and max_count >= 0 and position_index >= max_count:
             raise ValueError(f"position_index {position_index} is outside inventory capacity {max_count}")
         if query("select 1 from dune.items where inventory_id=%s and position_index=%s", (inventory_id, position_index)):
             raise ValueError("target inventory position is already occupied")
