@@ -12,9 +12,21 @@ The official self-hosted package is Kubernetes-oriented. This repository transla
 - `director`: battlegroup director service.
 - `text-router`: text/auth routing service.
 - `gateway`: gateway service.
-- `survival`: experimental direct launch of the game server image.
+- `survival`: `Survival_1`, the Hagga Basin starting map.
+- `overmap`: `Overmap`, the overland travel map.
+- `arrakeen`: `SH_Arrakeen`, the Arrakeen social hub.
+- `harko-village`: `SH_HarkoVillage`, the Harko Village social hub.
+- `testing-hephaestus`: `CB_Story_Hephaestus`.
+- `testing-carthag`: `CB_Story_Ecolab_Carthag`.
+- `testing-waterfat`: `CB_Story_WaterFatManor`.
+- `deep-desert`: `DeepDesert_1`.
+- `proces-verbal`: `Story_ProcesVerbal`.
 
-The `survival` service uses `scripts/run_server_safe.sh` instead of the image's default `/home/dune/run.sh`. The local launcher preserves command arguments containing spaces, prepares the saved/config symlink expected by Unreal, appends `-IGWBindAddress=$POD_IP`, and then starts `DuneSandboxServer.sh` as the `dune` user.
+The game-server services use `scripts/run_server_safe.sh` instead of the image's default `/home/dune/run.sh`. The local launcher preserves command arguments containing spaces, prepares the saved/config symlink expected by Unreal, appends `-IGWBindAddress=$POD_IP`, and then starts `DuneSandboxServer.sh` as the `dune` user.
+
+## Partition Layout
+
+The expanded standing farm uses one partition per launched map. See `docs/full-farm.md` for the full table of service names, map names, partition ids, and ports.
 
 ## Local State
 
@@ -28,10 +40,12 @@ Runtime state is intentionally outside git:
 
 ## Network
 
-Compose uses a fixed `172.31.240.0/24` subnet so the experimental game server can use a stable container IP for `POD_IP` and `-MultiHome` behavior.
+Compose uses a fixed `172.31.240.0/24` subnet so each game-server container can use a stable container IP for `POD_IP` and `-MultiHome` behavior.
 
-## Current Blockers
+Only RabbitMQ and Postgres debug/admin ports bind to `127.0.0.1`. Game UDP ports bind on the host so the router can forward them.
 
-- Full service registration depends on a valid `FLS_SECRET`.
-- Direct game-server launch still needs parity with the operator-generated map arguments.
-- Public UDP port behavior needs verification once the service layer registers cleanly.
+## Validation Boundary
+
+- Server-side full-farm registration is proven when status reports `farm_ready_alive=9 active_servers=9 partitions=9`.
+- Client login and travel between maps still need live game-client validation.
+- The live token in `.env` is sensitive and should be rotated if it was exposed outside the host.

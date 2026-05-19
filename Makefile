@@ -1,18 +1,32 @@
 COMPOSE ?= docker compose
 ENV_FILE ?= .env.example
 
-.PHONY: validate compose-config secret-scan list-publishable preflight
+.PHONY: validate compose-config secret-scan list-publishable preflight status recover-survival full-world-partitions verify-local-state-ignored
 
-validate: compose-config secret-scan
+validate: compose-config secret-scan verify-local-state-ignored
 
 preflight:
 	./scripts/preflight.sh
+
+status:
+	./scripts/status.sh $(ENV_FILE)
+
+recover-survival:
+	./scripts/recover-survival.sh $(ENV_FILE)
+
+full-world-partitions:
+	./scripts/full-world-partitions.sh $(ENV_FILE)
 
 compose-config:
 	$(COMPOSE) --env-file $(ENV_FILE) config --quiet
 
 secret-scan:
-	rg -n --pcre2 "(gho_|FLS_SECRET=.+|ServiceAuthToken=[A-Za-z0-9_.-]+|ServerLoginPasswordSecret=\"(?!replace)|UsernameServerLoginSecret=\"(?!replace)|BEGIN .*PRIVATE KEY|PRIVATE KEY)" . --glob '!data/**' --glob '!config/tls/**' --glob '!.env' --glob '!Makefile' --glob '!.github/workflows/validate.yml' && exit 1 || true
+	rg -n --pcre2 "(gho_|FLS_SECRET=.+|ServiceAuthToken=[A-Za-z0-9_.-]+|ServerLoginPasswordSecret=\"(?!replace)|UsernameServerLoginSecret=\"(?!replace)|BEGIN .*PRIVATE KEY|PRIVATE KEY)" . --glob '!data/**' --glob '!captures/**' --glob '!backups/**' --glob '!config/tls/**' --glob '!.env' --glob '!Makefile' --glob '!.github/workflows/validate.yml' && exit 1 || true
 
 list-publishable:
-	find . -maxdepth 3 -type f -not -path './.git/*' -not -path './data/*' -not -path './config/tls/*' -not -name '.env' | sort
+	find . -maxdepth 3 \( -path './.git' -o -path './data' -o -path './captures' -o -path './backups' -o -path './config/tls' \) -prune -o -type f -not -name '.env' -print | sort
+
+verify-local-state-ignored:
+	@for path in backups/example captures/example data/example config/tls/example; do \
+		git check-ignore -q "$$path" || exit 1; \
+	done

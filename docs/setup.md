@@ -53,16 +53,51 @@ docker compose --env-file .env up -d rmq-auth-shim text-router gateway director
 ./scripts/status.sh
 ```
 
-## 7. Experimental Game Server
+## 7. Single Survival Server
 
 ```bash
 docker compose --env-file .env up -d survival
 ./scripts/status.sh
 ```
 
-The direct game-server launch is still experimental. The remaining work is reproducing the exact map launch/runtime behavior normally synthesized by Funcom's Kubernetes operator.
+This starts only the `Survival_1` map. It is useful for proving the core service layer, token, RabbitMQ auth, and public game address before expanding the farm.
 
-## 8. Admin Panel
+For a one-server test world, prune the unused generated `Survival_1` dimensions:
+
+```bash
+./scripts/single-survival-partition.sh .env
+```
+
+## 8. Expanded Standing Farm
+
+The official Kubernetes template defines several single-dimension travel targets, and the Kubernetes operator normally starts some of them on demand. The Compose layout keeps one container for each target running so Director can assign every partition without Kubernetes.
+
+Prepare the matching partition rows:
+
+```bash
+./scripts/full-world-partitions.sh .env
+```
+
+Start the full standing farm:
+
+```bash
+docker compose --env-file .env up -d \
+  survival overmap arrakeen harko-village \
+  testing-hephaestus testing-carthag testing-waterfat \
+  deep-desert proces-verbal
+
+./scripts/status.sh .env
+```
+
+Expected server-side status:
+
+```text
+farm_ready_alive=9 active_servers=9 partitions=9
+```
+
+This proves server-side registration and partition assignment. It does not by itself prove client travel; test login and each travel path from the live game client.
+
+## 9. Admin Panel
 
 ```bash
 docker compose --env-file .env up -d admin-panel

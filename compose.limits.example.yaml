@@ -1,0 +1,34 @@
+# Optional local resource guardrails.
+#
+# Usage:
+#   docker compose --env-file .env -f compose.yaml -f compose.limits.example.yaml up -d
+#
+# These limits are deliberately conservative. They are meant to make runaway
+# behavior visible and keep small hosts from being consumed, not to prove minimum
+# viable production sizing.
+
+services:
+  postgres:
+    mem_limit: 1g
+
+  admin-rmq:
+    mem_limit: 512m
+
+  game-rmq:
+    mem_limit: 512m
+
+  rmq-auth-shim:
+    mem_limit: 128m
+
+  director:
+    mem_limit: 512m
+
+  text-router:
+    mem_limit: 256m
+
+  gateway:
+    mem_limit: 256m
+
+  survival:
+    # Matches the official Survival_1 memory limit from the Funcom workload.
+    mem_limit: 12g

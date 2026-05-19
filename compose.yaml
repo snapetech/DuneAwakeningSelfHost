@@ -1,4 +1,29 @@
+x-game-server-base: &game-server-base
+  image: registry.funcom.com/funcom/self-hosting/seabass-server:${DUNE_IMAGE_TAG}
+  depends_on:
+    - postgres
+    - admin-rmq
+    - game-rmq
+
+x-game-server-command:
+  run: &cmd-run /workspace/scripts/run_server_safe.sh
+  farm-region: &cmd-farm-region -FarmRegion=${WORLD_REGION}
+  fls-token: &cmd-fls-token -ini:engine:[FuncomLiveServices]:ServiceAuthToken=${FLS_SECRET}
+  server-name: &cmd-server-name -ini:engine:[OnlineSubsystem]:ServerName=${WORLD_UNIQUE_NAME}
+  datacenter: &cmd-datacenter -ini:engine:[OnlineSubsystem]:DatacenterId=${WORLD_REGION}
+  db-host: &cmd-db-host -ini:game:[DuneDatabaseInterfacePSQL]:DatabaseHost=postgres:5432
+  db-user: &cmd-db-user -ini:game:[DuneDatabaseInterfacePSQL]:DatabaseUser=dune
+  db-password: &cmd-db-password -ini:game:[DuneDatabaseInterfacePSQL]:DatabasePassword=${POSTGRES_DUNE_PASSWORD}
+  rmq-tls: &cmd-rmq-tls -RMQGameTlsEnabled=true
+  external-address: &cmd-external-address -ExternalAddress=${EXTERNAL_ADDRESS}
+  rmq-game-host: &cmd-rmq-game-host --RMQGameHostname=game-rmq
+  rmq-game-port: &cmd-rmq-game-port --RMQGamePort=5672
+  rmq-admin-host: &cmd-rmq-admin-host --RMQAdminHostname=admin-rmq
+  rmq-admin-port: &cmd-rmq-admin-port --RMQAdminPort=5672
+  multihome: &cmd-multihome -MultiHome=$$POD_IP
+
 services:
+
   postgres:
     image: registry.funcom.com/funcom/self-hosting/igw-postgres:17.4-alpine-fc-13
     environment:
@@ -10,6 +35,12 @@ services:
       - ./data/postgres:/var/lib/postgresql/data
     ports:
       - "127.0.0.1:15431:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dune -d dune || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
   admin-rmq:
     image: registry.funcom.com/funcom/self-hosting/seabass-server-rabbitmq:${DUNE_IMAGE_TAG}
@@ -25,6 +56,12 @@ services:
     ports:
       - "127.0.0.1:15672:15672"
       - "127.0.0.1:5673:5672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
   game-rmq:
     image: registry.funcom.com/funcom/self-hosting/seabass-server-rabbitmq:${DUNE_IMAGE_TAG}
@@ -43,6 +80,12 @@ services:
     ports:
       - "127.0.0.1:15673:15672"
       - "127.0.0.1:31982:5672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
   rmq-auth-shim:
     image: registry.funcom.com/funcom/self-hosting/seabass-server-db-utils:${DUNE_IMAGE_TAG}
@@ -173,23 +216,23 @@ services:
       - game-rmq
 
   survival:
-    image: registry.funcom.com/funcom/self-hosting/seabass-server:${DUNE_IMAGE_TAG}
+    <<: *game-server-base
     command:
-      - /workspace/scripts/run_server_safe.sh
-      - -FarmRegion=${WORLD_REGION}
-      - -ini:engine:[FuncomLiveServices]:ServiceAuthToken=${FLS_SECRET}
-      - -ini:engine:[OnlineSubsystem]:ServerName=${WORLD_UNIQUE_NAME}
-      - -ini:engine:[OnlineSubsystem]:DatacenterId=${WORLD_REGION}
-      - -ini:game:[DuneDatabaseInterfacePSQL]:DatabaseHost=postgres:5432
-      - -ini:game:[DuneDatabaseInterfacePSQL]:DatabaseUser=dune
-      - -ini:game:[DuneDatabaseInterfacePSQL]:DatabasePassword=${POSTGRES_DUNE_PASSWORD}
-      - -RMQGameTlsEnabled=true
-      - -ExternalAddress=${EXTERNAL_ADDRESS}
-      - --RMQGameHostname=game-rmq
-      - --RMQGamePort=5672
-      - --RMQAdminHostname=admin-rmq
-      - --RMQAdminPort=5672
-      - -MultiHome=$$POD_IP
+      - *cmd-run
+      - *cmd-farm-region
+      - *cmd-fls-token
+      - *cmd-server-name
+      - *cmd-datacenter
+      - *cmd-db-host
+      - *cmd-db-user
+      - *cmd-db-password
+      - *cmd-rmq-tls
+      - *cmd-external-address
+      - *cmd-rmq-game-host
+      - *cmd-rmq-game-port
+      - *cmd-rmq-admin-host
+      - *cmd-rmq-admin-port
+      - *cmd-multihome
       - -PartitionIndex=1
     environment:
       POD_IP: 172.31.240.10
@@ -201,13 +244,297 @@ services:
     volumes:
       - .:/workspace:ro
       - ./data/server-saved:/home/dune/server/DuneSandbox/Saved
-    depends_on:
-      - postgres
-      - admin-rmq
-      - game-rmq
     networks:
       default:
         ipv4_address: 172.31.240.10
+
+  overmap:
+    <<: *game-server-base
+    command:
+      - *cmd-run
+      - *cmd-farm-region
+      - *cmd-fls-token
+      - *cmd-server-name
+      - *cmd-datacenter
+      - *cmd-db-host
+      - *cmd-db-user
+      - *cmd-db-password
+      - *cmd-rmq-tls
+      - *cmd-external-address
+      - *cmd-rmq-game-host
+      - *cmd-rmq-game-port
+      - *cmd-rmq-admin-host
+      - *cmd-rmq-admin-port
+      - *cmd-multihome
+      - /Game/Dune/Systems/Overmap/Overmap.Overmap
+      - -Port=7778
+      - -IGWPort=7889
+      - -PartitionIndex=2
+    environment:
+      POD_IP: 172.31.240.11
+      NODE_NAME: dune-local
+      BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
+    ports:
+      - "7778:7778/udp"
+      - "7889:7889/udp"
+    volumes:
+      - .:/workspace:ro
+      - ./data/server-saved/overmap:/home/dune/server/DuneSandbox/Saved
+    networks:
+      default:
+        ipv4_address: 172.31.240.11
+
+  arrakeen:
+    <<: *game-server-base
+    command:
+      - *cmd-run
+      - *cmd-farm-region
+      - *cmd-fls-token
+      - *cmd-server-name
+      - *cmd-datacenter
+      - *cmd-db-host
+      - *cmd-db-user
+      - *cmd-db-password
+      - *cmd-rmq-tls
+      - *cmd-external-address
+      - *cmd-rmq-game-host
+      - *cmd-rmq-game-port
+      - *cmd-rmq-admin-host
+      - *cmd-rmq-admin-port
+      - *cmd-multihome
+      - /Game/Dune/Maps/SocialHubs/Arrakeen/SH_Arrakeen.SH_Arrakeen
+      - -Port=7779
+      - -IGWPort=7890
+      - -PartitionIndex=3
+    environment:
+      POD_IP: 172.31.240.12
+      NODE_NAME: dune-local
+      BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
+    ports:
+      - "7779:7779/udp"
+      - "7890:7890/udp"
+    volumes:
+      - .:/workspace:ro
+      - ./data/server-saved/arrakeen:/home/dune/server/DuneSandbox/Saved
+    networks:
+      default:
+        ipv4_address: 172.31.240.12
+
+  harko-village:
+    <<: *game-server-base
+    command:
+      - *cmd-run
+      - *cmd-farm-region
+      - *cmd-fls-token
+      - *cmd-server-name
+      - *cmd-datacenter
+      - *cmd-db-host
+      - *cmd-db-user
+      - *cmd-db-password
+      - *cmd-rmq-tls
+      - *cmd-external-address
+      - *cmd-rmq-game-host
+      - *cmd-rmq-game-port
+      - *cmd-rmq-admin-host
+      - *cmd-rmq-admin-port
+      - *cmd-multihome
+      - /Game/Dune/Maps/SocialHubs/HarkoVillage/SH_HarkoVillage.SH_HarkoVillage
+      - -Port=7780
+      - -IGWPort=7891
+      - -PartitionIndex=4
+    environment:
+      POD_IP: 172.31.240.13
+      NODE_NAME: dune-local
+      BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
+    ports:
+      - "7780:7780/udp"
+      - "7891:7891/udp"
+    volumes:
+      - .:/workspace:ro
+      - ./data/server-saved/harko-village:/home/dune/server/DuneSandbox/Saved
+    networks:
+      default:
+        ipv4_address: 172.31.240.13
+
+  testing-hephaestus:
+    <<: *game-server-base
+    command:
+      - *cmd-run
+      - *cmd-farm-region
+      - *cmd-fls-token
+      - *cmd-server-name
+      - *cmd-datacenter
+      - *cmd-db-host
+      - *cmd-db-user
+      - *cmd-db-password
+      - *cmd-rmq-tls
+      - *cmd-external-address
+      - *cmd-rmq-game-host
+      - *cmd-rmq-game-port
+      - *cmd-rmq-admin-host
+      - *cmd-rmq-admin-port
+      - *cmd-multihome
+      - /Game/Dune/Maps/OverlandMaps_Story/WreckOfTheHephaestus/CB_Story_Hephaestus/CB_Story_Hephaestus.CB_Story_Hephaestus
+      - -Port=7781
+      - -IGWPort=7892
+      - -PartitionIndex=5
+    environment:
+      POD_IP: 172.31.240.14
+      NODE_NAME: dune-local
+      BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
+    ports:
+      - "7781:7781/udp"
+      - "7892:7892/udp"
+    volumes:
+      - .:/workspace:ro
+      - ./data/server-saved/testing-hephaestus:/home/dune/server/DuneSandbox/Saved
+    networks:
+      default:
+        ipv4_address: 172.31.240.14
+
+  testing-carthag:
+    <<: *game-server-base
+    command:
+      - *cmd-run
+      - *cmd-farm-region
+      - *cmd-fls-token
+      - *cmd-server-name
+      - *cmd-datacenter
+      - *cmd-db-host
+      - *cmd-db-user
+      - *cmd-db-password
+      - *cmd-rmq-tls
+      - *cmd-external-address
+      - *cmd-rmq-game-host
+      - *cmd-rmq-game-port
+      - *cmd-rmq-admin-host
+      - *cmd-rmq-admin-port
+      - *cmd-multihome
+      - /Game/Dune/Maps/OverlandMaps_Story/BeneathOldCarthag/CB_Story_Ecolab_Carthag/CB_Story_Ecolab_Carthag.CB_Story_Ecolab_Carthag
+      - -Port=7782
+      - -IGWPort=7893
+      - -PartitionIndex=6
+    environment:
+      POD_IP: 172.31.240.15
+      NODE_NAME: dune-local
+      BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
+    ports:
+      - "7782:7782/udp"
+      - "7893:7893/udp"
+    volumes:
+      - .:/workspace:ro
+      - ./data/server-saved/testing-carthag:/home/dune/server/DuneSandbox/Saved
+    networks:
+      default:
+        ipv4_address: 172.31.240.15
+
+  testing-waterfat:
+    <<: *game-server-base
+    command:
+      - *cmd-run
+      - *cmd-farm-region
+      - *cmd-fls-token
+      - *cmd-server-name
+      - *cmd-datacenter
+      - *cmd-db-host
+      - *cmd-db-user
+      - *cmd-db-password
+      - *cmd-rmq-tls
+      - *cmd-external-address
+      - *cmd-rmq-game-host
+      - *cmd-rmq-game-port
+      - *cmd-rmq-admin-host
+      - *cmd-rmq-admin-port
+      - *cmd-multihome
+      - /Game/Dune/Maps/OverlandMaps_Story/WaterFatManor/CB_Story_WaterFatManor.CB_Story_WaterFatManor
+      - -Port=7783
+      - -IGWPort=7894
+      - -PartitionIndex=7
+    environment:
+      POD_IP: 172.31.240.16
+      NODE_NAME: dune-local
+      BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
+    ports:
+      - "7783:7783/udp"
+      - "7894:7894/udp"
+    volumes:
+      - .:/workspace:ro
+      - ./data/server-saved/testing-waterfat:/home/dune/server/DuneSandbox/Saved
+    networks:
+      default:
+        ipv4_address: 172.31.240.16
+
+  deep-desert:
+    <<: *game-server-base
+    command:
+      - *cmd-run
+      - *cmd-farm-region
+      - *cmd-fls-token
+      - *cmd-server-name
+      - *cmd-datacenter
+      - *cmd-db-host
+      - *cmd-db-user
+      - *cmd-db-password
+      - *cmd-rmq-tls
+      - *cmd-external-address
+      - *cmd-rmq-game-host
+      - *cmd-rmq-game-port
+      - *cmd-rmq-admin-host
+      - *cmd-rmq-admin-port
+      - *cmd-multihome
+      - /Game/Dune/Maps/Arrakis/DeepDesert_1/DeepDesert_1.DeepDesert_1
+      - -Port=7784
+      - -IGWPort=7895
+      - -PartitionIndex=8
+    environment:
+      POD_IP: 172.31.240.17
+      NODE_NAME: dune-local
+      BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
+    ports:
+      - "7784:7784/udp"
+      - "7895:7895/udp"
+    volumes:
+      - .:/workspace:ro
+      - ./data/server-saved/deep-desert:/home/dune/server/DuneSandbox/Saved
+    networks:
+      default:
+        ipv4_address: 172.31.240.17
+
+  proces-verbal:
+    <<: *game-server-base
+    command:
+      - *cmd-run
+      - *cmd-farm-region
+      - *cmd-fls-token
+      - *cmd-server-name
+      - *cmd-datacenter
+      - *cmd-db-host
+      - *cmd-db-user
+      - *cmd-db-password
+      - *cmd-rmq-tls
+      - *cmd-external-address
+      - *cmd-rmq-game-host
+      - *cmd-rmq-game-port
+      - *cmd-rmq-admin-host
+      - *cmd-rmq-admin-port
+      - *cmd-multihome
+      - /Game/Dune/Maps/MainStory_Chapter2/ProcesVerbal/ProcesVerbalMap/Story_ProcesVerbal.Story_ProcesVerbal
+      - -Port=7785
+      - -IGWPort=7896
+      - -PartitionIndex=9
+    environment:
+      POD_IP: 172.31.240.18
+      NODE_NAME: dune-local
+      BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
+    ports:
+      - "7785:7785/udp"
+      - "7896:7896/udp"
+    volumes:
+      - .:/workspace:ro
+      - ./data/server-saved/proces-verbal:/home/dune/server/DuneSandbox/Saved
+    networks:
+      default:
+        ipv4_address: 172.31.240.18
 
   admin-panel:
     image: registry.funcom.com/funcom/self-hosting/seabass-server-db-utils:${DUNE_IMAGE_TAG}

@@ -78,10 +78,61 @@ This deletes local server state.
 
 Check:
 
-- Router/firewall forwards only `7777/udp` and `7888/udp`.
+- Router/firewall forwards `7777/udp` for the single `Survival_1` layout, or `7777-7785/udp` for the expanded standing farm.
 - `EXTERNAL_ADDRESS` matches the address clients should use.
 - `./scripts/status.sh` shows `farm_state.ready` and non-empty game/IGW addresses.
+- `./scripts/status.sh` shows game and admin RabbitMQ `sg.<world>.<server>.game/admin` connections.
 - RabbitMQ and Postgres ports remain local-only.
+
+The game can log a warning that binding directly to the public `EXTERNAL_ADDRESS` failed. In this Compose layout that is expected when the public address belongs to the router rather than the container. The important checks are that Docker publishes the relevant game UDP port, the game reports `listening for Clients on <EXTERNAL_ADDRESS>:<port>`, and Director/Gateway declare that same address to FLS.
+
+## Survival Crashes After Database Restart
+
+Symptoms:
+
+```text
+PQconsumeInput failed: server closed the connection unexpectedly
+Fatal error: ... PSqlProcessingThread.cpp
+Unhandled Exception: SIGSEGV
+```
+
+The current game-server process does not reliably survive a lost Postgres connection. Avoid restarting Postgres while players are online. If it happens, recover by restarting the game server after dependencies are healthy:
+
+```bash
+./scripts/recover-survival.sh .env
+```
+
+The script does not wipe state. It restarts dependencies if needed, waits for Postgres and RabbitMQ health checks, force-recreates `survival`, and then prints status.
+
+## Director Repeats Unassigned Partition Warnings
+
+Symptoms:
+
+```text
+Battlegroup, consuming 4 partitions from database.
+Error:Partition's ServerId is null or empty!
+```
+
+The bundled `initialize_partitions_basic_survival_1()` function creates four `Survival_1` dimensions. A one-container Compose test world only launches dimension 0, so dimensions 1-3 remain unassigned and Director keeps trying to process them.
+
+For a one-server test world, run:
+
+```bash
+./scripts/single-survival-partition.sh
+```
+
+The script backs up `world_partition` state under `backups/partition-surgery/`, deletes only unassigned `Survival_1` dimensions greater than zero, and restarts Director plus Survival. Afterward, status should show one `world_partition` row and the game log should say `Server farm is READY (1 server(s))`.
+
+## FLS Autologin Warning
+
+Symptoms:
+
+```text
+LogGameSession: Warning: Autologin attempt failed, unable to register server!
+LogFuncomLiveServices: Error: Setting 'GgwpApiKey' was not found
+```
+
+The current server image does not ship values for several optional `FuncomLiveServices_retail` keys. Do not invent these values locally. Treat the warning as non-fatal when Director FLS calls succeed, the gateway sees the server come up, and `Battlegroups_DeclareBattlegroupUpdates` includes the public game address.
 
 ## World Region With Spaces Breaks Startup
 

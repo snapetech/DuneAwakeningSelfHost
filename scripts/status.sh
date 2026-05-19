@@ -2,7 +2,13 @@
 set -euo pipefail
 
 env_file="${1:-.env}"
-compose=(docker compose --env-file "$env_file")
+container_runtime="${CONTAINER_RUNTIME:-docker}"
+compose=("$container_runtime" compose)
+IFS=':' read -ra compose_files <<< "${COMPOSE_FILES:-compose.yaml}"
+for compose_file in "${compose_files[@]}"; do
+  compose+=(-f "$compose_file")
+done
+compose+=(--env-file "$env_file")
 db=dune_sb_1_4_0_0
 
 redact() {
@@ -11,11 +17,51 @@ redact() {
     -e 's/(ServiceAuthToken: )[A-Za-z0-9_.-]+/\1[redacted]/g' \
     -e 's/(DatabasePassword=)[^ ]+/\1[redacted]/g' \
     -e 's/(Password=)[^;]+/\1[redacted]/g' \
-    -e 's#(sg\.sh-[^/ ]+/)[A-Za-z0-9+/=_-]+#\1[redacted]#g'
+    -e 's#(sg\.sh-[^/ ]+/)[A-Za-z0-9+/=_-]+#\1[redacted]#g' \
+    -e 's#(sg|bgd|tr)\.sh-[A-Za-z0-9_.+/-]+#\1.sh-[redacted]#g' \
+    -e 's/sh-[0-9a-fA-F]{16}-[A-Za-z0-9]+/sh-[redacted]/g'
 }
 
 echo "== containers =="
 "${compose[@]}" ps
+
+container_ids="$("${compose[@]}" ps -q 2>/dev/null || true)"
+
+if [[ -n "$container_ids" ]]; then
+  echo
+  echo "== resource snapshot =="
+  "$container_runtime" stats --no-stream --format \
+    'table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}\t{{.BlockIO}}\t{{.PIDs}}' \
+    $container_ids \
+    || true
+
+  echo
+  echo "== restart counts =="
+  "$container_runtime" inspect \
+    --format '{{ index .Config.Labels "com.docker.compose.service" }} restart_count={{ .RestartCount }} oom_killed={{ .State.OOMKilled }} status={{ .State.Status }}' \
+    $container_ids \
+    | sort \
+    || true
+fi
+
+echo
+echo "== health verdict =="
+farm_ready="$("${compose[@]}" exec -T postgres psql -U dune -d "$db" -Atc "select count(*) from dune.farm_state where ready and alive;" 2>/dev/null || printf '0')"
+active_servers="$("${compose[@]}" exec -T postgres psql -U dune -d "$db" -Atc "select count(*) from dune.active_server_ids;" 2>/dev/null || printf '0')"
+partitions="$("${compose[@]}" exec -T postgres psql -U dune -d "$db" -Atc "select count(*) from dune.world_partition;" 2>/dev/null || printf '0')"
+game_sg_connections="$("${compose[@]}" exec -T game-rmq rabbitmqctl list_connections user 2>/dev/null | rg -c '^sg\.' || true)"
+admin_sg_connections="$("${compose[@]}" exec -T admin-rmq rabbitmqctl list_connections user 2>/dev/null | rg -c '^sg\.' || true)"
+
+if [[ "$farm_ready" -gt 0 && "$farm_ready" -eq "$partitions" && "$active_servers" -eq "$farm_ready" && "$game_sg_connections" -ge "$farm_ready" ]]; then
+  echo "OK: all partitions have ready/alive farm rows, active server ids exist, and game RMQ service users are connected."
+else
+  echo "WARN: expected readiness signals are incomplete."
+fi
+if [[ "$admin_sg_connections" -lt "$farm_ready" ]]; then
+  echo "NOTE: admin RMQ service-user connections are lower than farm-ready rows. This is expected for some warm-pool/on-demand maps, but investigate if admin mutations or heartbeats fail."
+fi
+printf 'farm_ready_alive=%s active_servers=%s partitions=%s game_sg_connections=%s admin_sg_connections=%s\n' \
+  "$farm_ready" "$active_servers" "$partitions" "$game_sg_connections" "$admin_sg_connections"
 
 echo
 echo "== database state =="
@@ -31,15 +77,29 @@ order by server_id;
 select partition_id,server_id,map,dimension_index,label
 from dune.world_partition
 order by partition_id;
-"
+
+select
+  coalesce((select sum(connected_players) from dune.farm_state), 0) as connected_players_reported,
+  (select count(*) from dune.get_online_player_controller_ids_on_farm()) as online_controller_ids,
+  (select count(*) from dune.get_all_online_or_recently_disconnected_player_online_state()) as online_or_recently_disconnected,
+  (select count(*) from dune.get_player_online_state_within_grace_period_for_each_server()) as grace_period_entries;
+" || true
 
 echo
 echo "== rabbitmq game connections =="
-"${compose[@]}" exec -T game-rmq rabbitmqctl list_connections name user peer_host state 2>/dev/null || true
+"${compose[@]}" exec -T game-rmq rabbitmqctl list_connections name user peer_host state 2>/dev/null \
+  | redact \
+  || true
+
+echo
+echo "== rabbitmq admin connections =="
+"${compose[@]}" exec -T admin-rmq rabbitmqctl list_connections name user peer_host state 2>/dev/null \
+  | redact \
+  || true
 
 echo
 echo "== recent high-signal logs =="
-"${compose[@]}" logs --since=5m survival director text-router gateway game-rmq 2>&1 \
+"${compose[@]}" logs --since=5m --tail=800 2>&1 \
   | redact \
   | rg -n "Autologin|ACCESS_REFUSED|Invalid token|PLAIN login refused|LogRmq|Director_InitializeDirector|Battlegroups_|Population|Heartbeat|Server .*listening|FarmHealth|partition|ready|error|failed|Exception" -i \
   || true

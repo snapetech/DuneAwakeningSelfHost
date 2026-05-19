@@ -95,7 +95,7 @@ Back up before enabling mutations:
 - Do not expose this service to the public internet.
 - Use a long random `DUNE_ADMIN_TOKEN`.
 - Keep `DUNE_ADMIN_MUTATIONS_ENABLED=false` unless actively making admin edits.
-- `DUNE_ADMIN_ITEM_GRANTS_ENABLED` defaults to `true` in this repo; leave it enabled only on trusted LAN/VPN deployments and keep general mutations gated with `DUNE_ADMIN_MUTATIONS_ENABLED`.
+- `DUNE_ADMIN_ITEM_GRANTS_ENABLED` defaults to `true` in this repo so item tooling is visible and ready; keep general writes gated with `DUNE_ADMIN_MUTATIONS_ENABLED`.
 - Keep `DUNE_ADMIN_MAX_BODY_BYTES` small unless editing unusually large config files; the default is `65536`.
 - Keep `DUNE_ADMIN_AUDIT_MAX_BYTES` bounded; the default rotates the JSONL audit log at 5 MiB.
 - Set `DUNE_ADMIN_ALLOWED_HOSTS` to the exact hostnames used to reach the panel, for example `127.0.0.1:18080,localhost:18080,duneadmin.home`.
