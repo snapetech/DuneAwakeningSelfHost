@@ -1372,6 +1372,7 @@ INDEX = r"""<!doctype html>
 let token = sessionStorage.getItem('duneAdminToken') || '';
 document.getElementById('token').value = token;
 let current = 'overview';
+let pendingAdminAccountId = '';
 const view = document.getElementById('view');
 
 function saveToken(){ token = document.getElementById('token').value; sessionStorage.setItem('duneAdminToken', token); load(); }
@@ -1581,7 +1582,7 @@ async function pickCharacter(row){
   const ref = await api('/api/admin/reference');
   const p = d.player || {};
   const firstTrack = (d.specialization && d.specialization[0]) || {};
-  document.getElementById('detail').innerHTML = `<datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><div class="card"><h2>${esc(p.character_name || 'Character')}</h2><div class="grid"><div><b>Account</b><br>${esc(p.account_id)}</div><div><b>Controller</b><br>${esc(p.player_controller_id)}</div><div><b>Pawn</b><br>${esc(p.player_pawn_id)}</div><div><b>Status</b><br>${esc(p.online_status)}</div></div></div><div class="card"><h2>Quick Admin</h2><p class="dangerText">Back up first. Mutations require server-side enablement.</p><div class="grid"><label>Currency<select id="detailCurId">${currencyBalanceOptions(d.currency, ref.currencyIds)}</select></label><label>Amount<input id="detailCurAmount" value="1000"></label><label>Mode<select id="detailCurMode"><option>add</option><option>set</option></select></label></div><p><button id="detailCurrencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Track<select id="detailTrack">${specializationOptions(d.specialization, ref.specializationTrackTypes)}</select></label><label>XP amount<input id="detailXpAmount" value="1000"></label><label>Level for set/new track<input id="detailXpLevel" value="${esc(firstTrack.level ?? 0)}"></label><label>Mode<select id="detailXpMode"><option>add</option><option>set</option></select></label></div><p><button id="detailXpBtn" class="primary">Apply XP</button></p><div class="grid"><label>Owned inventory<select id="detailGrantInventory"><option value="">All owned inventories</option>${inventoryOptions(d.inventories)}</select></label><label>Owned item<select id="detailItemSelect">${inventoryItemOptions(d.inventoryItems)}</select></label><label>Template ID<input id="detailGrantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="detailGrantStack" value="1"></label><label>Delete count<input id="detailDeleteCount" placeholder="blank/all"></label></div><p><button id="detailDryRunBtn" class="primary">Dry run item</button> <button id="detailGrantBtn" class="danger">Grant item</button> <button id="detailSetStackBtn" class="primary">Set selected stack</button> <button id="detailDeleteItemBtn" class="danger">Delete selected item/count</button></p><pre id="detailGrantResult"></pre></div><div class="card"><h2>Inventories</h2>${table(d.inventories)}</div><div class="card"><h2>Inventory Items</h2>${table(d.inventoryItems)}</div><div class="card"><h2>Raw Detail</h2><pre>${esc(JSON.stringify(d, null, 2))}</pre></div>`;
+  document.getElementById('detail').innerHTML = `<datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><div class="card"><h2>${esc(p.character_name || 'Character')}</h2><div class="grid"><div><b>Account</b><br>${esc(p.account_id)}</div><div><b>Controller</b><br>${esc(p.player_controller_id)}</div><div><b>Pawn</b><br>${esc(p.player_pawn_id)}</div><div><b>Status</b><br>${esc(p.online_status)}</div></div><p><button id="detailOpenAdminActionsBtn" class="primary">Open in Admin Actions</button></p></div><div class="card"><h2>Quick Admin</h2><p class="dangerText">Back up first. Mutations require server-side enablement.</p><div class="grid"><label>Currency<select id="detailCurId">${currencyBalanceOptions(d.currency, ref.currencyIds)}</select></label><label>Amount<input id="detailCurAmount" value="1000"></label><label>Mode<select id="detailCurMode"><option>add</option><option>set</option></select></label></div><p><button id="detailCurrencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Track<select id="detailTrack">${specializationOptions(d.specialization, ref.specializationTrackTypes)}</select></label><label>XP amount<input id="detailXpAmount" value="1000"></label><label>Level for set/new track<input id="detailXpLevel" value="${esc(firstTrack.level ?? 0)}"></label><label>Mode<select id="detailXpMode"><option>add</option><option>set</option></select></label></div><p><button id="detailXpBtn" class="primary">Apply XP</button></p><div class="grid"><label>Owned inventory<select id="detailGrantInventory"><option value="">All owned inventories</option>${inventoryOptions(d.inventories)}</select></label><label>Owned item<select id="detailItemSelect">${inventoryItemOptions(d.inventoryItems)}</select></label><label>Template ID<input id="detailGrantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="detailGrantStack" value="1"></label><label>Delete count<input id="detailDeleteCount" placeholder="blank/all"></label></div><p><button id="detailDryRunBtn" class="primary">Dry run item</button> <button id="detailGrantBtn" class="danger">Grant item</button> <button id="detailSetStackBtn" class="primary">Set selected stack</button> <button id="detailDeleteItemBtn" class="danger">Delete selected item/count</button></p><pre id="detailGrantResult"></pre></div><div class="card"><h2>Inventories</h2>${table(d.inventories)}</div><div class="card"><h2>Inventory Items</h2>${table(d.inventoryItems)}</div><div class="card"><h2>Raw Detail</h2><pre>${esc(JSON.stringify(d, null, 2))}</pre></div>`;
   const detailInventory = document.getElementById('detailGrantInventory');
   const detailItem = document.getElementById('detailItemSelect');
   const setDetailItemOptions = () => {
@@ -1603,6 +1604,10 @@ async function pickCharacter(row){
     if (level) document.getElementById('detailXpLevel').value = level;
   });
   document.getElementById('detailCurrencyBtn').addEventListener('click', () => currencyFor(p.player_controller_id));
+  document.getElementById('detailOpenAdminActionsBtn').addEventListener('click', () => {
+    pendingAdminAccountId = String(p.account_id || '');
+    show('mutations');
+  });
   document.getElementById('detailXpBtn').addEventListener('click', () => xpFor(p.player_controller_id));
   document.getElementById('detailDryRunBtn').addEventListener('click', () => grantItemForAccount(p.account_id, true));
   document.getElementById('detailGrantBtn').addEventListener('click', () => grantItemForAccount(p.account_id, false));
@@ -1732,6 +1737,12 @@ async function mutations(){
   document.getElementById('setItemStackBtn').addEventListener('click', setItemStack);
   document.getElementById('deleteItemBtn').addEventListener('click', deleteItem);
   document.getElementById('unsupportedBtn').addEventListener('click', unsupported);
+  if (pendingAdminAccountId) {
+    const target = document.getElementById('adminCharacterSelect');
+    target.value = pendingAdminAccountId;
+    pendingAdminAccountId = '';
+    if (target.value) await fillCharacter(target);
+  }
 }
 async function currency(){
   await api('/api/admin/currency', {method:'POST', body:JSON.stringify({player_controller_id:pcid.value,currency_id:curid.value,amount:amount.value,mode:mode.value})});
