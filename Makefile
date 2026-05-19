@@ -1,9 +1,9 @@
 COMPOSE ?= docker compose
 ENV_FILE ?= .env.example
 
-.PHONY: validate compose-config secret-scan list-publishable preflight status recover-survival recover-map full-world-partitions verify-local-state-ignored
+.PHONY: validate compose-config secret-scan test-watch-maps list-publishable preflight status recover-survival recover-map watch-maps watch-maps-status install-map-watchdog-service full-world-partitions verify-local-state-ignored
 
-validate: compose-config secret-scan verify-local-state-ignored
+validate: compose-config secret-scan test-watch-maps verify-local-state-ignored
 
 preflight:
 	./scripts/preflight.sh
@@ -21,6 +21,15 @@ recover-map:
 	fi
 	./scripts/recover-map.sh $(ENV_FILE) $(SERVICE) $(PARTITION_ID)
 
+watch-maps:
+	./scripts/watch-maps.sh $(ENV_FILE)
+
+watch-maps-status:
+	./scripts/watch-maps.sh $(ENV_FILE) --status
+
+install-map-watchdog-service:
+	./scripts/install-map-watchdog-service.sh $(ENV_FILE)
+
 full-world-partitions:
 	./scripts/full-world-partitions.sh $(ENV_FILE)
 
@@ -29,6 +38,9 @@ compose-config:
 
 secret-scan:
 	rg -n --pcre2 "(gho_|FLS_SECRET=.+|ServiceAuthToken=[A-Za-z0-9_.-]+|ServerLoginPasswordSecret=\"(?!replace)|UsernameServerLoginSecret=\"(?!replace)|BEGIN .*PRIVATE KEY|PRIVATE KEY)" . --glob '!data/**' --glob '!captures/**' --glob '!backups/**' --glob '!config/tls/**' --glob '!.env' --glob '!Makefile' --glob '!.github/workflows/validate.yml' && exit 1 || true
+
+test-watch-maps:
+	./scripts/test-watch-maps.sh
 
 list-publishable:
 	find . -maxdepth 3 \( -path './.git' -o -path './data' -o -path './captures' -o -path './backups' -o -path './config/tls' \) -prune -o -type f -not -name '.env' -print | sort

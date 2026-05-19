@@ -1,0 +1,19 @@
+[Unit]
+Description=Dune map watchdog
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/keith/Documents/code/DuneAwakeningSelfHost
+Environment=COMPOSE_FILES=compose.yaml:compose.allmaps.yaml
+Environment=DUNE_WATCH_INTERVAL=30
+Environment=DUNE_WATCH_RECOVERY_WAIT=180
+Environment=DUNE_WATCH_COOLDOWN=300
+Environment=DUNE_WATCH_LOCK_DIR=/tmp/dune-map-watchdog.lock
+ExecStart=/home/keith/Documents/code/DuneAwakeningSelfHost/scripts/watch-maps.sh /home/keith/Documents/code/DuneAwakeningSelfHost/.env
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

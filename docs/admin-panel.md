@@ -63,6 +63,7 @@ server {
 - Character search and detail view.
 - Currency/progression table visibility.
 - `.env` operations editor for install, world, network, access, secret, and admin-panel knobs. Secret fields are admin-token protected, rendered as password inputs, and returned blank unless a replacement is typed.
+- Typed logout/reconnect timer editor for `config/UserGame.ini` under Settings -> Logout and Reconnect Timers.
 - Typed Director character-transfer settings editor for `config/director.ini`.
 - Config editor for selected local config files, including official `UserEngine.ini` and `UserGame.ini` overlays, with backups under `backups/admin-panel`.
 - Token-gated currency and XP mutation endpoints.
@@ -101,6 +102,24 @@ Back up before enabling mutations:
 ```bash
 ./scripts/backup-state.sh .env
 ```
+
+## Logout Timers
+
+Steam Deck suspend and quick logout behavior is controlled by the typed Settings -> Logout and Reconnect Timers editor. It writes this section in `config/UserGame.ini`:
+
+```ini
+[/Script/DuneSandbox.PlayerOnlineStateSettings]
+m_DefaultReconnectGracePeriodSeconds=0
+m_OvermapReturnGracePeriodSeconds=0
+m_InstancedMapReconnectGracePeriodSeconds=0
+```
+
+The same settings are available through token-protected JSON APIs:
+
+- `GET /api/settings/player-online-state`
+- `POST /api/settings/player-online-state`
+
+Recreate affected game-server containers after saving so `scripts/run_server_safe.sh` copies the updated `UserGame.ini` into the Unreal saved config paths.
 
 ## Security Notes
 

@@ -1,4 +1,4 @@
-# Dune Awakening Linux Host
+# DuneAwakeningSelfHost (DASH)
 
 Work-in-progress Linux/Compose harness for the Steam-installed Dune: Awakening self-hosted server package.
 
@@ -72,6 +72,8 @@ The first target here is Docker Compose parity for those pieces. After that, sys
 - `scripts/summarize-runtime-profile.sh`: prints a compact summary from a runtime profile capture.
 - `scripts/watch-network.sh`: prints current socket-state counts for routing/DB/RabbitMQ churn.
 - `scripts/recover-survival.sh`: restarts the game-server process after dependency restarts or a database disconnect crash.
+- `scripts/recover-map.sh`: safely recovers a crashed fixed-partition map after stale server-id ownership.
+- `scripts/watch-maps.sh`: host-side fixed-partition map watchdog that delegates to `recover-map.sh`.
 - `scripts/rmq-health.sh`: summarizes RabbitMQ service-user coverage and recent auth/connectivity errors.
 - `scripts/full-world-partitions.sh`: adds the official single-dimension travel target partitions for Overmap, social hubs, testing stations, Deep Desert, and Proces Verbal.
 - `scripts/rmq_auth_shim.py`: local RabbitMQ HTTP auth compatibility shim.

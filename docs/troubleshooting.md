@@ -128,6 +128,24 @@ COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' \
 
 Avoid repeatedly force-recreating the same map while the old server id is still active. That can reproduce the same crash loop.
 
+For unattended recovery, run the map watchdog:
+
+```bash
+COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' \
+  ./scripts/watch-maps.sh .env
+```
+
+The watchdog intentionally does not use Docker's generic restart policy. It only handles `exited` or `dead` map containers and delegates to the fixed-partition recovery helper.
+
+A systemd unit template is available at `config/systemd/dune-map-watchdog.service`, and `scripts/install-map-watchdog-service.sh .env` renders it for the current checkout. Keep only one watchdog instance running; the script also uses a lock directory to avoid duplicate host-side instances.
+
+Use status mode to confirm the watched services:
+
+```bash
+COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' \
+  ./scripts/watch-maps.sh .env --status
+```
+
 ## Director Repeats Unassigned Partition Warnings
 
 Symptoms:

@@ -60,16 +60,26 @@ ALLOWED_CONFIGS = {
 }
 
 DIRECTOR_TRANSFER_RULESETS = (
-    "DenyAll",
-    "AllowFromPrivateOnly",
-    "AllowFromOfficialOnly",
-    "AllowFromPrivateAndOfficial",
+    "0",
+    "1",
 )
+
+DIRECTOR_TRANSFER_RULESET_LABELS = {
+    "0": "DenyAll",
+    "1": "AllowFromPrivateOnly",
+    "DenyAll": "DenyAll",
+    "AllowFromPrivateOnly": "AllowFromPrivateOnly",
+}
+
+DIRECTOR_TRANSFER_RULESET_VALUES = {
+    "DenyAll": "0",
+    "AllowFromPrivateOnly": "1",
+}
 
 DIRECTOR_TRANSFER_SETTINGS = {
     "ShouldDeleteOriginCharactersDuringTransfers": {"type": "bool", "default": "true", "why": "Deletes the origin character after a successful transfer into this battlegroup."},
     "AcceptOutgoingCharacterTransfers": {"type": "bool", "default": "true", "why": "Allows characters on this battlegroup to transfer out."},
-    "IncomingCharacterTransfers": {"type": "ruleset", "default": "DenyAll", "why": "Controls which origin server types can transfer characters into this battlegroup."},
+    "IncomingCharacterTransfers": {"type": "ruleset", "default": "0", "why": "Controls which origin server types can transfer characters into this battlegroup. Director build 1963158 expects numeric enum values: 0=DenyAll, 1=AllowFromPrivateOnly."},
     "ExportCharacterTimeout": {"type": "int", "default": "900", "why": "Seconds before the export query times out."},
     "ImportCharacterTimeout": {"type": "int", "default": "900", "why": "Seconds before the import query times out."},
     "FreeToTransferCharactersFrom": {"type": "bool", "default": "false", "why": "Skips transfer token cost for transfers from this battlegroup."},
@@ -77,6 +87,13 @@ DIRECTOR_TRANSFER_SETTINGS = {
     "ValidateBeforeImportCharacterTimeout": {"type": "int", "default": "180", "why": "Seconds before canceling a transfer stuck in validation before import starts."},
     "ActiveTransfersResolveProcessFrequencySeconds": {"type": "int", "default": "10", "why": "Seconds between resolving unhandled active transfers."},
     "CharacterTransferDbFunctionTimeLogThresholdMs": {"type": "int", "default": "10000", "why": "Milliseconds before character transfer DB function timing is logged."},
+}
+
+PLAYER_ONLINE_STATE_SECTION = "/Script/DuneSandbox.PlayerOnlineStateSettings"
+PLAYER_ONLINE_STATE_SETTINGS = {
+    "m_DefaultReconnectGracePeriodSeconds": {"type": "int", "default": "0", "why": "Seconds a disconnected player can be treated as recently online on normal maps. Use 0 for immediate logout persistence expiry."},
+    "m_OvermapReturnGracePeriodSeconds": {"type": "int", "default": "0", "why": "Seconds allowed for returning from overmap disconnects. Use 0 for Steam Deck suspend-friendly immediate exit."},
+    "m_InstancedMapReconnectGracePeriodSeconds": {"type": "int", "default": "0", "why": "Seconds a disconnected player can reconnect to instanced maps. Use 0 for immediate instanced-map logout persistence expiry."},
 }
 
 ENV_KEY_DEFINITIONS = {
@@ -250,7 +267,10 @@ def read_director_transfer_settings():
         key, value = raw_line.split("=", 1)
         key = key.strip()
         if key in DIRECTOR_TRANSFER_SETTINGS:
-            values[key] = strip_ini_comment(value)
+            text = strip_ini_comment(value)
+            if DIRECTOR_TRANSFER_SETTINGS[key]["type"] == "ruleset":
+                text = DIRECTOR_TRANSFER_RULESET_VALUES.get(text, text)
+            values[key] = text
     return values
 
 
@@ -275,8 +295,10 @@ def validate_director_transfer_settings(updates):
                 raise ValueError(f"{key} must be >= 0")
             validated[key] = str(number)
         elif meta["type"] == "ruleset":
+            text = DIRECTOR_TRANSFER_RULESET_VALUES.get(text, text)
             if text not in DIRECTOR_TRANSFER_RULESETS:
-                raise ValueError(f"{key} must be one of: {', '.join(DIRECTOR_TRANSFER_RULESETS)}")
+                labels = ", ".join(f"{value}={DIRECTOR_TRANSFER_RULESET_LABELS[value]}" for value in DIRECTOR_TRANSFER_RULESETS)
+                raise ValueError(f"{key} must be one of: {labels}")
             validated[key] = text
     return validated
 
@@ -328,6 +350,100 @@ def write_director_transfer_settings(updates):
         if rendered and rendered[-1].strip():
             rendered.append("")
         rendered.append("[ Battlegroup ]")
+        append_missing()
+
+    backup_file(path)
+    path.write_text("\n".join(rendered) + "\n", encoding="utf-8")
+
+
+def read_player_online_state_settings():
+    values = {key: meta["default"] for key, meta in PLAYER_ONLINE_STATE_SETTINGS.items()}
+    path = ALLOWED_CONFIGS["UserGame.ini"]
+    if not path.exists():
+        return values
+    in_section = False
+    target_header = f"[{PLAYER_ONLINE_STATE_SECTION}]".lower()
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            in_section = line.lower() == target_header
+            continue
+        if not in_section or "=" not in raw_line:
+            continue
+        key, value = raw_line.split("=", 1)
+        key = key.strip()
+        if key in PLAYER_ONLINE_STATE_SETTINGS:
+            values[key] = strip_ini_comment(value)
+    return values
+
+
+def validate_player_online_state_settings(updates):
+    validated = {}
+    for key, value in updates.items():
+        if key not in PLAYER_ONLINE_STATE_SETTINGS:
+            continue
+        try:
+            number = int(str(value).strip())
+        except ValueError as exc:
+            raise ValueError(f"{key} must be an integer") from exc
+        if number < 0:
+            raise ValueError(f"{key} must be >= 0")
+        if number > 86400:
+            raise ValueError(f"{key} must be <= 86400")
+        validated[key] = str(number)
+    return validated
+
+
+def write_player_online_state_settings(updates):
+    path = ALLOWED_CONFIGS["UserGame.ini"]
+    values = read_player_online_state_settings()
+    values.update(validate_player_online_state_settings(updates))
+    original = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    rendered = []
+    seen = set()
+    in_section = False
+    inserted = False
+    target_header = f"[{PLAYER_ONLINE_STATE_SECTION}]".lower()
+
+    def append_missing():
+        nonlocal inserted
+        if inserted:
+            return
+        for key in PLAYER_ONLINE_STATE_SETTINGS:
+            if key in seen:
+                continue
+            rendered.append(f"{key}={values.get(key, PLAYER_ONLINE_STATE_SETTINGS[key]['default'])}")
+            seen.add(key)
+        inserted = True
+
+    for raw_line in original:
+        stripped = raw_line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            if in_section:
+                append_missing()
+            in_section = stripped.lower() == target_header
+            rendered.append(raw_line)
+            continue
+        if in_section and "=" in raw_line:
+            key, _ = raw_line.split("=", 1)
+            key = key.strip()
+            if key in PLAYER_ONLINE_STATE_SETTINGS:
+                rendered.append(f"{key}={values.get(key, PLAYER_ONLINE_STATE_SETTINGS[key]['default'])}")
+                seen.add(key)
+                continue
+        rendered.append(raw_line)
+
+    if not original:
+        rendered.append(f"[{PLAYER_ONLINE_STATE_SECTION}]")
+        in_section = True
+    if in_section:
+        append_missing()
+    elif not inserted:
+        if rendered and rendered[-1].strip():
+            rendered.append("")
+        rendered.append(f"[{PLAYER_ONLINE_STATE_SECTION}]")
         append_missing()
 
     backup_file(path)
@@ -520,6 +636,14 @@ class Handler(BaseHTTPRequestHandler):
                     "values": read_director_transfer_settings(),
                     "definitions": DIRECTOR_TRANSFER_SETTINGS,
                     "rulesets": DIRECTOR_TRANSFER_RULESETS,
+                    "rulesetLabels": DIRECTOR_TRANSFER_RULESET_LABELS,
+                })
+            elif parsed.path == "/api/settings/player-online-state":
+                self.require_token()
+                self.json({
+                    "values": read_player_online_state_settings(),
+                    "definitions": PLAYER_ONLINE_STATE_SETTINGS,
+                    "section": PLAYER_ONLINE_STATE_SECTION,
                 })
             elif parsed.path == "/api/admin/reference":
                 self.require_token()
@@ -571,6 +695,13 @@ class Handler(BaseHTTPRequestHandler):
                 write_director_transfer_settings(updates)
                 self.audit("director-transfer-write", keys=sorted(updates))
                 self.json({"ok": True, "values": read_director_transfer_settings()})
+            elif parsed.path == "/api/settings/player-online-state":
+                self.require_token()
+                body = parse_body(self)
+                updates = {key: body[key] for key in PLAYER_ONLINE_STATE_SETTINGS if key in body}
+                write_player_online_state_settings(updates)
+                self.audit("player-online-state-write", keys=sorted(updates))
+                self.json({"ok": True, "values": read_player_online_state_settings()})
             elif parsed.path == "/api/admin/currency":
                 self.require_token()
                 self.require_mutations()
@@ -1324,6 +1455,9 @@ INDEX = r"""<!doctype html>
     .row { display:flex; gap:8px; align-items:center; margin:8px 0; }
     .toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:12px; }
     .sectionHeader { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; }
+    .sectionHeader .toolbar { margin-bottom:0; }
+    .actionGrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:8px; }
+    .actionGrid button { text-align:left; white-space:normal; min-height:42px; }
     .muted { color:var(--muted); }
     .ok { color:var(--ok); }
     .dangerText { color:var(--danger); }
@@ -1371,7 +1505,9 @@ INDEX = r"""<!doctype html>
 <script nonce="__NONCE__">
 let token = sessionStorage.getItem('duneAdminToken') || '';
 document.getElementById('token').value = token;
-let current = 'overview';
+const validTabs = new Set(['overview', 'ops', 'security', 'runbook', 'characters', 'settings', 'mutations']);
+let current = validTabs.has(location.hash.slice(1)) ? location.hash.slice(1) : (sessionStorage.getItem('duneAdminTab') || 'overview');
+if (!validTabs.has(current)) current = 'overview';
 let pendingAdminAccountId = '';
 const view = document.getElementById('view');
 
@@ -1502,19 +1638,41 @@ function directorTransferEditor(payload){
   const values = payload.values || {};
   const definitions = payload.definitions || {};
   const rulesets = payload.rulesets || [];
+  const rulesetLabels = payload.rulesetLabels || {};
   return `<div class="card"><h2>Director Character Transfers</h2><div class="grid">${Object.entries(definitions).map(([key, meta]) => {
     let control = '';
     if (meta.type === 'bool') {
       control = `<select id="transfer_${esc(key)}"><option value="true"${values[key] === 'true' ? ' selected' : ''}>true</option><option value="false"${values[key] === 'false' ? ' selected' : ''}>false</option></select>`;
     } else if (meta.type === 'ruleset') {
-      control = `<select id="transfer_${esc(key)}">${rulesets.map(v => `<option value="${esc(v)}"${values[key] === v ? ' selected' : ''}>${esc(v)}</option>`).join('')}</select>`;
+      control = `<select id="transfer_${esc(key)}">${rulesets.map(v => `<option value="${esc(v)}"${values[key] === v ? ' selected' : ''}>${esc(rulesetLabels[v] || v)}</option>`).join('')}</select>`;
     } else {
       control = `<input id="transfer_${esc(key)}" type="number" min="0" value="${esc(values[key] || meta.default || '')}">`;
     }
     return `<label>${esc(key)}${control}<span class="muted">${esc(meta.why || '')}</span></label>`;
   }).join('')}</div><p><button id="saveDirectorTransferBtn" class="primary">Save transfer settings</button></p></div>`;
 }
-function show(name){ current=name; document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active', b.dataset.tab === name)); load(); }
+function playerOnlineStateEditor(payload){
+  const values = payload.values || {};
+  const definitions = payload.definitions || {};
+  const section = payload.section || '';
+  return `<div class="card"><h2>Logout and Reconnect Timers</h2><p class="muted"><code>${esc(section)}</code> in <code>UserGame.ini</code>. Set these to <code>0</code> for Steam Deck suspend/logout behavior. Recreate game-server containers after saving.</p><div class="grid">${Object.entries(definitions).map(([key, meta]) => {
+    return `<label>${esc(key)}<input id="online_${esc(key)}" type="number" min="0" max="86400" value="${esc(values[key] || meta.default || '')}"><span class="muted">${esc(meta.why || '')}</span></label>`;
+  }).join('')}</div><p><button id="savePlayerOnlineStateBtn" class="primary">Save logout timers</button></p></div>`;
+}
+function actionGrid(actions){
+  return `<div class="card"><h2>Quick Actions</h2><div class="actionGrid">${actions.map(a => `<button class="${esc(a.className || '')}" data-jump="${esc(a.tab)}">${esc(a.label)}</button>`).join('')}</div></div>`;
+}
+function syncTabs(){
+  document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active', b.dataset.tab === current));
+}
+function show(name){
+  if (!validTabs.has(name)) return;
+  current = name;
+  sessionStorage.setItem('duneAdminTab', current);
+  if (location.hash.slice(1) !== current) history.replaceState(null, '', '#' + current);
+  syncTabs();
+  load();
+}
 function renderStatus(data){
   document.getElementById('statusSummary').innerHTML = [
     statusPill('admin token configured', data.adminTokenConfigured),
@@ -1526,6 +1684,7 @@ function renderStatus(data){
 }
 async function refreshStatus(){ renderStatus(await api('/api/status')); }
 async function load(){
+  syncTabs();
   await refreshStatus().catch(e => {
     document.getElementById('statusSummary').innerHTML = `<span class="pill bad">${esc(e.message)}</span>`;
     document.getElementById('statusRaw').textContent = e.message;
@@ -1547,23 +1706,23 @@ async function overview(){
   const state = health;
   const summary = health.summary || {};
   const players = (state.farmState || []).reduce((sum, r) => sum + Number(r.connected_players || 0), 0);
-  view.innerHTML = `<div class="sectionHeader"><h2>Overview</h2><span class="pill">server: admin.example.test</span></div><div class="metricGrid">${metric('Ready Servers', `${summary.readyAlive ?? 0}/${summary.expectedPartitions ?? 0}`, summary.readyAlive === summary.expectedPartitions ? 'ok' : 'dangerText')}${metric('Online Maps', `${summary.onlineMaps ?? 0}/${summary.totalMaps ?? 0}`, summary.onlineMaps === summary.totalMaps ? 'ok' : 'dangerText')}${metric('Active IDs', `${summary.activeServers ?? 0}/${summary.expectedPartitions ?? 0}`)}${metric('Reported Players', players)}</div><div class="card"><h2>Map Health</h2>${mapStatusTable(health.mapStatus)}</div><div class="card"><h2>Network and Upstream</h2>${probeTable(health.network?.probes)}</div><div class="card"><h2>Health Verdict</h2>${checks(health.verdicts)}</div>`;
+  view.innerHTML = `<div class="sectionHeader"><h2>Overview</h2><div class="toolbar"><button data-jump="ops">Ops detail</button><button data-jump="characters">Find character</button><button data-jump="mutations" class="primary">Admin Actions</button></div></div><div class="metricGrid">${metric('Ready Servers', `${summary.readyAlive ?? 0}/${summary.expectedPartitions ?? 0}`, summary.readyAlive === summary.expectedPartitions ? 'ok' : 'dangerText')}${metric('Online Maps', `${summary.onlineMaps ?? 0}/${summary.totalMaps ?? 0}`, summary.onlineMaps === summary.totalMaps ? 'ok' : 'dangerText')}${metric('Active IDs', `${summary.activeServers ?? 0}/${summary.expectedPartitions ?? 0}`)}${metric('Reported Players', players)}</div>${actionGrid([{tab:'ops',label:'Open detailed map and network health'},{tab:'security',label:'Review security checks and audit trail'},{tab:'settings',label:'Edit server settings and configs'},{tab:'runbook',label:'Open operational runbook'}])}<div class="card"><h2>Map Health</h2>${mapStatusTable(health.mapStatus)}</div><div class="card"><h2>Network and Upstream</h2>${probeTable(health.network?.probes)}</div><div class="card"><h2>Health Verdict</h2>${checks(health.verdicts)}</div>`;
 }
 async function ops(){
   const health = await api('/api/ops/health');
   const opt = await api('/api/ops/optimization');
   const pc = health.playerCounts || {};
-  view.innerHTML = `<div class="sectionHeader"><h2>Operations</h2><span class="pill">health and cost signals</span></div><div class="metricGrid">${metric('Connected Players', pc.connected_players_reported ?? 0)}${metric('Online Controllers', pc.online_controller_ids ?? 0)}${metric('Recent Online State', pc.online_or_recently_disconnected ?? 0)}${metric('Grace Entries', pc.grace_period_entries ?? 0)}</div><div class="card"><h2>Health Verdict</h2>${checks(health.verdicts)}</div><div class="card"><h2>Map Online/Offline</h2>${mapStatusTable(health.mapStatus)}</div><div class="card"><h2>Local and Upstream Network</h2>${probeTable(health.network?.probes)}</div><div class="card"><h2>Farm State</h2>${table(health.farmState)}</div><div class="card"><h2>Partitions</h2>${table(health.partitions)}</div>${signalList(opt)}`;
+  view.innerHTML = `<div class="sectionHeader"><h2>Operations</h2><div class="toolbar"><button data-jump="overview">Overview</button><button data-jump="runbook">Runbook</button><button data-jump="settings">Settings</button></div></div><div class="metricGrid">${metric('Connected Players', pc.connected_players_reported ?? 0)}${metric('Online Controllers', pc.online_controller_ids ?? 0)}${metric('Recent Online State', pc.online_or_recently_disconnected ?? 0)}${metric('Grace Entries', pc.grace_period_entries ?? 0)}</div>${actionGrid([{tab:'characters',label:'Inspect characters currently represented in DB'},{tab:'security',label:'Check audit events and exposed settings'},{tab:'mutations',label:'Create a backup before writes',className:'primary'}])}<div class="card"><h2>Health Verdict</h2>${checks(health.verdicts)}</div><div class="card"><h2>Map Online/Offline</h2>${mapStatusTable(health.mapStatus)}</div><div class="card"><h2>Local and Upstream Network</h2>${probeTable(health.network?.probes)}</div><div class="card"><h2>Farm State</h2>${table(health.farmState)}</div><div class="card"><h2>Partitions</h2>${table(health.partitions)}</div>${signalList(opt)}`;
 }
 async function security(){
   const audit = await api('/api/ops/security');
   const events = await api('/api/ops/audit');
   const failed = (audit.checks || []).filter(c => !c.ok).length;
-  view.innerHTML = `<div class="sectionHeader"><h2>Security</h2><span class="pill ${failed ? 'warn' : 'ok'}">${failed ? failed + ' checks need attention' : 'checks OK'}</span></div><div class="card"><h2>Security Checks</h2>${checks(audit.checks)}</div><div class="card"><h2>Recent Audit Events</h2>${table(events.events)}</div><div class="card"><h2>Notes</h2><ul>${audit.notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul></div><div class="card"><h2>Editable Env Keys</h2><div class="toolbar">${audit.safeEnvKeys.map(k => `<span class="pill">${esc(k)}</span>`).join('')}</div></div><div class="card"><h2>Editable Config Files</h2><div class="toolbar">${audit.allowedConfigFiles.map(k => `<span class="pill">${esc(k)}</span>`).join('')}</div></div>`;
+  view.innerHTML = `<div class="sectionHeader"><h2>Security</h2><div class="toolbar"><span class="pill ${failed ? 'warn' : 'ok'}">${failed ? failed + ' checks need attention' : 'checks OK'}</span><button data-jump="settings">Edit settings</button><button data-jump="mutations">Backup</button></div></div>${actionGrid([{tab:'settings',label:'Open editable env and config allowlists'},{tab:'runbook',label:'Open commands for service operations'},{tab:'ops',label:'Review health before exposing services'}])}<div class="card"><h2>Security Checks</h2>${checks(audit.checks)}</div><div class="card"><h2>Recent Audit Events</h2>${table(events.events)}</div><div class="card"><h2>Notes</h2><ul>${audit.notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul></div><div class="card"><h2>Editable Env Keys</h2><div class="toolbar">${audit.safeEnvKeys.map(k => `<span class="pill">${esc(k)}</span>`).join('')}</div></div><div class="card"><h2>Editable Config Files</h2><div class="toolbar">${audit.allowedConfigFiles.map(k => `<span class="pill">${esc(k)}</span>`).join('')}</div></div>`;
 }
 async function runbook(){
   const data = await api('/api/ops/runbook');
-  view.innerHTML = `<div class="sectionHeader"><h2>Runbook</h2><span class="pill">copy/paste commands</span></div><div class="card"><p class="muted">${esc(data.why)}</p>${table(data.commands)}</div>`;
+  view.innerHTML = `<div class="sectionHeader"><h2>Runbook</h2><div class="toolbar"><span class="pill">copy/paste commands</span><button data-jump="ops">Ops</button><button data-jump="settings">Settings</button></div></div>${actionGrid([{tab:'overview',label:'Check server health first'},{tab:'mutations',label:'Create DB backup before risky work',className:'primary'},{tab:'security',label:'Review recent admin audit events'}])}<div class="card"><p class="muted">${esc(data.why)}</p>${table(data.commands)}</div>`;
 }
 async function characters(){
   view.innerHTML = `<div class="sectionHeader"><h2>Characters</h2><span class="pill">lookup and inspect</span></div><div class="card"><div class="row"><input id="q" placeholder="Character, Funcom ID, platform ID"><button id="characterSearchBtn" class="primary">Search</button></div><div id="results"></div></div><div id="detail"></div>`;
@@ -1617,11 +1776,13 @@ async function pickCharacter(row){
 async function settings(){
   const env = await api('/api/settings/env');
   const transfer = await api('/api/settings/director-transfer');
+  const onlineState = await api('/api/settings/player-online-state');
   const configs = await api('/api/settings/configs');
-  view.innerHTML = `<div class="sectionHeader"><h2>Settings</h2><button id="saveEnvBtn" class="primary">Save env settings</button></div><div class="card"><p class="muted">These write <code>.env</code> or <code>config/director.ini</code> with a backup under <code>backups/admin-panel</code>. Most service settings need the affected containers recreated before running processes pick them up.</p></div>${envEditor(env)}${directorTransferEditor(transfer)}<div class="card"><h2>Config Files</h2><select id="cfg">${Object.keys(configs).map(k=>`<option>${esc(k)}</option>`).join('')}</select><textarea id="cfgText"></textarea><p><button id="saveCfgBtn" class="primary">Save config with backup</button></p></div>`;
+  view.innerHTML = `<div class="sectionHeader"><h2>Settings</h2><button id="saveEnvBtn" class="primary">Save env settings</button></div><div class="card"><p class="muted">These write <code>.env</code>, <code>config/director.ini</code>, or <code>config/UserGame.ini</code> with a backup under <code>backups/admin-panel</code>. Most service settings need the affected containers recreated before running processes pick them up.</p></div>${envEditor(env)}${playerOnlineStateEditor(onlineState)}${directorTransferEditor(transfer)}<div class="card"><h2>Config Files</h2><select id="cfg">${Object.keys(configs).map(k=>`<option>${esc(k)}</option>`).join('')}</select><textarea id="cfgText"></textarea><p><button id="saveCfgBtn" class="primary">Save config with backup</button></p></div>`;
   window.configs = configs; selectCfg();
   document.getElementById('cfg').addEventListener('change', selectCfg);
   document.getElementById('saveEnvBtn').addEventListener('click', saveEnv);
+  document.getElementById('savePlayerOnlineStateBtn').addEventListener('click', savePlayerOnlineState);
   document.getElementById('saveDirectorTransferBtn').addEventListener('click', saveDirectorTransfer);
   document.getElementById('saveCfgBtn').addEventListener('click', saveCfg);
 }
@@ -1645,11 +1806,17 @@ async function saveDirectorTransfer(){
   await api('/api/settings/director-transfer', {method:'POST', body:JSON.stringify(body)});
   alert('Saved director transfer settings');
 }
+async function savePlayerOnlineState(){
+  const body={};
+  document.querySelectorAll('[id^=online_]').forEach(i => body[i.id.slice(7)] = i.value);
+  await api('/api/settings/player-online-state', {method:'POST', body:JSON.stringify(body)});
+  alert('Saved logout timers');
+}
 async function mutations(){
   const ref = await api('/api/admin/reference');
   const characterRows = await api('/api/characters?q=');
   const referenceErrors = ref.errors && Object.keys(ref.errors).length ? `<div class="card"><h2>Reference Errors</h2><pre>${esc(JSON.stringify(ref.errors, null, 2))}</pre></div>` : '';
-  view.innerHTML = `${referenceErrors}<div class="card"><h2>Backups</h2><p>Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button id="backupBtn" class="primary">Create DB backup</button><pre id="backupResult"></pre></div><div class="card"><h2>Currency and XP</h2><p class="dangerText">Writes require <code>DUNE_ADMIN_MUTATIONS_ENABLED=true</code> and a valid admin token. Back up first.</p><div class="grid"><label>Character<select id="adminCharacterSelect">${characterOptions(characterRows)}</select></label><label>Player controller ID<input id="pcid"></label><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button id="currencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Level for set/new track<input id="xplevel" value="0"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button id="xpBtn" class="primary">Apply XP</button></p></div><div class="card"><h2>Specialization Keystones</h2><div class="grid"><label>Player/controller ID<input id="keyPlayer"></label><label>Keystone<select id="keystone">${options(ref.keystones, 'name')}</select></label></div><p><button id="purchaseKeystoneBtn" class="primary">Purchase keystone</button> <button id="resetKeystonesBtn" class="danger">Reset all keystones</button></p><pre id="keystoneResult"></pre></div><div class="card"><h2>Item Grants</h2><p class="dangerText">Use exact server template IDs. Public item databases: <a href="${esc(ref.publicItemDatabase)}" target="_blank" rel="noreferrer">gaming.tools</a> and <a href="${esc(ref.publicItemDatabaseAlt)}" target="_blank" rel="noreferrer">Arrakis Atlas</a>. Dry run first when using IDs not observed locally.</p><div class="grid"><label>Character<select id="grantCharacterSelect">${characterOptions(characterRows)}</select></label><label>Known inventory<select id="grantInventorySelect">${inventoryOptions(ref.recentInventories)}</select></label><label>Inventory ID<input id="grantInventory" placeholder="explicit inventory"></label><label>Account ID<input id="grantAccount" placeholder="auto-select player inventory"></label><label>Character name<input id="grantCharacter" placeholder="auto-select by name"></label><label>Inventory type<select id="grantInventoryType">${inventoryTypeOptions(ref.inventoryTypes)}</select></label><label>Template ID<input id="grantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><label>Stats JSON<textarea id="grantStats">{}</textarea></label><p><button id="dryRunItemBtn" class="primary">Dry run</button> <button id="grantItemBtn" class="danger">Grant item</button></p><pre id="grantResult"></pre></div><div class="card"><h2>Item Maintenance</h2><div class="grid"><label>Character<select id="itemCharacterSelect">${characterOptions(characterRows)}</select></label><label>Owned item<select id="itemEditSelect"><option value="">Select a character first</option></select></label><label>Item ID<input id="itemEditId"></label><label>New stack size<input id="itemEditStack" value="1"></label><label>Delete count<input id="itemDeleteCount" placeholder="blank/all"></label></div><p><button id="setItemStackBtn" class="primary">Set stack</button> <button id="deleteItemBtn" class="danger">Delete item/count</button></p><pre id="itemEditResult"></pre></div><datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><div class="card"><h2>Known Item Templates</h2><p class="muted">Exact template IDs observed in local item, reward, vendor, vehicle, or exchange tables.</p>${table(ref.knownItemTemplates)}</div><div class="card"><h2>Observed Item Templates</h2><p class="muted">Read-only reference from this server's current <code>dune.items</code> rows.</p>${table(ref.observedItemTemplates)}</div><div class="card"><h2>Recent Inventories</h2>${table(ref.recentInventories)}</div><div class="card"><h2>Inventory Types</h2>${table(ref.inventoryTypes)}</div><div class="card"><h2>Recipe Unlocks</h2><p class="muted">Not implemented yet. The DB exposes removal helpers and actor JSON recipe arrays, but no safe grant function has been mapped.</p><button id="unsupportedBtn" class="danger">Test unsupported endpoint</button></div>`;
+  view.innerHTML = `${referenceErrors}<div class="sectionHeader"><h2>Admin Actions</h2><div class="toolbar"><button data-jump="characters">Characters</button><button data-jump="settings">Settings</button><button data-jump="security">Audit</button></div></div>${actionGrid([{tab:'characters',label:'Look up a character and inspect raw state'},{tab:'settings',label:'Enable or review mutation-related settings'},{tab:'runbook',label:'Open service commands after writes'}])}<div class="card"><h2>Backups</h2><p>Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button id="backupBtn" class="primary">Create DB backup</button><pre id="backupResult"></pre></div><div class="card"><h2>Currency and XP</h2><p class="dangerText">Writes require <code>DUNE_ADMIN_MUTATIONS_ENABLED=true</code> and a valid admin token. Back up first.</p><div class="grid"><label>Character<select id="adminCharacterSelect">${characterOptions(characterRows)}</select></label><label>Player controller ID<input id="pcid"></label><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button id="currencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Level for set/new track<input id="xplevel" value="0"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button id="xpBtn" class="primary">Apply XP</button></p></div><div class="card"><h2>Specialization Keystones</h2><div class="grid"><label>Player/controller ID<input id="keyPlayer"></label><label>Keystone<select id="keystone">${options(ref.keystones, 'name')}</select></label></div><p><button id="purchaseKeystoneBtn" class="primary">Purchase keystone</button> <button id="resetKeystonesBtn" class="danger">Reset all keystones</button></p><pre id="keystoneResult"></pre></div><div class="card"><h2>Item Grants</h2><p class="dangerText">Use exact server template IDs. Public item databases: <a href="${esc(ref.publicItemDatabase)}" target="_blank" rel="noreferrer">gaming.tools</a> and <a href="${esc(ref.publicItemDatabaseAlt)}" target="_blank" rel="noreferrer">Arrakis Atlas</a>. Dry run first when using IDs not observed locally.</p><div class="grid"><label>Character<select id="grantCharacterSelect">${characterOptions(characterRows)}</select></label><label>Known inventory<select id="grantInventorySelect">${inventoryOptions(ref.recentInventories)}</select></label><label>Inventory ID<input id="grantInventory" placeholder="explicit inventory"></label><label>Account ID<input id="grantAccount" placeholder="auto-select player inventory"></label><label>Character name<input id="grantCharacter" placeholder="auto-select by name"></label><label>Inventory type<select id="grantInventoryType">${inventoryTypeOptions(ref.inventoryTypes)}</select></label><label>Template ID<input id="grantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><label>Stats JSON<textarea id="grantStats">{}</textarea></label><p><button id="dryRunItemBtn" class="primary">Dry run</button> <button id="grantItemBtn" class="danger">Grant item</button></p><pre id="grantResult"></pre></div><div class="card"><h2>Item Maintenance</h2><div class="grid"><label>Character<select id="itemCharacterSelect">${characterOptions(characterRows)}</select></label><label>Owned item<select id="itemEditSelect"><option value="">Select a character first</option></select></label><label>Item ID<input id="itemEditId"></label><label>New stack size<input id="itemEditStack" value="1"></label><label>Delete count<input id="itemDeleteCount" placeholder="blank/all"></label></div><p><button id="setItemStackBtn" class="primary">Set stack</button> <button id="deleteItemBtn" class="danger">Delete item/count</button></p><pre id="itemEditResult"></pre></div><datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><div class="card"><h2>Known Item Templates</h2><p class="muted">Exact template IDs observed in local item, reward, vendor, vehicle, or exchange tables.</p>${table(ref.knownItemTemplates)}</div><div class="card"><h2>Observed Item Templates</h2><p class="muted">Read-only reference from this server's current <code>dune.items</code> rows.</p>${table(ref.observedItemTemplates)}</div><div class="card"><h2>Recent Inventories</h2>${table(ref.recentInventories)}</div><div class="card"><h2>Inventory Types</h2>${table(ref.inventoryTypes)}</div><div class="card"><h2>Recipe Unlocks</h2><p class="muted">Not implemented yet. The DB exposes removal helpers and actor JSON recipe arrays, but no safe grant function has been mapped.</p><button id="unsupportedBtn" class="danger">Test unsupported endpoint</button></div>`;
   const loadCharacterAdminDetails = async (accountId) => {
     const itemSelect = document.getElementById('itemEditSelect');
     const inventorySelect = document.getElementById('grantInventorySelect');
@@ -1808,7 +1975,15 @@ async function deleteDetailItem(){
 }
 async function unsupported(){ try { await api('/api/admin/unsupported', {method:'POST', body:'{}'}); } catch(e) { alert(e.message); } }
 document.getElementById('saveTokenBtn').addEventListener('click', saveToken);
+document.addEventListener('click', e => {
+  const target = e.target.closest('[data-jump]');
+  if (target) show(target.dataset.jump);
+});
 document.querySelectorAll('.tab').forEach(button => button.addEventListener('click', () => show(button.dataset.tab)));
+window.addEventListener('hashchange', () => {
+  const tab = location.hash.slice(1);
+  if (validTabs.has(tab) && tab !== current) show(tab);
+});
 load();
 </script>
 </body>
@@ -1817,8 +1992,9 @@ load();
 
 
 def main():
+    bind = os.environ.get("DUNE_ADMIN_BIND", "0.0.0.0")
     port = int(os.environ.get("DUNE_ADMIN_PORT", "8080"))
-    ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()
+    ThreadingHTTPServer((bind, port), Handler).serve_forever()
 
 
 if __name__ == "__main__":

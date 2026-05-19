@@ -15,7 +15,7 @@ The relevant section is `[ Battlegroup ]`.
 This repository defaults inbound transfers to disabled:
 
 ```ini
-IncomingCharacterTransfers=DenyAll
+IncomingCharacterTransfers=0
 ```
 
 That blocks characters transferring into this battlegroup from public/official worlds and from other private/self-hosted battlegroups.
@@ -28,7 +28,7 @@ These settings are exposed in the admin panel under Settings -> Director Charact
 | --- | --- | --- |
 | `ShouldDeleteOriginCharactersDuringTransfers` | `true` | Deletes the origin character after a successful transfer into this battlegroup. |
 | `AcceptOutgoingCharacterTransfers` | `true` | Allows characters on this battlegroup to transfer out. |
-| `IncomingCharacterTransfers` | `DenyAll` | Controls which origin server types may transfer characters into this battlegroup. |
+| `IncomingCharacterTransfers` | `0` | Controls which origin server types may transfer characters into this battlegroup. |
 | `ExportCharacterTimeout` | `900` | Seconds before the export query times out. |
 | `ImportCharacterTimeout` | `900` | Seconds before the import query times out. |
 | `FreeToTransferCharactersFrom` | `false` | Skips transfer token cost for transfers from this battlegroup. |
@@ -39,16 +39,14 @@ These settings are exposed in the admin panel under Settings -> Director Charact
 
 ## Incoming Rulesets
 
-The Director binary exposes these inbound rulesets:
+The Director binary for build `1963158` exposes these inbound rulesets, but its config parser expects the numeric enum value:
 
 ```text
-DenyAll
-AllowFromPrivateOnly
-AllowFromOfficialOnly
-AllowFromPrivateAndOfficial
+0 = DenyAll
+1 = AllowFromPrivateOnly
 ```
 
-Use `DenyAll` for a closed world. Use `AllowFromPrivateOnly` if you want to block public/official characters while still allowing transfers from other private/self-hosted battlegroups.
+Use `0` for a closed world. Use `1` if you want to block public/official characters while still allowing transfers from other private/self-hosted battlegroups. String values such as `DenyAll` are present in the binary but fail this build's settings reload with a `JsonException`.
 
 ## Apply Changes
 

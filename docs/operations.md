@@ -82,6 +82,42 @@ COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' \
 
 The helper marks the old partition owner dead, stops the map service, waits until the old id is no longer active, starts the service, and waits for the partition to become ready/alive/active again.
 
+## Map Watchdog
+
+Compose does not currently restart map containers automatically, and a generic `restart: always` policy is not safe for fixed-partition maps because a fast blind restart can reproduce the stale server-id crash loop.
+
+Run the watchdog from an operator shell or a host-level service manager if you want automatic recovery:
+
+```bash
+COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' \
+  ./scripts/watch-maps.sh .env
+```
+
+The watchdog only recovers services that already have containers and are `exited` or `dead`; it does not start maps that were intentionally never launched. Recovery delegates to `scripts/recover-map.sh`, so the old partition owner is marked dead and aged out before the service starts again.
+
+Check what it is monitoring without changing state:
+
+```bash
+COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' \
+  ./scripts/watch-maps.sh .env --status
+```
+
+Validate watchdog status and dry-run behavior without Docker:
+
+```bash
+make test-watch-maps
+```
+
+To run it under systemd on this host, install a rendered unit for the current checkout:
+
+```bash
+./scripts/install-map-watchdog-service.sh .env
+sudo systemctl enable --now dune-map-watchdog.service
+systemctl status dune-map-watchdog.service
+```
+
+The installer updates `WorkingDirectory` and `ExecStart` for the current repo path before copying the unit to `/etc/systemd/system/`.
+
 ## Expanded Farm Startup
 
 Start the full standing farm after the core service layer is healthy:

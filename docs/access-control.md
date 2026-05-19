@@ -57,16 +57,14 @@ This repository currently defaults inbound character transfers to disabled:
 
 ```ini
 [ Battlegroup ]
-IncomingCharacterTransfers=DenyAll
+IncomingCharacterTransfers=0
 ```
 
 The admin panel exposes the Director character-transfer settings under Settings -> Director Character Transfers. See `docs/character-transfers.md` for the full setting list and the inbound rulesets:
 
 ```text
-DenyAll
-AllowFromPrivateOnly
-AllowFromOfficialOnly
-AllowFromPrivateAndOfficial
+0 = DenyAll
+1 = AllowFromPrivateOnly
 ```
 
 ## Limitations

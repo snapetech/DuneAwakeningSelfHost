@@ -24,6 +24,11 @@ Game server containers copy `UserEngine.ini` and `UserGame.ini` into Unreal's sa
 
 `DUNE_SERVER_LOGIN_PASSWORD` remains in `.env`; `scripts/run_server_safe.sh` injects it at launch so the tracked config file does not contain the live password.
 
+The admin panel exposes `[/Script/DuneSandbox.PlayerOnlineStateSettings]` from `UserGame.ini` as Settings -> Logout and Reconnect Timers. The typed API endpoints are:
+
+- `GET /api/settings/player-online-state`
+- `POST /api/settings/player-online-state`
+
 ## Official User Engine Knobs
 
 These came from the Steam server package's `scripts/setup/config/UserEngine.ini` template.
@@ -58,6 +63,9 @@ Safe candidates for admin editing:
 - `m_bAreSecurityZonesEnabled`: enable/disable security zones.
 - `UpdateRateInSeconds`: item deterioration update cadence.
 - `m_bCoriolisAutoSpawnEnabled`: Coriolis storm auto-spawn behavior.
+- `m_DefaultReconnectGracePeriodSeconds`: normal-map reconnect grace/logoff persistence window; set to `0` for immediate disconnect/logout expiry.
+- `m_OvermapReturnGracePeriodSeconds`: overmap return grace window; set to `0` for Steam Deck suspend-friendly immediate exit.
+- `m_InstancedMapReconnectGracePeriodSeconds`: instanced-map reconnect grace/logoff persistence window; set to `0` for immediate disconnect/logout expiry.
 - `m_MaxNumLandclaimSegments`: landclaim segment cap.
 - `m_BuildingBlueprintMaxExtensions`: blueprint extension cap.
 - `m_BaseBackupMaxExtensions`: base backup extension cap.
@@ -123,5 +131,5 @@ Do not proxy the game UDP path through an HTTP reverse proxy unless a separate U
 ## Current Gaps
 
 - `gateway` is defined in the stack but was not running during this audit. Full farm readiness has been green without it, but this should be validated against live-client travel and FLS behavior before deciding it is optional.
-- Admin panel has raw config-file editing for `UserEngine.ini` and `UserGame.ini`; typed widgets for the safest gameplay knobs are still a follow-up.
+- Admin panel has raw config-file editing for `UserEngine.ini` and `UserGame.ini`; logout/reconnect timers now have typed controls, while other gameplay knobs are still raw-config edits.
 - There is no automated per-map resource recommendation yet. Use `scripts/profile-runtime.sh` and `scripts/summarize-runtime-profile.sh` while testing player travel.
