@@ -68,7 +68,8 @@ server {
 - Token-gated Postgres custom-format backup under `backups/admin-panel`.
 - Redacted JSONL audit trail for rejected requests and admin writes under `backups/admin-panel/audit.jsonl`.
 - Known item template, observed item template, inventory, and inventory-type references.
-- Character dropdowns in Admin Actions for currency, XP, keystones, and item grant targeting.
+- Character dropdowns in Admin Actions for currency, XP, keystones, item grant targeting, and item maintenance.
+- Selected characters pre-populate controller/account/name fields and load owned inventory items for stack edits or deletion.
 - Exact-template item grants, dry-runs, stack edits, and item deletion behind admin gates.
 
 ## Write Safety
