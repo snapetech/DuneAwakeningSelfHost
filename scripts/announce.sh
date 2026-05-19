@@ -36,6 +36,10 @@ title = os.environ.get("DUNE_ANNOUNCE_TITLE", "Maintenance")
 command = os.environ.get("DUNE_ANNOUNCE_COMMAND_NAME", "ServiceBroadcast")
 template = os.environ.get("DUNE_ANNOUNCE_PAYLOAD_TEMPLATE", "")
 mode = os.environ.get("DUNE_ANNOUNCE_PAYLOAD_MODE", "command-payload")
+reply_to = os.environ.get("DUNE_ANNOUNCE_RMQ_REPLY_TO", "")
+correlation_id = os.environ.get("DUNE_ANNOUNCE_RMQ_CORRELATION_ID", job_id)
+app_id = os.environ.get("DUNE_ANNOUNCE_RMQ_APP_ID", "")
+user_id = os.environ.get("DUNE_ANNOUNCE_RMQ_USER_ID", "")
 
 if not targets:
     print("missing DUNE_ANNOUNCE_RMQ_ROUTING_KEYS", file=sys.stderr)
@@ -96,13 +100,21 @@ headers = {
 ok = True
 results = []
 for routing_key in targets:
+    properties = {
+        "content_type": "application/json",
+        "delivery_mode": 1,
+        "timestamp": int(time.time()),
+        "type": command,
+        "correlation_id": correlation_id,
+    }
+    if reply_to:
+        properties["reply_to"] = reply_to
+    if app_id:
+        properties["app_id"] = app_id
+    if user_id:
+        properties["user_id"] = user_id
     payload = {
-        "properties": {
-            "content_type": "application/json",
-            "delivery_mode": 1,
-            "timestamp": int(time.time()),
-            "type": command,
-        },
+        "properties": properties,
         "routing_key": routing_key,
         "payload": body,
         "payload_encoding": "string",
