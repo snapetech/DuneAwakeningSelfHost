@@ -1,6 +1,6 @@
 # Steam Package Teardown
 
-As of 2026-05-19, this teardown is based on the live Steam tool `Dune: Awakening Self-Hosted Server`, app ID `4754530`, not the older PTC-only package naming. Funcom's current self-hosting FAQ still links token generation through `https://account-pts.duneawakening.com/`, so `account-pts` remains part of the live token flow for now.
+As of 2026-05-19, this teardown is based on the live Steam tool `Dune: Awakening Self-Hosted Server`, app ID `4754530`, not the older PTC-only package naming. Funcom's current self-hosting FAQ still links token generation through `https://account-pts.duneawakening.com/`, but the proper live token generator is in the Dune: Awakening account portal at `https://account.duneawakening.com/`.
 
 Package path:
 
@@ -108,3 +108,16 @@ rabbitmq_auth_backend_cache
 ```
 
 `server-gateway` expects `gateway_farm_api_key`. The official secret template includes an `fls-apikey` key, but using the placeholder reaches FLS and is rejected; Compose maps this to `FLS_SECRET` so the real self-host token is used once provided. The gateway also needs the operator-style `--RMQGameHostname/--RMQGamePort` launch args or it reports null RMQ addresses to FLS.
+
+## Local RMQ Auth Shim
+
+The official RabbitMQ HTTP auth backend points at TextRouter. In the Compose topology, Director and TextRouter service users authenticate cleanly, but game-server users shaped like:
+
+```text
+sg.<world>.<server-id>.game
+sg.<world>.<server-id>.admin
+```
+
+were rejected by TextRouter with token timestamps of `01/01/0001`, while the game server still reached farm-ready. `scripts/rmq_auth_shim.py` is a local compatibility shim that forwards normal auth requests to TextRouter and explicitly allows those same-world `sg.*.game/admin` service users.
+
+This is intentionally paired with localhost-only RabbitMQ publication. Do not expose `31982/tcp` publicly while this workaround is enabled.

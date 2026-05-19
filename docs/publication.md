@@ -24,7 +24,8 @@ This repository is for original tooling around the official Dune: Awakening self
 Run:
 
 ```bash
-find . -maxdepth 3 -type f | sort
+make list-publishable
+make validate
 git status --short
 git diff --cached --stat
 ```
