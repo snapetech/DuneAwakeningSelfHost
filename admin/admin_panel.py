@@ -143,6 +143,8 @@ GM_ALLOWED_GM_COMMANDS = (
     "Fly",
     "Ghost",
     "Walk",
+    "RemoveSessionMember",
+    "KickLobbyMember",
     "DestroyTargetVehicle",
     "DestroyTotem",
     "DestroyPlaceable",
@@ -167,6 +169,8 @@ GM_COMMAND_NOTES = {
     "Fly": "Enable fly movement on the admin player.",
     "Ghost": "Enable collision-free movement on the admin player.",
     "Walk": "Return movement mode to normal walking.",
+    "RemoveSessionMember": "Best current candidate for a soft targeted disconnect. Keep behind GM payload verification and player-disconnect execution gates.",
+    "KickLobbyMember": "Fallback targeted lobby kick candidate if RemoveSessionMember is ineffective.",
     "DestroyTargetVehicle": "Destroys targeted vehicle.",
     "DestroyTotem": "Destroys targeted totem.",
     "DestroyPlaceable": "Destroys targeted placeable.",
@@ -226,6 +230,7 @@ GM_CHAT_COMMANDS = (
     {"command": "&gm sandworm", "tier": "movement", "notes": "Preview/send TeleportToSandworm."},
     {"command": "&gm marker", "tier": "movement", "notes": "Preview/send TeleportToPersonalMarker."},
     {"command": "&gm vehicle <template> [args...]", "tier": "spawn", "notes": "Preview/send SpawnVehicle; exact args still need validation."},
+    {"command": "&disconnect <player>", "tier": "player", "notes": "Preview/send gated targeted session removal; defaults to RemoveSessionMember."},
 )
 GM_PANEL_PRESETS = (
     {"label": "Print Position", "command": "PrintPos", "args": "", "risk": "safe"},
@@ -243,6 +248,8 @@ GM_PANEL_PRESETS = (
     {"label": "Fly", "command": "Fly", "args": "", "risk": "movement"},
     {"label": "Ghost", "command": "Ghost", "args": "", "risk": "movement"},
     {"label": "Walk", "command": "Walk", "args": "", "risk": "movement"},
+    {"label": "Soft Disconnect", "command": "RemoveSessionMember", "args": "<player>", "risk": "player"},
+    {"label": "Lobby Kick", "command": "KickLobbyMember", "args": "<player>", "risk": "player"},
 )
 
 ALLOWED_CONFIGS = {
@@ -380,6 +387,9 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_CHAT_SPAM_EXEMPT_FLS_IDS": {"group": "Chat Spam Protection", "secret": False, "restart": True, "why": "Comma-separated Funcom Live Services account ids exempt from spam enforcement."},
     "DUNE_SPAM_KICK_BACKEND": {"group": "Chat Spam Protection", "secret": False, "restart": True, "why": "Backend mode used by scripts/spam-kick-player.sh. Keep blocked until a targeted Dune kick backend is verified."},
     "DUNE_SPAM_KICK_BACKEND_COMMAND": {"group": "Chat Spam Protection", "secret": False, "restart": True, "why": "Optional delegated backend command used only when DUNE_SPAM_KICK_BACKEND=command."},
+    "DUNE_CHAT_COMMAND_EXECUTE_PLAYER_DISCONNECT": {"group": "Chat Commands", "secret": False, "restart": True, "why": "Third gate for targeted player disconnect through the verified native GM command path."},
+    "DUNE_PLAYER_DISCONNECT_COMMAND": {"group": "Chat Commands", "secret": False, "restart": True, "why": "Native command used by &disconnect. Default RemoveSessionMember is the softest known candidate; KickLobbyMember is the fallback."},
+    "DUNE_PLAYER_DISCONNECT_ALLOW_BATTLEYE": {"group": "Chat Commands", "secret": False, "restart": True, "why": "Allows BattlEyeMegaKick as a selectable disconnect command. Leave false unless you deliberately want the punitive kick path."},
     "DUNE_ADMIN_BOT_INTERVAL_SECONDS": {"group": "Admin Bot", "secret": False, "restart": True, "why": "Loop interval for scripts/admin-bot.py when run in daemon mode."},
     "DUNE_ADMIN_BOT_BACKUP_MAX_AGE_HOURS": {"group": "Admin Bot", "secret": False, "restart": True, "why": "Maximum acceptable age for the newest local backup before the bot reports stale backup risk."},
     "DUNE_ADMIN_BOT_BACKUP_STALE_RUN": {"group": "Admin Bot", "secret": False, "restart": True, "why": "When true, admin-bot runs scripts/backup-state.sh if the newest local backup is stale."},
@@ -1726,6 +1736,7 @@ class Handler(BaseHTTPRequestHandler):
                     "mutationsEnabled": MUTATIONS_ENABLED,
                     "itemGrantsEnabled": ITEM_GRANTS_ENABLED,
                     "adminTokenConfigured": bool(ADMIN_TOKEN),
+                    "adminTokenRequired": os.environ.get("DUNE_ADMIN_REQUIRE_TOKEN", "false").lower() in ("1", "true", "yes", "on"),
                     "safeEnvKeys": sorted(SAFE_ENV_KEYS),
                     "configs": sorted(ALLOWED_CONFIGS),
                 })
@@ -2689,6 +2700,8 @@ class Handler(BaseHTTPRequestHandler):
         path.write_text(content, encoding="utf-8")
 
     def require_token(self):
+        if os.environ.get("DUNE_ADMIN_REQUIRE_TOKEN", "false").lower() not in ("1", "true", "yes", "on"):
+            return
         if not ADMIN_TOKEN:
             raise PermissionError("DUNE_ADMIN_TOKEN is not configured")
         peer = self.client_address[0] if self.client_address else "unknown"
@@ -2698,7 +2711,11 @@ class Handler(BaseHTTPRequestHandler):
         if len(failures) >= AUTH_FAILURE_LIMIT:
             self.audit("auth-throttled", ok=False, failures=len(failures))
             raise PermissionError("too many failed admin token attempts")
-        provided = self.headers.get("X-Admin-Token", "")
+        provided = self.headers.get("X-Admin-Token", "").strip()
+        if not provided:
+            authorization = self.headers.get("Authorization", "").strip()
+            if authorization.lower().startswith("bearer "):
+                provided = authorization[7:].strip()
         if not hmac.compare_digest(provided, ADMIN_TOKEN):
             failures.append(now)
             AUTH_FAILURES[peer] = failures
@@ -3005,7 +3022,7 @@ INDEX = r"""<!doctype html>
     </div>
   </div>
 <script nonce="__NONCE__">
-let token = sessionStorage.getItem('duneAdminToken') || '';
+let token = (localStorage.getItem('duneAdminToken') || sessionStorage.getItem('duneAdminToken') || '').trim();
 document.getElementById('token').value = token;
 const validTabs = new Set(['overview', 'ops', 'security', 'runbook', 'characters', 'settings', 'mutations']);
 let current = validTabs.has(location.hash.slice(1)) ? location.hash.slice(1) : (sessionStorage.getItem('duneAdminTab') || 'overview');
@@ -3031,8 +3048,22 @@ const view = document.getElementById('view');
 
 document.body.classList.toggle('highContrast', sessionStorage.getItem('duneAdminHighContrast') === 'on');
 document.body.classList.toggle('denseMode', sessionStorage.getItem('duneAdminDenseMode') === 'on');
-function saveToken(){ token = document.getElementById('token').value; sessionStorage.setItem('duneAdminToken', token); load(); }
-function clearToken(){ token = ''; document.getElementById('token').value = ''; sessionStorage.removeItem('duneAdminToken'); notify('Admin token cleared'); load(); }
+function normalizeToken(value){ return String(value || '').trim().replace(/^Bearer\s+/i, '').trim(); }
+async function saveToken(){
+  token = normalizeToken(document.getElementById('token').value);
+  document.getElementById('token').value = token;
+  localStorage.setItem('duneAdminToken', token);
+  sessionStorage.setItem('duneAdminToken', token);
+  await load();
+}
+function clearToken(){
+  token = '';
+  document.getElementById('token').value = '';
+  localStorage.removeItem('duneAdminToken');
+  sessionStorage.removeItem('duneAdminToken');
+  notify('Admin token cleared');
+  load();
+}
 function announce(message){ document.getElementById('srStatus').textContent = message; }
 function notify(message, tone='ok'){
   const box = document.getElementById('toast');
@@ -3078,8 +3109,20 @@ async function api(path, opts={}) {
   if (token) opts.headers['X-Admin-Token'] = token;
   try {
     const res = await fetch(path, opts);
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || res.statusText);
+    const text = await res.text();
+    let data = {};
+    if (text) {
+      try {
+        data = JSON.parse(text);
+      } catch (e) {
+        throw new Error(`${res.status} ${res.statusText}: non-JSON response from ${path}`);
+      }
+    }
+    if (!res.ok) {
+      const message = data.error || res.statusText || `HTTP ${res.status}`;
+      if (res.status === 401) throw new Error(`${message}. Paste the current admin token and press Use token.`);
+      throw new Error(message);
+    }
     return data;
   } catch (e) {
     if (e.name === 'AbortError') throw new Error(`request timed out after ${Math.round(timeoutMs / 1000)}s`);

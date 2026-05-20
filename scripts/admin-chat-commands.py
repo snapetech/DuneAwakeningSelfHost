@@ -368,12 +368,38 @@ def gm_execution_allowed():
     )
 
 
+def player_disconnect_allowed():
+    return (
+        env_bool("DUNE_ADMIN_GM_COMMANDS_ENABLED", False)
+        and env_bool("DUNE_GM_COMMAND_PAYLOAD_VERIFIED", False)
+        and env_bool("DUNE_CHAT_COMMAND_EXECUTE_PLAYER_DISCONNECT", False)
+    )
+
+
 def send_gm_command(command_text, target_player, admin_player, route):
     if not gm_execution_allowed():
         return {"ok": False, "blocked": True, "preview": gm_command_preview(command_text, target_player, admin_player, route)}
     if env("DUNE_GM_COMMAND_TRANSPORT", "amqp") == "management":
         return publish_command_management(command_text, route, target_player=target_player, admin_player=admin_player)
     return publish_command(command_text, route, target_player=target_player, admin_player=admin_player)
+
+
+def send_player_disconnect(command_text, target_player, admin_player, route):
+    if not player_disconnect_allowed():
+        return {"ok": False, "blocked": True, "preview": gm_command_preview(command_text, target_player, admin_player, route)}
+    if env("DUNE_GM_COMMAND_TRANSPORT", "amqp") == "management":
+        return publish_command_management(command_text, route, target_player=target_player, admin_player=admin_player)
+    return publish_command(command_text, route, target_player=target_player, admin_player=admin_player)
+
+
+def player_disconnect_command(target_name):
+    command = env("DUNE_PLAYER_DISCONNECT_COMMAND", "RemoveSessionMember").strip()
+    allowed = {"RemoveSessionMember", "KickLobbyMember"}
+    if env_bool("DUNE_PLAYER_DISCONNECT_ALLOW_BATTLEYE", False):
+        allowed.add("BattlEyeMegaKick")
+    if command not in allowed:
+        raise ValueError(f"DUNE_PLAYER_DISCONNECT_COMMAND must be one of: {', '.join(sorted(allowed))}")
+    return f"{command} {target_name}"
 
 
 def specialization_track_types(conn):
@@ -827,15 +853,15 @@ def kick_candidate_routes(conn, target):
     return [
         {
             "name": "native-gm-session-command",
-            "status": "investigate",
+            "status": "gated",
             "route": route,
             "candidateCommands": [
                 f"PrintAllowedCommands",
-                f"KickLobbyMember {target['character_name']}",
                 f"RemoveSessionMember {target['character_name']}",
+                f"KickLobbyMember {target['character_name']}",
                 f"BattlEyeMegaKick {target['character_name']}",
             ],
-            "reason": "The live binary contains session/lobby kick strings, but DedicatedServerGame.ini does not expose a confirmed KickPlayer-style GM command and the RabbitMQ payload envelope is still unverified.",
+            "reason": "Use RemoveSessionMember first for the least punitive disconnect. Execution requires DUNE_ADMIN_GM_COMMANDS_ENABLED=true, DUNE_GM_COMMAND_PAYLOAD_VERIFIED=true, and DUNE_CHAT_COMMAND_EXECUTE_PLAYER_DISCONNECT=true.",
         },
         {
             "name": "map-service-restart",
@@ -1050,7 +1076,7 @@ def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=F
 
     if command in ("kick", "disconnect", "sessionkick"):
         if len(parts) != 2:
-            response = "usage: &kick <playername>"
+            response = "usage: &disconnect <playername>"
             if reply:
                 run_announce(response)
             return {"ok": False, "error": response}
@@ -1064,21 +1090,35 @@ def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=F
         online = (target["online_status"] or "").lower() == "online"
         route = gm_route_for(conn, target)
         if online:
-            response = f"{target['character_name']} is online on {route}; targeted kick route is not verified yet"
-            ok = False
-            reason = "no confirmed allow-listed native kick/session command is available yet"
+            try:
+                command_text = player_disconnect_command(target["character_name"])
+                gm_result = send_player_disconnect(command_text, target["character_name"], resolved_admin, route)
+                sent = bool(gm_result.get("ok"))
+                response = f"{target['character_name']} disconnect {'sent' if sent else 'preview ready'} via {route} using {command_text.split()[0]}"
+                ok = sent
+                reason = "disconnect sent" if sent else "player disconnect execution is gated or payload route is not verified"
+            except ValueError as exc:
+                command_text = ""
+                gm_result = {"ok": False, "blocked": True, "error": str(exc)}
+                response = str(exc)
+                ok = False
+                reason = str(exc)
         else:
             response = f"{target['character_name']} is {target['online_status']}; no live session to kick"
             ok = True
             reason = "target is not online"
+            command_text = ""
+            gm_result = None
         if reply:
             run_announce(response)
         return {
             "ok": ok,
-            "action": "kick",
-            "blocked": True,
+            "action": "disconnect",
+            "blocked": not ok,
             "reason": reason,
             "message": response,
+            "commandText": command_text,
+            "gm": gm_result,
             "target": compact_character(target),
             "candidateRoutes": kick_candidate_routes(conn, target),
         }

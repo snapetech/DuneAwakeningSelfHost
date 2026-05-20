@@ -218,6 +218,9 @@ DUNE_CHAT_COMMAND_ADMIN_FLS_IDS=6FF6498F4074E3DE
 DUNE_CHAT_COMMAND_DRY_RUN=true
 DUNE_CHAT_COMMAND_EXECUTE_TELEPORT=false
 DUNE_CHAT_COMMAND_EXECUTE_ONLINE_GM_TELEPORT=false
+DUNE_CHAT_COMMAND_EXECUTE_PLAYER_DISCONNECT=false
+DUNE_PLAYER_DISCONNECT_COMMAND=RemoveSessionMember
+DUNE_PLAYER_DISCONNECT_ALLOW_BATTLEYE=false
 DUNE_GM_COMMAND_PAYLOAD_VERIFIED=false
 DUNE_GM_COMMAND_ENVELOPE_MODE=service-message
 DUNE_GM_COMMAND_TRANSPORT=amqp
@@ -252,6 +255,7 @@ Implemented commands:
 ```text
 &test
 &where <playername>
+&disconnect <playername>
 &kick <playername>
 &teleport <playername>
 &goto <playername>
@@ -270,7 +274,9 @@ Implemented commands:
 
 `&where` reports the resolved player's current online/offline state and last known location. `&teleport` moves an offline target to the admin's current partition and location, using the server's own `dune.admin_move_offline_player_to_partition(...)` function. It rejects online targets because live actor transforms are owned by the running map server and can be overwritten.
 
-`&kick` resolves a target player and reports their online state, map route, controller ids, and the currently known kick options. It is deliberately blocked from disconnecting players until a real native kick/session command is verified. Current evidence shows lower-level `KickLobbyMember`, `RemoveSessionMember`, and `BattlEyeMegaKick` strings in the server binary, but no confirmed allow-listed `KickPlayer` command or safe DB/network session handle.
+`&disconnect` and its `&kick` alias resolve a target player, route the request to the player's current map, and default to `RemoveSessionMember <playername>`. That is the softest known native session-removal candidate. `KickLobbyMember` can be selected with `DUNE_PLAYER_DISCONNECT_COMMAND=KickLobbyMember` if session removal does not work. `BattlEyeMegaKick` is intentionally excluded unless `DUNE_PLAYER_DISCONNECT_ALLOW_BATTLEYE=true` and `DUNE_PLAYER_DISCONNECT_COMMAND=BattlEyeMegaKick` are set, because it is the most likely option to behave like a punitive kick or retry cooldown.
+
+Targeted disconnect execution has its own gate. It requires all three of `DUNE_ADMIN_GM_COMMANDS_ENABLED=true`, `DUNE_GM_COMMAND_PAYLOAD_VERIFIED=true`, and `DUNE_CHAT_COMMAND_EXECUTE_PLAYER_DISCONNECT=true`. Until those are true, the command returns the exact native payload preview instead of publishing it. The repo also sets the server reconnect grace periods to `0` in `config/UserGame.ini`, so normal disconnects should not leave a long persisted reconnect window.
 
 `&goto` and `&bring` are wired through the native GM command adapter for online movement, but execution remains gated until the command payload is proven. `&goto <playername>` prepares `TeleportToPlayer <playername>` targeted at the admin; `&bring <playername>` prepares `TeleportToExact <admin-x> <admin-y> <admin-z>` targeted at the online player. The three required gates are `DUNE_ADMIN_GM_COMMANDS_ENABLED=true`, `DUNE_GM_COMMAND_PAYLOAD_VERIFIED=true`, and `DUNE_CHAT_COMMAND_EXECUTE_ONLINE_GM_TELEPORT=true`. Until then, the commands return the exact payload preview instead of publishing a live teleport.
 
@@ -285,7 +291,7 @@ The chat-command listener also watches all intercepted chat messages for repeate
 - Admins are exempt by default through `DUNE_CHAT_SPAM_PROTECT_EXEMPT_ADMINS=true`.
 - A cooldown prevents repeated enforcement on the same player for `300` seconds.
 
-The detector normalizes whitespace and case before comparing messages. On violation it runs `DUNE_CHAT_SPAM_KICK_COMMAND` and announces the result. The default hook is `scripts/spam-kick-player.sh`, which fails closed with `DUNE_SPAM_KICK_BACKEND=blocked` until a real kick backend is configured. Because the native targeted-kick path is still unverified, violations are logged and announced as blocked rather than pretending a player was disconnected.
+The detector normalizes whitespace and case before comparing messages. On violation it runs `DUNE_CHAT_SPAM_KICK_COMMAND` and announces the result. The default hook is `scripts/spam-kick-player.sh`, which fails closed with `DUNE_SPAM_KICK_BACKEND=blocked` until a real kick backend is configured. Because targeted disconnect depends on the native GM command route being verified for the current server build, violations are logged and announced as blocked by default instead of silently doing unsafe state writes.
 
 Useful knobs:
 

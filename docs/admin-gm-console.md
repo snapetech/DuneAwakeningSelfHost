@@ -184,31 +184,44 @@ Until all three are true, `&goto <playername>` and `&bring <playername>` only re
 - `&goto <playername>`: `TeleportToPlayer <playername>` targeted at the admin.
 - `&bring <playername>`: `TeleportToExact <admin-x> <admin-y> <admin-z>` targeted at the online player.
 
-## Targeted Kick Status
+## Targeted Disconnect Status
 
-No confirmed targeted player kick command has been found yet.
+The stack now treats targeted disconnect as a gated native GM/session command. The preferred candidate is `RemoveSessionMember <playername>`, because it is less punitive than a kick. `KickLobbyMember <playername>` is the fallback. `BattlEyeMegaKick <playername>` stays opt-in only because it may behave like a harsher kick or impose client retry behavior outside the server reconnect-grace settings.
 
 What we verified:
 
-- The active `DedicatedServerGame.ini` GM allow-list does not include a clear `KickPlayer`, `AdminKick`, `DisconnectPlayer`, or session-removal command.
+- The active `DedicatedServerGame.ini` GM allow-list does not include a clear `KickPlayer`, `AdminKick`, or `DisconnectPlayer` command.
 - The live server binary does contain lower-level session and disconnect strings including `KickLobbyMember`, `RemoveSessionMember`, `BattlEyeMegaKick`, and `ClientWasKicked`.
-- Those strings are not enough to execute safely. We still need the exact console/GM command syntax, required identifiers, and verified RabbitMQ command envelope.
+- Those strings are not enough to execute safely unless the native RabbitMQ command envelope is verified for the current build.
 - The database exposes player online state, `server_id`, `player_controller_id`, pawn id, FLS id, and map location, but it does not expose a live socket/session handle that can be safely closed.
 - Host/container UDP listeners do not provide a reliable per-character connection to kill. A network-level kick would require a verified character-to-client-IP mapping first.
 
 Implemented chat helper:
 
 ```text
+&disconnect <playername>
 &kick <playername>
 ```
 
-`&kick` is intentionally a resolver/planner right now. It resolves the player, reports whether they are online, captures their current map route/controller ids, and returns the candidate kick paths. It does not mutate Postgres, publish guessed GM payloads, restart map services, or firewall an IP.
+`&disconnect` and `&kick` resolve the player, capture the current map route, and build a native command payload. They publish only when all three gates are enabled:
+
+```env
+DUNE_ADMIN_GM_COMMANDS_ENABLED=true
+DUNE_GM_COMMAND_PAYLOAD_VERIFIED=true
+DUNE_CHAT_COMMAND_EXECUTE_PLAYER_DISCONNECT=true
+DUNE_PLAYER_DISCONNECT_COMMAND=RemoveSessionMember
+DUNE_PLAYER_DISCONNECT_ALLOW_BATTLEYE=false
+```
+
+With the default gates, the command returns a preview and does not mutate Postgres, restart map services, firewall an IP, or publish a guessed payload.
 
 The chat spam auto-protector uses the same limitation. It detects repeated-message spam and calls `DUNE_CHAT_SPAM_KICK_COMMAND`, which defaults to `scripts/spam-kick-player.sh`. That hook fails closed with `DUNE_SPAM_KICK_BACKEND=blocked` until the native kick path is proven. With the default config, spam violations are logged and announced as blocked instead of silently doing unsafe state writes.
 
 Candidate paths:
 
-- Native GM/session command: investigate `KickLobbyMember`, `RemoveSessionMember`, or `BattlEyeMegaKick` only after the `PrintPos`/`PrintAllowedCommands` payload path is proven.
+- Native GM/session command: use `RemoveSessionMember` first after the `PrintPos`/`PrintAllowedCommands` payload path is proven.
+- Native GM/lobby kick: use `KickLobbyMember` only if session removal does not disconnect the client.
+- BattlEye kick: leave off unless deliberately testing a harsher kick path.
 - Map-service restart: available as a blunt operational tool, but not targeted because it disconnects everyone on that map.
 - DB online-state write: rejected because it is not the live session and can corrupt/desync state.
 - Network block: blocked until we can reliably map a character to a client IP/session handle.
