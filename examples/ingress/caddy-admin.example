@@ -1,0 +1,10 @@
+# Caddy LAN/VPN-only admin panel route.
+# Replace admin.example.test with a private DNS name and keep this behind LAN/VPN.
+
+admin.example.test {
+    reverse_proxy 127.0.0.1:18081 {
+        header_up Host {host}
+        header_up X-Forwarded-Host {host}
+        header_up X-Forwarded-Proto http
+    }
+}

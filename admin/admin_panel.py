@@ -7,6 +7,7 @@ import html
 import json
 import os
 import pathlib
+import re
 import secrets
 import shutil
 import socket
@@ -35,6 +36,7 @@ ENV_FILE = ROOT / ".env"
 BACKUP_ROOT = ROOT / "backups" / "admin-panel"
 STATIC_ROOT = ROOT / "admin" / "static"
 AUDIT_LOG = BACKUP_ROOT / "audit.jsonl"
+STEAM_PROFILE_CACHE_FILE = BACKUP_ROOT / "steam-profiles.json"
 AUDIT_MAX_BYTES = int(os.environ.get("DUNE_ADMIN_AUDIT_MAX_BYTES", str(5 * 1024 * 1024)))
 REQUEST_TIMEOUT_SECONDS = int(os.environ.get("DUNE_ADMIN_REQUEST_TIMEOUT_SECONDS", "10"))
 MAX_ITEM_STACK_SIZE = int(os.environ.get("DUNE_ADMIN_MAX_ITEM_STACK_SIZE", "1000000"))
@@ -44,10 +46,15 @@ HAGGA_MAP_MAX_X = float(os.environ.get("DUNE_HAGGA_MAP_MAX_X", "407000"))
 HAGGA_MAP_MIN_Y = float(os.environ.get("DUNE_HAGGA_MAP_MIN_Y", "-403500"))
 HAGGA_MAP_MAX_Y = float(os.environ.get("DUNE_HAGGA_MAP_MAX_Y", "403500"))
 HAGGA_MAP_INVERT_X = os.environ.get("DUNE_HAGGA_MAP_INVERT_X", "true").lower() not in ("0", "false", "no", "off")
-HAGGA_MAP_INVERT_Y = os.environ.get("DUNE_HAGGA_MAP_INVERT_Y", "true").lower() not in ("0", "false", "no", "off")
+HAGGA_MAP_INVERT_Y = os.environ.get("DUNE_HAGGA_MAP_INVERT_Y", "false").lower() not in ("0", "false", "no", "off")
 HAGGA_MAP_SHOW_RETURN_POINTS = os.environ.get("DUNE_HAGGA_MAP_SHOW_RETURN_POINTS", "false").lower() in ("1", "true", "yes", "on")
+HAGGA_MAP_IMAGE_MIN_U = float(os.environ.get("DUNE_HAGGA_MAP_IMAGE_MIN_U", "0.15"))
+HAGGA_MAP_IMAGE_MAX_U = float(os.environ.get("DUNE_HAGGA_MAP_IMAGE_MAX_U", "1.15"))
+HAGGA_MAP_IMAGE_MIN_V = float(os.environ.get("DUNE_HAGGA_MAP_IMAGE_MIN_V", "0.10"))
+HAGGA_MAP_IMAGE_MAX_V = float(os.environ.get("DUNE_HAGGA_MAP_IMAGE_MAX_V", "1.10"))
 ADMIN_REFERENCE_LIMIT = int(os.environ.get("DUNE_ADMIN_REFERENCE_LIMIT", "200"))
 CHARACTER_SEARCH_LIMIT = int(os.environ.get("DUNE_ADMIN_CHARACTER_SEARCH_LIMIT", "100"))
+STEAM_PROFILE_CACHE_TTL_SECONDS = int(os.environ.get("DUNE_ADMIN_STEAM_PROFILE_CACHE_TTL_SECONDS", str(24 * 60 * 60)))
 DATABASE = os.environ.get("DUNE_DATABASE", "dune_sb_1_4_0_0")
 ADMIN_TOKEN = os.environ.get("DUNE_ADMIN_TOKEN", "")
 MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_MUTATIONS_ENABLED", "true").lower() == "true"
@@ -324,11 +331,16 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ADMIN_AUDIT_EVENT_LIMIT": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Default number of audit events returned by the panel."},
     "DUNE_ADMIN_REFERENCE_LIMIT": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum reference rows returned by admin helper endpoints."},
     "DUNE_ADMIN_CHARACTER_SEARCH_LIMIT": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum character search rows returned."},
+    "DUNE_ADMIN_STEAM_PROFILE_CACHE_TTL_SECONDS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "How long to cache public Steam persona names resolved from SteamID64 platform ids."},
     "DUNE_ADMIN_BIND_ADDRESS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Host interface used for the admin-panel published port. Keep this on 127.0.0.1 unless a trusted reverse proxy or VPN owns access."},
     "DUNE_ADMIN_HOST_PORT": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Host TCP port that publishes admin-panel:8080. Change this if another local service already owns 18080."},
     "DUNE_ADMIN_ALLOWED_HOSTS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Host header allowlist for the admin HTTP service."},
     "DUNE_HAGGA_MAP_INVERT_X": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Flip Hagga Basin map plotting horizontally to match the background map orientation."},
     "DUNE_HAGGA_MAP_INVERT_Y": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Invert Hagga Basin map plotting vertically to match the background map orientation."},
+    "DUNE_HAGGA_MAP_IMAGE_MIN_U": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Normalized image-space left edge for Hagga world-coordinate calibration. Values may be outside 0..1 when the bitmap has projection/crop offset."},
+    "DUNE_HAGGA_MAP_IMAGE_MAX_U": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Normalized image-space right edge for Hagga world-coordinate calibration."},
+    "DUNE_HAGGA_MAP_IMAGE_MIN_V": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Normalized image-space top edge for Hagga world-coordinate calibration."},
+    "DUNE_HAGGA_MAP_IMAGE_MAX_V": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Normalized image-space bottom edge for Hagga world-coordinate calibration."},
     "DUNE_HAGGA_MAP_SHOW_RETURN_POINTS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Show yellow travel-return markers on the Hagga map. Default false because they are not live player positions."},
     "DUNE_ADMIN_ANNOUNCE_COMMAND": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Executable hook used by the restart-announcement scheduler to deliver in-game messages."},
     "DUNE_ADMIN_ANNOUNCEMENT_MAX_MESSAGE_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum UTF-8 size for a scheduled restart-announcement message."},
@@ -1741,6 +1753,78 @@ def reference_query(errors, name, sql, params=None):
         return []
 
 
+def read_steam_profile_cache():
+    try:
+        data = json.loads(STEAM_PROFILE_CACHE_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def write_steam_profile_cache(cache):
+    BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
+    tmp = STEAM_PROFILE_CACHE_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(cache, indent=2, sort_keys=True), encoding="utf-8")
+    tmp.replace(STEAM_PROFILE_CACHE_FILE)
+
+
+def fetch_steam_persona_name(steam_id):
+    url = f"https://steamcommunity.com/profiles/{urllib.parse.quote(str(steam_id), safe='')}/?xml=1"
+    request = urllib.request.Request(url, headers={"User-Agent": "DASH-Admin/1.0"})
+    with urllib.request.urlopen(request, timeout=1.5) as response:
+        text = response.read(32768).decode("utf-8", "replace")
+    match = re.search(r"<steamID><!\[CDATA\[(.*?)\]\]></steamID>", text, re.S)
+    if match:
+        return html.unescape(match.group(1).strip())
+    match = re.search(r"<steamID>(.*?)</steamID>", text, re.S)
+    return html.unescape(match.group(1).strip()) if match else ""
+
+
+def enrich_steam_profiles(rows):
+    steam_ids = sorted({
+        str(row.get("platform_id") or "").strip()
+        for row in rows
+        if str(row.get("platform_name") or "").lower() == "steam" and str(row.get("platform_id") or "").strip().isdigit()
+    })
+    if not steam_ids:
+        return rows
+    now = time.time()
+    cache = read_steam_profile_cache()
+    changed = False
+    missing = [
+        steam_id for steam_id in steam_ids
+        if now - float((cache.get(steam_id) or {}).get("fetchedAt") or 0) > STEAM_PROFILE_CACHE_TTL_SECONDS
+    ]
+    if missing:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(missing))) as executor:
+            future_map = {executor.submit(fetch_steam_persona_name, steam_id): steam_id for steam_id in missing}
+            for future in concurrent.futures.as_completed(future_map):
+                steam_id = future_map[future]
+                try:
+                    persona = future.result()
+                    cache[steam_id] = {"personaName": persona, "fetchedAt": now, "ok": bool(persona)}
+                except Exception as exc:
+                    previous = cache.get(steam_id) or {}
+                    cache[steam_id] = {
+                        "personaName": previous.get("personaName", ""),
+                        "fetchedAt": now,
+                        "ok": False,
+                        "error": str(exc)[:160],
+                    }
+                changed = True
+    if changed:
+        try:
+            write_steam_profile_cache(cache)
+        except OSError:
+            pass
+    for row in rows:
+        steam_id = str(row.get("platform_id") or "").strip()
+        if str(row.get("platform_name") or "").lower() == "steam" and steam_id:
+            row["steam_profile_url"] = f"https://steamcommunity.com/profiles/{steam_id}"
+            row["steam_persona_name"] = (cache.get(steam_id) or {}).get("personaName", "")
+    return rows
+
+
 def create_db_backup():
     BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
@@ -2218,7 +2302,7 @@ class Handler(BaseHTTPRequestHandler):
             order by ps.last_login_time desc nulls last, ps.account_id
             limit %s
         """
-        return query(sql, (term, like, like, like, CHARACTER_SEARCH_LIMIT))
+        return enrich_steam_profiles([dict(row) for row in query(sql, (term, like, like, like, CHARACTER_SEARCH_LIMIT))])
 
     def character_roster(self):
         sql = """
@@ -2232,7 +2316,7 @@ class Handler(BaseHTTPRequestHandler):
             left join dune.farm_state fs on fs.server_id = ps.server_id
             order by ps.last_login_time desc nulls last, ps.character_name nulls last, ps.account_id
         """
-        rows = query(sql)
+        rows = enrich_steam_profiles([dict(row) for row in query(sql)])
         online = [row for row in rows if str(row.get("online_status") or "").lower() == "online"]
         offline = [row for row in rows if str(row.get("online_status") or "").lower() != "online"]
         return {
@@ -2296,8 +2380,12 @@ class Handler(BaseHTTPRequestHandler):
                 "maxY": HAGGA_MAP_MAX_Y,
                 "invertX": HAGGA_MAP_INVERT_X,
                 "invertY": HAGGA_MAP_INVERT_Y,
+                "imageMinU": HAGGA_MAP_IMAGE_MIN_U,
+                "imageMaxU": HAGGA_MAP_IMAGE_MAX_U,
+                "imageMinV": HAGGA_MAP_IMAGE_MIN_V,
+                "imageMaxV": HAGGA_MAP_IMAGE_MAX_V,
                 "showReturnPoints": HAGGA_MAP_SHOW_RETURN_POINTS,
-                "source": "DUNE_HAGGA_MAP_* world-centimeter extents",
+                "source": "DUNE_HAGGA_MAP_* affine world-to-image calibration",
             },
             "players": rows,
         }
@@ -2312,7 +2400,7 @@ class Handler(BaseHTTPRequestHandler):
         server_id = player[0].get("server_id")
         return {
             "player": player[0],
-            "account": query("select id, funcom_id, platform_name, platform_id, takeoverable from dune.accounts where id=%s", (account_id,)),
+            "account": enrich_steam_profiles([dict(row) for row in query("select id, funcom_id, platform_name, platform_id, takeoverable from dune.accounts where id=%s", (account_id,))]),
             "mapContext": query("""
                 select fs.server_id, fs.farm_id, fs.ready, fs.alive, fs.map,
                        fs.revision, fs.game_addr, fs.game_port, fs.igw_addr, fs.igw_port,
@@ -2735,9 +2823,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def security_audit(self):
         env_values = read_env()
+        token_required = os.environ.get("DUNE_ADMIN_REQUIRE_TOKEN", "false").lower() in ("1", "true", "yes", "on")
         checks = [
-            {"name": "admin token configured", "ok": bool(ADMIN_TOKEN)},
-            {"name": "admin token not placeholder", "ok": ADMIN_TOKEN not in ("", "change-me-admin-token")},
+            {"name": "admin auth mode", "ok": True, "value": "token required" if token_required else "local unlocked"},
+            {"name": "admin token configured", "ok": bool(ADMIN_TOKEN) if token_required else True, "value": "required" if token_required else "not required"},
+            {"name": "admin token not placeholder", "ok": ADMIN_TOKEN not in ("", "change-me-admin-token") if token_required else True, "value": "required" if token_required else "not required"},
             {"name": "mutation gate configured", "ok": True, "value": "enabled" if MUTATIONS_ENABLED else "off"},
             {"name": "item grants enabled", "ok": ITEM_GRANTS_ENABLED, "value": ITEM_GRANTS_ENABLED},
             {"name": "allowed hosts configured", "ok": bool(ALLOWED_HOSTS), "value": ", ".join(sorted(ALLOWED_HOSTS))},
@@ -3058,8 +3148,6 @@ INDEX = r"""<!doctype html>
     .tab { padding:10px 11px; text-align:left; border-radius:7px; }
     .tab.active { border-color:var(--accent); color:var(--accent); background:#252416; }
     .card { border:1px solid var(--line); border-radius:8px; background:var(--panel); padding:14px; margin-bottom:14px; }
-    .discordBadge { display:flex; align-items:center; justify-content:center; gap:8px; border:1px solid #5865f2; border-radius:8px; background:#1c2242; color:#f3f5ff; text-decoration:none; font-weight:700; padding:10px 12px; margin:14px 0; }
-    .discordBadge:hover { border-color:#8ea1ff; background:#252d5c; }
     .panelBand { border:1px solid var(--line); border-radius:8px; background:var(--panel); padding:14px; margin-bottom:14px; }
     .pageStack { display:grid; gap:14px; }
     .twoCol { display:grid; grid-template-columns:minmax(0,1.2fr) minmax(360px,.8fr); gap:14px; align-items:start; }
@@ -3098,16 +3186,29 @@ INDEX = r"""<!doctype html>
     .legend { display:grid; gap:7px; min-width:0; }
     .legendRow { display:flex; align-items:center; gap:8px; min-width:0; }
     .swatch { width:10px; height:10px; border-radius:2px; flex:0 0 auto; background:var(--accent); }
+    .swatch0 { background:var(--ok); }
+    .swatch1 { background:var(--accent); }
+    .swatch2 { background:var(--danger); }
     .barList { display:grid; gap:9px; }
     .barRow { display:grid; grid-template-columns:minmax(100px,1fr) minmax(130px,2fr) auto; gap:10px; align-items:center; }
     .barTrack { height:10px; border-radius:999px; background:#0d100d; border:1px solid var(--line); overflow:hidden; }
-    .barFill { height:100%; width:0%; background:var(--accent); }
-    .barFill.ok { background:var(--ok); }
-    .barFill.warn { background:var(--warn); }
-    .barFill.bad { background:var(--danger); }
+    .barProgress { width:100%; height:100%; appearance:none; display:block; border:0; background:transparent; }
+    .barProgress::-webkit-progress-bar { background:transparent; }
+    .barProgress::-webkit-progress-value { background:var(--accent); }
+    .barProgress.ok::-webkit-progress-value { background:var(--ok); }
+    .barProgress.warn::-webkit-progress-value { background:var(--warn); }
+    .barProgress.bad::-webkit-progress-value { background:var(--danger); }
+    .barProgress::-moz-progress-bar { background:var(--accent); }
+    .barProgress.ok::-moz-progress-bar { background:var(--ok); }
+    .barProgress.warn::-moz-progress-bar { background:var(--warn); }
+    .barProgress.bad::-moz-progress-bar { background:var(--danger); }
     .spark { display:flex; height:58px; gap:3px; align-items:end; padding:8px; border:1px solid var(--line); border-radius:8px; background:#0d100d; }
     .spark span { flex:1; min-width:3px; background:var(--accent); border-radius:2px 2px 0 0; opacity:.9; }
     .spark.compact { height:42px; }
+    .sparkSvg { display:block; width:100%; height:58px; padding:8px; box-sizing:border-box; border:1px solid var(--line); border-radius:8px; background:#0d100d; }
+    .sparkSvg.compact { height:42px; }
+    .sparkSvg rect { fill:var(--accent); opacity:.9; rx:2; }
+    .compactTextarea { min-height:120px; }
     tr.selected td { background:#252416; }
     .mapGrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:8px; }
     .mapTile { border:1px solid var(--line); border-radius:7px; padding:9px; background:#101310; min-height:62px; }
@@ -3484,7 +3585,7 @@ function toneForPercent(value){ value = Number(value || 0); return value >= 90 ?
 function bar(label, value, max=100, detail=''){
   const pct = max ? clamp((Number(value || 0) / max) * 100) : 0;
   const tone = toneForPercent(pct);
-  return `<div class="barRow"><div title="${esc(label)}">${esc(label)}</div><div class="barTrack"><div class="barFill ${tone}" style="width:${pct.toFixed(1)}%"></div></div><div class="muted">${esc(detail || pct.toFixed(0) + '%')}</div></div>`;
+  return `<div class="barRow"><div title="${esc(label)}">${esc(label)}</div><div class="barTrack"><progress class="barProgress ${tone}" value="${esc(pct.toFixed(1))}" max="100"></progress></div><div class="muted">${esc(detail || pct.toFixed(0) + '%')}</div></div>`;
 }
 function donut(label, segments){
   const total = segments.reduce((sum, s) => sum + Number(s.value || 0), 0);
@@ -3495,18 +3596,36 @@ function donut(label, segments){
     offset -= value;
     return circle;
   }).join('');
-  const legend = segments.map(s => `<div class="legendRow"><span class="swatch" style="background:${esc(s.color)}"></span><span>${esc(s.label)}</span><span class="muted">${esc(s.value)}</span></div>`).join('');
+  const legend = segments.map((s, i) => `<div class="legendRow"><span class="swatch swatch${i % 3}"></span><span>${esc(s.label)}</span><span class="muted">${esc(s.value)}</span></div>`).join('');
   return `<div class="vizCard"><h3>${esc(label)}</h3><div class="donutWrap"><svg class="donut" viewBox="0 0 36 36">${circles}<text x="18" y="18">${esc(total)}</text></svg><div class="legend">${legend}</div></div></div>`;
 }
 function spark(values){
   const vals = (values || []).map(v => Number(v || 0));
   const max = Math.max(...vals, 1);
-  return `<div class="spark">${vals.map(v => `<span style="height:${Math.max(4, (v / max) * 100).toFixed(1)}%"></span>`).join('')}</div>`;
+  const count = Math.max(vals.length, 1);
+  const width = 100;
+  const gap = 1;
+  const barWidth = Math.max((width - gap * (count - 1)) / count, 1);
+  const rects = vals.map((v, i) => {
+    const height = Math.max(4, (v / max) * 100);
+    const x = i * (barWidth + gap);
+    return `<rect x="${esc(x.toFixed(2))}" y="${esc((100 - height).toFixed(2))}" width="${esc(barWidth.toFixed(2))}" height="${esc(height.toFixed(2))}"></rect>`;
+  }).join('');
+  return `<svg class="sparkSvg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">${rects}</svg>`;
 }
 function historySpark(values){
   const vals = (values || []).map(v => Number(v || 0));
   const max = Math.max(...vals, 1);
-  return `<div class="spark compact">${vals.map(v => `<span style="height:${Math.max(4, (v / max) * 100).toFixed(1)}%"></span>`).join('')}</div>`;
+  const count = Math.max(vals.length, 1);
+  const width = 100;
+  const gap = 1;
+  const barWidth = Math.max((width - gap * (count - 1)) / count, 1);
+  const rects = vals.map((v, i) => {
+    const height = Math.max(4, (v / max) * 100);
+    const x = i * (barWidth + gap);
+    return `<rect x="${esc(x.toFixed(2))}" y="${esc((100 - height).toFixed(2))}" width="${esc(barWidth.toFixed(2))}" height="${esc(height.toFixed(2))}"></rect>`;
+  }).join('');
+  return `<svg class="sparkSvg compact" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">${rects}</svg>`;
 }
 function rememberResourceSample(data){
   const host = data.host || {};
@@ -3581,7 +3700,7 @@ function characterOptions(rows){
   if (!vals.length) return '<option value="">No characters found</option>';
   return '<option value="">Select character</option>' + vals.map(r => {
     const label = `${r.character_name || 'unnamed'} | account ${r.account_id} | ${r.online_status || 'unknown'}`;
-    return `<option value="${esc(r.account_id)}" data-name="${esc(r.character_name || '')}" data-controller="${esc(r.player_controller_id || '')}">${esc(label)}</option>`;
+    return `<option value="${esc(r.account_id)}" data-name="${esc(r.character_name || '')}" data-controller="${esc(r.player_controller_id || '')}" data-status="${esc(r.online_status || '')}">${esc(label)}</option>`;
   }).join('');
 }
 function inventoryItemOptions(rows){
@@ -3605,35 +3724,6 @@ function templateDatalist(ref){
     .sort((a, b) => String(a[0]).localeCompare(String(b[0])))
     .map(([id, label]) => `<option value="${esc(id)}" label="${esc(label)}"></option>`)
     .join('');
-}
-function gmCommandOptions(commands, scripts){
-  const commandOptions = (commands || []).map(r => `<option value="${esc(r.name)}">${esc(r.name)} | ${esc(r.kind)}</option>`).join('');
-  const scriptOptions = (scripts || []).map(r => `<option value="CheatScript ${esc(r.name)}">CheatScript ${esc(r.name)}</option>`).join('');
-  return commandOptions + scriptOptions;
-}
-function gmRouteOptions(routes){
-  const vals = (routes || []).filter(r => r.exchange === 'rpc');
-  if (!vals.length) return '<option value="Survival_11">Survival_11</option>';
-  return vals.map(r => `<option value="${esc(r.routingKey)}">${esc(r.map || r.routingKey)} | ${esc(r.routingKey)} | ${r.alive ? 'alive' : 'not alive'}</option>`).join('');
-}
-function gmPresetButtons(presets){
-  const vals = presets || [];
-  if (!vals.length) return '';
-  return `<div class="toolbar">${vals.map(p => `<button type="button" class="gmPresetBtn" data-command="${esc(p.command)}" data-args="${esc(p.args || '')}" title="${esc(p.risk || '')}">${esc(p.label)}</button>`).join('')}</div>`;
-}
-function gmCommandPanel(gm, characters){
-  const routeRows = (gm.routeCandidates || []).map(r => ({
-    exchange: r.exchange,
-    routing_key: r.routingKey,
-    map: r.map,
-    ready: r.ready,
-    alive: r.alive,
-    notes: r.notes,
-  }));
-  const commandRows = (gm.commands || []).map(r => ({command: r.name, kind: r.kind, notes: r.notes}));
-  const scriptRows = (gm.cheatScripts || []).map(r => ({script: r.name, command_count: (r.commands || []).length, commands: (r.commands || []).join(' | ')}));
-  const chatRows = (gm.chatCommands || []).map(r => ({command: r.command, tier: r.tier, notes: r.notes}));
-  return `<div class="panelBand dangerZone"><div class="sectionHeader"><h2>Native GM / Cheat Console</h2><div class="toolbar"><span class="pill ${gm.enabled ? 'ok' : 'warn'}">gate ${gm.enabled ? 'enabled' : 'disabled'}</span><span class="pill ${gm.payloadVerified ? 'ok' : 'bad'}">route ${gm.payloadVerified ? 'verified' : 'blocked'}</span><button id="refreshGmRefBtn">Refresh commands</button></div></div><p class="dangerText">${esc(gm.reason || 'Execution is blocked until the command route is verified.')}</p>${gmPresetButtons(gm.panelPresets)}<div class="grid"><label>Map RPC route<select id="gmRoute">${gmRouteOptions(gm.routeCandidates)}</select></label><label>Target player<select id="gmTarget">${characterOptions(characters)}</select></label><label>Command<select id="gmCommand">${gmCommandOptions(gm.commands, gm.cheatScripts)}</select></label><label>Arguments<input id="gmArgs" placeholder="template/count, player, map, or coordinates"></label></div><label>Confirmation<input id="gmConfirm" placeholder="RUN GM COMMAND"></label><p><button id="gmPreviewBtn" class="primary">Preview payload</button> <button id="gmExecuteBtn" class="danger" disabled>Execute after route verification</button></p><pre id="gmResult"></pre><details open><summary>Discovered Allow-List</summary>${table(commandRows)}</details><details open><summary>In-Game &gm Commands</summary>${table(chatRows)}</details><details><summary>Cheat Scripts</summary>${table(scriptRows)}</details><details><summary>RabbitMQ Route Candidates</summary>${table(routeRows)}</details></div>`;
 }
 function checks(rows){
   return `<table><thead><tr><th>Check</th><th>Status</th><th>Value</th></tr></thead><tbody>${(rows || []).map(r=>`<tr><td>${esc(r.name)}</td><td class="${r.ok ? 'ok' : 'dangerText'}">${r.ok ? 'OK' : 'Needs attention'}</td><td>${esc(r.value ?? '')}</td></tr>`).join('')}</tbody></table>`;
@@ -3663,19 +3753,25 @@ function haggaBasinMapPanel(data){
   const maxY = Number.isFinite(Number(calibration.maxY)) ? Number(calibration.maxY) : 403500;
   const invertX = calibration.invertX !== false;
   const invertY = calibration.invertY !== false;
+  const imageMinU = Number.isFinite(Number(calibration.imageMinU)) ? Number(calibration.imageMinU) : 0;
+  const imageMaxU = Number.isFinite(Number(calibration.imageMaxU)) ? Number(calibration.imageMaxU) : 1;
+  const imageMinV = Number.isFinite(Number(calibration.imageMinV)) ? Number(calibration.imageMinV) : 0;
+  const imageMaxV = Number.isFinite(Number(calibration.imageMaxV)) ? Number(calibration.imageMaxV) : 1;
   const showReturnPoints = calibration.showReturnPoints === true;
   const spanX = Math.max(maxX - minX, 1);
   const spanY = Math.max(maxY - minY, 1);
-  const mapX = x => {
-    const normalized = ((Number(x) - minX) / spanX) * mapExtent;
-    return clamp(invertX ? mapExtent - normalized : normalized, 0, mapExtent);
+  const worldToImageU = x => {
+    const normalized = (Number(x) - minX) / spanX;
+    const oriented = invertX ? 1 - normalized : normalized;
+    return imageMinU + oriented * (imageMaxU - imageMinU);
   };
-  const mapY = y => {
-    const normalized = ((Number(y) - minY) / spanY) * mapExtent;
-    return clamp(invertY ? mapExtent - normalized : normalized, 0, mapExtent);
+  const worldToImageV = y => {
+    const normalized = (Number(y) - minY) / spanY;
+    const oriented = invertY ? 1 - normalized : normalized;
+    return imageMinV + oriented * (imageMaxV - imageMinV);
   };
-  const px = x => pad + (mapX(x) / mapExtent) * (width - pad * 2);
-  const py = y => pad + (mapY(y) / mapExtent) * (height - pad * 2);
+  const px = x => clamp(pad + worldToImageU(x) * (width - pad * 2), 0, width);
+  const py = y => clamp(pad + worldToImageV(y) * (height - pad * 2), 0, height);
   const grid = [1,2,3,4].map(i => {
     const gx = (i / 5) * width;
     const gy = (i / 5) * height;
@@ -3709,7 +3805,7 @@ function haggaBasinMapPanel(data){
     last_login_time: p.last_login_time || ''
   }));
   const generatedAt = data?.generatedAt ? new Date(data.generatedAt).toLocaleTimeString() : '';
-  return `<div class="panelBand"><div class="sectionHeader"><h2>Hagga Basin Player Map</h2><div class="toolbar"><span id="haggaMapCount" class="pill ${players.length ? 'ok' : ''}">${esc(players.length)} plotted</span><span id="haggaMapUpdated" class="pill">updated ${esc(generatedAt)}</span><span id="haggaMapHealth" class="pill warn">best-effort DB position</span><button id="toggleHaggaMapRefreshBtn" aria-pressed="${haggaMapAutoRefresh ? 'true' : 'false'}">${haggaMapAutoRefresh ? 'Pause map' : 'Resume map'}</button><button id="refreshHaggaMapBtn">Refresh map</button></div></div><div id="haggaMapSrStatus" class="srOnly" aria-live="polite">${esc(players.length)} Hagga Basin players plotted.</div><div class="haggaMap"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Hagga Basin online player coordinate map"><image class="mapImage" href="/static/hagga-basin.webp" x="0" y="0" width="${width}" height="${height}" preserveAspectRatio="xMidYMid meet"></image><rect class="mapShade" x="0" y="0" width="${width}" height="${height}"></rect>${grid}<text x="12" y="24" fill="var(--muted)" font-size="12">NW</text><text x="${width - 30}" y="${height - 12}" fill="var(--muted)" font-size="12">SE</text>${markers}${empty}</svg></div><div class="haggaMapStatus"><span class="pill ok">green: pawn/controller transform</span><span class="pill ${showReturnPoints ? 'warn' : ''}">yellow return-info ${showReturnPoints ? 'shown' : 'hidden'}</span><span class="pill">background: Community Wiki Hagga Basin map</span><span class="pill">calibration X ${esc(Math.round(minX))}..${esc(Math.round(maxX))}, Y ${esc(Math.round(minY))}..${esc(Math.round(maxY))}${invertX ? ', flipped X' : ''}${invertY ? ', inverted Y' : ''}</span></div><details open><summary>Coordinates</summary><div class="coordTable">${table(rows)}</div></details></div>`;
+  return `<div class="panelBand"><div class="sectionHeader"><h2>Hagga Basin Player Map</h2><div class="toolbar"><span id="haggaMapCount" class="pill ${players.length ? 'ok' : ''}">${esc(players.length)} plotted</span><span id="haggaMapUpdated" class="pill">updated ${esc(generatedAt)}</span><span id="haggaMapHealth" class="pill warn">best-effort DB position</span><button id="toggleHaggaMapRefreshBtn" aria-pressed="${haggaMapAutoRefresh ? 'true' : 'false'}">${haggaMapAutoRefresh ? 'Pause map' : 'Resume map'}</button><button id="refreshHaggaMapBtn">Refresh map</button></div></div><div id="haggaMapSrStatus" class="srOnly" aria-live="polite">${esc(players.length)} Hagga Basin players plotted.</div><div class="haggaMap"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Hagga Basin online player coordinate map"><image class="mapImage" href="/static/hagga-basin.webp" x="0" y="0" width="${width}" height="${height}" preserveAspectRatio="xMidYMid meet"></image><rect class="mapShade" x="0" y="0" width="${width}" height="${height}"></rect>${grid}<text x="12" y="24" fill="var(--muted)" font-size="12">NW</text><text x="${width - 30}" y="${height - 12}" fill="var(--muted)" font-size="12">SE</text>${markers}${empty}</svg></div><div class="haggaMapStatus"><span class="pill ok">green: pawn/controller transform</span><span class="pill ${showReturnPoints ? 'warn' : ''}">yellow return-info ${showReturnPoints ? 'shown' : 'hidden'}</span><span class="pill">background: Community Wiki Hagga Basin map</span><span class="pill">world X ${esc(Math.round(minX))}..${esc(Math.round(maxX))}, Y ${esc(Math.round(minY))}..${esc(Math.round(maxY))}${invertX ? ', flipped X' : ''}${invertY ? ', inverted Y' : ''}</span><span class="pill">image U ${esc(imageMinU.toFixed(2))}..${esc(imageMaxU.toFixed(2))}, V ${esc(imageMinV.toFixed(2))}..${esc(imageMaxV.toFixed(2))}</span></div><details open><summary>Coordinates</summary><div class="coordTable">${table(rows)}</div></details></div>`;
 }
 function wireHaggaMapControls(container){
   container.querySelectorAll('.playerMarker[data-account-id]').forEach(marker => {
@@ -3767,9 +3863,18 @@ function healthViz(health){
     {label:'Attention', value:Math.max(verdicts.length - okVerdicts, 0), color:'var(--warn)'}
   ])}<div class="vizCard"><h3>Players By Map</h3>${spark(playerValues)}<div class="muted">${esc(playerValues.reduce((a,b)=>a+b,0))} reported players across ${esc(maps.length)} maps</div></div></div>`;
 }
+function steamProfileCell(r){
+  const platform = String(r?.platform_name || '');
+  const platformId = String(r?.platform_id || '').trim();
+  if (platform.toLowerCase() !== 'steam' || !platformId) return `${esc(platform)} ${esc(platformId)}`.trim();
+  const persona = String(r?.steam_persona_name || '').trim();
+  const label = persona ? `${persona} (${platformId})` : platformId;
+  const href = r?.steam_profile_url || `https://steamcommunity.com/profiles/${encodeURIComponent(platformId)}`;
+  return `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(label)}</a>`;
+}
 function characterRosterTable(rows){
   if (!rows || !rows.length) return '<div class="muted">No characters in this group.</div>';
-  return `<div class="tableWrap"><table class="dataDense"><thead><tr><th>Character</th><th>Status</th><th>Life</th><th>Map</th><th>Account</th><th>Last Login</th></tr></thead><tbody>${rows.map(r=>`<tr data-id="${esc(r.account_id ?? '')}"><td>${esc(r.character_name || 'unnamed')}<br><span class="muted">${esc(r.platform_name || '')} ${esc(r.platform_id || '')}</span></td><td>${esc(r.online_status || '')}</td><td>${esc(r.life_state || '')}</td><td>${esc(r.map || r.server_id || '')}</td><td>${esc(r.account_id || '')}</td><td>${esc(r.last_login_time || '')}</td></tr>`).join('')}</tbody></table></div>`;
+  return `<div class="tableWrap"><table class="dataDense"><thead><tr><th>Character</th><th>Status</th><th>Life</th><th>Map</th><th>Account</th><th>Last Login</th></tr></thead><tbody>${rows.map(r=>`<tr data-id="${esc(r.account_id ?? '')}"><td>${esc(r.character_name || 'unnamed')}<br><span class="muted">${steamProfileCell(r)}</span></td><td>${esc(r.online_status || '')}</td><td>${esc(r.life_state || '')}</td><td>${esc(r.map || r.server_id || '')}</td><td>${esc(r.account_id || '')}</td><td>${esc(r.last_login_time || '')}</td></tr>`).join('')}</tbody></table></div>`;
 }
 function characterRosterPanel(roster){
   const counts = roster.counts || {};
@@ -3777,14 +3882,19 @@ function characterRosterPanel(roster){
     {label:'Online', value:Number(counts.online || 0), color:'var(--ok)'},
     {label:'Offline', value:Number(counts.offline || 0), color:'var(--muted)'}
   ]);
-  return `<div class="rosterPanel"><div class="sectionHeader"><h2>Players</h2><div class="toolbar"><input class="filterInput rosterFilter" placeholder="Filter players, IDs, maps"></div></div><div class="metricGrid">${metric('Online Players', counts.online ?? 0, Number(counts.online || 0) ? 'ok' : '')}${metric('Offline Players', counts.offline ?? 0)}${metric('Total Characters', counts.total ?? 0)}</div><div class="vizGrid">${chart}<div class="vizCard"><h3>Roster Ratio</h3><div class="barList">${bar('Online', counts.online || 0, counts.total || 1)}${bar('Offline', counts.offline || 0, counts.total || 1)}</div></div></div><div class="twoCol"><div class="panelBand"><div class="splitHeader"><h2>Online Players</h2><span class="pill ok">${esc(counts.online ?? 0)} online</span></div>${characterRosterTable(roster.online)}</div><div class="panelBand"><div class="splitHeader"><h2>Offline Players</h2><span class="pill">${esc(counts.offline ?? 0)} offline</span></div>${characterRosterTable(roster.offline)}</div></div></div>`;
+  return `<div class="rosterPanel"><div class="sectionHeader"><h2>Roster</h2><div class="toolbar"><input class="filterInput rosterFilter" placeholder="Filter players, IDs, maps"></div></div><div class="metricGrid">${metric('Online Players', counts.online ?? 0, Number(counts.online || 0) ? 'ok' : '')}${metric('Offline Players', counts.offline ?? 0)}${metric('Total Characters', counts.total ?? 0)}</div><div class="vizGrid">${chart}<div class="vizCard"><h3>Roster Ratio</h3><div class="barList">${bar('Online', counts.online || 0, counts.total || 1)}${bar('Offline', counts.offline || 0, counts.total || 1)}</div></div></div><div class="twoCol"><div class="panelBand"><div class="splitHeader"><h2>Online Players</h2><span class="pill ok">${esc(counts.online ?? 0)} online</span></div>${characterRosterTable(roster.online)}</div><div class="panelBand"><div class="splitHeader"><h2>Offline Players</h2><span class="pill">${esc(counts.offline ?? 0)} offline</span></div>${characterRosterTable(roster.offline)}</div></div></div>`;
 }
 function probeTable(rows){
   if (!rows || !rows.length) return '<div class="muted">No probes.</div>';
   return `<div class="tableWrap"><table><thead><tr><th>Name</th><th>Status</th><th>Target</th><th>Latency</th><th>HTTP</th><th>Error</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.name)}</td><td>${healthCell(r.ok || [401,403,404].includes(r.httpStatus), r.ok ? 'OK' : 'reachable', 'down')}</td><td>${esc(r.target)}</td><td>${esc(r.latencyMs)}ms</td><td>${esc(r.httpStatus ?? '')}</td><td>${esc(r.error ?? '')}</td></tr>`).join('')}</tbody></table></div>`;
 }
 function auditEventsTable(events){
-  const rows = (events || []).filter(e => !(e.action === 'auth-failed' && e.method === 'GET'));
+  const rows = (events || []).filter(e => {
+    const detail = String(e.error || e.target || '');
+    if (e.action === 'auth-failed') return false;
+    if (e.action === 'post-rejected' && detail.toLowerCase().includes('admin token')) return false;
+    return true;
+  });
   const display = rows.slice(0, 40);
   if (!display.length) return '<div class="muted">No recent actionable audit events.</div>';
   return `<div class="eventList">${display.map(e => {
@@ -3803,7 +3913,7 @@ function announcementPanel(state){
   ].map(([value,label]) => `<option value="${value}">${label}</option>`).join('');
   const jobSummary = latest ? `<pre id="announcementState">${esc(JSON.stringify(latest, null, 2))}</pre>` : '<div class="muted">No scheduled announcement.</div>';
   const delivery = state.lastDelivery ? `<pre>${esc(JSON.stringify(state.lastDelivery, null, 2))}</pre>` : '<div class="muted">No delivery attempts yet.</div>';
-  return `<div class="card"><h2>Announcement Only</h2><p class="muted">Sends warning messages without restarting anything.</p><div class="grid"><label>Message until<select id="announceDelay">${delayOptions}</select></label><label>Repeat every<select id="announceRepeat"><option value="0">Do not repeat</option><option value="30">30 sec</option><option value="60" selected>60 sec</option><option value="300">5 min</option><option value="600">10 min</option><option value="900">15 min</option><option value="1800">30 min</option><option value="3600">60 min</option></select></label></div><label>Message<textarea id="announceMessage" rows="3" style="min-height:120px">Server restart soon. Please get to a safe place.</textarea></label><p><button id="scheduleAnnouncementBtn" class="primary">Schedule announcement</button> <button id="cancelAnnouncementBtn" class="danger">Cancel active announcement</button></p><details><summary>Current announcement state</summary>${jobSummary}</details><details><summary>Last delivery</summary>${delivery}</details></div>`;
+  return `<div class="card"><h2>Announcement Only</h2><p class="muted">Sends warning messages without restarting anything.</p><div class="grid"><label>Message until<select id="announceDelay">${delayOptions}</select></label><label>Repeat every<select id="announceRepeat"><option value="0">Do not repeat</option><option value="30">30 sec</option><option value="60" selected>60 sec</option><option value="300">5 min</option><option value="600">10 min</option><option value="900">15 min</option><option value="1800">30 min</option><option value="3600">60 min</option></select></label></div><label>Message<textarea id="announceMessage" rows="3" class="compactTextarea">Server restart soon. Please get to a safe place.</textarea></label><p><button id="scheduleAnnouncementBtn" class="primary">Schedule announcement</button> <button id="cancelAnnouncementBtn" class="danger">Cancel active announcement</button></p><details><summary>Current announcement state</summary>${jobSummary}</details><details><summary>Last delivery</summary>${delivery}</details></div>`;
 }
 function restartPanel(state){
   const active = (state.jobs || []).filter(j => ['scheduled','executing'].includes(j.status));
@@ -3818,7 +3928,7 @@ function restartPanel(state){
   ].map(([value,label]) => `<option value="${value}">${label}</option>`).join('');
   const jobSummary = latest ? `<pre>${esc(JSON.stringify(latest, null, 2))}</pre>` : '<div class="muted">No scheduled restart.</div>';
   const execution = state.lastExecution ? `<pre>${esc(JSON.stringify(state.lastExecution, null, 2))}</pre>` : '<div class="muted">No restart execution attempts yet.</div>';
-  return `<div class="card"><h2>Maintenance Job</h2><p class="muted">Stops the selected services, takes the maintenance backup, starts them again, and waits for map readiness.</p><div class="grid"><label>Target<select id="restartTarget">${targetOptions}</select></label><label>Action<select id="restartAction"><option value="restart" selected>Restart target</option><option value="shutdown">Shutdown target</option></select></label><label>Run after<select id="restartDelay">${delayOptions}</select></label><label>Repeat notice every<select id="restartRepeat"><option value="0">Do not repeat</option><option value="30">30 sec</option><option value="60" selected>60 sec</option><option value="300">5 min</option><option value="600">10 min</option><option value="900">15 min</option><option value="1800">30 min</option><option value="3600">60 min</option></select></label><label>Execution<select id="restartExecute"><option value="false" selected>Dry-run schedule</option><option value="true">Execute hook</option></select></label></div><div class="toolbar checkToolbar"><label><input id="restartBackup" type="checkbox" checked style="width:auto"> Backup before execution</label><label><input id="restartAnnounce" type="checkbox" checked style="width:auto"> Send in-game warnings</label></div><label>Warning message<textarea id="restartMessage" rows="3" style="min-height:120px">Server maintenance soon. Please get to a safe place.</textarea></label><p><button id="scheduleRestartBtn" class="primary">Schedule maintenance</button> <button id="cancelRestartBtn" class="danger">Cancel active job</button></p><details><summary>Current job state</summary>${jobSummary}</details><details><summary>Last execution</summary>${execution}</details></div>`;
+  return `<div class="card"><h2>Maintenance Job</h2><p class="muted">Stops the selected services, takes the maintenance backup, starts them again, and waits for map readiness.</p><div class="grid"><label>Target<select id="restartTarget">${targetOptions}</select></label><label>Action<select id="restartAction"><option value="restart" selected>Restart target</option><option value="shutdown">Shutdown target</option></select></label><label>Run after<select id="restartDelay">${delayOptions}</select></label><label>Repeat notice every<select id="restartRepeat"><option value="0">Do not repeat</option><option value="30">30 sec</option><option value="60" selected>60 sec</option><option value="300">5 min</option><option value="600">10 min</option><option value="900">15 min</option><option value="1800">30 min</option><option value="3600">60 min</option></select></label><label>Execution<select id="restartExecute"><option value="false" selected>Dry-run schedule</option><option value="true">Execute hook</option></select></label></div><div class="toolbar checkToolbar"><label><input id="restartBackup" type="checkbox" checked> Backup before execution</label><label><input id="restartAnnounce" type="checkbox" checked> Send in-game warnings</label></div><label>Warning message<textarea id="restartMessage" rows="3" class="compactTextarea">Server maintenance soon. Please get to a safe place.</textarea></label><p><button id="scheduleRestartBtn" class="primary">Schedule maintenance</button> <button id="cancelRestartBtn" class="danger">Cancel active job</button></p><details><summary>Current job state</summary>${jobSummary}</details><details><summary>Last execution</summary>${execution}</details></div>`;
 }
 function signalList(groups){
   return Object.entries(groups || {}).map(([group, rows]) => `<div class="card"><h2>${esc(group)}</h2><table><thead><tr><th>Name</th><th>Value</th><th>Why</th></tr></thead><tbody>${(rows || []).map(r=>`<tr><td>${esc(r.name)}</td><td>${esc(Array.isArray(r.value) ? r.value.join(', ') : r.value)}</td><td>${esc(r.why)}</td></tr>`).join('')}</tbody></table></div>`).join('');
@@ -4276,7 +4386,7 @@ function renderPlayerModal(d, ref, uiState={}){
   const firstTrack = (d.specialization && d.specialization[0]) || {};
   document.getElementById('playerModalTitle').textContent = p.character_name || 'Player Detail';
   document.getElementById('playerModalRefreshState').textContent = `updated ${new Date().toLocaleTimeString()}`;
-  document.getElementById('playerModalBody').innerHTML = `<datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><div class="playerModalGrid"><div class="pageStack"><div class="panelBand"><h2>${esc(p.character_name || 'Character')}</h2><div class="metricGrid">${metric('Status', p.online_status || '')}${metric('Life', p.life_state || '')}${metric('Map', map.label || map.map || p.server_id || '')}${metric('Items', items.length)}</div><div class="grid"><div><b>Account</b><br>${esc(p.account_id)}</div><div><b>Funcom</b><br>${esc(account.funcom_id || '')}</div><div><b>Platform</b><br>${esc(account.platform_name || '')} ${esc(account.platform_id || '')}</div><div><b>Last Login</b><br>${esc(p.last_login_time || '')}</div><div><b>Controller</b><br>${esc(p.player_controller_id)}</div><div><b>Pawn</b><br>${esc(p.player_pawn_id)}</div></div><p><button id="modalOpenAdminActionsBtn" class="primary">Open Admin Actions</button></p></div><div class="panelBand"><h2>Location and Runtime</h2>${table(locationRows)}<details open><summary>Actor Locations</summary>${table(d.actorLocations || [])}</details><details><summary>Travel Return</summary>${table(d.travelReturn || [])}</details><details><summary>Map Context</summary>${table(d.mapContext || [])}</details><details><summary>Respawn Locations</summary>${table(d.respawnLocations || [])}</details><details><summary>Runtime Source</summary><pre>${esc(JSON.stringify(d.realtime || {}, null, 2))}</pre></details></div><div class="panelBand"><h2>Currency and XP</h2><details open><summary>Currency</summary>${table(d.currency || [])}</details><details><summary>Specialization</summary>${table(d.specialization || [])}</details><details><summary>Faction</summary>${table(d.faction || [])}</details><details><summary>Reputation</summary>${table(d.reputation || [])}</details></div></div><div class="pageStack"><div class="panelBand"><div class="splitHeader"><h2>Inventory</h2><span class="pill">${esc(items.length)} items</span></div><div class="playerInventoryTools"><label>Inventory<select id="modalInventoryFilter"><option value="">All inventories</option>${inventoryOptions(inventories)}</select></label><label>Item Search<input id="modalItemFilter" placeholder="Template, item ID, inventory"></label></div><h3>Inventory Summary</h3>${table(inventorySummary)}<h3>Items</h3><div id="modalInventoryItems">${table(items)}</div></div><div class="panelBand"><h2>Quick Currency and XP</h2><div class="grid"><label>Currency<select id="detailCurId">${currencyBalanceOptions(d.currency, ref.currencyIds)}</select></label><label>Amount<input id="detailCurAmount" value="1000"></label><label>Mode<select id="detailCurMode"><option>add</option><option>set</option></select></label></div><p><button id="detailCurrencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Track<select id="detailTrack">${specializationOptions(d.specialization, ref.specializationTrackTypes)}</select></label><label>XP amount<input id="detailXpAmount" value="1000"></label><label>Level for set/new track<input id="detailXpLevel" value="${esc(firstTrack.level ?? 0)}"></label><label>Mode<select id="detailXpMode"><option>add</option><option>set</option></select></label></div><p><button id="detailXpBtn" class="primary">Apply XP</button></p></div><div class="panelBand"><h2>Quick Item Action</h2><div class="grid"><label>Owned inventory<select id="detailGrantInventory"><option value="">All owned inventories</option>${inventoryOptions(inventories)}</select></label><label>Owned item<select id="detailItemSelect">${inventoryItemOptions(items)}</select></label><label>Template ID<input id="detailGrantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="detailGrantStack" value="1"></label><label>Delete count<input id="detailDeleteCount" placeholder="blank/all"></label></div><div id="detailSelectedItem" class="muted">Select an owned item to inspect stack and template details.</div><p><button id="detailDryRunBtn" class="primary">Dry run item</button> <button id="detailGrantBtn" class="danger">Grant item</button> <button id="detailSetStackBtn" class="primary">Set selected stack</button> <button id="detailDeleteItemBtn" class="danger">Delete selected item/count</button></p><pre id="detailGrantResult"></pre></div><details class="panelBand"><summary>Raw Detail</summary><pre>${esc(JSON.stringify(d, null, 2))}</pre></details></div></div>`;
+  document.getElementById('playerModalBody').innerHTML = `<datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><div class="playerModalGrid"><div class="pageStack"><div class="panelBand"><h2>${esc(p.character_name || 'Character')}</h2><div class="metricGrid">${metric('Status', p.online_status || '')}${metric('Life', p.life_state || '')}${metric('Map', map.label || map.map || p.server_id || '')}${metric('Items', items.length)}</div><div class="grid"><div><b>Account</b><br>${esc(p.account_id)}</div><div><b>Funcom</b><br>${esc(account.funcom_id || '')}</div><div><b>Platform</b><br>${steamProfileCell(account)}</div><div><b>Last Login</b><br>${esc(p.last_login_time || '')}</div><div><b>Controller</b><br>${esc(p.player_controller_id)}</div><div><b>Pawn</b><br>${esc(p.player_pawn_id)}</div></div><p><button id="modalOpenAdminActionsBtn" class="primary">Open Admin Actions</button></p></div><div class="panelBand"><h2>Location and Runtime</h2>${table(locationRows)}<details open><summary>Actor Locations</summary>${table(d.actorLocations || [])}</details><details><summary>Travel Return</summary>${table(d.travelReturn || [])}</details><details><summary>Map Context</summary>${table(d.mapContext || [])}</details><details><summary>Respawn Locations</summary>${table(d.respawnLocations || [])}</details><details><summary>Runtime Source</summary><pre>${esc(JSON.stringify(d.realtime || {}, null, 2))}</pre></details></div><div class="panelBand"><h2>Currency and XP</h2><details open><summary>Currency</summary>${table(d.currency || [])}</details><details><summary>Specialization</summary>${table(d.specialization || [])}</details><details><summary>Faction</summary>${table(d.faction || [])}</details><details><summary>Reputation</summary>${table(d.reputation || [])}</details></div></div><div class="pageStack"><div class="panelBand"><div class="splitHeader"><h2>Inventory</h2><span class="pill">${esc(items.length)} items</span></div><div class="playerInventoryTools"><label>Inventory<select id="modalInventoryFilter"><option value="">All inventories</option>${inventoryOptions(inventories)}</select></label><label>Item Search<input id="modalItemFilter" placeholder="Template, item ID, inventory"></label></div><h3>Inventory Summary</h3>${table(inventorySummary)}<h3>Items</h3><div id="modalInventoryItems">${table(items)}</div></div><div class="panelBand"><h2>Quick Currency and XP</h2><div class="grid"><label>Currency<select id="detailCurId">${currencyBalanceOptions(d.currency, ref.currencyIds)}</select></label><label>Amount<input id="detailCurAmount" value="1000"></label><label>Mode<select id="detailCurMode"><option>add</option><option>set</option></select></label></div><p><button id="detailCurrencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Track<select id="detailTrack">${specializationOptions(d.specialization, ref.specializationTrackTypes)}</select></label><label>XP amount<input id="detailXpAmount" value="1000"></label><label>Level for set/new track<input id="detailXpLevel" value="${esc(firstTrack.level ?? 0)}"></label><label>Mode<select id="detailXpMode"><option>add</option><option>set</option></select></label></div><p><button id="detailXpBtn" class="primary">Apply XP</button></p></div><div class="panelBand"><h2>Quick Item Action</h2><div class="grid"><label>Owned inventory<select id="detailGrantInventory"><option value="">All owned inventories</option>${inventoryOptions(inventories)}</select></label><label>Owned item<select id="detailItemSelect">${inventoryItemOptions(items)}</select></label><label>Template ID<input id="detailGrantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="detailGrantStack" value="1"></label><label>Delete count<input id="detailDeleteCount" placeholder="blank/all"></label></div><div id="detailSelectedItem" class="muted">Select an owned item to inspect stack and template details.</div><p><button id="detailDryRunBtn" class="primary">Dry run item</button> <button id="detailGrantBtn" class="danger">Grant item</button> <button id="detailSetStackBtn" class="primary">Set selected stack</button> <button id="detailDeleteItemBtn" class="danger">Delete selected item/count</button></p><pre id="detailGrantResult"></pre></div><details class="panelBand"><summary>Raw Detail</summary><pre>${esc(JSON.stringify(d, null, 2))}</pre></details></div></div>`;
   makeSortableTables(document.getElementById('playerModalBody'));
   enhanceCopyBlocks(document.getElementById('playerModalBody'));
   wirePlayerModalDetailActions(d, ref, firstTrack, uiState);
@@ -4468,14 +4578,13 @@ async function savePlayerOnlineState(){
   notify('Saved logout timers');
 }
 async function mutations(serial=loadSerial){
-  const [ref, characterRows, gm] = await Promise.all([
+  const [ref, characterRows] = await Promise.all([
     adminReference(),
-    api('/api/characters?q='),
-    api('/api/admin/gm/reference')
+    api('/api/characters?q=')
   ]);
   if (serial !== loadSerial) return;
   const referenceErrors = ref.errors && Object.keys(ref.errors).length ? `<div class="card"><h2>Reference Errors</h2><pre>${esc(JSON.stringify(ref.errors, null, 2))}</pre></div>` : '';
-  view.innerHTML = `<div class="pageStack">${referenceErrors}<div class="sectionHeader"><h2>Admin Actions</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="settings">Settings</button><button data-jump="security">Audit</button></div></div><div class="panelBand"><h2>Target Player</h2><div class="grid"><label>Character<select id="adminCharacterSelect">${characterOptions(characterRows)}</select></label><label>Player controller ID<input id="pcid"></label><label>Account ID<input id="grantAccount" placeholder="auto-select player inventory"></label><label>Character name<input id="grantCharacter" placeholder="auto-select by name"></label></div></div><div class="twoCol"><div class="panelBand"><h2>Currency and XP</h2><p class="muted">Select a character first; balances and tracks populate from that player.</p><div class="grid"><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button id="currencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Level for set/new track<input id="xplevel" value="0"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button id="xpBtn" class="primary">Apply XP</button></p></div><div class="panelBand"><h2>Item Grants</h2><p class="muted">Use a known template ID and dry run before writing new items.</p><div class="grid"><label>Known inventory<select id="grantInventorySelect">${inventoryOptions(ref.recentInventories)}</select></label><label>Inventory ID<input id="grantInventory" placeholder="explicit inventory"></label><label class="hidden">Character<select id="grantCharacterSelect">${characterOptions(characterRows)}</select></label><label>Inventory type<select id="grantInventoryType">${inventoryTypeOptions(ref.inventoryTypes)}</select></label><label>Template ID<input id="grantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><details><summary>Advanced stats JSON</summary><textarea id="grantStats">{}</textarea></details><p><button id="dryRunItemBtn" class="primary">Dry run</button> <button id="grantItemBtn" class="danger">Grant item</button></p><pre id="grantResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Item Maintenance</h2><div class="grid"><label class="hidden">Character<select id="itemCharacterSelect">${characterOptions(characterRows)}</select></label><label>Owned item<select id="itemEditSelect"><option value="">Select a character first</option></select></label><label>Item ID<input id="itemEditId"></label><label>New stack size<input id="itemEditStack" value="1"></label><label>Delete count<input id="itemDeleteCount" placeholder="blank/all"></label></div><p><button id="setItemStackBtn" class="primary">Set stack</button> <button id="deleteItemBtn" class="danger">Delete item/count</button></p><pre id="itemEditResult"></pre></div><div class="panelBand"><h2>Specialization Keystones</h2><div class="grid"><label>Player/controller ID<input id="keyPlayer"></label><label>Keystone<select id="keystone">${options(ref.keystones, 'name')}</select></label></div><p><button id="purchaseKeystoneBtn" class="primary">Purchase keystone</button> <button id="resetKeystonesBtn" class="danger">Reset all keystones</button></p><pre id="keystoneResult"></pre></div></div><details class="panelBand"><summary>Backup</summary><p class="muted">Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button id="backupBtn" class="primary">Create DB backup</button><pre id="backupResult"></pre></details><details class="panelBand"><summary>Native GM / Cheat Console</summary>${gmCommandPanel(gm, characterRows)}</details><datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><details class="panelBand"><summary>Known Item Templates</summary>${table(ref.knownItemTemplates)}</details><details class="panelBand"><summary>Observed Item Templates</summary>${table(ref.observedItemTemplates)}</details><details class="panelBand"><summary>Recent Inventories</summary>${table(ref.recentInventories)}</details><details class="panelBand"><summary>Inventory Types</summary>${table(ref.inventoryTypes)}</details></div>`;
+  view.innerHTML = `<div class="pageStack">${referenceErrors}<div class="sectionHeader"><h2>Admin Actions</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="settings">Settings</button><button data-jump="security">Audit</button></div></div><div class="panelBand"><h2>Target Player</h2><div class="grid"><label>Character<select id="adminCharacterSelect">${characterOptions(characterRows)}</select></label><label>Player controller ID<input id="pcid"></label><label>Account ID<input id="grantAccount" placeholder="auto-select player inventory"></label><label>Character name<input id="grantCharacter" placeholder="auto-select by name"></label></div></div><div class="twoCol"><div class="panelBand"><h2>Currency and XP</h2><p class="muted">Select a character first; balances and tracks populate from that player.</p><div class="grid"><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button id="currencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Level for set/new track<input id="xplevel" value="0"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button id="xpBtn" class="primary">Apply XP</button></p></div><div class="panelBand"><h2>Item Grants</h2><p class="muted">Use a known template ID and dry run before writing new items.</p><div class="grid"><label>Known inventory<select id="grantInventorySelect">${inventoryOptions(ref.recentInventories)}</select></label><label>Inventory ID<input id="grantInventory" placeholder="explicit inventory"></label><label class="hidden">Character<select id="grantCharacterSelect">${characterOptions(characterRows)}</select></label><label>Inventory type<select id="grantInventoryType">${inventoryTypeOptions(ref.inventoryTypes)}</select></label><label>Template ID<input id="grantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><details><summary>Advanced stats JSON</summary><textarea id="grantStats">{}</textarea></details><p><button id="dryRunItemBtn" class="primary">Dry run</button> <button id="grantItemBtn" class="danger">Grant item</button></p><pre id="grantResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Item Maintenance</h2><div class="grid"><label class="hidden">Character<select id="itemCharacterSelect">${characterOptions(characterRows)}</select></label><label>Owned item<select id="itemEditSelect"><option value="">Select a character first</option></select></label><label>Item ID<input id="itemEditId"></label><label>New stack size<input id="itemEditStack" value="1"></label><label>Delete count<input id="itemDeleteCount" placeholder="blank/all"></label></div><p><button id="setItemStackBtn" class="primary">Set stack</button> <button id="deleteItemBtn" class="danger">Delete item/count</button></p><pre id="itemEditResult"></pre></div><div class="panelBand"><h2>Specialization Keystones</h2><div class="grid"><label>Player/controller ID<input id="keyPlayer"></label><label>Keystone<select id="keystone">${options(ref.keystones, 'name')}</select></label></div><p><button id="purchaseKeystoneBtn" class="primary">Purchase keystone</button> <button id="resetKeystonesBtn" class="danger">Reset all keystones</button></p><pre id="keystoneResult"></pre></div></div><details class="panelBand"><summary>Backup</summary><p class="muted">Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button id="backupBtn" class="primary">Create DB backup</button><pre id="backupResult"></pre></details><datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><details class="panelBand"><summary>Known Item Templates</summary>${table(ref.knownItemTemplates)}</details><details class="panelBand"><summary>Observed Item Templates</summary>${table(ref.observedItemTemplates)}</details><details class="panelBand"><summary>Recent Inventories</summary>${table(ref.recentInventories)}</details><details class="panelBand"><summary>Inventory Types</summary>${table(ref.inventoryTypes)}</details></div>`;
   const loadCharacterAdminDetails = async (accountId, serial=detailLoadSerial) => {
     const itemSelect = document.getElementById('itemEditSelect');
     const inventorySelect = document.getElementById('grantInventorySelect');
@@ -4533,13 +4642,18 @@ async function mutations(serial=loadSerial){
     if (document.getElementById('pcid')) document.getElementById('pcid').value = option.dataset.controller || '';
     if (document.getElementById('xpid')) document.getElementById('xpid').value = option.dataset.controller || '';
     if (document.getElementById('keyPlayer')) document.getElementById('keyPlayer').value = option.dataset.controller || '';
-    if (document.getElementById('gmTarget')) document.getElementById('gmTarget').value = option.value;
     await loadCharacterAdminDetails(option.value, serial);
     if (serial !== detailLoadSerial) return;
   };
   document.getElementById('adminCharacterSelect').addEventListener('change', e => fillCharacter(e.target).catch(err => reportClientError(err, 'Load player admin detail')));
   document.getElementById('grantCharacterSelect').addEventListener('change', e => fillCharacter(e.target).catch(err => reportClientError(err, 'Load player admin detail')));
   document.getElementById('itemCharacterSelect').addEventListener('change', e => fillCharacter(e.target).catch(err => reportClientError(err, 'Load player admin detail')));
+  const initialTarget = document.getElementById('adminCharacterSelect');
+  const initialOption = Array.from(initialTarget.options).find(o => o.value && String(o.dataset.status || '').toLowerCase() === 'online') || Array.from(initialTarget.options).find(o => o.value);
+  if (initialOption) {
+    initialTarget.value = initialOption.value;
+    fillCharacter(initialTarget).catch(err => reportClientError(err, 'Load default player admin detail'));
+  }
   document.getElementById('itemEditSelect').addEventListener('change', e => {
     const option = e.target.selectedOptions?.[0];
     document.getElementById('itemEditId').value = e.target.value || '';
@@ -4567,13 +4681,6 @@ async function mutations(serial=loadSerial){
   document.getElementById('grantItemBtn').addEventListener('click', e => runAction(e.currentTarget, 'Granting...', () => grantItem(false)));
   document.getElementById('setItemStackBtn').addEventListener('click', e => runAction(e.currentTarget, 'Saving...', setItemStack));
   document.getElementById('deleteItemBtn').addEventListener('click', e => runAction(e.currentTarget, 'Deleting...', deleteItem));
-  document.getElementById('refreshGmRefBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Refreshing...', async () => {
-    const gmRef = await api('/api/admin/gm/reference');
-    document.getElementById('gmResult').textContent = JSON.stringify(gmRef, null, 2);
-  }));
-  document.querySelectorAll('.gmPresetBtn').forEach(btn => btn.addEventListener('click', () => applyGmPreset(btn)));
-  document.getElementById('gmPreviewBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Previewing...', previewGmCommand));
-  document.getElementById('gmExecuteBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Executing...', executeGmCommand));
   if (pendingAdminAccountId) {
     const target = document.getElementById('adminCharacterSelect');
     target.value = pendingAdminAccountId;
@@ -4602,41 +4709,6 @@ async function xpFor(playerId){
 async function backup(){
   const result = await api('/api/admin/backup', {method:'POST', body:'{}'});
   document.getElementById('backupResult').textContent = JSON.stringify(result, null, 2);
-}
-function gmCommandBody(){
-  const target = document.getElementById('gmTarget')?.selectedOptions?.[0];
-  return {
-    route: document.getElementById('gmRoute')?.value || '',
-    target_player: target?.dataset.controller || target?.value || '',
-    target_account_id: target?.value || '',
-    target_character: target?.dataset.name || '',
-    command: document.getElementById('gmCommand')?.value || '',
-    args: document.getElementById('gmArgs')?.value || '',
-    confirm: document.getElementById('gmConfirm')?.value || ''
-  };
-}
-function gmSelectedTargetName(){
-  const target = document.getElementById('gmTarget')?.selectedOptions?.[0];
-  return target?.dataset.name || '';
-}
-function applyGmPreset(btn){
-  const command = btn.dataset.command || '';
-  const targetName = gmSelectedTargetName();
-  const args = (btn.dataset.args || '').replaceAll('<player>', targetName || '<player>');
-  const commandSelect = document.getElementById('gmCommand');
-  if (commandSelect) commandSelect.value = command;
-  const argsInput = document.getElementById('gmArgs');
-  if (argsInput) argsInput.value = args;
-}
-async function previewGmCommand(){
-  const result = await api('/api/admin/gm/preview', {method:'POST', body:JSON.stringify(gmCommandBody())});
-  document.getElementById('gmResult').textContent = JSON.stringify(result, null, 2);
-  notify('GM payload preview generated');
-}
-async function executeGmCommand(){
-  if (!confirm('Run native GM command on the live server?')) return;
-  const result = await api('/api/admin/gm/execute', {method:'POST', body:JSON.stringify(gmCommandBody())});
-  document.getElementById('gmResult').textContent = JSON.stringify(result, null, 2);
 }
 async function scheduleAnnouncement(){
   const result = await api('/api/ops/announcement', {method:'POST', body:JSON.stringify({

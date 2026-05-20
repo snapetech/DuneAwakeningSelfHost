@@ -1,0 +1,10 @@
+[Unit]
+Description=Run DASH offsite backup sync
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=10m
+
+[Install]
+WantedBy=timers.target

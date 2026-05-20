@@ -1,0 +1,10 @@
+[Unit]
+Description=DASH offsite backup sync
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/path/to/DuneAwakeningSelfHost
+Environment=DUNE_BACKUP_REMOTE_ENV=/path/to/DuneAwakeningSelfHost/examples/backup/rclone-offsite.env
+ExecStart=/path/to/DuneAwakeningSelfHost/scripts/backup-offsite.sh /path/to/DuneAwakeningSelfHost/.env

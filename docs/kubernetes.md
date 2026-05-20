@@ -21,7 +21,7 @@ The official Steam package is already Kubernetes-oriented and includes an operat
 | `text-router` | `Deployment` | Internal service, plus any ports required by the game routing path. |
 | `gateway` | `Deployment` or small replica `Deployment` | Exposes public gateway path and registers with Funcom services. |
 | game map services | one `Deployment` per fixed map partition, or generated `StatefulSet` style pods | Preserve stable `POD_IP`, `NODE_NAME`, map name, partition id, game port, and IGW port assumptions. |
-| `admin-panel` | optional `Deployment` + private `Ingress` | Restrict to trusted LAN/VPN and require the admin token. |
+| `admin-panel` | optional `Deployment` + private `Ingress` | Restrict to trusted LAN/VPN. Enable token auth unless the ingress is fully isolated to trusted operators. |
 
 The Compose warm pool uses one long-running container per map partition. In Kubernetes, the nearest equivalent is one Deployment per fixed partition so each pod has explicit args, ports, config, and recovery behavior. A generator or Helm chart can reduce repetition, but the rendered output should stay inspectable.
 
@@ -111,4 +111,3 @@ Before treating Kubernetes as supported, add:
 - Kubernetes versions of `status.sh`, `backup-state.sh`, `restore-state.sh`, and map recovery helpers.
 - A test matrix for single-node, multi-node, and private-registry image distribution.
 - Documentation for rolling image-tag upgrades and rollback.
-

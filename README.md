@@ -14,7 +14,7 @@ This repository does **not** contain, mirror, or license any Funcom server binar
 - Minimal world target: one `Survival_1` map
 - Expanded standing farm: nine current travel targets
 - Full warm-pool target: 30 online map partitions
-- Admin surface: private LAN/VPN web panel with token-gated writes
+- Admin surface: private LAN/VPN web panel. Token auth is optional and currently disabled by default for local trusted deployments.
 - Automation: map watchdog, startup/recovery helpers, scheduled restart planner, restart announcements, backups, and optional Postgres replica snapshots
 
 Known working 30-map target:
@@ -44,12 +44,13 @@ That is the server-side readiness target. Live-client login, travel, and routing
 - Local admin panel with Overview, Ops, Security, Runbook, Players, Settings, and Admin Actions pages.
 - Hagga Basin player map that plots currently known online player coordinates from local database/runtime state.
 - Restart announcement scheduler that publishes verified in-game chat through game RabbitMQ as the configured announcer.
-- Scheduled restart planner with token gates, pre-restart notices, optional targeted disconnect, maintenance backups, service recreate/start, and post-start health checks.
+- Scheduled restart planner with pre-restart notices, maintenance backups, service recreate/start, and post-start health checks.
 - Guarded admin writes for database backups, currency, XP, keystones, item grants, stack edits, and item deletion.
-- Experimental GM/cheat route research surfaced behind explicit feature flags and verification gates.
+- Experimental GM/cheat route research kept out of the live panel until the native payload route is verified.
 - Chat-command bridge for approved admins, including `&gm` helper commands and spam-protection hooks.
 - Editable settings for `.env`, `director.ini`, `UserGame.ini`, and selected config overlays with backups.
 - Backup/restore helpers, optional Postgres streaming replica setup, and remote replica snapshot helpers.
+- Portable examples for single-map, full warm-pool, LAN admin ingress, rclone, rsync/NAS, restic, and systemd timers.
 - LAN reflection/hairpin notes and Docker bridge neighbor seeding for the observed local networking failure mode.
 
 ## Repository Boundaries
@@ -140,7 +141,7 @@ http://127.0.0.1:18080/
 
 If another process owns `18080`, set `DUNE_ADMIN_HOST_PORT=18081` in `.env`, include that host in `DUNE_ADMIN_ALLOWED_HOSTS`, and recreate only the admin panel.
 
-The panel is intended for trusted LAN/VPN access only. Do not expose it directly to the public internet. The header token box uses `DUNE_ADMIN_TOKEN`; protected requests send it as `X-Admin-Token`.
+The panel is intended for trusted LAN/VPN access only. Do not expose it directly to the public internet. By default the local deployment runs unlocked on the private admin surface. To require a token, set `DUNE_ADMIN_REQUIRE_TOKEN=true` and `DUNE_ADMIN_TOKEN`; protected requests then send `X-Admin-Token`.
 
 Panel pages:
 
@@ -148,11 +149,11 @@ Panel pages:
 | --- | --- |
 | Overview | Readiness metrics, health summary, Hagga Basin player map, map details, and player preview. |
 | Ops | Restart planner, restart announcements, resource telemetry, map health, network checks, farm state, and partition state. |
-| Security | Host/origin checks, token status, mutation gates, allowlists, and audit events. |
+| Security | Host/origin checks, auth mode, mutation gates, allowlists, and audit events. |
 | Runbook | Copy/paste operational commands for health, backups, restores, logs, profiling, and routing capture. |
 | Players | Online/offline roster, player detail, account/controller/pawn context, currency, XP, inventory, and location views. |
-| Settings | Token-gated edits for selected `.env` and config values, with backups. |
-| Admin Actions | Database backups and guarded mutations for currency, XP, keystones, items, and experimental GM routes. |
+| Settings | Edits for selected `.env` and config values, with backups. |
+| Admin Actions | Database backups and guarded mutations for currency, XP, keystones, item grants, stack edits, and item deletion. |
 
 If the local published admin port accepts TCP but returns no HTTP bytes after a container recreate, refresh the observed Docker bridge neighbor entries:
 
@@ -233,6 +234,23 @@ Optional remote LAN standby and snapshots:
 
 Replication is an extra recovery layer, not a replacement for stopped-world backups. Deletes and bad writes replicate too. See [`docs/postgres-replication.md`](docs/postgres-replication.md).
 
+Portable backup examples:
+
+```bash
+DUNE_BACKUP_OFFSITE_MODE=none ./scripts/backup-offsite.sh .env
+DUNE_BACKUP_REMOTE_ENV=examples/backup/rclone-offsite.env ./scripts/backup-offsite.sh .env
+DUNE_BACKUP_REMOTE_ENV=examples/backup/rsync-nas.env ./scripts/backup-offsite.sh .env
+DUNE_BACKUP_REMOTE_ENV=examples/backup/restic.env ./scripts/backup-offsite.sh .env
+```
+
+Install an hourly offsite/onsite backup timer:
+
+```bash
+./scripts/install-backup-offsite-timer.sh .env examples/backup/rclone-offsite.env
+```
+
+See [`docs/backup-strategy.md`](docs/backup-strategy.md).
+
 ## Networking
 
 Forward only the client-facing ports needed for your layout.
@@ -298,7 +316,7 @@ Verify announcement delivery:
 
 The chat-command bridge is [`scripts/admin-chat-commands.py`](scripts/admin-chat-commands.py). It listens for configured command prefixes, checks approved admins, and can reply through the announcement path.
 
-The native GM/cheat route remains experimental. It is intentionally blocked unless all related gates are enabled and the payload route is verified:
+The native GM/cheat route remains research-only. It is not exposed as a live Admin Actions control because the RabbitMQ payload envelope is not verified. Probe and chat helper paths stay blocked unless all related gates are enabled:
 
 ```env
 DUNE_ADMIN_GM_COMMANDS_ENABLED=false
@@ -313,8 +331,11 @@ Documentation: [`docs/admin-gm-console.md`](docs/admin-gm-console.md).
 Start here:
 
 - [`docs/setup.md`](docs/setup.md): initial setup flow.
+- [`docs/operator-handoff.md`](docs/operator-handoff.md): checklist for moving the stack to another operator or host.
+- [`docs/platforms.md`](docs/platforms.md): Linux, Windows/macOS operator, Podman, VM, and NAS notes.
 - [`docs/operations.md`](docs/operations.md): health, recovery, startup, watchdog, ports, and restart workflow.
 - [`docs/admin-panel.md`](docs/admin-panel.md): admin panel features, security, announcements, chat commands, and mutation gates.
+- [`docs/backup-strategy.md`](docs/backup-strategy.md): local, onsite, offsite, replica, retention, and restore-test guidance.
 - [`docs/troubleshooting.md`](docs/troubleshooting.md): common failures and checks.
 - [`docs/full-farm.md`](docs/full-farm.md): expanded farm and 30-partition warm-pool notes.
 - [`docs/lan-reflection.md`](docs/lan-reflection.md): internal client hairpin/LAN reflection.
@@ -333,6 +354,8 @@ Architecture and research:
 - [`docs/validation.md`](docs/validation.md): live-client route validation checklist.
 - [`docs/benchmarking.md`](docs/benchmarking.md): resource and transition benchmark notes.
 - [`docs/kubernetes.md`](docs/kubernetes.md): unsupported Kubernetes translation notes.
+- [`docs/packaging.md`](docs/packaging.md): publishable package boundaries and release checklist.
+- [`docs/release-template.md`](docs/release-template.md): release/handoff note template.
 - [`docs/publication.md`](docs/publication.md): release safety checklist.
 
 Root-level research indexes:
@@ -350,15 +373,21 @@ Root-level research indexes:
 - [`compose.allmaps.yaml`](compose.allmaps.yaml): 30-partition warm-pool extension.
 - [`compose.replica.yaml`](compose.replica.yaml): optional Postgres streaming-replica extension.
 - [`compose.limits.example.yaml`](compose.limits.example.yaml): optional local resource guardrails.
+- [`examples/`](examples): portable env, backup, and operator examples.
 - [`admin/admin_panel.py`](admin/admin_panel.py): admin web panel.
 - [`admin/static/hagga-basin.webp`](admin/static/hagga-basin.webp): Hagga Basin panel map asset.
 - [`scripts/start-full-warm-pool.sh`](scripts/start-full-warm-pool.sh): 30-map startup helper.
+- [`scripts/bootstrap-checklist.sh`](scripts/bootstrap-checklist.sh): read-only new-host readiness checklist.
 - [`scripts/watch-maps.sh`](scripts/watch-maps.sh): map watchdog.
 - [`scripts/recover-map.sh`](scripts/recover-map.sh): fixed-partition recovery.
 - [`scripts/restart-target.sh`](scripts/restart-target.sh): scheduled restart execution hook.
 - [`scripts/announce.sh`](scripts/announce.sh): in-game announcement publisher.
 - [`scripts/admin-chat-commands.py`](scripts/admin-chat-commands.py): chat command listener.
 - [`scripts/seed-gateway-neighbor.sh`](scripts/seed-gateway-neighbor.sh): Docker bridge neighbor refresh helper for the observed local bridge issue.
+- [`scripts/backup-offsite.sh`](scripts/backup-offsite.sh): local backup plus rclone, rsync, restic, or local-only sync helper.
+- [`scripts/verify-backup.sh`](scripts/verify-backup.sh): structural check for backup dumps, archives, and manifests.
+- [`scripts/install-backup-offsite-timer.sh`](scripts/install-backup-offsite-timer.sh): systemd timer installer for portable backup sync.
+- [`scripts/package-manifest.sh`](scripts/package-manifest.sh): publishable file manifest generator.
 - [`.env.example`](.env.example): documented settings template.
 
 ## Validation
@@ -374,12 +403,4 @@ Useful focused checks:
 ```bash
 python3 -m py_compile admin/admin_panel.py scripts/admin-chat-commands.py scripts/dune_gm_command.py scripts/probe-gm-command.py
 git diff --check
-```
-
-## Community Support
-
-Discord support:
-
-```text
-https://discord.gg/cybhGntTts
 ```

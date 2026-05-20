@@ -13,14 +13,9 @@ This records what is known about the native Dune admin/cheat path without guessi
 
 ## Current Panel Behavior
 
-The Admin Actions pane now includes a Native GM / Cheat Console section. It shows:
+The live Admin Actions pane does **not** expose a Native GM / Cheat Console. Earlier builds showed a blocked preview UI, but that was removed because it looked actionable while the payload route was still unverified.
 
-- The discovered command allow-list.
-- Shipped cheat scripts and their command bodies where known.
-- Candidate RabbitMQ map routes from live `farm_state`.
-- A dry-run payload preview composer for command, route, target player, and arguments.
-
-Execution is intentionally blocked until the RabbitMQ payload envelope for `UDuneServerCommandSubsystem` is proven. The safe first probe should be `PrintPos` against `Survival_11`, because it should not mutate state.
+The research APIs and scripts can still list discovered commands, shipped cheat scripts, and candidate RabbitMQ routes for operator investigation. Execution remains blocked until the RabbitMQ payload envelope for `UDuneServerCommandSubsystem` is proven. The safe first probe should be `PrintPos` against a known live route, because it should not mutate state.
 
 ## Chat Command Plan
 
@@ -113,7 +108,7 @@ Implemented as gated native previews:
 
 - `&gm item` prepares or sends `AddItemToInventory <playername> <template> <count> [quality]`.
 - `&gm kit` prepares or sends `AddBasicInventoryToCharacter <playername>`. Only the `basic` kit is wired right now.
-- `&gm xp` resolves the player and specialization track, then returns the admin-panel mutation request body for `POST /api/admin/xp`. It does not write from chat; execute through the token-gated panel so the mutation gate and audit trail stay in force.
+- `&gm xp` resolves the player and specialization track, then returns the admin-panel mutation request body for `POST /api/admin/xp`. It does not write from chat; execute through Admin Actions so the mutation gate and audit trail stay in force.
 - `&gm vehicle` prepares or sends `SpawnVehicle <template> [args...]`; exact vehicle template and argument behavior still needs validation.
 
 ### Tier 4: Dangerous Commands
@@ -131,7 +126,7 @@ Do not enable by default:
 
 ## Why Execution Is Blocked
 
-We know the command names and likely transport, but not the exact serialized message body. Publishing guessed messages into a live map `rpc` queue can be ignored, poison a consumer, or trigger unintended behavior. The panel therefore supports operator workflow and payload preview now, while hard-blocking `/api/admin/gm/execute`.
+We know the command names and likely transport, but not the exact serialized message body. Publishing guessed messages into a live map `rpc` queue can be ignored, poison a consumer, or trigger unintended behavior. The panel therefore does not expose this as a live control, and `/api/admin/gm/execute` remains hard-blocked.
 
 ## Probe Tool
 

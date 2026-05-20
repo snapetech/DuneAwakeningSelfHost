@@ -1,6 +1,6 @@
 # Setup
 
-This flow assumes you already installed the official Dune: Awakening Self-Hosted Server Steam tool and have Docker Compose available on the Linux host. For a fresh install on different hardware, read `docs/reproducibility.md` first.
+This flow assumes you already installed the official Dune: Awakening Self-Hosted Server Steam tool and have Docker Compose available on the Linux host. For a fresh install on different hardware, read `docs/reproducibility.md` and `docs/platforms.md` first.
 
 ## 1. Create Local Env and TLS
 
@@ -16,7 +16,17 @@ Edit `.env` after generation:
 - Paste the Funcom self-hosting token into `FLS_SECRET`.
 - Set `EXTERNAL_ADDRESS` to the address clients should reach.
 
+Optional starting overlays live under `examples/env/`. Copy values from those files into `.env`; do not use them as complete replacements for `.env.example`.
+
 ## 2. Run Preflight
+
+For a read-only new-host overview:
+
+```bash
+./scripts/bootstrap-checklist.sh .env
+```
+
+Then run the stricter preflight:
 
 ```bash
 ./scripts/preflight.sh
@@ -70,6 +80,37 @@ docker compose --env-file .env -f compose.yaml -f compose.replica.yaml ps
 ```
 
 The replica is a read-only physical standby under `data/postgres-replica`. It can reduce load for logical dumps and gives a fast recovery source, but it mirrors bad writes and deletes, so keep snapshot backups. See `docs/postgres-replication.md`.
+
+## 6b. Optional Onsite/Offsite Backup Sync
+
+Local backups:
+
+```bash
+./scripts/backup-state.sh .env
+```
+
+Portable sync helpers:
+
+```bash
+DUNE_BACKUP_OFFSITE_MODE=none ./scripts/backup-offsite.sh .env
+DUNE_BACKUP_REMOTE_ENV=examples/backup/rclone-offsite.env ./scripts/backup-offsite.sh .env
+DUNE_BACKUP_REMOTE_ENV=examples/backup/rsync-nas.env ./scripts/backup-offsite.sh .env
+DUNE_BACKUP_REMOTE_ENV=examples/backup/restic.env ./scripts/backup-offsite.sh .env
+```
+
+Install the timer after the selected backup config works manually:
+
+```bash
+./scripts/install-backup-offsite-timer.sh .env examples/backup/rclone-offsite.env
+```
+
+See `docs/backup-strategy.md`.
+
+Verify a backup structurally before trusting the path:
+
+```bash
+./scripts/verify-backup.sh backups/<backup-id>
+```
 
 ## 7. Start Service Layer
 

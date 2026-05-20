@@ -8,6 +8,7 @@ the useful layer for host/disk failure.
 This is not a replacement for point-in-time backups. A streaming replica quickly
 copies good writes, bad writes, deletes, corruption, and schema migrations. Keep
 `scripts/backup-state.sh` or admin-panel dumps for recoverable snapshots.
+For broader onsite/offsite backup patterns, see `docs/backup-strategy.md`.
 
 ## Enable
 

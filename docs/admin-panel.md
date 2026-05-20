@@ -4,12 +4,19 @@ The admin helper panel is a LAN-only web UI for local server operators. It is no
 
 ## Start
 
-Set a strong token in `.env`:
+For the current local trusted deployment, the panel runs unlocked by default:
 
 ```env
-DUNE_ADMIN_TOKEN=replace-with-a-long-random-token
+DUNE_ADMIN_REQUIRE_TOKEN=false
 DUNE_ADMIN_MUTATIONS_ENABLED=true
 DUNE_ADMIN_ITEM_GRANTS_ENABLED=true
+```
+
+To require a browser token, set:
+
+```env
+DUNE_ADMIN_REQUIRE_TOKEN=true
+DUNE_ADMIN_TOKEN=replace-with-a-long-random-token
 ```
 
 Start the service:
@@ -24,7 +31,7 @@ Open:
 http://127.0.0.1:${DUNE_ADMIN_HOST_PORT:-18080}
 ```
 
-The panel uses `X-Admin-Token` for protected APIs. The browser stores the token in session storage when entered in the header.
+When token auth is enabled, protected APIs use `X-Admin-Token`. The browser stores the token in local/session storage when entered in the header. When token auth is disabled, the token header is hidden and the Security page reports `local unlocked`.
 
 ## LAN Hostname
 
@@ -107,6 +114,7 @@ server {
 ## Current Features
 
 - Overview-first dashboard with player roster, realtime resource use, headline health metrics, map health, network checks, and health verdicts.
+- Hagga Basin player map that projects live database pawn coordinates onto `admin/static/hagga-basin.webp` through `DUNE_HAGGA_MAP_*` affine calibration. The world extents and image-space `U/V` range are editable env settings so alignment can be corrected against known in-game locations without hardcoding per-player offsets.
 - Server/farm state view with per-map online/offline health derived from `world_partition`, `farm_state`, and `active_server_ids`.
 - Realtime resource view for host load, host memory, workspace disk, and Docker container CPU/memory/network/block I/O when the Docker socket is available.
 - Local/upstream health checks for Postgres reachability, the Dune account portal, and public Dune/Funcom HTTP reachability.
@@ -119,8 +127,8 @@ server {
 - Typed Director character-transfer settings editor for `config/director.ini`.
 - Config editor for selected local config files, including official `UserEngine.ini` and `UserGame.ini` overlays, with backups under `backups/admin-panel`.
 - Director GME voice-chat credentials can be added through the `director.ini` config editor when Funcom/provider supplies real `GmeAppId` and `GmeAppKey` values. Leave them unset otherwise.
-- Token-gated currency and XP mutation endpoints.
-- Token-gated Postgres custom-format backup under `backups/admin-panel`.
+- Currency and XP mutation endpoints gated by `DUNE_ADMIN_MUTATIONS_ENABLED`.
+- Postgres custom-format backup under `backups/admin-panel`.
 - Redacted JSONL audit trail for rejected requests and admin writes under `backups/admin-panel/audit.jsonl`.
 - Known item template, observed item template, inventory, and inventory-type references.
 - Player dropdowns in Admin Actions for currency, XP, keystones, item grant targeting, and item maintenance.
@@ -135,7 +143,7 @@ The Ops tab includes a restart-announcement scheduler with these restart-time pr
 immediate, 30s, 60s, 5min, 10min, 15min, 30min, 60min, 1hr, 2hr, 3hr, 4hr, 6hr, 12hr
 ```
 
-The scheduler is real and token-gated, but in-game delivery is delegated to:
+The scheduler is real, and in-game delivery is delegated to:
 
 ```env
 DUNE_ADMIN_ANNOUNCE_COMMAND=/workspace/scripts/announce.sh
@@ -376,7 +384,7 @@ DUNE_RESTART_DOCKER_STOP_TIMEOUT_SECONDS=120
 DUNE_RESTART_DOCKER_API_TIMEOUT_SECONDS=30
 ```
 
-The Docker socket is privileged host control. Keep the admin panel bound to localhost or a trusted reverse proxy, require the admin token, and do not expose the admin hostname publicly. The script receives `DUNE_RESTART_JOB_ID`, `DUNE_RESTART_TARGET`, `DUNE_RESTART_SERVICES`, and `DUNE_RESTART_ACTION`, plus the target as its first argument.
+The Docker socket is privileged host control. Keep the admin panel bound to localhost or a trusted reverse proxy, and do not expose the admin hostname publicly. If the panel is reachable beyond a trusted local admin surface, enable `DUNE_ADMIN_REQUIRE_TOKEN=true`. The script receives `DUNE_RESTART_JOB_ID`, `DUNE_RESTART_TARGET`, `DUNE_RESTART_SERVICES`, and `DUNE_RESTART_ACTION`, plus the target as its first argument.
 
 For admin-triggered restart jobs, the stop phase uses Docker stop, and the start phase uses Compose `up -d --force-recreate --no-deps`. When the admin image has no Docker CLI, the socket fallback starts a short-lived privileged `docker:27-cli` helper container with the repo and Docker socket mounted, then runs host-side Compose from that helper. It also runs `scripts/seed-gateway-neighbor.sh` before and after recreate so gateway's static `172.31.240.40`/`02:42:ac:1f:f0:28` identity is refreshed in Postgres, gateway, RabbitMQ, service-layer, and host bridge neighbor tables. After recreate and seeding, `scripts/restart-post-start-health.sh` waits for Postgres connectivity, re-seeds bridge neighbors, recreates `text-router` if it exited during early startup, and retries `scripts/verify-rmq-auth-path.sh` until the auth and text-router paths are reachable or the timeout expires. This catches the broken state where `admin-rmq` cannot reach `rmq-auth-shim`, `game-rmq` cannot reach `text-router`, or `text-router` exits because it raced Postgres during startup. This means the daily restart schedule applies changed `.env` values and bind-mounted config files during the recreate phase without pulling in excluded dependencies such as Postgres or RabbitMQ. Keep `DUNE_RESTART_COMPOSE_IMAGE` available locally on the Docker host; if it is missing, pull it before relying on unattended maintenance. The socket fallback gives stop/restart calls a longer timeout than Docker's graceful stop window so a normal slow shutdown is not misreported as a failed maintenance job.
 
@@ -434,7 +442,7 @@ Recreate affected game-server containers after saving so `scripts/run_server_saf
 ## Security Notes
 
 - Do not expose this service to the public internet.
-- Use a long random `DUNE_ADMIN_TOKEN`.
+- Use a long random `DUNE_ADMIN_TOKEN` whenever `DUNE_ADMIN_REQUIRE_TOKEN=true`.
 - `DUNE_ADMIN_MUTATIONS_ENABLED=true` is the repo default so the character-admin workflows can apply currency, XP, item stack, and item grant changes without a separate redeploy.
 - `DUNE_ADMIN_ITEM_GRANTS_ENABLED` defaults to `true` in this repo so item tooling is visible and ready.
 - Director character-transfer settings write `config/director.ini`; recreate the Director container before relying on a changed transfer policy.
@@ -445,6 +453,7 @@ Recreate affected game-server containers after saving so `scripts/run_server_saf
 - Keep `DUNE_ADMIN_REQUEST_TIMEOUT_SECONDS` bounded; the default is `10` seconds to limit slow-body and idle connection abuse.
 - Keep `DUNE_ADMIN_MAX_ITEM_STACK_SIZE` bounded; the default is `1000000` to prevent accidental enormous stack writes.
 - Keep `DUNE_ADMIN_AUDIT_EVENT_LIMIT`, `DUNE_ADMIN_REFERENCE_LIMIT`, and `DUNE_ADMIN_CHARACTER_SEARCH_LIMIT` bounded so read endpoints stay predictable as local data grows.
+- Steam account ids in `dune.accounts.platform_id` are SteamID64 values. The roster resolves them to public Steam persona names and profile links, cached in `backups/admin-panel/steam-profiles.json`; tune the cache age with `DUNE_ADMIN_STEAM_PROFILE_CACHE_TTL_SECONDS`. Steam private login names are not exposed.
 - Set `DUNE_ADMIN_ALLOWED_HOSTS` to the exact hostnames used to reach the panel, for example `127.0.0.1:18080,localhost:18080,admin.example.test`.
 - Review the Security tab's recent audit events after failed login attempts, blocked host/origin requests, config edits, backups, or mutation runs.
 - Restart affected game services after config changes when the target service does not hot-reload.

@@ -11,6 +11,9 @@ CONTAINER_RUNTIME=podman ./scripts/backup-state.sh .env
 CONTAINER_RUNTIME=podman ./scripts/restore-state.sh .env backups/20260519T150000Z
 ```
 
+For platform-specific notes, including Windows/macOS operator workstations,
+Podman caveats, VM layout, and NAS storage guidance, see `docs/platforms.md`.
+
 ## Health Checks
 
 Compose defines health checks for:
@@ -210,6 +213,19 @@ For unattended operation, run the map watchdog as a host service after startup:
 ```bash
 ./scripts/install-map-watchdog-service.sh .env
 sudo systemctl enable --now dune-map-watchdog.service
+```
+
+For unattended backup sync, configure one of the examples under
+`examples/backup/`, test `scripts/backup-offsite.sh` manually, then install:
+
+```bash
+./scripts/install-backup-offsite-timer.sh .env examples/backup/rclone-offsite.env
+```
+
+Verify backup readability after changing the backup path:
+
+```bash
+./scripts/verify-backup.sh backups/<backup-id>
 ```
 
 ## Network Ports

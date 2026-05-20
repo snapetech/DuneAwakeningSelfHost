@@ -9,12 +9,6 @@ Start with:
 
 The preflight helper catches missing tools, missing image tarballs, default credentials, empty tokens, and unsafe host bindings. The status helper prints container state, selected database rows, RabbitMQ connections, and recent high-signal logs with known token/password patterns redacted.
 
-## Community Support
-
-For live community support, join the Discord:
-
-https://discord.gg/cybhGntTts
-
 ## Image Tarball Not Found
 
 Symptom:
