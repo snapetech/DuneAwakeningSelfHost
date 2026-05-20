@@ -168,11 +168,11 @@ The admin panel passes:
 
 The script also receives the message as its first argument. Delivery attempts and failures are recorded in the admin audit log.
 
-## Scheduled Restarts
+## Scheduled Restarts And Shutdowns
 
-The Ops tab can also schedule restart jobs for restart-safe components, the service layer, all game maps, or key individual maps such as Survival, Overmap, Arrakeen, Harko Village, and Deep Desert. It does not restart Postgres or RabbitMQ by default because replacing those services disconnects all running map servers.
+The Ops tab can also schedule restart or shutdown jobs for restart-safe components, the service layer, all game maps, or key individual maps such as Survival, Overmap, Arrakeen, Harko Village, and Deep Desert. It does not stop or restart Postgres or RabbitMQ by default because replacing those services disconnects all running map servers.
 
-Scheduled restarts default to dry-run mode. In dry-run mode, the job matures, records that it would have run, and does not touch containers.
+Scheduled maintenance defaults to dry-run mode. In dry-run mode, the job matures, records that it would have run, and does not touch containers. Executed jobs default to taking a maintenance backup before the Docker action runs. The backup includes a Postgres dump, config/env archive, and mounted `data/server-saved` / `data/rabbitmq` archives when those paths are available to the admin container.
 
 Actual execution is delegated to:
 
@@ -187,11 +187,11 @@ DUNE_RESTART_COMPOSE_PROJECT=dune_server
 DUNE_RESTART_DOCKER_SOCKET=/var/run/docker.sock
 ```
 
-The Docker socket is privileged host control. Keep the admin panel bound to localhost or a trusted reverse proxy, require the admin token, and do not expose the admin hostname publicly. The script receives `DUNE_RESTART_JOB_ID`, `DUNE_RESTART_TARGET`, and `DUNE_RESTART_SERVICES`, plus the target as its first argument.
+The Docker socket is privileged host control. Keep the admin panel bound to localhost or a trusted reverse proxy, require the admin token, and do not expose the admin hostname publicly. The script receives `DUNE_RESTART_JOB_ID`, `DUNE_RESTART_TARGET`, `DUNE_RESTART_SERVICES`, and `DUNE_RESTART_ACTION`, plus the target as its first argument.
 
 The Docker-socket fallback restarts existing containers. It does not recreate containers or apply changed environment variables; use `docker compose up -d --force-recreate ...` from the host for config changes.
 
-`scripts/restart-target.sh` refuses to restart `postgres`, `admin-rmq`, or `game-rmq` unless `DUNE_RESTART_ALLOW_STATEFUL=true` is set for a deliberate maintenance window. If Postgres must be restarted, expect all game maps to need recovery afterward.
+`scripts/restart-target.sh` refuses to stop or restart `postgres`, `admin-rmq`, or `game-rmq` unless `DUNE_RESTART_ALLOW_STATEFUL=true` is set for a deliberate maintenance window. If Postgres must be restarted, expect all game maps to need recovery afterward.
 
 ## Write Safety
 
