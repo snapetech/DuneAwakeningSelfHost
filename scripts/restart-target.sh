@@ -4,6 +4,7 @@ set -eu
 target="${DUNE_RESTART_TARGET:-${1:-}}"
 services="${DUNE_RESTART_SERVICES:-}"
 action="${DUNE_RESTART_ACTION:-restart}"
+phase="${DUNE_RESTART_PHASE:-$action}"
 
 if [ -z "$target" ]; then
   printf 'missing DUNE_RESTART_TARGET\n' >&2
@@ -13,6 +14,13 @@ case "$action" in
   restart|shutdown) ;;
   *)
     printf 'invalid DUNE_RESTART_ACTION: %s\n' "$action" >&2
+    exit 64
+    ;;
+esac
+case "$phase" in
+  restart|shutdown|stop|start) ;;
+  *)
+    printf 'invalid DUNE_RESTART_PHASE: %s\n' "$phase" >&2
     exit 64
     ;;
 esac
@@ -43,6 +51,7 @@ project = os.environ.get("DUNE_RESTART_COMPOSE_PROJECT", "dune_server")
 socket_path = os.environ.get("DUNE_RESTART_DOCKER_SOCKET", "/var/run/docker.sock")
 dry_run = os.environ.get("DUNE_RESTART_DRY_RUN", "").lower() in ("1", "true", "yes", "on")
 action = os.environ.get("DUNE_RESTART_ACTION", "restart")
+phase = os.environ.get("DUNE_RESTART_PHASE", action)
 
 default_services = [
     "survival", "overmap", "arrakeen", "harko-village", "testing-hephaestus",
@@ -156,14 +165,19 @@ for service in services:
         if dry_run:
             restarted.append(service)
             continue
-        endpoint = "stop?t=30" if action == "shutdown" else "restart?t=30"
+        if phase in ("shutdown", "stop"):
+            endpoint = "stop?t=30"
+        elif phase == "start":
+            endpoint = "start"
+        else:
+            endpoint = "restart?t=30"
         status, payload = docker("POST", f"/containers/{container_id}/{endpoint}")
         if status not in (204, 304):
-            print(f"failed restarting {service}: HTTP {status} {payload[:200]!r}", file=sys.stderr)
+            print(f"failed {phase} for {service}: HTTP {status} {payload[:200]!r}", file=sys.stderr)
             sys.exit(75)
         restarted.append(service)
 
-print(json.dumps({"ok": True, "target": target, "action": action, "dryRun": dry_run, "affected": restarted, "missing": missing}, separators=(",", ":")))
+print(json.dumps({"ok": True, "target": target, "action": action, "phase": phase, "dryRun": dry_run, "affected": restarted, "missing": missing}, separators=(",", ":")))
 PY
   exit $?
 fi
@@ -197,10 +211,13 @@ case " $services " in
     ;;
 esac
 if [ "${DUNE_RESTART_DRY_RUN:-}" = "true" ] || [ "${DUNE_RESTART_DRY_RUN:-}" = "1" ]; then
-  printf '{"ok":true,"target":"%s","action":"%s","dryRun":true,"services":"%s"}\n' "$target" "$action" "$services"
+  printf '{"ok":true,"target":"%s","action":"%s","phase":"%s","dryRun":true,"services":"%s"}\n' "$target" "$action" "$phase" "$services"
   exit 0
 fi
-if [ "$action" = "shutdown" ]; then
+if [ "$phase" = "shutdown" ] || [ "$phase" = "stop" ]; then
   exec "$@" stop -t 30 $services
+fi
+if [ "$phase" = "start" ]; then
+  exec "$@" up -d --force-recreate $services
 fi
 exec "$@" up -d --force-recreate $services

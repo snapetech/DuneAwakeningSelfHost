@@ -449,21 +449,15 @@ def cancel_restart(job_id=None):
     return {"ok": True, "cancelled": changed}
 
 
-def execute_restart(job):
-    if not job.get("execute"):
-        return {"ok": True, "dryRun": True, "output": f"scheduled {job.get('action', 'restart')} reached run time; execute=false so no command was run"}
+def run_restart_command(command, job, phase):
     command = pathlib.Path(RESTART_COMMAND)
-    if not command.exists() or not os.access(command, os.X_OK):
-        return {"ok": False, "error": f"restart command is not executable: {command}"}
     env = os.environ.copy()
-    backup_result = None
-    if job.get("backup", True) and MAINTENANCE_BACKUP_ENABLED:
-        backup_result = create_maintenance_backup(job)
     env.update({
         "DUNE_RESTART_JOB_ID": job.get("id", ""),
         "DUNE_RESTART_TARGET": job.get("target", ""),
         "DUNE_RESTART_SERVICES": " ".join(job.get("services", [])),
         "DUNE_RESTART_ACTION": job.get("action", "restart"),
+        "DUNE_RESTART_PHASE": phase,
     })
     try:
         result = subprocess.run(
@@ -477,11 +471,49 @@ def execute_restart(job):
             check=False,
         )
     except Exception as exc:
-        return {"ok": False, "error": str(exc)}
+        return {"ok": False, "phase": phase, "error": str(exc)}
     output = (result.stdout + result.stderr).strip()
     if len(output) > AUDIT_FIELD_LIMIT:
         output = output[:AUDIT_FIELD_LIMIT] + "...[truncated]"
-    return {"ok": result.returncode == 0, "returncode": result.returncode, "output": output, "backup": backup_result}
+    return {"ok": result.returncode == 0, "phase": phase, "returncode": result.returncode, "output": output}
+
+
+def execute_restart(job):
+    if not job.get("execute"):
+        return {"ok": True, "dryRun": True, "output": f"scheduled {job.get('action', 'restart')} reached run time; execute=false so no command was run"}
+    command = pathlib.Path(RESTART_COMMAND)
+    if not command.exists() or not os.access(command, os.X_OK):
+        return {"ok": False, "error": f"restart command is not executable: {command}"}
+
+    action = job.get("action", "restart")
+    stop_phase = "shutdown" if action == "shutdown" else "stop"
+    stop_result = run_restart_command(command, job, stop_phase)
+    result = {"ok": False, "action": action, "stop": stop_result, "backup": None, "start": None}
+    if not stop_result.get("ok"):
+        result["output"] = stop_result.get("output", stop_result.get("error", ""))
+        return result
+
+    if job.get("backup", True) and MAINTENANCE_BACKUP_ENABLED:
+        try:
+            result["backup"] = create_maintenance_backup(job)
+        except Exception as exc:
+            result["error"] = str(exc)
+            result["output"] = f"{stop_result.get('output', '')}\nbackup failed: {exc}".strip()
+            return result
+
+    if action == "shutdown":
+        result["ok"] = True
+        result["output"] = stop_result.get("output", "")
+        return result
+
+    start_result = run_restart_command(command, job, "start")
+    result["start"] = start_result
+    result["ok"] = bool(start_result.get("ok"))
+    result["returncode"] = start_result.get("returncode")
+    result["output"] = "\n".join(part for part in [stop_result.get("output", ""), start_result.get("output", "")] if part)
+    if len(result["output"]) > AUDIT_FIELD_LIMIT:
+        result["output"] = result["output"][:AUDIT_FIELD_LIMIT] + "...[truncated]"
+    return result
 
 
 def dashboard_announcement_message(message):
@@ -1113,8 +1145,9 @@ def reference_query(errors, name, sql, params=None):
 def create_db_backup():
     BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-    path = BACKUP_ROOT / f"{stamp}-{DATABASE}.dump"
-    temp_path = BACKUP_ROOT / f".{stamp}-{DATABASE}.dump.tmp"
+    suffix = secrets.token_urlsafe(6)
+    path = BACKUP_ROOT / f"{stamp}-{suffix}-{DATABASE}.dump"
+    temp_path = BACKUP_ROOT / f".{stamp}-{suffix}-{DATABASE}.dump.tmp"
     env = os.environ.copy()
     env["PGPASSWORD"] = os.environ.get("DUNE_ADMIN_DB_PASSWORD", os.environ.get("POSTGRES_DUNE_PASSWORD", ""))
     cmd = [
