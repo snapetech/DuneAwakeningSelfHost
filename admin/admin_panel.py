@@ -2248,6 +2248,8 @@ let loadSerial = 0;
 let resourceRefreshInFlight = false;
 let autoRefresh = sessionStorage.getItem('duneAdminAutoRefresh') !== 'off';
 const resourceHistory = [];
+let adminReferenceCache = null;
+let adminReferenceCacheAt = 0;
 const view = document.getElementById('view');
 
 document.body.classList.toggle('highContrast', sessionStorage.getItem('duneAdminHighContrast') === 'on');
@@ -2286,6 +2288,14 @@ async function api(path, opts={}) {
   } finally {
     clearTimeout(timer);
   }
+}
+async function adminReference(opts={}) {
+  const ttlMs = opts.ttlMs ?? 60000;
+  const now = Date.now();
+  if (adminReferenceCache && now - adminReferenceCacheAt < ttlMs) return adminReferenceCache;
+  adminReferenceCache = await api('/api/admin/reference', opts);
+  adminReferenceCacheAt = Date.now();
+  return adminReferenceCache;
 }
 function esc(v){ return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function table(rows){
@@ -2984,8 +2994,10 @@ async function pickCharacter(row){
   row.classList.add('selected');
   const id = row.dataset.id || row.children[0].textContent;
   if (!id) return;
-  const d = await api('/api/characters/' + encodeURIComponent(id));
-  const ref = await api('/api/admin/reference');
+  const [d, ref] = await Promise.all([
+    api('/api/characters/' + encodeURIComponent(id)),
+    adminReference()
+  ]);
   const p = d.player || {};
   announce(`Selected ${p.character_name || 'character'}`);
   const firstTrack = (d.specialization && d.specialization[0]) || {};
@@ -3067,7 +3079,7 @@ async function savePlayerOnlineState(){
 }
 async function mutations(serial=loadSerial){
   const [ref, characterRows] = await Promise.all([
-    api('/api/admin/reference'),
+    adminReference(),
     api('/api/characters?q=')
   ]);
   if (serial !== loadSerial) return;
