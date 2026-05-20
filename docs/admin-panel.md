@@ -67,6 +67,16 @@ reverse_proxy @admin_panel 127.0.0.1:18081 {
 
 For Caddy or any other LAN ingress, also keep the admin hostname in a private/LAN allow rule. Do not add it to a public catch-all route.
 
+If the local published port accepts TCP but returns no HTTP bytes, check for stale permanent neighbor entries on the Docker bridge after admin container recreation:
+
+```bash
+ip neigh show dev br-<dune-bridge-id> | grep '172.31.240.8\|172.31.240.9'
+./scripts/seed-gateway-neighbor.sh
+curl -H 'Host: admin-panel:8080' http://127.0.0.1:${DUNE_ADMIN_HOST_PORT:-18081}/api/status
+```
+
+`scripts/seed-gateway-neighbor.sh` refreshes the host bridge entries for the admin ingress and panel containers. This avoids the failure mode where Docker's localhost proxy connects but sends traffic to an old container MAC after a recreate.
+
 Optional hardening probe:
 
 ```dotenv
@@ -326,11 +336,13 @@ The listener service is separate from the web panel so a command-loop failure do
 
 ## Scheduled Restarts And Shutdowns
 
-The Ops tab can also schedule restart or shutdown jobs for restart-safe components, the service layer, all game maps, or key individual maps such as Survival, Overmap, Arrakeen, Harko Village, and Deep Desert. It does not stop or restart Postgres or RabbitMQ by default because replacing those services disconnects all running map servers.
+The Ops tab can also schedule restart or shutdown jobs for restart-safe components, the service layer, all game maps, or key individual maps such as Survival, Overmap, Arrakeen, Harko Village, and Deep Desert. It does not stop or restart Postgres or RabbitMQ by default because replacing those services disconnects all running map servers. It also does not include `admin-panel` in the admin-triggered `all` target, because stopping the container running the scheduler would interrupt the stop-backup-start workflow.
 
 Scheduled maintenance defaults to dry-run mode. In dry-run mode, the job matures, records that it would have run, and does not touch containers. Executed restart jobs now use a stop-backup-start sequence: stop the selected game services, take the maintenance backup while they are down, then start/recreate the selected services. Executed shutdown jobs stop the selected services, take the maintenance backup, and leave them stopped. If the stop step fails, no backup or start is attempted. If the backup step fails during a restart, the selected services are left stopped so the failed backup can be investigated before the world is brought back online.
 
 Maintenance backups are written under `backups/admin-panel/maintenance/<utc-stamp>-<job-id>/`. Each backup includes a unique Postgres custom-format dump, config/env archive, and mounted `data/server-saved` / `data/rabbitmq` archives when those paths are available to the admin container.
+
+When the restart form's announcement checkbox is enabled, the admin panel schedules the first warning immediately and repeats it until the maintenance run time. The standalone announcement card is separate: it only schedules chat notices and does not stop, start, or back up services.
 
 Actual execution is delegated to:
 
@@ -343,11 +355,17 @@ DUNE_ADMIN_RESTART_COMMAND=/workspace/scripts/restart-target.sh
 ```env
 DUNE_RESTART_COMPOSE_PROJECT=dune_server
 DUNE_RESTART_DOCKER_SOCKET=/var/run/docker.sock
+DUNE_RESTART_HOST_WORKSPACE=/path/to/DuneAwakeningSelfHost
+DUNE_RESTART_COMPOSE_IMAGE=docker:27-cli
+DUNE_RESTART_USE_HOST_COMPOSE=true
+DUNE_RESTART_COMPOSE_TIMEOUT_SECONDS=1800
+DUNE_RESTART_DOCKER_STOP_TIMEOUT_SECONDS=120
+DUNE_RESTART_DOCKER_API_TIMEOUT_SECONDS=30
 ```
 
 The Docker socket is privileged host control. Keep the admin panel bound to localhost or a trusted reverse proxy, require the admin token, and do not expose the admin hostname publicly. The script receives `DUNE_RESTART_JOB_ID`, `DUNE_RESTART_TARGET`, `DUNE_RESTART_SERVICES`, and `DUNE_RESTART_ACTION`, plus the target as its first argument.
 
-For admin-triggered restart jobs, the stop phase uses Docker stop, and the start phase uses Compose `up -d --force-recreate` when the Docker CLI is available. The Docker-socket fallback can stop, start, or restart existing containers, but it cannot recreate containers or apply changed environment variables; use the host Compose path for config-change maintenance.
+For admin-triggered restart jobs, the stop phase uses Docker stop, and the start phase uses Compose `up -d --force-recreate`. When the admin image has no Docker CLI, the socket fallback starts a short-lived `docker:27-cli` helper container with the repo and Docker socket mounted, then runs host-side Compose from that helper. This means the daily restart schedule applies changed `.env` values and bind-mounted config files during the recreate phase. Keep `DUNE_RESTART_COMPOSE_IMAGE` available locally on the Docker host; if it is missing, pull it before relying on unattended maintenance. The socket fallback gives stop/restart calls a longer timeout than Docker's graceful stop window so a normal slow shutdown is not misreported as a failed maintenance job.
 
 `scripts/restart-target.sh` refuses to stop or restart `postgres`, `admin-rmq`, or `game-rmq` unless `DUNE_RESTART_ALLOW_STATEFUL=true` is set for a deliberate maintenance window. If Postgres must be restarted, expect all game maps to need recovery afterward.
 

@@ -52,6 +52,11 @@ socket_path = os.environ.get("DUNE_RESTART_DOCKER_SOCKET", "/var/run/docker.sock
 dry_run = os.environ.get("DUNE_RESTART_DRY_RUN", "").lower() in ("1", "true", "yes", "on")
 action = os.environ.get("DUNE_RESTART_ACTION", "restart")
 phase = os.environ.get("DUNE_RESTART_PHASE", action)
+host_workspace = os.environ.get("DUNE_RESTART_HOST_WORKSPACE") or os.environ.get("DUNE_ANNOUNCE_HOST_WORKSPACE", "")
+compose_image = os.environ.get("DUNE_RESTART_COMPOSE_IMAGE", "docker:27-cli")
+use_host_compose = os.environ.get("DUNE_RESTART_USE_HOST_COMPOSE", "true").lower() in ("1", "true", "yes", "on")
+compose_files = [item for item in os.environ.get("COMPOSE_FILES", "compose.yaml:compose.allmaps.yaml").split(":") if item]
+env_file = os.environ.get("ENV_FILE", ".env")
 
 default_services = [
     "survival", "overmap", "arrakeen", "harko-village", "testing-hephaestus",
@@ -64,7 +69,6 @@ default_services = [
     "overland-s-04", "overland-s-06", "bandit-fortress", "overland-s-07",
     "overland-s-08", "dungeon-thepit",
     "director", "gateway", "text-router", "rmq-auth-shim",
-    "admin-panel",
 ]
 stateful_services = {"postgres", "admin-rmq", "game-rmq"}
 allow_stateful = os.environ.get("DUNE_RESTART_ALLOW_STATEFUL", "").lower() in ("1", "true", "yes", "on")
@@ -100,6 +104,14 @@ def decode_chunked(payload):
     return bytes(decoded)
 
 
+def request_timeout(path):
+    if "/wait" in path:
+        return int(os.environ.get("DUNE_RESTART_COMPOSE_TIMEOUT_SECONDS", os.environ.get("DUNE_ADMIN_RESTART_COMMAND_TIMEOUT_SECONDS", "1800")))
+    if "/stop" in path or "/restart" in path:
+        return int(os.environ.get("DUNE_RESTART_DOCKER_STOP_TIMEOUT_SECONDS", "120"))
+    return int(os.environ.get("DUNE_RESTART_DOCKER_API_TIMEOUT_SECONDS", "30"))
+
+
 def docker(method, path, body=None):
     data = b"" if body is None else json.dumps(body).encode()
     request = [
@@ -112,7 +124,7 @@ def docker(method, path, body=None):
     request.append("")
     request.append("")
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.settimeout(30)
+    sock.settimeout(request_timeout(path))
     sock.connect(socket_path)
     sock.sendall("\r\n".join(request).encode() + data)
     chunks = []
@@ -134,6 +146,86 @@ def docker(method, path, body=None):
     if headers.get("transfer-encoding") == "chunked":
         payload = decode_chunked(payload)
     return status, payload
+
+
+def remove_container(container_id):
+    docker("DELETE", f"/containers/{container_id}?force=true&v=true")
+
+
+def docker_logs(container_id):
+    status, payload = docker("GET", f"/containers/{container_id}/logs?stdout=1&stderr=1")
+    if status != 200:
+        return f"failed reading helper logs: HTTP {status}"
+    return payload.decode("utf-8", errors="replace").strip()
+
+
+def run_host_compose(services):
+    if not host_workspace:
+        print(
+            "DUNE_RESTART_HOST_WORKSPACE or DUNE_ANNOUNCE_HOST_WORKSPACE is required for host Compose recreate",
+            file=sys.stderr,
+        )
+        sys.exit(78)
+    command = ["docker", "compose"]
+    for file_name in compose_files:
+        command.extend(["-f", file_name])
+    command.extend(["--env-file", env_file, "up", "-d", "--force-recreate"])
+    command.extend(services)
+    body = {
+        "Image": compose_image,
+        "WorkingDir": "/workspace",
+        "Cmd": command,
+        "Env": [
+            f"COMPOSE_PROJECT_NAME={project}",
+            "DOCKER_HOST=unix:///var/run/docker.sock",
+        ],
+        "HostConfig": {
+            "AutoRemove": False,
+            "Binds": [
+                f"{socket_path}:/var/run/docker.sock",
+                f"{host_workspace}:/workspace",
+            ],
+        },
+        "Labels": {
+            "com.snapetech.dune.role": "admin-restart-compose",
+            "com.snapetech.dune.restart_job": os.environ.get("DUNE_RESTART_JOB_ID", ""),
+        },
+    }
+    helper_name = "dune-admin-restart-compose-" + (os.environ.get("DUNE_RESTART_JOB_ID", "manual") or "manual")
+    status, payload = docker("POST", "/containers/create?name=" + urllib.parse.quote(helper_name), body)
+    if status == 409:
+        status, payload = docker("POST", "/containers/create", body)
+    if status != 201:
+        print(f"failed creating Compose helper: HTTP {status} {payload[:500]!r}", file=sys.stderr)
+        sys.exit(75)
+    container_id = json.loads(payload.decode())["Id"]
+    try:
+        status, payload = docker("POST", f"/containers/{container_id}/start")
+        if status not in (204, 304):
+            print(f"failed starting Compose helper: HTTP {status} {payload[:500]!r}", file=sys.stderr)
+            sys.exit(75)
+        status, payload = docker("POST", f"/containers/{container_id}/wait")
+        if status != 200:
+            print(f"failed waiting for Compose helper: HTTP {status} {payload[:500]!r}", file=sys.stderr)
+            sys.exit(75)
+        result = json.loads(payload.decode() or "{}")
+        exit_code = int(result.get("StatusCode", 1))
+        logs = docker_logs(container_id)
+        if exit_code != 0:
+            print(logs, file=sys.stderr)
+            sys.exit(exit_code)
+        return {"ok": True, "composeImage": compose_image, "hostWorkspace": host_workspace, "command": command, "output": logs}
+    finally:
+        remove_container(container_id)
+
+
+if phase in ("start", "restart") and use_host_compose:
+    if dry_run:
+        print(json.dumps({"ok": True, "target": target, "action": action, "phase": phase, "dryRun": True, "hostCompose": True, "services": services}, separators=(",", ":")))
+        sys.exit(0)
+    result = run_host_compose(services)
+    print(json.dumps({"ok": True, "target": target, "action": action, "phase": phase, "hostCompose": True, "affected": services, "result": result}, separators=(",", ":")))
+    sys.exit(0)
 
 
 label_filters = [
@@ -193,7 +285,7 @@ IFS="$old_ifs"
 set -- "$@" --env-file "${ENV_FILE:-.env}"
 
 if [ "$target" = "all" ]; then
-  services="survival overmap arrakeen harko-village testing-hephaestus testing-carthag testing-waterfat deep-desert proces-verbal lostharvest-ecolab-a lostharvest-ecolab-b lostharvest-forgottenlab art-of-kanly dungeon-hephaestus dungeon-oldcarthag faction-outpost-atre faction-outpost-hark heighliner-dungeon ecolab-green-089 ecolab-green-152 ecolab-green-024 ecolab-green-195 ecolab-green-136 overland-m-01 overland-s-04 overland-s-06 bandit-fortress overland-s-07 overland-s-08 dungeon-thepit director gateway text-router rmq-auth-shim admin-panel"
+  services="survival overmap arrakeen harko-village testing-hephaestus testing-carthag testing-waterfat deep-desert proces-verbal lostharvest-ecolab-a lostharvest-ecolab-b lostharvest-forgottenlab art-of-kanly dungeon-hephaestus dungeon-oldcarthag faction-outpost-atre faction-outpost-hark heighliner-dungeon ecolab-green-089 ecolab-green-152 ecolab-green-024 ecolab-green-195 ecolab-green-136 overland-m-01 overland-s-04 overland-s-06 bandit-fortress overland-s-07 overland-s-08 dungeon-thepit director gateway text-router rmq-auth-shim"
 fi
 
 if [ -z "$services" ]; then

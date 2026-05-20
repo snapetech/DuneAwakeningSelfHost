@@ -66,7 +66,7 @@ RESTART_LOCK = threading.Lock()
 ANNOUNCEMENT_THREAD_STARTED = False
 ANNOUNCEMENT_POLL_SECONDS = 5
 ANNOUNCEMENT_MAX_MESSAGE_BYTES = int(os.environ.get("DUNE_ADMIN_ANNOUNCEMENT_MAX_MESSAGE_BYTES", "500"))
-ANNOUNCEMENT_COMMAND_TIMEOUT_SECONDS = int(os.environ.get("DUNE_ADMIN_ANNOUNCEMENT_COMMAND_TIMEOUT_SECONDS", "10"))
+ANNOUNCEMENT_COMMAND_TIMEOUT_SECONDS = int(os.environ.get("DUNE_ADMIN_ANNOUNCEMENT_COMMAND_TIMEOUT_SECONDS", "45"))
 ANNOUNCEMENT_COMMAND = os.environ.get("DUNE_ADMIN_ANNOUNCE_COMMAND", str(ROOT / "scripts" / "announce.sh"))
 RESTART_COMMAND_TIMEOUT_SECONDS = int(os.environ.get("DUNE_ADMIN_RESTART_COMMAND_TIMEOUT_SECONDS", "1800"))
 RESTART_COMMAND = os.environ.get("DUNE_ADMIN_RESTART_COMMAND", str(ROOT / "scripts" / "restart-target.sh"))
@@ -89,18 +89,21 @@ ANNOUNCEMENT_DELAYS = {
     "6hr": 6 * 60 * 60,
     "12hr": 12 * 60 * 60,
 }
+GAME_MAP_SERVICES = [
+    "survival", "overmap", "arrakeen", "harko-village", "testing-hephaestus", "testing-carthag", "testing-waterfat",
+    "deep-desert", "proces-verbal", "lostharvest-ecolab-a", "lostharvest-ecolab-b", "lostharvest-forgottenlab",
+    "art-of-kanly", "dungeon-hephaestus", "dungeon-oldcarthag", "faction-outpost-atre", "faction-outpost-hark",
+    "heighliner-dungeon", "ecolab-green-089", "ecolab-green-152", "ecolab-green-024", "ecolab-green-195",
+    "ecolab-green-136", "overland-m-01", "overland-s-04", "overland-s-06", "bandit-fortress",
+    "overland-s-07", "overland-s-08", "dungeon-thepit",
+]
+SERVICE_LAYER_SERVICES = ["rmq-auth-shim", "text-router", "gateway", "director"]
+ALL_RESTART_SAFE_SERVICES = GAME_MAP_SERVICES + SERVICE_LAYER_SERVICES
 RESTART_TARGETS = {
-    "all": {"label": "All Restart-Safe Components", "services": []},
-    "core": {"label": "Restart-Safe Core Services", "services": ["rmq-auth-shim", "text-router", "gateway", "director"]},
-    "service-layer": {"label": "Service Layer", "services": ["rmq-auth-shim", "text-router", "gateway", "director"]},
-    "game-all": {"label": "All Game Maps", "services": [
-        "survival", "overmap", "arrakeen", "harko-village", "testing-hephaestus", "testing-carthag", "testing-waterfat",
-        "deep-desert", "proces-verbal", "lostharvest-ecolab-a", "lostharvest-ecolab-b", "lostharvest-forgottenlab",
-        "art-of-kanly", "dungeon-hephaestus", "dungeon-oldcarthag", "faction-outpost-atre", "faction-outpost-hark",
-        "heighliner-dungeon", "ecolab-green-089", "ecolab-green-152", "ecolab-green-024", "ecolab-green-195",
-        "ecolab-green-136", "overland-m-01", "overland-s-04", "overland-s-06", "bandit-fortress",
-        "overland-s-07", "overland-s-08", "dungeon-thepit",
-    ]},
+    "all": {"label": "All Restart-Safe Components", "services": ALL_RESTART_SAFE_SERVICES},
+    "core": {"label": "Restart-Safe Core Services", "services": SERVICE_LAYER_SERVICES},
+    "service-layer": {"label": "Service Layer", "services": SERVICE_LAYER_SERVICES},
+    "game-all": {"label": "All Game Maps", "services": GAME_MAP_SERVICES},
     "survival": {"label": "Hagga Basin / Survival", "services": ["survival"]},
     "overmap": {"label": "Overland Map", "services": ["overmap"]},
     "arrakeen": {"label": "Arrakeen", "services": ["arrakeen"]},
@@ -348,6 +351,12 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ADMIN_RESTART_COMMAND_TIMEOUT_SECONDS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Timeout for each scheduled restart hook invocation."},
     "DUNE_RESTART_COMPOSE_PROJECT": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Compose project label used by the Docker-socket restart hook."},
     "DUNE_RESTART_DOCKER_SOCKET": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Docker Engine Unix socket path used by the restart hook when Docker CLI is unavailable."},
+    "DUNE_RESTART_HOST_WORKSPACE": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Absolute host path to this repo. The Docker-socket fallback mounts it into a short-lived Compose helper so scheduled restarts can recreate containers and apply .env/config changes."},
+    "DUNE_RESTART_COMPOSE_IMAGE": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Docker CLI image used for the short-lived host Compose helper."},
+    "DUNE_RESTART_USE_HOST_COMPOSE": {"group": "Admin Panel", "secret": False, "restart": True, "why": "When true, the Docker-socket restart hook uses host Compose for start/recreate phases instead of only starting existing containers."},
+    "DUNE_RESTART_COMPOSE_TIMEOUT_SECONDS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Timeout for the short-lived host Compose helper used by scheduled restart recreate phases."},
+    "DUNE_RESTART_DOCKER_STOP_TIMEOUT_SECONDS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Socket read timeout for Docker stop/restart API calls made by the restart hook."},
+    "DUNE_RESTART_DOCKER_API_TIMEOUT_SECONDS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Socket read timeout for non-stop Docker API calls made by the restart hook."},
     "DUNE_CHAT_SPAM_PROTECT_ENABLED": {"group": "Chat Spam Protection", "secret": False, "restart": True, "why": "Enables repeated-message spam detection in the chat-command listener."},
     "DUNE_CHAT_SPAM_PROTECT_EXEMPT_ADMINS": {"group": "Chat Spam Protection", "secret": False, "restart": True, "why": "Exempts configured chat-command admins from automatic spam enforcement."},
     "DUNE_CHAT_SPAM_SAME_CONSECUTIVE_LIMIT": {"group": "Chat Spam Protection", "secret": False, "restart": True, "why": "Maximum identical consecutive messages allowed before enforcement. A value of 3 means the 4th repeat triggers."},
@@ -483,7 +492,16 @@ def schedule_announcement(body):
     if repeat_seconds < 0 or repeat_seconds > 24 * 60 * 60:
         raise ValueError("repeat_seconds must be between 0 and 86400")
     now = time.time()
-    restart_at = now + ANNOUNCEMENT_DELAYS[delay_key]
+    restart_at = body.get("restart_at", body.get("restartAt"))
+    if restart_at is None:
+        restart_at = now + ANNOUNCEMENT_DELAYS[delay_key]
+    else:
+        restart_at = float(restart_at)
+        if restart_at < now:
+            raise ValueError("restart_at must be in the future")
+    next_send_at = body.get("next_send_at", body.get("nextSendAt"))
+    next_send_at = float(next_send_at) if next_send_at is not None else now + ANNOUNCEMENT_DELAYS[delay_key]
+    next_send_at = min(max(next_send_at, now), restart_at)
     job = {
         "id": secrets.token_urlsafe(12),
         "message": message,
@@ -491,7 +509,7 @@ def schedule_announcement(body):
         "createdAt": now,
         "restartAt": restart_at,
         "repeatSeconds": repeat_seconds,
-        "nextSendAt": now,
+        "nextSendAt": next_send_at,
         "lastSentAt": None,
         "deliveryCount": 0,
         "status": "scheduled",
@@ -592,7 +610,12 @@ def schedule_restart(body):
         state.setdefault("jobs", []).append(job)
         write_restart_state(state)
     if announce and message:
-        schedule_announcement({"delay": delay_key, "repeat_seconds": repeat_seconds, "message": message})
+        schedule_announcement({
+            "delay": "immediate",
+            "repeat_seconds": repeat_seconds,
+            "message": message,
+            "restart_at": run_at,
+        })
     return job
 
 
@@ -2668,6 +2691,8 @@ INDEX = r"""<!doctype html>
     .tab { padding:10px 11px; text-align:left; border-radius:7px; }
     .tab.active { border-color:var(--accent); color:var(--accent); background:#252416; }
     .card { border:1px solid var(--line); border-radius:8px; background:var(--panel); padding:14px; margin-bottom:14px; }
+    .discordBadge { display:flex; align-items:center; justify-content:center; gap:8px; border:1px solid #5865f2; border-radius:8px; background:#1c2242; color:#f3f5ff; text-decoration:none; font-weight:700; padding:10px 12px; margin:14px 0; }
+    .discordBadge:hover { border-color:#8ea1ff; background:#252d5c; }
     .panelBand { border:1px solid var(--line); border-radius:8px; background:var(--panel); padding:14px; margin-bottom:14px; }
     .pageStack { display:grid; gap:14px; }
     .twoCol { display:grid; grid-template-columns:minmax(0,1.2fr) minmax(360px,.8fr); gap:14px; align-items:start; }
@@ -2717,8 +2742,8 @@ INDEX = r"""<!doctype html>
     .mapTile.bad { border-color:#743932; }
     .mapTile .name { font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .mapTile .meta { color:var(--muted); font-size:12px; margin-top:4px; }
-    .haggaMap { position:relative; border:1px solid var(--line); border-radius:8px; overflow:auto; background:#171513; max-height:min(78vh,900px); }
-    .haggaMap svg { display:block; width:100%; min-width:620px; height:auto; background:#171513; }
+    .haggaMap { position:relative; display:grid; place-items:center; overflow:visible; background:transparent; inline-size:100%; margin-inline:auto; }
+    .haggaMap svg { display:block; inline-size:min(100%,1400px); block-size:auto; background:#171513; }
     .haggaMap .mapImage { opacity:.88; }
     .haggaMap .mapShade { fill:rgba(4,5,4,.22); }
     .haggaMap .gridLine { stroke:#f1d08a; stroke-width:1; opacity:.22; }
@@ -2789,6 +2814,7 @@ INDEX = r"""<!doctype html>
         <button class="tab" role="tab" aria-selected="false" data-tab="settings">Settings</button>
         <button class="tab" role="tab" aria-selected="false" data-tab="mutations">Admin Actions</button>
       </div>
+      <a class="discordBadge" href="https://discord.gg/cybhGntTts" target="_blank" rel="noopener noreferrer">Discord Support</a>
       <div class="card"><h3>Display</h3><div class="toolbar"><button id="contrastBtn">High contrast</button><button id="densityBtn">Dense mode</button><button id="expandAllBtn">Expand all</button><button id="collapseAllBtn">Collapse all</button><button id="helpBtn">Shortcuts</button></div></div>
       <div class="card hostNote"><div class="muted"><b>admin.example.test</b><br>LAN/VPN admin surface. Use the token to unlock data and writes.</div></div>
       <div class="card">

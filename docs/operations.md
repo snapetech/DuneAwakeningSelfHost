@@ -47,7 +47,7 @@ The admin panel Overview and Ops tabs expose the same high-level readiness from 
 
 The Ops tab also has a restart-announcement scheduler. It stores scheduled jobs in `backups/admin-panel/announcements.json` and invokes `DUNE_ADMIN_ANNOUNCE_COMMAND` at the chosen repeat interval until the scheduled restart time. The default hook, `scripts/announce.sh`, publishes directly to game RabbitMQ `chat.map` as the Paul announcer account using bundled `pika`. It reads `/workspace/.env` at delivery time, binds currently connected player queues to the configured chat routes when `DUNE_ANNOUNCE_CHAT_BIND_ONLINE_QUEUES=true`, and then sends the message. Dashboard-origin announcements are wrapped as `!!! message !!!`. Verify with `./scripts/verify-announcement.sh 'DASH ANNOUNCEMENT VERIFY'`. Keep the announcer password and RabbitMQ credentials private.
 
-The same Ops area has a scheduled restart planner. Restart jobs store in `backups/admin-panel/restart-jobs.json`. They default to dry-run mode and only invoke `DUNE_ADMIN_RESTART_COMMAND` when execution is explicitly enabled. Executed restart jobs stop the selected services, create a maintenance backup under `backups/admin-panel/maintenance/`, then start/recreate the selected services. Executed shutdown jobs stop the selected services, create the same maintenance backup, and leave them offline. The default hook, `scripts/restart-target.sh`, uses Docker Compose on the host or the mounted Docker Engine socket in the admin-panel container. Treat that socket as privileged host control: keep the panel local/private, require the admin token, and do not publish it to the internet. The socket fallback can stop/start/restart existing containers, but it does not recreate containers with changed environment.
+The same Ops area has a scheduled restart planner. Restart jobs store in `backups/admin-panel/restart-jobs.json`. They default to dry-run mode and only invoke `DUNE_ADMIN_RESTART_COMMAND` when execution is explicitly enabled. Executed restart jobs stop the selected services, create a maintenance backup under `backups/admin-panel/maintenance/`, then start/recreate the selected services. Executed shutdown jobs stop the selected services, create the same maintenance backup, and leave them offline. The default hook, `scripts/restart-target.sh`, uses Docker Compose on the host or the mounted Docker Engine socket in the admin-panel container. Treat that socket as privileged host control: keep the panel local/private, require the admin token, and do not publish it to the internet. The socket fallback now uses a short-lived Docker CLI helper for start/recreate phases, so scheduled daily restarts apply changed `.env` values and bind-mounted config.
 
 For the expanded standing farm, the expected summary is:
 
@@ -178,7 +178,7 @@ to learn existing peers. Run the same step manually after force-recreating
 Known working baseline as of May 19, 2026:
 
 ```text
-gateway declares Snapetech PVE Friendly Server (www.snape.tech) to FLS
+gateway declares Snapetech Friendly PVE (www.snape.tech) to FLS
 gateway reaches postgres:5432
 game-rmq reaches rmq-auth-shim:8080 and text-router:8080
 director reaches game-rmq:5672, admin-rmq:5672, and postgres:5432
