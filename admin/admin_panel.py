@@ -2266,6 +2266,11 @@ function notify(message, tone='ok'){
   announce(message);
   setTimeout(() => item.remove(), 4200);
 }
+function reportClientError(error, context='Panel error'){
+  const message = error?.message || String(error || 'unknown error');
+  notify(`${context}: ${message}`, 'bad');
+  console.error(context, error);
+}
 function updateLastRefresh(label='Refreshed'){
   document.getElementById('lastRefresh').textContent = `${label}: ${new Date().toLocaleTimeString()}`;
 }
@@ -3282,13 +3287,18 @@ document.getElementById('clearTokenBtn').addEventListener('click', clearToken);
 wireGlobalAffordances();
 document.addEventListener('click', e => {
   const target = e.target.closest('[data-jump]');
-  if (target) show(target.dataset.jump);
+  if (target) {
+    e.preventDefault();
+    show(target.dataset.jump);
+  }
 });
 document.querySelectorAll('.tab').forEach(button => button.addEventListener('click', () => show(button.dataset.tab)));
 window.addEventListener('hashchange', () => {
   const tab = location.hash.slice(1);
   if (validTabs.has(tab) && tab !== current) show(tab);
 });
+window.addEventListener('error', e => reportClientError(e.error || e.message));
+window.addEventListener('unhandledrejection', e => reportClientError(e.reason || e, 'Request failed'));
 load();
 </script>
 </body>
