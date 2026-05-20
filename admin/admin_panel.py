@@ -1447,7 +1447,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.require_token()
                 parse_body(self)
                 result = create_db_backup()
-                self.audit("database-backup", path=result.get("path"), bytes=result.get("bytes"))
+                self.audit("database-backup", backup_path=result.get("path"), bytes=result.get("bytes"))
                 self.json(result)
             elif parsed.path == "/api/admin/item":
                 self.require_token()
