@@ -79,8 +79,9 @@ def save_state(state):
 
 def online_players():
     sql = """
-    select ps.account_id::text, coalesce(nullif(ps.character_name, ''), ps.account_id::text) as character_name
+    select ps.account_id::text, coalesce(nullif(ps.character_name, ''), ps.account_id::text) as character_name, acc.user as fls_id
     from dune.player_state ps
+    left join dune.accounts acc on acc.id = ps.account_id
     where ps.online_status::text = 'Online'
     order by ps.character_name nulls last, ps.account_id;
     """
@@ -91,9 +92,27 @@ def online_players():
     for line in result.stdout.splitlines():
         if not line.strip():
             continue
-        account_id, _, name = line.partition("\t")
-        players[account_id] = name or account_id
+        parts = line.split("\t")
+        account_id = parts[0]
+        name = parts[1] if len(parts) > 1 else account_id
+        fls_id = parts[2] if len(parts) > 2 else ""
+        players[account_id] = {
+            "name": name or account_id,
+            "flsId": fls_id,
+        }
     return players
+
+
+def player_name(player):
+    if isinstance(player, dict):
+        return player.get("name") or player.get("characterName") or player.get("accountId") or "unknown"
+    return str(player)
+
+
+def player_fls_id(player):
+    if isinstance(player, dict):
+        return player.get("flsId") or ""
+    return ""
 
 
 def completed_journey_players(story_node_id):
@@ -141,6 +160,36 @@ def announce(message):
     }
 
 
+def private_join_message(player, message):
+    fls_id = player_fls_id(player)
+    name = player_name(player)
+    if not fls_id:
+        return {"ok": False, "error": "missing player FLS id", "player": name}
+    command = env("DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_COMMAND", env("DUNE_PLAYER_PRESENCE_ANNOUNCE_COMMAND", env("DUNE_ADMIN_ANNOUNCE_COMMAND", str(ROOT / "scripts" / "announce.sh"))))
+    if command.startswith("/workspace/"):
+        command = str(ROOT / command.removeprefix("/workspace/"))
+    timeout = int(env("DUNE_PLAYER_PRESENCE_ANNOUNCE_TIMEOUT_SECONDS", env("DUNE_ADMIN_ANNOUNCEMENT_COMMAND_TIMEOUT_SECONDS", "45")))
+    child_env = os.environ.copy()
+    child_env.update(FILE_ENV)
+    child_env["DUNE_ANNOUNCE_MESSAGE"] = message
+    child_env["DUNE_ANNOUNCE_JOB_ID"] = "player-presence-private-welcome"
+    child_env["DUNE_ANNOUNCE_WRAP_DASHBOARD_MESSAGES"] = "false"
+    child_env["DUNE_ANNOUNCE_CHAT_CHANNEL"] = env("DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_CHANNEL", "Private")
+    child_env["DUNE_ANNOUNCE_CHAT_USER_NAME_TO"] = name
+    child_env["DUNE_ANNOUNCE_CHAT_TARGET_QUEUES"] = f"{fls_id}_queue"
+    child_env["DUNE_ANNOUNCE_CHAT_ROUTING_KEYS"] = f"dash.private-welcome.{fls_id}"
+    result = subprocess.run([command, message], cwd=ROOT, env=child_env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, check=False)
+    return {
+        "ok": result.returncode == 0,
+        "returncode": result.returncode,
+        "targetQueue": f"{fls_id}_queue",
+        "channel": child_env["DUNE_ANNOUNCE_CHAT_CHANNEL"],
+        "userNameTo": name,
+        "stdout": result.stdout[-1000:],
+        "stderr": result.stderr[-1000:],
+    }
+
+
 def render_template(template, player_name, count):
     return template.format(playername=player_name, player_name=player_name, count=count, player_count=count)
 
@@ -156,8 +205,8 @@ def check_once():
     current_ids = set(current)
     previous_ids = set(previous or {})
     first_run = previous is None
-    joined = sorted(current_ids - previous_ids, key=lambda account_id: current.get(account_id, account_id).lower())
-    left = sorted(previous_ids - current_ids, key=lambda account_id: previous.get(account_id, account_id).lower()) if previous else []
+    joined = sorted(current_ids - previous_ids, key=lambda account_id: player_name(current.get(account_id, account_id)).lower())
+    left = sorted(previous_ids - current_ids, key=lambda account_id: player_name(previous.get(account_id, account_id)).lower()) if previous else []
     final_count = len(current)
 
     results = []
@@ -165,11 +214,19 @@ def check_once():
         join_template = env("DUNE_PLAYER_PRESENCE_JOIN_TEMPLATE", "Welcome {playername}! Current player count is now {count}.")
         leave_template = env("DUNE_PLAYER_PRESENCE_LEAVE_TEMPLATE", "{playername} has left, current count is {count}.")
         for account_id in joined:
-            message = render_template(join_template, current.get(account_id, account_id), final_count)
+            message = render_template(join_template, player_name(current.get(account_id, account_id)), final_count)
             results.append({"event": "join", "accountId": account_id, "message": message, "announce": announce(message)})
         for account_id in left:
-            message = render_template(leave_template, previous.get(account_id, account_id), final_count)
+            message = render_template(leave_template, player_name(previous.get(account_id, account_id)), final_count)
             results.append({"event": "leave", "accountId": account_id, "message": message, "announce": announce(message)})
+
+    private_welcome_results = []
+    if env_bool("DUNE_PLAYER_PRESENCE_PRIVATE_WELCOME_ENABLED", False) and not first_run:
+        template = env("DUNE_PLAYER_PRESENCE_PRIVATE_WELCOME_TEMPLATE", "Welcome! Please Check https://snape.tech for Server Rules.")
+        for account_id in joined:
+            player = current.get(account_id, account_id)
+            message = render_template(template, player_name(player), final_count)
+            private_welcome_results.append({"event": "private-welcome", "accountId": account_id, "message": message, "send": private_join_message(player, message)})
 
     journey_results = []
     if env_bool("DUNE_PLAYER_PRESENCE_VERMILIUS_GAP_ENABLED", False):
@@ -194,9 +251,10 @@ def check_once():
         "ok": True,
         "firstRun": first_run,
         "onlineCount": final_count,
-        "joined": [current[account_id] for account_id in joined],
-        "left": [previous[account_id] for account_id in left] if previous else [],
+        "joined": [player_name(current[account_id]) for account_id in joined],
+        "left": [player_name(previous[account_id]) for account_id in left] if previous else [],
         "announcements": results,
+        "privateWelcomeMessages": private_welcome_results,
         "journeyAnnouncements": journey_results,
     }
 

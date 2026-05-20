@@ -107,6 +107,7 @@ sender_name = env("DUNE_ANNOUNCE_CHAT_SPOOF_NAME", "Paul")
 exchange = env("DUNE_ANNOUNCE_CHAT_EXCHANGE", "chat.map")
 routing_keys = split_csv(env("DUNE_ANNOUNCE_CHAT_ROUTING_KEYS", "<empty>"))
 channel_type = env("DUNE_ANNOUNCE_CHAT_CHANNEL", "Map")
+user_name_to = env("DUNE_ANNOUNCE_CHAT_USER_NAME_TO", "")
 use_spoof_name = env_bool("DUNE_ANNOUNCE_CHAT_USE_SPOOF_NAME", False)
 bind_online_queues = env_bool("DUNE_ANNOUNCE_CHAT_BIND_ONLINE_QUEUES", True)
 allow_management_publish = env_bool("DUNE_ANNOUNCE_ALLOW_MANAGEMENT_PUBLISH", False)
@@ -613,7 +614,7 @@ chat_message = {
         "m_UnlocalizedName": sender_name if use_spoof_name else "",
     },
     "m_FuncomIdFrom": sender_funcom_id,
-    "m_UserNameTo": "",
+    "m_UserNameTo": user_name_to,
     "m_Message": {
         "m_UnlocalizedMessage": message,
         "m_LocalizedMessage": {"m_TableId": "", "m_Key": "", "m_FormatArgs": []},
