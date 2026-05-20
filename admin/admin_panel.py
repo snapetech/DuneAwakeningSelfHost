@@ -35,6 +35,7 @@ CONFIG_ROOT = ROOT / "config"
 ENV_FILE = ROOT / ".env"
 BACKUP_ROOT = ROOT / "backups" / "admin-panel"
 STATIC_ROOT = ROOT / "admin" / "static"
+PLAYER_PEAKS_FILE = pathlib.Path(os.environ.get("DUNE_PLAYER_PEAKS_FILE", str(BACKUP_ROOT / "player-peaks.json")))
 ADMIN_PANEL_BUILD = "20260520-hagga-clean-map-south"
 AUDIT_LOG = BACKUP_ROOT / "audit.jsonl"
 STEAM_PROFILE_CACHE_FILE = BACKUP_ROOT / "steam-profiles.json"
@@ -76,10 +77,19 @@ CONFIRM_RESET_KEYSTONES = "RESET KEYSTONES"
 CONFIRM_DELETE_ITEM = "DELETE ITEM"
 CONFIRM_SET_STACK = "SET STACK"
 CONFIRM_GM_COMMAND = "RUN GM COMMAND"
+CONFIRM_TYPED_KNOBS = "WRITE TYPED KNOBS"
+CONFIRM_BUNDLE_MUTATION = "EXECUTE BUNDLE"
+CONFIRM_PLAYER_RECOVERY = "MOVE OFFLINE PLAYER"
+CATALOG_ENABLED = os.environ.get("DUNE_ADMIN_CATALOG_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+TYPED_KNOBS_ENABLED = os.environ.get("DUNE_ADMIN_TYPED_KNOBS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+EVENT_EXECUTION_ENABLED = os.environ.get("DUNE_ADMIN_EVENT_EXECUTION_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+BUNDLE_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_BUNDLE_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 ANNOUNCEMENT_STATE_FILE = BACKUP_ROOT / "announcements.json"
 RESTART_STATE_FILE = BACKUP_ROOT / "restart-jobs.json"
+EVENT_STATE_FILE = BACKUP_ROOT / "events.json"
 ANNOUNCEMENT_LOCK = threading.Lock()
 RESTART_LOCK = threading.Lock()
+EVENT_LOCK = threading.Lock()
 ANNOUNCEMENT_THREAD_STARTED = False
 ANNOUNCEMENT_POLL_SECONDS = 5
 ANNOUNCEMENT_MAX_MESSAGE_BYTES = int(os.environ.get("DUNE_ADMIN_ANNOUNCEMENT_MAX_MESSAGE_BYTES", "500"))
@@ -277,24 +287,32 @@ ALLOWED_CONFIGS = {
 DIRECTOR_TRANSFER_RULESETS = (
     "0",
     "1",
+    "2",
+    "3",
 )
 
 DIRECTOR_TRANSFER_RULESET_LABELS = {
     "0": "DenyAll",
     "1": "AllowFromPrivateOnly",
+    "2": "AllowFromOfficialOnly",
+    "3": "AllowFromPrivateAndOfficial",
     "DenyAll": "DenyAll",
     "AllowFromPrivateOnly": "AllowFromPrivateOnly",
+    "AllowFromOfficialOnly": "AllowFromOfficialOnly",
+    "AllowFromPrivateAndOfficial": "AllowFromPrivateAndOfficial",
 }
 
 DIRECTOR_TRANSFER_RULESET_VALUES = {
     "DenyAll": "0",
     "AllowFromPrivateOnly": "1",
+    "AllowFromOfficialOnly": "2",
+    "AllowFromPrivateAndOfficial": "3",
 }
 
 DIRECTOR_TRANSFER_SETTINGS = {
     "ShouldDeleteOriginCharactersDuringTransfers": {"type": "bool", "default": "true", "why": "Deletes the origin character after a successful transfer into this battlegroup."},
     "AcceptOutgoingCharacterTransfers": {"type": "bool", "default": "true", "why": "Allows characters on this battlegroup to transfer out."},
-    "IncomingCharacterTransfers": {"type": "ruleset", "default": "0", "why": "Controls which origin server types can transfer characters into this battlegroup. Director build 1963158 expects numeric enum values: 0=DenyAll, 1=AllowFromPrivateOnly."},
+    "IncomingCharacterTransfers": {"type": "ruleset", "default": "0", "why": "Controls which origin server types can transfer characters into this battlegroup. Director build 1963158 expects numeric enum values: 0=DenyAll, 1=AllowFromPrivateOnly, 2=AllowFromOfficialOnly, 3=AllowFromPrivateAndOfficial."},
     "ExportCharacterTimeout": {"type": "int", "default": "900", "why": "Seconds before the export query times out."},
     "ImportCharacterTimeout": {"type": "int", "default": "900", "why": "Seconds before the import query times out."},
     "FreeToTransferCharactersFrom": {"type": "bool", "default": "false", "why": "Skips transfer token cost for transfers from this battlegroup."},
@@ -310,6 +328,34 @@ PLAYER_ONLINE_STATE_SETTINGS = {
     "m_OvermapReturnGracePeriodSeconds": {"type": "int", "default": "0", "why": "Seconds allowed for returning from overmap disconnects. Use 0 for Steam Deck suspend-friendly immediate exit."},
     "m_InstancedMapReconnectGracePeriodSeconds": {"type": "int", "default": "0", "why": "Seconds a disconnected player can reconnect to instanced maps. Use 0 for immediate instanced-map logout persistence expiry."},
 }
+
+TYPED_CONFIG_KNOBS = {
+    "spiceDeepDesertCaps": {
+        "label": "Deep Desert spice caps",
+        "file": "UserGame.ini",
+        "section": "/Script/DuneSandbox.SpiceHarvestingSystem",
+        "key": "m_PerMapSystemSettings",
+        "type": "spice_caps",
+        "restart": True,
+        "confidence": "high",
+        "risk": "medium",
+        "why": "Caps materialize in dune.spicefield_types and resourcefield_state after map restart.",
+        "default": '(("DeepDesert_1", (m_SpiceFieldTypeSettings=(((Name="Small"), (MaxGloballyPrimed=60,MaxGloballyActive=60)),((Name="Medium"), (MaxGloballyPrimed=12,MaxGloballyActive=12)),((Name="Large"), (MaxGloballyPrimed=1,MaxGloballyActive=1))))),("Survival_1", (m_SpiceFieldTypeSettings=(((Name="Small"), (MaxGloballyPrimed=5,MaxGloballyActive=5))))))',
+    },
+    "sandstormEnabled": {"label": "Sandstorm enabled", "file": "UserEngine.ini", "section": "ConsoleVariables", "key": "Sandstorm.Enabled", "type": "bool01", "restart": True, "confidence": "high", "risk": "low", "why": "Console variable is already present in config/UserEngine.ini.", "default": "1"},
+    "sandstormTreasureEnabled": {"label": "Sandstorm treasure enabled", "file": "UserEngine.ini", "section": "ConsoleVariables", "key": "Sandstorm.Treasure.Enabled", "type": "bool01", "restart": True, "confidence": "moderate", "risk": "medium", "why": "Console variable is present; treasure runtime effect still needs live validation.", "default": "1"},
+    "coriolisAutoSpawnEnabled": {"label": "Coriolis auto-spawn", "file": "UserGame.ini", "section": "/Script/DuneSandbox.SandStormConfig", "key": "m_bCoriolisAutoSpawnEnabled", "type": "bool", "restart": True, "confidence": "high", "risk": "medium", "why": "Shipped config key controls Coriolis auto-spawn. Cycle and wipe fields are deliberately excluded.", "default": "False"},
+    "globalMiningMultiplier": {"label": "Player mining multiplier", "file": "UserEngine.ini", "section": "ConsoleVariables", "key": "Dune.GlobalMiningOutputMultiplier", "type": "float", "min": 0, "max": 100, "restart": True, "confidence": "high", "risk": "low", "why": "Console variable is already present in config/UserEngine.ini.", "default": "1.0"},
+    "vehicleMiningMultiplier": {"label": "Vehicle mining multiplier", "file": "UserEngine.ini", "section": "ConsoleVariables", "key": "Dune.GlobalVehicleMiningOutputMultiplier", "type": "float", "min": 0, "max": 100, "restart": True, "confidence": "high", "risk": "low", "why": "Console variable is already present in config/UserEngine.ini.", "default": "1.0"},
+    "pvpResourceMultiplier": {"label": "PvP resource multiplier", "file": "UserEngine.ini", "section": "ConsoleVariables", "key": "SecurityZones.PvpResourceMultiplier", "type": "float", "min": 0, "max": 100, "restart": True, "confidence": "high", "risk": "low", "why": "Console variable is already present in config/UserEngine.ini.", "default": "2.5"},
+    "forcePvpAllPartitions": {"label": "Force PvP on all partitions", "file": "UserGame.ini", "section": "/Script/DuneSandbox.PvpPveSettings", "key": "m_bShouldForceEnablePvpOnAllPartitions", "type": "bool", "restart": True, "confidence": "high", "risk": "medium", "why": "Documented shipped PvP/PvE setting.", "default": "False"},
+    "securityZonesEnabled": {"label": "Security zones enabled", "file": "UserGame.ini", "section": "/Script/DuneSandbox.SecurityZonesSubsystem", "key": "m_bAreSecurityZonesEnabled", "type": "bool", "restart": True, "confidence": "high", "risk": "medium", "why": "Documented shipped security-zone setting.", "default": "True"},
+    "buildingShelterThreshold": {"label": "Building shelter threshold", "file": "UserGame.ini", "section": "/Script/DuneSandbox.ShelterSettings", "key": "m_BuildingShelterThreshold", "type": "float", "min": 0, "max": 1, "restart": True, "confidence": "moderate", "risk": "experimental", "why": "Shipped ShelterSettings key; hydration/base effect needs live validation.", "default": "0.5"},
+    "placeableShelterThreshold": {"label": "Placeable shelter threshold", "file": "UserGame.ini", "section": "/Script/DuneSandbox.ShelterSettings", "key": "m_PlaceableShelterThreshold", "type": "float", "min": 0, "max": 1, "restart": True, "confidence": "moderate", "risk": "experimental", "why": "Shipped ShelterSettings key; hydration/base effect needs live validation.", "default": "0.5"},
+    "shelteredProtectionThreshold": {"label": "Sheltered hydration protection threshold", "file": "UserGame.ini", "section": "/Script/DuneSandbox.HydrationSubsystem", "key": "ShelteredProtectionThreshold", "type": "float", "min": 0, "max": 1, "restart": True, "confidence": "low", "risk": "experimental", "why": "Candidate override; owner/asset path is not proven.", "default": "0.5"},
+}
+
+CATALOG_GROUPS = ("Deep Desert", "Economy/Admin", "World Rules", "GM/RabbitMQ", "Limits")
 
 ENV_KEY_DEFINITIONS = {
     "DUNE_STEAM_SERVER_DIR": {"group": "Install", "secret": False, "restart": False, "why": "Local Steam tool path used by image loading and preflight scripts."},
@@ -328,6 +374,10 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ADMIN_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Master gate for writes that mutate game/admin state."},
     "DUNE_ADMIN_ITEM_GRANTS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Item grant feature gate. Defaults to true in this repo."},
     "DUNE_ADMIN_GM_COMMANDS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for native Dune GM/admin command execution. Execution also stays blocked until the RabbitMQ payload format is verified."},
+    "DUNE_ADMIN_CATALOG_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for read-only content insertion catalog endpoints."},
+    "DUNE_ADMIN_TYPED_KNOBS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for typed config knob writes. Dry-runs remain available."},
+    "DUNE_ADMIN_EVENT_EXECUTION_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for event orchestrator execution. Event creation and dry-run planning remain available."},
+    "DUNE_ADMIN_BUNDLE_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for economy bundle execution. Bundle planning defaults to dry-run."},
     "DUNE_ADMIN_MAX_BODY_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum accepted request body size."},
     "DUNE_ADMIN_AUDIT_MAX_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Audit log rotation threshold."},
     "DUNE_ADMIN_REQUEST_TIMEOUT_SECONDS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Socket timeout to limit slow client abuse."},
@@ -1211,6 +1261,41 @@ def json_default(value):
     return str(value)
 
 
+def update_daily_player_peak(count):
+    now = datetime.datetime.now(datetime.timezone.utc)
+    today = now.strftime("%Y-%m-%d")
+    now_text = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    data = {"days": {}}
+    try:
+        if PLAYER_PEAKS_FILE.exists():
+            data = json.loads(PLAYER_PEAKS_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        data = {"days": {}}
+    days = data.setdefault("days", {})
+    day = days.setdefault(today, {})
+    previous_peak = int(day.get("peak") or 0)
+    if int(count) >= previous_peak:
+        day["peak"] = int(count)
+        day["peakAt"] = now_text
+    else:
+        day["peak"] = previous_peak
+    day["last"] = int(count)
+    day["lastAt"] = now_text
+    data["today"] = today
+    data["peakToday"] = int(day.get("peak") or count)
+    data["peakTodayAt"] = day.get("peakAt") or now_text
+    data["lastCount"] = int(count)
+    data["lastCountAt"] = now_text
+    try:
+        PLAYER_PEAKS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = PLAYER_PEAKS_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+        tmp.replace(PLAYER_PEAKS_FILE)
+    except Exception as exc:
+        return {"date": today, "peak": max(previous_peak, int(count)), "last": int(count), "error": str(exc)}
+    return {"date": today, "peak": data["peakToday"], "peakAt": data["peakTodayAt"], "last": int(count), "lastAt": now_text}
+
+
 def read_env():
     values = {}
     if not ENV_FILE.exists():
@@ -1285,6 +1370,136 @@ def parse_ini_multivalue(path):
     return sections
 
 
+def set_ini_section_values(path, section, updates):
+    original = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    rendered = []
+    seen = set()
+    in_section = False
+    inserted = False
+    target_header = f"[{section}]".lower()
+
+    def append_missing():
+        nonlocal inserted
+        if inserted:
+            return
+        for key, value in updates.items():
+            if key not in seen:
+                rendered.append(f"{key}={value}")
+                seen.add(key)
+        inserted = True
+
+    for raw_line in original:
+        stripped = raw_line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            if in_section:
+                append_missing()
+            in_section = stripped.lower() == target_header
+            rendered.append(raw_line)
+            continue
+        if in_section and "=" in raw_line:
+            key, _ = raw_line.split("=", 1)
+            key = key.strip()
+            if key in updates:
+                rendered.append(f"{key}={updates[key]}")
+                seen.add(key)
+                continue
+        rendered.append(raw_line)
+    if not original:
+        rendered.append(f"[{section}]")
+        in_section = True
+    if in_section:
+        append_missing()
+    elif not inserted:
+        if rendered and rendered[-1].strip():
+            rendered.append("")
+        rendered.append(f"[{section}]")
+        append_missing()
+    backup_file(path)
+    path.write_text("\n".join(rendered) + "\n", encoding="utf-8")
+
+
+def read_ini_section_value(path, section, key):
+    sections = parse_ini_multivalue(path)
+    values = sections.get(section, {}).get(key, [])
+    return values[-1] if values else None
+
+
+def render_spice_caps(value):
+    if isinstance(value, str):
+        return value.strip()
+    if not isinstance(value, dict):
+        raise ValueError("spice caps must be an object or raw m_PerMapSystemSettings string")
+    defaults = {"Small": (60, 60), "Medium": (12, 12), "Large": (1, 1)}
+    caps = {}
+    for name, pair in defaults.items():
+        raw = value.get(name.lower(), value.get(name, {}))
+        if isinstance(raw, dict):
+            primed = int(raw.get("primed", raw.get("MaxGloballyPrimed", pair[0])))
+            active = int(raw.get("active", raw.get("MaxGloballyActive", pair[1])))
+        elif isinstance(raw, (list, tuple)) and len(raw) >= 2:
+            primed, active = int(raw[0]), int(raw[1])
+        else:
+            primed, active = pair
+        if primed < 0 or active < 0 or primed > 1000 or active > 1000:
+            raise ValueError(f"{name} spice caps must be between 0 and 1000")
+        caps[name] = (primed, active)
+    field_settings = ",".join(
+        f'((Name="{name}"), (MaxGloballyPrimed={primed},MaxGloballyActive={active}))'
+        for name, (primed, active) in caps.items()
+    )
+    return f'(("DeepDesert_1", (m_SpiceFieldTypeSettings=({field_settings}))),("Survival_1", (m_SpiceFieldTypeSettings=(((Name="Small"), (MaxGloballyPrimed=5,MaxGloballyActive=5))))))'
+
+
+def validate_typed_knob_value(knob_id, value):
+    meta = TYPED_CONFIG_KNOBS[knob_id]
+    kind = meta["type"]
+    if kind == "bool":
+        lowered = str(value).strip().lower()
+        if lowered not in ("true", "false"):
+            raise ValueError(f"{knob_id} must be true or false")
+        return "True" if lowered == "true" else "False"
+    if kind == "bool01":
+        lowered = str(value).strip().lower()
+        if lowered not in ("0", "1", "true", "false"):
+            raise ValueError(f"{knob_id} must be 0/1 or true/false")
+        return "1" if lowered in ("1", "true") else "0"
+    if kind == "float":
+        try:
+            number = float(str(value).strip())
+        except ValueError as exc:
+            raise ValueError(f"{knob_id} must be a number") from exc
+        if number < float(meta.get("min", -10**9)) or number > float(meta.get("max", 10**9)):
+            raise ValueError(f"{knob_id} is outside allowed range")
+        return str(number)
+    if kind == "spice_caps":
+        return render_spice_caps(value)
+    raise ValueError(f"unsupported knob type: {kind}")
+
+
+def read_typed_knobs():
+    rows = {}
+    for knob_id, meta in TYPED_CONFIG_KNOBS.items():
+        path = ALLOWED_CONFIGS[meta["file"]]
+        current = read_ini_section_value(path, meta["section"], meta["key"]) if path.exists() else None
+        rows[knob_id] = dict(meta, id=knob_id, value=current if current is not None else meta.get("default", ""))
+    return rows
+
+
+def write_typed_knobs(updates):
+    validated = {}
+    by_file_section = {}
+    for knob_id, value in updates.items():
+        if knob_id not in TYPED_CONFIG_KNOBS:
+            continue
+        meta = TYPED_CONFIG_KNOBS[knob_id]
+        rendered = validate_typed_knob_value(knob_id, value)
+        validated[knob_id] = rendered
+        by_file_section.setdefault((meta["file"], meta["section"]), {})[meta["key"]] = rendered
+    for (filename, section), values in by_file_section.items():
+        set_ini_section_values(ALLOWED_CONFIGS[filename], section, values)
+    return {"ok": True, "updated": validated, "restartRequired": any(TYPED_CONFIG_KNOBS[k]["restart"] for k in validated)}
+
+
 def gm_command_catalog():
     user_game = parse_ini_multivalue(ALLOWED_CONFIGS["UserGame.ini"])
     local_scripts = {
@@ -1349,6 +1564,159 @@ def gm_route_candidates():
                 "notes": "Per-map grant route observed in admin RabbitMQ.",
             })
     return rows
+
+
+def content_catalog_entries():
+    entries = [
+        {"id": "deep-desert-spice-caps", "group": "Deep Desert", "surface": "Config/INI knobs", "capability": "Raise or lower Deep Desert spice field active/primed caps.", "evidence": ["DEEP_DESERT_EVENT_KNOBS.md", "SERVER_RUNTIME_SURFACES.md", "dune.spicefield_types", "dune.resourcefield_state"], "confidence": "high", "mutationRisk": "medium", "restartRequired": True, "validationCommand": "select * from dune.spicefield_types order by map, field_kind_id;", "rollback": "Restore backed-up UserGame.ini and restart deep-desert."},
+        {"id": "sandstorm-coriolis-safe-toggles", "group": "Deep Desert", "surface": "Config/INI knobs", "capability": "Toggle sandstorm/Coriolis safe fields already present in config.", "evidence": ["config/UserGame.ini", "config/UserEngine.ini", "SERVER_RUNTIME_SURFACES.md"], "confidence": "high", "mutationRisk": "medium", "restartRequired": True, "validationCommand": "rg -n 'Sandstorm|Coriolis' config/UserGame.ini config/UserEngine.ini", "rollback": "Restore backed-up config file and restart affected maps."},
+        {"id": "economy-bundle-plan", "group": "Economy/Admin", "surface": "Database state", "capability": "Plan currency, item, and XP grants as one audited dry-run bundle.", "evidence": ["admin/admin_panel.py existing currency/xp/item mutation paths", "docs/admin-mutation-map.md"], "confidence": "high", "mutationRisk": "medium", "restartRequired": False, "validationCommand": "Use /api/admin/bundle dry_run=true, then inspect balances/inventory after gated execution.", "rollback": "Manual compensating currency/xp/item edits from audit record."},
+        {"id": "offline-player-recovery", "group": "Economy/Admin", "surface": "Database state", "capability": "Preview offline player partition move through dune.admin_move_offline_player_to_partition.", "evidence": ["PLAYER_LOCATION_SOURCE_AUDIT.md", "database function name observed in local schema"], "confidence": "moderate", "mutationRisk": "high", "restartRequired": False, "validationCommand": "select * from dune.player_state where account_id=<id>;", "rollback": "Move player back to prior partition from audit record."},
+        {"id": "mining-resource-multipliers", "group": "World Rules", "surface": "Config/INI knobs", "capability": "Adjust player mining, vehicle mining, and PvP resource multipliers.", "evidence": ["config/UserEngine.ini", "docs/server-knobs-audit.md"], "confidence": "high", "mutationRisk": "low", "restartRequired": True, "validationCommand": "rg -n 'MiningOutput|PvpResourceMultiplier' config/UserEngine.ini", "rollback": "Restore backed-up UserEngine.ini and restart maps."},
+        {"id": "pvp-security-zones", "group": "World Rules", "surface": "Config/INI knobs", "capability": "Toggle forced PvP and security-zone behavior.", "evidence": ["config/UserGame.ini", "SERVER_CONFIG_KEYS.md"], "confidence": "high", "mutationRisk": "medium", "restartRequired": True, "validationCommand": "rg -n 'Pvp|SecurityZones' config/UserGame.ini", "rollback": "Restore backed-up UserGame.ini and restart maps."},
+        {"id": "shelter-hydration-candidates", "group": "World Rules", "surface": "Config/INI knobs", "capability": "Experiment with shelter thresholds and candidate hydration protection.", "evidence": ["HYDRATION_WATER_KNOBS.md", "config/UserGame.ini"], "confidence": "low", "mutationRisk": "experimental", "restartRequired": True, "validationCommand": "Live in-base/outside hydration test after restart.", "rollback": "Restore backed-up UserGame.ini and restart maps."},
+        {"id": "verified-chat-announcements", "group": "GM/RabbitMQ", "surface": "RabbitMQ/admin/GM routes", "capability": "Send verified chat announcements through existing announcement hook.", "evidence": ["scripts/verify-announcement.sh", "admin announcement scheduler"], "confidence": "high", "mutationRisk": "low", "restartRequired": False, "validationCommand": "./scripts/verify-announcement.sh", "rollback": "No persistent rollback; audit records message delivery."},
+        {"id": "native-gm-routes", "group": "GM/RabbitMQ", "surface": "RabbitMQ/admin/GM routes", "capability": "Preview native GM command envelopes only.", "evidence": ["scripts/dune_gm_command.py", "DedicatedServerGame.ini command allow-list"], "confidence": "low", "mutationRisk": "blocked", "restartRequired": False, "validationCommand": "Keep execution blocked until DUNE_GM_COMMAND_PAYLOAD_VERIFIED=true is proven live.", "rollback": "No execution in v1."},
+        {"id": "true-new-content-limits", "group": "Limits", "surface": "Hard limits", "capability": "True new maps/assets/physics/algorithms are blocked without cooked assets or binary/plugin work.", "evidence": ["SERVER_RUNTIME_SURFACES.md", "SERVER_CONFIG_KEYS.md"], "confidence": "high", "mutationRisk": "blocked", "restartRequired": None, "validationCommand": "Not applicable for admin v1.", "rollback": "Not applicable."},
+    ]
+    return entries
+
+
+def catalog_payload(group=None):
+    entries = content_catalog_entries()
+    if group:
+        entries = [entry for entry in entries if entry["group"].lower() == group.lower()]
+    grouped = {name: [entry for entry in entries if entry["group"] == name] for name in CATALOG_GROUPS}
+    return {"enabled": CATALOG_ENABLED, "groups": grouped, "surfaces": entries}
+
+
+def catalog_evidence_payload():
+    return {
+        "schema": ["surface", "capability", "evidence", "confidence", "mutationRisk", "restartRequired", "validationCommand", "rollback"],
+        "rules": [
+            "Shipped config plus live DB behavior is strong evidence.",
+            "Binary strings are leads until section, syntax, and runtime effect are proven.",
+            "Public websites are candidate lookup sources, not authoritative local server evidence.",
+        ],
+        "entries": content_catalog_entries(),
+    }
+
+
+def catalog_validation_payload():
+    return {
+        "commands": [
+            {"name": "Static compile", "command": "python3 -m py_compile admin/admin_panel.py scripts/admin-chat-commands.py scripts/dune_gm_command.py"},
+            {"name": "Repo validation", "command": "make validate"},
+            {"name": "Announcement delivery", "command": "./scripts/verify-announcement.sh"},
+            {"name": "Spice state", "command": "select * from dune.spicefield_types order by map, field_kind_id;"},
+            {"name": "Resource fields", "command": "select map,dimension_index,field_kind_id,count(*),sum(value_remaining) from dune.resourcefield_state group by 1,2,3 order by 1,2,3;"},
+        ]
+    }
+
+
+def read_event_state():
+    if not EVENT_STATE_FILE.exists():
+        return {"events": [], "lastRun": None}
+    try:
+        state = json.loads(EVENT_STATE_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"events": [], "lastRun": None}
+    if not isinstance(state, dict):
+        return {"events": [], "lastRun": None}
+    state.setdefault("events", [])
+    state.setdefault("lastRun", None)
+    return state
+
+
+def write_event_state(state):
+    BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
+    tmp = EVENT_STATE_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(state, indent=2, sort_keys=True, default=json_default), encoding="utf-8")
+    tmp.replace(EVENT_STATE_FILE)
+
+
+def event_action_plan(action):
+    kind = str(action.get("type", "")).strip()
+    if kind == "announcement":
+        return {"type": kind, "endpoint": "/api/ops/announcement", "payload": {"message": action.get("message", ""), "delay": action.get("delay", "immediate"), "repeat_seconds": int(action.get("repeat_seconds", 0) or 0)}, "safePrimitive": True}
+    if kind == "restart":
+        return {"type": kind, "endpoint": "/api/ops/restart", "payload": {"target": action.get("target", "deep-desert"), "action": action.get("action", "restart"), "delay": action.get("delay", "immediate"), "execute": False}, "safePrimitive": True}
+    if kind == "typed-knob-plan":
+        return {"type": kind, "endpoint": "/api/settings/typed-knobs", "payload": {"updates": action.get("updates", {})}, "safePrimitive": True, "dryRunOnly": True}
+    if kind == "economy-bundle":
+        return {"type": kind, "endpoint": "/api/admin/bundle", "payload": dict(action.get("payload", {}), dry_run=True), "safePrimitive": True, "dryRunOnly": True}
+    if kind == "spice-cap-proposal":
+        return {"type": kind, "endpoint": "/api/settings/typed-knobs", "payload": {"updates": {"spiceDeepDesertCaps": action.get("caps", {})}}, "safePrimitive": True, "dryRunOnly": True}
+    raise ValueError(f"unsupported event action type: {kind}")
+
+
+def build_event(body):
+    actions = body.get("actions", [])
+    if not isinstance(actions, list) or not actions:
+        raise ValueError("actions must be a non-empty list")
+    plans = [event_action_plan(action) for action in actions]
+    return {
+        "id": secrets.token_hex(8),
+        "name": str(body.get("name", "admin event")).strip()[:120] or "admin event",
+        "status": "scheduled",
+        "createdAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "runAt": str(body.get("runAt", body.get("run_at", ""))).strip() or None,
+        "actions": actions,
+        "plan": plans,
+    }
+
+
+def event_dry_run(body):
+    event = build_event(body)
+    event["status"] = "dry-run"
+    return {"ok": True, "dryRun": True, "event": event, "executionEnabled": EVENT_EXECUTION_ENABLED}
+
+
+def create_event(body):
+    event = build_event(body)
+    with EVENT_LOCK:
+        state = read_event_state()
+        state["events"].append(event)
+        write_event_state(state)
+    return event
+
+
+def cancel_event(event_id):
+    with EVENT_LOCK:
+        state = read_event_state()
+        cancelled = 0
+        for event in state.get("events", []):
+            if event.get("id") == event_id and event.get("status") == "scheduled":
+                event["status"] = "cancelled"
+                event["cancelledAt"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                cancelled += 1
+        write_event_state(state)
+    return {"ok": True, "cancelled": cancelled}
+
+
+def execute_event(event_id):
+    if not EVENT_EXECUTION_ENABLED:
+        raise PermissionError("event execution is disabled; set DUNE_ADMIN_EVENT_EXECUTION_ENABLED=true")
+    with EVENT_LOCK:
+        state = read_event_state()
+        event = next((item for item in state.get("events", []) if item.get("id") == event_id), None)
+        if not event:
+            raise ValueError("event not found")
+        if event.get("status") != "scheduled":
+            raise ValueError("event is not scheduled")
+        executed = []
+        failures = []
+        for plan in event.get("plan", []):
+            if plan.get("dryRunOnly"):
+                executed.append({"type": plan.get("type"), "ok": True, "dryRun": True, "notes": "plan-only action, no write executed"})
+            else:
+                failures.append({"type": plan.get("type"), "ok": False, "error": "direct event primitive execution is not implemented in v1; use the dedicated endpoint"})
+        event["status"] = "failed" if failures else "executed"
+        event["lastRunAt"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        state["lastRun"] = {"eventId": event_id, "executed": executed, "failures": failures, "rollback": "Use per-action audit records and config backups."}
+        write_event_state(state)
+    audit_event("event-run", ok=not failures, event_id=event_id, executed=executed, failures=failures)
+    return {"ok": not failures, "eventId": event_id, "executed": executed, "failures": failures}
 
 
 def gm_payload_preview(body):
@@ -2057,7 +2425,7 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         try:
             self.validate_host()
-            if parsed.path == "/":
+            if self.is_app_route(parsed.path):
                 self.html(INDEX)
             elif parsed.path == "/static/hagga-basin.webp":
                 self.static_file(STATIC_ROOT / "hagga-basin.webp", "image/webp")
@@ -2159,6 +2527,30 @@ class Handler(BaseHTTPRequestHandler):
                     "definitions": PLAYER_ONLINE_STATE_SETTINGS,
                     "section": PLAYER_ONLINE_STATE_SECTION,
                 })
+            elif parsed.path == "/api/settings/typed-knobs":
+                self.require_token()
+                self.json({
+                    "enabled": TYPED_KNOBS_ENABLED,
+                    "values": read_typed_knobs(),
+                    "confirmPhrase": CONFIRM_TYPED_KNOBS,
+                })
+            elif parsed.path == "/api/catalog/surfaces":
+                self.require_token()
+                self.require_catalog()
+                params = urllib.parse.parse_qs(parsed.query)
+                self.json(catalog_payload(group=(params.get("group") or [""])[0]))
+            elif parsed.path == "/api/catalog/evidence":
+                self.require_token()
+                self.require_catalog()
+                self.json(catalog_evidence_payload())
+            elif parsed.path == "/api/catalog/validation":
+                self.require_token()
+                self.require_catalog()
+                self.json(catalog_validation_payload())
+            elif parsed.path == "/api/events":
+                self.require_token()
+                with EVENT_LOCK:
+                    self.json(dict(read_event_state(), executionEnabled=EVENT_EXECUTION_ENABLED))
             elif parsed.path == "/api/admin/reference":
                 self.require_token()
                 self.json(self.admin_reference())
@@ -2173,10 +2565,23 @@ class Handler(BaseHTTPRequestHandler):
             self.error(HTTPStatus.BAD_REQUEST, str(exc))
 
     def do_HEAD(self):
-        self.validate_host()
-        self.send_response(HTTPStatus.NO_CONTENT)
-        self.security_headers()
-        self.end_headers()
+        parsed = urllib.parse.urlparse(self.path)
+        try:
+            self.validate_host()
+            if self.is_app_route(parsed.path):
+                self.html(INDEX, head_only=True)
+            elif parsed.path == "/static/hagga-basin.webp":
+                self.static_file(STATIC_ROOT / "hagga-basin.webp", "image/webp", head_only=True)
+            elif parsed.path == "/static/hagga-basin-south.webp":
+                self.static_file(STATIC_ROOT / "hagga-basin-south.webp", "image/webp", head_only=True)
+            elif parsed.path.startswith("/api/"):
+                self.json({}, head_only=True)
+            else:
+                self.error(HTTPStatus.NOT_FOUND, "not found", head_only=True)
+        except PermissionError as exc:
+            self.error(HTTPStatus.UNAUTHORIZED, str(exc), head_only=True)
+        except Exception as exc:
+            self.error(HTTPStatus.BAD_REQUEST, str(exc), head_only=True)
 
     def do_OPTIONS(self):
         self.validate_host()
@@ -2219,6 +2624,22 @@ class Handler(BaseHTTPRequestHandler):
                 write_player_online_state_settings(updates)
                 self.audit("player-online-state-write", keys=sorted(updates))
                 self.json({"ok": True, "values": read_player_online_state_settings()})
+            elif parsed.path == "/api/settings/typed-knobs":
+                self.require_token()
+                body = parse_body(self)
+                updates = body.get("updates", body)
+                if not isinstance(updates, dict):
+                    raise ValueError("updates must be an object")
+                if str(body.get("dry_run", body.get("dryRun", "false"))).lower() in ("1", "true", "yes", "on"):
+                    planned = {key: validate_typed_knob_value(key, value) for key, value in updates.items() if key in TYPED_CONFIG_KNOBS}
+                    self.json({"ok": True, "dryRun": True, "planned": planned, "restartRequired": any(TYPED_CONFIG_KNOBS[k]["restart"] for k in planned)})
+                else:
+                    self.require_mutations()
+                    self.require_typed_knobs()
+                    require_confirmation(body, CONFIRM_TYPED_KNOBS)
+                    result = write_typed_knobs(updates)
+                    self.audit("typed-knobs-write", keys=sorted(result.get("updated", {})))
+                    self.json(dict(result, values=read_typed_knobs()))
             elif parsed.path == "/api/admin/currency":
                 self.require_token()
                 self.require_mutations()
@@ -2286,6 +2707,22 @@ class Handler(BaseHTTPRequestHandler):
                 result = self.set_item_stack(body)
                 self.audit("item-stack", item_id=result.get("item_id"), stack_size=result.get("stack_size"))
                 self.json(result)
+            elif parsed.path == "/api/admin/bundle":
+                self.require_token()
+                body = parse_body(self)
+                result = self.economy_bundle(body)
+                self.audit("economy-bundle", ok=result.get("ok"), dry_run=result.get("dryRun"), steps=len(result.get("plan", [])))
+                self.json(result)
+            elif parsed.path == "/api/admin/player-recovery/offline-teleport":
+                self.require_token()
+                body = parse_body(self)
+                result = self.offline_player_recovery(body)
+                self.audit("offline-player-recovery", ok=result.get("ok"), dry_run=result.get("dryRun"), account_id=result.get("accountId"), partition_id=result.get("partitionId"))
+                self.json(result)
+            elif parsed.path == "/api/admin/spice-fields/inspect":
+                self.require_token()
+                parse_body(self)
+                self.json(self.spice_field_inspect())
             elif parsed.path == "/api/admin/gm/preview":
                 self.require_token()
                 body = parse_body(self)
@@ -2327,6 +2764,29 @@ class Handler(BaseHTTPRequestHandler):
                 body = parse_body(self)
                 result = cancel_restart(body.get("id"))
                 self.audit("restart-cancel", job_id=body.get("id"), cancelled=result.get("cancelled"))
+                self.json(result)
+            elif parsed.path == "/api/events/dry-run":
+                self.require_token()
+                body = parse_body(self)
+                result = event_dry_run(body)
+                self.audit("event-dry-run", event_id=result.get("event", {}).get("id"), actions=len(result.get("event", {}).get("plan", [])))
+                self.json(result)
+            elif parsed.path == "/api/events":
+                self.require_token()
+                body = parse_body(self)
+                event = create_event(body)
+                self.audit("event-create", event_id=event.get("id"), actions=len(event.get("plan", [])))
+                self.json({"ok": True, "event": event})
+            elif parsed.path == "/api/events/cancel":
+                self.require_token()
+                body = parse_body(self)
+                result = cancel_event(str(body.get("id", "")))
+                self.audit("event-cancel", event_id=body.get("id"), cancelled=result.get("cancelled"))
+                self.json(result)
+            elif parsed.path == "/api/events/run":
+                self.require_token()
+                body = parse_body(self)
+                result = execute_event(str(body.get("id", "")))
                 self.json(result)
             else:
                 self.error(HTTPStatus.NOT_FOUND, "not found")
@@ -2869,6 +3329,8 @@ class Handler(BaseHTTPRequestHandler):
               (select count(*) from dune.get_all_online_or_recently_disconnected_player_online_state()) as online_or_recently_disconnected,
               (select count(*) from dune.get_player_online_state_within_grace_period_for_each_server()) as grace_period_entries
         """)[0]
+        current_players = int(player_counts.get("connected_players_reported") or 0)
+        player_peak = update_daily_player_peak(current_players)
         verdicts = [
             {"name": "current partitions have alive active farm rows", "ok": expected > 0 and current_alive_active == expected, "value": f"{current_alive_active}/{expected}"},
             {"name": "current partitions have ready/alive farm rows", "ok": expected > 0 and current_ready_alive == expected, "value": f"{current_ready_alive}/{expected}"},
@@ -2880,6 +3342,7 @@ class Handler(BaseHTTPRequestHandler):
         return {
             "verdicts": verdicts,
             "playerCounts": player_counts,
+            "playerPeak": player_peak,
             "summary": {
                 "readyAlive": current_ready_alive,
                 "aliveActive": current_alive_active,
@@ -2887,6 +3350,8 @@ class Handler(BaseHTTPRequestHandler):
                 "activeServers": active_count,
                 "onlineMaps": sum(1 for row in map_status if row.get("online")),
                 "totalMaps": len(map_status),
+                "peakPlayersToday": player_peak.get("peak"),
+                "peakPlayersDate": player_peak.get("date"),
             },
             "mapStatus": map_status,
             "farmState": farm,
@@ -3128,6 +3593,94 @@ class Handler(BaseHTTPRequestHandler):
         player_id = int(body["player_id"])
         execute("select dune.reset_specialization_keystones(%s)", (player_id,))
 
+    def economy_bundle(self, body):
+        dry_run = str(body.get("dry_run", body.get("dryRun", "true"))).lower() not in ("0", "false", "no", "off")
+        plan = []
+        for row in body.get("currency", []) or []:
+            plan.append({"type": "currency", "payload": row, "statement": "insert/update dune.player_virtual_currency_balances"})
+        for row in body.get("xp", []) or []:
+            plan.append({"type": "xp", "payload": row, "statement": "select dune.set_specialization_xp_and_level(...)"})
+        for row in body.get("items", []) or []:
+            item_body = dict(row)
+            item_body["dry_run"] = True
+            try:
+                preview = self.grant_item(item_body)
+            except Exception as exc:
+                preview = {"ok": False, "error": str(exc), "payload": item_body}
+            plan.append({"type": "item", "payload": row, "preview": preview})
+        if dry_run:
+            return {"ok": True, "dryRun": True, "plan": plan, "executionGate": "DUNE_ADMIN_BUNDLE_MUTATIONS_ENABLED"}
+        self.require_mutations()
+        if not BUNDLE_MUTATIONS_ENABLED:
+            raise PermissionError("bundle mutations are disabled; set DUNE_ADMIN_BUNDLE_MUTATIONS_ENABLED=true")
+        require_confirmation(body, CONFIRM_BUNDLE_MUTATION)
+        executed = []
+        for row in body.get("currency", []) or []:
+            self.update_currency(row)
+            executed.append({"type": "currency", "ok": True})
+        for row in body.get("xp", []) or []:
+            self.update_xp(row)
+            executed.append({"type": "xp", "ok": True})
+        for row in body.get("items", []) or []:
+            self.require_item_grants()
+            item_body = dict(row)
+            item_body["dry_run"] = False
+            executed.append({"type": "item", "result": self.grant_item(item_body)})
+        return {"ok": True, "dryRun": False, "plan": plan, "executed": executed}
+
+    def offline_player_recovery(self, body):
+        account_id = int(body.get("account_id", body.get("accountId")))
+        partition_id = int(body.get("partition_id", body.get("partitionId")))
+        dry_run = str(body.get("dry_run", body.get("dryRun", "true"))).lower() not in ("0", "false", "no", "off")
+        player = query("""
+            select ps.account_id, ps.character_name, ps.online_status::text, ps.server_id,
+                   ps.previous_server_partition_id, a.funcom_id, a."user" as fls_id
+            from dune.player_state ps
+            left join dune.accounts a on a.id = ps.account_id
+            where ps.account_id=%s
+        """, (account_id,))
+        partition = query("select partition_id, server_id, map, dimension_index, label, blocked from dune.world_partition where partition_id=%s", (partition_id,))
+        if not player:
+            raise ValueError("account_id not found")
+        if not partition:
+            raise ValueError("partition_id not found")
+        if str(player[0].get("online_status") or "").lower() == "online":
+            raise ValueError("player is online; offline recovery refuses to move online players")
+        location = body.get("location", body.get("target_location", body.get("targetLocation", {})))
+        if not isinstance(location, dict):
+            raise ValueError("location must be an object with x, y, and z")
+        target_location = {
+            "x": float(location.get("x", 0)),
+            "y": float(location.get("y", 0)),
+            "z": float(location.get("z", 0)),
+        }
+        fls_id = str(player[0].get("fls_id") or player[0].get("funcom_id") or "").strip()
+        if not fls_id:
+            raise ValueError("player account has no FLS/user id for admin_move_offline_player_to_partition")
+        plan = {"function": "dune.admin_move_offline_player_to_partition", "args": [fls_id, partition_id, target_location], "player": player[0], "targetPartition": partition[0]}
+        if dry_run:
+            return {"ok": True, "dryRun": True, "accountId": account_id, "partitionId": partition_id, "plan": plan}
+        self.require_mutations()
+        require_confirmation(body, CONFIRM_PLAYER_RECOVERY)
+        rows = query("""
+            select dune.admin_move_offline_player_to_partition(
+                %s,
+                %s,
+                row(%s,%s,%s)::dune.vector
+            ) as moved
+        """, (fls_id, partition_id, target_location["x"], target_location["y"], target_location["z"]))
+        return {"ok": True, "dryRun": False, "accountId": account_id, "partitionId": partition_id, "result": rows[0] if rows else {}, "rollback": {"previousServerPartitionId": player[0].get("previous_server_partition_id"), "previousServerId": player[0].get("server_id")}}
+
+    def spice_field_inspect(self):
+        errors = {}
+        return {
+            "caps": reference_query(errors, "spicefieldTypes", "select * from dune.spicefield_types order by map, field_kind_id"),
+            "availability": reference_query(errors, "spicefieldAvailability", "select * from dune.spicefield_server_availability order by server_id, field_kind_id"),
+            "resourceFields": reference_query(errors, "resourcefieldState", "select map,dimension_index,field_kind_id,count(*) as fields,min(value_remaining),max(value_remaining),sum(value_remaining) from dune.resourcefield_state group by 1,2,3 order by 1,2,3"),
+            "typedKnob": read_typed_knobs().get("spiceDeepDesertCaps"),
+            "errors": errors,
+        }
+
     def write_config(self, name, content):
         if name not in ALLOWED_CONFIGS:
             raise ValueError("config file not allowed")
@@ -3170,6 +3723,14 @@ class Handler(BaseHTTPRequestHandler):
         if not ITEM_GRANTS_ENABLED:
             raise PermissionError("item grants are disabled; set DUNE_ADMIN_ITEM_GRANTS_ENABLED=true")
 
+    def require_catalog(self):
+        if not CATALOG_ENABLED:
+            raise PermissionError("catalog is disabled; set DUNE_ADMIN_CATALOG_ENABLED=true")
+
+    def require_typed_knobs(self):
+        if not TYPED_KNOBS_ENABLED:
+            raise PermissionError("typed knob writes are disabled; set DUNE_ADMIN_TYPED_KNOBS_ENABLED=true")
+
     def validate_host(self):
         if not ALLOWED_HOSTS:
             return
@@ -3193,7 +3754,13 @@ class Handler(BaseHTTPRequestHandler):
                 self.audit("referer-rejected", ok=False, referer_origin=referer_origin)
                 raise PermissionError("cross-origin admin request rejected")
 
-    def html(self, body):
+    def is_app_route(self, path):
+        if path == "/":
+            return True
+        route = path.strip("/")
+        return route in {"overview", "ops", "security", "runbook", "characters", "settings", "mutations", "catalog"}
+
+    def html(self, body, head_only=False):
         nonce = secrets.token_urlsafe(16)
         body = body.replace("__NONCE__", nonce)
         data = body.encode("utf-8")
@@ -3202,18 +3769,20 @@ class Handler(BaseHTTPRequestHandler):
         self.security_headers(nonce=nonce)
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
-        self.wfile.write(data)
+        if not head_only:
+            self.wfile.write(data)
 
-    def json(self, value):
+    def json(self, value, head_only=False):
         data = json.dumps(value, default=json_default, indent=2).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.security_headers()
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
-        self.wfile.write(data)
+        if not head_only:
+            self.wfile.write(data)
 
-    def static_file(self, path, content_type):
+    def static_file(self, path, content_type, head_only=False):
         try:
             resolved = path.resolve()
             resolved.relative_to(STATIC_ROOT.resolve())
@@ -3226,19 +3795,22 @@ class Handler(BaseHTTPRequestHandler):
         self.security_headers()
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
-        self.wfile.write(data)
+        if not head_only:
+            self.wfile.write(data)
 
-    def error(self, status, message):
+    def error(self, status, message, head_only=False):
         data = json.dumps({"error": message}).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.security_headers()
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
-        self.wfile.write(data)
+        if not head_only:
+            self.wfile.write(data)
 
     def security_headers(self, nonce=None):
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", "no-store, no-cache, max-age=0, must-revalidate, proxy-revalidate")
+        self.send_header("Surrogate-Control", "no-store")
         self.send_header("Pragma", "no-cache")
         self.send_header("Expires", "0")
         self.send_header("X-Admin-Panel-Build", ADMIN_PANEL_BUILD)
@@ -3310,7 +3882,7 @@ INDEX = r"""<!doctype html>
     .metric .value { font-size:20px; font-weight:700; margin-top:6px; overflow-wrap:anywhere; }
     .overviewTopGrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; margin-bottom:14px; }
     .overviewMapShell .panelBand { margin-bottom:0; }
-    .overviewMapShell .haggaMap { aspect-ratio:16 / 10; max-height:calc(100vh - 260px); min-height:520px; --hagga-map-x-skew:1.32; }
+    .overviewMapShell .haggaMap { aspect-ratio:16 / 10; max-height:calc(100vh - 260px); min-height:520px; }
     .overviewMapShell .haggaMap svg { block-size:100%; inline-size:100%; aspect-ratio:auto; }
     .summaryCard { position:relative; border:1px solid var(--line); border-radius:8px; background:var(--panel2); padding:10px 12px; min-height:74px; }
     .summaryCard:focus-within, .summaryCard:hover { border-color:#53614d; }
@@ -3378,7 +3950,7 @@ INDEX = r"""<!doctype html>
     .mapTile.bad { border-color:#743932; }
     .mapTile .name { font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .mapTile .meta { color:var(--muted); font-size:12px; margin-top:4px; }
-    .haggaMap { position:relative; display:block; overflow:hidden; touch-action:none; cursor:grab; background:#171513; inline-size:100%; margin-inline:auto; border:1px solid var(--line); border-radius:8px; --hagga-map-x-skew:1; }
+    .haggaMap { position:relative; display:block; overflow:hidden; touch-action:none; cursor:grab; background:#171513; inline-size:100%; margin-inline:auto; border:1px solid var(--line); border-radius:8px; }
     .haggaMap.isDragging { cursor:grabbing; }
     .haggaMap svg { display:block; inline-size:100%; aspect-ratio:1 / 1; block-size:auto; background:#171513; transform-origin:center center; will-change:transform; user-select:none; }
     .haggaMap .mapImage { opacity:.95; }
@@ -3438,7 +4010,7 @@ INDEX = r"""<!doctype html>
     .hostNote { font-size:13px; line-height:1.35; }
     .hidden { display:none; }
     @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior:auto !important; transition:none !important; animation:none !important; } }
-    @media (max-width: 1100px) { .twoCol, .threeCol { grid-template-columns:1fr; } .overviewMapShell .haggaMap { aspect-ratio:1 / 1; min-height:0; max-height:none; --hagga-map-x-skew:1.06; } }
+    @media (max-width: 1100px) { .twoCol, .threeCol { grid-template-columns:1fr; } .overviewMapShell .haggaMap { aspect-ratio:1 / 1; min-height:0; max-height:none; } }
     @media (max-width: 820px) { header { align-items:flex-start; flex-direction:column; } main { grid-template-columns:1fr; } nav { position:static; height:auto; border-right:0; border-bottom:1px solid var(--line); } .tabs { grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); } .row { flex-wrap:wrap; } .barRow { grid-template-columns:1fr; gap:4px; } }
   </style>
 </head>
@@ -3458,6 +4030,7 @@ INDEX = r"""<!doctype html>
         <button class="tab" role="tab" aria-selected="false" data-tab="characters">Players</button>
         <button class="tab" role="tab" aria-selected="false" data-tab="settings">Settings</button>
         <button class="tab" role="tab" aria-selected="false" data-tab="mutations">Admin Actions</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="catalog">Catalog</button>
       </div>
       <div class="card"><h3>Display</h3><div class="toolbar"><button id="contrastBtn">High contrast</button><button id="densityBtn">Dense mode</button><button id="expandAllBtn">Expand all</button><button id="collapseAllBtn">Collapse all</button><button id="helpBtn">Shortcuts</button></div></div>
       <div class="card">
@@ -3502,11 +4075,13 @@ INDEX = r"""<!doctype html>
 const ADMIN_PANEL_BUILD = '20260520-hagga-clean-map-south';
 let token = (localStorage.getItem('duneAdminToken') || sessionStorage.getItem('duneAdminToken') || '').trim();
 document.getElementById('token').value = token;
-const validTabs = new Set(['overview', 'ops', 'security', 'runbook', 'characters', 'settings', 'mutations']);
-let current = validTabs.has(location.hash.slice(1)) ? location.hash.slice(1) : (sessionStorage.getItem('duneAdminTab') || 'overview');
+const validTabs = new Set(['overview', 'ops', 'security', 'runbook', 'characters', 'settings', 'mutations', 'catalog']);
+const pathTab = location.pathname.slice(1);
+let current = validTabs.has(location.hash.slice(1)) ? location.hash.slice(1) : (validTabs.has(pathTab) ? pathTab : (sessionStorage.getItem('duneAdminTab') || 'overview'));
 if (!validTabs.has(current)) current = 'overview';
 let pendingAdminAccountId = '';
 let resourceTimer = null;
+let healthTimer = null;
 let haggaMapTimer = null;
 let loadSerial = 0;
 let detailLoadSerial = 0;
@@ -3515,6 +4090,7 @@ let playerModalTimer = null;
 let playerModalInFlight = false;
 let playerModalRef = null;
 let resourceRefreshInFlight = false;
+let healthRefreshInFlight = false;
 let haggaMapRefreshInFlight = false;
 let haggaMapAutoRefresh = sessionStorage.getItem('duneAdminHaggaMapAutoRefresh') !== 'off';
 let haggaMapLastGoodHtml = '';
@@ -3523,6 +4099,7 @@ let autoRefresh = sessionStorage.getItem('duneAdminAutoRefresh') !== 'off';
 const resourceHistory = [];
 let adminReferenceCache = null;
 let adminReferenceCacheAt = 0;
+let overviewRosterCounts = {};
 const view = document.getElementById('view');
 
 document.body.classList.toggle('highContrast', sessionStorage.getItem('duneAdminHighContrast') === 'on');
@@ -3585,7 +4162,12 @@ async function api(path, opts={}) {
   delete opts.timeoutMs;
   opts.signal = opts.signal || controller.signal;
   opts.headers = Object.assign({'Content-Type':'application/json'}, opts.headers || {});
+  opts.cache = opts.cache || 'no-store';
   if (token) opts.headers['X-Admin-Token'] = token;
+  if (!opts.method || String(opts.method).toUpperCase() === 'GET') {
+    const separator = path.includes('?') ? '&' : '?';
+    path = `${path}${separator}_=${Date.now()}`;
+  }
   try {
     const res = await fetch(path, opts);
     const text = await res.text();
@@ -3999,26 +4581,37 @@ function initHaggaMapPanZoom(container){
   const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
   let drag = null;
   let suppressMarkerClick = false;
-  function skewX(){
-    const value = parseFloat(getComputedStyle(viewport).getPropertyValue('--hagga-map-x-skew'));
-    return Number.isFinite(value) && value > 0 ? value : 1;
+  function fittedContent(){
+    const rect = viewport.getBoundingClientRect();
+    const viewBox = content.viewBox?.baseVal;
+    const viewWidth = viewBox?.width || 1;
+    const viewHeight = viewBox?.height || 1;
+    const contentAspect = viewWidth / viewHeight;
+    const fittedWidth = Math.min(rect.width, rect.height * contentAspect);
+    return {width:fittedWidth, height:fittedWidth / contentAspect};
+  }
+  function stretchX(){
+    const rect = viewport.getBoundingClientRect();
+    const fitted = fittedContent();
+    return fitted.width > 0 ? rect.width / fitted.width : 1;
   }
   function constrain(){
     const rect = viewport.getBoundingClientRect();
-    const maxX = Math.max(0, (rect.width * haggaMapZoomState.scale * skewX() - rect.width) / 2);
-    const maxY = Math.max(0, (rect.height * haggaMapZoomState.scale - rect.height) / 2);
+    const fitted = fittedContent();
+    const maxX = Math.max(0, (fitted.width * stretchX() * haggaMapZoomState.scale - rect.width) / 2);
+    const maxY = Math.max(0, (fitted.height * haggaMapZoomState.scale - rect.height) / 2);
     haggaMapZoomState.x = clamp(haggaMapZoomState.x, -maxX, maxX);
     haggaMapZoomState.y = clamp(haggaMapZoomState.y, -maxY, maxY);
   }
   function apply(){
     constrain();
-    content.style.transform = `translate(${haggaMapZoomState.x}px, ${haggaMapZoomState.y}px) scale(${haggaMapZoomState.scale}) scaleX(${skewX()})`;
+    content.style.transform = `translate(${haggaMapZoomState.x}px, ${haggaMapZoomState.y}px) scale(${haggaMapZoomState.scale}) scaleX(${stretchX()})`;
   }
   function zoomAt(nextScale, clientX, clientY){
     const rect = viewport.getBoundingClientRect();
     const oldScale = haggaMapZoomState.scale;
     const newScale = clamp(nextScale, 1, 8);
-    const px = (clientX - rect.left - rect.width / 2 - haggaMapZoomState.x) / skewX();
+    const px = (clientX - rect.left - rect.width / 2 - haggaMapZoomState.x) / stretchX();
     const py = clientY - rect.top - rect.height / 2 - haggaMapZoomState.y;
     haggaMapZoomState.x -= px * (newScale / oldScale - 1);
     haggaMapZoomState.y -= py * (newScale / oldScale - 1);
@@ -4166,6 +4759,70 @@ function overviewHealthCards(health){
   const attentionVerdicts = Math.max(verdicts.length - okVerdicts, 0);
   const players = playerValues.reduce((a,b)=>a+b,0);
   return `${summaryHoverCard('Map State', `${onlineMaps}/${maps.length || 0}`, `${offlineMaps} offline`, `<div class="panelBand"><h2>Map Online/Offline</h2>${mapTiles(maps)}${mapStatusTable(maps)}</div>`, offlineMaps ? 'dangerText' : 'ok')}${summaryHoverCard('Health Verdicts', okVerdicts, `${attentionVerdicts} attention`, `<div class="panelBand"><h2>Health Verdict</h2>${checks(verdicts)}</div>`, attentionVerdicts ? 'dangerText' : 'ok')}${summaryHoverCard('Players By Map', players, `${maps.length} maps`, `<div class="panelBand"><h2>Players By Map</h2>${spark(playerValues)}${mapStatusTable(maps)}</div>`)}`;
+}
+function overviewRealtimeHtml(health, rosterCounts={}){
+  const state = health || {};
+  const summary = state.summary || {};
+  const players = (state.farmState || []).reduce((sum, r) => sum + Number(r.connected_players || 0), 0);
+  const playerPeak = state.playerPeak || {};
+  return `${metric('Ready Servers', `${summary.readyAlive ?? 0}/${summary.expectedPartitions ?? 0}`, summary.readyAlive === summary.expectedPartitions ? 'ok' : 'dangerText')}${metric('Online Maps', `${summary.onlineMaps ?? 0}/${summary.totalMaps ?? 0}`, summary.onlineMaps === summary.totalMaps ? 'ok' : 'dangerText')}${metric('Reported Players', players)}${metric('Peak Today', playerPeak.peak ?? summary.peakPlayersToday ?? 0)}${metric('Characters', rosterCounts.total ?? 0)}${overviewHealthCards(state)}`;
+}
+function opsRealtimeMetricsHtml(health){
+  const pc = (health || {}).playerCounts || {};
+  return `${metric('Connected Players', pc.connected_players_reported ?? 0)}${metric('Online Controllers', pc.online_controller_ids ?? 0)}${metric('Recent Online State', pc.online_or_recently_disconnected ?? 0)}${metric('Grace Entries', pc.grace_period_entries ?? 0)}`;
+}
+function renderOverviewRealtime(health){
+  const container = document.getElementById('overviewRealtime');
+  if (!container) return;
+  container.innerHTML = overviewRealtimeHtml(health, overviewRosterCounts);
+}
+function renderOpsRealtime(health){
+  const metrics = document.getElementById('opsRealtimeMetrics');
+  if (metrics) metrics.innerHTML = opsRealtimeMetricsHtml(health);
+  const viz = document.getElementById('opsHealthViz');
+  if (viz) viz.innerHTML = healthViz(health);
+  const verdicts = document.getElementById('opsHealthVerdicts');
+  if (verdicts) {
+    verdicts.innerHTML = checks(health.verdicts);
+    makeSortableTables(verdicts);
+  }
+  const mapStatus = document.getElementById('opsMapStatus');
+  if (mapStatus) {
+    mapStatus.innerHTML = `${mapTiles(health.mapStatus)}${mapStatusTable(health.mapStatus)}`;
+    makeSortableTables(mapStatus);
+  }
+  const rawFarm = document.getElementById('opsRawFarmState');
+  if (rawFarm) {
+    rawFarm.innerHTML = table(health.farmState);
+    makeSortableTables(rawFarm);
+  }
+  const partitions = document.getElementById('opsPartitions');
+  if (partitions) {
+    partitions.innerHTML = table(health.partitions);
+    makeSortableTables(partitions);
+  }
+}
+async function refreshRealtimeHealth(opts={}){
+  if (healthRefreshInFlight) return;
+  if (document.hidden && !opts.force) return;
+  if (current !== 'overview' && current !== 'ops') return;
+  healthRefreshInFlight = true;
+  try {
+    const health = await api('/api/ops/health', {timeoutMs: 7000});
+    if (current === 'overview') renderOverviewRealtime(health);
+    else if (current === 'ops') renderOpsRealtime(health);
+    updateLastRefresh('Health refreshed');
+  } catch (e) {
+    announce(`Health refresh failed: ${e.message}`);
+  } finally {
+    healthRefreshInFlight = false;
+  }
+}
+function startHealthRefresh(){
+  if (healthTimer) clearInterval(healthTimer);
+  healthTimer = setInterval(() => {
+    if (autoRefresh) refreshRealtimeHealth().catch(() => {});
+  }, 2500);
 }
 function summaryHoverCard(label, value, meta, content, tone=''){
   return `<div class="summaryCard" tabindex="0"><h3>${esc(label)}</h3><div class="summaryValue ${tone}">${esc(value)}</div><div class="summaryMeta">${esc(meta)}</div><div class="summaryHover" role="dialog" aria-label="${esc(label)} details">${content}</div></div>`;
@@ -4415,7 +5072,7 @@ function wireGlobalAffordances(){
     if (e.key === 'Escape' && document.getElementById('playerModal').classList.contains('open')) { closePlayerModal(); return; }
     if (e.key === 'Escape' && document.getElementById('helpModal').classList.contains('open')) { modal(false); return; }
     if (typing && e.key !== 'Escape') return;
-    const tabMap = {'1':'overview','2':'ops','3':'security','4':'runbook','5':'characters','6':'settings','7':'mutations'};
+    const tabMap = {'1':'overview','2':'ops','3':'security','4':'runbook','5':'characters','6':'settings','7':'mutations','8':'catalog'};
     if (tabMap[e.key]) { e.preventDefault(); show(tabMap[e.key]); return; }
     if (e.key === '?') { e.preventDefault(); modal(true); return; }
     if (e.key === '/') { e.preventDefault(); focusFirstFilter(); return; }
@@ -4455,6 +5112,10 @@ async function load(){
     clearInterval(haggaMapTimer);
     haggaMapTimer = null;
   }
+  if (healthTimer) {
+    clearInterval(healthTimer);
+    healthTimer = null;
+  }
   view.setAttribute('aria-busy', 'true');
   syncTabs();
   view.innerHTML = `<div class="panelBand"><h2>${esc(current[0].toUpperCase() + current.slice(1))}</h2><div class="muted">Loading...</div></div>`;
@@ -4470,6 +5131,7 @@ async function load(){
     else if (current === 'characters') await characters(serial);
     else if (current === 'settings') await settings(serial);
     else if (current === 'mutations') await mutations(serial);
+    else if (current === 'catalog') await catalog(serial);
   } catch (e) {
     if (serial !== loadSerial) return;
     view.innerHTML = `<div class="card"><h2>Panel Data Unavailable</h2><p class="dangerText">${esc(e.message)}</p><p class="muted">The page loaded, but one of the backing admin APIs failed. Refresh after the admin panel or database is healthy.</p></div><div class="metricGrid">${metric('Endpoint', location.host)}${metric('Item Grants', 'enabled', 'ok')}${metric('Mutations', 'check status')}</div>`;
@@ -4487,10 +5149,8 @@ async function overview(serial=loadSerial){
     api('/api/characters/roster')
   ]);
   if (serial !== loadSerial) return;
-  const state = health;
-  const summary = health.summary || {};
-  const players = (state.farmState || []).reduce((sum, r) => sum + Number(r.connected_players || 0), 0);
-  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Overview</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="ops">Operations</button><button data-jump="mutations" class="primary">Admin Actions</button></div></div><div class="overviewTopGrid">${metric('Ready Servers', `${summary.readyAlive ?? 0}/${summary.expectedPartitions ?? 0}`, summary.readyAlive === summary.expectedPartitions ? 'ok' : 'dangerText')}${metric('Online Maps', `${summary.onlineMaps ?? 0}/${summary.totalMaps ?? 0}`, summary.onlineMaps === summary.totalMaps ? 'ok' : 'dangerText')}${metric('Reported Players', players)}${metric('Characters', roster.counts?.total ?? 0)}${overviewHealthCards(health)}</div><div id="haggaBasinMap" class="overviewMapShell"><div class="panelBand"><h2>Hagga Basin Player Map</h2><div class="muted">Loading player positions...</div></div></div>${actionGrid([{tab:'characters',label:'Open player roster',className:'primary'},{tab:'ops',label:'Restart / backup / map health'},{tab:'mutations',label:'Grant currency, XP, or items'},{tab:'settings',label:'Server settings'}])}<details class="panelBand"><summary>Player Roster Preview</summary><div id="overviewRoster">${characterRosterPanel(roster)}</div></details><div id="detail"></div></div>`;
+  overviewRosterCounts = roster.counts || {};
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Overview</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="ops">Operations</button><button data-jump="mutations" class="primary">Admin Actions</button></div></div><div id="overviewRealtime" class="overviewTopGrid" aria-live="polite">${overviewRealtimeHtml(health, overviewRosterCounts)}</div><div id="haggaBasinMap" class="overviewMapShell"><div class="panelBand"><h2>Hagga Basin Player Map</h2><div class="muted">Loading player positions...</div></div></div>${actionGrid([{tab:'characters',label:'Open player roster',className:'primary'},{tab:'ops',label:'Restart / backup / map health'},{tab:'mutations',label:'Grant currency, XP, or items'},{tab:'settings',label:'Server settings'}])}<details class="panelBand"><summary>Player Roster Preview</summary><div id="overviewRoster">${characterRosterPanel(roster)}</div></details><div id="detail"></div></div>`;
   document.querySelectorAll('#overviewRoster tbody tr').forEach(row => row.onclick = () => pickCharacter(row));
   makeRowsKeyboardFriendly(view);
   bindRosterFilters(view);
@@ -4501,6 +5161,7 @@ async function overview(serial=loadSerial){
   haggaMapTimer = setInterval(() => {
     if (haggaMapAutoRefresh && current === 'overview') refreshHaggaMap().catch(() => {});
   }, 2000);
+  startHealthRefresh();
 }
 async function ops(serial=loadSerial){
   const [health, opt, announcement, restart] = await Promise.all([
@@ -4510,8 +5171,7 @@ async function ops(serial=loadSerial){
     api('/api/ops/restart')
   ]);
   if (serial !== loadSerial) return;
-  const pc = health.playerCounts || {};
-  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Operations</h2><div class="toolbar"><button data-jump="overview">Overview</button><button data-jump="characters">Players</button><button data-jump="runbook">Runbook</button><button data-jump="settings">Settings</button></div></div><div class="metricGrid">${metric('Connected Players', pc.connected_players_reported ?? 0)}${metric('Online Controllers', pc.online_controller_ids ?? 0)}${metric('Recent Online State', pc.online_or_recently_disconnected ?? 0)}${metric('Grace Entries', pc.grace_period_entries ?? 0)}</div><div class="twoCol">${restartPanel(restart)}${announcementPanel(announcement)}</div><div class="twoCol">${healthViz(health)}<div class="panelBand"><h2>Health Verdict</h2>${checks(health.verdicts)}</div></div><details class="panelBand" open><summary>Map Online/Offline</summary>${mapTiles(health.mapStatus)}${mapStatusTable(health.mapStatus)}</details><details class="panelBand"><summary>Host Resources</summary><div id="resources"><div class="muted">Loading resource stats...</div></div></details><details class="panelBand"><summary>Local and Upstream Network</summary><div data-network-panel><div class="muted">Loading network probes...</div></div></details><details class="panelBand"><summary>Raw Farm State</summary>${table(health.farmState)}</details><details class="panelBand"><summary>Partitions</summary>${table(health.partitions)}</details><details class="panelBand"><summary>Optimization Signals</summary>${signalList(opt)}</details></div>`;
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Operations</h2><div class="toolbar"><button data-jump="overview">Overview</button><button data-jump="characters">Players</button><button data-jump="runbook">Runbook</button><button data-jump="settings">Settings</button></div></div><div id="opsRealtimeMetrics" class="metricGrid" aria-live="polite">${opsRealtimeMetricsHtml(health)}</div><div class="twoCol">${restartPanel(restart)}${announcementPanel(announcement)}</div><div class="twoCol"><div id="opsHealthViz">${healthViz(health)}</div><div class="panelBand"><h2>Health Verdict</h2><div id="opsHealthVerdicts">${checks(health.verdicts)}</div></div></div><details class="panelBand" open><summary>Map Online/Offline</summary><div id="opsMapStatus">${mapTiles(health.mapStatus)}${mapStatusTable(health.mapStatus)}</div></details><details class="panelBand"><summary>Host Resources</summary><div id="resources"><div class="muted">Loading resource stats...</div></div></details><details class="panelBand"><summary>Local and Upstream Network</summary><div data-network-panel><div class="muted">Loading network probes...</div></div></details><details class="panelBand"><summary>Raw Farm State</summary><div id="opsRawFarmState">${table(health.farmState)}</div></details><details class="panelBand"><summary>Partitions</summary><div id="opsPartitions">${table(health.partitions)}</div></details><details class="panelBand"><summary>Optimization Signals</summary>${signalList(opt)}</details></div>`;
   wireResourceControls(view);
   bindResourceFilters(view);
   refreshResources().catch(e => {
@@ -4528,6 +5188,7 @@ async function ops(serial=loadSerial){
   resourceTimer = setInterval(() => {
     if (autoRefresh && current === 'ops') refreshResources().catch(() => {});
   }, 5000);
+  startHealthRefresh();
 }
 async function refreshResources(liveStats=false){
   if (resourceRefreshInFlight) return;
@@ -4858,6 +5519,56 @@ async function settings(serial=loadSerial){
   document.getElementById('saveDirectorTransferBtn').addEventListener('click', e => runAction(e.currentTarget, 'Saving...', saveDirectorTransfer));
   document.getElementById('saveCfgBtn').addEventListener('click', e => runAction(e.currentTarget, 'Saving...', saveCfg));
 }
+
+async function catalog(serial=loadSerial){
+  const [surfaces, evidence, validation, knobs, events] = await Promise.all([
+    api('/api/catalog/surfaces'),
+    api('/api/catalog/evidence'),
+    api('/api/catalog/validation'),
+    api('/api/settings/typed-knobs'),
+    api('/api/events')
+  ]);
+  if (serial !== loadSerial) return;
+  const groups = surfaces.groups || {};
+  const groupPanels = Object.entries(groups).map(([name, rows]) => `<details class="panelBand" open><summary>${esc(name)}</summary>${table(rows || [])}</details>`).join('');
+  const knobRows = Object.values(knobs.values || {}).map(k => ({id:k.id,label:k.label,value:k.value,confidence:k.confidence,risk:k.risk,restartRequired:k.restart,why:k.why}));
+  const eventRows = (events.events || []).map(e => ({id:e.id,name:e.name,status:e.status,createdAt:e.createdAt,runAt:e.runAt,actions:(e.plan || []).length}));
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Content Catalog</h2><div class="toolbar"><span class="pill ${surfaces.enabled ? 'ok' : 'warn'}">catalog ${surfaces.enabled ? 'enabled' : 'disabled'}</span><span class="pill ${knobs.enabled ? 'warn' : 'ok'}">typed writes ${knobs.enabled ? 'enabled' : 'dry-run only'}</span><span class="pill ${events.executionEnabled ? 'warn' : 'ok'}">events ${events.executionEnabled ? 'execute enabled' : 'plan only'}</span><button data-jump="settings">Settings</button><button data-jump="mutations">Admin Actions</button></div></div><div class="panelBand"><p class="muted">Catalog endpoints are read-only. Typed knob writes require the mutation gate, typed-knob gate, backup, and confirmation phrase.</p></div>${groupPanels}<div class="twoCol"><div class="panelBand"><h2>Typed Knob Dry Run</h2><div class="grid"><label>Knob<select id="typedKnobId">${Object.values(knobs.values || {}).map(k=>`<option value="${esc(k.id)}">${esc(k.label || k.id)}</option>`).join('')}</select></label><label>Value<input id="typedKnobValue" placeholder="true, 2.5, or JSON caps"></label></div><p><button id="typedKnobDryRunBtn" class="primary">Preview typed write</button></p><pre id="typedKnobResult"></pre></div><div class="panelBand"><h2>Spice Fields</h2><p><button id="inspectSpiceBtn" class="primary">Inspect spice/resource state</button></p><pre id="spiceInspectResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Event Dry Run</h2><label>Event JSON<textarea id="eventPlanJson" rows="7">{"name":"Deep Desert spice proposal","actions":[{"type":"spice-cap-proposal","caps":{"Medium":{"primed":24,"active":24},"Large":{"primed":3,"active":3}}}]}</textarea></label><p><button id="eventDryRunBtn" class="primary">Preview event</button></p><pre id="eventDryRunResult"></pre></div><div class="panelBand"><h2>Economy Bundle Dry Run</h2><label>Bundle JSON<textarea id="bundlePlanJson" rows="7">{"currency":[],"xp":[],"items":[],"dry_run":true}</textarea></label><p><button id="bundleDryRunBtn" class="primary">Preview bundle</button></p><pre id="bundleDryRunResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Typed Knobs</h2>${table(knobRows)}</div><div class="panelBand"><h2>Validation</h2>${table(validation.commands || [])}</div></div><details class="panelBand"><summary>Evidence Rules</summary><ul>${(evidence.rules || []).map(r=>`<li>${esc(r)}</li>`).join('')}</ul><p class="muted">${esc((evidence.schema || []).join(', '))}</p></details><details class="panelBand"><summary>Scheduled Events</summary>${table(eventRows)}</details></div>`;
+  wireCatalogControls();
+}
+
+function parseJsonInput(id){
+  const text = document.getElementById(id).value.trim();
+  return text ? JSON.parse(text) : {};
+}
+function parseTypedKnobValue(raw){
+  const text = String(raw || '').trim();
+  if (!text) return '';
+  if (text.startsWith('{') || text.startsWith('[')) return JSON.parse(text);
+  return text;
+}
+function wireCatalogControls(root=document){
+  root.querySelector('#typedKnobDryRunBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Previewing...', async () => {
+    const key = document.getElementById('typedKnobId').value;
+    const value = parseTypedKnobValue(document.getElementById('typedKnobValue').value);
+    const result = await api('/api/settings/typed-knobs', {method:'POST', body:JSON.stringify({dry_run:true, updates:{[key]:value}})});
+    document.getElementById('typedKnobResult').textContent = JSON.stringify(result, null, 2);
+  }));
+  root.querySelector('#inspectSpiceBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Inspecting...', async () => {
+    const result = await api('/api/admin/spice-fields/inspect', {method:'POST', body:'{}'});
+    document.getElementById('spiceInspectResult').textContent = JSON.stringify(result, null, 2);
+  }));
+  root.querySelector('#eventDryRunBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Planning...', async () => {
+    const result = await api('/api/events/dry-run', {method:'POST', body:JSON.stringify(parseJsonInput('eventPlanJson'))});
+    document.getElementById('eventDryRunResult').textContent = JSON.stringify(result, null, 2);
+  }));
+  root.querySelector('#bundleDryRunBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Planning...', async () => {
+    const body = parseJsonInput('bundlePlanJson');
+    body.dry_run = true;
+    const result = await api('/api/admin/bundle', {method:'POST', body:JSON.stringify(body)});
+    document.getElementById('bundleDryRunResult').textContent = JSON.stringify(result, null, 2);
+  }));
+}
 function selectCfg(){ const name=document.getElementById('cfg').value; document.getElementById('cfgText').value = window.configs[name] || ''; }
 async function saveEnv(){
   const body={};
@@ -5118,8 +5829,12 @@ window.addEventListener('hashchange', () => {
   const tab = location.hash.slice(1);
   if (validTabs.has(tab) && tab !== current) show(tab);
 });
+window.addEventListener('pageshow', e => {
+  if (e.persisted) location.reload();
+});
 window.addEventListener('error', e => reportClientError(e.error || e.message));
 window.addEventListener('unhandledrejection', e => reportClientError(e.reason || e, 'Request failed'));
+setInterval(() => refreshStatus().catch(() => {}), 5000);
 load();
 </script>
 </body>

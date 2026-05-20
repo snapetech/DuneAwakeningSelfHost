@@ -29,6 +29,26 @@ The admin panel exposes `[/Script/DuneSandbox.PlayerOnlineStateSettings]` from `
 - `GET /api/settings/player-online-state`
 - `POST /api/settings/player-online-state`
 
+The admin panel also exposes a safer typed gameplay-knob layer:
+
+- `GET /api/settings/typed-knobs`
+- `POST /api/settings/typed-knobs`
+
+Dry-runs are available by passing `dry_run=true`. Actual writes require:
+
+```env
+DUNE_ADMIN_MUTATIONS_ENABLED=true
+DUNE_ADMIN_TYPED_KNOBS_ENABLED=true
+```
+
+and confirmation:
+
+```text
+WRITE TYPED KNOBS
+```
+
+Typed writes back up the target config file under `backups/admin-panel` before replacing values.
+
 ## Official User Engine Knobs
 
 These came from the Steam server package's `scripts/setup/config/UserEngine.ini` template.
@@ -47,6 +67,14 @@ Safe candidates for admin editing:
 - `Sandworm.SandwormDangerZonesEnabled`: enable danger-zone behavior.
 - `Vehicle.SandwormInvulnerabilitySecondsOnExit`: post-exit protection duration.
 - `Vehicle.SandwormInvulnerabilitySecondsOnServerRestart`: post-restart protection duration.
+
+Typed controls currently implemented:
+
+- `Dune.GlobalMiningOutputMultiplier`
+- `Dune.GlobalVehicleMiningOutputMultiplier`
+- `SecurityZones.PvpResourceMultiplier`
+- `Sandstorm.Enabled`
+- `Sandstorm.Treasure.Enabled`
 
 Sensitive:
 
@@ -70,6 +98,60 @@ Safe candidates for admin editing:
 - `m_BuildingBlueprintMaxExtensions`: blueprint extension cap.
 - `m_BaseBackupMaxExtensions`: base backup extension cap.
 - `m_bBuildingRestrictionLimitsEnabled`: enable/disable building restriction limits.
+
+Typed controls currently implemented:
+
+- `m_bShouldForceEnablePvpOnAllPartitions`
+- `m_bAreSecurityZonesEnabled`
+- `m_bCoriolisAutoSpawnEnabled`
+- `[/Script/DuneSandbox.SpiceHarvestingSystem] m_PerMapSystemSettings`
+- `m_BuildingShelterThreshold`
+- `m_PlaceableShelterThreshold`
+- `ShelteredProtectionThreshold`
+
+The typed layer deliberately excludes Coriolis cycle-start, cycle-duration, DB wipe, and cycle-end restart fields. Those are high-impact fields and should remain raw-config-only until a stronger rollback and validation workflow exists.
+
+## Deep Desert Spice Caps
+
+The high-confidence Deep Desert content knob is:
+
+```ini
+[/Script/DuneSandbox.SpiceHarvestingSystem]
+m_PerMapSystemSettings=...
+```
+
+The typed knob id is:
+
+```text
+spiceDeepDesertCaps
+```
+
+Structured dry-run example:
+
+```json
+{
+  "dry_run": true,
+  "updates": {
+    "spiceDeepDesertCaps": {
+      "Medium": {"primed": 24, "active": 24},
+      "Large": {"primed": 3, "active": 3}
+    }
+  }
+}
+```
+
+Validation after restart:
+
+```sql
+select * from dune.spicefield_types order by map, field_kind_id;
+
+select map,dimension_index,field_kind_id,count(*),sum(value_remaining)
+from dune.resourcefield_state
+group by 1,2,3
+order by 1,2,3;
+```
+
+`POST /api/admin/spice-fields/inspect` returns the same high-signal state without writing.
 
 ## Director Knobs
 
@@ -114,7 +196,7 @@ Safe candidates:
 Riskier candidates:
 
 - Public RabbitMQ/database binds. Keep these local-only.
-- IGW/S2S UDP forwarding. Leave internal unless live-client testing proves it is required.
+- IGW/S2S UDP forwarding. For the full warm-pool layout, `7888-7917/udp` is the paired IGW range; forward it only when the deployment's live-client routing or server-browser checks require it.
 - Arbitrary map service count changes without matching `world_partition` rows.
 
 ## Reverse Proxy / Ingress
@@ -131,5 +213,7 @@ Do not proxy the game UDP path through an HTTP reverse proxy unless a separate U
 ## Current Gaps
 
 - `gateway` is defined in the stack but was not running during this audit. Full farm readiness has been green without it, but this should be validated against live-client travel and FLS behavior before deciding it is optional.
-- Admin panel has raw config-file editing for `UserEngine.ini` and `UserGame.ini`; logout/reconnect timers now have typed controls, while other gameplay knobs are still raw-config edits.
+- Admin panel has raw config-file editing for `UserEngine.ini` and `UserGame.ini`; logout/reconnect timers and selected high-confidence gameplay knobs now have typed controls. Shelter/hydration candidates are still experimental even though they are represented in the typed layer.
+- Native GM command execution remains blocked until the RabbitMQ payload route is verified by a live client.
+- Journey, recipe, and vehicle unlock mutation remain blocked until safe DB functions or live examples are mapped.
 - There is no automated per-map resource recommendation yet. Use `scripts/profile-runtime.sh` and `scripts/summarize-runtime-profile.sh` while testing player travel.

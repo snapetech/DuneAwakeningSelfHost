@@ -70,18 +70,23 @@ DUNE_PLAYER_PRESENCE_PRIVATE_WELCOME_ENABLED=true
 DUNE_PLAYER_PRESENCE_PRIVATE_WELCOME_TEMPLATE=Welcome! Please Check https://snape.tech for Server Rules.
 DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_CHANNEL=Private
 DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_COMMAND=/workspace/scripts/announce.sh
+DUNE_PLAYER_PRESENCE_STARTER_BASE_TOOL_ENABLED=true
+DUNE_PLAYER_PRESENCE_STARTER_BASE_TOOL_MESSAGE_ENABLED=true
+DUNE_PLAYER_PRESENCE_STARTER_BASE_TOOL_MESSAGE_TEMPLATE=A Base Reconstruction Tool has been added to your inventory. You may need to log out and back in before it appears.
 DUNE_PLAYER_PRESENCE_VERMILIUS_GAP_ENABLED=true
 DUNE_PLAYER_PRESENCE_VERMILIUS_GAP_NODE=DA_SQ_VermiliusGap.Relocate.RelocateOutsideHBS.Drive north to the Vermilius Gap
 DUNE_PLAYER_PRESENCE_VERMILIUS_GAP_TEMPLATE=Congrats! {playername} has outrun Shai-Hulud!
 ```
 
-Join/leave and private-welcome templates support `{playername}`, `{player_name}`, `{count}`, and `{player_count}`. Vermilius Gap templates support `{playername}`, `{player_name}`, and `{story_node_id}`.
+Join/leave, private-welcome, and starter Base Reconstruction Tool templates support `{playername}`, `{player_name}`, `{count}`, and `{player_count}`. Vermilius Gap templates support `{playername}`, `{player_name}`, and `{story_node_id}`.
 
 The private welcome path runs on every detected join for existing and new players after the first baseline poll. It uses the same Paul chat sender, disables dashboard `!!!` wrapping, targets the joined player's live game RabbitMQ queue, and sets `m_ChannelType` to `DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_CHANNEL`. The default message is:
 
 ```text
 Welcome! Please Check https://snape.tech for Server Rules.
 ```
+
+The starter Base Reconstruction Tool path grants one `BaseBackupTool` to each newly observed joining account that has not already been recorded in `backups/admin-bot/player-presence.json`. When the grant succeeds, it sends a private message telling the player they may need to log out and back in before the item appears.
 
 The Vermilius Gap announcement watches `dune.journey_story_node` for the configured node's `complete_condition_state = true`. It records completed account ids under `backups/admin-bot/player-presence.json`, so each player is congratulated once. The first poll after enabling the feature baselines already-completed players and does not announce them retroactively.
 

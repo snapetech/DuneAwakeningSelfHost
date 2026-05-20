@@ -126,15 +126,295 @@ server {
 - `.env` operations editor for install, world, network, access, secret, and admin-panel knobs. Secret fields are admin-token protected, rendered as password inputs, and returned blank unless a replacement is typed.
 - Typed logout/reconnect timer editor for `config/UserGame.ini` under Settings -> Logout and Reconnect Timers.
 - Typed Director character-transfer settings editor for `config/director.ini`.
+- Catalog tab for content-insertion surfaces, evidence levels, validation commands, typed knob dry-runs, spice/resource inspection, event dry-runs, and economy bundle dry-runs.
+- Read-only content catalog APIs:
+  - `GET /api/catalog/surfaces`
+  - `GET /api/catalog/evidence`
+  - `GET /api/catalog/validation`
+- Typed gameplay knob API at `GET/POST /api/settings/typed-knobs`. Dry-runs are available without the typed-write gate; writes require backups, the global mutation gate, `DUNE_ADMIN_TYPED_KNOBS_ENABLED=true`, and the confirmation phrase `WRITE TYPED KNOBS`.
 - Config editor for selected local config files, including official `UserEngine.ini` and `UserGame.ini` overlays, with backups under `backups/admin-panel`.
 - Director GME voice-chat credentials can be added through the `director.ini` config editor when Funcom/provider supplies real `GmeAppId` and `GmeAppKey` values. Leave them unset otherwise.
 - Currency and XP mutation endpoints gated by `DUNE_ADMIN_MUTATIONS_ENABLED`.
+- Economy bundle planning through `POST /api/admin/bundle`. It plans currency, XP, and item grants in one response and defaults to `dry_run=true`. Execution additionally requires `DUNE_ADMIN_BUNDLE_MUTATIONS_ENABLED=true` and confirmation `EXECUTE BUNDLE`.
+- Offline player recovery preview through `POST /api/admin/player-recovery/offline-teleport`. Execution refuses online players and requires `MOVE OFFLINE PLAYER`.
+- Spice/resource field inspection through `POST /api/admin/spice-fields/inspect`.
+- Event planner APIs:
+  - `GET /api/events`
+  - `POST /api/events/dry-run`
+  - `POST /api/events`
+  - `POST /api/events/cancel`
+  - `POST /api/events/run`
+  Event execution is blocked unless `DUNE_ADMIN_EVENT_EXECUTION_ENABLED=true`.
 - Postgres custom-format backup under `backups/admin-panel`.
 - Redacted JSONL audit trail for rejected requests and admin writes under `backups/admin-panel/audit.jsonl`.
 - Known item template, observed item template, inventory, and inventory-type references.
 - Player dropdowns in Admin Actions for currency, XP, keystones, item grant targeting, and item maintenance.
 - Selected players pre-populate controller/account/name fields, current currency and specialization selectors, owned inventories, and owned inventory items for stack edits or deletion.
 - Exact-template item grants, dry-runs, stack edits, and item deletion behind admin gates.
+
+## Content Catalog and Safe Expansion
+
+The source-of-truth evidence catalog is [`../CONTENT_INSERTION_SURFACES.md`](../CONTENT_INSERTION_SURFACES.md). The Catalog tab renders the same model through read-only APIs and groups surfaces as:
+
+- Deep Desert
+- Economy/Admin
+- World Rules
+- GM/RabbitMQ
+- Limits
+
+Each catalog entry uses this schema:
+
+```text
+surface, capability, evidence, confidence, mutationRisk,
+restartRequired, validationCommand, rollback
+```
+
+Evidence handling is deliberately strict:
+
+- Shipped config plus live database behavior is strong evidence.
+- Binary strings are leads until section, syntax, and runtime effect are proven.
+- Public websites are candidate lookup sources only.
+- Native GM command routes remain previews until `DUNE_GM_COMMAND_PAYLOAD_VERIFIED=true` is proven by live-client validation.
+
+The Catalog tab includes safe forms for:
+
+- Typed knob dry-runs.
+- Spice/resource state inspection.
+- Event dry-run planning.
+- Economy bundle dry-run planning.
+
+These forms are intentionally preview-first. They make the plan visible before any write gate can matter.
+
+## New Admin Gates
+
+The content expansion adds separate gates so operators can expose discovery without enabling writes:
+
+```env
+DUNE_ADMIN_CATALOG_ENABLED=true
+DUNE_ADMIN_TYPED_KNOBS_ENABLED=false
+DUNE_ADMIN_EVENT_EXECUTION_ENABLED=false
+DUNE_ADMIN_BUNDLE_MUTATIONS_ENABLED=false
+```
+
+Gate behavior:
+
+- `DUNE_ADMIN_CATALOG_ENABLED`: controls read-only catalog endpoints.
+- `DUNE_ADMIN_TYPED_KNOBS_ENABLED`: controls typed config writes only. Typed dry-runs still work.
+- `DUNE_ADMIN_EVENT_EXECUTION_ENABLED`: controls event execution. Event creation and dry-run planning still work.
+- `DUNE_ADMIN_BUNDLE_MUTATIONS_ENABLED`: controls economy bundle execution. Bundle dry-runs still work.
+
+Existing gates still apply:
+
+```env
+DUNE_ADMIN_MUTATIONS_ENABLED=true
+DUNE_ADMIN_ITEM_GRANTS_ENABLED=true
+DUNE_ADMIN_GM_COMMANDS_ENABLED=false
+DUNE_GM_COMMAND_PAYLOAD_VERIFIED=false
+```
+
+Write confirmation phrases:
+
+```text
+WRITE TYPED KNOBS
+EXECUTE BUNDLE
+MOVE OFFLINE PLAYER
+RUN GM COMMAND
+```
+
+## Typed Gameplay Knobs
+
+`GET /api/settings/typed-knobs` returns the typed knob registry and current values. `POST /api/settings/typed-knobs` accepts:
+
+```json
+{
+  "dry_run": true,
+  "updates": {
+    "globalMiningMultiplier": "2.5"
+  }
+}
+```
+
+For Deep Desert spice caps, the dry-run body can use structured caps:
+
+```json
+{
+  "dry_run": true,
+  "updates": {
+    "spiceDeepDesertCaps": {
+      "Medium": {"primed": 24, "active": 24},
+      "Large": {"primed": 3, "active": 3}
+    }
+  }
+}
+```
+
+Current typed knobs:
+
+| ID | File | Section/key | Confidence | Risk |
+| --- | --- | --- | --- | --- |
+| `spiceDeepDesertCaps` | `UserGame.ini` | `[/Script/DuneSandbox.SpiceHarvestingSystem] m_PerMapSystemSettings` | high | medium |
+| `sandstormEnabled` | `UserEngine.ini` | `[ConsoleVariables] Sandstorm.Enabled` | high | low |
+| `sandstormTreasureEnabled` | `UserEngine.ini` | `[ConsoleVariables] Sandstorm.Treasure.Enabled` | moderate | medium |
+| `coriolisAutoSpawnEnabled` | `UserGame.ini` | `[/Script/DuneSandbox.SandStormConfig] m_bCoriolisAutoSpawnEnabled` | high | medium |
+| `globalMiningMultiplier` | `UserEngine.ini` | `[ConsoleVariables] Dune.GlobalMiningOutputMultiplier` | high | low |
+| `vehicleMiningMultiplier` | `UserEngine.ini` | `[ConsoleVariables] Dune.GlobalVehicleMiningOutputMultiplier` | high | low |
+| `pvpResourceMultiplier` | `UserEngine.ini` | `[ConsoleVariables] SecurityZones.PvpResourceMultiplier` | high | low |
+| `forcePvpAllPartitions` | `UserGame.ini` | `[/Script/DuneSandbox.PvpPveSettings] m_bShouldForceEnablePvpOnAllPartitions` | high | medium |
+| `securityZonesEnabled` | `UserGame.ini` | `[/Script/DuneSandbox.SecurityZonesSubsystem] m_bAreSecurityZonesEnabled` | high | medium |
+| `buildingShelterThreshold` | `UserGame.ini` | `[/Script/DuneSandbox.ShelterSettings] m_BuildingShelterThreshold` | moderate | experimental |
+| `placeableShelterThreshold` | `UserGame.ini` | `[/Script/DuneSandbox.ShelterSettings] m_PlaceableShelterThreshold` | moderate | experimental |
+| `shelteredProtectionThreshold` | `UserGame.ini` | `[/Script/DuneSandbox.HydrationSubsystem] ShelteredProtectionThreshold` | low | experimental |
+
+Typed writes create a backup under `backups/admin-panel` before writing the config file. Most of these values require restarting the affected map containers.
+
+The typed layer deliberately does not expose Coriolis cycle seed, DB wipe, or cycle-end restart fields.
+
+## Economy Bundle Plans
+
+`POST /api/admin/bundle` produces a single audited plan for currency, XP, and item grants. Default behavior is dry-run:
+
+```json
+{
+  "dry_run": true,
+  "currency": [
+    {"player_controller_id": 123, "currency_id": 1, "amount": 1000, "mode": "add"}
+  ],
+  "xp": [
+    {"player_id": 123, "track_type": "Combat", "amount": 1000, "mode": "add"}
+  ],
+  "items": [
+    {"account_id": 456, "template_id": "SolarisCoin", "stack_size": 1}
+  ]
+}
+```
+
+Execution requires all of:
+
+- `DUNE_ADMIN_MUTATIONS_ENABLED=true`
+- `DUNE_ADMIN_BUNDLE_MUTATIONS_ENABLED=true`
+- `DUNE_ADMIN_ITEM_GRANTS_ENABLED=true` for item rows
+- `confirm: "EXECUTE BUNDLE"`
+
+Rollback is compensating work from the audit record: set currency back, set XP back through the specialization function, and delete or adjust granted item rows.
+
+## Offline Player Recovery
+
+`POST /api/admin/player-recovery/offline-teleport` previews or executes the mapped database function:
+
+```sql
+dune.admin_move_offline_player_to_partition(
+  in_fls_id text,
+  in_target_partition_id bigint,
+  in_target_location dune.vector
+)
+```
+
+Dry-run body:
+
+```json
+{
+  "dry_run": true,
+  "account_id": 456,
+  "partition_id": 12,
+  "location": {"x": 0, "y": 0, "z": 0}
+}
+```
+
+The endpoint refuses online players. Execution requires:
+
+- `DUNE_ADMIN_MUTATIONS_ENABLED=true`
+- `confirm: "MOVE OFFLINE PLAYER"`
+
+Rollback is another offline move using the previous partition/location recorded in the audit context. Confidence is moderate because the function contract is mapped, but live recovery should still be validated on a non-critical character first.
+
+## Spice and Resource Inspection
+
+`POST /api/admin/spice-fields/inspect` is read-only. It queries:
+
+- `dune.spicefield_types`
+- `dune.spicefield_server_availability`
+- grouped `dune.resourcefield_state`
+- the current `spiceDeepDesertCaps` typed knob value
+
+Use it before and after Deep Desert cap changes, then validate with:
+
+```sql
+select * from dune.spicefield_types order by map, field_kind_id;
+
+select map,dimension_index,field_kind_id,count(*),sum(value_remaining)
+from dune.resourcefield_state
+group by 1,2,3
+order by 1,2,3;
+```
+
+## Event Orchestrator
+
+Events are persisted in:
+
+```text
+backups/admin-panel/events.json
+```
+
+Supported action types:
+
+| Type | Behavior |
+| --- | --- |
+| `announcement` | Plans a call to `/api/ops/announcement`. |
+| `restart` | Plans a restart schedule with execution disabled in the action payload. |
+| `typed-knob-plan` | Plans typed knob updates only. |
+| `economy-bundle` | Plans an economy bundle with `dry_run=true`. |
+| `spice-cap-proposal` | Plans Deep Desert spice cap typed knob changes. |
+
+Dry-run example:
+
+```json
+{
+  "name": "Deep Desert spice proposal",
+  "actions": [
+    {
+      "type": "spice-cap-proposal",
+      "caps": {
+        "Medium": {"primed": 24, "active": 24},
+        "Large": {"primed": 3, "active": 3}
+      }
+    }
+  ]
+}
+```
+
+`POST /api/events/run` remains blocked unless `DUNE_ADMIN_EVENT_EXECUTION_ENABLED=true`. In the current v1 implementation, dry-run-only actions still do not perform underlying writes during event execution; they record the planned action and tell the operator which dedicated endpoint to use. Confidence: high that this is fail-closed, moderate that it is sufficient for real event automation without a later worker loop.
+
+## Blocked in v1
+
+The admin expansion does not implement:
+
+- Native GM command execution.
+- True new maps, cooked assets, physics, or algorithms.
+- Raw recipe/journey/vehicle DB grants.
+- Coriolis wipe/cycle mutation controls.
+- Ordinary resource-node respawn mutation beyond documented config candidates.
+
+Those areas need stronger evidence, safe DB functions, or cooked asset/plugin/binary work before they should move out of the catalog.
+
+## Regression Tests
+
+The safe-surface expansion has a focused test target:
+
+```bash
+python3 scripts/test-admin-panel-safe-surfaces.py
+```
+
+It runs under a temporary `ADMIN_WORKSPACE`, so it does not edit the live `.env`, `config/`, or `backups/` paths. `make validate` runs this test after the existing map-watch tests.
+
+Current coverage:
+
+- Catalog schema and groups.
+- Typed knob value validation.
+- Typed config writes with backups in a temporary workspace.
+- Deep Desert spice cap rendering from structured JSON.
+- Event dry-run planning.
+- Event persistence and cancellation.
+- Event execution blocked by default.
 
 ## Restart Announcements
 

@@ -87,9 +87,10 @@ Forward `7777-7785/udp` from the router to the host for the full standing farm.
 
 Forward `7777-7806/udp` from the router to the host for the full 30-partition warm pool.
 
-Keep these closed publicly unless client testing proves otherwise:
+Forward `7888-7917/udp` from the router to the host for the full 30-partition warm pool when your deployment uses the paired IGW ports for live-client routing or server-browser checks. These are the IGW ports paired with the gameplay ports.
 
-- `7888-7917/udp`: IGW/S2S ports, currently working on the Docker network.
+Keep these closed publicly:
+
 - `15431/tcp`, `15672/tcp`, `15673/tcp`, `18080/tcp`: local debug/admin surfaces.
 
 Forward `31982/tcp` when using the live client through Funcom/FLS. Gateway advertises this as the game RabbitMQ endpoint during login; if it advertises Docker-internal `game-rmq:5672`, the client fails before gameplay UDP starts.

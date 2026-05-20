@@ -102,6 +102,54 @@ dune.player_virtual_currency_balances
 
 It supports add/set by `(player_controller_id, currency_id)`.
 
+## Economy Bundle Plans
+
+The panel exposes:
+
+```text
+POST /api/admin/bundle
+```
+
+This endpoint is a planning wrapper around the existing currency, XP, and item grant paths. It defaults to `dry_run=true` and returns a combined plan without writing.
+
+Dry-run request shape:
+
+```json
+{
+  "dry_run": true,
+  "currency": [
+    {"player_controller_id": 123, "currency_id": 1, "amount": 1000, "mode": "add"}
+  ],
+  "xp": [
+    {"player_id": 123, "track_type": "Combat", "amount": 1000, "mode": "add"}
+  ],
+  "items": [
+    {"account_id": 456, "template_id": "SolarisCoin", "stack_size": 1}
+  ]
+}
+```
+
+Execution requires:
+
+```env
+DUNE_ADMIN_MUTATIONS_ENABLED=true
+DUNE_ADMIN_BUNDLE_MUTATIONS_ENABLED=true
+```
+
+Item rows also require:
+
+```env
+DUNE_ADMIN_ITEM_GRANTS_ENABLED=true
+```
+
+The execution confirmation phrase is:
+
+```text
+EXECUTE BUNDLE
+```
+
+Rollback is compensating mutation from the audit record. There is no database transaction spanning the helper calls yet, so broad bundles should stay dry-run until the target rows are confirmed.
+
 ## Specialization XP
 
 The panel uses:
@@ -164,7 +212,7 @@ dune.reset_journey_story_nodes_for_player(...)
 
 These functions explicitly reject some operations when the player is online. The panel does not expose them yet because story node IDs and reward semantics need mapping.
 
-## Offline Player Teleport
+## Offline Player Teleport / Recovery
 
 The mapped safe movement functions are:
 
@@ -190,3 +238,52 @@ where id = player_pawn_id;
 ```
 
 The command uses `dune.accounts.user` as the FLS/user id and `dune.player_state.character_name` for human-facing names.
+
+The admin panel endpoint is:
+
+```text
+POST /api/admin/player-recovery/offline-teleport
+```
+
+Dry-run request shape:
+
+```json
+{
+  "dry_run": true,
+  "account_id": 456,
+  "partition_id": 12,
+  "location": {"x": 0, "y": 0, "z": 0}
+}
+```
+
+Execution requires:
+
+```env
+DUNE_ADMIN_MUTATIONS_ENABLED=true
+```
+
+and confirmation:
+
+```text
+MOVE OFFLINE PLAYER
+```
+
+The panel resolves `account_id` to `dune.accounts.user` and refuses players whose `online_status` is `Online`. Confidence is moderate: the DB function is mapped, but recovery should be validated on a disposable/offline character before use on valuable characters.
+
+## Spice and Resource Field Inspection
+
+The read-only endpoint is:
+
+```text
+POST /api/admin/spice-fields/inspect
+```
+
+It reads:
+
+```sql
+dune.spicefield_types
+dune.spicefield_server_availability
+dune.resourcefield_state
+```
+
+The endpoint is intended to validate typed Deep Desert cap changes before and after restart. It does not write DB resource-field rows.

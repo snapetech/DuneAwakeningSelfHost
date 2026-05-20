@@ -15,6 +15,12 @@ STATIC_DIR = pathlib.Path(os.environ.get("STATIC_DIR", "/srv/dash-public-site"))
 DATABASE = os.environ.get("DUNE_DATABASE", "dune_sb_1_4_0_0")
 WIDTH = 1600
 HEIGHT = 1600
+PUBLIC_VIEWBOX_WIDTH = 2133.333
+PUBLIC_X_SCALE = PUBLIC_VIEWBOX_WIDTH / WIDTH
+PEAKS_FILE = pathlib.Path(os.environ.get(
+    "DUNE_PLAYER_PEAKS_FILE",
+    str(DUNE_ROOT / "backups" / "admin-panel" / "player-peaks.json"),
+))
 
 
 def env_file_values(path):
@@ -123,6 +129,10 @@ def project(x, y):
     return clamp(u * WIDTH, 0, WIDTH), clamp(v * HEIGHT, 0, HEIGHT)
 
 
+def public_x(x):
+    return float(x) * PUBLIC_X_SCALE
+
+
 def map_image_href(source_map):
     if source_map.exists():
         encoded = base64.b64encode(source_map.read_bytes()).decode("ascii")
@@ -144,24 +154,27 @@ def render_svg(players, generated_at, image_href):
     for player in hagga:
         x, y = project(player["x"], player["y"])
         name = html.escape(str(player.get("character_name") or "Player"))
-        label_x = clamp(x + 16, 10, WIDTH - 180)
+        sx = public_x(x)
+        label_x = clamp(sx + 16, 10, PUBLIC_VIEWBOX_WIDTH - 180)
         label_y = clamp(y - 14, 24, HEIGHT - 20)
         markers.append(
-            f'<g><circle cx="{x:.1f}" cy="{y:.1f}" r="10" class="dot"/>'
+            f'<g><circle cx="{sx:.1f}" cy="{y:.1f}" r="10" class="dot"/>'
             f'<text x="{label_x:.1f}" y="{label_y:.1f}" class="label">{name}</text></g>'
         )
     empty = ""
     if not hagga:
         empty = f'<text x="{WIDTH / 2}" y="{HEIGHT / 2}" class="empty">No online Hagga Basin positions.</text>'
-    return f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {WIDTH} {HEIGHT}" role="img" aria-label="Hagga Basin live player map">
+    return f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {PUBLIC_VIEWBOX_WIDTH:.3f} {HEIGHT}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Hagga Basin live player map">
 <style>
 .shade{{fill:rgba(4,5,4,.28)}}.grid{{stroke:#f1d08a;stroke-width:1;opacity:.24}}.dot{{fill:#78cf7a;stroke:#071007;stroke-width:4}}.label{{fill:#fff;font:700 24px system-ui,sans-serif;paint-order:stroke;stroke:#0b0d0a;stroke-width:7}}.meta{{fill:#c7bba9;font:20px system-ui,sans-serif}}.empty{{fill:#f3eadb;font:26px system-ui,sans-serif;text-anchor:middle;paint-order:stroke;stroke:#0b0d0a;stroke-width:6}}
 </style>
-<image href="{image_href}" x="0" y="0" width="{WIDTH}" height="{HEIGHT}" preserveAspectRatio="xMidYMid meet"/>
+<g transform="scale({PUBLIC_X_SCALE:.6f} 1)">
+<image href="{image_href}" x="0" y="0" width="{WIDTH}" height="{HEIGHT}" preserveAspectRatio="none"/>
 <rect x="0" y="0" width="{WIDTH}" height="{HEIGHT}" class="shade"/>
 {''.join(grid)}
+</g>
 <text x="22" y="38" class="meta">NW</text>
-<text x="{WIDTH - 56}" y="{HEIGHT - 24}" class="meta">SE</text>
+<text x="{PUBLIC_VIEWBOX_WIDTH - 56:.1f}" y="{HEIGHT - 24}" class="meta">SE</text>
 <text x="22" y="{HEIGHT - 24}" class="meta">Updated {html.escape(generated_at)}</text>
 {''.join(markers)}
 {empty}
@@ -169,9 +182,50 @@ def render_svg(players, generated_at, image_href):
 '''
 
 
+def update_daily_peak(count, now):
+    today = now.strftime("%Y-%m-%d")
+    now_text = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    data = {"days": {}}
+    try:
+        if PEAKS_FILE.exists():
+            data = json.loads(PEAKS_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        data = {"days": {}}
+    days = data.setdefault("days", {})
+    day = days.setdefault(today, {})
+    previous_peak = int(day.get("peak") or 0)
+    if count >= previous_peak:
+        day["peak"] = int(count)
+        day["peakAt"] = now_text
+    else:
+        day["peak"] = previous_peak
+    day["last"] = int(count)
+    day["lastAt"] = now_text
+    data["today"] = today
+    data["peakToday"] = int(day.get("peak") or count)
+    data["peakTodayAt"] = day.get("peakAt") or now_text
+    data["lastCount"] = int(count)
+    data["lastCountAt"] = now_text
+    try:
+        PEAKS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = PEAKS_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+        tmp.replace(PEAKS_FILE)
+    except Exception:
+        pass
+    return {
+        "date": today,
+        "peak": data["peakToday"],
+        "peakAt": data["peakTodayAt"],
+        "last": int(count),
+        "lastAt": now_text,
+    }
+
+
 def main():
     STATIC_DIR.mkdir(parents=True, exist_ok=True)
-    generated = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    generated_dt = datetime.datetime.now(datetime.timezone.utc)
+    generated = generated_dt.strftime("%Y-%m-%d %H:%M UTC")
     try:
         players = load_rows()
         ok = True
@@ -190,10 +244,14 @@ def main():
         }
         for p in players
     ]
+    daily_peak = update_daily_peak(len(public_players), generated_dt)
     snapshot = {
         "ok": ok,
         "generatedAt": generated,
         "onlineCount": len(public_players),
+        "peakToday": daily_peak["peak"],
+        "peakTodayAt": daily_peak["peakAt"],
+        "peakDate": daily_peak["date"],
         "haggaPlotted": sum(1 for p in public_players if p["onHaggaMap"]),
         "players": public_players,
         "error": error,

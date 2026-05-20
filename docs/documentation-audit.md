@@ -27,7 +27,7 @@ This page records documentation coverage gaps found during repo review and the c
 | Admin mutations | Recipe unlocks and journey/skill-like unlocks are intentionally not implemented. | Extend `docs/admin-mutation-map.md` only after safe DB contracts and refresh semantics are proven. |
 | Image/version drift | README and teardown pin observations to image tag `1963158-0-shipping`. | Re-run `scripts/inspect-images.sh`, `scripts/discover-player-state.sh`, and validation after every Steam tool update. |
 | Kubernetes manifests | The Kubernetes doc is currently design documentation only. | Add generated manifests or a Helm chart only after the Compose topology is stable enough to avoid duplicating service definitions by hand. |
-| Public networking | IGW/S2S UDP forwarding is still conservative and based on local observations. | Update `docs/operations.md` and `docs/full-farm.md` after live-client tests prove whether public IGW forwarding is needed. |
+| Public networking | Generic networking docs now cover gameplay UDP, optional paired IGW UDP, RMQ TCP, and backup-before-change guidance for router NAT/hairpin rules. | Keep deployment-specific IPs and router rule dumps in private operator backups, not public docs. |
 | Admin panel network probes | The panel exposes local/upstream health probes, but no real-outage examples are recorded. | Add examples once probe output has been observed during a real outage. |
 | Research docs location | `SERVER_CONFIG_KEYS.md`, `SERVER_CONFIG_KEY_INDEX.md`, `SERVER_BINARY_CONFIG_CANDIDATES.md`, and `DEEP_DESERT_EVENT_KNOBS.md` live at repo root because they are generated/research-heavy. | Move them under `docs/` later if they become stable operator docs rather than research indexes. |
 

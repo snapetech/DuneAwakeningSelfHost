@@ -4,7 +4,7 @@ Dune self-hosting advertises one external address to Funcom/FLS and to clients.
 For a public server this should normally stay set to the public WAN address:
 
 ```dotenv
-EXTERNAL_ADDRESS=24.109.206.134
+EXTERNAL_ADDRESS=<public-wan-ip>
 ```
 
 Do not switch this value between public and LAN addresses for day-to-day use.
@@ -30,6 +30,17 @@ Docker port-publish problem. The LAN path is not reaching the host.
 
 Use one stable public advertised address and make LAN clients able to reach that
 same address internally.
+
+Do not change working hairpin/NAT reflection rules casually. Before touching
+router NAT, export the router config or capture the current forwarding/NAT state.
+For routers that expose shell access, a read-only snapshot should include the
+port-forward definitions and NAT/filter rules. Example shape:
+
+```bash
+mkdir -p backups/router-inspection
+ssh <router-user>@<router-lan-ip> '<dump-port-forward-config>; iptables -t nat -S; iptables -S' \
+  > "backups/router-inspection/router-$(date -u +%Y%m%dT%H%M%SZ).txt"
+```
 
 Preferred order:
 
@@ -101,6 +112,31 @@ sudo route -n add -host <public-server-ip> <dune-host-lan-ip>
 
 Host-side reflection must still be enabled on the Dune host.
 
+## Known-Good Router Baseline
+
+For a working deployment, keep a private operator note or backup that records:
+
+```text
+Router model/firmware
+WAN/public address
+Dune host LAN address
+Gameplay UDP forwards for the selected layout
+IGW UDP forwards if used by that layout
+GAME_RMQ_PUBLIC_PORT TCP forward
+Any NAT reflection/hairpin/loopback toggle or rule
+```
+
+For router-managed hairpin, the private backup should show both:
+
+```text
+DNAT/port-forward rules for the public Dune ports
+A LAN-to-LAN reflection/masquerade path for same-LAN clients using the public address
+```
+
+Do not remove or rewrite a working LAN-to-LAN reflection/masquerade rule without
+a router backup and a rollback plan. It may be part of the same-LAN
+public-listing join path.
+
 ## Validation
 
 Watch for packets while attempting to join from the LAN:
@@ -132,9 +168,9 @@ Forward public gameplay UDP to the Dune host for external players:
 7777-7806/udp -> <dune-host-lan-ip>
 ```
 
-The current Compose layout also publishes IGW/S2S UDP ports `7888-7917` for
-diagnostics. Keep those closed publicly unless client testing proves they are
-required by the live routing path.
+For the full warm-pool layout, the paired IGW range is `7888-7917/udp`. If your
+layout uses those ports for live-client routing or server-browser checks,
+forward them to the Dune host along with the gameplay UDP range.
 
 For live-client login, the game RabbitMQ endpoint advertised by Gateway must be
 reachable from the client. In the public self-host layout that means forwarding

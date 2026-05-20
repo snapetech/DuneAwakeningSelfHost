@@ -155,6 +155,7 @@ Panel pages:
 | Players | Online/offline roster, player detail, account/controller/pawn context, currency, XP, inventory, and location views. |
 | Settings | Edits for selected `.env` and config values, with backups. |
 | Admin Actions | Database backups and guarded mutations for currency, XP, keystones, item grants, stack edits, and item deletion. |
+| Catalog | Content insertion evidence catalog, typed knob dry-runs, spice/resource inspection, event dry-runs, and economy bundle dry-runs. |
 
 If the local published admin port accepts TCP but returns no HTTP bytes after a container recreate, refresh the observed Docker bridge neighbor entries:
 
@@ -163,7 +164,7 @@ If the local published admin port accepts TCP but returns no HTTP bytes after a 
 curl -H 'Host: admin-panel:8080' http://127.0.0.1:${DUNE_ADMIN_HOST_PORT:-18081}/api/status
 ```
 
-More detail: [`docs/admin-panel.md`](docs/admin-panel.md).
+More detail: [`docs/admin-panel.md`](docs/admin-panel.md), [`docs/admin-safe-content-api.md`](docs/admin-safe-content-api.md), and [`CONTENT_INSERTION_SURFACES.md`](CONTENT_INSERTION_SURFACES.md).
 
 ## Operations
 
@@ -272,6 +273,7 @@ Full 30-partition warm pool:
 
 ```text
 7777-7806/udp
+7888-7917/udp
 ```
 
 Live-client login also receives the game RabbitMQ address from FLS before gameplay UDP starts. Forward:
@@ -280,7 +282,7 @@ Live-client login also receives the game RabbitMQ address from FLS before gamepl
 GAME_RMQ_PUBLIC_PORT tcp, default 31982/tcp
 ```
 
-Do not forward Postgres, RabbitMQ management, the admin panel, or local debug ports. The Compose files may expose IGW/S2S UDP ports for local debugging; keep those closed publicly unless a live-client capture proves they are required.
+Do not forward Postgres, RabbitMQ management, the admin panel, or local debug ports. For full warm-pool deployments, the paired IGW UDP range is `7888-7917`; forward it only when your live-client routing or server-browser checks require it, and back up working router rules before changing them.
 
 For LAN players joining through the public listing, keep `EXTERNAL_ADDRESS` set to the public address and use LAN reflection/hairpin routing. Do not flip the advertised address between public and private for normal operation. See [`docs/lan-reflection.md`](docs/lan-reflection.md).
 

@@ -12,13 +12,13 @@ The relevant section is `[ Battlegroup ]`.
 
 ## Current Default
 
-This repository defaults inbound transfers to disabled:
+This repository allows inbound transfers from public, official, private, and self-hosted battlegroups:
 
 ```ini
-IncomingCharacterTransfers=0
+IncomingCharacterTransfers=3
 ```
 
-That blocks characters transferring into this battlegroup from public/official worlds and from other private/self-hosted battlegroups.
+That allows characters to transfer into this battlegroup from public, official, private, and self-hosted origins.
 
 ## Settings
 
@@ -28,7 +28,7 @@ These settings are exposed in the admin panel under Settings -> Director Charact
 | --- | --- | --- |
 | `ShouldDeleteOriginCharactersDuringTransfers` | `true` | Deletes the origin character after a successful transfer into this battlegroup. |
 | `AcceptOutgoingCharacterTransfers` | `true` | Allows characters on this battlegroup to transfer out. |
-| `IncomingCharacterTransfers` | `0` | Controls which origin server types may transfer characters into this battlegroup. |
+| `IncomingCharacterTransfers` | `3` | Controls which origin server types may transfer characters into this battlegroup. |
 | `ExportCharacterTimeout` | `900` | Seconds before the export query times out. |
 | `ImportCharacterTimeout` | `900` | Seconds before the import query times out. |
 | `FreeToTransferCharactersFrom` | `false` | Skips transfer token cost for transfers from this battlegroup. |
@@ -44,9 +44,11 @@ The Director binary for build `1963158` exposes these inbound rulesets, but its 
 ```text
 0 = DenyAll
 1 = AllowFromPrivateOnly
+2 = AllowFromOfficialOnly
+3 = AllowFromPrivateAndOfficial
 ```
 
-Use `0` for a closed world. Use `1` if you want to block public/official characters while still allowing transfers from other private/self-hosted battlegroups. String values such as `DenyAll` are present in the binary but fail this build's settings reload with a `JsonException`.
+Use `0` for a closed world, `1` to allow only private/self-hosted origins, `2` to allow only public/official origins, or `3` to allow both. String values such as `DenyAll` are present in the binary but fail this build's settings reload with a `JsonException`.
 
 ## Apply Changes
 
