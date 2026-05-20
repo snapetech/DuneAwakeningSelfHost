@@ -655,7 +655,7 @@ def fmt_bytes(value):
     return f"{value:.1f} {units[unit]}" if unit else f"{int(value)} {units[unit]}"
 
 
-def docker_container_stats():
+def docker_container_stats(live_stats=False):
     containers = docker_api(f"/containers/json?all=1&filters={urllib.parse.quote(json.dumps({'label': [f'com.docker.compose.project={DOCKER_COMPOSE_PROJECT}']}))}")
     rows = []
 
@@ -663,6 +663,13 @@ def docker_container_stats():
         container_id = container.get("Id", "")
         labels = container.get("Labels") or {}
         name = (container.get("Names") or [""])[0].lstrip("/")
+        base = {
+            "service": labels.get("com.docker.compose.service", name),
+            "name": name,
+            "status": container.get("State"),
+        }
+        if not live_stats:
+            return base
         try:
             stats = docker_api(f"/containers/{container_id}/stats?stream=false")
         except Exception as exc:
@@ -686,10 +693,7 @@ def docker_container_stats():
         net_tx = sum(int(v.get("tx_bytes") or 0) for v in networks.values())
         block_read = sum(int(v.get("value") or 0) for v in blkio if str(v.get("op", "")).lower() == "read")
         block_write = sum(int(v.get("value") or 0) for v in blkio if str(v.get("op", "")).lower() == "write")
-        return {
-            "service": labels.get("com.docker.compose.service", name),
-            "name": name,
-            "status": container.get("State"),
+        return base | {
             "cpuPercent": cpu_percent,
             "memory": f"{fmt_bytes(mem_usage)} / {fmt_bytes(mem_limit)}",
             "memoryPercent": round((mem_usage / mem_limit) * 100, 1) if mem_limit else None,
@@ -1147,7 +1151,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.json(self.optimization_signals())
             elif parsed.path == "/api/ops/resources":
                 self.require_token()
-                self.json(self.resource_snapshot())
+                params = urllib.parse.parse_qs(parsed.query)
+                self.json(self.resource_snapshot(live_stats=(params.get("live") or ["0"])[0] == "1"))
             elif parsed.path == "/api/ops/runbook":
                 self.require_token()
                 self.json(self.ops_runbook())
@@ -1855,11 +1860,11 @@ class Handler(BaseHTTPRequestHandler):
             ],
         }
 
-    def resource_snapshot(self):
+    def resource_snapshot(self, live_stats=False):
         disk = shutil.disk_usage(ROOT)
         docker_error = None
         try:
-            containers = docker_container_stats()
+            containers = docker_container_stats(live_stats=live_stats)
         except Exception as exc:
             docker_error = str(exc)
             containers = []
@@ -1881,6 +1886,7 @@ class Handler(BaseHTTPRequestHandler):
             "docker": {
                 "socket": DOCKER_SOCKET,
                 "composeProject": DOCKER_COMPOSE_PROJECT,
+                "liveStats": live_stats,
                 "error": docker_error,
                 "containers": containers,
             },
@@ -2632,8 +2638,9 @@ function resourcePanel(data){
   const load = host.load || {};
   const docker = data.docker || {};
   const containers = docker.containers || [];
+  const liveStats = !!docker.liveStats;
   const containerRows = containers.length ? `<div class="tableWrap"><table class="dataDense"><thead><tr><th>Service</th><th>Status</th><th>CPU</th><th>Memory</th><th>Net I/O</th><th>Block I/O</th><th>PIDs</th></tr></thead><tbody>${containers.map(r => `<tr><td>${esc(r.service || r.name)}</td><td>${esc(r.status || r.error || '')}</td><td>${esc(r.cpuPercent ?? '')}%</td><td>${esc(r.memory || '')}<br><span class="muted">${esc(r.memoryPercent ?? '')}%</span></td><td>${esc(r.netIO || '')}</td><td>${esc(r.blockIO || '')}</td><td>${esc(r.pids ?? '')}</td></tr>`).join('')}</tbody></table></div>` : `<div class="muted">${esc(docker.error || 'No container stats available.')}</div>`;
-  return `<div class="card resourcePanel"><div class="sectionHeader"><h2>Realtime Resources</h2><div class="toolbar"><input class="filterInput resourceFilter" placeholder="Filter containers"><span class="pill">${esc(data.generatedAt || '')}</span><button id="toggleAutoRefreshBtn">${autoRefresh ? 'Pause live refresh' : 'Resume live refresh'}</button><button id="refreshResourcesBtn">Refresh</button></div></div><div class="metricGrid">${metric('Host Load', `${load.one ?? '?'} / ${load.five ?? '?'} / ${load.fifteen ?? '?'}`)}${metric('Host Memory', `${fmtBytes(mem.usedBytes)} / ${fmtBytes(mem.totalBytes)}`, (mem.usedPercent || 0) > 90 ? 'dangerText' : '')}${metric('Workspace Disk', `${fmtBytes(disk.usedBytes)} / ${fmtBytes(disk.totalBytes)}`, (disk.usedPercent || 0) > 90 ? 'dangerText' : '')}${metric('Containers', containers.length)}</div>${resourceHistoryPanel()}${resourceViz(data)}<details><summary>Container Table</summary>${containerRows}</details></div>`;
+  return `<div class="card resourcePanel"><div class="sectionHeader"><h2>Resources</h2><div class="toolbar"><input class="filterInput resourceFilter" placeholder="Filter containers"><span class="pill">${esc(data.generatedAt || '')}</span><span class="pill">${liveStats ? 'live stats' : 'fast inventory'}</span><button id="toggleAutoRefreshBtn">${autoRefresh ? 'Pause refresh' : 'Resume refresh'}</button><button id="refreshResourcesBtn">Refresh</button><button id="sampleResourcesBtn">Sample live stats</button></div></div><div class="metricGrid">${metric('Host Load', `${load.one ?? '?'} / ${load.five ?? '?'} / ${load.fifteen ?? '?'}`)}${metric('Host Memory', `${fmtBytes(mem.usedBytes)} / ${fmtBytes(mem.totalBytes)}`, (mem.usedPercent || 0) > 90 ? 'dangerText' : '')}${metric('Workspace Disk', `${fmtBytes(disk.usedBytes)} / ${fmtBytes(disk.totalBytes)}`, (disk.usedPercent || 0) > 90 ? 'dangerText' : '')}${metric('Containers', containers.length)}</div>${resourceHistoryPanel()}${resourceViz(data)}<details><summary>Container Table</summary>${containerRows}</details></div>`;
 }
 function envEditor(payload){
   const values = payload.values || {};
@@ -2726,6 +2733,7 @@ function setDetails(open){
 }
 function wireResourceControls(root=document){
   root.querySelector('#refreshResourcesBtn')?.addEventListener('click', refreshResources);
+  root.querySelector('#sampleResourcesBtn')?.addEventListener('click', () => refreshResources(true));
   root.querySelector('#toggleAutoRefreshBtn')?.addEventListener('click', () => {
     autoRefresh = !autoRefresh;
     sessionStorage.setItem('duneAdminAutoRefresh', autoRefresh ? 'on' : 'off');
@@ -2873,14 +2881,19 @@ async function ops(serial=loadSerial){
     if (autoRefresh && current === 'ops') refreshResources().catch(() => {});
   }, 5000);
 }
-async function refreshResources(){
+async function refreshResources(liveStats=false){
   const button = document.getElementById('refreshResourcesBtn');
   if (button) {
     button.disabled = true;
     button.textContent = 'Refreshing';
   }
+  const sampleButton = document.getElementById('sampleResourcesBtn');
+  if (sampleButton) {
+    sampleButton.disabled = true;
+    sampleButton.textContent = liveStats ? 'Sampling' : 'Sample live stats';
+  }
   try {
-    const resources = await api('/api/ops/resources');
+    const resources = await api('/api/ops/resources' + (liveStats ? '?live=1' : ''));
     const container = document.getElementById('resources');
     if (!container) return;
     container.innerHTML = resourcePanel(resources);
@@ -2895,6 +2908,10 @@ async function refreshResources(){
     if (button && document.body.contains(button)) {
       button.disabled = false;
       button.textContent = 'Refresh';
+    }
+    if (sampleButton && document.body.contains(sampleButton)) {
+      sampleButton.disabled = false;
+      sampleButton.textContent = 'Sample live stats';
     }
   }
 }
