@@ -3308,6 +3308,19 @@ INDEX = r"""<!doctype html>
     .metric { border:1px solid var(--line); border-radius:8px; background:var(--panel2); padding:12px; min-height:82px; }
     .metric .label { color:var(--muted); font-size:12px; }
     .metric .value { font-size:20px; font-weight:700; margin-top:6px; overflow-wrap:anywhere; }
+    .overviewTopGrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; margin-bottom:14px; }
+    .overviewMapShell .panelBand { margin-bottom:0; }
+    .overviewMapShell .haggaMap { aspect-ratio:16 / 10; max-height:calc(100vh - 260px); min-height:520px; }
+    .overviewMapShell .haggaMap svg { block-size:100%; inline-size:100%; aspect-ratio:auto; }
+    .summaryCard { position:relative; border:1px solid var(--line); border-radius:8px; background:var(--panel2); padding:10px 12px; min-height:74px; }
+    .summaryCard:focus-within, .summaryCard:hover { border-color:#53614d; }
+    .summaryCard h3 { margin:0 0 6px; }
+    .summaryValue { font-size:22px; font-weight:800; line-height:1; }
+    .summaryMeta { color:var(--muted); font-size:12px; margin-top:7px; }
+    .summaryCard .sparkSvg { height:28px; margin-top:5px; padding:4px; }
+    .summaryHover { position:fixed; z-index:14; top:92px; right:24px; display:none; width:min(920px,calc(100vw - 48px)); max-height:calc(100vh - 128px); overflow:auto; border:1px solid var(--line); border-radius:8px; background:var(--panel); box-shadow:0 18px 60px rgba(0,0,0,.55); padding:14px; }
+    .summaryCard:hover .summaryHover, .summaryCard:focus-within .summaryHover { display:block; }
+    .summaryHover .panelBand { margin:0; }
     .pill { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line); border-radius:999px; padding:5px 9px; background:#101310; color:var(--muted); font-size:12px; }
     .pill.ok { border-color:#315e31; color:var(--ok); }
     .pill.warn { border-color:#6d5624; color:var(--warn); }
@@ -3425,7 +3438,7 @@ INDEX = r"""<!doctype html>
     .hostNote { font-size:13px; line-height:1.35; }
     .hidden { display:none; }
     @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior:auto !important; transition:none !important; animation:none !important; } }
-    @media (max-width: 1100px) { .twoCol, .threeCol { grid-template-columns:1fr; } }
+    @media (max-width: 1100px) { .twoCol, .threeCol { grid-template-columns:1fr; } .overviewMapShell .haggaMap { aspect-ratio:1 / 1; min-height:0; max-height:none; } }
     @media (max-width: 820px) { header { align-items:flex-start; flex-direction:column; } main { grid-template-columns:1fr; } nav { position:static; height:auto; border-right:0; border-bottom:1px solid var(--line); } .tabs { grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); } .row { flex-wrap:wrap; } .barRow { grid-template-columns:1fr; gap:4px; } }
   </style>
 </head>
@@ -4139,6 +4152,20 @@ function healthViz(health){
     {label:'Attention', value:Math.max(verdicts.length - okVerdicts, 0), color:'var(--warn)'}
   ])}<div class="vizCard"><h3>Players By Map</h3>${spark(playerValues)}<div class="muted">${esc(playerValues.reduce((a,b)=>a+b,0))} reported players across ${esc(maps.length)} maps</div></div></div>`;
 }
+function overviewHealthCards(health){
+  const verdicts = health.verdicts || [];
+  const maps = health.mapStatus || [];
+  const okVerdicts = verdicts.filter(v => v.ok).length;
+  const onlineMaps = maps.filter(m => m.online).length;
+  const playerValues = maps.map(m => Number(m.players || 0));
+  const offlineMaps = Math.max(maps.length - onlineMaps, 0);
+  const attentionVerdicts = Math.max(verdicts.length - okVerdicts, 0);
+  const players = playerValues.reduce((a,b)=>a+b,0);
+  return `${summaryHoverCard('Map State', `${onlineMaps}/${maps.length || 0}`, `${offlineMaps} offline`, `<div class="panelBand"><h2>Map Online/Offline</h2>${mapTiles(maps)}${mapStatusTable(maps)}</div>`, offlineMaps ? 'dangerText' : 'ok')}${summaryHoverCard('Health Verdicts', okVerdicts, `${attentionVerdicts} attention`, `<div class="panelBand"><h2>Health Verdict</h2>${checks(verdicts)}</div>`, attentionVerdicts ? 'dangerText' : 'ok')}${summaryHoverCard('Players By Map', players, `${maps.length} maps`, `<div class="panelBand"><h2>Players By Map</h2>${spark(playerValues)}${mapStatusTable(maps)}</div>`)}`;
+}
+function summaryHoverCard(label, value, meta, content, tone=''){
+  return `<div class="summaryCard" tabindex="0"><h3>${esc(label)}</h3><div class="summaryValue ${tone}">${esc(value)}</div><div class="summaryMeta">${esc(meta)}</div><div class="summaryHover" role="dialog" aria-label="${esc(label)} details">${content}</div></div>`;
+}
 function steamProfileCell(r){
   const platform = String(r?.platform_name || '');
   const platformId = String(r?.platform_id || '').trim();
@@ -4459,7 +4486,7 @@ async function overview(serial=loadSerial){
   const state = health;
   const summary = health.summary || {};
   const players = (state.farmState || []).reduce((sum, r) => sum + Number(r.connected_players || 0), 0);
-  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Overview</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="ops">Operations</button><button data-jump="mutations" class="primary">Admin Actions</button></div></div><div class="metricGrid">${metric('Ready Servers', `${summary.readyAlive ?? 0}/${summary.expectedPartitions ?? 0}`, summary.readyAlive === summary.expectedPartitions ? 'ok' : 'dangerText')}${metric('Online Maps', `${summary.onlineMaps ?? 0}/${summary.totalMaps ?? 0}`, summary.onlineMaps === summary.totalMaps ? 'ok' : 'dangerText')}${metric('Reported Players', players)}${metric('Characters', roster.counts?.total ?? 0)}</div><div class="twoCol"><div id="haggaBasinMap"><div class="panelBand"><h2>Hagga Basin Player Map</h2><div class="muted">Loading player positions...</div></div></div><div class="pageStack">${healthViz(health)}<div class="panelBand"><h2>Health Verdict</h2>${checks(health.verdicts)}</div></div></div>${actionGrid([{tab:'characters',label:'Open player roster',className:'primary'},{tab:'ops',label:'Restart / backup / map health'},{tab:'mutations',label:'Grant currency, XP, or items'},{tab:'settings',label:'Server settings'}])}<details class="panelBand"><summary>Map Details</summary>${mapTiles(health.mapStatus)}${mapStatusTable(health.mapStatus)}</details><details class="panelBand"><summary>Player Roster Preview</summary><div id="overviewRoster">${characterRosterPanel(roster)}</div></details><div id="detail"></div></div>`;
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Overview</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="ops">Operations</button><button data-jump="mutations" class="primary">Admin Actions</button></div></div><div class="overviewTopGrid">${metric('Ready Servers', `${summary.readyAlive ?? 0}/${summary.expectedPartitions ?? 0}`, summary.readyAlive === summary.expectedPartitions ? 'ok' : 'dangerText')}${metric('Online Maps', `${summary.onlineMaps ?? 0}/${summary.totalMaps ?? 0}`, summary.onlineMaps === summary.totalMaps ? 'ok' : 'dangerText')}${metric('Reported Players', players)}${metric('Characters', roster.counts?.total ?? 0)}${overviewHealthCards(health)}</div><div id="haggaBasinMap" class="overviewMapShell"><div class="panelBand"><h2>Hagga Basin Player Map</h2><div class="muted">Loading player positions...</div></div></div>${actionGrid([{tab:'characters',label:'Open player roster',className:'primary'},{tab:'ops',label:'Restart / backup / map health'},{tab:'mutations',label:'Grant currency, XP, or items'},{tab:'settings',label:'Server settings'}])}<details class="panelBand"><summary>Player Roster Preview</summary><div id="overviewRoster">${characterRosterPanel(roster)}</div></details><div id="detail"></div></div>`;
   document.querySelectorAll('#overviewRoster tbody tr').forEach(row => row.onclick = () => pickCharacter(row));
   makeRowsKeyboardFriendly(view);
   bindRosterFilters(view);
