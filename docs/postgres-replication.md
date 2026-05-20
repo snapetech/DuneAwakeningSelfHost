@@ -141,6 +141,15 @@ The timer runs hourly and keeps `DUNE_REPLICA_SNAPSHOT_KEEP_HOURS` hours of
 remote dumps. The default is 48 hours. Dumps are written on the remote host under
 `/srv/dune-postgres-replica/snapshots` when using the example path.
 
+Admin-triggered restart and shutdown maintenance also account for these layers.
+The stopped-world local maintenance backup remains the authoritative restore
+point. Its `postgres-layers.json` records primary streaming-replication status,
+and, when `POSTGRES_REMOTE_REPLICA_HOST` is set, attempts a remote standby
+snapshot through `scripts/replica-snapshot.sh`. Set
+`DUNE_ADMIN_MAINTENANCE_REPLICA_SNAPSHOT_ENABLED=false` if maintenance jobs
+should only record replica status and leave remote snapshots to the systemd
+timer.
+
 ## Restore And Failover
 
 Routine restore still uses `scripts/restore-state.sh` and is disruptive. After
