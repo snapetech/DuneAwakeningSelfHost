@@ -172,7 +172,9 @@ The script also receives the message as its first argument. Delivery attempts an
 
 The Ops tab can also schedule restart or shutdown jobs for restart-safe components, the service layer, all game maps, or key individual maps such as Survival, Overmap, Arrakeen, Harko Village, and Deep Desert. It does not stop or restart Postgres or RabbitMQ by default because replacing those services disconnects all running map servers.
 
-Scheduled maintenance defaults to dry-run mode. In dry-run mode, the job matures, records that it would have run, and does not touch containers. Executed jobs default to taking a maintenance backup before the Docker action runs. The backup includes a Postgres dump, config/env archive, and mounted `data/server-saved` / `data/rabbitmq` archives when those paths are available to the admin container.
+Scheduled maintenance defaults to dry-run mode. In dry-run mode, the job matures, records that it would have run, and does not touch containers. Executed restart jobs now use a stop-backup-start sequence: stop the selected game services, take the maintenance backup while they are down, then start/recreate the selected services. Executed shutdown jobs stop the selected services, take the maintenance backup, and leave them stopped. If the stop step fails, no backup or start is attempted. If the backup step fails during a restart, the selected services are left stopped so the failed backup can be investigated before the world is brought back online.
+
+Maintenance backups are written under `backups/admin-panel/maintenance/<utc-stamp>-<job-id>/`. Each backup includes a unique Postgres custom-format dump, config/env archive, and mounted `data/server-saved` / `data/rabbitmq` archives when those paths are available to the admin container.
 
 Actual execution is delegated to:
 
@@ -180,7 +182,7 @@ Actual execution is delegated to:
 DUNE_ADMIN_RESTART_COMMAND=/workspace/scripts/restart-target.sh
 ```
 
-`scripts/restart-target.sh` first uses Docker Compose when the Docker CLI is available. Inside the admin-panel container it falls back to the mounted Docker Engine socket and restarts containers by Compose labels:
+`scripts/restart-target.sh` first uses Docker Compose when the Docker CLI is available. Inside the admin-panel container it falls back to the mounted Docker Engine socket and operates on containers by Compose labels:
 
 ```env
 DUNE_RESTART_COMPOSE_PROJECT=dune_server
@@ -189,7 +191,7 @@ DUNE_RESTART_DOCKER_SOCKET=/var/run/docker.sock
 
 The Docker socket is privileged host control. Keep the admin panel bound to localhost or a trusted reverse proxy, require the admin token, and do not expose the admin hostname publicly. The script receives `DUNE_RESTART_JOB_ID`, `DUNE_RESTART_TARGET`, `DUNE_RESTART_SERVICES`, and `DUNE_RESTART_ACTION`, plus the target as its first argument.
 
-The Docker-socket fallback restarts existing containers. It does not recreate containers or apply changed environment variables; use `docker compose up -d --force-recreate ...` from the host for config changes.
+For admin-triggered restart jobs, the stop phase uses Docker stop, and the start phase uses Compose `up -d --force-recreate` when the Docker CLI is available. The Docker-socket fallback can stop, start, or restart existing containers, but it cannot recreate containers or apply changed environment variables; use the host Compose path for config-change maintenance.
 
 `scripts/restart-target.sh` refuses to stop or restart `postgres`, `admin-rmq`, or `game-rmq` unless `DUNE_RESTART_ALLOW_STATEFUL=true` is set for a deliberate maintenance window. If Postgres must be restarted, expect all game maps to need recovery afterward.
 
