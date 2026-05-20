@@ -7,9 +7,9 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=dune
-WorkingDirectory=/opt/DuneAwakeningSelfHost
+WorkingDirectory=-/opt/DuneAwakeningSelfHost
 Environment=DUNE_ADMIN_BOT_ENV_FILE=.env
-ExecStart=/opt/DuneAwakeningSelfHost/scripts/player-presence-announcer.py --loop
+ExecStart=/bin/sh -lc 'exec /opt/DuneAwakeningSelfHost/scripts/player-presence-announcer.py --loop'
 Restart=always
 RestartSec=5
 

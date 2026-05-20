@@ -2,7 +2,7 @@
 
 DASH is a Linux/Docker Compose operations harness for the official Steam-installed **Dune: Awakening Self-Hosted Server** package.
 
-It turns Funcom's self-host stack into a reproducible local layout with Compose services, operational scripts, a LAN-only admin panel, backup/recovery tooling, warm-pool map startup, watchdog recovery, restart announcements, and guarded admin actions.
+It turns Funcom's self-host stack into a reproducible local layout with Compose services, operational scripts, a LAN-only admin panel, backup/recovery tooling, warm-pool map startup, watchdog recovery, restart/player-presence announcements, and guarded admin actions.
 
 This repository does **not** contain, mirror, or license any Funcom server binaries, container images, Steam package files, game assets, live data, or secrets.
 
@@ -15,7 +15,7 @@ This repository does **not** contain, mirror, or license any Funcom server binar
 - Expanded standing farm: nine current travel targets
 - Full warm-pool target: 30 online map partitions
 - Admin surface: private LAN/VPN web panel. Token auth is optional and currently disabled by default for local trusted deployments.
-- Automation: map watchdog, startup/recovery helpers, scheduled restart planner, restart announcements, backups, and optional Postgres replica snapshots
+- Automation: map watchdog, startup/recovery helpers, scheduled restart planner, restart/player-presence announcements, backups, and optional Postgres replica snapshots
 
 Known working 30-map target:
 
@@ -44,6 +44,7 @@ That is the server-side readiness target. Live-client login, travel, and routing
 - Local admin panel with Overview, Ops, Security, Runbook, Players, Settings, and Admin Actions pages.
 - Hagga Basin player map that plots currently known online player coordinates from local database/runtime state.
 - Restart announcement scheduler that publishes verified in-game chat through game RabbitMQ as the configured announcer.
+- Optional player join/leave announcer that runs as a restartable host systemd service.
 - Scheduled restart planner with pre-restart notices, maintenance backups, service recreate/start, and post-start health checks.
 - Guarded admin writes for database backups, currency, XP, keystones, item grants, stack edits, and item deletion.
 - Experimental GM/cheat route research kept out of the live panel until the native payload route is verified.
@@ -316,6 +317,14 @@ Verify announcement delivery:
 
 The chat-command bridge is [`scripts/admin-chat-commands.py`](scripts/admin-chat-commands.py). It listens for configured command prefixes, checks approved admins, and can reply through the announcement path.
 
+The player-presence announcer is [`scripts/player-presence-announcer.py`](scripts/player-presence-announcer.py). It baselines current online players, then announces later joins/leaves through the same in-game announcement path. Install the host service with:
+
+```bash
+make install-player-presence-announcer-service ENV_FILE=.env
+```
+
+See [`docs/admin-bot.md`](docs/admin-bot.md) for templates, service checks, and reboot behavior.
+
 The native GM/cheat route remains research-only. It is not exposed as a live Admin Actions control because the RabbitMQ payload envelope is not verified. Probe and chat helper paths stay blocked unless all related gates are enabled:
 
 ```env
@@ -336,6 +345,7 @@ Start here:
 - [`docs/operations.md`](docs/operations.md): health, recovery, startup, watchdog, ports, and restart workflow.
 - [`docs/maintenance-updates.md`](docs/maintenance-updates.md): 06:00 restart/backup/update timeline and Steam hotfix handling.
 - [`docs/admin-panel.md`](docs/admin-panel.md): admin panel features, security, announcements, chat commands, and mutation gates.
+- [`docs/admin-bot.md`](docs/admin-bot.md): Paul/DASH Admin automation, player-presence announcements, and service install.
 - [`docs/backup-strategy.md`](docs/backup-strategy.md): local, onsite, offsite, replica, retention, and restore-test guidance.
 - [`docs/troubleshooting.md`](docs/troubleshooting.md): common failures and checks.
 - [`docs/full-farm.md`](docs/full-farm.md): expanded farm and 30-partition warm-pool notes.
