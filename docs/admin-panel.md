@@ -168,7 +168,7 @@ DUNE_ANNOUNCE_CHAT_SPOOF_NAME=Paul
 DUNE_ANNOUNCE_CHAT_EXCHANGE=chat.map
 DUNE_ANNOUNCE_CHAT_ROUTING_KEYS=HaggaBasin.0,Survival_1.dim_0,<empty>
 DUNE_ANNOUNCE_CHAT_CHANNEL=Map
-DUNE_ANNOUNCE_CHAT_USE_SPOOF_NAME=false
+DUNE_ANNOUNCE_CHAT_USE_SPOOF_NAME=true
 DUNE_ANNOUNCE_CHAT_BIND_ONLINE_QUEUES=true
 DUNE_ANNOUNCE_CHAT_ENSURE_ACCOUNT=false
 DUNE_ANNOUNCE_CHAT_PLATFORM_ID=PAUL
@@ -207,7 +207,7 @@ The script also receives the message as its first argument. Delivery attempts an
 
 ## Chat Commands
 
-`scripts/admin-chat-commands.py` is the Paul chat-command bridge. It listens for game chat messages that start with `DUNE_CHAT_COMMAND_PREFIX`, resolves the sending account through `dune.accounts.user`, and only accepts commands from configured admins.
+`scripts/admin-chat-commands.py` is the DASH chat-command bridge. It listens for game chat messages that start with `DUNE_CHAT_COMMAND_PREFIX`, resolves the sending account through `dune.accounts.user`, and only accepts commands from configured admins.
 
 Default command settings:
 
