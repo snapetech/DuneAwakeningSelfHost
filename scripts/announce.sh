@@ -342,7 +342,8 @@ def publish_with_host_container():
             child_env.append(f"{key}={value}")
     body = {
         "Image": image,
-        "Cmd": ["python3", "/workspace/scripts/announce_pika.py", message, restart_at, job_id],
+        "Entrypoint": ["python3"],
+        "Cmd": ["/workspace/scripts/announce_pika.py", message, restart_at, job_id],
         "WorkingDir": "/workspace",
         "Env": child_env,
         "HostConfig": {
