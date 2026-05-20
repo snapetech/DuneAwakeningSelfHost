@@ -316,6 +316,7 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_IMAGE_TAG": {"group": "Install", "secret": False, "restart": True, "why": "Funcom container image tag used by Compose services."},
     "WORLD_NAME": {"group": "World", "secret": False, "restart": True, "why": "Public display name shown by Director/Text Router/Gateway."},
     "WORLD_UNIQUE_NAME": {"group": "World", "secret": False, "restart": True, "why": "Stable internal server/world identifier used for registration and routing."},
+    "DUNE_SERVER_DISPLAY_NAME": {"group": "World", "secret": False, "restart": True, "why": "Optional in-engine server display name injected as Bgd.ServerDisplayName. Leave blank to reuse WORLD_NAME."},
     "WORLD_REGION": {"group": "World", "secret": False, "restart": True, "why": "Farm region/datacenter label passed into game services."},
     "EXTERNAL_ADDRESS": {"group": "Network", "secret": False, "restart": True, "why": "Address advertised to clients/FLS for game traffic."},
     "DUNE_SERVER_LOGIN_PASSWORD": {"group": "Access", "secret": False, "restart": True, "why": "Optional player login password passed into game server console variables. Visible here so trusted operators can share and rotate it."},
@@ -3364,8 +3365,9 @@ INDEX = r"""<!doctype html>
     .mapTile.bad { border-color:#743932; }
     .mapTile .name { font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .mapTile .meta { color:var(--muted); font-size:12px; margin-top:4px; }
-    .haggaMap { position:relative; display:block; overflow:visible; background:#171513; inline-size:100%; margin-inline:auto; border:1px solid var(--line); border-radius:8px; }
-    .haggaMap svg { display:block; inline-size:100%; aspect-ratio:1 / 1; block-size:auto; background:#171513; }
+    .haggaMap { position:relative; display:block; overflow:hidden; touch-action:none; cursor:grab; background:#171513; inline-size:100%; margin-inline:auto; border:1px solid var(--line); border-radius:8px; }
+    .haggaMap.isDragging { cursor:grabbing; }
+    .haggaMap svg { display:block; inline-size:100%; aspect-ratio:1 / 1; block-size:auto; background:#171513; transform-origin:center center; will-change:transform; user-select:none; }
     .haggaMap .mapImage { opacity:.95; }
     .haggaMap .mapShade { fill:rgba(4,5,4,.08); }
     .haggaMap .gridLine { stroke:#f1d08a; stroke-width:1; opacity:.22; }
@@ -3503,6 +3505,7 @@ let resourceRefreshInFlight = false;
 let haggaMapRefreshInFlight = false;
 let haggaMapAutoRefresh = sessionStorage.getItem('duneAdminHaggaMapAutoRefresh') !== 'off';
 let haggaMapLastGoodHtml = '';
+let haggaMapZoomState = {scale:1, x:0, y:0};
 let autoRefresh = sessionStorage.getItem('duneAdminAutoRefresh') !== 'off';
 const resourceHistory = [];
 let adminReferenceCache = null;
@@ -3974,11 +3977,115 @@ function haggaBasinMapPanel(data){
     assessment: d.assessment || ''
   }));
   const generatedAt = data?.generatedAt ? new Date(data.generatedAt).toLocaleTimeString() : '';
-  return `<div class="panelBand"><div class="sectionHeader"><h2>Hagga Basin Coordinate Grid</h2><div class="toolbar"><span id="haggaMapCount" class="pill ${players.length ? 'ok' : ''}">${esc(players.length)} plotted</span><span id="haggaMapUpdated" class="pill">updated ${esc(generatedAt)}</span><span id="haggaMapHealth" class="pill warn">DB persistence position, not proven live</span><button id="toggleHaggaMapRefreshBtn" aria-pressed="${haggaMapAutoRefresh ? 'true' : 'false'}">${haggaMapAutoRefresh ? 'Pause map' : 'Resume map'}</button><button id="refreshHaggaMapBtn">Refresh map</button></div></div><div id="haggaMapSrStatus" class="srOnly" aria-live="polite">${esc(players.length)} Hagga Basin players plotted.</div><div class="haggaMap"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Full Hagga Basin coordinate-grid map"><image class="mapImage" href="/static/hagga-basin.webp?v=${encodeURIComponent(ADMIN_PANEL_BUILD)}" x="0" y="0" width="${width}" height="${height}" preserveAspectRatio="xMidYMid meet"></image><rect class="mapShade" x="0" y="0" width="${width}" height="${height}"></rect>${grid}<text x="12" y="38" fill="var(--muted)" font-size="12">NW</text><text x="${width - 30}" y="${height - 12}" fill="var(--muted)" font-size="12">SE</text>${markers}${empty}</svg></div><div class="haggaMapStatus"><span class="pill warn">green: persisted actor transform</span><span class="pill ${showReturnPoints ? 'warn' : ''}">yellow return-info ${showReturnPoints ? 'shown' : 'hidden'}</span><span class="pill">background: clean survival_1 tile composite</span><span class="pill">projection: world X -> image U, world Y -> image V</span><span class="pill">world X ${esc(Math.round(minX))}..${esc(Math.round(maxX))}, Y ${esc(Math.round(minY))}..${esc(Math.round(maxY))}${invertX ? ', flipped X' : ''}${invertY ? ', inverted Y' : ''}</span><span class="pill">image U ${esc(imageMinU.toFixed(2))}..${esc(imageMaxU.toFixed(2))}, V ${esc(imageMinV.toFixed(2))}..${esc(imageMaxV.toFixed(2))}</span></div><details open><summary>Coordinates</summary><div class="coordTable">${table(rows)}</div></details><details open><summary>Location Source Diagnostics</summary><div class="coordTable">${table(diagnosticRows)}</div></details></div>`;
+  return `<div class="panelBand"><div class="sectionHeader"><h2>Hagga Basin Coordinate Grid</h2><div class="toolbar"><span id="haggaMapCount" class="pill ${players.length ? 'ok' : ''}">${esc(players.length)} plotted</span><span id="haggaMapUpdated" class="pill">updated ${esc(generatedAt)}</span><span id="haggaMapHealth" class="pill warn">DB persistence position, not proven live</span><button id="haggaMapZoomOutBtn" title="Zoom map out">-</button><button id="haggaMapZoomInBtn" title="Zoom map in">+</button><button id="haggaMapResetBtn">Reset view</button><button id="toggleHaggaMapRefreshBtn" aria-pressed="${haggaMapAutoRefresh ? 'true' : 'false'}">${haggaMapAutoRefresh ? 'Pause map' : 'Resume map'}</button><button id="refreshHaggaMapBtn">Refresh map</button></div></div><div id="haggaMapSrStatus" class="srOnly" aria-live="polite">${esc(players.length)} Hagga Basin players plotted.</div><div id="haggaMapViewport" class="haggaMap"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Full Hagga Basin coordinate-grid map"><image class="mapImage" href="/static/hagga-basin.webp?v=${encodeURIComponent(ADMIN_PANEL_BUILD)}" x="0" y="0" width="${width}" height="${height}" preserveAspectRatio="xMidYMid meet"></image><rect class="mapShade" x="0" y="0" width="${width}" height="${height}"></rect>${grid}<text x="12" y="38" fill="var(--muted)" font-size="12">NW</text><text x="${width - 30}" y="${height - 12}" fill="var(--muted)" font-size="12">SE</text>${markers}${empty}</svg></div><div class="haggaMapStatus"><span class="pill warn">green: persisted actor transform</span><span class="pill ${showReturnPoints ? 'warn' : ''}">yellow return-info ${showReturnPoints ? 'shown' : 'hidden'}</span><span class="pill">background: clean survival_1 tile composite</span><span class="pill">projection: world X -> image U, world Y -> image V</span><span class="pill">world X ${esc(Math.round(minX))}..${esc(Math.round(maxX))}, Y ${esc(Math.round(minY))}..${esc(Math.round(maxY))}${invertX ? ', flipped X' : ''}${invertY ? ', inverted Y' : ''}</span><span class="pill">image U ${esc(imageMinU.toFixed(2))}..${esc(imageMaxU.toFixed(2))}, V ${esc(imageMinV.toFixed(2))}..${esc(imageMaxV.toFixed(2))}</span></div><details open><summary>Coordinates</summary><div class="coordTable">${table(rows)}</div></details><details open><summary>Location Source Diagnostics</summary><div class="coordTable">${table(diagnosticRows)}</div></details></div>`;
+}
+function initHaggaMapPanZoom(container){
+  const viewport = container.querySelector('#haggaMapViewport');
+  const content = viewport?.querySelector('svg');
+  if (!viewport || !content) return;
+  const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+  let drag = null;
+  let suppressMarkerClick = false;
+  function constrain(){
+    const rect = viewport.getBoundingClientRect();
+    const maxX = Math.max(0, (rect.width * haggaMapZoomState.scale - rect.width) / 2);
+    const maxY = Math.max(0, (rect.height * haggaMapZoomState.scale - rect.height) / 2);
+    haggaMapZoomState.x = clamp(haggaMapZoomState.x, -maxX, maxX);
+    haggaMapZoomState.y = clamp(haggaMapZoomState.y, -maxY, maxY);
+  }
+  function apply(){
+    constrain();
+    content.style.transform = `translate(${haggaMapZoomState.x}px, ${haggaMapZoomState.y}px) scale(${haggaMapZoomState.scale})`;
+  }
+  function zoomAt(nextScale, clientX, clientY){
+    const rect = viewport.getBoundingClientRect();
+    const oldScale = haggaMapZoomState.scale;
+    const newScale = clamp(nextScale, 1, 8);
+    const px = clientX - rect.left - rect.width / 2 - haggaMapZoomState.x;
+    const py = clientY - rect.top - rect.height / 2 - haggaMapZoomState.y;
+    haggaMapZoomState.x -= px * (newScale / oldScale - 1);
+    haggaMapZoomState.y -= py * (newScale / oldScale - 1);
+    haggaMapZoomState.scale = newScale;
+    apply();
+  }
+  viewport.addEventListener('wheel', e => {
+    e.preventDefault();
+    zoomAt(haggaMapZoomState.scale * (e.deltaY < 0 ? 1.18 : 0.84), e.clientX, e.clientY);
+  }, {passive:false});
+  viewport.addEventListener('pointerdown', e => {
+    if (e.button !== undefined && e.button !== 0) return;
+    e.preventDefault();
+    drag = {id:e.pointerId, x:e.clientX, y:e.clientY, startX:haggaMapZoomState.x, startY:haggaMapZoomState.y};
+    suppressMarkerClick = false;
+    viewport.classList.add('isDragging');
+    viewport.setPointerCapture(e.pointerId);
+  }, true);
+  viewport.addEventListener('pointermove', e => {
+    if (!drag || drag.id !== e.pointerId) return;
+    e.preventDefault();
+    if (Math.abs(e.clientX - drag.x) > 3 || Math.abs(e.clientY - drag.y) > 3) suppressMarkerClick = true;
+    haggaMapZoomState.x = drag.startX + e.clientX - drag.x;
+    haggaMapZoomState.y = drag.startY + e.clientY - drag.y;
+    apply();
+  }, true);
+  function endDrag(e){
+    if (drag && drag.id === e.pointerId) {
+      e.preventDefault();
+      drag = null;
+      viewport.classList.remove('isDragging');
+    }
+  }
+  viewport.addEventListener('pointerup', endDrag, true);
+  viewport.addEventListener('pointercancel', endDrag, true);
+  viewport.addEventListener('mousedown', e => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    drag = {id:'mouse', x:e.clientX, y:e.clientY, startX:haggaMapZoomState.x, startY:haggaMapZoomState.y};
+    suppressMarkerClick = false;
+    viewport.classList.add('isDragging');
+  }, true);
+  document.addEventListener('mousemove', e => {
+    if (!drag || drag.id !== 'mouse') return;
+    e.preventDefault();
+    if (Math.abs(e.clientX - drag.x) > 3 || Math.abs(e.clientY - drag.y) > 3) suppressMarkerClick = true;
+    haggaMapZoomState.x = drag.startX + e.clientX - drag.x;
+    haggaMapZoomState.y = drag.startY + e.clientY - drag.y;
+    apply();
+  }, true);
+  document.addEventListener('mouseup', e => {
+    if (!drag || drag.id !== 'mouse') return;
+    e.preventDefault();
+    drag = null;
+    viewport.classList.remove('isDragging');
+  }, true);
+  viewport.addEventListener('dblclick', e => zoomAt(haggaMapZoomState.scale < 2 ? 2 : 1, e.clientX, e.clientY));
+  container.querySelector('#haggaMapZoomInBtn')?.addEventListener('click', () => {
+    const rect = viewport.getBoundingClientRect();
+    zoomAt(haggaMapZoomState.scale * 1.35, rect.left + rect.width / 2, rect.top + rect.height / 2);
+  });
+  container.querySelector('#haggaMapZoomOutBtn')?.addEventListener('click', () => {
+    const rect = viewport.getBoundingClientRect();
+    zoomAt(haggaMapZoomState.scale / 1.35, rect.left + rect.width / 2, rect.top + rect.height / 2);
+  });
+  container.querySelector('#haggaMapResetBtn')?.addEventListener('click', () => {
+    haggaMapZoomState = {scale:1, x:0, y:0};
+    apply();
+  });
+  window.addEventListener('resize', apply, {once:true});
+  apply();
 }
 function wireHaggaMapControls(container){
+  initHaggaMapPanZoom(container);
   container.querySelectorAll('.playerMarker[data-account-id]').forEach(marker => {
-    marker.addEventListener('click', () => openPlayerModal(marker.dataset.accountId));
+    marker.addEventListener('click', e => {
+      if (suppressMarkerClick) {
+        e.preventDefault();
+        e.stopPropagation();
+        suppressMarkerClick = false;
+        return;
+      }
+      openPlayerModal(marker.dataset.accountId);
+    });
     marker.addEventListener('keydown', e => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();

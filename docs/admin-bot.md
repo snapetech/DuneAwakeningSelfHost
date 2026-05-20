@@ -66,9 +66,14 @@ DUNE_PLAYER_PRESENCE_POLL_SECONDS=15
 DUNE_PLAYER_PRESENCE_JOIN_TEMPLATE=Welcome {playername}! Current player count is now {count}.
 DUNE_PLAYER_PRESENCE_LEAVE_TEMPLATE={playername} has left, current count is {count}.
 DUNE_PLAYER_PRESENCE_ANNOUNCE_COMMAND=/workspace/scripts/announce.sh
+DUNE_PLAYER_PRESENCE_VERMILIUS_GAP_ENABLED=true
+DUNE_PLAYER_PRESENCE_VERMILIUS_GAP_NODE=DA_SQ_VermiliusGap.Relocate.RelocateOutsideHBS.Drive north to the Vermilius Gap
+DUNE_PLAYER_PRESENCE_VERMILIUS_GAP_TEMPLATE=Congrats! {playername} has outrun Shai-Hulud!
 ```
 
-Templates support `{playername}`, `{player_name}`, `{count}`, and `{player_count}`.
+Join/leave templates support `{playername}`, `{player_name}`, `{count}`, and `{player_count}`. Vermilius Gap templates support `{playername}`, `{player_name}`, and `{story_node_id}`.
+
+The Vermilius Gap announcement watches `dune.journey_story_node` for the configured node's `complete_condition_state = true`. It records completed account ids under `backups/admin-bot/player-presence.json`, so each player is congratulated once. The first poll after enabling the feature baselines already-completed players and does not announce them retroactively.
 
 Run one baseline/check without installing the service:
 

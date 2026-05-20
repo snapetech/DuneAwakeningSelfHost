@@ -59,6 +59,10 @@ def run(cmd, timeout=30):
     return subprocess.run(cmd, cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, check=False)
 
 
+def sql_literal(value):
+    return "'" + str(value).replace("'", "''") + "'"
+
+
 def load_state():
     try:
         return json.loads(STATE_FILE.read_text(encoding="utf-8"))
@@ -92,6 +96,33 @@ def online_players():
     return players
 
 
+def completed_journey_players(story_node_id):
+    sql = f"""
+    select ps.account_id::text, coalesce(nullif(ps.character_name, ''), ps.account_id::text) as character_name
+    from dune.journey_story_node jsn
+    join dune.player_state ps on ps.account_id = jsn.account_id
+    where jsn.story_node_id = {sql_literal(story_node_id)}
+      and jsn.complete_condition_state = 'true'::jsonb
+    order by ps.character_name nulls last, ps.account_id;
+    """
+    result = run(
+        compose_cmd(
+            "exec", "-T", "postgres", "psql", "-U", "dune", "-d", DB,
+            "-At", "-F", "\t", "-c", sql,
+        ),
+        timeout=int(env("DUNE_PLAYER_PRESENCE_SQL_TIMEOUT_SECONDS", "10")),
+    )
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or "journey completion query failed")
+    players = {}
+    for line in result.stdout.splitlines():
+        if not line.strip():
+            continue
+        account_id, _, name = line.partition("\t")
+        players[account_id] = name or account_id
+    return players
+
+
 def announce(message):
     command = env("DUNE_PLAYER_PRESENCE_ANNOUNCE_COMMAND", env("DUNE_ADMIN_ANNOUNCE_COMMAND", str(ROOT / "scripts" / "announce.sh")))
     if command.startswith("/workspace/"):
@@ -112,6 +143,10 @@ def announce(message):
 
 def render_template(template, player_name, count):
     return template.format(playername=player_name, player_name=player_name, count=count, player_count=count)
+
+
+def render_journey_template(template, player_name, story_node_id):
+    return template.format(playername=player_name, player_name=player_name, story_node_id=story_node_id)
 
 
 def check_once():
@@ -136,6 +171,22 @@ def check_once():
             message = render_template(leave_template, previous.get(account_id, account_id), final_count)
             results.append({"event": "leave", "accountId": account_id, "message": message, "announce": announce(message)})
 
+    journey_results = []
+    if env_bool("DUNE_PLAYER_PRESENCE_VERMILIUS_GAP_ENABLED", False):
+        story_node_id = env("DUNE_PLAYER_PRESENCE_VERMILIUS_GAP_NODE", "DA_SQ_VermiliusGap.Relocate.RelocateOutsideHBS.Drive north to the Vermilius Gap")
+        completed = completed_journey_players(story_node_id)
+        journey_state = state.setdefault("announcedJourneyNodes", {})
+        previous_completed = set(journey_state.get(story_node_id, []))
+        current_completed = set(completed)
+        journey_first_run = story_node_id not in journey_state
+        newly_completed = sorted(current_completed - previous_completed, key=lambda account_id: completed.get(account_id, account_id).lower())
+        if not journey_first_run:
+            template = env("DUNE_PLAYER_PRESENCE_VERMILIUS_GAP_TEMPLATE", "Congrats! {playername} has outrun Shai-Hulud!")
+            for account_id in newly_completed:
+                message = render_journey_template(template, completed.get(account_id, account_id), story_node_id)
+                journey_results.append({"event": "vermilius-gap", "accountId": account_id, "message": message, "announce": announce(message)})
+        journey_state[story_node_id] = sorted(current_completed)
+
     state["onlinePlayers"] = current
     state["updatedAt"] = now_iso()
     save_state(state)
@@ -146,6 +197,7 @@ def check_once():
         "joined": [current[account_id] for account_id in joined],
         "left": [previous[account_id] for account_id in left] if previous else [],
         "announcements": results,
+        "journeyAnnouncements": journey_results,
     }
 
 

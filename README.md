@@ -294,6 +294,7 @@ Start from [`.env.example`](.env.example). Important values:
 | `DUNE_IMAGE_TAG` | Official image tag loaded from the Steam package. |
 | `WORLD_NAME` | Public/server-browser world name. |
 | `WORLD_UNIQUE_NAME` | Stable internal world identifier. |
+| `DUNE_SERVER_DISPLAY_NAME` | Optional in-engine `Bgd.ServerDisplayName`; defaults to `WORLD_NAME` when blank. |
 | `FLS_SECRET` | Funcom self-hosting token. |
 | `EXTERNAL_ADDRESS` | Public address advertised to clients. |
 | `GAME_RMQ_PUBLIC_HOST` / `GAME_RMQ_PUBLIC_PORT` | Client-facing game RabbitMQ endpoint returned during login. |

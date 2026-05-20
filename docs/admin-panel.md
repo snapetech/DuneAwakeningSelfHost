@@ -206,6 +206,18 @@ from dune.login_account('A000000000000001','ADMIN#00001','PAUL','Paul',0,'Paul',
 limit 1;
 ```
 
+If in-game chat shows an older sender name, the client is resolving the persisted announcer account instead of honoring only `DUNE_ANNOUNCE_CHAT_SPOOF_NAME`. Repair only the synthetic announcer account:
+
+```sql
+update dune.encrypted_player_state
+set encrypted_character_name = dune.encrypt_user_data('Paul')
+where account_id = (select id from dune.encrypted_accounts where "user" = 'A000000000000001');
+
+update dune.encrypted_accounts
+set platform_id = 'PAUL', platform_name = 'Paul'
+where "user" = 'A000000000000001';
+```
+
 The admin panel passes:
 
 - `DUNE_ANNOUNCE_MESSAGE`

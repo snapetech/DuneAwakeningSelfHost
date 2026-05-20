@@ -83,7 +83,7 @@ install_server_login_password() {
 }
 
 install_server_display_name() {
-  local display_name="${WORLD_NAME:-}"
+  local display_name="${DUNE_SERVER_DISPLAY_NAME:-${WORLD_NAME:-}}"
   local arg
   local prefix='-ini:engine:[ConsoleVariables]:Bgd.ServerDisplayName='
   if [ -z "$display_name" ]; then

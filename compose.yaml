@@ -5,6 +5,7 @@ x-game-server-base: &game-server-base
     - 8.8.8.8
   environment:
     DUNE_SERVER_LOGIN_PASSWORD: ${DUNE_SERVER_LOGIN_PASSWORD:-}
+    DUNE_SERVER_DISPLAY_NAME: ${DUNE_SERVER_DISPLAY_NAME:-}
     WORLD_NAME: ${WORLD_NAME}
   depends_on:
     - postgres
