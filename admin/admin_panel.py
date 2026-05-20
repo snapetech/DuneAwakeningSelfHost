@@ -3337,7 +3337,7 @@ function renderPlayerModal(d, ref, uiState={}){
   const firstTrack = (d.specialization && d.specialization[0]) || {};
   document.getElementById('playerModalTitle').textContent = p.character_name || 'Player Detail';
   document.getElementById('playerModalRefreshState').textContent = `updated ${new Date().toLocaleTimeString()}`;
-  document.getElementById('playerModalBody').innerHTML = `<datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><div class="playerModalGrid"><div class="pageStack"><div class="panelBand"><h2>${esc(p.character_name || 'Character')}</h2><div class="metricGrid">${metric('Status', p.online_status || '')}${metric('Life', p.life_state || '')}${metric('Map', map.label || map.map || p.server_id || '')}${metric('Items', items.length)}</div><div class="grid"><div><b>Account</b><br>${esc(p.account_id)}</div><div><b>Funcom</b><br>${esc(account.funcom_id || '')}</div><div><b>Platform</b><br>${esc(account.platform_name || '')} ${esc(account.platform_id || '')}</div><div><b>Last Login</b><br>${esc(p.last_login_time || '')}</div><div><b>Controller</b><br>${esc(p.player_controller_id)}</div><div><b>Pawn</b><br>${esc(p.player_pawn_id)}</div></div><p><button id="modalOpenAdminActionsBtn" class="primary">Open Admin Actions</button></p></div><div class="panelBand"><h2>Location and Runtime</h2>${table(locationRows)}<details open><summary>Actor Locations</summary>${table(d.actorLocations || [])}</details><details><summary>Travel Return</summary>${table(d.travelReturn || [])}</details><details><summary>Map Context</summary>${table(d.mapContext || [])}</details><details><summary>Respawn Locations</summary>${table(d.respawnLocations || [])}</details><details><summary>Runtime Source</summary><pre>${esc(JSON.stringify(d.realtime || {}, null, 2))}</pre></details></div><div class="panelBand"><h2>Currency and XP</h2><details open><summary>Currency</summary>${table(d.currency || [])}</details><details><summary>Specialization</summary>${table(d.specialization || [])}</details><details><summary>Faction</summary>${table(d.faction || [])}</details><details><summary>Reputation</summary>${table(d.reputation || [])}</details></div></div><div class="pageStack"><div class="panelBand"><div class="splitHeader"><h2>Inventory</h2><span class="pill">${esc(items.length)} items</span></div><div class="playerInventoryTools"><label>Inventory<select id="modalInventoryFilter"><option value="">All inventories</option>${inventoryOptions(inventories)}</select></label><label>Item Search<input id="modalItemFilter" placeholder="Template, item ID, inventory"></label></div><h3>Inventory Summary</h3>${table(inventorySummary)}<h3>Items</h3><div id="modalInventoryItems">${table(items)}</div></div><div class="panelBand"><h2>Quick Currency and XP</h2><div class="grid"><label>Currency<select id="detailCurId">${currencyBalanceOptions(d.currency, ref.currencyIds)}</select></label><label>Amount<input id="detailCurAmount" value="1000"></label><label>Mode<select id="detailCurMode"><option>add</option><option>set</option></select></label></div><p><button id="detailCurrencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Track<select id="detailTrack">${specializationOptions(d.specialization, ref.specializationTrackTypes)}</select></label><label>XP amount<input id="detailXpAmount" value="1000"></label><label>Level for set/new track<input id="detailXpLevel" value="${esc(firstTrack.level ?? 0)}"></label><label>Mode<select id="detailXpMode"><option>add</option><option>set</option></select></label></div><p><button id="detailXpBtn" class="primary">Apply XP</button></p></div><div class="panelBand"><h2>Quick Item Action</h2><div class="grid"><label>Owned inventory<select id="detailGrantInventory"><option value="">All owned inventories</option>${inventoryOptions(inventories)}</select></label><label>Owned item<select id="detailItemSelect">${inventoryItemOptions(items)}</select></label><label>Template ID<input id="detailGrantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="detailGrantStack" value="1"></label><label>Delete count<input id="detailDeleteCount" placeholder="blank/all"></label></div><p><button id="detailDryRunBtn" class="primary">Dry run item</button> <button id="detailGrantBtn" class="danger">Grant item</button> <button id="detailSetStackBtn" class="primary">Set selected stack</button> <button id="detailDeleteItemBtn" class="danger">Delete selected item/count</button></p><pre id="detailGrantResult"></pre></div><details class="panelBand"><summary>Raw Detail</summary><pre>${esc(JSON.stringify(d, null, 2))}</pre></details></div></div>`;
+  document.getElementById('playerModalBody').innerHTML = `<datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><div class="playerModalGrid"><div class="pageStack"><div class="panelBand"><h2>${esc(p.character_name || 'Character')}</h2><div class="metricGrid">${metric('Status', p.online_status || '')}${metric('Life', p.life_state || '')}${metric('Map', map.label || map.map || p.server_id || '')}${metric('Items', items.length)}</div><div class="grid"><div><b>Account</b><br>${esc(p.account_id)}</div><div><b>Funcom</b><br>${esc(account.funcom_id || '')}</div><div><b>Platform</b><br>${esc(account.platform_name || '')} ${esc(account.platform_id || '')}</div><div><b>Last Login</b><br>${esc(p.last_login_time || '')}</div><div><b>Controller</b><br>${esc(p.player_controller_id)}</div><div><b>Pawn</b><br>${esc(p.player_pawn_id)}</div></div><p><button id="modalOpenAdminActionsBtn" class="primary">Open Admin Actions</button></p></div><div class="panelBand"><h2>Location and Runtime</h2>${table(locationRows)}<details open><summary>Actor Locations</summary>${table(d.actorLocations || [])}</details><details><summary>Travel Return</summary>${table(d.travelReturn || [])}</details><details><summary>Map Context</summary>${table(d.mapContext || [])}</details><details><summary>Respawn Locations</summary>${table(d.respawnLocations || [])}</details><details><summary>Runtime Source</summary><pre>${esc(JSON.stringify(d.realtime || {}, null, 2))}</pre></details></div><div class="panelBand"><h2>Currency and XP</h2><details open><summary>Currency</summary>${table(d.currency || [])}</details><details><summary>Specialization</summary>${table(d.specialization || [])}</details><details><summary>Faction</summary>${table(d.faction || [])}</details><details><summary>Reputation</summary>${table(d.reputation || [])}</details></div></div><div class="pageStack"><div class="panelBand"><div class="splitHeader"><h2>Inventory</h2><span class="pill">${esc(items.length)} items</span></div><div class="playerInventoryTools"><label>Inventory<select id="modalInventoryFilter"><option value="">All inventories</option>${inventoryOptions(inventories)}</select></label><label>Item Search<input id="modalItemFilter" placeholder="Template, item ID, inventory"></label></div><h3>Inventory Summary</h3>${table(inventorySummary)}<h3>Items</h3><div id="modalInventoryItems">${table(items)}</div></div><div class="panelBand"><h2>Quick Currency and XP</h2><div class="grid"><label>Currency<select id="detailCurId">${currencyBalanceOptions(d.currency, ref.currencyIds)}</select></label><label>Amount<input id="detailCurAmount" value="1000"></label><label>Mode<select id="detailCurMode"><option>add</option><option>set</option></select></label></div><p><button id="detailCurrencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Track<select id="detailTrack">${specializationOptions(d.specialization, ref.specializationTrackTypes)}</select></label><label>XP amount<input id="detailXpAmount" value="1000"></label><label>Level for set/new track<input id="detailXpLevel" value="${esc(firstTrack.level ?? 0)}"></label><label>Mode<select id="detailXpMode"><option>add</option><option>set</option></select></label></div><p><button id="detailXpBtn" class="primary">Apply XP</button></p></div><div class="panelBand"><h2>Quick Item Action</h2><div class="grid"><label>Owned inventory<select id="detailGrantInventory"><option value="">All owned inventories</option>${inventoryOptions(inventories)}</select></label><label>Owned item<select id="detailItemSelect">${inventoryItemOptions(items)}</select></label><label>Template ID<input id="detailGrantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="detailGrantStack" value="1"></label><label>Delete count<input id="detailDeleteCount" placeholder="blank/all"></label></div><div id="detailSelectedItem" class="muted">Select an owned item to inspect stack and template details.</div><p><button id="detailDryRunBtn" class="primary">Dry run item</button> <button id="detailGrantBtn" class="danger">Grant item</button> <button id="detailSetStackBtn" class="primary">Set selected stack</button> <button id="detailDeleteItemBtn" class="danger">Delete selected item/count</button></p><pre id="detailGrantResult"></pre></div><details class="panelBand"><summary>Raw Detail</summary><pre>${esc(JSON.stringify(d, null, 2))}</pre></details></div></div>`;
   makeSortableTables(document.getElementById('playerModalBody'));
   enhanceCopyBlocks(document.getElementById('playerModalBody'));
   wirePlayerModalDetailActions(d, ref, firstTrack, uiState);
@@ -3348,6 +3348,14 @@ function wirePlayerModalDetailActions(d, ref, firstTrack, uiState={}){
   const detailItem = document.getElementById('detailItemSelect');
   const modalInventoryFilter = document.getElementById('modalInventoryFilter');
   const modalItemFilter = document.getElementById('modalItemFilter');
+  const updateSelectedItemSummary = () => {
+    const itemId = detailItem?.value || '';
+    const item = (d.inventoryItems || []).find(r => String(r.item_id ?? r.id ?? '') === String(itemId));
+    const target = document.getElementById('detailSelectedItem');
+    if (!target) return;
+    target.innerHTML = item ? table([item]) : '<div class="muted">Select an owned item to inspect stack and template details.</div>';
+    makeSortableTables(target);
+  };
   const filterInventoryTable = () => {
     const inventoryId = modalInventoryFilter?.value || '';
     const term = String(modalItemFilter?.value || '').toLowerCase();
@@ -3392,6 +3400,7 @@ function wirePlayerModalDetailActions(d, ref, firstTrack, uiState={}){
     const filtered = inventoryId ? allItems.filter(r => String(r.inventory_id ?? '') === String(inventoryId)) : allItems;
     detailItem.innerHTML = inventoryItemOptions(filtered);
     document.getElementById('detailGrantTemplate').value = '';
+    updateSelectedItemSummary();
   };
   detailInventory?.addEventListener('change', setDetailItemOptions);
   detailItem?.addEventListener('change', e => {
@@ -3399,6 +3408,7 @@ function wirePlayerModalDetailActions(d, ref, firstTrack, uiState={}){
     if (option?.dataset.template) document.getElementById('detailGrantTemplate').value = option.dataset.template;
     if (option?.dataset.stack) document.getElementById('detailGrantStack').value = option.dataset.stack;
     if (option?.dataset.inventory && detailInventory) detailInventory.value = option.dataset.inventory;
+    updateSelectedItemSummary();
   });
   document.getElementById('detailTrack')?.addEventListener('change', e => {
     const level = e.target.selectedOptions?.[0]?.dataset.level || '';
@@ -3409,12 +3419,12 @@ function wirePlayerModalDetailActions(d, ref, firstTrack, uiState={}){
     closePlayerModal();
     show('mutations');
   });
-  document.getElementById('detailCurrencyBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Applying...', async () => { await currencyFor(p.player_controller_id); await loadPlayerModal(p.account_id); }));
-  document.getElementById('detailXpBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Applying...', async () => { await xpFor(p.player_controller_id); await loadPlayerModal(p.account_id); }));
+  document.getElementById('detailCurrencyBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Applying...', async () => { if (await currencyFor(p.player_controller_id)) await loadPlayerModal(p.account_id); }));
+  document.getElementById('detailXpBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Applying...', async () => { if (await xpFor(p.player_controller_id)) await loadPlayerModal(p.account_id); }));
   document.getElementById('detailDryRunBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Checking...', () => grantItemForAccount(p.account_id, true)));
-  document.getElementById('detailGrantBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Granting...', async () => { await grantItemForAccount(p.account_id, false); await loadPlayerModal(p.account_id); }));
-  document.getElementById('detailSetStackBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Saving...', async () => { await setDetailItemStack(); await loadPlayerModal(p.account_id); }));
-  document.getElementById('detailDeleteItemBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Deleting...', async () => { await deleteDetailItem(); await loadPlayerModal(p.account_id); }));
+  document.getElementById('detailGrantBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Granting...', async () => { if (await grantItemForAccount(p.account_id, false)) await loadPlayerModal(p.account_id); }));
+  document.getElementById('detailSetStackBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Saving...', async () => { if (await setDetailItemStack()) await loadPlayerModal(p.account_id); }));
+  document.getElementById('detailDeleteItemBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Deleting...', async () => { if (await deleteDetailItem()) await loadPlayerModal(p.account_id); }));
   setIfPresent('modalInventoryFilter', uiState.inventoryFilter);
   setIfPresent('modalItemFilter', uiState.itemFilter);
   setIfPresent('detailGrantInventory', uiState.grantInventory || uiState.inventoryFilter);
@@ -3430,6 +3440,7 @@ function wirePlayerModalDetailActions(d, ref, firstTrack, uiState={}){
   setIfPresent('detailXpAmount', uiState.xpAmount);
   setIfPresent('detailXpLevel', uiState.xpLevel);
   setIfPresent('detailXpMode', uiState.xpMode);
+  updateSelectedItemSummary();
   filterInventoryTable();
 }
 async function loadPlayerModal(accountId){
@@ -3629,6 +3640,7 @@ async function currency(){
 async function currencyFor(playerControllerId){
   await api('/api/admin/currency', {method:'POST', body:JSON.stringify({player_controller_id:playerControllerId,currency_id:detailCurId.value,amount:detailCurAmount.value,mode:detailCurMode.value})});
   notify('Currency updated');
+  return true;
 }
 async function xp(){
   await api('/api/admin/xp', {method:'POST', body:JSON.stringify({player_id:xpid.value,track_type:track.value,amount:xpamount.value,level:xplevel.value,mode:xpmode.value})});
@@ -3637,6 +3649,7 @@ async function xp(){
 async function xpFor(playerId){
   await api('/api/admin/xp', {method:'POST', body:JSON.stringify({player_id:playerId,track_type:detailTrack.value,amount:detailXpAmount.value,level:detailXpLevel.value,mode:detailXpMode.value})});
   notify('XP updated');
+  return true;
 }
 async function backup(){
   const result = await api('/api/admin/backup', {method:'POST', body:'{}'});
@@ -3696,6 +3709,7 @@ async function grantItemForAccount(accountId, dryRun=false){
   const inventoryId = document.getElementById('detailGrantInventory')?.value || '';
   const result = await api('/api/admin/item', {method:'POST', body:JSON.stringify({inventory_id:inventoryId,account_id:accountId,template_id:detailGrantTemplate.value,stack_size:detailGrantStack.value,dry_run:dryRun,stats:{}})});
   document.getElementById('detailGrantResult').textContent = JSON.stringify(result, null, 2);
+  return true;
 }
 async function setItemStack(){
   if (!confirm('Set this item stack size?')) return;
@@ -3709,17 +3723,19 @@ async function deleteItem(){
 }
 async function setDetailItemStack(){
   const itemId = document.getElementById('detailItemSelect')?.value || '';
-  if (!itemId) { notify('Select an owned item first', 'bad'); return; }
-  if (!confirm('Set this selected item stack size?')) return;
+  if (!itemId) { notify('Select an owned item first', 'bad'); return false; }
+  if (!confirm('Set this selected item stack size?')) return false;
   const result = await api('/api/admin/item/stack', {method:'POST', body:JSON.stringify({item_id:itemId,stack_size:detailGrantStack.value,confirm:'SET STACK'})});
   document.getElementById('detailGrantResult').textContent = JSON.stringify(result, null, 2);
+  return true;
 }
 async function deleteDetailItem(){
   const itemId = document.getElementById('detailItemSelect')?.value || '';
-  if (!itemId) { notify('Select an owned item first', 'bad'); return; }
-  if (!confirm('Delete this selected item or count from the stack?')) return;
+  if (!itemId) { notify('Select an owned item first', 'bad'); return false; }
+  if (!confirm('Delete this selected item or count from the stack?')) return false;
   const result = await api('/api/admin/item/delete', {method:'POST', body:JSON.stringify({item_id:itemId,count:detailDeleteCount.value,confirm:'DELETE ITEM'})});
   document.getElementById('detailGrantResult').textContent = JSON.stringify(result, null, 2);
+  return true;
 }
 document.getElementById('saveTokenBtn').addEventListener('click', saveToken);
 document.getElementById('clearTokenBtn').addEventListener('click', clearToken);
