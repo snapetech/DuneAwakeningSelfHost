@@ -163,8 +163,10 @@ section {
 	background: #0d0d0d;
 	border: 1px solid #3a342d;
 	border-radius: 6px;
-	aspect-ratio: 1 / 1;
-	max-height: calc(100vh - 300px);
+	aspect-ratio: 4 / 3;
+	max-height: min(72vh, 820px);
+	position: relative;
+	--map-x-skew: 1.08;
 }
 
 .map-viewport.is-dragging {
@@ -348,6 +350,11 @@ a:visited {
 
 	dt {
 		margin-top: 12px;
+	}
+
+	.map-viewport {
+		aspect-ratio: 1 / 1;
+		--map-x-skew: 1.03;
 	}
 }
 

@@ -25,24 +25,41 @@
 		var state = { scale: 1, x: 0, y: 0 };
 		var drag = null;
 
+		function skewX() {
+			var value = parseFloat(window.getComputedStyle(viewport).getPropertyValue("--map-x-skew"));
+			return Number.isFinite(value) && value > 0 ? value : 1;
+		}
+
+		function fittedSize() {
+			var rect = viewport.getBoundingClientRect();
+			var naturalWidth = content.naturalWidth || Number(content.getAttribute("width")) || 1;
+			var naturalHeight = content.naturalHeight || Number(content.getAttribute("height")) || 1;
+			var fitScale = Math.min(rect.width / naturalWidth, rect.height / naturalHeight);
+			return {
+				width: naturalWidth * fitScale * skewX(),
+				height: naturalHeight * fitScale
+			};
+		}
+
 		function bounds() {
 			var rect = viewport.getBoundingClientRect();
-			var maxX = Math.max(0, (rect.width * state.scale - rect.width) / 2);
-			var maxY = Math.max(0, (rect.height * state.scale - rect.height) / 2);
+			var size = fittedSize();
+			var maxX = Math.max(0, (size.width * state.scale - rect.width) / 2);
+			var maxY = Math.max(0, (size.height * state.scale - rect.height) / 2);
 			state.x = clamp(state.x, -maxX, maxX);
 			state.y = clamp(state.y, -maxY, maxY);
 		}
 
 		function apply() {
 			bounds();
-			content.style.transform = "translate(" + state.x + "px, " + state.y + "px) scale(" + state.scale + ")";
+			content.style.transform = "translate(" + state.x + "px, " + state.y + "px) scale(" + state.scale + ") scaleX(" + skewX() + ")";
 		}
 
 		function zoomAt(nextScale, clientX, clientY) {
 			var rect = viewport.getBoundingClientRect();
 			var oldScale = state.scale;
 			var newScale = clamp(nextScale, 1, 6);
-			var px = clientX - rect.left - rect.width / 2 - state.x;
+			var px = (clientX - rect.left - rect.width / 2 - state.x) / skewX();
 			var py = clientY - rect.top - rect.height / 2 - state.y;
 			state.x -= px * (newScale / oldScale - 1);
 			state.y -= py * (newScale / oldScale - 1);
