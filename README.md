@@ -40,6 +40,7 @@ Start with these:
 - [`docs/setup.md`](docs/setup.md): step-by-step local startup flow.
 - [`docs/operations.md`](docs/operations.md): health checks, recovery, backup, restore, ports, and upgrades.
 - [`docs/admin-panel.md`](docs/admin-panel.md): local admin helper panel setup, security notes, and write-safety gates.
+- [`docs/admin-bot.md`](docs/admin-bot.md): approved admin-bot automation, report-first monitors, and safety gates.
 - [`docs/full-farm.md`](docs/full-farm.md): expanded standing farm and 30-partition warm-pool runbook.
 - [`docs/troubleshooting.md`](docs/troubleshooting.md): common startup failures and where to look.
 
@@ -171,12 +172,14 @@ The panel is the operator-facing Web UI for this repo:
 | Tab | Use it for |
 | --- | --- |
 | **Overview** | Operator dashboard with online/offline players, realtime host/container resource use, headline health metrics, map health, network checks, and health verdicts. |
-| **Ops** | Detailed resource use, map/network health, farm state, partition state, restart planning, and verified DASH Admin chat announcements. |
+| **Ops** | Detailed resource use, map/network health, farm state, partition state, restart planning, and verified Paul chat announcements. |
 | **Security** | Host/origin checks, mutation-gate status, token status, audit events, and editable-setting allowlists. |
 | **Runbook** | Copy/paste operational commands for health, backups, restores, profiling, logs, and routing capture. |
 | **Players** | Search/list existing players and inspect controller, account, currency, inventory, and progression state before changing anything. |
 | **Settings** | Edit `.env`, `config/director.ini`, `config/UserGame.ini`, and selected config overlays with backups under `backups/admin-panel`. Runtime-only settings may apply immediately, but many game-server values require recreating or restarting affected containers. |
 | **Admin Actions** | Create DB backups and perform guarded writes such as XP, currency, keystones, item grants, item stack edits, and item deletion. Back up the database before broad writes; item and inventory operations are guarded by the admin token and mutation safety flags. |
+
+The chat-command helper also includes spam protection. By default, a non-admin player who sends the same normalized message more than 3 times in a row, or 5 times within 30 seconds, triggers the auto-kick hook. Detection is active by default, admins are exempt by default, and enforcement uses `scripts/spam-kick-player.sh`. The hook fails closed until a real targeted kick backend is configured, so current violations are logged and announced as blocked rather than using unsafe DB or network hacks. See [`docs/admin-panel.md`](docs/admin-panel.md) for the knobs.
 
 Typical admin flow:
 

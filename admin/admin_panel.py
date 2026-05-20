@@ -11,6 +11,7 @@ import secrets
 import shutil
 import socket
 import subprocess
+import sys
 import tarfile
 import threading
 import time
@@ -25,9 +26,14 @@ import psycopg2.extras
 
 
 ROOT = pathlib.Path(os.environ.get("ADMIN_WORKSPACE", "/workspace"))
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from dune_gm_command import build_envelope, publish_command, publish_command_management
+
 CONFIG_ROOT = ROOT / "config"
 ENV_FILE = ROOT / ".env"
 BACKUP_ROOT = ROOT / "backups" / "admin-panel"
+STATIC_ROOT = ROOT / "admin" / "static"
 AUDIT_LOG = BACKUP_ROOT / "audit.jsonl"
 AUDIT_MAX_BYTES = int(os.environ.get("DUNE_ADMIN_AUDIT_MAX_BYTES", str(5 * 1024 * 1024)))
 REQUEST_TIMEOUT_SECONDS = int(os.environ.get("DUNE_ADMIN_REQUEST_TIMEOUT_SECONDS", "10"))
@@ -103,7 +109,7 @@ RESTART_TARGETS = {
 }
 
 GM_COMMANDS_ENABLED = os.environ.get("DUNE_ADMIN_GM_COMMANDS_ENABLED", "false").lower() == "true"
-GM_COMMAND_PAYLOAD_VERIFIED = False
+GM_COMMAND_PAYLOAD_VERIFIED = os.environ.get("DUNE_GM_COMMAND_PAYLOAD_VERIFIED", "false").lower() == "true"
 GM_ALLOWED_COMMANDS = (
     "obj",
     "FGL.ComponentAuditRequested",
@@ -188,6 +194,44 @@ GM_CHEAT_SCRIPTS = {
         "AwardXP Science 10000",
     ],
 }
+GM_CHAT_COMMANDS = (
+    {"command": "&gm help", "tier": "safe", "notes": "List wired GM chat commands."},
+    {"command": "&gm routes", "tier": "safe", "notes": "Resolve current admin map route and gate status."},
+    {"command": "&gm mark [name]", "tier": "movement", "notes": "Save current admin location; default marker is location0."},
+    {"command": "&gm marks", "tier": "movement", "notes": "List saved admin markers."},
+    {"command": "&gm recall [name]", "tier": "movement", "notes": "Preview/send teleport back to a saved marker."},
+    {"command": "&gm where <player>", "tier": "player", "notes": "Resolve player online state and location."},
+    {"command": "&gm goto <player>", "tier": "movement", "notes": "Preview/send admin teleport to player."},
+    {"command": "&gm bring <player>", "tier": "movement", "notes": "Preview/send target teleport to admin."},
+    {"command": "&gm unstuck <player> [mark]", "tier": "player", "notes": "Preview/send target teleport to saved marker or admin location."},
+    {"command": "&gm item <player> <template> [count] [quality]", "tier": "inventory", "notes": "Preview native item grant payload."},
+    {"command": "&gm kit <player> [basic]", "tier": "inventory", "notes": "Preview native basic kit payload."},
+    {"command": "&gm xp <player> <track> <amount> [add|set] [level]", "tier": "mutation", "notes": "Resolve XP mutation body; execute through audited panel API."},
+    {"command": "&gm map <map> [dimension]", "tier": "movement", "notes": "Preview/send native TeleportToMap."},
+    {"command": "&gm travel <map> [location]", "tier": "movement", "notes": "Preview/send native TravelTo."},
+    {"command": "&gm dimension <map> <dimension>", "tier": "movement", "notes": "Preview/send native TravelToDimension."},
+    {"command": "&gm patrol", "tier": "movement", "notes": "Preview/send PatrolShipTeleportToNearest."},
+    {"command": "&gm sandworm", "tier": "movement", "notes": "Preview/send TeleportToSandworm."},
+    {"command": "&gm marker", "tier": "movement", "notes": "Preview/send TeleportToPersonalMarker."},
+    {"command": "&gm vehicle <template> [args...]", "tier": "spawn", "notes": "Preview/send SpawnVehicle; exact args still need validation."},
+)
+GM_PANEL_PRESETS = (
+    {"label": "Print Position", "command": "PrintPos", "args": "", "risk": "safe"},
+    {"label": "Teleport To Player", "command": "TeleportToPlayer", "args": "<player>", "risk": "movement"},
+    {"label": "Teleport Exact", "command": "TeleportToExact", "args": "<x> <y> <z>", "risk": "movement"},
+    {"label": "Add Item", "command": "AddItemToInventory", "args": "<player> <template> 1", "risk": "inventory"},
+    {"label": "Basic Kit", "command": "AddBasicInventoryToCharacter", "args": "<player>", "risk": "inventory"},
+    {"label": "Teleport Map", "command": "TeleportToMap", "args": "<map> [dimension]", "risk": "movement"},
+    {"label": "Travel To", "command": "TravelTo", "args": "<map> [location]", "risk": "movement"},
+    {"label": "Travel Dimension", "command": "TravelToDimension", "args": "<map> <dimension>", "risk": "movement"},
+    {"label": "Nearest Patrol Ship", "command": "PatrolShipTeleportToNearest", "args": "", "risk": "movement"},
+    {"label": "Sandworm", "command": "TeleportToSandworm", "args": "", "risk": "movement"},
+    {"label": "Personal Marker", "command": "TeleportToPersonalMarker", "args": "", "risk": "movement"},
+    {"label": "Spawn Vehicle", "command": "SpawnVehicle", "args": "<template>", "risk": "spawn"},
+    {"label": "Fly", "command": "Fly", "args": "", "risk": "movement"},
+    {"label": "Ghost", "command": "Ghost", "args": "", "risk": "movement"},
+    {"label": "Walk", "command": "Walk", "args": "", "risk": "movement"},
+)
 
 ALLOWED_CONFIGS = {
     "director.ini": CONFIG_ROOT / "director.ini",
@@ -282,9 +326,9 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ANNOUNCE_CHAT_CHANNEL": {"group": "Announcements", "secret": False, "restart": False, "why": "Chat channel type stamped onto restart announcement messages."},
     "DUNE_ANNOUNCE_CHAT_USE_SPOOF_NAME": {"group": "Announcements", "secret": False, "restart": False, "why": "Whether restart announcements should use the spoofed display-name field."},
     "DUNE_ANNOUNCE_CHAT_BIND_ONLINE_QUEUES": {"group": "Announcements", "secret": False, "restart": False, "why": "When enabled, the hook binds currently connected player queues to the announcement chat routes before publishing."},
-    "DUNE_ANNOUNCE_CHAT_ENSURE_ACCOUNT": {"group": "Announcements", "secret": False, "restart": False, "why": "Optional DB write path to ensure the DASH Admin announcer account exists before publishing. Leave disabled on live servers unless you are deliberately repairing the announcer account."},
-    "DUNE_ANNOUNCE_CHAT_PLATFORM_ID": {"group": "Announcements", "secret": False, "restart": False, "why": "Platform id used when auto-creating the DASH Admin announcer account."},
-    "DUNE_ANNOUNCE_CHAT_PLATFORM_NAME": {"group": "Announcements", "secret": False, "restart": False, "why": "Platform name used when auto-creating the DASH Admin announcer account."},
+    "DUNE_ANNOUNCE_CHAT_ENSURE_ACCOUNT": {"group": "Announcements", "secret": False, "restart": False, "why": "Optional DB write path to ensure the Paul announcer account exists before publishing. Leave disabled on live servers unless you are deliberately repairing the announcer account."},
+    "DUNE_ANNOUNCE_CHAT_PLATFORM_ID": {"group": "Announcements", "secret": False, "restart": False, "why": "Platform id used when auto-creating the Paul announcer account."},
+    "DUNE_ANNOUNCE_CHAT_PLATFORM_NAME": {"group": "Announcements", "secret": False, "restart": False, "why": "Platform name used when auto-creating the Paul announcer account."},
     "DUNE_ANNOUNCE_RMQ_URL": {"group": "Announcements", "secret": False, "restart": True, "why": "RabbitMQ management API URL used by the announcement hook."},
     "DUNE_ANNOUNCE_RMQ_USER": {"group": "Announcements", "secret": False, "restart": True, "why": "RabbitMQ management user used by the announcement hook. Use a bgd.<world>.*.admin identity so JSON-RPC sender permissions pass."},
     "DUNE_ANNOUNCE_RMQ_PASSWORD": {"group": "Announcements", "secret": True, "restart": True, "why": "RabbitMQ management password used by the announcement hook."},
@@ -304,6 +348,34 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ADMIN_RESTART_COMMAND_TIMEOUT_SECONDS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Timeout for each scheduled restart hook invocation."},
     "DUNE_RESTART_COMPOSE_PROJECT": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Compose project label used by the Docker-socket restart hook."},
     "DUNE_RESTART_DOCKER_SOCKET": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Docker Engine Unix socket path used by the restart hook when Docker CLI is unavailable."},
+    "DUNE_CHAT_SPAM_PROTECT_ENABLED": {"group": "Chat Spam Protection", "secret": False, "restart": True, "why": "Enables repeated-message spam detection in the chat-command listener."},
+    "DUNE_CHAT_SPAM_PROTECT_EXEMPT_ADMINS": {"group": "Chat Spam Protection", "secret": False, "restart": True, "why": "Exempts configured chat-command admins from automatic spam enforcement."},
+    "DUNE_CHAT_SPAM_SAME_CONSECUTIVE_LIMIT": {"group": "Chat Spam Protection", "secret": False, "restart": True, "why": "Maximum identical consecutive messages allowed before enforcement. A value of 3 means the 4th repeat triggers."},
+    "DUNE_CHAT_SPAM_SAME_WINDOW_LIMIT": {"group": "Chat Spam Protection", "secret": False, "restart": True, "why": "Identical-message count inside the rolling spam window that triggers enforcement."},
+    "DUNE_CHAT_SPAM_SAME_WINDOW_SECONDS": {"group": "Chat Spam Protection", "secret": False, "restart": True, "why": "Rolling window length, in seconds, for repeated-message spam detection."},
+    "DUNE_CHAT_SPAM_KICK_COOLDOWN_SECONDS": {"group": "Chat Spam Protection", "secret": False, "restart": True, "why": "Cooldown before the same sender can trigger another spam enforcement action."},
+    "DUNE_CHAT_SPAM_MIN_MESSAGE_LENGTH": {"group": "Chat Spam Protection", "secret": False, "restart": True, "why": "Minimum normalized message length checked by spam protection."},
+    "DUNE_CHAT_SPAM_ANNOUNCE_ACTION": {"group": "Chat Spam Protection", "secret": False, "restart": True, "why": "Announces spam enforcement or blocked enforcement through the configured in-game announcement hook."},
+    "DUNE_CHAT_SPAM_KICK_COMMAND": {"group": "Chat Spam Protection", "secret": False, "restart": True, "why": "Optional executable hook for kicking a spammer. Leave blank until a real targeted kick backend is verified."},
+    "DUNE_CHAT_SPAM_KICK_TIMEOUT_SECONDS": {"group": "Chat Spam Protection", "secret": False, "restart": True, "why": "Timeout for the spam kick hook command."},
+    "DUNE_CHAT_SPAM_EXEMPT_NAMES": {"group": "Chat Spam Protection", "secret": False, "restart": True, "why": "Comma-separated character names exempt from spam enforcement."},
+    "DUNE_CHAT_SPAM_EXEMPT_FLS_IDS": {"group": "Chat Spam Protection", "secret": False, "restart": True, "why": "Comma-separated Funcom Live Services account ids exempt from spam enforcement."},
+    "DUNE_SPAM_KICK_BACKEND": {"group": "Chat Spam Protection", "secret": False, "restart": True, "why": "Backend mode used by scripts/spam-kick-player.sh. Keep blocked until a targeted Dune kick backend is verified."},
+    "DUNE_SPAM_KICK_BACKEND_COMMAND": {"group": "Chat Spam Protection", "secret": False, "restart": True, "why": "Optional delegated backend command used only when DUNE_SPAM_KICK_BACKEND=command."},
+    "DUNE_ADMIN_BOT_INTERVAL_SECONDS": {"group": "Admin Bot", "secret": False, "restart": True, "why": "Loop interval for scripts/admin-bot.py when run in daemon mode."},
+    "DUNE_ADMIN_BOT_BACKUP_MAX_AGE_HOURS": {"group": "Admin Bot", "secret": False, "restart": True, "why": "Maximum acceptable age for the newest local backup before the bot reports stale backup risk."},
+    "DUNE_ADMIN_BOT_BACKUP_STALE_RUN": {"group": "Admin Bot", "secret": False, "restart": True, "why": "When true, admin-bot runs scripts/backup-state.sh if the newest local backup is stale."},
+    "DUNE_ADMIN_BOT_MAP_WATCHDOG_ENABLED": {"group": "Admin Bot", "secret": False, "restart": True, "why": "Enables admin-bot map watchdog checks using scripts/watch-maps.sh."},
+    "DUNE_ADMIN_BOT_MAP_WATCHDOG_RECOVER": {"group": "Admin Bot", "secret": False, "restart": True, "why": "When true, admin-bot allows watch-maps.sh --once recovery. Default false keeps it dry-run/report-only."},
+    "DUNE_ADMIN_BOT_STUCK_TRANSITIONS_ENABLED": {"group": "Admin Bot", "secret": False, "restart": True, "why": "Enables read-only reporting of players whose online activity appears stale."},
+    "DUNE_ADMIN_BOT_STUCK_TRANSITION_MINUTES": {"group": "Admin Bot", "secret": False, "restart": True, "why": "Minutes of stale online activity before a player is reported as potentially stuck."},
+    "DUNE_ADMIN_BOT_AUDIT_DIGEST_ENABLED": {"group": "Admin Bot", "secret": False, "restart": True, "why": "Enables incremental digesting of admin panel audit events."},
+    "DUNE_ADMIN_BOT_ECONOMY_ANOMALIES_ENABLED": {"group": "Admin Bot", "secret": False, "restart": True, "why": "Enables read-only Solari/currency anomaly reporting."},
+    "DUNE_ADMIN_BOT_SOLARI_WARN_THRESHOLD": {"group": "Admin Bot", "secret": False, "restart": True, "why": "Currency amount threshold used by the economy anomaly report."},
+    "DUNE_ADMIN_BOT_BASE_CLAIM_MONITOR_ENABLED": {"group": "Admin Bot", "secret": False, "restart": True, "why": "Enables read-only base/claim count anomaly reporting."},
+    "DUNE_ADMIN_BOT_MAX_BASES_WARN": {"group": "Admin Bot", "secret": False, "restart": True, "why": "Base/claim count threshold used by the claim monitor."},
+    "DUNE_ADMIN_BOT_CONFIG_DRIFT_ENABLED": {"group": "Admin Bot", "secret": False, "restart": True, "why": "Tracks hashes of key config files and reports changes between bot runs."},
+    "DUNE_ADMIN_BOT_SECURITY_GUARD_ENABLED": {"group": "Admin Bot", "secret": False, "restart": True, "why": "Summarizes recent token, host, origin, and denied-request audit events."},
 }
 SAFE_ENV_KEYS = set(ENV_KEY_DEFINITIONS)
 
@@ -1007,6 +1079,8 @@ def gm_command_catalog():
         "activeAllowListSource": "DuneSandbox/Config/DedicatedServerGame.ini from the live survival container",
         "commands": commands,
         "cheatScripts": [{"name": name, "commands": lines} for name, lines in sorted(scripts.items())],
+        "chatCommands": list(GM_CHAT_COMMANDS),
+        "panelPresets": list(GM_PANEL_PRESETS),
         "routeCandidates": gm_route_candidates(),
         "safeProbe": {"command": "PrintPos", "why": "Read-only position print is the safest first execution probe once payload format is known."},
     }
@@ -1053,23 +1127,51 @@ def gm_payload_preview(body):
     args = str(body.get("args", "")).strip()
     target_player = str(body.get("target_player", body.get("targetPlayer", ""))).strip()
     route = str(body.get("route", "")).strip() or "Survival_11"
+    admin_player = str(body.get("admin_player", body.get("adminPlayer", ""))).strip()
+    mode = str(body.get("mode", "")).strip() or os.environ.get("DUNE_GM_COMMAND_ENVELOPE_MODE", "service-message")
     allowed = set(GM_ALLOWED_COMMANDS) | set(GM_ALLOWED_GM_COMMANDS) | {f"CheatScript {name}" for name in GM_CHEAT_SCRIPTS}
     if command not in allowed and not command.startswith("CheatScript "):
         raise ValueError("command is not in the discovered allow-list")
     text = " ".join(part for part in (command, args) if part)
+    envelope = build_envelope(mode, text, target_player=target_player, admin_player=admin_player)
     return {
         "ok": True,
         "dryRun": True,
         "route": {"exchange": "rpc", "routingKey": route},
         "targetPlayer": target_player,
+        "adminPlayer": admin_player,
+        "mode": mode,
         "commandText": text,
         "blocked": True,
         "reason": "Native command execution is blocked until UDuneServerCommandSubsystem RabbitMQ payload format is verified.",
-        "candidatePayloads": [
-            {"format": "jsonrpc-notify-array", "body": {"jsonrpc": "2.0", "method": "ServerCommand", "params": [text]}},
-            {"format": "service-message", "body": {"Command": "ServerCommand", "CommandText": text, "TargetPlayer": target_player}},
-        ],
+        "payload": envelope,
     }
+
+
+def gm_payload_execute(body):
+    preview = gm_payload_preview(body)
+    route = preview["route"]["routingKey"]
+    if os.environ.get("DUNE_GM_COMMAND_TRANSPORT", "amqp") == "management":
+        result = publish_command_management(
+            preview["commandText"],
+            route,
+            target_player=preview["targetPlayer"],
+            admin_player=preview["adminPlayer"],
+            mode=preview["mode"],
+            exchange=preview["route"]["exchange"],
+        )
+    else:
+        result = publish_command(
+            preview["commandText"],
+            route,
+            target_player=preview["targetPlayer"],
+            admin_player=preview["adminPlayer"],
+            mode=preview["mode"],
+            exchange=preview["route"]["exchange"],
+            app_id="DASH-Admin-Panel",
+        )
+    result["dryRun"] = False
+    return result
 
 
 def read_director_transfer_settings():
@@ -1436,7 +1538,7 @@ def create_maintenance_backup(job):
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "dune-admin-panel"
-    protocol_version = "HTTP/1.1"
+    protocol_version = "HTTP/1.0"
 
     def setup(self):
         super().setup()
@@ -1459,6 +1561,8 @@ class Handler(BaseHTTPRequestHandler):
             self.validate_host()
             if parsed.path == "/":
                 self.html(INDEX)
+            elif parsed.path == "/static/hagga-basin.webp":
+                self.static_file(STATIC_ROOT / "hagga-basin.webp", "image/webp")
             elif parsed.path == "/api/status":
                 self.json({
                     "database": DATABASE,
@@ -1695,8 +1799,9 @@ class Handler(BaseHTTPRequestHandler):
                     raise PermissionError("GM commands are disabled; set DUNE_ADMIN_GM_COMMANDS_ENABLED=true")
                 if not GM_COMMAND_PAYLOAD_VERIFIED:
                     raise PermissionError("GM command route is not verified yet; execution is intentionally blocked")
-                self.audit("gm-command-execute-blocked", command=body.get("command"), route=body.get("route"), target_player=body.get("target_player"))
-                self.error(HTTPStatus.NOT_IMPLEMENTED, "GM command payload route is not implemented")
+                result = gm_payload_execute(body)
+                self.audit("gm-command-execute", command=body.get("command"), route=body.get("route"), target_player=body.get("target_player"), correlation_id=result.get("correlationId"))
+                self.json(result)
             elif parsed.path == "/api/ops/announcement":
                 self.require_token()
                 body = parse_body(self)
@@ -2482,6 +2587,22 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def static_file(self, path, content_type):
+        try:
+            resolved = path.resolve()
+            resolved.relative_to(STATIC_ROOT.resolve())
+            data = resolved.read_bytes()
+        except Exception:
+            self.error(HTTPStatus.NOT_FOUND, "static asset not found")
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.security_headers()
+        self.send_header("Cache-Control", "public, max-age=86400")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
     def error(self, status, message):
         data = json.dumps({"error": message}).encode("utf-8")
         self.send_response(status)
@@ -2596,10 +2717,11 @@ INDEX = r"""<!doctype html>
     .mapTile.bad { border-color:#743932; }
     .mapTile .name { font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .mapTile .meta { color:var(--muted); font-size:12px; margin-top:4px; }
-    .haggaMap { position:relative; border:1px solid var(--line); border-radius:8px; overflow:hidden; background:linear-gradient(145deg,#231d13,#151812 52%,#302314); min-height:360px; }
-    .haggaMap svg { display:block; width:100%; height:auto; min-height:360px; }
-    .haggaMap .gridLine { stroke:#5e523c; stroke-width:1; opacity:.35; }
-    .haggaMap .basinLine { fill:none; stroke:#b68b43; stroke-width:2; opacity:.65; }
+    .haggaMap { position:relative; border:1px solid var(--line); border-radius:8px; overflow:auto; background:#171513; max-height:min(78vh,900px); }
+    .haggaMap svg { display:block; width:100%; min-width:620px; height:auto; background:#171513; }
+    .haggaMap .mapImage { opacity:.88; }
+    .haggaMap .mapShade { fill:rgba(4,5,4,.22); }
+    .haggaMap .gridLine { stroke:#f1d08a; stroke-width:1; opacity:.22; }
     .haggaMap .playerDot { fill:var(--ok); stroke:#071007; stroke-width:3; }
     .haggaMap .playerMarker:focus .playerDot, .haggaMap .playerMarker:hover .playerDot { fill:var(--accent); stroke:var(--text); }
     .haggaMap .playerLabel { fill:var(--text); font:700 13px system-ui,sans-serif; paint-order:stroke; stroke:#0b0d0a; stroke-width:4; }
@@ -3066,6 +3188,11 @@ function gmRouteOptions(routes){
   if (!vals.length) return '<option value="Survival_11">Survival_11</option>';
   return vals.map(r => `<option value="${esc(r.routingKey)}">${esc(r.map || r.routingKey)} | ${esc(r.routingKey)} | ${r.alive ? 'alive' : 'not alive'}</option>`).join('');
 }
+function gmPresetButtons(presets){
+  const vals = presets || [];
+  if (!vals.length) return '';
+  return `<div class="toolbar">${vals.map(p => `<button type="button" class="gmPresetBtn" data-command="${esc(p.command)}" data-args="${esc(p.args || '')}" title="${esc(p.risk || '')}">${esc(p.label)}</button>`).join('')}</div>`;
+}
 function gmCommandPanel(gm, characters){
   const routeRows = (gm.routeCandidates || []).map(r => ({
     exchange: r.exchange,
@@ -3077,7 +3204,8 @@ function gmCommandPanel(gm, characters){
   }));
   const commandRows = (gm.commands || []).map(r => ({command: r.name, kind: r.kind, notes: r.notes}));
   const scriptRows = (gm.cheatScripts || []).map(r => ({script: r.name, command_count: (r.commands || []).length, commands: (r.commands || []).join(' | ')}));
-  return `<div class="panelBand dangerZone"><div class="sectionHeader"><h2>Native GM / Cheat Console</h2><div class="toolbar"><span class="pill ${gm.enabled ? 'ok' : 'warn'}">gate ${gm.enabled ? 'enabled' : 'disabled'}</span><span class="pill ${gm.payloadVerified ? 'ok' : 'bad'}">route ${gm.payloadVerified ? 'verified' : 'blocked'}</span><button id="refreshGmRefBtn">Refresh commands</button></div></div><p class="dangerText">${esc(gm.reason || 'Execution is blocked until the command route is verified.')}</p><div class="grid"><label>Map RPC route<select id="gmRoute">${gmRouteOptions(gm.routeCandidates)}</select></label><label>Target player<select id="gmTarget">${characterOptions(characters)}</select></label><label>Command<select id="gmCommand">${gmCommandOptions(gm.commands, gm.cheatScripts)}</select></label><label>Arguments<input id="gmArgs" placeholder="template/count, player, map, or coordinates"></label></div><label>Confirmation<input id="gmConfirm" placeholder="RUN GM COMMAND"></label><p><button id="gmPreviewBtn" class="primary">Preview payload</button> <button id="gmExecuteBtn" class="danger" disabled>Execute after route verification</button></p><pre id="gmResult"></pre><details open><summary>Discovered Allow-List</summary>${table(commandRows)}</details><details><summary>Cheat Scripts</summary>${table(scriptRows)}</details><details><summary>RabbitMQ Route Candidates</summary>${table(routeRows)}</details></div>`;
+  const chatRows = (gm.chatCommands || []).map(r => ({command: r.command, tier: r.tier, notes: r.notes}));
+  return `<div class="panelBand dangerZone"><div class="sectionHeader"><h2>Native GM / Cheat Console</h2><div class="toolbar"><span class="pill ${gm.enabled ? 'ok' : 'warn'}">gate ${gm.enabled ? 'enabled' : 'disabled'}</span><span class="pill ${gm.payloadVerified ? 'ok' : 'bad'}">route ${gm.payloadVerified ? 'verified' : 'blocked'}</span><button id="refreshGmRefBtn">Refresh commands</button></div></div><p class="dangerText">${esc(gm.reason || 'Execution is blocked until the command route is verified.')}</p>${gmPresetButtons(gm.panelPresets)}<div class="grid"><label>Map RPC route<select id="gmRoute">${gmRouteOptions(gm.routeCandidates)}</select></label><label>Target player<select id="gmTarget">${characterOptions(characters)}</select></label><label>Command<select id="gmCommand">${gmCommandOptions(gm.commands, gm.cheatScripts)}</select></label><label>Arguments<input id="gmArgs" placeholder="template/count, player, map, or coordinates"></label></div><label>Confirmation<input id="gmConfirm" placeholder="RUN GM COMMAND"></label><p><button id="gmPreviewBtn" class="primary">Preview payload</button> <button id="gmExecuteBtn" class="danger" disabled>Execute after route verification</button></p><pre id="gmResult"></pre><details open><summary>Discovered Allow-List</summary>${table(commandRows)}</details><details open><summary>In-Game &gm Commands</summary>${table(chatRows)}</details><details><summary>Cheat Scripts</summary>${table(scriptRows)}</details><details><summary>RabbitMQ Route Candidates</summary>${table(routeRows)}</details></div>`;
 }
 function checks(rows){
   return `<table><thead><tr><th>Check</th><th>Status</th><th>Value</th></tr></thead><tbody>${(rows || []).map(r=>`<tr><td>${esc(r.name)}</td><td class="${r.ok ? 'ok' : 'dangerText'}">${r.ok ? 'OK' : 'Needs attention'}</td><td>${esc(r.value ?? '')}</td></tr>`).join('')}</tbody></table>`;
@@ -3096,9 +3224,10 @@ function mapTiles(rows){
 function haggaBasinMapPanel(data){
   const players = data?.players || [];
   const bounds = data?.bounds || {};
-  const width = 960;
-  const height = 460;
-  const pad = 42;
+  const width = 1000;
+  const height = 1000;
+  const pad = 0;
+  const mapExtent = 100000;
   const xs = players.map(p => Number(p.x)).filter(Number.isFinite);
   const ys = players.map(p => Number(p.y)).filter(Number.isFinite);
   const minX = Number.isFinite(Number(bounds.minX)) ? Number(bounds.minX) : Math.min(...xs, -120000);
@@ -3107,20 +3236,21 @@ function haggaBasinMapPanel(data){
   const maxY = Number.isFinite(Number(bounds.maxY)) ? Number(bounds.maxY) : Math.max(...ys, 340000);
   const spanX = Math.max(maxX - minX, 1);
   const spanY = Math.max(maxY - minY, 1);
-  const px = x => pad + ((Number(x) - minX) / spanX) * (width - pad * 2);
-  const py = y => height - pad - ((Number(y) - minY) / spanY) * (height - pad * 2);
+  const mapX = x => clamp(((Number(x) - minX) / spanX) * mapExtent, 0, mapExtent);
+  const mapY = y => clamp(mapExtent - ((Number(y) - minY) / spanY) * mapExtent, 0, mapExtent);
+  const px = x => pad + (mapX(x) / mapExtent) * (width - pad * 2);
+  const py = y => pad + (mapY(y) / mapExtent) * (height - pad * 2);
   const grid = [1,2,3,4].map(i => {
-    const gx = pad + (i / 5) * (width - pad * 2);
-    const gy = pad + (i / 5) * (height - pad * 2);
+    const gx = (i / 5) * width;
+    const gy = (i / 5) * height;
     return `<line class="gridLine" x1="${gx}" y1="${pad}" x2="${gx}" y2="${height - pad}"></line><line class="gridLine" x1="${pad}" y1="${gy}" x2="${width - pad}" y2="${gy}"></line>`;
   }).join('');
-  const outline = `${pad + 34},${height - pad - 40} ${pad + 118},${pad + 42} ${width - pad - 142},${pad + 22} ${width - pad - 50},${height - pad - 86} ${width * .58},${height - pad - 22}`;
   const markers = players.map((p, index) => {
     const x = px(p.x);
     const y = py(p.y);
     const name = p.character_name || `Player ${index + 1}`;
-    const labelX = clamp(x + 12, pad, width - 180);
-    const labelY = clamp(y - 10, pad + 12, height - pad);
+    const labelX = clamp(x + 14, 8, width - 190);
+    const labelY = clamp(y - 12, 22, height - 24);
     const title = `${name} | x ${Number(p.x).toFixed(0)}, y ${Number(p.y).toFixed(0)}, z ${Number(p.z || 0).toFixed(0)}`;
     return `<g class="playerMarker" tabindex="0" role="button" data-account-id="${esc(p.account_id || '')}" aria-label="${esc(title)}"><title>${esc(title)}</title><circle class="playerDot" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="8"></circle><text class="playerLabel" x="${labelX.toFixed(1)}" y="${labelY.toFixed(1)}">${esc(name)}</text><text class="coordLabel" x="${labelX.toFixed(1)}" y="${(labelY + 16).toFixed(1)}">${esc(Math.round(Number(p.x || 0)))}, ${esc(Math.round(Number(p.y || 0)))}</text></g>`;
   }).join('');
@@ -3135,7 +3265,7 @@ function haggaBasinMapPanel(data){
     last_login_time: p.last_login_time || ''
   }));
   const generatedAt = data?.generatedAt ? new Date(data.generatedAt).toLocaleTimeString() : '';
-  return `<div class="panelBand"><div class="sectionHeader"><h2>Hagga Basin Player Map</h2><div class="toolbar"><span id="haggaMapCount" class="pill ${players.length ? 'ok' : ''}">${esc(players.length)} plotted</span><span id="haggaMapUpdated" class="pill">updated ${esc(generatedAt)}</span><span id="haggaMapHealth" class="pill ok">live</span><button id="toggleHaggaMapRefreshBtn" aria-pressed="${haggaMapAutoRefresh ? 'true' : 'false'}">${haggaMapAutoRefresh ? 'Pause map' : 'Resume map'}</button><button id="refreshHaggaMapBtn">Refresh map</button></div></div><div id="haggaMapSrStatus" class="srOnly" aria-live="polite">${esc(players.length)} Hagga Basin players plotted.</div><div class="haggaMap"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Hagga Basin online player coordinate map"><rect x="0" y="0" width="${width}" height="${height}" fill="transparent"></rect>${grid}<polygon class="basinLine" points="${outline}"></polygon><text x="${pad}" y="${pad - 12}" fill="var(--muted)" font-size="12">NW</text><text x="${width - pad - 18}" y="${height - pad + 26}" fill="var(--muted)" font-size="12">SE</text>${markers}${empty}</svg></div><div class="haggaMapStatus"><span class="pill ok">online pawn position</span><span class="pill">bounds from ${esc(bounds.actorCount || 0)} Hagga actors</span><span class="pill">updates every 2s while visible</span><span class="pill">world X/Y projection</span></div><details><summary>Coordinates</summary><div class="coordTable">${table(rows)}</div></details></div>`;
+  return `<div class="panelBand"><div class="sectionHeader"><h2>Hagga Basin Player Map</h2><div class="toolbar"><span id="haggaMapCount" class="pill ${players.length ? 'ok' : ''}">${esc(players.length)} plotted</span><span id="haggaMapUpdated" class="pill">updated ${esc(generatedAt)}</span><span id="haggaMapHealth" class="pill ok">live</span><button id="toggleHaggaMapRefreshBtn" aria-pressed="${haggaMapAutoRefresh ? 'true' : 'false'}">${haggaMapAutoRefresh ? 'Pause map' : 'Resume map'}</button><button id="refreshHaggaMapBtn">Refresh map</button></div></div><div id="haggaMapSrStatus" class="srOnly" aria-live="polite">${esc(players.length)} Hagga Basin players plotted.</div><div class="haggaMap"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Hagga Basin online player coordinate map"><image class="mapImage" href="/static/hagga-basin.webp" x="0" y="0" width="${width}" height="${height}" preserveAspectRatio="none"></image><rect class="mapShade" x="0" y="0" width="${width}" height="${height}"></rect>${grid}<text x="12" y="24" fill="var(--muted)" font-size="12">NW</text><text x="${width - 30}" y="${height - 12}" fill="var(--muted)" font-size="12">SE</text>${markers}${empty}</svg></div><div class="haggaMapStatus"><span class="pill ok">online pawn position</span><span class="pill">background: Community Wiki Hagga Basin map</span><span class="pill">bounds from ${esc(bounds.actorCount || 0)} Hagga actors</span><span class="pill">updates every 2s while visible</span></div><details><summary>Coordinates</summary><div class="coordTable">${table(rows)}</div></details></div>`;
 }
 function wireHaggaMapControls(container){
   container.querySelectorAll('.playerMarker[data-account-id]').forEach(marker => {
@@ -3990,6 +4120,7 @@ async function mutations(serial=loadSerial){
     const gmRef = await api('/api/admin/gm/reference');
     document.getElementById('gmResult').textContent = JSON.stringify(gmRef, null, 2);
   }));
+  document.querySelectorAll('.gmPresetBtn').forEach(btn => btn.addEventListener('click', () => applyGmPreset(btn)));
   document.getElementById('gmPreviewBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Previewing...', previewGmCommand));
   document.getElementById('gmExecuteBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Executing...', executeGmCommand));
   if (pendingAdminAccountId) {
@@ -4032,6 +4163,19 @@ function gmCommandBody(){
     args: document.getElementById('gmArgs')?.value || '',
     confirm: document.getElementById('gmConfirm')?.value || ''
   };
+}
+function gmSelectedTargetName(){
+  const target = document.getElementById('gmTarget')?.selectedOptions?.[0];
+  return target?.dataset.name || '';
+}
+function applyGmPreset(btn){
+  const command = btn.dataset.command || '';
+  const targetName = gmSelectedTargetName();
+  const args = (btn.dataset.args || '').replaceAll('<player>', targetName || '<player>');
+  const commandSelect = document.getElementById('gmCommand');
+  if (commandSelect) commandSelect.value = command;
+  const argsInput = document.getElementById('gmArgs');
+  if (argsInput) argsInput.value = args;
 }
 async function previewGmCommand(){
   const result = await api('/api/admin/gm/preview', {method:'POST', body:JSON.stringify(gmCommandBody())});

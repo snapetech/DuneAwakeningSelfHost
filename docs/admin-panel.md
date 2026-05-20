@@ -131,7 +131,7 @@ The scheduler is real and token-gated, but in-game delivery is delegated to:
 DUNE_ADMIN_ANNOUNCE_COMMAND=/workspace/scripts/announce.sh
 ```
 
-`scripts/announce.sh` publishes directly to the game RabbitMQ `chat.map` exchange as the local DASH announcer account. This is the only path currently verified in-game. The old `ServiceBroadcast`/JSON-RPC route, RabbitMQ management `publish`, and hand-written AMQP publisher can report success while the client renders nothing.
+`scripts/announce.sh` publishes directly to the game RabbitMQ `chat.map` exchange as the local Paul announcer account. This is the only path currently verified in-game. The old `ServiceBroadcast`/JSON-RPC route, RabbitMQ management `publish`, and hand-written AMQP publisher can report success while the client renders nothing.
 
 The stable transport is:
 
@@ -154,15 +154,15 @@ DUNE_ANNOUNCE_ALLOW_MANAGEMENT_PUBLISH=false
 DUNE_ANNOUNCE_CHAT_USER=A000000000000001
 DUNE_ANNOUNCE_CHAT_PASSWORD=<local announcer password>
 DUNE_ANNOUNCE_CHAT_FUNCOM_ID=ADMIN#00001
-DUNE_ANNOUNCE_CHAT_SPOOF_NAME=DASH Admin
+DUNE_ANNOUNCE_CHAT_SPOOF_NAME=Paul
 DUNE_ANNOUNCE_CHAT_EXCHANGE=chat.map
 DUNE_ANNOUNCE_CHAT_ROUTING_KEYS=HaggaBasin.0,Survival_1.dim_0,<empty>
 DUNE_ANNOUNCE_CHAT_CHANNEL=Map
 DUNE_ANNOUNCE_CHAT_USE_SPOOF_NAME=false
 DUNE_ANNOUNCE_CHAT_BIND_ONLINE_QUEUES=true
 DUNE_ANNOUNCE_CHAT_ENSURE_ACCOUNT=false
-DUNE_ANNOUNCE_CHAT_PLATFORM_ID=DASH-ADMIN
-DUNE_ANNOUNCE_CHAT_PLATFORM_NAME=DASH
+DUNE_ANNOUNCE_CHAT_PLATFORM_ID=PAUL
+DUNE_ANNOUNCE_CHAT_PLATFORM_NAME=Paul
 ```
 
 `DUNE_ANNOUNCE_CHAT_ROUTING_KEYS` is comma-separated. Use `<empty>` for the blank RabbitMQ routing key. Keep the three default routes unless a new build changes chat routing; those are the routes verified with the live client. When `DUNE_ANNOUNCE_CHAT_BIND_ONLINE_QUEUES=true`, the hook first lists connected player queues on game RabbitMQ and idempotently binds them to the configured chat routes, then publishes the restart message. The hook reads `/workspace/.env` at delivery time, so route and sender changes are picked up without recreating the admin-panel container.
@@ -183,7 +183,7 @@ The default sender account is created with the game database login function so t
 
 ```sql
 select *
-from dune.login_account('A000000000000001','ADMIN#00001','DASH-ADMIN','DASH',0,'DASH Admin',0,0)
+from dune.login_account('A000000000000001','ADMIN#00001','PAUL','Paul',0,'Paul',0,0)
 limit 1;
 ```
 
@@ -210,21 +210,31 @@ DUNE_CHAT_COMMAND_EXECUTE_TELEPORT=false
 DUNE_CHAT_COMMAND_EXECUTE_ONLINE_GM_TELEPORT=false
 DUNE_GM_COMMAND_PAYLOAD_VERIFIED=false
 DUNE_GM_COMMAND_ENVELOPE_MODE=service-message
+DUNE_GM_COMMAND_TRANSPORT=amqp
 DUNE_GM_COMMAND_EXCHANGE=rpc
 DUNE_GM_COMMAND_REPLY_TO=bgdRpc
-DUNE_GM_COMMAND_AMQP_HOST=admin-rabbitmq
+DUNE_GM_COMMAND_AMQP_HOST=admin-rmq
 DUNE_GM_COMMAND_AMQP_PORT=5672
 DUNE_GM_COMMAND_AMQP_USER=<admin-rmq command user>
 DUNE_GM_COMMAND_AMQP_PASSWORD=<admin-rmq command password>
+DUNE_GM_COMMAND_RMQ_URL=http://admin-rmq:15672
+DUNE_GM_COMMAND_RMQ_USER=<admin-rmq command user>
+DUNE_GM_COMMAND_RMQ_PASSWORD=<admin-rmq command password>
 DUNE_CHAT_COMMAND_EXCHANGE=chat.intercept
 DUNE_CHAT_COMMAND_QUEUE=dash_admin_chat_commands
 DUNE_CHAT_COMMAND_ROUTING_KEY=#
-DUNE_CHAT_COMMAND_AMQP_HOST=172.31.240.1
-DUNE_CHAT_COMMAND_AMQP_PORT=31982
+DUNE_CHAT_COMMAND_AMQP_HOST=game-rmq
+DUNE_CHAT_COMMAND_AMQP_PORT=5672
 DUNE_CHAT_COMMAND_AMQP_TLS=true
-DUNE_CHAT_COMMAND_AMQP_USER=A000000000000001
-DUNE_CHAT_COMMAND_AMQP_PASSWORD=<local announcer password>
+DUNE_CHAT_COMMAND_AMQP_USER=guest
+DUNE_CHAT_COMMAND_AMQP_PASSWORD=guest
 DUNE_CHAT_COMMAND_REPLY_COMMAND=/workspace/scripts/announce.sh
+DUNE_CHAT_SPAM_PROTECT_ENABLED=true
+DUNE_CHAT_SPAM_SAME_CONSECUTIVE_LIMIT=3
+DUNE_CHAT_SPAM_SAME_WINDOW_LIMIT=5
+DUNE_CHAT_SPAM_SAME_WINDOW_SECONDS=30
+DUNE_CHAT_SPAM_KICK_COMMAND=/workspace/scripts/spam-kick-player.sh --player {character_name} --fls-id {fls_id} --reason {reason} --message {message}
+DUNE_SPAM_KICK_BACKEND=blocked
 ```
 
 Implemented commands:
@@ -232,16 +242,60 @@ Implemented commands:
 ```text
 &test
 &where <playername>
+&kick <playername>
 &teleport <playername>
 &goto <playername>
 &bring <playername>
+&gm help
+&gm routes
+&gm mark|marks|unmark|recall
+&gm pos|dry
+&gm where|goto|bring|unstuck
+&gm item|kit|xp
+&gm tp|map|travel|dimension|patrol|sandworm|marker|vehicle
+&gm fly|ghost|walk
 ```
 
 `&test` replies with `f00` through the configured announcement/reply path. Use it as the first live smoke test for chat-command ingestion and reply delivery.
 
 `&where` reports the resolved player's current online/offline state and last known location. `&teleport` moves an offline target to the admin's current partition and location, using the server's own `dune.admin_move_offline_player_to_partition(...)` function. It rejects online targets because live actor transforms are owned by the running map server and can be overwritten.
 
+`&kick` resolves a target player and reports their online state, map route, controller ids, and the currently known kick options. It is deliberately blocked from disconnecting players until a real native kick/session command is verified. Current evidence shows lower-level `KickLobbyMember`, `RemoveSessionMember`, and `BattlEyeMegaKick` strings in the server binary, but no confirmed allow-listed `KickPlayer` command or safe DB/network session handle.
+
 `&goto` and `&bring` are wired through the native GM command adapter for online movement, but execution remains gated until the command payload is proven. `&goto <playername>` prepares `TeleportToPlayer <playername>` targeted at the admin; `&bring <playername>` prepares `TeleportToExact <admin-x> <admin-y> <admin-z>` targeted at the online player. The three required gates are `DUNE_ADMIN_GM_COMMANDS_ENABLED=true`, `DUNE_GM_COMMAND_PAYLOAD_VERIFIED=true`, and `DUNE_CHAT_COMMAND_EXECUTE_ONLINE_GM_TELEPORT=true`. Until then, the commands return the exact payload preview instead of publishing a live teleport.
+
+`&gm` is the richer native-command namespace. It supports safe probes, saved admin marks, movement/travel previews, player help, item/kit previews, XP mutation request previews, and movement-mode previews. All native publishes remain gated by the same three GM flags; dangerous building/placeable destroy commands are intentionally not wired as chat shortcuts.
+
+### Chat Spam Auto-Protection
+
+The chat-command listener also watches all intercepted chat messages for repeated-message spam. It is enabled by default with these rules:
+
+- More than `3` identical messages in a row from the same player triggers enforcement.
+- `5` identical messages within `30` seconds from the same player triggers enforcement.
+- Admins are exempt by default through `DUNE_CHAT_SPAM_PROTECT_EXEMPT_ADMINS=true`.
+- A cooldown prevents repeated enforcement on the same player for `300` seconds.
+
+The detector normalizes whitespace and case before comparing messages. On violation it runs `DUNE_CHAT_SPAM_KICK_COMMAND` and announces the result. The default hook is `scripts/spam-kick-player.sh`, which fails closed with `DUNE_SPAM_KICK_BACKEND=blocked` until a real kick backend is configured. Because the native targeted-kick path is still unverified, violations are logged and announced as blocked rather than pretending a player was disconnected.
+
+Useful knobs:
+
+```env
+DUNE_CHAT_SPAM_PROTECT_ENABLED=true
+DUNE_CHAT_SPAM_PROTECT_EXEMPT_ADMINS=true
+DUNE_CHAT_SPAM_SAME_CONSECUTIVE_LIMIT=3
+DUNE_CHAT_SPAM_SAME_WINDOW_LIMIT=5
+DUNE_CHAT_SPAM_SAME_WINDOW_SECONDS=30
+DUNE_CHAT_SPAM_KICK_COOLDOWN_SECONDS=300
+DUNE_CHAT_SPAM_KICK_COMMAND=/workspace/scripts/spam-kick-player.sh --player {character_name} --fls-id {fls_id} --reason {reason} --message {message}
+DUNE_SPAM_KICK_BACKEND=blocked
+DUNE_SPAM_KICK_BACKEND_COMMAND=
+DUNE_CHAT_SPAM_EXEMPT_NAMES=
+DUNE_CHAT_SPAM_EXEMPT_FLS_IDS=
+```
+
+`DUNE_CHAT_SPAM_KICK_COMMAND` is parsed with shell-style quoting and supports these placeholders: `{character_name}`, `{player}`, `{fls_id}`, `{reason}`, and `{message}`.
+
+`scripts/spam-kick-player.sh` supports `DUNE_SPAM_KICK_BACKEND=blocked` and `DUNE_SPAM_KICK_BACKEND=command`. The `command` backend delegates to `DUNE_SPAM_KICK_BACKEND_COMMAND` with `--player`, `--fls-id`, `--reason`, and `--message`; use it only after a targeted disconnect primitive is proven.
 
 Teleport starts in dry-run mode. To apply the movement write, set:
 

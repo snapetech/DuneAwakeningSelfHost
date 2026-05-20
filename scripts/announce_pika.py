@@ -64,7 +64,7 @@ funcom_id = env("DUNE_ANNOUNCE_CHAT_FUNCOM_ID", "ADMIN#00001")
 exchange = env("DUNE_ANNOUNCE_CHAT_EXCHANGE", "chat.map")
 routes = split_csv(env("DUNE_ANNOUNCE_CHAT_ROUTING_KEYS", "HaggaBasin.0,Survival_1.dim_0,<empty>"))
 spoof = env_bool("DUNE_ANNOUNCE_CHAT_USE_SPOOF_NAME", False)
-spoof_name = env("DUNE_ANNOUNCE_CHAT_SPOOF_NAME", "DASH Admin")
+spoof_name = env("DUNE_ANNOUNCE_CHAT_SPOOF_NAME", "Paul")
 
 context = ssl.create_default_context()
 context.check_hostname = False
