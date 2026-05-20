@@ -654,6 +654,7 @@ services:
       - ./config:/workspace/config
       - ./.env:/workspace/.env
       - ./backups:/workspace/backups
+      - ./data:/workspace/data:ro
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       default:

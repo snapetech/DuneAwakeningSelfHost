@@ -2959,7 +2959,7 @@ function restartPanel(state){
   ].map(([value,label]) => `<option value="${value}">${label}</option>`).join('');
   const jobSummary = latest ? `<pre>${esc(JSON.stringify(latest, null, 2))}</pre>` : '<div class="muted">No scheduled restart.</div>';
   const execution = state.lastExecution ? `<pre>${esc(JSON.stringify(state.lastExecution, null, 2))}</pre>` : '<div class="muted">No restart execution attempts yet.</div>';
-  return `<div class="card"><h2>Scheduled Restart</h2><p class="muted">Schedules a component restart through <code>${esc(state.command || '')}</code>. Leave execution off for a dry-run schedule; enable it only when the restart hook should control Docker.</p><div class="grid"><label>Target<select id="restartTarget">${targetOptions}</select></label><label>Restart after<select id="restartDelay">${delayOptions}</select></label><label>Repeat notice every<select id="restartRepeat"><option value="0">Do not repeat</option><option value="30">30 sec</option><option value="60" selected>60 sec</option><option value="300">5 min</option><option value="600">10 min</option><option value="900">15 min</option><option value="1800">30 min</option><option value="3600">60 min</option></select></label><label>Restart action<select id="restartExecute"><option value="false" selected>Dry-run schedule</option><option value="true">Execute restart hook</option></select></label></div><label><input id="restartAnnounce" type="checkbox" checked style="width:auto"> Also schedule announcement</label><label>Message<textarea id="restartMessage" rows="3" style="min-height:82px">Server restart soon. Please get to a safe place.</textarea></label><p><button id="scheduleRestartBtn" class="primary">Schedule restart</button> <button id="cancelRestartBtn" class="danger">Cancel active restart</button></p><h3>Current</h3>${jobSummary}<h3>Last Execution</h3>${execution}</div>`;
+  return `<div class="card"><h2>Scheduled Restart / Shutdown</h2><p class="muted">Schedules a component restart or shutdown through <code>${esc(state.command || '')}</code>. Executed jobs take a maintenance backup first by default.</p><div class="grid"><label>Target<select id="restartTarget">${targetOptions}</select></label><label>Action<select id="restartAction"><option value="restart" selected>Restart target</option><option value="shutdown">Shutdown target</option></select></label><label>Run after<select id="restartDelay">${delayOptions}</select></label><label>Repeat notice every<select id="restartRepeat"><option value="0">Do not repeat</option><option value="30">30 sec</option><option value="60" selected>60 sec</option><option value="300">5 min</option><option value="600">10 min</option><option value="900">15 min</option><option value="1800">30 min</option><option value="3600">60 min</option></select></label><label>Execution<select id="restartExecute"><option value="false" selected>Dry-run schedule</option><option value="true">Execute hook</option></select></label></div><label><input id="restartBackup" type="checkbox" checked style="width:auto"> Backup before execution</label><label><input id="restartAnnounce" type="checkbox" checked style="width:auto"> Also schedule announcement</label><label>Message<textarea id="restartMessage" rows="3" style="min-height:82px">Server maintenance soon. Please get to a safe place.</textarea></label><p><button id="scheduleRestartBtn" class="primary">Schedule maintenance</button> <button id="cancelRestartBtn" class="danger">Cancel active job</button></p><h3>Current</h3>${jobSummary}<h3>Last Execution</h3>${execution}</div>`;
 }
 function signalList(groups){
   return Object.entries(groups || {}).map(([group, rows]) => `<div class="card"><h2>${esc(group)}</h2><table><thead><tr><th>Name</th><th>Value</th><th>Why</th></tr></thead><tbody>${(rows || []).map(r=>`<tr><td>${esc(r.name)}</td><td>${esc(Array.isArray(r.value) ? r.value.join(', ') : r.value)}</td><td>${esc(r.why)}</td></tr>`).join('')}</tbody></table></div>`).join('');
@@ -3753,20 +3753,24 @@ async function cancelAnnouncement(){
 }
 async function scheduleRestart(){
   const execute = restartExecute.value === 'true';
+  const action = restartAction.value || 'restart';
   const targetLabel = restartTarget.options[restartTarget.selectedIndex]?.textContent || restartTarget.value;
   const delayLabel = restartDelay.options[restartDelay.selectedIndex]?.textContent || restartDelay.value;
   const repeatLabel = restartRepeat.options[restartRepeat.selectedIndex]?.textContent || restartRepeat.value;
   const actionLabel = execute ? 'execute the restart hook' : 'dry-run only';
-  if (!confirm(`Schedule ${targetLabel} restart after ${delayLabel}?\nNotice repeat: ${repeatLabel}\nAction: ${actionLabel}`)) return;
+  const backupLabel = restartBackup.checked ? 'backup first' : 'no backup';
+  if (!confirm(`Schedule ${targetLabel} ${action} after ${delayLabel}?\nNotice repeat: ${repeatLabel}\nAction: ${actionLabel}\nBackup: ${backupLabel}`)) return;
   await api('/api/ops/restart', {method:'POST', body:JSON.stringify({
     target: restartTarget.value,
+    action,
     delay: restartDelay.value,
     repeat_seconds: restartRepeat.value,
     message: restartMessage.value,
     announce: restartAnnounce.checked,
-    execute
+    execute,
+    backup: restartBackup.checked
   })});
-  notify('Restart scheduled');
+  notify('Maintenance scheduled');
   await ops();
 }
 async function cancelRestart(){
