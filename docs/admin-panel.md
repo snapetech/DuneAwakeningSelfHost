@@ -8,7 +8,8 @@ Set a strong token in `.env`:
 
 ```env
 DUNE_ADMIN_TOKEN=replace-with-a-long-random-token
-DUNE_ADMIN_MUTATIONS_ENABLED=false
+DUNE_ADMIN_MUTATIONS_ENABLED=true
+DUNE_ADMIN_ITEM_GRANTS_ENABLED=true
 ```
 
 Start the service:
@@ -221,8 +222,8 @@ Recreate affected game-server containers after saving so `scripts/run_server_saf
 
 - Do not expose this service to the public internet.
 - Use a long random `DUNE_ADMIN_TOKEN`.
-- Keep `DUNE_ADMIN_MUTATIONS_ENABLED=false` unless actively making admin edits.
-- `DUNE_ADMIN_ITEM_GRANTS_ENABLED` defaults to `true` in this repo so item tooling is visible and ready; keep general writes gated with `DUNE_ADMIN_MUTATIONS_ENABLED`.
+- `DUNE_ADMIN_MUTATIONS_ENABLED=true` is the repo default so the character-admin workflows can apply currency, XP, item stack, and item grant changes without a separate redeploy.
+- `DUNE_ADMIN_ITEM_GRANTS_ENABLED` defaults to `true` in this repo so item tooling is visible and ready.
 - Director character-transfer settings write `config/director.ini`; recreate the Director container before relying on a changed transfer policy.
 - Director GME voice-chat settings also live in `config/director.ini`; recreate Director after changing them.
 - `UserEngine.ini` and `UserGame.ini` edits are copied into game containers during game-service startup. Recreate affected game containers before relying on changed gameplay knobs.
