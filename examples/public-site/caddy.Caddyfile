@@ -7,6 +7,9 @@ https://dune.example.com {
 	encode zstd gzip
 
 	header {
+		Cache-Control "no-store, max-age=0, must-revalidate"
+		Pragma "no-cache"
+		Expires "0"
 		Content-Security-Policy "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:"
 		Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=(), serial=(), bluetooth=()"
 		Referrer-Policy "no-referrer"

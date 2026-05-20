@@ -46,16 +46,16 @@ def float_env(key, default):
 
 
 CAL = {
-    "min_x": float_env("DUNE_HAGGA_MAP_MIN_X", "-407000"),
-    "max_x": float_env("DUNE_HAGGA_MAP_MAX_X", "407000"),
-    "min_y": float_env("DUNE_HAGGA_MAP_MIN_Y", "-403500"),
-    "max_y": float_env("DUNE_HAGGA_MAP_MAX_Y", "403500"),
-    "invert_x": bool_env("DUNE_HAGGA_MAP_INVERT_X", "true"),
+    "min_x": float_env("DUNE_HAGGA_MAP_MIN_X", "-457200"),
+    "max_x": float_env("DUNE_HAGGA_MAP_MAX_X", "355600"),
+    "min_y": float_env("DUNE_HAGGA_MAP_MIN_Y", "-457200"),
+    "max_y": float_env("DUNE_HAGGA_MAP_MAX_Y", "355600"),
+    "invert_x": bool_env("DUNE_HAGGA_MAP_INVERT_X", "false"),
     "invert_y": bool_env("DUNE_HAGGA_MAP_INVERT_Y", "false"),
-    "image_min_u": float_env("DUNE_HAGGA_MAP_IMAGE_MIN_U", "0.15"),
-    "image_max_u": float_env("DUNE_HAGGA_MAP_IMAGE_MAX_U", "1.15"),
-    "image_min_v": float_env("DUNE_HAGGA_MAP_IMAGE_MIN_V", "0.10"),
-    "image_max_v": float_env("DUNE_HAGGA_MAP_IMAGE_MAX_V", "1.10"),
+    "image_min_u": float_env("DUNE_HAGGA_MAP_IMAGE_MIN_U", "0"),
+    "image_max_u": float_env("DUNE_HAGGA_MAP_IMAGE_MAX_U", "1"),
+    "image_min_v": float_env("DUNE_HAGGA_MAP_IMAGE_MIN_V", "0"),
+    "image_max_v": float_env("DUNE_HAGGA_MAP_IMAGE_MAX_V", "1"),
 }
 
 
@@ -198,7 +198,7 @@ def main():
         "players": public_players,
         "error": error,
     }
-    source_map = DUNE_ROOT / "admin" / "static" / "hagga-basin-south.webp"
+    source_map = DUNE_ROOT / "admin" / "static" / "hagga-basin.webp"
     if source_map.exists():
         shutil.copyfile(source_map, STATIC_DIR / "hagga-basin.webp")
     (STATIC_DIR / "players.json").write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
