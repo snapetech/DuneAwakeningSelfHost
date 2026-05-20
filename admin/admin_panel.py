@@ -2238,6 +2238,7 @@ let current = validTabs.has(location.hash.slice(1)) ? location.hash.slice(1) : (
 if (!validTabs.has(current)) current = 'overview';
 let pendingAdminAccountId = '';
 let resourceTimer = null;
+let loadSerial = 0;
 let autoRefresh = sessionStorage.getItem('duneAdminAutoRefresh') !== 'off';
 const resourceHistory = [];
 const view = document.getElementById('view');
@@ -2788,6 +2789,7 @@ async function refreshNetwork(){
   });
 }
 async function load(){
+  const serial = ++loadSerial;
   if (resourceTimer) {
     clearInterval(resourceTimer);
     resourceTimer = null;
@@ -2800,27 +2802,30 @@ async function load(){
     document.getElementById('statusRaw').textContent = e.message;
   });
   try {
-    if (current === 'overview') await overview();
-    else if (current === 'ops') await ops();
-    else if (current === 'security') await security();
-    else if (current === 'runbook') await runbook();
-    else if (current === 'characters') await characters();
-    else if (current === 'settings') await settings();
-    else if (current === 'mutations') await mutations();
+    if (current === 'overview') await overview(serial);
+    else if (current === 'ops') await ops(serial);
+    else if (current === 'security') await security(serial);
+    else if (current === 'runbook') await runbook(serial);
+    else if (current === 'characters') await characters(serial);
+    else if (current === 'settings') await settings(serial);
+    else if (current === 'mutations') await mutations(serial);
   } catch (e) {
+    if (serial !== loadSerial) return;
     view.innerHTML = `<div class="card"><h2>Admin Token Required</h2><p class="dangerText">${esc(e.message)}</p><p class="muted">Paste the admin token in the header and press <b>Use token</b>. The panel is reachable, but server data and write controls stay locked until the token is present.</p></div><div class="metricGrid">${metric('Endpoint', location.host)}${metric('Item Grants', 'enabled', 'ok')}${metric('Mutations', 'off', 'ok')}</div>`;
   }
+  if (serial !== loadSerial) return;
   makeSortableTables(view);
   makeRowsKeyboardFriendly(view);
   enhanceCopyBlocks(view);
   announce(`${current} loaded`);
   view.setAttribute('aria-busy', 'false');
 }
-async function overview(){
+async function overview(serial=loadSerial){
   const [health, roster] = await Promise.all([
     api('/api/ops/health'),
     api('/api/characters/roster')
   ]);
+  if (serial !== loadSerial) return;
   const state = health;
   const summary = health.summary || {};
   const players = (state.farmState || []).reduce((sum, r) => sum + Number(r.connected_players || 0), 0);
@@ -2841,13 +2846,14 @@ async function overview(){
     if (autoRefresh && current === 'overview') refreshResources().catch(() => {});
   }, 5000);
 }
-async function ops(){
+async function ops(serial=loadSerial){
   const [health, opt, announcement, restart] = await Promise.all([
     api('/api/ops/health'),
     api('/api/ops/optimization'),
     api('/api/ops/announcement'),
     api('/api/ops/restart')
   ]);
+  if (serial !== loadSerial) return;
   const pc = health.playerCounts || {};
   view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Operations</h2><div class="toolbar"><button data-jump="overview">Overview</button><button data-jump="characters">Players</button><button data-jump="runbook">Runbook</button><button data-jump="settings">Settings</button></div></div><div class="metricGrid">${metric('Connected Players', pc.connected_players_reported ?? 0)}${metric('Online Controllers', pc.online_controller_ids ?? 0)}${metric('Recent Online State', pc.online_or_recently_disconnected ?? 0)}${metric('Grace Entries', pc.grace_period_entries ?? 0)}</div>${healthViz(health)}<div id="resources" class="panelBand"><h2>Resources</h2><div class="muted">Loading resource stats...</div></div><div class="twoCol">${restartPanel(restart)}${announcementPanel(announcement)}</div><div class="twoCol"><div class="panelBand"><h2>Health Verdict</h2>${checks(health.verdicts)}</div><div class="panelBand" data-network-panel><h2>Local and Upstream Network</h2><div class="muted">Loading network probes...</div></div></div><div class="panelBand"><h2>Map Online/Offline</h2>${mapTiles(health.mapStatus)}<details><summary>Map Table</summary>${mapStatusTable(health.mapStatus)}</details></div><details class="panelBand"><summary>Raw Farm State</summary>${table(health.farmState)}</details><details class="panelBand"><summary>Partitions</summary>${table(health.partitions)}</details>${signalList(opt)}</div>`;
   wireResourceControls(view);
@@ -2892,20 +2898,23 @@ async function refreshResources(){
     }
   }
 }
-async function security(){
+async function security(serial=loadSerial){
   const [audit, events] = await Promise.all([
     api('/api/ops/security'),
     api('/api/ops/audit')
   ]);
+  if (serial !== loadSerial) return;
   const failed = (audit.checks || []).filter(c => !c.ok).length;
   view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Security</h2><div class="toolbar"><span class="pill ${failed ? 'warn' : 'ok'}">${failed ? failed + ' checks need attention' : 'checks OK'}</span><button data-jump="settings">Settings</button><button data-jump="mutations">Backup</button></div></div><div class="twoCol"><div class="panelBand"><h2>Security Checks</h2>${checks(audit.checks)}</div><div class="panelBand"><h2>Recent Audit Events</h2>${table(events.events)}</div></div><div class="panelBand"><h2>Operating Notes</h2><ul>${audit.notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul></div><details class="panelBand"><summary>Editable Env Keys</summary><div class="toolbar">${audit.safeEnvKeys.map(k => `<span class="pill">${esc(k)}</span>`).join('')}</div></details><details class="panelBand"><summary>Editable Config Files</summary><div class="toolbar">${audit.allowedConfigFiles.map(k => `<span class="pill">${esc(k)}</span>`).join('')}</div></details></div>`;
 }
-async function runbook(){
+async function runbook(serial=loadSerial){
   const data = await api('/api/ops/runbook');
+  if (serial !== loadSerial) return;
   view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Runbook</h2><div class="toolbar"><span class="pill">copy/paste commands</span><button data-jump="ops">Ops</button><button data-jump="settings">Settings</button></div></div>${actionGrid([{tab:'overview',label:'Overview'},{tab:'mutations',label:'Create DB backup',className:'primary'},{tab:'security',label:'Audit'}])}<div class="panelBand"><p class="muted">${esc(data.why)}</p>${table(data.commands)}</div></div>`;
 }
-async function characters(){
+async function characters(serial=loadSerial){
   const lastQuery = sessionStorage.getItem('duneAdminCharacterQuery') || '';
+  if (serial !== loadSerial) return;
   view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Players</h2><div class="toolbar"><span class="pill">online and offline roster</span><button id="refreshRosterBtn">Refresh roster</button><button data-jump="mutations" class="primary">Admin Actions</button><button data-jump="settings">Settings</button></div></div><div id="roster"></div><div class="panelBand"><h2>Player Search</h2><div class="row"><input id="q" placeholder="Character, Funcom ID, platform ID" value="${esc(lastQuery)}"><button id="characterSearchBtn" class="primary">Search</button><button id="characterListAllBtn">List all</button></div><div id="results"></div></div><div id="detail"></div></div>`;
   document.getElementById('refreshRosterBtn').addEventListener('click', loadCharacterRoster);
   document.getElementById('characterSearchBtn').addEventListener('click', searchCharacters);
@@ -2981,13 +2990,14 @@ async function pickCharacter(row){
   document.getElementById('detailSetStackBtn').addEventListener('click', setDetailItemStack);
   document.getElementById('detailDeleteItemBtn').addEventListener('click', deleteDetailItem);
 }
-async function settings(){
+async function settings(serial=loadSerial){
   const [env, transfer, onlineState, configs] = await Promise.all([
     api('/api/settings/env'),
     api('/api/settings/director-transfer'),
     api('/api/settings/player-online-state'),
     api('/api/settings/configs')
   ]);
+  if (serial !== loadSerial) return;
   view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Settings</h2><div class="toolbar"><button data-jump="security">Security</button><button data-jump="ops">Ops</button><button id="saveEnvBtn" class="primary">Save env settings</button></div></div><div class="panelBand"><p class="muted">These write <code>.env</code>, <code>config/director.ini</code>, or <code>config/UserGame.ini</code> with a backup under <code>backups/admin-panel</code>. Most service settings need the affected containers recreated before running processes pick them up.</p></div>${actionGrid([{tab:'ops',label:'Check live state'},{tab:'mutations',label:'Create backup',className:'primary'},{tab:'characters',label:'Inspect players'}])}${envEditor(env)}<div class="twoCol">${playerOnlineStateEditor(onlineState)}${directorTransferEditor(transfer)}</div><div class="panelBand"><h2>Config Files</h2><select id="cfg">${Object.keys(configs).map(k=>`<option>${esc(k)}</option>`).join('')}</select><textarea id="cfgText"></textarea><p><button id="saveCfgBtn" class="primary">Save config with backup</button></p></div></div>`;
   window.configs = configs; selectCfg();
   document.getElementById('cfg').addEventListener('change', selectCfg);
@@ -3022,11 +3032,12 @@ async function savePlayerOnlineState(){
   await api('/api/settings/player-online-state', {method:'POST', body:JSON.stringify(body)});
   notify('Saved logout timers');
 }
-async function mutations(){
+async function mutations(serial=loadSerial){
   const [ref, characterRows] = await Promise.all([
     api('/api/admin/reference'),
     api('/api/characters?q=')
   ]);
+  if (serial !== loadSerial) return;
   const referenceErrors = ref.errors && Object.keys(ref.errors).length ? `<div class="card"><h2>Reference Errors</h2><pre>${esc(JSON.stringify(ref.errors, null, 2))}</pre></div>` : '';
   view.innerHTML = `<div class="pageStack">${referenceErrors}<div class="sectionHeader"><h2>Admin Actions</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="settings">Settings</button><button data-jump="security">Audit</button></div></div>${actionGrid([{tab:'characters',label:'Player lookup'},{tab:'settings',label:'Mutation settings'},{tab:'runbook',label:'Runbook'}])}<div class="panelBand"><h2>Backup First</h2><p class="muted">Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button id="backupBtn" class="primary">Create DB backup</button><pre id="backupResult"></pre></div><div class="panelBand"><h2>Target Player</h2><div class="grid"><label>Character<select id="adminCharacterSelect">${characterOptions(characterRows)}</select></label><label>Player controller ID<input id="pcid"></label><label>Account ID<input id="grantAccount" placeholder="auto-select player inventory"></label><label>Character name<input id="grantCharacter" placeholder="auto-select by name"></label></div></div><div class="twoCol"><div class="panelBand"><h2>Currency and XP</h2><p class="dangerText">Writes require <code>DUNE_ADMIN_MUTATIONS_ENABLED=true</code> and a valid admin token.</p><div class="grid"><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button id="currencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Level for set/new track<input id="xplevel" value="0"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button id="xpBtn" class="primary">Apply XP</button></p></div><div class="panelBand dangerZone"><h2>Specialization Keystones</h2><div class="grid"><label>Player/controller ID<input id="keyPlayer"></label><label>Keystone<select id="keystone">${options(ref.keystones, 'name')}</select></label></div><p><button id="purchaseKeystoneBtn" class="primary">Purchase keystone</button> <button id="resetKeystonesBtn" class="danger">Reset all keystones</button></p><pre id="keystoneResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Item Grants</h2><p class="dangerText">Use exact server template IDs. Dry run first when using IDs not observed locally.</p><div class="grid"><label>Known inventory<select id="grantInventorySelect">${inventoryOptions(ref.recentInventories)}</select></label><label>Inventory ID<input id="grantInventory" placeholder="explicit inventory"></label><label class="hidden">Character<select id="grantCharacterSelect">${characterOptions(characterRows)}</select></label><label>Inventory type<select id="grantInventoryType">${inventoryTypeOptions(ref.inventoryTypes)}</select></label><label>Template ID<input id="grantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><label>Stats JSON<textarea id="grantStats">{}</textarea></label><p><button id="dryRunItemBtn" class="primary">Dry run</button> <button id="grantItemBtn" class="danger">Grant item</button></p><pre id="grantResult"></pre></div><div class="panelBand dangerZone"><h2>Item Maintenance</h2><div class="grid"><label class="hidden">Character<select id="itemCharacterSelect">${characterOptions(characterRows)}</select></label><label>Owned item<select id="itemEditSelect"><option value="">Select a character first</option></select></label><label>Item ID<input id="itemEditId"></label><label>New stack size<input id="itemEditStack" value="1"></label><label>Delete count<input id="itemDeleteCount" placeholder="blank/all"></label></div><p><button id="setItemStackBtn" class="primary">Set stack</button> <button id="deleteItemBtn" class="danger">Delete item/count</button></p><pre id="itemEditResult"></pre></div></div><datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><details class="panelBand"><summary>Known Item Templates</summary>${table(ref.knownItemTemplates)}</details><details class="panelBand"><summary>Observed Item Templates</summary>${table(ref.observedItemTemplates)}</details><details class="panelBand"><summary>Recent Inventories</summary>${table(ref.recentInventories)}</details><details class="panelBand"><summary>Inventory Types</summary>${table(ref.inventoryTypes)}</details></div>`;
   const loadCharacterAdminDetails = async (accountId) => {
