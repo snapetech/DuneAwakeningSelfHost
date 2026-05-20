@@ -3310,7 +3310,7 @@ INDEX = r"""<!doctype html>
     .metric .value { font-size:20px; font-weight:700; margin-top:6px; overflow-wrap:anywhere; }
     .overviewTopGrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; margin-bottom:14px; }
     .overviewMapShell .panelBand { margin-bottom:0; }
-    .overviewMapShell .haggaMap { aspect-ratio:16 / 10; max-height:calc(100vh - 260px); min-height:520px; }
+    .overviewMapShell .haggaMap { aspect-ratio:16 / 10; max-height:calc(100vh - 260px); min-height:520px; --hagga-map-x-skew:1.32; }
     .overviewMapShell .haggaMap svg { block-size:100%; inline-size:100%; aspect-ratio:auto; }
     .summaryCard { position:relative; border:1px solid var(--line); border-radius:8px; background:var(--panel2); padding:10px 12px; min-height:74px; }
     .summaryCard:focus-within, .summaryCard:hover { border-color:#53614d; }
@@ -3378,7 +3378,7 @@ INDEX = r"""<!doctype html>
     .mapTile.bad { border-color:#743932; }
     .mapTile .name { font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .mapTile .meta { color:var(--muted); font-size:12px; margin-top:4px; }
-    .haggaMap { position:relative; display:block; overflow:hidden; touch-action:none; cursor:grab; background:#171513; inline-size:100%; margin-inline:auto; border:1px solid var(--line); border-radius:8px; }
+    .haggaMap { position:relative; display:block; overflow:hidden; touch-action:none; cursor:grab; background:#171513; inline-size:100%; margin-inline:auto; border:1px solid var(--line); border-radius:8px; --hagga-map-x-skew:1; }
     .haggaMap.isDragging { cursor:grabbing; }
     .haggaMap svg { display:block; inline-size:100%; aspect-ratio:1 / 1; block-size:auto; background:#171513; transform-origin:center center; will-change:transform; user-select:none; }
     .haggaMap .mapImage { opacity:.95; }
@@ -3438,7 +3438,7 @@ INDEX = r"""<!doctype html>
     .hostNote { font-size:13px; line-height:1.35; }
     .hidden { display:none; }
     @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior:auto !important; transition:none !important; animation:none !important; } }
-    @media (max-width: 1100px) { .twoCol, .threeCol { grid-template-columns:1fr; } .overviewMapShell .haggaMap { aspect-ratio:1 / 1; min-height:0; max-height:none; } }
+    @media (max-width: 1100px) { .twoCol, .threeCol { grid-template-columns:1fr; } .overviewMapShell .haggaMap { aspect-ratio:1 / 1; min-height:0; max-height:none; --hagga-map-x-skew:1.06; } }
     @media (max-width: 820px) { header { align-items:flex-start; flex-direction:column; } main { grid-template-columns:1fr; } nav { position:static; height:auto; border-right:0; border-bottom:1px solid var(--line); } .tabs { grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); } .row { flex-wrap:wrap; } .barRow { grid-template-columns:1fr; gap:4px; } }
   </style>
 </head>
@@ -3999,22 +3999,26 @@ function initHaggaMapPanZoom(container){
   const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
   let drag = null;
   let suppressMarkerClick = false;
+  function skewX(){
+    const value = parseFloat(getComputedStyle(viewport).getPropertyValue('--hagga-map-x-skew'));
+    return Number.isFinite(value) && value > 0 ? value : 1;
+  }
   function constrain(){
     const rect = viewport.getBoundingClientRect();
-    const maxX = Math.max(0, (rect.width * haggaMapZoomState.scale - rect.width) / 2);
+    const maxX = Math.max(0, (rect.width * haggaMapZoomState.scale * skewX() - rect.width) / 2);
     const maxY = Math.max(0, (rect.height * haggaMapZoomState.scale - rect.height) / 2);
     haggaMapZoomState.x = clamp(haggaMapZoomState.x, -maxX, maxX);
     haggaMapZoomState.y = clamp(haggaMapZoomState.y, -maxY, maxY);
   }
   function apply(){
     constrain();
-    content.style.transform = `translate(${haggaMapZoomState.x}px, ${haggaMapZoomState.y}px) scale(${haggaMapZoomState.scale})`;
+    content.style.transform = `translate(${haggaMapZoomState.x}px, ${haggaMapZoomState.y}px) scale(${haggaMapZoomState.scale}) scaleX(${skewX()})`;
   }
   function zoomAt(nextScale, clientX, clientY){
     const rect = viewport.getBoundingClientRect();
     const oldScale = haggaMapZoomState.scale;
     const newScale = clamp(nextScale, 1, 8);
-    const px = clientX - rect.left - rect.width / 2 - haggaMapZoomState.x;
+    const px = (clientX - rect.left - rect.width / 2 - haggaMapZoomState.x) / skewX();
     const py = clientY - rect.top - rect.height / 2 - haggaMapZoomState.y;
     haggaMapZoomState.x -= px * (newScale / oldScale - 1);
     haggaMapZoomState.y -= py * (newScale / oldScale - 1);
