@@ -147,7 +147,7 @@ The stable transport is:
 
 1. The hook binds currently online player queues to the configured `chat.map` routing keys.
 2. The hook publishes a `TextChat` payload with bundled `pika`, matching the AMQP property encoding used by real player chat.
-3. Dashboard-origin messages are wrapped as `!!! message !!!` before delivery. Direct/manual hook invocations with `DUNE_ANNOUNCE_JOB_ID=manual` are not wrapped.
+3. Paul-origin messages are wrapped as `!!! message !!!` before delivery. Direct/manual hook invocations with `DUNE_ANNOUNCE_JOB_ID=manual` are not wrapped.
 
 Default announcement transport settings:
 
@@ -182,7 +182,7 @@ Do not replace the `pika` publisher with RabbitMQ HTTP publish unless you valida
 Verification command:
 
 ```bash
-./scripts/verify-announcement.sh 'DASH ANNOUNCEMENT VERIFY'
+./scripts/verify-announcement.sh 'PAUL ANNOUNCEMENT VERIFY'
 ```
 
 For a dashboard-origin test, use Ops -> Restart Announcement or POST `/api/ops/announcement`; the visible message should be wrapped, for example `!!! ADMIN Alert f00 !!!`.
@@ -207,7 +207,7 @@ The script also receives the message as its first argument. Delivery attempts an
 
 ## Chat Commands
 
-`scripts/admin-chat-commands.py` is the first DASH chat-command bridge. It listens for game chat messages that start with `DUNE_CHAT_COMMAND_PREFIX`, resolves the sending account through `dune.accounts.user`, and only accepts commands from configured admins.
+`scripts/admin-chat-commands.py` is the Paul chat-command bridge. It listens for game chat messages that start with `DUNE_CHAT_COMMAND_PREFIX`, resolves the sending account through `dune.accounts.user`, and only accepts commands from configured admins.
 
 Default command settings:
 

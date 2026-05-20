@@ -2979,7 +2979,7 @@ INDEX = r"""<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Dune Admin</title>
+  <title>Paul Admin</title>
   <style nonce="__NONCE__">
     :root { color-scheme: dark; --bg:#0f1110; --nav:#141814; --panel:#1a1f1a; --panel2:#131713; --panel3:#20261f; --muted:#a3aea4; --line:#323b32; --text:#edf3ea; --accent:#d5a13e; --danger:#d96f62; --ok:#7fc27a; --warn:#e1b75f; }
     * { box-sizing:border-box; }
@@ -3123,12 +3123,12 @@ INDEX = r"""<!doctype html>
 <body>
   <a class="skipLink" href="#view">Skip to dashboard</a>
   <header>
-    <div class="brand"><h1>DASH Admin</h1><span class="subtle">Dune Awakening Self Host</span></div>
+    <div class="brand"><h1>Paul</h1><span class="subtle">Dune Awakening Self Host Admin</span></div>
     <div class="row"><input id="token" type="password" placeholder="Admin token"><button id="saveTokenBtn">Use token</button><button id="clearTokenBtn">Clear</button></div>
   </header>
   <main>
     <nav aria-label="Admin panel navigation">
-      <div class="tabs" role="tablist" aria-label="DASH sections">
+      <div class="tabs" role="tablist" aria-label="Paul admin sections">
         <button class="tab active" role="tab" aria-selected="true" data-tab="overview">Overview</button>
         <button class="tab" role="tab" aria-selected="false" data-tab="ops">Ops</button>
         <button class="tab" role="tab" aria-selected="false" data-tab="security">Security</button>
