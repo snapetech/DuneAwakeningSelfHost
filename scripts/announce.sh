@@ -17,10 +17,21 @@ if [ "${DUNE_ANNOUNCE_WRAP_DASHBOARD_MESSAGES:-true}" != "false" ] && [ "${DUNE_
   esac
 fi
 
-python3 - "$message" "$restart_at" "$job_id" <<'PY'
+python_bin="${DUNE_ANNOUNCE_PYTHON:-python3}"
+if ! "$python_bin" -c 'import pika' >/dev/null 2>&1; then
+  venv="${DUNE_ANNOUNCE_PIKA_VENV:-/workspace/backups/admin-panel/announce-pika-venv}"
+  if [ ! -x "$venv/bin/python" ]; then
+    "$python_bin" -m venv "$venv"
+  fi
+  "$venv/bin/python" -m pip -q install pika
+  python_bin="$venv/bin/python"
+fi
+
+"$python_bin" - "$message" "$restart_at" "$job_id" <<'PY'
 import base64
 import json
 import os
+import pika
 import re
 import secrets
 import socket
@@ -442,21 +453,43 @@ def amqp_publish_once(routing_key, body, properties):
 
 
 def publish_with_amqp():
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    connection = pika.BlockingConnection(pika.ConnectionParameters(
+        host=amqp_host,
+        port=amqp_port,
+        virtual_host="/",
+        credentials=pika.PlainCredentials(sender_user, sender_password),
+        ssl_options=pika.SSLOptions(context, amqp_host) if amqp_tls else None,
+        heartbeat=0,
+        blocked_connection_timeout=10,
+    ))
+    channel = connection.channel()
     amqp_results = []
-    for routing_key in routing_keys:
-        properties = {
-            "content_type": "Content",
-            "delivery_mode": 1,
-            "timestamp": int(time.time()),
-            "type": "text_chat",
-            "user_id": sender_user,
-            "message_id": secrets.token_urlsafe(16),
-        }
-        try:
-            published = amqp_publish_once(routing_key, json.dumps(payload, separators=(",", ":")), properties)
-            amqp_results.append({"routingKey": routing_key, "ok": published})
-        except Exception as exc:
-            amqp_results.append({"routingKey": routing_key, "ok": False, "error": str(exc)})
+    try:
+        for routing_key in routing_keys:
+            properties = pika.BasicProperties(
+                content_type="Content",
+                delivery_mode=1,
+                timestamp=int(time.time()),
+                type="text_chat",
+                user_id=sender_user,
+                message_id=secrets.token_urlsafe(16),
+            )
+            try:
+                channel.basic_publish(
+                    exchange,
+                    routing_key,
+                    json.dumps(payload, separators=(",", ":")).encode("utf-8"),
+                    properties,
+                    mandatory=False,
+                )
+                amqp_results.append({"routingKey": routing_key, "ok": True})
+            except Exception as exc:
+                amqp_results.append({"routingKey": routing_key, "ok": False, "error": str(exc)})
+    finally:
+        connection.close()
     return amqp_results
 
 
