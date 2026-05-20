@@ -178,7 +178,7 @@ to learn existing peers. Run the same step manually after force-recreating
 Known working baseline as of May 19, 2026:
 
 ```text
-gateway declares Snapetech Dune Awakening Server 1.25x PVE to FLS
+gateway declares Snapetech 1.25x PVE Friendly (rules:snape.tech) to FLS
 gateway reaches postgres:5432
 game-rmq reaches rmq-auth-shim:8080 and text-router:8080
 director reaches game-rmq:5672, admin-rmq:5672, and postgres:5432
