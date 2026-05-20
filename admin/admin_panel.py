@@ -511,6 +511,26 @@ def schedule_announcement(body):
     repeat_seconds = int(body.get("repeat_seconds", body.get("repeatSeconds", 60)) or 0)
     if repeat_seconds < 0 or repeat_seconds > 24 * 60 * 60:
         raise ValueError("repeat_seconds must be between 0 and 86400")
+    cadence = body.get("cadence", body.get("announcementCadence", []))
+    if cadence is None:
+        cadence = []
+    if not isinstance(cadence, list):
+        raise ValueError("cadence must be a list")
+    normalized_cadence = []
+    for entry in cadence:
+        if not isinstance(entry, dict):
+            raise ValueError("cadence entries must be objects")
+        remaining_seconds = int(entry.get("remaining_seconds", entry.get("remainingSeconds", 0)) or 0)
+        interval_seconds = int(entry.get("interval_seconds", entry.get("intervalSeconds", 0)) or 0)
+        if remaining_seconds < 0 or remaining_seconds > 24 * 60 * 60:
+            raise ValueError("cadence remaining_seconds must be between 0 and 86400")
+        if interval_seconds <= 0 or interval_seconds > 24 * 60 * 60:
+            raise ValueError("cadence interval_seconds must be between 1 and 86400")
+        normalized_cadence.append({
+            "remainingSeconds": remaining_seconds,
+            "intervalSeconds": interval_seconds,
+        })
+    normalized_cadence.sort(key=lambda item: item["remainingSeconds"])
     now = time.time()
     restart_at = body.get("restart_at", body.get("restartAt"))
     if restart_at is None:
@@ -530,6 +550,7 @@ def schedule_announcement(body):
         "createdAt": now,
         "restartAt": restart_at,
         "repeatSeconds": repeat_seconds,
+        "cadence": normalized_cadence,
         "nextSendAt": next_send_at,
         "lastSentAt": None,
         "deliveryCount": 0,
@@ -543,6 +564,22 @@ def schedule_announcement(body):
         state.setdefault("jobs", []).append(job)
         write_announcement_state(state)
     return job
+
+
+def announcement_next_interval(job, now=None):
+    now = time.time() if now is None else float(now)
+    remaining = max(0, float(job.get("restartAt", now)) - now)
+    cadence = job.get("cadence") or []
+    if isinstance(cadence, list):
+        for entry in cadence:
+            try:
+                threshold = float(entry.get("remainingSeconds", 0))
+                interval = int(entry.get("intervalSeconds", 0))
+            except (AttributeError, TypeError, ValueError):
+                continue
+            if remaining <= threshold and interval > 0:
+                return interval
+    return int(job.get("repeatSeconds") or 0)
 
 
 def cancel_announcement(job_id=None):
@@ -634,6 +671,7 @@ def schedule_restart(body):
         schedule_announcement({
             "delay": "immediate",
             "repeat_seconds": repeat_seconds,
+            "cadence": body.get("announcement_cadence", body.get("announcementCadence", [])),
             "message": message,
             "restart_at": run_at,
             "action": action,
@@ -886,7 +924,7 @@ def announcement_worker():
                     job["deliveryCount"] = int(job.get("deliveryCount") or 0) + 1
                     job["lastSentAt"] = time.time()
                     job["lastError"] = None if result.get("ok") else result.get("error") or result.get("output")
-                    repeat_seconds = int(job.get("repeatSeconds") or 0)
+                    repeat_seconds = announcement_next_interval(job)
                     if time.time() >= float(job.get("restartAt", 0)):
                         job["finalSentAt"] = time.time()
                         job["status"] = "expired"
@@ -2995,9 +3033,9 @@ INDEX = r"""<!doctype html>
     h1 { font-size:18px; margin:0; letter-spacing:0; }
     h2 { font-size:16px; margin:0 0 10px; }
     h3 { font-size:13px; margin:0 0 8px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
-    main { display:grid; grid-template-columns:280px minmax(0,1fr); min-height:calc(100vh - 58px); }
+    main { display:grid; grid-template-columns:264px minmax(0,1fr); min-height:calc(100vh - 58px); }
     nav { border-right:1px solid var(--line); padding:14px; background:var(--nav); position:sticky; top:58px; height:calc(100vh - 58px); overflow:auto; }
-    section { padding:18px; min-width:0; max-width:1680px; }
+    section { padding:18px; min-width:0; max-width:1540px; }
     button, input, select, textarea { font:inherit; border:1px solid var(--line); background:#101310; color:var(--text); border-radius:6px; padding:8px 10px; }
     button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible, a:focus-visible, tr[tabindex]:focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
     button { cursor:pointer; background:#22291f; white-space:nowrap; }
@@ -3019,6 +3057,8 @@ INDEX = r"""<!doctype html>
     .twoCol { display:grid; grid-template-columns:minmax(0,1.2fr) minmax(360px,.8fr); gap:14px; align-items:start; }
     .threeCol { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; align-items:start; }
     .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:12px; }
+    .settingsGrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:12px; }
+    .settingsGrid label { min-width:0; overflow-wrap:anywhere; }
     .metricGrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-bottom:14px; }
     .metric { border:1px solid var(--line); border-radius:8px; background:var(--panel2); padding:12px; min-height:82px; }
     .metric .label { color:var(--muted); font-size:12px; }
@@ -3029,11 +3069,13 @@ INDEX = r"""<!doctype html>
     .pill.bad { border-color:#743932; color:var(--danger); }
     .row { display:flex; gap:8px; align-items:center; margin:8px 0; }
     .toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:12px; }
+    .toolbar label { display:inline-flex; align-items:center; gap:6px; }
     .sectionHeader { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; }
     .sectionHeader .toolbar { margin-bottom:0; }
     .commandBar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:14px; }
     .commandBar button { min-height:38px; }
     .splitHeader { display:flex; justify-content:space-between; gap:10px; align-items:center; margin-bottom:10px; }
+    summary h2 { display:inline; margin:0; }
     .subgrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:14px; align-items:start; }
     .dangerZone { border-color:#74413b; background:#211816; }
     .dataDense th, .dataDense td { padding:6px; font-size:13px; }
@@ -3124,7 +3166,7 @@ INDEX = r"""<!doctype html>
   <a class="skipLink" href="#view">Skip to dashboard</a>
   <header>
     <div class="brand"><h1>DASH Admin</h1><span class="subtle">Dune Awakening Self Host</span></div>
-    <div class="row"><input id="token" type="password" placeholder="Admin token"><button id="saveTokenBtn">Use token</button><button id="clearTokenBtn">Clear</button></div>
+    <div class="row" id="tokenRow"><input id="token" type="password" placeholder="Admin token"><button id="saveTokenBtn">Use token</button><button id="clearTokenBtn">Clear</button></div>
   </header>
   <main>
     <nav aria-label="Admin panel navigation">
@@ -3137,9 +3179,7 @@ INDEX = r"""<!doctype html>
         <button class="tab" role="tab" aria-selected="false" data-tab="settings">Settings</button>
         <button class="tab" role="tab" aria-selected="false" data-tab="mutations">Admin Actions</button>
       </div>
-      <a class="discordBadge" href="https://discord.gg/cybhGntTts" target="_blank" rel="noopener noreferrer">Discord Support</a>
       <div class="card"><h3>Display</h3><div class="toolbar"><button id="contrastBtn">High contrast</button><button id="densityBtn">Dense mode</button><button id="expandAllBtn">Expand all</button><button id="collapseAllBtn">Collapse all</button><button id="helpBtn">Shortcuts</button></div></div>
-      <div class="card hostNote"><div class="muted"><b>admin.example.test</b><br>LAN/VPN admin surface. Use the token to unlock data and writes.</div></div>
       <div class="card">
         <h3>Runtime</h3>
         <div id="statusSummary"></div>
@@ -3736,7 +3776,7 @@ function announcementPanel(state){
   ].map(([value,label]) => `<option value="${value}">${label}</option>`).join('');
   const jobSummary = latest ? `<pre id="announcementState">${esc(JSON.stringify(latest, null, 2))}</pre>` : '<div class="muted">No scheduled announcement.</div>';
   const delivery = state.lastDelivery ? `<pre>${esc(JSON.stringify(state.lastDelivery, null, 2))}</pre>` : '<div class="muted">No delivery attempts yet.</div>';
-  return `<div class="card"><h2>Restart Announcement</h2><p class="muted">Schedules repeated maintenance messages through <code>${esc(state.command || '')}</code>. The scheduler is live; in-game delivery depends on that command being implemented and executable.</p><div class="grid"><label>Restart time<select id="announceDelay">${delayOptions}</select></label><label>Repeat every<select id="announceRepeat"><option value="0">Do not repeat</option><option value="30">30 sec</option><option value="60" selected>60 sec</option><option value="300">5 min</option><option value="600">10 min</option><option value="900">15 min</option><option value="1800">30 min</option><option value="3600">60 min</option></select></label></div><label>Message<textarea id="announceMessage" rows="3" style="min-height:82px">Server restart soon. Please get to a safe place.</textarea></label><p><button id="scheduleAnnouncementBtn" class="primary">Schedule announcement</button> <button id="cancelAnnouncementBtn" class="danger">Cancel active announcement</button></p><h3>Current</h3>${jobSummary}<h3>Last Delivery</h3>${delivery}</div>`;
+  return `<div class="card"><h2>Announcement Only</h2><p class="muted">Sends warning messages without restarting anything.</p><div class="grid"><label>Message until<select id="announceDelay">${delayOptions}</select></label><label>Repeat every<select id="announceRepeat"><option value="0">Do not repeat</option><option value="30">30 sec</option><option value="60" selected>60 sec</option><option value="300">5 min</option><option value="600">10 min</option><option value="900">15 min</option><option value="1800">30 min</option><option value="3600">60 min</option></select></label></div><label>Message<textarea id="announceMessage" rows="3" style="min-height:120px">Server restart soon. Please get to a safe place.</textarea></label><p><button id="scheduleAnnouncementBtn" class="primary">Schedule announcement</button> <button id="cancelAnnouncementBtn" class="danger">Cancel active announcement</button></p><details><summary>Current announcement state</summary>${jobSummary}</details><details><summary>Last delivery</summary>${delivery}</details></div>`;
 }
 function restartPanel(state){
   const active = (state.jobs || []).filter(j => ['scheduled','executing'].includes(j.status));
@@ -3751,7 +3791,7 @@ function restartPanel(state){
   ].map(([value,label]) => `<option value="${value}">${label}</option>`).join('');
   const jobSummary = latest ? `<pre>${esc(JSON.stringify(latest, null, 2))}</pre>` : '<div class="muted">No scheduled restart.</div>';
   const execution = state.lastExecution ? `<pre>${esc(JSON.stringify(state.lastExecution, null, 2))}</pre>` : '<div class="muted">No restart execution attempts yet.</div>';
-  return `<div class="card"><h2>Scheduled Restart / Shutdown</h2><p class="muted">Schedules a component restart or shutdown through <code>${esc(state.command || '')}</code>. Executed jobs take a maintenance backup first by default.</p><div class="grid"><label>Target<select id="restartTarget">${targetOptions}</select></label><label>Action<select id="restartAction"><option value="restart" selected>Restart target</option><option value="shutdown">Shutdown target</option></select></label><label>Run after<select id="restartDelay">${delayOptions}</select></label><label>Repeat notice every<select id="restartRepeat"><option value="0">Do not repeat</option><option value="30">30 sec</option><option value="60" selected>60 sec</option><option value="300">5 min</option><option value="600">10 min</option><option value="900">15 min</option><option value="1800">30 min</option><option value="3600">60 min</option></select></label><label>Execution<select id="restartExecute"><option value="false" selected>Dry-run schedule</option><option value="true">Execute hook</option></select></label></div><label><input id="restartBackup" type="checkbox" checked style="width:auto"> Backup before execution</label><label><input id="restartAnnounce" type="checkbox" checked style="width:auto"> Also schedule announcement</label><label>Message<textarea id="restartMessage" rows="3" style="min-height:82px">Server maintenance soon. Please get to a safe place.</textarea></label><p><button id="scheduleRestartBtn" class="primary">Schedule maintenance</button> <button id="cancelRestartBtn" class="danger">Cancel active job</button></p><h3>Current</h3>${jobSummary}<h3>Last Execution</h3>${execution}</div>`;
+  return `<div class="card"><h2>Maintenance Job</h2><p class="muted">Stops the selected services, takes the maintenance backup, starts them again, and waits for map readiness.</p><div class="grid"><label>Target<select id="restartTarget">${targetOptions}</select></label><label>Action<select id="restartAction"><option value="restart" selected>Restart target</option><option value="shutdown">Shutdown target</option></select></label><label>Run after<select id="restartDelay">${delayOptions}</select></label><label>Repeat notice every<select id="restartRepeat"><option value="0">Do not repeat</option><option value="30">30 sec</option><option value="60" selected>60 sec</option><option value="300">5 min</option><option value="600">10 min</option><option value="900">15 min</option><option value="1800">30 min</option><option value="3600">60 min</option></select></label><label>Execution<select id="restartExecute"><option value="false" selected>Dry-run schedule</option><option value="true">Execute hook</option></select></label></div><div class="toolbar"><label><input id="restartBackup" type="checkbox" checked style="width:auto"> Backup before execution</label><label><input id="restartAnnounce" type="checkbox" checked style="width:auto"> Send in-game warnings</label></div><label>Warning message<textarea id="restartMessage" rows="3" style="min-height:120px">Server maintenance soon. Please get to a safe place.</textarea></label><p><button id="scheduleRestartBtn" class="primary">Schedule maintenance</button> <button id="cancelRestartBtn" class="danger">Cancel active job</button></p><details><summary>Current job state</summary>${jobSummary}</details><details><summary>Last execution</summary>${execution}</details></div>`;
 }
 function signalList(groups){
   return Object.entries(groups || {}).map(([group, rows]) => `<div class="card"><h2>${esc(group)}</h2><table><thead><tr><th>Name</th><th>Value</th><th>Why</th></tr></thead><tbody>${(rows || []).map(r=>`<tr><td>${esc(r.name)}</td><td>${esc(Array.isArray(r.value) ? r.value.join(', ') : r.value)}</td><td>${esc(r.why)}</td></tr>`).join('')}</tbody></table></div>`).join('');
@@ -3803,12 +3843,19 @@ function envEditor(payload){
     groups[group] = groups[group] || [];
     groups[group].push([key, meta]);
   });
-  return Object.entries(groups).map(([group, rows]) => `<div class="card"><h2>${esc(group)}</h2><div class="grid">${rows.map(([key, meta]) => {
+  const groupOrder = ['World', 'Access', 'Admin Panel', 'Announcements', 'Restart', 'Chat Spam Protection', 'Admin Bot', 'Secrets', 'Network', 'Install'];
+  const orderedGroups = Object.entries(groups).sort(([a], [b]) => {
+    const ai = groupOrder.indexOf(a);
+    const bi = groupOrder.indexOf(b);
+    if (ai !== -1 || bi !== -1) return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+    return a.localeCompare(b);
+  });
+  return orderedGroups.map(([group, rows]) => `<details class="card"${group === 'World' || group === 'Access' ? ' open' : ''}><summary><h2>${esc(group)}</h2></summary><div class="settingsGrid">${rows.map(([key, meta]) => {
     const type = meta.secret ? 'password' : 'text';
     const restart = meta.restart ? '<span class="muted"> restart/recreate applies</span>' : '';
     const configuredText = meta.secret && configured[key] ? ' configured, leave blank to keep' : '';
     return `<label>${esc(key)}${restart}<input id="env_${esc(key)}" data-secret="${meta.secret ? 'true' : 'false'}" type="${type}" value="${esc(values[key] || '')}" placeholder="${esc(configuredText.trim())}"><span class="muted">${esc(meta.why || '')}${esc(configuredText)}</span></label>`;
-  }).join('')}</div></div>`).join('');
+  }).join('')}</div></details>`).join('');
 }
 function directorTransferEditor(payload){
   const values = payload.values || {};
@@ -3936,8 +3983,10 @@ function wireGlobalAffordances(){
   });
 }
 function renderStatus(data){
+  const tokenRow = document.getElementById('tokenRow');
+  if (tokenRow) tokenRow.classList.toggle('hidden', !data.adminTokenRequired);
   document.getElementById('statusSummary').innerHTML = [
-    statusPill('admin token configured', data.adminTokenConfigured),
+    data.adminTokenRequired ? statusPill('admin token configured', data.adminTokenConfigured) : '<span class="pill ok">local admin: unlocked</span>',
     statusPill('item grants', data.itemGrantsEnabled),
     `<span class="pill ${data.mutationsEnabled ? 'warn' : 'ok'}">mutations: ${data.mutationsEnabled ? 'enabled' : 'off'}</span>`,
     `<span class="pill">db: ${esc(data.database)}</span>`
@@ -3979,7 +4028,7 @@ async function load(){
     else if (current === 'mutations') await mutations(serial);
   } catch (e) {
     if (serial !== loadSerial) return;
-    view.innerHTML = `<div class="card"><h2>Admin Token Required</h2><p class="dangerText">${esc(e.message)}</p><p class="muted">Paste the admin token in the header and press <b>Use token</b>. The panel is reachable, but server data and write controls stay locked until the token is present.</p></div><div class="metricGrid">${metric('Endpoint', location.host)}${metric('Item Grants', 'enabled', 'ok')}${metric('Mutations', 'off', 'ok')}</div>`;
+    view.innerHTML = `<div class="card"><h2>Panel Data Unavailable</h2><p class="dangerText">${esc(e.message)}</p><p class="muted">The page loaded, but one of the backing admin APIs failed. Refresh after the admin panel or database is healthy.</p></div><div class="metricGrid">${metric('Endpoint', location.host)}${metric('Item Grants', 'enabled', 'ok')}${metric('Mutations', 'check status')}</div>`;
   }
   if (serial !== loadSerial) return;
   makeSortableTables(view);
@@ -3997,26 +4046,14 @@ async function overview(serial=loadSerial){
   const state = health;
   const summary = health.summary || {};
   const players = (state.farmState || []).reduce((sum, r) => sum + Number(r.connected_players || 0), 0);
-  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Overview</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="ops">Operations</button><button data-jump="mutations" class="primary">Admin Actions</button></div></div><div class="metricGrid">${metric('Ready Servers', `${summary.readyAlive ?? 0}/${summary.expectedPartitions ?? 0}`, summary.readyAlive === summary.expectedPartitions ? 'ok' : 'dangerText')}${metric('Online Maps', `${summary.onlineMaps ?? 0}/${summary.totalMaps ?? 0}`, summary.onlineMaps === summary.totalMaps ? 'ok' : 'dangerText')}${metric('Active IDs', `${summary.activeServers ?? 0}/${summary.expectedPartitions ?? 0}`)}${metric('Reported Players', players)}</div>${healthViz(health)}<div id="haggaBasinMap"><div class="panelBand"><h2>Hagga Basin Player Map</h2><div class="muted">Loading player positions...</div></div></div><div id="overviewRoster">${characterRosterPanel(roster)}</div><div id="detail"></div><div id="resources" class="panelBand"><h2>Resources</h2><div class="muted">Loading resource stats...</div></div>${actionGrid([{tab:'characters',label:'Player search and detail'},{tab:'ops',label:'Service controls and map health'},{tab:'security',label:'Security and audit'},{tab:'settings',label:'Server settings'}])}<div class="twoCol"><div class="panelBand"><h2>Map Health</h2>${mapTiles(health.mapStatus)}<details><summary>Map Table</summary>${mapStatusTable(health.mapStatus)}</details></div><div class="panelBand"><h2>Health Verdict</h2>${checks(health.verdicts)}</div></div><div class="panelBand" data-network-panel><h2>Network and Upstream</h2><div class="muted">Loading network probes...</div></div></div>`;
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Overview</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="ops">Operations</button><button data-jump="mutations" class="primary">Admin Actions</button></div></div><div class="metricGrid">${metric('Ready Servers', `${summary.readyAlive ?? 0}/${summary.expectedPartitions ?? 0}`, summary.readyAlive === summary.expectedPartitions ? 'ok' : 'dangerText')}${metric('Online Maps', `${summary.onlineMaps ?? 0}/${summary.totalMaps ?? 0}`, summary.onlineMaps === summary.totalMaps ? 'ok' : 'dangerText')}${metric('Reported Players', players)}${metric('Characters', roster.counts?.total ?? 0)}</div><div class="twoCol"><div id="haggaBasinMap"><div class="panelBand"><h2>Hagga Basin Player Map</h2><div class="muted">Loading player positions...</div></div></div><div class="pageStack">${healthViz(health)}<div class="panelBand"><h2>Health Verdict</h2>${checks(health.verdicts)}</div></div></div>${actionGrid([{tab:'characters',label:'Open player roster',className:'primary'},{tab:'ops',label:'Restart / backup / map health'},{tab:'mutations',label:'Grant currency, XP, or items'},{tab:'settings',label:'Server settings'}])}<details class="panelBand"><summary>Map Details</summary>${mapTiles(health.mapStatus)}${mapStatusTable(health.mapStatus)}</details><details class="panelBand"><summary>Player Roster Preview</summary><div id="overviewRoster">${characterRosterPanel(roster)}</div></details><div id="detail"></div></div>`;
   document.querySelectorAll('#overviewRoster tbody tr').forEach(row => row.onclick = () => pickCharacter(row));
   makeRowsKeyboardFriendly(view);
-  wireResourceControls(view);
   bindRosterFilters(view);
-  bindResourceFilters(view);
   refreshHaggaMap().catch(e => {
     const container = document.getElementById('haggaBasinMap');
     if (container) container.innerHTML = `<h2>Hagga Basin Player Map</h2><div class="dangerText">${esc(e.message)}</div>`;
   });
-  refreshResources().catch(e => {
-    const container = document.getElementById('resources');
-    if (container) container.innerHTML = `<div class="panelBand"><h2>Resources</h2><div class="dangerText">${esc(e.message)}</div></div>`;
-  });
-  refreshNetwork().catch(e => {
-    document.querySelectorAll('[data-network-panel]').forEach(container => container.innerHTML = `<h2>Network and Upstream</h2><div class="dangerText">${esc(e.message)}</div>`);
-  });
-  resourceTimer = setInterval(() => {
-    if (autoRefresh && current === 'overview') refreshResources().catch(() => {});
-  }, 5000);
   haggaMapTimer = setInterval(() => {
     if (haggaMapAutoRefresh && current === 'overview') refreshHaggaMap().catch(() => {});
   }, 2000);
@@ -4030,7 +4067,7 @@ async function ops(serial=loadSerial){
   ]);
   if (serial !== loadSerial) return;
   const pc = health.playerCounts || {};
-  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Operations</h2><div class="toolbar"><button data-jump="overview">Overview</button><button data-jump="characters">Players</button><button data-jump="runbook">Runbook</button><button data-jump="settings">Settings</button></div></div><div class="metricGrid">${metric('Connected Players', pc.connected_players_reported ?? 0)}${metric('Online Controllers', pc.online_controller_ids ?? 0)}${metric('Recent Online State', pc.online_or_recently_disconnected ?? 0)}${metric('Grace Entries', pc.grace_period_entries ?? 0)}</div>${healthViz(health)}<div id="resources" class="panelBand"><h2>Resources</h2><div class="muted">Loading resource stats...</div></div><div class="twoCol">${restartPanel(restart)}${announcementPanel(announcement)}</div><div class="twoCol"><div class="panelBand"><h2>Health Verdict</h2>${checks(health.verdicts)}</div><div class="panelBand" data-network-panel><h2>Local and Upstream Network</h2><div class="muted">Loading network probes...</div></div></div><div class="panelBand"><h2>Map Online/Offline</h2>${mapTiles(health.mapStatus)}<details><summary>Map Table</summary>${mapStatusTable(health.mapStatus)}</details></div><details class="panelBand"><summary>Raw Farm State</summary>${table(health.farmState)}</details><details class="panelBand"><summary>Partitions</summary>${table(health.partitions)}</details>${signalList(opt)}</div>`;
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Operations</h2><div class="toolbar"><button data-jump="overview">Overview</button><button data-jump="characters">Players</button><button data-jump="runbook">Runbook</button><button data-jump="settings">Settings</button></div></div><div class="metricGrid">${metric('Connected Players', pc.connected_players_reported ?? 0)}${metric('Online Controllers', pc.online_controller_ids ?? 0)}${metric('Recent Online State', pc.online_or_recently_disconnected ?? 0)}${metric('Grace Entries', pc.grace_period_entries ?? 0)}</div><div class="twoCol">${restartPanel(restart)}${announcementPanel(announcement)}</div><div class="twoCol">${healthViz(health)}<div class="panelBand"><h2>Health Verdict</h2>${checks(health.verdicts)}</div></div><details class="panelBand" open><summary>Map Online/Offline</summary>${mapTiles(health.mapStatus)}${mapStatusTable(health.mapStatus)}</details><details class="panelBand"><summary>Host Resources</summary><div id="resources"><div class="muted">Loading resource stats...</div></div></details><details class="panelBand"><summary>Local and Upstream Network</summary><div data-network-panel><div class="muted">Loading network probes...</div></div></details><details class="panelBand"><summary>Raw Farm State</summary>${table(health.farmState)}</details><details class="panelBand"><summary>Partitions</summary>${table(health.partitions)}</details><details class="panelBand"><summary>Optimization Signals</summary>${signalList(opt)}</details></div>`;
   wireResourceControls(view);
   bindResourceFilters(view);
   refreshResources().catch(e => {
@@ -4410,7 +4447,7 @@ async function mutations(serial=loadSerial){
   ]);
   if (serial !== loadSerial) return;
   const referenceErrors = ref.errors && Object.keys(ref.errors).length ? `<div class="card"><h2>Reference Errors</h2><pre>${esc(JSON.stringify(ref.errors, null, 2))}</pre></div>` : '';
-  view.innerHTML = `<div class="pageStack">${referenceErrors}<div class="sectionHeader"><h2>Admin Actions</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="settings">Settings</button><button data-jump="security">Audit</button></div></div>${actionGrid([{tab:'characters',label:'Player lookup'},{tab:'settings',label:'Mutation settings'},{tab:'runbook',label:'Runbook'}])}<div class="panelBand"><h2>Backup First</h2><p class="muted">Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button id="backupBtn" class="primary">Create DB backup</button><pre id="backupResult"></pre></div><div class="panelBand"><h2>Target Player</h2><div class="grid"><label>Character<select id="adminCharacterSelect">${characterOptions(characterRows)}</select></label><label>Player controller ID<input id="pcid"></label><label>Account ID<input id="grantAccount" placeholder="auto-select player inventory"></label><label>Character name<input id="grantCharacter" placeholder="auto-select by name"></label></div></div>${gmCommandPanel(gm, characterRows)}<div class="twoCol"><div class="panelBand"><h2>Currency and XP</h2><p class="dangerText">Writes require <code>DUNE_ADMIN_MUTATIONS_ENABLED=true</code> and a valid admin token.</p><div class="grid"><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button id="currencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Level for set/new track<input id="xplevel" value="0"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button id="xpBtn" class="primary">Apply XP</button></p></div><div class="panelBand dangerZone"><h2>Specialization Keystones</h2><div class="grid"><label>Player/controller ID<input id="keyPlayer"></label><label>Keystone<select id="keystone">${options(ref.keystones, 'name')}</select></label></div><p><button id="purchaseKeystoneBtn" class="primary">Purchase keystone</button> <button id="resetKeystonesBtn" class="danger">Reset all keystones</button></p><pre id="keystoneResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Item Grants</h2><p class="dangerText">Use exact server template IDs. Dry run first when using IDs not observed locally.</p><div class="grid"><label>Known inventory<select id="grantInventorySelect">${inventoryOptions(ref.recentInventories)}</select></label><label>Inventory ID<input id="grantInventory" placeholder="explicit inventory"></label><label class="hidden">Character<select id="grantCharacterSelect">${characterOptions(characterRows)}</select></label><label>Inventory type<select id="grantInventoryType">${inventoryTypeOptions(ref.inventoryTypes)}</select></label><label>Template ID<input id="grantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><label>Stats JSON<textarea id="grantStats">{}</textarea></label><p><button id="dryRunItemBtn" class="primary">Dry run</button> <button id="grantItemBtn" class="danger">Grant item</button></p><pre id="grantResult"></pre></div><div class="panelBand dangerZone"><h2>Item Maintenance</h2><div class="grid"><label class="hidden">Character<select id="itemCharacterSelect">${characterOptions(characterRows)}</select></label><label>Owned item<select id="itemEditSelect"><option value="">Select a character first</option></select></label><label>Item ID<input id="itemEditId"></label><label>New stack size<input id="itemEditStack" value="1"></label><label>Delete count<input id="itemDeleteCount" placeholder="blank/all"></label></div><p><button id="setItemStackBtn" class="primary">Set stack</button> <button id="deleteItemBtn" class="danger">Delete item/count</button></p><pre id="itemEditResult"></pre></div></div><datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><details class="panelBand"><summary>Known Item Templates</summary>${table(ref.knownItemTemplates)}</details><details class="panelBand"><summary>Observed Item Templates</summary>${table(ref.observedItemTemplates)}</details><details class="panelBand"><summary>Recent Inventories</summary>${table(ref.recentInventories)}</details><details class="panelBand"><summary>Inventory Types</summary>${table(ref.inventoryTypes)}</details></div>`;
+  view.innerHTML = `<div class="pageStack">${referenceErrors}<div class="sectionHeader"><h2>Admin Actions</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="settings">Settings</button><button data-jump="security">Audit</button></div></div><div class="panelBand"><h2>Target Player</h2><div class="grid"><label>Character<select id="adminCharacterSelect">${characterOptions(characterRows)}</select></label><label>Player controller ID<input id="pcid"></label><label>Account ID<input id="grantAccount" placeholder="auto-select player inventory"></label><label>Character name<input id="grantCharacter" placeholder="auto-select by name"></label></div></div><div class="twoCol"><div class="panelBand"><h2>Currency and XP</h2><p class="muted">Select a character first; balances and tracks populate from that player.</p><div class="grid"><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button id="currencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Level for set/new track<input id="xplevel" value="0"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button id="xpBtn" class="primary">Apply XP</button></p></div><div class="panelBand"><h2>Item Grants</h2><p class="muted">Use a known template ID and dry run before writing new items.</p><div class="grid"><label>Known inventory<select id="grantInventorySelect">${inventoryOptions(ref.recentInventories)}</select></label><label>Inventory ID<input id="grantInventory" placeholder="explicit inventory"></label><label class="hidden">Character<select id="grantCharacterSelect">${characterOptions(characterRows)}</select></label><label>Inventory type<select id="grantInventoryType">${inventoryTypeOptions(ref.inventoryTypes)}</select></label><label>Template ID<input id="grantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><details><summary>Advanced stats JSON</summary><textarea id="grantStats">{}</textarea></details><p><button id="dryRunItemBtn" class="primary">Dry run</button> <button id="grantItemBtn" class="danger">Grant item</button></p><pre id="grantResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Item Maintenance</h2><div class="grid"><label class="hidden">Character<select id="itemCharacterSelect">${characterOptions(characterRows)}</select></label><label>Owned item<select id="itemEditSelect"><option value="">Select a character first</option></select></label><label>Item ID<input id="itemEditId"></label><label>New stack size<input id="itemEditStack" value="1"></label><label>Delete count<input id="itemDeleteCount" placeholder="blank/all"></label></div><p><button id="setItemStackBtn" class="primary">Set stack</button> <button id="deleteItemBtn" class="danger">Delete item/count</button></p><pre id="itemEditResult"></pre></div><div class="panelBand"><h2>Specialization Keystones</h2><div class="grid"><label>Player/controller ID<input id="keyPlayer"></label><label>Keystone<select id="keystone">${options(ref.keystones, 'name')}</select></label></div><p><button id="purchaseKeystoneBtn" class="primary">Purchase keystone</button> <button id="resetKeystonesBtn" class="danger">Reset all keystones</button></p><pre id="keystoneResult"></pre></div></div><details class="panelBand"><summary>Backup</summary><p class="muted">Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button id="backupBtn" class="primary">Create DB backup</button><pre id="backupResult"></pre></details><details class="panelBand"><summary>Native GM / Cheat Console</summary>${gmCommandPanel(gm, characterRows)}</details><datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><details class="panelBand"><summary>Known Item Templates</summary>${table(ref.knownItemTemplates)}</details><details class="panelBand"><summary>Observed Item Templates</summary>${table(ref.observedItemTemplates)}</details><details class="panelBand"><summary>Recent Inventories</summary>${table(ref.recentInventories)}</details><details class="panelBand"><summary>Inventory Types</summary>${table(ref.inventoryTypes)}</details></div>`;
   const loadCharacterAdminDetails = async (accountId, serial=detailLoadSerial) => {
     const itemSelect = document.getElementById('itemEditSelect');
     const inventorySelect = document.getElementById('grantInventorySelect');

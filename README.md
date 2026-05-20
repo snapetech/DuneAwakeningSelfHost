@@ -1,106 +1,91 @@
 # DuneAwakeningSelfHost (DASH)
 
-Work-in-progress Linux/Compose harness for the Steam-installed Dune: Awakening self-hosted server package.
+DASH is a Linux/Docker Compose operations harness for the official Steam-installed **Dune: Awakening Self-Hosted Server** package.
 
-The goal is a reproducible Linux host layout that starts from Funcom's current container images but avoids the Hyper-V/k3s/operator wrapper where possible. This repository does not contain, mirror, or license any Funcom server binaries, container images, Steam package files, game assets, or secrets.
+It turns Funcom's self-host stack into a reproducible local layout with Compose services, operational scripts, a LAN-only admin panel, backup/recovery tooling, warm-pool map startup, watchdog recovery, restart announcements, and guarded admin actions.
 
-As of 2026-05-19, Steam exposes `Dune: Awakening Self-Hosted Server` as a released live tool, not only a PTC-only server package. Funcom's current live self-hosting FAQ still points token generation at `https://account-pts.duneawakening.com/`, but the proper live token generator is in the Dune: Awakening account portal at `https://account.duneawakening.com/`.
+This repository does **not** contain, mirror, or license any Funcom server binaries, container images, Steam package files, game assets, live data, or secrets.
 
-## Current State
+## Current Shape
 
-- Steam package found at `$HOME/.local/share/Steam/steamapps/common/Dune Awakening Self-Hosted Server`
-- Battlegroup image version: `1963158-0-shipping`
-- Operator version in the package: `v1.5.0`
-- Host has AVX2 and enough CPU for the server image
-- Docker is installed and the Funcom images have been loaded locally
-- Postgres, both RabbitMQ instances, gateway, and text-router start under Compose; FLS registration still needs a valid self-host token
-- `Survival_1` reaches farm-ready with public address advertisement when `FLS_SECRET` and `EXTERNAL_ADDRESS` are set
-- `rmq-auth-shim` is a local compatibility workaround for game-server S2S RabbitMQ users; the game RabbitMQ AMQPS port must be client-reachable for live self-host joins
+- Official Steam server package: `Dune: Awakening Self-Hosted Server`
+- Tested image lineage: `1963158-0-shipping`
+- Runtime target: Linux host with Docker Compose
+- Minimal world target: one `Survival_1` map
+- Expanded standing farm: nine current travel targets
+- Full warm-pool target: 30 online map partitions
+- Admin surface: private LAN/VPN web panel with token-gated writes
+- Automation: map watchdog, startup/recovery helpers, scheduled restart planner, restart announcements, backups, and optional Postgres replica snapshots
 
-Adjust the path and image tag in `.env` for your install. The values above document the package version used during this teardown.
+Known working 30-map target:
 
-## Runtime Shape
+```text
+current_alive_active=30 active_servers=30 partitions=30
+```
 
-The official package creates a Kubernetes `BattleGroup` custom resource. The useful workload pieces are:
+That is the server-side readiness target. Live-client login, travel, and routing still depend on a valid Funcom self-host/FLS token, public reachability, and correct LAN reflection when joining from inside the same network.
 
-- `igw-postgres`
-- `server-rabbitmq` twice: admin queue and game queue
-- `server-bg-director`
-- `server-gateway`
-- `server-text-router`
-- `server` game map instances, with `Survival_1` and `Overmap` enabled by default
-- `server-db-utils` for dump/import/DB operations
+## Screenshots
 
-The first target here is Docker Compose parity for those pieces. After that, systemd units can wrap either Docker/Podman containers or native extracted binaries if that proves viable.
+### Overview
 
-## Documentation
+![DASH Admin overview showing 30/30 maps and Hagga Basin player positions](docs/assets/admin-overview.png)
 
-Start with these:
+### Operations
 
-- [`docs/setup.md`](docs/setup.md): step-by-step local startup flow.
-- [`docs/operations.md`](docs/operations.md): health checks, recovery, backup, restore, ports, and upgrades.
-- [`docs/postgres-replication.md`](docs/postgres-replication.md): optional realtime Postgres hot standby for DB redundancy and replica-side dumps.
-- [`docs/admin-panel.md`](docs/admin-panel.md): local admin helper panel setup, security notes, and write-safety gates.
-- [`docs/admin-bot.md`](docs/admin-bot.md): approved admin-bot automation, report-first monitors, and safety gates.
-- [`docs/full-farm.md`](docs/full-farm.md): expanded standing farm and 30-partition warm-pool runbook.
-- [`docs/troubleshooting.md`](docs/troubleshooting.md): common startup failures and where to look.
+![DASH Admin operations page showing health, resources, and map status](docs/assets/admin-ops.png)
 
-Planning and architecture:
+## What DASH Adds
 
-- [`docs/architecture.md`](docs/architecture.md): Compose service map, partition layout, local state, and validation boundary.
-- [`docs/reproducibility.md`](docs/reproducibility.md): fresh-host, migration, validation, and version-drift checklist.
-- [`docs/kubernetes.md`](docs/kubernetes.md): unsupported design map for translating the Compose pod set to Kubernetes.
-- [`docs/improvements.md`](docs/improvements.md): improvement roadmap with the reason behind each workstream.
-- [`docs/optimization-targets.md`](docs/optimization-targets.md): practical memory, storage, network, and routing optimization targets.
-- [`docs/publication.md`](docs/publication.md): what is safe to publish and what must stay local.
-- [`docs/teardown.md`](docs/teardown.md): notes extracted from the Steam install and image metadata.
+- Compose topology for Postgres, admin RabbitMQ, game RabbitMQ, auth shim, text router, gateway, director, map services, and the admin panel.
+- 30-partition warm-pool startup that brings maps up in a predictable order and validates active partition state.
+- Recovery scripts for crashed/stale fixed-partition maps without blindly reproducing stale server-id loops.
+- Host-level map watchdog service for unattended recovery.
+- Local admin panel with Overview, Ops, Security, Runbook, Players, Settings, and Admin Actions pages.
+- Hagga Basin player map that plots currently known online player coordinates from local database/runtime state.
+- Restart announcement scheduler that publishes verified in-game chat through game RabbitMQ as the configured announcer.
+- Scheduled restart planner with token gates, pre-restart notices, optional targeted disconnect, maintenance backups, service recreate/start, and post-start health checks.
+- Guarded admin writes for database backups, currency, XP, keystones, item grants, stack edits, and item deletion.
+- Experimental GM/cheat route research surfaced behind explicit feature flags and verification gates.
+- Chat-command bridge for approved admins, including `&gm` helper commands and spam-protection hooks.
+- Editable settings for `.env`, `director.ini`, `UserGame.ini`, and selected config overlays with backups.
+- Backup/restore helpers, optional Postgres streaming replica setup, and remote replica snapshot helpers.
+- LAN reflection/hairpin notes and Docker bridge neighbor seeding for the observed local networking failure mode.
 
-Networking, routing, and validation:
+## Repository Boundaries
 
-- [`docs/lan-reflection.md`](docs/lan-reflection.md): LAN reflection options for joining the public-advertised server from inside the same LAN.
-- [`docs/network-investigation.md`](docs/network-investigation.md): DB/RabbitMQ/socket-level routing investigation notes.
-- [`docs/routing-investigation.md`](docs/routing-investigation.md): Deep Desert, Arrakeen, and Testing Station transition investigation notes.
-- [`docs/validation.md`](docs/validation.md): live-client route validation checklist and failed-transition capture flow.
-- [`docs/benchmarking.md`](docs/benchmarking.md): repeatable resource and transition benchmark notes.
+Keep these local and uncommitted:
 
-Admin, access, and gameplay knobs:
+- `.env`
+- `data/`
+- `config/tls/`
+- Steam package contents
+- Funcom container image tarballs
+- backups, captures, dumps, routing traces, and runtime logs
+- real hostnames, public IPs, tokens, passwords, and private Discord/admin details
 
-- [`docs/access-control.md`](docs/access-control.md): server login password and current restriction limits.
-- [`docs/character-transfers.md`](docs/character-transfers.md): Director inbound/outbound character-transfer policy.
-- [`docs/admin-mutation-map.md`](docs/admin-mutation-map.md): database contracts used or deliberately avoided by admin mutations.
-- [`docs/server-knobs-audit.md`](docs/server-knobs-audit.md): audited Funcom, Compose, and reverse-proxy settings worth exposing in admin.
-- [`docs/documentation-audit.md`](docs/documentation-audit.md): docs coverage gaps and audit checklist.
-
-Research indexes at the repo root:
-
-- [`SERVER_CONFIG_KEYS.md`](SERVER_CONFIG_KEYS.md): known local `UserGame.ini` override keys and evidence level.
-- [`SERVER_CONFIG_KEY_INDEX.md`](SERVER_CONFIG_KEY_INDEX.md): generated shipped `DefaultGame.ini` key inventory.
-- [`SERVER_BINARY_CONFIG_CANDIDATES.md`](SERVER_BINARY_CONFIG_CANDIDATES.md): binary-only candidate config strings for focused validation.
-- [`DEEP_DESERT_EVENT_KNOBS.md`](DEEP_DESERT_EVENT_KNOBS.md): Deep Desert spice/event tuning research.
-- [`RESOURCE_RESPAWN_KNOBS.md`](RESOURCE_RESPAWN_KNOBS.md): ore, scrap, fuel, resource-node, and loot respawn timer research.
-- [`HYDRATION_WATER_KNOBS.md`](HYDRATION_WATER_KNOBS.md): dehydration, shelter, thirst-in-base, and base water generation/evaporation research.
-
-## Key Files
-
-- [`compose.yaml`](compose.yaml): base container topology.
-- [`compose.replica.yaml`](compose.replica.yaml): optional Postgres streaming-replica extension.
-- [`compose.allmaps.yaml`](compose.allmaps.yaml): 30-partition warm-pool extension.
-- [`compose.limits.example.yaml`](compose.limits.example.yaml): optional local memory guardrails for profiling and small-host testing.
-- [`admin/admin_panel.py`](admin/admin_panel.py): local admin helper web panel.
-- [`.env.example`](.env.example): required world/token/password settings.
-- [`Makefile`](Makefile): validation targets.
-- [`scripts/`](scripts): helper scripts for image loading, preflight, DB bootstrap, backups, status, recovery, profiling, and routing capture.
+Publishable material should stay limited to original orchestration, helper scripts, and documentation. See [`docs/publication.md`](docs/publication.md) before making a public release.
 
 ## Requirements
 
 - Linux host with Docker Compose.
 - Official Dune: Awakening Self-Hosted Server Steam tool installed locally.
-- A valid self-hosting/FLS token from Funcom's account flow.
-- `openssl`, `jq`, and `rg` for the helper scripts.
+- Valid self-hosting/FLS token from Funcom's account portal.
+- CPU with AVX2 support.
+- Enough memory and disk for the map count you intend to run.
+- `openssl`, `jq`, `rg`, and standard shell tooling for helper scripts.
+
+Funcom's live account portal is:
+
+```text
+https://account.duneawakening.com/
+```
+
+If an old FAQ points to a PTS account URL, use the live portal for live self-hosting tokens.
 
 ## Quick Start
 
-Generate local secrets, fill in the self-hosting token in `.env`, load the official images, then bootstrap the DB:
+Create local settings, validate the host, load the official images, and initialize the database:
 
 ```bash
 ./scripts/populate-local-env.sh
@@ -110,15 +95,134 @@ docker compose --env-file .env up -d postgres admin-rmq game-rmq
 docker compose --env-file .env run --rm db-init
 ```
 
-Optional realtime database standby:
+Start the service layer:
+
+```bash
+docker compose --env-file .env up -d rmq-auth-shim text-router gateway director
+./scripts/status.sh .env
+```
+
+Start a single test map:
+
+```bash
+docker compose --env-file .env up -d survival
+./scripts/status.sh .env
+```
+
+For a single-map test world, prune unused generated `Survival_1` dimensions after DB bootstrap:
+
+```bash
+./scripts/single-survival-partition.sh .env
+```
+
+For the 30-partition warm pool:
+
+```bash
+./scripts/start-full-warm-pool.sh .env
+COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' ./scripts/rmq-health.sh .env
+```
+
+The warm-pool helper starts dependencies first, writes the 30-partition layout, starts the service layer, starts maps in batches, seeds required Docker bridge neighbor entries, and validates RabbitMQ/auth/text-router paths.
+
+## Admin Panel
+
+Start the private admin panel:
+
+```bash
+docker compose --env-file .env up -d admin-panel
+```
+
+Default local URL:
+
+```text
+http://127.0.0.1:18080/
+```
+
+If another process owns `18080`, set `DUNE_ADMIN_HOST_PORT=18081` in `.env`, include that host in `DUNE_ADMIN_ALLOWED_HOSTS`, and recreate only the admin panel.
+
+The panel is intended for trusted LAN/VPN access only. Do not expose it directly to the public internet. The header token box uses `DUNE_ADMIN_TOKEN`; protected requests send it as `X-Admin-Token`.
+
+Panel pages:
+
+| Page | Purpose |
+| --- | --- |
+| Overview | Readiness metrics, health summary, Hagga Basin player map, map details, and player preview. |
+| Ops | Restart planner, restart announcements, resource telemetry, map health, network checks, farm state, and partition state. |
+| Security | Host/origin checks, token status, mutation gates, allowlists, and audit events. |
+| Runbook | Copy/paste operational commands for health, backups, restores, logs, profiling, and routing capture. |
+| Players | Online/offline roster, player detail, account/controller/pawn context, currency, XP, inventory, and location views. |
+| Settings | Token-gated edits for selected `.env` and config values, with backups. |
+| Admin Actions | Database backups and guarded mutations for currency, XP, keystones, items, and experimental GM routes. |
+
+If the local published admin port accepts TCP but returns no HTTP bytes after a container recreate, refresh the observed Docker bridge neighbor entries:
+
+```bash
+./scripts/seed-gateway-neighbor.sh
+curl -H 'Host: admin-panel:8080' http://127.0.0.1:${DUNE_ADMIN_HOST_PORT:-18081}/api/status
+```
+
+More detail: [`docs/admin-panel.md`](docs/admin-panel.md).
+
+## Operations
+
+Common health checks:
+
+```bash
+./scripts/status.sh .env
+COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' ./scripts/rmq-health.sh .env
+./scripts/verify-rmq-auth-path.sh
+```
+
+Recover the single survival target after dependency loss:
+
+```bash
+./scripts/recover-survival.sh .env
+```
+
+Recover a fixed-partition map that has a stale server id:
+
+```bash
+COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' \
+  ./scripts/recover-map.sh .env heighliner-dungeon 18
+```
+
+Run the watchdog interactively:
+
+```bash
+COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' \
+  ./scripts/watch-maps.sh .env
+```
+
+Install it as a host service:
+
+```bash
+./scripts/install-map-watchdog-service.sh .env
+sudo systemctl enable --now dune-map-watchdog.service
+```
+
+Detailed runbooks live in [`docs/operations.md`](docs/operations.md) and [`docs/troubleshooting.md`](docs/troubleshooting.md).
+
+## Backups and Replication
+
+Create a local state backup:
+
+```bash
+./scripts/backup-state.sh .env
+```
+
+Restore a backup:
+
+```bash
+./scripts/restore-state.sh .env backups/<backup-id>
+```
+
+Optional local Postgres streaming standby:
 
 ```bash
 COMPOSE_FILES=compose.yaml:compose.replica.yaml ./scripts/setup-postgres-replica.sh .env
 ```
 
-This creates a physical streaming replica in `data/postgres-replica`. It is useful for redundancy and read-only dumps, but it does not replace point-in-time backups because deletes and bad writes replicate too. See [`docs/postgres-replication.md`](docs/postgres-replication.md).
-
-For host-level redundancy, put the standby on another LAN host:
+Optional remote LAN standby and snapshots:
 
 ```bash
 ./scripts/install-postgres-lan-forwarder.sh .env
@@ -127,126 +231,135 @@ For host-level redundancy, put the standby on another LAN host:
 ./scripts/backup-layers-status.sh .env replica.example.lan /srv/dune-postgres-replica
 ```
 
-Then bring up the service layer:
+Replication is an extra recovery layer, not a replacement for stopped-world backups. Deletes and bad writes replicate too. See [`docs/postgres-replication.md`](docs/postgres-replication.md).
 
-```bash
-docker compose --env-file .env up -d rmq-auth-shim text-router gateway director
-./scripts/status.sh .env
-```
+## Networking
 
-Pass a custom env file when needed:
+Forward only the client-facing ports needed for your layout.
 
-```bash
-./scripts/status.sh .env.production
-```
-
-The `survival` service is the minimal direct game-server launch target:
-
-```bash
-docker compose --env-file .env up -d survival
-```
-
-For a single-server test world, prune the unused generated `Survival_1` dimensions after DB bootstrap:
-
-```bash
-./scripts/single-survival-partition.sh .env
-```
-
-The script writes a `backups/partition-surgery/world-partitions-before-single-survival-*.sql` backup before deleting only unassigned `Survival_1` dimensions greater than zero. This removes recurring Director warnings for dimensions that are not being launched.
-
-Do not expect full gameplay until `FLS_SECRET` is set. The gateway/director/text-router path depends on that token for FLS registration; if the account page redirects to `/buy`, Funcom's entitlement service is not seeing the Steam ownership for the logged-in account.
-
-For the expanded standing farm and 30-partition warm pool, see `docs/full-farm.md`. The known-good nine-map server-side target is:
+Single `Survival_1` layout:
 
 ```text
-current_alive_active=9 active_servers=9 partitions=9
+7777/udp
 ```
 
-The known-good warm-pool target with `compose.allmaps.yaml` is:
+Expanded nine-map farm:
 
 ```text
-current_alive_active=30 active_servers=30 partitions=30
+7777-7785/udp
 ```
 
-That means server registration is green. Client travel still needs validation from the live game client.
-
-Start the local admin helper panel:
-
-```bash
-docker compose --env-file .env up -d admin-panel
-```
-
-It binds to `127.0.0.1:${DUNE_ADMIN_HOST_PORT:-18080}` by default and is intended to sit behind trusted LAN/VPN ingress. If another local process owns `18080`, set `DUNE_ADMIN_HOST_PORT=18081` and include that host in `DUNE_ADMIN_ALLOWED_HOSTS`. If you want a LAN hostname such as `admin.example.test`, point your own DNS or reverse proxy at the host. Do not expose this panel directly to the public internet.
-
-Open the panel at:
+Full 30-partition warm pool:
 
 ```text
-http://127.0.0.1:18080/
+7777-7806/udp
 ```
 
-The header token box uses `DUNE_ADMIN_TOKEN` from `.env`. After you click **Use token**, the browser stores it in session storage and sends protected API requests with `X-Admin-Token`. Keep the token private; it gates sensitive reads and all mutation endpoints.
+Live-client login also receives the game RabbitMQ address from FLS before gameplay UDP starts. Forward:
 
-The panel is the operator-facing Web UI for this repo:
+```text
+GAME_RMQ_PUBLIC_PORT tcp, default 31982/tcp
+```
 
-| Tab | Use it for |
+Do not forward Postgres, RabbitMQ management, the admin panel, or local debug ports. The Compose files may expose IGW/S2S UDP ports for local debugging; keep those closed publicly unless a live-client capture proves they are required.
+
+For LAN players joining through the public listing, keep `EXTERNAL_ADDRESS` set to the public address and use LAN reflection/hairpin routing. Do not flip the advertised address between public and private for normal operation. See [`docs/lan-reflection.md`](docs/lan-reflection.md).
+
+## Configuration
+
+Start from [`.env.example`](.env.example). Important values:
+
+| Key | Meaning |
 | --- | --- |
-| **Overview** | Operator dashboard with online/offline players, realtime host/container resource use, headline health metrics, map health, network checks, and health verdicts. |
-| **Ops** | Detailed resource use, map/network health, farm state, partition state, restart planning, and verified Paul chat announcements. |
-| **Security** | Host/origin checks, mutation-gate status, token status, audit events, and editable-setting allowlists. |
-| **Runbook** | Copy/paste operational commands for health, backups, restores, profiling, logs, and routing capture. |
-| **Players** | Search/list existing players and inspect controller, account, currency, inventory, and progression state before changing anything. |
-| **Settings** | Edit `.env`, `config/director.ini`, `config/UserGame.ini`, and selected config overlays with backups under `backups/admin-panel`. Runtime-only settings may apply immediately, but many game-server values require recreating or restarting affected containers. |
-| **Admin Actions** | Create DB backups and perform guarded writes such as XP, currency, keystones, item grants, item stack edits, and item deletion. Back up the database before broad writes; item and inventory operations are guarded by the admin token and mutation safety flags. |
+| `DUNE_STEAM_SERVER_DIR` | Local Steam tool path. |
+| `DUNE_IMAGE_TAG` | Official image tag loaded from the Steam package. |
+| `WORLD_NAME` | Public/server-browser world name. |
+| `WORLD_UNIQUE_NAME` | Stable internal world identifier. |
+| `FLS_SECRET` | Funcom self-hosting token. |
+| `EXTERNAL_ADDRESS` | Public address advertised to clients. |
+| `GAME_RMQ_PUBLIC_HOST` / `GAME_RMQ_PUBLIC_PORT` | Client-facing game RabbitMQ endpoint returned during login. |
+| `DUNE_ADMIN_TOKEN` | Admin panel API token. |
+| `DUNE_ADMIN_MUTATIONS_ENABLED` | Master gate for admin writes. |
+| `DUNE_ADMIN_ITEM_GRANTS_ENABLED` | Separate gate for item grants/edits/deletes. |
+| `DUNE_ADMIN_RESTART_COMMAND` | Hook used by scheduled restart jobs. |
+| `DUNE_ADMIN_ANNOUNCE_COMMAND` | Hook used by restart announcements. |
 
-The chat-command helper also includes spam protection. By default, a non-admin player who sends the same normalized message more than 3 times in a row, or 5 times within 30 seconds, triggers the auto-kick hook. Detection is active by default, admins are exempt by default, and enforcement uses `scripts/spam-kick-player.sh`. The hook fails closed until a real targeted kick backend is configured, so current violations are logged and announced as blocked rather than using unsafe DB or network hacks. See [`docs/admin-panel.md`](docs/admin-panel.md) for the knobs.
+Most service settings require the affected containers to be recreated or restarted before running processes pick them up. Runtime-only settings in the admin panel document whether a restart is expected.
 
-Typical admin flow:
+## Chat, Announcements, and GM Research
 
-1. Open **Overview** and confirm the Map Health list is sane.
-2. Use **Players** to select the player instead of typing IDs by hand.
-3. Use **Admin Actions** for dry-runs and guarded writes.
-4. Check **Security** after failed auth, blocked host/origin requests, config edits, backups, or mutation runs.
-5. Restart or recreate affected containers after settings that are loaded only at process startup.
+Restart announcements use [`scripts/announce.sh`](scripts/announce.sh), which publishes verified `TextChat` payloads to game RabbitMQ `chat.map` with bundled `pika`.
 
-Current headless captures of the Map Health list screen are saved locally under:
+Verify announcement delivery:
 
-- `captures/admin-panel-webui/map-health-overview-desktop.png`
-- `captures/admin-panel-webui/map-health-overview-mobile-tall.png`
+```bash
+./scripts/verify-announcement.sh 'PAUL ANNOUNCEMENT VERIFY'
+```
 
-For the single `Survival_1` test layout, forward:
+The chat-command bridge is [`scripts/admin-chat-commands.py`](scripts/admin-chat-commands.py). It listens for configured command prefixes, checks approved admins, and can reply through the announcement path.
 
-- `7777/udp`
+The native GM/cheat route remains experimental. It is intentionally blocked unless all related gates are enabled and the payload route is verified:
 
-For the expanded standing full-farm layout, forward these game UDP ports:
+```env
+DUNE_ADMIN_GM_COMMANDS_ENABLED=false
+DUNE_GM_COMMAND_PAYLOAD_VERIFIED=false
+DUNE_CHAT_COMMAND_EXECUTE_ONLINE_GM_TELEPORT=false
+```
 
-- `7777-7785/udp`
+Documentation: [`docs/admin-gm-console.md`](docs/admin-gm-console.md).
 
-For the full 30-partition warm pool, forward these game UDP ports:
+## Documentation Map
 
-- `7777-7806/udp`
+Start here:
 
-The Compose files also expose the current IGW/S2S UDP ports on the host for debugging (`7888-7917/udp` in the 30-partition layout), but those are server-to-server paths on the Docker network. Do not forward them publicly unless a client test proves Funcom's routing requires it.
+- [`docs/setup.md`](docs/setup.md): initial setup flow.
+- [`docs/operations.md`](docs/operations.md): health, recovery, startup, watchdog, ports, and restart workflow.
+- [`docs/admin-panel.md`](docs/admin-panel.md): admin panel features, security, announcements, chat commands, and mutation gates.
+- [`docs/troubleshooting.md`](docs/troubleshooting.md): common failures and checks.
+- [`docs/full-farm.md`](docs/full-farm.md): expanded farm and 30-partition warm-pool notes.
+- [`docs/lan-reflection.md`](docs/lan-reflection.md): internal client hairpin/LAN reflection.
+- [`docs/postgres-replication.md`](docs/postgres-replication.md): local and remote Postgres standby.
 
-Forward the game RabbitMQ AMQPS port (`GAME_RMQ_PUBLIC_PORT`, default `31982/tcp`) when using live self-host joins; the client receives this address from FLS before gameplay UDP starts. Do not forward Postgres, RabbitMQ management, admin panel, or other local debug ports.
+Architecture and research:
 
-If LAN players join through the public server listing, keep `EXTERNAL_ADDRESS`
-set to the public address and use the standard LAN reflection options in
-`docs/lan-reflection.md`. Do not flip `EXTERNAL_ADDRESS` between public and LAN
-addresses for normal operation.
+- [`docs/architecture.md`](docs/architecture.md): service map, state layout, and validation boundary.
+- [`docs/reproducibility.md`](docs/reproducibility.md): fresh-host and migration checklist.
+- [`docs/access-control.md`](docs/access-control.md): login password and access limits.
+- [`docs/character-transfers.md`](docs/character-transfers.md): Director transfer policy.
+- [`docs/admin-mutation-map.md`](docs/admin-mutation-map.md): DB contracts used by admin writes.
+- [`docs/server-knobs-audit.md`](docs/server-knobs-audit.md): audited config/settings candidates.
+- [`docs/network-investigation.md`](docs/network-investigation.md): DB/RabbitMQ/socket routing notes.
+- [`docs/routing-investigation.md`](docs/routing-investigation.md): travel route investigation notes.
+- [`docs/validation.md`](docs/validation.md): live-client route validation checklist.
+- [`docs/benchmarking.md`](docs/benchmarking.md): resource and transition benchmark notes.
+- [`docs/kubernetes.md`](docs/kubernetes.md): unsupported Kubernetes translation notes.
+- [`docs/publication.md`](docs/publication.md): release safety checklist.
 
-## Repository Boundaries
+Root-level research indexes:
 
-This repo is intended to contain only original orchestration, documentation, and local helper scripts. Keep these local and uncommitted:
+- [`SERVER_CONFIG_KEYS.md`](SERVER_CONFIG_KEYS.md)
+- [`SERVER_CONFIG_KEY_INDEX.md`](SERVER_CONFIG_KEY_INDEX.md)
+- [`SERVER_BINARY_CONFIG_CANDIDATES.md`](SERVER_BINARY_CONFIG_CANDIDATES.md)
+- [`DEEP_DESERT_EVENT_KNOBS.md`](DEEP_DESERT_EVENT_KNOBS.md)
+- [`RESOURCE_RESPAWN_KNOBS.md`](RESOURCE_RESPAWN_KNOBS.md)
+- [`HYDRATION_WATER_KNOBS.md`](HYDRATION_WATER_KNOBS.md)
 
-- `.env`
-- `data/`
-- `config/tls/`
-- Steam package contents
-- backups and routing captures
-- Funcom container image tarballs
-- logs, dumps, and generated runtime state
+## Key Files
 
-See `docs/publication.md` for the public-release checklist.
+- [`compose.yaml`](compose.yaml): base service topology.
+- [`compose.allmaps.yaml`](compose.allmaps.yaml): 30-partition warm-pool extension.
+- [`compose.replica.yaml`](compose.replica.yaml): optional Postgres streaming-replica extension.
+- [`compose.limits.example.yaml`](compose.limits.example.yaml): optional local resource guardrails.
+- [`admin/admin_panel.py`](admin/admin_panel.py): admin web panel.
+- [`admin/static/hagga-basin.webp`](admin/static/hagga-basin.webp): Hagga Basin panel map asset.
+- [`scripts/start-full-warm-pool.sh`](scripts/start-full-warm-pool.sh): 30-map startup helper.
+- [`scripts/watch-maps.sh`](scripts/watch-maps.sh): map watchdog.
+- [`scripts/recover-map.sh`](scripts/recover-map.sh): fixed-partition recovery.
+- [`scripts/restart-target.sh`](scripts/restart-target.sh): scheduled restart execution hook.
+- [`scripts/announce.sh`](scripts/announce.sh): in-game announcement publisher.
+- [`scripts/admin-chat-commands.py`](scripts/admin-chat-commands.py): chat command listener.
+- [`scripts/seed-gateway-neighbor.sh`](scripts/seed-gateway-neighbor.sh): Docker bridge neighbor refresh helper for the observed local bridge issue.
+- [`.env.example`](.env.example): documented settings template.
 
 ## Validation
 
@@ -256,6 +369,17 @@ Run the local validation target before pushing:
 make validate
 ```
 
-This checks the Compose config against `.env.example` and scans publishable files for obvious secret patterns.
+Useful focused checks:
 
-For a fresh install on different hardware, use `docs/reproducibility.md`. For a future move back into a normal Kubernetes cluster, use `docs/kubernetes.md` as the service mapping and gap list.
+```bash
+python3 -m py_compile admin/admin_panel.py scripts/admin-chat-commands.py scripts/dune_gm_command.py scripts/probe-gm-command.py
+git diff --check
+```
+
+## Community Support
+
+Discord support:
+
+```text
+https://discord.gg/cybhGntTts
+```

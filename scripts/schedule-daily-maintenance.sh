@@ -34,6 +34,10 @@ print(json.dumps({
     "action": "restart",
     "delay": delay,
     "repeat_seconds": int(repeat_seconds),
+    "announcement_cadence": [
+        {"remaining_seconds": 5 * 60, "interval_seconds": 60},
+        {"remaining_seconds": 30 * 60, "interval_seconds": 5 * 60},
+    ],
     "message": message,
     "announce": True,
     "execute": True,
