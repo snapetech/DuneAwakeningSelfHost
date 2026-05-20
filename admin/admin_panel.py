@@ -2731,7 +2731,7 @@ class Handler(BaseHTTPRequestHandler):
         checks = [
             {"name": "admin token configured", "ok": bool(ADMIN_TOKEN)},
             {"name": "admin token not placeholder", "ok": ADMIN_TOKEN not in ("", "change-me-admin-token")},
-            {"name": "mutations disabled by default", "ok": not MUTATIONS_ENABLED, "value": MUTATIONS_ENABLED},
+            {"name": "mutation gate configured", "ok": True, "value": "enabled" if MUTATIONS_ENABLED else "off"},
             {"name": "item grants enabled", "ok": ITEM_GRANTS_ENABLED, "value": ITEM_GRANTS_ENABLED},
             {"name": "allowed hosts configured", "ok": bool(ALLOWED_HOSTS), "value": ", ".join(sorted(ALLOWED_HOSTS))},
             {"name": "request body limit", "ok": MAX_BODY_BYTES <= 262144, "value": MAX_BODY_BYTES},
@@ -2759,7 +2759,7 @@ class Handler(BaseHTTPRequestHandler):
             "notes": [
                 "Keep the panel on trusted LAN/VPN only.",
                 "Do not expose RabbitMQ, Postgres, or this panel directly to the internet.",
-                "Use mutations only for deliberate admin edits after taking a backup.",
+                "Take a backup before broad admin mutations or config surgery.",
             ],
         }
 
@@ -2824,15 +2824,16 @@ class Handler(BaseHTTPRequestHandler):
     def ops_runbook(self):
         return {
             "safeCliOnly": True,
-            "why": "The panel deliberately does not mount the container runtime socket or execute arbitrary shell commands.",
+            "why": "High-signal operator commands and workflows. Prefer the panel buttons for routine maintenance; use these when diagnosing or validating from a shell.",
             "commands": [
-                {"name": "Status", "command": "./scripts/status.sh .env", "when": "Quick health and high-signal logs."},
-                {"name": "Routing capture before transition", "command": "./scripts/capture-routing.sh .env hagga-to-deep-desert-before", "when": "Before attempting a broken transition."},
-                {"name": "Routing capture after transition", "command": "./scripts/capture-routing.sh .env hagga-to-deep-desert-after", "when": "Immediately after a failed transition."},
+                {"name": "Current health", "command": "curl -sk https://<admin-host>/api/ops/health | jq '.summary'", "when": "Confirm 30/30 maps ready after restart or config changes."},
+                {"name": "RabbitMQ auth path", "command": "./scripts/verify-rmq-auth-path.sh", "when": "Check admin-rmq/game-rmq can reach auth shim and text-router."},
+                {"name": "Post-start recovery check", "command": "./scripts/restart-post-start-health.sh", "when": "Validate restart recovery plumbing without taking the game down."},
+                {"name": "Backup validation", "command": "backup=backups/admin-panel/maintenance/<stamp>; tar -tzf \"$backup/server-saved.tgz\" >/dev/null && pg_restore --list \"$backup\"/*.dump >/dev/null", "when": "Verify a maintenance backup is readable."},
+                {"name": "Daily timer", "command": "systemctl list-timers dune-daily-maintenance-schedule.timer --all --no-pager", "when": "Confirm 02:30 schedule for 03:00 maintenance."},
+                {"name": "Status script", "command": "./scripts/status.sh .env", "when": "Quick health and high-signal logs."},
                 {"name": "Runtime profile", "command": "./scripts/profile-runtime.sh .env", "when": "Memory/storage/network/process teardown."},
-                {"name": "Summarize runtime profile", "command": "./scripts/summarize-runtime-profile.sh captures/YYYYMMDDTHHMMSSZ-runtime-profile", "when": "Compare profile captures."},
                 {"name": "Network watch", "command": "./scripts/watch-network.sh .env", "when": "Check Postgres/RabbitMQ socket churn."},
-                {"name": "Backup state", "command": "./scripts/backup-state.sh .env", "when": "Before upgrades, config surgery, or admin mutations."},
             ],
         }
 
@@ -3765,6 +3766,15 @@ function probeTable(rows){
   if (!rows || !rows.length) return '<div class="muted">No probes.</div>';
   return `<div class="tableWrap"><table><thead><tr><th>Name</th><th>Status</th><th>Target</th><th>Latency</th><th>HTTP</th><th>Error</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.name)}</td><td>${healthCell(r.ok || [401,403,404].includes(r.httpStatus), r.ok ? 'OK' : 'reachable', 'down')}</td><td>${esc(r.target)}</td><td>${esc(r.latencyMs)}ms</td><td>${esc(r.httpStatus ?? '')}</td><td>${esc(r.error ?? '')}</td></tr>`).join('')}</tbody></table></div>`;
 }
+function auditEventsTable(events){
+  const rows = (events || []).filter(e => !(e.action === 'auth-failed' && e.method === 'GET'));
+  const display = rows.slice(0, 40);
+  if (!display.length) return '<div class="muted">No recent actionable audit events.</div>';
+  return `<div class="tableWrap"><table class="dataDense"><thead><tr><th>Time</th><th>Action</th><th>Result</th><th>Path</th><th>Detail</th></tr></thead><tbody>${display.map(e => {
+    const detail = e.error || e.target || e.command || e.template_id || e.backup_path || e.job_id || '';
+    return `<tr><td>${esc(String(e.ts || '').replace('T', ' ').replace('Z', ''))}</td><td>${esc(e.action || '')}</td><td>${healthCell(e.ok !== false, 'OK', 'failed')}</td><td>${esc(e.path || '')}</td><td>${esc(detail)}</td></tr>`;
+  }).join('')}</tbody></table></div>`;
+}
 function announcementPanel(state){
   const active = (state.jobs || []).filter(j => ['scheduled','delivering'].includes(j.status));
   const latest = active[active.length - 1] || (state.jobs || []).slice(-1)[0] || null;
@@ -4129,12 +4139,13 @@ async function security(serial=loadSerial){
   ]);
   if (serial !== loadSerial) return;
   const failed = (audit.checks || []).filter(c => !c.ok).length;
-  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Security</h2><div class="toolbar"><span class="pill ${failed ? 'warn' : 'ok'}">${failed ? failed + ' checks need attention' : 'checks OK'}</span><button data-jump="settings">Settings</button><button data-jump="mutations">Backup</button></div></div><div class="twoCol"><div class="panelBand"><h2>Security Checks</h2>${checks(audit.checks)}</div><div class="panelBand"><h2>Recent Audit Events</h2>${table(events.events)}</div></div><div class="panelBand"><h2>Operating Notes</h2><ul>${audit.notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul></div><details class="panelBand"><summary>Editable Env Keys</summary><div class="toolbar">${audit.safeEnvKeys.map(k => `<span class="pill">${esc(k)}</span>`).join('')}</div></details><details class="panelBand"><summary>Editable Config Files</summary><div class="toolbar">${audit.allowedConfigFiles.map(k => `<span class="pill">${esc(k)}</span>`).join('')}</div></details></div>`;
+  const failedChecks = (audit.checks || []).filter(c => !c.ok);
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Security</h2><div class="toolbar"><span class="pill ${failed ? 'warn' : 'ok'}">${failed ? failed + ' checks need attention' : 'checks OK'}</span><button data-jump="settings">Settings</button><button data-jump="mutations">Admin Actions</button></div></div>${failed ? `<div class="panelBand dangerZone"><h2>Needs Attention</h2>${checks(failedChecks)}</div>` : ''}<div class="twoCol"><div class="panelBand"><h2>Security Checks</h2>${checks(audit.checks)}</div><div class="panelBand"><h2>Recent Audit Events</h2>${auditEventsTable(events.events)}<details><summary>Raw audit events</summary>${table(events.events)}</details></div></div><div class="panelBand"><h2>Operating Notes</h2><ul>${audit.notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul></div><details class="panelBand"><summary>Editable Env Keys</summary><div class="toolbar">${audit.safeEnvKeys.map(k => `<span class="pill">${esc(k)}</span>`).join('')}</div></details><details class="panelBand"><summary>Editable Config Files</summary><div class="toolbar">${audit.allowedConfigFiles.map(k => `<span class="pill">${esc(k)}</span>`).join('')}</div></details></div>`;
 }
 async function runbook(serial=loadSerial){
   const data = await api('/api/ops/runbook');
   if (serial !== loadSerial) return;
-  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Runbook</h2><div class="toolbar"><span class="pill">copy/paste commands</span><button data-jump="ops">Ops</button><button data-jump="settings">Settings</button></div></div>${actionGrid([{tab:'overview',label:'Overview'},{tab:'mutations',label:'Create DB backup',className:'primary'},{tab:'security',label:'Audit'}])}<div class="panelBand"><p class="muted">${esc(data.why)}</p>${table(data.commands)}</div></div>`;
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Runbook</h2><div class="toolbar"><span class="pill">operator workflows</span><button data-jump="ops">Ops</button><button data-jump="settings">Settings</button></div></div>${actionGrid([{tab:'ops',label:'Restart / backup status',className:'primary'},{tab:'mutations',label:'Admin Actions'},{tab:'security',label:'Audit'}])}<div class="panelBand"><p class="muted">${esc(data.why)}</p>${table(data.commands)}</div></div>`;
 }
 async function characters(serial=loadSerial){
   const lastQuery = sessionStorage.getItem('duneAdminCharacterQuery') || '';
