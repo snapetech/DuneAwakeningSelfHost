@@ -2245,6 +2245,7 @@ if (!validTabs.has(current)) current = 'overview';
 let pendingAdminAccountId = '';
 let resourceTimer = null;
 let loadSerial = 0;
+let resourceRefreshInFlight = false;
 let autoRefresh = sessionStorage.getItem('duneAdminAutoRefresh') !== 'off';
 const resourceHistory = [];
 const view = document.getElementById('view');
@@ -2267,12 +2268,24 @@ function updateLastRefresh(label='Refreshed'){
   document.getElementById('lastRefresh').textContent = `${label}: ${new Date().toLocaleTimeString()}`;
 }
 async function api(path, opts={}) {
+  const timeoutMs = opts.timeoutMs ?? 15000;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  delete opts.timeoutMs;
+  opts.signal = opts.signal || controller.signal;
   opts.headers = Object.assign({'Content-Type':'application/json'}, opts.headers || {});
   if (token) opts.headers['X-Admin-Token'] = token;
-  const res = await fetch(path, opts);
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || res.statusText);
-  return data;
+  try {
+    const res = await fetch(path, opts);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    return data;
+  } catch (e) {
+    if (e.name === 'AbortError') throw new Error(`request timed out after ${Math.round(timeoutMs / 1000)}s`);
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 function esc(v){ return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function table(rows){
@@ -2882,6 +2895,8 @@ async function ops(serial=loadSerial){
   }, 5000);
 }
 async function refreshResources(liveStats=false){
+  if (resourceRefreshInFlight) return;
+  resourceRefreshInFlight = true;
   const button = document.getElementById('refreshResourcesBtn');
   if (button) {
     button.disabled = true;
@@ -2893,7 +2908,7 @@ async function refreshResources(liveStats=false){
     sampleButton.textContent = liveStats ? 'Sampling' : 'Sample live stats';
   }
   try {
-    const resources = await api('/api/ops/resources' + (liveStats ? '?live=1' : ''));
+    const resources = await api('/api/ops/resources' + (liveStats ? '?live=1' : ''), {timeoutMs: liveStats ? 8000 : 5000});
     const container = document.getElementById('resources');
     if (!container) return;
     container.innerHTML = resourcePanel(resources);
@@ -2913,6 +2928,7 @@ async function refreshResources(liveStats=false){
       sampleButton.disabled = false;
       sampleButton.textContent = 'Sample live stats';
     }
+    resourceRefreshInFlight = false;
   }
 }
 async function security(serial=loadSerial){
