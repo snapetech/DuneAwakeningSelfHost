@@ -1702,8 +1702,6 @@ class Handler(BaseHTTPRequestHandler):
             {"name": "RabbitMQ-backed farm registration", "ok": expected > 0 and current_alive_active == expected and active_count == expected, "value": "inferred from current world_partition rows, farm_state, and active_server_ids"},
             {"name": "player counts query", "ok": True},
         ]
-        network = self.network_health()
-        verdicts.extend(network["verdicts"])
         return {
             "verdicts": verdicts,
             "playerCounts": player_counts,
@@ -1716,7 +1714,6 @@ class Handler(BaseHTTPRequestHandler):
                 "totalMaps": len(map_status),
             },
             "mapStatus": map_status,
-            "network": network,
             "farmState": farm,
             "partitions": partitions,
             "activeServers": active,
@@ -2784,6 +2781,12 @@ function renderStatus(data){
   updateLastRefresh('Status refreshed');
 }
 async function refreshStatus(){ renderStatus(await api('/api/status')); }
+async function refreshNetwork(){
+  const network = await api('/api/ops/network');
+  document.querySelectorAll('[data-network-panel]').forEach(container => {
+    container.innerHTML = `<h2>Network and Upstream</h2>${probeTable(network.probes)}${checks(network.verdicts)}`;
+  });
+}
 async function load(){
   if (resourceTimer) {
     clearInterval(resourceTimer);
@@ -2791,7 +2794,8 @@ async function load(){
   }
   view.setAttribute('aria-busy', 'true');
   syncTabs();
-  await refreshStatus().catch(e => {
+  view.innerHTML = `<div class="panelBand"><h2>${esc(current[0].toUpperCase() + current.slice(1))}</h2><div class="muted">Loading...</div></div>`;
+  refreshStatus().catch(e => {
     document.getElementById('statusSummary').innerHTML = `<span class="pill bad">${esc(e.message)}</span>`;
     document.getElementById('statusRaw').textContent = e.message;
   });
@@ -2813,32 +2817,48 @@ async function load(){
   view.setAttribute('aria-busy', 'false');
 }
 async function overview(){
-  const health = await api('/api/ops/health');
-  const roster = await api('/api/characters/roster');
-  const resources = await api('/api/ops/resources');
+  const [health, roster] = await Promise.all([
+    api('/api/ops/health'),
+    api('/api/characters/roster')
+  ]);
   const state = health;
   const summary = health.summary || {};
   const players = (state.farmState || []).reduce((sum, r) => sum + Number(r.connected_players || 0), 0);
-  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Overview</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="ops">Operations</button><button data-jump="mutations" class="primary">Admin Actions</button></div></div><div class="metricGrid">${metric('Ready Servers', `${summary.readyAlive ?? 0}/${summary.expectedPartitions ?? 0}`, summary.readyAlive === summary.expectedPartitions ? 'ok' : 'dangerText')}${metric('Online Maps', `${summary.onlineMaps ?? 0}/${summary.totalMaps ?? 0}`, summary.onlineMaps === summary.totalMaps ? 'ok' : 'dangerText')}${metric('Active IDs', `${summary.activeServers ?? 0}/${summary.expectedPartitions ?? 0}`)}${metric('Reported Players', players)}</div>${healthViz(health)}<div id="overviewRoster">${characterRosterPanel(roster)}</div><div id="detail"></div><div id="resources">${resourcePanel(resources)}</div>${actionGrid([{tab:'characters',label:'Player search and detail'},{tab:'ops',label:'Service controls and map health'},{tab:'security',label:'Security and audit'},{tab:'settings',label:'Server settings'}])}<div class="twoCol"><div class="panelBand"><h2>Map Health</h2>${mapTiles(health.mapStatus)}<details><summary>Map Table</summary>${mapStatusTable(health.mapStatus)}</details></div><div class="panelBand"><h2>Health Verdict</h2>${checks(health.verdicts)}</div></div><div class="panelBand"><h2>Network and Upstream</h2>${probeTable(health.network?.probes)}</div></div>`;
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Overview</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="ops">Operations</button><button data-jump="mutations" class="primary">Admin Actions</button></div></div><div class="metricGrid">${metric('Ready Servers', `${summary.readyAlive ?? 0}/${summary.expectedPartitions ?? 0}`, summary.readyAlive === summary.expectedPartitions ? 'ok' : 'dangerText')}${metric('Online Maps', `${summary.onlineMaps ?? 0}/${summary.totalMaps ?? 0}`, summary.onlineMaps === summary.totalMaps ? 'ok' : 'dangerText')}${metric('Active IDs', `${summary.activeServers ?? 0}/${summary.expectedPartitions ?? 0}`)}${metric('Reported Players', players)}</div>${healthViz(health)}<div id="overviewRoster">${characterRosterPanel(roster)}</div><div id="detail"></div><div id="resources" class="panelBand"><h2>Resources</h2><div class="muted">Loading resource stats...</div></div>${actionGrid([{tab:'characters',label:'Player search and detail'},{tab:'ops',label:'Service controls and map health'},{tab:'security',label:'Security and audit'},{tab:'settings',label:'Server settings'}])}<div class="twoCol"><div class="panelBand"><h2>Map Health</h2>${mapTiles(health.mapStatus)}<details><summary>Map Table</summary>${mapStatusTable(health.mapStatus)}</details></div><div class="panelBand"><h2>Health Verdict</h2>${checks(health.verdicts)}</div></div><div class="panelBand" data-network-panel><h2>Network and Upstream</h2><div class="muted">Loading network probes...</div></div></div>`;
   document.querySelectorAll('#overviewRoster tbody tr').forEach(row => row.onclick = () => pickCharacter(row));
   makeRowsKeyboardFriendly(view);
   wireResourceControls(view);
   bindRosterFilters(view);
   bindResourceFilters(view);
+  refreshResources().catch(e => {
+    const container = document.getElementById('resources');
+    if (container) container.innerHTML = `<div class="panelBand"><h2>Resources</h2><div class="dangerText">${esc(e.message)}</div></div>`;
+  });
+  refreshNetwork().catch(e => {
+    document.querySelectorAll('[data-network-panel]').forEach(container => container.innerHTML = `<h2>Network and Upstream</h2><div class="dangerText">${esc(e.message)}</div>`);
+  });
   resourceTimer = setInterval(() => {
     if (autoRefresh && current === 'overview') refreshResources().catch(() => {});
   }, 5000);
 }
 async function ops(){
-  const health = await api('/api/ops/health');
-  const opt = await api('/api/ops/optimization');
-  const announcement = await api('/api/ops/announcement');
-  const restart = await api('/api/ops/restart');
-  const resources = await api('/api/ops/resources');
+  const [health, opt, announcement, restart] = await Promise.all([
+    api('/api/ops/health'),
+    api('/api/ops/optimization'),
+    api('/api/ops/announcement'),
+    api('/api/ops/restart')
+  ]);
   const pc = health.playerCounts || {};
-  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Operations</h2><div class="toolbar"><button data-jump="overview">Overview</button><button data-jump="characters">Players</button><button data-jump="runbook">Runbook</button><button data-jump="settings">Settings</button></div></div><div class="metricGrid">${metric('Connected Players', pc.connected_players_reported ?? 0)}${metric('Online Controllers', pc.online_controller_ids ?? 0)}${metric('Recent Online State', pc.online_or_recently_disconnected ?? 0)}${metric('Grace Entries', pc.grace_period_entries ?? 0)}</div>${healthViz(health)}<div id="resources">${resourcePanel(resources)}</div><div class="twoCol">${restartPanel(restart)}${announcementPanel(announcement)}</div><div class="twoCol"><div class="panelBand"><h2>Health Verdict</h2>${checks(health.verdicts)}</div><div class="panelBand"><h2>Local and Upstream Network</h2>${probeTable(health.network?.probes)}</div></div><div class="panelBand"><h2>Map Online/Offline</h2>${mapTiles(health.mapStatus)}<details><summary>Map Table</summary>${mapStatusTable(health.mapStatus)}</details></div><details class="panelBand"><summary>Raw Farm State</summary>${table(health.farmState)}</details><details class="panelBand"><summary>Partitions</summary>${table(health.partitions)}</details>${signalList(opt)}</div>`;
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Operations</h2><div class="toolbar"><button data-jump="overview">Overview</button><button data-jump="characters">Players</button><button data-jump="runbook">Runbook</button><button data-jump="settings">Settings</button></div></div><div class="metricGrid">${metric('Connected Players', pc.connected_players_reported ?? 0)}${metric('Online Controllers', pc.online_controller_ids ?? 0)}${metric('Recent Online State', pc.online_or_recently_disconnected ?? 0)}${metric('Grace Entries', pc.grace_period_entries ?? 0)}</div>${healthViz(health)}<div id="resources" class="panelBand"><h2>Resources</h2><div class="muted">Loading resource stats...</div></div><div class="twoCol">${restartPanel(restart)}${announcementPanel(announcement)}</div><div class="twoCol"><div class="panelBand"><h2>Health Verdict</h2>${checks(health.verdicts)}</div><div class="panelBand" data-network-panel><h2>Local and Upstream Network</h2><div class="muted">Loading network probes...</div></div></div><div class="panelBand"><h2>Map Online/Offline</h2>${mapTiles(health.mapStatus)}<details><summary>Map Table</summary>${mapStatusTable(health.mapStatus)}</details></div><details class="panelBand"><summary>Raw Farm State</summary>${table(health.farmState)}</details><details class="panelBand"><summary>Partitions</summary>${table(health.partitions)}</details>${signalList(opt)}</div>`;
   wireResourceControls(view);
   bindResourceFilters(view);
+  refreshResources().catch(e => {
+    const container = document.getElementById('resources');
+    if (container) container.innerHTML = `<div class="panelBand"><h2>Resources</h2><div class="dangerText">${esc(e.message)}</div></div>`;
+  });
+  refreshNetwork().catch(e => {
+    document.querySelectorAll('[data-network-panel]').forEach(container => container.innerHTML = `<h2>Local and Upstream Network</h2><div class="dangerText">${esc(e.message)}</div>`);
+  });
   document.getElementById('scheduleAnnouncementBtn').addEventListener('click', scheduleAnnouncement);
   document.getElementById('cancelAnnouncementBtn').addEventListener('click', cancelAnnouncement);
   document.getElementById('scheduleRestartBtn').addEventListener('click', scheduleRestart);
@@ -2873,8 +2893,10 @@ async function refreshResources(){
   }
 }
 async function security(){
-  const audit = await api('/api/ops/security');
-  const events = await api('/api/ops/audit');
+  const [audit, events] = await Promise.all([
+    api('/api/ops/security'),
+    api('/api/ops/audit')
+  ]);
   const failed = (audit.checks || []).filter(c => !c.ok).length;
   view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Security</h2><div class="toolbar"><span class="pill ${failed ? 'warn' : 'ok'}">${failed ? failed + ' checks need attention' : 'checks OK'}</span><button data-jump="settings">Settings</button><button data-jump="mutations">Backup</button></div></div><div class="twoCol"><div class="panelBand"><h2>Security Checks</h2>${checks(audit.checks)}</div><div class="panelBand"><h2>Recent Audit Events</h2>${table(events.events)}</div></div><div class="panelBand"><h2>Operating Notes</h2><ul>${audit.notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul></div><details class="panelBand"><summary>Editable Env Keys</summary><div class="toolbar">${audit.safeEnvKeys.map(k => `<span class="pill">${esc(k)}</span>`).join('')}</div></details><details class="panelBand"><summary>Editable Config Files</summary><div class="toolbar">${audit.allowedConfigFiles.map(k => `<span class="pill">${esc(k)}</span>`).join('')}</div></details></div>`;
 }
@@ -2960,10 +2982,12 @@ async function pickCharacter(row){
   document.getElementById('detailDeleteItemBtn').addEventListener('click', deleteDetailItem);
 }
 async function settings(){
-  const env = await api('/api/settings/env');
-  const transfer = await api('/api/settings/director-transfer');
-  const onlineState = await api('/api/settings/player-online-state');
-  const configs = await api('/api/settings/configs');
+  const [env, transfer, onlineState, configs] = await Promise.all([
+    api('/api/settings/env'),
+    api('/api/settings/director-transfer'),
+    api('/api/settings/player-online-state'),
+    api('/api/settings/configs')
+  ]);
   view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Settings</h2><div class="toolbar"><button data-jump="security">Security</button><button data-jump="ops">Ops</button><button id="saveEnvBtn" class="primary">Save env settings</button></div></div><div class="panelBand"><p class="muted">These write <code>.env</code>, <code>config/director.ini</code>, or <code>config/UserGame.ini</code> with a backup under <code>backups/admin-panel</code>. Most service settings need the affected containers recreated before running processes pick them up.</p></div>${actionGrid([{tab:'ops',label:'Check live state'},{tab:'mutations',label:'Create backup',className:'primary'},{tab:'characters',label:'Inspect players'}])}${envEditor(env)}<div class="twoCol">${playerOnlineStateEditor(onlineState)}${directorTransferEditor(transfer)}</div><div class="panelBand"><h2>Config Files</h2><select id="cfg">${Object.keys(configs).map(k=>`<option>${esc(k)}</option>`).join('')}</select><textarea id="cfgText"></textarea><p><button id="saveCfgBtn" class="primary">Save config with backup</button></p></div></div>`;
   window.configs = configs; selectCfg();
   document.getElementById('cfg').addEventListener('change', selectCfg);
@@ -2999,8 +3023,10 @@ async function savePlayerOnlineState(){
   notify('Saved logout timers');
 }
 async function mutations(){
-  const ref = await api('/api/admin/reference');
-  const characterRows = await api('/api/characters?q=');
+  const [ref, characterRows] = await Promise.all([
+    api('/api/admin/reference'),
+    api('/api/characters?q=')
+  ]);
   const referenceErrors = ref.errors && Object.keys(ref.errors).length ? `<div class="card"><h2>Reference Errors</h2><pre>${esc(JSON.stringify(ref.errors, null, 2))}</pre></div>` : '';
   view.innerHTML = `<div class="pageStack">${referenceErrors}<div class="sectionHeader"><h2>Admin Actions</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="settings">Settings</button><button data-jump="security">Audit</button></div></div>${actionGrid([{tab:'characters',label:'Player lookup'},{tab:'settings',label:'Mutation settings'},{tab:'runbook',label:'Runbook'}])}<div class="panelBand"><h2>Backup First</h2><p class="muted">Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button id="backupBtn" class="primary">Create DB backup</button><pre id="backupResult"></pre></div><div class="panelBand"><h2>Target Player</h2><div class="grid"><label>Character<select id="adminCharacterSelect">${characterOptions(characterRows)}</select></label><label>Player controller ID<input id="pcid"></label><label>Account ID<input id="grantAccount" placeholder="auto-select player inventory"></label><label>Character name<input id="grantCharacter" placeholder="auto-select by name"></label></div></div><div class="twoCol"><div class="panelBand"><h2>Currency and XP</h2><p class="dangerText">Writes require <code>DUNE_ADMIN_MUTATIONS_ENABLED=true</code> and a valid admin token.</p><div class="grid"><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button id="currencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Level for set/new track<input id="xplevel" value="0"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button id="xpBtn" class="primary">Apply XP</button></p></div><div class="panelBand dangerZone"><h2>Specialization Keystones</h2><div class="grid"><label>Player/controller ID<input id="keyPlayer"></label><label>Keystone<select id="keystone">${options(ref.keystones, 'name')}</select></label></div><p><button id="purchaseKeystoneBtn" class="primary">Purchase keystone</button> <button id="resetKeystonesBtn" class="danger">Reset all keystones</button></p><pre id="keystoneResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Item Grants</h2><p class="dangerText">Use exact server template IDs. Dry run first when using IDs not observed locally.</p><div class="grid"><label>Known inventory<select id="grantInventorySelect">${inventoryOptions(ref.recentInventories)}</select></label><label>Inventory ID<input id="grantInventory" placeholder="explicit inventory"></label><label class="hidden">Character<select id="grantCharacterSelect">${characterOptions(characterRows)}</select></label><label>Inventory type<select id="grantInventoryType">${inventoryTypeOptions(ref.inventoryTypes)}</select></label><label>Template ID<input id="grantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><label>Stats JSON<textarea id="grantStats">{}</textarea></label><p><button id="dryRunItemBtn" class="primary">Dry run</button> <button id="grantItemBtn" class="danger">Grant item</button></p><pre id="grantResult"></pre></div><div class="panelBand dangerZone"><h2>Item Maintenance</h2><div class="grid"><label class="hidden">Character<select id="itemCharacterSelect">${characterOptions(characterRows)}</select></label><label>Owned item<select id="itemEditSelect"><option value="">Select a character first</option></select></label><label>Item ID<input id="itemEditId"></label><label>New stack size<input id="itemEditStack" value="1"></label><label>Delete count<input id="itemDeleteCount" placeholder="blank/all"></label></div><p><button id="setItemStackBtn" class="primary">Set stack</button> <button id="deleteItemBtn" class="danger">Delete item/count</button></p><pre id="itemEditResult"></pre></div></div><datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><details class="panelBand"><summary>Known Item Templates</summary>${table(ref.knownItemTemplates)}</details><details class="panelBand"><summary>Observed Item Templates</summary>${table(ref.observedItemTemplates)}</details><details class="panelBand"><summary>Recent Inventories</summary>${table(ref.recentInventories)}</details><details class="panelBand"><summary>Inventory Types</summary>${table(ref.inventoryTypes)}</details></div>`;
   const loadCharacterAdminDetails = async (accountId) => {
