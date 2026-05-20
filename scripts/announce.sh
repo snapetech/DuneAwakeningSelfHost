@@ -14,150 +14,190 @@ python3 - "$message" "$restart_at" "$job_id" <<'PY'
 import base64
 import json
 import os
+import re
+import secrets
 import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 
 
 message, restart_at, job_id = sys.argv[1:4]
-rmq_url = os.environ.get("DUNE_ANNOUNCE_RMQ_URL", "http://admin-rmq:15672").rstrip("/")
-rmq_user = os.environ.get("DUNE_ANNOUNCE_RMQ_USER", "guest")
-rmq_password = os.environ.get("DUNE_ANNOUNCE_RMQ_PASSWORD", "guest")
-exchange = os.environ.get("DUNE_ANNOUNCE_RMQ_EXCHANGE", "rpc")
-targets = [
-    item.strip()
-    for item in os.environ.get("DUNE_ANNOUNCE_RMQ_ROUTING_KEYS", "Survival_11").split(",")
-    if item.strip()
-]
-duration = int(os.environ.get("DUNE_ANNOUNCE_DURATION_SECONDS", "12"))
-title = os.environ.get("DUNE_ANNOUNCE_TITLE", "Maintenance")
-command = os.environ.get("DUNE_ANNOUNCE_COMMAND_NAME", "ServiceBroadcast")
-template = os.environ.get("DUNE_ANNOUNCE_PAYLOAD_TEMPLATE", "")
-mode = os.environ.get("DUNE_ANNOUNCE_PAYLOAD_MODE", "jsonrpc-notify-array")
-rmq_type = os.environ.get("DUNE_ANNOUNCE_RMQ_TYPE", "json_rpc")
-reply_to = os.environ.get("DUNE_ANNOUNCE_RMQ_REPLY_TO", "bgdRpc")
-correlation_id = os.environ.get("DUNE_ANNOUNCE_RMQ_CORRELATION_ID", job_id)
-app_id = os.environ.get("DUNE_ANNOUNCE_RMQ_APP_ID", "")
-user_id = os.environ.get("DUNE_ANNOUNCE_RMQ_USER_ID", rmq_user)
 
-if not targets:
-    print("missing DUNE_ANNOUNCE_RMQ_ROUTING_KEYS", file=sys.stderr)
+
+def read_env_file(path):
+    values = {}
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            for raw in handle:
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                values[key.strip()] = value.strip().strip('"').strip("'")
+    except FileNotFoundError:
+        pass
+    return values
+
+
+file_env = {}
+for env_path in ("/workspace/.env", os.path.join(os.getcwd(), ".env")):
+    file_env.update(read_env_file(env_path))
+
+
+def env(name, default=""):
+    value = os.environ.get(name)
+    if value is not None and value != "":
+        return value
+    return file_env.get(name, default)
+
+
+def env_bool(name, default=False):
+    value = env(name, "true" if default else "false").lower()
+    return value in ("1", "true", "yes", "on")
+
+
+def split_csv(value):
+    items = []
+    for item in value.split(","):
+        item = item.strip()
+        if item in ("<empty>", "empty", "EMPTY"):
+            items.append("")
+        elif item:
+            items.append(item)
+    return items
+
+
+default_url = "http://game-rmq:15672" if os.path.exists("/workspace/.env") else "http://127.0.0.1:15673"
+rmq_url = env("DUNE_ANNOUNCE_GAME_RMQ_MANAGEMENT_URL", default_url).rstrip("/")
+sender_user = env("DUNE_ANNOUNCE_CHAT_USER", "A000000000000001")
+sender_password = env("DUNE_ANNOUNCE_CHAT_PASSWORD", "dash-admin-test")
+sender_funcom_id = env("DUNE_ANNOUNCE_CHAT_FUNCOM_ID", "ADMIN#00001")
+sender_name = env("DUNE_ANNOUNCE_CHAT_SPOOF_NAME", "DASH Admin")
+exchange = env("DUNE_ANNOUNCE_CHAT_EXCHANGE", "chat.map")
+routing_keys = split_csv(env("DUNE_ANNOUNCE_CHAT_ROUTING_KEYS", "HaggaBasin.0,Survival_1.dim_0,<empty>"))
+channel_type = env("DUNE_ANNOUNCE_CHAT_CHANNEL", "Map")
+use_spoof_name = env_bool("DUNE_ANNOUNCE_CHAT_USE_SPOOF_NAME", False)
+bind_online_queues = env_bool("DUNE_ANNOUNCE_CHAT_BIND_ONLINE_QUEUES", True)
+queue_pattern = re.compile(env("DUNE_ANNOUNCE_CHAT_QUEUE_PATTERN", r"^[0-9A-Fa-f]{16}_queue$"))
+target_queues = split_csv(env("DUNE_ANNOUNCE_CHAT_TARGET_QUEUES", ""))
+
+if not routing_keys:
+    print("missing DUNE_ANNOUNCE_CHAT_ROUTING_KEYS", file=sys.stderr)
     sys.exit(64)
 
-context = {
-    "command": command,
-    "title": title,
-    "message": message,
-    "duration": duration,
-    "restart_at": restart_at,
-    "job_id": job_id,
-    "timestamp": int(time.time()),
-}
-
-service_payload = {
-    "m_Title": title,
-    "m_Message": message,
-    "m_DurationInSeconds": duration,
-    "m_MessageTargets": [],
-    "m_RestartAt": restart_at,
-    "m_JobId": job_id,
-}
-
-if template:
-    body = template
-    for key, value in context.items():
-        body = body.replace("{{" + key + "}}", json.dumps(value)[1:-1] if isinstance(value, str) else str(value))
-else:
-    if mode == "command-payload":
-        envelope = {"Command": command, "Payload": service_payload}
-    elif mode == "server-command":
-        envelope = {"ServerCommand": command, "Payload": service_payload}
-    elif mode == "message-type":
-        envelope = {"MessageType": command, "Payload": service_payload}
-    elif mode == "flat-command":
-        envelope = {"Command": command, **service_payload}
-    elif mode == "jsonrpc-object":
-        envelope = {"jsonrpc": "2.0", "method": command, "params": service_payload, "id": job_id}
-    elif mode == "jsonrpc-array":
-        envelope = {"jsonrpc": "2.0", "method": command, "params": [service_payload], "id": job_id}
-    elif mode == "jsonrpc-notify-object":
-        envelope = {"jsonrpc": "2.0", "method": command, "params": service_payload}
-    elif mode == "jsonrpc-notify-array":
-        envelope = {"jsonrpc": "2.0", "method": command, "params": [service_payload]}
-    elif mode == "dune-server-command":
-        envelope = {
-            "jsonrpc": "2.0",
-            "method": "SendDuneServerCommand",
-            "params": [
-                json.dumps({"ServerCommand": command, "Payload": service_payload}, separators=(",", ":"))
-            ],
-        }
-    elif mode == "dune-server-command-payload":
-        envelope = {
-            "jsonrpc": "2.0",
-            "method": "SendDuneServerCommand",
-            "params": [
-                command,
-                json.dumps(service_payload, separators=(",", ":")),
-            ],
-        }
-    elif mode == "payload-only":
-        envelope = service_payload
-    else:
-        print(f"unknown DUNE_ANNOUNCE_PAYLOAD_MODE: {mode}", file=sys.stderr)
-        sys.exit(64)
-    body = json.dumps(
-        envelope,
-        separators=(",", ":"),
-    )
-
-credentials = base64.b64encode(f"{rmq_user}:{rmq_password}".encode()).decode()
+credentials = base64.b64encode(f"{sender_user}:{sender_password}".encode()).decode()
 headers = {
     "Authorization": f"Basic {credentials}",
     "Content-Type": "application/json",
 }
+vhost = urllib.parse.quote("/", safe="")
 
-ok = True
+
+def request_json(method, path, body=None, timeout=8):
+    data = None if body is None else json.dumps(body).encode()
+    request = urllib.request.Request(
+        f"{rmq_url}{path}",
+        data=data,
+        headers=headers,
+        method=method,
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        text = response.read().decode()
+    return json.loads(text) if text else {}
+
+
+def safe_request(method, path, body=None):
+    try:
+        return request_json(method, path, body), None
+    except urllib.error.HTTPError as exc:
+        return None, f"HTTP {exc.code}"
+    except Exception as exc:
+        return None, str(exc)
+
+
+bound_queues = []
+bind_errors = []
+if bind_online_queues:
+    queues, error = safe_request("GET", f"/api/queues/{vhost}")
+    if error:
+        bind_errors.append({"step": "listQueues", "error": error})
+    else:
+        seen = set(target_queues)
+        for queue in queues:
+            name = queue.get("name", "")
+            if queue_pattern.match(name) and int(queue.get("consumers") or 0) > 0:
+                seen.add(name)
+        for queue_name in sorted(seen):
+            if not queue_name:
+                continue
+            for routing_key in routing_keys:
+                path = (
+                    f"/api/bindings/{vhost}/e/{urllib.parse.quote(exchange, safe='')}"
+                    f"/q/{urllib.parse.quote(queue_name, safe='')}"
+                )
+                _, error = safe_request("POST", path, {"routing_key": routing_key, "arguments": {}})
+                if error:
+                    bind_errors.append({"queue": queue_name, "routingKey": routing_key, "error": error})
+                else:
+                    bound_queues.append({"queue": queue_name, "routingKey": routing_key})
+
+timestamp = time.strftime("%Y.%m.%d-%H.%M.%S", time.gmtime())
+chat_message = {
+    "m_Id": uuid.uuid4().hex.upper(),
+    "m_ChannelType": channel_type,
+    "m_bUseSpoofedUserName": use_spoof_name,
+    "m_SpoofedUserNameFrom": {
+        "m_TableId": "",
+        "m_Key": "",
+        "m_UnlocalizedName": sender_name if use_spoof_name else "",
+    },
+    "m_FuncomIdFrom": sender_funcom_id,
+    "m_UserNameTo": "",
+    "m_Message": {
+        "m_UnlocalizedMessage": message,
+        "m_LocalizedMessage": {"m_TableId": "", "m_Key": "", "m_FormatArgs": []},
+    },
+    "m_Timestamp": timestamp,
+    "m_OriginLocation": {"X": 0.0, "Y": 0.0, "Z": 0.0},
+    "m_HasSeenMessage": False,
+}
+payload = {"content": json.dumps(chat_message, separators=(",", ":")), "Type": "TextChat"}
+
 results = []
-for routing_key in targets:
+for routing_key in routing_keys:
     properties = {
-        "content_type": "application/json",
+        "content_type": "Content",
         "delivery_mode": 1,
         "timestamp": int(time.time()),
-        "type": rmq_type,
-        "correlation_id": correlation_id,
+        "type": "text_chat",
+        "user_id": sender_user,
+        "message_id": secrets.token_urlsafe(16),
     }
-    if reply_to:
-        properties["reply_to"] = reply_to
-    if app_id:
-        properties["app_id"] = app_id
-    if user_id:
-        properties["user_id"] = user_id
-    payload = {
+    body = {
         "properties": properties,
         "routing_key": routing_key,
-        "payload": body,
+        "payload": json.dumps(payload, separators=(",", ":")),
         "payload_encoding": "string",
     }
-    url = f"{rmq_url}/api/exchanges/{urllib.parse.quote('/', safe='')}/{urllib.parse.quote(exchange, safe='')}/publish"
-    request = urllib.request.Request(url, data=json.dumps(payload).encode(), headers=headers, method="POST")
-    try:
-        with urllib.request.urlopen(request, timeout=5) as response:
-            result = json.loads(response.read().decode() or "{}")
-    except urllib.error.HTTPError as exc:
-        ok = False
-        results.append({"routingKey": routing_key, "ok": False, "error": f"HTTP {exc.code}"})
-        continue
-    except Exception as exc:
-        ok = False
-        results.append({"routingKey": routing_key, "ok": False, "error": str(exc)})
-        continue
-    routed = bool(result.get("routed"))
-    ok = ok and routed
-    results.append({"routingKey": routing_key, "ok": routed})
+    path = f"/api/exchanges/{vhost}/{urllib.parse.quote(exchange, safe='')}/publish"
+    response, error = safe_request("POST", path, body)
+    routed = bool(response and response.get("routed"))
+    results.append({"routingKey": routing_key, "ok": routed, "error": error})
 
-print(json.dumps({"ok": ok, "mode": mode, "exchange": exchange, "targets": results}, separators=(",", ":")))
+ok = any(item["ok"] for item in results)
+print(json.dumps({
+    "ok": ok,
+    "transport": "chat.map",
+    "exchange": exchange,
+    "sender": sender_user,
+    "routingKeys": results,
+    "boundQueues": bound_queues,
+    "bindErrors": bind_errors,
+    "jobId": job_id,
+    "restartAt": restart_at,
+}, separators=(",", ":")))
 sys.exit(0 if ok else 75)
 PY

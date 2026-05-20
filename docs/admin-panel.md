@@ -103,31 +103,32 @@ The scheduler is real and token-gated, but in-game delivery is delegated to:
 DUNE_ADMIN_ANNOUNCE_COMMAND=/workspace/scripts/announce.sh
 ```
 
-`scripts/announce.sh` publishes a `ServiceBroadcast` command envelope to the admin RabbitMQ `rpc` exchange. The live server binary exposes `UDuneServerCommandSubsystem`, `SendDuneServerCommand`, and `ServiceBroadcast`; the repo keeps the command body configurable because Funcom can change the exact envelope between builds.
+`scripts/announce.sh` publishes directly to the game RabbitMQ `chat.map` exchange as the local DASH announcer account. This is the path verified in-game after the service-broadcast RPC route did not surface to clients.
 
 Default announcement transport settings:
 
 ```env
-DUNE_ANNOUNCE_RMQ_URL=http://admin-rmq:15672
-DUNE_ANNOUNCE_RMQ_USER=bgd.<world-unique-name>.duneadmin.admin
-DUNE_ANNOUNCE_RMQ_PASSWORD=<local secret>
-DUNE_ANNOUNCE_RMQ_EXCHANGE=rpc
-DUNE_ANNOUNCE_RMQ_ROUTING_KEYS=Survival_11
-DUNE_ANNOUNCE_RMQ_REPLY_TO=bgdRpc
-DUNE_ANNOUNCE_RMQ_CORRELATION_ID=
-DUNE_ANNOUNCE_RMQ_TYPE=json_rpc
-DUNE_ANNOUNCE_RMQ_APP_ID=
-DUNE_ANNOUNCE_RMQ_USER_ID=
-DUNE_ANNOUNCE_COMMAND_NAME=ServiceBroadcast
-DUNE_ANNOUNCE_TITLE=Maintenance
-DUNE_ANNOUNCE_DURATION_SECONDS=12
-DUNE_ANNOUNCE_PAYLOAD_MODE=jsonrpc-notify-array
-DUNE_ANNOUNCE_PAYLOAD_TEMPLATE=
+DUNE_ANNOUNCE_GAME_RMQ_MANAGEMENT_URL=http://game-rmq:15672
+DUNE_ANNOUNCE_CHAT_USER=A000000000000001
+DUNE_ANNOUNCE_CHAT_PASSWORD=<local announcer password>
+DUNE_ANNOUNCE_CHAT_FUNCOM_ID=ADMIN#00001
+DUNE_ANNOUNCE_CHAT_SPOOF_NAME=DASH Admin
+DUNE_ANNOUNCE_CHAT_EXCHANGE=chat.map
+DUNE_ANNOUNCE_CHAT_ROUTING_KEYS=HaggaBasin.0,Survival_1.dim_0,<empty>
+DUNE_ANNOUNCE_CHAT_CHANNEL=Map
+DUNE_ANNOUNCE_CHAT_USE_SPOOF_NAME=false
+DUNE_ANNOUNCE_CHAT_BIND_ONLINE_QUEUES=true
 ```
 
-`DUNE_ANNOUNCE_RMQ_ROUTING_KEYS` is comma-separated. Add map RPC routing keys when you want announcements delivered through more standing maps. The live server's RPC consumer expects AMQP `type=json_rpc`, a non-empty `reply_to`, and a trusted `user_id` prefix; the default `bgd.<world-unique-name>.duneadmin.admin` identity satisfies that through the local RabbitMQ auth shim. `DUNE_ANNOUNCE_PAYLOAD_MODE` selects one of the built-in probe envelopes: `command-payload`, `server-command`, `message-type`, `flat-command`, `jsonrpc-object`, `jsonrpc-array`, `jsonrpc-notify-object`, `jsonrpc-notify-array`, `dune-server-command`, `dune-server-command-payload`, or `payload-only`. `DUNE_ANNOUNCE_PAYLOAD_TEMPLATE` can override the default JSON body without editing the hook if a newer server build requires a different `ServiceBroadcast` envelope.
+`DUNE_ANNOUNCE_CHAT_ROUTING_KEYS` is comma-separated. Use `<empty>` for the blank RabbitMQ routing key. When `DUNE_ANNOUNCE_CHAT_BIND_ONLINE_QUEUES=true`, the hook first lists connected player queues on game RabbitMQ and idempotently binds them to the configured chat routes, then publishes the restart message. The hook reads `/workspace/.env` at delivery time, so route and sender changes are picked up without recreating the admin-panel container.
 
-After changing the announcer credentials, recreate `rmq-auth-shim` and `admin-panel`. If RabbitMQ has cached a previous denial for that user, restart only `admin-rmq` during a maintenance window; the game servers reconnect their admin queues afterward.
+The default sender account is created with the game database login function so the client treats it as a real player-shaped identity:
+
+```sql
+select *
+from dune.login_account('A000000000000001','ADMIN#00001','DASH-ADMIN','DASH',0,'DASH Admin',0,0)
+limit 1;
+```
 
 The admin panel passes:
 

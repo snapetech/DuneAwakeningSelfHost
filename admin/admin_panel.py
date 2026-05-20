@@ -172,6 +172,16 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ADMIN_ANNOUNCE_COMMAND": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Executable hook used by the restart-announcement scheduler to deliver in-game messages."},
     "DUNE_ADMIN_ANNOUNCEMENT_MAX_MESSAGE_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum UTF-8 size for a scheduled restart-announcement message."},
     "DUNE_ADMIN_ANNOUNCEMENT_COMMAND_TIMEOUT_SECONDS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Timeout for each announcement delivery hook invocation."},
+    "DUNE_ANNOUNCE_GAME_RMQ_MANAGEMENT_URL": {"group": "Announcements", "secret": False, "restart": False, "why": "Game RabbitMQ management API URL used by the chat announcement hook."},
+    "DUNE_ANNOUNCE_CHAT_USER": {"group": "Announcements", "secret": False, "restart": False, "why": "Player-shaped RabbitMQ identity used as the in-game announcement sender."},
+    "DUNE_ANNOUNCE_CHAT_PASSWORD": {"group": "Announcements", "secret": True, "restart": False, "why": "Password supplied for the chat announcement sender."},
+    "DUNE_ANNOUNCE_CHAT_FUNCOM_ID": {"group": "Announcements", "secret": False, "restart": False, "why": "Funcom id stamped onto restart chat messages."},
+    "DUNE_ANNOUNCE_CHAT_SPOOF_NAME": {"group": "Announcements", "secret": False, "restart": False, "why": "Display name used when spoofed chat names are enabled."},
+    "DUNE_ANNOUNCE_CHAT_EXCHANGE": {"group": "Announcements", "secret": False, "restart": False, "why": "Game RabbitMQ chat exchange used for restart announcements."},
+    "DUNE_ANNOUNCE_CHAT_ROUTING_KEYS": {"group": "Announcements", "secret": False, "restart": False, "why": "Comma-separated chat routing keys to publish restart announcements to; use <empty> for the blank route."},
+    "DUNE_ANNOUNCE_CHAT_CHANNEL": {"group": "Announcements", "secret": False, "restart": False, "why": "Chat channel type stamped onto restart announcement messages."},
+    "DUNE_ANNOUNCE_CHAT_USE_SPOOF_NAME": {"group": "Announcements", "secret": False, "restart": False, "why": "Whether restart announcements should use the spoofed display-name field."},
+    "DUNE_ANNOUNCE_CHAT_BIND_ONLINE_QUEUES": {"group": "Announcements", "secret": False, "restart": False, "why": "When enabled, the hook binds currently connected player queues to the announcement chat routes before publishing."},
     "DUNE_ANNOUNCE_RMQ_URL": {"group": "Announcements", "secret": False, "restart": True, "why": "RabbitMQ management API URL used by the announcement hook."},
     "DUNE_ANNOUNCE_RMQ_USER": {"group": "Announcements", "secret": False, "restart": True, "why": "RabbitMQ management user used by the announcement hook. Use a bgd.<world>.*.admin identity so JSON-RPC sender permissions pass."},
     "DUNE_ANNOUNCE_RMQ_PASSWORD": {"group": "Announcements", "secret": True, "restart": True, "why": "RabbitMQ management password used by the announcement hook."},
@@ -2245,6 +2255,7 @@ if (!validTabs.has(current)) current = 'overview';
 let pendingAdminAccountId = '';
 let resourceTimer = null;
 let loadSerial = 0;
+let detailLoadSerial = 0;
 let resourceRefreshInFlight = false;
 let autoRefresh = sessionStorage.getItem('duneAdminAutoRefresh') !== 'off';
 const resourceHistory = [];
@@ -2981,14 +2992,14 @@ async function characters(serial=loadSerial){
   const lastQuery = sessionStorage.getItem('duneAdminCharacterQuery') || '';
   if (serial !== loadSerial) return;
   view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Players</h2><div class="toolbar"><span class="pill">online and offline roster</span><button id="refreshRosterBtn">Refresh roster</button><button data-jump="mutations" class="primary">Admin Actions</button><button data-jump="settings">Settings</button></div></div><div id="roster"></div><div class="panelBand"><h2>Player Search</h2><div class="row"><input id="q" placeholder="Character, Funcom ID, platform ID" value="${esc(lastQuery)}"><button id="characterSearchBtn" class="primary">Search</button><button id="characterListAllBtn">List all</button></div><div id="results"></div></div><div id="detail"></div></div>`;
-  document.getElementById('refreshRosterBtn').addEventListener('click', loadCharacterRoster);
-  document.getElementById('characterSearchBtn').addEventListener('click', searchCharacters);
+  document.getElementById('refreshRosterBtn').addEventListener('click', e => runAction(e.currentTarget, 'Refreshing...', loadCharacterRoster));
+  document.getElementById('characterSearchBtn').addEventListener('click', e => runAction(e.currentTarget, 'Searching...', searchCharacters));
   document.getElementById('characterListAllBtn').addEventListener('click', () => {
     document.getElementById('q').value = '';
-    searchCharacters();
+    searchCharacters().catch(e => reportClientError(e, 'List players'));
   });
   document.getElementById('q').addEventListener('keydown', e => {
-    if (e.key === 'Enter') searchCharacters();
+    if (e.key === 'Enter') searchCharacters().catch(err => reportClientError(err, 'Search players'));
   });
   await loadCharacterRoster();
   if (lastQuery) await searchCharacters();
@@ -3012,14 +3023,26 @@ async function searchCharacters(){
   makeRowsKeyboardFriendly(results);
 }
 async function pickCharacter(row){
+  const serial = ++detailLoadSerial;
   document.querySelectorAll('tbody tr.selected').forEach(r => r.classList.remove('selected'));
   row.classList.add('selected');
   const id = row.dataset.id || row.children[0].textContent;
   if (!id) return;
-  const [d, ref] = await Promise.all([
-    api('/api/characters/' + encodeURIComponent(id)),
-    adminReference()
-  ]);
+  const detail = document.getElementById('detail');
+  if (detail) detail.innerHTML = '<div class="panelBand"><h2>Character Detail</h2><div class="muted">Loading selected character...</div></div>';
+  let d, ref;
+  try {
+    [d, ref] = await Promise.all([
+      api('/api/characters/' + encodeURIComponent(id)),
+      adminReference()
+    ]);
+  } catch (e) {
+    if (serial !== detailLoadSerial) return;
+    if (detail) detail.innerHTML = `<div class="panelBand"><h2>Character Detail</h2><div class="dangerText">${esc(e.message)}</div></div>`;
+    reportClientError(e, 'Load character');
+    return;
+  }
+  if (serial !== detailLoadSerial) return;
   const p = d.player || {};
   announce(`Selected ${p.character_name || 'character'}`);
   const firstTrack = (d.specialization && d.specialization[0]) || {};
@@ -3107,7 +3130,7 @@ async function mutations(serial=loadSerial){
   if (serial !== loadSerial) return;
   const referenceErrors = ref.errors && Object.keys(ref.errors).length ? `<div class="card"><h2>Reference Errors</h2><pre>${esc(JSON.stringify(ref.errors, null, 2))}</pre></div>` : '';
   view.innerHTML = `<div class="pageStack">${referenceErrors}<div class="sectionHeader"><h2>Admin Actions</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="settings">Settings</button><button data-jump="security">Audit</button></div></div>${actionGrid([{tab:'characters',label:'Player lookup'},{tab:'settings',label:'Mutation settings'},{tab:'runbook',label:'Runbook'}])}<div class="panelBand"><h2>Backup First</h2><p class="muted">Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button id="backupBtn" class="primary">Create DB backup</button><pre id="backupResult"></pre></div><div class="panelBand"><h2>Target Player</h2><div class="grid"><label>Character<select id="adminCharacterSelect">${characterOptions(characterRows)}</select></label><label>Player controller ID<input id="pcid"></label><label>Account ID<input id="grantAccount" placeholder="auto-select player inventory"></label><label>Character name<input id="grantCharacter" placeholder="auto-select by name"></label></div></div><div class="twoCol"><div class="panelBand"><h2>Currency and XP</h2><p class="dangerText">Writes require <code>DUNE_ADMIN_MUTATIONS_ENABLED=true</code> and a valid admin token.</p><div class="grid"><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button id="currencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Level for set/new track<input id="xplevel" value="0"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button id="xpBtn" class="primary">Apply XP</button></p></div><div class="panelBand dangerZone"><h2>Specialization Keystones</h2><div class="grid"><label>Player/controller ID<input id="keyPlayer"></label><label>Keystone<select id="keystone">${options(ref.keystones, 'name')}</select></label></div><p><button id="purchaseKeystoneBtn" class="primary">Purchase keystone</button> <button id="resetKeystonesBtn" class="danger">Reset all keystones</button></p><pre id="keystoneResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Item Grants</h2><p class="dangerText">Use exact server template IDs. Dry run first when using IDs not observed locally.</p><div class="grid"><label>Known inventory<select id="grantInventorySelect">${inventoryOptions(ref.recentInventories)}</select></label><label>Inventory ID<input id="grantInventory" placeholder="explicit inventory"></label><label class="hidden">Character<select id="grantCharacterSelect">${characterOptions(characterRows)}</select></label><label>Inventory type<select id="grantInventoryType">${inventoryTypeOptions(ref.inventoryTypes)}</select></label><label>Template ID<input id="grantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><label>Stats JSON<textarea id="grantStats">{}</textarea></label><p><button id="dryRunItemBtn" class="primary">Dry run</button> <button id="grantItemBtn" class="danger">Grant item</button></p><pre id="grantResult"></pre></div><div class="panelBand dangerZone"><h2>Item Maintenance</h2><div class="grid"><label class="hidden">Character<select id="itemCharacterSelect">${characterOptions(characterRows)}</select></label><label>Owned item<select id="itemEditSelect"><option value="">Select a character first</option></select></label><label>Item ID<input id="itemEditId"></label><label>New stack size<input id="itemEditStack" value="1"></label><label>Delete count<input id="itemDeleteCount" placeholder="blank/all"></label></div><p><button id="setItemStackBtn" class="primary">Set stack</button> <button id="deleteItemBtn" class="danger">Delete item/count</button></p><pre id="itemEditResult"></pre></div></div><datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><details class="panelBand"><summary>Known Item Templates</summary>${table(ref.knownItemTemplates)}</details><details class="panelBand"><summary>Observed Item Templates</summary>${table(ref.observedItemTemplates)}</details><details class="panelBand"><summary>Recent Inventories</summary>${table(ref.recentInventories)}</details><details class="panelBand"><summary>Inventory Types</summary>${table(ref.inventoryTypes)}</details></div>`;
-  const loadCharacterAdminDetails = async (accountId) => {
+  const loadCharacterAdminDetails = async (accountId, serial=detailLoadSerial) => {
     const itemSelect = document.getElementById('itemEditSelect');
     const inventorySelect = document.getElementById('grantInventorySelect');
     const currencySelect = document.getElementById('curid');
@@ -3118,6 +3141,7 @@ async function mutations(serial=loadSerial){
     document.getElementById('itemEditId').value = '';
     try {
       const detail = await api('/api/characters/' + encodeURIComponent(accountId));
+      if (serial !== detailLoadSerial) return;
       const items = detail.inventoryItems || [];
       const inventories = detail.inventories || [];
       const currency = detail.currency || [];
@@ -3145,11 +3169,13 @@ async function mutations(serial=loadSerial){
         inventoryItems: items.length
       }, null, 2);
     } catch (e) {
+      if (serial !== detailLoadSerial) return;
       itemSelect.innerHTML = '<option value="">Could not load items</option>';
       document.getElementById('itemEditResult').textContent = e.message;
     }
   };
   const fillCharacter = async (select) => {
+    const serial = ++detailLoadSerial;
     const option = select?.selectedOptions?.[0];
     if (!option || !option.value) return;
     ['adminCharacterSelect', 'grantCharacterSelect', 'itemCharacterSelect'].forEach(id => {
@@ -3161,11 +3187,12 @@ async function mutations(serial=loadSerial){
     if (document.getElementById('pcid')) document.getElementById('pcid').value = option.dataset.controller || '';
     if (document.getElementById('xpid')) document.getElementById('xpid').value = option.dataset.controller || '';
     if (document.getElementById('keyPlayer')) document.getElementById('keyPlayer').value = option.dataset.controller || '';
-    await loadCharacterAdminDetails(option.value);
+    await loadCharacterAdminDetails(option.value, serial);
+    if (serial !== detailLoadSerial) return;
   };
-  document.getElementById('adminCharacterSelect').addEventListener('change', e => fillCharacter(e.target));
-  document.getElementById('grantCharacterSelect').addEventListener('change', e => fillCharacter(e.target));
-  document.getElementById('itemCharacterSelect').addEventListener('change', e => fillCharacter(e.target));
+  document.getElementById('adminCharacterSelect').addEventListener('change', e => fillCharacter(e.target).catch(err => reportClientError(err, 'Load player admin detail')));
+  document.getElementById('grantCharacterSelect').addEventListener('change', e => fillCharacter(e.target).catch(err => reportClientError(err, 'Load player admin detail')));
+  document.getElementById('itemCharacterSelect').addEventListener('change', e => fillCharacter(e.target).catch(err => reportClientError(err, 'Load player admin detail')));
   document.getElementById('itemEditSelect').addEventListener('change', e => {
     const option = e.target.selectedOptions?.[0];
     document.getElementById('itemEditId').value = e.target.value || '';
