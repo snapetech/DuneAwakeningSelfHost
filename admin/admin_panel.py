@@ -1497,6 +1497,18 @@ class Handler(BaseHTTPRequestHandler):
                 from dune.world_partition
                 where partition_id=%s
             """, (player[0].get("previous_server_partition_id"),)) if player[0].get("previous_server_partition_id") is not None else [],
+            "actorLocations": query("""
+                select id, class, map, transform::text as transform, partition_id,
+                       dimension_index, owner_account_id, serial
+                from dune.actors
+                where id in (%s,%s)
+                order by id
+            """, (controller_id, pawn_id)),
+            "travelReturn": query("""
+                select player_controller_id, map, transform::text as transform
+                from dune.travel_return_info
+                where player_controller_id=%s
+            """, (controller_id,)),
             "overmap": query("select * from dune.overmap_players where player_id in (%s,%s) order by player_id", (controller_id, pawn_id)),
             "respawnLocations": query("""
                 select id, account_id, "group", locator_transform, locator_actor_id,
@@ -2246,8 +2258,11 @@ INDEX = r"""<!doctype html>
     .haggaMap .gridLine { stroke:#5e523c; stroke-width:1; opacity:.35; }
     .haggaMap .basinLine { fill:none; stroke:#b68b43; stroke-width:2; opacity:.65; }
     .haggaMap .playerDot { fill:var(--ok); stroke:#071007; stroke-width:3; }
+    .haggaMap .playerMarker:focus .playerDot, .haggaMap .playerMarker:hover .playerDot { fill:var(--accent); stroke:var(--text); }
     .haggaMap .playerLabel { fill:var(--text); font:700 13px system-ui,sans-serif; paint-order:stroke; stroke:#0b0d0a; stroke-width:4; }
+    .haggaMap .coordLabel { fill:var(--muted); font:11px ui-monospace, SFMono-Regular, Menlo, monospace; }
     .haggaMap .emptyState { fill:var(--muted); font:14px system-ui,sans-serif; text-anchor:middle; }
+    .haggaMapStatus { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:10px; }
     .mapLegend { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
     .coordTable td, .coordTable th { font-size:12px; }
     .filterInput { max-width:280px; }
@@ -2357,6 +2372,7 @@ let current = validTabs.has(location.hash.slice(1)) ? location.hash.slice(1) : (
 if (!validTabs.has(current)) current = 'overview';
 let pendingAdminAccountId = '';
 let resourceTimer = null;
+let haggaMapTimer = null;
 let loadSerial = 0;
 let detailLoadSerial = 0;
 let playerModalAccountId = '';
@@ -2364,6 +2380,8 @@ let playerModalTimer = null;
 let playerModalInFlight = false;
 let playerModalRef = null;
 let resourceRefreshInFlight = false;
+let haggaMapRefreshInFlight = false;
+let haggaMapAutoRefresh = sessionStorage.getItem('duneAdminHaggaMapAutoRefresh') !== 'off';
 let autoRefresh = sessionStorage.getItem('duneAdminAutoRefresh') !== 'off';
 const resourceHistory = [];
 let adminReferenceCache = null;
@@ -2737,7 +2755,7 @@ function haggaBasinMapPanel(data){
     const labelX = clamp(x + 12, pad, width - 180);
     const labelY = clamp(y - 10, pad + 12, height - pad);
     const title = `${name} | x ${Number(p.x).toFixed(0)}, y ${Number(p.y).toFixed(0)}, z ${Number(p.z || 0).toFixed(0)}`;
-    return `<g class="playerMarker" tabindex="0" role="button" data-account-id="${esc(p.account_id || '')}"><title>${esc(title)}</title><circle class="playerDot" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="8"></circle><text class="playerLabel" x="${labelX.toFixed(1)}" y="${labelY.toFixed(1)}">${esc(name)}</text></g>`;
+    return `<g class="playerMarker" tabindex="0" role="button" data-account-id="${esc(p.account_id || '')}" aria-label="${esc(title)}"><title>${esc(title)}</title><circle class="playerDot" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="8"></circle><text class="playerLabel" x="${labelX.toFixed(1)}" y="${labelY.toFixed(1)}">${esc(name)}</text><text class="coordLabel" x="${labelX.toFixed(1)}" y="${(labelY + 16).toFixed(1)}">${esc(Math.round(Number(p.x || 0)))}, ${esc(Math.round(Number(p.y || 0)))}</text></g>`;
   }).join('');
   const empty = players.length ? '' : `<text class="emptyState" x="${width / 2}" y="${height / 2}">No online players with Hagga Basin coordinates.</text>`;
   const rows = players.map(p => ({
@@ -2749,13 +2767,9 @@ function haggaBasinMapPanel(data){
     z: Math.round(Number(p.z || 0)),
     last_login_time: p.last_login_time || ''
   }));
-  return `<div class="panelBand"><div class="sectionHeader"><h2>Hagga Basin Player Map</h2><div class="toolbar"><span class="pill ${players.length ? 'ok' : ''}">${esc(players.length)} plotted</span><span class="pill">${esc(data?.generatedAt || '')}</span></div></div><div class="haggaMap"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Hagga Basin online player coordinate map"><rect x="0" y="0" width="${width}" height="${height}" fill="transparent"></rect>${grid}<polygon class="basinLine" points="${outline}"></polygon><text x="${pad}" y="${pad - 12}" fill="var(--muted)" font-size="12">NW</text><text x="${width - pad - 18}" y="${height - pad + 26}" fill="var(--muted)" font-size="12">SE</text>${markers}${empty}</svg></div><div class="mapLegend"><span class="pill ok">online pawn position</span><span class="pill">bounds from ${esc(bounds.actorCount || 0)} Hagga actors</span><span class="pill">world X/Y projection</span></div><details><summary>Coordinates</summary><div class="coordTable">${table(rows)}</div></details></div>`;
+  return `<div class="panelBand" aria-live="polite"><div class="sectionHeader"><h2>Hagga Basin Player Map</h2><div class="toolbar"><span id="haggaMapCount" class="pill ${players.length ? 'ok' : ''}">${esc(players.length)} plotted</span><span id="haggaMapUpdated" class="pill">${esc(data?.generatedAt || '')}</span><button id="toggleHaggaMapRefreshBtn">${haggaMapAutoRefresh ? 'Pause map' : 'Resume map'}</button><button id="refreshHaggaMapBtn">Refresh map</button></div></div><div id="haggaMapSrStatus" class="srOnly">${esc(players.length)} Hagga Basin players plotted.</div><div class="haggaMap"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Hagga Basin online player coordinate map"><rect x="0" y="0" width="${width}" height="${height}" fill="transparent"></rect>${grid}<polygon class="basinLine" points="${outline}"></polygon><text x="${pad}" y="${pad - 12}" fill="var(--muted)" font-size="12">NW</text><text x="${width - pad - 18}" y="${height - pad + 26}" fill="var(--muted)" font-size="12">SE</text>${markers}${empty}</svg></div><div class="haggaMapStatus"><span class="pill ok">online pawn position</span><span class="pill">bounds from ${esc(bounds.actorCount || 0)} Hagga actors</span><span class="pill">updates every 2s</span><span class="pill">world X/Y projection</span></div><details><summary>Coordinates</summary><div class="coordTable">${table(rows)}</div></details></div>`;
 }
-async function refreshHaggaMap(){
-  const container = document.getElementById('haggaBasinMap');
-  if (!container) return;
-  const data = await api('/api/players/hagga-basin', {timeoutMs: 5000});
-  container.innerHTML = haggaBasinMapPanel(data);
+function wireHaggaMapControls(container){
   container.querySelectorAll('.playerMarker[data-account-id]').forEach(marker => {
     marker.addEventListener('click', () => openPlayerModal(marker.dataset.accountId));
     marker.addEventListener('keydown', e => {
@@ -2765,6 +2779,26 @@ async function refreshHaggaMap(){
       }
     });
   });
+  container.querySelector('#refreshHaggaMapBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Refreshing...', () => refreshHaggaMap({force:true})));
+  container.querySelector('#toggleHaggaMapRefreshBtn')?.addEventListener('click', () => {
+    haggaMapAutoRefresh = !haggaMapAutoRefresh;
+    sessionStorage.setItem('duneAdminHaggaMapAutoRefresh', haggaMapAutoRefresh ? 'on' : 'off');
+    notify(haggaMapAutoRefresh ? 'Hagga map refresh resumed' : 'Hagga map refresh paused');
+    refreshHaggaMap({force:true}).catch(e => reportClientError(e, 'Refresh Hagga map'));
+  });
+}
+async function refreshHaggaMap(){
+  const container = document.getElementById('haggaBasinMap');
+  if (!container) return;
+  if (haggaMapRefreshInFlight) return;
+  haggaMapRefreshInFlight = true;
+  try {
+    const data = await api('/api/players/hagga-basin', {timeoutMs: 5000});
+    container.innerHTML = haggaBasinMapPanel(data);
+    wireHaggaMapControls(container);
+  } finally {
+    haggaMapRefreshInFlight = false;
+  }
 }
 function healthViz(health){
   const verdicts = health.verdicts || [];
@@ -3029,6 +3063,10 @@ async function load(){
     clearInterval(resourceTimer);
     resourceTimer = null;
   }
+  if (haggaMapTimer) {
+    clearInterval(haggaMapTimer);
+    haggaMapTimer = null;
+  }
   view.setAttribute('aria-busy', 'true');
   syncTabs();
   view.innerHTML = `<div class="panelBand"><h2>${esc(current[0].toUpperCase() + current.slice(1))}</h2><div class="muted">Loading...</div></div>`;
@@ -3064,7 +3102,7 @@ async function overview(serial=loadSerial){
   const state = health;
   const summary = health.summary || {};
   const players = (state.farmState || []).reduce((sum, r) => sum + Number(r.connected_players || 0), 0);
-  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Overview</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="ops">Operations</button><button data-jump="mutations" class="primary">Admin Actions</button></div></div><div class="metricGrid">${metric('Ready Servers', `${summary.readyAlive ?? 0}/${summary.expectedPartitions ?? 0}`, summary.readyAlive === summary.expectedPartitions ? 'ok' : 'dangerText')}${metric('Online Maps', `${summary.onlineMaps ?? 0}/${summary.totalMaps ?? 0}`, summary.onlineMaps === summary.totalMaps ? 'ok' : 'dangerText')}${metric('Active IDs', `${summary.activeServers ?? 0}/${summary.expectedPartitions ?? 0}`)}${metric('Reported Players', players)}</div>${healthViz(health)}<div id="haggaBasinMap" class="panelBand"><h2>Hagga Basin Player Map</h2><div class="muted">Loading player positions...</div></div><div id="overviewRoster">${characterRosterPanel(roster)}</div><div id="detail"></div><div id="resources" class="panelBand"><h2>Resources</h2><div class="muted">Loading resource stats...</div></div>${actionGrid([{tab:'characters',label:'Player search and detail'},{tab:'ops',label:'Service controls and map health'},{tab:'security',label:'Security and audit'},{tab:'settings',label:'Server settings'}])}<div class="twoCol"><div class="panelBand"><h2>Map Health</h2>${mapTiles(health.mapStatus)}<details><summary>Map Table</summary>${mapStatusTable(health.mapStatus)}</details></div><div class="panelBand"><h2>Health Verdict</h2>${checks(health.verdicts)}</div></div><div class="panelBand" data-network-panel><h2>Network and Upstream</h2><div class="muted">Loading network probes...</div></div></div>`;
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Overview</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="ops">Operations</button><button data-jump="mutations" class="primary">Admin Actions</button></div></div><div class="metricGrid">${metric('Ready Servers', `${summary.readyAlive ?? 0}/${summary.expectedPartitions ?? 0}`, summary.readyAlive === summary.expectedPartitions ? 'ok' : 'dangerText')}${metric('Online Maps', `${summary.onlineMaps ?? 0}/${summary.totalMaps ?? 0}`, summary.onlineMaps === summary.totalMaps ? 'ok' : 'dangerText')}${metric('Active IDs', `${summary.activeServers ?? 0}/${summary.expectedPartitions ?? 0}`)}${metric('Reported Players', players)}</div>${healthViz(health)}<div id="haggaBasinMap"><div class="panelBand"><h2>Hagga Basin Player Map</h2><div class="muted">Loading player positions...</div></div></div><div id="overviewRoster">${characterRosterPanel(roster)}</div><div id="detail"></div><div id="resources" class="panelBand"><h2>Resources</h2><div class="muted">Loading resource stats...</div></div>${actionGrid([{tab:'characters',label:'Player search and detail'},{tab:'ops',label:'Service controls and map health'},{tab:'security',label:'Security and audit'},{tab:'settings',label:'Server settings'}])}<div class="twoCol"><div class="panelBand"><h2>Map Health</h2>${mapTiles(health.mapStatus)}<details><summary>Map Table</summary>${mapStatusTable(health.mapStatus)}</details></div><div class="panelBand"><h2>Health Verdict</h2>${checks(health.verdicts)}</div></div><div class="panelBand" data-network-panel><h2>Network and Upstream</h2><div class="muted">Loading network probes...</div></div></div>`;
   document.querySelectorAll('#overviewRoster tbody tr').forEach(row => row.onclick = () => pickCharacter(row));
   makeRowsKeyboardFriendly(view);
   wireResourceControls(view);
@@ -3084,6 +3122,9 @@ async function overview(serial=loadSerial){
   resourceTimer = setInterval(() => {
     if (autoRefresh && current === 'overview') refreshResources().catch(() => {});
   }, 5000);
+  haggaMapTimer = setInterval(() => {
+    if (haggaMapAutoRefresh && current === 'overview') refreshHaggaMap().catch(() => {});
+  }, 2000);
 }
 async function ops(serial=loadSerial){
   const [health, opt, announcement, restart] = await Promise.all([
@@ -3237,7 +3278,30 @@ function playerInventorySummary(items){
   });
   return Array.from(groups.values()).sort((a, b) => String(a.inventory_id).localeCompare(String(b.inventory_id)));
 }
-function renderPlayerModal(d, ref){
+function playerModalUiState(){
+  const value = id => document.getElementById(id)?.value || '';
+  return {
+    inventoryFilter: value('modalInventoryFilter'),
+    itemFilter: value('modalItemFilter'),
+    grantInventory: value('detailGrantInventory'),
+    itemId: value('detailItemSelect'),
+    templateId: value('detailGrantTemplate'),
+    stackSize: value('detailGrantStack'),
+    deleteCount: value('detailDeleteCount'),
+    currencyId: value('detailCurId'),
+    currencyAmount: value('detailCurAmount'),
+    currencyMode: value('detailCurMode'),
+    trackType: value('detailTrack'),
+    xpAmount: value('detailXpAmount'),
+    xpLevel: value('detailXpLevel'),
+    xpMode: value('detailXpMode'),
+  };
+}
+function setIfPresent(id, value){
+  const element = document.getElementById(id);
+  if (element && value !== undefined && value !== null && value !== '') element.value = value;
+}
+function renderPlayerModal(d, ref, uiState={}){
   const p = d.player || {};
   const account = (d.account || [])[0] || {};
   const map = (d.mapContext || [])[0] || {};
@@ -3251,9 +3315,9 @@ function renderPlayerModal(d, ref){
   document.getElementById('playerModalBody').innerHTML = `<datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><div class="playerModalGrid"><div class="pageStack"><div class="panelBand"><h2>${esc(p.character_name || 'Character')}</h2><div class="metricGrid">${metric('Status', p.online_status || '')}${metric('Life', p.life_state || '')}${metric('Map', map.label || map.map || p.server_id || '')}${metric('Items', items.length)}</div><div class="grid"><div><b>Account</b><br>${esc(p.account_id)}</div><div><b>Funcom</b><br>${esc(account.funcom_id || '')}</div><div><b>Platform</b><br>${esc(account.platform_name || '')} ${esc(account.platform_id || '')}</div><div><b>Last Login</b><br>${esc(p.last_login_time || '')}</div><div><b>Controller</b><br>${esc(p.player_controller_id)}</div><div><b>Pawn</b><br>${esc(p.player_pawn_id)}</div></div><p><button id="modalOpenAdminActionsBtn" class="primary">Open Admin Actions</button></p></div><div class="panelBand"><h2>Location and Runtime</h2>${table(locationRows)}<details><summary>Map Context</summary>${table(d.mapContext || [])}</details><details><summary>Respawn Locations</summary>${table(d.respawnLocations || [])}</details><details><summary>Runtime Source</summary><pre>${esc(JSON.stringify(d.realtime || {}, null, 2))}</pre></details></div><div class="panelBand"><h2>Currency and XP</h2><details open><summary>Currency</summary>${table(d.currency || [])}</details><details><summary>Specialization</summary>${table(d.specialization || [])}</details><details><summary>Faction</summary>${table(d.faction || [])}</details><details><summary>Reputation</summary>${table(d.reputation || [])}</details></div></div><div class="pageStack"><div class="panelBand"><div class="splitHeader"><h2>Inventory</h2><span class="pill">${esc(items.length)} items</span></div><div class="playerInventoryTools"><label>Inventory<select id="modalInventoryFilter"><option value="">All inventories</option>${inventoryOptions(inventories)}</select></label><label>Item Search<input id="modalItemFilter" placeholder="Template, item ID, inventory"></label></div><h3>Inventory Summary</h3>${table(inventorySummary)}<h3>Items</h3><div id="modalInventoryItems">${table(items)}</div></div><div class="panelBand"><h2>Quick Currency and XP</h2><div class="grid"><label>Currency<select id="detailCurId">${currencyBalanceOptions(d.currency, ref.currencyIds)}</select></label><label>Amount<input id="detailCurAmount" value="1000"></label><label>Mode<select id="detailCurMode"><option>add</option><option>set</option></select></label></div><p><button id="detailCurrencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Track<select id="detailTrack">${specializationOptions(d.specialization, ref.specializationTrackTypes)}</select></label><label>XP amount<input id="detailXpAmount" value="1000"></label><label>Level for set/new track<input id="detailXpLevel" value="${esc(firstTrack.level ?? 0)}"></label><label>Mode<select id="detailXpMode"><option>add</option><option>set</option></select></label></div><p><button id="detailXpBtn" class="primary">Apply XP</button></p></div><div class="panelBand"><h2>Quick Item Action</h2><div class="grid"><label>Owned inventory<select id="detailGrantInventory"><option value="">All owned inventories</option>${inventoryOptions(inventories)}</select></label><label>Owned item<select id="detailItemSelect">${inventoryItemOptions(items)}</select></label><label>Template ID<input id="detailGrantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="detailGrantStack" value="1"></label><label>Delete count<input id="detailDeleteCount" placeholder="blank/all"></label></div><p><button id="detailDryRunBtn" class="primary">Dry run item</button> <button id="detailGrantBtn" class="danger">Grant item</button> <button id="detailSetStackBtn" class="primary">Set selected stack</button> <button id="detailDeleteItemBtn" class="danger">Delete selected item/count</button></p><pre id="detailGrantResult"></pre></div><details class="panelBand"><summary>Raw Detail</summary><pre>${esc(JSON.stringify(d, null, 2))}</pre></details></div></div>`;
   makeSortableTables(document.getElementById('playerModalBody'));
   enhanceCopyBlocks(document.getElementById('playerModalBody'));
-  wirePlayerModalDetailActions(d, ref, firstTrack);
+  wirePlayerModalDetailActions(d, ref, firstTrack, uiState);
 }
-function wirePlayerModalDetailActions(d, ref, firstTrack){
+function wirePlayerModalDetailActions(d, ref, firstTrack, uiState={}){
   const p = d.player || {};
   const detailInventory = document.getElementById('detailGrantInventory');
   const detailItem = document.getElementById('detailItemSelect');
@@ -3270,7 +3334,13 @@ function wirePlayerModalDetailActions(d, ref, firstTrack){
     document.getElementById('modalInventoryItems').innerHTML = table(filtered);
     makeSortableTables(document.getElementById('modalInventoryItems'));
   };
-  modalInventoryFilter?.addEventListener('change', filterInventoryTable);
+  modalInventoryFilter?.addEventListener('change', () => {
+    if (detailInventory) {
+      detailInventory.value = modalInventoryFilter.value;
+      setDetailItemOptions();
+    }
+    filterInventoryTable();
+  });
   modalItemFilter?.addEventListener('input', filterInventoryTable);
   const setDetailItemOptions = () => {
     const inventoryId = detailInventory?.value || '';
@@ -3301,15 +3371,32 @@ function wirePlayerModalDetailActions(d, ref, firstTrack){
   document.getElementById('detailGrantBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Granting...', () => grantItemForAccount(p.account_id, false)));
   document.getElementById('detailSetStackBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Saving...', setDetailItemStack));
   document.getElementById('detailDeleteItemBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Deleting...', deleteDetailItem));
+  setIfPresent('modalInventoryFilter', uiState.inventoryFilter);
+  setIfPresent('modalItemFilter', uiState.itemFilter);
+  setIfPresent('detailGrantInventory', uiState.grantInventory || uiState.inventoryFilter);
+  setDetailItemOptions();
+  setIfPresent('detailItemSelect', uiState.itemId);
+  setIfPresent('detailGrantTemplate', uiState.templateId);
+  setIfPresent('detailGrantStack', uiState.stackSize);
+  setIfPresent('detailDeleteCount', uiState.deleteCount);
+  setIfPresent('detailCurId', uiState.currencyId);
+  setIfPresent('detailCurAmount', uiState.currencyAmount);
+  setIfPresent('detailCurMode', uiState.currencyMode);
+  setIfPresent('detailTrack', uiState.trackType);
+  setIfPresent('detailXpAmount', uiState.xpAmount);
+  setIfPresent('detailXpLevel', uiState.xpLevel);
+  setIfPresent('detailXpMode', uiState.xpMode);
+  filterInventoryTable();
 }
 async function loadPlayerModal(accountId){
   if (!accountId || playerModalInFlight) return;
   playerModalInFlight = true;
+  const uiState = playerModalUiState();
   document.getElementById('playerModalRefreshState').textContent = 'refreshing';
   try {
     const [d, ref] = await Promise.all([api('/api/characters/' + encodeURIComponent(accountId)), playerModalRef ? Promise.resolve(playerModalRef) : adminReference()]);
     playerModalRef = ref;
-    renderPlayerModal(d, ref);
+    renderPlayerModal(d, ref, uiState);
   } catch (e) {
     document.getElementById('playerModalBody').innerHTML = `<div class="dangerText">${esc(e.message)}</div>`;
     document.getElementById('playerModalRefreshState').textContent = 'error';
