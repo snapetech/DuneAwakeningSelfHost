@@ -40,7 +40,7 @@ docker compose --env-file .env config --quiet
 7. Load the official Funcom image tarballs into Docker:
 
 ```bash
-./scripts/load-images.sh
+./scripts/load-images.sh .env
 ```
 
 8. Start and bootstrap the state layer:
@@ -123,10 +123,12 @@ Expected result: `make validate` exits cleanly, and the second command finds no 
 When Steam updates the self-hosted server tool:
 
 1. Run `./scripts/check-steam-update.sh .env` to compare `.env` with the current Steam package.
-2. Re-run `./scripts/load-images.sh`.
+2. Re-run `./scripts/load-images.sh .env`.
 3. Update `DUNE_IMAGE_TAG` with `./scripts/check-steam-update.sh .env --write-env`, or edit it manually if multiple tags are reported.
 4. Re-run `./scripts/inspect-images.sh` and compare the output with `docs/teardown.md`.
 5. Run `docker compose --env-file .env config --quiet`.
 6. Start only Postgres and RabbitMQ, run `db-init`, then start the service layer.
 7. Confirm `./scripts/status.sh .env`.
 8. Update docs that cite image tags, ports, settings, or observed behavior.
+
+The unattended daily maintenance flow runs the same package-tag check after the stopped-world backup and before services are brought back online. See [`docs/maintenance-updates.md`](maintenance-updates.md).

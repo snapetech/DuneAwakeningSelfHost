@@ -55,6 +55,7 @@ HAGGA_MAP_IMAGE_MAX_V = float(os.environ.get("DUNE_HAGGA_MAP_IMAGE_MAX_V", "1.10
 ADMIN_REFERENCE_LIMIT = int(os.environ.get("DUNE_ADMIN_REFERENCE_LIMIT", "200"))
 CHARACTER_SEARCH_LIMIT = int(os.environ.get("DUNE_ADMIN_CHARACTER_SEARCH_LIMIT", "100"))
 STEAM_PROFILE_CACHE_TTL_SECONDS = int(os.environ.get("DUNE_ADMIN_STEAM_PROFILE_CACHE_TTL_SECONDS", str(24 * 60 * 60)))
+STEAM_PROFILE_LOOKUP_ENABLED = os.environ.get("DUNE_ADMIN_STEAM_PROFILE_LOOKUP_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 DATABASE = os.environ.get("DUNE_DATABASE", "dune_sb_1_4_0_0")
 ADMIN_TOKEN = os.environ.get("DUNE_ADMIN_TOKEN", "")
 MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_MUTATIONS_ENABLED", "true").lower() == "true"
@@ -69,6 +70,7 @@ AUTH_FAILURE_WINDOW_SECONDS = 60
 AUTH_FAILURE_LIMIT = 5
 AUTH_FAILURES = {}
 AUDIT_LOCK = threading.Lock()
+STEAM_PROFILE_CACHE_LOCK = threading.Lock()
 CONFIRM_RESET_KEYSTONES = "RESET KEYSTONES"
 CONFIRM_DELETE_ITEM = "DELETE ITEM"
 CONFIRM_SET_STACK = "SET STACK"
@@ -332,6 +334,7 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ADMIN_REFERENCE_LIMIT": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum reference rows returned by admin helper endpoints."},
     "DUNE_ADMIN_CHARACTER_SEARCH_LIMIT": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum character search rows returned."},
     "DUNE_ADMIN_STEAM_PROFILE_CACHE_TTL_SECONDS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "How long to cache public Steam persona names resolved from SteamID64 platform ids."},
+    "DUNE_ADMIN_STEAM_PROFILE_LOOKUP_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Enable public Steam profile lookups so SteamID64 platform ids show persona names in the roster."},
     "DUNE_ADMIN_BIND_ADDRESS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Host interface used for the admin-panel published port. Keep this on 127.0.0.1 unless a trusted reverse proxy or VPN owns access."},
     "DUNE_ADMIN_HOST_PORT": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Host TCP port that publishes admin-panel:8080. Change this if another local service already owns 18080."},
     "DUNE_ADMIN_ALLOWED_HOSTS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Host header allowlist for the admin HTTP service."},
@@ -1787,6 +1790,25 @@ def fetch_steam_persona_name(steam_id):
     return html.unescape(match.group(1).strip()) if match else ""
 
 
+def steam_cache_entry_expired(cache, steam_id, now):
+    try:
+        fetched_at = float((cache.get(steam_id) or {}).get("fetchedAt") or 0)
+    except (TypeError, ValueError):
+        return True
+    return now - fetched_at > STEAM_PROFILE_CACHE_TTL_SECONDS
+
+
+def annotate_steam_profile_rows(rows, cache=None):
+    cache = cache or {}
+    for row in rows:
+        steam_id = str(row.get("platform_id") or "").strip()
+        if str(row.get("platform_name") or "").lower() == "steam" and steam_id:
+            row["steam_profile_url"] = f"https://steamcommunity.com/profiles/{steam_id}"
+            row["steam_persona_name"] = (cache.get(steam_id) or {}).get("personaName", "")
+            row["steam_persona_lookup_enabled"] = STEAM_PROFILE_LOOKUP_ENABLED
+    return rows
+
+
 def enrich_steam_profiles(rows):
     steam_ids = sorted({
         str(row.get("platform_id") or "").strip()
@@ -1795,41 +1817,36 @@ def enrich_steam_profiles(rows):
     })
     if not steam_ids:
         return rows
-    now = time.time()
-    cache = read_steam_profile_cache()
-    changed = False
-    missing = [
-        steam_id for steam_id in steam_ids
-        if now - float((cache.get(steam_id) or {}).get("fetchedAt") or 0) > STEAM_PROFILE_CACHE_TTL_SECONDS
-    ]
-    if missing:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(missing))) as executor:
-            future_map = {executor.submit(fetch_steam_persona_name, steam_id): steam_id for steam_id in missing}
-            for future in concurrent.futures.as_completed(future_map):
-                steam_id = future_map[future]
-                try:
-                    persona = future.result()
-                    cache[steam_id] = {"personaName": persona, "fetchedAt": now, "ok": bool(persona)}
-                except Exception as exc:
-                    previous = cache.get(steam_id) or {}
-                    cache[steam_id] = {
-                        "personaName": previous.get("personaName", ""),
-                        "fetchedAt": now,
-                        "ok": False,
-                        "error": str(exc)[:160],
-                    }
-                changed = True
-    if changed:
-        try:
-            write_steam_profile_cache(cache)
-        except OSError:
-            pass
-    for row in rows:
-        steam_id = str(row.get("platform_id") or "").strip()
-        if str(row.get("platform_name") or "").lower() == "steam" and steam_id:
-            row["steam_profile_url"] = f"https://steamcommunity.com/profiles/{steam_id}"
-            row["steam_persona_name"] = (cache.get(steam_id) or {}).get("personaName", "")
-    return rows
+    if not STEAM_PROFILE_LOOKUP_ENABLED:
+        return annotate_steam_profile_rows(rows)
+    with STEAM_PROFILE_CACHE_LOCK:
+        now = time.time()
+        cache = read_steam_profile_cache()
+        changed = False
+        missing = [steam_id for steam_id in steam_ids if steam_cache_entry_expired(cache, steam_id, now)]
+        if missing:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(missing))) as executor:
+                future_map = {executor.submit(fetch_steam_persona_name, steam_id): steam_id for steam_id in missing}
+                for future in concurrent.futures.as_completed(future_map):
+                    steam_id = future_map[future]
+                    try:
+                        persona = future.result()
+                        cache[steam_id] = {"personaName": persona, "fetchedAt": now, "ok": bool(persona)}
+                    except Exception as exc:
+                        previous = cache.get(steam_id) or {}
+                        cache[steam_id] = {
+                            "personaName": previous.get("personaName", ""),
+                            "fetchedAt": now,
+                            "ok": False,
+                            "error": str(exc)[:160],
+                        }
+                    changed = True
+        if changed:
+            try:
+                write_steam_profile_cache(cache)
+            except OSError:
+                pass
+        return annotate_steam_profile_rows(rows, cache)
 
 
 def create_db_backup():
@@ -3935,7 +3952,7 @@ function restartPanel(state){
   ].map(([value,label]) => `<option value="${value}">${label}</option>`).join('');
   const jobSummary = latest ? `<pre>${esc(JSON.stringify(latest, null, 2))}</pre>` : '<div class="muted">No scheduled restart.</div>';
   const execution = state.lastExecution ? `<pre>${esc(JSON.stringify(state.lastExecution, null, 2))}</pre>` : '<div class="muted">No restart execution attempts yet.</div>';
-  return `<div class="card"><h2>Maintenance Job</h2><p class="muted">Stops the selected services, takes the maintenance backup, starts them again, and waits for map readiness.</p><div class="grid"><label>Target<select id="restartTarget">${targetOptions}</select></label><label>Action<select id="restartAction"><option value="restart" selected>Restart target</option><option value="shutdown">Shutdown target</option></select></label><label>Run after<select id="restartDelay">${delayOptions}</select></label><label>Repeat notice every<select id="restartRepeat"><option value="0">Do not repeat</option><option value="30">30 sec</option><option value="60" selected>60 sec</option><option value="300">5 min</option><option value="600">10 min</option><option value="900">15 min</option><option value="1800">30 min</option><option value="3600">60 min</option></select></label><label>Execution<select id="restartExecute"><option value="false" selected>Dry-run schedule</option><option value="true">Execute hook</option></select></label></div><div class="toolbar checkToolbar"><label><input id="restartBackup" type="checkbox" checked> Backup before execution</label><label><input id="restartAnnounce" type="checkbox" checked> Send in-game warnings</label></div><label>Warning message<textarea id="restartMessage" rows="3" class="compactTextarea">Server maintenance soon. Please get to a safe place.</textarea></label><p><button id="scheduleRestartBtn" class="primary">Schedule maintenance</button> <button id="cancelRestartBtn" class="danger">Cancel active job</button></p><details><summary>Current job state</summary>${jobSummary}</details><details><summary>Last execution</summary>${execution}</details></div>`;
+  return `<div class="card"><h2>Maintenance Job</h2><p class="muted">Stops the selected services, takes the maintenance backup, checks the Steam package image tag, starts them again, and waits for map readiness.</p><div class="grid"><label>Target<select id="restartTarget">${targetOptions}</select></label><label>Action<select id="restartAction"><option value="restart" selected>Restart target</option><option value="shutdown">Shutdown target</option></select></label><label>Run after<select id="restartDelay">${delayOptions}</select></label><label>Repeat notice every<select id="restartRepeat"><option value="0">Do not repeat</option><option value="30">30 sec</option><option value="60" selected>60 sec</option><option value="300">5 min</option><option value="600">10 min</option><option value="900">15 min</option><option value="1800">30 min</option><option value="3600">60 min</option></select></label><label>Execution<select id="restartExecute"><option value="false" selected>Dry-run schedule</option><option value="true">Execute hook</option></select></label></div><div class="toolbar checkToolbar"><label><input id="restartBackup" type="checkbox" checked> Backup before execution</label><label><input id="restartAnnounce" type="checkbox" checked> Send in-game warnings</label></div><label>Warning message<textarea id="restartMessage" rows="3" class="compactTextarea">Server maintenance soon. Please get to a safe place.</textarea></label><p><button id="scheduleRestartBtn" class="primary">Schedule maintenance</button> <button id="cancelRestartBtn" class="danger">Cancel active job</button></p><details><summary>Current job state</summary>${jobSummary}</details><details><summary>Last execution</summary>${execution}</details></div>`;
 }
 function signalList(groups){
   return Object.entries(groups || {}).map(([group, rows]) => `<div class="card"><h2>${esc(group)}</h2><table><thead><tr><th>Name</th><th>Value</th><th>Why</th></tr></thead><tbody>${(rows || []).map(r=>`<tr><td>${esc(r.name)}</td><td>${esc(Array.isArray(r.value) ? r.value.join(', ') : r.value)}</td><td>${esc(r.why)}</td></tr>`).join('')}</tbody></table></div>`).join('');

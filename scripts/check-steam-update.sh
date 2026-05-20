@@ -132,7 +132,7 @@ fi
 echo "status: update available"
 echo "next tag: $package_tag"
 echo "next steps:"
-echo "  ./scripts/load-images.sh"
+echo "  ./scripts/load-images.sh $env_file"
 echo "  ./scripts/check-steam-update.sh $env_file --write-env"
 echo "  docker compose --env-file $env_file config --quiet"
 echo "  ./scripts/backup-state.sh $env_file"

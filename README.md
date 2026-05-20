@@ -91,7 +91,7 @@ Create local settings, validate the host, load the official images, and initiali
 ```bash
 ./scripts/populate-local-env.sh
 ./scripts/preflight.sh
-./scripts/load-images.sh
+./scripts/load-images.sh .env
 docker compose --env-file .env up -d postgres admin-rmq game-rmq
 docker compose --env-file .env run --rm db-init
 ```
@@ -334,6 +334,7 @@ Start here:
 - [`docs/operator-handoff.md`](docs/operator-handoff.md): checklist for moving the stack to another operator or host.
 - [`docs/platforms.md`](docs/platforms.md): Linux, Windows/macOS operator, Podman, VM, and NAS notes.
 - [`docs/operations.md`](docs/operations.md): health, recovery, startup, watchdog, ports, and restart workflow.
+- [`docs/maintenance-updates.md`](docs/maintenance-updates.md): 06:00 restart/backup/update timeline and Steam hotfix handling.
 - [`docs/admin-panel.md`](docs/admin-panel.md): admin panel features, security, announcements, chat commands, and mutation gates.
 - [`docs/backup-strategy.md`](docs/backup-strategy.md): local, onsite, offsite, replica, retention, and restore-test guidance.
 - [`docs/troubleshooting.md`](docs/troubleshooting.md): common failures and checks.
@@ -378,9 +379,11 @@ Root-level research indexes:
 - [`admin/static/hagga-basin.webp`](admin/static/hagga-basin.webp): Hagga Basin panel map asset.
 - [`scripts/start-full-warm-pool.sh`](scripts/start-full-warm-pool.sh): 30-map startup helper.
 - [`scripts/bootstrap-checklist.sh`](scripts/bootstrap-checklist.sh): read-only new-host readiness checklist.
+- [`scripts/check-steam-update.sh`](scripts/check-steam-update.sh): compare `.env` image pin with the current Steam package tarballs.
 - [`scripts/watch-maps.sh`](scripts/watch-maps.sh): map watchdog.
 - [`scripts/recover-map.sh`](scripts/recover-map.sh): fixed-partition recovery.
 - [`scripts/restart-target.sh`](scripts/restart-target.sh): scheduled restart execution hook.
+- [`scripts/install-daily-maintenance-timer.sh`](scripts/install-daily-maintenance-timer.sh): systemd timer installer for 06:00 daily restart/backup/update maintenance.
 - [`scripts/announce.sh`](scripts/announce.sh): in-game announcement publisher.
 - [`scripts/admin-chat-commands.py`](scripts/admin-chat-commands.py): chat command listener.
 - [`scripts/seed-gateway-neighbor.sh`](scripts/seed-gateway-neighbor.sh): Docker bridge neighbor refresh helper for the observed local bridge issue.

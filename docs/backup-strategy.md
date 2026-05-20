@@ -12,7 +12,7 @@ Use layered backups. No single backup mechanism covers every failure mode.
 | Offsite object/NAS backup | Fire/theft/site loss, rollback to older snapshots | Very recent writes unless schedule is tight |
 | Manual pre-change backup | Known restore point before risky work | Problems that predate the backup |
 
-The maintenance restart flow creates an authoritative local maintenance backup before it starts services again. That backup includes a Postgres dump, config/env archive, RabbitMQ archives, server saved data, and a manifest.
+The maintenance restart flow creates an authoritative local maintenance backup before it checks the Steam package for updated Funcom image tarballs and starts services again. That backup includes a Postgres dump, config/env archive, RabbitMQ archives, server saved data, and a manifest. See [`docs/maintenance-updates.md`](maintenance-updates.md).
 
 ## Local Backup
 
@@ -107,7 +107,7 @@ Small/private host:
 
 Public 30-map host:
 
-- Maintenance backup before scheduled restart.
+- Maintenance backup before scheduled restart, followed by the Steam package image-tag check.
 - Hourly offsite sync or restic backup.
 - Remote Postgres replica with hourly snapshot.
 - Weekly restore test to a throwaway environment.

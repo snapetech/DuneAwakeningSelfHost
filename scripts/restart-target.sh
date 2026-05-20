@@ -48,7 +48,7 @@ run_steam_update_check() {
   rc=$?
   if [ "$rc" -eq 1 ]; then
     printf 'Steam package update available; loading official images and updating DUNE_IMAGE_TAG\n'
-    ./scripts/load-images.sh
+    ./scripts/load-images.sh "$env_file"
     ./scripts/check-steam-update.sh "$env_file" --write-env
     return 0
   fi
@@ -324,7 +324,7 @@ def run_host_update_check():
         "if [ \"$rc\" = 0 ]; then exit 0; fi; "
         "if [ \"$rc\" = 1 ]; then "
         "echo 'Steam package update available; loading official images and updating DUNE_IMAGE_TAG'; "
-        "./scripts/load-images.sh; "
+        f"./scripts/load-images.sh {shlex.quote(env_file)}; "
         f"./scripts/check-steam-update.sh {shlex.quote(env_file)} --write-env; "
         "exit 0; "
         "fi; "

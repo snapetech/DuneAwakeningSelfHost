@@ -83,7 +83,7 @@ DUNE_ADMIN_TOKEN
 8. Load official images from the Steam package:
 
 ```bash
-./scripts/load-images.sh
+./scripts/load-images.sh .env
 ```
 
 9. Bootstrap and start according to [`docs/setup.md`](docs/setup.md).
@@ -109,6 +109,12 @@ Install timer after the chosen remote mode works manually:
 
 ```bash
 ./scripts/install-backup-offsite-timer.sh .env examples/backup/rclone-offsite.env
+```
+
+Install the daily 06:00 restart/backup/update maintenance timer after the admin panel restart path works manually:
+
+```bash
+./scripts/install-daily-maintenance-timer.sh .env
 ```
 
 ## Readiness Criteria

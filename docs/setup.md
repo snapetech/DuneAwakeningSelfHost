@@ -37,7 +37,7 @@ This checks local commands, required env values, expected Steam image tarballs, 
 ## 3. Load Official Images
 
 ```bash
-./scripts/load-images.sh
+./scripts/load-images.sh .env
 ```
 
 The script expects Funcom's image tarballs under the official Steam package directory. It does not download or redistribute images.
@@ -51,10 +51,12 @@ Check whether `.env` is pinned to the tag shipped by the current Steam package:
 If Steam has updated the self-hosted server package, load the new images, update the env pin, and continue through the normal database/service startup path:
 
 ```bash
-./scripts/load-images.sh
+./scripts/load-images.sh .env
 ./scripts/check-steam-update.sh .env --write-env
 docker compose --env-file .env config --quiet
 ```
+
+For the unattended 06:00 restart/backup/update cycle, see [`docs/maintenance-updates.md`](maintenance-updates.md).
 
 ## 4. Start Core State Services
 
