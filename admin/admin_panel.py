@@ -11,6 +11,7 @@ import secrets
 import shutil
 import socket
 import subprocess
+import tarfile
 import threading
 import time
 import urllib.error
@@ -62,6 +63,7 @@ ANNOUNCEMENT_COMMAND_TIMEOUT_SECONDS = int(os.environ.get("DUNE_ADMIN_ANNOUNCEME
 ANNOUNCEMENT_COMMAND = os.environ.get("DUNE_ADMIN_ANNOUNCE_COMMAND", str(ROOT / "scripts" / "announce.sh"))
 RESTART_COMMAND_TIMEOUT_SECONDS = int(os.environ.get("DUNE_ADMIN_RESTART_COMMAND_TIMEOUT_SECONDS", "1800"))
 RESTART_COMMAND = os.environ.get("DUNE_ADMIN_RESTART_COMMAND", str(ROOT / "scripts" / "restart-target.sh"))
+MAINTENANCE_BACKUP_ENABLED = os.environ.get("DUNE_ADMIN_MAINTENANCE_BACKUP_ENABLED", "true").lower() == "true"
 DOCKER_SOCKET = os.environ.get("DUNE_RESTART_DOCKER_SOCKET", "/var/run/docker.sock")
 DOCKER_COMPOSE_PROJECT = os.environ.get("DUNE_RESTART_COMPOSE_PROJECT", "dune_server")
 ANNOUNCEMENT_DELAYS = {
@@ -178,12 +180,16 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ANNOUNCE_GAME_RMQ_AMQP_PORT": {"group": "Announcements", "secret": False, "restart": False, "why": "Game RabbitMQ AMQP port used by the chat announcement publisher."},
     "DUNE_ANNOUNCE_GAME_RMQ_AMQP_TLS": {"group": "Announcements", "secret": False, "restart": False, "why": "Whether the chat announcement publisher uses TLS for game RabbitMQ AMQP."},
     "DUNE_ANNOUNCE_HTTP_TIMEOUT_SECONDS": {"group": "Announcements", "secret": False, "restart": False, "why": "Short timeout for RabbitMQ management API probes before the hook falls back to Docker socket binding plus AMQP publish."},
+    "DUNE_ANNOUNCE_ALLOW_MANAGEMENT_PUBLISH": {"group": "Announcements", "secret": False, "restart": False, "why": "Emergency fallback for RabbitMQ HTTP publish. Leave false; HTTP publish can route successfully while the Dune client renders nothing."},
     "DUNE_ANNOUNCE_CHAT_USER": {"group": "Announcements", "secret": False, "restart": False, "why": "Player-shaped RabbitMQ identity used as the in-game announcement sender."},
     "DUNE_ANNOUNCE_CHAT_PASSWORD": {"group": "Announcements", "secret": True, "restart": False, "why": "Password supplied for the chat announcement sender."},
     "DUNE_ANNOUNCE_CHAT_FUNCOM_ID": {"group": "Announcements", "secret": False, "restart": False, "why": "Funcom id stamped onto restart chat messages."},
     "DUNE_ANNOUNCE_CHAT_SPOOF_NAME": {"group": "Announcements", "secret": False, "restart": False, "why": "Display name used when spoofed chat names are enabled."},
     "DUNE_ANNOUNCE_CHAT_EXCHANGE": {"group": "Announcements", "secret": False, "restart": False, "why": "Game RabbitMQ chat exchange used for restart announcements."},
     "DUNE_ANNOUNCE_CHAT_ROUTING_KEYS": {"group": "Announcements", "secret": False, "restart": False, "why": "Comma-separated chat routing keys to publish restart announcements to; use <empty> for the blank route."},
+    "DUNE_ANNOUNCE_HOST_WORKSPACE": {"group": "Announcements", "secret": False, "restart": False, "why": "Absolute host path to this repo, used only by the Docker-socket fallback publisher."},
+    "DUNE_ANNOUNCE_HOST_AMQP_HOST": {"group": "Announcements", "secret": False, "restart": False, "why": "Host-side address for the game RabbitMQ public AMQP port. The verified local Docker bridge value is 172.31.240.1."},
+    "DUNE_ANNOUNCE_HOST_AMQP_PORT": {"group": "Announcements", "secret": False, "restart": False, "why": "Host-side game RabbitMQ AMQP port used by the verified pika publisher."},
     "DUNE_ANNOUNCE_CHAT_CHANNEL": {"group": "Announcements", "secret": False, "restart": False, "why": "Chat channel type stamped onto restart announcement messages."},
     "DUNE_ANNOUNCE_CHAT_USE_SPOOF_NAME": {"group": "Announcements", "secret": False, "restart": False, "why": "Whether restart announcements should use the spoofed display-name field."},
     "DUNE_ANNOUNCE_CHAT_BIND_ONLINE_QUEUES": {"group": "Announcements", "secret": False, "restart": False, "why": "When enabled, the hook binds currently connected player queues to the announcement chat routes before publishing."},
@@ -1117,6 +1123,72 @@ def create_db_backup():
         temp_path.unlink(missing_ok=True)
         raise
     return {"path": str(path), "bytes": path.stat().st_size}
+
+
+def add_tree_archive(archive_path, entries):
+    added = []
+    skipped = []
+    with tarfile.open(archive_path, "w:gz") as archive:
+        for source, arcname in entries:
+            source = pathlib.Path(source)
+            if not source.exists():
+                skipped.append({"path": str(source), "reason": "missing"})
+                continue
+            try:
+                archive.add(source, arcname=arcname)
+                added.append({"path": str(source), "archiveName": arcname})
+            except (OSError, tarfile.TarError) as exc:
+                skipped.append({"path": str(source), "reason": str(exc)})
+    return {"path": str(archive_path), "bytes": archive_path.stat().st_size, "added": added, "skipped": skipped}
+
+
+def create_maintenance_backup(job):
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    job_id = str(job.get("id", "manual"))[:24]
+    backup_dir = BACKUP_ROOT / "maintenance" / f"{stamp}-{job_id}"
+    backup_dir.mkdir(parents=True, exist_ok=False)
+    result = {
+        "path": str(backup_dir),
+        "createdAt": time.time(),
+        "jobId": job.get("id"),
+        "action": job.get("action", "restart"),
+        "target": job.get("target"),
+        "services": job.get("services", []),
+        "artifacts": {},
+        "warnings": [],
+    }
+
+    try:
+        db_result = create_db_backup()
+        db_path = pathlib.Path(db_result["path"])
+        target = backup_dir / db_path.name
+        shutil.move(str(db_path), target)
+        result["artifacts"]["postgres"] = {"path": str(target), "bytes": target.stat().st_size}
+    except Exception as exc:
+        result["warnings"].append({"artifact": "postgres", "error": str(exc)})
+        raise RuntimeError(f"maintenance database backup failed: {exc}") from exc
+
+    archive_entries = [(CONFIG_ROOT, "config")]
+    if ENV_FILE.exists():
+        archive_entries.append((ENV_FILE, ".env"))
+    result["artifacts"]["config"] = add_tree_archive(backup_dir / "config-and-env.tgz", archive_entries)
+
+    data_root = ROOT / "data"
+    server_saved = data_root / "server-saved"
+    rabbitmq = data_root / "rabbitmq"
+    if server_saved.exists():
+        result["artifacts"]["serverSaved"] = add_tree_archive(backup_dir / "server-saved.tgz", [(server_saved, "server-saved")])
+    else:
+        result["warnings"].append({"artifact": "serverSaved", "error": f"{server_saved} is not mounted"})
+    if rabbitmq.exists():
+        result["artifacts"]["rabbitmq"] = add_tree_archive(backup_dir / "rabbitmq.tgz", [(rabbitmq, "rabbitmq")])
+    else:
+        result["warnings"].append({"artifact": "rabbitmq", "error": f"{rabbitmq} is not mounted"})
+
+    manifest = backup_dir / "manifest.json"
+    manifest.write_text(json.dumps(result, indent=2, sort_keys=True, default=json_default), encoding="utf-8")
+    result["artifacts"]["manifest"] = {"path": str(manifest), "bytes": manifest.stat().st_size}
+    return result
 
 
 class Handler(BaseHTTPRequestHandler):

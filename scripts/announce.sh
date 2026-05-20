@@ -109,6 +109,7 @@ routing_keys = split_csv(env("DUNE_ANNOUNCE_CHAT_ROUTING_KEYS", "<empty>"))
 channel_type = env("DUNE_ANNOUNCE_CHAT_CHANNEL", "Map")
 use_spoof_name = env_bool("DUNE_ANNOUNCE_CHAT_USE_SPOOF_NAME", False)
 bind_online_queues = env_bool("DUNE_ANNOUNCE_CHAT_BIND_ONLINE_QUEUES", True)
+allow_management_publish = env_bool("DUNE_ANNOUNCE_ALLOW_MANAGEMENT_PUBLISH", False)
 queue_pattern = re.compile(env("DUNE_ANNOUNCE_CHAT_QUEUE_PATTERN", r"^[0-9A-Fa-f]{16}_queue$"))
 target_queues = split_csv(env("DUNE_ANNOUNCE_CHAT_TARGET_QUEUES", ""))
 compose_project = env("DUNE_RESTART_COMPOSE_PROJECT", env("COMPOSE_PROJECT_NAME", "dune_server"))
@@ -299,6 +300,20 @@ def docker_exec(container_id, command, timeout=30):
     return text
 
 
+def demux_docker_payload(payload):
+    output = bytearray()
+    rest = payload
+    while len(rest) >= 8 and rest[0] in (1, 2):
+        stream_size = int.from_bytes(rest[4:8], "big")
+        if stream_size < 0 or len(rest) < 8 + stream_size:
+            break
+        output.extend(rest[8:8 + stream_size])
+        rest = rest[8 + stream_size:]
+    if output:
+        return output.decode(errors="replace")
+    return payload.decode(errors="replace")
+
+
 def find_compose_container(service):
     filters = {
         "label": [
@@ -335,8 +350,8 @@ def publish_with_host_container():
     child_env = []
     merged_env = dict(file_env)
     merged_env.update(os.environ)
-    merged_env["DUNE_ANNOUNCE_GAME_RMQ_AMQP_HOST"] = env("DUNE_ANNOUNCE_HOST_AMQP_HOST", "127.0.0.1")
-    merged_env["DUNE_ANNOUNCE_GAME_RMQ_AMQP_PORT"] = env("DUNE_ANNOUNCE_HOST_AMQP_PORT", env("GAME_RMQ_PUBLIC_PORT", "31982"))
+    merged_env["DUNE_ANNOUNCE_HOST_AMQP_HOST"] = env("DUNE_ANNOUNCE_HOST_AMQP_HOST", "172.31.240.1")
+    merged_env["DUNE_ANNOUNCE_HOST_AMQP_PORT"] = env("DUNE_ANNOUNCE_HOST_AMQP_PORT", env("GAME_RMQ_PUBLIC_PORT", "31982"))
     for key, value in merged_env.items():
         if key.startswith("DUNE_ANNOUNCE_") or key.startswith("GAME_RMQ_"):
             child_env.append(f"{key}={value}")
@@ -368,10 +383,14 @@ def publish_with_host_container():
             raise RuntimeError(f"container wait failed: HTTP {status} {payload_bytes[:200]!r}")
         wait_result = json.loads(payload_bytes.decode() or "{}")
         status, logs = docker_api("GET", f"/containers/{container_id}/logs?stdout=true&stderr=true")
-        text = logs.decode(errors="replace")
+        text = demux_docker_payload(logs)
         if int(wait_result.get("StatusCode") or 1) != 0:
             raise RuntimeError(text.strip() or f"publisher exited {wait_result.get('StatusCode')}")
-        return json.loads(text.strip().splitlines()[-1])
+        for line in reversed(text.strip().splitlines()):
+            start = line.find("{")
+            if start >= 0:
+                return json.loads(line[start:])
+        raise RuntimeError("publisher did not emit JSON")
     finally:
         docker_api("DELETE", f"/containers/{container_id}?force=true")
 
@@ -559,7 +578,7 @@ def publish_with_amqp():
 
 bound_queues = []
 bind_errors = []
-if bind_online_queues:
+if bind_online_queues and not os.path.exists(docker_socket):
     queues, error = safe_request("GET", f"/api/queues/{vhost}")
     if error:
         bind_errors.append({"step": "listQueues", "error": error})
@@ -605,41 +624,49 @@ chat_message = {
 }
 payload = {"content": json.dumps(chat_message, separators=(",", ":")), "Type": "TextChat"}
 
-results = []
-for routing_key in routing_keys:
-    properties = {
-        "content_type": "Content",
-        "delivery_mode": 1,
-        "timestamp": int(time.time()),
-        "type": "text_chat",
-        "user_id": sender_user,
-        "message_id": secrets.token_urlsafe(16),
-    }
-    body = {
-        "properties": properties,
-        "routing_key": routing_key,
-        "payload": json.dumps(payload, separators=(",", ":")),
-        "payload_encoding": "string",
-    }
-    path = f"/api/exchanges/{vhost}/{urllib.parse.quote(exchange, safe='')}/publish"
-    response, error = safe_request("POST", path, body)
-    routed = bool(response and response.get("routed"))
-    results.append({"routingKey": routing_key, "ok": routed, "error": error})
-
 fallback = ""
-if not any(item["ok"] for item in results) and os.path.exists(docker_socket):
+results = []
+if os.path.exists(docker_socket):
     try:
         bound_queues, bind_errors = publish_with_docker()
-        host_result = publish_with_host_container()
-        results = host_result.get("routingKeys", [])
-        fallback = "docker-host-pika"
+        results = publish_with_amqp()
+        fallback = "direct-pika"
     except Exception as exc:
-        bind_errors.append({"step": "dockerFallback", "error": str(exc)})
+        bind_errors.append({"step": "directPika", "error": str(exc)})
         try:
-            results = publish_with_amqp()
-            fallback = "direct-pika"
-        except Exception as direct_exc:
-            bind_errors.append({"step": "directPika", "error": str(direct_exc)})
+            host_result = publish_with_host_container()
+            results = host_result.get("routingKeys", [])
+            fallback = "docker-host-pika"
+        except Exception as host_exc:
+            bind_errors.append({"step": "dockerHostPika", "error": str(host_exc)})
+else:
+    try:
+        results = publish_with_amqp()
+        fallback = "direct-pika"
+    except Exception as exc:
+        bind_errors.append({"step": "directPika", "error": str(exc)})
+
+if not any(item["ok"] for item in results) and allow_management_publish:
+    for routing_key in routing_keys:
+        properties = {
+            "content_type": "Content",
+            "delivery_mode": 1,
+            "timestamp": int(time.time()),
+            "type": "text_chat",
+            "user_id": sender_user,
+            "message_id": secrets.token_urlsafe(16),
+        }
+        body = {
+            "properties": properties,
+            "routing_key": routing_key,
+            "payload": json.dumps(payload, separators=(",", ":")),
+            "payload_encoding": "string",
+        }
+        path = f"/api/exchanges/{vhost}/{urllib.parse.quote(exchange, safe='')}/publish"
+        response, error = safe_request("POST", path, body)
+        routed = bool(response and response.get("routed"))
+        results.append({"routingKey": routing_key, "ok": routed, "error": error})
+    fallback = "management-publish"
 
 ok = any(item["ok"] for item in results)
 print(json.dumps({

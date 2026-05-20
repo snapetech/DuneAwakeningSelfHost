@@ -171,7 +171,7 @@ The panel is the operator-facing Web UI for this repo:
 | Tab | Use it for |
 | --- | --- |
 | **Overview** | Operator dashboard with online/offline players, realtime host/container resource use, headline health metrics, map health, network checks, and health verdicts. |
-| **Ops** | Detailed resource use, map/network health, farm state, partition state, restart planning, and restart announcement helpers. |
+| **Ops** | Detailed resource use, map/network health, farm state, partition state, restart planning, and verified DASH Admin chat announcements. |
 | **Security** | Host/origin checks, mutation-gate status, token status, audit events, and editable-setting allowlists. |
 | **Runbook** | Copy/paste operational commands for health, backups, restores, profiling, logs, and routing capture. |
 | **Players** | Search/list existing players and inspect controller, account, currency, inventory, and progression state before changing anything. |

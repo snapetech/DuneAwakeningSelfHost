@@ -104,7 +104,13 @@ The scheduler is real and token-gated, but in-game delivery is delegated to:
 DUNE_ADMIN_ANNOUNCE_COMMAND=/workspace/scripts/announce.sh
 ```
 
-`scripts/announce.sh` publishes directly to the game RabbitMQ `chat.map` exchange as the local DASH announcer account. This is the path verified in-game after the service-broadcast RPC route did not surface to clients.
+`scripts/announce.sh` publishes directly to the game RabbitMQ `chat.map` exchange as the local DASH announcer account. This is the only path currently verified in-game. The old `ServiceBroadcast`/JSON-RPC route, RabbitMQ management `publish`, and hand-written AMQP publisher can report success while the client renders nothing.
+
+The stable transport is:
+
+1. The hook binds currently online player queues to the configured `chat.map` routing keys.
+2. The hook publishes a `TextChat` payload with bundled `pika`, matching the AMQP property encoding used by real player chat.
+3. Dashboard-origin messages are wrapped as `!!! message !!!` before delivery. Direct/manual hook invocations with `DUNE_ANNOUNCE_JOB_ID=manual` are not wrapped.
 
 Default announcement transport settings:
 
@@ -112,14 +118,18 @@ Default announcement transport settings:
 DUNE_ANNOUNCE_GAME_RMQ_MANAGEMENT_URL=http://game-rmq:15672
 DUNE_ANNOUNCE_GAME_RMQ_AMQP_HOST=172.31.240.1
 DUNE_ANNOUNCE_GAME_RMQ_AMQP_PORT=31982
+DUNE_ANNOUNCE_HOST_AMQP_HOST=172.31.240.1
+DUNE_ANNOUNCE_HOST_AMQP_PORT=31982
+DUNE_ANNOUNCE_HOST_WORKSPACE=/home/keith/Documents/code/DuneAwakeningSelfHost
 DUNE_ANNOUNCE_GAME_RMQ_AMQP_TLS=true
 DUNE_ANNOUNCE_HTTP_TIMEOUT_SECONDS=0.5
+DUNE_ANNOUNCE_ALLOW_MANAGEMENT_PUBLISH=false
 DUNE_ANNOUNCE_CHAT_USER=A000000000000001
 DUNE_ANNOUNCE_CHAT_PASSWORD=<local announcer password>
 DUNE_ANNOUNCE_CHAT_FUNCOM_ID=ADMIN#00001
 DUNE_ANNOUNCE_CHAT_SPOOF_NAME=DASH Admin
 DUNE_ANNOUNCE_CHAT_EXCHANGE=chat.map
-DUNE_ANNOUNCE_CHAT_ROUTING_KEYS=<empty>
+DUNE_ANNOUNCE_CHAT_ROUTING_KEYS=HaggaBasin.0,Survival_1.dim_0,<empty>
 DUNE_ANNOUNCE_CHAT_CHANNEL=Map
 DUNE_ANNOUNCE_CHAT_USE_SPOOF_NAME=false
 DUNE_ANNOUNCE_CHAT_BIND_ONLINE_QUEUES=true
@@ -128,7 +138,19 @@ DUNE_ANNOUNCE_CHAT_PLATFORM_ID=DASH-ADMIN
 DUNE_ANNOUNCE_CHAT_PLATFORM_NAME=DASH
 ```
 
-`DUNE_ANNOUNCE_CHAT_ROUTING_KEYS` is comma-separated. Use `<empty>` for the blank RabbitMQ routing key. When `DUNE_ANNOUNCE_CHAT_BIND_ONLINE_QUEUES=true`, the hook first lists connected player queues on game RabbitMQ and idempotently binds them to the configured chat routes, then publishes the restart message. The hook reads `/workspace/.env` at delivery time, so route and sender changes are picked up without recreating the admin-panel container.
+`DUNE_ANNOUNCE_CHAT_ROUTING_KEYS` is comma-separated. Use `<empty>` for the blank RabbitMQ routing key. Keep the three default routes unless a new build changes chat routing; those are the routes verified with the live client. When `DUNE_ANNOUNCE_CHAT_BIND_ONLINE_QUEUES=true`, the hook first lists connected player queues on game RabbitMQ and idempotently binds them to the configured chat routes, then publishes the restart message. The hook reads `/workspace/.env` at delivery time, so route and sender changes are picked up without recreating the admin-panel container.
+
+Do not replace the `pika` publisher with RabbitMQ HTTP publish unless you validate the client visually. The management API can accept messages and return `routed=true` while the Dune client ignores them. The bundled dependency lives under `scripts/vendor/pika` so the admin panel does not need internet access.
+
+Verification command:
+
+```bash
+./scripts/verify-announcement.sh 'DASH ANNOUNCEMENT VERIFY'
+```
+
+For a dashboard-origin test, use Ops -> Restart Announcement or POST `/api/ops/announcement`; the visible message should be wrapped, for example `!!! ADMIN Alert f00 !!!`.
+
+Known formatting limits: normal chat does not parse Unreal/HTML-style rich text tags. Tested color syntaxes such as `<#ff4444>`, `<RichColor ...>`, `<Red>`, `<b>`, `^1`, and `&c` render literally or blank the message. Keep automated restart announcements plain ASCII.
 
 The default sender account is created with the game database login function so the client treats it as a real player-shaped identity:
 
