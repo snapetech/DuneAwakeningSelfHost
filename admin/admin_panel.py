@@ -43,7 +43,9 @@ HAGGA_MAP_MIN_X = float(os.environ.get("DUNE_HAGGA_MAP_MIN_X", "-407000"))
 HAGGA_MAP_MAX_X = float(os.environ.get("DUNE_HAGGA_MAP_MAX_X", "407000"))
 HAGGA_MAP_MIN_Y = float(os.environ.get("DUNE_HAGGA_MAP_MIN_Y", "-403500"))
 HAGGA_MAP_MAX_Y = float(os.environ.get("DUNE_HAGGA_MAP_MAX_Y", "403500"))
+HAGGA_MAP_INVERT_X = os.environ.get("DUNE_HAGGA_MAP_INVERT_X", "true").lower() not in ("0", "false", "no", "off")
 HAGGA_MAP_INVERT_Y = os.environ.get("DUNE_HAGGA_MAP_INVERT_Y", "true").lower() not in ("0", "false", "no", "off")
+HAGGA_MAP_SHOW_RETURN_POINTS = os.environ.get("DUNE_HAGGA_MAP_SHOW_RETURN_POINTS", "false").lower() in ("1", "true", "yes", "on")
 ADMIN_REFERENCE_LIMIT = int(os.environ.get("DUNE_ADMIN_REFERENCE_LIMIT", "200"))
 CHARACTER_SEARCH_LIMIT = int(os.environ.get("DUNE_ADMIN_CHARACTER_SEARCH_LIMIT", "100"))
 DATABASE = os.environ.get("DUNE_DATABASE", "dune_sb_1_4_0_0")
@@ -325,6 +327,9 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ADMIN_BIND_ADDRESS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Host interface used for the admin-panel published port. Keep this on 127.0.0.1 unless a trusted reverse proxy or VPN owns access."},
     "DUNE_ADMIN_HOST_PORT": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Host TCP port that publishes admin-panel:8080. Change this if another local service already owns 18080."},
     "DUNE_ADMIN_ALLOWED_HOSTS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Host header allowlist for the admin HTTP service."},
+    "DUNE_HAGGA_MAP_INVERT_X": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Flip Hagga Basin map plotting horizontally to match the background map orientation."},
+    "DUNE_HAGGA_MAP_INVERT_Y": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Invert Hagga Basin map plotting vertically to match the background map orientation."},
+    "DUNE_HAGGA_MAP_SHOW_RETURN_POINTS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Show yellow travel-return markers on the Hagga map. Default false because they are not live player positions."},
     "DUNE_ADMIN_ANNOUNCE_COMMAND": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Executable hook used by the restart-announcement scheduler to deliver in-game messages."},
     "DUNE_ADMIN_ANNOUNCEMENT_MAX_MESSAGE_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum UTF-8 size for a scheduled restart-announcement message."},
     "DUNE_ADMIN_ANNOUNCEMENT_COMMAND_TIMEOUT_SECONDS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Timeout for each announcement delivery hook invocation."},
@@ -2289,7 +2294,9 @@ class Handler(BaseHTTPRequestHandler):
                 "maxX": HAGGA_MAP_MAX_X,
                 "minY": HAGGA_MAP_MIN_Y,
                 "maxY": HAGGA_MAP_MAX_Y,
+                "invertX": HAGGA_MAP_INVERT_X,
                 "invertY": HAGGA_MAP_INVERT_Y,
+                "showReturnPoints": HAGGA_MAP_SHOW_RETURN_POINTS,
                 "source": "DUNE_HAGGA_MAP_* world-centimeter extents",
             },
             "players": rows,
@@ -3106,8 +3113,8 @@ INDEX = r"""<!doctype html>
     .mapTile.bad { border-color:#743932; }
     .mapTile .name { font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .mapTile .meta { color:var(--muted); font-size:12px; margin-top:4px; }
-    .haggaMap { position:relative; display:grid; place-items:start center; overflow:auto; background:#171513; inline-size:100%; max-block-size:min(78vh,900px); margin-inline:auto; border:1px solid var(--line); border-radius:8px; }
-    .haggaMap svg { display:block; inline-size:min(100%,900px); min-inline-size:620px; aspect-ratio:1 / 1; block-size:auto; background:#171513; }
+    .haggaMap { position:relative; display:block; overflow:visible; background:#171513; inline-size:100%; margin-inline:auto; border:1px solid var(--line); border-radius:8px; }
+    .haggaMap svg { display:block; inline-size:100%; aspect-ratio:1 / 1; block-size:auto; background:#171513; }
     .haggaMap .mapImage { opacity:.88; }
     .haggaMap .mapShade { fill:rgba(4,5,4,.22); }
     .haggaMap .gridLine { stroke:#f1d08a; stroke-width:1; opacity:.22; }
@@ -3141,6 +3148,9 @@ INDEX = r"""<!doctype html>
     .copyBtn { position:absolute; right:8px; top:8px; z-index:1; padding:5px 8px; font-size:12px; }
     .copyWrap pre { padding-top:42px; }
     .filterMeta { font-size:12px; color:var(--muted); }
+    .eventList { display:grid; gap:8px; }
+    .eventItem { border:1px solid var(--line); border-radius:7px; padding:9px; background:var(--panel2); }
+    .eventItemHead { display:flex; gap:8px; align-items:center; justify-content:space-between; flex-wrap:wrap; margin-bottom:6px; }
     .srOnly { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
     .muted { color:var(--muted); }
     .ok { color:var(--ok); }
@@ -3649,10 +3659,15 @@ function haggaBasinMapPanel(data){
   const maxX = Number.isFinite(Number(calibration.maxX)) ? Number(calibration.maxX) : 407000;
   const minY = Number.isFinite(Number(calibration.minY)) ? Number(calibration.minY) : -403500;
   const maxY = Number.isFinite(Number(calibration.maxY)) ? Number(calibration.maxY) : 403500;
+  const invertX = calibration.invertX !== false;
   const invertY = calibration.invertY !== false;
+  const showReturnPoints = calibration.showReturnPoints === true;
   const spanX = Math.max(maxX - minX, 1);
   const spanY = Math.max(maxY - minY, 1);
-  const mapX = x => clamp(((Number(x) - minX) / spanX) * mapExtent, 0, mapExtent);
+  const mapX = x => {
+    const normalized = ((Number(x) - minX) / spanX) * mapExtent;
+    return clamp(invertX ? mapExtent - normalized : normalized, 0, mapExtent);
+  };
   const mapY = y => {
     const normalized = ((Number(y) - minY) / spanY) * mapExtent;
     return clamp(invertY ? mapExtent - normalized : normalized, 0, mapExtent);
@@ -3669,7 +3684,7 @@ function haggaBasinMapPanel(data){
     const y = py(p.y);
     const rx = p.return_map === 'HaggaBasin' && Number.isFinite(Number(p.return_x)) ? px(p.return_x) : null;
     const ry = p.return_map === 'HaggaBasin' && Number.isFinite(Number(p.return_y)) ? py(p.return_y) : null;
-    const hasReturnPoint = rx !== null && ry !== null && Math.hypot(rx - x, ry - y) > 8;
+    const hasReturnPoint = showReturnPoints && rx !== null && ry !== null && Math.hypot(rx - x, ry - y) > 8;
     const name = p.character_name || `Player ${index + 1}`;
     const labelX = clamp(x + 14, 8, width - 190);
     const labelY = clamp(y - 12, 22, height - 24);
@@ -3692,7 +3707,7 @@ function haggaBasinMapPanel(data){
     last_login_time: p.last_login_time || ''
   }));
   const generatedAt = data?.generatedAt ? new Date(data.generatedAt).toLocaleTimeString() : '';
-  return `<div class="panelBand"><div class="sectionHeader"><h2>Hagga Basin Player Map</h2><div class="toolbar"><span id="haggaMapCount" class="pill ${players.length ? 'ok' : ''}">${esc(players.length)} plotted</span><span id="haggaMapUpdated" class="pill">updated ${esc(generatedAt)}</span><span id="haggaMapHealth" class="pill warn">best-effort DB position</span><button id="toggleHaggaMapRefreshBtn" aria-pressed="${haggaMapAutoRefresh ? 'true' : 'false'}">${haggaMapAutoRefresh ? 'Pause map' : 'Resume map'}</button><button id="refreshHaggaMapBtn">Refresh map</button></div></div><div id="haggaMapSrStatus" class="srOnly" aria-live="polite">${esc(players.length)} Hagga Basin players plotted.</div><div class="haggaMap"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Hagga Basin online player coordinate map"><image class="mapImage" href="/static/hagga-basin.webp" x="0" y="0" width="${width}" height="${height}" preserveAspectRatio="xMidYMid meet"></image><rect class="mapShade" x="0" y="0" width="${width}" height="${height}"></rect>${grid}<text x="12" y="24" fill="var(--muted)" font-size="12">NW</text><text x="${width - 30}" y="${height - 12}" fill="var(--muted)" font-size="12">SE</text>${markers}${empty}</svg></div><div class="haggaMapStatus"><span class="pill ok">green: pawn/controller transform</span><span class="pill warn">yellow: travel return transform when different</span><span class="pill">background: Community Wiki Hagga Basin map</span><span class="pill">calibration X ${esc(Math.round(minX))}..${esc(Math.round(maxX))}, Y ${esc(Math.round(minY))}..${esc(Math.round(maxY))}${invertY ? ', inverted Y' : ''}</span></div><details open><summary>Coordinates</summary><div class="coordTable">${table(rows)}</div></details></div>`;
+  return `<div class="panelBand"><div class="sectionHeader"><h2>Hagga Basin Player Map</h2><div class="toolbar"><span id="haggaMapCount" class="pill ${players.length ? 'ok' : ''}">${esc(players.length)} plotted</span><span id="haggaMapUpdated" class="pill">updated ${esc(generatedAt)}</span><span id="haggaMapHealth" class="pill warn">best-effort DB position</span><button id="toggleHaggaMapRefreshBtn" aria-pressed="${haggaMapAutoRefresh ? 'true' : 'false'}">${haggaMapAutoRefresh ? 'Pause map' : 'Resume map'}</button><button id="refreshHaggaMapBtn">Refresh map</button></div></div><div id="haggaMapSrStatus" class="srOnly" aria-live="polite">${esc(players.length)} Hagga Basin players plotted.</div><div class="haggaMap"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Hagga Basin online player coordinate map"><image class="mapImage" href="/static/hagga-basin.webp" x="0" y="0" width="${width}" height="${height}" preserveAspectRatio="xMidYMid meet"></image><rect class="mapShade" x="0" y="0" width="${width}" height="${height}"></rect>${grid}<text x="12" y="24" fill="var(--muted)" font-size="12">NW</text><text x="${width - 30}" y="${height - 12}" fill="var(--muted)" font-size="12">SE</text>${markers}${empty}</svg></div><div class="haggaMapStatus"><span class="pill ok">green: pawn/controller transform</span><span class="pill ${showReturnPoints ? 'warn' : ''}">yellow return-info ${showReturnPoints ? 'shown' : 'hidden'}</span><span class="pill">background: Community Wiki Hagga Basin map</span><span class="pill">calibration X ${esc(Math.round(minX))}..${esc(Math.round(maxX))}, Y ${esc(Math.round(minY))}..${esc(Math.round(maxY))}${invertX ? ', flipped X' : ''}${invertY ? ', inverted Y' : ''}</span></div><details open><summary>Coordinates</summary><div class="coordTable">${table(rows)}</div></details></div>`;
 }
 function wireHaggaMapControls(container){
   container.querySelectorAll('.playerMarker[data-account-id]').forEach(marker => {
@@ -3770,10 +3785,10 @@ function auditEventsTable(events){
   const rows = (events || []).filter(e => !(e.action === 'auth-failed' && e.method === 'GET'));
   const display = rows.slice(0, 40);
   if (!display.length) return '<div class="muted">No recent actionable audit events.</div>';
-  return `<div class="tableWrap"><table class="dataDense"><thead><tr><th>Time</th><th>Action</th><th>Result</th><th>Path</th><th>Detail</th></tr></thead><tbody>${display.map(e => {
+  return `<div class="eventList">${display.map(e => {
     const detail = e.error || e.target || e.command || e.template_id || e.backup_path || e.job_id || '';
-    return `<tr><td>${esc(String(e.ts || '').replace('T', ' ').replace('Z', ''))}</td><td>${esc(e.action || '')}</td><td>${healthCell(e.ok !== false, 'OK', 'failed')}</td><td>${esc(e.path || '')}</td><td>${esc(detail)}</td></tr>`;
-  }).join('')}</tbody></table></div>`;
+    return `<div class="eventItem"><div class="eventItemHead"><b>${esc(e.action || '')}</b>${healthCell(e.ok !== false, 'OK', 'failed')}</div><div class="muted">${esc(String(e.ts || '').replace('T', ' ').replace('Z', ''))} ${esc(e.method || '')} ${esc(e.path || '')}</div>${detail ? `<div>${esc(detail)}</div>` : ''}</div>`;
+  }).join('')}</div>`;
 }
 function announcementPanel(state){
   const active = (state.jobs || []).filter(j => ['scheduled','delivering'].includes(j.status));
