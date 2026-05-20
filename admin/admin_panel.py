@@ -41,17 +41,17 @@ AUDIT_MAX_BYTES = int(os.environ.get("DUNE_ADMIN_AUDIT_MAX_BYTES", str(5 * 1024 
 REQUEST_TIMEOUT_SECONDS = int(os.environ.get("DUNE_ADMIN_REQUEST_TIMEOUT_SECONDS", "10"))
 MAX_ITEM_STACK_SIZE = int(os.environ.get("DUNE_ADMIN_MAX_ITEM_STACK_SIZE", "1000000"))
 AUDIT_EVENT_LIMIT = int(os.environ.get("DUNE_ADMIN_AUDIT_EVENT_LIMIT", "100"))
-HAGGA_MAP_MIN_X = float(os.environ.get("DUNE_HAGGA_MAP_MIN_X", "-407000"))
-HAGGA_MAP_MAX_X = float(os.environ.get("DUNE_HAGGA_MAP_MAX_X", "407000"))
-HAGGA_MAP_MIN_Y = float(os.environ.get("DUNE_HAGGA_MAP_MIN_Y", "-403500"))
-HAGGA_MAP_MAX_Y = float(os.environ.get("DUNE_HAGGA_MAP_MAX_Y", "403500"))
-HAGGA_MAP_INVERT_X = os.environ.get("DUNE_HAGGA_MAP_INVERT_X", "true").lower() not in ("0", "false", "no", "off")
+HAGGA_MAP_MIN_X = float(os.environ.get("DUNE_HAGGA_MAP_MIN_X", "-457599"))
+HAGGA_MAP_MAX_X = float(os.environ.get("DUNE_HAGGA_MAP_MAX_X", "355199"))
+HAGGA_MAP_MIN_Y = float(os.environ.get("DUNE_HAGGA_MAP_MIN_Y", "-457599"))
+HAGGA_MAP_MAX_Y = float(os.environ.get("DUNE_HAGGA_MAP_MAX_Y", "355199"))
+HAGGA_MAP_INVERT_X = os.environ.get("DUNE_HAGGA_MAP_INVERT_X", "false").lower() not in ("0", "false", "no", "off")
 HAGGA_MAP_INVERT_Y = os.environ.get("DUNE_HAGGA_MAP_INVERT_Y", "false").lower() not in ("0", "false", "no", "off")
 HAGGA_MAP_SHOW_RETURN_POINTS = os.environ.get("DUNE_HAGGA_MAP_SHOW_RETURN_POINTS", "false").lower() in ("1", "true", "yes", "on")
-HAGGA_MAP_IMAGE_MIN_U = float(os.environ.get("DUNE_HAGGA_MAP_IMAGE_MIN_U", "0.15"))
-HAGGA_MAP_IMAGE_MAX_U = float(os.environ.get("DUNE_HAGGA_MAP_IMAGE_MAX_U", "1.15"))
-HAGGA_MAP_IMAGE_MIN_V = float(os.environ.get("DUNE_HAGGA_MAP_IMAGE_MIN_V", "0.10"))
-HAGGA_MAP_IMAGE_MAX_V = float(os.environ.get("DUNE_HAGGA_MAP_IMAGE_MAX_V", "1.10"))
+HAGGA_MAP_IMAGE_MIN_U = float(os.environ.get("DUNE_HAGGA_MAP_IMAGE_MIN_U", "0"))
+HAGGA_MAP_IMAGE_MAX_U = float(os.environ.get("DUNE_HAGGA_MAP_IMAGE_MAX_U", "1"))
+HAGGA_MAP_IMAGE_MIN_V = float(os.environ.get("DUNE_HAGGA_MAP_IMAGE_MIN_V", "0"))
+HAGGA_MAP_IMAGE_MAX_V = float(os.environ.get("DUNE_HAGGA_MAP_IMAGE_MAX_V", "1"))
 ADMIN_REFERENCE_LIMIT = int(os.environ.get("DUNE_ADMIN_REFERENCE_LIMIT", "200"))
 CHARACTER_SEARCH_LIMIT = int(os.environ.get("DUNE_ADMIN_CHARACTER_SEARCH_LIMIT", "100"))
 STEAM_PROFILE_CACHE_TTL_SECONDS = int(os.environ.get("DUNE_ADMIN_STEAM_PROFILE_CACHE_TTL_SECONDS", str(24 * 60 * 60)))
@@ -338,8 +338,12 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ADMIN_BIND_ADDRESS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Host interface used for the admin-panel published port. Keep this on 127.0.0.1 unless a trusted reverse proxy or VPN owns access."},
     "DUNE_ADMIN_HOST_PORT": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Host TCP port that publishes admin-panel:8080. Change this if another local service already owns 18080."},
     "DUNE_ADMIN_ALLOWED_HOSTS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Host header allowlist for the admin HTTP service."},
-    "DUNE_HAGGA_MAP_INVERT_X": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Flip Hagga Basin map plotting horizontally to match the background map orientation."},
-    "DUNE_HAGGA_MAP_INVERT_Y": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Invert Hagga Basin map plotting vertically to match the background map orientation."},
+    "DUNE_HAGGA_MAP_MIN_X": {"group": "Admin Panel", "secret": False, "restart": True, "why": "THGL survival_1 world-space left bound for Hagga Basin player plotting."},
+    "DUNE_HAGGA_MAP_MAX_X": {"group": "Admin Panel", "secret": False, "restart": True, "why": "THGL survival_1 world-space right bound for Hagga Basin player plotting."},
+    "DUNE_HAGGA_MAP_MIN_Y": {"group": "Admin Panel", "secret": False, "restart": True, "why": "THGL survival_1 world-space top bound for Hagga Basin player plotting."},
+    "DUNE_HAGGA_MAP_MAX_Y": {"group": "Admin Panel", "secret": False, "restart": True, "why": "THGL survival_1 world-space bottom bound for Hagga Basin player plotting."},
+    "DUNE_HAGGA_MAP_INVERT_X": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Flip Hagga Basin map plotting horizontally. Default false for the THGL survival_1 tile mosaic."},
+    "DUNE_HAGGA_MAP_INVERT_Y": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Invert Hagga Basin map plotting vertically. Default false for the THGL survival_1 tile mosaic."},
     "DUNE_HAGGA_MAP_IMAGE_MIN_U": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Normalized image-space left edge for Hagga world-coordinate calibration. Values may be outside 0..1 when the bitmap has projection/crop offset."},
     "DUNE_HAGGA_MAP_IMAGE_MAX_U": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Normalized image-space right edge for Hagga world-coordinate calibration."},
     "DUNE_HAGGA_MAP_IMAGE_MIN_V": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Normalized image-space top edge for Hagga world-coordinate calibration."},
@@ -2409,7 +2413,7 @@ class Handler(BaseHTTPRequestHandler):
                 "imageMinV": HAGGA_MAP_IMAGE_MIN_V,
                 "imageMaxV": HAGGA_MAP_IMAGE_MAX_V,
                 "showReturnPoints": HAGGA_MAP_SHOW_RETURN_POINTS,
-                "source": "DUNE_HAGGA_MAP_* affine world-to-image calibration",
+                "source": "THGL survival_1 tile bounds/projection: image U from world Y, image V from world X",
             },
             "players": rows,
         }
@@ -3771,10 +3775,10 @@ function haggaBasinMapPanel(data){
   const height = 1000;
   const pad = 0;
   const mapExtent = 100000;
-  const minX = Number.isFinite(Number(calibration.minX)) ? Number(calibration.minX) : -407000;
-  const maxX = Number.isFinite(Number(calibration.maxX)) ? Number(calibration.maxX) : 407000;
-  const minY = Number.isFinite(Number(calibration.minY)) ? Number(calibration.minY) : -403500;
-  const maxY = Number.isFinite(Number(calibration.maxY)) ? Number(calibration.maxY) : 403500;
+  const minX = Number.isFinite(Number(calibration.minX)) ? Number(calibration.minX) : -457599;
+  const maxX = Number.isFinite(Number(calibration.maxX)) ? Number(calibration.maxX) : 355199;
+  const minY = Number.isFinite(Number(calibration.minY)) ? Number(calibration.minY) : -457599;
+  const maxY = Number.isFinite(Number(calibration.maxY)) ? Number(calibration.maxY) : 355199;
   const invertX = calibration.invertX !== false;
   const invertY = calibration.invertY !== false;
   const imageMinU = Number.isFinite(Number(calibration.imageMinU)) ? Number(calibration.imageMinU) : 0;
@@ -3784,28 +3788,28 @@ function haggaBasinMapPanel(data){
   const showReturnPoints = calibration.showReturnPoints === true;
   const spanX = Math.max(maxX - minX, 1);
   const spanY = Math.max(maxY - minY, 1);
-  const worldToImageU = x => {
-    const normalized = (Number(x) - minX) / spanX;
+  const worldToImageU = (x, y) => {
+    const normalized = (Number(y) - minY) / spanY;
     const oriented = invertX ? 1 - normalized : normalized;
     return imageMinU + oriented * (imageMaxU - imageMinU);
   };
-  const worldToImageV = y => {
-    const normalized = (Number(y) - minY) / spanY;
+  const worldToImageV = (x, y) => {
+    const normalized = (Number(x) - minX) / spanX;
     const oriented = invertY ? 1 - normalized : normalized;
     return imageMinV + oriented * (imageMaxV - imageMinV);
   };
-  const px = x => clamp(pad + worldToImageU(x) * (width - pad * 2), 0, width);
-  const py = y => clamp(pad + worldToImageV(y) * (height - pad * 2), 0, height);
+  const px = (x, y) => clamp(pad + worldToImageU(x, y) * (width - pad * 2), 0, width);
+  const py = (x, y) => clamp(pad + worldToImageV(x, y) * (height - pad * 2), 0, height);
   const grid = [1,2,3,4].map(i => {
     const gx = (i / 5) * width;
     const gy = (i / 5) * height;
     return `<line class="gridLine" x1="${gx}" y1="${pad}" x2="${gx}" y2="${height - pad}"></line><line class="gridLine" x1="${pad}" y1="${gy}" x2="${width - pad}" y2="${gy}"></line>`;
   }).join('');
   const markers = players.map((p, index) => {
-    const x = px(p.x);
-    const y = py(p.y);
-    const rx = p.return_map === 'HaggaBasin' && Number.isFinite(Number(p.return_x)) ? px(p.return_x) : null;
-    const ry = p.return_map === 'HaggaBasin' && Number.isFinite(Number(p.return_y)) ? py(p.return_y) : null;
+    const x = px(p.x, p.y);
+    const y = py(p.x, p.y);
+    const rx = p.return_map === 'HaggaBasin' && Number.isFinite(Number(p.return_x)) ? px(p.return_x, p.return_y) : null;
+    const ry = p.return_map === 'HaggaBasin' && Number.isFinite(Number(p.return_y)) ? py(p.return_x, p.return_y) : null;
     const hasReturnPoint = showReturnPoints && rx !== null && ry !== null && Math.hypot(rx - x, ry - y) > 8;
     const name = p.character_name || `Player ${index + 1}`;
     const labelX = clamp(x + 14, 8, width - 190);
@@ -3829,7 +3833,7 @@ function haggaBasinMapPanel(data){
     last_login_time: p.last_login_time || ''
   }));
   const generatedAt = data?.generatedAt ? new Date(data.generatedAt).toLocaleTimeString() : '';
-  return `<div class="panelBand"><div class="sectionHeader"><h2>Hagga Basin Player Map</h2><div class="toolbar"><span id="haggaMapCount" class="pill ${players.length ? 'ok' : ''}">${esc(players.length)} plotted</span><span id="haggaMapUpdated" class="pill">updated ${esc(generatedAt)}</span><span id="haggaMapHealth" class="pill warn">best-effort DB position</span><button id="toggleHaggaMapRefreshBtn" aria-pressed="${haggaMapAutoRefresh ? 'true' : 'false'}">${haggaMapAutoRefresh ? 'Pause map' : 'Resume map'}</button><button id="refreshHaggaMapBtn">Refresh map</button></div></div><div id="haggaMapSrStatus" class="srOnly" aria-live="polite">${esc(players.length)} Hagga Basin players plotted.</div><div class="haggaMap"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Hagga Basin online player coordinate map"><image class="mapImage" href="/static/hagga-basin.webp" x="0" y="0" width="${width}" height="${height}" preserveAspectRatio="xMidYMid meet"></image><rect class="mapShade" x="0" y="0" width="${width}" height="${height}"></rect>${grid}<text x="12" y="24" fill="var(--muted)" font-size="12">NW</text><text x="${width - 30}" y="${height - 12}" fill="var(--muted)" font-size="12">SE</text>${markers}${empty}</svg></div><div class="haggaMapStatus"><span class="pill ok">green: pawn/controller transform</span><span class="pill ${showReturnPoints ? 'warn' : ''}">yellow return-info ${showReturnPoints ? 'shown' : 'hidden'}</span><span class="pill">background: Community Wiki Hagga Basin map</span><span class="pill">world X ${esc(Math.round(minX))}..${esc(Math.round(maxX))}, Y ${esc(Math.round(minY))}..${esc(Math.round(maxY))}${invertX ? ', flipped X' : ''}${invertY ? ', inverted Y' : ''}</span><span class="pill">image U ${esc(imageMinU.toFixed(2))}..${esc(imageMaxU.toFixed(2))}, V ${esc(imageMinV.toFixed(2))}..${esc(imageMaxV.toFixed(2))}</span></div><details open><summary>Coordinates</summary><div class="coordTable">${table(rows)}</div></details></div>`;
+  return `<div class="panelBand"><div class="sectionHeader"><h2>Hagga Basin Player Map</h2><div class="toolbar"><span id="haggaMapCount" class="pill ${players.length ? 'ok' : ''}">${esc(players.length)} plotted</span><span id="haggaMapUpdated" class="pill">updated ${esc(generatedAt)}</span><span id="haggaMapHealth" class="pill warn">best-effort DB position</span><button id="toggleHaggaMapRefreshBtn" aria-pressed="${haggaMapAutoRefresh ? 'true' : 'false'}">${haggaMapAutoRefresh ? 'Pause map' : 'Resume map'}</button><button id="refreshHaggaMapBtn">Refresh map</button></div></div><div id="haggaMapSrStatus" class="srOnly" aria-live="polite">${esc(players.length)} Hagga Basin players plotted.</div><div class="haggaMap"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Hagga Basin online player coordinate map"><image class="mapImage" href="/static/hagga-basin.webp" x="0" y="0" width="${width}" height="${height}" preserveAspectRatio="xMidYMid meet"></image><rect class="mapShade" x="0" y="0" width="${width}" height="${height}"></rect>${grid}<text x="12" y="24" fill="var(--muted)" font-size="12">NW</text><text x="${width - 30}" y="${height - 12}" fill="var(--muted)" font-size="12">SE</text>${markers}${empty}</svg></div><div class="haggaMapStatus"><span class="pill ok">green: pawn/controller transform</span><span class="pill ${showReturnPoints ? 'warn' : ''}">yellow return-info ${showReturnPoints ? 'shown' : 'hidden'}</span><span class="pill">background: THGL survival_1 z4 tile mosaic</span><span class="pill">THGL projection: image U from world Y, image V from world X</span><span class="pill">world X ${esc(Math.round(minX))}..${esc(Math.round(maxX))}, Y ${esc(Math.round(minY))}..${esc(Math.round(maxY))}${invertX ? ', flipped X' : ''}${invertY ? ', inverted Y' : ''}</span><span class="pill">image U ${esc(imageMinU.toFixed(2))}..${esc(imageMaxU.toFixed(2))}, V ${esc(imageMinV.toFixed(2))}..${esc(imageMaxV.toFixed(2))}</span></div><details open><summary>Coordinates</summary><div class="coordTable">${table(rows)}</div></details></div>`;
 }
 function wireHaggaMapControls(container){
   container.querySelectorAll('.playerMarker[data-account-id]').forEach(marker => {

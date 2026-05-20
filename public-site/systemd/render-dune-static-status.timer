@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodic public Dune static status render
+
+[Timer]
+OnCalendar=*:0/1
+Persistent=true
+RandomizedDelaySec=10s
+
+[Install]
+WantedBy=timers.target

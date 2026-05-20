@@ -1,7 +1,7 @@
 COMPOSE ?= docker compose
 ENV_FILE ?= .env.example
 
-.PHONY: validate compose-config secret-scan test-watch-maps list-publishable preflight status check-steam-update start-full-warm-pool recover-survival recover-map watch-maps watch-maps-status install-map-watchdog-service install-full-farm-service install-daily-maintenance-timer full-world-partitions verify-local-state-ignored
+.PHONY: validate compose-config secret-scan test-watch-maps list-publishable preflight status check-steam-update start-full-warm-pool recover-survival recover-map watch-maps watch-maps-status install-map-watchdog-service install-full-farm-service install-daily-maintenance-timer full-world-partitions public-site-check public-site-package verify-local-state-ignored
 
 validate: compose-config secret-scan test-watch-maps verify-local-state-ignored
 
@@ -56,6 +56,14 @@ test-watch-maps:
 
 list-publishable:
 	find . -maxdepth 3 \( -path './.git' -o -path './data' -o -path './captures' -o -path './backups' -o -path './config/tls' \) -prune -o -type f -not -name '.env' -print | sort
+
+public-site-check:
+	bash -n public-site/scripts/*.sh examples/public-site/rclone-sync.sh
+	python3 -m py_compile public-site/scripts/render-dune-public-snapshot.py
+	systemd-analyze verify public-site/systemd/render-dune-static-status.service public-site/systemd/render-dune-static-status.timer
+
+public-site-package:
+	./public-site/scripts/package-dune-public-site.sh
 
 verify-local-state-ignored:
 	@for path in backups/example captures/example data/example config/tls/example; do \

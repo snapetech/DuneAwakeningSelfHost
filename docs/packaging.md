@@ -35,6 +35,7 @@ examples/backup/
 examples/ingress/
 examples/firewall/
 config/systemd/
+public-site/
 ```
 
 Operators should copy values from examples into their private `.env` or backup config. They should not use examples as complete replacements for `.env.example`, because `.env.example` remains the canonical list of supported keys.
@@ -45,6 +46,7 @@ Before publishing:
 
 ```bash
 make validate
+make public-site-check
 git diff --check
 ./scripts/package-manifest.sh /tmp/dash-package-manifest.md
 ```
@@ -75,6 +77,7 @@ For another operator, the handoff should be:
 4. Optional copied local-only backup config under `/etc/dash` or outside the repo.
 5. Router/firewall port list for the selected layout.
 6. Restore-tested backup location and retention policy.
+7. Optional public static site package from `public-site/` if the operator wants a public status/settings/map page.
 
 The handoff should not include Funcom images or Steam files unless the recipient is entitled and obtains them through official channels.
 

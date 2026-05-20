@@ -9,6 +9,7 @@ This repository is for original tooling around the official Dune: Awakening self
 - Documentation and teardown notes.
 - Sanitized config templates with placeholders.
 - `.env.example` with non-secret defaults.
+- The optional public static site package under `public-site/` and `examples/public-site/`.
 
 ## Keep Local
 
@@ -19,6 +20,7 @@ This repository is for original tooling around the official Dune: Awakening self
 - Steam-installed server package files.
 - Funcom image tarballs or extracted container contents.
 - Decompiled, reverse-engineered, or patched proprietary files.
+- Generated public-site runtime output if it contains real player names or site-specific hostnames.
 
 ## Before Pushing
 

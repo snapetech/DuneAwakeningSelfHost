@@ -1,0 +1,27 @@
+{
+	admin off
+}
+
+https://dune.example.com {
+	root * /srv/dash-public-site
+	encode zstd gzip
+
+	header {
+		Content-Security-Policy "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self'"
+		Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=(), serial=(), bluetooth=()"
+		Referrer-Policy "no-referrer"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+	}
+
+	@allowed_methods method GET HEAD
+	@public_files path / /style.css /app.js /status.html /players.json /hagga-map.svg /hagga-basin.webp
+
+	handle @allowed_methods {
+		handle @public_files {
+			file_server
+		}
+	}
+
+	respond "not found" 404
+}

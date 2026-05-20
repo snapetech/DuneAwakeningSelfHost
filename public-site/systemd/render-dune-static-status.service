@@ -1,0 +1,10 @@
+[Unit]
+Description=Render public Dune static status
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=dune
+EnvironmentFile=-/etc/dune-public-site.env
+ExecStart=/usr/local/sbin/render-dune-static-status.sh

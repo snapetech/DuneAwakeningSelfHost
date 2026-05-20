@@ -114,7 +114,7 @@ server {
 ## Current Features
 
 - Overview-first dashboard with player roster, realtime resource use, headline health metrics, map health, network checks, and health verdicts.
-- Hagga Basin player map that projects live database pawn coordinates onto `admin/static/hagga-basin.webp` through `DUNE_HAGGA_MAP_*` affine calibration. The world extents and image-space `U/V` range are editable env settings so alignment can be corrected against known in-game locations without hardcoding per-player offsets.
+- Hagga Basin player map that projects live database pawn coordinates onto `admin/static/hagga-basin.webp` through `DUNE_HAGGA_MAP_*` calibration. The checked-in background is an 8192px THGL `survival_1` z4 tile mosaic, and the default world bounds are `X -457599..355199`, `Y -457599..355199` with no axis flip. THGL's custom projection maps image U from world Y and image V from world X; do not swap this back to naive `x -> U, y -> V` mapping.
 - Server/farm state view with per-map online/offline health derived from `world_partition`, `farm_state`, and `active_server_ids`.
 - Realtime resource view for host load, host memory, workspace disk, and Docker container CPU/memory/network/block I/O when the Docker socket is available.
 - Local/upstream health checks for Postgres reachability, the Dune account portal, and public Dune/Funcom HTTP reachability.

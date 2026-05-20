@@ -358,6 +358,7 @@ Architecture and research:
 - [`docs/packaging.md`](docs/packaging.md): publishable package boundaries and release checklist.
 - [`docs/release-template.md`](docs/release-template.md): release/handoff note template.
 - [`docs/publication.md`](docs/publication.md): release safety checklist.
+- [`docs/public-static-site.md`](docs/public-static-site.md): optional public static server page with status, settings, player list, and Hagga Basin map.
 
 Root-level research indexes:
 
@@ -377,6 +378,7 @@ Root-level research indexes:
 - [`examples/`](examples): portable env, backup, and operator examples.
 - [`admin/admin_panel.py`](admin/admin_panel.py): admin web panel.
 - [`admin/static/hagga-basin.webp`](admin/static/hagga-basin.webp): Hagga Basin panel map asset.
+- [`public-site/`](public-site): optional public static site package for operators who want a safe public status/settings/map page.
 - [`scripts/start-full-warm-pool.sh`](scripts/start-full-warm-pool.sh): 30-map startup helper.
 - [`scripts/bootstrap-checklist.sh`](scripts/bootstrap-checklist.sh): read-only new-host readiness checklist.
 - [`scripts/check-steam-update.sh`](scripts/check-steam-update.sh): compare `.env` image pin with the current Steam package tarballs.

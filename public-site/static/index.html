@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dune Awakening Server</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<main>
+<h1>Dune Awakening Server</h1>
+<p class="lede">A community Dune Awakening server with public status, settings, and an active player map.</p>
+
+<div class="dashboard-grid">
+<section class="card">
+<h2>Connect</h2>
+<p><strong>Server:</strong> Dune Awakening Server</p>
+<p><strong>Where:</strong> Dune Awakening &gt; Servers &gt; search for your server name.</p>
+</section>
+
+<!-- STATUS_BEGIN -->
+<div id="server-status">
+<section class="card">
+<h2>Server Status</h2>
+<dl class="status-list">
+<dt><span class="status-dot status-ok"></span>Server</dt><dd>Online</dd>
+<dt><span class="status-dot status-ok"></span>World health</dt><dd>Healthy</dd>
+<dt><span class="status-dot status-ok"></span>Player access</dt><dd>Available</dd>
+</dl>
+<p class="status-updated">Last checked 2026-05-20 05:00 UTC.</p>
+</section>
+</div>
+<!-- STATUS_END -->
+
+<section class="card live-card">
+<div class="section-heading">
+<h2>Hagga Basin Live Map</h2>
+<span id="map-updated" class="muted">loading</span>
+</div>
+<img id="hagga-map" class="hagga-map" src="/hagga-map.svg" alt="Hagga Basin player position map" width="1600" height="1600">
+<p class="muted">Static public snapshot, refreshed once per minute. Only online public display names and coarse locations are published.</p>
+</section>
+
+<section class="card">
+<div class="section-heading">
+<h2>Active Players</h2>
+<span id="player-count" class="pill">loading</span>
+</div>
+<ul id="active-players" class="player-list">
+<li>Loading player list.</li>
+</ul>
+</section>
+</div>
+
+<section class="card">
+<h2>Hosting Stack</h2>
+<p><a href="https://github.com/snapetech/DuneAwakeningSelfHost">DuneAwakeningSelfHost</a> is the stack used to host this server.</p>
+</section>
+
+<div class="rules-grid">
+<section class="card">
+<h2>Core Rules</h2>
+<dl>
+<dt>Mode</dt><dd>PvE</dd>
+<dt>Forced PvP</dt><dd>Off</dd>
+<dt>Security zones</dt><dd>On</dd>
+<dt>Group travel</dt><dd>Off</dd>
+<dt>Character transfers in</dt><dd>Off</dd>
+<dt>Character transfers out</dt><dd>On</dd>
+</dl>
+</section>
+
+<section class="card">
+<h2>Housekeeping</h2>
+<ul>
+<li>Keep it cooperative. No griefing, harassment, blocking progression paths, or baiting other players into bad-faith losses.</li>
+<li>Build with room around shared paths, spawns, resource areas, and points of interest.</li>
+<li>Do not abuse bugs, dupes, stuck states, map holes, or unintended safe spots.</li>
+<li>Clean up abandoned temporary structures, vehicles, and clutter when you are done with them.</li>
+<li>If something breaks, crashes, or looks exploitable, report it instead of spreading it around.</li>
+</ul>
+</section>
+
+<section class="card">
+<h2>Progression And Resources</h2>
+<dl>
+<dt>Difficulty profile</dt><dd>Custom PvE</dd>
+<dt>Player mining output</dt><dd>1.0x</dd>
+<dt>Vehicle mining output</dt><dd>1.0x</dd>
+<dt>Security-zone resource multiplier</dt><dd>2.5x</dd>
+<dt>Vehicle durability damage</dt><dd>1.0x</dd>
+<dt>Decayed inventory durability threshold</dt><dd>0.1</dd>
+</dl>
+</section>
+
+<section class="card">
+<h2>World Events</h2>
+<dl>
+<dt>Sandstorms</dt><dd>On</dd>
+<dt>Coriolis auto-spawn</dt><dd>Off</dd>
+<dt>Sandworm</dt><dd>On</dd>
+<dt>Sandworm danger zones</dt><dd>On</dd>
+<dt>Vehicle and sandworm collision interaction</dt><dd>Off</dd>
+</dl>
+</section>
+
+<section class="card">
+<h2>Building And Bases</h2>
+<dl>
+<dt>Landclaim cap per Hagga Basin map</dt><dd>6</dd>
+<dt>Landclaim cap per Survival map</dt><dd>6</dd>
+<dt>Connected landclaim segments per base</dt><dd>10</dd>
+<dt>Building blueprint extensions</dt><dd>4</dd>
+<dt>Base backup extensions</dt><dd>8</dd>
+<dt>Base Reconstruction Tool cooldown</dt><dd>60 seconds</dd>
+<dt>Building restriction limits</dt><dd>On</dd>
+<dt>Building shelter threshold</dt><dd>0.5</dd>
+<dt>Placeable shelter threshold</dt><dd>0.5</dd>
+<dt>Sheltered hydration protection threshold</dt><dd>0.5</dd>
+</dl>
+</section>
+
+<section class="card">
+<h2>Population Caps</h2>
+<dl>
+<dt>Server hard cap</dt><dd>40</dd>
+</dl>
+</section>
+</div>
+
+</main>
+<script src="/app.js" defer></script>
+</body>
+</html>
