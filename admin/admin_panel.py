@@ -77,6 +77,7 @@ RESTART_COMMAND_TIMEOUT_SECONDS = int(os.environ.get("DUNE_ADMIN_RESTART_COMMAND
 RESTART_COMMAND = os.environ.get("DUNE_ADMIN_RESTART_COMMAND", str(ROOT / "scripts" / "restart-target.sh"))
 RESTART_ONLINE_TIMEOUT_SECONDS = int(os.environ.get("DUNE_ADMIN_RESTART_ONLINE_TIMEOUT_SECONDS", "300"))
 RESTART_ONLINE_POLL_SECONDS = int(os.environ.get("DUNE_ADMIN_RESTART_ONLINE_POLL_SECONDS", "5"))
+RESTART_DISCONNECT_WAIT_SECONDS = float(os.environ.get("DUNE_ADMIN_RESTART_DISCONNECT_WAIT_SECONDS", "5"))
 MAINTENANCE_BACKUP_ENABLED = os.environ.get("DUNE_ADMIN_MAINTENANCE_BACKUP_ENABLED", "true").lower() == "true"
 MAINTENANCE_REPLICA_SNAPSHOT_ENABLED = os.environ.get("DUNE_ADMIN_MAINTENANCE_REPLICA_SNAPSHOT_ENABLED", "true").lower() == "true"
 MAINTENANCE_REPLICA_SNAPSHOT_TIMEOUT_SECONDS = int(os.environ.get("DUNE_ADMIN_MAINTENANCE_REPLICA_SNAPSHOT_TIMEOUT_SECONDS", "300"))
@@ -524,6 +525,7 @@ def schedule_announcement(body):
     job = {
         "id": secrets.token_urlsafe(12),
         "message": message,
+        "action": str(body.get("action", "maintenance")).strip() or "maintenance",
         "delay": delay_key,
         "createdAt": now,
         "restartAt": restart_at,
@@ -634,6 +636,7 @@ def schedule_restart(body):
             "repeat_seconds": repeat_seconds,
             "message": message,
             "restart_at": run_at,
+            "action": action,
         })
     return job
 
@@ -740,9 +743,18 @@ def execute_restart(job):
         return {"ok": False, "error": f"restart command is not executable: {command}"}
 
     action = job.get("action", "restart")
+    disconnect_result = soft_disconnect_online_players(job)
+    if not disconnect_result.get("ok"):
+        return {
+            "ok": False,
+            "action": action,
+            "disconnect": disconnect_result,
+            "error": disconnect_result.get("error", "soft disconnect failed"),
+            "output": disconnect_result.get("error", "soft disconnect failed"),
+        }
     stop_phase = "shutdown" if action == "shutdown" else "stop"
     stop_result = run_restart_command(command, job, stop_phase)
-    result = {"ok": False, "action": action, "stop": stop_result, "backup": None, "start": None}
+    result = {"ok": False, "action": action, "disconnect": disconnect_result, "stop": stop_result, "backup": None, "start": None}
     if not stop_result.get("ok"):
         result["output"] = stop_result.get("output", stop_result.get("error", ""))
         return result
@@ -781,11 +793,42 @@ def dashboard_announcement_message(message):
     return f"!!! {message} !!!"
 
 
+def format_remaining(seconds):
+    seconds = max(0, int(round(float(seconds))))
+    if seconds <= 0:
+        return "now"
+    minutes, sec = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    parts = []
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes:
+        parts.append(f"{minutes}m")
+    if sec or not parts:
+        parts.append(f"{sec}s")
+    return " ".join(parts)
+
+
+def announcement_message_with_remaining(job):
+    base = str(job.get("message", "")).strip()
+    restart_at = float(job.get("restartAt", time.time()))
+    remaining = max(0, restart_at - time.time())
+    action = str(job.get("action", "maintenance")).strip() or "maintenance"
+    remaining_text = format_remaining(remaining)
+    if "{remaining}" in base or "{time_remaining}" in base:
+        return base.replace("{remaining}", remaining_text).replace("{time_remaining}", remaining_text)
+    if "{action}" in base:
+        return base.replace("{action}", action).replace("{remaining}", remaining_text).replace("{time_remaining}", remaining_text)
+    if remaining <= 0:
+        return f"{base} Starting {action} now. Players will be disconnected cleanly."
+    return f"{base} {action.capitalize()} in {remaining_text}."
+
+
 def deliver_announcement(job):
     command = pathlib.Path(ANNOUNCEMENT_COMMAND)
     if not command.exists() or not os.access(command, os.X_OK):
         return {"ok": False, "error": f"announce command is not executable: {command}"}
-    message = dashboard_announcement_message(job.get("message", ""))
+    message = dashboard_announcement_message(announcement_message_with_remaining(job))
     env = os.environ.copy()
     env.update({
         "DUNE_ANNOUNCE_MESSAGE": message,
@@ -819,7 +862,7 @@ def announcement_worker():
         with ANNOUNCEMENT_LOCK:
             state = read_announcement_state()
             for job in active_announcement_jobs(state):
-                if now >= float(job.get("restartAt", 0)) and int(job.get("deliveryCount") or 0) > 0:
+                if now >= float(job.get("restartAt", 0)) and job.get("finalSentAt"):
                     job["status"] = "expired"
                     continue
                 if now >= float(job.get("nextSendAt", 0)):
@@ -845,6 +888,7 @@ def announcement_worker():
                     job["lastError"] = None if result.get("ok") else result.get("error") or result.get("output")
                     repeat_seconds = int(job.get("repeatSeconds") or 0)
                     if time.time() >= float(job.get("restartAt", 0)):
+                        job["finalSentAt"] = time.time()
                         job["status"] = "expired"
                     elif repeat_seconds <= 0:
                         job["status"] = "sent" if result.get("ok") else "failed"
@@ -1268,6 +1312,119 @@ def gm_payload_execute(body):
             app_id="DASH-Admin-Panel",
         )
     result["dryRun"] = False
+    return result
+
+
+def bool_env(name, default=False):
+    value = os.environ.get(name, "true" if default else "false").lower()
+    return value in ("1", "true", "yes", "on")
+
+
+def player_disconnect_command_name():
+    command = os.environ.get("DUNE_PLAYER_DISCONNECT_COMMAND", "RemoveSessionMember").strip()
+    allowed = {"RemoveSessionMember", "KickLobbyMember"}
+    if bool_env("DUNE_PLAYER_DISCONNECT_ALLOW_BATTLEYE", False):
+        allowed.add("BattlEyeMegaKick")
+    if command not in allowed:
+        raise ValueError(f"DUNE_PLAYER_DISCONNECT_COMMAND must be one of: {', '.join(sorted(allowed))}")
+    return command
+
+
+def maintenance_player_disconnect_enabled():
+    return GM_COMMANDS_ENABLED and GM_COMMAND_PAYLOAD_VERIFIED and bool_env("DUNE_CHAT_COMMAND_EXECUTE_PLAYER_DISCONNECT", False)
+
+
+def online_players_for_restart(job):
+    broad_targets = {"all", "core", "service-layer", "game-all"}
+    services = set(job.get("services") or [])
+    rows = query("""
+        select ps.account_id, ps.character_name, ps.server_id, fs.map
+        from dune.player_state ps
+        left join dune.farm_state fs on fs.server_id = ps.server_id
+        where ps.online_status::text = 'Online'
+          and ps.character_name is not null
+          and ps.server_id is not null
+        order by ps.character_name
+    """)
+    if not services or job.get("target") in broad_targets:
+        return rows
+    return [
+        row for row in rows
+        if not row.get("map") or map_name_to_service(row.get("map")) in services
+    ]
+
+
+def map_name_to_service(map_name):
+    normalized = str(map_name or "").strip().lower().replace("_", "-")
+    aliases = {
+        "haggabasin": "survival",
+        "survival": "survival",
+        "overmap": "overmap",
+        "arrakeen": "arrakeen",
+        "harko-village": "harko-village",
+        "deep-desert": "deep-desert",
+    }
+    return aliases.get(normalized, normalized)
+
+
+def disconnect_player_for_restart(player):
+    command = player_disconnect_command_name()
+    character_name = str(player.get("character_name") or "").strip()
+    route = str(player.get("server_id") or "").strip()
+    if not character_name or not route:
+        return {"ok": False, "player": character_name, "route": route, "error": "missing character name or route"}
+    command_text = f"{command} {character_name}"
+    if os.environ.get("DUNE_GM_COMMAND_TRANSPORT", "amqp") == "management":
+        result = publish_command_management(command_text, route, target_player=character_name, admin_player="DASH")
+    else:
+        result = publish_command(command_text, route, target_player=character_name, admin_player="DASH", app_id="DASH-Maintenance")
+    return {
+        "ok": bool(result.get("ok")),
+        "player": character_name,
+        "route": route,
+        "map": player.get("map"),
+        "commandText": command_text,
+        "correlationId": result.get("correlationId"),
+        "transport": result.get("transport"),
+    }
+
+
+def soft_disconnect_online_players(job):
+    players = online_players_for_restart(job)
+    result = {
+        "ok": True,
+        "enabled": maintenance_player_disconnect_enabled(),
+        "waitSeconds": RESTART_DISCONNECT_WAIT_SECONDS,
+        "players": [{"characterName": row.get("character_name"), "serverId": row.get("server_id"), "map": row.get("map")} for row in players],
+        "sent": [],
+        "errors": [],
+    }
+    if not players:
+        result["skipped"] = "no online players in restart target"
+        return result
+    if not result["enabled"]:
+        result["ok"] = False
+        result["error"] = "online players are present, but targeted disconnect is gated; set DUNE_ADMIN_GM_COMMANDS_ENABLED=true, DUNE_GM_COMMAND_PAYLOAD_VERIFIED=true, and DUNE_CHAT_COMMAND_EXECUTE_PLAYER_DISCONNECT=true"
+        return result
+    max_workers = max(1, min(16, len(players)))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_map = {executor.submit(disconnect_player_for_restart, player): player for player in players}
+        for future in concurrent.futures.as_completed(future_map):
+            player = future_map[future]
+            try:
+                sent = future.result()
+            except Exception as exc:
+                sent = {"ok": False, "player": player.get("character_name"), "route": player.get("server_id"), "error": str(exc)}
+            if sent.get("ok"):
+                result["sent"].append(sent)
+            else:
+                result["errors"].append(sent)
+    if result["errors"]:
+        result["ok"] = False
+        result["error"] = "one or more soft disconnect publishes failed"
+        return result
+    time.sleep(max(0, RESTART_DISCONNECT_WAIT_SECONDS))
+    result["waited"] = True
     return result
 
 

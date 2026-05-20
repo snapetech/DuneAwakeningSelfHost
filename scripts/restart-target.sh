@@ -191,7 +191,9 @@ def run_host_compose(services):
         + "; if [ -x /workspace/scripts/seed-gateway-neighbor.sh ]; then "
         + "/workspace/scripts/seed-gateway-neighbor.sh; "
         + "fi; "
-        + "if [ -x /workspace/scripts/verify-rmq-auth-path.sh ]; then "
+        + "if [ -x /workspace/scripts/restart-post-start-health.sh ]; then "
+        + "/workspace/scripts/restart-post-start-health.sh; "
+        + "elif [ -x /workspace/scripts/verify-rmq-auth-path.sh ]; then "
         + "/workspace/scripts/verify-rmq-auth-path.sh; "
         + "fi"
     )
@@ -345,7 +347,9 @@ if [ "$phase" = "start" ]; then
   if [ -x ./scripts/seed-gateway-neighbor.sh ]; then
     ./scripts/seed-gateway-neighbor.sh || true
   fi
-  if [ -x ./scripts/verify-rmq-auth-path.sh ]; then
+  if [ -x ./scripts/restart-post-start-health.sh ]; then
+    ./scripts/restart-post-start-health.sh
+  elif [ -x ./scripts/verify-rmq-auth-path.sh ]; then
     ./scripts/verify-rmq-auth-path.sh
   fi
   exit 0
@@ -357,6 +361,8 @@ fi
 if [ -x ./scripts/seed-gateway-neighbor.sh ]; then
   ./scripts/seed-gateway-neighbor.sh || true
 fi
-if [ -x ./scripts/verify-rmq-auth-path.sh ]; then
+if [ -x ./scripts/restart-post-start-health.sh ]; then
+  ./scripts/restart-post-start-health.sh
+elif [ -x ./scripts/verify-rmq-auth-path.sh ]; then
   ./scripts/verify-rmq-auth-path.sh
 fi
