@@ -381,13 +381,13 @@ def private_join_message(player, message):
 
 def render_template(template, player_name, count, **extra):
     context = {
-        playername=player_name,
-        player_name=player_name,
-        count=count,
-        player_count=count,
-        server_name=env("DUNE_PLAYER_PRESENCE_SERVER_NAME", env("DUNE_SERVER_DISPLAY_NAME", env("WORLD_NAME", "this server"))),
-        server_url=env("DUNE_PLAYER_PRESENCE_SERVER_URL", env("DUNE_PUBLIC_SITE_URL", "")),
-        rules_url=env("DUNE_PLAYER_PRESENCE_RULES_URL", env("DUNE_PLAYER_PRESENCE_SERVER_URL", env("DUNE_PUBLIC_SITE_URL", ""))),
+        "playername": player_name,
+        "player_name": player_name,
+        "count": count,
+        "player_count": count,
+        "server_name": env("DUNE_PLAYER_PRESENCE_SERVER_NAME", env("DUNE_SERVER_DISPLAY_NAME", env("WORLD_NAME", "this server"))),
+        "server_url": env("DUNE_PLAYER_PRESENCE_SERVER_URL", env("DUNE_PUBLIC_SITE_URL", "")),
+        "rules_url": env("DUNE_PLAYER_PRESENCE_RULES_URL", env("DUNE_PLAYER_PRESENCE_SERVER_URL", env("DUNE_PUBLIC_SITE_URL", ""))),
     }
     context.update(extra)
     return template.format(**context)
