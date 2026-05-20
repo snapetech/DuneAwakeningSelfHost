@@ -157,6 +157,14 @@ fi
 check_image_tarballs
 check_compose_bindings
 
+if [[ -x ./scripts/check-admin-ingress.sh ]]; then
+  if ./scripts/check-admin-ingress.sh "$env_file"; then
+    ok "admin ingress probe passed"
+  else
+    fail "admin ingress probe failed"
+  fi
+fi
+
 if [[ "$failures" -gt 0 ]]; then
   printf '\npreflight failed with %s issue(s)\n' "$failures" >&2
   exit 1

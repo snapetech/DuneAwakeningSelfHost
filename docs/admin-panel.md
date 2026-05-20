@@ -52,6 +52,33 @@ admin.example.test -> <your-server-lan-ip>
 
 Keep it on trusted LAN/VPN only. The panel still runs behind the local ingress and should not be exposed directly to the internet.
 
+If you put a separate LAN reverse proxy in front of the local admin-panel port, make sure the hostname has an explicit route. A missing route can look like the panel is offline even when `127.0.0.1:${DUNE_ADMIN_HOST_PORT}` is healthy. The reverse proxy should forward the original `Host` header and target the local published port:
+
+```caddyfile
+@admin_panel {
+    host admin.example.test
+}
+reverse_proxy @admin_panel 127.0.0.1:18081 {
+    header_up Host {host}
+    header_up X-Forwarded-Host {host}
+    header_up X-Forwarded-Proto http
+}
+```
+
+For Caddy or any other LAN ingress, also keep the admin hostname in a private/LAN allow rule. Do not add it to a public catch-all route.
+
+Optional hardening probe:
+
+```dotenv
+DUNE_ADMIN_LAN_URL=http://admin.example.test/api/status
+```
+
+```bash
+./scripts/check-admin-ingress.sh .env
+```
+
+That script checks both the direct local panel endpoint and the optional LAN hostname. It catches the common failure where the container is healthy but the external reverse proxy returns `502` because no hostname route points at the panel.
+
 Example nginx site:
 
 ```nginx
@@ -120,7 +147,7 @@ DUNE_ANNOUNCE_GAME_RMQ_AMQP_HOST=172.31.240.1
 DUNE_ANNOUNCE_GAME_RMQ_AMQP_PORT=31982
 DUNE_ANNOUNCE_HOST_AMQP_HOST=172.31.240.1
 DUNE_ANNOUNCE_HOST_AMQP_PORT=31982
-DUNE_ANNOUNCE_HOST_WORKSPACE=/home/keith/Documents/code/DuneAwakeningSelfHost
+DUNE_ANNOUNCE_HOST_WORKSPACE=/path/to/DuneAwakeningSelfHost
 DUNE_ANNOUNCE_GAME_RMQ_AMQP_TLS=true
 DUNE_ANNOUNCE_HTTP_TIMEOUT_SECONDS=0.5
 DUNE_ANNOUNCE_ALLOW_MANAGEMENT_PUBLISH=false
@@ -180,6 +207,15 @@ DUNE_CHAT_COMMAND_ADMINS=Lukano
 DUNE_CHAT_COMMAND_ADMIN_FLS_IDS=6FF6498F4074E3DE
 DUNE_CHAT_COMMAND_DRY_RUN=true
 DUNE_CHAT_COMMAND_EXECUTE_TELEPORT=false
+DUNE_CHAT_COMMAND_EXECUTE_ONLINE_GM_TELEPORT=false
+DUNE_GM_COMMAND_PAYLOAD_VERIFIED=false
+DUNE_GM_COMMAND_ENVELOPE_MODE=service-message
+DUNE_GM_COMMAND_EXCHANGE=rpc
+DUNE_GM_COMMAND_REPLY_TO=bgdRpc
+DUNE_GM_COMMAND_AMQP_HOST=admin-rabbitmq
+DUNE_GM_COMMAND_AMQP_PORT=5672
+DUNE_GM_COMMAND_AMQP_USER=<admin-rmq command user>
+DUNE_GM_COMMAND_AMQP_PASSWORD=<admin-rmq command password>
 DUNE_CHAT_COMMAND_EXCHANGE=chat.intercept
 DUNE_CHAT_COMMAND_QUEUE=dash_admin_chat_commands
 DUNE_CHAT_COMMAND_ROUTING_KEY=#
@@ -198,13 +234,14 @@ Implemented commands:
 &where <playername>
 &teleport <playername>
 &goto <playername>
+&bring <playername>
 ```
 
 `&test` replies with `f00` through the configured announcement/reply path. Use it as the first live smoke test for chat-command ingestion and reply delivery.
 
 `&where` reports the resolved player's current online/offline state and last known location. `&teleport` moves an offline target to the admin's current partition and location, using the server's own `dune.admin_move_offline_player_to_partition(...)` function. It rejects online targets because live actor transforms are owned by the running map server and can be overwritten.
 
-`&goto` resolves the target's location and reports the native command candidates for moving the admin to that target. It does not execute yet. Online admin movement needs the native live GM route (`TeleportToPlayer`, `TeleportToExact`, or `TravelTo`) to be verified first.
+`&goto` and `&bring` are wired through the native GM command adapter for online movement, but execution remains gated until the command payload is proven. `&goto <playername>` prepares `TeleportToPlayer <playername>` targeted at the admin; `&bring <playername>` prepares `TeleportToExact <admin-x> <admin-y> <admin-z>` targeted at the online player. The three required gates are `DUNE_ADMIN_GM_COMMANDS_ENABLED=true`, `DUNE_GM_COMMAND_PAYLOAD_VERIFIED=true`, and `DUNE_CHAT_COMMAND_EXECUTE_ONLINE_GM_TELEPORT=true`. Until then, the commands return the exact payload preview instead of publishing a live teleport.
 
 Teleport starts in dry-run mode. To apply the movement write, set:
 
@@ -231,7 +268,7 @@ docker compose up -d --no-deps admin-chat-commands
 docker compose logs -f admin-chat-commands
 ```
 
-The listener service is separate from the web panel so a command-loop failure does not take down `duneadmin.home`. It uses `restart: unless-stopped` and reads `/workspace/.env` at runtime for chat-command and announcement credentials, matching the announcement hook behavior.
+The listener service is separate from the web panel so a command-loop failure does not take down the admin panel hostname. It uses `restart: unless-stopped` and reads `/workspace/.env` at runtime for chat-command and announcement credentials, matching the announcement hook behavior.
 
 ## Scheduled Restarts And Shutdowns
 
