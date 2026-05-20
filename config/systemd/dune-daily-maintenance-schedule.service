@@ -1,0 +1,10 @@
+[Unit]
+Description=Schedule DASH daily maintenance restart
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/path/to/DuneAwakeningSelfHost
+Environment=DUNE_ENV_FILE=/path/to/DuneAwakeningSelfHost/.env
+ExecStart=/path/to/DuneAwakeningSelfHost/scripts/schedule-daily-maintenance.sh

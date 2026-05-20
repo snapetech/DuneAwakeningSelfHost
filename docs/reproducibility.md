@@ -122,10 +122,11 @@ Expected result: `make validate` exits cleanly, and the second command finds no 
 
 When Steam updates the self-hosted server tool:
 
-1. Update `DUNE_IMAGE_TAG` in `.env`.
+1. Run `./scripts/check-steam-update.sh .env` to compare `.env` with the current Steam package.
 2. Re-run `./scripts/load-images.sh`.
-3. Re-run `./scripts/inspect-images.sh` and compare the output with `docs/teardown.md`.
-4. Run `docker compose --env-file .env config --quiet`.
-5. Start only Postgres and RabbitMQ, run `db-init`, then start the service layer.
-6. Confirm `./scripts/status.sh .env`.
-7. Update docs that cite image tags, ports, settings, or observed behavior.
+3. Update `DUNE_IMAGE_TAG` with `./scripts/check-steam-update.sh .env --write-env`, or edit it manually if multiple tags are reported.
+4. Re-run `./scripts/inspect-images.sh` and compare the output with `docs/teardown.md`.
+5. Run `docker compose --env-file .env config --quiet`.
+6. Start only Postgres and RabbitMQ, run `db-init`, then start the service layer.
+7. Confirm `./scripts/status.sh .env`.
+8. Update docs that cite image tags, ports, settings, or observed behavior.

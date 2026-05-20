@@ -18,12 +18,43 @@ case "$action" in
     ;;
 esac
 case "$phase" in
-  restart|shutdown|stop|start) ;;
+  restart|shutdown|stop|update|start) ;;
   *)
     printf 'invalid DUNE_RESTART_PHASE: %s\n' "$phase" >&2
     exit 64
     ;;
 esac
+
+steam_update_enabled() {
+  case "${DUNE_RESTART_CHECK_STEAM_UPDATE:-true}" in
+    1|true|yes|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+run_steam_update_check() {
+  env_file="${ENV_FILE:-.env}"
+  if ! steam_update_enabled; then
+    printf 'Steam package update check disabled by DUNE_RESTART_CHECK_STEAM_UPDATE\n'
+    return 0
+  fi
+  if [ ! -x ./scripts/check-steam-update.sh ]; then
+    printf 'Steam package update check skipped: scripts/check-steam-update.sh is missing or not executable\n' >&2
+    return 0
+  fi
+  if ./scripts/check-steam-update.sh "$env_file"; then
+    return 0
+  fi
+  rc=$?
+  if [ "$rc" -eq 1 ]; then
+    printf 'Steam package update available; loading official images and updating DUNE_IMAGE_TAG\n'
+    ./scripts/load-images.sh
+    ./scripts/check-steam-update.sh "$env_file" --write-env
+    return 0
+  fi
+  printf 'Steam package update check could not determine a safe tag; continuing without changing DUNE_IMAGE_TAG\n' >&2
+  return 0
+}
 
 if ! command -v docker >/dev/null 2>&1; then
   if [ ! -S /var/run/docker.sock ]; then
@@ -249,6 +280,120 @@ def run_host_compose(services):
         remove_container(container_id)
 
 
+def steam_update_enabled():
+    return os.environ.get("DUNE_RESTART_CHECK_STEAM_UPDATE", "true").lower() in ("1", "true", "yes", "on")
+
+
+def read_env_value(path, key):
+    candidates = []
+    if os.path.isabs(path):
+        candidates.append(path)
+    if host_workspace:
+        candidates.append(os.path.join(host_workspace, path))
+        candidates.append(os.path.join("/workspace", path))
+    for candidate in candidates:
+        try:
+            with open(candidate, "r", encoding="utf-8") as handle:
+                for line in handle:
+                    stripped = line.strip()
+                    if not stripped or stripped.startswith("#") or "=" not in stripped:
+                        continue
+                    name, value = stripped.split("=", 1)
+                    if name.strip() == key:
+                        return value.strip().strip("\"'")
+        except OSError:
+            continue
+    return ""
+
+
+def run_host_update_check():
+    if not steam_update_enabled():
+        return {"ok": True, "skipped": True, "reason": "DUNE_RESTART_CHECK_STEAM_UPDATE disabled"}
+    if not host_workspace:
+        return {"ok": True, "skipped": True, "warning": "host workspace is not configured"}
+    shell_command = (
+        "set -e; "
+        "if [ ! -x ./scripts/check-steam-update.sh ]; then "
+        "echo 'Steam package update check skipped: scripts/check-steam-update.sh is missing or not executable' >&2; "
+        "exit 0; "
+        "fi; "
+        "set +e; "
+        f"./scripts/check-steam-update.sh {shlex.quote(env_file)}; "
+        "rc=$?; "
+        "set -e; "
+        "if [ \"$rc\" = 0 ]; then exit 0; fi; "
+        "if [ \"$rc\" = 1 ]; then "
+        "echo 'Steam package update available; loading official images and updating DUNE_IMAGE_TAG'; "
+        "./scripts/load-images.sh; "
+        f"./scripts/check-steam-update.sh {shlex.quote(env_file)} --write-env; "
+        "exit 0; "
+        "fi; "
+        "echo 'Steam package update check could not determine a safe tag; continuing without changing DUNE_IMAGE_TAG' >&2; "
+        "exit 0"
+    )
+    binds = [
+        f"{socket_path}:/var/run/docker.sock",
+        f"{host_workspace}:{host_workspace}",
+        f"{host_workspace}:/workspace",
+    ]
+    steam_dir = read_env_value(env_file, "DUNE_STEAM_SERVER_DIR")
+    if steam_dir and os.path.isabs(steam_dir):
+        binds.append(f"{steam_dir}:{steam_dir}:ro")
+    body = {
+        "Image": compose_image,
+        "WorkingDir": host_workspace,
+        "Cmd": ["sh", "-lc", shell_command],
+        "Env": [
+            "DOCKER_HOST=unix:///var/run/docker.sock",
+        ],
+        "HostConfig": {
+            "AutoRemove": False,
+            "NetworkMode": "host",
+            "Privileged": True,
+            "Binds": binds,
+        },
+        "Labels": {
+            "com.snapetech.dune.role": "admin-restart-steam-update",
+            "com.snapetech.dune.restart_job": os.environ.get("DUNE_RESTART_JOB_ID", ""),
+        },
+    }
+    helper_name = "dune-admin-steam-update-" + (os.environ.get("DUNE_RESTART_JOB_ID", "manual") or "manual")
+    status, payload = docker("POST", "/containers/create?name=" + urllib.parse.quote(helper_name), body)
+    if status == 409:
+        status, payload = docker("POST", "/containers/create", body)
+    if status != 201:
+        print(f"failed creating Steam update helper: HTTP {status} {payload[:500]!r}", file=sys.stderr)
+        sys.exit(75)
+    container_id = json.loads(payload.decode())["Id"]
+    try:
+        status, payload = docker("POST", f"/containers/{container_id}/start")
+        if status not in (204, 304):
+            print(f"failed starting Steam update helper: HTTP {status} {payload[:500]!r}", file=sys.stderr)
+            sys.exit(75)
+        status, payload = docker("POST", f"/containers/{container_id}/wait")
+        if status != 200:
+            print(f"failed waiting for Steam update helper: HTTP {status} {payload[:500]!r}", file=sys.stderr)
+            sys.exit(75)
+        result = json.loads(payload.decode() or "{}")
+        exit_code = int(result.get("StatusCode", 1))
+        logs = docker_logs(container_id)
+        if exit_code != 0:
+            print(logs, file=sys.stderr)
+            sys.exit(exit_code)
+        return {"ok": True, "output": logs}
+    finally:
+        remove_container(container_id)
+
+
+if phase == "update":
+    if dry_run:
+        print(json.dumps({"ok": True, "target": target, "action": action, "phase": phase, "dryRun": True, "steamUpdate": True}, separators=(",", ":")))
+        sys.exit(0)
+    result = run_host_update_check() if use_host_compose else {"ok": True, "skipped": True, "warning": "host Compose helper disabled"}
+    print(json.dumps({"ok": True, "target": target, "action": action, "phase": phase, "steamUpdate": True, "result": result}, separators=(",", ":")))
+    sys.exit(0)
+
+
 if phase in ("start", "restart") and use_host_compose:
     if dry_run:
         print(json.dumps({"ok": True, "target": target, "action": action, "phase": phase, "dryRun": True, "hostCompose": True, "services": services}, separators=(",", ":")))
@@ -334,6 +479,10 @@ case " $services " in
 esac
 if [ "${DUNE_RESTART_DRY_RUN:-}" = "true" ] || [ "${DUNE_RESTART_DRY_RUN:-}" = "1" ]; then
   printf '{"ok":true,"target":"%s","action":"%s","phase":"%s","dryRun":true,"services":"%s"}\n' "$target" "$action" "$phase" "$services"
+  exit 0
+fi
+if [ "$phase" = "update" ]; then
+  run_steam_update_check
   exit 0
 fi
 if [ "$phase" = "shutdown" ] || [ "$phase" = "stop" ]; then

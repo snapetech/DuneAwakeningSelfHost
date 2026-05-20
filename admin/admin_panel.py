@@ -809,7 +809,7 @@ def execute_restart(job):
         }
     stop_phase = "shutdown" if action == "shutdown" else "stop"
     stop_result = run_restart_command(command, job, stop_phase)
-    result = {"ok": False, "action": action, "disconnect": disconnect_result, "stop": stop_result, "backup": None, "start": None}
+    result = {"ok": False, "action": action, "disconnect": disconnect_result, "stop": stop_result, "backup": None, "update": None, "start": None}
     if not stop_result.get("ok"):
         result["output"] = stop_result.get("output", stop_result.get("error", ""))
         return result
@@ -822,9 +822,16 @@ def execute_restart(job):
             result["output"] = f"{stop_result.get('output', '')}\nbackup failed: {exc}".strip()
             return result
 
+    update_result = run_restart_command(command, job, "update")
+    result["update"] = update_result
+    if not update_result.get("ok"):
+        result["error"] = update_result.get("error") or "Steam package update check failed"
+        result["output"] = "\n".join(part for part in [stop_result.get("output", ""), update_result.get("output", ""), result["error"]] if part)
+        return result
+
     if action == "shutdown":
         result["ok"] = True
-        result["output"] = stop_result.get("output", "")
+        result["output"] = "\n".join(part for part in [stop_result.get("output", ""), update_result.get("output", "")] if part)
         return result
 
     start_result = run_restart_command(command, job, "start")
@@ -2927,7 +2934,7 @@ class Handler(BaseHTTPRequestHandler):
                 {"name": "RabbitMQ auth path", "command": "./scripts/verify-rmq-auth-path.sh", "when": "Check admin-rmq/game-rmq can reach auth shim and text-router."},
                 {"name": "Post-start recovery check", "command": "./scripts/restart-post-start-health.sh", "when": "Validate restart recovery plumbing without taking the game down."},
                 {"name": "Backup validation", "command": "backup=backups/admin-panel/maintenance/<stamp>; tar -tzf \"$backup/server-saved.tgz\" >/dev/null && pg_restore --list \"$backup\"/*.dump >/dev/null", "when": "Verify a maintenance backup is readable."},
-                {"name": "Daily timer", "command": "systemctl list-timers dune-daily-maintenance-schedule.timer --all --no-pager", "when": "Confirm 02:30 schedule for 03:00 maintenance."},
+                {"name": "Daily timer", "command": "systemctl list-timers dune-daily-maintenance-schedule.timer --all --no-pager", "when": "Confirm 05:30 schedule for 06:00 maintenance."},
                 {"name": "Status script", "command": "./scripts/status.sh .env", "when": "Quick health and high-signal logs."},
                 {"name": "Runtime profile", "command": "./scripts/profile-runtime.sh .env", "when": "Memory/storage/network/process teardown."},
                 {"name": "Network watch", "command": "./scripts/watch-network.sh .env", "when": "Check Postgres/RabbitMQ socket churn."},

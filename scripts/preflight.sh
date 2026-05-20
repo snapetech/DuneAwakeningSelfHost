@@ -155,6 +155,15 @@ if [[ "${EXTERNAL_ADDRESS:-}" == "127.0.0.1" ]]; then
 fi
 
 check_image_tarballs
+
+if [[ -x ./scripts/check-steam-update.sh ]]; then
+  if ./scripts/check-steam-update.sh "$env_file" >/dev/null; then
+    ok "DUNE_IMAGE_TAG matches Steam package"
+  else
+    warn "DUNE_IMAGE_TAG may not match Steam package; run ./scripts/check-steam-update.sh $env_file"
+  fi
+fi
+
 check_compose_bindings
 
 if [[ -x ./scripts/check-admin-ingress.sh ]]; then

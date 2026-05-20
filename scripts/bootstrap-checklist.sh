@@ -86,6 +86,13 @@ if [[ -f "$env_file" ]]; then
 
   if [[ -n "$steam_dir" && -d "$steam_dir" ]]; then
     ok "Steam server directory exists"
+    if [[ -x scripts/check-steam-update.sh ]]; then
+      if scripts/check-steam-update.sh "$env_file" >/dev/null; then
+        ok "DUNE_IMAGE_TAG matches Steam package"
+      else
+        warn "DUNE_IMAGE_TAG may not match Steam package; run ./scripts/check-steam-update.sh $env_file"
+      fi
+    fi
   else
     warn "Steam server directory not found locally: ${steam_dir:-unset}"
   fi
