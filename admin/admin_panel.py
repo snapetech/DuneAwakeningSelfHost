@@ -394,6 +394,9 @@ def schedule_restart(body):
     target = str(body.get("target", "")).strip()
     if target not in RESTART_TARGETS:
         raise ValueError("invalid restart target")
+    action = str(body.get("action", "restart")).strip().lower()
+    if action not in ("restart", "shutdown"):
+        raise ValueError("invalid restart action")
     delay_key = str(body.get("delay", "immediate")).strip()
     if delay_key not in ANNOUNCEMENT_DELAYS:
         raise ValueError("invalid restart delay")
@@ -401,11 +404,13 @@ def schedule_restart(body):
     repeat_seconds = int(body.get("repeat_seconds", body.get("repeatSeconds", 60)) or 0)
     announce = str(body.get("announce", "true")).lower() in ("1", "true", "yes", "on")
     execute = str(body.get("execute", "")).lower() in ("1", "true", "yes", "on")
+    backup = str(body.get("backup", "true")).lower() in ("1", "true", "yes", "on")
     now = time.time()
     run_at = now + ANNOUNCEMENT_DELAYS[delay_key]
     job = {
         "id": secrets.token_urlsafe(12),
         "target": target,
+        "action": action,
         "targetLabel": RESTART_TARGETS[target]["label"],
         "services": RESTART_TARGETS[target]["services"],
         "delay": delay_key,
@@ -415,6 +420,7 @@ def schedule_restart(body):
         "announce": announce,
         "repeatSeconds": repeat_seconds,
         "execute": execute,
+        "backup": backup,
         "status": "scheduled",
         "lastError": None,
     }
@@ -445,15 +451,19 @@ def cancel_restart(job_id=None):
 
 def execute_restart(job):
     if not job.get("execute"):
-        return {"ok": True, "dryRun": True, "output": "scheduled restart reached run time; execute=false so no command was run"}
+        return {"ok": True, "dryRun": True, "output": f"scheduled {job.get('action', 'restart')} reached run time; execute=false so no command was run"}
     command = pathlib.Path(RESTART_COMMAND)
     if not command.exists() or not os.access(command, os.X_OK):
         return {"ok": False, "error": f"restart command is not executable: {command}"}
     env = os.environ.copy()
+    backup_result = None
+    if job.get("backup", True) and MAINTENANCE_BACKUP_ENABLED:
+        backup_result = create_maintenance_backup(job)
     env.update({
         "DUNE_RESTART_JOB_ID": job.get("id", ""),
         "DUNE_RESTART_TARGET": job.get("target", ""),
         "DUNE_RESTART_SERVICES": " ".join(job.get("services", [])),
+        "DUNE_RESTART_ACTION": job.get("action", "restart"),
     })
     try:
         result = subprocess.run(
@@ -471,7 +481,7 @@ def execute_restart(job):
     output = (result.stdout + result.stderr).strip()
     if len(output) > AUDIT_FIELD_LIMIT:
         output = output[:AUDIT_FIELD_LIMIT] + "...[truncated]"
-    return {"ok": result.returncode == 0, "returncode": result.returncode, "output": output}
+    return {"ok": result.returncode == 0, "returncode": result.returncode, "output": output, "backup": backup_result}
 
 
 def dashboard_announcement_message(message):
