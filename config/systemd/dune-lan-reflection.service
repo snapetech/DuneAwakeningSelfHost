@@ -6,8 +6,8 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-WorkingDirectory=/home/keith/Documents/code/DuneAwakeningSelfHost
-ExecStart=/home/keith/Documents/code/DuneAwakeningSelfHost/scripts/setup-lan-reflection.sh
+WorkingDirectory=/opt/DuneAwakeningSelfHost
+ExecStart=/opt/DuneAwakeningSelfHost/scripts/setup-lan-reflection.sh
 
 [Install]
 WantedBy=multi-user.target

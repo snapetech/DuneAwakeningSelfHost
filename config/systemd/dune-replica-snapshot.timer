@@ -1,0 +1,10 @@
+[Unit]
+Description=Hourly Dune remote Postgres replica snapshots
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target

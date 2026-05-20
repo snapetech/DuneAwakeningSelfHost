@@ -10,11 +10,13 @@ else
   cp .env.example "$env_file"
   postgres_super_password="$(openssl rand -hex 24)"
   postgres_dune_password="$(openssl rand -hex 24)"
+  postgres_replication_password="$(openssl rand -hex 32)"
   rmq_secret="$(openssl rand -hex 64)"
   world_suffix="$(openssl rand -hex 3)"
 
   sed -i "s/^POSTGRES_SUPER_PASSWORD=.*/POSTGRES_SUPER_PASSWORD=$postgres_super_password/" "$env_file"
   sed -i "s/^POSTGRES_DUNE_PASSWORD=.*/POSTGRES_DUNE_PASSWORD=$postgres_dune_password/" "$env_file"
+  sed -i "s/^POSTGRES_REPLICATION_PASSWORD=.*/POSTGRES_REPLICATION_PASSWORD=$postgres_replication_password/" "$env_file"
   sed -i "s/^RMQ_HTTP_TOKEN_AUTH_SECRET=.*/RMQ_HTTP_TOKEN_AUTH_SECRET=$rmq_secret/" "$env_file"
   sed -i "s/^WORLD_UNIQUE_NAME=.*/WORLD_UNIQUE_NAME=sh-example-$world_suffix/" "$env_file"
 fi

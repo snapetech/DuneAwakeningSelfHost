@@ -40,6 +40,7 @@ EOF
   python3 - "$target" "$services" <<'PY'
 import json
 import os
+import shlex
 import socket
 import sys
 import urllib.parse
@@ -156,6 +157,15 @@ def docker_logs(container_id):
     status, payload = docker("GET", f"/containers/{container_id}/logs?stdout=1&stderr=1")
     if status != 200:
         return f"failed reading helper logs: HTTP {status}"
+    if payload and payload[0] in (1, 2) and len(payload) >= 8 and payload[1:4] == b"\x00\x00\x00":
+        decoded = bytearray()
+        offset = 0
+        while offset + 8 <= len(payload):
+            size = int.from_bytes(payload[offset + 4:offset + 8], "big")
+            offset += 8
+            decoded.extend(payload[offset:offset + size])
+            offset += size
+        payload = bytes(decoded)
     return payload.decode("utf-8", errors="replace").strip()
 
 
@@ -166,23 +176,41 @@ def run_host_compose(services):
             file=sys.stderr,
         )
         sys.exit(78)
-    command = ["docker", "compose"]
+    compose_command = ["docker", "compose"]
     for file_name in compose_files:
-        command.extend(["-f", file_name])
-    command.extend(["--env-file", env_file, "up", "-d", "--force-recreate"])
-    command.extend(services)
+        compose_command.extend(["-f", file_name])
+    compose_command.extend(["--env-file", env_file, "up", "-d", "--force-recreate", "--no-deps"])
+    compose_command.extend(services)
+    shell_command = (
+        "set -e; "
+        + "if [ -x /workspace/scripts/seed-gateway-neighbor.sh ]; then "
+        + "apk add --no-cache bash iproute2 util-linux sudo >/dev/null; "
+        + "/workspace/scripts/seed-gateway-neighbor.sh || true; "
+        + "fi; "
+        + " ".join(shlex.quote(part) for part in compose_command)
+        + "; if [ -x /workspace/scripts/seed-gateway-neighbor.sh ]; then "
+        + "/workspace/scripts/seed-gateway-neighbor.sh; "
+        + "fi; "
+        + "if [ -x /workspace/scripts/verify-rmq-auth-path.sh ]; then "
+        + "/workspace/scripts/verify-rmq-auth-path.sh; "
+        + "fi"
+    )
     body = {
         "Image": compose_image,
-        "WorkingDir": "/workspace",
-        "Cmd": command,
+        "WorkingDir": host_workspace,
+        "Cmd": ["sh", "-lc", shell_command],
         "Env": [
             f"COMPOSE_PROJECT_NAME={project}",
             "DOCKER_HOST=unix:///var/run/docker.sock",
         ],
         "HostConfig": {
             "AutoRemove": False,
+            "NetworkMode": "host",
+            "PidMode": "host",
+            "Privileged": True,
             "Binds": [
                 f"{socket_path}:/var/run/docker.sock",
+                f"{host_workspace}:{host_workspace}",
                 f"{host_workspace}:/workspace",
             ],
         },
@@ -214,7 +242,7 @@ def run_host_compose(services):
         if exit_code != 0:
             print(logs, file=sys.stderr)
             sys.exit(exit_code)
-        return {"ok": True, "composeImage": compose_image, "hostWorkspace": host_workspace, "command": command, "output": logs}
+        return {"ok": True, "composeImage": compose_image, "hostWorkspace": host_workspace, "command": compose_command, "seedGatewayNeighbor": True, "output": logs}
     finally:
         remove_container(container_id)
 
@@ -310,6 +338,25 @@ if [ "$phase" = "shutdown" ] || [ "$phase" = "stop" ]; then
   exec "$@" stop -t 30 $services
 fi
 if [ "$phase" = "start" ]; then
-  exec "$@" up -d --force-recreate $services
+  if [ -x ./scripts/seed-gateway-neighbor.sh ]; then
+    ./scripts/seed-gateway-neighbor.sh || true
+  fi
+  "$@" up -d --force-recreate --no-deps $services
+  if [ -x ./scripts/seed-gateway-neighbor.sh ]; then
+    ./scripts/seed-gateway-neighbor.sh || true
+  fi
+  if [ -x ./scripts/verify-rmq-auth-path.sh ]; then
+    ./scripts/verify-rmq-auth-path.sh
+  fi
+  exit 0
 fi
-exec "$@" up -d --force-recreate $services
+if [ -x ./scripts/seed-gateway-neighbor.sh ]; then
+  ./scripts/seed-gateway-neighbor.sh || true
+fi
+"$@" up -d --force-recreate --no-deps $services
+if [ -x ./scripts/seed-gateway-neighbor.sh ]; then
+  ./scripts/seed-gateway-neighbor.sh || true
+fi
+if [ -x ./scripts/verify-rmq-auth-path.sh ]; then
+  ./scripts/verify-rmq-auth-path.sh
+fi

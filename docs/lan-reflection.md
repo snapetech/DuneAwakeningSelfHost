@@ -48,9 +48,9 @@ same public server address.
 On the router, add:
 
 ```text
-Destination: 24.109.206.134
+Destination: <public-server-ip>
 Prefix:      /32
-Gateway:     192.168.50.148
+Gateway:     <dune-host-lan-ip>
 Interface:   LAN
 ```
 
@@ -84,19 +84,19 @@ hairpin NAT. Add the route on each LAN client that needs to play internally.
 Linux:
 
 ```bash
-sudo ip route add 24.109.206.134/32 via 192.168.50.148
+sudo ip route add <public-server-ip>/32 via <dune-host-lan-ip>
 ```
 
 Windows PowerShell as Administrator:
 
 ```powershell
-route -p add 24.109.206.134 mask 255.255.255.255 192.168.50.148
+route -p add <public-server-ip> mask 255.255.255.255 <dune-host-lan-ip>
 ```
 
 macOS:
 
 ```bash
-sudo route -n add -host 24.109.206.134 192.168.50.148
+sudo route -n add -host <public-server-ip> <dune-host-lan-ip>
 ```
 
 Host-side reflection must still be enabled on the Dune host.
@@ -106,7 +106,7 @@ Host-side reflection must still be enabled on the Dune host.
 Watch for packets while attempting to join from the LAN:
 
 ```bash
-sudo timeout 75 tcpdump -ni enp17s0 'host 24.109.206.134 and udp'
+sudo timeout 75 tcpdump -ni <lan-interface> 'host <public-server-ip> and udp'
 ```
 
 Check Docker's UDP counters:
@@ -129,7 +129,7 @@ Interpretation:
 Forward public gameplay UDP to the Dune host for external players:
 
 ```text
-7777-7806/udp -> 192.168.50.148
+7777-7806/udp -> <dune-host-lan-ip>
 ```
 
 The current Compose layout also publishes IGW/S2S UDP ports `7888-7917` for

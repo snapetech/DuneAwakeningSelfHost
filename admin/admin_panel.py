@@ -39,6 +39,11 @@ AUDIT_MAX_BYTES = int(os.environ.get("DUNE_ADMIN_AUDIT_MAX_BYTES", str(5 * 1024 
 REQUEST_TIMEOUT_SECONDS = int(os.environ.get("DUNE_ADMIN_REQUEST_TIMEOUT_SECONDS", "10"))
 MAX_ITEM_STACK_SIZE = int(os.environ.get("DUNE_ADMIN_MAX_ITEM_STACK_SIZE", "1000000"))
 AUDIT_EVENT_LIMIT = int(os.environ.get("DUNE_ADMIN_AUDIT_EVENT_LIMIT", "100"))
+HAGGA_MAP_MIN_X = float(os.environ.get("DUNE_HAGGA_MAP_MIN_X", "-407000"))
+HAGGA_MAP_MAX_X = float(os.environ.get("DUNE_HAGGA_MAP_MAX_X", "407000"))
+HAGGA_MAP_MIN_Y = float(os.environ.get("DUNE_HAGGA_MAP_MIN_Y", "-403500"))
+HAGGA_MAP_MAX_Y = float(os.environ.get("DUNE_HAGGA_MAP_MAX_Y", "403500"))
+HAGGA_MAP_INVERT_Y = os.environ.get("DUNE_HAGGA_MAP_INVERT_Y", "true").lower() not in ("0", "false", "no", "off")
 ADMIN_REFERENCE_LIMIT = int(os.environ.get("DUNE_ADMIN_REFERENCE_LIMIT", "200"))
 CHARACTER_SEARCH_LIMIT = int(os.environ.get("DUNE_ADMIN_CHARACTER_SEARCH_LIMIT", "100"))
 DATABASE = os.environ.get("DUNE_DATABASE", "dune_sb_1_4_0_0")
@@ -70,7 +75,11 @@ ANNOUNCEMENT_COMMAND_TIMEOUT_SECONDS = int(os.environ.get("DUNE_ADMIN_ANNOUNCEME
 ANNOUNCEMENT_COMMAND = os.environ.get("DUNE_ADMIN_ANNOUNCE_COMMAND", str(ROOT / "scripts" / "announce.sh"))
 RESTART_COMMAND_TIMEOUT_SECONDS = int(os.environ.get("DUNE_ADMIN_RESTART_COMMAND_TIMEOUT_SECONDS", "1800"))
 RESTART_COMMAND = os.environ.get("DUNE_ADMIN_RESTART_COMMAND", str(ROOT / "scripts" / "restart-target.sh"))
+RESTART_ONLINE_TIMEOUT_SECONDS = int(os.environ.get("DUNE_ADMIN_RESTART_ONLINE_TIMEOUT_SECONDS", "300"))
+RESTART_ONLINE_POLL_SECONDS = int(os.environ.get("DUNE_ADMIN_RESTART_ONLINE_POLL_SECONDS", "5"))
 MAINTENANCE_BACKUP_ENABLED = os.environ.get("DUNE_ADMIN_MAINTENANCE_BACKUP_ENABLED", "true").lower() == "true"
+MAINTENANCE_REPLICA_SNAPSHOT_ENABLED = os.environ.get("DUNE_ADMIN_MAINTENANCE_REPLICA_SNAPSHOT_ENABLED", "true").lower() == "true"
+MAINTENANCE_REPLICA_SNAPSHOT_TIMEOUT_SECONDS = int(os.environ.get("DUNE_ADMIN_MAINTENANCE_REPLICA_SNAPSHOT_TIMEOUT_SECONDS", "300"))
 DOCKER_SOCKET = os.environ.get("DUNE_RESTART_DOCKER_SOCKET", "/var/run/docker.sock")
 DOCKER_COMPOSE_PROJECT = os.environ.get("DUNE_RESTART_COMPOSE_PROJECT", "dune_server")
 ANNOUNCEMENT_DELAYS = {
@@ -662,6 +671,57 @@ def run_restart_command(command, job, phase):
     return {"ok": result.returncode == 0, "phase": phase, "returncode": result.returncode, "output": output}
 
 
+def restart_online_snapshot():
+    rows = query("""
+        select
+          count(*)::int as expected,
+          count(*) filter (
+            where wp.server_id is not null
+              and coalesce(fs.alive, false)
+              and asi.server_id is not null
+              and not coalesce(wp.blocked, false)
+          )::int as online,
+          count(*) filter (
+            where wp.server_id is not null
+              and coalesce(fs.alive, false)
+              and coalesce(fs.ready, false)
+              and asi.server_id is not null
+              and not coalesce(wp.blocked, false)
+          )::int as ready_online,
+          count(*) filter (where wp.server_id is not null and coalesce(fs.alive, false))::int as alive,
+          count(*) filter (where asi.server_id is not null)::int as active
+        from dune.world_partition wp
+        left join dune.farm_state fs on fs.server_id = wp.server_id
+        left join dune.active_server_ids asi on asi.server_id = wp.server_id
+    """)
+    row = rows[0] if rows else {}
+    expected = int(row.get("expected") or 0)
+    online = int(row.get("online") or 0)
+    ready_online = int(row.get("ready_online") or 0)
+    return {
+        "ok": expected > 0 and online == expected and ready_online == expected,
+        "expected": expected,
+        "online": online,
+        "readyOnline": ready_online,
+        "alive": int(row.get("alive") or 0),
+        "active": int(row.get("active") or 0),
+    }
+
+
+def wait_for_restart_online():
+    deadline = time.time() + max(0, RESTART_ONLINE_TIMEOUT_SECONDS)
+    last = {"ok": False, "expected": 0, "online": 0, "alive": 0, "active": 0}
+    while True:
+        try:
+            last = restart_online_snapshot()
+        except Exception as exc:
+            last = {"ok": False, "error": str(exc)}
+        if last.get("ok") or time.time() >= deadline:
+            last["timeoutSeconds"] = RESTART_ONLINE_TIMEOUT_SECONDS
+            return last
+        time.sleep(max(1, RESTART_ONLINE_POLL_SECONDS))
+
+
 def execute_restart(job):
     if not job.get("execute"):
         return {"ok": True, "dryRun": True, "output": f"scheduled {job.get('action', 'restart')} reached run time; execute=false so no command was run"}
@@ -692,8 +752,12 @@ def execute_restart(job):
 
     start_result = run_restart_command(command, job, "start")
     result["start"] = start_result
-    result["ok"] = bool(start_result.get("ok"))
+    online_result = wait_for_restart_online() if start_result.get("ok") else {"ok": False, "skipped": True}
+    result["online"] = online_result
+    result["ok"] = bool(start_result.get("ok")) and bool(online_result.get("ok"))
     result["returncode"] = start_result.get("returncode")
+    if start_result.get("ok") and not online_result.get("ok"):
+        result["error"] = "restart start hook completed, but farm did not report fully online before timeout"
     result["output"] = "\n".join(part for part in [stop_result.get("output", ""), start_result.get("output", "")] if part)
     if len(result["output"]) > AUDIT_FIELD_LIMIT:
         result["output"] = result["output"][:AUDIT_FIELD_LIMIT] + "...[truncated]"
@@ -1510,6 +1574,65 @@ def add_tree_archive(archive_path, entries):
     return {"path": str(archive_path), "bytes": archive_path.stat().st_size, "added": added, "skipped": skipped}
 
 
+def create_postgres_layers_report(backup_dir):
+    report = {
+        "streamingReplication": {"checked": False, "slots": [], "senders": [], "error": None},
+        "remoteReplicaSnapshot": {"configured": False, "attempted": False, "ok": None, "output": "", "error": None},
+    }
+    try:
+        report["streamingReplication"]["slots"] = query("""
+            select slot_name, slot_type, active, restart_lsn::text, confirmed_flush_lsn::text,
+                   wal_status, safe_wal_size
+            from pg_replication_slots
+            order by slot_name
+        """)
+        report["streamingReplication"]["senders"] = query("""
+            select application_name, client_addr::text, state, sync_state,
+                   write_lag::text, flush_lag::text, replay_lag::text
+            from pg_stat_replication
+            order by application_name, client_addr::text
+        """)
+        report["streamingReplication"]["checked"] = True
+    except Exception as exc:
+        report["streamingReplication"]["error"] = str(exc)
+
+    remote = os.environ.get("POSTGRES_REMOTE_REPLICA_HOST", "").strip()
+    remote_root = os.environ.get("POSTGRES_REMOTE_REPLICA_ROOT", "/srv/dune-postgres-replica").strip()
+    report["remoteReplicaSnapshot"]["configured"] = bool(remote)
+    if remote and MAINTENANCE_REPLICA_SNAPSHOT_ENABLED:
+        command = ROOT / "scripts" / "replica-snapshot.sh"
+        report["remoteReplicaSnapshot"]["attempted"] = True
+        if not command.exists() or not os.access(command, os.X_OK):
+            report["remoteReplicaSnapshot"]["ok"] = False
+            report["remoteReplicaSnapshot"]["error"] = f"replica snapshot command is not executable: {command}"
+        else:
+            try:
+                result = subprocess.run(
+                    [str(command), str(ENV_FILE), remote, remote_root],
+                    cwd=str(ROOT),
+                    env=os.environ.copy(),
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=MAINTENANCE_REPLICA_SNAPSHOT_TIMEOUT_SECONDS,
+                    check=False,
+                )
+                output = (result.stdout + result.stderr).strip()
+                if len(output) > AUDIT_FIELD_LIMIT:
+                    output = output[:AUDIT_FIELD_LIMIT] + "...[truncated]"
+                report["remoteReplicaSnapshot"]["ok"] = result.returncode == 0
+                report["remoteReplicaSnapshot"]["output"] = output
+                if result.returncode != 0:
+                    report["remoteReplicaSnapshot"]["error"] = f"replica snapshot exited {result.returncode}"
+            except Exception as exc:
+                report["remoteReplicaSnapshot"]["ok"] = False
+                report["remoteReplicaSnapshot"]["error"] = str(exc)
+
+    status_path = backup_dir / "postgres-layers.json"
+    status_path.write_text(json.dumps(report, indent=2, sort_keys=True, default=json_default), encoding="utf-8")
+    return {"path": str(status_path), "bytes": status_path.stat().st_size, "report": report}
+
+
 def create_maintenance_backup(job):
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     job_id = str(job.get("id", "manual"))[:24]
@@ -1535,6 +1658,17 @@ def create_maintenance_backup(job):
     except Exception as exc:
         result["warnings"].append({"artifact": "postgres", "error": str(exc)})
         raise RuntimeError(f"maintenance database backup failed: {exc}") from exc
+
+    try:
+        result["artifacts"]["postgresLayers"] = create_postgres_layers_report(backup_dir)
+        layers = result["artifacts"]["postgresLayers"]["report"]
+        if layers["streamingReplication"].get("error"):
+            result["warnings"].append({"artifact": "postgresLayers.streamingReplication", "error": layers["streamingReplication"]["error"]})
+        snapshot = layers["remoteReplicaSnapshot"]
+        if snapshot.get("configured") and snapshot.get("attempted") and not snapshot.get("ok"):
+            result["warnings"].append({"artifact": "postgresLayers.remoteReplicaSnapshot", "error": snapshot.get("error") or "remote snapshot failed"})
+    except Exception as exc:
+        result["warnings"].append({"artifact": "postgresLayers", "error": str(exc)})
 
     archive_entries = [(CONFIG_ROOT, "config")]
     if ENV_FILE.exists():
@@ -1908,9 +2042,14 @@ class Handler(BaseHTTPRequestHandler):
                    a.map as actor_map, a.partition_id as actor_partition_id,
                    ((a.transform).location).x::float8 as x,
                    ((a.transform).location).y::float8 as y,
-                   ((a.transform).location).z::float8 as z
+                   ((a.transform).location).z::float8 as z,
+                   tri.map as return_map,
+                   ((tri.transform).location).x::float8 as return_x,
+                   ((tri.transform).location).y::float8 as return_y,
+                   ((tri.transform).location).z::float8 as return_z
             from dune.player_state ps
             left join dune.actors a on a.id = ps.player_pawn_id
+            left join dune.travel_return_info tri on tri.player_controller_id = ps.player_controller_id
             left join dune.farm_state fs on fs.server_id = ps.server_id
             left join dune.world_partition wp on wp.server_id = ps.server_id
             where ps.online_status::text = 'Online'
@@ -1939,6 +2078,14 @@ class Handler(BaseHTTPRequestHandler):
             "map": "HaggaBasin",
             "generatedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "bounds": bounds,
+            "calibration": {
+                "minX": HAGGA_MAP_MIN_X,
+                "maxX": HAGGA_MAP_MAX_X,
+                "minY": HAGGA_MAP_MIN_Y,
+                "maxY": HAGGA_MAP_MAX_Y,
+                "invertY": HAGGA_MAP_INVERT_Y,
+                "source": "DUNE_HAGGA_MAP_* world-centimeter extents",
+            },
             "players": rows,
         }
 
@@ -2742,12 +2889,14 @@ INDEX = r"""<!doctype html>
     .mapTile.bad { border-color:#743932; }
     .mapTile .name { font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .mapTile .meta { color:var(--muted); font-size:12px; margin-top:4px; }
-    .haggaMap { position:relative; display:grid; place-items:center; overflow:visible; background:transparent; inline-size:100%; margin-inline:auto; }
-    .haggaMap svg { display:block; inline-size:min(100%,1400px); block-size:auto; background:#171513; }
+    .haggaMap { position:relative; display:grid; place-items:start center; overflow:auto; background:#171513; inline-size:100%; max-block-size:min(78vh,900px); margin-inline:auto; border:1px solid var(--line); border-radius:8px; }
+    .haggaMap svg { display:block; inline-size:min(100%,900px); min-inline-size:620px; aspect-ratio:1 / 1; block-size:auto; background:#171513; }
     .haggaMap .mapImage { opacity:.88; }
     .haggaMap .mapShade { fill:rgba(4,5,4,.22); }
     .haggaMap .gridLine { stroke:#f1d08a; stroke-width:1; opacity:.22; }
     .haggaMap .playerDot { fill:var(--ok); stroke:#071007; stroke-width:3; }
+    .haggaMap .returnDot { fill:var(--warn); stroke:#160f04; stroke-width:3; }
+    .haggaMap .uncertainLine { stroke:var(--warn); stroke-width:2; stroke-dasharray:7 7; opacity:.75; }
     .haggaMap .playerMarker:focus .playerDot, .haggaMap .playerMarker:hover .playerDot { fill:var(--accent); stroke:var(--text); }
     .haggaMap .playerLabel { fill:var(--text); font:700 13px system-ui,sans-serif; paint-order:stroke; stroke:#0b0d0a; stroke-width:4; }
     .haggaMap .coordLabel { fill:var(--muted); font:11px ui-monospace, SFMono-Regular, Menlo, monospace; }
@@ -3250,20 +3399,23 @@ function mapTiles(rows){
 function haggaBasinMapPanel(data){
   const players = data?.players || [];
   const bounds = data?.bounds || {};
+  const calibration = data?.calibration || {};
   const width = 1000;
   const height = 1000;
   const pad = 0;
   const mapExtent = 100000;
-  const xs = players.map(p => Number(p.x)).filter(Number.isFinite);
-  const ys = players.map(p => Number(p.y)).filter(Number.isFinite);
-  const minX = Number.isFinite(Number(bounds.minX)) ? Number(bounds.minX) : Math.min(...xs, -120000);
-  const maxX = Number.isFinite(Number(bounds.maxX)) ? Number(bounds.maxX) : Math.max(...xs, 240000);
-  const minY = Number.isFinite(Number(bounds.minY)) ? Number(bounds.minY) : Math.min(...ys, 200000);
-  const maxY = Number.isFinite(Number(bounds.maxY)) ? Number(bounds.maxY) : Math.max(...ys, 340000);
+  const minX = Number.isFinite(Number(calibration.minX)) ? Number(calibration.minX) : -407000;
+  const maxX = Number.isFinite(Number(calibration.maxX)) ? Number(calibration.maxX) : 407000;
+  const minY = Number.isFinite(Number(calibration.minY)) ? Number(calibration.minY) : -403500;
+  const maxY = Number.isFinite(Number(calibration.maxY)) ? Number(calibration.maxY) : 403500;
+  const invertY = calibration.invertY !== false;
   const spanX = Math.max(maxX - minX, 1);
   const spanY = Math.max(maxY - minY, 1);
   const mapX = x => clamp(((Number(x) - minX) / spanX) * mapExtent, 0, mapExtent);
-  const mapY = y => clamp(mapExtent - ((Number(y) - minY) / spanY) * mapExtent, 0, mapExtent);
+  const mapY = y => {
+    const normalized = ((Number(y) - minY) / spanY) * mapExtent;
+    return clamp(invertY ? mapExtent - normalized : normalized, 0, mapExtent);
+  };
   const px = x => pad + (mapX(x) / mapExtent) * (width - pad * 2);
   const py = y => pad + (mapY(y) / mapExtent) * (height - pad * 2);
   const grid = [1,2,3,4].map(i => {
@@ -3274,11 +3426,15 @@ function haggaBasinMapPanel(data){
   const markers = players.map((p, index) => {
     const x = px(p.x);
     const y = py(p.y);
+    const rx = p.return_map === 'HaggaBasin' && Number.isFinite(Number(p.return_x)) ? px(p.return_x) : null;
+    const ry = p.return_map === 'HaggaBasin' && Number.isFinite(Number(p.return_y)) ? py(p.return_y) : null;
+    const hasReturnPoint = rx !== null && ry !== null && Math.hypot(rx - x, ry - y) > 8;
     const name = p.character_name || `Player ${index + 1}`;
     const labelX = clamp(x + 14, 8, width - 190);
     const labelY = clamp(y - 12, 22, height - 24);
-    const title = `${name} | x ${Number(p.x).toFixed(0)}, y ${Number(p.y).toFixed(0)}, z ${Number(p.z || 0).toFixed(0)}`;
-    return `<g class="playerMarker" tabindex="0" role="button" data-account-id="${esc(p.account_id || '')}" aria-label="${esc(title)}"><title>${esc(title)}</title><circle class="playerDot" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="8"></circle><text class="playerLabel" x="${labelX.toFixed(1)}" y="${labelY.toFixed(1)}">${esc(name)}</text><text class="coordLabel" x="${labelX.toFixed(1)}" y="${(labelY + 16).toFixed(1)}">${esc(Math.round(Number(p.x || 0)))}, ${esc(Math.round(Number(p.y || 0)))}</text></g>`;
+    const title = `${name} | pawn x ${Number(p.x).toFixed(0)}, y ${Number(p.y).toFixed(0)}, z ${Number(p.z || 0).toFixed(0)}${hasReturnPoint ? ` | return x ${Number(p.return_x).toFixed(0)}, y ${Number(p.return_y).toFixed(0)}, z ${Number(p.return_z || 0).toFixed(0)}` : ''}`;
+    const returnMarker = hasReturnPoint ? `<line class="uncertainLine" x1="${x.toFixed(1)}" y1="${y.toFixed(1)}" x2="${rx.toFixed(1)}" y2="${ry.toFixed(1)}"></line><circle class="returnDot" cx="${rx.toFixed(1)}" cy="${ry.toFixed(1)}" r="7"><title>${esc(name)} return-info position</title></circle>` : '';
+    return `<g class="playerMarker" tabindex="0" role="button" data-account-id="${esc(p.account_id || '')}" aria-label="${esc(title)}"><title>${esc(title)}</title>${returnMarker}<circle class="playerDot" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="8"></circle><text class="playerLabel" x="${labelX.toFixed(1)}" y="${labelY.toFixed(1)}">${esc(name)}</text><text class="coordLabel" x="${labelX.toFixed(1)}" y="${(labelY + 16).toFixed(1)}">${esc(Math.round(Number(p.x || 0)))}, ${esc(Math.round(Number(p.y || 0)))}</text></g>`;
   }).join('');
   const empty = players.length ? '' : `<text class="emptyState" x="${width / 2}" y="${height / 2}">No online players with Hagga Basin coordinates.</text>`;
   const rows = players.map(p => ({
@@ -3288,10 +3444,14 @@ function haggaBasinMapPanel(data){
     x: Math.round(Number(p.x || 0)),
     y: Math.round(Number(p.y || 0)),
     z: Math.round(Number(p.z || 0)),
+    return_map: p.return_map || '',
+    return_x: p.return_x === null || p.return_x === undefined ? '' : Math.round(Number(p.return_x)),
+    return_y: p.return_y === null || p.return_y === undefined ? '' : Math.round(Number(p.return_y)),
+    return_z: p.return_z === null || p.return_z === undefined ? '' : Math.round(Number(p.return_z)),
     last_login_time: p.last_login_time || ''
   }));
   const generatedAt = data?.generatedAt ? new Date(data.generatedAt).toLocaleTimeString() : '';
-  return `<div class="panelBand"><div class="sectionHeader"><h2>Hagga Basin Player Map</h2><div class="toolbar"><span id="haggaMapCount" class="pill ${players.length ? 'ok' : ''}">${esc(players.length)} plotted</span><span id="haggaMapUpdated" class="pill">updated ${esc(generatedAt)}</span><span id="haggaMapHealth" class="pill ok">live</span><button id="toggleHaggaMapRefreshBtn" aria-pressed="${haggaMapAutoRefresh ? 'true' : 'false'}">${haggaMapAutoRefresh ? 'Pause map' : 'Resume map'}</button><button id="refreshHaggaMapBtn">Refresh map</button></div></div><div id="haggaMapSrStatus" class="srOnly" aria-live="polite">${esc(players.length)} Hagga Basin players plotted.</div><div class="haggaMap"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Hagga Basin online player coordinate map"><image class="mapImage" href="/static/hagga-basin.webp" x="0" y="0" width="${width}" height="${height}" preserveAspectRatio="none"></image><rect class="mapShade" x="0" y="0" width="${width}" height="${height}"></rect>${grid}<text x="12" y="24" fill="var(--muted)" font-size="12">NW</text><text x="${width - 30}" y="${height - 12}" fill="var(--muted)" font-size="12">SE</text>${markers}${empty}</svg></div><div class="haggaMapStatus"><span class="pill ok">online pawn position</span><span class="pill">background: Community Wiki Hagga Basin map</span><span class="pill">bounds from ${esc(bounds.actorCount || 0)} Hagga actors</span><span class="pill">updates every 2s while visible</span></div><details><summary>Coordinates</summary><div class="coordTable">${table(rows)}</div></details></div>`;
+  return `<div class="panelBand"><div class="sectionHeader"><h2>Hagga Basin Player Map</h2><div class="toolbar"><span id="haggaMapCount" class="pill ${players.length ? 'ok' : ''}">${esc(players.length)} plotted</span><span id="haggaMapUpdated" class="pill">updated ${esc(generatedAt)}</span><span id="haggaMapHealth" class="pill warn">best-effort DB position</span><button id="toggleHaggaMapRefreshBtn" aria-pressed="${haggaMapAutoRefresh ? 'true' : 'false'}">${haggaMapAutoRefresh ? 'Pause map' : 'Resume map'}</button><button id="refreshHaggaMapBtn">Refresh map</button></div></div><div id="haggaMapSrStatus" class="srOnly" aria-live="polite">${esc(players.length)} Hagga Basin players plotted.</div><div class="haggaMap"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Hagga Basin online player coordinate map"><image class="mapImage" href="/static/hagga-basin.webp" x="0" y="0" width="${width}" height="${height}" preserveAspectRatio="xMidYMid meet"></image><rect class="mapShade" x="0" y="0" width="${width}" height="${height}"></rect>${grid}<text x="12" y="24" fill="var(--muted)" font-size="12">NW</text><text x="${width - 30}" y="${height - 12}" fill="var(--muted)" font-size="12">SE</text>${markers}${empty}</svg></div><div class="haggaMapStatus"><span class="pill ok">green: pawn/controller transform</span><span class="pill warn">yellow: travel return transform when different</span><span class="pill">background: Community Wiki Hagga Basin map</span><span class="pill">calibration X ${esc(Math.round(minX))}..${esc(Math.round(maxX))}, Y ${esc(Math.round(minY))}..${esc(Math.round(maxY))}${invertY ? ', inverted Y' : ''}</span></div><details open><summary>Coordinates</summary><div class="coordTable">${table(rows)}</div></details></div>`;
 }
 function wireHaggaMapControls(container){
   container.querySelectorAll('.playerMarker[data-account-id]').forEach(marker => {

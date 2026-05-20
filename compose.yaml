@@ -34,6 +34,7 @@ services:
   postgres:
     image: registry.funcom.com/funcom/self-hosting/igw-postgres:17.4-alpine-fc-13
     restart: unless-stopped
+    mac_address: 02:42:ac:1f:f0:02
     environment:
       POSTGRES_DB: dune
       POSTGRES_USER: dune
@@ -50,10 +51,14 @@ services:
       timeout: 5s
       retries: 12
       start_period: 20s
+    networks:
+      default:
+        ipv4_address: 172.31.240.2
 
   admin-rmq:
     image: registry.funcom.com/funcom/self-hosting/seabass-server-rabbitmq:${DUNE_IMAGE_TAG}
     hostname: admin-rmq
+    mac_address: 02:42:ac:1f:f0:03
     environment:
       RMQ_AUTH_BACKEND_1: cache
       RMQ_HTTP_TOKEN_AUTH_SECRET: ${RMQ_HTTP_TOKEN_AUTH_SECRET}
@@ -71,10 +76,14 @@ services:
       timeout: 5s
       retries: 12
       start_period: 20s
+    networks:
+      default:
+        ipv4_address: 172.31.240.3
 
   game-rmq:
     image: registry.funcom.com/funcom/self-hosting/seabass-server-rabbitmq:${DUNE_IMAGE_TAG}
     hostname: game-rmq
+    mac_address: 02:42:ac:1f:f0:04
     environment:
       RMQ_AUTH_BACKEND_1: cache
       RMQ_HTTP_TOKEN_AUTH_SECRET: ${RMQ_HTTP_TOKEN_AUTH_SECRET}
@@ -95,9 +104,13 @@ services:
       timeout: 5s
       retries: 12
       start_period: 20s
+    networks:
+      default:
+        ipv4_address: 172.31.240.4
 
   rmq-auth-shim:
     image: registry.funcom.com/funcom/self-hosting/seabass-server-db-utils:${DUNE_IMAGE_TAG}
+    mac_address: 02:42:ac:1f:f0:07
     working_dir: /workspace
     environment:
       WORLD_UNIQUE_NAME: ${WORLD_UNIQUE_NAME}
@@ -110,6 +123,9 @@ services:
       - .:/workspace:ro
     depends_on:
       - text-router
+    networks:
+      default:
+        ipv4_address: 172.31.240.7
 
   db-init:
     image: registry.funcom.com/funcom/self-hosting/seabass-server-db-utils:${DUNE_IMAGE_TAG}
@@ -126,6 +142,7 @@ services:
 
   director:
     image: registry.funcom.com/funcom/self-hosting/seabass-server-bg-director:${DUNE_IMAGE_TAG}
+    mac_address: 02:42:ac:1f:f0:05
     dns:
       - 1.1.1.1
       - 8.8.8.8
@@ -159,9 +176,13 @@ services:
       - postgres
       - admin-rmq
       - game-rmq
+    networks:
+      default:
+        ipv4_address: 172.31.240.5
 
   text-router:
     image: registry.funcom.com/funcom/self-hosting/seabass-server-text-router:${DUNE_IMAGE_TAG}
+    mac_address: 02:42:ac:1f:f0:06
     dns:
       - 1.1.1.1
       - 8.8.8.8
@@ -199,6 +220,9 @@ services:
       - postgres
       - admin-rmq
       - game-rmq
+    networks:
+      default:
+        ipv4_address: 172.31.240.6
 
   gateway:
     image: registry.funcom.com/funcom/self-hosting/seabass-server-gateway:${DUNE_IMAGE_TAG}
@@ -582,6 +606,7 @@ services:
   admin-panel:
     image: registry.funcom.com/funcom/self-hosting/seabass-server-db-utils:${DUNE_IMAGE_TAG}
     restart: unless-stopped
+    mac_address: 02:42:ac:1f:f0:09
     working_dir: /workspace
     environment:
       ADMIN_WORKSPACE: /workspace
@@ -706,6 +731,7 @@ services:
   admin-panel-ingress:
     image: caddy:2-alpine
     restart: unless-stopped
+    mac_address: 02:42:ac:1f:f0:08
     depends_on:
       admin-panel:
         condition: service_healthy
@@ -720,6 +746,7 @@ services:
       - "${DUNE_ADMIN_BIND_ADDRESS:-127.0.0.1}:${DUNE_ADMIN_HOST_PORT:-18080}:8080"
     networks:
       default:
+        ipv4_address: 172.31.240.8
         aliases:
           - admin-panel-ingress
 
@@ -816,6 +843,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       default:
+        ipv4_address: 172.31.240.41
 
 networks:
   default:

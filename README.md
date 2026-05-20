@@ -39,6 +39,7 @@ Start with these:
 
 - [`docs/setup.md`](docs/setup.md): step-by-step local startup flow.
 - [`docs/operations.md`](docs/operations.md): health checks, recovery, backup, restore, ports, and upgrades.
+- [`docs/postgres-replication.md`](docs/postgres-replication.md): optional realtime Postgres hot standby for DB redundancy and replica-side dumps.
 - [`docs/admin-panel.md`](docs/admin-panel.md): local admin helper panel setup, security notes, and write-safety gates.
 - [`docs/admin-bot.md`](docs/admin-bot.md): approved admin-bot automation, report-first monitors, and safety gates.
 - [`docs/full-farm.md`](docs/full-farm.md): expanded standing farm and 30-partition warm-pool runbook.
@@ -82,6 +83,7 @@ Research indexes at the repo root:
 ## Key Files
 
 - [`compose.yaml`](compose.yaml): base container topology.
+- [`compose.replica.yaml`](compose.replica.yaml): optional Postgres streaming-replica extension.
 - [`compose.allmaps.yaml`](compose.allmaps.yaml): 30-partition warm-pool extension.
 - [`compose.limits.example.yaml`](compose.limits.example.yaml): optional local memory guardrails for profiling and small-host testing.
 - [`admin/admin_panel.py`](admin/admin_panel.py): local admin helper web panel.
@@ -106,6 +108,23 @@ Generate local secrets, fill in the self-hosting token in `.env`, load the offic
 ./scripts/load-images.sh
 docker compose --env-file .env up -d postgres admin-rmq game-rmq
 docker compose --env-file .env run --rm db-init
+```
+
+Optional realtime database standby:
+
+```bash
+COMPOSE_FILES=compose.yaml:compose.replica.yaml ./scripts/setup-postgres-replica.sh .env
+```
+
+This creates a physical streaming replica in `data/postgres-replica`. It is useful for redundancy and read-only dumps, but it does not replace point-in-time backups because deletes and bad writes replicate too. See [`docs/postgres-replication.md`](docs/postgres-replication.md).
+
+For host-level redundancy, put the standby on another LAN host:
+
+```bash
+./scripts/install-postgres-lan-forwarder.sh .env
+./scripts/install-remote-postgres-replica.sh .env replica.example.lan /srv/dune-postgres-replica
+./scripts/install-replica-snapshot-timer.sh .env replica.example.lan /srv/dune-postgres-replica
+./scripts/backup-layers-status.sh .env replica.example.lan /srv/dune-postgres-replica
 ```
 
 Then bring up the service layer:

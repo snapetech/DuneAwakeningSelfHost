@@ -15,7 +15,7 @@ if ! ip link show "$LAN_IFACE" >/dev/null 2>&1; then
 fi
 
 # Let the Linux host own the public /32 on LAN as well. If LAN clients route this
-# exact public IP to kspls0, Docker's existing published-port DNAT rules handle
+# exact public IP to the Dune host, Docker's existing published-port DNAT rules handle
 # the same 7777/7888/77xx/78xx UDP ports as public clients.
 ip addr replace "${PUBLIC_IP}/32" dev "$LAN_IFACE" label "${LAN_IFACE}:dune"
 
@@ -23,7 +23,7 @@ ip addr replace "${PUBLIC_IP}/32" dev "$LAN_IFACE" label "${LAN_IFACE}:dune"
 sysctl -w "net.ipv4.conf.${LAN_IFACE}.rp_filter=0" >/dev/null
 sysctl -w "net.ipv4.conf.all.rp_filter=0" >/dev/null
 
-# Ensure reflected replies from containers are masqueraded back through kspls0.
+# Ensure reflected replies from containers are masqueraded back through the LAN interface.
 if ! iptables -t nat -C POSTROUTING -s "$DUNE_BRIDGE_CIDR" -o "$LAN_IFACE" -j MASQUERADE 2>/dev/null; then
     iptables -t nat -I POSTROUTING 1 -s "$DUNE_BRIDGE_CIDR" -o "$LAN_IFACE" -j MASQUERADE
 fi

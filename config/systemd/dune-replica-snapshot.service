@@ -1,0 +1,10 @@
+[Unit]
+Description=Dune remote Postgres replica snapshot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/DuneAwakeningSelfHost
+Environment=DUNE_REPLICA_SNAPSHOT_KEEP_HOURS=48
+ExecStart=/opt/DuneAwakeningSelfHost/scripts/replica-snapshot.sh /opt/DuneAwakeningSelfHost/.env replica.example.lan /srv/dune-postgres-replica

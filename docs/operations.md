@@ -43,11 +43,20 @@ COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' ./scripts/rmq-health.sh .env
 
 Admin RabbitMQ can have fewer active service-user connections than farm partitions in the 30-map warm-pool layout. Treat it as unhealthy when recent auth/connectivity errors appear or when a failed client transition correlates with missing admin queue consumers.
 
+Fast auth-path check:
+
+```bash
+./scripts/seed-gateway-neighbor.sh
+./scripts/verify-rmq-auth-path.sh
+```
+
+That verifier covers the restart failure mode where maps are alive in the database but dynamic RabbitMQ auth times out because `admin-rmq` cannot reach the local auth shim.
+
 The admin panel Overview and Ops tabs expose the same high-level readiness from a browser. The map table is derived from `world_partition`, `farm_state`, and `active_server_ids`; the network table probes local Postgres plus upstream HTTP reachability for the Dune account portal and public Dune/Funcom sites. Treat those probes as operator signals, not proof that FLS registration or client travel is healthy.
 
 The Ops tab also has a restart-announcement scheduler. It stores scheduled jobs in `backups/admin-panel/announcements.json` and invokes `DUNE_ADMIN_ANNOUNCE_COMMAND` at the chosen repeat interval until the scheduled restart time. The default hook, `scripts/announce.sh`, publishes directly to game RabbitMQ `chat.map` as the Paul announcer account using bundled `pika`. It reads `/workspace/.env` at delivery time, binds currently connected player queues to the configured chat routes when `DUNE_ANNOUNCE_CHAT_BIND_ONLINE_QUEUES=true`, and then sends the message. Dashboard-origin announcements are wrapped as `!!! message !!!`. Verify with `./scripts/verify-announcement.sh 'DASH ANNOUNCEMENT VERIFY'`. Keep the announcer password and RabbitMQ credentials private.
 
-The same Ops area has a scheduled restart planner. Restart jobs store in `backups/admin-panel/restart-jobs.json`. They default to dry-run mode and only invoke `DUNE_ADMIN_RESTART_COMMAND` when execution is explicitly enabled. Executed restart jobs stop the selected services, create a maintenance backup under `backups/admin-panel/maintenance/`, then start/recreate the selected services. Executed shutdown jobs stop the selected services, create the same maintenance backup, and leave them offline. The default hook, `scripts/restart-target.sh`, uses Docker Compose on the host or the mounted Docker Engine socket in the admin-panel container. Treat that socket as privileged host control: keep the panel local/private, require the admin token, and do not publish it to the internet. The socket fallback now uses a short-lived Docker CLI helper for start/recreate phases, so scheduled daily restarts apply changed `.env` values and bind-mounted config.
+The same Ops area has a scheduled restart planner. Restart jobs store in `backups/admin-panel/restart-jobs.json`. They default to dry-run mode and only invoke `DUNE_ADMIN_RESTART_COMMAND` when execution is explicitly enabled. Executed restart jobs stop the selected services, create a maintenance backup under `backups/admin-panel/maintenance/`, then start/recreate the selected services and wait for all current world partitions to become alive and active again. Executed shutdown jobs stop the selected services, create the same maintenance backup, and leave them offline. The default hook, `scripts/restart-target.sh`, uses Docker Compose on the host or the mounted Docker Engine socket in the admin-panel container. Treat that socket as privileged host control: keep the panel local/private, require the admin token, and do not publish it to the internet. The socket fallback now uses a short-lived privileged Docker CLI helper for start/recreate phases, so scheduled daily restarts apply changed `.env` values and bind-mounted config, then run `scripts/seed-gateway-neighbor.sh` before and after the recreate. Recreate is run with `--no-deps` so excluded stateful services are not pulled into the restart as Compose dependencies. After seeding, the hook runs `scripts/verify-rmq-auth-path.sh`; the restart is failed if `admin-rmq` cannot reach `rmq-auth-shim`, or if `game-rmq` cannot reach `rmq-auth-shim` and `text-router`.
 
 For the expanded standing farm, the expected summary is:
 
@@ -165,11 +174,17 @@ starts maps in batches: `survival`/`overmap`, partitions 3-9, then partitions
 10-30. It uses `--no-recreate` for normal startup so a routine online operation
 does not replace Postgres under running game servers.
 
-The helper also seeds required Docker bridge neighbor entries after the
-control-plane services start. This is a site-specific guard for the current
+The helper also seeds required Docker bridge neighbor entries before and after
+the control-plane services start. This is a site-specific guard for the current
 `dune_server_default` bridge, where recreated containers have sometimes failed
-to learn existing peers. Run the same step manually after force-recreating
-`gateway`, `director`, `game-rmq`, `rmq-auth-shim`, or `text-router`:
+to learn existing peers or kept stale permanent neighbor entries. The gateway
+keeps `172.31.240.40` and MAC `02:42:ac:1f:f0:28`; `admin-chat-commands` is
+pinned to `172.31.240.41` so it cannot take the gateway address during a
+recreate. The seeder derives Postgres and live container MACs with
+`docker inspect`, pre-seeds Postgres with the gateway's static MAC before
+gateway starts, then refreshes both directions while gateway is still in its
+startup sleep. Run the same step manually after force-recreating `gateway`,
+`director`, `game-rmq`, `rmq-auth-shim`, or `text-router`:
 
 ```bash
 ./scripts/seed-gateway-neighbor.sh
@@ -178,7 +193,7 @@ to learn existing peers. Run the same step manually after force-recreating
 Known working baseline as of May 19, 2026:
 
 ```text
-gateway declares Snapetech Friendly PVE (www.snape.tech) to FLS
+gateway declares Snapetech PVE Friendly Server (www.snape.tech) to FLS
 gateway reaches postgres:5432
 game-rmq reaches rmq-auth-shim:8080 and text-router:8080
 director reaches game-rmq:5672, admin-rmq:5672, and postgres:5432
@@ -260,6 +275,40 @@ Manual Postgres dump:
 docker compose --env-file .env exec -T postgres \
   pg_dump -U dune -d dune_sb_1_4_0_0 -Fc \
   > backups/dune-$(date -u +%Y%m%dT%H%M%SZ).dump
+```
+
+If the optional streaming replica is enabled, prefer taking routine logical dumps from the read-only standby:
+
+```bash
+mkdir -p backups
+docker compose --env-file .env -f compose.yaml -f compose.replica.yaml exec -T postgres-replica \
+  pg_dump -U dune -d dune_sb_1_4_0_0 -Fc \
+  > backups/dune-replica-$(date -u +%Y%m%dT%H%M%SZ).dump
+```
+
+Check replica health before relying on it:
+
+```bash
+docker compose --env-file .env -f compose.yaml -f compose.replica.yaml exec -T postgres \
+  psql -U dune -d dune_sb_1_4_0_0 -c \
+  "select application_name,state,sync_state,write_lag,flush_lag,replay_lag from pg_stat_replication;"
+```
+
+See `docs/postgres-replication.md` for setup, lag checks, and failure handling. Streaming replication is not point-in-time recovery; bad writes and deletes replicate immediately.
+
+For the remote standby layout, use the snapshot helper instead of pulling dumps back to the primary host:
+
+```bash
+./scripts/replica-snapshot.sh .env replica.example.lan /srv/dune-postgres-replica
+./scripts/install-replica-snapshot-timer.sh .env replica.example.lan /srv/dune-postgres-replica
+```
+
+This keeps rolling dumps on the remote replica host. Use it alongside daily offline full-state backups.
+
+Check all backup layers:
+
+```bash
+./scripts/backup-layers-status.sh .env replica.example.lan /srv/dune-postgres-replica
 ```
 
 Archive RabbitMQ state from inside the running containers:

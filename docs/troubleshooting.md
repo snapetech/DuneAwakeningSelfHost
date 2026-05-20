@@ -67,6 +67,7 @@ Check:
 - `WORLD_UNIQUE_NAME` matches the expected service-user prefix.
 - RabbitMQ ports are not exposed publicly.
 - `COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' ./scripts/rmq-health.sh .env` has no recent auth/connectivity errors.
+- `./scripts/verify-rmq-auth-path.sh` passes. This verifies `admin-rmq -> rmq-auth-shim`, `game-rmq -> rmq-auth-shim`, and `game-rmq -> text-router`.
 
 The shim is a local compatibility workaround for internal `sg.<world>.*`, `bgd.<world>.*`, and `tr.<world>.*` service users. Keep it paired with localhost-only RabbitMQ host bindings.
 
@@ -98,6 +99,8 @@ docker exec dune_server-director-1 sh -lc 'nc -vz -w 2 game-rmq 5672'
 ```
 
 Normal startup runs `scripts/seed-gateway-neighbor.sh` from `scripts/start-full-warm-pool.sh`. If a control-plane container is force-recreated manually, run the seed script again before judging the service unhealthy.
+
+Admin-triggered restarts run `scripts/seed-gateway-neighbor.sh` before and after recreate and then run `scripts/verify-rmq-auth-path.sh`. If the verifier fails, the restart should be treated as incomplete even when the map rows look alive.
 
 Long-term fix: rebuild the Docker network during a maintenance window and remove the manual neighbor seeding only after new/recreated containers can ping and TCP-connect to `postgres`, `game-rmq`, `rmq-auth-shim`, and `text-router` without seeded neighbors.
 
