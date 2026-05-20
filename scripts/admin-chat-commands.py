@@ -53,6 +53,19 @@ def env_bool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "on")
 
 
+def env_chat_or_announce(chat_name, announce_name, default=""):
+    value = FILE_ENV.get(chat_name)
+    if value:
+        return value
+    value = FILE_ENV.get(announce_name)
+    if value:
+        return value
+    value = os.environ.get(chat_name)
+    if value and value != "dash-admin-test":
+        return value
+    return env(announce_name, default)
+
+
 def split_csv(value):
     out = []
     for item in value.split(","):
@@ -219,6 +232,11 @@ def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=F
             run_announce(response)
         return {"ok": False, "error": response}
 
+    if command == "test":
+        response = "f00"
+        announce_result = run_announce(response) if reply else None
+        return {"ok": True, "action": "test", "message": response, "reply": announce_result}
+
     if command in ("where", "loc", "location"):
         if len(parts) != 2:
             response = "usage: &where <playername>"
@@ -349,8 +367,8 @@ def consume_forever():
     host = env("DUNE_CHAT_COMMAND_AMQP_HOST", env("DUNE_ANNOUNCE_HOST_AMQP_HOST", "172.31.240.1"))
     port = int(env("DUNE_CHAT_COMMAND_AMQP_PORT", env("DUNE_ANNOUNCE_HOST_AMQP_PORT", "31982")))
     tls = env_bool("DUNE_CHAT_COMMAND_AMQP_TLS", env_bool("DUNE_ANNOUNCE_GAME_RMQ_AMQP_TLS", True))
-    user = env("DUNE_CHAT_COMMAND_AMQP_USER", env("DUNE_ANNOUNCE_RMQ_USER", env("DUNE_ANNOUNCE_CHAT_USER", "")))
-    password = env("DUNE_CHAT_COMMAND_AMQP_PASSWORD", env("DUNE_ANNOUNCE_RMQ_PASSWORD", env("DUNE_ANNOUNCE_CHAT_PASSWORD", "")))
+    user = env_chat_or_announce("DUNE_CHAT_COMMAND_AMQP_USER", "DUNE_ANNOUNCE_CHAT_USER", "")
+    password = env_chat_or_announce("DUNE_CHAT_COMMAND_AMQP_PASSWORD", "DUNE_ANNOUNCE_CHAT_PASSWORD", "")
     exchange = env("DUNE_CHAT_COMMAND_EXCHANGE", "chat.intercept")
     queue = env("DUNE_CHAT_COMMAND_QUEUE", "dash_admin_chat_commands")
     routing_key = env("DUNE_CHAT_COMMAND_ROUTING_KEY", "#")

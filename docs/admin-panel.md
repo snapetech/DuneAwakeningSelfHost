@@ -194,11 +194,17 @@ DUNE_CHAT_COMMAND_REPLY_COMMAND=/workspace/scripts/announce.sh
 Implemented commands:
 
 ```text
+&test
 &where <playername>
 &teleport <playername>
+&goto <playername>
 ```
 
+`&test` replies with `f00` through the configured announcement/reply path. Use it as the first live smoke test for chat-command ingestion and reply delivery.
+
 `&where` reports the resolved player's current online/offline state and last known location. `&teleport` moves an offline target to the admin's current partition and location, using the server's own `dune.admin_move_offline_player_to_partition(...)` function. It rejects online targets because live actor transforms are owned by the running map server and can be overwritten.
+
+`&goto` resolves the target's location and reports the native command candidates for moving the admin to that target. It does not execute yet. Online admin movement needs the native live GM route (`TeleportToPlayer`, `TeleportToExact`, or `TravelTo`) to be verified first.
 
 Teleport starts in dry-run mode. To apply the movement write, set:
 
@@ -216,7 +222,16 @@ docker compose exec -T admin-panel /workspace/scripts/admin-chat-commands.py \
   --sender-fls-id 6FF6498F4074E3DE
 ```
 
-The current admin-panel container can resolve the database side of commands, but it cannot directly open the game RabbitMQ AMQP port on this host without Docker networking changes. Do not change Docker networking for this without an explicit maintenance window. The script is ready for the command parser and teleport backend; persistent listener activation should be done only after the RabbitMQ reachability path is chosen.
+The listener has been validated to bind `chat.intercept` from the admin container path. If that regresses, first check that `/workspace/.env` contains the current `DUNE_ANNOUNCE_*` and `DUNE_CHAT_COMMAND_*` credentials; stale container environment was the original blocker.
+
+Persistent listener service:
+
+```bash
+docker compose up -d --no-deps admin-chat-commands
+docker compose logs -f admin-chat-commands
+```
+
+The listener service is separate from the web panel so a command-loop failure does not take down `duneadmin.home`. It uses `restart: unless-stopped` and reads `/workspace/.env` at runtime for chat-command and announcement credentials, matching the announcement hook behavior.
 
 ## Scheduled Restarts And Shutdowns
 
