@@ -29,6 +29,8 @@ The configured defaults live in `.env`:
 
 ```env
 DUNE_RESTART_CHECK_STEAM_UPDATE=true
+DUNE_DAILY_RESTART_SCHEDULE_WINDOW=05:25-05:35
+DUNE_DAILY_RESTART_ALLOW_OUTSIDE_WINDOW=false
 DUNE_DAILY_RESTART_DELAY=30min
 DUNE_DAILY_RESTART_REPEAT_SECONDS=600
 DUNE_DAILY_RESTART_MESSAGE=Daily maintenance restart at 6:00 AM. Please get to a safe place.
@@ -49,6 +51,14 @@ The installer renders:
 - `config/systemd/dune-daily-maintenance-schedule.timer`
 
 The timer runs at `05:30:00` and creates an admin-panel restart job with `delay=30min`, so the actual maintenance begins at 06:00.
+
+The timer is intentionally non-persistent. If the host is down at 05:30, DASH skips that day's automatic maintenance schedule instead of creating a late "06:00" restart at the wrong wall-clock time.
+
+`scripts/schedule-daily-maintenance.sh` also refuses to schedule outside `DUNE_DAILY_RESTART_SCHEDULE_WINDOW` by default. This is a second guard for manual runs, timer mistakes, and stale installed units. For a deliberate manual test, set:
+
+```bash
+DUNE_DAILY_RESTART_ALLOW_OUTSIDE_WINDOW=true ./scripts/schedule-daily-maintenance.sh
+```
 
 ## Restart Flow
 

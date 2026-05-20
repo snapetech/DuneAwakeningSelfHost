@@ -14,11 +14,12 @@ Enabled in this first pass:
 - Base/claim count reporting.
 - Config drift detection for `.env`, Compose, `UserGame.ini`, and `director.ini`.
 - Admin token/Host/Origin/denied-request audit summary.
+- Optional join/leave announcements through the same Paul/DASH Admin in-game announcement path.
 
 Intentionally skipped:
 
 - Toxicity/slur filtering.
-- Queue/population announcements.
+- Queue/population forecasts.
 
 Run one report:
 
@@ -54,3 +55,47 @@ DUNE_ADMIN_BOT_SECURITY_GUARD_ENABLED=true
 ```
 
 State is stored in `backups/admin-bot/state.json`. The state file tracks audit offsets and config hashes so repeated runs report only new audit activity and drift since the previous run.
+
+## Player Presence Announcements
+
+`scripts/player-presence-announcer.py` is a lightweight companion loop for chatty player-presence events. It polls `dune.player_state`, stores the previous online set in `backups/admin-bot/player-presence.json`, and announces only transitions after the first baseline poll.
+
+```env
+DUNE_PLAYER_PRESENCE_ANNOUNCE_ENABLED=true
+DUNE_PLAYER_PRESENCE_POLL_SECONDS=15
+DUNE_PLAYER_PRESENCE_JOIN_TEMPLATE=Welcome {playername}! Current player count is now {count}.
+DUNE_PLAYER_PRESENCE_LEAVE_TEMPLATE={playername} has left, current count is {count}.
+DUNE_PLAYER_PRESENCE_ANNOUNCE_COMMAND=/workspace/scripts/announce.sh
+```
+
+Templates support `{playername}`, `{player_name}`, `{count}`, and `{player_count}`.
+
+Run one baseline/check without installing the service:
+
+```bash
+./scripts/player-presence-announcer.py --once
+```
+
+Install the host service with:
+
+```bash
+./scripts/install-player-presence-announcer-service.sh .env
+```
+
+or:
+
+```bash
+make install-player-presence-announcer-service ENV_FILE=.env
+```
+
+The installer writes `/etc/systemd/system/dune-player-presence-announcer.service`, enables it, and starts it. Because it is enabled with `WantedBy=multi-user.target` and `Restart=always`, it starts after host reboots and restarts itself after script failures. The generated unit uses the current checkout path and current user by default; set `DUNE_PLAYER_PRESENCE_SERVICE_USER=<user>` when running the installer to choose another system user.
+
+Operational checks:
+
+```bash
+systemctl is-enabled dune-player-presence-announcer.service
+systemctl status dune-player-presence-announcer.service
+journalctl -u dune-player-presence-announcer.service -f
+```
+
+The first service poll records the current online set and does not announce those already online. Announcements start on later observed joins/leaves.

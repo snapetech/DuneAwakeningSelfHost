@@ -1,7 +1,7 @@
 COMPOSE ?= docker compose
 ENV_FILE ?= .env.example
 
-.PHONY: validate compose-config secret-scan test-watch-maps list-publishable preflight status check-steam-update start-full-warm-pool recover-survival recover-map watch-maps watch-maps-status install-map-watchdog-service install-full-farm-service install-daily-maintenance-timer full-world-partitions public-site-check public-site-package verify-local-state-ignored
+.PHONY: validate compose-config secret-scan test-watch-maps list-publishable preflight status check-steam-update start-full-warm-pool recover-survival recover-map watch-maps watch-maps-status install-map-watchdog-service install-player-presence-announcer-service install-full-farm-service install-daily-maintenance-timer full-world-partitions public-site-check public-site-package verify-local-state-ignored
 
 validate: compose-config secret-scan test-watch-maps verify-local-state-ignored
 
@@ -35,6 +35,9 @@ watch-maps-status:
 
 install-map-watchdog-service:
 	./scripts/install-map-watchdog-service.sh $(ENV_FILE)
+
+install-player-presence-announcer-service:
+	./scripts/install-player-presence-announcer-service.sh $(ENV_FILE)
 
 install-full-farm-service:
 	./scripts/install-full-farm-service.sh $(ENV_FILE)

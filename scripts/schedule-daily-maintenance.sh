@@ -12,6 +12,9 @@ Environment:
   DUNE_ENV_FILE                         Env file to read. Default: <repo>/.env
   DUNE_ADMIN_LOCAL_HOST                 Admin bind host. Default: 127.0.0.1
   DUNE_ADMIN_LOCAL_PORT                 Admin port. Default: DUNE_ADMIN_HOST_PORT or 18080
+  DUNE_DAILY_RESTART_SCHEDULE_WINDOW    Allowed local HH:MM-HH:MM invocation window. Default: 05:25-05:35
+  DUNE_DAILY_RESTART_ALLOW_OUTSIDE_WINDOW
+                                        Set true to allow manual runs outside the window.
   DUNE_DAILY_RESTART_DELAY              Warning window. Default: 30min
   DUNE_DAILY_RESTART_REPEAT_SECONDS     Repeat cadence. Default: 600
   DUNE_DAILY_RESTART_MESSAGE            Announcement text.
@@ -36,15 +39,73 @@ read_env() {
   awk -F= -v key="$key" '$1 == key {sub(/^[^=]*=/, ""); print; exit}' "$env_file"
 }
 
+env_or_file() {
+  local key="$1"
+  local value="${!key:-}"
+  if [[ -n "$value" ]]; then
+    printf '%s\n' "$value"
+  else
+    read_env "$key"
+  fi
+}
+
+time_to_minutes() {
+  local value="$1"
+  if [[ ! "$value" =~ ^([0-2][0-9]):([0-5][0-9])$ ]]; then
+    printf 'invalid schedule time: %s\n' "$value" >&2
+    exit 2
+  fi
+  local hour="${BASH_REMATCH[1]}"
+  local minute="${BASH_REMATCH[2]}"
+  if (( 10#$hour > 23 )); then
+    printf 'invalid schedule hour: %s\n' "$value" >&2
+    exit 2
+  fi
+  printf '%s\n' $((10#$hour * 60 + 10#$minute))
+}
+
+check_schedule_window() {
+  local allow window start end now_minutes start_minutes end_minutes
+  allow="$(env_or_file DUNE_DAILY_RESTART_ALLOW_OUTSIDE_WINDOW)"
+  case "${allow,,}" in
+    1|true|yes|on) return 0 ;;
+  esac
+  window="$(env_or_file DUNE_DAILY_RESTART_SCHEDULE_WINDOW)"
+  window="${window:-05:25-05:35}"
+  if [[ "$window" != *-* ]]; then
+    printf 'invalid DUNE_DAILY_RESTART_SCHEDULE_WINDOW: %s\n' "$window" >&2
+    exit 2
+  fi
+  start="${window%-*}"
+  end="${window#*-}"
+  start_minutes="$(time_to_minutes "$start")"
+  end_minutes="$(time_to_minutes "$end")"
+  now_minutes=$((10#$(date +%H) * 60 + 10#$(date +%M)))
+  if (( start_minutes <= end_minutes )); then
+    if (( now_minutes >= start_minutes && now_minutes <= end_minutes )); then
+      return 0
+    fi
+  else
+    if (( now_minutes >= start_minutes || now_minutes <= end_minutes )); then
+      return 0
+    fi
+  fi
+  printf 'refusing to schedule daily maintenance outside %s local time; now=%s\n' "$window" "$(date +%H:%M)" >&2
+  printf 'set DUNE_DAILY_RESTART_ALLOW_OUTSIDE_WINDOW=true for a deliberate manual run\n' >&2
+  exit 2
+}
+
+check_schedule_window
+
 if [[ -z "$admin_port" ]]; then
   admin_port="$(read_env DUNE_ADMIN_HOST_PORT)"
 fi
 admin_port="${admin_port:-18080}"
-restart_delay="${DUNE_DAILY_RESTART_DELAY:-$(read_env DUNE_DAILY_RESTART_DELAY)}"
+restart_delay="$(env_or_file DUNE_DAILY_RESTART_DELAY)"
 restart_delay="${restart_delay:-30min}"
-repeat_seconds="${DUNE_DAILY_RESTART_REPEAT_SECONDS:-$(read_env DUNE_DAILY_RESTART_REPEAT_SECONDS)}"
+repeat_seconds="$(env_or_file DUNE_DAILY_RESTART_REPEAT_SECONDS)"
 repeat_seconds="${repeat_seconds:-600}"
-message="${DUNE_DAILY_RESTART_MESSAGE:-$(read_env DUNE_DAILY_RESTART_MESSAGE)}"
+message="$(env_or_file DUNE_DAILY_RESTART_MESSAGE)"
 message="${message:-Daily maintenance restart at 6:00 AM. Please get to a safe place.}"
 
 token="$(read_env DUNE_ADMIN_TOKEN || true)"

@@ -50,7 +50,7 @@ fi
 checked_at="$(date -u '+%Y-%m-%d %H:%M UTC')"
 
 status_block="$(cat <<EOF
-<section class="card">
+<section class="status-card">
 <h2>Server Status</h2>
 <dl class="status-list">
 <dt><span class="status-dot ${server_class}"></span>Server</dt><dd>${server_text}</dd>

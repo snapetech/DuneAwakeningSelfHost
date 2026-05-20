@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import base64
 import datetime
 import html
 import json
@@ -122,7 +123,14 @@ def project(x, y):
     return clamp(u * WIDTH, 0, WIDTH), clamp(v * HEIGHT, 0, HEIGHT)
 
 
-def render_svg(players, generated_at):
+def map_image_href(source_map):
+    if source_map.exists():
+        encoded = base64.b64encode(source_map.read_bytes()).decode("ascii")
+        return "data:image/webp;base64," + encoded
+    return "/hagga-basin.webp"
+
+
+def render_svg(players, generated_at, image_href):
     hagga = [
         p for p in players
         if p.get("actor_map") == "HaggaBasin" and p.get("x") is not None and p.get("y") is not None
@@ -149,7 +157,7 @@ def render_svg(players, generated_at):
 <style>
 .shade{{fill:rgba(4,5,4,.28)}}.grid{{stroke:#f1d08a;stroke-width:1;opacity:.24}}.dot{{fill:#78cf7a;stroke:#071007;stroke-width:4}}.label{{fill:#fff;font:700 24px system-ui,sans-serif;paint-order:stroke;stroke:#0b0d0a;stroke-width:7}}.meta{{fill:#c7bba9;font:20px system-ui,sans-serif}}.empty{{fill:#f3eadb;font:26px system-ui,sans-serif;text-anchor:middle;paint-order:stroke;stroke:#0b0d0a;stroke-width:6}}
 </style>
-<image href="/hagga-basin.webp" x="0" y="0" width="{WIDTH}" height="{HEIGHT}" preserveAspectRatio="xMidYMid meet"/>
+<image href="{image_href}" x="0" y="0" width="{WIDTH}" height="{HEIGHT}" preserveAspectRatio="xMidYMid meet"/>
 <rect x="0" y="0" width="{WIDTH}" height="{HEIGHT}" class="shade"/>
 {''.join(grid)}
 <text x="22" y="38" class="meta">NW</text>
@@ -190,11 +198,11 @@ def main():
         "players": public_players,
         "error": error,
     }
-    (STATIC_DIR / "players.json").write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
-    (STATIC_DIR / "hagga-map.svg").write_text(render_svg(players, generated), encoding="utf-8")
-    source_map = DUNE_ROOT / "admin" / "static" / "hagga-basin.webp"
+    source_map = DUNE_ROOT / "admin" / "static" / "hagga-basin-south.webp"
     if source_map.exists():
         shutil.copyfile(source_map, STATIC_DIR / "hagga-basin.webp")
+    (STATIC_DIR / "players.json").write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
+    (STATIC_DIR / "hagga-map.svg").write_text(render_svg(players, generated, map_image_href(source_map)), encoding="utf-8")
     return 0 if ok else 1
 
 

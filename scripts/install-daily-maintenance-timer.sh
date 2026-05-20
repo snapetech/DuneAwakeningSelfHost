@@ -68,11 +68,13 @@ fi
 if command -v systemctl >/dev/null 2>&1; then
   if [[ "$(id -u)" -eq 0 ]]; then
     systemctl daemon-reload
-    systemctl enable --now "$(basename "$timer_path")"
+    systemctl enable "$(basename "$timer_path")"
+    systemctl restart "$(basename "$timer_path")"
     systemctl list-timers "$(basename "$timer_path")" --no-pager
   else
     sudo systemctl daemon-reload
-    sudo systemctl enable --now "$(basename "$timer_path")"
+    sudo systemctl enable "$(basename "$timer_path")"
+    sudo systemctl restart "$(basename "$timer_path")"
     sudo systemctl list-timers "$(basename "$timer_path")" --no-pager
   fi
 fi

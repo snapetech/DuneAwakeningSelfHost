@@ -1,0 +1,17 @@
+[Unit]
+Description=Dune player join/leave announcer
+Documentation=file:///opt/DuneAwakeningSelfHost/docs/admin-bot.md
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dune
+WorkingDirectory=/opt/DuneAwakeningSelfHost
+Environment=DUNE_ADMIN_BOT_ENV_FILE=.env
+ExecStart=/opt/DuneAwakeningSelfHost/scripts/player-presence-announcer.py --loop
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

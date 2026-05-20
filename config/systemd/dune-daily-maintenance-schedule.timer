@@ -3,7 +3,7 @@ Description=Schedule DASH daily maintenance restart for 06:00
 
 [Timer]
 OnCalendar=*-*-* 05:30:00
-Persistent=true
+Persistent=false
 Unit=dune-daily-maintenance-schedule.service
 
 [Install]

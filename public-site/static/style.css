@@ -1,21 +1,26 @@
+* {
+	box-sizing: border-box;
+}
+
 body {
 	margin: 0;
 	background: #101010;
 	color: #f3eadb;
 	font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 	line-height: 1.5;
+	overflow-x: hidden;
 }
 
 main {
-	max-width: 1500px;
+	max-width: 1800px;
 	margin: 0 auto;
-	padding: 56px 24px;
+	padding: 32px 24px;
 }
 
 h1 {
 	font-size: 2rem;
 	font-weight: 700;
-	margin: 0 0 24px;
+	margin: 0 0 12px;
 }
 
 h2 {
@@ -32,6 +37,7 @@ p {
 .lede {
 	font-size: 1.15rem;
 	max-width: 640px;
+	margin-bottom: 10px;
 }
 
 section {
@@ -40,13 +46,27 @@ section {
 	padding-top: 2px;
 }
 
-.dashboard-grid,
+.dashboard-grid {
+	display: grid;
+	grid-template-columns: minmax(300px, 1fr) minmax(0, 2fr);
+	gap: 18px;
+	align-items: stretch;
+	margin-top: 22px;
+}
+
 .rules-grid {
 	display: grid;
-	grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+	grid-template-columns: repeat(5, minmax(0, 1fr));
 	gap: 18px;
-	align-items: start;
+	align-items: stretch;
 	margin-top: 28px;
+}
+
+.info-column {
+	display: grid;
+	grid-template-rows: auto minmax(0, 1fr);
+	gap: 14px;
+	min-height: 100%;
 }
 
 .card {
@@ -54,11 +74,50 @@ section {
 	border-radius: 8px;
 	background: #171512;
 	margin-top: 0;
-	padding: 18px;
+	padding: 14px 16px;
+}
+
+.rules-grid .card {
+	height: 100%;
+}
+
+.hero-card {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(280px, 420px);
+	gap: 20px;
+	align-items: center;
+	margin-top: 0;
+	padding: 18px 22px;
+}
+
+.hero-card .lede {
+	max-width: none;
+}
+
+.stack-link {
+	color: #c7bba9;
+	font-size: 0.98rem;
+	margin: 0;
+}
+
+.status-card {
+	border: 0;
+	margin: 0;
+	padding: 0;
+	background: transparent;
+}
+
+.status-card h2 {
+	margin: 0 0 8px;
+	font-size: 0.95rem;
+	text-align: right;
+	color: #c7bba9;
 }
 
 .live-card {
-	grid-column: span 2;
+	grid-column: auto;
+	display: flex;
+	flex-direction: column;
 }
 
 .section-heading {
@@ -66,18 +125,21 @@ section {
 	align-items: baseline;
 	justify-content: space-between;
 	gap: 12px;
+	margin-bottom: 10px;
 }
 
 .section-heading h2 {
-	margin-top: 0;
+	margin: 0;
 }
 
 .hagga-map {
 	display: block;
 	width: 100%;
 	height: auto;
+	max-height: calc(100vh - 300px);
 	aspect-ratio: 1 / 1;
 	object-fit: contain;
+	margin: 0 auto;
 	background: #0d0d0d;
 	border: 1px solid #3a342d;
 	border-radius: 6px;
@@ -89,6 +151,8 @@ section {
 	margin: 0;
 	display: grid;
 	gap: 10px;
+	max-height: 100%;
+	overflow-y: auto;
 }
 
 .player-list li {
@@ -99,6 +163,11 @@ section {
 	border-bottom: 1px solid #2b2721;
 	margin: 0;
 	padding: 0 0 10px;
+}
+
+.player-list li:last-child {
+	border-bottom: 0;
+	padding-bottom: 0;
 }
 
 .player-list small {
@@ -161,6 +230,20 @@ dd {
 	gap: 8px;
 }
 
+.hero-card .status-list {
+	grid-template-columns: minmax(110px, 1fr) auto;
+	gap: 4px 18px;
+	font-size: 0.92rem;
+}
+
+.hero-card .status-list dt {
+	justify-content: flex-start;
+}
+
+.hero-card .status-list dd {
+	text-align: right;
+}
+
 .status-dot {
 	width: 0.7rem;
 	height: 0.7rem;
@@ -187,8 +270,10 @@ dd {
 
 .status-updated {
 	color: #c7bba9;
-	font-size: 0.95rem;
-	margin-top: 14px;
+	font-size: 0.82rem;
+	margin-top: 8px;
+	margin-bottom: 0;
+	text-align: right;
 }
 
 strong {
@@ -220,7 +305,32 @@ a:visited {
 }
 
 @media (max-width: 920px) {
-	.live-card {
-		grid-column: span 1;
+	.hero-card {
+		grid-template-columns: 1fr;
+		align-items: start;
+	}
+
+	.status-card h2,
+	.status-updated,
+	.hero-card .status-list dd {
+		text-align: left;
+	}
+
+	.dashboard-grid {
+		grid-template-columns: 1fr;
+	}
+
+	.rules-grid {
+		grid-template-columns: 1fr;
+	}
+
+	.hagga-map {
+		max-height: none;
+	}
+}
+
+@media (min-width: 921px) and (max-width: 1500px) {
+	.rules-grid {
+		grid-template-columns: repeat(3, minmax(0, 1fr));
 	}
 }

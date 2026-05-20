@@ -35,16 +35,17 @@ CONFIG_ROOT = ROOT / "config"
 ENV_FILE = ROOT / ".env"
 BACKUP_ROOT = ROOT / "backups" / "admin-panel"
 STATIC_ROOT = ROOT / "admin" / "static"
+ADMIN_PANEL_BUILD = "20260520-hagga-clean-map-south"
 AUDIT_LOG = BACKUP_ROOT / "audit.jsonl"
 STEAM_PROFILE_CACHE_FILE = BACKUP_ROOT / "steam-profiles.json"
 AUDIT_MAX_BYTES = int(os.environ.get("DUNE_ADMIN_AUDIT_MAX_BYTES", str(5 * 1024 * 1024)))
 REQUEST_TIMEOUT_SECONDS = int(os.environ.get("DUNE_ADMIN_REQUEST_TIMEOUT_SECONDS", "10"))
 MAX_ITEM_STACK_SIZE = int(os.environ.get("DUNE_ADMIN_MAX_ITEM_STACK_SIZE", "1000000"))
 AUDIT_EVENT_LIMIT = int(os.environ.get("DUNE_ADMIN_AUDIT_EVENT_LIMIT", "100"))
-HAGGA_MAP_MIN_X = float(os.environ.get("DUNE_HAGGA_MAP_MIN_X", "-457599"))
-HAGGA_MAP_MAX_X = float(os.environ.get("DUNE_HAGGA_MAP_MAX_X", "355199"))
-HAGGA_MAP_MIN_Y = float(os.environ.get("DUNE_HAGGA_MAP_MIN_Y", "-457599"))
-HAGGA_MAP_MAX_Y = float(os.environ.get("DUNE_HAGGA_MAP_MAX_Y", "355199"))
+HAGGA_MAP_MIN_X = float(os.environ.get("DUNE_HAGGA_MAP_MIN_X", "-457200"))
+HAGGA_MAP_MAX_X = float(os.environ.get("DUNE_HAGGA_MAP_MAX_X", "355600"))
+HAGGA_MAP_MIN_Y = float(os.environ.get("DUNE_HAGGA_MAP_MIN_Y", "-457200"))
+HAGGA_MAP_MAX_Y = float(os.environ.get("DUNE_HAGGA_MAP_MAX_Y", "355600"))
 HAGGA_MAP_INVERT_X = os.environ.get("DUNE_HAGGA_MAP_INVERT_X", "false").lower() not in ("0", "false", "no", "off")
 HAGGA_MAP_INVERT_Y = os.environ.get("DUNE_HAGGA_MAP_INVERT_Y", "false").lower() not in ("0", "false", "no", "off")
 HAGGA_MAP_SHOW_RETURN_POINTS = os.environ.get("DUNE_HAGGA_MAP_SHOW_RETURN_POINTS", "false").lower() in ("1", "true", "yes", "on")
@@ -338,12 +339,12 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ADMIN_BIND_ADDRESS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Host interface used for the admin-panel published port. Keep this on 127.0.0.1 unless a trusted reverse proxy or VPN owns access."},
     "DUNE_ADMIN_HOST_PORT": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Host TCP port that publishes admin-panel:8080. Change this if another local service already owns 18080."},
     "DUNE_ADMIN_ALLOWED_HOSTS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Host header allowlist for the admin HTTP service."},
-    "DUNE_HAGGA_MAP_MIN_X": {"group": "Admin Panel", "secret": False, "restart": True, "why": "THGL survival_1 world-space left bound for Hagga Basin player plotting."},
-    "DUNE_HAGGA_MAP_MAX_X": {"group": "Admin Panel", "secret": False, "restart": True, "why": "THGL survival_1 world-space right bound for Hagga Basin player plotting."},
-    "DUNE_HAGGA_MAP_MIN_Y": {"group": "Admin Panel", "secret": False, "restart": True, "why": "THGL survival_1 world-space top bound for Hagga Basin player plotting."},
-    "DUNE_HAGGA_MAP_MAX_Y": {"group": "Admin Panel", "secret": False, "restart": True, "why": "THGL survival_1 world-space bottom bound for Hagga Basin player plotting."},
-    "DUNE_HAGGA_MAP_INVERT_X": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Flip Hagga Basin map plotting horizontally. Default false for the THGL survival_1 tile mosaic."},
-    "DUNE_HAGGA_MAP_INVERT_Y": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Invert Hagga Basin map plotting vertically. Default false for the THGL survival_1 tile mosaic."},
+    "DUNE_HAGGA_MAP_MIN_X": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Full Hagga Basin world-space left bound for coordinate-grid plotting."},
+    "DUNE_HAGGA_MAP_MAX_X": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Full Hagga Basin world-space right bound for coordinate-grid plotting."},
+    "DUNE_HAGGA_MAP_MIN_Y": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Full Hagga Basin world-space lower Y bound for coordinate-grid plotting."},
+    "DUNE_HAGGA_MAP_MAX_Y": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Full Hagga Basin world-space upper Y bound for coordinate-grid plotting."},
+    "DUNE_HAGGA_MAP_INVERT_X": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Flip Hagga Basin plotting horizontally. Default false."},
+    "DUNE_HAGGA_MAP_INVERT_Y": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Invert Hagga Basin plotting vertically. Default true so higher world Y renders north/up."},
     "DUNE_HAGGA_MAP_IMAGE_MIN_U": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Normalized image-space left edge for Hagga world-coordinate calibration. Values may be outside 0..1 when the bitmap has projection/crop offset."},
     "DUNE_HAGGA_MAP_IMAGE_MAX_U": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Normalized image-space right edge for Hagga world-coordinate calibration."},
     "DUNE_HAGGA_MAP_IMAGE_MIN_V": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Normalized image-space top edge for Hagga world-coordinate calibration."},
@@ -581,6 +582,9 @@ def schedule_announcement(body):
         "status": "scheduled",
         "lastError": None,
     }
+    restart_job_id = str(body.get("restart_job_id", body.get("restartJobId", ""))).strip()
+    if restart_job_id:
+        job["restartJobId"] = restart_job_id
     with ANNOUNCEMENT_LOCK:
         state = read_announcement_state()
         for existing in active_announcement_jobs(state):
@@ -699,11 +703,13 @@ def schedule_restart(body):
             "message": message,
             "restart_at": run_at,
             "action": action,
+            "restart_job_id": job["id"],
         })
     return job
 
 
 def cancel_restart(job_id=None):
+    cancelled_ids = []
     with RESTART_LOCK:
         state = read_restart_state()
         changed = 0
@@ -712,9 +718,21 @@ def cancel_restart(job_id=None):
                 continue
             job["status"] = "cancelled"
             job["cancelledAt"] = time.time()
+            cancelled_ids.append(job.get("id"))
             changed += 1
         write_restart_state(state)
-    return {"ok": True, "cancelled": changed}
+    cancelled_announcements = 0
+    if cancelled_ids:
+        with ANNOUNCEMENT_LOCK:
+            announcement_state = read_announcement_state()
+            for job in active_announcement_jobs(announcement_state):
+                if job.get("restartJobId") not in cancelled_ids:
+                    continue
+                job["status"] = "cancelled"
+                job["cancelledAt"] = time.time()
+                cancelled_announcements += 1
+            write_announcement_state(announcement_state)
+    return {"ok": True, "cancelled": changed, "cancelledAnnouncements": cancelled_announcements}
 
 
 def run_restart_command(command, job, phase):
@@ -2042,8 +2060,11 @@ class Handler(BaseHTTPRequestHandler):
                 self.html(INDEX)
             elif parsed.path == "/static/hagga-basin.webp":
                 self.static_file(STATIC_ROOT / "hagga-basin.webp", "image/webp")
+            elif parsed.path == "/static/hagga-basin-south.webp":
+                self.static_file(STATIC_ROOT / "hagga-basin-south.webp", "image/webp")
             elif parsed.path == "/api/status":
                 self.json({
+                    "build": ADMIN_PANEL_BUILD,
                     "database": DATABASE,
                     "mutationsEnabled": MUTATIONS_ENABLED,
                     "itemGrantsEnabled": ITEM_GRANTS_ENABLED,
@@ -2397,6 +2418,100 @@ class Handler(BaseHTTPRequestHandler):
             "maxY": bounds_row.get("max_y"),
             "actorCount": bounds_row.get("actor_count") or 0,
         }
+        landmarks = []
+        diagnostics = query("""
+            with online_players as (
+                select ps.account_id, ps.character_name, ps.player_controller_id, ps.player_pawn_id, ps.player_state_id
+                from dune.player_state ps
+                where ps.online_status::text = 'Online'
+            ),
+            actor_candidates as (
+                select op.account_id, op.character_name, 'actor:controller' as source, a.map,
+                       ((a.transform).location).x::float8 as x,
+                       ((a.transform).location).y::float8 as y,
+                       ((a.transform).location).z::float8 as z,
+                       a.partition_id, a.dimension_index,
+                       a.id::text as ref
+                from online_players op
+                join dune.actors a on a.id = op.player_controller_id
+                union all
+                select op.account_id, op.character_name, 'actor:pawn' as source, a.map,
+                       ((a.transform).location).x::float8,
+                       ((a.transform).location).y::float8,
+                       ((a.transform).location).z::float8,
+                       a.partition_id, a.dimension_index,
+                       a.id::text
+                from online_players op
+                join dune.actors a on a.id = op.player_pawn_id
+                union all
+                select op.account_id, op.character_name, 'actor:player_state' as source, a.map,
+                       ((a.transform).location).x::float8,
+                       ((a.transform).location).y::float8,
+                       ((a.transform).location).z::float8,
+                       a.partition_id, a.dimension_index,
+                       a.id::text
+                from online_players op
+                join dune.actors a on a.id = op.player_state_id
+            ),
+            travel_candidates as (
+                select op.account_id, op.character_name, 'travel:return_info' as source, tri.map,
+                       ((tri.transform).location).x::float8 as x,
+                       ((tri.transform).location).y::float8 as y,
+                       ((tri.transform).location).z::float8 as z,
+                       null::bigint as partition_id, null::integer as dimension_index,
+                       op.player_controller_id::text as ref
+                from online_players op
+                join dune.travel_return_info tri on tri.player_controller_id = op.player_controller_id
+            ),
+            function_candidates as (
+                select op.account_id, op.character_name, 'function:load_travel_to_player_info' as source, l.map,
+                       ((l.transform).location).x::float8 as x,
+                       ((l.transform).location).y::float8 as y,
+                       ((l.transform).location).z::float8 as z,
+                       l.partition_id, l.dimension_index,
+                       op.player_controller_id::text as ref
+                from online_players op
+                cross join lateral dune.load_travel_to_player_info(op.player_controller_id) l
+            ),
+            respawn_candidates as (
+                select op.account_id, op.character_name, 'respawn:' || prl.group as source, coalesce(a.map, prl.map) as map,
+                       coalesce(((a.transform).location).x::float8, ((prl.locator_transform).location).x::float8) as x,
+                       coalesce(((a.transform).location).y::float8, ((prl.locator_transform).location).y::float8) as y,
+                       coalesce(((a.transform).location).z::float8, ((prl.locator_transform).location).z::float8) as z,
+                       a.partition_id, coalesce(a.dimension_index, prl.dimension) as dimension_index,
+                       coalesce(prl.locator_actor_id::text, prl.locator_name, prl.id::text) as ref
+                from online_players op
+                join dune.player_respawn_locations prl on prl.account_id = op.account_id
+                left join dune.actors a on a.id = prl.locator_actor_id
+            ),
+            recent_events as (
+                select distinct on (op.account_id, ge.event_type)
+                       op.account_id, op.character_name, 'event:' || ge.event_type::text as source, ge.map,
+                       ge.x::float8 as x, ge.y::float8 as y, ge.z::float8 as z,
+                       ge.partition_id, null::integer as dimension_index,
+                       ge.universe_time::text as ref
+                from online_players op
+                join dune.game_events ge on ge.actor_id in (op.player_controller_id, op.player_pawn_id, op.player_state_id)
+                order by op.account_id, ge.event_type, ge.universe_time desc
+            )
+            select *, case
+                when x is null or y is null then 'no coordinates'
+                when source like 'actor:%%' then 'DB actor transform; persists but may lag live client'
+                when source = 'function:load_travel_to_player_info' then 'DB server helper; same persistence layer as actors'
+                when source = 'travel:return_info' then 'return/teleport target, not live position'
+                when source like 'respawn:%%' then 'respawn target, vehicle, or beacon; useful context only'
+                when source like 'event:%%' then 'historical event location, not live position'
+                else 'candidate'
+            end as assessment
+            from (
+                select * from actor_candidates
+                union all select * from function_candidates
+                union all select * from travel_candidates
+                union all select * from respawn_candidates
+                union all select * from recent_events
+            ) candidates
+            order by character_name, source
+        """)
         return {
             "map": "HaggaBasin",
             "generatedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -2413,8 +2528,10 @@ class Handler(BaseHTTPRequestHandler):
                 "imageMinV": HAGGA_MAP_IMAGE_MIN_V,
                 "imageMaxV": HAGGA_MAP_IMAGE_MAX_V,
                 "showReturnPoints": HAGGA_MAP_SHOW_RETURN_POINTS,
-                "source": "THGL survival_1 tile bounds/projection: image U from world Y, image V from world X",
+                "source": "Gaming.tools survival_1 tile bounds: image U from world X, image V from world Y",
             },
+            "landmarks": landmarks,
+            "diagnostics": diagnostics,
             "players": rows,
         }
 
@@ -3106,7 +3223,6 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.security_headers()
-        self.send_header("Cache-Control", "public, max-age=86400")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
@@ -3122,6 +3238,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def security_headers(self, nonce=None):
         self.send_header("Cache-Control", "no-store")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
+        self.send_header("X-Admin-Panel-Build", ADMIN_PANEL_BUILD)
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
@@ -3143,6 +3262,7 @@ INDEX = r"""<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="admin-panel-build" content="20260520-hagga-clean-map-south">
   <title>Dune Admin</title>
   <style nonce="__NONCE__">
     :root { color-scheme: dark; --bg:#0f1110; --nav:#141814; --panel:#1a1f1a; --panel2:#131713; --panel3:#20261f; --muted:#a3aea4; --line:#323b32; --text:#edf3ea; --accent:#d5a13e; --danger:#d96f62; --ok:#7fc27a; --warn:#e1b75f; }
@@ -3246,10 +3366,13 @@ INDEX = r"""<!doctype html>
     .mapTile .meta { color:var(--muted); font-size:12px; margin-top:4px; }
     .haggaMap { position:relative; display:block; overflow:visible; background:#171513; inline-size:100%; margin-inline:auto; border:1px solid var(--line); border-radius:8px; }
     .haggaMap svg { display:block; inline-size:100%; aspect-ratio:1 / 1; block-size:auto; background:#171513; }
-    .haggaMap .mapImage { opacity:.88; }
-    .haggaMap .mapShade { fill:rgba(4,5,4,.22); }
+    .haggaMap .mapImage { opacity:.95; }
+    .haggaMap .mapShade { fill:rgba(4,5,4,.08); }
     .haggaMap .gridLine { stroke:#f1d08a; stroke-width:1; opacity:.22; }
+    .haggaMap .gridLabel { fill:#ead9ac; font:10px ui-monospace, SFMono-Regular, Menlo, monospace; paint-order:stroke; stroke:#0b0d0a; stroke-width:3; opacity:.84; }
     .haggaMap .playerDot { fill:var(--ok); stroke:#071007; stroke-width:3; }
+    .haggaMap .landmarkDot { fill:#d8b763; stroke:#17120a; stroke-width:1.5; opacity:.45; }
+    .haggaMap .landmarkLabel { fill:#f0dfaa; font:700 10px system-ui,sans-serif; paint-order:stroke; stroke:#0b0d0a; stroke-width:3; opacity:.68; }
     .haggaMap .returnDot { fill:var(--warn); stroke:#160f04; stroke-width:3; }
     .haggaMap .uncertainLine { stroke:var(--warn); stroke-width:2; stroke-dasharray:7 7; opacity:.75; }
     .haggaMap .playerMarker:focus .playerDot, .haggaMap .playerMarker:hover .playerDot { fill:var(--accent); stroke:var(--text); }
@@ -3361,6 +3484,7 @@ INDEX = r"""<!doctype html>
     </div>
   </div>
 <script nonce="__NONCE__">
+const ADMIN_PANEL_BUILD = '20260520-hagga-clean-map-south';
 let token = (localStorage.getItem('duneAdminToken') || sessionStorage.getItem('duneAdminToken') || '').trim();
 document.getElementById('token').value = token;
 const validTabs = new Set(['overview', 'ops', 'security', 'runbook', 'characters', 'settings', 'mutations']);
@@ -3775,12 +3899,12 @@ function haggaBasinMapPanel(data){
   const height = 1000;
   const pad = 0;
   const mapExtent = 100000;
-  const minX = Number.isFinite(Number(calibration.minX)) ? Number(calibration.minX) : -457599;
-  const maxX = Number.isFinite(Number(calibration.maxX)) ? Number(calibration.maxX) : 355199;
-  const minY = Number.isFinite(Number(calibration.minY)) ? Number(calibration.minY) : -457599;
-  const maxY = Number.isFinite(Number(calibration.maxY)) ? Number(calibration.maxY) : 355199;
-  const invertX = calibration.invertX !== false;
-  const invertY = calibration.invertY !== false;
+  const minX = Number.isFinite(Number(calibration.minX)) ? Number(calibration.minX) : -457200;
+  const maxX = Number.isFinite(Number(calibration.maxX)) ? Number(calibration.maxX) : 355600;
+  const minY = Number.isFinite(Number(calibration.minY)) ? Number(calibration.minY) : -457200;
+  const maxY = Number.isFinite(Number(calibration.maxY)) ? Number(calibration.maxY) : 355600;
+  const invertX = calibration.invertX === true;
+  const invertY = calibration.invertY === true;
   const imageMinU = Number.isFinite(Number(calibration.imageMinU)) ? Number(calibration.imageMinU) : 0;
   const imageMaxU = Number.isFinite(Number(calibration.imageMaxU)) ? Number(calibration.imageMaxU) : 1;
   const imageMinV = Number.isFinite(Number(calibration.imageMinV)) ? Number(calibration.imageMinV) : 0;
@@ -3789,21 +3913,27 @@ function haggaBasinMapPanel(data){
   const spanX = Math.max(maxX - minX, 1);
   const spanY = Math.max(maxY - minY, 1);
   const worldToImageU = (x, y) => {
-    const normalized = (Number(y) - minY) / spanY;
+    const normalized = (Number(x) - minX) / spanX;
     const oriented = invertX ? 1 - normalized : normalized;
     return imageMinU + oriented * (imageMaxU - imageMinU);
   };
   const worldToImageV = (x, y) => {
-    const normalized = (Number(x) - minX) / spanX;
+    const normalized = (Number(y) - minY) / spanY;
     const oriented = invertY ? 1 - normalized : normalized;
     return imageMinV + oriented * (imageMaxV - imageMinV);
   };
   const px = (x, y) => clamp(pad + worldToImageU(x, y) * (width - pad * 2), 0, width);
   const py = (x, y) => clamp(pad + worldToImageV(x, y) * (height - pad * 2), 0, height);
-  const grid = [1,2,3,4].map(i => {
-    const gx = (i / 5) * width;
-    const gy = (i / 5) * height;
-    return `<line class="gridLine" x1="${gx}" y1="${pad}" x2="${gx}" y2="${height - pad}"></line><line class="gridLine" x1="${pad}" y1="${gy}" x2="${width - pad}" y2="${gy}"></line>`;
+  const gridSteps = 8;
+  const grid = Array.from({length: gridSteps + 1}, (_, i) => {
+    const t = i / gridSteps;
+    const gx = pad + t * (width - pad * 2);
+    const gy = pad + t * (height - pad * 2);
+    const worldX = minX + t * spanX;
+    const worldY = maxY - t * spanY;
+    const xLabelY = i % 2 === 0 ? 18 : height - 10;
+    const yLabelX = i % 2 === 0 ? 8 : width - 92;
+    return `<line class="gridLine" x1="${gx}" y1="${pad}" x2="${gx}" y2="${height - pad}"></line><line class="gridLine" x1="${pad}" y1="${gy}" x2="${width - pad}" y2="${gy}"></line><text class="gridLabel" x="${clamp(gx + 4, 8, width - 96)}" y="${xLabelY}">X ${esc(Math.round(worldX))}</text><text class="gridLabel" x="${yLabelX}" y="${clamp(gy - 4, 18, height - 12)}">Y ${esc(Math.round(worldY))}</text>`;
   }).join('');
   const markers = players.map((p, index) => {
     const x = px(p.x, p.y);
@@ -3832,8 +3962,19 @@ function haggaBasinMapPanel(data){
     return_z: p.return_z === null || p.return_z === undefined ? '' : Math.round(Number(p.return_z)),
     last_login_time: p.last_login_time || ''
   }));
+  const diagnosticRows = (data?.diagnostics || []).map(d => ({
+    character: d.character_name || '',
+    source: d.source || '',
+    map: d.map || '',
+    x: d.x === null || d.x === undefined ? '' : Math.round(Number(d.x)),
+    y: d.y === null || d.y === undefined ? '' : Math.round(Number(d.y)),
+    z: d.z === null || d.z === undefined ? '' : Math.round(Number(d.z)),
+    partition: d.partition_id ?? '',
+    ref: d.ref || '',
+    assessment: d.assessment || ''
+  }));
   const generatedAt = data?.generatedAt ? new Date(data.generatedAt).toLocaleTimeString() : '';
-  return `<div class="panelBand"><div class="sectionHeader"><h2>Hagga Basin Player Map</h2><div class="toolbar"><span id="haggaMapCount" class="pill ${players.length ? 'ok' : ''}">${esc(players.length)} plotted</span><span id="haggaMapUpdated" class="pill">updated ${esc(generatedAt)}</span><span id="haggaMapHealth" class="pill warn">best-effort DB position</span><button id="toggleHaggaMapRefreshBtn" aria-pressed="${haggaMapAutoRefresh ? 'true' : 'false'}">${haggaMapAutoRefresh ? 'Pause map' : 'Resume map'}</button><button id="refreshHaggaMapBtn">Refresh map</button></div></div><div id="haggaMapSrStatus" class="srOnly" aria-live="polite">${esc(players.length)} Hagga Basin players plotted.</div><div class="haggaMap"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Hagga Basin online player coordinate map"><image class="mapImage" href="/static/hagga-basin.webp" x="0" y="0" width="${width}" height="${height}" preserveAspectRatio="xMidYMid meet"></image><rect class="mapShade" x="0" y="0" width="${width}" height="${height}"></rect>${grid}<text x="12" y="24" fill="var(--muted)" font-size="12">NW</text><text x="${width - 30}" y="${height - 12}" fill="var(--muted)" font-size="12">SE</text>${markers}${empty}</svg></div><div class="haggaMapStatus"><span class="pill ok">green: pawn/controller transform</span><span class="pill ${showReturnPoints ? 'warn' : ''}">yellow return-info ${showReturnPoints ? 'shown' : 'hidden'}</span><span class="pill">background: THGL survival_1 z4 tile mosaic</span><span class="pill">THGL projection: image U from world Y, image V from world X</span><span class="pill">world X ${esc(Math.round(minX))}..${esc(Math.round(maxX))}, Y ${esc(Math.round(minY))}..${esc(Math.round(maxY))}${invertX ? ', flipped X' : ''}${invertY ? ', inverted Y' : ''}</span><span class="pill">image U ${esc(imageMinU.toFixed(2))}..${esc(imageMaxU.toFixed(2))}, V ${esc(imageMinV.toFixed(2))}..${esc(imageMaxV.toFixed(2))}</span></div><details open><summary>Coordinates</summary><div class="coordTable">${table(rows)}</div></details></div>`;
+  return `<div class="panelBand"><div class="sectionHeader"><h2>Hagga Basin Coordinate Grid</h2><div class="toolbar"><span id="haggaMapCount" class="pill ${players.length ? 'ok' : ''}">${esc(players.length)} plotted</span><span id="haggaMapUpdated" class="pill">updated ${esc(generatedAt)}</span><span id="haggaMapHealth" class="pill warn">DB persistence position, not proven live</span><button id="toggleHaggaMapRefreshBtn" aria-pressed="${haggaMapAutoRefresh ? 'true' : 'false'}">${haggaMapAutoRefresh ? 'Pause map' : 'Resume map'}</button><button id="refreshHaggaMapBtn">Refresh map</button></div></div><div id="haggaMapSrStatus" class="srOnly" aria-live="polite">${esc(players.length)} Hagga Basin players plotted.</div><div class="haggaMap"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Full Hagga Basin coordinate-grid map"><image class="mapImage" href="/static/hagga-basin.webp?v=${encodeURIComponent(ADMIN_PANEL_BUILD)}" x="0" y="0" width="${width}" height="${height}" preserveAspectRatio="xMidYMid meet"></image><rect class="mapShade" x="0" y="0" width="${width}" height="${height}"></rect>${grid}<text x="12" y="38" fill="var(--muted)" font-size="12">NW</text><text x="${width - 30}" y="${height - 12}" fill="var(--muted)" font-size="12">SE</text>${markers}${empty}</svg></div><div class="haggaMapStatus"><span class="pill warn">green: persisted actor transform</span><span class="pill ${showReturnPoints ? 'warn' : ''}">yellow return-info ${showReturnPoints ? 'shown' : 'hidden'}</span><span class="pill">background: clean survival_1 tile composite</span><span class="pill">projection: world X -> image U, world Y -> image V</span><span class="pill">world X ${esc(Math.round(minX))}..${esc(Math.round(maxX))}, Y ${esc(Math.round(minY))}..${esc(Math.round(maxY))}${invertX ? ', flipped X' : ''}${invertY ? ', inverted Y' : ''}</span><span class="pill">image U ${esc(imageMinU.toFixed(2))}..${esc(imageMaxU.toFixed(2))}, V ${esc(imageMinV.toFixed(2))}..${esc(imageMaxV.toFixed(2))}</span></div><details open><summary>Coordinates</summary><div class="coordTable">${table(rows)}</div></details><details open><summary>Location Source Diagnostics</summary><div class="coordTable">${table(diagnosticRows)}</div></details></div>`;
 }
 function wireHaggaMapControls(container){
   container.querySelectorAll('.playerMarker[data-account-id]').forEach(marker => {
