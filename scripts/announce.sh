@@ -10,6 +10,13 @@ if [ -z "$message" ]; then
   exit 64
 fi
 
+if [ "${DUNE_ANNOUNCE_WRAP_DASHBOARD_MESSAGES:-true}" != "false" ] && [ "${DUNE_ANNOUNCE_WRAP_DASHBOARD_MESSAGES:-true}" != "0" ] && [ "$job_id" != "manual" ]; then
+  case "$message" in
+    "!!! "*" !!!") ;;
+    *) message="!!! ${message} !!!" ;;
+  esac
+fi
+
 python3 - "$message" "$restart_at" "$job_id" <<'PY'
 import base64
 import json
