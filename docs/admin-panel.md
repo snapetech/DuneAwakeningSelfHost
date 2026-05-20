@@ -168,6 +168,56 @@ The admin panel passes:
 
 The script also receives the message as its first argument. Delivery attempts and failures are recorded in the admin audit log.
 
+## Chat Commands
+
+`scripts/admin-chat-commands.py` is the first DASH chat-command bridge. It listens for game chat messages that start with `DUNE_CHAT_COMMAND_PREFIX`, resolves the sending account through `dune.accounts.user`, and only accepts commands from configured admins.
+
+Default command settings:
+
+```env
+DUNE_CHAT_COMMAND_PREFIX=&
+DUNE_CHAT_COMMAND_ADMINS=Lukano
+DUNE_CHAT_COMMAND_ADMIN_FLS_IDS=6FF6498F4074E3DE
+DUNE_CHAT_COMMAND_DRY_RUN=true
+DUNE_CHAT_COMMAND_EXECUTE_TELEPORT=false
+DUNE_CHAT_COMMAND_EXCHANGE=chat.intercept
+DUNE_CHAT_COMMAND_QUEUE=dash_admin_chat_commands
+DUNE_CHAT_COMMAND_ROUTING_KEY=#
+DUNE_CHAT_COMMAND_AMQP_HOST=172.31.240.1
+DUNE_CHAT_COMMAND_AMQP_PORT=31982
+DUNE_CHAT_COMMAND_AMQP_TLS=true
+DUNE_CHAT_COMMAND_AMQP_USER=A000000000000001
+DUNE_CHAT_COMMAND_AMQP_PASSWORD=<local announcer password>
+DUNE_CHAT_COMMAND_REPLY_COMMAND=/workspace/scripts/announce.sh
+```
+
+Implemented commands:
+
+```text
+&where <playername>
+&teleport <playername>
+```
+
+`&where` reports the resolved player's current online/offline state and last known location. `&teleport` moves an offline target to the admin's current partition and location, using the server's own `dune.admin_move_offline_player_to_partition(...)` function. It rejects online targets because live actor transforms are owned by the running map server and can be overwritten.
+
+Teleport starts in dry-run mode. To apply the movement write, set:
+
+```env
+DUNE_CHAT_COMMAND_DRY_RUN=false
+DUNE_CHAT_COMMAND_EXECUTE_TELEPORT=true
+```
+
+Dry-run verification from the live admin container:
+
+```bash
+docker compose exec -T admin-panel /workspace/scripts/admin-chat-commands.py \
+  --dry-run-command '&teleport Cletus' \
+  --sender-name Lukano \
+  --sender-fls-id 6FF6498F4074E3DE
+```
+
+The current admin-panel container can resolve the database side of commands, but it cannot directly open the game RabbitMQ AMQP port on this host without Docker networking changes. Do not change Docker networking for this without an explicit maintenance window. The script is ready for the command parser and teleport backend; persistent listener activation should be done only after the RabbitMQ reachability path is chosen.
+
 ## Scheduled Restarts And Shutdowns
 
 The Ops tab can also schedule restart or shutdown jobs for restart-safe components, the service layer, all game maps, or key individual maps such as Survival, Overmap, Arrakeen, Harko Village, and Deep Desert. It does not stop or restart Postgres or RabbitMQ by default because replacing those services disconnects all running map servers.

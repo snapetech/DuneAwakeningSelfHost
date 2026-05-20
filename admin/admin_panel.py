@@ -52,6 +52,7 @@ AUDIT_LOCK = threading.Lock()
 CONFIRM_RESET_KEYSTONES = "RESET KEYSTONES"
 CONFIRM_DELETE_ITEM = "DELETE ITEM"
 CONFIRM_SET_STACK = "SET STACK"
+CONFIRM_GM_COMMAND = "RUN GM COMMAND"
 ANNOUNCEMENT_STATE_FILE = BACKUP_ROOT / "announcements.json"
 RESTART_STATE_FILE = BACKUP_ROOT / "restart-jobs.json"
 ANNOUNCEMENT_LOCK = threading.Lock()
@@ -99,6 +100,93 @@ RESTART_TARGETS = {
     "arrakeen": {"label": "Arrakeen", "services": ["arrakeen"]},
     "harko-village": {"label": "Harko Village", "services": ["harko-village"]},
     "deep-desert": {"label": "Deep Desert", "services": ["deep-desert"]},
+}
+
+GM_COMMANDS_ENABLED = os.environ.get("DUNE_ADMIN_GM_COMMANDS_ENABLED", "false").lower() == "true"
+GM_COMMAND_PAYLOAD_VERIFIED = False
+GM_ALLOWED_COMMANDS = (
+    "obj",
+    "FGL.ComponentAuditRequested",
+)
+GM_ALLOWED_GM_COMMANDS = (
+    "AddItemToInventory",
+    "AddBasicInventoryToCharacter",
+    "SpawnVehicle",
+    "PatrolShipTeleportToNearest",
+    "TeleportTo",
+    "TeleportToMap",
+    "TeleportToExact",
+    "TeleportToPlayer",
+    "TeleportToVehicleSpawner",
+    "TeleportToSandworm",
+    "TeleportToPersonalMarker",
+    "TravelTo",
+    "TravelToDimension",
+    "Fly",
+    "Ghost",
+    "Walk",
+    "DestroyTargetVehicle",
+    "DestroyTotem",
+    "DestroyPlaceable",
+    "DestroyEntireBuilding",
+    "DestroyBuildingPiece",
+    "PrintPos",
+)
+GM_COMMAND_NOTES = {
+    "AddItemToInventory": "Player inventory grant command exposed by DuneCheatManager. Args observed in scripts: <template_id> <count> [quality].",
+    "AddBasicInventoryToCharacter": "Likely fills or creates a basic inventory set for the target character. Payload route not verified.",
+    "SpawnVehicle": "Spawns a vehicle for/near the admin context. Vehicle template args still need validation.",
+    "PatrolShipTeleportToNearest": "Teleports to nearest patrol ship context.",
+    "TeleportTo": "Teleport helper; exact argument contract still needs validation.",
+    "TeleportToMap": "Map teleport helper; probably map name plus optional location.",
+    "TeleportToExact": "Exact coordinate teleport helper. Strings show this as a cheat/admin UI route.",
+    "TeleportToPlayer": "Teleport to a target player.",
+    "TeleportToVehicleSpawner": "Teleport to a vehicle spawner.",
+    "TeleportToSandworm": "Teleport to sandworm location/context.",
+    "TeleportToPersonalMarker": "Teleport to the player's personal marker.",
+    "TravelTo": "Travel command exposed by server command/cheat path.",
+    "TravelToDimension": "Travel to a map dimension.",
+    "Fly": "Enable fly movement on the admin player.",
+    "Ghost": "Enable collision-free movement on the admin player.",
+    "Walk": "Return movement mode to normal walking.",
+    "DestroyTargetVehicle": "Destroys targeted vehicle.",
+    "DestroyTotem": "Destroys targeted totem.",
+    "DestroyPlaceable": "Destroys targeted placeable.",
+    "DestroyEntireBuilding": "Destroys entire targeted building.",
+    "DestroyBuildingPiece": "Destroys targeted building piece.",
+    "PrintPos": "Prints current position; safest candidate for route testing once payload format is known.",
+}
+GM_CHEAT_SCRIPTS = {
+    "LeaveMeAlone": [
+        "EncountersDestroyAndDisableAll",
+        "DestroyAllNpcs",
+        "SetAutoSandstormSpawnEnabled 0",
+        "DestroyAllSandStorms",
+        "ServerExec sandworm.dune.Enabled 0",
+    ],
+    "StartHitchVehicleTest": [
+        "ServerExec t.maxfps 20",
+        "ServerExec CauseHitchesPeriod 10",
+        "ServerExec CauseHitchesHitchMS 1000",
+        "ServerExec CauseHitches 1",
+        "ServerExec t.UnsteadyFps 1",
+        "CauseHitchesPeriod 20",
+        "CauseHitchesHitchMS 200",
+        "CauseHitches 1",
+        "t.UnsteadyFps 1",
+    ],
+    "StopHitchVehicleTest": [
+        "ServerExec t.maxfps 0",
+        "ServerExec CauseHitches 0",
+        "ServerExec t.UnsteadyFps 0",
+        "CauseHitches 0",
+        "t.UnsteadyFps 0",
+    ],
+    "AwardPlayerXP": [
+        "AwardXP Combat 10000",
+        "AwardXP Exploration 10000",
+        "AwardXP Science 10000",
+    ],
 }
 
 ALLOWED_CONFIGS = {
@@ -162,6 +250,7 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ADMIN_TOKEN": {"group": "Admin Panel", "secret": True, "restart": True, "why": "Token required for admin panel APIs."},
     "DUNE_ADMIN_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Master gate for writes that mutate game/admin state."},
     "DUNE_ADMIN_ITEM_GRANTS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Item grant feature gate. Defaults to true in this repo."},
+    "DUNE_ADMIN_GM_COMMANDS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for native Dune GM/admin command execution. Execution also stays blocked until the RabbitMQ payload format is verified."},
     "DUNE_ADMIN_MAX_BODY_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum accepted request body size."},
     "DUNE_ADMIN_AUDIT_MAX_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Audit log rotation threshold."},
     "DUNE_ADMIN_REQUEST_TIMEOUT_SECONDS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Socket timeout to limit slow client abuse."},
@@ -872,6 +961,117 @@ def strip_ini_comment(value):
     return value.strip()
 
 
+def parse_ini_multivalue(path):
+    sections = {}
+    if not path.exists():
+        return sections
+    current = ""
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith(("#", ";")):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            current = line.strip("[]").strip()
+            sections.setdefault(current, {})
+            continue
+        if not current or "=" not in raw_line:
+            continue
+        key, value = raw_line.split("=", 1)
+        key = key.strip()
+        value = strip_ini_comment(value)
+        bucket = sections.setdefault(current, {}).setdefault(key, [])
+        bucket.append(value)
+    return sections
+
+
+def gm_command_catalog():
+    user_game = parse_ini_multivalue(ALLOWED_CONFIGS["UserGame.ini"])
+    local_scripts = {
+        section.split(".", 1)[1]: values.get("Cmd", [])
+        for section, values in user_game.items()
+        if section.startswith("CheatScript.")
+    }
+    scripts = dict(GM_CHEAT_SCRIPTS)
+    scripts.update({name: commands for name, commands in local_scripts.items() if commands})
+    commands = [{"name": name, "kind": "console", "notes": "Console command allowed by DedicatedServerGame.ini."} for name in GM_ALLOWED_COMMANDS]
+    commands.extend({
+        "name": name,
+        "kind": "gm",
+        "notes": GM_COMMAND_NOTES.get(name, "GM command exposed by DedicatedServerGame.ini allow-list."),
+    } for name in GM_ALLOWED_GM_COMMANDS)
+    return {
+        "enabled": GM_COMMANDS_ENABLED,
+        "payloadVerified": GM_COMMAND_PAYLOAD_VERIFIED,
+        "status": "catalog-ready-route-blocked",
+        "reason": "The native command names and map queues are known, but the live RabbitMQ payload envelope for UDuneServerCommandSubsystem is not yet verified.",
+        "activeAllowListSource": "DuneSandbox/Config/DedicatedServerGame.ini from the live survival container",
+        "commands": commands,
+        "cheatScripts": [{"name": name, "commands": lines} for name, lines in sorted(scripts.items())],
+        "routeCandidates": gm_route_candidates(),
+        "safeProbe": {"command": "PrintPos", "why": "Read-only position print is the safest first execution probe once payload format is known."},
+    }
+
+
+def gm_route_candidates():
+    rows = []
+    try:
+        farm = query("select server_id,map,ready,alive from dune.farm_state order by map, server_id")
+    except Exception:
+        farm = []
+    for row in farm:
+        server_id = row.get("server_id") or ""
+        if server_id:
+            rows.append({
+                "exchange": "rpc",
+                "routingKey": server_id,
+                "map": row.get("map"),
+                "ready": row.get("ready"),
+                "alive": row.get("alive"),
+                "notes": "Map queue binding observed in admin RabbitMQ.",
+            })
+            rows.append({
+                "exchange": "response",
+                "routingKey": f"response.{server_id}",
+                "map": row.get("map"),
+                "ready": row.get("ready"),
+                "alive": row.get("alive"),
+                "notes": "Per-map response route observed in admin RabbitMQ.",
+            })
+            rows.append({
+                "exchange": "grant",
+                "routingKey": f"grant.{server_id}",
+                "map": row.get("map"),
+                "ready": row.get("ready"),
+                "alive": row.get("alive"),
+                "notes": "Per-map grant route observed in admin RabbitMQ.",
+            })
+    return rows
+
+
+def gm_payload_preview(body):
+    command = str(body.get("command", "")).strip()
+    args = str(body.get("args", "")).strip()
+    target_player = str(body.get("target_player", body.get("targetPlayer", ""))).strip()
+    route = str(body.get("route", "")).strip() or "Survival_11"
+    allowed = set(GM_ALLOWED_COMMANDS) | set(GM_ALLOWED_GM_COMMANDS) | {f"CheatScript {name}" for name in GM_CHEAT_SCRIPTS}
+    if command not in allowed and not command.startswith("CheatScript "):
+        raise ValueError("command is not in the discovered allow-list")
+    text = " ".join(part for part in (command, args) if part)
+    return {
+        "ok": True,
+        "dryRun": True,
+        "route": {"exchange": "rpc", "routingKey": route},
+        "targetPlayer": target_player,
+        "commandText": text,
+        "blocked": True,
+        "reason": "Native command execution is blocked until UDuneServerCommandSubsystem RabbitMQ payload format is verified.",
+        "candidatePayloads": [
+            {"format": "jsonrpc-notify-array", "body": {"jsonrpc": "2.0", "method": "ServerCommand", "params": [text]}},
+            {"format": "service-message", "body": {"Command": "ServerCommand", "CommandText": text, "TargetPlayer": target_player}},
+        ],
+    }
+
+
 def read_director_transfer_settings():
     values = {key: meta["default"] for key, meta in DIRECTOR_TRANSFER_SETTINGS.items()}
     path = ALLOWED_CONFIGS["director.ini"]
@@ -1356,6 +1556,9 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/admin/reference":
                 self.require_token()
                 self.json(self.admin_reference())
+            elif parsed.path == "/api/admin/gm/reference":
+                self.require_token()
+                self.json(gm_command_catalog())
             else:
                 self.error(HTTPStatus.NOT_FOUND, "not found")
         except PermissionError as exc:
@@ -1477,6 +1680,23 @@ class Handler(BaseHTTPRequestHandler):
                 result = self.set_item_stack(body)
                 self.audit("item-stack", item_id=result.get("item_id"), stack_size=result.get("stack_size"))
                 self.json(result)
+            elif parsed.path == "/api/admin/gm/preview":
+                self.require_token()
+                body = parse_body(self)
+                result = gm_payload_preview(body)
+                self.audit("gm-command-preview", command=body.get("command"), route=body.get("route"), target_player=body.get("target_player"))
+                self.json(result)
+            elif parsed.path == "/api/admin/gm/execute":
+                self.require_token()
+                self.require_mutations()
+                body = parse_body(self)
+                require_confirmation(body, CONFIRM_GM_COMMAND)
+                if not GM_COMMANDS_ENABLED:
+                    raise PermissionError("GM commands are disabled; set DUNE_ADMIN_GM_COMMANDS_ENABLED=true")
+                if not GM_COMMAND_PAYLOAD_VERIFIED:
+                    raise PermissionError("GM command route is not verified yet; execution is intentionally blocked")
+                self.audit("gm-command-execute-blocked", command=body.get("command"), route=body.get("route"), target_player=body.get("target_player"))
+                self.error(HTTPStatus.NOT_IMPLEMENTED, "GM command payload route is not implemented")
             elif parsed.path == "/api/ops/announcement":
                 self.require_token()
                 body = parse_body(self)
@@ -2836,6 +3056,29 @@ function templateDatalist(ref){
     .map(([id, label]) => `<option value="${esc(id)}" label="${esc(label)}"></option>`)
     .join('');
 }
+function gmCommandOptions(commands, scripts){
+  const commandOptions = (commands || []).map(r => `<option value="${esc(r.name)}">${esc(r.name)} | ${esc(r.kind)}</option>`).join('');
+  const scriptOptions = (scripts || []).map(r => `<option value="CheatScript ${esc(r.name)}">CheatScript ${esc(r.name)}</option>`).join('');
+  return commandOptions + scriptOptions;
+}
+function gmRouteOptions(routes){
+  const vals = (routes || []).filter(r => r.exchange === 'rpc');
+  if (!vals.length) return '<option value="Survival_11">Survival_11</option>';
+  return vals.map(r => `<option value="${esc(r.routingKey)}">${esc(r.map || r.routingKey)} | ${esc(r.routingKey)} | ${r.alive ? 'alive' : 'not alive'}</option>`).join('');
+}
+function gmCommandPanel(gm, characters){
+  const routeRows = (gm.routeCandidates || []).map(r => ({
+    exchange: r.exchange,
+    routing_key: r.routingKey,
+    map: r.map,
+    ready: r.ready,
+    alive: r.alive,
+    notes: r.notes,
+  }));
+  const commandRows = (gm.commands || []).map(r => ({command: r.name, kind: r.kind, notes: r.notes}));
+  const scriptRows = (gm.cheatScripts || []).map(r => ({script: r.name, command_count: (r.commands || []).length, commands: (r.commands || []).join(' | ')}));
+  return `<div class="panelBand dangerZone"><div class="sectionHeader"><h2>Native GM / Cheat Console</h2><div class="toolbar"><span class="pill ${gm.enabled ? 'ok' : 'warn'}">gate ${gm.enabled ? 'enabled' : 'disabled'}</span><span class="pill ${gm.payloadVerified ? 'ok' : 'bad'}">route ${gm.payloadVerified ? 'verified' : 'blocked'}</span><button id="refreshGmRefBtn">Refresh commands</button></div></div><p class="dangerText">${esc(gm.reason || 'Execution is blocked until the command route is verified.')}</p><div class="grid"><label>Map RPC route<select id="gmRoute">${gmRouteOptions(gm.routeCandidates)}</select></label><label>Target player<select id="gmTarget">${characterOptions(characters)}</select></label><label>Command<select id="gmCommand">${gmCommandOptions(gm.commands, gm.cheatScripts)}</select></label><label>Arguments<input id="gmArgs" placeholder="template/count, player, map, or coordinates"></label></div><label>Confirmation<input id="gmConfirm" placeholder="RUN GM COMMAND"></label><p><button id="gmPreviewBtn" class="primary">Preview payload</button> <button id="gmExecuteBtn" class="danger" disabled>Execute after route verification</button></p><pre id="gmResult"></pre><details open><summary>Discovered Allow-List</summary>${table(commandRows)}</details><details><summary>Cheat Scripts</summary>${table(scriptRows)}</details><details><summary>RabbitMQ Route Candidates</summary>${table(routeRows)}</details></div>`;
+}
 function checks(rows){
   return `<table><thead><tr><th>Check</th><th>Status</th><th>Value</th></tr></thead><tbody>${(rows || []).map(r=>`<tr><td>${esc(r.name)}</td><td class="${r.ok ? 'ok' : 'dangerText'}">${r.ok ? 'OK' : 'Needs attention'}</td><td>${esc(r.value ?? '')}</td></tr>`).join('')}</tbody></table>`;
 }
@@ -3644,13 +3887,14 @@ async function savePlayerOnlineState(){
   notify('Saved logout timers');
 }
 async function mutations(serial=loadSerial){
-  const [ref, characterRows] = await Promise.all([
+  const [ref, characterRows, gm] = await Promise.all([
     adminReference(),
-    api('/api/characters?q=')
+    api('/api/characters?q='),
+    api('/api/admin/gm/reference')
   ]);
   if (serial !== loadSerial) return;
   const referenceErrors = ref.errors && Object.keys(ref.errors).length ? `<div class="card"><h2>Reference Errors</h2><pre>${esc(JSON.stringify(ref.errors, null, 2))}</pre></div>` : '';
-  view.innerHTML = `<div class="pageStack">${referenceErrors}<div class="sectionHeader"><h2>Admin Actions</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="settings">Settings</button><button data-jump="security">Audit</button></div></div>${actionGrid([{tab:'characters',label:'Player lookup'},{tab:'settings',label:'Mutation settings'},{tab:'runbook',label:'Runbook'}])}<div class="panelBand"><h2>Backup First</h2><p class="muted">Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button id="backupBtn" class="primary">Create DB backup</button><pre id="backupResult"></pre></div><div class="panelBand"><h2>Target Player</h2><div class="grid"><label>Character<select id="adminCharacterSelect">${characterOptions(characterRows)}</select></label><label>Player controller ID<input id="pcid"></label><label>Account ID<input id="grantAccount" placeholder="auto-select player inventory"></label><label>Character name<input id="grantCharacter" placeholder="auto-select by name"></label></div></div><div class="twoCol"><div class="panelBand"><h2>Currency and XP</h2><p class="dangerText">Writes require <code>DUNE_ADMIN_MUTATIONS_ENABLED=true</code> and a valid admin token.</p><div class="grid"><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button id="currencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Level for set/new track<input id="xplevel" value="0"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button id="xpBtn" class="primary">Apply XP</button></p></div><div class="panelBand dangerZone"><h2>Specialization Keystones</h2><div class="grid"><label>Player/controller ID<input id="keyPlayer"></label><label>Keystone<select id="keystone">${options(ref.keystones, 'name')}</select></label></div><p><button id="purchaseKeystoneBtn" class="primary">Purchase keystone</button> <button id="resetKeystonesBtn" class="danger">Reset all keystones</button></p><pre id="keystoneResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Item Grants</h2><p class="dangerText">Use exact server template IDs. Dry run first when using IDs not observed locally.</p><div class="grid"><label>Known inventory<select id="grantInventorySelect">${inventoryOptions(ref.recentInventories)}</select></label><label>Inventory ID<input id="grantInventory" placeholder="explicit inventory"></label><label class="hidden">Character<select id="grantCharacterSelect">${characterOptions(characterRows)}</select></label><label>Inventory type<select id="grantInventoryType">${inventoryTypeOptions(ref.inventoryTypes)}</select></label><label>Template ID<input id="grantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><label>Stats JSON<textarea id="grantStats">{}</textarea></label><p><button id="dryRunItemBtn" class="primary">Dry run</button> <button id="grantItemBtn" class="danger">Grant item</button></p><pre id="grantResult"></pre></div><div class="panelBand dangerZone"><h2>Item Maintenance</h2><div class="grid"><label class="hidden">Character<select id="itemCharacterSelect">${characterOptions(characterRows)}</select></label><label>Owned item<select id="itemEditSelect"><option value="">Select a character first</option></select></label><label>Item ID<input id="itemEditId"></label><label>New stack size<input id="itemEditStack" value="1"></label><label>Delete count<input id="itemDeleteCount" placeholder="blank/all"></label></div><p><button id="setItemStackBtn" class="primary">Set stack</button> <button id="deleteItemBtn" class="danger">Delete item/count</button></p><pre id="itemEditResult"></pre></div></div><datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><details class="panelBand"><summary>Known Item Templates</summary>${table(ref.knownItemTemplates)}</details><details class="panelBand"><summary>Observed Item Templates</summary>${table(ref.observedItemTemplates)}</details><details class="panelBand"><summary>Recent Inventories</summary>${table(ref.recentInventories)}</details><details class="panelBand"><summary>Inventory Types</summary>${table(ref.inventoryTypes)}</details></div>`;
+  view.innerHTML = `<div class="pageStack">${referenceErrors}<div class="sectionHeader"><h2>Admin Actions</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="settings">Settings</button><button data-jump="security">Audit</button></div></div>${actionGrid([{tab:'characters',label:'Player lookup'},{tab:'settings',label:'Mutation settings'},{tab:'runbook',label:'Runbook'}])}<div class="panelBand"><h2>Backup First</h2><p class="muted">Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button id="backupBtn" class="primary">Create DB backup</button><pre id="backupResult"></pre></div><div class="panelBand"><h2>Target Player</h2><div class="grid"><label>Character<select id="adminCharacterSelect">${characterOptions(characterRows)}</select></label><label>Player controller ID<input id="pcid"></label><label>Account ID<input id="grantAccount" placeholder="auto-select player inventory"></label><label>Character name<input id="grantCharacter" placeholder="auto-select by name"></label></div></div>${gmCommandPanel(gm, characterRows)}<div class="twoCol"><div class="panelBand"><h2>Currency and XP</h2><p class="dangerText">Writes require <code>DUNE_ADMIN_MUTATIONS_ENABLED=true</code> and a valid admin token.</p><div class="grid"><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button id="currencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Level for set/new track<input id="xplevel" value="0"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button id="xpBtn" class="primary">Apply XP</button></p></div><div class="panelBand dangerZone"><h2>Specialization Keystones</h2><div class="grid"><label>Player/controller ID<input id="keyPlayer"></label><label>Keystone<select id="keystone">${options(ref.keystones, 'name')}</select></label></div><p><button id="purchaseKeystoneBtn" class="primary">Purchase keystone</button> <button id="resetKeystonesBtn" class="danger">Reset all keystones</button></p><pre id="keystoneResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Item Grants</h2><p class="dangerText">Use exact server template IDs. Dry run first when using IDs not observed locally.</p><div class="grid"><label>Known inventory<select id="grantInventorySelect">${inventoryOptions(ref.recentInventories)}</select></label><label>Inventory ID<input id="grantInventory" placeholder="explicit inventory"></label><label class="hidden">Character<select id="grantCharacterSelect">${characterOptions(characterRows)}</select></label><label>Inventory type<select id="grantInventoryType">${inventoryTypeOptions(ref.inventoryTypes)}</select></label><label>Template ID<input id="grantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><label>Stats JSON<textarea id="grantStats">{}</textarea></label><p><button id="dryRunItemBtn" class="primary">Dry run</button> <button id="grantItemBtn" class="danger">Grant item</button></p><pre id="grantResult"></pre></div><div class="panelBand dangerZone"><h2>Item Maintenance</h2><div class="grid"><label class="hidden">Character<select id="itemCharacterSelect">${characterOptions(characterRows)}</select></label><label>Owned item<select id="itemEditSelect"><option value="">Select a character first</option></select></label><label>Item ID<input id="itemEditId"></label><label>New stack size<input id="itemEditStack" value="1"></label><label>Delete count<input id="itemDeleteCount" placeholder="blank/all"></label></div><p><button id="setItemStackBtn" class="primary">Set stack</button> <button id="deleteItemBtn" class="danger">Delete item/count</button></p><pre id="itemEditResult"></pre></div></div><datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><details class="panelBand"><summary>Known Item Templates</summary>${table(ref.knownItemTemplates)}</details><details class="panelBand"><summary>Observed Item Templates</summary>${table(ref.observedItemTemplates)}</details><details class="panelBand"><summary>Recent Inventories</summary>${table(ref.recentInventories)}</details><details class="panelBand"><summary>Inventory Types</summary>${table(ref.inventoryTypes)}</details></div>`;
   const loadCharacterAdminDetails = async (accountId, serial=detailLoadSerial) => {
     const itemSelect = document.getElementById('itemEditSelect');
     const inventorySelect = document.getElementById('grantInventorySelect');
@@ -3708,6 +3952,7 @@ async function mutations(serial=loadSerial){
     if (document.getElementById('pcid')) document.getElementById('pcid').value = option.dataset.controller || '';
     if (document.getElementById('xpid')) document.getElementById('xpid').value = option.dataset.controller || '';
     if (document.getElementById('keyPlayer')) document.getElementById('keyPlayer').value = option.dataset.controller || '';
+    if (document.getElementById('gmTarget')) document.getElementById('gmTarget').value = option.value;
     await loadCharacterAdminDetails(option.value, serial);
     if (serial !== detailLoadSerial) return;
   };
@@ -3741,6 +3986,12 @@ async function mutations(serial=loadSerial){
   document.getElementById('grantItemBtn').addEventListener('click', e => runAction(e.currentTarget, 'Granting...', () => grantItem(false)));
   document.getElementById('setItemStackBtn').addEventListener('click', e => runAction(e.currentTarget, 'Saving...', setItemStack));
   document.getElementById('deleteItemBtn').addEventListener('click', e => runAction(e.currentTarget, 'Deleting...', deleteItem));
+  document.getElementById('refreshGmRefBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Refreshing...', async () => {
+    const gmRef = await api('/api/admin/gm/reference');
+    document.getElementById('gmResult').textContent = JSON.stringify(gmRef, null, 2);
+  }));
+  document.getElementById('gmPreviewBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Previewing...', previewGmCommand));
+  document.getElementById('gmExecuteBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Executing...', executeGmCommand));
   if (pendingAdminAccountId) {
     const target = document.getElementById('adminCharacterSelect');
     target.value = pendingAdminAccountId;
@@ -3769,6 +4020,28 @@ async function xpFor(playerId){
 async function backup(){
   const result = await api('/api/admin/backup', {method:'POST', body:'{}'});
   document.getElementById('backupResult').textContent = JSON.stringify(result, null, 2);
+}
+function gmCommandBody(){
+  const target = document.getElementById('gmTarget')?.selectedOptions?.[0];
+  return {
+    route: document.getElementById('gmRoute')?.value || '',
+    target_player: target?.dataset.controller || target?.value || '',
+    target_account_id: target?.value || '',
+    target_character: target?.dataset.name || '',
+    command: document.getElementById('gmCommand')?.value || '',
+    args: document.getElementById('gmArgs')?.value || '',
+    confirm: document.getElementById('gmConfirm')?.value || ''
+  };
+}
+async function previewGmCommand(){
+  const result = await api('/api/admin/gm/preview', {method:'POST', body:JSON.stringify(gmCommandBody())});
+  document.getElementById('gmResult').textContent = JSON.stringify(result, null, 2);
+  notify('GM payload preview generated');
+}
+async function executeGmCommand(){
+  if (!confirm('Run native GM command on the live server?')) return;
+  const result = await api('/api/admin/gm/execute', {method:'POST', body:JSON.stringify(gmCommandBody())});
+  document.getElementById('gmResult').textContent = JSON.stringify(result, null, 2);
 }
 async function scheduleAnnouncement(){
   const result = await api('/api/ops/announcement', {method:'POST', body:JSON.stringify({

@@ -163,3 +163,30 @@ dune.reset_journey_story_nodes_for_player(...)
 ```
 
 These functions explicitly reject some operations when the player is online. The panel does not expose them yet because story node IDs and reward semantics need mapping.
+
+## Offline Player Teleport
+
+The mapped safe movement functions are:
+
+```sql
+dune.admin_move_offline_player(in_fls_id text, in_target_partition_name text, in_target_location dune.vector)
+dune.admin_move_offline_player_to_partition(in_fls_id text, in_target_partition_id bigint, in_target_location dune.vector)
+```
+
+Both functions require `dune.is_player_offline(in_fls_id)` to be true. They are the right primitive for a DASH teleport command that moves an offline player to an admin's current location.
+
+The first chat-command implementation deliberately does not write live online actor state. Online players are owned by the running map server, so a raw actor transform update can be overwritten or desynced. For now, `&teleport <playername>` resolves the admin and target, rejects online targets, and calls `admin_move_offline_player_to_partition` only when execution is explicitly enabled.
+
+The movement write performed by the server function is effectively:
+
+```sql
+update dune.actors
+set
+  transform = (in_target_location, (transform).rotation),
+  map = dune.upgrade_map_name(target_partition.map),
+  dimension_index = target_partition.dimension_index,
+  partition_id = target_partition.partition_id
+where id = player_pawn_id;
+```
+
+The command uses `dune.accounts.user` as the FLS/user id and `dune.player_state.character_name` for human-facing names.
