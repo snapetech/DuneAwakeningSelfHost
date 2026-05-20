@@ -240,6 +240,9 @@ Travel-related sections:
 | `[/Script/DuneSandbox.DuneExchangeSettings]` | `SellOrderDailySolarisFee` | `20` | Exchange sell-order daily fee. |
 | `[/Script/DuneSandbox.DuneExchangeSettings]` | `SellOrderPricePercentageFee` | `2.000000` | Exchange sell-order percent fee. |
 
+Local override in `config/UserGame.ini` sets both values to `0` for a no-fee
+private-server exchange.
+
 ### Admin and Progression Leads
 
 | Section | Key | Shipped value / summary | Notes |
