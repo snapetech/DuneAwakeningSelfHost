@@ -18,13 +18,17 @@ if [ "${DUNE_ANNOUNCE_WRAP_DASHBOARD_MESSAGES:-true}" != "false" ] && [ "${DUNE_
 fi
 
 python_bin="${DUNE_ANNOUNCE_PYTHON:-python3}"
+script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+default_vendor_dir="$script_dir/vendor"
+if [ -d /workspace/scripts/vendor ]; then
+  default_vendor_dir="/workspace/scripts/vendor"
+fi
+vendor_dir="${DUNE_ANNOUNCE_PYTHONPATH:-$default_vendor_dir}"
+export PYTHONDONTWRITEBYTECODE="${PYTHONDONTWRITEBYTECODE:-1}"
+export PYTHONPATH="${vendor_dir}${PYTHONPATH:+:$PYTHONPATH}"
 if ! "$python_bin" -c 'import pika' >/dev/null 2>&1; then
-  venv="${DUNE_ANNOUNCE_PIKA_VENV:-/workspace/backups/admin-panel/announce-pika-venv}"
-  if [ ! -x "$venv/bin/python" ]; then
-    "$python_bin" -m venv "$venv"
-  fi
-  "$venv/bin/python" -m pip -q install pika
-  python_bin="$venv/bin/python"
+  printf 'missing bundled pika module at %s\n' "$vendor_dir" >&2
+  exit 78
 fi
 
 "$python_bin" - "$message" "$restart_at" "$job_id" <<'PY'
@@ -110,8 +114,8 @@ target_queues = split_csv(env("DUNE_ANNOUNCE_CHAT_TARGET_QUEUES", ""))
 compose_project = env("DUNE_RESTART_COMPOSE_PROJECT", env("COMPOSE_PROJECT_NAME", "dune_server"))
 docker_socket = env("DUNE_RESTART_DOCKER_SOCKET", "/var/run/docker.sock")
 http_timeout = float(env("DUNE_ANNOUNCE_HTTP_TIMEOUT_SECONDS", "2"))
-amqp_host = env("DUNE_ANNOUNCE_GAME_RMQ_AMQP_HOST", "172.31.240.1" if os.path.exists("/workspace/.env") else "127.0.0.1")
-amqp_port = int(env("DUNE_ANNOUNCE_GAME_RMQ_AMQP_PORT", env("GAME_RMQ_PUBLIC_PORT", "31982")))
+amqp_host = env("DUNE_ANNOUNCE_HOST_AMQP_HOST", env("DUNE_ANNOUNCE_GAME_RMQ_AMQP_HOST", "172.31.240.1" if os.path.exists("/workspace/.env") else "127.0.0.1"))
+amqp_port = int(env("DUNE_ANNOUNCE_HOST_AMQP_PORT", env("DUNE_ANNOUNCE_GAME_RMQ_AMQP_PORT", env("GAME_RMQ_PUBLIC_PORT", "31982"))))
 amqp_tls = env_bool("DUNE_ANNOUNCE_GAME_RMQ_AMQP_TLS", True)
 management_user = env("DUNE_ANNOUNCE_RMQ_USER", sender_user)
 management_password = env("DUNE_ANNOUNCE_RMQ_PASSWORD", sender_password)
@@ -310,6 +314,65 @@ def find_compose_container(service):
     if not containers:
         raise RuntimeError(f"no running compose container found for service {service}")
     return containers[0]["Id"]
+
+
+def current_image():
+    container_name = env("HOSTNAME", "")
+    if not container_name:
+        return "registry.funcom.com/funcom/self-hosting/seabass-server-db-utils:" + env("DUNE_IMAGE_TAG", "latest")
+    status, payload = docker_api("GET", f"/containers/{container_name}/json")
+    if status == 200:
+        return json.loads(payload.decode()).get("Config", {}).get("Image", "")
+    return "registry.funcom.com/funcom/self-hosting/seabass-server-db-utils:" + env("DUNE_IMAGE_TAG", "latest")
+
+
+def publish_with_host_container():
+    host_workspace = env("DUNE_ANNOUNCE_HOST_WORKSPACE", "")
+    if not host_workspace:
+        raise RuntimeError("missing DUNE_ANNOUNCE_HOST_WORKSPACE")
+    name = "dash-announce-" + re.sub(r"[^A-Za-z0-9_.-]", "-", job_id or secrets.token_hex(4))[:40]
+    image = env("DUNE_ANNOUNCE_DOCKER_IMAGE", current_image())
+    child_env = []
+    merged_env = dict(file_env)
+    merged_env.update(os.environ)
+    merged_env["DUNE_ANNOUNCE_GAME_RMQ_AMQP_HOST"] = env("DUNE_ANNOUNCE_HOST_AMQP_HOST", "127.0.0.1")
+    merged_env["DUNE_ANNOUNCE_GAME_RMQ_AMQP_PORT"] = env("DUNE_ANNOUNCE_HOST_AMQP_PORT", env("GAME_RMQ_PUBLIC_PORT", "31982"))
+    for key, value in merged_env.items():
+        if key.startswith("DUNE_ANNOUNCE_") or key.startswith("GAME_RMQ_"):
+            child_env.append(f"{key}={value}")
+    body = {
+        "Image": image,
+        "Cmd": ["python3", "/workspace/scripts/announce_pika.py", message, restart_at, job_id],
+        "WorkingDir": "/workspace",
+        "Env": child_env,
+        "HostConfig": {
+            "NetworkMode": "host",
+            "Binds": [f"{host_workspace}:/workspace:ro"],
+            "AutoRemove": False,
+        },
+    }
+    status, payload_bytes = docker_api("POST", f"/containers/create?name={urllib.parse.quote(name)}", body)
+    if status == 409:
+        docker_api("DELETE", f"/containers/{name}?force=true")
+        status, payload_bytes = docker_api("POST", f"/containers/create?name={urllib.parse.quote(name)}", body)
+    if status != 201:
+        raise RuntimeError(f"container create failed: HTTP {status} {payload_bytes[:200]!r}")
+    container_id = json.loads(payload_bytes.decode())["Id"]
+    try:
+        status, payload_bytes = docker_api("POST", f"/containers/{container_id}/start")
+        if status != 204:
+            raise RuntimeError(f"container start failed: HTTP {status} {payload_bytes[:200]!r}")
+        status, payload_bytes = docker_api("POST", f"/containers/{container_id}/wait", timeout=60)
+        if status != 200:
+            raise RuntimeError(f"container wait failed: HTTP {status} {payload_bytes[:200]!r}")
+        wait_result = json.loads(payload_bytes.decode() or "{}")
+        status, logs = docker_api("GET", f"/containers/{container_id}/logs?stdout=true&stderr=true")
+        text = logs.decode(errors="replace")
+        if int(wait_result.get("StatusCode") or 1) != 0:
+            raise RuntimeError(text.strip() or f"publisher exited {wait_result.get('StatusCode')}")
+        return json.loads(text.strip().splitlines()[-1])
+    finally:
+        docker_api("DELETE", f"/containers/{container_id}?force=true")
 
 
 def publish_with_docker():
@@ -566,10 +629,16 @@ fallback = ""
 if not any(item["ok"] for item in results) and os.path.exists(docker_socket):
     try:
         bound_queues, bind_errors = publish_with_docker()
-        results = publish_with_amqp()
-        fallback = "docker-bind-amqp-publish"
+        host_result = publish_with_host_container()
+        results = host_result.get("routingKeys", [])
+        fallback = "docker-host-pika"
     except Exception as exc:
         bind_errors.append({"step": "dockerFallback", "error": str(exc)})
+        try:
+            results = publish_with_amqp()
+            fallback = "direct-pika"
+        except Exception as direct_exc:
+            bind_errors.append({"step": "directPika", "error": str(direct_exc)})
 
 ok = any(item["ok"] for item in results)
 print(json.dumps({
