@@ -16,6 +16,10 @@ import json
 import os
 import re
 import secrets
+import socket
+import ssl
+import struct
+import subprocess
 import sys
 import time
 import urllib.error
@@ -48,6 +52,8 @@ for env_path in ("/workspace/.env", os.path.join(os.getcwd(), ".env")):
 
 
 def env(name, default=""):
+    if name.startswith("DUNE_ANNOUNCE_") and name in file_env:
+        return file_env[name]
     value = os.environ.get(name)
     if value is not None and value != "":
         return value
@@ -77,12 +83,28 @@ sender_password = env("DUNE_ANNOUNCE_CHAT_PASSWORD", "dash-admin-test")
 sender_funcom_id = env("DUNE_ANNOUNCE_CHAT_FUNCOM_ID", "ADMIN#00001")
 sender_name = env("DUNE_ANNOUNCE_CHAT_SPOOF_NAME", "DASH Admin")
 exchange = env("DUNE_ANNOUNCE_CHAT_EXCHANGE", "chat.map")
-routing_keys = split_csv(env("DUNE_ANNOUNCE_CHAT_ROUTING_KEYS", "HaggaBasin.0,Survival_1.dim_0,<empty>"))
+routing_keys = split_csv(env("DUNE_ANNOUNCE_CHAT_ROUTING_KEYS", "<empty>"))
 channel_type = env("DUNE_ANNOUNCE_CHAT_CHANNEL", "Map")
 use_spoof_name = env_bool("DUNE_ANNOUNCE_CHAT_USE_SPOOF_NAME", False)
 bind_online_queues = env_bool("DUNE_ANNOUNCE_CHAT_BIND_ONLINE_QUEUES", True)
 queue_pattern = re.compile(env("DUNE_ANNOUNCE_CHAT_QUEUE_PATTERN", r"^[0-9A-Fa-f]{16}_queue$"))
 target_queues = split_csv(env("DUNE_ANNOUNCE_CHAT_TARGET_QUEUES", ""))
+compose_project = env("DUNE_RESTART_COMPOSE_PROJECT", env("COMPOSE_PROJECT_NAME", "dune_server"))
+docker_socket = env("DUNE_RESTART_DOCKER_SOCKET", "/var/run/docker.sock")
+http_timeout = float(env("DUNE_ANNOUNCE_HTTP_TIMEOUT_SECONDS", "2"))
+amqp_host = env("DUNE_ANNOUNCE_GAME_RMQ_AMQP_HOST", "172.31.240.1" if os.path.exists("/workspace/.env") else "127.0.0.1")
+amqp_port = int(env("DUNE_ANNOUNCE_GAME_RMQ_AMQP_PORT", env("GAME_RMQ_PUBLIC_PORT", "31982")))
+amqp_tls = env_bool("DUNE_ANNOUNCE_GAME_RMQ_AMQP_TLS", True)
+management_user = env("DUNE_ANNOUNCE_RMQ_USER", sender_user)
+management_password = env("DUNE_ANNOUNCE_RMQ_PASSWORD", sender_password)
+ensure_account = env_bool("DUNE_ANNOUNCE_CHAT_ENSURE_ACCOUNT", False)
+db_host = env("DUNE_ADMIN_DB_HOST", "postgres")
+db_port = env("DUNE_ADMIN_DB_PORT", "5432")
+db_user = env("DUNE_ADMIN_DB_USER", "dune")
+db_password = env("DUNE_ADMIN_DB_PASSWORD", env("POSTGRES_DUNE_PASSWORD", ""))
+db_name = env("DUNE_ADMIN_DB_NAME", "dune")
+platform_id = env("DUNE_ANNOUNCE_CHAT_PLATFORM_ID", "DASH-ADMIN")
+platform_name = env("DUNE_ANNOUNCE_CHAT_PLATFORM_NAME", "DASH")
 
 if not routing_keys:
     print("missing DUNE_ANNOUNCE_CHAT_ROUTING_KEYS", file=sys.stderr)
@@ -96,7 +118,59 @@ headers = {
 vhost = urllib.parse.quote("/", safe="")
 
 
-def request_json(method, path, body=None, timeout=8):
+def ensure_sender_account():
+    if not ensure_account:
+        return {"ok": True, "skipped": True}
+    if not db_password:
+        return {"ok": False, "error": "missing DUNE_ADMIN_DB_PASSWORD or POSTGRES_DUNE_PASSWORD"}
+    sql = (
+        "select id from dune.login_account("
+        ":'account',:'funcom_id',:'platform_id',:'platform_name',0,:'character_name',0,0"
+        ") limit 1;"
+    )
+    command = [
+        "psql",
+        "--no-psqlrc",
+        "--quiet",
+        "--tuples-only",
+        "--host", db_host,
+        "--port", str(db_port),
+        "--username", db_user,
+        "--dbname", db_name,
+        "--set", f"account={sender_user}",
+        "--set", f"funcom_id={sender_funcom_id}",
+        "--set", f"platform_id={platform_id}",
+        "--set", f"platform_name={platform_name}",
+        "--set", f"character_name={sender_name}",
+        "--command", sql,
+    ]
+    env_vars = os.environ.copy()
+    env_vars["PGPASSWORD"] = db_password
+    try:
+        result = subprocess.run(
+            command,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env_vars,
+            timeout=5,
+            check=False,
+        )
+    except FileNotFoundError:
+        return {"ok": False, "error": "psql is not installed"}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+    if result.returncode != 0:
+        return {"ok": False, "error": (result.stderr or result.stdout).strip()}
+    return {"ok": True, "output": result.stdout.strip()}
+
+
+account_result = ensure_sender_account()
+
+
+def request_json(method, path, body=None, timeout=None):
+    if timeout is None:
+        timeout = http_timeout
     data = None if body is None else json.dumps(body).encode()
     request = urllib.request.Request(
         f"{rmq_url}{path}",
@@ -116,6 +190,264 @@ def safe_request(method, path, body=None):
         return None, f"HTTP {exc.code}"
     except Exception as exc:
         return None, str(exc)
+
+
+def decode_chunked(payload):
+    decoded = bytearray()
+    rest = payload
+    while rest:
+        line, sep, rest = rest.partition(b"\r\n")
+        if not sep:
+            raise ValueError("truncated chunked response")
+        size = int(line.split(b";", 1)[0], 16)
+        if size == 0:
+            return bytes(decoded)
+        decoded.extend(rest[:size])
+        rest = rest[size + 2:]
+    return bytes(decoded)
+
+
+def docker_api(method, path, body=None, timeout=30):
+    data = b"" if body is None else json.dumps(body).encode()
+    request = [
+        f"{method} {path} HTTP/1.1",
+        "Host: docker",
+        "Connection: close",
+    ]
+    if body is not None:
+        request.extend(["Content-Type: application/json", f"Content-Length: {len(data)}"])
+    request.append("")
+    request.append("")
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(timeout)
+    sock.connect(docker_socket)
+    sock.sendall("\r\n".join(request).encode() + data)
+    chunks = []
+    while True:
+        chunk = sock.recv(65536)
+        if not chunk:
+            break
+        chunks.append(chunk)
+    sock.close()
+    raw = b"".join(chunks)
+    header, _, payload = raw.partition(b"\r\n\r\n")
+    header_text = header.decode("iso-8859-1")
+    status = int(header_text.split(" ", 2)[1])
+    response_headers = {}
+    for line in header_text.split("\r\n")[1:]:
+        name, sep, value = line.partition(":")
+        if sep:
+            response_headers[name.strip().lower()] = value.strip().lower()
+    if response_headers.get("transfer-encoding") == "chunked":
+        payload = decode_chunked(payload)
+    return status, payload
+
+
+def docker_exec(container_id, command, timeout=30):
+    status, payload = docker_api("POST", f"/containers/{container_id}/exec", {
+        "AttachStdout": True,
+        "AttachStderr": True,
+        "Tty": False,
+        "Cmd": command,
+    }, timeout=timeout)
+    if status != 201:
+        raise RuntimeError(f"docker exec create failed: HTTP {status} {payload[:200]!r}")
+    exec_id = json.loads(payload.decode())["Id"]
+    status, payload = docker_api("POST", f"/exec/{exec_id}/start", {
+        "Detach": False,
+        "Tty": False,
+    }, timeout=timeout)
+    if status != 200:
+        raise RuntimeError(f"docker exec start failed: HTTP {status} {payload[:200]!r}")
+    output = bytearray()
+    rest = payload
+    while len(rest) >= 8:
+        stream_size = int.from_bytes(rest[4:8], "big")
+        output.extend(rest[8:8 + stream_size])
+        rest = rest[8 + stream_size:]
+    if rest:
+        output.extend(rest)
+    status, inspect_payload = docker_api("GET", f"/exec/{exec_id}/json", timeout=timeout)
+    if status != 200:
+        raise RuntimeError(f"docker exec inspect failed: HTTP {status}")
+    exit_code = json.loads(inspect_payload.decode()).get("ExitCode")
+    text = output.decode(errors="replace")
+    if exit_code != 0:
+        raise RuntimeError(f"docker exec failed with exit {exit_code}: {text.strip()}")
+    return text
+
+
+def find_compose_container(service):
+    filters = {
+        "label": [
+            f"com.docker.compose.project={compose_project}",
+            f"com.docker.compose.service={service}",
+        ]
+    }
+    query = urllib.parse.urlencode({"all": "false", "filters": json.dumps(filters)})
+    status, payload = docker_api("GET", f"/containers/json?{query}")
+    if status != 200:
+        raise RuntimeError(f"container lookup failed: HTTP {status}")
+    containers = json.loads(payload.decode() or "[]")
+    if not containers:
+        raise RuntimeError(f"no running compose container found for service {service}")
+    return containers[0]["Id"]
+
+
+def publish_with_docker():
+    container_id = find_compose_container("game-rmq")
+
+    def rabbit(args):
+        return docker_exec(container_id, [
+            "rabbitmqadmin",
+            "--host", "127.0.0.1",
+            "--port", "15672",
+            "--username", management_user,
+            "--password", management_password,
+            *args,
+        ])
+
+    docker_bound = []
+    docker_errors = []
+    if bind_online_queues:
+        try:
+            queue_text = rabbit(["--format", "raw_json", "list", "queues", "name", "consumers"])
+            seen = set(target_queues)
+            for queue in json.loads(queue_text or "[]"):
+                name = queue.get("name", "")
+                if queue_pattern.match(name) and int(queue.get("consumers") or 0) > 0:
+                    seen.add(name)
+            for queue_name in sorted(seen):
+                if not queue_name:
+                    continue
+                for routing_key in routing_keys:
+                    rabbit([
+                        "declare", "binding",
+                        f"source={exchange}",
+                        "destination_type=queue",
+                        f"destination={queue_name}",
+                        f"routing_key={routing_key}",
+                    ])
+                    docker_bound.append({"queue": queue_name, "routingKey": routing_key})
+        except Exception as exc:
+            docker_errors.append({"step": "dockerBind", "error": str(exc)})
+
+    return docker_bound, docker_errors
+
+
+def shortstr(value):
+    data = value.encode()
+    if len(data) > 255:
+        raise ValueError("AMQP shortstr is too long")
+    return bytes([len(data)]) + data
+
+
+def longstr(value):
+    data = value.encode()
+    return struct.pack(">I", len(data)) + data
+
+
+def empty_table():
+    return struct.pack(">I", 0)
+
+
+def amqp_frame(frame_type, channel, payload):
+    return struct.pack(">BHI", frame_type, channel, len(payload)) + payload + b"\xce"
+
+
+def amqp_method(channel, class_id, method_id, args=b""):
+    return amqp_frame(1, channel, struct.pack(">HH", class_id, method_id) + args)
+
+
+def amqp_read_frame(sock):
+    header = sock.recv(7)
+    if len(header) != 7:
+        raise RuntimeError("short AMQP frame header")
+    frame_type, channel, size = struct.unpack(">BHI", header)
+    payload = b""
+    while len(payload) < size:
+        chunk = sock.recv(size - len(payload))
+        if not chunk:
+            raise RuntimeError("short AMQP frame payload")
+        payload += chunk
+    frame_end = sock.recv(1)
+    if frame_end != b"\xce":
+        raise RuntimeError("invalid AMQP frame terminator")
+    return frame_type, channel, payload
+
+
+def amqp_wait_method(sock, expected):
+    while True:
+        frame_type, channel, payload = amqp_read_frame(sock)
+        if frame_type != 1:
+            continue
+        class_id, method_id = struct.unpack(">HH", payload[:4])
+        if (class_id, method_id) == expected:
+            return channel, payload[4:]
+        if (class_id, method_id) == (10, 50):
+            raise RuntimeError("AMQP connection.close from broker")
+
+
+def amqp_publish_once(routing_key, body, properties):
+    raw = socket.create_connection((amqp_host, amqp_port), timeout=8)
+    if amqp_tls:
+        context = ssl._create_unverified_context()
+        sock = context.wrap_socket(raw, server_hostname=amqp_host)
+    else:
+        sock = raw
+    sock.settimeout(8)
+    try:
+        sock.sendall(b"AMQP\x00\x00\x09\x01")
+        amqp_wait_method(sock, (10, 10))
+        response = "\0%s\0%s" % (sender_user, sender_password)
+        sock.sendall(amqp_method(0, 10, 11, empty_table() + shortstr("PLAIN") + longstr(response) + shortstr("en_US")))
+        _, tune = amqp_wait_method(sock, (10, 30))
+        channel_max, frame_max, heartbeat = struct.unpack(">HIH", tune[:8])
+        sock.sendall(amqp_method(0, 10, 31, struct.pack(">HIH", channel_max, frame_max, heartbeat)))
+        sock.sendall(amqp_method(0, 10, 40, shortstr("/") + shortstr("") + b"\x00"))
+        amqp_wait_method(sock, (10, 41))
+        sock.sendall(amqp_method(1, 20, 10, shortstr("")))
+        amqp_wait_method(sock, (20, 11))
+        sock.sendall(amqp_method(1, 60, 40, struct.pack(">H", 0) + shortstr(exchange) + shortstr(routing_key) + b"\x00\x00"))
+        body_bytes = body.encode()
+        flags = 0x8000 | 0x1000 | 0x0020 | 0x0010 | 0x0008 | 0x0002
+        header_payload = (
+            struct.pack(">HHQH", 60, 0, len(body_bytes), flags)
+            + shortstr(properties["content_type"])
+            + struct.pack(">B", properties["delivery_mode"])
+            + struct.pack(">Q", properties["timestamp"])
+            + shortstr(properties["type"])
+            + shortstr(properties["user_id"])
+            + shortstr(properties["message_id"])
+        )
+        sock.sendall(amqp_frame(2, 1, header_payload))
+        max_body = min(frame_max or 131072, 131072) - 8
+        for offset in range(0, len(body_bytes), max_body):
+            sock.sendall(amqp_frame(3, 1, body_bytes[offset:offset + max_body]))
+        sock.sendall(amqp_method(1, 20, 40))
+        sock.sendall(amqp_method(0, 10, 50, struct.pack(">H", 200) + shortstr("OK") + struct.pack(">HH", 0, 0)))
+        return True
+    finally:
+        sock.close()
+
+
+def publish_with_amqp():
+    amqp_results = []
+    for routing_key in routing_keys:
+        properties = {
+            "content_type": "Content",
+            "delivery_mode": 1,
+            "timestamp": int(time.time()),
+            "type": "text_chat",
+            "user_id": sender_user,
+            "message_id": secrets.token_urlsafe(16),
+        }
+        try:
+            published = amqp_publish_once(routing_key, json.dumps(payload, separators=(",", ":")), properties)
+            amqp_results.append({"routingKey": routing_key, "ok": published})
+        except Exception as exc:
+            amqp_results.append({"routingKey": routing_key, "ok": False, "error": str(exc)})
+    return amqp_results
 
 
 bound_queues = []
@@ -187,12 +519,23 @@ for routing_key in routing_keys:
     routed = bool(response and response.get("routed"))
     results.append({"routingKey": routing_key, "ok": routed, "error": error})
 
+fallback = ""
+if not any(item["ok"] for item in results) and os.path.exists(docker_socket):
+    try:
+        bound_queues, bind_errors = publish_with_docker()
+        results = publish_with_amqp()
+        fallback = "docker-bind-amqp-publish"
+    except Exception as exc:
+        bind_errors.append({"step": "dockerFallback", "error": str(exc)})
+
 ok = any(item["ok"] for item in results)
 print(json.dumps({
     "ok": ok,
     "transport": "chat.map",
+    "fallback": fallback,
     "exchange": exchange,
     "sender": sender_user,
+    "account": account_result,
     "routingKeys": results,
     "boundQueues": bound_queues,
     "bindErrors": bind_errors,

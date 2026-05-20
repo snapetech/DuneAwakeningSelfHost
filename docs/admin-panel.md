@@ -109,15 +109,22 @@ Default announcement transport settings:
 
 ```env
 DUNE_ANNOUNCE_GAME_RMQ_MANAGEMENT_URL=http://game-rmq:15672
+DUNE_ANNOUNCE_GAME_RMQ_AMQP_HOST=172.31.240.1
+DUNE_ANNOUNCE_GAME_RMQ_AMQP_PORT=31982
+DUNE_ANNOUNCE_GAME_RMQ_AMQP_TLS=true
+DUNE_ANNOUNCE_HTTP_TIMEOUT_SECONDS=0.5
 DUNE_ANNOUNCE_CHAT_USER=A000000000000001
 DUNE_ANNOUNCE_CHAT_PASSWORD=<local announcer password>
 DUNE_ANNOUNCE_CHAT_FUNCOM_ID=ADMIN#00001
 DUNE_ANNOUNCE_CHAT_SPOOF_NAME=DASH Admin
 DUNE_ANNOUNCE_CHAT_EXCHANGE=chat.map
-DUNE_ANNOUNCE_CHAT_ROUTING_KEYS=HaggaBasin.0,Survival_1.dim_0,<empty>
+DUNE_ANNOUNCE_CHAT_ROUTING_KEYS=<empty>
 DUNE_ANNOUNCE_CHAT_CHANNEL=Map
 DUNE_ANNOUNCE_CHAT_USE_SPOOF_NAME=false
 DUNE_ANNOUNCE_CHAT_BIND_ONLINE_QUEUES=true
+DUNE_ANNOUNCE_CHAT_ENSURE_ACCOUNT=false
+DUNE_ANNOUNCE_CHAT_PLATFORM_ID=DASH-ADMIN
+DUNE_ANNOUNCE_CHAT_PLATFORM_NAME=DASH
 ```
 
 `DUNE_ANNOUNCE_CHAT_ROUTING_KEYS` is comma-separated. Use `<empty>` for the blank RabbitMQ routing key. When `DUNE_ANNOUNCE_CHAT_BIND_ONLINE_QUEUES=true`, the hook first lists connected player queues on game RabbitMQ and idempotently binds them to the configured chat routes, then publishes the restart message. The hook reads `/workspace/.env` at delivery time, so route and sender changes are picked up without recreating the admin-panel container.

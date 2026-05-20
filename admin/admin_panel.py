@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import configparser
 import concurrent.futures
+import datetime
 import hmac
 import html
 import json
@@ -173,6 +174,10 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ADMIN_ANNOUNCEMENT_MAX_MESSAGE_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum UTF-8 size for a scheduled restart-announcement message."},
     "DUNE_ADMIN_ANNOUNCEMENT_COMMAND_TIMEOUT_SECONDS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Timeout for each announcement delivery hook invocation."},
     "DUNE_ANNOUNCE_GAME_RMQ_MANAGEMENT_URL": {"group": "Announcements", "secret": False, "restart": False, "why": "Game RabbitMQ management API URL used by the chat announcement hook."},
+    "DUNE_ANNOUNCE_GAME_RMQ_AMQP_HOST": {"group": "Announcements", "secret": False, "restart": False, "why": "Game RabbitMQ AMQP host used by the chat announcement publisher."},
+    "DUNE_ANNOUNCE_GAME_RMQ_AMQP_PORT": {"group": "Announcements", "secret": False, "restart": False, "why": "Game RabbitMQ AMQP port used by the chat announcement publisher."},
+    "DUNE_ANNOUNCE_GAME_RMQ_AMQP_TLS": {"group": "Announcements", "secret": False, "restart": False, "why": "Whether the chat announcement publisher uses TLS for game RabbitMQ AMQP."},
+    "DUNE_ANNOUNCE_HTTP_TIMEOUT_SECONDS": {"group": "Announcements", "secret": False, "restart": False, "why": "Short timeout for RabbitMQ management API probes before the hook falls back to Docker socket binding plus AMQP publish."},
     "DUNE_ANNOUNCE_CHAT_USER": {"group": "Announcements", "secret": False, "restart": False, "why": "Player-shaped RabbitMQ identity used as the in-game announcement sender."},
     "DUNE_ANNOUNCE_CHAT_PASSWORD": {"group": "Announcements", "secret": True, "restart": False, "why": "Password supplied for the chat announcement sender."},
     "DUNE_ANNOUNCE_CHAT_FUNCOM_ID": {"group": "Announcements", "secret": False, "restart": False, "why": "Funcom id stamped onto restart chat messages."},
@@ -182,6 +187,9 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ANNOUNCE_CHAT_CHANNEL": {"group": "Announcements", "secret": False, "restart": False, "why": "Chat channel type stamped onto restart announcement messages."},
     "DUNE_ANNOUNCE_CHAT_USE_SPOOF_NAME": {"group": "Announcements", "secret": False, "restart": False, "why": "Whether restart announcements should use the spoofed display-name field."},
     "DUNE_ANNOUNCE_CHAT_BIND_ONLINE_QUEUES": {"group": "Announcements", "secret": False, "restart": False, "why": "When enabled, the hook binds currently connected player queues to the announcement chat routes before publishing."},
+    "DUNE_ANNOUNCE_CHAT_ENSURE_ACCOUNT": {"group": "Announcements", "secret": False, "restart": False, "why": "Optional DB write path to ensure the DASH Admin announcer account exists before publishing. Leave disabled on live servers unless you are deliberately repairing the announcer account."},
+    "DUNE_ANNOUNCE_CHAT_PLATFORM_ID": {"group": "Announcements", "secret": False, "restart": False, "why": "Platform id used when auto-creating the DASH Admin announcer account."},
+    "DUNE_ANNOUNCE_CHAT_PLATFORM_NAME": {"group": "Announcements", "secret": False, "restart": False, "why": "Platform name used when auto-creating the DASH Admin announcer account."},
     "DUNE_ANNOUNCE_RMQ_URL": {"group": "Announcements", "secret": False, "restart": True, "why": "RabbitMQ management API URL used by the announcement hook."},
     "DUNE_ANNOUNCE_RMQ_USER": {"group": "Announcements", "secret": False, "restart": True, "why": "RabbitMQ management user used by the announcement hook. Use a bgd.<world>.*.admin identity so JSON-RPC sender permissions pass."},
     "DUNE_ANNOUNCE_RMQ_PASSWORD": {"group": "Announcements", "secret": True, "restart": True, "why": "RabbitMQ management password used by the announcement hook."},
@@ -1182,6 +1190,9 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/characters/roster":
                 self.require_token()
                 self.json(self.character_roster())
+            elif parsed.path == "/api/players/hagga-basin":
+                self.require_token()
+                self.json(self.hagga_basin_players())
             elif parsed.path.startswith("/api/characters/"):
                 self.require_token()
                 account_id = int(parsed.path.rsplit("/", 1)[-1])
@@ -1418,6 +1429,48 @@ class Handler(BaseHTTPRequestHandler):
             "offline": offline,
         }
 
+    def hagga_basin_players(self):
+        rows = query("""
+            select ps.account_id, ps.character_name, ps.online_status::text, ps.life_state::text,
+                   ps.server_id, fs.map as farm_map, wp.partition_id, wp.dimension_index, wp.label,
+                   ps.player_controller_id, ps.player_pawn_id, ps.last_login_time,
+                   a.map as actor_map, a.partition_id as actor_partition_id,
+                   ((a.transform).location).x::float8 as x,
+                   ((a.transform).location).y::float8 as y,
+                   ((a.transform).location).z::float8 as z
+            from dune.player_state ps
+            left join dune.actors a on a.id = ps.player_pawn_id
+            left join dune.farm_state fs on fs.server_id = ps.server_id
+            left join dune.world_partition wp on wp.server_id = ps.server_id
+            where ps.online_status::text = 'Online'
+              and a.map = 'HaggaBasin'
+              and a.transform is not null
+            order by ps.character_name nulls last, ps.account_id
+        """)
+        bounds_row = (query("""
+            select min(((a.transform).location).x::float8) as min_x,
+                   max(((a.transform).location).x::float8) as max_x,
+                   min(((a.transform).location).y::float8) as min_y,
+                   max(((a.transform).location).y::float8) as max_y,
+                   count(*) as actor_count
+            from dune.actors a
+            where a.map = 'HaggaBasin'
+              and a.transform is not null
+        """) or [{}])[0]
+        bounds = {
+            "minX": bounds_row.get("min_x"),
+            "maxX": bounds_row.get("max_x"),
+            "minY": bounds_row.get("min_y"),
+            "maxY": bounds_row.get("max_y"),
+            "actorCount": bounds_row.get("actor_count") or 0,
+        }
+        return {
+            "map": "HaggaBasin",
+            "generatedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "bounds": bounds,
+            "players": rows,
+        }
+
     def character_detail(self, account_id):
         player = query("select * from dune.player_state where account_id=%s", (account_id,))
         if not player:
@@ -1425,15 +1478,45 @@ class Handler(BaseHTTPRequestHandler):
             return {}
         controller_id = player[0].get("player_controller_id")
         pawn_id = player[0].get("player_pawn_id")
+        server_id = player[0].get("server_id")
         return {
             "player": player[0],
             "account": query("select id, funcom_id, platform_name, platform_id, takeoverable from dune.accounts where id=%s", (account_id,)),
+            "mapContext": query("""
+                select fs.server_id, fs.farm_id, fs.ready, fs.alive, fs.map,
+                       fs.revision, fs.game_addr, fs.game_port, fs.igw_addr, fs.igw_port,
+                       fs.connected_players,
+                       wp.partition_id, wp.dimension_index, wp.label, wp.blocked
+                from dune.farm_state fs
+                left join dune.world_partition wp on wp.server_id = fs.server_id
+                where fs.server_id=%s
+                limit 1
+            """, (server_id,)) if server_id else [],
+            "previousPartition": query("""
+                select partition_id, server_id, map, dimension_index, label, blocked
+                from dune.world_partition
+                where partition_id=%s
+            """, (player[0].get("previous_server_partition_id"),)) if player[0].get("previous_server_partition_id") is not None else [],
+            "overmap": query("select * from dune.overmap_players where player_id in (%s,%s) order by player_id", (controller_id, pawn_id)),
+            "respawnLocations": query("""
+                select id, account_id, "group", locator_transform, locator_actor_id,
+                       locator_name, map, dimension, last_used_timestamp, locator_name_index
+                from dune.player_respawn_locations
+                where account_id=%s
+                order by last_used_timestamp desc nulls last
+                limit 25
+            """, (account_id,)),
             "currency": query("select * from dune.player_virtual_currency_balances where player_controller_id=%s order by currency_id", (controller_id,)),
             "specialization": query("select * from dune.specialization_tracks where player_id=%s order by track_type::text", (controller_id,)),
             "faction": query("select * from dune.player_faction where actor_id=%s order by faction_id", (pawn_id,)),
             "reputation": query("select * from dune.player_faction_reputation where actor_id=%s order by faction_id", (pawn_id,)),
             "inventories": query("select * from dune.inventories where actor_id in (%s,%s) order by id", (controller_id, pawn_id)),
             "inventoryItems": query("select * from dune.admin_get_inventory_details(%s)", (account_id,)),
+            "realtime": {
+                "source": "database snapshots and Director farm_state",
+                "serverTime": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "pollSeconds": 5,
+            },
         }
 
     def admin_reference(self):
@@ -2158,6 +2241,15 @@ INDEX = r"""<!doctype html>
     .mapTile.bad { border-color:#743932; }
     .mapTile .name { font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .mapTile .meta { color:var(--muted); font-size:12px; margin-top:4px; }
+    .haggaMap { position:relative; border:1px solid var(--line); border-radius:8px; overflow:hidden; background:linear-gradient(145deg,#231d13,#151812 52%,#302314); min-height:360px; }
+    .haggaMap svg { display:block; width:100%; height:auto; min-height:360px; }
+    .haggaMap .gridLine { stroke:#5e523c; stroke-width:1; opacity:.35; }
+    .haggaMap .basinLine { fill:none; stroke:#b68b43; stroke-width:2; opacity:.65; }
+    .haggaMap .playerDot { fill:var(--ok); stroke:#071007; stroke-width:3; }
+    .haggaMap .playerLabel { fill:var(--text); font:700 13px system-ui,sans-serif; paint-order:stroke; stroke:#0b0d0a; stroke-width:4; }
+    .haggaMap .emptyState { fill:var(--muted); font:14px system-ui,sans-serif; text-anchor:middle; }
+    .mapLegend { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+    .coordTable td, .coordTable th { font-size:12px; }
     .filterInput { max-width:280px; }
     .toast { position:fixed; right:18px; bottom:18px; z-index:10; display:grid; gap:8px; max-width:min(420px,calc(100vw - 36px)); }
     .toastItem { border:1px solid var(--line); border-radius:8px; background:#151915; box-shadow:0 10px 30px rgba(0,0,0,.35); padding:10px 12px; }
@@ -2166,6 +2258,11 @@ INDEX = r"""<!doctype html>
     .modalBackdrop { position:fixed; inset:0; z-index:12; display:none; place-items:center; background:rgba(0,0,0,.62); padding:18px; }
     .modalBackdrop.open { display:grid; }
     .modal { width:min(720px,100%); max-height:min(760px,92vh); overflow:auto; border:1px solid var(--line); border-radius:8px; background:var(--panel); padding:16px; box-shadow:0 18px 60px rgba(0,0,0,.5); }
+    .modal.wide { width:min(1180px,100%); }
+    .playerModalGrid { display:grid; grid-template-columns:minmax(260px,.75fr) minmax(0,1.25fr); gap:14px; align-items:start; }
+    .playerModalGrid .panelBand { margin:0; }
+    .playerInventoryTools { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px; }
+    @media (max-width:860px) { .playerModalGrid { grid-template-columns:1fr; } }
     .shortcutGrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; }
     .shortcut { display:flex; justify-content:space-between; gap:12px; border:1px solid var(--line); border-radius:7px; padding:9px; background:var(--panel2); }
     kbd { border:1px solid var(--line); border-bottom-width:2px; border-radius:5px; padding:2px 6px; background:#0d100d; color:var(--text); font:12px ui-monospace, SFMono-Regular, Menlo, monospace; white-space:nowrap; }
@@ -2246,6 +2343,12 @@ INDEX = r"""<!doctype html>
       </div>
     </div>
   </div>
+  <div id="playerModal" class="modalBackdrop" role="dialog" aria-modal="true" aria-labelledby="playerModalTitle">
+    <div class="modal wide">
+      <div class="sectionHeader"><h2 id="playerModalTitle">Player Detail</h2><div class="toolbar"><span id="playerModalRefreshState" class="pill">idle</span><button id="refreshPlayerModalBtn">Refresh</button><button id="closePlayerModalBtn">Close</button></div></div>
+      <div id="playerModalBody"><div class="muted">No player selected.</div></div>
+    </div>
+  </div>
 <script nonce="__NONCE__">
 let token = sessionStorage.getItem('duneAdminToken') || '';
 document.getElementById('token').value = token;
@@ -2256,6 +2359,10 @@ let pendingAdminAccountId = '';
 let resourceTimer = null;
 let loadSerial = 0;
 let detailLoadSerial = 0;
+let playerModalAccountId = '';
+let playerModalTimer = null;
+let playerModalInFlight = false;
+let playerModalRef = null;
 let resourceRefreshInFlight = false;
 let autoRefresh = sessionStorage.getItem('duneAdminAutoRefresh') !== 'off';
 const resourceHistory = [];
@@ -2601,6 +2708,64 @@ function mapTiles(rows){
   if (!rows || !rows.length) return '<div class="muted">No map rows.</div>';
   return `<div class="mapGrid">${rows.map(r => `<div class="mapTile ${r.online ? 'ok' : 'bad'}"><div class="name">${esc(r.label || r.map)}</div><div class="meta">${r.online ? 'online' : 'offline'} | ${esc(r.players ?? 0)} players</div></div>`).join('')}</div>`;
 }
+function haggaBasinMapPanel(data){
+  const players = data?.players || [];
+  const bounds = data?.bounds || {};
+  const width = 960;
+  const height = 460;
+  const pad = 42;
+  const xs = players.map(p => Number(p.x)).filter(Number.isFinite);
+  const ys = players.map(p => Number(p.y)).filter(Number.isFinite);
+  const minX = Number.isFinite(Number(bounds.minX)) ? Number(bounds.minX) : Math.min(...xs, -120000);
+  const maxX = Number.isFinite(Number(bounds.maxX)) ? Number(bounds.maxX) : Math.max(...xs, 240000);
+  const minY = Number.isFinite(Number(bounds.minY)) ? Number(bounds.minY) : Math.min(...ys, 200000);
+  const maxY = Number.isFinite(Number(bounds.maxY)) ? Number(bounds.maxY) : Math.max(...ys, 340000);
+  const spanX = Math.max(maxX - minX, 1);
+  const spanY = Math.max(maxY - minY, 1);
+  const px = x => pad + ((Number(x) - minX) / spanX) * (width - pad * 2);
+  const py = y => height - pad - ((Number(y) - minY) / spanY) * (height - pad * 2);
+  const grid = [1,2,3,4].map(i => {
+    const gx = pad + (i / 5) * (width - pad * 2);
+    const gy = pad + (i / 5) * (height - pad * 2);
+    return `<line class="gridLine" x1="${gx}" y1="${pad}" x2="${gx}" y2="${height - pad}"></line><line class="gridLine" x1="${pad}" y1="${gy}" x2="${width - pad}" y2="${gy}"></line>`;
+  }).join('');
+  const outline = `${pad + 34},${height - pad - 40} ${pad + 118},${pad + 42} ${width - pad - 142},${pad + 22} ${width - pad - 50},${height - pad - 86} ${width * .58},${height - pad - 22}`;
+  const markers = players.map((p, index) => {
+    const x = px(p.x);
+    const y = py(p.y);
+    const name = p.character_name || `Player ${index + 1}`;
+    const labelX = clamp(x + 12, pad, width - 180);
+    const labelY = clamp(y - 10, pad + 12, height - pad);
+    const title = `${name} | x ${Number(p.x).toFixed(0)}, y ${Number(p.y).toFixed(0)}, z ${Number(p.z || 0).toFixed(0)}`;
+    return `<g class="playerMarker" tabindex="0" role="button" data-account-id="${esc(p.account_id || '')}"><title>${esc(title)}</title><circle class="playerDot" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="8"></circle><text class="playerLabel" x="${labelX.toFixed(1)}" y="${labelY.toFixed(1)}">${esc(name)}</text></g>`;
+  }).join('');
+  const empty = players.length ? '' : `<text class="emptyState" x="${width / 2}" y="${height / 2}">No online players with Hagga Basin coordinates.</text>`;
+  const rows = players.map(p => ({
+    character: p.character_name || '',
+    account_id: p.account_id,
+    server_map: p.label || p.farm_map || p.server_id || '',
+    x: Math.round(Number(p.x || 0)),
+    y: Math.round(Number(p.y || 0)),
+    z: Math.round(Number(p.z || 0)),
+    last_login_time: p.last_login_time || ''
+  }));
+  return `<div class="panelBand"><div class="sectionHeader"><h2>Hagga Basin Player Map</h2><div class="toolbar"><span class="pill ${players.length ? 'ok' : ''}">${esc(players.length)} plotted</span><span class="pill">${esc(data?.generatedAt || '')}</span></div></div><div class="haggaMap"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Hagga Basin online player coordinate map"><rect x="0" y="0" width="${width}" height="${height}" fill="transparent"></rect>${grid}<polygon class="basinLine" points="${outline}"></polygon><text x="${pad}" y="${pad - 12}" fill="var(--muted)" font-size="12">NW</text><text x="${width - pad - 18}" y="${height - pad + 26}" fill="var(--muted)" font-size="12">SE</text>${markers}${empty}</svg></div><div class="mapLegend"><span class="pill ok">online pawn position</span><span class="pill">bounds from ${esc(bounds.actorCount || 0)} Hagga actors</span><span class="pill">world X/Y projection</span></div><details><summary>Coordinates</summary><div class="coordTable">${table(rows)}</div></details></div>`;
+}
+async function refreshHaggaMap(){
+  const container = document.getElementById('haggaBasinMap');
+  if (!container) return;
+  const data = await api('/api/players/hagga-basin', {timeoutMs: 5000});
+  container.innerHTML = haggaBasinMapPanel(data);
+  container.querySelectorAll('.playerMarker[data-account-id]').forEach(marker => {
+    marker.addEventListener('click', () => openPlayerModal(marker.dataset.accountId));
+    marker.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        openPlayerModal(marker.dataset.accountId);
+      }
+    });
+  });
+}
 function healthViz(health){
   const verdicts = health.verdicts || [];
   const maps = health.mapStatus || [];
@@ -2804,8 +2969,13 @@ function wireGlobalAffordances(){
   document.getElementById('collapseAllBtn')?.addEventListener('click', () => setDetails(false));
   document.getElementById('helpBtn')?.addEventListener('click', () => modal(true));
   document.getElementById('closeHelpBtn')?.addEventListener('click', () => modal(false));
+  document.getElementById('closePlayerModalBtn')?.addEventListener('click', closePlayerModal);
+  document.getElementById('refreshPlayerModalBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Refreshing...', () => loadPlayerModal(playerModalAccountId)));
   document.getElementById('helpModal')?.addEventListener('click', e => {
     if (e.target.id === 'helpModal') modal(false);
+  });
+  document.getElementById('playerModal')?.addEventListener('click', e => {
+    if (e.target.id === 'playerModal') closePlayerModal();
   });
   document.querySelectorAll('.tab').forEach(tab => {
     tab.addEventListener('keydown', e => {
@@ -2822,6 +2992,7 @@ function wireGlobalAffordances(){
   document.addEventListener('keydown', e => {
     const tag = e.target.tagName;
     const typing = ['INPUT','TEXTAREA','SELECT'].includes(tag);
+    if (e.key === 'Escape' && document.getElementById('playerModal').classList.contains('open')) { closePlayerModal(); return; }
     if (e.key === 'Escape' && document.getElementById('helpModal').classList.contains('open')) { modal(false); return; }
     if (typing && e.key !== 'Escape') return;
     const tabMap = {'1':'overview','2':'ops','3':'security','4':'runbook','5':'characters','6':'settings','7':'mutations'};
@@ -2893,12 +3064,16 @@ async function overview(serial=loadSerial){
   const state = health;
   const summary = health.summary || {};
   const players = (state.farmState || []).reduce((sum, r) => sum + Number(r.connected_players || 0), 0);
-  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Overview</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="ops">Operations</button><button data-jump="mutations" class="primary">Admin Actions</button></div></div><div class="metricGrid">${metric('Ready Servers', `${summary.readyAlive ?? 0}/${summary.expectedPartitions ?? 0}`, summary.readyAlive === summary.expectedPartitions ? 'ok' : 'dangerText')}${metric('Online Maps', `${summary.onlineMaps ?? 0}/${summary.totalMaps ?? 0}`, summary.onlineMaps === summary.totalMaps ? 'ok' : 'dangerText')}${metric('Active IDs', `${summary.activeServers ?? 0}/${summary.expectedPartitions ?? 0}`)}${metric('Reported Players', players)}</div>${healthViz(health)}<div id="overviewRoster">${characterRosterPanel(roster)}</div><div id="detail"></div><div id="resources" class="panelBand"><h2>Resources</h2><div class="muted">Loading resource stats...</div></div>${actionGrid([{tab:'characters',label:'Player search and detail'},{tab:'ops',label:'Service controls and map health'},{tab:'security',label:'Security and audit'},{tab:'settings',label:'Server settings'}])}<div class="twoCol"><div class="panelBand"><h2>Map Health</h2>${mapTiles(health.mapStatus)}<details><summary>Map Table</summary>${mapStatusTable(health.mapStatus)}</details></div><div class="panelBand"><h2>Health Verdict</h2>${checks(health.verdicts)}</div></div><div class="panelBand" data-network-panel><h2>Network and Upstream</h2><div class="muted">Loading network probes...</div></div></div>`;
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Overview</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="ops">Operations</button><button data-jump="mutations" class="primary">Admin Actions</button></div></div><div class="metricGrid">${metric('Ready Servers', `${summary.readyAlive ?? 0}/${summary.expectedPartitions ?? 0}`, summary.readyAlive === summary.expectedPartitions ? 'ok' : 'dangerText')}${metric('Online Maps', `${summary.onlineMaps ?? 0}/${summary.totalMaps ?? 0}`, summary.onlineMaps === summary.totalMaps ? 'ok' : 'dangerText')}${metric('Active IDs', `${summary.activeServers ?? 0}/${summary.expectedPartitions ?? 0}`)}${metric('Reported Players', players)}</div>${healthViz(health)}<div id="haggaBasinMap" class="panelBand"><h2>Hagga Basin Player Map</h2><div class="muted">Loading player positions...</div></div><div id="overviewRoster">${characterRosterPanel(roster)}</div><div id="detail"></div><div id="resources" class="panelBand"><h2>Resources</h2><div class="muted">Loading resource stats...</div></div>${actionGrid([{tab:'characters',label:'Player search and detail'},{tab:'ops',label:'Service controls and map health'},{tab:'security',label:'Security and audit'},{tab:'settings',label:'Server settings'}])}<div class="twoCol"><div class="panelBand"><h2>Map Health</h2>${mapTiles(health.mapStatus)}<details><summary>Map Table</summary>${mapStatusTable(health.mapStatus)}</details></div><div class="panelBand"><h2>Health Verdict</h2>${checks(health.verdicts)}</div></div><div class="panelBand" data-network-panel><h2>Network and Upstream</h2><div class="muted">Loading network probes...</div></div></div>`;
   document.querySelectorAll('#overviewRoster tbody tr').forEach(row => row.onclick = () => pickCharacter(row));
   makeRowsKeyboardFriendly(view);
   wireResourceControls(view);
   bindRosterFilters(view);
   bindResourceFilters(view);
+  refreshHaggaMap().catch(e => {
+    const container = document.getElementById('haggaBasinMap');
+    if (container) container.innerHTML = `<h2>Hagga Basin Player Map</h2><div class="dangerText">${esc(e.message)}</div>`;
+  });
   refreshResources().catch(e => {
     const container = document.getElementById('resources');
     if (container) container.innerHTML = `<div class="panelBand"><h2>Resources</h2><div class="dangerText">${esc(e.message)}</div></div>`;
@@ -3029,28 +3204,74 @@ async function pickCharacter(row){
   const id = row.dataset.id || row.children[0].textContent;
   if (!id) return;
   const detail = document.getElementById('detail');
-  if (detail) detail.innerHTML = '<div class="panelBand"><h2>Character Detail</h2><div class="muted">Loading selected character...</div></div>';
-  let d, ref;
-  try {
-    [d, ref] = await Promise.all([
-      api('/api/characters/' + encodeURIComponent(id)),
-      adminReference()
-    ]);
-  } catch (e) {
-    if (serial !== detailLoadSerial) return;
-    if (detail) detail.innerHTML = `<div class="panelBand"><h2>Character Detail</h2><div class="dangerText">${esc(e.message)}</div></div>`;
-    reportClientError(e, 'Load character');
-    return;
-  }
-  if (serial !== detailLoadSerial) return;
+  if (detail) detail.innerHTML = '<div class="panelBand"><h2>Selected Player</h2><div class="muted">Opening player detail...</div></div>';
+  await openPlayerModal(id, serial);
+}
+function playerLocationSummary(d){
   const p = d.player || {};
-  announce(`Selected ${p.character_name || 'character'}`);
+  const map = (d.mapContext || [])[0] || {};
+  const prev = (d.previousPartition || [])[0] || {};
+  const overmap = (d.overmap || [])[0] || {};
+  const respawn = (d.respawnLocations || [])[0] || {};
+  return [
+    {label:'Status', value:p.online_status || ''},
+    {label:'Life', value:p.life_state || ''},
+    {label:'Current Map', value:map.label || map.map || p.server_id || ''},
+    {label:'Partition', value:map.partition_id ?? prev.partition_id ?? ''},
+    {label:'Dimension', value:map.dimension_index ?? p.return_dimension_index ?? p.home_dimension_index ?? ''},
+    {label:'Server Ready', value:map.server_id ? `${map.ready ? 'ready' : 'not ready'} / ${map.alive ? 'alive' : 'not alive'}` : ''},
+    {label:'Reported Players', value:map.connected_players ?? ''},
+    {label:'Overmap Location', value:overmap.overmap_location ? JSON.stringify(overmap.overmap_location) : ''},
+    {label:'Death Location', value:p.death_location ? JSON.stringify(p.death_location) : ''},
+    {label:'Last Respawn', value:respawn.locator_name ? `${respawn.locator_name} ${respawn.map || ''}` : ''},
+  ].filter(r => r.value !== undefined && r.value !== null && String(r.value) !== '');
+}
+function playerInventorySummary(items){
+  const groups = new Map();
+  (items || []).forEach(item => {
+    const id = item.inventory_id ?? 'unknown';
+    const group = groups.get(id) || {inventory_id:id, item_count:0, total_stack:0};
+    group.item_count += 1;
+    group.total_stack += Number(item.stack_size || item.stack_count || 0);
+    groups.set(id, group);
+  });
+  return Array.from(groups.values()).sort((a, b) => String(a.inventory_id).localeCompare(String(b.inventory_id)));
+}
+function renderPlayerModal(d, ref){
+  const p = d.player || {};
+  const account = (d.account || [])[0] || {};
+  const map = (d.mapContext || [])[0] || {};
+  const locationRows = playerLocationSummary(d);
+  const inventories = d.inventories || [];
+  const items = d.inventoryItems || [];
+  const inventorySummary = playerInventorySummary(items);
   const firstTrack = (d.specialization && d.specialization[0]) || {};
-  document.getElementById('detail').innerHTML = `<datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><div class="card"><h2>${esc(p.character_name || 'Character')}</h2><div class="grid"><div><b>Account</b><br>${esc(p.account_id)}</div><div><b>Controller</b><br>${esc(p.player_controller_id)}</div><div><b>Pawn</b><br>${esc(p.player_pawn_id)}</div><div><b>Status</b><br>${esc(p.online_status)}</div></div><p><button id="detailOpenAdminActionsBtn" class="primary">Open in Admin Actions</button></p></div><div class="card"><h2>Quick Admin</h2><p class="dangerText">Back up first. Mutations require server-side enablement.</p><div class="grid"><label>Currency<select id="detailCurId">${currencyBalanceOptions(d.currency, ref.currencyIds)}</select></label><label>Amount<input id="detailCurAmount" value="1000"></label><label>Mode<select id="detailCurMode"><option>add</option><option>set</option></select></label></div><p><button id="detailCurrencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Track<select id="detailTrack">${specializationOptions(d.specialization, ref.specializationTrackTypes)}</select></label><label>XP amount<input id="detailXpAmount" value="1000"></label><label>Level for set/new track<input id="detailXpLevel" value="${esc(firstTrack.level ?? 0)}"></label><label>Mode<select id="detailXpMode"><option>add</option><option>set</option></select></label></div><p><button id="detailXpBtn" class="primary">Apply XP</button></p><div class="grid"><label>Owned inventory<select id="detailGrantInventory"><option value="">All owned inventories</option>${inventoryOptions(d.inventories)}</select></label><label>Owned item<select id="detailItemSelect">${inventoryItemOptions(d.inventoryItems)}</select></label><label>Template ID<input id="detailGrantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="detailGrantStack" value="1"></label><label>Delete count<input id="detailDeleteCount" placeholder="blank/all"></label></div><p><button id="detailDryRunBtn" class="primary">Dry run item</button> <button id="detailGrantBtn" class="danger">Grant item</button> <button id="detailSetStackBtn" class="primary">Set selected stack</button> <button id="detailDeleteItemBtn" class="danger">Delete selected item/count</button></p><pre id="detailGrantResult"></pre></div><div class="card"><h2>Inventories</h2>${table(d.inventories)}</div><div class="card"><h2>Inventory Items</h2>${table(d.inventoryItems)}</div><div class="card"><h2>Raw Detail</h2><pre>${esc(JSON.stringify(d, null, 2))}</pre></div>`;
-  makeSortableTables(document.getElementById('detail'));
-  enhanceCopyBlocks(document.getElementById('detail'));
+  document.getElementById('playerModalTitle').textContent = p.character_name || 'Player Detail';
+  document.getElementById('playerModalRefreshState').textContent = `updated ${new Date().toLocaleTimeString()}`;
+  document.getElementById('playerModalBody').innerHTML = `<datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><div class="playerModalGrid"><div class="pageStack"><div class="panelBand"><h2>${esc(p.character_name || 'Character')}</h2><div class="metricGrid">${metric('Status', p.online_status || '')}${metric('Life', p.life_state || '')}${metric('Map', map.label || map.map || p.server_id || '')}${metric('Items', items.length)}</div><div class="grid"><div><b>Account</b><br>${esc(p.account_id)}</div><div><b>Funcom</b><br>${esc(account.funcom_id || '')}</div><div><b>Platform</b><br>${esc(account.platform_name || '')} ${esc(account.platform_id || '')}</div><div><b>Last Login</b><br>${esc(p.last_login_time || '')}</div><div><b>Controller</b><br>${esc(p.player_controller_id)}</div><div><b>Pawn</b><br>${esc(p.player_pawn_id)}</div></div><p><button id="modalOpenAdminActionsBtn" class="primary">Open Admin Actions</button></p></div><div class="panelBand"><h2>Location and Runtime</h2>${table(locationRows)}<details><summary>Map Context</summary>${table(d.mapContext || [])}</details><details><summary>Respawn Locations</summary>${table(d.respawnLocations || [])}</details><details><summary>Runtime Source</summary><pre>${esc(JSON.stringify(d.realtime || {}, null, 2))}</pre></details></div><div class="panelBand"><h2>Currency and XP</h2><details open><summary>Currency</summary>${table(d.currency || [])}</details><details><summary>Specialization</summary>${table(d.specialization || [])}</details><details><summary>Faction</summary>${table(d.faction || [])}</details><details><summary>Reputation</summary>${table(d.reputation || [])}</details></div></div><div class="pageStack"><div class="panelBand"><div class="splitHeader"><h2>Inventory</h2><span class="pill">${esc(items.length)} items</span></div><div class="playerInventoryTools"><label>Inventory<select id="modalInventoryFilter"><option value="">All inventories</option>${inventoryOptions(inventories)}</select></label><label>Item Search<input id="modalItemFilter" placeholder="Template, item ID, inventory"></label></div><h3>Inventory Summary</h3>${table(inventorySummary)}<h3>Items</h3><div id="modalInventoryItems">${table(items)}</div></div><div class="panelBand"><h2>Quick Item Action</h2><div class="grid"><label>Owned inventory<select id="detailGrantInventory"><option value="">All owned inventories</option>${inventoryOptions(inventories)}</select></label><label>Owned item<select id="detailItemSelect">${inventoryItemOptions(items)}</select></label><label>Template ID<input id="detailGrantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="detailGrantStack" value="1"></label><label>Delete count<input id="detailDeleteCount" placeholder="blank/all"></label></div><p><button id="detailDryRunBtn" class="primary">Dry run item</button> <button id="detailGrantBtn" class="danger">Grant item</button> <button id="detailSetStackBtn" class="primary">Set selected stack</button> <button id="detailDeleteItemBtn" class="danger">Delete selected item/count</button></p><pre id="detailGrantResult"></pre></div><details class="panelBand"><summary>Raw Detail</summary><pre>${esc(JSON.stringify(d, null, 2))}</pre></details></div></div>`;
+  makeSortableTables(document.getElementById('playerModalBody'));
+  enhanceCopyBlocks(document.getElementById('playerModalBody'));
+  wirePlayerModalDetailActions(d, ref, firstTrack);
+}
+function wirePlayerModalDetailActions(d, ref, firstTrack){
+  const p = d.player || {};
   const detailInventory = document.getElementById('detailGrantInventory');
   const detailItem = document.getElementById('detailItemSelect');
+  const modalInventoryFilter = document.getElementById('modalInventoryFilter');
+  const modalItemFilter = document.getElementById('modalItemFilter');
+  const filterInventoryTable = () => {
+    const inventoryId = modalInventoryFilter?.value || '';
+    const term = String(modalItemFilter?.value || '').toLowerCase();
+    const filtered = (d.inventoryItems || []).filter(r => {
+      const matchesInventory = !inventoryId || String(r.inventory_id ?? '') === String(inventoryId);
+      const text = JSON.stringify(r).toLowerCase();
+      return matchesInventory && (!term || text.includes(term));
+    });
+    document.getElementById('modalInventoryItems').innerHTML = table(filtered);
+    makeSortableTables(document.getElementById('modalInventoryItems'));
+  };
+  modalInventoryFilter?.addEventListener('change', filterInventoryTable);
+  modalItemFilter?.addEventListener('input', filterInventoryTable);
   const setDetailItemOptions = () => {
     const inventoryId = detailInventory?.value || '';
     const allItems = d.inventoryItems || [];
@@ -3059,26 +3280,63 @@ async function pickCharacter(row){
     document.getElementById('detailGrantTemplate').value = '';
   };
   detailInventory?.addEventListener('change', setDetailItemOptions);
-  detailItem.addEventListener('change', e => {
+  detailItem?.addEventListener('change', e => {
     const option = e.target.selectedOptions?.[0];
     if (option?.dataset.template) document.getElementById('detailGrantTemplate').value = option.dataset.template;
     if (option?.dataset.stack) document.getElementById('detailGrantStack').value = option.dataset.stack;
     if (option?.dataset.inventory && detailInventory) detailInventory.value = option.dataset.inventory;
   });
-  document.getElementById('detailTrack').addEventListener('change', e => {
-    const level = e.target.selectedOptions?.[0]?.dataset.level || '';
-    if (level) document.getElementById('detailXpLevel').value = level;
-  });
-  document.getElementById('detailCurrencyBtn').addEventListener('click', e => runAction(e.currentTarget, 'Applying...', () => currencyFor(p.player_controller_id)));
-  document.getElementById('detailOpenAdminActionsBtn').addEventListener('click', () => {
+  document.getElementById('modalOpenAdminActionsBtn')?.addEventListener('click', () => {
     pendingAdminAccountId = String(p.account_id || '');
+    closePlayerModal();
     show('mutations');
   });
-  document.getElementById('detailXpBtn').addEventListener('click', e => runAction(e.currentTarget, 'Applying...', () => xpFor(p.player_controller_id)));
-  document.getElementById('detailDryRunBtn').addEventListener('click', e => runAction(e.currentTarget, 'Checking...', () => grantItemForAccount(p.account_id, true)));
-  document.getElementById('detailGrantBtn').addEventListener('click', e => runAction(e.currentTarget, 'Granting...', () => grantItemForAccount(p.account_id, false)));
-  document.getElementById('detailSetStackBtn').addEventListener('click', e => runAction(e.currentTarget, 'Saving...', setDetailItemStack));
-  document.getElementById('detailDeleteItemBtn').addEventListener('click', e => runAction(e.currentTarget, 'Deleting...', deleteDetailItem));
+  document.getElementById('detailDryRunBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Checking...', () => grantItemForAccount(p.account_id, true)));
+  document.getElementById('detailGrantBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Granting...', () => grantItemForAccount(p.account_id, false)));
+  document.getElementById('detailSetStackBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Saving...', setDetailItemStack));
+  document.getElementById('detailDeleteItemBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Deleting...', deleteDetailItem));
+}
+async function loadPlayerModal(accountId){
+  if (!accountId || playerModalInFlight) return;
+  playerModalInFlight = true;
+  document.getElementById('playerModalRefreshState').textContent = 'refreshing';
+  try {
+    const [d, ref] = await Promise.all([api('/api/characters/' + encodeURIComponent(accountId)), playerModalRef ? Promise.resolve(playerModalRef) : adminReference()]);
+    playerModalRef = ref;
+    renderPlayerModal(d, ref);
+  } catch (e) {
+    document.getElementById('playerModalBody').innerHTML = `<div class="dangerText">${esc(e.message)}</div>`;
+    document.getElementById('playerModalRefreshState').textContent = 'error';
+    reportClientError(e, 'Load player');
+  } finally {
+    playerModalInFlight = false;
+  }
+}
+async function openPlayerModal(accountId, serial=detailLoadSerial){
+  playerModalAccountId = String(accountId || '');
+  playerModalRef = null;
+  const modal = document.getElementById('playerModal');
+  modal.classList.add('open');
+  document.getElementById('playerModalBody').innerHTML = '<div class="muted">Loading player detail...</div>';
+  document.getElementById('playerModalRefreshState').textContent = 'loading';
+  document.getElementById('closePlayerModalBtn').focus();
+  await loadPlayerModal(playerModalAccountId);
+  if (serial !== detailLoadSerial) return;
+  const detail = document.getElementById('detail');
+  if (detail) detail.innerHTML = `<div class="panelBand"><h2>Selected Player</h2><div class="muted">Player detail is open in the modal. It refreshes every 5 seconds while open.</div></div>`;
+  clearInterval(playerModalTimer);
+  playerModalTimer = setInterval(() => {
+    const active = document.activeElement;
+    const editing = active && document.getElementById('playerModal').contains(active) && ['INPUT','SELECT','TEXTAREA'].includes(active.tagName);
+    if (document.getElementById('playerModal').classList.contains('open') && !editing) loadPlayerModal(playerModalAccountId);
+  }, 5000);
+}
+function closePlayerModal(){
+  clearInterval(playerModalTimer);
+  playerModalTimer = null;
+  playerModalAccountId = '';
+  document.getElementById('playerModal').classList.remove('open');
+  announce('Player detail closed');
 }
 async function settings(serial=loadSerial){
   const [env, transfer, onlineState, configs] = await Promise.all([
