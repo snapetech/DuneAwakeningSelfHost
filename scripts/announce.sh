@@ -410,15 +410,18 @@ def amqp_publish_once(routing_key, body, properties):
         amqp_wait_method(sock, (20, 11))
         sock.sendall(amqp_method(1, 60, 40, struct.pack(">H", 0) + shortstr(exchange) + shortstr(routing_key) + b"\x00\x00"))
         body_bytes = body.encode()
-        flags = 0x8000 | 0x1000 | 0x0020 | 0x0010 | 0x0008 | 0x0002
+        # AMQP basic property flags must be encoded in spec order. Chat clients
+        # discard these messages if user_id/type/message_id are shifted into
+        # the wrong slots.
+        flags = 0x8000 | 0x1000 | 0x0080 | 0x0040 | 0x0020 | 0x0010
         header_payload = (
             struct.pack(">HHQH", 60, 0, len(body_bytes), flags)
             + shortstr(properties["content_type"])
             + struct.pack(">B", properties["delivery_mode"])
+            + shortstr(properties["message_id"])
             + struct.pack(">Q", properties["timestamp"])
             + shortstr(properties["type"])
             + shortstr(properties["user_id"])
-            + shortstr(properties["message_id"])
         )
         sock.sendall(amqp_frame(2, 1, header_payload))
         max_body = min(frame_max or 131072, 131072) - 8

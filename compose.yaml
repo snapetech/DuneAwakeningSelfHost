@@ -654,6 +654,8 @@ services:
     networks:
       default:
         ipv4_address: 172.31.240.9
+        aliases:
+          - admin-panel
     healthcheck:
       test: ["CMD-SHELL", "python - <<'PY'\nimport urllib.request\nreq=urllib.request.Request('http://127.0.0.1:8080/api/status', headers={'Host':'admin-panel:8080'})\nurllib.request.urlopen(req, timeout=3).read()\nPY"]
       interval: 30s
@@ -676,6 +678,10 @@ services:
       - admin-panel:8080
     ports:
       - "${DUNE_ADMIN_BIND_ADDRESS:-127.0.0.1}:${DUNE_ADMIN_HOST_PORT:-18080}:8080"
+    networks:
+      default:
+        aliases:
+          - admin-panel-ingress
 
 networks:
   default:

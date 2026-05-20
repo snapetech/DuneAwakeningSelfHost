@@ -468,19 +468,27 @@ def execute_restart(job):
     return {"ok": result.returncode == 0, "returncode": result.returncode, "output": output}
 
 
+def dashboard_announcement_message(message):
+    message = str(message or "").strip()
+    if message.startswith("!!! ") and message.endswith(" !!!"):
+        return message
+    return f"!!! {message} !!!"
+
+
 def deliver_announcement(job):
     command = pathlib.Path(ANNOUNCEMENT_COMMAND)
     if not command.exists() or not os.access(command, os.X_OK):
         return {"ok": False, "error": f"announce command is not executable: {command}"}
+    message = dashboard_announcement_message(job.get("message", ""))
     env = os.environ.copy()
     env.update({
-        "DUNE_ANNOUNCE_MESSAGE": job.get("message", ""),
+        "DUNE_ANNOUNCE_MESSAGE": message,
         "DUNE_ANNOUNCE_RESTART_AT": str(int(float(job.get("restartAt", time.time())))),
         "DUNE_ANNOUNCE_JOB_ID": job.get("id", ""),
     })
     try:
         result = subprocess.run(
-            [str(command), job.get("message", "")],
+            [str(command), message],
             cwd=str(ROOT),
             env=env,
             text=True,
@@ -3350,6 +3358,25 @@ function wirePlayerModalDetailActions(d, ref, firstTrack, uiState={}){
     });
     document.getElementById('modalInventoryItems').innerHTML = table(filtered);
     makeSortableTables(document.getElementById('modalInventoryItems'));
+    document.querySelectorAll('#modalInventoryItems tbody tr').forEach((row, index) => {
+      const item = filtered[index] || {};
+      row.tabIndex = 0;
+      row.setAttribute('role', 'button');
+      const selectItem = () => {
+        const itemId = item.item_id ?? item.id ?? '';
+        if (detailItem && itemId) {
+          detailItem.value = String(itemId);
+          detailItem.dispatchEvent(new Event('change'));
+        }
+      };
+      row.addEventListener('click', selectItem);
+      row.addEventListener('keydown', e => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          selectItem();
+        }
+      });
+    });
   };
   modalInventoryFilter?.addEventListener('change', () => {
     if (detailInventory) {
@@ -3382,12 +3409,12 @@ function wirePlayerModalDetailActions(d, ref, firstTrack, uiState={}){
     closePlayerModal();
     show('mutations');
   });
-  document.getElementById('detailCurrencyBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Applying...', () => currencyFor(p.player_controller_id)));
-  document.getElementById('detailXpBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Applying...', () => xpFor(p.player_controller_id)));
+  document.getElementById('detailCurrencyBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Applying...', async () => { await currencyFor(p.player_controller_id); await loadPlayerModal(p.account_id); }));
+  document.getElementById('detailXpBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Applying...', async () => { await xpFor(p.player_controller_id); await loadPlayerModal(p.account_id); }));
   document.getElementById('detailDryRunBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Checking...', () => grantItemForAccount(p.account_id, true)));
-  document.getElementById('detailGrantBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Granting...', () => grantItemForAccount(p.account_id, false)));
-  document.getElementById('detailSetStackBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Saving...', setDetailItemStack));
-  document.getElementById('detailDeleteItemBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Deleting...', deleteDetailItem));
+  document.getElementById('detailGrantBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Granting...', async () => { await grantItemForAccount(p.account_id, false); await loadPlayerModal(p.account_id); }));
+  document.getElementById('detailSetStackBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Saving...', async () => { await setDetailItemStack(); await loadPlayerModal(p.account_id); }));
+  document.getElementById('detailDeleteItemBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Deleting...', async () => { await deleteDetailItem(); await loadPlayerModal(p.account_id); }));
   setIfPresent('modalInventoryFilter', uiState.inventoryFilter);
   setIfPresent('modalItemFilter', uiState.itemFilter);
   setIfPresent('detailGrantInventory', uiState.grantInventory || uiState.inventoryFilter);

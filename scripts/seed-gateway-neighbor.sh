@@ -71,6 +71,18 @@ seed_pair() {
   fi
 }
 
+seed_host_alias() {
+  local source="$1"
+  local target="$2"
+  local alias="$3"
+  local target_ip
+
+  target_ip="$("$runtime" inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$target" 2>/dev/null || true)"
+  if is_running "$source" && [[ -n "$target_ip" ]]; then
+    "$runtime" exec "$source" sh -lc "sed -i '/[[:space:]]${alias}\$/d' /etc/hosts; printf '\\n%s %s\\n' '$target_ip' '$alias' >> /etc/hosts" >/dev/null 2>&1 || true
+  fi
+}
+
 seed_bridge "$gateway_container"
 seed_bridge "$director_container"
 seed_bridge "$game_rmq_container"
@@ -89,4 +101,6 @@ seed_pair "$admin_panel_ingress_container" "$admin_panel_container"
 seed_pair "$admin_panel_container" "$admin_panel_ingress_container"
 seed_pair "$admin_panel_container" "$postgres_container"
 seed_pair "$postgres_container" "$admin_panel_container"
+seed_host_alias "$admin_panel_ingress_container" "$admin_panel_container" "admin-panel"
+seed_host_alias "$admin_panel_container" "$postgres_container" "postgres"
 printf 'seeded available Dune bridge neighbor entries\n'
