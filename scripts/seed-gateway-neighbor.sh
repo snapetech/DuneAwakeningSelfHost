@@ -71,6 +71,24 @@ seed_pair() {
   fi
 }
 
+seed_host_neighbor() {
+  local target="$1"
+  local target_ip
+  local target_mac
+  local target_dev
+
+  target_ip="$("$runtime" inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$target" 2>/dev/null || true)"
+  target_mac="$(container_mac "$target" 2>/dev/null || true)"
+  if [[ -z "$target_ip" || -z "$target_mac" ]]; then
+    return
+  fi
+
+  target_dev="$(ip route get "$target_ip" 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i == "dev") {print $(i+1); exit}}')"
+  if [[ -n "$target_dev" ]]; then
+    sudo ip neigh replace "$target_ip" lladdr "$target_mac" dev "$target_dev" nud permanent
+  fi
+}
+
 seed_host_alias() {
   local source="$1"
   local target="$2"
@@ -101,6 +119,8 @@ seed_pair "$admin_panel_ingress_container" "$admin_panel_container"
 seed_pair "$admin_panel_container" "$admin_panel_ingress_container"
 seed_pair "$admin_panel_container" "$postgres_container"
 seed_pair "$postgres_container" "$admin_panel_container"
+seed_host_neighbor "$admin_panel_ingress_container"
+seed_host_neighbor "$admin_panel_container"
 seed_host_alias "$admin_panel_ingress_container" "$admin_panel_container" "admin-panel"
 seed_host_alias "$admin_panel_container" "$postgres_container" "postgres"
 printf 'seeded available Dune bridge neighbor entries\n'
