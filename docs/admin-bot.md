@@ -146,7 +146,6 @@ Automated private messages are derived from local state and operator config rath
 - `POPULATION_ADMIN_DIGEST` privately sends currently online admins a periodic player-count-by-map digest.
 - `RECONNECT_SUPPORT` privately nudges players who reconnect repeatedly inside a short window.
 - `ADMIN_ANOMALY_DIGEST` privately sends currently online admins a compact digest for stuck-transition candidates and over-cap base counts.
-
 Admin-private recipients are derived from currently online players whose character name or FLS id matches `DUNE_PLAYER_PRESENCE_ADMIN_NAMES` / `DUNE_PLAYER_PRESENCE_ADMIN_FLS_IDS`. Keep real admin identifiers in private `.env`, not in committed examples or docs.
 - `MAP_HEALTH_PUBLIC` can publish degraded/recovered map-health notices when enabled.
 - `MAP_HEALTH_ADMIN`, `POPULATION_ADMIN_DIGEST`, and `ADMIN_ANOMALY_DIGEST` send private admin-only digests to configured admin names/FLS ids.

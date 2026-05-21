@@ -83,6 +83,8 @@ CONFIRM_PLAYER_RECOVERY = "MOVE OFFLINE PLAYER"
 CONFIRM_REPUTATION_MUTATION = "WRITE REPUTATION"
 CONFIRM_JOURNEY_MUTATION = "WRITE JOURNEY"
 CONFIRM_FACTION_MUTATION = "CHANGE FACTION"
+CONFIRM_LANDSRAAD_MUTATION = "WRITE LANDSRAAD"
+CONFIRM_RESPAWN_MUTATION = "DELETE RESPAWN"
 CATALOG_ENABLED = os.environ.get("DUNE_ADMIN_CATALOG_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 TYPED_KNOBS_ENABLED = os.environ.get("DUNE_ADMIN_TYPED_KNOBS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 EVENT_EXECUTION_ENABLED = os.environ.get("DUNE_ADMIN_EVENT_EXECUTION_ENABLED", "false").lower() in ("1", "true", "yes", "on")
@@ -90,6 +92,8 @@ BUNDLE_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_BUNDLE_MUTATIONS_ENABLED",
 REPUTATION_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 JOURNEY_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 FACTION_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_FACTION_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+LANDSRAAD_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_LANDSRAAD_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+RESPAWN_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_RESPAWN_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 ANNOUNCEMENT_STATE_FILE = BACKUP_ROOT / "announcements.json"
 RESTART_STATE_FILE = BACKUP_ROOT / "restart-jobs.json"
 EVENT_STATE_FILE = BACKUP_ROOT / "events.json"
@@ -387,6 +391,8 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for raw faction reputation writes. Reputation planning and inspection remain available."},
     "DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for journey reveal/complete/reset/delete server-function calls. Journey planning and inspection remain available."},
     "DUNE_ADMIN_FACTION_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for player faction change server-function calls. Faction planning and inspection remain available."},
+    "DUNE_ADMIN_LANDSRAAD_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for Landsraad term administration server-function calls. Landsraad inspection and dry-runs remain available."},
+    "DUNE_ADMIN_RESPAWN_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for respawn-location deletion through update_respawn_locations. Respawn inspection and dry-runs remain available."},
     "DUNE_ADMIN_MAX_BODY_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum accepted request body size."},
     "DUNE_ADMIN_AUDIT_MAX_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Audit log rotation threshold."},
     "DUNE_ADMIN_REQUEST_TIMEOUT_SECONDS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Socket timeout to limit slow client abuse."},
@@ -1583,6 +1589,8 @@ def content_catalog_entries():
         {"id": "faction-reputation-plan", "group": "Economy/Admin", "surface": "Database state", "capability": "Inspect and plan faction reputation changes for a player pawn.", "evidence": ["dune.set_player_faction_reputation(in_actor_id bigint, in_faction_id smallint, in_reputation_amount integer)", "dune.get_player_current_faction_reputation", "character detail reads dune.player_faction_reputation"], "confidence": "moderate-to-high", "mutationRisk": "high", "restartRequired": False, "validationCommand": "select * from dune.player_faction_reputation where actor_id=<pawn_id> order by faction_id;", "rollback": "Call /api/admin/faction-reputation with mode=set and the previous value from the dry-run/audit record."},
         {"id": "player-faction-change", "group": "Economy/Admin", "surface": "Database state", "capability": "Inspect and optionally change a player's faction using first-party faction functions.", "evidence": ["dune.change_player_faction(in_player_id bigint, in_faction_id smallint, neutral_faction_id smallint, in_utc_time_faction_change timestamp)", "dune.get_player_faction", "dune.factions table contains Atreides/Harkonnen/None/Smuggler"], "confidence": "moderate", "mutationRisk": "high", "restartRequired": False, "validationCommand": "POST /api/admin/faction dry_run=true; verify dune.player_faction and guild side effects after disposable offline test.", "rollback": "Call /api/admin/faction with the previous faction_id from the dry-run/audit record."},
         {"id": "journey-server-functions", "group": "Economy/Admin", "surface": "Database state", "capability": "Inspect and optionally reveal, complete, reset, or delete known journey story nodes for an offline player.", "evidence": ["dune.admin_get_journey_details(in_player_id text, in_story_node_id text)", "dune.reveal_journey_story_nodes_for_player", "dune.complete_journey_story_nodes_for_player", "dune.reset_journey_story_nodes_for_player", "dune.delete_journey_story_nodes_for_player"], "confidence": "moderate", "mutationRisk": "high", "restartRequired": False, "validationCommand": "POST /api/admin/journey dry_run=true with known story_node_ids; inspect admin_get_journey_details before and after.", "rollback": "Use reset/delete/reveal/complete compensating calls for the affected story_node_ids from the audit record."},
+        {"id": "respawn-location-delete", "group": "Economy/Admin", "surface": "Database state", "capability": "Inspect and optionally delete one known respawn location by UUID by re-saving the current respawnlocation array without that entry.", "evidence": ["dune.get_respawn_locations(in_account_id bigint)", "dune.update_respawn_locations(player_id bigint, respawn_locations respawnlocation[])", "dune.player_respawn_locations table"], "confidence": "moderate", "mutationRisk": "high", "restartRequired": False, "validationCommand": "POST /api/admin/respawn-location dry_run=true; compare get_respawn_locations before and after.", "rollback": "No automatic rollback yet; restoring requires reconstructing the removed respawnlocation composite."},
+        {"id": "landsraad-term-admin", "group": "Economy/Admin", "surface": "Database state", "capability": "Inspect and optionally change or force-end the current Landsraad term through first-party functions.", "evidence": ["dune.landsraad_load_current_term", "dune.landsraad_change_term_end_time", "dune.landsraad_force_end_term", "dune.landsraad_decree_term live rows"], "confidence": "moderate", "mutationRisk": "very high", "restartRequired": False, "validationCommand": "POST /api/admin/landsraad dry_run=true; inspect landsraad_load_current_term and landsraad_decree_term before/after.", "rollback": "For end-time changes, call change-end-time with the previous end_time. Force-end is not safely reversible."},
         {"id": "offline-player-recovery", "group": "Economy/Admin", "surface": "Database state", "capability": "Preview offline player partition move through dune.admin_move_offline_player_to_partition.", "evidence": ["PLAYER_LOCATION_SOURCE_AUDIT.md", "database function name observed in local schema"], "confidence": "moderate", "mutationRisk": "high", "restartRequired": False, "validationCommand": "select * from dune.player_state where account_id=<id>;", "rollback": "Move player back to prior partition from audit record."},
         {"id": "mining-resource-multipliers", "group": "World Rules", "surface": "Config/INI knobs", "capability": "Adjust player mining, vehicle mining, and PvP resource multipliers.", "evidence": ["config/UserEngine.ini", "docs/server-knobs-audit.md"], "confidence": "high", "mutationRisk": "low", "restartRequired": True, "validationCommand": "rg -n 'MiningOutput|PvpResourceMultiplier' config/UserEngine.ini", "rollback": "Restore backed-up UserEngine.ini and restart maps."},
         {"id": "pvp-security-zones", "group": "World Rules", "surface": "Config/INI knobs", "capability": "Toggle forced PvP and security-zone behavior.", "evidence": ["config/UserGame.ini", "SERVER_CONFIG_KEYS.md"], "confidence": "high", "mutationRisk": "medium", "restartRequired": True, "validationCommand": "rg -n 'Pvp|SecurityZones' config/UserGame.ini", "rollback": "Restore backed-up UserGame.ini and restart maps."},
@@ -2758,6 +2766,18 @@ class Handler(BaseHTTPRequestHandler):
                 result = self.faction_change_mutation(body)
                 self.audit("faction-change", ok=result.get("ok"), dry_run=result.get("dryRun"), account_id=result.get("accountId"), actor_id=result.get("actorId"), faction_id=result.get("factionId"))
                 self.json(result)
+            elif parsed.path == "/api/admin/respawn-location":
+                self.require_token()
+                body = parse_body(self)
+                result = self.respawn_location_mutation(body)
+                self.audit("respawn-location", ok=result.get("ok"), dry_run=result.get("dryRun"), account_id=result.get("accountId"), respawn_id=result.get("respawnId"), respawn_action=result.get("action"))
+                self.json(result)
+            elif parsed.path == "/api/admin/landsraad":
+                self.require_token()
+                body = parse_body(self)
+                result = self.landsraad_mutation(body)
+                self.audit("landsraad-mutation", ok=result.get("ok"), dry_run=result.get("dryRun"), landsraad_action=result.get("action"), term_id=result.get("termId"))
+                self.json(result)
             elif parsed.path == "/api/admin/gm/preview":
                 self.require_token()
                 body = parse_body(self)
@@ -3784,12 +3804,28 @@ class Handler(BaseHTTPRequestHandler):
                     "confirm": CONFIRM_FACTION_MUTATION,
                     "confidence": "moderate",
                 },
+                "respawnLocation": {
+                    "endpoint": "/api/admin/respawn-location",
+                    "defaultDryRun": True,
+                    "executionGate": "DUNE_ADMIN_RESPAWN_MUTATIONS_ENABLED",
+                    "confirm": CONFIRM_RESPAWN_MUTATION,
+                    "actions": ["delete"],
+                    "confidence": "moderate",
+                },
                 "journey": {
                     "endpoint": "/api/admin/journey",
                     "defaultDryRun": True,
                     "executionGate": "DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED",
                     "confirm": CONFIRM_JOURNEY_MUTATION,
                     "actions": ["reveal", "complete", "reset", "delete"],
+                    "confidence": "moderate",
+                },
+                "landsraad": {
+                    "endpoint": "/api/admin/landsraad",
+                    "defaultDryRun": True,
+                    "executionGate": "DUNE_ADMIN_LANDSRAAD_MUTATIONS_ENABLED",
+                    "confirm": CONFIRM_LANDSRAAD_MUTATION,
+                    "actions": ["change-end-time", "force-end"],
                     "confidence": "moderate",
                 },
                 "journeyRecipeVehicle": {
@@ -3991,6 +4027,100 @@ class Handler(BaseHTTPRequestHandler):
         execute("select dune.change_player_faction(%s::bigint,%s::smallint,%s::smallint, timezone('utc', now())::timestamp)", (actor_id, faction_id, neutral_faction_id))
         after = query("select * from dune.player_faction where actor_id=%s", (actor_id,))
         return {"ok": True, "dryRun": False, "accountId": account_id, "actorId": actor_id, "factionId": faction_id, "before": current_rows, "after": after, "rollback": {"faction_id": current_faction_id, "neutral_faction_id": neutral_faction_id, "confirm": CONFIRM_FACTION_MUTATION}}
+
+    def respawn_location_mutation(self, body):
+        account_id = int(body.get("account_id", body.get("accountId")))
+        respawn_id = str(body.get("respawn_id", body.get("respawnId", ""))).strip()
+        action = str(body.get("action", "delete")).strip().lower()
+        if action != "delete":
+            raise ValueError("only delete is supported for respawn-location")
+        if not re.fullmatch(r"[0-9a-fA-F-]{36}", respawn_id):
+            raise ValueError("respawn_id must be a UUID")
+        dry_run = str(body.get("dry_run", body.get("dryRun", "true"))).lower() not in ("0", "false", "no", "off")
+        player, _ = self.resolve_player_identity(account_id)
+        current_rows = query("select * from dune.player_respawn_locations where account_id=%s order by last_used_timestamp desc nulls last", (account_id,))
+        target = [row for row in current_rows if str(row.get("id")) == respawn_id]
+        if not target:
+            raise ValueError("respawn_id not found for account_id")
+        plan = {
+            "function": "dune.update_respawn_locations",
+            "args": [account_id, f"get_respawn_locations({account_id}) minus {respawn_id}"],
+            "player": player,
+            "currentRows": current_rows,
+            "delete": target[0],
+            "remainingCount": max(0, len(current_rows) - 1),
+            "rollback": "No automatic rollback; preserve the deleted row from this dry-run/audit record.",
+        }
+        if dry_run:
+            return {"ok": True, "dryRun": True, "accountId": account_id, "respawnId": respawn_id, "action": action, "plan": plan, "executionGate": "DUNE_ADMIN_RESPAWN_MUTATIONS_ENABLED", "confirm": CONFIRM_RESPAWN_MUTATION}
+        self.require_mutations()
+        if not RESPAWN_MUTATIONS_ENABLED:
+            raise PermissionError("respawn mutations are disabled; set DUNE_ADMIN_RESPAWN_MUTATIONS_ENABLED=true")
+        require_confirmation(body, CONFIRM_RESPAWN_MUTATION)
+        if str(player.get("online_status") or "").lower() == "online":
+            raise ValueError("player is online; respawn-location execution refuses online targets")
+        execute("""
+            select dune.update_respawn_locations(%s, coalesce(array(
+                select current_location.loc
+                from unnest(dune.get_respawn_locations(%s)) as current_location(loc)
+                where (current_location.loc).id <> %s::uuid
+            ), array[]::dune.respawnlocation[]))
+        """, (account_id, account_id, respawn_id))
+        after = query("select * from dune.player_respawn_locations where account_id=%s order by last_used_timestamp desc nulls last", (account_id,))
+        return {"ok": True, "dryRun": False, "accountId": account_id, "respawnId": respawn_id, "action": action, "before": current_rows, "after": after, "rollback": plan["rollback"]}
+
+    def landsraad_snapshot(self):
+        errors = {}
+        current = reference_query(errors, "currentTerm", "select * from dune.landsraad_load_current_term()")
+        terms = reference_query(errors, "terms", "select * from dune.landsraad_decree_term order by term_id desc limit 5")
+        functions = reference_query(errors, "functions", """
+            select p.proname as name, pg_get_function_identity_arguments(p.oid) as args
+            from pg_proc p
+            join pg_namespace n on n.oid = p.pronamespace
+            where n.nspname='dune'
+              and p.proname in ('landsraad_load_current_term', 'landsraad_change_term_end_time', 'landsraad_force_end_term')
+            order by p.proname
+        """)
+        return {"currentTerm": current, "terms": terms, "functions": functions, "errors": errors}
+
+    def landsraad_mutation(self, body):
+        action = str(body.get("action", "")).strip().lower()
+        if action not in ("change-end-time", "force-end"):
+            raise ValueError("action must be change-end-time or force-end")
+        dry_run = str(body.get("dry_run", body.get("dryRun", "true"))).lower() not in ("0", "false", "no", "off")
+        before = self.landsraad_snapshot()
+        current_term = (before.get("currentTerm") or before.get("terms") or [{}])[0] if (before.get("currentTerm") or before.get("terms")) else {}
+        term_id = int(body.get("term_id", body.get("termId", current_term.get("term_id") or 0)) or 0)
+        if term_id <= 0:
+            raise ValueError("term_id is required")
+        test_term = str(body.get("test_term", body.get("testTerm", current_term.get("testterm", False)))).lower() in ("1", "true", "yes", "on")
+        plan = {
+            "action": action,
+            "termId": term_id,
+            "testTerm": test_term,
+            "before": before,
+            "function": "dune.landsraad_change_term_end_time" if action == "change-end-time" else "dune.landsraad_force_end_term",
+        }
+        if action == "change-end-time":
+            new_end_time = str(body.get("new_end_time", body.get("newEndTime", ""))).strip()
+            if not new_end_time:
+                raise ValueError("new_end_time is required for change-end-time")
+            plan["newEndTime"] = new_end_time
+            plan["rollback"] = {"action": "change-end-time", "term_id": term_id, "new_end_time": current_term.get("end_time"), "confirm": CONFIRM_LANDSRAAD_MUTATION}
+        else:
+            plan["rollback"] = "force-end is not safely reversible"
+        if dry_run:
+            return {"ok": True, "dryRun": True, "action": action, "termId": term_id, "plan": plan, "executionGate": "DUNE_ADMIN_LANDSRAAD_MUTATIONS_ENABLED", "confirm": CONFIRM_LANDSRAAD_MUTATION}
+        self.require_mutations()
+        if not LANDSRAAD_MUTATIONS_ENABLED:
+            raise PermissionError("landsraad mutations are disabled; set DUNE_ADMIN_LANDSRAAD_MUTATIONS_ENABLED=true")
+        require_confirmation(body, CONFIRM_LANDSRAAD_MUTATION)
+        if action == "change-end-time":
+            execute("select dune.landsraad_change_term_end_time(%s,%s::timestamp,%s)", (term_id, plan["newEndTime"], test_term))
+        else:
+            execute("select dune.landsraad_force_end_term(%s)", (term_id,))
+        after = self.landsraad_snapshot()
+        return {"ok": True, "dryRun": False, "action": action, "termId": term_id, "before": before, "after": after, "rollback": plan["rollback"]}
 
     def write_config(self, name, content):
         if name not in ALLOWED_CONFIGS:

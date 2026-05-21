@@ -82,6 +82,8 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn("faction-reputation-plan", by_id)
         self.assertIn("set_player_faction_reputation", " ".join(by_id["faction-reputation-plan"]["evidence"]))
         self.assertIn("journey-server-functions", by_id)
+        self.assertIn("respawn-location-delete", by_id)
+        self.assertIn("landsraad-term-admin", by_id)
         self.assertEqual(by_id["recipe-vehicle-function-discovery"]["mutationRisk"], "blocked")
 
     def test_typed_knob_validation_and_backup_write(self):

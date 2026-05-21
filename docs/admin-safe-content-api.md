@@ -26,6 +26,7 @@ Content-Type: application/json
 | `DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED` | `false` | Enables journey reveal/complete/reset/delete server-function calls. Does not block inspection or dry-runs. |
 | `DUNE_ADMIN_FACTION_MUTATIONS_ENABLED` | `false` | Enables player faction change through `dune.change_player_faction`. Does not block inspection or dry-runs. |
 | `DUNE_ADMIN_LANDSRAAD_MUTATIONS_ENABLED` | `false` | Enables Landsraad term administration through first-party functions. Does not block inspection or dry-runs. |
+| `DUNE_ADMIN_RESPAWN_MUTATIONS_ENABLED` | `false` | Enables deleting known respawn locations through `dune.update_respawn_locations`. Does not block inspection or dry-runs. |
 | `DUNE_ADMIN_MUTATIONS_ENABLED` | repo default currently `true` | Existing global mutation gate. |
 | `DUNE_ADMIN_ITEM_GRANTS_ENABLED` | repo default currently `true` | Existing item mutation gate. |
 
@@ -449,6 +450,46 @@ Function mapping:
 | `force-end` | `dune.landsraad_force_end_term(term_id)` |
 
 Risk: very high. Landsraad terms are world/economy state. Use dry-run and DB backup first. Do not use `force-end` casually because it is not safely reversible.
+
+## Respawn Location Delete
+
+### `POST /api/admin/respawn-location`
+
+Default mode is dry-run. The only supported action is `delete`.
+
+```json
+{
+  "dry_run": true,
+  "action": "delete",
+  "account_id": 456,
+  "respawn_id": "0a0556f6-a387-41f2-b613-deacee4e2bd0"
+}
+```
+
+Dry-run behavior:
+
+- Resolves `account_id`.
+- Reads current rows from `dune.player_respawn_locations`.
+- Verifies the target UUID belongs to the account.
+- Plans a call that re-saves `dune.get_respawn_locations(account_id)` without the target UUID.
+
+Execution requirements:
+
+- `DUNE_ADMIN_MUTATIONS_ENABLED=true`
+- `DUNE_ADMIN_RESPAWN_MUTATIONS_ENABLED=true`
+- `confirm: "DELETE RESPAWN"`
+- target player must be offline
+
+Execution function:
+
+```sql
+dune.update_respawn_locations(
+  account_id,
+  get_respawn_locations(account_id) minus respawn_id
+)
+```
+
+Risk: high. This is intentionally limited to deletion of an existing known row. Creation or arbitrary editing of `respawnlocation` composites is still blocked until locator semantics and rollback are mapped.
 
 ## Faction Reputation
 

@@ -53,6 +53,7 @@ Implemented in `admin/admin_panel.py`:
 - Dry-run-first player faction-change mutator using `dune.change_player_faction`, faction id validation, offline-only execution, and a separate execution gate.
 - Dry-run-first journey story-node mutator using server-provided reveal/complete/reset/delete functions and a separate execution gate.
 - Dry-run-first Landsraad term mutator using first-party term end-time and force-end functions with a separate execution gate.
+- Dry-run-first respawn-location delete mutator using `get_respawn_locations` plus `update_respawn_locations`; arbitrary respawn creation/editing remains blocked.
 - Read-only spice/resource field inspection.
 - Event definition persistence under `backups/admin-panel/events.json`.
 - Event dry-run planner and explicit execution gate.
@@ -71,6 +72,7 @@ The implementation intentionally keeps catalog reads independent from write gate
 | `DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED` | `false` | Journey story-node execution. Journey dry-runs and progression inspection remain available. |
 | `DUNE_ADMIN_FACTION_MUTATIONS_ENABLED` | `false` | Player faction-change execution. Faction dry-runs and progression inspection remain available. |
 | `DUNE_ADMIN_LANDSRAAD_MUTATIONS_ENABLED` | `false` | Landsraad term execution. Landsraad dry-runs and progression inspection remain available. |
+| `DUNE_ADMIN_RESPAWN_MUTATIONS_ENABLED` | `false` | Respawn-location deletion. Respawn dry-runs and player detail inspection remain available. |
 | `DUNE_ADMIN_MUTATIONS_ENABLED` | repo default currently `true` | Existing global mutation gate. |
 | `DUNE_ADMIN_ITEM_GRANTS_ENABLED` | repo default currently `true` | Item grant and bundle item execution. |
 | `DUNE_ADMIN_GM_COMMANDS_ENABLED` | `false` | Native GM command execution. Still also blocked by payload verification. |
@@ -85,6 +87,7 @@ The implementation intentionally keeps catalog reads independent from write gate
 | `WRITE JOURNEY` | Journey story-node execution. |
 | `CHANGE FACTION` | Player faction-change execution. |
 | `WRITE LANDSRAAD` | Landsraad term execution. |
+| `DELETE RESPAWN` | Respawn-location deletion. |
 | `RUN GM COMMAND` | Native GM command execution, still blocked until payload verification. |
 
 ## Typed Knob Registry
@@ -177,6 +180,7 @@ Near-term, high-confidence work:
 - Validate journey reveal/complete/reset/delete on disposable offline character data and build a local story-node id reference from observed `admin_get_journey_details` calls.
 - Validate player faction changes on disposable/offline character data and document guild side effects.
 - Validate Landsraad end-time changes on disposable/private test terms. Keep force-end manual-only until recovery/term lifecycle effects are fully documented.
+- Validate respawn-location deletion on disposable/offline character data. Do not add arbitrary respawn creation until `spawnlocatordescriptor` semantics and restoration are fully documented.
 
 Medium-confidence work:
 
