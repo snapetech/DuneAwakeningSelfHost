@@ -661,7 +661,9 @@ curl -sS -H 'Content-Type: application/json' \
   | jq '.dryRun, .executable, .plan.blockers'
 ```
 
-Execution remains blocked unless the plan reports `executable: true`. Current contract discovery records lifecycle evidence such as `login_account`, `delete_account`, `takeover_account`, `save_player`, and `save_player_pawn`, but does not treat those as a proven hibernate/switch path by themselves. Confidence: moderate for inspection, low for execution.
+Execution remains blocked unless the plan reports `executable: true`. Current contract discovery treats `dune.takeover_account(in_user_to_takeover text, in_current_user text)` as the only executable native switch/restore path. It swaps the active login identity onto the selected same-owner hibernated character and moves that target identity onto the current character account. Confidence: moderate.
+
+`new-character` execution remains blocked. The mapped native blank-character path is `delete_account(in_user_id, in_reason)`, and that function deletes the current account/actors instead of hibernating them. DASH does not use it for character-slot creation. Confidence: high.
 
 Non-dry-run execution requires all of:
 
@@ -669,10 +671,18 @@ Non-dry-run execution requires all of:
 - `DUNE_ADMIN_CHARACTER_SWAP_ENABLED=true`
 - `confirm: "SWAP CHARACTER"`
 - the active account and selected target are offline
+- the action is `switch-character` or `restore-character`
 - the plan returns `executable: true`
 - a DB backup can be created before any native lifecycle call
 
-Blocked behavior is intentional. The panel does not create synthetic starter rows, does not overwrite raw `player_state`, and does not execute account deletion/takeover or save-player functions as a guessed swap mechanism.
+Execution behavior:
+
+- creates a Postgres backup first
+- audits before/after rows for the active and target account ids
+- calls only `select dune.takeover_account(target_fls_id, active_fls_id)`
+- returns an inverse restore payload and backup path
+
+Blocked behavior is intentional. The panel does not create synthetic starter rows, does not overwrite raw `player_state`, and does not execute account deletion or save-player functions as a guessed swap mechanism.
 
 Test coverage includes direct planner tests and handler-route tests for `GET /api/admin/character-slots`, `POST /api/admin/character-slots/plan`, and dry-run/blocked `POST /api/admin/character-slots/execute`. The tests verify that blocked execution does not call SQL write helpers or create a backup.
 

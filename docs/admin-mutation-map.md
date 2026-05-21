@@ -430,7 +430,7 @@ Current confidence:
 - Tutorial entry: moderate mechanically because first-party get/update functions exist; medium progression risk.
 - Permission actor name/access/rank: moderate mechanically because first-party functions exist; high base access risk.
 - Vendor stock-cycle timestamp: moderate mechanically because a first-party setter exists; medium economy/vendor-limit risk.
-- Character slots: moderate for inspection because it reads `player_state`, `accounts`, `pg_proc`, and `information_schema`; execution is blocked unless the plan reports a validated native hibernate/switch contract. No synthetic blank character rows or raw `player_state` surgery are allowed.
+- Character slots: moderate for inspection and switch/restore execution because it reads `player_state`, `accounts`, `pg_proc`, and `information_schema`, then uses only the validated native `dune.takeover_account(in_user_to_takeover text, in_current_user text)` path when the plan is executable. `new-character` execution remains blocked because the mapped native blank-character path is destructive `delete_account`. No synthetic blank character rows or raw `player_state` surgery are allowed.
 
 ## Character Slot Hibernation And Switch
 
@@ -455,7 +455,7 @@ import_character
 transfer_character
 ```
 
-Those functions are evidence, not authorization. Execution stays blocked unless a future implementation can prove a native hibernate/switch path that avoids raw table surgery.
+Those functions are evidence, not authorization. `takeover_account(in_user_to_takeover text, in_current_user text)` is the only mapped native switch/restore path. It swaps FLS user identity between two same-owner existing character accounts and is used only after the dry-run plan is executable.
 
 Safe dry-run payloads:
 
@@ -473,6 +473,8 @@ Fail-closed rules:
 - The target must be in the same-owner candidate set.
 - Online active or target characters make the plan non-executable.
 - Missing native contract returns `executable: false`.
+- `new-character` returns `executable: false`; DASH does not call destructive `delete_account` to create a blank slot.
+- Switch/restore execution creates a backup first, audits before/after rows, calls `dune.takeover_account(target_fls_id, active_fls_id)`, and returns an inverse restore payload.
 - Non-dry-run execution requires `DUNE_ADMIN_MUTATIONS_ENABLED=true`, `DUNE_ADMIN_CHARACTER_SWAP_ENABLED=true`, and `confirm: "SWAP CHARACTER"`.
 - Even with gates enabled, execution stops before backup/write when the plan is not executable.
 

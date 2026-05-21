@@ -3603,15 +3603,22 @@ class Handler(BaseHTTPRequestHandler):
         """)
         names = {str(row.get("name") or "") for row in functions}
         required_observed = {"login_account", "delete_account", "takeover_account", "save_player", "save_player_pawn"}
+        has_takeover_swap = any(
+            str(row.get("name") or "") == "takeover_account"
+            and str(row.get("args") or "").strip() == "in_user_to_takeover text, in_current_user text"
+            and str(row.get("result") or "").strip() == "void"
+            for row in functions
+        )
         has_lifecycle_evidence = bool(required_observed.intersection(names))
         return {
             "functions": functions,
             "tables": tables,
             "errors": errors,
-            "safeNativeSwapPath": False,
-            "blockedReason": "No validated first-party hibernate/switch function contract is mapped; execution remains blocked to avoid synthetic player_state edits.",
+            "safeNativeSwapPath": has_takeover_swap,
+            "safeNativeSwapAction": "takeover_account" if has_takeover_swap else None,
+            "blockedReason": None if has_takeover_swap else "No validated first-party hibernate/switch function contract is mapped; execution remains blocked to avoid synthetic player_state edits.",
             "observedLifecycleEvidence": sorted(required_observed.intersection(names)),
-            "confidence": "moderate" if has_lifecycle_evidence else "low",
+            "confidence": "moderate" if has_takeover_swap or has_lifecycle_evidence else "low",
         }
 
     def character_slots(self, account_id):
@@ -3693,26 +3700,40 @@ class Handler(BaseHTTPRequestHandler):
             if str(target.get("online_status") or "").lower() == "online":
                 online = True
         contract = slots["contract"]
-        executable = bool(contract.get("safeNativeSwapPath")) and not online
+        executable = bool(contract.get("safeNativeSwapPath")) and not online and action in ("switch-character", "restore-character")
         blockers = []
         if online:
             blockers.append("target account or requested character is online")
+        if action == "new-character":
+            blockers.append("new-character execution is blocked because the only mapped native blank-character path is delete_account, which destroys the current character")
         if not contract.get("safeNativeSwapPath"):
             blockers.append(contract.get("blockedReason") or "safe native character swap path is not mapped")
         if action == "new-character":
             intent = "Hibernate the current active character, leaving the account to use the game's native character creator on next login."
         else:
             intent = "Switch active play back to a previously hibernated, native-owned character for the same account."
+        native_call = None
+        if action in ("switch-character", "restore-character") and target:
+            native_call = {
+                "function": "dune.takeover_account",
+                "in_user_to_takeover": target.get("fls_id"),
+                "in_current_user": active.get("fls_id"),
+                "effect": "Swaps the active login identity onto the target character account and moves the target identity onto the current character account.",
+            }
+            if not target.get("fls_id") or not active.get("fls_id"):
+                executable = False
+                blockers.append("active and target accounts must both have FLS user ids")
         plan = {
             "intent": intent,
             "activeBefore": active,
             "targetCharacter": target,
             "nativeContract": contract,
+            "nativeCall": native_call,
             "steps": [
                 "Refuse execution while the active account or selected target is online.",
                 "Create a database backup.",
                 "Audit before rows from accounts/player_state and linked identity tables.",
-                "Execute only a validated first-party native lifecycle function path.",
+                "Execute only the validated first-party takeover_account switch path.",
                 "Audit after rows and preserve rollback hints.",
             ],
             "rollback": {
@@ -3746,7 +3767,53 @@ class Handler(BaseHTTPRequestHandler):
         if not planned.get("executable"):
             raise NotImplementedError("; ".join(planned.get("plan", {}).get("blockers") or ["character swap execution is blocked"]))
         backup = create_db_backup()
-        raise NotImplementedError(f"validated native character swap execution is not implemented; backup created at {backup.get('path')}")
+        active_before = planned["plan"]["activeBefore"]
+        target_before = planned["plan"]["targetCharacter"]
+        active_user = active_before.get("fls_id")
+        target_user = target_before.get("fls_id") if target_before else None
+        if not active_user or not target_user:
+            raise ValueError("active and target accounts must both have FLS user ids")
+        before_rows = query("""
+            select ps.account_id, ps.character_name, ps.online_status::text, ps.life_state::text,
+                   ps.server_id, ps.player_controller_id, ps.player_pawn_id, ps.player_state_id,
+                   a."user" as fls_id, a.funcom_id, a.platform_name, a.platform_id
+            from dune.player_state ps
+            left join dune.accounts a on a.id=ps.account_id
+            where ps.account_id in (%s, %s)
+            order by ps.account_id
+        """, (planned["accountId"], planned["targetAccountId"]))
+        execute("select dune.takeover_account(%s, %s)", (target_user, active_user))
+        after_rows = query("""
+            select ps.account_id, ps.character_name, ps.online_status::text, ps.life_state::text,
+                   ps.server_id, ps.player_controller_id, ps.player_pawn_id, ps.player_state_id,
+                   a."user" as fls_id, a.funcom_id, a.platform_name, a.platform_id
+            from dune.player_state ps
+            left join dune.accounts a on a.id=ps.account_id
+            where ps.account_id in (%s, %s)
+            order by ps.account_id
+        """, (planned["accountId"], planned["targetAccountId"]))
+        return {
+            "ok": True,
+            "dryRun": False,
+            "accountId": planned["accountId"],
+            "targetAccountId": planned["targetAccountId"],
+            "action": planned["action"],
+            "executable": True,
+            "backup": backup,
+            "nativeCall": planned["plan"]["nativeCall"],
+            "before": before_rows,
+            "after": after_rows,
+            "rollback": {
+                "hint": "Run the inverse switch after verifying both characters are offline, or restore the DB backup.",
+                "inversePayload": {
+                    "dry_run": False,
+                    "account_id": planned["targetAccountId"],
+                    "action": "restore-character",
+                    "target_account_id": planned["accountId"],
+                    "confirm": CONFIRM_CHARACTER_SWAP,
+                },
+            },
+        }
 
     def admin_reference(self):
         errors = {}
@@ -7745,7 +7812,7 @@ async function mutations(serial=loadSerial){
   ]);
   if (serial !== loadSerial) return;
   const referenceErrors = ref.errors && Object.keys(ref.errors).length ? `<div class="card"><h2>Reference Errors</h2><pre>${esc(JSON.stringify(ref.errors, null, 2))}</pre></div>` : '';
-  view.innerHTML = `<div class="pageStack">${referenceErrors}<div class="sectionHeader"><h2>Admin Actions</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="settings">Settings</button><button data-jump="security">Audit</button></div></div><div class="panelBand"><h2>Target Player</h2><div class="grid"><label>Character<select id="adminCharacterSelect">${characterOptions(characterRows)}</select></label><label>Player controller ID<input id="pcid"></label><label>Account ID<input id="grantAccount" placeholder="auto-select player inventory"></label><label>Character name<input id="grantCharacter" placeholder="auto-select by name"></label></div></div><div class="panelBand"><h2>Character Slots</h2><div class="grid"><label>Action<select id="slotAction"><option>new-character</option><option>switch-character</option><option>restore-character</option></select></label><label>Target hibernated account ID<input id="slotTargetAccount"></label></div><p><button id="slotInspectBtn" class="primary">Inspect slots</button> <button id="slotPlanBtn" class="primary">Preview swap</button></p><pre id="slotResult"></pre></div><div class="twoCol"><div class="panelBand"><h2>Currency and XP</h2><p class="muted">Select a character first; balances and tracks populate from that player.</p><div class="grid"><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button id="currencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Level for set/new track<input id="xplevel" value="0"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button id="xpBtn" class="primary">Apply XP</button></p></div><div class="panelBand"><h2>Item Grants</h2><p class="muted">Use a known template ID and dry run before writing new items.</p><div class="grid"><label>Known inventory<select id="grantInventorySelect">${inventoryOptions(ref.recentInventories)}</select></label><label>Inventory ID<input id="grantInventory" placeholder="explicit inventory"></label><label class="hidden">Character<select id="grantCharacterSelect">${characterOptions(characterRows)}</select></label><label>Inventory type<select id="grantInventoryType">${inventoryTypeOptions(ref.inventoryTypes)}</select></label><label>Template ID<input id="grantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><details><summary>Advanced stats JSON</summary><textarea id="grantStats">{}</textarea></details><p><button id="dryRunItemBtn" class="primary">Dry run</button> <button id="grantItemBtn" class="danger">Grant item</button></p><pre id="grantResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Item Maintenance</h2><div class="grid"><label class="hidden">Character<select id="itemCharacterSelect">${characterOptions(characterRows)}</select></label><label>Owned item<select id="itemEditSelect"><option value="">Select a character first</option></select></label><label>Item ID<input id="itemEditId"></label><label>New stack size<input id="itemEditStack" value="1"></label><label>Delete count<input id="itemDeleteCount" placeholder="blank/all"></label></div><p><button id="setItemStackBtn" class="primary">Set stack</button> <button id="deleteItemBtn" class="danger">Delete item/count</button></p><pre id="itemEditResult"></pre></div><div class="panelBand"><h2>Specialization Keystones</h2><div class="grid"><label>Player/controller ID<input id="keyPlayer"></label><label>Keystone<select id="keystone">${options(ref.keystones, 'name')}</select></label></div><p><button id="purchaseKeystoneBtn" class="primary">Purchase keystone</button> <button id="resetKeystonesBtn" class="danger">Reset all keystones</button></p><pre id="keystoneResult"></pre></div></div><details class="panelBand"><summary>Backup</summary><p class="muted">Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button id="backupBtn" class="primary">Create DB backup</button><pre id="backupResult"></pre></details><datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><details class="panelBand"><summary>Known Item Templates</summary>${table(ref.knownItemTemplates)}</details><details class="panelBand"><summary>Observed Item Templates</summary>${table(ref.observedItemTemplates)}</details><details class="panelBand"><summary>Recent Inventories</summary>${table(ref.recentInventories)}</details><details class="panelBand"><summary>Inventory Types</summary>${table(ref.inventoryTypes)}</details></div>`;
+  view.innerHTML = `<div class="pageStack">${referenceErrors}<div class="sectionHeader"><h2>Admin Actions</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="settings">Settings</button><button data-jump="security">Audit</button></div></div><div class="panelBand"><h2>Target Player</h2><div class="grid"><label>Character<select id="adminCharacterSelect">${characterOptions(characterRows)}</select></label><label>Player controller ID<input id="pcid"></label><label>Account ID<input id="grantAccount" placeholder="auto-select player inventory"></label><label>Character name<input id="grantCharacter" placeholder="auto-select by name"></label></div></div><div class="panelBand"><h2>Character Slots</h2><div class="grid"><label>Action<select id="slotAction"><option>new-character</option><option>switch-character</option><option>restore-character</option></select></label><label>Target hibernated account ID<input id="slotTargetAccount"></label></div><p><button id="slotInspectBtn" class="primary">Inspect slots</button> <button id="slotPlanBtn" class="primary">Preview swap</button> <button id="slotExecuteBtn" class="danger">Execute swap</button></p><pre id="slotResult"></pre></div><div class="twoCol"><div class="panelBand"><h2>Currency and XP</h2><p class="muted">Select a character first; balances and tracks populate from that player.</p><div class="grid"><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button id="currencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Level for set/new track<input id="xplevel" value="0"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button id="xpBtn" class="primary">Apply XP</button></p></div><div class="panelBand"><h2>Item Grants</h2><p class="muted">Use a known template ID and dry run before writing new items.</p><div class="grid"><label>Known inventory<select id="grantInventorySelect">${inventoryOptions(ref.recentInventories)}</select></label><label>Inventory ID<input id="grantInventory" placeholder="explicit inventory"></label><label class="hidden">Character<select id="grantCharacterSelect">${characterOptions(characterRows)}</select></label><label>Inventory type<select id="grantInventoryType">${inventoryTypeOptions(ref.inventoryTypes)}</select></label><label>Template ID<input id="grantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><details><summary>Advanced stats JSON</summary><textarea id="grantStats">{}</textarea></details><p><button id="dryRunItemBtn" class="primary">Dry run</button> <button id="grantItemBtn" class="danger">Grant item</button></p><pre id="grantResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Item Maintenance</h2><div class="grid"><label class="hidden">Character<select id="itemCharacterSelect">${characterOptions(characterRows)}</select></label><label>Owned item<select id="itemEditSelect"><option value="">Select a character first</option></select></label><label>Item ID<input id="itemEditId"></label><label>New stack size<input id="itemEditStack" value="1"></label><label>Delete count<input id="itemDeleteCount" placeholder="blank/all"></label></div><p><button id="setItemStackBtn" class="primary">Set stack</button> <button id="deleteItemBtn" class="danger">Delete item/count</button></p><pre id="itemEditResult"></pre></div><div class="panelBand"><h2>Specialization Keystones</h2><div class="grid"><label>Player/controller ID<input id="keyPlayer"></label><label>Keystone<select id="keystone">${options(ref.keystones, 'name')}</select></label></div><p><button id="purchaseKeystoneBtn" class="primary">Purchase keystone</button> <button id="resetKeystonesBtn" class="danger">Reset all keystones</button></p><pre id="keystoneResult"></pre></div></div><details class="panelBand"><summary>Backup</summary><p class="muted">Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button id="backupBtn" class="primary">Create DB backup</button><pre id="backupResult"></pre></details><datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><details class="panelBand"><summary>Known Item Templates</summary>${table(ref.knownItemTemplates)}</details><details class="panelBand"><summary>Observed Item Templates</summary>${table(ref.observedItemTemplates)}</details><details class="panelBand"><summary>Recent Inventories</summary>${table(ref.recentInventories)}</details><details class="panelBand"><summary>Inventory Types</summary>${table(ref.inventoryTypes)}</details></div>`;
   const loadCharacterAdminDetails = async (accountId, serial=detailLoadSerial) => {
     const itemSelect = document.getElementById('itemEditSelect');
     const inventorySelect = document.getElementById('grantInventorySelect');
@@ -7840,6 +7907,11 @@ async function mutations(serial=loadSerial){
   }));
   document.getElementById('slotPlanBtn').addEventListener('click', e => runAction(e.currentTarget, 'Planning...', async () => {
     const result = await api('/api/admin/character-slots/plan', {method:'POST', body:JSON.stringify({dry_run:true, account_id:grantAccount.value, action:slotAction.value, target_account_id:slotTargetAccount.value})});
+    document.getElementById('slotResult').textContent = JSON.stringify(result, null, 2);
+  }));
+  document.getElementById('slotExecuteBtn').addEventListener('click', e => runAction(e.currentTarget, 'Executing...', async () => {
+    if (!confirm('Execute native character swap? Both characters must be offline and a database backup will be created first.')) return;
+    const result = await api('/api/admin/character-slots/execute', {method:'POST', body:JSON.stringify({dry_run:false, account_id:grantAccount.value, action:slotAction.value, target_account_id:slotTargetAccount.value, confirm:'SWAP CHARACTER'})});
     document.getElementById('slotResult').textContent = JSON.stringify(result, null, 2);
   }));
   document.getElementById('currencyBtn').addEventListener('click', e => runAction(e.currentTarget, 'Applying...', currency));

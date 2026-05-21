@@ -492,6 +492,64 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn("login_account", contract["observedLifecycleEvidence"])
         self.assertFalse(contract["safeNativeSwapPath"])
 
+    def test_character_slot_takeover_contract_enables_switch_plan(self):
+        def fake_query(sql, params=None):
+            if "where ps.account_id=%s" in sql and "left join dune.accounts" in sql:
+                return [{"account_id": 10, "character_name": "Active", "online_status": "Offline", "fls_id": "active-fls"}]
+            if "with target_account as" in sql:
+                return [{"account_id": 11, "character_name": "Stored", "online_status": "Offline", "fls_id": "stored-fls", "ownership_evidence": "same-account-user"}]
+            if "from pg_proc" in sql:
+                return [{"name": "takeover_account", "args": "in_user_to_takeover text, in_current_user text", "result": "void"}]
+            return []
+
+        self.patch_db(fake_query)
+        plan = self.handler.character_slot_plan({"account_id": 10, "action": "switch-character", "target_account_id": 11})
+        self.assertTrue(plan["executable"])
+        self.assertEqual(plan["plan"]["nativeCall"]["function"], "dune.takeover_account")
+        self.assertEqual(plan["plan"]["nativeCall"]["in_user_to_takeover"], "stored-fls")
+        self.assertEqual(plan["plan"]["nativeCall"]["in_current_user"], "active-fls")
+
+        new_plan = self.handler.character_slot_plan({"account_id": 10, "action": "new-character"})
+        self.assertFalse(new_plan["executable"])
+        self.assertIn("delete_account", " ".join(new_plan["plan"]["blockers"]))
+
+    def test_character_slot_switch_execute_uses_takeover_with_backup_and_audit_rows(self):
+        calls = []
+        backups = []
+        original_backup = self.panel.create_db_backup
+
+        def fake_query(sql, params=None):
+            if "where ps.account_id=%s" in sql and "left join dune.accounts" in sql:
+                return [{"account_id": 10, "character_name": "Active", "online_status": "Offline", "fls_id": "active-fls"}]
+            if "with target_account as" in sql:
+                return [{"account_id": 11, "character_name": "Stored", "online_status": "Offline", "fls_id": "stored-fls", "ownership_evidence": "same-account-user"}]
+            if "from pg_proc" in sql:
+                return [{"name": "takeover_account", "args": "in_user_to_takeover text, in_current_user text", "result": "void"}]
+            if "where ps.account_id in" in sql:
+                return [{"account_id": params[0], "fls_id": "active-fls"}, {"account_id": params[1], "fls_id": "stored-fls"}]
+            return []
+
+        def fake_execute(sql, params=None):
+            calls.append((sql, params))
+            return 1
+
+        self.patch_db(fake_query, fake_execute)
+        self.patch_flag("CHARACTER_SWAP_ENABLED", True)
+        self.panel.create_db_backup = lambda: backups.append("backup") or {"path": "backup.dump", "bytes": 1}
+        self.addCleanup(lambda: setattr(self.panel, "create_db_backup", original_backup))
+
+        result = self.handler.character_slot_execute({
+            "dry_run": False,
+            "account_id": 10,
+            "action": "switch-character",
+            "target_account_id": 11,
+            "confirm": "SWAP CHARACTER",
+        })
+        self.assertFalse(result["dryRun"])
+        self.assertEqual(backups, ["backup"])
+        self.assertEqual(calls, [("select dune.takeover_account(%s, %s)", ("stored-fls", "active-fls"))])
+        self.assertEqual(result["rollback"]["inversePayload"]["account_id"], 11)
+
     def test_character_slot_execution_block_does_not_create_backup(self):
         backups = []
         original_backup = self.panel.create_db_backup

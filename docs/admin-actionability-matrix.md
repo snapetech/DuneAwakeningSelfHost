@@ -89,7 +89,7 @@ Automated coverage currently verifies:
 - Read-only inspectors expose actionable mutator metadata and blocked/inspect-only areas without executing writes.
 - Typed knob validation, rendering, and backup-before-write behavior.
 - Event dry-run planning, persistence, cancellation, and fail-closed execution.
-- Character-slot discovery, dry-run shape, online-player refusal, and missing native contract blockers.
+- Character-slot discovery, dry-run shape, online-player refusal, missing native contract blockers, and native `takeover_account` switch/restore execution planning.
 - Restart recovery edge cases for SIGPIPE-like start exits and incomplete farm readiness.
 - Dry-run planning and fail-closed gates for representative promoted mutators:
   - faction reputation
