@@ -49,7 +49,8 @@ DUNE_ADMIN_BOT_AUDIT_DIGEST_ENABLED=true
 DUNE_ADMIN_BOT_ECONOMY_ANOMALIES_ENABLED=true
 DUNE_ADMIN_BOT_SOLARI_WARN_THRESHOLD=10000000
 DUNE_ADMIN_BOT_BASE_CLAIM_MONITOR_ENABLED=true
-DUNE_ADMIN_BOT_MAX_BASES_WARN=6
+DUNE_ADMIN_BOT_BASE_CAP_CONFIG=config/UserGame.ini
+DUNE_ADMIN_BOT_BASE_CAP_MAP=HaggaBasin
 DUNE_ADMIN_BOT_CONFIG_DRIFT_ENABLED=true
 DUNE_ADMIN_BOT_SECURITY_GUARD_ENABLED=true
 ```
@@ -69,6 +70,7 @@ DUNE_PLAYER_PRESENCE_RULES_URL=https://example.test
 DUNE_PLAYER_PRESENCE_JOIN_TEMPLATE=Welcome {playername}! Current player count is now {count}.
 DUNE_PLAYER_PRESENCE_LEAVE_TEMPLATE={playername} has left, current count is {count}.
 DUNE_PLAYER_PRESENCE_ANNOUNCE_COMMAND=/workspace/scripts/announce.sh
+DUNE_PLAYER_PRESENCE_ANNOUNCE_ROUTING_KEYS=<empty>
 DUNE_PLAYER_PRESENCE_PRIVATE_WELCOME_ENABLED=true
 DUNE_PLAYER_PRESENCE_PRIVATE_WELCOME_TEMPLATE=Welcome! Please check {rules_url} for server rules.
 DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_EXCHANGE=chat.whispers
@@ -82,7 +84,8 @@ DUNE_PLAYER_PRESENCE_HAGGA_ARRIVAL_TEMPLATE=You made it to Hagga Basin. Build wi
 DUNE_PLAYER_PRESENCE_DEEP_DESERT_FIRST_ENABLED=true
 DUNE_PLAYER_PRESENCE_DEEP_DESERT_FIRST_TEMPLATE=Deep Desert is high risk. Expect sandstorms, sandworms, and harsher recovery. Support: {server_url}
 DUNE_PLAYER_PRESENCE_BASE_REMINDERS_ENABLED=true
-DUNE_PLAYER_PRESENCE_BASE_CAP=6
+DUNE_PLAYER_PRESENCE_BASE_CAP_CONFIG=config/UserGame.ini
+DUNE_PLAYER_PRESENCE_BASE_CAP_MAP=HaggaBasin
 DUNE_PLAYER_PRESENCE_BASE_NEAR_CAP=5
 DUNE_PLAYER_PRESENCE_FIRST_BASE_TEMPLATE=Base reminder: please avoid blocking shared paths, NPCs, resources, caves, wrecks, and POIs. Rules: {rules_url}
 DUNE_PLAYER_PRESENCE_BASE_NEAR_CAP_TEMPLATE=Base reminder: this server has a {base_cap} landclaim cap per Hagga Basin map. Please clean up unused claims. Rules: {rules_url}
@@ -149,7 +152,7 @@ DUNE_PLAYER_PRESENCE_VERMILIUS_GAP_TEMPLATE=Congrats! {playername} has outrun Sh
 
 Presence templates support `{playername}`, `{player_name}`, `{count}`, `{player_count}`, `{server_name}`, `{server_url}`, and `{rules_url}`. Base-cap templates also support `{base_cap}`. Restart-warning templates support `{remaining}` and `{remaining_seconds}`. Vermilius Gap templates support `{playername}`, `{player_name}`, and `{story_node_id}`.
 
-Global join/leave messages use `DUNE_PLAYER_PRESENCE_JOIN_TEMPLATE` and `DUNE_PLAYER_PRESENCE_LEAVE_TEMPLATE` through the normal public `announce()` path. Keep those global; they are the visible welcome/goodbye style notices for everyone online.
+Global join/leave messages use `DUNE_PLAYER_PRESENCE_JOIN_TEMPLATE` and `DUNE_PLAYER_PRESENCE_LEAVE_TEMPLATE` through the public `announce()` path. Player-presence announcements override the shared announcement routing and default to `DUNE_PLAYER_PRESENCE_ANNOUNCE_ROUTING_KEYS=<empty>` so each online client receives one copy. Do not set this to multiple routing keys unless you intentionally want fan-out; the shared `DUNE_ANNOUNCE_CHAT_ROUTING_KEYS=HaggaBasin.0,Survival_1.dim_0,<empty>` pattern can make HUD notices render more than once.
 
 The private welcome path runs on every detected join for existing and new players after the first baseline poll. It uses the same Paul chat sender, disables dashboard `!!!` wrapping, targets the joined player's live game RabbitMQ queue, publishes to `DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_EXCHANGE`, and sets `m_ChannelType` to `DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_CHANNEL`. The confirmed private-rendering values are `chat.whispers` and `Whispers`. The shared publisher must emit `m_TimeStamp`, not `m_Timestamp`; see `docs/private-chat-replies.md`. The default private welcome message is:
 

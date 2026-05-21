@@ -27,7 +27,7 @@ Outer AMQP body:
 
 ```json
 {
-  "content": "{\"m_Id\":\"...\",\"m_ChannelType\":\"Whispers\",\"m_bUseSpoofedUserName\":true,\"m_SpoofedUserNameFrom\":{\"m_TableId\":\"\",\"m_Key\":\"\",\"m_UnlocalizedName\":\"Paul\"},\"m_FuncomIdFrom\":\"ADMIN#00001\",\"m_UserNameTo\":\"Lukano\",\"m_Message\":{\"m_UnlocalizedMessage\":\"message text\",\"m_LocalizedMessage\":{\"m_TableId\":\"\",\"m_Key\":\"\",\"m_FormatArgs\":[]}},\"m_TimeStamp\":\"2026.05.21-02.43.11\",\"m_OriginLocation\":{\"X\":0.0,\"Y\":0.0,\"Z\":0.0},\"m_HasSeenMessage\":false}",
+  "content": "{\"m_Id\":\"...\",\"m_ChannelType\":\"Whispers\",\"m_bUseSpoofedUserName\":true,\"m_SpoofedUserNameFrom\":{\"m_TableId\":\"\",\"m_Key\":\"\",\"m_UnlocalizedName\":\"Paul\"},\"m_FuncomIdFrom\":\"ADMIN#00001\",\"m_UserNameTo\":\"TestPlayer\",\"m_Message\":{\"m_UnlocalizedMessage\":\"message text\",\"m_LocalizedMessage\":{\"m_TableId\":\"\",\"m_Key\":\"\",\"m_FormatArgs\":[]}},\"m_TimeStamp\":\"2026.05.21-02.43.11\",\"m_OriginLocation\":{\"X\":0.0,\"Y\":0.0,\"Z\":0.0},\"m_HasSeenMessage\":false}",
   "Type": "TextChat"
 }
 ```
@@ -86,7 +86,7 @@ DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_CHANNEL=Whispers
 DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_ROUTING_KEY=
 ```
 
-Global join/leave and server-wide status notices intentionally stay on the public `announce()` path.
+Global join/leave and server-wide status notices intentionally stay on the public `announce()` path. Player-presence public messages still force `DUNE_ANNOUNCE_ENV_OVERRIDES_FILE=true` and default to one routing key, `DUNE_PLAYER_PRESENCE_ANNOUNCE_ROUTING_KEYS=<empty>`, so a join/leave notice is not delivered three times through the default shared announcement routing keys.
 
 ## Private Vs Global Matrix
 
@@ -150,9 +150,9 @@ with these environment overrides:
 DUNE_ANNOUNCE_ENV_OVERRIDES_FILE=true
 DUNE_ANNOUNCE_CHAT_EXCHANGE=chat.whispers
 DUNE_ANNOUNCE_CHAT_CHANNEL=Whispers
-DUNE_ANNOUNCE_CHAT_USER_NAME_TO=Lukano
-DUNE_ANNOUNCE_CHAT_TARGET_QUEUES=6FF6498F4074E3DE_queue
-DUNE_ANNOUNCE_CHAT_ROUTING_KEYS=6FF6498F4074E3DE
+DUNE_ANNOUNCE_CHAT_USER_NAME_TO=TestPlayer
+DUNE_ANNOUNCE_CHAT_TARGET_QUEUES=TEST_FLS_ID_queue
+DUNE_ANNOUNCE_CHAT_ROUTING_KEYS=TEST_FLS_ID
 DUNE_ANNOUNCE_CHAT_CLEANUP_TARGET_BINDINGS=true
 DUNE_ANNOUNCE_WRAP_DASHBOARD_MESSAGES=false
 ```
@@ -162,8 +162,8 @@ Command-path smoke test:
 ```bash
 python3 scripts/admin-chat-commands.py \
   --dry-run-command '&auction PwerPck 1 456' \
-  --sender-name Lukano \
-  --sender-fls-id 6FF6498F4074E3DE \
+  --sender-name TestPlayer \
+  --sender-fls-id TEST_FLS_ID \
   --reply
 ```
 
@@ -184,8 +184,8 @@ GM nested command smoke test:
 ```bash
 python3 scripts/admin-chat-commands.py \
   --dry-run-command '&gm' \
-  --sender-name Lukano \
-  --sender-fls-id 6FF6498F4074E3DE \
+  --sender-name TestPlayer \
+  --sender-fls-id TEST_FLS_ID \
   --reply
 ```
 

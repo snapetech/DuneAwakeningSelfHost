@@ -2,7 +2,7 @@
 
 This records the first verified online-adjacent teleport primitive found for DASH.
 
-Confidence: high for Lukano on Survival/Hagga Basin on 2026-05-21. Confidence: moderate for automation and other maps until repeated.
+Confidence: high for TestPlayer on Survival/Hagga Basin on 2026-05-21. Confidence: moderate for automation and other maps until repeated.
 
 ## Result
 
@@ -27,8 +27,8 @@ Date: 2026-05-21
 
 Target:
 
-- Character: `Lukano`
-- FLS/user id: `6FF6498F4074E3DE`
+- Character: `TestPlayer`
+- FLS/user id: `TEST_FLS_ID`
 - Server id: `o13FuZmcSvCCi5kuofbU5w`
 - Map: `Survival_1`
 - Partition: `1`
@@ -41,7 +41,7 @@ Target:
 Observed real disconnect:
 
 ```text
-2026-05-21 17:16:14 UTC: UNetConnection timed out for 24.109.206.134:57662, FLS 6FF6498F4074E3DE.
+2026-05-21 17:16:14 UTC: UNetConnection timed out for CLIENT_IP:CLIENT_PORT, FLS TEST_FLS_ID.
 2026-05-21 17:16:14 UTC: player updated to LoggingOut.
 2026-05-21 17:16:45 UTC: player updated to Offline.
 ```
@@ -49,17 +49,17 @@ Observed real disconnect:
 Move staged while offline:
 
 ```text
-before: X=183540.665 Y=27906.060 Z=9191.031
-after:  X=183540.665 Y=39906.060 Z=9191.031
+before: X=100000.000 Y=100000.000 Z=9191.031
+after:  X=100000.000 Y=112000.000 Z=9191.031
 delta:  +12000 Y
 ```
 
 Reconnect proof from Survival logs:
 
 ```text
-Player 6FF6498F4074E3DE attempting to log in with stored pawn info id=19 map=Survival_1, dimension=0, location=X=183540.665 Y=39906.060 Z=9191.031
-Updated player 6FF6498F4074E3DE online status to Online
-Updated 6FF6498F4074E3DE with 1 servers (X=183540.665 Y=39906.060 Z=8470.877): o13FuZmcSvCCi5kuofbU5w
+Player TEST_FLS_ID attempting to log in with stored pawn info id=19 map=Survival_1, dimension=0, location=X=100000.000 Y=112000.000 Z=9191.031
+Updated player TEST_FLS_ID online status to Online
+Updated TEST_FLS_ID with 1 servers (X=100000.000 Y=112000.000 Z=8470.877): o13FuZmcSvCCi5kuofbU5w
 ```
 
 Final DB state after reconnect:
@@ -67,9 +67,9 @@ Final DB state after reconnect:
 ```text
 online_status=Online
 server_id=o13FuZmcSvCCi5kuofbU5w
-actor 17: X=183540.665 Y=39906.060 Z=9191.031 serial=1890
-actor 18: X=183540.665 Y=39906.060 Z=9191.031 serial=1890
-actor 19: X=183540.665 Y=39906.060 Z=9191.031 serial=1890
+actor 17: X=100000.000 Y=112000.000 Z=9191.031 serial=1890
+actor 18: X=100000.000 Y=112000.000 Z=9191.031 serial=1890
+actor 19: X=100000.000 Y=112000.000 Z=9191.031 serial=1890
 ```
 
 ## What Did Not Work

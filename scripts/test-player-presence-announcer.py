@@ -55,6 +55,66 @@ class PrivateMessageRoutingTests(unittest.TestCase):
         self.assertEqual(captured["env"]["DUNE_ANNOUNCE_WRAP_DASHBOARD_MESSAGES"], "false")
 
 
+class PublicAnnouncementRoutingTests(unittest.TestCase):
+    def test_public_presence_announcement_defaults_to_single_routing_key(self):
+        captured = {}
+
+        def fake_run(command, **kwargs):
+            captured["command"] = command
+            captured["env"] = kwargs["env"]
+
+            class Result:
+                returncode = 0
+                stdout = "{}"
+                stderr = ""
+
+            return Result()
+
+        file_env = {
+            "DUNE_PLAYER_PRESENCE_ANNOUNCE_COMMAND": "/bin/echo",
+            "DUNE_PLAYER_PRESENCE_ANNOUNCE_TIMEOUT_SECONDS": "10",
+            "DUNE_ANNOUNCE_CHAT_ROUTING_KEYS": "HaggaBasin.0,Survival_1.dim_0,<empty>",
+        }
+
+        with unittest.mock.patch.object(player_presence_announcer, "FILE_ENV", file_env), \
+             unittest.mock.patch.object(player_presence_announcer.subprocess, "run", fake_run):
+            result = player_presence_announcer.announce("joined")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(captured["command"], ["/bin/echo", "joined"])
+        self.assertEqual(captured["env"]["DUNE_ANNOUNCE_ENV_OVERRIDES_FILE"], "true")
+        self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_EXCHANGE"], "chat.map")
+        self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_CHANNEL"], "Map")
+        self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_ROUTING_KEYS"], "<empty>")
+        self.assertEqual(result["routingKeys"], "<empty>")
+
+    def test_public_presence_announcement_can_opt_into_multiple_routing_keys(self):
+        captured = {}
+
+        def fake_run(command, **kwargs):
+            captured["env"] = kwargs["env"]
+
+            class Result:
+                returncode = 0
+                stdout = "{}"
+                stderr = ""
+
+            return Result()
+
+        file_env = {
+            "DUNE_PLAYER_PRESENCE_ANNOUNCE_COMMAND": "/bin/echo",
+            "DUNE_PLAYER_PRESENCE_ANNOUNCE_ROUTING_KEYS": "HaggaBasin.0,<empty>",
+        }
+
+        with unittest.mock.patch.object(player_presence_announcer, "FILE_ENV", file_env), \
+             unittest.mock.patch.object(player_presence_announcer.subprocess, "run", fake_run):
+            result = player_presence_announcer.announce("joined")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_ROUTING_KEYS"], "HaggaBasin.0,<empty>")
+        self.assertEqual(result["routingKeys"], "HaggaBasin.0,<empty>")
+
+
 class ServiceHealthCheckTests(unittest.TestCase):
     def test_default_freshness_check_excludes_derived_hagga_map_svg(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -126,6 +186,32 @@ class AdminAnomalyDigestTests(unittest.TestCase):
             player_presence_announcer.admin_anomaly_digest_signature([], 0),
             '{"overBaseCap": 0, "stuck": []}',
         )
+
+
+class BaseCapConfigTests(unittest.TestCase):
+    def test_base_cap_defaults_to_usergame_hagga_basin_limit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            config = root / "config"
+            config.mkdir()
+            (config / "UserGame.ini").write_text(
+                'm_MaxLandclaimSegmentsPerMap=(((Name="HaggaBasin"), 8),((Name="Survival_1"), 4))\n',
+                encoding="utf-8",
+            )
+
+            with unittest.mock.patch.object(player_presence_announcer, "ROOT", root), \
+                 unittest.mock.patch.object(player_presence_announcer, "FILE_ENV", {}), \
+                 unittest.mock.patch.dict(player_presence_announcer.os.environ, {}, clear=True):
+                self.assertEqual(player_presence_announcer.configured_base_cap(), 8)
+
+    def test_legacy_base_cap_env_is_only_a_fallback_when_config_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+
+            with unittest.mock.patch.object(player_presence_announcer, "ROOT", root), \
+                 unittest.mock.patch.object(player_presence_announcer, "FILE_ENV", {"DUNE_PLAYER_PRESENCE_BASE_CAP": "10"}), \
+                 unittest.mock.patch.dict(player_presence_announcer.os.environ, {}, clear=True):
+                self.assertEqual(player_presence_announcer.configured_base_cap(), 10)
 
 
 class RepoStarThirdJoinTests(unittest.TestCase):

@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import time
@@ -23,6 +24,27 @@ def env(name, default=""):
 
 def env_bool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "on")
+
+
+def configured_base_cap():
+    config_path = ROOT / env("DUNE_ADMIN_BOT_BASE_CAP_CONFIG", "config/UserGame.ini")
+    target_map = env("DUNE_ADMIN_BOT_BASE_CAP_MAP", "HaggaBasin")
+    try:
+        text = config_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return int(env("DUNE_ADMIN_BOT_MAX_BASES_WARN", "6"))
+
+    match = re.search(r"^m_MaxLandclaimSegmentsPerMap\s*=\s*(.+)$", text, flags=re.MULTILINE)
+    if not match:
+        return int(env("DUNE_ADMIN_BOT_MAX_BASES_WARN", "6"))
+
+    entries = re.findall(r'Name="([^"]+)"\)\s*,\s*(\d+)', match.group(1))
+    for map_name, cap in entries:
+        if map_name == target_map:
+            return int(cap)
+    if entries:
+        return int(entries[0][1])
+    return int(env("DUNE_ADMIN_BOT_MAX_BASES_WARN", "6"))
 
 
 def now_utc():
@@ -155,7 +177,7 @@ def economy_anomaly_report():
 def base_claim_report():
     if not env_bool("DUNE_ADMIN_BOT_BASE_CLAIM_MONITOR_ENABLED", True):
         return {"name": "base-claim-monitor", "ok": True, "skipped": True}
-    max_bases = int(env("DUNE_ADMIN_BOT_MAX_BASES_WARN", "6"))
+    max_bases = configured_base_cap()
     sql = f"""
     select ps.character_name, count(distinct t.id) as base_count, count(ls.*) as segment_count
     from dune.totems t

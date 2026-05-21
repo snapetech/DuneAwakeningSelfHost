@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import time
@@ -45,6 +46,27 @@ def env(name, default=""):
 
 def env_bool(name, default=False):
     return str(env(name, "true" if default else "false")).lower() in ("1", "true", "yes", "on")
+
+
+def configured_base_cap():
+    config_path = ROOT / env("DUNE_PLAYER_PRESENCE_BASE_CAP_CONFIG", "config/UserGame.ini")
+    target_map = env("DUNE_PLAYER_PRESENCE_BASE_CAP_MAP", "HaggaBasin")
+    try:
+        text = config_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return int(env("DUNE_PLAYER_PRESENCE_BASE_CAP", env("DUNE_ADMIN_BOT_MAX_BASES_WARN", "6")))
+
+    match = re.search(r"^m_MaxLandclaimSegmentsPerMap\s*=\s*(.+)$", text, flags=re.MULTILINE)
+    if not match:
+        return int(env("DUNE_PLAYER_PRESENCE_BASE_CAP", env("DUNE_ADMIN_BOT_MAX_BASES_WARN", "6")))
+
+    entries = re.findall(r'Name="([^"]+)"\)\s*,\s*(\d+)', match.group(1))
+    for map_name, cap in entries:
+        if map_name == target_map:
+            return int(cap)
+    if entries:
+        return int(entries[0][1])
+    return int(env("DUNE_PLAYER_PRESENCE_BASE_CAP", env("DUNE_ADMIN_BOT_MAX_BASES_WARN", "6")))
 
 
 def now_iso():
@@ -530,10 +552,18 @@ def announce(message):
     child_env.update(FILE_ENV)
     child_env["DUNE_ANNOUNCE_MESSAGE"] = message
     child_env["DUNE_ANNOUNCE_JOB_ID"] = "player-presence"
+    child_env["DUNE_ANNOUNCE_ENV_OVERRIDES_FILE"] = "true"
+    child_env["DUNE_ANNOUNCE_CHAT_EXCHANGE"] = env("DUNE_PLAYER_PRESENCE_ANNOUNCE_EXCHANGE", env("DUNE_ANNOUNCE_CHAT_EXCHANGE", "chat.map"))
+    child_env["DUNE_ANNOUNCE_CHAT_CHANNEL"] = env("DUNE_PLAYER_PRESENCE_ANNOUNCE_CHANNEL", env("DUNE_ANNOUNCE_CHAT_CHANNEL", "Map"))
+    child_env["DUNE_ANNOUNCE_CHAT_ROUTING_KEYS"] = env("DUNE_PLAYER_PRESENCE_ANNOUNCE_ROUTING_KEYS", "<empty>") or "<empty>"
+    child_env["DUNE_ANNOUNCE_CHAT_BIND_ONLINE_QUEUES"] = env("DUNE_PLAYER_PRESENCE_ANNOUNCE_BIND_ONLINE_QUEUES", env("DUNE_ANNOUNCE_CHAT_BIND_ONLINE_QUEUES", "true"))
     result = subprocess.run([command, message], cwd=ROOT, env=child_env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, check=False)
     return {
         "ok": result.returncode == 0,
         "returncode": result.returncode,
+        "routingKeys": child_env["DUNE_ANNOUNCE_CHAT_ROUTING_KEYS"],
+        "exchange": child_env["DUNE_ANNOUNCE_CHAT_EXCHANGE"],
+        "channel": child_env["DUNE_ANNOUNCE_CHAT_CHANNEL"],
         "stdout": result.stdout[-1000:],
         "stderr": result.stderr[-1000:],
     }
@@ -766,7 +796,7 @@ def check_once():
 
         if env_bool("DUNE_PLAYER_PRESENCE_BASE_REMINDERS_ENABLED", False):
             base_counts = base_claim_counts()
-            cap = int(env("DUNE_PLAYER_PRESENCE_BASE_CAP", env("DUNE_ADMIN_BOT_MAX_BASES_WARN", "6")))
+            cap = configured_base_cap()
             near_cap = int(env("DUNE_PLAYER_PRESENCE_BASE_NEAR_CAP", str(max(1, cap - 1))))
             notices = state.setdefault("baseClaimNotices", {})
             near_template = env("DUNE_PLAYER_PRESENCE_BASE_NEAR_CAP_TEMPLATE", "Base reminder: this server has a {base_cap} landclaim cap per Hagga Basin map. Please clean up unused claims. Rules: {rules_url}")
@@ -967,7 +997,7 @@ def check_once():
             try:
                 stuck = stuck_transition_players(int(env("DUNE_ADMIN_BOT_STUCK_TRANSITION_MINUTES", "10")))
                 base_counts = base_claim_counts()
-                cap = int(env("DUNE_PLAYER_PRESENCE_BASE_CAP", env("DUNE_ADMIN_BOT_MAX_BASES_WARN", "6")))
+                cap = configured_base_cap()
                 over_cap = sum(1 for item in base_counts.values() if item.get("baseCount", 0) > cap)
                 stuck_names = ", ".join(item["name"] for item in stuck[:5]) or "none"
                 template = env("DUNE_PLAYER_PRESENCE_ADMIN_ANOMALY_DIGEST_TEMPLATE", ADMIN_ANOMALY_DIGEST_TEMPLATE)

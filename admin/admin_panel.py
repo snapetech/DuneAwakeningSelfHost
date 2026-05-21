@@ -2871,7 +2871,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             super().handle_one_request()
         except ConnectionError:
-            raise
+            return
         except Exception as exc:
             try:
                 self.error(HTTPStatus.BAD_REQUEST, str(exc))
@@ -3029,6 +3029,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.error(HTTPStatus.NOT_FOUND, "not found")
         except PermissionError as exc:
             self.error(HTTPStatus.UNAUTHORIZED, str(exc))
+        except ConnectionError:
+            return
         except Exception as exc:
             self.error(HTTPStatus.BAD_REQUEST, str(exc))
 
@@ -3048,6 +3050,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.error(HTTPStatus.NOT_FOUND, "not found", head_only=True)
         except PermissionError as exc:
             self.error(HTTPStatus.UNAUTHORIZED, str(exc), head_only=True)
+        except ConnectionError:
+            return
         except Exception as exc:
             self.error(HTTPStatus.BAD_REQUEST, str(exc), head_only=True)
 
@@ -3389,6 +3393,8 @@ class Handler(BaseHTTPRequestHandler):
         except NotImplementedError as exc:
             self.audit("post-not-implemented", ok=False, error=str(exc))
             self.error(HTTPStatus.NOT_IMPLEMENTED, str(exc))
+        except ConnectionError:
+            return
         except Exception as exc:
             self.audit("post-failed", ok=False, error=str(exc))
             self.error(HTTPStatus.BAD_REQUEST, str(exc))
