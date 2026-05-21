@@ -9,6 +9,7 @@ Requires=docker.service
 Type=simple
 WorkingDirectory=/opt/DuneAwakeningSelfHost
 EnvironmentFile=/opt/DuneAwakeningSelfHost/.env
+Environment=PYTHONUNBUFFERED=1
 ExecStartPre=/opt/DuneAwakeningSelfHost/scripts/build-exchange-catalog.py
 ExecStart=/opt/DuneAwakeningSelfHost/scripts/artificial-exchange-bot.py --loop
 Restart=always

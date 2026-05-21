@@ -583,6 +583,53 @@ python3 scripts/test-artificial-exchange.py
 python3 -m py_compile scripts/artificial-exchange-bot.py scripts/build-exchange-catalog.py
 ```
 
+## Logging
+
+The bot writes structured JSON events to stdout/stderr for `journalctl` and
+important state transitions to:
+
+```bash
+backups/admin-panel/artificial-exchange/bot-audit.jsonl
+```
+
+Systemd sets `PYTHONUNBUFFERED=1`, so service logs are emitted immediately.
+
+Follow the buyer service:
+
+```bash
+journalctl -u dune-artificial-exchange-bot.service -f
+```
+
+Inspect recent failures and restarts:
+
+```bash
+systemctl status dune-artificial-exchange-bot.service --no-pager --lines=80
+journalctl -u dune-artificial-exchange-bot.service -n 200 --no-pager
+```
+
+Useful event names:
+
+- `bot-start`: process start and CLI mode.
+- `loop-iteration-start`: each buyer/populator loop pass.
+- `scan-start` and `scan-complete`: buyer scan boundaries and counts.
+- `catalog-loaded`: catalog path and enabled item count.
+- `db-connect-attempt` and `db-connect-ok`: database connection target/result.
+- `purchase-attempt` and `purchase-result`: live purchase execution.
+- `settlement-claim-start` and `settlement-claim-complete`: manual claim path.
+- `settlement-auto-claim-start` and `settlement-auto-claim-complete`: auto-claim
+  pass.
+- `populate-start` and `populate-complete`: populator pass.
+- `loop-iteration-failed`: exception inside a service loop iteration.
+- `bot-fatal`: top-level crash; includes exception type and traceback.
+
+The audit JSONL file records purchase selections, settlement observations,
+claim results, funding events, populator plans, and failure payloads. Use it
+when journald has rotated:
+
+```bash
+tail -n 100 backups/admin-panel/artificial-exchange/bot-audit.jsonl
+```
+
 ## Live Validation Record
 
 Validated on May 20, 2026:

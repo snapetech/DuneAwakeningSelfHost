@@ -7,6 +7,7 @@ import pathlib
 import random
 import sys
 import time
+import traceback
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 STATE_DIR = ROOT / "backups" / "admin-panel" / "artificial-exchange"
@@ -61,15 +62,21 @@ def connect_db():
     import psycopg2
     import psycopg2.extras
 
-    return psycopg2.connect(
-        host=env("DUNE_ADMIN_DB_HOST", db_default_host()),
-        port=env("DUNE_ADMIN_DB_PORT", db_default_port()),
+    host = env("DUNE_ADMIN_DB_HOST", db_default_host())
+    port = env("DUNE_ADMIN_DB_PORT", db_default_port())
+    dbname = env("DUNE_ADMIN_DB_NAME", env("DUNE_DATABASE", "dune_sb_1_4_0_0"))
+    log_event("db-connect-attempt", host=host, port=port, dbname=dbname)
+    conn = psycopg2.connect(
+        host=host,
+        port=port,
         user=env("DUNE_ADMIN_DB_USER", "dune"),
         password=env("DUNE_ADMIN_DB_PASSWORD", env("POSTGRES_DUNE_PASSWORD", "")),
-        dbname=env("DUNE_ADMIN_DB_NAME", env("DUNE_DATABASE", "dune_sb_1_4_0_0")),
+        dbname=dbname,
         connect_timeout=5,
         cursor_factory=psycopg2.extras.RealDictCursor,
     )
+    log_event("db-connect-ok", host=host, port=port, dbname=dbname)
+    return conn
 
 
 def load_json(path, default):
@@ -92,6 +99,23 @@ def audit(event):
         fh.write(json.dumps(event, sort_keys=True) + "\n")
 
 
+def log_event(event, **fields):
+    print(json.dumps({"event": event, "ts": int(time.time()), **fields}, sort_keys=True, default=str), flush=True)
+
+
+def log_failure(event, exc, **fields):
+    payload = {
+        "event": event,
+        "ok": False,
+        "error": str(exc),
+        "exceptionType": type(exc).__name__,
+        "traceback": traceback.format_exc(),
+        **fields,
+    }
+    log_event(event, **{key: value for key, value in payload.items() if key != "event"})
+    audit(payload)
+
+
 def today_key():
     return time.strftime("%Y-%m-%d", time.localtime())
 
@@ -102,6 +126,7 @@ def load_catalog(path):
     for row in payload.get("items", []):
         if row.get("template_id"):
             items[row["template_id"]] = row
+    log_event("catalog-loaded", path=str(path), items=len(items), enabledItems=sum(1 for row in items.values() if row.get("enabled")))
     return items
 
 
@@ -256,6 +281,14 @@ def populator_quality_level(row):
     if configured < minimum:
         raise RuntimeError(f"populator quality_level {configured} is below minimum {minimum}")
     return configured
+
+
+def populator_category_mask(row):
+    return int(row.get("category_mask") if row.get("category_mask") is not None else env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_CATEGORY_MASK", "0"))
+
+
+def populator_category_depth(row):
+    return int(row.get("category_depth") if row.get("category_depth") is not None else env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_CATEGORY_DEPTH", "0"))
 
 
 def fetch_orders(conn, exchange_id, limit):
@@ -461,8 +494,8 @@ def execute_seed_listing(cur, row, args, price, expiration_time, position_index)
             item_id,
             int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_STACK_SIZE", "1")),
             int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MAX_STACK_SIZE", "1")),
-            int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_CATEGORY_MASK", "0")),
-            int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_CATEGORY_DEPTH", "0")),
+            populator_category_mask(row),
+            populator_category_depth(row),
             float(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_DURABILITY_CUR", "1")),
             float(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_DURABILITY_MAX", "1")),
             price,
@@ -507,6 +540,14 @@ def expire_seeded_once(args):
 
 
 def populate_once(args):
+    started = time.time()
+    log_event(
+        "populate-start",
+        dryRun=args.dry_run,
+        exchangeId=args.exchange_id,
+        ownerId=args.populator_owner_id,
+        sourceInventoryId=args.populator_source_inventory_id,
+    )
     if not env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ENABLED", False):
         raise RuntimeError("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ENABLED is false")
     if args.populator_owner_id <= 0:
@@ -539,6 +580,8 @@ def populate_once(args):
                 "baselinePrice": row["baseline_price"],
                 "price": price,
                 "qualityLevel": populator_quality_level(row),
+                "categoryMask": populator_category_mask(row),
+                "categoryDepth": populator_category_depth(row),
                 "expirationTime": expiration_time,
                 "ownerId": args.populator_owner_id,
                 "exchangeId": args.exchange_id,
@@ -566,7 +609,16 @@ def populate_once(args):
     conn.close()
     if args.expire_seeded:
         cleanup = expire_seeded_once(args)
-    return {"ok": True, "dryRun": args.dry_run, "activeSeededOrders": len(active), "eligibleCatalogRows": len(eligible), "planned": planned, "cleanup": cleanup}
+    result = {"ok": True, "dryRun": args.dry_run, "activeSeededOrders": len(active), "eligibleCatalogRows": len(eligible), "planned": planned, "cleanup": cleanup}
+    log_event(
+        "populate-complete",
+        dryRun=args.dry_run,
+        activeSeededOrders=len(active),
+        eligibleCatalogRows=len(eligible),
+        planned=len(planned),
+        durationMs=int((time.time() - started) * 1000),
+    )
+    return result
 
 
 def validate_populator_once(args):
@@ -757,6 +809,15 @@ def fulfill_signature(conn):
 
 
 def execute_purchase(conn, order, buyer_controller_id):
+    log_event(
+        "purchase-attempt",
+        orderId=order["id"],
+        templateId=order["template_id"],
+        sellerId=order["owner_id"],
+        price=order["item_price"],
+        buyerControllerId=buyer_controller_id,
+        revision=order["revision"],
+    )
     signatures = fulfill_signature(conn)
     supported = [args for args in signatures if "in_order_id bigint" in args and "in_order_revision bigint" in args]
     if not supported:
@@ -791,7 +852,9 @@ def execute_purchase(conn, order, buyer_controller_id):
                 purge_time,
             ),
         )
-        return cur.fetchone()
+        result = cur.fetchone()
+    log_event("purchase-result", orderId=order["id"], result=dict(result) if result else None)
+    return result
 
 
 def inspect_settlement(conn, limit):
@@ -939,6 +1002,7 @@ def readiness_check(args):
 
 
 def claim_settlement_once(args):
+    log_event("settlement-claim-start", orderId=args.claim_settlement)
     if not env_bool("DUNE_ARTIFICIAL_EXCHANGE_AUTO_CLAIM_ENABLED", False):
         raise RuntimeError("DUNE_ARTIFICIAL_EXCHANGE_AUTO_CLAIM_ENABLED is false")
     if args.confirm != CLAIM_CONFIRM:
@@ -1005,10 +1069,13 @@ def claim_settlement_once(args):
         raise
     conn.close()
     save_json(STATE_PATH, state)
-    return {"ok": True, "dryRun": False, "claimed": key, "row": row, "result": result, "beforeBalance": before_balance, "afterBalance": after_balance}
+    response = {"ok": True, "dryRun": False, "claimed": key, "row": row, "result": result, "beforeBalance": before_balance, "afterBalance": after_balance}
+    log_event("settlement-claim-complete", orderId=args.claim_settlement, credited=result.get("credited"), beforeBalance=before_balance, afterBalance=after_balance)
+    return response
 
 
 def claim_all_settlements(args, *, require_confirm=True):
+    log_event("settlement-auto-claim-start", settlementLimit=args.settlement_limit, requireConfirm=require_confirm)
     if not env_bool("DUNE_ARTIFICIAL_EXCHANGE_AUTO_CLAIM_ENABLED", False):
         raise RuntimeError("DUNE_ARTIFICIAL_EXCHANGE_AUTO_CLAIM_ENABLED is false")
     if require_confirm and args.confirm != CLAIM_CONFIRM:
@@ -1053,7 +1120,9 @@ def claim_all_settlements(args, *, require_confirm=True):
         raise
     conn.close()
     save_json(STATE_PATH, state)
-    return {"ok": True, "dryRun": False, "claimed": claimed, "skipped": skipped}
+    result = {"ok": True, "dryRun": False, "claimed": claimed, "skipped": skipped}
+    log_event("settlement-auto-claim-complete", claimed=len(claimed), skipped=len(skipped))
+    return result
 
 
 def fund_buyer(args):
@@ -1087,6 +1156,14 @@ def fund_buyer(args):
 
 
 def scan_once(args):
+    started = time.time()
+    log_event(
+        "scan-start",
+        dryRun=args.dry_run,
+        exchangeId=args.exchange_id,
+        limit=args.limit,
+        autoClaimAfterScan=args.auto_claim_after_scan,
+    )
     if not env_bool("DUNE_ARTIFICIAL_EXCHANGE_ENABLED", True) and not args.ignore_enabled_gate:
         raise RuntimeError("DUNE_ARTIFICIAL_EXCHANGE_ENABLED is false")
     catalog = load_catalog(args.catalog)
@@ -1143,7 +1220,17 @@ def scan_once(args):
             audit({"event": "purchase-selected", **decision})
     conn.close()
     save_json(STATE_PATH, state)
-    return {"ok": True, "dryRun": args.dry_run, "selected": selected, "skipped": skipped[: args.report_skips], "completedObserved": len(completed), "autoClaim": auto_claim}
+    result = {"ok": True, "dryRun": args.dry_run, "selected": selected, "skipped": skipped[: args.report_skips], "completedObserved": len(completed), "autoClaim": auto_claim}
+    log_event(
+        "scan-complete",
+        dryRun=args.dry_run,
+        selected=len(selected),
+        skipped=len(skipped),
+        completedObserved=len(completed),
+        autoClaimed=len((auto_claim or {}).get("claimed", [])) if isinstance(auto_claim, dict) else 0,
+        durationMs=int((time.time() - started) * 1000),
+    )
+    return result
 
 
 def main():
@@ -1182,6 +1269,14 @@ def main():
     parser.add_argument("--dry-run", action="store_true", default=env_bool("DUNE_ARTIFICIAL_EXCHANGE_DRY_RUN", env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_DRY_RUN", True)))
     parser.add_argument("--apply", dest="dry_run", action="store_false")
     args = parser.parse_args()
+    log_event(
+        "bot-start",
+        argv=sys.argv[1:],
+        dryRun=args.dry_run,
+        loop=args.loop,
+        populateLoop=args.populate_loop,
+        exchangeId=args.exchange_id,
+    )
     if args.settlement_report:
         print(json.dumps(print_settlement_report(args), indent=2, default=str))
         return
@@ -1203,40 +1298,69 @@ def main():
     if args.loop and not args.dry_run and args.buyer_controller_id <= 0:
         raise RuntimeError("--buyer-controller-id is required for buyer apply mode")
     if args.populate_loop and args.loop:
+        iteration = 0
         while True:
-            result = {"populate": populate_once(args), "buyer": scan_once(args)}
-            print(json.dumps(result, indent=2, default=str))
+            iteration += 1
+            try:
+                log_event("loop-iteration-start", mode="combined", iteration=iteration)
+                result = {"populate": populate_once(args), "buyer": scan_once(args)}
+                print(json.dumps({"event": "loop-result", "mode": "combined", "iteration": iteration, "result": result}, sort_keys=True, default=str), flush=True)
+            except Exception as exc:
+                log_failure("loop-iteration-failed", exc, mode="combined", iteration=iteration)
+                raise
             sleep_min = int(env("DUNE_ARTIFICIAL_EXCHANGE_SCAN_INTERVAL_MIN_SECONDS", "180"))
             sleep_max = int(env("DUNE_ARTIFICIAL_EXCHANGE_SCAN_INTERVAL_MAX_SECONDS", "420"))
-            time.sleep(random.randint(sleep_min, max(sleep_min, sleep_max)))
+            sleep_seconds = random.randint(sleep_min, max(sleep_min, sleep_max))
+            log_event("loop-sleep", mode="combined", iteration=iteration, seconds=sleep_seconds)
+            time.sleep(sleep_seconds)
         return
     if args.populate_once or args.populate_loop:
+        iteration = 0
         while True:
-            print(json.dumps(populate_once(args), indent=2, default=str))
+            iteration += 1
+            try:
+                log_event("loop-iteration-start", mode="populator", iteration=iteration)
+                result = populate_once(args)
+                print(json.dumps({"event": "loop-result", "mode": "populator", "iteration": iteration, "result": result}, sort_keys=True, default=str), flush=True)
+            except Exception as exc:
+                log_failure("loop-iteration-failed", exc, mode="populator", iteration=iteration)
+                raise
             if not args.populate_loop:
                 break
             sleep_min = int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_INTERVAL_MIN_SECONDS", env("DUNE_ARTIFICIAL_EXCHANGE_SCAN_INTERVAL_MIN_SECONDS", "180")))
             sleep_max = int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_INTERVAL_MAX_SECONDS", env("DUNE_ARTIFICIAL_EXCHANGE_SCAN_INTERVAL_MAX_SECONDS", "420")))
-            time.sleep(random.randint(sleep_min, max(sleep_min, sleep_max)))
+            sleep_seconds = random.randint(sleep_min, max(sleep_min, sleep_max))
+            log_event("loop-sleep", mode="populator", iteration=iteration, seconds=sleep_seconds)
+            time.sleep(sleep_seconds)
         return
     if args.fund_buyer:
         print(json.dumps(fund_buyer(args), indent=2, default=str))
         return
     if not args.dry_run and args.buyer_controller_id <= 0:
         raise RuntimeError("--buyer-controller-id is required for apply mode")
+    iteration = 0
     while True:
-        result = scan_once(args)
-        print(json.dumps(result, indent=2, default=str))
+        iteration += 1
+        try:
+            log_event("loop-iteration-start", mode="buyer", iteration=iteration)
+            result = scan_once(args)
+            print(json.dumps({"event": "loop-result", "mode": "buyer", "iteration": iteration, "result": result}, sort_keys=True, default=str), flush=True)
+        except Exception as exc:
+            log_failure("loop-iteration-failed", exc, mode="buyer", iteration=iteration)
+            raise
         if not args.loop:
             break
         sleep_min = int(env("DUNE_ARTIFICIAL_EXCHANGE_SCAN_INTERVAL_MIN_SECONDS", "180"))
         sleep_max = int(env("DUNE_ARTIFICIAL_EXCHANGE_SCAN_INTERVAL_MAX_SECONDS", "420"))
-        time.sleep(random.randint(sleep_min, max(sleep_min, sleep_max)))
+        sleep_seconds = random.randint(sleep_min, max(sleep_min, sleep_max))
+        log_event("loop-sleep", mode="buyer", iteration=iteration, seconds=sleep_seconds)
+        time.sleep(sleep_seconds)
 
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        log_failure("bot-fatal", exc)
+        print(f"error: {exc}", file=sys.stderr, flush=True)
         sys.exit(1)
