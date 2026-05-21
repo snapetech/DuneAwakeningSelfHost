@@ -1,46 +1,44 @@
 #!/usr/bin/env python3
 """Derived Dune Exchange category masks.
 
-The Exchange UI tree is separate from the generic item category tags. These
-top-level buckets were derived from local client GUI.pak strings for
-/Game/Dune/GUI/Data/ItemCategories/DA_ExchangeyTree:
-
-1 Augments, 2 Garment, 3 Misc, 4 Utility, 5 Vehicles, 6 Weapons.
+The Exchange UI tree is separate from generic item category tags. These values
+come from local game GUI category assets plus category rewrites observed from
+the client/server exchange category refresh path.
 
 Keep game assets out of the repo. This module stores only derived mask metadata
 and keeps all importers on one shared Exchange-specific map.
 """
 
 EXCHANGE_CATEGORY_MASKS = {
-    "resources/raw": (0x01010000, 2),
-    "resources/refined": (0x01020000, 2),
-    "resources/components": (0x01030000, 2),
-    "augments/armor": (0x01010000, 2),
-    "augments/melee": (0x01020000, 2),
-    "augments/misc": (0x01030000, 2),
-    "augments/ranged": (0x01040000, 2),
-    "consumables/medical": (0x02010000, 2),
-    "consumables/spice": (0x02010000, 2),
-    "tools/mining": (0x03010000, 2),
-    "tools/utility": (0x03020000, 2),
-    "weapons/melee": (0x04010000, 2),
-    "weapons/ranged": (0x04020000, 2),
-    "armor/combat": (0x05010000, 2),
-    "armor/heavy": (0x05010000, 2),
-    "armor/light": (0x05010000, 2),
-    "armor/social": (0x05030000, 2),
-    "armor/stillsuit": (0x05020000, 2),
-    "vehicles/parts": (0x06030000, 2),
-    "vehicles/sandbike": (0x06010000, 2),
-    "vehicles/ornithopter": (0x06020000, 2),
-    "vehicles/buggy": (0x06030000, 2),
-    "vehicles/sandcrawler": (0x06030000, 2),
-    "schematics/weapons": (0x07010000, 2),
-    "schematics/armor": (0x07020000, 2),
-    "schematics/vehicles": (0x07030000, 2),
-    "building/patents": (0x08010000, 2),
-    "customization": (0x09010000, 2),
-    "contracts": (0x09010000, 2),
+    "augments/armor": (0x04000000, 2),
+    "augments/melee": (0x04010000, 2),
+    "augments/misc": (0x04020000, 2),
+    "augments/ranged": (0x04030000, 2),
+    "armor/combat": (0x00010400, 3),
+    "armor/heavy": (0x00010400, 3),
+    "armor/light": (0x00000300, 3),
+    "armor/social": (0x00030000, 2),
+    "armor/stillsuit": (0x00020300, 3),
+    "building/patents": (0x03070000, 2),
+    "consumables/medical": (0x03060200, 3),
+    "consumables/spice": (0x03060200, 3),
+    "contracts": (0x05050000, 2),
+    "customization": (0x05060000, 2),
+    "resources/components": (0x05020000, 2),
+    "resources/raw": (0x05000000, 2),
+    "resources/refined": (0x05010000, 2),
+    "schematics/armor": (0x07000000, 2),
+    "schematics/vehicles": (0x07000000, 2),
+    "schematics/weapons": (0x07000000, 2),
+    "tools/mining": (0x03000000, 2),
+    "tools/utility": (0x03050100, 3),
+    "vehicles/buggy": (0x02010700, 3),
+    "vehicles/ornithopter": (0x02020600, 3),
+    "vehicles/parts": (0x02010700, 3),
+    "vehicles/sandbike": (0x02000500, 3),
+    "vehicles/sandcrawler": (0x02030000, 2),
+    "weapons/melee": (0x01000100, 3),
+    "weapons/ranged": (0x01010700, 3),
     "unknown": (0x00000000, 0),
 }
 

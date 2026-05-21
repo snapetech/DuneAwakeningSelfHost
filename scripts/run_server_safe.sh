@@ -36,7 +36,9 @@ main() {
       args+=("$arg")
     fi
   done
-  args+=("-IGWBindAddress=$pod_ip")
+  if [ "${DUNE_FORCE_PRIVATE_IGW_BIND_ADDRESS:-false}" = "true" ]; then
+    args+=("-IGWBindAddress=$pod_ip")
+  fi
 
   if [ "$dry_run" = "true" ]; then
     printf '%s\0' "${args[@]}" > "${DUNE_RUN_SERVER_SAFE_ARGS_OUT:-/tmp/run_server_safe.args}"

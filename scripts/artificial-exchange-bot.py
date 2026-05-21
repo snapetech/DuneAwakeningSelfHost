@@ -436,17 +436,16 @@ def jitter_price_bounds(baseline_price, jitter_pct):
 def populator_price_bounds(row, jitter_pct):
     floor = row.get("price_floor")
     ceiling = row.get("price_ceiling")
+    baseline_price = row.get("baseline_price")
     min_span = max(1, int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_PRICE_SPAN", "1")))
     jitter_pct = max(0, int(jitter_pct))
-    if floor not in (None, "") and ceiling not in (None, ""):
-        market_anchor = max(int(floor), int(ceiling))
-        baseline = scaled_price(market_anchor)
-        low = max(1, int(round(baseline * (100 - jitter_pct) / 100)))
-        high = max(low, int(round(baseline * (100 + jitter_pct) / 100)))
-        if high - low + 1 < min_span:
-            high = low + min_span - 1
-        return low, high
-    low, high = jitter_price_bounds(row["baseline_price"], jitter_pct)
+    if baseline_price not in (None, ""):
+        anchor = int(baseline_price)
+    elif floor not in (None, "") and ceiling not in (None, ""):
+        anchor = int(round((int(floor) + int(ceiling)) / 2))
+    else:
+        raise RuntimeError(f"missing baseline_price or price floor/ceiling for {row.get('template_id', 'unknown template')}")
+    low, high = jitter_price_bounds(anchor, jitter_pct)
     if high - low + 1 < min_span:
         high = low + min_span - 1
     return low, high

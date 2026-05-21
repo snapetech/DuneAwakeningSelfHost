@@ -9,6 +9,9 @@ import sys
 import time
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+from exchange_category_map import EXCHANGE_CATEGORY_MASKS
+
 DEFAULT_MANUAL = ROOT / "config" / "artificial-exchange-prices.csv"
 DEFAULT_SNAPSHOT_DIR = ROOT / "data" / "exchange-price-snapshots"
 DEFAULT_OUTPUT_DIR = ROOT / "backups" / "admin-panel" / "artificial-exchange"
@@ -294,6 +297,32 @@ def reconcile_source_categories(rows, source_map):
     return out, {"updated": updated, "missing": missing}
 
 
+def reconcile_known_category_masks(rows):
+    updated = 0
+    missing = 0
+    out = []
+    for row in rows:
+        expected = EXCHANGE_CATEGORY_MASKS.get(row["category"])
+        if not expected:
+            missing += 1
+            out.append(row)
+            continue
+        expected_mask, expected_depth = expected
+        if row.get("category_mask") == expected_mask and row.get("category_depth") == expected_depth:
+            out.append(row)
+            continue
+        next_row = dict(row)
+        next_row["category_mask"] = expected_mask
+        next_row["category_depth"] = expected_depth
+        notes = next_row.get("notes") or ""
+        marker = "category mask reconciled from exchange_category_map"
+        if marker not in notes:
+            next_row["notes"] = f"{notes}; {marker}".strip("; ")
+        updated += 1
+        out.append(next_row)
+    return out, {"updated": updated, "missing": missing}
+
+
 def write_outputs(rows, output_dir):
     output_dir.mkdir(parents=True, exist_ok=True)
     latest_json = output_dir / "catalog.json"
@@ -342,6 +371,7 @@ def main():
         if error:
             warnings.append(error)
         rows, category_reconcile = reconcile_source_categories(rows, source_map)
+    rows, mask_reconcile = reconcile_known_category_masks(rows)
     latest_json, latest_csv = write_outputs(rows, args.output_dir)
     print(json.dumps({
         "ok": True,
@@ -350,6 +380,7 @@ def main():
         "catalog": str(latest_json),
         "csv": str(latest_csv),
         "categoryReconcile": category_reconcile,
+        "categoryMaskReconcile": mask_reconcile,
         "warnings": warnings,
     }, indent=2))
 

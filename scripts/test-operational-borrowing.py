@@ -169,7 +169,7 @@ class RunServerSafeTests(unittest.TestCase):
             self.assertIn("-MultiHome=172.31.240.40", decoded)
             self.assertIn("-ini:engine:[ConsoleVariables]:Bgd.ServerLoginPassword=pass with spaces", decoded)
             self.assertIn("/Game/Dune/Maps/Test Map", decoded)
-            self.assertIn("-IGWBindAddress=172.31.240.40", decoded)
+            self.assertNotIn("-IGWBindAddress=172.31.240.40", decoded)
 
             engine_ini = server_root / "DuneSandbox" / "Saved" / "Config" / "LinuxServer" / "Engine.ini"
             user_engine_ini = server_root / "DuneSandbox" / "Saved" / "UserSettings" / "UserEngine.ini"
@@ -179,6 +179,37 @@ class RunServerSafeTests(unittest.TestCase):
             config_link = dune_home / ".config" / "Epic" / "Unreal Engine" / "Engine" / "Config"
             self.assertTrue(config_link.is_symlink())
             self.assertEqual(config_link.resolve(), server_root / "DuneSandbox" / "Saved" / "UserSettings")
+
+    def test_dry_run_can_force_private_igw_bind_address(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            server_root = tmp_path / "server"
+            dune_home = tmp_path / "home"
+            args_out = tmp_path / "args.nul"
+            server_root.mkdir()
+
+            env = {
+                **os.environ,
+                "DUNE_SERVER_ROOT": str(server_root),
+                "DUNE_HOME": str(dune_home),
+                "DUNE_RUN_SERVER_SAFE_DRY_RUN": "true",
+                "DUNE_RUN_SERVER_SAFE_ARGS_OUT": str(args_out),
+                "POD_IP": "172.31.240.40",
+                "DUNE_FORCE_PRIVATE_IGW_BIND_ADDRESS": "true",
+            }
+            subprocess.run(
+                [
+                    str(ROOT / "scripts" / "run_server_safe.sh"),
+                    "-MultiHome=$POD_IP",
+                ],
+                cwd=ROOT,
+                env=env,
+                check=True,
+            )
+
+            raw_args = args_out.read_bytes().rstrip(b"\0").split(b"\0")
+            decoded = [item.decode("utf-8") for item in raw_args]
+            self.assertIn("-IGWBindAddress=172.31.240.40", decoded)
 
 
 class ComposeCommandTests(unittest.TestCase):

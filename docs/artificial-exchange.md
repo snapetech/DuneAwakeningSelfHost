@@ -555,14 +555,11 @@ Current default row gates:
 
 Current default pricing:
 
-- `planned_unique_price(...)` anchors on the higher of `price_floor` and
-  `price_ceiling`, multiplies it by
+- `planned_unique_price(...)` anchors on `baseline_price`, multiplies it by
   `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_PRICE_MULTIPLIER`, default `0.25`, then
   applies `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_PRICE_JITTER_PCT`.
-- `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_RANGE_LOW_PCT` and
-  `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_RANGE_HIGH_PCT` can narrow that explicit
-  floor/ceiling range. The current aggressive liquidity run uses the default
-  full `0..100` band.
+- If a row has no `baseline_price` but does have both `price_floor` and
+  `price_ceiling`, the populator falls back to their midpoint as the anchor.
 - `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_PRICE_SPAN` can widen a too-tight
   floor/ceiling range so multiple active orders for the same template get
   unique prices instead of merging through the native recurring-order path.

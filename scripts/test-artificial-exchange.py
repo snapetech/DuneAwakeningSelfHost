@@ -112,6 +112,19 @@ class ArtificialExchangeCatalogTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 catalog.read_csv_rows(path)
 
+    def test_reconcile_known_category_masks_updates_exchange_categories(self):
+        rows, stats = catalog.reconcile_known_category_masks([
+            self.base_row("ItemA", category="weapons/ranged", category_mask=0, category_depth=0, notes="tier=2"),
+            self.base_row("ItemB", category="not/a/category", category_mask=0, category_depth=0),
+        ])
+
+        self.assertEqual(stats, {"updated": 1, "missing": 1})
+        self.assertEqual(rows[0]["category_mask"], 0x01010700)
+        self.assertEqual(rows[0]["category_depth"], 3)
+        self.assertIn("category mask reconciled from exchange_category_map", rows[0]["notes"])
+        self.assertEqual(rows[1]["category_mask"], 0)
+        self.assertEqual(rows[1]["category_depth"], 0)
+
 
 class ArtificialExchangePriceResearchTest(unittest.TestCase):
     def test_extract_item_data_reads_wiki_price_and_item_id(self):
@@ -317,10 +330,10 @@ class ArtificialExchangeBotTest(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             bot.planned_unique_price(self.catalog_row(baseline_price=1), 0, {"ItemA": {1}})
 
-    def test_planned_unique_price_uses_scaled_floor_ceiling_anchor(self):
-        row = self.catalog_row(price_floor=100, price_ceiling=1100)
+    def test_planned_unique_price_uses_scaled_baseline_anchor(self):
+        row = self.catalog_row(baseline_price=100, price_floor=100, price_ceiling=1100)
         with mock.patch.object(bot.random, "choice", side_effect=lambda values: values[0]):
-            self.assertEqual(bot.planned_unique_price(row, 20, {}), 220)
+            self.assertEqual(bot.planned_unique_price(row, 20, {}), 20)
 
     def test_planned_unique_price_can_expand_tight_fixed_ranges(self):
         bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_PRICE_SPAN"] = "20"
@@ -391,9 +404,14 @@ class ArtificialExchangeBotTest(unittest.TestCase):
         self.assertEqual(bot.template_category_key(row), ("ItemA", "weapons/ranged", 1, 2))
 
     def test_planned_unique_price_samples_large_floor_ceiling_range(self):
-        row = self.catalog_row(price_floor=100, price_ceiling=100000000)
-        with mock.patch.object(bot.random, "randint", return_value=500):
-            self.assertEqual(bot.planned_unique_price(row, 20, {}), 500)
+        row = self.catalog_row(baseline_price=100, price_floor=100, price_ceiling=100000000)
+        with mock.patch.object(bot.random, "choice", side_effect=lambda values: values[-1]):
+            self.assertEqual(bot.planned_unique_price(row, 20, {}), 30)
+
+    def test_planned_unique_price_requires_baseline_or_bounds(self):
+        row = self.catalog_row(baseline_price="", price_floor="", price_ceiling="")
+        with self.assertRaisesRegex(RuntimeError, "missing baseline_price"):
+            bot.planned_unique_price(row, 20, {})
 
     def test_populator_target_count_and_expiry_selection(self):
         with mock.patch.object(bot.random, "randint", return_value=7):

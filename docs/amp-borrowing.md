@@ -15,7 +15,7 @@ Useful patterns borrowed into DASH-native code:
 
 - FLS environment is explicit. DASH now passes `DefaultFlsEnvironment` through `DUNE_FLS_ENV`, defaulting to `retail`, in game-server command lines and service-layer FuncomLiveServices environment. Use a beta/test value only with a matching PTC/test server build and token authorization.
 - The AMP manifest treats the FLS world name as a reclaimable battlegroup identity. DASH keeps `WORLD_UNIQUE_NAME` as the durable identity and preflight now flags unchanged example names.
-- AMP solved the same class of UE5 saved-config placement problem. DASH already copies generated `Engine.ini`/`Game.ini` into saved config paths, keeps the Unreal `Saved/UserSettings` symlink, and appends `-IGWBindAddress`; focused tests now cover that wrapper behavior.
+- AMP solved the same class of UE5 saved-config placement problem. DASH already copies generated `Engine.ini`/`Game.ini` into saved config paths, keeps the Unreal `Saved/UserSettings` symlink, and can append `-IGWBindAddress` through `DUNE_FORCE_PRIVATE_IGW_BIND_ADDRESS=true`; focused tests cover that wrapper behavior.
 - AMP exposes game RabbitMQ as the client-facing broker endpoint. DASH now has a read-only RabbitMQ TLS SAN checker so operators can see whether the certificate covers `GAME_RMQ_PUBLIC_HOST`, `game-rmq`, `localhost`, and `127.0.0.1`.
 
 Not borrowed:

@@ -181,9 +181,10 @@ section {
 
 .map-layout {
 	display: grid;
-	grid-template-columns: minmax(0, 1fr) minmax(240px, 320px);
+	grid-template-columns: minmax(0, 1fr) minmax(260px, 300px);
 	gap: 12px;
 	align-items: stretch;
+	min-width: 0;
 }
 
 .map-viewport {
@@ -195,6 +196,8 @@ section {
 	border-radius: 6px;
 	aspect-ratio: 4 / 3;
 	max-height: min(72vh, 820px);
+	min-width: 0;
+	width: 100%;
 	position: relative;
 }
 
@@ -259,6 +262,11 @@ section {
 	padding: 10px 12px;
 	max-height: min(56vh, 620px);
 	overflow: auto;
+}
+
+.poi-legend {
+	min-width: 0;
+	overflow: hidden;
 }
 
 .poi-legend-header {

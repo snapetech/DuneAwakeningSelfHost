@@ -135,6 +135,13 @@ Check:
 
 The game can log a warning that binding directly to the public `EXTERNAL_ADDRESS` failed. In this Compose layout that is expected when the public address belongs to the router rather than the container. The important checks are that Docker publishes the relevant game UDP port, the game reports `listening for Clients on <EXTERNAL_ADDRESS>:<port>`, and Director/Gateway declare that same address to FLS.
 
+If the server browser lists the world but does not show ping, check whether
+`farm_state.igw_addr` is advertising a container-private `172.31.240.x` address.
+The launcher no longer forces `-IGWBindAddress=$POD_IP` by default so the next
+game-server restart can test public IGW advertisement. Set
+`DUNE_FORCE_PRIVATE_IGW_BIND_ADDRESS=true` before restart to restore the older
+private IGW bind behavior.
+
 ### Hangs at `Connecting to Sietch` from the same LAN
 
 If the client is on the same LAN as the server and the server advertises the
