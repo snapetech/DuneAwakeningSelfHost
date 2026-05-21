@@ -26,6 +26,11 @@ role_services="${DUNE_STANDBY_ROLE_SERVICES:-$(read_env DUNE_STANDBY_ROLE_SERVIC
 role_timers="${DUNE_STANDBY_ROLE_TIMERS:-$(read_env DUNE_STANDBY_ROLE_TIMERS)}"
 website_services="${DUNE_STANDBY_WEBSITE_SERVICES:-$(read_env DUNE_STANDBY_WEBSITE_SERVICES)}"
 website_timers="${DUNE_STANDBY_WEBSITE_TIMERS:-$(read_env DUNE_STANDBY_WEBSITE_TIMERS)}"
+website_mode="${DUNE_STANDBY_WEBSITE_MODE:-$(read_env DUNE_STANDBY_WEBSITE_MODE)}"
+website_mode="${website_mode:-follow-role}"
+if [[ "${DUNE_STANDBY_KEEP_WEBSITE_RUNNING:-$(read_env DUNE_STANDBY_KEEP_WEBSITE_RUNNING)}" == "true" ]]; then
+  website_mode="independent"
+fi
 
 run_systemctl() {
   local host="$1"; shift
@@ -61,13 +66,14 @@ apply_role() {
   if [[ "$role" == "primary" ]]; then
     [[ -n "$role_services" ]] && run_systemctl "$host" enable --now $role_services
     [[ -n "$role_timers" ]] && run_systemctl "$host" enable --now $role_timers
-    [[ -n "$website_services" ]] && run_systemctl "$host" enable --now $website_services
-    [[ -n "$website_timers" ]] && run_systemctl "$host" enable --now $website_timers
+    if [[ "$website_mode" == "follow-role" ]]; then
+      [[ -n "$website_services" ]] && run_systemctl "$host" enable --now $website_services
+      [[ -n "$website_timers" ]] && run_systemctl "$host" enable --now $website_timers
+    fi
   else
     [[ -n "$role_services" ]] && run_systemctl "$host" disable --now $role_services
     [[ -n "$role_timers" ]] && run_systemctl "$host" disable --now $role_timers
-    # Website services may stay enabled on a standby mirror only if explicitly allowed.
-    if [[ "${DUNE_STANDBY_KEEP_WEBSITE_RUNNING:-$(read_env DUNE_STANDBY_KEEP_WEBSITE_RUNNING)}" != "true" ]]; then
+    if [[ "$website_mode" == "follow-role" ]]; then
       [[ -n "$website_services" ]] && run_systemctl "$host" disable --now $website_services
       [[ -n "$website_timers" ]] && run_systemctl "$host" disable --now $website_timers
     fi
@@ -78,7 +84,7 @@ if [[ "$target_role" == "primary" ]]; then
   if [[ "${CONFIRM_FAILOVER_ROLE_SERVICES:-}" != "yes" ]]; then
     check_units local $role_services $role_timers $website_services $website_timers || true
     [[ -n "$remote" ]] && check_units "$remote" $role_services $role_timers $website_services $website_timers || true
-    printf 'Dry run: would make local host primary and remote %s standby. Set CONFIRM_FAILOVER_ROLE_SERVICES=yes to apply.\n' "${remote:-<unset>}"
+    printf 'Dry run: would make local host primary and remote %s standby. website_mode=%s. Set CONFIRM_FAILOVER_ROLE_SERVICES=yes to apply.\n' "${remote:-<unset>}" "$website_mode"
     exit 0
   fi
   apply_role local primary
@@ -91,7 +97,7 @@ else
   if [[ "${CONFIRM_FAILOVER_ROLE_SERVICES:-}" != "yes" ]]; then
     check_units local $role_services $role_timers $website_services $website_timers || true
     check_units "$remote" $role_services $role_timers $website_services $website_timers || true
-    printf 'Dry run: would make local host standby and remote %s primary. Set CONFIRM_FAILOVER_ROLE_SERVICES=yes to apply.\n' "$remote"
+    printf 'Dry run: would make local host standby and remote %s primary. website_mode=%s. Set CONFIRM_FAILOVER_ROLE_SERVICES=yes to apply.\n' "$remote" "$website_mode"
     exit 0
   fi
   apply_role local standby

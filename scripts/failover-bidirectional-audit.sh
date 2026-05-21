@@ -34,6 +34,11 @@ role_timers="${DUNE_STANDBY_ROLE_TIMERS:-$(read_env DUNE_STANDBY_ROLE_TIMERS)}"
 website_services="${DUNE_STANDBY_WEBSITE_SERVICES:-$(read_env DUNE_STANDBY_WEBSITE_SERVICES)}"
 website_timers="${DUNE_STANDBY_WEBSITE_TIMERS:-$(read_env DUNE_STANDBY_WEBSITE_TIMERS)}"
 keep_website_running="${DUNE_STANDBY_KEEP_WEBSITE_RUNNING:-$(read_env DUNE_STANDBY_KEEP_WEBSITE_RUNNING)}"
+website_mode="${DUNE_STANDBY_WEBSITE_MODE:-$(read_env DUNE_STANDBY_WEBSITE_MODE)}"
+website_mode="${website_mode:-follow-role}"
+if [[ "$keep_website_running" == "true" ]]; then
+  website_mode="independent"
+fi
 
 unit_enabled_state() {
   local host="$1" unit="$2"
@@ -54,7 +59,7 @@ unit_active_state() {
 }
 
 audit_primary_enabled_standby_disabled() {
-  local label="$1" allow_standby_enabled="$2" unit local_enabled remote_enabled local_active remote_active
+  local label="$1" enforce_role_ownership="$2" unit local_enabled remote_enabled local_active remote_active
   shift 2
   for unit in "$@"; do
     [[ -z "$unit" ]] && continue
@@ -63,11 +68,11 @@ audit_primary_enabled_standby_disabled() {
     local_active="$(unit_active_state local "$unit")"
     remote_active="$(unit_active_state "$standby_host" "$unit")"
     printf '%s %s local_enabled=%s local_active=%s standby_enabled=%s standby_active=%s\n' "$label" "$unit" "${local_enabled:-unknown}" "${local_active:-unknown}" "${remote_enabled:-unknown}" "${remote_active:-unknown}"
-    case "$local_enabled" in
-      enabled|static|generated|indirect) ;;
-      *) warn "$label $unit is not enabled/static on current primary" ;;
-    esac
-    if [[ "$allow_standby_enabled" != "true" ]]; then
+    if [[ "$enforce_role_ownership" == "true" ]]; then
+      case "$local_enabled" in
+        enabled|static|generated|indirect) ;;
+        *) warn "$label $unit is not enabled/static on current primary" ;;
+      esac
       case "$remote_enabled" in
         disabled|masked|static|'') ;;
         *) warn "$label $unit is enabled on standby but should be cold for role-following cutover" ;;
@@ -123,15 +128,18 @@ make failover-role-services "ENV_FILE=$env_file" ROLE=standby || status_rc=1
 make failover-role-services "ENV_FILE=$env_file" ROLE=primary || status_rc=1
 
 printf '\n== active role ownership ==\n'
-audit_primary_enabled_standby_disabled "role-service" false $role_services
-audit_primary_enabled_standby_disabled "role-timer" false $role_timers
+audit_primary_enabled_standby_disabled "role-service" true $role_services
+audit_primary_enabled_standby_disabled "role-timer" true $role_timers
 if [[ "$keep_website_running" == "true" ]]; then
   ok "website standby running is explicitly allowed by DUNE_STANDBY_KEEP_WEBSITE_RUNNING=true"
-  audit_primary_enabled_standby_disabled "website-service" true $website_services
-  audit_primary_enabled_standby_disabled "website-timer" true $website_timers
-else
+fi
+if [[ "$website_mode" == "independent" ]]; then
+  ok "website units are independent of game role by DUNE_STANDBY_WEBSITE_MODE=independent"
   audit_primary_enabled_standby_disabled "website-service" false $website_services
   audit_primary_enabled_standby_disabled "website-timer" false $website_timers
+else
+  audit_primary_enabled_standby_disabled "website-service" true $website_services
+  audit_primary_enabled_standby_disabled "website-timer" true $website_timers
 fi
 
 printf '\n== router dry-run to each side ==\n'

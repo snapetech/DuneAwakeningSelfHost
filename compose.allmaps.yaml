@@ -19,7 +19,7 @@ x-game-server-command:
   fls-env: &cmd-fls-env -ini:engine:[FuncomLiveServices]:DefaultFlsEnvironment=${DUNE_FLS_ENV:-retail}
   server-name: &cmd-server-name -ini:engine:[OnlineSubsystem]:ServerName=${WORLD_UNIQUE_NAME}
   server-login-password: &cmd-server-login-password -ini:engine:[ConsoleVariables]:Bgd.ServerLoginPassword=${DUNE_SERVER_LOGIN_PASSWORD:-}
-  datacenter: &cmd-datacenter -ini:engine:[OnlineSubsystem]:DatacenterId=${WORLD_REGION}
+  datacenter: &cmd-datacenter -ini:engine:[OnlineSubsystem]:DatacenterId=${WORLD_DATACENTER_ID}
   db-host: &cmd-db-host -ini:game:[DuneDatabaseInterfacePSQL]:DatabaseHost=postgres:5432
   db-user: &cmd-db-user -ini:game:[DuneDatabaseInterfacePSQL]:DatabaseUser=dune
   db-password: &cmd-db-password -ini:game:[DuneDatabaseInterfacePSQL]:DatabasePassword=${POSTGRES_DUNE_PASSWORD}

@@ -20,7 +20,7 @@ x-game-server-command:
   fls-env: &cmd-fls-env -ini:engine:[FuncomLiveServices]:DefaultFlsEnvironment=${DUNE_FLS_ENV:-retail}
   server-name: &cmd-server-name -ini:engine:[OnlineSubsystem]:ServerName=${WORLD_UNIQUE_NAME}
   server-login-password: &cmd-server-login-password -ini:engine:[ConsoleVariables]:Bgd.ServerLoginPassword=${DUNE_SERVER_LOGIN_PASSWORD:-}
-  datacenter: &cmd-datacenter -ini:engine:[OnlineSubsystem]:DatacenterId=${WORLD_REGION}
+  datacenter: &cmd-datacenter -ini:engine:[OnlineSubsystem]:DatacenterId=${WORLD_DATACENTER_ID}
   db-host: &cmd-db-host -ini:game:[DuneDatabaseInterfacePSQL]:DatabaseHost=postgres:5432
   db-user: &cmd-db-user -ini:game:[DuneDatabaseInterfacePSQL]:DatabaseUser=dune
   db-password: &cmd-db-password -ini:game:[DuneDatabaseInterfacePSQL]:DatabasePassword=${POSTGRES_DUNE_PASSWORD}
@@ -175,7 +175,7 @@ services:
       FuncomLiveServices__ServiceAuthToken: ${FLS_SECRET}
       FuncomLiveServices__RmqTlsEnabled: "true"
       BATTLEGROUP_REGION_NAME: ${WORLD_REGION}
-      HOST_DATACENTER_ID: dune-testing
+      HOST_DATACENTER_ID: ${WORLD_DATACENTER_ID}
       HOST_DATACENTER_IP_ADDRESS: ${EXTERNAL_ADDRESS}
       FuncomLiveServices__DefaultFlsEnvironment: ${DUNE_FLS_ENV:-retail}
     volumes:
@@ -222,7 +222,7 @@ services:
       FuncomLiveServices__ServiceAuthToken: ${FLS_SECRET}
       FuncomLiveServices__RmqTlsEnabled: "true"
       BATTLEGROUP_LANGUAGE: en-US
-      HOST_DATACENTER_ID: dune-testing
+      HOST_DATACENTER_ID: ${WORLD_DATACENTER_ID}
       HOST_DATACENTER_IP_ADDRESS: ${EXTERNAL_ADDRESS}
       FuncomLiveServices__DefaultFlsEnvironment: ${DUNE_FLS_ENV:-retail}
     depends_on:
@@ -263,7 +263,7 @@ services:
       OPT_DISPLAY_NAME: ${WORLD_NAME}
       gateway_farm_api_key: ${FLS_SECRET}
       RMQ_HTTP_TOKEN_AUTH_SECRET: ${RMQ_HTTP_TOKEN_AUTH_SECRET}
-      HOST_DATACENTER_ID: dune-testing
+      HOST_DATACENTER_ID: ${WORLD_DATACENTER_ID}
       HOST_DATACENTER_IP_ADDRESS: ${EXTERNAL_ADDRESS}
     volumes:
       - ./config/gateway.ini:/etc/app/conf.d/gateway.ini:ro

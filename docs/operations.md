@@ -265,7 +265,7 @@ For the expanded standing farm, forward:
 For the 30-partition warm pool, forward:
 
 ```text
-7777-7806/udp
+7777-7810/udp
 7888-7917/udp
 ```
 

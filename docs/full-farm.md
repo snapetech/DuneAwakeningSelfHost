@@ -85,7 +85,7 @@ current_alive_active=30 active_servers=30 partitions=30
 
 Forward `7777-7785/udp` from the router to the host for the full standing farm.
 
-Forward `7777-7806/udp` from the router to the host for the full 30-partition warm pool.
+Forward `7777-7810/udp` from the router to the host for the full 30-partition warm pool.
 
 Forward `7888-7917/udp` from the router to the host for the full 30-partition warm pool when your deployment uses the paired IGW ports for live-client routing or server-browser checks. These are the IGW ports paired with the gameplay ports.
 

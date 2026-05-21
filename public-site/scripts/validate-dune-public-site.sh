@@ -27,7 +27,17 @@ if command -v jq >/dev/null 2>&1; then
   jq -e '.groups | type == "object"' "$static_dir/hagga-pois.json" >/dev/null
   jq -e '.markers | type == "array" and length > 0' "$static_dir/hagga-pois.json" >/dev/null
   jq -e '
-    all(.markers[]; (.group | type == "string") and (.name | type == "string") and (.x | type == "number") and (.y | type == "number"))
+    (.markers | length <= 5000)
+    and (.groups | length <= 64)
+    and all(.groups | keys[]; test("^[A-Za-z0-9 _:\\\"()./-]{1,80}$"))
+    and all(.markers[];
+      (.id | type == "string" and length <= 120)
+      and (.group | type == "string" and length <= 80)
+      and (.name | type == "string" and length <= 120)
+      and (.article | type == "string" and length <= 120)
+      and (.x | type == "number" and . >= 0 and . <= 100000)
+      and (.y | type == "number" and . >= 0 and . <= 100000)
+    )
   ' "$static_dir/hagga-pois.json" >/dev/null
   if jq -e '
     def forbidden:
@@ -69,7 +79,15 @@ grep -q 'hagga-pois.json' "$static_dir/app.js"
 grep -q 'sessionStorage.getItem(poiStorageKey)' "$static_dir/app.js"
 grep -q 'setFiltered' "$static_dir/app.js"
 grep -q 'onlyFiltered' "$static_dir/app.js"
+if grep -Eq 'innerHTML|outerHTML|insertAdjacentHTML|document\.write' "$static_dir/app.js"; then
+  echo "public app.js contains unsafe HTML injection sinks" >&2
+  exit 1
+fi
 grep -q '<svg' "$static_dir/hagga-map.svg"
+if grep -Eiq '<script|<foreignObject|<iframe|<object|<embed|on[a-z]+=' "$static_dir/hagga-map.svg"; then
+  echo "hagga-map.svg contains executable or embeddable content" >&2
+  exit 1
+fi
 if ! grep -Eq 'hagga-basin\.webp|data:image/webp;base64' "$static_dir/hagga-map.svg"; then
   echo "hagga-map.svg does not reference or embed the Hagga Basin map image" >&2
   exit 1

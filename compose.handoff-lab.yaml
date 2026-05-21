@@ -1,0 +1,126 @@
+services:
+  postgres:
+    volumes:
+      - ./data/handoff-lab/postgres:/var/lib/postgresql/data
+    ports: !override
+      - "127.0.0.1:${HANDOFF_LAB_POSTGRES_LOCAL_PORT:-16431}:5432"
+      - "${POSTGRES_BRIDGE_BIND_ADDRESS:-172.31.241.1}:${POSTGRES_BRIDGE_PUBLIC_PORT:-16432}:5432"
+    networks:
+      default:
+        ipv4_address: 172.31.241.2
+
+  admin-rmq:
+    volumes:
+      - ./config/rabbitmq-enabled-plugins:/etc/rabbitmq/enabled_plugins:ro
+      - ./config/rabbitmq-admin.conf:/etc/rabbitmq/conf.d/99-dune.conf:ro
+      - ./data/handoff-lab/rabbitmq/admin:/var/lib/rabbitmq
+    ports: !override
+      - "127.0.0.1:${HANDOFF_LAB_ADMIN_RMQ_HTTP_PORT:-16672}:15672"
+      - "127.0.0.1:${HANDOFF_LAB_ADMIN_RMQ_AMQP_PORT:-6673}:5672"
+    networks:
+      default:
+        ipv4_address: 172.31.241.3
+
+  game-rmq:
+    volumes:
+      - ./config/rabbitmq-enabled-plugins:/etc/rabbitmq/enabled_plugins:ro
+      - ./config/rabbitmq-game.conf:/etc/rabbitmq/conf.d/99-dune.conf:ro
+      - ./config/tls/rabbitmq/ca.crt:/etc/rabbitmq/cacert.pem:ro
+      - ./config/tls/rabbitmq/server.crt:/etc/rabbitmq/cert.pem:ro
+      - ./config/tls/rabbitmq/server.key:/etc/rabbitmq/key.pem:ro
+      - ./data/handoff-lab/rabbitmq/game:/var/lib/rabbitmq
+    ports: !override
+      - "127.0.0.1:${HANDOFF_LAB_GAME_RMQ_HTTP_PORT:-16673}:15672"
+      - "${GAME_RMQ_BIND_ADDRESS:-0.0.0.0}:${GAME_RMQ_PUBLIC_PORT:-32982}:5672"
+    networks:
+      default:
+        ipv4_address: 172.31.241.4
+
+  director:
+    environment:
+      HOST_DATACENTER_IP_ADDRESS: ${EXTERNAL_ADDRESS}
+    networks:
+      default:
+        ipv4_address: 172.31.241.5
+
+  text-router:
+    environment:
+      HOST_DATACENTER_IP_ADDRESS: ${EXTERNAL_ADDRESS}
+    networks:
+      default:
+        ipv4_address: 172.31.241.6
+
+  rmq-auth-shim:
+    networks:
+      default:
+        ipv4_address: 172.31.241.7
+
+  admin-panel:
+    networks:
+      default:
+        ipv4_address: 172.31.241.8
+
+  admin-chat-commands:
+    networks:
+      default:
+        ipv4_address: 172.31.241.41
+
+  db-init:
+    networks:
+      default:
+        ipv4_address: 172.31.241.42
+
+  gateway:
+    environment:
+      HOST_DATACENTER_IP_ADDRESS: ${EXTERNAL_ADDRESS}
+    networks:
+      default:
+        ipv4_address: 172.31.241.40
+
+  survival:
+    command:
+      - /workspace/scripts/run_server_safe.sh
+      - -FarmRegion=${WORLD_REGION}
+      - -ini:engine:[FuncomLiveServices]:ServiceAuthToken=${FLS_SECRET}
+      - -ini:engine:[FuncomLiveServices]:DefaultFlsEnvironment=${DUNE_FLS_ENV:-retail}
+      - -ini:engine:[OnlineSubsystem]:ServerName=${WORLD_UNIQUE_NAME}
+      - -ini:engine:[ConsoleVariables]:Bgd.ServerLoginPassword=${DUNE_SERVER_LOGIN_PASSWORD:-}
+      - -ini:engine:[OnlineSubsystem]:DatacenterId=${WORLD_REGION}
+      - -ini:game:[DuneDatabaseInterfacePSQL]:DatabaseHost=postgres:5432
+      - -ini:game:[DuneDatabaseInterfacePSQL]:DatabaseUser=dune
+      - -ini:game:[DuneDatabaseInterfacePSQL]:DatabasePassword=${POSTGRES_DUNE_PASSWORD}
+      - -RMQGameTlsEnabled=true
+      - -ExternalAddress=${EXTERNAL_ADDRESS}
+      - --RMQGameHostname=game-rmq
+      - --RMQGamePort=5672
+      - --RMQAdminHostname=admin-rmq
+      - --RMQAdminPort=5672
+      - -MultiHome=$$POD_IP
+      - -Port=7777
+      - -IGWPort=7888
+      - -PartitionIndex=1
+    environment:
+      POD_IP: 172.31.241.10
+      NODE_NAME: dune-handoff-lab
+      BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
+      WORLD_NAME: ${WORLD_NAME}
+      DUNE_SERVER_LOGIN_PASSWORD: ${DUNE_SERVER_LOGIN_PASSWORD:-}
+      DUNE_SERVER_DISPLAY_NAME: ${DUNE_SERVER_DISPLAY_NAME:-}
+      DUNE_FORCE_PRIVATE_IGW_BIND_ADDRESS: ${DUNE_FORCE_PRIVATE_IGW_BIND_ADDRESS:-false}
+    ports: !override
+      - "${HANDOFF_LAB_GAME_UDP_PORT:-17777}:7777/udp"
+      - "${HANDOFF_LAB_IGW_UDP_PORT:-18888}:7888/udp"
+    volumes:
+      - .:/workspace:ro
+      - ./data/handoff-lab/server-saved/survival:/home/dune/server/DuneSandbox/Saved
+    networks:
+      default:
+        ipv4_address: 172.31.241.10
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.31.241.0/24
+          ip_range: 172.31.241.128/25
+          gateway: 172.31.241.1

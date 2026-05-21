@@ -189,10 +189,14 @@ The scripted cutover covers:
 - configured active-only systemd services and timers;
 - configured website/status services and timers.
 
-The public website is not part of the game Compose stack. Include its units in
+The public website is not part of the game Compose stack. Set
+`DUNE_STANDBY_WEBSITE_MODE=follow-role` and include its units in
 `DUNE_STANDBY_WEBSITE_SERVICES` and `DUNE_STANDBY_WEBSITE_TIMERS` if it must move
-with the game primary. If the website is intentionally active-active or hosted
-elsewhere, leave those variables empty or set `DUNE_STANDBY_KEEP_WEBSITE_RUNNING=true`.
+with the game primary. Set `DUNE_STANDBY_WEBSITE_MODE=independent` when the live
+static/status site may stay on whichever host web routing already targets; in
+that mode failover scripts verify the units exist but do not enable, disable, or
+judge them against game-primary ownership. `DUNE_STANDBY_KEEP_WEBSITE_RUNNING=true`
+is treated as compatibility shorthand for independent mode.
 For bidirectional cutover, those service/timer units and their application files
 must exist on both hosts; the dry-run for `make failover-role-services` reports
 missing units before any role switch is applied.

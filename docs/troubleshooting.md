@@ -126,7 +126,7 @@ This deletes local server state.
 
 Check:
 
-- Router/firewall forwards `7777/udp` for the single `Survival_1` layout, `7777-7785/udp` for the expanded standing farm, or `7777-7806/udp` plus any paired IGW UDP range used by the selected layout.
+- Router/firewall forwards `7777/udp` for the single `Survival_1` layout, `7777-7785/udp` for the expanded standing farm, or `7777-7810/udp` plus any paired IGW UDP range used by the selected layout.
 - Router/firewall forwards `GAME_RMQ_PUBLIC_PORT` TCP, default `31982/tcp`, for live-client login through Funcom/FLS.
 - `EXTERNAL_ADDRESS` matches the address clients should use.
 - `./scripts/status.sh` shows `farm_state.ready` and non-empty game/IGW addresses.

@@ -73,7 +73,7 @@ Public client UDP exposure must preserve the same game-port range used by the ch
 
 - Single Survival: `7777/udp`
 - Nine-map standing farm: `7777-7785/udp`
-- Full 30-partition warm pool: `7777-7806/udp`
+- Full 30-partition warm pool: `7777-7810/udp`
 
 The IGW/S2S UDP range is exposed in Compose for debugging. Keep it cluster-internal unless live-client testing proves public exposure is required.
 

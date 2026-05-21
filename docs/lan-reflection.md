@@ -19,7 +19,7 @@ support NAT hairpin/loopback correctly for UDP game traffic. The symptom is:
 
 - the game hangs at `Connecting to Sietch`;
 - the server containers are up and farm-ready;
-- Docker has UDP publishes for `7777-7806`;
+- Docker has UDP publishes for `7777-7810`;
 - host counters for those UDP ports stay at `0`;
 - `tcpdump` on the LAN interface sees no packets for the public IP.
 
@@ -165,7 +165,7 @@ Interpretation:
 Forward public gameplay UDP to the Dune host for external players:
 
 ```text
-7777-7806/udp -> <dune-host-lan-ip>
+7777-7810/udp -> <dune-host-lan-ip>
 ```
 
 For the full warm-pool layout, the paired IGW range is `7888-7917/udp`. If your

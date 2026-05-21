@@ -31,6 +31,56 @@
 		return Math.min(max, Math.max(min, value));
 	}
 
+	function clearNode(node) {
+		while (node && node.firstChild) {
+			node.removeChild(node.firstChild);
+		}
+	}
+
+	function appendTextElement(parent, tagName, className, text) {
+		var element = document.createElement(tagName);
+		if (className) {
+			element.className = className;
+		}
+		element.textContent = String(text || "");
+		parent.appendChild(element);
+		return element;
+	}
+
+	function replaceWithSanitizedHtml(targetNode, html) {
+		var parser = new DOMParser();
+		var doc = parser.parseFromString(String(html || ""), "text/html");
+		doc.querySelectorAll("script, iframe, object, embed, link, meta, style").forEach(function (node) {
+			node.remove();
+		});
+		doc.body.querySelectorAll("*").forEach(function (node) {
+			Array.prototype.slice.call(node.attributes).forEach(function (attribute) {
+				var name = attribute.name.toLowerCase();
+				var value = String(attribute.value || "").trim().toLowerCase();
+				if (name.indexOf("on") === 0 || value.indexOf("javascript:") === 0) {
+					node.removeAttribute(attribute.name);
+				}
+			});
+		});
+		clearNode(targetNode);
+		Array.prototype.slice.call(doc.body.childNodes).forEach(function (node) {
+			targetNode.appendChild(document.importNode(node, true));
+		});
+	}
+
+	function safeJson(response, maxBytes) {
+		var length = Number(response.headers.get("Content-Length") || 0);
+		if (length && length > maxBytes) {
+			throw new Error("response too large");
+		}
+		return response.text().then(function (text) {
+			if (text.length > maxBytes) {
+				throw new Error("response too large");
+			}
+			return JSON.parse(text);
+		});
+	}
+
 	var poiPalette = ["#d9a63c", "#78cf7a", "#6fb6ff", "#e08585", "#c98dff", "#72d6c9", "#f0d77a", "#ff9d5c"];
 	var poiStorageKey = "dunePublicPoiGroups";
 	var poiPresetGroups = {"Shipwrecks": true, "Caves": true, "TradingPosts": true, "Outposts": true, "Aql": true, "Trainers": true};
@@ -133,7 +183,7 @@
 				if (html.indexOf("<script") !== -1) {
 					return;
 				}
-				target.innerHTML = html;
+				replaceWithSanitizedHtml(target, html);
 			})
 			.catch(function () {
 				// Keep the last rendered static status if refresh fails.
@@ -155,19 +205,27 @@
 		if (!players) {
 			return;
 		}
+		clearNode(players);
 		if (!list.length) {
-			players.innerHTML = "<li>No active players reported.</li>";
+			appendTextElement(players, "li", "", "No active players reported.");
 			return;
 		}
-		players.innerHTML = list.map(function (player) {
-			var name = String(player.name || "Player").replace(/[&<>"']/g, function (ch) {
-				return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[ch];
-			});
-			var location = String(player.location || "Unknown").replace(/[&<>"']/g, function (ch) {
-				return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[ch];
-			});
-				return '<li><span class="player-meta"><strong><span>Name:</span> ' + name + '</strong><small><span>Map:</span> ' + location + '</small></span><span class="map-chip">Online</span></li>';
-			}).join("");
+		list.forEach(function (player) {
+			var item = document.createElement("li");
+			var meta = document.createElement("span");
+			meta.className = "player-meta";
+			var nameLine = document.createElement("strong");
+			appendTextElement(nameLine, "span", "", "Name:");
+			nameLine.appendChild(document.createTextNode(" " + String(player.name || "Player")));
+			var mapLine = document.createElement("small");
+			appendTextElement(mapLine, "span", "", "Map:");
+			mapLine.appendChild(document.createTextNode(" " + String(player.location || "Unknown")));
+			meta.appendChild(nameLine);
+			meta.appendChild(mapLine);
+			item.appendChild(meta);
+			appendTextElement(item, "span", "map-chip", "Online");
+			players.appendChild(item);
+		});
 	}
 
 	function refreshSnapshot() {
@@ -180,7 +238,7 @@
 				if (!response.ok) {
 					throw new Error("players fetch failed");
 				}
-				return response.json();
+				return safeJson(response, 64000);
 			})
 			.then(renderPlayers)
 			.catch(function () {
@@ -231,22 +289,38 @@
 		if (!poiOverlay) {
 			return;
 		}
+		clearNode(poiOverlay);
 		var markers = Array.isArray(data.markers) ? data.markers : [];
 		var groupKeys = Object.keys(data.groups || {});
 		var colors = {};
 		groupKeys.forEach(function (group, index) {
 			colors[group] = poiPalette[index % poiPalette.length];
 		});
-		poiOverlay.innerHTML = markers.filter(function (marker) {
+		markers.filter(function (marker) {
 			return selected[marker.group] === true;
-		}).map(function (marker) {
+		}).forEach(function (marker) {
 			var x = Math.max(0, Math.min(1000, Number(marker.x || 0) / 100));
 			var y = Math.max(0, Math.min(1000, Number(marker.y || 0) / 100));
-			var name = escapeHtml(marker.name || marker.group);
-			var group = escapeHtml((data.groups[marker.group] || {}).name || marker.group);
+			var name = String(marker.name || marker.group || "");
+			var group = String((data.groups[marker.group] || {}).name || marker.group || "");
 			var color = colors[marker.group] || "#d9a63c";
-			return '<g class="poi-marker" transform="translate(' + x.toFixed(1) + ' ' + y.toFixed(1) + ')"><title>' + group + ': ' + name + '</title><circle r="4.5" fill="' + color + '"></circle><text x="8" y="-8">' + name + '</text></g>';
-		}).join("");
+			var item = document.createElementNS("http://www.w3.org/2000/svg", "g");
+			item.setAttribute("class", "poi-marker");
+			item.setAttribute("transform", "translate(" + x.toFixed(1) + " " + y.toFixed(1) + ")");
+			var title = document.createElementNS("http://www.w3.org/2000/svg", "title");
+			title.textContent = group + ": " + name;
+			var circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+			circle.setAttribute("r", "4.5");
+			circle.setAttribute("fill", color);
+			var label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+			label.setAttribute("x", "8");
+			label.setAttribute("y", "-8");
+			label.textContent = name;
+			item.appendChild(title);
+			item.appendChild(circle);
+			item.appendChild(label);
+			poiOverlay.appendChild(item);
+		});
 	}
 
 	function renderPoiToggles(data) {
@@ -264,12 +338,28 @@
 		groupKeys.forEach(function (group, index) {
 			colors[group] = poiPalette[index % poiPalette.length];
 		});
-		poiToggles.innerHTML = groupKeys.map(function (group) {
+		clearNode(poiToggles);
+		groupKeys.forEach(function (group) {
 			var info = groups[group] || {};
-			var checked = selected[group] ? " checked" : "";
 			var label = String(info.name || group);
-			return '<label data-filter-text="' + escapeHtml((label + " " + group).toLowerCase()) + '"><span class="poi-toggle-label"><input type="checkbox" value="' + escapeHtml(group) + '"' + checked + '><span class="poi-swatch" style="background:' + escapeHtml(colors[group]) + '"></span><span>' + escapeHtml(label) + '</span></span><span class="poi-count">' + escapeHtml(info.count || 0) + '</span></label>';
-		}).join("");
+			var row = document.createElement("label");
+			row.setAttribute("data-filter-text", (label + " " + group).toLowerCase());
+			var toggleLabel = document.createElement("span");
+			toggleLabel.className = "poi-toggle-label";
+			var input = document.createElement("input");
+			input.type = "checkbox";
+			input.value = group;
+			input.checked = selected[group] === true;
+			var swatch = document.createElement("span");
+			swatch.className = "poi-swatch";
+			swatch.style.backgroundColor = colors[group];
+			toggleLabel.appendChild(input);
+			toggleLabel.appendChild(swatch);
+			appendTextElement(toggleLabel, "span", "", label);
+			row.appendChild(toggleLabel);
+			appendTextElement(row, "span", "poi-count", String(info.count || 0));
+			poiToggles.appendChild(row);
+		});
 		renderPoiOverlay(data, selected);
 		updatePoiSummary(selected, data);
 		function applyFilter() {
@@ -378,12 +468,12 @@
 				if (!response.ok) {
 					throw new Error("poi fetch failed");
 				}
-				return response.json();
+				return safeJson(response, 512000);
 			})
 			.then(renderPoiToggles)
 			.catch(function () {
-				poiToggles.innerHTML = "";
-				poiOverlay.innerHTML = "";
+				clearNode(poiToggles);
+				clearNode(poiOverlay);
 			});
 	}
 

@@ -183,7 +183,7 @@ section {
 	display: grid;
 	grid-template-columns: minmax(0, 1fr) minmax(260px, 300px);
 	gap: 12px;
-	align-items: stretch;
+	align-items: start;
 	min-width: 0;
 }
 

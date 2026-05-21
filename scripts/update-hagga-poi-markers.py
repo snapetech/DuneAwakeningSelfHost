@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import pathlib
+import re
 import urllib.parse
 import urllib.request
 
@@ -17,6 +18,34 @@ SOURCE_URL = "https://awakening.wiki/api.php?" + urllib.parse.urlencode({
     "prop": "wikitext",
     "format": "json",
 })
+MAX_GROUPS = 64
+MAX_MARKERS = 5000
+MAX_TEXT_LENGTH = 120
+SAFE_GROUP_RE = re.compile(r"^[A-Za-z0-9 _:'()./-]{1,80}$")
+
+
+def clean_text(value, fallback=""):
+    text = str(value or fallback).strip()
+    text = re.sub(r"[\x00-\x1f\x7f]", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text[:MAX_TEXT_LENGTH]
+
+
+def clean_group_key(value):
+    key = clean_text(value)
+    if not SAFE_GROUP_RE.match(key):
+        key = re.sub(r"[^A-Za-z0-9 _:'()./-]+", "", key)[:80].strip()
+    return key
+
+
+def clean_url(value):
+    text = clean_text(value, "")
+    if not text:
+        return ""
+    parsed = urllib.parse.urlparse(text)
+    if parsed.scheme and parsed.scheme not in {"http", "https"}:
+        return ""
+    return text
 
 
 def fetch_source():
@@ -27,7 +56,7 @@ def fetch_source():
 
 
 def marker_id(group_key, marker, index):
-    return str(marker.get("id") or f"{group_key.lower()}-{index + 1}")
+    return clean_text(marker.get("id") or f"{group_key.lower()}-{index + 1}", f"{group_key.lower()}-{index + 1}")
 
 
 def main():
@@ -36,27 +65,35 @@ def main():
     source_markers = source.get("markers") or {}
     groups = {}
     markers = []
-    for group_key, rows in source_markers.items():
+    for group_key, rows in list(source_markers.items())[:MAX_GROUPS]:
+        safe_group_key = clean_group_key(group_key)
+        if not safe_group_key:
+            continue
         group = source_groups.get(group_key) or {}
-        groups[group_key] = {
-            "name": group.get("name") or group_key,
-            "icon": group.get("icon") or "",
+        groups[safe_group_key] = {
+            "name": clean_text(group.get("name"), safe_group_key),
+            "icon": clean_url(group.get("icon")),
             "count": len(rows or []),
         }
         for index, marker in enumerate(rows or []):
+            if len(markers) >= MAX_MARKERS:
+                break
             try:
                 x = float(marker["x"])
                 y = float(marker["y"])
             except (KeyError, TypeError, ValueError):
                 continue
+            if not (0 <= x <= 100000 and 0 <= y <= 100000):
+                continue
             markers.append({
-                "id": marker_id(group_key, marker, index),
-                "group": group_key,
-                "name": marker.get("name") or group.get("name") or group_key,
-                "article": marker.get("article") or "",
+                "id": marker_id(safe_group_key, marker, index),
+                "group": safe_group_key,
+                "name": clean_text(marker.get("name"), group.get("name") or safe_group_key),
+                "article": clean_text(marker.get("article"), ""),
                 "x": round(x, 2),
                 "y": round(y, 2),
             })
+        groups[safe_group_key]["count"] = sum(1 for marker in markers if marker["group"] == safe_group_key)
     payload = {
         "source": {
             "name": "Dune: Awakening Community Wiki Map:Hagga Basin",
