@@ -357,6 +357,21 @@ class ArtificialExchangeBotTest(unittest.TestCase):
             wrong = self.catalog_row("ItemA", category="tools/utility", category_mask=1, category_depth=2)
             self.assertEqual(bot.populator_category_skip_reason(wrong), "source category mismatch expected weapons/ranged")
 
+    def test_verified_category_map_overrides_catalog_masks(self):
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_CATEGORY_SEEDING_VERIFIED"] = "true"
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_SOURCE_CATEGORY"] = "false"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "verified-category-map.json"
+            path.write_text('{"items":{"ItemA":{"category_mask":258,"category_depth":2}}}', encoding="utf-8")
+            bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_VERIFIED_CATEGORY_MAP"] = str(path)
+            row = self.catalog_row("ItemA", category_mask=1, category_depth=1)
+            bot.VERIFIED_CATEGORY_MAP_CACHE.clear()
+            self.assertEqual(bot.populator_category_skip_reason(row), "")
+            self.assertEqual(bot.populator_category_mask(row), 258)
+            self.assertEqual(bot.populator_category_depth(row), 2)
+            missing = self.catalog_row("ItemB", category_mask=1, category_depth=1)
+            self.assertEqual(bot.populator_category_skip_reason(missing), "missing verified category")
+
     def test_blueprint_identity_is_restricted_to_blueprint_categories(self):
         mask, depth = bot.CATEGORY_MASKS["weapons/ranged"]
         row = self.catalog_row("D_T4_Rifle_Blueprint", category="weapons/ranged", category_mask=mask, category_depth=depth, notes="tier=4")

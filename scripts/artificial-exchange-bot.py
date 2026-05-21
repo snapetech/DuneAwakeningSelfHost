@@ -16,7 +16,9 @@ CATALOG_PATH = STATE_DIR / "catalog.json"
 AUDIT_PATH = STATE_DIR / "bot-audit.jsonl"
 STATE_PATH = STATE_DIR / "bot-state.json"
 SOURCE_CATEGORY_MAP_PATH = STATE_DIR / "source-category-map.json"
+VERIFIED_CATEGORY_MAP_PATH = STATE_DIR / "verified-category-map.json"
 SOURCE_CATEGORY_MAP_CACHE = {}
+VERIFIED_CATEGORY_MAP_CACHE = {}
 CONFIRM = "RUN ARTIFICIAL EXCHANGE"
 CLAIM_CONFIRM = "CLAIM ARTIFICIAL EXCHANGE"
 FUND_CONFIRM = "FUND ARTIFICIAL EXCHANGE"
@@ -272,6 +274,25 @@ def load_source_category_map(path=None):
     return SOURCE_CATEGORY_MAP_CACHE[cache_key]
 
 
+def load_verified_category_map(path=None):
+    source_path = pathlib.Path(path or VERIFIED_CATEGORY_MAP_PATH)
+    if not source_path.is_absolute():
+        source_path = ROOT / source_path
+    cache_key = str(source_path)
+    if cache_key in VERIFIED_CATEGORY_MAP_CACHE:
+        return VERIFIED_CATEGORY_MAP_CACHE[cache_key]
+    payload = load_json(source_path, {"items": {}})
+    VERIFIED_CATEGORY_MAP_CACHE[cache_key] = payload.get("items", {})
+    return VERIFIED_CATEGORY_MAP_CACHE[cache_key]
+
+
+def verified_category_row(row):
+    if not env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_CATEGORY_SEEDING_VERIFIED", False):
+        return None
+    verified_map = load_verified_category_map(pathlib.Path(env("DUNE_ARTIFICIAL_EXCHANGE_VERIFIED_CATEGORY_MAP", str(VERIFIED_CATEGORY_MAP_PATH))))
+    return verified_map.get(row["template_id"])
+
+
 def is_augment_template(row):
     text = " ".join(str(row.get(key) or "") for key in ("template_id", "display_name", "category", "notes")).lower()
     if "module" in text:
@@ -337,6 +358,9 @@ def has_blueprint_identity(row):
 
 def populator_category_skip_reason(row):
     category = str(row.get("category") or "")
+    verified_row = verified_category_row(row)
+    if env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_CATEGORY_SEEDING_VERIFIED", False) and not verified_row:
+        return "missing verified category"
     if env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_SOURCE_CATEGORY", True):
         source_map = load_source_category_map(pathlib.Path(env("DUNE_ARTIFICIAL_EXCHANGE_SOURCE_CATEGORY_MAP", str(SOURCE_CATEGORY_MAP_PATH))))
         source_row = source_map.get(row["template_id"])
@@ -344,7 +368,7 @@ def populator_category_skip_reason(row):
             return "missing source category"
         if source_row.get("category") != category:
             return f"source category mismatch expected {source_row.get('category')}"
-        if int(source_row.get("category_mask") or -1) != populator_category_mask(row) or int(source_row.get("category_depth") or -1) != populator_category_depth(row):
+        if not verified_row and (int(source_row.get("category_mask") or -1) != populator_category_mask(row) or int(source_row.get("category_depth") or -1) != populator_category_depth(row)):
             return f"source category mask mismatch expected {source_row.get('category_mask')}/{source_row.get('category_depth')}"
     if env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_SKIP_UNKNOWN_CATEGORY", True):
         if category == "unknown" or (populator_category_mask(row) == 0 and populator_category_depth(row) == 0):
@@ -548,10 +572,16 @@ def populator_quality_level(row):
 
 
 def populator_category_mask(row):
+    verified_row = verified_category_row(row)
+    if verified_row:
+        return int(verified_row.get("category_mask") or 0)
     return int(row.get("category_mask") if row.get("category_mask") is not None else env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_CATEGORY_MASK", "0"))
 
 
 def populator_category_depth(row):
+    verified_row = verified_category_row(row)
+    if verified_row:
+        return int(verified_row.get("category_depth") or 0)
     return int(row.get("category_depth") if row.get("category_depth") is not None else env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_CATEGORY_DEPTH", "0"))
 
 
