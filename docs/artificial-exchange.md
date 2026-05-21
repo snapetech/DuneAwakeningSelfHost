@@ -416,8 +416,9 @@ transaction.
 
 The populator seeds NPC Exchange listings from enabled catalog rows. By default
 it only uses rows with `sellable_status=validated`, jitters prices around
-`baseline_price`, gives listings a jittered expiration, and refuses to seed the
-lowest observed item grade (`quality_level=0`).
+the configured `price_floor..price_ceiling` range, gives listings a jittered
+expiration, and refuses to seed catalog rows below tier 2 or rows without a
+dune.exchange market price by default.
 
 Known grade boundary:
 
@@ -425,9 +426,9 @@ Known grade boundary:
 - The tooling observed and can create `quality_level=0` and `quality_level=1`.
 - The catalog/import metadata exposes tier markers through at least tier `6`.
 - Operational answer: there are at least seven numeric quality/tier buckets if
-  counting `0` through `6`; the populator minimum is set to `1`, so it skips the
-  lowest bucket by default. Confidence: moderate because the DB stores numeric
-  levels but does not include a canonical grade-name table.
+  counting `0` through `6`; the populator minimum is set to `2`, so it skips
+  tier 0 and tier 1 by default. Confidence: moderate because the DB stores
+  numeric levels but does not include a canonical grade-name table.
 
 Current category limitation:
 
@@ -620,14 +621,16 @@ DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_EXPIRE_PROBABILITY=0.10
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_FORCE_COUNT=
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_VALIDATION_PRICE=
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_VALIDATED=true
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_MARKET_PRICE=true
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_TIER=2
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_STACK_SIZE=1
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MAX_STACK_SIZE=1
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_CATEGORY_MASK=0
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_CATEGORY_DEPTH=0
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_DURABILITY_CUR=1
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_DURABILITY_MAX=1
-DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_QUALITY_LEVEL=1
-DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_QUALITY_LEVEL=1
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_QUALITY_LEVEL=2
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_QUALITY_LEVEL=2
 ```
 
 ## Bootstrap Catalog

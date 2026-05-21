@@ -337,11 +337,14 @@ Current typed knobs:
 | `pvpResourceMultiplier` | `UserEngine.ini` | `[ConsoleVariables] SecurityZones.PvpResourceMultiplier` | high | low |
 | `forcePvpAllPartitions` | `UserGame.ini` | `[/Script/DuneSandbox.PvpPveSettings] m_bShouldForceEnablePvpOnAllPartitions` | high | medium |
 | `securityZonesEnabled` | `UserGame.ini` | `[/Script/DuneSandbox.SecurityZonesSubsystem] m_bAreSecurityZonesEnabled` | high | medium |
+| `characterRecustomizationCost` | `UserGame.ini` | `[/Script/DuneSandbox.CharacterRecustomizerSubsystem] m_CostAmount` | high | low |
 | `buildingShelterThreshold` | `UserGame.ini` | `[/Script/DuneSandbox.ShelterSettings] m_BuildingShelterThreshold` | moderate | experimental |
 | `placeableShelterThreshold` | `UserGame.ini` | `[/Script/DuneSandbox.ShelterSettings] m_PlaceableShelterThreshold` | moderate | experimental |
 | `shelteredProtectionThreshold` | `UserGame.ini` | `[/Script/DuneSandbox.HydrationSubsystem] ShelteredProtectionThreshold` | low | experimental |
 
 Typed writes create a backup under `backups/admin-panel` before writing the config file. Most of these values require restarting the affected map containers.
+
+Character recustomization is currently overridden to `0` in `config/UserGame.ini`, making it free instead of the shipped/default `5000` Solaris. Use the `characterRecustomizationCost` typed knob to restore or tune the cost.
 
 The typed layer deliberately does not expose Coriolis cycle seed, DB wipe, or cycle-end restart fields.
 

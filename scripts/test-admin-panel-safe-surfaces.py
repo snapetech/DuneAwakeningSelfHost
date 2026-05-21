@@ -150,13 +150,17 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
     def test_typed_knob_validation_and_backup_write(self):
         self.assertEqual(self.panel.validate_typed_knob_value("globalMiningMultiplier", "2.5"), "2.5")
         self.assertEqual(self.panel.validate_typed_knob_value("sandstormEnabled", "false"), "0")
+        self.assertEqual(self.panel.validate_typed_knob_value("characterRecustomizationCost", "0"), "0")
         with self.assertRaises(ValueError):
             self.panel.validate_typed_knob_value("buildingShelterThreshold", "2")
+        with self.assertRaises(ValueError):
+            self.panel.validate_typed_knob_value("characterRecustomizationCost", "-1")
 
         result = self.panel.write_typed_knobs({
             "globalMiningMultiplier": "2.5",
             "sandstormEnabled": "false",
             "forcePvpAllPartitions": "true",
+            "characterRecustomizationCost": "0",
         })
         self.assertTrue(result["ok"])
         self.assertTrue(result["restartRequired"])
@@ -165,6 +169,8 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn("Dune.GlobalMiningOutputMultiplier=2.5", engine)
         self.assertIn("Sandstorm.Enabled=0", engine)
         self.assertIn("m_bShouldForceEnablePvpOnAllPartitions=True", game)
+        self.assertIn("[/Script/DuneSandbox.CharacterRecustomizerSubsystem]", game)
+        self.assertIn("m_CostAmount=0", game)
         backups = list((self.workspace / "backups" / "admin-panel").glob("*User*.ini"))
         self.assertGreaterEqual(len(backups), 2)
 

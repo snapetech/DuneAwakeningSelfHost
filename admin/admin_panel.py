@@ -386,6 +386,7 @@ TYPED_CONFIG_KNOBS = {
     "pvpResourceMultiplier": {"label": "PvP resource multiplier", "file": "UserEngine.ini", "section": "ConsoleVariables", "key": "SecurityZones.PvpResourceMultiplier", "type": "float", "min": 0, "max": 100, "restart": True, "confidence": "high", "risk": "low", "why": "Console variable is already present in config/UserEngine.ini.", "default": "2.5"},
     "forcePvpAllPartitions": {"label": "Force PvP on all partitions", "file": "UserGame.ini", "section": "/Script/DuneSandbox.PvpPveSettings", "key": "m_bShouldForceEnablePvpOnAllPartitions", "type": "bool", "restart": True, "confidence": "high", "risk": "medium", "why": "Documented shipped PvP/PvE setting.", "default": "False"},
     "securityZonesEnabled": {"label": "Security zones enabled", "file": "UserGame.ini", "section": "/Script/DuneSandbox.SecurityZonesSubsystem", "key": "m_bAreSecurityZonesEnabled", "type": "bool", "restart": True, "confidence": "high", "risk": "medium", "why": "Documented shipped security-zone setting.", "default": "True"},
+    "characterRecustomizationCost": {"label": "Character recustomization cost", "file": "UserGame.ini", "section": "/Script/DuneSandbox.CharacterRecustomizerSubsystem", "key": "m_CostAmount", "type": "int", "min": 0, "max": 1000000000, "restart": True, "confidence": "high", "risk": "low", "why": "Shipped CharacterRecustomizerSubsystem Solaris cost. Set 0 to make recustomization free.", "default": "5000"},
     "buildingShelterThreshold": {"label": "Building shelter threshold", "file": "UserGame.ini", "section": "/Script/DuneSandbox.ShelterSettings", "key": "m_BuildingShelterThreshold", "type": "float", "min": 0, "max": 1, "restart": True, "confidence": "moderate", "risk": "experimental", "why": "Shipped ShelterSettings key; hydration/base effect needs live validation.", "default": "0.5"},
     "placeableShelterThreshold": {"label": "Placeable shelter threshold", "file": "UserGame.ini", "section": "/Script/DuneSandbox.ShelterSettings", "key": "m_PlaceableShelterThreshold", "type": "float", "min": 0, "max": 1, "restart": True, "confidence": "moderate", "risk": "experimental", "why": "Shipped ShelterSettings key; hydration/base effect needs live validation.", "default": "0.5"},
     "shelteredProtectionThreshold": {"label": "Sheltered hydration protection threshold", "file": "UserGame.ini", "section": "/Script/DuneSandbox.HydrationSubsystem", "key": "ShelteredProtectionThreshold", "type": "float", "min": 0, "max": 1, "restart": True, "confidence": "low", "risk": "experimental", "why": "Candidate override; owner/asset path is not proven.", "default": "0.5"},
@@ -1791,6 +1792,14 @@ def validate_typed_knob_value(knob_id, value):
         except ValueError as exc:
             raise ValueError(f"{knob_id} must be a number") from exc
         if number < float(meta.get("min", -10**9)) or number > float(meta.get("max", 10**9)):
+            raise ValueError(f"{knob_id} is outside allowed range")
+        return str(number)
+    if kind == "int":
+        try:
+            number = int(str(value).strip())
+        except ValueError as exc:
+            raise ValueError(f"{knob_id} must be an integer") from exc
+        if number < int(meta.get("min", -10**9)) or number > int(meta.get("max", 10**9)):
             raise ValueError(f"{knob_id} is outside allowed range")
         return str(number)
     if kind == "spice_caps":

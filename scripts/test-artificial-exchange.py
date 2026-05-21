@@ -21,6 +21,7 @@ def load_script(name, path):
 catalog = load_script("build_exchange_catalog_under_test", "scripts/build-exchange-catalog.py")
 bot = load_script("artificial_exchange_bot_under_test", "scripts/artificial-exchange-bot.py")
 research = load_script("research_exchange_prices_under_test", "scripts/research-exchange-prices.py")
+dune_exchange_import = load_script("import_dune_exchange_prices_under_test", "scripts/import-dune-exchange-prices.py")
 
 
 class ArtificialExchangeCatalogTest(unittest.TestCase):
@@ -47,7 +48,7 @@ class ArtificialExchangeCatalogTest(unittest.TestCase):
             "enabled": "true",
             "source": "manual",
             "confidence": "moderate",
-            "notes": "",
+            "notes": "tier=2",
         }
         row.update(overrides)
         return row
@@ -147,7 +148,7 @@ class ArtificialExchangeBotTest(unittest.TestCase):
         return row
 
     def catalog_row(self, template_id="ItemA", **overrides):
-        row = {"template_id": template_id, "max_buy_price": 80, "baseline_price": 100, "price_floor": None, "price_ceiling": None, "enabled": True, "liquidity_tier": "medium", "sellable_status": "validated", "category_mask": 0, "category_depth": 0}
+        row = {"template_id": template_id, "max_buy_price": 80, "baseline_price": 100, "price_floor": None, "price_ceiling": None, "enabled": True, "liquidity_tier": "medium", "sellable_status": "validated", "category_mask": 0, "category_depth": 0, "source": "dune.exchange+midpoint-floor", "notes": "tier=2; price_ceiling=dune.exchange averagePrice"}
         row.update(overrides)
         return row
 
@@ -234,6 +235,9 @@ class ArtificialExchangeBotTest(unittest.TestCase):
             "disabled": self.catalog_row("disabled", enabled=False),
             "missing-price": self.catalog_row("missing-price", baseline_price=""),
             "unvalidated": self.catalog_row("unvalidated", sellable_status="observed"),
+            "tier-one": self.catalog_row("tier-one", notes="tier=1"),
+            "unknown-tier": self.catalog_row("unknown-tier", notes=""),
+            "missing-market": self.catalog_row("missing-market", source="manual", notes="tier=2"),
         }
         self.assertEqual([row["template_id"] for row in bot.populator_catalog_rows(catalog_rows)], ["enabled"])
 
@@ -241,6 +245,12 @@ class ArtificialExchangeBotTest(unittest.TestCase):
         self.assertEqual(
             [row["template_id"] for row in bot.populator_catalog_rows(catalog_rows)],
             ["enabled", "unvalidated"],
+        )
+
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_MARKET_PRICE"] = "false"
+        self.assertEqual(
+            [row["template_id"] for row in bot.populator_catalog_rows(catalog_rows)],
+            ["enabled", "unvalidated", "missing-market"],
         )
 
     def test_populator_price_and_expiry_jitter_bounds(self):
@@ -263,7 +273,7 @@ class ArtificialExchangeBotTest(unittest.TestCase):
     def test_planned_unique_price_uses_middle_band_for_floor_ceiling(self):
         row = self.catalog_row(price_floor=100, price_ceiling=1100)
         with mock.patch.object(bot.random, "choice", side_effect=lambda values: values[0]):
-            self.assertEqual(bot.planned_unique_price(row, 20, {}), 450)
+            self.assertEqual(bot.planned_unique_price(row, 20, {}), 100)
 
     def test_planned_unique_price_samples_large_floor_ceiling_range(self):
         row = self.catalog_row(price_floor=100, price_ceiling=100000000)
@@ -295,13 +305,13 @@ class ArtificialExchangeBotTest(unittest.TestCase):
         self.assertEqual(bot.seeded_order_ids([{"id": "7"}, {"id": 8}]), {7, 8})
 
     def test_populator_quality_rejects_lowest_grade_by_default(self):
-        self.assertEqual(bot.populator_quality_level(self.catalog_row()), 1)
-        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_QUALITY_LEVEL"] = "0"
+        self.assertEqual(bot.populator_quality_level(self.catalog_row(notes="tier=4")), 4)
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_QUALITY_LEVEL"] = "1"
         with self.assertRaises(RuntimeError):
-            bot.populator_quality_level(self.catalog_row())
+            bot.populator_quality_level(self.catalog_row(notes=""))
 
-        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_QUALITY_LEVEL"] = "0"
-        self.assertEqual(bot.populator_quality_level(self.catalog_row()), 0)
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_QUALITY_LEVEL"] = "1"
+        self.assertEqual(bot.populator_quality_level(self.catalog_row(notes="")), 1)
 
     def test_populator_category_uses_row_before_env(self):
         bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_CATEGORY_MASK"] = "99"
@@ -309,6 +319,9 @@ class ArtificialExchangeBotTest(unittest.TestCase):
         row = self.catalog_row(category_mask=258, category_depth=2)
         self.assertEqual(bot.populator_category_mask(row), 258)
         self.assertEqual(bot.populator_category_depth(row), 2)
+
+    def test_dune_exchange_import_sets_midpoint_floor(self):
+        self.assertEqual(dune_exchange_import.midpoint_floor(100, 1100), 600)
 
 
 if __name__ == "__main__":

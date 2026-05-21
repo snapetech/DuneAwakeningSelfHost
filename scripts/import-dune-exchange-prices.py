@@ -70,8 +70,45 @@ def choose_ceiling(row, market_row, price_field):
     if value in (None, ""):
         value = market_row.get("lowestPrice")
     ceiling = parse_int(value)
-    floor = parse_int(row.get("price_floor") or row.get("baseline_price"), 1)
-    return max(floor, ceiling)
+    game_price = parse_int(row.get("price_floor") or row.get("baseline_price"), 1)
+    return max(game_price, ceiling)
+
+
+def midpoint_floor(game_price, market_price):
+    game_price = max(1, int(game_price))
+    market_price = max(game_price, int(market_price))
+    return game_price + int(round((market_price - game_price) * 0.50))
+
+
+def strip_price_notes(notes):
+    prefixes = (
+        "game_file_price=",
+        "price_floor=",
+        "price_ceiling=",
+        "market_item=",
+        "market_avg=",
+        "market_low=",
+        "market_high=",
+        "market_listings=",
+        "market_timestamp=",
+    )
+    kept = []
+    for part in str(notes or "").split(";"):
+        part = part.strip()
+        if not part:
+            continue
+        if any(part.startswith(prefix) for prefix in prefixes):
+            continue
+        kept.append(part)
+    return "; ".join(kept)
+
+
+def original_game_price(row):
+    notes = str(row.get("notes") or "")
+    match = re.search(r"(?:^|; )game_file_price=(\d+)(?:;|$)", notes)
+    if match:
+        return parse_int(match.group(1), 1)
+    return parse_int(row.get("price_floor") or row.get("baseline_price"), 1)
 
 
 def update_catalog(catalog_path, market_rows, price_field):
@@ -87,26 +124,30 @@ def update_catalog(catalog_path, market_rows, price_field):
     index = market_index(market_rows)
     matched = []
     for row in rows:
-        floor = parse_int(row.get("price_floor") or row.get("baseline_price"), 1)
-        row["price_floor"] = str(floor)
+        game_price = original_game_price(row)
         key = norm(row.get("display_name") or row.get("template_id"))
         market = index.get(key)
         if not market and row.get("template_id", "").endswith("_Schematic"):
             market = index.get(norm((row.get("display_name") or "") + " Schematic"))
         if not market:
-            row["price_ceiling"] = row.get("price_ceiling") or row["price_floor"]
+            floor = midpoint_floor(game_price, parse_int(row.get("price_ceiling") or game_price, game_price))
+            row["price_floor"] = str(floor)
+            row["price_ceiling"] = row.get("price_ceiling") or str(max(floor, game_price))
             continue
         ceiling = choose_ceiling(row, market, price_field)
+        floor = midpoint_floor(game_price, ceiling)
+        row["price_floor"] = str(floor)
         row["price_ceiling"] = str(ceiling)
-        midpoint = floor + int(round((ceiling - floor) * 0.55))
-        row["baseline_price"] = str(max(1, midpoint))
+        row["baseline_price"] = str(floor)
         row["max_buy_price"] = str(ceiling)
-        row["source"] = "dune.exchange+game-file-floor"
+        row["source"] = "dune.exchange+midpoint-floor"
         row["confidence"] = "moderate"
+        base_notes = strip_price_notes(row.get("notes", ""))
         row["notes"] = (
-            f"{row.get('notes', '').strip()}; " if row.get("notes") else ""
+            f"{base_notes}; " if base_notes else ""
         ) + (
-            "price_floor=game-file; "
+            f"game_file_price={game_price}; "
+            "price_floor=50pct_between_game_file_and_dune_exchange; "
             f"price_ceiling=dune.exchange {price_field}; "
             f"market_item={market.get('itemName')}; "
             f"market_avg={market.get('averagePrice')}; "
@@ -120,10 +161,11 @@ def update_catalog(catalog_path, market_rows, price_field):
             "display_name": row["display_name"],
             "floor": floor,
             "ceiling": ceiling,
+            "game_price": game_price,
             "market_item": market.get("itemName"),
         })
     with catalog_path.open("w", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(fh, fieldnames=fieldnames)
+        writer = csv.DictWriter(fh, fieldnames=fieldnames, lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
     return matched, len(rows)

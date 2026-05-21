@@ -89,6 +89,7 @@ Safe candidates for admin editing:
 - `m_bShouldForceEnablePvpOnAllPartitions`: force PvP across all partitions.
 - `m_PvpEnabledPartitions`: explicitly enable PvP on listed partitions.
 - `m_bAreSecurityZonesEnabled`: enable/disable security zones.
+- `m_CostAmount` under `[/Script/DuneSandbox.CharacterRecustomizerSubsystem]`: Solaris cost for character recustomization. The local override sets this to `0`; shipped/default is `5000`.
 - `UpdateRateInSeconds`: item deterioration update cadence.
 - `m_bCoriolisAutoSpawnEnabled`: Coriolis storm auto-spawn behavior.
 - `m_DefaultReconnectGracePeriodSeconds`: normal-map reconnect grace/logoff persistence window; set to `0` for immediate disconnect/logout expiry.

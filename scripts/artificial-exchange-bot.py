@@ -5,6 +5,7 @@ import json
 import os
 import pathlib
 import random
+import re
 import sys
 import time
 import traceback
@@ -200,8 +201,36 @@ def populator_catalog_rows(catalog):
             continue
         if env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_VALIDATED", True) and row.get("sellable_status") != "validated":
             continue
+        tier = catalog_tier(row)
+        if tier is None or tier < int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_TIER", "2")):
+            continue
+        if env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_MARKET_PRICE", True) and not catalog_has_market_price(row):
+            continue
         rows.append(row)
     return rows
+
+
+def catalog_tier(row):
+    value = row.get("tier")
+    if value not in (None, ""):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+    notes = str(row.get("notes") or "")
+    match = re.search(r"(?:^|[;,\s])tier\s*=\s*(\d+)(?:$|[;,\s])", notes, re.IGNORECASE)
+    if match:
+        return int(match.group(1))
+    match = re.search(r"(?:^|[^A-Za-z0-9])T(?:ier)?[_ -]?(\d+)(?:$|[^A-Za-z0-9])", str(row.get("template_id") or ""), re.IGNORECASE)
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def catalog_has_market_price(row):
+    if str(row.get("source") or "").startswith("dune.exchange"):
+        return True
+    return "price_ceiling=dune.exchange" in str(row.get("notes") or "")
 
 
 def jitter_price(baseline_price, jitter_pct):
@@ -227,8 +256,8 @@ def populator_price_bounds(row, jitter_pct):
         low = max(1, int(floor))
         high = max(low, int(ceiling))
         if high > low:
-            lower_pct = int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_RANGE_LOW_PCT", "35"))
-            upper_pct = int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_RANGE_HIGH_PCT", "70"))
+            lower_pct = int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_RANGE_LOW_PCT", "0"))
+            upper_pct = int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_RANGE_HIGH_PCT", "100"))
             lower_pct = min(100, max(0, lower_pct))
             upper_pct = min(100, max(lower_pct, upper_pct))
             spread = high - low
@@ -307,8 +336,8 @@ def free_position_candidates(occupied_positions, needed_count, start=0, max_posi
 
 
 def populator_quality_level(row):
-    configured = int(row.get("quality_level") or env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_QUALITY_LEVEL", "1"))
-    minimum = int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_QUALITY_LEVEL", "1"))
+    configured = int(row.get("quality_level") or catalog_tier(row) or env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_QUALITY_LEVEL", "2"))
+    minimum = int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_QUALITY_LEVEL", "2"))
     if configured < minimum:
         raise RuntimeError(f"populator quality_level {configured} is below minimum {minimum}")
     return configured

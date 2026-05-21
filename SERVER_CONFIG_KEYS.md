@@ -41,6 +41,7 @@ Evidence levels:
 | `[/Script/DuneSandbox.BuildingSettings]` | `m_BuildingBlueprintMaxExtensions` | `4` | Known | Maximum number of times a building blueprint / landclaim can be expanded. Shipped default is `4`. This is not the active base-count knob. |
 | `[/Script/DuneSandbox.BuildingSettings]` | `m_BaseBackupMaxExtensions` | `8` | Known | Maximum extension count used by base backup/reconstruction-related data. Shipped default is `8`. This is not the active base-count knob. |
 | `[/Script/DuneSandbox.BuildingSettings]` | `m_bBuildingRestrictionLimitsEnabled` | `True` | Known | Enables server-side building restriction limits. Funcom's setup comment says this must also be applied to each client. |
+| `[/Script/DuneSandbox.CharacterRecustomizerSubsystem]` | `m_CostAmount` | `0` | Known | Solaris cost for character recustomization. Shipped/default observed in build `1963158` is `5000`; this repo makes it free. |
 
 ## Building Knob Notes
 
