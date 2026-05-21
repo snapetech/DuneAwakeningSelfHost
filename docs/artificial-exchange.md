@@ -27,6 +27,12 @@ Files:
 
 - `config/artificial-exchange-prices.csv`: reviewed manual catalog rows.
 - `scripts/build-exchange-catalog.py`: catalog builder.
+- `scripts/import-awakening-wiki-items.py`: imports Community Wiki API item
+  metadata and game-file-derived prices into a snapshot CSV.
+- `scripts/research-exchange-prices.py`: crawls Awakening Wiki page wikitext
+  and extracts exact item ids with `Base Vendor Price` fields.
+- `scripts/build-exchange-bootstrap-catalog.py`: heuristic broad catalog builder
+  from locally observed templates.
 - `scripts/artificial-exchange-bot.py`: buyer, settlement, funding, readiness,
   and populator CLI.
 - `scripts/artificial-exchange-smoke.sh`: safe end-to-end smoke check.
@@ -93,7 +99,7 @@ Reason: live validation showed unsafe behavior on this server build.
 Catalog fields:
 
 ```csv
-template_id,display_name,category,sellable_status,baseline_price,max_buy_price,liquidity_tier,enabled,source,confidence,notes
+template_id,display_name,category,category_mask,category_depth,sellable_status,baseline_price,max_buy_price,liquidity_tier,enabled,source,confidence,notes
 ```
 
 Meaning:
@@ -101,6 +107,8 @@ Meaning:
 - `template_id`: item template id used by Dune DB rows.
 - `display_name`: human label for operators.
 - `category`: operator grouping only.
+- `category_mask` and `category_depth`: native Exchange category filter values
+  used when seeding or validating category counts.
 - `sellable_status`: expected values are `known`, `observed`, or `validated`.
 - `baseline_price`: reference market price.
 - `max_buy_price`: highest price the artificial buyer may pay.
@@ -110,17 +118,43 @@ Meaning:
 - `confidence`: `low`, `moderate`, or `high`.
 - `notes`: operator comments.
 
-Current reviewed manual seed:
-
-```csv
-PowerPack,PowerPack,test,validated,123,123,high,true,live-test,high,validated via order 5 live purchase and settlement
-```
+The old one-row `PowerPack` live-test catalog entry is disabled. It remains
+only as a historical validation record and must not be used as the production
+seed source.
 
 ## Catalog Pipeline
 
 Build without DB:
 
 ```bash
+python3 scripts/build-exchange-catalog.py --no-db
+```
+
+Refresh the broad community/game-file snapshot first:
+
+```bash
+python3 scripts/import-awakening-wiki-items.py
+python3 scripts/build-exchange-catalog.py --no-db
+```
+
+Promote the imported game-file rows for full population:
+
+```bash
+python3 scripts/import-awakening-wiki-items.py \
+  --enabled \
+  --sellable-status validated \
+  --source awakening-wiki-game-files-full-populate \
+  --confidence moderate \
+  --output /tmp/awakening-wiki-full-populate.csv
+```
+
+Research exact wiki page vendor prices:
+
+```bash
+python3 scripts/research-exchange-prices.py \
+  --crawl-allpages \
+  --no-search-fallback \
+  --output data/exchange-price-snapshots/wiki-base-vendor-prices.csv
 python3 scripts/build-exchange-catalog.py --no-db
 ```
 
@@ -140,6 +174,20 @@ Sources, in priority order:
 Manual rows override everything else. Snapshot rows are grouped by template and
 use median pricing, with moderate confidence after at least three observations.
 DB-observed rows are disabled until reviewed.
+
+The `awakening-wiki-items.csv` snapshot is sourced from
+`https://api.awakening.wiki/items`. The API describes itself as Community Wiki
+data sourced from game files. Imported rows use `market_price` first and
+`base_vendor_price` as a fallback, remain `enabled=false`, and should be treated
+as broad reference coverage rather than reviewed live-market prices.
+
+The `wiki-base-vendor-prices.csv` snapshot is sourced from wiki page wikitext at
+`https://awakening.wiki`. The extractor only accepts pages that expose an exact
+`ITEMID` marker and a numeric `Base Vendor Price` field. Confidence: high for
+the extracted price matching the wiki page, moderate for whether that price is
+the right player-market baseline without operator review. Example source pages
+validated during development: `Plant Fiber`, `Power Pack Mk1`, and
+`Scrap Metal Knife`.
 
 Validation behavior:
 
@@ -315,16 +363,28 @@ it only uses rows with `sellable_status=validated`, jitters prices around
 `baseline_price`, gives listings a jittered expiration, and refuses to seed the
 lowest observed item grade (`quality_level=0`).
 
+Known grade boundary:
+
+- The local Exchange and item tables expose numeric `quality_level` values.
+- The tooling observed and can create `quality_level=0` and `quality_level=1`.
+- The catalog/import metadata exposes tier markers through at least tier `6`.
+- Operational answer: there are at least seven numeric quality/tier buckets if
+  counting `0` through `6`; the populator minimum is set to `1`, so it skips the
+  lowest bucket by default. Confidence: moderate because the DB stores numeric
+  levels but does not include a canonical grade-name table.
+
 Current category limitation:
 
-- The reviewed catalog currently has one enabled row: `PowerPack`.
 - The live `dune_exchange_categories_hash` table currently exposes only integer
   hashes, not category names or a hierarchy.
-- The populator can set global `category_mask` and `category_depth`, but the
-  catalog does not yet carry per-row native category mask/depth values.
-- Because of that, it cannot truthfully populate 20 listings in every native
-  Exchange subcategory yet. It can only populate the reviewed catalog rows under
-  one configured mask/depth until category metadata is mapped.
+- `try_update_exchange_categories_hash(...)` shows that category mappings are
+  normally supplied by the game/client through `update_sell_orders_categories`.
+- The bootstrap catalog therefore uses deterministic server-side category masks
+  and depths. Native DB filtering through `get_exchange_sell_orders(... mask,
+  depth)` works with those masks. Confidence: high.
+- Whether the live game UI labels those exact masks as the expected category
+  names depends on the client category tree. Confidence: moderate until observed
+  in-client.
 
 Single-template safety:
 
@@ -361,6 +421,56 @@ Run the populator loop:
 ```bash
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ENABLED=true \
   python3 scripts/artificial-exchange-bot.py --populate-loop
+```
+
+Populate to a minimum per available catalog subcategory:
+
+```bash
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ENABLED=true \
+  python3 scripts/artificial-exchange-bot.py \
+  --populate-categories-once \
+  --populator-owner-id 17 \
+  --populator-source-inventory-id 485 \
+  --populator-target-min-orders 20
+```
+
+Apply mode:
+
+```bash
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ENABLED=true \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_DRY_RUN=false \
+  python3 scripts/artificial-exchange-bot.py \
+  --populate-categories-once \
+  --apply \
+  --populator-owner-id 17 \
+  --populator-source-inventory-id 485 \
+  --populator-target-min-orders 20 \
+  --confirm "POPULATE ARTIFICIAL EXCHANGE"
+```
+
+Populate one listing for every enabled catalog template that is not already
+seeded:
+
+```bash
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ENABLED=true \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_DRY_RUN=true \
+  python3 scripts/artificial-exchange-bot.py \
+  --populate-all-once \
+  --populator-owner-id 17 \
+  --populator-source-inventory-id 485
+```
+
+Apply mode:
+
+```bash
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ENABLED=true \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_DRY_RUN=false \
+  python3 scripts/artificial-exchange-bot.py \
+  --populate-all-once \
+  --apply \
+  --populator-owner-id 17 \
+  --populator-source-inventory-id 485 \
+  --confirm "POPULATE ARTIFICIAL EXCHANGE"
 ```
 
 Run expiry and over-cap cleanup for seeded NPC listings:
@@ -464,6 +574,71 @@ DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_QUALITY_LEVEL=1
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_QUALITY_LEVEL=1
 ```
 
+## Bootstrap Catalog
+
+Generate a broad heuristic catalog from locally observed templates:
+
+```bash
+python3 scripts/build-exchange-bootstrap-catalog.py --limit-per-category 20
+python3 scripts/build-exchange-catalog.py
+```
+
+The bootstrap builder reads templates from:
+
+- `dune.items`
+- `dune.vehicle_modules`
+- `dune.landsraad_house_rewards`
+- `dune.landsraad_task_rewards`
+
+It skips obvious non-market entries:
+
+- emotes
+- contract items
+- SolarisCoin
+- swatches and dye packs
+- building blueprints
+- known internal/test-looking ids
+
+It classifies by template-id heuristics into these subcategories:
+
+- `resources/raw`
+- `resources/refined`
+- `resources/components`
+- `consumables/medical`
+- `tools/mining`
+- `tools/utility`
+- `weapons/melee`
+- `weapons/ranged`
+- `armor/combat`
+- `armor/stillsuit`
+- `armor/social`
+- `vehicles/sandbike`
+- `vehicles/ornithopter`
+- `vehicles/parts`
+- `schematics/weapons`
+- `schematics/armor`
+- `schematics/vehicles`
+
+The generated rows are marked:
+
+- `sellable_status=observed`
+- `enabled=false`
+- `source=local-bootstrap`
+- `confidence=low`
+
+That means they are discovery placeholders only. Prices are heuristic category
+defaults with simple tier multipliers and are not production prices. Confidence:
+low. Do not use them for live market seeding.
+
+There is an explicit unsafe override:
+
+```bash
+python3 scripts/build-exchange-bootstrap-catalog.py --enable-heuristic-prices
+```
+
+That marks heuristic rows as enabled and validated. Use it only for isolated
+test servers, never for the real market population.
+
 ## Services
 
 Render/install buyer service:
@@ -495,7 +670,8 @@ The service unit:
   `/etc/systemd/system`
 - uses `Restart=always` so it comes back after process crashes
 
-Run buyer and populator as separate services. There is no combined mode.
+Prefer buyer and populator as separate services for clearer operations. The
+installer also supports `both` for a combined process when explicitly selected.
 
 ## Command Reference
 
@@ -540,6 +716,8 @@ Populator:
 ```bash
 python3 scripts/artificial-exchange-bot.py --populate-once
 python3 scripts/artificial-exchange-bot.py --populate-loop
+python3 scripts/artificial-exchange-bot.py --populate-categories-once
+python3 scripts/artificial-exchange-bot.py --populate-all-once
 python3 scripts/artificial-exchange-bot.py --expire-seeded
 ```
 
@@ -658,14 +836,98 @@ Settlement result:
 - claim order `7` was deleted
 - purchased item storage order `6` remains
 
-Current known live state after validation:
+Current known live state after final service validation:
 
-- no active sell orders
+- active seeded NPC orders: `20`
+- active player orders selected by buyer: `0`
 - completed purchased-item storage order `6`
 - no pending seller claim rows
 - no unsafe settlement rows
-- controller `17` base Solaris balance `123`
-- buyer Exchange balance `0`
+- controller `17` base Solaris balance `0` after buyer funding
+- buyer Exchange balance `123`
+- active seeded item rows are in Exchange inventory `485`
+- stale orphaned Exchange inventory items from earlier bad staging tests were
+  purged
+
+Category populate run on May 21, 2026:
+
+- backup before category populate:
+  `backups/admin-panel/artificial-exchange/live-runs/20260521T022133Z-before-category-populate.sql`
+- generated bootstrap catalog rows: `151`
+- active seeded NPC orders after apply: `340`
+- seeded categories: `17`
+- target per category: `20`
+- minimum quality: `1`
+- rows below minimum quality: `0`
+- buyer dry-run selected: `0`
+- buyer dry-run skipped seeded orders: `340`, all via `npc order skipped`
+
+Final service validation on May 20, 2026 local time:
+
+- `config/artificial-exchange-prices.csv` contains a broad disabled catalog and
+  a reviewed enabled seed subset of `20` rows.
+- `build-exchange-catalog.py` rebuilt a catalog with `2278` known rows and `20`
+  enabled rows.
+- `dune-artificial-exchange-bot.service` and
+  `dune-artificial-exchange-populator.service` were both enabled and active.
+- Both units use `Restart=always` and `RestartSec=15s`.
+- Both units were killed with `SIGKILL`; systemd restarted both automatically.
+- After restart, `NRestarts=1` for both units, `ActiveState=active`, and
+  `UnitFileState=enabled`.
+- The buyer loop skipped all `20` seeded NPC orders and selected `0`.
+- The populator preflight passed, saw `20` active seeded orders, planned `0`,
+  and deleted `0`.
+- Cleanup was fixed to preserve
+  `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_TARGET_MIN_ORDERS`.
+- Cleanup now deletes the selected order rows first, then deletes only unreferenced
+  staged items from the native Exchange inventory.
+- Earlier orphaned staging items were purged after verifying no active order
+  referenced them.
+
+Price research run after rollback:
+
+- `scripts/research-exchange-prices.py --crawl-allpages --no-search-fallback`
+  crawled Awakening Wiki mainspace pages in revision batches.
+- Extracted exact wiki price records: `1259`.
+- Matched locally observed seedable templates: `121`.
+- Missed locally observed seedable templates: `30`.
+- Output:
+  `data/exchange-price-snapshots/wiki-base-vendor-prices.csv`.
+
+Verified category counts:
+
+| Category | Orders | Native mask filter count |
+| --- | ---: | ---: |
+| `armor/combat` | 20 | 20 |
+| `armor/social` | 20 | 20 |
+| `armor/stillsuit` | 20 | 20 |
+| `consumables/medical` | 20 | 20 |
+| `resources/components` | 20 | 20 |
+| `resources/raw` | 20 | 20 |
+| `resources/refined` | 20 | 20 |
+| `schematics/armor` | 20 | 20 |
+| `schematics/vehicles` | 20 | 20 |
+| `schematics/weapons` | 20 | 20 |
+| `tools/mining` | 20 | 20 |
+| `tools/utility` | 20 | 20 |
+| `vehicles/ornithopter` | 20 | 20 |
+| `vehicles/parts` | 20 | 20 |
+| `vehicles/sandbike` | 20 | 20 |
+| `weapons/melee` | 20 | 20 |
+| `weapons/ranged` | 20 | 20 |
+
+Full catalog population run on May 21, 2026:
+
+- backup before populate-all:
+  `backups/admin-panel/artificial-exchange/live-runs/20260521T023525Z-before-populate-all.sql`
+- enabled catalog rows: `2278`
+- eligible validated rows: `2278`
+- dry-run planned rows: `2278`
+- apply planned rows: `2278`
+- active seeded NPC orders after apply: `2278`
+- distinct seeded templates after apply: `2278`
+- seeded price range after apply: `1` to `568078`
+- source inventory id: `485`
 
 ## Recovery And Rollback
 

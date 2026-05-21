@@ -67,125 +67,129 @@ def connection_params():
     )
 
 
-def chat_payload(message, channel_type, sender_funcom_id, sender_name, target_name, localized_sender=False):
+def chat_payload(message, channel_type, sender_funcom_id, sender_name, user_name_to, origin):
     timestamp = time.strftime("%Y.%m.%d-%H.%M.%S", time.gmtime())
     chat_message = {
         "m_Id": uuid.uuid4().hex.upper(),
         "m_ChannelType": channel_type,
         "m_bUseSpoofedUserName": True,
         "m_SpoofedUserNameFrom": {
-            "m_TableId": "/Game/Dune/Localization/ST_Localization_UI.ST_Localization_UI" if localized_sender else "",
-            "m_Key": "UI/TextChat_Channel_Title_Whispers" if localized_sender else "",
-            "m_UnlocalizedName": "" if localized_sender else sender_name,
+            "m_TableId": "",
+            "m_Key": "",
+            "m_UnlocalizedName": sender_name,
         },
         "m_FuncomIdFrom": sender_funcom_id,
-        "m_UserNameTo": target_name,
+        "m_UserNameTo": user_name_to,
         "m_Message": {
             "m_UnlocalizedMessage": message,
             "m_LocalizedMessage": {"m_TableId": "", "m_Key": "", "m_FormatArgs": []},
         },
         "m_Timestamp": timestamp,
-        "m_OriginLocation": {"X": 0.0, "Y": 0.0, "Z": 0.0},
+        "m_OriginLocation": {"X": origin[0], "Y": origin[1], "Z": origin[2]},
         "m_HasSeenMessage": False,
     }
     return {"content": json.dumps(chat_message, separators=(",", ":")), "Type": "TextChat"}
 
 
-def make_properties(kind, include_user_id, headers=None):
+def make_properties(include_user_id, redirect_exchange=""):
     kwargs = {
         "content_type": "Content",
         "delivery_mode": 1,
         "timestamp": int(time.time()),
-        "type": kind,
+        "type": "text_chat",
         "message_id": secrets.token_urlsafe(16),
     }
     if include_user_id:
         kwargs["user_id"] = env("DUNE_ANNOUNCE_CHAT_USER", "A000000000000001")
-    if headers:
-        kwargs["headers"] = headers
+    if redirect_exchange:
+        kwargs["headers"] = {"redirect_exchange": redirect_exchange.encode("utf-8")}
     return pika.BasicProperties(**kwargs)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Send labeled Dune whisper/chat probe variants.")
+    parser = argparse.ArgumentParser(description="Send labeled Dune chat channel probe variants.")
     parser.add_argument("--target-name", default="Lukano")
     parser.add_argument("--target-fls-id", default="6FF6498F4074E3DE")
-    parser.add_argument("--message-prefix", default="whisper probe")
+    parser.add_argument("--message-prefix", default="channel probe")
     parser.add_argument("--sender-name", default=env("DUNE_ANNOUNCE_CHAT_SPOOF_NAME", "Paul"))
     parser.add_argument("--sender-funcom-id", default=env("DUNE_ANNOUNCE_CHAT_FUNCOM_ID", "ADMIN#00001"))
+    parser.add_argument("--origin", default="0,0,0", help="Origin as X,Y,Z for proximity payloads.")
     parser.add_argument("--bind-target-queue", action="store_true")
     parser.add_argument("--include-user-id", action="store_true")
-    parser.add_argument("--send-intercept", action="store_true")
+    parser.add_argument("--guild-id", default="1")
+    parser.add_argument("--faction-id", default="3")
+    parser.add_argument("--party-id", default="")
     args = parser.parse_args()
 
+    origin = tuple(float(item.strip()) for item in args.origin.split(",", 2))
+    if len(origin) != 3:
+        raise SystemExit("--origin must be X,Y,Z")
+
     target_queue = f"{args.target_fls_id}_queue"
-    direct_variants = [
-        ("DW-map-fls", "chat.whispers", args.target_fls_id, "Map", "text_chat"),
-        ("DW-whisper-fls", "chat.whispers", args.target_fls_id, "Whisper", "text_chat"),
-        ("DW-private-fls", "chat.whispers", args.target_fls_id, "Private", "text_chat"),
-        ("DW-map-name", "chat.whispers", args.target_name, "Map", "text_chat"),
-        ("DQ-private", "", target_queue, "Private", "text_chat", False),
-        ("DQ-whisper", "", target_queue, "Whisper", "text_chat", False),
-        ("DQ-whispers", "", target_queue, "Whispers", "text_chat", False),
-        ("DQ-whispers-localized", "", target_queue, "Whispers", "text_chat", True),
-        ("DQ-map", "", target_queue, "Map", "text_chat"),
-        ("DQ-type-whisper", "", target_queue, "Whisper", "whisper"),
-        ("DQ-type-private", "", target_queue, "Private", "private"),
+    variants = [
+        ("direct-proximity-hagga", "chat.proximity", "HaggaBasin.0", "Proximity", ""),
+        ("direct-proximity-survival", "chat.proximity", "Survival_1.dim_0", "Proximity", ""),
+        ("intercept-proximity-hagga", "chat.intercept", "HaggaBasin.0", "Proximity", "chat.proximity"),
+        ("intercept-proximity-fls", "chat.intercept", args.target_fls_id, "Proximity", "chat.proximity"),
+        ("direct-guild", f"chat.guild.{args.guild_id}", "", "Guild", ""),
+        ("intercept-guild", "chat.intercept", "", "Guild", f"chat.guild.{args.guild_id}"),
+        ("direct-faction", f"chat.faction.{args.faction_id}", "", "Faction", ""),
+        ("intercept-faction", "chat.intercept", "", "Faction", f"chat.faction.{args.faction_id}"),
     ]
-    intercept_variants = [
-        ("IRW-map-fls", "chat.intercept", args.target_fls_id, "Map", "text_chat"),
-        ("IRW-whisper-fls", "chat.intercept", args.target_fls_id, "Whisper", "text_chat"),
-        ("IRW-private-fls", "chat.intercept", args.target_fls_id, "Private", "text_chat"),
-    ]
-    variants = direct_variants + (intercept_variants if args.send_intercept else [])
+    if args.party_id:
+        variants.extend([
+            ("direct-party", f"chat.party.{args.party_id}", "", "Party", ""),
+            ("intercept-party", "chat.intercept", "", "Party", f"chat.party.{args.party_id}"),
+        ])
 
     connection = pika.BlockingConnection(connection_params())
     channel = connection.channel()
     results = []
     try:
         if args.bind_target_queue:
-            for routing_key in (args.target_fls_id, args.target_name, target_queue):
-                channel.queue_bind(queue=target_queue, exchange="chat.whispers", routing_key=routing_key)
-                results.append({"step": "bind", "exchange": "chat.whispers", "queue": target_queue, "routingKey": routing_key, "ok": True})
+            for exchange, routing_key in (
+                ("chat.proximity", "HaggaBasin.0"),
+                ("chat.proximity", "Survival_1.dim_0"),
+                (f"chat.guild.{args.guild_id}", ""),
+                (f"chat.faction.{args.faction_id}", ""),
+            ):
+                try:
+                    channel.queue_bind(queue=target_queue, exchange=exchange, routing_key=routing_key)
+                    results.append({"step": "bind", "exchange": exchange, "queue": target_queue, "routingKey": routing_key, "ok": True})
+                except Exception as exc:
+                    results.append({"step": "bind", "exchange": exchange, "queue": target_queue, "routingKey": routing_key, "ok": False, "error": str(exc)})
+            if args.party_id:
+                exchange = f"chat.party.{args.party_id}"
+                try:
+                    channel.exchange_declare(exchange=exchange, exchange_type="fanout", durable=False, auto_delete=False, passive=False)
+                    channel.queue_bind(queue=target_queue, exchange=exchange, routing_key="")
+                    results.append({"step": "bind", "exchange": exchange, "queue": target_queue, "routingKey": "", "ok": True})
+                except Exception as exc:
+                    results.append({"step": "bind", "exchange": exchange, "queue": target_queue, "routingKey": "", "ok": False, "error": str(exc)})
 
-        for index, variant in enumerate(variants, start=1):
-            if len(variant) == 5:
-                label, exchange, routing_key, channel_type, prop_type = variant
-                localized_sender = False
-            else:
-                label, exchange, routing_key, channel_type, prop_type, localized_sender = variant
+        for label, exchange, routing_key, channel_type, redirect_exchange in variants:
             message = f"{args.message_prefix} {label}"
-            headers = None
-            if exchange == "chat.intercept":
-                headers = {"redirect_exchange": b"chat.whispers"}
-            payload = chat_payload(message, channel_type, args.sender_funcom_id, args.sender_name, args.target_name, localized_sender=localized_sender)
+            payload = chat_payload(message, channel_type, args.sender_funcom_id, args.sender_name, args.target_name, origin)
             try:
                 channel.basic_publish(
                     exchange=exchange,
                     routing_key=routing_key,
                     body=json.dumps(payload, separators=(",", ":")).encode("utf-8"),
-                    properties=make_properties(prop_type, args.include_user_id, headers=headers),
+                    properties=make_properties(args.include_user_id, redirect_exchange),
                     mandatory=False,
                 )
                 results.append({
                     "step": "publish",
                     "label": label,
-                    "exchange": exchange or "<default>",
+                    "exchange": exchange,
                     "routingKey": routing_key,
                     "channelType": channel_type,
-                    "propertyType": prop_type,
+                    "redirectExchange": redirect_exchange,
                     "message": message,
                     "ok": True,
                 })
             except Exception as exc:
-                results.append({
-                    "step": "publish",
-                    "label": label,
-                    "exchange": exchange or "<default>",
-                    "routingKey": routing_key,
-                    "error": str(exc),
-                    "ok": False,
-                })
+                results.append({"step": "publish", "label": label, "exchange": exchange, "routingKey": routing_key, "ok": False, "error": str(exc)})
             time.sleep(0.15)
     finally:
         connection.close()

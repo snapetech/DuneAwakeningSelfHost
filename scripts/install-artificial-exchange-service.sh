@@ -54,8 +54,8 @@ trap 'rm -f "$tmp"' EXIT
 
 case "$mode" in
   buyer) exec_args="--loop" ;;
-  populator) exec_args="--populate-loop" ;;
-  both) exec_args="--loop --populate-loop" ;;
+  populator) exec_args="--populate-loop --expire-seeded" ;;
+  both) exec_args="--loop --populate-loop --expire-seeded" ;;
   *)
     printf 'unknown mode: %s\n' "$mode" >&2
     usage

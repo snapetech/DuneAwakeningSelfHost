@@ -1,7 +1,7 @@
 COMPOSE ?= docker compose
 ENV_FILE ?= .env.example
 
-.PHONY: validate compose-config secret-scan test-watch-maps test-admin-panel-safe-surfaces test-artificial-exchange test-artificial-exchange-service artificial-exchange-smoke test-vehicle-fidelity-investigation list-publishable preflight status check-steam-update start-full-warm-pool recover-survival recover-map watch-maps watch-maps-status install-map-watchdog-service install-player-presence-announcer-service install-artificial-exchange-service install-artificial-exchange-buyer-service install-artificial-exchange-populator-service install-full-farm-service install-daily-maintenance-timer full-world-partitions public-site-check public-site-package verify-local-state-ignored
+.PHONY: validate compose-config secret-scan test-watch-maps test-admin-panel-safe-surfaces test-artificial-exchange test-artificial-exchange-service artificial-exchange-smoke artificial-exchange-bootstrap-catalog artificial-exchange-research-prices test-vehicle-fidelity-investigation list-publishable preflight status check-steam-update start-full-warm-pool recover-survival recover-map watch-maps watch-maps-status install-map-watchdog-service install-artificial-exchange-service install-artificial-exchange-buyer-service install-artificial-exchange-populator-service install-player-presence-announcer-service install-full-farm-service install-daily-maintenance-timer full-world-partitions public-site-check public-site-package verify-local-state-ignored
 
 validate: compose-config secret-scan test-watch-maps test-admin-panel-safe-surfaces test-artificial-exchange test-artificial-exchange-service test-vehicle-fidelity-investigation verify-local-state-ignored
 
@@ -77,6 +77,14 @@ test-artificial-exchange-service:
 
 artificial-exchange-smoke:
 	./scripts/artificial-exchange-smoke.sh
+
+artificial-exchange-bootstrap-catalog:
+	python3 scripts/build-exchange-bootstrap-catalog.py
+	python3 scripts/build-exchange-catalog.py
+
+artificial-exchange-research-prices:
+	python3 scripts/research-exchange-prices.py --crawl-allpages --no-search-fallback
+	python3 scripts/build-exchange-catalog.py
 
 test-vehicle-fidelity-investigation:
 	./scripts/investigate-vehicle-fidelity.sh >/dev/null

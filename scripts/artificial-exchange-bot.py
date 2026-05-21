@@ -254,11 +254,13 @@ def expire_probability_selected(order_ids, probability):
     return [order_id for order_id in order_ids if random.random() < probability]
 
 
-def cleanup_candidate_ids(active_orders, target_max_orders, expire_probability):
+def cleanup_candidate_ids(active_orders, target_max_orders, expire_probability, target_min_orders=0):
     target_max_orders = max(0, int(target_max_orders))
+    target_min_orders = max(0, int(target_min_orders))
     over_cap = max(0, len(active_orders) - target_max_orders)
     over_cap_ids = [row["id"] for row in active_orders[:over_cap]]
-    random_ids = expire_probability_selected([row["id"] for row in active_orders[over_cap:]], expire_probability)
+    random_expire_capacity = max(0, len(active_orders) - len(over_cap_ids) - target_min_orders)
+    random_ids = expire_probability_selected([row["id"] for row in active_orders[over_cap:]], expire_probability)[:random_expire_capacity]
     return sorted(set(over_cap_ids + random_ids))
 
 
@@ -332,7 +334,7 @@ def fetch_seeded_orders(conn, exchange_id, owner_id, limit):
             select
                 o.id, o.exchange_id, o.access_point_id, o.owner_id, o.item_id,
                 o.template_id, o.item_price, o.expiration_time, o.quality_level,
-                i.stack_size
+                o.category_mask, o.category_depth, i.stack_size
             from dune.dune_exchange_orders o
             left join dune.items i on i.id=o.item_id
             where o.exchange_id=%s
@@ -371,6 +373,86 @@ def fetch_free_inventory_positions(conn, inventory_id, needed_count):
     )
 
 
+def populator_preflight(conn, args, catalog=None, eligible=None, *, require_source=True):
+    checks = []
+    owner_id = int(args.populator_owner_id or 0)
+    source_inventory_id = int(args.populator_source_inventory_id or 0)
+    min_orders = int(args.populator_target_min_orders)
+    max_orders = int(args.populator_target_max_orders)
+    hard_max = int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_HARD_MAX_ORDERS", "200"))
+    stack_size = int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_STACK_SIZE", "1"))
+    max_stack_size = int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MAX_STACK_SIZE", "1"))
+
+    checks.append({"name": "ownerConfigured", "ok": owner_id > 0, "ownerId": owner_id})
+    checks.append({"name": "targetRange", "ok": 0 <= min_orders <= max_orders <= hard_max, "targetMin": min_orders, "targetMax": max_orders, "hardMax": hard_max})
+    checks.append({"name": "stackRange", "ok": 1 <= stack_size <= max_stack_size, "stackSize": stack_size, "maxStackSize": max_stack_size})
+    checks.append({"name": "priceJitter", "ok": 0 <= int(args.populator_price_jitter_pct) <= 100, "priceJitterPct": int(args.populator_price_jitter_pct)})
+    checks.append({"name": "expiryRange", "ok": 60 <= int(args.populator_expiry_min_seconds) <= int(args.populator_expiry_max_seconds), "expiryMinSeconds": int(args.populator_expiry_min_seconds), "expiryMaxSeconds": int(args.populator_expiry_max_seconds)})
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            select player_controller_id, player_pawn_id, character_name
+            from dune.player_state
+            where player_controller_id=%s
+            """,
+            (owner_id,),
+        )
+        owner = cur.fetchone()
+        checks.append({"name": "ownerExists", "ok": bool(owner), "owner": dict(owner) if owner else None})
+
+        if require_source:
+            cur.execute(
+                """
+                select id, actor_id, exchange_id, inventory_type
+                from dune.inventories
+                where id=%s
+                """,
+                (source_inventory_id,),
+            )
+            source = cur.fetchone()
+            source_ok = bool(source) and source.get("actor_id") is None and int(source.get("exchange_id") or 0) == int(args.exchange_id)
+            checks.append({"name": "sourceInventoryConfigured", "ok": source_inventory_id > 0, "sourceInventoryId": source_inventory_id})
+            checks.append({"name": "sourceInventoryIsExchangeStaging", "ok": source_ok, "sourceInventory": dict(source) if source else None, "exchangeId": args.exchange_id})
+
+            cur.execute("select dune.get_exchange_inventory_id(%s) as inventory_id", (args.exchange_id,))
+            native = cur.fetchone()
+            native_inventory_id = int(native["inventory_id"]) if native and native.get("inventory_id") is not None else 0
+            checks.append({
+                "name": "sourceInventoryMatchesNativeExchangeInventory",
+                "ok": source_inventory_id == native_inventory_id,
+                "sourceInventoryId": source_inventory_id,
+                "nativeExchangeInventoryId": native_inventory_id,
+            })
+
+    if catalog is not None:
+        enabled = [row for row in catalog.values() if row.get("enabled")]
+        checks.append({"name": "catalogEnabledRows", "ok": bool(enabled), "enabledRows": len(enabled)})
+    if eligible is not None:
+        checks.append({"name": "eligibleValidatedRows", "ok": bool(eligible), "eligibleRows": len(eligible), "requireValidated": env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_VALIDATED", True)})
+        invalid_categories = [
+            row["template_id"]
+            for row in eligible
+            if populator_category_mask(row) < 0 or populator_category_depth(row) < 0
+        ]
+        checks.append({"name": "categoryValues", "ok": not invalid_categories, "invalidTemplates": invalid_categories[:20]})
+
+    ok = all(check["ok"] for check in checks)
+    result = {"ok": ok, "checks": checks}
+    log_event("populator-preflight", ok=ok, checks=len(checks), ownerId=owner_id, sourceInventoryId=source_inventory_id)
+    if not ok:
+        audit({"event": "populator-preflight-failed", **result})
+    return result
+
+
+def require_populator_preflight(conn, args, catalog=None, eligible=None, *, require_source=True):
+    result = populator_preflight(conn, args, catalog, eligible, require_source=require_source)
+    if not result["ok"]:
+        failed = [check for check in result["checks"] if not check["ok"]]
+        raise RuntimeError(f"populator preflight failed: {failed}")
+    return result
+
+
 def execute_native_expiry(cur, exchange_id, now):
     cur.execute(
         """
@@ -407,31 +489,7 @@ def delete_seeded_orders(cur, order_ids, exchange_id, owner_id):
         (order_ids, exchange_id, owner_id),
     )
     rows = [dict(row) for row in cur.fetchall()]
-    item_ids = [row["item_id"] for row in rows if row.get("item_id") not in (None, 0, "")]
-    if item_ids:
-        cur.execute(
-            """
-            update dune.dune_exchange_orders
-            set item_id = null
-            where id = any(%s)
-              and exchange_id=%s
-              and owner_id=%s
-              and is_npc_order=true
-            """,
-            (order_ids, exchange_id, owner_id),
-        )
-        cur.execute(
-            """
-            delete from dune.items
-            where id = any(%s)
-              and inventory_id = dune.get_exchange_inventory_id(%s)
-            returning id
-            """,
-            (item_ids, exchange_id),
-        )
-        deleted_items = [row["id"] for row in cur.fetchall()]
-    else:
-        deleted_items = []
+    item_id_by_order = {int(row["id"]): int(row["item_id"]) for row in rows if row.get("item_id") not in (None, 0, "")}
     cur.execute(
         """
         delete from dune.dune_exchange_orders
@@ -444,8 +502,29 @@ def delete_seeded_orders(cur, order_ids, exchange_id, owner_id):
         (order_ids, exchange_id, owner_id),
     )
     deleted_orders = [dict(row) for row in cur.fetchall()]
+    deleted_order_ids = {int(row["id"]) for row in deleted_orders}
+    candidate_item_ids = [item_id for order_id, item_id in item_id_by_order.items() if order_id in deleted_order_ids]
+    if candidate_item_ids:
+        cur.execute(
+            """
+            delete from dune.items i
+            where i.id = any(%s)
+              and i.inventory_id = dune.get_exchange_inventory_id(%s)
+              and not exists (
+                  select 1
+                  from dune.dune_exchange_orders o
+                  where o.item_id = i.id
+              )
+            returning id
+            """,
+            (candidate_item_ids, exchange_id),
+        )
+        deleted_items = [row["id"] for row in cur.fetchall()]
+    else:
+        deleted_items = []
     for row in deleted_orders:
-        row["deletedItemIds"] = deleted_items
+        item_id = item_id_by_order.get(int(row["id"]))
+        row["deletedItemIds"] = [item_id] if item_id in deleted_items else []
     return deleted_orders
 
 
@@ -510,6 +589,52 @@ def execute_seed_listing(cur, row, args, price, expiration_time, position_index)
     return {"itemId": item_id, "incrementAdded": increment_added}
 
 
+def plan_seed_events(args, eligible, active, positions):
+    now = int(time.time())
+    used_prices = {}
+    for order in active:
+        used_prices.setdefault(order["template_id"], set()).add(int(order["item_price"]))
+    planned = []
+    for index, row in enumerate(eligible):
+        price = args.populator_force_price + index if args.populator_force_price is not None else planned_unique_price(row, args.populator_price_jitter_pct, used_prices)
+        position_index = positions[index]
+        planned.append({
+            "row": row,
+            "event": {
+                "templateId": row["template_id"],
+                "baselinePrice": row["baseline_price"],
+                "price": price,
+                "qualityLevel": populator_quality_level(row),
+                "category": row.get("category"),
+                "categoryMask": populator_category_mask(row),
+                "categoryDepth": populator_category_depth(row),
+                "expirationTime": jitter_expiration(now, args.populator_expiry_min_seconds, args.populator_expiry_max_seconds),
+                "ownerId": args.populator_owner_id,
+                "exchangeId": args.exchange_id,
+                "accessPointId": args.populator_access_point_id,
+                "sourceInventoryId": args.populator_source_inventory_id,
+                "sourcePositionIndex": position_index,
+                "plannedItemCreation": True,
+                "dryRun": args.dry_run,
+            },
+        })
+    return planned
+
+
+def apply_seed_events(conn, args, planned):
+    events = []
+    for item in planned:
+        event = item["event"]
+        if not args.dry_run:
+            if args.confirm != POPULATE_CONFIRM:
+                raise RuntimeError(f"confirmation phrase required: {POPULATE_CONFIRM}")
+            with conn.cursor() as cur:
+                event.update(execute_seed_listing(cur, item["row"], args, event["price"], event["expirationTime"], event["sourcePositionIndex"]))
+        events.append(event)
+        audit({"event": "populator-seed-planned", **event})
+    return events
+
+
 def expire_seeded_once(args):
     if not env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ENABLED", False):
         raise RuntimeError("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ENABLED is false")
@@ -520,9 +645,10 @@ def expire_seeded_once(args):
     conn.autocommit = False
     try:
         with conn.cursor() as cur:
+            require_populator_preflight(conn, args, require_source=False)
             native = execute_native_expiry(cur, args.exchange_id, now)
             active = fetch_seeded_orders(conn, args.exchange_id, args.populator_owner_id, args.limit)
-            candidates = cleanup_candidate_ids(active, args.populator_target_max_orders, args.populator_expire_probability)
+            candidates = cleanup_candidate_ids(active, args.populator_target_max_orders, args.populator_expire_probability, args.populator_target_min_orders)
             if args.dry_run:
                 conn.rollback()
                 deleted = []
@@ -562,42 +688,13 @@ def populate_once(args):
     conn.autocommit = False
     planned = []
     cleanup = None
-    now = int(time.time())
     try:
+        require_populator_preflight(conn, args, catalog, eligible)
         active = fetch_seeded_orders(conn, args.exchange_id, args.populator_owner_id, args.limit)
         count = args.populator_force_count if args.populator_force_count is not None else desired_seed_count(len(active), args.populator_target_min_orders, args.populator_target_max_orders)
         positions = fetch_free_inventory_positions(conn, args.populator_source_inventory_id, count)
-        used_prices = {}
-        for order in active:
-            used_prices.setdefault(order["template_id"], set()).add(int(order["item_price"]))
-        for index in range(count):
-            row = random.choice(eligible)
-            price = args.populator_force_price + index if args.populator_force_price is not None else planned_unique_price(row, args.populator_price_jitter_pct, used_prices)
-            expiration_time = jitter_expiration(now, args.populator_expiry_min_seconds, args.populator_expiry_max_seconds)
-            position_index = positions[index]
-            event = {
-                "templateId": row["template_id"],
-                "baselinePrice": row["baseline_price"],
-                "price": price,
-                "qualityLevel": populator_quality_level(row),
-                "categoryMask": populator_category_mask(row),
-                "categoryDepth": populator_category_depth(row),
-                "expirationTime": expiration_time,
-                "ownerId": args.populator_owner_id,
-                "exchangeId": args.exchange_id,
-                "accessPointId": args.populator_access_point_id,
-                "sourceInventoryId": args.populator_source_inventory_id,
-                "sourcePositionIndex": position_index,
-                "plannedItemCreation": True,
-                "dryRun": args.dry_run,
-            }
-            if not args.dry_run:
-                if args.confirm != POPULATE_CONFIRM:
-                    raise RuntimeError(f"confirmation phrase required: {POPULATE_CONFIRM}")
-                with conn.cursor() as cur:
-                    event.update(execute_seed_listing(cur, row, args, price, expiration_time, position_index))
-            planned.append(event)
-            audit({"event": "populator-seed-planned", **event})
+        selected_rows = [random.choice(eligible) for _ in range(count)]
+        planned = apply_seed_events(conn, args, plan_seed_events(args, selected_rows, active, positions))
         if args.dry_run:
             conn.rollback()
         else:
@@ -618,6 +715,112 @@ def populate_once(args):
         planned=len(planned),
         durationMs=int((time.time() - started) * 1000),
     )
+    return result
+
+
+def populate_categories_once(args):
+    started = time.time()
+    if not env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ENABLED", False):
+        raise RuntimeError("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ENABLED is false")
+    if args.populator_owner_id <= 0:
+        raise RuntimeError("--populator-owner-id is required")
+    if args.populator_source_inventory_id <= 0:
+        raise RuntimeError("--populator-source-inventory-id is required")
+    catalog = load_catalog(args.catalog)
+    eligible = populator_catalog_rows(catalog)
+    grouped = {}
+    for row in eligible:
+        key = (row.get("category") or "unknown", populator_category_mask(row), populator_category_depth(row))
+        grouped.setdefault(key, []).append(row)
+    conn = connect_db()
+    conn.autocommit = False
+    planned = []
+    summary = []
+    try:
+        require_populator_preflight(conn, args, catalog, eligible)
+        active = fetch_seeded_orders(conn, args.exchange_id, args.populator_owner_id, max(args.limit, 10000))
+        active_by_category = {}
+        for order in active:
+            row = catalog.get(order["template_id"])
+            if not row:
+                continue
+            key = (row.get("category") or "unknown", int(order.get("category_mask") or 0), int(order.get("category_depth") or 0))
+            active_by_category[key] = active_by_category.get(key, 0) + 1
+        for key, rows in sorted(grouped.items()):
+            active_count = active_by_category.get(key, 0)
+            needed = max(0, args.populator_target_min_orders - active_count)
+            summary.append({"category": key[0], "categoryMask": key[1], "categoryDepth": key[2], "active": active_count, "planned": needed, "templates": len(rows)})
+        total_needed = sum(row["planned"] for row in summary)
+        positions = fetch_free_inventory_positions(conn, args.populator_source_inventory_id, total_needed)
+        offset = 0
+        planned_items = []
+        for row in summary:
+            if row["planned"] <= 0:
+                continue
+            key = (row["category"], row["categoryMask"], row["categoryDepth"])
+            rows = grouped[key]
+            category_active = [
+                order for order in active
+                if catalog.get(order["template_id"])
+                and (catalog[order["template_id"]].get("category") or "unknown", int(order.get("category_mask") or 0), int(order.get("category_depth") or 0)) == key
+            ]
+            selected_rows = [random.choice(rows) for _ in range(row["planned"])]
+            planned_items.extend(plan_seed_events(args, selected_rows, category_active, positions[offset:offset + row["planned"]]))
+            offset += row["planned"]
+        planned = apply_seed_events(conn, args, planned_items)
+        if args.dry_run:
+            conn.rollback()
+        else:
+            conn.commit()
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
+    conn.close()
+    result = {"ok": True, "dryRun": args.dry_run, "categories": summary, "planned": planned, "totalPlanned": len(planned)}
+    log_event("populate-categories-complete", dryRun=args.dry_run, categories=len(summary), planned=len(planned), durationMs=int((time.time() - started) * 1000))
+    return result
+
+
+def populate_all_once(args):
+    started = time.time()
+    if not env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ENABLED", False):
+        raise RuntimeError("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ENABLED is false")
+    if args.populator_owner_id <= 0:
+        raise RuntimeError("--populator-owner-id is required")
+    if args.populator_source_inventory_id <= 0:
+        raise RuntimeError("--populator-source-inventory-id is required")
+    catalog = load_catalog(args.catalog)
+    eligible = populator_catalog_rows(catalog)
+    conn = connect_db()
+    conn.autocommit = False
+    planned = []
+    try:
+        require_populator_preflight(conn, args, catalog, eligible)
+        active = fetch_seeded_orders(conn, args.exchange_id, args.populator_owner_id, max(args.limit, len(eligible) + 10000))
+        active_templates = {order["template_id"] for order in active}
+        missing = [row for row in eligible if row["template_id"] not in active_templates]
+        positions = fetch_free_inventory_positions(conn, args.populator_source_inventory_id, len(missing))
+        planned = apply_seed_events(conn, args, plan_seed_events(args, missing, active, positions))
+        if args.dry_run:
+            conn.rollback()
+        else:
+            conn.commit()
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
+    conn.close()
+    result = {
+        "ok": True,
+        "dryRun": args.dry_run,
+        "activeSeededOrders": len(active),
+        "eligibleCatalogRows": len(eligible),
+        "missingCatalogRows": len(missing),
+        "planned": planned,
+        "totalPlanned": len(planned),
+    }
+    log_event("populate-all-complete", dryRun=args.dry_run, activeSeededOrders=len(active), eligibleCatalogRows=len(eligible), planned=len(planned), durationMs=int((time.time() - started) * 1000))
     return result
 
 
@@ -984,6 +1187,10 @@ def readiness_check(args):
             orders = fetch_orders(conn, args.exchange_id, min(args.limit, 20))
             settlements = settlement_report(conn, args.settlement_limit)
             buyer_balance = read_exchange_balance(conn, args.buyer_controller_id) if args.buyer_controller_id > 0 else None
+            if env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ENABLED", False) or args.populator_owner_id > 0 or args.populator_source_inventory_id > 0:
+                eligible = populator_catalog_rows(catalog)
+                preflight = populator_preflight(conn, args, catalog, eligible)
+                checks.append({"name": "populatorSafety", **preflight})
         conn.close()
         checks.append({"name": "database", "ok": True, "exchangeId": args.exchange_id, "ordersSeen": len(orders), "settlementsSeen": len(settlements)})
         checks.append({"name": "settlementState", "ok": True, "claimable": sum(1 for row in settlements if row["claimSafe"]), "unsafe": sum(1 for row in settlements if row["status"].startswith("unsafe"))})
@@ -1243,6 +1450,8 @@ def main():
     parser.add_argument("--report-skips", type=int, default=50)
     parser.add_argument("--loop", action="store_true")
     parser.add_argument("--populate-once", action="store_true")
+    parser.add_argument("--populate-categories-once", action="store_true")
+    parser.add_argument("--populate-all-once", action="store_true")
     parser.add_argument("--populate-loop", action="store_true")
     parser.add_argument("--expire-seeded", action="store_true")
     parser.add_argument("--validate-populator-once", action="store_true")
@@ -1266,9 +1475,17 @@ def main():
     parser.add_argument("--populator-expire-probability", type=float, default=float(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_EXPIRE_PROBABILITY", "0.10")))
     parser.add_argument("--populator-force-count", type=int)
     parser.add_argument("--populator-force-price", type=int)
-    parser.add_argument("--dry-run", action="store_true", default=env_bool("DUNE_ARTIFICIAL_EXCHANGE_DRY_RUN", env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_DRY_RUN", True)))
+    parser.add_argument("--dry-run", dest="dry_run", action="store_true", default=None)
     parser.add_argument("--apply", dest="dry_run", action="store_false")
     args = parser.parse_args()
+    populator_mode = args.populate_once or args.populate_categories_once or args.populate_all_once or args.populate_loop or args.validate_populator_once or args.expire_seeded
+    if args.dry_run is None:
+        if populator_mode:
+            args.dry_run = env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_DRY_RUN", True)
+        else:
+            args.dry_run = env_bool("DUNE_ARTIFICIAL_EXCHANGE_DRY_RUN", True)
+    if populator_mode and not args.confirm:
+        args.confirm = env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_CONFIRM", "")
     log_event(
         "bot-start",
         argv=sys.argv[1:],
@@ -1291,6 +1508,12 @@ def main():
         return
     if args.validate_populator_once:
         print(json.dumps(validate_populator_once(args), indent=2, default=str))
+        return
+    if args.populate_categories_once:
+        print(json.dumps(populate_categories_once(args), indent=2, default=str))
+        return
+    if args.populate_all_once:
+        print(json.dumps(populate_all_once(args), indent=2, default=str))
         return
     if args.expire_seeded and not (args.populate_once or args.populate_loop):
         print(json.dumps(expire_seeded_once(args), indent=2, default=str))

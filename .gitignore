@@ -2,7 +2,9 @@
 .env.*
 !.env.example
 
-data/
+data/*
+!data/exchange-price-snapshots/
+!data/exchange-price-snapshots/*.csv
 captures/
 backups/
 config/tls/

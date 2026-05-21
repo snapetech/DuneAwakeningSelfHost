@@ -198,8 +198,19 @@ make install-artificial-exchange-buyer-service ENV_FILE=.env
 systemctl status dune-artificial-exchange-bot.service --no-pager
 ```
 
+Install the optional populator service after setting
+`DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_OWNER_ID`,
+`DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_SOURCE_INVENTORY_ID`, and the populator
+gates in `.env`. The service runs `--populate-loop --expire-seeded`, uses the
+same catalog preflight, and also restarts after crashes and host reboot:
+
+```bash
+make install-artificial-exchange-populator-service ENV_FILE=.env
+systemctl status dune-artificial-exchange-populator.service --no-pager
+```
+
 Use the smoke check before enabling live purchase, funding, auto-claim, or
-populator gates:
+populator apply gates:
 
 ```bash
 make artificial-exchange-smoke

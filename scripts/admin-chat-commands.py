@@ -1266,13 +1266,39 @@ def run_announce(message, target_name="", target_fls_id=""):
     child_env = os.environ.copy()
     child_env.update(FILE_ENV)
     cwd = ROOT
-    if target_name and target_fls_id and env_bool("DUNE_CHAT_COMMAND_PRIVATE_REPLIES_ENABLED", False):
+    target_reply_mode = env("DUNE_CHAT_COMMAND_TARGET_REPLY_MODE", "").strip().lower()
+    if not target_reply_mode and env_bool("DUNE_CHAT_COMMAND_PRIVATE_REPLIES_ENABLED", False):
+        target_reply_mode = "whisper"
+    if target_name and target_fls_id and target_reply_mode in ("whisper", "private"):
         child_env["DUNE_ANNOUNCE_ENV_OVERRIDES_FILE"] = "true"
         child_env["DUNE_ANNOUNCE_CHAT_EXCHANGE"] = env("DUNE_CHAT_COMMAND_PRIVATE_REPLY_EXCHANGE", "chat.whispers")
         child_env["DUNE_ANNOUNCE_CHAT_CHANNEL"] = env("DUNE_CHAT_COMMAND_PRIVATE_REPLY_CHANNEL", "Whisper")
         child_env["DUNE_ANNOUNCE_CHAT_USER_NAME_TO"] = target_name
         child_env["DUNE_ANNOUNCE_CHAT_TARGET_QUEUES"] = f"{target_fls_id}_queue"
         child_env["DUNE_ANNOUNCE_CHAT_ROUTING_KEYS"] = env("DUNE_CHAT_COMMAND_PRIVATE_REPLY_ROUTING_KEY", target_fls_id)
+        child_env["DUNE_ANNOUNCE_CHAT_CLEANUP_TARGET_BINDINGS"] = "true"
+        child_env["DUNE_ANNOUNCE_WRAP_DASHBOARD_MESSAGES"] = "false"
+        cwd = "/tmp"
+    elif target_name and target_fls_id and target_reply_mode in ("proximity", "prox"):
+        child_env["DUNE_ANNOUNCE_ENV_OVERRIDES_FILE"] = "true"
+        child_env["DUNE_ANNOUNCE_CHAT_EXCHANGE"] = env("DUNE_CHAT_COMMAND_TARGET_REPLY_EXCHANGE", "chat.proximity")
+        child_env["DUNE_ANNOUNCE_CHAT_CHANNEL"] = env("DUNE_CHAT_COMMAND_TARGET_REPLY_CHANNEL", "Proximity")
+        child_env["DUNE_ANNOUNCE_CHAT_USER_NAME_TO"] = target_name
+        child_env["DUNE_ANNOUNCE_CHAT_TARGET_QUEUES"] = f"{target_fls_id}_queue"
+        child_env["DUNE_ANNOUNCE_CHAT_ROUTING_KEYS"] = env("DUNE_CHAT_COMMAND_TARGET_REPLY_ROUTING_KEY", f"dash.chat-command-reply.{target_fls_id}")
+        child_env["DUNE_ANNOUNCE_CHAT_BIND_ONLINE_QUEUES"] = "false"
+        child_env["DUNE_ANNOUNCE_CHAT_CLEANUP_TARGET_BINDINGS"] = "true"
+        child_env["DUNE_ANNOUNCE_WRAP_DASHBOARD_MESSAGES"] = "false"
+        cwd = "/tmp"
+    elif target_name and target_fls_id and target_reply_mode == "guild":
+        child_env["DUNE_ANNOUNCE_ENV_OVERRIDES_FILE"] = "true"
+        child_env["DUNE_ANNOUNCE_CHAT_EXCHANGE"] = env("DUNE_CHAT_COMMAND_TARGET_REPLY_EXCHANGE", "chat.guild.1")
+        child_env["DUNE_ANNOUNCE_CHAT_CHANNEL"] = env("DUNE_CHAT_COMMAND_TARGET_REPLY_CHANNEL", "Guild")
+        child_env["DUNE_ANNOUNCE_CHAT_USER_NAME_TO"] = target_name
+        child_env["DUNE_ANNOUNCE_CHAT_TARGET_QUEUES"] = f"{target_fls_id}_queue"
+        child_env["DUNE_ANNOUNCE_CHAT_ROUTING_KEYS"] = env("DUNE_CHAT_COMMAND_TARGET_REPLY_ROUTING_KEY", "<empty>")
+        child_env["DUNE_ANNOUNCE_CHAT_BIND_ONLINE_QUEUES"] = "false"
+        child_env["DUNE_ANNOUNCE_CHAT_CLEANUP_TARGET_BINDINGS"] = "true"
         child_env["DUNE_ANNOUNCE_WRAP_DASHBOARD_MESSAGES"] = "false"
         cwd = "/tmp"
     elif target_name:

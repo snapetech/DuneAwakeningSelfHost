@@ -20,6 +20,7 @@ def load_script(name, path):
 
 catalog = load_script("build_exchange_catalog_under_test", "scripts/build-exchange-catalog.py")
 bot = load_script("artificial_exchange_bot_under_test", "scripts/artificial-exchange-bot.py")
+research = load_script("research_exchange_prices_under_test", "scripts/research-exchange-prices.py")
 
 
 class ArtificialExchangeCatalogTest(unittest.TestCase):
@@ -35,6 +36,8 @@ class ArtificialExchangeCatalogTest(unittest.TestCase):
             "template_id": template_id,
             "display_name": template_id,
             "category": "materials",
+            "category_mask": "0",
+            "category_depth": "0",
             "sellable_status": "validated",
             "baseline_price": "100",
             "max_buy_price": "80",
@@ -107,6 +110,26 @@ class ArtificialExchangeCatalogTest(unittest.TestCase):
                 catalog.read_csv_rows(path)
 
 
+class ArtificialExchangePriceResearchTest(unittest.TestCase):
+    def test_extract_item_data_reads_wiki_price_and_item_id(self):
+        wikitext = """
+<!-- |ITEMID|ScrapMetalKnife|ITEMID| -->
+| Name || Scrap Metal Knife
+| Base Vendor Price || 50
+[[Category:Weapons]]
+[[Category:Daggers]]
+"""
+        data = research.extract_item_data(wikitext, "Scrap Metal Knife")
+        self.assertEqual(data["template_id"], "ScrapMetalKnife")
+        self.assertEqual(data["display_name"], "Scrap Metal Knife")
+        self.assertEqual(data["base_vendor_price"], 50)
+        self.assertEqual(data["categories"], ["Daggers", "Weapons"])
+
+    def test_humanize_template_id_expands_common_template_shapes(self):
+        self.assertEqual(research.humanize_template_id("PowerPack5"), "Power Pack 5")
+        self.assertEqual(research.humanize_template_id("ScrapMetalKnife"), "Scrap Metal Knife")
+
+
 class ArtificialExchangeBotTest(unittest.TestCase):
     def setUp(self):
         self.original_env = dict(bot.FILE_ENV)
@@ -122,7 +145,7 @@ class ArtificialExchangeBotTest(unittest.TestCase):
         return row
 
     def catalog_row(self, template_id="ItemA", **overrides):
-        row = {"template_id": template_id, "max_buy_price": 80, "baseline_price": 100, "enabled": True, "liquidity_tier": "medium", "sellable_status": "validated"}
+        row = {"template_id": template_id, "max_buy_price": 80, "baseline_price": 100, "enabled": True, "liquidity_tier": "medium", "sellable_status": "validated", "category_mask": 0, "category_depth": 0}
         row.update(overrides)
         return row
 
@@ -267,6 +290,13 @@ class ArtificialExchangeBotTest(unittest.TestCase):
 
         bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_QUALITY_LEVEL"] = "0"
         self.assertEqual(bot.populator_quality_level(self.catalog_row()), 0)
+
+    def test_populator_category_uses_row_before_env(self):
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_CATEGORY_MASK"] = "99"
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_CATEGORY_DEPTH"] = "1"
+        row = self.catalog_row(category_mask=258, category_depth=2)
+        self.assertEqual(bot.populator_category_mask(row), 258)
+        self.assertEqual(bot.populator_category_depth(row), 2)
 
 
 if __name__ == "__main__":

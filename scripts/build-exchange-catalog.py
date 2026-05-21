@@ -16,6 +16,8 @@ FIELDS = [
     "template_id",
     "display_name",
     "category",
+    "category_mask",
+    "category_depth",
     "sellable_status",
     "baseline_price",
     "max_buy_price",
@@ -108,6 +110,14 @@ def clean_row(raw, source_name):
     row["template_id"] = tid
     row["display_name"] = str(row["display_name"] or tid).strip()
     row["category"] = str(row["category"] or "unknown").strip()
+    row["category_mask"] = parse_int(row["category_mask"], "category_mask", source_name)
+    row["category_depth"] = parse_int(row["category_depth"], "category_depth", source_name)
+    if row["category_mask"] is None:
+        row["category_mask"] = 0
+    if row["category_depth"] is None:
+        row["category_depth"] = 0
+    if row["category_depth"] > 4:
+        raise ValueError(f"{source_name}: category_depth must be between 0 and 4")
     row["sellable_status"] = str(row["sellable_status"] or "known").strip()
     row["baseline_price"] = parse_int(row["baseline_price"], "baseline_price", source_name)
     row["max_buy_price"] = parse_int(row["max_buy_price"], "max_buy_price", source_name)
@@ -183,6 +193,8 @@ def observed_from_db():
                 "template_id": raw["template_id"],
                 "display_name": raw["display_name"],
                 "category": raw["category"],
+                "category_mask": 0,
+                "category_depth": 0,
                 "sellable_status": raw["sellable_status"],
                 "baseline_price": raw["baseline_price"],
                 "max_buy_price": raw["max_buy_price"],

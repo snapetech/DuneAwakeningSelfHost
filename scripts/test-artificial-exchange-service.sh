@@ -46,8 +46,8 @@ if ! grep -q '^Environment=PYTHONUNBUFFERED=1$' "$unit_file"; then
 fi
 
 "$repo_root/scripts/install-artificial-exchange-service.sh" "$env_file" "$unit_file" populator >/dev/null
-if ! grep -q "^ExecStart=$repo_root/scripts/artificial-exchange-bot.py --populate-loop$" "$unit_file"; then
-  printf 'rendered populator unit did not use populate loop\n' >&2
+if ! grep -q "^ExecStart=$repo_root/scripts/artificial-exchange-bot.py --populate-loop --expire-seeded$" "$unit_file"; then
+  printf 'rendered populator unit did not use populate loop with seeded cleanup\n' >&2
   exit 1
 fi
 
@@ -55,8 +55,8 @@ if ! "$repo_root/scripts/install-artificial-exchange-service.sh" "$env_file" "$u
   printf 'installer should support combined mode\n' >&2
   exit 1
 fi
-if ! grep -q "^ExecStart=$repo_root/scripts/artificial-exchange-bot.py --loop --populate-loop$" "$unit_file"; then
-  printf 'rendered combined unit did not use buyer and populate loops\n' >&2
+if ! grep -q "^ExecStart=$repo_root/scripts/artificial-exchange-bot.py --loop --populate-loop --expire-seeded$" "$unit_file"; then
+  printf 'rendered combined unit did not use buyer and populate loops with seeded cleanup\n' >&2
   exit 1
 fi
 

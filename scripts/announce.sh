@@ -116,6 +116,7 @@ bind_online_queues = env_bool("DUNE_ANNOUNCE_CHAT_BIND_ONLINE_QUEUES", True)
 allow_management_publish = env_bool("DUNE_ANNOUNCE_ALLOW_MANAGEMENT_PUBLISH", False)
 queue_pattern = re.compile(env("DUNE_ANNOUNCE_CHAT_QUEUE_PATTERN", r"^[0-9A-Fa-f]{16}_queue$"))
 target_queues = split_csv(env("DUNE_ANNOUNCE_CHAT_TARGET_QUEUES", ""))
+cleanup_target_bindings = env_bool("DUNE_ANNOUNCE_CHAT_CLEANUP_TARGET_BINDINGS", False)
 compose_project = env("DUNE_RESTART_COMPOSE_PROJECT", env("COMPOSE_PROJECT_NAME", "dune_server"))
 docker_socket = env("DUNE_RESTART_DOCKER_SOCKET", "/var/run/docker.sock")
 http_timeout = float(env("DUNE_ANNOUNCE_HTTP_TIMEOUT_SECONDS", "2"))
@@ -414,14 +415,15 @@ def publish_with_docker():
 
     docker_bound = []
     docker_errors = []
-    if bind_online_queues:
+    if bind_online_queues or target_queues:
         try:
-            queue_text = rabbit(["--format", "raw_json", "list", "queues", "name", "consumers"])
             seen = set(target_queues)
-            for queue in json.loads(queue_text or "[]"):
-                name = queue.get("name", "")
-                if queue_pattern.match(name) and int(queue.get("consumers") or 0) > 0:
-                    seen.add(name)
+            if bind_online_queues:
+                queue_text = rabbit(["--format", "raw_json", "list", "queues", "name", "consumers"])
+                for queue in json.loads(queue_text or "[]"):
+                    name = queue.get("name", "")
+                    if queue_pattern.match(name) and int(queue.get("consumers") or 0) > 0:
+                        seen.add(name)
             for queue_name in sorted(seen):
                 if not queue_name:
                     continue
@@ -438,6 +440,37 @@ def publish_with_docker():
             docker_errors.append({"step": "dockerBind", "error": str(exc)})
 
     return docker_bound, docker_errors
+
+
+def cleanup_with_docker(bound):
+    if not bound:
+        return []
+    container_id = find_compose_container("game-rmq")
+
+    def rabbit(args):
+        return docker_exec(container_id, [
+            "rabbitmqadmin",
+            "--host", "127.0.0.1",
+            "--port", "15672",
+            "--username", management_user,
+            "--password", management_password,
+            *args,
+        ])
+
+    errors = []
+    for item in bound:
+        props = item.get("routingKey") or "~"
+        try:
+            rabbit([
+                "delete", "binding",
+                f"source={exchange}",
+                "destination_type=queue",
+                f"destination={item['queue']}",
+                f"properties_key={props}",
+            ])
+        except Exception as exc:
+            errors.append({"queue": item.get("queue"), "routingKey": item.get("routingKey"), "error": str(exc)})
+    return errors
 
 
 def shortstr(value):
@@ -582,16 +615,17 @@ def publish_with_amqp():
 
 bound_queues = []
 bind_errors = []
-if bind_online_queues and not os.path.exists(docker_socket):
+if (bind_online_queues or target_queues) and not os.path.exists(docker_socket):
     queues, error = safe_request("GET", f"/api/queues/{vhost}")
     if error:
         bind_errors.append({"step": "listQueues", "error": error})
     else:
         seen = set(target_queues)
-        for queue in queues:
-            name = queue.get("name", "")
-            if queue_pattern.match(name) and int(queue.get("consumers") or 0) > 0:
-                seen.add(name)
+        if bind_online_queues:
+            for queue in queues:
+                name = queue.get("name", "")
+                if queue_pattern.match(name) and int(queue.get("consumers") or 0) > 0:
+                    seen.add(name)
         for queue_name in sorted(seen):
             if not queue_name:
                 continue
@@ -605,6 +639,21 @@ if bind_online_queues and not os.path.exists(docker_socket):
                     bind_errors.append({"queue": queue_name, "routingKey": routing_key, "error": error})
                 else:
                     bound_queues.append({"queue": queue_name, "routingKey": routing_key})
+
+
+def cleanup_with_management(bound):
+    errors = []
+    for item in bound:
+        props = item.get("routingKey") or "~"
+        path = (
+            f"/api/bindings/{vhost}/e/{urllib.parse.quote(exchange, safe='')}"
+            f"/q/{urllib.parse.quote(item.get('queue', ''), safe='')}"
+            f"/{urllib.parse.quote(props, safe='')}"
+        )
+        _, error = safe_request("DELETE", path)
+        if error:
+            errors.append({"queue": item.get("queue"), "routingKey": item.get("routingKey"), "error": error})
+    return errors
 
 timestamp = time.strftime("%Y.%m.%d-%H.%M.%S", time.gmtime())
 chat_message = {
@@ -672,6 +721,17 @@ if not any(item["ok"] for item in results) and allow_management_publish:
         results.append({"routingKey": routing_key, "ok": routed, "error": error})
     fallback = "management-publish"
 
+cleanup_errors = []
+if cleanup_target_bindings:
+    cleanup_items = [item for item in bound_queues if item.get("queue") in set(target_queues)]
+    if os.path.exists(docker_socket):
+        try:
+            cleanup_errors = cleanup_with_docker(cleanup_items)
+        except Exception as exc:
+            cleanup_errors = [{"step": "dockerCleanup", "error": str(exc)}]
+    else:
+        cleanup_errors = cleanup_with_management(cleanup_items)
+
 ok = any(item["ok"] for item in results)
 print(json.dumps({
     "ok": ok,
@@ -683,6 +743,7 @@ print(json.dumps({
     "routingKeys": results,
     "boundQueues": bound_queues,
     "bindErrors": bind_errors,
+    "cleanupErrors": cleanup_errors,
     "jobId": job_id,
     "restartAt": restart_at,
 }, separators=(",", ":")))
