@@ -122,13 +122,14 @@ Expected result: `make validate` exits cleanly, and the second command finds no 
 
 When Steam updates the self-hosted server tool:
 
-1. Run `./scripts/check-steam-update.sh .env` to compare `.env` with the current Steam package.
-2. Re-run `./scripts/load-images.sh .env`.
-3. Update `DUNE_IMAGE_TAG` with `./scripts/check-steam-update.sh .env --write-env`, or edit it manually if multiple tags are reported.
-4. Re-run `./scripts/inspect-images.sh` and compare the output with `docs/teardown.md`.
-5. Run `docker compose --env-file .env config --quiet`.
-6. Start only Postgres and RabbitMQ, run `db-init`, then start the service layer.
-7. Confirm `./scripts/status.sh .env`.
-8. Update docs that cite image tags, ports, settings, or observed behavior.
+1. Run `./scripts/update-steam-tool.sh .env` to ask SteamCMD to refresh the local tool.
+2. Run `./scripts/check-steam-update.sh .env` to compare `.env` with the current Steam package.
+3. Re-run `./scripts/load-images.sh .env`.
+4. Update `DUNE_IMAGE_TAG` with `./scripts/check-steam-update.sh .env --write-env`, or edit it manually if multiple tags are reported.
+5. Re-run `./scripts/inspect-images.sh` and compare the output with `docs/teardown.md`.
+6. Run `docker compose --env-file .env config --quiet`.
+7. Start only Postgres and RabbitMQ, run `db-init`, then start the service layer.
+8. Confirm `./scripts/status.sh .env`.
+9. Update docs that cite image tags, ports, settings, or observed behavior.
 
-The unattended daily maintenance flow runs the same package-tag check after the stopped-world backup and before services are brought back online. See [`docs/maintenance-updates.md`](maintenance-updates.md).
+The unattended daily maintenance flow runs the same SteamCMD refresh and package-tag check after the stopped-world backup and before services are brought back online. See [`docs/maintenance-updates.md`](maintenance-updates.md).
