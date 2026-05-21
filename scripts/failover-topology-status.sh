@@ -23,6 +23,8 @@ standby_ip="${DUNE_FAILOVER_STANDBY_LAN_IP:-$(read_env DUNE_FAILOVER_STANDBY_LAN
 router="${DUNE_FAILOVER_ROUTER_SSH:-$(read_env DUNE_FAILOVER_ROUTER_SSH)}"
 public_ip="${DUNE_FAILOVER_PUBLIC_IP:-${DUNE_PUBLIC_IP:-${EXTERNAL_ADDRESS:-$(read_env EXTERNAL_ADDRESS)}}}"
 db="${DUNE_DATABASE:-$(read_env DUNE_DATABASE)}"; db="${db:-dune_sb_1_4_0_0}"
+remote_repo="${DUNE_STANDBY_REPO_ROOT:-$(read_env DUNE_STANDBY_REPO_ROOT)}"
+remote_repo="${remote_repo:-$PWD}"
 
 compose=(docker compose --env-file "$env_file" -f compose.yaml -f compose.replica.yaml)
 
@@ -45,8 +47,7 @@ if [[ -n "$standby_host" ]]; then
 if docker ps --format '{{.Names}}' | grep -qx dune-postgres-replica; then
   printf 'dune-postgres-replica='
   docker exec dune-postgres-replica psql -U dune -d '$db' -Atc 'select case when pg_is_in_recovery() then '\''standby-in-recovery'\'' else '\''writable-primary'\'' end;' 2>/dev/null || echo unavailable
-elif docker compose --env-file '$PWD/$env_file' -f '$PWD/compose.yaml' ps -q postgres >/dev/null 2>&1; then
-  cd '$PWD'
+elif [ -d '$remote_repo' ] && cd '$remote_repo' && docker compose --env-file '$env_file' -f compose.yaml ps -q postgres >/dev/null 2>&1; then
   printf 'compose-postgres='
   docker compose --env-file '$env_file' -f compose.yaml exec -T postgres psql -U dune -d '$db' -Atc 'select case when pg_is_in_recovery() then '\''standby-in-recovery'\'' else '\''writable-primary'\'' end;' 2>/dev/null || echo unavailable
 else

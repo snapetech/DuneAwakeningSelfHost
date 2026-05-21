@@ -6229,7 +6229,9 @@ INDEX = r"""<!doctype html>
     .poiToggleBar input { width:auto; }
     .poiLegendHeader { display:flex; align-items:center; justify-content:space-between; gap:10px; margin:0 0 6px; }
     .poiLegendHeader .toolbar { margin:0; }
-    .poiFilterInput { width:100%; margin:0 0 8px; }
+    .poiLegendHeader .toolbar { flex-wrap:wrap; justify-content:flex-end; }
+    .poiFilterInput { width:100%; margin:0 0 6px; }
+    .poiFilterSummary { color:var(--muted); font-size:12px; margin:0 0 8px; }
     .poiToggleLabel { display:inline-flex; align-items:center; gap:7px; min-width:0; }
     .poiSwatch { width:10px; height:10px; border:1px solid #0b0d0a; border-radius:2px; flex:0 0 auto; }
     .poiCount { color:var(--muted); font-size:11px; }
@@ -6821,7 +6823,7 @@ function haggaPoiToggleBar(pois, selected){
   if (!groupKeys.length) return '';
   const colors = {};
   groupKeys.forEach((group, index) => colors[group] = haggaPoiPalette[index % haggaPoiPalette.length]);
-  return `<div class="poiLegendHeader"><span id="haggaPoiSummary" class="muted">${esc(haggaPoiSummary(selected, pois))}</span><div class="toolbar"><button id="haggaPoiAllBtn">All</button><button id="haggaPoiPresetBtn">Preset</button><button id="haggaPoiClearBtn">Clear</button></div></div><input id="haggaPoiFilter" class="poiFilterInput" type="search" placeholder="Filter POI layers"><div class="poiToggleBar" aria-label="POI layer toggles">${groupKeys.map(group => {
+  return `<div class="poiLegendHeader"><span id="haggaPoiSummary" class="muted">${esc(haggaPoiSummary(selected, pois))}</span><div class="toolbar"><button id="haggaPoiAllBtn">All</button><button id="haggaPoiPresetBtn">Preset</button><button id="haggaPoiClearBtn">Clear</button><button id="haggaPoiEnableFilteredBtn">On shown</button><button id="haggaPoiDisableFilteredBtn">Off shown</button></div></div><input id="haggaPoiFilter" class="poiFilterInput" type="search" placeholder="Filter POI layers"><div id="haggaPoiFilterSummary" class="poiFilterSummary">Showing all POI layers</div><div class="poiToggleBar" aria-label="POI layer toggles">${groupKeys.map(group => {
     const info = groups[group] || {};
     const label = String(info.name || group);
     return `<label data-filter-text="${esc((label + ' ' + group).toLowerCase())}"><span class="poiToggleLabel"><input type="checkbox" value="${esc(group)}"${selected[group] ? ' checked' : ''}><span class="poiSwatch" style="background:${esc(colors[group])}"></span><span>${esc(label)}</span></span><span class="poiCount">${esc(info.count || 0)}</span></label>`;
@@ -7117,13 +7119,32 @@ function wireHaggaMapControls(container){
   if (poiFilter) {
     const applyPoiFilter = () => {
       const term = poiFilter.value.trim().toLowerCase();
+      let visible = 0;
+      let total = 0;
       container.querySelectorAll('.poiToggleBar label[data-filter-text]').forEach(label => {
         label.hidden = term && !label.getAttribute('data-filter-text').includes(term);
+        total += 1;
+        if (!label.hidden) visible += 1;
       });
+      const summary = container.querySelector('#haggaPoiFilterSummary');
+      if (summary) summary.textContent = term ? `Showing ${visible} of ${total} POI layers` : `Showing all ${total} POI layers`;
     };
     poiFilter.addEventListener('input', applyPoiFilter);
     applyPoiFilter();
   }
+  const setFilteredPois = enabled => {
+    const selected = selectedHaggaPoiGroups({});
+    container.querySelectorAll('.poiToggleBar label[data-filter-text]').forEach(label => {
+      if (!label.hidden) {
+        const input = label.querySelector('input[type=checkbox]');
+        if (input) selected[input.value] = enabled;
+      }
+    });
+    saveHaggaPoiGroups(selected);
+    refreshHaggaMap({force:true}).catch(e => reportClientError(e, 'Refresh Hagga map'));
+  };
+  container.querySelector('#haggaPoiEnableFilteredBtn')?.addEventListener('click', () => setFilteredPois(true));
+  container.querySelector('#haggaPoiDisableFilteredBtn')?.addEventListener('click', () => setFilteredPois(false));
   container.querySelectorAll('.playerMarker[data-account-id]').forEach(marker => {
     marker.addEventListener('click', e => {
       if (haggaMapSuppressMarkerClick) {

@@ -157,6 +157,7 @@ def main():
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--wait", type=float, default=1.0)
     parser.add_argument("--include-game-rmq", action="store_true")
+    parser.add_argument("--include-game-bindings", action="store_true", help="Also publish to known game exchange bindings for the server queue.")
     parser.add_argument("--only-broker", choices=("admin", "game", "all"), default="all")
     args = parser.parse_args()
 
@@ -166,6 +167,15 @@ def main():
     targets = [("admin", "rpc", args.route), ("admin", "", args.queue)]
     if args.include_game_rmq and args.game_server_queue:
         targets.append(("game", "", args.game_server_queue))
+        if args.include_game_bindings and args.game_server_queue.startswith("queue.server."):
+            server_id = args.game_server_queue.removeprefix("queue.server.")
+            targets.extend(
+                [
+                    ("game", "heartbeats", server_id),
+                    ("game", "heartbeats", "notifications"),
+                    ("game", "notifications", "PlayerOnlineState"),
+                ]
+            )
     if args.only_broker != "all":
         targets = [target for target in targets if target[0] == args.only_broker]
 

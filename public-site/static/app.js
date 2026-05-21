@@ -10,7 +10,10 @@
 	var poiAll = document.getElementById("poi-all");
 	var poiPreset = document.getElementById("poi-preset");
 	var poiClear = document.getElementById("poi-clear");
+	var poiEnableFiltered = document.getElementById("poi-enable-filtered");
+	var poiDisableFiltered = document.getElementById("poi-disable-filtered");
 	var poiFilter = document.getElementById("poi-filter");
+	var poiFilterSummary = document.getElementById("poi-filter-summary");
 	var players = document.getElementById("active-players");
 	var count = document.getElementById("player-count");
 	var peakCount = document.getElementById("peak-player-count");
@@ -270,9 +273,18 @@
 		updatePoiSummary(selected, data);
 		function applyFilter() {
 			var term = poiFilter ? poiFilter.value.trim().toLowerCase() : "";
+			var visible = 0;
+			var total = 0;
 			poiToggles.querySelectorAll("label[data-filter-text]").forEach(function (label) {
 				label.hidden = term && label.getAttribute("data-filter-text").indexOf(term) === -1;
+				total += 1;
+				if (!label.hidden) {
+					visible += 1;
+				}
 			});
+			if (poiFilterSummary) {
+				poiFilterSummary.textContent = term ? "Showing " + visible + " of " + total + " POI layers" : "Showing all " + total + " POI layers";
+			}
 		}
 		poiToggles.querySelectorAll("input[type=checkbox]").forEach(function (input) {
 			input.addEventListener("change", function () {
@@ -303,6 +315,28 @@
 				});
 				savePoiGroups(selected);
 				renderPoiToggles(data);
+			};
+		}
+		function setFiltered(enabled) {
+			poiToggles.querySelectorAll("label[data-filter-text]").forEach(function (label) {
+				if (!label.hidden) {
+					var input = label.querySelector("input[type=checkbox]");
+					if (input) {
+						selected[input.value] = enabled;
+					}
+				}
+			});
+			savePoiGroups(selected);
+			renderPoiToggles(data);
+		}
+		if (poiEnableFiltered) {
+			poiEnableFiltered.onclick = function () {
+				setFiltered(true);
+			};
+		}
+		if (poiDisableFiltered) {
+			poiDisableFiltered.onclick = function () {
+				setFiltered(false);
 			};
 		}
 		if (poiPreset) {

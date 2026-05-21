@@ -48,6 +48,7 @@ Read-only checks:
 
 ```sh
 make failover-topology-status ENV_FILE=.env
+make failover-bidirectional-audit ENV_FILE=.env
 make standby-status ENV_FILE=.env
 make cutover-network-status ENV_FILE=.env
 make cutover-check ENV_FILE=.env

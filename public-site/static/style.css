@@ -262,7 +262,9 @@ section {
 
 .poi-legend-actions {
 	display: inline-flex;
+	flex-wrap: wrap;
 	gap: 6px;
+	justify-content: flex-end;
 }
 
 .poi-legend-actions button {
@@ -284,7 +286,7 @@ section {
 
 .poi-filter-label {
 	display: block;
-	margin-bottom: 8px;
+	margin-bottom: 6px;
 }
 
 .poi-filter-label input {
@@ -310,6 +312,11 @@ section {
 	overflow: hidden;
 	clip: rect(0, 0, 0, 0);
 	white-space: nowrap;
+}
+
+.poi-filter-summary {
+	font-size: 0.82rem;
+	margin-bottom: 8px;
 }
 
 .poi-toggles label {
