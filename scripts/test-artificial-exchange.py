@@ -289,6 +289,12 @@ class ArtificialExchangeBotTest(unittest.TestCase):
         bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_MARKET_PRICE"] = "false"
         self.assertEqual(
             [row["template_id"] for row in bot.populator_catalog_rows(catalog_rows)],
+            ["enabled", "unvalidated"],
+        )
+
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ALLOW_UNPRICED_SEEDING"] = "true"
+        self.assertEqual(
+            [row["template_id"] for row in bot.populator_catalog_rows(catalog_rows)],
             ["enabled", "unvalidated", "missing-market"],
         )
 
