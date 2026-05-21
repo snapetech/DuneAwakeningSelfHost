@@ -1123,7 +1123,17 @@ Targeted disconnect execution has its own gate. It requires all three of `DUNE_A
 
 `&goto` and `&bring` are wired through the native GM command adapter for online movement, but execution remains gated until the command payload is proven. `&goto <playername>` prepares `TeleportToPlayer <playername>` targeted at the admin; `&bring <playername>` prepares `TeleportToExact <admin-x> <admin-y> <admin-z>` targeted at the online player. The three required gates are `DUNE_ADMIN_GM_COMMANDS_ENABLED=true`, `DUNE_GM_COMMAND_PAYLOAD_VERIFIED=true`, and `DUNE_CHAT_COMMAND_EXECUTE_ONLINE_GM_TELEPORT=true`. Until then, the commands return the exact payload preview instead of publishing a live teleport.
 
-Online movement has an additional live-test guard: `DUNE_CHAT_COMMAND_ONLINE_GM_TELEPORT_REQUIRE_SAME_ROUTE=true` by default. With that guard enabled, the admin and target must both be online and resolve to the same GM route before a publish is attempted. This keeps first live tests limited to same-map/same-partition movement and prevents accidentally sending exact coordinates from one running map server to another.
+Online movement has additional live-test guards. `DUNE_CHAT_COMMAND_ONLINE_GM_TELEPORT_REQUIRE_SAME_ROUTE=true` by default, so the admin and target must both be online and resolve to the same GM route before a publish is attempted. `DUNE_CHAT_COMMAND_ONLINE_GM_TELEPORT_REQUIRE_ARM=true` by default, so live movement also requires a short-lived, one-use arm command:
+
+```text
+&armgoto <playername>
+&goto <playername>
+
+&armbring <playername>
+&bring <playername>
+```
+
+The arm expires after `DUNE_CHAT_COMMAND_ONLINE_GM_TELEPORT_ARM_SECONDS`, default `60`. This keeps first live tests limited to same-map/same-partition movement and prevents an old preview or repeated chat command from publishing unexpectedly.
 
 `&gm` is the richer native-command namespace. It supports safe probes, saved admin marks, movement/travel previews, player help, item/kit previews, XP mutation request previews, and movement-mode previews. All native publishes remain gated by the same three GM flags; dangerous building/placeable destroy commands are intentionally not wired as chat shortcuts.
 

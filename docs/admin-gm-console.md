@@ -183,9 +183,19 @@ The first live-test path is intentionally same-route only. Leave this guard enab
 
 ```env
 DUNE_CHAT_COMMAND_ONLINE_GM_TELEPORT_REQUIRE_SAME_ROUTE=true
+DUNE_CHAT_COMMAND_ONLINE_GM_TELEPORT_REQUIRE_ARM=true
+DUNE_CHAT_COMMAND_ONLINE_GM_TELEPORT_ARM_SECONDS=60
 ```
 
-With the guard enabled, the admin and target must both be online and resolve to the same GM route before a teleport command can publish.
+With these guards enabled, the admin and target must both be online and resolve to the same GM route before a teleport command can publish. Live movement also requires a short-lived, one-use arm:
+
+```text
+&armgoto <playername>
+&goto <playername>
+
+&armbring <playername>
+&bring <playername>
+```
 
 ## Targeted Disconnect Status
 

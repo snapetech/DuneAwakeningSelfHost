@@ -24,6 +24,7 @@ from dune_gm_command import build_envelope, publish_command, publish_command_man
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 GM_LOCATION_FILE = ROOT / "backups" / "admin-panel" / "gm-locations.json"
+ONLINE_GM_TELEPORT_ARM_FILE = ROOT / "backups" / "admin-panel" / "online-gm-teleport-arm.json"
 SPAM_STATE = {}
 AUCTION_CONFIRMATIONS = {}
 LAST_ANNOUNCE_RESULT = None
@@ -285,6 +286,89 @@ def write_gm_locations(data):
     tmp.replace(GM_LOCATION_FILE)
 
 
+def read_online_gm_teleport_arm():
+    try:
+        data = json.loads(ONLINE_GM_TELEPORT_ARM_FILE.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {"arms": []}
+    if not isinstance(data, dict):
+        return {"arms": []}
+    arms = data.get("arms")
+    if not isinstance(arms, list):
+        data["arms"] = []
+    return data
+
+
+def write_online_gm_teleport_arm(data):
+    ONLINE_GM_TELEPORT_ARM_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = ONLINE_GM_TELEPORT_ARM_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+    tmp.replace(ONLINE_GM_TELEPORT_ARM_FILE)
+
+
+def online_gm_teleport_arm_seconds():
+    return max(5, int(env("DUNE_CHAT_COMMAND_ONLINE_GM_TELEPORT_ARM_SECONDS", "60")))
+
+
+def online_gm_teleport_arm_entry(action, admin_name, target_name, route, command_text):
+    return {
+        "action": action,
+        "adminPlayer": admin_name,
+        "targetPlayer": target_name,
+        "route": route,
+        "commandText": command_text,
+        "expiresAt": int(time.time()) + online_gm_teleport_arm_seconds(),
+    }
+
+
+def arm_online_gm_teleport(action, admin_name, target_name, route, command_text):
+    now = int(time.time())
+    data = read_online_gm_teleport_arm()
+    entry = online_gm_teleport_arm_entry(action, admin_name, target_name, route, command_text)
+    data["arms"] = [
+        arm for arm in data.get("arms", [])
+        if int(arm.get("expiresAt") or 0) > now
+        and not (
+            arm.get("action") == action
+            and arm.get("adminPlayer") == admin_name
+            and arm.get("targetPlayer") == target_name
+        )
+    ]
+    data["arms"].append(entry)
+    write_online_gm_teleport_arm(data)
+    return entry
+
+
+def consume_online_gm_teleport_arm(action, admin_name, target_name, route, command_text):
+    if not env_bool("DUNE_CHAT_COMMAND_ONLINE_GM_TELEPORT_REQUIRE_ARM", True):
+        return True, "online GM teleport arming disabled"
+    now = int(time.time())
+    data = read_online_gm_teleport_arm()
+    kept = []
+    matched = None
+    for arm in data.get("arms", []):
+        if int(arm.get("expiresAt") or 0) <= now:
+            continue
+        if (
+            arm.get("action") == action
+            and arm.get("adminPlayer") == admin_name
+            and arm.get("targetPlayer") == target_name
+            and arm.get("route") == route
+            and arm.get("commandText") == command_text
+            and matched is None
+        ):
+            matched = arm
+            continue
+        kept.append(arm)
+    if matched:
+        data["arms"] = kept
+        write_online_gm_teleport_arm(data)
+        return True, f"armed until {matched.get('expiresAt')}"
+    data["arms"] = kept
+    write_online_gm_teleport_arm(data)
+    return False, f"online GM teleport is not armed; run &arm{action} {target_name} first"
+
+
 def save_gm_location(admin_name, location_name, row):
     data = read_gm_locations()
     locations = data.setdefault("locations", {})
@@ -415,6 +499,21 @@ def send_gm_command(command_text, target_player, admin_player, route):
     if env("DUNE_GM_COMMAND_TRANSPORT", "amqp") == "management":
         return publish_command_management(command_text, route, target_player=target_player, admin_player=admin_player)
     return publish_command(command_text, route, target_player=target_player, admin_player=admin_player)
+
+
+def send_online_gm_teleport(action, command_text, target_player, admin_player, route):
+    armed, arm_reason = consume_online_gm_teleport_arm(action, admin_player, target_player, route, command_text)
+    if not armed:
+        return {
+            "ok": False,
+            "blocked": True,
+            "reason": arm_reason,
+            "preview": gm_command_preview(command_text, target_player, admin_player, route),
+        }
+    result = send_gm_command(command_text, target_player, admin_player, route)
+    if isinstance(result, dict):
+        result.setdefault("arm", {"ok": True, "reason": arm_reason})
+    return result
 
 
 def send_player_disconnect(command_text, target_player, admin_player, route):
@@ -826,7 +925,7 @@ def specialization_track_types(conn):
 
 def handle_gm_command(conn, args, resolved_admin, reply=False):
     if not args:
-        response = "usage: &gm <help|test|routes|mark|marks|recall|pos|dry|where|goto|bring|unstuck|item|kit|xp|tp|map|travel|dimension|patrol|sandworm|marker|vehicle|fly|ghost|walk> ..."
+        response = "usage: &gm <help|test|routes|mark|marks|recall|pos|dry|where|goto|bring|unstuck|item|kit|xp|tp|map|travel|dimension|patrol|sandworm|marker|vehicle|fly|ghost|walk> ...; online &goto/&bring require &armgoto/&armbring first"
         if reply:
             run_announce(response)
         return {"ok": False, "error": response}
@@ -835,7 +934,7 @@ def handle_gm_command(conn, args, resolved_admin, reply=False):
     admin, _ = character_row(conn, resolved_admin)
 
     if subcommand in ("help", "?"):
-        response = "gm: test, routes, mark, marks, recall, pos, dry, where, goto, bring, unstuck, item, kit, xp, tp, map, travel, dimension, patrol, sandworm, marker, vehicle, fly, ghost, walk"
+        response = "gm: test, routes, mark, marks, recall, pos, dry, where, goto, bring, unstuck, item, kit, xp, tp, map, travel, dimension, patrol, sandworm, marker, vehicle, fly, ghost, walk; use &armgoto/&armbring before live online movement"
         if reply:
             run_announce(response)
         return {"ok": True, "action": "gm.help", "message": response}
@@ -987,7 +1086,7 @@ def handle_gm_command(conn, args, resolved_admin, reply=False):
         route = target_route or gm_route_for(conn, target)
         command_text = f"TeleportToPlayer {target['character_name']}"
         if safe:
-            gm_result = send_gm_command(command_text, resolved_admin, resolved_admin, route)
+            gm_result = send_online_gm_teleport("goto", command_text, resolved_admin, resolved_admin, route)
             response = f"goto {'sent' if gm_result.get('ok') else 'preview ready'} for {target['character_name']} via {route}"
         else:
             gm_result = {"ok": False, "blocked": True, "reason": safety_reason, "preview": gm_command_preview(command_text, resolved_admin, resolved_admin, route)}
@@ -1018,7 +1117,7 @@ def handle_gm_command(conn, args, resolved_admin, reply=False):
         route = target_route or gm_route_for(conn, target)
         command_text = f"TeleportToExact {admin['x']:.3f} {admin['y']:.3f} {admin['z']:.3f}"
         if safe:
-            gm_result = send_gm_command(command_text, target["character_name"], resolved_admin, route)
+            gm_result = send_online_gm_teleport("bring", command_text, target["character_name"], resolved_admin, route)
             response = f"bring {'sent' if gm_result.get('ok') else 'preview ready'} for {target['character_name']} via {route}"
         else:
             gm_result = {"ok": False, "blocked": True, "reason": safety_reason, "preview": gm_command_preview(command_text, target["character_name"], resolved_admin, route)}
@@ -1764,6 +1863,54 @@ def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=F
             "reply": announce_result,
         }
 
+    if command in ("armgoto", "armbring"):
+        if len(parts) != 2:
+            response = f"usage: &{command} <playername>"
+            announce_result = maybe_reply(response, reply)
+            return {"ok": False, "error": response, "reply": announce_result}
+        action = "goto" if command == "armgoto" else "bring"
+        admin, _ = character_row(conn, resolved_admin)
+        target, matches = character_row(conn, parts[1])
+        if target is None:
+            response = "no unique player match: " + ", ".join(row["character_name"] for row in matches) if matches else "player not found"
+            announce_result = maybe_reply(response, reply)
+            return {"ok": False, "error": response, "matches": [row["character_name"] for row in matches], "reply": announce_result}
+        safe, safety_reason, admin_route, target_route = online_gm_teleport_safety(conn, action, admin, target)
+        route = target_route or gm_route_for(conn, target)
+        if action == "goto":
+            command_text = f"TeleportToPlayer {target['character_name']}"
+            target_player = resolved_admin
+        else:
+            command_text = f"TeleportToExact {admin['x']:.3f} {admin['y']:.3f} {admin['z']:.3f}" if admin and admin.get("x") is not None else "TeleportToExact <admin-x> <admin-y> <admin-z>"
+            target_player = target["character_name"]
+        if not safe:
+            response = f"arm {action} blocked for {target['character_name']}: {safety_reason}"
+            announce_result = maybe_reply(response, reply)
+            return {
+                "ok": False,
+                "action": f"arm.{action}",
+                "blocked": True,
+                "reason": safety_reason,
+                "message": response,
+                "adminRoute": admin_route,
+                "targetRoute": target_route,
+                "preview": gm_command_preview(command_text, target_player, resolved_admin, route),
+                "reply": announce_result,
+            }
+        arm = arm_online_gm_teleport(action, resolved_admin, target_player, route, command_text)
+        response = f"armed {action} for {target['character_name']} via {route} for {online_gm_teleport_arm_seconds()}s; run &{action} {target['character_name']} to execute once"
+        announce_result = maybe_reply(response, reply)
+        return {
+            "ok": True,
+            "action": f"arm.{action}",
+            "message": response,
+            "arm": arm,
+            "adminRoute": admin_route,
+            "targetRoute": target_route,
+            "preview": gm_command_preview(command_text, target_player, resolved_admin, route),
+            "reply": announce_result,
+        }
+
     if command in ("goto", "teleportto", "tpto"):
         if len(parts) != 2:
             response = "usage: &goto <playername>"
@@ -1784,7 +1931,7 @@ def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=F
             route = target_route or gm_route_for(conn, target)
             command_text = f"TeleportToPlayer {target['character_name']}"
             if safe:
-                gm_result = send_gm_command(command_text, resolved_admin, resolved_admin, route)
+                gm_result = send_online_gm_teleport("goto", command_text, resolved_admin, resolved_admin, route)
             else:
                 gm_result = {"ok": False, "blocked": True, "reason": safety_reason, "preview": gm_command_preview(command_text, resolved_admin, resolved_admin, route)}
             if gm_result.get("ok"):
@@ -1846,7 +1993,7 @@ def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=F
         route = target_route or gm_route_for(conn, target)
         command_text = f"TeleportToExact {admin['x']:.3f} {admin['y']:.3f} {admin['z']:.3f}"
         if safe:
-            gm_result = send_gm_command(command_text, target["character_name"], resolved_admin, route)
+            gm_result = send_online_gm_teleport("bring", command_text, target["character_name"], resolved_admin, route)
         else:
             gm_result = {"ok": False, "blocked": True, "reason": safety_reason, "preview": gm_command_preview(command_text, target["character_name"], resolved_admin, route)}
         if gm_result.get("ok"):

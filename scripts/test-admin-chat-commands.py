@@ -3,6 +3,7 @@ import contextlib
 import io
 import importlib.util
 import pathlib
+import tempfile
 import unittest.mock
 import unittest
 
@@ -207,7 +208,7 @@ class OnlineTeleportSafetyTests(unittest.TestCase):
         self.assertIn("same-route live teleport guard", result["reason"])
         send_gm.assert_not_called()
 
-    def test_online_bring_same_route_can_publish_when_gates_are_enabled(self):
+    def test_online_bring_same_route_requires_arm_even_when_gates_are_enabled(self):
         admin = self.row("Lukano", partition_id=1)
         target = self.row("Tester", partition_id=1)
 
@@ -228,10 +229,45 @@ class OnlineTeleportSafetyTests(unittest.TestCase):
              unittest.mock.patch.object(admin_chat_commands, "publish_command", lambda command_text, route, **kwargs: {"ok": True, "commandText": command_text, "route": route, **kwargs}):
             result = admin_chat_commands.handle_command(object(), "&bring Tester", sender_name="Lukano")
 
-        self.assertTrue(result["ok"])
-        self.assertFalse(result["blocked"])
-        self.assertEqual(result["gm"]["commandText"], "TeleportToExact 10.000 20.000 30.000")
-        self.assertEqual(result["gm"]["route"], "Survival_11")
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["blocked"])
+        self.assertIn("not armed", result["gm"]["reason"])
+
+    def test_armbring_allows_one_same_route_publish(self):
+        admin = self.row("Lukano", partition_id=1)
+        target = self.row("Tester", partition_id=1)
+
+        def fake_character_row(conn, name):
+            return (admin if name == "Lukano" else target), []
+
+        def fake_env(name, default=""):
+            values = {
+                "DUNE_ADMIN_GM_COMMANDS_ENABLED": "true",
+                "DUNE_GM_COMMAND_PAYLOAD_VERIFIED": "true",
+                "DUNE_CHAT_COMMAND_EXECUTE_ONLINE_GM_TELEPORT": "true",
+                "DUNE_CHAT_COMMAND_ONLINE_GM_TELEPORT_ARM_SECONDS": "30",
+            }
+            return values.get(name, default)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            arm_file = pathlib.Path(tmpdir) / "online-gm-teleport-arm.json"
+            with unittest.mock.patch.object(admin_chat_commands, "ONLINE_GM_TELEPORT_ARM_FILE", arm_file), \
+                 unittest.mock.patch.object(admin_chat_commands, "is_admin", lambda conn, sender_name, sender_fls_id: (True, "Lukano")), \
+                 unittest.mock.patch.object(admin_chat_commands, "character_row", fake_character_row), \
+                 unittest.mock.patch.object(admin_chat_commands, "env", fake_env), \
+                 unittest.mock.patch.object(admin_chat_commands, "publish_command", lambda command_text, route, **kwargs: {"ok": True, "commandText": command_text, "route": route, **kwargs}):
+                arm = admin_chat_commands.handle_command(object(), "&armbring Tester", sender_name="Lukano")
+                first = admin_chat_commands.handle_command(object(), "&bring Tester", sender_name="Lukano")
+                second = admin_chat_commands.handle_command(object(), "&bring Tester", sender_name="Lukano")
+
+        self.assertTrue(arm["ok"])
+        self.assertTrue(first["ok"])
+        self.assertFalse(first["blocked"])
+        self.assertEqual(first["gm"]["commandText"], "TeleportToExact 10.000 20.000 30.000")
+        self.assertEqual(first["gm"]["route"], "Survival_11")
+        self.assertFalse(second["ok"])
+        self.assertTrue(second["blocked"])
+        self.assertIn("not armed", second["gm"]["reason"])
 
 
 class CommandListenerRetryTests(unittest.TestCase):

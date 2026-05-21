@@ -32,11 +32,58 @@ steam_update_enabled() {
   esac
 }
 
+env_file_value() {
+  key="$1"
+  file="${2:-${ENV_FILE:-.env}}"
+  eval "value=\${$key:-}"
+  if [ -n "$value" ]; then
+    printf '%s\n' "$value"
+    return 0
+  fi
+  awk -F= -v key="$key" '
+    $0 ~ "^[[:space:]]*" key "=" {
+      sub(/^[^=]*=/, "")
+      gsub(/^["'\''"]|["'\''"]$/, "")
+      print
+      exit
+    }
+  ' "$file" 2>/dev/null || true
+}
+
 run_steam_update_check() {
   env_file="${ENV_FILE:-.env}"
   if ! steam_update_enabled; then
     printf 'Steam package update check disabled by DUNE_RESTART_CHECK_STEAM_UPDATE\n'
     return 0
+  fi
+  if [ -x ./scripts/update-steam-tool.sh ]; then
+    steamcmd_command="$(env_file_value DUNE_STEAMCMD_COMMAND "$env_file")"
+    steamcmd_command="${steamcmd_command:-steamcmd}"
+    if command -v "$steamcmd_command" >/dev/null 2>&1; then
+      ./scripts/update-steam-tool.sh "$env_file"
+    else
+      helper_image="$(env_file_value DUNE_RESTART_STEAMCMD_HELPER_IMAGE "$env_file")"
+      steam_dir="$(env_file_value DUNE_STEAM_SERVER_DIR "$env_file")"
+      if [ -n "$helper_image" ] && [ -n "$steam_dir" ] && command -v docker >/dev/null 2>&1; then
+        docker run --rm \
+          -v "$PWD:$PWD" \
+          -v "$PWD:/workspace" \
+          -v "$steam_dir:$steam_dir" \
+          -w "$PWD" \
+          -e "DUNE_RESTART_STEAMCMD_UPDATE=$(env_file_value DUNE_RESTART_STEAMCMD_UPDATE "$env_file")" \
+          -e "DUNE_RESTART_STEAMCMD_REQUIRED=$(env_file_value DUNE_RESTART_STEAMCMD_REQUIRED "$env_file")" \
+          -e "DUNE_STEAM_APP_ID=$(env_file_value DUNE_STEAM_APP_ID "$env_file")" \
+          -e "DUNE_STEAM_LOGIN=$(env_file_value DUNE_STEAM_LOGIN "$env_file")" \
+          -e "DUNE_STEAM_PASSWORD=$(env_file_value DUNE_STEAM_PASSWORD "$env_file")" \
+          -e "DUNE_STEAMCMD_VALIDATE=$(env_file_value DUNE_STEAMCMD_VALIDATE "$env_file")" \
+          -e "DUNE_STEAMCMD_TIMEOUT_SECONDS=$(env_file_value DUNE_STEAMCMD_TIMEOUT_SECONDS "$env_file")" \
+          "$helper_image" bash ./scripts/update-steam-tool.sh "$env_file"
+      else
+        ./scripts/update-steam-tool.sh "$env_file"
+      fi
+    fi
+  else
+    printf 'SteamCMD package update skipped: scripts/update-steam-tool.sh is missing or not executable\n' >&2
   fi
   if [ ! -x ./scripts/check-steam-update.sh ]; then
     printf 'Steam package update check skipped: scripts/check-steam-update.sh is missing or not executable\n' >&2
@@ -311,8 +358,51 @@ def run_host_update_check():
         return {"ok": True, "skipped": True, "reason": "DUNE_RESTART_CHECK_STEAM_UPDATE disabled"}
     if not host_workspace:
         return {"ok": True, "skipped": True, "warning": "host workspace is not configured"}
+    steam_dir = read_env_value(env_file, "DUNE_STEAM_SERVER_DIR")
+    steamcmd_helper_image = os.environ.get("DUNE_RESTART_STEAMCMD_HELPER_IMAGE") or read_env_value(env_file, "DUNE_RESTART_STEAMCMD_HELPER_IMAGE")
+    steamcmd_env_keys = [
+        "DUNE_RESTART_STEAMCMD_UPDATE",
+        "DUNE_RESTART_STEAMCMD_REQUIRED",
+        "DUNE_STEAM_APP_ID",
+        "DUNE_STEAM_LOGIN",
+        "DUNE_STEAM_PASSWORD",
+        "DUNE_STEAMCMD_VALIDATE",
+        "DUNE_STEAMCMD_TIMEOUT_SECONDS",
+    ]
+    steamcmd_env = []
+    for key in steamcmd_env_keys:
+        value = os.environ.get(key)
+        if value is None:
+            value = read_env_value(env_file, key)
+        if value:
+            steamcmd_env.extend(["-e", f"{key}={value}"])
+    steamcmd_container = ""
+    if steam_dir and os.path.isabs(steam_dir) and steamcmd_helper_image:
+        docker_run = [
+            "docker", "run", "--rm",
+            "-v", f"{host_workspace}:{host_workspace}",
+            "-v", f"{host_workspace}:/workspace",
+            "-v", f"{steam_dir}:{steam_dir}",
+            "-w", host_workspace,
+        ]
+        docker_run.extend(steamcmd_env)
+        docker_run.extend([
+            steamcmd_helper_image,
+            "bash", "./scripts/update-steam-tool.sh", env_file,
+        ])
+        steamcmd_container = " ".join(shlex.quote(part) for part in docker_run)
     shell_command = (
         "set -e; "
+        "if [ -x ./scripts/update-steam-tool.sh ]; then "
+        "if command -v steamcmd >/dev/null 2>&1; then "
+        f"./scripts/update-steam-tool.sh {shlex.quote(env_file)}; "
+        + (f"elif [ -n {shlex.quote(steamcmd_container)} ]; then {steamcmd_container}; " if steamcmd_container else "")
+        + "else "
+        "echo 'SteamCMD package update skipped: steamcmd is unavailable and no helper image is configured' >&2; "
+        "fi; "
+        "else "
+        "echo 'SteamCMD package update skipped: scripts/update-steam-tool.sh is missing or not executable' >&2; "
+        "fi; "
         "if [ ! -x ./scripts/check-steam-update.sh ]; then "
         "echo 'Steam package update check skipped: scripts/check-steam-update.sh is missing or not executable' >&2; "
         "exit 0; "
@@ -336,9 +426,8 @@ def run_host_update_check():
         f"{host_workspace}:{host_workspace}",
         f"{host_workspace}:/workspace",
     ]
-    steam_dir = read_env_value(env_file, "DUNE_STEAM_SERVER_DIR")
     if steam_dir and os.path.isabs(steam_dir):
-        binds.append(f"{steam_dir}:{steam_dir}:ro")
+        binds.append(f"{steam_dir}:{steam_dir}")
     body = {
         "Image": compose_image,
         "WorkingDir": host_workspace,
