@@ -6,7 +6,7 @@ It turns Funcom's self-host stack into a reproducible local layout with Compose 
 
 This repository does **not** contain, mirror, or license Funcom server binaries, container images, Steam package files, game assets, live server data, or secrets.
 
-Documented baseline: image lineage `1963158-0-shipping`. Treat that as the tested baseline for this repo, not as a permanent version requirement. Always compare your `.env` image pin with the Steam package installed on your host.
+Always compare your `.env` image pin with the Steam package installed on your host.
 
 ## Contents
 
