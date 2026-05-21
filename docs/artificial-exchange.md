@@ -551,6 +551,13 @@ Current category limitation:
   requires the populator to infer the same category from the item id/display
   name as the catalog row declares, and requires the row mask/depth to match the
   local category map. Mismatches are skipped instead of seeded.
+- `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_SOURCE_CATEGORY=true` is stricter
+  and is the preferred live gate. It requires
+  `backups/admin-panel/artificial-exchange/source-category-map.json`, generated
+  by `scripts/import-exchange-category-map.py` from `api.awakening.wiki` game
+  item tags. Rows missing from that source map, rows tagged
+  `Items.ExcludeFromExchange`, and rows whose catalog category/mask differs from
+  the source map are skipped.
 - Blueprint-like rows are allowed only in blueprint categories:
   `schematics/weapons`, `schematics/armor`, `schematics/vehicles`, and
   `building/patents`.

@@ -137,10 +137,13 @@ class ArtificialExchangeBotTest(unittest.TestCase):
     def setUp(self):
         self.original_env = dict(bot.FILE_ENV)
         bot.FILE_ENV.clear()
+        bot.SOURCE_CATEGORY_MAP_CACHE.clear()
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_SOURCE_CATEGORY"] = "false"
 
     def tearDown(self):
         bot.FILE_ENV.clear()
         bot.FILE_ENV.update(self.original_env)
+        bot.SOURCE_CATEGORY_MAP_CACHE.clear()
 
     def order(self, **overrides):
         row = {"id": 1, "owner_id": 10, "template_id": "ItemA", "item_price": 75, "revision": "1"}
@@ -291,11 +294,26 @@ class ArtificialExchangeBotTest(unittest.TestCase):
         self.assertEqual(bot.populator_category_skip_reason(unknown), "unknown category")
 
     def test_populator_category_gate_requires_deterministic_category(self):
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_DETERMINISTIC_CATEGORY"] = "true"
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_SOURCE_CATEGORY"] = "false"
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_PROTECT_AUGMENTS_CATEGORY"] = "false"
         row = self.catalog_row("SandbikeEngine_Schematic", category="schematics/weapons", category_mask=117506048, category_depth=2, notes="tier=4")
         self.assertEqual(bot.populator_category_skip_reason(row), "category mismatch expected schematics/vehicles")
         mask, depth = bot.CATEGORY_MASKS["schematics/vehicles"]
         fixed = self.catalog_row("SandbikeEngine_Schematic", category="schematics/vehicles", category_mask=mask, category_depth=depth, notes="tier=4")
         self.assertEqual(bot.populator_category_skip_reason(fixed), "")
+
+    def test_populator_category_gate_requires_source_category(self):
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_SOURCE_CATEGORY"] = "true"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "source-category-map.json"
+            path.write_text('{"items":{"ItemA":{"category":"weapons/ranged","category_mask":1,"category_depth":2}}}', encoding="utf-8")
+            bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_SOURCE_CATEGORY_MAP"] = str(path)
+            row = self.catalog_row("ItemA", category="weapons/ranged", category_mask=1, category_depth=2)
+            bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_DETERMINISTIC_CATEGORY"] = "false"
+            self.assertEqual(bot.populator_category_skip_reason(row), "")
+            wrong = self.catalog_row("ItemA", category="tools/utility", category_mask=1, category_depth=2)
+            self.assertEqual(bot.populator_category_skip_reason(wrong), "source category mismatch expected weapons/ranged")
 
     def test_blueprint_identity_is_restricted_to_blueprint_categories(self):
         mask, depth = bot.CATEGORY_MASKS["weapons/ranged"]

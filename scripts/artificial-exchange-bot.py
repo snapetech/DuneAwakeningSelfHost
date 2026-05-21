@@ -15,6 +15,8 @@ STATE_DIR = ROOT / "backups" / "admin-panel" / "artificial-exchange"
 CATALOG_PATH = STATE_DIR / "catalog.json"
 AUDIT_PATH = STATE_DIR / "bot-audit.jsonl"
 STATE_PATH = STATE_DIR / "bot-state.json"
+SOURCE_CATEGORY_MAP_PATH = STATE_DIR / "source-category-map.json"
+SOURCE_CATEGORY_MAP_CACHE = {}
 CONFIRM = "RUN ARTIFICIAL EXCHANGE"
 CLAIM_CONFIRM = "CLAIM ARTIFICIAL EXCHANGE"
 FUND_CONFIRM = "FUND ARTIFICIAL EXCHANGE"
@@ -256,6 +258,18 @@ def catalog_has_market_price(row):
     return "price_ceiling=dune.exchange" in str(row.get("notes") or "")
 
 
+def load_source_category_map(path=None):
+    source_path = pathlib.Path(path or SOURCE_CATEGORY_MAP_PATH)
+    if not source_path.is_absolute():
+        source_path = ROOT / source_path
+    cache_key = str(source_path)
+    if cache_key in SOURCE_CATEGORY_MAP_CACHE:
+        return SOURCE_CATEGORY_MAP_CACHE[cache_key]
+    payload = load_json(source_path, {"items": {}})
+    SOURCE_CATEGORY_MAP_CACHE[cache_key] = payload.get("items", {})
+    return SOURCE_CATEGORY_MAP_CACHE[cache_key]
+
+
 def is_augment_template(row):
     text = " ".join(str(row.get(key) or "") for key in ("template_id", "display_name", "category", "notes")).lower()
     if "module" in text:
@@ -321,10 +335,19 @@ def has_blueprint_identity(row):
 
 def populator_category_skip_reason(row):
     category = str(row.get("category") or "")
+    if env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_SOURCE_CATEGORY", True):
+        source_map = load_source_category_map(pathlib.Path(env("DUNE_ARTIFICIAL_EXCHANGE_SOURCE_CATEGORY_MAP", str(SOURCE_CATEGORY_MAP_PATH))))
+        source_row = source_map.get(row["template_id"])
+        if not source_row:
+            return "missing source category"
+        if source_row.get("category") != category:
+            return f"source category mismatch expected {source_row.get('category')}"
+        if int(source_row.get("category_mask") or -1) != populator_category_mask(row) or int(source_row.get("category_depth") or -1) != populator_category_depth(row):
+            return f"source category mask mismatch expected {source_row.get('category_mask')}/{source_row.get('category_depth')}"
     if env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_SKIP_UNKNOWN_CATEGORY", True):
         if category == "unknown" or (populator_category_mask(row) == 0 and populator_category_depth(row) == 0):
             return "unknown category"
-    if env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_DETERMINISTIC_CATEGORY", True):
+    if env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_DETERMINISTIC_CATEGORY", False) and not env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_SOURCE_CATEGORY", True):
         inferred = inferred_catalog_category(row)
         if not inferred:
             return "unclassified category"
