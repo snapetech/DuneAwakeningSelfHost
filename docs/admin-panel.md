@@ -667,6 +667,36 @@ curl -sS -H 'Content-Type: application/json' \
   | jq '.dryRun, .executable, .plan.blockers'
 ```
 
+CLI workflow:
+
+```bash
+python3 scripts/character-slot-tool.py \
+  --account-id 456 \
+  --action inspect \
+  --pretty
+```
+
+```bash
+python3 scripts/character-slot-tool.py \
+  --account-id 456 \
+  --action switch-character \
+  --target-account-id 789 \
+  --pretty
+```
+
+```bash
+python3 scripts/character-slot-tool.py \
+  --account-id 456 \
+  --action switch-character \
+  --target-account-id 789 \
+  --execute \
+  --confirm "SWAP CHARACTER" \
+  --pretty
+```
+
+The CLI reads `DUNE_ADMIN_HOST_PORT` and `DUNE_ADMIN_TOKEN` from `.env` by
+default. Use `--base-url` or `--token` to override them.
+
 Execution remains blocked unless the plan reports `executable: true`. Current contract discovery treats `dune.takeover_account(in_user_to_takeover text, in_current_user text)` as the only executable native switch/restore path. It swaps the active login identity onto the selected same-owner hibernated character and moves that target identity onto the current character account. Confidence: moderate.
 
 `new-character` execution remains blocked. The mapped native blank-character path is `delete_account(in_user_id, in_reason)`, and that function deletes the current account/actors instead of hibernating them. DASH does not use it for character-slot creation. Confidence: high.

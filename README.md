@@ -597,6 +597,7 @@ Root-level research indexes:
 - [`scripts/artificial-exchange-watchdog.sh`](scripts/artificial-exchange-watchdog.sh): keeps enabled buyer/populator units installed and active.
 - [`scripts/announce.sh`](scripts/announce.sh): in-game announcement publisher.
 - [`scripts/admin-chat-commands.py`](scripts/admin-chat-commands.py): chat command listener.
+- [`scripts/character-slot-tool.py`](scripts/character-slot-tool.py): CLI inspect/plan/execute wrapper for admin character switch/restore operations.
 - [`scripts/player-presence-announcer.py`](scripts/player-presence-announcer.py): join/leave, private message, milestone, map-health, and admin-digest automation.
 - [`scripts/admin-bot.py`](scripts/admin-bot.py): report-first operational/admin automation.
 - [`scripts/seed-gateway-neighbor.sh`](scripts/seed-gateway-neighbor.sh): Docker bridge neighbor refresh helper.
