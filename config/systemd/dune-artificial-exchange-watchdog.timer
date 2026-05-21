@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Dune artificial Exchange service watchdog
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=1min
+AccuracySec=15s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -64,4 +64,32 @@ if command -v systemd-analyze >/dev/null 2>&1; then
   systemd-analyze verify "$unit_file"
 fi
 
+watchdog_service="$tmp_dir/dune-artificial-exchange-watchdog.service"
+watchdog_timer="$tmp_dir/dune-artificial-exchange-watchdog.timer"
+"$repo_root/scripts/install-artificial-exchange-watchdog-timer.sh" "$env_file" "$watchdog_service" "$watchdog_timer" >/dev/null
+
+if ! grep -q "^WorkingDirectory=$repo_root$" "$watchdog_service"; then
+  printf 'rendered watchdog service did not use checkout working directory\n' >&2
+  exit 1
+fi
+
+if ! grep -q "^EnvironmentFile=$env_file$" "$watchdog_service"; then
+  printf 'rendered watchdog service did not use requested env file\n' >&2
+  exit 1
+fi
+
+if ! grep -q "^ExecStart=$repo_root/scripts/artificial-exchange-watchdog.sh $env_file$" "$watchdog_service"; then
+  printf 'rendered watchdog service did not use checkout watchdog path\n' >&2
+  exit 1
+fi
+
+if ! grep -q '^OnUnitInactiveSec=1min$' "$watchdog_timer"; then
+  printf 'rendered watchdog timer does not run every minute\n' >&2
+  exit 1
+fi
+
+if command -v systemd-analyze >/dev/null 2>&1; then
+  systemd-analyze verify "$watchdog_service" "$watchdog_timer"
+fi
+
 printf 'artificial exchange service tests passed\n'

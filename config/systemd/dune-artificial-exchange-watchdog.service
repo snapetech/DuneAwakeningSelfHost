@@ -1,0 +1,11 @@
+[Unit]
+Description=Dune artificial Exchange service watchdog
+Documentation=file:///opt/DuneAwakeningSelfHost/docs/artificial-exchange.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/DuneAwakeningSelfHost
+EnvironmentFile=/opt/DuneAwakeningSelfHost/.env
+ExecStart=/opt/DuneAwakeningSelfHost/scripts/artificial-exchange-watchdog.sh /opt/DuneAwakeningSelfHost/.env

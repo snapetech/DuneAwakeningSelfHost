@@ -19,6 +19,29 @@ CONFIRM = "RUN ARTIFICIAL EXCHANGE"
 CLAIM_CONFIRM = "CLAIM ARTIFICIAL EXCHANGE"
 FUND_CONFIRM = "FUND ARTIFICIAL EXCHANGE"
 POPULATE_CONFIRM = "POPULATE ARTIFICIAL EXCHANGE"
+CATEGORY_MASKS = {
+    "resources/raw": (0x01010000, 2),
+    "resources/refined": (0x01020000, 2),
+    "resources/components": (0x01030000, 2),
+    "consumables/medical": (0x02010000, 2),
+    "tools/mining": (0x03010000, 2),
+    "tools/utility": (0x03020000, 2),
+    "weapons/melee": (0x04010000, 2),
+    "weapons/ranged": (0x04020000, 2),
+    "armor/combat": (0x05010000, 2),
+    "armor/stillsuit": (0x05020000, 2),
+    "armor/social": (0x05030000, 2),
+    "vehicles/sandbike": (0x06010000, 2),
+    "vehicles/ornithopter": (0x06020000, 2),
+    "vehicles/parts": (0x06030000, 2),
+    "schematics/weapons": (0x07010000, 2),
+    "schematics/armor": (0x07020000, 2),
+    "schematics/vehicles": (0x07030000, 2),
+    "building/placeables": (0x08010000, 2),
+    "building/patents": (0x08020000, 2),
+    "contracts": (0x09010000, 2),
+    "customization": (0x0A010000, 2),
+}
 
 
 def read_env_file(path):
@@ -240,11 +263,78 @@ def is_augment_template(row):
     return any(token in text for token in ("weaponmod", "toolmod", "_mod_", " augment", "augment_"))
 
 
+def inferred_catalog_category(row):
+    template_id = str(row.get("template_id") or "")
+    low_id = template_id.lower()
+    name = str(row.get("display_name") or "").lower()
+    notes = str(row.get("notes") or "").lower()
+    haystack = f"{low_id} {name} {notes}"
+    if "patent" in haystack:
+        return "building/patents"
+    if "schematic" in low_id or "unique_schematic=yes" in notes:
+        if any(token in haystack for token in ("vehicle", "sandbike", "ornithopter", "crawler", "buggy", "tank")):
+            return "schematics/vehicles"
+        if any(token in haystack for token in ("garment", "armor", "stillsuit", "combat_", "social_")):
+            return "schematics/armor"
+        return "schematics/weapons"
+    if any(token in haystack for token in ("building", "placeable")):
+        return "building/placeables"
+    if "contract" in haystack:
+        return "contracts"
+    if any(token in haystack for token in ("customization", "swatch", "dyepack", "dye")):
+        return "customization"
+    if "stillsuit" in haystack:
+        return "armor/stillsuit"
+    if "social_" in low_id:
+        return "armor/social"
+    if "combat_" in low_id or "garment" in haystack or "armor" in haystack:
+        return "armor/combat"
+    if "sandbike" in haystack:
+        return "vehicles/sandbike"
+    if "ornithopter" in haystack:
+        return "vehicles/ornithopter"
+    if any(token in haystack for token in ("vehicle", "sandcrawler", "buggy", "tank")):
+        return "vehicles/parts"
+    if any(token in haystack for token in ("kindjal", "dirk", "sword", "rapier", "knife", "blade")):
+        return "weapons/melee"
+    if any(token in haystack for token in ("pistol", "smg", "rifle", "carbine", "scattergun", "lmg", "dart", "ammo", "disruptor", "lasgun", "flamethrower")):
+        return "weapons/ranged"
+    if any(token in haystack for token in ("powerpack", "binocular", "survey", "shield", "suspensor", "beacon", "glide", "backup")):
+        return "tools/utility"
+    if any(token in haystack for token in ("miningtool", "cutter", "compactor", "bodyfluidextractor", "repairtool", "dewreaper")):
+        return "tools/mining"
+    if any(token in haystack for token in ("healthpack", "bloodsack", "literjon", "decajon", "detox", "consumable")):
+        return "consumables/medical"
+    if any(token in haystack for token in ("bar", "ingot", "paste", "lubricant", "filter", "fuelcanister", "silicone", "plastone", "flour")):
+        return "resources/refined"
+    if any(token in haystack for token in ("component", "part", "dust", "capacitor", "actuator", "core", "plating", "rangefinder", "welding", "servok")):
+        return "resources/components"
+    if any(token in haystack for token in ("ore", "stone", "fiber", "plant", "corpse", "spice", "seed", "raw")):
+        return "resources/raw"
+    return ""
+
+
+def has_blueprint_identity(row):
+    text = " ".join(str(row.get(key) or "") for key in ("template_id", "display_name", "category", "notes")).lower()
+    return any(token in text for token in ("schematic", "patent", "blueprint", "unique_schematic=yes"))
+
+
 def populator_category_skip_reason(row):
     category = str(row.get("category") or "")
     if env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_SKIP_UNKNOWN_CATEGORY", True):
         if category == "unknown" or (populator_category_mask(row) == 0 and populator_category_depth(row) == 0):
             return "unknown category"
+    if env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_DETERMINISTIC_CATEGORY", True):
+        inferred = inferred_catalog_category(row)
+        if not inferred:
+            return "unclassified category"
+        if inferred != category:
+            return f"category mismatch expected {inferred}"
+        expected_mask, expected_depth = CATEGORY_MASKS.get(category, (None, None))
+        if expected_mask is None:
+            return "unmapped category"
+        if populator_category_mask(row) != expected_mask or populator_category_depth(row) != expected_depth:
+            return f"category mask mismatch expected {expected_mask}/{expected_depth}"
     if env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_CATEGORY_REVIEW", True):
         notes = str(row.get("notes") or "").lower()
         source = str(row.get("source") or "").lower()
@@ -260,6 +350,8 @@ def populator_category_skip_reason(row):
         }
         if category_depth == 2 and str(category_mask) in augment_masks and not is_augment_template(row):
             return "non-augment in augments category"
+    if has_blueprint_identity(row) and category not in ("schematics/weapons", "schematics/armor", "schematics/vehicles", "building/patents"):
+        return "blueprint outside blueprint category"
     return ""
 
 

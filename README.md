@@ -60,9 +60,12 @@ Documented baseline: image lineage `1963158-0-shipping`. Treat that as the teste
 - LAN/VPN admin panel with Overview, Ops, Security, Runbook, Players, Settings, Admin Actions, and Catalog surfaces.
 - Guarded admin writes for backups, currency, XP, keystones, item grants, stack edits, item deletion, and catalog dry-runs.
 - Restart announcements, restart planner hooks, chat-command bridge, player-presence announcer, and admin-bot monitoring.
+- Private whisper replies for admin chat commands, auction confirmations, player-presence messages, and admin-only digests through the verified `chat.whispers` route.
+- Chat spam protection with repeat-message detection, public action announcements, and a blocked-by-default kick backend.
+- Player-presence automation for joins/leaves, first-seen welcomes, Hagga/Deep Desert milestones, base-cap reminders, reconnect help, restart warnings, map-health notices, population digests, incident notices, starter Base Reconstruction Tool grants, and Vermilius Gap celebration.
 - Local backups, restore helpers, optional streaming Postgres replica, optional remote replica snapshots, and portable offsite/onsite backup sync examples.
 - Optional public static site package with status, settings, player list, and Hagga Basin map.
-- Artificial Exchange catalog, buyer, settlement, populator, smoke tests, and optional systemd services.
+- Artificial Exchange catalog pipeline, buyer, settlement, funding, populator, readiness checks, smoke tests, admin-panel controls, optional systemd services, and watchdog timer.
 - Publication and validation guardrails for keeping local state and secrets out of shared artifacts.
 
 ## What DASH Does Not Include
@@ -264,7 +267,7 @@ By default the local deployment is configured for a trusted private admin surfac
 | Players | Online/offline roster, player detail, account/controller/pawn context, currency, XP, inventory, and location views. |
 | Settings | Selected `.env` and config edits with backups. |
 | Admin Actions | Database backups and guarded mutations for currency, XP, keystones, grants, stack edits, and deletion. |
-| Catalog | Content insertion evidence, typed knob dry-runs, resource inspection, event dry-runs, and economy bundle dry-runs. |
+| Catalog | Content insertion evidence, typed knob dry-runs/writes, resource and progression inspection, event planning, economy bundle planning, and gated world/player/economy mutator families. |
 
 If the published local admin port accepts TCP but returns no HTTP bytes after a container recreate, refresh the observed Docker bridge neighbor entries:
 
@@ -402,6 +405,15 @@ make install-artificial-exchange-populator-service ENV_FILE=.env
 
 The daily maintenance flow targets a 06:00 local restart with warning announcements, stopped-world backup, optional Steam package update check, service recreate/start, and post-start health checks. See [`docs/maintenance-updates.md`](docs/maintenance-updates.md).
 
+Paul/Admin automation is split across two scripts:
+
+```bash
+./scripts/admin-bot.py --once
+./scripts/player-presence-announcer.py --once
+```
+
+`admin-bot.py` is report-first automation for backup freshness, map health, stuck transitions, audit/security digests, currency/base anomalies, and config drift. `player-presence-announcer.py` handles live join/leave and private/global player messaging. See [`docs/admin-bot.md`](docs/admin-bot.md) and [`docs/private-chat-replies.md`](docs/private-chat-replies.md).
+
 ## Public Static Site
 
 The optional public site publishes static files only:
@@ -435,7 +447,7 @@ More detail: [`docs/public-static-site.md`](docs/public-static-site.md).
 
 ## Artificial Exchange
 
-The Artificial Exchange tooling manages a local item catalog, buyer flow, settlement checks, optional populator, and service wrappers. The buyer and populator are separate: the buyer can run continuously, while the populator should only run when you deliberately want DASH/Admin-owned NPC listings seeded from reviewed, dune.exchange-priced, tier 2+ catalog rows.
+The Artificial Exchange tooling manages a reviewed item catalog, buyer flow, seller settlement, optional buyer funding, optional populator, service wrappers, admin-panel controls, and a watchdog timer. The buyer and populator are separate: the buyer can run continuously, while the populator should only run when you deliberately want DASH/Admin-owned NPC listings seeded from reviewed, dune.exchange-priced, tier 2+ catalog rows.
 
 Run the smoke check before enabling live purchase, funding, auto-claim, or populator apply gates:
 
@@ -448,6 +460,7 @@ Install services after `.env` gates and owner/source IDs are configured:
 ```bash
 make install-artificial-exchange-buyer-service ENV_FILE=.env
 make install-artificial-exchange-populator-service ENV_FILE=.env
+make install-artificial-exchange-watchdog-timer ENV_FILE=.env
 ```
 
 More detail: [`docs/artificial-exchange.md`](docs/artificial-exchange.md).
@@ -475,9 +488,14 @@ Start from [`.env.example`](.env.example). It is the source of truth for the ful
 | `DUNE_ADMIN_MUTATIONS_ENABLED` | Master gate for admin writes. |
 | `DUNE_ADMIN_ITEM_GRANTS_ENABLED` | Separate gate for item grants, stack edits, and deletion. |
 | `DUNE_ADMIN_GM_COMMANDS_ENABLED` / `DUNE_GM_COMMAND_PAYLOAD_VERIFIED` | GM/native command gates; keep false unless verified. |
+| `DUNE_ADMIN_*_ENABLED` write gates | Per-family gates for typed knobs, events, bundles, progression, faction, Landsraad, respawn, guild, markers, landclaim, Exchange, tags, access codes, Communinet, tutorial, permission, vendor, and character-slot operations. |
 | `DUNE_ADMIN_RESTART_COMMAND` | Hook used by scheduled restart jobs. |
 | `DUNE_ADMIN_ANNOUNCE_COMMAND` | Hook used by restart announcements. |
 | `DUNE_CHAT_COMMAND_ADMINS` / `DUNE_CHAT_COMMAND_ADMIN_FLS_IDS` | Chat-command allowlists. |
+| `DUNE_CHAT_COMMAND_TARGET_REPLY_MODE` and private reply keys | Optional private command replies through the verified `chat.whispers` path. |
+| `DUNE_CHAT_SPAM_*` | Repeat-message spam detection, exemptions, public announcements, and kick backend settings. |
+| `DUNE_PLAYER_PRESENCE_*` | Player-presence announcements, private welcomes, milestones, base reminders, restart notices, map-health alerts, admin digests, and starter-tool grants. |
+| `DUNE_ARTIFICIAL_EXCHANGE_*` | Artificial Exchange buyer, settlement, funding, populator, catalog, service, and watchdog gates/tuning. |
 
 Most service settings require recreating or restarting affected containers before running processes pick them up. The admin panel documents runtime-only settings where applicable.
 
@@ -513,6 +531,7 @@ Start here:
 - [`docs/setup.md`](docs/setup.md): initial setup flow.
 - [`docs/operations.md`](docs/operations.md): health, recovery, startup, watchdog, ports, and restart workflow.
 - [`docs/admin-panel.md`](docs/admin-panel.md): admin panel features, security, announcements, chat commands, and mutation gates.
+- [`docs/private-chat-replies.md`](docs/private-chat-replies.md): verified private whisper route for command replies and player/admin automation.
 - [`docs/backup-strategy.md`](docs/backup-strategy.md): local, onsite, offsite, replica, retention, and restore-test guidance.
 - [`docs/postgres-replication.md`](docs/postgres-replication.md): local and remote Postgres standby.
 - [`docs/artificial-exchange.md`](docs/artificial-exchange.md): artificial Exchange catalog, buyer, settlement, populator, and services.
@@ -574,8 +593,12 @@ Root-level research indexes:
 - [`scripts/restart-target.sh`](scripts/restart-target.sh): scheduled restart execution hook.
 - [`scripts/install-daily-maintenance-timer.sh`](scripts/install-daily-maintenance-timer.sh): daily maintenance timer installer.
 - [`scripts/install-artificial-exchange-service.sh`](scripts/install-artificial-exchange-service.sh): artificial Exchange service installer.
+- [`scripts/install-artificial-exchange-watchdog-timer.sh`](scripts/install-artificial-exchange-watchdog-timer.sh): artificial Exchange watchdog timer installer.
+- [`scripts/artificial-exchange-watchdog.sh`](scripts/artificial-exchange-watchdog.sh): keeps enabled buyer/populator units installed and active.
 - [`scripts/announce.sh`](scripts/announce.sh): in-game announcement publisher.
 - [`scripts/admin-chat-commands.py`](scripts/admin-chat-commands.py): chat command listener.
+- [`scripts/player-presence-announcer.py`](scripts/player-presence-announcer.py): join/leave, private message, milestone, map-health, and admin-digest automation.
+- [`scripts/admin-bot.py`](scripts/admin-bot.py): report-first operational/admin automation.
 - [`scripts/seed-gateway-neighbor.sh`](scripts/seed-gateway-neighbor.sh): Docker bridge neighbor refresh helper.
 - [`scripts/backup-offsite.sh`](scripts/backup-offsite.sh): local backup plus rclone, rsync, restic, or local-only sync helper.
 - [`scripts/verify-backup.sh`](scripts/verify-backup.sh): structural backup check.

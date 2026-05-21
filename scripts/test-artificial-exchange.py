@@ -290,6 +290,19 @@ class ArtificialExchangeBotTest(unittest.TestCase):
         unknown = self.catalog_row("MysteryItem", category="unknown", category_mask=0, category_depth=0, notes="tier=4")
         self.assertEqual(bot.populator_category_skip_reason(unknown), "unknown category")
 
+    def test_populator_category_gate_requires_deterministic_category(self):
+        row = self.catalog_row("SandbikeEngine_Schematic", category="schematics/weapons", category_mask=117506048, category_depth=2, notes="tier=4")
+        self.assertEqual(bot.populator_category_skip_reason(row), "category mismatch expected schematics/vehicles")
+        mask, depth = bot.CATEGORY_MASKS["schematics/vehicles"]
+        fixed = self.catalog_row("SandbikeEngine_Schematic", category="schematics/vehicles", category_mask=mask, category_depth=depth, notes="tier=4")
+        self.assertEqual(bot.populator_category_skip_reason(fixed), "")
+
+    def test_blueprint_identity_is_restricted_to_blueprint_categories(self):
+        mask, depth = bot.CATEGORY_MASKS["weapons/ranged"]
+        row = self.catalog_row("D_T4_Rifle_Blueprint", category="weapons/ranged", category_mask=mask, category_depth=depth, notes="tier=4")
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_DETERMINISTIC_CATEGORY"] = "false"
+        self.assertEqual(bot.populator_category_skip_reason(row), "blueprint outside blueprint category")
+
     def test_template_category_key_distinguishes_category(self):
         row = self.catalog_row("ItemA", category="weapons/ranged", category_mask=1, category_depth=2)
         self.assertEqual(bot.template_category_key(row), ("ItemA", "weapons/ranged", 1, 2))

@@ -541,9 +541,20 @@ Current category limitation:
   `schematics/weapons`.
 - `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_SKIP_UNKNOWN_CATEGORY=true` blocks rows
   with `category=unknown` or mask/depth `0/0`.
+- `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_DETERMINISTIC_CATEGORY=true`
+  requires the populator to infer the same category from the item id/display
+  name as the catalog row declares, and requires the row mask/depth to match the
+  local category map. Mismatches are skipped instead of seeded.
+- Blueprint-like rows are allowed only in blueprint categories:
+  `schematics/weapons`, `schematics/armor`, `schematics/vehicles`, and
+  `building/patents`.
 - `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MAX_PER_TEMPLATE_PER_CATEGORY=2` is the
   default duplicate cap. Population modes must not create more than two active
   NPC listings for the same template in the same category.
+- The optional watchdog does not restart the populator from
+  `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ENABLED`; it requires
+  `DUNE_ARTIFICIAL_EXCHANGE_WATCHDOG_POPULATOR_ENABLED=true`. Keep that false
+  for one-shot category seeding.
 
 Single-template safety:
 
@@ -905,11 +916,18 @@ Render/install populator service:
 make install-artificial-exchange-populator-service ENV_FILE=.env
 ```
 
+Render/install the watchdog timer:
+
+```bash
+make install-artificial-exchange-watchdog-timer ENV_FILE=.env
+```
+
 Direct installer syntax:
 
 ```bash
 scripts/install-artificial-exchange-service.sh .env /etc/systemd/system/dune-artificial-exchange-bot.service buyer
 scripts/install-artificial-exchange-service.sh .env /etc/systemd/system/dune-artificial-exchange-populator.service populator
+scripts/install-artificial-exchange-watchdog-timer.sh .env
 ```
 
 The service unit:
@@ -921,6 +939,11 @@ The service unit:
 - enables at boot and starts immediately when installed under
   `/etc/systemd/system`
 - uses `Restart=always` so it comes back after process crashes
+
+The watchdog timer runs once per minute. If `.env` says the buyer or populator
+gate is enabled, the corresponding systemd unit is enabled, and that unit is
+inactive, the watchdog starts it. This covers accidental/manual clean stops,
+which `Restart=always` intentionally does not recover.
 
 Prefer buyer and populator as separate services for clearer operations. The
 installer also supports `both` for a combined process when explicitly selected.
