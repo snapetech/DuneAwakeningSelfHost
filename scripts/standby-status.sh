@@ -153,7 +153,10 @@ else
   printf 'OK all required images are present on remote\n'
 fi
 
-if [[ -x ./scripts/check-rabbitmq-cert-sans.sh ]]; then
+if [[ "${DUNE_STANDBY_SKIP_RMQ_TLS_CHECK:-}" == "true" ]]; then
+  printf '\n== rabbitmq TLS SAN check ==\n'
+  printf 'SKIP RabbitMQ TLS certificate check requested by DUNE_STANDBY_SKIP_RMQ_TLS_CHECK\n'
+elif [[ -x ./scripts/check-rabbitmq-cert-sans.sh ]]; then
   printf '\n== rabbitmq TLS SAN check ==\n'
   if ./scripts/check-rabbitmq-cert-sans.sh "$env_file"; then
     printf 'OK RabbitMQ TLS certificate covers expected names\n'

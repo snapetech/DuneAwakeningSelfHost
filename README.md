@@ -62,7 +62,7 @@ Always compare your `.env` image pin with the Steam package installed on your ho
 - Restart announcements, restart planner hooks, chat-command bridge, player-presence announcer, and admin-bot monitoring.
 - Private whisper replies for admin chat commands, auction confirmations, player-presence messages, and admin-only digests through the verified `chat.whispers` route.
 - Chat spam protection with repeat-message detection, public action announcements, and a blocked-by-default kick backend.
-- Verified targeted network-timeout teleport research: a scoped `UNetConnection` timeout plus the shipped offline move helper moved TestPlayer, and reconnect loaded the moved pawn. This is a working teleport mechanism, not a soft disconnect; see `docs/soft-disconnect-teleport.md`.
+- Verified targeted network-timeout teleport research: a scoped `UNetConnection` timeout plus the shipped offline move helper moved a test player, and reconnect loaded the moved pawn. This is a working teleport mechanism, not a soft disconnect; see `docs/soft-disconnect-teleport.md`.
 - Player-presence automation for joins/leaves, first-seen welcomes, Hagga/Deep Desert milestones, base-cap reminders, reconnect help, restart warnings, map-health notices, population digests, incident notices, starter Base Reconstruction Tool grants, and Vermilius Gap celebration.
 - Local backups, restore helpers, optional streaming Postgres replica, optional remote replica snapshots, and portable offsite/onsite backup sync examples.
 - Optional public static site package with status, settings, player list, and Hagga Basin map.

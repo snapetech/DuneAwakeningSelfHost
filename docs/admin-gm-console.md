@@ -108,7 +108,7 @@ Implemented:
 - `&gm unstuck` prepares or sends a gated `TeleportToExact` for a target player. It uses the named saved marker, defaulting to `location0`; if no marker exists it falls back to the admin's current location.
 - `&where` reports current known state and location.
 - `&teleport` moves an offline target to the admin's current position only when offline teleport execution is explicitly enabled. The shipped `dune.admin_move_offline_player_to_partition(...)` helper updates the pawn row, which is the row consumed by the verified network-disconnect/rejoin test.
-- Direct online database movement is not a live teleport path. A same-partition test moved TestPlayer's controller, player-state, and pawn actor rows together by `+750` X; the live Survival server later saved the old in-memory position back to the database.
+- Direct online database movement is not a live teleport path. A same-partition test moved the test player's controller, player-state, and pawn actor rows together by `+750` X; the live Survival server later saved the old in-memory position back to the database.
 - Network-disconnect teleport is now the preferred online-adjacent fallback while native GM teleport remains unverified. The path is: force a real `UNetConnection` timeout, wait until Survival marks the player `Offline`, call `dune.admin_move_offline_player_to_partition(...)`, then let the client reconnect. See [soft-disconnect-teleport.md](soft-disconnect-teleport.md).
 
 ### Tier 3: Inventory/Admin
@@ -149,14 +149,14 @@ We know the command names and likely transport, but not the exact serialized mes
 Use `scripts/probe-gm-command.py` to test harmless native command envelopes without wiring unverified execution into the dashboard:
 
 ```bash
-./scripts/probe-gm-command.py --command PrintPos --target-player TestPlayer --route Survival_11
+./scripts/probe-gm-command.py --command PrintPos --target-player SamplePlayer --route Survival_11
 docker compose logs --since=30s survival | rg "PrintPos|ServerCommand|ServerExec|DuneServer|Admin|Command"
 ```
 
 Preview the currently implemented envelope set without publishing:
 
 ```bash
-./scripts/probe-gm-command.py --preview --command PrintPos --target-player TestPlayer --route Survival_11
+./scripts/probe-gm-command.py --preview --command PrintPos --target-player SamplePlayer --route Survival_11
 ```
 
 If AMQP is unavailable, the probe can also publish through RabbitMQ's management API:
@@ -165,10 +165,10 @@ If AMQP is unavailable, the probe can also publish through RabbitMQ's management
 DUNE_GM_COMMAND_RMQ_URL=http://127.0.0.1:15672 \
 DUNE_GM_COMMAND_RMQ_USER=guest \
 DUNE_GM_COMMAND_RMQ_PASSWORD=guest \
-./scripts/probe-gm-command.py --transport management --command PrintPos --target-player TestPlayer --route Survival_11
+./scripts/probe-gm-command.py --transport management --command PrintPos --target-player SamplePlayer --route Survival_11
 ```
 
-Current probe result: the game-RMQ Director JSON-RPC envelope is verified with `director/echo`. The server queue for TestPlayer's current Survival instance drains messages, but the tested `PrintPos` method names do not produce a visible response or survival log entry. Treat the transport as verified and the server command method contract as unverified.
+Current probe result: the game-RMQ Director JSON-RPC envelope is verified with `director/echo`. The server queue for the test player's current Survival instance drains messages, but the tested `PrintPos` method names do not produce a visible response or survival log entry. Treat the transport as verified and the server command method contract as unverified.
 
 Current transport note: `rabbitmqctl` can inspect the admin broker, but AMQP/HTTP connections to `admin-rmq` are timing out from the host/admin-panel network in this runtime. Do not change Docker networking without operator approval; use this document to separate transport reachability from envelope correctness.
 
@@ -217,7 +217,7 @@ With these guards enabled, the admin and target must both be online and resolve 
 
 The stack now treats targeted disconnect as a gated native GM/session command. The preferred candidate is `RemoveSessionMember <playername>`, because it is less punitive than a kick. `KickLobbyMember <playername>` is the fallback. `BattlEyeMegaKick <playername>` stays opt-in only because it may behave like a harsher kick or impose client retry behavior outside the server reconnect-grace settings.
 
-A network-disconnect teleport path is now verified separately from native GM/session commands. DB-only presence flips were a false positive: they triggered automation but did not disconnect the game client or release the live pawn. The verified TestPlayer test forced a real `UNetConnection` timeout, waited for `Offline`, called `dune.admin_move_offline_player_to_partition(...)`, and reconnect loaded the moved pawn. Confidence: high for the observed test, moderate for generalized automation.
+A network-disconnect teleport path is now verified separately from native GM/session commands. DB-only presence flips were a false positive: they triggered automation but did not disconnect the game client or release the live pawn. The verified test player forced a real `UNetConnection` timeout, waited for `Offline`, called `dune.admin_move_offline_player_to_partition(...)`, and reconnect loaded the moved pawn. Confidence: high for the observed test, moderate for generalized automation.
 
 What we verified:
 
@@ -250,7 +250,7 @@ The chat spam auto-protector uses the same limitation. It detects repeated-messa
 
 Candidate paths:
 
-- Network-disconnect teleport: verified for TestPlayer on Survival; use this as the practical fallback for online-adjacent teleport while native GM teleport remains unverified. See [soft-disconnect-teleport.md](soft-disconnect-teleport.md).
+- Network-disconnect teleport: verified for a test player on Survival; use this as the practical fallback for online-adjacent teleport while native GM teleport remains unverified. See [soft-disconnect-teleport.md](soft-disconnect-teleport.md).
 - Native GM/session command: use `RemoveSessionMember` first after the `PrintPos`/`PrintAllowedCommands` payload path is proven.
 - Native GM/lobby kick: use `KickLobbyMember` only if session removal does not disconnect the client.
 - BattlEye kick: leave off unless deliberately testing a harsher kick path.

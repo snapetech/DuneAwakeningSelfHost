@@ -282,6 +282,36 @@ section {
 	outline: 0;
 }
 
+.poi-filter-label {
+	display: block;
+	margin-bottom: 8px;
+}
+
+.poi-filter-label input {
+	width: 100%;
+	border: 1px solid #5b503f;
+	border-radius: 6px;
+	background: #201d18;
+	color: #f3eadb;
+	font: inherit;
+	font-size: 0.9rem;
+	padding: 7px 9px;
+}
+
+.poi-filter-label input:focus-visible {
+	border-color: #d9a63c;
+	outline: 0;
+}
+
+.sr-only {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip: rect(0, 0, 0, 0);
+	white-space: nowrap;
+}
+
 .poi-toggles label {
 	display: inline-flex;
 	align-items: center;
@@ -290,6 +320,10 @@ section {
 	color: #f3eadb;
 	font-size: 0.82rem;
 	line-height: 1.25;
+}
+
+.poi-toggles label[hidden] {
+	display: none;
 }
 
 .poi-toggles input {

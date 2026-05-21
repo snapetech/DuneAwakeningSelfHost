@@ -155,11 +155,15 @@ def main():
 
     sent = []
     responses = []
-    admin_conn = amqp_connection()
-    admin_ch = admin_conn.channel()
-    reply_queue = admin_ch.queue_declare(queue="", exclusive=True, auto_delete=True).method.queue
-    for key in (reply_queue, f"response.{args.route}", args.route):
-        bind_safely(admin_ch, reply_queue, "response", key)
+    admin_conn = None
+    admin_ch = None
+    reply_queue = None
+    if any(target[0] == "admin" for target in targets):
+        admin_conn = amqp_connection()
+        admin_ch = admin_conn.channel()
+        reply_queue = admin_ch.queue_declare(queue="", exclusive=True, auto_delete=True).method.queue
+        for key in (reply_queue, f"response.{args.route}", args.route):
+            bind_safely(admin_ch, reply_queue, "response", key)
 
     game_conn = None
     game_ch = None
@@ -206,16 +210,19 @@ def main():
                     "error": str(exc),
                 }
             )
-        responses.extend(drain(admin_ch, reply_queue, args.wait))
+        if admin_ch is not None and reply_queue is not None:
+            responses.extend(drain(admin_ch, reply_queue, args.wait))
         if game_ch is not None and game_reply_queue is not None:
             responses.extend(drain(game_ch, game_reply_queue, args.wait))
 
-    responses.extend(drain(admin_ch, reply_queue, max(args.wait, 2.0)))
+    if admin_ch is not None and reply_queue is not None:
+        responses.extend(drain(admin_ch, reply_queue, max(args.wait, 2.0)))
     if game_ch is not None and game_reply_queue is not None:
         responses.extend(drain(game_ch, game_reply_queue, max(args.wait, 2.0)))
     if game_conn is not None:
         game_conn.close()
-    admin_conn.close()
+    if admin_conn is not None:
+        admin_conn.close()
     print(json.dumps({"ok": True, "command": args.command, "sent": sent, "responses": responses}, indent=2))
 
 

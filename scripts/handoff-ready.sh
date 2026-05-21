@@ -33,7 +33,7 @@ section "RabbitMQ TLS"
 check "public RabbitMQ cert covers advertised host" ./scripts/check-rabbitmq-cert-sans.sh "$env_file"
 
 section "Standby Replication And Mirror"
-check "standby status is clean" make standby-status "ENV_FILE=$env_file"
+check "standby replication, mirror, snapshots, and images are clean" env DUNE_STANDBY_SKIP_RMQ_TLS_CHECK=true make standby-status "ENV_FILE=$env_file"
 
 section "Current Public Endpoint"
 check "current stack health and public RMQ probe are clean" make cutover-check "ENV_FILE=$env_file"

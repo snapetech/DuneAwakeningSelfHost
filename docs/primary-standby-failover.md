@@ -47,6 +47,7 @@ must not be run active-active for the same `WORLD_UNIQUE_NAME`.
 Read-only checks:
 
 ```sh
+make failover-topology-status ENV_FILE=.env
 make standby-status ENV_FILE=.env
 make cutover-network-status ENV_FILE=.env
 make cutover-check ENV_FILE=.env

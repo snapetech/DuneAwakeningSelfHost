@@ -524,47 +524,25 @@ def send_player_disconnect(command_text, target_player, admin_player, route):
     return publish_command(command_text, route, target_player=target_player, admin_player=admin_player)
 
 
-def move_offline_player_actor_set_to_partition(conn, fls_id, partition_id, x, y, z):
+def move_offline_player_to_partition(conn, fls_id, partition_id, x, y, z):
     with conn.cursor() as cur:
         cur.execute(
             """
-            with target_partition as (
-                select partition_id, map, dimension_index
-                from dune.world_partition
-                where partition_id=%s
-            ), target_player as (
-                select ps.player_controller_id, ps.player_state_id, ps.player_pawn_id
-                from dune.player_state ps
-                join dune.accounts a on a.id = ps.account_id
-                where a."user"=%s and ps.online_status::text <> 'Online'
-                limit 1
-            ), target_actor as (
-                select unnest(array[player_controller_id, player_state_id, player_pawn_id]) as id
-                from target_player
-            ), overmap_location as (
-                select
-                    case
-                    when target_partition.map = 'Overmap' then dune.overmap_save_player_survival_data(target_player.player_pawn_id, null, false, row(%s::real, %s::real, %s::real)::dune.vector)
-                    else null
-                    end
-                from target_partition, target_player
+            select dune.admin_move_offline_player_to_partition(
+                %s,
+                %s,
+                row(%s::real, %s::real, %s::real)::dune.vector
             )
-            update dune.actors a
-            set
-                transform = (row(%s::real, %s::real, %s::real)::dune.vector, (a.transform).rotation),
-                map = dune.upgrade_map_name(target_partition.map),
-                dimension_index = target_partition.dimension_index,
-                partition_id = target_partition.partition_id
-            from target_partition, target_actor, overmap_location
-            where a.id = target_actor.id
-            returning a.id
             """,
-            (partition_id, fls_id, x, y, z, x, y, z),
+            (fls_id, partition_id, x, y, z),
         )
-        rows = cur.fetchall()
-    if len(rows) != 3:
-        raise RuntimeError(f"offline teleport updated {len(rows)} actor rows; expected controller, state, and pawn")
-    return [row[0] for row in rows]
+        cur.fetchall()
+    return {
+        "function": "dune.admin_move_offline_player_to_partition",
+        "flsId": fls_id,
+        "partitionId": partition_id,
+        "location": {"x": x, "y": y, "z": z},
+    }
 
 
 def player_disconnect_command(target_name):
@@ -1881,9 +1859,9 @@ def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=F
         execute = env_bool("DUNE_CHAT_COMMAND_EXECUTE_TELEPORT", False)
         dry_run = env_bool("DUNE_CHAT_COMMAND_DRY_RUN", True) or not execute
         response = f"would move {target['character_name']} to {resolved_admin} at {format_location(admin)}"
-        moved_actor_ids = []
+        move_result = None
         if not dry_run:
-            moved_actor_ids = move_offline_player_actor_set_to_partition(
+            move_result = move_offline_player_to_partition(
                 conn,
                 target["fls_id"],
                 admin["partition_id"],
@@ -1892,14 +1870,14 @@ def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=F
                 admin["z"],
             )
             conn.commit()
-            response = f"moved {target['character_name']} to {resolved_admin} at {format_location(admin)}; actor rows {','.join(str(actor_id) for actor_id in moved_actor_ids)}"
+            response = f"moved {target['character_name']} to {resolved_admin} at {format_location(admin)} via dune.admin_move_offline_player_to_partition"
         announce_result = maybe_reply(response, reply)
         return {
             "ok": True,
             "action": "teleport",
             "dryRun": dry_run,
             "message": response,
-            "movedActorIds": moved_actor_ids,
+            "moveResult": move_result,
             "admin": {"characterName": resolved_admin, "location": compact_location(admin)},
             "target": {"characterName": target["character_name"], "flsId": target["fls_id"], "status": target["online_status"], "location": compact_location(target)},
             "reply": announce_result,

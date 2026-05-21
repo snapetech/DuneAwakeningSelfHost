@@ -7,8 +7,10 @@
 	var poiOverlay = document.getElementById("poi-overlay");
 	var poiToggles = document.getElementById("poi-toggles");
 	var poiSummary = document.getElementById("poi-summary");
+	var poiAll = document.getElementById("poi-all");
 	var poiPreset = document.getElementById("poi-preset");
 	var poiClear = document.getElementById("poi-clear");
+	var poiFilter = document.getElementById("poi-filter");
 	var players = document.getElementById("active-players");
 	var count = document.getElementById("player-count");
 	var peakCount = document.getElementById("peak-player-count");
@@ -208,14 +210,17 @@
 		sessionStorage.setItem(poiStorageKey, JSON.stringify(selected));
 	}
 
-	function updatePoiSummary(selected) {
+	function updatePoiSummary(selected, data) {
 		if (!poiSummary) {
 			return;
 		}
 		var enabled = Object.keys(selected || {}).filter(function (group) {
 			return selected[group] === true;
 		}).length;
-		poiSummary.textContent = enabled ? String(enabled) + " POI layer" + (enabled === 1 ? "" : "s") + " on" : "POI layers off";
+		var markerCount = Array.isArray(data && data.markers) ? data.markers.filter(function (marker) {
+			return selected[marker.group] === true;
+		}).length : 0;
+		poiSummary.textContent = enabled ? String(enabled) + " layer" + (enabled === 1 ? "" : "s") + " / " + String(markerCount) + " markers" : "POI layers off";
 	}
 
 	function renderPoiOverlay(data, selected) {
@@ -248,6 +253,8 @@
 		var selected = selectedPoiGroups(groups);
 		var groupKeys = Object.keys(groups).filter(function (group) {
 			return Number(groups[group].count || 0) > 0;
+		}).sort(function (a, b) {
+			return String((groups[a] || {}).name || a).localeCompare(String((groups[b] || {}).name || b), undefined, { sensitivity: "base" });
 		});
 		var colors = {};
 		groupKeys.forEach(function (group, index) {
@@ -256,18 +263,39 @@
 		poiToggles.innerHTML = groupKeys.map(function (group) {
 			var info = groups[group] || {};
 			var checked = selected[group] ? " checked" : "";
-			return '<label><span class="poi-toggle-label"><input type="checkbox" value="' + escapeHtml(group) + '"' + checked + '><span class="poi-swatch" style="background:' + escapeHtml(colors[group]) + '"></span><span>' + escapeHtml(info.name || group) + '</span></span><span class="poi-count">' + escapeHtml(info.count || 0) + '</span></label>';
+			var label = String(info.name || group);
+			return '<label data-filter-text="' + escapeHtml((label + " " + group).toLowerCase()) + '"><span class="poi-toggle-label"><input type="checkbox" value="' + escapeHtml(group) + '"' + checked + '><span class="poi-swatch" style="background:' + escapeHtml(colors[group]) + '"></span><span>' + escapeHtml(label) + '</span></span><span class="poi-count">' + escapeHtml(info.count || 0) + '</span></label>';
 		}).join("");
 		renderPoiOverlay(data, selected);
-		updatePoiSummary(selected);
+		updatePoiSummary(selected, data);
+		function applyFilter() {
+			var term = poiFilter ? poiFilter.value.trim().toLowerCase() : "";
+			poiToggles.querySelectorAll("label[data-filter-text]").forEach(function (label) {
+				label.hidden = term && label.getAttribute("data-filter-text").indexOf(term) === -1;
+			});
+		}
 		poiToggles.querySelectorAll("input[type=checkbox]").forEach(function (input) {
 			input.addEventListener("change", function () {
 				selected[input.value] = input.checked;
 				savePoiGroups(selected);
 				renderPoiOverlay(data, selected);
-				updatePoiSummary(selected);
+				updatePoiSummary(selected, data);
 			});
 		});
+		if (poiFilter && !poiFilter.dataset.bound) {
+			poiFilter.dataset.bound = "true";
+			poiFilter.addEventListener("input", applyFilter);
+		}
+		applyFilter();
+		if (poiAll) {
+			poiAll.onclick = function () {
+				Object.keys(selected).forEach(function (group) {
+					selected[group] = true;
+				});
+				savePoiGroups(selected);
+				renderPoiToggles(data);
+			};
+		}
 		if (poiClear) {
 			poiClear.onclick = function () {
 				Object.keys(selected).forEach(function (group) {

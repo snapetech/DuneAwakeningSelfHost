@@ -114,7 +114,7 @@ server {
 ## Current Features
 
 - Overview-first dashboard with player roster, realtime resource use, headline health metrics, map health, network checks, and health verdicts.
-- Hagga Basin coordinate grid that projects persisted database pawn coordinates onto a clean `survival_1` tile composite at `admin/static/hagga-basin.webp` through `DUNE_HAGGA_MAP_*` calibration. The default grid follows the public map tile bounds, `X -457200..355600`, `Y -457200..355600`, with world X mapped horizontally and world Y mapped downward so the currently observed TestPlayer persistence coordinates render south-central instead of north-central. The panel intentionally does not overlay DB POIs/waypoints/landmarks.
+- Hagga Basin coordinate grid that projects persisted database pawn coordinates onto a clean `survival_1` tile composite at `admin/static/hagga-basin.webp` through `DUNE_HAGGA_MAP_*` calibration. The default grid follows the public map tile bounds, `X -457200..355600`, `Y -457200..355600`, with world X mapped horizontally and world Y mapped downward so the observed test persistence coordinates render south-central instead of north-central. The panel intentionally does not overlay DB POIs/waypoints/landmarks.
 - Location source diagnostics are shown under the map and returned by `/api/players/hagga-basin`. Current findings are documented in [`../PLAYER_LOCATION_SOURCE_AUDIT.md`](../PLAYER_LOCATION_SOURCE_AUDIT.md): actor transforms, `load_travel_to_player_info`, return info, respawn locations, actor state, overmap rows, game events, and normal server logs do not currently provide a proven live in-game arrow position.
 - Server/farm state view with per-map online/offline health derived from `world_partition`, `farm_state`, and `active_server_ids`.
 - Realtime resource view for host load, host memory, workspace disk, and Docker container CPU/memory/network/block I/O when the Docker socket is available.
@@ -981,7 +981,7 @@ Default command settings:
 
 ```env
 DUNE_CHAT_COMMAND_PREFIX=&
-DUNE_CHAT_COMMAND_ADMINS=TestPlayer
+DUNE_CHAT_COMMAND_ADMINS=AdminUser
 DUNE_CHAT_COMMAND_ADMIN_FLS_IDS=TEST_FLS_ID
 DUNE_CHAT_COMMAND_DRY_RUN=true
 DUNE_CHAT_COMMAND_EXECUTE_TELEPORT=false
@@ -1088,7 +1088,7 @@ Experimental result on 2026-05-20: TextRouter was temporarily restarted with fix
 Use `scripts/send-whisper-probe.py` for repeatable tests. The probe uses the working `m_TimeStamp` spelling:
 
 ```bash
-scripts/send-whisper-probe.py --target-name TestPlayer --target-fls-id TEST_FLS_ID --bind-target-queue --send-intercept --message-prefix "probe $(date +%H%M%S)"
+scripts/send-whisper-probe.py --target-name SamplePlayer --target-fls-id TEST_FLS_ID --bind-target-queue --send-intercept --message-prefix "probe $(date +%H%M%S)"
 ```
 
 Capture a real client whisper with:
@@ -1097,7 +1097,7 @@ Capture a real client whisper with:
 scripts/capture-chat-routing.py --seconds 120 \
   --routing-key '#' \
   --routing-key TEST_FLS_ID \
-  --routing-key TestPlayer \
+  --routing-key SamplePlayer \
   --routing-key 36A0226630A5875 \
   --routing-key Talon \
   --routing-key EC8C54C4BB4463D9 \
@@ -1113,11 +1113,11 @@ The working private reply path is also documented as a standalone runbook in [pr
 Additional channel probes are available through `scripts/send-chat-channel-probe.py`. This sends labeled `Proximity`, `Guild`, `Faction`, and optional `Party` messages as both direct exchange publishes and TextRouter intercept redirects:
 
 ```bash
-scripts/send-chat-channel-probe.py --target-name TestPlayer --target-fls-id TEST_FLS_ID --guild-id 1 --faction-id 3 --message-prefix "chan-native $(date +%H%M%S)"
-scripts/send-chat-channel-probe.py --target-name TestPlayer --target-fls-id TEST_FLS_ID --guild-id 1 --faction-id 3 --bind-target-queue --message-prefix "chan-bound $(date +%H%M%S)"
+scripts/send-chat-channel-probe.py --target-name SamplePlayer --target-fls-id TEST_FLS_ID --guild-id 1 --faction-id 3 --message-prefix "chan-native $(date +%H%M%S)"
+scripts/send-chat-channel-probe.py --target-name SamplePlayer --target-fls-id TEST_FLS_ID --guild-id 1 --faction-id 3 --bind-target-queue --message-prefix "chan-bound $(date +%H%M%S)"
 ```
 
-Live findings: TestPlayer's player controller `17` is in guild `1`; no active party row was present during testing. Direct `chat.proximity`, `chat.guild.1`, and `chat.faction.3` publishes with temporary target-queue bindings reached RabbitMQ and were delivered to the player queue, then the bindings were removed. Operator confirmation reported proximity and guild messages rendered in the client. TextRouter intercept redirects without `user_id` fail permission checks; redirects with `user_id` pass permission for `chat.proximity` but hit the same RabbitMQ `PRECONDITION_FAILED` republish issue seen with whispers.
+Live findings: the test player's player controller `17` is in guild `1`; no active party row was present during testing. Direct `chat.proximity`, `chat.guild.1`, and `chat.faction.3` publishes with temporary target-queue bindings reached RabbitMQ and were delivered to the player queue, then the bindings were removed. Operator confirmation reported proximity and guild messages rendered in the client. TextRouter intercept redirects without `user_id` fail permission checks; redirects with `user_id` pass permission for `chat.proximity` but hit the same RabbitMQ `PRECONDITION_FAILED` republish issue seen with whispers.
 
 For command replies, set `DUNE_CHAT_COMMAND_TARGET_REPLY_MODE=whisper` and `DUNE_CHAT_COMMAND_PRIVATE_REPLY_CHANNEL=Whispers` to reply through `chat.whispers` using a temporary binding to the sender's `{FLS_ID}_queue`. Command responses generated inside `handle_command()` infer the issuing player as the target when the sender FLS id is known, so admin command results and errors stay private by default. Returned command JSON includes `reply.stdout` from `scripts/announce.sh`; private replies should show `transport=chat.whispers` and `exchange=chat.whispers`. Set `DUNE_CHAT_COMMAND_TARGET_REPLY_MODE=proximity` to use `chat.proximity`, or set `DUNE_CHAT_COMMAND_TARGET_REPLY_MODE=guild` and `DUNE_CHAT_COMMAND_TARGET_REPLY_EXCHANGE=chat.guild.<id>` to use a confirmed guild exchange. The command listener sets `DUNE_ANNOUNCE_CHAT_CLEANUP_TARGET_BINDINGS=true` for these targeted replies so the temporary binding is removed after publish. Spam-protection action announcements are intentionally outside command context and remain global when `DUNE_CHAT_SPAM_ANNOUNCE_ACTION=true`.
 
@@ -1188,7 +1188,7 @@ Dry-run verification from the live admin container:
 ```bash
 docker compose exec -T admin-panel /workspace/scripts/admin-chat-commands.py \
   --dry-run-command '&teleport Cletus' \
-  --sender-name TestPlayer \
+  --sender-name SamplePlayer \
   --sender-fls-id TEST_FLS_ID
 ```
 

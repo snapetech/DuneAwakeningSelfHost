@@ -3,7 +3,7 @@
 This records the first verified online-adjacent teleport primitive found for DASH.
 The mechanism is useful, but it is not a soft disconnect.
 
-Confidence: high for TestPlayer on Survival/Hagga Basin on 2026-05-21. Confidence: moderate for automation and other maps until repeated.
+Confidence: high for the verified Survival/Hagga Basin test on 2026-05-21. Confidence: moderate for automation and other maps until repeated.
 
 ## Result
 
@@ -18,9 +18,8 @@ Verified sequence:
 3. Wait for Survival to update the player from `Online` to `LoggingOut`.
 4. Wait for the 30-second logoff timer to finish and for `online_status='Offline'`.
 5. Call `dune.admin_move_offline_player_to_partition(...)`.
-6. Optionally align controller/player-state actor rows to the pawn transform.
-7. Remove the network block.
-8. Let the client reconnect or have the player reconnect manually.
+6. Remove the network block.
+7. Let the client reconnect or have the player reconnect manually.
 
 The reconnect loaded the moved pawn position and the operator confirmed the character moved.
 
@@ -56,7 +55,7 @@ Date: 2026-05-21
 
 Target:
 
-- Character: `TestPlayer`
+- Character: `test player`
 - FLS/user id: `TEST_FLS_ID`
 - Server id: `o13FuZmcSvCCi5kuofbU5w`
 - Map: `Survival_1`
@@ -149,7 +148,7 @@ A production helper should use a guarded, auditable flow:
 ```text
 resolve target -> snapshot player/actor state -> find active UDP endpoint -> block endpoint
 poll for LoggingOut -> poll for Offline -> call admin_move_offline_player_to_partition
-align related actor rows if desired -> unblock endpoint -> poll reconnect/final position
+unblock endpoint -> poll reconnect/final position
 ```
 
 Use an advisory lock per account/FLS id. Always clean up network filters in a `finally` path.

@@ -270,6 +270,95 @@ class OnlineTeleportSafetyTests(unittest.TestCase):
         self.assertIn("not armed", second["gm"]["reason"])
 
 
+class OfflineTeleportCommandTests(unittest.TestCase):
+    def row(self, name, partition_id=1, status="Offline", x=10.0):
+        return {
+            "account_id": 1,
+            "character_name": name,
+            "online_status": status,
+            "life_state": "Alive",
+            "server_id": f"Survival_1{partition_id}",
+            "player_controller_id": 100 + partition_id,
+            "player_pawn_id": 200 + partition_id,
+            "fls_id": f"fls-{name}",
+            "funcom_id": f"funcom-{name}",
+            "actor_map": "HaggaBasin",
+            "partition_id": partition_id,
+            "dimension_index": 0,
+            "partition_label": f"Partition {partition_id}",
+            "partition_map": "Survival_1",
+            "x": x,
+            "y": 20.0,
+            "z": 30.0,
+        }
+
+    def test_offline_teleport_execute_uses_first_party_helper(self):
+        admin = self.row("Admin", partition_id=7, status="Online", x=100.0)
+        target = self.row("Tester", partition_id=7, status="Offline", x=1.0)
+        events = []
+
+        class FakeCursor:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def execute(self, sql, params=None):
+                events.append(("execute", sql, params))
+
+            def fetchall(self):
+                return [(None,)]
+
+        class FakeConn:
+            def cursor(self):
+                return FakeCursor()
+
+            def commit(self):
+                events.append(("commit",))
+
+        def fake_character_row(conn, name):
+            return (admin if name == "Admin" else target), []
+
+        def fake_env(name, default=""):
+            values = {
+                "DUNE_CHAT_COMMAND_EXECUTE_TELEPORT": "true",
+                "DUNE_CHAT_COMMAND_DRY_RUN": "false",
+            }
+            return values.get(name, default)
+
+        with unittest.mock.patch.object(admin_chat_commands, "is_admin", lambda conn, sender_name, sender_fls_id: (True, "Admin")), \
+             unittest.mock.patch.object(admin_chat_commands, "character_row", fake_character_row), \
+             unittest.mock.patch.object(admin_chat_commands, "env", fake_env), \
+             unittest.mock.patch.object(admin_chat_commands, "run_announce", lambda message, **kwargs: {"ok": True, "message": message}):
+            result = admin_chat_commands.handle_command(FakeConn(), "&teleport Tester", sender_name="Admin")
+
+        helper_calls = [event for event in events if event[0] == "execute" and "dune.admin_move_offline_player_to_partition" in event[1]]
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["dryRun"])
+        self.assertEqual(len(helper_calls), 1)
+        self.assertEqual(helper_calls[0][2], ("fls-Tester", 7, 100.0, 20.0, 30.0))
+        self.assertEqual(result["moveResult"]["function"], "dune.admin_move_offline_player_to_partition")
+        self.assertIn(("commit",), events)
+        self.assertFalse(any(event[0] == "execute" and "update dune.actors" in event[1].lower() for event in events))
+
+    def test_offline_teleport_dry_run_does_not_call_helper(self):
+        admin = self.row("Admin", partition_id=7, status="Online", x=100.0)
+        target = self.row("Tester", partition_id=7, status="Offline", x=1.0)
+
+        def fake_character_row(conn, name):
+            return (admin if name == "Admin" else target), []
+
+        with unittest.mock.patch.object(admin_chat_commands, "is_admin", lambda conn, sender_name, sender_fls_id: (True, "Admin")), \
+             unittest.mock.patch.object(admin_chat_commands, "character_row", fake_character_row), \
+             unittest.mock.patch.object(admin_chat_commands, "move_offline_player_to_partition") as move:
+            result = admin_chat_commands.handle_command(object(), "&teleport Tester", sender_name="Admin")
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["dryRun"])
+        move.assert_not_called()
+
+
 class CommandListenerRetryTests(unittest.TestCase):
     def test_consume_forever_retries_amqp_connection(self):
         attempts = {"count": 0, "slept": []}

@@ -6792,9 +6792,10 @@ function saveHaggaPoiGroups(selected){
   haggaPoiGroups = selected;
   sessionStorage.setItem('duneAdminHaggaPoiGroups', JSON.stringify(selected));
 }
-function haggaPoiSummary(selected){
+function haggaPoiSummary(selected, pois){
   const enabled = Object.keys(selected || {}).filter(group => selected[group] === true).length;
-  return enabled ? `${enabled} POI layer${enabled === 1 ? '' : 's'} on` : 'POI layers off';
+  const markerCount = Array.isArray(pois?.markers) ? pois.markers.filter(marker => selected[marker.group] === true).length : 0;
+  return enabled ? `${enabled} layer${enabled === 1 ? '' : 's'} / ${markerCount} markers` : 'POI layers off';
 }
 function haggaPoiOverlay(pois, selected){
   const markers = Array.isArray(pois?.markers) ? pois.markers : [];
@@ -6813,11 +6814,12 @@ function haggaPoiOverlay(pois, selected){
 }
 function haggaPoiToggleBar(pois, selected){
   const groups = pois?.groups || {};
-  const groupKeys = Object.keys(groups).filter(group => Number(groups[group]?.count || 0) > 0);
+  const groupKeys = Object.keys(groups).filter(group => Number(groups[group]?.count || 0) > 0)
+    .sort((a, b) => String(groups[a]?.name || a).localeCompare(String(groups[b]?.name || b), undefined, {sensitivity:'base'}));
   if (!groupKeys.length) return '';
   const colors = {};
   groupKeys.forEach((group, index) => colors[group] = haggaPoiPalette[index % haggaPoiPalette.length]);
-  return `<div class="poiLegendHeader"><span id="haggaPoiSummary" class="muted">${esc(haggaPoiSummary(selected))}</span><div class="toolbar"><button id="haggaPoiPresetBtn">Preset</button><button id="haggaPoiClearBtn">Clear</button></div></div><div class="poiToggleBar" aria-label="POI layer toggles">${groupKeys.map(group => {
+  return `<div class="poiLegendHeader"><span id="haggaPoiSummary" class="muted">${esc(haggaPoiSummary(selected, pois))}</span><div class="toolbar"><button id="haggaPoiAllBtn">All</button><button id="haggaPoiPresetBtn">Preset</button><button id="haggaPoiClearBtn">Clear</button></div></div><div class="poiToggleBar" aria-label="POI layer toggles">${groupKeys.map(group => {
     const info = groups[group] || {};
     return `<label><span class="poiToggleLabel"><input type="checkbox" value="${esc(group)}"${selected[group] ? ' checked' : ''}><span class="poiSwatch" style="background:${esc(colors[group])}"></span><span>${esc(info.name || group)}</span></span><span class="poiCount">${esc(info.count || 0)}</span></label>`;
   }).join('')}</div>`;
@@ -7093,6 +7095,12 @@ function wireHaggaMapControls(container){
   container.querySelector('#haggaPoiClearBtn')?.addEventListener('click', () => {
     const selected = selectedHaggaPoiGroups({});
     Object.keys(selected).forEach(group => selected[group] = false);
+    saveHaggaPoiGroups(selected);
+    refreshHaggaMap({force:true}).catch(e => reportClientError(e, 'Refresh Hagga map'));
+  });
+  container.querySelector('#haggaPoiAllBtn')?.addEventListener('click', () => {
+    const selected = selectedHaggaPoiGroups({});
+    Object.keys(selected).forEach(group => selected[group] = true);
     saveHaggaPoiGroups(selected);
     refreshHaggaMap({force:true}).catch(e => reportClientError(e, 'Refresh Hagga map'));
   });
