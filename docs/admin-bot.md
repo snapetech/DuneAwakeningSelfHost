@@ -77,6 +77,8 @@ DUNE_PLAYER_PRESENCE_FIRST_SEEN_ENABLED=true
 DUNE_PLAYER_PRESENCE_FIRST_SEEN_TEMPLATE=Welcome to {server_name}. This is a friendly PvE server. Please keep shared paths, spawns, and resources clear. Rules: {rules_url}
 DUNE_PLAYER_PRESENCE_HAGGA_ARRIVAL_ENABLED=true
 DUNE_PLAYER_PRESENCE_HAGGA_ARRIVAL_TEMPLATE=You made it to Hagga Basin. Build with room around roads, spawns, resource areas, and points of interest. Rules: {rules_url}
+DUNE_PLAYER_PRESENCE_DEEP_DESERT_FIRST_ENABLED=true
+DUNE_PLAYER_PRESENCE_DEEP_DESERT_FIRST_TEMPLATE=Deep Desert is high risk. Expect sandstorms, sandworms, and harsher recovery. Support: {server_url}
 DUNE_PLAYER_PRESENCE_BASE_REMINDERS_ENABLED=true
 DUNE_PLAYER_PRESENCE_BASE_CAP=6
 DUNE_PLAYER_PRESENCE_BASE_NEAR_CAP=5
@@ -115,6 +117,26 @@ DUNE_PLAYER_PRESENCE_RECONNECT_SUPPORT_TEMPLATE=Looks like you have reconnected 
 DUNE_PLAYER_PRESENCE_ADMIN_ANOMALY_DIGEST_ENABLED=true
 DUNE_PLAYER_PRESENCE_ADMIN_ANOMALY_DIGEST_INTERVAL_SECONDS=1800
 DUNE_PLAYER_PRESENCE_ADMIN_ANOMALY_DIGEST_TEMPLATE=Admin digest: stuck/recent anomalies={stuck_count} ({stuck_names}); over base cap={over_base_cap}.
+DUNE_PLAYER_PRESENCE_ADMIN_MAP_ROSTER_DIGEST_ENABLED=true
+DUNE_PLAYER_PRESENCE_ADMIN_MAP_ROSTER_DIGEST_INTERVAL_SECONDS=1800
+DUNE_PLAYER_PRESENCE_ADMIN_MAP_ROSTER_DIGEST_TEMPLATE=Admin roster: {count} online. {map_roster}
+DUNE_PLAYER_PRESENCE_ADMIN_UNIQUE_DAILY_DIGEST_ENABLED=true
+DUNE_PLAYER_PRESENCE_ADMIN_UNIQUE_DAILY_DIGEST_INTERVAL_SECONDS=86400
+DUNE_PLAYER_PRESENCE_ADMIN_UNIQUE_DAILY_DIGEST_TEMPLATE=Admin daily players: {unique_count} unique accounts seen today, {count} currently online.
+DUNE_PLAYER_PRESENCE_MAINTENANCE_ONLINE_ADMIN_ENABLED=true
+DUNE_PLAYER_PRESENCE_MAINTENANCE_ONLINE_WINDOW_SECONDS=1800
+DUNE_PLAYER_PRESENCE_MAINTENANCE_ONLINE_ADMIN_TEMPLATE=Admin maintenance check: {count} players still online before maintenance. {map_roster}
+DUNE_PLAYER_PRESENCE_MAP_WITH_PLAYERS_UNHEALTHY_ADMIN_ENABLED=true
+DUNE_PLAYER_PRESENCE_MAP_WITH_PLAYERS_UNHEALTHY_ADMIN_TEMPLATE=Admin alert: unhealthy maps still report players: {impacted_maps}
+DUNE_PLAYER_PRESENCE_PUBLIC_MAINTENANCE_CANCELLED_ENABLED=true
+DUNE_PLAYER_PRESENCE_PUBLIC_MAINTENANCE_CANCELLED_TEMPLATE=Maintenance has been cancelled or delayed. Normal play can continue.
+DUNE_PLAYER_PRESENCE_INCIDENT_MODE_PUBLIC_ENABLED=true
+DUNE_PLAYER_PRESENCE_INCIDENT_MODE_ACTIVE=false
+DUNE_PLAYER_PRESENCE_INCIDENT_MODE_ON_TEMPLATE=Server notice: admins are investigating travel instability. Updates at {server_url}.
+DUNE_PLAYER_PRESENCE_INCIDENT_MODE_OFF_TEMPLATE=Server notice: incident mode is cleared. Normal play can continue.
+DUNE_PLAYER_PRESENCE_ADMIN_FIRST_LOGIN_DAILY_ENABLED=true
+DUNE_PLAYER_PRESENCE_ADMIN_FIRST_LOGIN_DIGEST_LIMIT=8
+DUNE_PLAYER_PRESENCE_DIGEST_LOG_LIMIT=250
 DUNE_PLAYER_PRESENCE_STARTER_BASE_TOOL_ENABLED=true
 DUNE_PLAYER_PRESENCE_STARTER_BASE_TOOL_MESSAGE_ENABLED=true
 DUNE_PLAYER_PRESENCE_STARTER_BASE_TOOL_MESSAGE_TEMPLATE=A Base Reconstruction Tool has been added to your inventory. You may need to log out and back in before it appears.
@@ -135,6 +157,7 @@ Automated private messages are derived from local state and operator config rath
 
 - `FIRST_SEEN` sends once per account after its first observed join.
 - `HAGGA_ARRIVAL` sends once when an online player is first observed on `HaggaBasin`.
+- `DEEP_DESERT_FIRST` sends once when an online player is first observed on a Deep Desert map.
 - `BASE_REMINDERS` queries `dune.totems`, `dune.actors`, and `dune.landclaim_segments` for that account and sends first-base, near-cap, or over-cap reminders only when the count changes.
 - `RECONNECT_RECOVERY` sends when a player rejoins inside the configured short reconnect window.
 - `RESTART_PRIVATE_WARNINGS` mirrors scheduled admin-panel restart/announcement jobs to online players at configured remaining-time marks.
@@ -146,10 +169,15 @@ Automated private messages are derived from local state and operator config rath
 - `POPULATION_ADMIN_DIGEST` privately sends currently online admins a periodic player-count-by-map digest.
 - `RECONNECT_SUPPORT` privately nudges players who reconnect repeatedly inside a short window.
 - `ADMIN_ANOMALY_DIGEST` privately sends currently online admins a compact digest for stuck-transition candidates and over-cap base counts.
-Admin-private recipients are derived from currently online players whose character name or FLS id matches `DUNE_PLAYER_PRESENCE_ADMIN_NAMES` / `DUNE_PLAYER_PRESENCE_ADMIN_FLS_IDS`. Keep real admin identifiers in private `.env`, not in committed examples or docs.
-- `MAP_HEALTH_PUBLIC` can publish degraded/recovered map-health notices when enabled.
-- `MAP_HEALTH_ADMIN`, `POPULATION_ADMIN_DIGEST`, and `ADMIN_ANOMALY_DIGEST` send private admin-only digests to configured admin names/FLS ids.
-- `RECONNECT_SUPPORT` can privately nudge players who repeatedly reconnect inside the configured window.
+- `ADMIN_MAP_ROSTER_DIGEST` privately sends admins exact online player rosters grouped by map.
+- `ADMIN_UNIQUE_DAILY_DIGEST` privately sends admins the daily unique-account count.
+- `MAINTENANCE_ONLINE_ADMIN` privately tells admins who is still online, grouped by map, before scheduled maintenance.
+- `MAP_WITH_PLAYERS_UNHEALTHY_ADMIN` privately alerts admins when an unhealthy map still reports connected players.
+- `PUBLIC_MAINTENANCE_CANCELLED` publishes a cancellation/delay notice when an announcement or restart job is cancelled after scheduling.
+- `INCIDENT_MODE_PUBLIC` publishes manual incident on/off notices when `DUNE_PLAYER_PRESENCE_INCIDENT_MODE_ACTIVE` changes.
+- `ADMIN_FIRST_LOGIN_DAILY` sends the current admin digest set to each configured admin on their first login each day.
+
+Admin-private recipients are derived from currently online players whose character name or FLS id matches `DUNE_PLAYER_PRESENCE_ADMIN_NAMES` / `DUNE_PLAYER_PRESENCE_ADMIN_FLS_IDS`. Keep real admin identifiers in private `.env`, not in committed examples or docs. Digest entries are stored in `backups/admin-bot/player-presence.json` under `adminDigestLog`, and the admin panel exposes them on the Admin Digests tab.
 
 The starter Base Reconstruction Tool path grants one `BaseBackupTool` to each newly observed joining account that has not already been recorded in `backups/admin-bot/player-presence.json`. When the grant succeeds, it sends a private message telling the player they may need to log out and back in before the item appears.
 

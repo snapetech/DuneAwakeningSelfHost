@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import datetime as dt
+import hashlib
 import json
 import os
 import pathlib
@@ -17,6 +18,7 @@ STARTER_BASE_TOOL_TEMPLATE = "BaseBackupTool"
 STARTER_BASE_TOOL_MESSAGE = "A Base Reconstruction Tool has been added to your inventory. You may need to log out and back in before it appears."
 RESTART_STATE_FILE = ROOT / "backups" / "admin-panel" / "restart-jobs.json"
 ANNOUNCEMENT_STATE_FILE = ROOT / "backups" / "admin-panel" / "announcements.json"
+AUDIT_FILE = ROOT / "backups" / "admin-panel" / "audit.jsonl"
 
 
 def read_env_file(path):
@@ -83,6 +85,18 @@ def load_json_file(path, default=None):
         return json.loads(path.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError):
         return {} if default is None else default
+
+
+def file_hash(paths):
+    digest = hashlib.sha256()
+    found = False
+    for rel in paths:
+        path = ROOT / rel
+        if path.exists():
+            found = True
+            digest.update(str(rel).encode("utf-8"))
+            digest.update(path.read_bytes())
+    return digest.hexdigest() if found else ""
 
 
 def save_state(state):
@@ -195,6 +209,116 @@ def map_health_summary():
         raise RuntimeError(result.stderr.strip() or "map health query failed")
     text = result.stdout.strip().splitlines()[-1] if result.stdout.strip() else "{}"
     return json.loads(text)
+
+
+def player_roster_by_map():
+    sql = """
+    select
+      coalesce(nullif(wp.label, ''), nullif(act.map, ''), nullif(wp.map, ''), 'Unknown') as map_label,
+      coalesce(nullif(ps.character_name, ''), ps.account_id::text) as character_name
+    from dune.player_state ps
+    left join dune.actors act on act.id = ps.player_pawn_id
+    left join dune.world_partition wp on wp.partition_id = act.partition_id
+    where ps.online_status::text = 'Online'
+    order by map_label, character_name;
+    """
+    result = run(compose_cmd("exec", "-T", "postgres", "psql", "-U", "dune", "-d", DB, "-At", "-F", "\t", "-c", sql), timeout=int(env("DUNE_PLAYER_PRESENCE_SQL_TIMEOUT_SECONDS", "10")))
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or "player roster by map query failed")
+    roster = {}
+    for line in result.stdout.splitlines():
+        if not line.strip():
+            continue
+        map_label, name = (line.split("\t") + [""])[:2]
+        roster.setdefault(map_label or "Unknown", []).append(name)
+    return roster
+
+
+def compact_roster_by_map(roster, map_limit=8, player_limit=8):
+    if not roster:
+        return "no online players"
+    parts = []
+    for map_label in sorted(roster)[:map_limit]:
+        players = roster[map_label]
+        shown = ", ".join(players[:player_limit])
+        if len(players) > player_limit:
+            shown += f", +{len(players) - player_limit} more"
+        parts.append(f"{map_label}: {shown}")
+    if len(roster) > map_limit:
+        parts.append(f"+{len(roster) - map_limit} more maps")
+    return "; ".join(parts)
+
+
+def service_health_checks():
+    checks = []
+    for unit in [item.strip() for item in env("DUNE_PLAYER_PRESENCE_SERVICE_HEALTH_UNITS", "dune-player-presence-announcer.service").split(",") if item.strip()]:
+        result = run(["systemctl", "is-active", unit], timeout=5)
+        checks.append({"name": unit, "ok": result.returncode == 0, "status": result.stdout.strip() or result.stderr.strip()})
+    max_age = int(env("DUNE_PLAYER_PRESENCE_FRESHNESS_MAX_AGE_SECONDS", "300"))
+    for rel in [item.strip() for item in env("DUNE_PLAYER_PRESENCE_FRESHNESS_FILES", "public-site/static/players.json,public-site/static/hagga-map.svg").split(",") if item.strip()]:
+        path = ROOT / rel
+        if not path.exists():
+            checks.append({"name": rel, "ok": False, "status": "missing"})
+            continue
+        age = int(time.time() - path.stat().st_mtime)
+        checks.append({"name": rel, "ok": age <= max_age, "status": f"age={age}s"})
+    return checks
+
+
+def latest_backup_age_hours():
+    candidates = []
+    for path in (ROOT / "backups").glob("*"):
+        if path.is_dir() and ((path / "manifest.txt").exists() or (path / "manifest.json").exists()):
+            candidates.append(path)
+    for path in (ROOT / "backups" / "admin-panel" / "maintenance").glob("*"):
+        if path.is_dir() and (path / "manifest.json").exists():
+            candidates.append(path)
+    if not candidates:
+        return None
+    latest = max(candidates, key=lambda item: item.stat().st_mtime)
+    return {"path": str(latest.relative_to(ROOT)), "ageHours": round((time.time() - latest.stat().st_mtime) / 3600, 2)}
+
+
+def failed_restart_jobs_since(since_ts):
+    jobs = []
+    for job in load_json_file(RESTART_STATE_FILE, {"jobs": []}).get("jobs", []):
+        ts = float(job.get("executedAt") or job.get("createdAt") or 0)
+        if job.get("status") == "failed" and ts > since_ts:
+            jobs.append({"id": job.get("id"), "target": job.get("targetLabel") or job.get("target") or "unknown", "error": (job.get("lastError") or "")[:180]})
+    return jobs
+
+
+def cancelled_jobs_since(since_ts):
+    jobs = []
+    for path in (RESTART_STATE_FILE, ANNOUNCEMENT_STATE_FILE):
+        for job in load_json_file(path, {"jobs": []}).get("jobs", []):
+            ts = float(job.get("cancelledAt") or 0)
+            if job.get("status") == "cancelled" and ts > since_ts:
+                jobs.append({"id": job.get("id"), "source": path.name, "message": job.get("message", "")})
+    return jobs
+
+
+def audit_counts_since(offset):
+    counts = {}
+    mutations = 0
+    if not AUDIT_FILE.exists():
+        return {"offset": 0, "counts": counts, "mutations": mutations}
+    size = AUDIT_FILE.stat().st_size
+    if offset > size:
+        offset = 0
+    with AUDIT_FILE.open("r", encoding="utf-8", errors="replace") as handle:
+        handle.seek(offset)
+        for line in handle:
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            name = event.get("event") or event.get("action") or "unknown"
+            counts[name] = counts.get(name, 0) + 1
+            if any(token in name.lower() for token in ("write", "grant", "mutation", "restart", "transfer", "config")):
+                mutations += 1
+        offset = handle.tell()
+    return {"offset": offset, "counts": counts, "mutations": mutations}
 
 
 def stuck_transition_players(minutes):
@@ -512,6 +636,30 @@ def compact_map_counts(players_by_map, limit=6):
     return ", ".join(shown)
 
 
+def record_digest(state, event, audience, message, payload=None):
+    entry = {
+        "ts": now_iso(),
+        "event": event,
+        "audience": audience,
+        "message": message,
+        "payload": payload or {},
+    }
+    log = state.setdefault("adminDigestLog", [])
+    log.append(entry)
+    del log[:-int(env("DUNE_PLAYER_PRESENCE_DIGEST_LOG_LIMIT", "250"))]
+    return entry
+
+
+def send_admin_digest(current, state, template, count, event, extra=None):
+    extra = extra or {}
+    message = render_template(template, "admin", count, **extra)
+    record_digest(state, event, "admin", message, extra)
+    results = []
+    for account_id, player in admin_players(current).items():
+        results.append({"event": event, "accountId": account_id, "message": message, "send": private_message(player, message, f"player-presence-{event}")})
+    return results
+
+
 def check_once():
     state = load_state()
     current = online_players()
@@ -562,6 +710,15 @@ def check_once():
                 if str(account_id) not in hagga_arrivals and player_map(player) == "HaggaBasin":
                     automated_private_results.append(send_private(player, template, final_count, "hagga-arrival", account_id))
                     hagga_arrivals.add(str(account_id))
+
+        if env_bool("DUNE_PLAYER_PRESENCE_DEEP_DESERT_FIRST_ENABLED", False):
+            deep_desert_seen = set(str(item) for item in state.get("deepDesertMessaged", []))
+            template = env("DUNE_PLAYER_PRESENCE_DEEP_DESERT_FIRST_TEMPLATE", "Deep Desert is high risk. Expect sandstorms, sandworms, and harsher recovery. Support: {server_url}")
+            for account_id, player in current.items():
+                if str(account_id) not in deep_desert_seen and "DeepDesert" in player_map(player):
+                    automated_private_results.append(send_private(player, template, final_count, "deep-desert-first", account_id))
+                    deep_desert_seen.add(str(account_id))
+            state["deepDesertMessaged"] = sorted(deep_desert_seen, key=lambda value: (0, int(value)) if value.isdigit() else (1, value))
 
         if env_bool("DUNE_PLAYER_PRESENCE_RECONNECT_RECOVERY_ENABLED", False):
             window = int(env("DUNE_PLAYER_PRESENCE_RECONNECT_RECOVERY_WINDOW_SECONDS", "600"))
@@ -782,6 +939,197 @@ def check_once():
                 state["lastAdminAnomalyDigestAt"] = current_time
             except Exception as exc:
                 admin_alert_results.append({"event": "admin-anomaly-digest", "ok": False, "error": str(exc)})
+
+    if env_bool("DUNE_PLAYER_PRESENCE_ADMIN_MAP_ROSTER_DIGEST_ENABLED", False):
+        interval = int(env("DUNE_PLAYER_PRESENCE_ADMIN_MAP_ROSTER_DIGEST_INTERVAL_SECONDS", "1800"))
+        last = int(state.get("lastAdminMapRosterDigestAt", 0) or 0)
+        if current_time - last >= interval:
+            roster = player_roster_by_map()
+            roster_text = compact_roster_by_map(roster)
+            template = env("DUNE_PLAYER_PRESENCE_ADMIN_MAP_ROSTER_DIGEST_TEMPLATE", "Admin roster: {count} online. {map_roster}")
+            admin_alert_results.extend(send_admin_digest(current, state, template, final_count, "admin-map-roster-digest", {"map_roster": roster_text, "roster": roster}))
+            state["lastAdminMapRosterDigestAt"] = current_time
+
+    if env_bool("DUNE_PLAYER_PRESENCE_ADMIN_UNIQUE_DAILY_DIGEST_ENABLED", False):
+        today = dt.datetime.now().strftime("%Y-%m-%d")
+        daily = state.setdefault("dailyUniquePlayers", {})
+        seen_today = set(daily.get(today, []))
+        seen_today.update(current_ids)
+        daily[today] = sorted(seen_today, key=lambda value: (0, int(value)) if value.isdigit() else (1, value))
+        for old_day in list(daily):
+            if old_day != today:
+                daily.pop(old_day, None)
+        interval = int(env("DUNE_PLAYER_PRESENCE_ADMIN_UNIQUE_DAILY_DIGEST_INTERVAL_SECONDS", "86400"))
+        last = int(state.get("lastAdminUniqueDailyDigestAt", 0) or 0)
+        if current_time - last >= interval:
+            template = env("DUNE_PLAYER_PRESENCE_ADMIN_UNIQUE_DAILY_DIGEST_TEMPLATE", "Admin daily players: {unique_count} unique accounts seen today, {count} currently online.")
+            admin_alert_results.extend(send_admin_digest(current, state, template, final_count, "admin-unique-daily-digest", {"unique_count": len(seen_today)}))
+            state["lastAdminUniqueDailyDigestAt"] = current_time
+
+    if env_bool("DUNE_PLAYER_PRESENCE_MAINTENANCE_ONLINE_ADMIN_ENABLED", False):
+        targets = active_restart_targets()
+        if targets:
+            window = int(env("DUNE_PLAYER_PRESENCE_MAINTENANCE_ONLINE_WINDOW_SECONDS", "1800"))
+            for job in targets:
+                remaining = int(job["runAt"] - time.time())
+                key = f"{job['id']}:online"
+                if 0 <= remaining <= window and key not in state.setdefault("maintenanceOnlineDigests", []):
+                    roster = compact_roster_by_map(player_roster_by_map())
+                    template = env("DUNE_PLAYER_PRESENCE_MAINTENANCE_ONLINE_ADMIN_TEMPLATE", "Admin maintenance check: {count} players still online before maintenance. {map_roster}")
+                    admin_alert_results.extend(send_admin_digest(current, state, template, final_count, "admin-maintenance-online", {"map_roster": roster, "remaining_seconds": remaining}))
+                    state["maintenanceOnlineDigests"].append(key)
+
+    if env_bool("DUNE_PLAYER_PRESENCE_MAP_WITH_PLAYERS_UNHEALTHY_ADMIN_ENABLED", False):
+        if health is None:
+            health = map_health_summary()
+        offline = set(health.get("offlineLabels") or [])
+        players_by_map = health.get("playersByMap") or {}
+        impacted = [f"{name}: {players_by_map.get(name)}" for name in offline if int(players_by_map.get(name) or 0) > 0]
+        if impacted:
+            digest_key = hashlib.sha256("|".join(sorted(impacted)).encode("utf-8")).hexdigest()
+            if state.get("lastImpactedMapDigestKey") != digest_key:
+                template = env("DUNE_PLAYER_PRESENCE_MAP_WITH_PLAYERS_UNHEALTHY_ADMIN_TEMPLATE", "Admin alert: unhealthy maps still report players: {impacted_maps}")
+                admin_alert_results.extend(send_admin_digest(current, state, template, final_count, "admin-map-players-unhealthy", {"impacted_maps": "; ".join(impacted)}))
+                state["lastImpactedMapDigestKey"] = digest_key
+
+    if env_bool("DUNE_PLAYER_PRESENCE_PUBLIC_MAINTENANCE_CANCELLED_ENABLED", False):
+        since = float(state.get("lastMaintenanceCancelScanAt", current_time - 3600) or 0)
+        cancelled = cancelled_jobs_since(since)
+        state["lastMaintenanceCancelScanAt"] = current_time
+        if cancelled:
+            template = env("DUNE_PLAYER_PRESENCE_PUBLIC_MAINTENANCE_CANCELLED_TEMPLATE", "Maintenance has been cancelled or delayed. Normal play can continue.")
+            message = render_template(template, "server", final_count)
+            record_digest(state, "maintenance-cancelled-public", "public", message, {"cancelled": cancelled[:5]})
+            public_status_results.append({"event": "maintenance-cancelled", "message": message, "announce": announce(message)})
+
+    if env_bool("DUNE_PLAYER_PRESENCE_INCIDENT_MODE_PUBLIC_ENABLED", False):
+        incident_on = env_bool("DUNE_PLAYER_PRESENCE_INCIDENT_MODE_ACTIVE", False)
+        previous = state.get("incidentModeActive")
+        state["incidentModeActive"] = incident_on
+        if previous is not None and previous != incident_on:
+            if incident_on:
+                template = env("DUNE_PLAYER_PRESENCE_INCIDENT_MODE_ON_TEMPLATE", "Server notice: admins are investigating travel instability. Updates at {server_url}.")
+                event = "incident-mode-on"
+            else:
+                template = env("DUNE_PLAYER_PRESENCE_INCIDENT_MODE_OFF_TEMPLATE", "Server notice: incident mode is cleared. Normal play can continue.")
+                event = "incident-mode-off"
+            message = render_template(template, "server", final_count)
+            record_digest(state, event, "public", message)
+            public_status_results.append({"event": event, "message": message, "announce": announce(message)})
+
+    if env_bool("DUNE_PLAYER_PRESENCE_INFRA_ADMIN_ALERTS_ENABLED", False):
+        interval = int(env("DUNE_PLAYER_PRESENCE_ADMIN_ALERT_INTERVAL_SECONDS", "900"))
+        last = int(state.get("lastAdminInfraAlertAt", 0) or 0)
+        if current_time - last >= interval:
+            checks = service_health_checks()
+            failed = [item for item in checks if not item.get("ok")]
+            backup = latest_backup_age_hours()
+            max_backup_age = float(env("DUNE_PLAYER_PRESENCE_BACKUP_MAX_AGE_HOURS", "24"))
+            if backup is None:
+                failed.append({"name": "backup", "status": "no backup found"})
+            elif backup["ageHours"] > max_backup_age:
+                failed.append({"name": "backup", "status": f"{backup['ageHours']}h old"})
+            if failed:
+                summary = "; ".join(f"{item['name']} {item.get('status', '')}".strip() for item in failed[:6])
+                template = env("DUNE_PLAYER_PRESENCE_INFRA_ADMIN_ALERT_TEMPLATE", "Admin alert: infrastructure check failed: {infra_failures}")
+                admin_alert_results.extend(send_admin_digest(current, state, template, final_count, "admin-infra-alert", {"infra_failures": summary}))
+                state["lastAdminInfraAlertAt"] = current_time
+
+    if env_bool("DUNE_PLAYER_PRESENCE_RESTART_FAILURE_ADMIN_ENABLED", False):
+        since = float(state.get("lastRestartFailureScanAt", current_time - 3600) or 0)
+        failed_jobs = failed_restart_jobs_since(since)
+        state["lastRestartFailureScanAt"] = current_time
+        if failed_jobs:
+            summary = "; ".join(f"{job['target']} {job['id']}: {job['error']}" for job in failed_jobs[:3])
+            template = env("DUNE_PLAYER_PRESENCE_RESTART_FAILURE_ADMIN_TEMPLATE", "Admin alert: restart job failed: {restart_failures}")
+            admin_alert_results.extend(send_admin_digest(current, state, template, final_count, "admin-restart-failure", {"restart_failures": summary, "jobs": failed_jobs[:3]}))
+
+    if env_bool("DUNE_PLAYER_PRESENCE_ADMIN_MUTATION_DIGEST_ENABLED", False):
+        interval = int(env("DUNE_PLAYER_PRESENCE_ADMIN_MUTATION_DIGEST_INTERVAL_SECONDS", "1800"))
+        last = int(state.get("lastAdminMutationDigestAt", 0) or 0)
+        if current_time - last >= interval:
+            audit = audit_counts_since(int(state.get("adminMutationAuditOffset", 0) or 0))
+            state["adminMutationAuditOffset"] = audit["offset"]
+            if audit["mutations"]:
+                top = sorted(audit["counts"].items(), key=lambda item: (-item[1], item[0]))[:6]
+                summary = ", ".join(f"{name}={count}" for name, count in top)
+                template = env("DUNE_PLAYER_PRESENCE_ADMIN_MUTATION_DIGEST_TEMPLATE", "Admin write digest: {mutation_count} write-ish events. {mutation_summary}")
+                admin_alert_results.extend(send_admin_digest(current, state, template, final_count, "admin-mutation-digest", {"mutation_count": audit["mutations"], "mutation_summary": summary}))
+            state["lastAdminMutationDigestAt"] = current_time
+
+    if env_bool("DUNE_PLAYER_PRESENCE_TRANSFER_POLICY_PUBLIC_ENABLED", False):
+        transfer_hash = file_hash(["config/director.ini"])
+        previous_hash = state.get("transferPolicyHash")
+        state["transferPolicyHash"] = transfer_hash
+        if previous_hash and transfer_hash and transfer_hash != previous_hash:
+            template = env("DUNE_PLAYER_PRESENCE_TRANSFER_POLICY_PUBLIC_TEMPLATE", "Server notice: character transfer policy changed. Changes may apply after the next Director restart. Details: {server_url}")
+            message = render_template(template, "server", final_count)
+            record_digest(state, "transfer-policy-changed", "public", message)
+            public_status_results.append({"event": "transfer-policy-changed", "message": message, "announce": announce(message)})
+
+    if env_bool("DUNE_PLAYER_PRESENCE_RULES_CHANGE_PUBLIC_ENABLED", False):
+        rule_paths = [item.strip() for item in env("DUNE_PLAYER_PRESENCE_RULES_HASH_FILES", "public-site/static/index.html").split(",") if item.strip()]
+        rules_hash = file_hash(rule_paths)
+        previous_hash = state.get("rulesHash")
+        state["rulesHash"] = rules_hash
+        if previous_hash and rules_hash and rules_hash != previous_hash:
+            template = env("DUNE_PLAYER_PRESENCE_RULES_CHANGE_PUBLIC_TEMPLATE", "Server rules were updated. Please review {rules_url}.")
+            message = render_template(template, "server", final_count)
+            record_digest(state, "rules-changed", "public", message, {"files": rule_paths})
+            public_status_results.append({"event": "rules-changed", "message": message, "announce": announce(message)})
+
+    if env_bool("DUNE_PLAYER_PRESENCE_PEAK_PUBLIC_ENABLED", False):
+        thresholds = sorted([int(item.strip()) for item in env("DUNE_PLAYER_PRESENCE_PEAK_PUBLIC_THRESHOLDS", "10,20,30,40").split(",") if item.strip()])
+        today = dt.datetime.now().strftime("%Y-%m-%d")
+        peak_state = state.setdefault("dailyPeak", {"date": today, "peak": 0, "announced": []})
+        if peak_state.get("date") != today:
+            peak_state = {"date": today, "peak": 0, "announced": []}
+        if final_count > int(peak_state.get("peak", 0) or 0):
+            peak_state["peak"] = final_count
+        announced = set(int(item) for item in peak_state.get("announced", []))
+        for threshold in thresholds:
+            if final_count >= threshold and threshold not in announced:
+                template = env("DUNE_PLAYER_PRESENCE_PEAK_PUBLIC_TEMPLATE", "New daily player peak: {count} online.")
+                message = render_template(template, "server", final_count)
+                record_digest(state, "daily-peak-public", "public", message, {"threshold": threshold})
+                public_status_results.append({"event": "daily-peak", "threshold": threshold, "message": message, "announce": announce(message)})
+                announced.add(threshold)
+        peak_state["announced"] = sorted(announced)
+        state["dailyPeak"] = peak_state
+
+    if env_bool("DUNE_PLAYER_PRESENCE_DAILY_STATUS_PUBLIC_ENABLED", False):
+        interval = int(env("DUNE_PLAYER_PRESENCE_DAILY_STATUS_INTERVAL_SECONDS", "86400"))
+        last = int(state.get("lastDailyStatusAt", 0) or 0)
+        if current_time - last >= interval:
+            if health is None:
+                health = map_health_summary()
+            online = int(health.get("online") or 0)
+            expected = int(health.get("expected") or 0)
+            template = env("DUNE_PLAYER_PRESENCE_DAILY_STATUS_PUBLIC_TEMPLATE", "Daily status: {online}/{expected} maps online, {count} players online. Next maintenance is the normal configured window.")
+            message = render_template(template, "server", final_count, online=online, expected=expected)
+            record_digest(state, "daily-status-public", "public", message, {"online": online, "expected": expected})
+            public_status_results.append({"event": "daily-status", "message": message, "announce": announce(message)})
+            state["lastDailyStatusAt"] = current_time
+
+    if env_bool("DUNE_PLAYER_PRESENCE_ADMIN_FIRST_LOGIN_DAILY_ENABLED", True) and joined:
+        today = dt.datetime.now().strftime("%Y-%m-%d")
+        sent = state.setdefault("adminDailyLoginDigestSent", {})
+        digest_log = state.get("adminDigestLog", [])
+        latest_messages = []
+        for entry in reversed(digest_log):
+            if entry.get("audience") == "admin" and entry.get("message") not in latest_messages:
+                latest_messages.append(entry.get("message"))
+            if len(latest_messages) >= int(env("DUNE_PLAYER_PRESENCE_ADMIN_FIRST_LOGIN_DIGEST_LIMIT", "8")):
+                break
+        if not latest_messages:
+            latest_messages = ["No admin digests have been recorded yet today."]
+        for account_id in joined:
+            player = current.get(account_id)
+            if account_id in admin_players(current) and sent.get(str(account_id)) != today:
+                message = "Admin daily digest:\n" + "\n".join(f"- {item}" for item in reversed(latest_messages))
+                admin_alert_results.append({"event": "admin-first-login-daily", "accountId": account_id, "message": message, "send": private_message(player, message, "player-presence-admin-daily-login")})
+                record_digest(state, "admin-first-login-daily", "admin", message, {"accountId": account_id})
+                sent[str(account_id)] = today
 
     state["onlinePlayers"] = current
     state["updatedAt"] = now_iso()

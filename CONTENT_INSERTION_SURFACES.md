@@ -54,6 +54,10 @@ Implemented in `admin/admin_panel.py`:
 - Dry-run-first journey story-node mutator using server-provided reveal/complete/reset/delete functions and a separate execution gate.
 - Dry-run-first Landsraad term mutator using first-party term end-time and force-end functions with a separate execution gate.
 - Dry-run-first respawn-location delete mutator using `get_respawn_locations` plus `update_respawn_locations`; arbitrary respawn creation/editing remains blocked.
+- Read-only world-state inspector for guild, vehicle, marker, landclaim, recipe, and respawn evidence.
+- Dry-run-first guild mutator for description and member role changes through first-party guild functions; disband/remove/invite operations remain blocked.
+- Dry-run-first marker deletion mutator for marker IDs and static-location keys through first-party marker functions; marker creation/editing remains blocked.
+- Dry-run-first landclaim segment mutator for adding a segment to a known totem; rollback requires backup/manual repair because no delete function is mapped.
 - Read-only spice/resource field inspection.
 - Event definition persistence under `backups/admin-panel/events.json`.
 - Event dry-run planner and explicit execution gate.
@@ -73,6 +77,9 @@ The implementation intentionally keeps catalog reads independent from write gate
 | `DUNE_ADMIN_FACTION_MUTATIONS_ENABLED` | `false` | Player faction-change execution. Faction dry-runs and progression inspection remain available. |
 | `DUNE_ADMIN_LANDSRAAD_MUTATIONS_ENABLED` | `false` | Landsraad term execution. Landsraad dry-runs and progression inspection remain available. |
 | `DUNE_ADMIN_RESPAWN_MUTATIONS_ENABLED` | `false` | Respawn-location deletion. Respawn dry-runs and player detail inspection remain available. |
+| `DUNE_ADMIN_GUILD_MUTATIONS_ENABLED` | `false` | Guild description and role execution. Guild inspection and dry-runs remain available. |
+| `DUNE_ADMIN_MARKER_MUTATIONS_ENABLED` | `false` | Marker deletion execution. Marker inspection and dry-runs remain available. |
+| `DUNE_ADMIN_LANDCLAIM_MUTATIONS_ENABLED` | `false` | Landclaim segment execution. Landclaim inspection and dry-runs remain available. |
 | `DUNE_ADMIN_MUTATIONS_ENABLED` | repo default currently `true` | Existing global mutation gate. |
 | `DUNE_ADMIN_ITEM_GRANTS_ENABLED` | repo default currently `true` | Item grant and bundle item execution. |
 | `DUNE_ADMIN_GM_COMMANDS_ENABLED` | `false` | Native GM command execution. Still also blocked by payload verification. |
@@ -88,6 +95,9 @@ The implementation intentionally keeps catalog reads independent from write gate
 | `CHANGE FACTION` | Player faction-change execution. |
 | `WRITE LANDSRAAD` | Landsraad term execution. |
 | `DELETE RESPAWN` | Respawn-location deletion. |
+| `WRITE GUILD` | Guild description and role execution. |
+| `DELETE MARKERS` | Marker deletion execution. |
+| `WRITE LANDCLAIM` | Landclaim segment execution. |
 | `RUN GM COMMAND` | Native GM command execution, still blocked until payload verification. |
 
 ## Typed Knob Registry
@@ -181,6 +191,9 @@ Near-term, high-confidence work:
 - Validate player faction changes on disposable/offline character data and document guild side effects.
 - Validate Landsraad end-time changes on disposable/private test terms. Keep force-end manual-only until recovery/term lifecycle effects are fully documented.
 - Validate respawn-location deletion on disposable/offline character data. Do not add arbitrary respawn creation until `spawnlocatordescriptor` semantics and restoration are fully documented.
+- Validate guild description and role changes on a disposable guild. Keep disband, remove-member, invite, allegiance, and create-guild operations blocked until role IDs, faction side effects, and rollback are documented.
+- Validate marker deletion on disposable/static test markers only. Do not add marker creation/editing until `saveplayermarkerdata`, `savemarkerdata`, marker payloads, and ID update semantics are fully documented.
+- Validate landclaim segment addition on disposable base/totem data only. Do not add landclaim deletion or permission-actor mutation until ownership and permission side effects are documented.
 
 Medium-confidence work:
 

@@ -85,6 +85,10 @@ CONFIRM_JOURNEY_MUTATION = "WRITE JOURNEY"
 CONFIRM_FACTION_MUTATION = "CHANGE FACTION"
 CONFIRM_LANDSRAAD_MUTATION = "WRITE LANDSRAAD"
 CONFIRM_RESPAWN_MUTATION = "DELETE RESPAWN"
+CONFIRM_GUILD_MUTATION = "WRITE GUILD"
+CONFIRM_MARKER_MUTATION = "DELETE MARKERS"
+CONFIRM_LANDCLAIM_MUTATION = "WRITE LANDCLAIM"
+CONFIRM_EXCHANGE_MUTATION = "WRITE EXCHANGE"
 CATALOG_ENABLED = os.environ.get("DUNE_ADMIN_CATALOG_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 TYPED_KNOBS_ENABLED = os.environ.get("DUNE_ADMIN_TYPED_KNOBS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 EVENT_EXECUTION_ENABLED = os.environ.get("DUNE_ADMIN_EVENT_EXECUTION_ENABLED", "false").lower() in ("1", "true", "yes", "on")
@@ -94,9 +98,14 @@ JOURNEY_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED
 FACTION_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_FACTION_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 LANDSRAAD_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_LANDSRAAD_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 RESPAWN_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_RESPAWN_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+GUILD_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_GUILD_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+MARKER_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_MARKER_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+LANDCLAIM_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_LANDCLAIM_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+EXCHANGE_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_EXCHANGE_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 ANNOUNCEMENT_STATE_FILE = BACKUP_ROOT / "announcements.json"
 RESTART_STATE_FILE = BACKUP_ROOT / "restart-jobs.json"
 EVENT_STATE_FILE = BACKUP_ROOT / "events.json"
+ADMIN_DIGEST_STATE_FILE = ROOT / "backups" / "admin-bot" / "player-presence.json"
 ANNOUNCEMENT_LOCK = threading.Lock()
 RESTART_LOCK = threading.Lock()
 EVENT_LOCK = threading.Lock()
@@ -393,6 +402,10 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ADMIN_FACTION_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for player faction change server-function calls. Faction planning and inspection remain available."},
     "DUNE_ADMIN_LANDSRAAD_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for Landsraad term administration server-function calls. Landsraad inspection and dry-runs remain available."},
     "DUNE_ADMIN_RESPAWN_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for respawn-location deletion through update_respawn_locations. Respawn inspection and dry-runs remain available."},
+    "DUNE_ADMIN_GUILD_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for guild description and role server-function calls. Guild inspection and dry-runs remain available."},
+    "DUNE_ADMIN_MARKER_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for marker deletion server-function calls. Marker inspection and dry-runs remain available."},
+    "DUNE_ADMIN_LANDCLAIM_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for landclaim segment server-function calls. Landclaim inspection and dry-runs remain available."},
+    "DUNE_ADMIN_EXCHANGE_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for Dune Exchange Solari balance server-function calls. Exchange inspection and dry-runs remain available."},
     "DUNE_ADMIN_MAX_BODY_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum accepted request body size."},
     "DUNE_ADMIN_AUDIT_MAX_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Audit log rotation threshold."},
     "DUNE_ADMIN_REQUEST_TIMEOUT_SECONDS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Socket timeout to limit slow client abuse."},
@@ -708,6 +721,25 @@ def read_restart_state():
     state["command"] = RESTART_COMMAND
     state["targets"] = RESTART_TARGETS
     return state
+
+
+def read_admin_digest_state():
+    try:
+        state = json.loads(ADMIN_DIGEST_STATE_FILE.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        state = {}
+    return {
+        "path": str(ADMIN_DIGEST_STATE_FILE.relative_to(ROOT)),
+        "updatedAt": state.get("updatedAt"),
+        "digests": list(reversed(state.get("adminDigestLog", [])[-250:])),
+        "onlinePlayers": state.get("onlinePlayers", {}),
+        "mapHealthState": state.get("mapHealthState"),
+        "dailyPeak": state.get("dailyPeak", {}),
+        "lastSent": {
+            key: value for key, value in state.items()
+            if key.startswith("lastAdmin") or key in ("lastDailyStatusAt", "lastMaintenanceCancelScanAt")
+        },
+    }
 
 
 def write_restart_state(state):
@@ -1591,6 +1623,14 @@ def content_catalog_entries():
         {"id": "journey-server-functions", "group": "Economy/Admin", "surface": "Database state", "capability": "Inspect and optionally reveal, complete, reset, or delete known journey story nodes for an offline player.", "evidence": ["dune.admin_get_journey_details(in_player_id text, in_story_node_id text)", "dune.reveal_journey_story_nodes_for_player", "dune.complete_journey_story_nodes_for_player", "dune.reset_journey_story_nodes_for_player", "dune.delete_journey_story_nodes_for_player"], "confidence": "moderate", "mutationRisk": "high", "restartRequired": False, "validationCommand": "POST /api/admin/journey dry_run=true with known story_node_ids; inspect admin_get_journey_details before and after.", "rollback": "Use reset/delete/reveal/complete compensating calls for the affected story_node_ids from the audit record."},
         {"id": "respawn-location-delete", "group": "Economy/Admin", "surface": "Database state", "capability": "Inspect and optionally delete one known respawn location by UUID by re-saving the current respawnlocation array without that entry.", "evidence": ["dune.get_respawn_locations(in_account_id bigint)", "dune.update_respawn_locations(player_id bigint, respawn_locations respawnlocation[])", "dune.player_respawn_locations table"], "confidence": "moderate", "mutationRisk": "high", "restartRequired": False, "validationCommand": "POST /api/admin/respawn-location dry_run=true; compare get_respawn_locations before and after.", "rollback": "No automatic rollback yet; restoring requires reconstructing the removed respawnlocation composite."},
         {"id": "landsraad-term-admin", "group": "Economy/Admin", "surface": "Database state", "capability": "Inspect and optionally change or force-end the current Landsraad term through first-party functions.", "evidence": ["dune.landsraad_load_current_term", "dune.landsraad_change_term_end_time", "dune.landsraad_force_end_term", "dune.landsraad_decree_term live rows"], "confidence": "moderate", "mutationRisk": "very high", "restartRequired": False, "validationCommand": "POST /api/admin/landsraad dry_run=true; inspect landsraad_load_current_term and landsraad_decree_term before/after.", "rollback": "For end-time changes, call change-end-time with the previous end_time. Force-end is not safely reversible."},
+        {"id": "guild-admin-functions", "group": "Economy/Admin", "surface": "Database state", "capability": "Inspect guild state and optionally edit guild description or promote/demote member roles through first-party guild functions.", "evidence": ["dune.get_guild_data", "dune.get_guild_members", "dune.edit_guild_description", "dune.promote_guild_member", "dune.demote_guild_member", "dune.guilds and dune.guild_members tables"], "confidence": "moderate", "mutationRisk": "high", "restartRequired": False, "validationCommand": "POST /api/admin/world-state/inspect with guild_id; POST /api/admin/guild dry_run=true.", "rollback": "Dry-run/audit records prior description or role_id; apply a compensating guild mutation."},
+        {"id": "marker-delete-functions", "group": "World Rules", "surface": "Database state", "capability": "Inspect and optionally delete known marker rows by marker id or static-location key through first-party marker functions.", "evidence": ["dune.delete_markers_by_id", "dune.delete_static_location_markers", "dune.delete_markers_return_actor_ids", "dune.markers and dune.player_markers tables"], "confidence": "moderate", "mutationRisk": "high", "restartRequired": False, "validationCommand": "POST /api/admin/world-state/inspect; POST /api/admin/marker dry_run=true with marker_ids or static_location_keys.", "rollback": "No automatic rollback; marker save/composite semantics are not mapped, so preserve dry-run/audit rows before execution."},
+        {"id": "landclaim-segment-functions", "group": "World Rules", "surface": "Database state", "capability": "Inspect existing landclaim grid segments and optionally add one segment for a known totem id.", "evidence": ["dune.get_landclaim_segments", "dune.add_landclaim_segment", "dune.landclaim_segments table"], "confidence": "moderate for function existence, low-to-moderate for live semantics", "mutationRisk": "high", "restartRequired": False, "validationCommand": "POST /api/admin/world-state/inspect; POST /api/admin/landclaim dry_run=true with totem_id/grid coordinates.", "rollback": "No delete function mapped; rollback requires DB backup restore or manual table repair."},
+        {"id": "exchange-solari-balance", "group": "Economy/Admin", "surface": "Database state", "capability": "Inspect and optionally adjust a player's Dune Exchange Solari balance through first-party exchange functions.", "evidence": ["dune.dune_exchange_retrieve_solari_balance", "dune.dune_exchange_modify_user_solari_balance", "dune.dune_exchange_users table"], "confidence": "moderate", "mutationRisk": "high", "restartRequired": False, "validationCommand": "POST /api/admin/economy/inspect; POST /api/admin/exchange dry_run=true.", "rollback": "Dry-run/audit records prior balance; apply mode=set to restore."},
+        {"id": "exchange-order-functions", "group": "Economy/Admin", "surface": "Database state", "capability": "Inspect exchange order/storage functions and tables without adding, fulfilling, relisting, cancelling, or purging orders.", "evidence": ["dune_exchange_add_sell_order", "dune_exchange_fulfill_sell_order", "dune_exchange_cancel_order", "dune_exchange_orders table", "dune_exchange_sell_orders table"], "confidence": "moderate for existence, low for safe admin semantics", "mutationRisk": "blocked", "restartRequired": False, "validationCommand": "POST /api/admin/economy/inspect with optional owner_id/exchange_id.", "rollback": "No execution in v1."},
+        {"id": "vehicle-restore-functions", "group": "Limits", "surface": "Database state", "capability": "Inspect vehicle, recovered vehicle, backup vehicle, and module state without restoring/spawning vehicles.", "evidence": ["dune.get_player_owned_vehicles_data", "dune.load_recovered_vehicles", "dune.restore_recovered_vehicle", "dune.restore_backup_vehicle", "dune.vehicle_modules table"], "confidence": "moderate for reads, low for restore semantics", "mutationRisk": "blocked", "restartRequired": False, "validationCommand": "POST /api/admin/world-state/inspect or /api/admin/economy/inspect with account_id.", "rollback": "No execution in v1; restore requires serverinfo/transform validation."},
+        {"id": "base-backup-functions", "group": "Limits", "surface": "Database state", "capability": "Inspect base backup save/recycle/delete functions without exposing base backup writes.", "evidence": ["base_backup_get_available_backups", "base_backup_save_from_totem", "base_backup_recycle", "base_backup_delete", "base_backups table"], "confidence": "moderate for existence, low for safe mutation semantics", "mutationRisk": "blocked", "restartRequired": False, "validationCommand": "POST /api/admin/economy/inspect with player_id.", "rollback": "No execution in v1."},
+        {"id": "world-state-function-discovery", "group": "Limits", "surface": "Database state", "capability": "Discover guild, vehicle, marker, landclaim, recipe, and respawn function/table evidence without executing unsafe routes.", "evidence": ["pg_proc runtime schema introspection", "information_schema table/column introspection", "docs/admin-mutation-map.md"], "confidence": "moderate for existence, low-to-moderate for mutation semantics", "mutationRisk": "blocked except promoted guild/respawn paths", "restartRequired": False, "validationCommand": "POST /api/admin/world-state/inspect with optional account_id/player_id/guild_id.", "rollback": "No execution for blocked discovery surfaces."},
         {"id": "offline-player-recovery", "group": "Economy/Admin", "surface": "Database state", "capability": "Preview offline player partition move through dune.admin_move_offline_player_to_partition.", "evidence": ["PLAYER_LOCATION_SOURCE_AUDIT.md", "database function name observed in local schema"], "confidence": "moderate", "mutationRisk": "high", "restartRequired": False, "validationCommand": "select * from dune.player_state where account_id=<id>;", "rollback": "Move player back to prior partition from audit record."},
         {"id": "mining-resource-multipliers", "group": "World Rules", "surface": "Config/INI knobs", "capability": "Adjust player mining, vehicle mining, and PvP resource multipliers.", "evidence": ["config/UserEngine.ini", "docs/server-knobs-audit.md"], "confidence": "high", "mutationRisk": "low", "restartRequired": True, "validationCommand": "rg -n 'MiningOutput|PvpResourceMultiplier' config/UserEngine.ini", "rollback": "Restore backed-up UserEngine.ini and restart maps."},
         {"id": "pvp-security-zones", "group": "World Rules", "surface": "Config/INI knobs", "capability": "Toggle forced PvP and security-zone behavior.", "evidence": ["config/UserGame.ini", "SERVER_CONFIG_KEYS.md"], "confidence": "high", "mutationRisk": "medium", "restartRequired": True, "validationCommand": "rg -n 'Pvp|SecurityZones' config/UserGame.ini", "rollback": "Restore backed-up UserGame.ini and restart maps."},
@@ -2500,6 +2540,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.require_token()
                 with RESTART_LOCK:
                     self.json(read_restart_state())
+            elif parsed.path == "/api/admin/digests":
+                self.require_token()
+                self.json(read_admin_digest_state())
             elif parsed.path == "/api/characters":
                 self.require_token()
                 params = urllib.parse.parse_qs(parsed.query)
@@ -2748,6 +2791,14 @@ class Handler(BaseHTTPRequestHandler):
                 self.require_token()
                 body = parse_body(self)
                 self.json(self.progression_inspect(body))
+            elif parsed.path == "/api/admin/world-state/inspect":
+                self.require_token()
+                body = parse_body(self)
+                self.json(self.world_state_inspect(body))
+            elif parsed.path == "/api/admin/economy/inspect":
+                self.require_token()
+                body = parse_body(self)
+                self.json(self.economy_inspect(body))
             elif parsed.path == "/api/admin/faction-reputation":
                 self.require_token()
                 body = parse_body(self)
@@ -2777,6 +2828,30 @@ class Handler(BaseHTTPRequestHandler):
                 body = parse_body(self)
                 result = self.landsraad_mutation(body)
                 self.audit("landsraad-mutation", ok=result.get("ok"), dry_run=result.get("dryRun"), landsraad_action=result.get("action"), term_id=result.get("termId"))
+                self.json(result)
+            elif parsed.path == "/api/admin/guild":
+                self.require_token()
+                body = parse_body(self)
+                result = self.guild_mutation(body)
+                self.audit("guild-mutation", ok=result.get("ok"), dry_run=result.get("dryRun"), guild_action=result.get("action"), guild_id=result.get("guildId"), player_id=result.get("playerId"))
+                self.json(result)
+            elif parsed.path == "/api/admin/marker":
+                self.require_token()
+                body = parse_body(self)
+                result = self.marker_mutation(body)
+                self.audit("marker-mutation", ok=result.get("ok"), dry_run=result.get("dryRun"), marker_action=result.get("action"), marker_count=result.get("markerCount"), key_count=result.get("keyCount"))
+                self.json(result)
+            elif parsed.path == "/api/admin/landclaim":
+                self.require_token()
+                body = parse_body(self)
+                result = self.landclaim_mutation(body)
+                self.audit("landclaim-mutation", ok=result.get("ok"), dry_run=result.get("dryRun"), totem_id=result.get("totemId"), grid_x=result.get("gridX"), grid_y=result.get("gridY"))
+                self.json(result)
+            elif parsed.path == "/api/admin/exchange":
+                self.require_token()
+                body = parse_body(self)
+                result = self.exchange_mutation(body)
+                self.audit("exchange-mutation", ok=result.get("ok"), dry_run=result.get("dryRun"), owner_id=result.get("ownerId"), controller_id=result.get("controllerId"), mode=result.get("mode"))
                 self.json(result)
             elif parsed.path == "/api/admin/gm/preview":
                 self.require_token()
@@ -3828,9 +3903,177 @@ class Handler(BaseHTTPRequestHandler):
                     "actions": ["change-end-time", "force-end"],
                     "confidence": "moderate",
                 },
+                "guild": {
+                    "endpoint": "/api/admin/guild",
+                    "defaultDryRun": True,
+                    "executionGate": "DUNE_ADMIN_GUILD_MUTATIONS_ENABLED",
+                    "confirm": CONFIRM_GUILD_MUTATION,
+                    "actions": ["edit-description", "promote-member", "demote-member"],
+                    "confidence": "moderate",
+                },
+                "marker": {
+                    "endpoint": "/api/admin/marker",
+                    "defaultDryRun": True,
+                    "executionGate": "DUNE_ADMIN_MARKER_MUTATIONS_ENABLED",
+                    "confirm": CONFIRM_MARKER_MUTATION,
+                    "actions": ["delete-by-id", "delete-static-location"],
+                    "confidence": "moderate",
+                },
+                "landclaim": {
+                    "endpoint": "/api/admin/landclaim",
+                    "defaultDryRun": True,
+                    "executionGate": "DUNE_ADMIN_LANDCLAIM_MUTATIONS_ENABLED",
+                    "confirm": CONFIRM_LANDCLAIM_MUTATION,
+                    "actions": ["add-segment"],
+                    "confidence": "low-to-moderate",
+                },
                 "journeyRecipeVehicle": {
                     "status": "inspect-only",
                     "reason": "Recipe and vehicle function signatures can be discovered here, but writes stay blocked until safe contracts and live examples are mapped.",
+                },
+            },
+            "errors": errors,
+        }
+
+    def world_state_inspect(self, body):
+        errors = {}
+        account_id = body.get("account_id", body.get("accountId"))
+        player_id = body.get("player_id", body.get("playerId"))
+        guild_id = body.get("guild_id", body.get("guildId"))
+        if account_id not in ("", None) and player_id in ("", None):
+            player_rows = reference_query(errors, "playerForAccount", """
+                select account_id, character_name, online_status::text, player_pawn_id
+                from dune.player_state
+                where account_id=%s
+            """, (int(account_id),))
+            if player_rows:
+                player_id = player_rows[0].get("player_pawn_id")
+        if player_id not in ("", None) and guild_id in ("", None):
+            guild_rows = reference_query(errors, "guildForPlayer", "select dune.get_guild_for_player(%s) as guild_id", (int(player_id),))
+            if guild_rows:
+                guild_id = guild_rows[0].get("guild_id")
+        guild = []
+        guild_members = []
+        guild_invites = []
+        if guild_id not in ("", None):
+            guild = reference_query(errors, "guild", "select * from dune.get_guild_data(%s)", (int(guild_id),))
+            guild_members = reference_query(errors, "guildMembers", "select * from dune.get_guild_members(%s) order by role_id, player_id", (int(guild_id),))
+            guild_invites = reference_query(errors, "guildInvites", "select * from dune.get_guild_invites(%s) order by invite_sent_timespan desc limit %s", (int(guild_id), ADMIN_REFERENCE_LIMIT))
+        marker_counts = reference_query(errors, "markerCounts", """
+            select 'markers' as table_name, count(*) as rows from dune.markers
+            union all select 'player_markers', count(*) from dune.player_markers
+            union all select 'landclaim_segments', count(*) from dune.landclaim_segments
+        """)
+        recent_markers = reference_query(errors, "recentMarkers", """
+            select m.marker_hash_id, m.dimension_index, mn.map_name, m.area_id, m.area_radius, m.long_range, m.payload,
+                   count(pm.player_id) as player_marker_count
+            from dune.markers m
+            left join dune.map_names mn on mn.map_name_id = m.map_name_id
+            left join dune.player_markers pm on pm.marker_hash_id=m.marker_hash_id and pm.dimension_index=m.dimension_index
+            group by m.marker_hash_id, m.dimension_index, mn.map_name, m.area_id, m.area_radius, m.long_range, m.payload
+            order by m.marker_hash_id desc
+            limit %s
+        """, (ADMIN_REFERENCE_LIMIT,))
+        landclaim_segments = reference_query(errors, "landclaimSegments", """
+            select * from dune.landclaim_segments order by totem_id, grid_location_x, grid_location_y limit %s
+        """, (ADMIN_REFERENCE_LIMIT,))
+        vehicles = []
+        respawns = []
+        if account_id not in ("", None):
+            vehicles = reference_query(errors, "playerVehicles", """
+                select * from dune.get_player_owned_vehicles_data(%s, %s)
+                order by out_actor_id
+                limit %s
+            """, (int(player_id or 0), int(account_id), ADMIN_REFERENCE_LIMIT))
+            respawns = reference_query(errors, "respawnLocations", """
+                select * from dune.player_respawn_locations
+                where account_id=%s
+                order by last_used_timestamp desc nulls last
+                limit %s
+            """, (int(account_id), ADMIN_REFERENCE_LIMIT))
+        functions = reference_query(errors, "functions", """
+            select n.nspname as schema, p.proname as name,
+                   pg_get_function_identity_arguments(p.oid) as args,
+                   pg_get_function_result(p.oid) as result
+            from pg_proc p
+            join pg_namespace n on n.oid = p.pronamespace
+            where n.nspname = 'dune'
+              and (
+                p.proname ilike '%%guild%%'
+                or p.proname ilike '%%vehicle%%'
+                or p.proname ilike '%%landclaim%%'
+                or p.proname ilike '%%marker%%'
+                or p.proname ilike '%%recipe%%'
+                or p.proname ilike '%%respawn%%'
+              )
+            order by p.proname
+            limit %s
+        """, (ADMIN_REFERENCE_LIMIT,))
+        tables = reference_query(errors, "tables", """
+            select table_name, column_name, data_type, udt_name
+            from information_schema.columns
+            where table_schema='dune'
+              and (
+                table_name ilike '%%guild%%'
+                or table_name ilike '%%vehicle%%'
+                or table_name ilike '%%landclaim%%'
+                or table_name ilike '%%marker%%'
+                or table_name ilike '%%recipe%%'
+                or table_name ilike '%%respawn%%'
+              )
+            order by table_name, ordinal_position
+            limit %s
+        """, (ADMIN_REFERENCE_LIMIT * 5,))
+        return {
+            "accountId": int(account_id) if account_id not in ("", None) else None,
+            "playerId": int(player_id) if player_id not in ("", None) else None,
+            "guildId": int(guild_id) if guild_id not in ("", None) else None,
+            "guild": guild[0] if guild else None,
+            "guildMembers": guild_members,
+            "guildInvites": guild_invites,
+            "markerCounts": marker_counts,
+            "recentMarkers": recent_markers,
+            "landclaimSegments": landclaim_segments,
+            "vehicles": vehicles,
+            "respawnLocations": respawns,
+            "functions": functions,
+            "tables": tables,
+            "mutators": {
+                "guild": {
+                    "endpoint": "/api/admin/guild",
+                    "defaultDryRun": True,
+                    "executionGate": "DUNE_ADMIN_GUILD_MUTATIONS_ENABLED",
+                    "confirm": CONFIRM_GUILD_MUTATION,
+                    "actions": ["edit-description", "promote-member", "demote-member"],
+                    "confidence": "moderate",
+                },
+                "respawnLocation": {
+                    "endpoint": "/api/admin/respawn-location",
+                    "defaultDryRun": True,
+                    "executionGate": "DUNE_ADMIN_RESPAWN_MUTATIONS_ENABLED",
+                    "confirm": CONFIRM_RESPAWN_MUTATION,
+                    "actions": ["delete"],
+                    "confidence": "moderate",
+                },
+                "marker": {
+                    "endpoint": "/api/admin/marker",
+                    "defaultDryRun": True,
+                    "executionGate": "DUNE_ADMIN_MARKER_MUTATIONS_ENABLED",
+                    "confirm": CONFIRM_MARKER_MUTATION,
+                    "actions": ["delete-by-id", "delete-static-location"],
+                    "confidence": "moderate",
+                },
+                "landclaim": {
+                    "endpoint": "/api/admin/landclaim",
+                    "defaultDryRun": True,
+                    "executionGate": "DUNE_ADMIN_LANDCLAIM_MUTATIONS_ENABLED",
+                    "confirm": CONFIRM_LANDCLAIM_MUTATION,
+                    "actions": ["add-segment"],
+                    "confidence": "low-to-moderate",
+                },
+                "vehicleRecipeMarkerLandclaim": {
+                    "status": "inspect-only",
+                    "reason": "Functions and tables are cataloged here, but writes stay blocked until transform/serverinfo/composite semantics and rollback are proven.",
                 },
             },
             "errors": errors,
@@ -4027,6 +4270,156 @@ class Handler(BaseHTTPRequestHandler):
         execute("select dune.change_player_faction(%s::bigint,%s::smallint,%s::smallint, timezone('utc', now())::timestamp)", (actor_id, faction_id, neutral_faction_id))
         after = query("select * from dune.player_faction where actor_id=%s", (actor_id,))
         return {"ok": True, "dryRun": False, "accountId": account_id, "actorId": actor_id, "factionId": faction_id, "before": current_rows, "after": after, "rollback": {"faction_id": current_faction_id, "neutral_faction_id": neutral_faction_id, "confirm": CONFIRM_FACTION_MUTATION}}
+
+    def guild_mutation(self, body):
+        action = str(body.get("action", "")).strip().lower()
+        if action not in ("edit-description", "promote-member", "demote-member"):
+            raise ValueError("action must be edit-description, promote-member, or demote-member")
+        guild_id = int(body.get("guild_id", body.get("guildId")))
+        dry_run = str(body.get("dry_run", body.get("dryRun", "true"))).lower() not in ("0", "false", "no", "off")
+        guild_rows = query("select * from dune.guilds where guild_id=%s", (guild_id,))
+        if not guild_rows:
+            raise ValueError("guild_id not found")
+        before = {"guild": guild_rows[0], "members": query("select * from dune.guild_members where guild_id=%s order by role_id, player_id", (guild_id,))}
+        plan = {"action": action, "guildId": guild_id, "before": before}
+        player_id = None
+        if action == "edit-description":
+            description = str(body.get("description", body.get("guild_description", body.get("guildDescription", ""))))
+            if len(description) > 2048:
+                raise ValueError("description must be 2048 characters or less")
+            plan.update({
+                "function": "dune.edit_guild_description",
+                "args": [guild_id, description],
+                "rollback": {"action": "edit-description", "guild_id": guild_id, "description": guild_rows[0].get("guild_description"), "confirm": CONFIRM_GUILD_MUTATION},
+            })
+        else:
+            player_id = int(body.get("player_id", body.get("playerId")))
+            new_role = int(body.get("new_role", body.get("newRole")))
+            if new_role < 0 or new_role > 32767:
+                raise ValueError("new_role must fit a smallint")
+            member_rows = [row for row in before["members"] if int(row.get("player_id")) == player_id]
+            if not member_rows:
+                raise ValueError("player_id is not a member of guild_id")
+            function_name = "dune.promote_guild_member" if action == "promote-member" else "dune.demote_guild_member"
+            plan.update({
+                "function": function_name,
+                "args": [guild_id, player_id, new_role],
+                "previousRole": member_rows[0].get("role_id"),
+                "rollback": {"action": action, "guild_id": guild_id, "player_id": player_id, "new_role": member_rows[0].get("role_id"), "confirm": CONFIRM_GUILD_MUTATION},
+            })
+        if dry_run:
+            return {"ok": True, "dryRun": True, "action": action, "guildId": guild_id, "playerId": player_id, "plan": plan, "executionGate": "DUNE_ADMIN_GUILD_MUTATIONS_ENABLED", "confirm": CONFIRM_GUILD_MUTATION}
+        self.require_mutations()
+        if not GUILD_MUTATIONS_ENABLED:
+            raise PermissionError("guild mutations are disabled; set DUNE_ADMIN_GUILD_MUTATIONS_ENABLED=true")
+        require_confirmation(body, CONFIRM_GUILD_MUTATION)
+        if action == "edit-description":
+            execute("select dune.edit_guild_description(%s,%s)", (guild_id, plan["args"][1]))
+        elif action == "promote-member":
+            execute("select dune.promote_guild_member(%s,%s,%s::smallint)", (guild_id, player_id, plan["args"][2]))
+        else:
+            execute("select dune.demote_guild_member(%s,%s,%s::smallint)", (guild_id, player_id, plan["args"][2]))
+        after = {"guild": query("select * from dune.guilds where guild_id=%s", (guild_id,)), "members": query("select * from dune.guild_members where guild_id=%s order by role_id, player_id", (guild_id,))}
+        return {"ok": True, "dryRun": False, "action": action, "guildId": guild_id, "playerId": player_id, "before": before, "after": after, "rollback": plan["rollback"]}
+
+    def parse_int_list(self, value, field_name):
+        if isinstance(value, str):
+            parts = [part.strip() for part in value.split(",") if part.strip()]
+        elif isinstance(value, list):
+            parts = value
+        else:
+            parts = []
+        result = [int(part) for part in parts]
+        if not result:
+            raise ValueError(f"{field_name} is required")
+        return result
+
+    def parse_text_list(self, value, field_name):
+        if isinstance(value, str):
+            result = [part.strip() for part in value.split(",") if part.strip()]
+        elif isinstance(value, list):
+            result = [str(part).strip() for part in value if str(part).strip()]
+        else:
+            result = []
+        if not result:
+            raise ValueError(f"{field_name} is required")
+        return result
+
+    def marker_mutation(self, body):
+        action = str(body.get("action", "")).strip().lower()
+        if action not in ("delete-by-id", "delete-static-location"):
+            raise ValueError("action must be delete-by-id or delete-static-location")
+        dry_run = str(body.get("dry_run", body.get("dryRun", "true"))).lower() not in ("0", "false", "no", "off")
+        if action == "delete-by-id":
+            marker_ids = self.parse_int_list(body.get("marker_ids", body.get("markerIds")), "marker_ids")
+            marker_rows = query("""
+                select m.*, mn.map_name
+                from dune.markers m
+                left join dune.map_names mn on mn.map_name_id = m.map_name_id
+                where m.marker_hash_id = any(%s::integer[])
+                order by m.marker_hash_id, m.dimension_index
+            """, (marker_ids,))
+            plan = {
+                "action": action,
+                "function": "dune.delete_markers_by_id",
+                "args": [marker_ids],
+                "markers": marker_rows,
+                "rollback": "No automatic rollback; preserve marker/player_marker rows from dry-run/audit before execution.",
+            }
+            marker_count = len(marker_ids)
+            key_count = 0
+        else:
+            keys = self.parse_text_list(body.get("static_location_keys", body.get("staticLocationKeys")), "static_location_keys")
+            marker_rows = query("select * from dune.markers where payload::text = any(%s::text[]) or payload::text like any(%s::text[]) limit %s", (keys, [f"%{key}%" for key in keys], ADMIN_REFERENCE_LIMIT))
+            plan = {
+                "action": action,
+                "function": "dune.delete_static_location_markers",
+                "args": [keys],
+                "candidateMarkers": marker_rows,
+                "rollback": "No automatic rollback; static marker recreation semantics are not mapped.",
+            }
+            marker_count = 0
+            key_count = len(keys)
+        if dry_run:
+            return {"ok": True, "dryRun": True, "action": action, "markerCount": marker_count, "keyCount": key_count, "plan": plan, "executionGate": "DUNE_ADMIN_MARKER_MUTATIONS_ENABLED", "confirm": CONFIRM_MARKER_MUTATION}
+        self.require_mutations()
+        if not MARKER_MUTATIONS_ENABLED:
+            raise PermissionError("marker mutations are disabled; set DUNE_ADMIN_MARKER_MUTATIONS_ENABLED=true")
+        require_confirmation(body, CONFIRM_MARKER_MUTATION)
+        if action == "delete-by-id":
+            execute("select dune.delete_markers_by_id(%s::integer[])", (plan["args"][0],))
+        else:
+            execute("select dune.delete_static_location_markers(%s::text[])", (plan["args"][0],))
+        return {"ok": True, "dryRun": False, "action": action, "markerCount": marker_count, "keyCount": key_count, "before": plan, "rollback": plan["rollback"]}
+
+    def landclaim_mutation(self, body):
+        action = str(body.get("action", "add-segment")).strip().lower()
+        if action != "add-segment":
+            raise ValueError("only add-segment is supported for landclaim")
+        totem_id = int(body.get("totem_id", body.get("totemId")))
+        grid_x = int(body.get("grid_location_x", body.get("gridX")))
+        grid_y = int(body.get("grid_location_y", body.get("gridY")))
+        dry_run = str(body.get("dry_run", body.get("dryRun", "true"))).lower() not in ("0", "false", "no", "off")
+        before = query("select * from dune.get_landclaim_segments(%s) order by grid_location_x, grid_location_y", (totem_id,))
+        duplicate = [row for row in before if int(row.get("grid_location_x")) == grid_x and int(row.get("grid_location_y")) == grid_y]
+        if duplicate:
+            raise ValueError("landclaim segment already exists for this totem/grid coordinate")
+        plan = {
+            "action": action,
+            "function": "dune.add_landclaim_segment",
+            "args": [totem_id, grid_x, grid_y],
+            "before": before,
+            "rollback": "No delete function is mapped; take a DB backup before execution.",
+        }
+        if dry_run:
+            return {"ok": True, "dryRun": True, "action": action, "totemId": totem_id, "gridX": grid_x, "gridY": grid_y, "plan": plan, "executionGate": "DUNE_ADMIN_LANDCLAIM_MUTATIONS_ENABLED", "confirm": CONFIRM_LANDCLAIM_MUTATION}
+        self.require_mutations()
+        if not LANDCLAIM_MUTATIONS_ENABLED:
+            raise PermissionError("landclaim mutations are disabled; set DUNE_ADMIN_LANDCLAIM_MUTATIONS_ENABLED=true")
+        require_confirmation(body, CONFIRM_LANDCLAIM_MUTATION)
+        execute("select dune.add_landclaim_segment(%s,%s,%s)", (totem_id, grid_x, grid_y))
+        after = query("select * from dune.get_landclaim_segments(%s) order by grid_location_x, grid_location_y", (totem_id,))
+        return {"ok": True, "dryRun": False, "action": action, "totemId": totem_id, "gridX": grid_x, "gridY": grid_y, "before": before, "after": after, "rollback": plan["rollback"]}
 
     def respawn_location_mutation(self, body):
         account_id = int(body.get("account_id", body.get("accountId")))
@@ -4471,6 +4864,7 @@ INDEX = r"""<!doctype html>
         <button class="tab" role="tab" aria-selected="false" data-tab="characters">Players</button>
         <button class="tab" role="tab" aria-selected="false" data-tab="settings">Settings</button>
         <button class="tab" role="tab" aria-selected="false" data-tab="mutations">Admin Actions</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="digests">Admin Digests</button>
         <button class="tab" role="tab" aria-selected="false" data-tab="catalog">Catalog</button>
       </div>
       <div class="card"><h3>Display</h3><div class="toolbar"><button id="contrastBtn">High contrast</button><button id="densityBtn">Dense mode</button><button id="expandAllBtn">Expand all</button><button id="collapseAllBtn">Collapse all</button><button id="helpBtn">Shortcuts</button></div></div>
@@ -4516,7 +4910,7 @@ INDEX = r"""<!doctype html>
 const ADMIN_PANEL_BUILD = '20260520-hagga-clean-map-south';
 let token = (localStorage.getItem('duneAdminToken') || sessionStorage.getItem('duneAdminToken') || '').trim();
 document.getElementById('token').value = token;
-const validTabs = new Set(['overview', 'ops', 'security', 'runbook', 'characters', 'settings', 'mutations', 'catalog']);
+const validTabs = new Set(['overview', 'ops', 'security', 'runbook', 'characters', 'settings', 'mutations', 'digests', 'catalog']);
 const pathTab = location.pathname.slice(1);
 let current = validTabs.has(location.hash.slice(1)) ? location.hash.slice(1) : (validTabs.has(pathTab) ? pathTab : (sessionStorage.getItem('duneAdminTab') || 'overview'));
 if (!validTabs.has(current)) current = 'overview';
@@ -5513,7 +5907,7 @@ function wireGlobalAffordances(){
     if (e.key === 'Escape' && document.getElementById('playerModal').classList.contains('open')) { closePlayerModal(); return; }
     if (e.key === 'Escape' && document.getElementById('helpModal').classList.contains('open')) { modal(false); return; }
     if (typing && e.key !== 'Escape') return;
-    const tabMap = {'1':'overview','2':'ops','3':'security','4':'runbook','5':'characters','6':'settings','7':'mutations','8':'catalog'};
+    const tabMap = {'1':'overview','2':'ops','3':'security','4':'runbook','5':'characters','6':'settings','7':'mutations','8':'digests','9':'catalog'};
     if (tabMap[e.key]) { e.preventDefault(); show(tabMap[e.key]); return; }
     if (e.key === '?') { e.preventDefault(); modal(true); return; }
     if (e.key === '/') { e.preventDefault(); focusFirstFilter(); return; }
@@ -5572,6 +5966,7 @@ async function load(){
     else if (current === 'characters') await characters(serial);
     else if (current === 'settings') await settings(serial);
     else if (current === 'mutations') await mutations(serial);
+    else if (current === 'digests') await digests(serial);
     else if (current === 'catalog') await catalog(serial);
   } catch (e) {
     if (serial !== loadSerial) return;
@@ -5682,6 +6077,18 @@ async function runbook(serial=loadSerial){
   const data = await api('/api/ops/runbook');
   if (serial !== loadSerial) return;
   view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Runbook</h2><div class="toolbar"><span class="pill">operator workflows</span><button data-jump="ops">Ops</button><button data-jump="settings">Settings</button></div></div>${actionGrid([{tab:'ops',label:'Restart / backup status',className:'primary'},{tab:'mutations',label:'Admin Actions'},{tab:'security',label:'Audit'}])}<div class="panelBand"><p class="muted">${esc(data.why)}</p>${table(data.commands)}</div></div>`;
+}
+function digestList(entries){
+  if (!entries.length) return '<div class="muted">No digests recorded.</div>';
+  return `<div class="eventList">${entries.map(e => `<div class="eventItem"><div class="eventItemHead"><b>${esc(e.event || 'digest')}</b><span class="pill">${esc(e.audience || '')}</span></div><div class="muted">${esc(String(e.ts || '').replace('T', ' ').replace('Z', ''))}</div><div>${esc(e.message || '')}</div>${e.payload && Object.keys(e.payload).length ? `<details><summary>Payload</summary><pre>${esc(JSON.stringify(e.payload, null, 2))}</pre></details>` : ''}</div>`).join('')}</div>`;
+}
+async function digests(serial=loadSerial){
+  const data = await api('/api/admin/digests');
+  if (serial !== loadSerial) return;
+  const entries = data.digests || [];
+  const adminEntries = entries.filter(e => e.audience === 'admin');
+  const publicEntries = entries.filter(e => e.audience === 'public');
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Admin Digests</h2><div class="toolbar"><span class="pill">${esc(entries.length)} retained</span><span class="pill">${esc(data.updatedAt || 'not updated')}</span><button data-jump="ops">Ops</button><button data-jump="security">Audit</button></div></div><div class="metricGrid">${metric('Map Health State', data.mapHealthState || 'unknown')}${metric('Daily Peak', (data.dailyPeak || {}).peak ?? 0)}${metric('Online Snapshot', Object.keys(data.onlinePlayers || {}).length)}${metric('State File', data.path || '')}</div><div class="twoCol"><div class="panelBand"><h2>Admin-Only Digests</h2>${digestList(adminEntries)}</div><div class="panelBand"><h2>Public Notices</h2>${digestList(publicEntries)}</div></div><details class="panelBand"><summary>Last Send Markers</summary>${table(Object.entries(data.lastSent || {}).map(([key,value]) => ({key, value})))}</details><details class="panelBand"><summary>Raw Digest State</summary><pre>${esc(JSON.stringify(data, null, 2))}</pre></details></div>`;
 }
 async function characters(serial=loadSerial){
   const lastQuery = sessionStorage.getItem('duneAdminCharacterQuery') || '';
@@ -5975,6 +6382,8 @@ async function catalog(serial=loadSerial){
   const knobRows = Object.values(knobs.values || {}).map(k => ({id:k.id,label:k.label,value:k.value,confidence:k.confidence,risk:k.risk,restartRequired:k.restart,why:k.why}));
   const eventRows = (events.events || []).map(e => ({id:e.id,name:e.name,status:e.status,createdAt:e.createdAt,runAt:e.runAt,actions:(e.plan || []).length}));
   view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Content Catalog</h2><div class="toolbar"><span class="pill ${surfaces.enabled ? 'ok' : 'warn'}">catalog ${surfaces.enabled ? 'enabled' : 'disabled'}</span><span class="pill ${knobs.enabled ? 'warn' : 'ok'}">typed writes ${knobs.enabled ? 'enabled' : 'dry-run only'}</span><span class="pill ${events.executionEnabled ? 'warn' : 'ok'}">events ${events.executionEnabled ? 'execute enabled' : 'plan only'}</span><button data-jump="settings">Settings</button><button data-jump="mutations">Admin Actions</button></div></div><div class="panelBand"><p class="muted">Catalog endpoints are read-only. Typed knob writes require the mutation gate, typed-knob gate, backup, and confirmation phrase.</p></div>${groupPanels}<div class="twoCol"><div class="panelBand"><h2>Typed Knob Dry Run</h2><div class="grid"><label>Knob<select id="typedKnobId">${Object.values(knobs.values || {}).map(k=>`<option value="${esc(k.id)}">${esc(k.label || k.id)}</option>`).join('')}</select></label><label>Value<input id="typedKnobValue" placeholder="true, 2.5, or JSON caps"></label></div><p><button id="typedKnobDryRunBtn" class="primary">Preview typed write</button></p><pre id="typedKnobResult"></pre></div><div class="panelBand"><h2>Spice Fields</h2><p><button id="inspectSpiceBtn" class="primary">Inspect spice/resource state</button></p><pre id="spiceInspectResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Progression Inspect</h2><label>Account ID<input id="progressionAccountId"></label><p><button id="progressionInspectBtn" class="primary">Inspect progression surfaces</button></p><pre id="progressionInspectResult"></pre></div><div class="panelBand"><h2>Faction Reputation Dry Run</h2><div class="grid"><label>Account ID<input id="repAccountId"></label><label>Faction ID<input id="repFactionId"></label><label>Amount<input id="repAmount" value="100"></label><label>Mode<select id="repMode"><option>add</option><option>set</option></select></label></div><p><button id="repDryRunBtn" class="primary">Preview reputation write</button></p><pre id="repDryRunResult"></pre></div><div class="panelBand"><h2>Faction Change Dry Run</h2><div class="grid"><label>Account ID<input id="factionAccountId"></label><label>Faction ID<input id="factionId" value="3"></label><label>Neutral faction ID<input id="neutralFactionId" value="3"></label></div><p><button id="factionDryRunBtn" class="primary">Preview faction change</button></p><pre id="factionDryRunResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Journey Dry Run</h2><div class="grid"><label>Account ID<input id="journeyAccountId"></label><label>Action<select id="journeyAction"><option>reveal</option><option>complete</option><option>reset</option><option>delete</option></select></label></div><label>Story node IDs<textarea id="journeyStoryNodes" rows="3" placeholder="comma-separated story node ids"></textarea></label><p><button id="journeyDryRunBtn" class="primary">Preview journey mutation</button></p><pre id="journeyDryRunResult"></pre></div><div class="panelBand"><h2>Economy Bundle Dry Run</h2><label>Bundle JSON<textarea id="bundlePlanJson" rows="7">{"currency":[],"xp":[],"items":[],"dry_run":true}</textarea></label><p><button id="bundleDryRunBtn" class="primary">Preview bundle</button></p><pre id="bundleDryRunResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Event Dry Run</h2><label>Event JSON<textarea id="eventPlanJson" rows="7">{"name":"Deep Desert spice proposal","actions":[{"type":"spice-cap-proposal","caps":{"Medium":{"primed":24,"active":24},"Large":{"primed":3,"active":3}}}]}</textarea></label><p><button id="eventDryRunBtn" class="primary">Preview event</button></p><pre id="eventDryRunResult"></pre></div><div class="panelBand"><h2>Typed Knobs</h2>${table(knobRows)}</div></div><div class="panelBand"><h2>Validation</h2>${table(validation.commands || [])}</div><details class="panelBand"><summary>Evidence Rules</summary><ul>${(evidence.rules || []).map(r=>`<li>${esc(r)}</li>`).join('')}</ul><p class="muted">${esc((evidence.schema || []).join(', '))}</p></details><details class="panelBand"><summary>Scheduled Events</summary>${table(eventRows)}</details></div>`;
+  view.querySelector('.pageStack').insertAdjacentHTML('beforeend', `<div class="twoCol"><div class="panelBand"><h2>World State Inspect</h2><div class="grid"><label>Account ID<input id="worldAccountId"></label><label>Player ID<input id="worldPlayerId"></label><label>Guild ID<input id="worldGuildId"></label></div><p><button id="worldInspectBtn" class="primary">Inspect world surfaces</button></p><pre id="worldInspectResult"></pre></div><div class="panelBand"><h2>Guild Dry Run</h2><div class="grid"><label>Action<select id="guildAction"><option>edit-description</option><option>promote-member</option><option>demote-member</option></select></label><label>Guild ID<input id="guildId"></label><label>Player ID<input id="guildPlayerId"></label><label>New role<input id="guildNewRole"></label></div><label>Description<textarea id="guildDescription" rows="3"></textarea></label><p><button id="guildDryRunBtn" class="primary">Preview guild mutation</button></p><pre id="guildDryRunResult"></pre></div></div>`);
+  view.querySelector('.pageStack').insertAdjacentHTML('beforeend', `<div class="twoCol"><div class="panelBand"><h2>Marker Delete Dry Run</h2><div class="grid"><label>Action<select id="markerAction"><option>delete-by-id</option><option>delete-static-location</option></select></label><label>Marker IDs<input id="markerIds" placeholder="comma-separated ids"></label><label>Static keys<input id="markerStaticKeys" placeholder="comma-separated keys"></label></div><p><button id="markerDryRunBtn" class="primary">Preview marker deletion</button></p><pre id="markerDryRunResult"></pre></div><div class="panelBand"><h2>Landclaim Dry Run</h2><div class="grid"><label>Totem ID<input id="landclaimTotemId"></label><label>Grid X<input id="landclaimGridX"></label><label>Grid Y<input id="landclaimGridY"></label></div><p><button id="landclaimDryRunBtn" class="primary">Preview landclaim segment</button></p><pre id="landclaimDryRunResult"></pre></div></div>`);
   wireCatalogControls();
 }
 
@@ -6024,6 +6433,22 @@ function wireCatalogControls(root=document){
   root.querySelector('#factionDryRunBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Planning...', async () => {
     const result = await api('/api/admin/faction', {method:'POST', body:JSON.stringify({dry_run:true, account_id:factionAccountId.value, faction_id:factionId.value, neutral_faction_id:neutralFactionId.value})});
     document.getElementById('factionDryRunResult').textContent = JSON.stringify(result, null, 2);
+  }));
+  root.querySelector('#worldInspectBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Inspecting...', async () => {
+    const result = await api('/api/admin/world-state/inspect', {method:'POST', body:JSON.stringify({account_id:worldAccountId.value, player_id:worldPlayerId.value, guild_id:worldGuildId.value})});
+    document.getElementById('worldInspectResult').textContent = JSON.stringify(result, null, 2);
+  }));
+  root.querySelector('#guildDryRunBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Planning...', async () => {
+    const result = await api('/api/admin/guild', {method:'POST', body:JSON.stringify({dry_run:true, action:guildAction.value, guild_id:guildId.value, player_id:guildPlayerId.value, new_role:guildNewRole.value, description:guildDescription.value})});
+    document.getElementById('guildDryRunResult').textContent = JSON.stringify(result, null, 2);
+  }));
+  root.querySelector('#markerDryRunBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Planning...', async () => {
+    const result = await api('/api/admin/marker', {method:'POST', body:JSON.stringify({dry_run:true, action:markerAction.value, marker_ids:markerIds.value, static_location_keys:markerStaticKeys.value})});
+    document.getElementById('markerDryRunResult').textContent = JSON.stringify(result, null, 2);
+  }));
+  root.querySelector('#landclaimDryRunBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Planning...', async () => {
+    const result = await api('/api/admin/landclaim', {method:'POST', body:JSON.stringify({dry_run:true, action:'add-segment', totem_id:landclaimTotemId.value, grid_location_x:landclaimGridX.value, grid_location_y:landclaimGridY.value})});
+    document.getElementById('landclaimDryRunResult').textContent = JSON.stringify(result, null, 2);
   }));
 }
 function selectCfg(){ const name=document.getElementById('cfg').value; document.getElementById('cfgText').value = window.configs[name] || ''; }

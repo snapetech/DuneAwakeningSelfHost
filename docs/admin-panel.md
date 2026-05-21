@@ -144,6 +144,10 @@ server {
 - Journey story-node planning through `POST /api/admin/journey`, default `dry_run=true`. Execution requires `DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED=true`, confirmation `WRITE JOURNEY`, and an offline target player.
 - Landsraad term planning through `POST /api/admin/landsraad`, default `dry_run=true`. Execution requires `DUNE_ADMIN_LANDSRAAD_MUTATIONS_ENABLED=true` and confirmation `WRITE LANDSRAAD`.
 - Respawn-location delete planning through `POST /api/admin/respawn-location`, default `dry_run=true`. Execution requires `DUNE_ADMIN_RESPAWN_MUTATIONS_ENABLED=true`, confirmation `DELETE RESPAWN`, and an offline target player.
+- World-state inspection through `POST /api/admin/world-state/inspect` for guild, vehicle, marker, landclaim, recipe, and respawn evidence.
+- Guild description and role planning through `POST /api/admin/guild`, default `dry_run=true`. Execution requires `DUNE_ADMIN_GUILD_MUTATIONS_ENABLED=true` and confirmation `WRITE GUILD`.
+- Marker deletion planning through `POST /api/admin/marker`, default `dry_run=true`. Execution requires `DUNE_ADMIN_MARKER_MUTATIONS_ENABLED=true` and confirmation `DELETE MARKERS`.
+- Landclaim segment planning through `POST /api/admin/landclaim`, default `dry_run=true`. Execution requires `DUNE_ADMIN_LANDCLAIM_MUTATIONS_ENABLED=true` and confirmation `WRITE LANDCLAIM`.
 - Event planner APIs:
   - `GET /api/events`
   - `POST /api/events/dry-run`
@@ -205,6 +209,9 @@ DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED=false
 DUNE_ADMIN_FACTION_MUTATIONS_ENABLED=false
 DUNE_ADMIN_LANDSRAAD_MUTATIONS_ENABLED=false
 DUNE_ADMIN_RESPAWN_MUTATIONS_ENABLED=false
+DUNE_ADMIN_GUILD_MUTATIONS_ENABLED=false
+DUNE_ADMIN_MARKER_MUTATIONS_ENABLED=false
+DUNE_ADMIN_LANDCLAIM_MUTATIONS_ENABLED=false
 ```
 
 Gate behavior:
@@ -218,6 +225,9 @@ Gate behavior:
 - `DUNE_ADMIN_FACTION_MUTATIONS_ENABLED`: controls player faction-change server-function calls. Faction dry-runs still work.
 - `DUNE_ADMIN_LANDSRAAD_MUTATIONS_ENABLED`: controls Landsraad term server-function calls. Landsraad dry-runs still work.
 - `DUNE_ADMIN_RESPAWN_MUTATIONS_ENABLED`: controls respawn-location deletion through `dune.update_respawn_locations`. Respawn dry-runs still work.
+- `DUNE_ADMIN_GUILD_MUTATIONS_ENABLED`: controls guild description and role server-function calls. Guild dry-runs still work.
+- `DUNE_ADMIN_MARKER_MUTATIONS_ENABLED`: controls marker deletion server-function calls. Marker dry-runs still work.
+- `DUNE_ADMIN_LANDCLAIM_MUTATIONS_ENABLED`: controls landclaim segment server-function calls. Landclaim dry-runs still work.
 
 Existing gates still apply:
 
@@ -239,6 +249,9 @@ WRITE JOURNEY
 CHANGE FACTION
 WRITE LANDSRAAD
 DELETE RESPAWN
+WRITE GUILD
+DELETE MARKERS
+WRITE LANDCLAIM
 RUN GM COMMAND
 ```
 
@@ -457,6 +470,61 @@ Execution requires:
 - target player must be offline
 
 The endpoint verifies the UUID against `dune.player_respawn_locations` and then re-saves `dune.get_respawn_locations(account_id)` without that entry through `dune.update_respawn_locations`. Confidence is moderate for deletion mechanics and low for creation/editing, so creation and arbitrary edits remain blocked.
+
+`POST /api/admin/world-state/inspect` reads guild, vehicle, marker, landclaim, recipe, and respawn evidence without writing. It accepts optional `account_id`, `player_id`, and `guild_id`, resolves missing player/guild IDs when possible, and returns matching `pg_proc` functions plus table/column metadata.
+
+`POST /api/admin/guild` plans or executes narrow guild administration. Supported actions are `edit-description`, `promote-member`, and `demote-member`.
+
+Dry-run body:
+
+```json
+{
+  "dry_run": true,
+  "action": "edit-description",
+  "guild_id": 789,
+  "description": "Updated guild note"
+}
+```
+
+Role-change dry-run body:
+
+```json
+{
+  "dry_run": true,
+  "action": "promote-member",
+  "guild_id": 789,
+  "player_id": 123,
+  "new_role": 1
+}
+```
+
+Execution requires:
+
+- `DUNE_ADMIN_MUTATIONS_ENABLED=true`
+- `DUNE_ADMIN_GUILD_MUTATIONS_ENABLED=true`
+- `confirm: "WRITE GUILD"`
+
+The endpoint uses `dune.edit_guild_description`, `dune.promote_guild_member`, and `dune.demote_guild_member`. Confidence is moderate because the functions are first-party and rollback is a compensating call from the dry-run/audit record. Disband, invite, remove-member, create-guild, and allegiance operations remain blocked.
+
+`POST /api/admin/marker` plans or executes marker deletion. Supported actions are `delete-by-id` and `delete-static-location`.
+
+Execution requires:
+
+- `DUNE_ADMIN_MUTATIONS_ENABLED=true`
+- `DUNE_ADMIN_MARKER_MUTATIONS_ENABLED=true`
+- `confirm: "DELETE MARKERS"`
+
+The endpoint uses `dune.delete_markers_by_id` and `dune.delete_static_location_markers`. Confidence is moderate for deletion mechanics and low for rollback because marker recreation/payload semantics are not fully mapped.
+
+`POST /api/admin/landclaim` plans or executes adding one landclaim segment to a known totem id.
+
+Execution requires:
+
+- `DUNE_ADMIN_MUTATIONS_ENABLED=true`
+- `DUNE_ADMIN_LANDCLAIM_MUTATIONS_ENABLED=true`
+- `confirm: "WRITE LANDCLAIM"`
+
+The endpoint uses `dune.get_landclaim_segments` for preflight and `dune.add_landclaim_segment` for execution. Confidence is low-to-moderate because the local table is empty and no delete-segment rollback function is mapped.
 
 `POST /api/admin/journey` plans or executes journey story-node server functions. Supported actions are `reveal`, `complete`, `reset`, and `delete`.
 

@@ -1,9 +1,9 @@
 COMPOSE ?= docker compose
 ENV_FILE ?= .env.example
 
-.PHONY: validate compose-config secret-scan test-watch-maps test-admin-panel-safe-surfaces list-publishable preflight status check-steam-update start-full-warm-pool recover-survival recover-map watch-maps watch-maps-status install-map-watchdog-service install-player-presence-announcer-service install-full-farm-service install-daily-maintenance-timer full-world-partitions public-site-check public-site-package verify-local-state-ignored
+.PHONY: validate compose-config secret-scan test-watch-maps test-admin-panel-safe-surfaces test-vehicle-fidelity-investigation list-publishable preflight status check-steam-update start-full-warm-pool recover-survival recover-map watch-maps watch-maps-status install-map-watchdog-service install-player-presence-announcer-service install-full-farm-service install-daily-maintenance-timer full-world-partitions public-site-check public-site-package verify-local-state-ignored
 
-validate: compose-config secret-scan test-watch-maps test-admin-panel-safe-surfaces verify-local-state-ignored
+validate: compose-config secret-scan test-watch-maps test-admin-panel-safe-surfaces test-vehicle-fidelity-investigation verify-local-state-ignored
 
 preflight:
 	./scripts/preflight.sh
@@ -59,6 +59,9 @@ test-watch-maps:
 
 test-admin-panel-safe-surfaces:
 	python3 scripts/test-admin-panel-safe-surfaces.py
+
+test-vehicle-fidelity-investigation:
+	./scripts/investigate-vehicle-fidelity.sh >/dev/null
 
 list-publishable:
 	find . -maxdepth 3 \( -path './.git' -o -path './data' -o -path './captures' -o -path './backups' -o -path './config/tls' \) -prune -o -type f -not -name '.env' -print | sort

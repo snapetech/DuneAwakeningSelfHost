@@ -307,6 +307,9 @@ POST /api/admin/faction
 POST /api/admin/journey
 POST /api/admin/landsraad
 POST /api/admin/respawn-location
+POST /api/admin/guild
+POST /api/admin/marker
+POST /api/admin/landclaim
 ```
 
 Mapped first-party functions:
@@ -326,6 +329,16 @@ dune.landsraad_change_term_end_time(end_term_id bigint, new_end_time timestamp w
 dune.landsraad_force_end_term(end_term_id bigint)
 dune.get_respawn_locations(in_account_id bigint)
 dune.update_respawn_locations(player_id bigint, respawn_locations respawnlocation[])
+dune.get_guild_data(in_guild_id bigint)
+dune.get_guild_members(in_guild_id bigint)
+dune.edit_guild_description(in_guild_id bigint, in_guild_desc text)
+dune.promote_guild_member(in_guild_id bigint, in_player_id bigint, in_new_role smallint)
+dune.demote_guild_member(in_guild_id bigint, in_player_id bigint, in_new_role smallint)
+dune.delete_markers_by_id(in_marker_ids integer[])
+dune.delete_static_location_markers(p_location_keys text[])
+dune.delete_markers_return_actor_ids(in_dimension_index integer, in_map_name text, in_marker_ids integer[])
+dune.get_landclaim_segments(in_totem_id bigint)
+dune.add_landclaim_segment(in_totem_id bigint, in_grid_location_x bigint, in_grid_location_y bigint)
 ```
 
 Separate gates:
@@ -336,6 +349,9 @@ DUNE_ADMIN_FACTION_MUTATIONS_ENABLED=false
 DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED=false
 DUNE_ADMIN_LANDSRAAD_MUTATIONS_ENABLED=false
 DUNE_ADMIN_RESPAWN_MUTATIONS_ENABLED=false
+DUNE_ADMIN_GUILD_MUTATIONS_ENABLED=false
+DUNE_ADMIN_MARKER_MUTATIONS_ENABLED=false
+DUNE_ADMIN_LANDCLAIM_MUTATIONS_ENABLED=false
 ```
 
 Confirmation phrases:
@@ -346,6 +362,9 @@ CHANGE FACTION
 WRITE JOURNEY
 WRITE LANDSRAAD
 DELETE RESPAWN
+WRITE GUILD
+DELETE MARKERS
+WRITE LANDCLAIM
 ```
 
 Current confidence:
@@ -355,6 +374,9 @@ Current confidence:
 - Journey: moderate; functions exist, but story-node IDs and reward semantics need cataloging.
 - Landsraad term end-time: moderate mechanically because first-party functions exist; high operational risk because it changes shared world/economy state. `force-end` is not safely reversible.
 - Respawn-location delete: moderate mechanically because first-party array read/write functions exist; high rollback risk because restoring requires preserving and reconstructing the removed `respawnlocation` composite.
+- Guild description and role changes: moderate mechanically because first-party functions exist; high social-state risk. Destructive guild operations remain blocked.
+- Marker deletion: moderate mechanically because first-party delete functions exist; high rollback risk because marker save/recreation semantics are not mapped.
+- Landclaim segment addition: low-to-moderate because add/get functions exist, but the current local table has no rows and no delete-segment rollback function is mapped.
 
 ## Landsraad Term Administration
 
@@ -408,3 +430,122 @@ select dune.update_respawn_locations(
 Execution is blocked unless the global mutation gate and `DUNE_ADMIN_RESPAWN_MUTATIONS_ENABLED=true` are both set, the request includes `confirm: "DELETE RESPAWN"`, and the target player is offline.
 
 Creation and arbitrary editing of respawn locations remain blocked. Confidence is moderate for deletion mechanics and low for safe creation because `spawnlocatordescriptor`, nested `transform`, map/dimension, and actor binding semantics are not fully proven.
+
+## World State Inspect
+
+The read-only endpoint is:
+
+```text
+POST /api/admin/world-state/inspect
+```
+
+It accepts optional `account_id`, `player_id`, and `guild_id`, then returns local evidence for:
+
+```sql
+dune.get_guild_for_player(...)
+dune.get_guild_data(...)
+dune.get_guild_members(...)
+dune.get_guild_invites(...)
+dune.get_player_owned_vehicles_data(...)
+dune.player_respawn_locations
+```
+
+It also lists matching `pg_proc` signatures and `information_schema` table columns for guild, vehicle, marker, landclaim, recipe, and respawn surfaces. It deliberately does not call vehicle restore, marker save/delete, landclaim add, guild invite/remove/disband, or recipe removal functions.
+
+## Guild Administration
+
+The panel endpoint is:
+
+```text
+POST /api/admin/guild
+```
+
+Supported actions:
+
+```text
+edit-description
+promote-member
+demote-member
+```
+
+Mapped functions:
+
+```sql
+dune.edit_guild_description(in_guild_id bigint, in_guild_desc text)
+dune.promote_guild_member(in_guild_id bigint, in_player_id bigint, in_new_role smallint)
+dune.demote_guild_member(in_guild_id bigint, in_player_id bigint, in_new_role smallint)
+```
+
+Execution is blocked unless the global mutation gate and `DUNE_ADMIN_GUILD_MUTATIONS_ENABLED=true` are both set, and the request includes `confirm: "WRITE GUILD"`.
+
+Rollback posture:
+
+- Description edit: dry-run records the previous `guild_description`.
+- Role change: dry-run records the previous `role_id` from `dune.guild_members`.
+
+Blocked guild functions for now:
+
+```sql
+dune.create_guild(...)
+dune.disband_guild(...)
+dune.remove_guild_members(...)
+dune.add_guild_invite(...)
+dune.accept_guild_invite(...)
+dune.reject_guild_invite(...)
+dune.pledge_guild_allegiance(...)
+dune.break_guild_allegiance(...)
+```
+
+Confidence is moderate for the narrow promoted functions and low for the blocked destructive/social-flow functions until role IDs, faction side effects, invite lifecycle, and rollback are validated on disposable guild data.
+
+## Marker Deletion
+
+The panel endpoint is:
+
+```text
+POST /api/admin/marker
+```
+
+Supported actions:
+
+```text
+delete-by-id
+delete-static-location
+```
+
+Mapped functions:
+
+```sql
+dune.delete_markers_by_id(in_marker_ids integer[])
+dune.delete_static_location_markers(p_location_keys text[])
+dune.delete_markers_return_actor_ids(in_dimension_index integer, in_map_name text, in_marker_ids integer[])
+```
+
+Execution is blocked unless the global mutation gate and `DUNE_ADMIN_MARKER_MUTATIONS_ENABLED=true` are both set, and the request includes `confirm: "DELETE MARKERS"`.
+
+Rollback posture is weak. The dry-run records matching marker rows when deleting by id, but marker recreation through `save_markers` is not mapped. Use only with disposable/static marker data until marker payloads, player-marker rows, and ID update semantics are fully documented.
+
+## Landclaim Segment Addition
+
+The panel endpoint is:
+
+```text
+POST /api/admin/landclaim
+```
+
+Supported action:
+
+```text
+add-segment
+```
+
+Mapped functions:
+
+```sql
+dune.get_landclaim_segments(in_totem_id bigint)
+dune.add_landclaim_segment(in_totem_id bigint, in_grid_location_x bigint, in_grid_location_y bigint)
+```
+
+Execution is blocked unless the global mutation gate and `DUNE_ADMIN_LANDCLAIM_MUTATIONS_ENABLED=true` are both set, and the request includes `confirm: "WRITE LANDCLAIM"`.
+
+Rollback posture is weak. No delete-segment function is mapped. The current local database has an empty `dune.landclaim_segments` table, so live semantics need disposable base/totem validation before this is used on real claims.

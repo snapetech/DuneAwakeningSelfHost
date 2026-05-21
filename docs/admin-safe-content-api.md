@@ -27,6 +27,9 @@ Content-Type: application/json
 | `DUNE_ADMIN_FACTION_MUTATIONS_ENABLED` | `false` | Enables player faction change through `dune.change_player_faction`. Does not block inspection or dry-runs. |
 | `DUNE_ADMIN_LANDSRAAD_MUTATIONS_ENABLED` | `false` | Enables Landsraad term administration through first-party functions. Does not block inspection or dry-runs. |
 | `DUNE_ADMIN_RESPAWN_MUTATIONS_ENABLED` | `false` | Enables deleting known respawn locations through `dune.update_respawn_locations`. Does not block inspection or dry-runs. |
+| `DUNE_ADMIN_GUILD_MUTATIONS_ENABLED` | `false` | Enables guild description and member role changes through first-party functions. Does not block inspection or dry-runs. |
+| `DUNE_ADMIN_MARKER_MUTATIONS_ENABLED` | `false` | Enables marker deletion through first-party marker functions. Does not block inspection or dry-runs. |
+| `DUNE_ADMIN_LANDCLAIM_MUTATIONS_ENABLED` | `false` | Enables landclaim segment addition through `dune.add_landclaim_segment`. Does not block inspection or dry-runs. |
 | `DUNE_ADMIN_MUTATIONS_ENABLED` | repo default currently `true` | Existing global mutation gate. |
 | `DUNE_ADMIN_ITEM_GRANTS_ENABLED` | repo default currently `true` | Existing item mutation gate. |
 
@@ -450,6 +453,158 @@ Function mapping:
 | `force-end` | `dune.landsraad_force_end_term(term_id)` |
 
 Risk: very high. Landsraad terms are world/economy state. Use dry-run and DB backup first. Do not use `force-end` casually because it is not safely reversible.
+
+## World State Inspect
+
+### `POST /api/admin/world-state/inspect`
+
+Read-only endpoint for guild, vehicle, marker, landclaim, recipe, and respawn evidence.
+
+```json
+{
+  "account_id": 456,
+  "player_id": 123,
+  "guild_id": 789
+}
+```
+
+All fields are optional. If `account_id` is supplied and `player_id` is omitted, the endpoint resolves the player pawn from `dune.player_state`. If `player_id` is supplied and `guild_id` is omitted, it resolves the guild with `dune.get_guild_for_player`.
+
+Returned evidence includes:
+
+- `dune.get_guild_data`
+- `dune.get_guild_members`
+- `dune.get_guild_invites`
+- `dune.get_player_owned_vehicles_data`
+- `dune.player_respawn_locations`
+- matching function signatures from `pg_proc`
+- matching table/column definitions from `information_schema`
+
+No writes are performed.
+
+## Guild Mutator
+
+### `POST /api/admin/guild`
+
+Default mode is dry-run. Supported actions are:
+
+- `edit-description`
+- `promote-member`
+- `demote-member`
+
+Dry-run request for a description edit:
+
+```json
+{
+  "dry_run": true,
+  "action": "edit-description",
+  "guild_id": 789,
+  "description": "Updated server event guild note"
+}
+```
+
+Dry-run request for a role change:
+
+```json
+{
+  "dry_run": true,
+  "action": "promote-member",
+  "guild_id": 789,
+  "player_id": 123,
+  "new_role": 1
+}
+```
+
+Execution requirements:
+
+- `DUNE_ADMIN_MUTATIONS_ENABLED=true`
+- `DUNE_ADMIN_GUILD_MUTATIONS_ENABLED=true`
+- `confirm: "WRITE GUILD"`
+
+Function mapping:
+
+| Action | Function |
+| --- | --- |
+| `edit-description` | `dune.edit_guild_description(guild_id, description)` |
+| `promote-member` | `dune.promote_guild_member(guild_id, player_id, new_role)` |
+| `demote-member` | `dune.demote_guild_member(guild_id, player_id, new_role)` |
+
+Risk: high. These calls affect social state. Dry-run records current guild rows and member roles for compensating rollback. Disband, remove-member, invite, create, and allegiance operations remain blocked.
+
+## Marker Delete
+
+### `POST /api/admin/marker`
+
+Default mode is dry-run. Supported actions are:
+
+- `delete-by-id`
+- `delete-static-location`
+
+Dry-run by marker id:
+
+```json
+{
+  "dry_run": true,
+  "action": "delete-by-id",
+  "marker_ids": [123, 456]
+}
+```
+
+Dry-run by static-location key:
+
+```json
+{
+  "dry_run": true,
+  "action": "delete-static-location",
+  "static_location_keys": ["example_location_key"]
+}
+```
+
+Execution requirements:
+
+- `DUNE_ADMIN_MUTATIONS_ENABLED=true`
+- `DUNE_ADMIN_MARKER_MUTATIONS_ENABLED=true`
+- `confirm: "DELETE MARKERS"`
+
+Function mapping:
+
+| Action | Function |
+| --- | --- |
+| `delete-by-id` | `dune.delete_markers_by_id(marker_ids)` |
+| `delete-static-location` | `dune.delete_static_location_markers(static_location_keys)` |
+
+Risk: high. Marker recreation and payload semantics are not fully mapped, so dry-run/audit rows are the only rollback evidence. Marker creation, marker editing, player-marker save, and permission-actor mutation remain blocked.
+
+## Landclaim Segment
+
+### `POST /api/admin/landclaim`
+
+Default mode is dry-run. The only supported action is `add-segment`.
+
+```json
+{
+  "dry_run": true,
+  "action": "add-segment",
+  "totem_id": 1000,
+  "grid_location_x": 12,
+  "grid_location_y": -4
+}
+```
+
+Execution requirements:
+
+- `DUNE_ADMIN_MUTATIONS_ENABLED=true`
+- `DUNE_ADMIN_LANDCLAIM_MUTATIONS_ENABLED=true`
+- `confirm: "WRITE LANDCLAIM"`
+
+Function mapping:
+
+```sql
+dune.get_landclaim_segments(in_totem_id bigint)
+dune.add_landclaim_segment(in_totem_id bigint, in_grid_location_x bigint, in_grid_location_y bigint)
+```
+
+Risk: high. No first-party delete-segment function has been mapped. Rollback requires a database backup restore or manual table repair.
 
 ## Respawn Location Delete
 
