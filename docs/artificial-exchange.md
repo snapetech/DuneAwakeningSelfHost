@@ -5,7 +5,8 @@ Awakening self-hosts. It has three separate jobs:
 
 - build a reviewed item price catalog
 - buy eligible player listings through the native Exchange fulfill path
-- optionally seed NPC listings from reviewed catalog rows
+- optionally seed tightly gated NPC listings from reviewed, market-priced
+  catalog rows
 
 All write paths are gated. The default service state is enabled in dry-run mode,
 with purchases, funding, settlement claim, and populator writes disabled.
@@ -16,8 +17,9 @@ Confidence levels:
 - Live native purchase for the tested `PowerPack` path: high.
 - Safe seller Solari settlement through the validated direct transaction: high
   for completed seller Solari claim rows matching the tested shape.
-- Broad item coverage and unattended economy tuning: moderate until more
-  templates are reviewed.
+- Buyer execution against reviewed rows: high for the tested paths.
+- Populator live seeding: moderate. It uses native Exchange order functions and
+  has cleanup guards, but it can still affect the visible economy immediately.
 - Native `dune_exchange_retrieve_solaris_from_item(...)`: low and not used by
   the bot because this server build showed unsafe behavior.
 
@@ -29,6 +31,8 @@ Files:
 - `scripts/build-exchange-catalog.py`: catalog builder.
 - `scripts/import-awakening-wiki-items.py`: imports Community Wiki API item
   metadata and game-file-derived prices into a snapshot CSV.
+- `scripts/import-dune-exchange-prices.py`: imports public dune.exchange
+  auction-history prices and computes midpoint floors for market-priced rows.
 - `scripts/research-exchange-prices.py`: crawls Awakening Wiki page wikitext
   and extracts exact item ids with `Base Vendor Price` fields.
 - `scripts/build-exchange-bootstrap-catalog.py`: heuristic broad catalog builder
@@ -155,7 +159,7 @@ Reason: live validation showed unsafe behavior on this server build.
 Catalog fields:
 
 ```csv
-template_id,display_name,category,category_mask,category_depth,sellable_status,baseline_price,max_buy_price,liquidity_tier,enabled,source,confidence,notes
+template_id,display_name,category,category_mask,category_depth,sellable_status,baseline_price,max_buy_price,price_floor,price_ceiling,liquidity_tier,enabled,source,confidence,notes
 ```
 
 Meaning:
@@ -166,8 +170,11 @@ Meaning:
 - `category_mask` and `category_depth`: native Exchange category filter values
   used when seeding or validating category counts.
 - `sellable_status`: expected values are `known`, `observed`, or `validated`.
-- `baseline_price`: reference market price.
+- `baseline_price`: reference price used by the catalog and current populator
+  floor. For dune.exchange-backed rows this equals `price_floor`.
 - `max_buy_price`: highest price the artificial buyer may pay.
+- `price_floor`: minimum price the populator may post.
+- `price_ceiling`: maximum price the populator may post.
 - `liquidity_tier`: `low`, `medium`, or `high`; controls buy probability.
 - `enabled`: only `true` rows are eligible for buying or seeding.
 - `source`: `manual`, `snapshot`, `local-db`, `live-test`, or similar.
@@ -177,6 +184,53 @@ Meaning:
 The old one-row `PowerPack` live-test catalog entry is disabled. It remains
 only as a historical validation record and must not be used as the production
 seed source.
+
+## Source Decisions
+
+Current source policy:
+
+- Game-file/community-wiki rows provide identity, display names, category masks,
+  category depths, tiers, and conservative in-game reference prices.
+- Public dune.exchange auction-history rows provide live market ceilings.
+- Populator rows require both `sellable_status=validated` and a dune.exchange
+  market price by default.
+- Rows without a market price remain useful for buyer catalog review, but are
+  excluded from NPC seeding while
+  `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_MARKET_PRICE=true`.
+- Tier 0 and tier 1 rows are excluded from NPC seeding by default. Low-tier
+  basics and common schematics produced too many cheap/noisy listings.
+
+Pricing decision:
+
+- `price_ceiling` is the selected dune.exchange market price field, currently
+  `averagePrice`.
+- `price_floor` is halfway between the in-game/game-file price and
+  `price_ceiling`.
+- The populator randomly samples the full `price_floor..price_ceiling` range.
+- If the dune.exchange price is lower than the in-game/game-file price, the
+  ceiling is clamped up to the in-game/game-file price. Confidence: high for the
+  implemented rule.
+
+Example: if the game-file price is `10,000` and dune.exchange average is
+`50,000`, the floor becomes `30,000`, the ceiling remains `50,000`, and seeded
+orders are posted randomly between those values.
+
+Intended uses:
+
+- Keep scarce high-tier resources and reviewed items visible on small/private
+  servers.
+- Provide controlled liquidity while the player market is thin.
+- Exercise Exchange category filters and client rendering with realistic prices.
+- Run one-shot validation or short maintenance-window seeding, then stop the
+  populator.
+
+Non-goals:
+
+- It is not a replacement for player supply.
+- It should not flood the market with broad catalog coverage.
+- It should not seed unpriced, low-tier, test, cosmetic, or unknown rows just
+  because they exist in game-file metadata.
+- It does not automatically recycle seller proceeds back into buyer funding.
 
 ## Catalog Pipeline
 
@@ -414,11 +468,37 @@ transaction.
 
 ## Populator
 
-The populator seeds NPC Exchange listings from enabled catalog rows. By default
-it only uses rows with `sellable_status=validated`, jitters prices around
-the configured `price_floor..price_ceiling` range, gives listings a jittered
-expiration, and refuses to seed catalog rows below tier 2 or rows without a
-dune.exchange market price by default.
+The populator seeds NPC Exchange listings from enabled catalog rows. It is a
+liquidity tool, not a default background requirement. Use it when the server
+needs controlled, operator-owned market stock; leave it stopped when you only
+want the buyer to purchase player listings.
+
+Current default row gates:
+
+- `enabled=true`
+- `sellable_status=validated`
+- `baseline_price` present and positive
+- `source` or `notes` prove a dune.exchange market price
+- parsed tier is at least `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_TIER`, default
+  `2`
+- category mask/depth values are non-negative
+
+Current default pricing:
+
+- `price_floor` is the midpoint between the in-game/game-file price and the
+  selected dune.exchange price.
+- `price_ceiling` is the selected dune.exchange price.
+- `planned_unique_price(...)` samples the full floor-to-ceiling range.
+- `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_PRICE_JITTER_PCT` is used only for rows
+  that do not have explicit floor/ceiling values.
+
+Current default item quality:
+
+- `quality_level` comes from the catalog row when present.
+- Otherwise it is inferred from the parsed tier.
+- Otherwise it falls back to `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_QUALITY_LEVEL`.
+- The minimum allowed quality is
+  `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_QUALITY_LEVEL`, default `2`.
 
 Known grade boundary:
 
@@ -452,6 +532,26 @@ Single-template safety:
   into fewer active orders.
 - Apply mode fails if the native recurring sell function reports that no
   inventory was added.
+
+Owner decision:
+
+- Use a dedicated DASH/Admin player controller for
+  `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_OWNER_ID`, not a normal human character.
+- Add that same id to `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_OWNER_IDS` so the
+  buyer never purchases seeded stock.
+- On the current host, the DASH/Admin identity is `Paul` controller `124`; this
+  is local state, not a portable default.
+
+Service decision:
+
+- The populator service uses `Restart=always` when installed.
+- Stop and disable it when no seeding should happen:
+
+```bash
+sudo systemctl disable --now dune-artificial-exchange-populator.service
+```
+
+- The buyer service can remain active while the populator is stopped.
 
 Dry-run one populate pass:
 
@@ -505,8 +605,8 @@ DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_DRY_RUN=false \
   --confirm "POPULATE ARTIFICIAL EXCHANGE"
 ```
 
-Populate one listing for every enabled catalog template that is not already
-seeded:
+Populate one listing for every eligible, enabled catalog template that is not
+already seeded:
 
 ```bash
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ENABLED=true \
@@ -544,6 +644,30 @@ Cleanup is scoped to:
 - `is_npc_order=true`
 
 It does not select human orders.
+
+Purge all current seeded NPC listings for the configured owner:
+
+```bash
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_TARGET_MIN_ORDERS=0 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_TARGET_MAX_ORDERS=0 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_HARD_MAX_ORDERS=5000 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_EXPIRE_PROBABILITY=1 \
+  python3 scripts/artificial-exchange-bot.py \
+  --expire-seeded \
+  --limit 10000 \
+  --apply \
+  --confirm "POPULATE ARTIFICIAL EXCHANGE"
+```
+
+Verify the purge:
+
+```sql
+select owner_id, is_npc_order, count(*)
+from dune.dune_exchange_orders
+where exchange_id = 2
+group by owner_id, is_npc_order
+order by owner_id, is_npc_order;
+```
 
 Run a guarded one-listing validation:
 
@@ -614,6 +738,7 @@ DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_SOURCE_POSITION_START=0
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_SOURCE_POSITION_MAX=100000
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_TARGET_MIN_ORDERS=20
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_TARGET_MAX_ORDERS=80
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_HARD_MAX_ORDERS=200
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_PRICE_JITTER_PCT=20
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_EXPIRY_MIN_SECONDS=3600
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_EXPIRY_MAX_SECONDS=86400
@@ -632,6 +757,11 @@ DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_DURABILITY_MAX=1
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_QUALITY_LEVEL=2
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_QUALITY_LEVEL=2
 ```
+
+`DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_MARKET_PRICE=true` is the main guard
+against broad, cheap population from game-file-only rows. Turning it off allows
+validated rows without dune.exchange prices to seed, so use that only on an
+isolated test server. Confidence: high.
 
 ## Bootstrap Catalog
 
@@ -869,6 +999,20 @@ tail -n 100 backups/admin-panel/artificial-exchange/bot-audit.jsonl
 
 ## Live Validation Record
 
+Current populator policy as of the stricter seeding update:
+
+- Populator service should be stopped and disabled unless a deliberate seeding
+  run is in progress.
+- Current default eligible set is limited to rows with dune.exchange pricing and
+  tier 2+ metadata.
+- The latest market-priced sample had `7` eligible rows, all tier `3..6`, and
+  no rows without market-pricing evidence.
+- Existing NPC rows were purged after the policy change. A normal Exchange query
+  should show no `is_npc_order=true` rows unless a new seeding run was started.
+- Older broad-population runs below are retained only as historical validation
+  of mechanics and cleanup behavior. They are not the current production
+  seeding recommendation.
+
 Validated on May 20, 2026:
 
 - Exchange id: `2`
@@ -895,7 +1039,7 @@ Settlement result:
 - claim order `7` was deleted
 - purchased item storage order `6` remains
 
-Current known live state after final service validation:
+Historical known live state after first service validation:
 
 - active seeded NPC orders: `20`
 - active player orders selected by buyer: `0`
@@ -908,7 +1052,7 @@ Current known live state after final service validation:
 - stale orphaned Exchange inventory items from earlier bad staging tests were
   purged
 
-Category populate run on May 21, 2026:
+Historical category populate run on May 21, 2026:
 
 - backup before category populate:
   `backups/admin-panel/artificial-exchange/live-runs/20260521T022133Z-before-category-populate.sql`
@@ -921,7 +1065,7 @@ Category populate run on May 21, 2026:
 - buyer dry-run selected: `0`
 - buyer dry-run skipped seeded orders: `340`, all via `npc order skipped`
 
-Final service validation on May 20, 2026 local time:
+Historical service validation on May 20, 2026 local time:
 
 - `config/artificial-exchange-prices.csv` contains a broad disabled catalog and
   a reviewed enabled seed subset of `20` rows.
@@ -975,7 +1119,7 @@ Verified category counts:
 | `weapons/melee` | 20 | 20 |
 | `weapons/ranged` | 20 | 20 |
 
-Full catalog population run on May 21, 2026:
+Rejected full catalog population run on May 21, 2026:
 
 - backup before populate-all:
   `backups/admin-panel/artificial-exchange/live-runs/20260521T023525Z-before-populate-all.sql`
@@ -987,6 +1131,10 @@ Full catalog population run on May 21, 2026:
 - distinct seeded templates after apply: `2278`
 - seeded price range after apply: `1` to `568078`
 - source inventory id: `485`
+
+Decision after review: this was too broad and included too many cheap tier 0/1
+or game-file-only rows. Do not repeat this run on the live market. The current
+policy requires dune.exchange market price evidence and tier 2+ rows.
 
 ## Recovery And Rollback
 

@@ -435,7 +435,7 @@ More detail: [`docs/public-static-site.md`](docs/public-static-site.md).
 
 ## Artificial Exchange
 
-The Artificial Exchange tooling manages a local item catalog, buyer flow, settlement checks, optional populator, and service wrappers for operators who want an always-on artificial market helper.
+The Artificial Exchange tooling manages a local item catalog, buyer flow, settlement checks, optional populator, and service wrappers. The buyer and populator are separate: the buyer can run continuously, while the populator should only run when you deliberately want DASH/Admin-owned NPC listings seeded from reviewed, dune.exchange-priced, tier 2+ catalog rows.
 
 Run the smoke check before enabling live purchase, funding, auto-claim, or populator apply gates:
 

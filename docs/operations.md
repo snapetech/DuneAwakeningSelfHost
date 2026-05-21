@@ -287,6 +287,12 @@ python3 scripts/artificial-exchange-bot.py --check-ready
 make install-artificial-exchange-buyer-service ENV_FILE=.env
 ```
 
+The Exchange populator is separate from the buyer. Leave
+`dune-artificial-exchange-populator.service` stopped unless you are deliberately
+seeding operator-owned NPC listings. Current populator policy requires
+dune.exchange price evidence and tier 2+ rows; see `docs/artificial-exchange.md`
+before starting it.
+
 ## Backup
 
 Use the backup helper for routine snapshots:

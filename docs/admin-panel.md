@@ -797,6 +797,14 @@ python3 scripts/test-admin-panel-safe-surfaces.py
 
 It runs under a temporary `ADMIN_WORKSPACE`, so it does not edit the live `.env`, `config/`, or `backups/` paths. `make validate` runs this test after the existing map-watch tests.
 
+Admin chat and private player-message routing have a separate focused target:
+
+```bash
+make test-admin-chat
+```
+
+That target runs the chat-command parser/reply tests plus the player-presence private whisper routing test.
+
 Current coverage:
 
 - Catalog schema and groups.
