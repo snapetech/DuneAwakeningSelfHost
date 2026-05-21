@@ -70,6 +70,39 @@ class CharacterSlotToolTest(unittest.TestCase):
         self.assertTrue(args[1].startswith("http://127.0.0.1:19090/"))
         self.assertEqual(kwargs["token"], "secret")
 
+    def test_summary_for_plan_response(self):
+        result = self.tool.summarize({
+            "ok": True,
+            "dryRun": True,
+            "accountId": 10,
+            "action": "switch-character",
+            "targetAccountId": 11,
+            "executable": True,
+            "plan": {
+                "blockers": [],
+                "nativeCall": {"function": "dune.takeover_account"},
+                "transactionSafety": {"commitRequiresPostSwapVerification": True},
+            },
+        })
+        self.assertTrue(result["executable"])
+        self.assertEqual(result["nativeCall"]["function"], "dune.takeover_account")
+        self.assertTrue(result["transactionSafety"]["commitRequiresPostSwapVerification"])
+
+    def test_summary_for_inspect_response(self):
+        result = self.tool.summarize({
+            "ok": True,
+            "accountId": 10,
+            "offline": True,
+            "candidates": [{"account_id": 11}],
+            "contract": {
+                "safeNativeSwapPath": True,
+                "safeNativeSwapAction": "takeover_account",
+                "confidence": "moderate",
+            },
+        })
+        self.assertEqual(result["candidateCount"], 1)
+        self.assertTrue(result["safeNativeSwapPath"])
+
 
 if __name__ == "__main__":
     unittest.main()

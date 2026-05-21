@@ -54,6 +54,34 @@ def request_json(method, url, token="", body=None):
         raise SystemExit(f"admin API unavailable: {exc}") from exc
 
 
+def summarize(result):
+    if not isinstance(result, dict):
+        return {"ok": False, "summary": "unexpected non-object API response"}
+    if "plan" in result:
+        plan = result.get("plan") or {}
+        return {
+            "ok": bool(result.get("ok")),
+            "dryRun": result.get("dryRun"),
+            "accountId": result.get("accountId"),
+            "action": result.get("action"),
+            "targetAccountId": result.get("targetAccountId"),
+            "executable": result.get("executable"),
+            "blockers": plan.get("blockers") or [],
+            "nativeCall": plan.get("nativeCall"),
+            "transactionSafety": plan.get("transactionSafety"),
+        }
+    return {
+        "ok": bool(result.get("ok", True)),
+        "accountId": result.get("accountId"),
+        "offline": result.get("offline"),
+        "candidateCount": len(result.get("candidates") or []),
+        "safeNativeSwapPath": (result.get("contract") or {}).get("safeNativeSwapPath"),
+        "safeNativeSwapAction": (result.get("contract") or {}).get("safeNativeSwapAction"),
+        "confidence": (result.get("contract") or {}).get("confidence"),
+        "errors": result.get("errors") or {},
+    }
+
+
 def admin_base(args, env_file):
     if args.base_url:
         return args.base_url.rstrip("/")
@@ -71,6 +99,7 @@ def main_with_argv(argv=None):
     parser.add_argument("--action", choices=("inspect", "new-character", "switch-character", "restore-character"), default="inspect")
     parser.add_argument("--execute", action="store_true", help="Execute switch-character/restore-character through the admin API.")
     parser.add_argument("--confirm", default="", help='Required for execution: "SWAP CHARACTER".')
+    parser.add_argument("--summary", action="store_true", help="Print a compact operator summary instead of the full response.")
     parser.add_argument("--pretty", action="store_true")
     args = parser.parse_args(argv)
 
@@ -101,11 +130,12 @@ def main_with_argv(argv=None):
             endpoint = "plan"
         result = request_json("POST", f"{base}/api/admin/character-slots/{endpoint}", token=token, body=body)
 
-    if args.pretty:
-        json.dump(result, sys.stdout, indent=2, sort_keys=True)
+    output = summarize(result) if args.summary else result
+    if args.pretty or args.summary:
+        json.dump(output, sys.stdout, indent=2, sort_keys=True)
         sys.stdout.write("\n")
     else:
-        json.dump(result, sys.stdout, separators=(",", ":"), sort_keys=True)
+        json.dump(output, sys.stdout, separators=(",", ":"), sort_keys=True)
         sys.stdout.write("\n")
 
 

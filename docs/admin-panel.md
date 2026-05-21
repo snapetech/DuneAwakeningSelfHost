@@ -673,6 +673,7 @@ CLI workflow:
 python3 scripts/character-slot-tool.py \
   --account-id 456 \
   --action inspect \
+  --summary \
   --pretty
 ```
 
@@ -681,6 +682,7 @@ python3 scripts/character-slot-tool.py \
   --account-id 456 \
   --action switch-character \
   --target-account-id 789 \
+  --summary \
   --pretty
 ```
 
