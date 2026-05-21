@@ -2,6 +2,7 @@
 import argparse
 import collections
 import difflib
+import inspect
 import json
 import os
 import pathlib
@@ -1259,6 +1260,10 @@ def kick_candidate_routes(conn, target):
 
 
 def run_announce(message, target_name="", target_fls_id=""):
+    if not target_name or not target_fls_id:
+        inferred_name, inferred_fls_id = infer_command_reply_target()
+        target_name = target_name or inferred_name
+        target_fls_id = target_fls_id or inferred_fls_id
     command = env("DUNE_CHAT_COMMAND_REPLY_COMMAND", env("DUNE_ADMIN_ANNOUNCE_COMMAND", "/workspace/scripts/announce.sh"))
     if command.startswith("/workspace/") and not pathlib.Path(command).exists():
         command = str(ROOT / command.removeprefix("/workspace/"))
@@ -1319,6 +1324,23 @@ def run_announce(message, target_name="", target_fls_id=""):
         "stdout": result.stdout.strip(),
         "stderr": result.stderr.strip(),
     }
+
+
+def infer_command_reply_target():
+    frame = inspect.currentframe()
+    if frame is None:
+        return "", ""
+    frame = frame.f_back
+    while frame:
+        if frame.f_code.co_name == "handle_command":
+            sender_fls_id = frame.f_locals.get("sender_fls_id") or ""
+            if not sender_fls_id:
+                return "", ""
+            sender_name = frame.f_locals.get("sender_name") or ""
+            resolved_admin = frame.f_locals.get("resolved_admin") or ""
+            return resolved_admin or sender_name, sender_fls_id
+        frame = frame.f_back
+    return "", ""
 
 
 def normalize_chat_text(text):
