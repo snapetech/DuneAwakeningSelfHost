@@ -26,6 +26,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 GM_LOCATION_FILE = ROOT / "backups" / "admin-panel" / "gm-locations.json"
 SPAM_STATE = {}
 AUCTION_CONFIRMATIONS = {}
+LAST_ANNOUNCE_RESULT = None
 
 
 def read_env_file(path):
@@ -1263,6 +1264,7 @@ def kick_candidate_routes(conn, target):
 
 
 def run_announce(message, target_name="", target_fls_id=""):
+    global LAST_ANNOUNCE_RESULT
     if not target_name or not target_fls_id:
         inferred_name, inferred_fls_id = infer_command_reply_target()
         target_name = target_name or inferred_name
@@ -1321,12 +1323,13 @@ def run_announce(message, target_name="", target_fls_id=""):
         check=False,
         env=child_env,
     )
-    return {
+    LAST_ANNOUNCE_RESULT = {
         "ok": result.returncode == 0,
         "returncode": result.returncode,
         "stdout": result.stdout.strip(),
         "stderr": result.stderr.strip(),
     }
+    return LAST_ANNOUNCE_RESULT
 
 
 def maybe_reply(message, reply=False, target_name="", target_fls_id=""):
@@ -1602,7 +1605,12 @@ def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=F
         return {"ok": True, "action": "test", "message": response, "reply": announce_result}
 
     if command == "gm":
-        return handle_gm_command(conn, parts[1:], resolved_admin, reply=reply)
+        global LAST_ANNOUNCE_RESULT
+        LAST_ANNOUNCE_RESULT = None
+        result = handle_gm_command(conn, parts[1:], resolved_admin, reply=reply)
+        if reply and isinstance(result, dict) and "reply" not in result:
+            result = result | {"reply": LAST_ANNOUNCE_RESULT}
+        return result
 
     if command in ("where", "loc", "location"):
         if len(parts) != 2:

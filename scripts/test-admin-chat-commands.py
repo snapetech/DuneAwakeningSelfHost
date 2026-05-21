@@ -148,6 +148,25 @@ class CommandReplyTargetTests(unittest.TestCase):
         self.assertEqual(captured["targetName"], "Lukano")
         self.assertEqual(captured["targetFlsId"], "6FF6498F4074E3DE")
 
+    def test_gm_subcommand_includes_inferred_private_reply_metadata(self):
+        def fake_run_announce(message, target_name="", target_fls_id=""):
+            admin_chat_commands.LAST_ANNOUNCE_RESULT = {"ok": True, "stdout": '{"transport":"chat.whispers"}', "stderr": ""}
+            return admin_chat_commands.LAST_ANNOUNCE_RESULT
+
+        with unittest.mock.patch.object(admin_chat_commands, "is_admin", lambda conn, sender_name, sender_fls_id: (True, "Lukano")), \
+             unittest.mock.patch.object(admin_chat_commands, "run_announce", fake_run_announce):
+            result = admin_chat_commands.handle_command(
+                object(),
+                "&gm",
+                sender_name="Lukano",
+                sender_fls_id="6FF6498F4074E3DE",
+                reply=True,
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["reply"]["ok"])
+        self.assertIn("chat.whispers", result["reply"]["stdout"])
+
 
 class CommandListenerRetryTests(unittest.TestCase):
     def test_consume_forever_retries_amqp_connection(self):
