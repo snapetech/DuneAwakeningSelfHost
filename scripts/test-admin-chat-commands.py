@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+import contextlib
+import io
 import importlib.util
 import pathlib
 import unittest.mock
@@ -107,6 +109,45 @@ class CommandReplyTargetTests(unittest.TestCase):
         self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_TARGET_QUEUES"], "6FF6498F4074E3DE_queue")
         self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_ROUTING_KEYS"], "6FF6498F4074E3DE")
 
+    def test_auction_suggestion_reply_returns_private_publish_metadata(self):
+        captured = {}
+
+        def fake_run_announce(message, target_name="", target_fls_id=""):
+            captured["message"] = message
+            captured["targetName"] = target_name
+            captured["targetFlsId"] = target_fls_id
+            return {"ok": True, "stdout": '{"transport":"chat.whispers","exchange":"chat.whispers"}', "stderr": ""}
+
+        def fake_auction_item(conn, player, search_text, count, price, **kwargs):
+            return {
+                "ok": False,
+                "error": "no allowed inventory item matched 'PwerPck'",
+                "suggestion": {
+                    "itemId": 95039169,
+                    "templateId": "PowerPack2",
+                    "inventoryId": 15,
+                    "score": 0.824,
+                },
+            }
+
+        with unittest.mock.patch.object(admin_chat_commands, "resolve_sender_character", lambda conn, sender_name, sender_fls_id: "Lukano"), \
+             unittest.mock.patch.object(admin_chat_commands, "character_row", lambda conn, name: ({"character_name": "Lukano"}, [])), \
+             unittest.mock.patch.object(admin_chat_commands, "auction_item", fake_auction_item), \
+             unittest.mock.patch.object(admin_chat_commands, "run_announce", fake_run_announce):
+            result = admin_chat_commands.handle_command(
+                object(),
+                "&auction PwerPck 1 456",
+                sender_name="Lukano",
+                sender_fls_id="6FF6498F4074E3DE",
+                reply=True,
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["reply"]["ok"])
+        self.assertIn("did you mean PowerPack2", captured["message"])
+        self.assertEqual(captured["targetName"], "Lukano")
+        self.assertEqual(captured["targetFlsId"], "6FF6498F4074E3DE")
+
 
 class CommandListenerRetryTests(unittest.TestCase):
     def test_consume_forever_retries_amqp_connection(self):
@@ -153,13 +194,14 @@ class CommandListenerRetryTests(unittest.TestCase):
             }
             return values.get(name, default)
 
-        with unittest.mock.patch.object(admin_chat_commands, "env", fake_env), \
-             unittest.mock.patch.object(admin_chat_commands, "env_chat_or_announce", lambda name, fallback, default="": fake_env(name, default)), \
-             unittest.mock.patch.object(admin_chat_commands.pika, "BlockingConnection", fake_blocking_connection), \
-             unittest.mock.patch.object(admin_chat_commands, "connect_db", lambda: object()), \
-             unittest.mock.patch.object(admin_chat_commands.time, "sleep", lambda seconds: attempts["slept"].append(seconds)):
-            with self.assertRaises(KeyboardInterrupt):
-                admin_chat_commands.consume_forever()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            with unittest.mock.patch.object(admin_chat_commands, "env", fake_env), \
+                 unittest.mock.patch.object(admin_chat_commands, "env_chat_or_announce", lambda name, fallback, default="": fake_env(name, default)), \
+                 unittest.mock.patch.object(admin_chat_commands.pika, "BlockingConnection", fake_blocking_connection), \
+                 unittest.mock.patch.object(admin_chat_commands, "connect_db", lambda: object()), \
+                 unittest.mock.patch.object(admin_chat_commands.time, "sleep", lambda seconds: attempts["slept"].append(seconds)):
+                with self.assertRaises(KeyboardInterrupt):
+                    admin_chat_commands.consume_forever()
 
         self.assertEqual(attempts["count"], 2)
         self.assertEqual(attempts["slept"], [0.01])

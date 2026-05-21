@@ -1499,23 +1499,20 @@ def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=F
             if not pending or int(time.time()) > int(pending.get("expiresAt", 0)):
                 AUCTION_CONFIRMATIONS.pop(confirm_key, None)
                 response = "no pending auction suggestion"
-                if reply:
-                    run_announce(response, target_name=resolved_name or sender_name, target_fls_id=sender_fls_id)
-                return {"ok": False, "error": response}
+                announce_result = maybe_reply(response, reply, target_name=resolved_name or sender_name, target_fls_id=sender_fls_id)
+                return {"ok": False, "error": response, "reply": announce_result}
             if parts[1].lower() in ("no", "n"):
                 AUCTION_CONFIRMATIONS.pop(confirm_key, None)
                 response = "auction suggestion cancelled"
-                if reply:
-                    run_announce(response, target_name=resolved_name or sender_name, target_fls_id=sender_fls_id)
-                return {"ok": True, "action": "auction.cancelled", "message": response}
+                announce_result = maybe_reply(response, reply, target_name=resolved_name or sender_name, target_fls_id=sender_fls_id)
+                return {"ok": True, "action": "auction.cancelled", "message": response, "reply": announce_result}
             player, matches = character_row(conn, resolved_name)
             if player is None:
                 response = "could not resolve your character for auction"
                 if matches:
                     response = "no unique character match: " + ", ".join(row["character_name"] for row in matches)
-                if reply:
-                    run_announce(response, target_name=resolved_name or sender_name, target_fls_id=sender_fls_id)
-                return {"ok": False, "error": response}
+                announce_result = maybe_reply(response, reply, target_name=resolved_name or sender_name, target_fls_id=sender_fls_id)
+                return {"ok": False, "error": response, "reply": announce_result}
             dry_run = not chat_auction_enabled()
             result = auction_item(
                 conn,
@@ -1541,26 +1538,23 @@ def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=F
                     response = f"auction listed {plan.get('count')}x {plan.get('templateId')}{source_label} for {plan.get('price')}; order {order.get('id')}"
             else:
                 response = result.get("error", "auction failed")
-            if reply:
-                run_announce(response, target_name=resolved_name or sender_name, target_fls_id=sender_fls_id)
-            return result | {"message": response, "dryRun": dry_run}
+            announce_result = maybe_reply(response, reply, target_name=resolved_name or sender_name, target_fls_id=sender_fls_id)
+            return result | {"message": response, "dryRun": dry_run, "reply": announce_result}
 
         try:
             source, explicit_inventory_id, explicit_item_id, search_text, count, price = parse_auction_command_args(parts[1:])
         except ValueError as exc:
             response = str(exc)
-            if reply:
-                run_announce(response, target_name=sender_name, target_fls_id=sender_fls_id)
-            return {"ok": False, "error": response}
+            announce_result = maybe_reply(response, reply, target_name=sender_name, target_fls_id=sender_fls_id)
+            return {"ok": False, "error": response, "reply": announce_result}
         resolved_name = resolve_sender_character(conn, sender_name, sender_fls_id)
         player, matches = character_row(conn, resolved_name)
         if player is None:
             response = "could not resolve your character for auction"
             if matches:
                 response = "no unique character match: " + ", ".join(row["character_name"] for row in matches)
-            if reply:
-                run_announce(response, target_name=resolved_name or sender_name, target_fls_id=sender_fls_id)
-            return {"ok": False, "error": response}
+            announce_result = maybe_reply(response, reply, target_name=resolved_name or sender_name, target_fls_id=sender_fls_id)
+            return {"ok": False, "error": response, "reply": announce_result}
         dry_run = not chat_auction_enabled()
         result = auction_item(conn, player, search_text, count, price, dry_run=dry_run, source=source, explicit_inventory_id=explicit_inventory_id, explicit_item_id=explicit_item_id)
         if result.get("ok"):
@@ -1593,9 +1587,8 @@ def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=F
                     f"no exact match for '{search_text}'. did you mean {suggestion['templateId']} "
                     f"from inventory {suggestion['inventoryId']}? reply &auction yes or &auction no"
                 )
-        if reply:
-            run_announce(response, target_name=resolved_name or sender_name, target_fls_id=sender_fls_id)
-        return result | {"message": response, "dryRun": dry_run}
+        announce_result = maybe_reply(response, reply, target_name=resolved_name or sender_name, target_fls_id=sender_fls_id)
+        return result | {"message": response, "dryRun": dry_run, "reply": announce_result}
 
     allowed, resolved_admin = is_admin(conn, sender_name, sender_fls_id)
     if not allowed:

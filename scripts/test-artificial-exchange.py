@@ -275,6 +275,13 @@ class ArtificialExchangeBotTest(unittest.TestCase):
         with mock.patch.object(bot.random, "choice", side_effect=lambda values: values[0]):
             self.assertEqual(bot.planned_unique_price(row, 20, {}), 100)
 
+    def test_planned_unique_price_can_expand_tight_fixed_ranges(self):
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_PRICE_SPAN"] = "20"
+        row = self.catalog_row(price_floor=100, price_ceiling=100)
+        used = {"ItemA": set(range(100, 119))}
+        with mock.patch.object(bot.random, "choice", side_effect=lambda values: values[0]):
+            self.assertEqual(bot.planned_unique_price(row, 20, used), 119)
+
     def test_planned_unique_price_samples_large_floor_ceiling_range(self):
         row = self.catalog_row(price_floor=100, price_ceiling=100000000)
         with mock.patch.object(bot.random, "randint", return_value=500):

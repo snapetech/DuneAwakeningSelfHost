@@ -252,6 +252,7 @@ def jitter_price_bounds(baseline_price, jitter_pct):
 def populator_price_bounds(row, jitter_pct):
     floor = row.get("price_floor")
     ceiling = row.get("price_ceiling")
+    min_span = max(1, int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_PRICE_SPAN", "1")))
     if floor not in (None, "") and ceiling not in (None, ""):
         low = max(1, int(floor))
         high = max(low, int(ceiling))
@@ -261,9 +262,14 @@ def populator_price_bounds(row, jitter_pct):
             lower_pct = min(100, max(0, lower_pct))
             upper_pct = min(100, max(lower_pct, upper_pct))
             spread = high - low
-            return low + int(round(spread * lower_pct / 100)), low + int(round(spread * upper_pct / 100))
+            low, high = low + int(round(spread * lower_pct / 100)), low + int(round(spread * upper_pct / 100))
+        if high - low + 1 < min_span:
+            high = low + min_span - 1
         return low, high
-    return jitter_price_bounds(row["baseline_price"], jitter_pct)
+    low, high = jitter_price_bounds(row["baseline_price"], jitter_pct)
+    if high - low + 1 < min_span:
+        high = low + min_span - 1
+    return low, high
 
 
 def planned_unique_price(row, jitter_pct, used_prices):
@@ -879,6 +885,58 @@ def populate_all_once(args):
         "totalPlanned": len(planned),
     }
     log_event("populate-all-complete", dryRun=args.dry_run, activeSeededOrders=len(active), eligibleCatalogRows=len(eligible), planned=len(planned), durationMs=int((time.time() - started) * 1000))
+    return result
+
+
+def populate_templates_once(args):
+    started = time.time()
+    if not env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ENABLED", False):
+        raise RuntimeError("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ENABLED is false")
+    if args.populator_owner_id <= 0:
+        raise RuntimeError("--populator-owner-id is required")
+    if args.populator_source_inventory_id <= 0:
+        raise RuntimeError("--populator-source-inventory-id is required")
+    catalog = load_catalog(args.catalog)
+    eligible = populator_catalog_rows(catalog)
+    target = int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_TEMPLATE_TARGET_ORDERS", str(args.populator_target_min_orders)))
+    conn = connect_db()
+    conn.autocommit = False
+    planned = []
+    summary = []
+    try:
+        require_populator_preflight(conn, args, catalog, eligible)
+        active = fetch_seeded_orders(conn, args.exchange_id, args.populator_owner_id, max(args.limit, len(eligible) * max(1, target) + 10000))
+        active_by_template = {}
+        for order in active:
+            active_by_template[order["template_id"]] = active_by_template.get(order["template_id"], 0) + 1
+        selected_rows = []
+        for row in eligible:
+            active_count = active_by_template.get(row["template_id"], 0)
+            needed = max(0, target - active_count)
+            summary.append({"templateId": row["template_id"], "active": active_count, "planned": needed, "tier": catalog_tier(row), "category": row.get("category")})
+            selected_rows.extend([row] * needed)
+        positions = fetch_free_inventory_positions(conn, args.populator_source_inventory_id, len(selected_rows))
+        planned = apply_seed_events(conn, args, plan_seed_events(args, selected_rows, active, positions))
+        if args.dry_run:
+            conn.rollback()
+        else:
+            conn.commit()
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
+    conn.close()
+    result = {
+        "ok": True,
+        "dryRun": args.dry_run,
+        "targetPerTemplate": target,
+        "activeSeededOrders": len(active),
+        "eligibleCatalogRows": len(eligible),
+        "templates": summary,
+        "planned": planned,
+        "totalPlanned": len(planned),
+    }
+    log_event("populate-templates-complete", dryRun=args.dry_run, eligibleCatalogRows=len(eligible), planned=len(planned), durationMs=int((time.time() - started) * 1000))
     return result
 
 
@@ -1510,6 +1568,7 @@ def main():
     parser.add_argument("--populate-once", action="store_true")
     parser.add_argument("--populate-categories-once", action="store_true")
     parser.add_argument("--populate-all-once", action="store_true")
+    parser.add_argument("--populate-templates-once", action="store_true")
     parser.add_argument("--populate-loop", action="store_true")
     parser.add_argument("--expire-seeded", action="store_true")
     parser.add_argument("--validate-populator-once", action="store_true")
@@ -1536,7 +1595,15 @@ def main():
     parser.add_argument("--dry-run", dest="dry_run", action="store_true", default=None)
     parser.add_argument("--apply", dest="dry_run", action="store_false")
     args = parser.parse_args()
-    populator_mode = args.populate_once or args.populate_categories_once or args.populate_all_once or args.populate_loop or args.validate_populator_once or args.expire_seeded
+    populator_mode = (
+        args.populate_once
+        or args.populate_categories_once
+        or args.populate_all_once
+        or args.populate_templates_once
+        or args.populate_loop
+        or args.validate_populator_once
+        or args.expire_seeded
+    )
     if args.dry_run is None:
         if populator_mode:
             args.dry_run = env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_DRY_RUN", True)
@@ -1572,6 +1639,9 @@ def main():
         return
     if args.populate_all_once:
         print(json.dumps(populate_all_once(args), indent=2, default=str))
+        return
+    if args.populate_templates_once:
+        print(json.dumps(populate_templates_once(args), indent=2, default=str))
         return
     if args.expire_seeded and not (args.populate_once or args.populate_loop):
         print(json.dumps(expire_seeded_once(args), indent=2, default=str))

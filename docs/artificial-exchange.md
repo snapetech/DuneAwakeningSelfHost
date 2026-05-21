@@ -493,6 +493,13 @@ Current default pricing:
   selected dune.exchange price.
 - `price_ceiling` is the selected dune.exchange price.
 - `planned_unique_price(...)` samples the full floor-to-ceiling range.
+- `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_RANGE_LOW_PCT` and
+  `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_RANGE_HIGH_PCT` can narrow that explicit
+  floor/ceiling range. The current aggressive liquidity run uses the default
+  full `0..100` band.
+- `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_PRICE_SPAN` can widen a too-tight
+  floor/ceiling range so multiple active orders for the same template get
+  unique prices instead of merging through the native recurring-order path.
 - `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_PRICE_JITTER_PCT` is used only for rows
   that do not have explicit floor/ceiling values.
 
@@ -633,6 +640,45 @@ DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_DRY_RUN=false \
   --populator-source-inventory-id 485 \
   --confirm "POPULATE ARTIFICIAL EXCHANGE"
 ```
+
+Populate up to a fixed active order target for every eligible template:
+
+```bash
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ENABLED=true \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_TEMPLATE_TARGET_ORDERS=20 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_MARKET_PRICE=false \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_TIER=3 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_PRICE_SPAN=20 \
+  python3 scripts/artificial-exchange-bot.py \
+  --populate-templates-once \
+  --populator-owner-id 17 \
+  --populator-source-inventory-id 485 \
+  --limit 50000
+```
+
+Apply mode:
+
+```bash
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ENABLED=true \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_DRY_RUN=false \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_TEMPLATE_TARGET_ORDERS=20 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_MARKET_PRICE=false \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_TIER=3 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_PRICE_SPAN=20 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_TARGET_MAX_ORDERS=50000 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_HARD_MAX_ORDERS=50000 \
+  python3 scripts/artificial-exchange-bot.py \
+  --populate-templates-once \
+  --apply \
+  --populator-owner-id 17 \
+  --populator-source-inventory-id 485 \
+  --limit 50000 \
+  --confirm "POPULATE ARTIFICIAL EXCHANGE"
+```
+
+This mode is intentionally one-shot. It does not change the installed
+`--populate-loop` service behavior. Leave the service stopped unless you
+explicitly want the older global target loop to run.
 
 Run expiry and over-cap cleanup for seeded NPC listings:
 
