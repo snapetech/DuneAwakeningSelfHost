@@ -58,6 +58,8 @@ Implemented in `admin/admin_panel.py`:
 - Dry-run-first guild mutator for description and member role changes through first-party guild functions; disband/remove/invite operations remain blocked.
 - Dry-run-first marker deletion mutator for marker IDs and static-location keys through first-party marker functions; marker creation/editing remains blocked.
 - Dry-run-first landclaim segment mutator for adding a segment to a known totem; rollback requires backup/manual repair because no delete function is mapped.
+- Read-only economy inspector for Dune Exchange, vehicles, recovered/backup vehicles, and base backups.
+- Dry-run-first Dune Exchange Solari balance mutator through first-party exchange balance functions; order add/fulfill/cancel/relist remains blocked.
 - Read-only spice/resource field inspection.
 - Event definition persistence under `backups/admin-panel/events.json`.
 - Event dry-run planner and explicit execution gate.
@@ -80,6 +82,7 @@ The implementation intentionally keeps catalog reads independent from write gate
 | `DUNE_ADMIN_GUILD_MUTATIONS_ENABLED` | `false` | Guild description and role execution. Guild inspection and dry-runs remain available. |
 | `DUNE_ADMIN_MARKER_MUTATIONS_ENABLED` | `false` | Marker deletion execution. Marker inspection and dry-runs remain available. |
 | `DUNE_ADMIN_LANDCLAIM_MUTATIONS_ENABLED` | `false` | Landclaim segment execution. Landclaim inspection and dry-runs remain available. |
+| `DUNE_ADMIN_EXCHANGE_MUTATIONS_ENABLED` | `false` | Dune Exchange Solari balance execution. Economy inspection and dry-runs remain available. |
 | `DUNE_ADMIN_MUTATIONS_ENABLED` | repo default currently `true` | Existing global mutation gate. |
 | `DUNE_ADMIN_ITEM_GRANTS_ENABLED` | repo default currently `true` | Item grant and bundle item execution. |
 | `DUNE_ADMIN_GM_COMMANDS_ENABLED` | `false` | Native GM command execution. Still also blocked by payload verification. |
@@ -98,6 +101,7 @@ The implementation intentionally keeps catalog reads independent from write gate
 | `WRITE GUILD` | Guild description and role execution. |
 | `DELETE MARKERS` | Marker deletion execution. |
 | `WRITE LANDCLAIM` | Landclaim segment execution. |
+| `WRITE EXCHANGE` | Dune Exchange Solari balance execution. |
 | `RUN GM COMMAND` | Native GM command execution, still blocked until payload verification. |
 
 ## Typed Knob Registry
@@ -194,6 +198,8 @@ Near-term, high-confidence work:
 - Validate guild description and role changes on a disposable guild. Keep disband, remove-member, invite, allegiance, and create-guild operations blocked until role IDs, faction side effects, and rollback are documented.
 - Validate marker deletion on disposable/static test markers only. Do not add marker creation/editing until `saveplayermarkerdata`, `savemarkerdata`, marker payloads, and ID update semantics are fully documented.
 - Validate landclaim segment addition on disposable base/totem data only. Do not add landclaim deletion or permission-actor mutation until ownership and permission side effects are documented.
+- Validate Dune Exchange Solari balance changes on disposable player economy data. Do not add sell-order add/fulfill/cancel/relist until inventory locking, order revision, purge/completion types, and rollback are documented.
+- Keep vehicle restore and base backup save/recycle/delete blocked until `serverinfo`, `transform`, inventory side effects, and spawned actor ownership are validated end-to-end.
 
 Medium-confidence work:
 

@@ -310,6 +310,7 @@ POST /api/admin/respawn-location
 POST /api/admin/guild
 POST /api/admin/marker
 POST /api/admin/landclaim
+POST /api/admin/exchange
 ```
 
 Mapped first-party functions:
@@ -339,6 +340,8 @@ dune.delete_static_location_markers(p_location_keys text[])
 dune.delete_markers_return_actor_ids(in_dimension_index integer, in_map_name text, in_marker_ids integer[])
 dune.get_landclaim_segments(in_totem_id bigint)
 dune.add_landclaim_segment(in_totem_id bigint, in_grid_location_x bigint, in_grid_location_y bigint)
+dune.dune_exchange_retrieve_solari_balance(in_owner_id bigint)
+dune.dune_exchange_modify_user_solari_balance(in_controller_id bigint, in_solari_delta bigint)
 ```
 
 Separate gates:
@@ -352,6 +355,7 @@ DUNE_ADMIN_RESPAWN_MUTATIONS_ENABLED=false
 DUNE_ADMIN_GUILD_MUTATIONS_ENABLED=false
 DUNE_ADMIN_MARKER_MUTATIONS_ENABLED=false
 DUNE_ADMIN_LANDCLAIM_MUTATIONS_ENABLED=false
+DUNE_ADMIN_EXCHANGE_MUTATIONS_ENABLED=false
 ```
 
 Confirmation phrases:
@@ -365,6 +369,7 @@ DELETE RESPAWN
 WRITE GUILD
 DELETE MARKERS
 WRITE LANDCLAIM
+WRITE EXCHANGE
 ```
 
 Current confidence:
@@ -377,6 +382,7 @@ Current confidence:
 - Guild description and role changes: moderate mechanically because first-party functions exist; high social-state risk. Destructive guild operations remain blocked.
 - Marker deletion: moderate mechanically because first-party delete functions exist; high rollback risk because marker save/recreation semantics are not mapped.
 - Landclaim segment addition: low-to-moderate because add/get functions exist, but the current local table has no rows and no delete-segment rollback function is mapped.
+- Dune Exchange Solari balance: moderate mechanically because first-party retrieve/modify functions exist; high economy risk. Order lifecycle functions remain blocked.
 
 ## Landsraad Term Administration
 
@@ -549,3 +555,95 @@ dune.add_landclaim_segment(in_totem_id bigint, in_grid_location_x bigint, in_gri
 Execution is blocked unless the global mutation gate and `DUNE_ADMIN_LANDCLAIM_MUTATIONS_ENABLED=true` are both set, and the request includes `confirm: "WRITE LANDCLAIM"`.
 
 Rollback posture is weak. No delete-segment function is mapped. The current local database has an empty `dune.landclaim_segments` table, so live semantics need disposable base/totem validation before this is used on real claims.
+
+## Economy And Exchange Inspection
+
+The read-only endpoint is:
+
+```text
+POST /api/admin/economy/inspect
+```
+
+It accepts optional `account_id`, `player_id`, `controller_id`, and `exchange_id`, then returns local evidence for:
+
+```sql
+dune.dune_exchange_retrieve_solari_balance(...)
+dune.dune_exchange_orders
+dune.dune_exchange_users
+dune.load_recovered_vehicles(...)
+dune.load_backup_vehicle(...)
+dune.base_backup_get_available_backups(...)
+```
+
+It also lists matching `pg_proc` signatures and `information_schema` table columns for exchange, vehicle, backup, and contract surfaces.
+
+Current local evidence:
+
+```text
+vehicles: 3
+vehicle_modules: 26
+recovered_vehicles: 0
+backup_vehicles: 1
+dune_exchange_orders: 0
+```
+
+## Dune Exchange Solari Balance
+
+The panel endpoint is:
+
+```text
+POST /api/admin/exchange
+```
+
+Supported modes:
+
+```text
+add
+set
+```
+
+Mapped functions:
+
+```sql
+dune.dune_exchange_retrieve_solari_balance(in_owner_id bigint)
+dune.dune_exchange_modify_user_solari_balance(in_controller_id bigint, in_solari_delta bigint)
+```
+
+Execution is blocked unless the global mutation gate and `DUNE_ADMIN_EXCHANGE_MUTATIONS_ENABLED=true` are both set, and the request includes `confirm: "WRITE EXCHANGE"`.
+
+Rollback posture:
+
+- Dry-run records the prior Exchange Solari balance.
+- A compensating `mode=set` request can restore the prior balance.
+
+Blocked Exchange functions for now:
+
+```sql
+dune.dune_exchange_add_sell_order(...)
+dune.dune_exchange_fulfill_sell_order(...)
+dune.dune_exchange_cancel_order(...)
+dune.dune_exchange_relist_order(...)
+dune.dune_exchange_retrieve_storage_item(...)
+dune.dune_exchange_retrieve_solaris_from_item(...)
+dune.dune_exchange_expire_orders(...)
+dune.dune_exchange_purge_completed_orders(...)
+```
+
+Confidence is moderate for balance mechanics and low for order lifecycle operations until inventory IDs, order revisions, completion types, purge timing, and item transfer rollback are documented.
+
+## Vehicle And Base Backup Limits
+
+Vehicle and base backup functions are cataloged but blocked for execution:
+
+```sql
+dune.restore_recovered_vehicle(...)
+dune.restore_backup_vehicle(...)
+dune.store_recovered_vehicle(...)
+dune.save_vehicle_modules(...)
+dune.base_backup_save(...)
+dune.base_backup_save_from_totem(...)
+dune.base_backup_recycle(...)
+dune.base_backup_delete(...)
+```
+
+Confidence is moderate for read functions and low for write functions. Restore/spawn paths require `serverinfo`, nested `transform`, inventory ownership, spawned actor ownership, and live map-server refresh semantics to be validated before any safe admin mutator is exposed.

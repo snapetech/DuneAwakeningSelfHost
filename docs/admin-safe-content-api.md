@@ -30,6 +30,7 @@ Content-Type: application/json
 | `DUNE_ADMIN_GUILD_MUTATIONS_ENABLED` | `false` | Enables guild description and member role changes through first-party functions. Does not block inspection or dry-runs. |
 | `DUNE_ADMIN_MARKER_MUTATIONS_ENABLED` | `false` | Enables marker deletion through first-party marker functions. Does not block inspection or dry-runs. |
 | `DUNE_ADMIN_LANDCLAIM_MUTATIONS_ENABLED` | `false` | Enables landclaim segment addition through `dune.add_landclaim_segment`. Does not block inspection or dry-runs. |
+| `DUNE_ADMIN_EXCHANGE_MUTATIONS_ENABLED` | `false` | Enables Dune Exchange Solari balance changes through first-party exchange functions. Does not block inspection or dry-runs. |
 | `DUNE_ADMIN_MUTATIONS_ENABLED` | repo default currently `true` | Existing global mutation gate. |
 | `DUNE_ADMIN_ITEM_GRANTS_ENABLED` | repo default currently `true` | Existing item mutation gate. |
 
@@ -605,6 +606,65 @@ dune.add_landclaim_segment(in_totem_id bigint, in_grid_location_x bigint, in_gri
 ```
 
 Risk: high. No first-party delete-segment function has been mapped. Rollback requires a database backup restore or manual table repair.
+
+## Economy Inspect
+
+### `POST /api/admin/economy/inspect`
+
+Read-only endpoint for Dune Exchange, vehicle, recovered/backup vehicle, and base-backup evidence.
+
+```json
+{
+  "account_id": 456,
+  "player_id": 123,
+  "controller_id": 124,
+  "exchange_id": 1
+}
+```
+
+Returned evidence includes:
+
+- `dune.dune_exchange_users`
+- `dune.dune_exchange_orders`
+- `dune.dune_exchange_retrieve_solari_balance`
+- `dune.load_recovered_vehicles`
+- `dune.load_backup_vehicle`
+- `dune.base_backup_get_available_backups`
+- matching function signatures from `pg_proc`
+- matching table/column definitions from `information_schema`
+
+No writes are performed.
+
+## Dune Exchange Solari
+
+### `POST /api/admin/exchange`
+
+Default mode is dry-run. Supported modes are `add` and `set`.
+
+```json
+{
+  "dry_run": true,
+  "owner_id": 123,
+  "controller_id": 124,
+  "amount": 1000,
+  "mode": "add"
+}
+```
+
+Execution requirements:
+
+- `DUNE_ADMIN_MUTATIONS_ENABLED=true`
+- `DUNE_ADMIN_EXCHANGE_MUTATIONS_ENABLED=true`
+- `confirm: "WRITE EXCHANGE"`
+
+Function mapping:
+
+```sql
+dune.dune_exchange_retrieve_solari_balance(in_owner_id bigint)
+dune.dune_exchange_modify_user_solari_balance(in_controller_id bigint, in_solari_delta bigint)
+```
+
+Risk: high. This changes Exchange-local economy state, not the generic virtual currency table. Dry-run records the previous balance and rollback uses `mode=set`. Order add, fulfill, cancel, relist, retrieve, purge, and category-update functions remain blocked.
 
 ## Respawn Location Delete
 

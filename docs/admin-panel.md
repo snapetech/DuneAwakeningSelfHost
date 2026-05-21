@@ -148,6 +148,8 @@ server {
 - Guild description and role planning through `POST /api/admin/guild`, default `dry_run=true`. Execution requires `DUNE_ADMIN_GUILD_MUTATIONS_ENABLED=true` and confirmation `WRITE GUILD`.
 - Marker deletion planning through `POST /api/admin/marker`, default `dry_run=true`. Execution requires `DUNE_ADMIN_MARKER_MUTATIONS_ENABLED=true` and confirmation `DELETE MARKERS`.
 - Landclaim segment planning through `POST /api/admin/landclaim`, default `dry_run=true`. Execution requires `DUNE_ADMIN_LANDCLAIM_MUTATIONS_ENABLED=true` and confirmation `WRITE LANDCLAIM`.
+- Economy inspection through `POST /api/admin/economy/inspect` for Dune Exchange, vehicle, recovered/backup vehicle, and base-backup evidence.
+- Dune Exchange Solari planning through `POST /api/admin/exchange`, default `dry_run=true`. Execution requires `DUNE_ADMIN_EXCHANGE_MUTATIONS_ENABLED=true` and confirmation `WRITE EXCHANGE`.
 - Event planner APIs:
   - `GET /api/events`
   - `POST /api/events/dry-run`
@@ -212,6 +214,7 @@ DUNE_ADMIN_RESPAWN_MUTATIONS_ENABLED=false
 DUNE_ADMIN_GUILD_MUTATIONS_ENABLED=false
 DUNE_ADMIN_MARKER_MUTATIONS_ENABLED=false
 DUNE_ADMIN_LANDCLAIM_MUTATIONS_ENABLED=false
+DUNE_ADMIN_EXCHANGE_MUTATIONS_ENABLED=false
 ```
 
 Gate behavior:
@@ -228,6 +231,7 @@ Gate behavior:
 - `DUNE_ADMIN_GUILD_MUTATIONS_ENABLED`: controls guild description and role server-function calls. Guild dry-runs still work.
 - `DUNE_ADMIN_MARKER_MUTATIONS_ENABLED`: controls marker deletion server-function calls. Marker dry-runs still work.
 - `DUNE_ADMIN_LANDCLAIM_MUTATIONS_ENABLED`: controls landclaim segment server-function calls. Landclaim dry-runs still work.
+- `DUNE_ADMIN_EXCHANGE_MUTATIONS_ENABLED`: controls Dune Exchange Solari balance server-function calls. Economy dry-runs still work.
 
 Existing gates still apply:
 
@@ -252,6 +256,7 @@ DELETE RESPAWN
 WRITE GUILD
 DELETE MARKERS
 WRITE LANDCLAIM
+WRITE EXCHANGE
 RUN GM COMMAND
 ```
 
@@ -525,6 +530,18 @@ Execution requires:
 - `confirm: "WRITE LANDCLAIM"`
 
 The endpoint uses `dune.get_landclaim_segments` for preflight and `dune.add_landclaim_segment` for execution. Confidence is low-to-moderate because the local table is empty and no delete-segment rollback function is mapped.
+
+`POST /api/admin/economy/inspect` reads Dune Exchange, vehicle, recovered/backup vehicle, and base-backup evidence without writing. It accepts optional `account_id`, `player_id`, `controller_id`, and `exchange_id`, and returns matching `pg_proc` functions plus table/column metadata.
+
+`POST /api/admin/exchange` plans or executes Dune Exchange Solari balance changes. Supported modes are `add` and `set`.
+
+Execution requires:
+
+- `DUNE_ADMIN_MUTATIONS_ENABLED=true`
+- `DUNE_ADMIN_EXCHANGE_MUTATIONS_ENABLED=true`
+- `confirm: "WRITE EXCHANGE"`
+
+The endpoint uses `dune.dune_exchange_retrieve_solari_balance` for preflight and `dune.dune_exchange_modify_user_solari_balance` for execution. Confidence is moderate for the balance mechanics and low for order operations, so add/fulfill/cancel/relist/retrieve/purge order functions remain blocked.
 
 `POST /api/admin/journey` plans or executes journey story-node server functions. Supported actions are `reveal`, `complete`, `reset`, and `delete`.
 

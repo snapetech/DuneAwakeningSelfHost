@@ -88,6 +88,10 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn("world-state-function-discovery", by_id)
         self.assertIn("marker-delete-functions", by_id)
         self.assertIn("landclaim-segment-functions", by_id)
+        self.assertIn("exchange-solari-balance", by_id)
+        self.assertIn("exchange-order-functions", by_id)
+        self.assertIn("vehicle-restore-functions", by_id)
+        self.assertIn("base-backup-functions", by_id)
         self.assertEqual(by_id["recipe-vehicle-function-discovery"]["mutationRisk"], "blocked")
 
     def test_typed_knob_validation_and_backup_write(self):

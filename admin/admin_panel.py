@@ -3927,6 +3927,14 @@ class Handler(BaseHTTPRequestHandler):
                     "actions": ["add-segment"],
                     "confidence": "low-to-moderate",
                 },
+                "exchangeSolari": {
+                    "endpoint": "/api/admin/exchange",
+                    "defaultDryRun": True,
+                    "executionGate": "DUNE_ADMIN_EXCHANGE_MUTATIONS_ENABLED",
+                    "confirm": CONFIRM_EXCHANGE_MUTATION,
+                    "actions": ["add", "set"],
+                    "confidence": "moderate",
+                },
                 "journeyRecipeVehicle": {
                     "status": "inspect-only",
                     "reason": "Recipe and vehicle function signatures can be discovered here, but writes stay blocked until safe contracts and live examples are mapped.",
@@ -4074,6 +4082,115 @@ class Handler(BaseHTTPRequestHandler):
                 "vehicleRecipeMarkerLandclaim": {
                     "status": "inspect-only",
                     "reason": "Functions and tables are cataloged here, but writes stay blocked until transform/serverinfo/composite semantics and rollback are proven.",
+                },
+            },
+            "errors": errors,
+        }
+
+    def economy_inspect(self, body):
+        errors = {}
+        account_id = body.get("account_id", body.get("accountId"))
+        player_id = body.get("player_id", body.get("playerId"))
+        owner_id = body.get("owner_id", body.get("ownerId", player_id))
+        controller_id = body.get("controller_id", body.get("controllerId"))
+        exchange_id = body.get("exchange_id", body.get("exchangeId"))
+        if account_id not in ("", None) and player_id in ("", None):
+            player_rows = reference_query(errors, "playerForAccount", """
+                select account_id, character_name, online_status::text, player_controller_id, player_pawn_id
+                from dune.player_state
+                where account_id=%s
+            """, (int(account_id),))
+            if player_rows:
+                player_id = player_rows[0].get("player_pawn_id")
+                controller_id = controller_id or player_rows[0].get("player_controller_id")
+                owner_id = owner_id or player_id
+        exchange_users = []
+        exchange_balance = []
+        if owner_id not in ("", None):
+            exchange_users = reference_query(errors, "exchangeUsers", "select * from dune.dune_exchange_users where owner_id=%s", (int(owner_id),))
+            exchange_balance = reference_query(errors, "exchangeBalance", "select dune.dune_exchange_retrieve_solari_balance(%s) as solari_balance", (int(owner_id),))
+        exchange_orders = []
+        if owner_id not in ("", None):
+            exchange_orders = reference_query(errors, "exchangeOrdersByOwner", """
+                select * from dune.dune_exchange_orders where owner_id=%s order by id desc limit %s
+            """, (int(owner_id), ADMIN_REFERENCE_LIMIT))
+        elif exchange_id not in ("", None):
+            exchange_orders = reference_query(errors, "exchangeOrdersByExchange", """
+                select * from dune.dune_exchange_orders where exchange_id=%s order by id desc limit %s
+            """, (int(exchange_id), ADMIN_REFERENCE_LIMIT))
+        counts = reference_query(errors, "economyCounts", """
+            select 'dune_exchange_orders' as table_name, count(*) as rows from dune.dune_exchange_orders
+            union all select 'dune_exchange_users', count(*) from dune.dune_exchange_users
+            union all select 'vehicles', count(*) from dune.vehicles
+            union all select 'vehicle_modules', count(*) from dune.vehicle_modules
+            union all select 'recovered_vehicles', count(*) from dune.recovered_vehicles
+            union all select 'backup_vehicles', count(*) from dune.backup_vehicles
+            union all select 'base_backups', count(*) from dune.base_backups
+        """)
+        recovered = []
+        backup_vehicle = []
+        if account_id not in ("", None):
+            recovered = reference_query(errors, "recoveredVehicles", "select * from dune.load_recovered_vehicles(%s, %s) limit %s", (int(account_id), 0, ADMIN_REFERENCE_LIMIT))
+            backup_vehicle = reference_query(errors, "backupVehicle", "select * from dune.load_backup_vehicle(%s) limit %s", (int(account_id), ADMIN_REFERENCE_LIMIT))
+        base_backups = []
+        if player_id not in ("", None):
+            base_backups = reference_query(errors, "baseBackups", "select * from dune.base_backup_get_available_backups(%s) limit %s", (int(player_id), ADMIN_REFERENCE_LIMIT))
+        functions = reference_query(errors, "functions", """
+            select n.nspname as schema, p.proname as name,
+                   pg_get_function_identity_arguments(p.oid) as args,
+                   pg_get_function_result(p.oid) as result
+            from pg_proc p
+            join pg_namespace n on n.oid = p.pronamespace
+            where n.nspname = 'dune'
+              and (
+                p.proname ilike '%%exchange%%'
+                or p.proname ilike '%%vehicle%%'
+                or p.proname ilike '%%backup%%'
+                or p.proname ilike '%%contract%%'
+              )
+            order by p.proname
+            limit %s
+        """, (ADMIN_REFERENCE_LIMIT,))
+        tables = reference_query(errors, "tables", """
+            select table_name, column_name, data_type, udt_name
+            from information_schema.columns
+            where table_schema='dune'
+              and (
+                table_name ilike '%%exchange%%'
+                or table_name ilike '%%vehicle%%'
+                or table_name ilike '%%backup%%'
+                or table_name ilike '%%contract%%'
+              )
+            order by table_name, ordinal_position
+            limit %s
+        """, (ADMIN_REFERENCE_LIMIT * 5,))
+        return {
+            "accountId": int(account_id) if account_id not in ("", None) else None,
+            "playerId": int(player_id) if player_id not in ("", None) else None,
+            "ownerId": int(owner_id) if owner_id not in ("", None) else None,
+            "controllerId": int(controller_id) if controller_id not in ("", None) else None,
+            "exchangeId": int(exchange_id) if exchange_id not in ("", None) else None,
+            "exchangeUsers": exchange_users,
+            "exchangeBalance": exchange_balance[0] if exchange_balance else None,
+            "exchangeOrders": exchange_orders,
+            "counts": counts,
+            "recoveredVehicles": recovered,
+            "backupVehicle": backup_vehicle,
+            "baseBackups": base_backups,
+            "functions": functions,
+            "tables": tables,
+            "mutators": {
+                "exchangeSolari": {
+                    "endpoint": "/api/admin/exchange",
+                    "defaultDryRun": True,
+                    "executionGate": "DUNE_ADMIN_EXCHANGE_MUTATIONS_ENABLED",
+                    "confirm": CONFIRM_EXCHANGE_MUTATION,
+                    "actions": ["add", "set"],
+                    "confidence": "moderate",
+                },
+                "exchangeOrdersVehiclesBaseBackups": {
+                    "status": "inspect-only",
+                    "reason": "Order, vehicle restore, and base backup functions require inventory/serverinfo/transform/composite semantics and stronger rollback mapping.",
                 },
             },
             "errors": errors,
@@ -4420,6 +4537,38 @@ class Handler(BaseHTTPRequestHandler):
         execute("select dune.add_landclaim_segment(%s,%s,%s)", (totem_id, grid_x, grid_y))
         after = query("select * from dune.get_landclaim_segments(%s) order by grid_location_x, grid_location_y", (totem_id,))
         return {"ok": True, "dryRun": False, "action": action, "totemId": totem_id, "gridX": grid_x, "gridY": grid_y, "before": before, "after": after, "rollback": plan["rollback"]}
+
+    def exchange_mutation(self, body):
+        owner_id = int(body.get("owner_id", body.get("ownerId")))
+        controller_id = int(body.get("controller_id", body.get("controllerId", owner_id)))
+        amount = int(body.get("amount", 0))
+        mode = str(body.get("mode", "add")).strip().lower()
+        if mode not in ("add", "set"):
+            raise ValueError("mode must be add or set")
+        dry_run = str(body.get("dry_run", body.get("dryRun", "true"))).lower() not in ("0", "false", "no", "off")
+        before_rows = query("select dune.dune_exchange_retrieve_solari_balance(%s) as solari_balance", (owner_id,))
+        before_balance = int((before_rows[0] if before_rows else {}).get("solari_balance") or 0)
+        delta = amount if mode == "add" else amount - before_balance
+        plan = {
+            "function": "dune.dune_exchange_modify_user_solari_balance",
+            "args": [controller_id, delta],
+            "ownerId": owner_id,
+            "controllerId": controller_id,
+            "mode": mode,
+            "amount": amount,
+            "beforeBalance": before_balance,
+            "delta": delta,
+            "rollback": {"mode": "set", "owner_id": owner_id, "controller_id": controller_id, "amount": before_balance, "confirm": CONFIRM_EXCHANGE_MUTATION},
+        }
+        if dry_run:
+            return {"ok": True, "dryRun": True, "ownerId": owner_id, "controllerId": controller_id, "mode": mode, "plan": plan, "executionGate": "DUNE_ADMIN_EXCHANGE_MUTATIONS_ENABLED", "confirm": CONFIRM_EXCHANGE_MUTATION}
+        self.require_mutations()
+        if not EXCHANGE_MUTATIONS_ENABLED:
+            raise PermissionError("exchange mutations are disabled; set DUNE_ADMIN_EXCHANGE_MUTATIONS_ENABLED=true")
+        require_confirmation(body, CONFIRM_EXCHANGE_MUTATION)
+        execute("select dune.dune_exchange_modify_user_solari_balance(%s,%s)", (controller_id, delta))
+        after = query("select dune.dune_exchange_retrieve_solari_balance(%s) as solari_balance", (owner_id,))
+        return {"ok": True, "dryRun": False, "ownerId": owner_id, "controllerId": controller_id, "mode": mode, "before": before_rows, "after": after, "rollback": plan["rollback"]}
 
     def respawn_location_mutation(self, body):
         account_id = int(body.get("account_id", body.get("accountId")))
@@ -6384,6 +6533,7 @@ async function catalog(serial=loadSerial){
   view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Content Catalog</h2><div class="toolbar"><span class="pill ${surfaces.enabled ? 'ok' : 'warn'}">catalog ${surfaces.enabled ? 'enabled' : 'disabled'}</span><span class="pill ${knobs.enabled ? 'warn' : 'ok'}">typed writes ${knobs.enabled ? 'enabled' : 'dry-run only'}</span><span class="pill ${events.executionEnabled ? 'warn' : 'ok'}">events ${events.executionEnabled ? 'execute enabled' : 'plan only'}</span><button data-jump="settings">Settings</button><button data-jump="mutations">Admin Actions</button></div></div><div class="panelBand"><p class="muted">Catalog endpoints are read-only. Typed knob writes require the mutation gate, typed-knob gate, backup, and confirmation phrase.</p></div>${groupPanels}<div class="twoCol"><div class="panelBand"><h2>Typed Knob Dry Run</h2><div class="grid"><label>Knob<select id="typedKnobId">${Object.values(knobs.values || {}).map(k=>`<option value="${esc(k.id)}">${esc(k.label || k.id)}</option>`).join('')}</select></label><label>Value<input id="typedKnobValue" placeholder="true, 2.5, or JSON caps"></label></div><p><button id="typedKnobDryRunBtn" class="primary">Preview typed write</button></p><pre id="typedKnobResult"></pre></div><div class="panelBand"><h2>Spice Fields</h2><p><button id="inspectSpiceBtn" class="primary">Inspect spice/resource state</button></p><pre id="spiceInspectResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Progression Inspect</h2><label>Account ID<input id="progressionAccountId"></label><p><button id="progressionInspectBtn" class="primary">Inspect progression surfaces</button></p><pre id="progressionInspectResult"></pre></div><div class="panelBand"><h2>Faction Reputation Dry Run</h2><div class="grid"><label>Account ID<input id="repAccountId"></label><label>Faction ID<input id="repFactionId"></label><label>Amount<input id="repAmount" value="100"></label><label>Mode<select id="repMode"><option>add</option><option>set</option></select></label></div><p><button id="repDryRunBtn" class="primary">Preview reputation write</button></p><pre id="repDryRunResult"></pre></div><div class="panelBand"><h2>Faction Change Dry Run</h2><div class="grid"><label>Account ID<input id="factionAccountId"></label><label>Faction ID<input id="factionId" value="3"></label><label>Neutral faction ID<input id="neutralFactionId" value="3"></label></div><p><button id="factionDryRunBtn" class="primary">Preview faction change</button></p><pre id="factionDryRunResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Journey Dry Run</h2><div class="grid"><label>Account ID<input id="journeyAccountId"></label><label>Action<select id="journeyAction"><option>reveal</option><option>complete</option><option>reset</option><option>delete</option></select></label></div><label>Story node IDs<textarea id="journeyStoryNodes" rows="3" placeholder="comma-separated story node ids"></textarea></label><p><button id="journeyDryRunBtn" class="primary">Preview journey mutation</button></p><pre id="journeyDryRunResult"></pre></div><div class="panelBand"><h2>Economy Bundle Dry Run</h2><label>Bundle JSON<textarea id="bundlePlanJson" rows="7">{"currency":[],"xp":[],"items":[],"dry_run":true}</textarea></label><p><button id="bundleDryRunBtn" class="primary">Preview bundle</button></p><pre id="bundleDryRunResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Event Dry Run</h2><label>Event JSON<textarea id="eventPlanJson" rows="7">{"name":"Deep Desert spice proposal","actions":[{"type":"spice-cap-proposal","caps":{"Medium":{"primed":24,"active":24},"Large":{"primed":3,"active":3}}}]}</textarea></label><p><button id="eventDryRunBtn" class="primary">Preview event</button></p><pre id="eventDryRunResult"></pre></div><div class="panelBand"><h2>Typed Knobs</h2>${table(knobRows)}</div></div><div class="panelBand"><h2>Validation</h2>${table(validation.commands || [])}</div><details class="panelBand"><summary>Evidence Rules</summary><ul>${(evidence.rules || []).map(r=>`<li>${esc(r)}</li>`).join('')}</ul><p class="muted">${esc((evidence.schema || []).join(', '))}</p></details><details class="panelBand"><summary>Scheduled Events</summary>${table(eventRows)}</details></div>`;
   view.querySelector('.pageStack').insertAdjacentHTML('beforeend', `<div class="twoCol"><div class="panelBand"><h2>World State Inspect</h2><div class="grid"><label>Account ID<input id="worldAccountId"></label><label>Player ID<input id="worldPlayerId"></label><label>Guild ID<input id="worldGuildId"></label></div><p><button id="worldInspectBtn" class="primary">Inspect world surfaces</button></p><pre id="worldInspectResult"></pre></div><div class="panelBand"><h2>Guild Dry Run</h2><div class="grid"><label>Action<select id="guildAction"><option>edit-description</option><option>promote-member</option><option>demote-member</option></select></label><label>Guild ID<input id="guildId"></label><label>Player ID<input id="guildPlayerId"></label><label>New role<input id="guildNewRole"></label></div><label>Description<textarea id="guildDescription" rows="3"></textarea></label><p><button id="guildDryRunBtn" class="primary">Preview guild mutation</button></p><pre id="guildDryRunResult"></pre></div></div>`);
   view.querySelector('.pageStack').insertAdjacentHTML('beforeend', `<div class="twoCol"><div class="panelBand"><h2>Marker Delete Dry Run</h2><div class="grid"><label>Action<select id="markerAction"><option>delete-by-id</option><option>delete-static-location</option></select></label><label>Marker IDs<input id="markerIds" placeholder="comma-separated ids"></label><label>Static keys<input id="markerStaticKeys" placeholder="comma-separated keys"></label></div><p><button id="markerDryRunBtn" class="primary">Preview marker deletion</button></p><pre id="markerDryRunResult"></pre></div><div class="panelBand"><h2>Landclaim Dry Run</h2><div class="grid"><label>Totem ID<input id="landclaimTotemId"></label><label>Grid X<input id="landclaimGridX"></label><label>Grid Y<input id="landclaimGridY"></label></div><p><button id="landclaimDryRunBtn" class="primary">Preview landclaim segment</button></p><pre id="landclaimDryRunResult"></pre></div></div>`);
+  view.querySelector('.pageStack').insertAdjacentHTML('beforeend', `<div class="twoCol"><div class="panelBand"><h2>Economy Inspect</h2><div class="grid"><label>Account ID<input id="economyAccountId"></label><label>Player/Owner ID<input id="economyPlayerId"></label><label>Controller ID<input id="economyControllerId"></label><label>Exchange ID<input id="economyExchangeId"></label></div><p><button id="economyInspectBtn" class="primary">Inspect economy surfaces</button></p><pre id="economyInspectResult"></pre></div><div class="panelBand"><h2>Exchange Solari Dry Run</h2><div class="grid"><label>Owner ID<input id="exchangeOwnerId"></label><label>Controller ID<input id="exchangeControllerId"></label><label>Amount<input id="exchangeAmount" value="1000"></label><label>Mode<select id="exchangeMode"><option>add</option><option>set</option></select></label></div><p><button id="exchangeDryRunBtn" class="primary">Preview exchange balance</button></p><pre id="exchangeDryRunResult"></pre></div></div>`);
   wireCatalogControls();
 }
 
@@ -6449,6 +6599,14 @@ function wireCatalogControls(root=document){
   root.querySelector('#landclaimDryRunBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Planning...', async () => {
     const result = await api('/api/admin/landclaim', {method:'POST', body:JSON.stringify({dry_run:true, action:'add-segment', totem_id:landclaimTotemId.value, grid_location_x:landclaimGridX.value, grid_location_y:landclaimGridY.value})});
     document.getElementById('landclaimDryRunResult').textContent = JSON.stringify(result, null, 2);
+  }));
+  root.querySelector('#economyInspectBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Inspecting...', async () => {
+    const result = await api('/api/admin/economy/inspect', {method:'POST', body:JSON.stringify({account_id:economyAccountId.value, player_id:economyPlayerId.value, controller_id:economyControllerId.value, exchange_id:economyExchangeId.value})});
+    document.getElementById('economyInspectResult').textContent = JSON.stringify(result, null, 2);
+  }));
+  root.querySelector('#exchangeDryRunBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Planning...', async () => {
+    const result = await api('/api/admin/exchange', {method:'POST', body:JSON.stringify({dry_run:true, owner_id:exchangeOwnerId.value, controller_id:exchangeControllerId.value || exchangeOwnerId.value, amount:exchangeAmount.value, mode:exchangeMode.value})});
+    document.getElementById('exchangeDryRunResult').textContent = JSON.stringify(result, null, 2);
   }));
 }
 function selectCfg(){ const name=document.getElementById('cfg').value; document.getElementById('cfgText').value = window.configs[name] || ''; }
