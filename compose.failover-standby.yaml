@@ -1,0 +1,4 @@
+services:
+  postgres:
+    volumes:
+      - ${POSTGRES_REMOTE_REPLICA_ROOT:?set POSTGRES_REMOTE_REPLICA_ROOT}/data:/var/lib/postgresql/data

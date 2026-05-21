@@ -49,6 +49,9 @@ install -d -m 0755 "$static_dir"
 install -m 0644 "$repo_root/public-site/static/index.html" "$static_dir/index.html"
 install -m 0644 "$repo_root/public-site/static/style.css" "$static_dir/style.css"
 install -m 0644 "$repo_root/public-site/static/app.js" "$static_dir/app.js"
+if [[ -f "$repo_root/public-site/static/hagga-pois.json" ]]; then
+  install -m 0644 "$repo_root/public-site/static/hagga-pois.json" "$static_dir/hagga-pois.json"
+fi
 if [[ -f "$repo_root/public-site/static/status.html" ]]; then
   install -m 0644 "$repo_root/public-site/static/status.html" "$static_dir/status.html"
 fi

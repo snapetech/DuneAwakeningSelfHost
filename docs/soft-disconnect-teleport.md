@@ -1,17 +1,20 @@
 # Network-Disconnect Teleport Runbook
 
 This records the first verified online-adjacent teleport primitive found for DASH.
+The mechanism is useful, but it is not a soft disconnect.
 
 Confidence: high for TestPlayer on Survival/Hagga Basin on 2026-05-21. Confidence: moderate for automation and other maps until repeated.
 
 ## Result
 
-The working path is a real network timeout followed by a first-party offline DB move. A DB-only presence flip is not enough.
+The working path is a targeted network timeout followed by a first-party offline DB move. A DB-only presence flip is not enough.
+
+This is a verified teleport mechanism, not a verified soft-reconnect mechanism. The player can be dumped to a disconnected/server-offline style screen and may need to reconnect manually. Use it only when that UX is acceptable, or keep it behind an explicit operator confirmation until a native targeted kick/session-close path is found.
 
 Verified sequence:
 
 1. Identify the player's active UDP game endpoint from Survival logs or packet capture.
-2. Drop that player's UDP game traffic long enough for Unreal to time out the `UNetConnection`.
+2. Drop that player's UDP game traffic inside the target map server network namespace long enough for Unreal to time out the `UNetConnection`.
 3. Wait for Survival to update the player from `Online` to `LoggingOut`.
 4. Wait for the 30-second logoff timer to finish and for `online_status='Offline'`.
 5. Call `dune.admin_move_offline_player_to_partition(...)`.
@@ -20,6 +23,32 @@ Verified sequence:
 8. Let the client reconnect or have the player reconnect manually.
 
 The reconnect loaded the moved pawn position and the operator confirmed the character moved.
+
+## Mechanism Notes
+
+The safest verified packet scope is inside the target map server's network namespace, not a broad host or router outage. On the tested Survival server, two exact rules were enough to affect only the target client tuple:
+
+```text
+INPUT:  client_ip:client_port -> server_ip:7777
+OUTPUT: server_ip:7777 -> client_ip:client_port
+```
+
+The tested `DROP` window hit the exact target packets and produced:
+
+```text
+UNetConnection::Tick: Connection TIMED OUT. Closing connection.
+NetworkFailure: ConnectionTimeout
+Updated player TEST_FLS_ID online status to LoggingOut
+Updated player TEST_FLS_ID online status to Offline
+```
+
+Observed timing on 2026-05-21:
+
+- `12s` targeted `DROP` reached the server timeout threshold and started logoff.
+- Survival then kept the character in `LoggingOut` for roughly `30s`.
+- The offline move helper succeeded after `online_status='Offline'`.
+
+Targeted `REJECT --reject-with icmp-port-unreachable` did hit packets but did not make the game session close during the tested window. Host-level `DOCKER-USER` and `FORWARD` rules missed the hairpin path in this deployment; the map server netns rules hit reliably.
 
 ## Verified Test Case
 
@@ -83,6 +112,8 @@ Observed failures:
 - Flipping DB presence to `Offline`, calling the offline helper, then restoring `Online` did not move the player when the live connection remained active.
 - Closing the player's RabbitMQ connections caused reconnects at the RabbitMQ layer but did not disconnect the game session.
 - Guessed native GM/RabbitMQ command payloads were consumed or ignored and did not produce `PrintPos` or teleport behavior.
+- Guessed `kick`, `RemoveSessionMember`, and `KickLobbyMember` payloads sent to the admin RPC route and the game server queue were routed or consumed but did not close the target game session.
+- Targeted ICMP `REJECT` and conntrack flow deletion did not trigger a useful soft reconnect in the tested deployment.
 - Startup `-ExecCmds` executes console commands, but tested command names did not expose a useful online teleport route.
 
 ## First-Party SQL Contract
@@ -123,6 +154,8 @@ align related actor rows if desired -> unblock endpoint -> poll reconnect/final 
 
 Use an advisory lock per account/FLS id. Always clean up network filters in a `finally` path.
 
+The current verified block primitive is timeout-shaped. Name UI and audit events accordingly, for example `network-timeout-teleport`, not `soft-teleport`.
+
 Suggested gates:
 
 ```env
@@ -141,11 +174,13 @@ NETWORK DISCONNECT TELEPORT
 ## Safety Rules
 
 - Do not treat admin-bot join/leave messages as proof of a real game disconnect.
+- Do not call this a soft disconnect. It is a targeted hard timeout until a native session-close/kick path is proven.
 - Only call the offline move helper after `dune.player_state.online_status='Offline'`.
 - Snapshot original transform, partition, map, dimension, `server_id`, and actor ids before writing.
 - Prefer same-partition moves first. Cross-partition and cross-map moves still need validation.
-- Keep the network block scoped to the target endpoint when possible.
+- Keep the network block scoped to the target endpoint and target map server namespace.
 - Avoid broad UDP outages except as an emergency/manual test because they affect every player on that Survival process.
+- Always remove packet rules even if the move fails. Verify the namespace rules are back to default before ending the operation.
 - Log the old/new coordinates, timeout time, offline time, unblock time, reconnect time, and final row state.
 
 ## Verification Query
@@ -186,5 +221,5 @@ Expected shape after reconnect:
 - Repeat on another map/partition.
 - Validate cross-partition same-map movement.
 - Validate cross-map movement.
-- Find a cleaner targeted disconnect knob than network packet drop.
+- Find a cleaner targeted disconnect knob than network packet drop, preferably a native `UNetConnection::Close`, game-session kick, or Online Services `RemoveSessionMember`/`KickLobbyMember` path.
 - Automate endpoint discovery from Survival logs or packet capture.

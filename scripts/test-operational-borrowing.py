@@ -486,5 +486,123 @@ class VerifyBackupTests(unittest.TestCase):
             self.assertIn("OK env copy present", result.stdout)
 
 
+class FailoverScriptTests(unittest.TestCase):
+    def test_router_cutover_dry_run_rewrites_env_driven_ports(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            bin_dir = tmp_path / "bin"
+            backup_dir = tmp_path / "router-backups"
+            bin_dir.mkdir()
+            ssh = bin_dir / "ssh"
+            ssh.write_text(
+                "#!/usr/bin/env bash\n"
+                "if [[ \"$*\" == *\"nvram get vts_rulelist\"* ]]; then\n"
+                "  printf '<duneA1>7000:7002>10.0.0.10>>UDP><duneA2>7100:7102>10.0.0.10>>UDP><DuneRMQ>32000>10.0.0.10>32000>TCP>'\n"
+                "  exit 0\n"
+                "fi\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            ssh.chmod(0o755)
+            env_file = tmp_path / "failover.env"
+            env_file.write_text(
+                "DUNE_FAILOVER_ROUTER_SSH=router.example.test\n"
+                "DUNE_FAILOVER_PRIMARY_LAN_IP=10.0.0.10\n"
+                "DUNE_FAILOVER_STANDBY_LAN_IP=10.0.0.20\n"
+                "EXTERNAL_ADDRESS=203.0.113.10\n"
+                "GAME_RMQ_PUBLIC_PORT=32000\n"
+                "GAME_UDP_PORT_RANGE=7000:7002\n"
+                "IGW_UDP_PORT_RANGE=7100:7102\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [str(ROOT / "scripts" / "router-cutover-asuswrt.sh"), str(env_file), "10.0.0.20"],
+                cwd=ROOT,
+                env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "DUNE_ROUTER_BACKUP_DIR": str(backup_dir)},
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("<duneA1>7000:7002>10.0.0.20>>UDP>", result.stdout)
+            self.assertIn("<duneA2>7100:7102>10.0.0.20>>UDP>", result.stdout)
+            self.assertIn("<DuneRMQ>32000>10.0.0.20>32000>TCP>", result.stdout)
+            self.assertIn("Dry run only", result.stdout)
+
+    def test_staged_rabbitmq_install_dry_run_does_not_touch_live_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            live_dir = tmp_path / "live-rabbitmq"
+            stage_dir = tmp_path / "staged-rabbitmq"
+            env_file = tmp_path / "dune.env"
+            env_file.write_text("GAME_RMQ_PUBLIC_HOST=rmq.example.test\n", encoding="utf-8")
+            live_dir.mkdir()
+            (live_dir / "server.crt").write_text("live\n", encoding="utf-8")
+
+            generated = subprocess.run(
+                [str(ROOT / "scripts" / "generate-rabbitmq-cert.sh"), str(env_file)],
+                cwd=ROOT,
+                env={**os.environ, "RABBITMQ_TLS_DIR": str(stage_dir)},
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(generated.returncode, 0, generated.stdout + generated.stderr)
+
+            result = subprocess.run(
+                [str(ROOT / "scripts" / "install-staged-rabbitmq-cert.sh"), str(env_file)],
+                cwd=ROOT,
+                env={**os.environ, "RABBITMQ_STAGED_TLS_DIR": str(stage_dir), "RABBITMQ_TLS_DIR": str(live_dir)},
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("dry-run: would back up", result.stdout)
+            self.assertEqual((live_dir / "server.crt").read_text(encoding="utf-8"), "live\n")
+
+    def test_failover_orchestrate_apply_refuses_failed_preflight(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            bin_dir = tmp_path / "bin"
+            log_file = tmp_path / "make.log"
+            bin_dir.mkdir()
+            make = bin_dir / "make"
+            make.write_text(
+                "#!/usr/bin/env bash\n"
+                "printf '%s\\n' \"$*\" >> \"$MAKE_LOG\"\n"
+                "case \"$*\" in\n"
+                "  *standby-status*) exit 2 ;;\n"
+                "  *) exit 0 ;;\n"
+                "esac\n",
+                encoding="utf-8",
+            )
+            make.chmod(0o755)
+            env_file = tmp_path / "failover.env"
+            env_file.write_text(
+                "POSTGRES_REMOTE_REPLICA_HOST=standby.example.test\n"
+                "DUNE_FAILOVER_PRIMARY_LAN_IP=10.0.0.10\n"
+                "DUNE_FAILOVER_STANDBY_LAN_IP=10.0.0.20\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [str(ROOT / "scripts" / "failover-orchestrate.sh"), str(env_file), "standby", "--apply"],
+                cwd=ROOT,
+                env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "MAKE_LOG": str(log_file)},
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("Refusing apply", result.stderr)
+            self.assertNotIn("sync-standby-files", log_file.read_text(encoding="utf-8"))
+
+
 if __name__ == "__main__":
     unittest.main()

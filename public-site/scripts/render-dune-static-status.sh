@@ -9,13 +9,27 @@ DUNE_ROOT="${DUNE_ROOT:-/opt/DuneAwakeningSelfHost}"
 INDEX_FILE="${INDEX_FILE:-/srv/dash-public-site/index.html}"
 STATUS_FILE="${STATUS_FILE:-$(dirname "$INDEX_FILE")/status.html}"
 STATIC_DIR="${STATIC_DIR:-$(dirname "$INDEX_FILE")}"
+SOURCE_INDEX_FILE="${SOURCE_INDEX_FILE:-$DUNE_ROOT/public-site/static/index.html}"
 STATUS_TIMEOUT_SECONDS="${STATUS_TIMEOUT_SECONDS:-20}"
 SYNC_HOST="${SYNC_HOST:-}"
 SYNC_STATIC_ROOT="${SYNC_STATIC_ROOT:-/srv/hostapps/ingress/static}"
+CONFIGURE_SCRIPT="${CONFIGURE_SCRIPT:-$(dirname "$0")/configure-dune-public-site.sh}"
 
 tmp_status="$(mktemp)"
 tmp_index="$(mktemp)"
 trap 'rm -f "$tmp_status" "$tmp_index"' EXIT
+
+if [[ -f "$SOURCE_INDEX_FILE" ]]; then
+  if [[ -w "$(dirname "$INDEX_FILE")" ]]; then
+    install -m 0644 "$SOURCE_INDEX_FILE" "$INDEX_FILE"
+  else
+    sudo install -m 0644 "$SOURCE_INDEX_FILE" "$INDEX_FILE"
+  fi
+fi
+
+if [[ -x "$CONFIGURE_SCRIPT" ]]; then
+  STATIC_DIR="$STATIC_DIR" INDEX_FILE="$INDEX_FILE" "$CONFIGURE_SCRIPT"
+fi
 
 server_class="status-down"
 server_text="Offline"

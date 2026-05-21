@@ -59,8 +59,12 @@
 <button type="button" id="map-zoom-in" aria-label="Zoom map in">+</button>
 <button type="button" id="map-reset">Reset</button>
 </div>
+<div id="poi-toggles" class="poi-toggles" aria-label="Map marker toggles"></div>
 <div id="hagga-map-viewport" class="map-viewport">
+<div id="hagga-map-content" class="map-content">
 <img id="hagga-map" class="hagga-map" src="/hagga-map.svg" alt="Hagga Basin player position map" width="1600" height="1600" draggable="false">
+<svg id="poi-overlay" class="poi-overlay" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden="true"></svg>
+</div>
 </div>
 <p class="muted">Static public snapshot, refreshed once per minute. Only online public display names and coarse locations are published.</p>
 </section>
@@ -111,7 +115,7 @@
 <dt>Sandworm</dt><dd>On</dd>
 <dt>Sandworm danger zones</dt><dd>On</dd>
 <dt>Vehicle and sandworm collision interaction</dt><dd>Off</dd>
-<dt>Thopter render distance</dt><dd>2km</dd>
+<dt>Thopter Full Render Pop-in</dt><dd>2km</dd>
 </dl>
 </section>
 
@@ -119,7 +123,6 @@
 <h2>Building And Bases</h2>
 <dl>
 <dt>Landclaim cap per Hagga Basin map</dt><dd>6</dd>
-<dt>Landclaim cap per Survival map</dt><dd>6</dd>
 <dt>Connected landclaim segments per base</dt><dd>10</dd>
 <dt>Building blueprint extensions</dt><dd>4</dd>
 <dt>Base backup extensions</dt><dd>8</dd>

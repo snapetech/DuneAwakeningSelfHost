@@ -174,6 +174,26 @@ full failover runbook should stop all game/admin writers first, promote the
 replica, repoint services to the promoted database, and rebuild a new standby
 from the promoted primary.
 
+Postgres cutback is not automatic. Confidence high: once a standby is promoted,
+the old primary is not a valid reverse standby until it is rebuilt or otherwise
+rewound onto the promoted timeline. This repo provides a confirmation-gated
+rebuild helper for the common safe path:
+
+```sh
+make postgres-cutback-proof ENV_FILE=.env TARGET=<old-primary-host> ROOT=<standby-root> SEAL_FILE=<seal-file>
+make rebuild-postgres-standby ENV_FILE=.env TARGET=<old-primary-host> ROOT=<standby-root>
+CONFIRM_REBUILD_POSTGRES_STANDBY=yes make rebuild-postgres-standby ENV_FILE=.env TARGET=<old-primary-host> ROOT=<standby-root>
+```
+
+Run these from the current active primary. `postgres-cutback-proof` verifies the
+pre-promotion seal against target control data and rewind evidence. The rebuild
+helper moves the target's existing standby data aside and starts a fresh
+`dune-postgres-replica` cloned with `pg_basebackup`.
+
+For the primary-to-standby warm-standby procedure, including file mirroring,
+promotion, router/NAT cutover, systemd role services, and live-handoff
+investigation scope, see `docs/primary-standby-failover.md`.
+
 ## Failure Notes
 
 - If the replica is stopped for too long, the physical replication slot can hold

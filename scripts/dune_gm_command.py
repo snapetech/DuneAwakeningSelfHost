@@ -137,6 +137,20 @@ def build_envelope(mode, command_text, target_player="", admin_player=""):
             "m_Payload": [command_text],
             "m_Sender": admin_player,
         }
+    if mode == "dw-rpc-task-method-params":
+        return {"method": command, "params": [args] if args else []}
+    if mode == "dw-rpc-task-api-args":
+        return {"api": command, "args": [args] if args else []}
+    if mode == "dw-rpc-task-api-arguments":
+        return {"api": command, "arguments": [args] if args else []}
+    if mode == "dw-rpc-task-upper-api-args":
+        return {"Api": command, "Args": [args] if args else []}
+    if mode == "dw-rpc-task-name-arguments":
+        return {"name": command, "arguments": [args] if args else []}
+    if mode == "dw-rpc-task-commandline":
+        return {"commandLine": command_text}
+    if mode == "dw-rpc-task-command":
+        return {"command": command, "arguments": [args] if args else []}
     if mode == "ue-fstring-array":
         return [command_text, target_player, admin_player]
     if mode == "plain":
@@ -165,6 +179,13 @@ def candidate_modes():
         "rpc-api-object-one",
         "rpc-api-object-two",
         "dw-notification-message",
+        "dw-rpc-task-method-params",
+        "dw-rpc-task-api-args",
+        "dw-rpc-task-api-arguments",
+        "dw-rpc-task-upper-api-args",
+        "dw-rpc-task-name-arguments",
+        "dw-rpc-task-commandline",
+        "dw-rpc-task-command",
         "ue-fstring-array",
         "plain",
         "plain-serverexec",

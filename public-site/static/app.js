@@ -3,6 +3,9 @@
 
 	var target = document.getElementById("server-status");
 	var map = document.getElementById("hagga-map");
+	var mapContent = document.getElementById("hagga-map-content");
+	var poiOverlay = document.getElementById("poi-overlay");
+	var poiToggles = document.getElementById("poi-toggles");
 	var players = document.getElementById("active-players");
 	var count = document.getElementById("player-count");
 	var peakCount = document.getElementById("peak-player-count");
@@ -18,6 +21,9 @@
 	function clamp(value, min, max) {
 		return Math.min(max, Math.max(min, value));
 	}
+
+	var poiPalette = ["#d9a63c", "#78cf7a", "#6fb6ff", "#e08585", "#c98dff", "#72d6c9", "#f0d77a", "#ff9d5c"];
+	var defaultPoiGroups = {"Shipwrecks": true, "Caves": true, "TradingPosts": true, "Outposts": true, "Aql": true, "Trainers": true};
 
 	function initPanZoom(viewport, content, zoomIn, zoomOut, reset) {
 		if (!viewport || !content) {
@@ -174,9 +180,98 @@
 			});
 	}
 
+	function escapeHtml(value) {
+		return String(value || "").replace(/[&<>"']/g, function (ch) {
+			return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[ch];
+		});
+	}
+
+	function selectedPoiGroups(groups) {
+		var stored = {};
+		try {
+			stored = JSON.parse(localStorage.getItem("dunePublicPoiGroups") || "{}");
+		} catch (e) {
+			stored = {};
+		}
+		var selected = {};
+		Object.keys(groups || {}).forEach(function (group) {
+			selected[group] = Object.prototype.hasOwnProperty.call(stored, group) ? stored[group] === true : defaultPoiGroups[group] === true;
+		});
+		return selected;
+	}
+
+	function savePoiGroups(selected) {
+		localStorage.setItem("dunePublicPoiGroups", JSON.stringify(selected));
+	}
+
+	function renderPoiOverlay(data, selected) {
+		if (!poiOverlay) {
+			return;
+		}
+		var markers = Array.isArray(data.markers) ? data.markers : [];
+		var groupKeys = Object.keys(data.groups || {});
+		var colors = {};
+		groupKeys.forEach(function (group, index) {
+			colors[group] = poiPalette[index % poiPalette.length];
+		});
+		poiOverlay.innerHTML = markers.filter(function (marker) {
+			return selected[marker.group] === true;
+		}).map(function (marker) {
+			var x = Math.max(0, Math.min(1000, Number(marker.x || 0) / 100));
+			var y = Math.max(0, Math.min(1000, Number(marker.y || 0) / 100));
+			var name = escapeHtml(marker.name || marker.group);
+			var group = escapeHtml((data.groups[marker.group] || {}).name || marker.group);
+			var color = colors[marker.group] || "#d9a63c";
+			return '<g class="poi-marker" transform="translate(' + x.toFixed(1) + ' ' + y.toFixed(1) + ')"><title>' + group + ': ' + name + '</title><circle r="4.5" fill="' + color + '"></circle><text x="8" y="-8">' + name + '</text></g>';
+		}).join("");
+	}
+
+	function renderPoiToggles(data) {
+		if (!poiToggles) {
+			return;
+		}
+		var groups = data.groups || {};
+		var selected = selectedPoiGroups(groups);
+		var groupKeys = Object.keys(groups).filter(function (group) {
+			return Number(groups[group].count || 0) > 0;
+		});
+		poiToggles.innerHTML = groupKeys.map(function (group) {
+			var info = groups[group] || {};
+			var checked = selected[group] ? " checked" : "";
+			return '<label><input type="checkbox" value="' + escapeHtml(group) + '"' + checked + '> ' + escapeHtml(info.name || group) + ' <span class="muted">' + escapeHtml(info.count || 0) + '</span></label>';
+		}).join("");
+		renderPoiOverlay(data, selected);
+		poiToggles.querySelectorAll("input[type=checkbox]").forEach(function (input) {
+			input.addEventListener("change", function () {
+				selected[input.value] = input.checked;
+				savePoiGroups(selected);
+				renderPoiOverlay(data, selected);
+			});
+		});
+	}
+
+	function loadPois() {
+		if (!poiOverlay || !poiToggles) {
+			return;
+		}
+		fetch("/hagga-pois.json", { cache: "no-store" })
+			.then(function (response) {
+				if (!response.ok) {
+					throw new Error("poi fetch failed");
+				}
+				return response.json();
+			})
+			.then(renderPoiToggles)
+			.catch(function () {
+				poiToggles.innerHTML = "";
+				poiOverlay.innerHTML = "";
+			});
+	}
+
 	refreshStatus();
 	refreshSnapshot();
-	initPanZoom(mapViewport, map, mapZoomIn, mapZoomOut, mapReset);
+	loadPois();
+	initPanZoom(mapViewport, mapContent || map, mapZoomIn, mapZoomOut, mapReset);
 	window.setInterval(refreshStatus, 60000);
 	window.setInterval(refreshSnapshot, 60000);
 })();

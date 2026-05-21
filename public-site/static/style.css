@@ -81,6 +81,10 @@ section {
 	height: 100%;
 }
 
+.card > h2:first-child {
+	margin-top: 0;
+}
+
 .hero-card {
 	display: grid;
 	grid-template-columns: minmax(0, 1fr) minmax(280px, 420px);
@@ -187,6 +191,13 @@ section {
 	position: relative;
 }
 
+.map-content {
+	position: absolute;
+	inset: 0;
+	transform-origin: center center;
+	will-change: transform;
+}
+
 .map-viewport.is-dragging {
 	cursor: grabbing;
 }
@@ -196,10 +207,62 @@ section {
 	width: 100%;
 	height: 100%;
 	object-fit: fill;
-	transform-origin: center center;
-	will-change: transform;
 	user-select: none;
 	pointer-events: none;
+}
+
+.poi-overlay {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	pointer-events: none;
+}
+
+.poi-marker {
+	opacity: 0.88;
+}
+
+.poi-marker circle {
+	stroke: #0b0d0a;
+	stroke-width: 2;
+}
+
+.poi-marker text {
+	display: none;
+	fill: #fff;
+	font: 700 12px system-ui, sans-serif;
+	paint-order: stroke;
+	stroke: #0b0d0a;
+	stroke-width: 3;
+}
+
+.poi-marker:hover text {
+	display: block;
+}
+
+.poi-toggles {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	justify-content: flex-end;
+	margin-bottom: 8px;
+}
+
+.poi-toggles label {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	border: 1px solid #5b503f;
+	border-radius: 999px;
+	background: #201d18;
+	color: #f3eadb;
+	font-size: 0.82rem;
+	padding: 4px 8px;
+}
+
+.poi-toggles input {
+	margin: 0;
 }
 
 .player-list {

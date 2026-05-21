@@ -3,6 +3,29 @@ set -euo pipefail
 
 static_dir="${STATIC_DIR:-/srv/dash-public-site}"
 index_file="${INDEX_FILE:-$static_dir/index.html}"
+env_file="${ENV_FILE:-}"
+
+env_file_value() {
+  local key="$1"
+  local line value
+  [[ -n "$env_file" && -f "$env_file" ]] || return 1
+  line="$(grep -E "^[[:space:]]*${key}[[:space:]]*=" "$env_file" | tail -n 1 || true)"
+  [[ -n "$line" ]] || return 1
+  value="${line#*=}"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  value="${value%\"}"
+  value="${value#\"}"
+  value="${value%\'}"
+  value="${value#\'}"
+  printf '%s' "$value"
+}
+
+PUBLIC_SITE_TITLE="${PUBLIC_SITE_TITLE:-$(env_file_value PUBLIC_SITE_TITLE || true)}"
+PUBLIC_SERVER_NAME="${PUBLIC_SERVER_NAME:-$(env_file_value PUBLIC_SERVER_NAME || true)}"
+PUBLIC_SERVER_DESCRIPTION="${PUBLIC_SERVER_DESCRIPTION:-$(env_file_value PUBLIC_SERVER_DESCRIPTION || true)}"
+PUBLIC_SERVER_WHERE="${PUBLIC_SERVER_WHERE:-$(env_file_value PUBLIC_SERVER_WHERE || true)}"
+PUBLIC_STACK_URL="${PUBLIC_STACK_URL:-$(env_file_value PUBLIC_STACK_URL || true)}"
 
 site_title="${PUBLIC_SITE_TITLE:-Dune Awakening Server}"
 server_name="${PUBLIC_SERVER_NAME:-Dune Awakening Server}"
@@ -58,9 +81,10 @@ sed \
   -e "s#<title>.*</title>#<title>$(escape_sed "$title_html")</title>#" \
   -e "s#<h1>.*</h1>#<h1>$(escape_sed "$server_html")</h1>#" \
   -e "s#<p class=\"lede\">.*</p>#<p class=\"lede\">$(escape_sed "$description_html")</p>#" \
-  -e "s#<p><strong>Server:</strong> .*<\\/p>#<p><strong>Server:</strong> $(escape_sed "$server_html")</p>#" \
-  -e "s#<p><strong>Where:</strong> .*<\\/p>#<p><strong>Where:</strong> $(escape_sed "$where_html")</p>#" \
+  -e "s#<p><strong>Server Name:</strong> .*<\\/p>#<p><strong>Server Name:</strong> $(escape_sed "$server_html")</p>#" \
+  -e "s#<p><strong>How To Join:</strong> .*<\\/p>#<p><strong>How To Join:</strong> $(escape_sed "$where_html")</p>#" \
   -e "s#<p><a href=\"[^\"]*\">DuneAwakeningSelfHost</a> is the stack used to host this server\\.</p>#<p><a href=\"$(escape_sed "$stack_url_html")\">DuneAwakeningSelfHost</a> is the stack used to host this server.</p>#" \
+  -e "s#<p class=\"stack-link\"><a href=\"[^\"]*\">DuneAwakeningSelfHost</a> powers this self-hosted server\\.</p>#<p class=\"stack-link\"><a href=\"$(escape_sed "$stack_url_html")\">DuneAwakeningSelfHost</a> powers this self-hosted server.</p>#" \
   "$index_file" > "$tmp"
 
 install -m 0644 "$tmp" "$index_file"

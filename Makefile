@@ -1,7 +1,7 @@
 COMPOSE ?= docker compose
 ENV_FILE ?= .env.example
 
-.PHONY: validate compose-config check-compose-static-ips secret-scan test-watch-maps test-admin-panel-safe-surfaces test-character-slot-tool test-admin-chat test-operational-borrowing test-artificial-exchange test-artificial-exchange-service artificial-exchange-smoke artificial-exchange-bootstrap-catalog artificial-exchange-research-prices test-vehicle-fidelity-investigation list-publishable preflight operational-identity-check operational-report operational-bundle verify-operational-bundle status check-steam-update backup-dry-run backup-state restore-dry-run verify-backup start-full-warm-pool recover-survival recover-map watch-maps watch-maps-status install-map-watchdog-service install-artificial-exchange-service install-artificial-exchange-buyer-service install-artificial-exchange-populator-service install-artificial-exchange-watchdog-timer install-full-farm-service install-daily-maintenance-timer full-world-partitions public-site-check public-site-package verify-local-state-ignored rabbitmq-cert-check rabbitmq-cert-generate
+.PHONY: validate compose-config check-compose-static-ips secret-scan test-watch-maps test-admin-panel-safe-surfaces test-character-slot-tool test-admin-chat test-operational-borrowing test-artificial-exchange test-artificial-exchange-service artificial-exchange-smoke artificial-exchange-bootstrap-catalog artificial-exchange-research-prices test-vehicle-fidelity-investigation list-publishable preflight operational-identity-check operational-report operational-bundle verify-operational-bundle status standby-status sync-standby-files sync-standby-images promote-standby postgres-failover-seal postgres-cutback-proof rebuild-postgres-standby failover-orchestrate failover-role-services cutover-check cutover-network-status host-network-failover router-cutover install-dune-status-service check-steam-update backup-dry-run backup-state restore-dry-run verify-backup start-full-warm-pool recover-survival recover-map watch-maps watch-maps-status install-map-watchdog-service install-artificial-exchange-service install-artificial-exchange-buyer-service install-artificial-exchange-populator-service install-full-farm-service install-daily-maintenance-timer full-world-partitions public-site-check public-site-package verify-local-state-ignored rabbitmq-cert-check rabbitmq-cert-generate rabbitmq-cert-stage rabbitmq-cert-install-staged
 
 validate: compose-config check-compose-static-ips secret-scan test-watch-maps test-admin-panel-safe-surfaces test-character-slot-tool test-admin-chat test-operational-borrowing test-artificial-exchange test-artificial-exchange-service test-vehicle-fidelity-investigation verify-local-state-ignored
 
@@ -30,8 +30,56 @@ rabbitmq-cert-check:
 rabbitmq-cert-generate:
 	./scripts/generate-rabbitmq-cert.sh $(ENV_FILE)
 
+rabbitmq-cert-stage:
+	./scripts/stage-rabbitmq-cert.sh $(ENV_FILE)
+
+rabbitmq-cert-install-staged:
+	./scripts/install-staged-rabbitmq-cert.sh $(ENV_FILE) $(REMOTE)
+
 status:
 	./scripts/status.sh $(ENV_FILE)
+
+standby-status:
+	./scripts/standby-status.sh $(ENV_FILE) $(REMOTE) $(ROOT)
+
+sync-standby-files:
+	./scripts/sync-standby-files.sh $(ENV_FILE) $(REMOTE)
+
+sync-standby-images:
+	./scripts/sync-standby-images.sh $(ENV_FILE) $(REMOTE)
+
+promote-standby:
+	./scripts/promote-standby.sh $(ENV_FILE) $(REMOTE)
+
+postgres-failover-seal:
+	./scripts/postgres-failover-seal.sh $(ENV_FILE) $(REMOTE) $(SEAL_FILE)
+
+postgres-cutback-proof:
+	./scripts/postgres-cutback-proof.sh $(ENV_FILE) $(TARGET) $(ROOT) $(SEAL_FILE)
+
+rebuild-postgres-standby:
+	./scripts/rebuild-postgres-standby.sh $(ENV_FILE) $(TARGET) $(ROOT)
+
+failover-orchestrate:
+	./scripts/failover-orchestrate.sh $(ENV_FILE) $(ROLE) $(APPLY)
+
+failover-role-services:
+	./scripts/failover-role-services.sh $(ENV_FILE) $(ROLE) $(REMOTE)
+
+cutover-check:
+	./scripts/cutover-check.sh $(ENV_FILE)
+
+cutover-network-status:
+	./scripts/cutover-network-status.sh $(ENV_FILE) $(ROUTER) $(REMOTE)
+
+host-network-failover:
+	./scripts/host-network-failover.sh $(ENV_FILE) $(REMOTE)
+
+router-cutover:
+	./scripts/router-cutover-asuswrt.sh $(ENV_FILE) $(ROUTER) $(TARGET)
+
+install-dune-status-service:
+	./scripts/install-dune-status-service.sh $(ENV_FILE)
 
 check-steam-update:
 	./scripts/check-steam-update.sh $(ENV_FILE)

@@ -1,13 +1,46 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PUBLIC_IP="${DUNE_PUBLIC_IP:-24.109.206.134}"
-LAN_IFACE="${DUNE_LAN_IFACE:-enp17s0}"
+env_file="${1:-.env}"
+
+read_env() {
+    local key="$1" value
+    value="$(awk -F= -v key="$key" '$1 == key {sub(/^[^=]*=/, ""); print; found=1} END {if (!found) exit 0}' "$env_file" 2>/dev/null | tail -1)"
+    value="${value%\"}"; value="${value#\"}"; value="${value%\'}"; value="${value#\'}"
+    printf '%s' "$value"
+}
+
+default_iface="$(ip route show default 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}')"
+PUBLIC_IP="${DUNE_FAILOVER_PUBLIC_IP:-${DUNE_PUBLIC_IP:-${EXTERNAL_ADDRESS:-$(read_env EXTERNAL_ADDRESS)}}}"
+if [[ -z "$PUBLIC_IP" ]]; then
+    echo "DUNE_PUBLIC_IP or EXTERNAL_ADDRESS is required" >&2
+    exit 1
+fi
+LAN_IFACE="${DUNE_LAN_IFACE:-$default_iface}"
+LAN_IFACE="${LAN_IFACE:-enp17s0}"
 DUNE_BRIDGE_CIDR="${DUNE_BRIDGE_CIDR:-172.31.240.0/24}"
 DUNE_DOCKER_NETWORK="${DUNE_DOCKER_NETWORK:-dune_server_default}"
+GAME_RMQ_PUBLIC_PORT="${GAME_RMQ_PUBLIC_PORT:-$(read_env GAME_RMQ_PUBLIC_PORT)}"
 GAME_RMQ_PUBLIC_PORT="${GAME_RMQ_PUBLIC_PORT:-31982}"
 GAME_UDP_PORT_RANGE="${GAME_UDP_PORT_RANGE:-7777:7806}"
+IGW_UDP_PORT_RANGE="${IGW_UDP_PORT_RANGE:-7888:7917}"
 KNOCK_DUNE_TCP_COMMENT="knock-scanner dune tcp auto-block"
+
+if [[ "$(id -u)" -ne 0 ]]; then
+    if command -v sudo >/dev/null 2>&1; then
+        exec sudo \
+            DUNE_PUBLIC_IP="$PUBLIC_IP" \
+            DUNE_LAN_IFACE="$LAN_IFACE" \
+            DUNE_BRIDGE_CIDR="$DUNE_BRIDGE_CIDR" \
+            DUNE_DOCKER_NETWORK="$DUNE_DOCKER_NETWORK" \
+            GAME_RMQ_PUBLIC_PORT="$GAME_RMQ_PUBLIC_PORT" \
+            GAME_UDP_PORT_RANGE="$GAME_UDP_PORT_RANGE" \
+            IGW_UDP_PORT_RANGE="$IGW_UDP_PORT_RANGE" \
+            "$0" "$env_file"
+    fi
+    echo "root privileges required for ip, sysctl, and iptables changes" >&2
+    exit 1
+fi
 
 if ! ip link show "$LAN_IFACE" >/dev/null 2>&1; then
     echo "LAN interface not found: $LAN_IFACE" >&2
@@ -63,4 +96,8 @@ if ! iptables -t nat -C OUTPUT -p udp -d "$PUBLIC_IP" --dport "$GAME_UDP_PORT_RA
     iptables -t nat -A OUTPUT -p udp -d "$PUBLIC_IP" --dport "$GAME_UDP_PORT_RANGE" -j REDIRECT
 fi
 
-echo "Dune LAN reflection host side is active for ${PUBLIC_IP} on ${LAN_IFACE}; local self-host redirects cover tcp/${GAME_RMQ_PUBLIC_PORT} and udp/${GAME_UDP_PORT_RANGE}"
+if ! iptables -t nat -C OUTPUT -p udp -d "$PUBLIC_IP" --dport "$IGW_UDP_PORT_RANGE" -j REDIRECT 2>/dev/null; then
+    iptables -t nat -A OUTPUT -p udp -d "$PUBLIC_IP" --dport "$IGW_UDP_PORT_RANGE" -j REDIRECT
+fi
+
+echo "Dune LAN reflection host side is active for ${PUBLIC_IP} on ${LAN_IFACE}; local self-host redirects cover tcp/${GAME_RMQ_PUBLIC_PORT}, udp/${GAME_UDP_PORT_RANGE}, and udp/${IGW_UDP_PORT_RANGE}"
