@@ -102,12 +102,23 @@ Implemented:
 &gm unstuck <playername> [mark]
 &where <playername>
 &teleport <playername>
+&teleport list|locations
+&teleport set <slot> [name]
+&teleport replace <slot> [name]
+&teleport delete|rm <slot>
+&teleport <playername> <slot>
+&teleport <slot>
 ```
 
 - `&gm where` is the namespaced form of `&where`.
 - `&gm unstuck` prepares or sends a gated `TeleportToExact` for a target player. It uses the named saved marker, defaulting to `location0`; if no marker exists it falls back to the admin's current location.
 - `&where` reports current known state and location.
 - `&teleport` moves an offline target to the admin's current position only when offline teleport execution is explicitly enabled. The shipped `dune.admin_move_offline_player_to_partition(...)` helper updates the pawn row, which is the row consumed by the verified network-disconnect/rejoin test.
+- `&teleport set <slot> [name]` saves the issuing admin's current location as a shared numbered slot under `backups/admin-panel/teleport-slots.json`, but refuses to overwrite an occupied slot. Use `&teleport replace <slot> [name]` to overwrite intentionally.
+- `&teleport list` shows shared slots in numeric order, and `&teleport delete <slot>` removes one.
+- `&teleport <playername> <slot>` moves an offline target to a saved shared slot through `dune.admin_move_offline_player_to_partition(...)`. Online targets are still refused.
+- `&teleport <slot>` prepares or sends a gated native `TeleportToExact` for the issuing admin to go to that slot. It remains a preview until the native GM execution gates are enabled.
+- Recommended shared city setup is manual: stand in Arrakeen and run `&teleport set 0 arrakeen`; stand in Harko Village and run `&teleport set 1 harko`.
 - Direct online database movement is not a live teleport path. A same-partition test moved the test player's controller, player-state, and pawn actor rows together by `+750` X; the live Survival server later saved the old in-memory position back to the database.
 - Network-disconnect teleport is now the preferred online-adjacent fallback while native GM teleport remains unverified. The path is: force a real `UNetConnection` timeout, wait until Survival marks the player `Offline`, call `dune.admin_move_offline_player_to_partition(...)`, then let the client reconnect. See [soft-disconnect-teleport.md](soft-disconnect-teleport.md).
 

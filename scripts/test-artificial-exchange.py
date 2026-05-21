@@ -320,27 +320,46 @@ class ArtificialExchangeBotTest(unittest.TestCase):
         with mock.patch.object(bot.random, "randint", side_effect=lambda low, high: high):
             self.assertEqual(bot.jitter_price(100, 20), 120)
             self.assertEqual(bot.jitter_expiration(1000, 60, 120), 1120)
-        self.assertEqual(bot.jitter_price_bounds(100, 20), (20, 30))
+        self.assertEqual(bot.jitter_price_bounds(100, 20), (80, 120))
 
     def test_planned_unique_price_avoids_existing_template_prices(self):
-        used = {"ItemA": {20, 21}}
+        used = {"ItemA": {120, 121}}
         with mock.patch.object(bot.random, "choice", side_effect=lambda values: values[0]):
-            self.assertEqual(bot.planned_unique_price(self.catalog_row(baseline_price=100), 20, used), 22)
-        self.assertIn(22, used["ItemA"])
+            self.assertEqual(bot.planned_unique_price(self.catalog_row(baseline_price=100), 20, used), 122)
+        self.assertIn(122, used["ItemA"])
         with self.assertRaises(RuntimeError):
             bot.planned_unique_price(self.catalog_row(baseline_price=1), 0, {"ItemA": {1}})
 
     def test_planned_unique_price_uses_scaled_baseline_anchor(self):
         row = self.catalog_row(baseline_price=100, price_floor=100, price_ceiling=1100)
         with mock.patch.object(bot.random, "choice", side_effect=lambda values: values[0]):
-            self.assertEqual(bot.planned_unique_price(row, 20, {}), 20)
+            self.assertEqual(bot.planned_unique_price(row, 20, {}), 120)
+
+    def test_planned_unique_price_keeps_stackables_at_unit_price(self):
+        row = self.catalog_row(baseline_price=100, category="resources/raw")
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_FULL_STACK_SIZE"] = "100"
+        with mock.patch.object(bot.random, "choice", side_effect=lambda values: values[0]):
+            self.assertEqual(bot.planned_unique_price(row, 20, {}), 160)
+
+    def test_planned_unique_price_dampens_game_file_outliers(self):
+        row = self.catalog_row(
+            baseline_price=53546,
+            price_floor=53546,
+            price_ceiling=106942,
+            category="resources/components",
+            notes="tier=5; game_file_price=150; price_ceiling=dune.exchange averagePrice",
+        )
+        self.assertEqual(round(bot.populator_price_anchor(row)), 2834)
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_STACKABLE_CATEGORIES"] = ""
+        with mock.patch.object(bot.random, "choice", side_effect=lambda values: values[0]):
+            self.assertEqual(bot.planned_unique_price(row, 20, {}), 3401)
 
     def test_planned_unique_price_can_expand_tight_fixed_ranges(self):
         bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_PRICE_SPAN"] = "20"
         row = self.catalog_row(price_floor=100, price_ceiling=100)
-        used = {"ItemA": set(range(20, 39))}
+        used = {"ItemA": set(range(120, 139))}
         with mock.patch.object(bot.random, "choice", side_effect=lambda values: values[0]):
-            self.assertEqual(bot.planned_unique_price(row, 20, used), 39)
+            self.assertEqual(bot.planned_unique_price(row, 20, used), 139)
 
     def test_populator_category_gate_blocks_non_augments_from_augments_mask(self):
         row = self.catalog_row("Rifle_Schematic", category="schematics/weapons", category_mask=117506048, category_depth=2, notes="tier=4")
@@ -355,9 +374,9 @@ class ArtificialExchangeBotTest(unittest.TestCase):
         bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_SOURCE_CATEGORY"] = "false"
         bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_PROTECT_AUGMENTS_CATEGORY"] = "false"
         row = self.catalog_row("SandbikeEngine_Schematic", category="schematics/weapons", category_mask=117506048, category_depth=2, notes="tier=4")
-        self.assertEqual(bot.populator_category_skip_reason(row), "category mismatch expected schematics/vehicles")
-        mask, depth = bot.CATEGORY_MASKS["schematics/vehicles"]
-        fixed = self.catalog_row("SandbikeEngine_Schematic", category="schematics/vehicles", category_mask=mask, category_depth=depth, notes="tier=4")
+        self.assertEqual(bot.populator_category_skip_reason(row), "category mismatch expected schematics/vehicles/sandbike")
+        mask, depth = bot.CATEGORY_MASKS["schematics/vehicles/sandbike"]
+        fixed = self.catalog_row("SandbikeEngine_Schematic", category="schematics/vehicles/sandbike", category_mask=mask, category_depth=depth, notes="tier=4")
         self.assertEqual(bot.populator_category_skip_reason(fixed), "")
 
     def test_populator_category_gate_requires_source_category(self):
@@ -406,7 +425,7 @@ class ArtificialExchangeBotTest(unittest.TestCase):
     def test_planned_unique_price_samples_large_floor_ceiling_range(self):
         row = self.catalog_row(baseline_price=100, price_floor=100, price_ceiling=100000000)
         with mock.patch.object(bot.random, "choice", side_effect=lambda values: values[-1]):
-            self.assertEqual(bot.planned_unique_price(row, 20, {}), 30)
+            self.assertEqual(bot.planned_unique_price(row, 20, {}), 180)
 
     def test_planned_unique_price_requires_baseline_or_bounds(self):
         row = self.catalog_row(baseline_price="", price_floor="", price_ceiling="")
@@ -442,14 +461,14 @@ class ArtificialExchangeBotTest(unittest.TestCase):
     def test_seeded_order_ids_are_normalized(self):
         self.assertEqual(bot.seeded_order_ids([{"id": "7"}, {"id": 8}]), {7, 8})
 
-    def test_populator_quality_rejects_lowest_grade_by_default(self):
+    def test_populator_quality_defaults_to_tier_one_minimum(self):
         self.assertEqual(bot.populator_quality_level(self.catalog_row(notes="tier=4")), 4)
         bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_QUALITY_LEVEL"] = "1"
+        self.assertEqual(bot.populator_quality_level(self.catalog_row(notes="")), 1)
+
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_QUALITY_LEVEL"] = "2"
         with self.assertRaises(RuntimeError):
             bot.populator_quality_level(self.catalog_row(notes=""))
-
-        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_QUALITY_LEVEL"] = "1"
-        self.assertEqual(bot.populator_quality_level(self.catalog_row(notes="")), 1)
 
     def test_populator_category_uses_row_before_env(self):
         bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_CATEGORY_MASK"] = "99"

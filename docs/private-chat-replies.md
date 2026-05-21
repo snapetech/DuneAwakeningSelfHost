@@ -63,7 +63,9 @@ DUNE_CHAT_COMMAND_PRIVATE_REPLY_CHANNEL=Whispers
 DUNE_CHAT_COMMAND_PRIVATE_REPLY_ROUTING_KEY=
 ```
 
-When command replies are sent from inside `handle_command()`, `scripts/admin-chat-commands.py` infers the issuing player from the command sender and uses that player as the private target if no explicit target was passed to `run_announce()`. This keeps normal admin command replies, command errors, and auction confirmations private to the issuer. Command results should include `reply.stdout` metadata from `scripts/announce.sh`; for private replies it should report `transport` and `exchange` as `chat.whispers`. Public moderation notices such as spam auto-kick announcements are not generated inside that command context and remain global.
+When command replies are sent from inside `handle_command()`, `scripts/admin-chat-commands.py` infers the issuing player from the command sender and uses that player as the private target if no explicit target was passed to `run_announce()`. This keeps normal admin command replies, command errors, and auction confirmations private to the issuer. Command results should include `reply.stdout` metadata from `scripts/announce.sh`; for private replies it should report a whisper exchange. Public fallback is refused when the private target cannot be resolved.
+
+Chat commands are PM-only. The command listener binds only whisper exchanges and Paul’s inbound whisper routing key, `ADMIN#00001`; map, proximity, party, and guild messages are intentionally ignored as command input.
 
 The command listener retries RabbitMQ startup connection failures in-process instead of crash-looping while the broker is still accepting/authenticating clients:
 

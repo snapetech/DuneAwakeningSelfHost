@@ -10,12 +10,15 @@ Commands:
   up                  Start the local passworded one-partition lab.
   seed                Ensure the lab database has one Survival_1 partition.
   status              Print lab health without touching production.
+  settled-status      Wait until local lab status is healthy, then print it.
   dump FILE           Dump the local lab database to FILE.
   restore FILE        Restore FILE into the local lab database.
   stop                Stop the local lab stack.
   remote-up HOST      Start the lab on HOST using DUNE_HANDOFF_LAB_REPO_ROOT.
   remote-seed HOST    Seed the lab database on HOST.
   remote-status HOST  Print lab health on HOST.
+  remote-settled-status HOST
+                      Wait until remote lab status is healthy, then print it.
   remote-stop HOST    Stop the lab stack on HOST.
   handoff SRC DST     Stop SRC after dumping it, restore into DST, then start DST.
 
@@ -116,6 +119,29 @@ status_local() {
   COMPOSE_PROJECT_NAME="$compose_project" COMPOSE_FILES="${compose_files[0]}:${compose_files[1]}" ./scripts/status.sh "$env_file"
 }
 
+settled_status_local() {
+  local timeout="${DUNE_HANDOFF_LAB_SETTLE_TIMEOUT_SECONDS:-180}"
+  local interval="${DUNE_HANDOFF_LAB_SETTLE_INTERVAL_SECONDS:-10}"
+  local deadline=$((SECONDS + timeout))
+  local out
+  out="$(mktemp)"
+  while true; do
+    status_local > "$out" 2>&1 || true
+    if rg -q '^OK: all current partitions have alive active farm rows' "$out"; then
+      cat "$out"
+      rm -f "$out"
+      return 0
+    fi
+    if (( SECONDS >= deadline )); then
+      cat "$out"
+      rm -f "$out"
+      printf 'lab did not reach settled healthy status within %ss\n' "$timeout" >&2
+      return 1
+    fi
+    sleep "$interval"
+  done
+}
+
 dump_local() {
   local dump_file="$1"
   if [[ -z "$dump_file" ]]; then
@@ -160,6 +186,9 @@ case "$cmd" in
   status)
     status_local
     ;;
+  settled-status)
+    settled_status_local
+    ;;
   dump)
     dump_local "${3:-}"
     ;;
@@ -186,6 +215,11 @@ case "$cmd" in
     [[ -n "$host" ]] || { printf 'remote host is required\n' >&2; exit 2; }
     remote_run "$host" "COMPOSE_PROJECT_NAME='$compose_project' COMPOSE_FILES='${compose_files[0]}:${compose_files[1]}' ./scripts/status.sh '$env_file'"
     ;;
+  remote-settled-status)
+    host="${3:-}"
+    [[ -n "$host" ]] || { printf 'remote host is required\n' >&2; exit 2; }
+    remote_run "$host" "./scripts/handoff-lab.sh settled-status '$env_file'"
+    ;;
   remote-stop)
     host="${3:-}"
     [[ -n "$host" ]] || { printf 'remote host is required\n' >&2; exit 2; }
@@ -206,13 +240,13 @@ case "$cmd" in
     if [[ "$dst" == "local" ]]; then
       restore_local "$dump_file"
       start_local
-      status_local
+      settled_status_local
     else
       remote_dump="/tmp/$(basename "$dump_file")"
       scp "$dump_file" "$dst:$remote_dump" >/dev/null
       remote_run "$dst" "./scripts/handoff-lab.sh restore '$env_file' '$remote_dump'"
       remote_run "$dst" "./scripts/handoff-lab.sh up '$env_file'"
-      remote_run "$dst" "COMPOSE_PROJECT_NAME='$compose_project' COMPOSE_FILES='${compose_files[0]}:${compose_files[1]}' ./scripts/status.sh '$env_file'"
+      remote_run "$dst" "./scripts/handoff-lab.sh settled-status '$env_file'"
     fi
     ;;
   *)

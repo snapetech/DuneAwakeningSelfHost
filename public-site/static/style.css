@@ -183,7 +183,7 @@ section {
 	display: grid;
 	grid-template-columns: minmax(0, 1fr) minmax(260px, 300px);
 	gap: 12px;
-	align-items: start;
+	align-items: stretch;
 	min-width: 0;
 }
 
@@ -230,12 +230,29 @@ section {
 }
 
 .poi-marker {
-	opacity: 0.88;
+	opacity: 0.98;
+	color: var(--poi-color, #d9a63c);
+	filter: drop-shadow(0 0 5px currentColor) drop-shadow(0 0 14px currentColor);
 }
 
-.poi-marker circle {
-	stroke: #0b0d0a;
-	stroke-width: 2;
+.poi-marker .poi-halo {
+	fill: currentColor;
+	opacity: 0.22;
+	stroke: currentColor;
+	stroke-width: 1.5;
+}
+
+.poi-marker .poi-ring {
+	fill: none;
+	stroke: #fff7dc;
+	stroke-width: 1.7;
+	opacity: 0.9;
+}
+
+.poi-marker .poi-core {
+	fill: currentColor;
+	stroke: #080906;
+	stroke-width: 2.4;
 }
 
 .poi-marker text {
@@ -260,12 +277,16 @@ section {
 	background: #13110f;
 	margin-bottom: 8px;
 	padding: 10px 12px;
-	max-height: min(56vh, 620px);
+	flex: 1 1 auto;
+	min-height: 0;
 	overflow: auto;
 }
 
 .poi-legend {
+	display: flex;
+	flex-direction: column;
 	min-width: 0;
+	min-height: 0;
 	overflow: hidden;
 }
 
@@ -366,11 +387,13 @@ section {
 }
 
 .poi-swatch {
-	width: 0.7rem;
-	height: 0.7rem;
-	border: 1px solid #0b0d0a;
-	border-radius: 2px;
+	width: 0.78rem;
+	height: 0.78rem;
+	border: 1px solid #fff2c0;
+	border-radius: 999px;
 	flex: 0 0 auto;
+	color: var(--poi-color, #d9a63c);
+	box-shadow: 0 0 7px currentColor, 0 0 14px currentColor;
 }
 
 .poi-count {
@@ -572,6 +595,7 @@ a:visited {
 	}
 
 	.poi-toggles {
+		flex: initial;
 		max-height: 240px;
 	}
 

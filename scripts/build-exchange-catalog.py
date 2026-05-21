@@ -323,6 +323,58 @@ def reconcile_known_category_masks(rows):
     return out, {"updated": updated, "missing": missing}
 
 
+def category_from_identity(row):
+    template_id = str(row.get("template_id") or "").lower()
+    display_name = str(row.get("display_name") or "").lower()
+    text = f"{template_id} {display_name}"
+    is_schematic = "schematic" in template_id or "schematic" in display_name
+
+    if is_schematic and ("socialclothing" in text or "social clothing" in text):
+        return "schematics/armor/social"
+    if is_schematic and ("consumables_spice" in text or "spiced food" in text or "spiced drink" in text):
+        return "schematics/utility"
+    if is_schematic and any(token in text for token in ("respawnbeacon", "respawn beacon", "stilltent", "still tent")):
+        return "schematics/utility/deployables"
+    if not is_schematic and template_id.startswith("spiceaddictionconsumable"):
+        return "consumables/spice"
+    if not is_schematic and template_id.startswith("d_harkar_"):
+        return "weapons/ranged"
+    if not is_schematic and "armorpack_heavy" in template_id:
+        return "armor/heavy"
+    if not is_schematic and "armorpack_med" in template_id:
+        return "armor/light"
+    if any(token in text for token in ("dewreaper", "dew reaper", "bloodsack", "bloodbag", "bodyfluidextractor", "exsanguination")):
+        return "schematics/utility/hydration" if is_schematic else "tools/hydration"
+    if any(token in text for token in ("miningtool", "cutteray", "cutter ray", "cutterray")):
+        return "schematics/utility/gathering" if is_schematic else "tools/gathering"
+    if any(token in text for token in ("scanner", "surveyprobe", "survey probe", "seismicprobe", "sesmicprobe", "seismic probe", "hand scanner")):
+        if any(vehicle in text for vehicle in ("sandbike", "ornithopter", "orni", "thopter")) and is_schematic:
+            return None
+        return "schematics/utility/cartography" if is_schematic else "tools/cartography"
+    if any(token in text for token in ("respawnbeacon", "respawn beacon", "stilltent", "still tent")):
+        return "schematics/utility/deployables" if is_schematic else "tools/deployables"
+    return None
+
+
+def reconcile_identity_categories(rows):
+    updated = 0
+    out = []
+    for row in rows:
+        category = category_from_identity(row)
+        if not category or row.get("category") == category:
+            out.append(row)
+            continue
+        next_row = dict(row)
+        next_row["category"] = category
+        notes = next_row.get("notes") or ""
+        marker = "category reconciled from item identity"
+        if marker not in notes:
+            next_row["notes"] = f"{notes}; {marker}".strip("; ")
+        updated += 1
+        out.append(next_row)
+    return out, {"updated": updated}
+
+
 def write_outputs(rows, output_dir):
     output_dir.mkdir(parents=True, exist_ok=True)
     latest_json = output_dir / "catalog.json"
@@ -371,6 +423,7 @@ def main():
         if error:
             warnings.append(error)
         rows, category_reconcile = reconcile_source_categories(rows, source_map)
+    rows, identity_reconcile = reconcile_identity_categories(rows)
     rows, mask_reconcile = reconcile_known_category_masks(rows)
     latest_json, latest_csv = write_outputs(rows, args.output_dir)
     print(json.dumps({
@@ -380,6 +433,7 @@ def main():
         "catalog": str(latest_json),
         "csv": str(latest_csv),
         "categoryReconcile": category_reconcile,
+        "identityReconcile": identity_reconcile,
         "categoryMaskReconcile": mask_reconcile,
         "warnings": warnings,
     }, indent=2))

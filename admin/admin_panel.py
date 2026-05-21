@@ -36,7 +36,7 @@ ENV_FILE = ROOT / ".env"
 BACKUP_ROOT = ROOT / "backups" / "admin-panel"
 STATIC_ROOT = ROOT / "admin" / "static"
 PLAYER_PEAKS_FILE = pathlib.Path(os.environ.get("DUNE_PLAYER_PEAKS_FILE", str(BACKUP_ROOT / "player-peaks.json")))
-ADMIN_PANEL_BUILD = "20260520-hagga-clean-map-south"
+ADMIN_PANEL_BUILD = "20260521-hagga-neon-pois"
 AUDIT_LOG = BACKUP_ROOT / "audit.jsonl"
 STEAM_PROFILE_CACHE_FILE = BACKUP_ROOT / "steam-profiles.json"
 AUDIT_MAX_BYTES = int(os.environ.get("DUNE_ADMIN_AUDIT_MAX_BYTES", str(5 * 1024 * 1024)))
@@ -89,6 +89,7 @@ CONFIRM_GUILD_MUTATION = "WRITE GUILD"
 CONFIRM_MARKER_MUTATION = "DELETE MARKERS"
 CONFIRM_LANDCLAIM_MUTATION = "WRITE LANDCLAIM"
 CONFIRM_EXCHANGE_MUTATION = "WRITE EXCHANGE"
+CONFIRM_SOLARI_GRANT = "GRANT SOLARI"
 CONFIRM_PLAYER_TAG_MUTATION = "WRITE PLAYER TAGS"
 CONFIRM_ACCESS_CODE_MUTATION = "WRITE ACCESS CODES"
 CONFIRM_COMMUNINET_MUTATION = "WRITE COMMUNINET"
@@ -1627,7 +1628,7 @@ def artificial_exchange_systemd_service(name):
 def artificial_exchange_status():
     env_values = read_env()
     buyer_id = env_values.get("DUNE_ARTIFICIAL_EXCHANGE_BUYER_CONTROLLER_ID", os.environ.get("DUNE_ARTIFICIAL_EXCHANGE_BUYER_CONTROLLER_ID", "0")) or "0"
-    scan_limit = env_values.get("DUNE_ARTIFICIAL_EXCHANGE_SCAN_LIMIT", "200") or "200"
+    scan_limit = env_values.get("DUNE_ARTIFICIAL_EXCHANGE_SCAN_LIMIT", "25000") or "25000"
     check = run_workspace_command([
         sys.executable,
         str(ROOT / "scripts" / "artificial-exchange-bot.py"),
@@ -3145,6 +3146,18 @@ class Handler(BaseHTTPRequestHandler):
                 self.update_currency(body)
                 self.audit("currency-update", player_controller_id=body.get("player_controller_id"), currency_id=body.get("currency_id"), amount=body.get("amount"), mode=body.get("mode", "add"))
                 self.json({"ok": True})
+            elif parsed.path == "/api/admin/solari/inventory":
+                self.require_token()
+                body = parse_body(self)
+                result = self.grant_player_inventory_solari(body)
+                self.audit("solari-inventory-grant", ok=result.get("ok"), dry_run=result.get("dryRun"), controller_id=result.get("controllerId"), amount=result.get("amount"))
+                self.json(result)
+            elif parsed.path == "/api/admin/solari/bank":
+                self.require_token()
+                body = parse_body(self)
+                result = self.grant_player_bank_solari(body)
+                self.audit("solari-bank-grant", ok=result.get("ok"), dry_run=result.get("dryRun"), owner_id=result.get("ownerId"), controller_id=result.get("controllerId"), amount=result.get("amount"))
+                self.json(result)
             elif parsed.path == "/api/admin/xp":
                 self.require_token()
                 self.require_mutations()
@@ -4450,6 +4463,106 @@ class Handler(BaseHTTPRequestHandler):
             """, (controller_id, currency_id, amount))
         else:
             raise ValueError("mode must be add or set")
+
+    def resolve_player_money_ids(self, body):
+        controller_id = body.get("player_controller_id", body.get("controller_id", body.get("controllerId")))
+        owner_id = body.get("owner_id", body.get("ownerId"))
+        account_id = body.get("account_id", body.get("accountId"))
+        character_name = str(body.get("character_name", body.get("characterName", ""))).strip()
+        player = None
+        if account_id not in ("", None) or character_name:
+            player = self.resolve_player(account_id=account_id, character_name=character_name)
+            controller_id = controller_id or player.get("player_controller_id")
+            owner_id = owner_id or player.get("player_pawn_id")
+        if controller_id in ("", None):
+            raise ValueError("player_controller_id, account_id, or character_name is required")
+        return {
+            "controllerId": int(controller_id),
+            "ownerId": int(owner_id) if owner_id not in ("", None) else int(controller_id),
+            "accountId": int(player["account_id"]) if player and player.get("account_id") is not None else (int(account_id) if account_id not in ("", None) else None),
+            "characterName": player.get("character_name") if player else character_name,
+        }
+
+    def grant_player_inventory_solari(self, body):
+        ids = self.resolve_player_money_ids(body)
+        amount = int(body.get("amount", 0))
+        if amount <= 0:
+            raise ValueError("amount must be > 0")
+        dry_run = str(body.get("dry_run", body.get("dryRun", "true"))).lower() not in ("0", "false", "no", "off")
+        inventory_body = dict(body)
+        if not str(inventory_body.get("inventory_id", "")).strip():
+            inventory_body.setdefault("inventory_type", 0)
+        inventory_id = self.resolve_inventory_id(inventory_body)
+        inventory = self.inventory_for_grant(inventory_id)
+        max_count = inventory.get("max_item_count")
+        if max_count is not None and max_count > 0:
+            position_rows = query("""
+                select slot.position_index
+                from generate_series(0, %s - 1) as slot(position_index)
+                where not exists (
+                    select 1 from dune.items i
+                    where i.inventory_id=%s and i.position_index=slot.position_index
+                )
+                order by slot.position_index
+                limit 1
+            """, (int(max_count), inventory_id))
+        else:
+            position_rows = query("select coalesce(max(position_index), -1) + 1 as position_index from dune.items where inventory_id=%s", (inventory_id,))
+        if not position_rows:
+            raise ValueError(f"no free inventory position inside inventory capacity {max_count}")
+        position_index = int(position_rows[0]["position_index"])
+        plan = {
+            "function": "dune.save_item",
+            "templateId": "SolarisCoin",
+            "controllerId": ids["controllerId"],
+            "inventoryId": inventory_id,
+            "itemId": None,
+            "action": "create-stack",
+            "amount": amount,
+            "beforeStack": 0,
+            "afterStack": amount,
+            "positionIndex": position_index,
+            "rollback": {
+                "endpoint": "/api/admin/item/delete",
+                "item_id": None,
+                "confirm": CONFIRM_DELETE_ITEM,
+            },
+            "warnings": self.item_grant_warnings(inventory, "SolarisCoin"),
+        }
+        if dry_run:
+            return dict(ids, ok=True, dryRun=True, location="inventory", amount=amount, plan=plan, executionGate="DUNE_ADMIN_MUTATIONS_ENABLED", confirm=CONFIRM_SOLARI_GRANT)
+        self.require_mutations()
+        require_confirmation(body, CONFIRM_SOLARI_GRANT)
+        item_body = dict(body)
+        item_body.update({
+            "inventory_id": inventory_id,
+            "template_id": "SolarisCoin",
+            "stack_size": amount,
+            "quality_level": 0,
+            "position_index": position_index,
+            "stats": {},
+            "dry_run": False,
+        })
+        item_id = int(self.grant_item(item_body)["item_id"])
+        plan["rollback"]["item_id"] = item_id
+        after = query("select id, inventory_id, stack_size, position_index, template_id from dune.items where id=%s", (item_id,))
+        return dict(ids, ok=True, dryRun=False, location="inventory", amount=amount, before=[], after=after, rollback=plan["rollback"])
+
+    def grant_player_bank_solari(self, body):
+        ids = self.resolve_player_money_ids(body)
+        amount = int(body.get("amount", 0))
+        if amount <= 0:
+            raise ValueError("amount must be > 0")
+        bank_body = dict(body)
+        bank_body.update({
+            "owner_id": ids["ownerId"],
+            "controller_id": ids["controllerId"],
+            "amount": amount,
+            "mode": "add",
+        })
+        result = self.exchange_mutation(bank_body)
+        result.update(dict(ids, location="bank", amount=amount))
+        return result
 
     def update_xp(self, body):
         player_id = int(body["player_id"])
@@ -6083,7 +6196,7 @@ INDEX = r"""<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="admin-panel-build" content="20260520-hagga-clean-map-south">
+  <meta name="admin-panel-build" content="20260521-hagga-neon-pois">
   <title>Dune Admin</title>
   <style nonce="__NONCE__">
     :root { color-scheme: dark; --bg:#0f1110; --nav:#141814; --panel:#1a1f1a; --panel2:#131713; --panel3:#20261f; --muted:#a3aea4; --line:#323b32; --text:#edf3ea; --accent:#d5a13e; --danger:#d96f62; --ok:#7fc27a; --warn:#e1b75f; }
@@ -6133,7 +6246,7 @@ INDEX = r"""<!doctype html>
     .overviewTopGrid .metric { min-height:74px; padding:10px 12px; min-width:0; }
     .overviewTopGrid .metric .value { font-size:18px; }
     .overviewMapShell .panelBand { margin-bottom:0; }
-    .overviewMapShell .haggaMap { aspect-ratio:16 / 10; max-height:calc(100vh - 260px); min-height:520px; }
+    .overviewMapShell .haggaMap { aspect-ratio:1 / 1; max-height:calc(100vh - 250px); min-height:520px; }
     .overviewMapShell .haggaMap svg { block-size:100%; inline-size:100%; aspect-ratio:auto; }
     .summaryCard { position:relative; border:1px solid var(--line); border-radius:8px; background:var(--panel2); padding:10px 12px; min-height:74px; min-width:0; }
     .summaryCard:focus-within, .summaryCard:hover { border-color:#53614d; }
@@ -6211,8 +6324,10 @@ INDEX = r"""<!doctype html>
     .haggaMap .playerDot { fill:var(--ok); stroke:#071007; stroke-width:3; }
     .haggaMap .landmarkDot { fill:#d8b763; stroke:#17120a; stroke-width:1.5; opacity:.45; }
     .haggaMap .landmarkLabel { fill:#f0dfaa; font:700 10px system-ui,sans-serif; paint-order:stroke; stroke:#0b0d0a; stroke-width:3; opacity:.68; }
-    .haggaMap .poiMarker { opacity:.86; }
-    .haggaMap .poiMarker circle { stroke:#0b0d0a; stroke-width:2; }
+    .haggaMap .poiMarker { opacity:.98; filter:drop-shadow(0 0 5px currentColor) drop-shadow(0 0 13px currentColor); color:var(--poi-color, var(--accent)); }
+    .haggaMap .poiMarker .poiHalo { fill:currentColor; opacity:.22; stroke:currentColor; stroke-width:1.5; }
+    .haggaMap .poiMarker .poiRing { fill:none; stroke:#fff7dc; stroke-width:1.7; opacity:.9; }
+    .haggaMap .poiMarker .poiCore { fill:currentColor; stroke:#080906; stroke-width:2.4; }
     .haggaMap .poiMarker text { display:none; fill:var(--text); font:700 11px system-ui,sans-serif; paint-order:stroke; stroke:#0b0d0a; stroke-width:3; }
     .haggaMap .poiMarker:hover text, .haggaMap .poiMarker:focus text { display:block; }
     .haggaMap .returnDot { fill:var(--warn); stroke:#160f04; stroke-width:3; }
@@ -6223,17 +6338,24 @@ INDEX = r"""<!doctype html>
     .haggaMap .emptyState { fill:var(--muted); font:14px system-ui,sans-serif; text-anchor:middle; }
     .haggaMapStatus { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:10px; }
     .mapLegend { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
-    .poiToggleBar { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:6px 14px; border:1px solid var(--line); border-radius:7px; background:#101310; margin:0 0 10px; padding:10px 12px; }
-    .poiToggleBar label { display:inline-flex; justify-content:space-between; gap:10px; align-items:center; color:var(--text); font-size:12px; line-height:1.25; }
+    .haggaMapLayout { display:grid; grid-template-columns:minmax(0,1fr) 270px; gap:10px; align-items:start; }
+    .haggaMapMain { min-width:0; }
+    .haggaPoiLegend { border:1px solid var(--line); border-radius:8px; background:#101310; padding:10px; max-height:calc(100vh - 250px); overflow:auto; }
+    .haggaPoiLegend h3 { margin:0 0 8px; color:var(--text); font-size:13px; text-transform:none; letter-spacing:0; }
+    .poiToggleBar { display:grid; gap:3px; margin:8px 0 0; }
+    .poiToggleBar label { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:center; color:var(--text); font-size:12px; line-height:1.2; border-radius:5px; padding:4px 3px; }
+    .poiToggleBar label:hover { background:#171d17; }
     .poiToggleBar label[hidden] { display:none; }
     .poiToggleBar input { width:auto; }
-    .poiLegendHeader { display:flex; align-items:center; justify-content:space-between; gap:10px; margin:0 0 6px; }
+    .poiLegendHeader { display:grid; gap:8px; margin:0 0 8px; }
     .poiLegendHeader .toolbar { margin:0; }
-    .poiLegendHeader .toolbar { flex-wrap:wrap; justify-content:flex-end; }
+    .poiLegendHeader .toolbar { display:grid; grid-template-columns:repeat(3,1fr); gap:5px; }
+    .poiLegendHeader .toolbar button { padding:6px 7px; min-height:0; font-size:12px; }
     .poiFilterInput { width:100%; margin:0 0 6px; }
     .poiFilterSummary { color:var(--muted); font-size:12px; margin:0 0 8px; }
     .poiToggleLabel { display:inline-flex; align-items:center; gap:7px; min-width:0; }
-    .poiSwatch { width:10px; height:10px; border:1px solid #0b0d0a; border-radius:2px; flex:0 0 auto; }
+    .poiToggleLabel span:last-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .poiSwatch { width:12px; height:12px; border:1px solid #fff2c0; border-radius:999px; flex:0 0 auto; box-shadow:0 0 7px currentColor, 0 0 14px currentColor; color:var(--poi-color, var(--accent)); }
     .poiCount { color:var(--muted); font-size:11px; }
     .teleportMap { cursor:crosshair; min-height:360px; }
     .teleportMap .teleportTargetDot { fill:var(--danger); stroke:#fff0d0; stroke-width:3; }
@@ -6280,7 +6402,7 @@ INDEX = r"""<!doctype html>
     .hostNote { font-size:13px; line-height:1.35; }
     .hidden { display:none; }
     @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior:auto !important; transition:none !important; animation:none !important; } }
-    @media (max-width: 1100px) { .twoCol, .threeCol { grid-template-columns:1fr; } .overviewMapShell .haggaMap { aspect-ratio:1 / 1; min-height:0; max-height:none; } }
+    @media (max-width: 1100px) { .twoCol, .threeCol, .haggaMapLayout { grid-template-columns:1fr; } .overviewMapShell .haggaMap { aspect-ratio:1 / 1; min-height:0; max-height:none; } .haggaPoiLegend { max-height:none; } }
     @media (max-width: 1180px) { main { grid-template-columns:1fr; } nav { position:static; height:auto; border-right:0; border-bottom:1px solid var(--line); } .tabs { grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); } .overviewTopGrid { grid-template-columns:repeat(3,minmax(0,1fr)); } .sectionHeader { flex-wrap:wrap; } }
     @media (max-width: 640px) { section { padding:12px; } .overviewTopGrid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
     @media (max-width: 820px) { header { align-items:flex-start; flex-direction:column; } .row { flex-wrap:wrap; } .barRow { grid-template-columns:1fr; gap:4px; } }
@@ -6345,7 +6467,7 @@ INDEX = r"""<!doctype html>
     </div>
   </div>
 <script nonce="__NONCE__">
-const ADMIN_PANEL_BUILD = '20260520-hagga-clean-map-south';
+const ADMIN_PANEL_BUILD = '20260521-hagga-neon-pois';
 let token = (localStorage.getItem('duneAdminToken') || sessionStorage.getItem('duneAdminToken') || '').trim();
 document.getElementById('token').value = token;
 const validTabs = new Set(['overview', 'ops', 'security', 'runbook', 'characters', 'settings', 'mutations', 'digests', 'catalog']);
@@ -6366,7 +6488,7 @@ let playerModalRef = null;
 let resourceRefreshInFlight = false;
 let healthRefreshInFlight = false;
 let haggaMapRefreshInFlight = false;
-let haggaMapAutoRefresh = sessionStorage.getItem('duneAdminHaggaMapAutoRefresh') !== 'off';
+let haggaMapAutoRefresh = localStorage.getItem('duneAdminHaggaMapAutoRefresh') !== 'off';
 let haggaMapLastGoodHtml = '';
 let haggaMapZoomState = {scale:1, x:0, y:0};
 let haggaMapSuppressMarkerClick = false;
@@ -6777,11 +6899,35 @@ function mapTiles(rows){
   return `<div class="mapGrid">${rows.map(r => `<div class="mapTile ${r.online ? 'ok' : 'bad'}"><div class="name">${esc(r.label || r.map)}</div><div class="meta">${r.online ? 'online' : 'offline'} | ${esc(r.players ?? 0)} players</div></div>`).join('')}</div>`;
 }
 const haggaPoiPalette = ['#d5a13e', '#7fc27a', '#6fa8dc', '#d96f62', '#b78cff', '#6cc7bd', '#e1b75f', '#e89458'];
+const haggaPoiGroupColors = {
+  Agave:'#7fc27a',
+  Aql:'#b78cff',
+  Atreides:'#4f86d9',
+  Camps:'#d96f62',
+  Caves:'#c8a46a',
+  Custom:'#edf3ea',
+  EcoLabs:'#54c6a2',
+  Harkonnen:'#d9534f',
+  Intel:'#65b7ff',
+  Landmark:'#d5a13e',
+  Loot:'#e7d35b',
+  NPCs:'#f0c26e',
+  Outposts:'#cf5b4d',
+  Representatives:'#8fb7ff',
+  Sandbikes:'#e89458',
+  Shipwrecks:'#9aa6ad',
+  Spiceblows:'#f16f9a',
+  TradingPosts:'#6cc7bd',
+  Trainers:'#9fd36f'
+};
+function haggaPoiColor(group, index=0){
+  return haggaPoiGroupColors[group] || haggaPoiPalette[index % haggaPoiPalette.length];
+}
 const haggaPoiPresetGroups = {Shipwrecks:true, Caves:true, TradingPosts:true, Outposts:true, Aql:true, Trainers:true};
 function selectedHaggaPoiGroups(groups){
   if (!haggaPoiGroups || !Object.keys(haggaPoiGroups).length) {
     try {
-      haggaPoiGroups = JSON.parse(sessionStorage.getItem('duneAdminHaggaPoiGroups') || '{}');
+      haggaPoiGroups = JSON.parse(localStorage.getItem('duneAdminHaggaPoiGroups') || sessionStorage.getItem('duneAdminHaggaPoiGroups') || '{}');
     } catch (e) {
       haggaPoiGroups = {};
     }
@@ -6794,6 +6940,7 @@ function selectedHaggaPoiGroups(groups){
 }
 function saveHaggaPoiGroups(selected){
   haggaPoiGroups = selected;
+  localStorage.setItem('duneAdminHaggaPoiGroups', JSON.stringify(selected));
   sessionStorage.setItem('duneAdminHaggaPoiGroups', JSON.stringify(selected));
 }
 function haggaPoiSummary(selected, pois){
@@ -6806,14 +6953,14 @@ function haggaPoiOverlay(pois, selected){
   const groups = pois?.groups || {};
   const groupKeys = Object.keys(groups);
   const colors = {};
-  groupKeys.forEach((group, index) => colors[group] = haggaPoiPalette[index % haggaPoiPalette.length]);
+  groupKeys.forEach((group, index) => colors[group] = haggaPoiColor(group, index));
   return markers.filter(marker => selected[marker.group] === true).map(marker => {
     const x = clamp(Number(marker.x || 0) / 100, 0, 1000);
     const y = clamp(Number(marker.y || 0) / 100, 0, 1000);
     const group = (groups[marker.group] || {}).name || marker.group || 'POI';
     const name = marker.name || group;
     const color = colors[marker.group] || '#d5a13e';
-    return `<g class="poiMarker" tabindex="0" transform="translate(${x.toFixed(1)} ${y.toFixed(1)})"><title>${esc(group)}: ${esc(name)}</title><circle r="4.5" fill="${esc(color)}"></circle><text x="8" y="-8">${esc(name)}</text></g>`;
+    return `<g class="poiMarker" tabindex="0" style="--poi-color:${esc(color)}; color:${esc(color)}" transform="translate(${x.toFixed(1)} ${y.toFixed(1)})"><title>${esc(group)}: ${esc(name)}</title><circle class="poiHalo" r="9"></circle><circle class="poiRing" r="6"></circle><circle class="poiCore" r="4.2"></circle><text x="10" y="-10">${esc(name)}</text></g>`;
   }).join('');
 }
 function haggaPoiToggleBar(pois, selected){
@@ -6822,12 +6969,12 @@ function haggaPoiToggleBar(pois, selected){
     .sort((a, b) => String(groups[a]?.name || a).localeCompare(String(groups[b]?.name || b), undefined, {sensitivity:'base'}));
   if (!groupKeys.length) return '';
   const colors = {};
-  groupKeys.forEach((group, index) => colors[group] = haggaPoiPalette[index % haggaPoiPalette.length]);
-  return `<div class="poiLegendHeader"><span id="haggaPoiSummary" class="muted">${esc(haggaPoiSummary(selected, pois))}</span><div class="toolbar"><button id="haggaPoiAllBtn">All</button><button id="haggaPoiPresetBtn">Preset</button><button id="haggaPoiClearBtn">Clear</button><button id="haggaPoiEnableFilteredBtn">On shown</button><button id="haggaPoiDisableFilteredBtn">Off shown</button><button id="haggaPoiOnlyFilteredBtn">Only shown</button></div></div><input id="haggaPoiFilter" class="poiFilterInput" type="search" placeholder="Filter POI layers"><div id="haggaPoiFilterSummary" class="poiFilterSummary">Showing all POI layers</div><div class="poiToggleBar" aria-label="POI layer toggles">${groupKeys.map(group => {
+  groupKeys.forEach((group, index) => colors[group] = haggaPoiColor(group, index));
+  return `<aside class="haggaPoiLegend" aria-label="Map legend"><h3>Legend</h3><div class="poiLegendHeader"><span id="haggaPoiSummary" class="muted">${esc(haggaPoiSummary(selected, pois))}</span><div class="toolbar"><button id="haggaPoiAllBtn">All</button><button id="haggaPoiPresetBtn">Preset</button><button id="haggaPoiClearBtn">Clear</button><button id="haggaPoiEnableFilteredBtn">On</button><button id="haggaPoiDisableFilteredBtn">Off</button><button id="haggaPoiOnlyFilteredBtn">Only</button></div></div><input id="haggaPoiFilter" class="poiFilterInput" type="search" placeholder="Filter legend"><div id="haggaPoiFilterSummary" class="poiFilterSummary">Showing all POI layers</div><div class="poiToggleBar" aria-label="POI layer toggles">${groupKeys.map(group => {
     const info = groups[group] || {};
     const label = String(info.name || group);
-    return `<label data-filter-text="${esc((label + ' ' + group).toLowerCase())}"><span class="poiToggleLabel"><input type="checkbox" value="${esc(group)}"${selected[group] ? ' checked' : ''}><span class="poiSwatch" style="background:${esc(colors[group])}"></span><span>${esc(label)}</span></span><span class="poiCount">${esc(info.count || 0)}</span></label>`;
-  }).join('')}</div>`;
+    return `<label data-filter-text="${esc((label + ' ' + group).toLowerCase())}"><span class="poiToggleLabel"><input type="checkbox" value="${esc(group)}"${selected[group] ? ' checked' : ''}><span class="poiSwatch" style="--poi-color:${esc(colors[group])}; color:${esc(colors[group])}; background:${esc(colors[group])}"></span><span>${esc(label)}</span></span><span class="poiCount">${esc(info.count || 0)}</span></label>`;
+  }).join('')}</div></aside>`;
 }
 function haggaBasinMapPanel(data){
   const players = data?.players || [];
@@ -6915,7 +7062,7 @@ function haggaBasinMapPanel(data){
     assessment: d.assessment || ''
   }));
   const generatedAt = data?.generatedAt ? new Date(data.generatedAt).toLocaleTimeString() : '';
-  return `<div class="panelBand"><div class="sectionHeader"><h2>Hagga Basin Coordinate Grid</h2><div class="toolbar"><span id="haggaMapCount" class="pill ${players.length ? 'ok' : ''}">${esc(players.length)} plotted</span><span id="haggaMapUpdated" class="pill">updated ${esc(generatedAt)}</span><span id="haggaMapHealth" class="pill warn">DB persistence position, not proven live</span><button id="haggaMapZoomOutBtn" title="Zoom map out">-</button><button id="haggaMapZoomInBtn" title="Zoom map in">+</button><button id="haggaMapResetBtn">Reset view</button><button id="toggleHaggaMapRefreshBtn" aria-pressed="${haggaMapAutoRefresh ? 'true' : 'false'}">${haggaMapAutoRefresh ? 'Pause map' : 'Resume map'}</button><button id="refreshHaggaMapBtn">Refresh map</button></div></div>${haggaPoiToggleBar(pois, selectedPois)}<div id="haggaMapSrStatus" class="srOnly" aria-live="polite">${esc(players.length)} Hagga Basin players plotted.</div><div id="haggaMapViewport" class="haggaMap"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Full Hagga Basin coordinate-grid map"><image class="mapImage" href="/static/hagga-basin.webp?v=${encodeURIComponent(ADMIN_PANEL_BUILD)}" x="0" y="0" width="${width}" height="${height}" preserveAspectRatio="xMidYMid meet"></image><rect class="mapShade" x="0" y="0" width="${width}" height="${height}"></rect>${grid}<text x="12" y="38" fill="var(--muted)" font-size="12">NW</text><text x="${width - 30}" y="${height - 12}" fill="var(--muted)" font-size="12">SE</text>${poiMarkers}${markers}${empty}</svg></div><div class="haggaMapStatus"><span class="pill warn">green: persisted actor transform</span><span class="pill ${showReturnPoints ? 'warn' : ''}">yellow return-info ${showReturnPoints ? 'shown' : 'hidden'}</span><span class="pill">POIs: Dune: Awakening Community Wiki CC BY-NC-SA 4.0</span><span class="pill">background: clean survival_1 tile composite</span><span class="pill">projection: world X -> image U, world Y -> image V</span><span class="pill">world X ${esc(Math.round(minX))}..${esc(Math.round(maxX))}, Y ${esc(Math.round(minY))}..${esc(Math.round(maxY))}${invertX ? ', flipped X' : ''}${invertY ? ', inverted Y' : ''}</span><span class="pill">image U ${esc(imageMinU.toFixed(2))}..${esc(imageMaxU.toFixed(2))}, V ${esc(imageMinV.toFixed(2))}..${esc(imageMaxV.toFixed(2))}</span></div><details open><summary>Coordinates</summary><div class="coordTable">${table(rows)}</div></details><details open><summary>Location Source Diagnostics</summary><div class="coordTable">${table(diagnosticRows)}</div></details></div>`;
+  return `<div class="panelBand"><div class="sectionHeader"><h2>Hagga Basin Coordinate Grid</h2><div class="toolbar"><span id="haggaMapCount" class="pill ${players.length ? 'ok' : ''}">${esc(players.length)} plotted</span><span id="haggaMapUpdated" class="pill">updated ${esc(generatedAt)}</span><span id="haggaMapHealth" class="pill warn">DB persistence position, not proven live</span><button id="haggaMapZoomOutBtn" title="Zoom map out">-</button><button id="haggaMapZoomInBtn" title="Zoom map in">+</button><button id="haggaMapResetBtn">Reset view</button><button id="toggleHaggaMapRefreshBtn" aria-pressed="${haggaMapAutoRefresh ? 'true' : 'false'}">${haggaMapAutoRefresh ? 'Pause map' : 'Resume map'}</button><button id="refreshHaggaMapBtn">Refresh map</button></div></div><div id="haggaMapSrStatus" class="srOnly" aria-live="polite">${esc(players.length)} Hagga Basin players plotted.</div><div class="haggaMapLayout"><div class="haggaMapMain"><div id="haggaMapViewport" class="haggaMap"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Full Hagga Basin coordinate-grid map"><image class="mapImage" href="/static/hagga-basin.webp?v=${encodeURIComponent(ADMIN_PANEL_BUILD)}" x="0" y="0" width="${width}" height="${height}" preserveAspectRatio="xMidYMid meet"></image><rect class="mapShade" x="0" y="0" width="${width}" height="${height}"></rect>${grid}<text x="12" y="38" fill="var(--muted)" font-size="12">NW</text><text x="${width - 30}" y="${height - 12}" fill="var(--muted)" font-size="12">SE</text>${poiMarkers}${markers}${empty}</svg></div></div>${haggaPoiToggleBar(pois, selectedPois)}</div><div class="haggaMapStatus"><span class="pill warn">green: persisted actor transform</span><span class="pill ${showReturnPoints ? 'warn' : ''}">yellow return-info ${showReturnPoints ? 'shown' : 'hidden'}</span><span class="pill">POIs: Dune: Awakening Community Wiki CC BY-NC-SA 4.0</span><span class="pill">background: clean survival_1 tile composite</span><span class="pill">projection: world X -> image U, world Y -> image V</span><span class="pill">world X ${esc(Math.round(minX))}..${esc(Math.round(maxX))}, Y ${esc(Math.round(minY))}..${esc(Math.round(maxY))}${invertX ? ', flipped X' : ''}${invertY ? ', inverted Y' : ''}</span><span class="pill">image U ${esc(imageMinU.toFixed(2))}..${esc(imageMaxU.toFixed(2))}, V ${esc(imageMinV.toFixed(2))}..${esc(imageMaxV.toFixed(2))}</span></div><details open><summary>Coordinates</summary><div class="coordTable">${table(rows)}</div></details><details open><summary>Location Source Diagnostics</summary><div class="coordTable">${table(diagnosticRows)}</div></details></div>`;
 }
 function offlineTeleportPanel(ref, characterRows){
   const partitions = ref.worldPartitions || [];
@@ -7178,6 +7325,7 @@ function wireHaggaMapControls(container){
   container.querySelector('#refreshHaggaMapBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Refreshing...', () => refreshHaggaMap({force:true})));
   container.querySelector('#toggleHaggaMapRefreshBtn')?.addEventListener('click', () => {
     haggaMapAutoRefresh = !haggaMapAutoRefresh;
+    localStorage.setItem('duneAdminHaggaMapAutoRefresh', haggaMapAutoRefresh ? 'on' : 'off');
     sessionStorage.setItem('duneAdminHaggaMapAutoRefresh', haggaMapAutoRefresh ? 'on' : 'off');
     notify(haggaMapAutoRefresh ? 'Hagga map refresh resumed' : 'Hagga map refresh paused');
     refreshHaggaMap({force:true}).catch(e => reportClientError(e, 'Refresh Hagga map'));
@@ -8266,7 +8414,7 @@ async function mutations(serial=loadSerial){
   ]);
   if (serial !== loadSerial) return;
   const referenceErrors = ref.errors && Object.keys(ref.errors).length ? `<div class="card"><h2>Reference Errors</h2><pre>${esc(JSON.stringify(ref.errors, null, 2))}</pre></div>` : '';
-  view.innerHTML = `<div class="pageStack">${referenceErrors}<div class="sectionHeader"><h2>Admin Actions</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="settings">Settings</button><button data-jump="security">Audit</button></div></div><div class="panelBand"><h2>Target Player</h2><div class="grid"><label>Character<select id="adminCharacterSelect">${characterOptions(characterRows)}</select></label><label>Player controller ID<input id="pcid"></label><label>Account ID<input id="grantAccount" placeholder="auto-select player inventory"></label><label>Character name<input id="grantCharacter" placeholder="auto-select by name"></label></div></div>${offlineTeleportPanel(ref, characterRows)}<div class="panelBand"><h2>Character Slots</h2><div class="grid"><label>Action<select id="slotAction"><option>new-character</option><option>switch-character</option><option>restore-character</option></select></label><label>Target hibernated account ID<input id="slotTargetAccount"></label></div><p><button id="slotInspectBtn" class="primary">Inspect slots</button> <button id="slotPlanBtn" class="primary">Preview swap</button> <button id="slotExecuteBtn" class="danger">Execute swap</button></p><pre id="slotResult"></pre></div><div class="twoCol"><div class="panelBand"><h2>Currency and XP</h2><p class="muted">Select a character first; balances and tracks populate from that player.</p><div class="grid"><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button id="currencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Level for set/new track<input id="xplevel" value="0"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button id="xpBtn" class="primary">Apply XP</button></p></div><div class="panelBand"><h2>Item Grants</h2><p class="muted">Use a known template ID and dry run before writing new items.</p><div class="grid"><label>Known inventory<select id="grantInventorySelect">${inventoryOptions(ref.recentInventories)}</select></label><label>Inventory ID<input id="grantInventory" placeholder="explicit inventory"></label><label class="hidden">Character<select id="grantCharacterSelect">${characterOptions(characterRows)}</select></label><label>Inventory type<select id="grantInventoryType">${inventoryTypeOptions(ref.inventoryTypes)}</select></label><label>Template ID<input id="grantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><details><summary>Advanced stats JSON</summary><textarea id="grantStats">{}</textarea></details><p><button id="dryRunItemBtn" class="primary">Dry run</button> <button id="grantItemBtn" class="danger">Grant item</button></p><pre id="grantResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Item Maintenance</h2><div class="grid"><label class="hidden">Character<select id="itemCharacterSelect">${characterOptions(characterRows)}</select></label><label>Owned item<select id="itemEditSelect"><option value="">Select a character first</option></select></label><label>Item ID<input id="itemEditId"></label><label>New stack size<input id="itemEditStack" value="1"></label><label>Delete count<input id="itemDeleteCount" placeholder="blank/all"></label></div><p><button id="setItemStackBtn" class="primary">Set stack</button> <button id="deleteItemBtn" class="danger">Delete item/count</button></p><pre id="itemEditResult"></pre></div><div class="panelBand"><h2>Specialization Keystones</h2><div class="grid"><label>Player/controller ID<input id="keyPlayer"></label><label>Keystone<select id="keystone">${options(ref.keystones, 'name')}</select></label></div><p><button id="purchaseKeystoneBtn" class="primary">Purchase keystone</button> <button id="resetKeystonesBtn" class="danger">Reset all keystones</button></p><pre id="keystoneResult"></pre></div></div><details class="panelBand"><summary>Backup</summary><p class="muted">Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button id="backupBtn" class="primary">Create DB backup</button><pre id="backupResult"></pre></details><datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><details class="panelBand"><summary>Known Item Templates</summary>${table(ref.knownItemTemplates)}</details><details class="panelBand"><summary>Observed Item Templates</summary>${table(ref.observedItemTemplates)}</details><details class="panelBand"><summary>Recent Inventories</summary>${table(ref.recentInventories)}</details><details class="panelBand"><summary>Inventory Types</summary>${table(ref.inventoryTypes)}</details></div>`;
+  view.innerHTML = `<div class="pageStack">${referenceErrors}<div class="sectionHeader"><h2>Admin Actions</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="settings">Settings</button><button data-jump="security">Audit</button></div></div><div class="panelBand"><h2>Target Player</h2><div class="grid"><label>Character<select id="adminCharacterSelect">${characterOptions(characterRows)}</select></label><label>Player controller ID<input id="pcid"></label><label>Account ID<input id="grantAccount" placeholder="auto-select player inventory"></label><label>Character name<input id="grantCharacter" placeholder="auto-select by name"></label></div></div>${offlineTeleportPanel(ref, characterRows)}<div class="panelBand"><h2>Character Slots</h2><div class="grid"><label>Action<select id="slotAction"><option>new-character</option><option>switch-character</option><option>restore-character</option></select></label><label>Target hibernated account ID<input id="slotTargetAccount"></label></div><p><button id="slotInspectBtn" class="primary">Inspect slots</button> <button id="slotPlanBtn" class="primary">Preview swap</button> <button id="slotExecuteBtn" class="danger">Execute swap</button></p><pre id="slotResult"></pre></div><div class="twoCol"><div class="panelBand"><h2>Currency and XP</h2><p class="muted">Select a character first; balances and tracks populate from that player.</p><div class="grid"><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button id="currencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Solari amount<input id="solariAmount" value="20000"></label></div><p><button id="solariInventoryDryRunBtn" class="primary">Preview inventory Solari</button> <button id="solariInventoryGrantBtn" class="danger">Grant inventory Solari</button> <button id="solariBankDryRunBtn" class="primary">Preview bank Solari</button> <button id="solariBankGrantBtn" class="danger">Grant bank Solari</button></p><pre id="solariGrantResult"></pre><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Level for set/new track<input id="xplevel" value="0"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button id="xpBtn" class="primary">Apply XP</button></p></div><div class="panelBand"><h2>Item Grants</h2><p class="muted">Use a known template ID and dry run before writing new items.</p><div class="grid"><label>Known inventory<select id="grantInventorySelect">${inventoryOptions(ref.recentInventories)}</select></label><label>Inventory ID<input id="grantInventory" placeholder="explicit inventory"></label><label class="hidden">Character<select id="grantCharacterSelect">${characterOptions(characterRows)}</select></label><label>Inventory type<select id="grantInventoryType">${inventoryTypeOptions(ref.inventoryTypes)}</select></label><label>Template ID<input id="grantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><details><summary>Advanced stats JSON</summary><textarea id="grantStats">{}</textarea></details><p><button id="dryRunItemBtn" class="primary">Dry run</button> <button id="grantItemBtn" class="danger">Grant item</button></p><pre id="grantResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Item Maintenance</h2><div class="grid"><label class="hidden">Character<select id="itemCharacterSelect">${characterOptions(characterRows)}</select></label><label>Owned item<select id="itemEditSelect"><option value="">Select a character first</option></select></label><label>Item ID<input id="itemEditId"></label><label>New stack size<input id="itemEditStack" value="1"></label><label>Delete count<input id="itemDeleteCount" placeholder="blank/all"></label></div><p><button id="setItemStackBtn" class="primary">Set stack</button> <button id="deleteItemBtn" class="danger">Delete item/count</button></p><pre id="itemEditResult"></pre></div><div class="panelBand"><h2>Specialization Keystones</h2><div class="grid"><label>Player/controller ID<input id="keyPlayer"></label><label>Keystone<select id="keystone">${options(ref.keystones, 'name')}</select></label></div><p><button id="purchaseKeystoneBtn" class="primary">Purchase keystone</button> <button id="resetKeystonesBtn" class="danger">Reset all keystones</button></p><pre id="keystoneResult"></pre></div></div><details class="panelBand"><summary>Backup</summary><p class="muted">Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button id="backupBtn" class="primary">Create DB backup</button><pre id="backupResult"></pre></details><datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><details class="panelBand"><summary>Known Item Templates</summary>${table(ref.knownItemTemplates)}</details><details class="panelBand"><summary>Observed Item Templates</summary>${table(ref.observedItemTemplates)}</details><details class="panelBand"><summary>Recent Inventories</summary>${table(ref.recentInventories)}</details><details class="panelBand"><summary>Inventory Types</summary>${table(ref.inventoryTypes)}</details></div>`;
   const loadCharacterAdminDetails = async (accountId, serial=detailLoadSerial) => {
     const itemSelect = document.getElementById('itemEditSelect');
     const inventorySelect = document.getElementById('grantInventorySelect');
@@ -8375,6 +8523,10 @@ async function mutations(serial=loadSerial){
     document.getElementById('slotResult').textContent = JSON.stringify(result, null, 2);
   }));
   document.getElementById('currencyBtn').addEventListener('click', e => runAction(e.currentTarget, 'Applying...', currency));
+  document.getElementById('solariInventoryDryRunBtn').addEventListener('click', e => runAction(e.currentTarget, 'Planning...', () => grantSolari('inventory', true)));
+  document.getElementById('solariInventoryGrantBtn').addEventListener('click', e => runAction(e.currentTarget, 'Granting...', () => grantSolari('inventory', false)));
+  document.getElementById('solariBankDryRunBtn').addEventListener('click', e => runAction(e.currentTarget, 'Planning...', () => grantSolari('bank', true)));
+  document.getElementById('solariBankGrantBtn').addEventListener('click', e => runAction(e.currentTarget, 'Granting...', () => grantSolari('bank', false)));
   document.getElementById('xpBtn').addEventListener('click', e => runAction(e.currentTarget, 'Applying...', xp));
   document.getElementById('purchaseKeystoneBtn').addEventListener('click', e => runAction(e.currentTarget, 'Purchasing...', purchaseKeystone));
   document.getElementById('resetKeystonesBtn').addEventListener('click', e => runAction(e.currentTarget, 'Resetting...', resetKeystones));
@@ -8397,6 +8549,23 @@ async function currencyFor(playerControllerId){
   await api('/api/admin/currency', {method:'POST', body:JSON.stringify({player_controller_id:playerControllerId,currency_id:detailCurId.value,amount:detailCurAmount.value,mode:detailCurMode.value})});
   notify('Currency updated');
   return true;
+}
+async function grantSolari(location, dryRun){
+  const body = {
+    dry_run: dryRun,
+    account_id: grantAccount.value,
+    character_name: grantCharacter.value,
+    player_controller_id: pcid.value,
+    amount: solariAmount.value
+  };
+  if (!dryRun) {
+    const phrase = location === 'bank' ? 'WRITE EXCHANGE' : 'GRANT SOLARI';
+    if (!confirm(`Grant ${body.amount} Solari to ${location}?`)) return;
+    body.confirm = phrase;
+  }
+  const result = await api(`/api/admin/solari/${location}`, {method:'POST', body:JSON.stringify(body)});
+  document.getElementById('solariGrantResult').textContent = JSON.stringify(result, null, 2);
+  notify(dryRun ? 'Solari grant preview ready' : 'Solari granted');
 }
 async function xp(){
   await api('/api/admin/xp', {method:'POST', body:JSON.stringify({player_id:xpid.value,track_type:track.value,amount:xpamount.value,level:xplevel.value,mode:xpmode.value})});

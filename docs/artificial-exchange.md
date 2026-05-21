@@ -5,7 +5,7 @@ Awakening self-hosts. It has three separate jobs:
 
 - build a reviewed item price catalog
 - buy eligible player listings through the native Exchange fulfill path
-- optionally seed tightly gated NPC listings from reviewed, market-priced
+- optionally seed tightly gated NPC listings from reviewed, category-mapped
   catalog rows
 
 All write paths are gated. The default service state is enabled in dry-run mode,
@@ -29,6 +29,7 @@ Operational model:
 First-class operator workflow:
 
 ```bash
+python3 scripts/import-exchange-category-map.py
 python3 scripts/build-exchange-catalog.py
 python3 scripts/artificial-exchange-bot.py --check-ready
 python3 scripts/artificial-exchange-bot.py --dry-run --report-skips 100
@@ -38,6 +39,11 @@ make artificial-exchange-smoke
 
 Only after that flow is clean should an operator enable live purchase,
 auto-claim, funding, or populator apply gates in `.env`.
+
+The seeded-listing populator is first-class but intentionally operator-driven.
+It is designed for small or private servers where the Exchange needs a visible
+stock baseline. It should be run as a controlled one-shot or explicitly managed
+service, not left running accidentally after test seeding.
 
 Confidence levels:
 
@@ -50,6 +56,157 @@ Confidence levels:
   has cleanup guards, but it can still affect the visible economy immediately.
 - Native `dune_exchange_retrieve_solaris_from_item(...)`: low and not used by
   the bot because this server build showed unsafe behavior.
+
+## Current Production Snapshot
+
+As of the current validated run, Artificial Exchange seeding is a first-class
+feature with category-targeted broad population enabled. Confidence: high for
+the category map and catalog reconciliation used by the current seed, moderate
+for exact economy balance because player demand can still move faster than
+static seeded supply.
+
+Current verified market state:
+
+- Exchange id: `2`
+- Populator/controller owner id: `124`
+- Source inventory id: `485`
+- Live seeded orders: `5432`
+- Eligible catalog rows: `1758`
+- Live seeded templates: `1176`
+- Live seeded categories: `50`
+- Dry-run planned additions after audit: `0`
+- Missing catalog rows after audit: `0`
+- Live/catalog category mask mismatches after audit: `0`
+- Eligible/source-map mismatches after audit: `0`
+- Empty eligible categories after audit: `0`
+- Under-target categories after audit: `0`
+
+The current audit report is
+`backups/admin-panel/artificial-exchange/market-category-audit.json`. A clean
+audit means the populator does not currently see anything else to add under the
+configured category targets and ceiling.
+
+The production seeding shape is:
+
+- Minimum target: `4000` live orders
+- Hard/goal ceiling: `20000` live orders
+- Category-target planner: enabled
+- Scan/populator cadence: every `180` to `420` seconds unless overridden
+- Stackable categories: full-stack listings, currently stack size `100`
+- Singleton categories: individual listings, currently targeting `125` orders
+  per category with a cap of `8` per template/category
+
+Stackable categories currently include consumables, resources, fuel, and ammo:
+
+```env
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_STACKABLE_CATEGORIES=consumables/medical,consumables/spice,resources/components,resources/fuel,resources/raw,resources/refined,vehicles/ammunition,weapons/ammunition
+```
+
+Unique Schematics are special. The game UI filters them through the parent
+Unique Schematics mask, so seeded schematic listings use parent mask
+`0x07000000` with category depth `2`. The catalog still keeps logical schematic
+subcategories for balancing and audit reporting. Confidence: high.
+
+Augments are protected. Non-augment rows are not allowed into Augment masks.
+The current game-derived sources do not expose trusted standalone augment or
+customization item rows, and the previous observed Augment placements were bad
+old rows corrected back to weapon categories. Do not seed weapons into
+customization just because the weapon has a customization capability tag.
+
+## Audit And Coverage Checklist
+
+Use this checklist after any category-map, pricing, catalog, or `.env` change.
+Confidence: high that these checks catch the failure modes seen during the
+initial broad seed.
+
+1. Rebuild the game-derived source category map and catalog:
+
+```bash
+python3 scripts/import-exchange-category-map.py
+python3 scripts/build-exchange-catalog.py
+```
+
+2. Run offline tests:
+
+```bash
+make test-artificial-exchange
+```
+
+3. Dry-run the broad populator against the live market:
+
+```bash
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ENABLED=true \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_DRY_RUN=true \
+DUNE_ARTIFICIAL_EXCHANGE_SCAN_LIMIT=25000 \
+  python3 scripts/artificial-exchange-bot.py \
+  --populate-all-once \
+  --catalog backups/admin-panel/artificial-exchange/catalog.json \
+  --populator-owner-id 124 \
+  --populator-source-inventory-id 485 \
+  --confirm "POPULATE ARTIFICIAL EXCHANGE"
+```
+
+4. Inspect the resulting summary. A healthy saturated market should report:
+
+- `missingCatalogRows` or `totalPlanned` near `0`
+- no category-gate skips for expected rows
+- no category mask mismatch errors
+- no source category mismatch errors
+- no inventory position exhaustion
+
+5. Inspect live category distribution:
+
+```sql
+select o.category_mask, o.category_depth, count(*) as orders
+from dune.dune_exchange_orders o
+where o.exchange_id = 2
+group by o.category_mask, o.category_depth
+order by orders desc, o.category_mask, o.category_depth;
+```
+
+6. Inspect seeded owner scope:
+
+```sql
+select owner_id, is_npc_order, count(*) as orders
+from dune.dune_exchange_orders
+where exchange_id = 2
+group by owner_id, is_npc_order
+order by owner_id, is_npc_order;
+```
+
+7. Inspect template/category pairs that do not exist in the reviewed catalog:
+
+```sql
+select o.template_id, o.category_mask, o.category_depth, count(*) as orders
+from dune.dune_exchange_orders o
+left join dune.dune_exchange_sell_orders s on s.order_id = o.id
+where o.exchange_id = 2
+group by o.template_id, o.category_mask, o.category_depth
+order by orders desc, o.template_id;
+```
+
+Compare that list to `backups/admin-panel/artificial-exchange/catalog.json`.
+Rows visible in-game but missing from the catalog are either player listings,
+old seeded rows that need purging, or a catalog build regression.
+
+Wrong-bucket triage:
+
+- Items in Augments: first suspect stale rows. Purge the Exchange or the
+  DASH/Admin owner, rebuild the catalog, then seed again. If the item returns to
+  Augments, inspect its `category`, `category_mask`, `category_depth`, and
+  source-map entry.
+- Empty category in-game: check that the source map has eligible templates for
+  that logical category, then check the dry-run `totalPlanned`. If planned is
+  `0`, the market is already saturated under the configured category target.
+- Schematics missing in-game: check that schematic rows use parent mask
+  `0x07000000` and depth `2`. Child schematic masks can exist logically in the
+  catalog, but the client filter expects the parent mask for visibility.
+- Fuel/resources swapped: inspect `resources/fuel`, `resources/raw`,
+  `resources/refined`, and `resources/components` in the source map. These were
+  previously easy to confuse because all live under the Misc top-level bucket.
+- Prices obviously wrong: inspect `baseline_price`, `game_file_price` in notes,
+  category multiplier, category floor, and
+  `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_GAME_FILE_OUTLIER_RATIO`.
 
 ## Components
 
@@ -79,6 +236,9 @@ Generated local state:
 - `backups/admin-panel/artificial-exchange/catalog.json`
 - `backups/admin-panel/artificial-exchange/catalog.csv`
 - `backups/admin-panel/artificial-exchange/<timestamp>-catalog.json`
+- `backups/admin-panel/artificial-exchange/source-category-map.json`
+- `backups/admin-panel/artificial-exchange/verified-category-map.json`
+- `backups/admin-panel/artificial-exchange/market-category-audit.json`
 - `backups/admin-panel/artificial-exchange/bot-audit.jsonl`
 - `backups/admin-panel/artificial-exchange/bot-state.json`
 
@@ -258,14 +418,14 @@ Intended uses:
 - Run one-shot validation or short maintenance-window seeding, then stop the
   populator.
 - Seed broad category coverage only after price and category gates pass. The
-  goal can be thousands of listings, but only from market-priced rows mapped to
-  the correct native Exchange bucket.
+  goal can be thousands of listings, but only from reviewed rows mapped to the
+  correct native Exchange bucket.
 
 Non-goals:
 
 - It is not a replacement for player supply.
-- It should not seed unpriced, low-tier, test, cosmetic, or unknown rows just
-  because they exist in game-file metadata.
+- It should not seed unknown, excluded, test, cosmetic, or unreconciled rows
+  just because they exist in game-file metadata.
 - It does not automatically recycle seller proceeds back into buyer funding.
 
 ## Catalog Pipeline
@@ -555,9 +715,22 @@ Current default row gates:
 
 Current default pricing:
 
-- `planned_unique_price(...)` anchors on `baseline_price`, multiplies it by
-  `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_PRICE_MULTIPLIER`, default `0.25`, then
-  applies `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_PRICE_JITTER_PCT`.
+- `planned_unique_price(...)` anchors on `baseline_price`, applies an
+  Exchange category multiplier, then applies the global
+  `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_PRICE_MULTIPLIER`, default `1.0`, and
+  `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_PRICE_JITTER_PCT`.
+- Category multipliers are intentionally not uniform:
+  - consumables: lower, so utility items such as Iodine Pills remain obtainable
+  - raw/refined/components: moderate, so materials are useful but not instant
+  - weapons, armor, vehicles, and high-impact tools: higher, so purchases feel
+    rewarding and require real Solari effort
+  - schematics/patents: conservative, because many catalog rows have flat or
+    placeholder source prices
+- If the row has `game_file_price=N` in notes and `baseline_price / N` exceeds
+  `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_GAME_FILE_OUTLIER_RATIO`, default `8`,
+  the populator uses the geometric mean of `baseline_price` and
+  `game_file_price` as the anchor. This dampens public-market spikes without
+  collapsing normal items to vendor-trash prices.
 - If a row has no `baseline_price` but does have both `price_floor` and
   `price_ceiling`, the populator falls back to their midpoint as the anchor.
 - `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_PRICE_SPAN` can widen a too-tight
@@ -565,6 +738,62 @@ Current default pricing:
   unique prices instead of merging through the native recurring-order path.
 - `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_PRICE_JITTER_PCT` is used only for rows
   that do not have explicit floor/ceiling values.
+- Blueprint/schematic rows are allowed through the baseline-price gate even
+  when the imported source price is a placeholder `1`. The pricing anchor is
+  raised to at least `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_BLUEPRINT_PRICE_FLOOR`
+  plus `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_BLUEPRINT_PRICE_TIER_STEP` per tier
+  above tier 2. This keeps schematics present without making them free.
+- Categories with official game-file rows but sparse market prices use explicit
+  lower floors so tier 0/1 placeholders do not create 1-Solari weapons, tools,
+  vehicles, armor, contracts, or patents.
+
+Current default quantity policy:
+
+- Stackable categories are controlled by
+  `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_STACKABLE_CATEGORIES`, defaulting to
+  consumables, raw/refined/component/fuel resources, and ammo.
+- Stackable rows use `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_FULL_STACK_SIZE`,
+  default `100`, for both staged item stack size and max stack size.
+- The Exchange order price remains the normal item/listing price for the
+  template. It is not multiplied by stack size. The audit event includes
+  `totalStackPrice` only as an operator reference.
+- `--populate-all-once` targets
+  `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_STACKABLE_TARGET_ORDERS`, default `13`,
+  active full-stack listings per stackable template.
+- Singleton rows use stack size `1` and `--populate-all-once` targets
+  `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_SINGLETON_CATEGORY_TARGET_ORDERS`,
+  default `125`, active listings per singleton category.
+- `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MAX_PER_TEMPLATE_PER_CATEGORY`, default
+  `8`, still caps duplicate singleton templates within a category, so the
+  category target spreads across multiple weapons, armor pieces, vehicles, and
+  schematics instead of repeating one template.
+
+Pricing examples from the current curve:
+
+| Template | Item | Category | Typical seeded price shape |
+| --- | --- | --- | --- |
+| `AntiRadiationPill` | Iodine Pill | Utility consumable | hundreds, not thousands |
+| `SpiceAddictionConsumable_04` | Melange Spiced Wine | Utility consumable | low thousands |
+| `LandsraadShipwreckComponent1` | Ship Manifest | Misc components | low hundreds |
+| `DuraluminumRod` | Duraluminum Ingot | Misc refined resources | hundreds |
+| `T5UniqueComponent` | Spice-infused Duraluminum Dust | Misc components | low thousands |
+| `T5RadiatedCoreComponent` | Irradiated Slag | Misc components | low thousands after spike damping |
+| `MelangeSpice` | Spice Melange | Misc refined resources | tens of thousands after spike damping |
+| `AtreLMG3` | House Vulcan GAU-92 | Weapons ranged | tens of thousands |
+
+Outlier handling:
+
+- Public dune.exchange snapshots are useful, but they can contain scarcity
+  spikes. Treat them as a market signal, not an absolute truth.
+- Rows imported with `game_file_price=N` get an outlier check. If
+  `baseline_price / N > DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_GAME_FILE_OUTLIER_RATIO`,
+  the anchor becomes `sqrt(baseline_price * game_file_price)`.
+- This caught the Spice Melange failure mode: public baseline `61156`, game-file
+  price `6500`, ratio `9.4`. With threshold `8`, the anchor drops to about
+  `19938` before the refined-resource multiplier and jitter.
+- Normal expensive weapons with smaller public/game-file ratios are not damped.
+  Example: `RocketLauncher_Unique_Homing_06` had ratio about `3.0`, so it keeps
+  the public-market baseline.
 
 Current default item quality:
 
@@ -572,7 +801,8 @@ Current default item quality:
 - Otherwise it is inferred from the parsed tier.
 - Otherwise it falls back to `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_QUALITY_LEVEL`.
 - The minimum allowed quality is
-  `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_QUALITY_LEVEL`, default `2`.
+  `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_QUALITY_LEVEL`, current broad profile
+  `1`.
 
 Known grade boundary:
 
@@ -580,69 +810,81 @@ Known grade boundary:
 - The tooling observed and can create `quality_level=0` and `quality_level=1`.
 - The catalog/import metadata exposes tier markers through at least tier `6`.
 - Operational answer: there are at least seven numeric quality/tier buckets if
-  counting `0` through `6`; the populator minimum is set to `2`, so it skips
-  tier 0 and tier 1 by default. Confidence: moderate because the DB stores
-  numeric levels but does not include a canonical grade-name table.
+  counting `0` through `6`; the broad profile sets the populator minimum to
+  `1`, so only tier 0 is excluded by the quality gate. Confidence: moderate
+  because the DB stores numeric levels but does not include a canonical
+  grade-name table.
 
-Current category limitation:
+Exchange category model:
 
 - Exchange category masks are not generic item category tags. The native client
-  has a separate Exchange tree under
-  `/Game/Dune/GUI/Data/ItemCategories/DA_ExchangeyTree`.
-- Local client `GUI.pak` string inspection found the observed top-level
-  Exchange order: `Augments`, `Garment`, `Misc`, `Utility`, `Vehicles`,
-  `Weapons`. Derived masks now live in `scripts/exchange_category_map.py`.
-  Confidence: high for the top-level order because it came from the
-  Exchange-specific client asset name; moderate for unobserved child indexes
-  until each bucket is client-verified.
-- The currently tested derived component bucket is `Misc -> Components`:
-  `0x03010000` / decimal `50397184`, depth `2`. This is the correct class of
-  bucket for crafted components and is the active probe value.
-- The live `dune_exchange_categories_hash` table exposes only integer hashes,
-  not category names or a hierarchy.
-- `try_update_exchange_categories_hash(...)` shows that category mappings are
-  normally supplied by the game/client through `update_sell_orders_categories`.
-- The bootstrap catalog and source category importer use the shared derived
-  Exchange map. Native DB filtering through `get_exchange_sell_orders(... mask,
-  depth)` works with masks by prefix and depth. Confidence: high.
-- Whether every child bucket renders with the expected live UI label still
-  depends on client verification. Confidence: moderate until observed in-client.
-- `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_PROTECT_AUGMENTS_CATEGORY=true` blocks
-  non-augment templates from category masks listed in
-  `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_AUGMENTS_CATEGORY_MASKS`. The current
-  protected mask is `117506048`, because live observation showed that bucket can
-  render as Augments in the client while older bootstrap rows labeled it
-  `schematics/weapons`.
+  has a separate Exchange category tree under
+  `/Game/Dune/GUI/Data/ItemCategories/`.
+- `strings` inspection of the local client `GUI.pak` exposed the actual
+  Exchange-facing category assets and tag queries, including:
+  - `DA_y_Consumables` -> `UI/GameItemCategory_Utility_Consumables`
+  - `DA_y_Components` -> `UI/GameItemCategory_Misc_Components`
+  - `DA_y_RawResources` -> `UI/GameItemCategory_Misc_RawResources`
+  - `DA_y_RefinedResources` -> `UI/GameItemCategory_Misc_RefinedResources`
+  - `DA_y_Fuel` -> `UI/GameItemCategory_Misc_Fuel`
+  - `DA_y_Ammunition` -> `UI/GameItemCategory_Weapons_Ammunition`
+  - `DA_y_HydrationTools`, `DA_y_GatheringTools`, and
+    `DA_yrtographyTools`
+  - `DA_y_Rifles`, `DA_y_LongBlades`, `DA_y_Sandbike`,
+    `DA_y_LightOrnithopter`, `DA_y_MediumOrnithopter`,
+    `DA_y_TransportOrnithopter`, `DA_y_Sandcrawler`, and related
+    weapon/vehicle/wearable buckets
+  - `DA_Exchangey_UniqueSchematics_*` buckets for utility, garments, vehicles,
+    weapons, and augments
+- Observed client/server category refresh writes confirmed the masks used by
+  representative live orders. Examples:
+  - Iodine Pill: `50725376/3`
+  - Ship Manifest and crafted components: `84017152/2`
+  - Duraluminum Ingot and refined resources: `83951616/2`
+  - House Vulcan GAU-92: `16844544/3`
+  - Artisan Sword: `16777472/3`
+  - Sandbike Boost Mk3: `33555712/3`
+  - Scout Ornithopter Thruster Mk4: `33687040/3`
+- The shared authoritative map lives in
+  `scripts/exchange_category_map.py`. Both
+  `scripts/import-exchange-category-map.py` and
+  `scripts/build-exchange-catalog.py` use it, and the catalog builder performs a
+  final category-mask reconcile across all rows so stale CSV/bootstrap masks do
+  not leak into seeded listings.
+- The generated source category map lives at
+  `backups/admin-panel/artificial-exchange/source-category-map.json`. It is
+  rebuilt from `api.awakening.wiki` item tags, then reconciled through the local
+  Exchange mask table.
+- The verified category map lives at
+  `backups/admin-panel/artificial-exchange/verified-category-map.json`. It is
+  exported by `scripts/observe-exchange-category-updates.py` from observed
+  client writes to `update_sell_orders_categories(...)`. Use it for high-risk
+  probe work or template-specific verification.
+- `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_SOURCE_CATEGORY=true` is the
+  preferred broad live gate. It requires the source category map and rejects
+  rows whose source category disagrees with the catalog.
+- A narrow fallback admits source-reconciled sparse rows for patents, social
+  armor, contracts, hydration/gathering/cartography/mining/deployable tools,
+  and schematic subcategories even when public market data is thin. Confidence:
+  moderate, because the masks come from local game category assets but those
+  sparse buckets still have less public-market data.
+- Augment categories exist in the game category tree, but the public item API
+  currently exposes no sellable `Items.Augment` or `Items.Schematics.Augments`
+  templates. Do not seed guessed `DA_AUGMENT_*` asset names unless a client or
+  DB observation proves they are valid Exchange item template ids.
+- `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_CATEGORY_SEEDING_VERIFIED=true` switches
+  to template-specific verified masks. This is stricter and useful for probes,
+  but it only seeds templates present in the verified map.
 - `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_SKIP_UNKNOWN_CATEGORY=true` blocks rows
   with `category=unknown` or mask/depth `0/0`.
-- `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_DETERMINISTIC_CATEGORY=true`
-  requires the populator to infer the same category from the item id/display
-  name as the catalog row declares, and requires the row mask/depth to match the
-  local category map. Mismatches are skipped instead of seeded.
-- `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_SOURCE_CATEGORY=true` is stricter
-  and is the preferred live gate. It requires
-  `backups/admin-panel/artificial-exchange/source-category-map.json`, generated
-  by `scripts/import-exchange-category-map.py` from `api.awakening.wiki` game
-  item tags. Rows missing from that source map, rows tagged
-  `Items.ExcludeFromExchange`, and rows whose catalog category/mask differs from
-  the source map are skipped.
-- Category seeding remains hard-disabled unless
-  `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_CATEGORY_SEEDING_VERIFIED=true`. Do not
-  enable that gate for broad seeding until the rows being seeded have verified
-  mask/depth values. Source-backed item categories alone are not enough because
-  a wrong mask can still render in the wrong client bucket.
-- Verified category seeding uses
-  `DUNE_ARTIFICIAL_EXCHANGE_VERIFIED_CATEGORY_MAP`, generated by
-  `scripts/observe-exchange-category-updates.py` from observed client writes to
-  `update_sell_orders_categories(...)`. Each template must have an observed
-  mask/depth row in that file before it can seed while the verified gate is on.
-  Confidence: high.
+- `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_PROTECT_AUGMENTS_CATEGORY=true` remains a
+  last-resort guard against known bad Augments masks.
 - Blueprint-like rows are allowed only in blueprint categories:
   `schematics/weapons`, `schematics/armor`, `schematics/vehicles`, and
   `building/patents`.
-- `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MAX_PER_TEMPLATE_PER_CATEGORY=2` is the
-  default duplicate cap. Population modes must not create more than two active
-  NPC listings for the same template in the same category.
+- `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MAX_PER_TEMPLATE_PER_CATEGORY=8` is the
+  current broad duplicate cap. Population modes must not create more than eight
+  active NPC listings for the same template in the same category.
 - The optional watchdog treats `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ENABLED` as
   the source of truth. Keep that gate false for one-shot category seeding.
 
@@ -658,14 +900,18 @@ Single-template safety:
 
 Populator safety boundary:
 
-- live seeding requires `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ENABLED=true`
-- live seeding requires `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_DRY_RUN=false`
-- apply mode requires confirmation `POPULATE ARTIFICIAL EXCHANGE`
-- category seeding remains blocked unless
+- service/loop seeding requires `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ENABLED=true`
+- service/loop seeding requires `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_DRY_RUN=false`
+- one-shot CLI seeding still requires `--apply` and confirmation
+  `POPULATE ARTIFICIAL EXCHANGE`
+- broad row gates require validated, reviewed rows with source category
+  evidence; market price and tier 2+ gates can be re-enabled for conservative
+  validation runs
+- broad seeding should use a freshly rebuilt source category map and catalog
+- strict probe seeding can enable
   `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_CATEGORY_SEEDING_VERIFIED=true`
-- default row gates require validated, market-priced, tier 2+ rows with category
-  evidence
-- cleanup only selects configured owner-scoped `is_npc_order=true` listings
+- cleanup/purge operations must be scoped by Exchange id or configured
+  populator owner; back up rows first
 
 Owner decision:
 
@@ -686,6 +932,61 @@ sudo systemctl disable --now dune-artificial-exchange-populator.service
 ```
 
 - The buyer service can remain active while the populator is stopped.
+
+Recommended broad seed workflow:
+
+```bash
+python3 scripts/import-exchange-category-map.py
+python3 scripts/build-exchange-catalog.py --no-db
+make test-artificial-exchange
+
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_TARGET_MIN_ORDERS=0 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_TARGET_MAX_ORDERS=20000 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_HARD_MAX_ORDERS=20000 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_USE_CATEGORY_TARGETS=true \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_TIER=0 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_QUALITY_LEVEL=1 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_BASELINE_PRICE=1 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_PRICE_SPAN=200 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MAX_PER_TEMPLATE_PER_CATEGORY=8 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_STACKABLE_TARGET_ORDERS=13 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_SINGLETON_CATEGORY_TARGET_ORDERS=125 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_FULL_STACK_SIZE=100 \
+  python3 scripts/artificial-exchange-bot.py \
+  --populate-all-once \
+  --catalog backups/admin-panel/artificial-exchange/catalog.json \
+  --dry-run \
+  --populator-owner-id 124 \
+  --populator-source-inventory-id 485 \
+  --confirm "POPULATE ARTIFICIAL EXCHANGE"
+```
+
+If the dry run looks correct, apply the same command with `--apply`:
+
+```bash
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_TARGET_MIN_ORDERS=0 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_TARGET_MAX_ORDERS=20000 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_HARD_MAX_ORDERS=20000 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_USE_CATEGORY_TARGETS=true \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_TIER=0 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_QUALITY_LEVEL=1 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_BASELINE_PRICE=1 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_PRICE_SPAN=200 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MAX_PER_TEMPLATE_PER_CATEGORY=8 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_STACKABLE_TARGET_ORDERS=13 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_SINGLETON_CATEGORY_TARGET_ORDERS=125 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_FULL_STACK_SIZE=100 \
+  python3 scripts/artificial-exchange-bot.py \
+  --populate-all-once \
+  --catalog backups/admin-panel/artificial-exchange/catalog.json \
+  --apply \
+  --populator-owner-id 124 \
+  --populator-source-inventory-id 485 \
+  --confirm "POPULATE ARTIFICIAL EXCHANGE"
+```
+
+Replace `124` and `485` with the local DASH/Admin controller and source
+inventory ids. Those values are host-local and not portable.
 
 Dry-run one populate pass:
 
@@ -819,10 +1120,12 @@ python3 scripts/observe-exchange-category-updates.py --export
 ```
 
 The export writes
-`backups/admin-panel/artificial-exchange/verified-category-map.json`. Category
-population must remain disabled until that map contains the templates being
-seeded. If the export reports `templates: 0`, no client has supplied category
-updates yet. Confidence: high.
+`backups/admin-panel/artificial-exchange/verified-category-map.json`. If the
+export reports `templates: 0`, no client has supplied category updates yet.
+Use this path for strict template-level category proof. Broad seeding can use
+the source category map plus `scripts/exchange_category_map.py` after catalog
+reconciliation. Confidence: high for observed templates; moderate-high for
+broad categories backed by GUI assets and source tags.
 
 Run expiry and over-cap cleanup for seeded NPC listings:
 
@@ -839,7 +1142,7 @@ Cleanup is scoped to:
 
 It does not select human orders.
 
-Purge all current seeded NPC listings for the configured owner:
+Expire all current seeded NPC listings for the configured owner through the bot:
 
 ```bash
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_TARGET_MIN_ORDERS=0 \
@@ -861,6 +1164,47 @@ from dune.dune_exchange_orders
 where exchange_id = 2
 group by owner_id, is_npc_order
 order by owner_id, is_npc_order;
+```
+
+Emergency hard purge for one Exchange:
+
+Use this when the visible market must be forced to zero before validation. It
+backs up the targeted rows, deletes matching sell-order children, deletes the
+orders, and verifies the Exchange is empty. This bypasses expiry behavior and is
+intentionally scoped to one `exchange_id`.
+
+```bash
+ts=$(date -u +%Y%m%dT%H%M%SZ)
+out="backups/admin-panel/artificial-exchange/live-runs/${ts}-before-exchange-2-purge.json"
+
+docker compose --env-file .env -f compose.yaml exec -T postgres \
+  psql -U dune -d dune_sb_1_4_0_0 -Atc \
+  "copy (select row_to_json(o) from dune.dune_exchange_orders o where exchange_id=2 order by id) to stdout" \
+  > "$out"
+
+docker compose --env-file .env -f compose.yaml exec -T postgres \
+  psql -U dune -d dune_sb_1_4_0_0 -v ON_ERROR_STOP=1 -Atc \
+  "delete from dune.dune_exchange_sell_orders s using dune.dune_exchange_orders o where s.order_id=o.id and o.exchange_id=2;
+   delete from dune.dune_exchange_orders where exchange_id=2;
+   select 'exchange2_orders', count(*) from dune.dune_exchange_orders where exchange_id=2;"
+```
+
+Emergency hard purge for only DASH/Admin seeded orders:
+
+```bash
+ts=$(date -u +%Y%m%dT%H%M%SZ)
+out="backups/admin-panel/artificial-exchange/live-runs/${ts}-before-owner-124-purge.json"
+
+docker compose --env-file .env -f compose.yaml exec -T postgres \
+  psql -U dune -d dune_sb_1_4_0_0 -Atc \
+  "copy (select row_to_json(o) from dune.dune_exchange_orders o where owner_id=124 order by id) to stdout" \
+  > "$out"
+
+docker compose --env-file .env -f compose.yaml exec -T postgres \
+  psql -U dune -d dune_sb_1_4_0_0 -v ON_ERROR_STOP=1 -Atc \
+  "delete from dune.dune_exchange_sell_orders s using dune.dune_exchange_orders o where s.order_id=o.id and o.owner_id=124;
+   delete from dune.dune_exchange_orders where owner_id=124;
+   select 'owner124_orders', count(*) from dune.dune_exchange_orders where owner_id=124;"
 ```
 
 Run a guarded one-listing validation:
@@ -894,7 +1238,7 @@ DUNE_ARTIFICIAL_EXCHANGE_PURCHASES_ENABLED=false
 DUNE_ARTIFICIAL_EXCHANGE_ID=2
 DUNE_ARTIFICIAL_EXCHANGE_ACCESS_POINT_ID=1
 DUNE_ARTIFICIAL_EXCHANGE_BUYER_CONTROLLER_ID=0
-DUNE_ARTIFICIAL_EXCHANGE_SCAN_LIMIT=200
+DUNE_ARTIFICIAL_EXCHANGE_SCAN_LIMIT=25000
 DUNE_ARTIFICIAL_EXCHANGE_SCAN_INTERVAL_MIN_SECONDS=180
 DUNE_ARTIFICIAL_EXCHANGE_SCAN_INTERVAL_MAX_SECONDS=420
 ```
@@ -938,35 +1282,74 @@ DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_OWNER_IDS=
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_SOURCE_INVENTORY_ID=0
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_SOURCE_POSITION_START=0
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_SOURCE_POSITION_MAX=100000
-DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_TARGET_MIN_ORDERS=20
-DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_TARGET_MAX_ORDERS=80
-DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_HARD_MAX_ORDERS=200
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_TARGET_MIN_ORDERS=4000
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_TARGET_MAX_ORDERS=20000
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_HARD_MAX_ORDERS=20000
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_USE_CATEGORY_TARGETS=true
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_PRICE_JITTER_PCT=20
-DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_PRICE_MULTIPLIER=0.25
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_PRICE_MULTIPLIER=1.0
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_GAME_FILE_OUTLIER_RATIO=8
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MAX_PER_TEMPLATE_PER_CATEGORY=8
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_STACKABLE_TARGET_ORDERS=13
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_SINGLETON_CATEGORY_TARGET_ORDERS=125
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_FULL_STACK_SIZE=100
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_STACKABLE_CATEGORIES=consumables/medical,consumables/spice,resources/components,resources/fuel,resources/raw,resources/refined,vehicles/ammunition,weapons/ammunition
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_PRICE_SPAN=200
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_BLUEPRINT_PRICE_FLOOR=2500
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_BLUEPRINT_PRICE_TIER_STEP=1500
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_EXPIRY_MIN_SECONDS=3600
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_EXPIRY_MAX_SECONDS=86400
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_EXPIRE_PROBABILITY=0.10
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_FORCE_COUNT=
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_VALIDATION_PRICE=
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_VALIDATED=true
-DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_MARKET_PRICE=true
-DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ALLOW_UNPRICED_SEEDING=false
-DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_TIER=2
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_MARKET_PRICE=false
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ALLOW_UNPRICED_SEEDING=true
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_TIER=0
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_STACK_SIZE=1
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MAX_STACK_SIZE=1
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_CATEGORY_MASK=0
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_CATEGORY_DEPTH=0
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_DURABILITY_CUR=1
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_DURABILITY_MAX=1
-DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_QUALITY_LEVEL=2
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_QUALITY_LEVEL=1
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_QUALITY_LEVEL=2
 ```
 
-`DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_MARKET_PRICE=true` is the main guard
-against broad, cheap population from game-file-only rows. The populator still
-skips unpriced rows when that setting is false unless
-`DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ALLOW_UNPRICED_SEEDING=true` is also set.
-Use that override only on an isolated test server. Confidence: high.
+This block documents the broad private-server profile. For a conservative
+first validation run, keep `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_DRY_RUN=true`,
+set `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_TARGET_MIN_ORDERS=20`, set
+`DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_TARGET_MAX_ORDERS=80`, and keep
+`DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_MARKET_PRICE=true`. For broad
+population, `REQUIRE_MARKET_PRICE=false` plus `ALLOW_UNPRICED_SEEDING=true`
+allows reviewed game-file rows without public market observations. Confidence:
+high.
+
+`DUNE_ARTIFICIAL_EXCHANGE_SCAN_LIMIT=25000` matters for broad seeded markets.
+If this is too low, the bot may not see enough existing seeded rows to make
+correct duplicate, cap, and under-target decisions.
+
+`DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_USE_CATEGORY_TARGETS=true` changes the
+planner from a simple global fill to category coverage. The populator first
+counts eligible catalog rows by reconciled category, then fills empty and
+under-target categories before adding broad stock. This is the mode that
+prevents categories such as ammunition, tools, deployables, schematics, fuel,
+armor, vehicles, and resources from being skipped while a few high-volume
+categories consume the order budget.
+
+Pricing knobs:
+
+- `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_PRICE_MULTIPLIER` is a global scalar on
+  top of the built-in category multipliers. Keep it at `1.0` for the documented
+  curve. Raise or lower it only when the whole seeded economy is too expensive
+  or too cheap.
+- `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_GAME_FILE_OUTLIER_RATIO` controls when a
+  public-market baseline is treated as a spike relative to `game_file_price`.
+  Lower values damp more rows; higher values trust dune.exchange more.
+- `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_PRICE_JITTER_PCT` spreads listings around
+  the computed anchor so the market does not look static.
+- `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_PRICE_SPAN` prevents duplicate prices
+  from merging into a single native recurring order.
 
 ## Bootstrap Catalog
 
@@ -1216,16 +1599,17 @@ tail -n 100 backups/admin-panel/artificial-exchange/bot-audit.jsonl
 
 ## Live Validation Record
 
-Current populator policy as of the stricter seeding update:
+Current populator policy as of the broad category-targeted seeding update:
 
-- Populator service should be stopped and disabled unless a deliberate seeding
-  run is in progress.
-- Current default eligible set is limited to rows with dune.exchange pricing and
-  tier 2+ metadata.
-- The latest market-priced sample had `7` eligible rows, all tier `3..6`, and
-  no rows without market-pricing evidence.
-- Existing NPC rows were purged after the policy change. A normal Exchange query
-  should show no `is_npc_order=true` rows unless a new seeding run was started.
+- Populator service can run deliberately when broad seeded stock is desired.
+- Current broad eligible set includes reviewed game-file rows with source
+  category evidence, even when public market pricing is sparse.
+- The latest audit observed `1758` eligible catalog rows, `5432` live seeded
+  orders, `1176` live seeded templates, `50` live categories, and `0` planned
+  additions.
+- Existing bad rows from older mappings were purged before the current seed.
+  A normal Exchange query should show only rows matching the current catalog
+  masks and owner scope.
 - Older broad-population runs below are retained only as historical validation
   of mechanics and cleanup behavior. They are not the current production
   seeding recommendation.
@@ -1349,9 +1733,10 @@ Rejected full catalog population run on May 21, 2026:
 - seeded price range after apply: `1` to `568078`
 - source inventory id: `485`
 
-Decision after review: this was too broad and included too many cheap tier 0/1
-or game-file-only rows. Do not repeat this run on the live market. The current
-policy requires dune.exchange market price evidence and tier 2+ rows.
+Decision after review: this was too broad and included too many 1-Solari rows
+and stale category assignments. Do not repeat this run on the live market. The
+current policy uses category-aware floors, source-category reconciliation,
+outlier damping, a 4k minimum target, and a 20k hard ceiling.
 
 ## Recovery And Rollback
 

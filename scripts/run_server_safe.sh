@@ -23,12 +23,17 @@ main() {
 
   cd "$server_root"
 
+  load_workspace_bool DUNE_DISABLE_MULTIHOME
+  load_workspace_bool DUNE_FORCE_PRIVATE_IGW_BIND_ADDRESS
+
   local pod_ip="${POD_IP:-127.0.0.1}"
   local args=()
   local arg
   local login_prefix='-ini:engine:[ConsoleVariables]:Bgd.ServerLoginPassword='
   for arg in "$@"; do
-    if [ "$arg" = '-MultiHome=$POD_IP' ]; then
+    if [ "$arg" = '-MultiHome=$POD_IP' ] && [ "${DUNE_DISABLE_MULTIHOME:-false}" = "true" ]; then
+      continue
+    elif [ "$arg" = '-MultiHome=$POD_IP' ]; then
       args+=("-MultiHome=$pod_ip")
     elif [[ "${arg:0:${#login_prefix}}" == "$login_prefix" ]] && [ -n "${DUNE_SERVER_LOGIN_PASSWORD:-}" ]; then
       args+=("-ini:engine:[ConsoleVariables]:Bgd.ServerLoginPassword=${DUNE_SERVER_LOGIN_PASSWORD}")
@@ -46,6 +51,16 @@ main() {
   fi
 
   exec runuser -u dune -- ./DuneSandboxServer.sh "${args[@]}"
+}
+
+load_workspace_bool() {
+  local name="$1"
+  [ -z "${!name:-}" ] || return 0
+  [ -f /workspace/.env ] || return 0
+  if grep -Eq "^[[:space:]]*${name}=true[[:space:]]*$" /workspace/.env; then
+    printf -v "$name" true
+    export "$name"
+  fi
 }
 
 install_user_configs() {

@@ -17,7 +17,7 @@ STATE_FILE = STATE_DIR / "player-presence.json"
 DB = "dune_sb_1_4_0_0"
 STARTER_BASE_TOOL_TEMPLATE = "BaseBackupTool"
 STARTER_BASE_TOOL_MESSAGE = "A Base Reconstruction Tool has been added to your inventory. You may need to log out and back in before it appears."
-ADMIN_ANOMALY_DIGEST_TEMPLATE = "Admin digest: stuck/recent anomalies={stuck_count} ({stuck_names}); over base cap={over_base_cap}."
+ADMIN_ANOMALY_DIGEST_TEMPLATE = "Admin digest: stale online activity={stuck_count} ({stuck_names}); over base cap={over_base_cap}."
 RESTART_STATE_FILE = ROOT / "backups" / "admin-panel" / "restart-jobs.json"
 ANNOUNCEMENT_STATE_FILE = ROOT / "backups" / "admin-panel" / "announcements.json"
 AUDIT_FILE = ROOT / "backups" / "admin-panel" / "audit.jsonl"
@@ -278,10 +278,31 @@ def service_health_checks():
         result = run(["systemctl", "is-active", unit], timeout=5)
         checks.append({"name": unit, "ok": result.returncode == 0, "status": result.stdout.strip() or result.stderr.strip()})
     max_age = int(env("DUNE_PLAYER_PRESENCE_FRESHNESS_MAX_AGE_SECONDS", "300"))
-    for rel in [item.strip() for item in env("DUNE_PLAYER_PRESENCE_FRESHNESS_FILES", "public-site/static/players.json").split(",") if item.strip()]:
+    missing_grace = int(env("DUNE_PLAYER_PRESENCE_FRESHNESS_MISSING_GRACE_SECONDS", "900"))
+    optional_missing = {
+        item.strip()
+        for item in env("DUNE_PLAYER_PRESENCE_FRESHNESS_OPTIONAL_MISSING_FILES", "public-site/static/hagga-map.svg").split(",")
+        if item.strip()
+    }
+    anchor_paths = [
+        ROOT / item.strip()
+        for item in env("DUNE_PLAYER_PRESENCE_FRESHNESS_ANCHOR_FILES", "public-site/static/players.json").split(",")
+        if item.strip()
+    ]
+    newest_anchor_mtime = max((path.stat().st_mtime for path in anchor_paths if path.exists()), default=0)
+    freshness_files = [
+        item.strip()
+        for item in env("DUNE_PLAYER_PRESENCE_FRESHNESS_FILES", "public-site/static/players.json").split(",")
+        if item.strip() and item.strip().lower() not in ("none", "off", "false", "disabled")
+    ]
+    for rel in freshness_files:
         path = ROOT / rel
         if not path.exists():
-            checks.append({"name": rel, "ok": False, "status": "missing"})
+            anchor_age = int(time.time() - newest_anchor_mtime) if newest_anchor_mtime else None
+            if rel in optional_missing and newest_anchor_mtime and anchor_age is not None and anchor_age <= missing_grace:
+                checks.append({"name": rel, "ok": True, "status": f"missing but optional; anchor age={anchor_age}s"})
+            else:
+                checks.append({"name": rel, "ok": False, "status": "missing"})
             continue
         age = int(time.time() - path.stat().st_mtime)
         checks.append({"name": rel, "ok": age <= max_age, "status": f"age={age}s"})
@@ -346,9 +367,14 @@ def audit_counts_since(offset):
 
 def stuck_transition_players(minutes):
     sql = f"""
-    select ps.account_id::text, coalesce(nullif(ps.character_name, ''), ps.account_id::text) as character_name, ps.online_status::text
+    select ps.account_id::text,
+           coalesce(nullif(ps.character_name, ''), ps.account_id::text) as character_name,
+           ps.online_status::text,
+           coalesce(fs.map, '') as map,
+           floor(extract(epoch from (now() - ps.last_avatar_activity)) / 60)::int as stale_minutes
     from dune.player_state ps
-    where ps.online_status::text <> 'Offline'
+    left join dune.farm_state fs on fs.server_id = ps.server_id
+    where ps.online_status::text = 'Online'
       and ps.last_avatar_activity < now() - interval '{int(minutes)} minutes'
     order by ps.last_avatar_activity asc
     limit 25;
@@ -360,8 +386,8 @@ def stuck_transition_players(minutes):
     for line in result.stdout.splitlines():
         if not line.strip():
             continue
-        account_id, name, status = (line.split("\t") + ["", ""])[:3]
-        rows.append({"accountId": account_id, "name": name, "status": status})
+        account_id, name, status, map_name, stale_minutes = (line.split("\t") + ["", "", "", ""])[:5]
+        rows.append({"accountId": account_id, "name": name, "status": status, "map": map_name, "staleMinutes": stale_minutes})
     return rows
 
 
@@ -663,7 +689,7 @@ def send_admin_private(current, template, count, event, extra=None):
 def admin_anomaly_digest_template(stuck_count, stuck_names, over_base_cap):
     parts = []
     if stuck_count:
-        parts.append(f"stuck/recent anomalies={stuck_count} ({stuck_names})")
+        parts.append(f"stale online activity={stuck_count} ({stuck_names})")
     if over_base_cap:
         parts.append(f"over base cap={over_base_cap}")
     if not parts:
@@ -672,7 +698,7 @@ def admin_anomaly_digest_template(stuck_count, stuck_names, over_base_cap):
 
 
 def admin_anomaly_digest_signature(stuck, over_base_cap):
-    stuck_ids = sorted(str(item.get("accountId") or item.get("name") or "") for item in stuck if item.get("accountId") or item.get("name"))
+    stuck_ids = sorted(f"{item.get('accountId') or item.get('name') or ''}:{item.get('staleMinutes') or ''}" for item in stuck if item.get("accountId") or item.get("name"))
     return json.dumps({"stuck": stuck_ids, "overBaseCap": int(over_base_cap or 0)}, sort_keys=True)
 
 
@@ -999,7 +1025,10 @@ def check_once():
                 base_counts = base_claim_counts()
                 cap = configured_base_cap()
                 over_cap = sum(1 for item in base_counts.values() if item.get("baseCount", 0) > cap)
-                stuck_names = ", ".join(item["name"] for item in stuck[:5]) or "none"
+                stuck_names = ", ".join(
+                    f"{item['name']} {item.get('staleMinutes', '?')}m {item.get('map') or 'unknown-map'}"
+                    for item in stuck[:5]
+                ) or "none"
                 template = env("DUNE_PLAYER_PRESENCE_ADMIN_ANOMALY_DIGEST_TEMPLATE", ADMIN_ANOMALY_DIGEST_TEMPLATE)
                 if template == ADMIN_ANOMALY_DIGEST_TEMPLATE:
                     template = admin_anomaly_digest_template(len(stuck), stuck_names, over_cap)

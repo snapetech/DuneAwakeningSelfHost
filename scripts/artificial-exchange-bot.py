@@ -2,6 +2,7 @@
 import argparse
 import copy
 import json
+import math
 import os
 import pathlib
 import random
@@ -27,6 +28,93 @@ CLAIM_CONFIRM = "CLAIM ARTIFICIAL EXCHANGE"
 FUND_CONFIRM = "FUND ARTIFICIAL EXCHANGE"
 POPULATE_CONFIRM = "POPULATE ARTIFICIAL EXCHANGE"
 CATEGORY_MASKS = EXCHANGE_CATEGORY_MASKS
+PRICE_CATEGORY_MULTIPLIERS = {
+    "armor/combat": 2.2,
+    "armor/heavy": 2.2,
+    "armor/light": 2.0,
+    "armor/social": 1.5,
+    "armor/stillsuit": 2.2,
+    "building/patents": 1.0,
+    "consumables/medical": 0.75,
+    "consumables/spice": 0.75,
+    "resources/components": 1.5,
+    "resources/fuel": 1.8,
+    "resources/raw": 2.0,
+    "resources/refined": 2.2,
+    "schematics/armor": 1.0,
+    "schematics/vehicles": 1.0,
+    "schematics/weapons": 1.0,
+    "tools/cartography": 1.5,
+    "tools/deployables": 1.5,
+    "tools/gathering": 1.5,
+    "tools/hydration": 1.5,
+    "tools/mining": 1.5,
+    "tools/utility": 2.0,
+    "vehicles/ammunition": 1.5,
+    "vehicles/buggy": 2.0,
+    "vehicles/light_ornithopter": 2.0,
+    "vehicles/medium_ornithopter": 2.0,
+    "vehicles/ornithopter": 2.0,
+    "vehicles/parts": 2.0,
+    "vehicles/sandbike": 2.0,
+    "vehicles/sandcrawler": 2.0,
+    "vehicles/transport_ornithopter": 2.0,
+    "weapons/ammunition": 1.5,
+    "weapons/melee": 2.4,
+    "weapons/ranged": 3.0,
+}
+DEFAULT_STACKABLE_CATEGORIES = {
+    "consumables/medical",
+    "consumables/spice",
+    "resources/components",
+    "resources/fuel",
+    "resources/raw",
+    "resources/refined",
+    "vehicles/ammunition",
+    "weapons/ammunition",
+}
+SOURCE_MAP_FALLBACK_CATEGORIES = {
+    "building/patents",
+    "armor/social",
+    "contracts",
+    "tools/cartography",
+    "tools/deployables",
+    "tools/gathering",
+    "tools/hydration",
+    "tools/mining",
+}
+PRICE_CATEGORY_FLOORS = {
+    "armor/combat": 1000,
+    "armor/heavy": 1000,
+    "armor/light": 1000,
+    "armor/social": 1000,
+    "armor/stillsuit": 1000,
+    "building/patents": 2500,
+    "contracts": 1000,
+    "tools/cartography": 1000,
+    "tools/deployables": 1000,
+    "tools/gathering": 1000,
+    "tools/hydration": 1000,
+    "tools/mining": 1000,
+    "tools/utility": 1000,
+    "vehicles/ammunition": 1000,
+    "vehicles/buggy": 1000,
+    "vehicles/light_ornithopter": 1000,
+    "vehicles/medium_ornithopter": 1000,
+    "vehicles/ornithopter": 1000,
+    "vehicles/parts": 1000,
+    "vehicles/sandbike": 1000,
+    "vehicles/sandcrawler": 1000,
+    "vehicles/transport_ornithopter": 1000,
+    "weapons/ammunition": 1000,
+    "weapons/melee": 1000,
+    "weapons/ranged": 1000,
+}
+
+
+def is_blueprint_category(category):
+    text = str(category or "")
+    return text == "building/patents" or text.startswith("schematics/")
 
 
 def read_env_file(path):
@@ -211,11 +299,13 @@ def populator_catalog_rows(catalog):
         baseline_price = row.get("baseline_price")
         if baseline_price in (None, "", 0):
             continue
-        if int(baseline_price) < min_baseline_price:
+        if int(baseline_price) < min_baseline_price and not is_blueprint_category(row.get("category")):
             continue
         if env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_VALIDATED", True) and row.get("sellable_status") != "validated":
             continue
         tier = catalog_tier(row)
+        if tier is None and (row.get("category") in SOURCE_MAP_FALLBACK_CATEGORIES or is_blueprint_category(row.get("category"))) and has_reconciled_game_category(row):
+            tier = 2
         if tier is None or tier < int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_TIER", "2")):
             continue
         if (require_market_price or not allow_unpriced) and not catalog_has_market_price(row):
@@ -246,6 +336,15 @@ def catalog_has_market_price(row):
         return True
     notes = str(row.get("notes") or "").lower()
     return "price_ceiling=dune.exchange" in notes or "price_source=market_price" in notes
+
+
+def has_reconciled_game_category(row):
+    notes = str(row.get("notes") or "").lower()
+    return (
+        "category mask reconciled from exchange_category_map" in notes
+        or "category reconciled from source-category-map" in notes
+        or "category reconciled from item identity" in notes
+    )
 
 
 def load_source_category_map(path=None):
@@ -295,11 +394,43 @@ def inferred_catalog_category(row):
     if "patent" in haystack:
         return "building/patents"
     if "schematic" in low_id or "unique_schematic=yes" in notes:
-        if any(token in haystack for token in ("vehicle", "sandbike", "ornithopter", "crawler", "buggy", "tank")):
-            return "schematics/vehicles"
-        if any(token in haystack for token in ("garment", "armor", "stillsuit", "combat_", "social_")):
-            return "schematics/armor"
-        return "schematics/weapons"
+        if "socialclothing" in haystack or "social clothing" in haystack:
+            return "schematics/armor/social"
+        if "consumables_spice" in haystack or "spiced food" in haystack or "spiced drink" in haystack:
+            return "schematics/utility"
+        if any(token in haystack for token in ("respawnbeacon", "respawn beacon", "stilltent", "still tent")):
+            return "schematics/utility/deployables"
+        if any(token in haystack for token in ("sandcrawler", "crawler")):
+            return "schematics/vehicles/sandcrawler"
+        if any(token in haystack for token in ("transportorni", "transport ornithopter", "carrier ornithopter")):
+            return "schematics/vehicles/transport_ornithopter"
+        if any(token in haystack for token in ("mediumorni", "medium ornithopter")):
+            return "schematics/vehicles/medium_ornithopter"
+        if any(token in haystack for token in ("lightorni", "light ornithopter")):
+            return "schematics/vehicles/light_ornithopter"
+        if "sandbike" in haystack:
+            return "schematics/vehicles/sandbike"
+        if "buggy" in haystack:
+            return "schematics/vehicles/buggy"
+        if any(token in haystack for token in ("stillsuit", "still suit")):
+            return "schematics/armor/stillsuit"
+        if "social_" in haystack or "social " in haystack:
+            return "schematics/armor/social"
+        if "heavy" in haystack:
+            return "schematics/armor/heavy"
+        if "light" in haystack or "scout" in haystack or "combat_" in haystack:
+            return "schematics/armor/light"
+        if any(token in haystack for token in ("bloodbag", "bloodsack", "extractor", "dewreaper", "exsanguination")):
+            return "schematics/utility/hydration"
+        if any(token in haystack for token in ("miningtool", "cutteray", "cutter ray", "cutterray", "compactor")):
+            return "schematics/utility/gathering"
+        if any(token in haystack for token in ("scanner", "surveyprobe", "survey probe", "seismicprobe", "sesmicprobe", "seismic probe", "hand scanner")):
+            return "schematics/utility/cartography"
+        if any(token in haystack for token in ("suspensor", "shield")):
+            return "schematics/utility"
+        if any(token in haystack for token in ("dirk", "rapier", "sword", "kindjal", "blade")):
+            return "schematics/weapons/melee"
+        return "schematics/weapons/ranged"
     if any(token in haystack for token in ("building", "placeable")):
         return "building/placeables"
     if "contract" in haystack:
@@ -310,6 +441,12 @@ def inferred_catalog_category(row):
         return "armor/stillsuit"
     if "social_" in low_id:
         return "armor/social"
+    if low_id.startswith("d_harkar_"):
+        return "weapons/ranged"
+    if "armorpack_heavy" in low_id:
+        return "armor/heavy"
+    if "armorpack_med" in low_id:
+        return "armor/light"
     if "combat_" in low_id or "garment" in haystack or "armor" in haystack:
         return "armor/combat"
     if "sandbike" in haystack:
@@ -322,12 +459,22 @@ def inferred_catalog_category(row):
         return "weapons/melee"
     if any(token in haystack for token in ("pistol", "smg", "rifle", "carbine", "scattergun", "lmg", "dart", "ammo", "disruptor", "lasgun", "flamethrower")):
         return "weapons/ranged"
+    if any(token in haystack for token in ("dewreaper", "dew reaper", "bodyfluidextractor", "bloodsack", "bloodbag")):
+        return "tools/hydration"
+    if any(token in haystack for token in ("miningtool", "cutteray", "cutter ray", "cutterray")):
+        return "tools/gathering"
+    if any(token in haystack for token in ("scanner", "surveyprobe", "survey probe", "seismicprobe", "sesmicprobe", "seismic probe", "hand scanner")):
+        return "tools/cartography"
+    if any(token in haystack for token in ("respawnbeacon", "respawn beacon", "stilltent", "still tent")):
+        return "tools/deployables"
     if any(token in haystack for token in ("powerpack", "binocular", "survey", "shield", "suspensor", "beacon", "glide", "backup")):
         return "tools/utility"
     if any(token in haystack for token in ("miningtool", "cutter", "compactor", "bodyfluidextractor", "repairtool", "dewreaper")):
         return "tools/mining"
     if any(token in haystack for token in ("healthpack", "bloodsack", "literjon", "decajon", "detox", "consumable")):
         return "consumables/medical"
+    if low_id.startswith("spiceaddictionconsumable"):
+        return "consumables/spice"
     if any(token in haystack for token in ("bar", "ingot", "paste", "lubricant", "filter", "fuelcanister", "silicone", "plastone", "flour")):
         return "resources/refined"
     if any(token in haystack for token in ("component", "part", "dust", "capacitor", "actuator", "core", "plating", "rangefinder", "welding", "servok")):
@@ -338,8 +485,10 @@ def inferred_catalog_category(row):
 
 
 def has_blueprint_identity(row):
-    text = " ".join(str(row.get(key) or "") for key in ("template_id", "display_name", "category", "notes")).lower()
-    return any(token in text for token in ("schematic", "patent", "blueprint", "unique_schematic=yes"))
+    if str(row.get("template_id") or "") == "BuildingBlueprint_CopyDevice":
+        return False
+    text = " ".join(str(row.get(key) or "") for key in ("template_id", "display_name", "category")).lower()
+    return any(token in text for token in ("schematic", "patent", "blueprint"))
 
 
 def populator_category_skip_reason(row):
@@ -352,10 +501,17 @@ def populator_category_skip_reason(row):
         source_map = load_source_category_map(pathlib.Path(env("DUNE_ARTIFICIAL_EXCHANGE_SOURCE_CATEGORY_MAP", str(SOURCE_CATEGORY_MAP_PATH))))
         source_row = source_map.get(row["template_id"])
         if not source_row:
-            return "missing source category"
-        if source_row.get("category") != category:
+            source = str(row.get("source") or "").lower()
+            source_category = (
+                source.startswith("awakening-wiki-game-files")
+                and category != "unknown"
+                and has_reconciled_game_category(row)
+            )
+            if not source_category and not (category in SOURCE_MAP_FALLBACK_CATEGORIES and has_reconciled_game_category(row)):
+                return "missing source category"
+        elif source_row.get("category") != category:
             return f"source category mismatch expected {source_row.get('category')}"
-        if not verified_row and (int(source_row.get("category_mask") or -1) != populator_category_mask(row) or int(source_row.get("category_depth") or -1) != populator_category_depth(row)):
+        if source_row and not verified_row and (int(source_row.get("category_mask") or -1) != populator_category_mask(row) or int(source_row.get("category_depth") or -1) != populator_category_depth(row)):
             return f"source category mask mismatch expected {source_row.get('category_mask')}/{source_row.get('category_depth')}"
     if verified_row:
         verified_mask = int(verified_row.get("category_mask") or -1)
@@ -379,7 +535,15 @@ def populator_category_skip_reason(row):
     if env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_CATEGORY_REVIEW", True):
         notes = str(row.get("notes") or "").lower()
         source = str(row.get("source") or "").lower()
-        if "heuristic category" in notes or source == "local-bootstrap":
+        source_map = load_source_category_map(pathlib.Path(env("DUNE_ARTIFICIAL_EXCHANGE_SOURCE_CATEGORY_MAP", str(SOURCE_CATEGORY_MAP_PATH))))
+        source_row = source_map.get(row["template_id"])
+        source_backed_category = (
+            source_row
+            and source_row.get("category") == category
+            and int(source_row.get("category_mask") or -1) == populator_category_mask(row)
+            and int(source_row.get("category_depth") or -1) == populator_category_depth(row)
+        )
+        if ("heuristic category" in notes or source == "local-bootstrap") and not source_backed_category:
             return "heuristic category"
     if env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_PROTECT_AUGMENTS_CATEGORY", True):
         category_mask = populator_category_mask(row)
@@ -391,7 +555,7 @@ def populator_category_skip_reason(row):
         }
         if category_depth == 2 and str(category_mask) in augment_masks and not is_augment_template(row):
             return "non-augment in augments category"
-    if has_blueprint_identity(row) and category not in ("schematics/weapons", "schematics/armor", "schematics/vehicles", "building/patents"):
+    if has_blueprint_identity(row) and not is_blueprint_category(category):
         return "blueprint outside blueprint category"
     return ""
 
@@ -418,34 +582,67 @@ def jitter_price(baseline_price, jitter_pct):
     return random.randint(low, high)
 
 
-def scaled_price(value):
-    multiplier = float(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_PRICE_MULTIPLIER", "0.25"))
-    if multiplier <= 0:
+def populator_price_multiplier(row=None):
+    global_multiplier = float(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_PRICE_MULTIPLIER", "1.0"))
+    if global_multiplier <= 0:
         raise RuntimeError("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_PRICE_MULTIPLIER must be positive")
-    return max(1, int(round(int(value) * multiplier)))
+    if not row:
+        return global_multiplier
+    category = str(row.get("category") or "")
+    return global_multiplier * PRICE_CATEGORY_MULTIPLIERS.get(category, 1.5)
 
 
-def jitter_price_bounds(baseline_price, jitter_pct):
-    baseline = scaled_price(baseline_price)
+def scaled_price(value, row=None):
+    multiplier = populator_price_multiplier(row)
+    return max(1, int(round(float(value) * multiplier)))
+
+
+def jitter_price_bounds(baseline_price, jitter_pct, row=None):
+    baseline = scaled_price(baseline_price, row)
     pct = max(0, int(jitter_pct))
     low = max(1, int(round(baseline * (100 - pct) / 100)))
     high = max(low, int(round(baseline * (100 + pct) / 100)))
     return low, high
 
 
-def populator_price_bounds(row, jitter_pct):
+def game_file_price(row):
+    match = re.search(r"(?:^|; )game_file_price=(\d+)", str(row.get("notes") or ""))
+    if not match:
+        return None
+    value = int(match.group(1))
+    return value if value > 0 else None
+
+
+def populator_price_anchor(row):
     floor = row.get("price_floor")
     ceiling = row.get("price_ceiling")
     baseline_price = row.get("baseline_price")
-    min_span = max(1, int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_PRICE_SPAN", "1")))
-    jitter_pct = max(0, int(jitter_pct))
     if baseline_price not in (None, ""):
         anchor = int(baseline_price)
     elif floor not in (None, "") and ceiling not in (None, ""):
         anchor = int(round((int(floor) + int(ceiling)) / 2))
     else:
         raise RuntimeError(f"missing baseline_price or price floor/ceiling for {row.get('template_id', 'unknown template')}")
-    low, high = jitter_price_bounds(anchor, jitter_pct)
+    game_price = game_file_price(row)
+    outlier_ratio = float(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_GAME_FILE_OUTLIER_RATIO", "8"))
+    if game_price and outlier_ratio > 0 and anchor / game_price > outlier_ratio:
+        anchor = math.sqrt(anchor * game_price)
+    if is_blueprint_category(row.get("category")):
+        tier = catalog_tier(row) or 2
+        floor = int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_BLUEPRINT_PRICE_FLOOR", "2500"))
+        tier_step = int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_BLUEPRINT_PRICE_TIER_STEP", "1500"))
+        anchor = max(anchor, floor + max(0, tier - 2) * tier_step)
+    category_floor = PRICE_CATEGORY_FLOORS.get(str(row.get("category") or ""))
+    if category_floor:
+        anchor = max(anchor, category_floor)
+    return anchor
+
+
+def populator_price_bounds(row, jitter_pct):
+    min_span = max(1, int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_PRICE_SPAN", "1")))
+    jitter_pct = max(0, int(jitter_pct))
+    anchor = populator_price_anchor(row)
+    low, high = jitter_price_bounds(anchor, jitter_pct, row)
     if high - low + 1 < min_span:
         high = low + min_span - 1
     return low, high
@@ -512,7 +709,7 @@ def template_category_key(row):
 
 
 def populator_active_fetch_limit(args, eligible_count=0):
-    hard_max = int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_HARD_MAX_ORDERS", "200"))
+    hard_max = int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_HARD_MAX_ORDERS", "20000"))
     target_max = int(getattr(args, "populator_target_max_orders", 0) or 0)
     limit = int(getattr(args, "limit", 0) or 0)
     eligible_count = int(eligible_count or 0)
@@ -566,10 +763,31 @@ def free_position_candidates(occupied_positions, needed_count, start=0, max_posi
 
 def populator_quality_level(row):
     configured = int(row.get("quality_level") or catalog_tier(row) or env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_QUALITY_LEVEL", "2"))
-    minimum = int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_QUALITY_LEVEL", "2"))
+    minimum = int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_QUALITY_LEVEL", "1"))
     if configured < minimum:
         raise RuntimeError(f"populator quality_level {configured} is below minimum {minimum}")
     return configured
+
+
+def populator_stackable_categories():
+    raw = env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_STACKABLE_CATEGORIES", ",".join(sorted(DEFAULT_STACKABLE_CATEGORIES)))
+    return {item.strip() for item in raw.split(",") if item.strip()}
+
+
+def populator_is_stackable(row):
+    return str(row.get("category") or "") in populator_stackable_categories()
+
+
+def populator_stack_size(row):
+    if populator_is_stackable(row):
+        return max(1, int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_FULL_STACK_SIZE", "100")))
+    return max(1, int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_STACK_SIZE", "1")))
+
+
+def populator_max_stack_size(row):
+    if populator_is_stackable(row):
+        return max(populator_stack_size(row), int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_FULL_STACK_SIZE", "100")))
+    return max(populator_stack_size(row), int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MAX_STACK_SIZE", "1")))
 
 
 def populator_category_mask(row):
@@ -672,7 +890,7 @@ def populator_preflight(conn, args, catalog=None, eligible=None, *, require_sour
     source_inventory_id = int(args.populator_source_inventory_id or 0)
     min_orders = int(args.populator_target_min_orders)
     max_orders = int(args.populator_target_max_orders)
-    hard_max = int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_HARD_MAX_ORDERS", "200"))
+    hard_max = int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_HARD_MAX_ORDERS", "20000"))
     stack_size = int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_STACK_SIZE", "1"))
     max_stack_size = int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MAX_STACK_SIZE", "1"))
 
@@ -821,7 +1039,7 @@ def delete_seeded_orders(cur, order_ids, exchange_id, owner_id):
     return deleted_orders
 
 
-def create_staging_item(cur, row, source_inventory_id, position_index):
+def create_staging_item(cur, row, source_inventory_id, position_index, stack_size):
     item_id = None
     cur.execute("select dune.advance_items_id_sequencer(1) as item_id")
     item_id = int(cur.fetchone()["item_id"])
@@ -835,7 +1053,7 @@ def create_staging_item(cur, row, source_inventory_id, position_index):
         (
             item_id,
             source_inventory_id,
-            int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_STACK_SIZE", "1")),
+            stack_size,
             position_index,
             row["template_id"],
             True,
@@ -852,7 +1070,9 @@ def execute_seed_listing(cur, row, args, price, expiration_time, position_index)
     category_reason = populator_category_skip_reason(row)
     if category_reason:
         raise RuntimeError(f"refusing to seed {row['template_id']}: {category_reason}")
-    item_id, quality_level = create_staging_item(cur, row, args.populator_source_inventory_id, position_index)
+    stack_size = populator_stack_size(row)
+    max_stack_size = populator_max_stack_size(row)
+    item_id, quality_level = create_staging_item(cur, row, args.populator_source_inventory_id, position_index, stack_size)
     cur.execute(
         """
         select dune.dune_exchange_update_recurring_sell_order(
@@ -867,8 +1087,8 @@ def execute_seed_listing(cur, row, args, price, expiration_time, position_index)
             args.populator_access_point_id,
             args.populator_owner_id,
             item_id,
-            int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_STACK_SIZE", "1")),
-            int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MAX_STACK_SIZE", "1")),
+            stack_size,
+            max_stack_size,
             populator_category_mask(row),
             populator_category_depth(row),
             float(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_DURABILITY_CUR", "1")),
@@ -882,7 +1102,7 @@ def execute_seed_listing(cur, row, args, price, expiration_time, position_index)
     increment_added = result["increment_added"] if result else None
     if int(increment_added or 0) <= 0:
         raise RuntimeError(f"seed listing did not add inventory for {row['template_id']} at price {price}")
-    return {"itemId": item_id, "incrementAdded": increment_added}
+    return {"itemId": item_id, "incrementAdded": increment_added, "stackSize": stack_size, "maxStackSize": max_stack_size}
 
 
 def plan_seed_events(args, eligible, active, positions):
@@ -893,6 +1113,8 @@ def plan_seed_events(args, eligible, active, positions):
     planned = []
     for index, row in enumerate(eligible):
         price = args.populator_force_price + index if args.populator_force_price is not None else planned_unique_price(row, args.populator_price_jitter_pct, used_prices)
+        unit_low, unit_high = populator_price_bounds(row, args.populator_price_jitter_pct)
+        stack_size = populator_stack_size(row)
         position_index = positions[index]
         planned.append({
             "row": row,
@@ -900,6 +1122,10 @@ def plan_seed_events(args, eligible, active, positions):
                 "templateId": row["template_id"],
                 "baselinePrice": row["baseline_price"],
                 "price": price,
+                "unitPriceBounds": [unit_low, unit_high],
+                "stackSize": stack_size,
+                "maxStackSize": populator_max_stack_size(row),
+                "totalStackPrice": price * stack_size,
                 "qualityLevel": populator_quality_level(row),
                 "category": row.get("category"),
                 "categoryMask": populator_category_mask(row),
@@ -929,6 +1155,46 @@ def apply_seed_events(conn, args, planned):
         events.append(event)
         audit({"event": "populator-seed-planned", **event})
     return events
+
+
+def desired_populate_all_rows(eligible, active, catalog):
+    stackable_target = max(1, int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_STACKABLE_TARGET_ORDERS", "13")))
+    singleton_category_target = max(1, int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_SINGLETON_CATEGORY_TARGET_ORDERS", "125")))
+    max_per_template = max(1, int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MAX_PER_TEMPLATE_PER_CATEGORY", "8")))
+    active_by_template = {}
+    active_by_category = {}
+    active_by_template_category = {}
+    for order in active:
+        active_by_template[order["template_id"]] = active_by_template.get(order["template_id"], 0) + 1
+        row = catalog.get(order["template_id"])
+        if not row:
+            continue
+        category_key = (row.get("category") or "unknown", int(order.get("category_mask") or 0), int(order.get("category_depth") or 0))
+        active_by_category[category_key] = active_by_category.get(category_key, 0) + 1
+        template_key = template_category_key(row)
+        active_by_template_category[template_key] = active_by_template_category.get(template_key, 0) + 1
+
+    selected = []
+    singleton_groups = {}
+    for row in eligible:
+        if populator_is_stackable(row):
+            needed = max(0, stackable_target - active_by_template.get(row["template_id"], 0))
+            selected.extend([row] * needed)
+        else:
+            key = (row.get("category") or "unknown", populator_category_mask(row), populator_category_depth(row))
+            singleton_groups.setdefault(key, []).append(row)
+
+    for key, rows in sorted(singleton_groups.items()):
+        needed = max(0, singleton_category_target - active_by_category.get(key, 0))
+        counts = {template_category_key(row): active_by_template_category.get(template_category_key(row), 0) for row in rows}
+        for _ in range(needed):
+            candidates = [row for row in rows if counts.get(template_category_key(row), 0) < max_per_template]
+            if not candidates:
+                break
+            row = random.choice(candidates)
+            counts[template_category_key(row)] = counts.get(template_category_key(row), 0) + 1
+            selected.append(row)
+    return selected
 
 
 def expire_seeded_once(args):
@@ -987,9 +1253,14 @@ def populate_once(args):
     try:
         require_populator_preflight(conn, args, catalog, eligible)
         active = fetch_seeded_orders(conn, args.exchange_id, args.populator_owner_id, args.limit)
-        count = args.populator_force_count if args.populator_force_count is not None else desired_seed_count(len(active), args.populator_target_min_orders, args.populator_target_max_orders)
-        max_per_template = int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MAX_PER_TEMPLATE_PER_CATEGORY", "2"))
-        selected_rows = select_populator_rows(eligible, count, active, max_per_template)
+        if env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_USE_CATEGORY_TARGETS", True):
+            selected_rows = desired_populate_all_rows(eligible, active, catalog)
+            ceiling = min(args.populator_target_max_orders, int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_HARD_MAX_ORDERS", "20000")))
+            selected_rows = selected_rows[:max(0, ceiling - len(active))]
+        else:
+            count = args.populator_force_count if args.populator_force_count is not None else desired_seed_count(len(active), args.populator_target_min_orders, args.populator_target_max_orders)
+            max_per_template = int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MAX_PER_TEMPLATE_PER_CATEGORY", "8"))
+            selected_rows = select_populator_rows(eligible, count, active, max_per_template)
         positions = fetch_free_inventory_positions(conn, args.populator_source_inventory_id, len(selected_rows))
         planned = apply_seed_events(conn, args, plan_seed_events(args, selected_rows, active, positions))
         if args.dry_run:
@@ -1066,7 +1337,7 @@ def populate_categories_once(args):
                 if catalog.get(order["template_id"])
                 and (catalog[order["template_id"]].get("category") or "unknown", int(order.get("category_mask") or 0), int(order.get("category_depth") or 0)) == key
             ]
-            max_per_template = max(1, int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MAX_PER_TEMPLATE_PER_CATEGORY", "2")))
+            max_per_template = max(1, int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MAX_PER_TEMPLATE_PER_CATEGORY", "8")))
             selected_rows = []
             counts = {template_category_key(item): active_by_template_category.get(template_category_key(item), 0) for item in rows}
             for _ in range(row["planned"]):
@@ -1109,11 +1380,10 @@ def populate_all_once(args):
     planned = []
     try:
         require_populator_preflight(conn, args, catalog, eligible)
-        active = fetch_seeded_orders(conn, args.exchange_id, args.populator_owner_id, max(args.limit, len(eligible) + 10000))
-        active_templates = {order["template_id"] for order in active}
-        missing = [row for row in eligible if row["template_id"] not in active_templates]
-        positions = fetch_free_inventory_positions(conn, args.populator_source_inventory_id, len(missing))
-        planned = apply_seed_events(conn, args, plan_seed_events(args, missing, active, positions))
+        active = fetch_seeded_orders(conn, args.exchange_id, args.populator_owner_id, max(args.limit, len(eligible) * 3 + 10000))
+        selected_rows = desired_populate_all_rows(eligible, active, catalog)
+        positions = fetch_free_inventory_positions(conn, args.populator_source_inventory_id, len(selected_rows))
+        planned = apply_seed_events(conn, args, plan_seed_events(args, selected_rows, active, positions))
         if args.dry_run:
             conn.rollback()
         else:
@@ -1128,7 +1398,7 @@ def populate_all_once(args):
         "dryRun": args.dry_run,
         "activeSeededOrders": len(active),
         "eligibleCatalogRows": len(eligible),
-        "missingCatalogRows": len(missing),
+        "missingCatalogRows": len(selected_rows),
         "planned": planned,
         "totalPlanned": len(planned),
     }
@@ -1163,7 +1433,7 @@ def populate_templates_once(args):
                 key = template_category_key(row)
                 active_by_template_category[key] = active_by_template_category.get(key, 0) + 1
         selected_rows = []
-        max_per_template = max(1, int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MAX_PER_TEMPLATE_PER_CATEGORY", "2")))
+        max_per_template = max(1, int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MAX_PER_TEMPLATE_PER_CATEGORY", "8")))
         for row in eligible:
             active_count = active_by_template.get(row["template_id"], 0)
             category_count = active_by_template_category.get(template_category_key(row), 0)
@@ -1826,7 +2096,7 @@ def main():
     parser.add_argument("--catalog", type=pathlib.Path, default=CATALOG_PATH)
     parser.add_argument("--exchange-id", type=int, default=int(env("DUNE_ARTIFICIAL_EXCHANGE_ID", "2")))
     parser.add_argument("--buyer-controller-id", type=int, default=int(env("DUNE_ARTIFICIAL_EXCHANGE_BUYER_CONTROLLER_ID", "0")))
-    parser.add_argument("--limit", type=int, default=int(env("DUNE_ARTIFICIAL_EXCHANGE_SCAN_LIMIT", "200")))
+    parser.add_argument("--limit", type=int, default=int(env("DUNE_ARTIFICIAL_EXCHANGE_SCAN_LIMIT", "25000")))
     parser.add_argument("--settlement-limit", type=int, default=50)
     parser.add_argument("--report-skips", type=int, default=50)
     parser.add_argument("--loop", action="store_true")
@@ -1849,8 +2119,8 @@ def main():
     parser.add_argument("--populator-owner-id", type=int, default=int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_OWNER_ID", "0") or "0"))
     parser.add_argument("--populator-source-inventory-id", type=int, default=int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_SOURCE_INVENTORY_ID", "0") or "0"))
     parser.add_argument("--populator-access-point-id", type=int, default=int(env("DUNE_ARTIFICIAL_EXCHANGE_ACCESS_POINT_ID", "1")))
-    parser.add_argument("--populator-target-min-orders", type=int, default=int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_TARGET_MIN_ORDERS", "20")))
-    parser.add_argument("--populator-target-max-orders", type=int, default=int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_TARGET_MAX_ORDERS", "80")))
+    parser.add_argument("--populator-target-min-orders", type=int, default=int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_TARGET_MIN_ORDERS", "4000")))
+    parser.add_argument("--populator-target-max-orders", type=int, default=int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_TARGET_MAX_ORDERS", "20000")))
     parser.add_argument("--populator-price-jitter-pct", type=int, default=int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_PRICE_JITTER_PCT", "20")))
     parser.add_argument("--populator-expiry-min-seconds", type=int, default=int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_EXPIRY_MIN_SECONDS", "3600")))
     parser.add_argument("--populator-expiry-max-seconds", type=int, default=int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_EXPIRY_MAX_SECONDS", "86400")))

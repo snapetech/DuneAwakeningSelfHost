@@ -141,6 +141,7 @@ server {
 - Director GME voice-chat credentials can be added through the `director.ini` config editor when Funcom/provider supplies real `GmeAppId` and `GmeAppKey` values. Leave them unset otherwise.
 - Currency and XP mutation endpoints gated by `DUNE_ADMIN_MUTATIONS_ENABLED`.
 - Economy bundle planning through `POST /api/admin/bundle`. It plans currency, XP, and item grants in one response and defaults to `dry_run=true`. Execution additionally requires `DUNE_ADMIN_BUNDLE_MUTATIONS_ENABLED=true` and confirmation `EXECUTE BUNDLE`.
+- Targeted Solari grants through `POST /api/admin/solari/inventory` for carried `SolarisCoin` stacks and `POST /api/admin/solari/bank` for Exchange/bank balance.
 - Offline player recovery preview through `POST /api/admin/player-recovery/offline-teleport`. Execution refuses online players, requires `MOVE OFFLINE PLAYER`, and calls the shipped `dune.admin_move_offline_player_to_partition(...)` pawn move helper.
 - Spice/resource field inspection through `POST /api/admin/spice-fields/inspect`.
 - Progression surface inspection through `POST /api/admin/progression/inspect`; this discovers faction, reputation, journey, recipe, vehicle, and related DB function/table evidence without executing discovered functions.
@@ -173,7 +174,7 @@ server {
 - Postgres custom-format backup under `backups/admin-panel`.
 - Redacted JSONL audit trail for rejected requests and admin writes under `backups/admin-panel/audit.jsonl`.
 - Known item template, observed item template, inventory, and inventory-type references.
-- Player dropdowns in Admin Actions for currency, XP, keystones, item grant targeting, and item maintenance.
+- Player dropdowns in Admin Actions for currency, carried/bank Solari, XP, keystones, item grant targeting, and item maintenance.
 - Selected players pre-populate controller/account/name fields, current currency and specialization selectors, owned inventories, and owned inventory items for stack edits or deletion.
 - Exact-template item grants, dry-runs, stack edits, and item deletion behind admin gates.
 
@@ -587,6 +588,21 @@ Execution requires:
 
 The endpoint uses `dune.dune_exchange_retrieve_solari_balance` for preflight and `dune.dune_exchange_modify_user_solari_balance` for execution. Confidence is moderate for the balance mechanics and low for order operations, so add/fulfill/cancel/relist/retrieve/purge order functions remain blocked.
 
+`POST /api/admin/solari/inventory` grants Solari to a player's carried inventory as a fresh `SolarisCoin` item stack in a free slot. It accepts `inventory_id` directly, or resolves a player inventory from `account_id` / `character_name`.
+
+Execution requires:
+
+- `DUNE_ADMIN_MUTATIONS_ENABLED=true`
+- `confirm: "GRANT SOLARI"`
+
+`POST /api/admin/solari/bank` grants Solari to the player's Exchange/bank balance. It accepts `owner_id` and `controller_id` directly, or resolves them from `account_id` / `character_name`. The write delegates to `dune.dune_exchange_modify_user_solari_balance`.
+
+Execution requires:
+
+- `DUNE_ADMIN_MUTATIONS_ENABLED=true`
+- `DUNE_ADMIN_EXCHANGE_MUTATIONS_ENABLED=true`
+- `confirm: "WRITE EXCHANGE"`
+
 `POST /api/admin/player-lifecycle/inspect` reads account/player, party, tag, access-code, Communinet, dungeon, tutorial, and lifecycle evidence without writing.
 
 `POST /api/admin/player-tags` plans or executes player tag add/remove calls through `dune.update_player_tags`.
@@ -975,7 +991,7 @@ The script also receives the message as its first argument. Delivery attempts an
 
 ## Chat Commands
 
-`scripts/admin-chat-commands.py` is the DASH chat-command bridge. It listens for game chat messages that start with `DUNE_CHAT_COMMAND_PREFIX`, resolves the sending account through `dune.accounts.user`, and only accepts commands from configured admins.
+`scripts/admin-chat-commands.py` is the DASH chat-command bridge. It listens only for private whispers/PMs sent to Paul that start with `DUNE_CHAT_COMMAND_PREFIX`, resolves the sending account through `dune.accounts.user`, and only accepts commands from configured admins. Map, proximity, party, and guild chat are not command input channels.
 
 Default command settings:
 
@@ -1013,9 +1029,11 @@ DUNE_GM_COMMAND_AMQP_PASSWORD=<admin-rmq command password>
 DUNE_GM_COMMAND_RMQ_URL=http://admin-rmq:15672
 DUNE_GM_COMMAND_RMQ_USER=<admin-rmq command user>
 DUNE_GM_COMMAND_RMQ_PASSWORD=<admin-rmq command password>
-DUNE_CHAT_COMMAND_EXCHANGE=chat.intercept
+DUNE_CHAT_COMMAND_EXCHANGE=chat.whispers
+DUNE_CHAT_COMMAND_EXCHANGES=chat.whispers
 DUNE_CHAT_COMMAND_QUEUE=dash_admin_chat_commands
-DUNE_CHAT_COMMAND_ROUTING_KEY=#
+DUNE_CHAT_COMMAND_ROUTING_KEY=ADMIN#00001
+DUNE_CHAT_COMMAND_BIND_ROUTING_KEYS=ADMIN#00001
 DUNE_CHAT_COMMAND_AMQP_HOST=game-rmq
 DUNE_CHAT_COMMAND_AMQP_PORT=5672
 DUNE_CHAT_COMMAND_AMQP_TLS=true
@@ -1024,11 +1042,11 @@ DUNE_CHAT_COMMAND_AMQP_CONNECT_ATTEMPTS=0
 DUNE_CHAT_COMMAND_AMQP_USER=guest
 DUNE_CHAT_COMMAND_AMQP_PASSWORD=guest
 DUNE_CHAT_COMMAND_REPLY_COMMAND=/workspace/scripts/announce.sh
-DUNE_CHAT_COMMAND_PRIVATE_REPLIES_ENABLED=false
+DUNE_CHAT_COMMAND_PRIVATE_REPLIES_ENABLED=true
 DUNE_CHAT_COMMAND_PRIVATE_REPLY_EXCHANGE=chat.whispers
 DUNE_CHAT_COMMAND_PRIVATE_REPLY_CHANNEL=Whispers
 DUNE_CHAT_COMMAND_PRIVATE_REPLY_ROUTING_KEY=
-DUNE_CHAT_COMMAND_TARGET_REPLY_MODE=
+DUNE_CHAT_COMMAND_TARGET_REPLY_MODE=whisper
 DUNE_CHAT_COMMAND_TARGET_REPLY_EXCHANGE=chat.proximity
 DUNE_CHAT_COMMAND_TARGET_REPLY_CHANNEL=Proximity
 DUNE_CHAT_COMMAND_TARGET_REPLY_ROUTING_KEY=
@@ -1049,6 +1067,12 @@ Implemented commands:
 &kick <playername>
 &auction [--base|--inventory <inventory_id>] [--item-id <item_id>|"<item name or template>"] <count> <price>
 &teleport <playername>
+&teleport list|locations
+&teleport set <slot> [name]
+&teleport replace <slot> [name]
+&teleport delete|rm <slot>
+&teleport <playername> <slot>
+&teleport <slot>
 &goto <playername>
 &bring <playername>
 &gm help
@@ -1063,7 +1087,11 @@ Implemented commands:
 
 `&test` replies with `f00` through the configured announcement/reply path. Use it as the first live smoke test for chat-command ingestion and reply delivery.
 
-`&where` reports the resolved player's current online/offline state and last known location. `&teleport` moves an offline target to the admin's current partition and location. Live actor transforms are owned by the running map server and can be overwritten, so raw online actor updates are not a teleport path.
+`&where` reports the resolved player's current online/offline state and last known location. `&teleport <playername>` moves an offline target to the admin's current partition and location. Live actor transforms are owned by the running map server and can be overwritten, so raw online actor updates are not a teleport path.
+
+Shared numbered teleport slots live in `backups/admin-panel/teleport-slots.json`. `&teleport set <slot> [name]` saves the issuing admin's current location only when the slot is empty; if occupied, it reports the current slot and next free number. Use `&teleport replace <slot> [name]` to overwrite, `&teleport list` to show slots in numeric order, and `&teleport delete <slot>` to remove a slot. `&teleport <playername> <slot>` moves a strict-offline target to the saved slot through `dune.admin_move_offline_player_to_partition(...)`; `&teleport <slot>` prepares or sends a gated native `TeleportToExact` for the issuing admin.
+
+Recommended city slots are operator-created, not seeded: stand in Arrakeen and run `&teleport set 0 arrakeen`; stand in Harko Village and run `&teleport set 1 harko`.
 
 The verified online-adjacent fallback is network-disconnect teleport: force a real connection timeout, wait until Survival marks the player `Offline`, call `dune.admin_move_offline_player_to_partition(...)`, then let the client reconnect and load the moved pawn. DB-only presence flips are not sufficient. The full contract is in [soft-disconnect-teleport.md](soft-disconnect-teleport.md).
 
@@ -1260,6 +1288,8 @@ DUNE_ADMIN_MUTATIONS_ENABLED=true
 Current mutation support is intentionally narrow:
 
 - Currency balance add/set through `dune.player_virtual_currency_balances`.
+- Inventory Solari grants through `dune.save_item(dune.inventoryitem)` against `SolarisCoin` item stacks.
+- Exchange/bank Solari grants through `dune.dune_exchange_modify_user_solari_balance`.
 - Specialization XP add/set through existing `dune.specialization_tracks` rows.
 - Database backup through `pg_dump -Fc`.
 - Item grants through `dune.save_item(dune.inventoryitem)` when `DUNE_ADMIN_ITEM_GRANTS_ENABLED=true`.

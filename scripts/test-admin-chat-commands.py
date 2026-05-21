@@ -109,6 +109,7 @@ class CommandReplyTargetTests(unittest.TestCase):
         self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_USER_NAME_TO"], "AdminUser")
         self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_TARGET_QUEUES"], "TEST_FLS_ID_queue")
         self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_ROUTING_KEYS"], "TEST_FLS_ID")
+        self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_BIND_ONLINE_QUEUES"], "false")
 
     def test_auction_suggestion_reply_returns_private_publish_metadata(self):
         captured = {}
@@ -167,6 +168,56 @@ class CommandReplyTargetTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertTrue(result["reply"]["ok"])
         self.assertIn("chat.whispers", result["reply"]["stdout"])
+
+    def test_missing_sender_fls_id_is_resolved_for_private_reply(self):
+        captured = {}
+
+        def fake_run(command, **kwargs):
+            captured["env"] = kwargs["env"]
+
+            class Result:
+                returncode = 0
+                stdout = '{"transport":"chat.whispers","exchange":"chat.whispers"}'
+                stderr = ""
+
+            return Result()
+
+        def fake_env(name, default=""):
+            values = {
+                "DUNE_CHAT_COMMAND_REPLY_COMMAND": "/bin/echo",
+                "DUNE_CHAT_COMMAND_TARGET_REPLY_MODE": "whisper",
+                "DUNE_CHAT_COMMAND_PRIVATE_REPLY_EXCHANGE": "chat.whispers",
+                "DUNE_CHAT_COMMAND_PRIVATE_REPLY_CHANNEL": "Whispers",
+                "DUNE_CHAT_COMMAND_REPLY_TIMEOUT_SECONDS": "10",
+            }
+            return values.get(name, default)
+
+        with unittest.mock.patch.object(admin_chat_commands, "fls_id_for_sender", lambda conn, sender_name: "FLS_FROM_DB"), \
+             unittest.mock.patch.object(admin_chat_commands, "is_admin", lambda conn, sender_name, sender_fls_id: (True, "Lukano")), \
+             unittest.mock.patch.object(admin_chat_commands.subprocess, "run", fake_run), \
+             unittest.mock.patch.object(admin_chat_commands, "env", fake_env):
+            result = admin_chat_commands.handle_command(object(), "&test", sender_name="Lukano", reply=True)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_EXCHANGE"], "chat.whispers")
+        self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_TARGET_QUEUES"], "FLS_FROM_DB_queue")
+        self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_BIND_ONLINE_QUEUES"], "false")
+
+    def test_whisper_reply_does_not_fall_back_to_public_without_target(self):
+        def fake_env(name, default=""):
+            values = {
+                "DUNE_CHAT_COMMAND_TARGET_REPLY_MODE": "whisper",
+            }
+            return values.get(name, default)
+
+        with unittest.mock.patch.object(admin_chat_commands, "env", fake_env), \
+             unittest.mock.patch.object(admin_chat_commands.subprocess, "run") as run:
+            result = admin_chat_commands.run_announce("must stay private")
+
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["skipped"])
+        self.assertIn("refusing public fallback", result["reason"])
+        run.assert_not_called()
 
 
 class OnlineTeleportSafetyTests(unittest.TestCase):
@@ -358,6 +409,139 @@ class OfflineTeleportCommandTests(unittest.TestCase):
         self.assertTrue(result["dryRun"])
         move.assert_not_called()
 
+    def test_teleport_set_creates_empty_slot_from_admin_location(self):
+        admin = self.row("Admin", partition_id=7, status="Online", x=100.0)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            slot_file = pathlib.Path(tmpdir) / "teleport-slots.json"
+            with unittest.mock.patch.object(admin_chat_commands, "TELEPORT_SLOT_FILE", slot_file), \
+                 unittest.mock.patch.object(admin_chat_commands, "is_admin", lambda conn, sender_name, sender_fls_id: (True, "Admin")), \
+                 unittest.mock.patch.object(admin_chat_commands, "character_row", lambda conn, name: (admin, [])):
+                result = admin_chat_commands.handle_command(object(), "&teleport set 0 arrakeen", sender_name="Admin")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["location"]["slot"], 0)
+        self.assertEqual(result["location"]["name"], "arrakeen")
+        self.assertEqual(result["location"]["partitionId"], 7)
+        self.assertEqual(result["location"]["x"], 100.0)
+
+    def test_teleport_set_refuses_overwrite_and_reports_next_free_slot(self):
+        admin = self.row("Admin", partition_id=7, status="Online", x=100.0)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            slot_file = pathlib.Path(tmpdir) / "teleport-slots.json"
+            with unittest.mock.patch.object(admin_chat_commands, "TELEPORT_SLOT_FILE", slot_file), \
+                 unittest.mock.patch.object(admin_chat_commands, "is_admin", lambda conn, sender_name, sender_fls_id: (True, "Admin")), \
+                 unittest.mock.patch.object(admin_chat_commands, "character_row", lambda conn, name: (admin, [])):
+                first = admin_chat_commands.handle_command(object(), "&teleport set 0 arrakeen", sender_name="Admin")
+                second = admin_chat_commands.handle_command(object(), "&teleport set 0 harko", sender_name="Admin")
+
+        self.assertTrue(first["ok"])
+        self.assertFalse(second["ok"])
+        self.assertEqual(second["nextFreeSlot"], 1)
+        self.assertIn("slot 0", second["error"])
+        self.assertIn("next free slot is 1", second["error"])
+        self.assertIn("&teleport replace 0", second["error"])
+
+    def test_teleport_replace_overwrites_existing_slot(self):
+        admin = self.row("Admin", partition_id=7, status="Online", x=100.0)
+        moved_admin = self.row("Admin", partition_id=8, status="Online", x=500.0)
+        calls = {"count": 0}
+
+        def fake_character_row(conn, name):
+            calls["count"] += 1
+            return (admin if calls["count"] == 1 else moved_admin), []
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            slot_file = pathlib.Path(tmpdir) / "teleport-slots.json"
+            with unittest.mock.patch.object(admin_chat_commands, "TELEPORT_SLOT_FILE", slot_file), \
+                 unittest.mock.patch.object(admin_chat_commands, "is_admin", lambda conn, sender_name, sender_fls_id: (True, "Admin")), \
+                 unittest.mock.patch.object(admin_chat_commands, "character_row", fake_character_row):
+                admin_chat_commands.handle_command(object(), "&teleport set 0 arrakeen", sender_name="Admin")
+                result = admin_chat_commands.handle_command(object(), "&teleport replace 0 harko", sender_name="Admin")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["location"]["name"], "harko")
+        self.assertEqual(result["location"]["partitionId"], 8)
+        self.assertEqual(result["location"]["x"], 500.0)
+
+    def test_teleport_delete_removes_slot(self):
+        admin = self.row("Admin", partition_id=7, status="Online", x=100.0)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            slot_file = pathlib.Path(tmpdir) / "teleport-slots.json"
+            with unittest.mock.patch.object(admin_chat_commands, "TELEPORT_SLOT_FILE", slot_file), \
+                 unittest.mock.patch.object(admin_chat_commands, "is_admin", lambda conn, sender_name, sender_fls_id: (True, "Admin")), \
+                 unittest.mock.patch.object(admin_chat_commands, "character_row", lambda conn, name: (admin, [])):
+                admin_chat_commands.handle_command(object(), "&teleport set 0 arrakeen", sender_name="Admin")
+                deleted = admin_chat_commands.handle_command(object(), "&teleport delete 0", sender_name="Admin")
+                listed = admin_chat_commands.handle_command(object(), "&teleport list", sender_name="Admin")
+
+        self.assertTrue(deleted["ok"])
+        self.assertEqual(listed["locations"], [])
+
+    def test_teleport_list_returns_slots_in_numeric_order(self):
+        admin = self.row("Admin", partition_id=7, status="Online", x=100.0)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            slot_file = pathlib.Path(tmpdir) / "teleport-slots.json"
+            with unittest.mock.patch.object(admin_chat_commands, "TELEPORT_SLOT_FILE", slot_file), \
+                 unittest.mock.patch.object(admin_chat_commands, "is_admin", lambda conn, sender_name, sender_fls_id: (True, "Admin")), \
+                 unittest.mock.patch.object(admin_chat_commands, "character_row", lambda conn, name: (admin, [])):
+                admin_chat_commands.handle_command(object(), "&teleport set 10 ten", sender_name="Admin")
+                admin_chat_commands.handle_command(object(), "&teleport set 2 two", sender_name="Admin")
+                result = admin_chat_commands.handle_command(object(), "&teleport locations", sender_name="Admin")
+
+        self.assertEqual([location["slot"] for location in result["locations"]], [2, 10])
+
+    def test_offline_teleport_to_slot_uses_first_party_helper(self):
+        admin = self.row("Admin", partition_id=7, status="Online", x=100.0)
+        target = self.row("Tester", partition_id=1, status="Offline", x=1.0)
+
+        def fake_character_row(conn, name):
+            return (admin if name == "Admin" else target), []
+
+        def fake_env(name, default=""):
+            values = {
+                "DUNE_CHAT_COMMAND_EXECUTE_TELEPORT": "true",
+                "DUNE_CHAT_COMMAND_DRY_RUN": "false",
+            }
+            return values.get(name, default)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            slot_file = pathlib.Path(tmpdir) / "teleport-slots.json"
+            with unittest.mock.patch.object(admin_chat_commands, "TELEPORT_SLOT_FILE", slot_file), \
+                 unittest.mock.patch.object(admin_chat_commands, "is_admin", lambda conn, sender_name, sender_fls_id: (True, "Admin")), \
+                 unittest.mock.patch.object(admin_chat_commands, "character_row", fake_character_row), \
+                 unittest.mock.patch.object(admin_chat_commands, "env", fake_env), \
+                 unittest.mock.patch.object(admin_chat_commands, "move_offline_player_to_partition", return_value={"function": "dune.admin_move_offline_player_to_partition"}) as move:
+                class FakeConn:
+                    def commit(self):
+                        pass
+
+                admin_chat_commands.handle_command(FakeConn(), "&teleport set 0 arrakeen", sender_name="Admin")
+                result = admin_chat_commands.handle_command(FakeConn(), "&teleport Tester 0", sender_name="Admin")
+
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["dryRun"])
+        move.assert_called_once_with(unittest.mock.ANY, "fls-Tester", 7, 100.0, 20.0, 30.0)
+
+    def test_teleport_slot_returns_gated_native_preview(self):
+        admin = self.row("Admin", partition_id=7, status="Online", x=100.0)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            slot_file = pathlib.Path(tmpdir) / "teleport-slots.json"
+            with unittest.mock.patch.object(admin_chat_commands, "TELEPORT_SLOT_FILE", slot_file), \
+                 unittest.mock.patch.object(admin_chat_commands, "is_admin", lambda conn, sender_name, sender_fls_id: (True, "Admin")), \
+                 unittest.mock.patch.object(admin_chat_commands, "character_row", lambda conn, name: (admin, [])):
+                admin_chat_commands.handle_command(object(), "&teleport set 0 arrakeen", sender_name="Admin")
+                result = admin_chat_commands.handle_command(object(), "&teleport 0", sender_name="Admin")
+
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["blocked"])
+        self.assertEqual(result["gm"]["preview"]["commandText"], "TeleportToExact 100.000 20.000 30.000")
+        self.assertEqual(result["gm"]["preview"]["route"], "Survival_17")
+
 
 class CommandListenerRetryTests(unittest.TestCase):
     def test_consume_forever_retries_amqp_connection(self):
@@ -398,9 +582,9 @@ class CommandListenerRetryTests(unittest.TestCase):
                 "DUNE_CHAT_COMMAND_AMQP_PASSWORD": "guest",
                 "DUNE_CHAT_COMMAND_AMQP_RETRY_SECONDS": "0.01",
                 "DUNE_CHAT_COMMAND_AMQP_CONNECT_ATTEMPTS": "0",
-                "DUNE_CHAT_COMMAND_EXCHANGE": "chat.intercept",
+                "DUNE_CHAT_COMMAND_EXCHANGE": "chat.whispers",
                 "DUNE_CHAT_COMMAND_QUEUE": "dash_admin_chat_commands",
-                "DUNE_CHAT_COMMAND_ROUTING_KEY": "#",
+                "DUNE_CHAT_COMMAND_ROUTING_KEY": "ADMIN#00001",
             }
             return values.get(name, default)
 

@@ -90,6 +90,9 @@ handoff-lab-seed:
 handoff-lab-status:
 	./scripts/handoff-lab.sh status $(ENV_FILE)
 
+handoff-lab-settled-status:
+	./scripts/handoff-lab.sh settled-status $(ENV_FILE)
+
 handoff-lab-stop:
 	./scripts/handoff-lab.sh stop $(ENV_FILE)
 
@@ -98,6 +101,9 @@ handoff-lab-remote-up:
 
 handoff-lab-remote-status:
 	./scripts/handoff-lab.sh remote-status $(ENV_FILE) $(REMOTE)
+
+handoff-lab-remote-settled-status:
+	./scripts/handoff-lab.sh remote-settled-status $(ENV_FILE) $(REMOTE)
 
 handoff-lab-remote-stop:
 	./scripts/handoff-lab.sh remote-stop $(ENV_FILE) $(REMOTE)

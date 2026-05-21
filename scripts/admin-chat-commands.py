@@ -13,7 +13,9 @@ import subprocess
 import sys
 import time
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / "vendor"))
+SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR))
+sys.path.insert(0, str(SCRIPT_DIR / "vendor"))
 
 import pika
 import psycopg2
@@ -24,6 +26,7 @@ from dune_gm_command import build_envelope, publish_command, publish_command_man
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 GM_LOCATION_FILE = ROOT / "backups" / "admin-panel" / "gm-locations.json"
+TELEPORT_SLOT_FILE = ROOT / "backups" / "admin-panel" / "teleport-slots.json"
 ONLINE_GM_TELEPORT_ARM_FILE = ROOT / "backups" / "admin-panel" / "online-gm-teleport-arm.json"
 SPAM_STATE = {}
 AUCTION_CONFIRMATIONS = {}
@@ -85,6 +88,17 @@ def split_csv(value):
     for item in value.split(","):
         item = item.strip()
         if item:
+            out.append(item)
+    return out
+
+
+def split_routing_keys(value):
+    out = []
+    for item in value.split(","):
+        item = item.strip()
+        if item in ("<empty>", "empty", "EMPTY"):
+            item = ""
+        if item or item == "":
             out.append(item)
     return out
 
@@ -178,6 +192,33 @@ def character_by_fls_id(conn, fls_id):
         return cur.fetchone()
 
 
+def fls_id_for_sender(conn, sender_name):
+    if not sender_name:
+        return ""
+    if not hasattr(conn, "cursor"):
+        return ""
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                select acc.user as fls_id
+                from dune.accounts acc
+                left join dune.player_state ps on ps.account_id = acc.id
+                where acc.user = %s
+                   or lower(acc.funcom_id) = lower(%s)
+                   or lower(ps.character_name) = lower(%s)
+                order by case when lower(ps.character_name) = lower(%s) then 0 else 1 end,
+                         ps.character_name nulls last
+                limit 1
+                """,
+                (sender_name, sender_name, sender_name, sender_name),
+            )
+            row = cur.fetchone()
+    except (AttributeError, TypeError):
+        return ""
+    return (row or {}).get("fls_id") or ""
+
+
 def resolve_sender_character(conn, sender_name, sender_fls_id):
     if sender_fls_id:
         resolved = character_by_fls_id(conn, sender_fls_id)
@@ -266,6 +307,82 @@ def location_from_character(row, name="location0"):
         "z": float(row.get("z")),
         "savedAt": int(time.time()),
     }
+
+
+def teleport_slot_from_character(row, slot, name, creator):
+    location = location_from_character(row, name or f"slot{slot}")
+    location["slot"] = slot
+    location["creator"] = creator
+    location["dimension"] = row.get("dimension_index")
+    return location
+
+
+def parse_teleport_slot(value):
+    if not re.fullmatch(r"\d+", value or ""):
+        raise ValueError("slot must be a non-negative integer")
+    return int(value)
+
+
+def read_teleport_slots():
+    try:
+        data = json.loads(TELEPORT_SLOT_FILE.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {"slots": {}}
+    if not isinstance(data, dict):
+        return {"slots": {}}
+    slots = data.get("slots")
+    if not isinstance(slots, dict):
+        data["slots"] = {}
+    return data
+
+
+def write_teleport_slots(data):
+    TELEPORT_SLOT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = TELEPORT_SLOT_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+    tmp.replace(TELEPORT_SLOT_FILE)
+
+
+def load_teleport_slot(slot):
+    return read_teleport_slots().get("slots", {}).get(str(slot))
+
+
+def list_teleport_slots():
+    slots = read_teleport_slots().get("slots", {})
+    return [
+        slots[key]
+        for key in sorted((key for key in slots if re.fullmatch(r"\d+", str(key))), key=lambda item: int(item))
+        if isinstance(slots.get(key), dict)
+    ]
+
+
+def next_free_teleport_slot(slots=None):
+    slots = slots if slots is not None else read_teleport_slots().get("slots", {})
+    occupied = {int(key) for key in slots if re.fullmatch(r"\d+", str(key))}
+    slot = 0
+    while slot in occupied:
+        slot += 1
+    return slot
+
+
+def save_teleport_slot(slot, name, row, creator, replace=False):
+    data = read_teleport_slots()
+    slots = data.setdefault("slots", {})
+    key = str(slot)
+    if key in slots and not replace:
+        return None, slots[key], next_free_teleport_slot(slots)
+    location = teleport_slot_from_character(row, slot, name, creator)
+    slots[key] = location
+    write_teleport_slots(data)
+    return location, None, None
+
+
+def delete_teleport_slot(slot):
+    data = read_teleport_slots()
+    location = data.get("slots", {}).pop(str(slot), None)
+    if location:
+        write_teleport_slots(data)
+    return location
 
 
 def read_gm_locations():
@@ -407,6 +524,22 @@ def format_saved_location(location):
         return "location not found"
     label = location.get("partitionLabel") or location.get("map") or "unknown"
     return f"{location.get('name', 'location')} {label} x={location['x']:.1f} y={location['y']:.1f} z={location['z']:.1f}"
+
+
+def format_teleport_slot(location):
+    if not location:
+        return "slot not found"
+    label = location.get("partitionLabel") or location.get("map") or "unknown"
+    name = location.get("name") or f"slot{location.get('slot')}"
+    return f"slot {location.get('slot')}: {name} {label} x={location['x']:.1f} y={location['y']:.1f} z={location['z']:.1f}"
+
+
+def format_teleport_slot_collision(location):
+    if not location:
+        return "slot not found"
+    label = location.get("partitionLabel") or location.get("map") or "unknown"
+    name = location.get("name") or f"slot{location.get('slot')}"
+    return f"slot {location.get('slot')} exists: {name} {label} x={location['x']:.1f} y={location['y']:.1f} z={location['z']:.1f}"
 
 
 def gm_route_for(conn, row):
@@ -1442,6 +1575,15 @@ def run_announce(message, target_name="", target_fls_id=""):
     target_reply_mode = env("DUNE_CHAT_COMMAND_TARGET_REPLY_MODE", "").strip().lower()
     if not target_reply_mode and env_bool("DUNE_CHAT_COMMAND_PRIVATE_REPLIES_ENABLED", False):
         target_reply_mode = "whisper"
+    if target_reply_mode in ("whisper", "private") and (not target_name or not target_fls_id):
+        LAST_ANNOUNCE_RESULT = {
+            "ok": False,
+            "skipped": True,
+            "reason": "private command reply target unavailable; refusing public fallback",
+            "stdout": "",
+            "stderr": "",
+        }
+        return LAST_ANNOUNCE_RESULT
     if target_name and target_fls_id and target_reply_mode in ("whisper", "private"):
         child_env["DUNE_ANNOUNCE_ENV_OVERRIDES_FILE"] = "true"
         child_env["DUNE_ANNOUNCE_CHAT_EXCHANGE"] = env("DUNE_CHAT_COMMAND_PRIVATE_REPLY_EXCHANGE", "chat.whispers")
@@ -1449,6 +1591,7 @@ def run_announce(message, target_name="", target_fls_id=""):
         child_env["DUNE_ANNOUNCE_CHAT_USER_NAME_TO"] = target_name
         child_env["DUNE_ANNOUNCE_CHAT_TARGET_QUEUES"] = f"{target_fls_id}_queue"
         child_env["DUNE_ANNOUNCE_CHAT_ROUTING_KEYS"] = env("DUNE_CHAT_COMMAND_PRIVATE_REPLY_ROUTING_KEY", target_fls_id) or target_fls_id
+        child_env["DUNE_ANNOUNCE_CHAT_BIND_ONLINE_QUEUES"] = "false"
         child_env["DUNE_ANNOUNCE_CHAT_CLEANUP_TARGET_BINDINGS"] = "true"
         child_env["DUNE_ANNOUNCE_WRAP_DASHBOARD_MESSAGES"] = "false"
         cwd = "/tmp"
@@ -1655,6 +1798,8 @@ def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=F
         return {"ok": False, "error": f"bad command syntax: {exc}"}
     if not parts:
         return {"ok": True, "ignored": True}
+    if not sender_fls_id and sender_name:
+        sender_fls_id = fls_id_for_sender(conn, sender_name)
 
     command = parts[0].lower()
     if command == "auction":
@@ -1837,10 +1982,115 @@ def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=F
         }
 
     if command == "teleport":
-        if len(parts) != 2:
-            response = "usage: &teleport <playername>"
+        if len(parts) < 2:
+            response = "usage: &teleport <playername>|<slot>|list|set <slot> [name]|replace <slot> [name]|delete <slot>|<playername> <slot>"
             announce_result = maybe_reply(response, reply)
             return {"ok": False, "error": response, "reply": announce_result}
+
+        subcommand = parts[1].lower()
+        if subcommand in ("list", "locations"):
+            locations = list_teleport_slots()
+            response = "teleport slots: " + "; ".join(format_teleport_slot(location) for location in locations[:12]) if locations else "no teleport slots; use &teleport set 0 <name>"
+            announce_result = maybe_reply(response, reply)
+            return {"ok": True, "action": "teleport.list", "message": response, "locations": locations, "reply": announce_result}
+
+        if subcommand in ("set", "replace"):
+            if len(parts) < 3:
+                response = f"usage: &teleport {subcommand} <slot> [name]"
+                announce_result = maybe_reply(response, reply)
+                return {"ok": False, "error": response, "reply": announce_result}
+            try:
+                slot = parse_teleport_slot(parts[2])
+            except ValueError as exc:
+                response = str(exc)
+                announce_result = maybe_reply(response, reply)
+                return {"ok": False, "error": response, "reply": announce_result}
+            admin, _ = character_row(conn, resolved_admin)
+            if admin is None or admin["partition_id"] is None or admin["x"] is None:
+                response = f"admin location unavailable for {resolved_admin}"
+                announce_result = maybe_reply(response, reply)
+                return {"ok": False, "error": response, "reply": announce_result}
+            name = " ".join(parts[3:]).strip() or None
+            location, existing, next_slot = save_teleport_slot(slot, name, admin, resolved_admin, replace=(subcommand == "replace"))
+            if existing:
+                response = f"{format_teleport_slot_collision(existing)}; next free slot is {next_slot}; use &teleport set {next_slot} or &teleport replace {slot}"
+                announce_result = maybe_reply(response, reply)
+                return {"ok": False, "action": "teleport.set", "error": response, "location": existing, "nextFreeSlot": next_slot, "reply": announce_result}
+            response = f"{'replaced' if subcommand == 'replace' else 'saved'} {format_teleport_slot(location)}"
+            announce_result = maybe_reply(response, reply)
+            return {"ok": True, "action": f"teleport.{subcommand}", "message": response, "location": location, "reply": announce_result}
+
+        if subcommand in ("delete", "rm"):
+            if len(parts) != 3:
+                response = f"usage: &teleport {subcommand} <slot>"
+                announce_result = maybe_reply(response, reply)
+                return {"ok": False, "error": response, "reply": announce_result}
+            try:
+                slot = parse_teleport_slot(parts[2])
+            except ValueError as exc:
+                response = str(exc)
+                announce_result = maybe_reply(response, reply)
+                return {"ok": False, "error": response, "reply": announce_result}
+            location = delete_teleport_slot(slot)
+            response = f"deleted {format_teleport_slot(location)}" if location else f"no saved slot {slot}"
+            announce_result = maybe_reply(response, reply)
+            return {"ok": bool(location), "action": "teleport.delete", "message": response, "location": location, "reply": announce_result}
+
+        if len(parts) == 2:
+            try:
+                slot = parse_teleport_slot(parts[1])
+            except ValueError:
+                slot = None
+            if slot is not None:
+                location = load_teleport_slot(slot)
+                if not location:
+                    response = f"no saved slot {slot}; use &teleport set {slot} [name]"
+                    announce_result = maybe_reply(response, reply)
+                    return {"ok": False, "error": response, "reply": announce_result}
+                route = gm_route_for_saved_location(conn, location)
+                command_text = f"TeleportToExact {location['x']:.3f} {location['y']:.3f} {location['z']:.3f}"
+                gm_result = send_gm_command(command_text, resolved_admin, resolved_admin, route)
+                response = f"teleport slot {'sent' if gm_result.get('ok') else 'preview ready'} for {format_teleport_slot(location)} via {route}"
+                announce_result = maybe_reply(response, reply)
+                return {"ok": bool(gm_result.get("ok")), "action": "teleport.slot", "blocked": not bool(gm_result.get("ok")), "message": response, "location": location, "gm": gm_result, "reply": announce_result}
+
+        if len(parts) == 3:
+            try:
+                slot = parse_teleport_slot(parts[2])
+            except ValueError:
+                response = "usage: &teleport <playername> <slot>"
+                announce_result = maybe_reply(response, reply)
+                return {"ok": False, "error": response, "reply": announce_result}
+            location = load_teleport_slot(slot)
+            if not location:
+                response = f"no saved slot {slot}; use &teleport set {slot} [name]"
+                announce_result = maybe_reply(response, reply)
+                return {"ok": False, "error": response, "reply": announce_result}
+            target, matches = character_row(conn, parts[1])
+            if target is None:
+                response = "no unique player match: " + ", ".join(row["character_name"] for row in matches) if matches else "player not found"
+                announce_result = maybe_reply(response, reply)
+                return {"ok": False, "error": response, "matches": [row["character_name"] for row in matches], "reply": announce_result}
+            if target["online_status"].lower() != "offline":
+                response = f"{target['character_name']} is {target['online_status']}; safe teleport only supports offline targets right now"
+                announce_result = maybe_reply(response, reply)
+                return {"ok": False, "error": response, "target": dict(target), "reply": announce_result}
+            execute = env_bool("DUNE_CHAT_COMMAND_EXECUTE_TELEPORT", False)
+            dry_run = env_bool("DUNE_CHAT_COMMAND_DRY_RUN", True) or not execute
+            response = f"would move {target['character_name']} to {format_teleport_slot(location)}"
+            move_result = None
+            if not dry_run:
+                move_result = move_offline_player_to_partition(conn, target["fls_id"], location["partitionId"], location["x"], location["y"], location["z"])
+                conn.commit()
+                response = f"moved {target['character_name']} to {format_teleport_slot(location)} via dune.admin_move_offline_player_to_partition"
+            announce_result = maybe_reply(response, reply)
+            return {"ok": True, "action": "teleport.player-slot", "dryRun": dry_run, "message": response, "moveResult": move_result, "location": location, "target": {"characterName": target["character_name"], "flsId": target["fls_id"], "status": target["online_status"], "location": compact_location(target)}, "reply": announce_result}
+
+        if len(parts) != 2:
+            response = "usage: &teleport <playername>|<slot>|list|set <slot> [name]|replace <slot> [name]|delete <slot>|<playername> <slot>"
+            announce_result = maybe_reply(response, reply)
+            return {"ok": False, "error": response, "reply": announce_result}
+
         admin, _ = character_row(conn, resolved_admin)
         if admin is None or admin["partition_id"] is None or admin["x"] is None:
             response = f"admin location unavailable for {resolved_admin}"
@@ -2060,8 +2310,12 @@ def consume_forever():
     user = env_chat_or_announce("DUNE_CHAT_COMMAND_AMQP_USER", "DUNE_ANNOUNCE_CHAT_USER", "")
     password = env_chat_or_announce("DUNE_CHAT_COMMAND_AMQP_PASSWORD", "DUNE_ANNOUNCE_CHAT_PASSWORD", "")
     exchange = env("DUNE_CHAT_COMMAND_EXCHANGE", "chat.intercept")
+    exchanges = split_csv(env("DUNE_CHAT_COMMAND_EXCHANGES", exchange))
+    if exchange and exchange not in exchanges:
+        exchanges.insert(0, exchange)
     queue = env("DUNE_CHAT_COMMAND_QUEUE", "dash_admin_chat_commands")
     routing_key = env("DUNE_CHAT_COMMAND_ROUTING_KEY", "#")
+    bind_routing_keys = split_routing_keys(env("DUNE_CHAT_COMMAND_BIND_ROUTING_KEYS", routing_key))
 
     context = ssl.create_default_context()
     context.check_hostname = False
@@ -2089,7 +2343,9 @@ def consume_forever():
             time.sleep(retry_seconds)
     channel = connection.channel()
     channel.queue_declare(queue=queue, durable=True, auto_delete=False)
-    channel.queue_bind(queue=queue, exchange=exchange, routing_key=routing_key)
+    for exchange_name in exchanges:
+        for bind_routing_key in dict.fromkeys(bind_routing_keys):
+            channel.queue_bind(queue=queue, exchange=exchange_name, routing_key=bind_routing_key)
     channel.basic_qos(prefetch_count=1)
 
     conn = connect_db()
@@ -2110,7 +2366,7 @@ def consume_forever():
             print(json.dumps({"ts": int(time.time()), "error": str(exc)}, separators=(",", ":")), file=sys.stderr, flush=True)
             ch.basic_ack(method.delivery_tag)
 
-    print(json.dumps({"ok": True, "listening": exchange, "queue": queue, "routingKey": routing_key}, separators=(",", ":")), flush=True)
+    print(json.dumps({"ok": True, "listening": exchanges, "queue": queue, "routingKeys": bind_routing_keys}, separators=(",", ":")), flush=True)
     channel.basic_consume(queue=queue, on_message_callback=on_message)
     channel.start_consuming()
 

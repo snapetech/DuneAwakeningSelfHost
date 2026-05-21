@@ -13,6 +13,9 @@ db=dune_sb_1_4_0_0
 
 redact() {
   sed -E \
+    -e 's/(code=)[A-Za-z0-9_.-]+/\1[redacted]/g' \
+    -e 's/(ServiceAuthKey["\\: ]+)[A-Za-z0-9+/=_-]+/\1[redacted]/g' \
+    -e 's/eyJ[A-Za-z0-9_.-]+\.[A-Za-z0-9_.-]+\.[A-Za-z0-9_.-]+/[redacted-jwt]/g' \
     -e 's/(ServiceAuthToken=)[A-Za-z0-9_.-]+/\1[redacted]/g' \
     -e 's/(ServiceAuthToken: )[A-Za-z0-9_.-]+/\1[redacted]/g' \
     -e 's/(DatabasePassword=)[^ ]+/\1[redacted]/g' \
@@ -65,8 +68,8 @@ partitions="$("${compose[@]}" exec -T postgres psql -U dune -d "$db" -Atc "selec
 game_sg_connections="$("${compose[@]}" exec -T game-rmq rabbitmqctl list_connections user 2>/dev/null | rg -c '^sg\.' || true)"
 admin_sg_connections="$("${compose[@]}" exec -T admin-rmq rabbitmqctl list_connections user 2>/dev/null | rg -c '^sg\.' || true)"
 
-if [[ "$current_alive_active" -gt 0 && "$current_alive_active" -eq "$partitions" && "$active_servers" -eq "$partitions" && "$game_sg_connections" -ge "$partitions" ]]; then
-  echo "OK: all current partitions have alive active farm rows, active server ids exist, and game RMQ service users are connected."
+if [[ "$current_alive_active" -gt 0 && "$current_alive_active" -eq "$partitions" && "$active_servers" -eq "$partitions" && "$game_sg_connections" -ge "$partitions" && "$admin_sg_connections" -ge "$partitions" ]]; then
+  echo "OK: all current partitions have alive active farm rows, active server ids exist, and game/admin RMQ service users are connected."
 else
   echo "WARN: expected readiness signals are incomplete."
 fi

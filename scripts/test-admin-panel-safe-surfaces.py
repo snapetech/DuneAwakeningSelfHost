@@ -1044,6 +1044,99 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
                 "confirm": "WRITE PERMISSION",
             })
 
+    def test_solari_inventory_grant_dry_run_creates_solaris_coin_stack(self):
+        def fake_query(sql, params=None):
+            if "from dune.inventories inv" in sql:
+                return [{"inventory_id": 14, "account_id": 10, "online_status": "Offline", "max_item_count": 35}]
+            if "generate_series" in sql:
+                return [{"position_index": 4}]
+            if "known_templates" in sql:
+                return [{"exists": 1}]
+            raise AssertionError(f"unexpected query: {sql}")
+
+        self.patch_db(fake_query, lambda sql, params=None: (_ for _ in ()).throw(AssertionError("dry-run executed SQL")))
+        result = self.handler.grant_player_inventory_solari({
+            "dry_run": True,
+            "player_controller_id": 21,
+            "inventory_id": 14,
+            "amount": 125,
+        })
+        self.assertTrue(result["dryRun"])
+        self.assertEqual(result["location"], "inventory")
+        self.assertEqual(result["plan"]["templateId"], "SolarisCoin")
+        self.assertEqual(result["plan"]["itemId"], None)
+        self.assertEqual(result["plan"]["beforeStack"], 0)
+        self.assertEqual(result["plan"]["afterStack"], 125)
+        self.assertEqual(result["plan"]["positionIndex"], 4)
+        self.assertEqual(result["confirm"], "GRANT SOLARI")
+
+    def test_solari_inventory_grant_execute_requires_confirmation(self):
+        self.patch_flag("MUTATIONS_ENABLED", True)
+        self.patch_db(
+            lambda sql, params=None: [{"inventory_id": 14, "account_id": 10, "online_status": "Offline", "max_item_count": 35}] if "from dune.inventories inv" in sql else ([{"position_index": 4}] if "generate_series" in sql else []),
+            lambda sql, params=None: (_ for _ in ()).throw(AssertionError("unexpected execute")),
+        )
+        with self.assertRaises(PermissionError):
+            self.handler.grant_player_inventory_solari({
+                "dry_run": False,
+                "player_controller_id": 21,
+                "inventory_id": 14,
+                "amount": 125,
+            })
+
+    def test_solari_inventory_grant_execute_creates_stack(self):
+        self.patch_flag("MUTATIONS_ENABLED", True)
+        executed = []
+
+        def fake_query(sql, params=None):
+            if "from dune.inventories inv" in sql:
+                return [{"inventory_id": 14, "account_id": 10, "online_status": "Offline", "max_item_count": 35}]
+            if "generate_series" in sql:
+                return [{"position_index": 4}]
+            if "known_templates" in sql:
+                return [{"exists": 1}]
+            if "advance_items_id_sequencer" in sql:
+                return [{"item_id": 100}]
+            if "where inventory_id=%s and position_index=%s" in sql:
+                return []
+            if "from dune.items where id=%s" in sql:
+                return [{"id": 100, "inventory_id": 14, "stack_size": 125, "position_index": 4, "template_id": "SolarisCoin"}]
+            return []
+
+        self.patch_db(fake_query, lambda sql, params=None: executed.append((" ".join(sql.split()), params)))
+        result = self.handler.grant_player_inventory_solari({
+            "dry_run": False,
+            "player_controller_id": 21,
+            "inventory_id": 14,
+            "amount": 125,
+            "confirm": "GRANT SOLARI",
+        })
+        self.assertFalse(result["dryRun"])
+        self.assertEqual(executed[0][1][0], 100)
+        self.assertEqual(executed[0][1][2], 125)
+        self.assertEqual(result["after"][0]["stack_size"], 125)
+
+    def test_solari_bank_grant_uses_exchange_function(self):
+        def fake_query(sql, params=None):
+            if "player_state" in sql:
+                return [{"account_id": 10, "character_name": "Paul", "player_controller_id": 21, "player_pawn_id": 20}]
+            if "dune_exchange_retrieve_solari_balance" in sql:
+                return [{"solari_balance": 500}]
+            return []
+
+        self.patch_db(fake_query, lambda sql, params=None: (_ for _ in ()).throw(AssertionError("dry-run executed SQL")))
+        result = self.handler.grant_player_bank_solari({
+            "dry_run": True,
+            "account_id": 10,
+            "amount": 125,
+        })
+        self.assertTrue(result["dryRun"])
+        self.assertEqual(result["location"], "bank")
+        self.assertEqual(result["ownerId"], 20)
+        self.assertEqual(result["controllerId"], 21)
+        self.assertEqual(result["plan"]["function"], "dune.dune_exchange_modify_user_solari_balance")
+        self.assertEqual(result["plan"]["delta"], 125)
+
     def test_faction_reputation_and_faction_dry_runs(self):
         self.handler.resolve_player_identity = lambda account_id: ({
             "account_id": account_id,

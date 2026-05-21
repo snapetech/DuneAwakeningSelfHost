@@ -8,11 +8,7 @@
 	var poiToggles = document.getElementById("poi-toggles");
 	var poiSummary = document.getElementById("poi-summary");
 	var poiAll = document.getElementById("poi-all");
-	var poiPreset = document.getElementById("poi-preset");
 	var poiClear = document.getElementById("poi-clear");
-	var poiEnableFiltered = document.getElementById("poi-enable-filtered");
-	var poiDisableFiltered = document.getElementById("poi-disable-filtered");
-	var poiOnlyFiltered = document.getElementById("poi-only-filtered");
 	var poiFilter = document.getElementById("poi-filter");
 	var poiFilterSummary = document.getElementById("poi-filter-summary");
 	var players = document.getElementById("active-players");
@@ -82,8 +78,32 @@
 	}
 
 	var poiPalette = ["#d9a63c", "#78cf7a", "#6fb6ff", "#e08585", "#c98dff", "#72d6c9", "#f0d77a", "#ff9d5c"];
+	var poiGroupColors = {
+		Agave: "#78cf7a",
+		Aql: "#c98dff",
+		Atreides: "#4f9dff",
+		Camps: "#ff6b5f",
+		Caves: "#d8b36b",
+		Custom: "#f3eadb",
+		EcoLabs: "#54e0b0",
+		Harkonnen: "#ff4d5c",
+		Intel: "#62c8ff",
+		Landmark: "#ffd057",
+		Loot: "#f4e45f",
+		NPCs: "#ffc870",
+		Outposts: "#ff5448",
+		Representatives: "#92bbff",
+		Sandbikes: "#ff9d5c",
+		Shipwrecks: "#b7c0c7",
+		Spiceblows: "#ff5aa6",
+		TradingPosts: "#67ead9",
+		Trainers: "#a8ed70"
+	};
 	var poiStorageKey = "dunePublicPoiGroups";
-	var poiPresetGroups = {"Shipwrecks": true, "Caves": true, "TradingPosts": true, "Outposts": true, "Aql": true, "Trainers": true};
+
+	function poiColor(group, index) {
+		return poiGroupColors[group] || poiPalette[index % poiPalette.length];
+	}
 
 	function initPanZoom(viewport, content, zoomIn, zoomOut, reset) {
 		if (!viewport || !content) {
@@ -257,7 +277,7 @@
 	function selectedPoiGroups(groups) {
 		var stored = {};
 		try {
-			stored = JSON.parse(sessionStorage.getItem(poiStorageKey) || "{}");
+			stored = JSON.parse(localStorage.getItem(poiStorageKey) || sessionStorage.getItem(poiStorageKey) || "{}");
 		} catch (e) {
 			stored = {};
 		}
@@ -269,6 +289,7 @@
 	}
 
 	function savePoiGroups(selected) {
+		localStorage.setItem(poiStorageKey, JSON.stringify(selected));
 		sessionStorage.setItem(poiStorageKey, JSON.stringify(selected));
 	}
 
@@ -276,13 +297,7 @@
 		if (!poiSummary) {
 			return;
 		}
-		var enabled = Object.keys(selected || {}).filter(function (group) {
-			return selected[group] === true;
-		}).length;
-		var markerCount = Array.isArray(data && data.markers) ? data.markers.filter(function (marker) {
-			return selected[marker.group] === true;
-		}).length : 0;
-		poiSummary.textContent = enabled ? String(enabled) + " layer" + (enabled === 1 ? "" : "s") + " / " + String(markerCount) + " markers" : "POI layers off";
+		poiSummary.textContent = "";
 	}
 
 	function renderPoiOverlay(data, selected) {
@@ -294,7 +309,7 @@
 		var groupKeys = Object.keys(data.groups || {});
 		var colors = {};
 		groupKeys.forEach(function (group, index) {
-			colors[group] = poiPalette[index % poiPalette.length];
+			colors[group] = poiColor(group, index);
 		});
 		markers.filter(function (marker) {
 			return selected[marker.group] === true;
@@ -306,17 +321,27 @@
 			var color = colors[marker.group] || "#d9a63c";
 			var item = document.createElementNS("http://www.w3.org/2000/svg", "g");
 			item.setAttribute("class", "poi-marker");
+			item.style.setProperty("--poi-color", color);
+			item.style.color = color;
 			item.setAttribute("transform", "translate(" + x.toFixed(1) + " " + y.toFixed(1) + ")");
 			var title = document.createElementNS("http://www.w3.org/2000/svg", "title");
 			title.textContent = group + ": " + name;
+			var halo = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+			halo.setAttribute("class", "poi-halo");
+			halo.setAttribute("r", "9");
+			var ring = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+			ring.setAttribute("class", "poi-ring");
+			ring.setAttribute("r", "6");
 			var circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-			circle.setAttribute("r", "4.5");
-			circle.setAttribute("fill", color);
+			circle.setAttribute("class", "poi-core");
+			circle.setAttribute("r", "4.2");
 			var label = document.createElementNS("http://www.w3.org/2000/svg", "text");
-			label.setAttribute("x", "8");
-			label.setAttribute("y", "-8");
+			label.setAttribute("x", "10");
+			label.setAttribute("y", "-10");
 			label.textContent = name;
 			item.appendChild(title);
+			item.appendChild(halo);
+			item.appendChild(ring);
 			item.appendChild(circle);
 			item.appendChild(label);
 			poiOverlay.appendChild(item);
@@ -336,7 +361,7 @@
 		});
 		var colors = {};
 		groupKeys.forEach(function (group, index) {
-			colors[group] = poiPalette[index % poiPalette.length];
+			colors[group] = poiColor(group, index);
 		});
 		clearNode(poiToggles);
 		groupKeys.forEach(function (group) {
@@ -353,6 +378,8 @@
 			var swatch = document.createElement("span");
 			swatch.className = "poi-swatch";
 			swatch.style.backgroundColor = colors[group];
+			swatch.style.color = colors[group];
+			swatch.style.setProperty("--poi-color", colors[group]);
 			toggleLabel.appendChild(input);
 			toggleLabel.appendChild(swatch);
 			appendTextElement(toggleLabel, "span", "", label);
@@ -403,55 +430,6 @@
 			poiClear.onclick = function () {
 				Object.keys(selected).forEach(function (group) {
 					selected[group] = false;
-				});
-				savePoiGroups(selected);
-				renderPoiToggles(data);
-			};
-		}
-		function setFiltered(enabled) {
-			poiToggles.querySelectorAll("label[data-filter-text]").forEach(function (label) {
-				if (!label.hidden) {
-					var input = label.querySelector("input[type=checkbox]");
-					if (input) {
-						selected[input.value] = enabled;
-					}
-				}
-			});
-			savePoiGroups(selected);
-			renderPoiToggles(data);
-		}
-		function onlyFiltered() {
-			Object.keys(selected).forEach(function (group) {
-				selected[group] = false;
-			});
-			poiToggles.querySelectorAll("label[data-filter-text]").forEach(function (label) {
-				if (!label.hidden) {
-					var input = label.querySelector("input[type=checkbox]");
-					if (input) {
-						selected[input.value] = true;
-					}
-				}
-			});
-			savePoiGroups(selected);
-			renderPoiToggles(data);
-		}
-		if (poiEnableFiltered) {
-			poiEnableFiltered.onclick = function () {
-				setFiltered(true);
-			};
-		}
-		if (poiDisableFiltered) {
-			poiDisableFiltered.onclick = function () {
-				setFiltered(false);
-			};
-		}
-		if (poiOnlyFiltered) {
-			poiOnlyFiltered.onclick = onlyFiltered;
-		}
-		if (poiPreset) {
-			poiPreset.onclick = function () {
-				Object.keys(selected).forEach(function (group) {
-					selected[group] = poiPresetGroups[group] === true;
 				});
 				savePoiGroups(selected);
 				renderPoiToggles(data);

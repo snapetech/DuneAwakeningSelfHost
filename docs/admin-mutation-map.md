@@ -102,6 +102,21 @@ dune.player_virtual_currency_balances
 
 It supports add/set by `(player_controller_id, currency_id)`.
 
+## Solari Grants
+
+The panel exposes two explicit Solari grant helpers:
+
+```text
+POST /api/admin/solari/inventory
+POST /api/admin/solari/bank
+```
+
+Inventory Solari grants create fresh carried `SolarisCoin` item stacks in free slots with `dune.save_item(dune.inventoryitem)`. Execution requires the global mutation gate and `confirm: "GRANT SOLARI"`.
+
+Bank Solari grants call the existing Exchange balance mutator path with `mode=add`. Execution requires the global mutation gate, `DUNE_ADMIN_EXCHANGE_MUTATIONS_ENABLED=true`, and `confirm: "WRITE EXCHANGE"`.
+
+Both endpoints default to dry-run and return before/after balance plans plus rollback data.
+
 ## Economy Bundle Plans
 
 The panel exposes:

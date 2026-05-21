@@ -70,6 +70,12 @@ Check health:
 make handoff-lab-status ENV_FILE=.env.handoff-lab
 ```
 
+Wait for the post-start health verdict to settle:
+
+```sh
+make handoff-lab-settled-status ENV_FILE=.env.handoff-lab
+```
+
 A healthy process-level lab has one current partition, one active server, and
 game/admin RabbitMQ service-user connections. The stronger client-visible proof
 also needs successful Director/Gateway FLS calls and an external test client.
@@ -93,6 +99,7 @@ Start, check, or stop the remote lab:
 ```sh
 make handoff-lab-remote-up ENV_FILE=.env.handoff-lab REMOTE=kspls0
 make handoff-lab-remote-status ENV_FILE=.env.handoff-lab REMOTE=kspls0
+make handoff-lab-remote-settled-status ENV_FILE=.env.handoff-lab REMOTE=kspls0
 make handoff-lab-remote-stop ENV_FILE=.env.handoff-lab REMOTE=kspls0
 ```
 
@@ -112,7 +119,7 @@ make handoff-lab ENV_FILE=.env.handoff-lab SRC=kspls0 DST=local
 
 The scripted handoff dumps the source lab database, stops source lab writers,
 restores the dump on the destination, starts the destination lab stack, and
-prints destination health. It does not touch production Compose projects,
+waits for a settled destination health verdict. It does not touch production Compose projects,
 production `data/postgres`, production router forwards, public `/32` ownership,
 or live static-site service ownership.
 

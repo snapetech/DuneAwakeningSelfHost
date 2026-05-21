@@ -58,7 +58,7 @@ Always compare your `.env` image pin with the Steam package installed on your ho
 - Recovery helpers for dependency loss and stale fixed-partition server IDs.
 - Host-level map watchdog service for unattended recovery.
 - LAN/VPN admin panel with Overview, Ops, Security, Runbook, Players, Settings, Admin Actions, and Catalog surfaces.
-- Guarded admin writes for backups, currency, XP, keystones, item grants, stack edits, item deletion, and catalog dry-runs.
+- Guarded admin writes for backups, currency, carried/bank Solari grants, XP, keystones, item grants, stack edits, item deletion, and catalog dry-runs.
 - Restart announcements, restart planner hooks, chat-command bridge, player-presence announcer, and admin-bot monitoring.
 - Private whisper replies for admin chat commands, auction confirmations, player-presence messages, and admin-only digests through the verified `chat.whispers` route.
 - Chat spam protection with repeat-message detection, public action announcements, and a blocked-by-default kick backend.
@@ -271,7 +271,7 @@ By default the local deployment is configured for a trusted private admin surfac
 | Runbook | Copy/paste operational commands for health, backups, restores, logs, profiling, and routing capture. |
 | Players | Online/offline roster, player detail, account/controller/pawn context, currency, XP, inventory, and location views. |
 | Settings | Selected `.env` and config edits with backups. |
-| Admin Actions | Database backups and guarded mutations for currency, XP, keystones, grants, stack edits, and deletion. |
+| Admin Actions | Database backups and guarded mutations for currency, carried/bank Solari, XP, keystones, grants, stack edits, and deletion. |
 | Catalog | Content insertion evidence, typed knob dry-runs/writes, resource and progression inspection, event planning, economy bundle planning, and gated world/player/economy mutator families. |
 
 If the published local admin port accepts TCP but returns no HTTP bytes after a container recreate, refresh the observed Docker bridge neighbor entries:
@@ -457,14 +457,54 @@ More detail: [`docs/public-static-site.md`](docs/public-static-site.md).
 
 ## Artificial Exchange
 
-Artificial Exchange is DASH's operator-controlled Exchange liquidity layer for small or private self-hosts. It is built around a reviewed catalog, a conservative artificial buyer, validated seller settlement, optional buyer funding, and an optional seeded-listing populator. Confidence: high for catalog building, dry-run buyer scans, buyer execution on reviewed rows, and validated seller Solari settlement; moderate for broad live seeding because seeded listings are immediately visible in the player market.
+Artificial Exchange is DASH's operator-controlled Exchange liquidity layer for
+small or private self-hosts. It is now a first-class economy feature, not a
+throwaway helper. It is built around a reviewed catalog, a conservative
+artificial buyer, validated seller settlement, optional buyer funding, and an
+operator-owned seeded-listing populator. Confidence: high for catalog building,
+dry-run buyer scans, buyer execution on reviewed rows, validated seller Solari
+settlement, and the current game-derived Exchange category map; moderate for
+broad live seeding because seeded listings are immediately visible in the player
+market.
 
 The feature has two independent market roles:
 
 - Buyer: watches player sell orders, skips NPC/populator-owned orders, enforces catalog eligibility, max buy prices, blocked sellers, daily global/seller/template caps, and liquidity-tier buy probability, then uses the native fulfill function when live purchases are enabled.
-- Seller/populator: optionally posts DASH/Admin-owned `is_npc_order=true` listings from reviewed, validated, market-priced catalog rows. Keep it stopped unless you intentionally want operator-seeded stock in the Exchange.
+- Seller/populator: optionally posts DASH/Admin-owned `is_npc_order=true` listings from reviewed, validated, category-mapped catalog rows. Keep it stopped unless you intentionally want operator-seeded stock in the Exchange.
 
 Seller settlement is separate from both roles. Completed player-sale claims are inspected and can be claimed through a validated direct transaction that credits exactly the completed Solari value and deletes only the matched claim row. The unsafe native Solaris retrieve function is not used.
+
+Seeded listings use Exchange-specific category masks, not generic item tags.
+DASH derives those masks from the local game GUI category assets and observed
+client/server category refresh writes, then reconciles the reviewed catalog
+before seeding. This prevents failure modes such as consumables, manifests,
+resources, or weapon parts appearing under unrelated Augments buckets.
+
+Populator pricing is category-aware. Consumables and common materials stay
+obtainable, refined/components remain meaningful, and weapons/armor/vehicles
+are intentionally more rewarding. Rows with a public dune.exchange spike and a
+known `game_file_price` are damped with a geometric-mean anchor so individual
+market oddities, such as Spice Melange, do not distort the whole economy.
+Quantity policy is category-aware too: consumables, resources, fuel, and ammo
+seed as multiple full-stack listings, while weapons, armor, vehicles,
+schematics, tools, contracts, patents, and other singleton items seed as
+individual listings toward per-category targets. Stackable orders use stack
+size `100`, but the Exchange order price is not multiplied by stack size; it
+remains the normal listing price used by the native Exchange path.
+
+Current broad-population profile targets at least `4000` seeded orders with a
+hard ceiling of `20000`. The verified seed has `5432` live orders across `50`
+categories, `1176` templates, and no dry-run additions left under the configured
+category targets. The audit report is written to
+`backups/admin-panel/artificial-exchange/market-category-audit.json`. Confidence:
+high for category placement in the current catalog; moderate for long-term
+price balance.
+
+Unique Schematics use the game UI parent mask `0x07000000` at depth `2` so the
+client's Unique Schematics filter can see them, while the catalog retains their
+logical subcategories for balancing. Augments are protected: no non-augment row
+is allowed into Augment masks, and trusted standalone augment/customization
+source rows are not currently present.
 
 Run the smoke check before enabling live purchase, funding, auto-claim, or populator apply gates:
 
@@ -475,6 +515,7 @@ make artificial-exchange-smoke
 Build or refresh the reviewed catalog, then inspect readiness and the current settlement queue:
 
 ```bash
+python3 scripts/import-exchange-category-map.py
 python3 scripts/build-exchange-catalog.py
 python3 scripts/artificial-exchange-bot.py --check-ready
 python3 scripts/artificial-exchange-bot.py --settlement-report
@@ -490,6 +531,47 @@ Live buyer execution requires `DUNE_ARTIFICIAL_EXCHANGE_DRY_RUN=false`,
 `DUNE_ARTIFICIAL_EXCHANGE_PURCHASES_ENABLED=true`, a configured
 `DUNE_ARTIFICIAL_EXCHANGE_BUYER_CONTROLLER_ID`, and confirmation
 `RUN ARTIFICIAL EXCHANGE`.
+
+One-shot market seeding from the reviewed catalog:
+
+```bash
+DUNE_ARTIFICIAL_EXCHANGE_SCAN_LIMIT=25000 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_TARGET_MIN_ORDERS=4000 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_TARGET_MAX_ORDERS=20000 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_HARD_MAX_ORDERS=20000 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_USE_CATEGORY_TARGETS=true \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_TIER=0 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_QUALITY_LEVEL=1 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_BASELINE_PRICE=1 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_PRICE_SPAN=200 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MAX_PER_TEMPLATE_PER_CATEGORY=8 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_STACKABLE_TARGET_ORDERS=13 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_SINGLETON_CATEGORY_TARGET_ORDERS=125 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_FULL_STACK_SIZE=100 \
+  python3 scripts/artificial-exchange-bot.py \
+  --populate-all-once \
+  --catalog backups/admin-panel/artificial-exchange/catalog.json \
+  --apply \
+  --populator-owner-id <dash-admin-controller-id> \
+  --populator-source-inventory-id <source-inventory-id> \
+  --confirm "POPULATE ARTIFICIAL EXCHANGE"
+```
+
+Emergency purge of one seeded Exchange:
+
+```bash
+ts=$(date -u +%Y%m%dT%H%M%SZ)
+docker compose --env-file .env -f compose.yaml exec -T postgres \
+  psql -U dune -d dune_sb_1_4_0_0 -Atc \
+  "copy (select row_to_json(o) from dune.dune_exchange_orders o where exchange_id=2 order by id) to stdout" \
+  > "backups/admin-panel/artificial-exchange/live-runs/${ts}-before-exchange-purge.json"
+
+docker compose --env-file .env -f compose.yaml exec -T postgres \
+  psql -U dune -d dune_sb_1_4_0_0 -v ON_ERROR_STOP=1 -Atc \
+  "delete from dune.dune_exchange_sell_orders s using dune.dune_exchange_orders o where s.order_id=o.id and o.exchange_id=2;
+   delete from dune.dune_exchange_orders where exchange_id=2;
+   select count(*) from dune.dune_exchange_orders where exchange_id=2;"
+```
 
 Install services after `.env` gates and buyer/populator owner IDs are configured:
 
