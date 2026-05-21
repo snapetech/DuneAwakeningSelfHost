@@ -131,7 +131,6 @@ def main():
     reply_queue = admin_ch.queue_declare(queue="", exclusive=True, auto_delete=True).method.queue
     for key in (reply_queue, f"response.{args.route}", args.route):
         bind_safely(admin_ch, reply_queue, "response", key)
-        bind_safely(admin_ch, reply_queue, "rpc", key)
 
     game_conn = None
     game_ch = None

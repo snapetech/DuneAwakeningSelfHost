@@ -6223,9 +6223,12 @@ INDEX = r"""<!doctype html>
     .haggaMap .emptyState { fill:var(--muted); font:14px system-ui,sans-serif; text-anchor:middle; }
     .haggaMapStatus { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:10px; }
     .mapLegend { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
-    .poiToggleBar { display:flex; flex-wrap:wrap; gap:8px; margin:0 0 10px; }
-    .poiToggleBar label { display:inline-flex; gap:6px; align-items:center; border:1px solid var(--line); border-radius:999px; background:#101310; color:var(--text); font-size:12px; padding:5px 9px; }
+    .poiToggleBar { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:6px 14px; border:1px solid var(--line); border-radius:7px; background:#101310; margin:0 0 10px; padding:10px 12px; }
+    .poiToggleBar label { display:inline-flex; justify-content:space-between; gap:10px; align-items:center; color:var(--text); font-size:12px; line-height:1.25; }
     .poiToggleBar input { width:auto; }
+    .poiToggleLabel { display:inline-flex; align-items:center; gap:7px; min-width:0; }
+    .poiSwatch { width:10px; height:10px; border:1px solid #0b0d0a; border-radius:2px; flex:0 0 auto; }
+    .poiCount { color:var(--muted); font-size:11px; }
     .teleportMap { cursor:crosshair; min-height:360px; }
     .teleportMap .teleportTargetDot { fill:var(--danger); stroke:#fff0d0; stroke-width:3; }
     .teleportMap .teleportTargetLabel { fill:#fff0d0; font:700 12px system-ui,sans-serif; paint-order:stroke; stroke:#0b0d0a; stroke-width:4; }
@@ -6768,7 +6771,6 @@ function mapTiles(rows){
   return `<div class="mapGrid">${rows.map(r => `<div class="mapTile ${r.online ? 'ok' : 'bad'}"><div class="name">${esc(r.label || r.map)}</div><div class="meta">${r.online ? 'online' : 'offline'} | ${esc(r.players ?? 0)} players</div></div>`).join('')}</div>`;
 }
 const haggaPoiPalette = ['#d5a13e', '#7fc27a', '#6fa8dc', '#d96f62', '#b78cff', '#6cc7bd', '#e1b75f', '#e89458'];
-const defaultHaggaPoiGroups = {Shipwrecks:true, Caves:true, TradingPosts:true, Outposts:true, Aql:true, Trainers:true};
 function selectedHaggaPoiGroups(groups){
   if (!haggaPoiGroups || !Object.keys(haggaPoiGroups).length) {
     try {
@@ -6779,7 +6781,7 @@ function selectedHaggaPoiGroups(groups){
   }
   const selected = {};
   Object.keys(groups || {}).forEach(group => {
-    selected[group] = Object.prototype.hasOwnProperty.call(haggaPoiGroups, group) ? haggaPoiGroups[group] === true : defaultHaggaPoiGroups[group] === true;
+    selected[group] = Object.prototype.hasOwnProperty.call(haggaPoiGroups, group) ? haggaPoiGroups[group] === true : false;
   });
   return selected;
 }
@@ -6806,9 +6808,11 @@ function haggaPoiToggleBar(pois, selected){
   const groups = pois?.groups || {};
   const groupKeys = Object.keys(groups).filter(group => Number(groups[group]?.count || 0) > 0);
   if (!groupKeys.length) return '';
+  const colors = {};
+  groupKeys.forEach((group, index) => colors[group] = haggaPoiPalette[index % haggaPoiPalette.length]);
   return `<div class="poiToggleBar" aria-label="POI layer toggles">${groupKeys.map(group => {
     const info = groups[group] || {};
-    return `<label><input type="checkbox" value="${esc(group)}"${selected[group] ? ' checked' : ''}>${esc(info.name || group)} <span class="muted">${esc(info.count || 0)}</span></label>`;
+    return `<label><span class="poiToggleLabel"><input type="checkbox" value="${esc(group)}"${selected[group] ? ' checked' : ''}><span class="poiSwatch" style="background:${esc(colors[group])}"></span><span>${esc(info.name || group)}</span></span><span class="poiCount">${esc(info.count || 0)}</span></label>`;
   }).join('')}</div>`;
 }
 function haggaBasinMapPanel(data){

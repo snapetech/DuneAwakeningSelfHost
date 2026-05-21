@@ -23,7 +23,7 @@
 	}
 
 	var poiPalette = ["#d9a63c", "#78cf7a", "#6fb6ff", "#e08585", "#c98dff", "#72d6c9", "#f0d77a", "#ff9d5c"];
-	var defaultPoiGroups = {"Shipwrecks": true, "Caves": true, "TradingPosts": true, "Outposts": true, "Aql": true, "Trainers": true};
+	var poiStorageKey = "dunePublicPoiGroups";
 
 	function initPanZoom(viewport, content, zoomIn, zoomOut, reset) {
 		if (!viewport || !content) {
@@ -195,13 +195,13 @@
 		}
 		var selected = {};
 		Object.keys(groups || {}).forEach(function (group) {
-			selected[group] = Object.prototype.hasOwnProperty.call(stored, group) ? stored[group] === true : defaultPoiGroups[group] === true;
+			selected[group] = Object.prototype.hasOwnProperty.call(stored, group) ? stored[group] === true : false;
 		});
 		return selected;
 	}
 
 	function savePoiGroups(selected) {
-		localStorage.setItem("dunePublicPoiGroups", JSON.stringify(selected));
+		sessionStorage.setItem(poiStorageKey, JSON.stringify(selected));
 	}
 
 	function renderPoiOverlay(data, selected) {
@@ -235,10 +235,14 @@
 		var groupKeys = Object.keys(groups).filter(function (group) {
 			return Number(groups[group].count || 0) > 0;
 		});
+		var colors = {};
+		groupKeys.forEach(function (group, index) {
+			colors[group] = poiPalette[index % poiPalette.length];
+		});
 		poiToggles.innerHTML = groupKeys.map(function (group) {
 			var info = groups[group] || {};
 			var checked = selected[group] ? " checked" : "";
-			return '<label><input type="checkbox" value="' + escapeHtml(group) + '"' + checked + '> ' + escapeHtml(info.name || group) + ' <span class="muted">' + escapeHtml(info.count || 0) + '</span></label>';
+			return '<label><span class="poi-toggle-label"><input type="checkbox" value="' + escapeHtml(group) + '"' + checked + '><span class="poi-swatch" style="background:' + escapeHtml(colors[group]) + '"></span><span>' + escapeHtml(info.name || group) + '</span></span><span class="poi-count">' + escapeHtml(info.count || 0) + '</span></label>';
 		}).join("");
 		renderPoiOverlay(data, selected);
 		poiToggles.querySelectorAll("input[type=checkbox]").forEach(function (input) {
