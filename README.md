@@ -400,6 +400,7 @@ Root-level research indexes:
 - [`scripts/recover-map.sh`](scripts/recover-map.sh): fixed-partition recovery.
 - [`scripts/restart-target.sh`](scripts/restart-target.sh): scheduled restart execution hook.
 - [`scripts/install-daily-maintenance-timer.sh`](scripts/install-daily-maintenance-timer.sh): systemd timer installer for 06:00 daily restart/backup/update maintenance.
+- [`scripts/install-artificial-exchange-service.sh`](scripts/install-artificial-exchange-service.sh): systemd installer for the always-on dry-run artificial Exchange buyer or populator service.
 - [`scripts/announce.sh`](scripts/announce.sh): in-game announcement publisher.
 - [`scripts/admin-chat-commands.py`](scripts/admin-chat-commands.py): chat command listener.
 - [`scripts/seed-gateway-neighbor.sh`](scripts/seed-gateway-neighbor.sh): Docker bridge neighbor refresh helper for the observed local bridge issue.

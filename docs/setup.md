@@ -186,3 +186,23 @@ docker compose --env-file .env up -d admin-panel
 ```
 
 Open `http://127.0.0.1:${DUNE_ADMIN_HOST_PORT:-18080}`, or put a trusted LAN/VPN reverse proxy in front of it with your own hostname. See `docs/admin-panel.md`.
+
+## 10. Standard Host Services
+
+Install the always-on artificial Exchange buyer service. It starts in dry-run by
+default, rebuilds the catalog on service start, restarts after crashes, and
+starts after host reboot:
+
+```bash
+make install-artificial-exchange-buyer-service ENV_FILE=.env
+systemctl status dune-artificial-exchange-bot.service --no-pager
+```
+
+Use the smoke check before enabling live purchase, funding, auto-claim, or
+populator gates:
+
+```bash
+make artificial-exchange-smoke
+```
+
+See `docs/artificial-exchange.md`.

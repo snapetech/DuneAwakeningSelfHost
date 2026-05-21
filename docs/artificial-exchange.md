@@ -7,7 +7,8 @@ Awakening self-hosts. It has three separate jobs:
 - buy eligible player listings through the native Exchange fulfill path
 - optionally seed NPC listings from reviewed catalog rows
 
-All write paths are gated. The default state is disabled and dry-run.
+All write paths are gated. The default service state is enabled in dry-run mode,
+with purchases, funding, settlement claim, and populator writes disabled.
 
 Confidence levels:
 
@@ -311,7 +312,29 @@ transaction.
 
 The populator seeds NPC Exchange listings from enabled catalog rows. By default
 it only uses rows with `sellable_status=validated`, jitters prices around
-`baseline_price`, and gives listings a jittered expiration.
+`baseline_price`, gives listings a jittered expiration, and refuses to seed the
+lowest observed item grade (`quality_level=0`).
+
+Current category limitation:
+
+- The reviewed catalog currently has one enabled row: `PowerPack`.
+- The live `dune_exchange_categories_hash` table currently exposes only integer
+  hashes, not category names or a hierarchy.
+- The populator can set global `category_mask` and `category_depth`, but the
+  catalog does not yet carry per-row native category mask/depth values.
+- Because of that, it cannot truthfully populate 20 listings in every native
+  Exchange subcategory yet. It can only populate the reviewed catalog rows under
+  one configured mask/depth until category metadata is mapped.
+
+Single-template safety:
+
+- Listings are NPC orders with `is_npc_order=true`.
+- The buyer skips NPC orders and configured populator owners by default.
+- The populator avoids duplicate active prices for the same template in one run
+  so native recurring-order merging does not silently turn requested listings
+  into fewer active orders.
+- Apply mode fails if the native recurring sell function reports that no
+  inventory was added.
 
 Dry-run one populate pass:
 
@@ -380,7 +403,7 @@ validation.
 Global buyer:
 
 ```env
-DUNE_ARTIFICIAL_EXCHANGE_ENABLED=false
+DUNE_ARTIFICIAL_EXCHANGE_ENABLED=true
 DUNE_ARTIFICIAL_EXCHANGE_DRY_RUN=true
 DUNE_ARTIFICIAL_EXCHANGE_PURCHASES_ENABLED=false
 DUNE_ARTIFICIAL_EXCHANGE_ID=2
@@ -437,7 +460,8 @@ DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_CATEGORY_MASK=0
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_CATEGORY_DEPTH=0
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_DURABILITY_CUR=1
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_DURABILITY_MAX=1
-DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_QUALITY_LEVEL=0
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_QUALITY_LEVEL=1
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_QUALITY_LEVEL=1
 ```
 
 ## Services
@@ -446,14 +470,12 @@ Render/install buyer service:
 
 ```bash
 make install-artificial-exchange-buyer-service ENV_FILE=.env
-sudo systemctl enable --now dune-artificial-exchange-bot.service
 ```
 
 Render/install populator service:
 
 ```bash
 make install-artificial-exchange-populator-service ENV_FILE=.env
-sudo systemctl enable --now dune-artificial-exchange-populator.service
 ```
 
 Direct installer syntax:
@@ -469,6 +491,9 @@ The service unit:
 - runs `build-exchange-catalog.py` as `ExecStartPre`
 - runs either buyer loop or populator loop
 - does not hardcode artificial Exchange gates
+- enables at boot and starts immediately when installed under
+  `/etc/systemd/system`
+- uses `Restart=always` so it comes back after process crashes
 
 Run buyer and populator as separate services. There is no combined mode.
 

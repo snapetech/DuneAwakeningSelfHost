@@ -285,7 +285,6 @@ Install the long-running service with:
 ```bash
 python3 scripts/artificial-exchange-bot.py --check-ready
 make install-artificial-exchange-buyer-service ENV_FILE=.env
-sudo systemctl enable --now dune-artificial-exchange-bot.service
 ```
 
 ## Backup

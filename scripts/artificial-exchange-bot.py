@@ -187,6 +187,26 @@ def jitter_price(baseline_price, jitter_pct):
     return random.randint(low, high)
 
 
+def jitter_price_bounds(baseline_price, jitter_pct):
+    baseline = int(baseline_price)
+    pct = max(0, int(jitter_pct))
+    low = max(1, int(round(baseline * (100 - pct) / 100)))
+    high = max(low, int(round(baseline * (100 + pct) / 100)))
+    return low, high
+
+
+def planned_unique_price(row, jitter_pct, used_prices):
+    low, high = jitter_price_bounds(row["baseline_price"], jitter_pct)
+    template_id = row["template_id"]
+    used = used_prices.setdefault(template_id, set())
+    available = [price for price in range(low, high + 1) if price not in used]
+    if not available:
+        raise RuntimeError(f"not enough unique prices for {template_id} in jitter range {low}-{high}")
+    price = random.choice(available)
+    used.add(price)
+    return price
+
+
 def jitter_expiration(now, min_seconds, max_seconds):
     min_seconds = int(min_seconds)
     max_seconds = max(min_seconds, int(max_seconds))
@@ -228,6 +248,14 @@ def free_position_candidates(occupied_positions, needed_count, start=0, max_posi
     if len(positions) < int(needed_count):
         raise RuntimeError(f"not enough free staging inventory positions: needed {needed_count}, found {len(positions)}")
     return positions
+
+
+def populator_quality_level(row):
+    configured = int(row.get("quality_level") or env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_QUALITY_LEVEL", "1"))
+    minimum = int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_QUALITY_LEVEL", "1"))
+    if configured < minimum:
+        raise RuntimeError(f"populator quality_level {configured} is below minimum {minimum}")
+    return configured
 
 
 def fetch_orders(conn, exchange_id, limit):
@@ -392,7 +420,7 @@ def create_staging_item(cur, row, source_inventory_id, position_index):
     item_id = None
     cur.execute("select dune.advance_items_id_sequencer(1) as item_id")
     item_id = int(cur.fetchone()["item_id"])
-    quality_level = int(row.get("quality_level") or env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_QUALITY_LEVEL", "0"))
+    quality_level = populator_quality_level(row)
     cur.execute(
         """
         select dune.save_item((
@@ -443,7 +471,10 @@ def execute_seed_listing(cur, row, args, price, expiration_time, position_index)
         ),
     )
     result = cur.fetchone()
-    return {"itemId": item_id, "incrementAdded": result["increment_added"] if result else None}
+    increment_added = result["increment_added"] if result else None
+    if int(increment_added or 0) <= 0:
+        raise RuntimeError(f"seed listing did not add inventory for {row['template_id']} at price {price}")
+    return {"itemId": item_id, "incrementAdded": increment_added}
 
 
 def expire_seeded_once(args):
@@ -495,15 +526,19 @@ def populate_once(args):
         active = fetch_seeded_orders(conn, args.exchange_id, args.populator_owner_id, args.limit)
         count = args.populator_force_count if args.populator_force_count is not None else desired_seed_count(len(active), args.populator_target_min_orders, args.populator_target_max_orders)
         positions = fetch_free_inventory_positions(conn, args.populator_source_inventory_id, count)
+        used_prices = {}
+        for order in active:
+            used_prices.setdefault(order["template_id"], set()).add(int(order["item_price"]))
         for index in range(count):
             row = random.choice(eligible)
-            price = args.populator_force_price if args.populator_force_price is not None else jitter_price(row["baseline_price"], args.populator_price_jitter_pct)
+            price = args.populator_force_price + index if args.populator_force_price is not None else planned_unique_price(row, args.populator_price_jitter_pct, used_prices)
             expiration_time = jitter_expiration(now, args.populator_expiry_min_seconds, args.populator_expiry_max_seconds)
             position_index = positions[index]
             event = {
                 "templateId": row["template_id"],
                 "baselinePrice": row["baseline_price"],
                 "price": price,
+                "qualityLevel": populator_quality_level(row),
                 "expirationTime": expiration_time,
                 "ownerId": args.populator_owner_id,
                 "exchangeId": args.exchange_id,
@@ -861,8 +896,8 @@ def readiness_check(args):
     })
     checks.append({
         "name": "buyerGate",
-        "ok": env_bool("DUNE_ARTIFICIAL_EXCHANGE_ENABLED", False),
-        "enabled": env_bool("DUNE_ARTIFICIAL_EXCHANGE_ENABLED", False),
+        "ok": env_bool("DUNE_ARTIFICIAL_EXCHANGE_ENABLED", True),
+        "enabled": env_bool("DUNE_ARTIFICIAL_EXCHANGE_ENABLED", True),
         "dryRun": env_bool("DUNE_ARTIFICIAL_EXCHANGE_DRY_RUN", True),
         "purchasesEnabled": env_bool("DUNE_ARTIFICIAL_EXCHANGE_PURCHASES_ENABLED", False),
     })
@@ -1052,7 +1087,7 @@ def fund_buyer(args):
 
 
 def scan_once(args):
-    if not env_bool("DUNE_ARTIFICIAL_EXCHANGE_ENABLED", False) and not args.ignore_enabled_gate:
+    if not env_bool("DUNE_ARTIFICIAL_EXCHANGE_ENABLED", True) and not args.ignore_enabled_gate:
         raise RuntimeError("DUNE_ARTIFICIAL_EXCHANGE_ENABLED is false")
     catalog = load_catalog(args.catalog)
     state = load_state()

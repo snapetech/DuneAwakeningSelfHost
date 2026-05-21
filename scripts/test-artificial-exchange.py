@@ -225,6 +225,15 @@ class ArtificialExchangeBotTest(unittest.TestCase):
         with mock.patch.object(bot.random, "randint", side_effect=lambda low, high: high):
             self.assertEqual(bot.jitter_price(100, 20), 120)
             self.assertEqual(bot.jitter_expiration(1000, 60, 120), 1120)
+        self.assertEqual(bot.jitter_price_bounds(100, 20), (80, 120))
+
+    def test_planned_unique_price_avoids_existing_template_prices(self):
+        used = {"ItemA": {80, 81}}
+        with mock.patch.object(bot.random, "choice", side_effect=lambda values: values[0]):
+            self.assertEqual(bot.planned_unique_price(self.catalog_row(baseline_price=100), 20, used), 82)
+        self.assertIn(82, used["ItemA"])
+        with self.assertRaises(RuntimeError):
+            bot.planned_unique_price(self.catalog_row(baseline_price=1), 0, {"ItemA": {1}})
 
     def test_populator_target_count_and_expiry_selection(self):
         with mock.patch.object(bot.random, "randint", return_value=7):
@@ -249,6 +258,15 @@ class ArtificialExchangeBotTest(unittest.TestCase):
 
     def test_seeded_order_ids_are_normalized(self):
         self.assertEqual(bot.seeded_order_ids([{"id": "7"}, {"id": 8}]), {7, 8})
+
+    def test_populator_quality_rejects_lowest_grade_by_default(self):
+        self.assertEqual(bot.populator_quality_level(self.catalog_row()), 1)
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_QUALITY_LEVEL"] = "0"
+        with self.assertRaises(RuntimeError):
+            bot.populator_quality_level(self.catalog_row())
+
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_QUALITY_LEVEL"] = "0"
+        self.assertEqual(bot.populator_quality_level(self.catalog_row()), 0)
 
 
 if __name__ == "__main__":

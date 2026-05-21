@@ -83,7 +83,19 @@ if command -v systemctl >/dev/null 2>&1; then
   else
     sudo systemctl daemon-reload
   fi
+  if [[ "$unit_path" == /etc/systemd/system/*.service ]]; then
+    service_name="$(basename "$unit_path")"
+    if [[ "$(id -u)" -eq 0 ]]; then
+      systemctl enable --now "$service_name"
+    else
+      sudo systemctl enable --now "$service_name"
+    fi
+  fi
 fi
 
 printf 'installed %s\n' "$unit_path"
-printf 'enable with: sudo systemctl enable --now %s\n' "$(basename "$unit_path")"
+if [[ "$unit_path" == /etc/systemd/system/*.service ]]; then
+  printf 'enabled and started %s\n' "$(basename "$unit_path")"
+else
+  printf 'enable with: sudo systemctl enable --now %s\n' "$(basename "$unit_path")"
+fi
