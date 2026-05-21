@@ -220,16 +220,45 @@ def jitter_price_bounds(baseline_price, jitter_pct):
     return low, high
 
 
+def populator_price_bounds(row, jitter_pct):
+    floor = row.get("price_floor")
+    ceiling = row.get("price_ceiling")
+    if floor not in (None, "") and ceiling not in (None, ""):
+        low = max(1, int(floor))
+        high = max(low, int(ceiling))
+        if high > low:
+            lower_pct = int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_RANGE_LOW_PCT", "35"))
+            upper_pct = int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_RANGE_HIGH_PCT", "70"))
+            lower_pct = min(100, max(0, lower_pct))
+            upper_pct = min(100, max(lower_pct, upper_pct))
+            spread = high - low
+            return low + int(round(spread * lower_pct / 100)), low + int(round(spread * upper_pct / 100))
+        return low, high
+    return jitter_price_bounds(row["baseline_price"], jitter_pct)
+
+
 def planned_unique_price(row, jitter_pct, used_prices):
-    low, high = jitter_price_bounds(row["baseline_price"], jitter_pct)
+    low, high = populator_price_bounds(row, jitter_pct)
     template_id = row["template_id"]
     used = used_prices.setdefault(template_id, set())
-    available = [price for price in range(low, high + 1) if price not in used]
-    if not available:
+    span = high - low + 1
+    if len(used) >= span:
         raise RuntimeError(f"not enough unique prices for {template_id} in jitter range {low}-{high}")
-    price = random.choice(available)
-    used.add(price)
-    return price
+    if span <= 10000:
+        available = [price for price in range(low, high + 1) if price not in used]
+        price = random.choice(available)
+        used.add(price)
+        return price
+    for _ in range(100):
+        price = random.randint(low, high)
+        if price not in used:
+            used.add(price)
+            return price
+    for price in range(low, high + 1):
+        if price not in used:
+            used.add(price)
+            return price
+    raise RuntimeError(f"not enough unique prices for {template_id} in jitter range {low}-{high}")
 
 
 def jitter_expiration(now, min_seconds, max_seconds):

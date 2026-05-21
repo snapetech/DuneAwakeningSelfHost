@@ -1272,7 +1272,7 @@ def run_announce(message, target_name="", target_fls_id=""):
     if target_name and target_fls_id and target_reply_mode in ("whisper", "private"):
         child_env["DUNE_ANNOUNCE_ENV_OVERRIDES_FILE"] = "true"
         child_env["DUNE_ANNOUNCE_CHAT_EXCHANGE"] = env("DUNE_CHAT_COMMAND_PRIVATE_REPLY_EXCHANGE", "chat.whispers")
-        child_env["DUNE_ANNOUNCE_CHAT_CHANNEL"] = env("DUNE_CHAT_COMMAND_PRIVATE_REPLY_CHANNEL", "Whisper")
+        child_env["DUNE_ANNOUNCE_CHAT_CHANNEL"] = env("DUNE_CHAT_COMMAND_PRIVATE_REPLY_CHANNEL", "Whispers")
         child_env["DUNE_ANNOUNCE_CHAT_USER_NAME_TO"] = target_name
         child_env["DUNE_ANNOUNCE_CHAT_TARGET_QUEUES"] = f"{target_fls_id}_queue"
         child_env["DUNE_ANNOUNCE_CHAT_ROUTING_KEYS"] = env("DUNE_CHAT_COMMAND_PRIVATE_REPLY_ROUTING_KEY", target_fls_id)

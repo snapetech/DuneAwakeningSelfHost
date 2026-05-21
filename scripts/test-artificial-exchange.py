@@ -41,6 +41,8 @@ class ArtificialExchangeCatalogTest(unittest.TestCase):
             "sellable_status": "validated",
             "baseline_price": "100",
             "max_buy_price": "80",
+            "price_floor": "",
+            "price_ceiling": "",
             "liquidity_tier": "medium",
             "enabled": "true",
             "source": "manual",
@@ -145,7 +147,7 @@ class ArtificialExchangeBotTest(unittest.TestCase):
         return row
 
     def catalog_row(self, template_id="ItemA", **overrides):
-        row = {"template_id": template_id, "max_buy_price": 80, "baseline_price": 100, "enabled": True, "liquidity_tier": "medium", "sellable_status": "validated", "category_mask": 0, "category_depth": 0}
+        row = {"template_id": template_id, "max_buy_price": 80, "baseline_price": 100, "price_floor": None, "price_ceiling": None, "enabled": True, "liquidity_tier": "medium", "sellable_status": "validated", "category_mask": 0, "category_depth": 0}
         row.update(overrides)
         return row
 
@@ -257,6 +259,16 @@ class ArtificialExchangeBotTest(unittest.TestCase):
         self.assertIn(82, used["ItemA"])
         with self.assertRaises(RuntimeError):
             bot.planned_unique_price(self.catalog_row(baseline_price=1), 0, {"ItemA": {1}})
+
+    def test_planned_unique_price_uses_middle_band_for_floor_ceiling(self):
+        row = self.catalog_row(price_floor=100, price_ceiling=1100)
+        with mock.patch.object(bot.random, "choice", side_effect=lambda values: values[0]):
+            self.assertEqual(bot.planned_unique_price(row, 20, {}), 450)
+
+    def test_planned_unique_price_samples_large_floor_ceiling_range(self):
+        row = self.catalog_row(price_floor=100, price_ceiling=100000000)
+        with mock.patch.object(bot.random, "randint", return_value=500):
+            self.assertEqual(bot.planned_unique_price(row, 20, {}), 500)
 
     def test_populator_target_count_and_expiry_selection(self):
         with mock.patch.object(bot.random, "randint", return_value=7):

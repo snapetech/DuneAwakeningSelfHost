@@ -124,6 +124,7 @@ server {
 - Player roster split into currently online players and offline players, plus search and detail views.
 - Currency/progression table visibility.
 - `.env` operations editor for install, world, network, access, secret, and admin-panel knobs. Secret fields are admin-token protected, rendered as password inputs, and returned blank unless a replacement is typed.
+- Artificial Exchange controls under Settings. Operators can review buyer/populator readiness, rebuild the catalog, run buyer dry-runs, view settlement reports, validate the populator, install/start/stop/restart the systemd units, and edit all `DUNE_ARTIFICIAL_EXCHANGE_*` gates and tuning knobs through the safe `.env` editor.
 - Typed logout/reconnect timer editor for `config/UserGame.ini` under Settings -> Logout and Reconnect Timers.
 - Typed Director character-transfer settings editor for `config/director.ini`.
 - Catalog tab for content-insertion surfaces, evidence levels, validation commands, typed knob dry-runs, spice/resource inspection, event dry-runs, and economy bundle dry-runs.
@@ -131,6 +132,10 @@ server {
   - `GET /api/catalog/surfaces`
   - `GET /api/catalog/evidence`
   - `GET /api/catalog/validation`
+- Artificial Exchange operator API:
+  - `GET /api/admin/artificial-exchange`
+  - `POST /api/admin/artificial-exchange`
+  Supported actions are `build-catalog`, `check-ready`, `buyer-dry-run`, `settlement-report`, `validate-populator`, `install-buyer-service`, `install-populator-service`, and `start|stop|restart|status:buyer|populator`.
 - Typed gameplay knob API at `GET/POST /api/settings/typed-knobs`. Dry-runs are available without the typed-write gate; writes require backups, the global mutation gate, `DUNE_ADMIN_TYPED_KNOBS_ENABLED=true`, and the confirmation phrase `WRITE TYPED KNOBS`.
 - Config editor for selected local config files, including official `UserEngine.ini` and `UserGame.ini` overlays, with backups under `backups/admin-panel`.
 - Director GME voice-chat credentials can be added through the `director.ini` config editor when Funcom/provider supplies real `GmeAppId` and `GmeAppKey` values. Leave them unset otherwise.
@@ -945,7 +950,7 @@ DUNE_CHAT_COMMAND_AMQP_PASSWORD=guest
 DUNE_CHAT_COMMAND_REPLY_COMMAND=/workspace/scripts/announce.sh
 DUNE_CHAT_COMMAND_PRIVATE_REPLIES_ENABLED=false
 DUNE_CHAT_COMMAND_PRIVATE_REPLY_EXCHANGE=chat.whispers
-DUNE_CHAT_COMMAND_PRIVATE_REPLY_CHANNEL=Whisper
+DUNE_CHAT_COMMAND_PRIVATE_REPLY_CHANNEL=Whispers
 DUNE_CHAT_COMMAND_PRIVATE_REPLY_ROUTING_KEY=
 DUNE_CHAT_COMMAND_TARGET_REPLY_MODE=
 DUNE_CHAT_COMMAND_TARGET_REPLY_EXCHANGE=chat.proximity
@@ -990,19 +995,19 @@ Auction item matching searches the sender's pawn/controller inventories by norma
 
 If no exact/contains match is found, the command scores allowed inventory items and replies with `did you mean <template>? reply &auction yes or &auction no` when the best score is at least `DUNE_CHAT_COMMAND_AUCTION_SUGGESTION_MIN_SCORE`. The pending suggestion expires after `DUNE_CHAT_COMMAND_AUCTION_CONFIRM_SECONDS`. Confirmation state is held in the running chat listener process, so it works in service mode but not across separate one-shot `--dry-run-command` invocations.
 
-Private command replies are disabled by default. Testing showed that `m_UserNameTo` alone rendered as a broadcast/channel message, and the private-channel/target-queue shape published to RabbitMQ but did not render in the client. Confidence is high that the current chat-publish route is not a working private-message route.
+Private command replies are supported through the direct player-queue path documented in [private-chat-replies.md](private-chat-replies.md). The working client-visible form is `m_ChannelType=Whispers` plus the exact `m_TimeStamp` field name. Confidence: high.
 
 Private-chat investigation found a real `chat.whispers` direct exchange and a required TextRouter redirect header, `redirect_exchange`, whose AMQP value must be bytes, for example `b"chat.whispers"`. The TextRouter binary also confirms private player queue names are `{FLS_ID}_queue` and private RPC queue names are `{FLS_ID}_rpcQueue`.
 
-Current confidence: high for exchange/header/queue naming; low for client-visible private rendering. Direct `chat.whispers` and direct queue publishes can be delivered to RabbitMQ, but repeated probes to Lukano did not render as pink/private client messages. Failed variants include `m_ChannelType` values `Map`, `Whisper`, `Private`, and `Whispers`, plus a localized `UI/TextChat_Channel_Title_Whispers` sender label. Intercepted synthetic whispers with no AMQP `user_id` reach TextRouter but fail `DemoPlayersFilter` with `ArgumentNullException`; intercepted synthetic whispers with `user_id` pass redirect permission checks but TextRouter republishes with the original `user_id` while authenticated as its router account, causing RabbitMQ `PRECONDITION_FAILED`. Keep `DUNE_CHAT_COMMAND_PRIVATE_REPLIES_ENABLED=false` until a real client whisper has been captured and a client-rendered synthetic reply is proven. If enabled for testing, command replies use `DUNE_ANNOUNCE_ENV_OVERRIDES_FILE=true` internally so per-reply exchange/routing overrides are not overwritten by `/workspace/.env`.
+Current confidence: high for exchange/header/queue naming and client-visible private rendering through a direct player-queue publish. Direct `chat.whispers` and direct queue publishes can be delivered to RabbitMQ. The client-visible private form uses `m_ChannelType=Whispers` and the exact `m_TimeStamp` field name; the earlier `m_Timestamp` payload was consumed but silently ignored by the client. Operator confirmation showed `fieldfix 204311 timeS-whispers` rendered in the private/whisper color. Intercepted synthetic whispers with no AMQP `user_id` reach TextRouter but fail `DemoPlayersFilter` with `ArgumentNullException`; intercepted synthetic whispers with `user_id` pass redirect permission checks but TextRouter republishes with the original `user_id` while authenticated as its router account, causing RabbitMQ `PRECONDITION_FAILED`.
 
 Online research on 2026-05-20 did not find a public self-host recipe for injecting client-visible private whispers. GitHub code search found no Dune-specific use of `chat.whispers`, `redirect_exchange`, `send-whisper-probe.py`, or this repo's private-reply toggles. General web/Steam/community-wiki searches found private-chat references but no RabbitMQ/TextRouter implementation details. The useful external signal is official/community patch-note evidence for update `1.3.20.0` on 2026-04-28: one fix says muted players receive a whisper notification, and another says private chat messages could fail to show after opening chat directly into the private tab. That confirms the client has a real private-message display path, and also that display behavior has been buggy. Confidence: high that private chat exists in the product; low that anyone has publicly documented a working self-host injection path.
 
 Deeper local decompilation found a TextRouter launch knob: `--RMQCredentials <username>:<password>`. In normal mode TextRouter authenticates to RabbitMQ as a generated `tr.<battlegroup>.<correlation>` user. Intercepted messages keep the original AMQP `user_id` when TextRouter republishes them, so RabbitMQ rejects the publish when `user_id` differs from the authenticated router user. In fixed-credential mode, TextRouter also enables battlegroup-prefixed exchange names such as `<world>_chat.intercept` and `<world>_chat.whispers`.
 
-Experimental result on 2026-05-20: TextRouter was temporarily restarted with fixed `guest` credentials, a synthetic message was published to the battlegroup-prefixed intercept exchange with AMQP `user_id=guest`, and TextRouter successfully redirected four variants to `chat.whispers` without `PRECONDITION_FAILED`: `prefixed-fixed-tr 203132 Map`, `prefixed-fixed-tr 203132 Whisper`, `prefixed-fixed-tr 203132 Private`, and `prefixed-fixed-tr 203132 Whispers`. Temporary target-queue bindings were removed afterward and TextRouter was restored to its normal compose command. Confidence: high that this knob fixes the broker republish failure; unknown whether the client renders these redirected messages as private/pink until the operator confirms what appeared in-game.
+Experimental result on 2026-05-20: TextRouter was temporarily restarted with fixed `guest` credentials, a synthetic message was published to the battlegroup-prefixed intercept exchange with AMQP `user_id=guest`, and TextRouter successfully redirected four variants to `chat.whispers` without `PRECONDITION_FAILED`: `prefixed-fixed-tr 203132 Map`, `prefixed-fixed-tr 203132 Whisper`, `prefixed-fixed-tr 203132 Private`, and `prefixed-fixed-tr 203132 Whispers`. Temporary target-queue bindings were removed afterward and TextRouter was restored to its normal compose command. These did not render for the operator, so fixed TextRouter credentials are not required for the working direct-queue path.
 
-Use `scripts/send-whisper-probe.py` for repeatable tests:
+Use `scripts/send-whisper-probe.py` for repeatable tests. The probe uses the working `m_TimeStamp` spelling:
 
 ```bash
 scripts/send-whisper-probe.py --target-name Lukano --target-fls-id 6FF6498F4074E3DE --bind-target-queue --send-intercept --message-prefix "probe $(date +%H%M%S)"
@@ -1025,6 +1030,8 @@ scripts/capture-chat-routing.py --seconds 120 \
 
 Then compare the real payload's exchange, routing key, AMQP properties, `redirect_exchange` header, outer `Type`, and inner `m_ChannelType`/`m_UserNameTo` against probe output.
 
+The working private reply path is also documented as a standalone runbook in [private-chat-replies.md](private-chat-replies.md). Keep that file updated when changing `scripts/announce.sh`, `scripts/send-whisper-probe.py`, or chat-command reply routing.
+
 Additional channel probes are available through `scripts/send-chat-channel-probe.py`. This sends labeled `Proximity`, `Guild`, `Faction`, and optional `Party` messages as both direct exchange publishes and TextRouter intercept redirects:
 
 ```bash
@@ -1034,7 +1041,7 @@ scripts/send-chat-channel-probe.py --target-name Lukano --target-fls-id 6FF6498F
 
 Live findings: Lukano's player controller `17` is in guild `1`; no active party row was present during testing. Direct `chat.proximity`, `chat.guild.1`, and `chat.faction.3` publishes with temporary target-queue bindings reached RabbitMQ and were delivered to the player queue, then the bindings were removed. Operator confirmation reported proximity and guild messages rendered in the client. TextRouter intercept redirects without `user_id` fail permission checks; redirects with `user_id` pass permission for `chat.proximity` but hit the same RabbitMQ `PRECONDITION_FAILED` republish issue seen with whispers.
 
-For command replies, set `DUNE_CHAT_COMMAND_TARGET_REPLY_MODE=proximity` to reply through `chat.proximity` using a temporary binding to the sender's `{FLS_ID}_queue`. Set `DUNE_CHAT_COMMAND_TARGET_REPLY_MODE=guild` and `DUNE_CHAT_COMMAND_TARGET_REPLY_EXCHANGE=chat.guild.<id>` to use a confirmed guild exchange. The command listener sets `DUNE_ANNOUNCE_CHAT_CLEANUP_TARGET_BINDINGS=true` for these targeted replies so the temporary binding is removed after publish. Confidence: moderate for proximity/guild command replies until a live `&auction` response is confirmed through this path.
+For command replies, set `DUNE_CHAT_COMMAND_TARGET_REPLY_MODE=whisper` and `DUNE_CHAT_COMMAND_PRIVATE_REPLY_CHANNEL=Whispers` to reply through `chat.whispers` using a temporary binding to the sender's `{FLS_ID}_queue`. Set `DUNE_CHAT_COMMAND_TARGET_REPLY_MODE=proximity` to use `chat.proximity`, or set `DUNE_CHAT_COMMAND_TARGET_REPLY_MODE=guild` and `DUNE_CHAT_COMMAND_TARGET_REPLY_EXCHANGE=chat.guild.<id>` to use a confirmed guild exchange. The command listener sets `DUNE_ANNOUNCE_CHAT_CLEANUP_TARGET_BINDINGS=true` for these targeted replies so the temporary binding is removed after publish.
 
 `&disconnect` and its `&kick` alias resolve a target player, route the request to the player's current map, and default to `RemoveSessionMember <playername>`. That is the softest known native session-removal candidate. `KickLobbyMember` can be selected with `DUNE_PLAYER_DISCONNECT_COMMAND=KickLobbyMember` if session removal does not work. `BattlEyeMegaKick` is intentionally excluded unless `DUNE_PLAYER_DISCONNECT_ALLOW_BATTLEYE=true` and `DUNE_PLAYER_DISCONNECT_COMMAND=BattlEyeMegaKick` are set, because it is the most likely option to behave like a punitive kick or retry cooldown.
 

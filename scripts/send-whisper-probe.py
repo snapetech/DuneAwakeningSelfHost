@@ -84,7 +84,7 @@ def chat_payload(message, channel_type, sender_funcom_id, sender_name, target_na
             "m_UnlocalizedMessage": message,
             "m_LocalizedMessage": {"m_TableId": "", "m_Key": "", "m_FormatArgs": []},
         },
-        "m_Timestamp": timestamp,
+        "m_TimeStamp": timestamp,
         "m_OriginLocation": {"X": 0.0, "Y": 0.0, "Z": 0.0},
         "m_HasSeenMessage": False,
     }

@@ -433,15 +433,15 @@ Confirmation notes:
   shared across one-shot `--dry-run-command` executions.
 - `m_UserNameTo` by itself was tested and rendered as a broadcast/channel
   message, not a private message.
-- Private-shaped replies were also tested with `m_ChannelType=Private`,
-  `m_UserNameTo=<name>`, target queue `<fls_id>_queue`, and a
-  command-specific routing key.
-- The private-channel shape published successfully to RabbitMQ but did not
-  render in the client. Confidence is high that the current chat-publish route
-  is not a working private-message route.
-- `DUNE_CHAT_COMMAND_PRIVATE_REPLIES_ENABLED` now defaults to `false`; auction
-  confirmations should use the normal visible reply path until the real
-  private-chat contract is discovered.
+- Private-shaped replies with `m_ChannelType=Private`, `m_ChannelType=Whisper`,
+  and `m_ChannelType=Whispers` initially failed because the payload used
+  `m_Timestamp`.
+- The working private/pink client-visible shape is `m_ChannelType=Whispers`
+  plus the exact field spelling `m_TimeStamp`. Confidence: high.
+- Operator confirmation: `[Paul]: fieldfix 204311 timeS-whispers` rendered in
+  the private/whisper color.
+- `DUNE_CHAT_COMMAND_TARGET_REPLY_MODE=whisper` is now the preferred command
+  reply mode. See `docs/private-chat-replies.md`.
 
 Additional private-chat investigation:
 
@@ -459,8 +459,10 @@ Additional private-chat investigation:
   to `chat.whispers` for routing keys `6FF6498F4074E3DE`, `Lukano`, and
   `6FF6498F4074E3DE_queue`. Confidence: high for TextRouter redirect, unknown
   for client rendering.
-- Remaining blocker: prove the client-visible whisper routing key/body/channel
-  by capturing a real player-to-player whisper. Use:
+- Working direct player-queue publish uses `chat.whispers`, temporary binding
+  to `{FLS_ID}_queue`, routing key `{FLS_ID}`, and `m_ChannelType=Whispers`.
+  Capture a real player-to-player whisper only if the first-party client route
+  needs to be compared further. Use:
 
 ```text
 scripts/capture-chat-routing.py --seconds 60 \
@@ -472,7 +474,7 @@ scripts/capture-chat-routing.py --seconds 60 \
 
 Then send a real in-client whisper/private chat and compare the captured
 `exchange`, `routingKey`, `properties.headers.redirect_exchange`, `userId`,
-`m_ChannelType`, `m_UserNameTo`, and message body shape.
+`m_ChannelType`, `m_UserNameTo`, `m_TimeStamp`, and message body shape.
 
 Important limitation: direct DB execution while the player is online still needs
 live validation. The function is the server's first-party exchange function, but

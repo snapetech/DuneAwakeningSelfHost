@@ -52,6 +52,62 @@ Generated local state:
 
 The generated state lives under `backups/` and is ignored by git.
 
+## DuneAdmin Panel
+
+The DuneAdmin dashboard exposes Artificial Exchange operations under
+`Settings -> Artificial Exchange`.
+
+The panel can:
+
+- show catalog counts, readiness checks, and buyer/populator systemd state
+- rebuild `backups/admin-panel/artificial-exchange/catalog.json`
+- run `--check-ready`
+- run a buyer dry-run scan with expanded skip reporting
+- render a settlement report
+- run the disposable populator validation path
+- install, start, stop, and restart the buyer and populator systemd services
+- edit every `DUNE_ARTIFICIAL_EXCHANGE_*` `.env` setting through the safe
+  Settings editor
+
+The backend endpoints are:
+
+```text
+GET  /api/admin/artificial-exchange
+POST /api/admin/artificial-exchange
+```
+
+The POST body is:
+
+```json
+{"action":"check-ready"}
+```
+
+Supported actions:
+
+```text
+build-catalog
+check-ready
+buyer-dry-run
+settlement-report
+validate-populator
+install-buyer-service
+install-populator-service
+start:buyer
+stop:buyer
+restart:buyer
+status:buyer
+start:populator
+stop:populator
+restart:populator
+status:populator
+```
+
+Service actions require `systemctl` in the runtime where the admin panel is
+running. When the panel runs inside the Compose container without host systemd
+access, those actions fail cleanly and the response explains that `systemctl`
+is unavailable. The setting editor still works in that mode; restart the host
+services from the host after saving `.env` changes.
+
 ## Database Surfaces
 
 Read surfaces:

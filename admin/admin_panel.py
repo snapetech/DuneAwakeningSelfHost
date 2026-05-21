@@ -537,6 +537,54 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ADMIN_BOT_CONFIG_DRIFT_ENABLED": {"group": "Admin Bot", "secret": False, "restart": True, "why": "Tracks hashes of key config files and reports changes between bot runs."},
     "DUNE_ADMIN_BOT_SECURITY_GUARD_ENABLED": {"group": "Admin Bot", "secret": False, "restart": True, "why": "Summarizes recent token, host, origin, and denied-request audit events."},
 }
+ENV_KEY_DEFINITIONS.update({
+    "DUNE_ARTIFICIAL_EXCHANGE_ENABLED": {"group": "Artificial Exchange", "secret": False, "restart": True, "why": "Master gate for the artificial buyer service."},
+    "DUNE_ARTIFICIAL_EXCHANGE_DRY_RUN": {"group": "Artificial Exchange", "secret": False, "restart": True, "why": "When true, buyer scans select listings but do not purchase."},
+    "DUNE_ARTIFICIAL_EXCHANGE_PURCHASES_ENABLED": {"group": "Artificial Exchange", "secret": False, "restart": True, "why": "Allows native Exchange purchases when the buyer is not in dry-run mode."},
+    "DUNE_ARTIFICIAL_EXCHANGE_AUTO_CLAIM_ENABLED": {"group": "Artificial Exchange", "secret": False, "restart": True, "why": "Allows seller settlement auto-claim through the validated native retrieval path."},
+    "DUNE_ARTIFICIAL_EXCHANGE_AUTO_CLAIM_AFTER_SCAN": {"group": "Artificial Exchange", "secret": False, "restart": True, "why": "Runs auto-claim after each buyer scan when auto-claim is enabled."},
+    "DUNE_ARTIFICIAL_EXCHANGE_FUNDING_ENABLED": {"group": "Artificial Exchange", "secret": False, "restart": True, "why": "Allows explicit buyer Solari funding actions."},
+    "DUNE_ARTIFICIAL_EXCHANGE_ID": {"group": "Artificial Exchange", "secret": False, "restart": True, "why": "Exchange id used for listing discovery and seeding. Default is 2."},
+    "DUNE_ARTIFICIAL_EXCHANGE_ACCESS_POINT_ID": {"group": "Artificial Exchange", "secret": False, "restart": True, "why": "Exchange access point id used for seeded listings. Default is 1."},
+    "DUNE_ARTIFICIAL_EXCHANGE_BUYER_CONTROLLER_ID": {"group": "Artificial Exchange", "secret": False, "restart": True, "why": "Player controller id used as the artificial buyer identity."},
+    "DUNE_ARTIFICIAL_EXCHANGE_SCAN_LIMIT": {"group": "Artificial Exchange", "secret": False, "restart": True, "why": "Maximum sell orders inspected per buyer scan."},
+    "DUNE_ARTIFICIAL_EXCHANGE_SCAN_INTERVAL_MIN_SECONDS": {"group": "Artificial Exchange", "secret": False, "restart": True, "why": "Minimum randomized buyer loop sleep interval."},
+    "DUNE_ARTIFICIAL_EXCHANGE_SCAN_INTERVAL_MAX_SECONDS": {"group": "Artificial Exchange", "secret": False, "restart": True, "why": "Maximum randomized buyer loop sleep interval."},
+    "DUNE_ARTIFICIAL_EXCHANGE_DAILY_SOLARI_CAP": {"group": "Artificial Exchange", "secret": False, "restart": True, "why": "Global daily Solari spend cap."},
+    "DUNE_ARTIFICIAL_EXCHANGE_DAILY_SELLER_CAP": {"group": "Artificial Exchange", "secret": False, "restart": True, "why": "Daily Solari cap per seller."},
+    "DUNE_ARTIFICIAL_EXCHANGE_DAILY_TEMPLATE_CAP": {"group": "Artificial Exchange", "secret": False, "restart": True, "why": "Daily Solari cap per item template."},
+    "DUNE_ARTIFICIAL_EXCHANGE_LOW_BUY_PROBABILITY": {"group": "Artificial Exchange", "secret": False, "restart": True, "why": "Random buy probability for low-liquidity catalog rows."},
+    "DUNE_ARTIFICIAL_EXCHANGE_MEDIUM_BUY_PROBABILITY": {"group": "Artificial Exchange", "secret": False, "restart": True, "why": "Random buy probability for medium-liquidity catalog rows."},
+    "DUNE_ARTIFICIAL_EXCHANGE_HIGH_BUY_PROBABILITY": {"group": "Artificial Exchange", "secret": False, "restart": True, "why": "Random buy probability for high-liquidity catalog rows."},
+    "DUNE_ARTIFICIAL_EXCHANGE_BLOCKED_SELLERS": {"group": "Artificial Exchange", "secret": False, "restart": True, "why": "Comma-separated seller/controller ids the buyer must never buy from."},
+    "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ENABLED": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Master gate for seeded NPC-like Exchange listings."},
+    "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_DRY_RUN": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "When true, the populator plans seeded listings without inserting them."},
+    "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_LIVE_VALIDATION_ENABLED": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Allows live disposable validation of populator and buyer skip behavior."},
+    "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_OWNER_ID": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Primary owner/controller id used for seeded listings."},
+    "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_OWNER_IDS": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Comma-separated owner/controller ids treated as populator sellers and skipped by the buyer."},
+    "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_SOURCE_INVENTORY_ID": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Exchange inventory id used to hold seeded listing item rows."},
+    "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_SOURCE_POSITION_START": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "First inventory position reserved for seeded listing items."},
+    "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_SOURCE_POSITION_MAX": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Last inventory position reserved for seeded listing items."},
+    "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_TARGET_MIN_ORDERS": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Minimum active seeded listings the populator tries to maintain."},
+    "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_TARGET_MAX_ORDERS": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Maximum active seeded listings the populator tries to maintain."},
+    "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_HARD_MAX_ORDERS": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Absolute cap on active seeded listings."},
+    "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_PRICE_JITTER_PCT": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Percent jitter applied around catalog max buy prices for seeded listings."},
+    "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_EXPIRY_MIN_SECONDS": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Minimum seeded listing lifetime."},
+    "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_EXPIRY_MAX_SECONDS": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Maximum seeded listing lifetime."},
+    "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_EXPIRE_PROBABILITY": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Probability of expiring eligible seeded listings each loop."},
+    "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_FORCE_COUNT": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Optional one-shot forced listing count for validation."},
+    "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_VALIDATION_PRICE": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Optional forced price for disposable live validation listings."},
+    "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_CONFIRM": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Confirmation phrase passed to live populator actions."},
+    "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_VALIDATED": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "When true, only catalog rows marked validated are seeded."},
+    "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_STACK_SIZE": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Stack size for seeded items."},
+    "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MAX_STACK_SIZE": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Max stack size written to seeded item rows."},
+    "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_CATEGORY_MASK": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Category mask written to seeded item rows when catalog rows do not override it."},
+    "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_CATEGORY_DEPTH": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Category depth written to seeded item rows when catalog rows do not override it."},
+    "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_DURABILITY_CUR": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Current durability for seeded items."},
+    "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_DURABILITY_MAX": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Maximum durability for seeded items."},
+    "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_QUALITY_LEVEL": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Minimum quality level allowed for seeded items."},
+    "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_QUALITY_LEVEL": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Default quality level for seeded items."},
+})
 SAFE_ENV_KEYS = set(ENV_KEY_DEFINITIONS)
 
 AUDIT_FIELD_LIMIT = 240
@@ -1448,6 +1496,164 @@ def write_safe_env(updates):
         ENV_FILE.chmod(0o600)
     except OSError:
         pass
+
+
+ARTIFICIAL_EXCHANGE_STATE_DIR = BACKUP_ROOT / "artificial-exchange"
+ARTIFICIAL_EXCHANGE_CATALOG = ARTIFICIAL_EXCHANGE_STATE_DIR / "catalog.json"
+
+
+def command_output_excerpt(text, limit=6000):
+    text = (text or "").strip()
+    if len(text) > limit:
+        return text[:limit] + "...[truncated]"
+    return text
+
+
+def run_workspace_command(args, timeout=45):
+    env = os.environ.copy()
+    env.setdefault("ADMIN_WORKSPACE", str(ROOT))
+    try:
+        result = subprocess.run(
+            args,
+            cwd=str(ROOT),
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+            check=False,
+        )
+    except Exception as exc:
+        return {"ok": False, "error": str(exc), "args": args}
+    return {
+        "ok": result.returncode == 0,
+        "returncode": result.returncode,
+        "stdout": command_output_excerpt(result.stdout),
+        "stderr": command_output_excerpt(result.stderr),
+        "args": args,
+    }
+
+
+def parse_last_json(text):
+    text = (text or "").strip()
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(text):
+        if char != "{":
+            continue
+        try:
+            value, end = decoder.raw_decode(text[index:])
+        except json.JSONDecodeError:
+            continue
+        if text[index + end:].strip():
+            continue
+        return value
+    return None
+
+
+def artificial_exchange_catalog_summary():
+    if not ARTIFICIAL_EXCHANGE_CATALOG.exists():
+        return {"ok": False, "path": str(ARTIFICIAL_EXCHANGE_CATALOG), "error": "catalog has not been built"}
+    try:
+        data = json.loads(ARTIFICIAL_EXCHANGE_CATALOG.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return {"ok": False, "path": str(ARTIFICIAL_EXCHANGE_CATALOG), "error": str(exc)}
+    rows = data.get("items") if isinstance(data, dict) else data
+    if isinstance(rows, dict):
+        rows = list(rows.values())
+    if not isinstance(rows, list):
+        rows = []
+    return {
+        "ok": True,
+        "path": str(ARTIFICIAL_EXCHANGE_CATALOG),
+        "items": len(rows),
+        "enabledItems": sum(1 for row in rows if row.get("enabled")),
+        "validatedItems": sum(1 for row in rows if row.get("sellable_status") == "validated"),
+        "lowConfidenceItems": sum(1 for row in rows if row.get("confidence") == "low"),
+        "mtime": datetime.datetime.fromtimestamp(ARTIFICIAL_EXCHANGE_CATALOG.stat().st_mtime, datetime.timezone.utc).isoformat(),
+    }
+
+
+def artificial_exchange_systemd_service(name):
+    systemctl = shutil.which("systemctl")
+    if not systemctl:
+        return {"name": name, "available": False, "ok": False, "error": "systemctl is not available in this runtime"}
+    result = run_workspace_command([systemctl, "show", name, "--property=LoadState,ActiveState,SubState,UnitFileState,NRestarts,ExecMainStatus", "--no-pager"], timeout=10)
+    service = {"name": name, "available": True, "ok": result.get("ok")}
+    if not result.get("ok"):
+        service["error"] = result.get("stderr") or result.get("stdout") or "systemctl show failed"
+        return service
+    for line in result.get("stdout", "").splitlines():
+        if "=" in line:
+            key, value = line.split("=", 1)
+            service[key] = value
+    service["ok"] = service.get("ActiveState") == "active"
+    return service
+
+
+def artificial_exchange_status():
+    env_values = read_env()
+    buyer_id = env_values.get("DUNE_ARTIFICIAL_EXCHANGE_BUYER_CONTROLLER_ID", os.environ.get("DUNE_ARTIFICIAL_EXCHANGE_BUYER_CONTROLLER_ID", "0")) or "0"
+    scan_limit = env_values.get("DUNE_ARTIFICIAL_EXCHANGE_SCAN_LIMIT", "200") or "200"
+    check = run_workspace_command([
+        sys.executable,
+        str(ROOT / "scripts" / "artificial-exchange-bot.py"),
+        "--check-ready",
+        "--buyer-controller-id",
+        str(buyer_id),
+        "--limit",
+        str(scan_limit),
+        "--settlement-limit",
+        "50",
+    ], timeout=60)
+    check_json = parse_last_json(check.get("stdout", ""))
+    if check_json is None and check.get("stderr"):
+        check_json = parse_last_json(check.get("stderr", ""))
+    return {
+        "ok": bool(check.get("ok")) and bool((check_json or {}).get("ok", True)),
+        "env": {key: env_values.get(key, "") for key in sorted(SAFE_ENV_KEYS) if key.startswith("DUNE_ARTIFICIAL_EXCHANGE_")},
+        "catalog": artificial_exchange_catalog_summary(),
+        "readiness": check_json,
+        "readinessCommand": check,
+        "services": {
+            "buyer": artificial_exchange_systemd_service("dune-artificial-exchange-bot.service"),
+            "populator": artificial_exchange_systemd_service("dune-artificial-exchange-populator.service"),
+        },
+    }
+
+
+def artificial_exchange_action(action):
+    systemctl = shutil.which("systemctl")
+    scripts = ROOT / "scripts"
+    commands = {
+        "build-catalog": ([sys.executable, str(scripts / "build-exchange-catalog.py")], 120),
+        "check-ready": ([sys.executable, str(scripts / "artificial-exchange-bot.py"), "--check-ready"], 60),
+        "buyer-dry-run": ([sys.executable, str(scripts / "artificial-exchange-bot.py"), "--dry-run", "--report-skips", "100"], 90),
+        "settlement-report": ([sys.executable, str(scripts / "artificial-exchange-bot.py"), "--settlement-report"], 60),
+        "validate-populator": ([sys.executable, str(scripts / "artificial-exchange-bot.py"), "--validate-populator-once"], 120),
+        "install-buyer-service": ([str(scripts / "install-artificial-exchange-service.sh"), str(ENV_FILE), "buyer"], 120),
+        "install-populator-service": ([str(scripts / "install-artificial-exchange-service.sh"), str(ENV_FILE), "populator"], 120),
+    }
+    service_actions = {"start", "stop", "restart", "status"}
+    service_names = {
+        "buyer": "dune-artificial-exchange-bot.service",
+        "populator": "dune-artificial-exchange-populator.service",
+    }
+    if action in commands:
+        cmd, timeout = commands[action]
+        result = run_workspace_command(cmd, timeout=timeout)
+        parsed = parse_last_json(result.get("stdout", "")) or parse_last_json(result.get("stderr", ""))
+        if parsed is not None:
+            result["json"] = parsed
+        return result
+    if ":" in action:
+        service_action, target = action.split(":", 1)
+        if service_action in service_actions and target in service_names:
+            if not systemctl:
+                return {"ok": False, "error": "systemctl is not available in this runtime", "action": action}
+            if service_action == "status":
+                return artificial_exchange_systemd_service(service_names[target])
+            return run_workspace_command([systemctl, service_action, service_names[target]], timeout=30)
+    raise ValueError(f"unknown artificial exchange action: {action}")
 
 
 def backup_file(path):
@@ -2675,6 +2881,9 @@ class Handler(BaseHTTPRequestHandler):
                     "definitions": PLAYER_ONLINE_STATE_SETTINGS,
                     "section": PLAYER_ONLINE_STATE_SECTION,
                 })
+            elif parsed.path == "/api/admin/artificial-exchange":
+                self.require_token()
+                self.json(artificial_exchange_status())
             elif parsed.path == "/api/settings/typed-knobs":
                 self.require_token()
                 self.json({
@@ -2772,6 +2981,13 @@ class Handler(BaseHTTPRequestHandler):
                 write_player_online_state_settings(updates)
                 self.audit("player-online-state-write", keys=sorted(updates))
                 self.json({"ok": True, "values": read_player_online_state_settings()})
+            elif parsed.path == "/api/admin/artificial-exchange":
+                self.require_token()
+                body = parse_body(self)
+                action = str(body.get("action", "")).strip()
+                result = artificial_exchange_action(action)
+                self.audit("artificial-exchange-action", action=action, ok=result.get("ok"))
+                self.json(result)
             elif parsed.path == "/api/settings/typed-knobs":
                 self.require_token()
                 body = parse_body(self)
@@ -6705,7 +6921,7 @@ function envEditor(payload){
     groups[group] = groups[group] || [];
     groups[group].push([key, meta]);
   });
-  const groupOrder = ['World', 'Access', 'Admin Panel', 'Announcements', 'Restart', 'Chat Spam Protection', 'Admin Bot', 'Secrets', 'Network', 'Install'];
+  const groupOrder = ['World', 'Access', 'Admin Panel', 'Artificial Exchange', 'Artificial Exchange Populator', 'Announcements', 'Restart', 'Chat Spam Protection', 'Admin Bot', 'Secrets', 'Network', 'Install'];
   const orderedGroups = Object.entries(groups).sort(([a], [b]) => {
     const ai = groupOrder.indexOf(a);
     const bi = groupOrder.indexOf(b);
@@ -6743,6 +6959,32 @@ function playerOnlineStateEditor(payload){
   return `<div class="card"><h2>Logout and Reconnect Timers</h2><p class="muted"><code>${esc(section)}</code> in <code>UserGame.ini</code>. Set these to <code>0</code> for Steam Deck suspend/logout behavior. Recreate game-server containers after saving.</p><div class="grid">${Object.entries(definitions).map(([key, meta]) => {
     return `<label>${esc(key)}<input id="online_${esc(key)}" type="number" min="0" max="86400" value="${esc(values[key] || meta.default || '')}"><span class="muted">${esc(meta.why || '')}</span></label>`;
   }).join('')}</div><p><button id="savePlayerOnlineStateBtn" class="primary">Save logout timers</button></p></div>`;
+}
+function artificialExchangePanel(status){
+  const env = status.env || {};
+  const catalog = status.catalog || {};
+  const readiness = status.readiness || {};
+  const buyer = (status.services || {}).buyer || {};
+  const populator = (status.services || {}).populator || {};
+  const checks = readiness.checks || [];
+  const checkRows = checks.map(c => ({check:c.name, ok:c.ok, detail:Object.entries(c).filter(([k]) => !['name','ok'].includes(k)).map(([k,v]) => `${k}=${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' ')}));
+  const serviceRows = [
+    {service:'buyer', active:buyer.ActiveState || '', substate:buyer.SubState || '', enabled:buyer.UnitFileState || '', restarts:buyer.NRestarts || '', status:buyer.error || ''},
+    {service:'populator', active:populator.ActiveState || '', substate:populator.SubState || '', enabled:populator.UnitFileState || '', restarts:populator.NRestarts || '', status:populator.error || ''}
+  ];
+  const gateRows = [
+    {key:'Buyer enabled', value:env.DUNE_ARTIFICIAL_EXCHANGE_ENABLED},
+    {key:'Buyer dry run', value:env.DUNE_ARTIFICIAL_EXCHANGE_DRY_RUN},
+    {key:'Purchases enabled', value:env.DUNE_ARTIFICIAL_EXCHANGE_PURCHASES_ENABLED},
+    {key:'Auto-claim enabled', value:env.DUNE_ARTIFICIAL_EXCHANGE_AUTO_CLAIM_ENABLED},
+    {key:'Auto-claim after scan', value:env.DUNE_ARTIFICIAL_EXCHANGE_AUTO_CLAIM_AFTER_SCAN},
+    {key:'Populator enabled', value:env.DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ENABLED},
+    {key:'Populator dry run', value:env.DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_DRY_RUN},
+    {key:'Buyer controller', value:env.DUNE_ARTIFICIAL_EXCHANGE_BUYER_CONTROLLER_ID},
+    {key:'Populator owner', value:env.DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_OWNER_ID},
+    {key:'Source inventory', value:env.DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_SOURCE_INVENTORY_ID}
+  ];
+  return `<div class="panelBand" id="artificialExchangePanel"><div class="sectionHeader"><h2>Artificial Exchange</h2><div class="toolbar"><span class="pill ${status.ok ? 'ok' : 'warn'}">readiness ${status.ok ? 'clean' : 'check'}</span><span class="pill ${catalog.ok ? 'ok' : 'bad'}">catalog ${catalog.enabledItems ?? 0}/${catalog.items ?? 0}</span><span class="pill ${buyer.ok ? 'ok' : 'warn'}">buyer ${buyer.ActiveState || 'unknown'}</span><span class="pill ${populator.ok ? 'ok' : 'warn'}">populator ${populator.ActiveState || 'unknown'}</span><button id="aeRefreshBtn">Refresh</button></div></div><div class="commandBar"><button data-ae-action="build-catalog">Build catalog</button><button data-ae-action="check-ready" class="primary">Check ready</button><button data-ae-action="buyer-dry-run">Buyer dry run</button><button data-ae-action="settlement-report">Settlement report</button><button data-ae-action="validate-populator">Validate populator</button></div><div class="commandBar"><button data-ae-action="install-buyer-service">Install buyer service</button><button data-ae-action="install-populator-service">Install populator service</button><button data-ae-action="restart:buyer">Restart buyer</button><button data-ae-action="restart:populator">Restart populator</button><button data-ae-action="start:buyer">Start buyer</button><button data-ae-action="start:populator">Start populator</button><button data-ae-action="stop:buyer" class="danger">Stop buyer</button><button data-ae-action="stop:populator" class="danger">Stop populator</button></div><div class="twoCol"><div><h3>Gates</h3>${table(gateRows)}</div><div><h3>Services</h3>${table(serviceRows)}</div></div><details><summary>Readiness checks</summary>${table(checkRows)}<pre>${esc(JSON.stringify(readiness, null, 2))}</pre></details><pre id="artificialExchangeResult"></pre></div>`;
 }
 function actionGrid(actions){
   return `<div class="commandBar">${actions.map(a => `<button class="${esc(a.className || '')}" data-jump="${esc(a.tab)}">${esc(a.label)}</button>`).join('')}</div>`;
@@ -7278,20 +7520,22 @@ function closePlayerModal(){
   announce('Player detail closed');
 }
 async function settings(serial=loadSerial){
-  const [env, transfer, onlineState, configs] = await Promise.all([
+  const [env, transfer, onlineState, artificialExchange, configs] = await Promise.all([
     api('/api/settings/env'),
     api('/api/settings/director-transfer'),
     api('/api/settings/player-online-state'),
+    api('/api/admin/artificial-exchange', {timeoutMs:60000}),
     api('/api/settings/configs')
   ]);
   if (serial !== loadSerial) return;
-  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Settings</h2><div class="toolbar"><button data-jump="security">Security</button><button data-jump="ops">Ops</button><button id="saveEnvBtn" class="primary">Save env settings</button></div></div><div class="panelBand"><p class="muted">These write <code>.env</code>, <code>config/director.ini</code>, or <code>config/UserGame.ini</code> with a backup under <code>backups/admin-panel</code>. Most service settings need the affected containers recreated before running processes pick them up.</p></div>${actionGrid([{tab:'ops',label:'Check live state'},{tab:'mutations',label:'Create backup',className:'primary'},{tab:'characters',label:'Inspect players'}])}${envEditor(env)}<div class="twoCol">${playerOnlineStateEditor(onlineState)}${directorTransferEditor(transfer)}</div><div class="panelBand"><h2>Config Files</h2><select id="cfg">${Object.keys(configs).map(k=>`<option>${esc(k)}</option>`).join('')}</select><textarea id="cfgText"></textarea><p><button id="saveCfgBtn" class="primary">Save config with backup</button></p></div></div>`;
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Settings</h2><div class="toolbar"><button data-jump="security">Security</button><button data-jump="ops">Ops</button><button id="saveEnvBtn" class="primary">Save env settings</button></div></div><div class="panelBand"><p class="muted">These write <code>.env</code>, <code>config/director.ini</code>, or <code>config/UserGame.ini</code> with a backup under <code>backups/admin-panel</code>. Most service settings need the affected containers recreated before running processes pick them up.</p></div>${actionGrid([{tab:'ops',label:'Check live state'},{tab:'mutations',label:'Create backup',className:'primary'},{tab:'characters',label:'Inspect players'}])}${artificialExchangePanel(artificialExchange)}${envEditor(env)}<div class="twoCol">${playerOnlineStateEditor(onlineState)}${directorTransferEditor(transfer)}</div><div class="panelBand"><h2>Config Files</h2><select id="cfg">${Object.keys(configs).map(k=>`<option>${esc(k)}</option>`).join('')}</select><textarea id="cfgText"></textarea><p><button id="saveCfgBtn" class="primary">Save config with backup</button></p></div></div>`;
   window.configs = configs; selectCfg();
   document.getElementById('cfg').addEventListener('change', selectCfg);
   document.getElementById('saveEnvBtn').addEventListener('click', e => runAction(e.currentTarget, 'Saving...', saveEnv));
   document.getElementById('savePlayerOnlineStateBtn').addEventListener('click', e => runAction(e.currentTarget, 'Saving...', savePlayerOnlineState));
   document.getElementById('saveDirectorTransferBtn').addEventListener('click', e => runAction(e.currentTarget, 'Saving...', saveDirectorTransfer));
   document.getElementById('saveCfgBtn').addEventListener('click', e => runAction(e.currentTarget, 'Saving...', saveCfg));
+  wireArtificialExchangeControls();
 }
 
 async function catalog(serial=loadSerial){
@@ -7444,6 +7688,21 @@ async function savePlayerOnlineState(){
   document.querySelectorAll('[id^=online_]').forEach(i => body[i.id.slice(7)] = i.value);
   await api('/api/settings/player-online-state', {method:'POST', body:JSON.stringify(body)});
   notify('Saved logout timers');
+}
+function wireArtificialExchangeControls(){
+  document.getElementById('aeRefreshBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Refreshing...', async () => {
+    await settings(++loadSerial);
+    notify('Refreshed Artificial Exchange');
+  }));
+  document.querySelectorAll('[data-ae-action]').forEach(button => {
+    button.addEventListener('click', e => runAction(e.currentTarget, 'Running...', async () => {
+      const action = e.currentTarget.dataset.aeAction;
+      const result = await api('/api/admin/artificial-exchange', {method:'POST', body:JSON.stringify({action}), timeoutMs:120000});
+      const output = document.getElementById('artificialExchangeResult');
+      if (output) output.textContent = JSON.stringify(result, null, 2);
+      notify(result.ok ? `Artificial Exchange ${action} finished` : `Artificial Exchange ${action} failed`, result.ok ? 'good' : 'bad');
+    }));
+  });
 }
 async function mutations(serial=loadSerial){
   const [ref, characterRows] = await Promise.all([

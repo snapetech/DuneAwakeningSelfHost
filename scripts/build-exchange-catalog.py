@@ -21,6 +21,8 @@ FIELDS = [
     "sellable_status",
     "baseline_price",
     "max_buy_price",
+    "price_floor",
+    "price_ceiling",
     "liquidity_tier",
     "enabled",
     "source",
@@ -121,6 +123,8 @@ def clean_row(raw, source_name):
     row["sellable_status"] = str(row["sellable_status"] or "known").strip()
     row["baseline_price"] = parse_int(row["baseline_price"], "baseline_price", source_name)
     row["max_buy_price"] = parse_int(row["max_buy_price"], "max_buy_price", source_name)
+    row["price_floor"] = parse_int(row["price_floor"], "price_floor", source_name)
+    row["price_ceiling"] = parse_int(row["price_ceiling"], "price_ceiling", source_name)
     row["liquidity_tier"] = str(row["liquidity_tier"] or "low").strip().lower()
     if row["liquidity_tier"] not in LIQUIDITY:
         raise ValueError(f"{source_name}: liquidity_tier must be one of {sorted(LIQUIDITY)}")
@@ -134,6 +138,10 @@ def clean_row(raw, source_name):
         row["baseline_price"] = row["max_buy_price"]
     if row["max_buy_price"] is None and row["baseline_price"] is not None:
         row["max_buy_price"] = int(row["baseline_price"] * 0.8)
+    if row["price_floor"] is None and row["baseline_price"] is not None:
+        row["price_floor"] = row["baseline_price"]
+    if row["price_ceiling"] is None and row["baseline_price"] is not None:
+        row["price_ceiling"] = row["baseline_price"]
     return row
 
 
