@@ -13,6 +13,7 @@ rclone sync "$STATIC_DIR" "$RCLONE_REMOTE" \
   --include "/app.js" \
   --include "/status.html" \
   --include "/players.json" \
+  --include "/hagga-pois.json" \
   --include "/hagga-map.svg" \
   --include "/hagga-basin.webp" \
   --exclude "*" \

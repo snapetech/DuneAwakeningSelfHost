@@ -141,7 +141,7 @@ server {
 - Director GME voice-chat credentials can be added through the `director.ini` config editor when Funcom/provider supplies real `GmeAppId` and `GmeAppKey` values. Leave them unset otherwise.
 - Currency and XP mutation endpoints gated by `DUNE_ADMIN_MUTATIONS_ENABLED`.
 - Economy bundle planning through `POST /api/admin/bundle`. It plans currency, XP, and item grants in one response and defaults to `dry_run=true`. Execution additionally requires `DUNE_ADMIN_BUNDLE_MUTATIONS_ENABLED=true` and confirmation `EXECUTE BUNDLE`.
-- Offline player recovery preview through `POST /api/admin/player-recovery/offline-teleport`. Execution refuses online players, requires `MOVE OFFLINE PLAYER`, and updates the controller, player-state, and pawn actor rows together.
+- Offline player recovery preview through `POST /api/admin/player-recovery/offline-teleport`. Execution refuses online players, requires `MOVE OFFLINE PLAYER`, and calls the shipped `dune.admin_move_offline_player_to_partition(...)` pawn move helper.
 - Spice/resource field inspection through `POST /api/admin/spice-fields/inspect`.
 - Progression surface inspection through `POST /api/admin/progression/inspect`; this discovers faction, reputation, journey, recipe, vehicle, and related DB function/table evidence without executing discovered functions.
 - Faction reputation planning through `POST /api/admin/faction-reputation`, default `dry_run=true`. Execution requires `DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED=true` and confirmation `WRITE REPUTATION`.
@@ -378,7 +378,9 @@ Rollback is compensating work from the audit record: set currency back, set XP b
 
 ## Offline Player Recovery
 
-`POST /api/admin/player-recovery/offline-teleport` previews or executes an offline actor-set move. The shipped database helper below is the verified primitive for the network-disconnect teleport path once Survival has marked the player `Offline`, because it updates the pawn actor row consumed by reconnect:
+`POST /api/admin/player-recovery/offline-teleport` previews or executes a strict-offline pawn move. It backs the Admin Actions Offline Teleport panel, which lets an operator pick a player, choose a partition, enter exact coordinates, or click the Hagga Basin map to fill rough X/Y coordinates.
+
+The endpoint calls the shipped database helper below. This is the verified primitive for the network-disconnect teleport path once Survival has marked the player `Offline`, because it updates the pawn actor row consumed by reconnect:
 
 ```sql
 dune.admin_move_offline_player_to_partition(
@@ -388,7 +390,7 @@ dune.admin_move_offline_player_to_partition(
 )
 ```
 
-The existing endpoint still uses its older actor-set write path for strict offline recovery. The newer online-adjacent workflow is documented separately in [soft-disconnect-teleport.md](soft-disconnect-teleport.md) and should be implemented behind its own gate instead of silently changing this endpoint's behavior.
+The endpoint does not force a disconnect and does not hide the timeout-based online-adjacent workflow. Operators must make the target truly `Offline` first, either by waiting for a normal logout or by using the documented network-timeout runbook. That workflow remains separate in [soft-disconnect-teleport.md](soft-disconnect-teleport.md).
 
 Dry-run body:
 

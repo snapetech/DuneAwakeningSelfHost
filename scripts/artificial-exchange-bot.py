@@ -347,6 +347,7 @@ def populator_category_skip_reason(row):
     verified_row = verified_category_row(row)
     if env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_CATEGORY_SEEDING_VERIFIED", False) and not verified_row:
         return "missing verified category"
+    source_row = None
     if env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_SOURCE_CATEGORY", True):
         source_map = load_source_category_map(pathlib.Path(env("DUNE_ARTIFICIAL_EXCHANGE_SOURCE_CATEGORY_MAP", str(SOURCE_CATEGORY_MAP_PATH))))
         source_row = source_map.get(row["template_id"])
@@ -356,6 +357,16 @@ def populator_category_skip_reason(row):
             return f"source category mismatch expected {source_row.get('category')}"
         if not verified_row and (int(source_row.get("category_mask") or -1) != populator_category_mask(row) or int(source_row.get("category_depth") or -1) != populator_category_depth(row)):
             return f"source category mask mismatch expected {source_row.get('category_mask')}/{source_row.get('category_depth')}"
+    if verified_row:
+        verified_mask = int(verified_row.get("category_mask") or -1)
+        verified_depth = int(verified_row.get("category_depth") or -1)
+        if source_row and (verified_mask != int(source_row.get("category_mask") or -1) or verified_depth != int(source_row.get("category_depth") or -1)):
+            return f"verified category mask mismatch expected {source_row.get('category_mask')}/{source_row.get('category_depth')}"
+        expected_mask, expected_depth = CATEGORY_MASKS.get(category, (None, None))
+        if expected_mask is None:
+            return "unmapped category"
+        if verified_mask != expected_mask or verified_depth != expected_depth:
+            return f"verified category map mismatch expected {expected_mask}/{expected_depth}"
     if env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_SKIP_UNKNOWN_CATEGORY", True):
         if category == "unknown" or (populator_category_mask(row) == 0 and populator_category_depth(row) == 0):
             return "unknown category"
@@ -412,8 +423,15 @@ def jitter_price(baseline_price, jitter_pct):
     return random.randint(low, high)
 
 
+def scaled_price(value):
+    multiplier = float(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_PRICE_MULTIPLIER", "0.25"))
+    if multiplier <= 0:
+        raise RuntimeError("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_PRICE_MULTIPLIER must be positive")
+    return max(1, int(round(int(value) * multiplier)))
+
+
 def jitter_price_bounds(baseline_price, jitter_pct):
-    baseline = int(baseline_price)
+    baseline = scaled_price(baseline_price)
     pct = max(0, int(jitter_pct))
     low = max(1, int(round(baseline * (100 - pct) / 100)))
     high = max(low, int(round(baseline * (100 + pct) / 100)))
@@ -424,16 +442,12 @@ def populator_price_bounds(row, jitter_pct):
     floor = row.get("price_floor")
     ceiling = row.get("price_ceiling")
     min_span = max(1, int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_PRICE_SPAN", "1")))
+    jitter_pct = max(0, int(jitter_pct))
     if floor not in (None, "") and ceiling not in (None, ""):
-        low = max(1, int(floor))
-        high = max(low, int(ceiling))
-        if high > low:
-            lower_pct = int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_RANGE_LOW_PCT", "0"))
-            upper_pct = int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_RANGE_HIGH_PCT", "100"))
-            lower_pct = min(100, max(0, lower_pct))
-            upper_pct = min(100, max(lower_pct, upper_pct))
-            spread = high - low
-            low, high = low + int(round(spread * lower_pct / 100)), low + int(round(spread * upper_pct / 100))
+        market_anchor = max(int(floor), int(ceiling))
+        baseline = scaled_price(market_anchor)
+        low = max(1, int(round(baseline * (100 - jitter_pct) / 100)))
+        high = max(low, int(round(baseline * (100 + jitter_pct) / 100)))
         if high - low + 1 < min_span:
             high = low + min_span - 1
         return low, high
@@ -841,6 +855,9 @@ def create_staging_item(cur, row, source_inventory_id, position_index):
 
 
 def execute_seed_listing(cur, row, args, price, expiration_time, position_index):
+    category_reason = populator_category_skip_reason(row)
+    if category_reason:
+        raise RuntimeError(f"refusing to seed {row['template_id']}: {category_reason}")
     item_id, quality_level = create_staging_item(cur, row, args.populator_source_inventory_id, position_index)
     cur.execute(
         """

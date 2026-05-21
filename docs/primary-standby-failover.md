@@ -255,3 +255,11 @@ experiment, not the failover baseline.
 Test only in a cloned battlegroup or during maintenance. Stop immediately if a
 test requires both hosts writing the same world state concurrently or advertising
 the same battlegroup in a split-brain state.
+
+For the quick-hiccup experiment that measures whether clients auto-recover after
+a fast host swap, see `docs/handoff-experiment.md` and:
+
+```sh
+make handoff-experiment ENV_FILE=.env ROLE=standby
+CONFIRM_HANDOFF_EXPERIMENT=yes make handoff-experiment ENV_FILE=.env ROLE=standby APPLY=--apply
+```

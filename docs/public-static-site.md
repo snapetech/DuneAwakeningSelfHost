@@ -14,6 +14,7 @@ The public site is deliberately boring from a security perspective:
 ```text
 /status.html
 /players.json
+/hagga-pois.json
 /hagga-map.svg
 /hagga-basin.webp
 ```
@@ -95,6 +96,7 @@ Only these public paths are required:
 /app.js
 /status.html
 /players.json
+/hagga-pois.json
 /hagga-map.svg
 /hagga-basin.webp
 ```

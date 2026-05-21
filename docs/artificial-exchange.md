@@ -555,10 +555,10 @@ Current default row gates:
 
 Current default pricing:
 
-- `price_floor` is the midpoint between the in-game/game-file price and the
-  selected dune.exchange price.
-- `price_ceiling` is the selected dune.exchange price.
-- `planned_unique_price(...)` samples the full floor-to-ceiling range.
+- `planned_unique_price(...)` anchors on the higher of `price_floor` and
+  `price_ceiling`, multiplies it by
+  `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_PRICE_MULTIPLIER`, default `0.25`, then
+  applies `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_PRICE_JITTER_PCT`.
 - `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_RANGE_LOW_PCT` and
   `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_RANGE_HIGH_PCT` can narrow that explicit
   floor/ceiling range. The current aggressive liquidity run uses the default
@@ -945,6 +945,7 @@ DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_TARGET_MIN_ORDERS=20
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_TARGET_MAX_ORDERS=80
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_HARD_MAX_ORDERS=200
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_PRICE_JITTER_PCT=20
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_PRICE_MULTIPLIER=0.25
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_EXPIRY_MIN_SECONDS=3600
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_EXPIRY_MAX_SECONDS=86400
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_EXPIRE_PROBABILITY=0.10

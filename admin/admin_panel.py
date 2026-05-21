@@ -2699,7 +2699,7 @@ def enrich_steam_profiles(rows):
 
 def read_hagga_pois():
     empty = {"source": {}, "crs": {"topLeft": [0, 0], "bottomRight": [100000, 100000], "order": "xy"}, "groups": {}, "markers": []}
-    path = ROOT / "public-site" / "static" / "hagga-pois.json"
+    path = STATIC_ROOT / "hagga-pois.json"
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
@@ -3643,11 +3643,14 @@ class Handler(BaseHTTPRequestHandler):
             """, (player[0].get("previous_server_partition_id"),)) if player[0].get("previous_server_partition_id") is not None else [],
             "actorLocations": query("""
                 select id, class, map, transform::text as transform, partition_id,
-                       dimension_index, owner_account_id, serial
+                       dimension_index, owner_account_id, serial,
+                       ((transform).location).x::float8 as x,
+                       ((transform).location).y::float8 as y,
+                       ((transform).location).z::float8 as z
                 from dune.actors
-                where id in (%s,%s)
+                where id in (%s,%s,%s)
                 order by id
-            """, (controller_id, pawn_id)),
+            """, (controller_id, player[0].get("player_state_id"), pawn_id)),
             "travelReturn": query("""
                 select player_controller_id, map, transform::text as transform
                 from dune.travel_return_info
@@ -3983,6 +3986,24 @@ class Handler(BaseHTTPRequestHandler):
                 order by inventory_type
             """),
             "keystones": reference_query(errors, "keystones", "select id, name from dune.specialization_keystones_map order by name"),
+            "worldPartitions": reference_query(errors, "worldPartitions", """
+                select partition_id, map, dimension_index, label, blocked, server_id
+                from dune.world_partition
+                order by map, dimension_index, partition_id
+                limit %s
+            """, (ADMIN_REFERENCE_LIMIT,)),
+            "haggaCalibration": {
+                "minX": HAGGA_MAP_MIN_X,
+                "maxX": HAGGA_MAP_MAX_X,
+                "minY": HAGGA_MAP_MIN_Y,
+                "maxY": HAGGA_MAP_MAX_Y,
+                "invertX": HAGGA_MAP_INVERT_X,
+                "invertY": HAGGA_MAP_INVERT_Y,
+                "imageMinU": HAGGA_MAP_IMAGE_MIN_U,
+                "imageMaxU": HAGGA_MAP_IMAGE_MAX_U,
+                "imageMinV": HAGGA_MAP_IMAGE_MIN_V,
+                "imageMaxV": HAGGA_MAP_IMAGE_MAX_V,
+            },
             "errors": errors,
             "publicItemDatabase": "https://dune.gaming.tools/items",
             "publicItemDatabaseAlt": "https://dune.geno.gg/items/",
@@ -4522,60 +4543,69 @@ class Handler(BaseHTTPRequestHandler):
         fls_id = str(player[0].get("fls_id") or player[0].get("funcom_id") or "").strip()
         if not fls_id:
             raise ValueError("player account has no FLS/user id for offline player recovery")
+        offline_check = query("select dune.is_player_offline(%s) as offline", (fls_id,))
+        is_offline = bool(offline_check and offline_check[0].get("offline"))
+        actor_snapshot = query("""
+            select a.id as actor_id, a.class, a.map, a.partition_id, a.dimension_index,
+                   ((a.transform).location).x as x,
+                   ((a.transform).location).y as y,
+                   ((a.transform).location).z as z
+            from dune.player_state ps
+            join dune.actors a
+              on a.id in (ps.player_controller_id, ps.player_state_id, ps.player_pawn_id)
+            where ps.account_id=%s
+            order by a.id
+        """, (account_id,))
         plan = {
-            "function": "admin-panel offline actor-set move",
+            "function": "dune.admin_move_offline_player_to_partition",
             "args": [fls_id, partition_id, target_location],
             "player": player[0],
             "targetPartition": partition[0],
-            "note": "Current strict-offline endpoint updates controller, player-state, and pawn actor transforms together. The separate verified network-disconnect teleport path uses dune.admin_move_offline_player_to_partition as the pawn-row move primitive after Survival marks the player Offline.",
+            "currentActors": actor_snapshot,
+            "executable": is_offline,
+            "blockers": [] if is_offline else ["dune.is_player_offline(fls_id) is false; wait for Offline before moving"],
+            "note": "Strict-offline teleport uses the first-party pawn-row move helper. Online/network-timeout automation is intentionally separate and not hidden behind this endpoint.",
         }
         if dry_run:
             return {"ok": True, "dryRun": True, "accountId": account_id, "partitionId": partition_id, "plan": plan}
         self.require_mutations()
         require_confirmation(body, CONFIRM_PLAYER_RECOVERY)
-        rows = query("""
-            with target_partition as (
-                select partition_id, map, dimension_index
-                from dune.world_partition
-                where partition_id=%s
-            ), target_player as (
-                select ps.player_controller_id, ps.player_state_id, ps.player_pawn_id
-                from dune.player_state ps
-                join dune.accounts a on a.id = ps.account_id
-                where a."user"=%s and ps.online_status::text <> 'Online'
-                limit 1
-            ), target_actor as (
-                select unnest(array[player_controller_id, player_state_id, player_pawn_id]) as id
-                from target_player
-            ), overmap_location as (
-                select
-                    case
-                    when target_partition.map = 'Overmap' then dune.overmap_save_player_survival_data(target_player.player_pawn_id, null, false, row(%s,%s,%s)::dune.vector)
-                    else null
-                    end
-                from target_partition, target_player
+        if not is_offline:
+            raise ValueError("player is not fully Offline according to dune.is_player_offline")
+        query("""
+            select dune.admin_move_offline_player_to_partition(
+                %s,
+                %s,
+                row(%s,%s,%s)::dune.vector
             )
-            update dune.actors a
-            set
-                transform = (row(%s,%s,%s)::dune.vector, (a.transform).rotation),
-                map = dune.upgrade_map_name(target_partition.map),
-                dimension_index = target_partition.dimension_index,
-                partition_id = target_partition.partition_id
-            from target_partition, target_actor, overmap_location
-            where a.id = target_actor.id
-            returning a.id as actor_id, a.class, a.map, a.partition_id, a.dimension_index,
-                      ((a.transform).location).x as x,
-                      ((a.transform).location).y as y,
-                      ((a.transform).location).z as z
         """, (
-            partition_id,
             fls_id,
-            target_location["x"], target_location["y"], target_location["z"],
+            partition_id,
             target_location["x"], target_location["y"], target_location["z"],
         ))
-        if len(rows) != 3:
-            raise RuntimeError(f"offline recovery updated {len(rows)} actor rows; expected controller, state, and pawn")
-        return {"ok": True, "dryRun": False, "accountId": account_id, "partitionId": partition_id, "result": rows, "rollback": {"previousServerPartitionId": player[0].get("previous_server_partition_id"), "previousServerId": player[0].get("server_id")}}
+        rows = query("""
+            select a.id as actor_id, a.class, a.map, a.partition_id, a.dimension_index,
+                   ((a.transform).location).x as x,
+                   ((a.transform).location).y as y,
+                   ((a.transform).location).z as z
+            from dune.player_state ps
+            join dune.actors a
+              on a.id in (ps.player_controller_id, ps.player_state_id, ps.player_pawn_id)
+            where ps.account_id=%s
+            order by a.id
+        """, (account_id,))
+        return {
+            "ok": True,
+            "dryRun": False,
+            "accountId": account_id,
+            "partitionId": partition_id,
+            "result": rows,
+            "rollback": {
+                "previousServerPartitionId": player[0].get("previous_server_partition_id"),
+                "previousServerId": player[0].get("server_id"),
+                "previousActors": actor_snapshot,
+            },
+        }
 
     def spice_field_inspect(self):
         errors = {}
@@ -6196,6 +6226,9 @@ INDEX = r"""<!doctype html>
     .poiToggleBar { display:flex; flex-wrap:wrap; gap:8px; margin:0 0 10px; }
     .poiToggleBar label { display:inline-flex; gap:6px; align-items:center; border:1px solid var(--line); border-radius:999px; background:#101310; color:var(--text); font-size:12px; padding:5px 9px; }
     .poiToggleBar input { width:auto; }
+    .teleportMap { cursor:crosshair; min-height:360px; }
+    .teleportMap .teleportTargetDot { fill:var(--danger); stroke:#fff0d0; stroke-width:3; }
+    .teleportMap .teleportTargetLabel { fill:#fff0d0; font:700 12px system-ui,sans-serif; paint-order:stroke; stroke:#0b0d0a; stroke-width:4; }
     .coordTable td, .coordTable th { font-size:12px; }
     .filterInput { max-width:280px; }
     .toast { position:fixed; right:18px; bottom:18px; z-index:10; display:grid; gap:8px; max-width:min(420px,calc(100vw - 36px)); }
@@ -6682,6 +6715,14 @@ function inventoryTypeOptions(rows){
   if (!vals.length) return '<option value="">Auto</option>';
   return '<option value="">Auto</option>' + vals.map(r => `<option value="${esc(r.inventory_type)}">type ${esc(r.inventory_type)} | ${esc(r.count)} inventories | cap ${esc(r.max_item_count)}</option>`).join('');
 }
+function partitionOptions(rows){
+  const vals = rows || [];
+  if (!vals.length) return '<option value="">No partitions found</option>';
+  return vals.map(r => {
+    const label = `${r.label || r.map || 'partition'} | id ${r.partition_id} | dim ${r.dimension_index ?? ''}${r.blocked ? ' | blocked' : ''}`;
+    return `<option value="${esc(r.partition_id)}" data-map="${esc(r.map || '')}" data-label="${esc(r.label || '')}" data-dimension="${esc(r.dimension_index ?? '')}">${esc(label)}</option>`;
+  }).join('');
+}
 function characterOptions(rows){
   const vals = rows || [];
   if (!vals.length) return '<option value="">No characters found</option>';
@@ -6857,6 +6898,67 @@ function haggaBasinMapPanel(data){
   }));
   const generatedAt = data?.generatedAt ? new Date(data.generatedAt).toLocaleTimeString() : '';
   return `<div class="panelBand"><div class="sectionHeader"><h2>Hagga Basin Coordinate Grid</h2><div class="toolbar"><span id="haggaMapCount" class="pill ${players.length ? 'ok' : ''}">${esc(players.length)} plotted</span><span id="haggaMapUpdated" class="pill">updated ${esc(generatedAt)}</span><span id="haggaMapHealth" class="pill warn">DB persistence position, not proven live</span><button id="haggaMapZoomOutBtn" title="Zoom map out">-</button><button id="haggaMapZoomInBtn" title="Zoom map in">+</button><button id="haggaMapResetBtn">Reset view</button><button id="toggleHaggaMapRefreshBtn" aria-pressed="${haggaMapAutoRefresh ? 'true' : 'false'}">${haggaMapAutoRefresh ? 'Pause map' : 'Resume map'}</button><button id="refreshHaggaMapBtn">Refresh map</button></div></div>${haggaPoiToggleBar(pois, selectedPois)}<div id="haggaMapSrStatus" class="srOnly" aria-live="polite">${esc(players.length)} Hagga Basin players plotted.</div><div id="haggaMapViewport" class="haggaMap"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Full Hagga Basin coordinate-grid map"><image class="mapImage" href="/static/hagga-basin.webp?v=${encodeURIComponent(ADMIN_PANEL_BUILD)}" x="0" y="0" width="${width}" height="${height}" preserveAspectRatio="xMidYMid meet"></image><rect class="mapShade" x="0" y="0" width="${width}" height="${height}"></rect>${grid}<text x="12" y="38" fill="var(--muted)" font-size="12">NW</text><text x="${width - 30}" y="${height - 12}" fill="var(--muted)" font-size="12">SE</text>${poiMarkers}${markers}${empty}</svg></div><div class="haggaMapStatus"><span class="pill warn">green: persisted actor transform</span><span class="pill ${showReturnPoints ? 'warn' : ''}">yellow return-info ${showReturnPoints ? 'shown' : 'hidden'}</span><span class="pill">POIs: Dune: Awakening Community Wiki CC BY-NC-SA 4.0</span><span class="pill">background: clean survival_1 tile composite</span><span class="pill">projection: world X -> image U, world Y -> image V</span><span class="pill">world X ${esc(Math.round(minX))}..${esc(Math.round(maxX))}, Y ${esc(Math.round(minY))}..${esc(Math.round(maxY))}${invertX ? ', flipped X' : ''}${invertY ? ', inverted Y' : ''}</span><span class="pill">image U ${esc(imageMinU.toFixed(2))}..${esc(imageMaxU.toFixed(2))}, V ${esc(imageMinV.toFixed(2))}..${esc(imageMaxV.toFixed(2))}</span></div><details open><summary>Coordinates</summary><div class="coordTable">${table(rows)}</div></details><details open><summary>Location Source Diagnostics</summary><div class="coordTable">${table(diagnosticRows)}</div></details></div>`;
+}
+function offlineTeleportPanel(ref, characterRows){
+  const partitions = ref.worldPartitions || [];
+  const calibration = ref.haggaCalibration || {};
+  const haggaPartition = partitions.find(p => String(p.map || '').toLowerCase().includes('survival')) || partitions[0] || {};
+  return `<div class="panelBand" id="offlineTeleportPanel"><div class="sectionHeader"><h2>Offline Teleport</h2><div class="toolbar"><span class="pill warn">requires Offline</span><span class="pill warn">targeted timeout is manual</span></div></div><p class="muted">Moves the selected player's stored pawn with <code>dune.admin_move_offline_player_to_partition</code>. Online players must first be disconnected by the documented targeted timeout mechanism or a future native kick path.</p><div class="grid"><label>Player<select id="teleportAccount">${characterOptions(characterRows)}</select></label><label>Partition<select id="teleportPartition">${partitionOptions(partitions)}</select></label><label>X<input id="teleportX" inputmode="decimal" value="0"></label><label>Y<input id="teleportY" inputmode="decimal" value="0"></label><label>Z<input id="teleportZ" inputmode="decimal" value="9000"></label></div><div class="commandBar"><button id="teleportPreviewBtn" class="primary">Preview teleport</button><button id="teleportExecuteBtn" class="danger">Execute offline teleport</button><button id="teleportUseSelectedBtn">Use selected player position</button></div><div id="offlineTeleportMap" class="haggaMap teleportMap" data-default-partition="${esc(haggaPartition.partition_id || '')}" data-calibration="${esc(JSON.stringify(calibration))}"></div><pre id="teleportResult"></pre></div>`;
+}
+function renderOfflineTeleportMap(){
+  const box = document.getElementById('offlineTeleportMap');
+  if (!box) return;
+  const width = 1000, height = 1000, pad = 0;
+  let calibration = {};
+  try { calibration = JSON.parse(box.dataset.calibration || '{}'); } catch (e) { calibration = {}; }
+  const minX = Number.isFinite(Number(calibration.minX)) ? Number(calibration.minX) : -457200;
+  const maxX = Number.isFinite(Number(calibration.maxX)) ? Number(calibration.maxX) : 355600;
+  const minY = Number.isFinite(Number(calibration.minY)) ? Number(calibration.minY) : -457200;
+  const maxY = Number.isFinite(Number(calibration.maxY)) ? Number(calibration.maxY) : 355600;
+  const invertX = calibration.invertX === true;
+  const invertY = calibration.invertY === true;
+  const imageMinU = Number.isFinite(Number(calibration.imageMinU)) ? Number(calibration.imageMinU) : 0;
+  const imageMaxU = Number.isFinite(Number(calibration.imageMaxU)) ? Number(calibration.imageMaxU) : 1;
+  const imageMinV = Number.isFinite(Number(calibration.imageMinV)) ? Number(calibration.imageMinV) : 0;
+  const imageMaxV = Number.isFinite(Number(calibration.imageMaxV)) ? Number(calibration.imageMaxV) : 1;
+  const spanX = maxX - minX || 1;
+  const spanY = maxY - minY || 1;
+  const worldToImageU = (x) => {
+    const normalized = (Number(x) - minX) / spanX;
+    const oriented = invertX ? 1 - normalized : normalized;
+    return imageMinU + oriented * (imageMaxU - imageMinU);
+  };
+  const worldToImageV = (y) => {
+    const normalized = (Number(y) - minY) / spanY;
+    const oriented = invertY ? 1 - normalized : normalized;
+    return imageMinV + oriented * (imageMaxV - imageMinV);
+  };
+  const imageUToWorld = (u) => {
+    const oriented = (u - imageMinU) / ((imageMaxU - imageMinU) || 1);
+    const normalized = invertX ? 1 - oriented : oriented;
+    return minX + normalized * spanX;
+  };
+  const imageVToWorld = (v) => {
+    const oriented = (v - imageMinV) / ((imageMaxV - imageMinV) || 1);
+    const normalized = invertY ? 1 - oriented : oriented;
+    return minY + normalized * spanY;
+  };
+  const px = (x) => clamp(pad + worldToImageU(x) * (width - pad * 2), 0, width);
+  const py = (y) => clamp(pad + worldToImageV(y) * (height - pad * 2), 0, height);
+  const tx = Number(document.getElementById('teleportX')?.value || 0);
+  const ty = Number(document.getElementById('teleportY')?.value || 0);
+  const target = Number.isFinite(tx) && Number.isFinite(ty) ? `<circle class="teleportTargetDot" cx="${px(tx).toFixed(1)}" cy="${py(ty).toFixed(1)}" r="10"></circle><text class="teleportTargetLabel" x="${clamp(px(tx) + 14, 8, width - 190).toFixed(1)}" y="${clamp(py(ty) - 14, 22, height - 22).toFixed(1)}">target ${esc(Math.round(tx))}, ${esc(Math.round(ty))}</text>` : '';
+  box.innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Click Hagga Basin map to choose teleport coordinates"><image class="mapImage" href="/static/hagga-basin.webp?v=${encodeURIComponent(ADMIN_PANEL_BUILD)}" x="0" y="0" width="${width}" height="${height}" preserveAspectRatio="xMidYMid meet"></image><rect class="mapShade" x="0" y="0" width="${width}" height="${height}"></rect>${target}</svg><div class="haggaMapStatus"><span class="pill">click map to fill X/Y</span><span class="pill">Z remains editable</span><span class="pill">Hagga Basin calibration</span></div>`;
+  box.querySelector('svg')?.addEventListener('click', e => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const imageU = clamp((e.clientX - rect.left) / rect.width, 0, 1);
+    const imageV = clamp((e.clientY - rect.top) / rect.height, 0, 1);
+    document.getElementById('teleportX').value = imageUToWorld(imageU).toFixed(3);
+    document.getElementById('teleportY').value = imageVToWorld(imageV).toFixed(3);
+    const partition = document.getElementById('teleportPartition');
+    if (partition && box.dataset.defaultPartition) partition.value = box.dataset.defaultPartition;
+    renderOfflineTeleportMap();
+  });
 }
 function initHaggaMapPanZoom(container){
   const viewport = container.querySelector('#haggaMapViewport');
@@ -8085,7 +8187,7 @@ async function mutations(serial=loadSerial){
   ]);
   if (serial !== loadSerial) return;
   const referenceErrors = ref.errors && Object.keys(ref.errors).length ? `<div class="card"><h2>Reference Errors</h2><pre>${esc(JSON.stringify(ref.errors, null, 2))}</pre></div>` : '';
-  view.innerHTML = `<div class="pageStack">${referenceErrors}<div class="sectionHeader"><h2>Admin Actions</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="settings">Settings</button><button data-jump="security">Audit</button></div></div><div class="panelBand"><h2>Target Player</h2><div class="grid"><label>Character<select id="adminCharacterSelect">${characterOptions(characterRows)}</select></label><label>Player controller ID<input id="pcid"></label><label>Account ID<input id="grantAccount" placeholder="auto-select player inventory"></label><label>Character name<input id="grantCharacter" placeholder="auto-select by name"></label></div></div><div class="panelBand"><h2>Character Slots</h2><div class="grid"><label>Action<select id="slotAction"><option>new-character</option><option>switch-character</option><option>restore-character</option></select></label><label>Target hibernated account ID<input id="slotTargetAccount"></label></div><p><button id="slotInspectBtn" class="primary">Inspect slots</button> <button id="slotPlanBtn" class="primary">Preview swap</button> <button id="slotExecuteBtn" class="danger">Execute swap</button></p><pre id="slotResult"></pre></div><div class="twoCol"><div class="panelBand"><h2>Currency and XP</h2><p class="muted">Select a character first; balances and tracks populate from that player.</p><div class="grid"><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button id="currencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Level for set/new track<input id="xplevel" value="0"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button id="xpBtn" class="primary">Apply XP</button></p></div><div class="panelBand"><h2>Item Grants</h2><p class="muted">Use a known template ID and dry run before writing new items.</p><div class="grid"><label>Known inventory<select id="grantInventorySelect">${inventoryOptions(ref.recentInventories)}</select></label><label>Inventory ID<input id="grantInventory" placeholder="explicit inventory"></label><label class="hidden">Character<select id="grantCharacterSelect">${characterOptions(characterRows)}</select></label><label>Inventory type<select id="grantInventoryType">${inventoryTypeOptions(ref.inventoryTypes)}</select></label><label>Template ID<input id="grantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><details><summary>Advanced stats JSON</summary><textarea id="grantStats">{}</textarea></details><p><button id="dryRunItemBtn" class="primary">Dry run</button> <button id="grantItemBtn" class="danger">Grant item</button></p><pre id="grantResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Item Maintenance</h2><div class="grid"><label class="hidden">Character<select id="itemCharacterSelect">${characterOptions(characterRows)}</select></label><label>Owned item<select id="itemEditSelect"><option value="">Select a character first</option></select></label><label>Item ID<input id="itemEditId"></label><label>New stack size<input id="itemEditStack" value="1"></label><label>Delete count<input id="itemDeleteCount" placeholder="blank/all"></label></div><p><button id="setItemStackBtn" class="primary">Set stack</button> <button id="deleteItemBtn" class="danger">Delete item/count</button></p><pre id="itemEditResult"></pre></div><div class="panelBand"><h2>Specialization Keystones</h2><div class="grid"><label>Player/controller ID<input id="keyPlayer"></label><label>Keystone<select id="keystone">${options(ref.keystones, 'name')}</select></label></div><p><button id="purchaseKeystoneBtn" class="primary">Purchase keystone</button> <button id="resetKeystonesBtn" class="danger">Reset all keystones</button></p><pre id="keystoneResult"></pre></div></div><details class="panelBand"><summary>Backup</summary><p class="muted">Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button id="backupBtn" class="primary">Create DB backup</button><pre id="backupResult"></pre></details><datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><details class="panelBand"><summary>Known Item Templates</summary>${table(ref.knownItemTemplates)}</details><details class="panelBand"><summary>Observed Item Templates</summary>${table(ref.observedItemTemplates)}</details><details class="panelBand"><summary>Recent Inventories</summary>${table(ref.recentInventories)}</details><details class="panelBand"><summary>Inventory Types</summary>${table(ref.inventoryTypes)}</details></div>`;
+  view.innerHTML = `<div class="pageStack">${referenceErrors}<div class="sectionHeader"><h2>Admin Actions</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="settings">Settings</button><button data-jump="security">Audit</button></div></div><div class="panelBand"><h2>Target Player</h2><div class="grid"><label>Character<select id="adminCharacterSelect">${characterOptions(characterRows)}</select></label><label>Player controller ID<input id="pcid"></label><label>Account ID<input id="grantAccount" placeholder="auto-select player inventory"></label><label>Character name<input id="grantCharacter" placeholder="auto-select by name"></label></div></div>${offlineTeleportPanel(ref, characterRows)}<div class="panelBand"><h2>Character Slots</h2><div class="grid"><label>Action<select id="slotAction"><option>new-character</option><option>switch-character</option><option>restore-character</option></select></label><label>Target hibernated account ID<input id="slotTargetAccount"></label></div><p><button id="slotInspectBtn" class="primary">Inspect slots</button> <button id="slotPlanBtn" class="primary">Preview swap</button> <button id="slotExecuteBtn" class="danger">Execute swap</button></p><pre id="slotResult"></pre></div><div class="twoCol"><div class="panelBand"><h2>Currency and XP</h2><p class="muted">Select a character first; balances and tracks populate from that player.</p><div class="grid"><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button id="currencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Level for set/new track<input id="xplevel" value="0"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button id="xpBtn" class="primary">Apply XP</button></p></div><div class="panelBand"><h2>Item Grants</h2><p class="muted">Use a known template ID and dry run before writing new items.</p><div class="grid"><label>Known inventory<select id="grantInventorySelect">${inventoryOptions(ref.recentInventories)}</select></label><label>Inventory ID<input id="grantInventory" placeholder="explicit inventory"></label><label class="hidden">Character<select id="grantCharacterSelect">${characterOptions(characterRows)}</select></label><label>Inventory type<select id="grantInventoryType">${inventoryTypeOptions(ref.inventoryTypes)}</select></label><label>Template ID<input id="grantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><details><summary>Advanced stats JSON</summary><textarea id="grantStats">{}</textarea></details><p><button id="dryRunItemBtn" class="primary">Dry run</button> <button id="grantItemBtn" class="danger">Grant item</button></p><pre id="grantResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Item Maintenance</h2><div class="grid"><label class="hidden">Character<select id="itemCharacterSelect">${characterOptions(characterRows)}</select></label><label>Owned item<select id="itemEditSelect"><option value="">Select a character first</option></select></label><label>Item ID<input id="itemEditId"></label><label>New stack size<input id="itemEditStack" value="1"></label><label>Delete count<input id="itemDeleteCount" placeholder="blank/all"></label></div><p><button id="setItemStackBtn" class="primary">Set stack</button> <button id="deleteItemBtn" class="danger">Delete item/count</button></p><pre id="itemEditResult"></pre></div><div class="panelBand"><h2>Specialization Keystones</h2><div class="grid"><label>Player/controller ID<input id="keyPlayer"></label><label>Keystone<select id="keystone">${options(ref.keystones, 'name')}</select></label></div><p><button id="purchaseKeystoneBtn" class="primary">Purchase keystone</button> <button id="resetKeystonesBtn" class="danger">Reset all keystones</button></p><pre id="keystoneResult"></pre></div></div><details class="panelBand"><summary>Backup</summary><p class="muted">Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button id="backupBtn" class="primary">Create DB backup</button><pre id="backupResult"></pre></details><datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><details class="panelBand"><summary>Known Item Templates</summary>${table(ref.knownItemTemplates)}</details><details class="panelBand"><summary>Observed Item Templates</summary>${table(ref.observedItemTemplates)}</details><details class="panelBand"><summary>Recent Inventories</summary>${table(ref.recentInventories)}</details><details class="panelBand"><summary>Inventory Types</summary>${table(ref.inventoryTypes)}</details></div>`;
   const loadCharacterAdminDetails = async (accountId, serial=detailLoadSerial) => {
     const itemSelect = document.getElementById('itemEditSelect');
     const inventorySelect = document.getElementById('grantInventorySelect');
@@ -8139,6 +8241,7 @@ async function mutations(serial=loadSerial){
       if (other && other !== select) other.value = option.value;
     });
     if (document.getElementById('grantAccount')) document.getElementById('grantAccount').value = option.value;
+    if (document.getElementById('teleportAccount')) document.getElementById('teleportAccount').value = option.value;
     if (document.getElementById('grantCharacter')) document.getElementById('grantCharacter').value = option.dataset.name || '';
     if (document.getElementById('pcid')) document.getElementById('pcid').value = option.dataset.controller || '';
     if (document.getElementById('xpid')) document.getElementById('xpid').value = option.dataset.controller || '';
@@ -8174,6 +8277,11 @@ async function mutations(serial=loadSerial){
     if (inventoryType) document.getElementById('grantInventoryType').value = inventoryType;
   });
   document.getElementById('backupBtn').addEventListener('click', e => runAction(e.currentTarget, 'Backing up...', backup));
+  renderOfflineTeleportMap();
+  ['teleportX','teleportY','teleportZ'].forEach(id => document.getElementById(id)?.addEventListener('input', renderOfflineTeleportMap));
+  document.getElementById('teleportPreviewBtn').addEventListener('click', e => runAction(e.currentTarget, 'Previewing...', () => offlineTeleport(true)));
+  document.getElementById('teleportExecuteBtn').addEventListener('click', e => runAction(e.currentTarget, 'Teleporting...', () => offlineTeleport(false)));
+  document.getElementById('teleportUseSelectedBtn').addEventListener('click', e => runAction(e.currentTarget, 'Loading position...', useSelectedTeleportPosition));
   document.getElementById('slotInspectBtn').addEventListener('click', e => runAction(e.currentTarget, 'Inspecting...', async () => {
     const result = await api('/api/admin/character-slots?account_id=' + encodeURIComponent(grantAccount.value));
     document.getElementById('slotResult').textContent = JSON.stringify(result, null, 2);
@@ -8223,6 +8331,39 @@ async function xpFor(playerId){
 async function backup(){
   const result = await api('/api/admin/backup', {method:'POST', body:'{}'});
   document.getElementById('backupResult').textContent = JSON.stringify(result, null, 2);
+}
+function teleportPayload(dryRun=true){
+  return {
+    dry_run: dryRun,
+    account_id: document.getElementById('teleportAccount')?.value || document.getElementById('grantAccount')?.value || '',
+    partition_id: document.getElementById('teleportPartition')?.value || '',
+    location: {
+      x: document.getElementById('teleportX')?.value || '0',
+      y: document.getElementById('teleportY')?.value || '0',
+      z: document.getElementById('teleportZ')?.value || '0'
+    },
+    confirm: dryRun ? '' : 'MOVE OFFLINE PLAYER'
+  };
+}
+async function offlineTeleport(dryRun=true){
+  if (!dryRun && !confirm('Execute offline teleport for the selected player? The target must already be Offline.')) return;
+  const result = await api('/api/admin/player-recovery/offline-teleport', {method:'POST', body:JSON.stringify(teleportPayload(dryRun))});
+  document.getElementById('teleportResult').textContent = JSON.stringify(result, null, 2);
+  notify(dryRun ? 'Teleport preview ready' : 'Offline teleport executed');
+}
+async function useSelectedTeleportPosition(){
+  const accountId = document.getElementById('teleportAccount')?.value || document.getElementById('grantAccount')?.value || '';
+  if (!accountId) { notify('Select a player first', 'bad'); return; }
+  const detail = await api('/api/characters/' + encodeURIComponent(accountId));
+  const pawnId = detail.player?.player_pawn_id;
+  const actor = (detail.actorLocations || []).find(row => String(row.actor_id ?? row.id ?? '') === String(pawnId)) || (detail.actorLocations || [])[0];
+  if (!actor) { notify('No stored actor position found', 'bad'); return; }
+  document.getElementById('teleportX').value = Number(actor.x || 0).toFixed(3);
+  document.getElementById('teleportY').value = Number(actor.y || 0).toFixed(3);
+  document.getElementById('teleportZ').value = Number(actor.z || 0).toFixed(3);
+  if (actor.partition_id && document.getElementById('teleportPartition')) document.getElementById('teleportPartition').value = actor.partition_id;
+  renderOfflineTeleportMap();
+  document.getElementById('teleportResult').textContent = JSON.stringify({source:'stored actor transform', actor}, null, 2);
 }
 async function scheduleAnnouncement(){
   const result = await api('/api/ops/announcement', {method:'POST', body:JSON.stringify({

@@ -9,6 +9,7 @@ required=(
   app.js
   status.html
   players.json
+  hagga-pois.json
   hagga-map.svg
   hagga-basin.webp
 )
@@ -23,6 +24,11 @@ done
 if command -v jq >/dev/null 2>&1; then
   jq -e '.ok | type == "boolean"' "$static_dir/players.json" >/dev/null
   jq -e '.players | type == "array"' "$static_dir/players.json" >/dev/null
+  jq -e '.groups | type == "object"' "$static_dir/hagga-pois.json" >/dev/null
+  jq -e '.markers | type == "array" and length > 0' "$static_dir/hagga-pois.json" >/dev/null
+  jq -e '
+    all(.markers[]; (.group | type == "string") and (.name | type == "string") and (.x | type == "number") and (.y | type == "number"))
+  ' "$static_dir/hagga-pois.json" >/dev/null
   if jq -e '
     def forbidden:
       paths(scalars) as $p
@@ -39,6 +45,8 @@ if command -v jq >/dev/null 2>&1; then
   fi
 else
   grep -q '"players"' "$static_dir/players.json"
+  grep -q '"markers"' "$static_dir/hagga-pois.json"
+  grep -q '"groups"' "$static_dir/hagga-pois.json"
   if grep -Eiq 'steam|platform|funcom|account|controller|pawn|fls|profile_url|persona|steamcommunity\.com/profiles' "$static_dir/players.json"; then
     echo "public players.json contains private/admin identity fields" >&2
     exit 1
@@ -47,7 +55,12 @@ fi
 
 grep -q 'id="hagga-map"' "$static_dir/index.html"
 grep -q 'id="active-players"' "$static_dir/index.html"
+grep -q 'id="poi-toggles"' "$static_dir/index.html"
+grep -q 'hagga-pois.json' "$static_dir/app.js"
 grep -q '<svg' "$static_dir/hagga-map.svg"
-grep -q 'hagga-basin.webp' "$static_dir/hagga-map.svg"
+if ! grep -Eq 'hagga-basin\.webp|data:image/webp;base64' "$static_dir/hagga-map.svg"; then
+  echo "hagga-map.svg does not reference or embed the Hagga Basin map image" >&2
+  exit 1
+fi
 
 echo "OK: public Dune static site files validate in $static_dir"

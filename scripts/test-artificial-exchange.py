@@ -138,12 +138,14 @@ class ArtificialExchangeBotTest(unittest.TestCase):
         self.original_env = dict(bot.FILE_ENV)
         bot.FILE_ENV.clear()
         bot.SOURCE_CATEGORY_MAP_CACHE.clear()
+        bot.VERIFIED_CATEGORY_MAP_CACHE.clear()
         bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_SOURCE_CATEGORY"] = "false"
 
     def tearDown(self):
         bot.FILE_ENV.clear()
         bot.FILE_ENV.update(self.original_env)
         bot.SOURCE_CATEGORY_MAP_CACHE.clear()
+        bot.VERIFIED_CATEGORY_MAP_CACHE.clear()
 
     def order(self, **overrides):
         row = {"id": 1, "owner_id": 10, "template_id": "ItemA", "item_price": 75, "revision": "1"}
@@ -305,27 +307,27 @@ class ArtificialExchangeBotTest(unittest.TestCase):
         with mock.patch.object(bot.random, "randint", side_effect=lambda low, high: high):
             self.assertEqual(bot.jitter_price(100, 20), 120)
             self.assertEqual(bot.jitter_expiration(1000, 60, 120), 1120)
-        self.assertEqual(bot.jitter_price_bounds(100, 20), (80, 120))
+        self.assertEqual(bot.jitter_price_bounds(100, 20), (20, 30))
 
     def test_planned_unique_price_avoids_existing_template_prices(self):
-        used = {"ItemA": {80, 81}}
+        used = {"ItemA": {20, 21}}
         with mock.patch.object(bot.random, "choice", side_effect=lambda values: values[0]):
-            self.assertEqual(bot.planned_unique_price(self.catalog_row(baseline_price=100), 20, used), 82)
-        self.assertIn(82, used["ItemA"])
+            self.assertEqual(bot.planned_unique_price(self.catalog_row(baseline_price=100), 20, used), 22)
+        self.assertIn(22, used["ItemA"])
         with self.assertRaises(RuntimeError):
             bot.planned_unique_price(self.catalog_row(baseline_price=1), 0, {"ItemA": {1}})
 
-    def test_planned_unique_price_uses_middle_band_for_floor_ceiling(self):
+    def test_planned_unique_price_uses_scaled_floor_ceiling_anchor(self):
         row = self.catalog_row(price_floor=100, price_ceiling=1100)
         with mock.patch.object(bot.random, "choice", side_effect=lambda values: values[0]):
-            self.assertEqual(bot.planned_unique_price(row, 20, {}), 100)
+            self.assertEqual(bot.planned_unique_price(row, 20, {}), 220)
 
     def test_planned_unique_price_can_expand_tight_fixed_ranges(self):
         bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_PRICE_SPAN"] = "20"
         row = self.catalog_row(price_floor=100, price_ceiling=100)
-        used = {"ItemA": set(range(100, 119))}
+        used = {"ItemA": set(range(20, 39))}
         with mock.patch.object(bot.random, "choice", side_effect=lambda values: values[0]):
-            self.assertEqual(bot.planned_unique_price(row, 20, used), 119)
+            self.assertEqual(bot.planned_unique_price(row, 20, used), 39)
 
     def test_populator_category_gate_blocks_non_augments_from_augments_mask(self):
         row = self.catalog_row("Rifle_Schematic", category="schematics/weapons", category_mask=117506048, category_depth=2, notes="tier=4")
@@ -362,15 +364,18 @@ class ArtificialExchangeBotTest(unittest.TestCase):
         bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_SOURCE_CATEGORY"] = "false"
         with tempfile.TemporaryDirectory() as tmp:
             path = pathlib.Path(tmp) / "verified-category-map.json"
-            path.write_text('{"items":{"ItemA":{"category_mask":258,"category_depth":2}}}', encoding="utf-8")
+            mask, depth = bot.CATEGORY_MASKS["weapons/ranged"]
+            path.write_text(f'{{"items":{{"ItemA":{{"category_mask":{mask},"category_depth":{depth}}},"ItemC":{{"category_mask":258,"category_depth":2}}}}}}', encoding="utf-8")
             bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_VERIFIED_CATEGORY_MAP"] = str(path)
-            row = self.catalog_row("ItemA", category_mask=1, category_depth=1)
+            row = self.catalog_row("ItemA", category="weapons/ranged", category_mask=1, category_depth=1)
             bot.VERIFIED_CATEGORY_MAP_CACHE.clear()
             self.assertEqual(bot.populator_category_skip_reason(row), "")
-            self.assertEqual(bot.populator_category_mask(row), 258)
-            self.assertEqual(bot.populator_category_depth(row), 2)
+            self.assertEqual(bot.populator_category_mask(row), mask)
+            self.assertEqual(bot.populator_category_depth(row), depth)
             missing = self.catalog_row("ItemB", category_mask=1, category_depth=1)
             self.assertEqual(bot.populator_category_skip_reason(missing), "missing verified category")
+            mismatched = self.catalog_row("ItemC", category="weapons/ranged", category_mask=1, category_depth=1)
+            self.assertEqual(bot.populator_category_skip_reason(mismatched), f"verified category map mismatch expected {mask}/{depth}")
 
     def test_blueprint_identity_is_restricted_to_blueprint_categories(self):
         mask, depth = bot.CATEGORY_MASKS["weapons/ranged"]

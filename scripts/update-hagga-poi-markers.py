@@ -6,7 +6,10 @@ import urllib.request
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-OUT = ROOT / "public-site" / "static" / "hagga-pois.json"
+OUT_PATHS = [
+    ROOT / "public-site" / "static" / "hagga-pois.json",
+    ROOT / "admin" / "static" / "hagga-pois.json",
+]
 SOURCE_PAGE = "Map:Hagga Basin"
 SOURCE_URL = "https://awakening.wiki/api.php?" + urllib.parse.urlencode({
     "action": "parse",
@@ -65,9 +68,11 @@ def main():
         "groups": groups,
         "markers": markers,
     }
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(f"wrote {OUT} with {len(markers)} markers in {len(groups)} groups")
+    text = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    for path in OUT_PATHS:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        print(f"wrote {path} with {len(markers)} markers in {len(groups)} groups")
 
 
 if __name__ == "__main__":

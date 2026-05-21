@@ -1,7 +1,7 @@
 COMPOSE ?= docker compose
 ENV_FILE ?= .env.example
 
-.PHONY: validate compose-config check-compose-static-ips secret-scan test-watch-maps test-admin-panel-safe-surfaces test-character-slot-tool test-admin-chat test-operational-borrowing test-artificial-exchange test-artificial-exchange-service artificial-exchange-smoke artificial-exchange-bootstrap-catalog artificial-exchange-research-prices test-vehicle-fidelity-investigation list-publishable preflight operational-identity-check operational-report operational-bundle verify-operational-bundle status standby-status sync-standby-files sync-standby-images promote-standby postgres-failover-seal postgres-cutback-proof rebuild-postgres-standby failover-orchestrate failover-role-services cutover-check cutover-network-status host-network-failover router-cutover install-dune-status-service check-steam-update backup-dry-run backup-state restore-dry-run verify-backup start-full-warm-pool recover-survival recover-map watch-maps watch-maps-status install-map-watchdog-service install-artificial-exchange-service install-artificial-exchange-buyer-service install-artificial-exchange-populator-service install-full-farm-service install-daily-maintenance-timer full-world-partitions public-site-check public-site-package verify-local-state-ignored rabbitmq-cert-check rabbitmq-cert-generate rabbitmq-cert-stage rabbitmq-cert-install-staged
+.PHONY: validate compose-config check-compose-static-ips secret-scan test-watch-maps test-admin-panel-safe-surfaces test-character-slot-tool test-admin-chat test-operational-borrowing test-artificial-exchange test-artificial-exchange-service artificial-exchange-smoke artificial-exchange-bootstrap-catalog artificial-exchange-research-prices test-vehicle-fidelity-investigation list-publishable preflight operational-identity-check operational-report operational-bundle verify-operational-bundle status standby-status sync-standby-files sync-standby-images promote-standby postgres-failover-seal postgres-cutback-proof rebuild-postgres-standby handoff-experiment summarize-handoff failover-orchestrate failover-role-services cutover-check cutover-network-status host-network-failover router-cutover install-dune-status-service check-steam-update backup-dry-run backup-state restore-dry-run verify-backup start-full-warm-pool recover-survival recover-map watch-maps watch-maps-status install-map-watchdog-service install-artificial-exchange-service install-artificial-exchange-buyer-service install-artificial-exchange-populator-service install-full-farm-service install-daily-maintenance-timer full-world-partitions public-site-check public-site-package verify-local-state-ignored rabbitmq-cert-check rabbitmq-cert-generate rabbitmq-cert-stage rabbitmq-cert-install-staged
 
 validate: compose-config check-compose-static-ips secret-scan test-watch-maps test-admin-panel-safe-surfaces test-character-slot-tool test-admin-chat test-operational-borrowing test-artificial-exchange test-artificial-exchange-service test-vehicle-fidelity-investigation verify-local-state-ignored
 
@@ -59,6 +59,12 @@ postgres-cutback-proof:
 
 rebuild-postgres-standby:
 	./scripts/rebuild-postgres-standby.sh $(ENV_FILE) $(TARGET) $(ROOT)
+
+handoff-experiment:
+	./scripts/handoff-experiment.sh $(ENV_FILE) $(ROLE) $(APPLY)
+
+summarize-handoff:
+	./scripts/summarize-handoff-experiment.sh $(CAPTURE_DIR)
 
 failover-orchestrate:
 	./scripts/failover-orchestrate.sh $(ENV_FILE) $(ROLE) $(APPLY)
@@ -200,7 +206,7 @@ list-publishable:
 
 public-site-check:
 	bash -n public-site/scripts/*.sh examples/public-site/rclone-sync.sh
-	python3 -m py_compile public-site/scripts/render-dune-public-snapshot.py
+	python3 -m py_compile public-site/scripts/render-dune-public-snapshot.py scripts/update-hagga-poi-markers.py
 	systemd-analyze verify public-site/systemd/render-dune-static-status.service public-site/systemd/render-dune-static-status.timer
 
 public-site-package:

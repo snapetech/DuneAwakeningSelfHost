@@ -430,6 +430,7 @@ The optional public site publishes static files only:
 ```text
 /status.html
 /players.json
+/hagga-pois.json
 /hagga-map.svg
 /hagga-basin.webp
 ```

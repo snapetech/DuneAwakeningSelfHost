@@ -378,7 +378,7 @@ DUNE_CHAT_COMMAND_AUCTION_SUGGESTION_MIN_SCORE=0.55
 Dry-run examples already tested:
 
 ```text
-Lukano: &auction "power pack" 1 456
+test player: &auction "power pack" 1 456
 -> previewed 1x PowerPack2 for 456, ownerId=17
 
 Xale: &auction PowerPack 1 456
@@ -390,11 +390,11 @@ Xale: &auction NopeItem 1 456
 Xale: &auction PowerPack one 456
 -> count must be a positive integer
 
-Lukano: &auction --base PowerPack 1 456
+test player: &auction --base PowerPack 1 456
 -> with base storage disabled: base/storage auction source is disabled
 -> with base storage enabled: previewed 1x PowerPack from inventory 413
 
-Lukano: &auction --inventory 413 PowerPack 1 456
+test player: &auction --inventory 413 PowerPack 1 456
 -> with base storage enabled: previewed 1x PowerPack from inventory 413
 
 Xale: &auction --inventory 413 PowerPack 1 456
@@ -403,7 +403,7 @@ Xale: &auction --inventory 413 PowerPack 1 456
 Xale: &auction --item-id 33256803 1 456
 -> previewed 1x PowerPack from Xale's personal inventory
 
-Lukano: &auction --inventory 413 --item-id 33256594 1 456
+test player: &auction --inventory 413 --item-id 33256594 1 456
 -> with base storage enabled: previewed 1x PowerPack from inventory 413
 
 Xale: &auction --item-id 33256594 1 456
@@ -413,7 +413,7 @@ Xale: &auction PwerPck 1 456
 -> no exact match for PwerPck; did you mean PowerPack from inventory 37?
 -> reply &auction yes or &auction no
 
-Lukano: &auction --inventory 413 PwerPck 1 456
+test player: &auction --inventory 413 PwerPck 1 456
 -> with base storage enabled: did you mean PowerPack from inventory 413?
 ```
 
@@ -456,7 +456,7 @@ Additional private-chat investigation:
 - With `redirect_exchange=b"chat.map"`, TextRouter logs a successful redirect to
   `chat.map`. Confidence: high.
 - With `redirect_exchange=b"chat.whispers"`, TextRouter logs successful redirects
-  to `chat.whispers` for routing keys `6FF6498F4074E3DE`, `Lukano`, and
+  to `chat.whispers` for routing keys `6FF6498F4074E3DE`, `test player`, and
   `6FF6498F4074E3DE_queue`. Confidence: high for TextRouter redirect, unknown
   for client rendering.
 - Working direct player-queue publish uses `chat.whispers`, temporary binding
@@ -467,7 +467,7 @@ Additional private-chat investigation:
 ```text
 scripts/capture-chat-routing.py --seconds 60 \
   --routing-key 6FF6498F4074E3DE \
-  --routing-key Lukano \
+  --routing-key test player \
   --routing-key 6FF6498F4074E3DE_queue \
   --routing-key '#'
 ```

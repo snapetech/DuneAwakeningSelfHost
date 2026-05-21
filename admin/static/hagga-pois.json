@@ -1,0 +1,5358 @@
+{
+  "crs": {
+    "bottomRight": [
+      100000,
+      100000
+    ],
+    "order": "xy",
+    "topLeft": [
+      0,
+      0
+    ]
+  },
+  "groups": {
+    "Agave": {
+      "count": 39,
+      "icon": "T_UI_IconMapMarkerSaguaro_D.png",
+      "name": "Agave Seeds"
+    },
+    "Aql": {
+      "count": 8,
+      "icon": "Map Marker Aql.png",
+      "name": "Trials of Aql"
+    },
+    "Atreides": {
+      "count": 2,
+      "icon": "Map_NPCAtreidesQuasrtermaster.png",
+      "name": "Atreides"
+    },
+    "Camps": {
+      "count": 263,
+      "icon": "Map_Marker_Enemy_Camp.png",
+      "name": "Enemy Camp"
+    },
+    "Caves": {
+      "count": 74,
+      "icon": "Map Marker Cave.png",
+      "name": "Cave"
+    },
+    "Custom": {
+      "count": 0,
+      "icon": "",
+      "name": "Dropped Pin"
+    },
+    "EcoLabs": {
+      "count": 13,
+      "icon": "Map Marker EcoLab.png",
+      "name": "Ecology Lab"
+    },
+    "Harkonnen": {
+      "count": 2,
+      "icon": "Map_NPCHarkonnenQuartermaster.png",
+      "name": "Harkonnen"
+    },
+    "Intel": {
+      "count": 51,
+      "icon": "T_UI_IconMapIntel_D.png",
+      "name": "Intel Points"
+    },
+    "Landmark": {
+      "count": 4,
+      "icon": "Map_Marker_Landmark.png",
+      "name": "Landmark"
+    },
+    "Loot": {
+      "count": 31,
+      "icon": "T_UI_CatIconUnique_D.png",
+      "name": "Unique Item Loot"
+    },
+    "NPCs": {
+      "count": 23,
+      "icon": "Map Marker NPC.png",
+      "name": "NPC's"
+    },
+    "Outposts": {
+      "count": 90,
+      "icon": "Map_Marker_Enemy_Outpost.png",
+      "name": "Outposts"
+    },
+    "Representatives": {
+      "count": 18,
+      "icon": "Map_NPCLandsraadRepresentative.png",
+      "name": "Landsraad Representative"
+    },
+    "Sandbikes": {
+      "count": 7,
+      "icon": "Map Marker Sandbike.png",
+      "name": "Salvaged Sandbikes"
+    },
+    "Shipwrecks": {
+      "count": 13,
+      "icon": "Map Marker Shipwreck.png",
+      "name": "Shipwreck"
+    },
+    "Spiceblows": {
+      "count": 8,
+      "icon": "Map_Spice Field.png",
+      "name": "Spice Blows"
+    },
+    "TradingPosts": {
+      "count": 4,
+      "icon": "Map_Marker_Trading_Post.png",
+      "name": "Trading Post"
+    },
+    "Trainers": {
+      "count": 5,
+      "icon": "Map_InteractLore.png",
+      "name": "Skill Trainer"
+    }
+  },
+  "markers": [
+    {
+      "article": "Wreck of the Alcyon",
+      "group": "Shipwrecks",
+      "id": "the_wreck_of_the_alcyon",
+      "name": "Wreck of the Alcyon",
+      "x": 75187.44,
+      "y": 84624.31
+    },
+    {
+      "article": "Wreck of the Pallas",
+      "group": "Shipwrecks",
+      "id": "the_wreck_of_the_pallas",
+      "name": "Wreck of the Pallas",
+      "x": 49509.09,
+      "y": 47187.17
+    },
+    {
+      "article": "Hagga Rift Shipwreck",
+      "group": "Shipwrecks",
+      "id": "hagga_rift_shipwreck",
+      "name": "Hagga Rift Shipwreck",
+      "x": 87181.1,
+      "y": 41252.97
+    },
+    {
+      "article": "Wreck of the Alecto",
+      "group": "Shipwrecks",
+      "id": "wreck_of_the_alecto",
+      "name": "Wreck of the Alecto",
+      "x": 28747.22,
+      "y": 13601.78
+    },
+    {
+      "article": "Wreck of the Delphis",
+      "group": "Shipwrecks",
+      "id": "wreck_of_the_delphis",
+      "name": "Wreck of the Delphis",
+      "x": 17953.13,
+      "y": 75531.25
+    },
+    {
+      "article": "Wreck of the Limos",
+      "group": "Shipwrecks",
+      "id": "the_wreck_of_the_limos",
+      "name": "Wreck of the Limos",
+      "x": 39034.21,
+      "y": 23512.99
+    },
+    {
+      "article": "Wreck of the Ourea (Forward Section)",
+      "group": "Shipwrecks",
+      "id": "the_wreck_of_the_ourea_forward_section",
+      "name": "Wreck of the Ourea (Forward Section)",
+      "x": 28562.5,
+      "y": 71828.13
+    },
+    {
+      "article": "Wreck of the Euporia",
+      "group": "Shipwrecks",
+      "id": "wreck_of_the_euporia",
+      "name": "Wreck of the Euporia",
+      "x": 8406.25,
+      "y": 92218.75
+    },
+    {
+      "article": "Wreck of the Leto",
+      "group": "Shipwrecks",
+      "id": "wreck_of_the_leto",
+      "name": "Wreck of the Leto",
+      "x": 25130.33,
+      "y": 87239.12
+    },
+    {
+      "article": "Wreck of the Ourea (Aft Section)",
+      "group": "Shipwrecks",
+      "id": "the_wreck_of_the_ourea_aft_section",
+      "name": "Wreck of the Ourea (Aft Section)",
+      "x": 15671.88,
+      "y": 65015.63
+    },
+    {
+      "article": "Wreck of the Tisiphone",
+      "group": "Shipwrecks",
+      "id": "the_wreck_of_the_tisiphone",
+      "name": "Wreck of the Tisiphone",
+      "x": 79484.38,
+      "y": 21390.63
+    },
+    {
+      "article": "Wreck of the Actaeon",
+      "group": "Shipwrecks",
+      "id": "the_wreck_of_the_actaeon",
+      "name": "Wreck of the Actaeon",
+      "x": 71868.04,
+      "y": 67604.58
+    },
+    {
+      "article": "Wreck of the Tartarus",
+      "group": "Shipwrecks",
+      "id": "wreck_of_the_tartarus",
+      "name": "Wreck of the Tartarus",
+      "x": 32640.63,
+      "y": 78796.88
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-1",
+      "name": "NPC Camp",
+      "x": 8937.5,
+      "y": 44453.13
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-2",
+      "name": "NPC Camp",
+      "x": 7984.38,
+      "y": 42781.25
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-3",
+      "name": "NPC Camp",
+      "x": 8312.5,
+      "y": 41015.63
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-4",
+      "name": "NPC Camp",
+      "x": 7359.38,
+      "y": 41796.88
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-5",
+      "name": "NPC Camp",
+      "x": 14218.75,
+      "y": 37921.88
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-6",
+      "name": "NPC Camp",
+      "x": 12500.0,
+      "y": 37843.75
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-7",
+      "name": "NPC Camp",
+      "x": 11875.0,
+      "y": 35125.0
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-8",
+      "name": "NPC Camp",
+      "x": 11250.0,
+      "y": 34093.75
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-9",
+      "name": "NPC Camp",
+      "x": 7875.0,
+      "y": 32250.0
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-10",
+      "name": "NPC Camp",
+      "x": 6765.63,
+      "y": 31781.25
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-11",
+      "name": "NPC Camp",
+      "x": 9328.13,
+      "y": 29484.38
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-12",
+      "name": "NPC Camp",
+      "x": 9125.0,
+      "y": 27281.25
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-13",
+      "name": "NPC Camp",
+      "x": 10546.88,
+      "y": 29640.63
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-14",
+      "name": "NPC Camp",
+      "x": 12562.5,
+      "y": 31093.75
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-15",
+      "name": "NPC Camp",
+      "x": 14750.0,
+      "y": 30281.25
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-16",
+      "name": "NPC Camp",
+      "x": 15781.25,
+      "y": 28953.13
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-17",
+      "name": "NPC Camp",
+      "x": 17796.88,
+      "y": 26921.88
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-18",
+      "name": "NPC Camp",
+      "x": 18843.75,
+      "y": 27031.25
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-19",
+      "name": "NPC Camp",
+      "x": 21043.71,
+      "y": 23042.22
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-20",
+      "name": "NPC Camp",
+      "x": 15953.13,
+      "y": 24906.25
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-21",
+      "name": "NPC Camp",
+      "x": 11750.0,
+      "y": 25234.38
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-22",
+      "name": "NPC Camp",
+      "x": 12995.75,
+      "y": 24529.69
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-23",
+      "name": "NPC Camp",
+      "x": 9250.0,
+      "y": 27703.13
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-24",
+      "name": "NPC Camp",
+      "x": 10991.58,
+      "y": 21852.25
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-25",
+      "name": "NPC Camp",
+      "x": 5218.75,
+      "y": 24875.0
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-26",
+      "name": "NPC Camp",
+      "x": 5406.25,
+      "y": 22968.75
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-27",
+      "name": "NPC Camp",
+      "x": 5781.25,
+      "y": 17531.25
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-28",
+      "name": "NPC Camp",
+      "x": 3812.5,
+      "y": 18203.13
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-29",
+      "name": "NPC Camp",
+      "x": 9625.0,
+      "y": 18546.88
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-30",
+      "name": "NPC Camp",
+      "x": 10703.13,
+      "y": 16421.88
+    },
+    {
+      "article": "Harkonnen Deserter Camp",
+      "group": "Camps",
+      "id": "harkonnen_deserter_camp",
+      "name": "Harkonnen Deserter Camp",
+      "x": 88778.17,
+      "y": 26472.26
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-32",
+      "name": "NPC Camp",
+      "x": 14421.88,
+      "y": 19375.0
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-33",
+      "name": "NPC Camp",
+      "x": 19245.9,
+      "y": 16615.65
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-34",
+      "name": "NPC Camp",
+      "x": 19125.0,
+      "y": 18921.88
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-35",
+      "name": "NPC Camp",
+      "x": 19343.75,
+      "y": 16890.63
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-36",
+      "name": "NPC Camp",
+      "x": 22281.25,
+      "y": 21015.63
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-37",
+      "name": "NPC Camp",
+      "x": 21265.63,
+      "y": 21500.0
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-38",
+      "name": "NPC Camp",
+      "x": 24541.94,
+      "y": 22839.85
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-39",
+      "name": "NPC Camp",
+      "x": 23359.38,
+      "y": 28046.88
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-40",
+      "name": "NPC Camp",
+      "x": 22281.25,
+      "y": 27203.13
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-41",
+      "name": "NPC Camp",
+      "x": 24125.0,
+      "y": 27375.0
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-42",
+      "name": "NPC Camp",
+      "x": 20949.77,
+      "y": 40939.82
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-43",
+      "name": "NPC Camp",
+      "x": 21748.3,
+      "y": 41910.58
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-44",
+      "name": "NPC Camp",
+      "x": 24457.05,
+      "y": 39937.73
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-45",
+      "name": "NPC Camp",
+      "x": 24582.31,
+      "y": 41550.46
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-46",
+      "name": "NPC Camp",
+      "x": 23533.26,
+      "y": 40548.38
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-47",
+      "name": "NPC Camp",
+      "x": 25600.05,
+      "y": 38137.12
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-48",
+      "name": "NPC Camp",
+      "x": 16375.0,
+      "y": 44312.5
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-49",
+      "name": "NPC Camp",
+      "x": 11084.1,
+      "y": 12016.38
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-50",
+      "name": "NPC Camp",
+      "x": 15027.66,
+      "y": 12954.41
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-51",
+      "name": "NPC Camp",
+      "x": 15946.55,
+      "y": 8685.41
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-52",
+      "name": "NPC Camp",
+      "x": 18607.5,
+      "y": 7039.06
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-53",
+      "name": "NPC Camp",
+      "x": 17860.9,
+      "y": 6560.47
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-54",
+      "name": "NPC Camp",
+      "x": 23163.66,
+      "y": 9680.87
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-55",
+      "name": "NPC Camp",
+      "x": 20713.29,
+      "y": 11231.49
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-56",
+      "name": "NPC Camp",
+      "x": 20100.7,
+      "y": 11939.8
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-57",
+      "name": "NPC Camp",
+      "x": 22417.06,
+      "y": 11844.09
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-58",
+      "name": "NPC Camp",
+      "x": 27385.01,
+      "y": 5835.64
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-59",
+      "name": "NPC Camp",
+      "x": 28590.64,
+      "y": 7573.63
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-60",
+      "name": "NPC Camp",
+      "x": 28943.89,
+      "y": 12580.89
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-61",
+      "name": "NPC Camp",
+      "x": 37077.02,
+      "y": 1185.36
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-62",
+      "name": "NPC Camp",
+      "x": 36419.4,
+      "y": 5412.89
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-63",
+      "name": "NPC Camp",
+      "x": 31377.68,
+      "y": 9436.87
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-64",
+      "name": "NPC Camp",
+      "x": 31706.49,
+      "y": 8685.31
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-65",
+      "name": "NPC Camp",
+      "x": 32802.52,
+      "y": 9217.67
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-66",
+      "name": "NPC Camp",
+      "x": 27281.89,
+      "y": 13992.02
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-67",
+      "name": "NPC Camp",
+      "x": 27720.91,
+      "y": 14415.36
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-68",
+      "name": "NPC Camp",
+      "x": 26231.38,
+      "y": 14305.6
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-69",
+      "name": "NPC Camp",
+      "x": 30025.76,
+      "y": 16641.81
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-70",
+      "name": "NPC Camp",
+      "x": 29827.59,
+      "y": 26049.51
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-71",
+      "name": "NPC Camp",
+      "x": 29138.65,
+      "y": 26926.33
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-72",
+      "name": "NPC Camp",
+      "x": 26915.29,
+      "y": 27552.63
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-73",
+      "name": "NPC Camp",
+      "x": 32849.49,
+      "y": 22276.05
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-74",
+      "name": "NPC Camp",
+      "x": 37379.32,
+      "y": 15951.92
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-75",
+      "name": "NPC Camp",
+      "x": 41539.41,
+      "y": 14885.69
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-76",
+      "name": "NPC Camp",
+      "x": 43089.51,
+      "y": 11503.67
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-77",
+      "name": "NPC Camp",
+      "x": 44608.29,
+      "y": 12145.63
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-78",
+      "name": "NPC Camp",
+      "x": 36983.07,
+      "y": 28523.4
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-79",
+      "name": "NPC Camp",
+      "x": 38893.29,
+      "y": 25188.35
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-80",
+      "name": "NPC Camp",
+      "x": 40365.1,
+      "y": 19927.42
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-81",
+      "name": "NPC Camp",
+      "x": 36215.22,
+      "y": 19401.46
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-82",
+      "name": "NPC Camp",
+      "x": 46174.04,
+      "y": 27897.1
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-83",
+      "name": "NPC Camp",
+      "x": 40051.95,
+      "y": 15371.08
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-84",
+      "name": "NPC Camp",
+      "x": 42197.03,
+      "y": 15371.08
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-85",
+      "name": "NPC Camp",
+      "x": 47410.99,
+      "y": 11848.13
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-86",
+      "name": "NPC Camp",
+      "x": 55944.34,
+      "y": 9327.27
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-87",
+      "name": "NPC Camp",
+      "x": 56304.46,
+      "y": 3487.02
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-88",
+      "name": "NPC Camp",
+      "x": 60485.02,
+      "y": 6352.34
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-89",
+      "name": "NPC Camp",
+      "x": 66468.75,
+      "y": 15734.38
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-90",
+      "name": "NPC Camp",
+      "x": 67187.5,
+      "y": 16562.5
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-91",
+      "name": "NPC Camp",
+      "x": 67796.88,
+      "y": 15687.5
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-92",
+      "name": "NPC Camp",
+      "x": 71265.63,
+      "y": 15984.38
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-93",
+      "name": "NPC Camp",
+      "x": 70453.13,
+      "y": 16125.0
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-94",
+      "name": "NPC Camp",
+      "x": 76203.13,
+      "y": 15984.38
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-95",
+      "name": "NPC Camp",
+      "x": 77984.38,
+      "y": 16421.88
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-96",
+      "name": "NPC Camp",
+      "x": 82484.38,
+      "y": 15609.38
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-97",
+      "name": "NPC Camp",
+      "x": 80171.88,
+      "y": 16187.5
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-98",
+      "name": "NPC Camp",
+      "x": 93788.58,
+      "y": 66492.9
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-99",
+      "name": "NPC Camp",
+      "x": 94477.51,
+      "y": 68168.25
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-100",
+      "name": "NPC Camp",
+      "x": 92034.93,
+      "y": 68669.29
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-101",
+      "name": "NPC Camp",
+      "x": 90970.22,
+      "y": 69827.95
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-102",
+      "name": "NPC Camp",
+      "x": 89936.82,
+      "y": 68387.46
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-103",
+      "name": "NPC Camp",
+      "x": 89926.53,
+      "y": 53062.45
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-104",
+      "name": "NPC Camp",
+      "x": 90641.41,
+      "y": 50929.32
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-105",
+      "name": "NPC Camp",
+      "x": 90891.93,
+      "y": 48549.37
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-106",
+      "name": "NPC Camp",
+      "x": 89052.44,
+      "y": 42328.61
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-107",
+      "name": "NPC Camp",
+      "x": 88558.96,
+      "y": 41065.08
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-108",
+      "name": "NPC Camp",
+      "x": 87353.33,
+      "y": 41863.61
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-109",
+      "name": "NPC Camp",
+      "x": 86883.61,
+      "y": 37628.77
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-110",
+      "name": "NPC Camp",
+      "x": 83625.0,
+      "y": 31921.88
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-111",
+      "name": "NPC Camp",
+      "x": 81906.25,
+      "y": 29781.25
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-112",
+      "name": "NPC Camp",
+      "x": 83109.38,
+      "y": 29031.25
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-113",
+      "name": "NPC Camp",
+      "x": 74107.07,
+      "y": 26433.64
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-114",
+      "name": "NPC Camp",
+      "x": 74451.53,
+      "y": 22268.74
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-115",
+      "name": "NPC Camp",
+      "x": 72078.13,
+      "y": 29265.63
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-116",
+      "name": "NPC Camp",
+      "x": 68125.0,
+      "y": 25796.88
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-117",
+      "name": "NPC Camp",
+      "x": 67546.88,
+      "y": 24484.38
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-118",
+      "name": "NPC Camp",
+      "x": 63522.58,
+      "y": 22096.51
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-119",
+      "name": "NPC Camp",
+      "x": 60907.77,
+      "y": 21172.71
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-120",
+      "name": "NPC Camp",
+      "x": 57750.0,
+      "y": 22859.38
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-121",
+      "name": "NPC Camp",
+      "x": 39723.14,
+      "y": 33236.31
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-122",
+      "name": "NPC Camp",
+      "x": 49312.5,
+      "y": 30921.88
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-123",
+      "name": "NPC Camp",
+      "x": 49640.63,
+      "y": 32656.25
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-124",
+      "name": "NPC Camp",
+      "x": 50203.13,
+      "y": 31812.5
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-125",
+      "name": "NPC Camp",
+      "x": 48921.88,
+      "y": 33781.25
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-126",
+      "name": "NPC Camp",
+      "x": 52289.55,
+      "y": 28787.49
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-127",
+      "name": "NPC Camp",
+      "x": 53843.75,
+      "y": 31000.0
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-128",
+      "name": "NPC Camp",
+      "x": 57424.52,
+      "y": 27594.59
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-129",
+      "name": "NPC Camp",
+      "x": 61609.38,
+      "y": 29890.63
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-130",
+      "name": "NPC Camp",
+      "x": 63234.38,
+      "y": 31906.25
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-131",
+      "name": "NPC Camp",
+      "x": 61953.13,
+      "y": 31484.38
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-132",
+      "name": "NPC Camp",
+      "x": 68734.38,
+      "y": 33515.63
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-133",
+      "name": "NPC Camp",
+      "x": 67500.0,
+      "y": 35531.25
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-134",
+      "name": "NPC Camp",
+      "x": 66718.75,
+      "y": 35468.75
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-135",
+      "name": "NPC Camp",
+      "x": 63046.88,
+      "y": 40750.0
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-136",
+      "name": "NPC Camp",
+      "x": 69515.63,
+      "y": 42750.0
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-137",
+      "name": "NPC Camp",
+      "x": 68296.88,
+      "y": 43578.13
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-138",
+      "name": "NPC Camp",
+      "x": 69312.5,
+      "y": 44375.0
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-139",
+      "name": "NPC Camp",
+      "x": 70515.63,
+      "y": 43515.63
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-140",
+      "name": "NPC Camp",
+      "x": 75609.38,
+      "y": 38328.13
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-141",
+      "name": "NPC Camp",
+      "x": 74548.02,
+      "y": 33035.6
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-142",
+      "name": "NPC Camp",
+      "x": 80218.75,
+      "y": 38468.75
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-143",
+      "name": "NPC Camp",
+      "x": 80828.13,
+      "y": 39671.88
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-144",
+      "name": "NPC Camp",
+      "x": 79738.07,
+      "y": 39663.58
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-145",
+      "name": "NPC Camp",
+      "x": 78093.75,
+      "y": 43109.38
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-146",
+      "name": "NPC Camp",
+      "x": 78000.0,
+      "y": 20796.88
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-147",
+      "name": "NPC Camp",
+      "x": 81015.63,
+      "y": 21296.88
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-148",
+      "name": "NPC Camp",
+      "x": 81906.25,
+      "y": 17359.38
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-149",
+      "name": "NPC Camp",
+      "x": 83283.44,
+      "y": 13526.71
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-150",
+      "name": "NPC Camp",
+      "x": 89326.18,
+      "y": 16717.62
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-151",
+      "name": "NPC Camp",
+      "x": 90891.93,
+      "y": 15574.62
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-152",
+      "name": "NPC Camp",
+      "x": 90390.89,
+      "y": 17296.95
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-153",
+      "name": "NPC Camp",
+      "x": 91252.06,
+      "y": 19426.38
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-154",
+      "name": "NPC Camp",
+      "x": 89996.46,
+      "y": 19994.99
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-155",
+      "name": "NPC Camp",
+      "x": 94070.41,
+      "y": 30198.75
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-156",
+      "name": "NPC Camp",
+      "x": 91424.29,
+      "y": 30605.85
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-157",
+      "name": "NPC Camp",
+      "x": 93256.22,
+      "y": 32093.31
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-158",
+      "name": "NPC Camp",
+      "x": 79211.42,
+      "y": 50506.56
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-159",
+      "name": "NPC Camp",
+      "x": 76737.53,
+      "y": 53857.27
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-160",
+      "name": "NPC Camp",
+      "x": 80135.21,
+      "y": 54264.37
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-161",
+      "name": "NPC Camp",
+      "x": 79712.46,
+      "y": 58617.16
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-162",
+      "name": "NPC Camp",
+      "x": 78397.23,
+      "y": 59118.2
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-163",
+      "name": "NPC Camp",
+      "x": 78945.24,
+      "y": 61012.76
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-164",
+      "name": "NPC Camp",
+      "x": 78193.68,
+      "y": 64316.5
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-165",
+      "name": "NPC Camp",
+      "x": 77755.27,
+      "y": 65522.13
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-166",
+      "name": "NPC Camp",
+      "x": 80526.65,
+      "y": 67369.72
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-167",
+      "name": "NPC Camp",
+      "x": 81074.66,
+      "y": 67933.39
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-168",
+      "name": "NPC Camp",
+      "x": 78052.76,
+      "y": 68450.09
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-169",
+      "name": "NPC Camp",
+      "x": 77301.2,
+      "y": 65631.73
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-170",
+      "name": "NPC Camp",
+      "x": 74811.65,
+      "y": 71863.43
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-171",
+      "name": "NPC Camp",
+      "x": 75297.04,
+      "y": 72348.81
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-172",
+      "name": "NPC Camp",
+      "x": 72979.72,
+      "y": 68136.94
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-173",
+      "name": "NPC Camp",
+      "x": 72431.71,
+      "y": 67588.92
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-174",
+      "name": "NPC Camp",
+      "x": 71883.7,
+      "y": 68152.59
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-175",
+      "name": "NPC Camp",
+      "x": 70631.1,
+      "y": 68356.14
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-176",
+      "name": "NPC Camp",
+      "x": 69660.33,
+      "y": 68324.83
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-177",
+      "name": "NPC Camp",
+      "x": 64806.5,
+      "y": 70375.96
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-178",
+      "name": "NPC Camp",
+      "x": 64321.11,
+      "y": 71926.06
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-179",
+      "name": "NPC Camp",
+      "x": 62990.22,
+      "y": 70125.44
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-180",
+      "name": "NPC Camp",
+      "x": 67139.47,
+      "y": 57489.82
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-181",
+      "name": "NPC Camp",
+      "x": 55271.06,
+      "y": 64473.08
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-182",
+      "name": "NPC Camp",
+      "x": 55302.38,
+      "y": 69655.72
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-183",
+      "name": "NPC Camp",
+      "x": 53486.11,
+      "y": 68058.65
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-184",
+      "name": "NPC Camp",
+      "x": 55521.58,
+      "y": 64144.27
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-185",
+      "name": "NPC Camp",
+      "x": 52014.3,
+      "y": 66007.51
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-186",
+      "name": "NPC Camp",
+      "x": 51701.15,
+      "y": 60229.89
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-187",
+      "name": "NPC Camp",
+      "x": 53376.5,
+      "y": 55736.18
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-188",
+      "name": "NPC Camp",
+      "x": 51810.75,
+      "y": 53747.67
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-189",
+      "name": "NPC Camp",
+      "x": 57400.49,
+      "y": 48017.02
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-190",
+      "name": "NPC Camp",
+      "x": 91862.7,
+      "y": 22244.73
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-191",
+      "name": "NPC Camp",
+      "x": 54879.63,
+      "y": 42646.49
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-192",
+      "name": "NPC Camp",
+      "x": 54754.37,
+      "y": 40798.9
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-193",
+      "name": "NPC Camp",
+      "x": 53266.9,
+      "y": 41440.86
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-194",
+      "name": "NPC Camp",
+      "x": 46800.34,
+      "y": 39828.13
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-195",
+      "name": "NPC Camp",
+      "x": 45673.0,
+      "y": 39640.24
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-196",
+      "name": "NPC Camp",
+      "x": 43433.97,
+      "y": 40062.99
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-197",
+      "name": "NPC Camp",
+      "x": 43308.71,
+      "y": 41190.34
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-198",
+      "name": "NPC Camp",
+      "x": 44811.84,
+      "y": 43147.53
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-199",
+      "name": "NPC Camp",
+      "x": 41759.28,
+      "y": 42581.89
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-200",
+      "name": "NPC Camp",
+      "x": 40358.38,
+      "y": 44754.7
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-201",
+      "name": "NPC Camp",
+      "x": 42103.08,
+      "y": 45042.09
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-202",
+      "name": "NPC Camp",
+      "x": 42134.4,
+      "y": 46388.63
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-203",
+      "name": "NPC Camp",
+      "x": 41617.7,
+      "y": 49019.1
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-204",
+      "name": "NPC Camp",
+      "x": 38783.69,
+      "y": 58006.52
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-205",
+      "name": "NPC Camp",
+      "x": 39331.7,
+      "y": 60793.56
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-206",
+      "name": "NPC Camp",
+      "x": 38658.43,
+      "y": 61388.54
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-207",
+      "name": "NPC Camp",
+      "x": 38251.33,
+      "y": 62187.08
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-208",
+      "name": "NPC Camp",
+      "x": 39222.1,
+      "y": 62014.84
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-209",
+      "name": "NPC Camp",
+      "x": 39065.53,
+      "y": 64473.08
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-210",
+      "name": "NPC Camp",
+      "x": 40161.55,
+      "y": 64927.14
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-211",
+      "name": "NPC Camp",
+      "x": 44702.23,
+      "y": 90652.46
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-212",
+      "name": "NPC Camp",
+      "x": 46972.58,
+      "y": 89932.21
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-213",
+      "name": "NPC Camp",
+      "x": 50119.74,
+      "y": 91826.77
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-214",
+      "name": "NPC Camp",
+      "x": 49242.92,
+      "y": 90339.31
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-215",
+      "name": "NPC Camp",
+      "x": 54103.19,
+      "y": 94044.24
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-216",
+      "name": "NPC Camp",
+      "x": 61956.83,
+      "y": 93502.13
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-217",
+      "name": "NPC Camp",
+      "x": 61768.94,
+      "y": 90934.29
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-218",
+      "name": "NPC Camp",
+      "x": 65401.48,
+      "y": 91607.57
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-219",
+      "name": "NPC Camp",
+      "x": 66669.74,
+      "y": 92672.28
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-220",
+      "name": "NPC Camp",
+      "x": 65683.32,
+      "y": 93298.58
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-221",
+      "name": "NPC Camp",
+      "x": 68329.44,
+      "y": 91952.03
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-222",
+      "name": "NPC Camp",
+      "x": 73856.55,
+      "y": 92045.98
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-223",
+      "name": "NPC Camp",
+      "x": 76142.54,
+      "y": 92437.42
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-224",
+      "name": "NPC Camp",
+      "x": 76361.75,
+      "y": 90621.14
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-225",
+      "name": "NPC Camp",
+      "x": 78647.75,
+      "y": 89352.88
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-226",
+      "name": "NPC Camp",
+      "x": 87168.88,
+      "y": 91655.48
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-227",
+      "name": "NPC Camp",
+      "x": 86867.95,
+      "y": 90104.44
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-228",
+      "name": "NPC Camp",
+      "x": 86993.21,
+      "y": 91075.21
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-229",
+      "name": "NPC Camp",
+      "x": 23531.25,
+      "y": 76000.0
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-230",
+      "name": "NPC Camp",
+      "x": 12375.0,
+      "y": 74609.38
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-231",
+      "name": "NPC Camp",
+      "x": 5296.88,
+      "y": 84421.88
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-232",
+      "name": "NPC Camp",
+      "x": 10421.88,
+      "y": 90531.25
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-233",
+      "name": "NPC Camp",
+      "x": 15218.75,
+      "y": 86171.88
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-234",
+      "name": "NPC Camp",
+      "x": 20605.3,
+      "y": 88601.32
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-235",
+      "name": "NPC Camp",
+      "x": 23705.49,
+      "y": 85861.25
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-236",
+      "name": "NPC Camp",
+      "x": 23204.45,
+      "y": 84968.78
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-237",
+      "name": "NPC Camp",
+      "x": 28812.5,
+      "y": 82796.88
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-238",
+      "name": "NPC Camp",
+      "x": 28375.0,
+      "y": 73953.13
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-239",
+      "name": "NPC Camp",
+      "x": 87541.22,
+      "y": 90699.43
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-240",
+      "name": "NPC Camp",
+      "x": 88715.54,
+      "y": 88100.28
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-241",
+      "name": "NPC Camp",
+      "x": 87744.77,
+      "y": 88162.91
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-242",
+      "name": "NPC Camp",
+      "x": 87932.66,
+      "y": 89024.07
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-243",
+      "name": "NPC Camp",
+      "x": 86272.96,
+      "y": 89556.43
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-244",
+      "name": "NPC Camp",
+      "x": 86053.76,
+      "y": 86878.99
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-245",
+      "name": "NPC Camp",
+      "x": 84534.98,
+      "y": 82307.0
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-246",
+      "name": "NPC Camp",
+      "x": 82389.9,
+      "y": 83590.91
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-247",
+      "name": "NPC Camp",
+      "x": 82734.36,
+      "y": 82087.79
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-248",
+      "name": "NPC Camp",
+      "x": 83532.9,
+      "y": 83121.19
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-249",
+      "name": "NPC Camp",
+      "x": 80808.49,
+      "y": 84201.56
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-250",
+      "name": "NPC Camp",
+      "x": 81137.29,
+      "y": 85782.97
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-251",
+      "name": "NPC Camp",
+      "x": 78318.94,
+      "y": 83935.38
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-252",
+      "name": "NPC Camp",
+      "x": 72337.77,
+      "y": 82369.63
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-253",
+      "name": "NPC Camp",
+      "x": 69754.27,
+      "y": 82228.71
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-254",
+      "name": "NPC Camp",
+      "x": 46659.42,
+      "y": 85970.86
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-255",
+      "name": "NPC Camp",
+      "x": 46409.78,
+      "y": 84278.01
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-256",
+      "name": "NPC Camp",
+      "x": 48256.49,
+      "y": 82604.49
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-257",
+      "name": "NPC Camp",
+      "x": 48209.52,
+      "y": 81164.0
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-258",
+      "name": "NPC Camp",
+      "x": 53492.39,
+      "y": 81775.13
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-259",
+      "name": "NPC Camp",
+      "x": 52693.6,
+      "y": 81136.1
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-260",
+      "name": "NPC Camp",
+      "x": 52797.17,
+      "y": 84577.34
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-261",
+      "name": "NPC Camp",
+      "x": 56539.32,
+      "y": 87380.03
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-262",
+      "name": "NPC Camp",
+      "x": 59107.16,
+      "y": 86597.16
+    },
+    {
+      "article": "",
+      "group": "Camps",
+      "id": "camps-263",
+      "name": "NPC Camp",
+      "x": 57243.91,
+      "y": 86284.01
+    },
+    {
+      "article": "Cave 1",
+      "group": "Caves",
+      "id": "cave_1",
+      "name": "Cave 1",
+      "x": 91674.81,
+      "y": 49144.36
+    },
+    {
+      "article": "Vents of Eifrit",
+      "group": "Caves",
+      "id": "vents_of_eifrit",
+      "name": "Vents of Eifrit",
+      "x": 67123.81,
+      "y": 94112.77
+    },
+    {
+      "article": "Lost Eyrie",
+      "group": "Caves",
+      "id": "lost_eyrie",
+      "name": "Lost Eyrie",
+      "x": 41946.51,
+      "y": 42388.08
+    },
+    {
+      "article": "",
+      "group": "Caves",
+      "id": "caves-4",
+      "name": "Cave",
+      "x": 54629.11,
+      "y": 42834.38
+    },
+    {
+      "article": "",
+      "group": "Caves",
+      "id": "caves-5",
+      "name": "Cave",
+      "x": 57196.94,
+      "y": 50694.45
+    },
+    {
+      "article": "",
+      "group": "Caves",
+      "id": "caves-6",
+      "name": "Cave",
+      "x": 41101.0,
+      "y": 58241.38
+    },
+    {
+      "article": "",
+      "group": "Caves",
+      "id": "caves-7",
+      "name": "Cave",
+      "x": 57557.06,
+      "y": 69593.09
+    },
+    {
+      "article": "",
+      "group": "Caves",
+      "id": "caves-8",
+      "name": "Cave",
+      "x": 64555.98,
+      "y": 63627.57
+    },
+    {
+      "article": "",
+      "group": "Caves",
+      "id": "caves-9",
+      "name": "Cave",
+      "x": 62583.13,
+      "y": 62484.57
+    },
+    {
+      "article": "",
+      "group": "Caves",
+      "id": "caves-10",
+      "name": "Cave",
+      "x": 63131.14,
+      "y": 56566.03
+    },
+    {
+      "article": "",
+      "group": "Caves",
+      "id": "caves-11",
+      "name": "Cave",
+      "x": 67515.25,
+      "y": 59415.69
+    },
+    {
+      "article": "",
+      "group": "Caves",
+      "id": "caves-12",
+      "name": "Cave",
+      "x": 65714.63,
+      "y": 56018.01
+    },
+    {
+      "article": "The Pustule",
+      "group": "Caves",
+      "id": "the_pustule",
+      "name": "The Pustule",
+      "x": 63256.4,
+      "y": 56785.23
+    },
+    {
+      "article": "Shadrath's Tomb",
+      "group": "Caves",
+      "id": "shadraths_tomb",
+      "name": "Shadrath's Tomb",
+      "x": 37750.29,
+      "y": 22620.51
+    },
+    {
+      "article": "Ghanima Cavern",
+      "group": "Caves",
+      "id": "ghanima_cavern",
+      "name": "Ghanima Cavern",
+      "x": 77019.37,
+      "y": 54608.83
+    },
+    {
+      "article": "Smuggler's Bolthole",
+      "group": "Caves",
+      "id": "smugglers_bolthole",
+      "name": "Smuggler's Bolthole",
+      "x": 78710.38,
+      "y": 58084.81
+    },
+    {
+      "article": "",
+      "group": "Caves",
+      "id": "caves-17",
+      "name": "Cave",
+      "x": 80166.53,
+      "y": 56487.74
+    },
+    {
+      "article": "Zein's Grotto",
+      "group": "Caves",
+      "id": "zeins_grotto",
+      "name": "Zein's Grotto",
+      "x": 76518.33,
+      "y": 70501.22
+    },
+    {
+      "article": "",
+      "group": "Caves",
+      "id": "caves-19",
+      "name": "Cave",
+      "x": 39190.79,
+      "y": 33079.74
+    },
+    {
+      "article": "Iri's Haunt",
+      "group": "Caves",
+      "id": "iris_haunt",
+      "name": "Iri's Haunt",
+      "x": 56022.62,
+      "y": 63893.75
+    },
+    {
+      "article": "Menol's Pocket",
+      "group": "Caves",
+      "id": "menols_pocket",
+      "name": "Menol's Pocket",
+      "x": 39691.83,
+      "y": 62860.35
+    },
+    {
+      "article": "",
+      "group": "Caves",
+      "id": "caves-22",
+      "name": "Cave",
+      "x": 58562.5,
+      "y": 22078.13
+    },
+    {
+      "article": "",
+      "group": "Caves",
+      "id": "caves-23",
+      "name": "Cave",
+      "x": 9645.04,
+      "y": 39054.12
+    },
+    {
+      "article": "Batigh Grotto",
+      "group": "Caves",
+      "id": "batigh_grotto",
+      "name": "Batigh Grotto",
+      "x": 7046.88,
+      "y": 17406.25
+    },
+    {
+      "article": "",
+      "group": "Caves",
+      "id": "caves-25",
+      "name": "Cave",
+      "x": 6296.88,
+      "y": 32328.13
+    },
+    {
+      "article": "",
+      "group": "Caves",
+      "id": "caves-26",
+      "name": "Cave",
+      "x": 15265.63,
+      "y": 19453.13
+    },
+    {
+      "article": "",
+      "group": "Caves",
+      "id": "caves-27",
+      "name": "Cave",
+      "x": 18281.25,
+      "y": 17250.0
+    },
+    {
+      "article": "Beneath The Jumble",
+      "group": "Caves",
+      "id": "beneath_the_jumble",
+      "name": "Beneath The Jumble",
+      "x": 50125.0,
+      "y": 32109.38
+    },
+    {
+      "article": "",
+      "group": "Caves",
+      "id": "caves-29",
+      "name": "Cave",
+      "x": 55093.75,
+      "y": 30765.63
+    },
+    {
+      "article": "The Dustpan",
+      "group": "Caves",
+      "id": "the_dustpan",
+      "name": "The Dustpan",
+      "x": 66343.75,
+      "y": 42078.13
+    },
+    {
+      "article": "Sandtide Grotto",
+      "group": "Caves",
+      "id": "sandtide_grotto",
+      "name": "Sandtide Grotto",
+      "x": 93929.49,
+      "y": 37244.64
+    },
+    {
+      "article": "Farhold Storage",
+      "group": "Caves",
+      "id": "farhold_storage",
+      "name": "Farhold Storage",
+      "x": 92301.11,
+      "y": 33220.66
+    },
+    {
+      "article": "",
+      "group": "Caves",
+      "id": "caves-33",
+      "name": "Cave",
+      "x": 85991.13,
+      "y": 16185.27
+    },
+    {
+      "article": "",
+      "group": "Caves",
+      "id": "caves-34",
+      "name": "Cave",
+      "x": 73359.38,
+      "y": 15578.13
+    },
+    {
+      "article": "",
+      "group": "Caves",
+      "id": "caves-35",
+      "name": "Cave",
+      "x": 30396.82,
+      "y": 22885.51
+    },
+    {
+      "article": "",
+      "group": "Caves",
+      "id": "caves-36",
+      "name": "Cave",
+      "x": 16520.86,
+      "y": 11633.51
+    },
+    {
+      "article": "",
+      "group": "Caves",
+      "id": "caves-37",
+      "name": "Cave",
+      "x": 37077.02,
+      "y": 7542.31
+    },
+    {
+      "article": "",
+      "group": "Caves",
+      "id": "caves-38",
+      "name": "Cave",
+      "x": 43684.49,
+      "y": 25047.43
+    },
+    {
+      "article": "",
+      "group": "Caves",
+      "id": "caves-39",
+      "name": "Cave",
+      "x": 53266.9,
+      "y": 53199.66
+    },
+    {
+      "article": "Kaleff's Stand",
+      "group": "Caves",
+      "id": "kaleffs_stand",
+      "name": "Kaleff's Stand",
+      "x": 81747.94,
+      "y": 83841.43
+    },
+    {
+      "article": "Western Safeway",
+      "group": "Caves",
+      "id": "western_safeway",
+      "name": "Western Safeway",
+      "x": 84660.24,
+      "y": 82839.35
+    },
+    {
+      "article": "Shamal Tunnel",
+      "group": "Caves",
+      "id": "shamal_tunnel",
+      "name": "Shamal Tunnel",
+      "x": 87462.94,
+      "y": 82447.91
+    },
+    {
+      "article": "Outer Safeway",
+      "group": "Caves",
+      "id": "outer_safeway",
+      "name": "Outer Safeway",
+      "x": 85771.92,
+      "y": 90918.64
+    },
+    {
+      "article": "Edgeway Cavern",
+      "group": "Caves",
+      "id": "edgeway_cavern",
+      "name": "Edgeway Cavern",
+      "x": 88057.92,
+      "y": 88460.4
+    },
+    {
+      "article": "Eastern Safeway",
+      "group": "Caves",
+      "id": "eastern_safeway",
+      "name": "Eastern Safeway",
+      "x": 78694.72,
+      "y": 91419.68
+    },
+    {
+      "article": "Wali Hole",
+      "group": "Caves",
+      "id": "wali_hole",
+      "name": "Wali Hole",
+      "x": 77661.32,
+      "y": 91122.18
+    },
+    {
+      "article": "The Stash",
+      "group": "Caves",
+      "id": "the_stash",
+      "name": "The Stash",
+      "x": 76533.98,
+      "y": 91983.35
+    },
+    {
+      "article": "Southwatch Shelter",
+      "group": "Caves",
+      "id": "southwatch_shelter",
+      "name": "Southwatch Shelter",
+      "x": 62567.47,
+      "y": 93204.63
+    },
+    {
+      "article": "The Backway",
+      "group": "Caves",
+      "id": "the_backway",
+      "name": "The Backway",
+      "x": 56100.91,
+      "y": 92506.85
+    },
+    {
+      "article": "Selaya Cave",
+      "group": "Caves",
+      "id": "selaya_cave",
+      "name": "Selaya Cave",
+      "x": 49086.34,
+      "y": 91591.91
+    },
+    {
+      "article": "The Shortway",
+      "group": "Caves",
+      "id": "the_shortway",
+      "name": "The Shortway",
+      "x": 44639.6,
+      "y": 90010.5
+    },
+    {
+      "article": "Riftrun Passage",
+      "group": "Caves",
+      "id": "riftrun_passage",
+      "name": "Riftrun Passage",
+      "x": 86946.24,
+      "y": 42803.06
+    },
+    {
+      "article": "",
+      "group": "Caves",
+      "id": "caves-53",
+      "name": "Cave",
+      "x": 83454.61,
+      "y": 42724.77
+    },
+    {
+      "article": "Cave of Ghosts",
+      "group": "Caves",
+      "id": "cave_of_ghosts",
+      "name": "Cave of Ghosts",
+      "x": 47129.15,
+      "y": 83005.88
+    },
+    {
+      "article": "The Twist",
+      "group": "Caves",
+      "id": "the_twist",
+      "name": "The Twist",
+      "x": 53125.98,
+      "y": 81018.04
+    },
+    {
+      "article": "Old Griffin Hideaway",
+      "group": "Caves",
+      "id": "old_griffin_hideaway",
+      "name": "Old Griffin Hideaway",
+      "x": 55646.84,
+      "y": 83371.71
+    },
+    {
+      "article": "Traitor's Grotto",
+      "group": "Caves",
+      "id": "traitors_grotto",
+      "name": "Traitor's Grotto",
+      "x": 55646.84,
+      "y": 87129.51
+    },
+    {
+      "article": "Aren's Refuge",
+      "group": "Caves",
+      "id": "arens_refuge",
+      "name": "Aren's Refuge",
+      "x": 61988.14,
+      "y": 81805.96
+    },
+    {
+      "article": "The Gasp",
+      "group": "Caves",
+      "id": "the_gasp",
+      "name": "The Gasp",
+      "x": 89592.36,
+      "y": 54624.49
+    },
+    {
+      "article": "",
+      "group": "Caves",
+      "id": "caves-60",
+      "name": "Cave",
+      "x": 28031.25,
+      "y": 82421.88
+    },
+    {
+      "article": "",
+      "group": "Caves",
+      "id": "caves-61",
+      "name": "Cave",
+      "x": 26054.12,
+      "y": 91122.18
+    },
+    {
+      "article": "",
+      "group": "Caves",
+      "id": "caves-62",
+      "name": "Cave",
+      "x": 8171.88,
+      "y": 82031.25
+    },
+    {
+      "article": "Limbo",
+      "group": "Caves",
+      "id": "limbo",
+      "name": "Limbo",
+      "x": 13421.88,
+      "y": 75218.75
+    },
+    {
+      "article": "",
+      "group": "Caves",
+      "id": "caves-64",
+      "name": "Cave",
+      "x": 13671.88,
+      "y": 87781.25
+    },
+    {
+      "article": "",
+      "group": "Caves",
+      "id": "caves-65",
+      "name": "Cave",
+      "x": 68329.44,
+      "y": 83387.37
+    },
+    {
+      "article": "",
+      "group": "Caves",
+      "id": "caves-66",
+      "name": "Cave",
+      "x": 40881.8,
+      "y": 56096.3
+    },
+    {
+      "article": "",
+      "group": "Caves",
+      "id": "caves-67",
+      "name": "Cave",
+      "x": 66027.78,
+      "y": 90605.48
+    },
+    {
+      "article": "The Fable",
+      "group": "Caves",
+      "id": "the_fable",
+      "name": "The Fable",
+      "x": 8281.25,
+      "y": 21125.0
+    },
+    {
+      "article": "Musky Cave",
+      "group": "Caves",
+      "id": "musky_cave",
+      "name": "Musky Cave",
+      "x": 22046.88,
+      "y": 28796.88
+    },
+    {
+      "article": "Fila's Hideaway",
+      "group": "Caves",
+      "id": "filas_hideaway",
+      "name": "Fila's Hideaway",
+      "x": 77849.21,
+      "y": 52291.52
+    },
+    {
+      "article": "",
+      "group": "Caves",
+      "id": "caves-71",
+      "name": "Cave",
+      "x": 7734.38,
+      "y": 41531.25
+    },
+    {
+      "article": "Hidden Eyrie",
+      "group": "Caves",
+      "id": "the_lost_aerie",
+      "name": "Hidden Eyrie",
+      "x": 41461.13,
+      "y": 44713.28
+    },
+    {
+      "article": "Poison Hollow",
+      "group": "Caves",
+      "id": "poison_hollow",
+      "name": "Poison Hollow",
+      "x": 68734.38,
+      "y": 34468.75
+    },
+    {
+      "article": "Duskwraith Hideaway",
+      "group": "Caves",
+      "id": "duskwraith_hideaway",
+      "name": "Duskwraith Hideaway",
+      "x": 70390.63,
+      "y": 44312.5
+    },
+    {
+      "article": "Testing Station 60",
+      "group": "EcoLabs",
+      "id": "testing_station_60",
+      "name": "Testing Station 60",
+      "x": 23743.31,
+      "y": 6784.02
+    },
+    {
+      "article": "Testing Station 63",
+      "group": "EcoLabs",
+      "id": "testing_station_63",
+      "name": "Testing Station 63",
+      "x": 93068.33,
+      "y": 25188.35
+    },
+    {
+      "article": "Testing Station 73",
+      "group": "EcoLabs",
+      "id": "testing_station_73",
+      "name": "Testing Station 73",
+      "x": 10656.25,
+      "y": 30703.13
+    },
+    {
+      "article": "Testing Station 17",
+      "group": "EcoLabs",
+      "id": "testing_station_17",
+      "name": "Testing Station 17",
+      "x": 47739.79,
+      "y": 7182.19
+    },
+    {
+      "article": "Testing Station 142",
+      "group": "EcoLabs",
+      "id": "testing_station_142",
+      "name": "Testing Station 142",
+      "x": 56476.69,
+      "y": 6602.86
+    },
+    {
+      "article": "Testing Station 10",
+      "group": "EcoLabs",
+      "id": "testing_station_10",
+      "name": "Testing Station 10",
+      "x": 93851.21,
+      "y": 64692.28
+    },
+    {
+      "article": "Testing Station 29",
+      "group": "EcoLabs",
+      "id": "testing_station_29",
+      "name": "Testing Station 29",
+      "x": 76125.0,
+      "y": 20515.63
+    },
+    {
+      "article": "Testing Station 2",
+      "group": "EcoLabs",
+      "id": "testing_station_2",
+      "name": "Testing Station 2",
+      "x": 64634.26,
+      "y": 84639.97
+    },
+    {
+      "article": "Testing Station 76",
+      "group": "EcoLabs",
+      "id": "testing_station_76",
+      "name": "Testing Station 76",
+      "x": 64187.5,
+      "y": 31296.88
+    },
+    {
+      "article": "Testing Station 163",
+      "group": "EcoLabs",
+      "id": "testing_station_163",
+      "name": "Testing Station 163",
+      "x": 13390.63,
+      "y": 25343.75
+    },
+    {
+      "article": "Testing Station 197",
+      "group": "EcoLabs",
+      "id": "testing_station_197",
+      "name": "Testing Station 197",
+      "x": 50088.42,
+      "y": 63189.16
+    },
+    {
+      "article": "Testing Station 13",
+      "group": "EcoLabs",
+      "id": "testing_station_13",
+      "name": "Testing Station 13",
+      "x": 41680.33,
+      "y": 45323.92
+    },
+    {
+      "article": "Testing Station 117",
+      "group": "EcoLabs",
+      "id": "testing_station_117",
+      "name": "Testing Station 117",
+      "x": 75187.5,
+      "y": 35875.0
+    },
+    {
+      "article": "The Crossroads Trading Post",
+      "group": "TradingPosts",
+      "id": "the_crossroads_trading_post",
+      "name": "The Crossroads Trading Post",
+      "x": 29248.26,
+      "y": 35553.63
+    },
+    {
+      "article": "The Anvil Trading Post",
+      "group": "TradingPosts",
+      "id": "the_anvil_trading_post",
+      "name": "The Anvil Trading Post",
+      "x": 78632.09,
+      "y": 56096.3
+    },
+    {
+      "article": "Pinnacle Trading Post",
+      "group": "TradingPosts",
+      "id": "pinnacle_trading_post",
+      "name": "Pinnacle Trading Post",
+      "x": 51513.26,
+      "y": 18126.8
+    },
+    {
+      "article": "Griffin's Reach Trading Post",
+      "group": "TradingPosts",
+      "id": "griffins_reach_trading_post",
+      "name": "Griffin's Reach Trading Post",
+      "x": 58026.79,
+      "y": 82526.2
+    },
+    {
+      "article": "",
+      "group": "Outposts",
+      "id": "outposts-1",
+      "name": "Atreides Outpost",
+      "x": 26235.45,
+      "y": 3581.0
+    },
+    {
+      "article": "",
+      "group": "Outposts",
+      "id": "outposts-2",
+      "name": "Atreides Outpost",
+      "x": 41816.55,
+      "y": 4035.7
+    },
+    {
+      "article": "Edge of Acheron",
+      "group": "Outposts",
+      "id": "edge_of_acheron",
+      "name": "Edge of Acheron",
+      "x": 17796.88,
+      "y": 61890.63
+    },
+    {
+      "article": "",
+      "group": "Outposts",
+      "id": "outposts-4",
+      "name": "Harkonnen Outpost",
+      "x": 9000.0,
+      "y": 38875.0
+    },
+    {
+      "article": "Westview",
+      "group": "Outposts",
+      "id": "westview",
+      "name": "Westview",
+      "x": 62896.28,
+      "y": 60276.86
+    },
+    {
+      "article": "Ironwatch",
+      "group": "Outposts",
+      "id": "ironwatch",
+      "name": "Ironwatch",
+      "x": 33272.24,
+      "y": 30872.03
+    },
+    {
+      "article": "",
+      "group": "Outposts",
+      "id": "outposts-7",
+      "name": "Enemy Outpost",
+      "x": 27604.22,
+      "y": 23199.84
+    },
+    {
+      "article": "Eastern Jumble",
+      "group": "Outposts",
+      "id": "eastern_jumble",
+      "name": "Eastern Jumble",
+      "x": 51609.38,
+      "y": 32578.13
+    },
+    {
+      "article": "",
+      "group": "Outposts",
+      "id": "outposts-9",
+      "name": "Enemy Outpost",
+      "x": 56392.94,
+      "y": 26403.4
+    },
+    {
+      "article": "Piter's Net",
+      "group": "Outposts",
+      "id": "piters_net",
+      "name": "Piter's Net",
+      "x": 56281.25,
+      "y": 28312.5
+    },
+    {
+      "article": "House Of Fiqh",
+      "group": "Outposts",
+      "id": "house_of_fiqh",
+      "name": "House Of Fiqh",
+      "x": 13984.38,
+      "y": 27218.75
+    },
+    {
+      "article": "The Slant",
+      "group": "Outposts",
+      "id": "the_slant",
+      "name": "The Slant",
+      "x": 67328.13,
+      "y": 33250.0
+    },
+    {
+      "article": "",
+      "group": "Outposts",
+      "id": "outposts-13",
+      "name": "Enemy Outpost",
+      "x": 67015.63,
+      "y": 38578.13
+    },
+    {
+      "article": "The Sweep",
+      "group": "Outposts",
+      "id": "the_sweep",
+      "name": "The Sweep",
+      "x": 65781.25,
+      "y": 41000.0
+    },
+    {
+      "article": "The Glutton",
+      "group": "Outposts",
+      "id": "the_glutton",
+      "name": "The Glutton",
+      "x": 72480.99,
+      "y": 37282.0
+    },
+    {
+      "article": "Kant's Tower",
+      "group": "Outposts",
+      "id": "kants_tower",
+      "name": "Kant's Tower",
+      "x": 77734.38,
+      "y": 39218.75
+    },
+    {
+      "article": "Chattel Passage",
+      "group": "Outposts",
+      "id": "chattel_passage",
+      "name": "Chattel Passage",
+      "x": 74211.01,
+      "y": 30901.16
+    },
+    {
+      "article": "Runaway Station",
+      "group": "Outposts",
+      "id": "runaway_station",
+      "name": "Runaway Station",
+      "x": 81515.63,
+      "y": 43531.25
+    },
+    {
+      "article": "",
+      "group": "Outposts",
+      "id": "outposts-19",
+      "name": "NPC Camp",
+      "x": 80041.27,
+      "y": 51680.88
+    },
+    {
+      "article": "Dayside",
+      "group": "Outposts",
+      "id": "dayside",
+      "name": "Dayside",
+      "x": 62437.5,
+      "y": 26187.5
+    },
+    {
+      "article": "",
+      "group": "Outposts",
+      "id": "outposts-21",
+      "name": "Enemy Outpost",
+      "x": 70171.88,
+      "y": 24984.38
+    },
+    {
+      "article": "",
+      "group": "Outposts",
+      "id": "outposts-22",
+      "name": "Enemy Outpost",
+      "x": 71031.25,
+      "y": 25796.88
+    },
+    {
+      "article": "Southwest Bunker (Top)",
+      "group": "Outposts",
+      "id": "southwest_bunker_top",
+      "name": "Southwest Bunker (Top)",
+      "x": 73906.25,
+      "y": 28359.38
+    },
+    {
+      "article": "",
+      "group": "Outposts",
+      "id": "outposts-24",
+      "name": "Enemy Outpost",
+      "x": 75156.25,
+      "y": 29781.25
+    },
+    {
+      "article": "Southwest Bunker (Bottom)",
+      "group": "Outposts",
+      "id": "southwest_bunker_bottom",
+      "name": "Southwest Bunker (Bottom)",
+      "x": 76671.88,
+      "y": 26593.75
+    },
+    {
+      "article": "",
+      "group": "Outposts",
+      "id": "outposts-26",
+      "name": "Enemy Outpost",
+      "x": 75546.88,
+      "y": 26859.38
+    },
+    {
+      "article": "The Spiral",
+      "group": "Outposts",
+      "id": "the_spiral",
+      "name": "The Spiral",
+      "x": 79906.25,
+      "y": 27187.5
+    },
+    {
+      "article": "",
+      "group": "Outposts",
+      "id": "outposts-28",
+      "name": "Enemy Outpost",
+      "x": 78906.77,
+      "y": 27965.14
+    },
+    {
+      "article": "",
+      "group": "Outposts",
+      "id": "outposts-29",
+      "name": "Enemy Outpost",
+      "x": 7351.11,
+      "y": 11384.64
+    },
+    {
+      "article": "Shield Wall Command",
+      "group": "Outposts",
+      "id": "shield_wall_command",
+      "name": "Shield Wall Command",
+      "x": 14587.36,
+      "y": 3325.22
+    },
+    {
+      "article": "",
+      "group": "Outposts",
+      "id": "outposts-31",
+      "name": "Enemy Outpost",
+      "x": 23623.1,
+      "y": 3497.51
+    },
+    {
+      "article": "The Depot",
+      "group": "Outposts",
+      "id": "the_depot",
+      "name": "The Depot",
+      "x": 23680.54,
+      "y": 11384.64
+    },
+    {
+      "article": "",
+      "group": "Outposts",
+      "id": "outposts-33",
+      "name": "Enemy Outpost",
+      "x": 30234.68,
+      "y": 10157.12
+    },
+    {
+      "article": "",
+      "group": "Outposts",
+      "id": "outposts-34",
+      "name": "Enemy Outpost",
+      "x": 38454.88,
+      "y": 3909.77
+    },
+    {
+      "article": "",
+      "group": "Outposts",
+      "id": "outposts-35",
+      "name": "Enemy Outpost",
+      "x": 29686.67,
+      "y": 26566.21
+    },
+    {
+      "article": "",
+      "group": "Outposts",
+      "id": "outposts-36",
+      "name": "Enemy Outpost",
+      "x": 33225.27,
+      "y": 23105.89
+    },
+    {
+      "article": "Sentinel City",
+      "group": "Outposts",
+      "id": "sentinel_city",
+      "name": "Sentinel City",
+      "x": 40725.22,
+      "y": 17907.6
+    },
+    {
+      "article": "",
+      "group": "Outposts",
+      "id": "outposts-38",
+      "name": "Enemy Outpost",
+      "x": 46283.64,
+      "y": 23967.06
+    },
+    {
+      "article": "",
+      "group": "Outposts",
+      "id": "outposts-39",
+      "name": "Enemy Outpost",
+      "x": 54597.79,
+      "y": 14729.12
+    },
+    {
+      "article": "",
+      "group": "Outposts",
+      "id": "outposts-40",
+      "name": "Enemy Outpost",
+      "x": 57040.36,
+      "y": 11503.67
+    },
+    {
+      "article": "",
+      "group": "Outposts",
+      "id": "outposts-41",
+      "name": "Enemy Outpost",
+      "x": 59640.63,
+      "y": 19500.0
+    },
+    {
+      "article": "",
+      "group": "Outposts",
+      "id": "outposts-42",
+      "name": "Enemy Outpost",
+      "x": 80546.88,
+      "y": 19812.5
+    },
+    {
+      "article": "Kel's Splinter",
+      "group": "Outposts",
+      "id": "kels_splinter",
+      "name": "Kel's Splinter",
+      "x": 86382.57,
+      "y": 17641.42
+    },
+    {
+      "article": "",
+      "group": "Outposts",
+      "id": "outposts-44",
+      "name": "Enemy Outpost",
+      "x": 92817.81,
+      "y": 23215.5
+    },
+    {
+      "article": "The Cells",
+      "group": "Outposts",
+      "id": "the_cells",
+      "name": "The Cells",
+      "x": 93130.2,
+      "y": 26950.0
+    },
+    {
+      "article": "",
+      "group": "Outposts",
+      "id": "outposts-46",
+      "name": "Enemy Outpost",
+      "x": 93256.22,
+      "y": 33079.74
+    },
+    {
+      "article": "",
+      "group": "Outposts",
+      "id": "outposts-47",
+      "name": "Enemy Outpost",
+      "x": 86194.68,
+      "y": 24937.82
+    },
+    {
+      "article": "House of Ilm",
+      "group": "Outposts",
+      "id": "house_of_ilm",
+      "name": "House of Ilm",
+      "x": 20015.63,
+      "y": 19718.75
+    },
+    {
+      "article": "Taqwa's Watch",
+      "group": "Outposts",
+      "id": "taqwas_watch",
+      "name": "Taqwa's Watch",
+      "x": 6125.0,
+      "y": 25500.0
+    },
+    {
+      "article": "Pyon Village 1",
+      "group": "Outposts",
+      "id": "pyon_village_1",
+      "name": "Pyon Village 1",
+      "x": 20437.5,
+      "y": 17671.88
+    },
+    {
+      "article": "Pyon Village 2",
+      "group": "Outposts",
+      "id": "pyon_village_2",
+      "name": "Pyon Village 2",
+      "x": 6281.25,
+      "y": 30609.38
+    },
+    {
+      "article": "Wormsight Spire",
+      "group": "Outposts",
+      "id": "wormsight_spire",
+      "name": "Wormsight Spire",
+      "x": 5281.25,
+      "y": 32265.63
+    },
+    {
+      "article": "",
+      "group": "Outposts",
+      "id": "outposts-53",
+      "name": "Enemy Outpost",
+      "x": 6703.13,
+      "y": 18515.63
+    },
+    {
+      "article": "",
+      "group": "Outposts",
+      "id": "outposts-54",
+      "name": "Enemy Outpost",
+      "x": 94884.6,
+      "y": 37260.3
+    },
+    {
+      "article": "The Bulwark",
+      "group": "Outposts",
+      "id": "the_bulwark",
+      "name": "The Bulwark",
+      "x": 78866.95,
+      "y": 50710.11
+    },
+    {
+      "article": "Slaver's Regret",
+      "group": "Outposts",
+      "id": "slavers_regret",
+      "name": "Slaver's Regret",
+      "x": 77489.09,
+      "y": 52542.04
+    },
+    {
+      "article": "Aren's Post",
+      "group": "Outposts",
+      "id": "arens_post",
+      "name": "Aren's Post",
+      "x": 77238.57,
+      "y": 67620.24
+    },
+    {
+      "article": "Scav's Hope",
+      "group": "Outposts",
+      "id": "scavs_hope",
+      "name": "Scav's Hope",
+      "x": 76659.24,
+      "y": 69420.85
+    },
+    {
+      "article": "Southeast Ironworks",
+      "group": "Outposts",
+      "id": "southeast_ironworks",
+      "name": "Southeast Ironworks",
+      "x": 77676.98,
+      "y": 70141.1
+    },
+    {
+      "article": "",
+      "group": "Outposts",
+      "id": "outposts-60",
+      "name": "Enemy Outpost",
+      "x": 75359.67,
+      "y": 68309.17
+    },
+    {
+      "article": "Southview",
+      "group": "Outposts",
+      "id": "southview",
+      "name": "Southview",
+      "x": 64900.44,
+      "y": 64974.12
+    },
+    {
+      "article": "Mendia's Gate",
+      "group": "Outposts",
+      "id": "mendias_gate",
+      "name": "Mendia's Gate",
+      "x": 66481.85,
+      "y": 60856.19
+    },
+    {
+      "article": "Eastview",
+      "group": "Outposts",
+      "id": "eastview",
+      "name": "Eastview",
+      "x": 69347.18,
+      "y": 60683.95
+    },
+    {
+      "article": "",
+      "group": "Outposts",
+      "id": "outposts-64",
+      "name": "Enemy Outpost",
+      "x": 65505.89,
+      "y": 54184.96
+    },
+    {
+      "article": "",
+      "group": "Outposts",
+      "id": "outposts-65",
+      "name": "Enemy Outpost",
+      "x": 56633.27,
+      "y": 65647.39
+    },
+    {
+      "article": "",
+      "group": "Outposts",
+      "id": "outposts-66",
+      "name": "Enemy Outpost",
+      "x": 58261.65,
+      "y": 70391.62
+    },
+    {
+      "article": "",
+      "group": "Outposts",
+      "id": "outposts-67",
+      "name": "Enemy Outpost",
+      "x": 56899.45,
+      "y": 70047.15
+    },
+    {
+      "article": "Southwest Ironworks",
+      "group": "Outposts",
+      "id": "southwest_ironworks",
+      "name": "Southwest Ironworks",
+      "x": 58058.1,
+      "y": 68747.58
+    },
+    {
+      "article": "The Roost",
+      "group": "Outposts",
+      "id": "the_roost",
+      "name": "The Roost",
+      "x": 56664.58,
+      "y": 65146.35
+    },
+    {
+      "article": "Salan's Refuge",
+      "group": "Outposts",
+      "id": "salans_refuge",
+      "name": "Salan's Refuge",
+      "x": 53392.16,
+      "y": 53872.93
+    },
+    {
+      "article": "Dead Man's Depot",
+      "group": "Outposts",
+      "id": "dead_mans_depot",
+      "name": "Dead Man's Depot",
+      "x": 57917.19,
+      "y": 50490.91
+    },
+    {
+      "article": "",
+      "group": "Outposts",
+      "id": "outposts-72",
+      "name": "Enemy Outpost",
+      "x": 45109.33,
+      "y": 41065.08
+    },
+    {
+      "article": "",
+      "group": "Outposts",
+      "id": "outposts-73",
+      "name": "Enemy Outpost",
+      "x": 44686.58,
+      "y": 42380.31
+    },
+    {
+      "article": "Northwest Ironworks",
+      "group": "Outposts",
+      "id": "northwest_ironworks",
+      "name": "Northwest Ironworks",
+      "x": 43293.06,
+      "y": 42035.84
+    },
+    {
+      "article": "Miner's Watch",
+      "group": "Outposts",
+      "id": "miners_watch",
+      "name": "Miner's Watch",
+      "x": 43637.52,
+      "y": 43445.02
+    },
+    {
+      "article": "",
+      "group": "Outposts",
+      "id": "outposts-76",
+      "name": "Enemy Outpost",
+      "x": 40834.83,
+      "y": 55563.94
+    },
+    {
+      "article": "Flatrock Outpost",
+      "group": "Outposts",
+      "id": "flatrock_outpost",
+      "name": "Flatrock Outpost",
+      "x": 39676.17,
+      "y": 58476.24
+    },
+    {
+      "article": "Menol's Folly",
+      "group": "Outposts",
+      "id": "menols_folly",
+      "name": "Menol's Folly",
+      "x": 39942.35,
+      "y": 63643.23
+    },
+    {
+      "article": "Threeway Outpost",
+      "group": "Outposts",
+      "id": "threeway_outpost",
+      "name": "Threeway Outpost",
+      "x": 63475.61,
+      "y": 89666.03
+    },
+    {
+      "article": "Keyhole Rock",
+      "group": "Outposts",
+      "id": "keyhole_rock",
+      "name": "Keyhole Rock",
+      "x": 67092.49,
+      "y": 91482.31
+    },
+    {
+      "article": "Broken Stone Station",
+      "group": "Outposts",
+      "id": "broken_stone_station",
+      "name": "Broken Stone Station",
+      "x": 65652.0,
+      "y": 94065.8
+    },
+    {
+      "article": "Hollow Arches",
+      "group": "Outposts",
+      "id": "hollow_arches",
+      "name": "Hollow Arches",
+      "x": 83141.46,
+      "y": 84718.26
+    },
+    {
+      "article": "Breaker Station",
+      "group": "Outposts",
+      "id": "breaker_station",
+      "name": "Breaker Station",
+      "x": 69488.1,
+      "y": 83872.75
+    },
+    {
+      "article": "Dewgap Gateway",
+      "group": "Outposts",
+      "id": "dewgap_gateway",
+      "name": "Dewgap Gateway",
+      "x": 52027.94,
+      "y": 85875.59
+    },
+    {
+      "article": "Sim's Jackpot",
+      "group": "Outposts",
+      "id": "sims_jackpot",
+      "name": "Sim's Jackpot",
+      "x": 51814.93,
+      "y": 80763.33
+    },
+    {
+      "article": "The Scrape",
+      "group": "Outposts",
+      "id": "the_scrape",
+      "name": "The Scrape",
+      "x": 69253.23,
+      "y": 94598.15
+    },
+    {
+      "article": "CHOAM Mineral Extraction Facility 17",
+      "group": "Outposts",
+      "id": "choam_mineral_extraction_facility_17",
+      "name": "CHOAM Mineral Extraction Facility 17",
+      "x": 76312.5,
+      "y": 29468.75
+    },
+    {
+      "article": "CHOAM Mineral Extraction Facility 4",
+      "group": "Outposts",
+      "id": "choam_mineral_extraction_facility_4",
+      "name": "CHOAM Mineral Extraction Facility 4",
+      "x": 82171.88,
+      "y": 26468.75
+    },
+    {
+      "article": "CHOAM Mineral Extraction Facility 2",
+      "group": "Outposts",
+      "id": "choam_mineral_extraction_facility_2",
+      "name": "CHOAM Mineral Extraction Facility 2",
+      "x": 85474.43,
+      "y": 37917.91
+    },
+    {
+      "article": "CHOAM Mineral Extraction Facility 1",
+      "group": "Outposts",
+      "id": "choam_mineral_extraction_facility_1",
+      "name": "CHOAM Mineral Extraction Facility 1",
+      "x": 84488.01,
+      "y": 38810.39
+    },
+    {
+      "article": "Mysa Tarill",
+      "group": "Landmark",
+      "id": "mysa_tarill",
+      "name": "Mysa Tarill",
+      "x": 20921.88,
+      "y": 32765.63
+    },
+    {
+      "article": "The Sentinel",
+      "group": "Landmark",
+      "id": "the_sentinel",
+      "name": "The Sentinel ('Godzilla Rock')",
+      "x": 40177.21,
+      "y": 16936.83
+    },
+    {
+      "article": "",
+      "group": "Landmark",
+      "id": "spy-nest",
+      "name": "Spy Nest",
+      "x": 80886.77,
+      "y": 67228.8
+    },
+    {
+      "article": "The Mithra",
+      "group": "Landmark",
+      "id": "the-mithra",
+      "name": "The Mithra",
+      "x": 43711.19,
+      "y": 73914.87
+    },
+    {
+      "article": "Fortress - Helius' Reach",
+      "group": "Atreides",
+      "id": "fortress__helius_reach",
+      "name": "Fortress - Helius' Reach",
+      "x": 50151.05,
+      "y": 27443.03
+    },
+    {
+      "article": "Atreides Landsraad Representative",
+      "group": "Atreides",
+      "id": "atreides_landsraad_representative",
+      "name": "Atreides Landsraad Representative",
+      "x": 51043.53,
+      "y": 25924.25
+    },
+    {
+      "article": "Fortress",
+      "group": "Harkonnen",
+      "id": "fortress",
+      "name": "Fortress",
+      "x": 88214.5,
+      "y": 57959.55
+    },
+    {
+      "article": "Harkonnen Landsraad Representative",
+      "group": "Harkonnen",
+      "id": "harkonnen_landsraad_representative",
+      "name": "Harkonnen Landsraad Representative",
+      "x": 87431.62,
+      "y": 52682.96
+    },
+    {
+      "article": "The First Trial Of Aql",
+      "group": "Aql",
+      "id": "1st_trial",
+      "name": "1st Trial",
+      "x": 66027.78,
+      "y": 90605.48
+    },
+    {
+      "article": "The Second Trial Of Aql",
+      "group": "Aql",
+      "id": "2nd_trial",
+      "name": "2nd Trial",
+      "x": 78193.68,
+      "y": 66806.05
+    },
+    {
+      "article": "The Third Trial Of Aql",
+      "group": "Aql",
+      "id": "3rd_trial",
+      "name": "3rd Trial",
+      "x": 40881.8,
+      "y": 56096.3
+    },
+    {
+      "article": "The Fourth Trial Of Aql",
+      "group": "Aql",
+      "id": "4th_trial",
+      "name": "4th Trial",
+      "x": 66293.96,
+      "y": 59055.57
+    },
+    {
+      "article": "The Fifth Trial Of Aql",
+      "group": "Aql",
+      "id": "5th_trial",
+      "name": "5th Trial",
+      "x": 90453.52,
+      "y": 43116.21
+    },
+    {
+      "article": "The Sixth Trial Of Aql",
+      "group": "Aql",
+      "id": "6th_trial",
+      "name": "6th Trial",
+      "x": 93522.4,
+      "y": 16701.97
+    },
+    {
+      "article": "The Seventh Trial Of Aql",
+      "group": "Aql",
+      "id": "7th_trial",
+      "name": "7th Trial",
+      "x": 71562.5,
+      "y": 27218.75
+    },
+    {
+      "article": "The Sietch",
+      "group": "Aql",
+      "id": "the_sietch",
+      "name": "The Sietch",
+      "x": 39973.66,
+      "y": 29040.1
+    },
+    {
+      "article": "The Scrape#Intel",
+      "group": "Intel",
+      "id": "intel-1",
+      "name": "2 Intel Points",
+      "x": 69331.52,
+      "y": 94754.73
+    },
+    {
+      "article": "Breaker Station#Intel",
+      "group": "Intel",
+      "id": "intel-2",
+      "name": "3 Intel Points",
+      "x": 69300.21,
+      "y": 84091.95
+    },
+    {
+      "article": "The Sweep#Intel",
+      "group": "Intel",
+      "id": "intel-3",
+      "name": "10 Intel Points",
+      "x": 66093.75,
+      "y": 41125.0
+    },
+    {
+      "article": "Kant's Tower#Intel",
+      "group": "Intel",
+      "id": "intel-4",
+      "name": "10 Intel Points",
+      "x": 77625.0,
+      "y": 39515.63
+    },
+    {
+      "article": "Dayside#Intel",
+      "group": "Intel",
+      "id": "intel-5",
+      "name": "10 Intel Points",
+      "x": 63046.88,
+      "y": 26187.5
+    },
+    {
+      "article": "Chattel Passage#Intel",
+      "group": "Intel",
+      "id": "intel-6",
+      "name": "10 Intel Points",
+      "x": 74078.72,
+      "y": 30538.73
+    },
+    {
+      "article": "The Glutton#Intel",
+      "group": "Intel",
+      "id": "intel-7",
+      "name": "10 Intel Points",
+      "x": 72736.72,
+      "y": 37439.75
+    },
+    {
+      "article": "The Glutton#Intel",
+      "group": "Intel",
+      "id": "intel-8",
+      "name": "10 Intel Points",
+      "x": 72468.31,
+      "y": 37597.66
+    },
+    {
+      "article": "Sentinel City#Intel",
+      "group": "Intel",
+      "id": "intel-9",
+      "name": "10 Intel Points",
+      "x": 40083.26,
+      "y": 18111.14
+    },
+    {
+      "article": "Kel's Splinter#Intel",
+      "group": "Intel",
+      "id": "intel-10",
+      "name": "10 Intel Points",
+      "x": 85959.81,
+      "y": 17891.94
+    },
+    {
+      "article": "Southwest Bunker (Bottom)#Intel",
+      "group": "Intel",
+      "id": "intel-11",
+      "name": "10 Intel Points",
+      "x": 75656.25,
+      "y": 27000.0
+    },
+    {
+      "article": "Southwest Bunker (Bottom)#Intel",
+      "group": "Intel",
+      "id": "intel-12",
+      "name": "10 Intel Points",
+      "x": 76671.88,
+      "y": 26609.38
+    },
+    {
+      "article": "Runaway Station#Intel",
+      "group": "Intel",
+      "id": "intel-13",
+      "name": "10 Intel Points",
+      "x": 81796.88,
+      "y": 43296.88
+    },
+    {
+      "article": "The Slant#Intel",
+      "group": "Intel",
+      "id": "intel-14",
+      "name": "10 Intel Points",
+      "x": 67640.63,
+      "y": 33109.38
+    },
+    {
+      "article": "Piter's Net#Intel",
+      "group": "Intel",
+      "id": "intel-15",
+      "name": "10 Intel Points",
+      "x": 56468.75,
+      "y": 28250.0
+    },
+    {
+      "article": "Eastern Jumble#Intel",
+      "group": "Intel",
+      "id": "intel-16",
+      "name": "10 Intel Points",
+      "x": 51890.63,
+      "y": 32734.38
+    },
+    {
+      "article": "",
+      "group": "Intel",
+      "id": "intel-17",
+      "name": "20 Intel Points",
+      "x": 42588.47,
+      "y": 23716.54
+    },
+    {
+      "article": "House Of Fiqh#Intel",
+      "group": "Intel",
+      "id": "intel-18",
+      "name": "20 Intel Points",
+      "x": 13078.13,
+      "y": 27171.88
+    },
+    {
+      "article": "",
+      "group": "Intel",
+      "id": "intel-19",
+      "name": "20 Intel Points",
+      "x": 23393.38,
+      "y": 4014.39
+    },
+    {
+      "article": "20 Intel Points (Harkonnen base on cliff)",
+      "group": "Intel",
+      "id": "20_intel_points_harkonnen_base_on_cliff",
+      "name": "20 Intel Points (Harkonnen base on cliff)",
+      "x": 9136.46,
+      "y": 38957.34
+    },
+    {
+      "article": "Shield Wall Command#Intel",
+      "group": "Intel",
+      "id": "intel-21",
+      "name": "20 Intel Points",
+      "x": 14013.06,
+      "y": 3133.78
+    },
+    {
+      "article": "House of Ilm#Intel",
+      "group": "Intel",
+      "id": "intel-22",
+      "name": "20 Intel Points",
+      "x": 19187.5,
+      "y": 19843.75
+    },
+    {
+      "article": "The Depot#Intel",
+      "group": "Intel",
+      "id": "intel-23",
+      "name": "20 Intel Points",
+      "x": 22857.36,
+      "y": 11767.51
+    },
+    {
+      "article": "Mysa Tarill#Intel",
+      "group": "Intel",
+      "id": "intel-24",
+      "name": "20 Intel Points",
+      "x": 19984.38,
+      "y": 31015.63
+    },
+    {
+      "article": "30 Intel Points",
+      "group": "Intel",
+      "id": "30_intel_points",
+      "name": "30 Intel Points",
+      "x": 17578.13,
+      "y": 62000.0
+    },
+    {
+      "article": "",
+      "group": "Intel",
+      "id": "intel-26",
+      "name": "20 Intel Points",
+      "x": 41273.64,
+      "y": 4221.15
+    },
+    {
+      "article": "",
+      "group": "Intel",
+      "id": "intel-27",
+      "name": "20 Intel Points",
+      "x": 26866.24,
+      "y": 3423.85
+    },
+    {
+      "article": "Ironwatch#Intel",
+      "group": "Intel",
+      "id": "intel-28",
+      "name": "20 Intel Points",
+      "x": 32849.49,
+      "y": 30762.42
+    },
+    {
+      "article": "",
+      "group": "Intel",
+      "id": "intel-29",
+      "name": "20 Intel Points",
+      "x": 27525.93,
+      "y": 22949.32
+    },
+    {
+      "article": "Taqwa's Watch#Intel",
+      "group": "Intel",
+      "id": "intel-30",
+      "name": "20 Intel Points",
+      "x": 6531.25,
+      "y": 25328.13
+    },
+    {
+      "article": "",
+      "group": "Intel",
+      "id": "intel-31",
+      "name": "10 Intel Points",
+      "x": 73335.99,
+      "y": 25720.78
+    },
+    {
+      "article": "Sim's Jackpot#Intel",
+      "group": "Intel",
+      "id": "intel-32",
+      "name": "3 Intel Points",
+      "x": 51857.72,
+      "y": 80455.42
+    },
+    {
+      "article": "Hollow Arches#Intel",
+      "group": "Intel",
+      "id": "intel-33",
+      "name": "3 Intel Points",
+      "x": 82922.25,
+      "y": 84467.74
+    },
+    {
+      "article": "Keyhole Rock#Intel",
+      "group": "Intel",
+      "id": "intel-34",
+      "name": "3 Intel Points",
+      "x": 67202.1,
+      "y": 91638.88
+    },
+    {
+      "article": "Threeway Outpost#Intel",
+      "group": "Intel",
+      "id": "intel-35",
+      "name": "3 Intel Points",
+      "x": 63005.88,
+      "y": 89806.95
+    },
+    {
+      "article": "Broken Stone Station#Intel",
+      "group": "Intel",
+      "id": "intel-36",
+      "name": "3 Intel Points",
+      "x": 65871.21,
+      "y": 93846.59
+    },
+    {
+      "article": "Dewgap Gateway#Intel",
+      "group": "Intel",
+      "id": "intel-37",
+      "name": "3 Intel Points",
+      "x": 51962.36,
+      "y": 85486.78
+    },
+    {
+      "article": "Slaver's Regret#Intel",
+      "group": "Intel",
+      "id": "intel-38",
+      "name": "5 Intel Points",
+      "x": 77473.43,
+      "y": 52917.82
+    },
+    {
+      "article": "The Bulwark#Intel",
+      "group": "Intel",
+      "id": "intel-39",
+      "name": "5 Intel Points",
+      "x": 78819.98,
+      "y": 50490.91
+    },
+    {
+      "article": "Scav's Hope#Intel",
+      "group": "Intel",
+      "id": "intel-40",
+      "name": "5 Intel Points",
+      "x": 76706.22,
+      "y": 69217.31
+    },
+    {
+      "article": "Dead Man's Depot#Intel",
+      "group": "Intel",
+      "id": "intel-41",
+      "name": "5 Intel Points",
+      "x": 57870.21,
+      "y": 50459.59
+    },
+    {
+      "article": "Salan's Refuge#Intel",
+      "group": "Intel",
+      "id": "intel-42",
+      "name": "5 Intel Points",
+      "x": 53595.71,
+      "y": 53919.9
+    },
+    {
+      "article": "Eastview#Intel",
+      "group": "Intel",
+      "id": "intel-43",
+      "name": "5 Intel Points",
+      "x": 69221.92,
+      "y": 60417.78
+    },
+    {
+      "article": "Mendia's Gate#Intel",
+      "group": "Intel",
+      "id": "intel-44",
+      "name": "5 Intel Points",
+      "x": 66419.22,
+      "y": 60840.53
+    },
+    {
+      "article": "Menol's Folly#Intel",
+      "group": "Intel",
+      "id": "intel-45",
+      "name": "5 Intel Points",
+      "x": 40286.81,
+      "y": 63737.17
+    },
+    {
+      "article": "Southwest Ironworks#Intel",
+      "group": "Intel",
+      "id": "intel-46",
+      "name": "5 Intel Points",
+      "x": 58245.99,
+      "y": 69201.65
+    },
+    {
+      "article": "Southview#Intel",
+      "group": "Intel",
+      "id": "intel-47",
+      "name": "5 Intel Points",
+      "x": 64524.66,
+      "y": 65318.58
+    },
+    {
+      "article": "Aren's Post#Intel",
+      "group": "Intel",
+      "id": "intel-48",
+      "name": "5 Intel Points",
+      "x": 77473.43,
+      "y": 67291.43
+    },
+    {
+      "article": "The Roost#Intel",
+      "group": "Intel",
+      "id": "intel-49",
+      "name": "5 Intel Points",
+      "x": 56194.86,
+      "y": 65506.47
+    },
+    {
+      "article": "Flatrock Outpost#Intel",
+      "group": "Intel",
+      "id": "intel-50",
+      "name": "5 Intel Points",
+      "x": 39347.36,
+      "y": 58210.07
+    },
+    {
+      "article": "Westview#Intel",
+      "group": "Intel",
+      "id": "intel-51",
+      "name": "5 Intel Points",
+      "x": 62614.44,
+      "y": 60668.3
+    },
+    {
+      "article": "Kaleff's Drinker Schematic",
+      "group": "Loot",
+      "id": "kaleffs_drinker",
+      "name": "Kaleff's Drinker (Wreck of the Alcyon)",
+      "x": 76135.8,
+      "y": 84139.58
+    },
+    {
+      "article": "Aren's Vengance",
+      "group": "Loot",
+      "id": "arens_vengance",
+      "name": "Aren's Vengance",
+      "x": 66012.13,
+      "y": 94206.72
+    },
+    {
+      "article": "Way of the Fallen Schematic",
+      "group": "Loot",
+      "id": "way_of_the_fallen",
+      "name": "Way of the Fallen (Old Griffin Hideaway)",
+      "x": 55767.32,
+      "y": 83887.96
+    },
+    {
+      "article": "Industrial Blood Extractor",
+      "group": "Loot",
+      "id": "industrial_blood_extractor",
+      "name": "Industrial Blood Extractor",
+      "x": 43762.78,
+      "y": 25360.58
+    },
+    {
+      "article": "Advanced Body Scanner",
+      "group": "Loot",
+      "id": "advanced_body_scanner",
+      "name": "Advanced Body Scanner",
+      "x": 72547.26,
+      "y": 36981.79
+    },
+    {
+      "article": "Advanced Compact Compactor",
+      "group": "Loot",
+      "id": "loot-6",
+      "name": "Advanced Compact Compactor",
+      "x": 89654.99,
+      "y": 55031.59
+    },
+    {
+      "article": "Steel Dew Gloves",
+      "group": "Loot",
+      "id": "steel_dew_gloves",
+      "name": "Steel Dew Gloves",
+      "x": 63406.25,
+      "y": 31281.25
+    },
+    {
+      "article": "House Last Words",
+      "group": "Loot",
+      "id": "house_last_words",
+      "name": "House Last Words",
+      "x": 56993.39,
+      "y": 6368.0
+    },
+    {
+      "article": "Alumite Oathbreaker Boots",
+      "group": "Loot",
+      "id": "alumite_oathbreaker_boots",
+      "name": "Alumite Oathbreaker Boots",
+      "x": 9109.38,
+      "y": 38906.25
+    },
+    {
+      "article": "Steel Pincushion Chestpiece",
+      "group": "Loot",
+      "id": "steel_pincushion_chestpiece",
+      "name": "Steel Pincushion Chestpiece",
+      "x": 73953.13,
+      "y": 28312.5
+    },
+    {
+      "article": "Alumite Suspensor-aided Harness",
+      "group": "Loot",
+      "id": "alumite_suspensoraided_harness",
+      "name": "Alumite Suspensor-aided Harness",
+      "x": 5890.63,
+      "y": 18843.75
+    },
+    {
+      "article": "Advanced Filtered Exsanguination Tool",
+      "group": "Loot",
+      "id": "advanced_filtered_exsanguination_tool",
+      "name": "Advanced Filtered Exsanguination Tool",
+      "x": 74640.63,
+      "y": 37078.13
+    },
+    {
+      "article": "Advanced Compact Compactor",
+      "group": "Loot",
+      "id": "loot-13",
+      "name": "Advanced Compact Compactor",
+      "x": 57734.38,
+      "y": 21937.5
+    },
+    {
+      "article": "Hollower Stillsuit Schematics",
+      "group": "Loot",
+      "id": "hollower_stillsuit",
+      "name": "Hollower Stillsuit",
+      "x": 52061.27,
+      "y": 86213.31
+    },
+    {
+      "article": "Aren's Armor Schematics",
+      "group": "Loot",
+      "id": "arens_armor",
+      "name": "Aren's Armor",
+      "x": 73492.36,
+      "y": 82472.36
+    },
+    {
+      "article": "Flatrock Clifftop Chest",
+      "group": "Loot",
+      "id": "flatrock_clifftop",
+      "name": "Flatrock Clifftop",
+      "x": 38413.21,
+      "y": 57011.55
+    },
+    {
+      "article": "Suk Alusuk Chest",
+      "group": "Loot",
+      "id": "suk_alusuk_chest",
+      "name": "Suk Alusuk Chest",
+      "x": 65526.74,
+      "y": 54730.0
+    },
+    {
+      "article": "Eastview Chest",
+      "group": "Loot",
+      "id": "eastview_chest",
+      "name": "Eastview Chest",
+      "x": 69080.36,
+      "y": 58069.71
+    },
+    {
+      "article": "Anomaly Chest",
+      "group": "Loot",
+      "id": "anomaly_chest",
+      "name": "Anomaly Chest",
+      "x": 55775.0,
+      "y": 49495.98
+    },
+    {
+      "article": "Pallas Chest",
+      "group": "Loot",
+      "id": "pallas_chest",
+      "name": "Pallas Chest",
+      "x": 50213.68,
+      "y": 45887.59
+    },
+    {
+      "article": "Hajra Literjon Mk1 Schematic",
+      "group": "Loot",
+      "id": "hajra_literjon_mk1",
+      "name": "Hajra Literjon Mk1",
+      "x": 78683.98,
+      "y": 91546.79
+    },
+    {
+      "article": "Vermillius North Chest",
+      "group": "Loot",
+      "id": "vermillius_north_chest",
+      "name": "Vermillius North Chest",
+      "x": 42818.94,
+      "y": 38981.78
+    },
+    {
+      "article": "Testing Station 13 Chest",
+      "group": "Loot",
+      "id": "testing_station_13_chest",
+      "name": "Testing Station 13 Chest",
+      "x": 42676.06,
+      "y": 41792.23
+    },
+    {
+      "article": "Testing Station 10 Chest",
+      "group": "Loot",
+      "id": "testing_station_10_chest",
+      "name": "Testing Station 10 Chest",
+      "x": 94520.79,
+      "y": 64156.78
+    },
+    {
+      "article": "Ghanima Cavern Chest",
+      "group": "Loot",
+      "id": "ghanima_cavern_chest",
+      "name": "Ghanima Cavern Chest",
+      "x": 80160.49,
+      "y": 53486.58
+    },
+    {
+      "article": "Keyhole Rock Chest",
+      "group": "Loot",
+      "id": "keyhole_rock_chest",
+      "name": "Keyhole Rock Chest",
+      "x": 67657.74,
+      "y": 92237.5
+    },
+    {
+      "article": "Oathbreaker Armor Schematics",
+      "group": "Loot",
+      "id": "oathbreaker_armor",
+      "name": "Oathbreaker Armor",
+      "x": 39723.02,
+      "y": 55630.15
+    },
+    {
+      "article": "Misrabar Top Chest",
+      "group": "Loot",
+      "id": "misrabar_top_chest",
+      "name": "Misrabar Top Chest",
+      "x": 65849.26,
+      "y": 59030.03
+    },
+    {
+      "article": "Testing Station 197 Chest",
+      "group": "Loot",
+      "id": "testing_station_197_chest",
+      "name": "Testing Station 197 Chest",
+      "x": 51059.19,
+      "y": 63455.34
+    },
+    {
+      "article": "The Emperor's Wings Mk1 Schematic",
+      "group": "Loot",
+      "id": "the_emperors_wings_mk1",
+      "name": "The Emperor's Wings Mk1 (Testing Station 2)",
+      "x": 64278.35,
+      "y": 84582.46
+    },
+    {
+      "article": "Aren's Vengeance Schematic",
+      "group": "Loot",
+      "id": "arens_vengeance",
+      "name": "Aren's Vengeance (Broken Stone Station)",
+      "x": 66043.69,
+      "y": 95436.15
+    },
+    {
+      "article": "House Novebruns",
+      "group": "Representatives",
+      "id": "novebruns",
+      "name": "House Novebruns",
+      "x": 53595.71,
+      "y": 53058.74
+    },
+    {
+      "article": "House Hurata",
+      "group": "Representatives",
+      "id": "hurata",
+      "name": "House Hurata",
+      "x": 93021.36,
+      "y": 65177.66
+    },
+    {
+      "article": "House Taligari",
+      "group": "Representatives",
+      "id": "_taligari",
+      "name": "House Taligari",
+      "x": 29639.69,
+      "y": 35804.15
+    },
+    {
+      "article": "House Sor",
+      "group": "Representatives",
+      "id": "sor",
+      "name": "House Sor",
+      "x": 51137.48,
+      "y": 18377.32
+    },
+    {
+      "article": "House Tseida",
+      "group": "Representatives",
+      "id": "tseida",
+      "name": "House Tseida",
+      "x": 78585.12,
+      "y": 56973.12
+    },
+    {
+      "article": "House Argosaz",
+      "group": "Representatives",
+      "id": "argosaz",
+      "name": "House Argosaz",
+      "x": 57635.35,
+      "y": 82119.11
+    },
+    {
+      "article": "House Hagal",
+      "group": "Representatives",
+      "id": "hagal",
+      "name": "House Hagal",
+      "x": 42367.26,
+      "y": 28583.94
+    },
+    {
+      "article": "House Wydras",
+      "group": "Representatives",
+      "id": "wydras",
+      "name": "House Wydras",
+      "x": 16953.13,
+      "y": 59281.25
+    },
+    {
+      "article": "House Vernius",
+      "group": "Representatives",
+      "id": "vernius",
+      "name": "House Vernius",
+      "x": 48788.85,
+      "y": 27286.45
+    },
+    {
+      "article": "House Richese",
+      "group": "Representatives",
+      "id": "richese",
+      "name": "House Richese",
+      "x": 50401.57,
+      "y": 27599.6
+    },
+    {
+      "article": "House Kenola",
+      "group": "Representatives",
+      "id": "kenola",
+      "name": "House Kenola",
+      "x": 17328.13,
+      "y": 28156.25
+    },
+    {
+      "article": "House Dyvetz",
+      "group": "Representatives",
+      "id": "dyvetz",
+      "name": "House Dyvetz",
+      "x": 85584.03,
+      "y": 54890.67
+    },
+    {
+      "article": "House Moritani",
+      "group": "Representatives",
+      "id": "moritani",
+      "name": "House Moritani",
+      "x": 89130.17,
+      "y": 56724.61
+    },
+    {
+      "article": "House Ecaz",
+      "group": "Representatives",
+      "id": "ecaz",
+      "name": "House Ecaz",
+      "x": 91768.75,
+      "y": 52228.89
+    },
+    {
+      "article": "House Thorvald",
+      "group": "Representatives",
+      "id": "thorvald",
+      "name": "House Thorvald",
+      "x": 89482.76,
+      "y": 41644.4
+    },
+    {
+      "article": "House Lindaren",
+      "group": "Representatives",
+      "id": "lindaren",
+      "name": "House Lindaren",
+      "x": 23450.81,
+      "y": 4799.27
+    },
+    {
+      "article": "House Imota",
+      "group": "Representatives",
+      "id": "imota",
+      "name": "House Imota",
+      "x": 81591.36,
+      "y": 21272.73
+    },
+    {
+      "article": "House Mikarrol",
+      "group": "Representatives",
+      "id": "mikarrol",
+      "name": "House Mikarrol",
+      "x": 66841.97,
+      "y": 34422.53
+    },
+    {
+      "article": "Planetologist Trainer",
+      "group": "Trainers",
+      "id": "planetologist_trainer",
+      "name": "Planetologist Trainer",
+      "x": 65307.54,
+      "y": 84311.16
+    },
+    {
+      "article": "Trooper Trainer",
+      "group": "Trainers",
+      "id": "trooper_trainer",
+      "name": "Trooper Trainer",
+      "x": 57604.03,
+      "y": 82948.96
+    },
+    {
+      "article": "Mentat Trainer",
+      "group": "Trainers",
+      "id": "mentat_trainer",
+      "name": "Mentat Trainer",
+      "x": 88558.96,
+      "y": 57348.9
+    },
+    {
+      "article": "Bene Gesserit Trainer",
+      "group": "Trainers",
+      "id": "bene_gesserit_trainer",
+      "name": "Bene Gesserit Trainer",
+      "x": 50476.96,
+      "y": 25469.36
+    },
+    {
+      "article": "Swordmaster Trainer",
+      "group": "Trainers",
+      "id": "swordmaster_trainer",
+      "name": "Swordmaster Trainer",
+      "x": 52076.93,
+      "y": 18659.16
+    },
+    {
+      "article": "",
+      "group": "Sandbikes",
+      "id": "sandbikes-1",
+      "name": "Scrap Sandbike",
+      "x": 78624.91,
+      "y": 48785.54
+    },
+    {
+      "article": "",
+      "group": "Sandbikes",
+      "id": "sandbikes-2",
+      "name": "Scrap Sandbike",
+      "x": 76808.79,
+      "y": 51901.39
+    },
+    {
+      "article": "",
+      "group": "Sandbikes",
+      "id": "sandbikes-3",
+      "name": "Scrap Sandbike",
+      "x": 73177.39,
+      "y": 26253.15
+    },
+    {
+      "article": "",
+      "group": "Sandbikes",
+      "id": "sandbikes-4",
+      "name": "Scrap Sandbike",
+      "x": 74352.61,
+      "y": 31067.63
+    },
+    {
+      "article": "",
+      "group": "Sandbikes",
+      "id": "sandbikes-5",
+      "name": "Scrap Sandbike",
+      "x": 74086.45,
+      "y": 31098.95
+    },
+    {
+      "article": "",
+      "group": "Sandbikes",
+      "id": "sandbikes-6",
+      "name": "Scrap Sandbike",
+      "x": 73084.45,
+      "y": 30817.1
+    },
+    {
+      "article": "",
+      "group": "Sandbikes",
+      "id": "sandbikes-7",
+      "name": "Scrap Sandbike",
+      "x": 43629.59,
+      "y": 41171.22
+    },
+    {
+      "article": "",
+      "group": "Spiceblows",
+      "id": "spiceblows-1",
+      "name": "Spice field",
+      "x": 20015.63,
+      "y": 61515.63
+    },
+    {
+      "article": "",
+      "group": "Spiceblows",
+      "id": "spiceblows-2",
+      "name": "Spice field",
+      "x": 10598.88,
+      "y": 56872.9
+    },
+    {
+      "article": "",
+      "group": "Spiceblows",
+      "id": "spiceblows-3",
+      "name": "Spice field",
+      "x": 13698.83,
+      "y": 51823.29
+    },
+    {
+      "article": "",
+      "group": "Spiceblows",
+      "id": "spiceblows-4",
+      "name": "Spice field",
+      "x": 23825.34,
+      "y": 54480.98
+    },
+    {
+      "article": "",
+      "group": "Spiceblows",
+      "id": "spiceblows-5",
+      "name": "Spice field",
+      "x": 34759.71,
+      "y": 58758.08
+    },
+    {
+      "article": "",
+      "group": "Spiceblows",
+      "id": "spiceblows-6",
+      "name": "Spice field",
+      "x": 19810.16,
+      "y": 44322.71
+    },
+    {
+      "article": "",
+      "group": "Spiceblows",
+      "id": "spiceblows-7",
+      "name": "Spice field",
+      "x": 35339.44,
+      "y": 32747.0
+    },
+    {
+      "article": "",
+      "group": "Spiceblows",
+      "id": "spiceblows-8",
+      "name": "Spice field",
+      "x": 41836.59,
+      "y": 35057.61
+    },
+    {
+      "article": "Captain Tighe Skorda",
+      "group": "NPCs",
+      "id": "captain_tighe_skorda",
+      "name": "Captain Tighe Skorda",
+      "x": 4078.13,
+      "y": 23890.63
+    },
+    {
+      "article": "Tleilaxu Trader",
+      "group": "NPCs",
+      "id": "tleilaxu_trader",
+      "name": "Tleilaxu Trader",
+      "x": 51560.23,
+      "y": 17829.31
+    },
+    {
+      "article": "Lanov",
+      "group": "NPCs",
+      "id": "lanov",
+      "name": "Lanov",
+      "x": 89905.51,
+      "y": 54937.64
+    },
+    {
+      "article": "Myr Charki",
+      "group": "NPCs",
+      "id": "myr_charki",
+      "name": "Myr Charki",
+      "x": 58199.02,
+      "y": 82667.12
+    },
+    {
+      "article": "Ihor",
+      "group": "NPCs",
+      "id": "ihor",
+      "name": "Ihor",
+      "x": 58167.71,
+      "y": 82494.89
+    },
+    {
+      "article": "Tyg Rolsum",
+      "group": "NPCs",
+      "id": "tyg_rolsum",
+      "name": "Tyg Rolsum",
+      "x": 78365.91,
+      "y": 56581.68
+    },
+    {
+      "article": "Lieutenant Anton Tolliver",
+      "group": "NPCs",
+      "id": "lieutenant_anton_tolliver",
+      "name": "Lieutenant Anton Tolliver",
+      "x": 79023.53,
+      "y": 56346.82
+    },
+    {
+      "article": "Levenbrech Maxim Kazmir",
+      "group": "NPCs",
+      "id": "levenbrech_maxim_kazmir",
+      "name": "Levenbrech Maxim Kazmir",
+      "x": 78866.95,
+      "y": 55798.81
+    },
+    {
+      "article": "Mobula Gang Member (Anvil)",
+      "group": "NPCs",
+      "id": "mobula_gang_member_anvil",
+      "name": "Mobula Gang Member (Anvil)",
+      "x": 78365.91,
+      "y": 56190.24
+    },
+    {
+      "article": "Harkonnen Acquisitor",
+      "group": "NPCs",
+      "id": "harkonnen_acquisitor",
+      "name": "Harkonnen Acquisitor",
+      "x": 87635.17,
+      "y": 57646.39
+    },
+    {
+      "article": "Simone Von Konig",
+      "group": "NPCs",
+      "id": "simone_von_konig",
+      "name": "Simone Von Konig",
+      "x": 88355.41,
+      "y": 56785.23
+    },
+    {
+      "article": "Mobula Gang Member (Harkonnen)",
+      "group": "NPCs",
+      "id": "mobula_gang_member_harkonnen",
+      "name": "Mobula Gang Member (Harkonnen)",
+      "x": 88355.41,
+      "y": 56221.56
+    },
+    {
+      "article": "Traj Axxari",
+      "group": "NPCs",
+      "id": "traj_axxari",
+      "name": "Traj Axxari",
+      "x": 51967.33,
+      "y": 17907.6
+    },
+    {
+      "article": "Gloos Bohannon",
+      "group": "NPCs",
+      "id": "gloos_bohannon",
+      "name": "Gloos Bohannon",
+      "x": 51106.16,
+      "y": 17876.28
+    },
+    {
+      "article": "Atreides Steward",
+      "group": "NPCs",
+      "id": "atreides_steward",
+      "name": "Atreides Steward",
+      "x": 50276.31,
+      "y": 27521.32
+    },
+    {
+      "article": "Andrea Ganan",
+      "group": "NPCs",
+      "id": "andrea_ganan",
+      "name": "Andrea Ganan",
+      "x": 50025.79,
+      "y": 27443.03
+    },
+    {
+      "article": "Duncan Idaho",
+      "group": "NPCs",
+      "id": "duncan_idaho",
+      "name": "Duncan Idaho",
+      "x": 49994.48,
+      "y": 27630.92
+    },
+    {
+      "article": "Zoe",
+      "group": "NPCs",
+      "id": "zoe",
+      "name": "Zoe",
+      "x": 29389.17,
+      "y": 35741.52
+    },
+    {
+      "article": "Tripp Yates",
+      "group": "NPCs",
+      "id": "tripp_yates",
+      "name": "Tripp Yates",
+      "x": 29044.71,
+      "y": 35537.97
+    },
+    {
+      "article": "Katrina Chloros",
+      "group": "NPCs",
+      "id": "katrina_chloros",
+      "name": "Katrina Chloros",
+      "x": 91048.51,
+      "y": 49598.43
+    },
+    {
+      "article": "Lieutenant Drangh",
+      "group": "NPCs",
+      "id": "lieutenant_drangh",
+      "name": "Lieutenant Drangh",
+      "x": 43029.72,
+      "y": 74726.86
+    },
+    {
+      "article": "Quartermaster Hix",
+      "group": "NPCs",
+      "id": "quartermaster_hix",
+      "name": "Quartermaster Hix",
+      "x": 42820.04,
+      "y": 74491.12
+    },
+    {
+      "article": "Chief Hanso",
+      "group": "NPCs",
+      "id": "chief_hanso",
+      "name": "Chief Hanso",
+      "x": 43527.72,
+      "y": 74910.21
+    },
+    {
+      "article": "Agave Seeds",
+      "group": "Agave",
+      "id": "agave-1",
+      "name": "Agave Seeds",
+      "x": 4728.57,
+      "y": 32562.74
+    },
+    {
+      "article": "Agave Seeds",
+      "group": "Agave",
+      "id": "agave-2",
+      "name": "Agave Seeds",
+      "x": 7781.79,
+      "y": 32390.5
+    },
+    {
+      "article": "Agave Seeds",
+      "group": "Agave",
+      "id": "agave-3",
+      "name": "Agave Seeds",
+      "x": 6059.46,
+      "y": 30088.85
+    },
+    {
+      "article": "Agave Seeds",
+      "group": "Agave",
+      "id": "agave-4",
+      "name": "Agave Seeds",
+      "x": 5245.27,
+      "y": 28037.71
+    },
+    {
+      "article": "Agave Seeds",
+      "group": "Agave",
+      "id": "agave-5",
+      "name": "Agave Seeds",
+      "x": 3632.55,
+      "y": 27442.72
+    },
+    {
+      "article": "Agave Seeds",
+      "group": "Agave",
+      "id": "agave-6",
+      "name": "Agave Seeds",
+      "x": 2583.49,
+      "y": 26127.49
+    },
+    {
+      "article": "Agave Seeds",
+      "group": "Agave",
+      "id": "agave-7",
+      "name": "Agave Seeds",
+      "x": 6591.82,
+      "y": 26675.51
+    },
+    {
+      "article": "Agave Seeds",
+      "group": "Agave",
+      "id": "agave-8",
+      "name": "Agave Seeds",
+      "x": 7938.37,
+      "y": 28617.04
+    },
+    {
+      "article": "Agave Seeds",
+      "group": "Agave",
+      "id": "agave-9",
+      "name": "Agave Seeds",
+      "x": 9065.71,
+      "y": 28961.5
+    },
+    {
+      "article": "Agave Seeds",
+      "group": "Agave",
+      "id": "agave-10",
+      "name": "Agave Seeds",
+      "x": 9785.95,
+      "y": 30370.68
+    },
+    {
+      "article": "Agave Seeds",
+      "group": "Agave",
+      "id": "agave-11",
+      "name": "Agave Seeds",
+      "x": 10694.09,
+      "y": 31638.94
+    },
+    {
+      "article": "Agave Seeds",
+      "group": "Agave",
+      "id": "agave-12",
+      "name": "Agave Seeds",
+      "x": 12494.71,
+      "y": 29133.74
+    },
+    {
+      "article": "Agave Seeds",
+      "group": "Agave",
+      "id": "agave-13",
+      "name": "Agave Seeds",
+      "x": 10960.27,
+      "y": 25360.27
+    },
+    {
+      "article": "Agave Seeds",
+      "group": "Agave",
+      "id": "agave-14",
+      "name": "Agave Seeds",
+      "x": 8329.8,
+      "y": 25062.78
+    },
+    {
+      "article": "Agave Seeds",
+      "group": "Agave",
+      "id": "agave-15",
+      "name": "Agave Seeds",
+      "x": 7327.72,
+      "y": 23183.88
+    },
+    {
+      "article": "Agave Seeds",
+      "group": "Agave",
+      "id": "agave-16",
+      "name": "Agave Seeds",
+      "x": 5480.13,
+      "y": 20866.56
+    },
+    {
+      "article": "Agave Seeds",
+      "group": "Agave",
+      "id": "agave-17",
+      "name": "Agave Seeds",
+      "x": 8423.75,
+      "y": 21320.63
+    },
+    {
+      "article": "Agave Seeds",
+      "group": "Agave",
+      "id": "agave-18",
+      "name": "Agave Seeds",
+      "x": 9128.34,
+      "y": 20302.89
+    },
+    {
+      "article": "Agave Seeds",
+      "group": "Agave",
+      "id": "agave-19",
+      "name": "Agave Seeds",
+      "x": 13715.99,
+      "y": 23825.84
+    },
+    {
+      "article": "Agave Seeds",
+      "group": "Agave",
+      "id": "agave-20",
+      "name": "Agave Seeds",
+      "x": 18428.91,
+      "y": 26127.49
+    },
+    {
+      "article": "Agave Seeds",
+      "group": "Agave",
+      "id": "agave-21",
+      "name": "Agave Seeds",
+      "x": 20949.77,
+      "y": 26597.22
+    },
+    {
+      "article": "Agave Seeds",
+      "group": "Agave",
+      "id": "agave-22",
+      "name": "Agave Seeds",
+      "x": 21184.63,
+      "y": 20506.44
+    },
+    {
+      "article": "Agave Seeds",
+      "group": "Agave",
+      "id": "agave-23",
+      "name": "Agave Seeds",
+      "x": 19806.77,
+      "y": 22150.48
+    },
+    {
+      "article": "Agave Seeds",
+      "group": "Agave",
+      "id": "agave-24",
+      "name": "Agave Seeds",
+      "x": 17458.14,
+      "y": 20271.58
+    },
+    {
+      "article": "Agave Seeds",
+      "group": "Agave",
+      "id": "agave-25",
+      "name": "Agave Seeds",
+      "x": 18929.95,
+      "y": 18940.69
+    },
+    {
+      "article": "Agave Seeds",
+      "group": "Agave",
+      "id": "agave-26",
+      "name": "Agave Seeds",
+      "x": 18460.22,
+      "y": 16858.24
+    },
+    {
+      "article": "Agave Seeds",
+      "group": "Agave",
+      "id": "agave-27",
+      "name": "Agave Seeds",
+      "x": 20542.67,
+      "y": 16451.14
+    },
+    {
+      "article": "Agave Seeds",
+      "group": "Agave",
+      "id": "agave-28",
+      "name": "Agave Seeds",
+      "x": 13997.83,
+      "y": 20302.89
+    },
+    {
+      "article": "Agave Seeds",
+      "group": "Agave",
+      "id": "agave-29",
+      "name": "Agave Seeds",
+      "x": 14310.98,
+      "y": 18940.69
+    },
+    {
+      "article": "Agave Seeds",
+      "group": "Agave",
+      "id": "agave-30",
+      "name": "Agave Seeds",
+      "x": 15955.02,
+      "y": 18157.81
+    },
+    {
+      "article": "Agave Seeds",
+      "group": "Agave",
+      "id": "agave-31",
+      "name": "Agave Seeds",
+      "x": 14201.38,
+      "y": 16686.0
+    },
+    {
+      "article": "Agave Seeds",
+      "group": "Agave",
+      "id": "agave-32",
+      "name": "Agave Seeds",
+      "x": 12181.55,
+      "y": 16983.5
+    },
+    {
+      "article": "Agave Seeds",
+      "group": "Agave",
+      "id": "agave-33",
+      "name": "Agave Seeds",
+      "x": 12165.9,
+      "y": 18596.22
+    },
+    {
+      "article": "Agave Seeds",
+      "group": "Agave",
+      "id": "agave-34",
+      "name": "Agave Seeds",
+      "x": 13590.73,
+      "y": 18517.94
+    },
+    {
+      "article": "Agave Seeds",
+      "group": "Agave",
+      "id": "agave-35",
+      "name": "Agave Seeds",
+      "x": 12807.86,
+      "y": 19613.96
+    },
+    {
+      "article": "Agave Seeds",
+      "group": "Agave",
+      "id": "agave-36",
+      "name": "Agave Seeds",
+      "x": 8658.61,
+      "y": 18455.31
+    },
+    {
+      "article": "Agave Seeds",
+      "group": "Agave",
+      "id": "agave-37",
+      "name": "Agave Seeds",
+      "x": 7499.95,
+      "y": 16686.0
+    },
+    {
+      "article": "Agave Seeds",
+      "group": "Agave",
+      "id": "agave-38",
+      "name": "Agave Seeds",
+      "x": 6920.63,
+      "y": 16263.25
+    },
+    {
+      "article": "Agave Seeds",
+      "group": "Agave",
+      "id": "agave-39",
+      "name": "Agave Seeds",
+      "x": 5401.85,
+      "y": 18611.88
+    }
+  ],
+  "source": {
+    "api": "https://awakening.wiki/api.php?action=parse&page=Map%3AHagga+Basin&prop=wikitext&format=json",
+    "license": "CC BY-NC-SA 4.0 unless otherwise noted",
+    "name": "Dune: Awakening Community Wiki Map:Hagga Basin",
+    "url": "https://awakening.wiki/Map:Hagga_Basin"
+  }
+}
