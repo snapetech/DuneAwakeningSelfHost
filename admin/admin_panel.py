@@ -6823,7 +6823,7 @@ function haggaPoiToggleBar(pois, selected){
   if (!groupKeys.length) return '';
   const colors = {};
   groupKeys.forEach((group, index) => colors[group] = haggaPoiPalette[index % haggaPoiPalette.length]);
-  return `<div class="poiLegendHeader"><span id="haggaPoiSummary" class="muted">${esc(haggaPoiSummary(selected, pois))}</span><div class="toolbar"><button id="haggaPoiAllBtn">All</button><button id="haggaPoiPresetBtn">Preset</button><button id="haggaPoiClearBtn">Clear</button><button id="haggaPoiEnableFilteredBtn">On shown</button><button id="haggaPoiDisableFilteredBtn">Off shown</button></div></div><input id="haggaPoiFilter" class="poiFilterInput" type="search" placeholder="Filter POI layers"><div id="haggaPoiFilterSummary" class="poiFilterSummary">Showing all POI layers</div><div class="poiToggleBar" aria-label="POI layer toggles">${groupKeys.map(group => {
+  return `<div class="poiLegendHeader"><span id="haggaPoiSummary" class="muted">${esc(haggaPoiSummary(selected, pois))}</span><div class="toolbar"><button id="haggaPoiAllBtn">All</button><button id="haggaPoiPresetBtn">Preset</button><button id="haggaPoiClearBtn">Clear</button><button id="haggaPoiEnableFilteredBtn">On shown</button><button id="haggaPoiDisableFilteredBtn">Off shown</button><button id="haggaPoiOnlyFilteredBtn">Only shown</button></div></div><input id="haggaPoiFilter" class="poiFilterInput" type="search" placeholder="Filter POI layers"><div id="haggaPoiFilterSummary" class="poiFilterSummary">Showing all POI layers</div><div class="poiToggleBar" aria-label="POI layer toggles">${groupKeys.map(group => {
     const info = groups[group] || {};
     const label = String(info.name || group);
     return `<label data-filter-text="${esc((label + ' ' + group).toLowerCase())}"><span class="poiToggleLabel"><input type="checkbox" value="${esc(group)}"${selected[group] ? ' checked' : ''}><span class="poiSwatch" style="background:${esc(colors[group])}"></span><span>${esc(label)}</span></span><span class="poiCount">${esc(info.count || 0)}</span></label>`;
@@ -7143,8 +7143,21 @@ function wireHaggaMapControls(container){
     saveHaggaPoiGroups(selected);
     refreshHaggaMap({force:true}).catch(e => reportClientError(e, 'Refresh Hagga map'));
   };
+  const onlyFilteredPois = () => {
+    const selected = selectedHaggaPoiGroups({});
+    Object.keys(selected).forEach(group => selected[group] = false);
+    container.querySelectorAll('.poiToggleBar label[data-filter-text]').forEach(label => {
+      if (!label.hidden) {
+        const input = label.querySelector('input[type=checkbox]');
+        if (input) selected[input.value] = true;
+      }
+    });
+    saveHaggaPoiGroups(selected);
+    refreshHaggaMap({force:true}).catch(e => reportClientError(e, 'Refresh Hagga map'));
+  };
   container.querySelector('#haggaPoiEnableFilteredBtn')?.addEventListener('click', () => setFilteredPois(true));
   container.querySelector('#haggaPoiDisableFilteredBtn')?.addEventListener('click', () => setFilteredPois(false));
+  container.querySelector('#haggaPoiOnlyFilteredBtn')?.addEventListener('click', onlyFilteredPois);
   container.querySelectorAll('.playerMarker[data-account-id]').forEach(marker => {
     marker.addEventListener('click', e => {
       if (haggaMapSuppressMarkerClick) {

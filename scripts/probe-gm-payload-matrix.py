@@ -195,7 +195,10 @@ def main():
     game_ch = None
     game_reply_queue = None
 
-    combos = list(itertools.product(targets, bodies.items(), content_type_modes, amqp_types))
+    combos = [
+        (target, body_item, content_type_mode, amqp_type)
+        for body_item, content_type_mode, amqp_type, target in itertools.product(bodies.items(), content_type_modes, amqp_types, targets)
+    ]
     if args.limit:
         combos = combos[: args.limit]
 

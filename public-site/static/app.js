@@ -12,6 +12,7 @@
 	var poiClear = document.getElementById("poi-clear");
 	var poiEnableFiltered = document.getElementById("poi-enable-filtered");
 	var poiDisableFiltered = document.getElementById("poi-disable-filtered");
+	var poiOnlyFiltered = document.getElementById("poi-only-filtered");
 	var poiFilter = document.getElementById("poi-filter");
 	var poiFilterSummary = document.getElementById("poi-filter-summary");
 	var players = document.getElementById("active-players");
@@ -329,6 +330,21 @@
 			savePoiGroups(selected);
 			renderPoiToggles(data);
 		}
+		function onlyFiltered() {
+			Object.keys(selected).forEach(function (group) {
+				selected[group] = false;
+			});
+			poiToggles.querySelectorAll("label[data-filter-text]").forEach(function (label) {
+				if (!label.hidden) {
+					var input = label.querySelector("input[type=checkbox]");
+					if (input) {
+						selected[input.value] = true;
+					}
+				}
+			});
+			savePoiGroups(selected);
+			renderPoiToggles(data);
+		}
 		if (poiEnableFiltered) {
 			poiEnableFiltered.onclick = function () {
 				setFiltered(true);
@@ -338,6 +354,9 @@
 			poiDisableFiltered.onclick = function () {
 				setFiltered(false);
 			};
+		}
+		if (poiOnlyFiltered) {
+			poiOnlyFiltered.onclick = onlyFiltered;
 		}
 		if (poiPreset) {
 			poiPreset.onclick = function () {

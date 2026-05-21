@@ -319,6 +319,11 @@ section {
 	margin-bottom: 8px;
 }
 
+.poi-attribution {
+	font-size: 0.84rem;
+	margin: 8px 0 6px;
+}
+
 .poi-toggles label {
 	display: inline-flex;
 	align-items: center;
