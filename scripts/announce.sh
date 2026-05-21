@@ -735,7 +735,7 @@ if cleanup_target_bindings:
 ok = any(item["ok"] for item in results)
 print(json.dumps({
     "ok": ok,
-    "transport": "chat.map",
+    "transport": exchange,
     "fallback": fallback,
     "exchange": exchange,
     "sender": sender_user,
