@@ -142,6 +142,7 @@ server {
 - Faction reputation planning through `POST /api/admin/faction-reputation`, default `dry_run=true`. Execution requires `DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED=true` and confirmation `WRITE REPUTATION`.
 - Player faction-change planning through `POST /api/admin/faction`, default `dry_run=true`. Execution requires `DUNE_ADMIN_FACTION_MUTATIONS_ENABLED=true`, confirmation `CHANGE FACTION`, and an offline target player.
 - Journey story-node planning through `POST /api/admin/journey`, default `dry_run=true`. Execution requires `DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED=true`, confirmation `WRITE JOURNEY`, and an offline target player.
+- Landsraad term planning through `POST /api/admin/landsraad`, default `dry_run=true`. Execution requires `DUNE_ADMIN_LANDSRAAD_MUTATIONS_ENABLED=true` and confirmation `WRITE LANDSRAAD`.
 - Event planner APIs:
   - `GET /api/events`
   - `POST /api/events/dry-run`
@@ -201,6 +202,7 @@ DUNE_ADMIN_BUNDLE_MUTATIONS_ENABLED=false
 DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED=false
 DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED=false
 DUNE_ADMIN_FACTION_MUTATIONS_ENABLED=false
+DUNE_ADMIN_LANDSRAAD_MUTATIONS_ENABLED=false
 ```
 
 Gate behavior:
@@ -212,6 +214,7 @@ Gate behavior:
 - `DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED`: controls faction reputation writes through `dune.set_player_faction_reputation`. Progression inspection and reputation dry-runs still work.
 - `DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED`: controls journey server-function calls. Journey dry-runs still work.
 - `DUNE_ADMIN_FACTION_MUTATIONS_ENABLED`: controls player faction-change server-function calls. Faction dry-runs still work.
+- `DUNE_ADMIN_LANDSRAAD_MUTATIONS_ENABLED`: controls Landsraad term server-function calls. Landsraad dry-runs still work.
 
 Existing gates still apply:
 
@@ -231,6 +234,7 @@ MOVE OFFLINE PLAYER
 WRITE REPUTATION
 WRITE JOURNEY
 CHANGE FACTION
+WRITE LANDSRAAD
 RUN GM COMMAND
 ```
 
@@ -405,6 +409,28 @@ Execution requires:
 - target player must be offline
 
 The live schema currently has `dune.factions` rows for `1=Atreides`, `2=Harkonnen`, `3=None`, and `4=Smuggler`. Confidence is moderate because the faction-change function is first-party; guild side effects and client refresh behavior still need disposable-character validation.
+
+`POST /api/admin/landsraad` plans or executes Landsraad term administration. Supported actions are `change-end-time` and `force-end`.
+
+Dry-run body:
+
+```json
+{
+  "dry_run": true,
+  "action": "change-end-time",
+  "term_id": 1,
+  "new_end_time": "2026-05-26 04:55:00",
+  "test_term": false
+}
+```
+
+Execution requires:
+
+- `DUNE_ADMIN_MUTATIONS_ENABLED=true`
+- `DUNE_ADMIN_LANDSRAAD_MUTATIONS_ENABLED=true`
+- `confirm: "WRITE LANDSRAAD"`
+
+The endpoint reads `dune.landsraad_load_current_term()` and recent `dune.landsraad_decree_term` rows before planning. End-time changes are reversible by writing the previous `end_time`; `force-end` is not safely reversible. Confidence is moderate for function mechanics and high that the action is world-impacting.
 
 `POST /api/admin/journey` plans or executes journey story-node server functions. Supported actions are `reveal`, `complete`, `reset`, and `delete`.
 

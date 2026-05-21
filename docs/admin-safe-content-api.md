@@ -25,6 +25,7 @@ Content-Type: application/json
 | `DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED` | `false` | Enables faction reputation writes through `dune.set_player_faction_reputation`. Does not block inspection or dry-runs. |
 | `DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED` | `false` | Enables journey reveal/complete/reset/delete server-function calls. Does not block inspection or dry-runs. |
 | `DUNE_ADMIN_FACTION_MUTATIONS_ENABLED` | `false` | Enables player faction change through `dune.change_player_faction`. Does not block inspection or dry-runs. |
+| `DUNE_ADMIN_LANDSRAAD_MUTATIONS_ENABLED` | `false` | Enables Landsraad term administration through first-party functions. Does not block inspection or dry-runs. |
 | `DUNE_ADMIN_MUTATIONS_ENABLED` | repo default currently `true` | Existing global mutation gate. |
 | `DUNE_ADMIN_ITEM_GRANTS_ENABLED` | repo default currently `true` | Existing item mutation gate. |
 
@@ -395,6 +396,59 @@ dune.change_player_faction(
 ```
 
 Risk: the function is first-party, but guild side effects and live-client refresh behavior need disposable-character validation.
+
+## Landsraad Term Admin
+
+### `POST /api/admin/landsraad`
+
+Default mode is dry-run. Supported actions are:
+
+- `change-end-time`
+- `force-end`
+
+Dry-run request for changing the term end time:
+
+```json
+{
+  "dry_run": true,
+  "action": "change-end-time",
+  "term_id": 1,
+  "new_end_time": "2026-05-26 04:55:00",
+  "test_term": false
+}
+```
+
+Dry-run request for force-ending a term:
+
+```json
+{
+  "dry_run": true,
+  "action": "force-end",
+  "term_id": 1
+}
+```
+
+Dry-run behavior:
+
+- Reads `dune.landsraad_load_current_term()`.
+- Reads recent rows from `dune.landsraad_decree_term`.
+- Verifies the current Landsraad admin functions exist.
+- Returns rollback notes. End-time changes can be rolled back to the previous `end_time`; force-end is not safely reversible.
+
+Execution requirements:
+
+- `DUNE_ADMIN_MUTATIONS_ENABLED=true`
+- `DUNE_ADMIN_LANDSRAAD_MUTATIONS_ENABLED=true`
+- `confirm: "WRITE LANDSRAAD"`
+
+Function mapping:
+
+| Action | Function |
+| --- | --- |
+| `change-end-time` | `dune.landsraad_change_term_end_time(term_id, new_end_time, test_term)` |
+| `force-end` | `dune.landsraad_force_end_term(term_id)` |
+
+Risk: very high. Landsraad terms are world/economy state. Use dry-run and DB backup first. Do not use `force-end` casually because it is not safely reversible.
 
 ## Faction Reputation
 

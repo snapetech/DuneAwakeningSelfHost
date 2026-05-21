@@ -287,3 +287,57 @@ dune.resourcefield_state
 ```
 
 The endpoint is intended to validate typed Deep Desert cap changes before and after restart. It does not write DB resource-field rows.
+
+## Faction and Journey Mutators
+
+Progression evidence collector:
+
+```text
+POST /api/admin/progression/inspect
+```
+
+This endpoint reads current player faction/reputation rows and discovers relevant `dune` functions/tables through `pg_proc` and `information_schema`. It is read-only.
+
+Function-backed mutators added after live schema validation:
+
+```text
+POST /api/admin/faction-reputation
+POST /api/admin/faction
+POST /api/admin/journey
+```
+
+Mapped first-party functions:
+
+```sql
+dune.set_player_faction_reputation(in_actor_id bigint, in_faction_id smallint, in_reputation_amount integer)
+dune.get_player_current_faction_reputation(in_actor_id bigint)
+dune.change_player_faction(in_player_id bigint, in_faction_id smallint, neutral_faction_id smallint, in_utc_time_faction_change timestamp)
+dune.get_player_faction(in_player_id bigint, in_neutral_faction_id smallint)
+dune.admin_get_journey_details(in_player_id text, in_story_node_id text)
+dune.reveal_journey_story_nodes_for_player(in_player_id text, in_story_node_ids text[])
+dune.complete_journey_story_nodes_for_player(in_player_id text, in_story_node_ids text[])
+dune.reset_journey_story_nodes_for_player(in_player_id text, in_story_node_ids text[])
+dune.delete_journey_story_nodes_for_player(in_player_id text, in_story_node_ids text[])
+```
+
+Separate gates:
+
+```env
+DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED=false
+DUNE_ADMIN_FACTION_MUTATIONS_ENABLED=false
+DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED=false
+```
+
+Confirmation phrases:
+
+```text
+WRITE REPUTATION
+CHANGE FACTION
+WRITE JOURNEY
+```
+
+Current confidence:
+
+- Reputation: moderate-to-high mechanically because a first-party setter exists.
+- Faction: moderate; guild side effects need disposable-character validation.
+- Journey: moderate; functions exist, but story-node IDs and reward semantics need cataloging.
