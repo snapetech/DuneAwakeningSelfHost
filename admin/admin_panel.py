@@ -2527,14 +2527,18 @@ def character_swap_takeover(active_account_id, target_account_id, active_user, t
                 lock_a, lock_b = sorted([int(active_account_id), int(target_account_id)])
                 cursor.execute("select pg_advisory_xact_lock(%s), pg_advisory_xact_lock(%s)", (lock_a, lock_b))
                 cursor.execute("""
-                    select ps.account_id, ps.character_name, ps.online_status::text, ps.life_state::text,
-                           ps.server_id, ps.player_controller_id, ps.player_pawn_id, ps.player_state_id,
-                           a."user" as fls_id, a.funcom_id, a.platform_name, a.platform_id
-                    from dune.player_state ps
-                    left join dune.accounts a on a.id=ps.account_id
-                    where ps.account_id in (%s, %s)
-                    order by ps.account_id
-                    for update of ps
+                    select eps.account_id,
+                           dune.decrypt_user_data(eps.encrypted_character_name) as character_name,
+                           eps.online_status::text, eps.life_state::text,
+                           eps.server_id, eps.player_controller_id, eps.player_pawn_id, eps.player_state_id,
+                           ea."user" as fls_id,
+                           dune.decrypt_user_data(ea.encrypted_funcom_id) as funcom_id,
+                           ea.platform_name, ea.platform_id
+                    from dune.encrypted_player_state eps
+                    join dune.encrypted_accounts ea on ea.id=eps.account_id
+                    where eps.account_id in (%s, %s)
+                    order by eps.account_id
+                    for update of eps, ea
                 """, (active_account_id, target_account_id))
                 before_rows = list(cursor.fetchall())
                 if len(before_rows) != 2:
@@ -2547,13 +2551,17 @@ def character_swap_takeover(active_account_id, target_account_id, active_user, t
                     raise RuntimeError("character swap aborted after backup because active or target account came online")
                 cursor.execute("select dune.takeover_account(%s, %s)", (target_user, active_user))
                 cursor.execute("""
-                    select ps.account_id, ps.character_name, ps.online_status::text, ps.life_state::text,
-                           ps.server_id, ps.player_controller_id, ps.player_pawn_id, ps.player_state_id,
-                           a."user" as fls_id, a.funcom_id, a.platform_name, a.platform_id
-                    from dune.player_state ps
-                    left join dune.accounts a on a.id=ps.account_id
-                    where ps.account_id in (%s, %s)
-                    order by ps.account_id
+                    select eps.account_id,
+                           dune.decrypt_user_data(eps.encrypted_character_name) as character_name,
+                           eps.online_status::text, eps.life_state::text,
+                           eps.server_id, eps.player_controller_id, eps.player_pawn_id, eps.player_state_id,
+                           ea."user" as fls_id,
+                           dune.decrypt_user_data(ea.encrypted_funcom_id) as funcom_id,
+                           ea.platform_name, ea.platform_id
+                    from dune.encrypted_player_state eps
+                    join dune.encrypted_accounts ea on ea.id=eps.account_id
+                    where eps.account_id in (%s, %s)
+                    order by eps.account_id
                 """, (active_account_id, target_account_id))
                 after_rows = list(cursor.fetchall())
                 after_by_account = {int(row.get("account_id")): row for row in after_rows}

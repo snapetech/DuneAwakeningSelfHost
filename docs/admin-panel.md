@@ -632,8 +632,9 @@ POST /api/admin/character-slots/execute
 
 Executable switch/restore plans include `plan.transactionSafety`, which records
 that execution creates a backup before the transaction, takes account-id
-advisory locks, locks both `player_state` rows, rechecks offline state inside
-the transaction, and requires post-swap identity verification before commit.
+advisory locks, locks both underlying `encrypted_player_state` and
+`encrypted_accounts` rows, rechecks offline state inside the transaction, and
+requires post-swap identity verification before commit.
 
 Safe preview examples:
 
@@ -683,7 +684,7 @@ Non-dry-run execution requires all of:
 Execution behavior:
 
 - creates a Postgres backup first
-- opens one DB transaction, takes account-id advisory locks, locks both `player_state` rows, and aborts before mutation if either came online
+- opens one DB transaction, takes account-id advisory locks, locks both underlying `encrypted_player_state` and `encrypted_accounts` rows, and aborts before mutation if either came online
 - audits before/after rows for the active and target account ids
 - calls only `select dune.takeover_account(target_fls_id, active_fls_id)`
 - verifies that the active and target FLS identities swapped as expected
