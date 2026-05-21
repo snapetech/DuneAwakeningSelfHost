@@ -474,7 +474,7 @@ Fail-closed rules:
 - Online active or target characters make the plan non-executable.
 - Missing native contract returns `executable: false`.
 - `new-character` returns `executable: false`; DASH does not call destructive `delete_account` to create a blank slot.
-- Switch/restore execution creates a backup first, rechecks offline state, audits before/after rows, calls `dune.takeover_account(target_fls_id, active_fls_id)`, verifies the FLS identity swap, and returns an inverse restore payload.
+- Switch/restore execution creates a backup first, opens one DB transaction, takes account-id advisory locks, locks both `player_state` rows, rechecks offline state, audits before/after rows, calls `dune.takeover_account(target_fls_id, active_fls_id)`, verifies the FLS identity swap, and returns an inverse restore payload.
 - Non-dry-run execution requires `DUNE_ADMIN_MUTATIONS_ENABLED=true`, `DUNE_ADMIN_CHARACTER_SWAP_ENABLED=true`, and `confirm: "SWAP CHARACTER"`.
 - Even with gates enabled, execution stops before backup/write when the plan is not executable.
 

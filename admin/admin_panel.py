@@ -2520,6 +2520,58 @@ def execute(sql, params=None):
             return cursor.rowcount
 
 
+def character_swap_takeover(active_account_id, target_account_id, active_user, target_user):
+    with db_connect() as conn:
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
+                lock_a, lock_b = sorted([int(active_account_id), int(target_account_id)])
+                cursor.execute("select pg_advisory_xact_lock(%s), pg_advisory_xact_lock(%s)", (lock_a, lock_b))
+                cursor.execute("""
+                    select ps.account_id, ps.character_name, ps.online_status::text, ps.life_state::text,
+                           ps.server_id, ps.player_controller_id, ps.player_pawn_id, ps.player_state_id,
+                           a."user" as fls_id, a.funcom_id, a.platform_name, a.platform_id
+                    from dune.player_state ps
+                    left join dune.accounts a on a.id=ps.account_id
+                    where ps.account_id in (%s, %s)
+                    order by ps.account_id
+                    for update of ps
+                """, (active_account_id, target_account_id))
+                before_rows = list(cursor.fetchall())
+                if len(before_rows) != 2:
+                    raise RuntimeError("character swap aborted because active/target rows could not both be locked")
+                online_now = [
+                    row for row in before_rows
+                    if str(row.get("online_status") or "").lower() == "online"
+                ]
+                if online_now:
+                    raise RuntimeError("character swap aborted after backup because active or target account came online")
+                cursor.execute("select dune.takeover_account(%s, %s)", (target_user, active_user))
+                cursor.execute("""
+                    select ps.account_id, ps.character_name, ps.online_status::text, ps.life_state::text,
+                           ps.server_id, ps.player_controller_id, ps.player_pawn_id, ps.player_state_id,
+                           a."user" as fls_id, a.funcom_id, a.platform_name, a.platform_id
+                    from dune.player_state ps
+                    left join dune.accounts a on a.id=ps.account_id
+                    where ps.account_id in (%s, %s)
+                    order by ps.account_id
+                """, (active_account_id, target_account_id))
+                after_rows = list(cursor.fetchall())
+                after_by_account = {int(row.get("account_id")): row for row in after_rows}
+                active_after = after_by_account.get(int(active_account_id), {})
+                target_after = after_by_account.get(int(target_account_id), {})
+                verified = (
+                    active_after.get("fls_id") == target_user
+                    and target_after.get("fls_id") == active_user
+                )
+                if not verified:
+                    raise RuntimeError("character swap native call returned but post-swap identity verification failed")
+            conn.commit()
+            return before_rows, after_rows, verified
+        except Exception:
+            conn.rollback()
+            raise
+
+
 def reference_query(errors, name, sql, params=None):
     try:
         return query(sql, params)
@@ -3773,40 +3825,12 @@ class Handler(BaseHTTPRequestHandler):
         target_user = target_before.get("fls_id") if target_before else None
         if not active_user or not target_user:
             raise ValueError("active and target accounts must both have FLS user ids")
-        before_rows = query("""
-            select ps.account_id, ps.character_name, ps.online_status::text, ps.life_state::text,
-                   ps.server_id, ps.player_controller_id, ps.player_pawn_id, ps.player_state_id,
-                   a."user" as fls_id, a.funcom_id, a.platform_name, a.platform_id
-            from dune.player_state ps
-            left join dune.accounts a on a.id=ps.account_id
-            where ps.account_id in (%s, %s)
-            order by ps.account_id
-        """, (planned["accountId"], planned["targetAccountId"]))
-        online_now = [
-            row for row in before_rows
-            if str(row.get("online_status") or "").lower() == "online"
-        ]
-        if online_now:
-            raise RuntimeError("character swap aborted after backup because active or target account came online")
-        execute("select dune.takeover_account(%s, %s)", (target_user, active_user))
-        after_rows = query("""
-            select ps.account_id, ps.character_name, ps.online_status::text, ps.life_state::text,
-                   ps.server_id, ps.player_controller_id, ps.player_pawn_id, ps.player_state_id,
-                   a."user" as fls_id, a.funcom_id, a.platform_name, a.platform_id
-            from dune.player_state ps
-            left join dune.accounts a on a.id=ps.account_id
-            where ps.account_id in (%s, %s)
-            order by ps.account_id
-        """, (planned["accountId"], planned["targetAccountId"]))
-        after_by_account = {int(row.get("account_id")): row for row in after_rows}
-        active_after = after_by_account.get(int(planned["accountId"]), {})
-        target_after = after_by_account.get(int(planned["targetAccountId"]), {})
-        verified = (
-            active_after.get("fls_id") == target_user
-            and target_after.get("fls_id") == active_user
+        before_rows, after_rows, verified = character_swap_takeover(
+            planned["accountId"],
+            planned["targetAccountId"],
+            active_user,
+            target_user,
         )
-        if not verified:
-            raise RuntimeError("character swap native call returned but post-swap identity verification failed")
         return {
             "ok": True,
             "dryRun": False,

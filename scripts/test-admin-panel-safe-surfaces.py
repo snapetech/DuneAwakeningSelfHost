@@ -517,6 +517,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         calls = []
         backups = []
         original_backup = self.panel.create_db_backup
+        original_takeover = self.panel.character_swap_takeover
 
         def fake_query(sql, params=None):
             if "where ps.account_id=%s" in sql and "left join dune.accounts" in sql:
@@ -525,20 +526,22 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
                 return [{"account_id": 11, "character_name": "Stored", "online_status": "Offline", "fls_id": "stored-fls", "ownership_evidence": "same-account-user"}]
             if "from pg_proc" in sql:
                 return [{"name": "takeover_account", "args": "in_user_to_takeover text, in_current_user text", "result": "void"}]
-            if "where ps.account_id in" in sql:
-                if calls:
-                    return [{"account_id": params[0], "online_status": "Offline", "fls_id": "stored-fls"}, {"account_id": params[1], "online_status": "Offline", "fls_id": "active-fls"}]
-                return [{"account_id": params[0], "online_status": "Offline", "fls_id": "active-fls"}, {"account_id": params[1], "online_status": "Offline", "fls_id": "stored-fls"}]
             return []
 
-        def fake_execute(sql, params=None):
-            calls.append((sql, params))
-            return 1
+        def fake_takeover(active_account_id, target_account_id, active_user, target_user):
+            calls.append((active_account_id, target_account_id, active_user, target_user))
+            return (
+                [{"account_id": active_account_id, "online_status": "Offline", "fls_id": active_user}, {"account_id": target_account_id, "online_status": "Offline", "fls_id": target_user}],
+                [{"account_id": active_account_id, "online_status": "Offline", "fls_id": target_user}, {"account_id": target_account_id, "online_status": "Offline", "fls_id": active_user}],
+                True,
+            )
 
-        self.patch_db(fake_query, fake_execute)
+        self.patch_db(fake_query, lambda sql, params=None: (_ for _ in ()).throw(AssertionError("unexpected raw execute")))
         self.patch_flag("CHARACTER_SWAP_ENABLED", True)
         self.panel.create_db_backup = lambda: backups.append("backup") or {"path": "backup.dump", "bytes": 1}
+        self.panel.character_swap_takeover = fake_takeover
         self.addCleanup(lambda: setattr(self.panel, "create_db_backup", original_backup))
+        self.addCleanup(lambda: setattr(self.panel, "character_swap_takeover", original_takeover))
 
         result = self.handler.character_slot_execute({
             "dry_run": False,
@@ -549,13 +552,14 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         })
         self.assertFalse(result["dryRun"])
         self.assertEqual(backups, ["backup"])
-        self.assertEqual(calls, [("select dune.takeover_account(%s, %s)", ("stored-fls", "active-fls"))])
+        self.assertEqual(calls, [(10, 11, "active-fls", "stored-fls")])
         self.assertTrue(result["verified"])
         self.assertEqual(result["rollback"]["inversePayload"]["account_id"], 11)
 
     def test_character_slot_execute_rechecks_offline_after_backup(self):
         calls = []
         original_backup = self.panel.create_db_backup
+        original_takeover = self.panel.character_swap_takeover
 
         def fake_query(sql, params=None):
             if "where ps.account_id=%s" in sql and "left join dune.accounts" in sql:
@@ -564,14 +568,18 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
                 return [{"account_id": 11, "character_name": "Stored", "online_status": "Offline", "fls_id": "stored-fls", "ownership_evidence": "same-account-user"}]
             if "from pg_proc" in sql:
                 return [{"name": "takeover_account", "args": "in_user_to_takeover text, in_current_user text", "result": "void"}]
-            if "where ps.account_id in" in sql:
-                return [{"account_id": params[0], "online_status": "Online", "fls_id": "active-fls"}, {"account_id": params[1], "online_status": "Offline", "fls_id": "stored-fls"}]
             return []
 
-        self.patch_db(fake_query, lambda sql, params=None: calls.append((sql, params)))
+        def fake_takeover(active_account_id, target_account_id, active_user, target_user):
+            calls.append((active_account_id, target_account_id, active_user, target_user))
+            raise RuntimeError("character swap aborted after backup because active or target account came online")
+
+        self.patch_db(fake_query, lambda sql, params=None: (_ for _ in ()).throw(AssertionError("unexpected raw execute")))
         self.patch_flag("CHARACTER_SWAP_ENABLED", True)
         self.panel.create_db_backup = lambda: {"path": "backup.dump", "bytes": 1}
+        self.panel.character_swap_takeover = fake_takeover
         self.addCleanup(lambda: setattr(self.panel, "create_db_backup", original_backup))
+        self.addCleanup(lambda: setattr(self.panel, "character_swap_takeover", original_takeover))
 
         with self.assertRaises(RuntimeError):
             self.handler.character_slot_execute({
@@ -581,7 +589,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
                 "target_account_id": 11,
                 "confirm": "SWAP CHARACTER",
             })
-        self.assertEqual(calls, [])
+        self.assertEqual(calls, [(10, 11, "active-fls", "stored-fls")])
 
     def test_character_slot_execution_block_does_not_create_backup(self):
         backups = []
