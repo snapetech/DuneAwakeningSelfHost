@@ -94,6 +94,27 @@ DUNE_PLAYER_PRESENCE_POST_RESTART_WINDOW_SECONDS=3600
 DUNE_PLAYER_PRESENCE_POST_RESTART_TEMPLATE=Maintenance is complete. If anything looks wrong, report it through {server_url}.
 DUNE_PLAYER_PRESENCE_STUCK_POSITION_ENABLED=false
 DUNE_PLAYER_PRESENCE_STUCK_POSITION_TEMPLATE=Your position looks unusual. If you are stuck, message an admin before relogging repeatedly.
+DUNE_PLAYER_PRESENCE_ADMIN_NAMES=
+DUNE_PLAYER_PRESENCE_ADMIN_FLS_IDS=
+DUNE_PLAYER_PRESENCE_ADMIN_ALERT_INTERVAL_SECONDS=900
+DUNE_PLAYER_PRESENCE_MAP_HEALTH_PUBLIC_ENABLED=true
+DUNE_PLAYER_PRESENCE_MAP_HEALTH_DEGRADED_TEMPLATE=Server notice: some travel destinations are recovering ({online}/{expected} online). If travel fails, wait 1-2 minutes and retry.
+DUNE_PLAYER_PRESENCE_MAP_HEALTH_RECOVERED_TEMPLATE=Server notice: all travel destinations are online again ({online}/{expected}).
+DUNE_PLAYER_PRESENCE_MAP_HEALTH_ADMIN_ENABLED=true
+DUNE_PLAYER_PRESENCE_MAP_HEALTH_ADMIN_TEMPLATE=Admin alert: map health degraded, {online}/{expected} online. Offline: {offline_maps}
+DUNE_PLAYER_PRESENCE_POPULATION_PUBLIC_ENABLED=true
+DUNE_PLAYER_PRESENCE_POPULATION_PUBLIC_THRESHOLDS=30,35,40
+DUNE_PLAYER_PRESENCE_POPULATION_PUBLIC_TEMPLATE=Server is getting busy: {count} online. Travel and loading may take longer.
+DUNE_PLAYER_PRESENCE_POPULATION_ADMIN_DIGEST_ENABLED=true
+DUNE_PLAYER_PRESENCE_POPULATION_ADMIN_DIGEST_INTERVAL_SECONDS=1800
+DUNE_PLAYER_PRESENCE_POPULATION_ADMIN_DIGEST_TEMPLATE=Admin population: {count} online. Maps: {map_counts}
+DUNE_PLAYER_PRESENCE_RECONNECT_SUPPORT_ENABLED=true
+DUNE_PLAYER_PRESENCE_RECONNECT_SUPPORT_WINDOW_SECONDS=600
+DUNE_PLAYER_PRESENCE_RECONNECT_SUPPORT_THRESHOLD=3
+DUNE_PLAYER_PRESENCE_RECONNECT_SUPPORT_TEMPLATE=Looks like you have reconnected several times. If travel is stuck, report it through {server_url}.
+DUNE_PLAYER_PRESENCE_ADMIN_ANOMALY_DIGEST_ENABLED=true
+DUNE_PLAYER_PRESENCE_ADMIN_ANOMALY_DIGEST_INTERVAL_SECONDS=1800
+DUNE_PLAYER_PRESENCE_ADMIN_ANOMALY_DIGEST_TEMPLATE=Admin digest: stuck/recent anomalies={stuck_count} ({stuck_names}); over base cap={over_base_cap}.
 DUNE_PLAYER_PRESENCE_STARTER_BASE_TOOL_ENABLED=true
 DUNE_PLAYER_PRESENCE_STARTER_BASE_TOOL_MESSAGE_ENABLED=true
 DUNE_PLAYER_PRESENCE_STARTER_BASE_TOOL_MESSAGE_TEMPLATE=A Base Reconstruction Tool has been added to your inventory. You may need to log out and back in before it appears.
@@ -119,6 +140,14 @@ Automated private messages are derived from local state and operator config rath
 - `RESTART_PRIVATE_WARNINGS` mirrors scheduled admin-panel restart/announcement jobs to online players at configured remaining-time marks.
 - `POST_RESTART_RETURN` sends once per recently executed restart job when a player rejoins after maintenance.
 - `STUCK_POSITION` is available but disabled by default; it only warns when an online player has no map/location in the DB, which can be noisy during travel.
+- `MAP_HEALTH_PUBLIC` announces when the farm transitions from full health to degraded, and again when all partition rows are back online. It derives `{online}` and `{expected}` from `dune.world_partition`, `dune.farm_state`, and `dune.active_server_ids`.
+- `MAP_HEALTH_ADMIN` privately alerts currently online admins at `DUNE_PLAYER_PRESENCE_ADMIN_ALERT_INTERVAL_SECONDS` while map health remains degraded.
+- `POPULATION_PUBLIC` announces once when online player count crosses a configured threshold band.
+- `POPULATION_ADMIN_DIGEST` privately sends currently online admins a periodic player-count-by-map digest.
+- `RECONNECT_SUPPORT` privately nudges players who reconnect repeatedly inside a short window.
+- `ADMIN_ANOMALY_DIGEST` privately sends currently online admins a compact digest for stuck-transition candidates and over-cap base counts.
+
+Admin-private recipients are derived from currently online players whose character name or FLS id matches `DUNE_PLAYER_PRESENCE_ADMIN_NAMES` / `DUNE_PLAYER_PRESENCE_ADMIN_FLS_IDS`. Keep real admin identifiers in private `.env`, not in committed examples or docs.
 - `MAP_HEALTH_PUBLIC` can publish degraded/recovered map-health notices when enabled.
 - `MAP_HEALTH_ADMIN`, `POPULATION_ADMIN_DIGEST`, and `ADMIN_ANOMALY_DIGEST` send private admin-only digests to configured admin names/FLS ids.
 - `RECONNECT_SUPPORT` can privately nudge players who repeatedly reconnect inside the configured window.

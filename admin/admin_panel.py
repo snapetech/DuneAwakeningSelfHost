@@ -83,6 +83,7 @@ CONFIRM_PLAYER_RECOVERY = "MOVE OFFLINE PLAYER"
 CONFIRM_REPUTATION_MUTATION = "WRITE REPUTATION"
 CONFIRM_JOURNEY_MUTATION = "WRITE JOURNEY"
 CONFIRM_FACTION_MUTATION = "CHANGE FACTION"
+CONFIRM_LANDSRAAD_MUTATION = "WRITE LANDSRAAD"
 CATALOG_ENABLED = os.environ.get("DUNE_ADMIN_CATALOG_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 TYPED_KNOBS_ENABLED = os.environ.get("DUNE_ADMIN_TYPED_KNOBS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 EVENT_EXECUTION_ENABLED = os.environ.get("DUNE_ADMIN_EVENT_EXECUTION_ENABLED", "false").lower() in ("1", "true", "yes", "on")
@@ -90,6 +91,7 @@ BUNDLE_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_BUNDLE_MUTATIONS_ENABLED",
 REPUTATION_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 JOURNEY_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 FACTION_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_FACTION_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+LANDSRAAD_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_LANDSRAAD_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 ANNOUNCEMENT_STATE_FILE = BACKUP_ROOT / "announcements.json"
 RESTART_STATE_FILE = BACKUP_ROOT / "restart-jobs.json"
 EVENT_STATE_FILE = BACKUP_ROOT / "events.json"
@@ -387,6 +389,7 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for raw faction reputation writes. Reputation planning and inspection remain available."},
     "DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for journey reveal/complete/reset/delete server-function calls. Journey planning and inspection remain available."},
     "DUNE_ADMIN_FACTION_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for player faction change server-function calls. Faction planning and inspection remain available."},
+    "DUNE_ADMIN_LANDSRAAD_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for Landsraad term administration server-function calls. Landsraad inspection and dry-runs remain available."},
     "DUNE_ADMIN_MAX_BODY_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum accepted request body size."},
     "DUNE_ADMIN_AUDIT_MAX_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Audit log rotation threshold."},
     "DUNE_ADMIN_REQUEST_TIMEOUT_SECONDS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Socket timeout to limit slow client abuse."},
@@ -3958,7 +3961,7 @@ class Handler(BaseHTTPRequestHandler):
         if neutral_faction_id not in faction_ids:
             raise ValueError("neutral_faction_id is not present in dune.factions")
         current_rows = query("select * from dune.player_faction where actor_id=%s", (actor_id,))
-        current_faction = query("select dune.get_player_faction(%s,%s) as faction_id", (actor_id, neutral_faction_id))
+        current_faction = query("select dune.get_player_faction(%s::bigint,%s::smallint) as faction_id", (actor_id, neutral_faction_id))
         current_faction_id = int(current_faction[0].get("faction_id") or neutral_faction_id) if current_faction else neutral_faction_id
         functions = query("""
             select p.proname as name, pg_get_function_identity_arguments(p.oid) as args
@@ -3989,7 +3992,7 @@ class Handler(BaseHTTPRequestHandler):
         require_confirmation(body, CONFIRM_FACTION_MUTATION)
         if str(player.get("online_status") or "").lower() == "online":
             raise ValueError("player is online; faction execution refuses online targets")
-        execute("select dune.change_player_faction(%s,%s,%s, timezone('utc', now())::timestamp)", (actor_id, faction_id, neutral_faction_id))
+        execute("select dune.change_player_faction(%s::bigint,%s::smallint,%s::smallint, timezone('utc', now())::timestamp)", (actor_id, faction_id, neutral_faction_id))
         after = query("select * from dune.player_faction where actor_id=%s", (actor_id,))
         return {"ok": True, "dryRun": False, "accountId": account_id, "actorId": actor_id, "factionId": faction_id, "before": current_rows, "after": after, "rollback": {"faction_id": current_faction_id, "neutral_faction_id": neutral_faction_id, "confirm": CONFIRM_FACTION_MUTATION}}
 

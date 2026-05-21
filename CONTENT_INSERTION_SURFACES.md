@@ -50,6 +50,7 @@ Implemented in `admin/admin_panel.py`:
 - Offline player recovery dry-run and gated execution path using the mapped `dune.admin_move_offline_player_to_partition(...)` function.
 - Progression surface inspection for faction, reputation, journey, recipe, and vehicle DB evidence.
 - Dry-run-first faction reputation mutator using `dune.set_player_faction_reputation`, runtime schema checks, and a separate execution gate.
+- Dry-run-first player faction-change mutator using `dune.change_player_faction`, faction id validation, offline-only execution, and a separate execution gate.
 - Dry-run-first journey story-node mutator using server-provided reveal/complete/reset/delete functions and a separate execution gate.
 - Read-only spice/resource field inspection.
 - Event definition persistence under `backups/admin-panel/events.json`.
@@ -67,6 +68,7 @@ The implementation intentionally keeps catalog reads independent from write gate
 | `DUNE_ADMIN_BUNDLE_MUTATIONS_ENABLED` | `false` | Economy bundle execution. Bundle dry-runs remain available. |
 | `DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED` | `false` | Faction reputation execution. Progression inspection and reputation dry-runs remain available. |
 | `DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED` | `false` | Journey story-node execution. Journey dry-runs and progression inspection remain available. |
+| `DUNE_ADMIN_FACTION_MUTATIONS_ENABLED` | `false` | Player faction-change execution. Faction dry-runs and progression inspection remain available. |
 | `DUNE_ADMIN_MUTATIONS_ENABLED` | repo default currently `true` | Existing global mutation gate. |
 | `DUNE_ADMIN_ITEM_GRANTS_ENABLED` | repo default currently `true` | Item grant and bundle item execution. |
 | `DUNE_ADMIN_GM_COMMANDS_ENABLED` | `false` | Native GM command execution. Still also blocked by payload verification. |
@@ -79,6 +81,7 @@ The implementation intentionally keeps catalog reads independent from write gate
 | `MOVE OFFLINE PLAYER` | Offline player recovery execution. |
 | `WRITE REPUTATION` | Faction reputation execution. |
 | `WRITE JOURNEY` | Journey story-node execution. |
+| `CHANGE FACTION` | Player faction-change execution. |
 | `RUN GM COMMAND` | Native GM command execution, still blocked until payload verification. |
 
 ## Typed Knob Registry
@@ -169,6 +172,7 @@ Near-term, high-confidence work:
 - Add export/download of event dry-run plans and catalog entries as JSON for operator review.
 - Validate faction reputation execution on disposable/offline character data and document exact table columns observed in the live schema.
 - Validate journey reveal/complete/reset/delete on disposable offline character data and build a local story-node id reference from observed `admin_get_journey_details` calls.
+- Validate player faction changes on disposable/offline character data and document guild side effects.
 
 Medium-confidence work:
 

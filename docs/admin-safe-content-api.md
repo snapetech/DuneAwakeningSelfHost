@@ -24,6 +24,7 @@ Content-Type: application/json
 | `DUNE_ADMIN_BUNDLE_MUTATIONS_ENABLED` | `false` | Enables bundle execution. Does not block bundle dry-runs. |
 | `DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED` | `false` | Enables faction reputation writes through `dune.set_player_faction_reputation`. Does not block inspection or dry-runs. |
 | `DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED` | `false` | Enables journey reveal/complete/reset/delete server-function calls. Does not block inspection or dry-runs. |
+| `DUNE_ADMIN_FACTION_MUTATIONS_ENABLED` | `false` | Enables player faction change through `dune.change_player_faction`. Does not block inspection or dry-runs. |
 | `DUNE_ADMIN_MUTATIONS_ENABLED` | repo default currently `true` | Existing global mutation gate. |
 | `DUNE_ADMIN_ITEM_GRANTS_ENABLED` | repo default currently `true` | Existing item mutation gate. |
 
@@ -338,6 +339,62 @@ Function mapping:
 | `delete` | `dune.delete_journey_story_nodes_for_player(in_player_id text, in_story_node_ids text[])` |
 
 Risk: these are server-provided functions, but story-node ids and reward semantics are not cataloged yet. Use dry-run detail output first and validate on disposable offline data.
+
+## Player Faction Change
+
+### `POST /api/admin/faction`
+
+Default mode is dry-run.
+
+```json
+{
+  "dry_run": true,
+  "account_id": 456,
+  "faction_id": 1,
+  "neutral_faction_id": 3
+}
+```
+
+Dry-run behavior:
+
+- Resolves `account_id` to `player_pawn_id`.
+- Validates `faction_id` and `neutral_faction_id` against `dune.factions`.
+- Reads current `dune.player_faction` rows.
+- Reads the effective current faction through `dune.get_player_faction(actor_id, neutral_faction_id)`.
+- Verifies `dune.change_player_faction(...)` exists.
+- Reports whether execution would be blocked because the player is online.
+
+Execution request:
+
+```json
+{
+  "dry_run": false,
+  "confirm": "CHANGE FACTION",
+  "account_id": 456,
+  "faction_id": 1,
+  "neutral_faction_id": 3
+}
+```
+
+Execution requirements:
+
+- `DUNE_ADMIN_MUTATIONS_ENABLED=true`
+- `DUNE_ADMIN_FACTION_MUTATIONS_ENABLED=true`
+- confirmation phrase
+- target player must be offline
+
+Function call:
+
+```sql
+dune.change_player_faction(
+  in_player_id := player_pawn_id,
+  in_faction_id := faction_id,
+  neutral_faction_id := neutral_faction_id,
+  in_utc_time_faction_change := now_utc
+)
+```
+
+Risk: the function is first-party, but guild side effects and live-client refresh behavior need disposable-character validation.
 
 ## Faction Reputation
 

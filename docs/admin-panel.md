@@ -140,6 +140,7 @@ server {
 - Spice/resource field inspection through `POST /api/admin/spice-fields/inspect`.
 - Progression surface inspection through `POST /api/admin/progression/inspect`; this discovers faction, reputation, journey, recipe, vehicle, and related DB function/table evidence without executing discovered functions.
 - Faction reputation planning through `POST /api/admin/faction-reputation`, default `dry_run=true`. Execution requires `DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED=true` and confirmation `WRITE REPUTATION`.
+- Player faction-change planning through `POST /api/admin/faction`, default `dry_run=true`. Execution requires `DUNE_ADMIN_FACTION_MUTATIONS_ENABLED=true`, confirmation `CHANGE FACTION`, and an offline target player.
 - Journey story-node planning through `POST /api/admin/journey`, default `dry_run=true`. Execution requires `DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED=true`, confirmation `WRITE JOURNEY`, and an offline target player.
 - Event planner APIs:
   - `GET /api/events`
@@ -199,6 +200,7 @@ DUNE_ADMIN_EVENT_EXECUTION_ENABLED=false
 DUNE_ADMIN_BUNDLE_MUTATIONS_ENABLED=false
 DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED=false
 DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED=false
+DUNE_ADMIN_FACTION_MUTATIONS_ENABLED=false
 ```
 
 Gate behavior:
@@ -209,6 +211,7 @@ Gate behavior:
 - `DUNE_ADMIN_BUNDLE_MUTATIONS_ENABLED`: controls economy bundle execution. Bundle dry-runs still work.
 - `DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED`: controls faction reputation writes through `dune.set_player_faction_reputation`. Progression inspection and reputation dry-runs still work.
 - `DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED`: controls journey server-function calls. Journey dry-runs still work.
+- `DUNE_ADMIN_FACTION_MUTATIONS_ENABLED`: controls player faction-change server-function calls. Faction dry-runs still work.
 
 Existing gates still apply:
 
@@ -227,6 +230,7 @@ EXECUTE BUNDLE
 MOVE OFFLINE PLAYER
 WRITE REPUTATION
 WRITE JOURNEY
+CHANGE FACTION
 RUN GM COMMAND
 ```
 
@@ -379,6 +383,28 @@ Execution requires:
 - `confirm: "WRITE REPUTATION"`
 
 The endpoint checks the live table shape and confirms the server-provided setter before planning or writing. It only recognizes `actor_id`, `faction_id`, and one of `reputation`, `reputation_amount`, `amount`, or `value` as the reputation value column. Confidence is moderate-to-high when `dune.set_player_faction_reputation` is present; still validate execution on disposable/offline character data before routine use.
+
+`POST /api/admin/faction` plans or executes first-party faction changes through `dune.change_player_faction`.
+
+Dry-run body:
+
+```json
+{
+  "dry_run": true,
+  "account_id": 456,
+  "faction_id": 1,
+  "neutral_faction_id": 3
+}
+```
+
+Execution requires:
+
+- `DUNE_ADMIN_MUTATIONS_ENABLED=true`
+- `DUNE_ADMIN_FACTION_MUTATIONS_ENABLED=true`
+- `confirm: "CHANGE FACTION"`
+- target player must be offline
+
+The live schema currently has `dune.factions` rows for `1=Atreides`, `2=Harkonnen`, `3=None`, and `4=Smuggler`. Confidence is moderate because the faction-change function is first-party; guild side effects and client refresh behavior still need disposable-character validation.
 
 `POST /api/admin/journey` plans or executes journey story-node server functions. Supported actions are `reveal`, `complete`, `reset`, and `delete`.
 
