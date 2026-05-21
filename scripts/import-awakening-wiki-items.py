@@ -10,6 +10,9 @@ import urllib.parse
 import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+from exchange_category_map import EXCHANGE_CATEGORY_MASKS
+
 OUTPUT = ROOT / "data" / "exchange-price-snapshots" / "awakening-wiki-items.csv"
 API = "https://api.awakening.wiki/items"
 
@@ -31,30 +34,7 @@ FIELDS = [
     "notes",
 ]
 
-SUBCATEGORIES = {
-    "resources/raw": (0x01010000, 2),
-    "resources/refined": (0x01020000, 2),
-    "resources/components": (0x01030000, 2),
-    "consumables/medical": (0x02010000, 2),
-    "tools/mining": (0x03010000, 2),
-    "tools/utility": (0x03020000, 2),
-    "weapons/melee": (0x04010000, 2),
-    "weapons/ranged": (0x04020000, 2),
-    "armor/combat": (0x05010000, 2),
-    "armor/stillsuit": (0x05020000, 2),
-    "armor/social": (0x05030000, 2),
-    "vehicles/sandbike": (0x06010000, 2),
-    "vehicles/ornithopter": (0x06020000, 2),
-    "vehicles/parts": (0x06030000, 2),
-    "schematics/weapons": (0x07010000, 2),
-    "schematics/armor": (0x07020000, 2),
-    "schematics/vehicles": (0x07030000, 2),
-    "building/placeables": (0x08010000, 2),
-    "building/patents": (0x08020000, 2),
-    "contracts": (0x09010000, 2),
-    "customization": (0x0A010000, 2),
-    "unknown": (0, 0),
-}
+SUBCATEGORIES = EXCHANGE_CATEGORY_MASKS
 
 
 def api_get(params):

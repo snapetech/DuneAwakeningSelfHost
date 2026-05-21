@@ -5,6 +5,10 @@ import pathlib
 import re
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+import sys
+sys.path.insert(0, str(ROOT / "scripts"))
+from exchange_category_map import EXCHANGE_CATEGORY_MASKS
+
 CATALOG_SCRIPT = ROOT / "scripts" / "build-exchange-catalog.py"
 OUTPUT = ROOT / "config" / "artificial-exchange-prices.csv"
 
@@ -13,23 +17,26 @@ catalog = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(catalog)
 
 SUBCATEGORIES = {
-    "resources/raw": (0x01010000, 2),
-    "resources/refined": (0x01020000, 2),
-    "resources/components": (0x01030000, 2),
-    "consumables/medical": (0x02010000, 2),
-    "tools/mining": (0x03010000, 2),
-    "tools/utility": (0x03020000, 2),
-    "weapons/melee": (0x04010000, 2),
-    "weapons/ranged": (0x04020000, 2),
-    "armor/combat": (0x05010000, 2),
-    "armor/stillsuit": (0x05020000, 2),
-    "armor/social": (0x05030000, 2),
-    "vehicles/sandbike": (0x06010000, 2),
-    "vehicles/ornithopter": (0x06020000, 2),
-    "vehicles/parts": (0x06030000, 2),
-    "schematics/weapons": (0x07010000, 2),
-    "schematics/armor": (0x07020000, 2),
-    "schematics/vehicles": (0x07030000, 2),
+    key: EXCHANGE_CATEGORY_MASKS[key]
+    for key in (
+        "resources/raw",
+        "resources/refined",
+        "resources/components",
+        "consumables/medical",
+        "tools/mining",
+        "tools/utility",
+        "weapons/melee",
+        "weapons/ranged",
+        "armor/combat",
+        "armor/stillsuit",
+        "armor/social",
+        "vehicles/sandbike",
+        "vehicles/ornithopter",
+        "vehicles/parts",
+        "schematics/weapons",
+        "schematics/armor",
+        "schematics/vehicles",
+    )
 }
 
 PRICE_HINTS = {
