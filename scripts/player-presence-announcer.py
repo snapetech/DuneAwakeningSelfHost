@@ -557,7 +557,7 @@ def private_message(player, message, job_id="player-presence-private-message"):
     child_env["DUNE_ANNOUNCE_CHAT_CHANNEL"] = env("DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_CHANNEL", "Whispers")
     child_env["DUNE_ANNOUNCE_CHAT_USER_NAME_TO"] = name
     child_env["DUNE_ANNOUNCE_CHAT_TARGET_QUEUES"] = f"{fls_id}_queue"
-    child_env["DUNE_ANNOUNCE_CHAT_ROUTING_KEYS"] = env("DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_ROUTING_KEY", fls_id)
+    child_env["DUNE_ANNOUNCE_CHAT_ROUTING_KEYS"] = env("DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_ROUTING_KEY", fls_id) or fls_id
     child_env["DUNE_ANNOUNCE_CHAT_BIND_ONLINE_QUEUES"] = "false"
     child_env["DUNE_ANNOUNCE_CHAT_CLEANUP_TARGET_BINDINGS"] = "true"
     result = subprocess.run([command, message], cwd=ROOT, env=child_env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, check=False)

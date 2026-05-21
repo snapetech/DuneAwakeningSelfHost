@@ -55,7 +55,10 @@ def env(name, default=""):
     value = os.environ.get(name)
     if value is not None and value != "":
         return value
-    return FILE_ENV.get(name, default)
+    value = FILE_ENV.get(name)
+    if value is not None and value != "":
+        return value
+    return default
 
 
 def env_bool(name, default=False):
@@ -1280,7 +1283,7 @@ def run_announce(message, target_name="", target_fls_id=""):
         child_env["DUNE_ANNOUNCE_CHAT_CHANNEL"] = env("DUNE_CHAT_COMMAND_PRIVATE_REPLY_CHANNEL", "Whispers")
         child_env["DUNE_ANNOUNCE_CHAT_USER_NAME_TO"] = target_name
         child_env["DUNE_ANNOUNCE_CHAT_TARGET_QUEUES"] = f"{target_fls_id}_queue"
-        child_env["DUNE_ANNOUNCE_CHAT_ROUTING_KEYS"] = env("DUNE_CHAT_COMMAND_PRIVATE_REPLY_ROUTING_KEY", target_fls_id)
+        child_env["DUNE_ANNOUNCE_CHAT_ROUTING_KEYS"] = env("DUNE_CHAT_COMMAND_PRIVATE_REPLY_ROUTING_KEY", target_fls_id) or target_fls_id
         child_env["DUNE_ANNOUNCE_CHAT_CLEANUP_TARGET_BINDINGS"] = "true"
         child_env["DUNE_ANNOUNCE_WRAP_DASHBOARD_MESSAGES"] = "false"
         cwd = "/tmp"
