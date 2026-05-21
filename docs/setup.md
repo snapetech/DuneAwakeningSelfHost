@@ -48,7 +48,8 @@ Check whether `.env` is pinned to the tag shipped by the current Steam package:
 ./scripts/check-steam-update.sh .env
 ```
 
-To ask Steam to update the local self-hosted server package first, run:
+To ask the running Steam client to validate/update the local self-hosted server
+package first, run:
 
 ```bash
 ./scripts/update-steam-tool.sh .env
@@ -169,10 +170,7 @@ Prepare the matching partition rows:
 Start the full standing farm:
 
 ```bash
-docker compose --env-file .env up -d \
-  survival overmap arrakeen harko-village \
-  testing-hephaestus testing-carthag testing-waterfat \
-  deep-desert proces-verbal
+./scripts/start-full-warm-pool.sh .env
 
 ./scripts/status.sh .env
 ```
@@ -180,10 +178,23 @@ docker compose --env-file .env up -d \
 Expected server-side status:
 
 ```text
-current_alive_active=9 active_servers=9 partitions=9
+current_alive_active=30 active_servers=30 partitions=30
 ```
 
 This proves server-side registration and partition assignment. It does not by itself prove client travel; test login and each travel path from the live game client.
+
+The Compose network pins every long-running container to a fixed address in
+`172.31.240.0/24`, keeps Docker's dynamic allocation pool in
+`172.31.240.128/25`, and pins the bridge gateway to `172.31.240.1`. This avoids
+restart-time address collisions where short-lived helpers or recreated services
+claim an address expected by RabbitMQ, text-router, map servers, or the Postgres
+host bind.
+
+Validate the static address plan after changing Compose services:
+
+```bash
+make check-compose-static-ips ENV_FILE=.env
+```
 
 ## 9. Admin Panel
 

@@ -122,7 +122,7 @@ Expected result: `make validate` exits cleanly, and the second command finds no 
 
 When Steam updates the self-hosted server tool:
 
-1. Run `./scripts/update-steam-tool.sh .env` to ask SteamCMD to refresh the local tool.
+1. Run `./scripts/update-steam-tool.sh .env` to ask the running Steam client, or SteamCMD on headless hosts, to refresh the local tool.
 2. Run `./scripts/check-steam-update.sh .env` to compare `.env` with the current Steam package.
 3. Re-run `./scripts/load-images.sh .env`.
 4. Update `DUNE_IMAGE_TAG` with `./scripts/check-steam-update.sh .env --write-env`, or edit it manually if multiple tags are reported.

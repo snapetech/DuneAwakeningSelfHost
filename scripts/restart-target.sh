@@ -59,22 +59,38 @@ run_steam_update_check() {
   if [ -x ./scripts/update-steam-tool.sh ]; then
     steamcmd_command="$(env_file_value DUNE_STEAMCMD_COMMAND "$env_file")"
     steamcmd_command="${steamcmd_command:-steamcmd}"
-    if command -v "$steamcmd_command" >/dev/null 2>&1; then
+    steam_mode="$(env_file_value DUNE_RESTART_STEAM_UPDATE_MODE "$env_file")"
+    steam_mode="${steam_mode:-auto}"
+    if [ "$steam_mode" != "steamcmd" ]; then
+      ./scripts/update-steam-tool.sh "$env_file"
+    elif command -v "$steamcmd_command" >/dev/null 2>&1; then
       ./scripts/update-steam-tool.sh "$env_file"
     else
       helper_image="$(env_file_value DUNE_RESTART_STEAMCMD_HELPER_IMAGE "$env_file")"
       steam_dir="$(env_file_value DUNE_STEAM_SERVER_DIR "$env_file")"
       if [ -n "$helper_image" ] && [ -n "$steam_dir" ] && command -v docker >/dev/null 2>&1; then
+        steam_mount="$steam_dir"
+        case "$steam_dir" in
+          */steamapps/common/*|*/Steam/steamapps/common/*)
+            steam_mount="$(dirname "$(dirname "$(dirname "$steam_dir")")")"
+            ;;
+        esac
         docker run --rm \
           -v "$PWD:$PWD" \
           -v "$PWD:/workspace" \
-          -v "$steam_dir:$steam_dir" \
+          -v "$steam_mount:$steam_mount" \
           -w "$PWD" \
           -e "DUNE_RESTART_STEAMCMD_UPDATE=$(env_file_value DUNE_RESTART_STEAMCMD_UPDATE "$env_file")" \
+          -e "DUNE_RESTART_STEAM_UPDATE_MODE=$(env_file_value DUNE_RESTART_STEAM_UPDATE_MODE "$env_file")" \
+          -e "DUNE_RESTART_STEAM_CLIENT_TRIGGER=$(env_file_value DUNE_RESTART_STEAM_CLIENT_TRIGGER "$env_file")" \
+          -e "DUNE_RESTART_STEAM_CLIENT_WAIT_SECONDS=$(env_file_value DUNE_RESTART_STEAM_CLIENT_WAIT_SECONDS "$env_file")" \
+          -e "DUNE_RESTART_STEAM_CLIENT_MIN_WAIT_SECONDS=$(env_file_value DUNE_RESTART_STEAM_CLIENT_MIN_WAIT_SECONDS "$env_file")" \
+          -e "DUNE_STEAM_CLIENT_COMMAND=$(env_file_value DUNE_STEAM_CLIENT_COMMAND "$env_file")" \
           -e "DUNE_RESTART_STEAMCMD_REQUIRED=$(env_file_value DUNE_RESTART_STEAMCMD_REQUIRED "$env_file")" \
           -e "DUNE_STEAM_APP_ID=$(env_file_value DUNE_STEAM_APP_ID "$env_file")" \
           -e "DUNE_STEAM_LOGIN=$(env_file_value DUNE_STEAM_LOGIN "$env_file")" \
           -e "DUNE_STEAM_PASSWORD=$(env_file_value DUNE_STEAM_PASSWORD "$env_file")" \
+          -e "DUNE_STEAMCMD_COMMAND=$(env_file_value DUNE_STEAMCMD_COMMAND "$env_file")" \
           -e "DUNE_STEAMCMD_VALIDATE=$(env_file_value DUNE_STEAMCMD_VALIDATE "$env_file")" \
           -e "DUNE_STEAMCMD_TIMEOUT_SECONDS=$(env_file_value DUNE_STEAMCMD_TIMEOUT_SECONDS "$env_file")" \
           "$helper_image" bash ./scripts/update-steam-tool.sh "$env_file"
@@ -89,10 +105,13 @@ run_steam_update_check() {
     printf 'Steam package update check skipped: scripts/check-steam-update.sh is missing or not executable\n' >&2
     return 0
   fi
-  if ./scripts/check-steam-update.sh "$env_file"; then
+  set +e
+  ./scripts/check-steam-update.sh "$env_file"
+  rc=$?
+  set -e
+  if [ "$rc" -eq 0 ]; then
     return 0
   fi
-  rc=$?
   if [ "$rc" -eq 1 ]; then
     printf 'Steam package update available; loading official images and updating DUNE_IMAGE_TAG\n'
     ./scripts/load-images.sh "$env_file"
@@ -362,10 +381,16 @@ def run_host_update_check():
     steamcmd_helper_image = os.environ.get("DUNE_RESTART_STEAMCMD_HELPER_IMAGE") or read_env_value(env_file, "DUNE_RESTART_STEAMCMD_HELPER_IMAGE")
     steamcmd_env_keys = [
         "DUNE_RESTART_STEAMCMD_UPDATE",
+        "DUNE_RESTART_STEAM_UPDATE_MODE",
+        "DUNE_RESTART_STEAM_CLIENT_TRIGGER",
+        "DUNE_RESTART_STEAM_CLIENT_WAIT_SECONDS",
+        "DUNE_RESTART_STEAM_CLIENT_MIN_WAIT_SECONDS",
+        "DUNE_STEAM_CLIENT_COMMAND",
         "DUNE_RESTART_STEAMCMD_REQUIRED",
         "DUNE_STEAM_APP_ID",
         "DUNE_STEAM_LOGIN",
         "DUNE_STEAM_PASSWORD",
+        "DUNE_STEAMCMD_COMMAND",
         "DUNE_STEAMCMD_VALIDATE",
         "DUNE_STEAMCMD_TIMEOUT_SECONDS",
     ]
@@ -378,11 +403,14 @@ def run_host_update_check():
             steamcmd_env.extend(["-e", f"{key}={value}"])
     steamcmd_container = ""
     if steam_dir and os.path.isabs(steam_dir) and steamcmd_helper_image:
+        steam_mount = steam_dir
+        if os.path.basename(os.path.dirname(steam_dir)) == "common" and os.path.basename(os.path.dirname(os.path.dirname(steam_dir))) == "steamapps":
+            steam_mount = os.path.dirname(os.path.dirname(os.path.dirname(steam_dir)))
         docker_run = [
             "docker", "run", "--rm",
             "-v", f"{host_workspace}:{host_workspace}",
             "-v", f"{host_workspace}:/workspace",
-            "-v", f"{steam_dir}:{steam_dir}",
+            "-v", f"{steam_mount}:{steam_mount}",
             "-w", host_workspace,
         ]
         docker_run.extend(steamcmd_env)
@@ -391,10 +419,79 @@ def run_host_update_check():
             "bash", "./scripts/update-steam-tool.sh", env_file,
         ])
         steamcmd_container = " ".join(shlex.quote(part) for part in docker_run)
+    steam_client_command = os.environ.get("DUNE_STEAM_CLIENT_COMMAND") or read_env_value(env_file, "DUNE_STEAM_CLIENT_COMMAND") or "steam"
+    steam_client_min_wait = os.environ.get("DUNE_RESTART_STEAM_CLIENT_MIN_WAIT_SECONDS") or read_env_value(env_file, "DUNE_RESTART_STEAM_CLIENT_MIN_WAIT_SECONDS") or "30"
+    steam_client_trigger = os.environ.get("DUNE_RESTART_STEAM_CLIENT_TRIGGER") or read_env_value(env_file, "DUNE_RESTART_STEAM_CLIENT_TRIGGER") or "true"
+    steam_client_host_trigger = (
+        "steam_pid=\"$(pgrep -u $(stat -c %u " + shlex.quote(steam_dir or host_workspace) + ") -f '/Steam/.*/steam|/steam( |$)' | head -1 || true)\"; "
+        "if [ -n \"$steam_pid\" ] && command -v nsenter >/dev/null 2>&1; then "
+        "if [ " + shlex.quote(steam_client_trigger) + " = false ] || [ " + shlex.quote(steam_client_trigger) + " = 0 ]; then "
+        "echo 'Host Steam client detected; validation trigger disabled'; "
+        "else echo 'Requesting host Steam client validation for app " + shlex.quote(read_env_value(env_file, "DUNE_STEAM_APP_ID") or "4754530") + "'; "
+        "steam_uid=\"$(stat -c %u " + shlex.quote(steam_dir or host_workspace) + ")\"; "
+        "steam_gid=\"$(stat -c %g " + shlex.quote(steam_dir or host_workspace) + ")\"; "
+        "steam_home=\"" + shlex.quote((steam_dir or "").split("/.local/share/Steam/", 1)[0] if "/.local/share/Steam/" in (steam_dir or "") else "") + "\"; "
+        "nsenter --target \"$steam_pid\" --mount --uts --ipc --net --pid --setuid \"$steam_uid\" --setgid \"$steam_gid\" "
+        "env HOME=\"${steam_home:-/tmp}\" XDG_RUNTIME_DIR=\"/run/user/$steam_uid\" DISPLAY=\"${DISPLAY:-:0}\" "
+        + shlex.quote(steam_client_command or "steam") + " "
+        + shlex.quote("steam://validate/" + (read_env_value(env_file, "DUNE_STEAM_APP_ID") or "4754530"))
+        + " >/dev/null 2>&1 || true; fi; "
+        "sleep " + shlex.quote(steam_client_min_wait) + "; "
+        "else false; fi"
+    )
+    image_tars = [
+        "images/battlegroup/server-rabbitmq.tar",
+        "images/battlegroup/server-text-router.tar",
+        "images/battlegroup/server-bg-director.tar",
+        "images/battlegroup/server-gateway.tar",
+        "images/battlegroup/server-db-utils.tar",
+        "images/battlegroup/server.tar",
+    ]
+    load_tars = image_tars + ["images/prerequisites/igw-postgres.tar"]
+    image_tars_shell = " ".join(shlex.quote(item) for item in image_tars)
+    load_tars_shell = " ".join(shlex.quote(item) for item in load_tars)
+    steam_dir_shell = shlex.quote(steam_dir or "")
+    env_file_shell = shlex.quote(env_file)
+    inline_package_ingest = (
+        "steam_dir=" + steam_dir_shell + "; "
+        "env_file=" + env_file_shell + "; "
+        "tag_file=$(mktemp); "
+        "missing=0; "
+        "for rel in " + image_tars_shell + "; do "
+        "path=\"$steam_dir/$rel\"; "
+        "if [ ! -f \"$path\" ]; then echo \"warn: missing package image tar: $path\" >&2; missing=$((missing + 1)); continue; fi; "
+        "tar -xOf \"$path\" manifest.json 2>/dev/null | "
+        "tr ',' '\\n' | "
+        "sed -n 's/.*registry\\.funcom\\.com\\/funcom\\/self-hosting\\/seabass-server[^:\" ]*:\\([^\"]*\\).*/\\1/p' >> \"$tag_file\" || true; "
+        "done; "
+        "tags=$(sort -u \"$tag_file\" | sed '/^$/d'); "
+        "tag_count=$(printf '%s\\n' \"$tags\" | sed '/^$/d' | wc -l | tr -d ' '); "
+        "current_tag=$(awk -F= '$1 == \"DUNE_IMAGE_TAG\" {print $2; exit}' \"$env_file\" 2>/dev/null || true); "
+        "echo \"env file: $env_file\"; echo \"Steam server dir: $steam_dir\"; echo \"current DUNE_IMAGE_TAG: ${current_tag:-unset}\"; "
+        "echo 'package server tags:'; printf '%s\\n' \"$tags\" | sed 's/^/  /'; "
+        "if [ \"$missing\" -gt 0 ] || [ \"$tag_count\" -ne 1 ]; then "
+        "echo 'Steam package update check could not determine a safe tag; continuing without changing DUNE_IMAGE_TAG' >&2; rm -f \"$tag_file\"; exit 0; "
+        "fi; "
+        "package_tag=$(printf '%s\\n' \"$tags\" | sed '/^$/d' | head -1); "
+        "if [ \"$current_tag\" = \"$package_tag\" ]; then echo 'status: current'; rm -f \"$tag_file\"; exit 0; fi; "
+        "echo 'status: update available'; echo \"next tag: $package_tag\"; "
+        "for rel in " + load_tars_shell + "; do "
+        "path=\"$steam_dir/$rel\"; "
+        "if [ ! -f \"$path\" ]; then echo \"missing image tar: $path\" >&2; rm -f \"$tag_file\"; exit 1; fi; "
+        "docker load -i \"$path\"; "
+        "done; "
+        "if grep -q '^DUNE_IMAGE_TAG=' \"$env_file\"; then sed -i \"s/^DUNE_IMAGE_TAG=.*/DUNE_IMAGE_TAG=$package_tag/\" \"$env_file\"; "
+        "else printf '\\nDUNE_IMAGE_TAG=%s\\n' \"$package_tag\" >> \"$env_file\"; fi; "
+        "echo \"updated $env_file: DUNE_IMAGE_TAG=$package_tag\"; "
+        "rm -f \"$tag_file\""
+    )
     shell_command = (
         "set -e; "
         "if [ -x ./scripts/update-steam-tool.sh ]; then "
-        "if command -v steamcmd >/dev/null 2>&1; then "
+        "steam_mode=${DUNE_RESTART_STEAM_UPDATE_MODE:-" + shlex.quote(read_env_value(env_file, "DUNE_RESTART_STEAM_UPDATE_MODE") or "auto") + "}; "
+        "if [ \"$steam_mode\" != steamcmd ]; then "
+        + steam_client_host_trigger + " || echo 'Steam client package refresh skipped: no host Steam client visible from helper' >&2; "
+        "elif command -v steamcmd >/dev/null 2>&1; then "
         f"./scripts/update-steam-tool.sh {shlex.quote(env_file)}; "
         + (f"elif [ -n {shlex.quote(steamcmd_container)} ]; then {steamcmd_container}; " if steamcmd_container else "")
         + "else "
@@ -403,23 +500,7 @@ def run_host_update_check():
         "else "
         "echo 'SteamCMD package update skipped: scripts/update-steam-tool.sh is missing or not executable' >&2; "
         "fi; "
-        "if [ ! -x ./scripts/check-steam-update.sh ]; then "
-        "echo 'Steam package update check skipped: scripts/check-steam-update.sh is missing or not executable' >&2; "
-        "exit 0; "
-        "fi; "
-        "set +e; "
-        f"./scripts/check-steam-update.sh {shlex.quote(env_file)}; "
-        "rc=$?; "
-        "set -e; "
-        "if [ \"$rc\" = 0 ]; then exit 0; fi; "
-        "if [ \"$rc\" = 1 ]; then "
-        "echo 'Steam package update available; loading official images and updating DUNE_IMAGE_TAG'; "
-        f"./scripts/load-images.sh {shlex.quote(env_file)}; "
-        f"./scripts/check-steam-update.sh {shlex.quote(env_file)} --write-env; "
-        "exit 0; "
-        "fi; "
-        "echo 'Steam package update check could not determine a safe tag; continuing without changing DUNE_IMAGE_TAG' >&2; "
-        "exit 0"
+        + inline_package_ingest
     )
     binds = [
         f"{socket_path}:/var/run/docker.sock",
@@ -427,7 +508,10 @@ def run_host_update_check():
         f"{host_workspace}:/workspace",
     ]
     if steam_dir and os.path.isabs(steam_dir):
-        binds.append(f"{steam_dir}:{steam_dir}")
+        steam_mount = steam_dir
+        if os.path.basename(os.path.dirname(steam_dir)) == "common" and os.path.basename(os.path.dirname(os.path.dirname(steam_dir))) == "steamapps":
+            steam_mount = os.path.dirname(os.path.dirname(os.path.dirname(steam_dir)))
+        binds.append(f"{steam_mount}:{steam_mount}")
     body = {
         "Image": compose_image,
         "WorkingDir": host_workspace,
@@ -438,6 +522,7 @@ def run_host_update_check():
         "HostConfig": {
             "AutoRemove": False,
             "NetworkMode": "host",
+            "PidMode": "host",
             "Privileged": True,
             "Binds": binds,
         },

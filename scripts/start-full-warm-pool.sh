@@ -38,6 +38,16 @@ psql_at() {
   "${compose[@]}" exec -T postgres psql -U dune -d "$db" -Atc "$1"
 }
 
+remove_db_init() {
+  local container_id
+
+  container_id="$("${compose[@]}" ps -aq db-init 2>/dev/null || true)"
+  if [[ -n "$container_id" ]]; then
+    printf 'removing stale one-shot db-init container\n'
+    "$container_runtime" rm -f "$container_id" >/dev/null
+  fi
+}
+
 wait_for_healthy() {
   local service="$1"
   local container_id
@@ -68,7 +78,7 @@ wait_for_counts() {
   local label="$2"
   local deadline=$((SECONDS + wait_seconds))
   local row
-  local alive
+  local alive_active
   local active
   local partitions
 
@@ -76,25 +86,27 @@ wait_for_counts() {
   while (( SECONDS < deadline )); do
     row="$(psql_at "
       select
-        count(*) filter (where fs.alive) || ' ' ||
+        count(*) filter (where fs.alive and asi.server_id is not null) || ' ' ||
         count(*) filter (where asi.server_id is not null) || ' ' ||
         count(*)
       from dune.world_partition wp
       left join dune.farm_state fs on fs.server_id = wp.server_id
       left join dune.active_server_ids asi on asi.server_id = wp.server_id;
     ")"
-    read -r alive active partitions <<< "$row"
-    if [[ "$alive" == "$expected" && "$active" == "$expected" && "$partitions" == "30" ]]; then
-      printf 'ready enough: alive=%s active=%s partitions=%s\n' "$alive" "$active" "$partitions"
+    read -r alive_active active partitions <<< "$row"
+    if [[ "$alive_active" == "$expected" && "$active" == "$expected" && "$partitions" == "30" ]]; then
+      printf 'ready enough: alive_active=%s active=%s partitions=%s\n' "$alive_active" "$active" "$partitions"
       return 0
     fi
-    printf 'still starting: alive=%s active=%s partitions=%s\n' "${alive:-?}" "${active:-?}" "${partitions:-?}"
+    printf 'still starting: alive_active=%s active=%s partitions=%s\n' "${alive_active:-?}" "${active:-?}" "${partitions:-?}"
     sleep 10
   done
 
-  printf '%s did not reach alive/active count %s within %s seconds\n' "$label" "$expected" "$wait_seconds" >&2
+  printf '%s did not reach alive-active/active count %s within %s seconds\n' "$label" "$expected" "$wait_seconds" >&2
   return 1
 }
+
+remove_db_init
 
 printf 'starting stateful dependencies without recreating existing containers\n'
 "${compose[@]}" up -d --no-recreate postgres admin-rmq game-rmq
@@ -107,7 +119,8 @@ COMPOSE_FILES="${COMPOSE_FILES:-compose.yaml:compose.allmaps.yaml}" CONTAINER_RU
   "$(dirname "$0")/full-world-partitions.sh" "$env_file"
 
 printf 'starting service layer without recreating existing containers\n'
-"${compose[@]}" up -d --no-recreate rmq-auth-shim text-router gateway director admin-panel
+"${compose[@]}" up -d --no-recreate \
+  rmq-auth-shim text-router gateway director admin-panel admin-panel-ingress admin-chat-commands
 "$(dirname "$0")/seed-gateway-neighbor.sh"
 
 printf 'starting base travel maps\n'
@@ -129,6 +142,7 @@ printf 'starting full warm-pool maps\n'
   overland-m-01 overland-s-04 overland-s-06 bandit-fortress \
   overland-s-07 overland-s-08 dungeon-thepit
 wait_for_counts 30 'full warm pool'
+remove_db_init
 
 printf 'final status\n'
 COMPOSE_FILES="${COMPOSE_FILES:-compose.yaml:compose.allmaps.yaml}" CONTAINER_RUNTIME="$container_runtime" \

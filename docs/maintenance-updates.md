@@ -30,6 +30,11 @@ The configured defaults live in `.env`:
 
 ```env
 DUNE_RESTART_CHECK_STEAM_UPDATE=true
+DUNE_RESTART_STEAM_UPDATE_MODE=auto
+DUNE_RESTART_STEAM_CLIENT_TRIGGER=true
+DUNE_RESTART_STEAM_CLIENT_WAIT_SECONDS=900
+DUNE_RESTART_STEAM_CLIENT_MIN_WAIT_SECONDS=30
+DUNE_STEAM_CLIENT_COMMAND=steam
 DUNE_RESTART_STEAMCMD_UPDATE=true
 DUNE_RESTART_STEAMCMD_REQUIRED=false
 DUNE_RESTART_STEAMCMD_HELPER_IMAGE=cm2network/steamcmd:root
@@ -90,22 +95,28 @@ If the stop phase fails, no backup, update check, or start is attempted. If the 
 
 ## Update Logic
 
-The update phase first runs SteamCMD against the official self-hosted server
+The update phase first refreshes or waits for the official self-hosted server
 Steam app:
 
 ```bash
 ./scripts/update-steam-tool.sh .env
 ```
 
-By default it runs app `4754530`, the Dune: Awakening Self-Hosted Server tool,
+By default `DUNE_RESTART_STEAM_UPDATE_MODE=auto`. On desktop Steam hosts, where
+the Steam client is already running and owns the library, DASH sends
+`steam://validate/4754530` to the client and waits for the local appmanifest
+download/staging state to settle before image ingest. This avoids running a
+competing SteamCMD process against the same library.
+
+For headless hosts without a running Steam client, auto mode falls back to
+SteamCMD. It runs app `4754530`, the Dune: Awakening Self-Hosted Server tool,
 with `+login anonymous` and `validate`. If the Steam tool requires an owned
 Steam account instead of anonymous access, set `DUNE_STEAM_LOGIN` and
-`DUNE_STEAM_PASSWORD` in `.env`.
-
-If `steamcmd` is not installed on the host, the restart hook can run SteamCMD
-through `DUNE_RESTART_STEAMCMD_HELPER_IMAGE`. The default helper image is
-`cm2network/steamcmd:root`; pre-pull it before relying on unattended maintenance
-if you do not want the maintenance window to depend on a Docker Hub pull.
+`DUNE_STEAM_PASSWORD` in `.env`. If `steamcmd` is not installed on the host, the
+restart hook can run SteamCMD through `DUNE_RESTART_STEAMCMD_HELPER_IMAGE`. The
+default helper image is `cm2network/steamcmd:root`; pre-pull it before relying
+on unattended maintenance if you do not want the maintenance window to depend on
+a Docker Hub pull.
 
 When `DUNE_RESTART_STEAMCMD_REQUIRED=false`, missing SteamCMD logs a warning and
 the flow continues with the package already present on disk. Set
@@ -143,6 +154,20 @@ DUNE_RESTART_CHECK_STEAM_UPDATE=false
 
 The normal host path uses local `docker compose`.
 
+All normal Compose services use fixed addresses on the Dune bridge network.
+The network gateway is pinned to `172.31.240.1`, service containers use the
+lower static range, and Docker's dynamic allocation pool is restricted to
+`172.31.240.128/25`. This keeps restart helpers and recreated one-shot
+containers from taking addresses reserved for RabbitMQ, text-router, map
+servers, or Postgres. It also keeps the Postgres host bind
+`172.31.240.1:15432` valid after a full network recreate.
+
+Before relying on an unattended restart after Compose changes, run:
+
+```bash
+make check-compose-static-ips ENV_FILE=.env
+```
+
 Inside the admin-panel container, `scripts/restart-target.sh` falls back to the mounted Docker socket and starts a short-lived privileged Docker CLI helper for update/start phases. That helper mounts:
 
 - the Docker socket,
@@ -161,6 +186,7 @@ DUNE_RESTART_HOST_WORKSPACE=/path/to/DuneAwakeningSelfHost
 DUNE_RESTART_COMPOSE_PROJECT=dune_server
 DUNE_RESTART_USE_HOST_COMPOSE=true
 DUNE_STEAM_SERVER_DIR=/path/to/Steam/steamapps/common/Dune Awakening Self-Hosted Server
+DUNE_RESTART_STEAM_UPDATE_MODE=auto
 DUNE_RESTART_STEAMCMD_HELPER_IMAGE=cm2network/steamcmd:root
 ```
 

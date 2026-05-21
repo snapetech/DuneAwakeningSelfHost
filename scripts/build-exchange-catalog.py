@@ -12,6 +12,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 DEFAULT_MANUAL = ROOT / "config" / "artificial-exchange-prices.csv"
 DEFAULT_SNAPSHOT_DIR = ROOT / "data" / "exchange-price-snapshots"
 DEFAULT_OUTPUT_DIR = ROOT / "backups" / "admin-panel" / "artificial-exchange"
+DEFAULT_SOURCE_CATEGORY_MAP = DEFAULT_OUTPUT_DIR / "source-category-map.json"
 FIELDS = [
     "template_id",
     "display_name",
@@ -248,6 +249,51 @@ def merge_snapshot_rows(rows):
     return out
 
 
+def load_source_category_map(path):
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}, f"source category map missing: {path}"
+    except json.JSONDecodeError as exc:
+        return {}, f"source category map invalid: {path}: {exc}"
+    items = payload.get("items") if isinstance(payload, dict) else None
+    if not isinstance(items, dict):
+        return {}, f"source category map has no items object: {path}"
+    return items, None
+
+
+def reconcile_source_categories(rows, source_map):
+    if not source_map:
+        return rows, {"updated": 0, "missing": 0}
+    updated = 0
+    missing = 0
+    out = []
+    for row in rows:
+        source = source_map.get(row["template_id"])
+        if not source:
+            missing += 1
+            out.append(row)
+            continue
+        next_row = dict(row)
+        changed = False
+        for field in ("category", "category_mask", "category_depth"):
+            if field not in source:
+                continue
+            value = source[field]
+            if field in ("category_mask", "category_depth"):
+                value = int(value)
+            if next_row.get(field) != value:
+                next_row[field] = value
+                changed = True
+        if changed:
+            notes = next_row.get("notes") or ""
+            marker = "category reconciled from source-category-map"
+            next_row["notes"] = f"{notes}; {marker}".strip("; ")
+            updated += 1
+        out.append(next_row)
+    return out, {"updated": updated, "missing": missing}
+
+
 def write_outputs(rows, output_dir):
     output_dir.mkdir(parents=True, exist_ok=True)
     latest_json = output_dir / "catalog.json"
@@ -269,6 +315,8 @@ def main():
     parser.add_argument("--manual", type=pathlib.Path, default=DEFAULT_MANUAL)
     parser.add_argument("--snapshot-dir", type=pathlib.Path, default=DEFAULT_SNAPSHOT_DIR)
     parser.add_argument("--output-dir", type=pathlib.Path, default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument("--source-category-map", type=pathlib.Path, default=DEFAULT_SOURCE_CATEGORY_MAP)
+    parser.add_argument("--no-source-category-reconcile", action="store_true")
     parser.add_argument("--no-db", action="store_true")
     args = parser.parse_args()
 
@@ -288,6 +336,12 @@ def main():
     for row in read_csv_rows(args.manual):
         merged[row["template_id"]] = row
     rows = [merged[tid] for tid in sorted(merged)]
+    category_reconcile = {"updated": 0, "missing": 0}
+    if not args.no_source_category_reconcile:
+        source_map, error = load_source_category_map(args.source_category_map)
+        if error:
+            warnings.append(error)
+        rows, category_reconcile = reconcile_source_categories(rows, source_map)
     latest_json, latest_csv = write_outputs(rows, args.output_dir)
     print(json.dumps({
         "ok": True,
@@ -295,6 +349,7 @@ def main():
         "enabled": sum(1 for row in rows if row["enabled"]),
         "catalog": str(latest_json),
         "csv": str(latest_csv),
+        "categoryReconcile": category_reconcile,
         "warnings": warnings,
     }, indent=2))
 

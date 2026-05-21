@@ -965,8 +965,9 @@ def populate_once(args):
         require_populator_preflight(conn, args, catalog, eligible)
         active = fetch_seeded_orders(conn, args.exchange_id, args.populator_owner_id, args.limit)
         count = args.populator_force_count if args.populator_force_count is not None else desired_seed_count(len(active), args.populator_target_min_orders, args.populator_target_max_orders)
-        positions = fetch_free_inventory_positions(conn, args.populator_source_inventory_id, count)
-        selected_rows = [random.choice(eligible) for _ in range(count)]
+        max_per_template = int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MAX_PER_TEMPLATE_PER_CATEGORY", "2"))
+        selected_rows = select_populator_rows(eligible, count, active, max_per_template)
+        positions = fetch_free_inventory_positions(conn, args.populator_source_inventory_id, len(selected_rows))
         planned = apply_seed_events(conn, args, plan_seed_events(args, selected_rows, active, positions))
         if args.dry_run:
             conn.rollback()
