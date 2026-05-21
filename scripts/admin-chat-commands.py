@@ -1329,6 +1329,10 @@ def run_announce(message, target_name="", target_fls_id=""):
     }
 
 
+def maybe_reply(message, reply=False, target_name="", target_fls_id=""):
+    return run_announce(message, target_name=target_name, target_fls_id=target_fls_id) if reply else None
+
+
 def infer_command_reply_target():
     frame = inspect.currentframe()
     if frame is None:
@@ -1596,9 +1600,8 @@ def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=F
     allowed, resolved_admin = is_admin(conn, sender_name, sender_fls_id)
     if not allowed:
         response = f"command denied for {resolved_admin or sender_name or sender_fls_id or 'unknown'}"
-        if reply:
-            run_announce(response)
-        return {"ok": False, "error": response}
+        announce_result = maybe_reply(response, reply)
+        return {"ok": False, "error": response, "reply": announce_result}
 
     if command == "test":
         response = "f00"
@@ -1611,32 +1614,27 @@ def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=F
     if command in ("where", "loc", "location"):
         if len(parts) != 2:
             response = "usage: &where <playername>"
-            if reply:
-                run_announce(response)
-            return {"ok": False, "error": response}
+            announce_result = maybe_reply(response, reply)
+            return {"ok": False, "error": response, "reply": announce_result}
         target, matches = character_row(conn, parts[1])
         if target is None:
             response = "no unique player match: " + ", ".join(row["character_name"] for row in matches) if matches else "player not found"
-            if reply:
-                run_announce(response)
-            return {"ok": False, "error": response, "matches": [row["character_name"] for row in matches]}
+            announce_result = maybe_reply(response, reply)
+            return {"ok": False, "error": response, "matches": [row["character_name"] for row in matches], "reply": announce_result}
         response = f"{target['character_name']} is {target['online_status']} at {format_location(target)}"
-        if reply:
-            run_announce(response)
-        return {"ok": True, "action": "where", "message": response, "target": dict(target)}
+        announce_result = maybe_reply(response, reply)
+        return {"ok": True, "action": "where", "message": response, "target": dict(target), "reply": announce_result}
 
     if command in ("kick", "disconnect", "sessionkick"):
         if len(parts) != 2:
             response = "usage: &disconnect <playername>"
-            if reply:
-                run_announce(response)
-            return {"ok": False, "error": response}
+            announce_result = maybe_reply(response, reply)
+            return {"ok": False, "error": response, "reply": announce_result}
         target, matches = character_row(conn, parts[1])
         if target is None:
             response = "no unique player match: " + ", ".join(row["character_name"] for row in matches) if matches else "player not found"
-            if reply:
-                run_announce(response)
-            return {"ok": False, "error": response, "matches": [row["character_name"] for row in matches]}
+            announce_result = maybe_reply(response, reply)
+            return {"ok": False, "error": response, "matches": [row["character_name"] for row in matches], "reply": announce_result}
 
         online = (target["online_status"] or "").lower() == "online"
         route = gm_route_for(conn, target)
@@ -1660,8 +1658,7 @@ def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=F
             reason = "target is not online"
             command_text = ""
             gm_result = None
-        if reply:
-            run_announce(response)
+        announce_result = maybe_reply(response, reply)
         return {
             "ok": ok,
             "action": "disconnect",
@@ -1672,31 +1669,28 @@ def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=F
             "gm": gm_result,
             "target": compact_character(target),
             "candidateRoutes": kick_candidate_routes(conn, target),
+            "reply": announce_result,
         }
 
     if command == "teleport":
         if len(parts) != 2:
             response = "usage: &teleport <playername>"
-            if reply:
-                run_announce(response)
-            return {"ok": False, "error": response}
+            announce_result = maybe_reply(response, reply)
+            return {"ok": False, "error": response, "reply": announce_result}
         admin, _ = character_row(conn, resolved_admin)
         if admin is None or admin["partition_id"] is None or admin["x"] is None:
             response = f"admin location unavailable for {resolved_admin}"
-            if reply:
-                run_announce(response)
-            return {"ok": False, "error": response}
+            announce_result = maybe_reply(response, reply)
+            return {"ok": False, "error": response, "reply": announce_result}
         target, matches = character_row(conn, parts[1])
         if target is None:
             response = "no unique player match: " + ", ".join(row["character_name"] for row in matches) if matches else "player not found"
-            if reply:
-                run_announce(response)
-            return {"ok": False, "error": response, "matches": [row["character_name"] for row in matches]}
+            announce_result = maybe_reply(response, reply)
+            return {"ok": False, "error": response, "matches": [row["character_name"] for row in matches], "reply": announce_result}
         if target["online_status"].lower() != "offline":
             response = f"{target['character_name']} is {target['online_status']}; safe teleport only supports offline targets right now"
-            if reply:
-                run_announce(response)
-            return {"ok": False, "error": response, "target": dict(target)}
+            announce_result = maybe_reply(response, reply)
+            return {"ok": False, "error": response, "target": dict(target), "reply": announce_result}
 
         execute = env_bool("DUNE_CHAT_COMMAND_EXECUTE_TELEPORT", False)
         dry_run = env_bool("DUNE_CHAT_COMMAND_DRY_RUN", True) or not execute
@@ -1715,8 +1709,7 @@ def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=F
                 )
             conn.commit()
             response = f"moved {target['character_name']} to {resolved_admin} at {format_location(admin)}"
-        if reply:
-            run_announce(response)
+        announce_result = maybe_reply(response, reply)
         return {
             "ok": True,
             "action": "teleport",
@@ -1724,20 +1717,19 @@ def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=F
             "message": response,
             "admin": {"characterName": resolved_admin, "location": compact_location(admin)},
             "target": {"characterName": target["character_name"], "flsId": target["fls_id"], "status": target["online_status"], "location": compact_location(target)},
+            "reply": announce_result,
         }
 
     if command in ("goto", "teleportto", "tpto"):
         if len(parts) != 2:
             response = "usage: &goto <playername>"
-            if reply:
-                run_announce(response)
-            return {"ok": False, "error": response}
+            announce_result = maybe_reply(response, reply)
+            return {"ok": False, "error": response, "reply": announce_result}
         target, matches = character_row(conn, parts[1])
         if target is None:
             response = "no unique player match: " + ", ".join(row["character_name"] for row in matches) if matches else "player not found"
-            if reply:
-                run_announce(response)
-            return {"ok": False, "error": response, "matches": [row["character_name"] for row in matches]}
+            announce_result = maybe_reply(response, reply)
+            return {"ok": False, "error": response, "matches": [row["character_name"] for row in matches], "reply": announce_result}
         route = gm_route_for(conn, target)
         if target["online_status"].lower() == "online":
             command_text = f"TeleportToPlayer {target['character_name']}"
@@ -1746,8 +1738,7 @@ def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=F
                 response = f"sent native GM goto for {resolved_admin} to {target['character_name']} via {route}"
             else:
                 response = f"{target['character_name']} is online at {format_location(target)}; live goto GM envelope is still gated"
-            if reply:
-                run_announce(response)
+            announce_result = maybe_reply(response, reply)
             return {
                 "ok": bool(gm_result.get("ok")),
                 "action": "goto",
@@ -1761,10 +1752,10 @@ def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=F
                 ],
                 "message": response,
                 "target": {"characterName": target["character_name"], "status": target["online_status"], "location": compact_location(target)},
+                "reply": announce_result,
             }
         response = f"{target['character_name']} is offline at {format_location(target)}; live goto still needs native GM command route verification"
-        if reply:
-            run_announce(response)
+        announce_result = maybe_reply(response, reply)
         return {
             "ok": False,
             "action": "goto",
@@ -1772,6 +1763,7 @@ def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=F
             "reason": "the sender is online when issuing chat commands, so moving the sender needs a live server command",
             "message": response,
             "target": {"characterName": target["character_name"], "status": target["online_status"], "location": compact_location(target)},
+            "reply": announce_result,
         }
 
     if command in ("bring", "summon", "tphere"):
