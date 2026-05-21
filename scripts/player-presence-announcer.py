@@ -159,6 +159,65 @@ def base_claim_counts():
     return counts
 
 
+def map_health_summary():
+    sql = """
+    with active as (
+      select server_id from dune.active_server_ids
+    ),
+    status as (
+      select
+        wp.partition_id,
+        coalesce(nullif(wp.label, ''), wp.map || ' #' || wp.partition_id::text) as label,
+        wp.map,
+        wp.server_id,
+        coalesce(fs.ready, false) as ready,
+        coalesce(fs.alive, false) as alive,
+        active.server_id is not null as active,
+        coalesce(wp.blocked, false) as blocked,
+        coalesce(fs.connected_players, 0)::int as connected_players
+      from dune.world_partition wp
+      left join dune.farm_state fs on fs.server_id = wp.server_id
+      left join active on active.server_id = wp.server_id
+    )
+    select jsonb_build_object(
+      'expected', count(*),
+      'online', count(*) filter (where server_id is not null and alive and active and not blocked),
+      'readyAlive', count(*) filter (where ready and alive and active and not blocked),
+      'activeServers', (select count(*) from active),
+      'connectedPlayers', coalesce(sum(connected_players), 0),
+      'offlineLabels', coalesce(jsonb_agg(label order by label) filter (where not (server_id is not null and alive and active and not blocked)), '[]'::jsonb),
+      'playersByMap', coalesce(jsonb_object_agg(label, connected_players order by label), '{}'::jsonb)
+    )::text
+    from status;
+    """
+    result = run(compose_cmd("exec", "-T", "postgres", "psql", "-U", "dune", "-d", DB, "-At", "-c", sql), timeout=int(env("DUNE_PLAYER_PRESENCE_SQL_TIMEOUT_SECONDS", "10")))
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or "map health query failed")
+    text = result.stdout.strip().splitlines()[-1] if result.stdout.strip() else "{}"
+    return json.loads(text)
+
+
+def stuck_transition_players(minutes):
+    sql = f"""
+    select ps.account_id::text, coalesce(nullif(ps.character_name, ''), ps.account_id::text) as character_name, ps.online_status::text
+    from dune.player_state ps
+    where ps.online_status::text <> 'Offline'
+      and ps.last_avatar_activity < now() - interval '{int(minutes)} minutes'
+    order by ps.last_avatar_activity asc
+    limit 25;
+    """
+    result = run(compose_cmd("exec", "-T", "postgres", "psql", "-U", "dune", "-d", DB, "-At", "-F", "\t", "-c", sql), timeout=int(env("DUNE_PLAYER_PRESENCE_SQL_TIMEOUT_SECONDS", "10")))
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or "stuck transition query failed")
+    rows = []
+    for line in result.stdout.splitlines():
+        if not line.strip():
+            continue
+        account_id, name, status = (line.split("\t") + ["", ""])[:3]
+        rows.append({"accountId": account_id, "name": name, "status": status})
+    return rows
+
+
 def player_name(player):
     if isinstance(player, dict):
         return player.get("name") or player.get("characterName") or player.get("accountId") or "unknown"
@@ -181,6 +240,16 @@ def player_location_label(player):
     if not isinstance(player, dict):
         return ""
     return player.get("partitionLabel") or player.get("map") or ""
+
+
+def admin_players(current):
+    names = {item.strip().lower() for item in env("DUNE_PLAYER_PRESENCE_ADMIN_NAMES", env("DUNE_CHAT_COMMAND_ADMINS", "")).split(",") if item.strip()}
+    fls_ids = {item.strip() for item in env("DUNE_PLAYER_PRESENCE_ADMIN_FLS_IDS", env("DUNE_CHAT_COMMAND_ADMIN_FLS_IDS", "")).split(",") if item.strip()}
+    admins = {}
+    for account_id, player in current.items():
+        if (names and player_name(player).lower() in names) or (fls_ids and player_fls_id(player) in fls_ids):
+            admins[account_id] = player
+    return admins
 
 
 def completed_journey_players(story_node_id):
@@ -425,6 +494,24 @@ def send_private(player, template, count, event, account_id, extra=None):
     return {"event": event, "accountId": account_id, "message": message, "send": private_message(player, message, f"player-presence-{event}")}
 
 
+def send_admin_private(current, template, count, event, extra=None):
+    results = []
+    for account_id, player in admin_players(current).items():
+        results.append(send_private(player, template, count, event, account_id, extra))
+    return results
+
+
+def compact_map_counts(players_by_map, limit=6):
+    items = [(name, int(count or 0)) for name, count in (players_by_map or {}).items() if int(count or 0) > 0]
+    items.sort(key=lambda item: (-item[1], item[0].lower()))
+    if not items:
+        return "no reported map population"
+    shown = [f"{name}: {count}" for name, count in items[:limit]]
+    if len(items) > limit:
+        shown.append(f"+{len(items) - limit} more")
+    return ", ".join(shown)
+
+
 def check_once():
     state = load_state()
     current = online_players()
@@ -604,6 +691,98 @@ def check_once():
                 sent_accounts.add(str(account_id))
             sent[job["id"]] = sorted(sent_accounts)
 
+    public_status_results = []
+    admin_alert_results = []
+    health = None
+    if (
+        env_bool("DUNE_PLAYER_PRESENCE_MAP_HEALTH_PUBLIC_ENABLED", False)
+        or env_bool("DUNE_PLAYER_PRESENCE_MAP_HEALTH_ADMIN_ENABLED", False)
+        or env_bool("DUNE_PLAYER_PRESENCE_POPULATION_PUBLIC_ENABLED", False)
+        or env_bool("DUNE_PLAYER_PRESENCE_POPULATION_ADMIN_DIGEST_ENABLED", False)
+    ):
+        health = map_health_summary()
+        expected = int(health.get("expected") or 0)
+        online = int(health.get("online") or 0)
+        health_state = "healthy" if expected > 0 and online == expected else "degraded"
+        previous_health_state = state.get("mapHealthState")
+        state["mapHealthState"] = health_state
+
+        if env_bool("DUNE_PLAYER_PRESENCE_MAP_HEALTH_PUBLIC_ENABLED", False) and previous_health_state and previous_health_state != health_state:
+            if health_state == "degraded":
+                template = env("DUNE_PLAYER_PRESENCE_MAP_HEALTH_DEGRADED_TEMPLATE", "Server notice: some travel destinations are recovering ({online}/{expected} online). If travel fails, wait 1-2 minutes and retry.")
+            else:
+                template = env("DUNE_PLAYER_PRESENCE_MAP_HEALTH_RECOVERED_TEMPLATE", "Server notice: all travel destinations are online again ({online}/{expected}).")
+            message = render_template(template, "server", final_count, online=online, expected=expected)
+            public_status_results.append({"event": f"map-health-{health_state}", "message": message, "announce": announce(message)})
+
+        if env_bool("DUNE_PLAYER_PRESENCE_MAP_HEALTH_ADMIN_ENABLED", False) and health_state == "degraded":
+            interval = int(env("DUNE_PLAYER_PRESENCE_ADMIN_ALERT_INTERVAL_SECONDS", "900"))
+            last = int(state.get("lastAdminMapHealthAlertAt", 0) or 0)
+            if current_time - last >= interval:
+                offline = ", ".join((health.get("offlineLabels") or [])[:8]) or "unknown"
+                template = env("DUNE_PLAYER_PRESENCE_MAP_HEALTH_ADMIN_TEMPLATE", "Admin alert: map health degraded, {online}/{expected} online. Offline: {offline_maps}")
+                admin_alert_results.extend(send_admin_private(current, template, final_count, "admin-map-health", {"online": online, "expected": expected, "offline_maps": offline}))
+                state["lastAdminMapHealthAlertAt"] = current_time
+
+        if env_bool("DUNE_PLAYER_PRESENCE_POPULATION_PUBLIC_ENABLED", False):
+            thresholds = sorted([int(item.strip()) for item in env("DUNE_PLAYER_PRESENCE_POPULATION_PUBLIC_THRESHOLDS", "30,35,40").split(",") if item.strip()])
+            band = 0
+            for threshold in thresholds:
+                if final_count >= threshold:
+                    band = threshold
+            previous_band = int(state.get("populationPublicBand", 0) or 0)
+            if band and band != previous_band:
+                template = env("DUNE_PLAYER_PRESENCE_POPULATION_PUBLIC_TEMPLATE", "Server is getting busy: {count} online. Travel and loading may take longer.")
+                message = render_template(template, "server", final_count)
+                public_status_results.append({"event": "population-threshold", "threshold": band, "message": message, "announce": announce(message)})
+            state["populationPublicBand"] = band
+
+        if env_bool("DUNE_PLAYER_PRESENCE_POPULATION_ADMIN_DIGEST_ENABLED", False):
+            interval = int(env("DUNE_PLAYER_PRESENCE_POPULATION_ADMIN_DIGEST_INTERVAL_SECONDS", "1800"))
+            last = int(state.get("lastAdminPopulationDigestAt", 0) or 0)
+            if current_time - last >= interval:
+                map_counts = compact_map_counts(health.get("playersByMap") or {})
+                template = env("DUNE_PLAYER_PRESENCE_POPULATION_ADMIN_DIGEST_TEMPLATE", "Admin population: {count} online. Maps: {map_counts}")
+                admin_alert_results.extend(send_admin_private(current, template, final_count, "admin-population-digest", {"map_counts": map_counts}))
+                state["lastAdminPopulationDigestAt"] = current_time
+
+    if env_bool("DUNE_PLAYER_PRESENCE_RECONNECT_SUPPORT_ENABLED", False):
+        window = int(env("DUNE_PLAYER_PRESENCE_RECONNECT_SUPPORT_WINDOW_SECONDS", "600"))
+        threshold = int(env("DUNE_PLAYER_PRESENCE_RECONNECT_SUPPORT_THRESHOLD", "3"))
+        reconnects = state.setdefault("reconnectSupportEvents", {})
+        sent = state.setdefault("reconnectSupportSent", {})
+        template = env("DUNE_PLAYER_PRESENCE_RECONNECT_SUPPORT_TEMPLATE", "Looks like you have reconnected several times. If travel is stuck, report it through {server_url}.")
+        for account_id in joined:
+            events = [int(ts) for ts in reconnects.get(str(account_id), []) if current_time - int(ts) <= window]
+            events.append(current_time)
+            reconnects[str(account_id)] = events
+            if len(events) >= threshold and current_time - int(sent.get(str(account_id), 0) or 0) >= window:
+                player = current[account_id]
+                automated_private_results.append(send_private(player, template, final_count, "reconnect-support", account_id))
+                sent[str(account_id)] = current_time
+        for account_id, events in list(reconnects.items()):
+            remaining = [int(ts) for ts in events if current_time - int(ts) <= window]
+            if remaining:
+                reconnects[account_id] = remaining
+            else:
+                reconnects.pop(account_id, None)
+
+    if env_bool("DUNE_PLAYER_PRESENCE_ADMIN_ANOMALY_DIGEST_ENABLED", False):
+        interval = int(env("DUNE_PLAYER_PRESENCE_ADMIN_ANOMALY_DIGEST_INTERVAL_SECONDS", "1800"))
+        last = int(state.get("lastAdminAnomalyDigestAt", 0) or 0)
+        if current_time - last >= interval:
+            try:
+                stuck = stuck_transition_players(int(env("DUNE_ADMIN_BOT_STUCK_TRANSITION_MINUTES", "10")))
+                base_counts = base_claim_counts()
+                cap = int(env("DUNE_PLAYER_PRESENCE_BASE_CAP", env("DUNE_ADMIN_BOT_MAX_BASES_WARN", "6")))
+                over_cap = sum(1 for item in base_counts.values() if item.get("baseCount", 0) > cap)
+                stuck_names = ", ".join(item["name"] for item in stuck[:5]) or "none"
+                template = env("DUNE_PLAYER_PRESENCE_ADMIN_ANOMALY_DIGEST_TEMPLATE", "Admin digest: stuck/recent anomalies={stuck_count} ({stuck_names}); over base cap={over_base_cap}.")
+                admin_alert_results.extend(send_admin_private(current, template, final_count, "admin-anomaly-digest", {"stuck_count": len(stuck), "stuck_names": stuck_names, "over_base_cap": over_cap}))
+                state["lastAdminAnomalyDigestAt"] = current_time
+            except Exception as exc:
+                admin_alert_results.append({"event": "admin-anomaly-digest", "ok": False, "error": str(exc)})
+
     state["onlinePlayers"] = current
     state["updatedAt"] = now_iso()
     save_state(state)
@@ -621,6 +800,8 @@ def check_once():
         "journeyAnnouncements": journey_results,
         "restartPrivateWarnings": restart_private_results,
         "postRestartReturnMessages": post_restart_results,
+        "publicStatusAnnouncements": public_status_results,
+        "adminAlertMessages": admin_alert_results,
     }
 
 

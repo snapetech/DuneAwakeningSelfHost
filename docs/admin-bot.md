@@ -63,13 +63,37 @@ State is stored in `backups/admin-bot/state.json`. The state file tracks audit o
 ```env
 DUNE_PLAYER_PRESENCE_ANNOUNCE_ENABLED=true
 DUNE_PLAYER_PRESENCE_POLL_SECONDS=15
+DUNE_PLAYER_PRESENCE_SERVER_NAME=My Dune Server
+DUNE_PLAYER_PRESENCE_SERVER_URL=https://example.test
+DUNE_PLAYER_PRESENCE_RULES_URL=https://example.test
 DUNE_PLAYER_PRESENCE_JOIN_TEMPLATE=Welcome {playername}! Current player count is now {count}.
 DUNE_PLAYER_PRESENCE_LEAVE_TEMPLATE={playername} has left, current count is {count}.
 DUNE_PLAYER_PRESENCE_ANNOUNCE_COMMAND=/workspace/scripts/announce.sh
 DUNE_PLAYER_PRESENCE_PRIVATE_WELCOME_ENABLED=true
-DUNE_PLAYER_PRESENCE_PRIVATE_WELCOME_TEMPLATE=Welcome! Please Check https://snape.tech for Server Rules.
+DUNE_PLAYER_PRESENCE_PRIVATE_WELCOME_TEMPLATE=Welcome! Please check {rules_url} for server rules.
 DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_CHANNEL=Private
 DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_COMMAND=/workspace/scripts/announce.sh
+DUNE_PLAYER_PRESENCE_FIRST_SEEN_ENABLED=true
+DUNE_PLAYER_PRESENCE_FIRST_SEEN_TEMPLATE=Welcome to {server_name}. This is a friendly PvE server. Please keep shared paths, spawns, and resources clear. Rules: {rules_url}
+DUNE_PLAYER_PRESENCE_HAGGA_ARRIVAL_ENABLED=true
+DUNE_PLAYER_PRESENCE_HAGGA_ARRIVAL_TEMPLATE=You made it to Hagga Basin. Build with room around roads, spawns, resource areas, and points of interest. Rules: {rules_url}
+DUNE_PLAYER_PRESENCE_BASE_REMINDERS_ENABLED=true
+DUNE_PLAYER_PRESENCE_BASE_CAP=6
+DUNE_PLAYER_PRESENCE_BASE_NEAR_CAP=5
+DUNE_PLAYER_PRESENCE_FIRST_BASE_TEMPLATE=Base reminder: please avoid blocking shared paths, NPCs, resources, caves, wrecks, and POIs. Rules: {rules_url}
+DUNE_PLAYER_PRESENCE_BASE_NEAR_CAP_TEMPLATE=Base reminder: this server has a {base_cap} landclaim cap per Hagga Basin map. Please clean up unused claims. Rules: {rules_url}
+DUNE_PLAYER_PRESENCE_BASE_OVER_CAP_TEMPLATE=Heads up: you appear to be over the {base_cap} landclaim cap. Please clean up unused claims. Rules: {rules_url}
+DUNE_PLAYER_PRESENCE_RECONNECT_RECOVERY_ENABLED=true
+DUNE_PLAYER_PRESENCE_RECONNECT_RECOVERY_WINDOW_SECONDS=600
+DUNE_PLAYER_PRESENCE_RECONNECT_RECOVERY_TEMPLATE=Welcome back. If you were disconnected during travel, wait a moment before retrying the same transition.
+DUNE_PLAYER_PRESENCE_RESTART_PRIVATE_WARNINGS_ENABLED=true
+DUNE_PLAYER_PRESENCE_RESTART_PRIVATE_WARNING_MARKS_SECONDS=1800,600,300,60
+DUNE_PLAYER_PRESENCE_RESTART_PRIVATE_WARNING_TEMPLATE=Server maintenance in about {remaining}. Please get to a safe place.
+DUNE_PLAYER_PRESENCE_POST_RESTART_RETURN_ENABLED=true
+DUNE_PLAYER_PRESENCE_POST_RESTART_WINDOW_SECONDS=3600
+DUNE_PLAYER_PRESENCE_POST_RESTART_TEMPLATE=Maintenance is complete. If anything looks wrong, report it through {server_url}.
+DUNE_PLAYER_PRESENCE_STUCK_POSITION_ENABLED=false
+DUNE_PLAYER_PRESENCE_STUCK_POSITION_TEMPLATE=Your position looks unusual. If you are stuck, message an admin before relogging repeatedly.
 DUNE_PLAYER_PRESENCE_STARTER_BASE_TOOL_ENABLED=true
 DUNE_PLAYER_PRESENCE_STARTER_BASE_TOOL_MESSAGE_ENABLED=true
 DUNE_PLAYER_PRESENCE_STARTER_BASE_TOOL_MESSAGE_TEMPLATE=A Base Reconstruction Tool has been added to your inventory. You may need to log out and back in before it appears.
@@ -78,13 +102,26 @@ DUNE_PLAYER_PRESENCE_VERMILIUS_GAP_NODE=DA_SQ_VermiliusGap.Relocate.RelocateOuts
 DUNE_PLAYER_PRESENCE_VERMILIUS_GAP_TEMPLATE=Congrats! {playername} has outrun Shai-Hulud!
 ```
 
-Join/leave, private-welcome, and starter Base Reconstruction Tool templates support `{playername}`, `{player_name}`, `{count}`, and `{player_count}`. Vermilius Gap templates support `{playername}`, `{player_name}`, and `{story_node_id}`.
+Presence templates support `{playername}`, `{player_name}`, `{count}`, `{player_count}`, `{server_name}`, `{server_url}`, and `{rules_url}`. Base-cap templates also support `{base_cap}`. Restart-warning templates support `{remaining}` and `{remaining_seconds}`. Vermilius Gap templates support `{playername}`, `{player_name}`, and `{story_node_id}`.
 
 The private welcome path runs on every detected join for existing and new players after the first baseline poll. It uses the same Paul chat sender, disables dashboard `!!!` wrapping, targets the joined player's live game RabbitMQ queue, and sets `m_ChannelType` to `DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_CHANNEL`. The default message is:
 
 ```text
-Welcome! Please Check https://snape.tech for Server Rules.
+Welcome! Please check {rules_url} for server rules.
 ```
+
+Automated private messages are derived from local state and operator config rather than hard-coded server details:
+
+- `FIRST_SEEN` sends once per account after its first observed join.
+- `HAGGA_ARRIVAL` sends once when an online player is first observed on `HaggaBasin`.
+- `BASE_REMINDERS` queries `dune.totems`, `dune.actors`, and `dune.landclaim_segments` for that account and sends first-base, near-cap, or over-cap reminders only when the count changes.
+- `RECONNECT_RECOVERY` sends when a player rejoins inside the configured short reconnect window.
+- `RESTART_PRIVATE_WARNINGS` mirrors scheduled admin-panel restart/announcement jobs to online players at configured remaining-time marks.
+- `POST_RESTART_RETURN` sends once per recently executed restart job when a player rejoins after maintenance.
+- `STUCK_POSITION` is available but disabled by default; it only warns when an online player has no map/location in the DB, which can be noisy during travel.
+- `MAP_HEALTH_PUBLIC` can publish degraded/recovered map-health notices when enabled.
+- `MAP_HEALTH_ADMIN`, `POPULATION_ADMIN_DIGEST`, and `ADMIN_ANOMALY_DIGEST` send private admin-only digests to configured admin names/FLS ids.
+- `RECONNECT_SUPPORT` can privately nudge players who repeatedly reconnect inside the configured window.
 
 The starter Base Reconstruction Tool path grants one `BaseBackupTool` to each newly observed joining account that has not already been recorded in `backups/admin-bot/player-presence.json`. When the grant succeeds, it sends a private message telling the player they may need to log out and back in before the item appears.
 

@@ -22,6 +22,8 @@ Content-Type: application/json
 | `DUNE_ADMIN_TYPED_KNOBS_ENABLED` | `false` | Enables typed config writes. Does not block dry-runs. |
 | `DUNE_ADMIN_EVENT_EXECUTION_ENABLED` | `false` | Enables event execution. Does not block event creation or dry-runs. |
 | `DUNE_ADMIN_BUNDLE_MUTATIONS_ENABLED` | `false` | Enables bundle execution. Does not block bundle dry-runs. |
+| `DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED` | `false` | Enables faction reputation writes through `dune.set_player_faction_reputation`. Does not block inspection or dry-runs. |
+| `DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED` | `false` | Enables journey reveal/complete/reset/delete server-function calls. Does not block inspection or dry-runs. |
 | `DUNE_ADMIN_MUTATIONS_ENABLED` | repo default currently `true` | Existing global mutation gate. |
 | `DUNE_ADMIN_ITEM_GRANTS_ENABLED` | repo default currently `true` | Existing item mutation gate. |
 
@@ -251,6 +253,146 @@ Execution requirements:
 - confirmation phrase
 
 Rollback: use the previous partition/server context in the response/audit record and perform another offline move.
+
+## Progression Inspect
+
+### `POST /api/admin/progression/inspect`
+
+Read-only. Discovers currently mapped player progression rows and relevant DB function/table signatures.
+
+```json
+{
+  "account_id": 456
+}
+```
+
+Returns:
+
+- `player`: selected player account/controller/pawn context.
+- `faction`: rows from `dune.player_faction`.
+- `reputation`: rows from `dune.player_faction_reputation`.
+- `functions`: `dune` functions whose names match journey, recipe, vehicle, faction, or reputation.
+- `tables`: relevant `information_schema.columns` rows.
+- `mutators`: current mutator status and gates.
+- `errors`: per-query failures.
+
+This endpoint is the safe evidence collector for future journey, recipe, vehicle, and faction work. It does not execute discovered functions.
+
+## Journey Mutations
+
+### `POST /api/admin/journey`
+
+Default mode is dry-run. Supported actions are:
+
+- `reveal`
+- `complete`
+- `reset`
+- `delete`
+
+Dry-run request:
+
+```json
+{
+  "dry_run": true,
+  "account_id": 456,
+  "action": "reveal",
+  "story_node_ids": ["ExampleStoryNode"]
+}
+```
+
+`story_node_ids` can also be a comma-separated string from the Catalog UI.
+
+Dry-run behavior:
+
+- Resolves `account_id` to the account FLS/user id.
+- Verifies the corresponding `dune.<action>_journey_story_nodes_for_player` function exists.
+- Reads up to the first 20 requested nodes through `dune.admin_get_journey_details(fls_id, story_node_id)`.
+- Reports whether execution would be blocked because the player is online.
+
+Execution request:
+
+```json
+{
+  "dry_run": false,
+  "confirm": "WRITE JOURNEY",
+  "account_id": 456,
+  "action": "complete",
+  "story_node_ids": ["ExampleStoryNode"]
+}
+```
+
+Execution requirements:
+
+- `DUNE_ADMIN_MUTATIONS_ENABLED=true`
+- `DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED=true`
+- confirmation phrase
+- target player must be offline
+
+Function mapping:
+
+| Action | Function |
+| --- | --- |
+| `reveal` | `dune.reveal_journey_story_nodes_for_player(in_player_id text, in_story_node_ids text[])` |
+| `complete` | `dune.complete_journey_story_nodes_for_player(in_player_id text, in_story_node_ids text[])` |
+| `reset` | `dune.reset_journey_story_nodes_for_player(in_player_id text, in_story_node_ids text[])` |
+| `delete` | `dune.delete_journey_story_nodes_for_player(in_player_id text, in_story_node_ids text[])` |
+
+Risk: these are server-provided functions, but story-node ids and reward semantics are not cataloged yet. Use dry-run detail output first and validate on disposable offline data.
+
+## Faction Reputation
+
+### `POST /api/admin/faction-reputation`
+
+Default mode is dry-run.
+
+```json
+{
+  "dry_run": true,
+  "account_id": 456,
+  "faction_id": 1,
+  "amount": 100,
+  "mode": "add"
+}
+```
+
+Dry-run behavior:
+
+- Resolves `account_id` to `player_pawn_id`.
+- Checks `information_schema.columns` for `dune.player_faction_reputation`.
+- Accepts the reputation value column only if it is one of:
+  - `reputation`
+  - `reputation_amount`
+  - `amount`
+  - `value`
+- Reads current rows for `(actor_id, faction_id)`.
+- Discovers `dune.set_player_faction_reputation` and `dune.get_player_current_faction_reputation`.
+- Returns the planned new value and rollback value.
+
+Execution request:
+
+```json
+{
+  "dry_run": false,
+  "confirm": "WRITE REPUTATION",
+  "account_id": 456,
+  "faction_id": 1,
+  "amount": 100,
+  "mode": "add"
+}
+```
+
+Execution requirements:
+
+- `DUNE_ADMIN_MUTATIONS_ENABLED=true`
+- `DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED=true`
+- confirmation phrase
+
+Execution behavior:
+
+- Calls `dune.set_player_faction_reputation(actor_id, faction_id, new_value)`.
+- Records before/after rows and a rollback set value in the response/audit context.
+
+Risk: this is a high-impact player progression mutation, but it uses a server-provided function rather than raw table writes. Confidence is moderate-to-high for the write path when the function is present; still validate on disposable/offline character data before routine operator use.
 
 ## Spice and Resource Inspect
 

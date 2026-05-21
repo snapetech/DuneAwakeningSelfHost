@@ -138,6 +138,9 @@ server {
 - Economy bundle planning through `POST /api/admin/bundle`. It plans currency, XP, and item grants in one response and defaults to `dry_run=true`. Execution additionally requires `DUNE_ADMIN_BUNDLE_MUTATIONS_ENABLED=true` and confirmation `EXECUTE BUNDLE`.
 - Offline player recovery preview through `POST /api/admin/player-recovery/offline-teleport`. Execution refuses online players and requires `MOVE OFFLINE PLAYER`.
 - Spice/resource field inspection through `POST /api/admin/spice-fields/inspect`.
+- Progression surface inspection through `POST /api/admin/progression/inspect`; this discovers faction, reputation, journey, recipe, vehicle, and related DB function/table evidence without executing discovered functions.
+- Faction reputation planning through `POST /api/admin/faction-reputation`, default `dry_run=true`. Execution requires `DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED=true` and confirmation `WRITE REPUTATION`.
+- Journey story-node planning through `POST /api/admin/journey`, default `dry_run=true`. Execution requires `DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED=true`, confirmation `WRITE JOURNEY`, and an offline target player.
 - Event planner APIs:
   - `GET /api/events`
   - `POST /api/events/dry-run`
@@ -194,6 +197,8 @@ DUNE_ADMIN_CATALOG_ENABLED=true
 DUNE_ADMIN_TYPED_KNOBS_ENABLED=false
 DUNE_ADMIN_EVENT_EXECUTION_ENABLED=false
 DUNE_ADMIN_BUNDLE_MUTATIONS_ENABLED=false
+DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED=false
+DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED=false
 ```
 
 Gate behavior:
@@ -202,6 +207,8 @@ Gate behavior:
 - `DUNE_ADMIN_TYPED_KNOBS_ENABLED`: controls typed config writes only. Typed dry-runs still work.
 - `DUNE_ADMIN_EVENT_EXECUTION_ENABLED`: controls event execution. Event creation and dry-run planning still work.
 - `DUNE_ADMIN_BUNDLE_MUTATIONS_ENABLED`: controls economy bundle execution. Bundle dry-runs still work.
+- `DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED`: controls faction reputation writes through `dune.set_player_faction_reputation`. Progression inspection and reputation dry-runs still work.
+- `DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED`: controls journey server-function calls. Journey dry-runs still work.
 
 Existing gates still apply:
 
@@ -218,6 +225,8 @@ Write confirmation phrases:
 WRITE TYPED KNOBS
 EXECUTE BUNDLE
 MOVE OFFLINE PLAYER
+WRITE REPUTATION
+WRITE JOURNEY
 RUN GM COMMAND
 ```
 
@@ -346,6 +355,52 @@ from dune.resourcefield_state
 group by 1,2,3
 order by 1,2,3;
 ```
+
+## Progression Inspection and Reputation
+
+`POST /api/admin/progression/inspect` is the read-only evidence collector for player progression work. With an `account_id`, it returns current player faction/reputation rows. It also introspects `pg_proc` and `information_schema.columns` for journey, recipe, vehicle, faction, and reputation surfaces.
+
+`POST /api/admin/faction-reputation` plans a faction reputation mutation through `dune.set_player_faction_reputation`. Default dry-run body:
+
+```json
+{
+  "dry_run": true,
+  "account_id": 456,
+  "faction_id": 1,
+  "amount": 100,
+  "mode": "add"
+}
+```
+
+Execution requires:
+
+- `DUNE_ADMIN_MUTATIONS_ENABLED=true`
+- `DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED=true`
+- `confirm: "WRITE REPUTATION"`
+
+The endpoint checks the live table shape and confirms the server-provided setter before planning or writing. It only recognizes `actor_id`, `faction_id`, and one of `reputation`, `reputation_amount`, `amount`, or `value` as the reputation value column. Confidence is moderate-to-high when `dune.set_player_faction_reputation` is present; still validate execution on disposable/offline character data before routine use.
+
+`POST /api/admin/journey` plans or executes journey story-node server functions. Supported actions are `reveal`, `complete`, `reset`, and `delete`.
+
+Dry-run body:
+
+```json
+{
+  "dry_run": true,
+  "account_id": 456,
+  "action": "reveal",
+  "story_node_ids": ["ExampleStoryNode"]
+}
+```
+
+Execution requires:
+
+- `DUNE_ADMIN_MUTATIONS_ENABLED=true`
+- `DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED=true`
+- `confirm: "WRITE JOURNEY"`
+- target player must be offline
+
+The endpoint uses `dune.admin_get_journey_details` for preflight details and then calls the matching server function: `reveal_journey_story_nodes_for_player`, `complete_journey_story_nodes_for_player`, `reset_journey_story_nodes_for_player`, or `delete_journey_story_nodes_for_player`. Confidence is moderate because the functions are first-party DB functions; story-node IDs and reward semantics still need a local reference catalog.
 
 ## Event Orchestrator
 

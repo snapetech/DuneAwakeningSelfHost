@@ -78,6 +78,11 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         payload = self.panel.catalog_payload()
         self.assertIn("Deep Desert", payload["groups"])
         self.assertTrue(payload["enabled"])
+        by_id = {entry["id"]: entry for entry in entries}
+        self.assertIn("faction-reputation-plan", by_id)
+        self.assertIn("set_player_faction_reputation", " ".join(by_id["faction-reputation-plan"]["evidence"]))
+        self.assertIn("journey-server-functions", by_id)
+        self.assertEqual(by_id["recipe-vehicle-function-discovery"]["mutationRisk"], "blocked")
 
     def test_typed_knob_validation_and_backup_write(self):
         self.assertEqual(self.panel.validate_typed_knob_value("globalMiningMultiplier", "2.5"), "2.5")

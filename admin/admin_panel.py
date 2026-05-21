@@ -80,10 +80,16 @@ CONFIRM_GM_COMMAND = "RUN GM COMMAND"
 CONFIRM_TYPED_KNOBS = "WRITE TYPED KNOBS"
 CONFIRM_BUNDLE_MUTATION = "EXECUTE BUNDLE"
 CONFIRM_PLAYER_RECOVERY = "MOVE OFFLINE PLAYER"
+CONFIRM_REPUTATION_MUTATION = "WRITE REPUTATION"
+CONFIRM_JOURNEY_MUTATION = "WRITE JOURNEY"
+CONFIRM_FACTION_MUTATION = "CHANGE FACTION"
 CATALOG_ENABLED = os.environ.get("DUNE_ADMIN_CATALOG_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 TYPED_KNOBS_ENABLED = os.environ.get("DUNE_ADMIN_TYPED_KNOBS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 EVENT_EXECUTION_ENABLED = os.environ.get("DUNE_ADMIN_EVENT_EXECUTION_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 BUNDLE_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_BUNDLE_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+REPUTATION_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+JOURNEY_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+FACTION_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_FACTION_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 ANNOUNCEMENT_STATE_FILE = BACKUP_ROOT / "announcements.json"
 RESTART_STATE_FILE = BACKUP_ROOT / "restart-jobs.json"
 EVENT_STATE_FILE = BACKUP_ROOT / "events.json"
@@ -378,6 +384,9 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ADMIN_TYPED_KNOBS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for typed config knob writes. Dry-runs remain available."},
     "DUNE_ADMIN_EVENT_EXECUTION_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for event orchestrator execution. Event creation and dry-run planning remain available."},
     "DUNE_ADMIN_BUNDLE_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for economy bundle execution. Bundle planning defaults to dry-run."},
+    "DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for raw faction reputation writes. Reputation planning and inspection remain available."},
+    "DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for journey reveal/complete/reset/delete server-function calls. Journey planning and inspection remain available."},
+    "DUNE_ADMIN_FACTION_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for player faction change server-function calls. Faction planning and inspection remain available."},
     "DUNE_ADMIN_MAX_BODY_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum accepted request body size."},
     "DUNE_ADMIN_AUDIT_MAX_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Audit log rotation threshold."},
     "DUNE_ADMIN_REQUEST_TIMEOUT_SECONDS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Socket timeout to limit slow client abuse."},
@@ -1571,12 +1580,17 @@ def content_catalog_entries():
         {"id": "deep-desert-spice-caps", "group": "Deep Desert", "surface": "Config/INI knobs", "capability": "Raise or lower Deep Desert spice field active/primed caps.", "evidence": ["DEEP_DESERT_EVENT_KNOBS.md", "SERVER_RUNTIME_SURFACES.md", "dune.spicefield_types", "dune.resourcefield_state"], "confidence": "high", "mutationRisk": "medium", "restartRequired": True, "validationCommand": "select * from dune.spicefield_types order by map, field_kind_id;", "rollback": "Restore backed-up UserGame.ini and restart deep-desert."},
         {"id": "sandstorm-coriolis-safe-toggles", "group": "Deep Desert", "surface": "Config/INI knobs", "capability": "Toggle sandstorm/Coriolis safe fields already present in config.", "evidence": ["config/UserGame.ini", "config/UserEngine.ini", "SERVER_RUNTIME_SURFACES.md"], "confidence": "high", "mutationRisk": "medium", "restartRequired": True, "validationCommand": "rg -n 'Sandstorm|Coriolis' config/UserGame.ini config/UserEngine.ini", "rollback": "Restore backed-up config file and restart affected maps."},
         {"id": "economy-bundle-plan", "group": "Economy/Admin", "surface": "Database state", "capability": "Plan currency, item, and XP grants as one audited dry-run bundle.", "evidence": ["admin/admin_panel.py existing currency/xp/item mutation paths", "docs/admin-mutation-map.md"], "confidence": "high", "mutationRisk": "medium", "restartRequired": False, "validationCommand": "Use /api/admin/bundle dry_run=true, then inspect balances/inventory after gated execution.", "rollback": "Manual compensating currency/xp/item edits from audit record."},
+        {"id": "faction-reputation-plan", "group": "Economy/Admin", "surface": "Database state", "capability": "Inspect and plan faction reputation changes for a player pawn.", "evidence": ["dune.set_player_faction_reputation(in_actor_id bigint, in_faction_id smallint, in_reputation_amount integer)", "dune.get_player_current_faction_reputation", "character detail reads dune.player_faction_reputation"], "confidence": "moderate-to-high", "mutationRisk": "high", "restartRequired": False, "validationCommand": "select * from dune.player_faction_reputation where actor_id=<pawn_id> order by faction_id;", "rollback": "Call /api/admin/faction-reputation with mode=set and the previous value from the dry-run/audit record."},
+        {"id": "player-faction-change", "group": "Economy/Admin", "surface": "Database state", "capability": "Inspect and optionally change a player's faction using first-party faction functions.", "evidence": ["dune.change_player_faction(in_player_id bigint, in_faction_id smallint, neutral_faction_id smallint, in_utc_time_faction_change timestamp)", "dune.get_player_faction", "dune.factions table contains Atreides/Harkonnen/None/Smuggler"], "confidence": "moderate", "mutationRisk": "high", "restartRequired": False, "validationCommand": "POST /api/admin/faction dry_run=true; verify dune.player_faction and guild side effects after disposable offline test.", "rollback": "Call /api/admin/faction with the previous faction_id from the dry-run/audit record."},
+        {"id": "journey-server-functions", "group": "Economy/Admin", "surface": "Database state", "capability": "Inspect and optionally reveal, complete, reset, or delete known journey story nodes for an offline player.", "evidence": ["dune.admin_get_journey_details(in_player_id text, in_story_node_id text)", "dune.reveal_journey_story_nodes_for_player", "dune.complete_journey_story_nodes_for_player", "dune.reset_journey_story_nodes_for_player", "dune.delete_journey_story_nodes_for_player"], "confidence": "moderate", "mutationRisk": "high", "restartRequired": False, "validationCommand": "POST /api/admin/journey dry_run=true with known story_node_ids; inspect admin_get_journey_details before and after.", "rollback": "Use reset/delete/reveal/complete compensating calls for the affected story_node_ids from the audit record."},
         {"id": "offline-player-recovery", "group": "Economy/Admin", "surface": "Database state", "capability": "Preview offline player partition move through dune.admin_move_offline_player_to_partition.", "evidence": ["PLAYER_LOCATION_SOURCE_AUDIT.md", "database function name observed in local schema"], "confidence": "moderate", "mutationRisk": "high", "restartRequired": False, "validationCommand": "select * from dune.player_state where account_id=<id>;", "rollback": "Move player back to prior partition from audit record."},
         {"id": "mining-resource-multipliers", "group": "World Rules", "surface": "Config/INI knobs", "capability": "Adjust player mining, vehicle mining, and PvP resource multipliers.", "evidence": ["config/UserEngine.ini", "docs/server-knobs-audit.md"], "confidence": "high", "mutationRisk": "low", "restartRequired": True, "validationCommand": "rg -n 'MiningOutput|PvpResourceMultiplier' config/UserEngine.ini", "rollback": "Restore backed-up UserEngine.ini and restart maps."},
         {"id": "pvp-security-zones", "group": "World Rules", "surface": "Config/INI knobs", "capability": "Toggle forced PvP and security-zone behavior.", "evidence": ["config/UserGame.ini", "SERVER_CONFIG_KEYS.md"], "confidence": "high", "mutationRisk": "medium", "restartRequired": True, "validationCommand": "rg -n 'Pvp|SecurityZones' config/UserGame.ini", "rollback": "Restore backed-up UserGame.ini and restart maps."},
         {"id": "shelter-hydration-candidates", "group": "World Rules", "surface": "Config/INI knobs", "capability": "Experiment with shelter thresholds and candidate hydration protection.", "evidence": ["HYDRATION_WATER_KNOBS.md", "config/UserGame.ini"], "confidence": "low", "mutationRisk": "experimental", "restartRequired": True, "validationCommand": "Live in-base/outside hydration test after restart.", "rollback": "Restore backed-up UserGame.ini and restart maps."},
         {"id": "verified-chat-announcements", "group": "GM/RabbitMQ", "surface": "RabbitMQ/admin/GM routes", "capability": "Send verified chat announcements through existing announcement hook.", "evidence": ["scripts/verify-announcement.sh", "admin announcement scheduler"], "confidence": "high", "mutationRisk": "low", "restartRequired": False, "validationCommand": "./scripts/verify-announcement.sh", "rollback": "No persistent rollback; audit records message delivery."},
         {"id": "native-gm-routes", "group": "GM/RabbitMQ", "surface": "RabbitMQ/admin/GM routes", "capability": "Preview native GM command envelopes only.", "evidence": ["scripts/dune_gm_command.py", "DedicatedServerGame.ini command allow-list"], "confidence": "low", "mutationRisk": "blocked", "restartRequired": False, "validationCommand": "Keep execution blocked until DUNE_GM_COMMAND_PAYLOAD_VERIFIED=true is proven live.", "rollback": "No execution in v1."},
+        {"id": "recipe-vehicle-function-discovery", "group": "Limits", "surface": "Database state", "capability": "Discover recipe and vehicle DB functions without executing them.", "evidence": ["pg_proc/runtime schema introspection", "docs/admin-mutation-map.md"], "confidence": "moderate for function existence, low for mutation semantics", "mutationRisk": "blocked", "restartRequired": False, "validationCommand": "Use /api/admin/progression/inspect for function signatures and current player rows.", "rollback": "No execution in v1."},
+        {"id": "landsraad-landclaim-vehicle-readonly", "group": "Limits", "surface": "Database state", "capability": "Inspect Landsraad, landclaim, respawn, and vehicle helper contracts without writes.", "evidence": ["dune.landsraad_load_current_term", "dune.add_landclaim_segment", "dune.get_respawn_locations", "dune.load_recovered_vehicles", "dune.restore_recovered_vehicle"], "confidence": "moderate for reads/function existence, low for safe mutation semantics", "mutationRisk": "blocked", "restartRequired": False, "validationCommand": "Use /api/admin/progression/inspect and direct SQL reads before proposing any write path.", "rollback": "No execution in v1."},
         {"id": "true-new-content-limits", "group": "Limits", "surface": "Hard limits", "capability": "True new maps/assets/physics/algorithms are blocked without cooked assets or binary/plugin work.", "evidence": ["SERVER_RUNTIME_SURFACES.md", "SERVER_CONFIG_KEYS.md"], "confidence": "high", "mutationRisk": "blocked", "restartRequired": None, "validationCommand": "Not applicable for admin v1.", "rollback": "Not applicable."},
     ]
     return entries
@@ -2723,6 +2737,28 @@ class Handler(BaseHTTPRequestHandler):
                 self.require_token()
                 parse_body(self)
                 self.json(self.spice_field_inspect())
+            elif parsed.path == "/api/admin/progression/inspect":
+                self.require_token()
+                body = parse_body(self)
+                self.json(self.progression_inspect(body))
+            elif parsed.path == "/api/admin/faction-reputation":
+                self.require_token()
+                body = parse_body(self)
+                result = self.faction_reputation_mutation(body)
+                self.audit("faction-reputation", ok=result.get("ok"), dry_run=result.get("dryRun"), account_id=result.get("accountId"), actor_id=result.get("actorId"), faction_id=result.get("factionId"), mode=result.get("mode"))
+                self.json(result)
+            elif parsed.path == "/api/admin/journey":
+                self.require_token()
+                body = parse_body(self)
+                result = self.journey_mutation(body)
+                self.audit("journey-mutation", ok=result.get("ok"), dry_run=result.get("dryRun"), account_id=result.get("accountId"), journey_action=result.get("action"), story_node_count=len(result.get("storyNodeIds", [])))
+                self.json(result)
+            elif parsed.path == "/api/admin/faction":
+                self.require_token()
+                body = parse_body(self)
+                result = self.faction_change_mutation(body)
+                self.audit("faction-change", ok=result.get("ok"), dry_run=result.get("dryRun"), account_id=result.get("accountId"), actor_id=result.get("actorId"), faction_id=result.get("factionId"))
+                self.json(result)
             elif parsed.path == "/api/admin/gm/preview":
                 self.require_token()
                 body = parse_body(self)
@@ -3680,6 +3716,282 @@ class Handler(BaseHTTPRequestHandler):
             "typedKnob": read_typed_knobs().get("spiceDeepDesertCaps"),
             "errors": errors,
         }
+
+    def progression_inspect(self, body):
+        errors = {}
+        account_id = body.get("account_id", body.get("accountId"))
+        player = []
+        faction = []
+        reputation = []
+        if account_id not in ("", None):
+            player = reference_query(errors, "player", """
+                select account_id, character_name, online_status::text, player_controller_id, player_pawn_id
+                from dune.player_state
+                where account_id=%s
+            """, (int(account_id),))
+            if player:
+                pawn_id = player[0].get("player_pawn_id")
+                faction = reference_query(errors, "faction", "select * from dune.player_faction where actor_id=%s order by faction_id", (pawn_id,))
+                reputation = reference_query(errors, "reputation", "select * from dune.player_faction_reputation where actor_id=%s order by faction_id", (pawn_id,))
+        functions = reference_query(errors, "functions", """
+            select n.nspname as schema, p.proname as name,
+                   pg_get_function_identity_arguments(p.oid) as args,
+                   pg_get_function_result(p.oid) as result
+            from pg_proc p
+            join pg_namespace n on n.oid = p.pronamespace
+            where n.nspname = 'dune'
+              and (
+                p.proname ilike '%%journey%%'
+                or p.proname ilike '%%recipe%%'
+                or p.proname ilike '%%vehicle%%'
+                or p.proname ilike '%%faction%%'
+                or p.proname ilike '%%reputation%%'
+              )
+            order by p.proname
+            limit %s
+        """, (ADMIN_REFERENCE_LIMIT,))
+        tables = reference_query(errors, "tables", """
+            select table_name, column_name, data_type, udt_name
+            from information_schema.columns
+            where table_schema='dune'
+              and (
+                table_name ilike '%%journey%%'
+                or table_name ilike '%%recipe%%'
+                or table_name ilike '%%vehicle%%'
+                or table_name ilike '%%faction%%'
+                or table_name ilike '%%reputation%%'
+              )
+            order by table_name, ordinal_position
+            limit %s
+        """, (ADMIN_REFERENCE_LIMIT * 5,))
+        return {
+            "player": player[0] if player else None,
+            "faction": faction,
+            "reputation": reputation,
+            "functions": functions,
+            "tables": tables,
+            "mutators": {
+                "factionReputation": {
+                    "endpoint": "/api/admin/faction-reputation",
+                    "defaultDryRun": True,
+                    "executionGate": "DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED",
+                    "confirm": CONFIRM_REPUTATION_MUTATION,
+                    "confidence": "moderate-to-high",
+                },
+                "playerFaction": {
+                    "endpoint": "/api/admin/faction",
+                    "defaultDryRun": True,
+                    "executionGate": "DUNE_ADMIN_FACTION_MUTATIONS_ENABLED",
+                    "confirm": CONFIRM_FACTION_MUTATION,
+                    "confidence": "moderate",
+                },
+                "journey": {
+                    "endpoint": "/api/admin/journey",
+                    "defaultDryRun": True,
+                    "executionGate": "DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED",
+                    "confirm": CONFIRM_JOURNEY_MUTATION,
+                    "actions": ["reveal", "complete", "reset", "delete"],
+                    "confidence": "moderate",
+                },
+                "journeyRecipeVehicle": {
+                    "status": "inspect-only",
+                    "reason": "Recipe and vehicle function signatures can be discovered here, but writes stay blocked until safe contracts and live examples are mapped.",
+                },
+            },
+            "errors": errors,
+        }
+
+    def resolve_player_identity(self, account_id):
+        rows = query("""
+            select ps.account_id, ps.character_name, ps.online_status::text,
+                   ps.player_controller_id, ps.player_pawn_id,
+                   a.funcom_id, a."user" as fls_id
+            from dune.player_state ps
+            left join dune.accounts a on a.id = ps.account_id
+            where ps.account_id=%s
+        """, (int(account_id),))
+        if not rows:
+            raise ValueError("account_id not found")
+        player = rows[0]
+        fls_id = str(player.get("fls_id") or player.get("funcom_id") or "").strip()
+        if not fls_id:
+            raise ValueError("player account has no FLS/user id")
+        return player, fls_id
+
+    def journey_mutation(self, body):
+        account_id = int(body.get("account_id", body.get("accountId")))
+        action = str(body.get("action", "")).strip().lower()
+        if action not in ("reveal", "complete", "reset", "delete"):
+            raise ValueError("action must be reveal, complete, reset, or delete")
+        story_node_ids = body.get("story_node_ids", body.get("storyNodeIds", body.get("story_node_id", body.get("storyNodeId", []))))
+        if isinstance(story_node_ids, str):
+            story_node_ids = [part.strip() for part in story_node_ids.split(",") if part.strip()]
+        if not isinstance(story_node_ids, list) or not story_node_ids:
+            raise ValueError("story_node_ids must be a non-empty list")
+        story_node_ids = [str(item).strip() for item in story_node_ids if str(item).strip()]
+        if not story_node_ids:
+            raise ValueError("story_node_ids must contain at least one non-empty id")
+        if len(story_node_ids) > 100:
+            raise ValueError("story_node_ids is limited to 100 entries per request")
+        dry_run = str(body.get("dry_run", body.get("dryRun", "true"))).lower() not in ("0", "false", "no", "off")
+        player, fls_id = self.resolve_player_identity(account_id)
+        details = []
+        errors = {}
+        for story_node_id in story_node_ids[:20]:
+            rows = reference_query(errors, f"journey:{story_node_id}", "select * from dune.admin_get_journey_details(%s,%s)", (fls_id, story_node_id))
+            details.append({"storyNodeId": story_node_id, "details": rows})
+        function_by_action = {
+            "reveal": "reveal_journey_story_nodes_for_player",
+            "complete": "complete_journey_story_nodes_for_player",
+            "reset": "reset_journey_story_nodes_for_player",
+            "delete": "delete_journey_story_nodes_for_player",
+        }
+        function_name = function_by_action[action]
+        functions = query("""
+            select p.proname as name, pg_get_function_identity_arguments(p.oid) as args
+            from pg_proc p
+            join pg_namespace n on n.oid = p.pronamespace
+            where n.nspname='dune' and p.proname=%s
+        """, (function_name,))
+        if not functions:
+            raise ValueError(f"dune.{function_name} is not available")
+        plan = {
+            "function": f"dune.{function_name}",
+            "args": [fls_id, story_node_ids],
+            "player": player,
+            "preflightDetails": details,
+            "errors": errors,
+            "onlineExecutionBlocked": str(player.get("online_status") or "").lower() == "online",
+        }
+        if dry_run:
+            return {"ok": True, "dryRun": True, "accountId": account_id, "action": action, "storyNodeIds": story_node_ids, "plan": plan, "executionGate": "DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED", "confirm": CONFIRM_JOURNEY_MUTATION}
+        self.require_mutations()
+        if not JOURNEY_MUTATIONS_ENABLED:
+            raise PermissionError("journey mutations are disabled; set DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED=true")
+        require_confirmation(body, CONFIRM_JOURNEY_MUTATION)
+        if str(player.get("online_status") or "").lower() == "online":
+            raise ValueError("player is online; journey execution refuses online targets")
+        execute(f"select dune.{function_name}(%s,%s::text[])", (fls_id, story_node_ids))
+        after = []
+        after_errors = {}
+        for story_node_id in story_node_ids[:20]:
+            rows = reference_query(after_errors, f"journey:{story_node_id}", "select * from dune.admin_get_journey_details(%s,%s)", (fls_id, story_node_id))
+            after.append({"storyNodeId": story_node_id, "details": rows})
+        return {"ok": True, "dryRun": False, "accountId": account_id, "action": action, "storyNodeIds": story_node_ids, "before": details, "after": after, "errors": after_errors, "rollback": "Use the opposite journey action where meaningful; reset/delete can remove progress, reveal/complete can reapply it."}
+
+    def faction_reputation_mutation(self, body):
+        account_id = int(body.get("account_id", body.get("accountId")))
+        faction_id = int(body.get("faction_id", body.get("factionId")))
+        amount = int(body.get("amount", body.get("reputation", 0)))
+        mode = str(body.get("mode", "add")).strip().lower()
+        if mode not in ("add", "set"):
+            raise ValueError("mode must be add or set")
+        dry_run = str(body.get("dry_run", body.get("dryRun", "true"))).lower() not in ("0", "false", "no", "off")
+        player = query("""
+            select account_id, character_name, online_status::text, player_pawn_id
+            from dune.player_state
+            where account_id=%s
+        """, (account_id,))
+        if not player:
+            raise ValueError("account_id not found")
+        actor_id = int(player[0]["player_pawn_id"])
+        columns = query("""
+            select column_name
+            from information_schema.columns
+            where table_schema='dune' and table_name='player_faction_reputation'
+            order by ordinal_position
+        """)
+        column_names = {row["column_name"] for row in columns}
+        required = {"actor_id", "faction_id"}
+        if not required.issubset(column_names):
+            raise ValueError("player_faction_reputation does not expose actor_id and faction_id columns")
+        value_column = next((name for name in ("reputation", "reputation_amount", "amount", "value") if name in column_names), None)
+        if not value_column:
+            raise ValueError("player_faction_reputation reputation value column is not recognized")
+        current_rows = query(f"select * from dune.player_faction_reputation where actor_id=%s and faction_id=%s", (actor_id, faction_id))
+        current_value = int(current_rows[0].get(value_column) or 0) if current_rows else 0
+        new_value = amount if mode == "set" else current_value + amount
+        functions = query("""
+            select p.proname as name, pg_get_function_identity_arguments(p.oid) as args
+            from pg_proc p
+            join pg_namespace n on n.oid = p.pronamespace
+            where n.nspname='dune' and p.proname in ('set_player_faction_reputation', 'get_player_current_faction_reputation')
+            order by p.proname
+        """)
+        function_names = {row["name"] for row in functions}
+        setter_available = "set_player_faction_reputation" in function_names
+        getter_available = "get_player_current_faction_reputation" in function_names
+        plan = {
+            "function": "dune.set_player_faction_reputation" if setter_available else None,
+            "table": "dune.player_faction_reputation",
+            "key": {"actor_id": actor_id, "faction_id": faction_id},
+            "valueColumn": value_column,
+            "currentRows": current_rows,
+            "currentValue": current_value,
+            "newValue": new_value,
+            "operation": "call server function" if setter_available else "blocked; setter function missing",
+            "availableFunctions": functions,
+        }
+        if dry_run:
+            return {"ok": True, "dryRun": True, "accountId": account_id, "actorId": actor_id, "factionId": faction_id, "mode": mode, "plan": plan, "executionGate": "DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED", "confidence": "moderate-to-high" if setter_available and getter_available else "moderate"}
+        self.require_mutations()
+        if not REPUTATION_MUTATIONS_ENABLED:
+            raise PermissionError("reputation mutations are disabled; set DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED=true")
+        require_confirmation(body, CONFIRM_REPUTATION_MUTATION)
+        if not setter_available:
+            raise ValueError("dune.set_player_faction_reputation is not available; refusing raw table mutation")
+        execute("select dune.set_player_faction_reputation(%s,%s,%s)", (actor_id, faction_id, new_value))
+        after = query("select * from dune.player_faction_reputation where actor_id=%s and faction_id=%s", (actor_id, faction_id))
+        return {"ok": True, "dryRun": False, "accountId": account_id, "actorId": actor_id, "factionId": faction_id, "mode": mode, "before": current_rows, "after": after, "rollback": {"mode": "set", "amount": current_value, "confirm": CONFIRM_REPUTATION_MUTATION}}
+
+    def faction_change_mutation(self, body):
+        account_id = int(body.get("account_id", body.get("accountId")))
+        faction_id = int(body.get("faction_id", body.get("factionId")))
+        neutral_faction_id = int(body.get("neutral_faction_id", body.get("neutralFactionId", 3)))
+        dry_run = str(body.get("dry_run", body.get("dryRun", "true"))).lower() not in ("0", "false", "no", "off")
+        player, _ = self.resolve_player_identity(account_id)
+        actor_id = int(player["player_pawn_id"])
+        factions = query("select id, name from dune.factions order by id")
+        faction_ids = {int(row["id"]) for row in factions}
+        if faction_id not in faction_ids:
+            raise ValueError("faction_id is not present in dune.factions")
+        if neutral_faction_id not in faction_ids:
+            raise ValueError("neutral_faction_id is not present in dune.factions")
+        current_rows = query("select * from dune.player_faction where actor_id=%s", (actor_id,))
+        current_faction = query("select dune.get_player_faction(%s,%s) as faction_id", (actor_id, neutral_faction_id))
+        current_faction_id = int(current_faction[0].get("faction_id") or neutral_faction_id) if current_faction else neutral_faction_id
+        functions = query("""
+            select p.proname as name, pg_get_function_identity_arguments(p.oid) as args
+            from pg_proc p
+            join pg_namespace n on n.oid = p.pronamespace
+            where n.nspname='dune' and p.proname in ('change_player_faction', 'get_player_faction', 'handle_player_faction_guild_effects', 'clean_guild_invites_with_incompatible_faction')
+            order by p.proname
+        """)
+        function_names = {row["name"] for row in functions}
+        if "change_player_faction" not in function_names:
+            raise ValueError("dune.change_player_faction is not available")
+        plan = {
+            "function": "dune.change_player_faction",
+            "args": [actor_id, faction_id, neutral_faction_id, "current UTC timestamp"],
+            "player": player,
+            "factions": factions,
+            "currentRows": current_rows,
+            "currentFactionId": current_faction_id,
+            "newFactionId": faction_id,
+            "availableFunctions": functions,
+            "onlineExecutionBlocked": str(player.get("online_status") or "").lower() == "online",
+        }
+        if dry_run:
+            return {"ok": True, "dryRun": True, "accountId": account_id, "actorId": actor_id, "factionId": faction_id, "plan": plan, "executionGate": "DUNE_ADMIN_FACTION_MUTATIONS_ENABLED", "confirm": CONFIRM_FACTION_MUTATION}
+        self.require_mutations()
+        if not FACTION_MUTATIONS_ENABLED:
+            raise PermissionError("faction mutations are disabled; set DUNE_ADMIN_FACTION_MUTATIONS_ENABLED=true")
+        require_confirmation(body, CONFIRM_FACTION_MUTATION)
+        if str(player.get("online_status") or "").lower() == "online":
+            raise ValueError("player is online; faction execution refuses online targets")
+        execute("select dune.change_player_faction(%s,%s,%s, timezone('utc', now())::timestamp)", (actor_id, faction_id, neutral_faction_id))
+        after = query("select * from dune.player_faction where actor_id=%s", (actor_id,))
+        return {"ok": True, "dryRun": False, "accountId": account_id, "actorId": actor_id, "factionId": faction_id, "before": current_rows, "after": after, "rollback": {"faction_id": current_faction_id, "neutral_faction_id": neutral_faction_id, "confirm": CONFIRM_FACTION_MUTATION}}
 
     def write_config(self, name, content):
         if name not in ALLOWED_CONFIGS:
@@ -5533,7 +5845,7 @@ async function catalog(serial=loadSerial){
   const groupPanels = Object.entries(groups).map(([name, rows]) => `<details class="panelBand" open><summary>${esc(name)}</summary>${table(rows || [])}</details>`).join('');
   const knobRows = Object.values(knobs.values || {}).map(k => ({id:k.id,label:k.label,value:k.value,confidence:k.confidence,risk:k.risk,restartRequired:k.restart,why:k.why}));
   const eventRows = (events.events || []).map(e => ({id:e.id,name:e.name,status:e.status,createdAt:e.createdAt,runAt:e.runAt,actions:(e.plan || []).length}));
-  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Content Catalog</h2><div class="toolbar"><span class="pill ${surfaces.enabled ? 'ok' : 'warn'}">catalog ${surfaces.enabled ? 'enabled' : 'disabled'}</span><span class="pill ${knobs.enabled ? 'warn' : 'ok'}">typed writes ${knobs.enabled ? 'enabled' : 'dry-run only'}</span><span class="pill ${events.executionEnabled ? 'warn' : 'ok'}">events ${events.executionEnabled ? 'execute enabled' : 'plan only'}</span><button data-jump="settings">Settings</button><button data-jump="mutations">Admin Actions</button></div></div><div class="panelBand"><p class="muted">Catalog endpoints are read-only. Typed knob writes require the mutation gate, typed-knob gate, backup, and confirmation phrase.</p></div>${groupPanels}<div class="twoCol"><div class="panelBand"><h2>Typed Knob Dry Run</h2><div class="grid"><label>Knob<select id="typedKnobId">${Object.values(knobs.values || {}).map(k=>`<option value="${esc(k.id)}">${esc(k.label || k.id)}</option>`).join('')}</select></label><label>Value<input id="typedKnobValue" placeholder="true, 2.5, or JSON caps"></label></div><p><button id="typedKnobDryRunBtn" class="primary">Preview typed write</button></p><pre id="typedKnobResult"></pre></div><div class="panelBand"><h2>Spice Fields</h2><p><button id="inspectSpiceBtn" class="primary">Inspect spice/resource state</button></p><pre id="spiceInspectResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Event Dry Run</h2><label>Event JSON<textarea id="eventPlanJson" rows="7">{"name":"Deep Desert spice proposal","actions":[{"type":"spice-cap-proposal","caps":{"Medium":{"primed":24,"active":24},"Large":{"primed":3,"active":3}}}]}</textarea></label><p><button id="eventDryRunBtn" class="primary">Preview event</button></p><pre id="eventDryRunResult"></pre></div><div class="panelBand"><h2>Economy Bundle Dry Run</h2><label>Bundle JSON<textarea id="bundlePlanJson" rows="7">{"currency":[],"xp":[],"items":[],"dry_run":true}</textarea></label><p><button id="bundleDryRunBtn" class="primary">Preview bundle</button></p><pre id="bundleDryRunResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Typed Knobs</h2>${table(knobRows)}</div><div class="panelBand"><h2>Validation</h2>${table(validation.commands || [])}</div></div><details class="panelBand"><summary>Evidence Rules</summary><ul>${(evidence.rules || []).map(r=>`<li>${esc(r)}</li>`).join('')}</ul><p class="muted">${esc((evidence.schema || []).join(', '))}</p></details><details class="panelBand"><summary>Scheduled Events</summary>${table(eventRows)}</details></div>`;
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Content Catalog</h2><div class="toolbar"><span class="pill ${surfaces.enabled ? 'ok' : 'warn'}">catalog ${surfaces.enabled ? 'enabled' : 'disabled'}</span><span class="pill ${knobs.enabled ? 'warn' : 'ok'}">typed writes ${knobs.enabled ? 'enabled' : 'dry-run only'}</span><span class="pill ${events.executionEnabled ? 'warn' : 'ok'}">events ${events.executionEnabled ? 'execute enabled' : 'plan only'}</span><button data-jump="settings">Settings</button><button data-jump="mutations">Admin Actions</button></div></div><div class="panelBand"><p class="muted">Catalog endpoints are read-only. Typed knob writes require the mutation gate, typed-knob gate, backup, and confirmation phrase.</p></div>${groupPanels}<div class="twoCol"><div class="panelBand"><h2>Typed Knob Dry Run</h2><div class="grid"><label>Knob<select id="typedKnobId">${Object.values(knobs.values || {}).map(k=>`<option value="${esc(k.id)}">${esc(k.label || k.id)}</option>`).join('')}</select></label><label>Value<input id="typedKnobValue" placeholder="true, 2.5, or JSON caps"></label></div><p><button id="typedKnobDryRunBtn" class="primary">Preview typed write</button></p><pre id="typedKnobResult"></pre></div><div class="panelBand"><h2>Spice Fields</h2><p><button id="inspectSpiceBtn" class="primary">Inspect spice/resource state</button></p><pre id="spiceInspectResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Progression Inspect</h2><label>Account ID<input id="progressionAccountId"></label><p><button id="progressionInspectBtn" class="primary">Inspect progression surfaces</button></p><pre id="progressionInspectResult"></pre></div><div class="panelBand"><h2>Faction Reputation Dry Run</h2><div class="grid"><label>Account ID<input id="repAccountId"></label><label>Faction ID<input id="repFactionId"></label><label>Amount<input id="repAmount" value="100"></label><label>Mode<select id="repMode"><option>add</option><option>set</option></select></label></div><p><button id="repDryRunBtn" class="primary">Preview reputation write</button></p><pre id="repDryRunResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Faction Change Dry Run</h2><div class="grid"><label>Account ID<input id="factionAccountId"></label><label>Faction ID<input id="factionId" value="3"></label><label>Neutral faction ID<input id="neutralFactionId" value="3"></label></div><p><button id="factionDryRunBtn" class="primary">Preview faction change</button></p><pre id="factionDryRunResult"></pre></div><div class="panelBand"><h2>Journey Dry Run</h2><div class="grid"><label>Account ID<input id="journeyAccountId"></label><label>Action<select id="journeyAction"><option>reveal</option><option>complete</option><option>reset</option><option>delete</option></select></label></div><label>Story node IDs<textarea id="journeyStoryNodes" rows="3" placeholder="comma-separated story node ids"></textarea></label><p><button id="journeyDryRunBtn" class="primary">Preview journey mutation</button></p><pre id="journeyDryRunResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Event Dry Run</h2><label>Event JSON<textarea id="eventPlanJson" rows="7">{"name":"Deep Desert spice proposal","actions":[{"type":"spice-cap-proposal","caps":{"Medium":{"primed":24,"active":24},"Large":{"primed":3,"active":3}}}]}</textarea></label><p><button id="eventDryRunBtn" class="primary">Preview event</button></p><pre id="eventDryRunResult"></pre></div><div class="panelBand"><h2>Economy Bundle Dry Run</h2><label>Bundle JSON<textarea id="bundlePlanJson" rows="7">{"currency":[],"xp":[],"items":[],"dry_run":true}</textarea></label><p><button id="bundleDryRunBtn" class="primary">Preview bundle</button></p><pre id="bundleDryRunResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Typed Knobs</h2>${table(knobRows)}</div><div class="panelBand"><h2>Validation</h2>${table(validation.commands || [])}</div></div><details class="panelBand"><summary>Evidence Rules</summary><ul>${(evidence.rules || []).map(r=>`<li>${esc(r)}</li>`).join('')}</ul><p class="muted">${esc((evidence.schema || []).join(', '))}</p></details><details class="panelBand"><summary>Scheduled Events</summary>${table(eventRows)}</details></div>`;
   wireCatalogControls();
 }
 
@@ -5567,6 +5879,22 @@ function wireCatalogControls(root=document){
     body.dry_run = true;
     const result = await api('/api/admin/bundle', {method:'POST', body:JSON.stringify(body)});
     document.getElementById('bundleDryRunResult').textContent = JSON.stringify(result, null, 2);
+  }));
+  root.querySelector('#progressionInspectBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Inspecting...', async () => {
+    const result = await api('/api/admin/progression/inspect', {method:'POST', body:JSON.stringify({account_id:document.getElementById('progressionAccountId').value})});
+    document.getElementById('progressionInspectResult').textContent = JSON.stringify(result, null, 2);
+  }));
+  root.querySelector('#repDryRunBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Planning...', async () => {
+    const result = await api('/api/admin/faction-reputation', {method:'POST', body:JSON.stringify({dry_run:true, account_id:repAccountId.value, faction_id:repFactionId.value, amount:repAmount.value, mode:repMode.value})});
+    document.getElementById('repDryRunResult').textContent = JSON.stringify(result, null, 2);
+  }));
+  root.querySelector('#journeyDryRunBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Planning...', async () => {
+    const result = await api('/api/admin/journey', {method:'POST', body:JSON.stringify({dry_run:true, account_id:journeyAccountId.value, action:journeyAction.value, story_node_ids:journeyStoryNodes.value})});
+    document.getElementById('journeyDryRunResult').textContent = JSON.stringify(result, null, 2);
+  }));
+  root.querySelector('#factionDryRunBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Planning...', async () => {
+    const result = await api('/api/admin/faction', {method:'POST', body:JSON.stringify({dry_run:true, account_id:factionAccountId.value, faction_id:factionId.value, neutral_faction_id:neutralFactionId.value})});
+    document.getElementById('factionDryRunResult').textContent = JSON.stringify(result, null, 2);
   }));
 }
 function selectCfg(){ const name=document.getElementById('cfg').value; document.getElementById('cfgText').value = window.configs[name] || ''; }
