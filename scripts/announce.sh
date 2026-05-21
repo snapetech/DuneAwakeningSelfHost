@@ -74,9 +74,12 @@ for env_path in ("/workspace/.env", os.path.join(os.getcwd(), ".env")):
 
 
 def env(name, default=""):
+    value = os.environ.get(name)
+    env_first = os.environ.get("DUNE_ANNOUNCE_ENV_OVERRIDES_FILE", "").lower() in ("1", "true", "yes", "on")
+    if env_first and value is not None and value != "":
+        return value
     if name.startswith("DUNE_ANNOUNCE_") and name in file_env:
         return file_env[name]
-    value = os.environ.get(name)
     if value is not None and value != "":
         return value
     return file_env.get(name, default)

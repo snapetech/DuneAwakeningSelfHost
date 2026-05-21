@@ -91,6 +91,11 @@ CONFIRM_LANDCLAIM_MUTATION = "WRITE LANDCLAIM"
 CONFIRM_EXCHANGE_MUTATION = "WRITE EXCHANGE"
 CONFIRM_PLAYER_TAG_MUTATION = "WRITE PLAYER TAGS"
 CONFIRM_ACCESS_CODE_MUTATION = "WRITE ACCESS CODES"
+CONFIRM_COMMUNINET_MUTATION = "WRITE COMMUNINET"
+CONFIRM_TUTORIAL_MUTATION = "WRITE TUTORIAL"
+CONFIRM_PERMISSION_MUTATION = "WRITE PERMISSION"
+CONFIRM_VENDOR_MUTATION = "WRITE VENDOR"
+CONFIRM_CHARACTER_SWAP = "SWAP CHARACTER"
 CATALOG_ENABLED = os.environ.get("DUNE_ADMIN_CATALOG_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 TYPED_KNOBS_ENABLED = os.environ.get("DUNE_ADMIN_TYPED_KNOBS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 EVENT_EXECUTION_ENABLED = os.environ.get("DUNE_ADMIN_EVENT_EXECUTION_ENABLED", "false").lower() in ("1", "true", "yes", "on")
@@ -106,6 +111,11 @@ LANDCLAIM_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_LANDCLAIM_MUTATIONS_ENA
 EXCHANGE_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_EXCHANGE_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 PLAYER_TAG_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_PLAYER_TAG_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 ACCESS_CODE_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_ACCESS_CODE_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+COMMUNINET_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_COMMUNINET_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+TUTORIAL_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_TUTORIAL_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+PERMISSION_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_PERMISSION_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+VENDOR_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_VENDOR_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+CHARACTER_SWAP_ENABLED = os.environ.get("DUNE_ADMIN_CHARACTER_SWAP_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 ANNOUNCEMENT_STATE_FILE = BACKUP_ROOT / "announcements.json"
 RESTART_STATE_FILE = BACKUP_ROOT / "restart-jobs.json"
 EVENT_STATE_FILE = BACKUP_ROOT / "events.json"
@@ -415,6 +425,11 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ADMIN_EXCHANGE_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for Dune Exchange Solari balance server-function calls. Exchange inspection and dry-runs remain available."},
     "DUNE_ADMIN_PLAYER_TAG_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for player tag server-function calls. Player lifecycle inspection and dry-runs remain available."},
     "DUNE_ADMIN_ACCESS_CODE_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for server player access-code server-function calls. Player lifecycle inspection and dry-runs remain available."},
+    "DUNE_ADMIN_COMMUNINET_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for Communinet player/channel server-function calls. Player lifecycle inspection and dry-runs remain available."},
+    "DUNE_ADMIN_TUTORIAL_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for tutorial entry server-function calls. Player lifecycle inspection and dry-runs remain available."},
+    "DUNE_ADMIN_PERMISSION_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for permission actor name/access/rank server-function calls. World-state inspection and dry-runs remain available."},
+    "DUNE_ADMIN_VENDOR_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for vendor player timestamp server-function calls. Player lifecycle inspection and dry-runs remain available."},
+    "DUNE_ADMIN_CHARACTER_SWAP_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for validated native character hibernation/switch execution. Character slot inspection and dry-runs remain available."},
     "DUNE_ADMIN_MAX_BODY_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum accepted request body size."},
     "DUNE_ADMIN_AUDIT_MAX_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Audit log rotation threshold."},
     "DUNE_ADMIN_REQUEST_TIMEOUT_SECONDS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Socket timeout to limit slow client abuse."},
@@ -1686,6 +1701,13 @@ def content_catalog_entries():
         {"id": "base-backup-functions", "group": "Limits", "surface": "Database state", "capability": "Inspect base backup save/recycle/delete functions without exposing base backup writes.", "evidence": ["base_backup_get_available_backups", "base_backup_save_from_totem", "base_backup_recycle", "base_backup_delete", "base_backups table"], "confidence": "moderate for existence, low for safe mutation semantics", "mutationRisk": "blocked", "restartRequired": False, "validationCommand": "POST /api/admin/economy/inspect with player_id.", "rollback": "No execution in v1."},
         {"id": "player-tag-functions", "group": "Economy/Admin", "surface": "Database state", "capability": "Inspect and optionally add/remove player tags through first-party tag functions.", "evidence": ["dune.admin_read_player_tags", "dune.update_player_tags", "dune.player_tags table"], "confidence": "moderate", "mutationRisk": "medium", "restartRequired": False, "validationCommand": "POST /api/admin/player-lifecycle/inspect; POST /api/admin/player-tags dry_run=true.", "rollback": "Dry-run/audit records prior tags; apply inverse add/remove arrays."},
         {"id": "player-access-code-functions", "group": "Economy/Admin", "surface": "Database state", "capability": "Inspect and optionally create/delete/reset server player access codes through first-party functions.", "evidence": ["dune.get_player_access_codes", "dune.create_server_player_access_codes", "dune.delete_server_player_access_codes", "dune.reset_server_all_player_access_codes"], "confidence": "moderate", "mutationRisk": "high", "restartRequired": False, "validationCommand": "POST /api/admin/player-lifecycle/inspect; POST /api/admin/access-code dry_run=true.", "rollback": "Dry-run/audit records prior codes; recreate deleted codes or delete created codes."},
+        {"id": "character-slot-hibernation", "group": "Limits", "surface": "Database state", "capability": "Inspect active and same-owner hibernated character candidates, then plan new-character or switch-character actions without synthetic player_state rows.", "evidence": ["dune.player_state", "dune.accounts", "lifecycle function discovery for login_account/delete_account/takeover_account/save_player/save_player_pawn"], "confidence": "moderate for inspection, low for execution", "mutationRisk": "blocked until native swap contract is proven", "restartRequired": False, "validationCommand": "GET /api/admin/character-slots?account_id=<id>; POST /api/admin/character-slots/plan dry_run=true.", "rollback": "No execution in v1 unless a native lifecycle path is validated; restore from DB backup if future execution is enabled."},
+        {"id": "communinet-functions", "group": "Economy/Admin", "surface": "Database state", "capability": "Inspect and optionally update Communinet active/selected-channel state or tune/remove one player channel through first-party functions.", "evidence": ["dune.load_communinet_player_data", "dune.update_communinet_player_data", "dune.update_communinet_player_channel", "dune.remove_communinet_player_channel", "communinet_player tables"], "confidence": "moderate", "mutationRisk": "medium", "restartRequired": False, "validationCommand": "POST /api/admin/player-lifecycle/inspect; POST /api/admin/communinet dry_run=true.", "rollback": "Dry-run/audit records prior Communinet rows; apply compensating data/channel updates."},
+        {"id": "tutorial-entry-functions", "group": "Economy/Admin", "surface": "Database state", "capability": "Inspect and optionally create/update one tutorial state row for a player through a first-party function.", "evidence": ["dune.get_all_tutorial_entries", "dune.create_or_update_tutorial_entry", "dune.tutorials", "dune.tutorial_per_player"], "confidence": "moderate", "mutationRisk": "medium", "restartRequired": False, "validationCommand": "POST /api/admin/player-lifecycle/inspect; POST /api/admin/tutorial dry_run=true.", "rollback": "Dry-run/audit records prior tutorial row; apply compensating tutorial state. Missing-row deletion is not exposed."},
+        {"id": "permission-actor-functions", "group": "World Rules", "surface": "Database state", "capability": "Inspect and optionally set permission actor name/access level or player rank through first-party functions.", "evidence": ["dune.permission_set_name", "dune.permission_set_access_level", "dune.permission_set_player_rank", "dune.permission_remove_player_rank", "permission_actor tables"], "confidence": "moderate", "mutationRisk": "high", "restartRequired": False, "validationCommand": "POST /api/admin/world-state/inspect; POST /api/admin/permission dry_run=true.", "rollback": "Dry-run/audit records prior actor/rank rows; apply compensating set-name/set-access-level/set-player-rank when possible."},
+        {"id": "vendor-cycle-timestamp-functions", "group": "Economy/Admin", "surface": "Database state", "capability": "Inspect and optionally update one vendor/player stock-cycle timestamp through a first-party function.", "evidence": ["dune.update_vendor_timestamp_for_player", "dune.interact_get_vendor_items_bought_from_player", "dune.vendor_stock_cycle table"], "confidence": "moderate", "mutationRisk": "medium", "restartRequired": False, "validationCommand": "POST /api/admin/player-lifecycle/inspect; POST /api/admin/vendor dry_run=true.", "rollback": "Dry-run/audit records prior timestamp; apply compensating timestamp update."},
+        {"id": "taxation-landsraad-vendor-functions", "group": "Limits", "surface": "Database state", "capability": "Inspect taxation invoice, Landsraad task progress, vendor stock counts, lore, and dungeon functions without exposing high-risk writes.", "evidence": ["tax_invoice table", "landsraad_task_* tables", "vendor_stock_state table", "lore tables", "dungeon completion tables", "pg_proc function signatures"], "confidence": "moderate for existence, low for mutation safety", "mutationRisk": "blocked except vendor timestamp", "restartRequired": False, "validationCommand": "POST /api/admin/player-lifecycle/inspect and catalog evidence endpoints.", "rollback": "No execution in v1 for blocked routes."},
+        {"id": "vendor-tutorial-lore-dungeon-overmap-functions", "group": "Limits", "surface": "Database state", "capability": "Inspect vendor stock, tutorial, lore, dungeon completion, overmap survival, and Coriolis functions without exposing writes.", "evidence": ["vendor_stock_state tables", "tutorial_per_player table", "lore_pickups tables", "dungeon_completion tables", "overmap_players table", "coriolis functions"], "confidence": "moderate for existence, low for mutation safety", "mutationRisk": "blocked", "restartRequired": False, "validationCommand": "POST /api/admin/player-lifecycle/inspect with account_id/player_id.", "rollback": "No execution in v1."},
         {"id": "party-account-lifecycle-functions", "group": "Limits", "surface": "Database state", "capability": "Inspect party, account deletion/takeover, Communinet, dungeon, tutorial, and player lifecycle functions without executing destructive routes.", "evidence": ["party functions", "delete_account", "takeover_account", "communinet functions", "dungeon completion functions", "player_state tables"], "confidence": "moderate for existence, low for mutation safety", "mutationRisk": "blocked except tags/access codes", "restartRequired": False, "validationCommand": "POST /api/admin/player-lifecycle/inspect with optional account_id/player_id.", "rollback": "No execution for blocked lifecycle surfaces."},
         {"id": "world-state-function-discovery", "group": "Limits", "surface": "Database state", "capability": "Discover guild, vehicle, marker, landclaim, recipe, and respawn function/table evidence without executing unsafe routes.", "evidence": ["pg_proc runtime schema introspection", "information_schema table/column introspection", "docs/admin-mutation-map.md"], "confidence": "moderate for existence, low-to-moderate for mutation semantics", "mutationRisk": "blocked except promoted guild/respawn paths", "restartRequired": False, "validationCommand": "POST /api/admin/world-state/inspect with optional account_id/player_id/guild_id.", "rollback": "No execution for blocked discovery surfaces."},
         {"id": "offline-player-recovery", "group": "Economy/Admin", "surface": "Database state", "capability": "Preview offline player partition move through dune.admin_move_offline_player_to_partition.", "evidence": ["PLAYER_LOCATION_SOURCE_AUDIT.md", "database function name observed in local schema"], "confidence": "moderate", "mutationRisk": "high", "restartRequired": False, "validationCommand": "select * from dune.player_state where account_id=<id>;", "rollback": "Move player back to prior partition from audit record."},
@@ -2608,6 +2630,11 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/characters/roster":
                 self.require_token()
                 self.json(self.character_roster())
+            elif parsed.path == "/api/admin/character-slots":
+                self.require_token()
+                params = urllib.parse.parse_qs(parsed.query)
+                account_id = (params.get("account_id") or params.get("accountId") or [""])[0]
+                self.json(self.character_slots(account_id))
             elif parsed.path == "/api/players/hagga-basin":
                 self.require_token()
                 self.json(self.hagga_basin_players())
@@ -2925,6 +2952,42 @@ class Handler(BaseHTTPRequestHandler):
                 body = parse_body(self)
                 result = self.access_code_mutation(body)
                 self.audit("access-code-mutation", ok=result.get("ok"), dry_run=result.get("dryRun"), account_id=result.get("accountId"), access_code_action=result.get("action"))
+                self.json(result)
+            elif parsed.path == "/api/admin/communinet":
+                self.require_token()
+                body = parse_body(self)
+                result = self.communinet_mutation(body)
+                self.audit("communinet-mutation", ok=result.get("ok"), dry_run=result.get("dryRun"), account_id=result.get("accountId"), communinet_action=result.get("action"))
+                self.json(result)
+            elif parsed.path == "/api/admin/tutorial":
+                self.require_token()
+                body = parse_body(self)
+                result = self.tutorial_mutation(body)
+                self.audit("tutorial-mutation", ok=result.get("ok"), dry_run=result.get("dryRun"), player_id=result.get("playerId"), tutorial_id=result.get("tutorialId"))
+                self.json(result)
+            elif parsed.path == "/api/admin/permission":
+                self.require_token()
+                body = parse_body(self)
+                result = self.permission_mutation(body)
+                self.audit("permission-mutation", ok=result.get("ok"), dry_run=result.get("dryRun"), permission_action=result.get("action"), actor_id=result.get("actorId"), player_id=result.get("playerId"))
+                self.json(result)
+            elif parsed.path == "/api/admin/vendor":
+                self.require_token()
+                body = parse_body(self)
+                result = self.vendor_mutation(body)
+                self.audit("vendor-mutation", ok=result.get("ok"), dry_run=result.get("dryRun"), vendor_id=result.get("vendorId"), player_id=result.get("playerId"))
+                self.json(result)
+            elif parsed.path == "/api/admin/character-slots/plan":
+                self.require_token()
+                body = parse_body(self)
+                result = self.character_slot_plan(body)
+                self.audit("character-slot-plan", ok=result.get("ok"), dry_run=result.get("dryRun"), account_id=result.get("accountId"), slot_action=result.get("action"), executable=result.get("executable"))
+                self.json(result)
+            elif parsed.path == "/api/admin/character-slots/execute":
+                self.require_token()
+                body = parse_body(self)
+                result = self.character_slot_execute(body)
+                self.audit("character-slot-execute", ok=result.get("ok"), dry_run=result.get("dryRun"), account_id=result.get("accountId"), slot_action=result.get("action"), executable=result.get("executable"))
                 self.json(result)
             elif parsed.path == "/api/admin/gm/preview":
                 self.require_token()
@@ -3258,6 +3321,188 @@ class Handler(BaseHTTPRequestHandler):
                 "pollSeconds": 5,
             },
         }
+
+    def character_slot_contract(self):
+        errors = {}
+        functions = reference_query(errors, "characterLifecycleFunctions", """
+            select p.proname as name,
+                   pg_get_function_identity_arguments(p.oid) as args,
+                   pg_get_function_result(p.oid) as result
+            from pg_proc p
+            join pg_namespace n on n.oid = p.pronamespace
+            where n.nspname='dune'
+              and p.proname in (
+                'login_account',
+                'delete_account',
+                'takeover_account',
+                'save_player',
+                'save_player_pawn',
+                'export_character',
+                'import_character',
+                'transfer_character'
+              )
+            order by p.proname
+        """)
+        tables = reference_query(errors, "characterIdentityTables", """
+            select table_name, column_name, data_type, udt_name
+            from information_schema.columns
+            where table_schema='dune'
+              and table_name in (
+                'accounts',
+                'player_state',
+                'player_transfers',
+                'character_transfers',
+                'actors',
+                'inventories'
+              )
+            order by table_name, ordinal_position
+        """)
+        names = {str(row.get("name") or "") for row in functions}
+        required_observed = {"login_account", "delete_account", "takeover_account", "save_player", "save_player_pawn"}
+        has_lifecycle_evidence = bool(required_observed.intersection(names))
+        return {
+            "functions": functions,
+            "tables": tables,
+            "errors": errors,
+            "safeNativeSwapPath": False,
+            "blockedReason": "No validated first-party hibernate/switch function contract is mapped; execution remains blocked to avoid synthetic player_state edits.",
+            "observedLifecycleEvidence": sorted(required_observed.intersection(names)),
+            "confidence": "moderate" if has_lifecycle_evidence else "low",
+        }
+
+    def character_slots(self, account_id):
+        account_id = int(account_id)
+        errors = {}
+        active_rows = reference_query(errors, "activePlayer", """
+            select ps.account_id, ps.character_name, ps.online_status::text, ps.life_state::text,
+                   ps.server_id, ps.player_controller_id, ps.player_pawn_id, ps.player_state_id,
+                   ps.last_login_time, ps.logoff_persistence_end_time, ps.reconnect_grace_period_end,
+                   a.id as account_row_id, a."user" as fls_id, a.funcom_id, a.platform_name, a.platform_id
+            from dune.player_state ps
+            left join dune.accounts a on a.id=ps.account_id
+            where ps.account_id=%s
+        """, (account_id,))
+        if not active_rows:
+            raise ValueError("account_id not found in dune.player_state")
+        active = active_rows[0]
+        candidates = reference_query(errors, "nativeOwnedCandidates", """
+            with target_account as (
+                select id, "user", funcom_id, platform_name, platform_id
+                from dune.accounts
+                where id=%s
+            )
+            select ps.account_id, ps.character_name, ps.online_status::text, ps.life_state::text,
+                   ps.server_id, ps.player_controller_id, ps.player_pawn_id, ps.player_state_id,
+                   ps.last_login_time, a."user" as fls_id, a.funcom_id, a.platform_name, a.platform_id,
+                   case
+                     when a."user" is not distinct from ta."user" then 'same-account-user'
+                     when a.funcom_id is not distinct from ta.funcom_id then 'same-funcom-id'
+                     when a.platform_name is not distinct from ta.platform_name and a.platform_id is not distinct from ta.platform_id then 'same-platform-id'
+                     else 'unknown'
+                   end as ownership_evidence
+            from target_account ta
+            join dune.accounts a on a.id <> ta.id
+              and (
+                a."user" is not distinct from ta."user"
+                or a.funcom_id is not distinct from ta.funcom_id
+                or (a.platform_name is not distinct from ta.platform_name and a.platform_id is not distinct from ta.platform_id)
+              )
+            join dune.player_state ps on ps.account_id=a.id
+            order by ps.last_login_time desc nulls last, ps.account_id
+            limit %s
+        """, (account_id, ADMIN_REFERENCE_LIMIT))
+        contract = self.character_slot_contract()
+        return {
+            "ok": True,
+            "accountId": account_id,
+            "activeCharacter": active,
+            "offline": str(active.get("online_status") or "").lower() != "online",
+            "candidates": candidates,
+            "contract": contract,
+            "actions": ["new-character", "switch-character", "restore-character"],
+            "executionGate": "DUNE_ADMIN_CHARACTER_SWAP_ENABLED",
+            "confirm": CONFIRM_CHARACTER_SWAP,
+            "defaultDryRun": True,
+            "errors": errors,
+        }
+
+    def character_slot_plan(self, body):
+        account_id = int(body.get("account_id", body.get("accountId")))
+        action = str(body.get("action", "new-character")).strip().lower()
+        if action not in ("new-character", "switch-character", "restore-character"):
+            raise ValueError("action must be new-character, switch-character, or restore-character")
+        target_account_id = body.get("target_account_id", body.get("targetAccountId"))
+        if action in ("switch-character", "restore-character") and target_account_id in ("", None):
+            raise ValueError("target_account_id is required for switch-character and restore-character")
+        slots = self.character_slots(account_id)
+        active = slots["activeCharacter"]
+        online = str(active.get("online_status") or "").lower() == "online"
+        target = None
+        if target_account_id not in ("", None):
+            target_id = int(target_account_id)
+            for candidate in slots["candidates"]:
+                if int(candidate.get("account_id")) == target_id:
+                    target = candidate
+                    break
+            if target is None:
+                raise ValueError("target_account_id is not a native-owned hibernated candidate for this account")
+            if str(target.get("online_status") or "").lower() == "online":
+                online = True
+        contract = slots["contract"]
+        executable = bool(contract.get("safeNativeSwapPath")) and not online
+        blockers = []
+        if online:
+            blockers.append("target account or requested character is online")
+        if not contract.get("safeNativeSwapPath"):
+            blockers.append(contract.get("blockedReason") or "safe native character swap path is not mapped")
+        if action == "new-character":
+            intent = "Hibernate the current active character, leaving the account to use the game's native character creator on next login."
+        else:
+            intent = "Switch active play back to a previously hibernated, native-owned character for the same account."
+        plan = {
+            "intent": intent,
+            "activeBefore": active,
+            "targetCharacter": target,
+            "nativeContract": contract,
+            "steps": [
+                "Refuse execution while the active account or selected target is online.",
+                "Create a database backup.",
+                "Audit before rows from accounts/player_state and linked identity tables.",
+                "Execute only a validated first-party native lifecycle function path.",
+                "Audit after rows and preserve rollback hints.",
+            ],
+            "rollback": {
+                "hint": "Use the created DB backup or reverse with the same validated native lifecycle path after inspecting audit before/after rows.",
+                "active_account_id": account_id,
+                "target_account_id": int(target_account_id) if target_account_id not in ("", None) else None,
+            },
+            "blockers": blockers,
+        }
+        return {
+            "ok": True,
+            "dryRun": True,
+            "accountId": account_id,
+            "action": action,
+            "targetAccountId": int(target_account_id) if target_account_id not in ("", None) else None,
+            "executable": executable,
+            "executionGate": "DUNE_ADMIN_CHARACTER_SWAP_ENABLED",
+            "confirm": CONFIRM_CHARACTER_SWAP,
+            "plan": plan,
+        }
+
+    def character_slot_execute(self, body):
+        dry_run = str(body.get("dry_run", body.get("dryRun", "true"))).lower() not in ("0", "false", "no", "off")
+        planned = self.character_slot_plan(dict(body, dry_run=True))
+        if dry_run:
+            return planned
+        self.require_mutations()
+        if not CHARACTER_SWAP_ENABLED:
+            raise PermissionError("character swap execution is disabled; set DUNE_ADMIN_CHARACTER_SWAP_ENABLED=true")
+        require_confirmation(body, CONFIRM_CHARACTER_SWAP)
+        if not planned.get("executable"):
+            raise NotImplementedError("; ".join(planned.get("plan", {}).get("blockers") or ["character swap execution is blocked"]))
+        backup = create_db_backup()
+        raise NotImplementedError(f"validated native character swap execution is not implemented; backup created at {backup.get('path')}")
 
     def admin_reference(self):
         errors = {}
@@ -4024,6 +4269,38 @@ class Handler(BaseHTTPRequestHandler):
                     "actions": ["create", "delete", "reset"],
                     "confidence": "moderate",
                 },
+                "communinet": {
+                    "endpoint": "/api/admin/communinet",
+                    "defaultDryRun": True,
+                    "executionGate": "DUNE_ADMIN_COMMUNINET_MUTATIONS_ENABLED",
+                    "confirm": CONFIRM_COMMUNINET_MUTATION,
+                    "actions": ["update-data", "update-channel", "remove-channel"],
+                    "confidence": "moderate",
+                },
+                "tutorial": {
+                    "endpoint": "/api/admin/tutorial",
+                    "defaultDryRun": True,
+                    "executionGate": "DUNE_ADMIN_TUTORIAL_MUTATIONS_ENABLED",
+                    "confirm": CONFIRM_TUTORIAL_MUTATION,
+                    "actions": ["set-state"],
+                    "confidence": "moderate",
+                },
+                "permission": {
+                    "endpoint": "/api/admin/permission",
+                    "defaultDryRun": True,
+                    "executionGate": "DUNE_ADMIN_PERMISSION_MUTATIONS_ENABLED",
+                    "confirm": CONFIRM_PERMISSION_MUTATION,
+                    "actions": ["set-name", "set-access-level", "set-player-rank", "remove-player-rank"],
+                    "confidence": "moderate",
+                },
+                "vendor": {
+                    "endpoint": "/api/admin/vendor",
+                    "defaultDryRun": True,
+                    "executionGate": "DUNE_ADMIN_VENDOR_MUTATIONS_ENABLED",
+                    "confirm": CONFIRM_VENDOR_MUTATION,
+                    "actions": ["set-cycle-timestamp"],
+                    "confidence": "moderate",
+                },
                 "journeyRecipeVehicle": {
                     "status": "inspect-only",
                     "reason": "Recipe and vehicle function signatures can be discovered here, but writes stay blocked until safe contracts and live examples are mapped.",
@@ -4073,6 +4350,14 @@ class Handler(BaseHTTPRequestHandler):
         """, (ADMIN_REFERENCE_LIMIT,))
         landclaim_segments = reference_query(errors, "landclaimSegments", """
             select * from dune.landclaim_segments order by totem_id, grid_location_x, grid_location_y limit %s
+        """, (ADMIN_REFERENCE_LIMIT,))
+        permission_actors = reference_query(errors, "permissionActors", """
+            select pa.*, count(par.player_id) as rank_count
+            from dune.permission_actor pa
+            left join dune.permission_actor_rank par on par.permission_actor_id=pa.actor_id
+            group by pa.actor_id, pa.actor_name, pa.actor_type, pa.access_level, pa.is_child
+            order by pa.actor_id
+            limit %s
         """, (ADMIN_REFERENCE_LIMIT,))
         vehicles = []
         respawns = []
@@ -4131,6 +4416,7 @@ class Handler(BaseHTTPRequestHandler):
             "markerCounts": marker_counts,
             "recentMarkers": recent_markers,
             "landclaimSegments": landclaim_segments,
+            "permissionActors": permission_actors,
             "vehicles": vehicles,
             "respawnLocations": respawns,
             "functions": functions,
@@ -4167,6 +4453,14 @@ class Handler(BaseHTTPRequestHandler):
                     "confirm": CONFIRM_LANDCLAIM_MUTATION,
                     "actions": ["add-segment"],
                     "confidence": "low-to-moderate",
+                },
+                "permission": {
+                    "endpoint": "/api/admin/permission",
+                    "defaultDryRun": True,
+                    "executionGate": "DUNE_ADMIN_PERMISSION_MUTATIONS_ENABLED",
+                    "confirm": CONFIRM_PERMISSION_MUTATION,
+                    "actions": ["set-name", "set-access-level", "set-player-rank", "remove-player-rank"],
+                    "confidence": "moderate",
                 },
                 "vehicleRecipeMarkerLandclaim": {
                     "status": "inspect-only",
@@ -4302,6 +4596,8 @@ class Handler(BaseHTTPRequestHandler):
         tags = []
         access_codes = []
         communinet = []
+        tutorials = []
+        vendor_cycles = []
         party = []
         party_invites = []
         if account_id not in ("", None):
@@ -4311,6 +4607,8 @@ class Handler(BaseHTTPRequestHandler):
             access_codes = reference_query(errors, "accessCodes", "select * from dune.get_player_access_codes(%s) order by access_code_type, access_code", (int(account_id),))
             communinet = reference_query(errors, "communinet", "select * from dune.load_communinet_player_data(%s)", (int(account_id),))
         if player_id not in ("", None):
+            tutorials = reference_query(errors, "tutorials", "select * from dune.get_all_tutorial_entries(%s) order by tutorial_id", (int(player_id),))
+            vendor_cycles = reference_query(errors, "vendorCycles", "select * from dune.vendor_stock_cycle where player_id=%s order by vendor_id limit %s", (int(player_id), ADMIN_REFERENCE_LIMIT))
             party = reference_query(errors, "partyMembers", """
                 select pm.*, ps.character_name
                 from dune.party_members pm
@@ -4333,6 +4631,16 @@ class Handler(BaseHTTPRequestHandler):
             union all select 'player_tags', count(*) from dune.player_tags
             union all select 'player_access_codes', count(*) from dune.player_access_codes
             union all select 'communinet_player', count(*) from dune.communinet_player
+            union all select 'communinet_player_channels', count(*) from dune.communinet_player_channels
+            union all select 'tutorial_per_player', count(*) from dune.tutorial_per_player
+            union all select 'overmap_players', count(*) from dune.overmap_players
+            union all select 'dungeon_completion_players', count(*) from dune.dungeon_completion_players
+            union all select 'vendor_stock_state', count(*) from dune.vendor_stock_state
+            union all select 'vendor_stock_cycle', count(*) from dune.vendor_stock_cycle
+            union all select 'tax_invoice', count(*) from dune.tax_invoice
+            union all select 'landsraad_task_progress_player', count(*) from dune.landsraad_task_progress_player
+            union all select 'landsraad_task_player_contributions', count(*) from dune.landsraad_task_player_contributions
+            union all select 'permission_actor', count(*) from dune.permission_actor
         """)
         functions = reference_query(errors, "functions", """
             select n.nspname as schema, p.proname as name,
@@ -4379,6 +4687,8 @@ class Handler(BaseHTTPRequestHandler):
             "tags": tags,
             "accessCodes": access_codes,
             "communinet": communinet,
+            "tutorials": tutorials,
+            "vendorCycles": vendor_cycles,
             "party": party,
             "partyInvites": party_invites,
             "counts": counts,
@@ -4401,9 +4711,33 @@ class Handler(BaseHTTPRequestHandler):
                     "actions": ["create", "delete", "reset"],
                     "confidence": "moderate",
                 },
+                "communinet": {
+                    "endpoint": "/api/admin/communinet",
+                    "defaultDryRun": True,
+                    "executionGate": "DUNE_ADMIN_COMMUNINET_MUTATIONS_ENABLED",
+                    "confirm": CONFIRM_COMMUNINET_MUTATION,
+                    "actions": ["update-data", "update-channel", "remove-channel"],
+                    "confidence": "moderate",
+                },
+                "tutorial": {
+                    "endpoint": "/api/admin/tutorial",
+                    "defaultDryRun": True,
+                    "executionGate": "DUNE_ADMIN_TUTORIAL_MUTATIONS_ENABLED",
+                    "confirm": CONFIRM_TUTORIAL_MUTATION,
+                    "actions": ["set-state"],
+                    "confidence": "moderate",
+                },
+                "vendor": {
+                    "endpoint": "/api/admin/vendor",
+                    "defaultDryRun": True,
+                    "executionGate": "DUNE_ADMIN_VENDOR_MUTATIONS_ENABLED",
+                    "confirm": CONFIRM_VENDOR_MUTATION,
+                    "actions": ["set-cycle-timestamp"],
+                    "confidence": "moderate",
+                },
                 "partyAccountCommuninet": {
                     "status": "inspect-only",
-                    "reason": "Party membership, account takeover/deletion, Communinet, dungeon, tutorial, and player save functions remain blocked pending lifecycle and rollback validation.",
+                    "reason": "Party membership, account takeover/deletion, vendor, dungeon, tutorial, lore, overmap, Coriolis, and player save functions remain blocked pending lifecycle and rollback validation.",
                 },
             },
             "errors": errors,
@@ -4845,6 +5179,173 @@ class Handler(BaseHTTPRequestHandler):
             execute("select dune.reset_server_all_player_access_codes(%s)", (account_id,))
         after = query("select * from dune.get_player_access_codes(%s) order by access_code_type, access_code", (account_id,))
         return {"ok": True, "dryRun": False, "action": action, "accountId": account_id, "before": before, "after": after, "rollback": plan["rollback"]}
+
+    def parse_bool_value(self, value, field_name):
+        if isinstance(value, bool):
+            return value
+        text = str(value).strip().lower()
+        if text in ("1", "true", "yes", "on"):
+            return True
+        if text in ("0", "false", "no", "off"):
+            return False
+        raise ValueError(f"{field_name} must be boolean")
+
+    def communinet_mutation(self, body):
+        action = str(body.get("action", "")).strip().lower()
+        if action not in ("update-data", "update-channel", "remove-channel"):
+            raise ValueError("action must be update-data, update-channel, or remove-channel")
+        account_id = int(body.get("account_id", body.get("accountId")))
+        dry_run = str(body.get("dry_run", body.get("dryRun", "true"))).lower() not in ("0", "false", "no", "off")
+        before = query("select * from dune.load_communinet_player_data(%s) order by channel_name", (account_id,))
+        plan = {"action": action, "accountId": account_id, "before": before}
+        if action == "update-data":
+            is_active = self.parse_bool_value(body.get("is_active", body.get("isActive")), "is_active")
+            selected_channel = str(body.get("selected_channel_name", body.get("selectedChannelName", ""))).strip()
+            plan.update({
+                "function": "dune.update_communinet_player_data",
+                "args": [account_id, is_active, selected_channel],
+                "rollback": "Use the previous is_active and selected_channel_name values from the dry-run/audit record.",
+            })
+        elif action == "update-channel":
+            channel_name = str(body.get("channel_name", body.get("channelName", ""))).strip()
+            if not channel_name:
+                raise ValueError("channel_name is required")
+            is_tuned = self.parse_bool_value(body.get("is_tuned", body.get("isTuned")), "is_tuned")
+            plan.update({
+                "function": "dune.update_communinet_player_channel",
+                "args": [account_id, channel_name, is_tuned],
+                "rollback": "Use the previous channel is_tuned value from the dry-run/audit record.",
+            })
+        else:
+            channel_name = str(body.get("channel_name", body.get("channelName", ""))).strip()
+            if not channel_name:
+                raise ValueError("channel_name is required")
+            plan.update({
+                "function": "dune.remove_communinet_player_channel",
+                "args": [account_id, channel_name],
+                "rollback": "Re-add/tune the channel with update-channel if the previous dry-run/audit rows show it existed.",
+            })
+        if dry_run:
+            return {"ok": True, "dryRun": True, "action": action, "accountId": account_id, "plan": plan, "executionGate": "DUNE_ADMIN_COMMUNINET_MUTATIONS_ENABLED", "confirm": CONFIRM_COMMUNINET_MUTATION}
+        self.require_mutations()
+        if not COMMUNINET_MUTATIONS_ENABLED:
+            raise PermissionError("communinet mutations are disabled; set DUNE_ADMIN_COMMUNINET_MUTATIONS_ENABLED=true")
+        require_confirmation(body, CONFIRM_COMMUNINET_MUTATION)
+        if action == "update-data":
+            execute("select dune.update_communinet_player_data(%s,%s,%s)", tuple(plan["args"]))
+        elif action == "update-channel":
+            execute("select dune.update_communinet_player_channel(%s,%s,%s)", tuple(plan["args"]))
+        else:
+            execute("select dune.remove_communinet_player_channel(%s,%s)", tuple(plan["args"]))
+        after = query("select * from dune.load_communinet_player_data(%s) order by channel_name", (account_id,))
+        return {"ok": True, "dryRun": False, "action": action, "accountId": account_id, "before": before, "after": after, "rollback": plan["rollback"]}
+
+    def tutorial_mutation(self, body):
+        player_id = int(body.get("player_id", body.get("playerId")))
+        tutorial_id = int(body.get("tutorial_id", body.get("tutorialId")))
+        tutorial_state = int(body.get("tutorial_state", body.get("tutorialState")))
+        if tutorial_id < -32768 or tutorial_id > 32767 or tutorial_state < -32768 or tutorial_state > 32767:
+            raise ValueError("tutorial_id and tutorial_state must fit smallint")
+        dry_run = str(body.get("dry_run", body.get("dryRun", "true"))).lower() not in ("0", "false", "no", "off")
+        tutorial_rows = query("select * from dune.tutorials where id=%s", (tutorial_id,))
+        before = query("select * from dune.get_all_tutorial_entries(%s) where tutorial_id=%s", (player_id, tutorial_id))
+        plan = {
+            "function": "dune.create_or_update_tutorial_entry",
+            "args": [player_id, tutorial_id, tutorial_state],
+            "tutorial": tutorial_rows[0] if tutorial_rows else None,
+            "before": before,
+            "rollback": {"player_id": player_id, "tutorial_id": tutorial_id, "tutorial_state": before[0].get("tutorial_state") if before else None, "confirm": CONFIRM_TUTORIAL_MUTATION},
+        }
+        if dry_run:
+            return {"ok": True, "dryRun": True, "playerId": player_id, "tutorialId": tutorial_id, "plan": plan, "executionGate": "DUNE_ADMIN_TUTORIAL_MUTATIONS_ENABLED", "confirm": CONFIRM_TUTORIAL_MUTATION}
+        self.require_mutations()
+        if not TUTORIAL_MUTATIONS_ENABLED:
+            raise PermissionError("tutorial mutations are disabled; set DUNE_ADMIN_TUTORIAL_MUTATIONS_ENABLED=true")
+        require_confirmation(body, CONFIRM_TUTORIAL_MUTATION)
+        execute("select dune.create_or_update_tutorial_entry(%s,%s::smallint,%s::smallint)", (player_id, tutorial_id, tutorial_state))
+        after = query("select * from dune.get_all_tutorial_entries(%s) where tutorial_id=%s", (player_id, tutorial_id))
+        return {"ok": True, "dryRun": False, "playerId": player_id, "tutorialId": tutorial_id, "before": before, "after": after, "rollback": plan["rollback"]}
+
+    def permission_mutation(self, body):
+        action = str(body.get("action", "")).strip().lower()
+        if action not in ("set-name", "set-access-level", "set-player-rank", "remove-player-rank"):
+            raise ValueError("action must be set-name, set-access-level, set-player-rank, or remove-player-rank")
+        actor_id = int(body.get("actor_id", body.get("actorId")))
+        dry_run = str(body.get("dry_run", body.get("dryRun", "true"))).lower() not in ("0", "false", "no", "off")
+        actor_rows = query("select * from dune.permission_actor where actor_id=%s", (actor_id,))
+        if not actor_rows:
+            raise ValueError("permission actor not found")
+        rank_rows = query("select * from dune.permission_actor_rank where permission_actor_id=%s order by player_id", (actor_id,))
+        plan = {"action": action, "actorId": actor_id, "before": {"actor": actor_rows[0], "ranks": rank_rows}}
+        player_id = None
+        if action == "set-name":
+            name = str(body.get("name", "")).strip()
+            if not name:
+                raise ValueError("name is required")
+            plan.update({"function": "dune.permission_set_name", "args": [actor_id, name], "rollback": {"action": "set-name", "actor_id": actor_id, "name": actor_rows[0].get("actor_name"), "confirm": CONFIRM_PERMISSION_MUTATION}})
+        elif action == "set-access-level":
+            access_level = int(body.get("access_level", body.get("accessLevel")))
+            if access_level < -32768 or access_level > 32767:
+                raise ValueError("access_level must fit smallint")
+            plan.update({"function": "dune.permission_set_access_level", "args": [actor_id, access_level], "rollback": {"action": "set-access-level", "actor_id": actor_id, "access_level": actor_rows[0].get("access_level"), "confirm": CONFIRM_PERMISSION_MUTATION}})
+        else:
+            player_id = int(body.get("player_id", body.get("playerId")))
+            existing_rank = next((row for row in rank_rows if int(row.get("player_id")) == player_id), None)
+            if action == "set-player-rank":
+                rank = int(body.get("rank"))
+                if rank < -32768 or rank > 32767:
+                    raise ValueError("rank must fit smallint")
+                map_id = str(body.get("map_id", body.get("mapId", ""))).strip()
+                if not map_id:
+                    raise ValueError("map_id is required")
+                plan.update({"function": "dune.permission_set_player_rank", "args": [actor_id, player_id, rank, map_id], "previousRank": existing_rank, "rollback": {"action": "set-player-rank" if existing_rank else "remove-player-rank", "actor_id": actor_id, "player_id": player_id, "rank": existing_rank.get("rank") if existing_rank else None, "map_id": map_id, "confirm": CONFIRM_PERMISSION_MUTATION}})
+            else:
+                plan.update({"function": "dune.permission_remove_player_rank", "args": [actor_id, player_id], "previousRank": existing_rank, "rollback": {"action": "set-player-rank", "actor_id": actor_id, "player_id": player_id, "rank": existing_rank.get("rank") if existing_rank else None, "confirm": CONFIRM_PERMISSION_MUTATION}})
+        if dry_run:
+            return {"ok": True, "dryRun": True, "action": action, "actorId": actor_id, "playerId": player_id, "plan": plan, "executionGate": "DUNE_ADMIN_PERMISSION_MUTATIONS_ENABLED", "confirm": CONFIRM_PERMISSION_MUTATION}
+        self.require_mutations()
+        if not PERMISSION_MUTATIONS_ENABLED:
+            raise PermissionError("permission mutations are disabled; set DUNE_ADMIN_PERMISSION_MUTATIONS_ENABLED=true")
+        require_confirmation(body, CONFIRM_PERMISSION_MUTATION)
+        if action == "set-name":
+            execute("select dune.permission_set_name(%s,%s)", tuple(plan["args"]))
+        elif action == "set-access-level":
+            execute("select dune.permission_set_access_level(%s,%s::smallint)", tuple(plan["args"]))
+        elif action == "set-player-rank":
+            execute("select dune.permission_set_player_rank(%s,%s,%s::smallint,%s)", tuple(plan["args"]))
+        else:
+            execute("select dune.permission_remove_player_rank(%s,%s)", tuple(plan["args"]))
+        after = {"actor": query("select * from dune.permission_actor where actor_id=%s", (actor_id,)), "ranks": query("select * from dune.permission_actor_rank where permission_actor_id=%s order by player_id", (actor_id,))}
+        return {"ok": True, "dryRun": False, "action": action, "actorId": actor_id, "playerId": player_id, "before": plan["before"], "after": after, "rollback": plan["rollback"]}
+
+    def vendor_mutation(self, body):
+        action = str(body.get("action", "set-cycle-timestamp")).strip().lower()
+        if action != "set-cycle-timestamp":
+            raise ValueError("only set-cycle-timestamp is supported for vendor")
+        vendor_id = str(body.get("vendor_id", body.get("vendorId", ""))).strip()
+        if not vendor_id:
+            raise ValueError("vendor_id is required")
+        player_id = int(body.get("player_id", body.get("playerId")))
+        timestamp = int(body.get("timestamp", body.get("last_interacted_timestamp", body.get("lastInteractedTimestamp"))))
+        dry_run = str(body.get("dry_run", body.get("dryRun", "true"))).lower() not in ("0", "false", "no", "off")
+        before = query("select * from dune.vendor_stock_cycle where vendor_id=%s and player_id=%s", (vendor_id, player_id))
+        bought = query("select * from dune.interact_get_vendor_items_bought_from_player(%s,%s,%s) order by out_template_id", (vendor_id, player_id, timestamp))
+        plan = {
+            "function": "dune.update_vendor_timestamp_for_player",
+            "args": [vendor_id, player_id, timestamp],
+            "before": before,
+            "itemsBoughtAtTimestamp": bought,
+            "rollback": {"action": action, "vendor_id": vendor_id, "player_id": player_id, "timestamp": before[0].get("last_interacted_timestamp") if before else None, "confirm": CONFIRM_VENDOR_MUTATION},
+        }
+        if dry_run:
+            return {"ok": True, "dryRun": True, "vendorId": vendor_id, "playerId": player_id, "plan": plan, "executionGate": "DUNE_ADMIN_VENDOR_MUTATIONS_ENABLED", "confirm": CONFIRM_VENDOR_MUTATION}
+        self.require_mutations()
+        if not VENDOR_MUTATIONS_ENABLED:
+            raise PermissionError("vendor mutations are disabled; set DUNE_ADMIN_VENDOR_MUTATIONS_ENABLED=true")
+        require_confirmation(body, CONFIRM_VENDOR_MUTATION)
+        execute("select dune.update_vendor_timestamp_for_player(%s,%s,%s)", (vendor_id, player_id, timestamp))
+        after = query("select * from dune.vendor_stock_cycle where vendor_id=%s and player_id=%s", (vendor_id, player_id))
+        return {"ok": True, "dryRun": False, "vendorId": vendor_id, "playerId": player_id, "before": before, "after": after, "rollback": plan["rollback"]}
 
     def respawn_location_mutation(self, body):
         account_id = int(body.get("account_id", body.get("accountId")))
@@ -6811,6 +7312,10 @@ async function catalog(serial=loadSerial){
   view.querySelector('.pageStack').insertAdjacentHTML('beforeend', `<div class="twoCol"><div class="panelBand"><h2>Marker Delete Dry Run</h2><div class="grid"><label>Action<select id="markerAction"><option>delete-by-id</option><option>delete-static-location</option></select></label><label>Marker IDs<input id="markerIds" placeholder="comma-separated ids"></label><label>Static keys<input id="markerStaticKeys" placeholder="comma-separated keys"></label></div><p><button id="markerDryRunBtn" class="primary">Preview marker deletion</button></p><pre id="markerDryRunResult"></pre></div><div class="panelBand"><h2>Landclaim Dry Run</h2><div class="grid"><label>Totem ID<input id="landclaimTotemId"></label><label>Grid X<input id="landclaimGridX"></label><label>Grid Y<input id="landclaimGridY"></label></div><p><button id="landclaimDryRunBtn" class="primary">Preview landclaim segment</button></p><pre id="landclaimDryRunResult"></pre></div></div>`);
   view.querySelector('.pageStack').insertAdjacentHTML('beforeend', `<div class="twoCol"><div class="panelBand"><h2>Economy Inspect</h2><div class="grid"><label>Account ID<input id="economyAccountId"></label><label>Player/Owner ID<input id="economyPlayerId"></label><label>Controller ID<input id="economyControllerId"></label><label>Exchange ID<input id="economyExchangeId"></label></div><p><button id="economyInspectBtn" class="primary">Inspect economy surfaces</button></p><pre id="economyInspectResult"></pre></div><div class="panelBand"><h2>Exchange Solari Dry Run</h2><div class="grid"><label>Owner ID<input id="exchangeOwnerId"></label><label>Controller ID<input id="exchangeControllerId"></label><label>Amount<input id="exchangeAmount" value="1000"></label><label>Mode<select id="exchangeMode"><option>add</option><option>set</option></select></label></div><p><button id="exchangeDryRunBtn" class="primary">Preview exchange balance</button></p><pre id="exchangeDryRunResult"></pre></div></div>`);
   view.querySelector('.pageStack').insertAdjacentHTML('beforeend', `<div class="twoCol"><div class="panelBand"><h2>Player Lifecycle Inspect</h2><div class="grid"><label>Account ID<input id="lifecycleAccountId"></label><label>Player ID<input id="lifecyclePlayerId"></label></div><p><button id="lifecycleInspectBtn" class="primary">Inspect lifecycle surfaces</button></p><pre id="lifecycleInspectResult"></pre></div><div class="panelBand"><h2>Player Tags Dry Run</h2><div class="grid"><label>Account ID<input id="tagAccountId"></label><label>Add tags<input id="tagsToAdd" placeholder="comma-separated"></label><label>Remove tags<input id="tagsToRemove" placeholder="comma-separated"></label></div><p><button id="tagsDryRunBtn" class="primary">Preview tag update</button></p><pre id="tagsDryRunResult"></pre></div><div class="panelBand"><h2>Access Codes Dry Run</h2><div class="grid"><label>Action<select id="accessCodeAction"><option>create</option><option>delete</option><option>reset</option></select></label><label>Account ID<input id="accessCodeAccountId"></label><label>Access code<input id="accessCodeValue"></label><label>Type<input id="accessCodeType" value="0"></label></div><p><button id="accessCodeDryRunBtn" class="primary">Preview access-code change</button></p><pre id="accessCodeDryRunResult"></pre></div></div>`);
+  view.querySelector('.pageStack').insertAdjacentHTML('beforeend', `<div class="twoCol"><div class="panelBand"><h2>Communinet Dry Run</h2><div class="grid"><label>Action<select id="communinetAction"><option>update-data</option><option>update-channel</option><option>remove-channel</option></select></label><label>Account ID<input id="communinetAccountId"></label><label>Active<input id="communinetActive" value="true"></label><label>Selected channel<input id="communinetSelectedChannel"></label><label>Channel<input id="communinetChannel"></label><label>Tuned<input id="communinetTuned" value="true"></label></div><p><button id="communinetDryRunBtn" class="primary">Preview Communinet change</button></p><pre id="communinetDryRunResult"></pre></div></div>`);
+  view.querySelector('.pageStack').insertAdjacentHTML('beforeend', `<div class="twoCol"><div class="panelBand"><h2>Tutorial Dry Run</h2><div class="grid"><label>Player ID<input id="tutorialPlayerId"></label><label>Tutorial ID<input id="tutorialId"></label><label>State<input id="tutorialState" value="1"></label></div><p><button id="tutorialDryRunBtn" class="primary">Preview tutorial state</button></p><pre id="tutorialDryRunResult"></pre></div></div>`);
+  view.querySelector('.pageStack').insertAdjacentHTML('beforeend', `<div class="twoCol"><div class="panelBand"><h2>Permission Dry Run</h2><div class="grid"><label>Action<select id="permissionAction"><option>set-name</option><option>set-access-level</option><option>set-player-rank</option><option>remove-player-rank</option></select></label><label>Actor ID<input id="permissionActorId"></label><label>Name<input id="permissionName"></label><label>Access level<input id="permissionAccessLevel"></label><label>Player ID<input id="permissionPlayerId"></label><label>Rank<input id="permissionRank"></label><label>Map ID<input id="permissionMapId"></label></div><p><button id="permissionDryRunBtn" class="primary">Preview permission change</button></p><pre id="permissionDryRunResult"></pre></div></div>`);
+  view.querySelector('.pageStack').insertAdjacentHTML('beforeend', `<div class="twoCol"><div class="panelBand"><h2>Vendor Cycle Dry Run</h2><div class="grid"><label>Vendor ID<input id="vendorId"></label><label>Player ID<input id="vendorPlayerId"></label><label>Timestamp<input id="vendorTimestamp"></label></div><p><button id="vendorDryRunBtn" class="primary">Preview vendor timestamp</button></p><pre id="vendorDryRunResult"></pre></div></div>`);
   wireCatalogControls();
 }
 
@@ -6897,6 +7402,22 @@ function wireCatalogControls(root=document){
     const result = await api('/api/admin/access-code', {method:'POST', body:JSON.stringify({dry_run:true, action:accessCodeAction.value, account_id:accessCodeAccountId.value, access_code:accessCodeValue.value, access_code_type:accessCodeType.value})});
     document.getElementById('accessCodeDryRunResult').textContent = JSON.stringify(result, null, 2);
   }));
+  root.querySelector('#communinetDryRunBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Planning...', async () => {
+    const result = await api('/api/admin/communinet', {method:'POST', body:JSON.stringify({dry_run:true, action:communinetAction.value, account_id:communinetAccountId.value, is_active:communinetActive.value, selected_channel_name:communinetSelectedChannel.value, channel_name:communinetChannel.value, is_tuned:communinetTuned.value})});
+    document.getElementById('communinetDryRunResult').textContent = JSON.stringify(result, null, 2);
+  }));
+  root.querySelector('#tutorialDryRunBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Planning...', async () => {
+    const result = await api('/api/admin/tutorial', {method:'POST', body:JSON.stringify({dry_run:true, player_id:tutorialPlayerId.value, tutorial_id:tutorialId.value, tutorial_state:tutorialState.value})});
+    document.getElementById('tutorialDryRunResult').textContent = JSON.stringify(result, null, 2);
+  }));
+  root.querySelector('#permissionDryRunBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Planning...', async () => {
+    const result = await api('/api/admin/permission', {method:'POST', body:JSON.stringify({dry_run:true, action:permissionAction.value, actor_id:permissionActorId.value, name:permissionName.value, access_level:permissionAccessLevel.value, player_id:permissionPlayerId.value, rank:permissionRank.value, map_id:permissionMapId.value})});
+    document.getElementById('permissionDryRunResult').textContent = JSON.stringify(result, null, 2);
+  }));
+  root.querySelector('#vendorDryRunBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Planning...', async () => {
+    const result = await api('/api/admin/vendor', {method:'POST', body:JSON.stringify({dry_run:true, action:'set-cycle-timestamp', vendor_id:vendorId.value, player_id:vendorPlayerId.value, timestamp:vendorTimestamp.value})});
+    document.getElementById('vendorDryRunResult').textContent = JSON.stringify(result, null, 2);
+  }));
 }
 function selectCfg(){ const name=document.getElementById('cfg').value; document.getElementById('cfgText').value = window.configs[name] || ''; }
 async function saveEnv(){
@@ -6931,7 +7452,7 @@ async function mutations(serial=loadSerial){
   ]);
   if (serial !== loadSerial) return;
   const referenceErrors = ref.errors && Object.keys(ref.errors).length ? `<div class="card"><h2>Reference Errors</h2><pre>${esc(JSON.stringify(ref.errors, null, 2))}</pre></div>` : '';
-  view.innerHTML = `<div class="pageStack">${referenceErrors}<div class="sectionHeader"><h2>Admin Actions</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="settings">Settings</button><button data-jump="security">Audit</button></div></div><div class="panelBand"><h2>Target Player</h2><div class="grid"><label>Character<select id="adminCharacterSelect">${characterOptions(characterRows)}</select></label><label>Player controller ID<input id="pcid"></label><label>Account ID<input id="grantAccount" placeholder="auto-select player inventory"></label><label>Character name<input id="grantCharacter" placeholder="auto-select by name"></label></div></div><div class="twoCol"><div class="panelBand"><h2>Currency and XP</h2><p class="muted">Select a character first; balances and tracks populate from that player.</p><div class="grid"><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button id="currencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Level for set/new track<input id="xplevel" value="0"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button id="xpBtn" class="primary">Apply XP</button></p></div><div class="panelBand"><h2>Item Grants</h2><p class="muted">Use a known template ID and dry run before writing new items.</p><div class="grid"><label>Known inventory<select id="grantInventorySelect">${inventoryOptions(ref.recentInventories)}</select></label><label>Inventory ID<input id="grantInventory" placeholder="explicit inventory"></label><label class="hidden">Character<select id="grantCharacterSelect">${characterOptions(characterRows)}</select></label><label>Inventory type<select id="grantInventoryType">${inventoryTypeOptions(ref.inventoryTypes)}</select></label><label>Template ID<input id="grantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><details><summary>Advanced stats JSON</summary><textarea id="grantStats">{}</textarea></details><p><button id="dryRunItemBtn" class="primary">Dry run</button> <button id="grantItemBtn" class="danger">Grant item</button></p><pre id="grantResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Item Maintenance</h2><div class="grid"><label class="hidden">Character<select id="itemCharacterSelect">${characterOptions(characterRows)}</select></label><label>Owned item<select id="itemEditSelect"><option value="">Select a character first</option></select></label><label>Item ID<input id="itemEditId"></label><label>New stack size<input id="itemEditStack" value="1"></label><label>Delete count<input id="itemDeleteCount" placeholder="blank/all"></label></div><p><button id="setItemStackBtn" class="primary">Set stack</button> <button id="deleteItemBtn" class="danger">Delete item/count</button></p><pre id="itemEditResult"></pre></div><div class="panelBand"><h2>Specialization Keystones</h2><div class="grid"><label>Player/controller ID<input id="keyPlayer"></label><label>Keystone<select id="keystone">${options(ref.keystones, 'name')}</select></label></div><p><button id="purchaseKeystoneBtn" class="primary">Purchase keystone</button> <button id="resetKeystonesBtn" class="danger">Reset all keystones</button></p><pre id="keystoneResult"></pre></div></div><details class="panelBand"><summary>Backup</summary><p class="muted">Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button id="backupBtn" class="primary">Create DB backup</button><pre id="backupResult"></pre></details><datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><details class="panelBand"><summary>Known Item Templates</summary>${table(ref.knownItemTemplates)}</details><details class="panelBand"><summary>Observed Item Templates</summary>${table(ref.observedItemTemplates)}</details><details class="panelBand"><summary>Recent Inventories</summary>${table(ref.recentInventories)}</details><details class="panelBand"><summary>Inventory Types</summary>${table(ref.inventoryTypes)}</details></div>`;
+  view.innerHTML = `<div class="pageStack">${referenceErrors}<div class="sectionHeader"><h2>Admin Actions</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="settings">Settings</button><button data-jump="security">Audit</button></div></div><div class="panelBand"><h2>Target Player</h2><div class="grid"><label>Character<select id="adminCharacterSelect">${characterOptions(characterRows)}</select></label><label>Player controller ID<input id="pcid"></label><label>Account ID<input id="grantAccount" placeholder="auto-select player inventory"></label><label>Character name<input id="grantCharacter" placeholder="auto-select by name"></label></div></div><div class="panelBand"><h2>Character Slots</h2><div class="grid"><label>Action<select id="slotAction"><option>new-character</option><option>switch-character</option><option>restore-character</option></select></label><label>Target hibernated account ID<input id="slotTargetAccount"></label></div><p><button id="slotInspectBtn" class="primary">Inspect slots</button> <button id="slotPlanBtn" class="primary">Preview swap</button></p><pre id="slotResult"></pre></div><div class="twoCol"><div class="panelBand"><h2>Currency and XP</h2><p class="muted">Select a character first; balances and tracks populate from that player.</p><div class="grid"><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button id="currencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Level for set/new track<input id="xplevel" value="0"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button id="xpBtn" class="primary">Apply XP</button></p></div><div class="panelBand"><h2>Item Grants</h2><p class="muted">Use a known template ID and dry run before writing new items.</p><div class="grid"><label>Known inventory<select id="grantInventorySelect">${inventoryOptions(ref.recentInventories)}</select></label><label>Inventory ID<input id="grantInventory" placeholder="explicit inventory"></label><label class="hidden">Character<select id="grantCharacterSelect">${characterOptions(characterRows)}</select></label><label>Inventory type<select id="grantInventoryType">${inventoryTypeOptions(ref.inventoryTypes)}</select></label><label>Template ID<input id="grantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><details><summary>Advanced stats JSON</summary><textarea id="grantStats">{}</textarea></details><p><button id="dryRunItemBtn" class="primary">Dry run</button> <button id="grantItemBtn" class="danger">Grant item</button></p><pre id="grantResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Item Maintenance</h2><div class="grid"><label class="hidden">Character<select id="itemCharacterSelect">${characterOptions(characterRows)}</select></label><label>Owned item<select id="itemEditSelect"><option value="">Select a character first</option></select></label><label>Item ID<input id="itemEditId"></label><label>New stack size<input id="itemEditStack" value="1"></label><label>Delete count<input id="itemDeleteCount" placeholder="blank/all"></label></div><p><button id="setItemStackBtn" class="primary">Set stack</button> <button id="deleteItemBtn" class="danger">Delete item/count</button></p><pre id="itemEditResult"></pre></div><div class="panelBand"><h2>Specialization Keystones</h2><div class="grid"><label>Player/controller ID<input id="keyPlayer"></label><label>Keystone<select id="keystone">${options(ref.keystones, 'name')}</select></label></div><p><button id="purchaseKeystoneBtn" class="primary">Purchase keystone</button> <button id="resetKeystonesBtn" class="danger">Reset all keystones</button></p><pre id="keystoneResult"></pre></div></div><details class="panelBand"><summary>Backup</summary><p class="muted">Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button id="backupBtn" class="primary">Create DB backup</button><pre id="backupResult"></pre></details><datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><details class="panelBand"><summary>Known Item Templates</summary>${table(ref.knownItemTemplates)}</details><details class="panelBand"><summary>Observed Item Templates</summary>${table(ref.observedItemTemplates)}</details><details class="panelBand"><summary>Recent Inventories</summary>${table(ref.recentInventories)}</details><details class="panelBand"><summary>Inventory Types</summary>${table(ref.inventoryTypes)}</details></div>`;
   const loadCharacterAdminDetails = async (accountId, serial=detailLoadSerial) => {
     const itemSelect = document.getElementById('itemEditSelect');
     const inventorySelect = document.getElementById('grantInventorySelect');
@@ -7020,6 +7541,14 @@ async function mutations(serial=loadSerial){
     if (inventoryType) document.getElementById('grantInventoryType').value = inventoryType;
   });
   document.getElementById('backupBtn').addEventListener('click', e => runAction(e.currentTarget, 'Backing up...', backup));
+  document.getElementById('slotInspectBtn').addEventListener('click', e => runAction(e.currentTarget, 'Inspecting...', async () => {
+    const result = await api('/api/admin/character-slots?account_id=' + encodeURIComponent(grantAccount.value));
+    document.getElementById('slotResult').textContent = JSON.stringify(result, null, 2);
+  }));
+  document.getElementById('slotPlanBtn').addEventListener('click', e => runAction(e.currentTarget, 'Planning...', async () => {
+    const result = await api('/api/admin/character-slots/plan', {method:'POST', body:JSON.stringify({dry_run:true, account_id:grantAccount.value, action:slotAction.value, target_account_id:slotTargetAccount.value})});
+    document.getElementById('slotResult').textContent = JSON.stringify(result, null, 2);
+  }));
   document.getElementById('currencyBtn').addEventListener('click', e => runAction(e.currentTarget, 'Applying...', currency));
   document.getElementById('xpBtn').addEventListener('click', e => runAction(e.currentTarget, 'Applying...', xp));
   document.getElementById('purchaseKeystoneBtn').addEventListener('click', e => runAction(e.currentTarget, 'Purchasing...', purchaseKeystone));

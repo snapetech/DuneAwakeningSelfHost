@@ -153,6 +153,11 @@ server {
 - Player lifecycle inspection through `POST /api/admin/player-lifecycle/inspect` for account/player, party, tags, access codes, Communinet, dungeon, tutorial, and lifecycle evidence.
 - Player tag planning through `POST /api/admin/player-tags`, default `dry_run=true`. Execution requires `DUNE_ADMIN_PLAYER_TAG_MUTATIONS_ENABLED=true` and confirmation `WRITE PLAYER TAGS`.
 - Access-code planning through `POST /api/admin/access-code`, default `dry_run=true`. Execution requires `DUNE_ADMIN_ACCESS_CODE_MUTATIONS_ENABLED=true` and confirmation `WRITE ACCESS CODES`.
+- Character slot inspection and planning through `GET /api/admin/character-slots?account_id=...`, `POST /api/admin/character-slots/plan`, and `POST /api/admin/character-slots/execute`, default `dry_run=true`. Execution requires `DUNE_ADMIN_CHARACTER_SWAP_ENABLED=true`, confirmation `SWAP CHARACTER`, offline targets, a DB backup, and a proven native lifecycle contract; current builds are inspect/plan-only when that contract is absent.
+- Communinet planning through `POST /api/admin/communinet`, default `dry_run=true`. Execution requires `DUNE_ADMIN_COMMUNINET_MUTATIONS_ENABLED=true` and confirmation `WRITE COMMUNINET`.
+- Tutorial entry planning through `POST /api/admin/tutorial`, default `dry_run=true`. Execution requires `DUNE_ADMIN_TUTORIAL_MUTATIONS_ENABLED=true` and confirmation `WRITE TUTORIAL`.
+- Permission actor planning through `POST /api/admin/permission`, default `dry_run=true`. Execution requires `DUNE_ADMIN_PERMISSION_MUTATIONS_ENABLED=true` and confirmation `WRITE PERMISSION`.
+- Vendor stock-cycle timestamp planning through `POST /api/admin/vendor`, default `dry_run=true`. Execution requires `DUNE_ADMIN_VENDOR_MUTATIONS_ENABLED=true` and confirmation `WRITE VENDOR`.
 - Event planner APIs:
   - `GET /api/events`
   - `POST /api/events/dry-run`
@@ -204,6 +209,10 @@ These forms are intentionally preview-first. They make the plan visible before a
 
 The content expansion adds separate gates so operators can expose discovery without enabling writes:
 
+For the current actionability split, read [`admin-actionability-matrix.md`](admin-actionability-matrix.md). Confidence is high that every write-capable endpoint listed there is dry-run-first and gate-protected; confidence varies by game-system side effect.
+
+The safe-surface test suite now includes mocked dry-run and fail-closed checks for the promoted mutator families. These tests prove the admin code plans writes and refuses execution when gates are disabled; they do not prove live client-visible game behavior. Use the disposable validation queue in [`admin-actionability-matrix.md`](admin-actionability-matrix.md) before routine use on real player/world state.
+
 ```env
 DUNE_ADMIN_CATALOG_ENABLED=true
 DUNE_ADMIN_TYPED_KNOBS_ENABLED=false
@@ -220,6 +229,11 @@ DUNE_ADMIN_LANDCLAIM_MUTATIONS_ENABLED=false
 DUNE_ADMIN_EXCHANGE_MUTATIONS_ENABLED=false
 DUNE_ADMIN_PLAYER_TAG_MUTATIONS_ENABLED=false
 DUNE_ADMIN_ACCESS_CODE_MUTATIONS_ENABLED=false
+DUNE_ADMIN_COMMUNINET_MUTATIONS_ENABLED=false
+DUNE_ADMIN_TUTORIAL_MUTATIONS_ENABLED=false
+DUNE_ADMIN_PERMISSION_MUTATIONS_ENABLED=false
+DUNE_ADMIN_VENDOR_MUTATIONS_ENABLED=false
+DUNE_ADMIN_CHARACTER_SWAP_ENABLED=false
 ```
 
 Gate behavior:
@@ -239,6 +253,11 @@ Gate behavior:
 - `DUNE_ADMIN_EXCHANGE_MUTATIONS_ENABLED`: controls Dune Exchange Solari balance server-function calls. Economy dry-runs still work.
 - `DUNE_ADMIN_PLAYER_TAG_MUTATIONS_ENABLED`: controls player tag server-function calls. Lifecycle dry-runs still work.
 - `DUNE_ADMIN_ACCESS_CODE_MUTATIONS_ENABLED`: controls server player access-code server-function calls. Lifecycle dry-runs still work.
+- `DUNE_ADMIN_COMMUNINET_MUTATIONS_ENABLED`: controls Communinet player/channel server-function calls. Lifecycle dry-runs still work.
+- `DUNE_ADMIN_TUTORIAL_MUTATIONS_ENABLED`: controls tutorial entry server-function calls. Lifecycle dry-runs still work.
+- `DUNE_ADMIN_PERMISSION_MUTATIONS_ENABLED`: controls permission actor name/access/rank server-function calls. World-state dry-runs still work.
+- `DUNE_ADMIN_VENDOR_MUTATIONS_ENABLED`: controls vendor stock-cycle timestamp server-function calls. Lifecycle dry-runs still work.
+- `DUNE_ADMIN_CHARACTER_SWAP_ENABLED`: controls character slot hibernation/switch execution. Slot inspection and planning still work; execution remains blocked unless the plan returns `executable: true`.
 
 Existing gates still apply:
 
@@ -266,6 +285,10 @@ WRITE LANDCLAIM
 WRITE EXCHANGE
 WRITE PLAYER TAGS
 WRITE ACCESS CODES
+WRITE COMMUNINET
+WRITE TUTORIAL
+WRITE PERMISSION
+WRITE VENDOR
 RUN GM COMMAND
 ```
 
@@ -574,6 +597,117 @@ Execution requires:
 
 The endpoint uses `dune.get_player_access_codes`, `dune.create_server_player_access_codes`, `dune.delete_server_player_access_codes`, and `dune.reset_server_all_player_access_codes`. Confidence is moderate for function mechanics and high for operational risk because reset needs manual recreation from audit data.
 
+## Character Slots
+
+Character slot tooling is admin-only and inspect/plan-first. It is built for three operator intents:
+
+- `new-character`: hibernate the current active character and let the game run its native character creator on next login.
+- `switch-character`: make a previously hibernated, same-owner character active again.
+- `restore-character`: same safety model as switch, used when returning to a prior hibernated character.
+
+Endpoints:
+
+```text
+GET /api/admin/character-slots?account_id=456
+POST /api/admin/character-slots/plan
+POST /api/admin/character-slots/execute
+```
+
+`GET /api/admin/character-slots` returns:
+
+- `activeCharacter`: the current `dune.player_state` row joined to account identity fields.
+- `offline`: whether the active character is offline.
+- `candidates`: same-owner native candidate characters matched through account user/Funcom/platform identity.
+- `contract`: discovered lifecycle functions and identity table metadata.
+- `executionGate`: `DUNE_ADMIN_CHARACTER_SWAP_ENABLED`.
+- `confirm`: `SWAP CHARACTER`.
+
+Safe preview examples:
+
+```json
+{
+  "dry_run": true,
+  "account_id": 456,
+  "action": "new-character"
+}
+```
+
+```json
+{
+  "dry_run": true,
+  "account_id": 456,
+  "action": "switch-character",
+  "target_account_id": 789
+}
+```
+
+Safe HTTP smoke checks:
+
+```bash
+curl -sS "http://127.0.0.1:${DUNE_ADMIN_HOST_PORT:-18080}/api/admin/character-slots?account_id=456" \
+  | jq '.accountId, .offline, .candidates, .contract.safeNativeSwapPath'
+
+curl -sS -H 'Content-Type: application/json' \
+  -X POST http://127.0.0.1:${DUNE_ADMIN_HOST_PORT:-18080}/api/admin/character-slots/plan \
+  -d '{"dry_run":true,"account_id":456,"action":"new-character"}' \
+  | jq '.dryRun, .executable, .plan.blockers'
+```
+
+Execution remains blocked unless the plan reports `executable: true`. Current contract discovery records lifecycle evidence such as `login_account`, `delete_account`, `takeover_account`, `save_player`, and `save_player_pawn`, but does not treat those as a proven hibernate/switch path by themselves. Confidence: moderate for inspection, low for execution.
+
+Non-dry-run execution requires all of:
+
+- `DUNE_ADMIN_MUTATIONS_ENABLED=true`
+- `DUNE_ADMIN_CHARACTER_SWAP_ENABLED=true`
+- `confirm: "SWAP CHARACTER"`
+- the active account and selected target are offline
+- the plan returns `executable: true`
+- a DB backup can be created before any native lifecycle call
+
+Blocked behavior is intentional. The panel does not create synthetic starter rows, does not overwrite raw `player_state`, and does not execute account deletion/takeover or save-player functions as a guessed swap mechanism.
+
+Test coverage includes direct planner tests and handler-route tests for `GET /api/admin/character-slots`, `POST /api/admin/character-slots/plan`, and dry-run/blocked `POST /api/admin/character-slots/execute`. The tests verify that blocked execution does not call SQL write helpers or create a backup.
+
+`POST /api/admin/communinet` plans or executes Communinet active/selected-channel and per-channel tuned state.
+
+Execution requires:
+
+- `DUNE_ADMIN_MUTATIONS_ENABLED=true`
+- `DUNE_ADMIN_COMMUNINET_MUTATIONS_ENABLED=true`
+- `confirm: "WRITE COMMUNINET"`
+
+The endpoint uses `dune.load_communinet_player_data`, `dune.update_communinet_player_data`, `dune.update_communinet_player_channel`, and `dune.remove_communinet_player_channel`. Confidence is moderate. Vendor stock, tutorial, lore, dungeon, overmap, and Coriolis writes remain blocked.
+
+`POST /api/admin/tutorial` plans or executes one tutorial state update for a player through `dune.create_or_update_tutorial_entry`.
+
+Execution requires:
+
+- `DUNE_ADMIN_MUTATIONS_ENABLED=true`
+- `DUNE_ADMIN_TUTORIAL_MUTATIONS_ENABLED=true`
+- `confirm: "WRITE TUTORIAL"`
+
+Confidence is moderate. Bulk tutorial deletion and tutorial registration remain blocked.
+
+`POST /api/admin/permission` plans or executes permission actor name/access/rank changes.
+
+Execution requires:
+
+- `DUNE_ADMIN_MUTATIONS_ENABLED=true`
+- `DUNE_ADMIN_PERMISSION_MUTATIONS_ENABLED=true`
+- `confirm: "WRITE PERMISSION"`
+
+The endpoint uses `dune.permission_set_name`, `dune.permission_set_access_level`, `dune.permission_set_player_rank`, and `dune.permission_remove_player_rank`. Confidence is moderate mechanically and high risk operationally because these calls affect base/actor access.
+
+`POST /api/admin/vendor` plans or executes one vendor/player stock-cycle timestamp update.
+
+Execution requires:
+
+- `DUNE_ADMIN_MUTATIONS_ENABLED=true`
+- `DUNE_ADMIN_VENDOR_MUTATIONS_ENABLED=true`
+- `confirm: "WRITE VENDOR"`
+
+The endpoint uses `dune.update_vendor_timestamp_for_player` and reads `dune.interact_get_vendor_items_bought_from_player` for dry-run context. Confidence is moderate for timestamp mechanics. Purchase-count and stock-cleanup writes remain blocked.
+
 `POST /api/admin/journey` plans or executes journey story-node server functions. Supported actions are `reveal`, `complete`, `reset`, and `delete`.
 
 Dry-run body:
@@ -658,12 +792,17 @@ It runs under a temporary `ADMIN_WORKSPACE`, so it does not edit the live `.env`
 Current coverage:
 
 - Catalog schema and groups.
+- Catalog evidence and validation payloads.
+- Catalog disabled-gate refusal.
+- Read-only inspector mutator metadata for progression, world state, economy, player lifecycle, and spice fields.
 - Typed knob value validation.
 - Typed config writes with backups in a temporary workspace.
 - Deep Desert spice cap rendering from structured JSON.
 - Event dry-run planning.
 - Event persistence and cancellation.
 - Event execution blocked by default.
+- Character-slot discovery, dry-run behavior, online-player refusal, and missing native-contract blockers.
+- Dry-run planning and fail-closed gates for promoted mutator families.
 
 ## Restart Announcements
 
@@ -769,6 +908,17 @@ DUNE_CHAT_COMMAND_DRY_RUN=true
 DUNE_CHAT_COMMAND_EXECUTE_TELEPORT=false
 DUNE_CHAT_COMMAND_EXECUTE_ONLINE_GM_TELEPORT=false
 DUNE_CHAT_COMMAND_EXECUTE_PLAYER_DISCONNECT=false
+DUNE_CHAT_COMMAND_AUCTION_ENABLED=false
+DUNE_CHAT_COMMAND_AUCTION_BASE_STORAGE_ENABLED=false
+DUNE_CHAT_COMMAND_AUCTION_EXCHANGE_ID=2
+DUNE_CHAT_COMMAND_AUCTION_ACCESS_POINT_ID=1
+DUNE_CHAT_COMMAND_AUCTION_MAX_ORDERS_PER_PLAYER=50
+DUNE_CHAT_COMMAND_AUCTION_LISTING_FEE=0
+DUNE_CHAT_COMMAND_AUCTION_DURATION_SECONDS=2419200
+DUNE_CHAT_COMMAND_AUCTION_CATEGORY_MASK=0
+DUNE_CHAT_COMMAND_AUCTION_CATEGORY_DEPTH=0
+DUNE_CHAT_COMMAND_AUCTION_CONFIRM_SECONDS=120
+DUNE_CHAT_COMMAND_AUCTION_SUGGESTION_MIN_SCORE=0.55
 DUNE_PLAYER_DISCONNECT_COMMAND=RemoveSessionMember
 DUNE_PLAYER_DISCONNECT_ALLOW_BATTLEYE=false
 DUNE_ADMIN_RESTART_DISCONNECT_WAIT_SECONDS=5
@@ -793,6 +943,10 @@ DUNE_CHAT_COMMAND_AMQP_TLS=true
 DUNE_CHAT_COMMAND_AMQP_USER=guest
 DUNE_CHAT_COMMAND_AMQP_PASSWORD=guest
 DUNE_CHAT_COMMAND_REPLY_COMMAND=/workspace/scripts/announce.sh
+DUNE_CHAT_COMMAND_PRIVATE_REPLIES_ENABLED=false
+DUNE_CHAT_COMMAND_PRIVATE_REPLY_EXCHANGE=chat.whispers
+DUNE_CHAT_COMMAND_PRIVATE_REPLY_CHANNEL=Whisper
+DUNE_CHAT_COMMAND_PRIVATE_REPLY_ROUTING_KEY=
 DUNE_CHAT_SPAM_PROTECT_ENABLED=true
 DUNE_CHAT_SPAM_SAME_CONSECUTIVE_LIMIT=3
 DUNE_CHAT_SPAM_SAME_WINDOW_LIMIT=5
@@ -808,6 +962,7 @@ Implemented commands:
 &where <playername>
 &disconnect <playername>
 &kick <playername>
+&auction [--base|--inventory <inventory_id>] [--item-id <item_id>|"<item name or template>"] <count> <price>
 &teleport <playername>
 &goto <playername>
 &bring <playername>
@@ -824,6 +979,41 @@ Implemented commands:
 `&test` replies with `f00` through the configured announcement/reply path. Use it as the first live smoke test for chat-command ingestion and reply delivery.
 
 `&where` reports the resolved player's current online/offline state and last known location. `&teleport` moves an offline target to the admin's current partition and location, using the server's own `dune.admin_move_offline_player_to_partition(...)` function. It rejects online targets because live actor transforms are owned by the running map server and can be overwritten.
+
+`&auction "<item name or template>" <count> <price>` is a player-facing exchange listing command. It does not require admin allow-list membership, but only operates for the sender's own resolved character. Use `--item-id <item_id>` when the operator already knows the exact item row and wants to bypass fuzzy name/template matching. By default the command previews the listing and does not mutate the database. Set `DUNE_CHAT_COMMAND_AUCTION_ENABLED=true` to execute. The command uses `dune.dune_exchange_add_sell_order(...)`, so the order is owned by the sender's player controller and should use the normal exchange seller settlement path. Confidence: moderate until a live purchase settlement has been validated.
+
+Auction item matching searches the sender's pawn/controller inventories by normalized template/name text and requires a single stack with at least `<count>` items. Use `--base` to search permitted shared base storage, or `--inventory <inventory_id>` to target a specific personal/permitted base inventory. Base and explicit-storage sources require `DUNE_CHAT_COMMAND_AUCTION_BASE_STORAGE_ENABLED=true`; otherwise they are rejected. Split-across-stacks listings are not supported.
+
+If no exact/contains match is found, the command scores allowed inventory items and replies with `did you mean <template>? reply &auction yes or &auction no` when the best score is at least `DUNE_CHAT_COMMAND_AUCTION_SUGGESTION_MIN_SCORE`. The pending suggestion expires after `DUNE_CHAT_COMMAND_AUCTION_CONFIRM_SECONDS`. Confirmation state is held in the running chat listener process, so it works in service mode but not across separate one-shot `--dry-run-command` invocations.
+
+Private command replies are disabled by default. Testing showed that `m_UserNameTo` alone rendered as a broadcast/channel message, and the private-channel/target-queue shape published to RabbitMQ but did not render in the client. Confidence is high that the current chat-publish route is not a working private-message route.
+
+Private-chat investigation found a real `chat.whispers` direct exchange and a required TextRouter redirect header, `redirect_exchange`, whose AMQP value must be bytes, for example `b"chat.whispers"`. The TextRouter binary also confirms private player queue names are `{FLS_ID}_queue` and private RPC queue names are `{FLS_ID}_rpcQueue`.
+
+Current confidence: high for exchange/header/queue naming; low for client-visible private rendering. Direct `chat.whispers` and direct queue publishes can be delivered to RabbitMQ, but have not been confirmed visible in the client. Intercepted synthetic whispers with no AMQP `user_id` reach TextRouter but fail `DemoPlayersFilter` with `ArgumentNullException`; intercepted synthetic whispers with `user_id` pass redirect permission checks but TextRouter republishes with the original `user_id` while authenticated as its router account, causing RabbitMQ `PRECONDITION_FAILED`. Keep `DUNE_CHAT_COMMAND_PRIVATE_REPLIES_ENABLED=false` until a real client whisper has been captured and a client-rendered synthetic reply is proven. If enabled for testing, command replies use `DUNE_ANNOUNCE_ENV_OVERRIDES_FILE=true` internally so per-reply exchange/routing overrides are not overwritten by `/workspace/.env`.
+
+Use `scripts/send-whisper-probe.py` for repeatable tests:
+
+```bash
+scripts/send-whisper-probe.py --target-name Lukano --target-fls-id 6FF6498F4074E3DE --bind-target-queue --send-intercept --message-prefix "probe $(date +%H%M%S)"
+```
+
+Capture a real client whisper with:
+
+```bash
+scripts/capture-chat-routing.py --seconds 120 \
+  --routing-key '#' \
+  --routing-key 6FF6498F4074E3DE \
+  --routing-key Lukano \
+  --routing-key 36A0226630A5875 \
+  --routing-key Talon \
+  --routing-key EC8C54C4BB4463D9 \
+  --routing-key Xale \
+  --routing-key HaggaBasin.0 \
+  --routing-key Survival_1.dim_0
+```
+
+Then compare the real payload's exchange, routing key, AMQP properties, `redirect_exchange` header, outer `Type`, and inner `m_ChannelType`/`m_UserNameTo` against probe output.
 
 `&disconnect` and its `&kick` alias resolve a target player, route the request to the player's current map, and default to `RemoveSessionMember <playername>`. That is the softest known native session-removal candidate. `KickLobbyMember` can be selected with `DUNE_PLAYER_DISCONNECT_COMMAND=KickLobbyMember` if session removal does not work. `BattlEyeMegaKick` is intentionally excluded unless `DUNE_PLAYER_DISCONNECT_ALLOW_BATTLEYE=true` and `DUNE_PLAYER_DISCONNECT_COMMAND=BattlEyeMegaKick` are set, because it is the most likely option to behave like a punitive kick or retry cooldown.
 

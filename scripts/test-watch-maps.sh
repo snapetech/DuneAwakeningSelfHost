@@ -157,4 +157,81 @@ if ! grep -q "would recover map: service=heighliner-dungeon partition=18 reason=
   exit 1
 fi
 
+recover_command="$tmp_dir/recover-map.sh"
+cat > "$recover_command" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "${FAKE_RECOVERY_LOG:?}"
+exit 42
+EOF
+chmod +x "$recover_command"
+recovery_log="$tmp_dir/recovery.log"
+
+failed_recovery_output="$(
+  FAKE_RUNTIME_LOG="$log_file" \
+  FAKE_RUNTIME_STATUS_FILE="$status_file" \
+  FAKE_RUNTIME_HEALTH_FILE="$health_file" \
+  FAKE_RECOVERY_LOG="$recovery_log" \
+  CONTAINER_RUNTIME="$fake_runtime" \
+  COMPOSE_FILES=compose.yaml:compose.allmaps.yaml \
+  DUNE_WATCH_STARTUP_GRACE=0 \
+  DUNE_WATCH_RECOVER_COMMAND="$recover_command" \
+  "$repo_root/scripts/watch-maps.sh" "$env_file" --dry-run
+)"
+
+if grep -q "map recovery failed" <<< "$failed_recovery_output"; then
+  printf 'dry-run should not invoke the recovery command\n' >&2
+  exit 1
+fi
+
+set +e
+FAKE_RUNTIME_LOG="$log_file" \
+FAKE_RUNTIME_STATUS_FILE="$status_file" \
+FAKE_RUNTIME_HEALTH_FILE="$health_file" \
+FAKE_RECOVERY_LOG="$recovery_log" \
+CONTAINER_RUNTIME="$fake_runtime" \
+COMPOSE_FILES=compose.yaml:compose.allmaps.yaml \
+DUNE_WATCH_STARTUP_GRACE=0 \
+DUNE_WATCH_RECOVER_COMMAND="$recover_command" \
+  "$repo_root/scripts/watch-maps.sh" "$env_file" --once > "$tmp_dir/failed-once.out"
+failed_once_rc=$?
+set -e
+
+if [[ "$failed_once_rc" -eq 0 ]]; then
+  printf 'one-shot recovery failure should return non-zero\n' >&2
+  exit 1
+fi
+
+if ! grep -q "map recovery failed: service=heighliner-dungeon partition=18 reason=not_active" "$tmp_dir/failed-once.out"; then
+  printf 'one-shot recovery failure was not logged\n' >&2
+  exit 1
+fi
+
+seed_command="$tmp_dir/seed-neighbors.sh"
+cat > "$seed_command" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'seeded\n' >> "${FAKE_SEED_LOG:?}"
+EOF
+chmod +x "$seed_command"
+seed_log="$tmp_dir/seed.log"
+
+FAKE_RUNTIME_LOG="$log_file" \
+FAKE_RUNTIME_STATUS_FILE="$status_file" \
+FAKE_RUNTIME_HEALTH_FILE="$health_file" \
+FAKE_RECOVERY_LOG="$recovery_log" \
+FAKE_SEED_LOG="$seed_log" \
+CONTAINER_RUNTIME="$fake_runtime" \
+COMPOSE_FILES=compose.yaml:compose.allmaps.yaml \
+DUNE_WATCH_STARTUP_GRACE=0 \
+DUNE_WATCH_RECOVER_COMMAND="$recover_command" \
+DUNE_WATCH_SEED_NEIGHBORS=true \
+DUNE_WATCH_SEED_COMMAND="$seed_command" \
+  "$repo_root/scripts/watch-maps.sh" "$env_file" --once > "$tmp_dir/seeded-once.out" || true
+
+if ! grep -q '^seeded$' "$seed_log"; then
+  printf 'one-shot watchdog did not run neighbor seeding\n' >&2
+  exit 1
+fi
+
 printf 'watch-maps tests passed\n'

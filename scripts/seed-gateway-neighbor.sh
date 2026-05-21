@@ -18,6 +18,14 @@ gateway_static_mac="${GATEWAY_MAC_ADDRESS:-02:42:ac:1f:f0:28}"
 bridge_ip="${DUNE_BRIDGE_IP:-172.31.240.1}"
 bridge_mac="${DUNE_BRIDGE_MAC_ADDRESS:-}"
 
+run_root() {
+  if [[ "$(id -u)" -eq 0 ]]; then
+    "$@"
+  else
+    sudo "$@"
+  fi
+}
+
 container_pid() {
   "$runtime" inspect -f '{{.State.Pid}}' "$1"
 }
@@ -45,7 +53,7 @@ fi
 
 if is_running "$postgres_container" && ! is_running "$gateway_container"; then
   postgres_pid="$(container_pid "$postgres_container")"
-  sudo nsenter -t "$postgres_pid" -n ip neigh replace "$gateway_ip" lladdr "$gateway_static_mac" dev eth0 nud permanent
+  run_root nsenter -t "$postgres_pid" -n ip neigh replace "$gateway_ip" lladdr "$gateway_static_mac" dev eth0 nud permanent
   printf 'preseeded postgres gateway neighbor entry: gateway=%s/%s\n' "$gateway_ip" "$gateway_static_mac"
 fi
 
@@ -57,11 +65,11 @@ if is_running "$postgres_container" && is_running "$gateway_container"; then
   postgres_mac="$(container_mac "$postgres_container")"
   gateway_mac="$(container_mac "$gateway_container")"
 
-  sudo nsenter -t "$gateway_pid" -n ip neigh replace "$postgres_ip" lladdr "$postgres_mac" dev eth0 nud permanent
+  run_root nsenter -t "$gateway_pid" -n ip neigh replace "$postgres_ip" lladdr "$postgres_mac" dev eth0 nud permanent
   if [[ -n "$bridge_mac" ]]; then
-    sudo nsenter -t "$gateway_pid" -n ip neigh replace "$bridge_ip" lladdr "$bridge_mac" dev eth0 nud permanent
+    run_root nsenter -t "$gateway_pid" -n ip neigh replace "$bridge_ip" lladdr "$bridge_mac" dev eth0 nud permanent
   fi
-  sudo nsenter -t "$postgres_pid" -n ip neigh replace "$gateway_ip" lladdr "$gateway_mac" dev eth0 nud permanent
+  run_root nsenter -t "$postgres_pid" -n ip neigh replace "$gateway_ip" lladdr "$gateway_mac" dev eth0 nud permanent
 
   printf 'seeded gateway/postgres neighbor entries: gateway=%s/%s postgres=%s/%s\n' \
     "$gateway_ip" "$gateway_mac" "$postgres_ip" "$postgres_mac"
@@ -75,7 +83,7 @@ seed_bridge() {
 
   source_pid="$(container_pid "$source" 2>/dev/null || true)"
   if [[ -n "$source_pid" && "$source_pid" != "0" && -n "$bridge_mac" ]]; then
-    sudo nsenter -t "$source_pid" -n ip neigh replace "$bridge_ip" lladdr "$bridge_mac" dev eth0 nud permanent
+    run_root nsenter -t "$source_pid" -n ip neigh replace "$bridge_ip" lladdr "$bridge_mac" dev eth0 nud permanent
   fi
 }
 
@@ -91,7 +99,7 @@ seed_pair() {
   target_mac="$(container_mac "$target" 2>/dev/null || true)"
 
   if [[ -n "$source_pid" && "$source_pid" != "0" && -n "$target_ip" && -n "$target_mac" ]]; then
-    sudo nsenter -t "$source_pid" -n ip neigh replace "$target_ip" lladdr "$target_mac" dev eth0 nud permanent
+    run_root nsenter -t "$source_pid" -n ip neigh replace "$target_ip" lladdr "$target_mac" dev eth0 nud permanent
   fi
 }
 
@@ -109,7 +117,7 @@ seed_host_neighbor() {
 
   target_dev="$(ip route get "$target_ip" 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i == "dev") {print $(i+1); exit}}')"
   if [[ -n "$target_dev" ]]; then
-    sudo ip neigh replace "$target_ip" lladdr "$target_mac" dev "$target_dev" nud permanent
+    run_root ip neigh replace "$target_ip" lladdr "$target_mac" dev "$target_dev" nud permanent
   fi
 }
 

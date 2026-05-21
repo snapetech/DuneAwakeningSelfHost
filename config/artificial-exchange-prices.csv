@@ -1,0 +1,5 @@
+template_id,display_name,category,sellable_status,baseline_price,max_buy_price,liquidity_tier,enabled,source,confidence,notes
+# Add reviewed Exchange items here. Manual rows override snapshots and DB heuristics.
+# Example:
+# ItemTemplatePath,Display Name,materials,validated,100,80,medium,true,manual,high,reviewed by admin
+PowerPack,PowerPack,test,validated,123,123,high,true,live-test,high,validated via order 5 live purchase and settlement

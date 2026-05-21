@@ -33,6 +33,10 @@ Content-Type: application/json
 | `DUNE_ADMIN_EXCHANGE_MUTATIONS_ENABLED` | `false` | Enables Dune Exchange Solari balance changes through first-party exchange functions. Does not block inspection or dry-runs. |
 | `DUNE_ADMIN_PLAYER_TAG_MUTATIONS_ENABLED` | `false` | Enables player tag add/remove through first-party tag functions. Does not block inspection or dry-runs. |
 | `DUNE_ADMIN_ACCESS_CODE_MUTATIONS_ENABLED` | `false` | Enables server player access-code create/delete/reset through first-party functions. Does not block inspection or dry-runs. |
+| `DUNE_ADMIN_COMMUNINET_MUTATIONS_ENABLED` | `false` | Enables Communinet player/channel changes through first-party functions. Does not block inspection or dry-runs. |
+| `DUNE_ADMIN_TUTORIAL_MUTATIONS_ENABLED` | `false` | Enables tutorial entry create/update through `dune.create_or_update_tutorial_entry`. Does not block inspection or dry-runs. |
+| `DUNE_ADMIN_PERMISSION_MUTATIONS_ENABLED` | `false` | Enables permission actor name/access/rank changes through first-party functions. Does not block inspection or dry-runs. |
+| `DUNE_ADMIN_VENDOR_MUTATIONS_ENABLED` | `false` | Enables vendor stock-cycle timestamp changes through `dune.update_vendor_timestamp_for_player`. Does not block inspection or dry-runs. |
 | `DUNE_ADMIN_MUTATIONS_ENABLED` | repo default currently `true` | Existing global mutation gate. |
 | `DUNE_ADMIN_ITEM_GRANTS_ENABLED` | repo default currently `true` | Existing item mutation gate. |
 
@@ -762,6 +766,159 @@ dune.reset_server_all_player_access_codes(in_account_id bigint)
 ```
 
 Risk: high. Access codes gate server-player access workflows. Create/delete have compensating rollback; reset requires recreating prior codes from the dry-run/audit record.
+
+## Communinet
+
+### `POST /api/admin/communinet`
+
+Default mode is dry-run. Supported actions are:
+
+- `update-data`
+- `update-channel`
+- `remove-channel`
+
+Update player data dry-run:
+
+```json
+{
+  "dry_run": true,
+  "action": "update-data",
+  "account_id": 456,
+  "is_active": true,
+  "selected_channel_name": "general"
+}
+```
+
+Update channel dry-run:
+
+```json
+{
+  "dry_run": true,
+  "action": "update-channel",
+  "account_id": 456,
+  "channel_name": "general",
+  "is_tuned": true
+}
+```
+
+Execution requirements:
+
+- `DUNE_ADMIN_MUTATIONS_ENABLED=true`
+- `DUNE_ADMIN_COMMUNINET_MUTATIONS_ENABLED=true`
+- `confirm: "WRITE COMMUNINET"`
+
+Function mapping:
+
+```sql
+dune.load_communinet_player_data(in_account_id bigint)
+dune.update_communinet_player_data(in_account_id bigint, in_is_active boolean, in_selected_channel_name text)
+dune.update_communinet_player_channel(in_account_id bigint, in_channel_name text, in_is_tuned boolean)
+dune.remove_communinet_player_channel(in_account_id bigint, in_channel_name text)
+```
+
+Risk: medium. Dry-run records prior Communinet rows. Rollback is a compensating data/channel update from audit data.
+
+## Tutorial Entry
+
+### `POST /api/admin/tutorial`
+
+Default mode is dry-run. The only supported action is setting one tutorial state row.
+
+```json
+{
+  "dry_run": true,
+  "player_id": 123,
+  "tutorial_id": 10,
+  "tutorial_state": 1
+}
+```
+
+Execution requirements:
+
+- `DUNE_ADMIN_MUTATIONS_ENABLED=true`
+- `DUNE_ADMIN_TUTORIAL_MUTATIONS_ENABLED=true`
+- `confirm: "WRITE TUTORIAL"`
+
+Function mapping:
+
+```sql
+dune.get_all_tutorial_entries(in_player_id bigint)
+dune.create_or_update_tutorial_entry(in_player_id bigint, in_tutorial_id smallint, in_tutorial_state smallint)
+```
+
+Risk: medium. Dry-run records the previous tutorial state if one existed. Deleting a row is not exposed because no narrow single-entry delete function is mapped.
+
+## Permission Actor
+
+### `POST /api/admin/permission`
+
+Default mode is dry-run. Supported actions are:
+
+- `set-name`
+- `set-access-level`
+- `set-player-rank`
+- `remove-player-rank`
+
+Dry-run request:
+
+```json
+{
+  "dry_run": true,
+  "action": "set-player-rank",
+  "actor_id": 1000,
+  "player_id": 123,
+  "rank": 2,
+  "map_id": "HaggaBasin"
+}
+```
+
+Execution requirements:
+
+- `DUNE_ADMIN_MUTATIONS_ENABLED=true`
+- `DUNE_ADMIN_PERMISSION_MUTATIONS_ENABLED=true`
+- `confirm: "WRITE PERMISSION"`
+
+Function mapping:
+
+```sql
+dune.permission_set_name(in_actor_id bigint, in_name text)
+dune.permission_set_access_level(in_actor_id bigint, in_access_level smallint)
+dune.permission_set_player_rank(in_actor_id bigint, in_player_id bigint, in_rank smallint, in_map_id text)
+dune.permission_remove_player_rank(in_actor_id bigint, in_player_id bigint)
+```
+
+Risk: high. These calls affect base/actor access. Dry-run records current `permission_actor` and `permission_actor_rank` rows. Permission actor register, takeover, destroy, and marker-location writes remain blocked.
+
+## Vendor Cycle Timestamp
+
+### `POST /api/admin/vendor`
+
+Default mode is dry-run. The only supported action is `set-cycle-timestamp`.
+
+```json
+{
+  "dry_run": true,
+  "action": "set-cycle-timestamp",
+  "vendor_id": "ScrapVendor",
+  "player_id": 17,
+  "timestamp": 1779271200
+}
+```
+
+Execution requirements:
+
+- `DUNE_ADMIN_MUTATIONS_ENABLED=true`
+- `DUNE_ADMIN_VENDOR_MUTATIONS_ENABLED=true`
+- `confirm: "WRITE VENDOR"`
+
+Function mapping:
+
+```sql
+dune.update_vendor_timestamp_for_player(in_vendor_id text, in_player_id bigint, in_timestamp bigint)
+dune.interact_get_vendor_items_bought_from_player(in_vendor_id text, in_player_id bigint, in_current_cycle_start_timestamp bigint)
+```
+
+Risk: medium. Dry-run records the prior `vendor_stock_cycle` row and current bought-item view for the proposed timestamp. Vendor item purchase-count writes and vendor stock cleanup remain blocked.
 
 ## Respawn Location Delete
 

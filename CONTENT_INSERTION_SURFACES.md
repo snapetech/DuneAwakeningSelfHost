@@ -2,6 +2,8 @@
 
 This is the canonical catalog for DASH content/admin expansion. Confidence levels are `high`, `moderate`, `low`, or `unknown`.
 
+For a concise operator view of what is actionable now versus evidence-only, see [`docs/admin-actionability-matrix.md`](docs/admin-actionability-matrix.md).
+
 Evidence rules:
 
 - Shipped config plus live database behavior is strong evidence.
@@ -36,6 +38,7 @@ Evidence rules:
 - Progression inspection: `/api/admin/progression/inspect`.
 - Faction reputation planning: `/api/admin/faction-reputation`, default `dry_run=true`; execution requires `DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED=true` and confirmation `WRITE REPUTATION`.
 - Journey story-node planning: `/api/admin/journey`, default `dry_run=true`; execution requires `DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED=true` and confirmation `WRITE JOURNEY`.
+- Character slot inspection/planning: `/api/admin/character-slots`, `/api/admin/character-slots/plan`, `/api/admin/character-slots/execute`; execution stays blocked unless a validated native lifecycle path is discovered, and would require `DUNE_ADMIN_CHARACTER_SWAP_ENABLED=true` plus confirmation `SWAP CHARACTER`.
 - Spice/resource inspection: `/api/admin/spice-fields/inspect`.
 - Event planner: `/api/events`, `/api/events/dry-run`, `/api/events/cancel`, `/api/events/run`; execution requires `DUNE_ADMIN_EVENT_EXECUTION_ENABLED=true`.
 
@@ -61,7 +64,12 @@ Implemented in `admin/admin_panel.py`:
 - Read-only economy inspector for Dune Exchange, vehicles, recovered/backup vehicles, and base backups.
 - Dry-run-first Dune Exchange Solari balance mutator through first-party exchange balance functions; order add/fulfill/cancel/relist remains blocked.
 - Read-only player lifecycle inspector for account/player, party, tags, access codes, Communinet, dungeon, tutorial, and lifecycle evidence.
+- Character slot inspector and planner for active/new/switch/restore workflows. It refuses online targets and does not execute without a proven native DB lifecycle contract.
 - Dry-run-first player tag and access-code mutators through first-party functions; account deletion/takeover, party membership, Communinet, dungeon, tutorial, and raw player save remain blocked.
+- Dry-run-first Communinet player/channel mutator through first-party functions; vendor, tutorial, lore, dungeon, overmap, and Coriolis writes remain blocked.
+- Dry-run-first tutorial entry mutator through `create_or_update_tutorial_entry`; bulk tutorial deletion and tutorial registration remain blocked.
+- Dry-run-first permission actor mutator for name/access level/player rank through first-party functions; permission actor register/takeover/destroy remains blocked.
+- Dry-run-first vendor stock-cycle timestamp mutator through `update_vendor_timestamp_for_player`; vendor purchase counts and stock cleanup remain blocked.
 - Read-only spice/resource field inspection.
 - Event definition persistence under `backups/admin-panel/events.json`.
 - Event dry-run planner and explicit execution gate.
@@ -87,6 +95,11 @@ The implementation intentionally keeps catalog reads independent from write gate
 | `DUNE_ADMIN_EXCHANGE_MUTATIONS_ENABLED` | `false` | Dune Exchange Solari balance execution. Economy inspection and dry-runs remain available. |
 | `DUNE_ADMIN_PLAYER_TAG_MUTATIONS_ENABLED` | `false` | Player tag execution. Lifecycle inspection and dry-runs remain available. |
 | `DUNE_ADMIN_ACCESS_CODE_MUTATIONS_ENABLED` | `false` | Player access-code execution. Lifecycle inspection and dry-runs remain available. |
+| `DUNE_ADMIN_COMMUNINET_MUTATIONS_ENABLED` | `false` | Communinet player/channel execution. Lifecycle inspection and dry-runs remain available. |
+| `DUNE_ADMIN_TUTORIAL_MUTATIONS_ENABLED` | `false` | Tutorial entry execution. Lifecycle inspection and dry-runs remain available. |
+| `DUNE_ADMIN_PERMISSION_MUTATIONS_ENABLED` | `false` | Permission actor name/access/rank execution. World-state inspection and dry-runs remain available. |
+| `DUNE_ADMIN_VENDOR_MUTATIONS_ENABLED` | `false` | Vendor stock-cycle timestamp execution. Lifecycle inspection and dry-runs remain available. |
+| `DUNE_ADMIN_CHARACTER_SWAP_ENABLED` | `false` | Character slot swap execution. Inspection and planning remain available; execution is blocked until a native path is proven. |
 | `DUNE_ADMIN_MUTATIONS_ENABLED` | repo default currently `true` | Existing global mutation gate. |
 | `DUNE_ADMIN_ITEM_GRANTS_ENABLED` | repo default currently `true` | Item grant and bundle item execution. |
 | `DUNE_ADMIN_GM_COMMANDS_ENABLED` | `false` | Native GM command execution. Still also blocked by payload verification. |
@@ -108,6 +121,11 @@ The implementation intentionally keeps catalog reads independent from write gate
 | `WRITE EXCHANGE` | Dune Exchange Solari balance execution. |
 | `WRITE PLAYER TAGS` | Player tag execution. |
 | `WRITE ACCESS CODES` | Player access-code execution. |
+| `WRITE COMMUNINET` | Communinet player/channel execution. |
+| `WRITE TUTORIAL` | Tutorial entry execution. |
+| `WRITE PERMISSION` | Permission actor name/access/rank execution. |
+| `WRITE VENDOR` | Vendor stock-cycle timestamp execution. |
+| `SWAP CHARACTER` | Character slot hibernation/switch execution, still blocked until a native path is proven. |
 | `RUN GM COMMAND` | Native GM command execution, still blocked until payload verification. |
 
 ## Typed Knob Registry
@@ -150,12 +168,17 @@ make validate
 `scripts/test-admin-panel-safe-surfaces.py` uses a temporary `ADMIN_WORKSPACE` and does not touch the live config or backup tree. It covers:
 
 - Catalog schema and grouping.
+- Catalog evidence and validation payload shape.
+- Catalog disabled-gate refusal.
+- Read-only inspector metadata for progression, world state, economy, player lifecycle, and spice fields.
 - Typed knob validation.
 - Backup-before-write behavior for typed config updates.
 - Structured Deep Desert spice cap rendering.
 - Event dry-run planning.
 - Event persistence/cancel.
 - Fail-closed event execution when `DUNE_ADMIN_EVENT_EXECUTION_ENABLED` is not set.
+- Character-slot discovery, same-owner target validation, switch/restore target requirements, online blockers, missing native contracts, route-level audit/error behavior, and no-backup/no-write behavior when execution remains blocked.
+- Dry-run planning and fail-closed gates for the promoted mutator families listed in `docs/admin-actionability-matrix.md`.
 
 HTTP smoke checks:
 
@@ -176,6 +199,14 @@ curl -sS -H 'Content-Type: application/json' \
   -X POST http://127.0.0.1:${DUNE_ADMIN_HOST_PORT:-18080}/api/admin/bundle \
   -d '{"dry_run":true,"currency":[],"xp":[],"items":[]}' \
   | jq '.dryRun, (.plan|length)'
+
+curl -sS "http://127.0.0.1:${DUNE_ADMIN_HOST_PORT:-18080}/api/admin/character-slots?account_id=456" \
+  | jq '.accountId, .offline, .contract.safeNativeSwapPath'
+
+curl -sS -H 'Content-Type: application/json' \
+  -X POST http://127.0.0.1:${DUNE_ADMIN_HOST_PORT:-18080}/api/admin/character-slots/plan \
+  -d '{"dry_run":true,"account_id":456,"action":"new-character"}' \
+  | jq '.dryRun, .executable, .plan.blockers'
 ```
 
 Manual Deep Desert validation:
@@ -207,6 +238,10 @@ Near-term, high-confidence work:
 - Validate Dune Exchange Solari balance changes on disposable player economy data. Do not add sell-order add/fulfill/cancel/relist until inventory locking, order revision, purge/completion types, and rollback are documented.
 - Keep vehicle restore and base backup save/recycle/delete blocked until `serverinfo`, `transform`, inventory side effects, and spawned actor ownership are validated end-to-end.
 - Validate player tag and access-code mutations on disposable accounts. Keep account delete/takeover, party membership, Communinet changes, dungeon completion deletion, tutorial/lore updates, and raw `save_player` paths blocked until lifecycle side effects and recovery are documented.
+- Validate Communinet active/channel changes on disposable accounts. Keep vendor stock/player timestamps, tutorial/lore, dungeon completion, overmap survival, and Coriolis player/map writes blocked until the client-visible effects and rollback are documented.
+- Validate tutorial entry updates on disposable player data. Keep bulk tutorial deletion, tutorial registration, permission actor writes, taxation invoice writes, Landsraad task progress writes, and vendor stock writes blocked until client-visible effects and rollback are documented.
+- Validate permission actor name/access/rank changes on disposable bases only. Keep permission actor register/takeover/destroy, taxation invoice writes, Landsraad task progress writes, vendor stock writes, lore, dungeon, overmap, and Coriolis writes blocked until side effects and rollback are documented.
+- Validate vendor timestamp changes on disposable player/vendor data. Keep `player_purchased_item_from_vendor`, vendor stock cleanup, lore, dungeon, taxation, Landsraad task, overmap, and Coriolis writes blocked until client-visible effects and rollback are documented.
 
 Medium-confidence work:
 

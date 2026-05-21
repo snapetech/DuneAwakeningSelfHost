@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import collections
+import difflib
 import json
 import os
 import pathlib
@@ -23,6 +24,7 @@ from dune_gm_command import build_envelope, publish_command, publish_command_man
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 GM_LOCATION_FILE = ROOT / "backups" / "admin-panel" / "gm-locations.json"
 SPAM_STATE = {}
+AUCTION_CONFIRMATIONS = {}
 
 
 def read_env_file(path):
@@ -400,6 +402,380 @@ def player_disconnect_command(target_name):
     if command not in allowed:
         raise ValueError(f"DUNE_PLAYER_DISCONNECT_COMMAND must be one of: {', '.join(sorted(allowed))}")
     return f"{command} {target_name}"
+
+
+def chat_auction_enabled():
+    return env_bool("DUNE_CHAT_COMMAND_AUCTION_ENABLED", False)
+
+
+def chat_auction_base_storage_enabled():
+    return env_bool("DUNE_CHAT_COMMAND_AUCTION_BASE_STORAGE_ENABLED", False)
+
+
+def normalize_item_search(value):
+    return re.sub(r"[^a-z0-9]+", "", (value or "").lower())
+
+
+def auction_confirmation_key(sender_name="", sender_fls_id="", resolved_name=""):
+    return (sender_fls_id or resolved_name or sender_name or "unknown").lower()
+
+
+def auction_confirmation_ttl():
+    return int(env("DUNE_CHAT_COMMAND_AUCTION_CONFIRM_SECONDS", "120"))
+
+
+def parse_positive_int(value, name):
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{name} must be a positive integer")
+    if parsed <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+    return parsed
+
+
+def player_inventory_ids(conn, player):
+    actor_ids = [player.get("player_pawn_id"), player.get("player_controller_id")]
+    actor_ids = [int(actor_id) for actor_id in actor_ids if actor_id is not None]
+    if not actor_ids:
+        return []
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            select id, actor_id, inventory_type, max_item_count
+            from dune.inventories
+            where actor_id = any(%s)
+            order by
+              case when actor_id=%s then 0 else 1 end,
+              inventory_type nulls last,
+              id
+            """,
+            (actor_ids, player.get("player_pawn_id")),
+        )
+        return cur.fetchall()
+
+
+def base_storage_inventory_ids(conn, player):
+    actor_ids = [player.get("player_pawn_id"), player.get("player_controller_id")]
+    actor_ids = [int(actor_id) for actor_id in actor_ids if actor_id is not None]
+    if not actor_ids:
+        return []
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            with permitted_totems as (
+                select t.id as totem_id, tp.owner_entity_id
+                from dune.totems t
+                join dune.placeables tp on tp.id=t.id
+                join dune.permission_actor_rank par on par.permission_actor_id=t.id
+                where par.player_id = any(%s)
+            )
+            select inv.id, inv.actor_id, inv.inventory_type, inv.max_item_count,
+                   a.class, pa.actor_name, pt.totem_id
+            from permitted_totems pt
+            join dune.placeables child on child.owner_entity_id=pt.owner_entity_id and child.id<>pt.totem_id
+            join dune.actors a on a.id=child.id
+            join dune.inventories inv on inv.actor_id=child.id
+            left join dune.permission_actor pa on pa.actor_id=child.id
+            where a.class not like '%%/Characters/Player/%%'
+            order by pt.totem_id, pa.actor_name nulls last, inv.id
+            """,
+            (actor_ids,),
+        )
+        return cur.fetchall()
+
+
+def auction_source_inventories(conn, player, source="personal", explicit_inventory_id=None):
+    personal = player_inventory_ids(conn, player)
+    if source == "personal":
+        return personal
+    if source in ("base", "storage"):
+        if not chat_auction_base_storage_enabled():
+            raise ValueError("base/storage auction source is disabled")
+        return base_storage_inventory_ids(conn, player)
+    if source == "inventory":
+        if not chat_auction_base_storage_enabled():
+            raise ValueError("explicit inventory auction source is disabled")
+        base = base_storage_inventory_ids(conn, player)
+        allowed = {int(row["id"]) for row in personal + base}
+        inventory_id = int(explicit_inventory_id)
+        if inventory_id not in allowed:
+            raise ValueError(f"inventory {inventory_id} is not an allowed personal/base inventory for this player")
+        return [row for row in personal + base if int(row["id"]) == inventory_id]
+    raise ValueError(f"unknown auction source: {source}")
+
+
+def inventory_item_rows(conn, inventory_ids, explicit_item_id=None):
+    if explicit_item_id is not None:
+        where_clause = "i.id=%s and i.inventory_id = any(%s)"
+        params = (int(explicit_item_id), inventory_ids)
+    else:
+        where_clause = "i.inventory_id = any(%s)"
+        params = (inventory_ids,)
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            f"""
+            select i.id, i.inventory_id, i.stack_size, i.position_index, i.template_id,
+                   i.quality_level, i.stats, inv.actor_id, inv.inventory_type
+            from dune.items i
+            join dune.inventories inv on inv.id = i.inventory_id
+            where {where_clause}
+            order by i.template_id, i.quality_level desc, i.stack_size desc, i.id
+            """,
+            params,
+        )
+        return cur.fetchall()
+
+
+def fuzzy_item_suggestion(rows, search_text, count):
+    normalized = normalize_item_search(search_text)
+    wanted_tokens = [token for token in re.split(r"[^a-z0-9]+", search_text.lower()) if token]
+    ignored = {"improved", "basic", "advanced", "mk", "tier"}
+    scored = []
+    for row in rows:
+        if int(row.get("stack_size") or 0) < count:
+            continue
+        template = row.get("template_id") or ""
+        template_norm = normalize_item_search(template)
+        if not template_norm:
+            continue
+        ratio = difflib.SequenceMatcher(None, normalized, template_norm).ratio() if normalized else 0.0
+        token_hits = sum(1 for token in wanted_tokens if token not in ignored and token in template_norm)
+        prefix_bonus = 0.2 if template_norm.startswith(normalized[: min(len(normalized), 4)]) else 0.0
+        contains_bonus = 0.25 if normalized and normalized in template_norm else 0.0
+        score = ratio + contains_bonus + prefix_bonus + (token_hits * 0.1)
+        scored.append((score, row))
+    if not scored:
+        return None
+    scored.sort(key=lambda item: (item[0], int(item[1].get("stack_size") or 0)), reverse=True)
+    score, row = scored[0]
+    threshold = float(env("DUNE_CHAT_COMMAND_AUCTION_SUGGESTION_MIN_SCORE", "0.55"))
+    if score < threshold:
+        return None
+    return {
+        "itemId": row["id"],
+        "templateId": row["template_id"],
+        "stackSize": row["stack_size"],
+        "inventoryId": row["inventory_id"],
+        "qualityLevel": row["quality_level"],
+        "score": round(score, 3),
+    }
+
+
+def item_search_candidates(conn, player, search_text, source="personal", explicit_inventory_id=None, explicit_item_id=None, count=1):
+    inventories = auction_source_inventories(conn, player, source=source, explicit_inventory_id=explicit_inventory_id)
+    if not inventories:
+        return [], [], None
+    inventory_ids = [row["id"] for row in inventories]
+    if explicit_item_id is not None:
+        rows = inventory_item_rows(conn, inventory_ids, explicit_item_id=explicit_item_id)
+        return rows, inventories, None
+    normalized = normalize_item_search(search_text)
+    if not normalized:
+        return [], inventories, None
+    rows = inventory_item_rows(conn, inventory_ids)
+    exact = []
+    contains = []
+    token_contains = []
+    wanted_tokens = [token for token in re.split(r"[^a-z0-9]+", search_text.lower()) if token]
+    for row in rows:
+        template_norm = normalize_item_search(row["template_id"])
+        if template_norm == normalized:
+            exact.append(row)
+        elif normalized and normalized in template_norm:
+            contains.append(row)
+        elif wanted_tokens and all(token in template_norm for token in wanted_tokens if token not in {"improved", "basic", "advanced", "mk", "tier"}):
+            token_contains.append(row)
+    matches = exact or contains or token_contains
+    suggestion = None if matches else fuzzy_item_suggestion(rows, search_text, count)
+    return matches, inventories, suggestion
+
+
+def parse_auction_command_args(args):
+    if len(args) < 3:
+        raise ValueError('usage: &auction [--base|--inventory <id>] [--item-id <id>|"<item name or template>"] <count> <price>')
+    source = "personal"
+    explicit_inventory_id = None
+    explicit_item_id = None
+    remaining = list(args)
+    while remaining:
+        if remaining[0] in ("--base", "base", "--storage", "storage"):
+            source = "base"
+            remaining = remaining[1:]
+        elif remaining[0] in ("--inventory", "inventory", "--inv", "inv"):
+            if len(remaining) < 2:
+                raise ValueError("usage: &auction --inventory <inventory_id> <item> <count> <price>")
+            explicit_inventory_id = parse_positive_int(remaining[1], "inventory_id")
+            source = "inventory"
+            remaining = remaining[2:]
+        elif remaining[0] in ("--item-id", "item-id", "--item", "item"):
+            if len(remaining) < 2:
+                raise ValueError("usage: &auction --item-id <item_id> <count> <price>")
+            explicit_item_id = parse_positive_int(remaining[1], "item_id")
+            remaining = remaining[2:]
+        else:
+            break
+    if explicit_item_id is None and len(remaining) < 3:
+        raise ValueError('usage: &auction [--base|--inventory <id>] [--item-id <id>|"<item name or template>"] <count> <price>')
+    if explicit_item_id is not None and len(remaining) > 2:
+        raise ValueError("do not provide an item name when using --item-id")
+    if explicit_item_id is not None and len(remaining) < 2:
+        raise ValueError("usage: &auction --item-id <item_id> <count> <price>")
+    count = parse_positive_int(remaining[-2], "count")
+    price = parse_positive_int(remaining[-1], "price")
+    if explicit_item_id is None:
+        search_text = " ".join(remaining[:-2]).strip()
+        if not search_text:
+            raise ValueError('usage: &auction [--base|--inventory <id>] [--item-id <id>|"<item name or template>"] <count> <price>')
+    else:
+        if remaining[:-2]:
+            raise ValueError("do not provide an item name when using --item-id")
+        search_text = f"item-id:{explicit_item_id}"
+    return source, explicit_inventory_id, explicit_item_id, search_text, count, price
+
+
+def solari_balance(conn, owner_id):
+    with conn.cursor() as cur:
+        cur.execute("select dune.dune_exchange_retrieve_solari_balance(%s)", (owner_id,))
+        row = cur.fetchone()
+    return int(row[0] or 0) if row else 0
+
+
+def exchange_order_slots(conn, owner_id):
+    with conn.cursor() as cur:
+        cur.execute("select dune.get_dune_exchange_used_order_slots(%s)", (owner_id,))
+        row = cur.fetchone()
+    return int(row[0] or 0) if row else 0
+
+
+def auction_item(conn, player, search_text, count, price, dry_run=True, source="personal", explicit_inventory_id=None, explicit_item_id=None):
+    owner_id = int(player["player_controller_id"])
+    exchange_id = int(env("DUNE_CHAT_COMMAND_AUCTION_EXCHANGE_ID", "2"))
+    access_point_id = int(env("DUNE_CHAT_COMMAND_AUCTION_ACCESS_POINT_ID", "1"))
+    max_orders = int(env("DUNE_CHAT_COMMAND_AUCTION_MAX_ORDERS_PER_PLAYER", "50"))
+    solari_cost = int(env("DUNE_CHAT_COMMAND_AUCTION_LISTING_FEE", "0"))
+    duration_seconds = int(env("DUNE_CHAT_COMMAND_AUCTION_DURATION_SECONDS", "2419200"))
+    category_mask = int(env("DUNE_CHAT_COMMAND_AUCTION_CATEGORY_MASK", "0"))
+    category_depth = int(env("DUNE_CHAT_COMMAND_AUCTION_CATEGORY_DEPTH", "0"))
+    expires_at = int(time.time()) + duration_seconds
+
+    try:
+        matches, inventories, suggestion = item_search_candidates(conn, player, search_text, source=source, explicit_inventory_id=explicit_inventory_id, explicit_item_id=explicit_item_id, count=count)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    if not matches:
+        response = {
+            "ok": False,
+            "error": f"no allowed inventory item matched '{search_text}'",
+            "source": source,
+            "searchedInventories": [row["id"] for row in inventories],
+        }
+        if suggestion:
+            response["suggestion"] = suggestion
+        return response
+    templates = sorted({row["template_id"] for row in matches})
+    if len(templates) > 1:
+        return {
+            "ok": False,
+            "error": "item search is ambiguous: " + ", ".join(templates[:12]),
+            "source": source,
+            "matches": [
+                {"itemId": row["id"], "templateId": row["template_id"], "stackSize": row["stack_size"], "inventoryId": row["inventory_id"]}
+                for row in matches[:20]
+            ],
+        }
+
+    available = sum(int(row["stack_size"]) for row in matches)
+    if available < count:
+        return {
+            "ok": False,
+            "error": f"only {available}x {templates[0]} available, requested {count}",
+            "source": source,
+            "matches": [
+                {"itemId": row["id"], "templateId": row["template_id"], "stackSize": row["stack_size"], "inventoryId": row["inventory_id"]}
+                for row in matches
+            ],
+        }
+    if exchange_order_slots(conn, owner_id) >= max_orders:
+        return {"ok": False, "error": f"exchange order slot limit reached ({max_orders})"}
+    balance = solari_balance(conn, owner_id)
+    if balance < solari_cost:
+        return {"ok": False, "error": f"exchange Solari balance {balance} is below listing fee {solari_cost}"}
+
+    source_item = next((row for row in matches if int(row["stack_size"]) >= count), None)
+    if not source_item:
+        return {"ok": False, "error": "split-across-stacks listing is not supported yet; merge the stack first"}
+    stats = source_item.get("stats") or {}
+    durability = ((stats.get("FItemStackAndDurabilityStats") or [None, {}])[1] or {}) if isinstance(stats, dict) else {}
+    durability_cur = float(durability.get("CurrentDurability") or 100.0)
+    durability_max = float(durability.get("MaxDurability") or 100.0)
+    plan = {
+        "player": player["character_name"],
+        "ownerId": owner_id,
+        "exchangeId": exchange_id,
+        "accessPointId": access_point_id,
+        "itemId": source_item["id"],
+        "templateId": source_item["template_id"],
+        "count": count,
+        "price": price,
+        "listingFee": solari_cost,
+        "expiresAt": expires_at,
+        "sourceInventoryId": source_item["inventory_id"],
+        "sourceStackSize": source_item["stack_size"],
+        "source": source,
+        "explicitItemId": explicit_item_id,
+        "dryRun": dry_run,
+    }
+    if dry_run:
+        return {"ok": True, "action": "auction.preview", "plan": plan}
+
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            select *
+            from dune.dune_exchange_add_sell_order(
+              %s::bigint, %s::bigint, %s::bigint, %s::integer, %s::bigint,
+              %s::bigint, %s::bigint, %s::integer, %s::smallint, %s::real,
+              %s::real, %s::bigint, %s::bigint, %s::bigint, %s::bigint
+            )
+            """,
+            (
+                exchange_id,
+                access_point_id,
+                owner_id,
+                max_orders,
+                expires_at,
+                int(source_item["id"]),
+                count,
+                category_mask,
+                category_depth,
+                durability_cur,
+                durability_max,
+                price,
+                price,
+                int(source_item["quality_level"] or 0),
+                solari_cost,
+            ),
+        )
+        result = cur.fetchone()
+        order_id = int(result.get("order_id") or 0) if result else 0
+        slots = int(result.get("order_slots_used") or 0) if result else 0
+        if order_id <= 0:
+            conn.rollback()
+            return {"ok": False, "error": "exchange function returned order_id=0", "plan": plan, "orderSlotsUsed": slots}
+        cur.execute(
+            """
+            select o.id, o.owner_id, o.item_id, o.template_id, o.item_price, o.expiration_time,
+                   i.stack_size, i.inventory_id
+            from dune.dune_exchange_orders o
+            join dune.items i on i.id=o.item_id
+            where o.id=%s
+            """,
+            (order_id,),
+        )
+        order = cur.fetchone()
+    conn.commit()
+    return {"ok": True, "action": "auction.created", "plan": plan, "order": dict(order), "orderSlotsUsed": slots}
 
 
 def specialization_track_types(conn):
@@ -882,16 +1258,34 @@ def kick_candidate_routes(conn, target):
     ]
 
 
-def run_announce(message):
+def run_announce(message, target_name="", target_fls_id=""):
     command = env("DUNE_CHAT_COMMAND_REPLY_COMMAND", env("DUNE_ADMIN_ANNOUNCE_COMMAND", "/workspace/scripts/announce.sh"))
+    if command.startswith("/workspace/") and not pathlib.Path(command).exists():
+        command = str(ROOT / command.removeprefix("/workspace/"))
     wrapped = f"[Paul] {message}"
+    child_env = os.environ.copy()
+    child_env.update(FILE_ENV)
+    cwd = ROOT
+    if target_name and target_fls_id and env_bool("DUNE_CHAT_COMMAND_PRIVATE_REPLIES_ENABLED", False):
+        child_env["DUNE_ANNOUNCE_ENV_OVERRIDES_FILE"] = "true"
+        child_env["DUNE_ANNOUNCE_CHAT_EXCHANGE"] = env("DUNE_CHAT_COMMAND_PRIVATE_REPLY_EXCHANGE", "chat.whispers")
+        child_env["DUNE_ANNOUNCE_CHAT_CHANNEL"] = env("DUNE_CHAT_COMMAND_PRIVATE_REPLY_CHANNEL", "Whisper")
+        child_env["DUNE_ANNOUNCE_CHAT_USER_NAME_TO"] = target_name
+        child_env["DUNE_ANNOUNCE_CHAT_TARGET_QUEUES"] = f"{target_fls_id}_queue"
+        child_env["DUNE_ANNOUNCE_CHAT_ROUTING_KEYS"] = env("DUNE_CHAT_COMMAND_PRIVATE_REPLY_ROUTING_KEY", target_fls_id)
+        child_env["DUNE_ANNOUNCE_WRAP_DASHBOARD_MESSAGES"] = "false"
+        cwd = "/tmp"
+    elif target_name:
+        child_env["DUNE_ANNOUNCE_CHAT_USER_NAME_TO"] = target_name
     result = subprocess.run(
         [command, wrapped],
+        cwd=cwd,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         timeout=float(env("DUNE_CHAT_COMMAND_REPLY_TIMEOUT_SECONDS", "10")),
         check=False,
+        env=child_env,
     )
     return {
         "ok": result.returncode == 0,
@@ -1042,6 +1436,112 @@ def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=F
         return {"ok": True, "ignored": True}
 
     command = parts[0].lower()
+    if command == "auction":
+        if len(parts) == 2 and parts[1].lower() in ("yes", "y", "no", "n"):
+            resolved_name = resolve_sender_character(conn, sender_name, sender_fls_id)
+            confirm_key = auction_confirmation_key(sender_name, sender_fls_id, resolved_name)
+            pending = AUCTION_CONFIRMATIONS.get(confirm_key)
+            if not pending or int(time.time()) > int(pending.get("expiresAt", 0)):
+                AUCTION_CONFIRMATIONS.pop(confirm_key, None)
+                response = "no pending auction suggestion"
+                if reply:
+                    run_announce(response, target_name=resolved_name or sender_name, target_fls_id=sender_fls_id)
+                return {"ok": False, "error": response}
+            if parts[1].lower() in ("no", "n"):
+                AUCTION_CONFIRMATIONS.pop(confirm_key, None)
+                response = "auction suggestion cancelled"
+                if reply:
+                    run_announce(response, target_name=resolved_name or sender_name, target_fls_id=sender_fls_id)
+                return {"ok": True, "action": "auction.cancelled", "message": response}
+            player, matches = character_row(conn, resolved_name)
+            if player is None:
+                response = "could not resolve your character for auction"
+                if matches:
+                    response = "no unique character match: " + ", ".join(row["character_name"] for row in matches)
+                if reply:
+                    run_announce(response, target_name=resolved_name or sender_name, target_fls_id=sender_fls_id)
+                return {"ok": False, "error": response}
+            dry_run = not chat_auction_enabled()
+            result = auction_item(
+                conn,
+                player,
+                pending["searchText"],
+                int(pending["count"]),
+                int(pending["price"]),
+                dry_run=dry_run,
+                source=pending["source"],
+                explicit_inventory_id=pending.get("explicitInventoryId"),
+                explicit_item_id=pending["itemId"],
+            )
+            AUCTION_CONFIRMATIONS.pop(confirm_key, None)
+            if result.get("ok"):
+                plan = result.get("plan") or {}
+                source_inventory = plan.get("sourceInventoryId")
+                if dry_run:
+                    source_label = f" from inventory {source_inventory}" if plan.get("source") != "personal" and source_inventory else ""
+                    response = f"auction preview: {plan.get('count')}x {plan.get('templateId')}{source_label} for {plan.get('price')}; enable DUNE_CHAT_COMMAND_AUCTION_ENABLED to execute"
+                else:
+                    order = result.get("order") or {}
+                    source_label = f" from inventory {source_inventory}" if source_inventory else ""
+                    response = f"auction listed {plan.get('count')}x {plan.get('templateId')}{source_label} for {plan.get('price')}; order {order.get('id')}"
+            else:
+                response = result.get("error", "auction failed")
+            if reply:
+                run_announce(response, target_name=resolved_name or sender_name, target_fls_id=sender_fls_id)
+            return result | {"message": response, "dryRun": dry_run}
+
+        try:
+            source, explicit_inventory_id, explicit_item_id, search_text, count, price = parse_auction_command_args(parts[1:])
+        except ValueError as exc:
+            response = str(exc)
+            if reply:
+                run_announce(response, target_name=sender_name, target_fls_id=sender_fls_id)
+            return {"ok": False, "error": response}
+        resolved_name = resolve_sender_character(conn, sender_name, sender_fls_id)
+        player, matches = character_row(conn, resolved_name)
+        if player is None:
+            response = "could not resolve your character for auction"
+            if matches:
+                response = "no unique character match: " + ", ".join(row["character_name"] for row in matches)
+            if reply:
+                run_announce(response, target_name=resolved_name or sender_name, target_fls_id=sender_fls_id)
+            return {"ok": False, "error": response}
+        dry_run = not chat_auction_enabled()
+        result = auction_item(conn, player, search_text, count, price, dry_run=dry_run, source=source, explicit_inventory_id=explicit_inventory_id, explicit_item_id=explicit_item_id)
+        if result.get("ok"):
+            plan = result.get("plan") or {}
+            source_inventory = plan.get("sourceInventoryId")
+            if dry_run:
+                source_label = f" from inventory {source_inventory}" if plan.get("source") != "personal" and source_inventory else ""
+                response = f"auction preview: {count}x {plan.get('templateId')}{source_label} for {price}; enable DUNE_CHAT_COMMAND_AUCTION_ENABLED to execute"
+            else:
+                order = result.get("order") or {}
+                source_label = f" from inventory {source_inventory}" if source_inventory else ""
+                response = f"auction listed {count}x {plan.get('templateId')}{source_label} for {price}; order {order.get('id')}"
+        else:
+            response = result.get("error", "auction failed")
+            suggestion = result.get("suggestion")
+            if suggestion and explicit_item_id is None:
+                confirm_key = auction_confirmation_key(sender_name, sender_fls_id, resolved_name)
+                AUCTION_CONFIRMATIONS[confirm_key] = {
+                    "itemId": int(suggestion["itemId"]),
+                    "templateId": suggestion["templateId"],
+                    "inventoryId": int(suggestion["inventoryId"]),
+                    "source": source,
+                    "explicitInventoryId": explicit_inventory_id,
+                    "searchText": search_text,
+                    "count": count,
+                    "price": price,
+                    "expiresAt": int(time.time()) + auction_confirmation_ttl(),
+                }
+                response = (
+                    f"no exact match for '{search_text}'. did you mean {suggestion['templateId']} "
+                    f"from inventory {suggestion['inventoryId']}? reply &auction yes or &auction no"
+                )
+        if reply:
+            run_announce(response, target_name=resolved_name or sender_name, target_fls_id=sender_fls_id)
+        return result | {"message": response, "dryRun": dry_run}
+
     allowed, resolved_admin = is_admin(conn, sender_name, sender_fls_id)
     if not allowed:
         response = f"command denied for {resolved_admin or sender_name or sender_fls_id or 'unknown'}"

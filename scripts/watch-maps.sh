@@ -23,6 +23,9 @@ Environment:
   DUNE_WATCH_STARTUP_GRACE   Seconds to let running maps warm before DB recovery. Default: 300
   DUNE_WATCH_LOCK_DIR        Single-instance lock dir. Default: /tmp/dune-map-watchdog.lock
   DUNE_WATCH_REQUIRE_READY    Recover running maps with ready=false. Default: false
+  DUNE_WATCH_RECOVER_COMMAND Recovery command. Default: scripts/recover-map.sh
+  DUNE_WATCH_SEED_NEIGHBORS Seed known Docker bridge neighbor entries. Default: false
+  DUNE_WATCH_SEED_COMMAND   Neighbor seed command. Default: scripts/seed-gateway-neighbor.sh
 USAGE
 }
 
@@ -52,6 +55,9 @@ cooldown="${DUNE_WATCH_COOLDOWN:-300}"
 startup_grace="${DUNE_WATCH_STARTUP_GRACE:-300}"
 lock_dir="${DUNE_WATCH_LOCK_DIR:-/tmp/dune-map-watchdog.lock}"
 require_ready="${DUNE_WATCH_REQUIRE_READY:-false}"
+recover_command="${DUNE_WATCH_RECOVER_COMMAND:-$(dirname "$0")/recover-map.sh}"
+seed_neighbors="${DUNE_WATCH_SEED_NEIGHBORS:-false}"
+seed_command="${DUNE_WATCH_SEED_COMMAND:-$(dirname "$0")/seed-gateway-neighbor.sh}"
 
 if [[ ! "$interval" =~ ^[0-9]+$ || ! "$recovery_wait" =~ ^[0-9]+$ || ! "$cooldown" =~ ^[0-9]+$ || ! "$startup_grace" =~ ^[0-9]+$ ]]; then
   printf 'DUNE_WATCH_INTERVAL, DUNE_WATCH_RECOVERY_WAIT, DUNE_WATCH_COOLDOWN, and DUNE_WATCH_STARTUP_GRACE must be numeric\n' >&2
@@ -214,8 +220,28 @@ recover_service() {
   fi
 
   log "recovering map: service=$service partition=$partition_id reason=$reason"
-  COMPOSE_FILES="${COMPOSE_FILES:-compose.yaml}" CONTAINER_RUNTIME="$container_runtime" \
-    "$(dirname "$0")/recover-map.sh" "$env_file" "$service" "$partition_id" "$recovery_wait"
+  if ! COMPOSE_FILES="${COMPOSE_FILES:-compose.yaml}" CONTAINER_RUNTIME="$container_runtime" \
+    "$recover_command" "$env_file" "$service" "$partition_id" "$recovery_wait"; then
+    log "map recovery failed: service=$service partition=$partition_id reason=$reason"
+    if [[ "$mode" == "--once" ]]; then
+      return 1
+    fi
+  fi
+}
+
+seed_network_neighbors() {
+  if [[ "$seed_neighbors" != "true" ]]; then
+    return
+  fi
+
+  if [[ ! -x "$seed_command" ]]; then
+    log "skip neighbor seeding; command is not executable: $seed_command"
+    return
+  fi
+
+  if ! CONTAINER_RUNTIME="$container_runtime" "$seed_command" >/dev/null; then
+    log "neighbor seeding failed: command=$seed_command"
+  fi
 }
 
 check_once() {
@@ -270,6 +296,9 @@ check_once() {
 }
 
 while true; do
+  if [[ "$mode" != "--status" && "$mode" != "--dry-run" ]]; then
+    seed_network_neighbors
+  fi
   check_once
   if [[ "$mode" == "--once" || "$mode" == "--status" || "$mode" == "--dry-run" ]]; then
     exit 0

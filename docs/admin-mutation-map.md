@@ -313,6 +313,13 @@ POST /api/admin/landclaim
 POST /api/admin/exchange
 POST /api/admin/player-tags
 POST /api/admin/access-code
+POST /api/admin/communinet
+POST /api/admin/tutorial
+POST /api/admin/permission
+POST /api/admin/vendor
+GET /api/admin/character-slots?account_id=<id>
+POST /api/admin/character-slots/plan
+POST /api/admin/character-slots/execute
 ```
 
 Mapped first-party functions:
@@ -350,6 +357,18 @@ dune.get_player_access_codes(in_account_id bigint)
 dune.create_server_player_access_codes(in_account_id bigint, in_access_code integer, in_access_code_type integer, in_is_resettable boolean)
 dune.delete_server_player_access_codes(in_account_id bigint, in_access_code integer, in_access_code_type integer)
 dune.reset_server_all_player_access_codes(in_account_id bigint)
+dune.load_communinet_player_data(in_account_id bigint)
+dune.update_communinet_player_data(in_account_id bigint, in_is_active boolean, in_selected_channel_name text)
+dune.update_communinet_player_channel(in_account_id bigint, in_channel_name text, in_is_tuned boolean)
+dune.remove_communinet_player_channel(in_account_id bigint, in_channel_name text)
+dune.get_all_tutorial_entries(in_player_id bigint)
+dune.create_or_update_tutorial_entry(in_player_id bigint, in_tutorial_id smallint, in_tutorial_state smallint)
+dune.permission_set_name(in_actor_id bigint, in_name text)
+dune.permission_set_access_level(in_actor_id bigint, in_access_level smallint)
+dune.permission_set_player_rank(in_actor_id bigint, in_player_id bigint, in_rank smallint, in_map_id text)
+dune.permission_remove_player_rank(in_actor_id bigint, in_player_id bigint)
+dune.update_vendor_timestamp_for_player(in_vendor_id text, in_player_id bigint, in_timestamp bigint)
+dune.interact_get_vendor_items_bought_from_player(in_vendor_id text, in_player_id bigint, in_current_cycle_start_timestamp bigint)
 ```
 
 Separate gates:
@@ -366,6 +385,11 @@ DUNE_ADMIN_LANDCLAIM_MUTATIONS_ENABLED=false
 DUNE_ADMIN_EXCHANGE_MUTATIONS_ENABLED=false
 DUNE_ADMIN_PLAYER_TAG_MUTATIONS_ENABLED=false
 DUNE_ADMIN_ACCESS_CODE_MUTATIONS_ENABLED=false
+DUNE_ADMIN_COMMUNINET_MUTATIONS_ENABLED=false
+DUNE_ADMIN_TUTORIAL_MUTATIONS_ENABLED=false
+DUNE_ADMIN_PERMISSION_MUTATIONS_ENABLED=false
+DUNE_ADMIN_VENDOR_MUTATIONS_ENABLED=false
+DUNE_ADMIN_CHARACTER_SWAP_ENABLED=false
 ```
 
 Confirmation phrases:
@@ -382,6 +406,11 @@ WRITE LANDCLAIM
 WRITE EXCHANGE
 WRITE PLAYER TAGS
 WRITE ACCESS CODES
+WRITE COMMUNINET
+WRITE TUTORIAL
+WRITE PERMISSION
+WRITE VENDOR
+SWAP CHARACTER
 ```
 
 Current confidence:
@@ -397,6 +426,57 @@ Current confidence:
 - Dune Exchange Solari balance: moderate mechanically because first-party retrieve/modify functions exist; high economy risk. Order lifecycle functions remain blocked.
 - Player tags: moderate mechanically because first-party read/update functions exist; medium operational risk.
 - Access codes: moderate mechanically because first-party create/delete/reset functions exist; high operational risk because reset rollback is manual.
+- Communinet: moderate mechanically because first-party read/update/remove functions exist; medium social/channel-state risk.
+- Tutorial entry: moderate mechanically because first-party get/update functions exist; medium progression risk.
+- Permission actor name/access/rank: moderate mechanically because first-party functions exist; high base access risk.
+- Vendor stock-cycle timestamp: moderate mechanically because a first-party setter exists; medium economy/vendor-limit risk.
+- Character slots: moderate for inspection because it reads `player_state`, `accounts`, `pg_proc`, and `information_schema`; execution is blocked unless the plan reports a validated native hibernate/switch contract. No synthetic blank character rows or raw `player_state` surgery are allowed.
+
+## Character Slot Hibernation And Switch
+
+The panel endpoints are:
+
+```text
+GET /api/admin/character-slots?account_id=<id>
+POST /api/admin/character-slots/plan
+POST /api/admin/character-slots/execute
+```
+
+The read path inspects the active account row, candidate same-owner character rows, known identity columns, and native lifecycle function signatures. The inspected function set includes:
+
+```text
+login_account
+delete_account
+takeover_account
+save_player
+save_player_pawn
+export_character
+import_character
+transfer_character
+```
+
+Those functions are evidence, not authorization. Execution stays blocked unless a future implementation can prove a native hibernate/switch path that avoids raw table surgery.
+
+Safe dry-run payloads:
+
+```json
+{"dry_run": true, "account_id": 456, "action": "new-character"}
+```
+
+```json
+{"dry_run": true, "account_id": 456, "action": "switch-character", "target_account_id": 789}
+```
+
+Fail-closed rules:
+
+- `switch-character` and `restore-character` require `target_account_id`.
+- The target must be in the same-owner candidate set.
+- Online active or target characters make the plan non-executable.
+- Missing native contract returns `executable: false`.
+- Non-dry-run execution requires `DUNE_ADMIN_MUTATIONS_ENABLED=true`, `DUNE_ADMIN_CHARACTER_SWAP_ENABLED=true`, and `confirm: "SWAP CHARACTER"`.
+- Even with gates enabled, execution stops before backup/write when the plan is not executable.
+
+Safe tests currently cover direct planner behavior plus handler-route behavior for GET, plan POST, dry-run execute POST, and rejected live execute POST. They intentionally do not fake `safeNativeSwapPath=true`, because that would normalize an execution path that has not been proven against native Dune lifecycle semantics.
 
 ## Landsraad Term Administration
 
@@ -723,6 +803,199 @@ dune.reset_server_all_player_access_codes(in_account_id bigint)
 Execution is blocked unless the global mutation gate and `DUNE_ADMIN_ACCESS_CODE_MUTATIONS_ENABLED=true` are both set, and the request includes `confirm: "WRITE ACCESS CODES"`.
 
 Create/delete have compensating rollback. Reset is higher risk because rollback requires recreating prior access codes from the dry-run/audit record.
+
+## Communinet
+
+The panel endpoint is:
+
+```text
+POST /api/admin/communinet
+```
+
+Supported actions:
+
+```text
+update-data
+update-channel
+remove-channel
+```
+
+Mapped functions:
+
+```sql
+dune.load_communinet_player_data(in_account_id bigint)
+dune.update_communinet_player_data(in_account_id bigint, in_is_active boolean, in_selected_channel_name text)
+dune.update_communinet_player_channel(in_account_id bigint, in_channel_name text, in_is_tuned boolean)
+dune.remove_communinet_player_channel(in_account_id bigint, in_channel_name text)
+```
+
+Execution is blocked unless the global mutation gate and `DUNE_ADMIN_COMMUNINET_MUTATIONS_ENABLED=true` are both set, and the request includes `confirm: "WRITE COMMUNINET"`.
+
+Rollback is a compensating data/channel update from prior rows recorded in the dry-run/audit record. Current local evidence shows 16 `communinet_player` rows and 112 `communinet_player_channels` rows.
+
+## Blocked Vendor, Tutorial, Lore, Dungeon, Overmap, And Coriolis Routes
+
+The following functions are cataloged but blocked:
+
+```sql
+dune.player_purchased_item_from_vendor(...)
+dune.update_vendor_timestamp_for_player(...)
+dune.clean_stock_for_player(...)
+dune.create_or_update_tutorial_entry(...)
+dune.delete_all_tutorial_entries(...)
+dune.register_lore_pickup(...)
+dune.register_per_player_lore_pickup(...)
+dune.update_consumed_per_player_lore(...)
+dune.record_dungeon_completion(...)
+dune.delete_all_dungeon_completions_by_player(...)
+dune.overmap_save_player_survival_data(...)
+dune.overmap_delete_player_survival_data(...)
+dune.update_coriolis_for_player(...)
+dune.coriolis_update_seed(...)
+```
+
+Local evidence found:
+
+```text
+communinet_player: 16
+communinet_player_channels: 112
+tutorial_per_player: 223
+overmap_players: 1
+dungeon_completion_players: 0
+```
+
+Confidence is moderate for function existence and low for safe admin mutation semantics. These routes affect client progression, vendor limits, survival/overmap state, dungeon records, and map/server lifecycle behavior.
+
+## Tutorial Entry
+
+The panel endpoint is:
+
+```text
+POST /api/admin/tutorial
+```
+
+Mapped functions:
+
+```sql
+dune.get_all_tutorial_entries(in_player_id bigint)
+dune.create_or_update_tutorial_entry(in_player_id bigint, in_tutorial_id smallint, in_tutorial_state smallint)
+```
+
+Execution is blocked unless the global mutation gate and `DUNE_ADMIN_TUTORIAL_MUTATIONS_ENABLED=true` are both set, and the request includes `confirm: "WRITE TUTORIAL"`.
+
+Rollback is a compensating state update when a previous row existed. If the dry-run shows no previous row, deletion rollback is not exposed because no narrow single-entry delete function is mapped.
+
+## Permission Actor
+
+The panel endpoint is:
+
+```text
+POST /api/admin/permission
+```
+
+Supported actions:
+
+```text
+set-name
+set-access-level
+set-player-rank
+remove-player-rank
+```
+
+Mapped functions:
+
+```sql
+dune.permission_set_name(in_actor_id bigint, in_name text)
+dune.permission_set_access_level(in_actor_id bigint, in_access_level smallint)
+dune.permission_set_player_rank(in_actor_id bigint, in_player_id bigint, in_rank smallint, in_map_id text)
+dune.permission_remove_player_rank(in_actor_id bigint, in_player_id bigint)
+```
+
+Execution is blocked unless the global mutation gate and `DUNE_ADMIN_PERMISSION_MUTATIONS_ENABLED=true` are both set, and the request includes `confirm: "WRITE PERMISSION"`.
+
+Dry-run reads `dune.permission_actor` and `dune.permission_actor_rank` for rollback context. Confidence is moderate mechanically and high risk operationally.
+
+Blocked permission functions:
+
+```sql
+dune.permission_actor_register(...)
+dune.permission_actor_takeover(...)
+dune.permission_actor_destroy(...)
+dune.permission_actor_create_or_update_base_marker(...)
+dune.permission_actor_update_marker_location(...)
+```
+
+Local evidence found:
+
+```text
+permission_actor: 72
+permission_actor_rank: 19
+```
+
+## Vendor Cycle Timestamp
+
+The panel endpoint is:
+
+```text
+POST /api/admin/vendor
+```
+
+Supported action:
+
+```text
+set-cycle-timestamp
+```
+
+Mapped functions:
+
+```sql
+dune.update_vendor_timestamp_for_player(in_vendor_id text, in_player_id bigint, in_timestamp bigint)
+dune.interact_get_vendor_items_bought_from_player(in_vendor_id text, in_player_id bigint, in_current_cycle_start_timestamp bigint)
+```
+
+Execution is blocked unless the global mutation gate and `DUNE_ADMIN_VENDOR_MUTATIONS_ENABLED=true` are both set, and the request includes `confirm: "WRITE VENDOR"`.
+
+Dry-run reads the prior `dune.vendor_stock_cycle` row and item-bought view for the proposed timestamp.
+
+Local evidence found:
+
+```text
+vendor_stock_cycle: 6
+vendor_stock_state: 0
+```
+
+## Blocked Taxation, Landsraad Task, Vendor Stock, Lore, And Dungeon Routes
+
+The following functions are cataloged but blocked:
+
+```sql
+dune.taxation_pay_invoice(...)
+dune.taxation_remove_invoices(...)
+dune.taxation_update_invoice_status(...)
+dune.landsraad_insert_task_progress(...)
+dune.landsraad_update_task_faction_reveal_state(...)
+dune.landsraad_perform_daily_task_reveal(...)
+dune.player_purchased_item_from_vendor(...)
+dune.clean_stock_for_vendors(...)
+dune.register_lore_pickup(...)
+dune.register_per_player_lore_pickup(...)
+dune.update_consumed_per_player_lore(...)
+dune.record_dungeon_completion(...)
+dune.delete_all_dungeon_completions_by_player(...)
+```
+
+Local evidence found:
+
+```text
+tutorials: 103
+tutorial_per_player: 223
+vendor_stock_state: 0
+vendor_stock_cycle: 6
+landsraad_task_progress_player: 0
+landsraad_task_player_contributions: 0
+```
+
+Confidence is moderate for existence and low for safe mutation semantics. These routes affect base permissions, taxes, competitive Landsraad progression, and vendor limits.
 
 ## Blocked Player Lifecycle Routes
 

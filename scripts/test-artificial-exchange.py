@@ -1,0 +1,255 @@
+#!/usr/bin/env python3
+import csv
+import importlib.util
+import pathlib
+import types
+import tempfile
+import unittest
+from unittest import mock
+
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+
+def load_script(name, path):
+    spec = importlib.util.spec_from_file_location(name, ROOT / path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+catalog = load_script("build_exchange_catalog_under_test", "scripts/build-exchange-catalog.py")
+bot = load_script("artificial_exchange_bot_under_test", "scripts/artificial-exchange-bot.py")
+
+
+class ArtificialExchangeCatalogTest(unittest.TestCase):
+    def write_csv(self, path, rows):
+        with path.open("w", newline="", encoding="utf-8") as fh:
+            writer = csv.DictWriter(fh, fieldnames=catalog.FIELDS)
+            writer.writeheader()
+            for row in rows:
+                writer.writerow(row)
+
+    def base_row(self, template_id="ItemA", **overrides):
+        row = {
+            "template_id": template_id,
+            "display_name": template_id,
+            "category": "materials",
+            "sellable_status": "validated",
+            "baseline_price": "100",
+            "max_buy_price": "80",
+            "liquidity_tier": "medium",
+            "enabled": "true",
+            "source": "manual",
+            "confidence": "moderate",
+            "notes": "",
+        }
+        row.update(overrides)
+        return row
+
+    def test_manual_rows_validate_and_override_snapshot_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = pathlib.Path(tmp)
+            manual = tmp_path / "manual.csv"
+            snapshot_dir = tmp_path / "snapshots"
+            output_dir = tmp_path / "out"
+            snapshot_dir.mkdir()
+            self.write_csv(snapshot_dir / "snapshot.csv", [
+                self.base_row("ItemA", baseline_price="50", max_buy_price="40", enabled="false", source="snapshot", confidence="low"),
+                self.base_row("ItemB", baseline_price="200", max_buy_price="", enabled="false", source="snapshot", confidence="low"),
+            ])
+            self.write_csv(manual, [self.base_row("ItemA", baseline_price="120", max_buy_price="90", confidence="high")])
+
+            merged = {}
+            snapshots = []
+            for path in snapshot_dir.glob("*.csv"):
+                snapshots.extend(catalog.read_csv_rows(path))
+            for row in catalog.merge_snapshot_rows(snapshots):
+                merged.setdefault(row["template_id"], row)
+            for row in catalog.read_csv_rows(manual):
+                merged[row["template_id"]] = row
+            latest_json, latest_csv = catalog.write_outputs([merged[tid] for tid in sorted(merged)], output_dir)
+
+            self.assertTrue(latest_json.exists())
+            self.assertTrue(latest_csv.exists())
+            self.assertEqual(merged["ItemA"]["baseline_price"], 120)
+            self.assertEqual(merged["ItemA"]["max_buy_price"], 90)
+            self.assertTrue(merged["ItemA"]["enabled"])
+            self.assertFalse(merged["ItemB"]["enabled"])
+            self.assertEqual(merged["ItemB"]["max_buy_price"], 160)
+
+    def test_snapshot_median_requires_three_rows_for_moderate_confidence(self):
+        rows = [
+            catalog.clean_row(self.base_row("ItemA", baseline_price="100", enabled="false"), "row1"),
+            catalog.clean_row(self.base_row("ItemA", baseline_price="200", enabled="false"), "row2"),
+            catalog.clean_row(self.base_row("ItemA", baseline_price="300", enabled="false"), "row3"),
+        ]
+        merged = catalog.merge_snapshot_rows(rows)
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0]["baseline_price"], 200)
+        self.assertEqual(merged[0]["max_buy_price"], 160)
+        self.assertEqual(merged[0]["confidence"], "moderate")
+        self.assertEqual(merged[0]["liquidity_tier"], "medium")
+
+    def test_malformed_price_duplicate_and_unknown_confidence_fail(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "bad.csv"
+            self.write_csv(path, [self.base_row("ItemA", baseline_price="nope")])
+            with self.assertRaises(ValueError):
+                catalog.read_csv_rows(path)
+
+            self.write_csv(path, [self.base_row("ItemA"), self.base_row("ItemA")])
+            with self.assertRaises(ValueError):
+                catalog.read_csv_rows(path)
+
+            self.write_csv(path, [self.base_row("ItemB", confidence="certain")])
+            with self.assertRaises(ValueError):
+                catalog.read_csv_rows(path)
+
+
+class ArtificialExchangeBotTest(unittest.TestCase):
+    def setUp(self):
+        self.original_env = dict(bot.FILE_ENV)
+        bot.FILE_ENV.clear()
+
+    def tearDown(self):
+        bot.FILE_ENV.clear()
+        bot.FILE_ENV.update(self.original_env)
+
+    def order(self, **overrides):
+        row = {"id": 1, "owner_id": 10, "template_id": "ItemA", "item_price": 75, "revision": "1"}
+        row.update(overrides)
+        return row
+
+    def catalog_row(self, template_id="ItemA", **overrides):
+        row = {"template_id": template_id, "max_buy_price": 80, "baseline_price": 100, "enabled": True, "liquidity_tier": "medium", "sellable_status": "validated"}
+        row.update(overrides)
+        return row
+
+    def test_price_and_daily_caps_are_enforced(self):
+        state = {"spent_global": 0, "spent_by_seller": {}, "spent_by_template": {}}
+        ok, reason = bot.spend_available(state, self.order(item_price=90), self.catalog_row(max_buy_price=80))
+        self.assertFalse(ok)
+        self.assertEqual(reason, "above max_buy_price")
+
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_DAILY_SOLARI_CAP"] = "100"
+        state["spent_global"] = 50
+        ok, reason = bot.spend_available(state, self.order(item_price=75), self.catalog_row(max_buy_price=100))
+        self.assertFalse(ok)
+        self.assertEqual(reason, "global daily cap")
+
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_DAILY_SOLARI_CAP"] = "1000"
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_DAILY_SELLER_CAP"] = "100"
+        state = {"spent_global": 0, "spent_by_seller": {"10": 50}, "spent_by_template": {}}
+        ok, reason = bot.spend_available(state, self.order(item_price=75), self.catalog_row(max_buy_price=100))
+        self.assertFalse(ok)
+        self.assertEqual(reason, "seller daily cap")
+
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_DAILY_SELLER_CAP"] = "1000"
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_DAILY_TEMPLATE_CAP"] = "100"
+        state = {"spent_global": 0, "spent_by_seller": {}, "spent_by_template": {"ItemA": 50}}
+        ok, reason = bot.spend_available(state, self.order(item_price=75), self.catalog_row(max_buy_price=100))
+        self.assertFalse(ok)
+        self.assertEqual(reason, "template daily cap")
+
+    def test_record_spend_updates_all_daily_buckets(self):
+        state = {"spent_global": 0, "spent_by_seller": {}, "spent_by_template": {}}
+        bot.record_spend(state, self.order(item_price=75))
+        self.assertEqual(state["spent_global"], 75)
+        self.assertEqual(state["spent_by_seller"]["10"], 75)
+        self.assertEqual(state["spent_by_template"]["ItemA"], 75)
+
+    def test_blocked_sellers_and_probability_env(self):
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_BLOCKED_SELLERS"] = "10, 20"
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_MEDIUM_BUY_PROBABILITY"] = "0.42"
+        self.assertEqual(bot.blocked_sellers(), {"10", "20"})
+        self.assertEqual(bot.buy_probability("medium"), 0.42)
+
+    def test_settlement_status_blocks_missing_currency_balance(self):
+        purchased = {"completion_type": 0, "item_id": 100, "currency_balance": None}
+        self.assertEqual(bot.settlement_status(purchased), "purchased_item_storage")
+        self.assertFalse(bot.settlement_claim_safe(purchased))
+
+        unsafe = {"completion_type": 1, "item_id": None, "currency_balance": None}
+        self.assertEqual(bot.settlement_status(unsafe), "unsafe_missing_base_solaris_balance")
+        self.assertFalse(bot.settlement_claim_safe(unsafe))
+
+        safe = {"completion_type": 1, "item_id": None, "currency_balance": 500}
+        self.assertEqual(bot.settlement_status(safe), "seller_solari_claim_ready")
+        self.assertTrue(bot.settlement_claim_safe(safe))
+
+    def test_settlement_status_flags_unknown_completion_type(self):
+        row = {"completion_type": 99, "item_id": None, "currency_balance": 500}
+        self.assertEqual(bot.settlement_status(row), "unknown_completion_type")
+        self.assertFalse(bot.settlement_claim_safe(row))
+
+    def test_settlement_claim_key_includes_idempotency_fields(self):
+        row = {"order_id": 7, "source_order_id": None, "original_order_id": 5, "completion_type": 1}
+        self.assertEqual(bot.settlement_claim_key(row), "7::5:1")
+
+    def test_env_bool_defaults_and_overrides(self):
+        self.assertFalse(bot.env_bool("DUNE_ARTIFICIAL_EXCHANGE_ENABLED", False))
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_ENABLED"] = "true"
+        self.assertTrue(bot.env_bool("DUNE_ARTIFICIAL_EXCHANGE_ENABLED", False))
+
+    def test_buyer_skips_npc_and_populator_owner_by_default(self):
+        args = types.SimpleNamespace(include_npc_test_orders=False)
+        self.assertEqual(bot.buyer_skip_reason(self.order(is_npc_order=True), args), "npc order skipped")
+
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_OWNER_ID"] = "10"
+        self.assertEqual(bot.buyer_skip_reason(self.order(is_npc_order=False), args), "populator owner skipped")
+
+        args.include_npc_test_orders = True
+        self.assertEqual(bot.buyer_skip_reason(self.order(is_npc_order=True), args), "")
+        self.assertEqual(bot.buyer_skip_reason(self.order(is_npc_order=False), args), "")
+
+    def test_populator_catalog_filter_requires_enabled_baseline_and_validated(self):
+        catalog_rows = {
+            "enabled": self.catalog_row("enabled"),
+            "disabled": self.catalog_row("disabled", enabled=False),
+            "missing-price": self.catalog_row("missing-price", baseline_price=""),
+            "unvalidated": self.catalog_row("unvalidated", sellable_status="observed"),
+        }
+        self.assertEqual([row["template_id"] for row in bot.populator_catalog_rows(catalog_rows)], ["enabled"])
+
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_VALIDATED"] = "false"
+        self.assertEqual(
+            [row["template_id"] for row in bot.populator_catalog_rows(catalog_rows)],
+            ["enabled", "unvalidated"],
+        )
+
+    def test_populator_price_and_expiry_jitter_bounds(self):
+        with mock.patch.object(bot.random, "randint", side_effect=lambda low, high: low):
+            self.assertEqual(bot.jitter_price(100, 20), 80)
+            self.assertEqual(bot.jitter_expiration(1000, 60, 120), 1060)
+        with mock.patch.object(bot.random, "randint", side_effect=lambda low, high: high):
+            self.assertEqual(bot.jitter_price(100, 20), 120)
+            self.assertEqual(bot.jitter_expiration(1000, 60, 120), 1120)
+
+    def test_populator_target_count_and_expiry_selection(self):
+        with mock.patch.object(bot.random, "randint", return_value=7):
+            self.assertEqual(bot.desired_seed_count(active_count=5, target_min=10, target_max=20), 7)
+        self.assertEqual(bot.desired_seed_count(active_count=10, target_min=10, target_max=20), 0)
+
+        with mock.patch.object(bot.random, "random", side_effect=[0.05, 0.5, 0.09]):
+            self.assertEqual(bot.expire_probability_selected([1, 2, 3], 0.10), [1, 3])
+
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_FORCE_COUNT"] = "1"
+        self.assertEqual(bot.desired_seed_count(active_count=99, target_min=10, target_max=20), 1)
+
+    def test_cleanup_candidates_select_over_cap_then_probability(self):
+        active = [{"id": 1}, {"id": 2}, {"id": 3}, {"id": 4}]
+        with mock.patch.object(bot.random, "random", side_effect=[0.5, 0.05]):
+            self.assertEqual(bot.cleanup_candidate_ids(active, target_max_orders=2, expire_probability=0.10), [1, 2, 4])
+
+    def test_free_position_candidates_skip_occupied_slots(self):
+        self.assertEqual(bot.free_position_candidates([0, 2, 5], needed_count=4, start=0, max_position=8), [1, 3, 4, 6])
+        with self.assertRaises(RuntimeError):
+            bot.free_position_candidates([0, 1, 2], needed_count=1, start=0, max_position=2)
+
+    def test_seeded_order_ids_are_normalized(self):
+        self.assertEqual(bot.seeded_order_ids([{"id": "7"}, {"id": 8}]), {7, 8})
+
+
+if __name__ == "__main__":
+    unittest.main()

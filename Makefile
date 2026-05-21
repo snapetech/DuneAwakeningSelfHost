@@ -1,9 +1,9 @@
 COMPOSE ?= docker compose
 ENV_FILE ?= .env.example
 
-.PHONY: validate compose-config secret-scan test-watch-maps test-admin-panel-safe-surfaces test-vehicle-fidelity-investigation list-publishable preflight status check-steam-update start-full-warm-pool recover-survival recover-map watch-maps watch-maps-status install-map-watchdog-service install-player-presence-announcer-service install-full-farm-service install-daily-maintenance-timer full-world-partitions public-site-check public-site-package verify-local-state-ignored
+.PHONY: validate compose-config secret-scan test-watch-maps test-admin-panel-safe-surfaces test-artificial-exchange test-artificial-exchange-service artificial-exchange-smoke test-vehicle-fidelity-investigation list-publishable preflight status check-steam-update start-full-warm-pool recover-survival recover-map watch-maps watch-maps-status install-map-watchdog-service install-player-presence-announcer-service install-artificial-exchange-service install-artificial-exchange-buyer-service install-artificial-exchange-populator-service install-full-farm-service install-daily-maintenance-timer full-world-partitions public-site-check public-site-package verify-local-state-ignored
 
-validate: compose-config secret-scan test-watch-maps test-admin-panel-safe-surfaces test-vehicle-fidelity-investigation verify-local-state-ignored
+validate: compose-config secret-scan test-watch-maps test-admin-panel-safe-surfaces test-artificial-exchange test-artificial-exchange-service test-vehicle-fidelity-investigation verify-local-state-ignored
 
 preflight:
 	./scripts/preflight.sh
@@ -39,6 +39,15 @@ install-map-watchdog-service:
 install-player-presence-announcer-service:
 	./scripts/install-player-presence-announcer-service.sh $(ENV_FILE)
 
+install-artificial-exchange-service:
+	./scripts/install-artificial-exchange-service.sh $(ENV_FILE)
+
+install-artificial-exchange-buyer-service:
+	./scripts/install-artificial-exchange-service.sh $(ENV_FILE) /etc/systemd/system/dune-artificial-exchange-bot.service buyer
+
+install-artificial-exchange-populator-service:
+	./scripts/install-artificial-exchange-service.sh $(ENV_FILE) /etc/systemd/system/dune-artificial-exchange-populator.service populator
+
 install-full-farm-service:
 	./scripts/install-full-farm-service.sh $(ENV_FILE)
 
@@ -59,6 +68,15 @@ test-watch-maps:
 
 test-admin-panel-safe-surfaces:
 	python3 scripts/test-admin-panel-safe-surfaces.py
+
+test-artificial-exchange:
+	python3 scripts/test-artificial-exchange.py
+
+test-artificial-exchange-service:
+	./scripts/test-artificial-exchange-service.sh
+
+artificial-exchange-smoke:
+	./scripts/artificial-exchange-smoke.sh
 
 test-vehicle-fidelity-investigation:
 	./scripts/investigate-vehicle-fidelity.sh >/dev/null

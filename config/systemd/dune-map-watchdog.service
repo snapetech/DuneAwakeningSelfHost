@@ -8,10 +8,11 @@ Type=simple
 WorkingDirectory=/opt/DuneAwakeningSelfHost
 Environment=COMPOSE_FILES=compose.yaml:compose.allmaps.yaml
 Environment=DUNE_WATCH_INTERVAL=30
-Environment=DUNE_WATCH_RECOVERY_WAIT=180
+Environment=DUNE_WATCH_RECOVERY_WAIT=360
 Environment=DUNE_WATCH_COOLDOWN=300
 Environment=DUNE_WATCH_STARTUP_GRACE=300
 Environment=DUNE_WATCH_LOCK_DIR=/tmp/dune-map-watchdog.lock
+Environment=DUNE_WATCH_SEED_NEIGHBORS=true
 ExecStart=/opt/DuneAwakeningSelfHost/scripts/watch-maps.sh /opt/DuneAwakeningSelfHost/.env
 Restart=always
 RestartSec=10

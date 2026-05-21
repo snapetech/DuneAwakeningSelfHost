@@ -109,6 +109,12 @@ COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' \
 
 The watchdog only recovers services that already have containers; it does not start maps that were intentionally never launched. It recovers containers that are `exited` or `dead`, and it also checks running maps against Postgres for partition registration. A running map is recovered when its partition is not alive or is missing from `active_server_ids`. Recovery delegates to `scripts/recover-map.sh`, so the old partition owner is marked dead and aged out before the service starts again.
 
+On hosts affected by the Docker bridge neighbor-learning failure, run the host
+systemd watchdog with `DUNE_WATCH_SEED_NEIGHBORS=true`. That makes the watchdog
+run `scripts/seed-gateway-neighbor.sh` before each recovery scan, keeping the
+known control-plane and map-to-RabbitMQ/Postgres neighbor entries warm instead
+of only seeding during startup/restart flows.
+
 By default the watchdog does not recover solely on `farm_state.ready=false`, because some live builds can report `ready=false` after the map log has reached `Server farm is READY`. To make readiness strict, set:
 
 ```bash
@@ -265,6 +271,22 @@ choose one LAN reflection mode and document it for the site:
 - per-client route for the public `/32` to the Dune host.
 
 See `docs/lan-reflection.md` for the standard setup and validation commands.
+
+## Artificial Exchange Buyer
+
+Use `scripts/build-exchange-catalog.py` to build the reviewed local catalog and
+`scripts/artificial-exchange-bot.py` for dry-run scans. Real purchases require
+the explicit artificial Exchange gates and confirmation phrase. Settlement
+auto-claim remains disabled; use the bot's `--settlement-report` mode to inspect
+completed orders. See `docs/artificial-exchange.md`.
+
+Install the long-running service with:
+
+```bash
+python3 scripts/artificial-exchange-bot.py --check-ready
+make install-artificial-exchange-buyer-service ENV_FILE=.env
+sudo systemctl enable --now dune-artificial-exchange-bot.service
+```
 
 ## Backup
 
