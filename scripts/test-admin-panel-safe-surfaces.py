@@ -92,6 +92,9 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn("exchange-order-functions", by_id)
         self.assertIn("vehicle-restore-functions", by_id)
         self.assertIn("base-backup-functions", by_id)
+        self.assertIn("player-tag-functions", by_id)
+        self.assertIn("player-access-code-functions", by_id)
+        self.assertIn("party-account-lifecycle-functions", by_id)
         self.assertEqual(by_id["recipe-vehicle-function-discovery"]["mutationRisk"], "blocked")
 
     def test_typed_knob_validation_and_backup_write(self):
@@ -156,6 +159,73 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         event = self.panel.create_event({"name": "blocked", "actions": [{"type": "typed-knob-plan", "updates": {}}]})
         with self.assertRaises(PermissionError):
             self.panel.execute_event(event["id"])
+
+    def test_restart_start_sigpipe_is_success_when_farm_recovers(self):
+        command = self.workspace / "scripts" / "restart-target.sh"
+        command.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        command.chmod(0o755)
+        self.panel.RESTART_COMMAND = str(command)
+        self.panel.soft_disconnect_online_players = lambda job: {"ok": True}
+        self.panel.run_restart_command = lambda command, job, phase: {
+            "ok": phase != "start",
+            "phase": phase,
+            "returncode": 141 if phase == "start" else 0,
+            "output": phase,
+        }
+        self.panel.wait_for_restart_online = lambda: {
+            "ok": True,
+            "expected": 30,
+            "online": 30,
+            "readyOnline": 30,
+            "alive": 30,
+            "active": 30,
+        }
+
+        result = self.panel.execute_restart({
+            "id": "sigpipe",
+            "execute": True,
+            "action": "restart",
+            "target": "all",
+            "services": [],
+            "backup": False,
+        })
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["returncode"], 141)
+        self.assertIn("141", result["warning"])
+
+    def test_restart_runs_recovery_when_farm_readiness_is_incomplete(self):
+        command = self.workspace / "scripts" / "restart-target.sh"
+        command.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        command.chmod(0o755)
+        self.panel.RESTART_COMMAND = str(command)
+        self.panel.soft_disconnect_online_players = lambda job: {"ok": True}
+        self.panel.run_restart_command = lambda command, job, phase: {
+            "ok": True,
+            "phase": phase,
+            "returncode": 0,
+            "output": phase,
+        }
+        snapshots = [
+            {"ok": False, "expected": 30, "online": 29, "readyOnline": 29, "alive": 29, "active": 29},
+            {"ok": True, "expected": 30, "online": 30, "readyOnline": 30, "alive": 30, "active": 30},
+        ]
+        recoveries = []
+        self.panel.wait_for_restart_online = lambda: snapshots.pop(0)
+        self.panel.run_restart_recovery = lambda job: recoveries.append(job["id"]) or {"ok": True, "output": "recovered"}
+
+        result = self.panel.execute_restart({
+            "id": "recover",
+            "execute": True,
+            "action": "restart",
+            "target": "all",
+            "services": [],
+            "backup": False,
+        })
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(recoveries, ["recover"])
+        self.assertEqual(result["recovery"]["output"], "recovered")
 
 
 if __name__ == "__main__":

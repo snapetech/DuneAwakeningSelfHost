@@ -31,6 +31,8 @@ Content-Type: application/json
 | `DUNE_ADMIN_MARKER_MUTATIONS_ENABLED` | `false` | Enables marker deletion through first-party marker functions. Does not block inspection or dry-runs. |
 | `DUNE_ADMIN_LANDCLAIM_MUTATIONS_ENABLED` | `false` | Enables landclaim segment addition through `dune.add_landclaim_segment`. Does not block inspection or dry-runs. |
 | `DUNE_ADMIN_EXCHANGE_MUTATIONS_ENABLED` | `false` | Enables Dune Exchange Solari balance changes through first-party exchange functions. Does not block inspection or dry-runs. |
+| `DUNE_ADMIN_PLAYER_TAG_MUTATIONS_ENABLED` | `false` | Enables player tag add/remove through first-party tag functions. Does not block inspection or dry-runs. |
+| `DUNE_ADMIN_ACCESS_CODE_MUTATIONS_ENABLED` | `false` | Enables server player access-code create/delete/reset through first-party functions. Does not block inspection or dry-runs. |
 | `DUNE_ADMIN_MUTATIONS_ENABLED` | repo default currently `true` | Existing global mutation gate. |
 | `DUNE_ADMIN_ITEM_GRANTS_ENABLED` | repo default currently `true` | Existing item mutation gate. |
 
@@ -665,6 +667,101 @@ dune.dune_exchange_modify_user_solari_balance(in_controller_id bigint, in_solari
 ```
 
 Risk: high. This changes Exchange-local economy state, not the generic virtual currency table. Dry-run records the previous balance and rollback uses `mode=set`. Order add, fulfill, cancel, relist, retrieve, purge, and category-update functions remain blocked.
+
+## Player Lifecycle Inspect
+
+### `POST /api/admin/player-lifecycle/inspect`
+
+Read-only endpoint for account/player, party, tag, access-code, Communinet, dungeon, tutorial, and lifecycle evidence.
+
+```json
+{
+  "account_id": 456,
+  "player_id": 123
+}
+```
+
+Returned evidence includes:
+
+- account and player rows
+- `dune.admin_read_player_tags`
+- `dune.get_player_access_codes`
+- `dune.load_communinet_player_data`
+- party membership/invites
+- matching function signatures from `pg_proc`
+- matching table/column definitions from `information_schema`
+
+No writes are performed.
+
+## Player Tags
+
+### `POST /api/admin/player-tags`
+
+Default mode is dry-run.
+
+```json
+{
+  "dry_run": true,
+  "account_id": 456,
+  "tags_to_add": ["event_participant"],
+  "tags_to_remove": ["old_tag"]
+}
+```
+
+Execution requirements:
+
+- `DUNE_ADMIN_MUTATIONS_ENABLED=true`
+- `DUNE_ADMIN_PLAYER_TAG_MUTATIONS_ENABLED=true`
+- `confirm: "WRITE PLAYER TAGS"`
+
+Function mapping:
+
+```sql
+dune.admin_read_player_tags(in_account_id bigint)
+dune.update_player_tags(in_account_id bigint, tags_to_add text[], tags_to_remove text[])
+```
+
+Risk: medium. Tags are local player/account metadata. Dry-run records prior tags and rollback is the inverse add/remove set.
+
+## Access Codes
+
+### `POST /api/admin/access-code`
+
+Default mode is dry-run. Supported actions are:
+
+- `create`
+- `delete`
+- `reset`
+
+Create dry-run:
+
+```json
+{
+  "dry_run": true,
+  "action": "create",
+  "account_id": 456,
+  "access_code": 123456,
+  "access_code_type": 0,
+  "is_resettable": true
+}
+```
+
+Execution requirements:
+
+- `DUNE_ADMIN_MUTATIONS_ENABLED=true`
+- `DUNE_ADMIN_ACCESS_CODE_MUTATIONS_ENABLED=true`
+- `confirm: "WRITE ACCESS CODES"`
+
+Function mapping:
+
+```sql
+dune.get_player_access_codes(in_account_id bigint)
+dune.create_server_player_access_codes(in_account_id bigint, in_access_code integer, in_access_code_type integer, in_is_resettable boolean)
+dune.delete_server_player_access_codes(in_account_id bigint, in_access_code integer, in_access_code_type integer)
+dune.reset_server_all_player_access_codes(in_account_id bigint)
+```
+
+Risk: high. Access codes gate server-player access workflows. Create/delete have compensating rollback; reset requires recreating prior codes from the dry-run/audit record.
 
 ## Respawn Location Delete
 

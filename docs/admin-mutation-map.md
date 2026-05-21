@@ -311,6 +311,8 @@ POST /api/admin/guild
 POST /api/admin/marker
 POST /api/admin/landclaim
 POST /api/admin/exchange
+POST /api/admin/player-tags
+POST /api/admin/access-code
 ```
 
 Mapped first-party functions:
@@ -342,6 +344,12 @@ dune.get_landclaim_segments(in_totem_id bigint)
 dune.add_landclaim_segment(in_totem_id bigint, in_grid_location_x bigint, in_grid_location_y bigint)
 dune.dune_exchange_retrieve_solari_balance(in_owner_id bigint)
 dune.dune_exchange_modify_user_solari_balance(in_controller_id bigint, in_solari_delta bigint)
+dune.admin_read_player_tags(in_account_id bigint)
+dune.update_player_tags(in_account_id bigint, tags_to_add text[], tags_to_remove text[])
+dune.get_player_access_codes(in_account_id bigint)
+dune.create_server_player_access_codes(in_account_id bigint, in_access_code integer, in_access_code_type integer, in_is_resettable boolean)
+dune.delete_server_player_access_codes(in_account_id bigint, in_access_code integer, in_access_code_type integer)
+dune.reset_server_all_player_access_codes(in_account_id bigint)
 ```
 
 Separate gates:
@@ -356,6 +364,8 @@ DUNE_ADMIN_GUILD_MUTATIONS_ENABLED=false
 DUNE_ADMIN_MARKER_MUTATIONS_ENABLED=false
 DUNE_ADMIN_LANDCLAIM_MUTATIONS_ENABLED=false
 DUNE_ADMIN_EXCHANGE_MUTATIONS_ENABLED=false
+DUNE_ADMIN_PLAYER_TAG_MUTATIONS_ENABLED=false
+DUNE_ADMIN_ACCESS_CODE_MUTATIONS_ENABLED=false
 ```
 
 Confirmation phrases:
@@ -370,6 +380,8 @@ WRITE GUILD
 DELETE MARKERS
 WRITE LANDCLAIM
 WRITE EXCHANGE
+WRITE PLAYER TAGS
+WRITE ACCESS CODES
 ```
 
 Current confidence:
@@ -383,6 +395,8 @@ Current confidence:
 - Marker deletion: moderate mechanically because first-party delete functions exist; high rollback risk because marker save/recreation semantics are not mapped.
 - Landclaim segment addition: low-to-moderate because add/get functions exist, but the current local table has no rows and no delete-segment rollback function is mapped.
 - Dune Exchange Solari balance: moderate mechanically because first-party retrieve/modify functions exist; high economy risk. Order lifecycle functions remain blocked.
+- Player tags: moderate mechanically because first-party read/update functions exist; medium operational risk.
+- Access codes: moderate mechanically because first-party create/delete/reset functions exist; high operational risk because reset rollback is manual.
 
 ## Landsraad Term Administration
 
@@ -630,6 +644,108 @@ dune.dune_exchange_purge_completed_orders(...)
 ```
 
 Confidence is moderate for balance mechanics and low for order lifecycle operations until inventory IDs, order revisions, completion types, purge timing, and item transfer rollback are documented.
+
+## Player Lifecycle Inspection
+
+The read-only endpoint is:
+
+```text
+POST /api/admin/player-lifecycle/inspect
+```
+
+It accepts optional `account_id` and `player_id`, then returns local evidence for:
+
+```sql
+dune.admin_read_player_tags(...)
+dune.get_player_access_codes(...)
+dune.load_communinet_player_data(...)
+dune.get_all_party_invites(...)
+dune.party_members
+dune.accounts
+dune.player_state
+```
+
+It also lists matching `pg_proc` signatures and `information_schema` columns for party, account, player, Communinet, access-code, tag, dungeon, and tutorial surfaces.
+
+Current local evidence:
+
+```text
+accounts: 16
+player_state: 16
+parties: 0
+party_members: 0
+```
+
+## Player Tags
+
+The panel endpoint is:
+
+```text
+POST /api/admin/player-tags
+```
+
+Mapped functions:
+
+```sql
+dune.admin_read_player_tags(in_account_id bigint)
+dune.update_player_tags(in_account_id bigint, tags_to_add text[], tags_to_remove text[])
+```
+
+Execution is blocked unless the global mutation gate and `DUNE_ADMIN_PLAYER_TAG_MUTATIONS_ENABLED=true` are both set, and the request includes `confirm: "WRITE PLAYER TAGS"`.
+
+Rollback is the inverse add/remove operation from the audit record. Confidence is moderate.
+
+## Access Codes
+
+The panel endpoint is:
+
+```text
+POST /api/admin/access-code
+```
+
+Supported actions:
+
+```text
+create
+delete
+reset
+```
+
+Mapped functions:
+
+```sql
+dune.get_player_access_codes(in_account_id bigint)
+dune.create_server_player_access_codes(in_account_id bigint, in_access_code integer, in_access_code_type integer, in_is_resettable boolean)
+dune.delete_server_player_access_codes(in_account_id bigint, in_access_code integer, in_access_code_type integer)
+dune.reset_server_all_player_access_codes(in_account_id bigint)
+```
+
+Execution is blocked unless the global mutation gate and `DUNE_ADMIN_ACCESS_CODE_MUTATIONS_ENABLED=true` are both set, and the request includes `confirm: "WRITE ACCESS CODES"`.
+
+Create/delete have compensating rollback. Reset is higher risk because rollback requires recreating prior access codes from the dry-run/audit record.
+
+## Blocked Player Lifecycle Routes
+
+The following functions are cataloged but blocked:
+
+```sql
+dune.delete_account(...)
+dune.set_account_as_takeoverable(...)
+dune.takeover_account(...)
+dune.login_account(...)
+dune.save_player(...)
+dune.save_player_pawn(...)
+dune.accept_party_invite(...)
+dune.add_party_invite(...)
+dune.remove_party_member(...)
+dune.disband_party(...)
+dune.update_communinet_player_data(...)
+dune.update_communinet_player_channel(...)
+dune.delete_all_dungeon_completions_by_player(...)
+dune.overmap_save_player_survival_data(...)
+```
+
+Confidence is low for safe admin mutation semantics until lifecycle side effects, online/offline constraints, account ownership, party session state, and rollback/recovery are validated.
 
 ## Vehicle And Base Backup Limits
 

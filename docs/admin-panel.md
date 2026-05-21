@@ -150,6 +150,9 @@ server {
 - Landclaim segment planning through `POST /api/admin/landclaim`, default `dry_run=true`. Execution requires `DUNE_ADMIN_LANDCLAIM_MUTATIONS_ENABLED=true` and confirmation `WRITE LANDCLAIM`.
 - Economy inspection through `POST /api/admin/economy/inspect` for Dune Exchange, vehicle, recovered/backup vehicle, and base-backup evidence.
 - Dune Exchange Solari planning through `POST /api/admin/exchange`, default `dry_run=true`. Execution requires `DUNE_ADMIN_EXCHANGE_MUTATIONS_ENABLED=true` and confirmation `WRITE EXCHANGE`.
+- Player lifecycle inspection through `POST /api/admin/player-lifecycle/inspect` for account/player, party, tags, access codes, Communinet, dungeon, tutorial, and lifecycle evidence.
+- Player tag planning through `POST /api/admin/player-tags`, default `dry_run=true`. Execution requires `DUNE_ADMIN_PLAYER_TAG_MUTATIONS_ENABLED=true` and confirmation `WRITE PLAYER TAGS`.
+- Access-code planning through `POST /api/admin/access-code`, default `dry_run=true`. Execution requires `DUNE_ADMIN_ACCESS_CODE_MUTATIONS_ENABLED=true` and confirmation `WRITE ACCESS CODES`.
 - Event planner APIs:
   - `GET /api/events`
   - `POST /api/events/dry-run`
@@ -215,6 +218,8 @@ DUNE_ADMIN_GUILD_MUTATIONS_ENABLED=false
 DUNE_ADMIN_MARKER_MUTATIONS_ENABLED=false
 DUNE_ADMIN_LANDCLAIM_MUTATIONS_ENABLED=false
 DUNE_ADMIN_EXCHANGE_MUTATIONS_ENABLED=false
+DUNE_ADMIN_PLAYER_TAG_MUTATIONS_ENABLED=false
+DUNE_ADMIN_ACCESS_CODE_MUTATIONS_ENABLED=false
 ```
 
 Gate behavior:
@@ -232,6 +237,8 @@ Gate behavior:
 - `DUNE_ADMIN_MARKER_MUTATIONS_ENABLED`: controls marker deletion server-function calls. Marker dry-runs still work.
 - `DUNE_ADMIN_LANDCLAIM_MUTATIONS_ENABLED`: controls landclaim segment server-function calls. Landclaim dry-runs still work.
 - `DUNE_ADMIN_EXCHANGE_MUTATIONS_ENABLED`: controls Dune Exchange Solari balance server-function calls. Economy dry-runs still work.
+- `DUNE_ADMIN_PLAYER_TAG_MUTATIONS_ENABLED`: controls player tag server-function calls. Lifecycle dry-runs still work.
+- `DUNE_ADMIN_ACCESS_CODE_MUTATIONS_ENABLED`: controls server player access-code server-function calls. Lifecycle dry-runs still work.
 
 Existing gates still apply:
 
@@ -257,6 +264,8 @@ WRITE GUILD
 DELETE MARKERS
 WRITE LANDCLAIM
 WRITE EXCHANGE
+WRITE PLAYER TAGS
+WRITE ACCESS CODES
 RUN GM COMMAND
 ```
 
@@ -542,6 +551,28 @@ Execution requires:
 - `confirm: "WRITE EXCHANGE"`
 
 The endpoint uses `dune.dune_exchange_retrieve_solari_balance` for preflight and `dune.dune_exchange_modify_user_solari_balance` for execution. Confidence is moderate for the balance mechanics and low for order operations, so add/fulfill/cancel/relist/retrieve/purge order functions remain blocked.
+
+`POST /api/admin/player-lifecycle/inspect` reads account/player, party, tag, access-code, Communinet, dungeon, tutorial, and lifecycle evidence without writing.
+
+`POST /api/admin/player-tags` plans or executes player tag add/remove calls through `dune.update_player_tags`.
+
+Execution requires:
+
+- `DUNE_ADMIN_MUTATIONS_ENABLED=true`
+- `DUNE_ADMIN_PLAYER_TAG_MUTATIONS_ENABLED=true`
+- `confirm: "WRITE PLAYER TAGS"`
+
+Confidence is moderate. Rollback is the inverse add/remove set from the dry-run/audit record.
+
+`POST /api/admin/access-code` plans or executes server player access-code create/delete/reset calls.
+
+Execution requires:
+
+- `DUNE_ADMIN_MUTATIONS_ENABLED=true`
+- `DUNE_ADMIN_ACCESS_CODE_MUTATIONS_ENABLED=true`
+- `confirm: "WRITE ACCESS CODES"`
+
+The endpoint uses `dune.get_player_access_codes`, `dune.create_server_player_access_codes`, `dune.delete_server_player_access_codes`, and `dune.reset_server_all_player_access_codes`. Confidence is moderate for function mechanics and high for operational risk because reset needs manual recreation from audit data.
 
 `POST /api/admin/journey` plans or executes journey story-node server functions. Supported actions are `reveal`, `complete`, `reset`, and `delete`.
 
@@ -872,7 +903,7 @@ Before an executed restart or shutdown stops containers, the admin panel resolve
 
 Maintenance backups are written under `backups/admin-panel/maintenance/<utc-stamp>-<job-id>/`. Each backup includes a unique Postgres custom-format dump, config/env archive, and mounted `data/server-saved` / `data/rabbitmq` archives when those paths are available to the admin container. Each backup also writes `postgres-layers.json`, which records primary streaming-replication slots and active senders at the stopped-world backup point. If `POSTGRES_REMOTE_REPLICA_HOST` is configured and `DUNE_ADMIN_MAINTENANCE_REPLICA_SNAPSHOT_ENABLED=true` (default), the backup attempts `scripts/replica-snapshot.sh` so the remote standby also gets a rolling logical snapshot. Replica status and remote snapshot failures are recorded as warnings in `manifest.json`; they do not replace or block the authoritative local stopped-world dump.
 
-After a restart start hook returns successfully, the admin panel waits for farm DB readiness before marking the job successful. The gate requires every current `world_partition` row to have an alive farm row and an `active_server_ids` entry; it also records the stricter ready/alive count as `readyOnline` in the execution details.
+After a restart start hook returns, the admin panel waits for farm DB readiness before marking the job successful. The gate requires every current `world_partition` row to have an alive farm row and an `active_server_ids` entry; it also records the stricter ready/alive count as `readyOnline` in the execution details. If readiness is incomplete, the panel runs one guarded recovery pass through `DUNE_ADMIN_RESTART_RECOVERY_COMMAND` before waiting again. The default recovery command is `scripts/watch-maps.sh .env --once` with startup grace disabled, so a map that is running but not alive/active in the DB is recovered instead of leaving the farm half-warm. A start hook return code of `141` is treated as recoverable only if the farm subsequently reports fully online, because that code commonly means a broken output pipe rather than a confirmed container startup failure.
 
 When the restart form's announcement checkbox is enabled, the admin panel schedules the first warning immediately and repeats it until the maintenance run time. The standalone announcement card is separate: it only schedules chat notices and does not stop, start, or back up services.
 
@@ -893,6 +924,9 @@ DUNE_RESTART_USE_HOST_COMPOSE=true
 DUNE_RESTART_COMPOSE_TIMEOUT_SECONDS=1800
 DUNE_RESTART_DOCKER_STOP_TIMEOUT_SECONDS=120
 DUNE_RESTART_DOCKER_API_TIMEOUT_SECONDS=30
+DUNE_ADMIN_RESTART_RECOVERY_ENABLED=true
+DUNE_ADMIN_RESTART_RECOVERY_COMMAND=/workspace/scripts/watch-maps.sh
+DUNE_ADMIN_RESTART_RECOVERY_TIMEOUT_SECONDS=900
 ```
 
 The Docker socket is privileged host control. Keep the admin panel bound to localhost or a trusted reverse proxy, and do not expose the admin hostname publicly. If the panel is reachable beyond a trusted local admin surface, enable `DUNE_ADMIN_REQUIRE_TOKEN=true`. The script receives `DUNE_RESTART_JOB_ID`, `DUNE_RESTART_TARGET`, `DUNE_RESTART_SERVICES`, and `DUNE_RESTART_ACTION`, plus the target as its first argument.

@@ -89,6 +89,8 @@ CONFIRM_GUILD_MUTATION = "WRITE GUILD"
 CONFIRM_MARKER_MUTATION = "DELETE MARKERS"
 CONFIRM_LANDCLAIM_MUTATION = "WRITE LANDCLAIM"
 CONFIRM_EXCHANGE_MUTATION = "WRITE EXCHANGE"
+CONFIRM_PLAYER_TAG_MUTATION = "WRITE PLAYER TAGS"
+CONFIRM_ACCESS_CODE_MUTATION = "WRITE ACCESS CODES"
 CATALOG_ENABLED = os.environ.get("DUNE_ADMIN_CATALOG_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 TYPED_KNOBS_ENABLED = os.environ.get("DUNE_ADMIN_TYPED_KNOBS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 EVENT_EXECUTION_ENABLED = os.environ.get("DUNE_ADMIN_EVENT_EXECUTION_ENABLED", "false").lower() in ("1", "true", "yes", "on")
@@ -102,6 +104,8 @@ GUILD_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_GUILD_MUTATIONS_ENABLED", "
 MARKER_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_MARKER_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 LANDCLAIM_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_LANDCLAIM_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 EXCHANGE_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_EXCHANGE_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+PLAYER_TAG_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_PLAYER_TAG_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+ACCESS_CODE_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_ACCESS_CODE_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 ANNOUNCEMENT_STATE_FILE = BACKUP_ROOT / "announcements.json"
 RESTART_STATE_FILE = BACKUP_ROOT / "restart-jobs.json"
 EVENT_STATE_FILE = BACKUP_ROOT / "events.json"
@@ -118,6 +122,9 @@ RESTART_COMMAND_TIMEOUT_SECONDS = int(os.environ.get("DUNE_ADMIN_RESTART_COMMAND
 RESTART_COMMAND = os.environ.get("DUNE_ADMIN_RESTART_COMMAND", str(ROOT / "scripts" / "restart-target.sh"))
 RESTART_ONLINE_TIMEOUT_SECONDS = int(os.environ.get("DUNE_ADMIN_RESTART_ONLINE_TIMEOUT_SECONDS", "300"))
 RESTART_ONLINE_POLL_SECONDS = int(os.environ.get("DUNE_ADMIN_RESTART_ONLINE_POLL_SECONDS", "5"))
+RESTART_RECOVERY_ENABLED = os.environ.get("DUNE_ADMIN_RESTART_RECOVERY_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+RESTART_RECOVERY_COMMAND = os.environ.get("DUNE_ADMIN_RESTART_RECOVERY_COMMAND", str(ROOT / "scripts" / "watch-maps.sh"))
+RESTART_RECOVERY_TIMEOUT_SECONDS = int(os.environ.get("DUNE_ADMIN_RESTART_RECOVERY_TIMEOUT_SECONDS", "900"))
 RESTART_DISCONNECT_WAIT_SECONDS = float(os.environ.get("DUNE_ADMIN_RESTART_DISCONNECT_WAIT_SECONDS", "5"))
 MAINTENANCE_BACKUP_ENABLED = os.environ.get("DUNE_ADMIN_MAINTENANCE_BACKUP_ENABLED", "true").lower() == "true"
 MAINTENANCE_REPLICA_SNAPSHOT_ENABLED = os.environ.get("DUNE_ADMIN_MAINTENANCE_REPLICA_SNAPSHOT_ENABLED", "true").lower() == "true"
@@ -406,6 +413,8 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ADMIN_MARKER_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for marker deletion server-function calls. Marker inspection and dry-runs remain available."},
     "DUNE_ADMIN_LANDCLAIM_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for landclaim segment server-function calls. Landclaim inspection and dry-runs remain available."},
     "DUNE_ADMIN_EXCHANGE_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for Dune Exchange Solari balance server-function calls. Exchange inspection and dry-runs remain available."},
+    "DUNE_ADMIN_PLAYER_TAG_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for player tag server-function calls. Player lifecycle inspection and dry-runs remain available."},
+    "DUNE_ADMIN_ACCESS_CODE_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for server player access-code server-function calls. Player lifecycle inspection and dry-runs remain available."},
     "DUNE_ADMIN_MAX_BODY_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum accepted request body size."},
     "DUNE_ADMIN_AUDIT_MAX_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Audit log rotation threshold."},
     "DUNE_ADMIN_REQUEST_TIMEOUT_SECONDS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Socket timeout to limit slow client abuse."},
@@ -470,6 +479,9 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ANNOUNCE_PAYLOAD_TEMPLATE": {"group": "Announcements", "secret": False, "restart": True, "why": "Optional raw RabbitMQ payload template for overriding the default ServiceBroadcast envelope."},
     "DUNE_ADMIN_RESTART_COMMAND": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Executable hook used by the scheduled restart runner."},
     "DUNE_ADMIN_RESTART_COMMAND_TIMEOUT_SECONDS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Timeout for each scheduled restart hook invocation."},
+    "DUNE_ADMIN_RESTART_RECOVERY_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Runs one map-watchdog recovery pass if a restart start phase completes but farm DB readiness is incomplete."},
+    "DUNE_ADMIN_RESTART_RECOVERY_COMMAND": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Recovery hook used after an incomplete scheduled restart. Defaults to scripts/watch-maps.sh."},
+    "DUNE_ADMIN_RESTART_RECOVERY_TIMEOUT_SECONDS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Timeout for the post-restart recovery hook."},
     "DUNE_RESTART_COMPOSE_PROJECT": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Compose project label used by the Docker-socket restart hook."},
     "DUNE_RESTART_DOCKER_SOCKET": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Docker Engine Unix socket path used by the restart hook when Docker CLI is unavailable."},
     "DUNE_RESTART_HOST_WORKSPACE": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Absolute host path to this repo. The Docker-socket fallback mounts it into a short-lived Compose helper so scheduled restarts can recreate containers and apply .env/config changes."},
@@ -913,6 +925,37 @@ def wait_for_restart_online():
         time.sleep(max(1, RESTART_ONLINE_POLL_SECONDS))
 
 
+def run_restart_recovery(job):
+    if not RESTART_RECOVERY_ENABLED:
+        return {"ok": True, "skipped": True, "reason": "disabled"}
+    command = pathlib.Path(RESTART_RECOVERY_COMMAND)
+    if not command.exists() or not os.access(command, os.X_OK):
+        return {"ok": False, "skipped": True, "error": f"restart recovery command is not executable: {command}"}
+    env = os.environ.copy()
+    env.update({
+        "COMPOSE_FILES": env.get("COMPOSE_FILES", "compose.yaml:compose.allmaps.yaml"),
+        "DUNE_WATCH_STARTUP_GRACE": "0",
+        "DUNE_WATCH_RECOVERY_WAIT": env.get("DUNE_WATCH_RECOVERY_WAIT", str(RESTART_ONLINE_TIMEOUT_SECONDS)),
+    })
+    try:
+        result = subprocess.run(
+            [str(command), str(ENV_FILE), "--once"],
+            cwd=str(ROOT),
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=RESTART_RECOVERY_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+    output = (result.stdout + result.stderr).strip()
+    if len(output) > AUDIT_FIELD_LIMIT:
+        output = output[:AUDIT_FIELD_LIMIT] + "...[truncated]"
+    return {"ok": result.returncode == 0, "returncode": result.returncode, "output": output}
+
+
 def execute_restart(job):
     if not job.get("execute"):
         return {"ok": True, "dryRun": True, "output": f"scheduled {job.get('action', 'restart')} reached run time; execute=false so no command was run"}
@@ -959,11 +1002,22 @@ def execute_restart(job):
 
     start_result = run_restart_command(command, job, "start")
     result["start"] = start_result
-    online_result = wait_for_restart_online() if start_result.get("ok") else {"ok": False, "skipped": True}
+    online_result = wait_for_restart_online()
+    recovery_result = None
+    if not online_result.get("ok"):
+        recovery_result = run_restart_recovery(job)
+        result["recovery"] = recovery_result
+        if recovery_result.get("ok"):
+            online_result = wait_for_restart_online()
     result["online"] = online_result
-    result["ok"] = bool(start_result.get("ok")) and bool(online_result.get("ok"))
+    start_ok = bool(start_result.get("ok")) or (start_result.get("returncode") == 141 and bool(online_result.get("ok")))
+    result["ok"] = start_ok and bool(online_result.get("ok"))
     result["returncode"] = start_result.get("returncode")
-    if start_result.get("ok") and not online_result.get("ok"):
+    if start_result.get("returncode") == 141 and online_result.get("ok"):
+        result["warning"] = "restart start hook returned 141, but farm reported fully online after verification"
+    elif not start_result.get("ok"):
+        result["error"] = start_result.get("error") or f"restart start hook failed with return code {start_result.get('returncode')}"
+    elif not online_result.get("ok"):
         result["error"] = "restart start hook completed, but farm did not report fully online before timeout"
     result["output"] = "\n".join(part for part in [stop_result.get("output", ""), start_result.get("output", "")] if part)
     if len(result["output"]) > AUDIT_FIELD_LIMIT:
@@ -1630,6 +1684,9 @@ def content_catalog_entries():
         {"id": "exchange-order-functions", "group": "Economy/Admin", "surface": "Database state", "capability": "Inspect exchange order/storage functions and tables without adding, fulfilling, relisting, cancelling, or purging orders.", "evidence": ["dune_exchange_add_sell_order", "dune_exchange_fulfill_sell_order", "dune_exchange_cancel_order", "dune_exchange_orders table", "dune_exchange_sell_orders table"], "confidence": "moderate for existence, low for safe admin semantics", "mutationRisk": "blocked", "restartRequired": False, "validationCommand": "POST /api/admin/economy/inspect with optional owner_id/exchange_id.", "rollback": "No execution in v1."},
         {"id": "vehicle-restore-functions", "group": "Limits", "surface": "Database state", "capability": "Inspect vehicle, recovered vehicle, backup vehicle, and module state without restoring/spawning vehicles.", "evidence": ["dune.get_player_owned_vehicles_data", "dune.load_recovered_vehicles", "dune.restore_recovered_vehicle", "dune.restore_backup_vehicle", "dune.vehicle_modules table"], "confidence": "moderate for reads, low for restore semantics", "mutationRisk": "blocked", "restartRequired": False, "validationCommand": "POST /api/admin/world-state/inspect or /api/admin/economy/inspect with account_id.", "rollback": "No execution in v1; restore requires serverinfo/transform validation."},
         {"id": "base-backup-functions", "group": "Limits", "surface": "Database state", "capability": "Inspect base backup save/recycle/delete functions without exposing base backup writes.", "evidence": ["base_backup_get_available_backups", "base_backup_save_from_totem", "base_backup_recycle", "base_backup_delete", "base_backups table"], "confidence": "moderate for existence, low for safe mutation semantics", "mutationRisk": "blocked", "restartRequired": False, "validationCommand": "POST /api/admin/economy/inspect with player_id.", "rollback": "No execution in v1."},
+        {"id": "player-tag-functions", "group": "Economy/Admin", "surface": "Database state", "capability": "Inspect and optionally add/remove player tags through first-party tag functions.", "evidence": ["dune.admin_read_player_tags", "dune.update_player_tags", "dune.player_tags table"], "confidence": "moderate", "mutationRisk": "medium", "restartRequired": False, "validationCommand": "POST /api/admin/player-lifecycle/inspect; POST /api/admin/player-tags dry_run=true.", "rollback": "Dry-run/audit records prior tags; apply inverse add/remove arrays."},
+        {"id": "player-access-code-functions", "group": "Economy/Admin", "surface": "Database state", "capability": "Inspect and optionally create/delete/reset server player access codes through first-party functions.", "evidence": ["dune.get_player_access_codes", "dune.create_server_player_access_codes", "dune.delete_server_player_access_codes", "dune.reset_server_all_player_access_codes"], "confidence": "moderate", "mutationRisk": "high", "restartRequired": False, "validationCommand": "POST /api/admin/player-lifecycle/inspect; POST /api/admin/access-code dry_run=true.", "rollback": "Dry-run/audit records prior codes; recreate deleted codes or delete created codes."},
+        {"id": "party-account-lifecycle-functions", "group": "Limits", "surface": "Database state", "capability": "Inspect party, account deletion/takeover, Communinet, dungeon, tutorial, and player lifecycle functions without executing destructive routes.", "evidence": ["party functions", "delete_account", "takeover_account", "communinet functions", "dungeon completion functions", "player_state tables"], "confidence": "moderate for existence, low for mutation safety", "mutationRisk": "blocked except tags/access codes", "restartRequired": False, "validationCommand": "POST /api/admin/player-lifecycle/inspect with optional account_id/player_id.", "rollback": "No execution for blocked lifecycle surfaces."},
         {"id": "world-state-function-discovery", "group": "Limits", "surface": "Database state", "capability": "Discover guild, vehicle, marker, landclaim, recipe, and respawn function/table evidence without executing unsafe routes.", "evidence": ["pg_proc runtime schema introspection", "information_schema table/column introspection", "docs/admin-mutation-map.md"], "confidence": "moderate for existence, low-to-moderate for mutation semantics", "mutationRisk": "blocked except promoted guild/respawn paths", "restartRequired": False, "validationCommand": "POST /api/admin/world-state/inspect with optional account_id/player_id/guild_id.", "rollback": "No execution for blocked discovery surfaces."},
         {"id": "offline-player-recovery", "group": "Economy/Admin", "surface": "Database state", "capability": "Preview offline player partition move through dune.admin_move_offline_player_to_partition.", "evidence": ["PLAYER_LOCATION_SOURCE_AUDIT.md", "database function name observed in local schema"], "confidence": "moderate", "mutationRisk": "high", "restartRequired": False, "validationCommand": "select * from dune.player_state where account_id=<id>;", "rollback": "Move player back to prior partition from audit record."},
         {"id": "mining-resource-multipliers", "group": "World Rules", "surface": "Config/INI knobs", "capability": "Adjust player mining, vehicle mining, and PvP resource multipliers.", "evidence": ["config/UserEngine.ini", "docs/server-knobs-audit.md"], "confidence": "high", "mutationRisk": "low", "restartRequired": True, "validationCommand": "rg -n 'MiningOutput|PvpResourceMultiplier' config/UserEngine.ini", "rollback": "Restore backed-up UserEngine.ini and restart maps."},
@@ -2799,6 +2856,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.require_token()
                 body = parse_body(self)
                 self.json(self.economy_inspect(body))
+            elif parsed.path == "/api/admin/player-lifecycle/inspect":
+                self.require_token()
+                body = parse_body(self)
+                self.json(self.player_lifecycle_inspect(body))
             elif parsed.path == "/api/admin/faction-reputation":
                 self.require_token()
                 body = parse_body(self)
@@ -2852,6 +2913,18 @@ class Handler(BaseHTTPRequestHandler):
                 body = parse_body(self)
                 result = self.exchange_mutation(body)
                 self.audit("exchange-mutation", ok=result.get("ok"), dry_run=result.get("dryRun"), owner_id=result.get("ownerId"), controller_id=result.get("controllerId"), mode=result.get("mode"))
+                self.json(result)
+            elif parsed.path == "/api/admin/player-tags":
+                self.require_token()
+                body = parse_body(self)
+                result = self.player_tags_mutation(body)
+                self.audit("player-tags-mutation", ok=result.get("ok"), dry_run=result.get("dryRun"), account_id=result.get("accountId"))
+                self.json(result)
+            elif parsed.path == "/api/admin/access-code":
+                self.require_token()
+                body = parse_body(self)
+                result = self.access_code_mutation(body)
+                self.audit("access-code-mutation", ok=result.get("ok"), dry_run=result.get("dryRun"), account_id=result.get("accountId"), access_code_action=result.get("action"))
                 self.json(result)
             elif parsed.path == "/api/admin/gm/preview":
                 self.require_token()
@@ -3935,6 +4008,22 @@ class Handler(BaseHTTPRequestHandler):
                     "actions": ["add", "set"],
                     "confidence": "moderate",
                 },
+                "playerTags": {
+                    "endpoint": "/api/admin/player-tags",
+                    "defaultDryRun": True,
+                    "executionGate": "DUNE_ADMIN_PLAYER_TAG_MUTATIONS_ENABLED",
+                    "confirm": CONFIRM_PLAYER_TAG_MUTATION,
+                    "actions": ["add-remove"],
+                    "confidence": "moderate",
+                },
+                "accessCodes": {
+                    "endpoint": "/api/admin/access-code",
+                    "defaultDryRun": True,
+                    "executionGate": "DUNE_ADMIN_ACCESS_CODE_MUTATIONS_ENABLED",
+                    "confirm": CONFIRM_ACCESS_CODE_MUTATION,
+                    "actions": ["create", "delete", "reset"],
+                    "confidence": "moderate",
+                },
                 "journeyRecipeVehicle": {
                     "status": "inspect-only",
                     "reason": "Recipe and vehicle function signatures can be discovered here, but writes stay blocked until safe contracts and live examples are mapped.",
@@ -4191,6 +4280,130 @@ class Handler(BaseHTTPRequestHandler):
                 "exchangeOrdersVehiclesBaseBackups": {
                     "status": "inspect-only",
                     "reason": "Order, vehicle restore, and base backup functions require inventory/serverinfo/transform/composite semantics and stronger rollback mapping.",
+                },
+            },
+            "errors": errors,
+        }
+
+    def player_lifecycle_inspect(self, body):
+        errors = {}
+        account_id = body.get("account_id", body.get("accountId"))
+        player_id = body.get("player_id", body.get("playerId"))
+        if account_id not in ("", None) and player_id in ("", None):
+            player_rows = reference_query(errors, "playerForAccount", """
+                select account_id, character_name, online_status::text, player_controller_id, player_pawn_id
+                from dune.player_state
+                where account_id=%s
+            """, (int(account_id),))
+            if player_rows:
+                player_id = player_rows[0].get("player_pawn_id")
+        account = []
+        player = []
+        tags = []
+        access_codes = []
+        communinet = []
+        party = []
+        party_invites = []
+        if account_id not in ("", None):
+            account = reference_query(errors, "account", "select id, \"user\", funcom_id, takeoverable, platform_id, platform_name from dune.accounts where id=%s", (int(account_id),))
+            player = reference_query(errors, "player", "select * from dune.player_state where account_id=%s", (int(account_id),))
+            tags = reference_query(errors, "playerTags", "select * from dune.admin_read_player_tags(%s)", (int(account_id),))
+            access_codes = reference_query(errors, "accessCodes", "select * from dune.get_player_access_codes(%s) order by access_code_type, access_code", (int(account_id),))
+            communinet = reference_query(errors, "communinet", "select * from dune.load_communinet_player_data(%s)", (int(account_id),))
+        if player_id not in ("", None):
+            party = reference_query(errors, "partyMembers", """
+                select pm.*, ps.character_name
+                from dune.party_members pm
+                left join dune.player_state ps on ps.player_pawn_id=pm.player_id
+                where pm.party_id in (select party_id from dune.party_members where player_id=%s)
+                order by pm.party_id, pm.player_id
+            """, (int(player_id),))
+            party_invites = reference_query(errors, "partyInvites", """
+                select * from dune.get_all_party_invites()
+                where sender_player_id=%s or player_id=%s
+                order by invite_sent_timespan desc
+                limit %s
+            """, (int(player_id), int(player_id), ADMIN_REFERENCE_LIMIT))
+        counts = reference_query(errors, "lifecycleCounts", """
+            select 'accounts' as table_name, count(*) as rows from dune.accounts
+            union all select 'player_state', count(*) from dune.player_state
+            union all select 'parties', count(*) from dune.parties
+            union all select 'party_members', count(*) from dune.party_members
+            union all select 'party_invites', count(*) from dune.party_invites
+            union all select 'player_tags', count(*) from dune.player_tags
+            union all select 'player_access_codes', count(*) from dune.player_access_codes
+            union all select 'communinet_player', count(*) from dune.communinet_player
+        """)
+        functions = reference_query(errors, "functions", """
+            select n.nspname as schema, p.proname as name,
+                   pg_get_function_identity_arguments(p.oid) as args,
+                   pg_get_function_result(p.oid) as result
+            from pg_proc p
+            join pg_namespace n on n.oid = p.pronamespace
+            where n.nspname = 'dune'
+              and (
+                p.proname ilike '%%party%%'
+                or p.proname ilike '%%account%%'
+                or p.proname ilike '%%player%%'
+                or p.proname ilike '%%communinet%%'
+                or p.proname ilike '%%access_code%%'
+                or p.proname ilike '%%tag%%'
+                or p.proname ilike '%%dungeon%%'
+                or p.proname ilike '%%tutorial%%'
+              )
+            order by p.proname
+            limit %s
+        """, (ADMIN_REFERENCE_LIMIT,))
+        tables = reference_query(errors, "tables", """
+            select table_name, column_name, data_type, udt_name
+            from information_schema.columns
+            where table_schema='dune'
+              and (
+                table_name ilike '%%party%%'
+                or table_name ilike '%%account%%'
+                or table_name ilike '%%player%%'
+                or table_name ilike '%%communinet%%'
+                or table_name ilike '%%access_code%%'
+                or table_name ilike '%%tag%%'
+                or table_name ilike '%%dungeon%%'
+                or table_name ilike '%%tutorial%%'
+              )
+            order by table_name, ordinal_position
+            limit %s
+        """, (ADMIN_REFERENCE_LIMIT * 5,))
+        return {
+            "accountId": int(account_id) if account_id not in ("", None) else None,
+            "playerId": int(player_id) if player_id not in ("", None) else None,
+            "account": account[0] if account else None,
+            "player": player[0] if player else None,
+            "tags": tags,
+            "accessCodes": access_codes,
+            "communinet": communinet,
+            "party": party,
+            "partyInvites": party_invites,
+            "counts": counts,
+            "functions": functions,
+            "tables": tables,
+            "mutators": {
+                "playerTags": {
+                    "endpoint": "/api/admin/player-tags",
+                    "defaultDryRun": True,
+                    "executionGate": "DUNE_ADMIN_PLAYER_TAG_MUTATIONS_ENABLED",
+                    "confirm": CONFIRM_PLAYER_TAG_MUTATION,
+                    "actions": ["add-remove"],
+                    "confidence": "moderate",
+                },
+                "accessCodes": {
+                    "endpoint": "/api/admin/access-code",
+                    "defaultDryRun": True,
+                    "executionGate": "DUNE_ADMIN_ACCESS_CODE_MUTATIONS_ENABLED",
+                    "confirm": CONFIRM_ACCESS_CODE_MUTATION,
+                    "actions": ["create", "delete", "reset"],
+                    "confidence": "moderate",
+                },
+                "partyAccountCommuninet": {
+                    "status": "inspect-only",
+                    "reason": "Party membership, account takeover/deletion, Communinet, dungeon, tutorial, and player save functions remain blocked pending lifecycle and rollback validation.",
                 },
             },
             "errors": errors,
@@ -4569,6 +4782,69 @@ class Handler(BaseHTTPRequestHandler):
         execute("select dune.dune_exchange_modify_user_solari_balance(%s,%s)", (controller_id, delta))
         after = query("select dune.dune_exchange_retrieve_solari_balance(%s) as solari_balance", (owner_id,))
         return {"ok": True, "dryRun": False, "ownerId": owner_id, "controllerId": controller_id, "mode": mode, "before": before_rows, "after": after, "rollback": plan["rollback"]}
+
+    def player_tags_mutation(self, body):
+        account_id = int(body.get("account_id", body.get("accountId")))
+        tags_to_add = self.parse_text_list(body.get("tags_to_add", body.get("tagsToAdd", body.get("add", []))), "tags_to_add") if body.get("tags_to_add", body.get("tagsToAdd", body.get("add"))) not in (None, "", []) else []
+        tags_to_remove = self.parse_text_list(body.get("tags_to_remove", body.get("tagsToRemove", body.get("remove", []))), "tags_to_remove") if body.get("tags_to_remove", body.get("tagsToRemove", body.get("remove"))) not in (None, "", []) else []
+        if not tags_to_add and not tags_to_remove:
+            raise ValueError("at least one tag to add or remove is required")
+        dry_run = str(body.get("dry_run", body.get("dryRun", "true"))).lower() not in ("0", "false", "no", "off")
+        before = query("select * from dune.admin_read_player_tags(%s) order by tags", (account_id,))
+        plan = {
+            "function": "dune.update_player_tags",
+            "args": [account_id, tags_to_add, tags_to_remove],
+            "before": before,
+            "rollback": {"account_id": account_id, "tags_to_add": tags_to_remove, "tags_to_remove": tags_to_add, "confirm": CONFIRM_PLAYER_TAG_MUTATION},
+        }
+        if dry_run:
+            return {"ok": True, "dryRun": True, "accountId": account_id, "plan": plan, "executionGate": "DUNE_ADMIN_PLAYER_TAG_MUTATIONS_ENABLED", "confirm": CONFIRM_PLAYER_TAG_MUTATION}
+        self.require_mutations()
+        if not PLAYER_TAG_MUTATIONS_ENABLED:
+            raise PermissionError("player tag mutations are disabled; set DUNE_ADMIN_PLAYER_TAG_MUTATIONS_ENABLED=true")
+        require_confirmation(body, CONFIRM_PLAYER_TAG_MUTATION)
+        execute("select dune.update_player_tags(%s,%s::text[],%s::text[])", (account_id, tags_to_add, tags_to_remove))
+        after = query("select * from dune.admin_read_player_tags(%s) order by tags", (account_id,))
+        return {"ok": True, "dryRun": False, "accountId": account_id, "before": before, "after": after, "rollback": plan["rollback"]}
+
+    def access_code_mutation(self, body):
+        action = str(body.get("action", "")).strip().lower()
+        if action not in ("create", "delete", "reset"):
+            raise ValueError("action must be create, delete, or reset")
+        account_id = int(body.get("account_id", body.get("accountId")))
+        dry_run = str(body.get("dry_run", body.get("dryRun", "true"))).lower() not in ("0", "false", "no", "off")
+        before = query("select * from dune.get_player_access_codes(%s) order by access_code_type, access_code", (account_id,))
+        plan = {"action": action, "accountId": account_id, "before": before}
+        if action in ("create", "delete"):
+            access_code = int(body.get("access_code", body.get("accessCode")))
+            access_code_type = int(body.get("access_code_type", body.get("accessCodeType", 0)))
+            plan.update({
+                "accessCode": access_code,
+                "accessCodeType": access_code_type,
+                "function": "dune.create_server_player_access_codes" if action == "create" else "dune.delete_server_player_access_codes",
+                "rollback": {"action": "delete" if action == "create" else "create", "account_id": account_id, "access_code": access_code, "access_code_type": access_code_type, "is_resettable": True, "confirm": CONFIRM_ACCESS_CODE_MUTATION},
+            })
+            if action == "create":
+                plan["isResettable"] = str(body.get("is_resettable", body.get("isResettable", "true"))).lower() in ("1", "true", "yes", "on")
+        else:
+            plan.update({
+                "function": "dune.reset_server_all_player_access_codes",
+                "rollback": "No automatic rollback; recreate needed access codes from the dry-run/audit before rows.",
+            })
+        if dry_run:
+            return {"ok": True, "dryRun": True, "action": action, "accountId": account_id, "plan": plan, "executionGate": "DUNE_ADMIN_ACCESS_CODE_MUTATIONS_ENABLED", "confirm": CONFIRM_ACCESS_CODE_MUTATION}
+        self.require_mutations()
+        if not ACCESS_CODE_MUTATIONS_ENABLED:
+            raise PermissionError("access-code mutations are disabled; set DUNE_ADMIN_ACCESS_CODE_MUTATIONS_ENABLED=true")
+        require_confirmation(body, CONFIRM_ACCESS_CODE_MUTATION)
+        if action == "create":
+            execute("select dune.create_server_player_access_codes(%s,%s,%s,%s)", (account_id, plan["accessCode"], plan["accessCodeType"], plan["isResettable"]))
+        elif action == "delete":
+            execute("select dune.delete_server_player_access_codes(%s,%s,%s)", (account_id, plan["accessCode"], plan["accessCodeType"]))
+        else:
+            execute("select dune.reset_server_all_player_access_codes(%s)", (account_id,))
+        after = query("select * from dune.get_player_access_codes(%s) order by access_code_type, access_code", (account_id,))
+        return {"ok": True, "dryRun": False, "action": action, "accountId": account_id, "before": before, "after": after, "rollback": plan["rollback"]}
 
     def respawn_location_mutation(self, body):
         account_id = int(body.get("account_id", body.get("accountId")))
@@ -6534,6 +6810,7 @@ async function catalog(serial=loadSerial){
   view.querySelector('.pageStack').insertAdjacentHTML('beforeend', `<div class="twoCol"><div class="panelBand"><h2>World State Inspect</h2><div class="grid"><label>Account ID<input id="worldAccountId"></label><label>Player ID<input id="worldPlayerId"></label><label>Guild ID<input id="worldGuildId"></label></div><p><button id="worldInspectBtn" class="primary">Inspect world surfaces</button></p><pre id="worldInspectResult"></pre></div><div class="panelBand"><h2>Guild Dry Run</h2><div class="grid"><label>Action<select id="guildAction"><option>edit-description</option><option>promote-member</option><option>demote-member</option></select></label><label>Guild ID<input id="guildId"></label><label>Player ID<input id="guildPlayerId"></label><label>New role<input id="guildNewRole"></label></div><label>Description<textarea id="guildDescription" rows="3"></textarea></label><p><button id="guildDryRunBtn" class="primary">Preview guild mutation</button></p><pre id="guildDryRunResult"></pre></div></div>`);
   view.querySelector('.pageStack').insertAdjacentHTML('beforeend', `<div class="twoCol"><div class="panelBand"><h2>Marker Delete Dry Run</h2><div class="grid"><label>Action<select id="markerAction"><option>delete-by-id</option><option>delete-static-location</option></select></label><label>Marker IDs<input id="markerIds" placeholder="comma-separated ids"></label><label>Static keys<input id="markerStaticKeys" placeholder="comma-separated keys"></label></div><p><button id="markerDryRunBtn" class="primary">Preview marker deletion</button></p><pre id="markerDryRunResult"></pre></div><div class="panelBand"><h2>Landclaim Dry Run</h2><div class="grid"><label>Totem ID<input id="landclaimTotemId"></label><label>Grid X<input id="landclaimGridX"></label><label>Grid Y<input id="landclaimGridY"></label></div><p><button id="landclaimDryRunBtn" class="primary">Preview landclaim segment</button></p><pre id="landclaimDryRunResult"></pre></div></div>`);
   view.querySelector('.pageStack').insertAdjacentHTML('beforeend', `<div class="twoCol"><div class="panelBand"><h2>Economy Inspect</h2><div class="grid"><label>Account ID<input id="economyAccountId"></label><label>Player/Owner ID<input id="economyPlayerId"></label><label>Controller ID<input id="economyControllerId"></label><label>Exchange ID<input id="economyExchangeId"></label></div><p><button id="economyInspectBtn" class="primary">Inspect economy surfaces</button></p><pre id="economyInspectResult"></pre></div><div class="panelBand"><h2>Exchange Solari Dry Run</h2><div class="grid"><label>Owner ID<input id="exchangeOwnerId"></label><label>Controller ID<input id="exchangeControllerId"></label><label>Amount<input id="exchangeAmount" value="1000"></label><label>Mode<select id="exchangeMode"><option>add</option><option>set</option></select></label></div><p><button id="exchangeDryRunBtn" class="primary">Preview exchange balance</button></p><pre id="exchangeDryRunResult"></pre></div></div>`);
+  view.querySelector('.pageStack').insertAdjacentHTML('beforeend', `<div class="twoCol"><div class="panelBand"><h2>Player Lifecycle Inspect</h2><div class="grid"><label>Account ID<input id="lifecycleAccountId"></label><label>Player ID<input id="lifecyclePlayerId"></label></div><p><button id="lifecycleInspectBtn" class="primary">Inspect lifecycle surfaces</button></p><pre id="lifecycleInspectResult"></pre></div><div class="panelBand"><h2>Player Tags Dry Run</h2><div class="grid"><label>Account ID<input id="tagAccountId"></label><label>Add tags<input id="tagsToAdd" placeholder="comma-separated"></label><label>Remove tags<input id="tagsToRemove" placeholder="comma-separated"></label></div><p><button id="tagsDryRunBtn" class="primary">Preview tag update</button></p><pre id="tagsDryRunResult"></pre></div><div class="panelBand"><h2>Access Codes Dry Run</h2><div class="grid"><label>Action<select id="accessCodeAction"><option>create</option><option>delete</option><option>reset</option></select></label><label>Account ID<input id="accessCodeAccountId"></label><label>Access code<input id="accessCodeValue"></label><label>Type<input id="accessCodeType" value="0"></label></div><p><button id="accessCodeDryRunBtn" class="primary">Preview access-code change</button></p><pre id="accessCodeDryRunResult"></pre></div></div>`);
   wireCatalogControls();
 }
 
@@ -6607,6 +6884,18 @@ function wireCatalogControls(root=document){
   root.querySelector('#exchangeDryRunBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Planning...', async () => {
     const result = await api('/api/admin/exchange', {method:'POST', body:JSON.stringify({dry_run:true, owner_id:exchangeOwnerId.value, controller_id:exchangeControllerId.value || exchangeOwnerId.value, amount:exchangeAmount.value, mode:exchangeMode.value})});
     document.getElementById('exchangeDryRunResult').textContent = JSON.stringify(result, null, 2);
+  }));
+  root.querySelector('#lifecycleInspectBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Inspecting...', async () => {
+    const result = await api('/api/admin/player-lifecycle/inspect', {method:'POST', body:JSON.stringify({account_id:lifecycleAccountId.value, player_id:lifecyclePlayerId.value})});
+    document.getElementById('lifecycleInspectResult').textContent = JSON.stringify(result, null, 2);
+  }));
+  root.querySelector('#tagsDryRunBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Planning...', async () => {
+    const result = await api('/api/admin/player-tags', {method:'POST', body:JSON.stringify({dry_run:true, account_id:tagAccountId.value, tags_to_add:tagsToAdd.value, tags_to_remove:tagsToRemove.value})});
+    document.getElementById('tagsDryRunResult').textContent = JSON.stringify(result, null, 2);
+  }));
+  root.querySelector('#accessCodeDryRunBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Planning...', async () => {
+    const result = await api('/api/admin/access-code', {method:'POST', body:JSON.stringify({dry_run:true, action:accessCodeAction.value, account_id:accessCodeAccountId.value, access_code:accessCodeValue.value, access_code_type:accessCodeType.value})});
+    document.getElementById('accessCodeDryRunResult').textContent = JSON.stringify(result, null, 2);
   }));
 }
 function selectCfg(){ const name=document.getElementById('cfg').value; document.getElementById('cfgText').value = window.configs[name] || ''; }
