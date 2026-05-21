@@ -247,7 +247,7 @@ python3 scripts/import-awakening-wiki-items.py
 python3 scripts/build-exchange-catalog.py --no-db
 ```
 
-Promote the imported game-file rows for full population:
+Promote imported game-file rows for review or isolated test seeding:
 
 ```bash
 python3 scripts/import-awakening-wiki-items.py \
@@ -257,6 +257,10 @@ python3 scripts/import-awakening-wiki-items.py \
   --confidence moderate \
   --output /tmp/awakening-wiki-full-populate.csv
 ```
+
+Those rows still need market-price evidence before live NPC seeding when
+`DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_MARKET_PRICE=true`. Do not treat a
+game-file import alone as approval for production population.
 
 Research exact wiki page vendor prices:
 
