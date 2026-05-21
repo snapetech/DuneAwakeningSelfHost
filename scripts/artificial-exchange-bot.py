@@ -491,6 +491,39 @@ def template_category_key(row):
     return (row["template_id"], row.get("category") or "unknown", populator_category_mask(row), populator_category_depth(row))
 
 
+def populator_active_fetch_limit(args, eligible_count=0):
+    hard_max = int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_HARD_MAX_ORDERS", "200"))
+    target_max = int(getattr(args, "populator_target_max_orders", 0) or 0)
+    limit = int(getattr(args, "limit", 0) or 0)
+    eligible_count = int(eligible_count or 0)
+    return max(limit, hard_max, target_max, eligible_count + hard_max)
+
+
+def select_populator_rows(eligible, planned_count, active_orders, max_per_template):
+    max_per_template = max(1, int(max_per_template))
+    counts = {}
+    for order in active_orders:
+        key = (order.get("template_id"), order.get("category"), int(order.get("category_mask") or 0), int(order.get("category_depth") or 0))
+        counts[key] = counts.get(key, 0) + 1
+
+    selected = []
+    for _ in range(max(0, int(planned_count))):
+        candidates = []
+        for row in eligible:
+            row_key = template_category_key(row)
+            order_key = (row_key[0], row_key[1], row_key[2], row_key[3])
+            if counts.get(order_key, 0) < max_per_template:
+                candidates.append(row)
+        if not candidates:
+            break
+        row = random.choice(candidates)
+        row_key = template_category_key(row)
+        order_key = (row_key[0], row_key[1], row_key[2], row_key[3])
+        counts[order_key] = counts.get(order_key, 0) + 1
+        selected.append(row)
+    return selected
+
+
 def free_position_candidates(occupied_positions, needed_count, start=0, max_position=100000):
     occupied = {int(pos) for pos in occupied_positions if pos is not None}
     positions = []
@@ -946,6 +979,8 @@ def populate_once(args):
 
 
 def populate_categories_once(args):
+    if not env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_CATEGORY_SEEDING_VERIFIED", False):
+        raise RuntimeError("category seeding is disabled until Exchange category masks are verified from client/game data")
     started = time.time()
     if not env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ENABLED", False):
         raise RuntimeError("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ENABLED is false")

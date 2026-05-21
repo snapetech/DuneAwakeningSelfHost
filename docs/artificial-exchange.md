@@ -558,6 +558,12 @@ Current category limitation:
   item tags. Rows missing from that source map, rows tagged
   `Items.ExcludeFromExchange`, and rows whose catalog category/mask differs from
   the source map are skipped.
+- Category seeding is hard-disabled unless
+  `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_CATEGORY_SEEDING_VERIFIED=true`. Do not
+  enable that gate until the Exchange category mask/depth values are extracted
+  from client/game data or another authoritative Exchange category source and
+  verified in-client. Source-backed item categories alone are not enough because
+  a wrong mask can still render in the wrong client bucket.
 - Blueprint-like rows are allowed only in blueprint categories:
   `schematics/weapons`, `schematics/armor`, `schematics/vehicles`, and
   `building/patents`.

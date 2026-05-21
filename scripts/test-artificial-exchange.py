@@ -341,6 +341,11 @@ class ArtificialExchangeBotTest(unittest.TestCase):
         bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_FORCE_COUNT"] = "1"
         self.assertEqual(bot.desired_seed_count(active_count=99, target_min=10, target_max=20), 1)
 
+    def test_category_population_requires_verified_masks(self):
+        args = types.SimpleNamespace()
+        with self.assertRaisesRegex(RuntimeError, "category seeding is disabled"):
+            bot.populate_categories_once(args)
+
     def test_cleanup_candidates_select_over_cap_then_probability(self):
         active = [{"id": 1}, {"id": 2}, {"id": 3}, {"id": 4}]
         with mock.patch.object(bot.random, "random", side_effect=[0.5, 0.05]):
