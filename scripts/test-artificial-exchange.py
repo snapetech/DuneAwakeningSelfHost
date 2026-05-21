@@ -365,7 +365,7 @@ class ArtificialExchangeBotTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = pathlib.Path(tmp) / "verified-category-map.json"
             mask, depth = bot.CATEGORY_MASKS["weapons/ranged"]
-            path.write_text(f'{{"items":{{"ItemA":{{"category_mask":{mask},"category_depth":{depth}}},"ItemC":{{"category_mask":258,"category_depth":2}}}}}}', encoding="utf-8")
+            path.write_text(f'{{"items":{{"ItemA":{{"category_mask":{mask},"category_depth":{depth}}},"ItemC":{{"category_mask":258,"category_depth":2}},"ItemD":{{"category_mask":-1,"category_depth":2}}}}}}', encoding="utf-8")
             bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_VERIFIED_CATEGORY_MAP"] = str(path)
             row = self.catalog_row("ItemA", category="weapons/ranged", category_mask=1, category_depth=1)
             bot.VERIFIED_CATEGORY_MAP_CACHE.clear()
@@ -374,8 +374,11 @@ class ArtificialExchangeBotTest(unittest.TestCase):
             self.assertEqual(bot.populator_category_depth(row), depth)
             missing = self.catalog_row("ItemB", category_mask=1, category_depth=1)
             self.assertEqual(bot.populator_category_skip_reason(missing), "missing verified category")
-            mismatched = self.catalog_row("ItemC", category="weapons/ranged", category_mask=1, category_depth=1)
-            self.assertEqual(bot.populator_category_skip_reason(mismatched), f"verified category map mismatch expected {mask}/{depth}")
+            game_derived = self.catalog_row("ItemC", category="weapons/ranged", category_mask=1, category_depth=1)
+            self.assertEqual(bot.populator_category_skip_reason(game_derived), "")
+            self.assertEqual(bot.populator_category_mask(game_derived), 258)
+            invalid = self.catalog_row("ItemD", category="weapons/ranged", category_mask=1, category_depth=1)
+            self.assertEqual(bot.populator_category_skip_reason(invalid), "invalid verified category")
 
     def test_blueprint_identity_is_restricted_to_blueprint_categories(self):
         mask, depth = bot.CATEGORY_MASKS["weapons/ranged"]

@@ -93,6 +93,7 @@ case "$target_role" in
     CONFIRM_FAILOVER_ROLE_SERVICES=yes run_step make failover-role-services "ENV_FILE=$env_file" ROLE=standby
     ;;
   primary)
+    CONFIRM_HOST_NETWORK_FAILOVER=yes run_step make host-network-failover "ENV_FILE=$env_file" ROLE=primary
     CONFIRM_ROUTER_CUTOVER=yes run_step make router-cutover "ENV_FILE=$env_file" "TARGET=$primary_ip"
     CONFIRM_FAILOVER_ROLE_SERVICES=yes run_step make failover-role-services "ENV_FILE=$env_file" ROLE=primary
     ;;

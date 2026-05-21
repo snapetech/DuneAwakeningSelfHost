@@ -18,18 +18,11 @@ jobs:
       - name: Install ripgrep
         run: sudo apt-get update && sudo apt-get install -y ripgrep
 
-      - name: Validate Compose config
-        run: docker compose --env-file .env.example config --quiet
-
-      - name: Scan for obvious secrets
-        run: |
-          if rg -n --pcre2 '(gho_|FLS_SECRET=.+|ServiceAuthToken=[A-Za-z0-9_.-]+|ServerLoginPasswordSecret="(?!replace)|UsernameServerLoginSecret="(?!replace)|BEGIN .*PRIVATE KEY|PRIVATE KEY)' . --glob '!data/**' --glob '!config/tls/**' --glob '!.env' --glob '!Makefile' --glob '!.github/workflows/validate.yml'; then
-            echo "Potential secret found in publishable files"
-            exit 1
-          fi
+      - name: Validate repository
+        run: make validate
 
       - name: Block runtime artifacts
         run: |
           test ! -e .env
-          test ! -e data
+          ! git ls-files data | grep -v '^data/exchange-price-snapshots/'
           test ! -e config/tls

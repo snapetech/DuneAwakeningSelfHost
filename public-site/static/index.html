@@ -12,7 +12,7 @@
 <div class="hero-copy">
 <h1>Dune Awakening Server</h1>
 <p class="lede">A community Dune Awakening server with public status, settings, and an active player map.</p>
-<p class="starter-notice"><strong>New players:</strong> every new account receives a Base Reconstruction Tool. Character transfers are open from public, official, private, and self-host worlds.</p>
+<p class="starter-notice"><strong>New players:</strong> every new account receives a Base Reconstruction Tool. Character transfers are open from all worlds.</p>
 <p class="stack-link"><a href="https://github.com/snapetech/DuneAwakeningSelfHost">DuneAwakeningSelfHost</a> powers this self-hosted server.</p>
 </div>
 <!-- STATUS_BEGIN -->
@@ -59,6 +59,14 @@
 <button type="button" id="map-zoom-in" aria-label="Zoom map in">+</button>
 <button type="button" id="map-reset">Reset</button>
 </div>
+<div class="map-layout">
+<div id="hagga-map-viewport" class="map-viewport">
+<div id="hagga-map-content" class="map-content">
+<img id="hagga-map" class="hagga-map" src="/hagga-map.svg" alt="Hagga Basin player position map" width="1600" height="1600" draggable="false">
+<svg id="poi-overlay" class="poi-overlay" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden="true"></svg>
+</div>
+</div>
+<aside class="poi-legend" aria-label="POI layer legend">
 <div class="poi-legend-header">
 <span id="poi-summary" class="muted">POI layers off</span>
 <span class="poi-legend-actions">
@@ -73,11 +81,7 @@
 <label class="poi-filter-label"><span class="sr-only">Filter POI layers</span><input id="poi-filter" type="search" placeholder="Filter POI layers"></label>
 <div id="poi-filter-summary" class="poi-filter-summary muted">Showing all POI layers</div>
 <div id="poi-toggles" class="poi-toggles" aria-label="Map marker toggles"></div>
-<div id="hagga-map-viewport" class="map-viewport">
-<div id="hagga-map-content" class="map-content">
-<img id="hagga-map" class="hagga-map" src="/hagga-map.svg" alt="Hagga Basin player position map" width="1600" height="1600" draggable="false">
-<svg id="poi-overlay" class="poi-overlay" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden="true"></svg>
-</div>
+</aside>
 </div>
 <p class="muted poi-attribution">POI data from <a href="https://awakening.wiki/Map:Hagga_Basin">Dune: Awakening Community Wiki</a>, CC BY-NC-SA 4.0 unless otherwise noted.</p>
 <p class="muted">Static public snapshot, refreshed once per minute. Only online public display names and coarse locations are published.</p>

@@ -112,6 +112,7 @@ remote_manifest="$(mktemp)"
 trap 'rm -f "$local_manifest" "$remote_manifest"' EXIT
 find .env compose.yaml compose.allmaps.yaml compose.failover-standby.yaml config \
   -type f \
+  -not -path 'config/tls/rabbitmq.backup.*/*' \
   -not -path 'config/tls/rabbitmq-staged/*' \
   -not -path 'config/tls/rabbitmq-staged.backup.*/*' \
   -not -path 'config/tls/*/*.key' \
@@ -120,6 +121,7 @@ find .env compose.yaml compose.allmaps.yaml compose.failover-standby.yaml config
   | xargs -0 sha256sum > "$local_manifest"
 if ssh "$remote" "cd '$remote_repo' && find .env compose.yaml compose.allmaps.yaml compose.failover-standby.yaml config \
   -type f \
+  -not -path 'config/tls/rabbitmq.backup.*/*' \
   -not -path 'config/tls/rabbitmq-staged/*' \
   -not -path 'config/tls/rabbitmq-staged.backup.*/*' \
   -not -path 'config/tls/*/*.key' \

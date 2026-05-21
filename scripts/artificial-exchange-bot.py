@@ -360,13 +360,8 @@ def populator_category_skip_reason(row):
     if verified_row:
         verified_mask = int(verified_row.get("category_mask") or -1)
         verified_depth = int(verified_row.get("category_depth") or -1)
-        if source_row and (verified_mask != int(source_row.get("category_mask") or -1) or verified_depth != int(source_row.get("category_depth") or -1)):
-            return f"verified category mask mismatch expected {source_row.get('category_mask')}/{source_row.get('category_depth')}"
-        expected_mask, expected_depth = CATEGORY_MASKS.get(category, (None, None))
-        if expected_mask is None:
-            return "unmapped category"
-        if verified_mask != expected_mask or verified_depth != expected_depth:
-            return f"verified category map mismatch expected {expected_mask}/{expected_depth}"
+        if verified_mask < 0 or verified_depth < 0:
+            return "invalid verified category"
     if env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_SKIP_UNKNOWN_CATEGORY", True):
         if category == "unknown" or (populator_category_mask(row) == 0 and populator_category_depth(row) == 0):
             return "unknown category"

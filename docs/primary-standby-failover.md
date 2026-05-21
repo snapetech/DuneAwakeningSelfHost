@@ -88,7 +88,7 @@ CONFIRM_PROMOTE_STANDBY=yes make promote-standby ENV_FILE=.env
 Move host-side public-address/reflection rules to the standby:
 
 ```sh
-CONFIRM_HOST_NETWORK_FAILOVER=yes make host-network-failover ENV_FILE=.env
+CONFIRM_HOST_NETWORK_FAILOVER=yes make host-network-failover ENV_FILE=.env ROLE=standby
 ```
 
 Move router forwards to the standby LAN IP:
@@ -107,6 +107,7 @@ CONFIRM_FAILOVER_ROLE_SERVICES=yes make failover-role-services ENV_FILE=.env ROL
 Cut back by reversing the target IP and role direction:
 
 ```sh
+CONFIRM_HOST_NETWORK_FAILOVER=yes make host-network-failover ENV_FILE=.env ROLE=primary
 CONFIRM_ROUTER_CUTOVER=yes make router-cutover ENV_FILE=.env TARGET="$DUNE_FAILOVER_PRIMARY_LAN_IP"
 CONFIRM_FAILOVER_ROLE_SERVICES=yes make failover-role-services ENV_FILE=.env ROLE=primary
 make failover-orchestrate ENV_FILE=.env ROLE=primary
@@ -152,7 +153,8 @@ and starts a fresh `dune-postgres-replica` from the current active primary.
    then the 30 map services. Optional admin/bot services are controlled by
    `failover-role-services`.
 10. Run `CONFIRM_HOST_NETWORK_FAILOVER=yes make host-network-failover
-   ENV_FILE=.env` so the standby owns the public `/32`, relaxed reverse-path
+   ENV_FILE=.env ROLE=standby` so the standby owns the public `/32`, the old
+   primary no longer owns it, and the standby has relaxed reverse-path
    filtering, Dune bridge masquerade, and local self-host redirects for
    `GAME_RMQ_PUBLIC_PORT`, gameplay UDP, and IGW UDP.
 11. Run `CONFIRM_ROUTER_CUTOVER=yes make router-cutover ENV_FILE=.env
