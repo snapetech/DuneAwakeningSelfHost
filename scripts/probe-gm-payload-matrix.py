@@ -4,6 +4,7 @@ import itertools
 import json
 import pathlib
 import secrets
+import ssl
 import sys
 import time
 import uuid
@@ -12,7 +13,32 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / "vendor"))
 
 import pika
 
-from dune_gm_command import amqp_connection
+from dune_gm_command import amqp_connection, env, env_bool
+
+
+def game_amqp_connection():
+    host = env("DUNE_ANNOUNCE_HOST_AMQP_HOST", env("DUNE_ANNOUNCE_GAME_RMQ_AMQP_HOST", "127.0.0.1"))
+    port = int(env("DUNE_ANNOUNCE_HOST_AMQP_PORT", env("DUNE_ANNOUNCE_GAME_RMQ_AMQP_PORT", env("GAME_RMQ_PUBLIC_PORT", "31982"))))
+    tls = env_bool("DUNE_ANNOUNCE_GAME_RMQ_AMQP_TLS", True)
+    user = env("DUNE_ANNOUNCE_CHAT_USER", "A000000000000001")
+    password = env("DUNE_ANNOUNCE_CHAT_PASSWORD", "")
+    ssl_options = None
+    if tls:
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        ssl_options = pika.SSLOptions(context, host)
+    return pika.BlockingConnection(
+        pika.ConnectionParameters(
+            host=host,
+            port=port,
+            virtual_host="/",
+            credentials=pika.PlainCredentials(user, password),
+            ssl_options=ssl_options,
+            heartbeat=0,
+            blocked_connection_timeout=10,
+        )
+    )
 
 
 def json_bytes(value):
@@ -115,6 +141,7 @@ def main():
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--wait", type=float, default=1.0)
     parser.add_argument("--include-game-rmq", action="store_true")
+    parser.add_argument("--only-broker", choices=("admin", "game", "all"), default="all")
     args = parser.parse_args()
 
     bodies = build_bodies(args.command, args.target_player, args.admin_player)
@@ -123,6 +150,8 @@ def main():
     targets = [("admin", "rpc", args.route), ("admin", "", args.queue)]
     if args.include_game_rmq and args.game_server_queue:
         targets.append(("game", "", args.game_server_queue))
+    if args.only_broker != "all":
+        targets = [target for target in targets if target[0] == args.only_broker]
 
     sent = []
     responses = []
@@ -134,6 +163,7 @@ def main():
 
     game_conn = None
     game_ch = None
+    game_reply_queue = None
 
     combos = list(itertools.product(targets, bodies.items(), content_type_modes, amqp_types))
     if args.limit:
@@ -148,9 +178,10 @@ def main():
                 publish_one(admin_ch, exchange, routing_key, body, content_type, amqp_type, reply_queue, "", tag)
             else:
                 if game_conn is None:
-                    game_conn = amqp_connection()
+                    game_conn = game_amqp_connection()
                     game_ch = game_conn.channel()
-                publish_one(game_ch, exchange, routing_key, body, content_type, amqp_type, reply_queue, "", tag)
+                    game_reply_queue = game_ch.queue_declare(queue="", exclusive=True, auto_delete=True).method.queue
+                publish_one(game_ch, exchange, routing_key, body, content_type, amqp_type, game_reply_queue, "", tag)
             sent.append(
                 {
                     "tag": tag,
@@ -176,8 +207,12 @@ def main():
                 }
             )
         responses.extend(drain(admin_ch, reply_queue, args.wait))
+        if game_ch is not None and game_reply_queue is not None:
+            responses.extend(drain(game_ch, game_reply_queue, args.wait))
 
     responses.extend(drain(admin_ch, reply_queue, max(args.wait, 2.0)))
+    if game_ch is not None and game_reply_queue is not None:
+        responses.extend(drain(game_ch, game_reply_queue, max(args.wait, 2.0)))
     if game_conn is not None:
         game_conn.close()
     admin_conn.close()

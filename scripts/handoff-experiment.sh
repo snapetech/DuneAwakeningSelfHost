@@ -67,12 +67,7 @@ preflight_handoff() {
   printf '== handoff preflight ==\n' >"$capture_dir/preflight.txt"
   {
     printf 'timestamp=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    printf '\n== RabbitMQ TLS public SAN ==\n'
-    ./scripts/check-rabbitmq-cert-sans.sh "$env_file" || rc=1
-    printf '\n== standby status ==\n'
-    make standby-status "ENV_FILE=$env_file" || rc=1
-    printf '\n== current health ==\n'
-    make cutover-check "ENV_FILE=$env_file" || rc=1
+    ./scripts/handoff-ready.sh "$env_file" "$role" || rc=1
   } >>"$capture_dir/preflight.txt" 2>&1
   return "$rc"
 }

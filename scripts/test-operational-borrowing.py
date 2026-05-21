@@ -603,6 +603,48 @@ class FailoverScriptTests(unittest.TestCase):
             self.assertIn("Refusing apply", result.stderr)
             self.assertNotIn("sync-standby-files", log_file.read_text(encoding="utf-8"))
 
+    def test_rabbitmq_tls_recreate_dry_run_allows_invalid_current_cert(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            env_file = tmp_path / "dune.env"
+            cert = write_self_signed_cert(tmp_path, "DNS:game-rmq,DNS:localhost,IP:127.0.0.1")
+            env_file.write_text("GAME_RMQ_PUBLIC_HOST=rmq.example.test\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [str(ROOT / "scripts" / "recreate-rabbitmq-tls-stack.sh"), str(env_file)],
+                cwd=ROOT,
+                env={**os.environ, "RABBITMQ_CERT_PATH": str(cert)},
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("Dry run only", result.stdout)
+
+    def test_rabbitmq_tls_recreate_apply_refuses_invalid_current_cert(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            env_file = tmp_path / "dune.env"
+            cert = write_self_signed_cert(tmp_path, "DNS:game-rmq,DNS:localhost,IP:127.0.0.1")
+            env_file.write_text("GAME_RMQ_PUBLIC_HOST=rmq.example.test\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [str(ROOT / "scripts" / "recreate-rabbitmq-tls-stack.sh"), str(env_file)],
+                cwd=ROOT,
+                env={
+                    **os.environ,
+                    "RABBITMQ_CERT_PATH": str(cert),
+                    "CONFIRM_RECREATE_RMQ_TLS_STACK": "yes",
+                },
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("refusing recreate", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

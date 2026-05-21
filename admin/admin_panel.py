@@ -6226,6 +6226,8 @@ INDEX = r"""<!doctype html>
     .poiToggleBar { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:6px 14px; border:1px solid var(--line); border-radius:7px; background:#101310; margin:0 0 10px; padding:10px 12px; }
     .poiToggleBar label { display:inline-flex; justify-content:space-between; gap:10px; align-items:center; color:var(--text); font-size:12px; line-height:1.25; }
     .poiToggleBar input { width:auto; }
+    .poiLegendHeader { display:flex; align-items:center; justify-content:space-between; gap:10px; margin:0 0 6px; }
+    .poiLegendHeader .toolbar { margin:0; }
     .poiToggleLabel { display:inline-flex; align-items:center; gap:7px; min-width:0; }
     .poiSwatch { width:10px; height:10px; border:1px solid #0b0d0a; border-radius:2px; flex:0 0 auto; }
     .poiCount { color:var(--muted); font-size:11px; }
@@ -6771,6 +6773,7 @@ function mapTiles(rows){
   return `<div class="mapGrid">${rows.map(r => `<div class="mapTile ${r.online ? 'ok' : 'bad'}"><div class="name">${esc(r.label || r.map)}</div><div class="meta">${r.online ? 'online' : 'offline'} | ${esc(r.players ?? 0)} players</div></div>`).join('')}</div>`;
 }
 const haggaPoiPalette = ['#d5a13e', '#7fc27a', '#6fa8dc', '#d96f62', '#b78cff', '#6cc7bd', '#e1b75f', '#e89458'];
+const haggaPoiPresetGroups = {Shipwrecks:true, Caves:true, TradingPosts:true, Outposts:true, Aql:true, Trainers:true};
 function selectedHaggaPoiGroups(groups){
   if (!haggaPoiGroups || !Object.keys(haggaPoiGroups).length) {
     try {
@@ -6788,6 +6791,10 @@ function selectedHaggaPoiGroups(groups){
 function saveHaggaPoiGroups(selected){
   haggaPoiGroups = selected;
   sessionStorage.setItem('duneAdminHaggaPoiGroups', JSON.stringify(selected));
+}
+function haggaPoiSummary(selected){
+  const enabled = Object.keys(selected || {}).filter(group => selected[group] === true).length;
+  return enabled ? `${enabled} POI layer${enabled === 1 ? '' : 's'} on` : 'POI layers off';
 }
 function haggaPoiOverlay(pois, selected){
   const markers = Array.isArray(pois?.markers) ? pois.markers : [];
@@ -6810,7 +6817,7 @@ function haggaPoiToggleBar(pois, selected){
   if (!groupKeys.length) return '';
   const colors = {};
   groupKeys.forEach((group, index) => colors[group] = haggaPoiPalette[index % haggaPoiPalette.length]);
-  return `<div class="poiToggleBar" aria-label="POI layer toggles">${groupKeys.map(group => {
+  return `<div class="poiLegendHeader"><span id="haggaPoiSummary" class="muted">${esc(haggaPoiSummary(selected))}</span><div class="toolbar"><button id="haggaPoiPresetBtn">Preset</button><button id="haggaPoiClearBtn">Clear</button></div></div><div class="poiToggleBar" aria-label="POI layer toggles">${groupKeys.map(group => {
     const info = groups[group] || {};
     return `<label><span class="poiToggleLabel"><input type="checkbox" value="${esc(group)}"${selected[group] ? ' checked' : ''}><span class="poiSwatch" style="background:${esc(colors[group])}"></span><span>${esc(info.name || group)}</span></span><span class="poiCount">${esc(info.count || 0)}</span></label>`;
   }).join('')}</div>`;
@@ -7082,6 +7089,18 @@ function wireHaggaMapControls(container){
       saveHaggaPoiGroups(selected);
       refreshHaggaMap({force:true}).catch(e => reportClientError(e, 'Refresh Hagga map'));
     });
+  });
+  container.querySelector('#haggaPoiClearBtn')?.addEventListener('click', () => {
+    const selected = selectedHaggaPoiGroups({});
+    Object.keys(selected).forEach(group => selected[group] = false);
+    saveHaggaPoiGroups(selected);
+    refreshHaggaMap({force:true}).catch(e => reportClientError(e, 'Refresh Hagga map'));
+  });
+  container.querySelector('#haggaPoiPresetBtn')?.addEventListener('click', () => {
+    const selected = selectedHaggaPoiGroups({});
+    Object.keys(selected).forEach(group => selected[group] = haggaPoiPresetGroups[group] === true);
+    saveHaggaPoiGroups(selected);
+    refreshHaggaMap({force:true}).catch(e => reportClientError(e, 'Refresh Hagga map'));
   });
   container.querySelectorAll('.playerMarker[data-account-id]').forEach(marker => {
     marker.addEventListener('click', e => {

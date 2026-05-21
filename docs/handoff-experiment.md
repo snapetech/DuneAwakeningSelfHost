@@ -23,6 +23,7 @@ The client may tolerate a brief interruption if:
 Use a maintenance window or a disposable battlegroup first.
 
 ```sh
+make handoff-ready ENV_FILE=.env ROLE=standby
 make handoff-experiment ENV_FILE=.env ROLE=standby
 CONFIRM_HANDOFF_EXPERIMENT=yes make handoff-experiment ENV_FILE=.env ROLE=standby APPLY=--apply
 ```
@@ -42,6 +43,7 @@ If the RabbitMQ public SAN check fails, fix it in a maintenance window:
 make rabbitmq-cert-stage ENV_FILE=.env
 CONFIRM_INSTALL_STAGED_RMQ_CERT=yes make rabbitmq-cert-install-staged ENV_FILE=.env
 CONFIRM_RECREATE_RMQ_TLS_STACK=yes make rabbitmq-cert-recreate-stack ENV_FILE=.env
+make handoff-ready ENV_FILE=.env ROLE=standby
 make handoff-experiment ENV_FILE=.env ROLE=standby
 ```
 

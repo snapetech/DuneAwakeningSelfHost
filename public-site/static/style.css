@@ -252,6 +252,36 @@ section {
 	padding: 10px 12px;
 }
 
+.poi-legend-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+	margin-bottom: 6px;
+}
+
+.poi-legend-actions {
+	display: inline-flex;
+	gap: 6px;
+}
+
+.poi-legend-actions button {
+	border: 1px solid #5b503f;
+	border-radius: 6px;
+	background: #201d18;
+	color: #f3eadb;
+	font: inherit;
+	font-size: 0.82rem;
+	padding: 4px 8px;
+	cursor: pointer;
+}
+
+.poi-legend-actions button:hover,
+.poi-legend-actions button:focus-visible {
+	border-color: #d9a63c;
+	outline: 0;
+}
+
 .poi-toggles label {
 	display: inline-flex;
 	align-items: center;

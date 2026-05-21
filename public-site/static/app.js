@@ -6,6 +6,9 @@
 	var mapContent = document.getElementById("hagga-map-content");
 	var poiOverlay = document.getElementById("poi-overlay");
 	var poiToggles = document.getElementById("poi-toggles");
+	var poiSummary = document.getElementById("poi-summary");
+	var poiPreset = document.getElementById("poi-preset");
+	var poiClear = document.getElementById("poi-clear");
 	var players = document.getElementById("active-players");
 	var count = document.getElementById("player-count");
 	var peakCount = document.getElementById("peak-player-count");
@@ -24,6 +27,7 @@
 
 	var poiPalette = ["#d9a63c", "#78cf7a", "#6fb6ff", "#e08585", "#c98dff", "#72d6c9", "#f0d77a", "#ff9d5c"];
 	var poiStorageKey = "dunePublicPoiGroups";
+	var poiPresetGroups = {"Shipwrecks": true, "Caves": true, "TradingPosts": true, "Outposts": true, "Aql": true, "Trainers": true};
 
 	function initPanZoom(viewport, content, zoomIn, zoomOut, reset) {
 		if (!viewport || !content) {
@@ -204,6 +208,16 @@
 		sessionStorage.setItem(poiStorageKey, JSON.stringify(selected));
 	}
 
+	function updatePoiSummary(selected) {
+		if (!poiSummary) {
+			return;
+		}
+		var enabled = Object.keys(selected || {}).filter(function (group) {
+			return selected[group] === true;
+		}).length;
+		poiSummary.textContent = enabled ? String(enabled) + " POI layer" + (enabled === 1 ? "" : "s") + " on" : "POI layers off";
+	}
+
 	function renderPoiOverlay(data, selected) {
 		if (!poiOverlay) {
 			return;
@@ -245,13 +259,33 @@
 			return '<label><span class="poi-toggle-label"><input type="checkbox" value="' + escapeHtml(group) + '"' + checked + '><span class="poi-swatch" style="background:' + escapeHtml(colors[group]) + '"></span><span>' + escapeHtml(info.name || group) + '</span></span><span class="poi-count">' + escapeHtml(info.count || 0) + '</span></label>';
 		}).join("");
 		renderPoiOverlay(data, selected);
+		updatePoiSummary(selected);
 		poiToggles.querySelectorAll("input[type=checkbox]").forEach(function (input) {
 			input.addEventListener("change", function () {
 				selected[input.value] = input.checked;
 				savePoiGroups(selected);
 				renderPoiOverlay(data, selected);
+				updatePoiSummary(selected);
 			});
 		});
+		if (poiClear) {
+			poiClear.onclick = function () {
+				Object.keys(selected).forEach(function (group) {
+					selected[group] = false;
+				});
+				savePoiGroups(selected);
+				renderPoiToggles(data);
+			};
+		}
+		if (poiPreset) {
+			poiPreset.onclick = function () {
+				Object.keys(selected).forEach(function (group) {
+					selected[group] = poiPresetGroups[group] === true;
+				});
+				savePoiGroups(selected);
+				renderPoiToggles(data);
+			};
+		}
 	}
 
 	function loadPois() {

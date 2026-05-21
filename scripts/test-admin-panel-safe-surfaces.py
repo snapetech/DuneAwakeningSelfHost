@@ -861,6 +861,85 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertEqual(captured["audits"][0]["action"], "character-slot-execute")
         self.assertTrue(captured["audits"][0]["executable"])
 
+    def test_offline_teleport_dry_run_uses_first_party_helper(self):
+        calls = []
+
+        def fake_query(sql, params=None):
+            calls.append((sql, params))
+            if "from dune.player_state ps" in sql and "left join dune.accounts" in sql:
+                return [{
+                    "account_id": 10,
+                    "character_name": "Target",
+                    "online_status": "Offline",
+                    "server_id": 1,
+                    "previous_server_partition_id": 5,
+                    "funcom_id": "funcom-user",
+                    "fls_id": "fls-user",
+                }]
+            if "from dune.world_partition" in sql:
+                return [{"partition_id": 12, "server_id": 1, "map": "Survival_1", "dimension_index": 0, "label": "Hagga Basin", "blocked": False}]
+            if "dune.is_player_offline" in sql:
+                return [{"offline": False}]
+            if "join dune.actors" in sql:
+                return [{"actor_id": 200, "class": "Pawn", "partition_id": 5, "x": 1, "y": 2, "z": 3}]
+            return []
+
+        self.patch_db(fake_query, lambda sql, params=None: (_ for _ in ()).throw(AssertionError("dry-run executed SQL write")))
+        result = self.handler.offline_player_recovery({
+            "dry_run": True,
+            "account_id": 10,
+            "partition_id": 12,
+            "location": {"x": 100, "y": 200, "z": 9000},
+        })
+
+        self.assertTrue(result["dryRun"])
+        self.assertEqual(result["plan"]["function"], "dune.admin_move_offline_player_to_partition")
+        self.assertFalse(result["plan"]["executable"])
+        self.assertIn("dune.is_player_offline", result["plan"]["blockers"][0])
+        self.assertFalse(any("update dune.actors" in sql.lower() for sql, _ in calls))
+
+    def test_offline_teleport_execute_calls_first_party_helper_once(self):
+        calls = []
+
+        def fake_query(sql, params=None):
+            calls.append((sql, params))
+            if "from dune.player_state ps" in sql and "left join dune.accounts" in sql:
+                return [{
+                    "account_id": 10,
+                    "character_name": "Target",
+                    "online_status": "Offline",
+                    "server_id": 1,
+                    "previous_server_partition_id": 5,
+                    "funcom_id": "funcom-user",
+                    "fls_id": "fls-user",
+                }]
+            if "from dune.world_partition" in sql:
+                return [{"partition_id": 12, "server_id": 1, "map": "Survival_1", "dimension_index": 0, "label": "Hagga Basin", "blocked": False}]
+            if "dune.is_player_offline" in sql:
+                return [{"offline": True}]
+            if "dune.admin_move_offline_player_to_partition" in sql:
+                return [{"admin_move_offline_player_to_partition": None}]
+            if "join dune.actors" in sql:
+                return [{"actor_id": 200, "class": "Pawn", "partition_id": 12, "x": 100, "y": 200, "z": 9000}]
+            return []
+
+        self.patch_db(fake_query, lambda sql, params=None: (_ for _ in ()).throw(AssertionError("unexpected raw execute")))
+        self.patch_flag("MUTATIONS_ENABLED", True)
+        result = self.handler.offline_player_recovery({
+            "dry_run": False,
+            "account_id": 10,
+            "partition_id": 12,
+            "location": {"x": 100, "y": 200, "z": 9000},
+            "confirm": "MOVE OFFLINE PLAYER",
+        })
+
+        helper_calls = [call for call in calls if "dune.admin_move_offline_player_to_partition" in call[0]]
+        self.assertFalse(result["dryRun"])
+        self.assertEqual(len(helper_calls), 1)
+        self.assertEqual(helper_calls[0][1], ("fls-user", 12, 100.0, 200.0, 9000.0))
+        self.assertIn("previousActors", result["rollback"])
+        self.assertFalse(any("update dune.actors" in sql.lower() for sql, _ in calls))
+
     def test_communinet_tutorial_vendor_dry_runs_are_plan_only(self):
         def fake_query(sql, params=None):
             if "load_communinet_player_data" in sql:
