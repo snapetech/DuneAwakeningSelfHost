@@ -526,7 +526,9 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
             if "from pg_proc" in sql:
                 return [{"name": "takeover_account", "args": "in_user_to_takeover text, in_current_user text", "result": "void"}]
             if "where ps.account_id in" in sql:
-                return [{"account_id": params[0], "fls_id": "active-fls"}, {"account_id": params[1], "fls_id": "stored-fls"}]
+                if calls:
+                    return [{"account_id": params[0], "online_status": "Offline", "fls_id": "stored-fls"}, {"account_id": params[1], "online_status": "Offline", "fls_id": "active-fls"}]
+                return [{"account_id": params[0], "online_status": "Offline", "fls_id": "active-fls"}, {"account_id": params[1], "online_status": "Offline", "fls_id": "stored-fls"}]
             return []
 
         def fake_execute(sql, params=None):
@@ -548,7 +550,38 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertFalse(result["dryRun"])
         self.assertEqual(backups, ["backup"])
         self.assertEqual(calls, [("select dune.takeover_account(%s, %s)", ("stored-fls", "active-fls"))])
+        self.assertTrue(result["verified"])
         self.assertEqual(result["rollback"]["inversePayload"]["account_id"], 11)
+
+    def test_character_slot_execute_rechecks_offline_after_backup(self):
+        calls = []
+        original_backup = self.panel.create_db_backup
+
+        def fake_query(sql, params=None):
+            if "where ps.account_id=%s" in sql and "left join dune.accounts" in sql:
+                return [{"account_id": 10, "character_name": "Active", "online_status": "Offline", "fls_id": "active-fls"}]
+            if "with target_account as" in sql:
+                return [{"account_id": 11, "character_name": "Stored", "online_status": "Offline", "fls_id": "stored-fls", "ownership_evidence": "same-account-user"}]
+            if "from pg_proc" in sql:
+                return [{"name": "takeover_account", "args": "in_user_to_takeover text, in_current_user text", "result": "void"}]
+            if "where ps.account_id in" in sql:
+                return [{"account_id": params[0], "online_status": "Online", "fls_id": "active-fls"}, {"account_id": params[1], "online_status": "Offline", "fls_id": "stored-fls"}]
+            return []
+
+        self.patch_db(fake_query, lambda sql, params=None: calls.append((sql, params)))
+        self.patch_flag("CHARACTER_SWAP_ENABLED", True)
+        self.panel.create_db_backup = lambda: {"path": "backup.dump", "bytes": 1}
+        self.addCleanup(lambda: setattr(self.panel, "create_db_backup", original_backup))
+
+        with self.assertRaises(RuntimeError):
+            self.handler.character_slot_execute({
+                "dry_run": False,
+                "account_id": 10,
+                "action": "switch-character",
+                "target_account_id": 11,
+                "confirm": "SWAP CHARACTER",
+            })
+        self.assertEqual(calls, [])
 
     def test_character_slot_execution_block_does_not_create_backup(self):
         backups = []

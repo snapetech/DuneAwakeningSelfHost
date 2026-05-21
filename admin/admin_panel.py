@@ -3782,6 +3782,12 @@ class Handler(BaseHTTPRequestHandler):
             where ps.account_id in (%s, %s)
             order by ps.account_id
         """, (planned["accountId"], planned["targetAccountId"]))
+        online_now = [
+            row for row in before_rows
+            if str(row.get("online_status") or "").lower() == "online"
+        ]
+        if online_now:
+            raise RuntimeError("character swap aborted after backup because active or target account came online")
         execute("select dune.takeover_account(%s, %s)", (target_user, active_user))
         after_rows = query("""
             select ps.account_id, ps.character_name, ps.online_status::text, ps.life_state::text,
@@ -3792,6 +3798,15 @@ class Handler(BaseHTTPRequestHandler):
             where ps.account_id in (%s, %s)
             order by ps.account_id
         """, (planned["accountId"], planned["targetAccountId"]))
+        after_by_account = {int(row.get("account_id")): row for row in after_rows}
+        active_after = after_by_account.get(int(planned["accountId"]), {})
+        target_after = after_by_account.get(int(planned["targetAccountId"]), {})
+        verified = (
+            active_after.get("fls_id") == target_user
+            and target_after.get("fls_id") == active_user
+        )
+        if not verified:
+            raise RuntimeError("character swap native call returned but post-swap identity verification failed")
         return {
             "ok": True,
             "dryRun": False,
@@ -3803,6 +3818,7 @@ class Handler(BaseHTTPRequestHandler):
             "nativeCall": planned["plan"]["nativeCall"],
             "before": before_rows,
             "after": after_rows,
+            "verified": verified,
             "rollback": {
                 "hint": "Run the inverse switch after verifying both characters are offline, or restore the DB backup.",
                 "inversePayload": {

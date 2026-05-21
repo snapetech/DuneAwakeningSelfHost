@@ -678,8 +678,10 @@ Non-dry-run execution requires all of:
 Execution behavior:
 
 - creates a Postgres backup first
+- rechecks both account rows after the backup and aborts before mutation if either came online
 - audits before/after rows for the active and target account ids
 - calls only `select dune.takeover_account(target_fls_id, active_fls_id)`
+- verifies that the active and target FLS identities swapped as expected
 - returns an inverse restore payload and backup path
 
 Blocked behavior is intentional. The panel does not create synthetic starter rows, does not overwrite raw `player_state`, and does not execute account deletion or save-player functions as a guessed swap mechanism.
