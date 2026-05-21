@@ -63,6 +63,8 @@ DUNE_CHAT_COMMAND_PRIVATE_REPLY_CHANNEL=Whispers
 DUNE_CHAT_COMMAND_PRIVATE_REPLY_ROUTING_KEY=
 ```
 
+When command replies are sent from inside `handle_command()`, `scripts/admin-chat-commands.py` infers the issuing player from the command sender and uses that player as the private target if no explicit target was passed to `run_announce()`. This keeps normal admin command replies, command errors, and auction confirmations private to the issuer. Public moderation notices such as spam auto-kick announcements are not generated inside that command context and remain global.
+
 The player-presence private path uses the same confirmed route for private welcomes, first-seen messages, base-cap reminders, reconnect notices, restart warnings, starter-tool messages, stuck-position notices, and admin-only digests:
 
 ```env
