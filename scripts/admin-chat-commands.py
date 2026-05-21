@@ -1834,15 +1834,27 @@ def consume_forever():
     context = ssl.create_default_context()
     context.check_hostname = False
     context.verify_mode = ssl.CERT_NONE
-    connection = pika.BlockingConnection(pika.ConnectionParameters(
-        host=host,
-        port=port,
-        virtual_host="/",
-        credentials=pika.PlainCredentials(user, password),
-        ssl_options=pika.SSLOptions(context, host) if tls else None,
-        heartbeat=30,
-        blocked_connection_timeout=10,
-    ))
+    retry_seconds = float(env("DUNE_CHAT_COMMAND_AMQP_RETRY_SECONDS", "5"))
+    max_attempts = int(env("DUNE_CHAT_COMMAND_AMQP_CONNECT_ATTEMPTS", "0"))
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            connection = pika.BlockingConnection(pika.ConnectionParameters(
+                host=host,
+                port=port,
+                virtual_host="/",
+                credentials=pika.PlainCredentials(user, password),
+                ssl_options=pika.SSLOptions(context, host) if tls else None,
+                heartbeat=30,
+                blocked_connection_timeout=10,
+            ))
+            break
+        except pika.exceptions.AMQPConnectionError as exc:
+            if max_attempts and attempt >= max_attempts:
+                raise
+            print(json.dumps({"ok": False, "amqpConnectAttempt": attempt, "retrySeconds": retry_seconds, "error": str(exc)}, separators=(",", ":")), file=sys.stderr, flush=True)
+            time.sleep(retry_seconds)
     channel = connection.channel()
     channel.queue_declare(queue=queue, durable=True, auto_delete=False)
     channel.queue_bind(queue=queue, exchange=exchange, routing_key=routing_key)
