@@ -902,6 +902,28 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertEqual(recoveries, ["recover"])
         self.assertEqual(result["recovery"]["output"], "recovered")
 
+    def test_artificial_exchange_install_actions_use_explicit_unit_paths(self):
+        captured = []
+        original = self.panel.run_workspace_command
+
+        def fake_run(command, timeout=60, **kwargs):
+            captured.append((list(command), timeout))
+            return {"ok": True, "stdout": '{"ok":true}', "stderr": ""}
+
+        self.panel.run_workspace_command = fake_run
+        self.addCleanup(lambda: setattr(self.panel, "run_workspace_command", original))
+
+        self.panel.artificial_exchange_action("install-buyer-service")
+        self.panel.artificial_exchange_action("install-populator-service")
+        self.panel.artificial_exchange_action("install-watchdog-timer")
+        self.panel.artificial_exchange_action("watchdog-once")
+
+        commands = [item[0] for item in captured]
+        self.assertEqual(commands[0][-2:], ["/etc/systemd/system/dune-artificial-exchange-bot.service", "buyer"])
+        self.assertEqual(commands[1][-2:], ["/etc/systemd/system/dune-artificial-exchange-populator.service", "populator"])
+        self.assertTrue(commands[2][0].endswith("install-artificial-exchange-watchdog-timer.sh"))
+        self.assertTrue(commands[3][0].endswith("artificial-exchange-watchdog.sh"))
+
 
 if __name__ == "__main__":
     unittest.main()

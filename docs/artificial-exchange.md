@@ -96,6 +96,8 @@ settlement-report
 validate-populator
 install-buyer-service
 install-populator-service
+install-watchdog-timer
+watchdog-once
 start:buyer
 stop:buyer
 restart:buyer
@@ -104,6 +106,10 @@ start:populator
 stop:populator
 restart:populator
 status:populator
+start:watchdog
+stop:watchdog
+restart:watchdog
+status:watchdog
 ```
 
 Service actions require `systemctl` in the runtime where the admin panel is
@@ -551,10 +557,8 @@ Current category limitation:
 - `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MAX_PER_TEMPLATE_PER_CATEGORY=2` is the
   default duplicate cap. Population modes must not create more than two active
   NPC listings for the same template in the same category.
-- The optional watchdog does not restart the populator from
-  `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ENABLED`; it requires
-  `DUNE_ARTIFICIAL_EXCHANGE_WATCHDOG_POPULATOR_ENABLED=true`. Keep that false
-  for one-shot category seeding.
+- The optional watchdog treats `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ENABLED` as
+  the source of truth. Keep that gate false for one-shot category seeding.
 
 Single-template safety:
 

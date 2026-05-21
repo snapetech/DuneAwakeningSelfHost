@@ -577,6 +577,16 @@ ENV_KEY_DEFINITIONS.update({
     "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_VALIDATION_PRICE": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Optional forced price for disposable live validation listings."},
     "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_CONFIRM": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Confirmation phrase passed to live populator actions."},
     "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_VALIDATED": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "When true, only catalog rows marked validated are seeded."},
+    "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_MARKET_PRICE": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "When true, only catalog rows with dune.exchange price evidence are seeded."},
+    "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_TIER": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Minimum parsed tier allowed for seeded listings."},
+    "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_CATEGORY_REVIEW": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Blocks heuristic/bootstrap categories until reviewed."},
+    "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_DETERMINISTIC_CATEGORY": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Requires inferred category and category mask/depth to match before seeding."},
+    "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_SKIP_UNKNOWN_CATEGORY": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Blocks unknown category rows and mask/depth 0/0 rows."},
+    "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_PROTECT_AUGMENTS_CATEGORY": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Blocks non-augment templates from protected Augments category masks."},
+    "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_AUGMENTS_CATEGORY_MASKS": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Comma-separated category masks treated as Augments-only buckets."},
+    "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_TEMPLATE_TARGET_ORDERS": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Target active orders per eligible template for template population mode."},
+    "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MAX_PER_TEMPLATE_PER_CATEGORY": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Maximum active seeded orders for the same template/category combination."},
+    "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_PRICE_SPAN": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Minimum price span used when widening tight fixed price ranges."},
     "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_STACK_SIZE": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Stack size for seeded items."},
     "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MAX_STACK_SIZE": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Max stack size written to seeded item rows."},
     "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_CATEGORY_MASK": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Category mask written to seeded item rows when catalog rows do not override it."},
@@ -585,6 +595,9 @@ ENV_KEY_DEFINITIONS.update({
     "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_DURABILITY_MAX": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Maximum durability for seeded items."},
     "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_QUALITY_LEVEL": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Minimum quality level allowed for seeded items."},
     "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_QUALITY_LEVEL": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Default quality level for seeded items."},
+    "DUNE_ARTIFICIAL_EXCHANGE_WATCHDOG_DRY_RUN": {"group": "Artificial Exchange Watchdog", "secret": False, "restart": False, "why": "When true, the watchdog reports inactive/missing services without repairing them."},
+    "DUNE_ARTIFICIAL_EXCHANGE_WATCHDOG_BUYER_UNIT": {"group": "Artificial Exchange Watchdog", "secret": False, "restart": False, "why": "Systemd unit name for the buyer service repaired by the watchdog."},
+    "DUNE_ARTIFICIAL_EXCHANGE_WATCHDOG_POPULATOR_UNIT": {"group": "Artificial Exchange Watchdog", "secret": False, "restart": False, "why": "Systemd unit name for the populator service repaired by the watchdog."},
 })
 SAFE_ENV_KEYS = set(ENV_KEY_DEFINITIONS)
 
@@ -1618,6 +1631,7 @@ def artificial_exchange_status():
         "services": {
             "buyer": artificial_exchange_systemd_service("dune-artificial-exchange-bot.service"),
             "populator": artificial_exchange_systemd_service("dune-artificial-exchange-populator.service"),
+            "watchdog": artificial_exchange_systemd_service("dune-artificial-exchange-watchdog.timer"),
         },
     }
 
@@ -1631,13 +1645,16 @@ def artificial_exchange_action(action):
         "buyer-dry-run": ([sys.executable, str(scripts / "artificial-exchange-bot.py"), "--dry-run", "--report-skips", "100"], 90),
         "settlement-report": ([sys.executable, str(scripts / "artificial-exchange-bot.py"), "--settlement-report"], 60),
         "validate-populator": ([sys.executable, str(scripts / "artificial-exchange-bot.py"), "--validate-populator-once"], 120),
-        "install-buyer-service": ([str(scripts / "install-artificial-exchange-service.sh"), str(ENV_FILE), "buyer"], 120),
-        "install-populator-service": ([str(scripts / "install-artificial-exchange-service.sh"), str(ENV_FILE), "populator"], 120),
+        "install-buyer-service": ([str(scripts / "install-artificial-exchange-service.sh"), str(ENV_FILE), "/etc/systemd/system/dune-artificial-exchange-bot.service", "buyer"], 120),
+        "install-populator-service": ([str(scripts / "install-artificial-exchange-service.sh"), str(ENV_FILE), "/etc/systemd/system/dune-artificial-exchange-populator.service", "populator"], 120),
+        "install-watchdog-timer": ([str(scripts / "install-artificial-exchange-watchdog-timer.sh"), str(ENV_FILE)], 120),
+        "watchdog-once": ([str(scripts / "artificial-exchange-watchdog.sh"), str(ENV_FILE)], 60),
     }
     service_actions = {"start", "stop", "restart", "status"}
     service_names = {
         "buyer": "dune-artificial-exchange-bot.service",
         "populator": "dune-artificial-exchange-populator.service",
+        "watchdog": "dune-artificial-exchange-watchdog.timer",
     }
     if action in commands:
         cmd, timeout = commands[action]
@@ -6975,11 +6992,13 @@ function artificialExchangePanel(status){
   const readiness = status.readiness || {};
   const buyer = (status.services || {}).buyer || {};
   const populator = (status.services || {}).populator || {};
+  const watchdog = (status.services || {}).watchdog || {};
   const checks = readiness.checks || [];
   const checkRows = checks.map(c => ({check:c.name, ok:c.ok, detail:Object.entries(c).filter(([k]) => !['name','ok'].includes(k)).map(([k,v]) => `${k}=${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' ')}));
   const serviceRows = [
     {service:'buyer', active:buyer.ActiveState || '', substate:buyer.SubState || '', enabled:buyer.UnitFileState || '', restarts:buyer.NRestarts || '', status:buyer.error || ''},
-    {service:'populator', active:populator.ActiveState || '', substate:populator.SubState || '', enabled:populator.UnitFileState || '', restarts:populator.NRestarts || '', status:populator.error || ''}
+    {service:'populator', active:populator.ActiveState || '', substate:populator.SubState || '', enabled:populator.UnitFileState || '', restarts:populator.NRestarts || '', status:populator.error || ''},
+    {service:'watchdog', active:watchdog.ActiveState || '', substate:watchdog.SubState || '', enabled:watchdog.UnitFileState || '', restarts:watchdog.NRestarts || '', status:watchdog.error || ''}
   ];
   const gateRows = [
     {key:'Buyer enabled', value:env.DUNE_ARTIFICIAL_EXCHANGE_ENABLED},
@@ -6989,11 +7008,15 @@ function artificialExchangePanel(status){
     {key:'Auto-claim after scan', value:env.DUNE_ARTIFICIAL_EXCHANGE_AUTO_CLAIM_AFTER_SCAN},
     {key:'Populator enabled', value:env.DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ENABLED},
     {key:'Populator dry run', value:env.DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_DRY_RUN},
+    {key:'Require market price', value:env.DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_MARKET_PRICE},
+    {key:'Require deterministic category', value:env.DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_DETERMINISTIC_CATEGORY},
+    {key:'Max per template/category', value:env.DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MAX_PER_TEMPLATE_PER_CATEGORY},
+    {key:'Watchdog dry run', value:env.DUNE_ARTIFICIAL_EXCHANGE_WATCHDOG_DRY_RUN},
     {key:'Buyer controller', value:env.DUNE_ARTIFICIAL_EXCHANGE_BUYER_CONTROLLER_ID},
     {key:'Populator owner', value:env.DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_OWNER_ID},
     {key:'Source inventory', value:env.DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_SOURCE_INVENTORY_ID}
   ];
-  return `<div class="panelBand" id="artificialExchangePanel"><div class="sectionHeader"><h2>Artificial Exchange</h2><div class="toolbar"><span class="pill ${status.ok ? 'ok' : 'warn'}">readiness ${status.ok ? 'clean' : 'check'}</span><span class="pill ${catalog.ok ? 'ok' : 'bad'}">catalog ${catalog.enabledItems ?? 0}/${catalog.items ?? 0}</span><span class="pill ${buyer.ok ? 'ok' : 'warn'}">buyer ${buyer.ActiveState || 'unknown'}</span><span class="pill ${populator.ok ? 'ok' : 'warn'}">populator ${populator.ActiveState || 'unknown'}</span><button id="aeRefreshBtn">Refresh</button></div></div><div class="commandBar"><button data-ae-action="build-catalog">Build catalog</button><button data-ae-action="check-ready" class="primary">Check ready</button><button data-ae-action="buyer-dry-run">Buyer dry run</button><button data-ae-action="settlement-report">Settlement report</button><button data-ae-action="validate-populator">Validate populator</button></div><div class="commandBar"><button data-ae-action="install-buyer-service">Install buyer service</button><button data-ae-action="install-populator-service">Install populator service</button><button data-ae-action="restart:buyer">Restart buyer</button><button data-ae-action="restart:populator">Restart populator</button><button data-ae-action="start:buyer">Start buyer</button><button data-ae-action="start:populator">Start populator</button><button data-ae-action="stop:buyer" class="danger">Stop buyer</button><button data-ae-action="stop:populator" class="danger">Stop populator</button></div><div class="twoCol"><div><h3>Gates</h3>${table(gateRows)}</div><div><h3>Services</h3>${table(serviceRows)}</div></div><details><summary>Readiness checks</summary>${table(checkRows)}<pre>${esc(JSON.stringify(readiness, null, 2))}</pre></details><pre id="artificialExchangeResult"></pre></div>`;
+  return `<div class="panelBand" id="artificialExchangePanel"><div class="sectionHeader"><h2>Artificial Exchange</h2><div class="toolbar"><span class="pill ${status.ok ? 'ok' : 'warn'}">readiness ${status.ok ? 'clean' : 'check'}</span><span class="pill ${catalog.ok ? 'ok' : 'bad'}">catalog ${catalog.enabledItems ?? 0}/${catalog.items ?? 0}</span><span class="pill ${buyer.ok ? 'ok' : 'warn'}">buyer ${buyer.ActiveState || 'unknown'}</span><span class="pill ${populator.ok ? 'ok' : 'warn'}">populator ${populator.ActiveState || 'unknown'}</span><span class="pill ${watchdog.ok ? 'ok' : 'warn'}">watchdog ${watchdog.ActiveState || 'unknown'}</span><button id="aeRefreshBtn">Refresh</button></div></div><div class="commandBar"><button data-ae-action="build-catalog">Build catalog</button><button data-ae-action="check-ready" class="primary">Check ready</button><button data-ae-action="buyer-dry-run">Buyer dry run</button><button data-ae-action="settlement-report">Settlement report</button><button data-ae-action="validate-populator">Validate populator</button><button data-ae-action="watchdog-once">Watchdog once</button></div><div class="commandBar"><button data-ae-action="install-buyer-service">Install buyer service</button><button data-ae-action="install-populator-service">Install populator service</button><button data-ae-action="install-watchdog-timer">Install watchdog timer</button><button data-ae-action="restart:buyer">Restart buyer</button><button data-ae-action="restart:populator">Restart populator</button><button data-ae-action="restart:watchdog">Restart watchdog</button><button data-ae-action="start:buyer">Start buyer</button><button data-ae-action="start:populator">Start populator</button><button data-ae-action="start:watchdog">Start watchdog</button><button data-ae-action="stop:buyer" class="danger">Stop buyer</button><button data-ae-action="stop:populator" class="danger">Stop populator</button><button data-ae-action="stop:watchdog" class="danger">Stop watchdog</button></div><div class="twoCol"><div><h3>Gates</h3>${table(gateRows)}</div><div><h3>Services</h3>${table(serviceRows)}</div></div><details><summary>Readiness checks</summary>${table(checkRows)}<pre>${esc(JSON.stringify(readiness, null, 2))}</pre></details><pre id="artificialExchangeResult"></pre></div>`;
 }
 function actionGrid(actions){
   return `<div class="commandBar">${actions.map(a => `<button class="${esc(a.className || '')}" data-jump="${esc(a.tab)}">${esc(a.label)}</button>`).join('')}</div>`;
