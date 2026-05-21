@@ -189,7 +189,7 @@
 	function selectedPoiGroups(groups) {
 		var stored = {};
 		try {
-			stored = JSON.parse(localStorage.getItem("dunePublicPoiGroups") || "{}");
+			stored = JSON.parse(sessionStorage.getItem(poiStorageKey) || "{}");
 		} catch (e) {
 			stored = {};
 		}
