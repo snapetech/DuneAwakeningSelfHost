@@ -187,6 +187,8 @@ The public/global presence events are intentionally not private:
 - `MAP_HEALTH_PUBLIC`, `POPULATION_PUBLIC`, `PUBLIC_MAINTENANCE_CANCELLED`, `INCIDENT_MODE_PUBLIC`, `TRANSFER_POLICY_PUBLIC`, `RULES_CHANGE_PUBLIC`, `PEAK_PUBLIC`, and `DAILY_STATUS_PUBLIC` publish server-wide notices.
 - `VERMILIUS_GAP` is currently a public celebration announcement.
 
+For the full private/global routing matrix, command-reply behavior, and RabbitMQ verification steps, use [private-chat-replies.md](private-chat-replies.md). That runbook is authoritative for `chat.whispers`, `Whispers`, `m_TimeStamp`, and the expected `reply.stdout` metadata from command smoke tests.
+
 Admin-private recipients are derived from currently online players whose character name or FLS id matches `DUNE_PLAYER_PRESENCE_ADMIN_NAMES` / `DUNE_PLAYER_PRESENCE_ADMIN_FLS_IDS`. Keep real admin identifiers in private `.env`, not in committed examples or docs. Digest entries are stored in `backups/admin-bot/player-presence.json` under `adminDigestLog`, and the admin panel exposes them on the Admin Digests tab.
 
 The starter Base Reconstruction Tool path grants one `BaseBackupTool` to each newly observed joining account that has not already been recorded in `backups/admin-bot/player-presence.json`. When the grant succeeds, it sends a private message telling the player they may need to log out and back in before the item appears.

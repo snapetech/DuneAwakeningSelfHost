@@ -65,6 +65,19 @@ DUNE_CHAT_COMMAND_PRIVATE_REPLY_ROUTING_KEY=
 
 When command replies are sent from inside `handle_command()`, `scripts/admin-chat-commands.py` infers the issuing player from the command sender and uses that player as the private target if no explicit target was passed to `run_announce()`. This keeps normal admin command replies, command errors, and auction confirmations private to the issuer. Command results should include `reply.stdout` metadata from `scripts/announce.sh`; for private replies it should report `transport` and `exchange` as `chat.whispers`. Public moderation notices such as spam auto-kick announcements are not generated inside that command context and remain global.
 
+The command listener retries RabbitMQ startup connection failures in-process instead of crash-looping while the broker is still accepting/authenticating clients:
+
+```env
+DUNE_CHAT_COMMAND_AMQP_RETRY_SECONDS=5
+DUNE_CHAT_COMMAND_AMQP_CONNECT_ATTEMPTS=0
+```
+
+`DUNE_CHAT_COMMAND_AMQP_CONNECT_ATTEMPTS=0` means retry forever. A healthy startup eventually logs:
+
+```json
+{"ok":true,"listening":"chat.intercept","queue":"dash_admin_chat_commands","routingKey":"#"}
+```
+
 The player-presence private path uses the same confirmed route for private welcomes, first-seen messages, base-cap reminders, reconnect notices, restart warnings, starter-tool messages, stuck-position notices, and admin-only digests:
 
 ```env
@@ -74,6 +87,38 @@ DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_ROUTING_KEY=
 ```
 
 Global join/leave and server-wide status notices intentionally stay on the public `announce()` path.
+
+## Private Vs Global Matrix
+
+Private to the issuing player or recipient:
+
+- `&auction` previews, execution results, fuzzy-match suggestions, and `&auction yes/no` confirmations.
+- `&test`, `&where`, `&disconnect`/`&kick`, `&teleport`, `&goto`, `&bring`, denied commands, unknown commands, and usage/errors.
+- `&gm ...` command results and errors, including nested GM subcommands that call `run_announce()`.
+- Player-presence private welcome and first-seen messages.
+- Hagga arrival, first Deep Desert, reconnect recovery/support, base reminders, stuck-position notices, restart private warnings, post-restart return notices, and starter-tool notices.
+- Admin-only presence digests and alerts sent to currently online configured admins.
+
+Global by design:
+
+- Join/leave welcome and goodbye population notices.
+- Public map-health, population-threshold, maintenance-cancelled, incident-mode, transfer-policy, rules-change, daily-peak, and daily-status notices.
+- Vermilius Gap celebration announcements.
+- Chat spam-protection action announcements when `DUNE_CHAT_SPAM_ANNOUNCE_ACTION=true`.
+
+Fallback channels that rendered during investigation but are not private:
+
+- `chat.proximity` with channel `Proximity`.
+- `chat.guild.<id>` with channel `Guild`.
+
+Use those only as diagnostics or deliberate non-private reply modes.
+
+## Implementation Map
+
+- `scripts/announce.sh` is the shared publisher. It emits `m_TimeStamp`, accepts `DUNE_ANNOUNCE_CHAT_EXCHANGE`, `DUNE_ANNOUNCE_CHAT_CHANNEL`, `DUNE_ANNOUNCE_CHAT_TARGET_QUEUES`, and `DUNE_ANNOUNCE_CHAT_ROUTING_KEYS`, and reports the actual exchange in `transport`.
+- `scripts/admin-chat-commands.py` handles chat commands. `run_announce()` infers the command sender from the `handle_command()` frame when no explicit target is provided. Command JSON replies include `reply.stdout` metadata from `scripts/announce.sh` where practical.
+- `scripts/player-presence-announcer.py` handles presence automation. `private_message()` forces `chat.whispers`, channel `Whispers`, the target `{FLS_ID}_queue`, cleanup, and no dashboard wrapping.
+- `Makefile` target `test-admin-chat` runs command/private-route and presence-private-route tests. `make validate` includes that target.
 
 The command listener sets:
 
@@ -128,6 +173,32 @@ Expected private reply:
 [Paul]: no exact match for 'PwerPck'. did you mean PowerPack2 from inventory 15? reply &auction yes or &auction no
 ```
 
+Expected command JSON includes a `reply.stdout` JSON string like:
+
+```json
+{"ok":true,"transport":"chat.whispers","exchange":"chat.whispers","routingKeys":[{"routingKey":"<FLS_ID>","ok":true}],"boundQueues":[{"queue":"<FLS_ID>_queue","routingKey":"<FLS_ID>"}]}
+```
+
+GM nested command smoke test:
+
+```bash
+python3 scripts/admin-chat-commands.py \
+  --dry-run-command '&gm' \
+  --sender-name Lukano \
+  --sender-fls-id 6FF6498F4074E3DE \
+  --reply
+```
+
+Expected result: a usage error plus `reply.stdout` with `transport=chat.whispers` and `exchange=chat.whispers`.
+
+Presence private-route unit test:
+
+```bash
+make test-admin-chat
+```
+
+Expected result: command tests and player-presence private whisper routing tests pass.
+
 ## Failed Paths
 
 These were tested and should not be reintroduced as fixes:
@@ -174,3 +245,5 @@ If private replies stop rendering:
 
 4. Verify cleanup did not leave stale whisper bindings.
 5. Send a direct `scripts/announce.sh` smoke test before debugging `&auction`.
+6. For command replies, inspect `reply.stdout`; private replies should report `transport=chat.whispers` and `exchange=chat.whispers`.
+7. For listener startup issues, inspect `docker compose logs admin-chat-commands`; transient `amqpConnectAttempt` lines are expected during RabbitMQ readiness, but they should eventually be followed by `listening=chat.intercept`.

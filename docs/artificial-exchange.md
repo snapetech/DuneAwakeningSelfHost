@@ -533,6 +533,17 @@ Current category limitation:
 - Whether the live game UI labels those exact masks as the expected category
   names depends on the client category tree. Confidence: moderate until observed
   in-client.
+- `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_PROTECT_AUGMENTS_CATEGORY=true` blocks
+  non-augment templates from category masks listed in
+  `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_AUGMENTS_CATEGORY_MASKS`. The current
+  protected mask is `117506048`, because live observation showed that bucket can
+  render as Augments in the client while older bootstrap rows labeled it
+  `schematics/weapons`.
+- `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_SKIP_UNKNOWN_CATEGORY=true` blocks rows
+  with `category=unknown` or mask/depth `0/0`.
+- `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MAX_PER_TEMPLATE_PER_CATEGORY=2` is the
+  default duplicate cap. Population modes must not create more than two active
+  NPC listings for the same template in the same category.
 
 Single-template safety:
 
@@ -648,6 +659,7 @@ DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ENABLED=true \
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_TEMPLATE_TARGET_ORDERS=20 \
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_MARKET_PRICE=false \
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_TIER=3 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MAX_PER_TEMPLATE_PER_CATEGORY=2 \
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_PRICE_SPAN=20 \
   python3 scripts/artificial-exchange-bot.py \
   --populate-templates-once \
@@ -664,6 +676,7 @@ DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_DRY_RUN=false \
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_TEMPLATE_TARGET_ORDERS=20 \
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_MARKET_PRICE=false \
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_TIER=3 \
+DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MAX_PER_TEMPLATE_PER_CATEGORY=2 \
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_PRICE_SPAN=20 \
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_TARGET_MAX_ORDERS=50000 \
 DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_HARD_MAX_ORDERS=50000 \

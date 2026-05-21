@@ -233,6 +233,50 @@ def catalog_has_market_price(row):
     return "price_ceiling=dune.exchange" in str(row.get("notes") or "")
 
 
+def is_augment_template(row):
+    text = " ".join(str(row.get(key) or "") for key in ("template_id", "display_name", "category", "notes")).lower()
+    if "module" in text:
+        return False
+    return any(token in text for token in ("weaponmod", "toolmod", "_mod_", " augment", "augment_"))
+
+
+def populator_category_skip_reason(row):
+    category = str(row.get("category") or "")
+    if env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_SKIP_UNKNOWN_CATEGORY", True):
+        if category == "unknown" or (populator_category_mask(row) == 0 and populator_category_depth(row) == 0):
+            return "unknown category"
+    if env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_CATEGORY_REVIEW", True):
+        notes = str(row.get("notes") or "").lower()
+        source = str(row.get("source") or "").lower()
+        if "heuristic category" in notes or source == "local-bootstrap":
+            return "heuristic category"
+    if env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_PROTECT_AUGMENTS_CATEGORY", True):
+        category_mask = populator_category_mask(row)
+        category_depth = populator_category_depth(row)
+        augment_masks = {
+            item.strip()
+            for item in env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_AUGMENTS_CATEGORY_MASKS", "117506048").split(",")
+            if item.strip()
+        }
+        if category_depth == 2 and str(category_mask) in augment_masks and not is_augment_template(row):
+            return "non-augment in augments category"
+    return ""
+
+
+def populator_eligible_rows(catalog):
+    rows = []
+    skipped = {}
+    for row in populator_catalog_rows(catalog):
+        reason = populator_category_skip_reason(row)
+        if reason:
+            skipped[reason] = skipped.get(reason, 0) + 1
+            continue
+        rows.append(row)
+    if skipped:
+        log_event("populator-category-gate", eligible=len(rows), skipped=skipped)
+    return rows
+
+
 def jitter_price(baseline_price, jitter_pct):
     baseline = int(baseline_price)
     pct = max(0, int(jitter_pct))
@@ -326,6 +370,10 @@ def cleanup_candidate_ids(active_orders, target_max_orders, expire_probability, 
     random_expire_capacity = max(0, len(active_orders) - len(over_cap_ids) - target_min_orders)
     random_ids = expire_probability_selected([row["id"] for row in active_orders[over_cap:]], expire_probability)[:random_expire_capacity]
     return sorted(set(over_cap_ids + random_ids))
+
+
+def template_category_key(row):
+    return (row["template_id"], row.get("category") or "unknown", populator_category_mask(row), populator_category_depth(row))
 
 
 def free_position_candidates(occupied_positions, needed_count, start=0, max_position=100000):
@@ -745,7 +793,7 @@ def populate_once(args):
     if args.populator_source_inventory_id <= 0:
         raise RuntimeError("--populator-source-inventory-id is required")
     catalog = load_catalog(args.catalog)
-    eligible = populator_catalog_rows(catalog)
+    eligible = populator_eligible_rows(catalog)
     if not eligible:
         return {"ok": True, "dryRun": args.dry_run, "planned": [], "reason": "no eligible catalog rows"}
     conn = connect_db()
@@ -791,7 +839,7 @@ def populate_categories_once(args):
     if args.populator_source_inventory_id <= 0:
         raise RuntimeError("--populator-source-inventory-id is required")
     catalog = load_catalog(args.catalog)
-    eligible = populator_catalog_rows(catalog)
+    eligible = populator_eligible_rows(catalog)
     grouped = {}
     for row in eligible:
         key = (row.get("category") or "unknown", populator_category_mask(row), populator_category_depth(row))
@@ -804,12 +852,15 @@ def populate_categories_once(args):
         require_populator_preflight(conn, args, catalog, eligible)
         active = fetch_seeded_orders(conn, args.exchange_id, args.populator_owner_id, max(args.limit, 10000))
         active_by_category = {}
+        active_by_template_category = {}
         for order in active:
             row = catalog.get(order["template_id"])
             if not row:
                 continue
             key = (row.get("category") or "unknown", int(order.get("category_mask") or 0), int(order.get("category_depth") or 0))
             active_by_category[key] = active_by_category.get(key, 0) + 1
+            template_key = template_category_key(row)
+            active_by_template_category[template_key] = active_by_template_category.get(template_key, 0) + 1
         for key, rows in sorted(grouped.items()):
             active_count = active_by_category.get(key, 0)
             needed = max(0, args.populator_target_min_orders - active_count)
@@ -828,9 +879,19 @@ def populate_categories_once(args):
                 if catalog.get(order["template_id"])
                 and (catalog[order["template_id"]].get("category") or "unknown", int(order.get("category_mask") or 0), int(order.get("category_depth") or 0)) == key
             ]
-            selected_rows = [random.choice(rows) for _ in range(row["planned"])]
+            max_per_template = max(1, int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MAX_PER_TEMPLATE_PER_CATEGORY", "2")))
+            selected_rows = []
+            counts = {template_category_key(item): active_by_template_category.get(template_category_key(item), 0) for item in rows}
+            for _ in range(row["planned"]):
+                candidates = [item for item in rows if counts.get(template_category_key(item), 0) < max_per_template]
+                if not candidates:
+                    break
+                selected = random.choice(candidates)
+                counts[template_category_key(selected)] = counts.get(template_category_key(selected), 0) + 1
+                selected_rows.append(selected)
+            row["planned"] = len(selected_rows)
             planned_items.extend(plan_seed_events(args, selected_rows, category_active, positions[offset:offset + row["planned"]]))
-            offset += row["planned"]
+            offset += len(selected_rows)
         planned = apply_seed_events(conn, args, planned_items)
         if args.dry_run:
             conn.rollback()
@@ -855,7 +916,7 @@ def populate_all_once(args):
     if args.populator_source_inventory_id <= 0:
         raise RuntimeError("--populator-source-inventory-id is required")
     catalog = load_catalog(args.catalog)
-    eligible = populator_catalog_rows(catalog)
+    eligible = populator_eligible_rows(catalog)
     conn = connect_db()
     conn.autocommit = False
     planned = []
@@ -897,7 +958,7 @@ def populate_templates_once(args):
     if args.populator_source_inventory_id <= 0:
         raise RuntimeError("--populator-source-inventory-id is required")
     catalog = load_catalog(args.catalog)
-    eligible = populator_catalog_rows(catalog)
+    eligible = populator_eligible_rows(catalog)
     target = int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_TEMPLATE_TARGET_ORDERS", str(args.populator_target_min_orders)))
     conn = connect_db()
     conn.autocommit = False
@@ -907,12 +968,19 @@ def populate_templates_once(args):
         require_populator_preflight(conn, args, catalog, eligible)
         active = fetch_seeded_orders(conn, args.exchange_id, args.populator_owner_id, max(args.limit, len(eligible) * max(1, target) + 10000))
         active_by_template = {}
+        active_by_template_category = {}
         for order in active:
             active_by_template[order["template_id"]] = active_by_template.get(order["template_id"], 0) + 1
+            row = catalog.get(order["template_id"])
+            if row:
+                key = template_category_key(row)
+                active_by_template_category[key] = active_by_template_category.get(key, 0) + 1
         selected_rows = []
+        max_per_template = max(1, int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MAX_PER_TEMPLATE_PER_CATEGORY", "2")))
         for row in eligible:
             active_count = active_by_template.get(row["template_id"], 0)
-            needed = max(0, target - active_count)
+            category_count = active_by_template_category.get(template_category_key(row), 0)
+            needed = max(0, min(target - active_count, max_per_template - category_count))
             summary.append({"templateId": row["template_id"], "active": active_count, "planned": needed, "tier": catalog_tier(row), "category": row.get("category")})
             selected_rows.extend([row] * needed)
         positions = fetch_free_inventory_positions(conn, args.populator_source_inventory_id, len(selected_rows))
@@ -1304,7 +1372,7 @@ def readiness_check(args):
             settlements = settlement_report(conn, args.settlement_limit)
             buyer_balance = read_exchange_balance(conn, args.buyer_controller_id) if args.buyer_controller_id > 0 else None
             if env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ENABLED", False) or args.populator_owner_id > 0 or args.populator_source_inventory_id > 0:
-                eligible = populator_catalog_rows(catalog)
+                eligible = populator_eligible_rows(catalog)
                 preflight = populator_preflight(conn, args, catalog, eligible)
                 checks.append({"name": "populatorSafety", **preflight})
         conn.close()

@@ -282,6 +282,18 @@ class ArtificialExchangeBotTest(unittest.TestCase):
         with mock.patch.object(bot.random, "choice", side_effect=lambda values: values[0]):
             self.assertEqual(bot.planned_unique_price(row, 20, used), 119)
 
+    def test_populator_category_gate_blocks_non_augments_from_augments_mask(self):
+        row = self.catalog_row("Rifle_Schematic", category="schematics/weapons", category_mask=117506048, category_depth=2, notes="tier=4")
+        self.assertEqual(bot.populator_category_skip_reason(row), "non-augment in augments category")
+        augment = self.catalog_row("D_T4_WeaponMod_ExplosiveGel_Schematic", category="schematics/weapons", category_mask=117506048, category_depth=2, notes="tier=4")
+        self.assertEqual(bot.populator_category_skip_reason(augment), "")
+        unknown = self.catalog_row("MysteryItem", category="unknown", category_mask=0, category_depth=0, notes="tier=4")
+        self.assertEqual(bot.populator_category_skip_reason(unknown), "unknown category")
+
+    def test_template_category_key_distinguishes_category(self):
+        row = self.catalog_row("ItemA", category="weapons/ranged", category_mask=1, category_depth=2)
+        self.assertEqual(bot.template_category_key(row), ("ItemA", "weapons/ranged", 1, 2))
+
     def test_planned_unique_price_samples_large_floor_ceiling_range(self):
         row = self.catalog_row(price_floor=100, price_ceiling=100000000)
         with mock.patch.object(bot.random, "randint", return_value=500):
