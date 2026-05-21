@@ -345,7 +345,11 @@ For the remote standby layout, use the snapshot helper instead of pulling dumps 
 ./scripts/install-replica-snapshot-timer.sh .env replica.example.lan /srv/dune-postgres-replica
 ```
 
-This keeps rolling dumps on the remote replica host. Use it alongside daily offline full-state backups.
+This keeps rolling dumps on the remote replica host. The installed timer runs as
+the installing local user by default so SSH uses that user's keys and host
+aliases. Use `DUNE_REPLICA_SNAPSHOT_USER` and
+`DUNE_REPLICA_SNAPSHOT_GROUP` only for a dedicated service account with working
+remote SSH credentials. Use it alongside daily offline full-state backups.
 
 Check all backup layers:
 

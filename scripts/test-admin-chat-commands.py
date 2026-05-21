@@ -108,5 +108,62 @@ class CommandReplyTargetTests(unittest.TestCase):
         self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_ROUTING_KEYS"], "6FF6498F4074E3DE")
 
 
+class CommandListenerRetryTests(unittest.TestCase):
+    def test_consume_forever_retries_amqp_connection(self):
+        attempts = {"count": 0, "slept": []}
+
+        class FakeChannel:
+            def queue_declare(self, **kwargs):
+                pass
+
+            def queue_bind(self, **kwargs):
+                pass
+
+            def basic_qos(self, **kwargs):
+                pass
+
+            def basic_consume(self, **kwargs):
+                pass
+
+            def start_consuming(self):
+                raise KeyboardInterrupt()
+
+        class FakeConnection:
+            def channel(self):
+                return FakeChannel()
+
+        def fake_blocking_connection(parameters):
+            attempts["count"] += 1
+            if attempts["count"] == 1:
+                raise admin_chat_commands.pika.exceptions.AMQPConnectionError()
+            return FakeConnection()
+
+        def fake_env(name, default=""):
+            values = {
+                "DUNE_CHAT_COMMAND_AMQP_HOST": "game-rmq",
+                "DUNE_CHAT_COMMAND_AMQP_PORT": "5672",
+                "DUNE_CHAT_COMMAND_AMQP_TLS": "false",
+                "DUNE_CHAT_COMMAND_AMQP_USER": "guest",
+                "DUNE_CHAT_COMMAND_AMQP_PASSWORD": "guest",
+                "DUNE_CHAT_COMMAND_AMQP_RETRY_SECONDS": "0.01",
+                "DUNE_CHAT_COMMAND_AMQP_CONNECT_ATTEMPTS": "0",
+                "DUNE_CHAT_COMMAND_EXCHANGE": "chat.intercept",
+                "DUNE_CHAT_COMMAND_QUEUE": "dash_admin_chat_commands",
+                "DUNE_CHAT_COMMAND_ROUTING_KEY": "#",
+            }
+            return values.get(name, default)
+
+        with unittest.mock.patch.object(admin_chat_commands, "env", fake_env), \
+             unittest.mock.patch.object(admin_chat_commands, "env_chat_or_announce", lambda name, fallback, default="": fake_env(name, default)), \
+             unittest.mock.patch.object(admin_chat_commands.pika, "BlockingConnection", fake_blocking_connection), \
+             unittest.mock.patch.object(admin_chat_commands, "connect_db", lambda: object()), \
+             unittest.mock.patch.object(admin_chat_commands.time, "sleep", lambda seconds: attempts["slept"].append(seconds)):
+            with self.assertRaises(KeyboardInterrupt):
+                admin_chat_commands.consume_forever()
+
+        self.assertEqual(attempts["count"], 2)
+        self.assertEqual(attempts["slept"], [0.01])
+
+
 if __name__ == "__main__":
     unittest.main()

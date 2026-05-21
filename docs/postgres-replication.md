@@ -142,6 +142,11 @@ The timer runs hourly and keeps `DUNE_REPLICA_SNAPSHOT_KEEP_HOURS` hours of
 remote dumps. The default is 48 hours. Dumps are written on the remote host under
 `/srv/dune-postgres-replica/snapshots` when using the example path.
 
+The installed oneshot service runs as the installing local user by default so
+SSH uses that user's configured keys and host aliases. Override with
+`DUNE_REPLICA_SNAPSHOT_USER` and `DUNE_REPLICA_SNAPSHOT_GROUP` only when a
+dedicated local service account owns the remote replica SSH credentials.
+
 Admin-triggered restart and shutdown maintenance also account for these layers.
 The stopped-world local maintenance backup remains the authoritative restore
 point. Its `postgres-layers.json` records primary streaming-replication status,

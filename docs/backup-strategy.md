@@ -89,6 +89,11 @@ For a hot standby on another LAN host:
 ./scripts/install-replica-snapshot-timer.sh .env replica.example.lan /srv/dune-postgres-replica
 ```
 
+The snapshot timer runs as the installing local user by default so SSH uses that
+user's keys and host aliases. Set `DUNE_REPLICA_SNAPSHOT_USER` and
+`DUNE_REPLICA_SNAPSHOT_GROUP` before installation only when another local
+account owns the remote replica SSH credentials.
+
 Check the layers:
 
 ```bash
