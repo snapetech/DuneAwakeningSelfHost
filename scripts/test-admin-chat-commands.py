@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import importlib.util
 import pathlib
+import unittest.mock
 import unittest
 
 
@@ -61,6 +62,50 @@ class AuctionCommandParserTests(unittest.TestCase):
     def test_price_must_be_positive_integer(self):
         with self.assertRaisesRegex(ValueError, "price must be a positive integer"):
             self.parse(["PowerPack", "1", "0"])
+
+
+class CommandReplyTargetTests(unittest.TestCase):
+    def test_run_announce_infers_command_sender_for_private_reply(self):
+        captured = {}
+
+        def fake_run(command, **kwargs):
+            captured["command"] = command
+            captured["env"] = kwargs["env"]
+
+            class Result:
+                returncode = 0
+                stdout = ""
+                stderr = ""
+
+            return Result()
+
+        def fake_env(name, default=""):
+            values = {
+                "DUNE_CHAT_COMMAND_REPLY_COMMAND": "/bin/echo",
+                "DUNE_CHAT_COMMAND_TARGET_REPLY_MODE": "whisper",
+                "DUNE_CHAT_COMMAND_PRIVATE_REPLY_EXCHANGE": "chat.whispers",
+                "DUNE_CHAT_COMMAND_PRIVATE_REPLY_CHANNEL": "Whispers",
+                "DUNE_CHAT_COMMAND_PRIVATE_REPLY_ROUTING_KEY": "",
+                "DUNE_CHAT_COMMAND_REPLY_TIMEOUT_SECONDS": "10",
+            }
+            return values.get(name, default)
+
+        def handle_command():
+            sender_name = "Lukano"
+            sender_fls_id = "6FF6498F4074E3DE"
+            resolved_admin = ""
+            return admin_chat_commands.run_announce("private reply")
+
+        with unittest.mock.patch.object(admin_chat_commands.subprocess, "run", fake_run), \
+             unittest.mock.patch.object(admin_chat_commands, "env", fake_env):
+            result = handle_command()
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_EXCHANGE"], "chat.whispers")
+        self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_CHANNEL"], "Whispers")
+        self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_USER_NAME_TO"], "Lukano")
+        self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_TARGET_QUEUES"], "6FF6498F4074E3DE_queue")
+        self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_ROUTING_KEYS"], "6FF6498F4074E3DE")
 
 
 if __name__ == "__main__":
