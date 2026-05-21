@@ -22,6 +22,15 @@
 	if (typeof fetch !== "function") {
 		return;
 	}
+	var maxStatusAgeMs = 150000;
+
+	function assetUrl(path, cacheBust) {
+		var base = new URL(path, window.location.href);
+		if (cacheBust) {
+			base.searchParams.set("v", String(Date.now()));
+		}
+		return base.href;
+	}
 
 	function clamp(value, min, max) {
 		return Math.min(max, Math.max(min, value));
@@ -62,6 +71,42 @@
 		Array.prototype.slice.call(doc.body.childNodes).forEach(function (node) {
 			targetNode.appendChild(document.importNode(node, true));
 		});
+	}
+
+	function parseStatusTimestamp(root) {
+		var node = root.querySelector(".status-updated");
+		var match = node && String(node.textContent || "").match(/Last checked\s+(.+?)\./);
+		if (!match) {
+			return NaN;
+		}
+		return Date.parse(match[1].replace(" UTC", "Z").replace(" ", "T"));
+	}
+
+	function renderStatusUnavailable(reason) {
+		clearNode(target);
+		var section = document.createElement("section");
+		section.className = "status-card";
+		appendTextElement(section, "h2", "", "Server Status");
+		var list = document.createElement("dl");
+		list.className = "status-list";
+		[
+			["Server", "Unknown"],
+			["World health", "Unknown"],
+			["Player access", "Unknown"]
+		].forEach(function (row) {
+			var dt = document.createElement("dt");
+			var dot = document.createElement("span");
+			dot.className = "status-dot status-warn";
+			dt.appendChild(dot);
+			dt.appendChild(document.createTextNode(row[0]));
+			var dd = document.createElement("dd");
+			dd.textContent = row[1];
+			list.appendChild(dt);
+			list.appendChild(dd);
+		});
+		section.appendChild(list);
+		appendTextElement(section, "p", "status-updated", reason || "Live status unavailable.");
+		target.appendChild(section);
 	}
 
 	function safeJson(response, maxBytes) {
@@ -192,7 +237,7 @@
 		if (!target) {
 			return;
 		}
-		fetch("/status.html", { cache: "no-store" })
+		fetch(assetUrl("status.html", true), { cache: "no-store" })
 			.then(function (response) {
 				if (!response.ok) {
 					throw new Error("status fetch failed");
@@ -203,10 +248,17 @@
 				if (html.indexOf("<script") !== -1) {
 					return;
 				}
+				var parser = new DOMParser();
+				var doc = parser.parseFromString(String(html || ""), "text/html");
+				var checkedAt = parseStatusTimestamp(doc);
+				if (!checkedAt || Date.now() - checkedAt > maxStatusAgeMs) {
+					renderStatusUnavailable("Live status is not fresh.");
+					return;
+				}
 				replaceWithSanitizedHtml(target, html);
 			})
 			.catch(function () {
-				// Keep the last rendered static status if refresh fails.
+				renderStatusUnavailable("Live status unavailable.");
 			});
 	}
 
@@ -249,11 +301,10 @@
 	}
 
 	function refreshSnapshot() {
-		var stamp = String(Date.now());
 		if (map) {
-			map.src = "/hagga-map.svg?v=" + stamp;
+			map.src = assetUrl("hagga-map.svg", true);
 		}
-		fetch("/players.json?v=" + stamp, { cache: "no-store" })
+		fetch(assetUrl("players.json", true), { cache: "no-store" })
 			.then(function (response) {
 				if (!response.ok) {
 					throw new Error("players fetch failed");
@@ -441,7 +492,7 @@
 		if (!poiOverlay || !poiToggles) {
 			return;
 		}
-		fetch("/hagga-pois.json", { cache: "no-store" })
+		fetch(assetUrl("hagga-pois.json", true), { cache: "no-store" })
 			.then(function (response) {
 				if (!response.ok) {
 					throw new Error("poi fetch failed");

@@ -264,6 +264,8 @@ Gate behavior:
 - `DUNE_ADMIN_PERMISSION_MUTATIONS_ENABLED`: controls permission actor name/access/rank server-function calls. World-state dry-runs still work.
 - `DUNE_ADMIN_VENDOR_MUTATIONS_ENABLED`: controls vendor stock-cycle timestamp server-function calls. Lifecycle dry-runs still work.
 - `DUNE_ADMIN_CHARACTER_SWAP_ENABLED`: controls character slot hibernation/switch execution. Slot inspection and planning still work; execution remains blocked unless the plan returns `executable: true`.
+- `DUNE_ADMIN_GRANT_PRIVATE_MESSAGE_ENABLED`: controls best-effort private relog reminders after successful admin item and inventory-Solari grants.
+- `DUNE_ADMIN_GRANT_PRIVATE_MESSAGE_TEMPLATE`: private relog reminder template. Supports `{item}`, `{amount}`, and `{template_id}`.
 
 Existing gates still apply:
 

@@ -43,6 +43,8 @@ AUDIT_MAX_BYTES = int(os.environ.get("DUNE_ADMIN_AUDIT_MAX_BYTES", str(5 * 1024 
 REQUEST_TIMEOUT_SECONDS = int(os.environ.get("DUNE_ADMIN_REQUEST_TIMEOUT_SECONDS", "10"))
 MAX_ITEM_STACK_SIZE = int(os.environ.get("DUNE_ADMIN_MAX_ITEM_STACK_SIZE", "1000000"))
 AUDIT_EVENT_LIMIT = int(os.environ.get("DUNE_ADMIN_AUDIT_EVENT_LIMIT", "100"))
+GRANT_PRIVATE_MESSAGE_ENABLED = os.environ.get("DUNE_ADMIN_GRANT_PRIVATE_MESSAGE_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+GRANT_PRIVATE_MESSAGE_TEMPLATE = os.environ.get("DUNE_ADMIN_GRANT_PRIVATE_MESSAGE_TEMPLATE", "{item} has been added for you. Log out and back in before checking your inventory if it does not appear right away.")
 HAGGA_MAP_MIN_X = float(os.environ.get("DUNE_HAGGA_MAP_MIN_X", "-457200"))
 HAGGA_MAP_MAX_X = float(os.environ.get("DUNE_HAGGA_MAP_MAX_X", "355600"))
 HAGGA_MAP_MIN_Y = float(os.environ.get("DUNE_HAGGA_MAP_MIN_Y", "-457200"))
@@ -450,6 +452,8 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ADMIN_AUDIT_MAX_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Audit log rotation threshold."},
     "DUNE_ADMIN_REQUEST_TIMEOUT_SECONDS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Socket timeout to limit slow client abuse."},
     "DUNE_ADMIN_MAX_ITEM_STACK_SIZE": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum item stack mutation allowed through the panel."},
+    "DUNE_ADMIN_GRANT_PRIVATE_MESSAGE_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Sends a private relog reminder after successful admin item/Solari inventory grants."},
+    "DUNE_ADMIN_GRANT_PRIVATE_MESSAGE_TEMPLATE": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Private message template for admin item/Solari inventory grants. Supports {item}, {amount}, and {template_id}."},
     "DUNE_ADMIN_AUDIT_EVENT_LIMIT": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Default number of audit events returned by the panel."},
     "DUNE_ADMIN_REFERENCE_LIMIT": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum reference rows returned by admin helper endpoints."},
     "DUNE_ADMIN_CHARACTER_SEARCH_LIMIT": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum character search rows returned."},
@@ -3198,6 +3202,8 @@ class Handler(BaseHTTPRequestHandler):
                     self.require_mutations()
                     self.require_item_grants()
                 result = self.grant_item(body)
+                if not dry_run:
+                    result["privateMessage"] = self.notify_grant_private_message(body, result, result.get("template_id", "item"), result.get("stack_size"))
                 self.audit("item-grant", inventory_id=result.get("inventory_id"), template_id=result.get("template_id"), item_id=result.get("item_id"), stack_size=result.get("stack_size"))
                 self.json(result)
             elif parsed.path == "/api/admin/item/delete":
@@ -4058,6 +4064,8 @@ class Handler(BaseHTTPRequestHandler):
             "position_index": position_index,
             "quality_level": quality_level,
             "dry_run": dry_run,
+            "account_id": inventory.get("account_id"),
+            "character_name": inventory.get("character_name"),
             "warnings": self.item_grant_warnings(inventory, template_id),
         }
         if dry_run:
@@ -4085,6 +4093,88 @@ class Handler(BaseHTTPRequestHandler):
             "item": query("select * from dune.load_item(%s)", (item_id,)),
         })
         return result
+
+    def player_for_grant_notification(self, body, result):
+        account_id = body.get("account_id", body.get("accountId", result.get("account_id", result.get("accountId"))))
+        character_name = str(body.get("character_name", body.get("characterName", result.get("character_name", result.get("characterName", ""))))).strip()
+        controller_id = body.get("player_controller_id", body.get("controller_id", body.get("controllerId", result.get("controllerId"))))
+        inventory_id = body.get("inventory_id", result.get("inventory_id", result.get("inventoryId")))
+        params = []
+        clauses = []
+        if account_id not in ("", None):
+            clauses.append("ps.account_id=%s")
+            params.append(int(account_id))
+        if character_name:
+            clauses.append("ps.character_name ilike %s")
+            params.append(character_name)
+        if controller_id not in ("", None):
+            clauses.append("ps.player_controller_id=%s")
+            params.append(int(controller_id))
+        if inventory_id not in ("", None):
+            clauses.append("exists (select 1 from dune.inventories inv where inv.id=%s and inv.actor_id in (ps.player_pawn_id, ps.player_controller_id))")
+            params.append(int(inventory_id))
+        if not clauses:
+            return None
+        rows = query(f"""
+            select ps.account_id, ps.character_name, ps.online_status::text, acc."user" as fls_id, acc.funcom_id
+            from dune.player_state ps
+            left join dune.accounts acc on acc.id=ps.account_id
+            where {" or ".join(clauses)}
+            order by ps.last_login_time desc nulls last
+            limit 1
+        """, tuple(params))
+        return rows[0] if rows else None
+
+    def send_private_message(self, player, message, job_id="admin-grant-private-message"):
+        if not player:
+            return {"ok": False, "skipped": True, "error": "player not resolved"}
+        fls_id = str(player.get("fls_id") or player.get("funcom_id") or "").strip()
+        name = str(player.get("character_name") or player.get("account_id") or "").strip()
+        if not fls_id:
+            return {"ok": False, "skipped": True, "error": "missing player FLS id", "player": name}
+        command = os.environ.get("DUNE_ADMIN_GRANT_PRIVATE_MESSAGE_COMMAND", os.environ.get("DUNE_ADMIN_ANNOUNCE_COMMAND", str(ROOT / "scripts" / "announce.sh")))
+        if command.startswith("/workspace/"):
+            command = str(ROOT / command.removeprefix("/workspace/"))
+        timeout = int(os.environ.get("DUNE_ADMIN_GRANT_PRIVATE_MESSAGE_TIMEOUT_SECONDS", os.environ.get("DUNE_ADMIN_ANNOUNCEMENT_COMMAND_TIMEOUT_SECONDS", "45")))
+        child_env = os.environ.copy()
+        child_env["DUNE_ANNOUNCE_MESSAGE"] = message
+        child_env["DUNE_ANNOUNCE_JOB_ID"] = job_id
+        child_env["DUNE_ANNOUNCE_ENV_OVERRIDES_FILE"] = "true"
+        child_env["DUNE_ANNOUNCE_WRAP_DASHBOARD_MESSAGES"] = "false"
+        child_env["DUNE_ANNOUNCE_CHAT_EXCHANGE"] = os.environ.get("DUNE_ADMIN_GRANT_PRIVATE_MESSAGE_EXCHANGE", "chat.whispers")
+        child_env["DUNE_ANNOUNCE_CHAT_CHANNEL"] = os.environ.get("DUNE_ADMIN_GRANT_PRIVATE_MESSAGE_CHANNEL", "Whispers")
+        child_env["DUNE_ANNOUNCE_CHAT_USER_NAME_TO"] = name
+        child_env["DUNE_ANNOUNCE_CHAT_TARGET_QUEUES"] = f"{fls_id}_queue"
+        child_env["DUNE_ANNOUNCE_CHAT_ROUTING_KEYS"] = os.environ.get("DUNE_ADMIN_GRANT_PRIVATE_MESSAGE_ROUTING_KEY", fls_id) or fls_id
+        child_env["DUNE_ANNOUNCE_CHAT_BIND_ONLINE_QUEUES"] = "false"
+        child_env["DUNE_ANNOUNCE_CHAT_CLEANUP_TARGET_BINDINGS"] = "true"
+        try:
+            completed = subprocess.run([command, message], cwd=ROOT, env=child_env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, check=False)
+        except Exception as exc:
+            return {"ok": False, "error": str(exc), "player": name, "targetQueue": f"{fls_id}_queue"}
+        return {
+            "ok": completed.returncode == 0,
+            "returncode": completed.returncode,
+            "player": name,
+            "targetQueue": f"{fls_id}_queue",
+            "exchange": child_env["DUNE_ANNOUNCE_CHAT_EXCHANGE"],
+            "channel": child_env["DUNE_ANNOUNCE_CHAT_CHANNEL"],
+            "stdout": completed.stdout[-1000:],
+            "stderr": completed.stderr[-1000:],
+        }
+
+    def notify_grant_private_message(self, body, result, item_label, amount=None):
+        if not GRANT_PRIVATE_MESSAGE_ENABLED:
+            return {"ok": True, "skipped": True, "reason": "disabled"}
+        player = self.player_for_grant_notification(body, result)
+        amount_text = "" if amount in ("", None) else str(amount)
+        message = GRANT_PRIVATE_MESSAGE_TEMPLATE.format(item=item_label, amount=amount_text, template_id=item_label)
+        notice = self.send_private_message(player, message)
+        try:
+            self.audit("grant-private-message", ok=notice.get("ok", False), account_id=(player or {}).get("account_id"), target_queue=notice.get("targetQueue"), item=item_label)
+        except Exception:
+            pass
+        return notice
 
     def resolve_inventory_id(self, body):
         if str(body.get("inventory_id", "")).strip():
@@ -4546,7 +4636,9 @@ class Handler(BaseHTTPRequestHandler):
         item_id = int(self.grant_item(item_body)["item_id"])
         plan["rollback"]["item_id"] = item_id
         after = query("select id, inventory_id, stack_size, position_index, template_id from dune.items where id=%s", (item_id,))
-        return dict(ids, ok=True, dryRun=False, location="inventory", amount=amount, before=[], after=after, rollback=plan["rollback"])
+        result = dict(ids, ok=True, dryRun=False, location="inventory", amount=amount, before=[], after=after, rollback=plan["rollback"], inventory_id=inventory_id, template_id="SolarisCoin", stack_size=amount)
+        result["privateMessage"] = self.notify_grant_private_message(body, result, "SolarisCoin", amount)
+        return result
 
     def grant_player_bank_solari(self, body):
         ids = self.resolve_player_money_ids(body)
