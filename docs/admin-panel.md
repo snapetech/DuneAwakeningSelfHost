@@ -378,7 +378,7 @@ Rollback is compensating work from the audit record: set currency back, set XP b
 
 ## Offline Player Recovery
 
-`POST /api/admin/player-recovery/offline-teleport` previews or executes an offline actor-set move. The shipped database helper below is the verified primitive for the soft-disconnect teleport path because it updates the pawn actor row consumed by reconnect:
+`POST /api/admin/player-recovery/offline-teleport` previews or executes an offline actor-set move. The shipped database helper below is the verified primitive for the network-disconnect teleport path once Survival has marked the player `Offline`, because it updates the pawn actor row consumed by reconnect:
 
 ```sql
 dune.admin_move_offline_player_to_partition(
@@ -1063,7 +1063,7 @@ Implemented commands:
 
 `&where` reports the resolved player's current online/offline state and last known location. `&teleport` moves an offline target to the admin's current partition and location. Live actor transforms are owned by the running map server and can be overwritten, so raw online actor updates are not a teleport path.
 
-The verified online fallback is soft-disconnect teleport: temporarily mark the player DB-offline, call `dune.admin_move_offline_player_to_partition(...)` against the pawn row, hold briefly, restore the online marker, and let the client rejoin. Operator testing showed this behaved like a soft disconnect/reconnect rather than a main-menu kick. The full contract is in [soft-disconnect-teleport.md](soft-disconnect-teleport.md).
+The verified online-adjacent fallback is network-disconnect teleport: force a real connection timeout, wait until Survival marks the player `Offline`, call `dune.admin_move_offline_player_to_partition(...)`, then let the client reconnect and load the moved pawn. DB-only presence flips are not sufficient. The full contract is in [soft-disconnect-teleport.md](soft-disconnect-teleport.md).
 
 `&auction "<item name or template>" <count> <price>` is a player-facing exchange listing command. It does not require admin allow-list membership, but only operates for the sender's own resolved character. Use `--item-id <item_id>` when the operator already knows the exact item row and wants to bypass fuzzy name/template matching. By default the command previews the listing and does not mutate the database. Set `DUNE_CHAT_COMMAND_AUCTION_ENABLED=true` to execute. The command uses `dune.dune_exchange_add_sell_order(...)`, so the order is owned by the sender's player controller and should use the normal exchange seller settlement path. Confidence: moderate until a live purchase settlement has been validated.
 
@@ -1125,7 +1125,7 @@ The complete private/global split, command smoke tests, expected `reply.stdout` 
 
 Targeted disconnect execution has its own gate. It requires all three of `DUNE_ADMIN_GM_COMMANDS_ENABLED=true`, `DUNE_GM_COMMAND_PAYLOAD_VERIFIED=true`, and `DUNE_CHAT_COMMAND_EXECUTE_PLAYER_DISCONNECT=true`. Until those are true, the command returns the exact native payload preview instead of publishing it. The repo also sets the server reconnect grace periods to `0` in `config/UserGame.ini`, so normal disconnects should not leave a long persisted reconnect window.
 
-DB soft-disconnect is a separate verified path and does not depend on the native GM payload. It flips `encrypted_player_state` to `Offline`/`server_id=null`, holds briefly, then restores the marker. With the offline move helper in the middle, it becomes a disconnect-teleport-reconnect workflow. Keep it behind its own mutation gate and audit trail; do not mix it with unverified native kick gates.
+DB-only soft-disconnect is not a verified game-session disconnect. The verified fallback is network-disconnect teleport: force a real timeout, wait for `Offline`, run the offline move helper, then let reconnect load the moved pawn. Keep it behind its own mutation gate and audit trail; do not mix it with unverified native kick gates.
 
 `&goto` and `&bring` are wired through the native GM command adapter for online movement, but execution remains gated until the command payload is proven. `&goto <playername>` prepares `TeleportToPlayer <playername>` targeted at the admin; `&bring <playername>` prepares `TeleportToExact <admin-x> <admin-y> <admin-z>` targeted at the online player. The three required gates are `DUNE_ADMIN_GM_COMMANDS_ENABLED=true`, `DUNE_GM_COMMAND_PAYLOAD_VERIFIED=true`, and `DUNE_CHAT_COMMAND_EXECUTE_ONLINE_GM_TELEPORT=true`. Until then, the commands return the exact payload preview instead of publishing a live teleport.
 

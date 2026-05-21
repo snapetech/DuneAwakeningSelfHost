@@ -107,9 +107,9 @@ Implemented:
 - `&gm where` is the namespaced form of `&where`.
 - `&gm unstuck` prepares or sends a gated `TeleportToExact` for a target player. It uses the named saved marker, defaulting to `location0`; if no marker exists it falls back to the admin's current location.
 - `&where` reports current known state and location.
-- `&teleport` moves an offline target to the admin's current position only when offline teleport execution is explicitly enabled. The shipped `dune.admin_move_offline_player_to_partition(...)` helper updates the pawn row, which is the row consumed by the verified soft-disconnect/rejoin test.
+- `&teleport` moves an offline target to the admin's current position only when offline teleport execution is explicitly enabled. The shipped `dune.admin_move_offline_player_to_partition(...)` helper updates the pawn row, which is the row consumed by the verified network-disconnect/rejoin test.
 - Direct online database movement is not a live teleport path. A same-partition test moved Lukano's controller, player-state, and pawn actor rows together by `+750` X; the live Survival server later saved the old in-memory position back to the database.
-- Soft-disconnect teleport is now the preferred online fallback while native GM teleport remains unverified. The path is: temporarily mark the player DB-offline, call `dune.admin_move_offline_player_to_partition(...)`, hold briefly, restore the online marker, and let the client rejoin. See [soft-disconnect-teleport.md](soft-disconnect-teleport.md).
+- Network-disconnect teleport is now the preferred online-adjacent fallback while native GM teleport remains unverified. The path is: force a real `UNetConnection` timeout, wait until Survival marks the player `Offline`, call `dune.admin_move_offline_player_to_partition(...)`, then let the client reconnect. See [soft-disconnect-teleport.md](soft-disconnect-teleport.md).
 
 ### Tier 3: Inventory/Admin
 
@@ -217,7 +217,7 @@ With these guards enabled, the admin and target must both be online and resolve 
 
 The stack now treats targeted disconnect as a gated native GM/session command. The preferred candidate is `RemoveSessionMember <playername>`, because it is less punitive than a kick. `KickLobbyMember <playername>` is the fallback. `BattlEyeMegaKick <playername>` stays opt-in only because it may behave like a harsher kick or impose client retry behavior outside the server reconnect-grace settings.
 
-A DB-backed soft-disconnect path is now verified separately from native GM/session commands. Temporarily setting `dune.encrypted_player_state.online_status='Offline'` and `server_id=null`, holding for about `8` seconds, and restoring the marker caused the client to soft-disconnect/rejoin without a main-menu kick in the Lukano Survival test. When combined with `dune.admin_move_offline_player_to_partition(...)`, this becomes a working disconnect-teleport-reconnect primitive. Confidence: high for the observed test, moderate for generalized automation.
+A network-disconnect teleport path is now verified separately from native GM/session commands. DB-only presence flips were a false positive: they triggered automation but did not disconnect the game client or release the live pawn. The verified Lukano test forced a real `UNetConnection` timeout, waited for `Offline`, called `dune.admin_move_offline_player_to_partition(...)`, and reconnect loaded the moved pawn. Confidence: high for the observed test, moderate for generalized automation.
 
 What we verified:
 
