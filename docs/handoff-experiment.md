@@ -36,6 +36,18 @@ The harness refuses `--apply` when preflight fails unless
 TLS SAN mismatch for the public address is a real client-reconnect risk and
 should be fixed before testing seamless recovery.
 
+If the RabbitMQ public SAN check fails, fix it in a maintenance window:
+
+```sh
+make rabbitmq-cert-stage ENV_FILE=.env
+CONFIRM_INSTALL_STAGED_RMQ_CERT=yes make rabbitmq-cert-install-staged ENV_FILE=.env
+CONFIRM_RECREATE_RMQ_TLS_STACK=yes make rabbitmq-cert-recreate-stack ENV_FILE=.env
+make handoff-experiment ENV_FILE=.env ROLE=standby
+```
+
+The recreate step restarts RabbitMQ TLS-dependent services so the broker and game
+processes agree on the new certificate material.
+
 Record the client result in `operator-notes.md`:
 
 - no visible interruption;

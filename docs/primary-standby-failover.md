@@ -73,6 +73,8 @@ Install staged TLS only during maintenance. It changes client-facing RabbitMQ
 identity and requires recreating `game-rmq`, `gateway`, `director`,
 `text-router`, and map containers so every process uses the same CA and server
 certificate. Confidence high: do not apply this while players are connected.
+Use `CONFIRM_RECREATE_RMQ_TLS_STACK=yes make rabbitmq-cert-recreate-stack
+ENV_FILE=.env` after installing staged TLS.
 
 Promote the configured standby after stopping or isolating writers on the old
 primary:
