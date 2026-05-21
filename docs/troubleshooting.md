@@ -44,6 +44,19 @@ Check:
 - The token came from the live Dune: Awakening account portal.
 - The Steam account used for token generation owns the self-hosted server entitlement.
 - `EXTERNAL_ADDRESS` is reachable by clients.
+- `DUNE_FLS_ENV` is `retail` for live builds unless you intentionally installed a matching PTC/test build.
+
+## RabbitMQ TLS Name Mismatch
+
+Symptoms can look like clients receiving the correct game RabbitMQ host from FLS but failing TLS validation or disconnecting during login.
+
+Check:
+
+```bash
+./scripts/check-rabbitmq-cert-sans.sh .env
+```
+
+The certificate should cover `GAME_RMQ_PUBLIC_HOST`, `game-rmq`, `localhost`, and `127.0.0.1`. If the public host changed, use the maintenance flow in `docs/setup.md` to regenerate or replace the cert; do not overwrite TLS material while clients and map services are live.
 
 ## RabbitMQ Auth Failures
 

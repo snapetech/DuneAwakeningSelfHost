@@ -1,18 +1,60 @@
 COMPOSE ?= docker compose
 ENV_FILE ?= .env.example
 
-.PHONY: validate compose-config check-compose-static-ips secret-scan test-watch-maps test-admin-panel-safe-surfaces test-character-slot-tool test-admin-chat test-artificial-exchange test-artificial-exchange-service artificial-exchange-smoke artificial-exchange-bootstrap-catalog artificial-exchange-research-prices test-vehicle-fidelity-investigation list-publishable preflight status check-steam-update start-full-warm-pool recover-survival recover-map watch-maps watch-maps-status install-map-watchdog-service install-artificial-exchange-service install-artificial-exchange-buyer-service install-artificial-exchange-populator-service install-artificial-exchange-watchdog-timer install-player-presence-announcer-service install-full-farm-service install-daily-maintenance-timer full-world-partitions public-site-check public-site-package verify-local-state-ignored
+.PHONY: validate compose-config check-compose-static-ips secret-scan test-watch-maps test-admin-panel-safe-surfaces test-character-slot-tool test-admin-chat test-operational-borrowing test-artificial-exchange test-artificial-exchange-service artificial-exchange-smoke artificial-exchange-bootstrap-catalog artificial-exchange-research-prices test-vehicle-fidelity-investigation list-publishable preflight operational-identity-check operational-report operational-bundle verify-operational-bundle status check-steam-update backup-dry-run backup-state restore-dry-run verify-backup start-full-warm-pool recover-survival recover-map watch-maps watch-maps-status install-map-watchdog-service install-artificial-exchange-service install-artificial-exchange-buyer-service install-artificial-exchange-populator-service install-artificial-exchange-watchdog-timer install-full-farm-service install-daily-maintenance-timer full-world-partitions public-site-check public-site-package verify-local-state-ignored rabbitmq-cert-check rabbitmq-cert-generate
 
-validate: compose-config check-compose-static-ips secret-scan test-watch-maps test-admin-panel-safe-surfaces test-character-slot-tool test-admin-chat test-artificial-exchange test-artificial-exchange-service test-vehicle-fidelity-investigation verify-local-state-ignored
+validate: compose-config check-compose-static-ips secret-scan test-watch-maps test-admin-panel-safe-surfaces test-character-slot-tool test-admin-chat test-operational-borrowing test-artificial-exchange test-artificial-exchange-service test-vehicle-fidelity-investigation verify-local-state-ignored
 
 preflight:
 	./scripts/preflight.sh
+
+operational-identity-check:
+	./scripts/check-operational-identity.sh $(ENV_FILE)
+
+operational-report:
+	./scripts/operational-report.sh $(ENV_FILE) $(REPORT_FILE)
+
+operational-bundle:
+	./scripts/operational-bundle.sh $(ENV_FILE) $(BUNDLE_FILE)
+
+verify-operational-bundle:
+	@if [ -z "$(BUNDLE_FILE)" ]; then \
+		echo "Usage: make verify-operational-bundle BUNDLE_FILE=backups/operational-bundle-<id>.tgz"; \
+		exit 2; \
+	fi
+	./scripts/verify-operational-bundle.sh $(BUNDLE_FILE)
+
+rabbitmq-cert-check:
+	./scripts/check-rabbitmq-cert-sans.sh $(ENV_FILE)
+
+rabbitmq-cert-generate:
+	./scripts/generate-rabbitmq-cert.sh $(ENV_FILE)
 
 status:
 	./scripts/status.sh $(ENV_FILE)
 
 check-steam-update:
 	./scripts/check-steam-update.sh $(ENV_FILE)
+
+backup-dry-run:
+	./scripts/backup-state.sh --dry-run $(ENV_FILE)
+
+backup-state:
+	./scripts/backup-state.sh $(ENV_FILE)
+
+restore-dry-run:
+	@if [ -z "$(BACKUP_DIR)" ]; then \
+		echo "Usage: make restore-dry-run ENV_FILE=.env BACKUP_DIR=backups/<id> RESTORE_FLAGS='--rabbitmq --server-saved --config --tls'"; \
+		exit 2; \
+	fi
+	./scripts/restore-state.sh --dry-run $(RESTORE_FLAGS) $(ENV_FILE) $(BACKUP_DIR)
+
+verify-backup:
+	@if [ -z "$(BACKUP_DIR)" ]; then \
+		echo "Usage: make verify-backup BACKUP_DIR=backups/<id>"; \
+		exit 2; \
+	fi
+	./scripts/verify-backup.sh $(BACKUP_DIR)
 
 start-full-warm-pool:
 	./scripts/start-full-warm-pool.sh $(ENV_FILE)
@@ -81,6 +123,9 @@ test-character-slot-tool:
 test-admin-chat:
 	python3 scripts/test-admin-chat-commands.py
 	python3 scripts/test-player-presence-announcer.py
+
+test-operational-borrowing:
+	python3 scripts/test-operational-borrowing.py
 
 test-artificial-exchange:
 	python3 scripts/test-artificial-exchange.py

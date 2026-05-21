@@ -16,6 +16,7 @@ STATE_FILE = STATE_DIR / "player-presence.json"
 DB = "dune_sb_1_4_0_0"
 STARTER_BASE_TOOL_TEMPLATE = "BaseBackupTool"
 STARTER_BASE_TOOL_MESSAGE = "A Base Reconstruction Tool has been added to your inventory. You may need to log out and back in before it appears."
+ADMIN_ANOMALY_DIGEST_TEMPLATE = "Admin digest: stuck/recent anomalies={stuck_count} ({stuck_names}); over base cap={over_base_cap}."
 RESTART_STATE_FILE = ROOT / "backups" / "admin-panel" / "restart-jobs.json"
 ANNOUNCEMENT_STATE_FILE = ROOT / "backups" / "admin-panel" / "announcements.json"
 AUDIT_FILE = ROOT / "backups" / "admin-panel" / "audit.jsonl"
@@ -255,7 +256,7 @@ def service_health_checks():
         result = run(["systemctl", "is-active", unit], timeout=5)
         checks.append({"name": unit, "ok": result.returncode == 0, "status": result.stdout.strip() or result.stderr.strip()})
     max_age = int(env("DUNE_PLAYER_PRESENCE_FRESHNESS_MAX_AGE_SECONDS", "300"))
-    for rel in [item.strip() for item in env("DUNE_PLAYER_PRESENCE_FRESHNESS_FILES", "public-site/static/players.json,public-site/static/hagga-map.svg").split(",") if item.strip()]:
+    for rel in [item.strip() for item in env("DUNE_PLAYER_PRESENCE_FRESHNESS_FILES", "public-site/static/players.json").split(",") if item.strip()]:
         path = ROOT / rel
         if not path.exists():
             checks.append({"name": rel, "ok": False, "status": "missing"})
@@ -629,6 +630,22 @@ def send_admin_private(current, template, count, event, extra=None):
     return results
 
 
+def admin_anomaly_digest_template(stuck_count, stuck_names, over_base_cap):
+    parts = []
+    if stuck_count:
+        parts.append(f"stuck/recent anomalies={stuck_count} ({stuck_names})")
+    if over_base_cap:
+        parts.append(f"over base cap={over_base_cap}")
+    if not parts:
+        return ""
+    return "Admin digest: " + "; ".join(parts) + "."
+
+
+def admin_anomaly_digest_signature(stuck, over_base_cap):
+    stuck_ids = sorted(str(item.get("accountId") or item.get("name") or "") for item in stuck if item.get("accountId") or item.get("name"))
+    return json.dumps({"stuck": stuck_ids, "overBaseCap": int(over_base_cap or 0)}, sort_keys=True)
+
+
 def compact_map_counts(players_by_map, limit=6):
     items = [(name, int(count or 0)) for name, count in (players_by_map or {}).items() if int(count or 0) > 0]
     items.sort(key=lambda item: (-item[1], item[0].lower()))
@@ -707,6 +724,21 @@ def check_once():
                 if str(account_id) not in seen_accounts:
                     automated_private_results.append(send_private(current[account_id], template, final_count, "first-seen", account_id))
                     seen_accounts.add(str(account_id))
+
+        join_counts = state.setdefault("joinCounts", {})
+        repo_star_messaged = set(str(item) for item in state.get("repoStarMessaged", []))
+        for account_id in joined:
+            key = str(account_id)
+            join_counts[key] = int(join_counts.get(key, 0) or 0) + 1
+        if env_bool("DUNE_PLAYER_PRESENCE_REPO_STAR_THIRD_JOIN_ENABLED", True):
+            threshold = int(env("DUNE_PLAYER_PRESENCE_REPO_STAR_JOIN_COUNT", "3"))
+            template = env("DUNE_PLAYER_PRESENCE_REPO_STAR_TEMPLATE", "Glad to have you back on {server_name}. If this server and self-host stack have been useful, please consider starring the project: https://github.com/snapetech/DuneAwakeningSelfHost")
+            for account_id in joined:
+                key = str(account_id)
+                if key not in repo_star_messaged and int(join_counts.get(key, 0) or 0) >= threshold:
+                    automated_private_results.append(send_private(current[account_id], template, final_count, "repo-star-third-join", account_id, {"join_count": join_counts[key]}))
+                    repo_star_messaged.add(key)
+        state["repoStarMessaged"] = sorted(repo_star_messaged, key=lambda value: (0, int(value)) if value.isdigit() else (1, value))
 
         if env_bool("DUNE_PLAYER_PRESENCE_HAGGA_ARRIVAL_ENABLED", False):
             template = env("DUNE_PLAYER_PRESENCE_HAGGA_ARRIVAL_TEMPLATE", "You made it to Hagga Basin. Build with room around roads, spawns, resource areas, and points of interest. Rules: {rules_url}")
@@ -938,8 +970,17 @@ def check_once():
                 cap = int(env("DUNE_PLAYER_PRESENCE_BASE_CAP", env("DUNE_ADMIN_BOT_MAX_BASES_WARN", "6")))
                 over_cap = sum(1 for item in base_counts.values() if item.get("baseCount", 0) > cap)
                 stuck_names = ", ".join(item["name"] for item in stuck[:5]) or "none"
-                template = env("DUNE_PLAYER_PRESENCE_ADMIN_ANOMALY_DIGEST_TEMPLATE", "Admin digest: stuck/recent anomalies={stuck_count} ({stuck_names}); over base cap={over_base_cap}.")
-                admin_alert_results.extend(send_admin_private(current, template, final_count, "admin-anomaly-digest", {"stuck_count": len(stuck), "stuck_names": stuck_names, "over_base_cap": over_cap}))
+                template = env("DUNE_PLAYER_PRESENCE_ADMIN_ANOMALY_DIGEST_TEMPLATE", ADMIN_ANOMALY_DIGEST_TEMPLATE)
+                if template == ADMIN_ANOMALY_DIGEST_TEMPLATE:
+                    template = admin_anomaly_digest_template(len(stuck), stuck_names, over_cap)
+                if template:
+                    signature = admin_anomaly_digest_signature(stuck, over_cap)
+                    repeat_unchanged = env_bool("DUNE_PLAYER_PRESENCE_ADMIN_ANOMALY_DIGEST_REPEAT_UNCHANGED", False)
+                    if repeat_unchanged or signature != state.get("lastAdminAnomalyDigestSignature"):
+                        admin_alert_results.extend(send_admin_private(current, template, final_count, "admin-anomaly-digest", {"stuck_count": len(stuck), "stuck_names": stuck_names, "over_base_cap": over_cap}))
+                        state["lastAdminAnomalyDigestSignature"] = signature
+                else:
+                    state.pop("lastAdminAnomalyDigestSignature", None)
                 state["lastAdminAnomalyDigestAt"] = current_time
             except Exception as exc:
                 admin_alert_results.append({"event": "admin-anomaly-digest", "ok": False, "error": str(exc)})

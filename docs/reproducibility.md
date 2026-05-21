@@ -15,8 +15,11 @@ The current Compose files are pinned by `.env` values, not by local machine name
 - `DUNE_STEAM_SERVER_DIR`: path to the official Steam tool install.
 - `DUNE_IMAGE_TAG`: Funcom image tag from that install.
 - `WORLD_NAME`, `WORLD_UNIQUE_NAME`, `WORLD_REGION`: your world metadata.
+- `DUNE_FLS_ENV`: FLS environment. Keep `retail` for live servers; use beta/test only with a matching PTC/test build and authorization.
 - `EXTERNAL_ADDRESS`: address clients should reach from outside the host.
 - `FLS_SECRET`: self-hosting token. Keep this secret and rotate it if exposed.
+
+`WORLD_UNIQUE_NAME` is not cosmetic after registration. It is the durable FLS battlegroup identity for the world. Back up `.env`, and keep the same value when moving state to a new host unless you deliberately want a different world registration.
 
 ## Fresh Host Procedure
 
@@ -106,6 +109,7 @@ Move the chosen backup directory to the new host, load the same or explicitly up
 Use `--rabbitmq --server-saved` only when intentionally replacing those local state directories too.
 
 Do not mix a downgraded image tag with a database captured after an upgrade unless the schema compatibility has been verified.
+Do not restore state with a different `WORLD_UNIQUE_NAME` unless the FLS registration impact has been tested separately.
 
 ## Reproducibility Checks
 

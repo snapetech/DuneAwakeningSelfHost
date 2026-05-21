@@ -2,11 +2,25 @@
 
 This records what is known about the native Dune admin/cheat path without guessing on the live server.
 
+## AMP Public Template Research
+
+Confidence: high. The public CubeCoders AMP Dune Awakening template does not expose GM, teleport, item grant, or kick execution payloads. It is useful for operational settings research, but it does not verify a native command route for DASH.
+
+Current kick candidates remain unverified:
+
+- `RemoveSessionMember`
+- `KickLobbyMember`
+- opt-in `BattlEyeMegaKick`
+
+Future research should compare RabbitMQ bindings, generated users, and server queue behavior between known-good runtime captures. That work stays separate from operational borrowing and should not block Compose, TLS, FLS environment, or config-wrapper improvements.
+
 ## Verified Surfaces
 
 - The live survival binary contains `UDuneServerCommandSubsystem`, `UDuneServerCommandsCheatManager`, `UServiceMessageCommand`, `AdminLogin`, `PrintAllowedCommands`, `SendDuneServerCommand`, `ServerCommand`, and `ServerExecRPC` strings.
 - The survival container exposes `127.0.0.1:10000`, but tested paths only returned health/404 responses. This does not look like the command route.
 - Admin RabbitMQ has map RPC bindings on exchange `rpc` with routing keys such as `Survival_11`, plus per-map `grant.<server_id>` and `response.<server_id>` routes.
+- Game RabbitMQ has a verified Director JSON-RPC route on exchange `rpc`, routing key `sh-6ff6498f4074e3de-ksplsz`, queue `bgdRpc`. A `director/echo` call with AMQP `type=json_rpc`, `user_id=bgd.<world>.<id>`, and `reply_to=<queue bound to rpc>` returned `dash dash`.
+- The active Survival server queue is `queue.server.o13FuZmcSvCCi5kuofbU5w`. It consumes messages, but tested JSON-RPC methods `ServerExecRPC`, `ServerExec`, `ServerCommand`, and `SendDuneServerCommand` with `PrintPos` produced no response and no visible log hit.
 - The active dedicated server allow-list found in `DuneSandbox/Config/DedicatedServerGame.ini` includes:
   - Console commands: `obj`, `FGL.ComponentAuditRequested`
   - GM commands: `AddItemToInventory`, `AddBasicInventoryToCharacter`, `SpawnVehicle`, teleport/travel helpers, `Fly`, `Ghost`, `Walk`, targeted destroy helpers, and `PrintPos`.
@@ -15,7 +29,7 @@ This records what is known about the native Dune admin/cheat path without guessi
 
 The live Admin Actions pane does **not** expose a Native GM / Cheat Console. Earlier builds showed a blocked preview UI, but that was removed because it looked actionable while the payload route was still unverified.
 
-The research APIs and scripts can still list discovered commands, shipped cheat scripts, and candidate RabbitMQ routes for operator investigation. Execution remains blocked until the RabbitMQ payload envelope for `UDuneServerCommandSubsystem` is proven. The safe first probe should be `PrintPos` against a known live route, because it should not mutate state.
+The research APIs and scripts can still list discovered commands, shipped cheat scripts, and candidate RabbitMQ routes for operator investigation. Execution remains blocked until the RabbitMQ server-side method name and payload contract for `UDuneServerCommandSubsystem` is proven. The safe first probe should be `PrintPos` against a known live server queue, because it should not mutate state.
 
 ## Chat Command Plan
 
@@ -93,7 +107,9 @@ Implemented:
 - `&gm where` is the namespaced form of `&where`.
 - `&gm unstuck` prepares or sends a gated `TeleportToExact` for a target player. It uses the named saved marker, defaulting to `location0`; if no marker exists it falls back to the admin's current location.
 - `&where` reports current known state and location.
-- `&teleport` moves an offline target to the admin's current position only when offline teleport execution is explicitly enabled. The implementation updates the controller, player-state, and pawn actor rows together; the shipped `dune.admin_move_offline_player_to_partition(...)` helper only updates the pawn row and was not sufficient in live testing.
+- `&teleport` moves an offline target to the admin's current position only when offline teleport execution is explicitly enabled. The shipped `dune.admin_move_offline_player_to_partition(...)` helper updates the pawn row, which is the row consumed by the verified soft-disconnect/rejoin test.
+- Direct online database movement is not a live teleport path. A same-partition test moved Lukano's controller, player-state, and pawn actor rows together by `+750` X; the live Survival server later saved the old in-memory position back to the database.
+- Soft-disconnect teleport is now the preferred online fallback while native GM teleport remains unverified. The path is: temporarily mark the player DB-offline, call `dune.admin_move_offline_player_to_partition(...)`, hold briefly, restore the online marker, and let the client rejoin. See [soft-disconnect-teleport.md](soft-disconnect-teleport.md).
 
 ### Tier 3: Inventory/Admin
 
@@ -152,7 +168,7 @@ DUNE_GM_COMMAND_RMQ_PASSWORD=guest \
 ./scripts/probe-gm-command.py --transport management --command PrintPos --target-player Lukano --route Survival_11
 ```
 
-Current probe result: the `rpc` exchange route to `Survival_11` is real and the `Survival_11_queue` consumer drains probe messages, but the tested JSON-shaped envelopes do not produce a visible `PrintPos` response or survival log entry. Treat the route as located but the payload envelope as unverified.
+Current probe result: the game-RMQ Director JSON-RPC envelope is verified with `director/echo`. The server queue for Lukano's current Survival instance drains messages, but the tested `PrintPos` method names do not produce a visible response or survival log entry. Treat the transport as verified and the server command method contract as unverified.
 
 Current transport note: `rabbitmqctl` can inspect the admin broker, but AMQP/HTTP connections to `admin-rmq` are timing out from the host/admin-panel network in this runtime. Do not change Docker networking without operator approval; use this document to separate transport reachability from envelope correctness.
 
@@ -166,7 +182,7 @@ Implemented `PrintPos` candidate envelopes:
 - Positional RPC argument variants inferred from `TRmqRpcCallProxy<TArray<FString>, FString>` and `TRmqRpcCallProxy<TArray<FString>, FString, FString>` binary symbols.
 - Plain text `PrintPos` and `ServerExec <target> PrintPos` variants.
 
-`scripts/dune_gm_command.py` is the shared adapter for probe and chat-command code. It builds the native GM command envelope and publishes to the admin RabbitMQ `rpc` exchange. Online teleport chat commands are connected to it but remain hard-gated:
+`scripts/dune_gm_command.py` is the shared adapter for probe and chat-command code. It supports TLS AMQP and now sends the required JSON-RPC AMQP properties (`type=json_rpc`, `user_id`, and `reply_to`). Online teleport chat commands are connected to it but remain hard-gated:
 
 ```env
 DUNE_ADMIN_GM_COMMANDS_ENABLED=true
@@ -201,6 +217,8 @@ With these guards enabled, the admin and target must both be online and resolve 
 
 The stack now treats targeted disconnect as a gated native GM/session command. The preferred candidate is `RemoveSessionMember <playername>`, because it is less punitive than a kick. `KickLobbyMember <playername>` is the fallback. `BattlEyeMegaKick <playername>` stays opt-in only because it may behave like a harsher kick or impose client retry behavior outside the server reconnect-grace settings.
 
+A DB-backed soft-disconnect path is now verified separately from native GM/session commands. Temporarily setting `dune.encrypted_player_state.online_status='Offline'` and `server_id=null`, holding for about `8` seconds, and restoring the marker caused the client to soft-disconnect/rejoin without a main-menu kick in the Lukano Survival test. When combined with `dune.admin_move_offline_player_to_partition(...)`, this becomes a working disconnect-teleport-reconnect primitive. Confidence: high for the observed test, moderate for generalized automation.
+
 What we verified:
 
 - The active `DedicatedServerGame.ini` GM allow-list does not include a clear `KickPlayer`, `AdminKick`, or `DisconnectPlayer` command.
@@ -232,6 +250,7 @@ The chat spam auto-protector uses the same limitation. It detects repeated-messa
 
 Candidate paths:
 
+- Network-disconnect teleport: verified for Lukano on Survival; use this as the practical fallback for online-adjacent teleport while native GM teleport remains unverified. See [soft-disconnect-teleport.md](soft-disconnect-teleport.md).
 - Native GM/session command: use `RemoveSessionMember` first after the `PrintPos`/`PrintAllowedCommands` payload path is proven.
 - Native GM/lobby kick: use `KickLobbyMember` only if session removal does not disconnect the client.
 - BattlEye kick: leave off unless deliberately testing a harsher kick path.

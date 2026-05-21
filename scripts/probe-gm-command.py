@@ -32,6 +32,7 @@ def main():
         response_conn = amqp_connection()
         response_channel = response_conn.channel()
         reply_to = response_channel.queue_declare(queue="", exclusive=True, auto_delete=True).method.queue
+        response_channel.queue_bind(queue=reply_to, exchange=args.exchange, routing_key=reply_to)
     for mode in args.mode or candidate_modes():
         if args.preview:
             sent.append({

@@ -72,6 +72,37 @@ check_not_default() {
   fi
 }
 
+check_world_identity() {
+  case "${WORLD_UNIQUE_NAME:-}" in
+    ""|sh-example-dune|example|changeme|change-me)
+      fail "WORLD_UNIQUE_NAME still uses an example placeholder"
+      ;;
+    sh-example-*)
+      warn "WORLD_UNIQUE_NAME still uses the generated sh-example-* prefix; keep it only if this is the durable world identity you intend to register"
+      ;;
+    *)
+      ok "WORLD_UNIQUE_NAME is customized"
+      ;;
+  esac
+
+  warn "After first successful FLS registration, do not rotate WORLD_UNIQUE_NAME; back up .env with state backups"
+}
+
+check_fls_environment() {
+  local value="${DUNE_FLS_ENV:-retail}"
+  case "$value" in
+    retail)
+      ok "DUNE_FLS_ENV=retail"
+      ;;
+    beta|test|ptc|staging)
+      warn "DUNE_FLS_ENV=$value; use non-retail only with a matching PTC/test server build and token authorization"
+      ;;
+    *)
+      warn "DUNE_FLS_ENV=$value is not a known DASH value; confirm the server build and Funcom token support it"
+      ;;
+  esac
+}
+
 check_image_tarballs() {
   local server_dir="${DUNE_STEAM_SERVER_DIR:-}"
   local images=(
@@ -103,6 +134,16 @@ check_image_tarballs() {
       fail "missing $server_dir/$image"
     fi
   done
+}
+
+check_rabbitmq_cert_sans() {
+  if [[ -x ./scripts/check-rabbitmq-cert-sans.sh ]]; then
+    if ./scripts/check-rabbitmq-cert-sans.sh "$env_file"; then
+      ok "RabbitMQ TLS certificate SANs cover expected names"
+    else
+      warn "RabbitMQ TLS certificate SANs do not cover every expected name; see docs/setup.md before regenerating certs"
+    fi
+  fi
 }
 
 check_compose_bindings() {
@@ -145,6 +186,9 @@ check_env_value RMQ_HTTP_TOKEN_AUTH_SECRET
 check_env_value DUNE_ADMIN_TOKEN
 check_env_value EXTERNAL_ADDRESS
 
+check_world_identity
+check_fls_environment
+
 check_not_default POSTGRES_SUPER_PASSWORD change-me-postgres-super
 check_not_default POSTGRES_DUNE_PASSWORD change-me-dune-db
 check_not_default RMQ_HTTP_TOKEN_AUTH_SECRET change-me-rmq-secret
@@ -165,6 +209,7 @@ if [[ -x ./scripts/check-steam-update.sh ]]; then
 fi
 
 check_compose_bindings
+check_rabbitmq_cert_sans
 
 if [[ -x ./scripts/check-admin-ingress.sh ]]; then
   if ./scripts/check-admin-ingress.sh "$env_file"; then

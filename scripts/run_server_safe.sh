@@ -2,20 +2,26 @@
 set -euo pipefail
 
 main() {
+  local server_root="${DUNE_SERVER_ROOT:-/home/dune/server}"
+  local dune_home="${DUNE_HOME:-/home/dune}"
+  local dry_run="${DUNE_RUN_SERVER_SAFE_DRY_RUN:-false}"
+
   install_cert
-  install_user_configs
-  install_server_login_password "$@"
-  install_server_display_name "$@"
+  install_user_configs "$server_root"
+  install_server_login_password "$server_root" "$@"
+  install_server_display_name "$server_root" "$@"
 
-  mkdir -p /home/dune/server/DuneSandbox/Saved/UserSettings
-  chown -R dune:nogroup /home/dune/server/DuneSandbox/Saved
+  mkdir -p "$server_root/DuneSandbox/Saved/UserSettings"
+  if [ "$dry_run" != "true" ]; then
+    chown -R dune:nogroup "$server_root/DuneSandbox/Saved"
+  fi
 
-  mkdir -p "/home/dune/.config/Epic/Unreal Engine/Engine"
-  local config_path="/home/dune/.config/Epic/Unreal Engine/Engine/Config"
+  mkdir -p "$dune_home/.config/Epic/Unreal Engine/Engine"
+  local config_path="$dune_home/.config/Epic/Unreal Engine/Engine/Config"
   [ -d "$config_path" ] && [ ! -L "$config_path" ] && rm -rf "$config_path"
-  ln -sfn /home/dune/server/DuneSandbox/Saved/UserSettings "$config_path"
+  ln -sfn "$server_root/DuneSandbox/Saved/UserSettings" "$config_path"
 
-  cd /home/dune/server
+  cd "$server_root"
 
   local pod_ip="${POD_IP:-127.0.0.1}"
   local args=()
@@ -32,13 +38,19 @@ main() {
   done
   args+=("-IGWBindAddress=$pod_ip")
 
+  if [ "$dry_run" = "true" ]; then
+    printf '%s\0' "${args[@]}" > "${DUNE_RUN_SERVER_SAFE_ARGS_OUT:-/tmp/run_server_safe.args}"
+    return 0
+  fi
+
   exec runuser -u dune -- ./DuneSandboxServer.sh "${args[@]}"
 }
 
 install_user_configs() {
+  local server_root="$1"
   local source_dir=/workspace/config
-  local config_dir=/home/dune/server/DuneSandbox/Saved/Config/LinuxServer
-  local user_settings_dir=/home/dune/server/DuneSandbox/Saved/UserSettings
+  local config_dir="$server_root/DuneSandbox/Saved/Config/LinuxServer"
+  local user_settings_dir="$server_root/DuneSandbox/Saved/UserSettings"
   mkdir -p "$config_dir"
   mkdir -p "$user_settings_dir"
 
@@ -56,6 +68,8 @@ copy_user_config() {
 }
 
 install_server_login_password() {
+  local server_root="$1"
+  shift
   local password="${DUNE_SERVER_LOGIN_PASSWORD:-}"
   local arg
   local prefix='-ini:engine:[ConsoleVariables]:Bgd.ServerLoginPassword='
@@ -69,9 +83,9 @@ install_server_login_password() {
   fi
   [ -n "$password" ] || return 0
 
-  local config_dir=/home/dune/server/DuneSandbox/Saved/Config/LinuxServer
+  local config_dir="$server_root/DuneSandbox/Saved/Config/LinuxServer"
   local engine_ini="${config_dir}/Engine.ini"
-  local user_settings_dir=/home/dune/server/DuneSandbox/Saved/UserSettings
+  local user_settings_dir="$server_root/DuneSandbox/Saved/UserSettings"
   local user_engine_ini="${user_settings_dir}/UserEngine.ini"
   local quoted_password
   quoted_password="$(engine_ini_quote "$password")"
@@ -83,6 +97,8 @@ install_server_login_password() {
 }
 
 install_server_display_name() {
+  local server_root="$1"
+  shift
   local display_name="${DUNE_SERVER_DISPLAY_NAME:-${WORLD_NAME:-}}"
   local arg
   local prefix='-ini:engine:[ConsoleVariables]:Bgd.ServerDisplayName='
@@ -96,9 +112,9 @@ install_server_display_name() {
   fi
   [ -n "$display_name" ] || return 0
 
-  local config_dir=/home/dune/server/DuneSandbox/Saved/Config/LinuxServer
+  local config_dir="$server_root/DuneSandbox/Saved/Config/LinuxServer"
   local engine_ini="${config_dir}/Engine.ini"
-  local user_settings_dir=/home/dune/server/DuneSandbox/Saved/UserSettings
+  local user_settings_dir="$server_root/DuneSandbox/Saved/UserSettings"
   local user_engine_ini="${user_settings_dir}/UserEngine.ini"
   local quoted_display_name
   quoted_display_name="$(engine_ini_quote "$display_name")"

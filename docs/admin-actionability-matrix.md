@@ -12,7 +12,8 @@ These surfaces have implemented endpoints and can be previewed immediately with 
 | --- | --- | --- | --- | --- | --- |
 | Typed config knobs | `POST /api/settings/typed-knobs` | `DUNE_ADMIN_TYPED_KNOBS_ENABLED` | `WRITE TYPED KNOBS` | high for promoted knobs | Writes config with backup; restart required for most effects. |
 | Economy bundle | `POST /api/admin/bundle` | `DUNE_ADMIN_BUNDLE_MUTATIONS_ENABLED` | `EXECUTE BUNDLE` | high for plan, moderate for broad execution | Currency, XP, and item grants share one audited plan. |
-| Offline player recovery | `POST /api/admin/player-recovery/offline-teleport` | global mutation gate | `MOVE OFFLINE PLAYER` | moderate | Refuses online target players. |
+| Offline player recovery | `POST /api/admin/player-recovery/offline-teleport` | global mutation gate | `MOVE OFFLINE PLAYER` | moderate-to-high | Uses the shipped offline move helper; validates offline state. |
+| Network-disconnect teleport | planned | planned network-disconnect gates | `NETWORK DISCONNECT TELEPORT` | high observed, moderate generalized | Verified on Lukano/Survival: real `UNetConnection` timeout, wait for `Offline`, `admin_move_offline_player_to_partition`, reconnect loaded moved pawn. See `docs/soft-disconnect-teleport.md`. |
 | Faction reputation | `POST /api/admin/faction-reputation` | `DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED` | `WRITE REPUTATION` | moderate-to-high | Uses first-party setter/getter. |
 | Player faction | `POST /api/admin/faction` | `DUNE_ADMIN_FACTION_MUTATIONS_ENABLED` | `CHANGE FACTION` | moderate | Offline-only; guild side effects still need disposable validation. |
 | Journey story nodes | `POST /api/admin/journey` | `DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED` | `WRITE JOURNEY` | moderate | Reveal, complete, reset, delete known story-node ids. |
@@ -72,7 +73,7 @@ These have local evidence but are not safe admin writes yet.
 Yes, the evidence has already become actionable. The actionable subset is not “new content” in the asset-pipeline sense; it is safe admin control over shipped systems and live database state:
 
 - Economy/admin: bundles, reputation, faction, Exchange balance, tags, access codes.
-- Player recovery/progression: offline teleport, journey nodes, tutorial rows, respawn deletion.
+- Player recovery/progression: offline teleport, network-disconnect teleport, journey nodes, tutorial rows, respawn deletion.
 - World/social state: guild roles/descriptions, permission actor access/ranks, marker deletion, landclaim segment add.
 - World rules/config: typed spice, weather, mining, PvP/security, shelter candidates.
 - Operations/events: dry-run event plans, announcements, restart plans, typed config proposals.

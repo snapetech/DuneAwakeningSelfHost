@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import importlib.util
 import pathlib
+import tempfile
 import unittest
 import unittest.mock
 
@@ -52,6 +53,137 @@ class PrivateMessageRoutingTests(unittest.TestCase):
         self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_ROUTING_KEYS"], "6FF6498F4074E3DE")
         self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_CLEANUP_TARGET_BINDINGS"], "true")
         self.assertEqual(captured["env"]["DUNE_ANNOUNCE_WRAP_DASHBOARD_MESSAGES"], "false")
+
+
+class ServiceHealthCheckTests(unittest.TestCase):
+    def test_default_freshness_check_excludes_derived_hagga_map_svg(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            static = root / "public-site" / "static"
+            static.mkdir(parents=True)
+            (static / "players.json").write_text("{}", encoding="utf-8")
+
+            file_env = {
+                "DUNE_PLAYER_PRESENCE_SERVICE_HEALTH_UNITS": ",",
+                "DUNE_PLAYER_PRESENCE_FRESHNESS_MAX_AGE_SECONDS": "300",
+            }
+            with unittest.mock.patch.object(player_presence_announcer, "ROOT", root), \
+                 unittest.mock.patch.object(player_presence_announcer, "FILE_ENV", file_env), \
+                 unittest.mock.patch.dict(player_presence_announcer.os.environ, {}, clear=True):
+                checks = player_presence_announcer.service_health_checks()
+
+        self.assertEqual([check["name"] for check in checks], ["public-site/static/players.json"])
+        self.assertTrue(checks[0]["ok"])
+
+    def test_configured_freshness_files_can_still_include_hagga_map_svg(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            static = root / "public-site" / "static"
+            static.mkdir(parents=True)
+            (static / "players.json").write_text("{}", encoding="utf-8")
+
+            file_env = {
+                "DUNE_PLAYER_PRESENCE_SERVICE_HEALTH_UNITS": ",",
+                "DUNE_PLAYER_PRESENCE_FRESHNESS_FILES": "public-site/static/players.json,public-site/static/hagga-map.svg",
+                "DUNE_PLAYER_PRESENCE_FRESHNESS_MAX_AGE_SECONDS": "300",
+            }
+            with unittest.mock.patch.object(player_presence_announcer, "ROOT", root), \
+                 unittest.mock.patch.object(player_presence_announcer, "FILE_ENV", file_env), \
+                 unittest.mock.patch.dict(player_presence_announcer.os.environ, {}, clear=True):
+                checks = player_presence_announcer.service_health_checks()
+
+        by_name = {check["name"]: check for check in checks}
+        self.assertTrue(by_name["public-site/static/players.json"]["ok"])
+        self.assertFalse(by_name["public-site/static/hagga-map.svg"]["ok"])
+        self.assertEqual(by_name["public-site/static/hagga-map.svg"]["status"], "missing")
+
+
+class AdminAnomalyDigestTests(unittest.TestCase):
+    def test_default_digest_omits_zero_value_categories(self):
+        self.assertEqual(
+            player_presence_announcer.admin_anomaly_digest_template(1, "Lukano", 0),
+            "Admin digest: stuck/recent anomalies=1 (Lukano).",
+        )
+        self.assertEqual(
+            player_presence_announcer.admin_anomaly_digest_template(0, "none", 2),
+            "Admin digest: over base cap=2.",
+        )
+        self.assertEqual(
+            player_presence_announcer.admin_anomaly_digest_template(0, "none", 0),
+            "",
+        )
+
+    def test_digest_signature_tracks_actionable_values(self):
+        stuck = [
+            {"accountId": "2", "name": "Lukano"},
+            {"accountId": "10", "name": "Other"},
+        ]
+        self.assertEqual(
+            player_presence_announcer.admin_anomaly_digest_signature(stuck, 0),
+            '{"overBaseCap": 0, "stuck": ["10", "2"]}',
+        )
+        self.assertEqual(
+            player_presence_announcer.admin_anomaly_digest_signature([], 0),
+            '{"overBaseCap": 0, "stuck": []}',
+        )
+
+
+class RepoStarThirdJoinTests(unittest.TestCase):
+    def test_repo_star_private_message_sends_once_on_third_join(self):
+        player = {
+            "name": "Lukano",
+            "flsId": "6FF6498F4074E3DE",
+        }
+        snapshots = [
+            {"123": player},
+            {},
+            {"123": player},
+            {},
+            {"123": player},
+            {},
+            {"123": player},
+        ]
+        state = {"onlinePlayers": {}}
+        sent = []
+
+        def fake_online_players():
+            return snapshots.pop(0)
+
+        def fake_save_state(next_state):
+            state.clear()
+            state.update(next_state)
+
+        def fake_private_message(target, message, job_id="player-presence-private-message"):
+            sent.append({"target": target, "message": message, "jobId": job_id})
+            return {"ok": True}
+
+        file_env = {
+            "DUNE_PLAYER_PRESENCE_REPO_STAR_THIRD_JOIN_ENABLED": "true",
+            "DUNE_PLAYER_PRESENCE_REPO_STAR_JOIN_COUNT": "3",
+            "DUNE_PLAYER_PRESENCE_REPO_STAR_TEMPLATE": "Please star https://github.com/snapetech/DuneAwakeningSelfHost",
+            "DUNE_PLAYER_PRESENCE_STARTER_BASE_TOOL_ENABLED": "false",
+            "DUNE_PLAYER_PRESENCE_ADMIN_FIRST_LOGIN_DAILY_ENABLED": "false",
+        }
+
+        with unittest.mock.patch.object(player_presence_announcer, "FILE_ENV", file_env), \
+             unittest.mock.patch.dict(player_presence_announcer.os.environ, {}, clear=True), \
+             unittest.mock.patch.object(player_presence_announcer, "online_players", fake_online_players), \
+             unittest.mock.patch.object(player_presence_announcer, "load_state", lambda: state.copy()), \
+             unittest.mock.patch.object(player_presence_announcer, "save_state", fake_save_state), \
+             unittest.mock.patch.object(player_presence_announcer, "private_message", fake_private_message):
+            results = [player_presence_announcer.check_once() for _ in range(7)]
+
+        third_join_messages = [
+            item
+            for result in results
+            for item in result["automatedPrivateMessages"]
+            if item["event"] == "repo-star-third-join"
+        ]
+        self.assertEqual(len(third_join_messages), 1)
+        self.assertEqual(third_join_messages[0]["accountId"], "123")
+        self.assertEqual(sent[0]["jobId"], "player-presence-repo-star-third-join")
+        self.assertEqual(state["joinCounts"]["123"], 4)
+        self.assertEqual(state["repoStarMessaged"], ["123"])
 
 
 if __name__ == "__main__":

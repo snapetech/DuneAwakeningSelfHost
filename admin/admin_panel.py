@@ -1404,8 +1404,12 @@ def docker_container_stats(live_stats=False):
         return base | {
             "cpuPercent": cpu_percent,
             "memory": f"{fmt_bytes(mem_usage)} / {fmt_bytes(mem_limit)}",
+            "memoryUsageBytes": mem_usage,
+            "memoryLimitBytes": mem_limit,
             "memoryPercent": round((mem_usage / mem_limit) * 100, 1) if mem_limit else None,
             "netIO": f"{fmt_bytes(net_rx)} / {fmt_bytes(net_tx)}",
+            "netRxBytes": net_rx,
+            "netTxBytes": net_tx,
             "blockIO": f"{fmt_bytes(block_read)} / {fmt_bytes(block_write)}",
             "pids": int((stats.get("pids_stats") or {}).get("current") or 0),
         }
@@ -1958,7 +1962,7 @@ def content_catalog_entries():
         {"id": "vendor-tutorial-lore-dungeon-overmap-functions", "group": "Limits", "surface": "Database state", "capability": "Inspect vendor stock, tutorial, lore, dungeon completion, overmap survival, and Coriolis functions without exposing writes.", "evidence": ["vendor_stock_state tables", "tutorial_per_player table", "lore_pickups tables", "dungeon_completion tables", "overmap_players table", "coriolis functions"], "confidence": "moderate for existence, low for mutation safety", "mutationRisk": "blocked", "restartRequired": False, "validationCommand": "POST /api/admin/player-lifecycle/inspect with account_id/player_id.", "rollback": "No execution in v1."},
         {"id": "party-account-lifecycle-functions", "group": "Limits", "surface": "Database state", "capability": "Inspect party, account deletion/takeover, Communinet, dungeon, tutorial, and player lifecycle functions without executing destructive routes.", "evidence": ["party functions", "delete_account", "takeover_account", "communinet functions", "dungeon completion functions", "player_state tables"], "confidence": "moderate for existence, low for mutation safety", "mutationRisk": "blocked except tags/access codes", "restartRequired": False, "validationCommand": "POST /api/admin/player-lifecycle/inspect with optional account_id/player_id.", "rollback": "No execution for blocked lifecycle surfaces."},
         {"id": "world-state-function-discovery", "group": "Limits", "surface": "Database state", "capability": "Discover guild, vehicle, marker, landclaim, recipe, and respawn function/table evidence without executing unsafe routes.", "evidence": ["pg_proc runtime schema introspection", "information_schema table/column introspection", "docs/admin-mutation-map.md"], "confidence": "moderate for existence, low-to-moderate for mutation semantics", "mutationRisk": "blocked except promoted guild/respawn paths", "restartRequired": False, "validationCommand": "POST /api/admin/world-state/inspect with optional account_id/player_id/guild_id.", "rollback": "No execution for blocked discovery surfaces."},
-        {"id": "offline-player-recovery", "group": "Economy/Admin", "surface": "Database state", "capability": "Preview offline player partition move through dune.admin_move_offline_player_to_partition.", "evidence": ["PLAYER_LOCATION_SOURCE_AUDIT.md", "database function name observed in local schema"], "confidence": "moderate", "mutationRisk": "high", "restartRequired": False, "validationCommand": "select * from dune.player_state where account_id=<id>;", "rollback": "Move player back to prior partition from audit record."},
+        {"id": "offline-player-recovery", "group": "Economy/Admin", "surface": "Database state", "capability": "Preview offline player partition move; soft-disconnect teleport uses dune.admin_move_offline_player_to_partition as its verified pawn-row primitive.", "evidence": ["PLAYER_LOCATION_SOURCE_AUDIT.md", "database function name observed in local schema", "docs/soft-disconnect-teleport.md"], "confidence": "moderate-to-high for same-partition recovery", "mutationRisk": "high", "restartRequired": False, "validationCommand": "select * from dune.player_state where account_id=<id>;", "rollback": "Move player back to prior partition from audit record."},
         {"id": "mining-resource-multipliers", "group": "World Rules", "surface": "Config/INI knobs", "capability": "Adjust player mining, vehicle mining, and PvP resource multipliers.", "evidence": ["config/UserEngine.ini", "docs/server-knobs-audit.md"], "confidence": "high", "mutationRisk": "low", "restartRequired": True, "validationCommand": "rg -n 'MiningOutput|PvpResourceMultiplier' config/UserEngine.ini", "rollback": "Restore backed-up UserEngine.ini and restart maps."},
         {"id": "pvp-security-zones", "group": "World Rules", "surface": "Config/INI knobs", "capability": "Toggle forced PvP and security-zone behavior.", "evidence": ["config/UserGame.ini", "SERVER_CONFIG_KEYS.md"], "confidence": "high", "mutationRisk": "medium", "restartRequired": True, "validationCommand": "rg -n 'Pvp|SecurityZones' config/UserGame.ini", "rollback": "Restore backed-up UserGame.ini and restart maps."},
         {"id": "shelter-hydration-candidates", "group": "World Rules", "surface": "Config/INI knobs", "capability": "Experiment with shelter thresholds and candidate hydration protection.", "evidence": ["HYDRATION_WATER_KNOBS.md", "config/UserGame.ini"], "confidence": "low", "mutationRisk": "experimental", "restartRequired": True, "validationCommand": "Live in-base/outside hydration test after restart.", "rollback": "Restore backed-up UserGame.ini and restart maps."},
@@ -4497,7 +4501,7 @@ class Handler(BaseHTTPRequestHandler):
             "args": [fls_id, partition_id, target_location],
             "player": player[0],
             "targetPartition": partition[0],
-            "note": "Updates controller, player-state, and pawn actor transforms together. The shipped dune.admin_move_offline_player_to_partition helper only updates the pawn row.",
+            "note": "Current strict-offline endpoint updates controller, player-state, and pawn actor transforms together. The separate verified soft-disconnect teleport path uses dune.admin_move_offline_player_to_partition as the pawn-row move primitive.",
         }
         if dry_run:
             return {"ok": True, "dryRun": True, "accountId": account_id, "partitionId": partition_id, "plan": plan}
@@ -6068,11 +6072,13 @@ INDEX = r"""<!doctype html>
     .metric { border:1px solid var(--line); border-radius:8px; background:var(--panel2); padding:12px; min-height:82px; }
     .metric .label { color:var(--muted); font-size:12px; }
     .metric .value { font-size:20px; font-weight:700; margin-top:6px; overflow-wrap:anywhere; }
-    .overviewTopGrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; margin-bottom:14px; }
+    .overviewTopGrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(108px,1fr)); gap:8px; margin-bottom:14px; }
+    .overviewTopGrid .metric { min-height:74px; padding:10px 12px; min-width:0; }
+    .overviewTopGrid .metric .value { font-size:18px; }
     .overviewMapShell .panelBand { margin-bottom:0; }
     .overviewMapShell .haggaMap { aspect-ratio:16 / 10; max-height:calc(100vh - 260px); min-height:520px; }
     .overviewMapShell .haggaMap svg { block-size:100%; inline-size:100%; aspect-ratio:auto; }
-    .summaryCard { position:relative; border:1px solid var(--line); border-radius:8px; background:var(--panel2); padding:10px 12px; min-height:74px; }
+    .summaryCard { position:relative; border:1px solid var(--line); border-radius:8px; background:var(--panel2); padding:10px 12px; min-height:74px; min-width:0; }
     .summaryCard:focus-within, .summaryCard:hover { border-color:#53614d; }
     .summaryCard h3 { margin:0 0 6px; }
     .summaryValue { font-size:22px; font-weight:800; line-height:1; }
@@ -6199,7 +6205,9 @@ INDEX = r"""<!doctype html>
     .hidden { display:none; }
     @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior:auto !important; transition:none !important; animation:none !important; } }
     @media (max-width: 1100px) { .twoCol, .threeCol { grid-template-columns:1fr; } .overviewMapShell .haggaMap { aspect-ratio:1 / 1; min-height:0; max-height:none; } }
-    @media (max-width: 820px) { header { align-items:flex-start; flex-direction:column; } main { grid-template-columns:1fr; } nav { position:static; height:auto; border-right:0; border-bottom:1px solid var(--line); } .tabs { grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); } .row { flex-wrap:wrap; } .barRow { grid-template-columns:1fr; gap:4px; } }
+    @media (max-width: 1180px) { main { grid-template-columns:1fr; } nav { position:static; height:auto; border-right:0; border-bottom:1px solid var(--line); } .tabs { grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); } .overviewTopGrid { grid-template-columns:repeat(3,minmax(0,1fr)); } .sectionHeader { flex-wrap:wrap; } }
+    @media (max-width: 640px) { section { padding:12px; } .overviewTopGrid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+    @media (max-width: 820px) { header { align-items:flex-start; flex-direction:column; } .row { flex-wrap:wrap; } .barRow { grid-template-columns:1fr; gap:4px; } }
   </style>
 </head>
 <body>
@@ -6270,6 +6278,7 @@ let current = validTabs.has(location.hash.slice(1)) ? location.hash.slice(1) : (
 if (!validTabs.has(current)) current = 'overview';
 let pendingAdminAccountId = '';
 let resourceTimer = null;
+let overviewResourceTimer = null;
 let healthTimer = null;
 let haggaMapTimer = null;
 let loadSerial = 0;
@@ -6289,6 +6298,9 @@ const resourceHistory = [];
 let adminReferenceCache = null;
 let adminReferenceCacheAt = 0;
 let overviewRosterCounts = {};
+let overviewHealthSnapshot = null;
+let overviewResourceSnapshot = null;
+let overviewResourcePrevious = null;
 const view = document.getElementById('view');
 
 document.body.classList.toggle('highContrast', sessionStorage.getItem('duneAdminHighContrast') === 'on');
@@ -6949,12 +6961,36 @@ function overviewHealthCards(health){
   const players = playerValues.reduce((a,b)=>a+b,0);
   return `${summaryHoverCard('Map State', `${onlineMaps}/${maps.length || 0}`, `${offlineMaps} offline`, `<div class="panelBand"><h2>Map Online/Offline</h2>${mapTiles(maps)}${mapStatusTable(maps)}</div>`, offlineMaps ? 'dangerText' : 'ok')}${summaryHoverCard('Health Verdicts', okVerdicts, `${attentionVerdicts} attention`, `<div class="panelBand"><h2>Health Verdict</h2>${checks(verdicts)}</div>`, attentionVerdicts ? 'dangerText' : 'ok')}${summaryHoverCard('Players By Map', players, `${maps.length} maps`, `<div class="panelBand"><h2>Players By Map</h2>${spark(playerValues)}${mapStatusTable(maps)}</div>`)}`;
 }
-function overviewRealtimeHtml(health, rosterCounts={}){
+function overviewResourceCard(resources){
+  const data = resources || {};
+  const host = data.host || {};
+  const mem = host.memory || {};
+  const load = host.load || {};
+  const cpuCount = Number(host.cpuCount || 1);
+  const containers = ((data.docker || {}).containers || []).filter(r => !r.error);
+  const cpuPercent = Math.round(clamp((Number(load.one || 0) / Math.max(cpuCount, 1)) * 100));
+  const memPercent = mem.usedPercent ?? '?';
+  const rx = containers.reduce((sum, r) => sum + Number(r.netRxBytes || 0), 0);
+  const tx = containers.reduce((sum, r) => sum + Number(r.netTxBytes || 0), 0);
+  const previous = overviewResourcePrevious;
+  const seconds = previous?.at ? Math.max((Date.now() - previous.at) / 1000, 1) : 0;
+  const rxRate = previous ? Math.max((rx - previous.rx) / seconds, 0) : 0;
+  const txRate = previous ? Math.max((tx - previous.tx) / seconds, 0) : 0;
+  const topCpu = containers
+    .filter(r => r.cpuPercent !== undefined && r.cpuPercent !== null)
+    .sort((a, b) => Number(b.cpuPercent || 0) - Number(a.cpuPercent || 0))
+    .slice(0, 5);
+  const detail = `<div class="panelBand"><h2>Server Load</h2><div class="metricGrid">${metric('Load Average', `${load.one ?? '?'} / ${load.five ?? '?'} / ${load.fifteen ?? '?'}`)}${metric('RAM', `${fmtBytes(mem.usedBytes)} / ${fmtBytes(mem.totalBytes)}`)}${metric('CPU Pressure', `${cpuPercent}% of ${cpuCount} cores`)}${metric('Network Rate', `Rx ${fmtBytes(rxRate)}/s Tx ${fmtBytes(txRate)}/s`)}</div><div class="barList">${bar('CPU Load', cpuPercent, 100, `${cpuPercent}%`)}${bar('RAM', mem.usedPercent || 0, 100, `${mem.usedPercent ?? '?'}%`)}</div>${topCpu.length ? `<h3>Top Container CPU</h3><div class="barList">${topCpu.map(r => bar(r.service || r.name, r.cpuPercent || 0, 100, `${r.cpuPercent ?? 0}%`)).join('')}</div>` : '<div class="muted">No live container CPU sample yet.</div>'}</div>`;
+  const meta = `RAM ${memPercent}% | Rx ${fmtBytes(rxRate)}/s Tx ${fmtBytes(txRate)}/s`;
+  return summaryHoverCard('Server Load', `${cpuPercent}% CPU`, meta, detail, cpuPercent >= 90 || Number(mem.usedPercent || 0) >= 90 ? 'dangerText' : '');
+}
+function overviewRealtimeHtml(health, rosterCounts={}, resources=null){
   const state = health || {};
   const summary = state.summary || {};
   const players = (state.farmState || []).reduce((sum, r) => sum + Number(r.connected_players || 0), 0);
   const playerPeak = state.playerPeak || {};
-  return `${metric('Ready Servers', `${summary.readyAlive ?? 0}/${summary.expectedPartitions ?? 0}`, summary.readyAlive === summary.expectedPartitions ? 'ok' : 'dangerText')}${metric('Online Maps', `${summary.onlineMaps ?? 0}/${summary.totalMaps ?? 0}`, summary.onlineMaps === summary.totalMaps ? 'ok' : 'dangerText')}${metric('Reported Players', players)}${metric('Peak Today', playerPeak.peak ?? summary.peakPlayersToday ?? 0)}${metric('Characters', rosterCounts.total ?? 0)}${overviewHealthCards(state)}`;
+  const resourcesCard = resources ? overviewResourceCard(resources) : metric('Server Load', 'sampling');
+  return `${metric('Ready Servers', `${summary.readyAlive ?? 0}/${summary.expectedPartitions ?? 0}`, summary.readyAlive === summary.expectedPartitions ? 'ok' : 'dangerText')}${metric('Online Maps', `${summary.onlineMaps ?? 0}/${summary.totalMaps ?? 0}`, summary.onlineMaps === summary.totalMaps ? 'ok' : 'dangerText')}${metric('Reported Players', players)}${metric('Peak Today', playerPeak.peak ?? summary.peakPlayersToday ?? 0)}${metric('Characters', rosterCounts.total ?? 0)}${resourcesCard}${overviewHealthCards(state)}`;
 }
 function opsRealtimeMetricsHtml(health){
   const pc = (health || {}).playerCounts || {};
@@ -6963,7 +6999,8 @@ function opsRealtimeMetricsHtml(health){
 function renderOverviewRealtime(health){
   const container = document.getElementById('overviewRealtime');
   if (!container) return;
-  container.innerHTML = overviewRealtimeHtml(health, overviewRosterCounts);
+  overviewHealthSnapshot = health;
+  container.innerHTML = overviewRealtimeHtml(health, overviewRosterCounts, overviewResourceSnapshot);
 }
 function renderOpsRealtime(health){
   const metrics = document.getElementById('opsRealtimeMetrics');
@@ -7005,6 +7042,26 @@ async function refreshRealtimeHealth(opts={}){
     announce(`Health refresh failed: ${e.message}`);
   } finally {
     healthRefreshInFlight = false;
+  }
+}
+async function refreshOverviewResources(opts={}){
+  if (resourceRefreshInFlight) return;
+  if (document.hidden && !opts.force) return;
+  if (current !== 'overview') return;
+  resourceRefreshInFlight = true;
+  try {
+    const resources = await api('/api/ops/resources?live=1', {timeoutMs: 8000});
+    const containers = ((resources.docker || {}).containers || []).filter(r => !r.error);
+    const rx = containers.reduce((sum, r) => sum + Number(r.netRxBytes || 0), 0);
+    const tx = containers.reduce((sum, r) => sum + Number(r.netTxBytes || 0), 0);
+    overviewResourcePrevious = overviewResourceSnapshot ? {rx: overviewResourceSnapshot.rxBytes || 0, tx: overviewResourceSnapshot.txBytes || 0, at: overviewResourceSnapshot.sampledAt || Date.now()} : null;
+    overviewResourceSnapshot = {...resources, rxBytes: rx, txBytes: tx, sampledAt: Date.now()};
+    if (overviewHealthSnapshot) renderOverviewRealtime(overviewHealthSnapshot);
+    updateLastRefresh('Resources refreshed');
+  } catch (e) {
+    announce(`Resource refresh failed: ${e.message}`);
+  } finally {
+    resourceRefreshInFlight = false;
   }
 }
 function startHealthRefresh(){
@@ -7329,6 +7386,10 @@ async function load(){
     clearInterval(resourceTimer);
     resourceTimer = null;
   }
+  if (overviewResourceTimer) {
+    clearInterval(overviewResourceTimer);
+    overviewResourceTimer = null;
+  }
   if (haggaMapTimer) {
     clearInterval(haggaMapTimer);
     haggaMapTimer = null;
@@ -7372,7 +7433,8 @@ async function overview(serial=loadSerial){
   ]);
   if (serial !== loadSerial) return;
   overviewRosterCounts = roster.counts || {};
-  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Overview</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="ops">Operations</button><button data-jump="mutations" class="primary">Admin Actions</button></div></div><div id="overviewRealtime" class="overviewTopGrid" aria-live="polite">${overviewRealtimeHtml(health, overviewRosterCounts)}</div><div id="haggaBasinMap" class="overviewMapShell"><div class="panelBand"><h2>Hagga Basin Player Map</h2><div class="muted">Loading player positions...</div></div></div>${actionGrid([{tab:'characters',label:'Open player roster',className:'primary'},{tab:'ops',label:'Restart / backup / map health'},{tab:'mutations',label:'Grant currency, XP, or items'},{tab:'settings',label:'Server settings'}])}<details class="panelBand"><summary>Player Roster Preview</summary><div id="overviewRoster">${characterRosterPanel(roster)}</div></details><div id="detail"></div></div>`;
+  overviewHealthSnapshot = health;
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Overview</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="ops">Operations</button><button data-jump="mutations" class="primary">Admin Actions</button></div></div><div id="overviewRealtime" class="overviewTopGrid" aria-live="polite">${overviewRealtimeHtml(health, overviewRosterCounts, overviewResourceSnapshot)}</div><div id="haggaBasinMap" class="overviewMapShell"><div class="panelBand"><h2>Hagga Basin Player Map</h2><div class="muted">Loading player positions...</div></div></div>${actionGrid([{tab:'characters',label:'Open player roster',className:'primary'},{tab:'ops',label:'Restart / backup / map health'},{tab:'mutations',label:'Grant currency, XP, or items'},{tab:'settings',label:'Server settings'}])}<details class="panelBand"><summary>Player Roster Preview</summary><div id="overviewRoster">${characterRosterPanel(roster)}</div></details><div id="detail"></div></div>`;
   document.querySelectorAll('#overviewRoster tbody tr').forEach(row => row.onclick = () => pickCharacter(row));
   makeRowsKeyboardFriendly(view);
   bindRosterFilters(view);
@@ -7383,6 +7445,10 @@ async function overview(serial=loadSerial){
   haggaMapTimer = setInterval(() => {
     if (haggaMapAutoRefresh && current === 'overview') refreshHaggaMap().catch(() => {});
   }, 2000);
+  refreshOverviewResources({force:true}).catch(() => {});
+  overviewResourceTimer = setInterval(() => {
+    if (autoRefresh && current === 'overview') refreshOverviewResources().catch(() => {});
+  }, 5000);
   startHealthRefresh();
 }
 async function ops(serial=loadSerial){

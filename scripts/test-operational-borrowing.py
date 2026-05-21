@@ -1,0 +1,490 @@
+#!/usr/bin/env python3
+import os
+import json
+import shutil
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def write_self_signed_cert(tmp_path, sans):
+    key = tmp_path / "server.key"
+    csr = tmp_path / "server.csr"
+    cert = tmp_path / "server.crt"
+    ext = tmp_path / "server.ext"
+    ext.write_text(
+        f"subjectAltName = {sans}\n"
+        "extendedKeyUsage = serverAuth\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["openssl", "genrsa", "-out", str(key), "2048"], check=True, stdout=subprocess.DEVNULL)
+    subprocess.run(
+        ["openssl", "req", "-new", "-key", str(key), "-subj", "/CN=game-rmq", "-out", str(csr)],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    subprocess.run(
+        [
+            "openssl",
+            "x509",
+            "-req",
+            "-in",
+            str(csr),
+            "-signkey",
+            str(key),
+            "-days",
+            "1",
+            "-out",
+            str(cert),
+            "-extfile",
+            str(ext),
+        ],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return cert
+
+
+class RabbitMqCertSanTests(unittest.TestCase):
+    def test_cert_san_checker_reports_expected_names(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            env_file = tmp_path / "dune.env"
+            cert = write_self_signed_cert(tmp_path, "DNS:game-rmq,DNS:localhost,DNS:rmq.example.test,IP:127.0.0.1")
+            env_file.write_text("GAME_RMQ_PUBLIC_HOST=rmq.example.test\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [str(ROOT / "scripts" / "check-rabbitmq-cert-sans.sh"), str(env_file)],
+                cwd=ROOT,
+                env={**os.environ, "RABBITMQ_CERT_PATH": str(cert)},
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("DNS:rmq.example.test", result.stdout)
+
+    def test_cert_san_checker_warns_on_missing_public_host(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            env_file = tmp_path / "dune.env"
+            cert = write_self_signed_cert(tmp_path, "DNS:game-rmq,DNS:localhost,IP:127.0.0.1")
+            env_file.write_text("GAME_RMQ_PUBLIC_HOST=rmq.example.test\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [str(ROOT / "scripts" / "check-rabbitmq-cert-sans.sh"), str(env_file)],
+                cwd=ROOT,
+                env={**os.environ, "RABBITMQ_CERT_PATH": str(cert)},
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("SAN missing DNS:rmq.example.test", result.stderr)
+
+    def test_cert_generator_includes_public_host_and_refuses_overwrite(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            tls_dir = tmp_path / "tls"
+            env_file = tmp_path / "dune.env"
+            env_file.write_text("GAME_RMQ_PUBLIC_HOST=rmq.example.test\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [str(ROOT / "scripts" / "generate-rabbitmq-cert.sh"), str(env_file)],
+                cwd=ROOT,
+                env={**os.environ, "RABBITMQ_TLS_DIR": str(tls_dir)},
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("DNS:rmq.example.test", result.stdout)
+
+            check = subprocess.run(
+                [str(ROOT / "scripts" / "check-rabbitmq-cert-sans.sh"), str(env_file)],
+                cwd=ROOT,
+                env={**os.environ, "RABBITMQ_CERT_PATH": str(tls_dir / "server.crt")},
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
+
+            refused = subprocess.run(
+                [str(ROOT / "scripts" / "generate-rabbitmq-cert.sh"), str(env_file)],
+                cwd=ROOT,
+                env={**os.environ, "RABBITMQ_TLS_DIR": str(tls_dir)},
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(refused.returncode, 1)
+            self.assertIn("refusing to overwrite", refused.stderr)
+
+
+class RunServerSafeTests(unittest.TestCase):
+    def test_dry_run_preserves_args_and_writes_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            server_root = tmp_path / "server"
+            dune_home = tmp_path / "home"
+            args_out = tmp_path / "args.nul"
+            server_root.mkdir()
+
+            env = {
+                **os.environ,
+                "DUNE_SERVER_ROOT": str(server_root),
+                "DUNE_HOME": str(dune_home),
+                "DUNE_RUN_SERVER_SAFE_DRY_RUN": "true",
+                "DUNE_RUN_SERVER_SAFE_ARGS_OUT": str(args_out),
+                "POD_IP": "172.31.240.40",
+                "DUNE_SERVER_LOGIN_PASSWORD": "pass with spaces",
+                "DUNE_SERVER_DISPLAY_NAME": "Display With Spaces",
+            }
+            subprocess.run(
+                [
+                    str(ROOT / "scripts" / "run_server_safe.sh"),
+                    "-MultiHome=$POD_IP",
+                    "-ini:engine:[ConsoleVariables]:Bgd.ServerLoginPassword=old",
+                    "/Game/Dune/Maps/Test Map",
+                ],
+                cwd=ROOT,
+                env=env,
+                check=True,
+            )
+
+            raw_args = args_out.read_bytes().rstrip(b"\0").split(b"\0")
+            decoded = [item.decode("utf-8") for item in raw_args]
+            self.assertIn("-MultiHome=172.31.240.40", decoded)
+            self.assertIn("-ini:engine:[ConsoleVariables]:Bgd.ServerLoginPassword=pass with spaces", decoded)
+            self.assertIn("/Game/Dune/Maps/Test Map", decoded)
+            self.assertIn("-IGWBindAddress=172.31.240.40", decoded)
+
+            engine_ini = server_root / "DuneSandbox" / "Saved" / "Config" / "LinuxServer" / "Engine.ini"
+            user_engine_ini = server_root / "DuneSandbox" / "Saved" / "UserSettings" / "UserEngine.ini"
+            self.assertIn('Bgd.ServerLoginPassword="pass with spaces"', engine_ini.read_text(encoding="utf-8"))
+            self.assertIn('Bgd.ServerDisplayName="Display With Spaces"', user_engine_ini.read_text(encoding="utf-8"))
+
+            config_link = dune_home / ".config" / "Epic" / "Unreal Engine" / "Engine" / "Config"
+            self.assertTrue(config_link.is_symlink())
+            self.assertEqual(config_link.resolve(), server_root / "DuneSandbox" / "Saved" / "UserSettings")
+
+
+class ComposeCommandTests(unittest.TestCase):
+    def compose_config(self, *files, env_file=".env.example"):
+        cmd = ["docker", "compose"]
+        for file_name in files:
+            cmd.extend(["-f", file_name])
+        cmd.extend(["--env-file", str(env_file), "config", "--format", "json"])
+        result = subprocess.run(
+            cmd,
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
+        )
+        return json.loads(result.stdout)
+
+    def test_default_compose_passes_fls_environment(self):
+        config = self.compose_config("compose.yaml")
+        command = config["services"]["survival"]["command"]
+        self.assertIn("-ini:engine:[FuncomLiveServices]:DefaultFlsEnvironment=retail", command)
+        self.assertEqual(config["services"]["director"]["environment"]["FuncomLiveServices__DefaultFlsEnvironment"], "retail")
+        self.assertEqual(config["services"]["text-router"]["environment"]["FuncomLiveServices__DefaultFlsEnvironment"], "retail")
+        self.assertEqual(config["services"]["gateway"]["environment"]["FuncomLiveServices__DefaultFlsEnvironment"], "retail")
+
+    def test_allmaps_overlay_passes_fls_environment(self):
+        config = self.compose_config("compose.yaml", "compose.allmaps.yaml")
+        command = config["services"]["lostharvest-ecolab-a"]["command"]
+        self.assertIn("-ini:engine:[FuncomLiveServices]:DefaultFlsEnvironment=retail", command)
+
+    def test_compose_propagates_non_default_fls_environment(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env_file = Path(tmp) / "compose.env"
+            env_text = (ROOT / ".env.example").read_text(encoding="utf-8")
+            env_text = env_text.replace("DUNE_FLS_ENV=retail", "DUNE_FLS_ENV=beta")
+            env_file.write_text(env_text, encoding="utf-8")
+
+            config = self.compose_config("compose.yaml", env_file=env_file)
+            command = config["services"]["survival"]["command"]
+            self.assertIn("-ini:engine:[FuncomLiveServices]:DefaultFlsEnvironment=beta", command)
+            self.assertEqual(config["services"]["director"]["environment"]["FuncomLiveServices__DefaultFlsEnvironment"], "beta")
+            self.assertEqual(config["services"]["text-router"]["environment"]["FuncomLiveServices__DefaultFlsEnvironment"], "beta")
+            self.assertEqual(config["services"]["gateway"]["environment"]["FuncomLiveServices__DefaultFlsEnvironment"], "beta")
+
+
+class RestoreStateTests(unittest.TestCase):
+    def test_restore_dry_run_reports_world_identity_and_optional_layers(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / "backups") as tmp:
+            backup_dir = Path(tmp)
+            env_file = backup_dir / "restore.env"
+            env_file.write_text("WORLD_UNIQUE_NAME=sh-current\n", encoding="utf-8")
+            (backup_dir / "postgres-dune_sb_1_4_0_0.dump").write_bytes(b"not-read-in-dry-run")
+            (backup_dir / "manifest.txt").write_text(
+                "world_unique_name=sh-backed-up\n"
+                "config_archive=config.tgz\n"
+                "config_tls_archive=config-tls.tgz\n",
+                encoding="utf-8",
+            )
+            for archive_name in ("config.tgz", "config-tls.tgz", "rabbitmq-admin.tgz", "rabbitmq-game.tgz", "server-saved.tgz"):
+                subprocess.run(
+                    ["tar", "-czf", str(backup_dir / archive_name), "-C", str(backup_dir), "manifest.txt"],
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+
+            result = subprocess.run(
+                [
+                    str(ROOT / "scripts" / "restore-state.sh"),
+                    "--dry-run",
+                    "--rabbitmq",
+                    "--server-saved",
+                    "--config",
+                    "--tls",
+                    str(env_file),
+                    str(backup_dir.relative_to(ROOT)),
+                ],
+                cwd=ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("restore_config=true", result.stdout)
+            self.assertIn("restore_tls=true", result.stdout)
+            self.assertIn("backup_world_unique_name=sh-backed-up", result.stdout)
+            self.assertIn("current_world_unique_name=sh-current", result.stdout)
+            self.assertIn("differs from current", result.stderr)
+
+
+class BackupStateTests(unittest.TestCase):
+    def test_backup_dry_run_reports_identity_layers_without_docker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            env_file = tmp_path / "backup.env"
+            env_file.write_text(
+                "WORLD_UNIQUE_NAME=sh-backup\n"
+                "DUNE_FLS_ENV=retail\n"
+                "GAME_RMQ_PUBLIC_HOST=rmq.example.test\n",
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                [str(ROOT / "scripts" / "backup-state.sh"), "--dry-run", str(env_file)],
+                cwd=ROOT,
+                env={**os.environ, "CONTAINER_RUNTIME": "definitely-not-a-runtime"},
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("backup dry run OK", result.stdout)
+            self.assertIn("world_unique_name=sh-backup", result.stdout)
+            self.assertIn("dune_fls_env=retail", result.stdout)
+            self.assertIn("game_rmq_public_host=rmq.example.test", result.stdout)
+
+
+class OperationalIdentityCheckTests(unittest.TestCase):
+    def test_operational_identity_check_reports_rendered_fls_environment(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env_file = Path(tmp) / "identity.env"
+            env_text = (ROOT / ".env.example").read_text(encoding="utf-8")
+            env_text = env_text.replace("WORLD_UNIQUE_NAME=sh-example-dune", "WORLD_UNIQUE_NAME=sh-identity-test")
+            env_text = env_text.replace("DUNE_FLS_ENV=retail", "DUNE_FLS_ENV=beta")
+            env_text = env_text.replace("GAME_RMQ_PUBLIC_HOST=127.0.0.1", "GAME_RMQ_PUBLIC_HOST=rmq.example.test")
+            env_file.write_text(env_text, encoding="utf-8")
+
+            result = subprocess.run(
+                [str(ROOT / "scripts" / "check-operational-identity.sh"), str(env_file)],
+                cwd=ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("survival command renders beta FLS environment", result.stdout)
+            self.assertIn("service layer renders beta FLS environment", result.stdout)
+
+
+class OperationalReportTests(unittest.TestCase):
+    def test_operational_report_redacts_secret_values(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            env_file = tmp_path / "report.env"
+            report_file = tmp_path / "report.txt"
+            env_text = (ROOT / ".env.example").read_text(encoding="utf-8")
+            env_text = env_text.replace("WORLD_UNIQUE_NAME=sh-example-dune", "WORLD_UNIQUE_NAME=sh-report-test")
+            fls_key = "FLS" + "_SECRET"
+            env_text = env_text.replace(f"{fls_key}=", f"{fls_key}=super-secret-token")
+            env_text = env_text.replace("DUNE_ADMIN_TOKEN=change-me-admin-token", "DUNE_ADMIN_TOKEN=admin-secret-token")
+            env_file.write_text(env_text, encoding="utf-8")
+
+            result = subprocess.run(
+                [str(ROOT / "scripts" / "operational-report.sh"), str(env_file), str(report_file)],
+                cwd=ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            report = report_file.read_text(encoding="utf-8")
+            self.assertIn("WORLD_UNIQUE_NAME=sh-report-test", report)
+            self.assertIn(f"{fls_key}=<set length=18>", report)
+            self.assertIn("DUNE_ADMIN_TOKEN=<set length=18>", report)
+            self.assertNotIn("super-secret-token", report)
+            self.assertNotIn("admin-secret-token", report)
+            self.assertIn("compose_config=OK", report)
+
+
+class OperationalBundleTests(unittest.TestCase):
+    def test_operational_bundle_excludes_raw_secrets(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / "backups") as tmp:
+            tmp_path = Path(tmp)
+            env_file = tmp_path / "bundle.env"
+            bundle_file = tmp_path / "bundle.tgz"
+            extract_dir = tmp_path / "extract"
+            env_text = (ROOT / ".env.example").read_text(encoding="utf-8")
+            env_text = env_text.replace("WORLD_UNIQUE_NAME=sh-example-dune", "WORLD_UNIQUE_NAME=sh-bundle-test")
+            fls_key = "FLS" + "_SECRET"
+            env_text = env_text.replace(f"{fls_key}=", f"{fls_key}=bundle-secret-token")
+            env_file.write_text(env_text, encoding="utf-8")
+
+            result = subprocess.run(
+                [str(ROOT / "scripts" / "operational-bundle.sh"), str(env_file), str(bundle_file.relative_to(ROOT))],
+                cwd=ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+            extract_dir.mkdir()
+            subprocess.run(["tar", "-xzf", str(bundle_file), "-C", str(extract_dir)], check=True)
+            names = {path.name for path in extract_dir.iterdir()}
+            self.assertIn("operational-report.txt", names)
+            self.assertIn("operational-identity-check.txt", names)
+            self.assertIn("backup-dry-run.txt", names)
+            self.assertIn("compose-summary.txt", names)
+            self.assertIn("manifest.txt", names)
+            self.assertNotIn("bundle.env", names)
+
+            combined = "\n".join(path.read_text(encoding="utf-8") for path in extract_dir.iterdir() if path.is_file())
+            self.assertIn("contains_env=false", combined)
+            self.assertIn("WORLD_UNIQUE_NAME=sh-bundle-test", combined)
+            self.assertNotIn("bundle-secret-token", combined)
+
+    def test_operational_bundle_verifier_accepts_generated_bundle(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / "backups") as tmp:
+            tmp_path = Path(tmp)
+            env_file = tmp_path / "bundle.env"
+            bundle_file = tmp_path / "bundle.tgz"
+            env_text = (ROOT / ".env.example").read_text(encoding="utf-8")
+            env_text = env_text.replace("WORLD_UNIQUE_NAME=sh-example-dune", "WORLD_UNIQUE_NAME=sh-bundle-verify")
+            env_file.write_text(env_text, encoding="utf-8")
+
+            subprocess.run(
+                [str(ROOT / "scripts" / "operational-bundle.sh"), str(env_file), str(bundle_file.relative_to(ROOT))],
+                cwd=ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=True,
+            )
+            result = subprocess.run(
+                [str(ROOT / "scripts" / "verify-operational-bundle.sh"), str(bundle_file.relative_to(ROOT))],
+                cwd=ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("operational bundle verification complete: OK", result.stdout)
+
+    def test_operational_bundle_verifier_rejects_env_file(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / "backups") as tmp:
+            tmp_path = Path(tmp)
+            bundle_file = tmp_path / "bad-bundle.tgz"
+            payload_dir = tmp_path / "payload"
+            payload_dir.mkdir()
+            for name in ("operational-report.txt", "operational-identity-check.txt", "backup-dry-run.txt", "compose-summary.txt"):
+                (payload_dir / name).write_text("ok\n", encoding="utf-8")
+            (payload_dir / "manifest.txt").write_text(
+                "contains_env=false\n"
+                "contains_tls_keys=false\n"
+                "contains_database_dump=false\n"
+                "contains_rabbitmq_state=false\n"
+                "contains_raw_compose=false\n",
+                encoding="utf-8",
+            )
+            (payload_dir / ".env").write_text("WORLD_UNIQUE_NAME=sh-bad\n", encoding="utf-8")
+            subprocess.run(["tar", "-czf", str(bundle_file), "-C", str(payload_dir), "."], check=True)
+
+            result = subprocess.run(
+                [str(ROOT / "scripts" / "verify-operational-bundle.sh"), str(bundle_file.relative_to(ROOT))],
+                cwd=ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("forbidden file types", result.stderr)
+
+
+class VerifyBackupTests(unittest.TestCase):
+    def test_verify_backup_reports_identity_layers_without_pg_restore(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            backup_dir = Path(tmp)
+            bin_dir = backup_dir / "bin"
+            bin_dir.mkdir()
+            for tool in ("bash", "tar", "gzip", "rg", "grep", "find"):
+                target = shutil.which(tool)
+                self.assertIsNotNone(target, tool)
+                os.symlink(target, bin_dir / tool)
+            (backup_dir / "postgres-dune_sb_1_4_0_0.dump").write_bytes(b"placeholder")
+            (backup_dir / ".env").write_text("WORLD_UNIQUE_NAME=sh-test\n", encoding="utf-8")
+            (backup_dir / "manifest.txt").write_text("world_unique_name=sh-test\n", encoding="utf-8")
+            for archive_name in ("config.tgz", "config-tls.tgz"):
+                subprocess.run(
+                    ["tar", "-czf", str(backup_dir / archive_name), "-C", str(backup_dir), "manifest.txt"],
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+
+            env = {**os.environ, "PATH": str(bin_dir)}
+            result = subprocess.run(
+                [str(ROOT / "scripts" / "verify-backup.sh"), str(backup_dir)],
+                cwd=ROOT,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("OK manifest world identity present", result.stdout)
+            self.assertIn("OK archive", result.stdout)
+            self.assertIn("OK env copy present", result.stdout)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -13,8 +13,11 @@ Edit `.env` after generation:
 - Set `DUNE_STEAM_SERVER_DIR` to the Steam tool install path.
 - Set `DUNE_IMAGE_TAG` to the image tag in the Steam package.
 - Set `WORLD_NAME`, `WORLD_UNIQUE_NAME`, and `WORLD_REGION`.
+- Leave `DUNE_FLS_ENV=retail` for normal live servers. Use a beta/test value only with a matching PTC/test build and token authorization.
 - Paste the Funcom self-hosting token into `FLS_SECRET`.
 - Set `EXTERNAL_ADDRESS` to the address clients should reach.
+
+`WORLD_UNIQUE_NAME` is the durable FLS battlegroup identity. After the first successful registration, do not rotate it for the same world; back up `.env` with your database, RabbitMQ, and saved-state backups.
 
 Optional starting overlays live under `examples/env/`. Copy values from those files into `.env`; do not use them as complete replacements for `.env.example`.
 
@@ -33,6 +36,23 @@ Then run the stricter preflight:
 ```
 
 This checks local commands, required env values, expected Steam image tarballs, and unsafe host bindings.
+It also reports the current game RabbitMQ TLS certificate SANs and compares them with `GAME_RMQ_PUBLIC_HOST`, `game-rmq`, `localhost`, and `127.0.0.1`.
+
+To inspect only the RabbitMQ certificate:
+
+```bash
+./scripts/check-rabbitmq-cert-sans.sh .env
+```
+
+If `GAME_RMQ_PUBLIC_HOST` changes after first setup, do not blindly regenerate certificates over a live deployment. Schedule maintenance, stop clients/game services, back up `config/tls/`, then regenerate or replace the certificate with the new SAN set:
+
+```bash
+cp -a config/tls/rabbitmq "config/tls/rabbitmq.backup.$(date -u +%Y%m%dT%H%M%SZ)"
+./scripts/generate-rabbitmq-cert.sh .env --force
+./scripts/check-rabbitmq-cert-sans.sh .env
+```
+
+Then recreate `game-rmq`, `gateway`, `director`, `text-router`, and game-server containers.
 
 ## 3. Load Official Images
 

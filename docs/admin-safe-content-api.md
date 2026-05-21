@@ -246,7 +246,8 @@ Behavior:
 
 - Resolves `account_id` to `dune.accounts.user` or `funcom_id`.
 - Refuses players whose `online_status` is `Online`.
-- Plans or executes an offline actor-set move for the controller, player-state, and pawn actor rows. The shipped `dune.admin_move_offline_player_to_partition(fls_id, partition_id, location)` helper only updates the pawn row and is not used for execution.
+- Plans or executes the current offline actor-set move for the controller, player-state, and pawn actor rows.
+- Separate from this endpoint, the shipped `dune.admin_move_offline_player_to_partition(fls_id, partition_id, location)` helper is now verified as the correct pawn-row primitive for network-disconnect teleport once Survival has marked the player `Offline`. See `docs/soft-disconnect-teleport.md`.
 
 Execution request:
 

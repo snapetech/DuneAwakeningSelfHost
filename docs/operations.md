@@ -44,6 +44,22 @@ For RabbitMQ-specific checks, use:
 COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' ./scripts/rmq-health.sh .env
 ```
 
+For the client-facing game RabbitMQ TLS certificate identity, use:
+
+```bash
+./scripts/check-rabbitmq-cert-sans.sh .env
+```
+
+The check is read-only. It reports the certificate SANs and warns when the cert does not cover `GAME_RMQ_PUBLIC_HOST`, `game-rmq`, `localhost`, or `127.0.0.1`.
+
+Certificate generation is explicit and guarded:
+
+```bash
+./scripts/generate-rabbitmq-cert.sh .env
+```
+
+The generator refuses to overwrite existing TLS files unless `--force` is passed. Use `--force` only during planned maintenance after backing up `config/tls/rabbitmq`.
+
 Admin RabbitMQ can have fewer active service-user connections than farm partitions in the 30-map warm-pool layout. Treat it as unhealthy when recent auth/connectivity errors appear or when a failed client transition correlates with missing admin queue consumers.
 
 Fast auth-path check:

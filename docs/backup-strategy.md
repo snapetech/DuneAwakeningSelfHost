@@ -22,11 +22,38 @@ Run:
 ./scripts/backup-state.sh .env
 ```
 
+Before a maintenance window, check what identity/config layers will be captured without contacting Docker:
+
+```bash
+./scripts/backup-state.sh --dry-run .env
+```
+
+Equivalent Make targets:
+
+```bash
+make backup-dry-run ENV_FILE=.env
+make backup-state ENV_FILE=.env
+make verify-backup BACKUP_DIR=backups/<UTC timestamp>
+make restore-dry-run ENV_FILE=.env BACKUP_DIR=backups/<UTC timestamp>
+make operational-report ENV_FILE=.env
+make operational-bundle ENV_FILE=.env
+```
+
 Backups are written under:
 
 ```text
 backups/<UTC timestamp>/
 ```
+
+The local backup includes:
+
+- Postgres custom-format dump.
+- RabbitMQ state archives when brokers are running.
+- Server saved-state archive when available.
+- A copy of the env file used for the backup.
+- `config.tgz` for committed/local config files, excluding TLS key material.
+- `config-tls.tgz` for RabbitMQ TLS material under `config/tls/`.
+- `manifest.txt` with `WORLD_UNIQUE_NAME`, `DUNE_FLS_ENV`, and `GAME_RMQ_PUBLIC_HOST`.
 
 Restore with:
 
@@ -35,6 +62,19 @@ Restore with:
 ```
 
 Restores are disruptive. Stop game/admin writers first.
+RabbitMQ, saved-state, config, and TLS replacement are opt-in:
+
+```bash
+./scripts/restore-state.sh --rabbitmq --server-saved --config --tls .env backups/<UTC timestamp>
+```
+
+Run `--dry-run` first. If the manifest `WORLD_UNIQUE_NAME` differs from the current `.env`, restore will warn because that value is the durable FLS battlegroup identity.
+
+The equivalent Make target accepts optional restore layer flags:
+
+```bash
+make restore-dry-run ENV_FILE=.env BACKUP_DIR=backups/<UTC timestamp> RESTORE_FLAGS='--rabbitmq --server-saved --config --tls'
+```
 
 ## Offsite and Onsite Sync
 

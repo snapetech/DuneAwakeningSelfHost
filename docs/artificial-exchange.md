@@ -11,6 +11,34 @@ Awakening self-hosts. It has three separate jobs:
 All write paths are gated. The default service state is enabled in dry-run mode,
 with purchases, funding, settlement claim, and populator writes disabled.
 
+Operational model:
+
+- The artificial buyer is demand-side liquidity. It can run continuously after
+  dry-run review because it only buys catalog-approved player listings within
+  configured caps.
+- Seller settlement is a separate claim path for completed player sales. It
+  does not buy listings and does not seed stock.
+- The populator is supply-side liquidity. It creates DASH/Admin-owned
+  `is_npc_order=true` listings and should be treated as an intentional market
+  seeding tool, not as a required background daemon.
+- Buyer and populator identities should be distinct from normal human player
+  characters. Add every populator owner id to
+  `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_OWNER_IDS` so the buyer skips seeded
+  listings.
+
+First-class operator workflow:
+
+```bash
+python3 scripts/build-exchange-catalog.py
+python3 scripts/artificial-exchange-bot.py --check-ready
+python3 scripts/artificial-exchange-bot.py --dry-run --report-skips 100
+python3 scripts/artificial-exchange-bot.py --settlement-report
+make artificial-exchange-smoke
+```
+
+Only after that flow is clean should an operator enable live purchase,
+auto-claim, funding, or populator apply gates in `.env`.
+
 Confidence levels:
 
 - Catalog building and dry-run scans: high.
@@ -324,8 +352,9 @@ Validation behavior:
 
 ## Buyer
 
-The buyer scans Exchange sell orders and selects eligible listings. Normal scans
-skip:
+The buyer scans Exchange sell orders and selects eligible player listings. It is
+the safest long-running side of the feature because it starts in dry-run mode,
+uses the reviewed catalog, and is bounded by spend caps. Normal scans skip:
 
 - NPC orders
 - configured populator owner ids
@@ -358,6 +387,16 @@ dune.dune_exchange_fulfill_sell_order(
 
 The bot passes the actual `dune_exchange_orders.revision`; it does not use
 PostgreSQL `xmin`.
+
+Buyer safety boundary:
+
+- live buying requires `DUNE_ARTIFICIAL_EXCHANGE_ENABLED=true`
+- live buying requires `DUNE_ARTIFICIAL_EXCHANGE_DRY_RUN=false`
+- live buying requires `DUNE_ARTIFICIAL_EXCHANGE_PURCHASES_ENABLED=true`
+- apply mode requires a buyer controller id
+- manual one-shot apply requires confirmation `RUN ARTIFICIAL EXCHANGE`
+- service-loop apply should be enabled only after a reviewed dry-run shows the
+  expected selected and skipped orders
 
 Dry-run scan:
 
@@ -451,6 +490,16 @@ The bot uses a direct validated transaction for seller Solari claims:
 - commit only if every check passes
 - rollback on any mismatch
 
+Settlement safety boundary:
+
+- settlement reporting is read-only
+- claiming requires `DUNE_ARTIFICIAL_EXCHANGE_AUTO_CLAIM_ENABLED=true`
+- manual claim commands require confirmation `CLAIM ARTIFICIAL EXCHANGE`
+- auto-claim after scan requires
+  `DUNE_ARTIFICIAL_EXCHANGE_AUTO_CLAIM_AFTER_SCAN=true`
+- the claim transaction is scoped to completed seller Solari claim rows and
+  does not touch active player listings
+
 Claim one order:
 
 ```bash
@@ -487,6 +536,12 @@ The populator seeds NPC Exchange listings from enabled catalog rows. It is a
 liquidity tool, not a default background requirement. Use it when the server
 needs controlled, operator-owned market stock; leave it stopped when you only
 want the buyer to purchase player listings.
+
+The populator is the seller-side AI. It creates visible Exchange sell orders
+owned by the configured DASH/Admin controller, with `is_npc_order=true`, from
+catalog rows that pass the current validation gates. Confidence: moderate for
+broad live seeding because it uses native Exchange order functions but still
+changes the live economy immediately.
 
 Current default row gates:
 
@@ -603,6 +658,17 @@ Single-template safety:
   into fewer active orders.
 - Apply mode fails if the native recurring sell function reports that no
   inventory was added.
+
+Populator safety boundary:
+
+- live seeding requires `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ENABLED=true`
+- live seeding requires `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_DRY_RUN=false`
+- apply mode requires confirmation `POPULATE ARTIFICIAL EXCHANGE`
+- category seeding remains blocked unless
+  `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_CATEGORY_SEEDING_VERIFIED=true`
+- default row gates require validated, market-priced, tier 2+ rows with category
+  evidence
+- cleanup only selects configured owner-scoped `is_npc_order=true` listings
 
 Owner decision:
 
@@ -855,6 +921,14 @@ DUNE_ARTIFICIAL_EXCHANGE_AUTO_CLAIM_ENABLED=false
 DUNE_ARTIFICIAL_EXCHANGE_AUTO_CLAIM_AFTER_SCAN=false
 DUNE_ARTIFICIAL_EXCHANGE_FUNDING_ENABLED=false
 ```
+
+Meaning:
+
+- `DUNE_ARTIFICIAL_EXCHANGE_AUTO_CLAIM_ENABLED` gates any settlement write.
+- `DUNE_ARTIFICIAL_EXCHANGE_AUTO_CLAIM_AFTER_SCAN` runs the same settlement
+  claim logic after buyer scans.
+- `DUNE_ARTIFICIAL_EXCHANGE_FUNDING_ENABLED` gates explicit buyer Exchange
+  balance funding through the native balance function.
 
 Populator:
 

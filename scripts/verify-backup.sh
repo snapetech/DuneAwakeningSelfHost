@@ -77,8 +77,31 @@ if [[ -f "$backup_dir/manifest.json" ]]; then
   fi
 elif [[ -f "$backup_dir/manifest.txt" ]]; then
   printf 'OK manifest %s\n' "$backup_dir/manifest.txt"
+  if rg -q '^world_unique_name=.' "$backup_dir/manifest.txt"; then
+    printf 'OK manifest world identity present\n'
+  else
+    printf 'WARN manifest missing world_unique_name\n'
+  fi
 else
   printf 'WARN no manifest found in %s\n' "$backup_dir"
+fi
+
+if [[ -f "$backup_dir/config.tgz" ]]; then
+  check_tgz "$backup_dir/config.tgz"
+else
+  printf 'WARN no config.tgz found in %s\n' "$backup_dir"
+fi
+
+if [[ -f "$backup_dir/config-tls.tgz" ]]; then
+  check_tgz "$backup_dir/config-tls.tgz"
+else
+  printf 'WARN no config-tls.tgz found in %s\n' "$backup_dir"
+fi
+
+if find "$backup_dir" -maxdepth 1 -type f \( -name '.env' -o -name '*.env' \) | grep -q .; then
+  printf 'OK env copy present\n'
+else
+  printf 'WARN no env copy found in %s\n' "$backup_dir"
 fi
 
 if [[ "$ok" == true ]]; then

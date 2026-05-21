@@ -73,12 +73,21 @@ GAME_RMQ_PUBLIC_HOST
 DUNE_ADMIN_TOKEN
 ```
 
+Treat `WORLD_UNIQUE_NAME` as the durable FLS battlegroup identity. It must move with the database/RabbitMQ state during host migration unless the operator deliberately wants a different world registration.
+
 7. Run preflight:
 
 ```bash
 ./scripts/bootstrap-checklist.sh .env
+make operational-identity-check ENV_FILE=.env
+make operational-report ENV_FILE=.env
+make operational-bundle ENV_FILE=.env
+make verify-operational-bundle BUNDLE_FILE=backups/<operational-bundle>.tgz
 ./scripts/preflight.sh
 ```
+
+The operational report is written under `backups/` by default and redacts token values while preserving identity, FLS environment, RabbitMQ TLS, backup dry-run, and Compose-render status.
+The operational bundle packages that report with identity-check output, backup dry-run output, a redacted Compose service summary, and a manifest. It does not include `.env`, TLS keys, Postgres dumps, RabbitMQ data, or raw Compose output.
 
 8. Load official images from the Steam package:
 
@@ -103,6 +112,15 @@ Manual smoke test:
 
 ```bash
 DUNE_BACKUP_OFFSITE_MODE=none ./scripts/backup-offsite.sh .env
+./scripts/verify-backup.sh backups/<new-backup-id>
+```
+
+Confirm the backup contains the env/config identity layers before going live:
+
+```bash
+tar -tzf backups/<new-backup-id>/config.tgz >/dev/null
+tar -tzf backups/<new-backup-id>/config-tls.tgz >/dev/null
+rg '^world_unique_name=' backups/<new-backup-id>/manifest.txt
 ```
 
 Install timer after the chosen remote mode works manually:

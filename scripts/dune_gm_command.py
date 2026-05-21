@@ -3,6 +3,7 @@ import json
 import os
 import pathlib
 import secrets
+import ssl
 import sys
 import time
 import urllib.error
@@ -60,12 +61,24 @@ def amqp_connection():
     password = env("DUNE_GM_COMMAND_AMQP_PASSWORD", env("DUNE_ANNOUNCE_RMQ_PASSWORD"))
     if not user or not password:
         raise RuntimeError("missing DUNE_GM_COMMAND_AMQP_USER/PASSWORD or DUNE_ANNOUNCE_RMQ_USER/PASSWORD")
+    ssl_options = None
+    if env_bool("DUNE_GM_COMMAND_AMQP_TLS", False):
+        context = ssl.create_default_context()
+        context.check_hostname = env_bool("DUNE_GM_COMMAND_AMQP_TLS_CHECK_HOSTNAME", False)
+        if env_bool("DUNE_GM_COMMAND_AMQP_TLS_VERIFY", False):
+            ca_file = env("DUNE_GM_COMMAND_AMQP_TLS_CA_FILE")
+            if ca_file:
+                context.load_verify_locations(cafile=ca_file)
+        else:
+            context.verify_mode = ssl.CERT_NONE
+        ssl_options = pika.SSLOptions(context, env("DUNE_GM_COMMAND_AMQP_HOST", env("DUNE_GM_PROBE_AMQP_HOST", default_admin_rmq_host())))
     return pika.BlockingConnection(
         pika.ConnectionParameters(
             host=env("DUNE_GM_COMMAND_AMQP_HOST", env("DUNE_GM_PROBE_AMQP_HOST", default_admin_rmq_host())),
             port=int(env("DUNE_GM_COMMAND_AMQP_PORT", env("DUNE_GM_PROBE_AMQP_PORT", default_admin_rmq_port()))),
             virtual_host=env("DUNE_GM_COMMAND_AMQP_VHOST", "/"),
             credentials=pika.PlainCredentials(user, password),
+            ssl_options=ssl_options,
             heartbeat=0,
             blocked_connection_timeout=10,
         )
@@ -174,11 +187,12 @@ def publish_command(command_text, route, target_player="", admin_player="", mode
         content_type=content_type,
         delivery_mode=1,
         timestamp=int(time.time()),
-        type=env("DUNE_GM_COMMAND_AMQP_TYPE", mode),
+        type=env("DUNE_GM_COMMAND_AMQP_TYPE", "json_rpc"),
         reply_to=reply_to or env("DUNE_GM_COMMAND_REPLY_TO", "bgdRpc"),
         correlation_id=correlation_id,
         message_id=correlation_id,
         app_id=app_id,
+        user_id=env("DUNE_GM_COMMAND_AMQP_USER_ID", env("DUNE_GM_COMMAND_AMQP_USER", "")) or None,
         headers={
             "dash_gm_command": True,
             "dash_gm_mode": mode,
@@ -224,10 +238,11 @@ def publish_command_management(command_text, route, target_player="", admin_play
             "content_type": content_type,
             "delivery_mode": 1,
             "timestamp": int(time.time()),
-            "type": env("DUNE_GM_COMMAND_AMQP_TYPE", mode),
+            "type": env("DUNE_GM_COMMAND_AMQP_TYPE", "json_rpc"),
             "reply_to": env("DUNE_GM_COMMAND_REPLY_TO", "bgdRpc"),
             "correlation_id": f"dash-gm-mgmt-{mode}-{uuid.uuid4().hex[:8]}",
             "app_id": "DASH",
+            "user_id": env("DUNE_GM_COMMAND_AMQP_USER_ID", env("DUNE_GM_COMMAND_AMQP_USER", "")),
             "headers": {"dash_gm_command": True, "dash_gm_mode": mode, "dash_nonce": secrets.token_hex(4)},
         },
         "routing_key": route,

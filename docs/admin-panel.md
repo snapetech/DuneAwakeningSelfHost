@@ -124,7 +124,7 @@ server {
 - Player roster split into currently online players and offline players, plus search and detail views.
 - Currency/progression table visibility.
 - `.env` operations editor for install, world, network, access, secret, and admin-panel knobs. Secret fields are admin-token protected, rendered as password inputs, and returned blank unless a replacement is typed.
-- Artificial Exchange controls under Settings. Operators can review buyer/populator readiness, rebuild the catalog, run buyer dry-runs, view settlement reports, validate the populator, install/start/stop/restart the systemd units, and edit all `DUNE_ARTIFICIAL_EXCHANGE_*` gates and tuning knobs through the safe `.env` editor.
+- Artificial Exchange controls under Settings. Operators can manage the first-class Exchange economy workflow: rebuild the reviewed catalog, check buyer/seller readiness, run buyer dry-runs, inspect and claim seller settlement candidates through the gated bot, validate the seeded-listing populator, manage buyer/populator/watchdog systemd units, and edit all `DUNE_ARTIFICIAL_EXCHANGE_*` gates and tuning knobs through the safe `.env` editor.
 - Typed logout/reconnect timer editor for `config/UserGame.ini` under Settings -> Logout and Reconnect Timers.
 - Typed Director character-transfer settings editor for `config/director.ini`.
 - Catalog tab for content-insertion surfaces, evidence levels, validation commands, typed knob dry-runs, spice/resource inspection, event dry-runs, and economy bundle dry-runs.
@@ -135,7 +135,7 @@ server {
 - Artificial Exchange operator API:
   - `GET /api/admin/artificial-exchange`
   - `POST /api/admin/artificial-exchange`
-  Supported actions are `build-catalog`, `check-ready`, `buyer-dry-run`, `settlement-report`, `validate-populator`, `install-buyer-service`, `install-populator-service`, and `start|stop|restart|status:buyer|populator`.
+  Supported actions are `build-catalog`, `check-ready`, `buyer-dry-run`, `settlement-report`, `validate-populator`, `install-buyer-service`, `install-populator-service`, `install-watchdog-timer`, `watchdog-once`, and `start|stop|restart|status:buyer|populator|watchdog`.
 - Typed gameplay knob API at `GET/POST /api/settings/typed-knobs`. Dry-runs are available without the typed-write gate; writes require backups, the global mutation gate, `DUNE_ADMIN_TYPED_KNOBS_ENABLED=true`, and the confirmation phrase `WRITE TYPED KNOBS`.
 - Config editor for selected local config files, including official `UserEngine.ini` and `UserGame.ini` overlays, with backups under `backups/admin-panel`.
 - Director GME voice-chat credentials can be added through the `director.ini` config editor when Funcom/provider supplies real `GmeAppId` and `GmeAppKey` values. Leave them unset otherwise.
@@ -378,7 +378,7 @@ Rollback is compensating work from the audit record: set currency back, set XP b
 
 ## Offline Player Recovery
 
-`POST /api/admin/player-recovery/offline-teleport` previews or executes an offline actor-set move. The shipped database helper below was tested and found insufficient because it only updates the pawn actor row:
+`POST /api/admin/player-recovery/offline-teleport` previews or executes an offline actor-set move. The shipped database helper below is the verified primitive for the soft-disconnect teleport path because it updates the pawn actor row consumed by reconnect:
 
 ```sql
 dune.admin_move_offline_player_to_partition(
@@ -387,6 +387,8 @@ dune.admin_move_offline_player_to_partition(
   in_target_location dune.vector
 )
 ```
+
+The existing endpoint still uses its older actor-set write path for strict offline recovery. The newer online-adjacent workflow is documented separately in [soft-disconnect-teleport.md](soft-disconnect-teleport.md) and should be implemented behind its own gate instead of silently changing this endpoint's behavior.
 
 Dry-run body:
 
@@ -1059,7 +1061,9 @@ Implemented commands:
 
 `&test` replies with `f00` through the configured announcement/reply path. Use it as the first live smoke test for chat-command ingestion and reply delivery.
 
-`&where` reports the resolved player's current online/offline state and last known location. `&teleport` moves an offline target to the admin's current partition and location by updating the controller, player-state, and pawn actor rows together. It rejects online targets because live actor transforms are owned by the running map server and can be overwritten.
+`&where` reports the resolved player's current online/offline state and last known location. `&teleport` moves an offline target to the admin's current partition and location. Live actor transforms are owned by the running map server and can be overwritten, so raw online actor updates are not a teleport path.
+
+The verified online fallback is soft-disconnect teleport: temporarily mark the player DB-offline, call `dune.admin_move_offline_player_to_partition(...)` against the pawn row, hold briefly, restore the online marker, and let the client rejoin. Operator testing showed this behaved like a soft disconnect/reconnect rather than a main-menu kick. The full contract is in [soft-disconnect-teleport.md](soft-disconnect-teleport.md).
 
 `&auction "<item name or template>" <count> <price>` is a player-facing exchange listing command. It does not require admin allow-list membership, but only operates for the sender's own resolved character. Use `--item-id <item_id>` when the operator already knows the exact item row and wants to bypass fuzzy name/template matching. By default the command previews the listing and does not mutate the database. Set `DUNE_CHAT_COMMAND_AUCTION_ENABLED=true` to execute. The command uses `dune.dune_exchange_add_sell_order(...)`, so the order is owned by the sender's player controller and should use the normal exchange seller settlement path. Confidence: moderate until a live purchase settlement has been validated.
 
@@ -1120,6 +1124,8 @@ The complete private/global split, command smoke tests, expected `reply.stdout` 
 `&disconnect` and its `&kick` alias resolve a target player, route the request to the player's current map, and default to `RemoveSessionMember <playername>`. That is the softest known native session-removal candidate. `KickLobbyMember` can be selected with `DUNE_PLAYER_DISCONNECT_COMMAND=KickLobbyMember` if session removal does not work. `BattlEyeMegaKick` is intentionally excluded unless `DUNE_PLAYER_DISCONNECT_ALLOW_BATTLEYE=true` and `DUNE_PLAYER_DISCONNECT_COMMAND=BattlEyeMegaKick` are set, because it is the most likely option to behave like a punitive kick or retry cooldown.
 
 Targeted disconnect execution has its own gate. It requires all three of `DUNE_ADMIN_GM_COMMANDS_ENABLED=true`, `DUNE_GM_COMMAND_PAYLOAD_VERIFIED=true`, and `DUNE_CHAT_COMMAND_EXECUTE_PLAYER_DISCONNECT=true`. Until those are true, the command returns the exact native payload preview instead of publishing it. The repo also sets the server reconnect grace periods to `0` in `config/UserGame.ini`, so normal disconnects should not leave a long persisted reconnect window.
+
+DB soft-disconnect is a separate verified path and does not depend on the native GM payload. It flips `encrypted_player_state` to `Offline`/`server_id=null`, holds briefly, then restores the marker. With the offline move helper in the middle, it becomes a disconnect-teleport-reconnect workflow. Keep it behind its own mutation gate and audit trail; do not mix it with unverified native kick gates.
 
 `&goto` and `&bring` are wired through the native GM command adapter for online movement, but execution remains gated until the command payload is proven. `&goto <playername>` prepares `TeleportToPlayer <playername>` targeted at the admin; `&bring <playername>` prepares `TeleportToExact <admin-x> <admin-y> <admin-z>` targeted at the online player. The three required gates are `DUNE_ADMIN_GM_COMMANDS_ENABLED=true`, `DUNE_GM_COMMAND_PAYLOAD_VERIFIED=true`, and `DUNE_CHAT_COMMAND_EXECUTE_ONLINE_GM_TELEPORT=true`. Until then, the commands return the exact payload preview instead of publishing a live teleport.
 

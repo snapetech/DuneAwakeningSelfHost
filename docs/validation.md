@@ -10,6 +10,12 @@ Run a clean status check:
 COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' ./scripts/status.sh .env
 ```
 
+Confirm the client-facing RabbitMQ certificate covers the address FLS will hand to clients:
+
+```bash
+./scripts/check-rabbitmq-cert-sans.sh .env
+```
+
 Expected server-side baseline:
 
 ```text

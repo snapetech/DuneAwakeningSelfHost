@@ -62,10 +62,11 @@ Always compare your `.env` image pin with the Steam package installed on your ho
 - Restart announcements, restart planner hooks, chat-command bridge, player-presence announcer, and admin-bot monitoring.
 - Private whisper replies for admin chat commands, auction confirmations, player-presence messages, and admin-only digests through the verified `chat.whispers` route.
 - Chat spam protection with repeat-message detection, public action announcements, and a blocked-by-default kick backend.
+- Verified network-disconnect teleport research: a real `UNetConnection` timeout plus the shipped offline move helper moved Lukano, and reconnect loaded the moved pawn; see `docs/soft-disconnect-teleport.md`.
 - Player-presence automation for joins/leaves, first-seen welcomes, Hagga/Deep Desert milestones, base-cap reminders, reconnect help, restart warnings, map-health notices, population digests, incident notices, starter Base Reconstruction Tool grants, and Vermilius Gap celebration.
 - Local backups, restore helpers, optional streaming Postgres replica, optional remote replica snapshots, and portable offsite/onsite backup sync examples.
 - Optional public static site package with status, settings, player list, and Hagga Basin map.
-- Artificial Exchange catalog pipeline, buyer, settlement, funding, populator, readiness checks, smoke tests, admin-panel controls, optional systemd services, and watchdog timer.
+- Artificial Exchange as a first-class economy feature: reviewed price catalog, artificial buyer, validated seller settlement, optional buyer funding, controlled seeded listings, readiness checks, smoke tests, admin-panel controls, optional systemd services, and watchdog timer.
 - Publication and validation guardrails for keeping local state and secrets out of shared artifacts.
 
 ## What DASH Does Not Include
@@ -74,7 +75,7 @@ Always compare your `.env` image pin with the Steam package installed on your ho
 - A Funcom self-hosting/FLS token.
 - Production hosting, DDoS protection, router/firewall configuration, or account portal access.
 - Point-in-time recovery by replication alone. Replicas mirror bad writes and deletes too.
-- Verified native GM/cheat command execution. Those paths remain research-gated unless the payload route is explicitly verified.
+- Unverified native GM, cheat, and kick/session commands. DB-backed admin actions such as item grants, currency, XP, stack edits, offline recovery, and the documented network-disconnect teleport primitive are separate guarded features.
 - Public exposure for Postgres, RabbitMQ management, the admin panel, debug ports, or private automation endpoints.
 
 ## Security Posture
@@ -113,6 +114,10 @@ Generate local settings, edit `.env`, validate the host, load the official Steam
 ```bash
 ./scripts/populate-local-env.sh
 $EDITOR .env
+make operational-identity-check ENV_FILE=.env
+make operational-report ENV_FILE=.env
+make operational-bundle ENV_FILE=.env
+make verify-operational-bundle BUNDLE_FILE=backups/<operational-bundle>.tgz
 ./scripts/preflight.sh
 ./scripts/load-images.sh .env
 docker compose --env-file .env up -d postgres admin-rmq game-rmq
@@ -322,18 +327,22 @@ Detailed runbooks: [`docs/operations.md`](docs/operations.md), [`docs/maintenanc
 Create a local stopped-world state backup:
 
 ```bash
-./scripts/backup-state.sh .env
+make backup-dry-run ENV_FILE=.env
+make backup-state ENV_FILE=.env
 ```
+
+Local backups include Postgres, optional RabbitMQ/saved-state archives, the env file, config, RabbitMQ TLS material, and a manifest with the durable world identity.
 
 Verify a backup structurally:
 
 ```bash
-./scripts/verify-backup.sh backups/<backup-id>
+make verify-backup BACKUP_DIR=backups/<backup-id>
 ```
 
 Restore:
 
 ```bash
+make restore-dry-run ENV_FILE=.env BACKUP_DIR=backups/<backup-id>
 ./scripts/restore-state.sh .env backups/<backup-id>
 ```
 
@@ -447,7 +456,14 @@ More detail: [`docs/public-static-site.md`](docs/public-static-site.md).
 
 ## Artificial Exchange
 
-The Artificial Exchange tooling manages a reviewed item catalog, buyer flow, seller settlement, optional buyer funding, optional populator, service wrappers, admin-panel controls, and a watchdog timer. The buyer and populator are separate: the buyer can run continuously, while the populator should only run when you deliberately want DASH/Admin-owned NPC listings seeded from reviewed, dune.exchange-priced, tier 2+ catalog rows.
+Artificial Exchange is DASH's operator-controlled Exchange liquidity layer for small or private self-hosts. It is built around a reviewed catalog, a conservative artificial buyer, validated seller settlement, optional buyer funding, and an optional seeded-listing populator. Confidence: high for catalog building, dry-run buyer scans, buyer execution on reviewed rows, and validated seller Solari settlement; moderate for broad live seeding because seeded listings are immediately visible in the player market.
+
+The feature has two independent market roles:
+
+- Buyer: watches player sell orders, skips NPC/populator-owned orders, enforces catalog eligibility, max buy prices, blocked sellers, daily global/seller/template caps, and liquidity-tier buy probability, then uses the native fulfill function when live purchases are enabled.
+- Seller/populator: optionally posts DASH/Admin-owned `is_npc_order=true` listings from reviewed, validated, market-priced catalog rows. Keep it stopped unless you intentionally want operator-seeded stock in the Exchange.
+
+Seller settlement is separate from both roles. Completed player-sale claims are inspected and can be claimed through a validated direct transaction that credits exactly the completed Solari value and deletes only the matched claim row. The unsafe native Solaris retrieve function is not used.
 
 Run the smoke check before enabling live purchase, funding, auto-claim, or populator apply gates:
 
@@ -455,7 +471,26 @@ Run the smoke check before enabling live purchase, funding, auto-claim, or popul
 make artificial-exchange-smoke
 ```
 
-Install services after `.env` gates and owner/source IDs are configured:
+Build or refresh the reviewed catalog, then inspect readiness and the current settlement queue:
+
+```bash
+python3 scripts/build-exchange-catalog.py
+python3 scripts/artificial-exchange-bot.py --check-ready
+python3 scripts/artificial-exchange-bot.py --settlement-report
+```
+
+Run the buyer safely before applying purchases:
+
+```bash
+python3 scripts/artificial-exchange-bot.py --dry-run --report-skips 100
+```
+
+Live buyer execution requires `DUNE_ARTIFICIAL_EXCHANGE_DRY_RUN=false`,
+`DUNE_ARTIFICIAL_EXCHANGE_PURCHASES_ENABLED=true`, a configured
+`DUNE_ARTIFICIAL_EXCHANGE_BUYER_CONTROLLER_ID`, and confirmation
+`RUN ARTIFICIAL EXCHANGE`.
+
+Install services after `.env` gates and buyer/populator owner IDs are configured:
 
 ```bash
 make install-artificial-exchange-buyer-service ENV_FILE=.env
@@ -463,7 +498,7 @@ make install-artificial-exchange-populator-service ENV_FILE=.env
 make install-artificial-exchange-watchdog-timer ENV_FILE=.env
 ```
 
-More detail: [`docs/artificial-exchange.md`](docs/artificial-exchange.md).
+The admin panel exposes the same workflow under `Settings -> Artificial Exchange`: catalog rebuild, readiness, buyer dry-run, settlement report, populator validation, service install/status/start/stop/restart, watchdog actions, and the relevant `.env` gates. More detail: [`docs/artificial-exchange.md`](docs/artificial-exchange.md).
 
 ## Configuration Map
 
@@ -474,8 +509,9 @@ Start from [`.env.example`](.env.example). It is the source of truth for the ful
 | `DUNE_STEAM_SERVER_DIR` | Local path to the official Steam self-host tool. |
 | `DUNE_IMAGE_TAG` | Image tag loaded from the Steam package; documented baseline is `1963158-0-shipping`. |
 | `WORLD_NAME` | Public/server-browser world name. |
-| `WORLD_UNIQUE_NAME` | Stable internal world identifier; do not casually change after bootstrap. |
+| `WORLD_UNIQUE_NAME` | Durable FLS battlegroup identity; back up `.env` and do not rotate after first registration. |
 | `WORLD_REGION` | Region string used by the server configuration. |
+| `DUNE_FLS_ENV` | FLS environment passed to game-server commands; keep `retail` unless using a matching PTC/test build. |
 | `FLS_SECRET` | Funcom self-hosting token; keep private. |
 | `EXTERNAL_ADDRESS` | Public address clients should reach. |
 | `GAME_RMQ_PUBLIC_HOST` / `GAME_RMQ_PUBLIC_PORT` | Client-facing game RabbitMQ endpoint; default TCP port is `31982`. |
@@ -533,6 +569,7 @@ Start here:
 - [`docs/admin-panel.md`](docs/admin-panel.md): admin panel features, security, announcements, chat commands, and mutation gates.
 - [`docs/private-chat-replies.md`](docs/private-chat-replies.md): verified private whisper route for command replies and player/admin automation.
 - [`docs/backup-strategy.md`](docs/backup-strategy.md): local, onsite, offsite, replica, retention, and restore-test guidance.
+- [`docs/operational-identity-handoff.md`](docs/operational-identity-handoff.md): FLS identity, RabbitMQ TLS, backup identity layers, and redacted handoff artifacts.
 - [`docs/postgres-replication.md`](docs/postgres-replication.md): local and remote Postgres standby.
 - [`docs/artificial-exchange.md`](docs/artificial-exchange.md): artificial Exchange catalog, buyer, settlement, populator, and services.
 - [`docs/public-static-site.md`](docs/public-static-site.md): optional public static status site.
@@ -587,6 +624,12 @@ Root-level research indexes:
 - [`public-site/`](public-site): optional public static site package.
 - [`scripts/start-full-warm-pool.sh`](scripts/start-full-warm-pool.sh): 30-map startup helper.
 - [`scripts/bootstrap-checklist.sh`](scripts/bootstrap-checklist.sh): read-only new-host readiness checklist.
+- [`scripts/check-operational-identity.sh`](scripts/check-operational-identity.sh): read-only world/FLS/RabbitMQ/backup identity check.
+- [`scripts/operational-report.sh`](scripts/operational-report.sh): redacted handoff report for identity, FLS, TLS, backup, and Compose posture.
+- [`scripts/operational-bundle.sh`](scripts/operational-bundle.sh): portable redacted handoff bundle under `backups/`.
+- [`scripts/verify-operational-bundle.sh`](scripts/verify-operational-bundle.sh): structural and secret-pattern check for handoff bundles.
+- [`scripts/check-rabbitmq-cert-sans.sh`](scripts/check-rabbitmq-cert-sans.sh): read-only game RabbitMQ certificate SAN inspection.
+- [`scripts/generate-rabbitmq-cert.sh`](scripts/generate-rabbitmq-cert.sh): guarded local game RabbitMQ TLS generator.
 - [`scripts/check-steam-update.sh`](scripts/check-steam-update.sh): compare `.env` image pin with current Steam package tarballs.
 - [`scripts/watch-maps.sh`](scripts/watch-maps.sh): map watchdog.
 - [`scripts/recover-map.sh`](scripts/recover-map.sh): fixed-partition recovery.
@@ -602,6 +645,8 @@ Root-level research indexes:
 - [`scripts/admin-bot.py`](scripts/admin-bot.py): report-first operational/admin automation.
 - [`scripts/seed-gateway-neighbor.sh`](scripts/seed-gateway-neighbor.sh): Docker bridge neighbor refresh helper.
 - [`scripts/backup-offsite.sh`](scripts/backup-offsite.sh): local backup plus rclone, rsync, restic, or local-only sync helper.
+- [`scripts/backup-state.sh`](scripts/backup-state.sh): local Postgres/RabbitMQ/saved-state/env/config/TLS backup helper.
+- [`scripts/restore-state.sh`](scripts/restore-state.sh): disruptive restore helper with opt-in RabbitMQ, saved-state, config, and TLS layers.
 - [`scripts/verify-backup.sh`](scripts/verify-backup.sh): structural backup check.
 - [`scripts/install-backup-offsite-timer.sh`](scripts/install-backup-offsite-timer.sh): portable backup sync timer installer.
 - [`scripts/package-manifest.sh`](scripts/package-manifest.sh): publishable file manifest generator.

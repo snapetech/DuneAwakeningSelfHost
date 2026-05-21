@@ -222,9 +222,13 @@ dune.admin_move_offline_player(in_fls_id text, in_target_partition_name text, in
 dune.admin_move_offline_player_to_partition(in_fls_id text, in_target_partition_id bigint, in_target_location dune.vector)
 ```
 
-Both functions require `dune.is_player_offline(in_fls_id)` to be true. Live testing showed `admin_move_offline_player_to_partition` only updates the pawn actor row, so DASH offline recovery now updates the controller, player-state, and pawn actor rows together instead of relying on that helper.
+Both functions require `dune.is_player_offline(in_fls_id)` to be true. Live testing on 2026-05-21 showed `admin_move_offline_player_to_partition` is the right primitive when the player is actually treated as offline: it updates only the pawn actor row, and the client/server rejoin path can consume that pawn transform. Confidence: high for the tested same-partition Survival case, moderate for broader map/partition reuse.
 
-The chat-command implementation deliberately does not write live online actor state. Online players are owned by the running map server, so a raw actor transform update can be overwritten or desynced. For now, `&teleport <playername>` resolves the admin and target, rejects online targets, and updates the offline target's controller, player-state, and pawn actor rows together only when execution is explicitly enabled.
+The chat-command implementation deliberately does not write live online actor state. Online players are owned by the running map server, so a raw actor transform update can be overwritten or desynced. A same-partition live test moved Lukano's controller, player-state, and pawn actor rows together by `+750` X and incremented their serial; the live Survival server then wrote the old in-memory position back on the next save cycle. For now, `&teleport <playername>` resolves the admin and target, rejects online targets, and updates the offline target's controller, player-state, and pawn actor rows together only when execution is explicitly enabled.
+
+The verified network-disconnect teleport path is documented in [soft-disconnect-teleport.md](soft-disconnect-teleport.md). DB-only presence flips were a false positive: they can trigger bot automation but do not release the live pawn. The working path forces a real `UNetConnection` timeout, waits for Survival to mark the player `Offline`, calls `dune.admin_move_offline_player_to_partition(...)`, then lets reconnect load the moved pawn.
+
+Verified online-control boundary: game RabbitMQ JSON-RPC to the Director works when AMQP properties match the shipped `SimpleShaTokens.Rpc` contract (`type=json_rpc`, service `user_id`, `reply_to` bound on exchange `rpc`). The active Survival server queue consumes messages, but guessed server command methods for `PrintPos` did not produce a response or log hit. Confidence is high that online teleport needs the server-side RPC/command method contract, not another raw database actor update.
 
 The movement write performed by the server function is effectively:
 

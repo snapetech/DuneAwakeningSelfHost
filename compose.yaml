@@ -16,6 +16,7 @@ x-game-server-command:
   run: &cmd-run /workspace/scripts/run_server_safe.sh
   farm-region: &cmd-farm-region -FarmRegion=${WORLD_REGION}
   fls-token: &cmd-fls-token -ini:engine:[FuncomLiveServices]:ServiceAuthToken=${FLS_SECRET}
+  fls-env: &cmd-fls-env -ini:engine:[FuncomLiveServices]:DefaultFlsEnvironment=${DUNE_FLS_ENV:-retail}
   server-name: &cmd-server-name -ini:engine:[OnlineSubsystem]:ServerName=${WORLD_UNIQUE_NAME}
   server-login-password: &cmd-server-login-password -ini:engine:[ConsoleVariables]:Bgd.ServerLoginPassword=${DUNE_SERVER_LOGIN_PASSWORD:-}
   datacenter: &cmd-datacenter -ini:engine:[OnlineSubsystem]:DatacenterId=${WORLD_REGION}
@@ -175,6 +176,7 @@ services:
       BATTLEGROUP_REGION_NAME: ${WORLD_REGION}
       HOST_DATACENTER_ID: dune-testing
       HOST_DATACENTER_IP_ADDRESS: ${EXTERNAL_ADDRESS}
+      FuncomLiveServices__DefaultFlsEnvironment: ${DUNE_FLS_ENV:-retail}
     volumes:
       - ./config/director.ini:/etc/app/conf.d/director.ini:ro
     depends_on:
@@ -221,6 +223,7 @@ services:
       BATTLEGROUP_LANGUAGE: en-US
       HOST_DATACENTER_ID: dune-testing
       HOST_DATACENTER_IP_ADDRESS: ${EXTERNAL_ADDRESS}
+      FuncomLiveServices__DefaultFlsEnvironment: ${DUNE_FLS_ENV:-retail}
     depends_on:
       - postgres
       - admin-rmq
@@ -253,6 +256,7 @@ services:
       FuncomLiveServices__ServiceAuthToken: ${FLS_SECRET}
       FuncomLiveServices__RmqTlsEnabled: "true"
       FuncomLiveServices__BattlegroupAuthorizationPreset: BattlegroupInternal
+      FuncomLiveServices__DefaultFlsEnvironment: ${DUNE_FLS_ENV:-retail}
       BATTLEGROUP_DISPLAY_NAME: ${WORLD_NAME}
       OPT_SERVERNAME: ${WORLD_UNIQUE_NAME}
       OPT_DISPLAY_NAME: ${WORLD_NAME}
@@ -275,6 +279,7 @@ services:
       - *cmd-run
       - *cmd-farm-region
       - *cmd-fls-token
+      - *cmd-fls-env
       - *cmd-server-name
       - *cmd-server-login-password
       - *cmd-datacenter
@@ -310,6 +315,7 @@ services:
       - *cmd-run
       - *cmd-farm-region
       - *cmd-fls-token
+      - *cmd-fls-env
       - *cmd-server-name
       - *cmd-server-login-password
       - *cmd-datacenter
@@ -348,6 +354,7 @@ services:
       - *cmd-run
       - *cmd-farm-region
       - *cmd-fls-token
+      - *cmd-fls-env
       - *cmd-server-name
       - *cmd-server-login-password
       - *cmd-datacenter
@@ -386,6 +393,7 @@ services:
       - *cmd-run
       - *cmd-farm-region
       - *cmd-fls-token
+      - *cmd-fls-env
       - *cmd-server-name
       - *cmd-server-login-password
       - *cmd-datacenter
@@ -424,6 +432,7 @@ services:
       - *cmd-run
       - *cmd-farm-region
       - *cmd-fls-token
+      - *cmd-fls-env
       - *cmd-server-name
       - *cmd-server-login-password
       - *cmd-datacenter
@@ -462,6 +471,7 @@ services:
       - *cmd-run
       - *cmd-farm-region
       - *cmd-fls-token
+      - *cmd-fls-env
       - *cmd-server-name
       - *cmd-server-login-password
       - *cmd-datacenter
@@ -500,6 +510,7 @@ services:
       - *cmd-run
       - *cmd-farm-region
       - *cmd-fls-token
+      - *cmd-fls-env
       - *cmd-server-name
       - *cmd-server-login-password
       - *cmd-datacenter
@@ -538,6 +549,7 @@ services:
       - *cmd-run
       - *cmd-farm-region
       - *cmd-fls-token
+      - *cmd-fls-env
       - *cmd-server-name
       - *cmd-server-login-password
       - *cmd-datacenter
@@ -576,6 +588,7 @@ services:
       - *cmd-run
       - *cmd-farm-region
       - *cmd-fls-token
+      - *cmd-fls-env
       - *cmd-server-name
       - *cmd-server-login-password
       - *cmd-datacenter

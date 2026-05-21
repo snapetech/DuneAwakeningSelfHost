@@ -24,28 +24,7 @@ fi
 mkdir -p "$tls_dir"
 
 if [[ ! -f "$tls_dir/ca.crt" || ! -f "$tls_dir/server.crt" || ! -f "$tls_dir/server.key" ]]; then
-  openssl genrsa -out "$tls_dir/ca.key" 4096
-  openssl req -x509 -new -nodes -key "$tls_dir/ca.key" -sha256 -days 3650 \
-    -subj "/CN=dune-example-rabbitmq-ca" \
-    -out "$tls_dir/ca.crt"
-
-  openssl genrsa -out "$tls_dir/server.key" 2048
-  openssl req -new -key "$tls_dir/server.key" \
-    -subj "/CN=game-rmq" \
-    -out "$tls_dir/server.csr"
-
-  cat > "$tls_dir/server.ext" <<'EOF'
-subjectAltName = DNS:game-rmq,DNS:localhost,IP:127.0.0.1
-extendedKeyUsage = serverAuth
-EOF
-
-  openssl x509 -req -in "$tls_dir/server.csr" \
-    -CA "$tls_dir/ca.crt" -CAkey "$tls_dir/ca.key" -CAcreateserial \
-    -out "$tls_dir/server.crt" -days 3650 -sha256 \
-    -extfile "$tls_dir/server.ext"
-
-  chmod 644 "$tls_dir/server.key"
-  chmod 600 "$tls_dir/ca.key"
+  ./scripts/generate-rabbitmq-cert.sh "$env_file"
 fi
 
 echo "Populated $env_file and $tls_dir"
