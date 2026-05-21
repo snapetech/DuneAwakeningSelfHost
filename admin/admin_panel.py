@@ -3781,12 +3781,21 @@ class Handler(BaseHTTPRequestHandler):
             "targetCharacter": target,
             "nativeContract": contract,
             "nativeCall": native_call,
+            "transactionSafety": {
+                "backupBeforeTransaction": True,
+                "advisoryLocks": "sorted active/target account ids",
+                "rowLocks": "dune.player_state rows for active and target account ids",
+                "offlineRecheckInsideTransaction": True,
+                "commitRequiresPostSwapVerification": True,
+            },
             "steps": [
                 "Refuse execution while the active account or selected target is online.",
                 "Create a database backup.",
-                "Audit before rows from accounts/player_state and linked identity tables.",
+                "Take account-id advisory locks and lock both player_state rows in one transaction.",
+                "Recheck offline status inside the transaction.",
                 "Execute only the validated first-party takeover_account switch path.",
-                "Audit after rows and preserve rollback hints.",
+                "Verify swapped FLS identities before commit.",
+                "Return before/after rows and rollback hints.",
             ],
             "rollback": {
                 "hint": "Use the created DB backup or reverse with the same validated native lifecycle path after inspecting audit before/after rows.",

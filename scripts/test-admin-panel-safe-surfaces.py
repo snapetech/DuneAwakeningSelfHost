@@ -74,6 +74,11 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         setattr(self.panel, name, value)
         self.addCleanup(lambda: setattr(self.panel, name, original))
 
+    def patch_connect(self, connect_fn):
+        original = self.panel.db_connect
+        self.panel.db_connect = connect_fn
+        self.addCleanup(lambda: setattr(self.panel, "db_connect", original))
+
     def make_route_handler(self, path):
         captured = {"json": None, "errors": [], "audits": []}
         handler = object.__new__(self.panel.Handler)
@@ -508,6 +513,8 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertEqual(plan["plan"]["nativeCall"]["function"], "dune.takeover_account")
         self.assertEqual(plan["plan"]["nativeCall"]["in_user_to_takeover"], "stored-fls")
         self.assertEqual(plan["plan"]["nativeCall"]["in_current_user"], "active-fls")
+        self.assertTrue(plan["plan"]["transactionSafety"]["offlineRecheckInsideTransaction"])
+        self.assertTrue(plan["plan"]["transactionSafety"]["commitRequiresPostSwapVerification"])
 
         new_plan = self.handler.character_slot_plan({"account_id": 10, "action": "new-character"})
         self.assertFalse(new_plan["executable"])
@@ -590,6 +597,102 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
                 "confirm": "SWAP CHARACTER",
             })
         self.assertEqual(calls, [(10, 11, "active-fls", "stored-fls")])
+
+    def test_character_swap_takeover_commits_only_after_verified_swap(self):
+        events = []
+
+        class FakeCursor:
+            description = True
+
+            def __init__(self):
+                self.select_count = 0
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def execute(self, sql, params=None):
+                events.append(("execute", " ".join(sql.split()), params))
+
+            def fetchall(self):
+                self.select_count += 1
+                if self.select_count == 1:
+                    return [{"account_id": 10, "online_status": "Offline", "fls_id": "active-fls"}, {"account_id": 11, "online_status": "Offline", "fls_id": "stored-fls"}]
+                return [{"account_id": 10, "online_status": "Offline", "fls_id": "stored-fls"}, {"account_id": 11, "online_status": "Offline", "fls_id": "active-fls"}]
+
+        class FakeConn:
+            def __init__(self):
+                self.cursor_obj = FakeCursor()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def cursor(self, cursor_factory=None):
+                return self.cursor_obj
+
+            def commit(self):
+                events.append(("commit",))
+
+            def rollback(self):
+                events.append(("rollback",))
+
+        self.patch_connect(lambda: FakeConn())
+        before, after, verified = self.panel.character_swap_takeover(10, 11, "active-fls", "stored-fls")
+        self.assertTrue(verified)
+        self.assertEqual(before[0]["fls_id"], "active-fls")
+        self.assertEqual(after[0]["fls_id"], "stored-fls")
+        self.assertIn(("commit",), events)
+        self.assertNotIn(("rollback",), events)
+
+    def test_character_swap_takeover_rolls_back_on_failed_verification(self):
+        events = []
+
+        class FakeCursor:
+            def __init__(self):
+                self.select_count = 0
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def execute(self, sql, params=None):
+                events.append(("execute", " ".join(sql.split()), params))
+
+            def fetchall(self):
+                self.select_count += 1
+                return [{"account_id": 10, "online_status": "Offline", "fls_id": "active-fls"}, {"account_id": 11, "online_status": "Offline", "fls_id": "stored-fls"}]
+
+        class FakeConn:
+            def __init__(self):
+                self.cursor_obj = FakeCursor()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def cursor(self, cursor_factory=None):
+                return self.cursor_obj
+
+            def commit(self):
+                events.append(("commit",))
+
+            def rollback(self):
+                events.append(("rollback",))
+
+        self.patch_connect(lambda: FakeConn())
+        with self.assertRaises(RuntimeError):
+            self.panel.character_swap_takeover(10, 11, "active-fls", "stored-fls")
+        self.assertIn(("rollback",), events)
+        self.assertNotIn(("commit",), events)
 
     def test_character_slot_execution_block_does_not_create_backup(self):
         backups = []

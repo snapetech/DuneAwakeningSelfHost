@@ -467,6 +467,10 @@ Safe dry-run payloads:
 {"dry_run": true, "account_id": 456, "action": "switch-character", "target_account_id": 789}
 ```
 
+Executable switch/restore plans include `plan.transactionSafety` so the API/UI
+response shows the backup, advisory-lock, row-lock, offline-recheck, and
+post-swap verification requirements before the operator executes the mutation.
+
 Fail-closed rules:
 
 - `switch-character` and `restore-character` require `target_account_id`.

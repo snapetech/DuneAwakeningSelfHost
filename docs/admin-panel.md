@@ -630,6 +630,11 @@ POST /api/admin/character-slots/execute
 - `executionGate`: `DUNE_ADMIN_CHARACTER_SWAP_ENABLED`.
 - `confirm`: `SWAP CHARACTER`.
 
+Executable switch/restore plans include `plan.transactionSafety`, which records
+that execution creates a backup before the transaction, takes account-id
+advisory locks, locks both `player_state` rows, rechecks offline state inside
+the transaction, and requires post-swap identity verification before commit.
+
 Safe preview examples:
 
 ```json
