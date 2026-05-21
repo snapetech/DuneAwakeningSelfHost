@@ -48,6 +48,12 @@ Check whether `.env` is pinned to the tag shipped by the current Steam package:
 ./scripts/check-steam-update.sh .env
 ```
 
+To ask Steam to update the local self-hosted server package first, run:
+
+```bash
+./scripts/update-steam-tool.sh .env
+```
+
 If Steam has updated the self-hosted server package, load the new images, update the env pin, and continue through the normal database/service startup path:
 
 ```bash

@@ -20,6 +20,7 @@ The 06:00 target is deliberately after Funcom's nightly maintenance window. If S
 06:00  affected online players are soft-disconnected if the disconnect gates are enabled
 06:00  selected services are stopped
 06:00  maintenance backup is written
+06:00  SteamCMD is asked to update the local self-hosted server tool
 06:00  Steam package image tag is checked and updated if safe
 06:00  selected services are recreated
 06:00+ post-start health checks and farm readiness wait run
@@ -29,6 +30,15 @@ The configured defaults live in `.env`:
 
 ```env
 DUNE_RESTART_CHECK_STEAM_UPDATE=true
+DUNE_RESTART_STEAMCMD_UPDATE=true
+DUNE_RESTART_STEAMCMD_REQUIRED=false
+DUNE_RESTART_STEAMCMD_HELPER_IMAGE=cm2network/steamcmd:root
+DUNE_STEAM_APP_ID=4754530
+DUNE_STEAM_LOGIN=anonymous
+DUNE_STEAM_PASSWORD=
+DUNE_STEAMCMD_COMMAND=steamcmd
+DUNE_STEAMCMD_VALIDATE=true
+DUNE_STEAMCMD_TIMEOUT_SECONDS=1800
 DUNE_DAILY_RESTART_SCHEDULE_WINDOW=05:25-05:35
 DUNE_DAILY_RESTART_ALLOW_OUTSIDE_WINDOW=false
 DUNE_DAILY_RESTART_DELAY=30min
@@ -80,7 +90,29 @@ If the stop phase fails, no backup, update check, or start is attempted. If the 
 
 ## Update Logic
 
-The update phase runs:
+The update phase first runs SteamCMD against the official self-hosted server
+Steam app:
+
+```bash
+./scripts/update-steam-tool.sh .env
+```
+
+By default it runs app `4754530`, the Dune: Awakening Self-Hosted Server tool,
+with `+login anonymous` and `validate`. If the Steam tool requires an owned
+Steam account instead of anonymous access, set `DUNE_STEAM_LOGIN` and
+`DUNE_STEAM_PASSWORD` in `.env`.
+
+If `steamcmd` is not installed on the host, the restart hook can run SteamCMD
+through `DUNE_RESTART_STEAMCMD_HELPER_IMAGE`. The default helper image is
+`cm2network/steamcmd:root`; pre-pull it before relying on unattended maintenance
+if you do not want the maintenance window to depend on a Docker Hub pull.
+
+When `DUNE_RESTART_STEAMCMD_REQUIRED=false`, missing SteamCMD logs a warning and
+the flow continues with the package already present on disk. Set
+`DUNE_RESTART_STEAMCMD_REQUIRED=true` if you prefer maintenance to leave services
+stopped rather than start from an unrefreshed Steam package.
+
+After SteamCMD returns, the update phase runs:
 
 ```bash
 ./scripts/check-steam-update.sh .env
@@ -116,9 +148,10 @@ Inside the admin-panel container, `scripts/restart-target.sh` falls back to the 
 - the Docker socket,
 - the DASH repo path from `DUNE_RESTART_HOST_WORKSPACE`,
 - the same repo at `/workspace`,
-- `DUNE_STEAM_SERVER_DIR` read-only when it is an absolute path.
+- `DUNE_STEAM_SERVER_DIR` when it is an absolute path.
 
-That last mount is required so the helper can read Steam package tarballs that live outside the repo.
+That last mount is writable because SteamCMD must be able to update the local
+Steam tool before DASH reads the package tarballs.
 
 Required env values for unattended maintenance:
 
@@ -128,6 +161,7 @@ DUNE_RESTART_HOST_WORKSPACE=/path/to/DuneAwakeningSelfHost
 DUNE_RESTART_COMPOSE_PROJECT=dune_server
 DUNE_RESTART_USE_HOST_COMPOSE=true
 DUNE_STEAM_SERVER_DIR=/path/to/Steam/steamapps/common/Dune Awakening Self-Hosted Server
+DUNE_RESTART_STEAMCMD_HELPER_IMAGE=cm2network/steamcmd:root
 ```
 
 ## Manual Checks
@@ -136,6 +170,12 @@ Check the Steam package tag without changing `.env`:
 
 ```bash
 ./scripts/check-steam-update.sh .env
+```
+
+Force Steam to refresh the local self-hosted server tool:
+
+```bash
+./scripts/update-steam-tool.sh .env
 ```
 
 Load images and update `.env` when a single safe package tag is found:
