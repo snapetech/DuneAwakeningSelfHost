@@ -208,9 +208,10 @@ The DB has journey admin functions, including:
 dune.complete_journey_story_nodes_for_player(...)
 dune.reveal_journey_story_nodes_for_player(...)
 dune.reset_journey_story_nodes_for_player(...)
+dune.delete_journey_story_nodes_for_player(...)
 ```
 
-These functions explicitly reject some operations when the player is online. The panel does not expose them yet because story node IDs and reward semantics need mapping.
+These functions explicitly reject some operations when the player is online. The panel exposes them only as a dry-run-first mutator, requires offline targets for execution, and keeps story-node ID discovery separate because reward semantics still need mapping.
 
 ## Offline Player Teleport / Recovery
 
@@ -304,6 +305,8 @@ Function-backed mutators added after live schema validation:
 POST /api/admin/faction-reputation
 POST /api/admin/faction
 POST /api/admin/journey
+POST /api/admin/landsraad
+POST /api/admin/respawn-location
 ```
 
 Mapped first-party functions:
@@ -318,6 +321,11 @@ dune.reveal_journey_story_nodes_for_player(in_player_id text, in_story_node_ids 
 dune.complete_journey_story_nodes_for_player(in_player_id text, in_story_node_ids text[])
 dune.reset_journey_story_nodes_for_player(in_player_id text, in_story_node_ids text[])
 dune.delete_journey_story_nodes_for_player(in_player_id text, in_story_node_ids text[])
+dune.landsraad_load_current_term()
+dune.landsraad_change_term_end_time(end_term_id bigint, new_end_time timestamp without time zone, in_test_term boolean)
+dune.landsraad_force_end_term(end_term_id bigint)
+dune.get_respawn_locations(in_account_id bigint)
+dune.update_respawn_locations(player_id bigint, respawn_locations respawnlocation[])
 ```
 
 Separate gates:
@@ -326,6 +334,8 @@ Separate gates:
 DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED=false
 DUNE_ADMIN_FACTION_MUTATIONS_ENABLED=false
 DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED=false
+DUNE_ADMIN_LANDSRAAD_MUTATIONS_ENABLED=false
+DUNE_ADMIN_RESPAWN_MUTATIONS_ENABLED=false
 ```
 
 Confirmation phrases:
@@ -334,6 +344,8 @@ Confirmation phrases:
 WRITE REPUTATION
 CHANGE FACTION
 WRITE JOURNEY
+WRITE LANDSRAAD
+DELETE RESPAWN
 ```
 
 Current confidence:
@@ -341,3 +353,58 @@ Current confidence:
 - Reputation: moderate-to-high mechanically because a first-party setter exists.
 - Faction: moderate; guild side effects need disposable-character validation.
 - Journey: moderate; functions exist, but story-node IDs and reward semantics need cataloging.
+- Landsraad term end-time: moderate mechanically because first-party functions exist; high operational risk because it changes shared world/economy state. `force-end` is not safely reversible.
+- Respawn-location delete: moderate mechanically because first-party array read/write functions exist; high rollback risk because restoring requires preserving and reconstructing the removed `respawnlocation` composite.
+
+## Landsraad Term Administration
+
+The panel endpoint is:
+
+```text
+POST /api/admin/landsraad
+```
+
+Supported actions:
+
+```text
+change-end-time
+force-end
+```
+
+Dry-run reads the current term through `dune.landsraad_load_current_term()`, reads recent `dune.landsraad_decree_term` rows, and verifies the mapped functions exist. Execution is blocked unless the global mutation gate and `DUNE_ADMIN_LANDSRAAD_MUTATIONS_ENABLED=true` are both set, and the request includes `confirm: "WRITE LANDSRAAD"`.
+
+Rollback posture:
+
+- `change-end-time`: dry-run records the prior `end_time`, so a compensating change can restore it.
+- `force-end`: no safe rollback is mapped.
+
+## Respawn Location Delete
+
+The panel endpoint is:
+
+```text
+POST /api/admin/respawn-location
+```
+
+Supported action:
+
+```text
+delete
+```
+
+Dry-run verifies that the requested UUID exists in `dune.player_respawn_locations` for the account and plans a call equivalent to:
+
+```sql
+select dune.update_respawn_locations(
+  account_id,
+  array(
+    select current_location.loc
+    from unnest(dune.get_respawn_locations(account_id)) as current_location(loc)
+    where (current_location.loc).id <> target_uuid
+  )
+);
+```
+
+Execution is blocked unless the global mutation gate and `DUNE_ADMIN_RESPAWN_MUTATIONS_ENABLED=true` are both set, the request includes `confirm: "DELETE RESPAWN"`, and the target player is offline.
+
+Creation and arbitrary editing of respawn locations remain blocked. Confidence is moderate for deletion mechanics and low for safe creation because `spawnlocatordescriptor`, nested `transform`, map/dimension, and actor binding semantics are not fully proven.

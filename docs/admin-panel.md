@@ -143,6 +143,7 @@ server {
 - Player faction-change planning through `POST /api/admin/faction`, default `dry_run=true`. Execution requires `DUNE_ADMIN_FACTION_MUTATIONS_ENABLED=true`, confirmation `CHANGE FACTION`, and an offline target player.
 - Journey story-node planning through `POST /api/admin/journey`, default `dry_run=true`. Execution requires `DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED=true`, confirmation `WRITE JOURNEY`, and an offline target player.
 - Landsraad term planning through `POST /api/admin/landsraad`, default `dry_run=true`. Execution requires `DUNE_ADMIN_LANDSRAAD_MUTATIONS_ENABLED=true` and confirmation `WRITE LANDSRAAD`.
+- Respawn-location delete planning through `POST /api/admin/respawn-location`, default `dry_run=true`. Execution requires `DUNE_ADMIN_RESPAWN_MUTATIONS_ENABLED=true`, confirmation `DELETE RESPAWN`, and an offline target player.
 - Event planner APIs:
   - `GET /api/events`
   - `POST /api/events/dry-run`
@@ -203,6 +204,7 @@ DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED=false
 DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED=false
 DUNE_ADMIN_FACTION_MUTATIONS_ENABLED=false
 DUNE_ADMIN_LANDSRAAD_MUTATIONS_ENABLED=false
+DUNE_ADMIN_RESPAWN_MUTATIONS_ENABLED=false
 ```
 
 Gate behavior:
@@ -215,6 +217,7 @@ Gate behavior:
 - `DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED`: controls journey server-function calls. Journey dry-runs still work.
 - `DUNE_ADMIN_FACTION_MUTATIONS_ENABLED`: controls player faction-change server-function calls. Faction dry-runs still work.
 - `DUNE_ADMIN_LANDSRAAD_MUTATIONS_ENABLED`: controls Landsraad term server-function calls. Landsraad dry-runs still work.
+- `DUNE_ADMIN_RESPAWN_MUTATIONS_ENABLED`: controls respawn-location deletion through `dune.update_respawn_locations`. Respawn dry-runs still work.
 
 Existing gates still apply:
 
@@ -235,6 +238,7 @@ WRITE REPUTATION
 WRITE JOURNEY
 CHANGE FACTION
 WRITE LANDSRAAD
+DELETE RESPAWN
 RUN GM COMMAND
 ```
 
@@ -431,6 +435,28 @@ Execution requires:
 - `confirm: "WRITE LANDSRAAD"`
 
 The endpoint reads `dune.landsraad_load_current_term()` and recent `dune.landsraad_decree_term` rows before planning. End-time changes are reversible by writing the previous `end_time`; `force-end` is not safely reversible. Confidence is moderate for function mechanics and high that the action is world-impacting.
+
+`POST /api/admin/respawn-location` plans or executes deletion of one known respawn location by UUID.
+
+Dry-run body:
+
+```json
+{
+  "dry_run": true,
+  "action": "delete",
+  "account_id": 456,
+  "respawn_id": "0a0556f6-a387-41f2-b613-deacee4e2bd0"
+}
+```
+
+Execution requires:
+
+- `DUNE_ADMIN_MUTATIONS_ENABLED=true`
+- `DUNE_ADMIN_RESPAWN_MUTATIONS_ENABLED=true`
+- `confirm: "DELETE RESPAWN"`
+- target player must be offline
+
+The endpoint verifies the UUID against `dune.player_respawn_locations` and then re-saves `dune.get_respawn_locations(account_id)` without that entry through `dune.update_respawn_locations`. Confidence is moderate for deletion mechanics and low for creation/editing, so creation and arbitrary edits remain blocked.
 
 `POST /api/admin/journey` plans or executes journey story-node server functions. Supported actions are `reveal`, `complete`, `reset`, and `delete`.
 
