@@ -232,6 +232,42 @@ class ArtificialExchangeBotTest(unittest.TestCase):
         self.assertEqual(bot.buyer_skip_reason(self.order(is_npc_order=True), args), "")
         self.assertEqual(bot.buyer_skip_reason(self.order(is_npc_order=False), args), "")
 
+    def test_scan_dry_run_keeps_auto_claim_dry_run(self):
+        class FakeConn:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def close(self):
+                pass
+
+        args = types.SimpleNamespace(
+            dry_run=True,
+            exchange_id=2,
+            limit=200,
+            settlement_limit=50,
+            auto_claim_after_scan=True,
+            catalog="catalog.json",
+            report_skips=50,
+            ignore_enabled_gate=False,
+        )
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_ENABLED"] = "true"
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_AUTO_CLAIM_ENABLED"] = "true"
+        with mock.patch.object(bot, "load_catalog", return_value={}), \
+            mock.patch.object(bot, "load_state", return_value={"claimed_settlements": []}), \
+            mock.patch.object(bot, "connect_db", return_value=FakeConn()), \
+            mock.patch.object(bot, "inspect_settlement", return_value=[]), \
+            mock.patch.object(bot, "fetch_orders", return_value=[]), \
+            mock.patch.object(bot, "save_json"), \
+            mock.patch.object(bot, "claim_all_settlements", return_value={"ok": True, "dryRun": True, "claimed": [], "skipped": []}) as claim_all:
+            result = bot.scan_once(args)
+
+        self.assertTrue(result["autoClaim"]["dryRun"])
+        claim_all.assert_called_once()
+        self.assertTrue(claim_all.call_args.kwargs["dry_run"])
+
     def test_populator_catalog_filter_requires_enabled_baseline_and_validated(self):
         catalog_rows = {
             "enabled": self.catalog_row("enabled"),

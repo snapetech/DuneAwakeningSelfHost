@@ -219,6 +219,8 @@ def buyer_skip_reason(order, args):
 
 def populator_catalog_rows(catalog):
     rows = []
+    require_market_price = env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_MARKET_PRICE", True)
+    allow_unpriced = env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ALLOW_UNPRICED_SEEDING", False)
     for row in catalog.values():
         if not row.get("enabled"):
             continue
@@ -229,7 +231,7 @@ def populator_catalog_rows(catalog):
         tier = catalog_tier(row)
         if tier is None or tier < int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_TIER", "2")):
             continue
-        if env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_MARKET_PRICE", True) and not catalog_has_market_price(row):
+        if (require_market_price or not allow_unpriced) and not catalog_has_market_price(row):
             continue
         rows.append(row)
     return rows
@@ -1615,8 +1617,10 @@ def claim_settlement_once(args):
     return response
 
 
-def claim_all_settlements(args, *, require_confirm=True):
-    log_event("settlement-auto-claim-start", settlementLimit=args.settlement_limit, requireConfirm=require_confirm)
+def claim_all_settlements(args, *, require_confirm=True, dry_run=None):
+    if dry_run is None:
+        dry_run = bool(getattr(args, "dry_run", False))
+    log_event("settlement-auto-claim-start", settlementLimit=args.settlement_limit, requireConfirm=require_confirm, dryRun=dry_run)
     if not env_bool("DUNE_ARTIFICIAL_EXCHANGE_AUTO_CLAIM_ENABLED", False):
         raise RuntimeError("DUNE_ARTIFICIAL_EXCHANGE_AUTO_CLAIM_ENABLED is false")
     if require_confirm and args.confirm != CLAIM_CONFIRM:
@@ -1650,18 +1654,25 @@ def claim_all_settlements(args, *, require_confirm=True):
                 audit({"event": "settlement-auto-claim-rolled-back", "key": key, "row": row, "result": result})
                 skipped.append({"orderId": row["order_id"], "reason": "claim failed validation", "result": result})
                 continue
-            conn.commit()
-            state["claimed_settlements"].append(key)
             event = {"orderId": row["order_id"], "key": key, "row": row, "result": result}
-            claimed.append(event)
-            audit({"event": "settlement-auto-claimed", **event})
+            if dry_run:
+                conn.rollback()
+                event["dryRun"] = True
+                claimed.append(event)
+                audit({"event": "settlement-auto-claim-dry-run", **event})
+            else:
+                conn.commit()
+                state["claimed_settlements"].append(key)
+                claimed.append(event)
+                audit({"event": "settlement-auto-claimed", **event})
     except Exception:
         conn.rollback()
         conn.close()
         raise
     conn.close()
-    save_json(STATE_PATH, state)
-    result = {"ok": True, "dryRun": False, "claimed": claimed, "skipped": skipped}
+    if not dry_run:
+        save_json(STATE_PATH, state)
+    result = {"ok": True, "dryRun": dry_run, "claimed": claimed, "skipped": skipped}
     log_event("settlement-auto-claim-complete", claimed=len(claimed), skipped=len(skipped))
     return result
 
@@ -1716,8 +1727,9 @@ def scan_once(args):
     with conn:
         completed = inspect_settlement(conn, args.settlement_limit)
         if args.auto_claim_after_scan and env_bool("DUNE_ARTIFICIAL_EXCHANGE_AUTO_CLAIM_ENABLED", False):
-            auto_claim = claim_all_settlements(args, require_confirm=False)
-            state["claimed_settlements"] = load_state().get("claimed_settlements", [])
+            auto_claim = claim_all_settlements(args, require_confirm=False, dry_run=args.dry_run)
+            if not args.dry_run:
+                state["claimed_settlements"] = load_state().get("claimed_settlements", [])
         orders = fetch_orders(conn, args.exchange_id, args.limit)
         for order in orders:
             skip_reason = buyer_skip_reason(order, args)
