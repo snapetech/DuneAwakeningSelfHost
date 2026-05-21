@@ -94,8 +94,8 @@ class CommandReplyTargetTests(unittest.TestCase):
             return values.get(name, default)
 
         def handle_command():
-            sender_name = "Lukano"
-            sender_fls_id = "6FF6498F4074E3DE"
+            sender_name = "AdminUser"
+            sender_fls_id = "TEST_FLS_ID"
             resolved_admin = ""
             return admin_chat_commands.run_announce("private reply")
 
@@ -106,9 +106,9 @@ class CommandReplyTargetTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_EXCHANGE"], "chat.whispers")
         self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_CHANNEL"], "Whispers")
-        self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_USER_NAME_TO"], "Lukano")
-        self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_TARGET_QUEUES"], "6FF6498F4074E3DE_queue")
-        self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_ROUTING_KEYS"], "6FF6498F4074E3DE")
+        self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_USER_NAME_TO"], "AdminUser")
+        self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_TARGET_QUEUES"], "TEST_FLS_ID_queue")
+        self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_ROUTING_KEYS"], "TEST_FLS_ID")
 
     def test_auction_suggestion_reply_returns_private_publish_metadata(self):
         captured = {}
@@ -131,36 +131,36 @@ class CommandReplyTargetTests(unittest.TestCase):
                 },
             }
 
-        with unittest.mock.patch.object(admin_chat_commands, "resolve_sender_character", lambda conn, sender_name, sender_fls_id: "Lukano"), \
-             unittest.mock.patch.object(admin_chat_commands, "character_row", lambda conn, name: ({"character_name": "Lukano"}, [])), \
+        with unittest.mock.patch.object(admin_chat_commands, "resolve_sender_character", lambda conn, sender_name, sender_fls_id: "AdminUser"), \
+             unittest.mock.patch.object(admin_chat_commands, "character_row", lambda conn, name: ({"character_name": "AdminUser"}, [])), \
              unittest.mock.patch.object(admin_chat_commands, "auction_item", fake_auction_item), \
              unittest.mock.patch.object(admin_chat_commands, "run_announce", fake_run_announce):
             result = admin_chat_commands.handle_command(
                 object(),
                 "&auction PwerPck 1 456",
-                sender_name="Lukano",
-                sender_fls_id="6FF6498F4074E3DE",
+                sender_name="AdminUser",
+                sender_fls_id="TEST_FLS_ID",
                 reply=True,
             )
 
         self.assertFalse(result["ok"])
         self.assertTrue(result["reply"]["ok"])
         self.assertIn("did you mean PowerPack2", captured["message"])
-        self.assertEqual(captured["targetName"], "Lukano")
-        self.assertEqual(captured["targetFlsId"], "6FF6498F4074E3DE")
+        self.assertEqual(captured["targetName"], "AdminUser")
+        self.assertEqual(captured["targetFlsId"], "TEST_FLS_ID")
 
     def test_gm_subcommand_includes_inferred_private_reply_metadata(self):
         def fake_run_announce(message, target_name="", target_fls_id=""):
             admin_chat_commands.LAST_ANNOUNCE_RESULT = {"ok": True, "stdout": '{"transport":"chat.whispers"}', "stderr": ""}
             return admin_chat_commands.LAST_ANNOUNCE_RESULT
 
-        with unittest.mock.patch.object(admin_chat_commands, "is_admin", lambda conn, sender_name, sender_fls_id: (True, "Lukano")), \
+        with unittest.mock.patch.object(admin_chat_commands, "is_admin", lambda conn, sender_name, sender_fls_id: (True, "AdminUser")), \
              unittest.mock.patch.object(admin_chat_commands, "run_announce", fake_run_announce):
             result = admin_chat_commands.handle_command(
                 object(),
                 "&gm",
-                sender_name="Lukano",
-                sender_fls_id="6FF6498F4074E3DE",
+                sender_name="AdminUser",
+                sender_fls_id="TEST_FLS_ID",
                 reply=True,
             )
 
@@ -192,16 +192,16 @@ class OnlineTeleportSafetyTests(unittest.TestCase):
         }
 
     def test_online_goto_blocks_different_routes_before_publish(self):
-        admin = self.row("Lukano", partition_id=1)
+        admin = self.row("AdminUser", partition_id=1)
         target = self.row("Tester", partition_id=2)
 
         def fake_character_row(conn, name):
-            return (admin if name == "Lukano" else target), []
+            return (admin if name == "AdminUser" else target), []
 
-        with unittest.mock.patch.object(admin_chat_commands, "is_admin", lambda conn, sender_name, sender_fls_id: (True, "Lukano")), \
+        with unittest.mock.patch.object(admin_chat_commands, "is_admin", lambda conn, sender_name, sender_fls_id: (True, "AdminUser")), \
              unittest.mock.patch.object(admin_chat_commands, "character_row", fake_character_row), \
              unittest.mock.patch.object(admin_chat_commands, "send_gm_command") as send_gm:
-            result = admin_chat_commands.handle_command(object(), "&goto Tester", sender_name="Lukano")
+            result = admin_chat_commands.handle_command(object(), "&goto Tester", sender_name="AdminUser")
 
         self.assertFalse(result["ok"])
         self.assertTrue(result["blocked"])
@@ -209,11 +209,11 @@ class OnlineTeleportSafetyTests(unittest.TestCase):
         send_gm.assert_not_called()
 
     def test_online_bring_same_route_requires_arm_even_when_gates_are_enabled(self):
-        admin = self.row("Lukano", partition_id=1)
+        admin = self.row("AdminUser", partition_id=1)
         target = self.row("Tester", partition_id=1)
 
         def fake_character_row(conn, name):
-            return (admin if name == "Lukano" else target), []
+            return (admin if name == "AdminUser" else target), []
 
         def fake_env(name, default=""):
             values = {
@@ -223,22 +223,22 @@ class OnlineTeleportSafetyTests(unittest.TestCase):
             }
             return values.get(name, default)
 
-        with unittest.mock.patch.object(admin_chat_commands, "is_admin", lambda conn, sender_name, sender_fls_id: (True, "Lukano")), \
+        with unittest.mock.patch.object(admin_chat_commands, "is_admin", lambda conn, sender_name, sender_fls_id: (True, "AdminUser")), \
              unittest.mock.patch.object(admin_chat_commands, "character_row", fake_character_row), \
              unittest.mock.patch.object(admin_chat_commands, "env", fake_env), \
              unittest.mock.patch.object(admin_chat_commands, "publish_command", lambda command_text, route, **kwargs: {"ok": True, "commandText": command_text, "route": route, **kwargs}):
-            result = admin_chat_commands.handle_command(object(), "&bring Tester", sender_name="Lukano")
+            result = admin_chat_commands.handle_command(object(), "&bring Tester", sender_name="AdminUser")
 
         self.assertFalse(result["ok"])
         self.assertTrue(result["blocked"])
         self.assertIn("not armed", result["gm"]["reason"])
 
     def test_armbring_allows_one_same_route_publish(self):
-        admin = self.row("Lukano", partition_id=1)
+        admin = self.row("AdminUser", partition_id=1)
         target = self.row("Tester", partition_id=1)
 
         def fake_character_row(conn, name):
-            return (admin if name == "Lukano" else target), []
+            return (admin if name == "AdminUser" else target), []
 
         def fake_env(name, default=""):
             values = {
@@ -252,13 +252,13 @@ class OnlineTeleportSafetyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             arm_file = pathlib.Path(tmpdir) / "online-gm-teleport-arm.json"
             with unittest.mock.patch.object(admin_chat_commands, "ONLINE_GM_TELEPORT_ARM_FILE", arm_file), \
-                 unittest.mock.patch.object(admin_chat_commands, "is_admin", lambda conn, sender_name, sender_fls_id: (True, "Lukano")), \
+                 unittest.mock.patch.object(admin_chat_commands, "is_admin", lambda conn, sender_name, sender_fls_id: (True, "AdminUser")), \
                  unittest.mock.patch.object(admin_chat_commands, "character_row", fake_character_row), \
                  unittest.mock.patch.object(admin_chat_commands, "env", fake_env), \
                  unittest.mock.patch.object(admin_chat_commands, "publish_command", lambda command_text, route, **kwargs: {"ok": True, "commandText": command_text, "route": route, **kwargs}):
-                arm = admin_chat_commands.handle_command(object(), "&armbring Tester", sender_name="Lukano")
-                first = admin_chat_commands.handle_command(object(), "&bring Tester", sender_name="Lukano")
-                second = admin_chat_commands.handle_command(object(), "&bring Tester", sender_name="Lukano")
+                arm = admin_chat_commands.handle_command(object(), "&armbring Tester", sender_name="AdminUser")
+                first = admin_chat_commands.handle_command(object(), "&bring Tester", sender_name="AdminUser")
+                second = admin_chat_commands.handle_command(object(), "&bring Tester", sender_name="AdminUser")
 
         self.assertTrue(arm["ok"])
         self.assertTrue(first["ok"])

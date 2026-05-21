@@ -28,8 +28,8 @@ class PrivateMessageRoutingTests(unittest.TestCase):
             return Result()
 
         player = {
-            "name": "Lukano",
-            "flsId": "6FF6498F4074E3DE",
+            "name": "AdminUser",
+            "flsId": "TEST_FLS_ID",
         }
         file_env = {
             "DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_EXCHANGE": "chat.whispers",
@@ -48,9 +48,9 @@ class PrivateMessageRoutingTests(unittest.TestCase):
         self.assertEqual(captured["env"]["DUNE_ANNOUNCE_ENV_OVERRIDES_FILE"], "true")
         self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_EXCHANGE"], "chat.whispers")
         self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_CHANNEL"], "Whispers")
-        self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_USER_NAME_TO"], "Lukano")
-        self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_TARGET_QUEUES"], "6FF6498F4074E3DE_queue")
-        self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_ROUTING_KEYS"], "6FF6498F4074E3DE")
+        self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_USER_NAME_TO"], "AdminUser")
+        self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_TARGET_QUEUES"], "TEST_FLS_ID_queue")
+        self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_ROUTING_KEYS"], "TEST_FLS_ID")
         self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_CLEANUP_TARGET_BINDINGS"], "true")
         self.assertEqual(captured["env"]["DUNE_ANNOUNCE_WRAP_DASHBOARD_MESSAGES"], "false")
 
@@ -161,8 +161,8 @@ class ServiceHealthCheckTests(unittest.TestCase):
 class AdminAnomalyDigestTests(unittest.TestCase):
     def test_default_digest_omits_zero_value_categories(self):
         self.assertEqual(
-            player_presence_announcer.admin_anomaly_digest_template(1, "Lukano", 0),
-            "Admin digest: stuck/recent anomalies=1 (Lukano).",
+            player_presence_announcer.admin_anomaly_digest_template(1, "AdminUser", 0),
+            "Admin digest: stuck/recent anomalies=1 (AdminUser).",
         )
         self.assertEqual(
             player_presence_announcer.admin_anomaly_digest_template(0, "none", 2),
@@ -175,7 +175,7 @@ class AdminAnomalyDigestTests(unittest.TestCase):
 
     def test_digest_signature_tracks_actionable_values(self):
         stuck = [
-            {"accountId": "2", "name": "Lukano"},
+            {"accountId": "2", "name": "AdminUser"},
             {"accountId": "10", "name": "Other"},
         ]
         self.assertEqual(
@@ -217,8 +217,8 @@ class BaseCapConfigTests(unittest.TestCase):
 class RepoStarThirdJoinTests(unittest.TestCase):
     def test_repo_star_private_message_sends_once_on_third_join(self):
         player = {
-            "name": "Lukano",
-            "flsId": "6FF6498F4074E3DE",
+            "name": "AdminUser",
+            "flsId": "TEST_FLS_ID",
         }
         snapshots = [
             {"123": player},

@@ -1,7 +1,7 @@
 COMPOSE ?= docker compose
 ENV_FILE ?= .env.example
 
-.PHONY: validate compose-config check-compose-static-ips secret-scan test-watch-maps test-admin-panel-safe-surfaces test-character-slot-tool test-admin-chat test-operational-borrowing test-artificial-exchange test-artificial-exchange-service artificial-exchange-smoke artificial-exchange-bootstrap-catalog artificial-exchange-research-prices test-vehicle-fidelity-investigation list-publishable preflight operational-identity-check operational-report operational-bundle verify-operational-bundle status standby-status failover-topology-status sync-standby-files sync-standby-images promote-standby postgres-failover-seal postgres-cutback-proof rebuild-postgres-standby handoff-ready handoff-experiment summarize-handoff failover-orchestrate failover-role-services cutover-check cutover-network-status host-network-failover router-cutover install-dune-status-service check-steam-update backup-dry-run backup-state restore-dry-run verify-backup start-full-warm-pool recover-survival recover-map watch-maps watch-maps-status install-map-watchdog-service install-artificial-exchange-service install-artificial-exchange-buyer-service install-artificial-exchange-populator-service install-full-farm-service install-daily-maintenance-timer full-world-partitions public-site-check public-site-package verify-local-state-ignored rabbitmq-cert-check rabbitmq-cert-generate rabbitmq-cert-stage rabbitmq-cert-install-staged rabbitmq-cert-recreate-stack
+.PHONY: validate compose-config check-compose-static-ips secret-scan test-watch-maps test-admin-panel-safe-surfaces test-character-slot-tool test-admin-chat test-operational-borrowing test-artificial-exchange test-artificial-exchange-service artificial-exchange-smoke artificial-exchange-bootstrap-catalog artificial-exchange-research-prices test-vehicle-fidelity-investigation list-publishable preflight operational-identity-check operational-report operational-bundle verify-operational-bundle status standby-status failover-topology-status sync-standby-files sync-standby-images promote-standby postgres-failover-seal postgres-cutback-proof rebuild-postgres-standby handoff-ready handoff-experiment summarize-handoff failover-orchestrate failover-role-services cutover-check cutover-network-status host-network-failover router-cutover install-dune-status-service check-steam-update backup-dry-run backup-state restore-dry-run verify-backup start-full-warm-pool recover-survival recover-map watch-maps watch-maps-status install-map-watchdog-service install-artificial-exchange-service install-artificial-exchange-buyer-service install-artificial-exchange-populator-service install-full-farm-service install-daily-maintenance-timer full-world-partitions update-hagga-pois public-site-check public-site-package verify-local-state-ignored rabbitmq-cert-check rabbitmq-cert-generate rabbitmq-cert-stage rabbitmq-cert-install-staged rabbitmq-cert-recreate-stack
 
 validate: compose-config check-compose-static-ips secret-scan test-watch-maps test-admin-panel-safe-surfaces test-character-slot-tool test-admin-chat test-operational-borrowing test-artificial-exchange test-artificial-exchange-service test-vehicle-fidelity-investigation verify-local-state-ignored
 
@@ -212,6 +212,9 @@ test-vehicle-fidelity-investigation:
 
 list-publishable:
 	find . -maxdepth 3 \( -path './.git' -o -path './data' -o -path './captures' -o -path './backups' -o -path './config/tls' \) -prune -o -type f -not -name '.env' -print | sort
+
+update-hagga-pois:
+	python3 scripts/update-hagga-poi-markers.py
 
 public-site-check:
 	bash -n public-site/scripts/*.sh examples/public-site/rclone-sync.sh

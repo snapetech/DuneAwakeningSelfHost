@@ -91,7 +91,7 @@ def main():
     tls = env_bool("DUNE_ANNOUNCE_GAME_RMQ_AMQP_TLS", True)
     user = env("DUNE_ANNOUNCE_CHAT_USER", "A000000000000001")
     password = env("DUNE_ANNOUNCE_CHAT_PASSWORD", "")
-    routing_keys = args.routing_keys or ["#", "", "HaggaBasin.0", "Survival_1.dim_0", "6FF6498F4074E3DE", "Lukano"]
+    routing_keys = args.routing_keys or ["#", "", "HaggaBasin.0", "Survival_1.dim_0", "TEST_FLS_ID", "SamplePlayer"]
 
     context = ssl.create_default_context()
     context.check_hostname = False

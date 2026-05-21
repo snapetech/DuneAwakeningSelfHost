@@ -47,7 +47,7 @@ def json_bytes(value):
 
 def build_bodies(command_text, target_player, admin_player):
     command, _, args = command_text.partition(" ")
-    return {
+    base = {
         "jsonrpc-method-command-array": {"jsonrpc": "2.0", "method": command, "params": [args] if args else [], "id": None},
         "jsonrpc-method-command-string": {"jsonrpc": "2.0", "method": command, "params": args, "id": None},
         "jsonrpc-servercommand-array": {"jsonrpc": "2.0", "method": "ServerCommand", "params": [command_text], "id": None},
@@ -73,6 +73,22 @@ def build_bodies(command_text, target_player, admin_player):
         "raw-string": command_text,
         "raw-serverexec-string": f"ServerExec {target_player} {command_text}",
     }
+    wrapped = {}
+    for body_name, body_value in base.items():
+        if isinstance(body_value, str):
+            json_payload = body_value
+            payload = body_value
+        else:
+            json_payload = json.dumps(body_value, separators=(",", ":"))
+            payload = body_value
+        wrapped[f"payload-{body_name}"] = {"Payload": payload}
+        wrapped[f"payload-correlation-{body_name}"] = {"CorrelationId": "", "Payload": payload}
+        wrapped[f"jsonpayload-{body_name}"] = {"jsonPayload": json_payload}
+        wrapped[f"attributejsonpayload-{body_name}"] = {"AttributeJsonPayload": json_payload}
+        wrapped[f"callpayload-{body_name}"] = {"callPayload": payload}
+        wrapped[f"dispatchpayload-{body_name}"] = {"DispatchPayload": payload}
+    base.update(wrapped)
+    return base
 
 
 def serialize_body(value):
@@ -136,8 +152,8 @@ def main():
     parser.add_argument("--queue", required=True, help="Admin default-exchange queue, for example SH_Arrakeen3_queue.")
     parser.add_argument("--game-server-queue", default="", help="Optional game-RMQ server queue name.")
     parser.add_argument("--command", default="PrintAllowedCommands")
-    parser.add_argument("--target-player", default="Lukano")
-    parser.add_argument("--admin-player", default="Lukano")
+    parser.add_argument("--target-player", default="SamplePlayer")
+    parser.add_argument("--admin-player", default="SamplePlayer")
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--wait", type=float, default=1.0)
     parser.add_argument("--include-game-rmq", action="store_true")

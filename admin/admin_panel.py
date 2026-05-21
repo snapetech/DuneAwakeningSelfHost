@@ -6225,9 +6225,11 @@ INDEX = r"""<!doctype html>
     .mapLegend { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
     .poiToggleBar { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:6px 14px; border:1px solid var(--line); border-radius:7px; background:#101310; margin:0 0 10px; padding:10px 12px; }
     .poiToggleBar label { display:inline-flex; justify-content:space-between; gap:10px; align-items:center; color:var(--text); font-size:12px; line-height:1.25; }
+    .poiToggleBar label[hidden] { display:none; }
     .poiToggleBar input { width:auto; }
     .poiLegendHeader { display:flex; align-items:center; justify-content:space-between; gap:10px; margin:0 0 6px; }
     .poiLegendHeader .toolbar { margin:0; }
+    .poiFilterInput { width:100%; margin:0 0 8px; }
     .poiToggleLabel { display:inline-flex; align-items:center; gap:7px; min-width:0; }
     .poiSwatch { width:10px; height:10px; border:1px solid #0b0d0a; border-radius:2px; flex:0 0 auto; }
     .poiCount { color:var(--muted); font-size:11px; }
@@ -6819,9 +6821,10 @@ function haggaPoiToggleBar(pois, selected){
   if (!groupKeys.length) return '';
   const colors = {};
   groupKeys.forEach((group, index) => colors[group] = haggaPoiPalette[index % haggaPoiPalette.length]);
-  return `<div class="poiLegendHeader"><span id="haggaPoiSummary" class="muted">${esc(haggaPoiSummary(selected, pois))}</span><div class="toolbar"><button id="haggaPoiAllBtn">All</button><button id="haggaPoiPresetBtn">Preset</button><button id="haggaPoiClearBtn">Clear</button></div></div><div class="poiToggleBar" aria-label="POI layer toggles">${groupKeys.map(group => {
+  return `<div class="poiLegendHeader"><span id="haggaPoiSummary" class="muted">${esc(haggaPoiSummary(selected, pois))}</span><div class="toolbar"><button id="haggaPoiAllBtn">All</button><button id="haggaPoiPresetBtn">Preset</button><button id="haggaPoiClearBtn">Clear</button></div></div><input id="haggaPoiFilter" class="poiFilterInput" type="search" placeholder="Filter POI layers"><div class="poiToggleBar" aria-label="POI layer toggles">${groupKeys.map(group => {
     const info = groups[group] || {};
-    return `<label><span class="poiToggleLabel"><input type="checkbox" value="${esc(group)}"${selected[group] ? ' checked' : ''}><span class="poiSwatch" style="background:${esc(colors[group])}"></span><span>${esc(info.name || group)}</span></span><span class="poiCount">${esc(info.count || 0)}</span></label>`;
+    const label = String(info.name || group);
+    return `<label data-filter-text="${esc((label + ' ' + group).toLowerCase())}"><span class="poiToggleLabel"><input type="checkbox" value="${esc(group)}"${selected[group] ? ' checked' : ''}><span class="poiSwatch" style="background:${esc(colors[group])}"></span><span>${esc(label)}</span></span><span class="poiCount">${esc(info.count || 0)}</span></label>`;
   }).join('')}</div>`;
 }
 function haggaBasinMapPanel(data){
@@ -7110,6 +7113,17 @@ function wireHaggaMapControls(container){
     saveHaggaPoiGroups(selected);
     refreshHaggaMap({force:true}).catch(e => reportClientError(e, 'Refresh Hagga map'));
   });
+  const poiFilter = container.querySelector('#haggaPoiFilter');
+  if (poiFilter) {
+    const applyPoiFilter = () => {
+      const term = poiFilter.value.trim().toLowerCase();
+      container.querySelectorAll('.poiToggleBar label[data-filter-text]').forEach(label => {
+        label.hidden = term && !label.getAttribute('data-filter-text').includes(term);
+      });
+    };
+    poiFilter.addEventListener('input', applyPoiFilter);
+    applyPoiFilter();
+  }
   container.querySelectorAll('.playerMarker[data-account-id]').forEach(marker => {
     marker.addEventListener('click', e => {
       if (haggaMapSuppressMarkerClick) {

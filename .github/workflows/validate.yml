@@ -2,7 +2,8 @@ name: Validate
 
 on:
   push:
-  pull_request:
+    tags:
+      - main
 
 jobs:
   validate:

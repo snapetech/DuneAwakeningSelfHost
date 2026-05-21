@@ -108,8 +108,8 @@ def make_properties(include_user_id, redirect_exchange=""):
 
 def main():
     parser = argparse.ArgumentParser(description="Send labeled Dune chat channel probe variants.")
-    parser.add_argument("--target-name", default="Lukano")
-    parser.add_argument("--target-fls-id", default="6FF6498F4074E3DE")
+    parser.add_argument("--target-name", default="SamplePlayer")
+    parser.add_argument("--target-fls-id", default="TEST_FLS_ID")
     parser.add_argument("--message-prefix", default="channel probe")
     parser.add_argument("--sender-name", default=env("DUNE_ANNOUNCE_CHAT_SPOOF_NAME", "Paul"))
     parser.add_argument("--sender-funcom-id", default=env("DUNE_ANNOUNCE_CHAT_FUNCOM_ID", "ADMIN#00001"))

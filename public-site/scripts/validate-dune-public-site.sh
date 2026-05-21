@@ -56,7 +56,12 @@ fi
 grep -q 'id="hagga-map"' "$static_dir/index.html"
 grep -q 'id="active-players"' "$static_dir/index.html"
 grep -q 'id="poi-toggles"' "$static_dir/index.html"
+grep -q 'id="poi-all"' "$static_dir/index.html"
+grep -q 'id="poi-preset"' "$static_dir/index.html"
+grep -q 'id="poi-clear"' "$static_dir/index.html"
+grep -q 'id="poi-filter"' "$static_dir/index.html"
 grep -q 'hagga-pois.json' "$static_dir/app.js"
+grep -q 'sessionStorage.getItem(poiStorageKey)' "$static_dir/app.js"
 grep -q '<svg' "$static_dir/hagga-map.svg"
 if ! grep -Eq 'hagga-basin\.webp|data:image/webp;base64' "$static_dir/hagga-map.svg"; then
   echo "hagga-map.svg does not reference or embed the Hagga Basin map image" >&2

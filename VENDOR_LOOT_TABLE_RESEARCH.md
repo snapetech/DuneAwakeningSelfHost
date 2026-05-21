@@ -456,8 +456,8 @@ Additional private-chat investigation:
 - With `redirect_exchange=b"chat.map"`, TextRouter logs a successful redirect to
   `chat.map`. Confidence: high.
 - With `redirect_exchange=b"chat.whispers"`, TextRouter logs successful redirects
-  to `chat.whispers` for routing keys `6FF6498F4074E3DE`, `test player`, and
-  `6FF6498F4074E3DE_queue`. Confidence: high for TextRouter redirect, unknown
+  to `chat.whispers` for routing keys `TEST_FLS_ID`, `test player`, and
+  `TEST_FLS_ID_queue`. Confidence: high for TextRouter redirect, unknown
   for client rendering.
 - Working direct player-queue publish uses `chat.whispers`, temporary binding
   to `{FLS_ID}_queue`, routing key `{FLS_ID}`, and `m_ChannelType=Whispers`.
@@ -466,9 +466,9 @@ Additional private-chat investigation:
 
 ```text
 scripts/capture-chat-routing.py --seconds 60 \
-  --routing-key 6FF6498F4074E3DE \
+  --routing-key TEST_FLS_ID \
   --routing-key test player \
-  --routing-key 6FF6498F4074E3DE_queue \
+  --routing-key TEST_FLS_ID_queue \
   --routing-key '#'
 ```
 

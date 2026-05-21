@@ -195,8 +195,8 @@ def resolve_sender_character(conn, sender_name, sender_fls_id):
 
 
 def is_admin(conn, sender_name, sender_fls_id):
-    names = {item.lower() for item in split_csv(env("DUNE_CHAT_COMMAND_ADMINS", "Lukano"))}
-    fls_ids = set(split_csv(env("DUNE_CHAT_COMMAND_ADMIN_FLS_IDS", "6FF6498F4074E3DE")))
+    names = {item.lower() for item in split_csv(env("DUNE_CHAT_COMMAND_ADMINS", "AdminUser"))}
+    fls_ids = set(split_csv(env("DUNE_CHAT_COMMAND_ADMIN_FLS_IDS", "TEST_FLS_ID")))
     resolved = None
     if sender_fls_id:
         resolved = character_by_fls_id(conn, sender_fls_id)
