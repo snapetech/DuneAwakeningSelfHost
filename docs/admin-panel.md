@@ -141,7 +141,7 @@ server {
 - Director GME voice-chat credentials can be added through the `director.ini` config editor when Funcom/provider supplies real `GmeAppId` and `GmeAppKey` values. Leave them unset otherwise.
 - Currency and XP mutation endpoints gated by `DUNE_ADMIN_MUTATIONS_ENABLED`.
 - Economy bundle planning through `POST /api/admin/bundle`. It plans currency, XP, and item grants in one response and defaults to `dry_run=true`. Execution additionally requires `DUNE_ADMIN_BUNDLE_MUTATIONS_ENABLED=true` and confirmation `EXECUTE BUNDLE`.
-- Offline player recovery preview through `POST /api/admin/player-recovery/offline-teleport`. Execution refuses online players and requires `MOVE OFFLINE PLAYER`.
+- Offline player recovery preview through `POST /api/admin/player-recovery/offline-teleport`. Execution refuses online players, requires `MOVE OFFLINE PLAYER`, and updates the controller, player-state, and pawn actor rows together.
 - Spice/resource field inspection through `POST /api/admin/spice-fields/inspect`.
 - Progression surface inspection through `POST /api/admin/progression/inspect`; this discovers faction, reputation, journey, recipe, vehicle, and related DB function/table evidence without executing discovered functions.
 - Faction reputation planning through `POST /api/admin/faction-reputation`, default `dry_run=true`. Execution requires `DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED=true` and confirmation `WRITE REPUTATION`.
@@ -378,7 +378,7 @@ Rollback is compensating work from the audit record: set currency back, set XP b
 
 ## Offline Player Recovery
 
-`POST /api/admin/player-recovery/offline-teleport` previews or executes the mapped database function:
+`POST /api/admin/player-recovery/offline-teleport` previews or executes an offline actor-set move. The shipped database helper below was tested and found insufficient because it only updates the pawn actor row:
 
 ```sql
 dune.admin_move_offline_player_to_partition(
@@ -1059,7 +1059,7 @@ Implemented commands:
 
 `&test` replies with `f00` through the configured announcement/reply path. Use it as the first live smoke test for chat-command ingestion and reply delivery.
 
-`&where` reports the resolved player's current online/offline state and last known location. `&teleport` moves an offline target to the admin's current partition and location, using the server's own `dune.admin_move_offline_player_to_partition(...)` function. It rejects online targets because live actor transforms are owned by the running map server and can be overwritten.
+`&where` reports the resolved player's current online/offline state and last known location. `&teleport` moves an offline target to the admin's current partition and location by updating the controller, player-state, and pawn actor rows together. It rejects online targets because live actor transforms are owned by the running map server and can be overwritten.
 
 `&auction "<item name or template>" <count> <price>` is a player-facing exchange listing command. It does not require admin allow-list membership, but only operates for the sender's own resolved character. Use `--item-id <item_id>` when the operator already knows the exact item row and wants to bypass fuzzy name/template matching. By default the command previews the listing and does not mutate the database. Set `DUNE_CHAT_COMMAND_AUCTION_ENABLED=true` to execute. The command uses `dune.dune_exchange_add_sell_order(...)`, so the order is owned by the sender's player controller and should use the normal exchange seller settlement path. Confidence: moderate until a live purchase settlement has been validated.
 

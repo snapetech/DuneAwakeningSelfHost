@@ -204,10 +204,14 @@ def populator_catalog_rows(catalog):
     rows = []
     require_market_price = env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_MARKET_PRICE", True)
     allow_unpriced = env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ALLOW_UNPRICED_SEEDING", False)
+    min_baseline_price = int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_BASELINE_PRICE", "1"))
     for row in catalog.values():
         if not row.get("enabled"):
             continue
-        if row.get("baseline_price") in (None, "", 0):
+        baseline_price = row.get("baseline_price")
+        if baseline_price in (None, "", 0):
+            continue
+        if int(baseline_price) < min_baseline_price:
             continue
         if env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_VALIDATED", True) and row.get("sellable_status") != "validated":
             continue
@@ -240,7 +244,8 @@ def catalog_tier(row):
 def catalog_has_market_price(row):
     if str(row.get("source") or "").startswith("dune.exchange"):
         return True
-    return "price_ceiling=dune.exchange" in str(row.get("notes") or "")
+    notes = str(row.get("notes") or "").lower()
+    return "price_ceiling=dune.exchange" in notes or "price_source=market_price" in notes
 
 
 def load_source_category_map(path=None):
@@ -508,9 +513,16 @@ def populator_active_fetch_limit(args, eligible_count=0):
 
 def select_populator_rows(eligible, planned_count, active_orders, max_per_template):
     max_per_template = max(1, int(max_per_template))
+    category_by_template_mask = {
+        (row["template_id"], populator_category_mask(row), populator_category_depth(row)): row.get("category") or "unknown"
+        for row in eligible
+    }
     counts = {}
     for order in active_orders:
-        key = (order.get("template_id"), order.get("category"), int(order.get("category_mask") or 0), int(order.get("category_depth") or 0))
+        mask = int(order.get("category_mask") or 0)
+        depth = int(order.get("category_depth") or 0)
+        category = order.get("category") or category_by_template_mask.get((order.get("template_id"), mask, depth)) or "unknown"
+        key = (order.get("template_id"), category, mask, depth)
         counts[key] = counts.get(key, 0) + 1
 
     selected = []

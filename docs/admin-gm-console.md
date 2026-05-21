@@ -93,7 +93,7 @@ Implemented:
 - `&gm where` is the namespaced form of `&where`.
 - `&gm unstuck` prepares or sends a gated `TeleportToExact` for a target player. It uses the named saved marker, defaulting to `location0`; if no marker exists it falls back to the admin's current location.
 - `&where` reports current known state and location.
-- `&teleport` moves an offline target to the admin's current position using the database function `dune.admin_move_offline_player_to_partition(...)`, only when offline teleport execution is explicitly enabled.
+- `&teleport` moves an offline target to the admin's current position only when offline teleport execution is explicitly enabled. The implementation updates the controller, player-state, and pawn actor rows together; the shipped `dune.admin_move_offline_player_to_partition(...)` helper only updates the pawn row and was not sufficient in live testing.
 
 ### Tier 3: Inventory/Admin
 

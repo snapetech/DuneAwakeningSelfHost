@@ -246,7 +246,7 @@ Behavior:
 
 - Resolves `account_id` to `dune.accounts.user` or `funcom_id`.
 - Refuses players whose `online_status` is `Online`.
-- Plans or executes `dune.admin_move_offline_player_to_partition(fls_id, partition_id, location)`.
+- Plans or executes an offline actor-set move for the controller, player-state, and pawn actor rows. The shipped `dune.admin_move_offline_player_to_partition(fls_id, partition_id, location)` helper only updates the pawn row and is not used for execution.
 
 Execution request:
 

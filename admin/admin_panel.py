@@ -4491,20 +4491,61 @@ class Handler(BaseHTTPRequestHandler):
         }
         fls_id = str(player[0].get("fls_id") or player[0].get("funcom_id") or "").strip()
         if not fls_id:
-            raise ValueError("player account has no FLS/user id for admin_move_offline_player_to_partition")
-        plan = {"function": "dune.admin_move_offline_player_to_partition", "args": [fls_id, partition_id, target_location], "player": player[0], "targetPartition": partition[0]}
+            raise ValueError("player account has no FLS/user id for offline player recovery")
+        plan = {
+            "function": "admin-panel offline actor-set move",
+            "args": [fls_id, partition_id, target_location],
+            "player": player[0],
+            "targetPartition": partition[0],
+            "note": "Updates controller, player-state, and pawn actor transforms together. The shipped dune.admin_move_offline_player_to_partition helper only updates the pawn row.",
+        }
         if dry_run:
             return {"ok": True, "dryRun": True, "accountId": account_id, "partitionId": partition_id, "plan": plan}
         self.require_mutations()
         require_confirmation(body, CONFIRM_PLAYER_RECOVERY)
         rows = query("""
-            select dune.admin_move_offline_player_to_partition(
-                %s,
-                %s,
-                row(%s,%s,%s)::dune.vector
-            ) as moved
-        """, (fls_id, partition_id, target_location["x"], target_location["y"], target_location["z"]))
-        return {"ok": True, "dryRun": False, "accountId": account_id, "partitionId": partition_id, "result": rows[0] if rows else {}, "rollback": {"previousServerPartitionId": player[0].get("previous_server_partition_id"), "previousServerId": player[0].get("server_id")}}
+            with target_partition as (
+                select partition_id, map, dimension_index
+                from dune.world_partition
+                where partition_id=%s
+            ), target_player as (
+                select ps.player_controller_id, ps.player_state_id, ps.player_pawn_id
+                from dune.player_state ps
+                join dune.accounts a on a.id = ps.account_id
+                where a."user"=%s and ps.online_status::text <> 'Online'
+                limit 1
+            ), target_actor as (
+                select unnest(array[player_controller_id, player_state_id, player_pawn_id]) as id
+                from target_player
+            ), overmap_location as (
+                select
+                    case
+                    when target_partition.map = 'Overmap' then dune.overmap_save_player_survival_data(target_player.player_pawn_id, null, false, row(%s,%s,%s)::dune.vector)
+                    else null
+                    end
+                from target_partition, target_player
+            )
+            update dune.actors a
+            set
+                transform = (row(%s,%s,%s)::dune.vector, (a.transform).rotation),
+                map = dune.upgrade_map_name(target_partition.map),
+                dimension_index = target_partition.dimension_index,
+                partition_id = target_partition.partition_id
+            from target_partition, target_actor, overmap_location
+            where a.id = target_actor.id
+            returning a.id as actor_id, a.class, a.map, a.partition_id, a.dimension_index,
+                      ((a.transform).location).x as x,
+                      ((a.transform).location).y as y,
+                      ((a.transform).location).z as z
+        """, (
+            partition_id,
+            fls_id,
+            target_location["x"], target_location["y"], target_location["z"],
+            target_location["x"], target_location["y"], target_location["z"],
+        ))
+        if len(rows) != 3:
+            raise RuntimeError(f"offline recovery updated {len(rows)} actor rows; expected controller, state, and pawn")
+        return {"ok": True, "dryRun": False, "accountId": account_id, "partitionId": partition_id, "result": rows, "rollback": {"previousServerPartitionId": player[0].get("previous_server_partition_id"), "previousServerId": player[0].get("server_id")}}
 
     def spice_field_inspect(self):
         errors = {}

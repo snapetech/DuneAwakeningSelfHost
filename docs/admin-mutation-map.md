@@ -222,9 +222,9 @@ dune.admin_move_offline_player(in_fls_id text, in_target_partition_name text, in
 dune.admin_move_offline_player_to_partition(in_fls_id text, in_target_partition_id bigint, in_target_location dune.vector)
 ```
 
-Both functions require `dune.is_player_offline(in_fls_id)` to be true. They are the right primitive for a DASH teleport command that moves an offline player to an admin's current location.
+Both functions require `dune.is_player_offline(in_fls_id)` to be true. Live testing showed `admin_move_offline_player_to_partition` only updates the pawn actor row, so DASH offline recovery now updates the controller, player-state, and pawn actor rows together instead of relying on that helper.
 
-The first chat-command implementation deliberately does not write live online actor state. Online players are owned by the running map server, so a raw actor transform update can be overwritten or desynced. For now, `&teleport <playername>` resolves the admin and target, rejects online targets, and calls `admin_move_offline_player_to_partition` only when execution is explicitly enabled.
+The chat-command implementation deliberately does not write live online actor state. Online players are owned by the running map server, so a raw actor transform update can be overwritten or desynced. For now, `&teleport <playername>` resolves the admin and target, rejects online targets, and updates the offline target's controller, player-state, and pawn actor rows together only when execution is explicitly enabled.
 
 The movement write performed by the server function is effectively:
 
