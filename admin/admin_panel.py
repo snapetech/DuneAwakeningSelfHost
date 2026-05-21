@@ -579,6 +579,8 @@ ENV_KEY_DEFINITIONS.update({
     "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_VALIDATED": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "When true, only catalog rows marked validated are seeded."},
     "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_MARKET_PRICE": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "When true, only catalog rows with dune.exchange price evidence are seeded."},
     "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_TIER": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Minimum parsed tier allowed for seeded listings."},
+    "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_SOURCE_CATEGORY": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Requires source-backed category evidence before seeding a template."},
+    "DUNE_ARTIFICIAL_EXCHANGE_SOURCE_CATEGORY_MAP": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Path to the source-backed Exchange category map JSON."},
     "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_CATEGORY_REVIEW": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Blocks heuristic/bootstrap categories until reviewed."},
     "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_DETERMINISTIC_CATEGORY": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Requires inferred category and category mask/depth to match before seeding."},
     "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_SKIP_UNKNOWN_CATEGORY": {"group": "Artificial Exchange Populator", "secret": False, "restart": True, "why": "Blocks unknown category rows and mask/depth 0/0 rows."},
