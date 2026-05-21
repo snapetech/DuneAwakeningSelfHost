@@ -669,6 +669,15 @@ curl -sS -H 'Content-Type: application/json' \
 
 CLI workflow:
 
+Find accounts that actually have same-owner slot candidates:
+
+```bash
+python3 scripts/character-slot-tool.py \
+  --action scan \
+  --summary \
+  --pretty
+```
+
 ```bash
 python3 scripts/character-slot-tool.py \
   --account-id 456 \

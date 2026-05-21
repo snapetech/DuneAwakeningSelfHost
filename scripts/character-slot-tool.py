@@ -70,6 +70,14 @@ def summarize(result):
             "nativeCall": plan.get("nativeCall"),
             "transactionSafety": plan.get("transactionSafety"),
         }
+    if "withCandidates" in result and "accounts" in result:
+        return {
+            "ok": bool(result.get("ok")),
+            "query": result.get("query", ""),
+            "scanned": result.get("scanned", 0),
+            "withCandidates": result.get("withCandidates", 0),
+            "accounts": result.get("accounts") or [],
+        }
     return {
         "ok": bool(result.get("ok", True)),
         "accountId": result.get("accountId"),
@@ -79,6 +87,36 @@ def summarize(result):
         "safeNativeSwapAction": (result.get("contract") or {}).get("safeNativeSwapAction"),
         "confidence": (result.get("contract") or {}).get("confidence"),
         "errors": result.get("errors") or {},
+    }
+
+
+def scan_accounts(base, token, query="", limit=0):
+    roster_query = urllib.parse.urlencode({"q": query})
+    rows = request_json("GET", f"{base}/api/characters?{roster_query}", token=token)
+    if not isinstance(rows, list):
+        raise SystemExit("admin API returned unexpected roster payload")
+    if limit:
+        rows = rows[:limit]
+    scanned = []
+    with_candidates = []
+    for row in rows:
+        account_id = row.get("account_id")
+        if account_id is None:
+            continue
+        slot_query = urllib.parse.urlencode({"account_id": account_id})
+        slots = request_json("GET", f"{base}/api/admin/character-slots?{slot_query}", token=token)
+        summary = summarize(slots)
+        summary["characterName"] = row.get("character_name")
+        summary["onlineStatus"] = row.get("online_status")
+        scanned.append(summary)
+        if summary.get("candidateCount", 0) > 0:
+            with_candidates.append(summary)
+    return {
+        "ok": True,
+        "query": query,
+        "scanned": len(scanned),
+        "withCandidates": len(with_candidates),
+        "accounts": with_candidates,
     }
 
 
@@ -94,9 +132,11 @@ def main_with_argv(argv=None):
     parser.add_argument("--env-file", type=pathlib.Path, default=ROOT / ".env")
     parser.add_argument("--base-url", default="", help="Admin panel base URL. Default: http://127.0.0.1:${DUNE_ADMIN_HOST_PORT:-18080}")
     parser.add_argument("--token", default="", help="Admin token. Default: DUNE_ADMIN_TOKEN from env/.env when configured.")
-    parser.add_argument("--account-id", required=True, type=int)
+    parser.add_argument("--account-id", type=int)
     parser.add_argument("--target-account-id", type=int)
-    parser.add_argument("--action", choices=("inspect", "new-character", "switch-character", "restore-character"), default="inspect")
+    parser.add_argument("--action", choices=("scan", "inspect", "new-character", "switch-character", "restore-character"), default="inspect")
+    parser.add_argument("--query", default="", help="Roster search query for --action scan.")
+    parser.add_argument("--limit", type=int, default=0, help="Maximum roster rows to inspect for --action scan. Default: all returned rows.")
     parser.add_argument("--execute", action="store_true", help="Execute switch-character/restore-character through the admin API.")
     parser.add_argument("--confirm", default="", help='Required for execution: "SWAP CHARACTER".')
     parser.add_argument("--summary", action="store_true", help="Print a compact operator summary instead of the full response.")
@@ -107,10 +147,15 @@ def main_with_argv(argv=None):
     base = admin_base(args, env_file)
     token = args.token or env("DUNE_ADMIN_TOKEN", "", env_file)
 
+    if args.action == "scan":
+        result = scan_accounts(base, token, query=args.query, limit=args.limit)
+    else:
+        if args.account_id is None:
+            raise SystemExit("--account-id is required unless --action scan")
     if args.action == "inspect":
         query = urllib.parse.urlencode({"account_id": args.account_id})
         result = request_json("GET", f"{base}/api/admin/character-slots?{query}", token=token)
-    else:
+    elif args.action != "scan":
         if args.action in ("switch-character", "restore-character") and args.target_account_id is None:
             raise SystemExit("--target-account-id is required for switch-character and restore-character")
         body = {
