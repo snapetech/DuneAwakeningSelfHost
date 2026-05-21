@@ -56,7 +56,7 @@ class CharacterSlotToolTest(unittest.TestCase):
 
     def test_account_id_not_required_for_scan(self):
         responses = [
-            [{"account_id": 10, "character_name": "Active", "online_status": "Offline"}],
+            {"online": [], "offline": [{"account_id": 10, "character_name": "Active", "online_status": "Offline"}]},
             {"ok": True, "accountId": 10, "offline": True, "candidates": [], "contract": {"safeNativeSwapPath": True}},
         ]
         with mock.patch.object(self.tool, "request_json", side_effect=responses) as request_json:
@@ -124,10 +124,13 @@ class CharacterSlotToolTest(unittest.TestCase):
 
     def test_scan_accounts_returns_only_accounts_with_candidates(self):
         responses = [
-            [
-                {"account_id": 10, "character_name": "NoAlt", "online_status": "Offline"},
-                {"account_id": 11, "character_name": "HasAlt", "online_status": "Offline"},
-            ],
+            {
+                "online": [],
+                "offline": [
+                    {"account_id": 10, "character_name": "NoAlt", "online_status": "Offline"},
+                    {"account_id": 11, "character_name": "HasAlt", "online_status": "Offline"},
+                ],
+            },
             {"ok": True, "accountId": 10, "offline": True, "candidates": [], "contract": {"safeNativeSwapPath": True}},
             {"ok": True, "accountId": 11, "offline": True, "candidates": [{"account_id": 12}], "contract": {"safeNativeSwapPath": True}},
         ]
@@ -137,6 +140,16 @@ class CharacterSlotToolTest(unittest.TestCase):
         self.assertEqual(result["withCandidates"], 1)
         self.assertEqual(result["accounts"][0]["accountId"], 11)
         self.assertEqual(result["accounts"][0]["characterName"], "HasAlt")
+
+    def test_scan_with_query_uses_character_search(self):
+        responses = [
+            [{"account_id": 10, "character_name": "Match", "online_status": "Offline"}],
+            {"ok": True, "accountId": 10, "offline": True, "candidates": [], "contract": {"safeNativeSwapPath": True}},
+        ]
+        with mock.patch.object(self.tool, "request_json", side_effect=responses) as request_json:
+            result = self.tool.scan_accounts("http://admin.test", "token", query="Match")
+        self.assertEqual(result["scanned"], 1)
+        self.assertIn("/api/characters?", request_json.call_args_list[0].args[1])
 
     def test_summary_for_scan_response(self):
         result = self.tool.summarize({

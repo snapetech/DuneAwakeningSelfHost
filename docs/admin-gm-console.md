@@ -179,6 +179,14 @@ Until all three are true, `&goto <playername>` and `&bring <playername>` only re
 - `&goto <playername>`: `TeleportToPlayer <playername>` targeted at the admin.
 - `&bring <playername>`: `TeleportToExact <admin-x> <admin-y> <admin-z>` targeted at the online player.
 
+The first live-test path is intentionally same-route only. Leave this guard enabled until same-partition movement is proven:
+
+```env
+DUNE_CHAT_COMMAND_ONLINE_GM_TELEPORT_REQUIRE_SAME_ROUTE=true
+```
+
+With the guard enabled, the admin and target must both be online and resolve to the same GM route before a teleport command can publish.
+
 ## Targeted Disconnect Status
 
 The stack now treats targeted disconnect as a gated native GM/session command. The preferred candidate is `RemoveSessionMember <playername>`, because it is less punitive than a kick. `KickLobbyMember <playername>` is the fallback. `BattlEyeMegaKick <playername>` stays opt-in only because it may behave like a harsher kick or impose client retry behavior outside the server reconnect-grace settings.

@@ -91,10 +91,16 @@ def summarize(result):
 
 
 def scan_accounts(base, token, query="", limit=0):
-    roster_query = urllib.parse.urlencode({"q": query})
-    rows = request_json("GET", f"{base}/api/characters?{roster_query}", token=token)
-    if not isinstance(rows, list):
-        raise SystemExit("admin API returned unexpected roster payload")
+    if query:
+        roster_query = urllib.parse.urlencode({"q": query})
+        rows = request_json("GET", f"{base}/api/characters?{roster_query}", token=token)
+        if not isinstance(rows, list):
+            raise SystemExit("admin API returned unexpected character search payload")
+    else:
+        roster = request_json("GET", f"{base}/api/characters/roster", token=token)
+        if not isinstance(roster, dict):
+            raise SystemExit("admin API returned unexpected roster payload")
+        rows = list(roster.get("online") or []) + list(roster.get("offline") or [])
     if limit:
         rows = rows[:limit]
     scanned = []

@@ -168,6 +168,72 @@ class CommandReplyTargetTests(unittest.TestCase):
         self.assertIn("chat.whispers", result["reply"]["stdout"])
 
 
+class OnlineTeleportSafetyTests(unittest.TestCase):
+    def row(self, name, partition_id=1, status="Online", x=10.0):
+        return {
+            "account_id": 1,
+            "character_name": name,
+            "online_status": status,
+            "life_state": "Alive",
+            "server_id": f"Survival_1{partition_id}",
+            "player_controller_id": 100 + partition_id,
+            "player_pawn_id": 200 + partition_id,
+            "fls_id": f"fls-{name}",
+            "funcom_id": f"funcom-{name}",
+            "actor_map": "HaggaBasin",
+            "partition_id": partition_id,
+            "dimension_index": 0,
+            "partition_label": f"Partition {partition_id}",
+            "partition_map": "Survival_1",
+            "x": x,
+            "y": 20.0,
+            "z": 30.0,
+        }
+
+    def test_online_goto_blocks_different_routes_before_publish(self):
+        admin = self.row("Lukano", partition_id=1)
+        target = self.row("Tester", partition_id=2)
+
+        def fake_character_row(conn, name):
+            return (admin if name == "Lukano" else target), []
+
+        with unittest.mock.patch.object(admin_chat_commands, "is_admin", lambda conn, sender_name, sender_fls_id: (True, "Lukano")), \
+             unittest.mock.patch.object(admin_chat_commands, "character_row", fake_character_row), \
+             unittest.mock.patch.object(admin_chat_commands, "send_gm_command") as send_gm:
+            result = admin_chat_commands.handle_command(object(), "&goto Tester", sender_name="Lukano")
+
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["blocked"])
+        self.assertIn("same-route live teleport guard", result["reason"])
+        send_gm.assert_not_called()
+
+    def test_online_bring_same_route_can_publish_when_gates_are_enabled(self):
+        admin = self.row("Lukano", partition_id=1)
+        target = self.row("Tester", partition_id=1)
+
+        def fake_character_row(conn, name):
+            return (admin if name == "Lukano" else target), []
+
+        def fake_env(name, default=""):
+            values = {
+                "DUNE_ADMIN_GM_COMMANDS_ENABLED": "true",
+                "DUNE_GM_COMMAND_PAYLOAD_VERIFIED": "true",
+                "DUNE_CHAT_COMMAND_EXECUTE_ONLINE_GM_TELEPORT": "true",
+            }
+            return values.get(name, default)
+
+        with unittest.mock.patch.object(admin_chat_commands, "is_admin", lambda conn, sender_name, sender_fls_id: (True, "Lukano")), \
+             unittest.mock.patch.object(admin_chat_commands, "character_row", fake_character_row), \
+             unittest.mock.patch.object(admin_chat_commands, "env", fake_env), \
+             unittest.mock.patch.object(admin_chat_commands, "publish_command", lambda command_text, route, **kwargs: {"ok": True, "commandText": command_text, "route": route, **kwargs}):
+            result = admin_chat_commands.handle_command(object(), "&bring Tester", sender_name="Lukano")
+
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["blocked"])
+        self.assertEqual(result["gm"]["commandText"], "TeleportToExact 10.000 20.000 30.000")
+        self.assertEqual(result["gm"]["route"], "Survival_11")
+
+
 class CommandListenerRetryTests(unittest.TestCase):
     def test_consume_forever_retries_amqp_connection(self):
         attempts = {"count": 0, "slept": []}

@@ -375,6 +375,32 @@ def gm_execution_allowed():
     )
 
 
+def online_gm_teleport_safety(conn, action, admin, target):
+    if admin is None:
+        return False, "admin player not found", None, None
+    if (admin.get("online_status") or "").lower() != "online":
+        return False, f"admin {admin.get('character_name')} is {admin.get('online_status')}; online GM teleport needs the admin online", None, None
+    if target is None:
+        return False, "target player not found", None, None
+    if (target.get("online_status") or "").lower() != "online":
+        return False, f"{target.get('character_name')} is {target.get('online_status')}; online GM teleport only supports online targets", None, None
+    if action in ("bring", "unstuck") and admin.get("x") is None:
+        return False, f"admin location unavailable for {admin.get('character_name')}", None, None
+
+    admin_route = gm_route_for(conn, admin)
+    target_route = gm_route_for(conn, target)
+    if not admin_route or not target_route:
+        return False, "could not resolve admin and target GM routes", admin_route, target_route
+    if env_bool("DUNE_CHAT_COMMAND_ONLINE_GM_TELEPORT_REQUIRE_SAME_ROUTE", True) and admin_route != target_route:
+        return (
+            False,
+            f"admin route {admin_route} differs from target route {target_route}; same-route live teleport guard is enabled",
+            admin_route,
+            target_route,
+        )
+    return True, "online GM teleport safety checks passed", admin_route, target_route
+
+
 def player_disconnect_allowed():
     return (
         env_bool("DUNE_ADMIN_GM_COMMANDS_ENABLED", False)
@@ -946,19 +972,30 @@ def handle_gm_command(conn, args, resolved_admin, reply=False):
             if reply:
                 run_announce(response)
             return {"ok": False, "error": response}
+        if admin is None:
+            response = f"admin player not found: {resolved_admin}"
+            if reply:
+                run_announce(response)
+            return {"ok": False, "error": response}
         target, matches = character_row(conn, args[1])
         if target is None:
             response = "no unique player match: " + ", ".join(row["character_name"] for row in matches) if matches else "player not found"
             if reply:
                 run_announce(response)
             return {"ok": False, "error": response, "matches": [row["character_name"] for row in matches]}
-        route = gm_route_for(conn, target)
+        safe, safety_reason, admin_route, target_route = online_gm_teleport_safety(conn, "goto", admin, target)
+        route = target_route or gm_route_for(conn, target)
         command_text = f"TeleportToPlayer {target['character_name']}"
-        gm_result = send_gm_command(command_text, resolved_admin, resolved_admin, route)
-        response = f"goto {'sent' if gm_result.get('ok') else 'preview ready'} for {target['character_name']} via {route}"
+        if safe:
+            gm_result = send_gm_command(command_text, resolved_admin, resolved_admin, route)
+            response = f"goto {'sent' if gm_result.get('ok') else 'preview ready'} for {target['character_name']} via {route}"
+        else:
+            gm_result = {"ok": False, "blocked": True, "reason": safety_reason, "preview": gm_command_preview(command_text, resolved_admin, resolved_admin, route)}
+            response = f"goto blocked for {target['character_name']}: {safety_reason}"
         if reply:
             run_announce(response)
-        return {"ok": bool(gm_result.get("ok")), "action": "gm.goto", "blocked": not bool(gm_result.get("ok")), "message": response, "target": compact_character(target), "gm": gm_result}
+        reason = safety_reason if not safe else "online GM teleport requires DUNE_ADMIN_GM_COMMANDS_ENABLED=true, DUNE_GM_COMMAND_PAYLOAD_VERIFIED=true, and DUNE_CHAT_COMMAND_EXECUTE_ONLINE_GM_TELEPORT=true"
+        return {"ok": bool(gm_result.get("ok")), "action": "gm.goto", "blocked": not bool(gm_result.get("ok")), "reason": reason, "message": response, "adminRoute": admin_route, "targetRoute": target_route, "target": compact_character(target), "gm": gm_result}
 
     if subcommand in ("bring", "summon"):
         if len(args) != 2:
@@ -977,13 +1014,19 @@ def handle_gm_command(conn, args, resolved_admin, reply=False):
             if reply:
                 run_announce(response)
             return {"ok": False, "error": response, "matches": [row["character_name"] for row in matches]}
-        route = gm_route_for(conn, target)
+        safe, safety_reason, admin_route, target_route = online_gm_teleport_safety(conn, "bring", admin, target)
+        route = target_route or gm_route_for(conn, target)
         command_text = f"TeleportToExact {admin['x']:.3f} {admin['y']:.3f} {admin['z']:.3f}"
-        gm_result = send_gm_command(command_text, target["character_name"], resolved_admin, route)
-        response = f"bring {'sent' if gm_result.get('ok') else 'preview ready'} for {target['character_name']} via {route}"
+        if safe:
+            gm_result = send_gm_command(command_text, target["character_name"], resolved_admin, route)
+            response = f"bring {'sent' if gm_result.get('ok') else 'preview ready'} for {target['character_name']} via {route}"
+        else:
+            gm_result = {"ok": False, "blocked": True, "reason": safety_reason, "preview": gm_command_preview(command_text, target["character_name"], resolved_admin, route)}
+            response = f"bring blocked for {target['character_name']}: {safety_reason}"
         if reply:
             run_announce(response)
-        return {"ok": bool(gm_result.get("ok")), "action": "gm.bring", "blocked": not bool(gm_result.get("ok")), "message": response, "admin": compact_character(admin), "target": compact_character(target), "gm": gm_result}
+        reason = safety_reason if not safe else "online GM teleport requires DUNE_ADMIN_GM_COMMANDS_ENABLED=true, DUNE_GM_COMMAND_PAYLOAD_VERIFIED=true, and DUNE_CHAT_COMMAND_EXECUTE_ONLINE_GM_TELEPORT=true"
+        return {"ok": bool(gm_result.get("ok")), "action": "gm.bring", "blocked": not bool(gm_result.get("ok")), "reason": reason, "message": response, "adminRoute": admin_route, "targetRoute": target_route, "admin": compact_character(admin), "target": compact_character(target), "gm": gm_result}
 
     if subcommand == "unstuck":
         if len(args) not in (2, 3):
@@ -1726,17 +1769,28 @@ def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=F
             response = "usage: &goto <playername>"
             announce_result = maybe_reply(response, reply)
             return {"ok": False, "error": response, "reply": announce_result}
+        admin, _ = character_row(conn, resolved_admin)
+        if admin is None:
+            response = f"admin player not found: {resolved_admin}"
+            announce_result = maybe_reply(response, reply)
+            return {"ok": False, "error": response, "reply": announce_result}
         target, matches = character_row(conn, parts[1])
         if target is None:
             response = "no unique player match: " + ", ".join(row["character_name"] for row in matches) if matches else "player not found"
             announce_result = maybe_reply(response, reply)
             return {"ok": False, "error": response, "matches": [row["character_name"] for row in matches], "reply": announce_result}
-        route = gm_route_for(conn, target)
         if target["online_status"].lower() == "online":
+            safe, safety_reason, admin_route, target_route = online_gm_teleport_safety(conn, "goto", admin, target)
+            route = target_route or gm_route_for(conn, target)
             command_text = f"TeleportToPlayer {target['character_name']}"
-            gm_result = send_gm_command(command_text, resolved_admin, resolved_admin, route)
+            if safe:
+                gm_result = send_gm_command(command_text, resolved_admin, resolved_admin, route)
+            else:
+                gm_result = {"ok": False, "blocked": True, "reason": safety_reason, "preview": gm_command_preview(command_text, resolved_admin, resolved_admin, route)}
             if gm_result.get("ok"):
                 response = f"sent native GM goto for {resolved_admin} to {target['character_name']} via {route}"
+            elif not safe:
+                response = f"online goto blocked for {target['character_name']}: {safety_reason}"
             else:
                 response = f"{target['character_name']} is online at {format_location(target)}; live goto GM envelope is still gated"
             announce_result = maybe_reply(response, reply)
@@ -1744,7 +1798,7 @@ def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=F
                 "ok": bool(gm_result.get("ok")),
                 "action": "goto",
                 "blocked": not bool(gm_result.get("ok")),
-                "reason": "online admin teleport requires DUNE_ADMIN_GM_COMMANDS_ENABLED=true, DUNE_GM_COMMAND_PAYLOAD_VERIFIED=true, and DUNE_CHAT_COMMAND_EXECUTE_ONLINE_GM_TELEPORT=true",
+                "reason": safety_reason if not safe else "online admin teleport requires DUNE_ADMIN_GM_COMMANDS_ENABLED=true, DUNE_GM_COMMAND_PAYLOAD_VERIFIED=true, and DUNE_CHAT_COMMAND_EXECUTE_ONLINE_GM_TELEPORT=true",
                 "gm": gm_result,
                 "candidateCommands": [
                     f"TeleportToPlayer {target['character_name']}",
@@ -1752,6 +1806,8 @@ def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=F
                     f"TravelTo {target['actor_map'] or target['partition_map']}",
                 ],
                 "message": response,
+                "adminRoute": admin_route,
+                "targetRoute": target_route,
                 "target": {"characterName": target["character_name"], "status": target["online_status"], "location": compact_location(target)},
                 "reply": announce_result,
             }
@@ -1786,11 +1842,17 @@ def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=F
             response = f"{target['character_name']} is {target['online_status']}; use &teleport for offline targets"
             announce_result = maybe_reply(response, reply)
             return {"ok": False, "error": response, "target": dict(target), "reply": announce_result}
-        route = gm_route_for(conn, target)
+        safe, safety_reason, admin_route, target_route = online_gm_teleport_safety(conn, "bring", admin, target)
+        route = target_route or gm_route_for(conn, target)
         command_text = f"TeleportToExact {admin['x']:.3f} {admin['y']:.3f} {admin['z']:.3f}"
-        gm_result = send_gm_command(command_text, target["character_name"], resolved_admin, route)
+        if safe:
+            gm_result = send_gm_command(command_text, target["character_name"], resolved_admin, route)
+        else:
+            gm_result = {"ok": False, "blocked": True, "reason": safety_reason, "preview": gm_command_preview(command_text, target["character_name"], resolved_admin, route)}
         if gm_result.get("ok"):
             response = f"sent native GM bring for {target['character_name']} to {resolved_admin} via {route}"
+        elif not safe:
+            response = f"online bring blocked for {target['character_name']}: {safety_reason}"
         else:
             response = f"{target['character_name']} is online; bring GM envelope is still gated"
         announce_result = maybe_reply(response, reply)
@@ -1798,10 +1860,12 @@ def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=F
             "ok": bool(gm_result.get("ok")),
             "action": "bring",
             "blocked": not bool(gm_result.get("ok")),
-            "reason": "online player teleport requires the native live GM command route gates",
+            "reason": safety_reason if not safe else "online player teleport requires the native live GM command route gates",
             "gm": gm_result,
             "candidateCommands": [command_text, f"TeleportToPlayer {resolved_admin}"],
             "message": response,
+            "adminRoute": admin_route,
+            "targetRoute": target_route,
             "admin": {"characterName": resolved_admin, "location": compact_location(admin)},
             "target": {"characterName": target["character_name"], "status": target["online_status"], "location": compact_location(target)},
             "reply": announce_result,
