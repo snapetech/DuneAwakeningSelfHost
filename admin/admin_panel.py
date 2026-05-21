@@ -2549,6 +2549,11 @@ def character_swap_takeover(active_account_id, target_account_id, active_user, t
                 ]
                 if online_now:
                     raise RuntimeError("character swap aborted after backup because active or target account came online")
+                before_by_account = {int(row.get("account_id")): row for row in before_rows}
+                active_before = before_by_account.get(int(active_account_id), {})
+                target_before = before_by_account.get(int(target_account_id), {})
+                if active_before.get("fls_id") != active_user or target_before.get("fls_id") != target_user:
+                    raise RuntimeError("character swap aborted because active/target FLS identities changed after planning")
                 cursor.execute("select dune.takeover_account(%s, %s)", (target_user, active_user))
                 cursor.execute("""
                     select eps.account_id,

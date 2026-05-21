@@ -694,6 +694,49 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn(("rollback",), events)
         self.assertNotIn(("commit",), events)
 
+    def test_character_swap_takeover_rolls_back_on_stale_planned_identity(self):
+        events = []
+
+        class FakeCursor:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def execute(self, sql, params=None):
+                events.append(("execute", " ".join(sql.split()), params))
+
+            def fetchall(self):
+                return [{"account_id": 10, "online_status": "Offline", "fls_id": "different-fls"}, {"account_id": 11, "online_status": "Offline", "fls_id": "stored-fls"}]
+
+        class FakeConn:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def cursor(self, cursor_factory=None):
+                return FakeCursor()
+
+            def commit(self):
+                events.append(("commit",))
+
+            def rollback(self):
+                events.append(("rollback",))
+
+        self.patch_connect(lambda: FakeConn())
+        with self.assertRaises(RuntimeError):
+            self.panel.character_swap_takeover(10, 11, "active-fls", "stored-fls")
+        takeover_calls = [
+            event for event in events
+            if event[0] == "execute" and "takeover_account" in event[1]
+        ]
+        self.assertEqual(takeover_calls, [])
+        self.assertIn(("rollback",), events)
+        self.assertNotIn(("commit",), events)
+
     def test_character_slot_execution_block_does_not_create_backup(self):
         backups = []
         original_backup = self.panel.create_db_backup
