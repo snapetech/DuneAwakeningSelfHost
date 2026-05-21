@@ -1769,26 +1769,22 @@ def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=F
     if command in ("bring", "summon", "tphere"):
         if len(parts) != 2:
             response = "usage: &bring <playername>"
-            if reply:
-                run_announce(response)
-            return {"ok": False, "error": response}
+            announce_result = maybe_reply(response, reply)
+            return {"ok": False, "error": response, "reply": announce_result}
         admin, _ = character_row(conn, resolved_admin)
         if admin is None or admin["partition_id"] is None or admin["x"] is None:
             response = f"admin location unavailable for {resolved_admin}"
-            if reply:
-                run_announce(response)
-            return {"ok": False, "error": response}
+            announce_result = maybe_reply(response, reply)
+            return {"ok": False, "error": response, "reply": announce_result}
         target, matches = character_row(conn, parts[1])
         if target is None:
             response = "no unique player match: " + ", ".join(row["character_name"] for row in matches) if matches else "player not found"
-            if reply:
-                run_announce(response)
-            return {"ok": False, "error": response, "matches": [row["character_name"] for row in matches]}
+            announce_result = maybe_reply(response, reply)
+            return {"ok": False, "error": response, "matches": [row["character_name"] for row in matches], "reply": announce_result}
         if target["online_status"].lower() != "online":
             response = f"{target['character_name']} is {target['online_status']}; use &teleport for offline targets"
-            if reply:
-                run_announce(response)
-            return {"ok": False, "error": response, "target": dict(target)}
+            announce_result = maybe_reply(response, reply)
+            return {"ok": False, "error": response, "target": dict(target), "reply": announce_result}
         route = gm_route_for(conn, target)
         command_text = f"TeleportToExact {admin['x']:.3f} {admin['y']:.3f} {admin['z']:.3f}"
         gm_result = send_gm_command(command_text, target["character_name"], resolved_admin, route)
@@ -1796,8 +1792,7 @@ def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=F
             response = f"sent native GM bring for {target['character_name']} to {resolved_admin} via {route}"
         else:
             response = f"{target['character_name']} is online; bring GM envelope is still gated"
-        if reply:
-            run_announce(response)
+        announce_result = maybe_reply(response, reply)
         return {
             "ok": bool(gm_result.get("ok")),
             "action": "bring",
@@ -1808,12 +1803,12 @@ def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=F
             "message": response,
             "admin": {"characterName": resolved_admin, "location": compact_location(admin)},
             "target": {"characterName": target["character_name"], "status": target["online_status"], "location": compact_location(target)},
+            "reply": announce_result,
         }
 
     response = f"unknown command: {command}"
-    if reply:
-        run_announce(response)
-    return {"ok": False, "error": response}
+    announce_result = maybe_reply(response, reply)
+    return {"ok": False, "error": response, "reply": announce_result}
 
 
 def parse_chat_message(body):
