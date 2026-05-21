@@ -3792,7 +3792,7 @@ class Handler(BaseHTTPRequestHandler):
             "transactionSafety": {
                 "backupBeforeTransaction": True,
                 "advisoryLocks": "sorted active/target account ids",
-                "rowLocks": "dune.player_state rows for active and target account ids",
+                "rowLocks": "dune.encrypted_player_state and dune.encrypted_accounts rows for active and target account ids",
                 "offlineRecheckInsideTransaction": True,
                 "commitRequiresPostSwapVerification": True,
             },

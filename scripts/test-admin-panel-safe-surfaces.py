@@ -778,6 +778,46 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn("DUNE_ADMIN_CHARACTER_SWAP_ENABLED", captured["errors"][0]["message"])
         self.assertEqual(captured["audits"][0]["action"], "post-rejected")
 
+    def test_character_slot_execute_route_returns_success_payload(self):
+        original_backup = self.panel.create_db_backup
+        original_takeover = self.panel.character_swap_takeover
+
+        def fake_query(sql, params=None):
+            if "where ps.account_id=%s" in sql and "left join dune.accounts" in sql:
+                return [{"account_id": 10, "character_name": "Active", "online_status": "Offline", "fls_id": "active-fls"}]
+            if "with target_account as" in sql:
+                return [{"account_id": 11, "character_name": "Stored", "online_status": "Offline", "fls_id": "stored-fls", "ownership_evidence": "same-account-user"}]
+            if "from pg_proc" in sql:
+                return [{"name": "takeover_account", "args": "in_user_to_takeover text, in_current_user text", "result": "void"}]
+            return []
+
+        def fake_takeover(active_account_id, target_account_id, active_user, target_user):
+            return (
+                [{"account_id": active_account_id, "online_status": "Offline", "fls_id": active_user}, {"account_id": target_account_id, "online_status": "Offline", "fls_id": target_user}],
+                [{"account_id": active_account_id, "online_status": "Offline", "fls_id": target_user}, {"account_id": target_account_id, "online_status": "Offline", "fls_id": active_user}],
+                True,
+            )
+
+        self.patch_db(fake_query, lambda sql, params=None: (_ for _ in ()).throw(AssertionError("unexpected raw execute")))
+        self.patch_flag("CHARACTER_SWAP_ENABLED", True)
+        self.panel.create_db_backup = lambda: {"path": "backup.dump", "bytes": 1}
+        self.panel.character_swap_takeover = fake_takeover
+        self.addCleanup(lambda: setattr(self.panel, "create_db_backup", original_backup))
+        self.addCleanup(lambda: setattr(self.panel, "character_swap_takeover", original_takeover))
+
+        captured = self.invoke_post_route("/api/admin/character-slots/execute", {
+            "dry_run": False,
+            "account_id": 10,
+            "action": "switch-character",
+            "target_account_id": 11,
+            "confirm": "SWAP CHARACTER",
+        })
+        self.assertFalse(captured["errors"])
+        self.assertFalse(captured["json"]["dryRun"])
+        self.assertTrue(captured["json"]["verified"])
+        self.assertEqual(captured["audits"][0]["action"], "character-slot-execute")
+        self.assertTrue(captured["audits"][0]["executable"])
+
     def test_communinet_tutorial_vendor_dry_runs_are_plan_only(self):
         def fake_query(sql, params=None):
             if "load_communinet_player_data" in sql:
