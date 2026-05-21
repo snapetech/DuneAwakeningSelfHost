@@ -40,7 +40,8 @@ compose=(docker compose --env-file "$env_file" -f compose.yaml -f compose.allmap
 
 printf 'services_to_recreate=%s\n' "$services"
 printf '\n== current RabbitMQ TLS SAN ==\n'
-./scripts/check-rabbitmq-cert-sans.sh "$env_file"
+tls_rc=0
+./scripts/check-rabbitmq-cert-sans.sh "$env_file" || tls_rc=1
 
 if [[ "${CONFIRM_RECREATE_RMQ_TLS_STACK:-}" != "yes" ]]; then
   cat <<EOF
@@ -48,6 +49,12 @@ Dry run only. To recreate services during maintenance:
   CONFIRM_RECREATE_RMQ_TLS_STACK=yes make rabbitmq-cert-recreate-stack ENV_FILE=${env_file}
 EOF
   exit 0
+fi
+
+if [[ "$tls_rc" -ne 0 && "${DUNE_ALLOW_INVALID_RMQ_TLS_RECREATE:-}" != "yes" ]]; then
+  printf 'refusing recreate because RabbitMQ TLS SAN check failed\n' >&2
+  printf 'install staged TLS first or set DUNE_ALLOW_INVALID_RMQ_TLS_RECREATE=yes for an intentional emergency\n' >&2
+  exit 1
 fi
 
 printf '\n== recreating RabbitMQ TLS-dependent services ==\n'
