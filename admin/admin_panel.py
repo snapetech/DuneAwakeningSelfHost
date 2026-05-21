@@ -6063,6 +6063,7 @@ INDEX = r"""<!doctype html>
     .card { border:1px solid var(--line); border-radius:8px; background:var(--panel); padding:14px; margin-bottom:14px; }
     .panelBand { border:1px solid var(--line); border-radius:8px; background:var(--panel); padding:14px; margin-bottom:14px; }
     .pageStack { display:grid; gap:14px; }
+    .pageStack > * { min-width:0; }
     .twoCol { display:grid; grid-template-columns:minmax(0,1.2fr) minmax(360px,.8fr); gap:14px; align-items:start; }
     .threeCol { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; align-items:start; }
     .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:12px; }
