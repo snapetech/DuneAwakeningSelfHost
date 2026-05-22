@@ -44,7 +44,22 @@ ENV_FILE = ROOT / ".env"
 BACKUP_ROOT = ROOT / "backups" / "admin-panel"
 STATIC_ROOT = ROOT / "admin" / "static"
 PLAYER_PEAKS_FILE = pathlib.Path(os.environ.get("DUNE_PLAYER_PEAKS_FILE", str(BACKUP_ROOT / "player-peaks.json")))
-ADMIN_PANEL_BUILD = "20260521-hagga-neon-pois"
+ADMIN_PANEL_BUILD_LABEL = "20260522-live-refresh"
+ADMIN_PANEL_SELF_RELOAD_ENABLED = os.environ.get("DUNE_ADMIN_SELF_RELOAD_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+ADMIN_PANEL_SELF_RELOAD_POLL_SECONDS = float(os.environ.get("DUNE_ADMIN_SELF_RELOAD_POLL_SECONDS", "1.5"))
+ADMIN_PANEL_SELF_RELOAD_DEBOUNCE_SECONDS = float(os.environ.get("DUNE_ADMIN_SELF_RELOAD_DEBOUNCE_SECONDS", "1.0"))
+
+
+def compute_admin_panel_build():
+    try:
+        stat = pathlib.Path(__file__).stat()
+        return f"{ADMIN_PANEL_BUILD_LABEL}-{int(stat.st_mtime_ns)}-{stat.st_size}-{os.getpid()}"
+    except OSError:
+        return f"{ADMIN_PANEL_BUILD_LABEL}-{os.getpid()}"
+
+
+ADMIN_PANEL_BUILD = compute_admin_panel_build()
+ADMIN_PANEL_RESTART_EVENT = threading.Event()
 AUDIT_LOG = BACKUP_ROOT / "audit.jsonl"
 STEAM_PROFILE_CACHE_FILE = BACKUP_ROOT / "steam-profiles.json"
 AUDIT_MAX_BYTES = int(os.environ.get("DUNE_ADMIN_AUDIT_MAX_BYTES", str(5 * 1024 * 1024)))
@@ -134,6 +149,58 @@ ADMIN_DIGEST_STATE_FILE = ROOT / "backups" / "admin-bot" / "player-presence.json
 ANNOUNCEMENT_LOCK = threading.Lock()
 RESTART_LOCK = threading.Lock()
 EVENT_LOCK = threading.Lock()
+
+
+def admin_panel_build():
+    return ADMIN_PANEL_BUILD
+
+
+def admin_panel_reload_paths():
+    paths = [
+        pathlib.Path(__file__).resolve(),
+        CODE_ROOT / "scripts" / "dune_gm_command.py",
+        GM_CATALOG_PATH,
+    ]
+    extra = os.environ.get("DUNE_ADMIN_SELF_RELOAD_PATHS", "")
+    for raw in extra.split(":"):
+        raw = raw.strip()
+        if raw:
+            paths.append(pathlib.Path(raw).expanduser())
+    return paths
+
+
+def admin_panel_file_signature(path):
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return (int(stat.st_mtime_ns), int(stat.st_size))
+
+
+def admin_panel_source_signature(paths):
+    return {str(path): admin_panel_file_signature(path) for path in paths}
+
+
+def start_admin_panel_self_reload(server):
+    if not ADMIN_PANEL_SELF_RELOAD_ENABLED:
+        return
+
+    watched = admin_panel_reload_paths()
+    baseline = admin_panel_source_signature(watched)
+
+    def watcher():
+        while not ADMIN_PANEL_RESTART_EVENT.wait(ADMIN_PANEL_SELF_RELOAD_POLL_SECONDS):
+            current = admin_panel_source_signature(watched)
+            if current == baseline:
+                continue
+            changed = [path for path, signature in current.items() if baseline.get(path) != signature]
+            print(f"admin-panel source changed; self-reloading: {', '.join(changed)}", flush=True)
+            time.sleep(max(0.0, ADMIN_PANEL_SELF_RELOAD_DEBOUNCE_SECONDS))
+            ADMIN_PANEL_RESTART_EVENT.set()
+            threading.Thread(target=server.shutdown, daemon=True).start()
+            return
+
+    threading.Thread(target=watcher, name="admin-panel-self-reload", daemon=True).start()
 ANNOUNCEMENT_THREAD_STARTED = False
 ANNOUNCEMENT_POLL_SECONDS = 5
 ANNOUNCEMENT_MAX_MESSAGE_BYTES = int(os.environ.get("DUNE_ADMIN_ANNOUNCEMENT_MAX_MESSAGE_BYTES", "500"))
@@ -3003,7 +3070,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.static_file(STATIC_ROOT / "hagga-basin-south.webp", "image/webp")
             elif parsed.path == "/api/status":
                 self.json({
-                    "build": ADMIN_PANEL_BUILD,
+                    "build": admin_panel_build(),
+                    "buildLabel": ADMIN_PANEL_BUILD_LABEL,
+                    "selfReloadEnabled": ADMIN_PANEL_SELF_RELOAD_ENABLED,
                     "database": DATABASE,
                     "server": server_metadata(),
                     "mutationsEnabled": MUTATIONS_ENABLED,
@@ -3069,6 +3138,9 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/players/hagga-basin":
                 self.require_token()
                 self.json(self.hagga_basin_players())
+            elif parsed.path == "/api/players/deep-desert":
+                self.require_token()
+                self.json(self.deep_desert_players())
             elif parsed.path == "/api/markers/hagga-basin":
                 self.require_token()
                 self.json(read_hagga_pois())
@@ -3724,6 +3796,134 @@ class Handler(BaseHTTPRequestHandler):
             "landmarks": landmarks,
             "pois": read_hagga_pois(),
             "diagnostics": diagnostics,
+            "players": rows,
+        }
+
+    def deep_desert_players(self):
+        rows = query("""
+            select ps.account_id, ps.character_name, ps.online_status::text, ps.life_state::text,
+                   ps.server_id, fs.map as farm_map, wp.partition_id, wp.dimension_index, wp.label,
+                   ps.player_controller_id, ps.player_pawn_id, ps.last_login_time,
+                   a.map as actor_map, a.partition_id as actor_partition_id,
+                   ((a.transform).location).x::float8 as x,
+                   ((a.transform).location).y::float8 as y,
+                   ((a.transform).location).z::float8 as z,
+                   tri.map as return_map,
+                   ((tri.transform).location).x::float8 as return_x,
+                   ((tri.transform).location).y::float8 as return_y,
+                   ((tri.transform).location).z::float8 as return_z
+            from dune.player_state ps
+            left join dune.actors a on a.id = ps.player_pawn_id
+            left join dune.travel_return_info tri on tri.player_controller_id = ps.player_controller_id
+            left join dune.farm_state fs on fs.server_id = ps.server_id
+            left join dune.world_partition wp on wp.server_id = ps.server_id
+            where ps.online_status::text = 'Online'
+              and a.map in ('DeepDesert', 'DeepDesert_1')
+              and a.transform is not null
+            order by ps.character_name nulls last, ps.account_id
+        """)
+        bounds_row = (query("""
+            select min(((a.transform).location).x::float8) as min_x,
+                   max(((a.transform).location).x::float8) as max_x,
+                   min(((a.transform).location).y::float8) as min_y,
+                   max(((a.transform).location).y::float8) as max_y,
+                   count(*) as actor_count
+            from dune.actors a
+            where a.map in ('DeepDesert', 'DeepDesert_1')
+              and a.transform is not null
+        """) or [{}])[0]
+        marker_rows = query("""
+            select m.marker_hash_id,
+                   m.dimension_index,
+                   m.area_id,
+                   (m.marker).marker_type as marker_type,
+                   (m.marker).x::float8 as x,
+                   (m.marker).y::float8 as y,
+                   (m.marker).z::float8 as z,
+                   m.area_radius::float8 as area_radius
+            from dune.markers m
+            join dune.map_names mn on mn.map_name_id = m.map_name_id
+            where mn.map_name = 'DeepDesert'
+            order by m.dimension_index, (m.marker).marker_type, m.marker_hash_id
+        """)
+        shifting_rows = query("""
+            select id, alpha::float8 as alpha, x::float8 as x, y::float8 as y,
+                   extract(epoch from last_modified_time)::bigint as last_modified_time
+            from dune.shiftingsands_data
+            order by id
+        """)
+        resource_rows = query("""
+            select map, dimension_index, field_kind_id, field_id,
+                   spawn_time::float8 as spawn_time,
+                   value_remaining::bigint as value_remaining
+            from dune.resourcefield_state
+            where map = 'DeepDesert'
+            order by dimension_index, field_kind_id, spawn_time
+        """)
+        spice_rows = query("""
+            select field_type, map_name, dimension_index, spicefield_type_id,
+                   max_globally_primed, max_globally_active,
+                   current_globally_primed, current_globally_active,
+                   is_spawning_active, global_spawn_weight::float8 as global_spawn_weight
+            from dune.spicefield_types
+            where map_name = 'DeepDesert'
+            order by dimension_index, field_type
+        """)
+        seed_rows = query("""
+            select 'farm' as scope, null::integer as partition_id, null::integer as dimension_index,
+                   world_reset_seed
+            from dune.world_farm_reset_seed
+            where onerow_id = true
+            union all
+            select 'map' as scope, null::integer as partition_id, null::integer as dimension_index,
+                   world_reset_seed
+            from dune.world_map_reset_seed
+            where map = 'DeepDesert'
+            union all
+            select 'partition' as scope, wp.partition_id, wp.dimension_index, wprs.world_reset_seed
+            from dune.world_partition wp
+            left join dune.world_partition_reset_seed wprs on wprs.partition_id = wp.partition_id
+            where wp.map = 'DeepDesert_1'
+            order by scope, dimension_index nulls first, partition_id nulls first
+        """)
+        dd_min_x, dd_max_x = -1250000, 1150000
+        dd_min_y, dd_max_y = -1250000, 1050000
+        return {
+            "map": "DeepDesert",
+            "label": "Deep Desert",
+            "generatedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "bounds": {
+                "minX": bounds_row.get("min_x"),
+                "maxX": bounds_row.get("max_x"),
+                "minY": bounds_row.get("min_y"),
+                "maxY": bounds_row.get("max_y"),
+                "actorCount": bounds_row.get("actor_count") or 0,
+            },
+            "calibration": {
+                "minX": dd_min_x,
+                "maxX": dd_max_x,
+                "minY": dd_min_y,
+                "maxY": dd_max_y,
+                "invertX": HAGGA_MAP_INVERT_X,
+                "invertY": False,
+                "imageMinU": HAGGA_MAP_IMAGE_MIN_U,
+                "imageMaxU": HAGGA_MAP_IMAGE_MAX_U,
+                "imageMinV": HAGGA_MAP_IMAGE_MIN_V,
+                "imageMaxV": HAGGA_MAP_IMAGE_MAX_V,
+                "showReturnPoints": HAGGA_MAP_SHOW_RETURN_POINTS,
+                "source": "Deep Desert player and marker coordinates render by stored world X/Y against fixed Deep Desert bounds.",
+            },
+            "landmarks": [],
+            "markers": marker_rows,
+            "layout": {
+                "seeds": seed_rows,
+                "shiftingSands": shifting_rows,
+                "resourceFields": resource_rows,
+                "spiceFields": spice_rows,
+                "backgroundHref": "",
+            },
+            "pois": {"groups": {}, "markers": []},
+            "diagnostics": [],
             "players": rows,
         }
 
@@ -6328,7 +6528,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def html(self, body, head_only=False):
         nonce = secrets.token_urlsafe(16)
-        body = body.replace("__NONCE__", nonce)
+        body = body.replace("__NONCE__", nonce).replace("__ADMIN_PANEL_BUILD__", admin_panel_build())
         data = body.encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -6379,7 +6579,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Surrogate-Control", "no-store")
         self.send_header("Pragma", "no-cache")
         self.send_header("Expires", "0")
-        self.send_header("X-Admin-Panel-Build", ADMIN_PANEL_BUILD)
+        self.send_header("X-Admin-Panel-Build", admin_panel_build())
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
@@ -6401,7 +6601,7 @@ INDEX = r"""<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="admin-panel-build" content="20260521-hagga-neon-pois">
+  <meta name="admin-panel-build" content="__ADMIN_PANEL_BUILD__">
   <title>Dune Admin</title>
   <style nonce="__NONCE__">
     :root { color-scheme: dark; --bg:#0f1110; --nav:#141814; --panel:#1a1f1a; --panel2:#131713; --panel3:#20261f; --muted:#a3aea4; --line:#323b32; --text:#edf3ea; --accent:#d5a13e; --danger:#d96f62; --ok:#7fc27a; --warn:#e1b75f; }
@@ -6681,12 +6881,16 @@ INDEX = r"""<!doctype html>
     </div>
   </div>
 <script nonce="__NONCE__">
-const ADMIN_PANEL_BUILD = '20260521-hagga-neon-pois';
+const ADMIN_PANEL_BUILD = '__ADMIN_PANEL_BUILD__';
+const INITIAL_PATH_TAB = location.pathname.replace(/^\/+|\/+$/g, '');
+if (location.hash || (INITIAL_PATH_TAB && INITIAL_PATH_TAB !== 'overview')) {
+  history.replaceState({tab: INITIAL_PATH_TAB || 'overview'}, '', '/');
+}
 let token = (localStorage.getItem('duneAdminToken') || sessionStorage.getItem('duneAdminToken') || '').trim();
 document.getElementById('token').value = token;
 const validTabs = new Set(['overview', 'ops', 'security', 'runbook', 'characters', 'settings', 'mutations', 'digests', 'catalog']);
-const pathTab = location.pathname.slice(1);
-let current = validTabs.has(location.hash.slice(1)) ? location.hash.slice(1) : (validTabs.has(pathTab) ? pathTab : (sessionStorage.getItem('duneAdminTab') || 'overview'));
+const pathTab = validTabs.has(INITIAL_PATH_TAB) ? INITIAL_PATH_TAB : '';
+let current = pathTab || sessionStorage.getItem('duneAdminTab') || 'overview';
 if (!validTabs.has(current)) current = 'overview';
 let pendingAdminAccountId = '';
 let resourceTimer = null;
@@ -6694,6 +6898,8 @@ let overviewResourceTimer = null;
 let healthTimer = null;
 let haggaMapTimer = null;
 let loadSerial = 0;
+let currentBuild = ADMIN_PANEL_BUILD;
+let buildReloading = false;
 let detailLoadSerial = 0;
 let playerModalAccountId = '';
 let playerModalTimer = null;
@@ -6703,10 +6909,12 @@ let resourceRefreshInFlight = false;
 let healthRefreshInFlight = false;
 let haggaMapRefreshInFlight = false;
 let haggaMapAutoRefresh = localStorage.getItem('duneAdminHaggaMapAutoRefresh') !== 'off';
+let activeOverviewMap = sessionStorage.getItem('duneAdminOverviewMap') === 'deep-desert' ? 'deep-desert' : 'hagga-basin';
 let haggaMapLastGoodHtml = '';
 let haggaMapZoomState = {scale:1, x:0, y:0};
 let haggaMapSuppressMarkerClick = false;
 let haggaPoiGroups = {};
+let deepDesertMarkerGroups = {};
 let autoRefresh = sessionStorage.getItem('duneAdminAutoRefresh') !== 'off';
 const resourceHistory = [];
 let adminReferenceCache = null;
@@ -7182,6 +7390,25 @@ function saveHaggaPoiGroups(selected){
   localStorage.setItem('duneAdminHaggaPoiGroups', JSON.stringify(selected));
   sessionStorage.setItem('duneAdminHaggaPoiGroups', JSON.stringify(selected));
 }
+function selectedDeepDesertMarkerGroups(groups){
+  if (!deepDesertMarkerGroups || !Object.keys(deepDesertMarkerGroups).length) {
+    try {
+      deepDesertMarkerGroups = JSON.parse(localStorage.getItem('duneAdminDeepDesertMarkerGroups.v3') || sessionStorage.getItem('duneAdminDeepDesertMarkerGroups.v3') || '{}');
+    } catch (e) {
+      deepDesertMarkerGroups = {};
+    }
+  }
+  const selected = {};
+  Object.keys(groups || {}).forEach(group => {
+    selected[group] = Object.prototype.hasOwnProperty.call(deepDesertMarkerGroups, group) ? deepDesertMarkerGroups[group] === true : true;
+  });
+  return selected;
+}
+function saveDeepDesertMarkerGroups(selected){
+  deepDesertMarkerGroups = selected;
+  localStorage.setItem('duneAdminDeepDesertMarkerGroups.v3', JSON.stringify(selected));
+  sessionStorage.setItem('duneAdminDeepDesertMarkerGroups.v3', JSON.stringify(selected));
+}
 function haggaPoiSummary(selected, pois){
   const enabled = Object.keys(selected || {}).filter(group => selected[group] === true).length;
   const markerCount = Array.isArray(pois?.markers) ? pois.markers.filter(marker => selected[marker.group] === true).length : 0;
@@ -7215,13 +7442,62 @@ function haggaPoiToggleBar(pois, selected){
     return `<label data-filter-text="${esc((label + ' ' + group).toLowerCase())}"><span class="poiToggleLabel"><input type="checkbox" value="${esc(group)}"${selected[group] ? ' checked' : ''}><span class="poiSwatch" style="--poi-color:${esc(colors[group])}; color:${esc(colors[group])}; background:${esc(colors[group])}"></span><span>${esc(label)}</span></span><span class="poiCount">${esc(info.count || 0)}</span></label>`;
   }).join('')}</div></aside>`;
 }
+function deepDesertMarkerGroup(type){
+  const value = String(type || 'Marker');
+  if (value === 'TaxiService') return 'Transit';
+  if (['Cave', 'Ecolab', 'HomeBase'].includes(value)) return 'Locations';
+  if (value.includes('Wreckage') || value.includes('Part')) return 'Wreckage';
+  if (value.includes('Ore') || value.includes('Pickup') || value === 'BrittleBush') return 'Resources';
+  return 'Markers';
+}
+const deepDesertMarkerColors = {Transit:'#6fb6ff', Locations:'#d5a13e', Wreckage:'#b7c0c7', Resources:'#78cf7a', Markers:'#f3eadb'};
+function deepDesertMarkerGroupInfo(markers){
+  return (markers || []).reduce((acc, marker) => {
+    const group = deepDesertMarkerGroup(marker.marker_type);
+    if (!acc[group]) acc[group] = {name:group, count:0};
+    acc[group].count += 1;
+    return acc;
+  }, {});
+}
+function deepDesertMarkerSummary(selected, groups){
+  const enabled = Object.keys(selected || {}).filter(group => selected[group] === true).length;
+  const markerCount = Object.keys(groups || {}).reduce((sum, group) => sum + (selected[group] ? Number(groups[group]?.count || 0) : 0), 0);
+  return enabled ? `${enabled} layer${enabled === 1 ? '' : 's'} / ${markerCount} markers` : 'Deep Desert markers off';
+}
+function deepDesertMarkerToggleBar(groups, selected){
+  const groupKeys = Object.keys(groups || {})
+    .filter(group => Number(groups[group]?.count || 0) > 0)
+    .sort((a, b) => String(groups[a]?.name || a).localeCompare(String(groups[b]?.name || b), undefined, {sensitivity:'base'}));
+  if (!groupKeys.length) return '';
+  return `<aside class="haggaPoiLegend" aria-label="Deep Desert marker legend"><h3>Legend</h3><div class="poiLegendHeader"><span id="deepDesertMarkerSummary" class="muted">${esc(deepDesertMarkerSummary(selected, groups))}</span><div class="toolbar"><button id="deepDesertMarkerAllBtn">All</button><button id="deepDesertMarkerClearBtn">Clear</button><button id="deepDesertMarkerEnableFilteredBtn">On</button><button id="deepDesertMarkerDisableFilteredBtn">Off</button><button id="deepDesertMarkerOnlyFilteredBtn">Only</button></div></div><input id="deepDesertMarkerFilter" class="poiFilterInput" type="search" placeholder="Filter legend"><div id="deepDesertMarkerFilterSummary" class="poiFilterSummary">Showing all marker layers</div><div class="poiToggleBar deepDesertMarkerToggleBar" aria-label="Deep Desert marker toggles">${groupKeys.map(group => {
+    const info = groups[group] || {};
+    const label = String(info.name || group);
+    const color = deepDesertMarkerColors[group] || '#f3eadb';
+    return `<label data-filter-text="${esc((label + ' ' + group).toLowerCase())}"><span class="poiToggleLabel"><input type="checkbox" value="${esc(group)}"${selected[group] ? ' checked' : ''}><span class="poiSwatch" style="--poi-color:${esc(color)}; color:${esc(color)}; background:${esc(color)}"></span><span>${esc(label)}</span></span><span class="poiCount">${esc(info.count || 0)}</span></label>`;
+  }).join('')}</div></aside>`;
+}
+function deepDesertFieldStateLegend(resourceFields, spiceFields){
+  const resources = Array.isArray(resourceFields) ? resourceFields : [];
+  const spice = Array.isArray(spiceFields) ? spiceFields : [];
+  const activeSpice = spice.filter(row => Number(row.dimension_index || 0) === 0).map(row => `${row.field_type} ${row.current_globally_active}/${row.max_globally_active}`).join(', ') || 'unavailable';
+  const resourceSummary = resources.reduce((memo, row) => {
+    const key = `dimension ${row.dimension_index ?? '?'} kind ${row.field_kind_id ?? '?'}`;
+    const current = memo[key] || {count:0, remaining:0};
+    current.count += 1;
+    current.remaining += Number(row.value_remaining || 0);
+    memo[key] = current;
+    return memo;
+  }, {});
+  const resourceRows = Object.entries(resourceSummary).map(([label, row]) => `<div class="legendRow"><span>${esc(label)}</span><span class="muted">${esc(row.count)} fields, ${esc(row.remaining)} remaining</span></div>`).join('');
+  return `<aside class="haggaPoiLegend" aria-label="Deep Desert field state"><h3>Field State</h3><div class="muted">Resource/spice field tables expose state and counts, not exact field coordinates. Exact plotted points below come from marker/node rows.</div><div class="mapLegend">${resourceRows || '<div class="muted">No resource field rows.</div>'}</div><div class="muted">Spice state: ${esc(activeSpice)}.</div></aside>`;
+}
 function haggaBasinMapPanel(data){
   const players = data?.players || [];
   const pois = data?.pois || {};
   const selectedPois = selectedHaggaPoiGroups(pois.groups || {});
   const bounds = data?.bounds || {};
   const calibration = data?.calibration || {};
-  const width = 1000;
+  const width = data?.map === 'DeepDesert' ? 1333.333 : 1000;
   const height = 1000;
   const pad = 0;
   const mapExtent = 100000;
@@ -7250,13 +7526,13 @@ function haggaBasinMapPanel(data){
   };
   const px = (x, y) => clamp(pad + worldToImageU(x, y) * (width - pad * 2), 0, width);
   const py = (x, y) => clamp(pad + worldToImageV(x, y) * (height - pad * 2), 0, height);
-  const gridSteps = 8;
+  const gridSteps = data?.map === 'DeepDesert' ? 9 : 8;
   const grid = Array.from({length: gridSteps + 1}, (_, i) => {
     const t = i / gridSteps;
     const gx = pad + t * (width - pad * 2);
     const gy = pad + t * (height - pad * 2);
     const worldX = minX + t * spanX;
-    const worldY = maxY - t * spanY;
+    const worldY = invertY ? maxY - t * spanY : minY + t * spanY;
     const xLabelY = i % 2 === 0 ? 18 : height - 10;
     const yLabelX = i % 2 === 0 ? 8 : width - 92;
     return `<line class="gridLine" x1="${gx}" y1="${pad}" x2="${gx}" y2="${height - pad}"></line><line class="gridLine" x1="${pad}" y1="${gy}" x2="${width - pad}" y2="${gy}"></line><text class="gridLabel" x="${clamp(gx + 4, 8, width - 96)}" y="${xLabelY}">X ${esc(Math.round(worldX))}</text><text class="gridLabel" x="${yLabelX}" y="${clamp(gy - 4, 18, height - 12)}">Y ${esc(Math.round(worldY))}</text>`;
@@ -7301,7 +7577,66 @@ function haggaBasinMapPanel(data){
     assessment: d.assessment || ''
   }));
   const generatedAt = data?.generatedAt ? new Date(data.generatedAt).toLocaleTimeString() : '';
-  return `<div class="panelBand"><div class="sectionHeader"><h2>Hagga Basin Coordinate Grid</h2><div class="toolbar"><span id="haggaMapCount" class="pill ${players.length ? 'ok' : ''}">${esc(players.length)} plotted</span><span id="haggaMapUpdated" class="pill">updated ${esc(generatedAt)}</span><span id="haggaMapHealth" class="pill warn">DB persistence position, not proven live</span><button id="haggaMapZoomOutBtn" title="Zoom map out">-</button><button id="haggaMapZoomInBtn" title="Zoom map in">+</button><button id="haggaMapResetBtn">Reset view</button><button id="toggleHaggaMapRefreshBtn" aria-pressed="${haggaMapAutoRefresh ? 'true' : 'false'}">${haggaMapAutoRefresh ? 'Pause map' : 'Resume map'}</button><button id="refreshHaggaMapBtn">Refresh map</button></div></div><div id="haggaMapSrStatus" class="srOnly" aria-live="polite">${esc(players.length)} Hagga Basin players plotted.</div><div class="haggaMapLayout"><div class="haggaMapMain"><div id="haggaMapViewport" class="haggaMap"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Full Hagga Basin coordinate-grid map"><image class="mapImage" href="/static/hagga-basin.webp?v=${encodeURIComponent(ADMIN_PANEL_BUILD)}" x="0" y="0" width="${width}" height="${height}" preserveAspectRatio="xMidYMid meet"></image><rect class="mapShade" x="0" y="0" width="${width}" height="${height}"></rect>${grid}<text x="12" y="38" fill="var(--muted)" font-size="12">NW</text><text x="${width - 30}" y="${height - 12}" fill="var(--muted)" font-size="12">SE</text>${poiMarkers}${markers}${empty}</svg></div></div>${haggaPoiToggleBar(pois, selectedPois)}</div><div class="haggaMapStatus"><span class="pill warn">green: persisted actor transform</span><span class="pill ${showReturnPoints ? 'warn' : ''}">yellow return-info ${showReturnPoints ? 'shown' : 'hidden'}</span><span class="pill">POIs: Dune: Awakening Community Wiki CC BY-NC-SA 4.0</span><span class="pill">background: clean survival_1 tile composite</span><span class="pill">projection: world X -> image U, world Y -> image V</span><span class="pill">world X ${esc(Math.round(minX))}..${esc(Math.round(maxX))}, Y ${esc(Math.round(minY))}..${esc(Math.round(maxY))}${invertX ? ', flipped X' : ''}${invertY ? ', inverted Y' : ''}</span><span class="pill">image U ${esc(imageMinU.toFixed(2))}..${esc(imageMaxU.toFixed(2))}, V ${esc(imageMinV.toFixed(2))}..${esc(imageMaxV.toFixed(2))}</span></div><details open><summary>Coordinates</summary><div class="coordTable">${table(rows)}</div></details><details open><summary>Location Source Diagnostics</summary><div class="coordTable">${table(diagnosticRows)}</div></details></div>`;
+  const mapTabs = `<div class="toolbar mapTabBar" role="tablist" aria-label="Overview map"><button class="${activeOverviewMap === 'hagga-basin' ? 'primary' : ''}" role="tab" aria-selected="${activeOverviewMap === 'hagga-basin' ? 'true' : 'false'}" data-overview-map="hagga-basin">Hagga Basin</button><button class="${activeOverviewMap === 'deep-desert' ? 'primary' : ''}" role="tab" aria-selected="${activeOverviewMap === 'deep-desert' ? 'true' : 'false'}" data-overview-map="deep-desert">Deep Desert</button></div>`;
+  if (data?.map === 'DeepDesert') {
+    const deepEmpty = players.length ? '' : `<text class="emptyState" x="${width / 2}" y="${height / 2}">No online players with Deep Desert coordinates.</text>`;
+    const rowLabels = 'ABCDEFGHI';
+    const ddMarkerRows = data?.markers || [];
+    const ddGroups = deepDesertMarkerGroupInfo(ddMarkerRows);
+    const selectedDdGroups = selectedDeepDesertMarkerGroups(ddGroups);
+    const layout = data?.layout || {};
+    const backgroundHref = layout.backgroundHref || '';
+    const backgroundImage = backgroundHref ? `<image class="mapImage" href="${esc(backgroundHref)}" x="0" y="0" width="${width}" height="${height}" preserveAspectRatio="none"></image>` : '';
+    const deepBackground = `<rect x="0" y="0" width="${width}" height="${height}" fill="#171512"></rect>${backgroundImage}<path d="M0 410 C340 290 650 520 980 365 C1370 190 1700 390 2133 245" transform="scale(${width / 2133.333} ${height / 1600})" fill="none" stroke="#d5a13e" stroke-width="7" opacity="${backgroundHref ? '.10' : '.26'}"></path><path d="M0 760 C300 660 650 890 1010 710 C1390 520 1700 750 2133 565" transform="scale(${width / 2133.333} ${height / 1600})" fill="none" stroke="#d5a13e" stroke-width="7" opacity="${backgroundHref ? '.10' : '.26'}"></path><path d="M0 1120 C360 990 630 1230 990 1080 C1340 930 1680 1050 2133 880 L2133 1600 L0 1600 Z" transform="scale(${width / 2133.333} ${height / 1600})" fill="#2a241b" opacity="${backgroundHref ? '.18' : '.82'}"></path>`;
+    const shiftingSands = Array.isArray(layout.shiftingSands) ? layout.shiftingSands : [];
+    const resourceFields = Array.isArray(layout.resourceFields) ? layout.resourceFields : [];
+    const spiceFields = Array.isArray(layout.spiceFields) ? layout.spiceFields : [];
+    const seedRows = Array.isArray(layout.seeds) ? layout.seeds : [];
+    const shiftingSandOverlay = shiftingSands.map(row => {
+      if (row.x === null || row.x === undefined || row.y === null || row.y === undefined) return '';
+      const mx = px(row.x, row.y);
+      const my = py(row.x, row.y);
+      const alpha = clamp(Number(row.alpha || 0.4), 0.08, 0.82);
+      return `<circle cx="${mx.toFixed(1)}" cy="${my.toFixed(1)}" r="${(42 + alpha * 70).toFixed(1)}" fill="#e7d59a" stroke="#fff0bc" stroke-width="2" opacity="${(0.16 + alpha * 0.28).toFixed(3)}"><title>Static shifting sand ${esc(row.id || '')}</title></circle>`;
+    }).join('');
+    const ddAreaCell = areaId => {
+      const index = Number(areaId) - 2;
+      if (!Number.isFinite(index) || index < 0 || index >= 81) return null;
+      return {col: index % 9, row: Math.floor(index / 9)};
+    };
+    const ddMarkerPoint = marker => {
+      const cell = ddAreaCell(marker.area_id);
+      return {x:px(marker.x, marker.y), y:py(marker.x, marker.y), cellLabel:cell ? `${rowLabels[cell.row]}${cell.col + 1}` : ''};
+    };
+    const ddMarkers = ddMarkerRows.filter(marker => selectedDdGroups[deepDesertMarkerGroup(marker.marker_type)] === true).map(marker => {
+      const group = deepDesertMarkerGroup(marker.marker_type);
+      const color = deepDesertMarkerColors[group] || '#f3eadb';
+      const point = ddMarkerPoint(marker);
+      const radius = group === 'Transit' || group === 'Locations' ? 7 : 4;
+      return `<g class="poiMarker" tabindex="0" style="--poi-color:${esc(color)}; color:${esc(color)}" transform="translate(${point.x.toFixed(1)} ${point.y.toFixed(1)})"><title>${esc(marker.marker_type || group)} | area ${esc(marker.area_id ?? '')}${point.cellLabel ? ` | cell ${esc(point.cellLabel)}` : ''} | ${esc(Math.round(Number(marker.x || 0)))}, ${esc(Math.round(Number(marker.y || 0)))}</title><circle class="poiHalo" r="${radius + 5}"></circle><circle class="poiRing" r="${radius + 2}"></circle><circle class="poiCore" r="${radius}"></circle></g>`;
+    }).join('');
+    const ddSummary = Object.entries(ddGroups).sort((a, b) => a[0].localeCompare(b[0])).map(([group, info]) => `<span class="pill" style="border-color:${esc(deepDesertMarkerColors[group] || '#f3eadb')}">${esc(group)} ${esc(info.count || 0)}</span>`).join('');
+    const farmSeed = seedRows.find(row => row.scope === 'farm')?.world_reset_seed ?? 'unknown';
+    const mapSeed = seedRows.find(row => row.scope === 'map')?.world_reset_seed ?? 'unknown';
+    const spiceSummary = spiceFields.filter(row => Number(row.dimension_index || 0) === 0).map(row => `${row.field_type} ${row.current_globally_active}/${row.max_globally_active}`).join(', ') || 'unavailable';
+    const ddColumnLabels = Array.from({length: 9}, (_, i) => `<text class="gridLabel" x="${(((i + 0.5) / 9) * width).toFixed(1)}" y="42">${i + 1}</text>`).join('');
+    const ddRowLabels = Array.from({length: 9}, (_, i) => `<text class="gridLabel" x="14" y="${((i + 0.5) / 9 * height).toFixed(1)}">${esc(rowLabels[8 - i])}</text>`).join('');
+    return `<div class="panelBand"><div class="sectionHeader"><h2>Deep Desert Node Map</h2><div class="toolbar"><span id="haggaMapCount" class="pill ${players.length ? 'ok' : ''}">${esc(players.length)} players</span><span class="pill ok">${esc(ddMarkerRows.length)} node markers</span><span id="haggaMapUpdated" class="pill">updated ${esc(generatedAt)}</span><span id="haggaMapHealth" class="pill ok">world-coordinate nodes</span><button id="haggaMapZoomOutBtn" title="Zoom map out">-</button><button id="haggaMapZoomInBtn" title="Zoom map in">+</button><button id="haggaMapResetBtn">Reset view</button><button id="toggleHaggaMapRefreshBtn" aria-pressed="${haggaMapAutoRefresh ? 'true' : 'false'}">${haggaMapAutoRefresh ? 'Pause map' : 'Resume map'}</button><button id="refreshHaggaMapBtn">Refresh map</button></div></div>${mapTabs}<div id="haggaMapSrStatus" class="srOnly" aria-live="polite">${esc(players.length)} Deep Desert players and ${esc(ddMarkerRows.length)} nodes plotted.</div><div class="haggaMapLayout"><div class="haggaMapMain"><div id="haggaMapViewport" class="haggaMap"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Deep Desert node map from stored world coordinates">${deepBackground}${shiftingSandOverlay}<rect class="mapShade" x="0" y="0" width="${width}" height="${height}"></rect>${grid}${ddColumnLabels}${ddRowLabels}<text x="12" y="38" fill="var(--muted)" font-size="12">NW</text><text x="${width - 30}" y="${height - 12}" fill="var(--muted)" font-size="12">SE</text>${ddMarkers}${markers}${deepEmpty}</svg></div></div><div class="pageStack">${deepDesertFieldStateLegend(resourceFields, spiceFields)}${deepDesertMarkerToggleBar(ddGroups, selectedDdGroups)}</div></div><div class="haggaMapStatus"><span class="pill warn">green: persisted actor transform</span><span class="pill">farm seed ${esc(farmSeed)}, map seed ${esc(mapSeed)}</span><span class="pill">static shifting sand rows ${esc(shiftingSands.length)}</span><span class="pill">resource field state rows ${esc(resourceFields.length)}</span><span class="pill">spice ${esc(spiceSummary)}</span><span class="pill">background synthetic grid, no heatmap blobs</span><span class="pill">projection: stored world X/Y to fixed DD bounds</span><span class="pill">area_id 2=A1, 82=I9 only shown as metadata</span>${ddSummary}</div><details open><summary>Coordinates</summary><div class="coordTable">${table(rows)}</div></details><details open><summary>Deep Desert Nodes</summary><div class="coordTable">${table(ddMarkerRows.map(m => ({type:m.marker_type, area_id:m.area_id, cell:(() => { const cell = ddAreaCell(m.area_id); return cell ? `${rowLabels[cell.row]}${cell.col + 1}` : ''; })(), dimension:m.dimension_index, x:Math.round(Number(m.x || 0)), y:Math.round(Number(m.y || 0)), z:Math.round(Number(m.z || 0)), radius:m.area_radius || 0})))}</div></details><details><summary>Deep Desert Field State</summary><div class="coordTable">${table(resourceFields)}</div><div class="coordTable">${table(spiceFields)}</div></details></div>`;
+  }
+  return `<div class="panelBand"><div class="sectionHeader"><h2>Hagga Basin Coordinate Grid</h2><div class="toolbar"><span id="haggaMapCount" class="pill ${players.length ? 'ok' : ''}">${esc(players.length)} plotted</span><span id="haggaMapUpdated" class="pill">updated ${esc(generatedAt)}</span><span id="haggaMapHealth" class="pill warn">DB persistence position, not proven live</span><button id="haggaMapZoomOutBtn" title="Zoom map out">-</button><button id="haggaMapZoomInBtn" title="Zoom map in">+</button><button id="haggaMapResetBtn">Reset view</button><button id="toggleHaggaMapRefreshBtn" aria-pressed="${haggaMapAutoRefresh ? 'true' : 'false'}">${haggaMapAutoRefresh ? 'Pause map' : 'Resume map'}</button><button id="refreshHaggaMapBtn">Refresh map</button></div></div>${mapTabs}<div id="haggaMapSrStatus" class="srOnly" aria-live="polite">${esc(players.length)} Hagga Basin players plotted.</div><div class="haggaMapLayout"><div class="haggaMapMain"><div id="haggaMapViewport" class="haggaMap"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Full Hagga Basin coordinate-grid map"><image class="mapImage" href="/static/hagga-basin.webp?v=${encodeURIComponent(ADMIN_PANEL_BUILD)}" x="0" y="0" width="${width}" height="${height}" preserveAspectRatio="xMidYMid meet"></image><rect class="mapShade" x="0" y="0" width="${width}" height="${height}"></rect>${grid}<text x="12" y="38" fill="var(--muted)" font-size="12">NW</text><text x="${width - 30}" y="${height - 12}" fill="var(--muted)" font-size="12">SE</text>${poiMarkers}${markers}${empty}</svg></div></div>${haggaPoiToggleBar(pois, selectedPois)}</div><div class="haggaMapStatus"><span class="pill warn">green: persisted actor transform</span><span class="pill ${showReturnPoints ? 'warn' : ''}">yellow return-info ${showReturnPoints ? 'shown' : 'hidden'}</span><span class="pill">POIs: Dune: Awakening Community Wiki CC BY-NC-SA 4.0</span><span class="pill">background: clean survival_1 tile composite</span><span class="pill">projection: world X -> image U, world Y -> image V</span><span class="pill">world X ${esc(Math.round(minX))}..${esc(Math.round(maxX))}, Y ${esc(Math.round(minY))}..${esc(Math.round(maxY))}${invertX ? ', flipped X' : ''}${invertY ? ', inverted Y' : ''}</span><span class="pill">image U ${esc(imageMinU.toFixed(2))}..${esc(imageMaxU.toFixed(2))}, V ${esc(imageMinV.toFixed(2))}..${esc(imageMaxV.toFixed(2))}</span></div><details open><summary>Coordinates</summary><div class="coordTable">${table(rows)}</div></details><details open><summary>Location Source Diagnostics</summary><div class="coordTable">${table(diagnosticRows)}</div></details></div>`;
+}
+function overviewMapTabsHtml(){
+  return `<div class="toolbar mapTabBar" role="tablist" aria-label="Overview map"><button class="${activeOverviewMap === 'hagga-basin' ? 'primary' : ''}" role="tab" aria-selected="${activeOverviewMap === 'hagga-basin' ? 'true' : 'false'}" data-overview-map="hagga-basin">Hagga Basin</button><button class="${activeOverviewMap === 'deep-desert' ? 'primary' : ''}" role="tab" aria-selected="${activeOverviewMap === 'deep-desert' ? 'true' : 'false'}" data-overview-map="deep-desert">Deep Desert</button></div>`;
+}
+function wireOverviewMapTabs(container){
+  container.querySelectorAll('[data-overview-map]').forEach(button => {
+    button.addEventListener('click', () => {
+      activeOverviewMap = button.dataset.overviewMap === 'deep-desert' ? 'deep-desert' : 'hagga-basin';
+      sessionStorage.setItem('duneAdminOverviewMap', activeOverviewMap);
+      haggaMapZoomState = {scale:1, x:0, y:0};
+      refreshHaggaMap({force:true}).catch(e => reportClientError(e, 'Refresh overview map'));
+    });
+  });
 }
 function offlineTeleportPanel(ref, characterRows){
   const partitions = ref.worldPartitions || [];
@@ -7475,6 +7810,7 @@ function initHaggaMapPanZoom(container){
 }
 function wireHaggaMapControls(container){
   initHaggaMapPanZoom(container);
+  wireOverviewMapTabs(container);
   container.querySelectorAll('.poiToggleBar input[type=checkbox]').forEach(input => {
     input.addEventListener('change', () => {
       const selected = selectedHaggaPoiGroups({});
@@ -7544,6 +7880,73 @@ function wireHaggaMapControls(container){
   container.querySelector('#haggaPoiEnableFilteredBtn')?.addEventListener('click', () => setFilteredPois(true));
   container.querySelector('#haggaPoiDisableFilteredBtn')?.addEventListener('click', () => setFilteredPois(false));
   container.querySelector('#haggaPoiOnlyFilteredBtn')?.addEventListener('click', onlyFilteredPois);
+  container.querySelectorAll('.deepDesertMarkerToggleBar input[type=checkbox]').forEach(input => {
+    input.addEventListener('change', () => {
+      const selected = selectedDeepDesertMarkerGroups(deepDesertMarkerGroupInfo([]));
+      container.querySelectorAll('.deepDesertMarkerToggleBar input[type=checkbox]').forEach(current => {
+        selected[current.value] = current.checked;
+      });
+      saveDeepDesertMarkerGroups(selected);
+      refreshHaggaMap({force:true}).catch(e => reportClientError(e, 'Refresh Deep Desert map'));
+    });
+  });
+  const deepDesertMarkerFilter = container.querySelector('#deepDesertMarkerFilter');
+  if (deepDesertMarkerFilter) {
+    const applyDeepDesertMarkerFilter = () => {
+      const term = deepDesertMarkerFilter.value.trim().toLowerCase();
+      let visible = 0;
+      let total = 0;
+      container.querySelectorAll('.deepDesertMarkerToggleBar label[data-filter-text]').forEach(label => {
+        label.hidden = term && !label.getAttribute('data-filter-text').includes(term);
+        total += 1;
+        if (!label.hidden) visible += 1;
+      });
+      const summary = container.querySelector('#deepDesertMarkerFilterSummary');
+      if (summary) summary.textContent = term ? `Showing ${visible} of ${total} marker layers` : `Showing all ${total} marker layers`;
+    };
+    deepDesertMarkerFilter.addEventListener('input', applyDeepDesertMarkerFilter);
+    applyDeepDesertMarkerFilter();
+  }
+  const currentDeepDesertSelection = () => {
+    const selected = {};
+    container.querySelectorAll('.deepDesertMarkerToggleBar input[type=checkbox]').forEach(input => {
+      selected[input.value] = input.checked;
+    });
+    return selected;
+  };
+  const setFilteredDeepDesertMarkers = enabled => {
+    const selected = currentDeepDesertSelection();
+    container.querySelectorAll('.deepDesertMarkerToggleBar label[data-filter-text]').forEach(label => {
+      if (!label.hidden) {
+        const input = label.querySelector('input[type=checkbox]');
+        if (input) selected[input.value] = enabled;
+      }
+    });
+    saveDeepDesertMarkerGroups(selected);
+    refreshHaggaMap({force:true}).catch(e => reportClientError(e, 'Refresh Deep Desert map'));
+  };
+  const onlyFilteredDeepDesertMarkers = () => {
+    const selected = currentDeepDesertSelection();
+    Object.keys(selected).forEach(group => selected[group] = false);
+    container.querySelectorAll('.deepDesertMarkerToggleBar label[data-filter-text]').forEach(label => {
+      if (!label.hidden) {
+        const input = label.querySelector('input[type=checkbox]');
+        if (input) selected[input.value] = true;
+      }
+    });
+    saveDeepDesertMarkerGroups(selected);
+    refreshHaggaMap({force:true}).catch(e => reportClientError(e, 'Refresh Deep Desert map'));
+  };
+  container.querySelector('#deepDesertMarkerClearBtn')?.addEventListener('click', () => setFilteredDeepDesertMarkers(false));
+  container.querySelector('#deepDesertMarkerAllBtn')?.addEventListener('click', () => {
+    const selected = currentDeepDesertSelection();
+    Object.keys(selected).forEach(group => selected[group] = true);
+    saveDeepDesertMarkerGroups(selected);
+    refreshHaggaMap({force:true}).catch(e => reportClientError(e, 'Refresh Deep Desert map'));
+  });
+  container.querySelector('#deepDesertMarkerEnableFilteredBtn')?.addEventListener('click', () => setFilteredDeepDesertMarkers(true));
+  container.querySelector('#deepDesertMarkerDisableFilteredBtn')?.addEventListener('click', () => setFilteredDeepDesertMarkers(false));
+  container.querySelector('#deepDesertMarkerOnlyFilteredBtn')?.addEventListener('click', onlyFilteredDeepDesertMarkers);
   container.querySelectorAll('.playerMarker[data-account-id]').forEach(marker => {
     marker.addEventListener('click', e => {
       if (haggaMapSuppressMarkerClick) {
@@ -7577,7 +7980,8 @@ async function refreshHaggaMap(opts={}){
   if (haggaMapRefreshInFlight) return;
   haggaMapRefreshInFlight = true;
   try {
-    const data = await api('/api/players/hagga-basin', {timeoutMs: 5000});
+    const endpoint = activeOverviewMap === 'deep-desert' ? '/api/players/deep-desert' : '/api/players/hagga-basin';
+    const data = await api(endpoint, {timeoutMs: 5000});
     haggaMapLastGoodHtml = haggaBasinMapPanel(data);
     container.innerHTML = haggaMapLastGoodHtml;
     wireHaggaMapControls(container);
@@ -7933,7 +8337,7 @@ function show(name){
   if (!validTabs.has(name)) return;
   current = name;
   sessionStorage.setItem('duneAdminTab', current);
-  if (location.hash.slice(1) !== current) history.replaceState(null, '', '#' + current);
+  if (location.pathname !== '/' || location.hash) history.replaceState({tab: current}, '', '/');
   syncTabs();
   load();
 }
@@ -8037,6 +8441,29 @@ function renderStatus(data){
   updateLastRefresh('Status refreshed');
 }
 async function refreshStatus(){ renderStatus(await api('/api/status')); }
+function reloadForBuild(build){
+  if (buildReloading) return;
+  buildReloading = true;
+  sessionStorage.setItem('duneAdminTab', current);
+  notify('Admin panel updated; loading fresh code');
+  const url = new URL('/', location.origin);
+  url.searchParams.set('_build', build || Date.now());
+  location.replace(url.toString());
+}
+async function checkPanelBuild(){
+  if (document.hidden || buildReloading) return;
+  try {
+    const status = await api('/api/status', {timeoutMs: 5000});
+    if (status.build && currentBuild && status.build !== currentBuild) {
+      reloadForBuild(status.build);
+      return;
+    }
+    if (status.build) currentBuild = status.build;
+    renderStatus(status);
+  } catch (e) {
+    announce(`Build check failed: ${e.message}`);
+  }
+}
 async function refreshNetwork(){
   const network = await api('/api/ops/network');
   document.querySelectorAll('[data-network-panel]').forEach(container => {
@@ -8097,7 +8524,8 @@ async function overview(serial=loadSerial){
   if (serial !== loadSerial) return;
   overviewRosterCounts = roster.counts || {};
   overviewHealthSnapshot = health;
-  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Overview</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="ops">Operations</button><button data-jump="mutations" class="primary">Admin Actions</button></div></div><div id="overviewRealtime" class="overviewTopGrid" aria-live="polite">${overviewRealtimeHtml(health, overviewRosterCounts, overviewResourceSnapshot)}</div><div id="haggaBasinMap" class="overviewMapShell"><div class="panelBand"><h2>Hagga Basin Player Map</h2><div class="muted">Loading player positions...</div></div></div>${actionGrid([{tab:'characters',label:'Open player roster',className:'primary'},{tab:'ops',label:'Restart / backup / map health'},{tab:'mutations',label:'Grant currency, XP, or items'},{tab:'settings',label:'Server settings'}])}<details class="panelBand"><summary>Player Roster Preview</summary><div id="overviewRoster">${characterRosterPanel(roster)}</div></details><div id="detail"></div></div>`;
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Overview</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="ops">Operations</button><button data-jump="mutations" class="primary">Admin Actions</button></div></div><div id="overviewRealtime" class="overviewTopGrid" aria-live="polite">${overviewRealtimeHtml(health, overviewRosterCounts, overviewResourceSnapshot)}</div><div id="haggaBasinMap" class="overviewMapShell"><div class="panelBand"><div class="sectionHeader"><h2>Player Map</h2></div>${overviewMapTabsHtml()}<div class="muted">Loading player positions...</div></div></div>${actionGrid([{tab:'characters',label:'Open player roster',className:'primary'},{tab:'ops',label:'Restart / backup / map health'},{tab:'mutations',label:'Grant currency, XP, or items'},{tab:'settings',label:'Server settings'}])}<details class="panelBand"><summary>Player Roster Preview</summary><div id="overviewRoster">${characterRosterPanel(roster)}</div></details><div id="detail"></div></div>`;
+  wireOverviewMapTabs(view);
   document.querySelectorAll('#overviewRoster tbody tr').forEach(row => row.onclick = () => pickCharacter(row));
   makeRowsKeyboardFriendly(view);
   bindRosterFilters(view);
@@ -8954,16 +9382,19 @@ document.addEventListener('click', e => {
   }
 });
 document.querySelectorAll('.tab').forEach(button => button.addEventListener('click', () => show(button.dataset.tab)));
-window.addEventListener('hashchange', () => {
-  const tab = location.hash.slice(1);
-  if (validTabs.has(tab) && tab !== current) show(tab);
-});
 window.addEventListener('pageshow', e => {
   if (e.persisted) location.reload();
+});
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) {
+    checkPanelBuild();
+    load();
+  }
 });
 window.addEventListener('error', e => reportClientError(e.error || e.message));
 window.addEventListener('unhandledrejection', e => reportClientError(e.reason || e, 'Request failed'));
 setInterval(() => refreshStatus().catch(() => {}), 5000);
+setInterval(() => checkPanelBuild().catch(() => {}), 3000);
 load();
 </script>
 </body>
@@ -8975,7 +9406,14 @@ def main():
     ensure_announcement_thread()
     bind = os.environ.get("DUNE_ADMIN_BIND", "0.0.0.0")
     port = int(os.environ.get("DUNE_ADMIN_PORT", "8080"))
-    ThreadingHTTPServer((bind, port), Handler).serve_forever()
+    server = ThreadingHTTPServer((bind, port), Handler)
+    start_admin_panel_self_reload(server)
+    try:
+        server.serve_forever()
+    finally:
+        server.server_close()
+    if ADMIN_PANEL_RESTART_EVENT.is_set():
+        os.execv(sys.executable, [sys.executable] + sys.argv)
 
 
 if __name__ == "__main__":

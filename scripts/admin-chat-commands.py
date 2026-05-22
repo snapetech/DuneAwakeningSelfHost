@@ -56,8 +56,28 @@ FILE_ENV = {}
 for env_path in ("/workspace/.env", ROOT / ".env"):
     FILE_ENV.update(read_env_file(env_path))
 
+PROCESS_ENV_FIRST = {
+    "DUNE_ADMIN_DB_HOST",
+    "DUNE_ADMIN_DB_PORT",
+    "DUNE_GM_COMMAND_AMQP_HOST",
+    "DUNE_GM_COMMAND_AMQP_PORT",
+    "DUNE_GM_COMMAND_RMQ_URL",
+    "DUNE_CHAT_COMMAND_AMQP_HOST",
+    "DUNE_CHAT_COMMAND_AMQP_PORT",
+    "DUNE_CHAT_COMMAND_AMQP_TLS",
+    "DUNE_ANNOUNCE_GAME_RMQ_MANAGEMENT_URL",
+    "DUNE_ANNOUNCE_GAME_RMQ_AMQP_HOST",
+    "DUNE_ANNOUNCE_GAME_RMQ_AMQP_PORT",
+    "DUNE_ANNOUNCE_GAME_RMQ_AMQP_TLS",
+    "DUNE_ANNOUNCE_RMQ_URL",
+}
+
 
 def env(name, default=""):
+    if name in PROCESS_ENV_FIRST:
+        value = os.environ.get(name)
+        if value is not None and value != "":
+            return value
     if name.startswith("DUNE_CHAT_COMMAND_") or name.startswith("DUNE_ANNOUNCE_"):
         value = FILE_ENV.get(name)
         if value is not None and value != "":
@@ -2391,8 +2411,51 @@ def consume_forever():
     channel.start_consuming()
 
 
+def healthcheck():
+    queue = env("DUNE_CHAT_COMMAND_QUEUE", "dash_admin_chat_commands")
+    min_consumers = int(env("DUNE_CHAT_COMMAND_HEALTH_MIN_CONSUMERS", "1"))
+
+    conn = connect_db()
+    conn.close()
+
+    host = env("DUNE_CHAT_COMMAND_AMQP_HOST", env("DUNE_ANNOUNCE_HOST_AMQP_HOST", "172.31.240.1"))
+    port = int(env("DUNE_CHAT_COMMAND_AMQP_PORT", env("DUNE_ANNOUNCE_HOST_AMQP_PORT", "31982")))
+    tls = env_bool("DUNE_CHAT_COMMAND_AMQP_TLS", env_bool("DUNE_ANNOUNCE_GAME_RMQ_AMQP_TLS", True))
+    user = env_chat_or_announce("DUNE_CHAT_COMMAND_AMQP_USER", "DUNE_ANNOUNCE_CHAT_USER", "")
+    password = env_chat_or_announce("DUNE_CHAT_COMMAND_AMQP_PASSWORD", "DUNE_ANNOUNCE_CHAT_PASSWORD", "")
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    connection = pika.BlockingConnection(pika.ConnectionParameters(
+        host=host,
+        port=port,
+        virtual_host="/",
+        credentials=pika.PlainCredentials(user, password),
+        ssl_options=pika.SSLOptions(context, host) if tls else None,
+        heartbeat=30,
+        blocked_connection_timeout=10,
+    ))
+    try:
+        channel = connection.channel()
+        declared = channel.queue_declare(queue=queue, passive=True)
+        consumers = declared.method.consumer_count
+        messages = declared.method.message_count
+        ok = consumers >= min_consumers
+        print(json.dumps({
+            "ok": ok,
+            "queue": queue,
+            "consumers": consumers,
+            "messages": messages,
+            "minConsumers": min_consumers,
+        }, separators=(",", ":")), flush=True)
+        return 0 if ok else 1
+    finally:
+        connection.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Paul in-game chat command listener")
+    parser.add_argument("--healthcheck", action="store_true", help="Check DB, RabbitMQ, and the live command queue consumer.")
     parser.add_argument("--dry-run-command", help="Process a command once without consuming RabbitMQ")
     parser.add_argument("--dry-run-spam-message", help="Process one message through spam protection without consuming RabbitMQ")
     parser.add_argument("--dry-run-spam-count", type=int, default=1, help="Number of times to feed --dry-run-spam-message")
@@ -2400,6 +2463,9 @@ def main():
     parser.add_argument("--sender-fls-id", default="", help="Sender account/user id for --dry-run-command")
     parser.add_argument("--reply", action="store_true", help="Send an in-game reply for --dry-run-command")
     args = parser.parse_args()
+
+    if args.healthcheck:
+        return healthcheck()
 
     if args.dry_run_spam_message:
         with connect_db() as conn:

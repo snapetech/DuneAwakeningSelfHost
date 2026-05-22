@@ -217,7 +217,7 @@ or:
 make install-player-presence-announcer-service ENV_FILE=.env
 ```
 
-The installer writes `/etc/systemd/system/dune-player-presence-announcer.service`, enables it, and starts it. Because it is enabled with `WantedBy=multi-user.target` and `Restart=always`, it starts after host reboots and restarts itself after script failures. The generated unit uses the current checkout path and current user by default; set `DUNE_PLAYER_PRESENCE_SERVICE_USER=<user>` when running the installer to choose another system user.
+The installer writes `/etc/systemd/system/dune-player-presence-announcer.service`, enables it, and starts it. Because it is enabled with `WantedBy=multi-user.target`, `Requires=docker.service`, `Restart=always`, and an unlimited start-limit interval, it starts after host reboots and keeps restarting after script failures or early boot dependency races. The generated unit uses the current checkout path and current user by default; set `DUNE_PLAYER_PRESENCE_SERVICE_USER=<user>` when running the installer to choose another system user.
 
 Operational checks:
 

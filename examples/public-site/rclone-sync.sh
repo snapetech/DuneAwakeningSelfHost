@@ -8,14 +8,12 @@ STATIC_DIR="${STATIC_DIR:-/srv/dash-public-site}"
 RCLONE_REMOTE="${RCLONE_REMOTE:-b2:dune-public-site}"
 
 rclone sync "$STATIC_DIR" "$RCLONE_REMOTE" \
-  --include "/index.html" \
-  --include "/style.css" \
-  --include "/app.js" \
-  --include "/status.html" \
-  --include "/players.json" \
-  --include "/hagga-pois.json" \
-  --include "/hagga-map.svg" \
-  --include "/hagga-basin.webp" \
+  --include "/*.html" \
+  --include "/*.css" \
+  --include "/*.js" \
+  --include "/*.json" \
+  --include "/*.svg" \
+  --include "/*.webp" \
   --exclude "*" \
   --transfers 4 \
   --checkers 8

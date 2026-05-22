@@ -224,6 +224,19 @@ director heartbeat to FLS succeeds
 current_alive_active=31 active_servers=31 partitions=31
 ```
 
+Server-browser naming is split across the control plane based on the observed
+in-game browser. `config/gateway.ini` `[gateway].display_name` is the
+parent/top row and must stay the branded server title. `WORLD_NAME` and
+`DUNE_SERVER_DISPLAY_NAME` are the nested/details row and must stay the
+feature-list description. To refresh the server-browser rows without
+disconnecting existing map sessions, recreate only `gateway`, then reseed the
+gateway/Postgres bridge neighbor entries:
+
+```bash
+docker compose --env-file .env up -d --force-recreate --no-deps gateway
+./scripts/seed-gateway-neighbor.sh
+```
+
 Known brittle area: Docker bridge peer discovery on this host. Do not remove
 the neighbor-seeding step until a maintenance-window network rebuild proves
 that newly recreated control-plane containers can connect without it.

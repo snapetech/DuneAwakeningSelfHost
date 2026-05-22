@@ -434,6 +434,8 @@ The optional public site publishes static files only:
 /hagga-pois.json
 /hagga-map.svg
 /hagga-basin.webp
+/deep-desert-map.svg
+/deep-desert.webp
 ```
 
 The renderer runs locally on the DASH host. The public web server does not need Docker, Postgres, RabbitMQ, `.env`, admin-token, or admin-panel access.
@@ -594,7 +596,8 @@ Start from [`.env.example`](.env.example). It is the source of truth for the ful
 | --- | --- |
 | `DUNE_STEAM_SERVER_DIR` | Local path to the official Steam self-host tool. |
 | `DUNE_IMAGE_TAG` | Image tag loaded from the Steam package; documented baseline is `1963158-0-shipping`. |
-| `WORLD_NAME` | Public/server-browser world name. |
+| `WORLD_NAME` | Server-browser nested/details row. Use the feature-list description here. |
+| `DUNE_SERVER_DISPLAY_NAME` | Server-browser nested/details row injected into game config. Keep it equal to `WORLD_NAME`. |
 | `WORLD_UNIQUE_NAME` | Durable FLS battlegroup identity; back up `.env` and do not rotate after first registration. |
 | `WORLD_REGION` | Region string used by the server configuration. |
 | `DUNE_FLS_ENV` | FLS environment passed to game-server commands; keep `retail` unless using a matching PTC/test build. |
@@ -611,6 +614,8 @@ Start from [`.env.example`](.env.example). It is the source of truth for the ful
 | `DUNE_ADMIN_ITEM_GRANTS_ENABLED` | Separate gate for item grants, stack edits, and deletion. |
 | `DUNE_ADMIN_GM_COMMANDS_ENABLED` / `DUNE_GM_COMMAND_PAYLOAD_VERIFIED` | GM/native command gates; keep false unless verified. |
 | `DUNE_ADMIN_*_ENABLED` write gates | Per-family gates for typed knobs, events, bundles, progression, faction, Landsraad, respawn, guild, markers, landclaim, Exchange, tags, access codes, Communinet, tutorial, permission, vendor, and character-slot operations. |
+
+Server-browser ordering is deliberately split based on the observed in-game browser. `config/gateway.ini` `[gateway].display_name` is the parent/top row and must stay the branded server title. `WORLD_NAME` and `DUNE_SERVER_DISPLAY_NAME` are the nested/details row and must stay the feature-list description. Do not copy the branded title into `WORLD_NAME` or `DUNE_SERVER_DISPLAY_NAME`.
 | `DUNE_ADMIN_RESTART_COMMAND` | Hook used by scheduled restart jobs. |
 | `DUNE_ADMIN_ANNOUNCE_COMMAND` | Hook used by restart announcements. |
 | `DUNE_CHAT_COMMAND_ADMINS` / `DUNE_CHAT_COMMAND_ADMIN_FLS_IDS` | Chat-command allowlists. |

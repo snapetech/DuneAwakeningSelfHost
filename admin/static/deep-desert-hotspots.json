@@ -1,0 +1,130 @@
+{
+  "layout": 18,
+  "projection": "normalized 1024x1024 heatmap raster; row A bottom, I top in rendered grid",
+  "layers": [
+    {
+      "name": "Copper",
+      "color": "#eb954a"
+    },
+    {
+      "name": "T6 A",
+      "color": "#845cff"
+    },
+    {
+      "name": "Iron",
+      "color": "#cddce1"
+    },
+    {
+      "name": "Carbon",
+      "color": "#697880"
+    },
+    {
+      "name": "Aluminium",
+      "color": "#ebf0e8"
+    },
+    {
+      "name": "T6 B",
+      "color": "#46e1cd"
+    },
+    {
+      "name": "Stone",
+      "color": "#bea576"
+    },
+    {
+      "name": "Basalt",
+      "color": "#5a5c6e"
+    }
+  ],
+  "hotspots": [
+    {
+      "name": "Copper",
+      "color": "#eb954a",
+      "x": 0.46484375,
+      "y": 0.73046875,
+      "w": 0.0390625,
+      "h": 0.0390625,
+      "area": 69,
+      "intensity": 0.4423
+    },
+    {
+      "name": "T6 A",
+      "color": "#845cff",
+      "x": 0.8828125,
+      "y": 0.0625,
+      "w": 0.0625,
+      "h": 0.0625,
+      "area": 214,
+      "intensity": 0.4484
+    },
+    {
+      "name": "T6 A",
+      "color": "#845cff",
+      "x": 0.255859375,
+      "y": 0.2265625,
+      "w": 0.06640625,
+      "h": 0.0625,
+      "area": 211,
+      "intensity": 0.4354
+    },
+    {
+      "name": "Iron",
+      "color": "#cddce1",
+      "x": 0.583984375,
+      "y": 0.39453125,
+      "w": 0.04296875,
+      "h": 0.046875,
+      "area": 99,
+      "intensity": 0.4426
+    },
+    {
+      "name": "Carbon",
+      "color": "#697880",
+      "x": 0.1796875,
+      "y": 0.5625,
+      "w": 0.03125,
+      "h": 0.03125,
+      "area": 54,
+      "intensity": 0.454
+    },
+    {
+      "name": "Aluminium",
+      "color": "#ebf0e8",
+      "x": 0.37890625,
+      "y": 0.43359375,
+      "w": 0.0390625,
+      "h": 0.0390625,
+      "area": 82,
+      "intensity": 0.4218
+    },
+    {
+      "name": "T6 B",
+      "color": "#46e1cd",
+      "x": 0.3828125,
+      "y": 0.1015625,
+      "w": 0.0390625,
+      "h": 0.0390625,
+      "area": 84,
+      "intensity": 0.4335
+    },
+    {
+      "name": "Stone",
+      "color": "#bea576",
+      "x": 0.71484375,
+      "y": 0.59765625,
+      "w": 0.03125,
+      "h": 0.03125,
+      "area": 47,
+      "intensity": 0.4314
+    },
+    {
+      "name": "Basalt",
+      "color": "#5a5c6e",
+      "x": 0.08984375,
+      "y": 0.478515625,
+      "w": 0.0390625,
+      "h": 0.03515625,
+      "area": 66,
+      "intensity": 0.4284
+    }
+  ]
+}

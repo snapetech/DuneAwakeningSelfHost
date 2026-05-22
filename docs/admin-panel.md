@@ -1269,9 +1269,11 @@ Persistent listener service:
 ```bash
 docker compose up -d --no-deps admin-chat-commands
 docker compose logs -f admin-chat-commands
+docker compose ps admin-chat-commands
+docker compose exec -T admin-chat-commands /workspace/scripts/admin-chat-commands.py --healthcheck
 ```
 
-The listener service is separate from the web panel so a command-loop failure does not take down the admin panel hostname. It uses `restart: unless-stopped` and reads `/workspace/.env` at runtime for chat-command and announcement credentials, matching the announcement hook behavior.
+The listener service is separate from the web panel so a command-loop failure does not take down the admin panel hostname. It uses `restart: unless-stopped`, has a Docker healthcheck for the command queue consumer, and reads `/workspace/.env` at runtime for chat-command and announcement credentials, matching the announcement hook behavior. The service runs on host networking and uses the host-published Postgres/RabbitMQ ports for command ingestion and replies, so Paul can recover even when the compose bridge path is degraded.
 
 ## Scheduled Restarts And Shutdowns
 

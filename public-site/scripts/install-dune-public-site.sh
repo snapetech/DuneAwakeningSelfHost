@@ -46,19 +46,22 @@ if [[ "$(id -u)" -ne 0 ]]; then
 fi
 
 install -d -m 0755 "$static_dir"
-install -m 0644 "$repo_root/public-site/static/index.html" "$static_dir/index.html"
-install -m 0644 "$repo_root/public-site/static/style.css" "$static_dir/style.css"
-install -m 0644 "$repo_root/public-site/static/app.js" "$static_dir/app.js"
-if [[ -f "$repo_root/public-site/static/hagga-pois.json" ]]; then
-  install -m 0644 "$repo_root/public-site/static/hagga-pois.json" "$static_dir/hagga-pois.json"
-fi
-if [[ -f "$repo_root/public-site/static/status.html" ]]; then
-  install -m 0644 "$repo_root/public-site/static/status.html" "$static_dir/status.html"
-fi
+find "$repo_root/public-site/static" -maxdepth 1 -type f \( \
+  -name '*.html' -o \
+  -name '*.css' -o \
+  -name '*.js' -o \
+  -name '*.json' -o \
+  -name '*.svg' -o \
+  -name '*.webp' \
+\) -print0 |
+  while IFS= read -r -d '' asset; do
+    install -m 0644 "$asset" "$static_dir/$(basename "$asset")"
+  done
 
 install -d -m 0755 "$prefix/sbin"
 install -m 0755 "$repo_root/public-site/scripts/render-dune-static-status.sh" "$prefix/sbin/render-dune-static-status.sh"
 install -m 0755 "$repo_root/public-site/scripts/render-dune-public-snapshot.py" "$prefix/sbin/render-dune-public-snapshot.py"
+install -m 0755 "$repo_root/public-site/scripts/register-deep-desert-background.py" "$prefix/sbin/register-deep-desert-background.py"
 install -m 0755 "$repo_root/public-site/scripts/configure-dune-public-site.sh" "$prefix/sbin/configure-dune-public-site.sh"
 install -m 0755 "$repo_root/public-site/scripts/validate-dune-public-site.sh" "$prefix/sbin/validate-dune-public-site.sh"
 

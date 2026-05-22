@@ -21,6 +21,8 @@ Description=Dune player join/leave announcer
 Documentation=file://$root/docs/admin-bot.md
 After=docker.service network-online.target
 Wants=network-online.target
+Requires=docker.service
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple

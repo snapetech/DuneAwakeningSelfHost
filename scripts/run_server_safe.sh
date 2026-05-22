@@ -9,6 +9,7 @@ main() {
   install_cert
   install_user_configs "$server_root"
   install_server_login_password "$server_root" "$@"
+  load_workspace_value DUNE_SERVER_DISPLAY_NAME
   install_server_display_name "$server_root" "$@"
 
   mkdir -p "$server_root/DuneSandbox/Saved/UserSettings"
@@ -61,6 +62,22 @@ load_workspace_bool() {
     printf -v "$name" true
     export "$name"
   fi
+}
+
+load_workspace_value() {
+  local name="$1"
+  local value
+  [ -z "${!name:-}" ] || return 0
+  [ -f /workspace/.env ] || return 0
+  value="$(awk -F= -v key="$name" '
+    $0 ~ "^[[:space:]]*" key "=" {
+      sub(/^[^=]*=/, "", $0)
+      print $0
+    }
+  ' /workspace/.env | tail -n 1)"
+  [ -n "$value" ] || return 0
+  printf -v "$name" '%s' "$value"
+  export "$name"
 }
 
 install_user_configs() {

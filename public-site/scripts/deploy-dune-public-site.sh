@@ -34,17 +34,28 @@ install_file() {
   fi
 }
 
+install_static_assets() {
+  local src_dir="$repo_root/public-site/static"
+  local asset
+  find "$src_dir" -maxdepth 1 -type f \( \
+    -name '*.html' -o \
+    -name '*.css' -o \
+    -name '*.js' -o \
+    -name '*.json' -o \
+    -name '*.svg' -o \
+    -name '*.webp' \
+  \) -print0 |
+    while IFS= read -r -d '' asset; do
+      install_file "$asset" "$static_dir/$(basename "$asset")"
+    done
+}
+
 if [[ -d "$static_dir" && -w "$static_dir" ]]; then
   install -d -m 0755 "$static_dir"
 else
   run_privileged install -d -m 0755 "$static_dir"
 fi
-install_file "$repo_root/public-site/static/index.html" "$index_file"
-install_file "$repo_root/public-site/static/style.css" "$static_dir/style.css"
-install_file "$repo_root/public-site/static/app.js" "$static_dir/app.js"
-if [[ -f "$repo_root/public-site/static/hagga-pois.json" ]]; then
-  install_file "$repo_root/public-site/static/hagga-pois.json" "$static_dir/hagga-pois.json"
-fi
+install_static_assets
 
 if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files "$render_service" >/dev/null 2>&1; then
   run_privileged systemctl restart "$render_service"

@@ -28,6 +28,18 @@ state.
 - Native strings expose `DisableShiftingSandsPhysics` and
   `DisableShiftingSandsStormInteractions`. These are candidates only until a
   command/config surface is proven.
+- Server pak scans show Deep Desert layout and bitmap assets, including
+  `DA_DeepDesert_1_Bitmap_Collection_Layout*`,
+  `BMD_DeepDesert_*_LootAreas`, `BMD_DeepDesert_*_SmallShipwrecks`, and
+  `MI_DeepDesert_1_LayoutMap`. These are not exposed as ready static images in
+  the mounted server tree. Confidence: high for asset references, moderate for
+  extractability with external UE pak/uasset tooling.
+- No rows are currently present in `dune.shiftingsands_data`, so there is no
+  live static shifting-sand mask to draw today. Confidence: high.
+- The public/admin Deep Desert map now uses a DB-derived background from
+  marker density, Coriolis seeds, resource field counts, spice state, and
+  shifting-sand rows when present. A registered weekly screenshot can override
+  the schematic background through `admin/static/deep-desert.webp`.
 - RabbitMQ topology proves live admin/game routing surfaces exist for map state,
   settings updates, login grants, online state, notifications, chat, and
   heartbeat flows. Delivery is not the same as handler execution.
@@ -117,3 +129,51 @@ Interpretation:
 - The run did not prove per-instance Shifting Sands. The PVP instance had
   `m_bCoriolisTriggerShiftingSands=True`, but no static Shifting Sands DB rows
   appeared during the short observation. Confidence: unknown.
+
+## Asymmetric Standby Runs: 2026-05-22
+
+Host: `kspls0`.
+
+Captures:
+
+- `captures/research/dd-coriolis-asym-20260522T164032Z`
+- `captures/research/dd-coriolis-pvp-shortstage-20260522T164619Z`
+
+Tested configuration:
+
+- PVE DD, partition `8`, dimension `0`:
+  `m_bCoriolisAutoSpawnEnabled=False`, `m_bCoriolisTriggerShiftingSands=False`,
+  `m_CoriolisLightDamage=0`, `m_CoriolisHeavyDamage=0`,
+  `m_ShiftingSands=False`.
+- PVP DD, partition `31`, dimension `1`:
+  `m_bCoriolisAutoSpawnEnabled=True`, `m_bCoriolisTriggerShiftingSands=True`,
+  `m_CoriolisLightDamage=2`, `m_CoriolisHeavyDamage=25`,
+  `m_ShiftingSands=True`.
+
+Findings:
+
+- With PVE auto-spawn off and PVP auto-spawn on, only partition `31` logged
+  `Requested a Coriolis Spawn`. Partition `8` initialized Coriolis timing but did
+  not request a spawn. Confidence: high.
+- Adding short PVP-only stage/warning values changed the PVP spawn log from
+  `SkipTime 36000` to `SkipTime 16`. This proves at least one warning/stage
+  timing surface is being read by the PVP DD container. Confidence: high.
+- During both asymmetric runs, `retrieve_all_static_shifting_sand()` remained at
+  zero rows. Confidence: high.
+- During both asymmetric runs, `debug_get_coriolis_seeds()` stayed unchanged:
+  farm seed `1`, `DeepDesert_1` map seed `-1`, and partition seeds `-1` for
+  partitions `8` and `31`. Confidence: high.
+- No wipe, map reset, or container restart occurred during these runs.
+  Confidence: high.
+
+Practical conclusion:
+
+- A PVP DD with Coriolis enabled and a PVE DD with Coriolis disabled is achievable
+  through per-container mounted `UserGame.ini` files. Confidence: high for the
+  lab topology.
+- A PVE DD with zero-damage Coriolis is likely achievable by setting its
+  Coriolis damage values to zero, but this exact damage behavior was not proven
+  because no player/vehicle damage probe was present. Confidence: moderate.
+- PVP-only Shifting Sands is still unproven. The known `m_ShiftingSands=True`
+  and `m_bCoriolisTriggerShiftingSands=True` settings did not write
+  `shiftingsands_data` rows in these short server-only tests. Confidence: low.

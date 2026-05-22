@@ -52,9 +52,14 @@
 
 <section class="card live-card">
 <div class="section-heading">
-<h2>Hagga Basin Live Map</h2>
+<h2>Live Map</h2>
 <span id="map-updated" class="muted">loading</span>
 </div>
+<div class="map-tabs" role="tablist" aria-label="Map selection">
+<button type="button" class="active" id="map-tab-hagga" data-map-tab="hagga" role="tab" aria-selected="true">Hagga Basin</button>
+<button type="button" id="map-tab-deep-desert" data-map-tab="deep-desert" role="tab" aria-selected="false">Deep Desert</button>
+</div>
+<p id="map-tab-status" class="muted map-tab-status">Showing Hagga Basin.</p>
 <div class="map-tools" aria-label="Map controls">
 <button type="button" id="map-zoom-out" aria-label="Zoom map out">-</button>
 <button type="button" id="map-zoom-in" aria-label="Zoom map in">+</button>
@@ -67,7 +72,7 @@
 <svg id="poi-overlay" class="poi-overlay" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden="true"></svg>
 </div>
 </div>
-<aside class="poi-legend" aria-label="POI layer legend">
+<aside id="poi-legend" class="poi-legend" aria-label="POI layer legend">
 <div class="poi-legend-header">
 <span id="poi-summary" class="muted" aria-hidden="true"></span>
 <span class="poi-legend-actions">
@@ -80,7 +85,7 @@
 <div id="poi-toggles" class="poi-toggles" aria-label="Map marker toggles"></div>
 </aside>
 </div>
-<p class="muted poi-attribution">POI data from <a href="https://awakening.wiki/Map:Hagga_Basin">Dune: Awakening Community Wiki</a>, CC BY-NC-SA 4.0 unless otherwise noted.</p>
+<p id="poi-attribution" class="muted poi-attribution">POI data from <a href="https://awakening.wiki/Map:Hagga_Basin">Dune: Awakening Community Wiki</a>, CC BY-NC-SA 4.0 unless otherwise noted.</p>
 <p class="muted">Static public snapshot, refreshed once per minute. Only online public display names and coarse locations are published.</p>
 </section>
 </div>
