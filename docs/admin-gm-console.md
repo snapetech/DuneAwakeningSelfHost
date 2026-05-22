@@ -21,7 +21,9 @@ Future research should compare RabbitMQ bindings, generated users, and server qu
 - Admin RabbitMQ has map RPC bindings on exchange `rpc` with routing keys such as `Survival_11`, plus per-map `grant.<server_id>` and `response.<server_id>` routes.
 - Game RabbitMQ has a verified Director JSON-RPC route on exchange `rpc`, routing key `sh-6ff6498f4074e3de-ksplsz`, queue `bgdRpc`. The payload contract is `{"jsonrpc":"2.0","method":"<method>","params":[...],"id":"<non-empty id>"}` with AMQP `type=json_rpc`, `user_id=<authenticated user>`, and `reply_to=<queue name bound to exchange rpc with that same routing key>`.
 - The active Survival game-RMQ server queue observed in the latest capture is `queue.server.6tKBlSXBT5+AqlbBVCn32Q`. It consumes heartbeat/notification messages, but is not bound to the game-RMQ `rpc` exchange. Tested JSON-RPC methods `PrintAllowedCommands`, `ServerCommand`, and `SendDuneServerCommand` produced no response and no visible Survival log hit on the game broker. The same envelopes sent to Director `rpc/sh-6ff6498f4074e3de-ksplsz` returned JSON-RPC `-32601 Method not found`, proving the envelope/reply path while rejecting those GM method names on Director.
-- Admin-RMQ firehose tracing verified that `rpc/Survival_11` publishes are routed to and delivered from `Survival_11_queue`; the consuming user is the Survival server admin user (`sg.<world>.6tKBlSXBT5+AqlbBVCn32Q.admin`). Safe exact probes for `PrintPos` using JSON-RPC command, `ServerCommand`, `SendDuneServerCommand`, service-broadcast candidates, direct queue publishes, and raw text were delivered but produced no command reply and no visible Survival log hit. Confidence: high that auth, routing, and delivery are working; confidence: high that the remaining blocker is the native handler/method contract or required in-game admin/session context.
+- Admin-RMQ firehose tracing verified that `rpc/Survival_11` publishes are routed to and delivered from `Survival_11_queue`; the consuming user is the Survival server admin user (`sg.<world>.6tKBlSXBT5+AqlbBVCn32Q.admin`). Safe exact probes for `PrintPos` using JSON-RPC command, `ServerCommand`, `SendDuneServerCommand`, service-broadcast candidates, direct queue publishes, raw text, non-`json_rpc` AMQP types, omitted AMQP type, and omitted content type were delivered but produced no command reply and no visible Survival log hit. Confidence: high that auth, routing, and delivery are working; confidence: high that the remaining blocker is the native handler/method contract or required in-game admin/session context.
+- `AdminLogin sardaukar` was tested through the same delivered admin-RMQ path as JSON-RPC method, JSON-RPC `ServerCommand`, and raw text. It produced no command reply and no visible Survival log hit. Confidence: high that broker-only admin-login guessing is not enough.
+- Binary strings and local disassembly show `ADunePlayerControllerBase::AdminLogin(const FString&)`, `UDuneServerCommandsCheatManager`, `UDuneServerCommandSubsystem`, `DuneServerCommands::FServerBroadcastPayload`, and `ServerCommand` JSON serialization code. Confidence: moderate/high that at least part of the native GM path is player-controller or cheat-manager scoped, not a standalone broker method that can be called blindly from the admin queue.
 - The active dedicated server allow-list found in `DuneSandbox/Config/DedicatedServerGame.ini` includes:
   - Console commands: `obj`, `FGL.ComponentAuditRequested`
   - GM commands: `AddItemToInventory`, `AddBasicInventoryToCharacter`, `SpawnVehicle`, teleport/travel helpers, `Fly`, `Ghost`, `Walk`, targeted destroy helpers, and `PrintPos`.
@@ -201,7 +203,7 @@ DUNE_GM_COMMAND_RMQ_PASSWORD=guest \
 ./scripts/probe-gm-command.py --transport management --command PrintPos --target-player SamplePlayer --route Survival_11
 ```
 
-Current probe result: admin RabbitMQ routing for `Survival_11` is present (`rpc -> Survival_11_queue`, `grant.Survival_11`, `response.Survival_11`, `validation.Survival_11`, and `settingsUpdateQueue_Survival_11`). RabbitMQ firehose tracing proved exact `rpc/Survival_11` test messages are delivered to `Survival_11_queue` and consumed by the Survival server connection. Safe `PrintPos` publishes over current JSON-RPC, server-command, service-broadcast, direct-queue, and raw-text candidates returned no command response and produced no Survival log hit. The game-RMQ Director JSON-RPC envelope is verified: non-null `id` is required for replies, and the temporary reply queue must be bound to the `rpc` exchange. Treat transport, auth, route discovery, and delivery as working; the native server command method contract or required in-game admin context remains unverified.
+Current probe result: admin RabbitMQ routing for `Survival_11` is present (`rpc -> Survival_11_queue`, `grant.Survival_11`, `response.Survival_11`, `validation.Survival_11`, and `settingsUpdateQueue_Survival_11`). RabbitMQ firehose tracing proved exact `rpc/Survival_11` test messages are delivered to `Survival_11_queue` and consumed by the Survival server connection. Safe `PrintPos` publishes over current JSON-RPC, server-command, service-broadcast, direct-queue, raw-text, non-`json_rpc`, and omitted-property candidates returned no command response and produced no Survival log hit. `AdminLogin sardaukar` over the same path also produced no response/log hit. The game-RMQ Director JSON-RPC envelope is verified: non-null `id` is required for replies, and the temporary reply queue must be bound to the `rpc` exchange. Treat transport, auth, route discovery, and delivery as working; the native server command method contract or required in-game admin/player-controller context remains unverified.
 
 Current transport note: `rabbitmqctl` and AMQP publishing both work against the local brokers in the current runtime. The failure is not basic broker reachability; it is the unverified native server-command RPC method contract.
 
@@ -216,6 +218,18 @@ Implemented `PrintPos` candidate envelopes:
 - Raw task-style array/object variants.
 - Positional RPC argument variants inferred from `TRmqRpcCallProxy<TArray<FString>, FString>` and `TRmqRpcCallProxy<TArray<FString>, FString, FString>` binary symbols.
 - Plain text `PrintPos` and `ServerExec <target> PrintPos` variants.
+
+Additional negative probes:
+
+- Exact `AdminLogin sardaukar` as a JSON-RPC method, JSON-RPC `ServerCommand`, and raw string.
+- Exact `PrintPos` object/service-message variants with AMQP `type` omitted.
+- Exact `PrintPos` object/service-message variants with content type omitted.
+- Exact `PrintPos` object/service-message variants with non-`json_rpc` style properties.
+
+Binary follow-up:
+
+- `ServerCommand` is a real string field in nearby `DuneServerCommands` serialization code, so payloads containing `{"ServerCommand":"PrintPos"}` were worth testing. Those tests were delivered and still failed.
+- `AdminLogin` has an `ADunePlayerControllerBase::AdminLogin(const FString&)` symbol trail, and server commands have a `UDuneServerCommandsCheatManager` trail. The next useful capture is from a real in-game admin action or client-side admin login, not more blind admin-queue shape guessing. Confidence: moderate/high.
 
 `scripts/dune_gm_command.py` is the shared adapter for probe and chat-command code. It supports TLS AMQP and now sends the required JSON-RPC AMQP properties (`type=json_rpc`, `user_id`, and `reply_to`). Online teleport chat commands are connected to it but remain hard-gated:
 
