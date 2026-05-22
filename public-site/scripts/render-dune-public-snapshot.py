@@ -444,7 +444,7 @@ def render_deep_desert_svg(players, markers, generated_at, layout_state=None, ma
     empty = "" if player_nodes else '<text x="1066.7" y="830" class="empty">No online Deep Desert positions.</text>'
     return f'''<svg xmlns="http://www.w3.org/2000/svg" width="{PUBLIC_VIEWBOX_WIDTH:.0f}" height="{HEIGHT}" viewBox="0 0 {PUBLIC_VIEWBOX_WIDTH:.3f} {HEIGHT}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Deep Desert operational map derived from server markers">
 <style>
-.bg{{fill:#171512}}.dune{{fill:#2a241b;opacity:.82}}.ridge{{fill:none;stroke:#d9a63c;stroke-width:7;opacity:.26}}.grid{{stroke:#f1d08a;stroke-width:1;opacity:.18}}.coord,.meta,.legend{{fill:#c7bba9;font:18px system-ui,sans-serif}}.cellLabel{{fill:#e7c875;font:700 22px system-ui,sans-serif;text-anchor:middle;opacity:.68;paint-order:stroke;stroke:#0b0d0a;stroke-width:5}}.dot{{fill:#78cf7a;stroke:#071007;stroke-width:4}}.label{{fill:#fff;font:700 24px system-ui,sans-serif;paint-order:stroke;stroke:#0b0d0a;stroke-width:7}}.empty{{fill:#f3eadb;font:26px system-ui,sans-serif;text-anchor:middle;paint-order:stroke;stroke:#0b0d0a;stroke-width:6}}.marker{{opacity:.92;cursor:help}}.shiftingSand{{fill:#e7d59a;stroke:#fff0bc;stroke-width:2}}
+.bg{{fill:#171512}}.dune{{fill:#2a241b;opacity:.82}}.ridge{{fill:none;stroke:#d9a63c;stroke-width:7;opacity:.26}}.grid{{stroke:#f1d08a;stroke-width:1;opacity:.18}}.coord,.meta,.legend{{fill:#c7bba9;font:18px system-ui,sans-serif}}.cellLabel{{fill:#e7c875;font:700 22px system-ui,sans-serif;text-anchor:middle;opacity:.68;paint-order:stroke;stroke:#0b0d0a;stroke-width:5}}.dot{{fill:#78cf7a;stroke:#071007;stroke-width:4}}.label{{fill:#fff;font:700 24px system-ui,sans-serif;paint-order:stroke;stroke:#0b0d0a;stroke-width:7}}.pointLabel{{fill:#fff;font:700 18px system-ui,sans-serif;paint-order:stroke;stroke:#0b0d0a;stroke-width:5}}.empty{{fill:#f3eadb;font:26px system-ui,sans-serif;text-anchor:middle;paint-order:stroke;stroke:#0b0d0a;stroke-width:6}}.marker{{opacity:.92;cursor:help}}.shiftingSand{{fill:#e7d59a;stroke:#fff0bc;stroke-width:2}}
 </style>
 <rect class="bg" x="0" y="0" width="{PUBLIC_VIEWBOX_WIDTH:.3f}" height="{HEIGHT}"/>
 <path class="dune" d="M0 1120 C360 990 630 1230 990 1080 C1340 930 1680 1050 2133 880 L2133 1600 L0 1600 Z"/>
@@ -513,12 +513,14 @@ def main():
         players = load_rows()
         deep_desert_markers = load_deep_desert_markers()
         deep_desert_layout = load_deep_desert_layout_state()
+        deep_desert_map_data = load_deep_desert_map_data()
         ok = True
         error = None
     except Exception as exc:
         players = []
         deep_desert_markers = []
         deep_desert_layout = {}
+        deep_desert_map_data = load_deep_desert_map_data()
         ok = False
         error = str(exc)
 
@@ -558,10 +560,13 @@ def main():
     source_map = DUNE_ROOT / "admin" / "static" / "hagga-basin.webp"
     if source_map.exists():
         shutil.copyfile(source_map, STATIC_DIR / "hagga-basin.webp")
+    source_dd_map_data = DUNE_ROOT / "admin" / "static" / "deep-desert-map-data.json"
+    if source_dd_map_data.exists():
+        shutil.copyfile(source_dd_map_data, STATIC_DIR / "deep-desert-map-data.json")
     deep_desert_layout["backgroundHref"] = ""
     (STATIC_DIR / "players.json").write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
     (STATIC_DIR / "hagga-map.svg").write_text(render_svg(players, generated, map_image_href(source_map)), encoding="utf-8")
-    (STATIC_DIR / "deep-desert-map.svg").write_text(render_deep_desert_svg(players, deep_desert_markers, generated, deep_desert_layout), encoding="utf-8")
+    (STATIC_DIR / "deep-desert-map.svg").write_text(render_deep_desert_svg(players, deep_desert_markers, generated, deep_desert_layout, deep_desert_map_data), encoding="utf-8")
     return 0 if ok else 1
 
 

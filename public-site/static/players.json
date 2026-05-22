@@ -22,9 +22,7 @@
         "max_globally_primed": 1,
         "max_globally_active": 1,
         "current_globally_primed": 0,
-        "current_globally_active": 1,
-        "is_spawning_active": true,
-        "global_spawn_weight": 0.5
+        "current_globally_active": 1
       },
       {
         "field_type": "Medium",
@@ -34,9 +32,7 @@
         "max_globally_primed": 12,
         "max_globally_active": 12,
         "current_globally_primed": 0,
-        "current_globally_active": 12,
-        "is_spawning_active": true,
-        "global_spawn_weight": 0.5
+        "current_globally_active": 12
       },
       {
         "field_type": "Small",
@@ -46,9 +42,7 @@
         "max_globally_primed": 60,
         "max_globally_active": 60,
         "current_globally_primed": 0,
-        "current_globally_active": 16,
-        "is_spawning_active": true,
-        "global_spawn_weight": 0.5
+        "current_globally_active": 16
       },
       {
         "field_type": "Large",
@@ -58,9 +52,7 @@
         "max_globally_primed": 1,
         "max_globally_active": 1,
         "current_globally_primed": 0,
-        "current_globally_active": 1,
-        "is_spawning_active": true,
-        "global_spawn_weight": 0.5
+        "current_globally_active": 1
       },
       {
         "field_type": "Medium",
@@ -70,9 +62,7 @@
         "max_globally_primed": 12,
         "max_globally_active": 12,
         "current_globally_primed": 0,
-        "current_globally_active": 11,
-        "is_spawning_active": true,
-        "global_spawn_weight": 0.5
+        "current_globally_active": 11
       },
       {
         "field_type": "Small",
@@ -82,9 +72,7 @@
         "max_globally_primed": 60,
         "max_globally_active": 60,
         "current_globally_primed": 0,
-        "current_globally_active": 16,
-        "is_spawning_active": true,
-        "global_spawn_weight": 0.5
+        "current_globally_active": 16
       }
     ]
   },
