@@ -59,11 +59,12 @@ Always compare your `.env` image pin with the Steam package installed on your ho
 - Host-level map watchdog service for unattended recovery.
 - LAN/VPN admin panel with Overview, Ops, Security, Runbook, Players, Settings, Admin Actions, and Catalog surfaces.
 - Guarded admin writes for backups, currency, carried/bank Solari grants, XP, keystones, item grants, stack edits, item deletion, and catalog dry-runs.
+- Reproducible backend item-grant helper with dry-run, explicit confirmation, and reviewed display-name labels such as `Complex Machinery` -> `T2MachineComponent`.
 - Restart announcements, restart planner hooks, chat-command bridge, player-presence announcer, and admin-bot monitoring.
 - Private whisper replies for admin chat commands, auction confirmations, player-presence messages, and admin-only digests through the verified `chat.whispers` route.
 - Chat spam protection with repeat-message detection, public action announcements, and a blocked-by-default kick backend.
 - Verified targeted network-timeout teleport research: a scoped `UNetConnection` timeout plus the shipped offline move helper moved a test player, and reconnect loaded the moved pawn. This is a working teleport mechanism, not a soft disconnect; see `docs/soft-disconnect-teleport.md`.
-- Player-presence automation for joins/leaves, first-seen welcomes, Hagga/Deep Desert milestones, base-cap reminders, reconnect help, restart warnings, map-health notices, population digests, incident notices, starter Base Reconstruction Tool grants, and Vermilius Gap celebration.
+- Player-presence automation for first-time welcomes, returning-player welcome-backs, leaves, first-seen private messages, Hagga/Deep Desert milestones, base-cap reminders, reconnect help, restart warnings, map-health notices, population digests, incident notices, starter Base Reconstruction Tool grants, and Vermilius Gap celebration.
 - Local backups, restore helpers, optional streaming Postgres replica, optional remote replica snapshots, and portable offsite/onsite backup sync examples.
 - Optional public static site package with status, settings, player list, and Hagga Basin map.
 - Artificial Exchange as a first-class economy feature: reviewed price catalog, artificial buyer, validated seller settlement, optional buyer funding, controlled seeded listings, readiness checks, smoke tests, admin-panel controls, optional systemd services, and watchdog timer.
@@ -638,7 +639,7 @@ make list-publishable
 If the full validation target cannot run in your local environment, run focused safe checks:
 
 ```bash
-python3 -m py_compile admin/admin_panel.py scripts/admin-chat-commands.py scripts/dune_gm_command.py scripts/probe-gm-command.py
+python3 -m py_compile admin/admin_panel.py scripts/admin-chat-commands.py scripts/dune_gm_command.py scripts/probe-gm-command.py scripts/gm-command-catalog.py
 make secret-scan
 make verify-local-state-ignored
 ```

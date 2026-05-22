@@ -49,12 +49,44 @@ def build_bodies(command_text, target_player, admin_player):
     command, _, args = command_text.partition(" ")
     base = {
         "jsonrpc-method-command-array": {"jsonrpc": "2.0", "method": command, "params": [args] if args else [], "id": None},
+        "jsonrpc-id-method-command-array": {"jsonrpc": "2.0", "method": command, "params": [args] if args else [], "id": "dash-gm-probe"},
         "jsonrpc-method-command-string": {"jsonrpc": "2.0", "method": command, "params": args, "id": None},
+        "jsonrpc-id-method-command-string": {"jsonrpc": "2.0", "method": command, "params": [args] if args else [], "id": "dash-gm-probe"},
         "jsonrpc-servercommand-array": {"jsonrpc": "2.0", "method": "ServerCommand", "params": [command_text], "id": None},
+        "jsonrpc-id-servercommand-array": {"jsonrpc": "2.0", "method": "ServerCommand", "params": [command_text], "id": "dash-gm-probe"},
         "jsonrpc-servercommand-object": {"jsonrpc": "2.0", "method": "ServerCommand", "params": {"Command": command_text}, "id": None},
+        "jsonrpc-id-servercommand-object": {"jsonrpc": "2.0", "method": "ServerCommand", "params": {"Command": command_text}, "id": "dash-gm-probe"},
         "jsonrpc-senddune-array": {"jsonrpc": "2.0", "method": "SendDuneServerCommand", "params": [command_text, target_player, admin_player], "id": None},
+        "jsonrpc-id-senddune-array": {"jsonrpc": "2.0", "method": "SendDuneServerCommand", "params": [command_text, target_player, admin_player], "id": "dash-gm-probe"},
+        "jsonrpc-id-senddune-one": {"jsonrpc": "2.0", "method": "SendDuneServerCommand", "params": [command_text], "id": "dash-gm-probe"},
         "jsonrpc-serverexec-array": {"jsonrpc": "2.0", "method": "ServerExec", "params": [target_player, command_text], "id": None},
+        "jsonrpc-id-serverexec-array": {"jsonrpc": "2.0", "method": "ServerExec", "params": [target_player, command_text], "id": "dash-gm-probe"},
         "jsonrpc-serverexecrpc-array": {"jsonrpc": "2.0", "method": "ServerExecRPC", "params": [target_player, command_text], "id": None},
+        "jsonrpc-id-serverexecrpc-array": {"jsonrpc": "2.0", "method": "ServerExecRPC", "params": [target_player, command_text], "id": "dash-gm-probe"},
+        "jsonrpc-id-servicebroadcast-array": {"jsonrpc": "2.0", "method": "ServiceBroadcast", "params": [command_text], "id": "dash-gm-probe"},
+        "jsonrpc-id-servicebroadcast-servercommand-object": {
+            "jsonrpc": "2.0",
+            "method": "ServiceBroadcast",
+            "params": [{"ServerCommand": command_text}],
+            "id": "dash-gm-probe",
+        },
+        "jsonrpc-id-servicebroadcast-command-object": {
+            "jsonrpc": "2.0",
+            "method": "ServiceBroadcast",
+            "params": [{"Command": command_text}],
+            "id": "dash-gm-probe",
+        },
+        "jsonrpc-id-servicebroadcast-payload-object": {
+            "jsonrpc": "2.0",
+            "method": "ServiceBroadcast",
+            "params": [{"Payload": {"ServerCommand": command_text}}],
+            "id": "dash-gm-probe",
+        },
+        "servercommand-object": {"ServerCommand": command_text},
+        "servercommand-command-object": {"ServerCommand": command, "Args": args},
+        "dune-server-command-object": {"DuneServerCommand": command_text},
+        "servicebroadcast-servercommand-object": {"ServiceBroadcast": {"ServerCommand": command_text}},
+        "servicebroadcast-command-object": {"ServiceBroadcast": {"Command": command_text}},
         "command-commandtext": {"Command": "ServerCommand", "CommandText": command_text, "TargetPlayer": target_player, "AdminPlayer": admin_player},
         "command-direct": {"Command": command, "Args": args, "TargetPlayer": target_player, "AdminPlayer": admin_player},
         "command-params": {"Command": "SendDuneServerCommand", "Params": [command_text, target_player, admin_player]},
@@ -158,15 +190,37 @@ def main():
     parser.add_argument("--wait", type=float, default=1.0)
     parser.add_argument("--include-game-rmq", action="store_true")
     parser.add_argument("--include-game-bindings", action="store_true", help="Also publish to known game exchange bindings for the server queue.")
+    parser.add_argument("--game-rpc-route", default="", help="Optional game-RMQ rpc routing key, usually the world name.")
     parser.add_argument("--only-broker", choices=("admin", "game", "all"), default="all")
+    parser.add_argument("--user-id", default="", help="AMQP user_id property to send. Leave empty to omit.")
+    parser.add_argument("--body", action="append", default=[], help="Only send these exact body names. Repeatable.")
+    parser.add_argument("--body-contains", action="append", default=[], help="Only send body names containing these substrings. Repeatable.")
+    parser.add_argument("--amqp-type", action="append", default=[], help="Only send these AMQP type values. Repeatable; use empty for omitted type.")
+    parser.add_argument("--content-type", action="append", default=[], help="Only send these content type modes: native, application/json, empty. Repeatable.")
     args = parser.parse_args()
 
     bodies = build_bodies(args.command, args.target_player, args.admin_player)
-    content_type_modes = ["native", "application/json", ""]
-    amqp_types = ["json_rpc", "json-rpc", "request", ""]
+    if args.body:
+        bodies = {
+            name: value
+            for name, value in bodies.items()
+            if name in args.body
+        }
+    if args.body_contains:
+        bodies = {
+            name: value
+            for name, value in bodies.items()
+            if any(pattern in name for pattern in args.body_contains)
+        }
+    content_type_modes = args.content_type or ["native", "application/json", ""]
+    content_type_modes = ["" if mode == "empty" else mode for mode in content_type_modes]
+    amqp_types = args.amqp_type or ["json_rpc", "json-rpc", "request", ""]
+    amqp_types = ["" if mode == "empty" else mode for mode in amqp_types]
     targets = [("admin", "rpc", args.route), ("admin", "", args.queue)]
     if args.include_game_rmq and args.game_server_queue:
         targets.append(("game", "", args.game_server_queue))
+        if args.game_rpc_route:
+            targets.append(("game", "rpc", args.game_rpc_route))
         if args.include_game_bindings and args.game_server_queue.startswith("queue.server."):
             server_id = args.game_server_queue.removeprefix("queue.server.")
             targets.extend(
@@ -188,6 +242,7 @@ def main():
         admin_conn = amqp_connection()
         admin_ch = admin_conn.channel()
         reply_queue = admin_ch.queue_declare(queue="", exclusive=True, auto_delete=True).method.queue
+        bind_safely(admin_ch, reply_queue, "rpc", reply_queue)
         for key in (reply_queue, f"response.{args.route}", args.route):
             bind_safely(admin_ch, reply_queue, "response", key)
 
@@ -208,13 +263,14 @@ def main():
         content_type = native_content_type if content_type_mode == "native" else content_type_mode
         try:
             if broker == "admin":
-                publish_one(admin_ch, exchange, routing_key, body, content_type, amqp_type, reply_queue, "", tag)
+                publish_one(admin_ch, exchange, routing_key, body, content_type, amqp_type, reply_queue, args.user_id, tag)
             else:
                 if game_conn is None:
                     game_conn = game_amqp_connection()
                     game_ch = game_conn.channel()
                     game_reply_queue = game_ch.queue_declare(queue="", exclusive=True, auto_delete=True).method.queue
-                publish_one(game_ch, exchange, routing_key, body, content_type, amqp_type, game_reply_queue, "", tag)
+                    bind_safely(game_ch, game_reply_queue, "rpc", game_reply_queue)
+                publish_one(game_ch, exchange, routing_key, body, content_type, amqp_type, game_reply_queue, args.user_id, tag)
             sent.append(
                 {
                     "tag": tag,

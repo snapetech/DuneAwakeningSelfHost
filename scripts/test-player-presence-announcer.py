@@ -114,6 +114,57 @@ class PublicAnnouncementRoutingTests(unittest.TestCase):
         self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_ROUTING_KEYS"], "HaggaBasin.0,<empty>")
         self.assertEqual(result["routingKeys"], "HaggaBasin.0,<empty>")
 
+    def test_join_announcement_splits_first_timer_and_returning_players(self):
+        snapshots = [
+            {"123": {"name": "FirstTimer", "flsId": "FIRST_FLS"}, "456": {"name": "Returner", "flsId": "RETURN_FLS"}},
+        ]
+        state = {
+            "onlinePlayers": {},
+            "seenAccounts": ["456"],
+        }
+        announced = []
+
+        def fake_online_players():
+            return snapshots.pop(0)
+
+        def fake_save_state(next_state):
+            state.clear()
+            state.update(next_state)
+
+        def fake_announce(message):
+            announced.append(message)
+            return {"ok": True}
+
+        file_env = {
+            "DUNE_PLAYER_PRESENCE_ANNOUNCE_ENABLED": "true",
+            "DUNE_PLAYER_PRESENCE_JOIN_TEMPLATE": "Welcome {playername}! Current player count is now {count}.",
+            "DUNE_PLAYER_PRESENCE_RETURN_JOIN_TEMPLATE": "Welcome back {playername}! Current player count is now {count}.",
+            "DUNE_PLAYER_PRESENCE_STARTER_BASE_TOOL_ENABLED": "false",
+            "DUNE_PLAYER_PRESENCE_ADMIN_FIRST_LOGIN_DAILY_ENABLED": "false",
+        }
+
+        with unittest.mock.patch.object(player_presence_announcer, "FILE_ENV", file_env), \
+             unittest.mock.patch.dict(player_presence_announcer.os.environ, {}, clear=True), \
+             unittest.mock.patch.object(player_presence_announcer, "online_players", fake_online_players), \
+             unittest.mock.patch.object(player_presence_announcer, "load_state", lambda: state.copy()), \
+             unittest.mock.patch.object(player_presence_announcer, "save_state", fake_save_state), \
+             unittest.mock.patch.object(player_presence_announcer, "announce", fake_announce):
+            result = player_presence_announcer.check_once()
+
+        messages = {item["accountId"]: item for item in result["announcements"]}
+        self.assertEqual(messages["123"]["event"], "join-first-time")
+        self.assertEqual(messages["123"]["message"], "Welcome FirstTimer! Current player count is now 2.")
+        self.assertEqual(messages["456"]["event"], "join-returning")
+        self.assertEqual(messages["456"]["message"], "Welcome back Returner! Current player count is now 2.")
+        self.assertEqual(
+            announced,
+            [
+                "Welcome FirstTimer! Current player count is now 2.",
+                "Welcome back Returner! Current player count is now 2.",
+            ],
+        )
+        self.assertEqual(state["seenAccounts"], ["123", "456"])
+
 
 class ServiceHealthCheckTests(unittest.TestCase):
     def test_default_freshness_check_excludes_derived_hagga_map_svg(self):

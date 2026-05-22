@@ -48,6 +48,10 @@ def env_bool(name, default=False):
     return str(env(name, "true" if default else "false")).lower() in ("1", "true", "yes", "on")
 
 
+def env_is_set(name):
+    return name in os.environ or name in FILE_ENV
+
+
 def configured_base_cap():
     config_path = ROOT / env("DUNE_PLAYER_PRESENCE_BASE_CAP_CONFIG", "config/UserGame.ini")
     target_map = env("DUNE_PLAYER_PRESENCE_BASE_CAP_MAP", "HaggaBasin")
@@ -279,9 +283,10 @@ def service_health_checks():
         checks.append({"name": unit, "ok": result.returncode == 0, "status": result.stdout.strip() or result.stderr.strip()})
     max_age = int(env("DUNE_PLAYER_PRESENCE_FRESHNESS_MAX_AGE_SECONDS", "300"))
     missing_grace = int(env("DUNE_PLAYER_PRESENCE_FRESHNESS_MISSING_GRACE_SECONDS", "900"))
+    default_optional_missing = "" if env_is_set("DUNE_PLAYER_PRESENCE_FRESHNESS_FILES") else "public-site/static/hagga-map.svg"
     optional_missing = {
         item.strip()
-        for item in env("DUNE_PLAYER_PRESENCE_FRESHNESS_OPTIONAL_MISSING_FILES", "public-site/static/hagga-map.svg").split(",")
+        for item in env("DUNE_PLAYER_PRESENCE_FRESHNESS_OPTIONAL_MISSING_FILES", default_optional_missing).split(",")
         if item.strip()
     }
     anchor_paths = [
@@ -689,7 +694,7 @@ def send_admin_private(current, template, count, event, extra=None):
 def admin_anomaly_digest_template(stuck_count, stuck_names, over_base_cap):
     parts = []
     if stuck_count:
-        parts.append(f"stale online activity={stuck_count} ({stuck_names})")
+        parts.append(f"stuck/recent anomalies={stuck_count} ({stuck_names})")
     if over_base_cap:
         parts.append(f"over base cap={over_base_cap}")
     if not parts:
@@ -698,7 +703,7 @@ def admin_anomaly_digest_template(stuck_count, stuck_names, over_base_cap):
 
 
 def admin_anomaly_digest_signature(stuck, over_base_cap):
-    stuck_ids = sorted(f"{item.get('accountId') or item.get('name') or ''}:{item.get('staleMinutes') or ''}" for item in stuck if item.get("accountId") or item.get("name"))
+    stuck_ids = sorted(str(item.get("accountId") or item.get("name") or "") for item in stuck if item.get("accountId") or item.get("name"))
     return json.dumps({"stuck": stuck_ids, "overBaseCap": int(over_base_cap or 0)}, sort_keys=True)
 
 
@@ -748,14 +753,21 @@ def check_once():
     left = sorted(previous_ids - current_ids, key=lambda account_id: player_name(previous.get(account_id, account_id)).lower()) if previous else []
     final_count = len(current)
     current_time = now_ts()
+    seen_accounts = set(str(item) for item in state.get("seenAccounts", []))
 
     results = []
     if env_bool("DUNE_PLAYER_PRESENCE_ANNOUNCE_ENABLED", False) and not first_run:
         join_template = env("DUNE_PLAYER_PRESENCE_JOIN_TEMPLATE", "Welcome {playername}! Current player count is now {count}.")
+        return_join_template = env(
+            "DUNE_PLAYER_PRESENCE_RETURN_JOIN_TEMPLATE",
+            env("DUNE_PLAYER_PRESENCE_WELCOME_BACK_TEMPLATE", "Welcome back {playername}! Current player count is now {count}."),
+        )
         leave_template = env("DUNE_PLAYER_PRESENCE_LEAVE_TEMPLATE", "{playername} has left, current count is {count}.")
         for account_id in joined:
-            message = render_template(join_template, player_name(current.get(account_id, account_id)), final_count)
-            results.append({"event": "join", "accountId": account_id, "message": message, "announce": announce(message)})
+            event = "join-returning" if str(account_id) in seen_accounts else "join-first-time"
+            template = return_join_template if str(account_id) in seen_accounts else join_template
+            message = render_template(template, player_name(current.get(account_id, account_id)), final_count)
+            results.append({"event": event, "accountId": account_id, "message": message, "announce": announce(message)})
         for account_id in left:
             message = render_template(leave_template, player_name(previous.get(account_id, account_id)), final_count)
             results.append({"event": "leave", "accountId": account_id, "message": message, "announce": announce(message)})
@@ -770,7 +782,6 @@ def check_once():
 
     automated_private_results = []
     if not first_run:
-        seen_accounts = set(str(item) for item in state.get("seenAccounts", []))
         hagga_arrivals = set(str(item) for item in state.get("haggaArrivalMessaged", []))
         recent_leaves = state.setdefault("recentLeaves", {})
 
@@ -780,6 +791,7 @@ def check_once():
                 if str(account_id) not in seen_accounts:
                     automated_private_results.append(send_private(current[account_id], template, final_count, "first-seen", account_id))
                     seen_accounts.add(str(account_id))
+        seen_accounts.update(str(account_id) for account_id in joined)
 
         join_counts = state.setdefault("joinCounts", {})
         repo_star_messaged = set(str(item) for item in state.get("repoStarMessaged", []))

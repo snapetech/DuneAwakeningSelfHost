@@ -4,6 +4,7 @@ import concurrent.futures
 import datetime
 import hmac
 import html
+import importlib.util
 import json
 import os
 import pathlib
@@ -26,10 +27,17 @@ import psycopg2
 import psycopg2.extras
 
 
+CODE_ROOT = pathlib.Path(__file__).resolve().parents[1]
 ROOT = pathlib.Path(os.environ.get("ADMIN_WORKSPACE", "/workspace"))
+sys.path.insert(0, str(CODE_ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from dune_gm_command import build_envelope, publish_command, publish_command_management
+
+GM_CATALOG_PATH = CODE_ROOT / "scripts" / "gm-command-catalog.py"
+GM_CATALOG_SPEC = importlib.util.spec_from_file_location("gm_command_catalog", GM_CATALOG_PATH)
+gm_command_catalog = importlib.util.module_from_spec(GM_CATALOG_SPEC)
+GM_CATALOG_SPEC.loader.exec_module(gm_command_catalog)
 
 CONFIG_ROOT = ROOT / "config"
 ENV_FILE = ROOT / ".env"
@@ -1896,6 +1904,7 @@ def gm_command_catalog():
         "activeAllowListSource": "DuneSandbox/Config/DedicatedServerGame.ini from the live survival container",
         "commands": commands,
         "cheatScripts": [{"name": name, "commands": lines} for name, lines in sorted(scripts.items())],
+        "commandCatalog": gm_command_catalog.catalog(),
         "chatCommands": list(GM_CHAT_COMMANDS),
         "panelPresets": list(GM_PANEL_PRESETS),
         "routeCandidates": gm_route_candidates(),

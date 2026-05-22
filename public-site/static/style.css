@@ -116,6 +116,35 @@ section {
 	color: #d9a63c;
 }
 
+.support-link {
+	margin: 14px 0 12px;
+}
+
+.discord-button {
+	align-items: center;
+	background: #5865f2;
+	border: 1px solid #7782f5;
+	border-radius: 6px;
+	color: #fff;
+	display: inline-flex;
+	font-size: 0.98rem;
+	font-weight: 700;
+	line-height: 1;
+	padding: 10px 14px;
+	text-decoration: none;
+}
+
+.discord-button:visited {
+	color: #fff;
+}
+
+.discord-button:hover,
+.discord-button:focus-visible {
+	background: #4752c4;
+	border-color: #8c95f7;
+	outline: 0;
+}
+
 .status-card {
 	border: 0;
 	margin: 0;

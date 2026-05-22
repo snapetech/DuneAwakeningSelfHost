@@ -2,6 +2,7 @@
 import argparse
 import collections
 import difflib
+import importlib.util
 import inspect
 import json
 import os
@@ -23,6 +24,10 @@ import psycopg2.extras
 
 from dune_gm_command import build_envelope, publish_command, publish_command_management
 
+GM_CATALOG_PATH = pathlib.Path(__file__).with_name("gm-command-catalog.py")
+GM_CATALOG_SPEC = importlib.util.spec_from_file_location("gm_command_catalog", GM_CATALOG_PATH)
+gm_command_catalog = importlib.util.module_from_spec(GM_CATALOG_SPEC)
+GM_CATALOG_SPEC.loader.exec_module(gm_command_catalog)
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 GM_LOCATION_FILE = ROOT / "backups" / "admin-panel" / "gm-locations.json"
@@ -1079,7 +1084,7 @@ def specialization_track_types(conn):
 
 def handle_gm_command(conn, args, resolved_admin, reply=False):
     if not args:
-        response = "usage: &gm <help|test|routes|mark|marks|recall|pos|dry|where|goto|bring|unstuck|item|kit|xp|tp|map|travel|dimension|patrol|sandworm|marker|vehicle|fly|ghost|walk> ...; online &goto/&bring require &armgoto/&armbring first"
+        response = "usage: &gm <help|catalog|test|routes|mark|marks|recall|pos|dry|where|goto|bring|unstuck|item|kit|xp|tp|map|travel|dimension|patrol|sandworm|marker|vehicle|fly|ghost|walk> ...; online &goto/&bring require &armgoto/&armbring first"
         if reply:
             run_announce(response)
         return {"ok": False, "error": response}
@@ -1088,10 +1093,25 @@ def handle_gm_command(conn, args, resolved_admin, reply=False):
     admin, _ = character_row(conn, resolved_admin)
 
     if subcommand in ("help", "?"):
-        response = "gm: test, routes, mark, marks, recall, pos, dry, where, goto, bring, unstuck, item, kit, xp, tp, map, travel, dimension, patrol, sandworm, marker, vehicle, fly, ghost, walk; use &armgoto/&armbring before live online movement"
+        response = "gm: catalog, test, routes, mark, marks, recall, pos, dry, where, goto, bring, unstuck, item, kit, xp, tp, map, travel, dimension, patrol, sandworm, marker, vehicle, fly, ghost, walk; use &armgoto/&armbring before live online movement"
         if reply:
             run_announce(response)
         return {"ok": True, "action": "gm.help", "message": response}
+
+    if subcommand in ("catalog", "commands"):
+        data = gm_command_catalog.catalog()
+        counts = {}
+        for command in data["commands"]:
+            counts[command["status"]] = counts.get(command["status"], 0) + 1
+        wired = [command["name"] for command in data["commands"] if command["status"] in ("wired-preview", "gated-preview")]
+        response = "gm catalog: " + ", ".join(f"{status}={count}" for status, count in sorted(counts.items()))
+        response += "; wired: " + ", ".join(wired[:12])
+        if len(wired) > 12:
+            response += f", +{len(wired) - 12} more"
+        response += "; full list: ./scripts/gm-command-catalog.py --format markdown"
+        if reply:
+            run_announce(response)
+        return {"ok": True, "action": "gm.catalog", "message": response, "catalog": data}
 
     if subcommand == "test":
         response = "f00"

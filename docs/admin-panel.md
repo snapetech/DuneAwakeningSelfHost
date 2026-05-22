@@ -625,6 +625,26 @@ Execution requires:
 - `DUNE_ADMIN_EXCHANGE_MUTATIONS_ENABLED=true`
 - `confirm: "WRITE EXCHANGE"`
 
+### Reproducible Item Grants
+
+Use `scripts/admin-grant-item.py` when an operator needs a repeatable backend item grant outside the browser. It resolves reviewed display names through `config/artificial-exchange-prices.csv`, prints a dry-run plan by default, and only writes when `--execute --confirm "GRANT ITEM"` are both present.
+
+Examples:
+
+```bash
+./scripts/admin-grant-item.py "Complex Machinery" 2 --character Lukano
+./scripts/admin-grant-item.py "Complex Machinery" 2 --character Lukano --execute --confirm "GRANT ITEM"
+```
+
+Known machinery labels:
+
+| Display label | Server template ID | Confidence |
+| --- | --- | --- |
+| Complex Machinery | `T2MachineComponent` | high |
+| Advanced Machinery | `T6Machinery` | high |
+
+The script targets carried inventory type `0` by default, chooses a free slot, and calls `dune.save_item(dune.inventoryitem)`. Use `--inventory-id` for an exact container, `--inventory-type` for a different resolved inventory type, or `--position` for an exact free slot. Live grants are additive: each execution creates a new stack and does not declare the player's full inventory state.
+
 `POST /api/admin/player-lifecycle/inspect` reads account/player, party, tag, access-code, Communinet, dungeon, tutorial, and lifecycle evidence without writing.
 
 `POST /api/admin/player-tags` plans or executes player tag add/remove calls through `dune.update_player_tags`.

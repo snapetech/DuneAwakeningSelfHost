@@ -9,6 +9,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / "vendor"))
 
 from dune_gm_command import amqp_connection, build_envelope, candidate_modes, publish_command, publish_command_management
 
+SAFE_PROBE_COMMANDS = {"PrintPos", "PrintAllowedCommands"}
+
 
 def main():
     parser = argparse.ArgumentParser(description="Probe the native Dune GM command RabbitMQ route with safe commands.")
@@ -21,7 +23,12 @@ def main():
     parser.add_argument("--preview", action="store_true", help="Print envelopes without publishing.")
     parser.add_argument("--transport", choices=("amqp", "management"), default="amqp", help="Publish transport. Management uses RabbitMQ HTTP API and cannot wait for replies.")
     parser.add_argument("--wait-response", type=float, default=0, help="Declare an exclusive reply queue and wait this many seconds for native responses.")
+    parser.add_argument("--allow-unsafe", action="store_true", help="Allow publishing commands outside the harmless probe allow-list.")
     args = parser.parse_args()
+
+    command_name = args.command.strip().split(None, 1)[0] if args.command.strip() else ""
+    if not args.preview and command_name not in SAFE_PROBE_COMMANDS and not args.allow_unsafe:
+        raise SystemExit(f"refusing to publish unsafe GM probe command {command_name!r}; use --preview or --allow-unsafe")
 
     sent = []
     reply_to = None

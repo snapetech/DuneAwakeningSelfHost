@@ -169,6 +169,18 @@ class CommandReplyTargetTests(unittest.TestCase):
         self.assertTrue(result["reply"]["ok"])
         self.assertIn("chat.whispers", result["reply"]["stdout"])
 
+    def test_gm_catalog_reports_wiring_status(self):
+        with unittest.mock.patch.object(admin_chat_commands, "is_admin", lambda conn, sender_name, sender_fls_id: (True, "AdminUser")), \
+             unittest.mock.patch.object(admin_chat_commands, "character_row", lambda conn, name: (None, [])):
+            result = admin_chat_commands.handle_command(object(), "&gm catalog", sender_name="AdminUser")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["action"], "gm.catalog")
+        self.assertIn("wired-preview", result["message"])
+        command_names = {command["name"] for command in result["catalog"]["commands"]}
+        self.assertIn("PrintPos", command_names)
+        self.assertIn("DestroyEntireBuilding", command_names)
+
     def test_missing_sender_fls_id_is_resolved_for_private_reply(self):
         captured = {}
 
