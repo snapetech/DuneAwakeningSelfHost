@@ -24,6 +24,10 @@ Future research should compare RabbitMQ bindings, generated users, and server qu
 - Admin-RMQ firehose tracing verified that `rpc/Survival_11` publishes are routed to and delivered from `Survival_11_queue`; the consuming user is the Survival server admin user (`sg.<world>.6tKBlSXBT5+AqlbBVCn32Q.admin`). Safe exact probes for `PrintPos` using JSON-RPC command, `ServerCommand`, `SendDuneServerCommand`, service-broadcast candidates, direct queue publishes, raw text, non-`json_rpc` AMQP types, omitted AMQP type, and omitted content type were delivered but produced no command reply and no visible Survival log hit. Confidence: high that auth, routing, and delivery are working; confidence: high that the remaining blocker is the native handler/method contract or required in-game admin/session context.
 - `AdminLogin sardaukar` was tested through the same delivered admin-RMQ path as JSON-RPC method, JSON-RPC `ServerCommand`, and raw text. It produced no command reply and no visible Survival log hit. Confidence: high that broker-only admin-login guessing is not enough.
 - Binary strings and local disassembly show `ADunePlayerControllerBase::AdminLogin(const FString&)`, `UDuneServerCommandsCheatManager`, `UDuneServerCommandSubsystem`, `DuneServerCommands::FServerBroadcastPayload`, and `ServerCommand` JSON serialization code. Confidence: moderate/high that at least part of the native GM path is player-controller or cheat-manager scoped, not a standalone broker method that can be called blindly from the admin queue.
+- `UDuneServerCommandSubsystem` is gated by two opt-in server settings: `server.NotificationSystem.Enabled=true` and `FuncomLiveServices.ServerCommandsAuthToken=<token>`. DASH wires these as disabled-by-default Compose args:
+  - `DUNE_SERVER_NOTIFICATION_SYSTEM_ENABLED`, default `false`
+  - `DUNE_SERVER_COMMANDS_AUTH_TOKEN`, default blank
+- With those two settings enabled on Survival, publishing to the live game-RMQ server queue through the existing `heartbeats` exchange proved delivery into the running server notification parser. The proof probe used routing keys `MHh7RJrGT3CLt9lNDmRMCQ` and `notifications`; the server consumed the messages and logged `JsonObjectStringToUStruct` failures for invalid array/object-wrapper shapes. Confidence: high that the route reaches the game-server notification parser. Confidence: low that the final native `UDuneServerCommandSubsystem` command payload is solved; `PrintAllowedCommands` and `PrintPos` still produced no `Now running ServerCommand` or command-output log.
 - The active dedicated server allow-list found in `DuneSandbox/Config/DedicatedServerGame.ini` includes:
   - Console commands: `obj`, `FGL.ComponentAuditRequested`
   - GM commands: `AddItemToInventory`, `AddBasicInventoryToCharacter`, `SpawnVehicle`, teleport/travel helpers, `Fly`, `Ghost`, `Walk`, targeted destroy helpers, and `PrintPos`.
@@ -32,7 +36,7 @@ Future research should compare RabbitMQ bindings, generated users, and server qu
 
 The live Admin Actions pane does **not** expose a Native GM / Cheat Console. Earlier builds showed a blocked preview UI, but that was removed because it looked actionable while the payload route was still unverified.
 
-The research APIs and scripts can still list discovered commands, shipped cheat scripts, and candidate RabbitMQ routes for operator investigation. Execution remains blocked until the RabbitMQ server-side method name and payload contract for `UDuneServerCommandSubsystem` is proven. The safe first probe should be `PrintPos` against a known live server queue, because it should not mutate state.
+The research APIs and scripts can still list discovered commands, shipped cheat scripts, and candidate RabbitMQ routes for operator investigation. Execution remains blocked until the inner `UDuneServerCommandSubsystem` payload contract is proven. The safe first probe should be `PrintPos` against a known live server queue, because it should not mutate state.
 
 ## Chat Command Plan
 
@@ -309,8 +313,10 @@ Candidate paths:
 
 To enable real execution later:
 
-1. Capture or reconstruct the exact `ServerCommand`/`SendDuneServerCommand` message envelope.
-2. Test with `PrintPos` only.
-3. Confirm the response path on `response.<server_id>` or the RPC reply queue.
-4. Use `PrintAllowedCommands` through the verified path to confirm whether any native kick/session command is actually exposed.
-5. Flip `GM_COMMAND_PAYLOAD_VERIFIED` in the panel implementation and keep `DUNE_ADMIN_GM_COMMANDS_ENABLED=true` as a second gate.
+1. Set `DUNE_SERVER_NOTIFICATION_SYSTEM_ENABLED=true` and `DUNE_SERVER_COMMANDS_AUTH_TOKEN` to a private token, then recreate the target game-server container.
+2. Publish only safe probes through game-RMQ `heartbeats` to the current `queue.server.<server_id>` routing keys.
+3. Capture or reconstruct the inner `ServerCommand` payload that causes `UDuneServerCommandSubsystem` to log `Now running ServerCommand`.
+4. Test with `PrintPos` only.
+5. Confirm the response path on `response.<server_id>` or the RPC reply queue.
+6. Use `PrintAllowedCommands` through the verified path to confirm whether any native kick/session command is actually exposed.
+7. Flip `GM_COMMAND_PAYLOAD_VERIFIED` in the panel implementation and keep `DUNE_ADMIN_GM_COMMANDS_ENABLED=true` as a second gate.

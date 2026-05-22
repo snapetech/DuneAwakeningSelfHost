@@ -19,6 +19,8 @@ x-game-server-command:
   farm-region: &cmd-farm-region -FarmRegion=${WORLD_REGION}
   fls-token: &cmd-fls-token -ini:engine:[FuncomLiveServices]:ServiceAuthToken=${FLS_SECRET}
   fls-env: &cmd-fls-env -ini:engine:[FuncomLiveServices]:DefaultFlsEnvironment=${DUNE_FLS_ENV:-retail}
+  server-command-auth-token: &cmd-server-command-auth-token -ini:engine:[FuncomLiveServices]:ServerCommandsAuthToken=${DUNE_SERVER_COMMANDS_AUTH_TOKEN:-}
+  notification-system: &cmd-notification-system -ini:engine:[ConsoleVariables]:server.NotificationSystem.Enabled=${DUNE_SERVER_NOTIFICATION_SYSTEM_ENABLED:-false}
   server-name: &cmd-server-name -ini:engine:[OnlineSubsystem]:ServerName=${WORLD_UNIQUE_NAME}
   server-login-password: &cmd-server-login-password -ini:engine:[ConsoleVariables]:Bgd.ServerLoginPassword=${DUNE_SERVER_LOGIN_PASSWORD:-}
   datacenter: &cmd-datacenter -ini:engine:[OnlineSubsystem]:DatacenterId=${WORLD_DATACENTER_ID}
@@ -282,6 +284,8 @@ services:
       - *cmd-farm-region
       - *cmd-fls-token
       - *cmd-fls-env
+      - *cmd-server-command-auth-token
+      - *cmd-notification-system
       - *cmd-server-name
       - *cmd-server-login-password
       - *cmd-datacenter
@@ -318,6 +322,8 @@ services:
       - *cmd-farm-region
       - *cmd-fls-token
       - *cmd-fls-env
+      - *cmd-server-command-auth-token
+      - *cmd-notification-system
       - *cmd-server-name
       - *cmd-server-login-password
       - *cmd-datacenter
@@ -357,6 +363,8 @@ services:
       - *cmd-farm-region
       - *cmd-fls-token
       - *cmd-fls-env
+      - *cmd-server-command-auth-token
+      - *cmd-notification-system
       - *cmd-server-name
       - *cmd-server-login-password
       - *cmd-datacenter
@@ -396,6 +404,8 @@ services:
       - *cmd-farm-region
       - *cmd-fls-token
       - *cmd-fls-env
+      - *cmd-server-command-auth-token
+      - *cmd-notification-system
       - *cmd-server-name
       - *cmd-server-login-password
       - *cmd-datacenter
@@ -435,6 +445,8 @@ services:
       - *cmd-farm-region
       - *cmd-fls-token
       - *cmd-fls-env
+      - *cmd-server-command-auth-token
+      - *cmd-notification-system
       - *cmd-server-name
       - *cmd-server-login-password
       - *cmd-datacenter
@@ -474,6 +486,8 @@ services:
       - *cmd-farm-region
       - *cmd-fls-token
       - *cmd-fls-env
+      - *cmd-server-command-auth-token
+      - *cmd-notification-system
       - *cmd-server-name
       - *cmd-server-login-password
       - *cmd-datacenter
@@ -513,6 +527,8 @@ services:
       - *cmd-farm-region
       - *cmd-fls-token
       - *cmd-fls-env
+      - *cmd-server-command-auth-token
+      - *cmd-notification-system
       - *cmd-server-name
       - *cmd-server-login-password
       - *cmd-datacenter
@@ -552,6 +568,8 @@ services:
       - *cmd-farm-region
       - *cmd-fls-token
       - *cmd-fls-env
+      - *cmd-server-command-auth-token
+      - *cmd-notification-system
       - *cmd-server-name
       - *cmd-server-login-password
       - *cmd-datacenter
@@ -591,6 +609,8 @@ services:
       - *cmd-farm-region
       - *cmd-fls-token
       - *cmd-fls-env
+      - *cmd-server-command-auth-token
+      - *cmd-notification-system
       - *cmd-server-name
       - *cmd-server-login-password
       - *cmd-datacenter
