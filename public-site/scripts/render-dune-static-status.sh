@@ -37,6 +37,9 @@ world_class="status-down"
 world_text="Offline"
 access_class="status-down"
 access_text="Unavailable"
+runtime_class="status-unknown"
+runtime_text="Unknown"
+runtime_detail_html="Runtime data unavailable."
 
 if [[ -d "$DUNE_ROOT" ]] && (cd "$DUNE_ROOT" && timeout "$STATUS_TIMEOUT_SECONDS" ./scripts/status.sh .env) >"$tmp_status" 2>&1; then
   if grep -q 'OK: all current partitions have alive active farm rows' "$tmp_status"; then
@@ -61,6 +64,113 @@ if [[ -d "$DUNE_ROOT" ]] && (cd "$DUNE_ROOT" && timeout "$STATUS_TIMEOUT_SECONDS
   fi
 fi
 
+runtime_eval="$(
+  python3 - <<'PY'
+import datetime
+import html
+import json
+import os
+import shlex
+import subprocess
+import sys
+
+services = {
+    "survival", "overmap", "arrakeen", "harko-village", "testing-hephaestus",
+    "testing-carthag", "testing-waterfat", "deep-desert", "proces-verbal",
+    "lostharvest-ecolab-a", "lostharvest-ecolab-b", "lostharvest-forgottenlab",
+    "art-of-kanly", "dungeon-hephaestus", "dungeon-oldcarthag",
+    "faction-outpost-atre", "faction-outpost-hark", "heighliner-dungeon",
+    "ecolab-green-089", "ecolab-green-152", "ecolab-green-024",
+    "ecolab-green-195", "ecolab-green-136", "overland-m-01", "overland-s-04",
+    "overland-s-06", "bandit-fortress", "overland-s-07", "overland-s-08",
+    "dungeon-thepit",
+}
+project = os.environ.get("DOCKER_COMPOSE_PROJECT", "dune_server")
+
+def parse_started(value):
+    if not value:
+        return None
+    text = str(value)
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        return datetime.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+def fmt(seconds):
+    seconds = max(0, int(seconds))
+    days, rem = divmod(seconds, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, _ = divmod(rem, 60)
+    if days:
+        return f"{days}d {hours}h"
+    if hours:
+        return f"{hours}h {minutes}m"
+    return f"{minutes}m"
+
+try:
+    ps = subprocess.check_output(
+        [
+            "docker",
+            "ps",
+            "--filter",
+            f"label=com.docker.compose.project={project}",
+            "--format",
+            '{{.ID}}\t{{.Label "com.docker.compose.service"}}',
+        ],
+        text=True,
+        stderr=subprocess.DEVNULL,
+    )
+except Exception:
+    sys.exit(0)
+
+now = datetime.datetime.now(datetime.timezone.utc)
+rows = []
+restart_count = 0
+for line in ps.splitlines():
+    if not line.strip():
+        continue
+    parts = line.split("\t", 1)
+    if len(parts) != 2 or parts[1] not in services:
+        continue
+    try:
+        detail = json.loads(subprocess.check_output(["docker", "inspect", parts[0]], text=True, stderr=subprocess.DEVNULL))[0]
+    except Exception:
+        continue
+    state = detail.get("State") or {}
+    started = parse_started(state.get("StartedAt"))
+    if state.get("Status") != "running" or not started:
+        continue
+    restart_count += int(detail.get("RestartCount") or 0)
+    rows.append((parts[1], started))
+
+if not rows:
+    sys.exit(0)
+
+newest = max(started for _, started in rows)
+oldest = min(started for _, started in rows)
+last_restart = int((now - newest).total_seconds())
+oldest_uptime = int((now - oldest).total_seconds())
+detail = (
+    f"<strong>Running maps</strong> {len(rows)}/{len(services)}<br>"
+    f"<strong>Most recent restart</strong> {html.escape(newest.strftime('%Y-%m-%d %H:%M UTC'))}<br>"
+    f"<strong>Oldest map uptime</strong> {html.escape(fmt(oldest_uptime))}<br>"
+    f"<strong>Container restarts</strong> {restart_count}"
+)
+values = {
+    "runtime_class": "status-ok" if len(rows) == len(services) else "status-warn",
+    "runtime_text": fmt(last_restart),
+    "runtime_detail_html": detail,
+}
+for key, value in values.items():
+    print(f"{key}={shlex.quote(str(value))}")
+PY
+)" || runtime_eval=""
+if [[ -n "$runtime_eval" ]]; then
+  eval "$runtime_eval"
+fi
+
 checked_at="$(date -u '+%Y-%m-%d %H:%M UTC')"
 
 status_block="$(cat <<EOF
@@ -70,6 +180,7 @@ status_block="$(cat <<EOF
 <dt><span class="status-dot ${server_class}"></span>Server</dt><dd>${server_text}</dd>
 <dt><span class="status-dot ${world_class}"></span>World health</dt><dd>${world_text}</dd>
 <dt><span class="status-dot ${access_class}"></span>Player access</dt><dd>${access_text}</dd>
+<dt><span class="status-dot ${runtime_class}"></span>Since restart</dt><dd><span class="status-help" tabindex="0">${runtime_text}<span class="status-popover" role="dialog" aria-label="Uptime details">${runtime_detail_html}</span></span></dd>
 </dl>
 <p class="status-updated">Last checked ${checked_at}.</p>
 </section>

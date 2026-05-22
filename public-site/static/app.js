@@ -92,7 +92,8 @@
 		[
 			["Server", "Unknown"],
 			["World health", "Unknown"],
-			["Player access", "Unknown"]
+			["Player access", "Unknown"],
+			["Since restart", "Unknown"]
 		].forEach(function (row) {
 			var dt = document.createElement("dt");
 			var dot = document.createElement("span");

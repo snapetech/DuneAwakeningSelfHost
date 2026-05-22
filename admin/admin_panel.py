@@ -1454,6 +1454,67 @@ def docker_container_stats(live_stats=False):
     return sorted(rows, key=lambda r: str(r.get("service", "")))
 
 
+def parse_docker_time(value):
+    if not value:
+        return None
+    text = str(value)
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        return datetime.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def human_duration(seconds):
+    try:
+        seconds = max(0, int(seconds))
+    except (TypeError, ValueError):
+        return ""
+    days, rem = divmod(seconds, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, _ = divmod(rem, 60)
+    if days:
+        return f"{days}d {hours}h"
+    if hours:
+        return f"{hours}h {minutes}m"
+    return f"{minutes}m"
+
+
+def docker_container_runtimes():
+    containers = docker_api(f"/containers/json?all=1&filters={urllib.parse.quote(json.dumps({'label': [f'com.docker.compose.project={DOCKER_COMPOSE_PROJECT}']}))}")
+    now = datetime.datetime.now(datetime.timezone.utc)
+    rows = {}
+    for container in containers:
+        labels = container.get("Labels") or {}
+        service = labels.get("com.docker.compose.service") or (container.get("Names") or [""])[0].lstrip("/")
+        if not service:
+            continue
+        container_id = container.get("Id", "")
+        started_at = None
+        restart_count = None
+        state = container.get("State")
+        try:
+            detail = docker_api(f"/containers/{container_id}/json")
+            state_info = detail.get("State") or {}
+            state = state_info.get("Status") or state
+            started_at = state_info.get("StartedAt")
+            restart_count = detail.get("RestartCount")
+        except Exception:
+            started_at = None
+        started_dt = parse_docker_time(started_at)
+        uptime_seconds = int((now - started_dt).total_seconds()) if started_dt and state == "running" else None
+        rows[service] = {
+            "service": service,
+            "state": state,
+            "startedAt": started_at if started_dt else None,
+            "uptimeSeconds": uptime_seconds,
+            "uptime": human_duration(uptime_seconds) if uptime_seconds is not None else "",
+            "restartCount": restart_count,
+        }
+    return rows
+
+
 def db_connect():
     return psycopg2.connect(
         host=os.environ.get("DUNE_ADMIN_DB_HOST", "postgres"),
@@ -4315,7 +4376,13 @@ class Handler(BaseHTTPRequestHandler):
         partitions = query("select partition_id,server_id,map,dimension_index,label,blocked from dune.world_partition order by partition_id")
         active = query("select * from dune.active_server_ids order by server_id")
         active_ids = {row.get("server_id") for row in active}
-        map_status = self.map_health_rows(farm, partitions, active_ids)
+        try:
+            runtimes = docker_container_runtimes()
+            runtime_error = None
+        except Exception as exc:
+            runtimes = {}
+            runtime_error = str(exc)
+        map_status = self.map_health_rows(farm, partitions, active_ids, runtimes)
         expected = len(partitions)
         current_ready_alive = sum(1 for row in map_status if row.get("ready") and row.get("alive") and row.get("active"))
         current_alive_active = sum(1 for row in map_status if row.get("alive") and row.get("active"))
@@ -4350,6 +4417,8 @@ class Handler(BaseHTTPRequestHandler):
                 "totalMaps": len(map_status),
                 "peakPlayersToday": player_peak.get("peak"),
                 "peakPlayersDate": player_peak.get("date"),
+                "runtimeAvailable": runtime_error is None,
+                "runtimeError": runtime_error,
             },
             "mapStatus": map_status,
             "farmState": farm,
@@ -4357,7 +4426,8 @@ class Handler(BaseHTTPRequestHandler):
             "activeServers": active,
         }
 
-    def map_health_rows(self, farm, partitions, active_ids):
+    def map_health_rows(self, farm, partitions, active_ids, runtimes=None):
+        runtimes = runtimes or {}
         farm_by_server = {row.get("server_id"): row for row in farm}
         rows = []
         for part in partitions:
@@ -4381,8 +4451,19 @@ class Handler(BaseHTTPRequestHandler):
                 "players": farm_row.get("connected_players", 0),
                 "game": self.addr_port(farm_row.get("game_addr"), farm_row.get("game_port")),
                 "igw": self.addr_port(farm_row.get("igw_addr"), farm_row.get("igw_port")),
+                "runtime": runtimes.get(self.service_for_partition(part)),
             })
         return rows
+
+    def service_for_partition(self, part):
+        partition_id = part.get("partition_id")
+        try:
+            index = int(partition_id) - 1
+        except (TypeError, ValueError):
+            return None
+        if 0 <= index < len(GAME_MAP_SERVICES):
+            return GAME_MAP_SERVICES[index]
+        return None
 
     def addr_port(self, addr, port):
         if not addr or not port:
@@ -6358,6 +6439,15 @@ INDEX = r"""<!doctype html>
     .summaryHover { position:fixed; z-index:14; top:92px; right:24px; display:none; width:min(920px,calc(100vw - 48px)); max-height:calc(100vh - 128px); overflow:auto; border:1px solid var(--line); border-radius:8px; background:var(--panel); box-shadow:0 18px 60px rgba(0,0,0,.55); padding:14px; }
     .summaryCard:hover .summaryHover, .summaryCard:focus-within .summaryHover { display:block; }
     .summaryHover .panelBand { margin:0; }
+    .runtimeBadge { position:relative; display:inline-flex; align-items:center; border:1px solid var(--line); border-radius:999px; padding:5px 9px; background:#101310; color:var(--text); font-size:12px; white-space:nowrap; }
+    .runtimeBadge:hover, .runtimeBadge:focus { border-color:#53614d; outline:none; }
+    .runtimeBadge:focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
+    .runtimeHover { position:fixed; z-index:15; top:92px; right:24px; display:none; width:min(420px,calc(100vw - 48px)); border:1px solid var(--line); border-radius:8px; background:var(--panel); box-shadow:0 18px 60px rgba(0,0,0,.55); padding:14px; white-space:normal; text-align:left; }
+    .runtimeBadge:hover .runtimeHover, .runtimeBadge:focus .runtimeHover { display:block; }
+    .runtimeHover h3 { margin:0 0 10px; }
+    .runtimeDetails { display:grid; grid-template-columns:auto minmax(0,1fr); gap:6px 12px; margin:0; }
+    .runtimeDetails dt { color:var(--muted); }
+    .runtimeDetails dd { margin:0; overflow-wrap:anywhere; }
     .pill { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line); border-radius:999px; padding:5px 9px; background:#101310; color:var(--muted); font-size:12px; }
     .pill.ok { border-color:#315e31; color:var(--ok); }
     .pill.warn { border-color:#6d5624; color:var(--warn); }
@@ -6991,13 +7081,38 @@ function checks(rows){
 function healthCell(ok, yes='online', no='offline'){
   return `<span class="pill ${ok ? 'ok' : 'bad'}">${ok ? yes : no}</span>`;
 }
+function fmtRuntimeSeconds(seconds){
+  const value = Math.max(0, Number(seconds || 0));
+  const days = Math.floor(value / 86400);
+  const hours = Math.floor((value % 86400) / 3600);
+  const minutes = Math.floor((value % 3600) / 60);
+  if (days) return `${days}d ${hours}h`;
+  if (hours) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+}
+function fmtRuntimeStarted(value){
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString();
+}
+function runtimeBadge(row){
+  const rt = (row && row.runtime) || {};
+  const uptime = rt.uptime || (rt.uptimeSeconds != null ? fmtRuntimeSeconds(rt.uptimeSeconds) : '');
+  const label = uptime || 'unknown';
+  const state = rt.state || 'unknown';
+  const started = fmtRuntimeStarted(rt.startedAt) || 'unknown';
+  const restartCount = rt.restartCount ?? 'unknown';
+  const service = rt.service || 'unknown';
+  return `<span class="runtimeBadge" tabindex="0">${esc(label)}<span class="runtimeHover" role="dialog" aria-label="${esc(row.label || row.map || 'Map')} runtime details"><h3>${esc(row.label || row.map || 'Map')} Runtime</h3><dl class="runtimeDetails"><dt>Service</dt><dd>${esc(service)}</dd><dt>State</dt><dd>${esc(state)}</dd><dt>Started</dt><dd>${esc(started)}</dd><dt>Uptime</dt><dd>${esc(label)}</dd><dt>Restart count</dt><dd>${esc(restartCount)}</dd></dl></span></span>`;
+}
 function mapStatusTable(rows){
   if (!rows || !rows.length) return '<div class="muted">No map status rows.</div>';
-  return `<div class="tableWrap"><table><thead><tr><th>Map</th><th>Status</th><th>Ready</th><th>Alive</th><th>Active</th><th>Players</th><th>Game</th><th>IGW</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.label || r.map)}<br><span class="muted">${esc(r.map)} #${esc(r.partition_id)}</span></td><td>${healthCell(r.online)}</td><td>${healthCell(r.ready, 'yes', 'no')}</td><td>${healthCell(r.alive, 'yes', 'no')}</td><td>${healthCell(r.active, 'yes', 'no')}</td><td>${esc(r.players ?? 0)}</td><td>${esc(r.game)}</td><td>${esc(r.igw)}</td></tr>`).join('')}</tbody></table></div>`;
+  return `<div class="tableWrap"><table><thead><tr><th>Map</th><th>Status</th><th>Ready</th><th>Alive</th><th>Active</th><th>Players</th><th>Uptime</th><th>Game</th><th>IGW</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.label || r.map)}<br><span class="muted">${esc(r.map)} #${esc(r.partition_id)}</span></td><td>${healthCell(r.online)}</td><td>${healthCell(r.ready, 'yes', 'no')}</td><td>${healthCell(r.alive, 'yes', 'no')}</td><td>${healthCell(r.active, 'yes', 'no')}</td><td>${esc(r.players ?? 0)}</td><td>${runtimeBadge(r)}</td><td>${esc(r.game)}</td><td>${esc(r.igw)}</td></tr>`).join('')}</tbody></table></div>`;
 }
 function mapTiles(rows){
   if (!rows || !rows.length) return '<div class="muted">No map rows.</div>';
-  return `<div class="mapGrid">${rows.map(r => `<div class="mapTile ${r.online ? 'ok' : 'bad'}"><div class="name">${esc(r.label || r.map)}</div><div class="meta">${r.online ? 'online' : 'offline'} | ${esc(r.players ?? 0)} players</div></div>`).join('')}</div>`;
+  return `<div class="mapGrid">${rows.map(r => `<div class="mapTile ${r.online ? 'ok' : 'bad'}"><div class="name">${esc(r.label || r.map)}</div><div class="meta">${r.online ? 'online' : 'offline'} | ${esc(r.players ?? 0)} players | up ${esc(((r.runtime || {}).uptime) || 'unknown')}</div></div>`).join('')}</div>`;
 }
 const haggaPoiPalette = ['#d5a13e', '#7fc27a', '#6fa8dc', '#d96f62', '#b78cff', '#6cc7bd', '#e1b75f', '#e89458'];
 const haggaPoiGroupColors = {
