@@ -96,6 +96,26 @@ DUNE_ADMIN_LAN_URL=http://admin.example.test/api/status
 
 That script checks both the direct local panel endpoint and the optional LAN hostname. It catches the common failure where the container is healthy but the external reverse proxy returns `502` because no hostname route points at the panel.
 
+## Optional GitLab Deployment
+
+GitLab deployment is optional. The default admin-panel install and maintenance path is still direct Compose/systemd operation from the DASH host. Use the `.gitlab-ci.yml` jobs only when you deliberately want a protected `gitlab.home` shell runner to validate and manually deploy the panel.
+
+The optional jobs are:
+
+- `validate:admin-panel` compiles admin-related Python and runs safe-surface/chat tests.
+- `deploy:admin-panel` is manual on the default branch and recreates only the `admin-panel` Compose service.
+- `observe:admin-panel` is read-only and runs `scripts/check-admin-ingress.sh`.
+
+The deploy path is:
+
+```bash
+scripts/deploy-admin-panel.sh .env
+```
+
+That script validates the Python entry points, runs `scripts/test-admin-panel-safe-surfaces.py`, recreates `admin-panel` with `docker compose up -d --no-deps --force-recreate admin-panel`, then checks direct and LAN ingress. It does not restart Postgres, RabbitMQ, game maps, Director, Gateway, or admin-panel-ingress.
+
+Keep scheduled GitLab jobs read-only. Admin-panel deploys should stay manual because the panel is a live control surface for mutations, restarts, backups, config writes, and player operations. Do not give a public/shared runner Docker access to the Dune host.
+
 Example nginx site:
 
 ```nginx

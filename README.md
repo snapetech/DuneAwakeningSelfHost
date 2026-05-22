@@ -455,6 +455,8 @@ make public-site-check
 
 More detail: [`docs/public-static-site.md`](docs/public-static-site.md).
 
+Optional GitLab CI jobs can validate, manually deploy, and observe the public static site and LAN admin panel from a protected home-lab runner. This is not the default install path; direct shell/systemd/Compose operation remains the normal path. See [`docs/public-static-site.md`](docs/public-static-site.md) and [`docs/admin-panel.md`](docs/admin-panel.md).
+
 ## Artificial Exchange
 
 Artificial Exchange is DASH's operator-controlled Exchange liquidity layer for

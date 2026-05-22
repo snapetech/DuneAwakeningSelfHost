@@ -157,3 +157,36 @@ make public-site-check
 ```
 
 Inspect the tarball before sharing. It should contain only `public-site/`, `examples/public-site/`, and this document.
+
+## Optional GitLab Publishing
+
+GitLab publishing is optional. The default install and maintenance path is still the local shell/systemd flow above. Use `.gitlab-ci.yml` only when you deliberately want a protected `gitlab.home` shell runner to validate and publish the static site.
+
+The optional pipeline deliberately separates safe automation from live operations:
+
+- `validate:public-site` runs `make public-site-check` and creates a package artifact.
+- `deploy:public-site` is manual on the default branch and deploys only static-site files plus a fresh render.
+- `observe:public-site` verifies no-store headers, `status.html` freshness, and `players.json` shape.
+- `observe:server-health` is read-only and runs the existing health/RabbitMQ checks.
+
+Runner requirements for this optional path:
+
+```text
+bash
+curl
+docker compose access to the DASH stack
+jq
+make
+python3
+systemctl permission to restart render-dune-static-status.service
+write access to STATIC_DIR from /etc/dune-public-site.env
+```
+
+Recommended runner environment:
+
+```text
+PUBLIC_SITE_ENV_FILE=/etc/dune-public-site.env
+PUBLIC_SITE_URL=https://dune.snape.tech
+```
+
+Keep game-state mutations out of scheduled GitLab jobs. Use manual jobs only for static publish and read-only checks unless a separate operator-approved runbook says otherwise. Do not treat this as a required install step for users who prefer direct shell/systemd operation.
