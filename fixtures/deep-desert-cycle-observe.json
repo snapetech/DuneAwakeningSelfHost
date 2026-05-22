@@ -1,0 +1,30 @@
+{
+  "id": "deep-desert-cycle-observe",
+  "requiresClientAction": false,
+  "before": {
+    "sql": [
+      "select * from dune.spicefield_types order by map_name, dimension_index, field_type;",
+      "select map, dimension_index, field_kind_id, count(*), sum(value_remaining) from dune.resourcefield_state group by 1,2,3 order by 1,2,3;"
+    ]
+  },
+  "during": {
+    "operatorSteps": [
+      "Let the Deep Desert run through one observation window; optionally enter Deep Desert with a disposable player."
+    ]
+  },
+  "after": {
+    "sql": [
+      "select * from dune.spicefield_types order by map_name, dimension_index, field_type;",
+      "select map, dimension_index, field_kind_id, count(*), sum(value_remaining) from dune.resourcefield_state group by 1,2,3 order by 1,2,3;"
+    ],
+    "logs": ["LogSpice|resourcefield|SpiceField|shipwreck|crash|Encounter|SmallShip"]
+  },
+  "verdict": {
+    "classificationTargets": [
+      "large-spice-active-count",
+      "medium-spice-active-count",
+      "shipwreck-runtime-log-signature",
+      "resourcefield-state-transition"
+    ]
+  }
+}

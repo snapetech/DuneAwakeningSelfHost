@@ -1,5 +1,7 @@
 # Binary-Only Candidate Config Keys
 
+Stale/archived evidence: generated from build `1963158`; current `.env.example` is `1968181-0-shipping`. Regenerate before using this file as current build truth.
+
 Generated from strings in `DuneSandboxServer-Linux-Shipping` from build `1963158`, excluding keys already present in shipped `DefaultGame.ini`.
 This is a research index. A binary string is not proof that a key is config-loadable or safe to override; use it to choose targets for focused validation.
 

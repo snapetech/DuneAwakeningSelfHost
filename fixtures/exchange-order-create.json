@@ -1,0 +1,27 @@
+{
+  "id": "exchange-order-create",
+  "requiresClientAction": true,
+  "before": {
+    "sql": [
+      "select count(*) from dune.dune_exchange_orders;",
+      "select count(*) from dune.dune_exchange_sell_orders;"
+    ]
+  },
+  "during": {
+    "operatorSteps": [
+      "List one disposable item on the Dune Exchange from a disposable player."
+    ]
+  },
+  "after": {
+    "sql": [
+      "select * from dune.dune_exchange_orders order by id desc limit 20;",
+      "select * from dune.dune_exchange_sell_orders order by order_id desc limit 20;"
+    ],
+    "logs": ["exchange|auction|order|listing"]
+  },
+  "verdict": {
+    "expectedNewRows": {
+      "dune.dune_exchange_orders": ">0"
+    }
+  }
+}

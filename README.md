@@ -57,7 +57,7 @@ Always compare your `.env` image pin with the Steam package installed on your ho
 - Full 30-partition warm pool through `compose.allmaps.yaml` and `scripts/start-full-warm-pool.sh`.
 - Recovery helpers for dependency loss and stale fixed-partition server IDs.
 - Host-level map watchdog service for unattended recovery.
-- LAN/VPN admin panel with Overview, Ops, Security, Runbook, Players, Settings, Admin Actions, and Catalog surfaces.
+- LAN/VPN admin panel with Overview, Ops, Security, Runbook, Players, Settings, Admin Actions, Catalog, and Discovery surfaces.
 - Guarded admin writes for backups, currency, carried/bank Solari grants, XP, keystones, item grants, stack edits, item deletion, and catalog dry-runs.
 - Reproducible backend item-grant helper with dry-run, explicit confirmation, and reviewed display-name labels such as `Complex Machinery` -> `T2MachineComponent`.
 - Restart announcements, restart planner hooks, chat-command bridge, player-presence announcer, and admin-bot monitoring.
@@ -595,7 +595,7 @@ Start from [`.env.example`](.env.example). It is the source of truth for the ful
 | Key | First-run/security meaning |
 | --- | --- |
 | `DUNE_STEAM_SERVER_DIR` | Local path to the official Steam self-host tool. |
-| `DUNE_IMAGE_TAG` | Image tag loaded from the Steam package; documented baseline is `1963158-0-shipping`. |
+| `DUNE_IMAGE_TAG` | Image tag loaded from the Steam package; current example baseline is `1968181-0-shipping`. |
 | `WORLD_NAME` | Server-browser nested/details row. Use the feature-list description here. |
 | `DUNE_SERVER_DISPLAY_NAME` | Server-browser nested/details row injected into game config. Keep it equal to `WORLD_NAME`. |
 | `WORLD_UNIQUE_NAME` | Durable FLS battlegroup identity; back up `.env` and do not rotate after first registration. |
@@ -610,8 +610,8 @@ Start from [`.env.example`](.env.example). It is the source of truth for the ful
 | `DUNE_ADMIN_BIND_ADDRESS` / `DUNE_ADMIN_HOST_PORT` | Admin panel bind and host port; keep private. |
 | `DUNE_ADMIN_ALLOWED_HOSTS` | Host header allowlist for the admin panel. |
 | `DUNE_ADMIN_TOKEN` / `DUNE_ADMIN_REQUIRE_TOKEN` | Optional token protection for private admin API requests. |
-| `DUNE_ADMIN_MUTATIONS_ENABLED` | Master gate for admin writes. |
-| `DUNE_ADMIN_ITEM_GRANTS_ENABLED` | Separate gate for item grants, stack edits, and deletion. |
+| `DUNE_ADMIN_MUTATIONS_ENABLED` | Master gate for admin writes; example default is fail-closed. |
+| `DUNE_ADMIN_ITEM_GRANTS_ENABLED` | Separate gate for item grants, stack edits, and deletion; example default is fail-closed. |
 | `DUNE_ADMIN_GM_COMMANDS_ENABLED` / `DUNE_GM_COMMAND_PAYLOAD_VERIFIED` | GM/native command gates; keep false unless verified. |
 | `DUNE_ADMIN_*_ENABLED` write gates | Per-family gates for typed knobs, events, bundles, progression, faction, Landsraad, respawn, guild, markers, landclaim, Exchange, tags, access codes, Communinet, tutorial, permission, vendor, and character-slot operations. |
 
@@ -688,6 +688,7 @@ Architecture and research:
 - [`docs/admin-gm-console.md`](docs/admin-gm-console.md): GM command research and gates.
 - [`docs/soft-disconnect-teleport.md`](docs/soft-disconnect-teleport.md): verified targeted network-timeout teleport runbook and unresolved soft-disconnect work.
 - [`docs/server-knobs-audit.md`](docs/server-knobs-audit.md): audited config/settings candidates.
+- [`docs/discovery-burndown-plan.md`](docs/discovery-burndown-plan.md): build-scoped discovery, fixture, experiment, promotion, and browser-ping diagnostic burn-down.
 - [`docs/network-investigation.md`](docs/network-investigation.md): DB/RabbitMQ/socket routing notes.
 - [`docs/routing-investigation.md`](docs/routing-investigation.md): travel route investigation notes.
 - [`docs/benchmarking.md`](docs/benchmarking.md): resource and transition benchmark notes.

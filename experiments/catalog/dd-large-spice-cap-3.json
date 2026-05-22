@@ -1,0 +1,32 @@
+{
+  "id": "dd-large-spice-cap-3",
+  "service": "deep-desert",
+  "config": {
+    "file": "config/UserGame.ini",
+    "section": "/Script/DuneSandbox.SpiceHarvestingSystem",
+    "key": "m_PerMapSystemSettings",
+    "valueMode": "structured-spice-caps",
+    "value": {
+      "DeepDesert_1": {
+        "Large": {
+          "primed": 3,
+          "active": 3
+        }
+      }
+    }
+  },
+  "observe": {
+    "duration": "30m",
+    "sql": [
+      "select * from dune.spicefield_types order by map_name, dimension_index, field_type;",
+      "select * from dune.spicefield_server_availability order by map_name, dimension_index, field_type;"
+    ],
+    "logs": [
+      "LogSpice|resourcefield|SpiceField"
+    ]
+  },
+  "rollback": {
+    "restoreConfigBackup": true,
+    "restartServices": ["deep-desert"]
+  }
+}

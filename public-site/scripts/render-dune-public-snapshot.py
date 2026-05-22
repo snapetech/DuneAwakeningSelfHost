@@ -186,17 +186,39 @@ def load_deep_desert_layout_state():
     return json.loads(text)
 
 
-def load_deep_desert_map_data():
-    path = DUNE_ROOT / "admin" / "static" / "deep-desert-map-data.json"
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        data = {}
-    layers = data.setdefault("layers", {})
-    for key in ("resource_nodes", "resource_fields", "spice_fields", "transit", "wreckage", "locations", "saved_db_markers"):
-        if not isinstance(layers.get(key), list):
-            layers[key] = []
-    return data
+def load_deep_desert_observations():
+    sql = r"""
+        select json_build_object(
+            'source', 'live DB passive observation',
+            'spiceAvailability', coalesce((
+                select json_agg(row_to_json(a) order by a.dimension_index, a.field_type, a.server_id)
+                from (
+                    select st.field_type, st.dimension_index, sa.server_id,
+                           sa.inactive_fields_of_type, sa.requested_spawned_of_type
+                    from dune.spicefield_server_availability sa
+                    join dune.spicefield_types st on st.spicefield_type_id = sa.spicefield_type_id
+                    where st.map_name = 'DeepDesert'
+                ) a
+            ), '[]'::json),
+            'shipwreckSpawners', coalesce((
+                select json_agg(row_to_json(s) order by s.dimension_index, s.name, s.id)
+                from (
+                    select id, map, dimension_index, name,
+                           substring(name from 'CB_WL_[0-9]+') as world_layout_ref
+                    from dune.actor_spawners
+                    where map = 'DeepDesert'
+                      and (
+                        name ilike '%WreckedShip%'
+                        or name ilike '%Shipwreck%'
+                        or name ilike '%CrashSite%'
+                        or name ilike '%PatrolShip%'
+                      )
+                ) s
+            ), '[]'::json)
+        )
+    """
+    text = compose_psql(sql).strip() or "{}"
+    return json.loads(text)
 
 
 def clamp(value, low, high):
@@ -343,9 +365,9 @@ def dd_marker_area_bounds(markers):
     return bounds
 
 
-def render_deep_desert_svg(players, markers, generated_at, layout_state=None, map_data=None):
+def render_deep_desert_svg(players, markers, generated_at, layout_state=None, observations=None):
     layout_state = layout_state or {}
-    map_data = map_data or {}
+    observations = observations or {}
     background_href = layout_state.get("backgroundHref") or ""
     bounds = dd_bounds(markers, players)
     span_x = max(bounds["max_x"] - bounds["min_x"], 1)
@@ -363,17 +385,7 @@ def render_deep_desert_svg(players, markers, generated_at, layout_state=None, ma
     def marker_point(marker):
         return pp(float(marker["x"]), float(marker["y"]))
 
-    groups = {}
-    for layer_key, rows in (map_data.get("layers") or {}).items():
-        if layer_key == "saved_db_markers" or not isinstance(rows, list) or not rows:
-            continue
-        groups[DD_LAYER_LABELS.get(layer_key, layer_key)] = (len(rows), layer_key)
     legend_items = []
-    for index, (group, (count, layer_key)) in enumerate(sorted(groups.items())):
-        x = 24 + (index % 3) * 250
-        y = 74 + (index // 3) * 30
-        color = DD_LAYER_COLORS.get(layer_key, "#f3eadb")
-        legend_items.append(f'<circle cx="{x}" cy="{y}" r="8" fill="{color}"/><text x="{x + 16}" y="{y + 7}" class="legend">{html.escape(group)} {count}</text>')
 
     grid = []
     row_labels = "ABCDEFGHI"
@@ -412,22 +424,6 @@ def render_deep_desert_svg(players, markers, generated_at, layout_state=None, ma
     ) or "spice state unavailable"
 
     marker_nodes = []
-    for layer_key, rows in (map_data.get("layers") or {}).items():
-        if layer_key == "saved_db_markers" or not isinstance(rows, list):
-            continue
-        color = DD_LAYER_COLORS.get(layer_key, "#f3eadb")
-        for item in rows:
-            x = clamp(float(item.get("x") or 0) * PUBLIC_VIEWBOX_WIDTH, 0, PUBLIC_VIEWBOX_WIDTH)
-            y = clamp(float(item.get("y") or 0) * HEIGHT, 0, HEIGHT)
-            radius = clamp(float(item.get("radius") or 0.008) * HEIGHT, 7, 42)
-            label = str(item.get("label") or DD_LAYER_LABELS.get(layer_key, layer_key))
-            title = item.get("tooltip") or f'{label} | source {item.get("source", "unknown")} | confidence {item.get("confidence", "unknown")} | x {float(item.get("x") or 0):.4f}, y {float(item.get("y") or 0):.4f} | radius {float(item.get("radius") or 0):.4f}'
-            dash = ' stroke-dasharray="5 4"' if item.get("confidence") == "inferred" else ""
-            marker_nodes.append(
-                f'<g class="marker" transform="translate({x:.1f} {y:.1f})"><title>{html.escape(str(title))}</title>'
-                f'<circle r="{radius:.1f}" fill="none" stroke="{color}" opacity=".72" stroke-width="3"{dash}/><circle r="5" fill="{color}"/>'
-                f'<text x="12" y="-10" class="pointLabel">{html.escape(label)}</text></g>'
-            )
 
     player_nodes = []
     for player in players:
@@ -442,6 +438,13 @@ def render_deep_desert_svg(players, markers, generated_at, layout_state=None, ma
         )
 
     empty = "" if player_nodes else '<text x="1066.7" y="830" class="empty">No online Deep Desert positions.</text>'
+    spice_availability = observations.get("spiceAvailability") or []
+    shipwreck_spawners = observations.get("shipwreckSpawners") or []
+    large_inactive = sum(
+        int(row.get("inactive_fields_of_type") or 0)
+        for row in spice_availability
+        if str(row.get("field_type") or "").lower() == "large" and int(row.get("dimension_index") or 0) == 0
+    )
     return f'''<svg xmlns="http://www.w3.org/2000/svg" width="{PUBLIC_VIEWBOX_WIDTH:.0f}" height="{HEIGHT}" viewBox="0 0 {PUBLIC_VIEWBOX_WIDTH:.3f} {HEIGHT}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Deep Desert operational map derived from server markers">
 <style>
 .bg{{fill:#171512}}.dune{{fill:#2a241b;opacity:.82}}.ridge{{fill:none;stroke:#d9a63c;stroke-width:7;opacity:.26}}.grid{{stroke:#f1d08a;stroke-width:1;opacity:.18}}.coord,.meta,.legend{{fill:#c7bba9;font:18px system-ui,sans-serif}}.cellLabel{{fill:#e7c875;font:700 22px system-ui,sans-serif;text-anchor:middle;opacity:.68;paint-order:stroke;stroke:#0b0d0a;stroke-width:5}}.dot{{fill:#78cf7a;stroke:#071007;stroke-width:4}}.label{{fill:#fff;font:700 24px system-ui,sans-serif;paint-order:stroke;stroke:#0b0d0a;stroke-width:7}}.pointLabel{{fill:#fff;font:700 18px system-ui,sans-serif;paint-order:stroke;stroke:#0b0d0a;stroke-width:5}}.empty{{fill:#f3eadb;font:26px system-ui,sans-serif;text-anchor:middle;paint-order:stroke;stroke:#0b0d0a;stroke-width:6}}.marker{{opacity:.92;cursor:help}}.shiftingSand{{fill:#e7d59a;stroke:#fff0bc;stroke-width:2}}
@@ -458,8 +461,8 @@ def render_deep_desert_svg(players, markers, generated_at, layout_state=None, ma
 <rect x="0" y="0" width="{PUBLIC_VIEWBOX_WIDTH:.3f}" height="122" fill="#171512" opacity=".82"/>
 <text x="22" y="38" class="meta">Deep Desert Map</text>
 <text x="22" y="66" class="meta">{html.escape(seed_text)} | resource fields {len(resource_fields)} | spice {html.escape(spice_text)}</text>
-<text x="22" y="94" class="meta">Pak-derived inferred field centers; saved DB markers are not rendered as authoritative nodes.</text>
-<text x="22" y="1576" class="meta">Updated {html.escape(generated_at)} | layout {html.escape(str(map_data.get("layoutId") or "unknown"))} | discrete points, no heatmap blobs</text>
+<text x="22" y="94" class="meta">Passive tracker: no resource heatmap points; shipwreck candidates {len(shipwreck_spawners)}; inactive Large spice candidates {large_inactive}</text>
+<text x="22" y="1576" class="meta">Updated {html.escape(generated_at)} | verified player points only | saved DB markers and unlocated observations are not authoritative map points</text>
 {''.join(legend_items)}
 </svg>
 '''
@@ -513,14 +516,14 @@ def main():
         players = load_rows()
         deep_desert_markers = load_deep_desert_markers()
         deep_desert_layout = load_deep_desert_layout_state()
-        deep_desert_map_data = load_deep_desert_map_data()
+        deep_desert_observations = load_deep_desert_observations()
         ok = True
         error = None
     except Exception as exc:
         players = []
         deep_desert_markers = []
         deep_desert_layout = {}
-        deep_desert_map_data = load_deep_desert_map_data()
+        deep_desert_observations = {"source": "unavailable", "spiceAvailability": [], "shipwreckSpawners": []}
         ok = False
         error = str(exc)
 
@@ -554,19 +557,26 @@ def main():
                 for row in (deep_desert_layout.get("spiceFields") or [])
             ],
         },
+        "deepDesertTracker": {
+            "shipwreckCandidates": len(deep_desert_observations.get("shipwreckSpawners") or []),
+            "largeSpiceInactiveCandidates": sum(
+                int(row.get("inactive_fields_of_type") or 0)
+                for row in (deep_desert_observations.get("spiceAvailability") or [])
+                if str(row.get("field_type") or "").lower() == "large" and int(row.get("dimension_index") or 0) == 0
+            ),
+            "source": deep_desert_observations.get("source") or "live DB passive observation",
+        },
         "players": public_players,
         "error": error,
     }
     source_map = DUNE_ROOT / "admin" / "static" / "hagga-basin.webp"
     if source_map.exists():
         shutil.copyfile(source_map, STATIC_DIR / "hagga-basin.webp")
-    source_dd_map_data = DUNE_ROOT / "admin" / "static" / "deep-desert-map-data.json"
-    if source_dd_map_data.exists():
-        shutil.copyfile(source_dd_map_data, STATIC_DIR / "deep-desert-map-data.json")
+    (STATIC_DIR / "deep-desert-observations.json").write_text(json.dumps(deep_desert_observations, indent=2), encoding="utf-8")
     deep_desert_layout["backgroundHref"] = ""
     (STATIC_DIR / "players.json").write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
     (STATIC_DIR / "hagga-map.svg").write_text(render_svg(players, generated, map_image_href(source_map)), encoding="utf-8")
-    (STATIC_DIR / "deep-desert-map.svg").write_text(render_deep_desert_svg(players, deep_desert_markers, generated, deep_desert_layout, deep_desert_map_data), encoding="utf-8")
+    (STATIC_DIR / "deep-desert-map.svg").write_text(render_deep_desert_svg(players, deep_desert_markers, generated, deep_desert_layout, deep_desert_observations), encoding="utf-8")
     return 0 if ok else 1
 
 

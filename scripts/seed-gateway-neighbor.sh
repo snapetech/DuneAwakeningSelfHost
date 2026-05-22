@@ -38,6 +38,12 @@ container_ip() {
   "$runtime" inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$1"
 }
 
+container_dev() {
+  local pid="$1"
+  run_root nsenter -t "$pid" -n ip route show default 2>/dev/null \
+    | awk '{for (i=1; i<=NF; i++) if ($i == "dev") {print $(i+1); exit}}'
+}
+
 is_running() {
   local pid
   pid="$(container_pid "$1" 2>/dev/null || true)"
@@ -53,23 +59,32 @@ fi
 
 if is_running "$postgres_container" && ! is_running "$gateway_container"; then
   postgres_pid="$(container_pid "$postgres_container")"
-  run_root nsenter -t "$postgres_pid" -n ip neigh replace "$gateway_ip" lladdr "$gateway_static_mac" dev eth0 nud permanent
+  postgres_dev="$(container_dev "$postgres_pid")"
+  if [[ -n "$postgres_dev" ]]; then
+    run_root nsenter -t "$postgres_pid" -n ip neigh replace "$gateway_ip" lladdr "$gateway_static_mac" dev "$postgres_dev" nud permanent
+  fi
   printf 'preseeded postgres gateway neighbor entry: gateway=%s/%s\n' "$gateway_ip" "$gateway_static_mac"
 fi
 
 if is_running "$postgres_container" && is_running "$gateway_container"; then
   postgres_pid="$(container_pid "$postgres_container")"
   gateway_pid="$(container_pid "$gateway_container")"
+  postgres_dev="$(container_dev "$postgres_pid")"
+  gateway_dev="$(container_dev "$gateway_pid")"
   postgres_ip="${postgres_ip:-$(container_ip "$postgres_container")}"
   gateway_ip="$(container_ip "$gateway_container")"
   postgres_mac="$(container_mac "$postgres_container")"
   gateway_mac="$(container_mac "$gateway_container")"
 
-  run_root nsenter -t "$gateway_pid" -n ip neigh replace "$postgres_ip" lladdr "$postgres_mac" dev eth0 nud permanent
-  if [[ -n "$bridge_mac" ]]; then
-    run_root nsenter -t "$gateway_pid" -n ip neigh replace "$bridge_ip" lladdr "$bridge_mac" dev eth0 nud permanent
+  if [[ -n "$gateway_dev" ]]; then
+    run_root nsenter -t "$gateway_pid" -n ip neigh replace "$postgres_ip" lladdr "$postgres_mac" dev "$gateway_dev" nud permanent
+    if [[ -n "$bridge_mac" ]]; then
+      run_root nsenter -t "$gateway_pid" -n ip neigh replace "$bridge_ip" lladdr "$bridge_mac" dev "$gateway_dev" nud permanent
+    fi
   fi
-  run_root nsenter -t "$postgres_pid" -n ip neigh replace "$gateway_ip" lladdr "$gateway_mac" dev eth0 nud permanent
+  if [[ -n "$postgres_dev" ]]; then
+    run_root nsenter -t "$postgres_pid" -n ip neigh replace "$gateway_ip" lladdr "$gateway_mac" dev "$postgres_dev" nud permanent
+  fi
 
   printf 'seeded gateway/postgres neighbor entries: gateway=%s/%s postgres=%s/%s\n' \
     "$gateway_ip" "$gateway_mac" "$postgres_ip" "$postgres_mac"
@@ -83,7 +98,10 @@ seed_bridge() {
 
   source_pid="$(container_pid "$source" 2>/dev/null || true)"
   if [[ -n "$source_pid" && "$source_pid" != "0" && -n "$bridge_mac" ]]; then
-    run_root nsenter -t "$source_pid" -n ip neigh replace "$bridge_ip" lladdr "$bridge_mac" dev eth0 nud permanent
+    source_dev="$(container_dev "$source_pid")"
+    if [[ -n "$source_dev" ]]; then
+      run_root nsenter -t "$source_pid" -n ip neigh replace "$bridge_ip" lladdr "$bridge_mac" dev "$source_dev" nud permanent
+    fi
   fi
 }
 
@@ -91,6 +109,7 @@ seed_pair() {
   local source="$1"
   local target="$2"
   local source_pid
+  local source_dev
   local target_ip
   local target_mac
 
@@ -99,7 +118,10 @@ seed_pair() {
   target_mac="$(container_mac "$target" 2>/dev/null || true)"
 
   if [[ -n "$source_pid" && "$source_pid" != "0" && -n "$target_ip" && -n "$target_mac" ]]; then
-    run_root nsenter -t "$source_pid" -n ip neigh replace "$target_ip" lladdr "$target_mac" dev eth0 nud permanent
+    source_dev="$(container_dev "$source_pid")"
+    if [[ -n "$source_dev" ]]; then
+      run_root nsenter -t "$source_pid" -n ip neigh replace "$target_ip" lladdr "$target_mac" dev "$source_dev" nud permanent
+    fi
   fi
 }
 

@@ -2169,6 +2169,88 @@ def catalog_validation_payload():
     }
 
 
+def discovery_surface_dir():
+    primary = ROOT / "research" / "surfaces"
+    if primary.exists():
+        return primary
+    return CODE_ROOT / "research" / "surfaces"
+
+
+def load_discovery_surfaces():
+    surface_dir = discovery_surface_dir()
+    entries = []
+    errors = []
+    if not surface_dir.exists():
+        return {"surfaceDir": str(surface_dir), "entries": [], "errors": [f"surface directory not found: {surface_dir}"]}
+    for path in sorted(surface_dir.glob("*.jsonl")):
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError as exc:
+            errors.append(f"{path}: {exc}")
+            continue
+        for lineno, line in enumerate(lines, 1):
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as exc:
+                errors.append(f"{path}:{lineno}: {exc}")
+                continue
+            row.setdefault("sourceFile", str(path.relative_to(ROOT) if str(path).startswith(str(ROOT)) else path))
+            row.setdefault("sourceLine", lineno)
+            entries.append(row)
+    entries.sort(key=lambda item: item.get("id", ""))
+    return {"surfaceDir": str(surface_dir), "entries": entries, "errors": errors}
+
+
+def discovery_bucket(entry):
+    if entry.get("status") in ("validated", "admin-safe") and entry.get("validated"):
+        return "ready-or-promoted"
+    if entry.get("surface") == "binary-candidate":
+        return "needs-startup-parse-test"
+    if entry.get("surface") in ("rmq-command", "server-command"):
+        return "needs-contract-capture"
+    if entry.get("status") in ("loadable", "observable"):
+        return "needs-runtime-effect-test"
+    return "needs-triage"
+
+
+def discovery_queue_payload():
+    payload = load_discovery_surfaces()
+    buckets = {}
+    for entry in payload["entries"]:
+        buckets.setdefault(discovery_bucket(entry), []).append(entry)
+    return {"ok": not payload["errors"], "buckets": buckets, "errors": payload["errors"], "surfaceDir": payload["surfaceDir"]}
+
+
+def discovery_builds_payload():
+    roots = [ROOT / "build", CODE_ROOT / "build"]
+    builds = []
+    seen = set()
+    for root in roots:
+        if not root.exists():
+            continue
+        for path in sorted(item for item in root.iterdir() if item.is_dir()):
+            if path.name in seen:
+                continue
+            seen.add(path.name)
+            files = sorted(item.name for item in path.iterdir() if item.is_file())
+            builds.append({"build": path.name, "path": str(path), "files": files})
+    return {"ok": True, "builds": builds}
+
+
+def discovery_payload():
+    surfaces = load_discovery_surfaces()
+    return {
+        "ok": not surfaces["errors"],
+        "surfaces": surfaces["entries"],
+        "surfaceDir": surfaces["surfaceDir"],
+        "errors": surfaces["errors"],
+        "queue": discovery_queue_payload()["buckets"],
+        "builds": discovery_builds_payload()["builds"],
+    }
+
+
 def read_event_state():
     if not EVENT_STATE_FILE.exists():
         return {"events": [], "lastRun": None}
@@ -2877,22 +2959,30 @@ def read_hagga_pois():
     return data
 
 
-def read_deep_desert_map_data():
-    empty = {
-        "layoutId": "unknown",
-        "generatedAt": None,
-        "sourcePak": "",
-        "coordinateFrame": {"type": "normalized-raster", "xRange": [0, 1], "yRange": [0, 1], "origin": "top-left"},
-        "layers": {
-            "resource_nodes": [],
-            "resource_fields": [],
-            "spice_fields": [],
-            "transit": [],
-            "wreckage": [],
-            "locations": [],
-            "saved_db_markers": [],
-        },
+def empty_deep_desert_observations():
+    return {
+        "generatedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "source": "live DB/log passive observation",
+        "confidence": "mixed",
+        "exactPoints": [],
+        "spice": {"types": [], "availability": []},
+        "resourceFields": [],
+        "shipwreckSpawners": [],
+        "dynamicEvents": [],
+        "savedDbMarkers": [],
+        "diagnostics": [
+            {
+                "kind": "resource-distribution",
+                "status": "hidden",
+                "confidence": "low",
+                "note": "Pak heatmaps are broad distribution masks, not node or field coordinates.",
+            }
+        ],
     }
+
+
+def read_deep_desert_map_data():
+    empty = empty_deep_desert_observations()
     path = STATIC_ROOT / "deep-desert-map-data.json"
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -2900,11 +2990,12 @@ def read_deep_desert_map_data():
         return empty
     if not isinstance(data, dict):
         return empty
-    layers = data.setdefault("layers", {})
-    for key in empty["layers"]:
-        if not isinstance(layers.get(key), list):
-            layers[key] = []
-    data.setdefault("coordinateFrame", empty["coordinateFrame"])
+    for key, value in empty.items():
+        data.setdefault(key, value)
+    if not isinstance(data.get("exactPoints"), list):
+        data["exactPoints"] = []
+    if not isinstance(data.get("savedDbMarkers"), list):
+        data["savedDbMarkers"] = []
     return data
 
 
@@ -3238,6 +3329,22 @@ class Handler(BaseHTTPRequestHandler):
                 self.require_token()
                 self.require_catalog()
                 self.json(catalog_validation_payload())
+            elif parsed.path == "/api/discovery":
+                self.require_token()
+                self.require_catalog()
+                self.json(discovery_payload())
+            elif parsed.path == "/api/discovery/surfaces":
+                self.require_token()
+                self.require_catalog()
+                self.json(load_discovery_surfaces())
+            elif parsed.path == "/api/discovery/queue":
+                self.require_token()
+                self.require_catalog()
+                self.json(discovery_queue_payload())
+            elif parsed.path == "/api/discovery/builds":
+                self.require_token()
+                self.require_catalog()
+                self.json(discovery_builds_payload())
             elif parsed.path == "/api/events":
                 self.require_token()
                 with EVENT_LOCK:
@@ -3903,6 +4010,33 @@ class Handler(BaseHTTPRequestHandler):
             where map_name = 'DeepDesert'
             order by dimension_index, field_type
         """)
+        spice_availability_rows = query("""
+            select st.field_type,
+                   st.dimension_index,
+                   sa.server_id,
+                   sa.inactive_fields_of_type,
+                   sa.requested_spawned_of_type
+            from dune.spicefield_server_availability sa
+            join dune.spicefield_types st on st.spicefield_type_id = sa.spicefield_type_id
+            where st.map_name = 'DeepDesert'
+            order by st.dimension_index, st.field_type, sa.server_id
+        """)
+        shipwreck_spawner_rows = query("""
+            select id,
+                   map,
+                   dimension_index,
+                   name,
+                   substring(name from 'CB_WL_[0-9]+') as world_layout_ref
+            from dune.actor_spawners
+            where map = 'DeepDesert'
+              and (
+                name ilike '%%WreckedShip%%'
+                or name ilike '%%Shipwreck%%'
+                or name ilike '%%CrashSite%%'
+                or name ilike '%%PatrolShip%%'
+              )
+            order by dimension_index, name, id
+        """)
         seed_rows = query("""
             select 'farm' as scope, null::integer as partition_id, null::integer as dimension_index,
                    world_reset_seed
@@ -3922,7 +4056,7 @@ class Handler(BaseHTTPRequestHandler):
         """)
         dd_min_x, dd_max_x = -1250000, 1150000
         dd_min_y, dd_max_y = -1250000, 1050000
-        deep_desert_map_data = read_deep_desert_map_data()
+        deep_desert_map_data = empty_deep_desert_observations()
         saved_db_markers = []
         span_x = max(dd_max_x - dd_min_x, 1)
         span_y = max(dd_max_y - dd_min_y, 1)
@@ -3941,7 +4075,57 @@ class Handler(BaseHTTPRequestHandler):
                 })
             except (TypeError, ValueError):
                 continue
-        deep_desert_map_data.setdefault("layers", {})["saved_db_markers"] = saved_db_markers
+        large_availability = [
+            row for row in spice_availability_rows
+            if str(row.get("field_type") or "").lower() == "large" and int(row.get("dimension_index") or 0) == 0
+        ]
+        large_inactive = sum(int(row.get("inactive_fields_of_type") or 0) for row in large_availability)
+        observations = []
+        for row in spice_rows:
+            observations.append({
+                "id": f"spice-{row.get('dimension_index')}-{row.get('field_type')}",
+                "kind": "spice",
+                "label": f"{row.get('field_type')} spice",
+                "state": f"{row.get('current_globally_active')}/{row.get('max_globally_active')} active",
+                "dimensionIndex": row.get("dimension_index"),
+                "source": "dune.spicefield_types",
+                "confidence": "high",
+                "coordinateStatus": "unavailable",
+            })
+        for row in shipwreck_spawner_rows:
+            observations.append({
+                "id": f"shipwreck-spawner-{row.get('id')}",
+                "kind": "shipwreck_spawner",
+                "label": row.get("world_layout_ref") or "Deep Desert shipwreck spawner",
+                "state": "candidate spawner, location unresolved",
+                "dimensionIndex": row.get("dimension_index"),
+                "source": "dune.actor_spawners",
+                "confidence": "moderate",
+                "worldLayoutRef": row.get("world_layout_ref"),
+                "coordinateStatus": "unavailable",
+            })
+        deep_desert_map_data.update({
+            "generatedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "spice": {"types": spice_rows, "availability": spice_availability_rows},
+            "resourceFields": resource_rows,
+            "shipwreckSpawners": shipwreck_spawner_rows,
+            "dynamicEvents": observations,
+            "savedDbMarkers": saved_db_markers,
+            "diagnostics": [
+                {
+                    "kind": "resource-distribution",
+                    "status": "hidden",
+                    "confidence": "low",
+                    "note": "Generic resource heatmaps are not node catalogs and are not rendered.",
+                },
+                {
+                    "kind": "large-spice-availability",
+                    "status": "observed",
+                    "confidence": "high",
+                    "note": f"Dimension 0 DB reports {large_inactive} inactive Large spice fields available; exact coordinates are not exposed here.",
+                },
+            ],
+        })
         return {
             "map": "DeepDesert",
             "label": "Deep Desert",
@@ -6579,7 +6763,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/":
             return True
         route = path.strip("/")
-        return route in {"overview", "ops", "security", "runbook", "characters", "settings", "mutations", "catalog"}
+        return route in {"overview", "ops", "security", "runbook", "characters", "settings", "mutations", "catalog", "discovery"}
 
     def html(self, body, head_only=False):
         nonce = secrets.token_urlsafe(16)
@@ -6895,6 +7079,7 @@ INDEX = r"""<!doctype html>
         <button class="tab" role="tab" aria-selected="false" data-tab="mutations">Admin Actions</button>
         <button class="tab" role="tab" aria-selected="false" data-tab="digests">Admin Digests</button>
         <button class="tab" role="tab" aria-selected="false" data-tab="catalog">Catalog</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="discovery">Discovery</button>
       </div>
       <div class="card"><h3>Display</h3><div class="toolbar"><button id="contrastBtn">High contrast</button><button id="densityBtn">Dense mode</button><button id="expandAllBtn">Expand all</button><button id="collapseAllBtn">Collapse all</button><button id="helpBtn">Shortcuts</button></div></div>
       <div class="card">
@@ -6943,7 +7128,7 @@ if (location.hash || (INITIAL_PATH_TAB && INITIAL_PATH_TAB !== 'overview')) {
 }
 let token = (localStorage.getItem('duneAdminToken') || sessionStorage.getItem('duneAdminToken') || '').trim();
 document.getElementById('token').value = token;
-const validTabs = new Set(['overview', 'ops', 'security', 'runbook', 'characters', 'settings', 'mutations', 'digests', 'catalog']);
+const validTabs = new Set(['overview', 'ops', 'security', 'runbook', 'characters', 'settings', 'mutations', 'digests', 'catalog', 'discovery']);
 const pathTab = validTabs.has(INITIAL_PATH_TAB) ? INITIAL_PATH_TAB : '';
 let current = pathTab || sessionStorage.getItem('duneAdminTab') || 'overview';
 if (!validTabs.has(current)) current = 'overview';
@@ -7508,30 +7693,20 @@ function deepDesertMarkerGroup(type){
 }
 const deepDesertMarkerColors = {Transit:'#6fb6ff', Locations:'#d5a13e', Wreckage:'#b7c0c7', Resources:'#78cf7a', Markers:'#f3eadb'};
 const deepDesertLayerLabels = {
-  resource_nodes:'Resource nodes',
-  resource_fields:'Resource fields',
-  spice_fields:'Spice fields',
-  transit:'Transit',
-  wreckage:'Wreckage',
-  locations:'Locations',
+  exact_points:'Verified points',
   saved_db_markers:'Saved DB markers'
 };
 const deepDesertLayerColors = {
-  resource_nodes:'#78cf7a',
-  resource_fields:'#e7d35b',
-  spice_fields:'#f16f9a',
-  transit:'#6fb6ff',
-  wreckage:'#b7c0c7',
-  locations:'#d5a13e',
+  exact_points:'#78cf7a',
   saved_db_markers:'#8d96a0'
 };
 function deepDesertLayerGroups(mapData){
-  const layers = mapData?.layers || {};
-  return Object.keys(deepDesertLayerLabels).reduce((acc, key) => {
-    const count = Array.isArray(layers[key]) ? layers[key].length : 0;
-    if (count > 0) acc[deepDesertLayerLabels[key]] = {name:deepDesertLayerLabels[key], count, layerKey:key};
-    return acc;
-  }, {});
+  const groups = {};
+  const exactCount = Array.isArray(mapData?.exactPoints) ? mapData.exactPoints.length : 0;
+  const savedCount = Array.isArray(mapData?.savedDbMarkers) ? mapData.savedDbMarkers.length : 0;
+  if (exactCount > 0) groups['Verified points'] = {name:'Verified points', count:exactCount, layerKey:'exact_points'};
+  if (savedCount > 0) groups['Saved DB markers'] = {name:'Saved DB markers', count:savedCount, layerKey:'saved_db_markers'};
+  return groups;
 }
 function deepDesertMarkerGroupInfo(markers){
   return (markers || []).reduce((acc, marker) => {
@@ -7554,7 +7729,7 @@ function deepDesertMarkerToggleBar(groups, selected){
   return `<aside class="haggaPoiLegend" aria-label="Deep Desert marker legend"><h3>Legend</h3><div class="poiLegendHeader"><span id="deepDesertMarkerSummary" class="muted">${esc(deepDesertMarkerSummary(selected, groups))}</span><div class="toolbar"><button id="deepDesertMarkerAllBtn">All</button><button id="deepDesertMarkerClearBtn">Clear</button><button id="deepDesertMarkerEnableFilteredBtn">On</button><button id="deepDesertMarkerDisableFilteredBtn">Off</button><button id="deepDesertMarkerOnlyFilteredBtn">Only</button></div></div><input id="deepDesertMarkerFilter" class="poiFilterInput" type="search" placeholder="Filter legend"><div id="deepDesertMarkerFilterSummary" class="poiFilterSummary">Showing all marker layers</div><div class="poiToggleBar deepDesertMarkerToggleBar" aria-label="Deep Desert marker toggles">${groupKeys.map(group => {
     const info = groups[group] || {};
     const label = String(info.name || group);
-    const color = deepDesertMarkerColors[group] || '#f3eadb';
+    const color = deepDesertLayerColors[info.layerKey] || deepDesertMarkerColors[group] || '#f3eadb';
     return `<label data-filter-text="${esc((label + ' ' + group).toLowerCase())}"><span class="poiToggleLabel"><input type="checkbox" value="${esc(group)}"${selected[group] ? ' checked' : ''}><span class="poiSwatch" style="--poi-color:${esc(color)}; color:${esc(color)}; background:${esc(color)}"></span><span>${esc(label)}</span></span><span class="poiCount">${esc(info.count || 0)}</span></label>`;
   }).join('')}</div></aside>`;
 }
@@ -7571,7 +7746,7 @@ function deepDesertFieldStateLegend(resourceFields, spiceFields){
     return memo;
   }, {});
   const resourceRows = Object.entries(resourceSummary).map(([label, row]) => `<div class="legendRow"><span>${esc(label)}</span><span class="muted">${esc(row.count)} fields, ${esc(row.remaining)} remaining</span></div>`).join('');
-  return `<aside class="haggaPoiLegend" aria-label="Deep Desert field state"><h3>Field State</h3><div class="muted">Resource/spice field tables expose state and counts, not exact field coordinates. Exact plotted points below come from marker/node rows.</div><div class="mapLegend">${resourceRows || '<div class="muted">No resource field rows.</div>'}</div><div class="muted">Spice state: ${esc(activeSpice)}.</div></aside>`;
+  return `<aside class="haggaPoiLegend" aria-label="Deep Desert field state"><h3>Field State</h3><div class="muted">Resource/spice tables expose state and counts here, not field coordinates. Unproven heatmaps are hidden.</div><div class="mapLegend">${resourceRows || '<div class="muted">No resource field rows.</div>'}</div><div class="muted">Spice state: ${esc(activeSpice)}.</div></aside>`;
 }
 function haggaBasinMapPanel(data){
   const players = data?.players || [];
@@ -7691,17 +7866,20 @@ function haggaBasinMapPanel(data){
       const cell = ddAreaCell(marker.area_id);
       return {x:px(marker.x, marker.y), y:py(marker.x, marker.y), cellLabel:cell ? `${rowLabels[cell.row]}${cell.col + 1}` : ''};
     };
-    const ddMarkers = Object.entries(mapData.layers || {}).flatMap(([layerKey, rows]) => {
+    const pointLayers = [
+      ['exact_points', mapData.exactPoints || []],
+      ['saved_db_markers', mapData.savedDbMarkers || []]
+    ];
+    const ddMarkers = pointLayers.flatMap(([layerKey, rows]) => {
       const group = deepDesertLayerLabels[layerKey] || layerKey;
       if (selectedDdGroups[group] !== true || !Array.isArray(rows)) return [];
       const color = deepDesertLayerColors[layerKey] || '#f3eadb';
-      return rows.map(item => {
+      return rows.filter(item => Number.isFinite(Number(item.x)) && Number.isFinite(Number(item.y))).map(item => {
         const x = clamp(Number(item.x || 0) * width, 0, width);
         const y = clamp(Number(item.y || 0) * height, 0, height);
-        const inferred = item.confidence === 'inferred';
-        const radius = clamp(Number(item.radius || 0.008) * Math.min(width, height), 5, 34);
-        const title = item.tooltip || `${item.label || group} | source ${item.source || 'unknown'} | confidence ${item.confidence || 'unknown'} | x ${Number(item.x || 0).toFixed(4)}, y ${Number(item.y || 0).toFixed(4)} | radius ${Number(item.radius || 0).toFixed(4)}`;
-        return `<g class="poiMarker" tabindex="0" style="--poi-color:${esc(color)}; color:${esc(color)}" transform="translate(${x.toFixed(1)} ${y.toFixed(1)})"><title>${esc(title)}</title><circle class="poiHalo" r="${(radius + 5).toFixed(1)}"></circle><circle class="poiRing" r="${radius.toFixed(1)}" ${inferred ? 'stroke-dasharray="4 3"' : ''}></circle><circle class="poiCore" r="${inferred ? 3.8 : 5.2}"></circle><text x="10" y="-10">${esc(item.label || group)}</text></g>`;
+        const radius = clamp(Number(item.radius || 0.006) * Math.min(width, height), 5, 18);
+        const title = item.tooltip || `${item.label || group} | source ${item.source || 'unknown'} | confidence ${item.confidence || 'unknown'}`;
+        return `<g class="poiMarker" tabindex="0" style="--poi-color:${esc(color)}; color:${esc(color)}" transform="translate(${x.toFixed(1)} ${y.toFixed(1)})"><title>${esc(title)}</title><circle class="poiHalo" r="${(radius + 5).toFixed(1)}"></circle><circle class="poiRing" r="${radius.toFixed(1)}"></circle><circle class="poiCore" r="4.5"></circle><text x="10" y="-10">${esc(item.label || group)}</text></g>`;
       });
     }).join('');
     const ddSummary = Object.entries(ddGroups).sort((a, b) => a[0].localeCompare(b[0])).map(([group, info]) => `<span class="pill" style="border-color:${esc(deepDesertLayerColors[info.layerKey] || '#f3eadb')}">${esc(group)} ${esc(info.count || 0)}</span>`).join('');
@@ -7710,7 +7888,11 @@ function haggaBasinMapPanel(data){
     const spiceSummary = spiceFields.filter(row => Number(row.dimension_index || 0) === 0).map(row => `${row.field_type} ${row.current_globally_active}/${row.max_globally_active}`).join(', ') || 'unavailable';
     const ddColumnLabels = Array.from({length: 9}, (_, i) => `<text class="gridLabel" x="${(((i + 0.5) / 9) * width).toFixed(1)}" y="42">${i + 1}</text>`).join('');
     const ddRowLabels = Array.from({length: 9}, (_, i) => `<text class="gridLabel" x="14" y="${((i + 0.5) / 9 * height).toFixed(1)}">${esc(rowLabels[8 - i])}</text>`).join('');
-    return `<div class="panelBand"><div class="sectionHeader"><h2>Deep Desert Map</h2><div class="toolbar"><span id="haggaMapCount" class="pill ${players.length ? 'ok' : ''}">${esc(players.length)} players</span><span class="pill ok">${esc(Object.values(ddGroups).reduce((sum, info) => sum + Number(info.count || 0), 0))} pak/map points</span><span id="haggaMapUpdated" class="pill">updated ${esc(generatedAt)}</span><span id="haggaMapHealth" class="pill ok">pak-derived coordinate frame</span><button id="haggaMapZoomOutBtn" title="Zoom map out">-</button><button id="haggaMapZoomInBtn" title="Zoom map in">+</button><button id="haggaMapResetBtn">Reset view</button><button id="toggleHaggaMapRefreshBtn" aria-pressed="${haggaMapAutoRefresh ? 'true' : 'false'}">${haggaMapAutoRefresh ? 'Pause map' : 'Resume map'}</button><button id="refreshHaggaMapBtn">Refresh map</button></div></div>${mapTabs}<div id="haggaMapSrStatus" class="srOnly" aria-live="polite">${esc(players.length)} Deep Desert players and pak-derived points plotted.</div><div class="haggaMapLayout"><div class="haggaMapMain"><div id="haggaMapViewport" class="haggaMap"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Deep Desert map from pak-derived field centers">${deepBackground}<rect class="mapShade" x="0" y="0" width="${width}" height="${height}"></rect>${grid}${ddColumnLabels}${ddRowLabels}<text x="12" y="38" fill="var(--muted)" font-size="12">NW</text><text x="${width - 30}" y="${height - 12}" fill="var(--muted)" font-size="12">SE</text>${ddMarkers}${markers}${deepEmpty}</svg></div></div><div class="pageStack">${deepDesertFieldStateLegend(resourceFields, spiceFields)}${deepDesertMarkerToggleBar(ddGroups, selectedDdGroups)}</div></div><div class="haggaMapStatus"><span class="pill warn">green: persisted actor transform</span><span class="pill">layout ${esc(mapData.layoutId || 'unknown')}</span><span class="pill">farm seed ${esc(farmSeed)}, map seed ${esc(mapSeed)}</span><span class="pill">resource field state rows ${esc(resourceFields.length)}</span><span class="pill">spice ${esc(spiceSummary)}</span><span class="pill">no heatmap blobs</span><span class="pill">saved DB markers are separate and default off</span>${ddSummary}</div><details open><summary>Coordinates</summary><div class="coordTable">${table(rows)}</div></details><details open><summary>Deep Desert Map Data</summary><div class="coordTable">${table(Object.entries(mapData.layers || {}).flatMap(([layer, items]) => (items || []).map(item => ({layer, label:item.label, confidence:item.confidence, source:item.source, x:Number(item.x || 0).toFixed(4), y:Number(item.y || 0).toFixed(4), radius:Number(item.radius || 0).toFixed(4)}))))}</div></details><details><summary>Saved DB Markers</summary><div class="coordTable">${table(ddMarkerRows.map(m => ({type:m.marker_type, area_id:m.area_id, cell:(() => { const cell = ddAreaCell(m.area_id); return cell ? `${rowLabels[cell.row]}${cell.col + 1}` : ''; })(), dimension:m.dimension_index, x:Math.round(Number(m.x || 0)), y:Math.round(Number(m.y || 0)), z:Math.round(Number(m.z || 0)), radius:m.area_radius || 0})))}</div></details><details><summary>Deep Desert Field State</summary><div class="coordTable">${table(resourceFields)}</div><div class="coordTable">${table(spiceFields)}</div></details></div>`;
+    const observations = Array.isArray(mapData.dynamicEvents) ? mapData.dynamicEvents : [];
+    const spawnerRows = Array.isArray(mapData.shipwreckSpawners) ? mapData.shipwreckSpawners : [];
+    const availability = mapData.spice?.availability || [];
+    const diagnosticRows = Array.isArray(mapData.diagnostics) ? mapData.diagnostics : [];
+    return `<div class="panelBand"><div class="sectionHeader"><h2>Deep Desert Tracker</h2><div class="toolbar"><span id="haggaMapCount" class="pill ${players.length ? 'ok' : ''}">${esc(players.length)} players</span><span class="pill warn">${esc(Object.values(ddGroups).reduce((sum, info) => sum + Number(info.count || 0), 0))} verified map points</span><span id="haggaMapUpdated" class="pill">updated ${esc(generatedAt)}</span><span id="haggaMapHealth" class="pill ok">evidence-first passive tracking</span><button id="haggaMapZoomOutBtn" title="Zoom map out">-</button><button id="haggaMapZoomInBtn" title="Zoom map in">+</button><button id="haggaMapResetBtn">Reset view</button><button id="toggleHaggaMapRefreshBtn" aria-pressed="${haggaMapAutoRefresh ? 'true' : 'false'}">${haggaMapAutoRefresh ? 'Pause map' : 'Resume map'}</button><button id="refreshHaggaMapBtn">Refresh map</button></div></div>${mapTabs}<div id="haggaMapSrStatus" class="srOnly" aria-live="polite">${esc(players.length)} Deep Desert players plotted; unlocated observations are table-only.</div><div class="haggaMapLayout"><div class="haggaMapMain"><div id="haggaMapViewport" class="haggaMap"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Deep Desert tracker with only verified coordinate points">${deepBackground}<rect class="mapShade" x="0" y="0" width="${width}" height="${height}"></rect>${grid}${ddColumnLabels}${ddRowLabels}<text x="12" y="38" fill="var(--muted)" font-size="12">NW</text><text x="${width - 30}" y="${height - 12}" fill="var(--muted)" font-size="12">SE</text>${ddMarkers}${markers}${deepEmpty}</svg></div></div><div class="pageStack">${deepDesertFieldStateLegend(resourceFields, spiceFields)}${deepDesertMarkerToggleBar(ddGroups, selectedDdGroups)}</div></div><div class="haggaMapStatus"><span class="pill warn">green: persisted actor transform</span><span class="pill">farm seed ${esc(farmSeed)}, map seed ${esc(mapSeed)}</span><span class="pill">resource field state rows ${esc(resourceFields.length)}</span><span class="pill">spice ${esc(spiceSummary)}</span><span class="pill">shipwreck spawner candidates ${esc(spawnerRows.length)}</span><span class="pill">no resource heatmap points</span><span class="pill">saved DB markers default off</span>${ddSummary}</div><details open><summary>Coordinates</summary><div class="coordTable">${table(rows)}</div></details><details open><summary>Deep Desert Observations</summary><div class="coordTable">${table(observations.map(item => ({kind:item.kind, label:item.label, state:item.state, dimension:item.dimensionIndex, source:item.source, confidence:item.confidence, coordinate:item.coordinateStatus || 'unavailable', ref:item.worldLayoutRef || ''})))}</div></details><details open><summary>Spice Availability</summary><div class="coordTable">${table(availability)}</div></details><details><summary>Shipwreck Spawner Candidates</summary><div class="coordTable">${table(spawnerRows)}</div></details><details><summary>Diagnostics</summary><div class="coordTable">${table(diagnosticRows)}</div></details><details><summary>Saved DB Markers</summary><div class="coordTable">${table(ddMarkerRows.map(m => ({type:m.marker_type, area_id:m.area_id, cell:(() => { const cell = ddAreaCell(m.area_id); return cell ? `${rowLabels[cell.row]}${cell.col + 1}` : ''; })(), dimension:m.dimension_index, x:Math.round(Number(m.x || 0)), y:Math.round(Number(m.y || 0)), z:Math.round(Number(m.z || 0)), radius:m.area_radius || 0})))}</div></details><details><summary>Deep Desert Field State</summary><div class="coordTable">${table(resourceFields)}</div><div class="coordTable">${table(spiceFields)}</div></details></div>`;
   }
   return `<div class="panelBand"><div class="sectionHeader"><h2>Hagga Basin Coordinate Grid</h2><div class="toolbar"><span id="haggaMapCount" class="pill ${players.length ? 'ok' : ''}">${esc(players.length)} plotted</span><span id="haggaMapUpdated" class="pill">updated ${esc(generatedAt)}</span><span id="haggaMapHealth" class="pill warn">DB persistence position, not proven live</span><button id="haggaMapZoomOutBtn" title="Zoom map out">-</button><button id="haggaMapZoomInBtn" title="Zoom map in">+</button><button id="haggaMapResetBtn">Reset view</button><button id="toggleHaggaMapRefreshBtn" aria-pressed="${haggaMapAutoRefresh ? 'true' : 'false'}">${haggaMapAutoRefresh ? 'Pause map' : 'Resume map'}</button><button id="refreshHaggaMapBtn">Refresh map</button></div></div>${mapTabs}<div id="haggaMapSrStatus" class="srOnly" aria-live="polite">${esc(players.length)} Hagga Basin players plotted.</div><div class="haggaMapLayout"><div class="haggaMapMain"><div id="haggaMapViewport" class="haggaMap"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Full Hagga Basin coordinate-grid map"><image class="mapImage" href="/static/hagga-basin.webp?v=${encodeURIComponent(ADMIN_PANEL_BUILD)}" x="0" y="0" width="${width}" height="${height}" preserveAspectRatio="xMidYMid meet"></image><rect class="mapShade" x="0" y="0" width="${width}" height="${height}"></rect>${grid}<text x="12" y="38" fill="var(--muted)" font-size="12">NW</text><text x="${width - 30}" y="${height - 12}" fill="var(--muted)" font-size="12">SE</text>${poiMarkers}${markers}${empty}</svg></div></div>${haggaPoiToggleBar(pois, selectedPois)}</div><div class="haggaMapStatus"><span class="pill warn">green: persisted actor transform</span><span class="pill ${showReturnPoints ? 'warn' : ''}">yellow return-info ${showReturnPoints ? 'shown' : 'hidden'}</span><span class="pill">POIs: Dune: Awakening Community Wiki CC BY-NC-SA 4.0</span><span class="pill">background: clean survival_1 tile composite</span><span class="pill">projection: world X -> image U, world Y -> image V</span><span class="pill">world X ${esc(Math.round(minX))}..${esc(Math.round(maxX))}, Y ${esc(Math.round(minY))}..${esc(Math.round(maxY))}${invertX ? ', flipped X' : ''}${invertY ? ', inverted Y' : ''}</span><span class="pill">image U ${esc(imageMinU.toFixed(2))}..${esc(imageMaxU.toFixed(2))}, V ${esc(imageMinV.toFixed(2))}..${esc(imageMaxV.toFixed(2))}</span></div><details open><summary>Coordinates</summary><div class="coordTable">${table(rows)}</div></details><details open><summary>Location Source Diagnostics</summary><div class="coordTable">${table(diagnosticRows)}</div></details></div>`;
 }
@@ -8501,7 +8683,7 @@ function wireGlobalAffordances(){
     if (e.key === 'Escape' && document.getElementById('playerModal').classList.contains('open')) { closePlayerModal(); return; }
     if (e.key === 'Escape' && document.getElementById('helpModal').classList.contains('open')) { modal(false); return; }
     if (typing && e.key !== 'Escape') return;
-    const tabMap = {'1':'overview','2':'ops','3':'security','4':'runbook','5':'characters','6':'settings','7':'mutations','8':'digests','9':'catalog'};
+    const tabMap = {'1':'overview','2':'ops','3':'security','4':'runbook','5':'characters','6':'settings','7':'mutations','8':'digests','9':'catalog','0':'discovery'};
     if (tabMap[e.key]) { e.preventDefault(); show(tabMap[e.key]); return; }
     if (e.key === '?') { e.preventDefault(); modal(true); return; }
     if (e.key === '/') { e.preventDefault(); focusFirstFilter(); return; }
@@ -8594,6 +8776,7 @@ async function load(){
     else if (current === 'mutations') await mutations(serial);
     else if (current === 'digests') await digests(serial);
     else if (current === 'catalog') await catalog(serial);
+    else if (current === 'discovery') await discovery(serial);
   } catch (e) {
     if (serial !== loadSerial) return;
     view.innerHTML = `<div class="card"><h2>Panel Data Unavailable</h2><p class="dangerText">${esc(e.message)}</p><p class="muted">The page loaded, but one of the backing admin APIs failed. Refresh after the admin panel or database is healthy.</p></div><div class="metricGrid">${metric('Endpoint', location.host)}${metric('Item Grants', 'enabled', 'ok')}${metric('Mutations', 'check status')}</div>`;
@@ -9000,6 +9183,36 @@ async function settings(serial=loadSerial){
   document.getElementById('saveDirectorTransferBtn').addEventListener('click', e => runAction(e.currentTarget, 'Saving...', saveDirectorTransfer));
   document.getElementById('saveCfgBtn').addEventListener('click', e => runAction(e.currentTarget, 'Saving...', saveCfg));
   wireArtificialExchangeControls();
+}
+
+async function discovery(serial=loadSerial){
+  const data = await api('/api/discovery');
+  if (serial !== loadSerial) return;
+  const surfaces = data.surfaces || [];
+  const builds = data.builds || [];
+  const queue = data.queue || {};
+  const surfaceRows = surfaces.map(s => ({
+    id: s.id,
+    build: s.build,
+    surface: s.surface,
+    scope: s.scope,
+    status: s.status,
+    confidence: s.confidence,
+    risk: s.risk,
+    validated: s.validated
+  }));
+  const queueRows = Object.entries(queue).flatMap(([bucket, rows]) => (rows || []).map(s => ({
+    bucket,
+    id: s.id,
+    status: s.status,
+    confidence: s.confidence,
+    risk: s.risk
+  })));
+  const buildRows = builds.map(b => ({build:b.build, files:(b.files || []).length, path:b.path}));
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Discovery</h2><div class="toolbar"><span class="pill ${data.ok ? 'ok' : 'warn'}">ledger ${data.ok ? 'clean' : 'check'}</span><span class="pill">surfaces ${surfaces.length}</span><span class="pill">builds ${builds.length}</span><button data-jump="catalog">Catalog</button><button data-jump="settings">Settings</button></div></div><div class="panelBand"><p class="muted">Discovery is read-only here. Generated build ledgers live under <code>build/&lt;image-tag&gt;</code>; JSONL source lives under <code>research/surfaces</code>.</p></div><div class="twoCol"><div class="panelBand"><h2>Promotion Queue</h2>${table(queueRows)}</div><div class="panelBand"><h2>Build Ledgers</h2>${table(buildRows)}</div></div><div class="panelBand"><h2>Evidence Ledger</h2>${table(surfaceRows)}</div><details class="panelBand"><summary>Raw discovery payload</summary><pre>${esc(JSON.stringify(data, null, 2))}</pre></details></div>`;
+  if ((data.errors || []).length) {
+    view.querySelector('.pageStack').insertAdjacentHTML('afterbegin', `<div class="panelBand"><h2>Discovery Errors</h2><pre>${esc((data.errors || []).join('\\n'))}</pre></div>`);
+  }
 }
 
 async function catalog(serial=loadSerial){

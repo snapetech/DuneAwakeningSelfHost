@@ -1,0 +1,25 @@
+{
+  "id": "landclaim-segment-add",
+  "requiresClientAction": true,
+  "before": {
+    "sql": [
+      "select count(*) from dune.landclaim_segments;"
+    ]
+  },
+  "during": {
+    "operatorSteps": [
+      "Place or extend one disposable landclaim segment from a known totem."
+    ]
+  },
+  "after": {
+    "sql": [
+      "select * from dune.landclaim_segments order by id desc limit 20;"
+    ],
+    "logs": ["landclaim|totem|building|segment"]
+  },
+  "verdict": {
+    "expectedNewRows": {
+      "dune.landclaim_segments": ">0"
+    }
+  }
+}

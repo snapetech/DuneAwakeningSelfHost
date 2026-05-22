@@ -90,5 +90,10 @@
       "onHaggaMap": true
     }
   ],
-  "error": null
+  "error": null,
+  "deepDesertTracker": {
+    "largeSpiceInactiveCandidates": 0,
+    "source": "static fallback",
+    "shipwreckCandidates": 0
+  }
 }

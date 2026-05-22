@@ -8,8 +8,8 @@ For the current local trusted deployment, the panel runs unlocked by default:
 
 ```env
 DUNE_ADMIN_REQUIRE_TOKEN=false
-DUNE_ADMIN_MUTATIONS_ENABLED=true
-DUNE_ADMIN_ITEM_GRANTS_ENABLED=true
+DUNE_ADMIN_MUTATIONS_ENABLED=false
+DUNE_ADMIN_ITEM_GRANTS_ENABLED=false
 ```
 
 To require a browser token, set:
@@ -1374,8 +1374,8 @@ Recreate affected game-server containers after saving so `scripts/run_server_saf
 
 - Do not expose this service to the public internet.
 - Use a long random `DUNE_ADMIN_TOKEN` whenever `DUNE_ADMIN_REQUIRE_TOKEN=true`.
-- `DUNE_ADMIN_MUTATIONS_ENABLED=true` is the repo default so the character-admin workflows can apply currency, XP, item stack, and item grant changes without a separate redeploy.
-- `DUNE_ADMIN_ITEM_GRANTS_ENABLED` defaults to `true` in this repo so item tooling is visible and ready.
+- `DUNE_ADMIN_MUTATIONS_ENABLED=false` is the example default. Enable it only after backup/restore validation and operator access controls are in place.
+- `DUNE_ADMIN_ITEM_GRANTS_ENABLED=false` is the example default. Enable it only for item grant, stack edit, and deletion workflows that have been validated on the current build.
 - Director character-transfer settings write `config/director.ini`; recreate the Director container before relying on a changed transfer policy.
 - Director GME voice-chat settings also live in `config/director.ini`; recreate Director after changing them.
 - `UserEngine.ini` and `UserGame.ini` edits are copied into game containers during game-service startup. Recreate affected game containers before relying on changed gameplay knobs.

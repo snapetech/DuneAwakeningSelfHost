@@ -1,0 +1,30 @@
+{
+  "id": "resource-node-mine",
+  "requiresClientAction": true,
+  "before": {
+    "sql": [
+      "select count(*) from dune.actor_spawners;",
+      "select count(*) from dune.actor_spawner_actors;"
+    ]
+  },
+  "during": {
+    "operatorSteps": [
+      "Mine one known ordinary ore/scrap/fuel node and record the location and visible node type."
+    ]
+  },
+  "after": {
+    "sql": [
+      "select * from dune.actor_spawners order by id desc limit 20;",
+      "select * from dune.actor_spawner_actors order by id desc limit 20;"
+    ],
+    "logs": ["ResourceNode|ResourceSpawning|Spawner|readiness|ore|scrap|fuel"]
+  },
+  "verdict": {
+    "classificationTargets": [
+      "persisted-db-state",
+      "transient-actor-state",
+      "data-asset-controlled",
+      "runtime-subsystem-controlled"
+    ]
+  }
+}

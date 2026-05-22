@@ -1,0 +1,25 @@
+{
+  "id": "respawn-location-create",
+  "requiresClientAction": true,
+  "before": {
+    "sql": [
+      "select count(*) from dune.player_respawn_locations;"
+    ]
+  },
+  "during": {
+    "operatorSteps": [
+      "Create or discover one disposable respawn location for a disposable player."
+    ]
+  },
+  "after": {
+    "sql": [
+      "select * from dune.player_respawn_locations order by player_id desc limit 20;"
+    ],
+    "logs": ["respawn|spawn location"]
+  },
+  "verdict": {
+    "expectedNewRows": {
+      "dune.player_respawn_locations": ">0"
+    }
+  }
+}

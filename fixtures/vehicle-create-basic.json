@@ -1,0 +1,29 @@
+{
+  "id": "vehicle-create-basic",
+  "requiresClientAction": true,
+  "before": {
+    "sql": [
+      "select count(*) from dune.vehicles;",
+      "select count(*) from dune.vehicle_modules;"
+    ]
+  },
+  "during": {
+    "operatorSteps": [
+      "Spawn or place one vehicle in Survival_1."
+    ]
+  },
+  "after": {
+    "sql": [
+      "select * from dune.vehicles order by id desc limit 5;",
+      "select * from dune.vehicle_modules order by id desc limit 20;"
+    ],
+    "logs": [
+      "vehicle|module|backup|recover"
+    ]
+  },
+  "verdict": {
+    "expectedNewRows": {
+      "dune.vehicles": ">0"
+    }
+  }
+}

@@ -52,8 +52,16 @@ def main():
         password = env("DUNE_RESEARCH_ADMIN_RMQ_PASSWORD", file_env, env("DUNE_ANNOUNCE_RMQ_PASSWORD", file_env))
     else:
         base_url = env("DUNE_RESEARCH_GAME_RMQ_URL", file_env, "http://127.0.0.1:15673")
-        user = env("DUNE_RESEARCH_GAME_RMQ_USER", file_env, env("DUNE_ANNOUNCE_CHAT_USER", file_env, "A000000000000001"))
-        password = env("DUNE_RESEARCH_GAME_RMQ_PASSWORD", file_env, env("DUNE_ANNOUNCE_CHAT_PASSWORD", file_env))
+        user = env(
+            "DUNE_RESEARCH_GAME_RMQ_USER",
+            file_env,
+            env("DUNE_ANNOUNCE_RMQ_USER", file_env, env("DUNE_ANNOUNCE_CHAT_USER", file_env, "A000000000000001")),
+        )
+        password = env(
+            "DUNE_RESEARCH_GAME_RMQ_PASSWORD",
+            file_env,
+            env("DUNE_ANNOUNCE_RMQ_PASSWORD", file_env, env("DUNE_ANNOUNCE_CHAT_PASSWORD", file_env)),
+        )
     if not user or not password:
         raise SystemExit("missing RabbitMQ management credentials")
     exchanges = request_json(base_url, user, password, "/api/exchanges")

@@ -17,6 +17,7 @@ This page records documentation coverage gaps found during repo review and the c
 | Architecture/routing | Architecture and routing docs only described the base nine maps even though the 30-partition warm pool exists. | Updated `docs/architecture.md` and `docs/routing-investigation.md` to distinguish base-farm registration from 30-partition warm-pool registration. |
 | Improvement plan | Roadmap text still described only the isolated `survival` launch as current work. | Updated `docs/improvements.md` with warm-pool, admin map health, transfer-policy, and live-validation boundaries. |
 | README docs index | README had a flat file list and did not cover every markdown document or root research index. | Replaced it with grouped documentation, research-index, and key-file sections. |
+| Discovery burn-down | Build drift, manual knob discovery, thin fixtures, and browser-ping diagnostics were spread across research notes and operator context. | Added `docs/discovery-burndown-plan.md` and implemented build-scoped discovery, fixture coverage, experiment harnessing, RMQ/build diffs, admin Discovery, and non-disruptive ping diagnosis. |
 
 ## Remaining Gaps
 
@@ -26,6 +27,7 @@ This page records documentation coverage gaps found during repo review and the c
 | Route behavior | Deep Desert, Arrakeen, Harko Village, and testing-station travel remain documented as investigation surfaces. | Keep `docs/routing-investigation.md` current with exact client symptoms and first failing service boundary. |
 | Admin mutations | Recipe unlocks and journey/skill-like unlocks are intentionally not implemented. | Extend `docs/admin-mutation-map.md` only after safe DB contracts and refresh semantics are proven. |
 | Image/version drift | README and teardown pin observations to image tag `1963158-0-shipping`. | Re-run `scripts/inspect-images.sh`, `scripts/discover-player-state.sh`, and validation after every Steam tool update. |
+| Discovery automation | Surface discovery now has repo-side automation; remaining proof requires external/client runs. | Run browser-probe capture and client-driven fixtures, then promote only validated surfaces from the JSONL ledger. |
 | Kubernetes manifests | The Kubernetes doc is currently design documentation only. | Add generated manifests or a Helm chart only after the Compose topology is stable enough to avoid duplicating service definitions by hand. |
 | Public networking | Generic networking docs now cover gameplay UDP, optional paired IGW UDP, RMQ TCP, and backup-before-change guidance for router NAT/hairpin rules. | Keep deployment-specific IPs and router rule dumps in private operator backups, not public docs. |
 | Admin panel network probes | The panel exposes local/upstream health probes, but no real-outage examples are recorded. | Add examples once probe output has been observed during a real outage. |

@@ -32,6 +32,24 @@ steam_update_enabled() {
   esac
 }
 
+map_watchdog_control_enabled() {
+  case "${DUNE_MAP_WATCHDOG_CONTROL:-true}" in
+    0|false|no|off) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+map_watchdog_control() {
+  verb="$1"
+  env_file="${ENV_FILE:-.env}"
+  if ! map_watchdog_control_enabled; then
+    return 0
+  fi
+  if [ -x ./scripts/map-watchdog-control.sh ]; then
+    ./scripts/map-watchdog-control.sh "$verb" "$env_file" || true
+  fi
+}
+
 env_file_value() {
   key="$1"
   file="${2:-${ENV_FILE:-.env}}"
@@ -155,6 +173,7 @@ compose_image = os.environ.get("DUNE_RESTART_COMPOSE_IMAGE", "docker:27-cli")
 use_host_compose = os.environ.get("DUNE_RESTART_USE_HOST_COMPOSE", "true").lower() in ("1", "true", "yes", "on")
 compose_files = [item for item in os.environ.get("COMPOSE_FILES", "compose.yaml:compose.allmaps.yaml").split(":") if item]
 env_file = os.environ.get("ENV_FILE", ".env")
+watchdog_control_enabled = os.environ.get("DUNE_MAP_WATCHDOG_CONTROL", "true").lower() not in ("0", "false", "no", "off")
 
 default_services = [
     "survival", "overmap", "arrakeen", "harko-village", "testing-hephaestus",
@@ -264,6 +283,67 @@ def docker_logs(container_id):
             offset += size
         payload = bytes(decoded)
     return payload.decode("utf-8", errors="replace").strip()
+
+
+def run_host_shell(name, shell_command):
+    if not host_workspace:
+        return {"ok": False, "skipped": True, "warning": "host workspace is not configured"}
+    body = {
+        "Image": compose_image,
+        "WorkingDir": host_workspace,
+        "Cmd": ["sh", "-lc", shell_command],
+        "Env": [
+            f"COMPOSE_PROJECT_NAME={project}",
+            "DOCKER_HOST=unix:///var/run/docker.sock",
+        ],
+        "HostConfig": {
+            "AutoRemove": False,
+            "NetworkMode": "host",
+            "PidMode": "host",
+            "Privileged": True,
+            "Binds": [
+                f"{socket_path}:/var/run/docker.sock",
+                f"{host_workspace}:{host_workspace}",
+                f"{host_workspace}:/workspace",
+            ],
+        },
+        "Labels": {
+            "com.snapetech.dune.role": name,
+            "com.snapetech.dune.restart_job": os.environ.get("DUNE_RESTART_JOB_ID", ""),
+        },
+    }
+    helper_name = "dune-" + name + "-" + (os.environ.get("DUNE_RESTART_JOB_ID", "manual") or "manual")
+    status, payload = docker("POST", "/containers/create?name=" + urllib.parse.quote(helper_name), body)
+    if status == 409:
+        status, payload = docker("POST", "/containers/create", body)
+    if status != 201:
+        return {"ok": False, "error": f"failed creating helper: HTTP {status} {payload[:500]!r}"}
+    container_id = json.loads(payload.decode())["Id"]
+    try:
+        status, payload = docker("POST", f"/containers/{container_id}/start")
+        if status not in (204, 304):
+            return {"ok": False, "error": f"failed starting helper: HTTP {status} {payload[:500]!r}"}
+        status, payload = docker("POST", f"/containers/{container_id}/wait")
+        if status != 200:
+            return {"ok": False, "error": f"failed waiting for helper: HTTP {status} {payload[:500]!r}"}
+        result = json.loads(payload.decode() or "{}")
+        exit_code = int(result.get("StatusCode", 1))
+        logs = docker_logs(container_id)
+        return {"ok": exit_code == 0, "returncode": exit_code, "output": logs}
+    finally:
+        remove_container(container_id)
+
+
+def map_watchdog_control(verb):
+    if not watchdog_control_enabled:
+        return {"ok": True, "skipped": True, "reason": "disabled"}
+    command = (
+        "set -e; "
+        "if [ -x /workspace/scripts/map-watchdog-control.sh ]; then "
+        f"/workspace/scripts/map-watchdog-control.sh {shlex.quote(verb)} {shlex.quote(env_file)}; "
+        "else echo 'map watchdog control skipped: script missing' >&2; fi"
+    )
+    return run_host_shell("admin-restart-watchdog", command)
 
 
 def run_host_compose(services):
@@ -572,7 +652,9 @@ if phase in ("start", "restart") and use_host_compose:
     if dry_run:
         print(json.dumps({"ok": True, "target": target, "action": action, "phase": phase, "dryRun": True, "hostCompose": True, "services": services}, separators=(",", ":")))
         sys.exit(0)
+    map_watchdog_control("stop")
     result = run_host_compose(services)
+    map_watchdog_control("start")
     print(json.dumps({"ok": True, "target": target, "action": action, "phase": phase, "hostCompose": True, "affected": services, "result": result}, separators=(",", ":")))
     sys.exit(0)
 
@@ -585,6 +667,8 @@ for service in services:
 
 restarted = []
 missing = []
+if phase in ("shutdown", "stop", "start", "restart") and not dry_run:
+    map_watchdog_control("stop")
 for service in services:
     filters = {
         "label": [
@@ -617,6 +701,9 @@ for service in services:
             print(f"failed {phase} for {service}: HTTP {status} {payload[:200]!r}", file=sys.stderr)
             sys.exit(75)
         restarted.append(service)
+
+if phase in ("start", "restart") and not dry_run:
+    map_watchdog_control("start")
 
 print(json.dumps({"ok": True, "target": target, "action": action, "phase": phase, "dryRun": dry_run, "affected": restarted, "missing": missing}, separators=(",", ":")))
 PY
@@ -660,9 +747,11 @@ if [ "$phase" = "update" ]; then
   exit 0
 fi
 if [ "$phase" = "shutdown" ] || [ "$phase" = "stop" ]; then
+  map_watchdog_control stop
   exec "$@" stop -t 30 $services
 fi
 if [ "$phase" = "start" ]; then
+  map_watchdog_control stop
   if [ -x ./scripts/seed-gateway-neighbor.sh ]; then
     ./scripts/seed-gateway-neighbor.sh || true
   fi
@@ -675,8 +764,10 @@ if [ "$phase" = "start" ]; then
   elif [ -x ./scripts/verify-rmq-auth-path.sh ]; then
     ./scripts/verify-rmq-auth-path.sh
   fi
+  map_watchdog_control start
   exit 0
 fi
+map_watchdog_control stop
 if [ -x ./scripts/seed-gateway-neighbor.sh ]; then
   ./scripts/seed-gateway-neighbor.sh || true
 fi
@@ -689,3 +780,4 @@ if [ -x ./scripts/restart-post-start-health.sh ]; then
 elif [ -x ./scripts/verify-rmq-auth-path.sh ]; then
   ./scripts/verify-rmq-auth-path.sh
 fi
+map_watchdog_control start

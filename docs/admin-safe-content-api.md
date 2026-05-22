@@ -37,8 +37,8 @@ Content-Type: application/json
 | `DUNE_ADMIN_TUTORIAL_MUTATIONS_ENABLED` | `false` | Enables tutorial entry create/update through `dune.create_or_update_tutorial_entry`. Does not block inspection or dry-runs. |
 | `DUNE_ADMIN_PERMISSION_MUTATIONS_ENABLED` | `false` | Enables permission actor name/access/rank changes through first-party functions. Does not block inspection or dry-runs. |
 | `DUNE_ADMIN_VENDOR_MUTATIONS_ENABLED` | `false` | Enables vendor stock-cycle timestamp changes through `dune.update_vendor_timestamp_for_player`. Does not block inspection or dry-runs. |
-| `DUNE_ADMIN_MUTATIONS_ENABLED` | repo default currently `true` | Existing global mutation gate. |
-| `DUNE_ADMIN_ITEM_GRANTS_ENABLED` | repo default currently `true` | Existing item mutation gate. |
+| `DUNE_ADMIN_MUTATIONS_ENABLED` | example default `false` | Existing global mutation gate. |
+| `DUNE_ADMIN_ITEM_GRANTS_ENABLED` | example default `false` | Existing item mutation gate. |
 
 ## Read-Only Catalog
 

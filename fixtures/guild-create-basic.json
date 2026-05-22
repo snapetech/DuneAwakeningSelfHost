@@ -1,0 +1,28 @@
+{
+  "id": "guild-create-basic",
+  "requiresClientAction": true,
+  "before": {
+    "sql": [
+      "select count(*) from dune.guilds;",
+      "select count(*) from dune.guild_members;"
+    ]
+  },
+  "during": {
+    "operatorSteps": [
+      "Create one disposable guild with one disposable player."
+    ]
+  },
+  "after": {
+    "sql": [
+      "select * from dune.guilds order by id desc limit 5;",
+      "select * from dune.guild_members order by guild_id desc limit 20;"
+    ],
+    "logs": ["guild|clan|member"]
+  },
+  "verdict": {
+    "expectedNewRows": {
+      "dune.guilds": ">0",
+      "dune.guild_members": ">0"
+    }
+  }
+}

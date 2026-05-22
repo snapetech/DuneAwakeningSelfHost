@@ -1,5 +1,7 @@
 # Server Runtime Surfaces
 
+Stale/archived evidence: generated from build `1963158`; current `.env.example` is `1968181-0-shipping`. Regenerate before using this file as current build truth.
+
 This file connects shipped config sections, database persistence, live runtime
 state, and admin-tool risk areas. It complements:
 
