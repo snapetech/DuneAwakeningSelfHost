@@ -36,7 +36,7 @@ Evidence levels:
 | `[/Script/DuneSandbox.PlayerOnlineStateSettings]` | `m_DefaultReconnectGracePeriodSeconds` | `0` | Known | Normal-map reconnect grace period before the server stops preserving an offline/disconnected session. Shipped default observed in build `1963158` is `300`. |
 | `[/Script/DuneSandbox.PlayerOnlineStateSettings]` | `m_OvermapReturnGracePeriodSeconds` | `0` | Known | Overmap return/reconnect grace period. Shipped default observed in build `1963158` is `90`. |
 | `[/Script/DuneSandbox.PlayerOnlineStateSettings]` | `m_InstancedMapReconnectGracePeriodSeconds` | `0` | Known | Instanced-map reconnect grace period. Shipped default observed in build `1963158` is `300`. |
-| `[/Script/DuneSandbox.BuildingSettings]` | `m_MaxLandclaimSegmentsPerMap` | `(((Name="HaggaBasin"), 6),((Name="Survival_1"), 6))` | Inferred / validate | Active landclaim/base cap per map. This key is exposed by the shipped server binary as a `BuildingSettings` map property, but is not present in the shipped default INI. Intended repo value is 6 active bases on Hagga Basin / Survival. Needs live validation after restart. |
+| `[/Script/DuneSandbox.BuildingSettings]` | `m_MaxLandclaimSegmentsPerMap` | `(((Name="HaggaBasin"), 6),((Name="Survival_1"), 6))` | Inferred / validate | Map-level landclaim segment/base-distribution candidate. This is not the observed per-player 3 subfief/totem cap. |
 | `[/Script/DuneSandbox.BuildingSettings]` | `m_MaxNumLandclaimSegments` | `10` | Known | Maximum connected landclaim segments per base/landclaim. Shipped default is `6`. Funcom's setup comment says this must also be applied to each client. |
 | `[/Script/DuneSandbox.BuildingSettings]` | `m_BuildingBlueprintMaxExtensions` | `4` | Known | Maximum number of times a building blueprint / landclaim can be expanded. Shipped default is `4`. This is not the active base-count knob. |
 | `[/Script/DuneSandbox.BuildingSettings]` | `m_BaseBackupMaxExtensions` | `8` | Known | Maximum extension count used by base backup/reconstruction-related data. Shipped default is `8`. This is not the active base-count knob. |
@@ -45,11 +45,11 @@ Evidence levels:
 
 ## Building Knob Notes
 
-- Target policy for this repo: 6 active bases and 10 landclaim segments per base.
+- Target policy for this repo: 10 connected landclaim segments per base, plus investigation of map-level landclaim distribution.
 - Segment cap: `m_MaxNumLandclaimSegments=10`.
-- Active base cap candidate: `m_MaxLandclaimSegmentsPerMap=...6...`.
+- Map-level landclaim candidate: `m_MaxLandclaimSegmentsPerMap=...6...`.
 - `m_BuildingBlueprintMaxExtensions` and `m_BaseBackupMaxExtensions` are extension/reconstruction limits, not the active base-count cap.
-- `m_MaxLandclaimSegmentsPerMap` is binary-confirmed but still should be verified in game by placing more than three active landclaims after a full server restart.
+- The per-player 3 subfief/totem cap is not `m_MaxLandclaimSegmentsPerMap`. Binary evidence points to `SubfiefLimitBonus` / `SubfiefCount` as player attribute/UI state. This repo exposes `DUNE_SUBFIEF_LIMIT` as an experimental operator knob through `scripts/apply-subfief-limit-knob.sh`.
 
 ## Nearby Shipped Keys
 
@@ -142,7 +142,7 @@ they need live validation because Funcom did not ship default values for them.
 
 | INI section | Key | Evidence | Status | Description |
 | --- | --- | --- | --- | --- |
-| `[/Script/DuneSandbox.BuildingSettings]` | `m_MaxLandclaimSegmentsPerMap` | Binary contains `m_MaxLandclaimSegmentsPerMap` and `m_MaxLandclaimSegmentsPerMap_Key` near `UBuildingSettings` strings | Inferred / validate | Likely active landclaim/base cap per map. Repo sets Hagga Basin / Survival to `6`; validate by placing more than three active landclaims after restart. |
+| `[/Script/DuneSandbox.BuildingSettings]` | `m_MaxLandclaimSegmentsPerMap` | Binary contains `m_MaxLandclaimSegmentsPerMap` and `m_MaxLandclaimSegmentsPerMap_Key` near `UBuildingSettings` strings | Inferred / validate | Map-level landclaim candidate, not the per-player 3 subfief/totem cap. |
 | Unknown, likely building-related | `m_BuildableStructureLimitsPerMap` | Binary contains `m_BuildableStructureLimitsPerMap` and `m_BuildableStructureLimitsPerMap_Key` | Candidate / investigate | Possible per-map buildable structure limit map. Needs section discovery and live validation before use. |
 | Unknown, likely admin-related | `m_AdminPasswords` | Binary contains `m_AdminPasswords` and `m_AdminPasswords_Key` | Candidate / investigate | Possible admin-password map/list used by an internal admin path. Do not use until section and auth behavior are understood. |
 
@@ -156,7 +156,7 @@ they need live validation because Funcom did not ship default values for them.
 ## Validation Checklist
 
 - Restart the server after changing `config/UserGame.ini`; these are startup config values.
-- Validate `m_MaxLandclaimSegmentsPerMap` by attempting to maintain more than three active landclaims on Hagga Basin.
+- Do not use `m_MaxLandclaimSegmentsPerMap` as the validation target for the 3 subfief/totem cap; that cap appears to be driven by player attributes (`SubfiefLimitBonus` / `SubfiefCount`) or cooked game data.
 - Validate `m_MaxNumLandclaimSegments=10` with a client carrying the same setting, because Funcom's shipped setup comments require the segment cap on both server and client.
 - Avoid changing `m_BuildingBlueprintMaxExtensions` or `m_BaseBackupMaxExtensions` while testing base count; they control extension/reconstruction limits, not the active base cap.
 

@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dash.local/research/surface.schema.json",
+  "type": "object",
+  "required": [
+    "id",
+    "build",
+    "surface",
+    "scope",
+    "name",
+    "status",
+    "confidence",
+    "risk",
+    "evidence",
+    "validated"
+  ],
+  "properties": {
+    "id": {"type": "string", "minLength": 1},
+    "build": {"type": "string", "minLength": 1},
+    "surface": {"type": "string", "minLength": 1},
+    "scope": {"type": "string", "minLength": 1},
+    "name": {"type": "string", "minLength": 1},
+    "status": {
+      "type": "string",
+      "enum": ["candidate", "loadable", "observable", "validated", "admin-safe"]
+    },
+    "confidence": {
+      "type": "string",
+      "enum": ["unknown", "low", "moderate", "high"]
+    },
+    "risk": {
+      "type": "string",
+      "enum": ["low", "medium", "high"]
+    },
+    "section": {"type": "string"},
+    "key": {"type": "string"},
+    "function": {"type": "string"},
+    "evidence": {
+      "type": "array",
+      "items": {"type": "string"},
+      "minItems": 1
+    },
+    "restartRequired": {"type": "boolean"},
+    "validated": {"type": "boolean"},
+    "validationProcedure": {"type": "string"},
+    "rollbackProcedure": {"type": "string"},
+    "notes": {"type": "string"}
+  },
+  "additionalProperties": true
+}

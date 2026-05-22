@@ -1,0 +1,27 @@
+{
+  "id": "marker-create-basic",
+  "requiresClientAction": true,
+  "before": {
+    "sql": [
+      "select count(*) from dune.markers;",
+      "select count(*) from dune.player_markers;"
+    ]
+  },
+  "during": {
+    "operatorSteps": [
+      "Create one disposable player marker in Hagga Basin or Deep Desert."
+    ]
+  },
+  "after": {
+    "sql": [
+      "select * from dune.markers order by id desc limit 20;",
+      "select * from dune.player_markers order by marker_id desc limit 20;"
+    ],
+    "logs": ["marker|map"]
+  },
+  "verdict": {
+    "expectedNewRows": {
+      "dune.markers": ">0"
+    }
+  }
+}

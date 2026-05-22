@@ -1,9 +1,12 @@
 COMPOSE ?= docker compose
 ENV_FILE ?= .env.example
 
-.PHONY: validate compose-config check-compose-static-ips secret-scan test-watch-maps test-admin-panel-safe-surfaces test-character-slot-tool test-admin-chat test-admin-grant-item test-operational-borrowing test-artificial-exchange test-artificial-exchange-service artificial-exchange-smoke artificial-exchange-bootstrap-catalog artificial-exchange-research-prices test-vehicle-fidelity-investigation gm-catalog gm-probe-preview gm-probe-safe list-publishable preflight operational-identity-check operational-report operational-bundle verify-operational-bundle status standby-status failover-topology-status failover-bidirectional-audit sync-standby-files sync-standby-images promote-standby postgres-failover-seal postgres-cutback-proof rebuild-postgres-standby handoff-ready handoff-experiment summarize-handoff handoff-lab-config handoff-lab-up handoff-lab-seed handoff-lab-status handoff-lab-stop handoff-lab-remote-up handoff-lab-remote-status handoff-lab-remote-stop handoff-lab failover-orchestrate failover-role-services cutover-check cutover-network-status host-network-failover router-cutover install-dune-status-service check-steam-update backup-dry-run backup-state restore-dry-run verify-backup start-full-warm-pool recover-survival recover-map watch-maps watch-maps-status install-map-watchdog-service install-artificial-exchange-service install-artificial-exchange-buyer-service install-artificial-exchange-populator-service install-full-farm-service install-daily-maintenance-timer full-world-partitions update-hagga-pois public-site-check public-site-package public-site-deploy public-site-verify admin-panel-deploy admin-panel-verify verify-local-state-ignored rabbitmq-cert-check rabbitmq-cert-generate rabbitmq-cert-stage rabbitmq-cert-install-staged rabbitmq-cert-recreate-stack
+.PHONY: validate compose-config check-compose-static-ips validate-research-build-tags secret-scan test-watch-maps test-admin-panel-safe-surfaces test-character-slot-tool test-research-catalog test-discovery-tools test-admin-chat test-admin-grant-item test-operational-borrowing test-artificial-exchange test-artificial-exchange-service artificial-exchange-smoke artificial-exchange-bootstrap-catalog artificial-exchange-research-prices test-vehicle-fidelity-investigation gm-catalog gm-probe-preview gm-probe-safe research-catalog research-catalog-markdown surface-ledger surface-ledger-markdown discovery-queue binary-candidate-scores asset-reference-graph extract-build-surfaces diff-build-surfaces db-function-classifier fixture-runner knob-experiment capture-rmq-window diff-rmq-captures list-publishable preflight operational-identity-check operational-report operational-bundle verify-operational-bundle status standby-status failover-topology-status failover-bidirectional-audit sync-standby-files sync-standby-images promote-standby postgres-failover-seal postgres-cutback-proof rebuild-postgres-standby handoff-ready handoff-experiment summarize-handoff handoff-lab-config handoff-lab-up handoff-lab-seed handoff-lab-status handoff-lab-stop handoff-lab-remote-up handoff-lab-remote-status handoff-lab-remote-stop handoff-lab failover-orchestrate failover-role-services cutover-check cutover-network-status browser-ping-diagnostics watch-browser-probe host-network-failover router-cutover install-dune-status-service check-steam-update backup-dry-run backup-state restore-dry-run verify-backup start-full-warm-pool recover-survival recover-map watch-maps watch-maps-status install-map-watchdog-service install-artificial-exchange-service install-artificial-exchange-buyer-service install-artificial-exchange-populator-service install-full-farm-service install-daily-maintenance-timer full-world-partitions update-hagga-pois public-site-check public-site-package public-site-deploy public-site-verify admin-panel-deploy admin-panel-verify verify-local-state-ignored rabbitmq-cert-check rabbitmq-cert-generate rabbitmq-cert-stage rabbitmq-cert-install-staged rabbitmq-cert-recreate-stack
 
-validate: compose-config check-compose-static-ips secret-scan test-watch-maps test-admin-panel-safe-surfaces test-character-slot-tool test-admin-chat test-admin-grant-item test-operational-borrowing test-artificial-exchange test-artificial-exchange-service test-vehicle-fidelity-investigation public-site-check verify-local-state-ignored
+validate: compose-config check-compose-static-ips validate-research-build-tags surface-ledger secret-scan test-watch-maps test-admin-panel-safe-surfaces test-character-slot-tool test-research-catalog test-discovery-tools test-admin-chat test-admin-grant-item test-operational-borrowing test-artificial-exchange test-artificial-exchange-service test-vehicle-fidelity-investigation public-site-check verify-local-state-ignored
+
+validate-research-build-tags:
+	./scripts/validate-research-build-tags.sh $(ENV_FILE)
 
 preflight:
 	./scripts/preflight.sh
@@ -123,6 +126,12 @@ cutover-check:
 cutover-network-status:
 	./scripts/cutover-network-status.sh $(ENV_FILE) $(ROUTER) $(REMOTE)
 
+browser-ping-diagnostics:
+	./scripts/browser-ping-diagnostics.sh $(ENV_FILE)
+
+watch-browser-probe:
+	./scripts/watch-browser-probe.sh $(ENV_FILE) $(SECONDS)
+
 host-network-failover:
 	REMOTE="$(REMOTE)" ROLE="$(ROLE)" ./scripts/host-network-failover.sh $(ENV_FILE)
 
@@ -219,7 +228,16 @@ test-admin-panel-safe-surfaces:
 test-character-slot-tool:
 	python3 scripts/test-character-slot-tool.py
 
+test-research-catalog:
+	python3 scripts/test-research-catalog.py
+	python3 scripts/research_catalog.py --validate
+	python3 scripts/generate-surface-docs.py --validate
+
+test-discovery-tools:
+	python3 scripts/test-discovery-tools.py
+
 test-admin-chat:
+	python3 scripts/test-dune-whisper-route.py
 	python3 scripts/test-admin-chat-commands.py
 	python3 scripts/test-player-presence-announcer.py
 
@@ -234,6 +252,48 @@ gm-probe-preview:
 
 gm-probe-safe:
 	python3 scripts/probe-gm-command.py --command "$${GM_COMMAND:-PrintAllowedCommands}" --route "$${GM_ROUTE:-Survival_11}" --target-player "$${GM_TARGET_PLAYER:-SamplePlayer}" --admin-player "$${GM_ADMIN_PLAYER:-$${GM_TARGET_PLAYER:-SamplePlayer}}" --wait-response "$${GM_WAIT_RESPONSE:-3}"
+
+research-catalog:
+	python3 scripts/research_catalog.py --validate
+
+research-catalog-markdown:
+	python3 scripts/research_catalog.py --format markdown
+
+surface-ledger:
+	python3 scripts/generate-surface-docs.py --validate
+
+surface-ledger-markdown:
+	python3 scripts/generate-surface-docs.py --format markdown
+
+discovery-queue:
+	python3 scripts/generate-discovery-queue.py
+
+binary-candidate-scores:
+	python3 scripts/score-binary-candidates.py $(STRINGS_FILE) $(SCORE_FLAGS)
+
+asset-reference-graph:
+	python3 scripts/build-asset-reference-graph.py $(GRAPH_PATHS) $(GRAPH_FLAGS)
+
+extract-build-surfaces:
+	./scripts/extract-build-surfaces.sh $(ENV_FILE) $(SERVICE) $(OUT_ROOT)
+
+diff-build-surfaces:
+	python3 scripts/diff-build-surfaces.py $(OLD_BUILD) $(NEW_BUILD) $(DIFF_FLAGS)
+
+db-function-classifier:
+	python3 scripts/classify-db-functions.py $(DB_SURFACE_JSON) $(CLASSIFIER_FLAGS)
+
+fixture-runner:
+	python3 scripts/fixture-runner.py $(FIXTURE) --env-file $(ENV_FILE) $(FIXTURE_FLAGS)
+
+knob-experiment:
+	python3 scripts/knob-experiment.py --catalog $(CATALOG) --env-file $(ENV_FILE) $(EXPERIMENT_FLAGS)
+
+capture-rmq-window:
+	./scripts/capture-rmq-window.sh $(ENV_FILE) $(SECONDS) $(TAG)
+
+diff-rmq-captures:
+	python3 scripts/diff-rmq-captures.py $(RMQ_BEFORE) $(RMQ_AFTER) $(RMQ_DIFF_FLAGS)
 
 test-operational-borrowing:
 	python3 scripts/test-operational-borrowing.py

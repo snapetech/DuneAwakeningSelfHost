@@ -19,6 +19,7 @@ fi
 
 python_bin="${DUNE_ANNOUNCE_PYTHON:-python3}"
 script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+export DUNE_ANNOUNCE_SCRIPT_DIR="$script_dir"
 default_vendor_dir="$script_dir/vendor"
 if [ -d /workspace/scripts/vendor ]; then
   default_vendor_dir="/workspace/scripts/vendor"
@@ -48,6 +49,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+
+sys.path.insert(0, os.environ.get("DUNE_ANNOUNCE_SCRIPT_DIR", os.getcwd()))
+from dune_whisper_route import whisper_queue_for_fls_id, normalize_fls_id
 
 
 message, restart_at, job_id = sys.argv[1:4]
@@ -116,6 +120,17 @@ bind_online_queues = env_bool("DUNE_ANNOUNCE_CHAT_BIND_ONLINE_QUEUES", True)
 allow_management_publish = env_bool("DUNE_ANNOUNCE_ALLOW_MANAGEMENT_PUBLISH", False)
 queue_pattern = re.compile(env("DUNE_ANNOUNCE_CHAT_QUEUE_PATTERN", r"^[0-9A-Fa-f]{16}_queue$"))
 target_queues = split_csv(env("DUNE_ANNOUNCE_CHAT_TARGET_QUEUES", ""))
+target_fls_ids = [normalize_fls_id(item) for item in split_csv(env("DUNE_ANNOUNCE_CHAT_TARGET_FLS_IDS", ""))]
+target_fls_ids = [item for item in target_fls_ids if item]
+if target_fls_ids:
+    existing_queues = set(target_queues)
+    for fls_id in target_fls_ids:
+        queue_name = whisper_queue_for_fls_id(fls_id)
+        if queue_name and queue_name not in existing_queues:
+            target_queues.append(queue_name)
+            existing_queues.add(queue_name)
+    if "DUNE_ANNOUNCE_CHAT_ROUTING_KEYS" not in os.environ or routing_keys == [""]:
+        routing_keys = target_fls_ids
 cleanup_target_bindings = env_bool("DUNE_ANNOUNCE_CHAT_CLEANUP_TARGET_BINDINGS", False)
 compose_project = env("DUNE_RESTART_COMPOSE_PROJECT", env("COMPOSE_PROJECT_NAME", "dune_server"))
 docker_socket = env("DUNE_RESTART_DOCKER_SOCKET", "/var/run/docker.sock")

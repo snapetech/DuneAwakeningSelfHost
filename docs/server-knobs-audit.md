@@ -96,6 +96,7 @@ Safe candidates for admin editing:
 - `m_OvermapReturnGracePeriodSeconds`: overmap return grace window; set to `0` for Steam Deck suspend-friendly immediate exit.
 - `m_InstancedMapReconnectGracePeriodSeconds`: instanced-map reconnect grace/logoff persistence window; set to `0` for immediate disconnect/logout expiry.
 - `m_MaxNumLandclaimSegments`: landclaim segment cap.
+- `DUNE_SUBFIEF_LIMIT` / `DUNE_SUBFIEF_LIMIT_BONUS`: repo-owned experimental subfief/totem count knob. Apply with `scripts/apply-subfief-limit-knob.sh .env`; it writes `DunePlayerCharacterAttributeSet.SubfiefLimitBonus` into persisted player actor GAS attributes and installs a DB trigger for future player actor saves. If `DUNE_SUBFIEF_LIMIT_BONUS` is set, it wins over derived `DUNE_SUBFIEF_LIMIT - DUNE_SUBFIEF_BASE_LIMIT`. This is not a shipped INI knob and must be validated in game. Roll back with `scripts/apply-subfief-limit-knob.sh .env rollback`.
 - `m_BuildingBlueprintMaxExtensions`: blueprint extension cap.
 - `m_BaseBackupMaxExtensions`: base backup extension cap.
 - `m_bBuildingRestrictionLimitsEnabled`: enable/disable building restriction limits.
@@ -197,7 +198,7 @@ Safe candidates:
 Riskier candidates:
 
 - Public RabbitMQ/database binds. Keep these local-only.
-- IGW/S2S UDP forwarding. For the full warm-pool layout, `7888-7917/udp` is the paired IGW range; forward it only when the deployment's live-client routing or server-browser checks require it.
+- IGW/S2S UDP forwarding. For the full warm-pool layout, `7888-7918/udp` is the paired IGW range; forward it only when the deployment's live-client routing or server-browser checks require it.
 - Arbitrary map service count changes without matching `world_partition` rows.
 
 ## Reverse Proxy / Ingress

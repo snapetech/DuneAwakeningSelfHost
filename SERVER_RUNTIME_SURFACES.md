@@ -1,5 +1,7 @@
 # Server Runtime Surfaces
 
+Stale/archived evidence: generated from build `1963158`; current `.env.example` is `1968181-0-shipping`. Regenerate before using this file as current build truth.
+
 This file connects shipped config sections, database persistence, live runtime
 state, and admin-tool risk areas. It complements:
 
@@ -56,7 +58,7 @@ not universal defaults.
 
 | System | Config section | DB tables/functions | What is persisted | Admin/tuning notes |
 | --- | --- | --- | --- | --- |
-| Landclaims/building | `[/Script/DuneSandbox.BuildingSettings]` | `buildings`, `building_instances`, `building_blueprints`, `placeables`, `totems`, `landclaim_segments`, `base_backups`; `save_building`, `load_building` | Building actors, totems, landclaim segments, blueprints/backups. | `m_MaxNumLandclaimSegments` is the per-base segment cap; `m_MaxLandclaimSegmentsPerMap` is the best active-base cap candidate. Changing client-visible placement limits may require matching client config. |
+| Landclaims/building | `[/Script/DuneSandbox.BuildingSettings]` | `buildings`, `building_instances`, `building_blueprints`, `placeables`, `totems`, `landclaim_segments`, `base_backups`; `save_building`, `load_building` | Building actors, totems, landclaim segments, blueprints/backups. | `m_MaxNumLandclaimSegments` is the per-base segment cap. `m_MaxLandclaimSegmentsPerMap` is map-level landclaim evidence, not the per-player 3 subfief/totem cap. Changing client-visible placement limits may require matching client config. |
 | Inventory/items | `[/Script/DuneSandbox.InventorySystemSettings]`, item deterioration config | `inventories`, `actor_inventories`, `items`, `removed_items`, `removed_recipes`; `load_items`, `update_inventory`, `move_inventory_item`, `merge_inventory_items`, `delete_inventory_item` | Inventory containers, item rows, stack sizes, template IDs, quality/stats JSON. | Raw item grants should use or mirror the inventory functions where possible. Blind inserts risk bad `position_index`, stack, ownership, or stats shape. |
 | Spice/resource fields | `[/Script/DuneSandbox.SpiceHarvestingSystem]` | `spicefield_types`, `spicefield_server_availability`, `resourcefield_state`; `try_prime_spicefield`, `try_spawn_spicefield`, `update_global_spice_field_rules`, `fetch_resourcefield_state` | Global spice-field caps/current counts and individual resource field remaining values. | This is the best-understood Deep Desert economy knob set. Medium/large caps are the highest-value overrides. |
 | Encounters | `[/Script/DuneSandbox.EncountersSubsystem]` | `encounters_static`; `save_static_encounter_name`, `load_static_encounter_name`, `save_static_encounter_waiting_for_reset` | Static encounter identity/reset state only. | Dynamic encounter weights/caps are not in DB. Frequency knobs in config affect broad random encounter polling, not only shipwrecks. |
@@ -112,7 +114,7 @@ Admin grant implication:
 
 | Area | Current state | Next validation target |
 | --- | --- | --- |
-| Base count | `m_MaxLandclaimSegmentsPerMap` is binary-confirmed and configured in this repo. | Restart and test 4th-6th active landclaim/base placement. Query `dune.landclaim_segments` after placement. |
+| Subfief/totem count | Repo-owned experimental knob `DUNE_SUBFIEF_LIMIT` or direct `DUNE_SUBFIEF_LIMIT_BONUS`; binary evidence shows `SubfiefCount`, `SubfiefLimitBonus`, and claim-capacity UI hooks; DB migrations include an empty `DUNE-94841_subfief_cap.sql`. | `scripts/apply-subfief-limit-knob.sh .env` writes `DunePlayerCharacterAttributeSet.SubfiefLimitBonus` into persisted player actors and installs a DB trigger to stamp future player actor saves. `DUNE_SUBFIEF_LIMIT_BONUS` wins when set. Validate in game before calling this confirmed. |
 | Spice bloom frequency | Caps and DB behavior are validated. | Test higher medium/large caps and watch `spicefield_types` / `resourcefield_state`. |
 | Buried treasure | Loot table and binary fields found; no DB state. | Use in-game/admin commands `LootPrintTreasureCount` and `LootSpawnTreasure`; check logs for parsed config values. |
 | Shipwreck/downed ships | Encounter and patrol systems found; no dynamic DB state. | Use patrol/crash-site commands and Deep Desert logs to identify runtime selection behavior. |

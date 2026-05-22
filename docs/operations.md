@@ -81,10 +81,10 @@ For the expanded standing farm, the expected summary is:
 current_alive_active=9 active_servers=9 partitions=9
 ```
 
-For the 30-partition warm pool, the expected summary is:
+For the 31-partition warm pool, the expected summary is:
 
 ```text
-current_alive_active=30 active_servers=30 partitions=30
+current_alive_active=31 active_servers=31 partitions=31
 ```
 
 ## Survival Recovery
@@ -184,7 +184,7 @@ Capture the known-good state after all nine maps register:
 ./scripts/capture-routing.sh .env full-farm-ready
 ```
 
-For the 30-partition warm pool:
+For the 31-partition warm pool:
 
 ```bash
 ./scripts/start-full-warm-pool.sh .env
@@ -192,9 +192,9 @@ COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' ./scripts/rmq-health.sh .env
 ```
 
 The helper starts Postgres and both RabbitMQ services first, waits for their
-health checks, writes the 30-partition layout, starts the service layer, then
+health checks, writes the 31-partition layout, starts the service layer, then
 starts maps in batches: `survival`/`overmap`, partitions 3-9, then partitions
-10-30. It uses `--no-recreate` for normal startup so a routine online operation
+10-31. It uses `--no-recreate` for normal startup so a routine online operation
 does not replace Postgres under running game servers.
 
 The helper also seeds required Docker bridge neighbor entries before and after
@@ -221,7 +221,20 @@ gateway reaches postgres:5432
 game-rmq reaches rmq-auth-shim:8080 and text-router:8080
 director reaches game-rmq:5672, admin-rmq:5672, and postgres:5432
 director heartbeat to FLS succeeds
-current_alive_active=30 active_servers=30 partitions=30
+current_alive_active=31 active_servers=31 partitions=31
+```
+
+Server-browser naming is split across the control plane based on the observed
+in-game browser. `config/gateway.ini` `[gateway].display_name` is the
+parent/top row and must stay the branded server title. `WORLD_NAME` and
+`DUNE_SERVER_DISPLAY_NAME` are the nested/details row and must stay the
+feature-list description. To refresh the server-browser rows without
+disconnecting existing map sessions, recreate only `gateway`, then reseed the
+gateway/Postgres bridge neighbor entries:
+
+```bash
+docker compose --env-file .env up -d --force-recreate --no-deps gateway
+./scripts/seed-gateway-neighbor.sh
 ```
 
 Known brittle area: Docker bridge peer discovery on this host. Do not remove
@@ -262,14 +275,14 @@ For the expanded standing farm, forward:
 7777-7785/udp
 ```
 
-For the 30-partition warm pool, forward:
+For the 31-partition warm pool, forward:
 
 ```text
 7777-7810/udp
-7888-7917/udp
+7888-7918/udp
 ```
 
-`7888-7917/udp` are the IGW ports paired with the 30 warm-pool game ports. If your deployment relies on them for live-client routing or server-browser checks, forward them to the Dune host. Do not remove IGW forwards from a working deployment without packet-capture evidence and a router backup.
+`7888-7918/udp` are the IGW ports paired with the 31 warm-pool game ports. If your deployment relies on them for live-client routing or server-browser checks, forward them to the Dune host. Do not remove IGW forwards from a working deployment without packet-capture evidence and a router backup.
 
 Live-client login also asks FLS for a game RabbitMQ address before it starts the gameplay UDP leg. `GAME_RMQ_PUBLIC_HOST` and `GAME_RMQ_PUBLIC_PORT` control the address Gateway reports to FLS. For a publicly reachable live self-hosted server, forward `GAME_RMQ_PUBLIC_PORT` TCP, default `31982/tcp`, to the host. Do not forward Postgres, RabbitMQ management, or admin panel ports.
 

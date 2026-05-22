@@ -54,6 +54,33 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         (self.workspace / "config" / "gateway.ini").write_text("", encoding="utf-8")
         (self.workspace / "config" / "rabbitmq-admin.conf").write_text("", encoding="utf-8")
         (self.workspace / "config" / "rabbitmq-game.conf").write_text("", encoding="utf-8")
+        (self.workspace / "research" / "surfaces").mkdir(parents=True)
+        (self.workspace / "research" / "surfaces" / "test.jsonl").write_text(
+            json.dumps({
+                "id": "ini.test.surface",
+                "build": "test-build",
+                "surface": "ini",
+                "scope": "global",
+                "name": "Test surface",
+                "status": "validated",
+                "confidence": "high",
+                "risk": "low",
+                "validated": True,
+                "evidence": ["unit test"],
+            }) + "\n" + json.dumps({
+                "id": "binary.test.candidate",
+                "build": "test-build",
+                "surface": "binary-candidate",
+                "scope": "global",
+                "name": "Test binary candidate",
+                "status": "candidate",
+                "confidence": "low",
+                "risk": "medium",
+                "validated": False,
+                "evidence": ["unit test"],
+            }) + "\n",
+            encoding="utf-8",
+        )
         (self.workspace / ".env").write_text("", encoding="utf-8")
         self.panel = load_admin_panel(self.workspace)
         self.handler = object.__new__(self.panel.Handler)
@@ -207,6 +234,22 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.patch_flag("CATALOG_ENABLED", False)
         with self.assertRaises(PermissionError):
             self.handler.require_catalog()
+
+    def test_discovery_payload_reads_surface_ledger(self):
+        payload = self.panel.discovery_payload()
+        self.assertTrue(payload["ok"])
+        ids = {entry["id"] for entry in payload["surfaces"]}
+        self.assertIn("ini.test.surface", ids)
+        self.assertIn("binary.test.candidate", ids)
+        self.assertIn("ready-or-promoted", payload["queue"])
+        self.assertIn("needs-startup-parse-test", payload["queue"])
+
+    def test_discovery_routes_are_read_only_catalog_gated(self):
+        for route in ("/api/discovery", "/api/discovery/surfaces", "/api/discovery/queue", "/api/discovery/builds"):
+            handler, captured = self.make_route_handler(route)
+            handler.do_GET()
+            self.assertEqual([], captured["errors"], route)
+            self.assertIsNotNone(captured["json"], route)
 
     def test_read_only_inspectors_expose_safe_mutator_metadata(self):
         def fake_query(sql, params=None):

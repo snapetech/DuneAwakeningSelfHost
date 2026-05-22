@@ -113,6 +113,114 @@ def load_rows():
     return json.loads(text)
 
 
+def load_deep_desert_markers():
+    sql = r"""
+        select coalesce(json_agg(row_to_json(t)), '[]'::json)
+        from (
+            select m.marker_hash_id,
+                   m.dimension_index,
+                   m.area_id,
+                   (m.marker).marker_type as marker_type,
+                   (m.marker).x::float8 as x,
+                   (m.marker).y::float8 as y,
+                   (m.marker).z::float8 as z,
+                   m.area_radius::float8 as area_radius
+            from dune.markers m
+            join dune.map_names mn on mn.map_name_id = m.map_name_id
+            where mn.map_name = 'DeepDesert'
+            order by m.dimension_index, (m.marker).marker_type, m.marker_hash_id
+        ) t
+    """
+    text = compose_psql(sql).strip() or "[]"
+    return json.loads(text)
+
+
+def load_deep_desert_layout_state():
+    sql = r"""
+        select json_build_object(
+            'seeds', json_build_object(
+                'farm', (select world_reset_seed from dune.world_farm_reset_seed where onerow_id = true),
+                'map', (select world_reset_seed from dune.world_map_reset_seed where map = 'DeepDesert'),
+                'partitions', coalesce((
+                    select json_agg(row_to_json(t) order by t.dimension_index, t.partition_id)
+                    from (
+                        select wp.partition_id, wp.dimension_index, wprs.world_reset_seed
+                        from dune.world_partition wp
+                        left join dune.world_partition_reset_seed wprs on wprs.partition_id = wp.partition_id
+                        where wp.map = 'DeepDesert_1'
+                    ) t
+                ), '[]'::json)
+            ),
+            'shiftingSands', coalesce((
+                select json_agg(row_to_json(s) order by s.id)
+                from (
+                    select id, alpha::float8 as alpha, x::float8 as x, y::float8 as y,
+                           extract(epoch from last_modified_time)::bigint as last_modified_time
+                    from dune.shiftingsands_data
+                ) s
+            ), '[]'::json),
+            'resourceFields', coalesce((
+                select json_agg(row_to_json(r) order by r.dimension_index, r.field_kind_id, r.spawn_time)
+                from (
+                    select map, dimension_index, field_kind_id, field_id,
+                           spawn_time::float8 as spawn_time,
+                           value_remaining::bigint as value_remaining
+                    from dune.resourcefield_state
+                    where map = 'DeepDesert'
+                ) r
+            ), '[]'::json),
+            'spiceFields', coalesce((
+                select json_agg(row_to_json(st) order by st.dimension_index, st.field_type)
+                from (
+                    select field_type, map_name, dimension_index, spicefield_type_id,
+                           max_globally_primed, max_globally_active,
+                           current_globally_primed, current_globally_active,
+                           is_spawning_active, global_spawn_weight::float8 as global_spawn_weight
+                    from dune.spicefield_types
+                    where map_name = 'DeepDesert'
+                ) st
+            ), '[]'::json)
+        )
+    """
+    text = compose_psql(sql).strip() or "{}"
+    return json.loads(text)
+
+
+def load_deep_desert_observations():
+    sql = r"""
+        select json_build_object(
+            'source', 'live DB passive observation',
+            'spiceAvailability', coalesce((
+                select json_agg(row_to_json(a) order by a.dimension_index, a.field_type, a.server_id)
+                from (
+                    select st.field_type, st.dimension_index, sa.server_id,
+                           sa.inactive_fields_of_type, sa.requested_spawned_of_type
+                    from dune.spicefield_server_availability sa
+                    join dune.spicefield_types st on st.spicefield_type_id = sa.spicefield_type_id
+                    where st.map_name = 'DeepDesert'
+                ) a
+            ), '[]'::json),
+            'shipwreckSpawners', coalesce((
+                select json_agg(row_to_json(s) order by s.dimension_index, s.name, s.id)
+                from (
+                    select id, map, dimension_index, name,
+                           substring(name from 'CB_WL_[0-9]+') as world_layout_ref
+                    from dune.actor_spawners
+                    where map = 'DeepDesert'
+                      and (
+                        name ilike '%WreckedShip%'
+                        or name ilike '%Shipwreck%'
+                        or name ilike '%CrashSite%'
+                        or name ilike '%PatrolShip%'
+                      )
+                ) s
+            ), '[]'::json)
+        )
+    """
+    text = compose_psql(sql).strip() or "{}"
+    return json.loads(text)
+
+
 def clamp(value, low, high):
     return max(low, min(high, value))
 
@@ -140,10 +248,10 @@ def map_image_href(source_map):
     return "/hagga-basin.webp"
 
 
-def render_svg(players, generated_at, image_href):
-    hagga = [
+def render_svg(players, generated_at, image_href, map_key="HaggaBasin", label="Hagga Basin", image=True):
+    plotted = [
         p for p in players
-        if p.get("actor_map") == "HaggaBasin" and p.get("x") is not None and p.get("y") is not None
+        if p.get("actor_map") in (map_key, f"{map_key}_1") and p.get("x") is not None and p.get("y") is not None
     ]
     grid = []
     for i in range(1, 4):
@@ -151,7 +259,7 @@ def render_svg(players, generated_at, image_href):
         grid.append(f'<line x1="{pos:.1f}" y1="0" x2="{pos:.1f}" y2="{HEIGHT}" class="grid"/>')
         grid.append(f'<line x1="0" y1="{pos:.1f}" x2="{WIDTH}" y2="{pos:.1f}" class="grid"/>')
     markers = []
-    for player in hagga:
+    for player in plotted:
         x, y = project(player["x"], player["y"])
         name = html.escape(str(player.get("character_name") or "Player"))
         sx = public_x(x)
@@ -162,14 +270,15 @@ def render_svg(players, generated_at, image_href):
             f'<text x="{label_x:.1f}" y="{label_y:.1f}" class="label">{name}</text></g>'
         )
     empty = ""
-    if not hagga:
-        empty = f'<text x="{WIDTH / 2}" y="{HEIGHT / 2}" class="empty">No online Hagga Basin positions.</text>'
-    return f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {PUBLIC_VIEWBOX_WIDTH:.3f} {HEIGHT}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Hagga Basin live player map">
+    if not plotted:
+        empty = f'<text x="{WIDTH / 2}" y="{HEIGHT / 2}" class="empty">No online {html.escape(label)} positions.</text>'
+    background = f'<image href="{image_href}" x="0" y="0" width="{WIDTH}" height="{HEIGHT}" preserveAspectRatio="none"/>' if image else '<rect x="0" y="0" width="1600" height="1600" fill="#171512"/><path d="M0 1120 C300 1010 540 1240 820 1110 C1120 970 1320 1080 1600 960 L1600 1600 L0 1600 Z" fill="#2a241b" opacity=".75"/><path d="M0 420 C260 320 520 500 770 390 C1100 250 1320 390 1600 260" fill="none" stroke="#8f6b34" stroke-width="10" opacity=".42"/><path d="M0 760 C220 690 520 870 760 740 C1040 590 1300 720 1600 600" fill="none" stroke="#d9a63c" stroke-width="7" opacity=".28"/>'
+    return f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {PUBLIC_VIEWBOX_WIDTH:.3f} {HEIGHT}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="{html.escape(label)} live player map">
 <style>
 .shade{{fill:rgba(4,5,4,.28)}}.grid{{stroke:#f1d08a;stroke-width:1;opacity:.24}}.dot{{fill:#78cf7a;stroke:#071007;stroke-width:4}}.label{{fill:#fff;font:700 24px system-ui,sans-serif;paint-order:stroke;stroke:#0b0d0a;stroke-width:7}}.meta{{fill:#c7bba9;font:20px system-ui,sans-serif}}.empty{{fill:#f3eadb;font:26px system-ui,sans-serif;text-anchor:middle;paint-order:stroke;stroke:#0b0d0a;stroke-width:6}}
 </style>
 <g transform="scale({PUBLIC_X_SCALE:.6f} 1)">
-<image href="{image_href}" x="0" y="0" width="{WIDTH}" height="{HEIGHT}" preserveAspectRatio="none"/>
+{background}
 <rect x="0" y="0" width="{WIDTH}" height="{HEIGHT}" class="shade"/>
 {''.join(grid)}
 </g>
@@ -178,6 +287,183 @@ def render_svg(players, generated_at, image_href):
 <text x="22" y="{HEIGHT - 24}" class="meta">Updated {html.escape(generated_at)}</text>
 {''.join(markers)}
 {empty}
+</svg>
+'''
+
+
+def marker_group(marker_type):
+    value = str(marker_type or "Marker")
+    if value in ("TaxiService",):
+        return "Transit"
+    if value in ("Cave", "Ecolab", "HomeBase"):
+        return "Locations"
+    if "Wreckage" in value or "Part" in value:
+        return "Wreckage"
+    if "Ore" in value or "Pickup" in value or value in ("BrittleBush",):
+        return "Resources"
+    return "Markers"
+
+
+DD_GROUP_COLORS = {
+    "Transit": "#6fb6ff",
+    "Locations": "#d9a63c",
+    "Wreckage": "#b7c0c7",
+    "Resources": "#78cf7a",
+    "Markers": "#f3eadb",
+}
+DD_LAYER_LABELS = {
+    "resource_nodes": "Resource nodes",
+    "resource_fields": "Resource fields",
+    "spice_fields": "Spice fields",
+    "transit": "Transit",
+    "wreckage": "Wreckage",
+    "locations": "Locations",
+    "saved_db_markers": "Saved DB markers",
+}
+DD_LAYER_COLORS = {
+    "resource_nodes": "#78cf7a",
+    "resource_fields": "#e7d35b",
+    "spice_fields": "#f16f9a",
+    "transit": "#6fb6ff",
+    "wreckage": "#b7c0c7",
+    "locations": "#d9a63c",
+    "saved_db_markers": "#8d96a0",
+}
+
+
+def dd_bounds(markers, players):
+    return {"min_x": -1250000, "max_x": 1150000, "min_y": -1250000, "max_y": 1050000}
+
+
+def dd_area_cell(area_id):
+    try:
+        index = int(area_id) - 2
+    except (TypeError, ValueError):
+        return None
+    if index < 0 or index >= 81:
+        return None
+    return index % 9, index // 9
+
+
+def dd_marker_area_bounds(markers):
+    bounds = {}
+    for marker in markers:
+        cell = dd_area_cell(marker.get("area_id"))
+        if not cell:
+            continue
+        try:
+            x = float(marker["x"])
+            y = float(marker["y"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        area = int(marker["area_id"])
+        row = bounds.setdefault(area, {"min_x": x, "max_x": x, "min_y": y, "max_y": y})
+        row["min_x"] = min(row["min_x"], x)
+        row["max_x"] = max(row["max_x"], x)
+        row["min_y"] = min(row["min_y"], y)
+        row["max_y"] = max(row["max_y"], y)
+    return bounds
+
+
+def render_deep_desert_svg(players, markers, generated_at, layout_state=None, observations=None):
+    layout_state = layout_state or {}
+    observations = observations or {}
+    background_href = layout_state.get("backgroundHref") or ""
+    bounds = dd_bounds(markers, players)
+    span_x = max(bounds["max_x"] - bounds["min_x"], 1)
+    span_y = max(bounds["max_y"] - bounds["min_y"], 1)
+
+    def px(x):
+        return clamp((float(x) - bounds["min_x"]) / span_x * PUBLIC_VIEWBOX_WIDTH, 0, PUBLIC_VIEWBOX_WIDTH)
+
+    def py(y):
+        return clamp((float(y) - bounds["min_y"]) / span_y * HEIGHT, 0, HEIGHT)
+
+    def pp(x, y):
+        return px(x), py(y)
+
+    def marker_point(marker):
+        return pp(float(marker["x"]), float(marker["y"]))
+
+    legend_items = []
+
+    grid = []
+    row_labels = "ABCDEFGHI"
+    for i in range(0, 10):
+        tx = i / 9
+        x = tx * PUBLIC_VIEWBOX_WIDTH
+        y = tx * HEIGHT
+        world_x = bounds["min_x"] + tx * span_x
+        world_y = bounds["min_y"] + tx * span_y
+        grid.append(f'<line x1="{x:.1f}" y1="0" x2="{x:.1f}" y2="{HEIGHT}" class="grid"/>')
+        grid.append(f'<line x1="0" y1="{y:.1f}" x2="{PUBLIC_VIEWBOX_WIDTH:.1f}" y2="{y:.1f}" class="grid"/>')
+        if i < 9:
+            grid.append(f'<text x="{((i + 0.5) / 9 * PUBLIC_VIEWBOX_WIDTH):.1f}" y="118" class="cellLabel">{i + 1}</text>')
+            grid.append(f'<text x="34" y="{((i + 0.5) / 9 * HEIGHT):.1f}" class="cellLabel">{row_labels[8 - i]}</text>')
+        if i % 2 == 0:
+            grid.append(f'<text x="{clamp(x + 8, 10, PUBLIC_VIEWBOX_WIDTH - 180):.1f}" y="24" class="coord">X {round(world_x)}</text>')
+            grid.append(f'<text x="10" y="{clamp(y - 8, 44, HEIGHT - 16):.1f}" class="coord">Y {round(world_y)}</text>')
+
+    shifting_nodes = []
+    shifting_sands = layout_state.get("shiftingSands") or []
+    for row in shifting_sands:
+        if row.get("x") is None or row.get("y") is None:
+            continue
+        x, y = pp(float(row["x"]), float(row["y"]))
+        alpha = clamp(float(row.get("alpha") or 0.4), 0.08, 0.82)
+        shifting_nodes.append(f'<circle class="shiftingSand" cx="{x:.1f}" cy="{y:.1f}" r="{18 + alpha * 28:.1f}" opacity="{0.24 + alpha * 0.28:.3f}"><title>Static shifting sand {html.escape(str(row.get("id") or ""))}</title></circle>')
+
+    seeds = layout_state.get("seeds") or {}
+    spice_fields = layout_state.get("spiceFields") or []
+    resource_fields = layout_state.get("resourceFields") or []
+    seed_text = f'farm seed {seeds.get("farm", "unknown")}, map seed {seeds.get("map", "unknown")}, shifting sand rows {len(shifting_sands)}'
+    spice_text = ", ".join(
+        f'{str(row.get("field_type"))} {row.get("current_globally_active")}/{row.get("max_globally_active")}'
+        for row in spice_fields
+        if int(row.get("dimension_index") or 0) == 0
+    ) or "spice state unavailable"
+
+    marker_nodes = []
+
+    player_nodes = []
+    for player in players:
+        if player.get("actor_map") not in ("DeepDesert", "DeepDesert_1") or player.get("x") is None or player.get("y") is None:
+            continue
+        x = px(player["x"])
+        y = py(player["y"])
+        name = html.escape(str(player.get("character_name") or "Player"))
+        player_nodes.append(
+            f'<g><circle cx="{x:.1f}" cy="{y:.1f}" r="11" class="dot"/>'
+            f'<text x="{clamp(x + 16, 10, PUBLIC_VIEWBOX_WIDTH - 180):.1f}" y="{clamp(y - 12, 24, HEIGHT - 20):.1f}" class="label">{name}</text></g>'
+        )
+
+    empty = "" if player_nodes else '<text x="1066.7" y="830" class="empty">No online Deep Desert positions.</text>'
+    spice_availability = observations.get("spiceAvailability") or []
+    shipwreck_spawners = observations.get("shipwreckSpawners") or []
+    large_inactive = sum(
+        int(row.get("inactive_fields_of_type") or 0)
+        for row in spice_availability
+        if str(row.get("field_type") or "").lower() == "large" and int(row.get("dimension_index") or 0) == 0
+    )
+    return f'''<svg xmlns="http://www.w3.org/2000/svg" width="{PUBLIC_VIEWBOX_WIDTH:.0f}" height="{HEIGHT}" viewBox="0 0 {PUBLIC_VIEWBOX_WIDTH:.3f} {HEIGHT}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Deep Desert operational map derived from server markers">
+<style>
+.bg{{fill:#171512}}.dune{{fill:#2a241b;opacity:.82}}.ridge{{fill:none;stroke:#d9a63c;stroke-width:7;opacity:.26}}.grid{{stroke:#f1d08a;stroke-width:1;opacity:.18}}.coord,.meta,.legend{{fill:#c7bba9;font:18px system-ui,sans-serif}}.cellLabel{{fill:#e7c875;font:700 22px system-ui,sans-serif;text-anchor:middle;opacity:.68;paint-order:stroke;stroke:#0b0d0a;stroke-width:5}}.dot{{fill:#78cf7a;stroke:#071007;stroke-width:4}}.label{{fill:#fff;font:700 24px system-ui,sans-serif;paint-order:stroke;stroke:#0b0d0a;stroke-width:7}}.pointLabel{{fill:#fff;font:700 18px system-ui,sans-serif;paint-order:stroke;stroke:#0b0d0a;stroke-width:5}}.empty{{fill:#f3eadb;font:26px system-ui,sans-serif;text-anchor:middle;paint-order:stroke;stroke:#0b0d0a;stroke-width:6}}.marker{{opacity:.92;cursor:help}}.shiftingSand{{fill:#e7d59a;stroke:#fff0bc;stroke-width:2}}
+</style>
+<rect class="bg" x="0" y="0" width="{PUBLIC_VIEWBOX_WIDTH:.3f}" height="{HEIGHT}"/>
+<path class="dune" d="M0 1120 C360 990 630 1230 990 1080 C1340 930 1680 1050 2133 880 L2133 1600 L0 1600 Z"/>
+<path class="ridge" d="M0 410 C340 290 650 520 980 365 C1370 190 1700 390 2133 245"/>
+<path class="ridge" d="M0 760 C300 660 650 890 1010 710 C1390 520 1700 750 2133 565"/>
+{''.join(shifting_nodes)}
+{''.join(grid)}
+{''.join(marker_nodes)}
+{''.join(player_nodes)}
+{empty}
+<rect x="0" y="0" width="{PUBLIC_VIEWBOX_WIDTH:.3f}" height="122" fill="#171512" opacity=".82"/>
+<text x="22" y="38" class="meta">Deep Desert Map</text>
+<text x="22" y="66" class="meta">{html.escape(seed_text)} | resource fields {len(resource_fields)} | spice {html.escape(spice_text)}</text>
+<text x="22" y="94" class="meta">Passive tracker: no resource heatmap points; shipwreck candidates {len(shipwreck_spawners)}; inactive Large spice candidates {large_inactive}</text>
+<text x="22" y="1576" class="meta">Updated {html.escape(generated_at)} | verified player points only | saved DB markers and unlocated observations are not authoritative map points</text>
+{''.join(legend_items)}
 </svg>
 '''
 
@@ -228,10 +514,16 @@ def main():
     generated = generated_dt.strftime("%Y-%m-%d %H:%M UTC")
     try:
         players = load_rows()
+        deep_desert_markers = load_deep_desert_markers()
+        deep_desert_layout = load_deep_desert_layout_state()
+        deep_desert_observations = load_deep_desert_observations()
         ok = True
         error = None
     except Exception as exc:
         players = []
+        deep_desert_markers = []
+        deep_desert_layout = {}
+        deep_desert_observations = {"source": "unavailable", "spiceAvailability": [], "shipwreckSpawners": []}
         ok = False
         error = str(exc)
 
@@ -253,14 +545,38 @@ def main():
         "peakTodayAt": daily_peak["peakAt"],
         "peakDate": daily_peak["date"],
         "haggaPlotted": sum(1 for p in public_players if p["onHaggaMap"]),
+        "deepDesertPlotted": sum(1 for p in players if p.get("actor_map") in ("DeepDesert", "DeepDesert_1") and p.get("x") is not None and p.get("y") is not None),
+        "deepDesertMarkers": len(deep_desert_markers),
+        "deepDesertLayout": {
+            "farmSeed": (deep_desert_layout.get("seeds") or {}).get("farm"),
+            "mapSeed": (deep_desert_layout.get("seeds") or {}).get("map"),
+            "shiftingSandsRows": len(deep_desert_layout.get("shiftingSands") or []),
+            "resourceFields": len(deep_desert_layout.get("resourceFields") or []),
+            "spiceFields": [
+                {key: value for key, value in row.items() if key not in ("is_spawning_active", "global_spawn_weight")}
+                for row in (deep_desert_layout.get("spiceFields") or [])
+            ],
+        },
+        "deepDesertTracker": {
+            "shipwreckCandidates": len(deep_desert_observations.get("shipwreckSpawners") or []),
+            "largeSpiceInactiveCandidates": sum(
+                int(row.get("inactive_fields_of_type") or 0)
+                for row in (deep_desert_observations.get("spiceAvailability") or [])
+                if str(row.get("field_type") or "").lower() == "large" and int(row.get("dimension_index") or 0) == 0
+            ),
+            "source": deep_desert_observations.get("source") or "live DB passive observation",
+        },
         "players": public_players,
         "error": error,
     }
     source_map = DUNE_ROOT / "admin" / "static" / "hagga-basin.webp"
     if source_map.exists():
         shutil.copyfile(source_map, STATIC_DIR / "hagga-basin.webp")
+    (STATIC_DIR / "deep-desert-observations.json").write_text(json.dumps(deep_desert_observations, indent=2), encoding="utf-8")
+    deep_desert_layout["backgroundHref"] = ""
     (STATIC_DIR / "players.json").write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
     (STATIC_DIR / "hagga-map.svg").write_text(render_svg(players, generated, map_image_href(source_map)), encoding="utf-8")
+    (STATIC_DIR / "deep-desert-map.svg").write_text(render_deep_desert_svg(players, deep_desert_markers, generated, deep_desert_layout, deep_desert_observations), encoding="utf-8")
     return 0 if ok else 1
 
 

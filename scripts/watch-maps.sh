@@ -22,6 +22,7 @@ Environment:
   DUNE_WATCH_COOLDOWN        Minimum seconds between recoveries per service. Default: 300
   DUNE_WATCH_STARTUP_GRACE   Seconds to let running maps warm before DB recovery. Default: 300
   DUNE_WATCH_LOCK_DIR        Single-instance lock dir. Default: /tmp/dune-map-watchdog.lock
+  DUNE_WATCH_PAUSE_FILE      Pause marker honored in loop mode. Default: /tmp/dune-map-watchdog.paused
   DUNE_WATCH_REQUIRE_READY    Recover running maps with ready=false. Default: false
   DUNE_WATCH_RECOVER_COMMAND Recovery command. Default: scripts/recover-map.sh
   DUNE_WATCH_SEED_NEIGHBORS Seed known Docker bridge neighbor entries. Default: false
@@ -54,6 +55,7 @@ recovery_wait="${DUNE_WATCH_RECOVERY_WAIT:-180}"
 cooldown="${DUNE_WATCH_COOLDOWN:-300}"
 startup_grace="${DUNE_WATCH_STARTUP_GRACE:-300}"
 lock_dir="${DUNE_WATCH_LOCK_DIR:-/tmp/dune-map-watchdog.lock}"
+pause_file="${DUNE_WATCH_PAUSE_FILE:-/tmp/dune-map-watchdog.paused}"
 require_ready="${DUNE_WATCH_REQUIRE_READY:-false}"
 recover_command="${DUNE_WATCH_RECOVER_COMMAND:-$(dirname "$0")/recover-map.sh}"
 seed_neighbors="${DUNE_WATCH_SEED_NEIGHBORS:-false}"
@@ -81,6 +83,7 @@ MAP_PARTITIONS=(
   "testing-carthag:6"
   "testing-waterfat:7"
   "deep-desert:8"
+  "deep-desert-pvp:31"
   "proces-verbal:9"
   "lostharvest-ecolab-a:10"
   "lostharvest-ecolab-b:11"
@@ -244,6 +247,17 @@ seed_network_neighbors() {
   fi
 }
 
+wait_if_paused() {
+  if [[ -n "$mode" ]]; then
+    return
+  fi
+
+  while [[ -e "$pause_file" ]]; do
+    log "map watchdog paused: pause_file=$pause_file"
+    sleep "$interval"
+  done
+}
+
 check_once() {
   local item
   local service
@@ -296,6 +310,7 @@ check_once() {
 }
 
 while true; do
+  wait_if_paused
   if [[ "$mode" != "--status" && "$mode" != "--dry-run" ]]; then
     seed_network_neighbors
   fi

@@ -1,0 +1,22 @@
+{
+  "generatedAt": "2026-05-22T21:16:50.044348+00:00",
+  "source": "static fallback; live endpoint populates DB observations",
+  "confidence": "mixed",
+  "exactPoints": [],
+  "spice": {
+    "types": [],
+    "availability": []
+  },
+  "resourceFields": [],
+  "shipwreckSpawners": [],
+  "dynamicEvents": [],
+  "savedDbMarkers": [],
+  "diagnostics": [
+    {
+      "kind": "resource-distribution",
+      "status": "hidden",
+      "confidence": "low",
+      "note": "Pak heatmaps are broad distribution masks, not node or field coordinates."
+    }
+  ]
+}

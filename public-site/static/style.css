@@ -184,6 +184,35 @@ section {
 	justify-content: flex-end;
 }
 
+.map-tabs {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-bottom: 8px;
+}
+
+.map-tabs button {
+	border: 1px solid #5b503f;
+	border-radius: 6px;
+	background: #201d18;
+	color: #f3eadb;
+	cursor: pointer;
+	font: inherit;
+	padding: 7px 12px;
+}
+
+.map-tabs button.active,
+.map-tabs button:focus-visible {
+	border-color: #d9a63c;
+	background: #2a241b;
+	outline: 0;
+}
+
+.map-tab-status {
+	font-size: 0.95rem;
+	margin: -2px 0 8px;
+}
+
 .map-tools {
 	display: flex;
 	gap: 8px;
@@ -317,6 +346,12 @@ section {
 	min-width: 0;
 	min-height: 0;
 	overflow: hidden;
+}
+
+.poi-legend[hidden],
+.poi-overlay[hidden],
+.poi-attribution[hidden] {
+	display: none !important;
 }
 
 .poi-legend-header {

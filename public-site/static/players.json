@@ -1,0 +1,99 @@
+{
+  "ok": true,
+  "generatedAt": "2026-05-22 19:38 UTC",
+  "onlineCount": 2,
+  "peakToday": 7,
+  "peakTodayAt": "2026-05-22T15:45:38Z",
+  "peakDate": "2026-05-22",
+  "haggaPlotted": 2,
+  "deepDesertPlotted": 0,
+  "deepDesertMarkers": 91,
+  "deepDesertLayout": {
+    "farmSeed": 1,
+    "mapSeed": 1,
+    "shiftingSandsRows": 0,
+    "resourceFields": 108,
+    "spiceFields": [
+      {
+        "field_type": "Large",
+        "map_name": "DeepDesert",
+        "dimension_index": 0,
+        "spicefield_type_id": 15,
+        "max_globally_primed": 1,
+        "max_globally_active": 1,
+        "current_globally_primed": 0,
+        "current_globally_active": 1
+      },
+      {
+        "field_type": "Medium",
+        "map_name": "DeepDesert",
+        "dimension_index": 0,
+        "spicefield_type_id": 12,
+        "max_globally_primed": 12,
+        "max_globally_active": 12,
+        "current_globally_primed": 0,
+        "current_globally_active": 12
+      },
+      {
+        "field_type": "Small",
+        "map_name": "DeepDesert",
+        "dimension_index": 0,
+        "spicefield_type_id": 10,
+        "max_globally_primed": 60,
+        "max_globally_active": 60,
+        "current_globally_primed": 0,
+        "current_globally_active": 16
+      },
+      {
+        "field_type": "Large",
+        "map_name": "DeepDesert",
+        "dimension_index": 1,
+        "spicefield_type_id": 337,
+        "max_globally_primed": 1,
+        "max_globally_active": 1,
+        "current_globally_primed": 0,
+        "current_globally_active": 1
+      },
+      {
+        "field_type": "Medium",
+        "map_name": "DeepDesert",
+        "dimension_index": 1,
+        "spicefield_type_id": 334,
+        "max_globally_primed": 12,
+        "max_globally_active": 12,
+        "current_globally_primed": 0,
+        "current_globally_active": 11
+      },
+      {
+        "field_type": "Small",
+        "map_name": "DeepDesert",
+        "dimension_index": 1,
+        "spicefield_type_id": 332,
+        "max_globally_primed": 60,
+        "max_globally_active": 60,
+        "current_globally_primed": 0,
+        "current_globally_active": 16
+      }
+    ]
+  },
+  "players": [
+    {
+      "name": "Lord Cestus",
+      "location": "Abbir",
+      "lifeState": "Alive",
+      "onHaggaMap": true
+    },
+    {
+      "name": "Sadae",
+      "location": "Abbir",
+      "lifeState": "Alive",
+      "onHaggaMap": true
+    }
+  ],
+  "error": null,
+  "deepDesertTracker": {
+    "largeSpiceInactiveCandidates": 0,
+    "source": "static fallback",
+    "shipwreckCandidates": 0
+  }
+}

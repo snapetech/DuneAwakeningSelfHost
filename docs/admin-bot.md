@@ -155,7 +155,7 @@ Presence templates support `{playername}`, `{player_name}`, `{count}`, `{player_
 
 Global join/leave messages use `DUNE_PLAYER_PRESENCE_JOIN_TEMPLATE`, `DUNE_PLAYER_PRESENCE_RETURN_JOIN_TEMPLATE`, and `DUNE_PLAYER_PRESENCE_LEAVE_TEMPLATE` through the public `announce()` path. First-time joins are accounts missing from `seenAccounts`; returning joins are accounts already recorded there. Player-presence announcements override the shared announcement routing and default to `DUNE_PLAYER_PRESENCE_ANNOUNCE_ROUTING_KEYS=<empty>` so each online client receives one copy. Do not set this to multiple routing keys unless you intentionally want fan-out; the shared `DUNE_ANNOUNCE_CHAT_ROUTING_KEYS=HaggaBasin.0,Survival_1.dim_0,<empty>` pattern can make HUD notices render more than once.
 
-The private welcome path runs on every detected join for existing and new players after the first baseline poll. It uses the same Paul chat sender, disables dashboard `!!!` wrapping, targets the joined player's live game RabbitMQ queue, publishes to `DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_EXCHANGE`, and sets `m_ChannelType` to `DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_CHANNEL`. The confirmed private-rendering values are `chat.whispers` and `Whispers`. The shared publisher must emit `m_TimeStamp`, not `m_Timestamp`; see `docs/private-chat-replies.md`. The default private welcome message is:
+The private welcome path runs on every detected join for existing and new players after the first baseline poll. It uses the same Paul chat sender, disables dashboard `!!!` wrapping, derives the joined player's live whisper route from their FLS id, publishes to `DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_EXCHANGE`, and sets `m_ChannelType` to `DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_CHANNEL`. The confirmed private-rendering values are `chat.whispers` and `Whispers`. The shared publisher must emit `m_TimeStamp`, not `m_Timestamp`; see `docs/private-chat-replies.md`. The default private welcome message is:
 
 ```text
 Welcome! Please check {rules_url} for server rules.
@@ -217,7 +217,7 @@ or:
 make install-player-presence-announcer-service ENV_FILE=.env
 ```
 
-The installer writes `/etc/systemd/system/dune-player-presence-announcer.service`, enables it, and starts it. Because it is enabled with `WantedBy=multi-user.target` and `Restart=always`, it starts after host reboots and restarts itself after script failures. The generated unit uses the current checkout path and current user by default; set `DUNE_PLAYER_PRESENCE_SERVICE_USER=<user>` when running the installer to choose another system user.
+The installer writes `/etc/systemd/system/dune-player-presence-announcer.service`, enables it, and starts it. Because it is enabled with `WantedBy=multi-user.target`, `Requires=docker.service`, `Restart=always`, and an unlimited start-limit interval, it starts after host reboots and keeps restarting after script failures or early boot dependency races. The generated unit uses the current checkout path and current user by default; set `DUNE_PLAYER_PRESENCE_SERVICE_USER=<user>` when running the installer to choose another system user.
 
 Operational checks:
 

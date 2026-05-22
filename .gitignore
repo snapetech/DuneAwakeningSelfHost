@@ -7,6 +7,9 @@ data/*
 !data/exchange-price-snapshots/*.csv
 captures/
 backups/
+build/
+experiments/runs/
+research/fixtures/
 config/tls/
 
 *.log

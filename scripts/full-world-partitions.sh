@@ -62,7 +62,8 @@ with desired(partition_id, map, dimension_index) as (
     (27, 'CB_Story_BanditFortress01', 0),
     (28, 'CB_Overland_S_07', 0),
     (29, 'CB_Overland_S_08', 0),
-    (30, 'CB_Dungeon_ThePit', 0)
+    (30, 'CB_Dungeon_ThePit', 0),
+    (31, 'DeepDesert_1', 1)
 ),
 definition as (
   select '{"box": {"max_x": 1, "max_y": 1, "min_x": 0, "min_y": 0}, "type": "box2d_array"}'::jsonb as value

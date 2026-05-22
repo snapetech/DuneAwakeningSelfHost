@@ -101,8 +101,8 @@ The implementation intentionally keeps catalog reads independent from write gate
 | `DUNE_ADMIN_PERMISSION_MUTATIONS_ENABLED` | `false` | Permission actor name/access/rank execution. World-state inspection and dry-runs remain available. |
 | `DUNE_ADMIN_VENDOR_MUTATIONS_ENABLED` | `false` | Vendor stock-cycle timestamp execution. Lifecycle inspection and dry-runs remain available. |
 | `DUNE_ADMIN_CHARACTER_SWAP_ENABLED` | `false` | Character slot swap execution. Inspection and planning remain available; execution is blocked until a native path is proven. |
-| `DUNE_ADMIN_MUTATIONS_ENABLED` | repo default currently `true` | Existing global mutation gate. |
-| `DUNE_ADMIN_ITEM_GRANTS_ENABLED` | repo default currently `true` | Item grant and bundle item execution. |
+| `DUNE_ADMIN_MUTATIONS_ENABLED` | example default `false` | Existing global mutation gate. |
+| `DUNE_ADMIN_ITEM_GRANTS_ENABLED` | example default `false` | Item grant and bundle item execution. |
 | `DUNE_ADMIN_GM_COMMANDS_ENABLED` | `false` | Native GM command execution. Still also blocked by payload verification. |
 | `DUNE_GM_COMMAND_PAYLOAD_VERIFIED` | `false` | Required for native GM command execution. |
 

@@ -21,7 +21,7 @@ https://dune.example.com {
 	}
 
 	@allowed_methods method GET HEAD
-	@public_files path / /style.css /app.js /status.html /players.json /hagga-pois.json /hagga-map.svg /hagga-basin.webp
+	@public_files path / /*.html /*.css /*.js /*.json /*.svg /*.webp
 
 	handle @allowed_methods {
 		handle @public_files {

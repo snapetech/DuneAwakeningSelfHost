@@ -8,8 +8,8 @@ For the current local trusted deployment, the panel runs unlocked by default:
 
 ```env
 DUNE_ADMIN_REQUIRE_TOKEN=false
-DUNE_ADMIN_MUTATIONS_ENABLED=true
-DUNE_ADMIN_ITEM_GRANTS_ENABLED=true
+DUNE_ADMIN_MUTATIONS_ENABLED=false
+DUNE_ADMIN_ITEM_GRANTS_ENABLED=false
 ```
 
 To require a browser token, set:
@@ -1189,7 +1189,7 @@ scripts/send-chat-channel-probe.py --target-name SamplePlayer --target-fls-id TE
 
 Live findings: the test player's player controller `17` is in guild `1`; no active party row was present during testing. Direct `chat.proximity`, `chat.guild.1`, and `chat.faction.3` publishes with temporary target-queue bindings reached RabbitMQ and were delivered to the player queue, then the bindings were removed. Operator confirmation reported proximity and guild messages rendered in the client. TextRouter intercept redirects without `user_id` fail permission checks; redirects with `user_id` pass permission for `chat.proximity` but hit the same RabbitMQ `PRECONDITION_FAILED` republish issue seen with whispers.
 
-For command replies, set `DUNE_CHAT_COMMAND_TARGET_REPLY_MODE=whisper` and `DUNE_CHAT_COMMAND_PRIVATE_REPLY_CHANNEL=Whispers` to reply through `chat.whispers` using a temporary binding to the sender's `{FLS_ID}_queue`. Command responses generated inside `handle_command()` infer the issuing player as the target when the sender FLS id is known, so admin command results and errors stay private by default. Returned command JSON includes `reply.stdout` from `scripts/announce.sh`; private replies should show `transport=chat.whispers` and `exchange=chat.whispers`. Set `DUNE_CHAT_COMMAND_TARGET_REPLY_MODE=proximity` to use `chat.proximity`, or set `DUNE_CHAT_COMMAND_TARGET_REPLY_MODE=guild` and `DUNE_CHAT_COMMAND_TARGET_REPLY_EXCHANGE=chat.guild.<id>` to use a confirmed guild exchange. The command listener sets `DUNE_ANNOUNCE_CHAT_CLEANUP_TARGET_BINDINGS=true` for these targeted replies so the temporary binding is removed after publish. Spam-protection action announcements are intentionally outside command context and remain global when `DUNE_CHAT_SPAM_ANNOUNCE_ACTION=true`.
+For command replies, set `DUNE_CHAT_COMMAND_TARGET_REPLY_MODE=whisper` and `DUNE_CHAT_COMMAND_PRIVATE_REPLY_CHANNEL=Whispers` to reply through `chat.whispers`. The route is deterministic: `scripts/dune_whisper_route.py` derives routing key `<FLS_ID>` and queue `<FLS_ID>_queue`, so no player-created whisper is required after reboot. Command responses generated inside `handle_command()` infer the issuing player as the target when the sender FLS id is known, so admin command results and errors stay private by default. Returned command JSON includes `reply.stdout` from `scripts/announce.sh`; private replies should show `transport=chat.whispers` and `exchange=chat.whispers`. Set `DUNE_CHAT_COMMAND_TARGET_REPLY_MODE=proximity` to use `chat.proximity`, or set `DUNE_CHAT_COMMAND_TARGET_REPLY_MODE=guild` and `DUNE_CHAT_COMMAND_TARGET_REPLY_EXCHANGE=chat.guild.<id>` to use a confirmed guild exchange. The command listener sets `DUNE_ANNOUNCE_CHAT_CLEANUP_TARGET_BINDINGS=true` for these targeted replies so the temporary binding is removed after publish. Spam-protection action announcements are intentionally outside command context and remain global when `DUNE_CHAT_SPAM_ANNOUNCE_ACTION=true`.
 
 The complete private/global split, command smoke tests, expected `reply.stdout` shape, and stale-binding checks live in [private-chat-replies.md](private-chat-replies.md). Run `make test-admin-chat` after changing command reply routing, `scripts/announce.sh`, or player-presence private messaging.
 
@@ -1269,9 +1269,11 @@ Persistent listener service:
 ```bash
 docker compose up -d --no-deps admin-chat-commands
 docker compose logs -f admin-chat-commands
+docker compose ps admin-chat-commands
+docker compose exec -T admin-chat-commands /workspace/scripts/admin-chat-commands.py --healthcheck
 ```
 
-The listener service is separate from the web panel so a command-loop failure does not take down the admin panel hostname. It uses `restart: unless-stopped` and reads `/workspace/.env` at runtime for chat-command and announcement credentials, matching the announcement hook behavior.
+The listener service is separate from the web panel so a command-loop failure does not take down the admin panel hostname. It uses `restart: unless-stopped`, has a Docker healthcheck for the command queue consumer, and reads `/workspace/.env` at runtime for chat-command and announcement credentials, matching the announcement hook behavior. The service runs on host networking and uses the host-published Postgres/RabbitMQ ports for command ingestion and replies, so Paul can recover even when the compose bridge path is degraded.
 
 ## Scheduled Restarts And Shutdowns
 
@@ -1372,8 +1374,8 @@ Recreate affected game-server containers after saving so `scripts/run_server_saf
 
 - Do not expose this service to the public internet.
 - Use a long random `DUNE_ADMIN_TOKEN` whenever `DUNE_ADMIN_REQUIRE_TOKEN=true`.
-- `DUNE_ADMIN_MUTATIONS_ENABLED=true` is the repo default so the character-admin workflows can apply currency, XP, item stack, and item grant changes without a separate redeploy.
-- `DUNE_ADMIN_ITEM_GRANTS_ENABLED` defaults to `true` in this repo so item tooling is visible and ready.
+- `DUNE_ADMIN_MUTATIONS_ENABLED=false` is the example default. Enable it only after backup/restore validation and operator access controls are in place.
+- `DUNE_ADMIN_ITEM_GRANTS_ENABLED=false` is the example default. Enable it only for item grant, stack edit, and deletion workflows that have been validated on the current build.
 - Director character-transfer settings write `config/director.ini`; recreate the Director container before relying on a changed transfer policy.
 - Director GME voice-chat settings also live in `config/director.ini`; recreate Director after changing them.
 - `UserEngine.ini` and `UserGame.ini` edits are copied into game containers during game-service startup. Recreate affected game containers before relying on changed gameplay knobs.

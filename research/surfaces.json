@@ -1,0 +1,241 @@
+{
+  "schemaVersion": 1,
+  "evidenceLevels": ["candidate", "loadable", "observable", "validated", "admin-safe"],
+  "entries": [
+    {
+      "id": "sandstorm-coriolis-autospawn",
+      "name": "Coriolis auto-spawn",
+      "kind": "config",
+      "scope": "global",
+      "status": "validated",
+      "confidence": "high",
+      "risk": "medium",
+      "restartRequired": true,
+      "surface": {
+        "section": "/Script/DuneSandbox.SandStormConfig",
+        "key": "m_bCoriolisAutoSpawnEnabled"
+      },
+      "evidence": [
+        "Shipped DefaultGame.ini contains the key.",
+        "Repo UserGame.ini overrides the key.",
+        "SERVER_RUNTIME_SURFACES.md maps it to Sandstorm/Coriolis behavior."
+      ],
+      "validationProcedure": "Set true/false in a lab config, restart the affected map, then compare Coriolis warning/spawn logs and client warnings.",
+      "rollbackProcedure": "Restore backed-up UserGame.ini and restart affected maps."
+    },
+    {
+      "id": "sandstorm-coriolis-trigger-shifting-sands",
+      "name": "Coriolis triggers Shifting Sands",
+      "kind": "config",
+      "scope": "global",
+      "status": "observable",
+      "confidence": "moderate",
+      "risk": "medium",
+      "restartRequired": true,
+      "surface": {
+        "section": "/Script/DuneSandbox.SandStormConfig",
+        "key": "m_bCoriolisTriggerShiftingSands"
+      },
+      "evidence": [
+        "Shipped DefaultGame.ini contains the key.",
+        "SERVER_CONFIG_KEY_INDEX.md lists it under SandStormConfig.",
+        "No per-partition variant has been found."
+      ],
+      "validationProcedure": "In a lab DD cycle, set true, trigger or wait for Coriolis, then compare shiftingsands_data/world reset seed rows before and after.",
+      "rollbackProcedure": "Set false, restore config backup, and restart affected maps."
+    },
+    {
+      "id": "mapfeatures-deepdesert-shifting-sands",
+      "name": "Deep Desert Shifting Sands feature",
+      "kind": "config",
+      "scope": "map",
+      "status": "loadable",
+      "confidence": "moderate",
+      "risk": "high",
+      "restartRequired": true,
+      "surface": {
+        "section": "/Script/DuneSandbox.MapFeatures",
+        "key": "m_Maps",
+        "map": "DeepDesert",
+        "field": "m_ShiftingSands"
+      },
+      "evidence": [
+        "Shipped DefaultGame.ini contains DeepDesert m_ShiftingSands=True.",
+        "The repo can override the full MapFeatures m_Maps value.",
+        "No dimension-specific MapFeatures key has been found."
+      ],
+      "validationProcedure": "Restart a lab Deep Desert with m_ShiftingSands=False, then check client map state, world reset seed rows, and shiftingsands_data over a cycle.",
+      "rollbackProcedure": "Restore shipped DeepDesert m_ShiftingSands=True entry and restart affected maps."
+    },
+    {
+      "id": "spice-field-caps-deepdesert",
+      "name": "Deep Desert spice field caps",
+      "kind": "config",
+      "scope": "map",
+      "status": "validated",
+      "confidence": "high",
+      "risk": "medium",
+      "restartRequired": true,
+      "surface": {
+        "section": "/Script/DuneSandbox.SpiceHarvestingSystem",
+        "key": "m_PerMapSystemSettings",
+        "map": "DeepDesert_1"
+      },
+      "evidence": [
+        "Shipped config contains per-map spice field caps.",
+        "Live DB materializes values in dune.spicefield_types.",
+        "DEEP_DESERT_EVENT_KNOBS.md documents before/after queries."
+      ],
+      "validationProcedure": "Change Medium/Large caps, restart DD, then query spicefield_types, spicefield_server_availability, and resourcefield_state.",
+      "rollbackProcedure": "Restore backed-up UserGame.ini and restart Deep Desert."
+    },
+    {
+      "id": "coriolis-partition-seed-functions",
+      "name": "Coriolis seed DB functions",
+      "kind": "db-function",
+      "scope": "partition",
+      "status": "observable",
+      "confidence": "high",
+      "risk": "high",
+      "restartRequired": false,
+      "surface": {
+        "schema": "dune",
+        "functions": [
+          "debug_get_coriolis_seeds",
+          "debug_set_farm_seed",
+          "debug_set_map_seed",
+          "debug_set_partition_seed",
+          "coriolis_update_seed",
+          "coriolis_cleanup_partition",
+          "coriolis_cleanup_map",
+          "coriolis_cleanup_farm"
+        ]
+      },
+      "evidence": [
+        "Non-destructive DB surface dump captured the functions in captures/research/20260522T161723Z/db-surface.json.",
+        "Function names distinguish farm, map, and partition seed scopes."
+      ],
+      "validationProcedure": "On a disposable lab stack, snapshot debug_get_coriolis_seeds(), set one partition seed, restart only that lab DD if needed, then compare seed and map behavior.",
+      "rollbackProcedure": "Restore the lab database snapshot or call the matching cleanup function only in a disposable lab."
+    },
+    {
+      "id": "shifting-sands-static-db-functions",
+      "name": "Static Shifting Sands DB functions",
+      "kind": "db-function",
+      "scope": "global",
+      "status": "observable",
+      "confidence": "high",
+      "risk": "high",
+      "restartRequired": false,
+      "surface": {
+        "schema": "dune",
+        "functions": [
+          "record_static_shifting_sand",
+          "retrieve_all_static_shifting_sand",
+          "delete_all_static_shifting_sand"
+        ]
+      },
+      "evidence": [
+        "Non-destructive DB surface dump captured the functions in captures/research/20260522T161723Z/db-surface.json.",
+        "The function names imply persisted static Shifting Sands records."
+      ],
+      "validationProcedure": "Use retrieve_all_static_shifting_sand() before and after a lab Coriolis/Shifting Sands event, then compare counts and payloads.",
+      "rollbackProcedure": "Restore the lab database snapshot. Do not run delete_all_static_shifting_sand() on production without a tested restore path."
+    },
+    {
+      "id": "spice-field-dimension-state",
+      "name": "Spice field dimension state",
+      "kind": "db-function",
+      "scope": "map-dimension",
+      "status": "observable",
+      "confidence": "high",
+      "risk": "medium",
+      "restartRequired": false,
+      "surface": {
+        "schema": "dune",
+        "functions": [
+          "fetch_spicefie_id_types_with_global_info",
+          "upsert_spicefield_types",
+          "reset_global_spice_field_state",
+          "produce_spicefield_manifest"
+        ]
+      },
+      "evidence": [
+        "Non-destructive DB surface dump captured map_name and dimension_index parameters.",
+        "The parameters match the intended two-Deep-Desert test shape."
+      ],
+      "validationProcedure": "Run two lab Deep Desert dimensions and compare spicefield_types/resourcefield_state grouped by map and dimension_index.",
+      "rollbackProcedure": "Restore the lab database snapshot or restart the lab map services after returning config to baseline."
+    },
+    {
+      "id": "native-coriolis-cheat-commands",
+      "name": "Native Coriolis command strings",
+      "kind": "server-command",
+      "scope": "runtime",
+      "status": "candidate",
+      "confidence": "moderate",
+      "risk": "high",
+      "restartRequired": false,
+      "surface": {
+        "commands": [
+          "CoriolisPrintSeed",
+          "CoriolisPrintStoredSeeds",
+          "CoriolisSetFarmSeed",
+          "CoriolisSetMapSeed",
+          "CoriolisSetPartitionSeed",
+          "CoriolisRestartServer",
+          "CoriolisWipeDatabase",
+          "CoriolisMapReset"
+        ]
+      },
+      "evidence": [
+        "Focused binary string extraction captured the commands in captures/research/20260522T161723Z/binary-strings.focus.txt."
+      ],
+      "validationProcedure": "Only probe print commands in a disposable lab after the native GM/RMQ command envelope is proven.",
+      "rollbackProcedure": "Do not invoke restart, wipe, or map reset commands outside a disposable lab."
+    },
+    {
+      "id": "offline-player-teleport",
+      "name": "Offline player partition move",
+      "kind": "db-function",
+      "scope": "player",
+      "status": "admin-safe",
+      "confidence": "moderate",
+      "risk": "high",
+      "adminGate": "MOVE OFFLINE PLAYER",
+      "restartRequired": false,
+      "surface": {
+        "schema": "dune",
+        "function": "admin_move_offline_player_to_partition"
+      },
+      "evidence": [
+        "Function exists in the live schema.",
+        "Admin panel dry-run and gated execution path are implemented.",
+        "docs/soft-disconnect-teleport.md documents the workflow."
+      ],
+      "validationProcedure": "Use dry-run on an offline disposable player, execute with confirmation, then verify pawn partition/map/dimension and relog behavior.",
+      "rollbackProcedure": "Move the player back to the prior partition/location recorded in the audit result."
+    },
+    {
+      "id": "native-gm-command-envelope",
+      "name": "Native GM command payload",
+      "kind": "rabbitmq-command",
+      "scope": "runtime",
+      "status": "candidate",
+      "confidence": "low",
+      "risk": "high",
+      "restartRequired": false,
+      "surface": {
+        "subsystem": "UDuneServerCommandSubsystem",
+        "safeProbe": "PrintPos"
+      },
+      "evidence": [
+        "Binary strings expose command subsystem and allowed commands.",
+        "RabbitMQ delivery to candidate queues has been proven.",
+        "The final accepted payload contract is still unverified."
+      ],
+      "validationProcedure": "Publish PrintPos with a unique correlation id through a lab broker route, capture RMQ delivery, replies, and server logs for a command execution line.",
+      "rollbackProcedure": "No persistent rollback for safe probes; keep mutation commands gated until PrintPos is proven."
+    }
+  ]
+}

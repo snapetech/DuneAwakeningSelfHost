@@ -1,6 +1,6 @@
 # Live Client Validation
 
-Use this checklist after the 30-partition warm pool is server-ready. Server readiness proves that containers, Director, Gateway, Postgres, and RabbitMQ agree on the farm. It does not prove that the live client can route into every destination.
+Use this checklist after the 31-partition warm pool is server-ready. Server readiness proves that containers, Director, Gateway, Postgres, and RabbitMQ agree on the farm. It does not prove that the live client can route into every destination.
 
 ## Before Testing
 
@@ -19,7 +19,7 @@ Confirm the client-facing RabbitMQ certificate covers the address FLS will hand 
 Expected server-side baseline:
 
 ```text
-current_alive_active=30 active_servers=30 partitions=30
+current_alive_active=31 active_servers=31 partitions=31
 ```
 
 Create a baseline capture:

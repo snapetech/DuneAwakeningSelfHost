@@ -1,5 +1,7 @@
 # Deep Desert Event Knobs
 
+Stale/archived evidence: generated from build `1963158`; current `.env.example` is `1968181-0-shipping`. Regenerate before using this file as current build truth.
+
 This file tracks knobs found for Deep Desert spice blooms, patrol/crash-site
 ship events, dynamic small shipwreck encounters, and buried sandstorm treasure.
 Evidence comes from the shipped build `1963158` server image.

@@ -1,5 +1,7 @@
 # Shipped Server Config Key Index
 
+Stale/archived evidence: generated from build `1963158`; current `.env.example` is `1968181-0-shipping`. Regenerate before using this file as current build truth.
+
 Generated from the shipped `DuneSandbox/Config/DefaultGame.ini` in build `1963158`.
 This is an inventory, not a recommendation to override every key. Asset/UI/audio references are listed so missing knobs are searchable, but most useful self-host tuning is in `SERVER_CONFIG_KEYS.md`.
 
@@ -2363,4 +2365,3 @@ Status meanings: `Known` has shipped setup comments or strong default-config evi
 | Key | Shipped value / summary | Count | Status | Description |
 | --- | --- | ---: | --- | --- |
 | `ReturningPlayerRewardsDataAsset` | `/Game/Dune/Characters/Player/Config/DA_ReturningPlayerRewards.DA_ReturningPlayerRewards` | 1 | Asset/reference | Asset, class, table, material, widget, audio, or data reference. Usually not a self-host gameplay knob. |
-

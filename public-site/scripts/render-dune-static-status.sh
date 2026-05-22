@@ -230,11 +230,14 @@ if [[ -x "$snapshot_script" ]]; then
     tmp_static="$(mktemp -d)"
     trap 'rm -f "$tmp_status" "$tmp_index"; rm -rf "$tmp_static"' EXIT
     DUNE_ROOT="$DUNE_ROOT" STATIC_DIR="$tmp_static" "$snapshot_script" || true
-    for artifact in players.json hagga-map.svg hagga-basin.webp; do
-      if [[ -f "$tmp_static/$artifact" ]]; then
-        sudo install -m 0644 "$tmp_static/$artifact" "$STATIC_DIR/$artifact"
-      fi
-    done
+    find "$tmp_static" -maxdepth 1 -type f \( \
+      -name '*.json' -o \
+      -name '*.svg' -o \
+      -name '*.webp' \
+    \) -print0 |
+      while IFS= read -r -d '' artifact; do
+        sudo install -m 0644 "$artifact" "$STATIC_DIR/$(basename "$artifact")"
+      done
   fi
 fi
 

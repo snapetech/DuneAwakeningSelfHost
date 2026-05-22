@@ -11,6 +11,7 @@ required=(
   players.json
   hagga-pois.json
   hagga-map.svg
+  deep-desert-map.svg
   hagga-basin.webp
 )
 
@@ -64,6 +65,7 @@ else
 fi
 
 grep -q 'id="hagga-map"' "$static_dir/index.html"
+grep -q 'data-map-tab="deep-desert"' "$static_dir/index.html"
 grep -q 'id="active-players"' "$static_dir/index.html"
 grep -q 'id="poi-toggles"' "$static_dir/index.html"
 grep -q 'id="poi-all"' "$static_dir/index.html"
@@ -81,6 +83,7 @@ if grep -Eq 'innerHTML|outerHTML|insertAdjacentHTML|document\.write' "$static_di
   exit 1
 fi
 grep -q '<svg' "$static_dir/hagga-map.svg"
+grep -q '<svg' "$static_dir/deep-desert-map.svg"
 if grep -Eiq '<script|<foreignObject|<iframe|<object|<embed|on[a-z]+=' "$static_dir/hagga-map.svg"; then
   echo "hagga-map.svg contains executable or embeddable content" >&2
   exit 1

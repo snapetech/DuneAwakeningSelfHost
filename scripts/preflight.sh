@@ -103,6 +103,46 @@ check_fls_environment() {
   esac
 }
 
+check_server_browser_naming() {
+  local detail_row="${DUNE_SERVER_DISPLAY_NAME:-}"
+  local world_detail_row="${WORLD_NAME:-}"
+  local gateway_ini="config/gateway.ini"
+  local gateway_parent_row=""
+
+  check_env_value DUNE_SERVER_DISPLAY_NAME
+
+  if [[ -n "$detail_row" && -n "$world_detail_row" && "$detail_row" != "$world_detail_row" ]]; then
+    fail "DUNE_SERVER_DISPLAY_NAME must match WORLD_NAME; both feed the server-browser nested/details row"
+  fi
+
+  if [[ ! -f "$gateway_ini" ]]; then
+    fail "$gateway_ini does not exist"
+    return
+  fi
+
+  gateway_parent_row="$(awk -F= '
+    /^[[:space:]]*display_name[[:space:]]*=/ {
+      value=$0
+      sub(/^[^=]*=/, "", value)
+      sub(/^[[:space:]]*/, "", value)
+      sub(/[[:space:]]*$/, "", value)
+      print value
+    }
+  ' "$gateway_ini" | tail -n 1)"
+
+  if [[ -z "$gateway_parent_row" ]]; then
+    fail "$gateway_ini [gateway].display_name is empty"
+  elif [[ -n "$detail_row" && "$gateway_parent_row" == "$detail_row" ]]; then
+    fail "$gateway_ini [gateway].display_name must be the branded parent row, not the nested/details feature row"
+  else
+    ok "server-browser parent row fields are in sync"
+  fi
+
+  if [[ -n "$gateway_parent_row" && -n "$world_detail_row" && "$gateway_parent_row" == "$world_detail_row" ]]; then
+    fail "$gateway_ini [gateway].display_name must not match WORLD_NAME; WORLD_NAME is the nested/details feature row"
+  fi
+}
+
 check_image_tarballs() {
   local server_dir="${DUNE_STEAM_SERVER_DIR:-}"
   local images=(
@@ -188,6 +228,7 @@ check_env_value EXTERNAL_ADDRESS
 
 check_world_identity
 check_fls_environment
+check_server_browser_naming
 
 check_not_default POSTGRES_SUPER_PASSWORD change-me-postgres-super
 check_not_default POSTGRES_DUNE_PASSWORD change-me-dune-db
