@@ -1,0 +1,24 @@
+{
+  "ok": true,
+  "generatedAt": "2026-05-22 16:34 UTC",
+  "onlineCount": 2,
+  "peakToday": 7,
+  "peakTodayAt": "2026-05-22T15:45:38Z",
+  "peakDate": "2026-05-22",
+  "haggaPlotted": 2,
+  "players": [
+    {
+      "name": "Naarine",
+      "location": "Abbir",
+      "lifeState": "Alive",
+      "onHaggaMap": true
+    },
+    {
+      "name": "Skizzard",
+      "location": "Abbir",
+      "lifeState": "Alive",
+      "onHaggaMap": true
+    }
+  ],
+  "error": null
+}

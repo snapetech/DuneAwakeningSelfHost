@@ -158,7 +158,7 @@ env_file = os.environ.get("ENV_FILE", ".env")
 
 default_services = [
     "survival", "overmap", "arrakeen", "harko-village", "testing-hephaestus",
-    "testing-carthag", "testing-waterfat", "deep-desert", "proces-verbal",
+    "testing-carthag", "testing-waterfat", "deep-desert", "deep-desert-pvp", "proces-verbal",
     "lostharvest-ecolab-a", "lostharvest-ecolab-b", "lostharvest-forgottenlab",
     "art-of-kanly", "dungeon-hephaestus", "dungeon-oldcarthag",
     "faction-outpost-atre", "faction-outpost-hark", "heighliner-dungeon",
@@ -634,7 +634,7 @@ IFS="$old_ifs"
 set -- "$@" --env-file "${ENV_FILE:-.env}"
 
 if [ "$target" = "all" ]; then
-  services="survival overmap arrakeen harko-village testing-hephaestus testing-carthag testing-waterfat deep-desert proces-verbal lostharvest-ecolab-a lostharvest-ecolab-b lostharvest-forgottenlab art-of-kanly dungeon-hephaestus dungeon-oldcarthag faction-outpost-atre faction-outpost-hark heighliner-dungeon ecolab-green-089 ecolab-green-152 ecolab-green-024 ecolab-green-195 ecolab-green-136 overland-m-01 overland-s-04 overland-s-06 bandit-fortress overland-s-07 overland-s-08 dungeon-thepit director gateway text-router rmq-auth-shim"
+  services="survival overmap arrakeen harko-village testing-hephaestus testing-carthag testing-waterfat deep-desert deep-desert-pvp proces-verbal lostharvest-ecolab-a lostharvest-ecolab-b lostharvest-forgottenlab art-of-kanly dungeon-hephaestus dungeon-oldcarthag faction-outpost-atre faction-outpost-hark heighliner-dungeon ecolab-green-089 ecolab-green-152 ecolab-green-024 ecolab-green-195 ecolab-green-136 overland-m-01 overland-s-04 overland-s-06 bandit-fortress overland-s-07 overland-s-08 dungeon-thepit director gateway text-router rmq-auth-shim"
 fi
 
 if [ -z "$services" ]; then

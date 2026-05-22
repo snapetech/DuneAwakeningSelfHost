@@ -170,7 +170,7 @@ ANNOUNCEMENT_DELAYS = {
 }
 GAME_MAP_SERVICES = [
     "survival", "overmap", "arrakeen", "harko-village", "testing-hephaestus", "testing-carthag", "testing-waterfat",
-    "deep-desert", "proces-verbal", "lostharvest-ecolab-a", "lostharvest-ecolab-b", "lostharvest-forgottenlab",
+    "deep-desert", "deep-desert-pvp", "proces-verbal", "lostharvest-ecolab-a", "lostharvest-ecolab-b", "lostharvest-forgottenlab",
     "art-of-kanly", "dungeon-hephaestus", "dungeon-oldcarthag", "faction-outpost-atre", "faction-outpost-hark",
     "heighliner-dungeon", "ecolab-green-089", "ecolab-green-152", "ecolab-green-024", "ecolab-green-195",
     "ecolab-green-136", "overland-m-01", "overland-s-04", "overland-s-06", "bandit-fortress",
@@ -188,6 +188,7 @@ RESTART_TARGETS = {
     "arrakeen": {"label": "Arrakeen", "services": ["arrakeen"]},
     "harko-village": {"label": "Harko Village", "services": ["harko-village"]},
     "deep-desert": {"label": "Deep Desert", "services": ["deep-desert"]},
+    "deep-desert-pvp": {"label": "Deep Desert PvP", "services": ["deep-desert-pvp"]},
 }
 
 GM_COMMANDS_ENABLED = os.environ.get("DUNE_ADMIN_GM_COMMANDS_ENABLED", "false").lower() == "true"
@@ -1580,6 +1581,26 @@ def read_env():
     return values
 
 
+def server_metadata():
+    env_values = read_env()
+    world_name = env_values.get("WORLD_NAME") or os.environ.get("WORLD_NAME") or "Dune Awakening Server"
+    display_name = (
+        env_values.get("DUNE_SERVER_DISPLAY_NAME")
+        or os.environ.get("DUNE_SERVER_DISPLAY_NAME")
+        or world_name
+    )
+    public_title = env_values.get("PUBLIC_SITE_TITLE") or os.environ.get("PUBLIC_SITE_TITLE") or world_name
+    return {
+        "name": world_name,
+        "description": display_name,
+        "siteTitle": public_title,
+        "source": {
+            "name": "WORLD_NAME",
+            "description": "DUNE_SERVER_DISPLAY_NAME",
+        },
+    }
+
+
 def write_safe_env(updates):
     original = ENV_FILE.read_text(encoding="utf-8").splitlines()
     seen = set()
@@ -2286,6 +2307,7 @@ def map_name_to_service(map_name):
         "arrakeen": "arrakeen",
         "harko-village": "harko-village",
         "deep-desert": "deep-desert",
+        "deep-desert-pvp": "deep-desert-pvp",
     }
     return aliases.get(normalized, normalized)
 
@@ -2983,6 +3005,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.json({
                     "build": ADMIN_PANEL_BUILD,
                     "database": DATABASE,
+                    "server": server_metadata(),
                     "mutationsEnabled": MUTATIONS_ENABLED,
                     "itemGrantsEnabled": ITEM_GRANTS_ENABLED,
                     "adminTokenConfigured": bool(ADMIN_TOKEN),
@@ -6602,7 +6625,7 @@ INDEX = r"""<!doctype html>
 <body>
   <a class="skipLink" href="#view">Skip to dashboard</a>
   <header>
-    <div class="brand"><h1>DASH Admin</h1><span class="subtle">Dune Awakening Self Host</span></div>
+    <div class="brand"><h1>DASH Admin</h1><span class="subtle" id="serverBrand">Dune Awakening Self Host</span></div>
     <div class="row" id="tokenRow"><input id="token" type="password" placeholder="Admin token"><button id="saveTokenBtn">Use token</button><button id="clearTokenBtn">Clear</button></div>
   </header>
   <main>
@@ -7999,7 +8022,12 @@ function wireGlobalAffordances(){
 function renderStatus(data){
   const tokenRow = document.getElementById('tokenRow');
   if (tokenRow) tokenRow.classList.toggle('hidden', !data.adminTokenRequired);
+  const server = data.server || {};
+  if (server.name) document.title = `${server.name} | DASH Admin`;
+  const brand = document.getElementById('serverBrand');
+  if (brand) brand.textContent = [server.name, server.description].filter(Boolean).join(' | ') || 'Dune Awakening Self Host';
   document.getElementById('statusSummary').innerHTML = [
+    server.name ? `<span class="pill">${esc(server.name)}</span>` : '',
     data.adminTokenRequired ? statusPill('admin token configured', data.adminTokenConfigured) : '<span class="pill ok">local admin: unlocked</span>',
     statusPill('item grants', data.itemGrantsEnabled),
     `<span class="pill ${data.mutationsEnabled ? 'warn' : 'ok'}">mutations: ${data.mutationsEnabled ? 'enabled' : 'off'}</span>`,

@@ -197,7 +197,7 @@ Safe candidates:
 Riskier candidates:
 
 - Public RabbitMQ/database binds. Keep these local-only.
-- IGW/S2S UDP forwarding. For the full warm-pool layout, `7888-7917/udp` is the paired IGW range; forward it only when the deployment's live-client routing or server-browser checks require it.
+- IGW/S2S UDP forwarding. For the full warm-pool layout, `7888-7918/udp` is the paired IGW range; forward it only when the deployment's live-client routing or server-browser checks require it.
 - Arbitrary map service count changes without matching `world_partition` rows.
 
 ## Reverse Proxy / Ingress

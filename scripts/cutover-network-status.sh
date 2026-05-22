@@ -24,7 +24,7 @@ primary_ip="${DUNE_FAILOVER_PRIMARY_LAN_IP:-${DUNE_PRIMARY_LAN_IP:-$(read_env DU
 standby_ip="${DUNE_FAILOVER_STANDBY_LAN_IP:-${DUNE_STANDBY_LAN_IP:-$(read_env DUNE_FAILOVER_STANDBY_LAN_IP)}}"
 game_rmq_port="${GAME_RMQ_PUBLIC_PORT:-$(read_env GAME_RMQ_PUBLIC_PORT)}"; game_rmq_port="${game_rmq_port:-31982}"
 game_udp_range="${GAME_UDP_PORT_RANGE:-$(read_env GAME_UDP_PORT_RANGE)}"; game_udp_range="${game_udp_range:-7777:7810}"
-igw_udp_range="${IGW_UDP_PORT_RANGE:-$(read_env IGW_UDP_PORT_RANGE)}"; igw_udp_range="${igw_udp_range:-7888:7917}"
+igw_udp_range="${IGW_UDP_PORT_RANGE:-$(read_env IGW_UDP_PORT_RANGE)}"; igw_udp_range="${igw_udp_range:-7888:7918}"
 
 if [[ -z "$router" || -z "$remote" || -z "$public_ip" || -z "$primary_ip" || -z "$standby_ip" ]]; then
   printf 'DUNE_FAILOVER_ROUTER_SSH, POSTGRES_REMOTE_REPLICA_HOST, EXTERNAL_ADDRESS/DUNE_PUBLIC_IP, DUNE_FAILOVER_PRIMARY_LAN_IP, and DUNE_FAILOVER_STANDBY_LAN_IP are required\n' >&2

@@ -81,6 +81,7 @@ MAP_PARTITIONS=(
   "testing-carthag:6"
   "testing-waterfat:7"
   "deep-desert:8"
+  "deep-desert-pvp:31"
   "proces-verbal:9"
   "lostharvest-ecolab-a:10"
   "lostharvest-ecolab-b:11"

@@ -1,6 +1,6 @@
 # Routing Investigation
 
-This document tracks client travel validation after the Compose farm has server-side registration for Hagga Basin, Overmap, Deep Desert, Arrakeen, Harko Village, testing/story maps, and the optional 30-partition warm pool.
+This document tracks client travel validation after the Compose farm has server-side registration for Hagga Basin, Overmap, Deep Desert, Arrakeen, Harko Village, testing/story maps, and the optional 31-partition warm pool.
 
 ## Current Read
 
@@ -63,7 +63,7 @@ Use the capture helper:
 ./scripts/capture-routing.sh .env hagga-to-deep-desert-after
 ```
 
-For the 30-partition warm pool, include the all-maps overlay:
+For the 31-partition warm pool, include the all-maps overlay:
 
 ```bash
 COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' ./scripts/capture-routing.sh .env failed-survival-to-arrakeen
@@ -106,6 +106,8 @@ Observed local signatures worth tracking:
 - `LogIGW: Display: Server ... listening for Servers on ...`
 
 The duplicated travel-destination warnings are not proof of the routing bug by themselves. They are useful markers because they mention target-map transition data during `Survival_1` startup and should be compared against an operator-generated or provider-working topology.
+
+For the experimental second Deep Desert, expect another `DeepDesert_1` registration with `dimension_index=1` and partition 31. Confidence that routing will expose both dimensions in the client is low until a live downtime test proves Director and travel prompts distinguish both dimensions in Compose.
 
 ## Database Questions
 

@@ -26,24 +26,27 @@ PUBLIC_SERVER_NAME="${PUBLIC_SERVER_NAME:-$(env_file_value PUBLIC_SERVER_NAME ||
 PUBLIC_SERVER_DESCRIPTION="${PUBLIC_SERVER_DESCRIPTION:-$(env_file_value PUBLIC_SERVER_DESCRIPTION || true)}"
 PUBLIC_SERVER_WHERE="${PUBLIC_SERVER_WHERE:-$(env_file_value PUBLIC_SERVER_WHERE || true)}"
 PUBLIC_STACK_URL="${PUBLIC_STACK_URL:-$(env_file_value PUBLIC_STACK_URL || true)}"
+WORLD_NAME="${WORLD_NAME:-$(env_file_value WORLD_NAME || true)}"
+DUNE_SERVER_DISPLAY_NAME="${DUNE_SERVER_DISPLAY_NAME:-$(env_file_value DUNE_SERVER_DISPLAY_NAME || true)}"
 
-site_title="${PUBLIC_SITE_TITLE:-Dune Awakening Server}"
-server_name="${PUBLIC_SERVER_NAME:-Dune Awakening Server}"
-server_description="${PUBLIC_SERVER_DESCRIPTION:-A community Dune Awakening server with public status, settings, and an active player map.}"
+server_name="${WORLD_NAME:-${PUBLIC_SERVER_NAME:-${PUBLIC_SITE_TITLE:-Dune Awakening Server}}}"
+server_description="${DUNE_SERVER_DISPLAY_NAME:-${PUBLIC_SERVER_DESCRIPTION:-A community Dune Awakening server with public status, settings, and an active player map.}}"
+site_title="$server_name"
 server_where="${PUBLIC_SERVER_WHERE:-Dune Awakening > Servers > search for your server name.}"
 stack_url="${PUBLIC_STACK_URL:-https://github.com/snapetech/DuneAwakeningSelfHost}"
 
 usage() {
   cat <<EOF
 Usage:
-  PUBLIC_SITE_TITLE="Example Dune Server" \\
-  PUBLIC_SERVER_NAME="Example PVE Server" \\
-  PUBLIC_SERVER_DESCRIPTION="Friendly PvE server." \\
+  WORLD_NAME="Example PVE Server" \\
+  DUNE_SERVER_DISPLAY_NAME="Friendly PvE server." \\
   PUBLIC_SERVER_WHERE="Dune Awakening > Servers > Experimental > search Example." \\
   STATIC_DIR=/srv/dune-public-site \\
   ./public-site/scripts/configure-dune-public-site.sh
 
-Updates common public-facing text in an installed static Dune site.
+Updates common public-facing text in an installed static Dune site. Server
+name and description default to the same WORLD_NAME and
+DUNE_SERVER_DISPLAY_NAME values used by the game stack.
 EOF
 }
 

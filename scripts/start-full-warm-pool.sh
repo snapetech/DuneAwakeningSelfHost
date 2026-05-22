@@ -5,7 +5,7 @@ usage() {
   cat >&2 <<'USAGE'
 Usage: scripts/start-full-warm-pool.sh [ENV_FILE] [WAIT_SECONDS]
 
-Starts the 30-partition warm pool in dependency order without recreating
+Starts the 31-partition warm pool in dependency order without recreating
 already-running stateful services.
 
 Default:
@@ -140,8 +140,8 @@ printf 'starting full warm-pool maps\n'
   faction-outpost-atre faction-outpost-hark heighliner-dungeon \
   ecolab-green-089 ecolab-green-152 ecolab-green-024 ecolab-green-195 ecolab-green-136 \
   overland-m-01 overland-s-04 overland-s-06 bandit-fortress \
-  overland-s-07 overland-s-08 dungeon-thepit
-wait_for_counts 30 'full warm pool'
+  overland-s-07 overland-s-08 dungeon-thepit deep-desert-pvp
+wait_for_counts 31 'full warm pool'
 remove_db_init
 
 printf 'final status\n'

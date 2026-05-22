@@ -168,7 +168,7 @@ Forward public gameplay UDP to the Dune host for external players:
 7777-7810/udp -> <dune-host-lan-ip>
 ```
 
-For the full warm-pool layout, the paired IGW range is `7888-7917/udp`. If your
+For the full warm-pool layout, the paired IGW range is `7888-7918/udp`. If your
 layout uses those ports for live-client routing or server-browser checks,
 forward them to the Dune host along with the gameplay UDP range.
 
