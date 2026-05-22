@@ -54,6 +54,20 @@ routing_key=<target FLS id>
 queue=<target FLS id>_queue
 ```
 
+This route is deterministic. It does not require the player to whisper Paul first and it does not depend on a reboot-specific channel token. The per-player queue name is derived from the player's FLS id by `scripts/dune_whisper_route.py`; for example, FLS id `6FF6498F4074E3DE` maps to queue `6FF6498F4074E3DE_queue` and routing key `6FF6498F4074E3DE`.
+
+For direct/manual publishes, prefer `DUNE_ANNOUNCE_CHAT_TARGET_FLS_IDS` and let `scripts/announce.sh` derive the queue:
+
+```env
+DUNE_ANNOUNCE_CHAT_EXCHANGE=chat.whispers
+DUNE_ANNOUNCE_CHAT_CHANNEL=Whispers
+DUNE_ANNOUNCE_CHAT_USER_NAME_TO=SamplePlayer
+DUNE_ANNOUNCE_CHAT_TARGET_FLS_IDS=<FLS_ID>
+DUNE_ANNOUNCE_CHAT_CLEANUP_TARGET_BINDINGS=true
+```
+
+When `DUNE_ANNOUNCE_CHAT_TARGET_FLS_IDS` is set and routing keys are otherwise `<empty>`, `scripts/announce.sh` uses the FLS id as the routing key and binds `<FLS_ID>_queue` temporarily. This keeps operator-facing config from hard-coding queue names.
+
 The repo's command reply path sets this up automatically when:
 
 ```env
@@ -117,7 +131,8 @@ Use those only as diagnostics or deliberate non-private reply modes.
 
 ## Implementation Map
 
-- `scripts/announce.sh` is the shared publisher. It emits `m_TimeStamp`, accepts `DUNE_ANNOUNCE_CHAT_EXCHANGE`, `DUNE_ANNOUNCE_CHAT_CHANNEL`, `DUNE_ANNOUNCE_CHAT_TARGET_QUEUES`, and `DUNE_ANNOUNCE_CHAT_ROUTING_KEYS`, and reports the actual exchange in `transport`.
+- `scripts/dune_whisper_route.py` is the shared FLS-id-to-whisper-route resolver. It derives `routing_key=<FLS_ID>` and `queue=<FLS_ID>_queue`.
+- `scripts/announce.sh` is the shared publisher. It emits `m_TimeStamp`, accepts `DUNE_ANNOUNCE_CHAT_EXCHANGE`, `DUNE_ANNOUNCE_CHAT_CHANNEL`, `DUNE_ANNOUNCE_CHAT_TARGET_FLS_IDS`, `DUNE_ANNOUNCE_CHAT_TARGET_QUEUES`, and `DUNE_ANNOUNCE_CHAT_ROUTING_KEYS`, and reports the actual exchange in `transport`.
 - `scripts/admin-chat-commands.py` handles chat commands. `run_announce()` infers the command sender from the `handle_command()` frame when no explicit target is provided. Command JSON replies include `reply.stdout` metadata from `scripts/announce.sh` where practical.
 - `scripts/player-presence-announcer.py` handles presence automation. `private_message()` forces `chat.whispers`, channel `Whispers`, the target `{FLS_ID}_queue`, cleanup, and no dashboard wrapping.
 - `Makefile` target `test-admin-chat` runs command/private-route and presence-private-route tests. `make validate` includes that target.
@@ -125,6 +140,7 @@ Use those only as diagnostics or deliberate non-private reply modes.
 The command listener sets:
 
 ```env
+DUNE_ANNOUNCE_CHAT_TARGET_FLS_IDS=<FLS_ID>
 DUNE_ANNOUNCE_CHAT_TARGET_QUEUES=<FLS_ID>_queue
 DUNE_ANNOUNCE_CHAT_ROUTING_KEYS=<FLS_ID>
 DUNE_ANNOUNCE_CHAT_CLEANUP_TARGET_BINDINGS=true
@@ -153,6 +169,7 @@ DUNE_ANNOUNCE_ENV_OVERRIDES_FILE=true
 DUNE_ANNOUNCE_CHAT_EXCHANGE=chat.whispers
 DUNE_ANNOUNCE_CHAT_CHANNEL=Whispers
 DUNE_ANNOUNCE_CHAT_USER_NAME_TO=SamplePlayer
+DUNE_ANNOUNCE_CHAT_TARGET_FLS_IDS=TEST_FLS_ID
 DUNE_ANNOUNCE_CHAT_TARGET_QUEUES=TEST_FLS_ID_queue
 DUNE_ANNOUNCE_CHAT_ROUTING_KEYS=TEST_FLS_ID
 DUNE_ANNOUNCE_CHAT_CLEANUP_TARGET_BINDINGS=true

@@ -224,6 +224,7 @@ test-research-catalog:
 	python3 scripts/research_catalog.py --validate
 
 test-admin-chat:
+	python3 scripts/test-dune-whisper-route.py
 	python3 scripts/test-admin-chat-commands.py
 	python3 scripts/test-player-presence-announcer.py
 

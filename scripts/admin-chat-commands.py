@@ -23,6 +23,7 @@ import psycopg2
 import psycopg2.extras
 
 from dune_gm_command import build_envelope, publish_command, publish_command_management
+from dune_whisper_route import whisper_route_for_fls_id
 
 GM_CATALOG_PATH = pathlib.Path(__file__).with_name("gm-command-catalog.py")
 GM_CATALOG_SPEC = importlib.util.spec_from_file_location("gm_command_catalog", GM_CATALOG_PATH)
@@ -1625,12 +1626,14 @@ def run_announce(message, target_name="", target_fls_id=""):
         }
         return LAST_ANNOUNCE_RESULT
     if target_name and target_fls_id and target_reply_mode in ("whisper", "private"):
+        whisper_route = whisper_route_for_fls_id(target_fls_id)
         child_env["DUNE_ANNOUNCE_ENV_OVERRIDES_FILE"] = "true"
         child_env["DUNE_ANNOUNCE_CHAT_EXCHANGE"] = env("DUNE_CHAT_COMMAND_PRIVATE_REPLY_EXCHANGE", "chat.whispers")
         child_env["DUNE_ANNOUNCE_CHAT_CHANNEL"] = env("DUNE_CHAT_COMMAND_PRIVATE_REPLY_CHANNEL", "Whispers")
         child_env["DUNE_ANNOUNCE_CHAT_USER_NAME_TO"] = target_name
-        child_env["DUNE_ANNOUNCE_CHAT_TARGET_QUEUES"] = f"{target_fls_id}_queue"
-        child_env["DUNE_ANNOUNCE_CHAT_ROUTING_KEYS"] = env("DUNE_CHAT_COMMAND_PRIVATE_REPLY_ROUTING_KEY", target_fls_id) or target_fls_id
+        child_env["DUNE_ANNOUNCE_CHAT_TARGET_FLS_IDS"] = whisper_route["routingKey"]
+        child_env["DUNE_ANNOUNCE_CHAT_TARGET_QUEUES"] = whisper_route["queue"]
+        child_env["DUNE_ANNOUNCE_CHAT_ROUTING_KEYS"] = env("DUNE_CHAT_COMMAND_PRIVATE_REPLY_ROUTING_KEY", whisper_route["routingKey"]) or whisper_route["routingKey"]
         child_env["DUNE_ANNOUNCE_CHAT_BIND_ONLINE_QUEUES"] = "false"
         child_env["DUNE_ANNOUNCE_CHAT_CLEANUP_TARGET_BINDINGS"] = "true"
         child_env["DUNE_ANNOUNCE_WRAP_DASHBOARD_MESSAGES"] = "false"

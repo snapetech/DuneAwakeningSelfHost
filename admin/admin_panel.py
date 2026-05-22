@@ -2877,6 +2877,37 @@ def read_hagga_pois():
     return data
 
 
+def read_deep_desert_map_data():
+    empty = {
+        "layoutId": "unknown",
+        "generatedAt": None,
+        "sourcePak": "",
+        "coordinateFrame": {"type": "normalized-raster", "xRange": [0, 1], "yRange": [0, 1], "origin": "top-left"},
+        "layers": {
+            "resource_nodes": [],
+            "resource_fields": [],
+            "spice_fields": [],
+            "transit": [],
+            "wreckage": [],
+            "locations": [],
+            "saved_db_markers": [],
+        },
+    }
+    path = STATIC_ROOT / "deep-desert-map-data.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return empty
+    if not isinstance(data, dict):
+        return empty
+    layers = data.setdefault("layers", {})
+    for key in empty["layers"]:
+        if not isinstance(layers.get(key), list):
+            layers[key] = []
+    data.setdefault("coordinateFrame", empty["coordinateFrame"])
+    return data
+
+
 def create_db_backup():
     BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
@@ -3144,6 +3175,9 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/markers/hagga-basin":
                 self.require_token()
                 self.json(read_hagga_pois())
+            elif parsed.path == "/api/deep-desert/map-data":
+                self.require_token()
+                self.json(read_deep_desert_map_data())
             elif parsed.path.startswith("/api/characters/"):
                 self.require_token()
                 account_id = int(parsed.path.rsplit("/", 1)[-1])
@@ -3888,6 +3922,26 @@ class Handler(BaseHTTPRequestHandler):
         """)
         dd_min_x, dd_max_x = -1250000, 1150000
         dd_min_y, dd_max_y = -1250000, 1050000
+        deep_desert_map_data = read_deep_desert_map_data()
+        saved_db_markers = []
+        span_x = max(dd_max_x - dd_min_x, 1)
+        span_y = max(dd_max_y - dd_min_y, 1)
+        for marker in marker_rows:
+            try:
+                saved_db_markers.append({
+                    "id": f"db-marker-{marker.get('marker_hash_id')}",
+                    "label": marker.get("marker_type") or "Saved marker",
+                    "group": "Saved DB markers",
+                    "x": max(0, min(1, (float(marker.get("x")) - dd_min_x) / span_x)),
+                    "y": max(0, min(1, (float(marker.get("y")) - dd_min_y) / span_y)),
+                    "radius": max(float(marker.get("area_radius") or 0) / span_x, 0.006),
+                    "confidence": "untrusted",
+                    "source": "dune.markers saved/discovered marker row",
+                    "tooltip": f"{marker.get('marker_type') or 'Saved marker'} from dune.markers; untrusted optional layer; x {round(float(marker.get('x') or 0))}, y {round(float(marker.get('y') or 0))}",
+                })
+            except (TypeError, ValueError):
+                continue
+        deep_desert_map_data.setdefault("layers", {})["saved_db_markers"] = saved_db_markers
         return {
             "map": "DeepDesert",
             "label": "Deep Desert",
@@ -3922,6 +3976,7 @@ class Handler(BaseHTTPRequestHandler):
                 "spiceFields": spice_rows,
                 "backgroundHref": "",
             },
+            "deepDesertMapData": deep_desert_map_data,
             "pois": {"groups": {}, "markers": []},
             "diagnostics": [],
             "players": rows,
@@ -7400,7 +7455,8 @@ function selectedDeepDesertMarkerGroups(groups){
   }
   const selected = {};
   Object.keys(groups || {}).forEach(group => {
-    selected[group] = Object.prototype.hasOwnProperty.call(deepDesertMarkerGroups, group) ? deepDesertMarkerGroups[group] === true : true;
+    const defaultOn = group !== 'Saved DB markers';
+    selected[group] = Object.prototype.hasOwnProperty.call(deepDesertMarkerGroups, group) ? deepDesertMarkerGroups[group] === true : defaultOn;
   });
   return selected;
 }
@@ -7451,6 +7507,32 @@ function deepDesertMarkerGroup(type){
   return 'Markers';
 }
 const deepDesertMarkerColors = {Transit:'#6fb6ff', Locations:'#d5a13e', Wreckage:'#b7c0c7', Resources:'#78cf7a', Markers:'#f3eadb'};
+const deepDesertLayerLabels = {
+  resource_nodes:'Resource nodes',
+  resource_fields:'Resource fields',
+  spice_fields:'Spice fields',
+  transit:'Transit',
+  wreckage:'Wreckage',
+  locations:'Locations',
+  saved_db_markers:'Saved DB markers'
+};
+const deepDesertLayerColors = {
+  resource_nodes:'#78cf7a',
+  resource_fields:'#e7d35b',
+  spice_fields:'#f16f9a',
+  transit:'#6fb6ff',
+  wreckage:'#b7c0c7',
+  locations:'#d5a13e',
+  saved_db_markers:'#8d96a0'
+};
+function deepDesertLayerGroups(mapData){
+  const layers = mapData?.layers || {};
+  return Object.keys(deepDesertLayerLabels).reduce((acc, key) => {
+    const count = Array.isArray(layers[key]) ? layers[key].length : 0;
+    if (count > 0) acc[deepDesertLayerLabels[key]] = {name:deepDesertLayerLabels[key], count, layerKey:key};
+    return acc;
+  }, {});
+}
 function deepDesertMarkerGroupInfo(markers){
   return (markers || []).reduce((acc, marker) => {
     const group = deepDesertMarkerGroup(marker.marker_type);
@@ -7582,7 +7664,8 @@ function haggaBasinMapPanel(data){
     const deepEmpty = players.length ? '' : `<text class="emptyState" x="${width / 2}" y="${height / 2}">No online players with Deep Desert coordinates.</text>`;
     const rowLabels = 'ABCDEFGHI';
     const ddMarkerRows = data?.markers || [];
-    const ddGroups = deepDesertMarkerGroupInfo(ddMarkerRows);
+    const mapData = data?.deepDesertMapData || {};
+    const ddGroups = deepDesertLayerGroups(mapData);
     const selectedDdGroups = selectedDeepDesertMarkerGroups(ddGroups);
     const layout = data?.layout || {};
     const backgroundHref = layout.backgroundHref || '';
@@ -7608,20 +7691,26 @@ function haggaBasinMapPanel(data){
       const cell = ddAreaCell(marker.area_id);
       return {x:px(marker.x, marker.y), y:py(marker.x, marker.y), cellLabel:cell ? `${rowLabels[cell.row]}${cell.col + 1}` : ''};
     };
-    const ddMarkers = ddMarkerRows.filter(marker => selectedDdGroups[deepDesertMarkerGroup(marker.marker_type)] === true).map(marker => {
-      const group = deepDesertMarkerGroup(marker.marker_type);
-      const color = deepDesertMarkerColors[group] || '#f3eadb';
-      const point = ddMarkerPoint(marker);
-      const radius = group === 'Transit' || group === 'Locations' ? 7 : 4;
-      return `<g class="poiMarker" tabindex="0" style="--poi-color:${esc(color)}; color:${esc(color)}" transform="translate(${point.x.toFixed(1)} ${point.y.toFixed(1)})"><title>${esc(marker.marker_type || group)} | area ${esc(marker.area_id ?? '')}${point.cellLabel ? ` | cell ${esc(point.cellLabel)}` : ''} | ${esc(Math.round(Number(marker.x || 0)))}, ${esc(Math.round(Number(marker.y || 0)))}</title><circle class="poiHalo" r="${radius + 5}"></circle><circle class="poiRing" r="${radius + 2}"></circle><circle class="poiCore" r="${radius}"></circle></g>`;
+    const ddMarkers = Object.entries(mapData.layers || {}).flatMap(([layerKey, rows]) => {
+      const group = deepDesertLayerLabels[layerKey] || layerKey;
+      if (selectedDdGroups[group] !== true || !Array.isArray(rows)) return [];
+      const color = deepDesertLayerColors[layerKey] || '#f3eadb';
+      return rows.map(item => {
+        const x = clamp(Number(item.x || 0) * width, 0, width);
+        const y = clamp(Number(item.y || 0) * height, 0, height);
+        const inferred = item.confidence === 'inferred';
+        const radius = clamp(Number(item.radius || 0.008) * Math.min(width, height), 5, 34);
+        const title = item.tooltip || `${item.label || group} | source ${item.source || 'unknown'} | confidence ${item.confidence || 'unknown'} | x ${Number(item.x || 0).toFixed(4)}, y ${Number(item.y || 0).toFixed(4)} | radius ${Number(item.radius || 0).toFixed(4)}`;
+        return `<g class="poiMarker" tabindex="0" style="--poi-color:${esc(color)}; color:${esc(color)}" transform="translate(${x.toFixed(1)} ${y.toFixed(1)})"><title>${esc(title)}</title><circle class="poiHalo" r="${(radius + 5).toFixed(1)}"></circle><circle class="poiRing" r="${radius.toFixed(1)}" ${inferred ? 'stroke-dasharray="4 3"' : ''}></circle><circle class="poiCore" r="${inferred ? 3.8 : 5.2}"></circle><text x="10" y="-10">${esc(item.label || group)}</text></g>`;
+      });
     }).join('');
-    const ddSummary = Object.entries(ddGroups).sort((a, b) => a[0].localeCompare(b[0])).map(([group, info]) => `<span class="pill" style="border-color:${esc(deepDesertMarkerColors[group] || '#f3eadb')}">${esc(group)} ${esc(info.count || 0)}</span>`).join('');
+    const ddSummary = Object.entries(ddGroups).sort((a, b) => a[0].localeCompare(b[0])).map(([group, info]) => `<span class="pill" style="border-color:${esc(deepDesertLayerColors[info.layerKey] || '#f3eadb')}">${esc(group)} ${esc(info.count || 0)}</span>`).join('');
     const farmSeed = seedRows.find(row => row.scope === 'farm')?.world_reset_seed ?? 'unknown';
     const mapSeed = seedRows.find(row => row.scope === 'map')?.world_reset_seed ?? 'unknown';
     const spiceSummary = spiceFields.filter(row => Number(row.dimension_index || 0) === 0).map(row => `${row.field_type} ${row.current_globally_active}/${row.max_globally_active}`).join(', ') || 'unavailable';
     const ddColumnLabels = Array.from({length: 9}, (_, i) => `<text class="gridLabel" x="${(((i + 0.5) / 9) * width).toFixed(1)}" y="42">${i + 1}</text>`).join('');
     const ddRowLabels = Array.from({length: 9}, (_, i) => `<text class="gridLabel" x="14" y="${((i + 0.5) / 9 * height).toFixed(1)}">${esc(rowLabels[8 - i])}</text>`).join('');
-    return `<div class="panelBand"><div class="sectionHeader"><h2>Deep Desert Node Map</h2><div class="toolbar"><span id="haggaMapCount" class="pill ${players.length ? 'ok' : ''}">${esc(players.length)} players</span><span class="pill ok">${esc(ddMarkerRows.length)} node markers</span><span id="haggaMapUpdated" class="pill">updated ${esc(generatedAt)}</span><span id="haggaMapHealth" class="pill ok">world-coordinate nodes</span><button id="haggaMapZoomOutBtn" title="Zoom map out">-</button><button id="haggaMapZoomInBtn" title="Zoom map in">+</button><button id="haggaMapResetBtn">Reset view</button><button id="toggleHaggaMapRefreshBtn" aria-pressed="${haggaMapAutoRefresh ? 'true' : 'false'}">${haggaMapAutoRefresh ? 'Pause map' : 'Resume map'}</button><button id="refreshHaggaMapBtn">Refresh map</button></div></div>${mapTabs}<div id="haggaMapSrStatus" class="srOnly" aria-live="polite">${esc(players.length)} Deep Desert players and ${esc(ddMarkerRows.length)} nodes plotted.</div><div class="haggaMapLayout"><div class="haggaMapMain"><div id="haggaMapViewport" class="haggaMap"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Deep Desert node map from stored world coordinates">${deepBackground}${shiftingSandOverlay}<rect class="mapShade" x="0" y="0" width="${width}" height="${height}"></rect>${grid}${ddColumnLabels}${ddRowLabels}<text x="12" y="38" fill="var(--muted)" font-size="12">NW</text><text x="${width - 30}" y="${height - 12}" fill="var(--muted)" font-size="12">SE</text>${ddMarkers}${markers}${deepEmpty}</svg></div></div><div class="pageStack">${deepDesertFieldStateLegend(resourceFields, spiceFields)}${deepDesertMarkerToggleBar(ddGroups, selectedDdGroups)}</div></div><div class="haggaMapStatus"><span class="pill warn">green: persisted actor transform</span><span class="pill">farm seed ${esc(farmSeed)}, map seed ${esc(mapSeed)}</span><span class="pill">static shifting sand rows ${esc(shiftingSands.length)}</span><span class="pill">resource field state rows ${esc(resourceFields.length)}</span><span class="pill">spice ${esc(spiceSummary)}</span><span class="pill">background synthetic grid, no heatmap blobs</span><span class="pill">projection: stored world X/Y to fixed DD bounds</span><span class="pill">area_id 2=A1, 82=I9 only shown as metadata</span>${ddSummary}</div><details open><summary>Coordinates</summary><div class="coordTable">${table(rows)}</div></details><details open><summary>Deep Desert Nodes</summary><div class="coordTable">${table(ddMarkerRows.map(m => ({type:m.marker_type, area_id:m.area_id, cell:(() => { const cell = ddAreaCell(m.area_id); return cell ? `${rowLabels[cell.row]}${cell.col + 1}` : ''; })(), dimension:m.dimension_index, x:Math.round(Number(m.x || 0)), y:Math.round(Number(m.y || 0)), z:Math.round(Number(m.z || 0)), radius:m.area_radius || 0})))}</div></details><details><summary>Deep Desert Field State</summary><div class="coordTable">${table(resourceFields)}</div><div class="coordTable">${table(spiceFields)}</div></details></div>`;
+    return `<div class="panelBand"><div class="sectionHeader"><h2>Deep Desert Map</h2><div class="toolbar"><span id="haggaMapCount" class="pill ${players.length ? 'ok' : ''}">${esc(players.length)} players</span><span class="pill ok">${esc(Object.values(ddGroups).reduce((sum, info) => sum + Number(info.count || 0), 0))} pak/map points</span><span id="haggaMapUpdated" class="pill">updated ${esc(generatedAt)}</span><span id="haggaMapHealth" class="pill ok">pak-derived coordinate frame</span><button id="haggaMapZoomOutBtn" title="Zoom map out">-</button><button id="haggaMapZoomInBtn" title="Zoom map in">+</button><button id="haggaMapResetBtn">Reset view</button><button id="toggleHaggaMapRefreshBtn" aria-pressed="${haggaMapAutoRefresh ? 'true' : 'false'}">${haggaMapAutoRefresh ? 'Pause map' : 'Resume map'}</button><button id="refreshHaggaMapBtn">Refresh map</button></div></div>${mapTabs}<div id="haggaMapSrStatus" class="srOnly" aria-live="polite">${esc(players.length)} Deep Desert players and pak-derived points plotted.</div><div class="haggaMapLayout"><div class="haggaMapMain"><div id="haggaMapViewport" class="haggaMap"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Deep Desert map from pak-derived field centers">${deepBackground}<rect class="mapShade" x="0" y="0" width="${width}" height="${height}"></rect>${grid}${ddColumnLabels}${ddRowLabels}<text x="12" y="38" fill="var(--muted)" font-size="12">NW</text><text x="${width - 30}" y="${height - 12}" fill="var(--muted)" font-size="12">SE</text>${ddMarkers}${markers}${deepEmpty}</svg></div></div><div class="pageStack">${deepDesertFieldStateLegend(resourceFields, spiceFields)}${deepDesertMarkerToggleBar(ddGroups, selectedDdGroups)}</div></div><div class="haggaMapStatus"><span class="pill warn">green: persisted actor transform</span><span class="pill">layout ${esc(mapData.layoutId || 'unknown')}</span><span class="pill">farm seed ${esc(farmSeed)}, map seed ${esc(mapSeed)}</span><span class="pill">resource field state rows ${esc(resourceFields.length)}</span><span class="pill">spice ${esc(spiceSummary)}</span><span class="pill">no heatmap blobs</span><span class="pill">saved DB markers are separate and default off</span>${ddSummary}</div><details open><summary>Coordinates</summary><div class="coordTable">${table(rows)}</div></details><details open><summary>Deep Desert Map Data</summary><div class="coordTable">${table(Object.entries(mapData.layers || {}).flatMap(([layer, items]) => (items || []).map(item => ({layer, label:item.label, confidence:item.confidence, source:item.source, x:Number(item.x || 0).toFixed(4), y:Number(item.y || 0).toFixed(4), radius:Number(item.radius || 0).toFixed(4)}))))}</div></details><details><summary>Saved DB Markers</summary><div class="coordTable">${table(ddMarkerRows.map(m => ({type:m.marker_type, area_id:m.area_id, cell:(() => { const cell = ddAreaCell(m.area_id); return cell ? `${rowLabels[cell.row]}${cell.col + 1}` : ''; })(), dimension:m.dimension_index, x:Math.round(Number(m.x || 0)), y:Math.round(Number(m.y || 0)), z:Math.round(Number(m.z || 0)), radius:m.area_radius || 0})))}</div></details><details><summary>Deep Desert Field State</summary><div class="coordTable">${table(resourceFields)}</div><div class="coordTable">${table(spiceFields)}</div></details></div>`;
   }
   return `<div class="panelBand"><div class="sectionHeader"><h2>Hagga Basin Coordinate Grid</h2><div class="toolbar"><span id="haggaMapCount" class="pill ${players.length ? 'ok' : ''}">${esc(players.length)} plotted</span><span id="haggaMapUpdated" class="pill">updated ${esc(generatedAt)}</span><span id="haggaMapHealth" class="pill warn">DB persistence position, not proven live</span><button id="haggaMapZoomOutBtn" title="Zoom map out">-</button><button id="haggaMapZoomInBtn" title="Zoom map in">+</button><button id="haggaMapResetBtn">Reset view</button><button id="toggleHaggaMapRefreshBtn" aria-pressed="${haggaMapAutoRefresh ? 'true' : 'false'}">${haggaMapAutoRefresh ? 'Pause map' : 'Resume map'}</button><button id="refreshHaggaMapBtn">Refresh map</button></div></div>${mapTabs}<div id="haggaMapSrStatus" class="srOnly" aria-live="polite">${esc(players.length)} Hagga Basin players plotted.</div><div class="haggaMapLayout"><div class="haggaMapMain"><div id="haggaMapViewport" class="haggaMap"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Full Hagga Basin coordinate-grid map"><image class="mapImage" href="/static/hagga-basin.webp?v=${encodeURIComponent(ADMIN_PANEL_BUILD)}" x="0" y="0" width="${width}" height="${height}" preserveAspectRatio="xMidYMid meet"></image><rect class="mapShade" x="0" y="0" width="${width}" height="${height}"></rect>${grid}<text x="12" y="38" fill="var(--muted)" font-size="12">NW</text><text x="${width - 30}" y="${height - 12}" fill="var(--muted)" font-size="12">SE</text>${poiMarkers}${markers}${empty}</svg></div></div>${haggaPoiToggleBar(pois, selectedPois)}</div><div class="haggaMapStatus"><span class="pill warn">green: persisted actor transform</span><span class="pill ${showReturnPoints ? 'warn' : ''}">yellow return-info ${showReturnPoints ? 'shown' : 'hidden'}</span><span class="pill">POIs: Dune: Awakening Community Wiki CC BY-NC-SA 4.0</span><span class="pill">background: clean survival_1 tile composite</span><span class="pill">projection: world X -> image U, world Y -> image V</span><span class="pill">world X ${esc(Math.round(minX))}..${esc(Math.round(maxX))}, Y ${esc(Math.round(minY))}..${esc(Math.round(maxY))}${invertX ? ', flipped X' : ''}${invertY ? ', inverted Y' : ''}</span><span class="pill">image U ${esc(imageMinU.toFixed(2))}..${esc(imageMaxU.toFixed(2))}, V ${esc(imageMinV.toFixed(2))}..${esc(imageMaxV.toFixed(2))}</span></div><details open><summary>Coordinates</summary><div class="coordTable">${table(rows)}</div></details><details open><summary>Location Source Diagnostics</summary><div class="coordTable">${table(diagnosticRows)}</div></details></div>`;
 }

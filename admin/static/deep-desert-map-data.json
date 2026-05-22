@@ -1,0 +1,165 @@
+{
+  "layoutId": "DA_DeepDesert_Layout18",
+  "generatedAt": "2026-05-22T21:01:06.987897+00:00",
+  "sourcePak": "/tmp/dune-paks/pakchunk0-LinuxServer.pak",
+  "coordinateFrame": {
+    "type": "normalized-raster",
+    "width": 1024,
+    "height": 1024,
+    "xRange": [
+      0,
+      1
+    ],
+    "yRange": [
+      0,
+      1
+    ],
+    "origin": "top-left",
+    "notes": "Pak-derived normalized heatmap coordinate frame; row A renders at the bottom, I at the top."
+  },
+  "layers": {
+    "resource_nodes": [],
+    "resource_fields": [
+      {
+        "id": "layout18-resource-field-1",
+        "label": "Copper",
+        "group": "Copper",
+        "x": 0.46484375,
+        "y": 0.73046875,
+        "radius": 0.01953125,
+        "extent": {
+          "w": 0.0390625,
+          "h": 0.0390625
+        },
+        "confidence": "inferred",
+        "source": "pak:DA_DeepDesert_Layout18 resource distribution raster",
+        "tooltip": "Copper inferred field center from pak distribution raster; confidence inferred"
+      },
+      {
+        "id": "layout18-resource-field-2",
+        "label": "Tier 6 A",
+        "group": "Tier 6 A",
+        "x": 0.8828125,
+        "y": 0.0625,
+        "radius": 0.03125,
+        "extent": {
+          "w": 0.0625,
+          "h": 0.0625
+        },
+        "confidence": "inferred",
+        "source": "pak:DA_DeepDesert_Layout18 resource distribution raster",
+        "tooltip": "Tier 6 A inferred field center from pak distribution raster; confidence inferred"
+      },
+      {
+        "id": "layout18-resource-field-3",
+        "label": "Tier 6 A",
+        "group": "Tier 6 A",
+        "x": 0.255859375,
+        "y": 0.2265625,
+        "radius": 0.033203125,
+        "extent": {
+          "w": 0.06640625,
+          "h": 0.0625
+        },
+        "confidence": "inferred",
+        "source": "pak:DA_DeepDesert_Layout18 resource distribution raster",
+        "tooltip": "Tier 6 A inferred field center from pak distribution raster; confidence inferred"
+      },
+      {
+        "id": "layout18-resource-field-4",
+        "label": "Iron",
+        "group": "Iron",
+        "x": 0.583984375,
+        "y": 0.39453125,
+        "radius": 0.0234375,
+        "extent": {
+          "w": 0.04296875,
+          "h": 0.046875
+        },
+        "confidence": "inferred",
+        "source": "pak:DA_DeepDesert_Layout18 resource distribution raster",
+        "tooltip": "Iron inferred field center from pak distribution raster; confidence inferred"
+      },
+      {
+        "id": "layout18-resource-field-5",
+        "label": "Carbon",
+        "group": "Carbon",
+        "x": 0.1796875,
+        "y": 0.5625,
+        "radius": 0.015625,
+        "extent": {
+          "w": 0.03125,
+          "h": 0.03125
+        },
+        "confidence": "inferred",
+        "source": "pak:DA_DeepDesert_Layout18 resource distribution raster",
+        "tooltip": "Carbon inferred field center from pak distribution raster; confidence inferred"
+      },
+      {
+        "id": "layout18-resource-field-6",
+        "label": "Aluminium",
+        "group": "Aluminium",
+        "x": 0.37890625,
+        "y": 0.43359375,
+        "radius": 0.01953125,
+        "extent": {
+          "w": 0.0390625,
+          "h": 0.0390625
+        },
+        "confidence": "inferred",
+        "source": "pak:DA_DeepDesert_Layout18 resource distribution raster",
+        "tooltip": "Aluminium inferred field center from pak distribution raster; confidence inferred"
+      },
+      {
+        "id": "layout18-resource-field-7",
+        "label": "Tier 6 B",
+        "group": "Tier 6 B",
+        "x": 0.3828125,
+        "y": 0.1015625,
+        "radius": 0.01953125,
+        "extent": {
+          "w": 0.0390625,
+          "h": 0.0390625
+        },
+        "confidence": "inferred",
+        "source": "pak:DA_DeepDesert_Layout18 resource distribution raster",
+        "tooltip": "Tier 6 B inferred field center from pak distribution raster; confidence inferred"
+      },
+      {
+        "id": "layout18-resource-field-8",
+        "label": "Stone",
+        "group": "Stone",
+        "x": 0.71484375,
+        "y": 0.59765625,
+        "radius": 0.015625,
+        "extent": {
+          "w": 0.03125,
+          "h": 0.03125
+        },
+        "confidence": "inferred",
+        "source": "pak:DA_DeepDesert_Layout18 resource distribution raster",
+        "tooltip": "Stone inferred field center from pak distribution raster; confidence inferred"
+      },
+      {
+        "id": "layout18-resource-field-9",
+        "label": "Basalt",
+        "group": "Basalt",
+        "x": 0.08984375,
+        "y": 0.478515625,
+        "radius": 0.01953125,
+        "extent": {
+          "w": 0.0390625,
+          "h": 0.03515625
+        },
+        "confidence": "inferred",
+        "source": "pak:DA_DeepDesert_Layout18 resource distribution raster",
+        "tooltip": "Basalt inferred field center from pak distribution raster; confidence inferred"
+      }
+    ],
+    "spice_fields": [],
+    "transit": [],
+    "wreckage": [],
+    "locations": [],
+    "saved_db_markers": []
+  }
+}

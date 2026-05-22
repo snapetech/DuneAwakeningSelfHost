@@ -156,6 +156,7 @@ def main():
     parser.add_argument("--oodle", type=pathlib.Path, default=DEFAULT_OODLE)
     parser.add_argument("--output", type=pathlib.Path, default=pathlib.Path("admin/static/deep-desert.webp"))
     parser.add_argument("--hotspots-output", type=pathlib.Path, default=pathlib.Path("admin/static/deep-desert-hotspots.json"))
+    parser.add_argument("--map-data-output", type=pathlib.Path, default=pathlib.Path("admin/static/deep-desert-map-data.json"))
     args = parser.parse_args()
 
     data = args.pak.read_bytes()
@@ -207,6 +208,47 @@ def main():
             "projection": "normalized 1024x1024 heatmap raster; row A bottom, I top in rendered grid",
             "layers": [{"name": name, "color": "#{:02x}{:02x}{:02x}".format(*LAYER_COLORS[name])} for name in LAYOUT18_UEXP_OFFSETS],
             "hotspots": hotspots,
+        }, indent=2), encoding="utf-8")
+    if args.map_data_output:
+        args.map_data_output.parent.mkdir(parents=True, exist_ok=True)
+        resource_fields = []
+        for index, hotspot in enumerate(hotspots, 1):
+            radius = max(float(hotspot.get("w", 0)), float(hotspot.get("h", 0))) / 2
+            label = str(hotspot["name"]).replace("T6 A", "Tier 6 A").replace("T6 B", "Tier 6 B")
+            resource_fields.append({
+                "id": f"layout18-resource-field-{index}",
+                "label": label,
+                "group": label,
+                "x": hotspot["x"],
+                "y": hotspot["y"],
+                "radius": max(radius, 0.012),
+                "extent": {"w": hotspot["w"], "h": hotspot["h"]},
+                "confidence": "inferred",
+                "source": "pak:DA_DeepDesert_Layout18 resource distribution raster",
+                "tooltip": f"{label} inferred field center from pak distribution raster; confidence inferred",
+            })
+        args.map_data_output.write_text(json.dumps({
+            "layoutId": "DA_DeepDesert_Layout18",
+            "generatedAt": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+            "sourcePak": str(args.pak),
+            "coordinateFrame": {
+                "type": "normalized-raster",
+                "width": 1024,
+                "height": 1024,
+                "xRange": [0, 1],
+                "yRange": [0, 1],
+                "origin": "top-left",
+                "notes": "Pak-derived normalized heatmap coordinate frame; row A renders at the bottom, I at the top.",
+            },
+            "layers": {
+                "resource_nodes": [],
+                "resource_fields": resource_fields,
+                "spice_fields": [],
+                "transit": [],
+                "wreckage": [],
+                "locations": [],
+                "saved_db_markers": [],
+            },
         }, indent=2), encoding="utf-8")
     print(f"wrote {args.output} ({args.output.stat().st_size} bytes)")
 

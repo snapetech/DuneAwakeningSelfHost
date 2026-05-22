@@ -186,6 +186,19 @@ def load_deep_desert_layout_state():
     return json.loads(text)
 
 
+def load_deep_desert_map_data():
+    path = DUNE_ROOT / "admin" / "static" / "deep-desert-map-data.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        data = {}
+    layers = data.setdefault("layers", {})
+    for key in ("resource_nodes", "resource_fields", "spice_fields", "transit", "wreckage", "locations", "saved_db_markers"):
+        if not isinstance(layers.get(key), list):
+            layers[key] = []
+    return data
+
+
 def clamp(value, low, high):
     return max(low, min(high, value))
 
@@ -276,6 +289,24 @@ DD_GROUP_COLORS = {
     "Resources": "#78cf7a",
     "Markers": "#f3eadb",
 }
+DD_LAYER_LABELS = {
+    "resource_nodes": "Resource nodes",
+    "resource_fields": "Resource fields",
+    "spice_fields": "Spice fields",
+    "transit": "Transit",
+    "wreckage": "Wreckage",
+    "locations": "Locations",
+    "saved_db_markers": "Saved DB markers",
+}
+DD_LAYER_COLORS = {
+    "resource_nodes": "#78cf7a",
+    "resource_fields": "#e7d35b",
+    "spice_fields": "#f16f9a",
+    "transit": "#6fb6ff",
+    "wreckage": "#b7c0c7",
+    "locations": "#d9a63c",
+    "saved_db_markers": "#8d96a0",
+}
 
 
 def dd_bounds(markers, players):
@@ -312,8 +343,9 @@ def dd_marker_area_bounds(markers):
     return bounds
 
 
-def render_deep_desert_svg(players, markers, generated_at, layout_state=None):
+def render_deep_desert_svg(players, markers, generated_at, layout_state=None, map_data=None):
     layout_state = layout_state or {}
+    map_data = map_data or {}
     background_href = layout_state.get("backgroundHref") or ""
     bounds = dd_bounds(markers, players)
     span_x = max(bounds["max_x"] - bounds["min_x"], 1)
@@ -332,14 +364,15 @@ def render_deep_desert_svg(players, markers, generated_at, layout_state=None):
         return pp(float(marker["x"]), float(marker["y"]))
 
     groups = {}
-    for marker in markers:
-        groups.setdefault(marker_group(marker.get("marker_type")), 0)
-        groups[marker_group(marker.get("marker_type"))] += 1
+    for layer_key, rows in (map_data.get("layers") or {}).items():
+        if layer_key == "saved_db_markers" or not isinstance(rows, list) or not rows:
+            continue
+        groups[DD_LAYER_LABELS.get(layer_key, layer_key)] = (len(rows), layer_key)
     legend_items = []
-    for index, (group, count) in enumerate(sorted(groups.items())):
+    for index, (group, (count, layer_key)) in enumerate(sorted(groups.items())):
         x = 24 + (index % 3) * 250
         y = 74 + (index // 3) * 30
-        color = DD_GROUP_COLORS.get(group, "#f3eadb")
+        color = DD_LAYER_COLORS.get(layer_key, "#f3eadb")
         legend_items.append(f'<circle cx="{x}" cy="{y}" r="8" fill="{color}"/><text x="{x + 16}" y="{y + 7}" class="legend">{html.escape(group)} {count}</text>')
 
     grid = []
@@ -379,21 +412,22 @@ def render_deep_desert_svg(players, markers, generated_at, layout_state=None):
     ) or "spice state unavailable"
 
     marker_nodes = []
-    for marker in markers:
-        x, y = marker_point(marker)
-        group = marker_group(marker.get("marker_type"))
-        color = DD_GROUP_COLORS.get(group, "#f3eadb")
-        label = str(marker.get("marker_type") or "Marker")
-        r = 8 if group in ("Transit", "Locations") else 4.5
-        cell = dd_area_cell(marker.get("area_id"))
-        cell_label = ""
-        if cell:
-            col, row = cell
-            cell_label = f" | cell {'ABCDEFGHI'[row]}{col + 1}"
-        marker_nodes.append(
-            f'<g class="marker" transform="translate({x:.1f} {y:.1f})"><title>{html.escape(label)} | area {html.escape(str(marker.get("area_id") or ""))}{html.escape(cell_label)} | {round(float(marker["x"]))}, {round(float(marker["y"]))}</title>'
-            f'<circle r="{r}" fill="{color}"/><circle r="{r + 4}" fill="none" stroke="{color}" opacity=".25" stroke-width="3"/></g>'
-        )
+    for layer_key, rows in (map_data.get("layers") or {}).items():
+        if layer_key == "saved_db_markers" or not isinstance(rows, list):
+            continue
+        color = DD_LAYER_COLORS.get(layer_key, "#f3eadb")
+        for item in rows:
+            x = clamp(float(item.get("x") or 0) * PUBLIC_VIEWBOX_WIDTH, 0, PUBLIC_VIEWBOX_WIDTH)
+            y = clamp(float(item.get("y") or 0) * HEIGHT, 0, HEIGHT)
+            radius = clamp(float(item.get("radius") or 0.008) * HEIGHT, 7, 42)
+            label = str(item.get("label") or DD_LAYER_LABELS.get(layer_key, layer_key))
+            title = item.get("tooltip") or f'{label} | source {item.get("source", "unknown")} | confidence {item.get("confidence", "unknown")} | x {float(item.get("x") or 0):.4f}, y {float(item.get("y") or 0):.4f} | radius {float(item.get("radius") or 0):.4f}'
+            dash = ' stroke-dasharray="5 4"' if item.get("confidence") == "inferred" else ""
+            marker_nodes.append(
+                f'<g class="marker" transform="translate({x:.1f} {y:.1f})"><title>{html.escape(str(title))}</title>'
+                f'<circle r="{radius:.1f}" fill="none" stroke="{color}" opacity=".72" stroke-width="3"{dash}/><circle r="5" fill="{color}"/>'
+                f'<text x="12" y="-10" class="pointLabel">{html.escape(label)}</text></g>'
+            )
 
     player_nodes = []
     for player in players:
@@ -422,10 +456,10 @@ def render_deep_desert_svg(players, markers, generated_at, layout_state=None):
 {''.join(player_nodes)}
 {empty}
 <rect x="0" y="0" width="{PUBLIC_VIEWBOX_WIDTH:.3f}" height="122" fill="#171512" opacity=".82"/>
-<text x="22" y="38" class="meta">Deep Desert node map</text>
+<text x="22" y="38" class="meta">Deep Desert Map</text>
 <text x="22" y="66" class="meta">{html.escape(seed_text)} | resource fields {len(resource_fields)} | spice {html.escape(spice_text)}</text>
-<text x="22" y="94" class="meta">Exact plotted locations are stored DB marker/node coordinates. Field tables expose state/counts, not coordinates.</text>
-<text x="22" y="1576" class="meta">Updated {html.escape(generated_at)} | projection: stored world X/Y to fixed DD bounds | {len(markers)} node markers</text>
+<text x="22" y="94" class="meta">Pak-derived inferred field centers; saved DB markers are not rendered as authoritative nodes.</text>
+<text x="22" y="1576" class="meta">Updated {html.escape(generated_at)} | layout {html.escape(str(map_data.get("layoutId") or "unknown"))} | discrete points, no heatmap blobs</text>
 {''.join(legend_items)}
 </svg>
 '''

@@ -10,6 +10,8 @@ import subprocess
 import sys
 import time
 
+from dune_whisper_route import whisper_route_for_fls_id
+
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 STATE_DIR = ROOT / "backups" / "admin-bot"
@@ -603,8 +605,9 @@ def announce(message):
 def private_message(player, message, job_id="player-presence-private-message"):
     fls_id = player_fls_id(player)
     name = player_name(player)
-    if not fls_id:
-        return {"ok": False, "error": "missing player FLS id", "player": name}
+    route = whisper_route_for_fls_id(fls_id)
+    if not route["ok"]:
+        return {"ok": False, "error": route["error"], "player": name}
     command = env("DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_COMMAND", env("DUNE_PLAYER_PRESENCE_ANNOUNCE_COMMAND", env("DUNE_ADMIN_ANNOUNCE_COMMAND", str(ROOT / "scripts" / "announce.sh"))))
     if command.startswith("/workspace/"):
         command = str(ROOT / command.removeprefix("/workspace/"))
@@ -618,15 +621,17 @@ def private_message(player, message, job_id="player-presence-private-message"):
     child_env["DUNE_ANNOUNCE_CHAT_EXCHANGE"] = env("DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_EXCHANGE", "chat.whispers")
     child_env["DUNE_ANNOUNCE_CHAT_CHANNEL"] = env("DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_CHANNEL", "Whispers")
     child_env["DUNE_ANNOUNCE_CHAT_USER_NAME_TO"] = name
-    child_env["DUNE_ANNOUNCE_CHAT_TARGET_QUEUES"] = f"{fls_id}_queue"
-    child_env["DUNE_ANNOUNCE_CHAT_ROUTING_KEYS"] = env("DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_ROUTING_KEY", fls_id) or fls_id
+    child_env["DUNE_ANNOUNCE_CHAT_TARGET_FLS_IDS"] = route["routingKey"]
+    child_env["DUNE_ANNOUNCE_CHAT_TARGET_QUEUES"] = route["queue"]
+    child_env["DUNE_ANNOUNCE_CHAT_ROUTING_KEYS"] = env("DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_ROUTING_KEY", route["routingKey"]) or route["routingKey"]
     child_env["DUNE_ANNOUNCE_CHAT_BIND_ONLINE_QUEUES"] = "false"
     child_env["DUNE_ANNOUNCE_CHAT_CLEANUP_TARGET_BINDINGS"] = "true"
     result = subprocess.run([command, message], cwd=ROOT, env=child_env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, check=False)
     return {
         "ok": result.returncode == 0,
         "returncode": result.returncode,
-        "targetQueue": f"{fls_id}_queue",
+        "targetFlsId": route["routingKey"],
+        "targetQueue": route["queue"],
         "channel": child_env["DUNE_ANNOUNCE_CHAT_CHANNEL"],
         "userNameTo": name,
         "stdout": result.stdout[-1000:],
