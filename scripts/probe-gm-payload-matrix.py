@@ -192,6 +192,7 @@ def main():
     parser.add_argument("--include-game-bindings", action="store_true", help="Also publish to known game exchange bindings for the server queue.")
     parser.add_argument("--game-rpc-route", default="", help="Optional game-RMQ rpc routing key, usually the world name.")
     parser.add_argument("--only-broker", choices=("admin", "game", "all"), default="all")
+    parser.add_argument("--target-kind", choices=("all", "rpc", "direct"), default="all", help="Limit admin/game publishes to exchange RPC routes or direct queue routes.")
     parser.add_argument("--user-id", default="", help="AMQP user_id property to send. Leave empty to omit.")
     parser.add_argument("--body", action="append", default=[], help="Only send these exact body names. Repeatable.")
     parser.add_argument("--body-contains", action="append", default=[], help="Only send body names containing these substrings. Repeatable.")
@@ -232,6 +233,10 @@ def main():
             )
     if args.only_broker != "all":
         targets = [target for target in targets if target[0] == args.only_broker]
+    if args.target_kind == "rpc":
+        targets = [target for target in targets if target[1] == "rpc"]
+    elif args.target_kind == "direct":
+        targets = [target for target in targets if target[1] == ""]
 
     sent = []
     responses = []
