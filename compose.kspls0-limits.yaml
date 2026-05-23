@@ -33,6 +33,12 @@ x-map-large: &map-large
   cpus: 3.0
   oom_score_adj: 200
 
+x-map-entry: &map-entry
+  mem_limit: 16g
+  mem_reservation: 4g
+  cpus: 4.0
+  oom_score_adj: 100
+
 services:
   postgres:
     <<: *core-small
@@ -56,8 +62,7 @@ services:
     <<: *core-tiny
 
   survival:
-    <<: *map-large
-    oom_score_adj: 100
+    <<: *map-entry
 
   overmap:
     <<: *map-medium
