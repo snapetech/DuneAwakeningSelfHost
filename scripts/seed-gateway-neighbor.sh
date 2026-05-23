@@ -76,18 +76,22 @@ if is_running "$postgres_container" && is_running "$gateway_container"; then
   postgres_mac="$(container_mac "$postgres_container")"
   gateway_mac="$(container_mac "$gateway_container")"
 
-  if [[ -n "$gateway_dev" ]]; then
+  if [[ -n "$gateway_ip" && -n "$gateway_mac" && -n "$gateway_dev" ]]; then
     run_root nsenter -t "$gateway_pid" -n ip neigh replace "$postgres_ip" lladdr "$postgres_mac" dev "$gateway_dev" nud permanent
     if [[ -n "$bridge_mac" ]]; then
       run_root nsenter -t "$gateway_pid" -n ip neigh replace "$bridge_ip" lladdr "$bridge_mac" dev "$gateway_dev" nud permanent
     fi
   fi
-  if [[ -n "$postgres_dev" ]]; then
+  if [[ -n "$gateway_ip" && -n "$gateway_mac" && -n "$postgres_dev" ]]; then
     run_root nsenter -t "$postgres_pid" -n ip neigh replace "$gateway_ip" lladdr "$gateway_mac" dev "$postgres_dev" nud permanent
   fi
 
-  printf 'seeded gateway/postgres neighbor entries: gateway=%s/%s postgres=%s/%s\n' \
-    "$gateway_ip" "$gateway_mac" "$postgres_ip" "$postgres_mac"
+  if [[ -n "$gateway_ip" && -n "$gateway_mac" ]]; then
+    printf 'seeded gateway/postgres neighbor entries: gateway=%s/%s postgres=%s/%s\n' \
+      "$gateway_ip" "$gateway_mac" "$postgres_ip" "$postgres_mac"
+  else
+    printf 'skipped gateway/postgres neighbor entries; gateway has no bridge IP/MAC\n' >&2
+  fi
 else
   printf 'skipped gateway/postgres neighbor entries; one or both containers are not running\n' >&2
 fi
@@ -168,6 +172,7 @@ seed_bridge "$admin_chat_container"
 seed_pair "$game_rmq_container" "$rmq_auth_container"
 seed_pair "$rmq_auth_container" "$game_rmq_container"
 seed_pair "$admin_rmq_container" "$rmq_auth_container"
+seed_pair "$admin_rmq_container" "$text_router_container"
 seed_pair "$rmq_auth_container" "$admin_rmq_container"
 seed_pair "$rmq_auth_container" "$text_router_container"
 seed_pair "$text_router_container" "$rmq_auth_container"

@@ -30,6 +30,7 @@ rsync -a --delete \
   --exclude 'data/postgres/' \
   --exclude 'data/postgres-replica/' \
   --exclude 'data/rabbitmq/' \
+  --exclude 'data/handoff-lab/' \
   --exclude 'config/tls/rabbitmq-staged/' \
   --exclude 'config/tls/rabbitmq-staged.backup.*/' \
   --exclude 'captures/' \

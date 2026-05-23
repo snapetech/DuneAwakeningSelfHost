@@ -237,6 +237,48 @@ For a one-server test world, run:
 
 The script backs up `world_partition` state under `backups/partition-surgery/`, deletes only unassigned `Survival_1` dimensions greater than zero, and restarts Director plus Survival. Afterward, status should show one `world_partition` row and the game log should say `Server farm is READY (1 server(s))`.
 
+## Server Browser Shows World But No Maps
+
+Symptoms:
+
+```text
+The server parent row is visible in the in-game browser.
+The nested map list is empty or does not update.
+Director logs show server states, but FLS up-declarations are missing or stale.
+```
+
+Check whether the maps are healthy locally before restarting anything:
+
+```bash
+docker compose --env-file .env exec -T postgres psql -U dune -d dune_sb_1_4_0_0 \
+  -c "select count(*) filter (where server_id is not null) assigned, count(*) filter (where blocked) blocked, count(*) total from dune.world_partition;"
+
+docker logs --since 5m dune_server-director-1 2>&1 \
+  | grep '\[ServerState\] Received server state' \
+  | sed -E 's/.*"partitionId":([0-9]+).*/\1/' \
+  | sort -n | uniq -c
+```
+
+If the partition count and server-state logs look right, nudge Director instead
+of restarting maps:
+
+```bash
+docker compose --env-file .env -f compose.yaml -f compose.allmaps.yaml restart director
+```
+
+This makes Director resubscribe to RabbitMQ and re-declare battlegroup/map state
+to FLS. It does not recreate map containers. After the restart, look for:
+
+```bash
+docker logs --since 90s dune_server-director-1 2>&1 \
+  | grep -E 'Director_InitializeDirector|Battlegroups_DeclareBattlegroupUpdates|Battlegroups_SendBattlegroupHeartbeat|RMQ unreachable|No database connection'
+```
+
+For standby/failover hosts, include the active override files in the compose
+command. If a map process is exited, missing from `active_server_ids`, or
+crashing with `Local partition is not found`, use `scripts/recover-map.sh`
+instead. See `docs/operations.md#control-plane-nudges`.
+
 ## FLS Autologin Warning
 
 Symptoms:

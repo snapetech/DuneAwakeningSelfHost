@@ -62,6 +62,7 @@ for from_ip in "$primary_ip" "$standby_ip"; do
   new_dune_rmq="<DuneRMQ>${game_rmq_port}>${target_ip}>${game_rmq_port}>TCP>"
   new="${new//$old_dune_game/$new_dune_game}"
   new="${new//$old_dune_igw/$new_dune_igw}"
+  new="$(printf '%s' "$new" | sed -E "s#<duneA2>[0-9]+:[0-9]+>${from_ip}>>UDP>#${new_dune_igw}#g")"
   new="${new//$old_dune_rmq/$new_dune_rmq}"
 done
 

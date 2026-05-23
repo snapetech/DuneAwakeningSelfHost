@@ -3,9 +3,28 @@ set -euo pipefail
 
 env_file="${1:-.env}"
 container_runtime="${CONTAINER_RUNTIME:-docker}"
-compose=("$container_runtime" compose --env-file "$env_file")
+compose=("$container_runtime" compose)
+IFS=':' read -ra compose_files <<< "${COMPOSE_FILES:-compose.yaml:compose.allmaps.yaml}"
+for compose_file in "${compose_files[@]}"; do
+  compose+=(-f "$compose_file")
+done
+compose+=(--env-file "$env_file")
 db=dune_sb_1_4_0_0
 backup_dir=backups/partition-surgery
+
+read_env() {
+  local key="$1" value
+  value="$(awk -F= -v key="$key" '$1 == key {sub(/^[^=]*=/, ""); print; found=1} END {if (!found) exit 0}' "$env_file" 2>/dev/null | tail -1)"
+  value="${value%\"}"; value="${value#\"}"; value="${value%\'}"; value="${value#\'}"
+  printf '%s' "$value"
+}
+
+partition_count="${DUNE_WORLD_PARTITION_COUNT:-$(read_env DUNE_WORLD_PARTITION_COUNT)}"
+partition_count="${partition_count:-31}"
+if [[ "$partition_count" != "30" && "$partition_count" != "31" ]]; then
+  printf 'DUNE_WORLD_PARTITION_COUNT must be 30 or 31, got: %s\n' "$partition_count" >&2
+  exit 2
+fi
 
 case "$backup_dir" in
   backups/*) ;;
@@ -28,7 +47,7 @@ backup_file="$backup_dir/world-partitions-before-full-world-$(date -u +%Y%m%dT%H
 
 printf 'wrote backup: %s\n' "$backup_file"
 
-"${compose[@]}" exec -T postgres psql -U dune -d "$db" -v ON_ERROR_STOP=1 <<'SQL'
+"${compose[@]}" exec -T postgres psql -U dune -d "$db" -v ON_ERROR_STOP=1 -v partition_count="$partition_count" <<'SQL'
 begin;
 
 with desired(partition_id, map, dimension_index) as (
@@ -72,12 +91,46 @@ insert into dune.world_partition (partition_id, map, dimension_index, partition_
 select d.partition_id, d.map, d.dimension_index, definition.value
 from desired d
 cross join definition
+where d.partition_id <= :partition_count
+  and not exists (
+    select 1
+    from dune.world_partition wp
+    where wp.map = d.map
+      and wp.dimension_index = d.dimension_index
+  );
+
+update dune.actors
+set partition_id = null
+where :partition_count < 31
+  and partition_id in (
+    select partition_id
+    from dune.world_partition
+    where partition_id > :partition_count
+      and map = 'DeepDesert_1'
+      and dimension_index = 1
+  );
+
+delete from dune.world_partition_reset_seed
 where not exists (
-  select 1
-  from dune.world_partition wp
-  where wp.map = d.map
-    and wp.dimension_index = d.dimension_index
+  select 1 from dune.world_partition wp
+  where wp.partition_id = world_partition_reset_seed.partition_id
+)
+or (
+  :partition_count < 31
+  and partition_id in (
+    select partition_id
+    from dune.world_partition
+    where partition_id > :partition_count
+      and map = 'DeepDesert_1'
+      and dimension_index = 1
+  )
 );
+
+delete from dune.world_partition wp
+where :partition_count < 31
+  and wp.partition_id > :partition_count
+  and wp.map = 'DeepDesert_1'
+  and wp.dimension_index = 1;
 
 select setval(
   'dune.world_partition_partition_id_seq',

@@ -1,0 +1,7 @@
+services:
+  gateway:
+    network_mode: host
+    networks: !reset []
+    environment:
+      DuneDatabaseInterfacePSQL_DatabaseHost: 127.0.0.1:15431
+      DuneDatabaseInterfacePSQL_DatabasePort: "15431"

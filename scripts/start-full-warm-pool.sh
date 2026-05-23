@@ -25,6 +25,26 @@ if [[ ! "$wait_seconds" =~ ^[0-9]+$ ]]; then
   exit 2
 fi
 
+read_env() {
+  local key="$1" value
+  value="$(awk -F= -v key="$key" '$1 == key {sub(/^[^=]*=/, ""); print; found=1} END {if (!found) exit 0}' "$env_file" 2>/dev/null | tail -1)"
+  value="${value%\"}"; value="${value#\"}"; value="${value%\'}"; value="${value#\'}"
+  printf '%s' "$value"
+}
+
+batch_size="${DUNE_WARM_POOL_BATCH_SIZE:-0}"
+batch_delay="${DUNE_WARM_POOL_BATCH_DELAY:-20}"
+if [[ ! "$batch_size" =~ ^[0-9]+$ || ! "$batch_delay" =~ ^[0-9]+$ ]]; then
+  printf 'DUNE_WARM_POOL_BATCH_SIZE and DUNE_WARM_POOL_BATCH_DELAY must be numeric\n' >&2
+  exit 2
+fi
+partition_count="${DUNE_WORLD_PARTITION_COUNT:-$(read_env DUNE_WORLD_PARTITION_COUNT)}"
+partition_count="${partition_count:-31}"
+if [[ "$partition_count" != "30" && "$partition_count" != "31" ]]; then
+  printf 'DUNE_WORLD_PARTITION_COUNT must be 30 or 31, got: %s\n' "$partition_count" >&2
+  exit 2
+fi
+
 container_runtime="${CONTAINER_RUNTIME:-docker}"
 compose=("$container_runtime" compose)
 IFS=':' read -ra compose_files <<< "${COMPOSE_FILES:-compose.yaml:compose.allmaps.yaml}"
@@ -94,7 +114,7 @@ wait_for_counts() {
       left join dune.active_server_ids asi on asi.server_id = wp.server_id;
     ")"
     read -r alive_active active partitions <<< "$row"
-    if [[ "$alive_active" == "$expected" && "$active" == "$expected" && "$partitions" == "30" ]]; then
+    if (( alive_active >= expected && active >= expected )) && [[ "$partitions" == "$partition_count" ]]; then
       printf 'ready enough: alive_active=%s active=%s partitions=%s\n' "$alive_active" "$active" "$partitions"
       return 0
     fi
@@ -102,8 +122,32 @@ wait_for_counts() {
     sleep 10
   done
 
-  printf '%s did not reach alive-active/active count %s within %s seconds\n' "$label" "$expected" "$wait_seconds" >&2
+  printf '%s did not reach alive-active/active count %s with %s partitions within %s seconds\n' "$label" "$expected" "$partition_count" "$wait_seconds" >&2
   return 1
+}
+
+start_services() {
+  local services=("$@")
+  local batch=()
+  local service
+
+  if (( batch_size <= 0 )); then
+    "${compose[@]}" up -d --no-recreate "${services[@]}"
+    return
+  fi
+
+  for service in "${services[@]}"; do
+    batch+=("$service")
+    if (( ${#batch[@]} >= batch_size )); then
+      "${compose[@]}" up -d --no-recreate "${batch[@]}"
+      batch=()
+      sleep "$batch_delay"
+    fi
+  done
+
+  if (( ${#batch[@]} > 0 )); then
+    "${compose[@]}" up -d --no-recreate "${batch[@]}"
+  fi
 }
 
 remove_db_init
@@ -114,7 +158,7 @@ wait_for_healthy postgres
 wait_for_healthy admin-rmq
 wait_for_healthy game-rmq
 
-printf 'ensuring 30 world partitions exist\n'
+printf 'ensuring %s world partitions exist\n' "$partition_count"
 COMPOSE_FILES="${COMPOSE_FILES:-compose.yaml:compose.allmaps.yaml}" CONTAINER_RUNTIME="$container_runtime" \
   "$(dirname "$0")/full-world-partitions.sh" "$env_file"
 
@@ -123,25 +167,34 @@ printf 'starting service layer without recreating existing containers\n'
   rmq-auth-shim text-router gateway director admin-panel admin-panel-ingress admin-chat-commands
 "$(dirname "$0")/seed-gateway-neighbor.sh"
 
-printf 'starting base travel maps\n'
-"${compose[@]}" up -d --no-recreate survival overmap
-wait_for_counts 2 'base travel maps'
+printf 'starting base 3 maps\n'
+start_services survival overmap arrakeen
+wait_for_counts 3 'base 3 maps'
 
-printf 'starting base standing farm maps\n'
-"${compose[@]}" up -d --no-recreate \
-  arrakeen harko-village testing-hephaestus testing-carthag testing-waterfat \
+printf 'starting maps 4 through 9\n'
+start_services \
+  harko-village testing-hephaestus testing-carthag testing-waterfat \
   deep-desert proces-verbal
-wait_for_counts 9 'base standing farm maps'
+wait_for_counts 9 'maps 1 through 9'
 
-printf 'starting full warm-pool maps\n'
-"${compose[@]}" up -d --no-recreate \
+printf 'starting maps 10 through 30\n'
+start_services \
   lostharvest-ecolab-a lostharvest-ecolab-b lostharvest-forgottenlab \
   art-of-kanly dungeon-hephaestus dungeon-oldcarthag \
   faction-outpost-atre faction-outpost-hark heighliner-dungeon \
   ecolab-green-089 ecolab-green-152 ecolab-green-024 ecolab-green-195 ecolab-green-136 \
   overland-m-01 overland-s-04 overland-s-06 bandit-fortress \
-  overland-s-07 overland-s-08 dungeon-thepit deep-desert-pvp
-wait_for_counts 31 'full warm pool'
+  overland-s-07 overland-s-08 dungeon-thepit
+wait_for_counts 30 'maps 1 through 30'
+
+if (( partition_count >= 31 )); then
+  printf 'starting partition 31 PVP Deep Desert last\n'
+  start_services deep-desert-pvp
+  wait_for_counts 31 'full warm pool'
+else
+  printf 'skipping partition 31 PVP Deep Desert because DUNE_WORLD_PARTITION_COUNT=%s\n' "$partition_count"
+  "${compose[@]}" stop deep-desert-pvp >/dev/null 2>&1 || true
+fi
 remove_db_init
 
 printf 'final status\n'

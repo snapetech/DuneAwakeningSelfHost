@@ -88,16 +88,32 @@ done
 
 # Local clients on the Dune host itself also receive the public address from FLS.
 # Redirect only this self-host address/port set; official servers are unaffected.
-if ! iptables -t nat -C OUTPUT -p tcp -d "$PUBLIC_IP" --dport "$GAME_RMQ_PUBLIC_PORT" -j REDIRECT --to-ports "$GAME_RMQ_PUBLIC_PORT" 2>/dev/null; then
-    iptables -t nat -A OUTPUT -p tcp -d "$PUBLIC_IP" --dport "$GAME_RMQ_PUBLIC_PORT" -j REDIRECT --to-ports "$GAME_RMQ_PUBLIC_PORT"
-fi
+if iptables -t nat -A OUTPUT -p tcp -d 127.255.255.254 --dport 1 -j REDIRECT --to-ports 1 2>/dev/null; then
+    iptables -t nat -D OUTPUT -p tcp -d 127.255.255.254 --dport 1 -j REDIRECT --to-ports 1 2>/dev/null || true
+    if ! iptables -t nat -C OUTPUT -p tcp -d "$PUBLIC_IP" --dport "$GAME_RMQ_PUBLIC_PORT" -j REDIRECT --to-ports "$GAME_RMQ_PUBLIC_PORT" 2>/dev/null; then
+        iptables -t nat -A OUTPUT -p tcp -d "$PUBLIC_IP" --dport "$GAME_RMQ_PUBLIC_PORT" -j REDIRECT --to-ports "$GAME_RMQ_PUBLIC_PORT"
+    fi
 
-if ! iptables -t nat -C OUTPUT -p udp -d "$PUBLIC_IP" --dport "$GAME_UDP_PORT_RANGE" -j REDIRECT 2>/dev/null; then
-    iptables -t nat -A OUTPUT -p udp -d "$PUBLIC_IP" --dport "$GAME_UDP_PORT_RANGE" -j REDIRECT
-fi
+    if ! iptables -t nat -C OUTPUT -p udp -d "$PUBLIC_IP" --dport "$GAME_UDP_PORT_RANGE" -j REDIRECT 2>/dev/null; then
+        iptables -t nat -A OUTPUT -p udp -d "$PUBLIC_IP" --dport "$GAME_UDP_PORT_RANGE" -j REDIRECT
+    fi
 
-if ! iptables -t nat -C OUTPUT -p udp -d "$PUBLIC_IP" --dport "$IGW_UDP_PORT_RANGE" -j REDIRECT 2>/dev/null; then
-    iptables -t nat -A OUTPUT -p udp -d "$PUBLIC_IP" --dport "$IGW_UDP_PORT_RANGE" -j REDIRECT
+    if ! iptables -t nat -C OUTPUT -p udp -d "$PUBLIC_IP" --dport "$IGW_UDP_PORT_RANGE" -j REDIRECT 2>/dev/null; then
+        iptables -t nat -A OUTPUT -p udp -d "$PUBLIC_IP" --dport "$IGW_UDP_PORT_RANGE" -j REDIRECT
+    fi
+else
+    echo "WARN iptables REDIRECT is unavailable; using DNAT fallback for local self-host redirects"
+    if ! iptables -t nat -C OUTPUT -p tcp -d "$PUBLIC_IP" --dport "$GAME_RMQ_PUBLIC_PORT" -j DNAT --to-destination "127.0.0.1:${GAME_RMQ_PUBLIC_PORT}" 2>/dev/null; then
+        iptables -t nat -A OUTPUT -p tcp -d "$PUBLIC_IP" --dport "$GAME_RMQ_PUBLIC_PORT" -j DNAT --to-destination "127.0.0.1:${GAME_RMQ_PUBLIC_PORT}"
+    fi
+
+    if ! iptables -t nat -C OUTPUT -p udp -d "$PUBLIC_IP" --dport "$GAME_UDP_PORT_RANGE" -j DNAT --to-destination 127.0.0.1 2>/dev/null; then
+        iptables -t nat -A OUTPUT -p udp -d "$PUBLIC_IP" --dport "$GAME_UDP_PORT_RANGE" -j DNAT --to-destination 127.0.0.1
+    fi
+
+    if ! iptables -t nat -C OUTPUT -p udp -d "$PUBLIC_IP" --dport "$IGW_UDP_PORT_RANGE" -j DNAT --to-destination 127.0.0.1 2>/dev/null; then
+        iptables -t nat -A OUTPUT -p udp -d "$PUBLIC_IP" --dport "$IGW_UDP_PORT_RANGE" -j DNAT --to-destination 127.0.0.1
+    fi
 fi
 
 echo "Dune LAN reflection host side is active for ${PUBLIC_IP} on ${LAN_IFACE}; local self-host redirects cover tcp/${GAME_RMQ_PUBLIC_PORT}, udp/${GAME_UDP_PORT_RANGE}, and udp/${IGW_UDP_PORT_RANGE}"

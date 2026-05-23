@@ -1,0 +1,151 @@
+# Resource guardrails for kspls0's 64 GiB class host.
+#
+# These limits do not reduce the game's true working set. They prevent one map
+# from consuming the whole host and make OOM behavior less random under pressure.
+
+x-core-tiny: &core-tiny
+  mem_limit: 512m
+  mem_reservation: 128m
+  cpus: 1.0
+  oom_score_adj: -500
+
+x-core-small: &core-small
+  mem_limit: 2g
+  mem_reservation: 512m
+  cpus: 2.0
+  oom_score_adj: -700
+
+x-map-small: &map-small
+  mem_limit: 3g
+  mem_reservation: 768m
+  cpus: 1.5
+  oom_score_adj: 300
+
+x-map-medium: &map-medium
+  mem_limit: 5g
+  mem_reservation: 1g
+  cpus: 2.0
+  oom_score_adj: 250
+
+x-map-large: &map-large
+  mem_limit: 10g
+  mem_reservation: 2g
+  cpus: 3.0
+  oom_score_adj: 200
+
+services:
+  postgres:
+    <<: *core-small
+
+  admin-rmq:
+    <<: *core-small
+
+  game-rmq:
+    <<: *core-small
+
+  rmq-auth-shim:
+    <<: *core-tiny
+
+  director:
+    <<: *core-tiny
+
+  text-router:
+    <<: *core-tiny
+
+  gateway:
+    <<: *core-tiny
+
+  survival:
+    <<: *map-large
+    oom_score_adj: 100
+
+  overmap:
+    <<: *map-medium
+    oom_score_adj: 100
+
+  deep-desert:
+    <<: *map-large
+
+  deep-desert-pvp:
+    <<: *map-large
+
+  arrakeen:
+    <<: *map-medium
+
+  harko-village:
+    <<: *map-medium
+
+  testing-hephaestus:
+    <<: *map-medium
+
+  testing-carthag:
+    <<: *map-medium
+
+  testing-waterfat:
+    <<: *map-medium
+
+  proces-verbal:
+    <<: *map-medium
+
+  lostharvest-ecolab-a:
+    <<: *map-medium
+
+  lostharvest-ecolab-b:
+    <<: *map-medium
+
+  lostharvest-forgottenlab:
+    <<: *map-medium
+
+  art-of-kanly:
+    <<: *map-small
+
+  dungeon-hephaestus:
+    <<: *map-small
+
+  dungeon-oldcarthag:
+    <<: *map-small
+
+  faction-outpost-atre:
+    <<: *map-small
+
+  faction-outpost-hark:
+    <<: *map-small
+
+  heighliner-dungeon:
+    <<: *map-small
+
+  ecolab-green-089:
+    <<: *map-small
+
+  ecolab-green-152:
+    <<: *map-small
+
+  ecolab-green-024:
+    <<: *map-small
+
+  ecolab-green-195:
+    <<: *map-small
+
+  ecolab-green-136:
+    <<: *map-small
+
+  overland-m-01:
+    <<: *map-small
+
+  overland-s-04:
+    <<: *map-small
+
+  overland-s-06:
+    <<: *map-small
+
+  bandit-fortress:
+    <<: *map-small
+
+  overland-s-07:
+    <<: *map-small
+
+  overland-s-08:
+    <<: *map-small
+
+  dungeon-thepit:
+    <<: *map-small

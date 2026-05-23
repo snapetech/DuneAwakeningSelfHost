@@ -112,6 +112,81 @@ COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' \
 
 The helper marks the old partition owner dead, stops the map service, waits until the old id is no longer active, starts the service, and waits for the partition to become ready/alive/active again.
 
+## Control-Plane Nudges
+
+Use a nudge when the maps are already running and registered locally, but the
+browser/FLS view is stale. This is different from map recovery: do not restart
+map containers just because the server browser is missing maps.
+
+Good nudge candidates:
+
+- The server parent row appears in the browser, but the nested map list is empty
+  or stale.
+- `world_partition` has the expected assigned rows and `blocked=false`.
+- Director logs show `[ServerState] Received server state` for the expected
+  partitions.
+- Director, gateway, or RabbitMQ had a temporary connectivity failure and then
+  recovered.
+
+First confirm the local state:
+
+```bash
+docker compose --env-file .env exec -T postgres psql -U dune -d dune_sb_1_4_0_0 \
+  -c "select count(*) filter (where server_id is not null) assigned, count(*) filter (where blocked) blocked, count(*) total from dune.world_partition;"
+
+docker logs --since 5m dune_server-director-1 2>&1 \
+  | grep '\[ServerState\] Received server state' \
+  | sed -E 's/.*"partitionId":([0-9]+).*/\1/' \
+  | sort -n | uniq -c
+```
+
+If maps are locally present but FLS declarations are stale, restart only
+Director. This causes Director to rebuild RabbitMQ subscriptions and re-declare
+the battlegroup/map state to FLS without replacing running map containers:
+
+```bash
+docker compose --env-file .env \
+  -f compose.yaml -f compose.allmaps.yaml \
+  restart director
+```
+
+On standby/failover hosts, include the same override files the stack is
+currently using. For example:
+
+```bash
+docker compose --env-file .env \
+  -f compose.yaml -f compose.failover-standby.yaml \
+  -f compose.allmaps.yaml -f compose.kspls0-limits.yaml \
+  restart director
+```
+
+Verify the nudge by watching for successful FLS calls:
+
+```bash
+docker logs --since 90s dune_server-director-1 2>&1 \
+  | grep -E 'Director_InitializeDirector|Battlegroups_DeclareBattlegroupUpdates|Battlegroups_SendBattlegroupHeartbeat|RMQ unreachable|No database connection'
+```
+
+If the parent server row itself is missing from the browser, nudge `gateway`
+instead of Director:
+
+```bash
+docker compose --env-file .env up -d --force-recreate --no-deps gateway
+./scripts/seed-gateway-neighbor.sh
+```
+
+If Director cannot reach RabbitMQ, nudge the stuck broker path first, then
+Director:
+
+```bash
+docker exec dune_server-director-1 sh -lc 'nc -vz -w2 game-rmq 5672; nc -vz -w2 admin-rmq 5672; nc -vz -w2 postgres 5432'
+docker compose --env-file .env restart admin-rmq director
+```
+
+If a specific map container is exited, dead, missing from `active_server_ids`,
+or crashing with `Local partition is not found`, use the fixed-partition map
+recovery helper instead of a nudge.
+
 ## Map Watchdog
 
 Compose does not currently restart map containers automatically, and a generic `restart: always` policy is not safe for fixed-partition maps because a fast blind restart can reproduce the stale server-id crash loop.
