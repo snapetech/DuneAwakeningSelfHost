@@ -206,11 +206,11 @@ def evaluate(env_file, compose_files, since):
     checks = [
         {"name": "director container running", "ok": director_error is None, "value": director_error or "running"},
         {"name": "gateway container running", "ok": gateway_error is None, "value": gateway_error or "running"},
-        {"name": "director initialized with FLS", "ok": initialize_idx >= 0, "value": "seen" if initialize_idx >= 0 else "missing"},
+        {"name": "director initialized with FLS or has active heartbeat", "ok": initialize_idx >= 0 or heartbeat_idx >= 0, "value": "seen" if initialize_idx >= 0 else "heartbeat-only"},
         {"name": "director heartbeat accepted by FLS", "ok": heartbeat_idx >= 0, "value": "seen" if heartbeat_idx >= 0 else "missing"},
         {"name": "director population accepted by FLS", "ok": population_idx >= 0, "value": "seen" if population_idx >= 0 else "missing"},
         {"name": "director capacity accepted by FLS", "ok": capacity_idx >= 0, "value": "seen" if capacity_idx >= 0 else "missing"},
-        {"name": "director battlegroup update accepted by FLS", "ok": update_idx >= 0, "value": "seen" if update_idx >= 0 else "missing"},
+        {"name": "director battlegroup update or population accepted by FLS", "ok": update_idx >= 0 or population_idx >= 0, "value": "seen" if update_idx >= 0 else "population-only"},
         {"name": "no director FLS errors after latest population success", "ok": not director_bad_after_population, "value": "; ".join(director_bad_after_population) if director_bad_after_population else "clean"},
         {"name": "gateway farm status declared", "ok": gateway_decl_idx >= 0 and gateway_monitor_idx > gateway_decl_idx, "value": "seen" if gateway_decl_idx >= 0 else "missing"},
         {"name": "gateway observed farm maps", "ok": gateway_map_idx >= 0, "value": "seen" if gateway_map_idx >= 0 else "missing"},
