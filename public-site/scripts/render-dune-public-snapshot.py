@@ -221,6 +221,39 @@ def load_deep_desert_observations():
     return json.loads(text)
 
 
+def load_map_health():
+    sql = r"""
+        select coalesce(json_agg(row_to_json(t)), '[]'::json)
+        from (
+            select coalesce(wp.label, wp.map, 'Unknown') as name,
+                   wp.map,
+                   case
+                     when wp.blocked then 'offline'
+                     when wp.server_id is null then 'offline'
+                     when coalesce(fs.alive, false) and exists (
+                       select 1 from dune.active_server_ids asi where asi.server_id = wp.server_id
+                     ) and coalesce(fs.ready, false) then 'online'
+                     when coalesce(fs.alive, false) and exists (
+                       select 1 from dune.active_server_ids asi where asi.server_id = wp.server_id
+                     ) then 'degraded'
+                     else 'offline'
+                   end as status,
+                   coalesce(fs.ready, false) as ready,
+                   coalesce(fs.alive, false) as alive,
+                   exists (
+                     select 1 from dune.active_server_ids asi where asi.server_id = wp.server_id
+                   ) as active,
+                   wp.blocked,
+                   coalesce(fs.connected_players, 0) as players
+            from dune.world_partition wp
+            left join dune.farm_state fs on fs.server_id = wp.server_id
+            order by wp.partition_id
+        ) t
+    """
+    text = compose_psql(sql).strip() or "[]"
+    return json.loads(text)
+
+
 def clamp(value, low, high):
     return max(low, min(high, value))
 
@@ -514,6 +547,7 @@ def main():
     generated = generated_dt.strftime("%Y-%m-%d %H:%M UTC")
     try:
         players = load_rows()
+        map_health = load_map_health()
         deep_desert_markers = load_deep_desert_markers()
         deep_desert_layout = load_deep_desert_layout_state()
         deep_desert_observations = load_deep_desert_observations()
@@ -521,6 +555,7 @@ def main():
         error = None
     except Exception as exc:
         players = []
+        map_health = []
         deep_desert_markers = []
         deep_desert_layout = {}
         deep_desert_observations = {"source": "unavailable", "spiceAvailability": [], "shipwreckSpawners": []}
@@ -537,6 +572,12 @@ def main():
         for p in players
     ]
     daily_peak = update_daily_peak(len(public_players), generated_dt)
+    map_health_summary = {
+        "online": sum(1 for row in map_health if row.get("status") == "online"),
+        "degraded": sum(1 for row in map_health if row.get("status") == "degraded"),
+        "offline": sum(1 for row in map_health if row.get("status") == "offline"),
+        "total": len(map_health),
+    }
     snapshot = {
         "ok": ok,
         "generatedAt": generated,
@@ -546,6 +587,8 @@ def main():
         "peakDate": daily_peak["date"],
         "haggaPlotted": sum(1 for p in public_players if p["onHaggaMap"]),
         "deepDesertPlotted": sum(1 for p in players if p.get("actor_map") in ("DeepDesert", "DeepDesert_1") and p.get("x") is not None and p.get("y") is not None),
+        "mapHealth": map_health_summary,
+        "mapStatus": map_health,
         "deepDesertMarkers": len(deep_desert_markers),
         "deepDesertLayout": {
             "farmSeed": (deep_desert_layout.get("seeds") or {}).get("farm"),

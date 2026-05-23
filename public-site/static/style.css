@@ -213,6 +213,113 @@ section {
 	margin: -2px 0 8px;
 }
 
+.map-health-panel {
+	border: 1px solid #3a342d;
+	border-radius: 6px;
+	background: #13110f;
+	min-height: 420px;
+	padding: 12px;
+}
+
+.map-health-summary {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-bottom: 12px;
+}
+
+.map-health-list {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+	gap: 8px;
+}
+
+.map-health-row {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr);
+	grid-template-areas:
+		"dot name"
+		"dot state"
+		"dot checks";
+	gap: 5px 9px;
+	align-items: center;
+	border: 1px solid #3a342d;
+	border-radius: 6px;
+	background: #171512;
+	padding: 10px;
+}
+
+.map-health-ok {
+	border-color: #507b52;
+}
+
+.map-health-warn {
+	border-color: #7b6634;
+}
+
+.map-health-down {
+	border-color: #794343;
+}
+
+.map-health-row > .status-dot {
+	grid-area: dot;
+	width: 0.85rem;
+	height: 0.85rem;
+	box-shadow: 0 0 10px currentColor;
+}
+
+.map-health-name {
+	grid-area: name;
+	min-width: 0;
+}
+
+.map-health-state {
+	grid-area: state;
+	min-width: 0;
+}
+
+.map-health-name strong,
+.map-health-state strong,
+.map-health-name small,
+.map-health-state small {
+	display: block;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.map-health-name small,
+.map-health-state small {
+	color: #c7bba9;
+	font-size: 0.8rem;
+}
+
+.map-health-checks {
+	grid-area: checks;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 5px;
+}
+
+.map-health-chip {
+	border: 1px solid #5b503f;
+	border-radius: 999px;
+	color: #c7bba9;
+	font-size: 0.72rem;
+	line-height: 1;
+	padding: 3px 6px;
+}
+
+.map-health-chip.ok {
+	border-color: #507b52;
+	color: #8be092;
+}
+
+.map-health-chip.bad {
+	border-color: #794343;
+	color: #e08983;
+}
+
 .map-tools {
 	display: flex;
 	gap: 8px;
@@ -584,18 +691,22 @@ dd {
 
 .status-ok {
 	background: #6fcf7d;
+	color: #6fcf7d;
 }
 
 .status-warn {
 	background: #e0b84f;
+	color: #e0b84f;
 }
 
 .status-down {
 	background: #d65b5b;
+	color: #d65b5b;
 }
 
 .status-unknown {
 	background: #8a8275;
+	color: #8a8275;
 }
 
 .status-help {

@@ -151,6 +151,90 @@ class CommandReplyTargetTests(unittest.TestCase):
         self.assertEqual(captured["targetName"], "AdminUser")
         self.assertEqual(captured["targetFlsId"], "TEST_FLS_ID")
 
+    def test_list_replies_with_online_players_and_maps(self):
+        captured = {}
+
+        def fake_run_announce(message, target_name="", target_fls_id=""):
+            captured["message"] = message
+            captured["targetName"] = target_name
+            captured["targetFlsId"] = target_fls_id
+            return {"ok": True, "stdout": '{"transport":"chat.whispers"}', "stderr": ""}
+
+        players = [
+            {"character_name": "Lukano", "map_label": "Abbir"},
+            {"character_name": "Pablo", "map_label": "HaggaBasin"},
+        ]
+
+        with unittest.mock.patch.object(admin_chat_commands, "online_player_list", lambda conn: players), \
+             unittest.mock.patch.object(admin_chat_commands, "run_announce", fake_run_announce):
+            result = admin_chat_commands.handle_command(
+                object(),
+                "&list",
+                sender_name="Pablo",
+                sender_fls_id="TEST_FLS_ID",
+                reply=True,
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["action"], "list")
+        self.assertEqual(result["message"], "online players: Lukano (Abbir), Pablo (HaggaBasin)")
+        self.assertEqual(captured["message"], result["message"])
+        self.assertEqual(captured["targetName"], "Pablo")
+        self.assertEqual(captured["targetFlsId"], "TEST_FLS_ID")
+
+    def test_list_handles_empty_roster(self):
+        with unittest.mock.patch.object(admin_chat_commands, "online_player_list", lambda conn: []):
+            result = admin_chat_commands.handle_command(object(), "&list", sender_name="Pablo", sender_fls_id="TEST_FLS_ID")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["message"], "no players online")
+
+    def test_inv_list_replies_with_item_codes(self):
+        captured = {}
+        items = [{"id": 123, "template_id": "SteelBar", "stack_size": 500}]
+
+        def fake_run_announce(message, target_name="", target_fls_id=""):
+            captured["message"] = message
+            captured["targetName"] = target_name
+            captured["targetFlsId"] = target_fls_id
+            return {"ok": True, "stdout": '{"transport":"chat.whispers"}', "stderr": ""}
+
+        with unittest.mock.patch.object(admin_chat_commands, "resolve_sender_character", lambda conn, sender_name, sender_fls_id: "Lukano"), \
+             unittest.mock.patch.object(admin_chat_commands, "character_row", lambda conn, name: ({"character_name": "Lukano"}, [])), \
+             unittest.mock.patch.object(admin_chat_commands, "inventory_list_for_player", lambda conn, player: (items, "inventory: 500x Steel Ingot code=SteelBar item-id=123")), \
+             unittest.mock.patch.object(admin_chat_commands, "run_announce", fake_run_announce):
+            result = admin_chat_commands.handle_command(
+                object(),
+                "&inv_list",
+                sender_name="Lukano",
+                sender_fls_id="TEST_FLS_ID",
+                reply=True,
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["action"], "inv_list")
+        self.assertEqual(result["message"], "inventory: 500x Steel Ingot code=SteelBar item-id=123")
+        self.assertEqual(captured["targetName"], "Lukano")
+        self.assertEqual(captured["targetFlsId"], "TEST_FLS_ID")
+
+    def test_bare_auction_replies_with_usage_and_inventory_list(self):
+        items = [{"id": 123, "template_id": "SteelBar", "stack_size": 500}]
+
+        with unittest.mock.patch.object(admin_chat_commands, "resolve_sender_character", lambda conn, sender_name, sender_fls_id: "Lukano"), \
+             unittest.mock.patch.object(admin_chat_commands, "character_row", lambda conn, name: ({"character_name": "Lukano"}, [])), \
+             unittest.mock.patch.object(admin_chat_commands, "inventory_list_for_player", lambda conn, player: (items, "inventory: 500x Steel Ingot code=SteelBar item-id=123")):
+            result = admin_chat_commands.handle_command(
+                object(),
+                "&auction",
+                sender_name="Lukano",
+                sender_fls_id="TEST_FLS_ID",
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["action"], "auction.help")
+        self.assertIn("usage: &auction --item-id <item-id> <count> <price>", result["message"])
+        self.assertIn("inventory: 500x Steel Ingot code=SteelBar item-id=123", result["message"])
+
     def test_gm_subcommand_includes_inferred_private_reply_metadata(self):
         def fake_run_announce(message, target_name="", target_fls_id=""):
             admin_chat_commands.LAST_ANNOUNCE_RESULT = {"ok": True, "stdout": '{"transport":"chat.whispers"}', "stderr": ""}

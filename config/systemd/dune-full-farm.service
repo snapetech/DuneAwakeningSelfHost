@@ -6,6 +6,14 @@ Requires=docker.service
 
 [Service]
 Type=oneshot
+# Run as the owner of the docker compose CLI plugin
+# (~/.docker/cli-plugins/docker-compose). Without User=, systemd runs the
+# script as root, and root's docker doesn't find the plugin, so `docker
+# compose -f ...` becomes `docker -f ...` and exits 125 with
+# "unknown shorthand flag: 'f'". Set DUNE_SERVICE_USER in the installer
+# environment to override.
+User=DUNE_SERVICE_USER_PLACEHOLDER
+Group=DUNE_SERVICE_USER_PLACEHOLDER
 WorkingDirectory=/opt/DuneAwakeningSelfHost
 ExecStart=/opt/DuneAwakeningSelfHost/scripts/start-full-warm-pool.sh /opt/DuneAwakeningSelfHost/.env
 RemainAfterExit=yes

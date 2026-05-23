@@ -129,6 +129,14 @@ if [[ "$current_tag" == "$package_tag" ]]; then
   exit 0
 fi
 
+current_build="${current_tag%%-*}"
+package_build="${package_tag%%-*}"
+if [[ "$current_build" =~ ^[0-9]+$ && "$package_build" =~ ^[0-9]+$ && "$package_build" -lt "$current_build" ]]; then
+  echo "status: package older than current DUNE_IMAGE_TAG"
+  echo "keeping current tag: $current_tag"
+  exit 0
+fi
+
 echo "status: update available"
 echo "next tag: $package_tag"
 echo "next steps:"

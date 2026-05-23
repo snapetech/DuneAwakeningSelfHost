@@ -25,6 +25,8 @@ done
 if command -v jq >/dev/null 2>&1; then
   jq -e '.ok | type == "boolean"' "$static_dir/players.json" >/dev/null
   jq -e '.players | type == "array"' "$static_dir/players.json" >/dev/null
+  jq -e '(.mapStatus // []) | type == "array"' "$static_dir/players.json" >/dev/null
+  jq -e '(.mapHealth // {}) | type == "object"' "$static_dir/players.json" >/dev/null
   jq -e '.groups | type == "object"' "$static_dir/hagga-pois.json" >/dev/null
   jq -e '.markers | type == "array" and length > 0' "$static_dir/hagga-pois.json" >/dev/null
   jq -e '
@@ -66,6 +68,8 @@ fi
 
 grep -q 'id="hagga-map"' "$static_dir/index.html"
 grep -q 'data-map-tab="deep-desert"' "$static_dir/index.html"
+grep -q 'data-map-tab="health"' "$static_dir/index.html"
+grep -q 'id="map-health-panel"' "$static_dir/index.html"
 grep -q 'id="active-players"' "$static_dir/index.html"
 grep -q 'id="poi-toggles"' "$static_dir/index.html"
 grep -q 'id="poi-all"' "$static_dir/index.html"

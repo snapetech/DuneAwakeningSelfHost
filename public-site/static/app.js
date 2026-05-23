@@ -23,11 +23,15 @@
 	var mapReset = document.getElementById("map-reset");
 	var mapTabs = Array.prototype.slice.call(document.querySelectorAll("[data-map-tab]"));
 	var mapTabStatus = document.getElementById("map-tab-status");
+	var mapTools = document.getElementById("map-tools");
+	var mapLayout = document.getElementById("map-layout");
+	var mapHealthPanel = document.getElementById("map-health-panel");
 	if (typeof fetch !== "function") {
 		return;
 	}
 	var maxStatusAgeMs = 150000;
 	var activeMapTab = "hagga";
+	var latestSnapshot = null;
 	var scriptNode = document.currentScript || document.querySelector("script[src$='app.js']");
 	var assetBaseUrl = scriptNode && scriptNode.src ? new URL(".", scriptNode.src) : new URL("./", window.location.href);
 
@@ -275,6 +279,7 @@
 	}
 
 	function renderPlayers(data) {
+		latestSnapshot = data || {};
 		var list = Array.isArray(data.players) ? data.players : [];
 		if (count) {
 			count.textContent = String(data.onlineCount || list.length || 0) + " online";
@@ -310,10 +315,98 @@
 			appendTextElement(item, "span", "map-chip", "Online");
 			players.appendChild(item);
 		});
+		renderMapHealth(data);
+	}
+
+	function mapHealthClass(row) {
+		var status = String((row && row.status) || "").toLowerCase();
+		if (status === "online") {
+			return "ok";
+		}
+		if (status === "degraded") {
+			return "warn";
+		}
+		return "down";
+	}
+
+	function mapHealthLabel(row) {
+		var status = String((row && row.status) || "").toLowerCase();
+		if (status === "online") {
+			return "Online";
+		}
+		if (status === "degraded") {
+			return "Degraded";
+		}
+		return "Offline";
+	}
+
+	function renderMapHealth(data) {
+		if (!mapHealthPanel) {
+			return;
+		}
+		var rows = Array.isArray(data && data.mapStatus) ? data.mapStatus : [];
+		clearNode(mapHealthPanel);
+		var summary = data && data.mapHealth ? data.mapHealth : {};
+		var summaryRow = document.createElement("div");
+		summaryRow.className = "map-health-summary";
+		[
+			["status-ok", "Online", summary.online || 0],
+			["status-warn", "Degraded", summary.degraded || 0],
+			["status-down", "Offline", summary.offline || 0],
+			["status-unknown", "Total", summary.total || rows.length || 0]
+		].forEach(function (item) {
+			var pill = document.createElement("span");
+			pill.className = "pill";
+			var dot = document.createElement("span");
+			dot.className = "status-dot " + item[0];
+			pill.appendChild(dot);
+			pill.appendChild(document.createTextNode(item[1] + " " + item[2]));
+			summaryRow.appendChild(pill);
+		});
+		mapHealthPanel.appendChild(summaryRow);
+		if (!rows.length) {
+			appendTextElement(mapHealthPanel, "p", "muted", "Map health is unavailable.");
+			return;
+		}
+		var list = document.createElement("div");
+		list.className = "map-health-list";
+		rows.forEach(function (row) {
+			var state = mapHealthClass(row);
+			var item = document.createElement("div");
+			item.className = "map-health-row map-health-" + state;
+			var dot = document.createElement("span");
+			dot.className = "status-dot " + (state === "ok" ? "status-ok" : state === "warn" ? "status-warn" : "status-down");
+			var name = document.createElement("div");
+			name.className = "map-health-name";
+			appendTextElement(name, "strong", "", row.name || row.map || "Map");
+			appendTextElement(name, "small", "", row.map || "");
+			var stateText = document.createElement("div");
+			stateText.className = "map-health-state";
+			appendTextElement(stateText, "strong", "", mapHealthLabel(row));
+			appendTextElement(stateText, "small", "", String(row.players || 0) + " players");
+			var checks = document.createElement("div");
+			checks.className = "map-health-checks";
+			[
+				["ready", row.ready],
+				["alive", row.alive],
+				["active", row.active]
+			].forEach(function (check) {
+				var chip = document.createElement("span");
+				chip.className = "map-health-chip " + (check[1] ? "ok" : "bad");
+				chip.textContent = check[0];
+				checks.appendChild(chip);
+			});
+			item.appendChild(dot);
+			item.appendChild(name);
+			item.appendChild(stateText);
+			item.appendChild(checks);
+			list.appendChild(item);
+		});
+		mapHealthPanel.appendChild(list);
 	}
 
 	function refreshSnapshot() {
-		if (map) {
+		if (map && activeMapTab !== "health") {
 			map.onerror = function () {
 				if (activeMapTab === "deep-desert") {
 					map.onerror = null;
@@ -526,29 +619,41 @@
 	}
 
 	function selectMapTab(tab) {
-		activeMapTab = tab === "deep-desert" ? "deep-desert" : "hagga";
+		activeMapTab = tab === "deep-desert" ? "deep-desert" : tab === "health" ? "health" : "hagga";
 		mapTabs.forEach(function (button) {
 			var selected = button.getAttribute("data-map-tab") === activeMapTab;
 			button.classList.toggle("active", selected);
 			button.setAttribute("aria-selected", selected ? "true" : "false");
 		});
 		if (poiLegend) {
-			poiLegend.hidden = activeMapTab === "deep-desert";
+			poiLegend.hidden = activeMapTab !== "hagga";
 		}
 		if (poiOverlay) {
-			poiOverlay.hidden = activeMapTab === "deep-desert";
+			poiOverlay.hidden = activeMapTab !== "hagga";
 		}
 		if (poiAttribution) {
-			poiAttribution.hidden = activeMapTab === "deep-desert";
+			poiAttribution.hidden = activeMapTab !== "hagga";
+		}
+		if (mapTools) {
+			mapTools.hidden = activeMapTab === "health";
+		}
+		if (mapLayout) {
+			mapLayout.hidden = activeMapTab === "health";
+		}
+		if (mapHealthPanel) {
+			mapHealthPanel.hidden = activeMapTab !== "health";
 		}
 		if (mapTabStatus) {
-			mapTabStatus.textContent = activeMapTab === "deep-desert" ? "Showing Deep Desert." : "Showing Hagga Basin.";
+			mapTabStatus.textContent = activeMapTab === "deep-desert" ? "Showing Deep Desert." : activeMapTab === "health" ? "Showing map health." : "Showing Hagga Basin.";
 		}
-		if (mapContent) {
+		if (mapContent && activeMapTab !== "health") {
 			mapContent.style.opacity = "0.72";
 			window.setTimeout(function () {
 				mapContent.style.opacity = "";
 			}, 120);
+		}
+		if (activeMapTab === "health" && latestSnapshot) {
+			renderMapHealth(latestSnapshot);
 		}
 		refreshSnapshot();
 	}

@@ -38,12 +38,21 @@ if [[ "$env_path" != /* ]]; then
   env_path="$repo_root/$env_path"
 fi
 
+# Default the service user to whoever owns this checkout (almost always the
+# operator running the installer). Their HOME is where the docker compose CLI
+# plugin lives, so the service must run as them or `docker compose` exits 125
+# with "unknown shorthand flag: 'f'". Override with DUNE_SERVICE_USER.
+service_user="${DUNE_SERVICE_USER:-$(stat -c %U "$repo_root")}"
+service_group="${DUNE_SERVICE_GROUP:-$(stat -c %G "$repo_root")}"
+
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
 
 sed \
   -e "s#^WorkingDirectory=.*#WorkingDirectory=$repo_root#" \
   -e "s#^ExecStart=.*#ExecStart=$repo_root/scripts/start-full-warm-pool.sh $env_path#" \
+  -e "s#^User=DUNE_SERVICE_USER_PLACEHOLDER#User=$service_user#" \
+  -e "s#^Group=DUNE_SERVICE_USER_PLACEHOLDER#Group=$service_group#" \
   "$template" > "$tmp"
 
 install_cmd=(install -m 0644 "$tmp" "$unit_path")

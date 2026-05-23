@@ -1104,6 +1104,8 @@ Implemented commands:
 
 ```text
 &test
+&list
+&inv_list
 &where <playername>
 &disconnect <playername>
 &kick <playername>
@@ -1128,6 +1130,10 @@ Implemented commands:
 ```
 
 `&test` replies with `f00` through the configured announcement/reply path. Use it as the first live smoke test for chat-command ingestion and reply delivery.
+
+`&list` replies to the sender with all currently online players formatted as `Player (Map)`. It also accepts `&players` and `&online`.
+
+`&inv_list` replies to the sender with their personal inventory stacks, including `code=<template_id>` and `item-id=<item_id>` for auction listing. Players can use `&auction --item-id <item-id> <count> <price>` for an exact stack, or `&auction "<item code/template>" <count> <price>` for template matching. Bare `&auction` replies with the syntax and the same inventory list.
 
 `&where` reports the resolved player's current online/offline state and last known location. `&teleport <playername>` moves an offline target to the admin's current partition and location. Live actor transforms are owned by the running map server and can be overwritten, so raw online actor updates are not a teleport path.
 

@@ -7,7 +7,7 @@ The public site is deliberately boring from a security perspective:
 - The browser only fetches static files.
 - The renderer runs locally on the DASH host.
 - The public web server never needs Docker, Postgres, RabbitMQ, `.env`, admin-token, or admin-panel access.
-- Generated `players.json` omits Steam IDs, Steam persona names, Steam profile URLs, Funcom IDs, account IDs, controller IDs, pawn IDs, raw database rows, internal hostnames, ports, tokens, and raw coordinate JSON.
+- Generated `players.json` includes public player display rows, coarse map health, and public map-status labels. It omits Steam IDs, Steam persona names, Steam profile URLs, Funcom IDs, account IDs, controller IDs, pawn IDs, raw database rows, internal hostnames, ports, tokens, and raw coordinate JSON.
 
 ## What It Generates
 

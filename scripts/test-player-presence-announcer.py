@@ -166,6 +166,93 @@ class PublicAnnouncementRoutingTests(unittest.TestCase):
         )
         self.assertEqual(state["seenAccounts"], ["123", "456"])
 
+    def test_quick_rejoin_session_change_triggers_join_and_private_messages(self):
+        player = {"name": "Returner", "flsId": "RETURN_FLS", "lastLoginTime": "2026-05-22 19:05:00+00"}
+        snapshots = [
+            {**player, "lastLoginTime": "2026-05-22 19:06:00+00"},
+        ]
+        state = {
+            "onlinePlayers": {"456": player},
+            "seenAccounts": ["456"],
+            "recentLeaves": {},
+        }
+        announced = []
+        sent = []
+
+        def fake_online_players():
+            return {"456": snapshots.pop(0)}
+
+        def fake_save_state(next_state):
+            state.clear()
+            state.update(next_state)
+
+        def fake_announce(message):
+            announced.append(message)
+            return {"ok": True}
+
+        def fake_private_message(target, message, job_id="player-presence-private-message"):
+            sent.append({"target": target, "message": message, "jobId": job_id})
+            return {"ok": True}
+
+        file_env = {
+            "DUNE_PLAYER_PRESENCE_ANNOUNCE_ENABLED": "true",
+            "DUNE_PLAYER_PRESENCE_RETURN_JOIN_TEMPLATE": "Welcome back {playername}! Current player count is now {count}.",
+            "DUNE_PLAYER_PRESENCE_PRIVATE_WELCOME_ENABLED": "true",
+            "DUNE_PLAYER_PRESENCE_PRIVATE_WELCOME_TEMPLATE": "Private welcome {playername}",
+            "DUNE_PLAYER_PRESENCE_RECONNECT_RECOVERY_ENABLED": "true",
+            "DUNE_PLAYER_PRESENCE_RECONNECT_RECOVERY_TEMPLATE": "Reconnect help {playername}",
+            "DUNE_PLAYER_PRESENCE_STARTER_BASE_TOOL_ENABLED": "false",
+            "DUNE_PLAYER_PRESENCE_ADMIN_FIRST_LOGIN_DAILY_ENABLED": "false",
+        }
+
+        with unittest.mock.patch.object(player_presence_announcer, "FILE_ENV", file_env), \
+             unittest.mock.patch.dict(player_presence_announcer.os.environ, {}, clear=True), \
+             unittest.mock.patch.object(player_presence_announcer, "online_players", fake_online_players), \
+             unittest.mock.patch.object(player_presence_announcer, "load_state", lambda: state.copy()), \
+             unittest.mock.patch.object(player_presence_announcer, "save_state", fake_save_state), \
+             unittest.mock.patch.object(player_presence_announcer, "announce", fake_announce), \
+             unittest.mock.patch.object(player_presence_announcer, "private_message", fake_private_message):
+            result = player_presence_announcer.check_once()
+
+        self.assertEqual(result["joined"], ["Returner"])
+        self.assertEqual(result["sessionRejoined"], ["Returner"])
+        self.assertEqual(result["announcements"][0]["event"], "join-returning")
+        self.assertEqual(announced, ["Welcome back Returner! Current player count is now 1."])
+        self.assertEqual(result["privateWelcomeMessages"][0]["message"], "Private welcome Returner")
+        self.assertEqual(result["automatedPrivateMessages"][0]["event"], "reconnect-recovery")
+        self.assertEqual(result["automatedPrivateMessages"][0]["message"], "Reconnect help Returner")
+        self.assertEqual([item["jobId"] for item in sent], ["player-presence-private-welcome", "player-presence-reconnect-recovery"])
+
+    def test_existing_online_player_without_old_session_marker_is_not_reannounced(self):
+        state = {
+            "onlinePlayers": {"456": {"name": "Returner", "flsId": "RETURN_FLS"}},
+            "seenAccounts": ["456"],
+        }
+
+        def fake_save_state(next_state):
+            state.clear()
+            state.update(next_state)
+
+        file_env = {
+            "DUNE_PLAYER_PRESENCE_ANNOUNCE_ENABLED": "true",
+            "DUNE_PLAYER_PRESENCE_PRIVATE_WELCOME_ENABLED": "true",
+            "DUNE_PLAYER_PRESENCE_STARTER_BASE_TOOL_ENABLED": "false",
+            "DUNE_PLAYER_PRESENCE_ADMIN_FIRST_LOGIN_DAILY_ENABLED": "false",
+        }
+
+        with unittest.mock.patch.object(player_presence_announcer, "FILE_ENV", file_env), \
+             unittest.mock.patch.dict(player_presence_announcer.os.environ, {}, clear=True), \
+             unittest.mock.patch.object(player_presence_announcer, "online_players", lambda: {"456": {"name": "Returner", "flsId": "RETURN_FLS", "lastLoginTime": "2026-05-22 19:06:00+00"}}), \
+             unittest.mock.patch.object(player_presence_announcer, "load_state", lambda: state.copy()), \
+             unittest.mock.patch.object(player_presence_announcer, "save_state", fake_save_state):
+            result = player_presence_announcer.check_once()
+
+        self.assertEqual(result["joined"], [])
+        self.assertEqual(result["sessionRejoined"], [])
+        self.assertEqual(result["announcements"], [])
+        self.assertEqual(result["privateWelcomeMessages"], [])
+        self.assertEqual(state["onlinePlayers"]["456"]["lastLoginTime"], "2026-05-22 19:06:00+00")
+
 
 class ServiceHealthCheckTests(unittest.TestCase):
     def test_default_freshness_check_excludes_derived_hagga_map_svg(self):
@@ -178,6 +265,7 @@ class ServiceHealthCheckTests(unittest.TestCase):
             file_env = {
                 "DUNE_PLAYER_PRESENCE_SERVICE_HEALTH_UNITS": ",",
                 "DUNE_PLAYER_PRESENCE_FRESHNESS_MAX_AGE_SECONDS": "300",
+                "DUNE_PLAYER_PRESENCE_FLS_PUBLICATION_HEALTH_ENABLED": "false",
             }
             with unittest.mock.patch.object(player_presence_announcer, "ROOT", root), \
                  unittest.mock.patch.object(player_presence_announcer, "FILE_ENV", file_env), \
@@ -198,6 +286,7 @@ class ServiceHealthCheckTests(unittest.TestCase):
                 "DUNE_PLAYER_PRESENCE_SERVICE_HEALTH_UNITS": ",",
                 "DUNE_PLAYER_PRESENCE_FRESHNESS_FILES": "public-site/static/players.json,public-site/static/hagga-map.svg",
                 "DUNE_PLAYER_PRESENCE_FRESHNESS_MAX_AGE_SECONDS": "300",
+                "DUNE_PLAYER_PRESENCE_FLS_PUBLICATION_HEALTH_ENABLED": "false",
             }
             with unittest.mock.patch.object(player_presence_announcer, "ROOT", root), \
                  unittest.mock.patch.object(player_presence_announcer, "FILE_ENV", file_env), \

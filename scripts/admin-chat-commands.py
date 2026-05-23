@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import collections
+import csv
 import difflib
 import importlib.util
 import inspect
@@ -34,9 +35,11 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 GM_LOCATION_FILE = ROOT / "backups" / "admin-panel" / "gm-locations.json"
 TELEPORT_SLOT_FILE = ROOT / "backups" / "admin-panel" / "teleport-slots.json"
 ONLINE_GM_TELEPORT_ARM_FILE = ROOT / "backups" / "admin-panel" / "online-gm-teleport-arm.json"
+ITEM_CATALOG = ROOT / "config" / "artificial-exchange-prices.csv"
 SPAM_STATE = {}
 AUCTION_CONFIRMATIONS = {}
 LAST_ANNOUNCE_RESULT = None
+ITEM_DISPLAY_NAMES = None
 
 
 def read_env_file(path):
@@ -127,6 +130,28 @@ def split_routing_keys(value):
         if item or item == "":
             out.append(item)
     return out
+
+
+def item_display_names():
+    global ITEM_DISPLAY_NAMES
+    if ITEM_DISPLAY_NAMES is not None:
+        return ITEM_DISPLAY_NAMES
+    names = {}
+    try:
+        with ITEM_CATALOG.open("r", encoding="utf-8", newline="") as handle:
+            for row in csv.DictReader(handle):
+                template_id = row.get("template_id")
+                display_name = row.get("display_name")
+                if template_id and display_name:
+                    names[template_id] = display_name
+    except OSError:
+        pass
+    ITEM_DISPLAY_NAMES = names
+    return ITEM_DISPLAY_NAMES
+
+
+def auction_usage_message():
+    return 'usage: &auction --item-id <item-id> <count> <price> or &auction "<item code/template>" <count> <price>; use &inv_list for item codes'
 
 
 def db_default_host():
@@ -307,6 +332,32 @@ def format_location(row):
     if row["x"] is None:
         return f"{label} position unknown"
     return f"{label} x={row['x']:.1f} y={row['y']:.1f} z={row['z']:.1f}"
+
+
+def online_player_list(conn):
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            select
+                coalesce(nullif(ps.character_name, ''), ps.account_id::text) as character_name,
+                coalesce(nullif(wp.label, ''), nullif(act.map, ''), nullif(wp.map, ''), 'Unknown') as map_label
+            from dune.player_state ps
+            left join dune.actors act on act.id = ps.player_pawn_id
+            left join dune.world_partition wp on wp.partition_id = act.partition_id
+            where ps.online_status::text = 'Online'
+            order by character_name;
+            """
+        )
+        return cur.fetchall()
+
+
+def format_online_player_list(rows):
+    if not rows:
+        return "no players online"
+    return "online players: " + ", ".join(
+        f"{row.get('character_name') or 'unknown'} ({row.get('map_label') or 'Unknown'})"
+        for row in rows
+    )
 
 
 def route_key_from_map_partition(map_name, partition_id):
@@ -837,6 +888,45 @@ def inventory_item_rows(conn, inventory_ids, explicit_item_id=None):
         return cur.fetchall()
 
 
+def player_inventory_list_rows(conn, player):
+    inventories = auction_source_inventories(conn, player, source="personal")
+    if not inventories:
+        return []
+    inventory_ids = [row["id"] for row in inventories]
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            select i.id, i.inventory_id, i.stack_size, i.position_index, i.template_id,
+                   i.quality_level, inv.actor_id, inv.inventory_type
+            from dune.items i
+            join dune.inventories inv on inv.id = i.inventory_id
+            where i.inventory_id = any(%s)
+            order by i.inventory_id, i.position_index nulls last, i.id
+            """,
+            (inventory_ids,),
+        )
+        return cur.fetchall()
+
+
+def format_inventory_item_list(rows):
+    if not rows:
+        return "inventory is empty"
+    names = item_display_names()
+    parts = []
+    for row in rows:
+        template_id = row.get("template_id") or "unknown"
+        display_name = names.get(template_id, template_id)
+        parts.append(
+            f"{int(row.get('stack_size') or 0)}x {display_name} code={template_id} item-id={row.get('id')}"
+        )
+    return "inventory: " + "; ".join(parts)
+
+
+def inventory_list_for_player(conn, player):
+    rows = player_inventory_list_rows(conn, player)
+    return rows, format_inventory_item_list(rows)
+
+
 def fuzzy_item_suggestion(rows, search_text, count):
     normalized = normalize_item_search(search_text)
     wanted_tokens = [token for token in re.split(r"[^a-z0-9]+", search_text.lower()) if token]
@@ -903,7 +993,7 @@ def item_search_candidates(conn, player, search_text, source="personal", explici
 
 def parse_auction_command_args(args):
     if len(args) < 3:
-        raise ValueError('usage: &auction [--base|--inventory <id>] [--item-id <id>|"<item name or template>"] <count> <price>')
+        raise ValueError(auction_usage_message())
     source = "personal"
     explicit_inventory_id = None
     explicit_item_id = None
@@ -926,7 +1016,7 @@ def parse_auction_command_args(args):
         else:
             break
     if explicit_item_id is None and len(remaining) < 3:
-        raise ValueError('usage: &auction [--base|--inventory <id>] [--item-id <id>|"<item name or template>"] <count> <price>')
+        raise ValueError(auction_usage_message())
     if explicit_item_id is not None and len(remaining) > 2:
         raise ValueError("do not provide an item name when using --item-id")
     if explicit_item_id is not None and len(remaining) < 2:
@@ -936,7 +1026,7 @@ def parse_auction_command_args(args):
     if explicit_item_id is None:
         search_text = " ".join(remaining[:-2]).strip()
         if not search_text:
-            raise ValueError('usage: &auction [--base|--inventory <id>] [--item-id <id>|"<item name or template>"] <count> <price>')
+            raise ValueError(auction_usage_message())
     else:
         if remaining[:-2]:
             raise ValueError("do not provide an item name when using --item-id")
@@ -1845,7 +1935,41 @@ def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=F
         sender_fls_id = fls_id_for_sender(conn, sender_name)
 
     command = parts[0].lower()
+    if command in ("list", "players", "online"):
+        players = online_player_list(conn)
+        response = format_online_player_list(players)
+        announce_result = maybe_reply(response, reply, target_name=sender_name, target_fls_id=sender_fls_id)
+        return {"ok": True, "action": "list", "message": response, "players": [dict(row) for row in players], "reply": announce_result}
+
+    if command in ("inv_list", "inventory", "inv"):
+        resolved_name = resolve_sender_character(conn, sender_name, sender_fls_id)
+        player, matches = character_row(conn, resolved_name)
+        if player is None:
+            response = "could not resolve your character for inventory list"
+            if matches:
+                response = "no unique character match: " + ", ".join(row["character_name"] for row in matches)
+            announce_result = maybe_reply(response, reply, target_name=resolved_name or sender_name, target_fls_id=sender_fls_id)
+            return {"ok": False, "error": response, "reply": announce_result}
+        rows, response = inventory_list_for_player(conn, player)
+        announce_result = maybe_reply(response, reply, target_name=resolved_name or sender_name, target_fls_id=sender_fls_id)
+        return {"ok": True, "action": "inv_list", "message": response, "items": [dict(row) for row in rows], "reply": announce_result}
+
     if command == "auction":
+        if len(parts) == 1:
+            resolved_name = resolve_sender_character(conn, sender_name, sender_fls_id)
+            player, matches = character_row(conn, resolved_name)
+            if player is None:
+                inventory_response = "could not resolve your character for inventory list"
+                if matches:
+                    inventory_response = "no unique character match: " + ", ".join(row["character_name"] for row in matches)
+                response = f"{auction_usage_message()}; {inventory_response}"
+                announce_result = maybe_reply(response, reply, target_name=resolved_name or sender_name, target_fls_id=sender_fls_id)
+                return {"ok": False, "error": inventory_response, "message": response, "reply": announce_result}
+            rows, inventory_response = inventory_list_for_player(conn, player)
+            response = f"{auction_usage_message()}; {inventory_response}"
+            announce_result = maybe_reply(response, reply, target_name=resolved_name or sender_name, target_fls_id=sender_fls_id)
+            return {"ok": True, "action": "auction.help", "message": response, "items": [dict(row) for row in rows], "reply": announce_result}
+
         if len(parts) == 2 and parts[1].lower() in ("yes", "y", "no", "n"):
             resolved_name = resolve_sender_character(conn, sender_name, sender_fls_id)
             confirm_key = auction_confirmation_key(sender_name, sender_fls_id, resolved_name)

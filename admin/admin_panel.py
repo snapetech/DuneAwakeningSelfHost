@@ -235,6 +235,31 @@ ANNOUNCEMENT_DELAYS = {
     "6hr": 6 * 60 * 60,
     "12hr": 12 * 60 * 60,
 }
+
+
+def env_file_value(key):
+    if not ENV_FILE.exists():
+        return ""
+    try:
+        for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
+            if not line or line.lstrip().startswith("#") or "=" not in line:
+                continue
+            name, value = line.split("=", 1)
+            if name.strip() == key:
+                return value.strip().strip("\"'")
+    except OSError:
+        return ""
+    return ""
+
+
+def world_partition_count():
+    value = os.environ.get("DUNE_WORLD_PARTITION_COUNT") or env_file_value("DUNE_WORLD_PARTITION_COUNT") or "31"
+    try:
+        return int(value)
+    except ValueError:
+        return 31
+
+
 GAME_MAP_SERVICES = [
     "survival", "overmap", "arrakeen", "harko-village", "testing-hephaestus", "testing-carthag", "testing-waterfat",
     "deep-desert", "deep-desert-pvp", "proces-verbal", "lostharvest-ecolab-a", "lostharvest-ecolab-b", "lostharvest-forgottenlab",
@@ -243,6 +268,8 @@ GAME_MAP_SERVICES = [
     "ecolab-green-136", "overland-m-01", "overland-s-04", "overland-s-06", "bandit-fortress",
     "overland-s-07", "overland-s-08", "dungeon-thepit",
 ]
+if world_partition_count() < 31:
+    GAME_MAP_SERVICES = [service for service in GAME_MAP_SERVICES if service != "deep-desert-pvp"]
 SERVICE_LAYER_SERVICES = ["rmq-auth-shim", "text-router", "gateway", "director"]
 ALL_RESTART_SAFE_SERVICES = GAME_MAP_SERVICES + SERVICE_LAYER_SERVICES
 RESTART_TARGETS = {
@@ -6995,9 +7022,23 @@ INDEX = r"""<!doctype html>
     .mapGrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:8px; }
     .mapTile { border:1px solid var(--line); border-radius:7px; padding:9px; background:#101310; min-height:62px; }
     .mapTile.ok { border-color:#315e31; }
+    .mapTile.warn { border-color:#6d5624; }
     .mapTile.bad { border-color:#743932; }
     .mapTile .name { font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .mapTile .meta { color:var(--muted); font-size:12px; margin-top:4px; }
+    .statusLight { width:11px; height:11px; border-radius:999px; display:inline-block; background:var(--muted); box-shadow:0 0 10px currentColor; color:var(--muted); }
+    .statusLight.ok { background:var(--ok); color:var(--ok); }
+    .statusLight.warn { background:var(--warn); color:var(--warn); }
+    .statusLight.bad { background:var(--danger); color:var(--danger); }
+    .mapHealthList { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:8px; }
+    .mapHealthRow { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:6px 9px; align-items:center; border:1px solid var(--line); border-radius:7px; background:#101310; padding:9px; min-width:0; }
+    .mapHealthRow.ok { border-color:#315e31; }
+    .mapHealthRow.warn { border-color:#6d5624; }
+    .mapHealthRow.bad { border-color:#743932; }
+    .mapHealthName { min-width:0; }
+    .mapHealthName b, .mapHealthName span { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .mapHealthName span { color:var(--muted); font-size:12px; margin-top:2px; }
+    .mapHealthMeta { display:flex; gap:5px; flex-wrap:wrap; justify-content:flex-end; }
     .haggaMap { position:relative; display:block; overflow:hidden; touch-action:none; cursor:grab; background:#171513; inline-size:100%; margin-inline:auto; border:1px solid var(--line); border-radius:8px; }
     .haggaMap.isDragging { cursor:grabbing; }
     .haggaMap svg { display:block; inline-size:100%; aspect-ratio:1 / 1; block-size:auto; background:#171513; transform-origin:center center; will-change:transform; user-select:none; }
@@ -7180,7 +7221,7 @@ let resourceRefreshInFlight = false;
 let healthRefreshInFlight = false;
 let haggaMapRefreshInFlight = false;
 let haggaMapAutoRefresh = localStorage.getItem('duneAdminHaggaMapAutoRefresh') !== 'off';
-let activeOverviewMap = sessionStorage.getItem('duneAdminOverviewMap') === 'deep-desert' ? 'deep-desert' : 'hagga-basin';
+let activeOverviewMap = ['hagga-basin', 'deep-desert', 'map-health'].includes(sessionStorage.getItem('duneAdminOverviewMap')) ? sessionStorage.getItem('duneAdminOverviewMap') : 'hagga-basin';
 let haggaMapLastGoodHtml = '';
 let haggaMapZoomState = {scale:1, x:0, y:0};
 let haggaMapSuppressMarkerClick = false;
@@ -7583,6 +7624,31 @@ function checks(rows){
 function healthCell(ok, yes='online', no='offline'){
   return `<span class="pill ${ok ? 'ok' : 'bad'}">${ok ? yes : no}</span>`;
 }
+function mapHealthState(row){
+  if (row?.online && row?.ready) return 'ok';
+  if (row?.alive && row?.active && !row?.blocked) return 'warn';
+  return 'bad';
+}
+function mapHealthLabel(row){
+  const state = mapHealthState(row);
+  if (state === 'ok') return 'Online';
+  if (state === 'warn') return 'Degraded';
+  return 'Offline';
+}
+function mapHealthBrowser(rows){
+  const maps = rows || [];
+  if (!maps.length) return '<div class="muted">No map health rows.</div>';
+  const counts = maps.reduce((acc, row) => {
+    acc[mapHealthState(row)] += 1;
+    return acc;
+  }, {ok:0, warn:0, bad:0});
+  const summary = `<div class="toolbar"><span class="pill ok"><span class="statusLight ok"></span>${counts.ok} online</span><span class="pill warn"><span class="statusLight warn"></span>${counts.warn} degraded</span><span class="pill bad"><span class="statusLight bad"></span>${counts.bad} offline</span><span class="pill">${maps.length} total</span></div>`;
+  const body = `<div class="mapHealthList">${maps.map(row => {
+    const state = mapHealthState(row);
+    return `<div class="mapHealthRow ${state}"><span class="statusLight ${state}"></span><div class="mapHealthName"><b>${esc(row.label || row.map || 'Map')}</b><span>${esc(row.map || '')}</span></div><div class="mapHealthMeta"><span class="pill ${row.ready ? 'ok' : 'bad'}">ready</span><span class="pill ${row.alive ? 'ok' : 'bad'}">alive</span><span class="pill ${row.active ? 'ok' : 'bad'}">active</span><span class="pill">${esc(row.players ?? 0)} players</span><span class="pill ${state === 'ok' ? 'ok' : state === 'warn' ? 'warn' : 'bad'}">${mapHealthLabel(row)}</span></div></div>`;
+  }).join('')}</div>`;
+  return `${summary}${body}`;
+}
 function fmtRuntimeSeconds(seconds){
   const value = Math.max(0, Number(seconds || 0));
   const days = Math.floor(value / 86400);
@@ -7614,7 +7680,7 @@ function mapStatusTable(rows){
 }
 function mapTiles(rows){
   if (!rows || !rows.length) return '<div class="muted">No map rows.</div>';
-  return `<div class="mapGrid">${rows.map(r => `<div class="mapTile ${r.online ? 'ok' : 'bad'}"><div class="name">${esc(r.label || r.map)}</div><div class="meta">${r.online ? 'online' : 'offline'} | ${esc(r.players ?? 0)} players | up ${esc(((r.runtime || {}).uptime) || 'unknown')}</div></div>`).join('')}</div>`;
+  return `<div class="mapGrid">${rows.map(r => { const state = mapHealthState(r); return `<div class="mapTile ${state}"><div class="name">${esc(r.label || r.map)}</div><div class="meta">${mapHealthLabel(r).toLowerCase()} | ${esc(r.players ?? 0)} players | up ${esc(((r.runtime || {}).uptime) || 'unknown')}</div></div>`; }).join('')}</div>`;
 }
 const haggaPoiPalette = ['#d5a13e', '#7fc27a', '#6fa8dc', '#d96f62', '#b78cff', '#6cc7bd', '#e1b75f', '#e89458'];
 const haggaPoiGroupColors = {
@@ -7865,7 +7931,7 @@ function haggaBasinMapPanel(data){
     assessment: d.assessment || ''
   }));
   const generatedAt = data?.generatedAt ? new Date(data.generatedAt).toLocaleTimeString() : '';
-  const mapTabs = `<div class="toolbar mapTabBar" role="tablist" aria-label="Overview map"><button class="${activeOverviewMap === 'hagga-basin' ? 'primary' : ''}" role="tab" aria-selected="${activeOverviewMap === 'hagga-basin' ? 'true' : 'false'}" data-overview-map="hagga-basin">Hagga Basin</button><button class="${activeOverviewMap === 'deep-desert' ? 'primary' : ''}" role="tab" aria-selected="${activeOverviewMap === 'deep-desert' ? 'true' : 'false'}" data-overview-map="deep-desert">Deep Desert</button></div>`;
+  const mapTabs = overviewMapTabsHtml();
   if (data?.map === 'DeepDesert') {
     const deepEmpty = players.length ? '' : `<text class="emptyState" x="${width / 2}" y="${height / 2}">No online players with Deep Desert coordinates.</text>`;
     const rowLabels = 'ABCDEFGHI';
@@ -7928,12 +7994,17 @@ function haggaBasinMapPanel(data){
   return `<div class="panelBand"><div class="sectionHeader"><h2>Hagga Basin Coordinate Grid</h2><div class="toolbar"><span id="haggaMapCount" class="pill ${players.length ? 'ok' : ''}">${esc(players.length)} plotted</span><span id="haggaMapUpdated" class="pill">updated ${esc(generatedAt)}</span><span id="haggaMapHealth" class="pill warn">DB persistence position, not proven live</span><button id="haggaMapZoomOutBtn" title="Zoom map out">-</button><button id="haggaMapZoomInBtn" title="Zoom map in">+</button><button id="haggaMapResetBtn">Reset view</button><button id="toggleHaggaMapRefreshBtn" aria-pressed="${haggaMapAutoRefresh ? 'true' : 'false'}">${haggaMapAutoRefresh ? 'Pause map' : 'Resume map'}</button><button id="refreshHaggaMapBtn">Refresh map</button></div></div>${mapTabs}<div id="haggaMapSrStatus" class="srOnly" aria-live="polite">${esc(players.length)} Hagga Basin players plotted.</div><div class="haggaMapLayout"><div class="haggaMapMain"><div id="haggaMapViewport" class="haggaMap"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Full Hagga Basin coordinate-grid map"><image class="mapImage" href="/static/hagga-basin.webp?v=${encodeURIComponent(ADMIN_PANEL_BUILD)}" x="0" y="0" width="${width}" height="${height}" preserveAspectRatio="xMidYMid meet"></image><rect class="mapShade" x="0" y="0" width="${width}" height="${height}"></rect>${grid}<text x="12" y="38" fill="var(--muted)" font-size="12">NW</text><text x="${width - 30}" y="${height - 12}" fill="var(--muted)" font-size="12">SE</text>${poiMarkers}${markers}${empty}</svg></div></div>${haggaPoiToggleBar(pois, selectedPois)}</div><div class="haggaMapStatus"><span class="pill warn">green: persisted actor transform</span><span class="pill ${showReturnPoints ? 'warn' : ''}">yellow return-info ${showReturnPoints ? 'shown' : 'hidden'}</span><span class="pill">POIs: Dune: Awakening Community Wiki CC BY-NC-SA 4.0</span><span class="pill">background: clean survival_1 tile composite</span><span class="pill">projection: world X -> image U, world Y -> image V</span><span class="pill">world X ${esc(Math.round(minX))}..${esc(Math.round(maxX))}, Y ${esc(Math.round(minY))}..${esc(Math.round(maxY))}${invertX ? ', flipped X' : ''}${invertY ? ', inverted Y' : ''}</span><span class="pill">image U ${esc(imageMinU.toFixed(2))}..${esc(imageMaxU.toFixed(2))}, V ${esc(imageMinV.toFixed(2))}..${esc(imageMaxV.toFixed(2))}</span></div><details open><summary>Coordinates</summary><div class="coordTable">${table(rows)}</div></details><details open><summary>Location Source Diagnostics</summary><div class="coordTable">${table(diagnosticRows)}</div></details></div>`;
 }
 function overviewMapTabsHtml(){
-  return `<div class="toolbar mapTabBar" role="tablist" aria-label="Overview map"><button class="${activeOverviewMap === 'hagga-basin' ? 'primary' : ''}" role="tab" aria-selected="${activeOverviewMap === 'hagga-basin' ? 'true' : 'false'}" data-overview-map="hagga-basin">Hagga Basin</button><button class="${activeOverviewMap === 'deep-desert' ? 'primary' : ''}" role="tab" aria-selected="${activeOverviewMap === 'deep-desert' ? 'true' : 'false'}" data-overview-map="deep-desert">Deep Desert</button></div>`;
+  return `<div class="toolbar mapTabBar" role="tablist" aria-label="Overview map"><button class="${activeOverviewMap === 'hagga-basin' ? 'primary' : ''}" role="tab" aria-selected="${activeOverviewMap === 'hagga-basin' ? 'true' : 'false'}" data-overview-map="hagga-basin">Hagga Basin</button><button class="${activeOverviewMap === 'deep-desert' ? 'primary' : ''}" role="tab" aria-selected="${activeOverviewMap === 'deep-desert' ? 'true' : 'false'}" data-overview-map="deep-desert">Deep Desert</button><button class="${activeOverviewMap === 'map-health' ? 'primary' : ''}" role="tab" aria-selected="${activeOverviewMap === 'map-health' ? 'true' : 'false'}" data-overview-map="map-health">Map Health</button></div>`;
+}
+function overviewMapHealthPanel(health){
+  const rows = (health || {}).mapStatus || [];
+  const generated = new Date().toLocaleTimeString();
+  return `<div class="panelBand"><div class="sectionHeader"><h2>Map Health</h2><div class="toolbar"><span class="pill">updated ${esc(generated)}</span><button id="refreshHaggaMapBtn">Refresh map</button></div></div>${overviewMapTabsHtml()}${mapHealthBrowser(rows)}${mapStatusTable(rows)}</div>`;
 }
 function wireOverviewMapTabs(container){
   container.querySelectorAll('[data-overview-map]').forEach(button => {
     button.addEventListener('click', () => {
-      activeOverviewMap = button.dataset.overviewMap === 'deep-desert' ? 'deep-desert' : 'hagga-basin';
+      activeOverviewMap = ['hagga-basin', 'deep-desert', 'map-health'].includes(button.dataset.overviewMap) ? button.dataset.overviewMap : 'hagga-basin';
       sessionStorage.setItem('duneAdminOverviewMap', activeOverviewMap);
       haggaMapZoomState = {scale:1, x:0, y:0};
       refreshHaggaMap({force:true}).catch(e => reportClientError(e, 'Refresh overview map'));
@@ -8280,6 +8351,17 @@ async function refreshHaggaMap(opts={}){
   if (!container) return;
   if (document.hidden && !opts.force) return;
   if (haggaMapRefreshInFlight) return;
+  if (activeOverviewMap === 'map-health') {
+    container.innerHTML = overviewMapHealthPanel(overviewHealthSnapshot);
+    wireOverviewMapTabs(container);
+    container.querySelector('#refreshHaggaMapBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Refreshing...', async () => {
+      const health = await api('/api/ops/health', {timeoutMs: 7000});
+      overviewHealthSnapshot = health;
+      renderOverviewRealtime(health);
+      await refreshHaggaMap({force:true});
+    }));
+    return;
+  }
   haggaMapRefreshInFlight = true;
   try {
     const endpoint = activeOverviewMap === 'deep-desert' ? '/api/players/deep-desert' : '/api/players/hagga-basin';
@@ -8365,6 +8447,13 @@ function renderOverviewRealtime(health){
   if (!container) return;
   overviewHealthSnapshot = health;
   container.innerHTML = overviewRealtimeHtml(health, overviewRosterCounts, overviewResourceSnapshot);
+  if (activeOverviewMap === 'map-health') {
+    const mapContainer = document.getElementById('haggaBasinMap');
+    if (mapContainer) {
+      mapContainer.innerHTML = overviewMapHealthPanel(health);
+      wireOverviewMapTabs(mapContainer);
+    }
+  }
 }
 function renderOpsRealtime(health){
   const metrics = document.getElementById('opsRealtimeMetrics');

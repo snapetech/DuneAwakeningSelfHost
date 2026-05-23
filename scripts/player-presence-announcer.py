@@ -141,6 +141,7 @@ def online_players():
       ps.account_id::text,
       coalesce(nullif(ps.character_name, ''), ps.account_id::text) as character_name,
       acc.user as fls_id,
+      coalesce(ps.last_login_time::text, '') as last_login_time,
       coalesce(act.map, wp.map, '') as map_name,
       coalesce(wp.label, '') as partition_label,
       ((act.transform).location).x::float8 as x,
@@ -164,16 +165,18 @@ def online_players():
         account_id = parts[0]
         name = parts[1] if len(parts) > 1 else account_id
         fls_id = parts[2] if len(parts) > 2 else ""
-        map_name = parts[3] if len(parts) > 3 else ""
-        partition_label = parts[4] if len(parts) > 4 else ""
+        last_login_time = parts[3] if len(parts) > 3 else ""
+        map_name = parts[4] if len(parts) > 4 else ""
+        partition_label = parts[5] if len(parts) > 5 else ""
         players[account_id] = {
             "name": name or account_id,
             "flsId": fls_id,
+            "lastLoginTime": last_login_time,
             "map": map_name,
             "partitionLabel": partition_label,
-            "x": parts[5] if len(parts) > 5 else "",
-            "y": parts[6] if len(parts) > 6 else "",
-            "z": parts[7] if len(parts) > 7 else "",
+            "x": parts[6] if len(parts) > 6 else "",
+            "y": parts[7] if len(parts) > 7 else "",
+            "z": parts[8] if len(parts) > 8 else "",
         }
     return players
 
@@ -440,6 +443,12 @@ def player_location_label(player):
     if not isinstance(player, dict):
         return ""
     return player.get("partitionLabel") or player.get("map") or ""
+
+
+def player_presence_session(player):
+    if not isinstance(player, dict):
+        return ""
+    return str(player.get("lastLoginTime") or "")
 
 
 def admin_players(current):
@@ -775,6 +784,14 @@ def check_once():
     previous_ids = set(previous or {})
     first_run = previous is None
     joined = sorted(current_ids - previous_ids, key=lambda account_id: player_name(current.get(account_id, account_id)).lower())
+    session_rejoined = []
+    if previous and not first_run:
+        for account_id in sorted(current_ids & previous_ids, key=lambda account_id: player_name(current.get(account_id, account_id)).lower()):
+            previous_session = player_presence_session(previous.get(account_id))
+            current_session = player_presence_session(current.get(account_id))
+            if previous_session and current_session and previous_session != current_session:
+                session_rejoined.append(account_id)
+    joined = sorted(set(joined) | set(session_rejoined), key=lambda account_id: player_name(current.get(account_id, account_id)).lower())
     left = sorted(previous_ids - current_ids, key=lambda account_id: player_name(previous.get(account_id, account_id)).lower()) if previous else []
     final_count = len(current)
     current_time = now_ts()
@@ -854,7 +871,7 @@ def check_once():
             template = env("DUNE_PLAYER_PRESENCE_RECONNECT_RECOVERY_TEMPLATE", "Welcome back. If you were disconnected during travel, wait a moment before retrying the same transition.")
             for account_id in joined:
                 left_at = int(recent_leaves.get(str(account_id), 0) or 0)
-                if left_at and current_time - left_at <= window:
+                if (left_at and current_time - left_at <= window) or account_id in session_rejoined:
                     automated_private_results.append(send_private(current[account_id], template, final_count, "reconnect-recovery", account_id))
 
         if env_bool("DUNE_PLAYER_PRESENCE_BASE_REMINDERS_ENABLED", False):
@@ -1281,6 +1298,7 @@ def check_once():
         "onlineCount": final_count,
         "joined": [player_name(current[account_id]) for account_id in joined],
         "left": [player_name(previous[account_id]) for account_id in left] if previous else [],
+        "sessionRejoined": [player_name(current[account_id]) for account_id in session_rejoined],
         "announcements": results,
         "privateWelcomeMessages": private_welcome_results,
         "automatedPrivateMessages": automated_private_results,

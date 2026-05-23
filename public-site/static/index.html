@@ -58,14 +58,15 @@
 <div class="map-tabs" role="tablist" aria-label="Map selection">
 <button type="button" class="active" id="map-tab-hagga" data-map-tab="hagga" role="tab" aria-selected="true">Hagga Basin</button>
 <button type="button" id="map-tab-deep-desert" data-map-tab="deep-desert" role="tab" aria-selected="false">Deep Desert</button>
+<button type="button" id="map-tab-health" data-map-tab="health" role="tab" aria-selected="false">Map Health</button>
 </div>
 <p id="map-tab-status" class="muted map-tab-status">Showing Hagga Basin.</p>
-<div class="map-tools" aria-label="Map controls">
+<div id="map-tools" class="map-tools" aria-label="Map controls">
 <button type="button" id="map-zoom-out" aria-label="Zoom map out">-</button>
 <button type="button" id="map-zoom-in" aria-label="Zoom map in">+</button>
 <button type="button" id="map-reset">Reset</button>
 </div>
-<div class="map-layout">
+<div id="map-layout" class="map-layout">
 <div id="hagga-map-viewport" class="map-viewport">
 <div id="hagga-map-content" class="map-content">
 <img id="hagga-map" class="hagga-map" src="hagga-map.svg" alt="Hagga Basin player position map" width="1600" height="1600" draggable="false">
@@ -84,6 +85,9 @@
 <div id="poi-filter-summary" class="poi-filter-summary muted">Showing all POI layers</div>
 <div id="poi-toggles" class="poi-toggles" aria-label="Map marker toggles"></div>
 </aside>
+</div>
+<div id="map-health-panel" class="map-health-panel" hidden>
+<p class="muted">Loading map health.</p>
 </div>
 <p id="poi-attribution" class="muted poi-attribution">POI data from <a href="https://awakening.wiki/Map:Hagga_Basin">Dune: Awakening Community Wiki</a>, CC BY-NC-SA 4.0 unless otherwise noted.</p>
 <p class="muted">Static public snapshot, refreshed once per minute. Only online public display names and coarse locations are published.</p>

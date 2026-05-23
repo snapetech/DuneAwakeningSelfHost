@@ -85,6 +85,7 @@ run_steam_update_check() {
       ./scripts/update-steam-tool.sh "$env_file"
     else
       helper_image="$(env_file_value DUNE_RESTART_STEAMCMD_HELPER_IMAGE "$env_file")"
+      helper_image="${helper_image:-cm2network/steamcmd:root}"
       steam_dir="$(env_file_value DUNE_STEAM_SERVER_DIR "$env_file")"
       if [ -n "$helper_image" ] && [ -n "$steam_dir" ] && command -v docker >/dev/null 2>&1; then
         steam_mount="$steam_dir"
@@ -93,11 +94,15 @@ run_steam_update_check() {
             steam_mount="$(dirname "$(dirname "$(dirname "$steam_dir")")")"
             ;;
         esac
+        steam_uid_gid="$(stat -c '%u:%g' "$steam_dir")"
         docker run --rm \
+          --network host \
+          --user "$steam_uid_gid" \
           -v "$PWD:$PWD" \
           -v "$PWD:/workspace" \
           -v "$steam_mount:$steam_mount" \
           -w "$PWD" \
+          -e HOME=/tmp \
           -e "DUNE_RESTART_STEAMCMD_UPDATE=$(env_file_value DUNE_RESTART_STEAMCMD_UPDATE "$env_file")" \
           -e "DUNE_RESTART_STEAM_UPDATE_MODE=$(env_file_value DUNE_RESTART_STEAM_UPDATE_MODE "$env_file")" \
           -e "DUNE_RESTART_STEAM_CLIENT_TRIGGER=$(env_file_value DUNE_RESTART_STEAM_CLIENT_TRIGGER "$env_file")" \
@@ -187,6 +192,37 @@ default_services = [
     "overland-s-08", "dungeon-thepit",
     "director", "gateway", "text-router", "rmq-auth-shim",
 ]
+
+
+def env_value(key):
+    value = os.environ.get(key)
+    if value:
+        return value
+    candidates = [env_file]
+    if host_workspace:
+        candidates.extend([os.path.join(host_workspace, env_file), os.path.join("/workspace", env_file)])
+    for candidate in candidates:
+        try:
+            with open(candidate, "r", encoding="utf-8") as handle:
+                for line in handle:
+                    stripped = line.strip()
+                    if not stripped or stripped.startswith("#") or "=" not in stripped:
+                        continue
+                    name, candidate_value = stripped.split("=", 1)
+                    if name.strip() == key:
+                        return candidate_value.strip().strip("\"'")
+        except OSError:
+            continue
+    return ""
+
+
+partition_count = env_value("DUNE_WORLD_PARTITION_COUNT") or "31"
+if partition_count not in ("30", "31"):
+    print(f"DUNE_WORLD_PARTITION_COUNT must be 30 or 31, got: {partition_count}", file=sys.stderr)
+    sys.exit(64)
+if partition_count == "30":
+    default_services = [service for service in default_services if service != "deep-desert-pvp"]
+
 stateful_services = {"postgres", "admin-rmq", "game-rmq"}
 allow_stateful = os.environ.get("DUNE_RESTART_ALLOW_STATEFUL", "").lower() in ("1", "true", "yes", "on")
 
@@ -458,7 +494,7 @@ def run_host_update_check():
     if not host_workspace:
         return {"ok": True, "skipped": True, "warning": "host workspace is not configured"}
     steam_dir = read_env_value(env_file, "DUNE_STEAM_SERVER_DIR")
-    steamcmd_helper_image = os.environ.get("DUNE_RESTART_STEAMCMD_HELPER_IMAGE") or read_env_value(env_file, "DUNE_RESTART_STEAMCMD_HELPER_IMAGE")
+    steamcmd_helper_image = os.environ.get("DUNE_RESTART_STEAMCMD_HELPER_IMAGE") or read_env_value(env_file, "DUNE_RESTART_STEAMCMD_HELPER_IMAGE") or "cm2network/steamcmd:root"
     steamcmd_env_keys = [
         "DUNE_RESTART_STEAMCMD_UPDATE",
         "DUNE_RESTART_STEAM_UPDATE_MODE",
@@ -488,17 +524,24 @@ def run_host_update_check():
             steam_mount = os.path.dirname(os.path.dirname(os.path.dirname(steam_dir)))
         docker_run = [
             "docker", "run", "--rm",
+            "--network", "host",
             "-v", f"{host_workspace}:{host_workspace}",
             "-v", f"{host_workspace}:/workspace",
             "-v", f"{steam_mount}:{steam_mount}",
             "-w", host_workspace,
+            "-e", "HOME=/tmp",
         ]
         docker_run.extend(steamcmd_env)
         docker_run.extend([
             steamcmd_helper_image,
             "bash", "./scripts/update-steam-tool.sh", env_file,
         ])
-        steamcmd_container = " ".join(shlex.quote(part) for part in docker_run)
+        steamcmd_container = (
+            "steamcmd_uid_gid=$(stat -c %u:%g " + shlex.quote(steam_dir) + "); "
+            + " ".join(shlex.quote(part) for part in docker_run[:3])
+            + " --user \"$steamcmd_uid_gid\" "
+            + " ".join(shlex.quote(part) for part in docker_run[3:])
+        )
     steam_client_command = os.environ.get("DUNE_STEAM_CLIENT_COMMAND") or read_env_value(env_file, "DUNE_STEAM_CLIENT_COMMAND") or "steam"
     steam_client_min_wait = os.environ.get("DUNE_RESTART_STEAM_CLIENT_MIN_WAIT_SECONDS") or read_env_value(env_file, "DUNE_RESTART_STEAM_CLIENT_MIN_WAIT_SECONDS") or "30"
     steam_client_trigger = os.environ.get("DUNE_RESTART_STEAM_CLIENT_TRIGGER") or read_env_value(env_file, "DUNE_RESTART_STEAM_CLIENT_TRIGGER") or "true"
@@ -554,6 +597,10 @@ def run_host_update_check():
         "fi; "
         "package_tag=$(printf '%s\\n' \"$tags\" | sed '/^$/d' | head -1); "
         "if [ \"$current_tag\" = \"$package_tag\" ]; then echo 'status: current'; rm -f \"$tag_file\"; exit 0; fi; "
+        "current_build=${current_tag%%-*}; package_build=${package_tag%%-*}; "
+        "case \"$current_build:$package_build\" in *[!0-9:]*|:*|*:) ;; *) "
+        "if [ \"$package_build\" -lt \"$current_build\" ]; then echo 'status: package older than current DUNE_IMAGE_TAG'; echo \"keeping current tag: $current_tag\"; rm -f \"$tag_file\"; exit 0; fi; "
+        ";; esac; "
         "echo 'status: update available'; echo \"next tag: $package_tag\"; "
         "for rel in " + load_tars_shell + "; do "
         "path=\"$steam_dir/$rel\"; "
@@ -569,8 +616,10 @@ def run_host_update_check():
         "set -e; "
         "if [ -x ./scripts/update-steam-tool.sh ]; then "
         "steam_mode=${DUNE_RESTART_STEAM_UPDATE_MODE:-" + shlex.quote(read_env_value(env_file, "DUNE_RESTART_STEAM_UPDATE_MODE") or "auto") + "}; "
-        "if [ \"$steam_mode\" != steamcmd ]; then "
+        "if [ \"$steam_mode\" = client ]; then "
         + steam_client_host_trigger + " || echo 'Steam client package refresh skipped: no host Steam client visible from helper' >&2; "
+        "elif [ \"$steam_mode\" != steamcmd ] && ( " + steam_client_host_trigger + " ); then "
+        "true; "
         "elif command -v steamcmd >/dev/null 2>&1; then "
         f"./scripts/update-steam-tool.sh {shlex.quote(env_file)}; "
         + (f"elif [ -n {shlex.quote(steamcmd_container)} ]; then {steamcmd_container}; " if steamcmd_container else "")
@@ -721,7 +770,20 @@ IFS="$old_ifs"
 set -- "$@" --env-file "${ENV_FILE:-.env}"
 
 if [ "$target" = "all" ]; then
-  services="survival overmap arrakeen harko-village testing-hephaestus testing-carthag testing-waterfat deep-desert deep-desert-pvp proces-verbal lostharvest-ecolab-a lostharvest-ecolab-b lostharvest-forgottenlab art-of-kanly dungeon-hephaestus dungeon-oldcarthag faction-outpost-atre faction-outpost-hark heighliner-dungeon ecolab-green-089 ecolab-green-152 ecolab-green-024 ecolab-green-195 ecolab-green-136 overland-m-01 overland-s-04 overland-s-06 bandit-fortress overland-s-07 overland-s-08 dungeon-thepit director gateway text-router rmq-auth-shim"
+  partition_count="${DUNE_WORLD_PARTITION_COUNT:-$(env_file_value DUNE_WORLD_PARTITION_COUNT "${ENV_FILE:-.env}")}"
+  partition_count="${partition_count:-31}"
+  case "$partition_count" in
+    30)
+      services="survival overmap arrakeen harko-village testing-hephaestus testing-carthag testing-waterfat deep-desert proces-verbal lostharvest-ecolab-a lostharvest-ecolab-b lostharvest-forgottenlab art-of-kanly dungeon-hephaestus dungeon-oldcarthag faction-outpost-atre faction-outpost-hark heighliner-dungeon ecolab-green-089 ecolab-green-152 ecolab-green-024 ecolab-green-195 ecolab-green-136 overland-m-01 overland-s-04 overland-s-06 bandit-fortress overland-s-07 overland-s-08 dungeon-thepit director gateway text-router rmq-auth-shim"
+      ;;
+    31)
+      services="survival overmap arrakeen harko-village testing-hephaestus testing-carthag testing-waterfat deep-desert deep-desert-pvp proces-verbal lostharvest-ecolab-a lostharvest-ecolab-b lostharvest-forgottenlab art-of-kanly dungeon-hephaestus dungeon-oldcarthag faction-outpost-atre faction-outpost-hark heighliner-dungeon ecolab-green-089 ecolab-green-152 ecolab-green-024 ecolab-green-195 ecolab-green-136 overland-m-01 overland-s-04 overland-s-06 bandit-fortress overland-s-07 overland-s-08 dungeon-thepit director gateway text-router rmq-auth-shim"
+      ;;
+    *)
+      printf 'DUNE_WORLD_PARTITION_COUNT must be 30 or 31, got: %s\n' "$partition_count" >&2
+      exit 64
+      ;;
+  esac
 fi
 
 if [ -z "$services" ]; then

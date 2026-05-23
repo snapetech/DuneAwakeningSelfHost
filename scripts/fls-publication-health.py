@@ -191,17 +191,36 @@ def evaluate(env_file, compose_files, since):
     director_lines = director_log.splitlines()
     gateway_lines = gateway_log.splitlines()
 
+    # Gateway declares farm status once at startup and then only chatters when a
+    # map comes up or goes down. After steady state, the `--since` window has
+    # zero gateway events even though the farm is healthy. Look at the
+    # since-windowed log for liveness (errors, state changes), but consult the
+    # full container log when checking that the one-time declaration ever
+    # happened. The since-windowed gateway_lines is still used for "no errors
+    # after declaration" so we catch a fresh failure within the window.
+    # 9999h covers any plausible container uptime; docker compose accepts it.
+    gateway_full_log, gateway_full_error = service_logs(base, "gateway", "9999h")
+    gateway_full_lines = gateway_full_log.splitlines()
+
     initialize_idx = last_index(director_lines, '("api/Director_InitializeDirector") Request successful')
     heartbeat_idx = last_index(director_lines, '("api/Battlegroups_SendBattlegroupHeartbeat") Request successful')
     population_idx = last_index(director_lines, '("api/Battlegroups_DeclarePopulationAndActivity") Request successful')
     capacity_idx = last_index(director_lines, '("api/Battlegroups_DeclareMaxPlayerCapacities") Request successful')
     update_idx = last_index(director_lines, '("api/Battlegroups_DeclareBattlegroupUpdates") Request successful')
-    gateway_decl_idx = last_index(gateway_lines, "Request: api/GatewayDeclareFarmStatus")
-    gateway_monitor_idx = last_index(gateway_lines, "Monitoring for servers going up or down")
-    gateway_map_idx = last_index(gateway_lines, "Server ")
+    gateway_decl_idx_full = last_index(gateway_full_lines, "Request: api/GatewayDeclareFarmStatus")
+    gateway_monitor_idx_full = last_index(gateway_full_lines, "Monitoring for servers going up or down")
+    gateway_map_idx_full = last_index(gateway_full_lines, "Server ")
+    gateway_decl_idx_window = last_index(gateway_lines, "Request: api/GatewayDeclareFarmStatus")
 
     director_bad_after_population = has_after(director_lines, population_idx, BAD_PATTERNS) if population_idx >= 0 else line_sample(director_lines, BAD_PATTERNS, 5)
-    gateway_bad_after_declare = has_after(gateway_lines, gateway_decl_idx, BAD_PATTERNS) if gateway_decl_idx >= 0 else line_sample(gateway_lines, BAD_PATTERNS, 5)
+    # For gateway errors-after-declare, prefer the windowed declare anchor when
+    # present (catches "redeclared then failed within window"); otherwise scan
+    # the windowed log for any bad pattern at all so a new error doesn't hide
+    # behind a stale full-log anchor.
+    if gateway_decl_idx_window >= 0:
+        gateway_bad_after_declare = has_after(gateway_lines, gateway_decl_idx_window, BAD_PATTERNS)
+    else:
+        gateway_bad_after_declare = line_sample(gateway_lines, BAD_PATTERNS, 5)
 
     checks = [
         {"name": "director container running", "ok": director_error is None, "value": director_error or "running"},
@@ -212,8 +231,8 @@ def evaluate(env_file, compose_files, since):
         {"name": "director capacity accepted by FLS", "ok": capacity_idx >= 0, "value": "seen" if capacity_idx >= 0 else "missing"},
         {"name": "director battlegroup update or population accepted by FLS", "ok": update_idx >= 0 or population_idx >= 0, "value": "seen" if update_idx >= 0 else "population-only"},
         {"name": "no director FLS errors after latest population success", "ok": not director_bad_after_population, "value": "; ".join(director_bad_after_population) if director_bad_after_population else "clean"},
-        {"name": "gateway farm status declared", "ok": gateway_decl_idx >= 0 and gateway_monitor_idx > gateway_decl_idx, "value": "seen" if gateway_decl_idx >= 0 else "missing"},
-        {"name": "gateway observed farm maps", "ok": gateway_map_idx >= 0, "value": "seen" if gateway_map_idx >= 0 else "missing"},
+        {"name": "gateway farm status declared", "ok": gateway_decl_idx_full >= 0 and gateway_monitor_idx_full > gateway_decl_idx_full, "value": "seen" if gateway_decl_idx_full >= 0 else "missing"},
+        {"name": "gateway observed farm maps", "ok": gateway_map_idx_full >= 0, "value": "seen" if gateway_map_idx_full >= 0 else "missing"},
         {"name": "no gateway errors after latest farm declaration", "ok": not gateway_bad_after_declare, "value": "; ".join(gateway_bad_after_declare) if gateway_bad_after_declare else "clean"},
     ]
     ok = all(check["ok"] for check in checks)
