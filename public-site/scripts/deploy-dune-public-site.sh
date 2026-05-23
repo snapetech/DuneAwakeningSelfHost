@@ -46,8 +46,29 @@ install_static_assets() {
     -name '*.webp' \
   \) -print0 |
     while IFS= read -r -d '' asset; do
+      case "$(basename "$asset")" in
+        players.json|status.html|hagga-map.svg|deep-desert-map.svg|deep-desert-map-data.json|deep-desert-observations.json)
+          continue
+          ;;
+      esac
       install_file "$asset" "$static_dir/$(basename "$asset")"
     done
+}
+
+install_render_scripts() {
+  local dst_dir="${PUBLIC_SITE_RENDER_SCRIPT_DIR:-/usr/local/sbin}"
+  local script
+  if [[ -d "$dst_dir" && -w "$dst_dir" ]]; then
+    install -m 0755 "$repo_root/public-site/scripts/render-dune-static-status.sh" "$dst_dir/render-dune-static-status.sh"
+    install -m 0755 "$repo_root/public-site/scripts/render-dune-public-snapshot.py" "$dst_dir/render-dune-public-snapshot.py"
+    install -m 0755 "$repo_root/public-site/scripts/configure-dune-public-site.sh" "$dst_dir/configure-dune-public-site.sh"
+    install -m 0755 "$repo_root/public-site/scripts/validate-dune-public-site.sh" "$dst_dir/validate-dune-public-site.sh"
+  else
+    run_privileged install -d -m 0755 "$dst_dir"
+    for script in render-dune-static-status.sh render-dune-public-snapshot.py configure-dune-public-site.sh validate-dune-public-site.sh; do
+      run_privileged install -m 0755 "$repo_root/public-site/scripts/$script" "$dst_dir/$script"
+    done
+  fi
 }
 
 if [[ -d "$static_dir" && -w "$static_dir" ]]; then
@@ -56,6 +77,7 @@ else
   run_privileged install -d -m 0755 "$static_dir"
 fi
 install_static_assets
+install_render_scripts
 
 if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files "$render_service" >/dev/null 2>&1; then
   run_privileged systemctl restart "$render_service"

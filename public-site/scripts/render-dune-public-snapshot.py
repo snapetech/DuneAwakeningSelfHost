@@ -306,7 +306,7 @@ def render_svg(players, generated_at, image_href, map_key="HaggaBasin", label="H
     if not plotted:
         empty = f'<text x="{WIDTH / 2}" y="{HEIGHT / 2}" class="empty">No online {html.escape(label)} positions.</text>'
     background = f'<image href="{image_href}" x="0" y="0" width="{WIDTH}" height="{HEIGHT}" preserveAspectRatio="none"/>' if image else '<rect x="0" y="0" width="1600" height="1600" fill="#171512"/><path d="M0 1120 C300 1010 540 1240 820 1110 C1120 970 1320 1080 1600 960 L1600 1600 L0 1600 Z" fill="#2a241b" opacity=".75"/><path d="M0 420 C260 320 520 500 770 390 C1100 250 1320 390 1600 260" fill="none" stroke="#8f6b34" stroke-width="10" opacity=".42"/><path d="M0 760 C220 690 520 870 760 740 C1040 590 1300 720 1600 600" fill="none" stroke="#d9a63c" stroke-width="7" opacity=".28"/>'
-    return f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {PUBLIC_VIEWBOX_WIDTH:.3f} {HEIGHT}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="{html.escape(label)} live player map">
+    return f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {PUBLIC_VIEWBOX_WIDTH:.3f} {HEIGHT}" preserveAspectRatio="none" role="img" aria-label="{html.escape(label)} live player map">
 <style>
 .shade{{fill:rgba(4,5,4,.28)}}.grid{{stroke:#f1d08a;stroke-width:1;opacity:.24}}.dot{{fill:#78cf7a;stroke:#071007;stroke-width:4}}.label{{fill:#fff;font:700 24px system-ui,sans-serif;paint-order:stroke;stroke:#0b0d0a;stroke-width:7}}.meta{{fill:#c7bba9;font:20px system-ui,sans-serif}}.empty{{fill:#f3eadb;font:26px system-ui,sans-serif;text-anchor:middle;paint-order:stroke;stroke:#0b0d0a;stroke-width:6}}
 </style>
@@ -478,7 +478,7 @@ def render_deep_desert_svg(players, markers, generated_at, layout_state=None, ob
         for row in spice_availability
         if str(row.get("field_type") or "").lower() == "large" and int(row.get("dimension_index") or 0) == 0
     )
-    return f'''<svg xmlns="http://www.w3.org/2000/svg" width="{PUBLIC_VIEWBOX_WIDTH:.0f}" height="{HEIGHT}" viewBox="0 0 {PUBLIC_VIEWBOX_WIDTH:.3f} {HEIGHT}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Deep Desert operational map derived from server markers">
+    return f'''<svg xmlns="http://www.w3.org/2000/svg" width="{PUBLIC_VIEWBOX_WIDTH:.0f}" height="{HEIGHT}" viewBox="0 0 {PUBLIC_VIEWBOX_WIDTH:.3f} {HEIGHT}" preserveAspectRatio="none" role="img" aria-label="Deep Desert operational map derived from server markers">
 <style>
 .bg{{fill:#171512}}.dune{{fill:#2a241b;opacity:.82}}.ridge{{fill:none;stroke:#d9a63c;stroke-width:7;opacity:.26}}.grid{{stroke:#f1d08a;stroke-width:1;opacity:.18}}.coord,.meta,.legend{{fill:#c7bba9;font:18px system-ui,sans-serif}}.cellLabel{{fill:#e7c875;font:700 22px system-ui,sans-serif;text-anchor:middle;opacity:.68;paint-order:stroke;stroke:#0b0d0a;stroke-width:5}}.dot{{fill:#78cf7a;stroke:#071007;stroke-width:4}}.label{{fill:#fff;font:700 24px system-ui,sans-serif;paint-order:stroke;stroke:#0b0d0a;stroke-width:7}}.pointLabel{{fill:#fff;font:700 18px system-ui,sans-serif;paint-order:stroke;stroke:#0b0d0a;stroke-width:5}}.empty{{fill:#f3eadb;font:26px system-ui,sans-serif;text-anchor:middle;paint-order:stroke;stroke:#0b0d0a;stroke-width:6}}.marker{{opacity:.92;cursor:help}}.shiftingSand{{fill:#e7d59a;stroke:#fff0bc;stroke-width:2}}
 </style>
@@ -541,26 +541,55 @@ def update_daily_peak(count, now):
     }
 
 
+def write_snapshot_error(errors, generated):
+    error_file = STATIC_DIR / "players-error.json"
+    payload = {
+        "ok": False,
+        "generatedAt": generated,
+        "errors": errors,
+        "preserved": (STATIC_DIR / "players.json").exists(),
+    }
+    error_file.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+
 def main():
     STATIC_DIR.mkdir(parents=True, exist_ok=True)
     generated_dt = datetime.datetime.now(datetime.timezone.utc)
     generated = generated_dt.strftime("%Y-%m-%d %H:%M UTC")
+    errors = {}
     try:
         players = load_rows()
-        map_health = load_map_health()
-        deep_desert_markers = load_deep_desert_markers()
-        deep_desert_layout = load_deep_desert_layout_state()
-        deep_desert_observations = load_deep_desert_observations()
-        ok = True
-        error = None
     except Exception as exc:
         players = []
+        errors["players"] = str(exc)
+    try:
+        map_health = load_map_health()
+    except Exception as exc:
         map_health = []
+        errors["mapHealth"] = str(exc)
+    try:
+        deep_desert_markers = load_deep_desert_markers()
+    except Exception as exc:
         deep_desert_markers = []
+        errors["deepDesertMarkers"] = str(exc)
+    try:
+        deep_desert_layout = load_deep_desert_layout_state()
+    except Exception as exc:
         deep_desert_layout = {}
+        errors["deepDesertLayout"] = str(exc)
+    try:
+        deep_desert_observations = load_deep_desert_observations()
+    except Exception as exc:
         deep_desert_observations = {"source": "unavailable", "spiceAvailability": [], "shipwreckSpawners": []}
-        ok = False
-        error = str(exc)
+        errors["deepDesertObservations"] = str(exc)
+
+    if ("players" in errors or "mapHealth" in errors) and (STATIC_DIR / "players.json").exists():
+        write_snapshot_error(errors, generated)
+        print(f"preserved existing players.json after snapshot failure: {errors}", file=sys.stderr)
+        return 1
+
+    ok = not errors
+    error = "; ".join(f"{key}: {value}" for key, value in errors.items()) or None
 
     public_players = [
         {

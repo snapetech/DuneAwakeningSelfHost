@@ -7089,7 +7089,7 @@ INDEX = r"""<!doctype html>
     .statusLight.ok { background:var(--ok); color:var(--ok); }
     .statusLight.warn { background:var(--warn); color:var(--warn); }
     .statusLight.bad { background:var(--danger); color:var(--danger); }
-    .mapHealthList { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:4px; }
+    .mapHealthList { display:grid; grid-template-columns:repeat(auto-fill,minmax(145px,1fr)); gap:4px; }
     .mapHealthRow { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:3px 6px; align-items:center; border:1px solid var(--line); border-radius:7px; background:#101310; padding:4px 6px; min-width:0; }
     .mapHealthRow.ok { border-color:#315e31; }
     .mapHealthRow.warn { border-color:#6d5624; }
@@ -7190,10 +7190,10 @@ INDEX = r"""<!doctype html>
     .hidden { display:none; }
     @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior:auto !important; transition:none !important; animation:none !important; } }
     @media (max-width: 1100px) { .twoCol, .threeCol, .haggaMapLayout { grid-template-columns:1fr; } .overviewMapShell .haggaMap { aspect-ratio:1 / 1; min-height:0; max-height:none; } .haggaPoiLegend { max-height:none; } }
-    @media (max-width: 1180px) { main { grid-template-columns:1fr; } nav { position:static; height:auto; border-right:0; border-bottom:1px solid var(--line); } .tabs { grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); } .overviewTopGrid { grid-template-columns:repeat(3,minmax(0,1fr)); } .sectionHeader { flex-wrap:wrap; } }
+    @media (max-width: 1180px) { main { grid-template-columns:1fr; min-height:0; align-items:start; } nav { position:static; height:auto; align-self:start; border-right:0; border-bottom:1px solid var(--line); } section { align-self:start; } .tabs { grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); } .overviewTopGrid { grid-template-columns:repeat(3,minmax(0,1fr)); } .sectionHeader { flex-wrap:wrap; } }
     @media (min-width: 1800px) { .overviewTopGrid { grid-template-columns:repeat(6,minmax(0,1fr)); } }
-    @media (max-width: 640px) { section { padding:12px; } nav { padding:8px; } nav .tabs { display:flex; gap:4px; overflow-x:auto; padding-bottom:3px; scrollbar-width:thin; } nav .tab { flex:0 0 auto; padding:7px 9px; font-size:12px; } nav .card { padding:8px; margin:8px 0 0; } nav .card h3 { margin-bottom:5px; font-size:11px; } nav .card .toolbar { flex-wrap:nowrap; overflow-x:auto; gap:4px; margin-bottom:0; } nav .card .toolbar button { flex:0 0 auto; padding:6px 8px; font-size:12px; } nav .card details { display:none; } #statusSummary { grid-template-columns:repeat(2,minmax(0,1fr)); } #lastRefresh { font-size:11px; } .overviewTopGrid { grid-template-columns:repeat(2,minmax(0,1fr)); } .mapHealthMeta { flex-wrap:wrap; } }
-    @media (max-width: 820px) { header { align-items:flex-start; flex-direction:column; } .row { flex-wrap:wrap; } .barRow { grid-template-columns:1fr; gap:4px; } }
+    @media (max-width: 640px) { section { padding:12px; } nav { padding:6px 8px; } nav .tabs { display:flex; gap:4px; overflow-x:auto; padding-bottom:3px; scrollbar-width:thin; } nav .tab { flex:0 0 auto; padding:7px 9px; font-size:12px; } nav .card { display:none; } .overviewTopGrid { grid-template-columns:repeat(2,minmax(0,1fr)); } .mapHealthMeta { flex-wrap:nowrap; } .mapHealthMeta .pill:nth-child(n+4) { display:none; } }
+    @media (max-width: 820px) { header { align-items:stretch; flex-direction:column; gap:6px; padding:8px 10px; } #tokenRow input { min-width:0; flex:1 1 150px; } .row { flex-wrap:wrap; } .barRow { grid-template-columns:1fr; gap:4px; } }
   </style>
 </head>
 <body>

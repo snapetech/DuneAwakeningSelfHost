@@ -19,6 +19,28 @@ compose+=(--env-file "$env_file")
 python3 -m py_compile admin/admin_panel.py scripts/admin-chat-commands.py scripts/player-presence-announcer.py
 python3 scripts/test-admin-panel-safe-surfaces.py
 
+"${compose[@]}" up -d postgres
+
+deadline=$((SECONDS + 90))
+while (( SECONDS < deadline )); do
+  status="$("${compose[@]}" ps --format json postgres 2>/dev/null | python3 -c 'import json,sys
+text=sys.stdin.read().strip()
+if not text:
+    print("")
+    raise SystemExit
+try:
+    rows=[json.loads(line) for line in text.splitlines() if line.strip()]
+except Exception:
+    print("")
+    raise SystemExit
+print((rows[0].get("Health") or rows[0].get("State") or "").lower() if rows else "")
+' || true)"
+  if [[ "$status" == *healthy* || "$status" == *running* ]]; then
+    break
+  fi
+  sleep 3
+done
+
 "${compose[@]}" up -d --no-deps --force-recreate admin-panel admin-panel-ingress
 
 deadline=$((SECONDS + 90))

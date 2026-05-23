@@ -240,7 +240,7 @@ section {
 
 .map-health-list {
 	display: grid;
-	grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+	grid-template-columns: repeat(auto-fill, minmax(145px, 1fr));
 	gap: 4px;
 }
 
@@ -793,7 +793,25 @@ a:visited {
 
 @media (max-width: 560px) {
 	main {
-		padding: 36px 18px;
+		padding: 18px;
+	}
+
+	h1 {
+		font-size: 1.45rem;
+		line-height: 1.2;
+	}
+
+	p {
+		font-size: 0.95rem;
+	}
+
+	.hero-card {
+		padding: 14px;
+	}
+
+	.starter-notice,
+	.support-link {
+		margin: 8px 0;
 	}
 
 	dl {
@@ -808,9 +826,6 @@ a:visited {
 		aspect-ratio: 4 / 3;
 	}
 
-	.map-health-list {
-		grid-template-columns: 1fr;
-	}
 }
 
 @media (max-width: 920px) {

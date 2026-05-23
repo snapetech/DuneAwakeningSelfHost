@@ -55,6 +55,11 @@ find "$repo_root/public-site/static" -maxdepth 1 -type f \( \
   -name '*.webp' \
 \) -print0 |
   while IFS= read -r -d '' asset; do
+    case "$(basename "$asset")" in
+      players.json|status.html|hagga-map.svg|deep-desert-map.svg|deep-desert-map-data.json|deep-desert-observations.json)
+        continue
+        ;;
+    esac
     install -m 0644 "$asset" "$static_dir/$(basename "$asset")"
   done
 
