@@ -46,6 +46,17 @@ if [[ ! -f "$env_file" ]]; then
   exit 2
 fi
 
+extra_compose_files="${DUNE_HANDOFF_LAB_EXTRA_COMPOSE_FILES:-$(
+  awk -F= '$1 == "DUNE_HANDOFF_LAB_EXTRA_COMPOSE_FILES" { print $2 }' "$env_file" | tail -n1
+)}"
+if [[ -n "$extra_compose_files" ]]; then
+  IFS=':,' read -r -a extra_compose_array <<< "$extra_compose_files"
+  for extra_compose_file in "${extra_compose_array[@]}"; do
+    [[ -n "$extra_compose_file" ]] || continue
+    compose_files+=("$extra_compose_file")
+  done
+fi
+
 compose_args() {
   printf '%q ' "$runtime" compose --env-file "$env_file" -f "${compose_files[0]}" -f "${compose_files[1]}"
 }
