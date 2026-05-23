@@ -473,13 +473,14 @@
 			var checks = document.createElement("div");
 			checks.className = "map-health-checks";
 			[
-				["ready", row.ready],
-				["alive", row.alive],
-				["active", row.active]
+				["ready", "r", row.ready],
+				["alive", "live", row.alive],
+				["active", "act", row.active]
 			].forEach(function (check) {
 				var chip = document.createElement("span");
-				chip.className = "map-health-chip " + (check[1] ? "ok" : "bad");
-				chip.textContent = check[0];
+				chip.className = "map-health-chip " + (check[2] ? "ok" : "bad");
+				chip.title = check[0];
+				chip.textContent = check[1];
 				checks.appendChild(chip);
 			});
 			item.appendChild(dot);

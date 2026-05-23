@@ -12,9 +12,10 @@ body {
 }
 
 main {
-	max-width: 1800px;
+	width: 100%;
+	max-width: none;
 	margin: 0 auto;
-	padding: 32px 24px;
+	padding: clamp(16px, 1.6vw, 32px);
 }
 
 h1 {
@@ -48,9 +49,9 @@ section {
 
 .dashboard-grid {
 	display: grid;
-	grid-template-columns: minmax(300px, 1fr) minmax(0, 2fr);
+	grid-template-columns: minmax(280px, 420px) minmax(0, 1fr);
 	gap: 18px;
-	align-items: stretch;
+	align-items: start;
 	margin-top: 22px;
 }
 
@@ -64,9 +65,9 @@ section {
 
 .info-column {
 	display: grid;
-	grid-template-rows: auto minmax(0, 1fr);
+	grid-template-rows: auto auto;
 	gap: 14px;
-	min-height: 100%;
+	align-content: start;
 }
 
 .card {
@@ -217,36 +218,44 @@ section {
 	border: 1px solid #3a342d;
 	border-radius: 6px;
 	background: #13110f;
-	min-height: 420px;
-	padding: 12px;
+	max-height: calc(100vh - 260px);
+	min-height: 0;
+	overflow: auto;
+	padding: 8px;
+}
+
+/* Keep tab panels hidden even when component display rules also match. */
+.map-layout[hidden],
+.map-tools[hidden],
+.map-health-panel[hidden] {
+	display: none !important;
 }
 
 .map-health-summary {
 	display: flex;
 	flex-wrap: wrap;
-	gap: 8px;
-	margin-bottom: 12px;
+	gap: 5px;
+	margin-bottom: 8px;
 }
 
 .map-health-list {
 	display: grid;
-	grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
-	gap: 8px;
+	grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+	gap: 4px;
 }
 
 .map-health-row {
 	display: grid;
-	grid-template-columns: auto minmax(0, 1fr);
+	grid-template-columns: auto minmax(0, 1fr) auto;
 	grid-template-areas:
-		"dot name"
-		"dot state"
-		"dot checks";
-	gap: 5px 9px;
+		"dot name checks";
+	gap: 3px 6px;
 	align-items: center;
 	border: 1px solid #3a342d;
 	border-radius: 6px;
 	background: #171512;
-	padding: 10px;
+	min-width: 0;
+	padding: 4px 6px;
 }
 
 .map-health-ok {
@@ -263,9 +272,9 @@ section {
 
 .map-health-row > .status-dot {
 	grid-area: dot;
-	width: 0.85rem;
-	height: 0.85rem;
-	box-shadow: 0 0 10px currentColor;
+	width: 0.55rem;
+	height: 0.55rem;
+	box-shadow: 0 0 7px currentColor;
 }
 
 .map-health-name {
@@ -275,6 +284,7 @@ section {
 
 .map-health-state {
 	grid-area: state;
+	display: none;
 	min-width: 0;
 }
 
@@ -291,23 +301,35 @@ section {
 .map-health-name small,
 .map-health-state small {
 	color: #c7bba9;
-	font-size: 0.8rem;
+	font-size: 0.7rem;
+}
+
+.map-health-name small,
+.map-health-state small {
+	display: none;
+}
+
+.map-health-name strong,
+.map-health-state strong {
+	font-size: 0.72rem;
+	line-height: 1.1;
 }
 
 .map-health-checks {
 	grid-area: checks;
 	display: flex;
 	flex-wrap: wrap;
-	gap: 5px;
+	gap: 3px;
+	justify-content: flex-end;
 }
 
 .map-health-chip {
 	border: 1px solid #5b503f;
 	border-radius: 999px;
 	color: #c7bba9;
-	font-size: 0.72rem;
+	font-size: 0.62rem;
 	line-height: 1;
-	padding: 3px 6px;
+	padding: 2px 4px;
 }
 
 .map-health-chip.ok {
@@ -784,6 +806,10 @@ a:visited {
 
 	.map-viewport {
 		aspect-ratio: 4 / 3;
+	}
+
+	.map-health-list {
+		grid-template-columns: 1fr;
 	}
 }
 

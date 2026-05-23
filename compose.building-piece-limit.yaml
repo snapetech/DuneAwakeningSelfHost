@@ -1,0 +1,39 @@
+x-building-piece-limit-patch: &building-piece-limit-patch
+  environment:
+    DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED: "true"
+    DUNE_BUILDING_PIECE_LIMIT: ${DUNE_BUILDING_PIECE_LIMIT:-7500}
+    DUNE_OODLE_LIBRARY: /tmp/oodle/liboodle-data-shared.so
+  volumes:
+    - ${DUNE_OODLE_HOST_LIBRARY:-/home/keith/Documents/code/DuneAwakeningSelfHost/backups/operator-oodle/liboodle-data-shared.so}:/tmp/oodle/liboodle-data-shared.so:ro
+
+services:
+  survival: *building-piece-limit-patch
+  overmap: *building-piece-limit-patch
+  arrakeen: *building-piece-limit-patch
+  harko-village: *building-piece-limit-patch
+  testing-hephaestus: *building-piece-limit-patch
+  testing-carthag: *building-piece-limit-patch
+  testing-waterfat: *building-piece-limit-patch
+  deep-desert: *building-piece-limit-patch
+  proces-verbal: *building-piece-limit-patch
+  lostharvest-ecolab-a: *building-piece-limit-patch
+  lostharvest-ecolab-b: *building-piece-limit-patch
+  lostharvest-forgottenlab: *building-piece-limit-patch
+  art-of-kanly: *building-piece-limit-patch
+  dungeon-hephaestus: *building-piece-limit-patch
+  dungeon-oldcarthag: *building-piece-limit-patch
+  faction-outpost-atre: *building-piece-limit-patch
+  faction-outpost-hark: *building-piece-limit-patch
+  heighliner-dungeon: *building-piece-limit-patch
+  ecolab-green-089: *building-piece-limit-patch
+  ecolab-green-152: *building-piece-limit-patch
+  ecolab-green-024: *building-piece-limit-patch
+  ecolab-green-195: *building-piece-limit-patch
+  ecolab-green-136: *building-piece-limit-patch
+  overland-m-01: *building-piece-limit-patch
+  overland-s-04: *building-piece-limit-patch
+  overland-s-06: *building-piece-limit-patch
+  bandit-fortress: *building-piece-limit-patch
+  overland-s-07: *building-piece-limit-patch
+  overland-s-08: *building-piece-limit-patch
+  dungeon-thepit: *building-piece-limit-patch

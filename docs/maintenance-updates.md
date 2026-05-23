@@ -232,3 +232,154 @@ DUNE_RESTART_CHECK_STEAM_UPDATE=false \
 ## Rollback
 
 Rollback after an image-tag upgrade means restoring the old `DUNE_IMAGE_TAG` and restoring state from a backup taken before the upgrade. Do not mix a downgraded image tag with post-upgrade database state unless schema compatibility has been verified.
+
+## Building-Piece Limit Patch Rollback
+
+The `7500` building-piece experiment is applied through `compose.building-piece-limit.yaml` during game-server startup. It patches the server pak inside the recreated container overlay; it does not edit the official image or the host save data directly.
+
+Current production wiring on `kspls0`:
+
+```env
+COMPOSE_FILES=compose.yaml:compose.allmaps.yaml:compose.building-piece-limit.yaml
+DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED=true
+DUNE_BUILDING_PIECE_LIMIT=7500
+DUNE_OODLE_HOST_LIBRARY=/home/keith/Documents/code/DuneAwakeningSelfHost/backups/operator-oodle/liboodle-data-shared.so
+```
+
+Known rollback anchors from the initial production wiring:
+
+```text
+pre-change files: /home/keith/Documents/code/DuneAwakeningSelfHost/backups/operator-changes/20260523T193322Z-building-piece-limit
+pre-maintenance operator backup: /home/keith/Documents/code/DuneAwakeningSelfHost/backups/20260523T193525Z
+scheduled maintenance backups: /home/keith/Documents/code/DuneAwakeningSelfHost/backups/admin-panel/maintenance/<stamp>-<job-id>
+```
+
+### Disable Before Maintenance Starts
+
+Use this if the patch should not be attempted in the next 06:00 maintenance run.
+
+```bash
+cd /home/keith/Documents/code/DuneAwakeningSelfHost
+python3 - <<'PY'
+from pathlib import Path
+
+path = Path(".env")
+updates = {
+    "DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED": "false",
+    "COMPOSE_FILES": "compose.yaml:compose.allmaps.yaml",
+}
+out = []
+seen = set()
+for line in path.read_text().splitlines():
+    if line and not line.lstrip().startswith("#") and "=" in line:
+        key = line.split("=", 1)[0].strip()
+        if key in updates:
+            out.append(f"{key}={updates[key]}")
+            seen.add(key)
+            continue
+    out.append(line)
+for key, value in updates.items():
+    if key not in seen:
+        out.append(f"{key}={value}")
+path.write_text("\n".join(out) + "\n")
+PY
+
+docker compose --env-file .env \
+  -f compose.yaml \
+  -f compose.allmaps.yaml \
+  up -d --force-recreate --no-deps admin-panel admin-panel-ingress
+```
+
+Confidence: high. This removes the overlay from the admin panel's scheduled restart environment before the game servers are recreated.
+
+### Recover If Startup Fails
+
+Use this if the 06:00 job stopped the game services but the patched recreate fails. This keeps the current database and save state and simply starts containers from the unpatched compose set.
+
+```bash
+cd /home/keith/Documents/code/DuneAwakeningSelfHost
+python3 - <<'PY'
+from pathlib import Path
+
+path = Path(".env")
+updates = {
+    "DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED": "false",
+    "COMPOSE_FILES": "compose.yaml:compose.allmaps.yaml",
+}
+out = []
+seen = set()
+for line in path.read_text().splitlines():
+    if line and not line.lstrip().startswith("#") and "=" in line:
+        key = line.split("=", 1)[0].strip()
+        if key in updates:
+            out.append(f"{key}={updates[key]}")
+            seen.add(key)
+            continue
+    out.append(line)
+for key, value in updates.items():
+    if key not in seen:
+        out.append(f"{key}={value}")
+path.write_text("\n".join(out) + "\n")
+PY
+
+DUNE_RESTART_TARGET=all \
+DUNE_RESTART_PHASE=start \
+DUNE_RESTART_ACTION=restart \
+DUNE_RESTART_USE_HOST_COMPOSE=true \
+DUNE_RESTART_HOST_WORKSPACE=/home/keith/Documents/code/DuneAwakeningSelfHost \
+COMPOSE_FILES=compose.yaml:compose.allmaps.yaml \
+./scripts/restart-target.sh
+```
+
+After the farm is online, recreate the admin panel so future scheduled jobs use the unpatched compose set:
+
+```bash
+docker compose --env-file .env \
+  -f compose.yaml \
+  -f compose.allmaps.yaml \
+  up -d --force-recreate --no-deps admin-panel admin-panel-ingress
+```
+
+Confidence: high for a patcher, Oodle, or pak-layout failure. The original pak is restored by recreating containers without the overlay because the patch only touched the previous container filesystem.
+
+### Restore World State
+
+Use a state restore only if the server booted and then wrote bad world state, or if Postgres/RabbitMQ/server-saved data is otherwise suspect. Do not restore state for a simple patcher startup failure.
+
+Find the newest stopped-world maintenance backup:
+
+```bash
+cd /home/keith/Documents/code/DuneAwakeningSelfHost
+latest_backup="$(ls -dt backups/admin-panel/maintenance/* | head -1)"
+printf '%s\n' "$latest_backup"
+```
+
+Dry-run the restore first:
+
+```bash
+./scripts/restore-state.sh --dry-run --rabbitmq --server-saved --config --tls .env "$latest_backup"
+```
+
+Then run the disruptive restore only after confirming the selected backup:
+
+```bash
+./scripts/restore-state.sh --rabbitmq --server-saved --config --tls .env "$latest_backup"
+```
+
+Confidence: high that the maintenance backup is the right restore point after the stop phase completes. Confidence is lower for the immediate operator backup taken while the world is live; prefer the stopped-world `backups/admin-panel/maintenance/...` backup when it exists.
+
+### Full File Rollback
+
+Use the pre-change file copy only if the `.env` or compose files themselves need to be restored to the exact pre-experiment state.
+
+```bash
+cd /home/keith/Documents/code/DuneAwakeningSelfHost
+rollback_dir=backups/operator-changes/20260523T193322Z-building-piece-limit
+cp -a "$rollback_dir/.env" .env
+cp -a "$rollback_dir/compose.yaml" compose.yaml
+cp -a "$rollback_dir/compose.allmaps.yaml" compose.allmaps.yaml
+cp -a "$rollback_dir/scripts/run_server_safe.sh" scripts/run_server_safe.sh
+rm -f compose.building-piece-limit.yaml
+```
+
+Only use this path when overwriting later `.env` changes is acceptable. The safer default is to set `DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED=false` and remove `compose.building-piece-limit.yaml` from `COMPOSE_FILES`.

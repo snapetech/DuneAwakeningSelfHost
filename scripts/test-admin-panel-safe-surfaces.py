@@ -1413,6 +1413,44 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn("Steam package update check failed", result["warning"])
         self.assertIn("missing helper image", result["output"])
 
+    def test_restart_start_runs_after_maintenance_backup_failure(self):
+        command = self.workspace / "scripts" / "restart-target.sh"
+        command.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        command.chmod(0o755)
+        self.panel.RESTART_COMMAND = str(command)
+        self.panel.MAINTENANCE_BACKUP_ENABLED = True
+        self.panel.soft_disconnect_online_players = lambda job: {"ok": True}
+        phases = []
+        self.panel.run_restart_command = lambda command, job, phase: phases.append(phase) or {
+            "ok": True,
+            "phase": phase,
+            "returncode": 0,
+            "output": phase,
+        }
+        self.panel.create_maintenance_backup = lambda job: (_ for _ in ()).throw(RuntimeError("backup path unavailable"))
+        self.panel.wait_for_restart_online = lambda: {
+            "ok": True,
+            "expected": 30,
+            "online": 30,
+            "readyOnline": 30,
+            "alive": 30,
+            "active": 30,
+        }
+
+        result = self.panel.execute_restart({
+            "id": "backup-failure",
+            "execute": True,
+            "action": "restart",
+            "target": "all",
+            "services": [],
+            "backup": True,
+        })
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(phases, ["stop", "update", "start"])
+        self.assertIn("maintenance backup failed", result["warning"])
+        self.assertIn("backup path unavailable", result["output"])
+
     def test_restart_runs_recovery_when_farm_readiness_is_incomplete(self):
         command = self.workspace / "scripts" / "restart-target.sh"
         command.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")

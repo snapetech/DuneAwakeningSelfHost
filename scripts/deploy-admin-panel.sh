@@ -19,7 +19,7 @@ compose+=(--env-file "$env_file")
 python3 -m py_compile admin/admin_panel.py scripts/admin-chat-commands.py scripts/player-presence-announcer.py
 python3 scripts/test-admin-panel-safe-surfaces.py
 
-"${compose[@]}" up -d --no-deps --force-recreate admin-panel
+"${compose[@]}" up -d --no-deps --force-recreate admin-panel admin-panel-ingress
 
 deadline=$((SECONDS + 90))
 while (( SECONDS < deadline )); do

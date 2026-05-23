@@ -1163,6 +1163,14 @@ def run_restart_recovery(job):
     return {"ok": result.returncode == 0, "returncode": result.returncode, "output": output}
 
 
+def append_restart_warning(result, warning):
+    if not warning:
+        return
+    warnings = result.setdefault("warnings", [])
+    warnings.append(str(warning))
+    result["warning"] = "; ".join(warnings)
+
+
 def execute_restart(job):
     if not job.get("execute"):
         return {"ok": True, "dryRun": True, "output": f"scheduled {job.get('action', 'restart')} reached run time; execute=false so no command was run"}
@@ -1191,15 +1199,19 @@ def execute_restart(job):
         try:
             result["backup"] = create_maintenance_backup(job)
         except Exception as exc:
-            result["error"] = str(exc)
+            backup_warning = f"maintenance backup failed: {exc}"
+            result["backup"] = {"ok": False, "error": str(exc), "output": backup_warning}
+            append_restart_warning(result, backup_warning)
             result["output"] = f"{stop_result.get('output', '')}\nbackup failed: {exc}".strip()
-            return result
+            if action == "shutdown":
+                result["error"] = str(exc)
+                return result
 
     update_result = run_restart_command(command, job, "update")
     result["update"] = update_result
     if not update_result.get("ok"):
         update_warning = update_result.get("error") or "Steam package update check failed"
-        result["warning"] = update_warning
+        append_restart_warning(result, update_warning)
         result["output"] = "\n".join(part for part in [stop_result.get("output", ""), update_result.get("output", ""), update_warning] if part)
         if action == "shutdown":
             result["error"] = update_warning
@@ -1224,12 +1236,13 @@ def execute_restart(job):
     result["ok"] = start_ok and bool(online_result.get("ok"))
     result["returncode"] = start_result.get("returncode")
     if start_result.get("returncode") == 141 and online_result.get("ok"):
-        result["warning"] = "restart start hook returned 141, but farm reported fully online after verification"
+        append_restart_warning(result, "restart start hook returned 141, but farm reported fully online after verification")
     elif not start_result.get("ok"):
         result["error"] = start_result.get("error") or f"restart start hook failed with return code {start_result.get('returncode')}"
     elif not online_result.get("ok"):
         result["error"] = "restart start hook completed, but farm did not report fully online before timeout"
-    result["output"] = "\n".join(part for part in [stop_result.get("output", ""), update_result.get("output", ""), start_result.get("output", "")] if part)
+    backup_output = result["backup"].get("output") if isinstance(result.get("backup"), dict) else ""
+    result["output"] = "\n".join(part for part in [stop_result.get("output", ""), backup_output, update_result.get("output", ""), start_result.get("output", "")] if part)
     if len(result["output"]) > AUDIT_FIELD_LIMIT:
         result["output"] = result["output"][:AUDIT_FIELD_LIMIT] + "...[truncated]"
     return result
@@ -6961,9 +6974,9 @@ INDEX = r"""<!doctype html>
     h1 { font-size:18px; margin:0; letter-spacing:0; }
     h2 { font-size:16px; margin:0 0 10px; }
     h3 { font-size:13px; margin:0 0 8px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
-    main { display:grid; grid-template-columns:264px minmax(0,1fr); min-height:calc(100vh - 58px); }
+    main { display:grid; grid-template-columns:minmax(220px,14vw) minmax(0,1fr); min-height:calc(100vh - 58px); }
     nav { border-right:1px solid var(--line); padding:14px; background:var(--nav); position:sticky; top:58px; height:calc(100vh - 58px); overflow:auto; }
-    section { padding:18px; min-width:0; max-width:1540px; }
+    section { padding:clamp(12px,1.2vw,22px); min-width:0; max-width:none; width:100%; }
     button, input, select, textarea { font:inherit; border:1px solid var(--line); background:#101310; color:var(--text); border-radius:6px; padding:8px 10px; }
     button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible, a:focus-visible, tr[tabindex]:focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
     button { cursor:pointer; background:#22291f; white-space:nowrap; }
@@ -7076,15 +7089,18 @@ INDEX = r"""<!doctype html>
     .statusLight.ok { background:var(--ok); color:var(--ok); }
     .statusLight.warn { background:var(--warn); color:var(--warn); }
     .statusLight.bad { background:var(--danger); color:var(--danger); }
-    .mapHealthList { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:8px; }
-    .mapHealthRow { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:6px 9px; align-items:center; border:1px solid var(--line); border-radius:7px; background:#101310; padding:9px; min-width:0; }
+    .mapHealthList { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:4px; }
+    .mapHealthRow { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:3px 6px; align-items:center; border:1px solid var(--line); border-radius:7px; background:#101310; padding:4px 6px; min-width:0; }
     .mapHealthRow.ok { border-color:#315e31; }
     .mapHealthRow.warn { border-color:#6d5624; }
     .mapHealthRow.bad { border-color:#743932; }
     .mapHealthName { min-width:0; }
     .mapHealthName b, .mapHealthName span { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .mapHealthName span { color:var(--muted); font-size:12px; margin-top:2px; }
-    .mapHealthMeta { display:flex; gap:5px; flex-wrap:wrap; justify-content:flex-end; }
+    .mapHealthName b { font-size:12px; line-height:1.1; }
+    .mapHealthName span { display:none; color:var(--muted); font-size:10px; line-height:1.1; margin-top:1px; }
+    .mapHealthMeta { display:flex; gap:3px; flex-wrap:nowrap; justify-content:flex-end; min-width:0; }
+    .mapHealthMeta .pill { padding:2px 5px; font-size:10px; line-height:1; }
+    .mapHealthRow > .statusLight { width:8px; height:8px; box-shadow:0 0 7px currentColor; }
     .haggaMap { position:relative; display:block; overflow:hidden; touch-action:none; cursor:grab; background:#171513; inline-size:100%; margin-inline:auto; border:1px solid var(--line); border-radius:8px; }
     .haggaMap.isDragging { cursor:grabbing; }
     .haggaMap svg { display:block; inline-size:100%; aspect-ratio:1 / 1; block-size:auto; background:#171513; transform-origin:center center; will-change:transform; user-select:none; }
@@ -7175,7 +7191,8 @@ INDEX = r"""<!doctype html>
     @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior:auto !important; transition:none !important; animation:none !important; } }
     @media (max-width: 1100px) { .twoCol, .threeCol, .haggaMapLayout { grid-template-columns:1fr; } .overviewMapShell .haggaMap { aspect-ratio:1 / 1; min-height:0; max-height:none; } .haggaPoiLegend { max-height:none; } }
     @media (max-width: 1180px) { main { grid-template-columns:1fr; } nav { position:static; height:auto; border-right:0; border-bottom:1px solid var(--line); } .tabs { grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); } .overviewTopGrid { grid-template-columns:repeat(3,minmax(0,1fr)); } .sectionHeader { flex-wrap:wrap; } }
-    @media (max-width: 640px) { section { padding:12px; } .overviewTopGrid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+    @media (min-width: 1800px) { .overviewTopGrid { grid-template-columns:repeat(6,minmax(0,1fr)); } }
+    @media (max-width: 640px) { section { padding:12px; } nav { padding:8px; } nav .tabs { display:flex; gap:4px; overflow-x:auto; padding-bottom:3px; scrollbar-width:thin; } nav .tab { flex:0 0 auto; padding:7px 9px; font-size:12px; } nav .card { padding:8px; margin:8px 0 0; } nav .card h3 { margin-bottom:5px; font-size:11px; } nav .card .toolbar { flex-wrap:nowrap; overflow-x:auto; gap:4px; margin-bottom:0; } nav .card .toolbar button { flex:0 0 auto; padding:6px 8px; font-size:12px; } nav .card details { display:none; } #statusSummary { grid-template-columns:repeat(2,minmax(0,1fr)); } #lastRefresh { font-size:11px; } .overviewTopGrid { grid-template-columns:repeat(2,minmax(0,1fr)); } .mapHealthMeta { flex-wrap:wrap; } }
     @media (max-width: 820px) { header { align-items:flex-start; flex-direction:column; } .row { flex-wrap:wrap; } .barRow { grid-template-columns:1fr; gap:4px; } }
   </style>
 </head>
@@ -7692,7 +7709,7 @@ function mapHealthBrowser(rows){
   const summary = `<div class="toolbar"><span class="pill ok"><span class="statusLight ok"></span>${counts.ok} online</span><span class="pill warn"><span class="statusLight warn"></span>${counts.warn} degraded</span><span class="pill bad"><span class="statusLight bad"></span>${counts.bad} offline</span><span class="pill">${maps.length} total</span></div>`;
   const body = `<div class="mapHealthList">${maps.map(row => {
     const state = mapHealthState(row);
-    return `<div class="mapHealthRow ${state}"><span class="statusLight ${state}"></span><div class="mapHealthName"><b>${esc(row.label || row.map || 'Map')}</b><span>${esc(row.map || '')}</span></div><div class="mapHealthMeta"><span class="pill ${row.ready ? 'ok' : 'bad'}">ready</span><span class="pill ${row.alive ? 'ok' : 'bad'}">alive</span><span class="pill ${row.active ? 'ok' : 'bad'}">active</span><span class="pill">${esc(row.players ?? 0)} players</span><span class="pill ${state === 'ok' ? 'ok' : state === 'warn' ? 'warn' : 'bad'}">${mapHealthLabel(row)}</span></div></div>`;
+    return `<div class="mapHealthRow ${state}"><span class="statusLight ${state}"></span><div class="mapHealthName"><b>${esc(row.label || row.map || 'Map')}</b><span>${esc(row.map || '')}</span></div><div class="mapHealthMeta"><span class="pill ${row.ready ? 'ok' : 'bad'}" title="ready">r</span><span class="pill ${row.alive ? 'ok' : 'bad'}" title="alive">live</span><span class="pill ${row.active ? 'ok' : 'bad'}" title="active">act</span><span class="pill" title="players">${esc(row.players ?? 0)}p</span><span class="pill ${state === 'ok' ? 'ok' : state === 'warn' ? 'warn' : 'bad'}">${mapHealthLabel(row)}</span></div></div>`;
   }).join('')}</div>`;
   return `${summary}${body}`;
 }
@@ -8046,7 +8063,7 @@ function overviewMapTabsHtml(){
 function overviewMapHealthPanel(health){
   const rows = (health || {}).mapStatus || [];
   const generated = new Date().toLocaleTimeString();
-  return `<div class="panelBand"><div class="sectionHeader"><h2>Map Health</h2><div class="toolbar"><span class="pill">updated ${esc(generated)}</span><button id="refreshHaggaMapBtn">Refresh map</button></div></div>${overviewMapTabsHtml()}${mapHealthBrowser(rows)}${mapStatusTable(rows)}</div>`;
+  return `<div class="panelBand"><div class="sectionHeader"><h2>Map Health</h2><div class="toolbar"><span class="pill">updated ${esc(generated)}</span><button id="refreshHaggaMapBtn">Refresh map</button></div></div>${overviewMapTabsHtml()}${mapHealthBrowser(rows)}<details><summary>Map status table</summary>${mapStatusTable(rows)}</details></div>`;
 }
 function wireOverviewMapTabs(container){
   container.querySelectorAll('[data-overview-map]').forEach(button => {
