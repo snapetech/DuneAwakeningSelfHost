@@ -156,7 +156,7 @@ currently using. For example:
 ```bash
 docker compose --env-file .env \
   -f compose.yaml -f compose.failover-standby.yaml \
-  -f compose.allmaps.yaml -f compose.kspls0-limits.yaml \
+  -f compose.allmaps.yaml -f compose.64g-limits.yaml \
   restart director
 ```
 

@@ -1,4 +1,4 @@
-# Resource guardrails for kspls0's 64 GiB class host.
+# Resource guardrails for a 64 GiB class host.
 #
 # These limits do not reduce the game's true working set. They prevent one map
 # from consuming the whole host and make OOM behavior less random under pressure.

@@ -55,7 +55,7 @@ state.
 - Different Deep Desert containers can be given different mounted `UserGame.ini`
   files in the handoff lab. Whether the game treats those settings as
   per-instance or reconciles them through shared DB/global runtime state is what
-  the `kspls0` lab test is meant to prove.
+  the standby lab test is meant to prove.
 
 ## Standby Lab Test
 
@@ -85,7 +85,7 @@ Expected evidence to capture:
 
 ## Standby Run: 2026-05-22
 
-Host: `kspls0`.
+Host: `<standby-host>`.
 
 Capture path: `captures/research/dd-coriolis-lab-20260522T162747Z`.
 
@@ -132,7 +132,7 @@ Interpretation:
 
 ## Asymmetric Standby Runs: 2026-05-22
 
-Host: `kspls0`.
+Host: `<standby-host>`.
 
 Captures:
 

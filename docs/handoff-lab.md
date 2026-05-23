@@ -91,16 +91,16 @@ make handoff-lab-stop ENV_FILE=.env.handoff-lab
 Sync the lab files and env to the other host before using remote targets:
 
 ```sh
-rsync -a .env.handoff-lab .env.handoff-lab.example compose.handoff-lab.yaml scripts/handoff-lab.sh kspls0:/home/keith/Documents/code/DuneAwakeningSelfHost/
+rsync -a .env.handoff-lab .env.handoff-lab.example compose.handoff-lab.yaml scripts/handoff-lab.sh <standby-host>:/path/to/DuneAwakeningSelfHost/
 ```
 
 Start, check, or stop the remote lab:
 
 ```sh
-make handoff-lab-remote-up ENV_FILE=.env.handoff-lab REMOTE=kspls0
-make handoff-lab-remote-status ENV_FILE=.env.handoff-lab REMOTE=kspls0
-make handoff-lab-remote-settled-status ENV_FILE=.env.handoff-lab REMOTE=kspls0
-make handoff-lab-remote-stop ENV_FILE=.env.handoff-lab REMOTE=kspls0
+make handoff-lab-remote-up ENV_FILE=.env.handoff-lab REMOTE=<standby-host>
+make handoff-lab-remote-status ENV_FILE=.env.handoff-lab REMOTE=<standby-host>
+make handoff-lab-remote-settled-status ENV_FILE=.env.handoff-lab REMOTE=<standby-host>
+make handoff-lab-remote-stop ENV_FILE=.env.handoff-lab REMOTE=<standby-host>
 ```
 
 ## Bidirectional Handoff Drill
@@ -108,13 +108,13 @@ make handoff-lab-remote-stop ENV_FILE=.env.handoff-lab REMOTE=kspls0
 Move the lab from local to remote:
 
 ```sh
-make handoff-lab ENV_FILE=.env.handoff-lab SRC=local DST=kspls0
+make handoff-lab ENV_FILE=.env.handoff-lab SRC=local DST=<standby-host>
 ```
 
 Move it back:
 
 ```sh
-make handoff-lab ENV_FILE=.env.handoff-lab SRC=kspls0 DST=local
+make handoff-lab ENV_FILE=.env.handoff-lab SRC=<standby-host> DST=local
 ```
 
 The scripted handoff dumps the source lab database, stops source lab writers,
