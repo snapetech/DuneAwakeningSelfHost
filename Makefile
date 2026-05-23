@@ -217,7 +217,7 @@ check-compose-static-ips:
 	./scripts/check-compose-static-ips.py $(ENV_FILE)
 
 secret-scan:
-	rg -n --pcre2 "(gho_|FLS_SECRET=.+|ServiceAuthToken=[A-Za-z0-9_.-]+|ServerLoginPasswordSecret=\"(?!replace)|UsernameServerLoginSecret=\"(?!replace)|BEGIN .*PRIVATE KEY|PRIVATE KEY)" . --glob '!data/**' --glob '!captures/**' --glob '!backups/**' --glob '!config/tls/**' --glob '!.env' --glob '!Makefile' --glob '!.github/workflows/validate.yml' && exit 1 || true
+	rg -n --pcre2 "(gho_|FLS_SECRET=eyJ|POSTGRES_[A-Z_]*PASSWORD=(?!(?:change-me|replace-with|<))[A-Za-z0-9_./+=-]{24,}|RMQ_HTTP_TOKEN_AUTH_SECRET=(?!(?:change-me|replace-with|<))[A-Za-z0-9_./+=-]{32,}|DUNE_ADMIN_TOKEN=(?!(?:change-me|replace-with|<))[A-Za-z0-9_./+=-]{24,}|DUNE_ANNOUNCE_[A-Z_]*PASSWORD=(?!(?:change-me|replace-with|<))[A-Za-z0-9_./+=-]{20,}|ServiceAuthToken=[A-Za-z0-9_.-]+|ServerLoginPasswordSecret=\"(?!replace)|UsernameServerLoginSecret=\"(?!replace)|BEGIN .*PRIVATE KEY|PRIVATE KEY)" . --glob '!data/**' --glob '!captures/**' --glob '!backups/**' --glob '!config/tls/**' --glob '!.env' --glob '!Makefile' --glob '!.github/workflows/validate.yml' && exit 1 || true
 
 test-watch-maps:
 	./scripts/test-watch-maps.sh
@@ -345,6 +345,6 @@ admin-panel-verify:
 	./scripts/check-admin-ingress.sh $(ENV_FILE)
 
 verify-local-state-ignored:
-	@for path in backups/example captures/example data/example config/tls/example; do \
+	@for path in backups/example captures/example data/example config/tls/example backups-env-example backup-env-example local.env.backup local.env.bak; do \
 		git check-ignore -q "$$path" || exit 1; \
 	done

@@ -1,6 +1,10 @@
 .env
 .env.*
 !.env.example
+backups-env-*
+backup-env-*
+*.env.backup
+*.env.bak
 
 data/*
 !data/exchange-price-snapshots/
