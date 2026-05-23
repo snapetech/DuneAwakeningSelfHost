@@ -521,10 +521,17 @@ uses the reviewed catalog, and is bounded by spend caps. Normal scans skip:
 - templates missing from the catalog
 - disabled catalog rows
 - blocked sellers
-- prices above `max_buy_price`
+- prices above `max_buy_price` plus `DUNE_ARTIFICIAL_EXCHANGE_MAX_BUY_PRICE_TOLERANCE_PCT`
 - orders exceeding global, seller, or template daily caps
 - randomized probability skips by liquidity tier
 - stale order revisions
+
+After a live artificial purchase succeeds, the buyer sends the seller a private
+whisper through the same `chat.whispers` route used by admin replies and
+presence automation. The default message tells the seller which listing sold
+and that the Solari will appear after their next relog. Offline sellers are not
+messaged, but their listings can still be purchased. Notification failure is
+audited but does not roll back the completed Exchange purchase.
 
 The buyer uses the native fulfill function:
 
@@ -1249,9 +1256,15 @@ Budgets and probabilities:
 DUNE_ARTIFICIAL_EXCHANGE_DAILY_SOLARI_CAP=50000
 DUNE_ARTIFICIAL_EXCHANGE_DAILY_SELLER_CAP=10000
 DUNE_ARTIFICIAL_EXCHANGE_DAILY_TEMPLATE_CAP=15000
-DUNE_ARTIFICIAL_EXCHANGE_LOW_BUY_PROBABILITY=0.08
-DUNE_ARTIFICIAL_EXCHANGE_MEDIUM_BUY_PROBABILITY=0.18
-DUNE_ARTIFICIAL_EXCHANGE_HIGH_BUY_PROBABILITY=0.35
+DUNE_ARTIFICIAL_EXCHANGE_MAX_BUY_PRICE_TOLERANCE_PCT=10
+DUNE_ARTIFICIAL_EXCHANGE_LOW_BUY_PROBABILITY=0.0004
+DUNE_ARTIFICIAL_EXCHANGE_MEDIUM_BUY_PROBABILITY=0.0004
+DUNE_ARTIFICIAL_EXCHANGE_HIGH_BUY_PROBABILITY=0.0004
+DUNE_ARTIFICIAL_EXCHANGE_PURCHASE_NOTIFY_ENABLED=true
+DUNE_ARTIFICIAL_EXCHANGE_PURCHASE_NOTIFY_TEMPLATE=Your Exchange listing was purchased: {count}x {template_id} for {price} Solari. The Solari will be in your inventory after your next relog.
+DUNE_ARTIFICIAL_EXCHANGE_PURCHASE_NOTIFY_EXCHANGE=chat.whispers
+DUNE_ARTIFICIAL_EXCHANGE_PURCHASE_NOTIFY_CHANNEL=Whispers
+DUNE_ARTIFICIAL_EXCHANGE_PURCHASE_NOTIFY_ROUTING_KEY=
 DUNE_ARTIFICIAL_EXCHANGE_BLOCKED_SELLERS=
 ```
 

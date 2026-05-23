@@ -1056,6 +1056,8 @@ DUNE_CHAT_COMMAND_AUCTION_CATEGORY_MASK=0
 DUNE_CHAT_COMMAND_AUCTION_CATEGORY_DEPTH=0
 DUNE_CHAT_COMMAND_AUCTION_CONFIRM_SECONDS=120
 DUNE_CHAT_COMMAND_AUCTION_SUGGESTION_MIN_SCORE=0.55
+DUNE_CHAT_COMMAND_EXCHANGE_CASHOUT_ENABLED=false
+DUNE_CHAT_COMMAND_EXCHANGE_CASHOUT_LIMIT=50
 DUNE_PLAYER_DISCONNECT_COMMAND=RemoveSessionMember
 DUNE_PLAYER_DISCONNECT_ALLOW_BATTLEYE=false
 DUNE_ADMIN_RESTART_DISCONNECT_WAIT_SECONDS=5
@@ -1110,6 +1112,8 @@ Implemented commands:
 &disconnect <playername>
 &kick <playername>
 &auction [--base|--inventory <inventory_id>] [--item-id <item_id>|"<item name or template>"] <count> <price>
+&exchange_list [limit]
+&exchange_cashout
 &teleport <playername>
 &teleport list|locations
 &teleport set <slot> [name]
@@ -1134,6 +1138,10 @@ Implemented commands:
 `&list` replies to the sender with all currently online players formatted as `Player (Map)`. It also accepts `&players` and `&online`.
 
 `&inv_list` replies to the sender with their personal inventory stacks, including `code=<template_id>` and `item-id=<item_id>` for auction listing. Players can use `&auction --item-id <item-id> <count> <price>` for an exact stack, or `&auction "<item code/template>" <count> <price>` for template matching. Bare `&auction` replies with the syntax and the same inventory list.
+
+`&exchange_list [limit]` replies to the sender with their own active player exchange sales without requiring travel to Arrakeen. It filters orders to the sender's player controller, excludes NPC orders, and excludes fulfilled orders when the fulfilled-order table is present.
+
+`&exchange_cashout` claims the sender's completed seller Solari settlements through the same validated settlement path used by `scripts/artificial-exchange-bot.py`: it locks each completed seller-claim row, credits the sender's Solaris balance by `item_price * stack_size`, deletes the completed claim order, and validates that the order is gone and the credited amount matches. It previews by default; set `DUNE_CHAT_COMMAND_EXCHANGE_CASHOUT_ENABLED=true` to execute from chat. The batch size defaults to `DUNE_CHAT_COMMAND_EXCHANGE_CASHOUT_LIMIT=50`.
 
 `&where` reports the resolved player's current online/offline state and last known location. `&teleport <playername>` moves an offline target to the admin's current partition and location. Live actor transforms are owned by the running map server and can be overwritten, so raw online actor updates are not a teleport path.
 

@@ -172,9 +172,9 @@ class ArtificialExchangeBotTest(unittest.TestCase):
 
     def test_price_and_daily_caps_are_enforced(self):
         state = {"spent_global": 0, "spent_by_seller": {}, "spent_by_template": {}}
-        ok, reason = bot.spend_available(state, self.order(item_price=90), self.catalog_row(max_buy_price=80))
+        ok, reason = bot.spend_available(state, self.order(item_price=89), self.catalog_row(max_buy_price=80))
         self.assertFalse(ok)
-        self.assertEqual(reason, "above max_buy_price")
+        self.assertEqual(reason, "above max_buy_price tolerance")
 
         bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_DAILY_SOLARI_CAP"] = "100"
         state["spent_global"] = 50
@@ -196,6 +196,17 @@ class ArtificialExchangeBotTest(unittest.TestCase):
         self.assertFalse(ok)
         self.assertEqual(reason, "template daily cap")
 
+    def test_price_tolerance_allows_small_over_cap_purchases(self):
+        state = {"spent_global": 0, "spent_by_seller": {}, "spent_by_template": {}}
+        ok, reason = bot.spend_available(state, self.order(item_price=88), self.catalog_row(max_buy_price=80))
+        self.assertTrue(ok)
+        self.assertEqual(reason, "")
+
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_MAX_BUY_PRICE_TOLERANCE_PCT"] = "0"
+        ok, reason = bot.spend_available(state, self.order(item_price=81), self.catalog_row(max_buy_price=80))
+        self.assertFalse(ok)
+        self.assertEqual(reason, "above max_buy_price tolerance")
+
     def test_record_spend_updates_all_daily_buckets(self):
         state = {"spent_global": 0, "spent_by_seller": {}, "spent_by_template": {}}
         bot.record_spend(state, self.order(item_price=75))
@@ -208,6 +219,59 @@ class ArtificialExchangeBotTest(unittest.TestCase):
         bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_MEDIUM_BUY_PROBABILITY"] = "0.42"
         self.assertEqual(bot.blocked_sellers(), {"10", "20"})
         self.assertEqual(bot.buy_probability("medium"), 0.42)
+
+    def test_purchase_notification_uses_private_whisper_route(self):
+        captured = {}
+
+        def fake_run(command, **kwargs):
+            captured["command"] = command
+            captured["env"] = kwargs["env"]
+
+            class Result:
+                returncode = 0
+                stdout = "{}"
+                stderr = ""
+
+            return Result()
+
+        order = self.order(
+            id=77,
+            item_price=1234,
+            initial_stack_size=2,
+            seller_character_name="Seller",
+            seller_fls_id="TEST_FLS_ID",
+            seller_online_status="Online",
+        )
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_PURCHASE_NOTIFY_COMMAND"] = "/bin/echo"
+
+        with mock.patch.object(bot.subprocess, "run", fake_run):
+            result = bot.notify_purchase_seller(order)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(captured["command"][0], "/bin/echo")
+        self.assertIn("2x ItemA", captured["command"][1])
+        self.assertIn("1234 Solari", captured["command"][1])
+        self.assertIn("next relog", captured["command"][1])
+        self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_EXCHANGE"], "chat.whispers")
+        self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_CHANNEL"], "Whispers")
+        self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_USER_NAME_TO"], "Seller")
+        self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_TARGET_FLS_IDS"], "TEST_FLS_ID")
+        self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_TARGET_QUEUES"], "TEST_FLS_ID_queue")
+        self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_ROUTING_KEYS"], "TEST_FLS_ID")
+        self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_CLEANUP_TARGET_BINDINGS"], "true")
+        self.assertEqual(captured["env"]["DUNE_ANNOUNCE_WRAP_DASHBOARD_MESSAGES"], "false")
+
+    def test_purchase_notification_can_be_disabled(self):
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_PURCHASE_NOTIFY_ENABLED"] = "false"
+        result = bot.notify_purchase_seller(self.order(seller_character_name="Seller", seller_fls_id="TEST_FLS_ID"))
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["skipped"])
+
+    def test_offline_purchase_notification_is_skipped_without_pending_retry(self):
+        result = bot.notify_purchase_seller(self.order(seller_character_name="Seller", seller_fls_id="TEST_FLS_ID", seller_online_status="Offline"))
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["skipped"])
+        self.assertEqual(result["reason"], "seller offline")
 
     def test_settlement_status_blocks_missing_currency_balance(self):
         purchased = {"completion_type": 0, "item_id": 100, "currency_balance": None}
@@ -282,6 +346,50 @@ class ArtificialExchangeBotTest(unittest.TestCase):
         self.assertTrue(result["autoClaim"]["dryRun"])
         claim_all.assert_called_once()
         self.assertTrue(claim_all.call_args.kwargs["dry_run"])
+
+    def test_scan_apply_sends_seller_purchase_notification(self):
+        class FakeConn:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def close(self):
+                pass
+
+        args = types.SimpleNamespace(
+            dry_run=False,
+            exchange_id=2,
+            buyer_controller_id=124,
+            limit=200,
+            settlement_limit=50,
+            auto_claim_after_scan=False,
+            catalog="catalog.json",
+            report_skips=50,
+            ignore_enabled_gate=False,
+            confirm=bot.CONFIRM,
+            include_npc_test_orders=False,
+        )
+        order = self.order(seller_character_name="Seller", seller_fls_id="TEST_FLS_ID", seller_online_status="Online")
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_ENABLED"] = "true"
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_PURCHASES_ENABLED"] = "true"
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_MEDIUM_BUY_PROBABILITY"] = "1"
+        with mock.patch.object(bot, "load_catalog", return_value={"ItemA": self.catalog_row(max_buy_price=100)}), \
+            mock.patch.object(bot, "load_state", return_value={"spent_global": 0, "spent_by_seller": {}, "spent_by_template": {}, "claimed_settlements": []}), \
+            mock.patch.object(bot, "connect_db", return_value=FakeConn()), \
+            mock.patch.object(bot, "inspect_settlement", return_value=[]), \
+            mock.patch.object(bot, "fetch_orders", return_value=[order]), \
+            mock.patch.object(bot, "revision_matches", return_value=True), \
+            mock.patch.object(bot, "execute_purchase", return_value={"ok": True}), \
+            mock.patch.object(bot, "notify_purchase_seller", return_value={"ok": True, "message": "sent"}) as notify, \
+            mock.patch.object(bot, "save_json"), \
+            mock.patch.object(bot.random, "random", return_value=0):
+            result = bot.scan_once(args)
+
+        self.assertEqual(len(result["selected"]), 1)
+        self.assertEqual(result["selected"][0]["sellerNotification"], {"ok": True, "message": "sent"})
+        notify.assert_called_once()
 
     def test_populator_catalog_filter_requires_enabled_baseline_and_validated(self):
         catalog_rows = {

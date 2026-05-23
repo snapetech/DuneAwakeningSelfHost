@@ -235,6 +235,112 @@ class CommandReplyTargetTests(unittest.TestCase):
         self.assertIn("usage: &auction --item-id <item-id> <count> <price>", result["message"])
         self.assertIn("inventory: 500x Steel Ingot code=SteelBar item-id=123", result["message"])
 
+    def test_exchange_list_replies_with_sender_active_sales(self):
+        captured = {}
+        calls = {}
+        player = {"character_name": "Lukano", "player_controller_id": 17}
+        orders = [{"id": 456, "template_id": "SteelBar", "stack_size": 100, "item_price": 1200}]
+
+        def fake_run_announce(message, target_name="", target_fls_id=""):
+            captured["message"] = message
+            captured["targetName"] = target_name
+            captured["targetFlsId"] = target_fls_id
+            return {"ok": True, "stdout": '{"transport":"chat.whispers"}', "stderr": ""}
+
+        def fake_player_exchange_list_rows(conn, resolved_player, limit):
+            calls["player"] = resolved_player
+            calls["limit"] = limit
+            return orders, 1
+
+        with unittest.mock.patch.object(admin_chat_commands, "resolve_sender_character", lambda conn, sender_name, sender_fls_id: "Lukano"), \
+             unittest.mock.patch.object(admin_chat_commands, "character_row", lambda conn, name: (player, [])), \
+             unittest.mock.patch.object(admin_chat_commands, "player_exchange_list_rows", fake_player_exchange_list_rows), \
+             unittest.mock.patch.object(admin_chat_commands, "item_display_names", lambda: {"SteelBar": "Steel Ingot"}), \
+             unittest.mock.patch.object(admin_chat_commands, "run_announce", fake_run_announce):
+            result = admin_chat_commands.handle_command(
+                object(),
+                "&exchange_list 10",
+                sender_name="Lukano",
+                sender_fls_id="TEST_FLS_ID",
+                reply=True,
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["action"], "exchange_list")
+        self.assertEqual(calls["player"], player)
+        self.assertEqual(calls["limit"], 10)
+        self.assertEqual(result["message"], "exchange: showing 1/1 active sales: order 456: 100x Steel Ingot code=SteelBar price=1200")
+        self.assertEqual(captured["message"], result["message"])
+        self.assertEqual(captured["targetName"], "Lukano")
+        self.assertEqual(captured["targetFlsId"], "TEST_FLS_ID")
+
+    def test_exchange_list_handles_no_active_sales(self):
+        player = {"character_name": "Lukano", "player_controller_id": 17}
+
+        with unittest.mock.patch.object(admin_chat_commands, "resolve_sender_character", lambda conn, sender_name, sender_fls_id: "Lukano"), \
+             unittest.mock.patch.object(admin_chat_commands, "character_row", lambda conn, name: (player, [])), \
+             unittest.mock.patch.object(admin_chat_commands, "player_exchange_list_rows", lambda conn, resolved_player, limit: ([], 0)):
+            result = admin_chat_commands.handle_command(
+                object(),
+                "&exchange_list",
+                sender_name="Lukano",
+                sender_fls_id="TEST_FLS_ID",
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["message"], "exchange: you have no active sales")
+
+    def test_exchange_cashout_previews_when_disabled(self):
+        player = {"character_name": "Lukano", "player_controller_id": 17}
+        calls = {}
+
+        def fake_player_exchange_cashout(conn, resolved_player, dry_run=True):
+            calls["player"] = resolved_player
+            calls["dryRun"] = dry_run
+            return {"ok": True, "dryRun": True, "candidateCount": 2, "total": 2, "expectedSolari": 2400, "claimed": []}
+
+        with unittest.mock.patch.object(admin_chat_commands, "resolve_sender_character", lambda conn, sender_name, sender_fls_id: "Lukano"), \
+             unittest.mock.patch.object(admin_chat_commands, "character_row", lambda conn, name: (player, [])), \
+             unittest.mock.patch.object(admin_chat_commands, "chat_exchange_cashout_enabled", lambda: False), \
+             unittest.mock.patch.object(admin_chat_commands, "player_exchange_cashout", fake_player_exchange_cashout):
+            result = admin_chat_commands.handle_command(
+                object(),
+                "&exchange_cashout",
+                sender_name="Lukano",
+                sender_fls_id="TEST_FLS_ID",
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["action"], "exchange_cashout")
+        self.assertTrue(calls["dryRun"])
+        self.assertEqual(calls["player"], player)
+        self.assertEqual(result["message"], "exchange cashout preview: 2400 Solaris from 2/2 completed sales; enable DUNE_CHAT_COMMAND_EXCHANGE_CASHOUT_ENABLED=true to execute")
+
+    def test_exchange_cashout_executes_when_enabled(self):
+        player = {"character_name": "Lukano", "player_controller_id": 17}
+        calls = {}
+
+        def fake_player_exchange_cashout(conn, resolved_player, dry_run=True):
+            calls["player"] = resolved_player
+            calls["dryRun"] = dry_run
+            return {"ok": True, "dryRun": False, "claimed": [{"orderId": 456, "credited": 1200}], "candidateCount": 1, "total": 1, "credited": 1200}
+
+        with unittest.mock.patch.object(admin_chat_commands, "resolve_sender_character", lambda conn, sender_name, sender_fls_id: "Lukano"), \
+             unittest.mock.patch.object(admin_chat_commands, "character_row", lambda conn, name: (player, [])), \
+             unittest.mock.patch.object(admin_chat_commands, "chat_exchange_cashout_enabled", lambda: True), \
+             unittest.mock.patch.object(admin_chat_commands, "player_exchange_cashout", fake_player_exchange_cashout):
+            result = admin_chat_commands.handle_command(
+                object(),
+                "&exchange_cashout",
+                sender_name="Lukano",
+                sender_fls_id="TEST_FLS_ID",
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertFalse(calls["dryRun"])
+        self.assertEqual(calls["player"], player)
+        self.assertEqual(result["message"], "exchange cashout: credited 1200 Solaris from 1 completed sales")
+
     def test_gm_subcommand_includes_inferred_private_reply_metadata(self):
         def fake_run_announce(message, target_name="", target_fls_id=""):
             admin_chat_commands.LAST_ANNOUNCE_RESULT = {"ok": True, "stdout": '{"transport":"chat.whispers"}', "stderr": ""}

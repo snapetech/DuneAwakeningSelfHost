@@ -7,6 +7,7 @@ import os
 import pathlib
 import random
 import re
+import subprocess
 import sys
 import time
 import traceback
@@ -14,6 +15,7 @@ import traceback
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from exchange_category_map import EXCHANGE_CATEGORY_MASKS
+from dune_whisper_route import whisper_route_for_fls_id
 
 STATE_DIR = ROOT / "backups" / "admin-panel" / "artificial-exchange"
 CATALOG_PATH = STATE_DIR / "catalog.json"
@@ -241,6 +243,9 @@ def spend_available(state, order, catalog_row):
     global_cap = int(env("DUNE_ARTIFICIAL_EXCHANGE_DAILY_SOLARI_CAP", "50000"))
     seller_cap = int(env("DUNE_ARTIFICIAL_EXCHANGE_DAILY_SELLER_CAP", "10000"))
     template_cap = int(env("DUNE_ARTIFICIAL_EXCHANGE_DAILY_TEMPLATE_CAP", "15000"))
+    max_buy_price = int(catalog_row["max_buy_price"])
+    max_buy_price_tolerance_pct = max(0.0, float(env("DUNE_ARTIFICIAL_EXCHANGE_MAX_BUY_PRICE_TOLERANCE_PCT", "10")))
+    tolerated_max_buy_price = math.floor(max_buy_price * (1.0 + max_buy_price_tolerance_pct / 100.0))
     seller = str(order["owner_id"])
     template = order["template_id"]
     if state.get("spent_global", 0) + price > global_cap:
@@ -249,8 +254,8 @@ def spend_available(state, order, catalog_row):
         return False, "seller daily cap"
     if state["spent_by_template"].get(template, 0) + price > template_cap:
         return False, "template daily cap"
-    if price > int(catalog_row["max_buy_price"]):
-        return False, "above max_buy_price"
+    if price > tolerated_max_buy_price:
+        return False, "above max_buy_price tolerance"
     return True, ""
 
 
@@ -264,7 +269,7 @@ def record_spend(state, order):
 
 
 def buy_probability(tier):
-    defaults = {"low": "0.08", "medium": "0.18", "high": "0.35"}
+    defaults = {"low": "0.0004", "medium": "0.0004", "high": "0.0004"}
     return float(env(f"DUNE_ARTIFICIAL_EXCHANGE_{tier.upper()}_BUY_PROBABILITY", defaults.get(tier, "0.05")))
 
 
@@ -814,10 +819,15 @@ def fetch_orders(conn, exchange_id, limit):
                 o.durability_cur, o.durability_max, s.initial_stack_size,
                 s.wear_normalized_price, i.stack_size,
                 o.revision,
-                o.is_npc_order
+                o.is_npc_order,
+                ps.character_name as seller_character_name,
+                ps.online_status::text as seller_online_status,
+                acc."user" as seller_fls_id
             from dune.dune_exchange_orders o
             join dune.dune_exchange_sell_orders s on s.order_id = o.id
             left join dune.items i on i.id = o.item_id
+            left join dune.player_state ps on ps.player_controller_id = o.owner_id
+            left join dune.accounts acc on acc.id = ps.account_id
             where o.exchange_id = %s
               and o.template_id is not null
               and o.item_price is not null
@@ -1701,6 +1711,73 @@ def execute_purchase(conn, order, buyer_controller_id):
     return result
 
 
+def purchase_notice_stack_size(order):
+    for key in ("stack_size", "initial_stack_size"):
+        value = order.get(key)
+        if value not in (None, ""):
+            return max(1, int(value))
+    return 1
+
+
+def render_purchase_notice(order):
+    template = env(
+        "DUNE_ARTIFICIAL_EXCHANGE_PURCHASE_NOTIFY_TEMPLATE",
+        "Your Exchange listing was purchased: {count}x {template_id} for {price} Solari. The Solari will be in your inventory after your next relog.",
+    )
+    return template.format(
+        order_id=order.get("id"),
+        template_id=order.get("template_id", "item"),
+        item=order.get("template_id", "item"),
+        count=purchase_notice_stack_size(order),
+        price=int(order.get("item_price") or 0),
+        seller=order.get("seller_character_name") or "seller",
+        server_name=env("DUNE_SERVER_DISPLAY_NAME", env("WORLD_NAME", "this server")),
+    )
+
+
+def notify_purchase_seller(order, message=None):
+    if not env_bool("DUNE_ARTIFICIAL_EXCHANGE_PURCHASE_NOTIFY_ENABLED", True):
+        return {"ok": True, "skipped": True, "reason": "disabled"}
+    if str(order.get("seller_online_status") or "").lower() != "online":
+        return {"ok": True, "skipped": True, "reason": "seller offline"}
+    fls_id = str(order.get("seller_fls_id") or "").strip()
+    seller_name = str(order.get("seller_character_name") or order.get("owner_id") or "").strip()
+    route = whisper_route_for_fls_id(fls_id)
+    if not route["ok"]:
+        return {"ok": False, "error": route["error"], "seller": seller_name, "orderId": order.get("id")}
+    command = env("DUNE_ARTIFICIAL_EXCHANGE_PURCHASE_NOTIFY_COMMAND", env("DUNE_ADMIN_ANNOUNCE_COMMAND", str(ROOT / "scripts" / "announce.sh")))
+    if command.startswith("/workspace/"):
+        command = str(ROOT / command.removeprefix("/workspace/"))
+    notice = message or render_purchase_notice(order)
+    timeout = int(env("DUNE_ARTIFICIAL_EXCHANGE_PURCHASE_NOTIFY_TIMEOUT_SECONDS", env("DUNE_ADMIN_ANNOUNCEMENT_COMMAND_TIMEOUT_SECONDS", "45")))
+    child_env = os.environ.copy()
+    child_env.update(FILE_ENV)
+    child_env["DUNE_ANNOUNCE_MESSAGE"] = notice
+    child_env["DUNE_ANNOUNCE_JOB_ID"] = "artificial-exchange-purchase-notice"
+    child_env["DUNE_ANNOUNCE_ENV_OVERRIDES_FILE"] = "true"
+    child_env["DUNE_ANNOUNCE_WRAP_DASHBOARD_MESSAGES"] = "false"
+    child_env["DUNE_ANNOUNCE_CHAT_EXCHANGE"] = env("DUNE_ARTIFICIAL_EXCHANGE_PURCHASE_NOTIFY_EXCHANGE", "chat.whispers")
+    child_env["DUNE_ANNOUNCE_CHAT_CHANNEL"] = env("DUNE_ARTIFICIAL_EXCHANGE_PURCHASE_NOTIFY_CHANNEL", "Whispers")
+    child_env["DUNE_ANNOUNCE_CHAT_USER_NAME_TO"] = seller_name
+    child_env["DUNE_ANNOUNCE_CHAT_TARGET_FLS_IDS"] = route["routingKey"]
+    child_env["DUNE_ANNOUNCE_CHAT_TARGET_QUEUES"] = route["queue"]
+    child_env["DUNE_ANNOUNCE_CHAT_ROUTING_KEYS"] = env("DUNE_ARTIFICIAL_EXCHANGE_PURCHASE_NOTIFY_ROUTING_KEY", route["routingKey"]) or route["routingKey"]
+    child_env["DUNE_ANNOUNCE_CHAT_BIND_ONLINE_QUEUES"] = "false"
+    child_env["DUNE_ANNOUNCE_CHAT_CLEANUP_TARGET_BINDINGS"] = "true"
+    result = subprocess.run([command, notice], cwd=ROOT, env=child_env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, check=False)
+    return {
+        "ok": result.returncode == 0,
+        "returncode": result.returncode,
+        "seller": seller_name,
+        "targetFlsId": route["routingKey"],
+        "targetQueue": route["queue"],
+        "channel": child_env["DUNE_ANNOUNCE_CHAT_CHANNEL"],
+        "message": notice,
+        "stdout": result.stdout[-1000:],
+        "stderr": result.stderr[-1000:],
+    }
+
+
 def inspect_settlement(conn, limit):
     rows = settlement_report(conn, limit)
     for row in rows:
@@ -2074,6 +2151,13 @@ def scan_once(args):
                 decision["dryRun"] = False
                 decision["result"] = dict(result) if result else None
                 record_spend(state, order)
+                if result:
+                    try:
+                        notice = notify_purchase_seller(order)
+                    except Exception as exc:
+                        notice = {"ok": False, "error": str(exc), "exceptionType": type(exc).__name__}
+                    decision["sellerNotification"] = notice
+                    audit({"event": "purchase-seller-notification", "orderId": order.get("id"), "sellerId": order.get("owner_id"), "notice": notice})
             selected.append(decision)
             audit({"event": "purchase-selected", **decision})
     conn.close()

@@ -773,6 +773,10 @@ def chat_auction_base_storage_enabled():
     return env_bool("DUNE_CHAT_COMMAND_AUCTION_BASE_STORAGE_ENABLED", False)
 
 
+def chat_exchange_cashout_enabled():
+    return env_bool("DUNE_CHAT_COMMAND_EXCHANGE_CASHOUT_ENABLED", False)
+
+
 def normalize_item_search(value):
     return re.sub(r"[^a-z0-9]+", "", (value or "").lower())
 
@@ -944,13 +948,16 @@ def exchange_fulfilled_orders_available(conn):
     return bool(row.get("rel"))
 
 
-def exchange_list_rows(conn, limit):
+def player_exchange_list_rows(conn, player, limit):
     exchange_id = int(env("DUNE_CHAT_COMMAND_AUCTION_EXCHANGE_ID", "2"))
+    owner_id = int(player["player_controller_id"])
     has_fulfilled = exchange_fulfilled_orders_available(conn)
     fulfilled_join = "left join dune.dune_exchange_fulfilled_orders f on f.order_id=o.id" if has_fulfilled else ""
     fulfilled_where = "and f.order_id is null" if has_fulfilled else ""
     base_where = f"""
         o.exchange_id=%s
+        and o.owner_id=%s
+        and coalesce(o.is_npc_order, false)=false
         and o.template_id is not null
         and o.item_price is not null
         {fulfilled_where}
@@ -964,42 +971,226 @@ def exchange_list_rows(conn, limit):
             {fulfilled_join}
             where {base_where}
             """,
-            (exchange_id,),
+            (exchange_id, owner_id),
         )
         total = int((cur.fetchone() or {}).get("count") or 0)
         cur.execute(
             f"""
             select
                 o.id, o.owner_id, o.template_id, o.item_price, o.expiration_time,
-                o.is_npc_order, coalesce(i.stack_size, s.initial_stack_size, 1) as stack_size,
-                coalesce(ps.character_name, case when o.is_npc_order then 'NPC' else 'owner ' || o.owner_id::text end) as seller_name
+                coalesce(i.stack_size, s.initial_stack_size, 1) as stack_size
             from dune.dune_exchange_orders o
             join dune.dune_exchange_sell_orders s on s.order_id=o.id
             left join dune.items i on i.id=o.item_id
-            left join dune.player_state ps on ps.player_controller_id=o.owner_id
             {fulfilled_join}
             where {base_where}
             order by o.id desc
             limit %s
             """,
-            (exchange_id, int(limit)),
+            (exchange_id, owner_id, int(limit)),
         )
         return cur.fetchall(), total
 
 
-def format_exchange_list(rows, total):
+def format_player_exchange_list(rows, total):
     if total <= 0:
-        return "exchange: no current auctions"
+        return "exchange: you have no active sales"
     names = item_display_names()
     parts = []
     for row in rows:
         template_id = row.get("template_id") or "unknown"
         display_name = names.get(template_id, template_id)
         parts.append(
-            f"order {row.get('id')}: {int(row.get('stack_size') or 0)}x {display_name} code={template_id} price={int(row.get('item_price') or 0)} seller={row.get('seller_name') or 'unknown'}"
+            f"order {row.get('id')}: {int(row.get('stack_size') or 0)}x {display_name} code={template_id} price={int(row.get('item_price') or 0)}"
         )
-    prefix = f"exchange: showing {len(rows)}/{total} current auctions"
+    prefix = f"exchange: showing {len(rows)}/{total} active sales"
     return prefix + ": " + "; ".join(parts)
+
+
+def player_exchange_cashout_limit():
+    return int(env("DUNE_CHAT_COMMAND_EXCHANGE_CASHOUT_LIMIT", "50"))
+
+
+def player_exchange_cashout_candidates(conn, player, limit=None):
+    owner_id = int(player["player_controller_id"])
+    sold_completion_type = int(env("DUNE_ARTIFICIAL_EXCHANGE_SOLD_COMPLETION_TYPE", "1"))
+    limit = int(limit if limit is not None else player_exchange_cashout_limit())
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute("select to_regclass('dune.dune_exchange_fulfilled_orders') as rel")
+        if not (cur.fetchone() or {}).get("rel"):
+            return [], 0
+        cur.execute(
+            """
+            select count(*) as count
+            from dune.dune_exchange_fulfilled_orders f
+            join dune.dune_exchange_orders o on o.id=f.order_id
+            where o.owner_id=%s
+              and f.completion_type=%s
+              and o.item_id is null
+            """,
+            (owner_id, sold_completion_type),
+        )
+        total = int((cur.fetchone() or {}).get("count") or 0)
+        cur.execute(
+            """
+            select
+                o.id as order_id,
+                o.owner_id,
+                o.item_id,
+                o.template_id,
+                o.item_price,
+                f.completion_type,
+                f.stack_size,
+                f.source_order_id,
+                f.original_order_id,
+                (o.item_price * f.stack_size) as expected_solari
+            from dune.dune_exchange_fulfilled_orders f
+            join dune.dune_exchange_orders o on o.id=f.order_id
+            where o.owner_id=%s
+              and f.completion_type=%s
+              and o.item_id is null
+            order by o.id
+            limit %s
+            """,
+            (owner_id, sold_completion_type, limit),
+        )
+        return cur.fetchall(), total
+
+
+def ensure_solaris_balance_row(cur, controller_id):
+    cur.execute(
+        """
+        insert into dune.player_virtual_currency_balances(player_controller_id, currency_id, balance)
+        values(%s, dune.get_solaris_id(), 0)
+        on conflict do nothing
+        """,
+        (controller_id,),
+    )
+
+
+def read_locked_solaris_balance(cur, controller_id):
+    cur.execute(
+        """
+        select balance
+        from dune.player_virtual_currency_balances
+        where player_controller_id=%s and currency_id=dune.get_solaris_id()
+        for update
+        """,
+        (controller_id,),
+    )
+    row = cur.fetchone()
+    return int(row["balance"]) if row and row.get("balance") is not None else None
+
+
+def execute_player_exchange_cashout_row(cur, row, owner_id):
+    expected = int(row["expected_solari"])
+    ensure_solaris_balance_row(cur, owner_id)
+    before_balance = read_locked_solaris_balance(cur, owner_id)
+    if before_balance is None:
+        raise RuntimeError("Solaris balance row is unavailable for cashout")
+    cur.execute(
+        """
+        select
+            o.id as order_id,
+            o.owner_id,
+            o.item_id,
+            o.item_price,
+            f.completion_type,
+            f.stack_size,
+            f.original_order_id
+        from dune.dune_exchange_orders o
+        join dune.dune_exchange_fulfilled_orders f on f.order_id=o.id
+        where o.id=%s and o.owner_id=%s
+        for update
+        """,
+        (row["order_id"], owner_id),
+    )
+    locked = cur.fetchone()
+    if not locked:
+        raise RuntimeError(f"settlement order {row['order_id']} was not found")
+    if locked["item_id"] not in (None, 0, ""):
+        raise RuntimeError("settlement order has item_id; refusing Solari cashout")
+    if int(locked["completion_type"]) != int(env("DUNE_ARTIFICIAL_EXCHANGE_SOLD_COMPLETION_TYPE", "1")):
+        raise RuntimeError("settlement completion type is not a seller Solari claim")
+    actual_value = int(locked["item_price"]) * int(locked["stack_size"])
+    if actual_value != expected:
+        raise RuntimeError(f"settlement value changed before cashout: expected {expected}, got {actual_value}")
+    cur.execute(
+        """
+        update dune.player_virtual_currency_balances
+        set balance = balance + %s
+        where player_controller_id=%s and currency_id=dune.get_solaris_id()
+        returning balance
+        """,
+        (expected, owner_id),
+    )
+    after_balance = int(cur.fetchone()["balance"])
+    cur.execute("delete from dune.dune_exchange_orders where id=%s", (row["order_id"],))
+    cur.execute(
+        """
+        select exists(
+            select 1
+            from dune.dune_exchange_orders o
+            left join dune.dune_exchange_fulfilled_orders f on f.order_id=o.id
+            where o.id=%s or f.order_id=%s
+        ) as still_exists
+        """,
+        (row["order_id"], row["order_id"]),
+    )
+    still_exists = bool(cur.fetchone()["still_exists"])
+    credited = after_balance - before_balance
+    if credited != expected or still_exists:
+        raise RuntimeError("cashout failed validation")
+    return {
+        "orderId": int(row["order_id"]),
+        "templateId": row.get("template_id"),
+        "stackSize": int(row["stack_size"]),
+        "credited": credited,
+        "beforeBalance": before_balance,
+        "afterBalance": after_balance,
+    }
+
+
+def player_exchange_cashout(conn, player, dry_run=True):
+    owner_id = int(player["player_controller_id"])
+    rows, total = player_exchange_cashout_candidates(conn, player)
+    expected_total = sum(int(row["expected_solari"]) for row in rows)
+    if dry_run:
+        return {"ok": True, "dryRun": True, "claimed": [], "candidateCount": len(rows), "total": total, "expectedSolari": expected_total}
+    claimed = []
+    try:
+        for row in rows:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                claimed.append(execute_player_exchange_cashout_row(cur, row, owner_id))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return {
+        "ok": True,
+        "dryRun": False,
+        "claimed": claimed,
+        "candidateCount": len(rows),
+        "total": total,
+        "credited": sum(int(row["credited"]) for row in claimed),
+    }
+
+
+def format_exchange_cashout(result):
+    if result.get("dryRun"):
+        count = int(result.get("candidateCount") or 0)
+        total = int(result.get("total") or 0)
+        solari = int(result.get("expectedSolari") or 0)
+        if count <= 0:
+            return "exchange cashout preview: no completed sales ready"
+        suffix = "; rerun after current batch if more remain" if total > count else ""
+        return f"exchange cashout preview: {solari} Solaris from {count}/{total} completed sales; enable DUNE_CHAT_COMMAND_EXCHANGE_CASHOUT_ENABLED=true to execute{suffix}"
+    claimed = result.get("claimed") or []
+    credited = int(result.get("credited") or 0)
+    if not claimed:
+        return "exchange cashout: no completed sales ready"
+    suffix = "; rerun to claim remaining completed sales" if int(result.get("total") or 0) > len(claimed) else ""
+    return f"exchange cashout: credited {credited} Solaris from {len(claimed)} completed sales{suffix}"
 
 
 def fuzzy_item_suggestion(rows, search_text, count):
@@ -2028,6 +2219,52 @@ def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=F
         rows, response = inventory_list_for_player(conn, player)
         announce_result = maybe_reply(response, reply, target_name=resolved_name or sender_name, target_fls_id=sender_fls_id)
         return {"ok": True, "action": "inv_list", "message": response, "items": [dict(row) for row in rows], "reply": announce_result}
+
+    if command in ("exchange_list", "auction_list", "my_auctions", "sales"):
+        try:
+            limit = parse_exchange_list_limit(parts[1:])
+        except ValueError as exc:
+            response = str(exc)
+            announce_result = maybe_reply(response, reply, target_name=sender_name, target_fls_id=sender_fls_id)
+            return {"ok": False, "error": response, "reply": announce_result}
+        resolved_name = resolve_sender_character(conn, sender_name, sender_fls_id)
+        player, matches = character_row(conn, resolved_name)
+        if player is None:
+            response = "could not resolve your character for exchange list"
+            if matches:
+                response = "no unique character match: " + ", ".join(row["character_name"] for row in matches)
+            announce_result = maybe_reply(response, reply, target_name=resolved_name or sender_name, target_fls_id=sender_fls_id)
+            return {"ok": False, "error": response, "reply": announce_result}
+        rows, total = player_exchange_list_rows(conn, player, limit)
+        response = format_player_exchange_list(rows, total)
+        announce_result = maybe_reply(response, reply, target_name=resolved_name or sender_name, target_fls_id=sender_fls_id)
+        return {"ok": True, "action": "exchange_list", "message": response, "orders": [dict(row) for row in rows], "total": total, "reply": announce_result}
+
+    if command in ("exchange_cashout", "cashout"):
+        if len(parts) > 1:
+            response = "usage: &exchange_cashout"
+            announce_result = maybe_reply(response, reply, target_name=sender_name, target_fls_id=sender_fls_id)
+            return {"ok": False, "error": response, "reply": announce_result}
+        resolved_name = resolve_sender_character(conn, sender_name, sender_fls_id)
+        player, matches = character_row(conn, resolved_name)
+        if player is None:
+            response = "could not resolve your character for exchange cashout"
+            if matches:
+                response = "no unique character match: " + ", ".join(row["character_name"] for row in matches)
+            announce_result = maybe_reply(response, reply, target_name=resolved_name or sender_name, target_fls_id=sender_fls_id)
+            return {"ok": False, "error": response, "reply": announce_result}
+        dry_run = not chat_exchange_cashout_enabled()
+        try:
+            result = player_exchange_cashout(conn, player, dry_run=dry_run)
+            response = format_exchange_cashout(result)
+            ok = bool(result.get("ok"))
+        except Exception as exc:
+            conn.rollback()
+            result = {"ok": False, "error": str(exc), "dryRun": dry_run}
+            response = f"exchange cashout failed: {exc}"
+            ok = False
+        announce_result = maybe_reply(response, reply, target_name=resolved_name or sender_name, target_fls_id=sender_fls_id)
+        return result | {"ok": ok, "action": "exchange_cashout", "message": response, "reply": announce_result}
 
     if command == "auction":
         if len(parts) == 1:
