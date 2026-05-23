@@ -182,7 +182,7 @@ watchdog_control_enabled = os.environ.get("DUNE_MAP_WATCHDOG_CONTROL", "true").l
 
 default_services = [
     "survival", "overmap", "arrakeen", "harko-village", "testing-hephaestus",
-    "testing-carthag", "testing-waterfat", "deep-desert", "deep-desert-pvp", "proces-verbal",
+    "testing-carthag", "testing-waterfat", "deep-desert", "proces-verbal",
     "lostharvest-ecolab-a", "lostharvest-ecolab-b", "lostharvest-forgottenlab",
     "art-of-kanly", "dungeon-hephaestus", "dungeon-oldcarthag",
     "faction-outpost-atre", "faction-outpost-hark", "heighliner-dungeon",
@@ -216,12 +216,10 @@ def env_value(key):
     return ""
 
 
-partition_count = env_value("DUNE_WORLD_PARTITION_COUNT") or "31"
-if partition_count not in ("30", "31"):
-    print(f"DUNE_WORLD_PARTITION_COUNT must be 30 or 31, got: {partition_count}", file=sys.stderr)
+partition_count = env_value("DUNE_WORLD_PARTITION_COUNT") or "30"
+if partition_count != "30":
+    print(f"DUNE_WORLD_PARTITION_COUNT must be 30; partition 31 Deep Desert PvP is intentionally disabled, got: {partition_count}", file=sys.stderr)
     sys.exit(64)
-if partition_count == "30":
-    default_services = [service for service in default_services if service != "deep-desert-pvp"]
 
 stateful_services = {"postgres", "admin-rmq", "game-rmq"}
 allow_stateful = os.environ.get("DUNE_RESTART_ALLOW_STATEFUL", "").lower() in ("1", "true", "yes", "on")
@@ -771,16 +769,13 @@ set -- "$@" --env-file "${ENV_FILE:-.env}"
 
 if [ "$target" = "all" ]; then
   partition_count="${DUNE_WORLD_PARTITION_COUNT:-$(env_file_value DUNE_WORLD_PARTITION_COUNT "${ENV_FILE:-.env}")}"
-  partition_count="${partition_count:-31}"
+  partition_count="${partition_count:-30}"
   case "$partition_count" in
     30)
       services="survival overmap arrakeen harko-village testing-hephaestus testing-carthag testing-waterfat deep-desert proces-verbal lostharvest-ecolab-a lostharvest-ecolab-b lostharvest-forgottenlab art-of-kanly dungeon-hephaestus dungeon-oldcarthag faction-outpost-atre faction-outpost-hark heighliner-dungeon ecolab-green-089 ecolab-green-152 ecolab-green-024 ecolab-green-195 ecolab-green-136 overland-m-01 overland-s-04 overland-s-06 bandit-fortress overland-s-07 overland-s-08 dungeon-thepit director gateway text-router rmq-auth-shim"
       ;;
-    31)
-      services="survival overmap arrakeen harko-village testing-hephaestus testing-carthag testing-waterfat deep-desert deep-desert-pvp proces-verbal lostharvest-ecolab-a lostharvest-ecolab-b lostharvest-forgottenlab art-of-kanly dungeon-hephaestus dungeon-oldcarthag faction-outpost-atre faction-outpost-hark heighliner-dungeon ecolab-green-089 ecolab-green-152 ecolab-green-024 ecolab-green-195 ecolab-green-136 overland-m-01 overland-s-04 overland-s-06 bandit-fortress overland-s-07 overland-s-08 dungeon-thepit director gateway text-router rmq-auth-shim"
-      ;;
     *)
-      printf 'DUNE_WORLD_PARTITION_COUNT must be 30 or 31, got: %s\n' "$partition_count" >&2
+      printf 'DUNE_WORLD_PARTITION_COUNT must be 30; partition 31 Deep Desert PvP is intentionally disabled, got: %s\n' "$partition_count" >&2
       exit 64
       ;;
   esac

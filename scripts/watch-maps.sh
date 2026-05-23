@@ -27,7 +27,7 @@ Environment:
   DUNE_WATCH_RECOVER_COMMAND Recovery command. Default: scripts/recover-map.sh
   DUNE_WATCH_SEED_NEIGHBORS Seed known Docker bridge neighbor entries. Default: false
   DUNE_WATCH_SEED_COMMAND   Neighbor seed command. Default: scripts/seed-gateway-neighbor.sh
-  DUNE_WORLD_PARTITION_COUNT Monitored partition ceiling. Default: 31
+  DUNE_WORLD_PARTITION_COUNT Monitored partition ceiling. Default: 30
 USAGE
 }
 
@@ -70,9 +70,9 @@ read_env() {
 }
 
 partition_count="${DUNE_WORLD_PARTITION_COUNT:-$(read_env DUNE_WORLD_PARTITION_COUNT)}"
-partition_count="${partition_count:-31}"
-if [[ "$partition_count" != "30" && "$partition_count" != "31" ]]; then
-  printf 'DUNE_WORLD_PARTITION_COUNT must be 30 or 31, got: %s\n' "$partition_count" >&2
+partition_count="${partition_count:-30}"
+if [[ "$partition_count" != "30" ]]; then
+  printf 'DUNE_WORLD_PARTITION_COUNT must be 30; partition 31 Deep Desert PvP is intentionally disabled, got: %s\n' "$partition_count" >&2
   exit 2
 fi
 
@@ -98,7 +98,6 @@ MAP_PARTITIONS=(
   "testing-carthag:6"
   "testing-waterfat:7"
   "deep-desert:8"
-  "deep-desert-pvp:31"
   "proces-verbal:9"
   "lostharvest-ecolab-a:10"
   "lostharvest-ecolab-b:11"

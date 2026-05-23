@@ -7,6 +7,7 @@ main() {
   local dry_run="${DUNE_RUN_SERVER_SAFE_DRY_RUN:-false}"
 
   install_cert
+  install_building_piece_limit_patch "$server_root" "$dry_run"
   install_user_configs "$server_root"
   install_server_login_password "$server_root" "$@"
   load_workspace_value DUNE_SERVER_DISPLAY_NAME
@@ -190,6 +191,30 @@ install_cert() {
     ln -s "${service_account}/ca.crt" /usr/local/share/ca-certificates/kubernetes.crt
     update-ca-certificates
   fi
+}
+
+install_building_piece_limit_patch() {
+  local server_root="$1"
+  local dry_run="$2"
+  [ "${DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED:-false}" = "true" ] || return 0
+
+  local limit="${DUNE_BUILDING_PIECE_LIMIT:-7500}"
+  local pak="${DUNE_BUILDING_PIECE_LIMIT_PAK:-$server_root/DuneSandbox/Content/Paks/pakchunk0-LinuxServer.pak}"
+  local oodle="${DUNE_OODLE_LIBRARY:-/tmp/oodle/liboodle-data-shared.so}"
+
+  if [ "$dry_run" = "true" ]; then
+    python3 /workspace/scripts/patch-building-piece-limit-pak.py \
+      --pak "$pak" \
+      --oodle "$oodle" \
+      --limit "$limit" \
+      --dry-run
+    return 0
+  fi
+
+  python3 /workspace/scripts/patch-building-piece-limit-pak.py \
+    --pak "$pak" \
+    --oodle "$oodle" \
+    --limit "$limit"
 }
 
 main "$@"

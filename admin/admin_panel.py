@@ -48,6 +48,9 @@ ADMIN_PANEL_BUILD_LABEL = "20260522-live-refresh"
 ADMIN_PANEL_SELF_RELOAD_ENABLED = os.environ.get("DUNE_ADMIN_SELF_RELOAD_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 ADMIN_PANEL_SELF_RELOAD_POLL_SECONDS = float(os.environ.get("DUNE_ADMIN_SELF_RELOAD_POLL_SECONDS", "1.5"))
 ADMIN_PANEL_SELF_RELOAD_DEBOUNCE_SECONDS = float(os.environ.get("DUNE_ADMIN_SELF_RELOAD_DEBOUNCE_SECONDS", "1.0"))
+FLS_HEALTH_CACHE_TTL_SECONDS = float(os.environ.get("DUNE_ADMIN_FLS_HEALTH_CACHE_TTL_SECONDS", "120"))
+FLS_HEALTH_CACHE = {"payload": None, "updated_at": 0.0, "refreshing": False}
+FLS_HEALTH_CACHE_LOCK = threading.Lock()
 
 
 def compute_admin_panel_build():
@@ -253,23 +256,21 @@ def env_file_value(key):
 
 
 def world_partition_count():
-    value = os.environ.get("DUNE_WORLD_PARTITION_COUNT") or env_file_value("DUNE_WORLD_PARTITION_COUNT") or "31"
+    value = os.environ.get("DUNE_WORLD_PARTITION_COUNT") or env_file_value("DUNE_WORLD_PARTITION_COUNT") or "30"
     try:
         return int(value)
     except ValueError:
-        return 31
+        return 30
 
 
 GAME_MAP_SERVICES = [
     "survival", "overmap", "arrakeen", "harko-village", "testing-hephaestus", "testing-carthag", "testing-waterfat",
-    "deep-desert", "deep-desert-pvp", "proces-verbal", "lostharvest-ecolab-a", "lostharvest-ecolab-b", "lostharvest-forgottenlab",
+    "deep-desert", "proces-verbal", "lostharvest-ecolab-a", "lostharvest-ecolab-b", "lostharvest-forgottenlab",
     "art-of-kanly", "dungeon-hephaestus", "dungeon-oldcarthag", "faction-outpost-atre", "faction-outpost-hark",
     "heighliner-dungeon", "ecolab-green-089", "ecolab-green-152", "ecolab-green-024", "ecolab-green-195",
     "ecolab-green-136", "overland-m-01", "overland-s-04", "overland-s-06", "bandit-fortress",
     "overland-s-07", "overland-s-08", "dungeon-thepit",
 ]
-if world_partition_count() < 31:
-    GAME_MAP_SERVICES = [service for service in GAME_MAP_SERVICES if service != "deep-desert-pvp"]
 SERVICE_LAYER_SERVICES = ["rmq-auth-shim", "text-router", "gateway", "director"]
 ALL_RESTART_SAFE_SERVICES = GAME_MAP_SERVICES + SERVICE_LAYER_SERVICES
 RESTART_TARGETS = {
@@ -282,7 +283,6 @@ RESTART_TARGETS = {
     "arrakeen": {"label": "Arrakeen", "services": ["arrakeen"]},
     "harko-village": {"label": "Harko Village", "services": ["harko-village"]},
     "deep-desert": {"label": "Deep Desert", "services": ["deep-desert"]},
-    "deep-desert-pvp": {"label": "Deep Desert PvP", "services": ["deep-desert-pvp"]},
 }
 
 GM_COMMANDS_ENABLED = os.environ.get("DUNE_ADMIN_GM_COMMANDS_ENABLED", "false").lower() == "true"
@@ -2492,7 +2492,6 @@ def map_name_to_service(map_name):
         "arrakeen": "arrakeen",
         "harko-village": "harko-village",
         "deep-desert": "deep-desert",
-        "deep-desert-pvp": "deep-desert-pvp",
     }
     return aliases.get(normalized, normalized)
 
@@ -4929,6 +4928,44 @@ class Handler(BaseHTTPRequestHandler):
         }
 
     def fls_publication_health(self):
+        now = time.monotonic()
+        with FLS_HEALTH_CACHE_LOCK:
+            cached = FLS_HEALTH_CACHE.get("payload")
+            updated_at = float(FLS_HEALTH_CACHE.get("updated_at") or 0)
+            if cached and now - updated_at < FLS_HEALTH_CACHE_TTL_SECONDS:
+                payload = dict(cached)
+                payload["cached"] = True
+                payload["cacheAgeSeconds"] = int(now - updated_at)
+                return payload
+            if not FLS_HEALTH_CACHE.get("refreshing"):
+                FLS_HEALTH_CACHE["refreshing"] = True
+                threading.Thread(target=self.refresh_fls_publication_health_cache, daemon=True).start()
+            if cached:
+                payload = dict(cached)
+                payload["cached"] = True
+                payload["stale"] = True
+                payload["refreshing"] = True
+                payload["cacheAgeSeconds"] = int(now - updated_at)
+                return payload
+        return {
+            "ok": True,
+            "state": "refreshing",
+            "cached": False,
+            "refreshing": True,
+            "checks": [],
+            "note": "FLS publication health is being refreshed in the background so map health stays responsive.",
+        }
+
+    @staticmethod
+    def refresh_fls_publication_health_cache():
+        payload = Handler.run_fls_publication_health_check()
+        with FLS_HEALTH_CACHE_LOCK:
+            FLS_HEALTH_CACHE["payload"] = payload
+            FLS_HEALTH_CACHE["updated_at"] = time.monotonic()
+            FLS_HEALTH_CACHE["refreshing"] = False
+
+    @staticmethod
+    def run_fls_publication_health_check():
         script = ROOT / "scripts" / "fls-publication-health.py"
         env_file = os.environ.get("DUNE_ADMIN_ENV_FILE", ".env")
         compose_files = os.environ.get("COMPOSE_FILES", "compose.yaml")
@@ -7245,6 +7282,7 @@ let overviewHealthSnapshot = null;
 let overviewResourceSnapshot = null;
 let overviewResourcePrevious = null;
 const view = document.getElementById('view');
+const HEALTH_REQUEST_TIMEOUT_MS = 30000;
 
 document.body.classList.toggle('highContrast', sessionStorage.getItem('duneAdminHighContrast') === 'on');
 document.body.classList.toggle('denseMode', sessionStorage.getItem('duneAdminDenseMode') === 'on');
@@ -8364,7 +8402,7 @@ async function refreshHaggaMap(opts={}){
     container.innerHTML = overviewMapHealthPanel(overviewHealthSnapshot);
     wireOverviewMapTabs(container);
     container.querySelector('#refreshHaggaMapBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Refreshing...', async () => {
-      const health = await api('/api/ops/health', {timeoutMs: 7000});
+      const health = await api('/api/ops/health', {timeoutMs: HEALTH_REQUEST_TIMEOUT_MS});
       overviewHealthSnapshot = health;
       renderOverviewRealtime(health);
       await refreshHaggaMap({force:true});
@@ -8444,12 +8482,20 @@ function overviewRealtimeHtml(health, rosterCounts={}, resources=null){
   const summary = state.summary || {};
   const players = (state.farmState || []).reduce((sum, r) => sum + Number(r.connected_players || 0), 0);
   const playerPeak = state.playerPeak || {};
+  const fls = state.flsPublication || {};
+  const flsState = fls.state || summary.flsPublication || 'unknown';
+  const flsTone = flsState === 'healthy' ? 'ok' : flsState === 'refreshing' ? 'warn' : 'dangerText';
+  const flsMeta = fls.cached ? `cached ${fls.cacheAgeSeconds ?? 0}s` : (fls.refreshing ? 'refreshing' : '');
   const resourcesCard = resources ? overviewResourceCard(resources) : metric('Server Load', 'sampling');
-  return `${metric('Ready Servers', `${summary.readyAlive ?? 0}/${summary.expectedPartitions ?? 0}`, summary.readyAlive === summary.expectedPartitions ? 'ok' : 'dangerText')}${metric('Online Maps', `${summary.onlineMaps ?? 0}/${summary.totalMaps ?? 0}`, summary.onlineMaps === summary.totalMaps ? 'ok' : 'dangerText')}${metric('Reported Players', players)}${metric('Peak Today', playerPeak.peak ?? summary.peakPlayersToday ?? 0)}${metric('Characters', rosterCounts.total ?? 0)}${resourcesCard}${overviewHealthCards(state)}`;
+  return `${metric('Ready Servers', `${summary.readyAlive ?? 0}/${summary.expectedPartitions ?? 0}`, summary.readyAlive === summary.expectedPartitions ? 'ok' : 'dangerText')}${metric('Online Maps', `${summary.onlineMaps ?? 0}/${summary.totalMaps ?? 0}`, summary.onlineMaps === summary.totalMaps ? 'ok' : 'dangerText')}${metric('Reported Players', players)}${metric('Peak Today', playerPeak.peak ?? summary.peakPlayersToday ?? 0)}${metric('Characters', rosterCounts.total ?? 0)}${metric('FLS Publication', flsState, flsTone, flsMeta)}${resourcesCard}${overviewHealthCards(state)}`;
 }
 function opsRealtimeMetricsHtml(health){
   const pc = (health || {}).playerCounts || {};
-  return `${metric('Connected Players', pc.connected_players_reported ?? 0)}${metric('Online Controllers', pc.online_controller_ids ?? 0)}${metric('Recent Online State', pc.online_or_recently_disconnected ?? 0)}${metric('Grace Entries', pc.grace_period_entries ?? 0)}`;
+  const fls = (health || {}).flsPublication || {};
+  const flsState = fls.state || (health || {}).summary?.flsPublication || 'unknown';
+  const flsTone = flsState === 'healthy' ? 'ok' : flsState === 'refreshing' ? 'warn' : 'dangerText';
+  const flsMeta = fls.cached ? `cached ${fls.cacheAgeSeconds ?? 0}s` : (fls.refreshing ? 'refreshing' : '');
+  return `${metric('Connected Players', pc.connected_players_reported ?? 0)}${metric('Online Controllers', pc.online_controller_ids ?? 0)}${metric('Recent Online State', pc.online_or_recently_disconnected ?? 0)}${metric('Grace Entries', pc.grace_period_entries ?? 0)}${metric('FLS Publication', flsState, flsTone, flsMeta)}`;
 }
 function renderOverviewRealtime(health){
   const container = document.getElementById('overviewRealtime');
@@ -8496,7 +8542,7 @@ async function refreshRealtimeHealth(opts={}){
   if (current !== 'overview' && current !== 'ops') return;
   healthRefreshInFlight = true;
   try {
-    const health = await api('/api/ops/health', {timeoutMs: 7000});
+    const health = await api('/api/ops/health', {timeoutMs: HEALTH_REQUEST_TIMEOUT_MS});
     if (current === 'overview') renderOverviewRealtime(health);
     else if (current === 'ops') renderOpsRealtime(health);
     updateLastRefresh('Health refreshed');
@@ -8919,7 +8965,7 @@ async function load(){
 }
 async function overview(serial=loadSerial){
   const [health, roster] = await Promise.all([
-    api('/api/ops/health'),
+    api('/api/ops/health', {timeoutMs: HEALTH_REQUEST_TIMEOUT_MS}),
     api('/api/characters/roster')
   ]);
   if (serial !== loadSerial) return;
@@ -8945,7 +8991,7 @@ async function overview(serial=loadSerial){
 }
 async function ops(serial=loadSerial){
   const [health, opt, announcement, restart] = await Promise.all([
-    api('/api/ops/health'),
+    api('/api/ops/health', {timeoutMs: HEALTH_REQUEST_TIMEOUT_MS}),
     api('/api/ops/optimization'),
     api('/api/ops/announcement'),
     api('/api/ops/restart')

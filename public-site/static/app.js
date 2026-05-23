@@ -32,7 +32,9 @@
 	var maxStatusAgeMs = 150000;
 	var activeMapTab = "hagga";
 	var latestSnapshot = null;
-	var scriptNode = document.currentScript || document.querySelector("script[src$='app.js']");
+	var poisLoaded = false;
+	var lazyMapStarted = false;
+	var scriptNode = document.currentScript || document.querySelector("script[src*='app.js']");
 	var assetBaseUrl = scriptNode && scriptNode.src ? new URL(".", scriptNode.src) : new URL("./", window.location.href);
 
 	function assetUrl(path, cacheBust) {
@@ -41,6 +43,90 @@
 			base.searchParams.set("v", String(Date.now()));
 		}
 		return base.href;
+	}
+
+	function deferWork(callback, timeout) {
+		if (typeof window.requestIdleCallback === "function") {
+			window.requestIdleCallback(callback, { timeout: timeout || 2500 });
+			return;
+		}
+		window.setTimeout(callback, timeout || 0);
+	}
+
+	function delayThenDefer(callback, delay, timeout) {
+		window.setTimeout(function () {
+			deferWork(callback, timeout || 2500);
+		}, delay || 0);
+	}
+
+	function activeMapAsset() {
+		return activeMapTab === "deep-desert" ? {
+			key: "deep-desert",
+			path: "deep-desert-map.svg",
+			alt: "Deep Desert player position map"
+		} : {
+			key: "hagga",
+			path: map && map.getAttribute("data-map-src") || "hagga-map.svg",
+			alt: "Hagga Basin player position map"
+		};
+	}
+
+	function loadActiveMap(refresh) {
+		if (!map || activeMapTab === "health") {
+			return;
+		}
+		var asset = activeMapAsset();
+		if (!refresh && map.getAttribute("data-loaded-map") === asset.key) {
+			return;
+		}
+		map.onerror = function () {
+			if (asset.key === "deep-desert") {
+				map.onerror = null;
+				map.src = deepDesertFallbackSvg();
+			}
+		};
+		map.alt = asset.alt;
+		map.src = assetUrl(asset.path, true);
+		map.setAttribute("data-loaded-map", asset.key);
+		if (asset.key === "hagga") {
+			loadPois();
+		}
+	}
+
+	function refreshLoadedMap() {
+		if (map && map.getAttribute("data-loaded-map") && activeMapTab !== "health") {
+			loadActiveMap(true);
+		}
+	}
+
+	function scheduleLazyMapLoad() {
+		if (!mapLayout || lazyMapStarted) {
+			return;
+		}
+		lazyMapStarted = true;
+		var lazyTarget = mapViewport || mapLayout;
+		function armLazyMap() {
+			delayThenDefer(function () {
+				if (typeof IntersectionObserver === "function") {
+					var observer = new IntersectionObserver(function (entries) {
+						if (entries.some(function (entry) { return entry.isIntersecting; })) {
+							observer.disconnect();
+							delayThenDefer(function () {
+								loadActiveMap(false);
+							}, 750, 1500);
+						}
+					}, { rootMargin: "0px" });
+					observer.observe(lazyTarget);
+					return;
+				}
+				loadActiveMap(false);
+			}, 2000, 3000);
+		}
+		if (document.readyState === "complete") {
+			armLazyMap();
+			return;
+		}
+		window.addEventListener("load", armLazyMap, { once: true });
 	}
 
 	function deepDesertFallbackSvg() {
@@ -406,16 +492,6 @@
 	}
 
 	function refreshSnapshot() {
-		if (map && activeMapTab !== "health") {
-			map.onerror = function () {
-				if (activeMapTab === "deep-desert") {
-					map.onerror = null;
-					map.src = deepDesertFallbackSvg();
-				}
-			};
-			map.src = assetUrl(activeMapTab === "deep-desert" ? "deep-desert-map.svg" : "hagga-map.svg", true);
-			map.alt = activeMapTab === "deep-desert" ? "Deep Desert player position map" : "Hagga Basin player position map";
-		}
 		fetch(assetUrl("players.json", true), { cache: "no-store" })
 			.then(function (response) {
 				if (!response.ok) {
@@ -601,9 +677,10 @@
 	}
 
 	function loadPois() {
-		if (!poiOverlay || !poiToggles) {
+		if (!poiOverlay || !poiToggles || poisLoaded) {
 			return;
 		}
+		poisLoaded = true;
 		fetch(assetUrl("hagga-pois.json", true), { cache: "no-store" })
 			.then(function (response) {
 				if (!response.ok) {
@@ -613,6 +690,7 @@
 			})
 			.then(renderPoiToggles)
 			.catch(function () {
+				poisLoaded = false;
 				clearNode(poiToggles);
 				clearNode(poiOverlay);
 			});
@@ -655,7 +733,7 @@
 		if (activeMapTab === "health" && latestSnapshot) {
 			renderMapHealth(latestSnapshot);
 		}
-		refreshSnapshot();
+		loadActiveMap(true);
 	}
 
 	mapTabs.forEach(function (button) {
@@ -666,8 +744,9 @@
 
 	refreshStatus();
 	refreshSnapshot();
-	loadPois();
+	scheduleLazyMapLoad();
 	initPanZoom(mapViewport, mapContent || map, mapZoomIn, mapZoomOut, mapReset);
 	window.setInterval(refreshStatus, 60000);
 	window.setInterval(refreshSnapshot, 60000);
+	window.setInterval(refreshLoadedMap, 60000);
 })();

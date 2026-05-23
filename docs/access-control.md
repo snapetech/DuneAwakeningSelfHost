@@ -35,7 +35,7 @@ Changing the value updates `.env`, but it does not update already-running game-s
 ```bash
 docker compose -f compose.yaml -f compose.allmaps.yaml --env-file .env up -d --force-recreate \
   survival overmap arrakeen harko-village \
-  testing-hephaestus testing-carthag testing-waterfat deep-desert deep-desert-pvp proces-verbal \
+  testing-hephaestus testing-carthag testing-waterfat deep-desert proces-verbal \
   lostharvest-ecolab-a lostharvest-ecolab-b lostharvest-forgottenlab art-of-kanly \
   dungeon-hephaestus dungeon-oldcarthag faction-outpost-atre faction-outpost-hark \
   heighliner-dungeon ecolab-green-089 ecolab-green-152 ecolab-green-024 \

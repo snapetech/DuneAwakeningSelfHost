@@ -81,10 +81,10 @@ For the expanded standing farm, the expected summary is:
 current_alive_active=9 active_servers=9 partitions=9
 ```
 
-For the 31-partition warm pool, the expected summary is:
+For the 30-partition warm pool, the expected summary is:
 
 ```text
-current_alive_active=31 active_servers=31 partitions=31
+current_alive_active=30 active_servers=30 partitions=30
 ```
 
 ## Survival Recovery
@@ -276,7 +276,7 @@ Capture the known-good state after all nine maps register:
 ./scripts/capture-routing.sh .env full-farm-ready
 ```
 
-For the 31-partition warm pool:
+For the 30-partition warm pool:
 
 ```bash
 ./scripts/start-full-warm-pool.sh .env
@@ -284,9 +284,9 @@ COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' ./scripts/rmq-health.sh .env
 ```
 
 The helper starts Postgres and both RabbitMQ services first, waits for their
-health checks, writes the 31-partition layout, starts the service layer, then
+health checks, writes the 30-partition layout, starts the service layer, then
 starts maps in batches: `survival`/`overmap`, partitions 3-9, then partitions
-10-31. It uses `--no-recreate` for normal startup so a routine online operation
+10-30. It uses `--no-recreate` for normal startup so a routine online operation
 does not replace Postgres under running game servers.
 
 The helper also seeds required Docker bridge neighbor entries before and after
@@ -367,11 +367,11 @@ For the expanded standing farm, forward:
 7777-7785/udp
 ```
 
-For the 31-partition warm pool, forward:
+For the 30-partition warm pool, forward:
 
 ```text
-7777-7810/udp
-7888-7918/udp
+7777-7806/udp
+7888-7917/udp
 ```
 
 `7888-7918/udp` are the IGW ports paired with the 31 warm-pool game ports. If your deployment relies on them for live-client routing or server-browser checks, forward them to the Dune host. Do not remove IGW forwards from a working deployment without packet-capture evidence and a router backup.

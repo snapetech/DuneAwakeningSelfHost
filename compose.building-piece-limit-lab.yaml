@@ -1,0 +1,8 @@
+services:
+  survival:
+    environment:
+      DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED: "true"
+      DUNE_BUILDING_PIECE_LIMIT: ${DUNE_BUILDING_PIECE_LIMIT:-7500}
+      DUNE_OODLE_LIBRARY: /tmp/oodle/liboodle-data-shared.so
+    volumes:
+      - ${DUNE_OODLE_HOST_LIBRARY:-/tmp/oodleue/lib/liboodle-data-shared.so}:/tmp/oodle/liboodle-data-shared.so:ro

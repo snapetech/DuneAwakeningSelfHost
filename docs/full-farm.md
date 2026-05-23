@@ -1,10 +1,10 @@
 # Full Standing Farm / Warm Pool
 
-This Compose layout can run either the initial nine-map standing farm or the full 31-partition warm pool.
+This Compose layout can run either the initial nine-map standing farm or the full 30-partition warm pool.
 
 Funcom's template treats most of the non-starting maps as `dedicatedScaling` / on-demand capacity with `replicas: 0`. In Kubernetes, the operator and Director can create those game-server pods when a travel/instance trigger needs them. In Compose, there is no operator, so `compose.allmaps.yaml` keeps one server container warm for every official single-dimension self-host partition. That is a warm-pool substitute for on-demand scaling, not true elastic scaling.
 
-The base standing services cover partitions 1-9. The all-maps overlay adds partitions 10-31. Partition 31 is an experimental second `DeepDesert_1` dimension intended for PvP testing.
+The base standing services cover partitions 1-9. The all-maps overlay adds partitions 10-30. Partition 31 / PvP Deep Desert is intentionally disabled in the live farm.
 
 ## Services
 
@@ -40,7 +40,6 @@ The base standing services cover partitions 1-9. The all-maps overlay adds parti
 | `overland-s-07` | `CB_Overland_S_07` | 28 | 7804 | 7915 |
 | `overland-s-08` | `CB_Overland_S_08` | 29 | 7805 | 7916 |
 | `dungeon-thepit` | `CB_Dungeon_ThePit` | 30 | 7806 | 7917 |
-| `deep-desert-pvp` | `DeepDesert_1` | 31 | 7807 | 7918 |
 
 ## Start
 
@@ -63,7 +62,7 @@ Expected status:
 current_alive_active=9 active_servers=9 partitions=9
 ```
 
-Full 31-partition warm pool:
+Full 30-partition warm pool:
 
 ```bash
 ./scripts/start-full-warm-pool.sh .env
@@ -79,20 +78,20 @@ refresh the host-side bridge neighbor entries:
 Expected status:
 
 ```text
-current_alive_active=31 active_servers=31 partitions=31
+current_alive_active=30 active_servers=30 partitions=30
 ```
 
 ## Network
 
 Forward `7777-7785/udp` from the router to the host for the full standing farm.
 
-Forward `7777-7810/udp` from the router to the host for the full 31-partition warm pool.
+Forward `7777-7806/udp` from the router to the host for the full 30-partition warm pool.
 
-Forward `7888-7918/udp` from the router to the host for the full 31-partition warm pool when your deployment uses the paired IGW ports for live-client routing or server-browser checks. These are the IGW ports paired with the gameplay ports.
+Forward `7888-7917/udp` from the router to the host for the full 30-partition warm pool when your deployment uses the paired IGW ports for live-client routing or server-browser checks. These are the IGW ports paired with the gameplay ports.
 
-## Second Deep Desert
+## Disabled PvP Deep Desert
 
-`deep-desert-pvp` runs the same `DeepDesert_1` map as partition 8, but registers as partition 31 with `dimension_index=1`. `config/UserGame.ini` marks partition 31 as PvP through `+m_PvpEnabledPartitions=31`.
+Partition 31 / PvP Deep Desert is deliberately disabled. Do not include it in restart targets, watchdog expectations, public status, or router forwarding for the live farm.
 
 Coriolis is not currently proven to be partition-scoped. The known config surface exposes `m_bCoriolisAutoSpawnEnabled` under `SandStormConfig` and cycle/wipe fields under `CoriolisSubsystem`, which appear global. Keep auto-spawn disabled until a partition-specific Coriolis path is validated, otherwise enabling it is expected to affect the existing partition 8 Deep Desert too. The no-wipe guard is staged with `m_bIsDbWipeEnabled=False`, and the low-damage profile is staged as `m_bCoriolisDoesDamage=True`, `m_bCoriolisTriggerShiftingSands=False`, `m_CoriolisLightDamage=1.000000`, and `m_CoriolisHeavyDamage=25.000000`.
 

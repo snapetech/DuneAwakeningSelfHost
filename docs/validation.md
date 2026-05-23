@@ -1,6 +1,6 @@
 # Live Client Validation
 
-Use this checklist after the 31-partition warm pool is server-ready. Server readiness proves that containers, Director, Gateway, Postgres, and RabbitMQ agree on the farm. It does not prove that the live client can route into every destination.
+Use this checklist after the 30-partition warm pool is server-ready. Server readiness proves that containers, Director, Gateway, Postgres, and RabbitMQ agree on the farm. It does not prove that the live client can route into every destination.
 
 ## Before Testing
 

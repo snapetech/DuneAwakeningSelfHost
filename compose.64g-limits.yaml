@@ -71,9 +71,6 @@ services:
   deep-desert:
     <<: *map-large
 
-  deep-desert-pvp:
-    <<: *map-large
-
   arrakeen:
     <<: *map-medium
 

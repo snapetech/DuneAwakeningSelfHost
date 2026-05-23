@@ -19,6 +19,37 @@ tmp_status="$(mktemp)"
 tmp_index="$(mktemp)"
 trap 'rm -f "$tmp_status" "$tmp_index"' EXIT
 
+asset_version() {
+  local file="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$file" | awk '{print substr($1, 1, 12)}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$file" | awk '{print substr($1, 1, 12)}'
+  else
+    cksum "$file" | awk '{print $1}'
+  fi
+}
+
+stamp_static_asset_versions() {
+  local app_file="$STATIC_DIR/app.js"
+  local style_file="$STATIC_DIR/style.css"
+  local app_version style_version tmp_versioned
+  [[ -f "$INDEX_FILE" && -f "$app_file" && -f "$style_file" ]] || return 0
+  app_version="$(asset_version "$app_file")"
+  style_version="$(asset_version "$style_file")"
+  tmp_versioned="$(mktemp)"
+  sed -E \
+    -e "s#href=\"style\.css(\\?v=[^\"]*)?\"#href=\"style.css?v=${style_version}\"#g" \
+    -e "s#src=\"app\.js(\\?v=[^\"]*)?\"#src=\"app.js?v=${app_version}\"#g" \
+    "$INDEX_FILE" > "$tmp_versioned"
+  if [[ -w "$INDEX_FILE" ]]; then
+    install -m 0644 "$tmp_versioned" "$INDEX_FILE"
+  else
+    sudo install -m 0644 "$tmp_versioned" "$INDEX_FILE"
+  fi
+  rm -f "$tmp_versioned"
+}
+
 if [[ -f "$SOURCE_INDEX_FILE" ]]; then
   if [[ -w "$(dirname "$INDEX_FILE")" ]]; then
     install -m 0644 "$SOURCE_INDEX_FILE" "$INDEX_FILE"
@@ -30,6 +61,8 @@ fi
 if [[ -x "$CONFIGURE_SCRIPT" ]]; then
   STATIC_DIR="$STATIC_DIR" INDEX_FILE="$INDEX_FILE" "$CONFIGURE_SCRIPT"
 fi
+
+stamp_static_asset_versions
 
 server_class="status-down"
 server_text="Offline"
