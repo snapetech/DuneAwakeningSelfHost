@@ -46,7 +46,7 @@ Always compare your `.env` image pin with the Steam package installed on your ho
 | --- | --- | --- |
 | Single-map validation | Prove Steam package, token, database bootstrap, Gateway, RabbitMQ, and `Survival_1`. | `7777/udp` plus `31982/tcp` for live-client login. |
 | Public self-host | Run the nine-map standing farm or the 30-partition warm pool after single-map validation passes. | Game UDP range for your layout plus `31982/tcp`. |
-| Full warm-pool operator setup | Run all 30 official self-host partitions, watchdog recovery, restart planning, backups, and optional replica/sync. | `7777-7810/udp`, optional observed IGW `7888-7917/udp`, plus `31982/tcp`. |
+| Full warm-pool operator setup | Run all 30 official self-host partitions, watchdog recovery, restart planning, backups, and optional replica/sync. | `7777-7810/udp`, optional observed IGW `7888-7918/udp`, plus `31982/tcp`. |
 | Public-status-only website | Render static status, settings, players, and Hagga Basin map files from the private DASH host. | Only your normal static web server ports. |
 
 ## What DASH Includes
@@ -388,7 +388,7 @@ Forward only the client-facing ports needed for your layout.
 | Single `Survival_1` | `7777/udp` |
 | Nine-map farm | `7777-7785/udp` |
 | Full 30-partition warm pool | `7777-7810/udp` |
-| Optional/observed full-pool IGW range | `7888-7917/udp` |
+| Optional/observed full-pool IGW range | `7888-7918/udp` |
 
 Live-client login also receives the game RabbitMQ endpoint from FLS before gameplay UDP starts. Forward the configured game RabbitMQ public TCP port:
 

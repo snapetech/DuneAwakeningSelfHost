@@ -284,7 +284,7 @@ Add `scripts/browser-ping-diagnostics.sh` as a read-only report:
 - running container reality: `docker inspect` env/cmd for Gateway, Director,
   TextRouter, game-rmq, and Survival.
 - cert check: `scripts/check-rabbitmq-cert-sans.sh .env`.
-- local listeners: TCP `31982`, UDP gameplay `7777-7810`, IGW `7888-7917`.
+- local listeners: TCP `31982`, UDP gameplay `7777-7810`, IGW `7888-7918`.
 - Docker NAT/firewall counters for the same ports.
 - DB advertised addresses from `dune.farm_state`.
 - recent Gateway/Director/TextRouter FLS-ish logs.

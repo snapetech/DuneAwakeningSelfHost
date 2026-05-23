@@ -3,7 +3,7 @@ set -euo pipefail
 
 env_file="${1:-.env}"
 router_arg="${2:-}"
-target_ip="${3:-${DUNE_FAILOVER_TARGET_LAN_IP:-}}"
+target_ip="${3:-${DUNE_FAILOVER_TARGET_LAN_IP:-${DUNE_CURRENT_LAN_IP:-}}}"
 
 read_env() {
   local key="$1" value
@@ -25,7 +25,8 @@ fi
 router="${router_arg:-${DUNE_FAILOVER_ROUTER_SSH:-${DUNE_ROUTER_SSH:-$(read_env DUNE_FAILOVER_ROUTER_SSH)}}}"
 primary_ip="${DUNE_FAILOVER_PRIMARY_LAN_IP:-${DUNE_PRIMARY_LAN_IP:-$(read_env DUNE_FAILOVER_PRIMARY_LAN_IP)}}"
 standby_ip="${DUNE_FAILOVER_STANDBY_LAN_IP:-${DUNE_STANDBY_LAN_IP:-$(read_env DUNE_FAILOVER_STANDBY_LAN_IP)}}"
-target_ip="${target_ip:-$standby_ip}"
+current_ip="${DUNE_CURRENT_LAN_IP:-$(read_env DUNE_CURRENT_LAN_IP)}"
+target_ip="${target_ip:-${current_ip:-$standby_ip}}"
 public_ip="${DUNE_FAILOVER_PUBLIC_IP:-${DUNE_PUBLIC_IP:-${EXTERNAL_ADDRESS:-$(read_env EXTERNAL_ADDRESS)}}}"
 game_rmq_port="${GAME_RMQ_PUBLIC_PORT:-$(read_env GAME_RMQ_PUBLIC_PORT)}"; game_rmq_port="${game_rmq_port:-31982}"
 game_udp_range="${GAME_UDP_PORT_RANGE:-$(read_env GAME_UDP_PORT_RANGE)}"; game_udp_range="${game_udp_range:-7777:7810}"
@@ -37,7 +38,7 @@ backup_file="${backup_dir}/asuswrt-${timestamp}.txt"
 mkdir -p "$backup_dir"
 
 if [[ -z "$router" || -z "$target_ip" || -z "$primary_ip" || -z "$standby_ip" || -z "$public_ip" ]]; then
-  printf 'DUNE_FAILOVER_ROUTER_SSH, DUNE_FAILOVER_PRIMARY_LAN_IP, DUNE_FAILOVER_STANDBY_LAN_IP, target IP, and EXTERNAL_ADDRESS/DUNE_PUBLIC_IP are required\n' >&2
+  printf 'DUNE_FAILOVER_ROUTER_SSH, DUNE_FAILOVER_PRIMARY_LAN_IP, DUNE_FAILOVER_STANDBY_LAN_IP, DUNE_CURRENT_LAN_IP or target IP, and EXTERNAL_ADDRESS/DUNE_PUBLIC_IP are required\n' >&2
   exit 1
 fi
 
@@ -53,17 +54,18 @@ current="$(ssh "$router" 'nvram get vts_rulelist')"
 } > "$backup_file"
 
 new="$current"
-for from_ip in "$primary_ip" "$standby_ip"; do
-  old_dune_game="<duneA1>${game_udp_range}>${from_ip}>>UDP>"
+# Iterate primary, standby, and target — the target pass is what makes re-runs
+# idempotent: it catches rules already pointing at target_ip but with a stale
+# port range (e.g. 7777:7806 leftover from a narrower historical range) and
+# normalizes them to the current env range. Without this, drift between env
+# and router silently survives every cutover.
+for from_ip in "$primary_ip" "$standby_ip" "$target_ip"; do
   new_dune_game="<duneA1>${game_udp_range}>${target_ip}>>UDP>"
-  old_dune_igw="<duneA2>${igw_udp_range}>${from_ip}>>UDP>"
   new_dune_igw="<duneA2>${igw_udp_range}>${target_ip}>>UDP>"
-  old_dune_rmq="<DuneRMQ>${game_rmq_port}>${from_ip}>${game_rmq_port}>TCP>"
   new_dune_rmq="<DuneRMQ>${game_rmq_port}>${target_ip}>${game_rmq_port}>TCP>"
-  new="${new//$old_dune_game/$new_dune_game}"
-  new="${new//$old_dune_igw/$new_dune_igw}"
+  new="$(printf '%s' "$new" | sed -E "s#<duneA1>[0-9]+:[0-9]+>${from_ip}>>UDP>#${new_dune_game}#g")"
   new="$(printf '%s' "$new" | sed -E "s#<duneA2>[0-9]+:[0-9]+>${from_ip}>>UDP>#${new_dune_igw}#g")"
-  new="${new//$old_dune_rmq/$new_dune_rmq}"
+  new="$(printf '%s' "$new" | sed -E "s#<DuneRMQ>[0-9]+>${from_ip}>[0-9]+>TCP>#${new_dune_rmq}#g")"
 done
 
 missing=()

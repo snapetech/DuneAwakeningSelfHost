@@ -4,6 +4,12 @@ Confidence high: use the standby as a cold Dune-service node with a hot
 Postgres streaming replica. Confidence low that true zero-disconnect live player
 handoff is supported by the self-hosted server stack.
 
+> For the day-to-day "cut over to the other host" / "cut back" procedure that
+> includes the post-2026-05-23 firewall fixes (inet-filter-forward Dune
+> accepts, host knock-scanner patch, OUTPUT REDIRECT cleanup on the old
+> active host), see [docs/cutover-runbook.md](cutover-runbook.md). This page
+> covers the Postgres replication topology and replica-rebuild rationale.
+
 Set the deployment-specific values in `.env`; do not bake site IPs, usernames,
 or hostnames into scripts:
 
@@ -11,6 +17,8 @@ or hostnames into scripts:
 POSTGRES_REMOTE_REPLICA_HOST=<standby-host>
 POSTGRES_REMOTE_REPLICA_ROOT=<standby-replica-root>
 POSTGRES_REMOTE_REPLICATION_SLOT=<standby-slot>
+DUNE_CURRENT_HOST=<current-active-host>
+DUNE_CURRENT_LAN_IP=<current-active-lan-ip>
 DUNE_FAILOVER_PRIMARY_HOST=<current-primary-host>
 DUNE_FAILOVER_PRIMARY_LAN_IP=<current-primary-lan-ip>
 DUNE_FAILOVER_STANDBY_HOST=<standby-host>
@@ -23,6 +31,24 @@ DUNE_STANDBY_REPO_ROOT=<repo-path-on-standby>
 `EXTERNAL_ADDRESS` and `GAME_RMQ_PUBLIC_HOST` should keep advertising the public
 game address. During failover, only the LAN destination behind that public
 address changes.
+
+`DUNE_CURRENT_HOST` and `DUNE_CURRENT_LAN_IP` identify the host that currently
+owns the live game service. Keep these updated after promotion so operational
+checks and router cutover commands derive their default target from the active
+owner instead of from a hardcoded hostname or the historical primary/standby
+labels.
+
+When the active service moves to a former standby, do not rewrite scripts or
+docs with that concrete host. Update `.env` instead. For example, the private
+env file should contain:
+
+```sh
+DUNE_CURRENT_HOST=<current-active-host>
+DUNE_CURRENT_LAN_IP=<current-active-lan-ip>
+```
+
+The old role labels can remain useful for rebuild, cutback, and audit logic,
+but operator commands that target the live host should prefer `DUNE_CURRENT_*`.
 
 ## Standby Model
 
@@ -91,10 +117,10 @@ Move host-side public-address/reflection rules to the standby:
 CONFIRM_HOST_NETWORK_FAILOVER=yes make host-network-failover ENV_FILE=.env ROLE=standby
 ```
 
-Move router forwards to the standby LAN IP:
+Move router forwards to the current active host LAN IP:
 
 ```sh
-CONFIRM_ROUTER_CUTOVER=yes make router-cutover ENV_FILE=.env TARGET="$DUNE_FAILOVER_STANDBY_LAN_IP"
+CONFIRM_ROUTER_CUTOVER=yes make router-cutover ENV_FILE=.env TARGET="$DUNE_CURRENT_LAN_IP"
 ```
 
 Switch systemd role services so the promoted host owns the game stack, public

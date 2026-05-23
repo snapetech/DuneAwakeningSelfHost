@@ -69,6 +69,7 @@ fi
 
 # Keep same-network container traffic working when the host FORWARD policy is
 # DROP. RabbitMQ auth depends on game-rmq reaching rmq-auth-shim/text-router.
+bridge_if=""
 if command -v docker >/dev/null 2>&1; then
     network_id="$(docker network inspect "$DUNE_DOCKER_NETWORK" --format '{{.Id}}' 2>/dev/null || true)"
     if [ -n "$network_id" ]; then
@@ -77,6 +78,23 @@ if command -v docker >/dev/null 2>&1; then
             && ! iptables -C FORWARD -i "$bridge_if" -o "$bridge_if" -j ACCEPT 2>/dev/null; then
             iptables -I FORWARD 1 -i "$bridge_if" -o "$bridge_if" -j ACCEPT
         fi
+    fi
+fi
+
+# The host has a separate nftables inet filter forward chain (in addition to
+# Docker's iptables FORWARD). When that chain has policy drop and no explicit
+# accept for the Dune docker bridge, every external SYN to a published Dune
+# port is silently dropped after DNAT — counters in `iptables -t nat DOCKER`
+# tick up but `iptables -L FORWARD -v` shows zero packets reaching DOCKER-USER.
+# Add the accept rules at runtime; persistence is left to the host's
+# /etc/nftables.conf (see docs/cutover-runbook.md).
+if [ -n "$bridge_if" ] && command -v nft >/dev/null 2>&1 \
+    && nft list chain inet filter forward >/dev/null 2>&1; then
+    if ! nft list chain inet filter forward 2>/dev/null | grep -qE "ip daddr ${DUNE_BRIDGE_CIDR//./\\.} +oifname \"${bridge_if}\""; then
+        nft add rule inet filter forward ip daddr "$DUNE_BRIDGE_CIDR" oifname "$bridge_if" accept comment \"Dune docker DNAT inbound\"
+    fi
+    if ! nft list chain inet filter forward 2>/dev/null | grep -qE "iifname \"${bridge_if}\" +ip saddr ${DUNE_BRIDGE_CIDR//./\\.}"; then
+        nft add rule inet filter forward iifname "$bridge_if" ip saddr "$DUNE_BRIDGE_CIDR" accept comment \"Dune docker bridge outbound\"
     fi
 fi
 

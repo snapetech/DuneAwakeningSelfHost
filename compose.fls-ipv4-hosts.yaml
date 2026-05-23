@@ -1,0 +1,9 @@
+services:
+  director:
+    extra_hosts:
+      - "sb-retail.fls.funcom.com:13.107.253.70"
+      - "sb-retail.fls.funcom.com:13.107.226.70"
+  gateway:
+    extra_hosts:
+      - "sb-retail.fls.funcom.com:13.107.253.70"
+      - "sb-retail.fls.funcom.com:13.107.226.70"

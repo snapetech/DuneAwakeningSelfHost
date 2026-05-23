@@ -71,7 +71,7 @@ dune_database="${dune_database:-dune_sb_1_4_0_0}"
 game_udp_range="$(read_env GAME_UDP_PORT_RANGE)"
 game_udp_range="${game_udp_range:-7777:7810}"
 igw_udp_range="$(read_env IGW_UDP_PORT_RANGE)"
-igw_udp_range="${igw_udp_range:-7888:7917}"
+igw_udp_range="${igw_udp_range:-7888:7918}"
 
 section "env public identity"
 printf 'WORLD_UNIQUE_NAME=%s\n' "${world_unique_name:-unset}"
@@ -157,9 +157,9 @@ fi
 
 section "docker nat counters"
 if have iptables; then
-  iptables -t nat -L DOCKER -n -v 2>/dev/null | rg "dpt:(${game_rmq_public_port}|777[7-9]|778[0-9]|779[0-9]|780[0-9]|7810|788[8-9]|789[0-9]|790[0-9]|791[0-7])" || true
+  iptables -t nat -L DOCKER -n -v 2>/dev/null | rg "dpt:(${game_rmq_public_port}|777[7-9]|778[0-9]|779[0-9]|780[0-9]|7810|788[8-9]|789[0-9]|790[0-9]|791[0-8])" || true
 elif have nft; then
-  nft list ruleset 2>/dev/null | rg "(${game_rmq_public_port}|7777|7810|7888|7917)" || true
+  nft list ruleset 2>/dev/null | rg "(${game_rmq_public_port}|7777|7810|7888|7918)" || true
 else
   printf 'WARN neither iptables nor nft found\n'
 fi

@@ -1,0 +1,16 @@
+services:
+  director:
+    network_mode: host
+    networks: !reset []
+    command:
+      - --RMQGameHostname
+      - 127.0.0.1
+      - --RMQGamePort
+      - "31982"
+      - --RMQAdminHostname
+      - 127.0.0.1
+      - --RMQAdminPort
+      - "5673"
+    environment:
+      Database__address: 127.0.0.1
+      Database__port: "15431"
