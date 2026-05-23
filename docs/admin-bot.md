@@ -197,6 +197,8 @@ Admin-private recipients are derived from currently online players whose charact
 
 The starter Base Reconstruction Tool path grants one `BaseBackupTool` to each newly observed joining account that has not already been recorded in `backups/admin-bot/player-presence.json`. When the grant succeeds, it sends a private message telling the player they may need to log out and back in before the item appears.
 
+The quiet starter emote path grants `DUNE_PLAYER_PRESENCE_STARTER_EMOTE_TEMPLATES` into the configured emote inventory type, default `14`, for newly observed joining accounts. It records successful accounts under `starterEmotesGranted` in the same state file and does not send a public or private message.
+
 The Vermilius Gap announcement watches `dune.journey_story_node` for the configured node's `complete_condition_state = true`. It records completed account ids under `backups/admin-bot/player-presence.json`, so each player is congratulated once. The first poll after enabling the feature baselines already-completed players and does not announce them retroactively.
 
 Run one baseline/check without installing the service:
