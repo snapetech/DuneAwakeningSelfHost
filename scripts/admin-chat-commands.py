@@ -927,6 +927,81 @@ def inventory_list_for_player(conn, player):
     return rows, format_inventory_item_list(rows)
 
 
+def parse_exchange_list_limit(args):
+    default_limit = int(env("DUNE_CHAT_COMMAND_EXCHANGE_LIST_LIMIT", "25"))
+    max_limit = int(env("DUNE_CHAT_COMMAND_EXCHANGE_LIST_MAX_LIMIT", "100"))
+    if not args:
+        return min(default_limit, max_limit)
+    if len(args) > 1:
+        raise ValueError("usage: &exchange_list [limit]")
+    return min(parse_positive_int(args[0], "limit"), max_limit)
+
+
+def exchange_fulfilled_orders_available(conn):
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute("select to_regclass('dune.dune_exchange_fulfilled_orders') as rel")
+        row = cur.fetchone() or {}
+    return bool(row.get("rel"))
+
+
+def exchange_list_rows(conn, limit):
+    exchange_id = int(env("DUNE_CHAT_COMMAND_AUCTION_EXCHANGE_ID", "2"))
+    has_fulfilled = exchange_fulfilled_orders_available(conn)
+    fulfilled_join = "left join dune.dune_exchange_fulfilled_orders f on f.order_id=o.id" if has_fulfilled else ""
+    fulfilled_where = "and f.order_id is null" if has_fulfilled else ""
+    base_where = f"""
+        o.exchange_id=%s
+        and o.template_id is not null
+        and o.item_price is not null
+        {fulfilled_where}
+    """
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            f"""
+            select count(*) as count
+            from dune.dune_exchange_orders o
+            join dune.dune_exchange_sell_orders s on s.order_id=o.id
+            {fulfilled_join}
+            where {base_where}
+            """,
+            (exchange_id,),
+        )
+        total = int((cur.fetchone() or {}).get("count") or 0)
+        cur.execute(
+            f"""
+            select
+                o.id, o.owner_id, o.template_id, o.item_price, o.expiration_time,
+                o.is_npc_order, coalesce(i.stack_size, s.initial_stack_size, 1) as stack_size,
+                coalesce(ps.character_name, case when o.is_npc_order then 'NPC' else 'owner ' || o.owner_id::text end) as seller_name
+            from dune.dune_exchange_orders o
+            join dune.dune_exchange_sell_orders s on s.order_id=o.id
+            left join dune.items i on i.id=o.item_id
+            left join dune.player_state ps on ps.player_controller_id=o.owner_id
+            {fulfilled_join}
+            where {base_where}
+            order by o.id desc
+            limit %s
+            """,
+            (exchange_id, int(limit)),
+        )
+        return cur.fetchall(), total
+
+
+def format_exchange_list(rows, total):
+    if total <= 0:
+        return "exchange: no current auctions"
+    names = item_display_names()
+    parts = []
+    for row in rows:
+        template_id = row.get("template_id") or "unknown"
+        display_name = names.get(template_id, template_id)
+        parts.append(
+            f"order {row.get('id')}: {int(row.get('stack_size') or 0)}x {display_name} code={template_id} price={int(row.get('item_price') or 0)} seller={row.get('seller_name') or 'unknown'}"
+        )
+    prefix = f"exchange: showing {len(rows)}/{total} current auctions"
+    return prefix + ": " + "; ".join(parts)
+
+
 def fuzzy_item_suggestion(rows, search_text, count):
     normalized = normalize_item_search(search_text)
     wanted_tokens = [token for token in re.split(r"[^a-z0-9]+", search_text.lower()) if token]

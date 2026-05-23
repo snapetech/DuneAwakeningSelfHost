@@ -141,6 +141,7 @@ class PublicAnnouncementRoutingTests(unittest.TestCase):
             "DUNE_PLAYER_PRESENCE_JOIN_TEMPLATE": "Welcome {playername}! Current player count is now {count}.",
             "DUNE_PLAYER_PRESENCE_RETURN_JOIN_TEMPLATE": "Welcome back {playername}! Current player count is now {count}.",
             "DUNE_PLAYER_PRESENCE_STARTER_BASE_TOOL_ENABLED": "false",
+            "DUNE_PLAYER_PRESENCE_STARTER_EMOTES_ENABLED": "false",
             "DUNE_PLAYER_PRESENCE_ADMIN_FIRST_LOGIN_DAILY_ENABLED": "false",
         }
 
@@ -165,6 +166,58 @@ class PublicAnnouncementRoutingTests(unittest.TestCase):
             ],
         )
         self.assertEqual(state["seenAccounts"], ["123", "456"])
+
+
+class StarterEmoteGrantTests(unittest.TestCase):
+    def test_joined_player_gets_quiet_starter_emotes_once(self):
+        player = {"name": "FirstTimer", "flsId": "FIRST_FLS"}
+        state = {
+            "onlinePlayers": {},
+            "seenAccounts": [],
+        }
+        grants = []
+        sent = []
+
+        def fake_save_state(next_state):
+            state.clear()
+            state.update(next_state)
+
+        def fake_grant(account_id):
+            grants.append(account_id)
+            return {"ok": True, "accountId": account_id, "granted": 4}
+
+        def fake_private_message(target, message, job_id="player-presence-private-message"):
+            sent.append({"target": target, "message": message, "jobId": job_id})
+            return {"ok": True}
+
+        file_env = {
+            "DUNE_PLAYER_PRESENCE_STARTER_BASE_TOOL_ENABLED": "false",
+            "DUNE_PLAYER_PRESENCE_STARTER_EMOTES_ENABLED": "true",
+            "DUNE_PLAYER_PRESENCE_REPO_STAR_THIRD_JOIN_ENABLED": "false",
+            "DUNE_PLAYER_PRESENCE_ADMIN_FIRST_LOGIN_DAILY_ENABLED": "false",
+        }
+
+        with unittest.mock.patch.object(player_presence_announcer, "FILE_ENV", file_env), \
+             unittest.mock.patch.dict(player_presence_announcer.os.environ, {}, clear=True), \
+             unittest.mock.patch.object(player_presence_announcer, "online_players", lambda: {"123": player}), \
+             unittest.mock.patch.object(player_presence_announcer, "load_state", lambda: state.copy()), \
+             unittest.mock.patch.object(player_presence_announcer, "save_state", fake_save_state), \
+             unittest.mock.patch.object(player_presence_announcer, "grant_starter_emotes", fake_grant), \
+             unittest.mock.patch.object(player_presence_announcer, "private_message", fake_private_message):
+            result = player_presence_announcer.check_once()
+
+        self.assertEqual(grants, ["123"])
+        self.assertEqual(result["starterEmoteGrants"][0]["grant"]["granted"], 4)
+        self.assertEqual(state["starterEmotesGranted"], ["123"])
+        self.assertEqual(sent, [])
+
+    def test_starter_emote_templates_are_configurable(self):
+        file_env = {
+            "DUNE_PLAYER_PRESENCE_STARTER_EMOTE_TEMPLATES": " Emote_A , Emote_B ,, ",
+        }
+        with unittest.mock.patch.object(player_presence_announcer, "FILE_ENV", file_env), \
+             unittest.mock.patch.dict(player_presence_announcer.os.environ, {}, clear=True):
+            self.assertEqual(player_presence_announcer.starter_emote_templates(), ["Emote_A", "Emote_B"])
 
     def test_quick_rejoin_session_change_triggers_join_and_private_messages(self):
         player = {"name": "Returner", "flsId": "RETURN_FLS", "lastLoginTime": "2026-05-22 19:05:00+00"}
@@ -202,6 +255,7 @@ class PublicAnnouncementRoutingTests(unittest.TestCase):
             "DUNE_PLAYER_PRESENCE_RECONNECT_RECOVERY_ENABLED": "true",
             "DUNE_PLAYER_PRESENCE_RECONNECT_RECOVERY_TEMPLATE": "Reconnect help {playername}",
             "DUNE_PLAYER_PRESENCE_STARTER_BASE_TOOL_ENABLED": "false",
+            "DUNE_PLAYER_PRESENCE_STARTER_EMOTES_ENABLED": "false",
             "DUNE_PLAYER_PRESENCE_ADMIN_FIRST_LOGIN_DAILY_ENABLED": "false",
         }
 
@@ -237,6 +291,7 @@ class PublicAnnouncementRoutingTests(unittest.TestCase):
             "DUNE_PLAYER_PRESENCE_ANNOUNCE_ENABLED": "true",
             "DUNE_PLAYER_PRESENCE_PRIVATE_WELCOME_ENABLED": "true",
             "DUNE_PLAYER_PRESENCE_STARTER_BASE_TOOL_ENABLED": "false",
+            "DUNE_PLAYER_PRESENCE_STARTER_EMOTES_ENABLED": "false",
             "DUNE_PLAYER_PRESENCE_ADMIN_FIRST_LOGIN_DAILY_ENABLED": "false",
         }
 
@@ -389,6 +444,7 @@ class RepoStarThirdJoinTests(unittest.TestCase):
             "DUNE_PLAYER_PRESENCE_REPO_STAR_JOIN_COUNT": "3",
             "DUNE_PLAYER_PRESENCE_REPO_STAR_TEMPLATE": "Please star https://github.com/snapetech/DuneAwakeningSelfHost",
             "DUNE_PLAYER_PRESENCE_STARTER_BASE_TOOL_ENABLED": "false",
+            "DUNE_PLAYER_PRESENCE_STARTER_EMOTES_ENABLED": "false",
             "DUNE_PLAYER_PRESENCE_ADMIN_FIRST_LOGIN_DAILY_ENABLED": "false",
         }
 
