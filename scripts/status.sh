@@ -83,6 +83,14 @@ printf 'current_ready_alive=%s current_alive_active=%s active_servers=%s partiti
   "$current_ready_alive" "$current_alive_active" "$active_servers" "$partitions" "$game_sg_connections" "$admin_sg_connections"
 
 echo
+echo "== FLS publication health =="
+if ./scripts/fls-publication-health.py "$env_file" --compose-files "${COMPOSE_FILES:-compose.yaml}"; then
+  :
+else
+  echo "WARN: FLS publication health is degraded. The local farm can be healthy while the server browser is stale/offline."
+fi
+
+echo
 echo "== database state =="
 "${compose[@]}" exec -T postgres psql -U dune -d "$db" -c "
 select

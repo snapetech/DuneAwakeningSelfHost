@@ -313,6 +313,26 @@ def service_health_checks():
             continue
         age = int(time.time() - path.stat().st_mtime)
         checks.append({"name": rel, "ok": age <= max_age, "status": f"age={age}s"})
+    if env_bool("DUNE_PLAYER_PRESENCE_FLS_PUBLICATION_HEALTH_ENABLED", True):
+        result = run([
+            str(ROOT / "scripts" / "fls-publication-health.py"),
+            env("DUNE_PLAYER_PRESENCE_ENV_FILE", ".env"),
+            "--compose-files",
+            env("COMPOSE_FILES", "compose.yaml"),
+            "--json",
+        ], timeout=int(env("DUNE_PLAYER_PRESENCE_FLS_PUBLICATION_HEALTH_TIMEOUT_SECONDS", "30")))
+        try:
+            payload = json.loads(result.stdout.strip().splitlines()[-1]) if result.stdout.strip() else {}
+        except Exception:
+            payload = {}
+        failed = [item for item in payload.get("checks", []) if not item.get("ok")]
+        if result.returncode == 0 and payload.get("ok"):
+            checks.append({"name": "FLS publication", "ok": True, "status": payload.get("state", "healthy")})
+        else:
+            summary = "; ".join(f"{item.get('name')}: {item.get('value', '')}" for item in failed[:3])
+            if not summary:
+                summary = (result.stderr or result.stdout or "unknown failure").strip()[:240]
+            checks.append({"name": "FLS publication", "ok": False, "status": summary})
     return checks
 
 

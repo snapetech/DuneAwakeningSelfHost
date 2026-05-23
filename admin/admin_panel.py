@@ -4838,6 +4838,7 @@ class Handler(BaseHTTPRequestHandler):
         partitions = query("select partition_id,server_id,map,dimension_index,label,blocked from dune.world_partition order by partition_id")
         active = query("select * from dune.active_server_ids order by server_id")
         active_ids = {row.get("server_id") for row in active}
+        fls_publication = self.fls_publication_health()
         try:
             runtimes = docker_container_runtimes()
             runtime_error = None
@@ -4864,6 +4865,7 @@ class Handler(BaseHTTPRequestHandler):
             {"name": "active server ids match partitions", "ok": expected > 0 and active_count == expected, "value": f"{active_count}/{expected}"},
             {"name": "map health rows", "ok": expected > 0 and all(row.get("online") for row in map_status), "value": f"{sum(1 for row in map_status if row.get('online'))}/{len(map_status)}"},
             {"name": "RabbitMQ-backed farm registration", "ok": expected > 0 and current_alive_active == expected and active_count == expected, "value": "inferred from current world_partition rows, farm_state, and active_server_ids"},
+            {"name": "FLS publication path", "ok": bool(fls_publication.get("ok")), "value": fls_publication.get("state", "unknown")},
             {"name": "player counts query", "ok": True},
         ]
         return {
@@ -4881,12 +4883,41 @@ class Handler(BaseHTTPRequestHandler):
                 "peakPlayersDate": player_peak.get("date"),
                 "runtimeAvailable": runtime_error is None,
                 "runtimeError": runtime_error,
+                "flsPublication": fls_publication.get("state", "unknown"),
             },
+            "flsPublication": fls_publication,
             "mapStatus": map_status,
             "farmState": farm,
             "partitions": partitions,
             "activeServers": active,
         }
+
+    def fls_publication_health(self):
+        script = ROOT / "scripts" / "fls-publication-health.py"
+        env_file = os.environ.get("DUNE_ADMIN_ENV_FILE", ".env")
+        compose_files = os.environ.get("COMPOSE_FILES", "compose.yaml")
+        try:
+            result = subprocess.run(
+                [str(script), env_file, "--compose-files", compose_files, "--json"],
+                cwd=ROOT,
+                env=os.environ.copy(),
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=30,
+                check=False,
+            )
+            if result.stdout.strip():
+                payload = json.loads(result.stdout.strip().splitlines()[-1])
+            else:
+                payload = {"ok": False, "state": "degraded", "error": result.stderr.strip() or "no output"}
+            if result.returncode not in (0, 2):
+                payload["ok"] = False
+                payload["state"] = "degraded"
+                payload["error"] = result.stderr.strip() or f"exit {result.returncode}"
+            return payload
+        except Exception as exc:
+            return {"ok": False, "state": "degraded", "error": str(exc), "checks": []}
 
     def map_health_rows(self, farm, partitions, active_ids, runtimes=None):
         runtimes = runtimes or {}

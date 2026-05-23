@@ -167,6 +167,23 @@ docker logs --since 90s dune_server-director-1 2>&1 \
   | grep -E 'Director_InitializeDirector|Battlegroups_DeclareBattlegroupUpdates|Battlegroups_SendBattlegroupHeartbeat|RMQ unreachable|No database connection'
 ```
 
+`./scripts/status.sh` also runs `scripts/fls-publication-health.py`. Treat a
+degraded FLS publication result as a server-browser outage even when all map
+rows are locally green. The check looks for recent successful Director
+initialization, heartbeat, population/capacity declarations, Gateway farm
+status declaration, and no later FLS errors such as `INVALID_DATA` or
+`does not exist or is inactive`.
+
+```bash
+COMPOSE_FILES='compose.yaml:compose.allmaps.yaml:compose.gateway-hostnet.yaml' \
+  ./scripts/fls-publication-health.py .env \
+  --compose-files 'compose.yaml:compose.allmaps.yaml:compose.gateway-hostnet.yaml'
+```
+
+Admin alerts can include the same signal when
+`DUNE_PLAYER_PRESENCE_INFRA_ADMIN_ALERTS_ENABLED=true`; the FLS publication
+subcheck is controlled by `DUNE_PLAYER_PRESENCE_FLS_PUBLICATION_HEALTH_ENABLED`.
+
 If the parent server row itself is missing from the browser, nudge `gateway`
 instead of Director:
 
