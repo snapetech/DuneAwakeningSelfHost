@@ -19,6 +19,12 @@ STATE_FILE = STATE_DIR / "player-presence.json"
 DB = "dune_sb_1_4_0_0"
 STARTER_BASE_TOOL_TEMPLATE = "BaseBackupTool"
 STARTER_BASE_TOOL_MESSAGE = "A Base Reconstruction Tool has been added to your inventory. You may need to log out and back in before it appears."
+STARTER_EMOTE_TEMPLATES = (
+    "Emote_AtreSalute_01",
+    "Emote_ChusukMusic_01",
+    "Emote_HarkCurse_01",
+    "Emote_KaitanBow_01",
+)
 ADMIN_ANOMALY_DIGEST_TEMPLATE = "Admin digest: stale online activity={stuck_count} ({stuck_names}); over base cap={over_base_cap}."
 RESTART_STATE_FILE = ROOT / "backups" / "admin-panel" / "restart-jobs.json"
 ANNOUNCEMENT_STATE_FILE = ROOT / "backups" / "admin-panel" / "announcements.json"
@@ -605,6 +611,141 @@ def grant_starter_base_tool(account_id):
     return payload
 
 
+def starter_emote_templates():
+    raw = env("DUNE_PLAYER_PRESENCE_STARTER_EMOTE_TEMPLATES", ",".join(STARTER_EMOTE_TEMPLATES))
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def grant_starter_emotes(account_id):
+    templates = starter_emote_templates()
+    if not templates:
+        return {"ok": True, "accountId": account_id, "templateIds": [], "alreadyHadAll": True, "granted": 0}
+    preferred_inventory_type = int(env("DUNE_PLAYER_PRESENCE_STARTER_EMOTE_INVENTORY_TYPE", "14"))
+    template_values = ", ".join(
+        f"({index + 1}, {sql_literal(template_id)})"
+        for index, template_id in enumerate(templates)
+    )
+    sql = f"""
+    with target_templates(ord, template_id) as (
+      values {template_values}
+    ),
+    player as (
+      select account_id, character_name, player_pawn_id, player_controller_id
+      from dune.player_state
+      where account_id = {int(account_id)}
+      limit 1
+    ),
+    owned_inventories as (
+      select inv.id as inventory_id, inv.inventory_type, inv.max_item_count
+      from player p
+      join dune.inventories inv on inv.actor_id in (p.player_pawn_id, p.player_controller_id)
+    ),
+    target_inventory as (
+      select inventory_id, inventory_type, max_item_count
+      from owned_inventories
+      where inventory_type = {preferred_inventory_type}
+      order by inventory_id
+      limit 1
+    ),
+    missing as (
+      select tt.ord, tt.template_id
+      from target_templates tt
+      where not exists (
+        select 1
+        from owned_inventories inv
+        join dune.items i on i.inventory_id = inv.inventory_id
+        where i.template_id = tt.template_id
+      )
+    ),
+    numbered_missing as (
+      select ord,
+             template_id,
+             row_number() over (order by ord) as rn
+      from missing
+    ),
+    free_slots as (
+      select slot.position_index,
+             row_number() over (order by slot.position_index) as rn
+      from target_inventory inv
+      cross join lateral generate_series(0, inv.max_item_count - 1) as slot(position_index)
+      where inv.max_item_count is not null
+        and inv.max_item_count > 0
+        and not exists (
+          select 1 from dune.items i
+          where i.inventory_id = inv.inventory_id
+            and i.position_index = slot.position_index
+        )
+    ),
+    planned as (
+      select nm.ord,
+             nm.template_id,
+             ti.inventory_id,
+             ti.inventory_type,
+             fs.position_index,
+             row_number() over (order by nm.ord) as grant_ordinal
+      from numbered_missing nm
+      join target_inventory ti on true
+      join free_slots fs on fs.rn = nm.rn
+      where (select count(*) from free_slots) >= (select count(*) from missing)
+    ),
+    seq as (
+      select dune.advance_items_id_sequencer((select count(*) from planned)) as first_item_id
+      where exists (select 1 from planned)
+    ),
+    saved as (
+      select dune.save_item((
+        (seq.first_item_id + planned.grant_ordinal - 1)::bigint,
+        planned.inventory_id,
+        1,
+        planned.position_index,
+        planned.template_id,
+        true,
+        (extract(epoch from now()))::bigint,
+        '{{}}'::jsonb,
+        0,
+        null
+      )::dune.inventoryitem) as ok,
+      (seq.first_item_id + planned.grant_ordinal - 1)::bigint as item_id,
+      planned.inventory_id,
+      planned.inventory_type,
+      planned.position_index,
+      planned.template_id
+      from planned cross join seq
+    )
+    select jsonb_build_object(
+      'accountId', (select account_id from player),
+      'characterName', (select character_name from player),
+      'templateIds', (select jsonb_agg(template_id order by ord) from target_templates),
+      'alreadyHadAll', not exists(select 1 from missing),
+      'missing', (select count(*) from missing),
+      'granted', (select count(*) from saved),
+      'items', coalesce((select jsonb_agg(jsonb_build_object(
+        'itemId', item_id,
+        'inventoryId', inventory_id,
+        'inventoryType', inventory_type,
+        'positionIndex', position_index,
+        'templateId', template_id
+      ) order by position_index) from saved), '[]'::jsonb),
+      'error', case
+        when not exists(select 1 from player) then 'player not found'
+        when not exists(select 1 from target_inventory) and exists(select 1 from missing) then 'no owned emote inventory'
+        when (select count(*) from planned) < (select count(*) from missing) then 'not enough empty emote inventory slots'
+        else null
+      end
+    )::text;
+    """
+    result = run(
+        compose_cmd("exec", "-T", "postgres", "psql", "-U", "dune", "-d", DB, "-At", "-c", sql),
+        timeout=int(env("DUNE_PLAYER_PRESENCE_SQL_TIMEOUT_SECONDS", "10")),
+    )
+    if result.returncode != 0:
+        return {"ok": False, "accountId": account_id, "templateIds": templates, "error": result.stderr.strip() or "starter emote grant failed"}
+    text = result.stdout.strip().splitlines()[-1] if result.stdout.strip() else "{}"
+    payload = json.loads(text)
+    payload["ok"] = bool(payload.get("alreadyHadAll") or int(payload.get("granted") or 0) == len(templates))
+    return payload
+
+
 def announce(message):
     command = env("DUNE_PLAYER_PRESENCE_ANNOUNCE_COMMAND", env("DUNE_ADMIN_ANNOUNCE_COMMAND", str(ROOT / "scripts" / "announce.sh")))
     if command.startswith("/workspace/"):
@@ -940,6 +1081,19 @@ def check_once():
                         "send": private_join_message(player, message),
                     })
         state["starterBaseToolGranted"] = sorted(granted_ids, key=lambda value: (0, int(value)) if value.isdigit() else (1, value))
+
+    starter_emote_grant_results = []
+    if env_bool("DUNE_PLAYER_PRESENCE_STARTER_EMOTES_ENABLED", True) and not first_run:
+        granted = state.setdefault("starterEmotesGranted", [])
+        granted_ids = set(str(account_id) for account_id in granted)
+        for account_id in joined:
+            if str(account_id) in granted_ids:
+                continue
+            result = grant_starter_emotes(account_id)
+            starter_emote_grant_results.append({"event": "starter-emotes", "accountId": account_id, "grant": result})
+            if result.get("ok"):
+                granted_ids.add(str(account_id))
+        state["starterEmotesGranted"] = sorted(granted_ids, key=lambda value: (0, int(value)) if value.isdigit() else (1, value))
 
     journey_results = []
     if env_bool("DUNE_PLAYER_PRESENCE_VERMILIUS_GAP_ENABLED", False):
@@ -1304,6 +1458,7 @@ def check_once():
         "automatedPrivateMessages": automated_private_results,
         "starterBaseToolGrants": starter_grant_results,
         "starterBaseToolMessages": starter_message_results,
+        "starterEmoteGrants": starter_emote_grant_results,
         "journeyAnnouncements": journey_results,
         "restartPrivateWarnings": restart_private_results,
         "postRestartReturnMessages": post_restart_results,
