@@ -355,9 +355,17 @@ def format_online_player_list(rows):
     if not rows:
         return "no players online"
     return "online players: " + ", ".join(
-        f"{row.get('character_name') or 'unknown'} ({row.get('map_label') or 'Unknown'})"
+        f"{row.get('character_name') or 'unknown'} ({display_map_label(row.get('map_label'))})"
         for row in rows
     )
+
+
+def display_map_label(map_label):
+    if not map_label:
+        return "Unknown"
+    if map_label == "Abbir":
+        return "Hagga"
+    return map_label
 
 
 def route_key_from_map_partition(map_name, partition_id):

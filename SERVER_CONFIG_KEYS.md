@@ -49,7 +49,7 @@ Evidence levels:
 - Segment cap: `m_MaxNumLandclaimSegments=10`.
 - Map-level landclaim candidate: `m_MaxLandclaimSegmentsPerMap=...6...`.
 - `m_BuildingBlueprintMaxExtensions` and `m_BaseBackupMaxExtensions` are extension/reconstruction limits, not the active base-count cap.
-- The per-player 3 subfief/totem cap is not `m_MaxLandclaimSegmentsPerMap`. Binary evidence points to `SubfiefLimitBonus` / `SubfiefCount` as player attribute/UI state. This repo exposes `DUNE_SUBFIEF_LIMIT` as an experimental operator knob through `scripts/apply-subfief-limit-knob.sh`.
+- The per-player 3 subfief/totem cap is not `m_MaxLandclaimSegmentsPerMap`. Binary evidence points to `SubfiefLimitBonus` / `SubfiefCount` as player attribute/UI state. This repo exposes `DUNE_SUBFIEF_LIMIT` as an experimental operator knob through `scripts/apply-subfief-limit-knob.sh`; the player-presence announcer also repairs joined/rejoined current pawn actors whose bonus is below the configured value.
 
 ## Nearby Shipped Keys
 

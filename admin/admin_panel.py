@@ -1198,9 +1198,12 @@ def execute_restart(job):
     update_result = run_restart_command(command, job, "update")
     result["update"] = update_result
     if not update_result.get("ok"):
-        result["error"] = update_result.get("error") or "Steam package update check failed"
-        result["output"] = "\n".join(part for part in [stop_result.get("output", ""), update_result.get("output", ""), result["error"]] if part)
-        return result
+        update_warning = update_result.get("error") or "Steam package update check failed"
+        result["warning"] = update_warning
+        result["output"] = "\n".join(part for part in [stop_result.get("output", ""), update_result.get("output", ""), update_warning] if part)
+        if action == "shutdown":
+            result["error"] = update_warning
+            return result
 
     if action == "shutdown":
         result["ok"] = True
@@ -1226,7 +1229,7 @@ def execute_restart(job):
         result["error"] = start_result.get("error") or f"restart start hook failed with return code {start_result.get('returncode')}"
     elif not online_result.get("ok"):
         result["error"] = "restart start hook completed, but farm did not report fully online before timeout"
-    result["output"] = "\n".join(part for part in [stop_result.get("output", ""), start_result.get("output", "")] if part)
+    result["output"] = "\n".join(part for part in [stop_result.get("output", ""), update_result.get("output", ""), start_result.get("output", "")] if part)
     if len(result["output"]) > AUDIT_FIELD_LIMIT:
         result["output"] = result["output"][:AUDIT_FIELD_LIMIT] + "...[truncated]"
     return result

@@ -211,6 +211,92 @@ def base_claim_counts():
     return counts
 
 
+def configured_subfief_limit_bonus():
+    override = env("DUNE_PLAYER_PRESENCE_SUBFIEF_MIN_BONUS", "").strip()
+    if override:
+        return int(override)
+    explicit_bonus = env("DUNE_SUBFIEF_LIMIT_BONUS", "").strip()
+    if explicit_bonus:
+        return int(explicit_bonus)
+    limit = env("DUNE_SUBFIEF_LIMIT", "").strip()
+    if not limit:
+        return 0
+    base = int(env("DUNE_SUBFIEF_BASE_LIMIT", "3"))
+    return max(0, int(limit) - base)
+
+
+def ensure_subfief_limit_bonus(account_ids):
+    if not account_ids or not env_bool("DUNE_PLAYER_PRESENCE_SUBFIEF_BONUS_ENFORCER_ENABLED", True):
+        return []
+    bonus = configured_subfief_limit_bonus()
+    if bonus <= 0:
+        return []
+    values = ", ".join(f"({int(account_id)})" for account_id in sorted(set(account_ids), key=int))
+    sql = f"""
+    with requested(account_id) as (
+      values {values}
+    ),
+    target as (
+      select
+        ps.account_id,
+        coalesce(nullif(ps.character_name, ''), ps.account_id::text) as character_name,
+        ps.player_pawn_id,
+        case
+          when a.gas_attributes #>> '{{DunePlayerCharacterAttributeSet,SubfiefLimitBonus,BaseValue}}' ~ '^-?[0-9]+(\\.[0-9]+)?$'
+            then (a.gas_attributes #>> '{{DunePlayerCharacterAttributeSet,SubfiefLimitBonus,BaseValue}}')::numeric
+          else -1
+        end as current_base_bonus,
+        case
+          when a.gas_attributes #>> '{{DunePlayerCharacterAttributeSet,SubfiefLimitBonus,CurrentValue}}' ~ '^-?[0-9]+(\\.[0-9]+)?$'
+            then (a.gas_attributes #>> '{{DunePlayerCharacterAttributeSet,SubfiefLimitBonus,CurrentValue}}')::numeric
+          else -1
+        end as current_value_bonus
+      from requested
+      join dune.player_state ps on ps.account_id = requested.account_id
+      join dune.actors a on a.id = ps.player_pawn_id
+    ),
+    stale as (
+      select *
+      from target
+      where current_base_bonus < {bonus}
+         or current_value_bonus < {bonus}
+    ),
+    updated as (
+      update dune.actors a
+      set gas_attributes = jsonb_set(
+        jsonb_set(
+          coalesce(a.gas_attributes, '{{}}'::jsonb),
+          '{{DunePlayerCharacterAttributeSet}}',
+          coalesce(a.gas_attributes #> '{{DunePlayerCharacterAttributeSet}}', '{{}}'::jsonb),
+          true
+        ),
+        '{{DunePlayerCharacterAttributeSet,SubfiefLimitBonus}}',
+        jsonb_build_object('BaseValue', {bonus}::float, 'CurrentValue', {bonus}::float),
+        true
+      )
+      from stale
+      where a.id = stale.player_pawn_id
+      returning
+        stale.account_id::text,
+        stale.character_name,
+        stale.player_pawn_id,
+        stale.current_base_bonus,
+        stale.current_value_bonus,
+        {bonus} as applied_bonus
+    )
+    select coalesce(jsonb_agg(to_jsonb(updated) order by account_id), '[]'::jsonb)::text
+    from updated;
+    """
+    result = run(
+        compose_cmd("exec", "-T", "postgres", "psql", "-U", "dune", "-d", DB, "-At", "-c", sql),
+        timeout=int(env("DUNE_PLAYER_PRESENCE_SQL_TIMEOUT_SECONDS", "10")),
+    )
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or "subfief bonus repair failed")
+    text = result.stdout.strip().splitlines()[-1] if result.stdout.strip() else "[]"
+    return json.loads(text)
+
+
 def map_health_summary():
     sql = """
     with active as (
@@ -938,6 +1024,13 @@ def check_once():
     current_time = now_ts()
     seen_accounts = set(str(item) for item in state.get("seenAccounts", []))
 
+    subfief_bonus_results = []
+    if joined and not first_run:
+        try:
+            subfief_bonus_results = ensure_subfief_limit_bonus(joined)
+        except Exception as exc:
+            subfief_bonus_results = [{"ok": False, "error": str(exc), "accountIds": joined}]
+
     results = []
     if env_bool("DUNE_PLAYER_PRESENCE_ANNOUNCE_ENABLED", False) and not first_run:
         join_template = env("DUNE_PLAYER_PRESENCE_JOIN_TEMPLATE", "Welcome {playername}! Current player count is now {count}.")
@@ -1454,6 +1547,7 @@ def check_once():
         "left": [player_name(previous[account_id]) for account_id in left] if previous else [],
         "sessionRejoined": [player_name(current[account_id]) for account_id in session_rejoined],
         "announcements": results,
+        "subfiefBonusRepairs": subfief_bonus_results,
         "privateWelcomeMessages": private_welcome_results,
         "automatedPrivateMessages": automated_private_results,
         "starterBaseToolGrants": starter_grant_results,

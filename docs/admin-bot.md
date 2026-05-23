@@ -185,6 +185,15 @@ Automated private messages are derived from local state and operator config rath
 - `INCIDENT_MODE_PUBLIC` publishes manual incident on/off notices when `DUNE_PLAYER_PRESENCE_INCIDENT_MODE_ACTIVE` changes.
 - `ADMIN_FIRST_LOGIN_DAILY` sends the current admin digest set to each configured admin on their first login each day.
 
+The subfief bonus repair path runs quietly for joined/rejoined players when
+`DUNE_PLAYER_PRESENCE_SUBFIEF_BONUS_ENFORCER_ENABLED=true`. It checks the
+joined account's current `dune.player_state.player_pawn_id` actor and writes
+`DunePlayerCharacterAttributeSet.SubfiefLimitBonus` only when the current
+base/current value is below the configured bonus. The configured bonus is
+`DUNE_PLAYER_PRESENCE_SUBFIEF_MIN_BONUS` when set, otherwise
+`DUNE_SUBFIEF_LIMIT_BONUS`, otherwise `DUNE_SUBFIEF_LIMIT -
+DUNE_SUBFIEF_BASE_LIMIT`.
+
 The public/global presence events are intentionally not private:
 
 - `JOIN` and `LEAVE` are the visible welcome/goodbye population notices.

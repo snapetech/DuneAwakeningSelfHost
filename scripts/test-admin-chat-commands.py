@@ -177,7 +177,7 @@ class CommandReplyTargetTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["action"], "list")
-        self.assertEqual(result["message"], "online players: Lukano (Abbir), Pablo (HaggaBasin)")
+        self.assertEqual(result["message"], "online players: Lukano (Hagga), Pablo (HaggaBasin)")
         self.assertEqual(captured["message"], result["message"])
         self.assertEqual(captured["targetName"], "Pablo")
         self.assertEqual(captured["targetFlsId"], "TEST_FLS_ID")

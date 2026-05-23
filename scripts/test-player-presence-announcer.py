@@ -410,6 +410,60 @@ class BaseCapConfigTests(unittest.TestCase):
                 self.assertEqual(player_presence_announcer.configured_base_cap(), 10)
 
 
+class SubfiefBonusTests(unittest.TestCase):
+    def test_subfief_bonus_prefers_explicit_bonus(self):
+        file_env = {
+            "DUNE_SUBFIEF_LIMIT": "6",
+            "DUNE_SUBFIEF_BASE_LIMIT": "3",
+            "DUNE_SUBFIEF_LIMIT_BONUS": "6",
+        }
+        with unittest.mock.patch.object(player_presence_announcer, "FILE_ENV", file_env), \
+             unittest.mock.patch.dict(player_presence_announcer.os.environ, {}, clear=True):
+            self.assertEqual(player_presence_announcer.configured_subfief_limit_bonus(), 6)
+
+    def test_subfief_bonus_falls_back_to_limit_minus_base(self):
+        file_env = {
+            "DUNE_SUBFIEF_LIMIT": "6",
+            "DUNE_SUBFIEF_BASE_LIMIT": "3",
+        }
+        with unittest.mock.patch.object(player_presence_announcer, "FILE_ENV", file_env), \
+             unittest.mock.patch.dict(player_presence_announcer.os.environ, {}, clear=True):
+            self.assertEqual(player_presence_announcer.configured_subfief_limit_bonus(), 3)
+
+    def test_joined_player_triggers_subfief_bonus_repair(self):
+        state = {
+            "onlinePlayers": {},
+            "seenAccounts": [],
+        }
+        repairs = []
+
+        def fake_save_state(next_state):
+            state.clear()
+            state.update(next_state)
+
+        def fake_repair(account_ids):
+            repairs.extend(account_ids)
+            return [{"account_id": "123", "applied_bonus": 6}]
+
+        file_env = {
+            "DUNE_SUBFIEF_LIMIT_BONUS": "6",
+            "DUNE_PLAYER_PRESENCE_STARTER_BASE_TOOL_ENABLED": "false",
+            "DUNE_PLAYER_PRESENCE_STARTER_EMOTES_ENABLED": "false",
+            "DUNE_PLAYER_PRESENCE_ADMIN_FIRST_LOGIN_DAILY_ENABLED": "false",
+        }
+
+        with unittest.mock.patch.object(player_presence_announcer, "FILE_ENV", file_env), \
+             unittest.mock.patch.dict(player_presence_announcer.os.environ, {}, clear=True), \
+             unittest.mock.patch.object(player_presence_announcer, "online_players", lambda: {"123": {"name": "Joiner", "flsId": "JOINER_FLS"}}), \
+             unittest.mock.patch.object(player_presence_announcer, "load_state", lambda: state.copy()), \
+             unittest.mock.patch.object(player_presence_announcer, "save_state", fake_save_state), \
+             unittest.mock.patch.object(player_presence_announcer, "ensure_subfief_limit_bonus", fake_repair):
+            result = player_presence_announcer.check_once()
+
+        self.assertEqual(repairs, ["123"])
+        self.assertEqual(result["subfiefBonusRepairs"], [{"account_id": "123", "applied_bonus": 6}])
+
+
 class RepoStarThirdJoinTests(unittest.TestCase):
     def test_repo_star_private_message_sends_once_on_third_join(self):
         player = {

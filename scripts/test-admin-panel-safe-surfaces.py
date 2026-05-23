@@ -1369,6 +1369,50 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertEqual(result["returncode"], 141)
         self.assertIn("141", result["warning"])
 
+    def test_restart_start_runs_after_update_check_failure(self):
+        command = self.workspace / "scripts" / "restart-target.sh"
+        command.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        command.chmod(0o755)
+        self.panel.RESTART_COMMAND = str(command)
+        self.panel.soft_disconnect_online_players = lambda job: {"ok": True}
+        phases = []
+
+        def fake_run_restart_command(command, job, phase):
+            phases.append(phase)
+            if phase == "update":
+                return {
+                    "ok": False,
+                    "phase": phase,
+                    "returncode": 75,
+                    "output": "missing helper image",
+                    "error": "Steam package update check failed",
+                }
+            return {"ok": True, "phase": phase, "returncode": 0, "output": phase}
+
+        self.panel.run_restart_command = fake_run_restart_command
+        self.panel.wait_for_restart_online = lambda: {
+            "ok": True,
+            "expected": 30,
+            "online": 30,
+            "readyOnline": 30,
+            "alive": 30,
+            "active": 30,
+        }
+
+        result = self.panel.execute_restart({
+            "id": "update-failure",
+            "execute": True,
+            "action": "restart",
+            "target": "all",
+            "services": [],
+            "backup": False,
+        })
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(phases, ["stop", "update", "start"])
+        self.assertIn("Steam package update check failed", result["warning"])
+        self.assertIn("missing helper image", result["output"])
+
     def test_restart_runs_recovery_when_farm_readiness_is_incomplete(self):
         command = self.workspace / "scripts" / "restart-target.sh"
         command.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
