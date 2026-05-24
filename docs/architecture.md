@@ -25,7 +25,7 @@ The official self-hosted package is Kubernetes-oriented. This repository transla
 
 `compose.allmaps.yaml` extends this base topology with the remaining warm-pool map servers for partitions 10-30. See `docs/full-farm.md` for the full service, map, partition, game-port, and IGW-port table.
 
-The game-server services use `scripts/run_server_safe.sh` instead of the image's default `/home/dune/run.sh`. The local launcher preserves command arguments containing spaces, prepares the saved/config symlink expected by Unreal, optionally appends `-IGWBindAddress=$POD_IP` when `DUNE_FORCE_PRIVATE_IGW_BIND_ADDRESS=true`, and then starts `DuneSandboxServer.sh` as the `dune` user.
+The game-server services use `scripts/run_server_safe.sh` instead of the image's default `/home/dune/run.sh`. The local launcher preserves command arguments containing spaces, prepares the saved/config symlink expected by Unreal, optionally appends `-IGWBindAddress=$POD_IP` when `DUNE_FORCE_PRIVATE_IGW_BIND_ADDRESS=true`, optionally appends `-ExecCmds=$DUNE_SERVER_STARTUP_EXECCMDS`, and then starts `DuneSandboxServer.sh` as the `dune` user. Startup ExecCmds are applied only when a game-server container starts; changing the value does not affect already-running map processes.
 
 ## Partition Layout
 

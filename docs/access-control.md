@@ -53,11 +53,11 @@ COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' ./scripts/status.sh .env
 
 The login password is not the character-transfer policy. Director has separate inbound and outbound transfer controls in `config/director.ini`.
 
-This repository currently allows inbound character transfers from public, official, private, and self-hosted battlegroups:
+This repository currently allows inbound character transfers from public/official battlegroups:
 
 ```ini
 [ Battlegroup ]
-IncomingCharacterTransfers=3
+IncomingCharacterTransfers=2
 ```
 
 The admin panel exposes the Director character-transfer settings under Settings -> Director Character Transfers. See `docs/character-transfers.md` for the full setting list and the inbound rulesets:
@@ -66,7 +66,6 @@ The admin panel exposes the Director character-transfer settings under Settings 
 0 = DenyAll
 1 = AllowFromPrivateOnly
 2 = AllowFromOfficialOnly
-3 = AllowFromPrivateAndOfficial
 ```
 
 ## Limitations

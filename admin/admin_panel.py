@@ -475,31 +475,27 @@ DIRECTOR_TRANSFER_RULESETS = (
     "0",
     "1",
     "2",
-    "3",
 )
 
 DIRECTOR_TRANSFER_RULESET_LABELS = {
     "0": "DenyAll",
     "1": "AllowFromPrivateOnly",
     "2": "AllowFromOfficialOnly",
-    "3": "AllowFromPrivateAndOfficial",
     "DenyAll": "DenyAll",
     "AllowFromPrivateOnly": "AllowFromPrivateOnly",
     "AllowFromOfficialOnly": "AllowFromOfficialOnly",
-    "AllowFromPrivateAndOfficial": "AllowFromPrivateAndOfficial",
 }
 
 DIRECTOR_TRANSFER_RULESET_VALUES = {
     "DenyAll": "0",
     "AllowFromPrivateOnly": "1",
     "AllowFromOfficialOnly": "2",
-    "AllowFromPrivateAndOfficial": "3",
 }
 
 DIRECTOR_TRANSFER_SETTINGS = {
     "ShouldDeleteOriginCharactersDuringTransfers": {"type": "bool", "default": "true", "why": "Deletes the origin character after a successful transfer into this battlegroup."},
     "AcceptOutgoingCharacterTransfers": {"type": "bool", "default": "true", "why": "Allows characters on this battlegroup to transfer out."},
-    "IncomingCharacterTransfers": {"type": "ruleset", "default": "0", "why": "Controls which origin server types can transfer characters into this battlegroup. Director build 1963158 expects numeric enum values: 0=DenyAll, 1=AllowFromPrivateOnly, 2=AllowFromOfficialOnly, 3=AllowFromPrivateAndOfficial."},
+    "IncomingCharacterTransfers": {"type": "ruleset", "default": "0", "why": "Controls which origin server types can transfer characters into this battlegroup. Director build 1968181 parses numeric enum values. Use 2 for official/public-origin transfers; FLS currently rejects value 3 during transfer requests."},
     "ExportCharacterTimeout": {"type": "int", "default": "900", "why": "Seconds before the export query times out."},
     "ImportCharacterTimeout": {"type": "int", "default": "900", "why": "Seconds before the import query times out."},
     "FreeToTransferCharactersFrom": {"type": "bool", "default": "false", "why": "Skips transfer token cost for transfers from this battlegroup."},

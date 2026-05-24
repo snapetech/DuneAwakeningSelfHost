@@ -396,6 +396,8 @@ Live-client login also receives the game RabbitMQ endpoint from FLS before gamep
 GAME_RMQ_PUBLIC_PORT tcp, default 31982/tcp
 ```
 
+Gateway also declares a game RabbitMQ HTTP address to FLS with `GAME_RMQ_PUBLIC_HTTP_PORT`, default `15673/tcp`. The compose default still binds RabbitMQ management to `127.0.0.1` through `GAME_RMQ_HTTP_BIND_ADDRESS`; do not expose or forward this port unless a browser-ping experiment explicitly requires it and the security impact has been reviewed.
+
 Do not forward Postgres, RabbitMQ management, admin panel, debug ports, local reverse proxies, or systemd automation endpoints.
 
 For LAN players joining through the public listing, keep `EXTERNAL_ADDRESS` set to the public address and use LAN reflection/hairpin routing. Do not switch the advertised address between public and private during normal operation. See [`docs/lan-reflection.md`](docs/lan-reflection.md).
@@ -604,6 +606,7 @@ Start from [`.env.example`](.env.example). It is the source of truth for the ful
 | `FLS_SECRET` | Funcom self-hosting token; keep private. |
 | `EXTERNAL_ADDRESS` | Public address clients should reach. |
 | `GAME_RMQ_PUBLIC_HOST` / `GAME_RMQ_PUBLIC_PORT` | Client-facing game RabbitMQ endpoint; default TCP port is `31982`. |
+| `GAME_RMQ_PUBLIC_HTTP_PORT` / `GAME_RMQ_HTTP_BIND_ADDRESS` | Game RabbitMQ HTTP address Gateway declares to FLS and the local host bind for RabbitMQ management; defaults are `15673` and `127.0.0.1`. |
 | `POSTGRES_SUPER_PASSWORD` / `POSTGRES_DUNE_PASSWORD` | Local database credentials; never publish. |
 | `POSTGRES_REPLICATION_PASSWORD` | Required for optional streaming replica. |
 | `RMQ_HTTP_TOKEN_AUTH_SECRET` | Internal RabbitMQ auth-shim secret. |
@@ -734,6 +737,7 @@ Root-level research indexes:
 - [`scripts/announce.sh`](scripts/announce.sh): in-game announcement publisher.
 - [`scripts/admin-chat-commands.py`](scripts/admin-chat-commands.py): chat command listener.
 - [`scripts/character-slot-tool.py`](scripts/character-slot-tool.py): CLI inspect/plan/execute wrapper for admin character switch/restore operations.
+- [`scripts/grant-aql-trials.py`](scripts/grant-aql-trials.py): Offline-only helper for marking one or all `Find the Fremen` / Trials of Aql journey subtrees complete through the first-party DB journey function.
 - [`scripts/player-presence-announcer.py`](scripts/player-presence-announcer.py): join/leave, private message, milestone, map-health, and admin-digest automation.
 - [`scripts/admin-bot.py`](scripts/admin-bot.py): report-first operational/admin automation.
 - [`scripts/seed-gateway-neighbor.sh`](scripts/seed-gateway-neighbor.sh): Docker bridge neighbor refresh helper.

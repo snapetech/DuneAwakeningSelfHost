@@ -151,6 +151,7 @@ class RunServerSafeTests(unittest.TestCase):
                 "POD_IP": "172.31.240.40",
                 "DUNE_SERVER_LOGIN_PASSWORD": "pass with spaces",
                 "DUNE_SERVER_DISPLAY_NAME": "Display With Spaces",
+                "DUNE_SERVER_STARTUP_EXECCMDS": "ScheduleMTXEvent SpecializationXPBonus 60 604800,ListMTXEvents",
             }
             subprocess.run(
                 [
@@ -169,6 +170,7 @@ class RunServerSafeTests(unittest.TestCase):
             self.assertIn("-MultiHome=172.31.240.40", decoded)
             self.assertIn("-ini:engine:[ConsoleVariables]:Bgd.ServerLoginPassword=pass with spaces", decoded)
             self.assertIn("/Game/Dune/Maps/Test Map", decoded)
+            self.assertIn("-ExecCmds=ScheduleMTXEvent SpecializationXPBonus 60 604800,ListMTXEvents", decoded)
             self.assertNotIn("-IGWBindAddress=172.31.240.40", decoded)
 
             engine_ini = server_root / "DuneSandbox" / "Saved" / "Config" / "LinuxServer" / "Engine.ini"

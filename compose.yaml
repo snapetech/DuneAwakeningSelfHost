@@ -6,6 +6,7 @@ x-game-server-base: &game-server-base
   environment:
     DUNE_SERVER_LOGIN_PASSWORD: ${DUNE_SERVER_LOGIN_PASSWORD:-}
     DUNE_SERVER_DISPLAY_NAME: ${DUNE_SERVER_DISPLAY_NAME:-}
+    DUNE_SERVER_STARTUP_EXECCMDS: ${DUNE_SERVER_STARTUP_EXECCMDS:-}
     DUNE_FORCE_PRIVATE_IGW_BIND_ADDRESS: ${DUNE_FORCE_PRIVATE_IGW_BIND_ADDRESS:-false}
     DUNE_DISABLE_MULTIHOME: ${DUNE_DISABLE_MULTIHOME:-false}
     DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED: ${DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED:-false}
@@ -105,7 +106,7 @@ services:
       - ./config/tls/rabbitmq/server.key:/etc/rabbitmq/key.pem:ro
       - ./data/rabbitmq/game:/var/lib/rabbitmq
     ports:
-      - "127.0.0.1:15673:15672"
+      - "${GAME_RMQ_HTTP_BIND_ADDRESS:-127.0.0.1}:${GAME_RMQ_PUBLIC_HTTP_PORT:-15673}:15672"
       - "${GAME_RMQ_BIND_ADDRESS:-0.0.0.0}:${GAME_RMQ_PUBLIC_PORT:-31982}:5672"
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
@@ -254,6 +255,7 @@ services:
         -c /Tools/Battlegroups/GatewayService/service/configs/service.conf
         --RMQGameHostname ${GAME_RMQ_PUBLIC_HOST:-${EXTERNAL_ADDRESS}}
         --RMQGamePort ${GAME_RMQ_PUBLIC_PORT:-31982}
+        --RMQGameHttpPort ${GAME_RMQ_PUBLIC_HTTP_PORT:-15673}
     environment:
       DuneDatabaseInterfacePSQL_DatabaseHost: postgres
       DuneDatabaseInterfacePSQL_DatabasePort: "5432"

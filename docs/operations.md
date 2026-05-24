@@ -410,7 +410,7 @@ For the 30-partition warm pool, forward:
 
 `7888-7918/udp` are the IGW ports paired with the 31 warm-pool game ports. If your deployment relies on them for live-client routing or server-browser checks, forward them to the Dune host. Do not remove IGW forwards from a working deployment without packet-capture evidence and a router backup.
 
-Live-client login also asks FLS for a game RabbitMQ address before it starts the gameplay UDP leg. `GAME_RMQ_PUBLIC_HOST` and `GAME_RMQ_PUBLIC_PORT` control the address Gateway reports to FLS. For a publicly reachable live self-hosted server, forward `GAME_RMQ_PUBLIC_PORT` TCP, default `31982/tcp`, to the host. Do not forward Postgres, RabbitMQ management, or admin panel ports.
+Live-client login also asks FLS for a game RabbitMQ address before it starts the gameplay UDP leg. `GAME_RMQ_PUBLIC_HOST` and `GAME_RMQ_PUBLIC_PORT` control the AMQP address Gateway reports to FLS. `GAME_RMQ_PUBLIC_HTTP_PORT`, default `15673/tcp`, controls the HTTP address Gateway reports to FLS, while `GAME_RMQ_HTTP_BIND_ADDRESS` controls the host bind for RabbitMQ management and defaults to `127.0.0.1`. For a publicly reachable live self-hosted server, forward `GAME_RMQ_PUBLIC_PORT` TCP, default `31982/tcp`, to the host. Do not forward Postgres, RabbitMQ management, or admin panel ports unless a targeted browser-ping experiment explicitly requires it.
 
 ### Internal Clients and LAN Reflection
 

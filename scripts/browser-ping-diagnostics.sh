@@ -65,6 +65,10 @@ game_rmq_public_host="$(read_env GAME_RMQ_PUBLIC_HOST)"
 game_rmq_public_host="${game_rmq_public_host:-$external_address}"
 game_rmq_public_port="$(read_env GAME_RMQ_PUBLIC_PORT)"
 game_rmq_public_port="${game_rmq_public_port:-31982}"
+game_rmq_public_http_port="$(read_env GAME_RMQ_PUBLIC_HTTP_PORT)"
+game_rmq_public_http_port="${game_rmq_public_http_port:-15673}"
+game_rmq_http_bind_address="$(read_env GAME_RMQ_HTTP_BIND_ADDRESS)"
+game_rmq_http_bind_address="${game_rmq_http_bind_address:-127.0.0.1}"
 dune_fls_env="$(read_env DUNE_FLS_ENV)"
 dune_database="$(read_env DUNE_DATABASE)"
 dune_database="${dune_database:-dune_sb_1_4_0_0}"
@@ -81,6 +85,8 @@ printf 'WORLD_DATACENTER_ID=%s\n' "${world_datacenter_id:-unset}"
 printf 'EXTERNAL_ADDRESS=%s\n' "${external_address:-unset}"
 printf 'GAME_RMQ_PUBLIC_HOST=%s\n' "${game_rmq_public_host:-unset}"
 printf 'GAME_RMQ_PUBLIC_PORT=%s\n' "$game_rmq_public_port"
+printf 'GAME_RMQ_PUBLIC_HTTP_PORT=%s\n' "$game_rmq_public_http_port"
+printf 'GAME_RMQ_HTTP_BIND_ADDRESS=%s\n' "$game_rmq_http_bind_address"
 printf 'DUNE_FLS_ENV=%s\n' "${dune_fls_env:-unset}"
 printf 'GAME_UDP_PORT_RANGE=%s\n' "$game_udp_range"
 printf 'IGW_UDP_PORT_RANGE=%s\n' "$igw_udp_range"
@@ -97,7 +103,7 @@ fi
 section "rendered compose signals"
 if have docker; then
   if $compose_cmd --env-file "$env_file" config >/tmp/dune-browser-ping-compose.$$ 2>/tmp/dune-browser-ping-compose.err.$$; then
-    rg -n 'RMQGameHostname|RMQGamePort|EXTERNAL_ADDRESS|ExternalAddress|HOST_DATACENTER|OPT_SERVERNAME|OPT_DISPLAY_NAME|BATTLEGROUP|GAME_RMQ|7777|7888|31982' /tmp/dune-browser-ping-compose.$$ || true
+    rg -n 'RMQGameHostname|RMQGamePort|RMQGameHttpPort|EXTERNAL_ADDRESS|ExternalAddress|HOST_DATACENTER|OPT_SERVERNAME|OPT_DISPLAY_NAME|BATTLEGROUP|GAME_RMQ|7777|7888|31982|15673' /tmp/dune-browser-ping-compose.$$ || true
   else
     printf 'WARN docker compose config failed:\n'
     sed -n '1,80p' /tmp/dune-browser-ping-compose.err.$$

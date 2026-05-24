@@ -11,6 +11,7 @@ main() {
   install_user_configs "$server_root"
   install_server_login_password "$server_root" "$@"
   load_workspace_value DUNE_SERVER_DISPLAY_NAME
+  load_workspace_value DUNE_SERVER_STARTUP_EXECCMDS
   install_server_display_name "$server_root" "$@"
 
   mkdir -p "$server_root/DuneSandbox/Saved/UserSettings"
@@ -45,6 +46,9 @@ main() {
   done
   if [ "${DUNE_FORCE_PRIVATE_IGW_BIND_ADDRESS:-false}" = "true" ]; then
     args+=("-IGWBindAddress=$pod_ip")
+  fi
+  if [ -n "${DUNE_SERVER_STARTUP_EXECCMDS:-}" ]; then
+    args+=("-ExecCmds=${DUNE_SERVER_STARTUP_EXECCMDS}")
   fi
 
   if [ "$dry_run" = "true" ]; then
