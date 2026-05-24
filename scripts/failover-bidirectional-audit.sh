@@ -24,6 +24,13 @@ primary_ip="${DUNE_FAILOVER_PRIMARY_LAN_IP:-$(read_env DUNE_FAILOVER_PRIMARY_LAN
 standby_host="${DUNE_FAILOVER_STANDBY_HOST:-$(read_env DUNE_FAILOVER_STANDBY_HOST)}"
 standby_host="${standby_host:-${POSTGRES_REMOTE_REPLICA_HOST:-$(read_env POSTGRES_REMOTE_REPLICA_HOST)}}"
 standby_ip="${DUNE_FAILOVER_STANDBY_LAN_IP:-$(read_env DUNE_FAILOVER_STANDBY_LAN_IP)}"
+current_host="${DUNE_CURRENT_HOST:-$(read_env DUNE_CURRENT_HOST)}"
+current_ip="${DUNE_CURRENT_LAN_IP:-$(read_env DUNE_CURRENT_LAN_IP)}"
+postgres_bind_ip="${POSTGRES_REPLICATION_BIND_ADDRESS:-$(read_env POSTGRES_REPLICATION_BIND_ADDRESS)}"
+postgres_primary_ip="${POSTGRES_REPLICATION_PRIMARY_HOST:-$(read_env POSTGRES_REPLICATION_PRIMARY_HOST)}"
+postgres_remote_host="${POSTGRES_REMOTE_REPLICA_HOST:-$(read_env POSTGRES_REMOTE_REPLICA_HOST)}"
+postgres_allowed_ip="${POSTGRES_REPLICATION_ALLOWED_ADDRESS:-$(read_env POSTGRES_REPLICATION_ALLOWED_ADDRESS)}"
+standby_ssh="${postgres_remote_host:-$standby_host}"
 remote_repo="${DUNE_STANDBY_REPO_ROOT:-$(read_env DUNE_STANDBY_REPO_ROOT)}"
 remote_repo="${remote_repo:-$PWD}"
 router="${DUNE_FAILOVER_ROUTER_SSH:-$(read_env DUNE_FAILOVER_ROUTER_SSH)}"
@@ -64,9 +71,9 @@ audit_primary_enabled_standby_disabled() {
   for unit in "$@"; do
     [[ -z "$unit" ]] && continue
     local_enabled="$(unit_enabled_state local "$unit")"
-    remote_enabled="$(unit_enabled_state "$standby_host" "$unit")"
+    remote_enabled="$(unit_enabled_state "$standby_ssh" "$unit")"
     local_active="$(unit_active_state local "$unit")"
-    remote_active="$(unit_active_state "$standby_host" "$unit")"
+    remote_active="$(unit_active_state "$standby_ssh" "$unit")"
     printf '%s %s local_enabled=%s local_active=%s standby_enabled=%s standby_active=%s\n' "$label" "$unit" "${local_enabled:-unknown}" "${local_active:-unknown}" "${remote_enabled:-unknown}" "${remote_active:-unknown}"
     if [[ "$enforce_role_ownership" == "true" ]]; then
       case "$local_enabled" in
@@ -74,7 +81,7 @@ audit_primary_enabled_standby_disabled() {
         *) warn "$label $unit is not enabled/static on current primary" ;;
       esac
       case "$remote_enabled" in
-        disabled|masked|static|'') ;;
+        disabled|masked|static|not-found|'') ;;
         *) warn "$label $unit is enabled on standby but should be cold for role-following cutover" ;;
       esac
       case "$remote_active" in
@@ -91,6 +98,12 @@ for item in \
   "DUNE_FAILOVER_PRIMARY_LAN_IP:$primary_ip" \
   "DUNE_FAILOVER_STANDBY_HOST:$standby_host" \
   "DUNE_FAILOVER_STANDBY_LAN_IP:$standby_ip" \
+  "DUNE_CURRENT_HOST:$current_host" \
+  "DUNE_CURRENT_LAN_IP:$current_ip" \
+  "POSTGRES_REPLICATION_BIND_ADDRESS:$postgres_bind_ip" \
+  "POSTGRES_REPLICATION_PRIMARY_HOST:$postgres_primary_ip" \
+  "POSTGRES_REMOTE_REPLICA_HOST:$postgres_remote_host" \
+  "POSTGRES_REPLICATION_ALLOWED_ADDRESS:$postgres_allowed_ip" \
   "DUNE_FAILOVER_ROUTER_SSH:$router" \
   "DUNE_FAILOVER_PUBLIC_IP/EXTERNAL_ADDRESS:$public_ip" \
   "POSTGRES_REMOTE_REPLICA_ROOT:$remote_root" \
@@ -99,6 +112,25 @@ for item in \
   value="${item#*:}"
   if [[ -n "$value" ]]; then ok "$key=$value"; else warn "$key is unset"; fi
 done
+
+printf '\n== active role env consistency ==\n'
+[[ "$current_host" == "$primary_host" ]] && ok "DUNE_CURRENT_HOST matches DUNE_FAILOVER_PRIMARY_HOST" || warn "DUNE_CURRENT_HOST ($current_host) does not match DUNE_FAILOVER_PRIMARY_HOST ($primary_host)"
+[[ "$current_ip" == "$primary_ip" ]] && ok "DUNE_CURRENT_LAN_IP matches DUNE_FAILOVER_PRIMARY_LAN_IP" || warn "DUNE_CURRENT_LAN_IP ($current_ip) does not match DUNE_FAILOVER_PRIMARY_LAN_IP ($primary_ip)"
+[[ "$postgres_bind_ip" == "$primary_ip" ]] && ok "POSTGRES_REPLICATION_BIND_ADDRESS follows active primary IP" || warn "POSTGRES_REPLICATION_BIND_ADDRESS ($postgres_bind_ip) does not match primary IP ($primary_ip)"
+[[ "$postgres_primary_ip" == "$primary_ip" ]] && ok "POSTGRES_REPLICATION_PRIMARY_HOST follows active primary IP" || warn "POSTGRES_REPLICATION_PRIMARY_HOST ($postgres_primary_ip) does not match primary IP ($primary_ip)"
+[[ "$postgres_remote_host" == "$standby_ip" || "$postgres_remote_host" == "$standby_host" ]] && ok "POSTGRES_REMOTE_REPLICA_HOST targets standby" || warn "POSTGRES_REMOTE_REPLICA_HOST ($postgres_remote_host) does not match standby host/IP ($standby_host/$standby_ip)"
+[[ "$postgres_allowed_ip" == "$standby_ip" ]] && ok "POSTGRES_REPLICATION_ALLOWED_ADDRESS follows standby IP" || warn "POSTGRES_REPLICATION_ALLOWED_ADDRESS ($postgres_allowed_ip) does not match standby IP ($standby_ip)"
+
+printf '\n== standby must not run game writers ==\n'
+if [[ -n "$standby_ssh" ]]; then
+  standby_dune_writers="$(ssh "$standby_ssh" "docker ps --format '{{.Names}}' | grep -E '^(dune_server-|dune_handoff_lab-)' | grep -v '^dune-postgres-replica$' || true" 2>/dev/null || true)"
+  if [[ -z "$standby_dune_writers" ]]; then
+    ok "standby has no Dune game/control-plane containers running except replica"
+  else
+    printf '%s\n' "$standby_dune_writers"
+    warn "standby is running Dune writer/control-plane containers"
+  fi
+fi
 
 printf '\n== required failover scripts ==\n'
 required_scripts=(
@@ -116,10 +148,10 @@ required_scripts=(
 )
 for script in "${required_scripts[@]}"; do
   [[ -x "$script" ]] && ok "local $script executable" || warn "local $script missing or not executable"
-  if [[ -n "$standby_host" ]]; then
-    ssh "$standby_host" "test -x '$remote_repo/$script'" 2>/dev/null \
-      && ok "$standby_host:$script executable" \
-      || warn "$standby_host:$script missing or not executable"
+  if [[ -n "$standby_ssh" ]]; then
+    ssh "$standby_ssh" "test -x '$remote_repo/$script'" 2>/dev/null \
+      && ok "$standby_ssh:$script executable" \
+      || warn "$standby_ssh:$script missing or not executable"
   fi
 done
 

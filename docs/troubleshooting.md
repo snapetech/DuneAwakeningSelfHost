@@ -263,7 +263,7 @@ If the partition count and server-state logs look right, nudge Director instead
 of restarting maps:
 
 ```bash
-docker compose --env-file .env -f compose.yaml -f compose.allmaps.yaml restart director
+docker compose --env-file .env -f compose.yaml -f compose.allmaps.yaml up -d --no-deps --force-recreate director
 ```
 
 This makes Director resubscribe to RabbitMQ and re-declare battlegroup/map state
@@ -282,11 +282,14 @@ instead. See `docs/operations.md#control-plane-nudges`.
 If the parent server row disappears from the browser after another host was
 accidentally started with the same `.env`/`WORLD_UNIQUE_NAME`, do not restart
 maps. That second host can steal the FLS battlegroup identity and publish a
-shutdown/inactive state for the same battlegroup. Restart `gateway` on the real
-live host so it re-declares the farm as active:
+shutdown/inactive state for the same battlegroup. Stop the accidental stack
+first. The standby should run at most `dune-postgres-replica`; no
+`dune_server-*` or `dune_handoff_lab-*` containers should be up there. Then
+recreate only `gateway` on the real live host so it re-declares the farm as
+active:
 
 ```bash
-docker compose --env-file .env -f compose.yaml -f compose.allmaps.yaml restart gateway
+docker compose --env-file .env -f compose.yaml -f compose.allmaps.yaml up -d --no-deps --force-recreate gateway
 ```
 
 Then confirm Gateway published the farm and saw the live maps:
@@ -299,6 +302,13 @@ docker compose --env-file .env -f compose.yaml -f compose.allmaps.yaml logs --si
 This does not recreate Survival or map containers. Existing in-world players
 should remain connected; confidence is moderate because Gateway is part of the
 login/FLS publication path, not the map process itself.
+
+Run the bidirectional audit afterward. It warns if the standby is running
+writer/control-plane containers or if active/standby role values are stale:
+
+```bash
+make failover-bidirectional-audit ENV_FILE=.env
+```
 
 ## FLS Autologin Warning
 
@@ -336,7 +346,7 @@ GmeAppKey="replace-with-provider-gme-key"
 ```
 
 ```bash
-docker compose --env-file .env up -d --force-recreate director
+docker compose --env-file .env up -d --no-deps --force-recreate director
 ```
 
 Do not invent these values. Missing GME credentials affect voice-chat auth token generation; they are separate from world login, map travel, RabbitMQ game auth, and FLS registration.

@@ -12,13 +12,13 @@ The relevant section is `[ Battlegroup ]`.
 
 ## Current Default
 
-This repository allows inbound transfers from public/official battlegroups:
+This repository allows inbound transfers from public/official and private/self-hosted battlegroups:
 
 ```ini
-IncomingCharacterTransfers=2
+IncomingCharacterTransfers=3
 ```
 
-That allows characters to transfer into this battlegroup from public/official origins.
+That requests the Director binary's combined private-and-official ruleset. FLS accepted this value in the battlegroup settings declaration after both transfer fee flags were set free; live player transfer success still needs validation.
 
 ## Settings
 
@@ -28,11 +28,11 @@ These settings are exposed in the admin panel under Settings -> Director Charact
 | --- | --- | --- |
 | `ShouldDeleteOriginCharactersDuringTransfers` | `true` | Deletes the origin character after a successful transfer into this battlegroup. |
 | `AcceptOutgoingCharacterTransfers` | `true` | Allows characters on this battlegroup to transfer out. |
-| `IncomingCharacterTransfers` | `2` | Controls which origin server types may transfer characters into this battlegroup. |
+| `IncomingCharacterTransfers` | `3` | Controls which origin server types may transfer characters into this battlegroup. |
 | `ExportCharacterTimeout` | `900` | Seconds before the export query times out. |
 | `ImportCharacterTimeout` | `900` | Seconds before the import query times out. |
-| `FreeToTransferCharactersFrom` | `false` | Skips transfer token cost for transfers from this battlegroup. |
-| `FreeToTransferCharactersTo` | `false` | Skips transfer token cost for transfers to this battlegroup. |
+| `FreeToTransferCharactersFrom` | `true` | Skips transfer token cost for transfers from this battlegroup. |
+| `FreeToTransferCharactersTo` | `true` | Skips transfer token cost for transfers to this battlegroup. |
 | `ValidateBeforeImportCharacterTimeout` | `180` | Seconds before canceling a transfer stuck in validation before import starts. |
 | `ActiveTransfersResolveProcessFrequencySeconds` | `10` | Seconds between resolving unhandled active transfers. |
 | `CharacterTransferDbFunctionTimeLogThresholdMs` | `10000` | Milliseconds before character-transfer DB function timing is logged. |
@@ -45,18 +45,19 @@ The Director binary for build `1968181` exposes these inbound rulesets, but its 
 0 = DenyAll
 1 = AllowFromPrivateOnly
 2 = AllowFromOfficialOnly
+3 = AllowFromPrivateAndOfficial
 ```
 
-Use `0` for a closed world, `1` to allow only private/self-hosted origins, or `2` to allow only public/official origins.
+Use `0` for a closed world, `1` to allow only private/self-hosted origins, `2` to allow only public/official origins, or `3` to request both.
 
-The binary also contains `AllowFromPrivateAndOfficial`, but live transfer requests with `IncomingCharacterTransfers=3` have failed against FLS with `INVALID_ARGUMENT` because FLS cannot parse `TransferOriginRuleset: 3`. String values such as `DenyAll` are present in the binary but fail this build's settings reload with a `JsonException`.
+Earlier live transfer requests with `IncomingCharacterTransfers=3` failed against FLS with `INVALID_ARGUMENT` while transfer costs were not free. Retesting with `FreeToTransferCharactersFrom=true` and `FreeToTransferCharactersTo=true` is pending live player validation. String values such as `DenyAll` are present in the binary but fail this build's settings reload with a `JsonException`.
 
 ## Apply Changes
 
 Changing transfer settings updates `config/director.ini`, but already-running Director processes do not pick up file changes automatically. Recreate Director after a change:
 
 ```bash
-docker compose --env-file .env up -d --force-recreate director
+docker compose --env-file .env up -d --no-deps --force-recreate director
 ```
 
 Then check service health:

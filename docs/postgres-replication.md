@@ -72,7 +72,10 @@ remote container with Docker:
 ```
 
 The remote host needs SSH access and Docker. It does not need Docker Compose.
-The standby data lives under the remote root's `data/` directory.
+The standby data lives under the remote root's `data/` directory. By default the
+remote standby runs on Docker bridge networking and does not bind host TCP 5432.
+Set `DUNE_POSTGRES_STANDBY_NETWORK_MODE=host` only on hosts dedicated to the
+standby or known not to run a host-level Postgres listener.
 
 After the first run, include the overlay whenever managing the stack:
 
@@ -167,6 +170,19 @@ docker compose --env-file .env -f compose.yaml -f compose.replica.yaml stop post
 rm -rf data/postgres-replica
 COMPOSE_FILES=compose.yaml:compose.replica.yaml ./scripts/setup-postgres-replica.sh .env
 ```
+
+For the remote standby layout, rebuild the remote replica from the restored
+active primary instead of letting it continue on the old timeline:
+
+```sh
+make rebuild-postgres-standby ENV_FILE=.env TARGET="$POSTGRES_REMOTE_REPLICA_HOST" ROOT="$POSTGRES_REMOTE_REPLICA_ROOT"
+CONFIRM_REBUILD_POSTGRES_STANDBY=yes make rebuild-postgres-standby ENV_FILE=.env TARGET="$POSTGRES_REMOTE_REPLICA_HOST" ROOT="$POSTGRES_REMOTE_REPLICA_ROOT"
+make standby-status ENV_FILE=.env
+```
+
+The rebuild helper moves the old remote data directory aside. It defaults to
+Docker bridge networking so a standby host with another Postgres listener on
+host TCP 5432 can still run `dune-postgres-replica`.
 
 Promotion is only for disaster recovery. If you promote the replica while the
 original primary can still accept writes, you can split-brain the database. A

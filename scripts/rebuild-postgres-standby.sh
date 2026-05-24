@@ -32,7 +32,8 @@ if [[ ! -f "$env_file" ]]; then
 fi
 
 target="${target:-${DUNE_POSTGRES_STANDBY_TARGET_HOST:-$(read_env DUNE_POSTGRES_STANDBY_TARGET_HOST)}}"
-target="${target:-${DUNE_FAILOVER_PRIMARY_HOST:-$(read_env DUNE_FAILOVER_PRIMARY_HOST)}}"
+target="${target:-${POSTGRES_REMOTE_REPLICA_HOST:-$(read_env POSTGRES_REMOTE_REPLICA_HOST)}}"
+target="${target:-${DUNE_FAILOVER_STANDBY_HOST:-$(read_env DUNE_FAILOVER_STANDBY_HOST)}}"
 target_root="${target_root:-${DUNE_POSTGRES_STANDBY_TARGET_ROOT:-$(read_env DUNE_POSTGRES_STANDBY_TARGET_ROOT)}}"
 target_root="${target_root:-${POSTGRES_REMOTE_REPLICA_ROOT:-$(read_env POSTGRES_REMOTE_REPLICA_ROOT)}}"
 replication_user="${POSTGRES_REPLICATION_USER:-$(read_env POSTGRES_REPLICATION_USER)}"; replication_user="${replication_user:-dune_replicator}"
@@ -45,6 +46,8 @@ primary_port="${POSTGRES_REPLICATION_PUBLIC_PORT:-$(read_env POSTGRES_REPLICATIO
 image="${POSTGRES_IMAGE:-registry.funcom.com/funcom/self-hosting/igw-postgres:17.4-alpine-fc-13}"
 db="${DUNE_DATABASE:-$(read_env DUNE_DATABASE)}"; db="${db:-dune_sb_1_4_0_0}"
 confirm="${CONFIRM_REBUILD_POSTGRES_STANDBY:-no}"
+network_mode="${DUNE_POSTGRES_STANDBY_NETWORK_MODE:-$(read_env DUNE_POSTGRES_STANDBY_NETWORK_MODE)}"
+network_mode="${network_mode:-bridge}"
 
 if [[ -z "$target" || -z "$target_root" || -z "$replication_password" ]]; then
   printf 'target host, target root, and POSTGRES_REPLICATION_PASSWORD are required\n' >&2
@@ -69,6 +72,7 @@ printf 'target_standby=%s\n' "$target"
 printf 'target_root=%s\n' "$target_root"
 printf 'replication_slot=%s\n' "$replication_slot"
 printf 'primary_endpoint=%s:%s\n' "$primary_host" "$primary_port"
+printf 'standby_network_mode=%s\n' "$network_mode"
 
 printf '\n== local primary state ==\n'
 "${compose[@]}" exec -T postgres psql -U dune -d "$db" -v ON_ERROR_STOP=1 -c 'select pg_is_in_recovery() as in_recovery;'
@@ -130,6 +134,10 @@ if ! ssh "$target" "docker image inspect '$image' >/dev/null 2>&1"; then
 fi
 
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+network_arg=""
+if [[ "$network_mode" != "bridge" ]]; then
+  network_arg="--network $network_mode"
+fi
 ssh "$target" "set -eu
 docker rm -f dune-postgres-replica >/dev/null 2>&1 || true
 if [ -d '$target_root/data' ]; then
@@ -137,7 +145,7 @@ if [ -d '$target_root/data' ]; then
 fi
 mkdir -p '$target_root/data'
 docker run -d --name dune-postgres-replica --restart unless-stopped \
-  --network host \
+  $network_arg \
   -e POSTGRES_REPLICATION_USER='$replication_user' \
   -e POSTGRES_REPLICATION_PASSWORD='$replication_password' \
   -e POSTGRES_REPLICATION_SLOT='$replication_slot' \

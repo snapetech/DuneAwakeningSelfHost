@@ -7,6 +7,8 @@ remote_root="${3:-${POSTGRES_REMOTE_REPLICA_ROOT:-/srv/dune-postgres-replica}}"
 image="${POSTGRES_IMAGE:-registry.funcom.com/funcom/self-hosting/igw-postgres:17.4-alpine-fc-13}"
 db="${DUNE_DATABASE:-dune_sb_1_4_0_0}"
 remote_port="$(awk -F= '/^POSTGRES_REMOTE_REPLICA_HOST_PORT=/{print $2}' "$env_file" 2>/dev/null | tail -1 || true)"
+network_mode="$(awk -F= '/^DUNE_POSTGRES_STANDBY_NETWORK_MODE=/{print $2}' "$env_file" 2>/dev/null | tail -1 || true)"
+network_mode="${DUNE_POSTGRES_STANDBY_NETWORK_MODE:-${network_mode:-bridge}}"
 
 if [[ ! -f "$env_file" ]]; then
   printf 'env file not found: %s\n' "$env_file" >&2
@@ -70,11 +72,17 @@ port_args=""
 if [[ -n "$remote_port" ]]; then
   port_args="-p 127.0.0.1:${remote_port}:5432"
 fi
+network_arg=""
+if [[ "$network_mode" != "bridge" ]]; then
+  network_arg="--network $network_mode"
+  port_args=""
+fi
 
 printf 'starting remote replica container\n'
 ssh "$remote" "docker rm -f dune-postgres-replica >/dev/null 2>&1 || true
 docker run -d --name dune-postgres-replica --restart unless-stopped \
-  --network host \
+  $network_arg \
+  $port_args \
   -e POSTGRES_REPLICATION_USER='$replication_user' \
   -e POSTGRES_REPLICATION_PASSWORD='$replication_password' \
   -e POSTGRES_REPLICATION_SLOT='$replication_slot' \

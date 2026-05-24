@@ -28,6 +28,23 @@ DUNE_FAILOVER_PUBLIC_IP=<public-game-ip>
 DUNE_STANDBY_REPO_ROOT=<repo-path-on-standby>
 ```
 
+Treat `DUNE_FAILOVER_PRIMARY_*` as the current active gameserver primary, not as
+a permanent hardware label. When the active side changes, update the role values
+together:
+
+```sh
+make set-active-gameserver ENV_FILE=.env \
+  ACTIVE_HOST=<active-host> ACTIVE_IP=<active-lan-ip> \
+  STANDBY_HOST=<standby-host> STANDBY_IP=<standby-lan-ip> APPLY=--apply
+make sync-standby-files ENV_FILE=.env
+make failover-bidirectional-audit ENV_FILE=.env
+```
+
+The helper also updates `POSTGRES_REPLICATION_PRIMARY_HOST`,
+`POSTGRES_REPLICATION_BIND_ADDRESS`, `POSTGRES_REMOTE_REPLICA_HOST`, and
+`POSTGRES_REPLICATION_ALLOWED_ADDRESS`. Confidence high: these values must not
+be edited independently during cutover/cutback.
+
 `EXTERNAL_ADDRESS` and `GAME_RMQ_PUBLIC_HOST` should keep advertising the public
 game address. During failover, only the LAN destination behind that public
 address changes.
@@ -80,6 +97,10 @@ make cutover-network-status ENV_FILE=.env
 make cutover-check ENV_FILE=.env
 make failover-orchestrate ENV_FILE=.env ROLE=standby
 ```
+
+`failover-bidirectional-audit` checks that the current active role values match
+the Postgres replication direction and that the standby is not running Dune
+writer/control-plane containers.
 
 Mirror non-Postgres runtime files:
 
@@ -139,6 +160,9 @@ CONFIRM_FAILOVER_ROLE_SERVICES=yes make failover-role-services ENV_FILE=.env ROL
 make failover-orchestrate ENV_FILE=.env ROLE=primary
 ```
 
+After cutback, run `make set-active-gameserver` with the new active and standby
+hosts, then sync the checkout back to the inactive host.
+
 Postgres is not automatic in both directions. Confidence high: physical
 streaming replication follows one writable timeline. After promoting the
 standby, the old primary must not be restarted as a writer. Rebuild it as a new
@@ -151,7 +175,9 @@ CONFIRM_REBUILD_POSTGRES_STANDBY=yes make rebuild-postgres-standby ENV_FILE=.env
 
 Run that from the host that currently owns the active promoted database. The
 first command is a dry-run. The confirmed command moves stale target data aside
-and starts a fresh `dune-postgres-replica` from the current active primary.
+and starts a fresh `dune-postgres-replica` from the current active primary. The
+rebuild helper defaults to Docker bridge networking so a standby host with an
+unrelated Postgres service on TCP 5432 does not block replica startup.
 
 ## Planned Cutover
 
@@ -247,6 +273,12 @@ transactions not replayed to the standby before the primary failure are lost.
 
 After failover, rebuild a new standby from the promoted primary. Do not restart
 the old primary Dune stack against stale Postgres data.
+
+If a stale database was accidentally exposed, stop the Dune stack before players
+can continue on that state. Take a forensic dump of the stale live DB, restore
+the latest known-good dump/snapshot onto the active primary, start the warm pool,
+then run `make rebuild-postgres-standby` from the restored primary. Confidence
+high: do not allow the old standby to keep following a pre-restore timeline.
 
 ## Postgres Directionality
 

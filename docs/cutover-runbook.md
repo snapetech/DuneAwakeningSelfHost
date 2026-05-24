@@ -38,6 +38,59 @@ The non-active host:
    path so you can verify the active host is reachable).
 3. Runs at most a Postgres replica.
 
+## Role values that move together
+
+Confidence high: stale role values are dangerous. The active gameserver primary
+is the host that owns the writable Dune Postgres, runs Director/Gateway/maps,
+publishes to FLS, owns active backup/snapshot/status/bot timers, and receives
+router forwards.
+
+Keep these values synchronized in `.env` on both hosts:
+
+```sh
+DUNE_CURRENT_HOST=<active-host-label>
+DUNE_CURRENT_LAN_IP=<active-lan-ip>
+DUNE_FAILOVER_PRIMARY_HOST=<active-host-label>
+DUNE_FAILOVER_PRIMARY_LAN_IP=<active-lan-ip>
+DUNE_FAILOVER_STANDBY_HOST=<inactive-standby-label>
+DUNE_FAILOVER_STANDBY_LAN_IP=<inactive-standby-lan-ip>
+POSTGRES_REPLICATION_BIND_ADDRESS=<active-lan-ip>
+POSTGRES_REPLICATION_PRIMARY_HOST=<active-lan-ip>
+POSTGRES_REMOTE_REPLICA_HOST=<inactive-standby-lan-ip-or-ssh-host>
+POSTGRES_REPLICATION_ALLOWED_ADDRESS=<inactive-standby-lan-ip>
+```
+
+Use the helper instead of hand-editing these values:
+
+```bash
+# dry-run
+make set-active-gameserver ENV_FILE=.env \
+  ACTIVE_HOST=kspls0 ACTIVE_IP=192.168.50.85 \
+  STANDBY_HOST=kspld0 STANDBY_IP=192.168.50.148
+
+# apply, then mirror the corrected env/docs/scripts to the standby
+make set-active-gameserver ENV_FILE=.env \
+  ACTIVE_HOST=kspls0 ACTIVE_IP=192.168.50.85 \
+  STANDBY_HOST=kspld0 STANDBY_IP=192.168.50.148 APPLY=--apply
+make sync-standby-files ENV_FILE=.env
+```
+
+For cutback, reverse the active and standby arguments. Run
+`make failover-bidirectional-audit ENV_FILE=.env` after syncing; it fails if
+`DUNE_CURRENT_*`, `DUNE_FAILOVER_*`, and Postgres replication source/target
+values drift apart.
+
+Primary-only systemd timers must also be symmetric. Use generic unit names for
+role-swapped timers, with host-local config pointing at the peer. For backup
+mirroring this repo uses `dune-backup-mirror-peer.timer` on both hosts:
+
+- on kspls0, it uses `examples/backup/rsync-kspld0.env`;
+- on kspld0, it uses `examples/backup/rsync-kspls0.env`.
+
+Do not put host-specific names such as `dune-backup-mirror-kspld0.timer` in
+`DUNE_STANDBY_ROLE_TIMERS`; they cannot be enabled on both sides during a
+bidirectional cutover.
+
 ## One-time prerequisites on each host
 
 These need to persist across host rebuilds.
@@ -125,6 +178,11 @@ service role swap, and router cutover:
 ./scripts/failover-orchestrate.sh .env primary --apply
 ```
 
+After any successful direction change, update the role values with
+`make set-active-gameserver`, then `make sync-standby-files`. The orchestration
+moves traffic and services; the role-env helper records which host is now the
+active primary so the next operation derives from the right side.
+
 Under the hood this calls, in order:
 
 1. `make sync-standby-files` / `sync-standby-images` — keeps the destination
@@ -152,6 +210,7 @@ When only one piece needs to move:
 | Host network only | `CONFIRM_HOST_NETWORK_FAILOVER=yes make host-network-failover ENV_FILE=.env ROLE=standby` |
 | Apply host-side reflection on this box | `sudo ./scripts/setup-lan-reflection.sh .env` |
 | Service role swap only | `CONFIRM_FAILOVER_ROLE_SERVICES=yes make failover-role-services ENV_FILE=.env ROLE=standby` |
+| Role env only | `make set-active-gameserver ENV_FILE=.env ACTIVE_HOST=<active> ACTIVE_IP=<active-ip> STANDBY_HOST=<standby> STANDBY_IP=<standby-ip> APPLY=--apply` |
 | Inspect current router config | `./scripts/router-cutover-asuswrt.sh .env` (dry run; writes backup to `backups/router-inspection/`) |
 
 `ROLE=standby` means "move the active workload to the configured standby host
@@ -202,6 +261,35 @@ ranges.
   bridge name when this happens.
 - Removing the `inet filter forward` accepts on the inactive host. They're
   harmless when no Dune containers are running on that bridge.
+
+## 2026-05-24 stale DB / FLS stealing incident
+
+Confidence high on the operational causes and prevention:
+
+- Recreating `director` or `gateway` without `--no-deps` can recreate
+  dependency containers such as Postgres. For control-plane-only refreshes, use
+  `docker compose --env-file .env up -d --no-deps --force-recreate director`
+  or the matching service name. Do not run broad `up -d --force-recreate`
+  commands against the live stack.
+- A full `docker compose down && up` can create a new Docker bridge. If
+  `/etc/nftables.conf` still accepts the old bridge name under `inet filter
+  forward`, published ports DNAT but forwarding drops. Start with
+  `scripts/start-full-warm-pool.sh` or run `scripts/setup-lan-reflection.sh`
+  after dependencies are healthy so bridge accepts are refreshed.
+- If another host accidentally starts a Director/Gateway stack for the same
+  battlegroup and steals FLS registration, stop that stack first, then restart
+  `gateway` on the intended active host. Restarting `gateway` is the low-blast
+  reset for FLS registration; do not restart Postgres or all maps unless map
+  health actually requires it.
+- The inactive host must run at most `dune-postgres-replica`. No
+  `dune_server-*` or `dune_handoff_lab-*` containers should be up there.
+  `make failover-bidirectional-audit` checks this.
+- If a stale DB is ever exposed, stop the game stack before players rejoin,
+  take a dump of the stale live DB for forensics, restore the latest known-good
+  stopped-world or replica snapshot, start with the warm-pool script, then
+  rebuild the standby replica from the restored primary. Physical replication
+  follows timelines; after a restore or promotion, the old standby data is not
+  trustworthy until rebuilt.
 
 ## Known leaky edges
 

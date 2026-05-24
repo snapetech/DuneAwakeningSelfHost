@@ -163,6 +163,9 @@ wait_for_healthy postgres
 wait_for_healthy admin-rmq
 wait_for_healthy game-rmq
 
+printf 'refreshing host LAN/firewall reflection for the current docker bridge\n'
+"$script_dir/setup-lan-reflection.sh" "$env_file"
+
 printf 'ensuring %s world partitions exist\n' "$partition_count"
 COMPOSE_FILES="$COMPOSE_FILES" CONTAINER_RUNTIME="$container_runtime" \
   "$script_dir/full-world-partitions.sh" "$env_file"
