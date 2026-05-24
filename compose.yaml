@@ -597,6 +597,7 @@ services:
       NODE_NAME: dune-node
       BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
       WORLD_NAME: ${WORLD_NAME}
+      DUNE_USERGAME_CONFIG_PATH: /workspace/config/UserGame.deep-desert-coriolis.ini
     ports:
       - "7784:7784/udp"
       - "7895:7895/udp"

@@ -88,15 +88,17 @@ load_workspace_value() {
 install_user_configs() {
   local server_root="$1"
   local source_dir=/workspace/config
+  local user_game_config="${DUNE_USERGAME_CONFIG_PATH:-${source_dir}/UserGame.ini}"
+  local user_engine_config="${DUNE_USERENGINE_CONFIG_PATH:-${source_dir}/UserEngine.ini}"
   local config_dir="$server_root/DuneSandbox/Saved/Config/LinuxServer"
   local user_settings_dir="$server_root/DuneSandbox/Saved/UserSettings"
   mkdir -p "$config_dir"
   mkdir -p "$user_settings_dir"
 
-  copy_user_config "${source_dir}/UserEngine.ini" "${config_dir}/Engine.ini"
-  copy_user_config "${source_dir}/UserEngine.ini" "${user_settings_dir}/UserEngine.ini"
-  copy_user_config "${source_dir}/UserGame.ini" "${config_dir}/Game.ini"
-  copy_user_config "${source_dir}/UserGame.ini" "${user_settings_dir}/UserGame.ini"
+  copy_user_config "$user_engine_config" "${config_dir}/Engine.ini"
+  copy_user_config "$user_engine_config" "${user_settings_dir}/UserEngine.ini"
+  copy_user_config "$user_game_config" "${config_dir}/Game.ini"
+  copy_user_config "$user_game_config" "${user_settings_dir}/UserGame.ini"
 }
 
 copy_user_config() {
