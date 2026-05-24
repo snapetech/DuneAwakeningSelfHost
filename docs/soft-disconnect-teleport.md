@@ -3,7 +3,9 @@
 This records the first verified online-adjacent teleport primitive found for DASH.
 The mechanism is useful, but it is not a soft disconnect.
 
-Confidence: high for the verified Survival/Hagga Basin test on 2026-05-21. Confidence: moderate for automation and other maps until repeated.
+Confidence: high for the verified Survival/Hagga Basin teleport test on 2026-05-21. Confidence: moderate for automation and other maps until repeated.
+
+Update 2026-05-24: the non-base logoff wait is a separate server-side logoff timer, not the reconnect grace period. The active build has runtime unsafe-location timer values of `30.0` seconds and `300.0` seconds. A guarded runtime patch script now sets both values to `0.0` on the active `kspls0` Survival and Deep Desert containers.
 
 ## Result
 
@@ -16,7 +18,7 @@ Verified sequence:
 1. Identify the player's active UDP game endpoint from Survival logs or packet capture.
 2. Drop that player's UDP game traffic inside the target map server network namespace long enough for Unreal to time out the `UNetConnection`.
 3. Wait for Survival to update the player from `Online` to `LoggingOut`.
-4. Wait for the 30-second logoff timer to finish and for `online_status='Offline'`.
+4. Wait for the logoff timer to finish and for `online_status='Offline'`.
 5. Call `dune.admin_move_offline_player_to_partition(...)`.
 6. Remove the network block.
 7. Let the client reconnect or have the player reconnect manually.
@@ -46,6 +48,8 @@ Observed timing on 2026-05-21:
 - `12s` targeted `DROP` reached the server timeout threshold and started logoff.
 - Survival then kept the character in `LoggingOut` for roughly `30s`.
 - The offline move helper succeeded after `online_status='Offline'`.
+
+The 2026-05-24 runtime patch changes the unsafe-location wait target to `0.0` for the active process lifetime. With that patch applied, expected behavior is that unsafe-location disconnects become `Offline` immediately after the game enters `OnLeavingGame`, matching the base/safe-location path. Confidence: moderate-high until repeated live non-base logoff lines show `SetLeavingGameTimer ... to <same timestamp>` in both Hagga and Deep Desert.
 
 Targeted `REJECT --reject-with icmp-port-unreachable` did hit packets but did not make the game session close during the tested window. Host-level `DOCKER-USER` and `FORWARD` rules missed the hairpin path in this deployment; the map server netns rules hit reliably.
 
@@ -104,6 +108,8 @@ actor 19: X=100000.000 Y=112000.000 Z=9191.031 serial=1890
 
 DB-only presence manipulation is a false positive. Setting `dune.encrypted_player_state.online_status='Offline'` and `server_id=null` can trigger DASH/admin-bot presence automation, but it does not prove the client disconnected and does not make Survival release the live pawn.
 
+Setting only `[/Script/DuneSandbox.PlayerOnlineStateSettings]` reconnect grace values to `0` is also insufficient for immediate non-base despawn. Those settings remove reconnect/persistence grace, but live logs showed `ADunePlayerCharacter::SetLeavingGameTimer` still scheduling unsafe-location timers of roughly `30s` in Hagga and `5m` in Deep Desert before recording `logoff_persistence_end_time`.
+
 Observed failures:
 
 - Raw online actor transform updates were overwritten by the live Survival server.
@@ -154,6 +160,51 @@ unblock endpoint -> poll reconnect/final position
 Use an advisory lock per account/FLS id. Always clean up network filters in a `finally` path.
 
 The current verified block primitive is timeout-shaped. Name UI and audit events accordingly, for example `network-timeout-teleport`, not `soft-teleport`.
+
+## Immediate Logoff Runtime Patch
+
+The runtime patch is build-specific and process-local. It does not edit the shipped binary or config files, and it must be reapplied after Survival or Deep Desert restarts.
+
+Script:
+
+```bash
+./scripts/patch-logoff-timers-runtime.sh --host kspls0
+```
+
+Dry run:
+
+```bash
+./scripts/patch-logoff-timers-runtime.sh --host kspls0 --dry-run
+```
+
+The script guards against the wrong server build with the current expected ELF Build ID:
+
+```text
+f8298652f037c94b1c54264e06e8d020574d938b
+```
+
+It only targets these active production containers:
+
+```text
+dune_server-survival-1
+dune_server-deep-desert-1
+```
+
+It reads two runtime float arrays through `gdb`. Before the patch on 2026-05-24, both containers had:
+
+```text
+30 30 0 0
+300 300 0 0
+```
+
+After applying, both containers confirmed:
+
+```text
+0 0 0 0
+0 0 0 0
+```
+
+Confidence: high that the memory values were changed. Confidence: moderate-high that these are the exact unsafe-location logoff durations, because the values are read by the duration function immediately before `ADunePlayerCharacter::SetLeavingGameTimer`. Final proof is a live disconnect outside a base showing no future timestamp in `LogLogOffSystem`.
 
 Suggested gates:
 
