@@ -7,6 +7,6 @@ Wants=network-online.target
 Type=oneshot
 User=dune
 Group=dune
-WorkingDirectory=/opt/DuneAwakeningSelfHost
+WorkingDirectory=/home/keith/Documents/code/DuneAwakeningSelfHost
 Environment=DUNE_REPLICA_SNAPSHOT_KEEP_HOURS=48
-ExecStart=/opt/DuneAwakeningSelfHost/scripts/replica-snapshot.sh /opt/DuneAwakeningSelfHost/.env replica.example.lan /srv/dune-postgres-replica
+ExecStart=/home/keith/Documents/code/DuneAwakeningSelfHost/scripts/replica-snapshot.sh /home/keith/Documents/code/DuneAwakeningSelfHost/.env

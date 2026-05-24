@@ -5,15 +5,14 @@ Requires=docker.service
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/DuneAwakeningSelfHost
-Environment=COMPOSE_FILES=compose.yaml:compose.allmaps.yaml
+WorkingDirectory=/home/keith/Documents/code/DuneAwakeningSelfHost
 Environment=DUNE_WATCH_INTERVAL=30
 Environment=DUNE_WATCH_RECOVERY_WAIT=360
 Environment=DUNE_WATCH_COOLDOWN=300
 Environment=DUNE_WATCH_STARTUP_GRACE=300
 Environment=DUNE_WATCH_LOCK_DIR=/tmp/dune-map-watchdog.lock
 Environment=DUNE_WATCH_SEED_NEIGHBORS=true
-ExecStart=/opt/DuneAwakeningSelfHost/scripts/watch-maps.sh /opt/DuneAwakeningSelfHost/.env
+ExecStart=/home/keith/Documents/code/DuneAwakeningSelfHost/scripts/watch-maps.sh /home/keith/Documents/code/DuneAwakeningSelfHost/.env
 Restart=always
 RestartSec=10
 

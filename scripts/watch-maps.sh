@@ -15,7 +15,7 @@ Modes:
   --dry-run   Print what would be recovered and exit without changing state.
 
 Environment:
-  COMPOSE_FILES              Compose files, colon-separated. Default: compose.yaml
+  COMPOSE_FILES              Compose files, colon-separated. Defaults are derived from ENV_FILE and host role.
   CONTAINER_RUNTIME          Container runtime. Default: docker
   DUNE_WATCH_INTERVAL        Seconds between checks. Default: 30
   DUNE_WATCH_RECOVERY_WAIT   Seconds recover-map waits per recovery. Default: 180
@@ -44,6 +44,11 @@ if [[ -n "$mode" && "$mode" != "--once" && "$mode" != "--status" && "$mode" != "
 fi
 
 container_runtime="${CONTAINER_RUNTIME:-docker}"
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -x "$script_dir/compose-files.sh" ]]; then
+  COMPOSE_FILES="$("$script_dir/compose-files.sh" "$env_file")"
+  export COMPOSE_FILES
+fi
 compose=("$container_runtime" compose)
 IFS=':' read -ra compose_files <<< "${COMPOSE_FILES:-compose.yaml}"
 for compose_file in "${compose_files[@]}"; do
@@ -58,9 +63,9 @@ startup_grace="${DUNE_WATCH_STARTUP_GRACE:-300}"
 lock_dir="${DUNE_WATCH_LOCK_DIR:-/tmp/dune-map-watchdog.lock}"
 pause_file="${DUNE_WATCH_PAUSE_FILE:-/tmp/dune-map-watchdog.paused}"
 require_ready="${DUNE_WATCH_REQUIRE_READY:-false}"
-recover_command="${DUNE_WATCH_RECOVER_COMMAND:-$(dirname "$0")/recover-map.sh}"
+recover_command="${DUNE_WATCH_RECOVER_COMMAND:-$script_dir/recover-map.sh}"
 seed_neighbors="${DUNE_WATCH_SEED_NEIGHBORS:-false}"
-seed_command="${DUNE_WATCH_SEED_COMMAND:-$(dirname "$0")/seed-gateway-neighbor.sh}"
+seed_command="${DUNE_WATCH_SEED_COMMAND:-$script_dir/seed-gateway-neighbor.sh}"
 
 read_env() {
   local key="$1" value
@@ -237,7 +242,7 @@ recover_service() {
   fi
 
   log "recovering map: service=$service partition=$partition_id reason=$reason"
-  if ! COMPOSE_FILES="${COMPOSE_FILES:-compose.yaml}" CONTAINER_RUNTIME="$container_runtime" \
+  if ! COMPOSE_FILES="$COMPOSE_FILES" CONTAINER_RUNTIME="$container_runtime" \
     "$recover_command" "$env_file" "$service" "$partition_id" "$recovery_wait"; then
     log "map recovery failed: service=$service partition=$partition_id reason=$reason"
     if [[ "$mode" == "--once" ]]; then

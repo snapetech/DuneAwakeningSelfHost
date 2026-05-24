@@ -237,10 +237,13 @@ Rollback after an image-tag upgrade means restoring the old `DUNE_IMAGE_TAG` and
 
 The `7500` building-piece experiment is applied through `compose.building-piece-limit.yaml` during game-server startup. It patches the server pak inside the recreated container overlay; it does not edit the official image or the host save data directly.
 
-Current production wiring on `kspls0`:
+Current production wiring is derived by `scripts/compose-files.sh`. On `kspls0`,
+`POSTGRES_REMOTE_REPLICA_HOST=kspls0` causes `compose.failover-standby.yaml` to
+be included, and the building-piece overlay is included when the feature flag is
+enabled:
 
 ```env
-COMPOSE_FILES=compose.yaml:compose.allmaps.yaml:compose.building-piece-limit.yaml
+POSTGRES_REMOTE_REPLICA_HOST=kspls0
 DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED=true
 DUNE_BUILDING_PIECE_LIMIT=7500
 DUNE_OODLE_HOST_LIBRARY=/home/keith/Documents/code/DuneAwakeningSelfHost/backups/operator-oodle/liboodle-data-shared.so

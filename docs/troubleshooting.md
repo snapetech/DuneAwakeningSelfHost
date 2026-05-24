@@ -279,6 +279,27 @@ command. If a map process is exited, missing from `active_server_ids`, or
 crashing with `Local partition is not found`, use `scripts/recover-map.sh`
 instead. See `docs/operations.md#control-plane-nudges`.
 
+If the parent server row disappears from the browser after another host was
+accidentally started with the same `.env`/`WORLD_UNIQUE_NAME`, do not restart
+maps. That second host can steal the FLS battlegroup identity and publish a
+shutdown/inactive state for the same battlegroup. Restart `gateway` on the real
+live host so it re-declares the farm as active:
+
+```bash
+docker compose --env-file .env -f compose.yaml -f compose.allmaps.yaml restart gateway
+```
+
+Then confirm Gateway published the farm and saw the live maps:
+
+```bash
+docker compose --env-file .env -f compose.yaml -f compose.allmaps.yaml logs --since 3m gateway \
+  | grep -E 'GatewayDeclareFarmStatus|Server .* came up|HTTP Request Error|failed|inactive'
+```
+
+This does not recreate Survival or map containers. Existing in-world players
+should remain connected; confidence is moderate because Gateway is part of the
+login/FLS publication path, not the map process itself.
+
 ## FLS Autologin Warning
 
 Symptoms:

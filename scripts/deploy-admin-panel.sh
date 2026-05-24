@@ -3,6 +3,11 @@ set -euo pipefail
 
 env_file="${1:-${DUNE_ENV_FILE:-.env}}"
 container_runtime="${CONTAINER_RUNTIME:-docker}"
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -x "$script_dir/compose-files.sh" ]]; then
+  COMPOSE_FILES="$("$script_dir/compose-files.sh" "$env_file")"
+  export COMPOSE_FILES
+fi
 
 if [[ ! -f "$env_file" ]]; then
   printf 'env file not found: %s\n' "$env_file" >&2
@@ -19,7 +24,7 @@ compose+=(--env-file "$env_file")
 python3 -m py_compile admin/admin_panel.py scripts/admin-chat-commands.py scripts/player-presence-announcer.py
 python3 scripts/test-admin-panel-safe-surfaces.py
 
-"${compose[@]}" up -d postgres
+"${compose[@]}" up -d --no-recreate postgres
 
 deadline=$((SECONDS + 90))
 while (( SECONDS < deadline )); do

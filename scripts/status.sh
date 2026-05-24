@@ -3,6 +3,11 @@ set -euo pipefail
 
 env_file="${1:-.env}"
 container_runtime="${CONTAINER_RUNTIME:-docker}"
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -x "$script_dir/compose-files.sh" ]]; then
+  COMPOSE_FILES="$("$script_dir/compose-files.sh" "$env_file")"
+  export COMPOSE_FILES
+fi
 compose=("$container_runtime" compose)
 IFS=':' read -ra compose_files <<< "${COMPOSE_FILES:-compose.yaml}"
 for compose_file in "${compose_files[@]}"; do
@@ -84,7 +89,7 @@ printf 'current_ready_alive=%s current_alive_active=%s active_servers=%s partiti
 
 echo
 echo "== FLS publication health =="
-if ./scripts/fls-publication-health.py "$env_file" --compose-files "${COMPOSE_FILES:-compose.yaml}"; then
+if "$script_dir/fls-publication-health.py" "$env_file" --compose-files "${COMPOSE_FILES:-compose.yaml}"; then
   :
 else
   echo "WARN: FLS publication health is degraded. The local farm can be healthy while the server browser is stale/offline."

@@ -36,12 +36,18 @@ For a concise runtime verdict, use:
 ./scripts/status.sh .env
 ```
 
+Normal production scripts derive Docker Compose overlays with
+`scripts/compose-files.sh .env`. Do not pin `COMPOSE_FILES` in persistent
+service units or `.env` for host role selection; `POSTGRES_REMOTE_REPLICA_HOST`
+is the active Postgres owner and causes `compose.failover-standby.yaml` to be
+included on the promoted host.
+
 The `health verdict` section expects these signals at the same time: every current partition has an alive farm row joined through `world_partition`, every active server id is present, and game RabbitMQ service-user connections exist. A separate `current_ready_alive` line is still useful, but some live builds can leave `farm_state.ready=false` for a current map after the game log has already reported `Server farm is READY`.
 
 For RabbitMQ-specific checks, use:
 
 ```bash
-COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' ./scripts/rmq-health.sh .env
+./scripts/rmq-health.sh .env
 ```
 
 For the client-facing game RabbitMQ TLS certificate identity, use:
@@ -185,12 +191,40 @@ Admin alerts can include the same signal when
 subcheck is controlled by `DUNE_PLAYER_PRESENCE_FLS_PUBLICATION_HEALTH_ENABLED`.
 
 If the parent server row itself is missing from the browser, nudge `gateway`
-instead of Director:
+instead of Director. This is also the recovery for accidental FLS identity
+stealing: if another host starts with the same `.env`/`WORLD_UNIQUE_NAME` and
+then stops, it can publish the same battlegroup as inactive. Restarting
+`gateway` on the intended live host re-declares the farm as active without
+restarting Survival or the map containers:
 
 ```bash
-docker compose --env-file .env up -d --force-recreate --no-deps gateway
+docker compose --env-file .env \
+  -f compose.yaml -f compose.allmaps.yaml \
+  restart gateway
+```
+
+Then verify that Gateway declared the farm and observed the maps:
+
+```bash
+docker compose --env-file .env \
+  -f compose.yaml -f compose.allmaps.yaml \
+  logs --since 3m gateway \
+  | grep -E 'GatewayDeclareFarmStatus|Server .* came up|HTTP Request Error|failed|inactive'
+```
+
+On hosts affected by Docker bridge neighbor-learning issues, reseed the
+gateway/Postgres neighbors after the restart:
+
+```bash
 ./scripts/seed-gateway-neighbor.sh
 ```
+
+If `scripts/fls-publication-health.py` still reports Director population
+errors such as `INVALID_DATA` or `does not exist or is inactive` immediately
+after the gateway restart, check the live browser before escalating. Gateway
+farm declaration is the authoritative fix for the missing parent row; Director
+population may lag or continue reporting stale FLS-side state for a short
+interval.
 
 If Director cannot reach RabbitMQ, nudge the stuck broker path first, then
 Director:

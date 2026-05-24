@@ -53,6 +53,11 @@ fi
 
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 out_dir="captures/${timestamp}-${safe_label}"
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -x "$script_dir/compose-files.sh" ]]; then
+  COMPOSE_FILES="$("$script_dir/compose-files.sh" "$env_file")"
+  export COMPOSE_FILES
+fi
 compose=("$container_runtime" compose)
 IFS=':' read -ra compose_files <<< "${COMPOSE_FILES:-compose.yaml}"
 for compose_file in "${compose_files[@]}"; do

@@ -10,8 +10,7 @@ owner dead, waiting for that server id to leave active_server_ids, then starting
 the service and waiting for the partition to be ready/alive again.
 
 Example:
-  COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' \
-    ./scripts/recover-map.sh .env heighliner-dungeon 18
+  ./scripts/recover-map.sh .env heighliner-dungeon 18
 USAGE
 }
 
@@ -36,6 +35,11 @@ if [[ ! "$wait_seconds" =~ ^[0-9]+$ ]]; then
 fi
 
 container_runtime="${CONTAINER_RUNTIME:-docker}"
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -x "$script_dir/compose-files.sh" ]]; then
+  COMPOSE_FILES="$("$script_dir/compose-files.sh" "$env_file")"
+  export COMPOSE_FILES
+fi
 compose=("$container_runtime" compose)
 IFS=':' read -ra compose_files <<< "${COMPOSE_FILES:-compose.yaml}"
 for compose_file in "${compose_files[@]}"; do
@@ -74,7 +78,7 @@ wait_for_healthy() {
 }
 
 printf 'starting stateful dependencies\n'
-"${compose[@]}" up -d postgres admin-rmq game-rmq
+"${compose[@]}" up -d --no-recreate postgres admin-rmq game-rmq
 wait_for_healthy postgres
 wait_for_healthy admin-rmq
 wait_for_healthy game-rmq

@@ -258,6 +258,8 @@ def decode_chunked(payload):
 def request_timeout(path):
     if "/wait" in path:
         return int(os.environ.get("DUNE_RESTART_COMPOSE_TIMEOUT_SECONDS", os.environ.get("DUNE_ADMIN_RESTART_COMMAND_TIMEOUT_SECONDS", "1800")))
+    if "/images/create" in path:
+        return int(os.environ.get("DUNE_RESTART_IMAGE_PULL_TIMEOUT_SECONDS", os.environ.get("DUNE_RESTART_COMPOSE_TIMEOUT_SECONDS", "1800")))
     if "/stop" in path or "/restart" in path:
         return int(os.environ.get("DUNE_RESTART_DOCKER_STOP_TIMEOUT_SECONDS", "120"))
     return int(os.environ.get("DUNE_RESTART_DOCKER_API_TIMEOUT_SECONDS", "30"))
@@ -319,9 +321,35 @@ def docker_logs(container_id):
     return payload.decode("utf-8", errors="replace").strip()
 
 
+def split_image_ref(image):
+    last = image.rsplit("/", 1)[-1]
+    if ":" in last:
+        name, tag = image.rsplit(":", 1)
+        return name, tag
+    return image, "latest"
+
+
+def ensure_image(image):
+    status, _payload = docker("GET", "/images/" + urllib.parse.quote(image, safe="") + "/json")
+    if status == 200:
+        return
+    name, tag = split_image_ref(image)
+    path = "/images/create?fromImage=" + urllib.parse.quote(name) + "&tag=" + urllib.parse.quote(tag)
+    status, payload = docker("POST", path)
+    if status != 200:
+        print(f"failed pulling helper image {image}: HTTP {status} {payload[:500]!r}", file=sys.stderr)
+        sys.exit(75)
+    text = payload.decode("utf-8", errors="replace")
+    if '"error"' in text.lower():
+        print(f"failed pulling helper image {image}: {text[-1000:]}", file=sys.stderr)
+        sys.exit(75)
+
+
 def run_host_shell(name, shell_command):
     if not host_workspace:
         return {"ok": False, "skipped": True, "warning": "host workspace is not configured"}
+    ensure_image(compose_image)
+    shell_command = "apk add --no-cache bash iproute2 util-linux sudo >/dev/null 2>&1 || true; " + shell_command
     body = {
         "Image": compose_image,
         "WorkingDir": host_workspace,
@@ -387,6 +415,7 @@ def run_host_compose(services):
             file=sys.stderr,
         )
         sys.exit(78)
+    ensure_image(compose_image)
     compose_command = ["docker", "compose"]
     for file_name in compose_files:
         compose_command.extend(["-f", file_name])
@@ -491,6 +520,7 @@ def run_host_update_check():
         return {"ok": True, "skipped": True, "reason": "DUNE_RESTART_CHECK_STEAM_UPDATE disabled"}
     if not host_workspace:
         return {"ok": True, "skipped": True, "warning": "host workspace is not configured"}
+    ensure_image(compose_image)
     steam_dir = read_env_value(env_file, "DUNE_STEAM_SERVER_DIR")
     steamcmd_helper_image = os.environ.get("DUNE_RESTART_STEAMCMD_HELPER_IMAGE") or read_env_value(env_file, "DUNE_RESTART_STEAMCMD_HELPER_IMAGE") or "cm2network/steamcmd:root"
     steamcmd_env_keys = [
@@ -612,6 +642,7 @@ def run_host_update_check():
     )
     shell_command = (
         "set -e; "
+        "apk add --no-cache bash util-linux >/dev/null 2>&1 || true; "
         "if [ -x ./scripts/update-steam-tool.sh ]; then "
         "steam_mode=${DUNE_RESTART_STEAM_UPDATE_MODE:-" + shlex.quote(read_env_value(env_file, "DUNE_RESTART_STEAM_UPDATE_MODE") or "auto") + "}; "
         "if [ \"$steam_mode\" = client ]; then "
@@ -757,6 +788,10 @@ PY
   exit $?
 fi
 
+if [ -x "$(dirname "$0")/compose-files.sh" ]; then
+  COMPOSE_FILES="$("$(dirname "$0")/compose-files.sh" "${ENV_FILE:-.env}")"
+  export COMPOSE_FILES
+fi
 compose_files="${COMPOSE_FILES:-compose.yaml:compose.allmaps.yaml}"
 set -- docker compose
 old_ifs="$IFS"

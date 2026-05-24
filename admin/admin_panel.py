@@ -53,6 +53,51 @@ FLS_HEALTH_CACHE = {"payload": None, "updated_at": 0.0, "refreshing": False}
 FLS_HEALTH_CACHE_LOCK = threading.Lock()
 
 
+def resolve_compose_files(default="compose.yaml:compose.allmaps.yaml"):
+    def add_file(files, file_name):
+        if file_name and file_name not in files:
+            files.append(file_name)
+
+    requested = os.environ.get("COMPOSE_FILES") or env_file_value("COMPOSE_FILES") or default
+    files = []
+    for file_name in requested.split(":"):
+        add_file(files, file_name)
+    current_host = os.environ.get("DUNE_CURRENT_HOST") or env_file_value("DUNE_CURRENT_HOST")
+    postgres_host = os.environ.get("POSTGRES_REMOTE_REPLICA_HOST") or env_file_value("POSTGRES_REMOTE_REPLICA_HOST")
+    if current_host and postgres_host and current_host == postgres_host and (ROOT / "compose.failover-standby.yaml").exists():
+        add_file(files, "compose.failover-standby.yaml")
+    building_enabled = os.environ.get("DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED") or env_file_value("DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED")
+    if building_enabled == "true" and (ROOT / "compose.building-piece-limit.yaml").exists():
+        add_file(files, "compose.building-piece-limit.yaml")
+    host_limits = os.environ.get("DUNE_HOST_LIMITS_COMPOSE_FILE") or env_file_value("DUNE_HOST_LIMITS_COMPOSE_FILE")
+    if host_limits and (ROOT / host_limits).exists():
+        add_file(files, host_limits)
+    derived = ":".join(files)
+
+    script = ROOT / "scripts" / "compose-files.sh"
+    if not script.exists() or not os.access(script, os.X_OK):
+        return derived or default
+    env = os.environ.copy()
+    env.setdefault("DUNE_DEFAULT_COMPOSE_FILES", default)
+    try:
+        result = subprocess.run(
+            [str(script), str(ENV_FILE)],
+            cwd=str(ROOT),
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+            check=False,
+        )
+    except Exception:
+        return derived or default
+    resolved = result.stdout.strip().splitlines()[-1] if result.stdout.strip() else ""
+    if result.returncode == 0 and resolved:
+        return resolved
+    return derived or default
+
+
 def compute_admin_panel_build():
     try:
         stat = pathlib.Path(__file__).stat()
@@ -1061,6 +1106,7 @@ def run_restart_command(command, job, phase):
         "DUNE_RESTART_SERVICES": " ".join(job.get("services", [])),
         "DUNE_RESTART_ACTION": job.get("action", "restart"),
         "DUNE_RESTART_PHASE": phase,
+        "COMPOSE_FILES": resolve_compose_files("compose.yaml:compose.allmaps.yaml"),
     })
     try:
         result = subprocess.run(
@@ -1140,7 +1186,7 @@ def run_restart_recovery(job):
         return {"ok": False, "skipped": True, "error": f"restart recovery command is not executable: {command}"}
     env = os.environ.copy()
     env.update({
-        "COMPOSE_FILES": env.get("COMPOSE_FILES", "compose.yaml:compose.allmaps.yaml"),
+        "COMPOSE_FILES": resolve_compose_files("compose.yaml:compose.allmaps.yaml"),
         "DUNE_WATCH_STARTUP_GRACE": "0",
         "DUNE_WATCH_RECOVERY_WAIT": env.get("DUNE_WATCH_RECOVERY_WAIT", str(RESTART_ONLINE_TIMEOUT_SECONDS)),
     })
@@ -4981,7 +5027,7 @@ class Handler(BaseHTTPRequestHandler):
     def run_fls_publication_health_check():
         script = ROOT / "scripts" / "fls-publication-health.py"
         env_file = os.environ.get("DUNE_ADMIN_ENV_FILE", ".env")
-        compose_files = os.environ.get("COMPOSE_FILES", "compose.yaml")
+        compose_files = resolve_compose_files("compose.yaml:compose.allmaps.yaml")
         try:
             result = subprocess.run(
                 [str(script), env_file, "--compose-files", compose_files, "--json"],

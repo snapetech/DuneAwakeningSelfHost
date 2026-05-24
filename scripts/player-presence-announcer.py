@@ -89,8 +89,29 @@ def now_ts():
     return int(time.time())
 
 
+def resolved_compose_files(default="compose.yaml:compose.allmaps.yaml"):
+    script = ROOT / "scripts" / "compose-files.sh"
+    env_file = env("DUNE_ADMIN_BOT_ENV_FILE", ".env")
+    if script.exists() and os.access(script, os.X_OK):
+        cmd_env = os.environ.copy()
+        cmd_env.setdefault("DUNE_DEFAULT_COMPOSE_FILES", default)
+        result = subprocess.run(
+            [str(script), env_file],
+            cwd=ROOT,
+            env=cmd_env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+            check=False,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip().splitlines()[-1]
+    return env("COMPOSE_FILES", default) or default
+
+
 def compose_cmd(*args):
-    files = env("COMPOSE_FILES", "compose.yaml").split(":")
+    files = resolved_compose_files().split(":")
     cmd = [env("CONTAINER_RUNTIME", "docker"), "compose"]
     for file in files:
         if file:

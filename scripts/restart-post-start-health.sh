@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-compose_files="${COMPOSE_FILES:-compose.yaml:compose.allmaps.yaml}"
 env_file="${ENV_FILE:-.env}"
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -x "$script_dir/compose-files.sh" ]]; then
+  COMPOSE_FILES="$("$script_dir/compose-files.sh" "$env_file")"
+  export COMPOSE_FILES
+fi
+compose_files="${COMPOSE_FILES:-compose.yaml:compose.allmaps.yaml}"
 project="${COMPOSE_PROJECT_NAME:-dune_server}"
 text_router_service="${TEXT_ROUTER_SERVICE:-text-router}"
 text_router_container="${TEXT_ROUTER_CONTAINER:-${project}-${text_router_service}-1}"

@@ -14,18 +14,17 @@ if [[ ! -f "$env_file" ]]; then
   printf 'env file not found: %s\n' "$env_file" >&2
   exit 1
 fi
-if [[ -z "$remote" ]]; then
-  printf 'remote host required: %s ENV_FILE REMOTE_HOST [REMOTE_ROOT]\n' "$0" >&2
-  exit 1
-fi
-
 tmp_service="$(mktemp)"
 tmp_timer="$(mktemp)"
+exec_start="${repo_root}/scripts/replica-snapshot.sh ${repo_root}/${env_file}"
+if [[ -n "$remote" ]]; then
+  exec_start+=" ${remote} ${remote_root}"
+fi
 sed \
   -e "s#^User=.*#User=${run_user}#" \
   -e "s#^Group=.*#Group=${run_group}#" \
   -e "s#WorkingDirectory=.*#WorkingDirectory=${repo_root}#" \
-  -e "s#ExecStart=.*#ExecStart=${repo_root}/scripts/replica-snapshot.sh ${repo_root}/${env_file} ${remote} ${remote_root}#" \
+  -e "s#ExecStart=.*#ExecStart=${exec_start}#" \
   "$repo_root/config/systemd/dune-replica-snapshot.service" > "$tmp_service"
 cp "$repo_root/config/systemd/dune-replica-snapshot.timer" "$tmp_timer"
 

@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+env_file="${1:-${DUNE_ENV_FILE:-.env}}"
+default_files="${DUNE_DEFAULT_COMPOSE_FILES:-compose.yaml:compose.allmaps.yaml}"
+
+read_env() {
+  local key="$1" value
+  value="$(awk -F= -v key="$key" '$1 == key {sub(/^[^=]*=/, ""); print; found=1} END {if (!found) exit 0}' "$env_file" 2>/dev/null | tail -1)"
+  value="${value%\"}"; value="${value#\"}"; value="${value%\'}"; value="${value#\'}"
+  printf '%s' "$value"
+}
+
+file_exists() {
+  [[ -f "$1" ]]
+}
+
+add_file() {
+  local file="$1" existing
+  [[ -n "$file" ]] || return 0
+  for existing in "${resolved_files[@]}"; do
+    [[ "$existing" == "$file" ]] && return 0
+  done
+  resolved_files+=("$file")
+}
+
+host_matches_local() {
+  local host="$1" local_short local_full
+  [[ -n "$host" ]] || return 1
+  if [[ "$host" == "${DUNE_CURRENT_HOST:-$(read_env DUNE_CURRENT_HOST)}" ]]; then
+    return 0
+  fi
+  local_short="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
+  local_full="$(hostname 2>/dev/null || true)"
+  [[ "$host" == "$local_short" || "$host" == "$local_full" || "$host" == "localhost" ]]
+}
+
+postgres_uses_remote_root() {
+  local remote_root="$1" container_runtime="${CONTAINER_RUNTIME:-docker}" mount
+  [[ -n "$remote_root" ]] || return 1
+  mount="$("$container_runtime" inspect dune_server-postgres-1 \
+    --format '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Source}}{{end}}{{end}}' \
+    2>/dev/null || true)"
+  [[ "$mount" == "$remote_root/data" || "$mount" == "$remote_root"/data/* ]]
+}
+
+compose_files="${COMPOSE_FILES:-$(read_env COMPOSE_FILES)}"
+compose_files="${compose_files:-$default_files}"
+
+resolved_files=()
+IFS=':' read -ra requested_files <<< "$compose_files"
+for compose_file in "${requested_files[@]}"; do
+  add_file "$compose_file"
+done
+
+postgres_remote_host="${POSTGRES_REMOTE_REPLICA_HOST:-$(read_env POSTGRES_REMOTE_REPLICA_HOST)}"
+postgres_remote_root="${POSTGRES_REMOTE_REPLICA_ROOT:-$(read_env POSTGRES_REMOTE_REPLICA_ROOT)}"
+if file_exists compose.failover-standby.yaml; then
+  if host_matches_local "$postgres_remote_host" || postgres_uses_remote_root "$postgres_remote_root"; then
+    add_file compose.failover-standby.yaml
+  fi
+fi
+
+building_piece_enabled="${DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED:-$(read_env DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED)}"
+if [[ "$building_piece_enabled" == "true" ]] && file_exists compose.building-piece-limit.yaml; then
+  add_file compose.building-piece-limit.yaml
+fi
+
+host_limits_file="${DUNE_HOST_LIMITS_COMPOSE_FILE:-$(read_env DUNE_HOST_LIMITS_COMPOSE_FILE)}"
+if [[ -n "$host_limits_file" ]] && file_exists "$host_limits_file"; then
+  add_file "$host_limits_file"
+fi
+
+(
+  IFS=:
+  printf '%s\n' "${resolved_files[*]}"
+)

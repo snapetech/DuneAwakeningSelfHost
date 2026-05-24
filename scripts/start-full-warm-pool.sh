@@ -46,6 +46,11 @@ if [[ "$partition_count" != "30" ]]; then
 fi
 
 container_runtime="${CONTAINER_RUNTIME:-docker}"
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -x "$script_dir/compose-files.sh" ]]; then
+  COMPOSE_FILES="$("$script_dir/compose-files.sh" "$env_file")"
+  export COMPOSE_FILES
+fi
 compose=("$container_runtime" compose)
 IFS=':' read -ra compose_files <<< "${COMPOSE_FILES:-compose.yaml:compose.allmaps.yaml}"
 for compose_file in "${compose_files[@]}"; do
@@ -159,13 +164,13 @@ wait_for_healthy admin-rmq
 wait_for_healthy game-rmq
 
 printf 'ensuring %s world partitions exist\n' "$partition_count"
-COMPOSE_FILES="${COMPOSE_FILES:-compose.yaml:compose.allmaps.yaml}" CONTAINER_RUNTIME="$container_runtime" \
-  "$(dirname "$0")/full-world-partitions.sh" "$env_file"
+COMPOSE_FILES="$COMPOSE_FILES" CONTAINER_RUNTIME="$container_runtime" \
+  "$script_dir/full-world-partitions.sh" "$env_file"
 
 printf 'starting service layer without recreating existing containers\n'
 "${compose[@]}" up -d --no-recreate \
   rmq-auth-shim text-router gateway director admin-panel admin-panel-ingress admin-chat-commands
-"$(dirname "$0")/seed-gateway-neighbor.sh"
+"$script_dir/seed-gateway-neighbor.sh"
 
 printf 'starting base 3 maps\n'
 start_services survival overmap arrakeen
@@ -192,5 +197,5 @@ printf 'partition 31 Deep Desert PvP is intentionally disabled; ensuring the old
 remove_db_init
 
 printf 'final status\n'
-COMPOSE_FILES="${COMPOSE_FILES:-compose.yaml:compose.allmaps.yaml}" CONTAINER_RUNTIME="$container_runtime" \
-  "$(dirname "$0")/status.sh" "$env_file"
+COMPOSE_FILES="$COMPOSE_FILES" CONTAINER_RUNTIME="$container_runtime" \
+  "$script_dir/status.sh" "$env_file"
