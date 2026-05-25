@@ -89,27 +89,26 @@ Forward `7777-7806/udp` from the router to the host for the full 30-partition wa
 
 Forward `7888-7917/udp` from the router to the host for the full 30-partition warm pool when your deployment uses the paired IGW ports for live-client routing or server-browser checks. These are the IGW ports paired with the gameplay ports.
 
-## Disabled Second Deep Desert
+## Optional Second Deep Desert
 
-Partition 31 / the second Deep Desert dimension is deliberately disabled. It is
-prepped behind the legacy `disabled-deep-desert-pvp` Compose profile with its
-own `config/UserGame.deep-desert-pvp.ini` override, the dedicated
-`config/UserEngine.deep-desert-pvp.ini` 2.5x harvest override, separate saved-data
-directory, and ports `7807/udp` plus `7918/udp`. Do not include it in restart
-targets, watchdog expectations, public status, or router forwarding until it is
-intentionally promoted and validated.
+Partition 31 / the second Deep Desert dimension is opt-in through
+`DUNE_WORLD_PARTITION_COUNT=31`. It is prepped behind the legacy
+`disabled-deep-desert-pvp` Compose profile with its own
+`config/UserGame.deep-desert-pvp.ini` override, the dedicated
+`config/UserEngine.deep-desert-pvp.ini` 3x harvest override, separate saved-data
+directory, and ports `7807/udp` plus `7918/udp`.
 
-PvP is not enabled for partition 31 in the tracked configs. The Deep Desert
-partition 8 service stays on the shared 1.0x harvest config. The second DD
-harvest bonus is supplied by the per-service
+PvP is enabled only for partition 31 in `config/UserGame.deep-desert-pvp.ini`.
+The Deep Desert partition 8 service stays on the shared PvE config and 1.0x
+harvest config. The second DD harvest bonus is supplied by the per-service
 `UserEngine.deep-desert-pvp.ini` mining/vehicle multipliers, not by
-`m_PvpEnabledPartitions` or `SecurityZones.PvpResourceMultiplier`.
+`SecurityZones.PvpResourceMultiplier`.
 
 Coriolis is not currently proven to be partition-scoped. The known config
 surface exposes `m_bCoriolisAutoSpawnEnabled` under `SandStormConfig` and
-cycle/wipe fields under `CoriolisSubsystem`, which appear global. The second DD keeps
-auto-spawn, Shifting Sands trigger, and DB wipe disabled in its dedicated config
-until partition-specific behavior is validated on live routing.
+cycle/wipe fields under `CoriolisSubsystem`, which appear global. The second DD
+uses its dedicated high-damage Coriolis and Shifting Sands config only when the
+`deep-desert-pvp` service is intentionally restarted for maintenance.
 
 To intentionally bring the second DD online after a maintenance window, keep it as a
 manual opt-in:

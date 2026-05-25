@@ -121,8 +121,8 @@ The typed layer deliberately excludes Coriolis cycle-start, cycle-duration, DB w
 `config/UserEngine.deep-desert-pvp.ini` sets:
 
 ```ini
-Dune.GlobalMiningOutputMultiplier=2.5
-Dune.GlobalVehicleMiningOutputMultiplier=2.5
+Dune.GlobalMiningOutputMultiplier=3.0
+Dune.GlobalVehicleMiningOutputMultiplier=3.0
 SecurityZones.PvpResourceMultiplier=1.0
 ```
 
@@ -131,8 +131,9 @@ service if it is ever started manually. The live partition-8 Deep Desert service
 uses the shared `config/UserEngine.ini` values, which keep harvest at 1.0x.
 Because `run_server_safe.sh` copies `DUNE_USERENGINE_CONFIG_PATH` only into that
 map server process, the "global" mining values are isolated to the second DD
-service. This keeps the 2.5x second-DD harvest bonus without relying on
-`m_PvpEnabledPartitions` or `SecurityZones.PvpResourceMultiplier`.
+service. This keeps the 3x second-DD harvest bonus separate from
+`SecurityZones.PvpResourceMultiplier`; PvP itself is enabled in
+`config/UserGame.deep-desert-pvp.ini` with `+m_PvpEnabledPartitions=31`.
 
 No shipped or validated INI surface currently gates mining/resource multipliers
 by player level. Confidence is unknown for a level-gated harvest bonus until a

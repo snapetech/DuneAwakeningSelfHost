@@ -58,45 +58,45 @@ printf 'wrote backup: %s\n' "$backup_file"
 "${compose[@]}" exec -T postgres psql -U dune -d "$db" -v ON_ERROR_STOP=1 -v partition_count="$partition_count" <<'SQL'
 begin;
 
-with desired(partition_id, map, dimension_index) as (
+with desired(partition_id, map, dimension_index, label) as (
   values
-    (1, 'Survival_1', 0),
-    (2, 'Overmap', 0),
-    (3, 'SH_Arrakeen', 0),
-    (4, 'SH_HarkoVillage', 0),
-    (5, 'CB_Story_Hephaestus', 0),
-    (6, 'CB_Story_Ecolab_Carthag', 0),
-    (7, 'CB_Story_WaterFatManor', 0),
-    (8, 'DeepDesert_1', 0),
-    (9, 'Story_ProcesVerbal', 0),
-    (10, 'DLC_Story_LostHarvest_EcolabA', 0),
-    (11, 'DLC_Story_LostHarvest_EcolabB', 0),
-    (12, 'DLC_Story_LostHarvest_ForgottenLab', 0),
-    (13, 'Story_ArtOfKanly', 0),
-    (14, 'CB_Dungeon_Hephaestus', 0),
-    (15, 'CB_Dungeon_OldCarthag', 0),
-    (16, 'Story_Faction_Outpost_Atre', 0),
-    (17, 'Story_Faction_Outpost_Hark', 0),
-    (18, 'Story_HeighlinerDungeon', 0),
-    (19, 'CB_Ecolab_Bronze_Green_089', 0),
-    (20, 'CB_Ecolab_Bronze_Green_152', 0),
-    (21, 'CB_Ecolab_Bronze_Green_024', 0),
-    (22, 'CB_Ecolab_Bronze_Green_195', 0),
-    (23, 'CB_Ecolab_Bronze_Green_136', 0),
-    (24, 'CB_Overland_M_01', 0),
-    (25, 'CB_Overland_S_04', 0),
-    (26, 'CB_Overland_S_06', 0),
-    (27, 'CB_Story_BanditFortress01', 0),
-    (28, 'CB_Overland_S_07', 0),
-    (29, 'CB_Overland_S_08', 0),
-    (30, 'CB_Dungeon_ThePit', 0),
-    (31, 'DeepDesert_1', 1)
+    (1, 'Survival_1', 0, null),
+    (2, 'Overmap', 0, null),
+    (3, 'SH_Arrakeen', 0, null),
+    (4, 'SH_HarkoVillage', 0, null),
+    (5, 'CB_Story_Hephaestus', 0, null),
+    (6, 'CB_Story_Ecolab_Carthag', 0, null),
+    (7, 'CB_Story_WaterFatManor', 0, null),
+    (8, 'DeepDesert_1', 0, 'Deep Desert PvE'),
+    (9, 'Story_ProcesVerbal', 0, null),
+    (10, 'DLC_Story_LostHarvest_EcolabA', 0, null),
+    (11, 'DLC_Story_LostHarvest_EcolabB', 0, null),
+    (12, 'DLC_Story_LostHarvest_ForgottenLab', 0, null),
+    (13, 'Story_ArtOfKanly', 0, null),
+    (14, 'CB_Dungeon_Hephaestus', 0, null),
+    (15, 'CB_Dungeon_OldCarthag', 0, null),
+    (16, 'Story_Faction_Outpost_Atre', 0, null),
+    (17, 'Story_Faction_Outpost_Hark', 0, null),
+    (18, 'Story_HeighlinerDungeon', 0, null),
+    (19, 'CB_Ecolab_Bronze_Green_089', 0, null),
+    (20, 'CB_Ecolab_Bronze_Green_152', 0, null),
+    (21, 'CB_Ecolab_Bronze_Green_024', 0, null),
+    (22, 'CB_Ecolab_Bronze_Green_195', 0, null),
+    (23, 'CB_Ecolab_Bronze_Green_136', 0, null),
+    (24, 'CB_Overland_M_01', 0, null),
+    (25, 'CB_Overland_S_04', 0, null),
+    (26, 'CB_Overland_S_06', 0, null),
+    (27, 'CB_Story_BanditFortress01', 0, null),
+    (28, 'CB_Overland_S_07', 0, null),
+    (29, 'CB_Overland_S_08', 0, null),
+    (30, 'CB_Dungeon_ThePit', 0, null),
+    (31, 'DeepDesert_1', 1, 'Deep Desert PvP')
 ),
 definition as (
   select '{"box": {"max_x": 1, "max_y": 1, "min_x": 0, "min_y": 0}, "type": "box2d_array"}'::jsonb as value
 )
-insert into dune.world_partition (partition_id, map, dimension_index, partition_definition)
-select d.partition_id, d.map, d.dimension_index, definition.value
+insert into dune.world_partition (partition_id, map, dimension_index, partition_definition, label)
+select d.partition_id, d.map, d.dimension_index, definition.value, d.label
 from desired d
 cross join definition
 where d.partition_id <= :partition_count
@@ -106,6 +106,17 @@ where d.partition_id <= :partition_count
     where wp.map = d.map
       and wp.dimension_index = d.dimension_index
   );
+
+with desired(partition_id, label) as (
+  values
+    (8, 'Deep Desert PvE'),
+    (31, case when :partition_count >= 31 then 'Deep Desert PvP' else null end)
+)
+update dune.world_partition wp
+set label = desired.label
+from desired
+where wp.partition_id = desired.partition_id
+  and desired.label is not null;
 
 update dune.actors
 set partition_id = null

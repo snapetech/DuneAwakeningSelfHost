@@ -5,9 +5,13 @@ usage() {
   cat <<'USAGE'
 Usage: scripts/apply-post-dd-cycle-coriolis-config.sh [ENV_FILE] [--restart]
 
-Replaces the staged Deep Desert one-shot Coriolis configs with the normal
+Replaces the staged PvE Deep Desert one-shot Coriolis config with the normal
 weekly Landsraad/Coriolis cadence from config/UserGame.ini. The replacement
 keeps no damage, no DB wipe, no restart, and no Deep Desert Shifting Sands.
+
+The partition-31 PvP Deep Desert config is intentionally left alone because it
+owns PvP, high Coriolis damage, Shifting Sands, and the separate 3x harvest
+Engine config.
 
 Run this after the 2026-05-25 Deep Desert refresh has completed.
 USAGE
@@ -44,7 +48,6 @@ fi
 source_file="config/UserGame.ini"
 targets=(
   "config/UserGame.deep-desert-coriolis.ini"
-  "config/UserGame.deep-desert-pvp.ini"
 )
 
 if [[ ! -f "$source_file" ]]; then
@@ -99,7 +102,3 @@ for file in "${files[@]}"; do
 done
 
 "${compose[@]}" up -d --force-recreate --no-deps deep-desert
-
-if "${compose[@]}" ps --services --filter status=running | grep -qx 'deep-desert-pvp'; then
-  "${compose[@]}" up -d --force-recreate --no-deps deep-desert-pvp
-fi
