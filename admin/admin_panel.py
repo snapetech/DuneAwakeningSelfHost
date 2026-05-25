@@ -316,6 +316,8 @@ GAME_MAP_SERVICES = [
     "ecolab-green-136", "overland-m-01", "overland-s-04", "overland-s-06", "bandit-fortress",
     "overland-s-07", "overland-s-08", "dungeon-thepit",
 ]
+if world_partition_count() == 31 and "deep-desert-pvp" not in GAME_MAP_SERVICES:
+    GAME_MAP_SERVICES.append("deep-desert-pvp")
 SERVICE_LAYER_SERVICES = ["rmq-auth-shim", "text-router", "gateway", "director"]
 ALL_RESTART_SAFE_SERVICES = GAME_MAP_SERVICES + SERVICE_LAYER_SERVICES
 RESTART_TARGETS = {
@@ -1028,6 +1030,9 @@ def schedule_restart(body):
     announce = str(body.get("announce", "true")).lower() in ("1", "true", "yes", "on")
     execute = str(body.get("execute", "")).lower() in ("1", "true", "yes", "on")
     backup = str(body.get("backup", "true")).lower() in ("1", "true", "yes", "on")
+    require_soft_disconnect = str(
+        body.get("require_soft_disconnect", body.get("requireSoftDisconnect", "true"))
+    ).lower() in ("1", "true", "yes", "on")
     now = time.time()
     run_at = now + ANNOUNCEMENT_DELAYS[delay_key]
     job = {
@@ -1044,6 +1049,7 @@ def schedule_restart(body):
         "repeatSeconds": repeat_seconds,
         "execute": execute,
         "backup": backup,
+        "requireSoftDisconnect": require_soft_disconnect,
         "status": "scheduled",
         "lastError": None,
     }
@@ -1180,6 +1186,18 @@ def run_restart_recovery(job):
     command = pathlib.Path(RESTART_RECOVERY_COMMAND)
     if not command.exists() or not os.access(command, os.X_OK):
         return {"ok": False, "skipped": True, "error": f"restart recovery command is not executable: {command}"}
+    if command.suffix == ".sh" and shutil.which("bash") is None and pathlib.Path("/sbin/apk").exists():
+        try:
+            subprocess.run(
+                ["apk", "add", "--no-cache", "bash"],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=120,
+                check=False,
+            )
+        except Exception:
+            pass
     env = os.environ.copy()
     env.update({
         "COMPOSE_FILES": resolve_compose_files("compose.yaml:compose.allmaps.yaml"),
@@ -1221,14 +1239,21 @@ def execute_restart(job):
         return {"ok": False, "error": f"restart command is not executable: {command}"}
 
     action = job.get("action", "restart")
-    disconnect_result = soft_disconnect_online_players(job)
-    if not disconnect_result.get("ok"):
-        return {
-            "ok": False,
-            "action": action,
-            "disconnect": disconnect_result,
-            "error": disconnect_result.get("error", "soft disconnect failed"),
-            "output": disconnect_result.get("error", "soft disconnect failed"),
+    if job.get("requireSoftDisconnect", True):
+        disconnect_result = soft_disconnect_online_players(job)
+        if not disconnect_result.get("ok"):
+            return {
+                "ok": False,
+                "action": action,
+                "disconnect": disconnect_result,
+                "error": disconnect_result.get("error", "soft disconnect failed"),
+                "output": disconnect_result.get("error", "soft disconnect failed"),
+            }
+    else:
+        disconnect_result = {
+            "ok": True,
+            "enabled": False,
+            "skipped": "soft disconnect not required for this maintenance job",
         }
     stop_phase = "shutdown" if action == "shutdown" else "stop"
     stop_result = run_restart_command(command, job, stop_phase)

@@ -66,6 +66,12 @@ if [[ "$building_piece_enabled" == "true" ]] && file_exists compose.building-pie
   add_file compose.building-piece-limit.yaml
 fi
 
+fls_ipv4_hosts_enabled="${DUNE_FLS_IPV4_HOSTS_ENABLED:-$(read_env DUNE_FLS_IPV4_HOSTS_ENABLED)}"
+fls_ipv4_hosts_enabled="${fls_ipv4_hosts_enabled:-true}"
+if [[ "$fls_ipv4_hosts_enabled" == "true" ]] && file_exists compose.fls-ipv4-hosts.yaml; then
+  add_file compose.fls-ipv4-hosts.yaml
+fi
+
 host_limits_file="${DUNE_HOST_LIMITS_COMPOSE_FILE:-$(read_env DUNE_HOST_LIMITS_COMPOSE_FILE)}"
 if [[ -n "$host_limits_file" ]] && file_exists "$host_limits_file"; then
   add_file "$host_limits_file"

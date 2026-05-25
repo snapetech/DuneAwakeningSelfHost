@@ -15,6 +15,15 @@ import urllib.parse
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 DOCKER_SOCKET = os.environ.get("DOCKER_SOCKET", "/var/run/docker.sock")
 DOCKER_COMPOSE_PROJECT = os.environ.get("COMPOSE_PROJECT_NAME", "dune_server")
+DIRECTOR_FALLBACK_HEALTH_CONTAINERS = [
+    name
+    for name in re.split(r"[:,\s]+", os.environ.get("DUNE_DIRECTOR_HEALTH_CONTAINER", "").strip())
+    if name
+] + [
+    f"{DOCKER_COMPOSE_PROJECT}-director-live-1",
+    "dune_server-director-live-1",
+]
+LOG_SOURCE_NOTES = {}
 
 SECRET_PATTERNS = [
     (re.compile(r"eyJ[A-Za-z0-9_.-]+\.[A-Za-z0-9_.-]+\.[A-Za-z0-9_.-]+"), "[redacted-jwt]"),
@@ -125,10 +134,29 @@ def find_container_id(service):
     return containers[0].get("Id") if containers else None
 
 
+def find_running_container_by_name(names):
+    wanted = {name.lstrip("/") for name in names if name}
+    if not wanted:
+        return None, None
+    containers = docker_api_json("/containers/json?all=1")
+    for container in containers:
+        container_names = {name.lstrip("/") for name in container.get("Names") or []}
+        if container.get("State") == "running" and container_names & wanted:
+            matched = sorted(container_names & wanted)[0]
+            return container.get("Id"), matched
+    return None, None
+
+
 def socket_service_logs(service, since):
     container_id = find_container_id(service)
     if not container_id:
         return "", f"{service} container is not running"
+    since_epoch = max(0, int(time.time()) - parse_since_seconds(since))
+    path = f"/containers/{container_id}/logs?stdout=1&stderr=1&timestamps=0&since={since_epoch}"
+    return redact(clean_docker_log_bytes(docker_api_raw(path, timeout=20))), None
+
+
+def socket_container_logs(container_id, since):
     since_epoch = max(0, int(time.time()) - parse_since_seconds(since))
     path = f"/containers/{container_id}/logs?stdout=1&stderr=1&timestamps=0&since={since_epoch}"
     return redact(clean_docker_log_bytes(docker_api_raw(path, timeout=20))), None
@@ -151,10 +179,45 @@ def service_running(base_cmd, service):
     return result.returncode == 0 and bool(result.stdout.strip())
 
 
+def fallback_container_logs(service, since):
+    if service != "director":
+        return "", None
+    runtime = os.environ.get("CONTAINER_RUNTIME", "docker")
+    for name in dict.fromkeys(DIRECTOR_FALLBACK_HEALTH_CONTAINERS):
+        if not name:
+            continue
+        if shutil.which(runtime):
+            inspect = run([runtime, "inspect", "-f", "{{.State.Running}}", name], timeout=10)
+            if inspect.returncode != 0 or inspect.stdout.strip().lower() != "true":
+                continue
+            result = run([runtime, "logs", "--since", since, name], timeout=20)
+            text = redact((result.stdout or "") + "\n" + (result.stderr or ""))
+            if result.returncode != 0:
+                return text, f"{name} logs failed"
+            return text, f"using live fallback container: {name}"
+    try:
+        container_id, matched_name = find_running_container_by_name(DIRECTOR_FALLBACK_HEALTH_CONTAINERS)
+        if container_id:
+            logs, _ = socket_container_logs(container_id, since)
+            return logs, f"using live fallback container: {matched_name}"
+    except Exception:
+        pass
+    return "", None
+
+
 def service_logs(base_cmd, service, since):
     if not shutil.which(base_cmd[0]):
+        if service == "director":
+            logs, fallback_note = fallback_container_logs(service, since)
+            if fallback_note:
+                LOG_SOURCE_NOTES[service] = fallback_note
+                return logs, None
         return socket_service_logs(service, since)
     if not service_running(base_cmd, service):
+        logs, fallback_note = fallback_container_logs(service, since)
+        if fallback_note:
+            LOG_SOURCE_NOTES[service] = fallback_note
+            return logs, None
         return "", f"{service} container is not running"
     result = run(base_cmd + ["logs", "--since", since, service], timeout=20)
     text = redact((result.stdout or "") + "\n" + (result.stderr or ""))
@@ -185,6 +248,7 @@ def line_sample(lines, needles, limit=3):
 
 
 def evaluate(env_file, compose_files, since):
+    LOG_SOURCE_NOTES.clear()
     base = compose_cmd(env_file, compose_files)
     director_log, director_error = service_logs(base, "director", since)
     gateway_log, gateway_error = service_logs(base, "gateway", since)
@@ -223,8 +287,8 @@ def evaluate(env_file, compose_files, since):
         gateway_bad_after_declare = line_sample(gateway_lines, BAD_PATTERNS, 5)
 
     checks = [
-        {"name": "director container running", "ok": director_error is None, "value": director_error or "running"},
-        {"name": "gateway container running", "ok": gateway_error is None, "value": gateway_error or "running"},
+        {"name": "director container running", "ok": director_error is None, "value": director_error or LOG_SOURCE_NOTES.get("director", "running")},
+        {"name": "gateway container running", "ok": gateway_error is None, "value": gateway_error or LOG_SOURCE_NOTES.get("gateway", "running")},
         {"name": "director initialized with FLS or has active heartbeat", "ok": initialize_idx >= 0 or heartbeat_idx >= 0, "value": "seen" if initialize_idx >= 0 else "heartbeat-only"},
         {"name": "director heartbeat accepted by FLS", "ok": heartbeat_idx >= 0, "value": "seen" if heartbeat_idx >= 0 else "missing"},
         {"name": "director population accepted by FLS", "ok": population_idx >= 0, "value": "seen" if population_idx >= 0 else "missing"},

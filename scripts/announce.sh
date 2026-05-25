@@ -405,6 +405,16 @@ def publish_with_host_container():
         status, logs = docker_api("GET", f"/containers/{container_id}/logs?stdout=true&stderr=true")
         text = demux_docker_payload(logs)
         if int(wait_result.get("StatusCode") or 1) != 0:
+            for line in reversed(text.strip().splitlines()):
+                start = line.find("{")
+                if start < 0:
+                    continue
+                try:
+                    parsed = json.loads(line[start:])
+                except json.JSONDecodeError:
+                    continue
+                if parsed.get("ok"):
+                    return parsed
             raise RuntimeError(text.strip() or f"publisher exited {wait_result.get('StatusCode')}")
         for line in reversed(text.strip().splitlines()):
             start = line.find("{")

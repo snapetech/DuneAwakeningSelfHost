@@ -17,6 +17,9 @@ Environment:
                                         Set true to allow manual runs outside the window.
   DUNE_DAILY_RESTART_DELAY              Warning window. Default: 30min
   DUNE_DAILY_RESTART_REPEAT_SECONDS     Repeat cadence. Default: 600
+  DUNE_DAILY_RESTART_REQUIRE_SOFT_DISCONNECT
+                                        Require targeted player disconnect before stop.
+                                        Default: false
   DUNE_DAILY_RESTART_MESSAGE            Announcement text.
 USAGE
 }
@@ -105,6 +108,8 @@ restart_delay="$(env_or_file DUNE_DAILY_RESTART_DELAY)"
 restart_delay="${restart_delay:-30min}"
 repeat_seconds="$(env_or_file DUNE_DAILY_RESTART_REPEAT_SECONDS)"
 repeat_seconds="${repeat_seconds:-600}"
+require_soft_disconnect="$(env_or_file DUNE_DAILY_RESTART_REQUIRE_SOFT_DISCONNECT)"
+require_soft_disconnect="${require_soft_disconnect:-false}"
 message="$(env_or_file DUNE_DAILY_RESTART_MESSAGE)"
 message="${message:-Daily maintenance restart at 6:00 AM. Please get to a safe place.}"
 
@@ -112,11 +117,12 @@ token="$(read_env DUNE_ADMIN_TOKEN || true)"
 require_token="$(read_env DUNE_ADMIN_REQUIRE_TOKEN || true)"
 
 body="$(
-  python3 - "$restart_delay" "$repeat_seconds" "$message" <<'PY'
+  python3 - "$restart_delay" "$repeat_seconds" "$require_soft_disconnect" "$message" <<'PY'
 import json
 import sys
 
-delay, repeat_seconds, message = sys.argv[1:4]
+delay, repeat_seconds, require_soft_disconnect, message = sys.argv[1:5]
+require_soft_disconnect = require_soft_disconnect.strip().lower() in ("1", "true", "yes", "on")
 print(json.dumps({
     "target": "all",
     "action": "restart",
@@ -130,6 +136,7 @@ print(json.dumps({
     "announce": True,
     "execute": True,
     "backup": True,
+    "require_soft_disconnect": require_soft_disconnect,
 }))
 PY
 )"

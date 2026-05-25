@@ -112,7 +112,7 @@ Private to the issuing player or recipient:
 - `&test`, `&where`, `&disconnect`/`&kick`, `&teleport`, `&goto`, `&bring`, denied commands, unknown commands, and usage/errors.
 - `&gm ...` command results and errors, including nested GM subcommands that call `run_announce()`.
 - Player-presence private welcome and first-seen messages.
-- Hagga arrival, first Deep Desert, reconnect recovery/support, base reminders, stuck-position notices, restart private warnings, post-restart return notices, and starter-tool notices.
+- Hagga arrival, first Deep Desert, every-entry Deep Desert instance notices, reconnect recovery/support, base reminders, stuck-position notices, restart private warnings, post-restart return notices, and starter-tool notices.
 - Admin-only presence digests and alerts sent to currently online configured admins.
 
 Global by design:

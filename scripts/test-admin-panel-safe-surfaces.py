@@ -1369,6 +1369,51 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertEqual(result["returncode"], 141)
         self.assertIn("141", result["warning"])
 
+    def test_restart_can_skip_soft_disconnect_for_daily_maintenance(self):
+        command = self.workspace / "scripts" / "restart-target.sh"
+        command.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        command.chmod(0o755)
+        self.panel.RESTART_COMMAND = str(command)
+        self.panel.soft_disconnect_online_players = lambda job: (_ for _ in ()).throw(AssertionError("soft disconnect should be skipped"))
+        phases = []
+        self.panel.run_restart_command = lambda command, job, phase: phases.append(phase) or {
+            "ok": True,
+            "phase": phase,
+            "returncode": 0,
+            "output": phase,
+        }
+        self.panel.wait_for_restart_online = lambda: {
+            "ok": True,
+            "expected": 30,
+            "online": 30,
+            "readyOnline": 30,
+            "alive": 30,
+            "active": 30,
+        }
+
+        result = self.panel.execute_restart({
+            "id": "daily",
+            "execute": True,
+            "action": "restart",
+            "target": "all",
+            "services": [],
+            "backup": False,
+            "requireSoftDisconnect": False,
+        })
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(phases, ["stop", "update", "start"])
+        self.assertEqual(result["disconnect"]["skipped"], "soft disconnect not required for this maintenance job")
+
+    def test_partition_31_adds_deep_desert_pvp_to_restart_targets(self):
+        workspace = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(workspace, ignore_errors=True))
+        workspace.joinpath(".env").write_text("DUNE_WORLD_PARTITION_COUNT=31\n", encoding="utf-8")
+        panel = load_admin_panel(workspace)
+
+        self.assertIn("deep-desert-pvp", panel.GAME_MAP_SERVICES)
+        self.assertIn("deep-desert-pvp", panel.RESTART_TARGETS["all"]["services"])
+
     def test_restart_start_runs_after_update_check_failure(self):
         command = self.workspace / "scripts" / "restart-target.sh"
         command.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")

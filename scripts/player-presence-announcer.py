@@ -171,6 +171,7 @@ def online_players():
       coalesce(ps.last_login_time::text, '') as last_login_time,
       coalesce(act.map, wp.map, '') as map_name,
       coalesce(wp.label, '') as partition_label,
+      coalesce(act.partition_id::text, wp.partition_id::text, '') as partition_id,
       ((act.transform).location).x::float8 as x,
       ((act.transform).location).y::float8 as y,
       ((act.transform).location).z::float8 as z
@@ -195,15 +196,17 @@ def online_players():
         last_login_time = parts[3] if len(parts) > 3 else ""
         map_name = parts[4] if len(parts) > 4 else ""
         partition_label = parts[5] if len(parts) > 5 else ""
+        partition_id = parts[6] if len(parts) > 6 else ""
         players[account_id] = {
             "name": name or account_id,
             "flsId": fls_id,
             "lastLoginTime": last_login_time,
             "map": map_name,
             "partitionLabel": partition_label,
-            "x": parts[6] if len(parts) > 6 else "",
-            "y": parts[7] if len(parts) > 7 else "",
-            "z": parts[8] if len(parts) > 8 else "",
+            "partitionId": partition_id,
+            "x": parts[7] if len(parts) > 7 else "",
+            "y": parts[8] if len(parts) > 8 else "",
+            "z": parts[9] if len(parts) > 9 else "",
         }
     return players
 
@@ -556,6 +559,51 @@ def player_location_label(player):
     if not isinstance(player, dict):
         return ""
     return player.get("partitionLabel") or player.get("map") or ""
+
+
+def player_partition_id(player):
+    if isinstance(player, dict):
+        return str(player.get("partitionId") or "")
+    return ""
+
+
+def env_set(name, default=""):
+    return {item.strip() for item in env(name, default).split(",") if item.strip()}
+
+
+def deep_desert_text(player):
+    if not isinstance(player, dict):
+        return ""
+    return f"{player.get('map') or ''} {player.get('partitionLabel') or ''}".lower()
+
+
+def is_deep_desert_player(player):
+    text = re.sub(r"[^a-z0-9]+", "", deep_desert_text(player))
+    return "deepdesert" in text
+
+
+def deep_desert_instance(player):
+    if not is_deep_desert_player(player):
+        return ""
+    text = deep_desert_text(player)
+    partition_id = player_partition_id(player)
+    if "pvp" in text or partition_id in env_set("DUNE_PLAYER_PRESENCE_DEEP_DESERT_PVP_PARTITIONS", "31"):
+        return "pvp"
+    if "pve" in text or partition_id in env_set("DUNE_PLAYER_PRESENCE_DEEP_DESERT_PVE_PARTITIONS", "8"):
+        return "pve"
+    return env("DUNE_PLAYER_PRESENCE_DEEP_DESERT_DEFAULT_INSTANCE", "pve").strip().lower() or "pve"
+
+
+def player_location_changed(previous_player, current_player):
+    if not isinstance(previous_player, dict):
+        return True
+    previous_location = (player_map(previous_player), player_location_label(previous_player))
+    current_location = (player_map(current_player), player_location_label(current_player))
+    if previous_location != current_location:
+        return True
+    previous_partition_id = player_partition_id(previous_player)
+    current_partition_id = player_partition_id(current_player)
+    return bool(previous_partition_id and current_partition_id and previous_partition_id != current_partition_id)
 
 
 def player_presence_session(player):
@@ -1120,6 +1168,28 @@ def check_once():
                     automated_private_results.append(send_private(player, template, final_count, "deep-desert-first", account_id))
                     deep_desert_seen.add(str(account_id))
             state["deepDesertMessaged"] = sorted(deep_desert_seen, key=lambda value: (0, int(value)) if value.isdigit() else (1, value))
+
+        if env_bool("DUNE_PLAYER_PRESENCE_DEEP_DESERT_JOIN_MESSAGES_ENABLED", False):
+            templates = {
+                "pve": env("DUNE_PLAYER_PRESENCE_DEEP_DESERT_PVE_JOIN_TEMPLATE", "PvE Deep Desert: Coriolis runs weekly but does no damage. No DB wipe, no Shifting Sands."),
+                "pvp": env("DUNE_PLAYER_PRESENCE_DEEP_DESERT_PVP_JOIN_TEMPLATE", "PvP Deep Desert: high Coriolis damage, Shifting Sands, 3x harvest. Building here is at your risk: maintain bases and avoid areas sands can bury."),
+            }
+            for account_id, player in current.items():
+                instance = deep_desert_instance(player)
+                if not instance:
+                    continue
+                previous_player = (previous or {}).get(account_id)
+                if account_id not in joined and not player_location_changed(previous_player, player):
+                    continue
+                template = templates.get(instance, templates["pve"])
+                automated_private_results.append(send_private(
+                    player,
+                    template,
+                    final_count,
+                    f"deep-desert-{instance}-join",
+                    account_id,
+                    {"partition_label": player_location_label(player), "partition_id": player_partition_id(player)},
+                ))
 
         if env_bool("DUNE_PLAYER_PRESENCE_RECONNECT_RECOVERY_ENABLED", False):
             window = int(env("DUNE_PLAYER_PRESENCE_RECONNECT_RECOVERY_WINDOW_SECONDS", "600"))

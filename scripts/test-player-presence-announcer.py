@@ -309,6 +309,99 @@ class StarterEmoteGrantTests(unittest.TestCase):
         self.assertEqual(state["onlinePlayers"]["456"]["lastLoginTime"], "2026-05-22 19:06:00+00")
 
 
+class DeepDesertJoinMessageTests(unittest.TestCase):
+    def test_deep_desert_pve_message_sends_on_entry_not_every_poll(self):
+        state = {
+            "onlinePlayers": {
+                "123": {"name": "Traveler", "flsId": "TRAVELER_FLS", "map": "HaggaBasin", "partitionLabel": "Hagga Basin"}
+            },
+            "seenAccounts": ["123"],
+        }
+        current_player = {
+            "name": "Traveler",
+            "flsId": "TRAVELER_FLS",
+            "map": "DeepDesert",
+            "partitionLabel": "Deep Desert PvE",
+            "partitionId": "8",
+        }
+        sent = []
+
+        def fake_save_state(next_state):
+            state.clear()
+            state.update(next_state)
+
+        def fake_private_message(target, message, job_id="player-presence-private-message"):
+            sent.append({"target": target, "message": message, "jobId": job_id})
+            return {"ok": True}
+
+        file_env = {
+            "DUNE_PLAYER_PRESENCE_DEEP_DESERT_JOIN_MESSAGES_ENABLED": "true",
+            "DUNE_PLAYER_PRESENCE_DEEP_DESERT_PVE_JOIN_TEMPLATE": "PVE DD notice",
+            "DUNE_PLAYER_PRESENCE_DEEP_DESERT_FIRST_ENABLED": "false",
+            "DUNE_PLAYER_PRESENCE_REPO_STAR_THIRD_JOIN_ENABLED": "false",
+            "DUNE_PLAYER_PRESENCE_STARTER_BASE_TOOL_ENABLED": "false",
+            "DUNE_PLAYER_PRESENCE_STARTER_EMOTES_ENABLED": "false",
+            "DUNE_PLAYER_PRESENCE_ADMIN_FIRST_LOGIN_DAILY_ENABLED": "false",
+        }
+
+        with unittest.mock.patch.object(player_presence_announcer, "FILE_ENV", file_env), \
+             unittest.mock.patch.dict(player_presence_announcer.os.environ, {}, clear=True), \
+             unittest.mock.patch.object(player_presence_announcer, "online_players", lambda: {"123": current_player}), \
+             unittest.mock.patch.object(player_presence_announcer, "load_state", lambda: state.copy()), \
+             unittest.mock.patch.object(player_presence_announcer, "save_state", fake_save_state), \
+             unittest.mock.patch.object(player_presence_announcer, "private_message", fake_private_message):
+            first_result = player_presence_announcer.check_once()
+            second_result = player_presence_announcer.check_once()
+
+        self.assertEqual(first_result["automatedPrivateMessages"][0]["event"], "deep-desert-pve-join")
+        self.assertEqual(sent, [{"target": current_player, "message": "PVE DD notice", "jobId": "player-presence-deep-desert-pve-join"}])
+        self.assertEqual(second_result["automatedPrivateMessages"], [])
+
+    def test_deep_desert_pvp_message_sends_on_login_by_partition(self):
+        player = {
+            "name": "Builder",
+            "flsId": "BUILDER_FLS",
+            "map": "DeepDesert",
+            "partitionLabel": "Deep Desert",
+            "partitionId": "31",
+        }
+        state = {
+            "onlinePlayers": {},
+            "seenAccounts": ["123"],
+        }
+        sent = []
+
+        def fake_save_state(next_state):
+            state.clear()
+            state.update(next_state)
+
+        def fake_private_message(target, message, job_id="player-presence-private-message"):
+            sent.append({"target": target, "message": message, "jobId": job_id})
+            return {"ok": True}
+
+        file_env = {
+            "DUNE_PLAYER_PRESENCE_DEEP_DESERT_JOIN_MESSAGES_ENABLED": "true",
+            "DUNE_PLAYER_PRESENCE_DEEP_DESERT_PVP_JOIN_TEMPLATE": "PVP DD notice",
+            "DUNE_PLAYER_PRESENCE_DEEP_DESERT_FIRST_ENABLED": "false",
+            "DUNE_PLAYER_PRESENCE_REPO_STAR_THIRD_JOIN_ENABLED": "false",
+            "DUNE_PLAYER_PRESENCE_STARTER_BASE_TOOL_ENABLED": "false",
+            "DUNE_PLAYER_PRESENCE_STARTER_EMOTES_ENABLED": "false",
+            "DUNE_PLAYER_PRESENCE_ADMIN_FIRST_LOGIN_DAILY_ENABLED": "false",
+        }
+
+        with unittest.mock.patch.object(player_presence_announcer, "FILE_ENV", file_env), \
+             unittest.mock.patch.dict(player_presence_announcer.os.environ, {}, clear=True), \
+             unittest.mock.patch.object(player_presence_announcer, "online_players", lambda: {"123": player}), \
+             unittest.mock.patch.object(player_presence_announcer, "load_state", lambda: state.copy()), \
+             unittest.mock.patch.object(player_presence_announcer, "save_state", fake_save_state), \
+             unittest.mock.patch.object(player_presence_announcer, "private_message", fake_private_message):
+            result = player_presence_announcer.check_once()
+
+        self.assertEqual(result["automatedPrivateMessages"][0]["event"], "deep-desert-pvp-join")
+        self.assertEqual(sent[0]["message"], "PVP DD notice")
+        self.assertEqual(sent[0]["jobId"], "player-presence-deep-desert-pvp-join")
+
+
 class ServiceHealthCheckTests(unittest.TestCase):
     def test_default_freshness_check_excludes_derived_hagga_map_svg(self):
         with tempfile.TemporaryDirectory() as tmp:
