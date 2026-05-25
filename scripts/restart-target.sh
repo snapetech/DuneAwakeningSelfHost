@@ -217,9 +217,11 @@ def env_value(key):
 
 
 partition_count = env_value("DUNE_WORLD_PARTITION_COUNT") or "30"
-if partition_count != "30":
-    print(f"DUNE_WORLD_PARTITION_COUNT must be 30; partition 31 Deep Desert PvP is intentionally disabled, got: {partition_count}", file=sys.stderr)
+if partition_count not in ("30", "31"):
+    print(f"DUNE_WORLD_PARTITION_COUNT must be 30, or 31 to intentionally enable PvP Deep Desert; got: {partition_count}", file=sys.stderr)
     sys.exit(64)
+if partition_count == "31":
+    default_services.insert(default_services.index("director"), "deep-desert-pvp")
 
 stateful_services = {"postgres", "admin-rmq", "game-rmq"}
 allow_stateful = os.environ.get("DUNE_RESTART_ALLOW_STATEFUL", "").lower() in ("1", "true", "yes", "on")
@@ -809,8 +811,11 @@ if [ "$target" = "all" ]; then
     30)
       services="survival overmap arrakeen harko-village testing-hephaestus testing-carthag testing-waterfat deep-desert proces-verbal lostharvest-ecolab-a lostharvest-ecolab-b lostharvest-forgottenlab art-of-kanly dungeon-hephaestus dungeon-oldcarthag faction-outpost-atre faction-outpost-hark heighliner-dungeon ecolab-green-089 ecolab-green-152 ecolab-green-024 ecolab-green-195 ecolab-green-136 overland-m-01 overland-s-04 overland-s-06 bandit-fortress overland-s-07 overland-s-08 dungeon-thepit director gateway text-router rmq-auth-shim"
       ;;
+    31)
+      services="survival overmap arrakeen harko-village testing-hephaestus testing-carthag testing-waterfat deep-desert proces-verbal lostharvest-ecolab-a lostharvest-ecolab-b lostharvest-forgottenlab art-of-kanly dungeon-hephaestus dungeon-oldcarthag faction-outpost-atre faction-outpost-hark heighliner-dungeon ecolab-green-089 ecolab-green-152 ecolab-green-024 ecolab-green-195 ecolab-green-136 overland-m-01 overland-s-04 overland-s-06 bandit-fortress overland-s-07 overland-s-08 dungeon-thepit deep-desert-pvp director gateway text-router rmq-auth-shim"
+      ;;
     *)
-      printf 'DUNE_WORLD_PARTITION_COUNT must be 30; partition 31 Deep Desert PvP is intentionally disabled, got: %s\n' "$partition_count" >&2
+      printf 'DUNE_WORLD_PARTITION_COUNT must be 30, or 31 to intentionally enable PvP Deep Desert; got: %s\n' "$partition_count" >&2
       exit 64
       ;;
   esac

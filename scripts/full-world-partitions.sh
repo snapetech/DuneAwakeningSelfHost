@@ -26,10 +26,13 @@ read_env() {
 
 partition_count="${DUNE_WORLD_PARTITION_COUNT:-$(read_env DUNE_WORLD_PARTITION_COUNT)}"
 partition_count="${partition_count:-30}"
-if [[ "$partition_count" != "30" ]]; then
-  printf 'DUNE_WORLD_PARTITION_COUNT must be 30; partition 31 Deep Desert PvP is intentionally disabled, got: %s\n' "$partition_count" >&2
-  exit 2
-fi
+case "$partition_count" in
+  30|31) ;;
+  *)
+    printf 'DUNE_WORLD_PARTITION_COUNT must be 30, or 31 to intentionally enable PvP Deep Desert; got: %s\n' "$partition_count" >&2
+    exit 2
+    ;;
+esac
 
 case "$backup_dir" in
   backups/*) ;;

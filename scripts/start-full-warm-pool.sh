@@ -6,7 +6,8 @@ usage() {
 Usage: scripts/start-full-warm-pool.sh [ENV_FILE] [WAIT_SECONDS]
 
 Starts the 30-partition warm pool in dependency order without recreating
-already-running stateful services.
+already-running stateful services. Set DUNE_WORLD_PARTITION_COUNT=31 only for
+an intentional PvP Deep Desert bring-up.
 
 Default:
   scripts/start-full-warm-pool.sh .env 600
@@ -40,10 +41,13 @@ if [[ ! "$batch_size" =~ ^[0-9]+$ || ! "$batch_delay" =~ ^[0-9]+$ ]]; then
 fi
 partition_count="${DUNE_WORLD_PARTITION_COUNT:-$(read_env DUNE_WORLD_PARTITION_COUNT)}"
 partition_count="${partition_count:-30}"
-if [[ "$partition_count" != "30" ]]; then
-  printf 'DUNE_WORLD_PARTITION_COUNT must be 30; partition 31 Deep Desert PvP is intentionally disabled, got: %s\n' "$partition_count" >&2
-  exit 2
-fi
+case "$partition_count" in
+  30|31) ;;
+  *)
+    printf 'DUNE_WORLD_PARTITION_COUNT must be 30, or 31 to intentionally enable PvP Deep Desert; got: %s\n' "$partition_count" >&2
+    exit 2
+    ;;
+esac
 
 container_runtime="${CONTAINER_RUNTIME:-docker}"
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -195,8 +199,14 @@ start_services \
   overland-s-07 overland-s-08 dungeon-thepit
 wait_for_counts 30 'maps 1 through 30'
 
-printf 'partition 31 Deep Desert PvP is intentionally disabled; ensuring the old service is stopped\n'
-"${compose[@]}" stop deep-desert-pvp >/dev/null 2>&1 || true
+if [[ "$partition_count" == "31" ]]; then
+  printf 'starting partition 31 PvP Deep Desert\n'
+  start_services deep-desert-pvp
+  wait_for_counts 31 'maps 1 through 31'
+else
+  printf 'partition 31 Deep Desert PvP is intentionally disabled; ensuring the old service is stopped\n'
+  "${compose[@]}" stop deep-desert-pvp >/dev/null 2>&1 || true
+fi
 remove_db_init
 
 printf 'final status\n'

@@ -27,7 +27,8 @@ Environment:
   DUNE_WATCH_RECOVER_COMMAND Recovery command. Default: scripts/recover-map.sh
   DUNE_WATCH_SEED_NEIGHBORS Seed known Docker bridge neighbor entries. Default: false
   DUNE_WATCH_SEED_COMMAND   Neighbor seed command. Default: scripts/seed-gateway-neighbor.sh
-  DUNE_WORLD_PARTITION_COUNT Monitored partition ceiling. Default: 30
+  DUNE_WORLD_PARTITION_COUNT Monitored partition ceiling. Default: 30; set 31
+                             only when PvP Deep Desert is intentionally online.
 USAGE
 }
 
@@ -76,10 +77,13 @@ read_env() {
 
 partition_count="${DUNE_WORLD_PARTITION_COUNT:-$(read_env DUNE_WORLD_PARTITION_COUNT)}"
 partition_count="${partition_count:-30}"
-if [[ "$partition_count" != "30" ]]; then
-  printf 'DUNE_WORLD_PARTITION_COUNT must be 30; partition 31 Deep Desert PvP is intentionally disabled, got: %s\n' "$partition_count" >&2
-  exit 2
-fi
+case "$partition_count" in
+  30|31) ;;
+  *)
+    printf 'DUNE_WORLD_PARTITION_COUNT must be 30, or 31 to intentionally enable PvP Deep Desert; got: %s\n' "$partition_count" >&2
+    exit 2
+    ;;
+esac
 
 if [[ ! "$interval" =~ ^[0-9]+$ || ! "$recovery_wait" =~ ^[0-9]+$ || ! "$cooldown" =~ ^[0-9]+$ || ! "$startup_grace" =~ ^[0-9]+$ ]]; then
   printf 'DUNE_WATCH_INTERVAL, DUNE_WATCH_RECOVERY_WAIT, DUNE_WATCH_COOLDOWN, and DUNE_WATCH_STARTUP_GRACE must be numeric\n' >&2
@@ -125,6 +129,7 @@ MAP_PARTITIONS=(
   "overland-s-07:28"
   "overland-s-08:29"
   "dungeon-thepit:30"
+  "deep-desert-pvp:31"
 )
 
 declare -A LAST_RECOVERY=()

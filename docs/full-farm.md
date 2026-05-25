@@ -104,6 +104,20 @@ cycle/wipe fields under `CoriolisSubsystem`, which appear global. PvP DD keeps
 auto-spawn, Shifting Sands trigger, and DB wipe disabled in its dedicated config
 until partition-specific behavior is validated on live routing.
 
+To intentionally bring PvP DD online after a maintenance window, keep it as a
+manual opt-in:
+
+1. Set `DUNE_WORLD_PARTITION_COUNT=31` for the activation command or in `.env`
+   only when partition 31 should be monitored and included in all-target
+   restarts.
+2. Run `DUNE_WORLD_PARTITION_COUNT=31 ./scripts/full-world-partitions.sh .env`
+   to add `DeepDesert_1` dimension `1` / partition `31`.
+3. Start only the PvP DD service with
+   `DUNE_WORLD_PARTITION_COUNT=31 docker compose -f compose.yaml -f compose.allmaps.yaml --env-file .env up -d --no-deps deep-desert-pvp`.
+4. Validate partition `31` in `dune.world_partition`, `dune.farm_state`, and
+   `dune.active_server_ids`, then test routing before adding router forwarding
+   or public status/watchdog expectations.
+
 Keep these closed publicly:
 
 - `15431/tcp`, `15672/tcp`, `15673/tcp`, `18080/tcp`: local debug/admin surfaces.
