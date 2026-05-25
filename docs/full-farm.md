@@ -91,9 +91,18 @@ Forward `7888-7917/udp` from the router to the host for the full 30-partition wa
 
 ## Disabled PvP Deep Desert
 
-Partition 31 / PvP Deep Desert is deliberately disabled. Do not include it in restart targets, watchdog expectations, public status, or router forwarding for the live farm.
+Partition 31 / PvP Deep Desert is deliberately disabled. It is prepped behind
+the `disabled-deep-desert-pvp` Compose profile with its own
+`config/UserGame.deep-desert-pvp.ini` override, separate saved-data directory,
+and ports `7807/udp` plus `7918/udp`. Do not include it in restart targets,
+watchdog expectations, public status, or router forwarding until it is
+intentionally promoted and validated.
 
-Coriolis is not currently proven to be partition-scoped. The known config surface exposes `m_bCoriolisAutoSpawnEnabled` under `SandStormConfig` and cycle/wipe fields under `CoriolisSubsystem`, which appear global. Keep auto-spawn disabled until a partition-specific Coriolis path is validated, otherwise enabling it is expected to affect the existing partition 8 Deep Desert too. The no-wipe guard is staged with `m_bIsDbWipeEnabled=False`, and the low-damage profile is staged as `m_bCoriolisDoesDamage=True`, `m_bCoriolisTriggerShiftingSands=False`, `m_CoriolisLightDamage=1.000000`, and `m_CoriolisHeavyDamage=25.000000`.
+Coriolis is not currently proven to be partition-scoped. The known config
+surface exposes `m_bCoriolisAutoSpawnEnabled` under `SandStormConfig` and
+cycle/wipe fields under `CoriolisSubsystem`, which appear global. PvP DD keeps
+auto-spawn, Shifting Sands trigger, and DB wipe disabled in its dedicated config
+until partition-specific behavior is validated on live routing.
 
 Keep these closed publicly:
 
