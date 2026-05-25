@@ -116,6 +116,28 @@ Typed controls currently implemented:
 
 The typed layer deliberately excludes Coriolis cycle-start, cycle-duration, DB wipe, and cycle-end restart fields. Those are high-impact fields and should remain raw-config-only until a stronger rollback and validation workflow exists.
 
+## Deep Desert Harvest Bonus
+
+`config/UserEngine.deep-desert-pvp.ini` sets:
+
+```ini
+Dune.GlobalMiningOutputMultiplier=2.5
+Dune.GlobalVehicleMiningOutputMultiplier=2.5
+SecurityZones.PvpResourceMultiplier=1.0
+```
+
+`compose.allmaps.yaml` wires that file into only the partition-31 Deep Desert
+service if it is ever started manually. The live partition-8 Deep Desert service
+uses the shared `config/UserEngine.ini` values, which keep harvest at 1.0x.
+Because `run_server_safe.sh` copies `DUNE_USERENGINE_CONFIG_PATH` only into that
+map server process, the "global" mining values are isolated to the second DD
+service. This keeps the 2.5x second-DD harvest bonus without relying on
+`m_PvpEnabledPartitions` or `SecurityZones.PvpResourceMultiplier`.
+
+No shipped or validated INI surface currently gates mining/resource multipliers
+by player level. Confidence is unknown for a level-gated harvest bonus until a
+binary asset override, native command, or DB-backed gameplay hook is proven.
+
 ## Deep Desert Spice Caps
 
 The high-confidence Deep Desert content knob is:

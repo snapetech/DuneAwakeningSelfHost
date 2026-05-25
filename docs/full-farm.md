@@ -4,7 +4,7 @@ This Compose layout can run either the initial nine-map standing farm or the ful
 
 Funcom's template treats most of the non-starting maps as `dedicatedScaling` / on-demand capacity with `replicas: 0`. In Kubernetes, the operator and Director can create those game-server pods when a travel/instance trigger needs them. In Compose, there is no operator, so `compose.allmaps.yaml` keeps one server container warm for every official single-dimension self-host partition. That is a warm-pool substitute for on-demand scaling, not true elastic scaling.
 
-The base standing services cover partitions 1-9. The all-maps overlay adds partitions 10-30. Partition 31 / PvP Deep Desert is intentionally disabled in the live farm.
+The base standing services cover partitions 1-9. The all-maps overlay adds partitions 10-30. Partition 31 / second Deep Desert is intentionally opt-in.
 
 ## Services
 
@@ -89,22 +89,29 @@ Forward `7777-7806/udp` from the router to the host for the full 30-partition wa
 
 Forward `7888-7917/udp` from the router to the host for the full 30-partition warm pool when your deployment uses the paired IGW ports for live-client routing or server-browser checks. These are the IGW ports paired with the gameplay ports.
 
-## Disabled PvP Deep Desert
+## Disabled Second Deep Desert
 
-Partition 31 / PvP Deep Desert is deliberately disabled. It is prepped behind
-the `disabled-deep-desert-pvp` Compose profile with its own
-`config/UserGame.deep-desert-pvp.ini` override, separate saved-data directory,
-and ports `7807/udp` plus `7918/udp`. Do not include it in restart targets,
-watchdog expectations, public status, or router forwarding until it is
+Partition 31 / the second Deep Desert dimension is deliberately disabled. It is
+prepped behind the legacy `disabled-deep-desert-pvp` Compose profile with its
+own `config/UserGame.deep-desert-pvp.ini` override, the dedicated
+`config/UserEngine.deep-desert-pvp.ini` 2.5x harvest override, separate saved-data
+directory, and ports `7807/udp` plus `7918/udp`. Do not include it in restart
+targets, watchdog expectations, public status, or router forwarding until it is
 intentionally promoted and validated.
+
+PvP is not enabled for partition 31 in the tracked configs. The Deep Desert
+partition 8 service stays on the shared 1.0x harvest config. The second DD
+harvest bonus is supplied by the per-service
+`UserEngine.deep-desert-pvp.ini` mining/vehicle multipliers, not by
+`m_PvpEnabledPartitions` or `SecurityZones.PvpResourceMultiplier`.
 
 Coriolis is not currently proven to be partition-scoped. The known config
 surface exposes `m_bCoriolisAutoSpawnEnabled` under `SandStormConfig` and
-cycle/wipe fields under `CoriolisSubsystem`, which appear global. PvP DD keeps
+cycle/wipe fields under `CoriolisSubsystem`, which appear global. The second DD keeps
 auto-spawn, Shifting Sands trigger, and DB wipe disabled in its dedicated config
 until partition-specific behavior is validated on live routing.
 
-To intentionally bring PvP DD online after a maintenance window, keep it as a
+To intentionally bring the second DD online after a maintenance window, keep it as a
 manual opt-in:
 
 1. Set `DUNE_WORLD_PARTITION_COUNT=31` for the activation command or in `.env`
@@ -112,7 +119,7 @@ manual opt-in:
    restarts.
 2. Run `DUNE_WORLD_PARTITION_COUNT=31 ./scripts/full-world-partitions.sh .env`
    to add `DeepDesert_1` dimension `1` / partition `31`.
-3. Start only the PvP DD service with
+3. Start only the second DD service with
    `DUNE_WORLD_PARTITION_COUNT=31 docker compose -f compose.yaml -f compose.allmaps.yaml --env-file .env up -d --no-deps deep-desert-pvp`.
 4. Validate partition `31` in `dune.world_partition`, `dune.farm_state`, and
    `dune.active_server_ids`, then test routing before adding router forwarding

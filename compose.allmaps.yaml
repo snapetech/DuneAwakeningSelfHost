@@ -203,11 +203,11 @@ services:
     networks: {default: {ipv4_address: 172.31.240.39}}
 
   deep-desert-pvp:
-    # Intentionally disabled. Partition 31/PvP Deep Desert is not part of the live 30-map farm.
+    # Intentionally disabled. Partition 31 / second Deep Desert is not part of the live 30-map farm.
     profiles: ["disabled-deep-desert-pvp"]
     <<: *game-server-base
     command: [*cmd-run, *cmd-farm-region, *cmd-fls-token, *cmd-fls-env, *cmd-server-name, *cmd-server-login-password, *cmd-datacenter, *cmd-db-host, *cmd-db-user, *cmd-db-password, *cmd-rmq-tls, *cmd-external-address, *cmd-rmq-game-host, *cmd-rmq-game-port, *cmd-rmq-admin-host, *cmd-rmq-admin-port, *cmd-multihome, /Game/Dune/Maps/Arrakis/DeepDesert_1/DeepDesert_1.DeepDesert_1, -Port=7807, -IGWPort=7918, -PartitionIndex=31]
-    environment: {POD_IP: 172.31.240.43, NODE_NAME: dune-node, BATTLEGROUP_DISPLAY_NAME: "${WORLD_UNIQUE_NAME}", WORLD_NAME: "${WORLD_NAME}", DUNE_USERGAME_CONFIG_PATH: /workspace/config/UserGame.deep-desert-pvp.ini}
+    environment: {POD_IP: 172.31.240.43, NODE_NAME: dune-node, BATTLEGROUP_DISPLAY_NAME: "${WORLD_UNIQUE_NAME}", WORLD_NAME: "${WORLD_NAME}", DUNE_USERGAME_CONFIG_PATH: /workspace/config/UserGame.deep-desert-pvp.ini, DUNE_USERENGINE_CONFIG_PATH: /workspace/config/UserEngine.deep-desert-pvp.ini}
     ports: ["7807:7807/udp", "7918:7918/udp"]
     volumes: [".:/workspace:ro", "./data/server-saved/deep-desert-pvp:/home/dune/server/DuneSandbox/Saved"]
     networks: {default: {ipv4_address: 172.31.240.43}}

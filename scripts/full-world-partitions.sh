@@ -29,7 +29,7 @@ partition_count="${partition_count:-30}"
 case "$partition_count" in
   30|31) ;;
   *)
-    printf 'DUNE_WORLD_PARTITION_COUNT must be 30, or 31 to intentionally enable PvP Deep Desert; got: %s\n' "$partition_count" >&2
+    printf 'DUNE_WORLD_PARTITION_COUNT must be 30, or 31 to intentionally enable the second Deep Desert; got: %s\n' "$partition_count" >&2
     exit 2
     ;;
 esac

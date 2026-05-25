@@ -28,7 +28,7 @@ Environment:
   DUNE_WATCH_SEED_NEIGHBORS Seed known Docker bridge neighbor entries. Default: false
   DUNE_WATCH_SEED_COMMAND   Neighbor seed command. Default: scripts/seed-gateway-neighbor.sh
   DUNE_WORLD_PARTITION_COUNT Monitored partition ceiling. Default: 30; set 31
-                             only when PvP Deep Desert is intentionally online.
+                             only when the second Deep Desert is intentionally online.
 USAGE
 }
 
@@ -80,7 +80,7 @@ partition_count="${partition_count:-30}"
 case "$partition_count" in
   30|31) ;;
   *)
-    printf 'DUNE_WORLD_PARTITION_COUNT must be 30, or 31 to intentionally enable PvP Deep Desert; got: %s\n' "$partition_count" >&2
+    printf 'DUNE_WORLD_PARTITION_COUNT must be 30, or 31 to intentionally enable the second Deep Desert; got: %s\n' "$partition_count" >&2
     exit 2
     ;;
 esac

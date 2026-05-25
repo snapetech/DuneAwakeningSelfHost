@@ -215,10 +215,12 @@ class RunServerSafeTests(unittest.TestCase):
 
 
 class ComposeCommandTests(unittest.TestCase):
-    def compose_config(self, *files, env_file=".env.example"):
+    def compose_config(self, *files, env_file=".env.example", profiles=None):
         cmd = ["docker", "compose"]
         for file_name in files:
             cmd.extend(["-f", file_name])
+        for profile in profiles or []:
+            cmd.extend(["--profile", profile])
         cmd.extend(["--env-file", str(env_file), "config", "--format", "json"])
         result = subprocess.run(
             cmd,
@@ -237,6 +239,20 @@ class ComposeCommandTests(unittest.TestCase):
         self.assertEqual(config["services"]["director"]["environment"]["FuncomLiveServices__DefaultFlsEnvironment"], "retail")
         self.assertEqual(config["services"]["text-router"]["environment"]["FuncomLiveServices__DefaultFlsEnvironment"], "retail")
         self.assertEqual(config["services"]["gateway"]["environment"]["FuncomLiveServices__DefaultFlsEnvironment"], "retail")
+
+    def test_deep_desert_uses_shared_engine_config(self):
+        config = self.compose_config("compose.yaml")
+        environment = config["services"]["deep-desert"]["environment"]
+        self.assertNotIn("DUNE_USERENGINE_CONFIG_PATH", environment)
+
+    def test_partition_31_deep_desert_uses_dedicated_engine_config(self):
+        config = self.compose_config(
+            "compose.yaml",
+            "compose.allmaps.yaml",
+            profiles=["disabled-deep-desert-pvp"],
+        )
+        environment = config["services"]["deep-desert-pvp"]["environment"]
+        self.assertEqual(environment["DUNE_USERENGINE_CONFIG_PATH"], "/workspace/config/UserEngine.deep-desert-pvp.ini")
 
     def test_allmaps_overlay_passes_fls_environment(self):
         config = self.compose_config("compose.yaml", "compose.allmaps.yaml")

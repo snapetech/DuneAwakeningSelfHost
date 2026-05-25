@@ -107,7 +107,7 @@ Observed local signatures worth tracking:
 
 The duplicated travel-destination warnings are not proof of the routing bug by themselves. They are useful markers because they mention target-map transition data during `Survival_1` startup and should be compared against an operator-generated or provider-working topology.
 
-Partition 31 / PvP Deep Desert is intentionally disabled in the live farm, so routing checks should expect only the partition 8 `DeepDesert_1` registration. Confidence: high.
+Partition 31 / second Deep Desert is opt-in, so routing checks should expect only the partition 8 `DeepDesert_1` registration unless `DUNE_WORLD_PARTITION_COUNT=31` is deliberately staged. Confidence: high.
 
 ## Database Questions
 
