@@ -47,6 +47,16 @@ get_env() {
   ' "$env_file" 2>/dev/null
 }
 
+env_or_file() {
+  local key="$1"
+  local value="${!key:-}"
+  if [[ -n "$value" ]]; then
+    printf '%s\n' "$value"
+  else
+    get_env "$key"
+  fi
+}
+
 image_tars=(
   "images/battlegroup/server-rabbitmq.tar"
   "images/battlegroup/server-text-router.tar"
@@ -66,8 +76,8 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
-steam_dir="$(get_env DUNE_STEAM_SERVER_DIR)"
-current_tag="$(get_env DUNE_IMAGE_TAG)"
+steam_dir="$(env_or_file DUNE_STEAM_SERVER_DIR)"
+current_tag="$(env_or_file DUNE_IMAGE_TAG)"
 
 if [[ -z "$steam_dir" ]]; then
   echo "fail: DUNE_STEAM_SERVER_DIR is empty" >&2
@@ -152,6 +162,7 @@ if [[ "$write_env" == true ]]; then
     printf '\nDUNE_IMAGE_TAG=%s\n' "$package_tag" >>"$env_file"
   fi
   echo "updated $env_file: DUNE_IMAGE_TAG=$package_tag"
+  exit 0
 fi
 
 exit 1

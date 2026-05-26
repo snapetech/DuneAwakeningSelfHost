@@ -72,7 +72,6 @@ active_servers="$("${compose[@]}" exec -T postgres psql -U dune -d "$db" -Atc "s
 partitions="$("${compose[@]}" exec -T postgres psql -U dune -d "$db" -Atc "select count(*) from dune.world_partition;" 2>/dev/null || printf '0')"
 game_sg_connections="$("${compose[@]}" exec -T game-rmq rabbitmqctl list_connections user 2>/dev/null | rg -c '^sg\.' || true)"
 admin_sg_connections="$("${compose[@]}" exec -T admin-rmq rabbitmqctl list_connections user 2>/dev/null | rg -c '^sg\.' || true)"
-
 if [[ "$current_alive_active" -gt 0 && "$current_alive_active" -eq "$partitions" && "$active_servers" -eq "$partitions" && "$game_sg_connections" -ge "$partitions" && "$admin_sg_connections" -ge "$partitions" ]]; then
   echo "OK: all current partitions have alive active farm rows, active server ids exist, and game/admin RMQ service users are connected."
 else

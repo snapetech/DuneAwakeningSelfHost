@@ -19,6 +19,7 @@ Environment:
   DUNE_RESTART_STEAMCMD_UPDATE          Legacy SteamCMD enable flag. Default: true.
   DUNE_RESTART_STEAMCMD_REQUIRED        Fail if SteamCMD cannot run. Default: false.
   DUNE_STEAM_APP_ID                     Steam app id. Default: 4754530.
+  DUNE_STEAM_FORCE_PLATFORM             SteamCMD platform override. Default: linux.
   DUNE_STEAM_LOGIN                      Steam login user. Default: anonymous.
   DUNE_STEAM_PASSWORD                   Optional Steam password.
   DUNE_STEAMCMD_COMMAND                 SteamCMD executable. Default: steamcmd.
@@ -69,6 +70,7 @@ client_min_wait_seconds="$(env_or_file DUNE_RESTART_STEAM_CLIENT_MIN_WAIT_SECOND
 steam_client_command="$(env_or_file DUNE_STEAM_CLIENT_COMMAND)"
 steam_dir="$(env_or_file DUNE_STEAM_SERVER_DIR)"
 app_id="$(env_or_file DUNE_STEAM_APP_ID)"
+force_platform="$(env_or_file DUNE_STEAM_FORCE_PLATFORM)"
 
 steam_update_mode="${steam_update_mode:-auto}"
 client_trigger="${client_trigger:-true}"
@@ -76,6 +78,7 @@ client_wait_seconds="${client_wait_seconds:-900}"
 client_min_wait_seconds="${client_min_wait_seconds:-30}"
 steam_client_command="${steam_client_command:-steam}"
 app_id="${app_id:-4754530}"
+force_platform="${force_platform:-linux}"
 
 case "$steam_update_mode" in
   auto|client|steamcmd|none) ;;
@@ -237,6 +240,7 @@ esac
 
 cmd=(
   "$steamcmd_command"
+  "+@sSteamCmdForcePlatformType" "$force_platform"
   +force_install_dir "$steam_dir"
   "${login_args[@]}"
   "${app_update_args[@]}"

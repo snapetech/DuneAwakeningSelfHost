@@ -35,12 +35,22 @@ class AdminGrantItemTest(unittest.TestCase):
             [["14", "0", "35"]],
             [["1"]],
         ]
-        with mock.patch.object(self.tool, "run_psql", side_effect=responses) as run_psql:
+        with mock.patch.object(self.tool, "local_hostname", return_value="kspls0"), \
+             mock.patch.object(self.tool, "run_psql", side_effect=responses) as run_psql:
             with self.assertRaises(SystemExit):
                 self.tool.main_with_argv([
                     "Complex Machinery", "2", "--character", "Lukano", "--execute"
                 ])
         self.assertEqual(run_psql.call_count, 3)
+
+    def test_lab_host_refuses_execute_before_write(self):
+        with mock.patch.object(self.tool, "local_hostname", return_value="kspld0"), \
+             mock.patch.object(self.tool, "run_psql") as run_psql:
+            with self.assertRaises(SystemExit):
+                self.tool.main_with_argv([
+                    "Complex Machinery", "2", "--character", "Lukano", "--execute", "--confirm", "GRANT ITEM"
+                ])
+        self.assertEqual(run_psql.call_count, 0)
 
     def test_dry_run_returns_resolved_plan(self):
         responses = [

@@ -13,10 +13,34 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 CATALOG = ROOT / "config" / "artificial-exchange-prices.csv"
 DEFAULT_DB = "dune_sb_1_4_0_0"
 CONFIRM = "GRANT ITEM"
+LAB_HOSTS = {host.strip() for host in os.environ.get("DUNE_ADMIN_LAB_HOSTS", "kspld0").split(",") if host.strip()}
+ALLOW_LAB_MUTATIONS = os.environ.get("DUNE_ALLOW_LAB_ADMIN_MUTATIONS", "").lower() in {"1", "true", "yes", "y"}
 
 
 def compose_cmd(env_file):
     return ["docker", "compose", "--env-file", env_file]
+
+
+def local_hostname():
+    return subprocess.run(
+        ["hostname"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    ).stdout.strip()
+
+
+def assert_live_mutation_host(args):
+    host = local_hostname()
+    if args.allow_lab_host or ALLOW_LAB_MUTATIONS:
+        return host
+    if host in LAB_HOSTS:
+        raise SystemExit(
+            f"refusing live item grant on lab host {host}; run this on kspls0 "
+            "or set DUNE_ALLOW_LAB_ADMIN_MUTATIONS=yes for deliberate lab testing"
+        )
+    return host
 
 
 def run_psql(sql, env_file=".env", db=DEFAULT_DB, fieldsep="\t"):
@@ -206,6 +230,7 @@ def build_parser():
     parser.add_argument("--db", default=DEFAULT_DB)
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--confirm", default="")
+    parser.add_argument("--allow-lab-host", action="store_true", help="Permit live mutation on a configured lab host.")
     return parser
 
 
@@ -213,6 +238,9 @@ def main_with_argv(argv):
     args = build_parser().parse_args(argv)
     if args.count <= 0:
         raise SystemExit("count must be > 0")
+    host = local_hostname()
+    if args.execute:
+        host = assert_live_mutation_host(args)
     row = resolve_template(args.item, load_catalog())
     template_id = row["template_id"]
     player = resolve_player(args)
@@ -221,6 +249,7 @@ def main_with_argv(argv):
     plan = {
         "ok": True,
         "dryRun": not args.execute,
+        "host": host,
         "player": player,
         "inventory": inventory,
         "positionIndex": position,

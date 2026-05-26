@@ -22,6 +22,8 @@ The 06:00 target is deliberately after Funcom's nightly maintenance window. If S
 06:00  maintenance backup is written
 06:00  SteamCMD is asked to update the local self-hosted server tool
 06:00  Steam package image tag is checked and updated if safe
+06:00  official DB upgrade patches are applied
+06:00  operator DB patch markers and stale player RabbitMQ sessions are cleaned
 06:00  selected services are recreated
 06:00+ post-start health checks and farm readiness wait run
 ```
@@ -49,6 +51,7 @@ DUNE_DAILY_RESTART_ALLOW_OUTSIDE_WINDOW=false
 DUNE_DAILY_RESTART_DELAY=30min
 DUNE_DAILY_RESTART_REPEAT_SECONDS=600
 DUNE_DAILY_RESTART_MESSAGE=Daily maintenance restart at 6:00 AM. Please get to a safe place.
+DUNE_RESTART_CLEAR_PLAYER_RMQ_SESSIONS=true
 ```
 
 ## Install The Timer
@@ -110,13 +113,15 @@ competing SteamCMD process against the same library.
 
 For headless hosts without a running Steam client, auto mode falls back to
 SteamCMD. It runs app `4754530`, the Dune: Awakening Self-Hosted Server tool,
-with `+login anonymous` and `validate`. If the Steam tool requires an owned
-Steam account instead of anonymous access, set `DUNE_STEAM_LOGIN` and
-`DUNE_STEAM_PASSWORD` in `.env`. If `steamcmd` is not installed on the host, the
-restart hook can run SteamCMD through `DUNE_RESTART_STEAMCMD_HELPER_IMAGE`. The
-default helper image is `cm2network/steamcmd:root`; pre-pull it before relying
-on unattended maintenance if you do not want the maintenance window to depend on
-a Docker Hub pull.
+with `+login anonymous`, `validate`, and `+@sSteamCmdForcePlatformType linux`
+by default. On a production headless host, prefer a SteamCMD-owned directory
+such as `/home/keith/dune-steamcmd-server` over a nested Steam desktop client
+library path. If the Steam tool requires an owned Steam account instead of
+anonymous access, set `DUNE_STEAM_LOGIN` and `DUNE_STEAM_PASSWORD` in `.env`. If
+`steamcmd` is not installed on the host, the restart hook can run SteamCMD
+through `DUNE_RESTART_STEAMCMD_HELPER_IMAGE`. The default helper image is
+`cm2network/steamcmd:root`; pre-pull it before relying on unattended maintenance
+if you do not want the maintenance window to depend on a Docker Hub pull.
 
 When `DUNE_RESTART_STEAMCMD_REQUIRED=false`, missing SteamCMD logs a warning and
 the flow continues with the package already present on disk. Set
@@ -149,6 +154,24 @@ To disable the maintenance-window update check:
 ```env
 DUNE_RESTART_CHECK_STEAM_UPDATE=false
 ```
+
+## Pre-Start Hygiene
+
+The maintenance start phase runs two local safety cleanups before services are
+recreated:
+
+- `scripts/apply-official-db-patches.sh` reads Funcom's
+  `DuneSandbox/Database/Upgrade/__order.txt` from the configured
+  `seabass-server:${DUNE_IMAGE_TAG}` image and applies any missing official SQL
+  patches to `dune_sb_1_4_0_0` before maps start.
+- `scripts/clear-player-rmq-sessions.sh` closes stale 16-hex player RabbitMQ
+  connections and deletes matching `<FLS_ID>_queue` / `<FLS_ID>_rpcQueue`
+  queues. This prevents a client from getting stuck when it reconnects after
+  downtime and tries to recreate its per-player login queue.
+
+For `DUNE_RESTART_TARGET=all`, player RabbitMQ cleanup is enabled by default.
+For narrower restarts, it is skipped unless
+`DUNE_RESTART_CLEAR_PLAYER_RMQ_SESSIONS=true` is set.
 
 ## Container And Host Requirements
 
@@ -185,9 +208,10 @@ DUNE_ADMIN_RESTART_COMMAND=/workspace/scripts/restart-target.sh
 DUNE_RESTART_HOST_WORKSPACE=/path/to/DuneAwakeningSelfHost
 DUNE_RESTART_COMPOSE_PROJECT=dune_server
 DUNE_RESTART_USE_HOST_COMPOSE=true
-DUNE_STEAM_SERVER_DIR=/path/to/Steam/steamapps/common/Dune Awakening Self-Hosted Server
-DUNE_RESTART_STEAM_UPDATE_MODE=auto
+DUNE_STEAM_SERVER_DIR=/path/to/dune-steamcmd-server
+DUNE_RESTART_STEAM_UPDATE_MODE=steamcmd
 DUNE_RESTART_STEAMCMD_HELPER_IMAGE=cm2network/steamcmd:root
+DUNE_STEAM_FORCE_PLATFORM=linux
 ```
 
 ## Manual Checks

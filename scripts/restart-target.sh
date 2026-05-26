@@ -50,6 +50,27 @@ map_watchdog_control() {
   fi
 }
 
+pre_start_hygiene() {
+  env_file="${ENV_FILE:-.env}"
+  if [ -x ./scripts/apply-official-db-patches.sh ]; then
+    ./scripts/apply-official-db-patches.sh "$env_file"
+  fi
+  clear_player_rmq="${DUNE_RESTART_CLEAR_PLAYER_RMQ_SESSIONS:-}"
+  if [ -z "$clear_player_rmq" ]; then
+    case "$target" in
+      all) clear_player_rmq=true ;;
+      *) clear_player_rmq=false ;;
+    esac
+  fi
+  case "$clear_player_rmq" in
+    1|true|yes|on)
+      if [ -x ./scripts/clear-player-rmq-sessions.sh ]; then
+        ./scripts/clear-player-rmq-sessions.sh "$env_file" || true
+      fi
+      ;;
+  esac
+}
+
 env_file_value() {
   key="$1"
   file="${2:-${ENV_FILE:-.env}}"
@@ -108,9 +129,11 @@ run_steam_update_check() {
           -e "DUNE_RESTART_STEAM_CLIENT_TRIGGER=$(env_file_value DUNE_RESTART_STEAM_CLIENT_TRIGGER "$env_file")" \
           -e "DUNE_RESTART_STEAM_CLIENT_WAIT_SECONDS=$(env_file_value DUNE_RESTART_STEAM_CLIENT_WAIT_SECONDS "$env_file")" \
           -e "DUNE_RESTART_STEAM_CLIENT_MIN_WAIT_SECONDS=$(env_file_value DUNE_RESTART_STEAM_CLIENT_MIN_WAIT_SECONDS "$env_file")" \
+          -e "DUNE_STEAM_SERVER_DIR=$(env_file_value DUNE_STEAM_SERVER_DIR "$env_file")" \
           -e "DUNE_STEAM_CLIENT_COMMAND=$(env_file_value DUNE_STEAM_CLIENT_COMMAND "$env_file")" \
           -e "DUNE_RESTART_STEAMCMD_REQUIRED=$(env_file_value DUNE_RESTART_STEAMCMD_REQUIRED "$env_file")" \
           -e "DUNE_STEAM_APP_ID=$(env_file_value DUNE_STEAM_APP_ID "$env_file")" \
+          -e "DUNE_STEAM_FORCE_PLATFORM=$(env_file_value DUNE_STEAM_FORCE_PLATFORM "$env_file")" \
           -e "DUNE_STEAM_LOGIN=$(env_file_value DUNE_STEAM_LOGIN "$env_file")" \
           -e "DUNE_STEAM_PASSWORD=$(env_file_value DUNE_STEAM_PASSWORD "$env_file")" \
           -e "DUNE_STEAMCMD_COMMAND=$(env_file_value DUNE_STEAMCMD_COMMAND "$env_file")" \
@@ -852,6 +875,7 @@ if [ "$phase" = "shutdown" ] || [ "$phase" = "stop" ]; then
 fi
 if [ "$phase" = "start" ]; then
   map_watchdog_control stop
+  pre_start_hygiene
   if [ -x ./scripts/seed-gateway-neighbor.sh ]; then
     ./scripts/seed-gateway-neighbor.sh || true
   fi
@@ -871,6 +895,7 @@ if [ "$phase" = "start" ]; then
   exit 0
 fi
 map_watchdog_control stop
+pre_start_hygiene
 if [ -x ./scripts/seed-gateway-neighbor.sh ]; then
   ./scripts/seed-gateway-neighbor.sh || true
 fi

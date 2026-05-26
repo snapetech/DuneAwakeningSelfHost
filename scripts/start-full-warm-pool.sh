@@ -167,6 +167,12 @@ wait_for_healthy postgres
 wait_for_healthy admin-rmq
 wait_for_healthy game-rmq
 
+printf 'applying official DB patches before map startup\n'
+"$script_dir/apply-official-db-patches.sh" "$env_file"
+
+printf 'clearing stale player RabbitMQ sessions before map startup\n'
+"$script_dir/clear-player-rmq-sessions.sh" "$env_file"
+
 printf 'refreshing host LAN/firewall reflection for the current docker bridge\n'
 "$script_dir/setup-lan-reflection.sh" "$env_file"
 

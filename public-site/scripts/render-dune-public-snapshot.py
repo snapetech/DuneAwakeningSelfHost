@@ -232,10 +232,7 @@ def load_map_health():
                      when wp.server_id is null then 'offline'
                      when coalesce(fs.alive, false) and exists (
                        select 1 from dune.active_server_ids asi where asi.server_id = wp.server_id
-                     ) and coalesce(fs.ready, false) then 'online'
-                     when coalesce(fs.alive, false) and exists (
-                       select 1 from dune.active_server_ids asi where asi.server_id = wp.server_id
-                     ) then 'degraded'
+                     ) then 'online'
                      else 'offline'
                    end as status,
                    coalesce(fs.ready, false) as ready,

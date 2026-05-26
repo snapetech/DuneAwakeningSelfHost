@@ -75,18 +75,16 @@ runtime_text="Unknown"
 runtime_detail_html="Runtime data unavailable."
 
 if [[ -d "$DUNE_ROOT" ]] && (cd "$DUNE_ROOT" && timeout "$STATUS_TIMEOUT_SECONDS" ./scripts/status.sh .env) >"$tmp_status" 2>&1; then
-  if grep -q 'OK: all current partitions have alive active farm rows' "$tmp_status"; then
+  health_line="$(sed -nE 's/^current_ready_alive=([0-9]+) current_alive_active=([0-9]+) active_servers=([0-9]+) partitions=([0-9]+).*/\1 \2 \3 \4/p' "$tmp_status" | tail -1)"
+  read -r current_ready_alive current_alive_active active_servers partitions <<< "${health_line:-0 0 0 0}"
+  if [[ "$partitions" =~ ^[0-9]+$ && "$current_alive_active" =~ ^[0-9]+$ && "$active_servers" =~ ^[0-9]+$ \
+      && "$partitions" -gt 0 && "$current_alive_active" -eq "$partitions" && "$active_servers" -eq "$partitions" ]]; then
     server_class="status-ok"
     server_text="Online"
     access_class="status-ok"
     access_text="Available"
-    if grep -q '^NOTE: one or more current partitions are alive/active but have ready=false' "$tmp_status"; then
-      world_class="status-warn"
-      world_text="Degraded"
-    else
-      world_class="status-ok"
-      world_text="Healthy"
-    fi
+    world_class="status-ok"
+    world_text="Healthy"
   else
     server_class="status-warn"
     server_text="Partial"

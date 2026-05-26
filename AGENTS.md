@@ -1,5 +1,16 @@
 # Agent instructions - DuneAwakeningSelfHost
 
+## Operational target safety
+
+- `kspld0` is a lab/testing host only. Never treat local Docker Compose on
+  `kspld0` as production.
+- Production player/admin mutations must run on `kspls0`, not `kspld0`.
+- Before any live admin mutation, grant, inventory edit, currency edit, XP edit,
+  player recovery, or database write intended for the live server, first verify
+  the target host with `hostname`. If it is not `kspls0`, stop and connect to
+  `kspls0`.
+- Do not run production mutations through `docker compose` from `kspld0`.
+
 ## Communication style
 
 These interaction rules are standard for all model interfaces used with this repo, including Hermes, Codex CLI, Claude CLI, Kilo CLI, OpenCode, Cursor, and similar agents:

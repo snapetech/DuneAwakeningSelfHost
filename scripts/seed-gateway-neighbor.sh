@@ -208,9 +208,17 @@ critical_containers=(
   "$game_rmq_container"
   "$rmq_auth_container"
   "$text_router_container"
+  "$director_container"
 )
 for source in "${compose_containers[@]}"; do
   for target in "${critical_containers[@]}"; do
+    if [[ "$source" != "$target" ]]; then
+      seed_pair "$source" "$target"
+    fi
+  done
+done
+for source in "${critical_containers[@]}"; do
+  for target in "${compose_containers[@]}"; do
     if [[ "$source" != "$target" ]]; then
       seed_pair "$source" "$target"
     fi
