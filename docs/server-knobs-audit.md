@@ -99,7 +99,8 @@ Safe candidates for admin editing:
 - `DUNE_SUBFIEF_LIMIT` / `DUNE_SUBFIEF_LIMIT_BONUS`: repo-owned experimental subfief/totem count knob. Apply with `scripts/apply-subfief-limit-knob.sh .env`; it writes `DunePlayerCharacterAttributeSet.SubfiefLimitBonus` into persisted player-character actors and current `dune.player_state.player_pawn_id` actors, including blank-class pawn rows. It installs DB triggers for future actor saves and player-state pawn changes. If `DUNE_SUBFIEF_LIMIT_BONUS` is set, it wins over derived `DUNE_SUBFIEF_LIMIT - DUNE_SUBFIEF_BASE_LIMIT`. The player-presence announcer also repairs joined/rejoined players whose current pawn bonus is below the configured value when `DUNE_PLAYER_PRESENCE_SUBFIEF_BONUS_ENFORCER_ENABLED=true`. This is not a shipped INI knob and must be validated in game. Roll back DB triggers with `scripts/apply-subfief-limit-knob.sh .env rollback`.
 - `m_LimitNumberOfBuildablesPerServer` and `m_LimitNumberOfBuildablesPerMap`: experimental binary-only total buildable/building-piece cap candidates. The current override sets both to `7500` to test raising the observed `5000` cap. Confidence is low that these are sufficient for the per-base cap because live behavior allows multiple 5000-piece bases in one Hagga Basin map. These need live validation after map restart.
 - Per-base building-piece cap lead: cooked data table `/Game/Dune/Systems/Building/Data/DT_BuildableStructureCategoryData`, row/category `BuildingPiece`, with strings for `m_BuildableStructureLimitsOnServer`, `m_BuildableStructureLimitsPerMap`, `m_MaximumNumberOfBuildables`, and `m_TargetNumberOfLandclaims`. The adjacent row payload contains a literal int32 `5000` inside the `BuildingPiece` row before the `Production` row starts. Confidence is high that this asset contains the observed limit value; confidence is moderate that it is the per-base cap; confidence is low on an editable INI override until cooked asset mappings or an override mechanism are found. `scripts/patch-building-piece-limit-pak.py` patches that row to `7500` with Oodle recompression. Lab validation on `kspld0` proved the patched pak boots and reports `already-patched` in a running `survival` container; client placement beyond `5000` is still unproven without a client or a discovered placement RPC.
-- Native specialization XP bonus: cooked event asset `/Game/Dune/Events/DataAssets/DA_MTXEvent_SpecializationXPBonus` exists and uses `MTXEventModifier_TrackSpecializationScaleXP`. The game server accepts startup command syntax `-ExecCmds=ScheduleMTXEvent SpecializationXPBonus 60 604800,ListMTXEvents` in lab. Confidence is high that this schedules the shipped specialization-XP event when a map starts; confidence is low that the shipped event is configurable to an arbitrary `3x` scalar without a proved `ScheduleMTXEventJson` payload, cooked asset override, or native command route. `DUNE_SERVER_STARTUP_EXECCMDS` stages startup console commands for the next game-server start only.
+- Landsraad vendor faction gate lead: eight cooked dialogue assets under `/Game/Dune/NPCs/Dialogue/Generated/DA_Dialogue_*` contain both `PlayerCanAccessLandsraadVendor` and `PlayerFactionHasReignOverLandsraad`. The first condition is the desired active-decree/vendor-type gate; the second is the faction winner gate. `scripts/patch-landsraad-vendor-faction-gate-pak.py` replaces the faction condition class name with the same-length generic Solaris condition name in those dialogue payloads so the active vendor access gate remains while the reigning-faction dialogue gate is bypassed. Confidence is high that this is the right gate; confidence is moderate until validated by a losing-side player after a restart.
+- Native specialization XP bonus and popup channel: cooked event asset `/Game/Dune/Events/DataAssets/DA_MTXEvent_SpecializationXPBonus` exists and uses `MTXEventModifier_TrackSpecializationScaleXP`. The game server accepts startup command syntax `-ExecCmds=ScheduleMTXEvent SpecializationXPBonus 60 604800,ListMTXEvents` in lab. Scheduling that MTX event produces client-visible event popup notifications, so the same native event path may be reusable for player-base announcements such as downtime timers if a suitable cooked event asset or JSON/native command variant is found. Confidence is high that `ScheduleMTXEvent SpecializationXPBonus ...` schedules a visible specialization-XP event; confidence is low that the shipped event is configurable to arbitrary announcement text or an arbitrary `3x` scalar without a proved `ScheduleMTXEventJson` payload, cooked asset override, or native command route. `DUNE_SERVER_STARTUP_EXECCMDS` stages startup console commands for the next game-server start only. Live 24/7 specialization XP is currently handled separately by the DB trigger `dune.specialization_tracks_apply_3x_xp_rate`, so the MTX popup is not required for the 3x persisted XP behavior.
 - `m_BuildingBlueprintMaxExtensions`: blueprint extension cap.
 - `m_BaseBackupMaxExtensions`: base backup extension cap.
 - `m_bBuildingRestrictionLimitsEnabled`: enable/disable building restriction limits.
@@ -118,22 +119,31 @@ The typed layer deliberately excludes Coriolis cycle-start, cycle-duration, DB w
 
 ## Deep Desert Harvest Bonus
 
-`config/UserEngine.deep-desert-pvp.ini` sets:
+`config/UserEngine.deep-desert-pvp.ini` sets the Hardcore PvE Deep Desert harvest
+and vehicle-wear bonus:
 
 ```ini
 Dune.GlobalMiningOutputMultiplier=3.0
 Dune.GlobalVehicleMiningOutputMultiplier=3.0
 SecurityZones.PvpResourceMultiplier=1.0
+dw.VehicleDurabilityDamageMultiplier=1.15
 ```
 
 `compose.allmaps.yaml` wires that file into only the partition-31 Deep Desert
-service if it is ever started manually. The live partition-8 Deep Desert service
-uses the shared `config/UserEngine.ini` values, which keep harvest at 1.0x.
+service. The partition-8 Deep Desert service uses the shared
+`config/UserEngine.ini` values, which keep harvest at 1.0x.
 Because `run_server_safe.sh` copies `DUNE_USERENGINE_CONFIG_PATH` only into that
 map server process, the "global" mining values are isolated to the second DD
-service. This keeps the 3x second-DD harvest bonus separate from
-`SecurityZones.PvpResourceMultiplier`; PvP itself is enabled in
-`config/UserGame.deep-desert-pvp.ini` with `+m_PvpEnabledPartitions=31`.
+service. This keeps the 3x second-DD harvest bonus scoped to partition `31`
+without advertising the instance as PvP.
+
+Player-facing Paul notices should say:
+
+- partition `8`: PVE Casual is persistent, standard harvest, no weekly cleanup,
+  no Shifting Sands reset;
+- partition `31`: PVE Hardcore has PvE combat, 3x harvest,
+  Shifting Sands/high-damage Coriolis, 15% higher vehicle wear, and weekly
+  cleanup of Hardcore DD actors, respawns, and resource fields.
 
 No shipped or validated INI surface currently gates mining/resource multipliers
 by player level. Confidence is unknown for a level-gated harvest bonus until a

@@ -681,6 +681,7 @@ def cleanup_with_management(bound):
     return errors
 
 timestamp = time.strftime("%Y.%m.%d-%H.%M.%S", time.gmtime())
+timestamp_field = env("DUNE_ANNOUNCE_CHAT_TIMESTAMP_FIELD", "m_Timestamp")
 chat_message = {
     "m_Id": uuid.uuid4().hex.upper(),
     "m_ChannelType": channel_type,
@@ -696,10 +697,10 @@ chat_message = {
         "m_UnlocalizedMessage": message,
         "m_LocalizedMessage": {"m_TableId": "", "m_Key": "", "m_FormatArgs": []},
     },
-    "m_TimeStamp": timestamp,
     "m_OriginLocation": {"X": 0.0, "Y": 0.0, "Z": 0.0},
     "m_HasSeenMessage": False,
 }
+chat_message[timestamp_field] = timestamp
 payload = {"content": json.dumps(chat_message, separators=(",", ":")), "Type": "TextChat"}
 
 fallback = ""

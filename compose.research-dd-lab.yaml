@@ -43,7 +43,7 @@ services:
         ipv4_address: 172.31.241.18
 
   deep-desert-lab-pvp:
-    # Non-live research fixture only. Partition 31 / second Deep Desert is intentionally disabled in the live farm.
+    # Non-live research fixture only. Partition 31 is the PVE Hardcore Deep Desert shape.
     profiles: ["disabled-deep-desert-pvp-lab"]
     image: registry.funcom.com/funcom/self-hosting/seabass-server:${DUNE_IMAGE_TAG}
     command:

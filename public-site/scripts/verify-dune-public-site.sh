@@ -11,10 +11,14 @@ fi
 
 base_url="${base_url%/}"
 tmp_headers="$(mktemp)"
+tmp_index="$(mktemp)"
 tmp_status="$(mktemp)"
 tmp_players="$(mktemp)"
-trap 'rm -f "$tmp_headers" "$tmp_status" "$tmp_players"' EXIT
+tmp_index_status="$(mktemp)"
+tmp_expected_status="$(mktemp)"
+trap 'rm -f "$tmp_headers" "$tmp_index" "$tmp_status" "$tmp_players" "$tmp_index_status" "$tmp_expected_status"' EXIT
 
+curl -fsSL --max-time 15 "$base_url/?v=$(date +%s)" -o "$tmp_index"
 curl -fsSIL --max-time 15 "$base_url/" -o "$tmp_headers"
 curl -fsSL --max-time 15 "$base_url/status.html?v=$(date +%s)" -o "$tmp_status"
 curl -fsSL --max-time 15 "$base_url/players.json?v=$(date +%s)" -o "$tmp_players"
@@ -29,6 +33,22 @@ if grep -Eiq '^age: [1-9]' "$tmp_headers"; then
 fi
 if ! grep -q 'World health' "$tmp_status"; then
   echo "status.html does not contain status block" >&2
+  exit 1
+fi
+
+awk '
+  /<!-- STATUS_BEGIN -->/ { inside = 1; next }
+  /<!-- STATUS_END -->/ { inside = 0; next }
+  inside { print }
+' "$tmp_index" > "$tmp_index_status"
+{
+  echo '<div id="server-status">'
+  cat "$tmp_status"
+  echo '</div>'
+} > "$tmp_expected_status"
+if ! cmp -s "$tmp_index_status" "$tmp_expected_status"; then
+  echo "remote embedded index status differs from status.html" >&2
+  diff -u "$tmp_expected_status" "$tmp_index_status" >&2 || true
   exit 1
 fi
 

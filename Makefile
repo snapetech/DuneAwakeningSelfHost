@@ -330,6 +330,7 @@ update-hagga-pois:
 public-site-check:
 	bash -n public-site/scripts/*.sh examples/public-site/rclone-sync.sh
 	python3 -m py_compile public-site/scripts/render-dune-public-snapshot.py scripts/update-hagga-poi-markers.py
+	./public-site/scripts/validate-dune-public-site.sh public-site/static
 	systemd-analyze verify public-site/systemd/render-dune-static-status.service public-site/systemd/render-dune-static-status.timer
 
 public-site-package:

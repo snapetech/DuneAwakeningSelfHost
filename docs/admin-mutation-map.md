@@ -111,7 +111,7 @@ POST /api/admin/solari/inventory
 POST /api/admin/solari/bank
 ```
 
-Inventory Solari grants create fresh carried `SolarisCoin` item stacks in free slots with `dune.save_item(dune.inventoryitem)`. Execution requires the global mutation gate and `confirm: "GRANT SOLARI"`.
+Inventory Solari grants create fresh carried `SolarisCoin` item stacks in free slots with `dune.save_item(dune.inventoryitem)`. Exchange/bank Solari grants update the visible Solaris row in `dune.player_virtual_currency_balances`, ensure the Exchange user row with `dune.dune_exchange_get_user_id`, and mirror the value to `dune.dune_exchange_users.solari_balance`. Do not use `dune.dune_exchange_modify_user_solari_balance` as a grant primitive; it transfers existing wallet Solaris into the Exchange balance and subtracts the same amount from `player_virtual_currency_balances`. Execution requires the global mutation gate and the relevant confirmation phrase.
 
 Bank Solari grants call the existing Exchange balance mutator path with `mode=add`. Execution requires the global mutation gate, `DUNE_ADMIN_EXCHANGE_MUTATIONS_ENABLED=true`, and `confirm: "WRITE EXCHANGE"`.
 

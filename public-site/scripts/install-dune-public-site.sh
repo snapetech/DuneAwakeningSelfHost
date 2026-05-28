@@ -69,6 +69,7 @@ install -m 0755 "$repo_root/public-site/scripts/render-dune-public-snapshot.py" 
 install -m 0755 "$repo_root/public-site/scripts/register-deep-desert-background.py" "$prefix/sbin/register-deep-desert-background.py"
 install -m 0755 "$repo_root/public-site/scripts/configure-dune-public-site.sh" "$prefix/sbin/configure-dune-public-site.sh"
 install -m 0755 "$repo_root/public-site/scripts/validate-dune-public-site.sh" "$prefix/sbin/validate-dune-public-site.sh"
+install -m 0755 "$repo_root/public-site/scripts/check-dune-public-site-drift.sh" "$prefix/sbin/check-dune-public-site-drift.sh"
 
 if [[ ! -f "$env_file" ]]; then
   install -m 0644 "$repo_root/public-site/dune-public-site.env.example" "$env_file"

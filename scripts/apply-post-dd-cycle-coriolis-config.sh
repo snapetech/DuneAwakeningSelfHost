@@ -9,9 +9,9 @@ Replaces the staged PvE Deep Desert one-shot Coriolis config with the normal
 weekly Landsraad/Coriolis cadence from config/UserGame.ini. The replacement
 keeps no damage, no DB wipe, no restart, and no Deep Desert Shifting Sands.
 
-The partition-31 PvP Deep Desert config is intentionally left alone because it
-owns PvP, high Coriolis damage, Shifting Sands, and the separate 3x harvest
-Engine config.
+The partition-31 Hardcore Deep Desert config is intentionally left alone because
+it owns high Coriolis damage, Shifting Sands, and the separate 3x harvest Engine
+config.
 
 Run this after the 2026-05-25 Deep Desert refresh has completed.
 USAGE

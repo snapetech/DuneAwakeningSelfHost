@@ -66,6 +66,11 @@ if [[ "$building_piece_enabled" == "true" ]] && file_exists compose.building-pie
   add_file compose.building-piece-limit.yaml
 fi
 
+landsraad_vendor_gate_enabled="${DUNE_LANDSRAAD_VENDOR_FACTION_GATE_PATCH_ENABLED:-$(read_env DUNE_LANDSRAAD_VENDOR_FACTION_GATE_PATCH_ENABLED)}"
+if [[ "$landsraad_vendor_gate_enabled" == "true" ]] && file_exists compose.landsraad-vendor-faction-gate.yaml; then
+  add_file compose.landsraad-vendor-faction-gate.yaml
+fi
+
 fls_ipv4_hosts_enabled="${DUNE_FLS_IPV4_HOSTS_ENABLED:-$(read_env DUNE_FLS_IPV4_HOSTS_ENABLED)}"
 fls_ipv4_hosts_enabled="${fls_ipv4_hosts_enabled:-true}"
 if [[ "$fls_ipv4_hosts_enabled" == "true" ]] && file_exists compose.fls-ipv4-hosts.yaml; then

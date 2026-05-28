@@ -277,6 +277,67 @@ class StarterEmoteGrantTests(unittest.TestCase):
         self.assertEqual(result["automatedPrivateMessages"][0]["message"], "Reconnect help Returner")
         self.assertEqual([item["jobId"] for item in sent], ["player-presence-private-welcome", "player-presence-reconnect-recovery"])
 
+    def test_join_messages_can_be_delayed_until_player_is_stably_online(self):
+        player = {"name": "Returner", "flsId": "RETURN_FLS", "lastLoginTime": "2026-05-22 19:06:00+00"}
+        state = {
+            "onlinePlayers": {},
+            "seenAccounts": ["456"],
+            "recentLeaves": {"456": 1000},
+        }
+        announced = []
+        sent = []
+        fake_time = [1010]
+
+        def fake_save_state(next_state):
+            state.clear()
+            state.update(next_state)
+
+        def fake_announce(message):
+            announced.append(message)
+            return {"ok": True}
+
+        def fake_private_message(target, message, job_id="player-presence-private-message"):
+            sent.append({"target": target, "message": message, "jobId": job_id})
+            return {"ok": True}
+
+        file_env = {
+            "DUNE_PLAYER_PRESENCE_ANNOUNCE_ENABLED": "true",
+            "DUNE_PLAYER_PRESENCE_RETURN_JOIN_TEMPLATE": "Welcome back {playername}! Current player count is now {count}.",
+            "DUNE_PLAYER_PRESENCE_PRIVATE_WELCOME_ENABLED": "true",
+            "DUNE_PLAYER_PRESENCE_PRIVATE_WELCOME_TEMPLATE": "Private welcome {playername}",
+            "DUNE_PLAYER_PRESENCE_RECONNECT_RECOVERY_ENABLED": "true",
+            "DUNE_PLAYER_PRESENCE_RECONNECT_RECOVERY_TEMPLATE": "Reconnect help {playername}",
+            "DUNE_PLAYER_PRESENCE_JOIN_MESSAGE_DELAY_SECONDS": "30",
+            "DUNE_PLAYER_PRESENCE_STARTER_BASE_TOOL_ENABLED": "false",
+            "DUNE_PLAYER_PRESENCE_STARTER_EMOTES_ENABLED": "false",
+            "DUNE_PLAYER_PRESENCE_ADMIN_FIRST_LOGIN_DAILY_ENABLED": "false",
+        }
+
+        with unittest.mock.patch.object(player_presence_announcer, "FILE_ENV", file_env), \
+             unittest.mock.patch.dict(player_presence_announcer.os.environ, {}, clear=True), \
+             unittest.mock.patch.object(player_presence_announcer, "online_players", lambda: {"456": player}), \
+             unittest.mock.patch.object(player_presence_announcer, "load_state", lambda: state.copy()), \
+             unittest.mock.patch.object(player_presence_announcer, "save_state", fake_save_state), \
+             unittest.mock.patch.object(player_presence_announcer, "announce", fake_announce), \
+             unittest.mock.patch.object(player_presence_announcer, "private_message", fake_private_message), \
+             unittest.mock.patch.object(player_presence_announcer, "now_ts", lambda: fake_time[0]):
+            first = player_presence_announcer.check_once()
+            self.assertIn("456", state.get("pendingJoinMessages", {}))
+            fake_time[0] = 1041
+            second = player_presence_announcer.check_once()
+
+        self.assertEqual(first["joined"], [])
+        self.assertEqual(first["announcements"], [])
+        self.assertEqual(first["privateWelcomeMessages"], [])
+        self.assertEqual(first["automatedPrivateMessages"], [])
+        self.assertEqual(second["joined"], ["Returner"])
+        self.assertEqual(second["announcements"][0]["message"], "Welcome back Returner! Current player count is now 1.")
+        self.assertEqual(second["privateWelcomeMessages"][0]["message"], "Private welcome Returner")
+        self.assertEqual(second["automatedPrivateMessages"][0]["message"], "Reconnect help Returner")
+        self.assertEqual(announced, ["Welcome back Returner! Current player count is now 1."])
+        self.assertEqual([item["jobId"] for item in sent], ["player-presence-private-welcome", "player-presence-reconnect-recovery"])
+        self.assertNotIn("456", state.get("pendingJoinMessages", {}))
+
     def test_existing_online_player_without_old_session_marker_is_not_reannounced(self):
         state = {
             "onlinePlayers": {"456": {"name": "Returner", "flsId": "RETURN_FLS"}},
@@ -310,7 +371,7 @@ class StarterEmoteGrantTests(unittest.TestCase):
 
 
 class DeepDesertJoinMessageTests(unittest.TestCase):
-    def test_deep_desert_pve_message_sends_on_entry_not_every_poll(self):
+    def test_deep_desert_casual_message_sends_on_entry_not_every_poll(self):
         state = {
             "onlinePlayers": {
                 "123": {"name": "Traveler", "flsId": "TRAVELER_FLS", "map": "HaggaBasin", "partitionLabel": "Hagga Basin"}
@@ -321,7 +382,7 @@ class DeepDesertJoinMessageTests(unittest.TestCase):
             "name": "Traveler",
             "flsId": "TRAVELER_FLS",
             "map": "DeepDesert",
-            "partitionLabel": "Deep Desert PvE",
+            "partitionLabel": "PVE Casual",
             "partitionId": "8",
         }
         sent = []
@@ -336,7 +397,7 @@ class DeepDesertJoinMessageTests(unittest.TestCase):
 
         file_env = {
             "DUNE_PLAYER_PRESENCE_DEEP_DESERT_JOIN_MESSAGES_ENABLED": "true",
-            "DUNE_PLAYER_PRESENCE_DEEP_DESERT_PVE_JOIN_TEMPLATE": "PVE DD notice",
+            "DUNE_PLAYER_PRESENCE_DEEP_DESERT_CASUAL_JOIN_TEMPLATE": "Casual DD notice",
             "DUNE_PLAYER_PRESENCE_DEEP_DESERT_FIRST_ENABLED": "false",
             "DUNE_PLAYER_PRESENCE_REPO_STAR_THIRD_JOIN_ENABLED": "false",
             "DUNE_PLAYER_PRESENCE_STARTER_BASE_TOOL_ENABLED": "false",
@@ -353,16 +414,16 @@ class DeepDesertJoinMessageTests(unittest.TestCase):
             first_result = player_presence_announcer.check_once()
             second_result = player_presence_announcer.check_once()
 
-        self.assertEqual(first_result["automatedPrivateMessages"][0]["event"], "deep-desert-pve-join")
-        self.assertEqual(sent, [{"target": current_player, "message": "PVE DD notice", "jobId": "player-presence-deep-desert-pve-join"}])
+        self.assertEqual(first_result["automatedPrivateMessages"][0]["event"], "deep-desert-casual-join")
+        self.assertEqual(sent, [{"target": current_player, "message": "Casual DD notice", "jobId": "player-presence-deep-desert-casual-join"}])
         self.assertEqual(second_result["automatedPrivateMessages"], [])
 
-    def test_deep_desert_pvp_message_sends_on_login_by_partition(self):
+    def test_deep_desert_hardcore_message_sends_on_login_by_partition(self):
         player = {
             "name": "Builder",
             "flsId": "BUILDER_FLS",
             "map": "DeepDesert",
-            "partitionLabel": "Deep Desert",
+            "partitionLabel": "PVE Hardcore",
             "partitionId": "31",
         }
         state = {
@@ -381,7 +442,7 @@ class DeepDesertJoinMessageTests(unittest.TestCase):
 
         file_env = {
             "DUNE_PLAYER_PRESENCE_DEEP_DESERT_JOIN_MESSAGES_ENABLED": "true",
-            "DUNE_PLAYER_PRESENCE_DEEP_DESERT_PVP_JOIN_TEMPLATE": "PVP DD notice",
+            "DUNE_PLAYER_PRESENCE_DEEP_DESERT_HARDCORE_JOIN_TEMPLATE": "Hardcore DD notice",
             "DUNE_PLAYER_PRESENCE_DEEP_DESERT_FIRST_ENABLED": "false",
             "DUNE_PLAYER_PRESENCE_REPO_STAR_THIRD_JOIN_ENABLED": "false",
             "DUNE_PLAYER_PRESENCE_STARTER_BASE_TOOL_ENABLED": "false",
@@ -397,9 +458,9 @@ class DeepDesertJoinMessageTests(unittest.TestCase):
              unittest.mock.patch.object(player_presence_announcer, "private_message", fake_private_message):
             result = player_presence_announcer.check_once()
 
-        self.assertEqual(result["automatedPrivateMessages"][0]["event"], "deep-desert-pvp-join")
-        self.assertEqual(sent[0]["message"], "PVP DD notice")
-        self.assertEqual(sent[0]["jobId"], "player-presence-deep-desert-pvp-join")
+        self.assertEqual(result["automatedPrivateMessages"][0]["event"], "deep-desert-hardcore-join")
+        self.assertEqual(sent[0]["message"], "Hardcore DD notice")
+        self.assertEqual(sent[0]["jobId"], "player-presence-deep-desert-hardcore-join")
 
 
 class ServiceHealthCheckTests(unittest.TestCase):

@@ -50,11 +50,48 @@ map_watchdog_control() {
   fi
 }
 
+run_hardcore_dd_weekly_wipe() {
+  env_file="${ENV_FILE:-.env}"
+  enabled="${DUNE_HARDCORE_DD_WEEKLY_WIPE_ENABLED:-$(env_file_value DUNE_HARDCORE_DD_WEEKLY_WIPE_ENABLED "$env_file")}"
+  if [ -z "$enabled" ]; then
+    enabled="${DUNE_PVP_DD_WEEKLY_WIPE_ENABLED:-$(env_file_value DUNE_PVP_DD_WEEKLY_WIPE_ENABLED "$env_file")}"
+  fi
+  case "$enabled" in
+    1|true|yes|on) ;;
+    *) return 0 ;;
+  esac
+  case " $services " in
+    *" deep-desert-pvp "*|*" all "*) ;;
+    *) return 0 ;;
+  esac
+  if [ ! -x ./scripts/wipe-hardcore-deep-desert.sh ]; then
+    printf 'Hardcore DD weekly wipe enabled but scripts/wipe-hardcore-deep-desert.sh is missing or not executable\n' >&2
+    return 1
+  fi
+  ./scripts/wipe-hardcore-deep-desert.sh "$env_file" --execute --if-due
+}
+
+run_landsraad_goal_tuning() {
+  env_file="${ENV_FILE:-.env}"
+  enabled="${DUNE_LANDSRAAD_GOAL_TUNING_ENABLED:-$(env_file_value DUNE_LANDSRAAD_GOAL_TUNING_ENABLED "$env_file")}"
+  case "$enabled" in
+    1|true|yes|on) ;;
+    *) return 0 ;;
+  esac
+  if [ ! -x ./scripts/tune-landsraad-goals.sh ]; then
+    printf 'Landsraad goal tuning enabled but scripts/tune-landsraad-goals.sh is missing or not executable\n' >&2
+    return 1
+  fi
+  ./scripts/tune-landsraad-goals.sh "$env_file" --execute
+}
+
 pre_start_hygiene() {
   env_file="${ENV_FILE:-.env}"
   if [ -x ./scripts/apply-official-db-patches.sh ]; then
     ./scripts/apply-official-db-patches.sh "$env_file"
   fi
+  run_landsraad_goal_tuning
+  run_hardcore_dd_weekly_wipe
   clear_player_rmq="${DUNE_RESTART_CLEAR_PLAYER_RMQ_SESSIONS:-}"
   if [ -z "$clear_player_rmq" ]; then
     case "$target" in
@@ -446,10 +483,33 @@ def run_host_compose(services):
         compose_command.extend(["-f", file_name])
     compose_command.extend(["--env-file", env_file, "up", "-d", "--force-recreate", "--no-deps"])
     compose_command.extend(services)
+    service_words = " ".join(services)
+    hardcore_dd_wipe_enabled = (
+        os.environ.get("DUNE_HARDCORE_DD_WEEKLY_WIPE_ENABLED")
+        or read_env_value(env_file, "DUNE_HARDCORE_DD_WEEKLY_WIPE_ENABLED")
+        or os.environ.get("DUNE_PVP_DD_WEEKLY_WIPE_ENABLED")
+        or read_env_value(env_file, "DUNE_PVP_DD_WEEKLY_WIPE_ENABLED")
+        or ""
+    )
+    clear_player_rmq = os.environ.get("DUNE_RESTART_CLEAR_PLAYER_RMQ_SESSIONS") or read_env_value(env_file, "DUNE_RESTART_CLEAR_PLAYER_RMQ_SESSIONS") or ""
+    if not clear_player_rmq:
+        clear_player_rmq = "true" if target == "all" else "false"
     shell_command = (
         "set -e; "
-        + "if [ -x /workspace/scripts/seed-gateway-neighbor.sh ]; then "
         + "apk add --no-cache bash iproute2 util-linux sudo >/dev/null; "
+        + "if [ -x ./scripts/apply-official-db-patches.sh ]; then "
+        + f"./scripts/apply-official-db-patches.sh {shlex.quote(env_file)}; "
+        + "fi; "
+        + "case " + shlex.quote(hardcore_dd_wipe_enabled) + " in 1|true|yes|on) "
+        + "case " + shlex.quote(" " + service_words + " ") + " in *' deep-desert-pvp '*) "
+        + "if [ -x ./scripts/wipe-hardcore-deep-desert.sh ]; then "
+        + f"./scripts/wipe-hardcore-deep-desert.sh {shlex.quote(env_file)} --execute --if-due; "
+        + "else echo 'Hardcore DD weekly wipe enabled but script missing' >&2; exit 1; fi ;; esac ;; esac; "
+        + "case " + shlex.quote(clear_player_rmq) + " in 1|true|yes|on) "
+        + "if [ -x ./scripts/clear-player-rmq-sessions.sh ]; then "
+        + f"./scripts/clear-player-rmq-sessions.sh {shlex.quote(env_file)} || true; "
+        + "fi ;; esac; "
+        + "if [ -x /workspace/scripts/seed-gateway-neighbor.sh ]; then "
         + "/workspace/scripts/seed-gateway-neighbor.sh || true; "
         + "fi; "
         + "if [ -x /workspace/scripts/full-world-partitions.sh ]; then "

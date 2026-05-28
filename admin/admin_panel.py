@@ -5299,7 +5299,7 @@ class Handler(BaseHTTPRequestHandler):
         if account_id not in ("", None) or character_name:
             player = self.resolve_player(account_id=account_id, character_name=character_name)
             controller_id = controller_id or player.get("player_controller_id")
-            owner_id = owner_id or player.get("player_pawn_id")
+            owner_id = owner_id or controller_id
         if controller_id in ("", None):
             raise ValueError("player_controller_id, account_id, or character_name is required")
         return {
@@ -6522,17 +6522,29 @@ class Handler(BaseHTTPRequestHandler):
         if mode not in ("add", "set"):
             raise ValueError("mode must be add or set")
         dry_run = str(body.get("dry_run", body.get("dryRun", "true"))).lower() not in ("0", "false", "no", "off")
-        before_rows = query("select dune.dune_exchange_retrieve_solari_balance(%s) as solari_balance", (owner_id,))
+        before_rows = query("""
+            select
+                coalesce((
+                    select balance
+                    from dune.player_virtual_currency_balances
+                    where player_controller_id=%s and currency_id=dune.get_solaris_id()
+                ), 0) as solari_balance,
+                dune.dune_exchange_retrieve_solari_balance(%s) as exchange_solari_balance
+        """, (controller_id, owner_id))
         before_balance = int((before_rows[0] if before_rows else {}).get("solari_balance") or 0)
-        delta = amount if mode == "add" else amount - before_balance
+        target_balance = before_balance + amount if mode == "add" else amount
+        if target_balance < 0:
+            raise ValueError("exchange Solari balance cannot be negative")
+        delta = target_balance - before_balance
         plan = {
-            "function": "dune.dune_exchange_modify_user_solari_balance",
-            "args": [controller_id, delta],
+            "function": "direct-update:dune.player_virtual_currency_balances",
+            "args": [controller_id, target_balance],
             "ownerId": owner_id,
             "controllerId": controller_id,
             "mode": mode,
             "amount": amount,
             "beforeBalance": before_balance,
+            "targetBalance": target_balance,
             "delta": delta,
             "rollback": {"mode": "set", "owner_id": owner_id, "controller_id": controller_id, "amount": before_balance, "confirm": CONFIRM_EXCHANGE_MUTATION},
         }
@@ -6542,8 +6554,28 @@ class Handler(BaseHTTPRequestHandler):
         if not EXCHANGE_MUTATIONS_ENABLED:
             raise PermissionError("exchange mutations are disabled; set DUNE_ADMIN_EXCHANGE_MUTATIONS_ENABLED=true")
         require_confirmation(body, CONFIRM_EXCHANGE_MUTATION)
-        execute("select dune.dune_exchange_modify_user_solari_balance(%s,%s)", (controller_id, delta))
-        after = query("select dune.dune_exchange_retrieve_solari_balance(%s) as solari_balance", (owner_id,))
+        execute("""
+            insert into dune.player_virtual_currency_balances(player_controller_id, currency_id, balance)
+            values (%s, dune.get_solaris_id(), %s)
+            on conflict (player_controller_id, currency_id) do update set balance=excluded.balance
+        """, (controller_id, target_balance))
+        execute("""
+            with ensured as (
+                select dune.dune_exchange_get_user_id(%s) as id
+            )
+            update dune.dune_exchange_users
+            set solari_balance=%s
+            where id=(select id from ensured)
+        """, (owner_id, target_balance))
+        after = query("""
+            select
+                coalesce((
+                    select balance
+                    from dune.player_virtual_currency_balances
+                    where player_controller_id=%s and currency_id=dune.get_solaris_id()
+                ), 0) as solari_balance,
+                dune.dune_exchange_retrieve_solari_balance(%s) as exchange_solari_balance
+        """, (controller_id, owner_id))
         return {"ok": True, "dryRun": False, "ownerId": owner_id, "controllerId": controller_id, "mode": mode, "before": before_rows, "after": after, "rollback": plan["rollback"]}
 
     def player_tags_mutation(self, body):

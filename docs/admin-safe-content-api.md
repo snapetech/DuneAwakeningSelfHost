@@ -671,7 +671,7 @@ dune.dune_exchange_retrieve_solari_balance(in_owner_id bigint)
 dune.dune_exchange_modify_user_solari_balance(in_controller_id bigint, in_solari_delta bigint)
 ```
 
-Risk: high. This changes Exchange-local economy state, not the generic virtual currency table. Dry-run records the previous balance and rollback uses `mode=set`. Order add, fulfill, cancel, relist, retrieve, purge, and category-update functions remain blocked.
+Risk: high. `dune_exchange_retrieve_solari_balance` is safe for reads, but `dune_exchange_modify_user_solari_balance` is transfer-like, not a grant primitive: it moves up to the player's current wallet Solaris into the Exchange balance and subtracts that amount from the generic virtual currency table. Operator bank grants should update the visible Solaris row in `dune.player_virtual_currency_balances`, ensure the user row with `dune.dune_exchange_get_user_id`, mirror the value to `dune.dune_exchange_users.solari_balance`, record the previous balance, and roll back with `mode=set`. Order add, fulfill, cancel, relist, retrieve, purge, and category-update functions remain blocked.
 
 ## Player Lifecycle Inspect
 

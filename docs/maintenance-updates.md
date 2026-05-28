@@ -212,6 +212,38 @@ DUNE_STEAM_SERVER_DIR=/path/to/dune-steamcmd-server
 DUNE_RESTART_STEAM_UPDATE_MODE=steamcmd
 DUNE_RESTART_STEAMCMD_HELPER_IMAGE=cm2network/steamcmd:root
 DUNE_STEAM_FORCE_PLATFORM=linux
+DUNE_HARDCORE_DD_WEEKLY_WIPE_ENABLED=true
+```
+
+When `DUNE_HARDCORE_DD_WEEKLY_WIPE_ENABLED=true`, the restart start hook runs
+`scripts/wipe-hardcore-deep-desert.sh .env --execute --if-due` before recreating map
+servers. That script is deliberately narrower than the game's DB-wipe flag:
+
+- actor/respawn cleanup uses `dune.coriolis_cleanup_partition` for partition
+  `31`, `DeepDesert_1`, dimension `1`;
+- resource fields are deleted only from `dune.resourcefield_state` where
+  `map='DeepDesert'` and `dimension_index=1`;
+- spice field current counters are reset only through
+  `dune.reset_global_spice_field_state('DeepDesert', 1)`;
+- marker and surveyed-area cleanup are not called because the official
+  map-level cleanup only scopes those tables by map name.
+
+Player-facing Deep Desert rule notices are handled by
+`scripts/player-presence-announcer.py` through private Paul whispers. Keep
+`DUNE_PLAYER_PRESENCE_DEEP_DESERT_JOIN_MESSAGES_ENABLED=true` so partition `8`
+receives the PVE Casual notice and partition `31` receives the PVE Hardcore
+notice.
+
+Manual dry-run:
+
+```bash
+./scripts/wipe-hardcore-deep-desert.sh .env
+```
+
+Force an execution outside the weekly marker interval:
+
+```bash
+./scripts/wipe-hardcore-deep-desert.sh .env --execute --force
 ```
 
 ## Manual Checks
@@ -270,6 +302,7 @@ enabled:
 POSTGRES_REMOTE_REPLICA_HOST=kspls0
 DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED=true
 DUNE_BUILDING_PIECE_LIMIT=7500
+DUNE_LANDSRAAD_VENDOR_FACTION_GATE_PATCH_ENABLED=false
 DUNE_OODLE_HOST_LIBRARY=/home/keith/Documents/code/DuneAwakeningSelfHost/backups/operator-oodle/liboodle-data-shared.so
 ```
 
@@ -368,6 +401,49 @@ docker compose --env-file .env \
 ```
 
 Confidence: high for a patcher, Oodle, or pak-layout failure. The original pak is restored by recreating containers without the overlay because the patch only touched the previous container filesystem.
+
+## Landsraad Vendor Faction-Gate Patch
+
+`DUNE_LANDSRAAD_VENDOR_FACTION_GATE_PATCH_ENABLED=true` applies an experimental startup pak patch that keeps the active Landsraad vendor/decree gate but removes the dialogue condition that restricts vendors to the reigning faction. It targets eight generated vendor dialogue payloads in `pakchunk0-LinuxServer.pak`; if the target count changes, startup fails before the server runs. Use `compose.landsraad-vendor-faction-gate.yaml` when the building-piece overlay is not already mounting Oodle.
+
+Dry-run from inside an opted-in game container:
+
+```bash
+python3 /workspace/scripts/patch-landsraad-vendor-faction-gate-pak.py \
+  --pak /home/dune/server/DuneSandbox/Content/Paks/pakchunk0-LinuxServer.pak \
+  --oodle /tmp/oodle/liboodle-data-shared.so \
+  --dry-run
+```
+
+Rollback is the same as the building-piece patch: set `DUNE_LANDSRAAD_VENDOR_FACTION_GATE_PATCH_ENABLED=false` and recreate the affected game-server containers. The patch only touches the container overlay pak, not the official image or persisted world data.
+
+## Landsraad Goal Tuning
+
+`DUNE_LANDSRAAD_GOAL_TUNING_ENABLED=true` runs `scripts/tune-landsraad-goals.sh`
+during restart pre-start hygiene. The script installs a small DB-owned tuning
+table, patches `dune.landsraad_insert_tasks` so future terms use the configured
+scale, and idempotently applies the same scale to the current term. The default
+scale is `DUNE_LANDSRAAD_GOAL_SCALE=0.5`, changing the stock `70,000` per-house
+tile goal to `35,000`. A term is won by completing a row, column, or diagonal on
+the 5x5 board, so the default winning-line target drops from `350,000` to
+`175,000`.
+
+Dry-run:
+
+```bash
+./scripts/tune-landsraad-goals.sh .env
+```
+
+Apply:
+
+```bash
+./scripts/tune-landsraad-goals.sh .env --execute
+```
+
+Rollback or retune by changing `DUNE_LANDSRAAD_GOAL_SCALE` and running the script
+again. Set the scale to `1.0` to restore stock goals for incomplete current-term
+tasks and future terms. Completed Landsraad tiles are not reopened by this
+script.
 
 ### Restore World State
 

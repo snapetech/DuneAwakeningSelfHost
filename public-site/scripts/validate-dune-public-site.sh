@@ -82,6 +82,9 @@ grep -q 'sessionStorage.getItem(poiStorageKey)' "$static_dir/app.js"
 grep -q 'assetUrl("status.html", true)' "$static_dir/app.js"
 grep -q 'Live status is not fresh' "$static_dir/app.js"
 grep -q 'renderStatusUnavailable' "$static_dir/app.js"
+if [[ -x "$(dirname "$0")/check-dune-public-site-drift.sh" ]]; then
+  DUNE_PUBLIC_SITE_MAX_STATUS_AGE_SECONDS=0 "$(dirname "$0")/check-dune-public-site-drift.sh" "$static_dir" >/dev/null
+fi
 if grep -Eq 'innerHTML|outerHTML|insertAdjacentHTML|document\.write' "$static_dir/app.js"; then
   echo "public app.js contains unsafe HTML injection sinks" >&2
   exit 1

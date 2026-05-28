@@ -190,6 +190,60 @@ Admin alerts can include the same signal when
 `DUNE_PLAYER_PRESENCE_INFRA_ADMIN_ALERTS_ENABLED=true`; the FLS publication
 subcheck is controlled by `DUNE_PLAYER_PRESENCE_FLS_PUBLICATION_HEALTH_ENABLED`.
 
+### HP3 on map travel from FLS DNS failure
+
+On 2026-05-28, live players hit HP3 disconnects while entering or leaving
+Overmap and Deep Desert. The destination map logs showed
+`Auth_VerifyFlsServerToken` failing with `Couldn't resolve host name` for
+`sb-retail.fls.funcom.com`, followed by `VerifyIdentity Failed` and the HP3
+`NMT_Failure` rejection. This was not a bad player token; a retry with the same
+identity could succeed after DNS recovered.
+
+The persistent fix is `compose.fls-ipv4-hosts.yaml`. Keep
+`DUNE_FLS_IPV4_HOSTS_ENABLED=true` for live stacks and include the compose files
+from `scripts/compose-files.sh .env`. The overlay pins
+`sb-retail.fls.funcom.com` for Director, Gateway, TextRouter, Survival, and all
+map containers because map containers perform `Auth_VerifyFlsServerToken`
+during travel/login:
+
+```bash
+IFS=: read -r -a compose_files <<< "$(./scripts/compose-files.sh .env)"
+compose_args=()
+for file in "${compose_files[@]}"; do
+  compose_args+=("-f" "$file")
+done
+docker compose --env-file .env "${compose_args[@]}" config \
+  | awk '/^  overmap:/{flag=1} flag && /^  [[:alnum:]_-]+:/{if ($1 != "overmap:") exit} flag{print}' \
+  | grep -E 'extra_hosts|sb-retail'
+```
+
+For an immediate no-restart live mitigation, add the same host pin to every
+running Dune service container after verifying the host is `kspls0`:
+
+```bash
+hostname
+for c in $(docker ps --format '{{.Names}}' | grep '^dune_server-' | grep -Ev 'postgres|rmq|admin-panel|ingress'); do
+  docker exec "$c" sh -lc "grep -q 'sb-retail.fls.funcom.com' /etc/hosts || printf '13.107.253.70 sb-retail.fls.funcom.com\n13.107.226.70 sb-retail.fls.funcom.com\n' >> /etc/hosts"
+done
+```
+
+Verify the runtime resolver path from a representative map:
+
+```bash
+docker exec dune_server-overmap-1 sh -lc 'python3 - <<PY
+import socket
+for row in socket.getaddrinfo("sb-retail.fls.funcom.com", 443, 0, socket.SOCK_STREAM):
+    print(row[-1][0])
+PY'
+```
+
+Then check recent travel destinations for recurrence:
+
+```bash
+docker logs --since 15m dune_server-overmap-1 dune_server-deep-desert-1 dune_server-arrakeen-1 2>&1 \
+  | grep -Ei 'HP3|Couldn.t resolve host|Auth_VerifyFlsServerToken|VerifyIdentity Failed' || true
+```
+
 If the parent server row itself is missing from the browser, nudge `gateway`
 instead of Director. This is also the recovery for accidental FLS identity
 stealing: if another host starts with the same `.env`/`WORLD_UNIQUE_NAME` and

@@ -210,7 +210,7 @@ if [[ "$partition_count" == "31" ]]; then
   start_services deep-desert-pvp
   wait_for_counts 31 'maps 1 through 31'
 else
-  printf 'partition 31 Deep Desert PvP is intentionally disabled; ensuring the old service is stopped\n'
+  printf 'partition 31 PVE Hardcore Deep Desert is intentionally disabled; ensuring the old service is stopped\n'
   "${compose[@]}" stop deep-desert-pvp >/dev/null 2>&1 || true
 fi
 remove_db_init

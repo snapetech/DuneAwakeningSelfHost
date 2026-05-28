@@ -93,10 +93,10 @@ try:
                 "m_UnlocalizedMessage": message,
                 "m_LocalizedMessage": {"m_TableId": "", "m_Key": "", "m_FormatArgs": []},
             },
-            "m_TimeStamp": time.strftime("%Y.%m.%d-%H.%M.%S", time.gmtime()),
             "m_OriginLocation": {"X": 0.0, "Y": 0.0, "Z": 0.0},
             "m_HasSeenMessage": False,
         }
+        chat[env("DUNE_ANNOUNCE_CHAT_TIMESTAMP_FIELD", "m_Timestamp")] = time.strftime("%Y.%m.%d-%H.%M.%S", time.gmtime())
         body = json.dumps({"content": json.dumps(chat, separators=(",", ":")), "Type": "TextChat"}, separators=(",", ":"))
         props = pika.BasicProperties(
             content_type="Content",

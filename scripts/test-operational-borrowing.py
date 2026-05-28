@@ -254,6 +254,11 @@ class ComposeCommandTests(unittest.TestCase):
         environment = config["services"]["deep-desert-pvp"]["environment"]
         self.assertEqual(environment["DUNE_USERENGINE_CONFIG_PATH"], "/workspace/config/UserEngine.deep-desert-pvp.ini")
 
+    def test_deep_desert_uses_dimension_routing(self):
+        director_ini = (ROOT / "config" / "director.ini").read_text(encoding="utf-8")
+        self.assertIn("DeepDesert_1=Dimension", director_ini)
+        self.assertNotIn("DeepDesert_1=ClassicalInstancing", director_ini)
+
     def test_allmaps_overlay_passes_fls_environment(self):
         config = self.compose_config("compose.yaml", "compose.allmaps.yaml")
         command = config["services"]["lostharvest-ecolab-a"]["command"]

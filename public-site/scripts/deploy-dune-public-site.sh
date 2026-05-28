@@ -63,9 +63,10 @@ install_render_scripts() {
     install -m 0755 "$repo_root/public-site/scripts/render-dune-public-snapshot.py" "$dst_dir/render-dune-public-snapshot.py"
     install -m 0755 "$repo_root/public-site/scripts/configure-dune-public-site.sh" "$dst_dir/configure-dune-public-site.sh"
     install -m 0755 "$repo_root/public-site/scripts/validate-dune-public-site.sh" "$dst_dir/validate-dune-public-site.sh"
+    install -m 0755 "$repo_root/public-site/scripts/check-dune-public-site-drift.sh" "$dst_dir/check-dune-public-site-drift.sh"
   else
     run_privileged install -d -m 0755 "$dst_dir"
-    for script in render-dune-static-status.sh render-dune-public-snapshot.py configure-dune-public-site.sh validate-dune-public-site.sh; do
+    for script in render-dune-static-status.sh render-dune-public-snapshot.py configure-dune-public-site.sh validate-dune-public-site.sh check-dune-public-site-drift.sh; do
       run_privileged install -m 0755 "$repo_root/public-site/scripts/$script" "$dst_dir/$script"
     done
   fi

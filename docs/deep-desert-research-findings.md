@@ -93,11 +93,12 @@ Outcome:
 
 - Both lab Deep Desert containers started and became DB-ready.
 - Partition 8 registered as `DeepDesert_1`, dimension `0`, label
-  `Deep Desert PvE`.
+  `PVE Casual`.
 - Partition 31 registered as `DeepDesert_1`, dimension `1`, label
-  `Deep Desert PvP`.
+  `PVE Hardcore`.
 - The mounted per-service `UserGame.ini` files were copied into each
-  container's Saved `UserSettings` directory with different PVE/PVP values.
+  container's Saved `UserSettings` directory with different Casual/Hardcore
+  values.
 - The fractional cycle value did not behave as a five-minute cycle. Startup logs
   showed `This Coriolis Cycle start date UTC: 2026.05.22-16.27.00` and
   `Next Coriolis Cycle start date UTC: 2026.05.22-16.28.00`, so the observed
@@ -126,7 +127,7 @@ Interpretation:
 - The run did not prove per-instance Coriolis damage. No player or damage probe
   was inside the storm, and no damage-specific log line appeared. Confidence:
   unknown.
-- The run did not prove per-instance Shifting Sands. The PVP instance had
+- The run did not prove per-instance Shifting Sands. The Hardcore instance had
   `m_bCoriolisTriggerShiftingSands=True`, but no static Shifting Sands DB rows
   appeared during the short observation. Confidence: unknown.
 
@@ -141,23 +142,23 @@ Captures:
 
 Tested configuration:
 
-- PVE DD, partition `8`, dimension `0`:
+- PVE Casual DD, partition `8`, dimension `0`:
   `m_bCoriolisAutoSpawnEnabled=False`, `m_bCoriolisTriggerShiftingSands=False`,
   `m_CoriolisLightDamage=0`, `m_CoriolisHeavyDamage=0`,
   `m_ShiftingSands=False`.
-- PVP DD, partition `31`, dimension `1`:
+- PVE Hardcore DD, partition `31`, dimension `1`:
   `m_bCoriolisAutoSpawnEnabled=True`, `m_bCoriolisTriggerShiftingSands=True`,
   `m_CoriolisLightDamage=2`, `m_CoriolisHeavyDamage=25`,
   `m_ShiftingSands=True`.
 
 Findings:
 
-- With PVE auto-spawn off and PVP auto-spawn on, only partition `31` logged
+- With Casual auto-spawn off and Hardcore auto-spawn on, only partition `31` logged
   `Requested a Coriolis Spawn`. Partition `8` initialized Coriolis timing but did
   not request a spawn. Confidence: high.
-- Adding short PVP-only stage/warning values changed the PVP spawn log from
+- Adding short Hardcore-only stage/warning values changed the Hardcore spawn log from
   `SkipTime 36000` to `SkipTime 16`. This proves at least one warning/stage
-  timing surface is being read by the PVP DD container. Confidence: high.
+  timing surface is being read by the Hardcore DD container. Confidence: high.
 - During both asymmetric runs, `retrieve_all_static_shifting_sand()` remained at
   zero rows. Confidence: high.
 - During both asymmetric runs, `debug_get_coriolis_seeds()` stayed unchanged:
@@ -168,12 +169,12 @@ Findings:
 
 Practical conclusion:
 
-- A PVP DD with Coriolis enabled and a PVE DD with Coriolis disabled is achievable
+- A Hardcore DD with Coriolis enabled and a Casual DD with Coriolis disabled is achievable
   through per-container mounted `UserGame.ini` files. Confidence: high for the
   lab topology.
-- A PVE DD with zero-damage Coriolis is likely achievable by setting its
+- A Casual DD with zero-damage Coriolis is likely achievable by setting its
   Coriolis damage values to zero, but this exact damage behavior was not proven
   because no player/vehicle damage probe was present. Confidence: moderate.
-- PVP-only Shifting Sands is still unproven. The known `m_ShiftingSands=True`
+- Hardcore-only Shifting Sands is still unproven. The known `m_ShiftingSands=True`
   and `m_bCoriolisTriggerShiftingSands=True` settings did not write
   `shiftingsands_data` rows in these short server-only tests. Confidence: low.

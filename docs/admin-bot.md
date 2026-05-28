@@ -70,6 +70,7 @@ DUNE_PLAYER_PRESENCE_RULES_URL=https://example.test
 DUNE_PLAYER_PRESENCE_JOIN_TEMPLATE=Welcome {playername}! Current player count is now {count}.
 DUNE_PLAYER_PRESENCE_RETURN_JOIN_TEMPLATE=Welcome back {playername}! Current player count is now {count}.
 DUNE_PLAYER_PRESENCE_LEAVE_TEMPLATE={playername} has left, current count is {count}.
+DUNE_PLAYER_PRESENCE_JOIN_MESSAGE_DELAY_SECONDS=30
 DUNE_PLAYER_PRESENCE_ANNOUNCE_COMMAND=/workspace/scripts/announce.sh
 DUNE_PLAYER_PRESENCE_ANNOUNCE_ROUTING_KEYS=<empty>
 DUNE_PLAYER_PRESENCE_PRIVATE_WELCOME_ENABLED=true
@@ -84,11 +85,11 @@ DUNE_PLAYER_PRESENCE_HAGGA_ARRIVAL_ENABLED=true
 DUNE_PLAYER_PRESENCE_HAGGA_ARRIVAL_TEMPLATE=You made it to Hagga Basin. Build with room around roads, spawns, resource areas, and points of interest. Rules: {rules_url}
 DUNE_PLAYER_PRESENCE_DEEP_DESERT_FIRST_ENABLED=true
 DUNE_PLAYER_PRESENCE_DEEP_DESERT_FIRST_TEMPLATE=Deep Desert is high risk. Expect sandstorms, sandworms, and harsher recovery. Support: {server_url}
-DUNE_PLAYER_PRESENCE_DEEP_DESERT_JOIN_MESSAGES_ENABLED=false
-DUNE_PLAYER_PRESENCE_DEEP_DESERT_PVE_PARTITIONS=8
-DUNE_PLAYER_PRESENCE_DEEP_DESERT_PVP_PARTITIONS=31
-DUNE_PLAYER_PRESENCE_DEEP_DESERT_PVE_JOIN_TEMPLATE=PvE Deep Desert: Coriolis runs weekly but does no damage. No DB wipe, no Shifting Sands.
-DUNE_PLAYER_PRESENCE_DEEP_DESERT_PVP_JOIN_TEMPLATE=PvP Deep Desert: high Coriolis damage, Shifting Sands, 3x harvest. Building here is at your risk: maintain bases and avoid areas sands can bury.
+DUNE_PLAYER_PRESENCE_DEEP_DESERT_JOIN_MESSAGES_ENABLED=true
+DUNE_PLAYER_PRESENCE_DEEP_DESERT_CASUAL_PARTITIONS=8
+DUNE_PLAYER_PRESENCE_DEEP_DESERT_HARDCORE_PARTITIONS=31
+DUNE_PLAYER_PRESENCE_DEEP_DESERT_CASUAL_JOIN_TEMPLATE=PVE Casual ({partition_label}): persistent PvE Deep Desert, standard harvest, no weekly cleanup, no Shifting Sands reset.
+DUNE_PLAYER_PRESENCE_DEEP_DESERT_HARDCORE_JOIN_TEMPLATE=PVE Hardcore ({partition_label}): PvE combat, 3x harvest, high sandstorm/Coriolis damage, Shifting Sands, 15% higher vehicle wear, and weekly Hardcore DD cleanup during maintenance.
 DUNE_PLAYER_PRESENCE_BASE_REMINDERS_ENABLED=true
 DUNE_PLAYER_PRESENCE_BASE_CAP_CONFIG=config/UserGame.ini
 DUNE_PLAYER_PRESENCE_BASE_CAP_MAP=HaggaBasin
@@ -158,9 +159,9 @@ DUNE_PLAYER_PRESENCE_VERMILIUS_GAP_TEMPLATE=Congrats! {playername} has outrun Sh
 
 Presence templates support `{playername}`, `{player_name}`, `{count}`, `{player_count}`, `{server_name}`, `{server_url}`, and `{rules_url}`. Base-cap templates also support `{base_cap}`. Restart-warning templates support `{remaining}` and `{remaining_seconds}`. Vermilius Gap templates support `{playername}`, `{player_name}`, and `{story_node_id}`.
 
-Global join/leave messages use `DUNE_PLAYER_PRESENCE_JOIN_TEMPLATE`, `DUNE_PLAYER_PRESENCE_RETURN_JOIN_TEMPLATE`, and `DUNE_PLAYER_PRESENCE_LEAVE_TEMPLATE` through the public `announce()` path. First-time joins are accounts missing from `seenAccounts`; returning joins are accounts already recorded there. Player-presence announcements override the shared announcement routing and default to `DUNE_PLAYER_PRESENCE_ANNOUNCE_ROUTING_KEYS=<empty>` so each online client receives one copy. Do not set this to multiple routing keys unless you intentionally want fan-out; the shared `DUNE_ANNOUNCE_CHAT_ROUTING_KEYS=HaggaBasin.0,Survival_1.dim_0,<empty>` pattern can make HUD notices render more than once.
+Global join/leave messages use `DUNE_PLAYER_PRESENCE_JOIN_TEMPLATE`, `DUNE_PLAYER_PRESENCE_RETURN_JOIN_TEMPLATE`, and `DUNE_PLAYER_PRESENCE_LEAVE_TEMPLATE` through the public `announce()` path. First-time joins are accounts missing from `seenAccounts`; returning joins are accounts already recorded there. `DUNE_PLAYER_PRESENCE_JOIN_MESSAGE_DELAY_SECONDS` can delay join-triggered public and private messages until a player has remained online long enough for the client chat path to render them. Player-presence announcements override the shared announcement routing and default to `DUNE_PLAYER_PRESENCE_ANNOUNCE_ROUTING_KEYS=<empty>` so each online client receives one copy. Do not set this to multiple routing keys unless you intentionally want fan-out; the shared `DUNE_ANNOUNCE_CHAT_ROUTING_KEYS=HaggaBasin.0,Survival_1.dim_0,<empty>` pattern can make HUD notices render more than once.
 
-The private welcome path runs on every detected join for existing and new players after the first baseline poll. It uses the same Paul chat sender, disables dashboard `!!!` wrapping, derives the joined player's live whisper route from their FLS id, publishes to `DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_EXCHANGE`, and sets `m_ChannelType` to `DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_CHANNEL`. The confirmed private-rendering values are `chat.whispers` and `Whispers`. The shared publisher must emit `m_TimeStamp`, not `m_Timestamp`; see `docs/private-chat-replies.md`. The default private welcome message is:
+The private welcome path runs on every detected join for existing and new players after the first baseline poll. It uses the same Paul chat sender, disables dashboard `!!!` wrapping, derives the joined player's live whisper route from their FLS id, publishes to `DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_EXCHANGE`, and sets `m_ChannelType` to `DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_CHANNEL`. The intended private route is `chat.whispers` with `Whispers`. As of 2026-05-27, live player chat payloads use `m_Timestamp`; the shared publisher defaults to that spelling and can be overridden with `DUNE_ANNOUNCE_CHAT_TIMESTAMP_FIELD` if another game build requires `m_TimeStamp`. See `docs/private-chat-replies.md`. The default private welcome message is:
 
 ```text
 Welcome! Please check {rules_url} for server rules.
@@ -171,6 +172,7 @@ Automated private messages are derived from local state and operator config rath
 - `FIRST_SEEN` sends once per account after its first observed join.
 - `HAGGA_ARRIVAL` sends once when an online player is first observed on `HaggaBasin`.
 - `DEEP_DESERT_FIRST` sends once when an online player is first observed on a Deep Desert map.
+- `DEEP_DESERT_JOIN_MESSAGES` sends a private Paul whisper each time a player enters or logs into a Deep Desert instance. Partition `8` is treated as PVE Casual; partition `31` is treated as PVE Hardcore with 3x harvest, higher storm/Coriolis penalties, and weekly scoped cleanup.
 - `BASE_REMINDERS` queries `dune.totems`, `dune.actors`, and `dune.landclaim_segments` for that account and sends first-base, near-cap, or over-cap reminders only when the count changes.
 - `RECONNECT_RECOVERY` sends when a player rejoins inside the configured short reconnect window.
 - `RESTART_PRIVATE_WARNINGS` mirrors scheduled admin-panel restart/announcement jobs to online players at configured remaining-time marks.
@@ -205,7 +207,7 @@ The public/global presence events are intentionally not private:
 - `MAP_HEALTH_PUBLIC`, `POPULATION_PUBLIC`, `PUBLIC_MAINTENANCE_CANCELLED`, `INCIDENT_MODE_PUBLIC`, `TRANSFER_POLICY_PUBLIC`, `RULES_CHANGE_PUBLIC`, `PEAK_PUBLIC`, and `DAILY_STATUS_PUBLIC` publish server-wide notices.
 - `VERMILIUS_GAP` is currently a public celebration announcement.
 
-For the full private/global routing matrix, command-reply behavior, and RabbitMQ verification steps, use [private-chat-replies.md](private-chat-replies.md). That runbook is authoritative for `chat.whispers`, `Whispers`, `m_TimeStamp`, and the expected `reply.stdout` metadata from command smoke tests.
+For the full private/global routing matrix, command-reply behavior, and RabbitMQ verification steps, use [private-chat-replies.md](private-chat-replies.md). That runbook tracks `chat.whispers`, `Whispers`, timestamp-field behavior, and the expected `reply.stdout` metadata from command smoke tests.
 
 Admin-private recipients are derived from currently online players whose character name or FLS id matches `DUNE_PLAYER_PRESENCE_ADMIN_NAMES` / `DUNE_PLAYER_PRESENCE_ADMIN_FLS_IDS`. Keep real admin identifiers in private `.env`, not in committed examples or docs. Digest entries are stored in `backups/admin-bot/player-presence.json` under `adminDigestLog`, and the admin panel exposes them on the Admin Digests tab.
 

@@ -587,11 +587,17 @@ def deep_desert_instance(player):
         return ""
     text = deep_desert_text(player)
     partition_id = player_partition_id(player)
-    if "pvp" in text or partition_id in env_set("DUNE_PLAYER_PRESENCE_DEEP_DESERT_PVP_PARTITIONS", "31"):
-        return "pvp"
-    if "pve" in text or partition_id in env_set("DUNE_PLAYER_PRESENCE_DEEP_DESERT_PVE_PARTITIONS", "8"):
-        return "pve"
-    return env("DUNE_PLAYER_PRESENCE_DEEP_DESERT_DEFAULT_INSTANCE", "pve").strip().lower() or "pve"
+    hardcore_partitions = env_set("DUNE_PLAYER_PRESENCE_DEEP_DESERT_HARDCORE_PARTITIONS", "")
+    if not hardcore_partitions:
+        hardcore_partitions = env_set("DUNE_PLAYER_PRESENCE_DEEP_DESERT_PVP_PARTITIONS", "31")
+    casual_partitions = env_set("DUNE_PLAYER_PRESENCE_DEEP_DESERT_CASUAL_PARTITIONS", "")
+    if not casual_partitions:
+        casual_partitions = env_set("DUNE_PLAYER_PRESENCE_DEEP_DESERT_PVE_PARTITIONS", "8")
+    if "hardcore" in text or "pvp" in text or partition_id in hardcore_partitions:
+        return "hardcore"
+    if "casual" in text or "pve" in text or partition_id in casual_partitions:
+        return "casual"
+    return env("DUNE_PLAYER_PRESENCE_DEEP_DESERT_DEFAULT_INSTANCE", "casual").strip().lower() or "casual"
 
 
 def player_location_changed(previous_player, current_player):
@@ -901,6 +907,31 @@ def grant_starter_emotes(account_id):
     return payload
 
 
+def private_broadcast(current, message, job_id):
+    if not current:
+        return {"ok": False, "mode": "whisper", "error": "no current online players"}
+    sends = []
+    for account_id, player in sorted(current.items(), key=lambda item: player_name(item[1]).lower()):
+        sends.append({
+            "accountId": account_id,
+            "player": player_name(player),
+            "send": private_message(player, message, job_id),
+        })
+    return {
+        "ok": bool(sends) and all(item.get("send", {}).get("ok") for item in sends),
+        "mode": "whisper",
+        "count": len(sends),
+        "sends": sends,
+    }
+
+
+def public_announce(message, current, job_id="player-presence"):
+    delivery_mode = env("DUNE_PLAYER_PRESENCE_PUBLIC_DELIVERY_MODE", "announce").strip().lower()
+    if delivery_mode in ("whisper", "private", "private-whisper"):
+        return private_broadcast(current, message, job_id)
+    return announce(message)
+
+
 def announce(message):
     command = env("DUNE_PLAYER_PRESENCE_ANNOUNCE_COMMAND", env("DUNE_ADMIN_ANNOUNCE_COMMAND", str(ROOT / "scripts" / "announce.sh")))
     if command.startswith("/workspace/"):
@@ -918,6 +949,7 @@ def announce(message):
     result = subprocess.run([command, message], cwd=ROOT, env=child_env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, check=False)
     return {
         "ok": result.returncode == 0,
+        "mode": "announce",
         "returncode": result.returncode,
         "routingKeys": child_env["DUNE_ANNOUNCE_CHAT_ROUTING_KEYS"],
         "exchange": child_env["DUNE_ANNOUNCE_CHAT_EXCHANGE"],
@@ -1092,6 +1124,36 @@ def check_once():
     final_count = len(current)
     current_time = now_ts()
     seen_accounts = set(str(item) for item in state.get("seenAccounts", []))
+    join_delay = max(0, int(env("DUNE_PLAYER_PRESENCE_JOIN_MESSAGE_DELAY_SECONDS", "0")))
+    pending_join_messages = state.setdefault("pendingJoinMessages", {})
+    for account_id in left:
+        pending_join_messages.pop(str(account_id), None)
+    if join_delay > 0 and not first_run:
+        detected_joined = set(joined)
+        detected_session_rejoined = set(session_rejoined)
+        for account_id in detected_joined:
+            key = str(account_id)
+            session = player_presence_session(current.get(account_id)) or ""
+            entry = pending_join_messages.get(key)
+            if not entry or entry.get("session") != session:
+                entry = {"firstSeen": current_time, "session": session, "sessionRejoined": account_id in detected_session_rejoined}
+            else:
+                entry["sessionRejoined"] = bool(entry.get("sessionRejoined")) or account_id in detected_session_rejoined
+            pending_join_messages[key] = entry
+        ready_joined = []
+        ready_session_rejoined = []
+        for key, entry in list(pending_join_messages.items()):
+            if key not in current_ids:
+                pending_join_messages.pop(key, None)
+                continue
+            first_seen = int(entry.get("firstSeen") or current_time)
+            if current_time - first_seen >= join_delay:
+                ready_joined.append(key)
+                if entry.get("sessionRejoined"):
+                    ready_session_rejoined.append(key)
+                pending_join_messages.pop(key, None)
+        joined = sorted(ready_joined, key=lambda account_id: player_name(current.get(account_id, account_id)).lower())
+        session_rejoined = sorted(ready_session_rejoined, key=lambda account_id: player_name(current.get(account_id, account_id)).lower())
 
     subfief_bonus_results = []
     if joined and not first_run:
@@ -1112,10 +1174,10 @@ def check_once():
             event = "join-returning" if str(account_id) in seen_accounts else "join-first-time"
             template = return_join_template if str(account_id) in seen_accounts else join_template
             message = render_template(template, player_name(current.get(account_id, account_id)), final_count)
-            results.append({"event": event, "accountId": account_id, "message": message, "announce": announce(message)})
+            results.append({"event": event, "accountId": account_id, "message": message, "announce": public_announce(message, current, f"player-presence-{event}")})
         for account_id in left:
             message = render_template(leave_template, player_name(previous.get(account_id, account_id)), final_count)
-            results.append({"event": "leave", "accountId": account_id, "message": message, "announce": announce(message)})
+            results.append({"event": "leave", "accountId": account_id, "message": message, "announce": public_announce(message, current, "player-presence-leave")})
 
     private_welcome_results = []
     if env_bool("DUNE_PLAYER_PRESENCE_PRIVATE_WELCOME_ENABLED", False) and not first_run:
@@ -1171,8 +1233,14 @@ def check_once():
 
         if env_bool("DUNE_PLAYER_PRESENCE_DEEP_DESERT_JOIN_MESSAGES_ENABLED", False):
             templates = {
-                "pve": env("DUNE_PLAYER_PRESENCE_DEEP_DESERT_PVE_JOIN_TEMPLATE", "PvE Deep Desert: Coriolis runs weekly but does no damage. No DB wipe, no Shifting Sands."),
-                "pvp": env("DUNE_PLAYER_PRESENCE_DEEP_DESERT_PVP_JOIN_TEMPLATE", "PvP Deep Desert: high Coriolis damage, Shifting Sands, 3x harvest. Building here is at your risk: maintain bases and avoid areas sands can bury."),
+                "casual": env(
+                    "DUNE_PLAYER_PRESENCE_DEEP_DESERT_CASUAL_JOIN_TEMPLATE",
+                    env("DUNE_PLAYER_PRESENCE_DEEP_DESERT_PVE_JOIN_TEMPLATE", "PVE Casual ({partition_label}): persistent PvE Deep Desert, standard harvest, no weekly cleanup, no Shifting Sands reset."),
+                ),
+                "hardcore": env(
+                    "DUNE_PLAYER_PRESENCE_DEEP_DESERT_HARDCORE_JOIN_TEMPLATE",
+                    env("DUNE_PLAYER_PRESENCE_DEEP_DESERT_PVP_JOIN_TEMPLATE", "PVE Hardcore ({partition_label}): PvE combat, 3x harvest, high sandstorm/Coriolis damage, Shifting Sands, 15% higher vehicle wear, and weekly Hardcore DD cleanup during maintenance."),
+                ),
             }
             for account_id, player in current.items():
                 instance = deep_desert_instance(player)
@@ -1181,7 +1249,7 @@ def check_once():
                 previous_player = (previous or {}).get(account_id)
                 if account_id not in joined and not player_location_changed(previous_player, player):
                     continue
-                template = templates.get(instance, templates["pve"])
+                template = templates.get(instance, templates["casual"])
                 automated_private_results.append(send_private(
                     player,
                     template,
@@ -1292,7 +1360,7 @@ def check_once():
             template = env("DUNE_PLAYER_PRESENCE_VERMILIUS_GAP_TEMPLATE", "Congrats! {playername} has outrun Shai-Hulud!")
             for account_id in newly_completed:
                 message = render_journey_template(template, completed.get(account_id, account_id), story_node_id)
-                journey_results.append({"event": "vermilius-gap", "accountId": account_id, "message": message, "announce": announce(message)})
+                journey_results.append({"event": "vermilius-gap", "accountId": account_id, "message": message, "announce": public_announce(message, current, "player-presence-vermilius-gap")})
         journey_state[story_node_id] = sorted(current_completed)
 
     restart_private_results = []
@@ -1354,7 +1422,7 @@ def check_once():
             else:
                 template = env("DUNE_PLAYER_PRESENCE_MAP_HEALTH_RECOVERED_TEMPLATE", "Server notice: all travel destinations are online again ({online}/{expected}).")
             message = render_template(template, "server", final_count, online=online, expected=expected)
-            public_status_results.append({"event": f"map-health-{health_state}", "message": message, "announce": announce(message)})
+            public_status_results.append({"event": f"map-health-{health_state}", "message": message, "announce": public_announce(message, current, f"player-presence-map-health-{health_state}")})
 
         if env_bool("DUNE_PLAYER_PRESENCE_MAP_HEALTH_ADMIN_ENABLED", False) and health_state == "degraded":
             interval = int(env("DUNE_PLAYER_PRESENCE_ADMIN_ALERT_INTERVAL_SECONDS", "900"))
@@ -1375,7 +1443,7 @@ def check_once():
             if band and band != previous_band:
                 template = env("DUNE_PLAYER_PRESENCE_POPULATION_PUBLIC_TEMPLATE", "Server is getting busy: {count} online. Travel and loading may take longer.")
                 message = render_template(template, "server", final_count)
-                public_status_results.append({"event": "population-threshold", "threshold": band, "message": message, "announce": announce(message)})
+                public_status_results.append({"event": "population-threshold", "threshold": band, "message": message, "announce": public_announce(message, current, "player-presence-population-threshold")})
             state["populationPublicBand"] = band
 
         if env_bool("DUNE_PLAYER_PRESENCE_POPULATION_ADMIN_DIGEST_ENABLED", False):
@@ -1496,7 +1564,7 @@ def check_once():
             template = env("DUNE_PLAYER_PRESENCE_PUBLIC_MAINTENANCE_CANCELLED_TEMPLATE", "Maintenance has been cancelled or delayed. Normal play can continue.")
             message = render_template(template, "server", final_count)
             record_digest(state, "maintenance-cancelled-public", "public", message, {"cancelled": cancelled[:5]})
-            public_status_results.append({"event": "maintenance-cancelled", "message": message, "announce": announce(message)})
+            public_status_results.append({"event": "maintenance-cancelled", "message": message, "announce": public_announce(message, current, "player-presence-maintenance-cancelled")})
 
     if env_bool("DUNE_PLAYER_PRESENCE_INCIDENT_MODE_PUBLIC_ENABLED", False):
         incident_on = env_bool("DUNE_PLAYER_PRESENCE_INCIDENT_MODE_ACTIVE", False)
@@ -1511,7 +1579,7 @@ def check_once():
                 event = "incident-mode-off"
             message = render_template(template, "server", final_count)
             record_digest(state, event, "public", message)
-            public_status_results.append({"event": event, "message": message, "announce": announce(message)})
+            public_status_results.append({"event": event, "message": message, "announce": public_announce(message, current, f"player-presence-{event}")})
 
     if env_bool("DUNE_PLAYER_PRESENCE_INFRA_ADMIN_ALERTS_ENABLED", False):
         interval = int(env("DUNE_PLAYER_PRESENCE_ADMIN_ALERT_INTERVAL_SECONDS", "900"))
@@ -1561,7 +1629,7 @@ def check_once():
             template = env("DUNE_PLAYER_PRESENCE_TRANSFER_POLICY_PUBLIC_TEMPLATE", "Server notice: character transfer policy changed. Changes may apply after the next Director restart. Details: {server_url}")
             message = render_template(template, "server", final_count)
             record_digest(state, "transfer-policy-changed", "public", message)
-            public_status_results.append({"event": "transfer-policy-changed", "message": message, "announce": announce(message)})
+            public_status_results.append({"event": "transfer-policy-changed", "message": message, "announce": public_announce(message, current, "player-presence-transfer-policy-changed")})
 
     if env_bool("DUNE_PLAYER_PRESENCE_RULES_CHANGE_PUBLIC_ENABLED", False):
         rule_paths = [item.strip() for item in env("DUNE_PLAYER_PRESENCE_RULES_HASH_FILES", "public-site/static/index.html").split(",") if item.strip()]
@@ -1572,7 +1640,7 @@ def check_once():
             template = env("DUNE_PLAYER_PRESENCE_RULES_CHANGE_PUBLIC_TEMPLATE", "Server rules were updated. Please review {rules_url}.")
             message = render_template(template, "server", final_count)
             record_digest(state, "rules-changed", "public", message, {"files": rule_paths})
-            public_status_results.append({"event": "rules-changed", "message": message, "announce": announce(message)})
+            public_status_results.append({"event": "rules-changed", "message": message, "announce": public_announce(message, current, "player-presence-rules-changed")})
 
     if env_bool("DUNE_PLAYER_PRESENCE_PEAK_PUBLIC_ENABLED", False):
         thresholds = sorted([int(item.strip()) for item in env("DUNE_PLAYER_PRESENCE_PEAK_PUBLIC_THRESHOLDS", "10,20,30,40").split(",") if item.strip()])
@@ -1588,7 +1656,7 @@ def check_once():
                 template = env("DUNE_PLAYER_PRESENCE_PEAK_PUBLIC_TEMPLATE", "New daily player peak: {count} online.")
                 message = render_template(template, "server", final_count)
                 record_digest(state, "daily-peak-public", "public", message, {"threshold": threshold})
-                public_status_results.append({"event": "daily-peak", "threshold": threshold, "message": message, "announce": announce(message)})
+                public_status_results.append({"event": "daily-peak", "threshold": threshold, "message": message, "announce": public_announce(message, current, "player-presence-daily-peak")})
                 announced.add(threshold)
         peak_state["announced"] = sorted(announced)
         state["dailyPeak"] = peak_state
@@ -1604,7 +1672,7 @@ def check_once():
             template = env("DUNE_PLAYER_PRESENCE_DAILY_STATUS_PUBLIC_TEMPLATE", "Daily status: {online}/{expected} maps online, {count} players online. Next maintenance is the normal configured window.")
             message = render_template(template, "server", final_count, online=online, expected=expected)
             record_digest(state, "daily-status-public", "public", message, {"online": online, "expected": expected})
-            public_status_results.append({"event": "daily-status", "message": message, "announce": announce(message)})
+            public_status_results.append({"event": "daily-status", "message": message, "announce": public_announce(message, current, "player-presence-daily-status")})
             state["lastDailyStatusAt"] = current_time
 
     if env_bool("DUNE_PLAYER_PRESENCE_ADMIN_FIRST_LOGIN_DAILY_ENABLED", True) and joined:

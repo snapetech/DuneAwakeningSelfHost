@@ -14,6 +14,7 @@ STATUS_TIMEOUT_SECONDS="${STATUS_TIMEOUT_SECONDS:-20}"
 SYNC_HOST="${SYNC_HOST:-}"
 SYNC_STATIC_ROOT="${SYNC_STATIC_ROOT:-/srv/hostapps/ingress/static}"
 CONFIGURE_SCRIPT="${CONFIGURE_SCRIPT:-$(dirname "$0")/configure-dune-public-site.sh}"
+DRIFT_CHECK_SCRIPT="${DRIFT_CHECK_SCRIPT:-$(dirname "$0")/check-dune-public-site-drift.sh}"
 
 tmp_status="$(mktemp)"
 tmp_index="$(mktemp)"
@@ -77,8 +78,8 @@ runtime_detail_html="Runtime data unavailable."
 if [[ -d "$DUNE_ROOT" ]] && (cd "$DUNE_ROOT" && timeout "$STATUS_TIMEOUT_SECONDS" ./scripts/status.sh .env) >"$tmp_status" 2>&1; then
   health_line="$(sed -nE 's/^current_ready_alive=([0-9]+) current_alive_active=([0-9]+) active_servers=([0-9]+) partitions=([0-9]+).*/\1 \2 \3 \4/p' "$tmp_status" | tail -1)"
   read -r current_ready_alive current_alive_active active_servers partitions <<< "${health_line:-0 0 0 0}"
-  if [[ "$partitions" =~ ^[0-9]+$ && "$current_alive_active" =~ ^[0-9]+$ && "$active_servers" =~ ^[0-9]+$ \
-      && "$partitions" -gt 0 && "$current_alive_active" -eq "$partitions" && "$active_servers" -eq "$partitions" ]]; then
+  if [[ "$current_alive_active" =~ ^[0-9]+$ && "$active_servers" =~ ^[0-9]+$ \
+      && "$active_servers" -gt 0 && "$current_alive_active" -eq "$active_servers" ]]; then
     server_class="status-ok"
     server_text="Online"
     access_class="status-ok"
@@ -117,6 +118,27 @@ services = {
     "dungeon-thepit",
 }
 project = os.environ.get("DOCKER_COMPOSE_PROJECT", "dune_server")
+
+def read_env_value(path, key):
+    try:
+        with open(path, encoding="utf-8") as handle:
+            for raw in handle:
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                name, value = line.split("=", 1)
+                if name.strip() == key:
+                    return value.strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return ""
+
+partition_count = os.environ.get("DUNE_WORLD_PARTITION_COUNT") or read_env_value(
+    os.path.join(os.environ.get("DUNE_ROOT", "/opt/DuneAwakeningSelfHost"), ".env"),
+    "DUNE_WORLD_PARTITION_COUNT",
+)
+if partition_count == "31":
+    services.add("deep-desert-pvp")
 
 def parse_started(value):
     if not value:
@@ -253,6 +275,8 @@ else
   sudo install -m 0644 "$tmp_index" "$INDEX_FILE"
 fi
 
+stamp_static_asset_versions
+
 snapshot_script="$(dirname "$0")/render-dune-public-snapshot.py"
 if [[ -x "$snapshot_script" ]]; then
   if [[ -w "$STATIC_DIR" ]]; then
@@ -270,6 +294,10 @@ if [[ -x "$snapshot_script" ]]; then
         sudo install -m 0644 "$artifact" "$STATIC_DIR/$(basename "$artifact")"
       done
   fi
+fi
+
+if [[ -x "$DRIFT_CHECK_SCRIPT" ]]; then
+  STATIC_DIR="$STATIC_DIR" INDEX_FILE="$INDEX_FILE" STATUS_FILE="$STATUS_FILE" "$DRIFT_CHECK_SCRIPT" "$STATIC_DIR"
 fi
 
 if [[ -n "$SYNC_HOST" ]]; then

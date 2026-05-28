@@ -608,7 +608,7 @@ Execution requires:
 - `DUNE_ADMIN_EXCHANGE_MUTATIONS_ENABLED=true`
 - `confirm: "WRITE EXCHANGE"`
 
-The endpoint uses `dune.dune_exchange_retrieve_solari_balance` for preflight and `dune.dune_exchange_modify_user_solari_balance` for execution. Confidence is moderate for the balance mechanics and low for order operations, so add/fulfill/cancel/relist/retrieve/purge order functions remain blocked.
+The endpoint reads the visible Solaris row from `dune.player_virtual_currency_balances`, ensures the Exchange user row with `dune.dune_exchange_get_user_id`, then writes both `player_virtual_currency_balances.balance` and `dune_exchange_users.solari_balance`. Do not use `dune.dune_exchange_modify_user_solari_balance` for operator grants; that first-party function transfers up to the player's current wallet Solaris into Exchange/bank and subtracts the same amount from `player_virtual_currency_balances`. Confidence is moderate for direct balance adjustment and low for order operations, so add/fulfill/cancel/relist/retrieve/purge order functions remain blocked.
 
 `POST /api/admin/solari/inventory` grants Solari to a player's carried inventory as a fresh `SolarisCoin` item stack in a free slot. It accepts `inventory_id` directly, or resolves a player inventory from `account_id` / `character_name`.
 
@@ -617,7 +617,7 @@ Execution requires:
 - `DUNE_ADMIN_MUTATIONS_ENABLED=true`
 - `confirm: "GRANT SOLARI"`
 
-`POST /api/admin/solari/bank` grants Solari to the player's Exchange/bank balance. It accepts `owner_id` and `controller_id` directly, or resolves them from `account_id` / `character_name`. The write delegates to `dune.dune_exchange_modify_user_solari_balance`.
+`POST /api/admin/solari/bank` grants Solari to the player's visible Solaris balance by resolving the controller/owner id, ensuring the Exchange user row, and setting both `dune.player_virtual_currency_balances` currency `dune.get_solaris_id()` and `dune.dune_exchange_users.solari_balance`. Verify both rows.
 
 Execution requires:
 
@@ -1157,11 +1157,11 @@ Auction item matching searches the sender's pawn/controller inventories by norma
 
 If no exact/contains match is found, the command scores allowed inventory items and replies with `did you mean <template>? reply &auction yes or &auction no` when the best score is at least `DUNE_CHAT_COMMAND_AUCTION_SUGGESTION_MIN_SCORE`. The pending suggestion expires after `DUNE_CHAT_COMMAND_AUCTION_CONFIRM_SECONDS`. Confirmation state is held in the running chat listener process, so it works in service mode but not across separate one-shot `--dry-run-command` invocations.
 
-Private command replies are supported through the direct player-queue path documented in [private-chat-replies.md](private-chat-replies.md). The working client-visible form is `m_ChannelType=Whispers` plus the exact `m_TimeStamp` field name. Confidence: high.
+Private command replies are routed through the direct player-queue path documented in [private-chat-replies.md](private-chat-replies.md). The timestamp field is build-sensitive: older testing rendered `m_TimeStamp`, while live player chat on 2026-05-27 used `m_Timestamp`. `scripts/announce.sh` now defaults to `m_Timestamp` and exposes `DUNE_ANNOUNCE_CHAT_TIMESTAMP_FIELD` as the rollback knob. Confidence: moderate until the current build is re-confirmed in-game.
 
 Private-chat investigation found a real `chat.whispers` direct exchange and a required TextRouter redirect header, `redirect_exchange`, whose AMQP value must be bytes, for example `b"chat.whispers"`. The TextRouter binary also confirms private player queue names are `{FLS_ID}_queue` and private RPC queue names are `{FLS_ID}_rpcQueue`.
 
-Current confidence: high for exchange/header/queue naming and client-visible private rendering through a direct player-queue publish. Direct `chat.whispers` and direct queue publishes can be delivered to RabbitMQ. The client-visible private form uses `m_ChannelType=Whispers` and the exact `m_TimeStamp` field name; the earlier `m_Timestamp` payload was consumed but silently ignored by the client. Operator confirmation showed `fieldfix 204311 timeS-whispers` rendered in the private/whisper color. Intercepted synthetic whispers with no AMQP `user_id` reach TextRouter but fail `DemoPlayersFilter` with `ArgumentNullException`; intercepted synthetic whispers with `user_id` pass redirect permission checks but TextRouter republishes with the original `user_id` while authenticated as its router account, causing RabbitMQ `PRECONDITION_FAILED`.
+Current confidence: high for exchange/header/queue naming and RabbitMQ delivery, but only moderate for client-visible private rendering until the current game build is re-confirmed in-game. Direct `chat.whispers` and direct queue publishes can be delivered to RabbitMQ. Older operator confirmation showed `fieldfix 204311 timeS-whispers` rendered with `m_TimeStamp`; live player chat captured on 2026-05-27 used `m_Timestamp`, so the shared publisher now defaults to `m_Timestamp`. Intercepted synthetic whispers with no AMQP `user_id` reach TextRouter but fail `DemoPlayersFilter` with `ArgumentNullException`; intercepted synthetic whispers with `user_id` pass redirect permission checks but TextRouter republishes with the original `user_id` while authenticated as its router account, causing RabbitMQ `PRECONDITION_FAILED`.
 
 Online research on 2026-05-20 did not find a public self-host recipe for injecting client-visible private whispers. GitHub code search found no Dune-specific use of `chat.whispers`, `redirect_exchange`, `send-whisper-probe.py`, or this repo's private-reply toggles. General web/Steam/community-wiki searches found private-chat references but no RabbitMQ/TextRouter implementation details. The useful external signal is official/community patch-note evidence for update `1.3.20.0` on 2026-04-28: one fix says muted players receive a whisper notification, and another says private chat messages could fail to show after opening chat directly into the private tab. That confirms the client has a real private-message display path, and also that display behavior has been buggy. Confidence: high that private chat exists in the product; low that anyone has publicly documented a working self-host injection path.
 
@@ -1169,7 +1169,7 @@ Deeper local decompilation found a TextRouter launch knob: `--RMQCredentials <us
 
 Experimental result on 2026-05-20: TextRouter was temporarily restarted with fixed `guest` credentials, a synthetic message was published to the battlegroup-prefixed intercept exchange with AMQP `user_id=guest`, and TextRouter successfully redirected four variants to `chat.whispers` without `PRECONDITION_FAILED`: `prefixed-fixed-tr 203132 Map`, `prefixed-fixed-tr 203132 Whisper`, `prefixed-fixed-tr 203132 Private`, and `prefixed-fixed-tr 203132 Whispers`. Temporary target-queue bindings were removed afterward and TextRouter was restored to its normal compose command. These did not render for the operator, so fixed TextRouter credentials are not required for the working direct-queue path.
 
-Use `scripts/send-whisper-probe.py` for repeatable tests. The probe uses the working `m_TimeStamp` spelling:
+Use `scripts/send-whisper-probe.py` for repeatable tests. The probe currently uses the older `m_TimeStamp` spelling; prefer `scripts/announce.sh` with `DUNE_ANNOUNCE_CHAT_TIMESTAMP_FIELD` when validating the current production publisher:
 
 ```bash
 scripts/send-whisper-probe.py --target-name SamplePlayer --target-fls-id TEST_FLS_ID --bind-target-queue --send-intercept --message-prefix "probe $(date +%H%M%S)"
@@ -1347,7 +1347,7 @@ Current mutation support is intentionally narrow:
 
 - Currency balance add/set through `dune.player_virtual_currency_balances`.
 - Inventory Solari grants through `dune.save_item(dune.inventoryitem)` against `SolarisCoin` item stacks.
-- Exchange/bank Solari grants through `dune.dune_exchange_modify_user_solari_balance`.
+- Exchange/bank Solari grants through direct visible Solaris row updates in `dune.player_virtual_currency_balances`, mirrored to `dune.dune_exchange_users.solari_balance` after `dune.dune_exchange_get_user_id`.
 - Specialization XP add/set through existing `dune.specialization_tracks` rows.
 - Database backup through `pg_dump -Fc`.
 - Item grants through `dune.save_item(dune.inventoryitem)` when `DUNE_ADMIN_ITEM_GRANTS_ENABLED=true`.

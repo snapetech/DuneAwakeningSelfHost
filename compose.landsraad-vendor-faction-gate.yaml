@@ -1,0 +1,38 @@
+x-landsraad-vendor-faction-gate-patch: &landsraad-vendor-faction-gate-patch
+  environment:
+    DUNE_LANDSRAAD_VENDOR_FACTION_GATE_PATCH_ENABLED: "true"
+    DUNE_OODLE_LIBRARY: /tmp/oodle/liboodle-data-shared.so
+  volumes:
+    - ${DUNE_OODLE_HOST_LIBRARY:-/home/keith/Documents/code/DuneAwakeningSelfHost/backups/operator-oodle/liboodle-data-shared.so}:/tmp/oodle/liboodle-data-shared.so:ro
+
+services:
+  survival: *landsraad-vendor-faction-gate-patch
+  overmap: *landsraad-vendor-faction-gate-patch
+  arrakeen: *landsraad-vendor-faction-gate-patch
+  harko-village: *landsraad-vendor-faction-gate-patch
+  testing-hephaestus: *landsraad-vendor-faction-gate-patch
+  testing-carthag: *landsraad-vendor-faction-gate-patch
+  testing-waterfat: *landsraad-vendor-faction-gate-patch
+  deep-desert: *landsraad-vendor-faction-gate-patch
+  proces-verbal: *landsraad-vendor-faction-gate-patch
+  lostharvest-ecolab-a: *landsraad-vendor-faction-gate-patch
+  lostharvest-ecolab-b: *landsraad-vendor-faction-gate-patch
+  lostharvest-forgottenlab: *landsraad-vendor-faction-gate-patch
+  art-of-kanly: *landsraad-vendor-faction-gate-patch
+  dungeon-hephaestus: *landsraad-vendor-faction-gate-patch
+  dungeon-oldcarthag: *landsraad-vendor-faction-gate-patch
+  faction-outpost-atre: *landsraad-vendor-faction-gate-patch
+  faction-outpost-hark: *landsraad-vendor-faction-gate-patch
+  heighliner-dungeon: *landsraad-vendor-faction-gate-patch
+  ecolab-green-089: *landsraad-vendor-faction-gate-patch
+  ecolab-green-152: *landsraad-vendor-faction-gate-patch
+  ecolab-green-024: *landsraad-vendor-faction-gate-patch
+  ecolab-green-195: *landsraad-vendor-faction-gate-patch
+  ecolab-green-136: *landsraad-vendor-faction-gate-patch
+  overland-m-01: *landsraad-vendor-faction-gate-patch
+  overland-s-04: *landsraad-vendor-faction-gate-patch
+  overland-s-06: *landsraad-vendor-faction-gate-patch
+  bandit-fortress: *landsraad-vendor-faction-gate-patch
+  overland-s-07: *landsraad-vendor-faction-gate-patch
+  overland-s-08: *landsraad-vendor-faction-gate-patch
+  dungeon-thepit: *landsraad-vendor-faction-gate-patch

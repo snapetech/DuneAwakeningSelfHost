@@ -92,37 +92,28 @@ Forward `7888-7917/udp` from the router to the host for the full 30-partition wa
 ## Optional Second Deep Desert
 
 Partition 31 / the second Deep Desert dimension is opt-in through
-`DUNE_WORLD_PARTITION_COUNT=31`. It is prepped behind the legacy
-`disabled-deep-desert-pvp` Compose profile with its own
-`config/UserGame.deep-desert-pvp.ini` override, the dedicated
-`config/UserEngine.deep-desert-pvp.ini` 3x harvest override, separate saved-data
-directory, and ports `7807/udp` plus `7918/udp`.
+`DUNE_WORLD_PARTITION_COUNT=31`. When enabled, full-farm restarts include the
+`deep-desert-pvp` service with its own `config/UserGame.deep-desert-pvp.ini`
+override, the dedicated `config/UserEngine.deep-desert-pvp.ini` 3x harvest
+override, separate saved-data directory, and ports `7807/udp` plus `7918/udp`.
 
-PvP is enabled only for partition 31 in `config/UserGame.deep-desert-pvp.ini`.
-The Deep Desert partition 8 service stays on the shared PvE config and 1.0x
-harvest config. The second DD harvest bonus is supplied by the per-service
-`UserEngine.deep-desert-pvp.ini` mining/vehicle multipliers, not by
-`SecurityZones.PvpResourceMultiplier`.
+Rules by Deep Desert instance:
 
-Coriolis is not currently proven to be partition-scoped. The known config
-surface exposes `m_bCoriolisAutoSpawnEnabled` under `SandStormConfig` and
-cycle/wipe fields under `CoriolisSubsystem`, which appear global. The second DD
-uses its dedicated high-damage Coriolis and Shifting Sands config only when the
-`deep-desert-pvp` service is intentionally restarted for maintenance.
+| Partition | Label | Rules |
+| --- | --- | --- |
+| `8` | PVE Casual | Persistent PvE. No weekly cleanup, no Shifting Sands reset, standard harvest rates. |
+| `31` | PVE Hardcore | PvE combat, 3x harvest, Shifting Sands/high-damage Coriolis, 15% higher vehicle durability damage, and weekly maintenance cleanup of only Hardcore DD actors, respawns, and resource fields. |
 
-To intentionally bring the second DD online after a maintenance window, keep it as a
-manual opt-in:
+The built-in game `m_bIsDbWipeEnabled` flag is disabled for both DD configs.
+The Hardcore reset is handled by `scripts/wipe-hardcore-deep-desert.sh`, which scopes the
+official Coriolis actor/respawn cleanup to partition `31` and separately deletes
+`dune.resourcefield_state` only for `map='DeepDesert'` and
+`dimension_index=1`. PvE DD, Hagga Basin, social hubs, and other maps are not
+part of that wipe.
 
-1. Set `DUNE_WORLD_PARTITION_COUNT=31` for the activation command or in `.env`
-   only when partition 31 should be monitored and included in all-target
-   restarts.
-2. Run `DUNE_WORLD_PARTITION_COUNT=31 ./scripts/full-world-partitions.sh .env`
-   to add `DeepDesert_1` dimension `1` / partition `31`.
-3. Start only the second DD service with
-   `DUNE_WORLD_PARTITION_COUNT=31 docker compose -f compose.yaml -f compose.allmaps.yaml --env-file .env up -d --no-deps deep-desert-pvp`.
-4. Validate partition `31` in `dune.world_partition`, `dune.farm_state`, and
-   `dune.active_server_ids`, then test routing before adding router forwarding
-   or public status/watchdog expectations.
+Paul's player-presence private whispers mirror these rules. Partition `8`
+players receive the PVE Casual notice, and partition `31` players receive the
+PVE Hardcore notice.
 
 Keep these closed publicly:
 

@@ -244,6 +244,7 @@ def load_map_health():
                    coalesce(fs.connected_players, 0) as players
             from dune.world_partition wp
             left join dune.farm_state fs on fs.server_id = wp.server_id
+            where wp.server_id is not null
             order by wp.partition_id
         ) t
     """

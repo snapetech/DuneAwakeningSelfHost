@@ -1067,6 +1067,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertEqual(exchange["executionGate"], "DUNE_ADMIN_EXCHANGE_MUTATIONS_ENABLED")
         self.assertEqual(exchange["confirm"], "WRITE EXCHANGE")
         self.assertEqual(exchange["plan"]["delta"], 200)
+        self.assertEqual(exchange["plan"]["targetBalance"], 700)
 
         guild = self.handler.guild_mutation({
             "dry_run": True,
@@ -1159,7 +1160,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertEqual(executed[0][1][2], 125)
         self.assertEqual(result["after"][0]["stack_size"], 125)
 
-    def test_solari_bank_grant_uses_exchange_function(self):
+    def test_solari_bank_grant_sets_exchange_balance_directly(self):
         def fake_query(sql, params=None):
             if "player_state" in sql:
                 return [{"account_id": 10, "character_name": "Paul", "player_controller_id": 21, "player_pawn_id": 20}]
@@ -1175,10 +1176,11 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         })
         self.assertTrue(result["dryRun"])
         self.assertEqual(result["location"], "bank")
-        self.assertEqual(result["ownerId"], 20)
+        self.assertEqual(result["ownerId"], 21)
         self.assertEqual(result["controllerId"], 21)
-        self.assertEqual(result["plan"]["function"], "dune.dune_exchange_modify_user_solari_balance")
+        self.assertEqual(result["plan"]["function"], "direct-update:dune.player_virtual_currency_balances")
         self.assertEqual(result["plan"]["delta"], 125)
+        self.assertEqual(result["plan"]["targetBalance"], 625)
 
     def test_faction_reputation_and_faction_dry_runs(self):
         self.handler.resolve_player_identity = lambda account_id: ({

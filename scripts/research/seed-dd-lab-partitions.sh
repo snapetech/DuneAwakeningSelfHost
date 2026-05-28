@@ -36,8 +36,8 @@ run_compose exec -T postgres psql -U dune -d "$db" <<'SQL'
 insert into dune.world_partition (partition_id, map, dimension_index, partition_definition, label)
 values
   (1, 'Survival_1', 0, '{"box":{"max_x":1,"max_y":1,"min_x":0,"min_y":0},"type":"box2d_array"}'::jsonb, 'Hagga Basin'),
-  (8, 'DeepDesert_1', 0, '{"box":{"max_x":1,"max_y":1,"min_x":0,"min_y":0},"type":"box2d_array"}'::jsonb, 'Deep Desert PvE'),
-  (31, 'DeepDesert_1', 1, '{"box":{"max_x":1,"max_y":1,"min_x":0,"min_y":0},"type":"box2d_array"}'::jsonb, 'Deep Desert PvP')
+  (8, 'DeepDesert_1', 0, '{"box":{"max_x":1,"max_y":1,"min_x":0,"min_y":0},"type":"box2d_array"}'::jsonb, 'PVE Casual'),
+  (31, 'DeepDesert_1', 1, '{"box":{"max_x":1,"max_y":1,"min_x":0,"min_y":0},"type":"box2d_array"}'::jsonb, 'PVE Hardcore')
 on conflict (partition_id) do update
 set map = excluded.map,
     dimension_index = excluded.dimension_index,
