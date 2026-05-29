@@ -68,8 +68,29 @@ Signature-based patching of small comparisons typically survives many builds. Th
 
 The probe script `scripts/research/probe-subfief-cap-binary.py` provides the search heuristics and can be re-run after each Funcom binary update to verify the candidate functions still exist and the signature is still present.
 
+## radare2 follow-up (added after first commit)
+
+Installed radare2 on kspld0 and re-confirmed the indirection. Key new findings:
+
+- The hot callee at `0xf7d8600` calls `__cxa_guard_acquire` / `__cxa_guard_release` — it's the standard **C++ lazy static-local-variable initializer**, not a useful gateway. Pattern:
+  ```c
+  static Foo* instance = make_foo();  // guarded init
+  return instance->vtable[9](this, arg);  // call qword [rax+0x48]
+  ```
+  Used 34× in `0xcf70210` and 22× in `0xcedcb40` because it's a generic logger/assert helper, not a cap check.
+- The second-most-called callee `0x9591b80` (called 7× in PlaceBuildable) is a small array/string helper (uses `add rdi, rdi`, `shr rax, 1`, `mov esi, 2` — looks like `TArray::Reserve` or string copy).
+- Third-most-called `0x1469aa50` is `memcpy` (PLT stub).
+
+Full disassembly of the 4860-byte `0xcf70210` function shows **100+ cmp/test instructions but zero `cmp r, 3` or `cmp r, 6`** — i.e., the cap comparison is genuinely not inlined here. It's deeper in the call chain, likely behind a virtual dispatch.
+
+`SubfiefCount` / `SubfiefLimitBonus` FName strings are referenced only via `.rela.dyn` relocations (1 reloc to `SubfiefCount` at `0x156e7890`, 5 relocs to `SubfiefLimitBonus` clustered at `0x1502bfc0…0x1502fd78`) — these populate descriptor entries in `.data.rel.ro` at load time, not in `.text`. So scanning `.text` for code that "uses" these FNames returns nothing; the property descriptors get looked up via UE5 reflection (UClass / FProperty walks), and the reflection results feed into GAS attribute getters.
+
+Net: even with r2 + capstone, finding the cap byte from static analysis alone requires resolving 1–2 layers of virtual dispatch + reflection. That's exactly Ghidra's strength.
+
 ## Artifacts in this repo
 
 - `scripts/research/probe-subfief-cap-binary.py` — narrows search to candidate functions via source-file xref counting + cmp/float disassembly.
+- `scripts/research/ghidra-find-subfief-cap.py` — Ghidra Python script that auto-walks from the `Fail_DisallowedBuildLimit` string xref to the cap comparison.
+- `scripts/research/extract-binary-for-ghidra.sh` — packages the binary + scripts + this doc into `/tmp/dune-ghidra/` ready to ship to a workstation.
 - `docs/subfief-cap-research.md` — this document.
 - `scripts/apply-subfief-limit-knob.sh` — DB-side `SubfiefLimitBonus` writer + trigger. Still useful: when Funcom finally exposes the cap via `EServerGameplaySettingType` or wires the GAS attribute through, the persisted values are ready.
