@@ -89,8 +89,28 @@ Net: even with r2 + capstone, finding the cap byte from static analysis alone re
 
 ## Artifacts in this repo
 
+Research tooling:
 - `scripts/research/probe-subfief-cap-binary.py` — narrows search to candidate functions via source-file xref counting + cmp/float disassembly.
 - `scripts/research/ghidra-find-subfief-cap.py` — Ghidra Python script that auto-walks from the `Fail_DisallowedBuildLimit` string xref to the cap comparison.
 - `scripts/research/extract-binary-for-ghidra.sh` — packages the binary + scripts + this doc into `/tmp/dune-ghidra/` ready to ship to a workstation.
+- `scripts/research/verify-subfief-cap-signature.py` — validates a candidate sigscan signature (uniqueness, expected old byte at patch offset, disasm sanity). Emits paste-ready `SIGNATURE` / `PATCH_OFFSETS`.
+
+Runtime patcher (scaffolded, awaiting signature):
+- `scripts/patch-subfief-cap-binary.py` — sigscan-based binary patcher. Errors cleanly until `SIGNATURE` / `PATCH_OFFSETS` are populated.
+- `scripts/run_server_safe.sh` — `install_subfief_cap_binary_patch` hook fires on container start (matches existing `install_building_piece_limit_patch` pattern). Gated by `DUNE_SUBFIEF_CAP_BINARY_PATCH_ENABLED`.
+- `compose.yaml`, `.env.example` — `DUNE_SUBFIEF_CAP_BINARY_PATCH_ENABLED` (default `false`) and `DUNE_SUBFIEF_CAP` (default `6`) env knobs.
+
+Other:
 - `docs/subfief-cap-research.md` — this document.
 - `scripts/apply-subfief-limit-knob.sh` — DB-side `SubfiefLimitBonus` writer + trigger. Still useful: when Funcom finally exposes the cap via `EServerGameplaySettingType` or wires the GAS attribute through, the persisted values are ready.
+
+## Flow once Ghidra identifies the byte
+
+1. Ghidra produces a candidate signature (e.g. `48 89 e5 ?? 83 f8 03 0f 8c`).
+2. Validate it: `scripts/research/verify-subfief-cap-signature.py --binary <server-bin> --signature '<hex>' --patch-offset N --expected-old 3`.
+3. Paste the emitted `SIGNATURE` / `PATCH_OFFSETS` block into `scripts/patch-subfief-cap-binary.py`.
+4. Dry-run against the live binary: `python3 scripts/patch-subfief-cap-binary.py --binary <server-bin> --new-cap 6 --dry-run`.
+5. Test in handoff lab: set `DUNE_SUBFIEF_CAP_BINARY_PATCH_ENABLED=true` in `compose.handoff-lab.yaml`, bring up, place 4th totem with a test character.
+6. If validated, set the same env in prod's `.env` on the next maintenance window.
+
+The patch survives Funcom server-binary updates as long as the sigscan signature still finds exactly one match. If it stops finding a match, re-run Ghidra against the new binary and update the signature.
