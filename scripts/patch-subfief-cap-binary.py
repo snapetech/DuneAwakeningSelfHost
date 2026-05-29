@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Patch the per-player subfief / totem placement cap in the Dune server binary.
+"""Patch selected build-cap checks in the Dune server binary.
 
 This is the binary-patching counterpart to scripts/patch-building-piece-limit-pak.py
 (which patches a cooked data table in a pak). Here the cap is enforced by a
@@ -7,23 +7,19 @@ C++ comparison inside DuneSandboxServer-Linux-Shipping, so we patch the
 binary directly using a byte-pattern signature (so the patch survives
 Funcom binary updates as long as the surrounding codegen is stable).
 
-The actual signature and patch offset MUST be filled in once the byte is
-identified (via Ghidra; see docs/subfief-cap-research.md and
-scripts/research/ghidra-find-subfief-cap.py). Until then, this script
-errors out cleanly.
-
 Usage on the server host:
     python3 scripts/patch-subfief-cap-binary.py \
         --binary /home/dune/server/DuneSandbox/Binaries/Linux/DuneSandboxServer-Linux-Shipping \
+        --target subfief \
         --new-cap 6
 
-Pattern (when filled in below):
-    SIGNATURE is a list of ints (0..255) or None (wildcard). The script finds
-    exactly ONE byte range in the binary matching the signature, then patches
-    `PATCH_OFFSETS` bytes inside that range with new values derived from --new-cap.
+    python3 scripts/patch-subfief-cap-binary.py \
+        --binary /home/dune/server/DuneSandbox/Binaries/Linux/DuneSandboxServer-Linux-Shipping \
+        --target building \
+        --new-cap 7500
 
 The script is idempotent: it detects an already-patched signature and exits 0.
-Rollback: re-run with --new-cap equal to OLD_CAP (default 3).
+Rollback requires restoring the original binary from backup.
 """
 import argparse
 import hashlib
@@ -31,9 +27,18 @@ import shutil
 import struct
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 DEFAULT_BINARY = Path("/home/dune/server/DuneSandbox/Binaries/Linux/DuneSandboxServer-Linux-Shipping")
 OLD_CAP = 3
+
+
+class PatchTarget(NamedTuple):
+    name: str
+    description: str
+    signature: list
+    je_offset: int
+    expected_fail_enum: int
 
 # ---------------------------------------------------------------------------
 # Signature: the subfief-cap validity check inside the totem placement path.
@@ -54,7 +59,7 @@ OLD_CAP = 3
 # `new_cap` equals OLD_CAP (3), this script is a no-op (rollback path uses
 # the original je bytes).
 # ---------------------------------------------------------------------------
-SIGNATURE = [
+SUBFIEF_SIGNATURE = [
     0xc5, 0xfc, 0x11, 0x43, 0x44,                # -10 vmovups [rbx+0x44], ymm0  (anchor)
     0xe9, None, None, None, None,                # -5  jmp <rel32>  (rel32 wildcard)
     0x49, 0x8b, 0x7e, 0x70,                      # +0  mov rdi, [r14+0x70]
@@ -65,22 +70,57 @@ SIGNATURE = [
     0xc5, 0xf8, 0x28,                            # +24 vmovaps xmm0, ...
 ]
 
-# Patch byte indexes inside SIGNATURE. The callback receives `new_cap` and
-# returns the byte to write. We replace the 6-byte `je rel32` (0f 84 + 4-byte
-# disp) with 6 NOPs. The function ignores `new_cap` other than to detect
-# rollback (new_cap == OLD_CAP -> no-op, leave the bytes alone).
-def _bypass_byte(new_cap):
-    return 0x90  # NOP
 
-PATCH_OFFSETS = {
-    # Offsets reference SIGNATURE positions (with 10-byte pre-anchor prefix).
-    # The je rel32 starts at signature index 21.
-    21: _bypass_byte,  # 0x0f -> 0x90
-    22: _bypass_byte,  # 0x84 -> 0x90
-    23: _bypass_byte,  # rel32[0] -> 0x90
-    24: _bypass_byte,  # rel32[1] -> 0x90
-    25: _bypass_byte,  # rel32[2] -> 0x90
-    26: _bypass_byte,  # rel32[3] -> 0x90
+# Building-piece server-wide cap check. Ghidra/file offset 0xcf01466 is the
+# `je` to a fail block that writes enum 0x7e
+# (Fail_ReachedBuildableStructureLimitInServer).
+BUILDING_SERVER_SIGNATURE = [
+    0x48, 0x8b, 0xbd, 0x08, 0xff, 0xff, 0xff,    # mov rdi, [rbp-0xf8]
+    0xe8, None, None, None, None,                # call 0xedf0f20
+    0x84, 0xc0,                                  # test al, al
+    0x0f, 0x84, None, None, None, None,          # je <fail>  (PATCH)
+    0x48, 0x8b, 0x05, None, None, None, None,    # mov rax, [rip+disp]
+    0xc5, 0xf8, 0x28, 0x05,                     # vmovaps xmm0, ...
+]
+
+
+# Building-piece map-wide cap check. Ghidra/file offset 0xcf027e6 is the `je`
+# to a fail block that writes enum 0x7f
+# (Fail_ReachedBuildableStructureLimitInMap).
+BUILDING_MAP_SIGNATURE = [
+    0xc4, 0xc1, 0x7c, 0x11, 0x44, 0x24, 0x44,    # vmovups [r12+0x44], ymm0
+    0xe9, None, None, None, None,                # jmp <rel32>
+    0x4c, 0x89, 0xf7,                            # mov rdi, r14
+    0xe8, None, None, None, None,                # call 0xedf0f20
+    0x84, 0xc0,                                  # test al, al
+    0x0f, 0x84, None, None, None, None,          # je <fail>  (PATCH)
+    0x48, 0x8b, 0x05, None, None, None, None,    # mov rax, [rip+disp]
+    0xc5, 0xf8, 0x28, 0x05,                     # vmovaps xmm0, ...
+]
+
+
+TARGETS = {
+    "subfief": PatchTarget(
+        name="subfief",
+        description="per-player subfief/totem placement cap",
+        signature=SUBFIEF_SIGNATURE,
+        je_offset=21,
+        expected_fail_enum=0x6b,
+    ),
+    "building-server": PatchTarget(
+        name="building-server",
+        description="server-wide building-piece structure cap",
+        signature=BUILDING_SERVER_SIGNATURE,
+        je_offset=14,
+        expected_fail_enum=0x7e,
+    ),
+    "building-map": PatchTarget(
+        name="building-map",
+        description="map-wide building-piece structure cap",
+        signature=BUILDING_MAP_SIGNATURE,
+        je_offset=22,
+        expected_fail_enum=0x7f,
+    ),
 }
 
 
@@ -114,79 +154,97 @@ def find_all_signature(data: bytes, signature: list) -> list:
     return hits
 
 
-# Index inside SIGNATURE of the `je` instruction (the 6 bytes we NOP).
-# Used to compute the je target VMA and check the fail block.
-JE_OFFSET_IN_SIG = 21
+def patched_signature(target: PatchTarget) -> list:
+    signature = list(target.signature)
+    for off in range(target.je_offset, target.je_offset + 6):
+        signature[off] = 0x90
+    return signature
 
-# Expected enum byte written by the fail block we want to bypass.
-EXPECTED_FAIL_ENUM = 0x6b  # Fail_DisallowedBuildLimit
 
-
-def fail_enum_at_site(data: bytes, site_off: int) -> int | None:
-    """Compute the je target from the je at site_off + JE_OFFSET_IN_SIG and
-    look up the enum byte written there (mov byte [rbx+0x18], imm at +0x25)."""
-    je_addr = site_off + JE_OFFSET_IN_SIG
+def fail_enum_at_site(data: bytes, site_off: int, je_offset: int) -> int | None:
+    """Compute the je target and return the fail enum written at status +0x18."""
+    je_addr = site_off + je_offset
     if je_addr + 6 > len(data):
         return None
     disp = struct.unpack_from("<i", data, je_addr + 2)[0]
     target = je_addr + 6 + disp
-    # Search the fail block (200 bytes) for `c6 43 18 ??`
-    fb = data[target:target + 200]
-    for i in range(len(fb) - 3):
-        if fb[i] == 0xc6 and fb[i + 1] == 0x43 and fb[i + 2] == 0x18:
+    if target < 0 or target >= len(data):
+        return None
+
+    # Search the fail block for common encodings of:
+    #   mov byte ptr [<result storage> + 0x18], <enum>
+    fb = data[target:target + 500]
+    for i in range(len(fb) - 4):
+        if fb[i:i + 3] in (b"\xc6\x43\x18", b"\xc6\x45\x18"):
             return fb[i + 3]
+        if fb[i:i + 4] == b"\xc6\x44\x24\x18":
+            return fb[i + 4]
+        if i + 6 < len(fb) and fb[i:i + 2] == b"\xc6\x85":
+            if struct.unpack_from("<i", fb, i + 2)[0] == 0x18:
+                return fb[i + 6]
     return None
 
 
-def find_signature(data: bytes, signature: list) -> int:
-    """Find the unique site whose je target writes EXPECTED_FAIL_ENUM."""
-    candidates = find_all_signature(data, signature)
-    if not candidates:
-        return -1
+def find_patch_site(data: bytes, target: PatchTarget) -> tuple[int, bool]:
+    """Return (site offset, already patched)."""
+    candidates = find_all_signature(data, target.signature)
     filtered = [
         s for s in candidates
-        if fail_enum_at_site(data, s) == EXPECTED_FAIL_ENUM
+        if fail_enum_at_site(data, s, target.je_offset) == target.expected_fail_enum
     ]
-    if not filtered:
-        raise SystemExit(
-            f"matched {len(candidates)} candidate sites but none lead to a "
-            f"0x{EXPECTED_FAIL_ENUM:02x} fail block: {[hex(s) for s in candidates]}"
-        )
+    if len(filtered) == 1:
+        return filtered[0], False
     if len(filtered) > 1:
         raise SystemExit(
-            f"multiple sites lead to a 0x{EXPECTED_FAIL_ENUM:02x} fail block: "
-            f"{[hex(s) for s in filtered]} — narrow the signature further"
+            f"{target.name}: multiple sites lead to a "
+            f"0x{target.expected_fail_enum:02x} fail block: "
+            f"{[hex(s) for s in filtered]} - narrow the signature further"
         )
-    return filtered[0]
+
+    already_patched = find_all_signature(data, patched_signature(target))
+    if len(already_patched) == 1:
+        return already_patched[0], True
+    if len(already_patched) > 1:
+        raise SystemExit(
+            f"{target.name}: patched signature is ambiguous: "
+            f"{[hex(s) for s in already_patched]}"
+        )
+
+    if candidates:
+        enums = {
+            hex(s): fail_enum_at_site(data, s, target.je_offset)
+            for s in candidates
+        }
+        raise SystemExit(
+            f"{target.name}: matched {len(candidates)} candidate sites but none "
+            f"lead to a 0x{target.expected_fail_enum:02x} fail block: {enums}"
+        )
+    return -1, False
 
 
-def matches_target(data: bytes, base: int, signature: list, target_values: dict) -> bool:
-    """Return True if the bytes at PATCH_OFFSETS already match target_values."""
-    for off, target in target_values.items():
-        if data[base + off] != target:
-            return False
-    return True
+def selected_targets(name: str) -> list[PatchTarget]:
+    if name == "all":
+        return [TARGETS["subfief"], TARGETS["building-server"], TARGETS["building-map"]]
+    if name == "building":
+        return [TARGETS["building-server"], TARGETS["building-map"]]
+    return [TARGETS[name]]
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
+    parser.add_argument("--target", choices=sorted([*TARGETS.keys(), "building", "all"]),
+                        default="subfief",
+                        help="Which binary cap check to bypass (default: subfief).")
     parser.add_argument("--new-cap", type=int, required=True,
-                        help="Desired per-player subfief cap (e.g. 6). Use OLD_CAP to roll back.")
+                        help="Legacy cap knob. Any value > OLD_CAP applies the bypass.")
     parser.add_argument("--dry-run", action="store_true",
                         help="Find the site and report what would change without writing.")
     parser.add_argument("--backup", type=Path, default=None,
                         help="Optional path for a one-time backup before first patch.")
     args = parser.parse_args()
 
-    if SIGNATURE is None or not PATCH_OFFSETS:
-        sys.exit(
-            "ERROR: SIGNATURE / PATCH_OFFSETS are not populated yet.\n"
-            "Identify the patch byte via Ghidra first (see docs/subfief-cap-research.md),\n"
-            "then fill in SIGNATURE and PATCH_OFFSETS at the top of this script."
-        )
-
-    if not (1 <= args.new_cap <= 200):
+    if not (1 <= args.new_cap <= 100000):
         sys.exit(f"new-cap out of range: {args.new_cap}")
 
     # The patch is a hard bypass of the cap check (changes a 6-byte `je rel32`
@@ -199,13 +257,22 @@ def main():
         return
 
     data = args.binary.read_bytes()
-    base = find_signature(data, SIGNATURE)
-    if base < 0:
-        sys.exit(f"signature not found in {args.binary} — Funcom may have changed the codegen")
+    plan = []
+    for target in selected_targets(args.target):
+        base, already_patched = find_patch_site(data, target)
+        if base < 0:
+            sys.exit(
+                f"{target.name}: signature not found in {args.binary} - "
+                f"Funcom may have changed the codegen"
+            )
+        je_addr = base + target.je_offset
+        if already_patched:
+            print(f"{target.name}: already patched at 0x{je_addr:x}; nothing to do")
+            continue
+        plan.append((target, base))
 
-    target_values = {off: fn(args.new_cap) for off, fn in PATCH_OFFSETS.items()}
-    if matches_target(data, base, SIGNATURE, target_values):
-        print(f"already patched at 0x{base:x} (new_cap={args.new_cap}); nothing to do")
+    if not plan:
+        print(f"all selected targets already patched (target={args.target}, new_cap={args.new_cap})")
         return
 
     # Pre-patch backup
@@ -215,14 +282,16 @@ def main():
 
     sha_before = hashlib.sha256(data).hexdigest()
     patched = bytearray(data)
-    for off, value in target_values.items():
-        old_byte = patched[base + off]
-        patched[base + off] = value
-        print(f"  patch @ 0x{base+off:x}: 0x{old_byte:02x} -> 0x{value:02x}")
+    for target, base in plan:
+        print(f"{target.name}: {target.description}")
+        for off in range(target.je_offset, target.je_offset + 6):
+            old_byte = patched[base + off]
+            patched[base + off] = 0x90
+            print(f"  patch @ 0x{base+off:x}: 0x{old_byte:02x} -> 0x90")
     sha_after = hashlib.sha256(bytes(patched)).hexdigest()
 
     if args.dry_run:
-        print(f"DRY RUN: would change bytes at 0x{base:x}.")
+        print(f"DRY RUN: would patch {len(plan)} target(s).")
         print(f"  sha256 before: {sha_before}")
         print(f"  sha256 after:  {sha_after}")
         return

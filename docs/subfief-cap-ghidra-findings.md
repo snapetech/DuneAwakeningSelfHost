@@ -75,12 +75,28 @@ direct count comparisons).
 
 ## What's still open
 
-- The actual **subfief count cap** (`count >= 3 + bonus`) hasn't surfaced
-  in immediate writes of `0x6b`. The check likely involves loading two GAS
-  attribute floats and comparing them — no literal 3 in the code.
+- The exact **subfief count arithmetic** (`count >= 3 + bonus`) has not been
+  isolated as a numeric compare; no literal `3` surfaced in this path. The
+  practical bypass point is known, though: the call to `0xedf0f20` followed by
+  `test al, al; je <0x6b fail block>` at file offset `0xcdddb6a`.
 - The decompile pass for `0x7e` / `0x7f` (building-piece map / server caps)
-  is still running; results will land in
-  `/tmp/ghidra-work/cap-findings.txt`.
+  completed; the patch points are recorded below.
+
+## Follow-up: build-piece binary cap bypasses
+
+The completed decompile pass found the two building-piece binary cap checks.
+Both share the same validity-helper shape as the subfief/totem path:
+`call 0xedf0f20; test al, al; je <fail block>`.
+
+| Target | `je` file offset | Original bytes | Fail enum | Patch |
+|---|---:|---|---:|---|
+| Server-wide building-piece cap | `0xcf01466` | `0f 84 aa 00 00 00` | `0x7e` | `90 90 90 90 90 90` |
+| Map-wide building-piece cap | `0xcf027e6` | `0f 84 ca 00 00 00` | `0x7f` | `90 90 90 90 90 90` |
+
+`scripts/patch-subfief-cap-binary.py` now accepts `--target building` to patch
+both building-piece binary checks, or `--target all` to patch subfief plus both
+building-piece checks. The script filters original candidate sites by the enum
+written at the fail target and also recognizes already-patched NOP sites.
 
 ## Callee taxonomy
 
