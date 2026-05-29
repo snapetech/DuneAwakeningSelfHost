@@ -475,29 +475,41 @@ ALLOWED_CONFIGS = {
 
 DIRECTOR_TRANSFER_RULESETS = (
     "0",
-    "1",
-    "2",
+    "10",
+    "20",
+    "30",
+    "40",
+    "50",
 )
 
 DIRECTOR_TRANSFER_RULESET_LABELS = {
-    "0": "DenyAll",
-    "1": "AllowFromPrivateOnly",
-    "2": "AllowFromOfficialOnly",
+    "0": "Default",
+    "10": "DenyAll",
+    "20": "AllowFromPrivateOnly",
+    "30": "AllowFromOfficialOnly",
+    "40": "AllowFromPrivateAndOfficial",
+    "50": "AllowAll",
+    "Default": "Default",
     "DenyAll": "DenyAll",
     "AllowFromPrivateOnly": "AllowFromPrivateOnly",
     "AllowFromOfficialOnly": "AllowFromOfficialOnly",
+    "AllowFromPrivateAndOfficial": "AllowFromPrivateAndOfficial",
+    "AllowAll": "AllowAll",
 }
 
 DIRECTOR_TRANSFER_RULESET_VALUES = {
-    "DenyAll": "0",
-    "AllowFromPrivateOnly": "1",
-    "AllowFromOfficialOnly": "2",
+    "Default": "0",
+    "DenyAll": "10",
+    "AllowFromPrivateOnly": "20",
+    "AllowFromOfficialOnly": "30",
+    "AllowFromPrivateAndOfficial": "40",
+    "AllowAll": "50",
 }
 
 DIRECTOR_TRANSFER_SETTINGS = {
     "ShouldDeleteOriginCharactersDuringTransfers": {"type": "bool", "default": "true", "why": "Deletes the origin character after a successful transfer into this battlegroup."},
     "AcceptOutgoingCharacterTransfers": {"type": "bool", "default": "true", "why": "Allows characters on this battlegroup to transfer out."},
-    "IncomingCharacterTransfers": {"type": "ruleset", "default": "0", "why": "Controls which origin server types can transfer characters into this battlegroup. Director build 1968181 parses numeric enum values. Use 2 for official/public-origin transfers; FLS currently rejects value 3 during transfer requests."},
+    "IncomingCharacterTransfers": {"type": "ruleset", "default": "40", "why": "Controls which origin server types can transfer characters into this battlegroup. Director build 1973075 uses numeric enum values: 20 private/self-hosted, 30 official/public, 40 both."},
     "ExportCharacterTimeout": {"type": "int", "default": "900", "why": "Seconds before the export query times out."},
     "ImportCharacterTimeout": {"type": "int", "default": "900", "why": "Seconds before the import query times out."},
     "FreeToTransferCharactersFrom": {"type": "bool", "default": "false", "why": "Skips transfer token cost for transfers from this battlegroup."},

@@ -12,13 +12,13 @@ The relevant section is `[ Battlegroup ]`.
 
 ## Current Default
 
-This repository allows inbound transfers from private/self-hosted battlegroups:
+This repository allows inbound transfers from public/official and private/self-hosted battlegroups:
 
 ```ini
-IncomingCharacterTransfers=1
+IncomingCharacterTransfers=40
 ```
 
-That requests the Director binary's private-origin ruleset. The combined private-and-official value `3` is documented by the binary and accepted in FLS battlegroup declarations, but live transfer requests have failed because FLS could not parse `TransferOriginRuleset=3`.
+That requests the Director binary's combined public-and-private origin ruleset. Older local notes incorrectly mapped the rulesets as `0/1/2/3`; live testing showed those small values are undefined for the current enum and FLS rejects them during `CharacterTransfers_RequestTransfer`.
 
 ## Settings
 
@@ -28,7 +28,7 @@ These settings are exposed in the admin panel under Settings -> Director Charact
 | --- | --- | --- |
 | `ShouldDeleteOriginCharactersDuringTransfers` | `true` | Deletes the origin character after a successful transfer into this battlegroup. |
 | `AcceptOutgoingCharacterTransfers` | `true` | Allows characters on this battlegroup to transfer out. |
-| `IncomingCharacterTransfers` | `1` | Controls which origin server types may transfer characters into this battlegroup. |
+| `IncomingCharacterTransfers` | `40` | Controls which origin server types may transfer characters into this battlegroup. |
 | `ExportCharacterTimeout` | `900` | Seconds before the export query times out. |
 | `ImportCharacterTimeout` | `900` | Seconds before the import query times out. |
 | `FreeToTransferCharactersFrom` | `true` | Skips transfer token cost for transfers from this battlegroup. |
@@ -39,18 +39,20 @@ These settings are exposed in the admin panel under Settings -> Director Charact
 
 ## Incoming Rulesets
 
-The Director binary for build `1968181` exposes these inbound rulesets, but its config parser expects a numeric enum value:
+The Director binary for build `1973075` exposes these inbound rulesets, and its config parser expects the numeric enum value:
 
 ```text
-0 = DenyAll
-1 = AllowFromPrivateOnly
-2 = AllowFromOfficialOnly
-3 = AllowFromPrivateAndOfficial
+0 = Default
+10 = DenyAll
+20 = AllowFromPrivateOnly
+30 = AllowFromOfficialOnly
+40 = AllowFromPrivateAndOfficial
+50 = AllowAll
 ```
 
-Use `0` for a closed world, `1` to allow only private/self-hosted origins, `2` to allow only public/official origins, or `3` to request both.
+Use `10` for a closed world, `20` to allow only private/self-hosted origins, `30` to allow only public/official origins, or `40` to request both. `50` is exposed as `AllowAll`; treat it as broader than the normal public/private split until verified.
 
-Live private-origin transfer requests with `IncomingCharacterTransfers=3` failed against FLS with `INVALID_ARGUMENT` and `Could not parse ETransferOriginRuleset from int value` even after both transfer fee flags were set free. Keep `IncomingCharacterTransfers=1` for private-to-private transfers until FLS accepts the combined request ruleset. String values such as `DenyAll` are present in the binary but fail this build's settings reload with a `JsonException`.
+Live official-origin transfer requests with `IncomingCharacterTransfers=2` failed against FLS with `INVALID_ARGUMENT` and `Could not parse ETransferOriginRuleset from int value`. Decompiling Director build `1973075` showed the valid enum value for official-only is `30`, not `2`; use the values above.
 
 ## Apply Changes
 
