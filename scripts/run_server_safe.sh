@@ -9,6 +9,7 @@ main() {
   install_cert
   install_building_piece_limit_patch "$server_root" "$dry_run"
   install_landsraad_vendor_faction_gate_patch "$server_root" "$dry_run"
+  install_subfief_cap_binary_patch "$server_root" "$dry_run"
   install_user_configs "$server_root"
   install_server_login_password "$server_root" "$@"
   load_workspace_value DUNE_SERVER_DISPLAY_NAME
@@ -222,6 +223,27 @@ install_building_piece_limit_patch() {
     --pak "$pak" \
     --oodle "$oodle" \
     --limit "$limit"
+}
+
+install_subfief_cap_binary_patch() {
+  local server_root="$1"
+  local dry_run="$2"
+  [ "${DUNE_SUBFIEF_CAP_BINARY_PATCH_ENABLED:-false}" = "true" ] || return 0
+
+  local cap="${DUNE_SUBFIEF_CAP:-6}"
+  local binary="${DUNE_SUBFIEF_CAP_BINARY:-$server_root/DuneSandbox/Binaries/Linux/DuneSandboxServer-Linux-Shipping}"
+
+  if [ "$dry_run" = "true" ]; then
+    python3 /workspace/scripts/patch-subfief-cap-binary.py \
+      --binary "$binary" \
+      --new-cap "$cap" \
+      --dry-run
+    return 0
+  fi
+
+  python3 /workspace/scripts/patch-subfief-cap-binary.py \
+    --binary "$binary" \
+    --new-cap "$cap"
 }
 
 install_landsraad_vendor_faction_gate_patch() {
