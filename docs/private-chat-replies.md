@@ -138,7 +138,8 @@ Use those only as diagnostics or deliberate non-private reply modes.
 - `Makefile` target `test-admin-chat` runs command/private-route and presence-private-route tests. `make validate` includes that target.
 
 Deep Desert entry notices are partition-aware in `scripts/player-presence-announcer.py`.
-Partition `8` receives the PVE Casual/persistent rule text; partition `31`
+Partition `8` is labeled `01 Recommended PVE Casual` and receives the PVE
+Casual/persistent rule text; partition `31` is labeled `02 PVE Hardcore` and
 receives the PVE Hardcore/3x-harvest/weekly-cleanup rule text. Both are private
 Paul whispers, not global announcements.
 

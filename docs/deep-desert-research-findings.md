@@ -93,9 +93,9 @@ Outcome:
 
 - Both lab Deep Desert containers started and became DB-ready.
 - Partition 8 registered as `DeepDesert_1`, dimension `0`, label
-  `PVE Casual`.
+  `01 Recommended PVE Casual`.
 - Partition 31 registered as `DeepDesert_1`, dimension `1`, label
-  `PVE Hardcore`.
+  `02 PVE Hardcore`.
 - The mounted per-service `UserGame.ini` files were copied into each
   container's Saved `UserSettings` directory with different Casual/Hardcore
   values.

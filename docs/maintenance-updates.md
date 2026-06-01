@@ -217,7 +217,8 @@ DUNE_HARDCORE_DD_WEEKLY_WIPE_ENABLED=true
 
 When `DUNE_HARDCORE_DD_WEEKLY_WIPE_ENABLED=true`, the restart start hook runs
 `scripts/wipe-hardcore-deep-desert.sh .env --execute --if-due` before recreating map
-servers. That script is deliberately narrower than the game's DB-wipe flag:
+servers. That script expects partition `31` to be labeled `02 PVE Hardcore` and
+is deliberately narrower than the game's DB-wipe flag:
 
 - actor/respawn cleanup uses `dune.coriolis_cleanup_partition` for partition
   `31`, `DeepDesert_1`, dimension `1`;
@@ -289,21 +290,51 @@ DUNE_RESTART_CHECK_STEAM_UPDATE=false \
 
 Rollback after an image-tag upgrade means restoring the old `DUNE_IMAGE_TAG` and restoring state from a backup taken before the upgrade. Do not mix a downgraded image tag with post-upgrade database state unless schema compatibility has been verified.
 
-## Building-Piece Limit Patch Rollback
+## Building And Subfief Cap Patch Rollback
 
-The `7500` building-piece experiment is applied through `compose.building-piece-limit.yaml` during game-server startup. It patches the server pak inside the recreated container overlay; it does not edit the official image or the host save data directly.
+The `7500` building-piece experiment is applied during game-server startup. The
+pak patch updates the cooked `BuildingPiece` data-table row inside the recreated
+container overlay; it does not edit the official image or host save data
+directly. The binary patcher can also bypass the Ghidra-confirmed subfief/totem
+cap branch plus the server-wide and map-wide building-piece binary cap branches.
 
 Current production wiring is derived by `scripts/compose-files.sh`. On `kspls0`,
 `POSTGRES_REMOTE_REPLICA_HOST=kspls0` causes `compose.failover-standby.yaml` to
-be included, and the building-piece overlay is included when the feature flag is
-enabled:
+be included, and the cap patches are enabled by feature flags:
 
 ```env
 POSTGRES_REMOTE_REPLICA_HOST=kspls0
 DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED=true
 DUNE_BUILDING_PIECE_LIMIT=7500
+DUNE_SUBFIEF_CAP_BINARY_PATCH_ENABLED=true
+DUNE_SUBFIEF_CAP_BINARY_TARGET=all
+DUNE_SUBFIEF_CAP=6
 DUNE_LANDSRAAD_VENDOR_FACTION_GATE_PATCH_ENABLED=false
 DUNE_OODLE_HOST_LIBRARY=/home/keith/Documents/code/DuneAwakeningSelfHost/backups/operator-oodle/liboodle-data-shared.so
+```
+
+`DUNE_SUBFIEF_CAP_BINARY_TARGET=all` applies all three binary bypass targets:
+`subfief`, `building-server`, and `building-map`. A live read-only dry-run on
+2026-06-01 found exactly those three target sites in a running game container:
+
+```bash
+docker exec dune_server-testing-waterfat-1 \
+  python3 /workspace/scripts/patch-subfief-cap-binary.py \
+    --binary /home/dune/server/DuneSandbox/Binaries/Linux/DuneSandboxServer-Linux-Shipping \
+    --target all \
+    --new-cap 6 \
+    --dry-run
+```
+
+Expected output includes `DRY RUN: would patch 3 target(s)` and the three target
+names. If the dry-run cannot find exactly those sites after a Funcom binary
+update, leave `DUNE_SUBFIEF_CAP_BINARY_PATCH_ENABLED=false` until the Ghidra
+signatures are refreshed.
+
+Prepared-for-downtime production file backup:
+
+```text
+backups/live-config/<file>.20260601T213113Z.pre-subfief-binary-enable
 ```
 
 Known rollback anchors from the initial production wiring:
@@ -326,6 +357,7 @@ from pathlib import Path
 path = Path(".env")
 updates = {
     "DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED": "false",
+    "DUNE_SUBFIEF_CAP_BINARY_PATCH_ENABLED": "false",
     "COMPOSE_FILES": "compose.yaml:compose.allmaps.yaml",
 }
 out = []
@@ -485,4 +517,7 @@ cp -a "$rollback_dir/scripts/run_server_safe.sh" scripts/run_server_safe.sh
 rm -f compose.building-piece-limit.yaml
 ```
 
-Only use this path when overwriting later `.env` changes is acceptable. The safer default is to set `DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED=false` and remove `compose.building-piece-limit.yaml` from `COMPOSE_FILES`.
+Only use this path when overwriting later `.env` changes is acceptable. The
+safer default is to set `DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED=false`,
+`DUNE_SUBFIEF_CAP_BINARY_PATCH_ENABLED=false`, and remove obsolete patch overlays
+from `COMPOSE_FILES` if present.

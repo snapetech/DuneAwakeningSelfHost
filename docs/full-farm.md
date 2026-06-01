@@ -101,8 +101,8 @@ Rules by Deep Desert instance:
 
 | Partition | Label | Rules |
 | --- | --- | --- |
-| `8` | PVE Casual | Persistent PvE. No weekly cleanup, no Shifting Sands reset, standard harvest rates. |
-| `31` | PVE Hardcore | PvE combat, 3x harvest, Shifting Sands/high-damage Coriolis, 15% higher vehicle durability damage, and weekly maintenance cleanup of only Hardcore DD actors, respawns, and resource fields. |
+| `8` | `01 Recommended PVE Casual` | Persistent PvE. No weekly cleanup, no Shifting Sands reset, standard harvest rates. |
+| `31` | `02 PVE Hardcore` | PvE combat, 3x harvest, Shifting Sands/high-damage Coriolis, 15% higher vehicle durability damage, and weekly maintenance cleanup of only Hardcore DD actors, respawns, and resource fields. |
 
 The built-in game `m_bIsDbWipeEnabled` flag is disabled for both DD configs.
 The Hardcore reset is handled by `scripts/wipe-hardcore-deep-desert.sh`, which scopes the
@@ -111,9 +111,16 @@ official Coriolis actor/respawn cleanup to partition `31` and separately deletes
 `dimension_index=1`. PvE DD, Hagga Basin, social hubs, and other maps are not
 part of that wipe.
 
+Casual and Hardcore DD share scan/probe area state in `dune.map_areas` because
+that table is keyed by `map_name='DeepDesert'` and has no `dimension_index`.
+Use [deep-desert-map-state.md](deep-desert-map-state.md) for the guarded reset
+runbook and restore SQL.
+
 Paul's player-presence private whispers mirror these rules. Partition `8`
 players receive the PVE Casual notice, and partition `31` players receive the
-PVE Hardcore notice.
+PVE Hardcore notice. The `01`/`02` prefixes are intentional: they make Casual DD
+sort first in any label-sorted Deep Desert instance list, and mark it as the
+recommended default.
 
 Keep these closed publicly:
 

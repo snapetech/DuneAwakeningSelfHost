@@ -68,6 +68,22 @@ Then check service health:
 ./scripts/status.sh .env
 ```
 
+## Monitor Attempts
+
+When a tester is about to retry a transfer, run the transfer monitor on the live host before they click through:
+
+```bash
+scripts/monitor-character-transfers.sh --env-file .env --interval 2 --since 15m
+```
+
+It writes a timestamped evidence directory under `backups/character-transfer-monitor/` with:
+
+- `config.txt`: active transfer settings, compose files, Director container state, and git status at monitor start.
+- `events.log`: relevant Director/FLS transfer log lines plus transfer-state changes.
+- `state.jsonl`: one `dune.character_transfer_imports` snapshot every polling interval.
+
+The monitor is read-only. By default it redacts 16-hex player/FLS ids in Director logs; add `--full-ids` only when exact player correlation is required.
+
 ## Related Access Controls
 
 `DUNE_SERVER_LOGIN_PASSWORD` restricts who can log into the battlegroup. It does not distinguish fresh characters from transferred/imported characters.

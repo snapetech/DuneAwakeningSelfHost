@@ -369,6 +369,144 @@ class StarterEmoteGrantTests(unittest.TestCase):
         self.assertEqual(result["privateWelcomeMessages"], [])
         self.assertEqual(state["onlinePlayers"]["456"]["lastLoginTime"], "2026-05-22 19:06:00+00")
 
+    def test_session_change_during_map_transfer_is_not_reannounced(self):
+        previous_player = {
+            "name": "Traveler",
+            "flsId": "TRAVELER_FLS",
+            "lastLoginTime": "2026-05-22 19:05:00+00",
+            "map": "HaggaBasin",
+            "partitionLabel": "Hagga Basin",
+            "partitionId": "1",
+        }
+        current_player = {
+            **previous_player,
+            "lastLoginTime": "2026-05-22 19:06:00+00",
+            "map": "Arrakeen",
+            "partitionLabel": "Arrakeen",
+            "partitionId": "2",
+        }
+        state = {
+            "onlinePlayers": {"456": previous_player},
+            "seenAccounts": ["456"],
+        }
+        announced = []
+        sent = []
+
+        def fake_save_state(next_state):
+            state.clear()
+            state.update(next_state)
+
+        def fake_announce(message):
+            announced.append(message)
+            return {"ok": True}
+
+        def fake_private_message(target, message, job_id="player-presence-private-message"):
+            sent.append({"target": target, "message": message, "jobId": job_id})
+            return {"ok": True}
+
+        file_env = {
+            "DUNE_PLAYER_PRESENCE_ANNOUNCE_ENABLED": "true",
+            "DUNE_PLAYER_PRESENCE_PRIVATE_WELCOME_ENABLED": "true",
+            "DUNE_PLAYER_PRESENCE_RECONNECT_RECOVERY_ENABLED": "true",
+            "DUNE_PLAYER_PRESENCE_STARTER_BASE_TOOL_ENABLED": "false",
+            "DUNE_PLAYER_PRESENCE_STARTER_EMOTES_ENABLED": "false",
+            "DUNE_PLAYER_PRESENCE_ADMIN_FIRST_LOGIN_DAILY_ENABLED": "false",
+        }
+
+        with unittest.mock.patch.object(player_presence_announcer, "FILE_ENV", file_env), \
+             unittest.mock.patch.dict(player_presence_announcer.os.environ, {}, clear=True), \
+             unittest.mock.patch.object(player_presence_announcer, "online_players", lambda: {"456": current_player}), \
+             unittest.mock.patch.object(player_presence_announcer, "load_state", lambda: state.copy()), \
+             unittest.mock.patch.object(player_presence_announcer, "save_state", fake_save_state), \
+             unittest.mock.patch.object(player_presence_announcer, "announce", fake_announce), \
+             unittest.mock.patch.object(player_presence_announcer, "private_message", fake_private_message):
+            result = player_presence_announcer.check_once()
+
+        self.assertEqual(result["joined"], [])
+        self.assertEqual(result["sessionRejoined"], [])
+        self.assertEqual(result["announcements"], [])
+        self.assertEqual(result["privateWelcomeMessages"], [])
+        self.assertEqual(result["automatedPrivateMessages"], [])
+        self.assertEqual(announced, [])
+        self.assertEqual(sent, [])
+
+    def test_brief_missing_player_with_new_map_is_treated_as_transfer(self):
+        previous_player = {
+            "name": "Traveler",
+            "flsId": "TRAVELER_FLS",
+            "map": "HaggaBasin",
+            "partitionLabel": "Hagga Basin",
+            "partitionId": "1",
+        }
+        current_player = {
+            "name": "Traveler",
+            "flsId": "TRAVELER_FLS",
+            "map": "Arrakeen",
+            "partitionLabel": "Arrakeen",
+            "partitionId": "2",
+        }
+        snapshots = [
+            {},
+            {"456": current_player},
+        ]
+        state = {
+            "onlinePlayers": {"456": previous_player},
+            "seenAccounts": ["456"],
+            "recentLeaves": {},
+        }
+        fake_time = [1000]
+        announced = []
+        sent = []
+
+        def fake_online_players():
+            return snapshots.pop(0)
+
+        def fake_save_state(next_state):
+            state.clear()
+            state.update(next_state)
+
+        def fake_announce(message):
+            announced.append(message)
+            return {"ok": True}
+
+        def fake_private_message(target, message, job_id="player-presence-private-message"):
+            sent.append({"target": target, "message": message, "jobId": job_id})
+            return {"ok": True}
+
+        file_env = {
+            "DUNE_PLAYER_PRESENCE_ANNOUNCE_ENABLED": "true",
+            "DUNE_PLAYER_PRESENCE_PRIVATE_WELCOME_ENABLED": "true",
+            "DUNE_PLAYER_PRESENCE_RECONNECT_RECOVERY_ENABLED": "true",
+            "DUNE_PLAYER_PRESENCE_TRANSFER_GRACE_SECONDS": "90",
+            "DUNE_PLAYER_PRESENCE_STARTER_BASE_TOOL_ENABLED": "false",
+            "DUNE_PLAYER_PRESENCE_STARTER_EMOTES_ENABLED": "false",
+            "DUNE_PLAYER_PRESENCE_ADMIN_FIRST_LOGIN_DAILY_ENABLED": "false",
+        }
+
+        with unittest.mock.patch.object(player_presence_announcer, "FILE_ENV", file_env), \
+             unittest.mock.patch.dict(player_presence_announcer.os.environ, {}, clear=True), \
+             unittest.mock.patch.object(player_presence_announcer, "online_players", fake_online_players), \
+             unittest.mock.patch.object(player_presence_announcer, "load_state", lambda: state.copy()), \
+             unittest.mock.patch.object(player_presence_announcer, "save_state", fake_save_state), \
+             unittest.mock.patch.object(player_presence_announcer, "announce", fake_announce), \
+             unittest.mock.patch.object(player_presence_announcer, "private_message", fake_private_message), \
+             unittest.mock.patch.object(player_presence_announcer, "now_ts", lambda: fake_time[0]):
+            first = player_presence_announcer.check_once()
+            fake_time[0] = 1030
+            second = player_presence_announcer.check_once()
+
+        self.assertEqual(first["left"], [])
+        self.assertIn("456", state["onlinePlayers"])
+        self.assertEqual(second["joined"], [])
+        self.assertEqual(second["suppressedTransfers"], ["Traveler"])
+        self.assertEqual(second["announcements"], [])
+        self.assertEqual(second["privateWelcomeMessages"], [])
+        self.assertEqual(second["automatedPrivateMessages"], [])
+        self.assertEqual(announced, [])
+        self.assertEqual(sent, [])
+        self.assertEqual(state.get("pendingLeaves", {}), {})
+        self.assertEqual(state.get("recentLeaves", {}), {})
+
 
 class DeepDesertJoinMessageTests(unittest.TestCase):
     def test_deep_desert_casual_message_sends_on_entry_not_every_poll(self):
@@ -382,7 +520,7 @@ class DeepDesertJoinMessageTests(unittest.TestCase):
             "name": "Traveler",
             "flsId": "TRAVELER_FLS",
             "map": "DeepDesert",
-            "partitionLabel": "PVE Casual",
+            "partitionLabel": "01 Recommended PVE Casual",
             "partitionId": "8",
         }
         sent = []
@@ -423,7 +561,7 @@ class DeepDesertJoinMessageTests(unittest.TestCase):
             "name": "Builder",
             "flsId": "BUILDER_FLS",
             "map": "DeepDesert",
-            "partitionLabel": "PVE Hardcore",
+            "partitionLabel": "02 PVE Hardcore",
             "partitionId": "31",
         }
         state = {

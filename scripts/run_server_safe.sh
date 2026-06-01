@@ -231,11 +231,13 @@ install_subfief_cap_binary_patch() {
   [ "${DUNE_SUBFIEF_CAP_BINARY_PATCH_ENABLED:-false}" = "true" ] || return 0
 
   local cap="${DUNE_SUBFIEF_CAP:-6}"
+  local target="${DUNE_SUBFIEF_CAP_BINARY_TARGET:-subfief}"
   local binary="${DUNE_SUBFIEF_CAP_BINARY:-$server_root/DuneSandbox/Binaries/Linux/DuneSandboxServer-Linux-Shipping}"
 
   if [ "$dry_run" = "true" ]; then
     python3 /workspace/scripts/patch-subfief-cap-binary.py \
       --binary "$binary" \
+      --target "$target" \
       --new-cap "$cap" \
       --dry-run
     return 0
@@ -243,6 +245,7 @@ install_subfief_cap_binary_patch() {
 
   python3 /workspace/scripts/patch-subfief-cap-binary.py \
     --binary "$binary" \
+    --target "$target" \
     --new-cap "$cap"
 }
 

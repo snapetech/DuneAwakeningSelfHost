@@ -618,6 +618,27 @@ def player_presence_session(player):
     return str(player.get("lastLoginTime") or "")
 
 
+def sorted_account_ids(account_ids, players):
+    return sorted(account_ids, key=lambda account_id: player_name(players.get(account_id, account_id)).lower())
+
+
+def transfer_grace_seconds():
+    return max(0, int(env(
+        "DUNE_PLAYER_PRESENCE_TRANSFER_GRACE_SECONDS",
+        env("DUNE_PLAYER_PRESENCE_MAP_TRANSFER_GRACE_SECONDS", "90"),
+    )))
+
+
+def session_change_counts_as_rejoin(previous_player, current_player):
+    previous_session = player_presence_session(previous_player)
+    current_session = player_presence_session(current_player)
+    if not previous_session or not current_session or previous_session == current_session:
+        return False
+    if env_bool("DUNE_PLAYER_PRESENCE_SESSION_REJOIN_ON_LOCATION_CHANGE", False):
+        return True
+    return not player_location_changed(previous_player, current_player)
+
+
 def admin_players(current):
     names = {item.strip().lower() for item in env("DUNE_PLAYER_PRESENCE_ADMIN_NAMES", env("DUNE_CHAT_COMMAND_ADMINS", "")).split(",") if item.strip()}
     fls_ids = {item.strip() for item in env("DUNE_PLAYER_PRESENCE_ADMIN_FLS_IDS", env("DUNE_CHAT_COMMAND_ADMIN_FLS_IDS", "")).split(",") if item.strip()}
@@ -1111,18 +1132,46 @@ def check_once():
     current_ids = set(current)
     previous_ids = set(previous or {})
     first_run = previous is None
-    joined = sorted(current_ids - previous_ids, key=lambda account_id: player_name(current.get(account_id, account_id)).lower())
+    current_time = now_ts()
+    transfer_grace = transfer_grace_seconds()
+    pending_leaves = state.setdefault("pendingLeaves", {})
+    suppressed_transfer_ids = set()
+    joined = sorted_account_ids(current_ids - previous_ids, current)
     session_rejoined = []
     if previous and not first_run:
-        for account_id in sorted(current_ids & previous_ids, key=lambda account_id: player_name(current.get(account_id, account_id)).lower()):
-            previous_session = player_presence_session(previous.get(account_id))
-            current_session = player_presence_session(current.get(account_id))
-            if previous_session and current_session and previous_session != current_session:
+        for account_id in sorted_account_ids(current_ids & previous_ids, current):
+            if session_change_counts_as_rejoin(previous.get(account_id), current.get(account_id)):
                 session_rejoined.append(account_id)
-    joined = sorted(set(joined) | set(session_rejoined), key=lambda account_id: player_name(current.get(account_id, account_id)).lower())
-    left = sorted(previous_ids - current_ids, key=lambda account_id: player_name(previous.get(account_id, account_id)).lower()) if previous else []
+    raw_left = sorted_account_ids(previous_ids - current_ids, previous or {}) if previous else []
+    left = raw_left
+    left_players = {account_id: (previous or {}).get(account_id, account_id) for account_id in raw_left}
+    if transfer_grace > 0 and not first_run:
+        for account_id in raw_left:
+            key = str(account_id)
+            if key not in pending_leaves:
+                pending_leaves[key] = {
+                    "leftAt": current_time,
+                    "player": (previous or {}).get(account_id, account_id),
+                }
+
+        left = []
+        left_players = {}
+        for key, entry in list(pending_leaves.items()):
+            if key in current_ids:
+                previous_player = entry.get("player")
+                if current_time - int(entry.get("leftAt") or current_time) <= transfer_grace and player_location_changed(previous_player, current.get(key)):
+                    suppressed_transfer_ids.add(key)
+                pending_leaves.pop(key, None)
+                continue
+            if current_time - int(entry.get("leftAt") or current_time) >= transfer_grace:
+                left.append(key)
+                left_players[key] = entry.get("player") or key
+                pending_leaves.pop(key, None)
+        left = sorted_account_ids(left, left_players)
+
+    joined = sorted_account_ids((set(joined) | set(session_rejoined)) - suppressed_transfer_ids, current)
+    session_rejoined = sorted_account_ids(set(session_rejoined) - suppressed_transfer_ids, current)
     final_count = len(current)
-    current_time = now_ts()
     seen_accounts = set(str(item) for item in state.get("seenAccounts", []))
     join_delay = max(0, int(env("DUNE_PLAYER_PRESENCE_JOIN_MESSAGE_DELAY_SECONDS", "0")))
     pending_join_messages = state.setdefault("pendingJoinMessages", {})
@@ -1176,7 +1225,7 @@ def check_once():
             message = render_template(template, player_name(current.get(account_id, account_id)), final_count)
             results.append({"event": event, "accountId": account_id, "message": message, "announce": public_announce(message, current, f"player-presence-{event}")})
         for account_id in left:
-            message = render_template(leave_template, player_name(previous.get(account_id, account_id)), final_count)
+            message = render_template(leave_template, player_name(left_players.get(account_id, account_id)), final_count)
             results.append({"event": "leave", "accountId": account_id, "message": message, "announce": public_announce(message, current, "player-presence-leave")})
 
     private_welcome_results = []
@@ -1303,8 +1352,10 @@ def check_once():
 
         state["seenAccounts"] = sorted(seen_accounts, key=lambda value: (0, int(value)) if value.isdigit() else (1, value))
         state["haggaArrivalMessaged"] = sorted(hagga_arrivals, key=lambda value: (0, int(value)) if value.isdigit() else (1, value))
-        for account_id in left:
+        for account_id in raw_left:
             recent_leaves[str(account_id)] = current_time
+        for account_id in suppressed_transfer_ids:
+            recent_leaves.pop(str(account_id), None)
         for account_id, left_at in list(recent_leaves.items()):
             if current_time - int(left_at or 0) > 86400:
                 recent_leaves.pop(account_id, None)
@@ -1703,8 +1754,9 @@ def check_once():
         "firstRun": first_run,
         "onlineCount": final_count,
         "joined": [player_name(current[account_id]) for account_id in joined],
-        "left": [player_name(previous[account_id]) for account_id in left] if previous else [],
+        "left": [player_name(left_players.get(account_id, account_id)) for account_id in left],
         "sessionRejoined": [player_name(current[account_id]) for account_id in session_rejoined],
+        "suppressedTransfers": [player_name(current[account_id]) for account_id in sorted_account_ids(suppressed_transfer_ids & current_ids, current)],
         "announcements": results,
         "subfiefBonusRepairs": subfief_bonus_results,
         "privateWelcomeMessages": private_welcome_results,

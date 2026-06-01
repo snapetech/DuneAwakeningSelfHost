@@ -6,14 +6,15 @@ usage() {
 Usage: scripts/apply-post-dd-cycle-coriolis-config.sh [ENV_FILE] [--restart]
 
 Replaces the staged PvE Deep Desert one-shot Coriolis config with the normal
-weekly Landsraad/Coriolis cadence from config/UserGame.ini. The replacement
-keeps no damage, no DB wipe, no restart, and no Deep Desert Shifting Sands.
+Standard PvE no-Coriolis config from config/UserGame.ini. The replacement keeps
+auto-spawn off, no damage, no DB wipe, no restart, no Deep Desert Shifting
+Sands, and a far-future cycle.
 
 The partition-31 Hardcore Deep Desert config is intentionally left alone because
 it owns high Coriolis damage, Shifting Sands, and the separate 3x harvest Engine
 config.
 
-Run this after the 2026-05-25 Deep Desert refresh has completed.
+Run this after a staged Standard PvE Deep Desert refresh has completed.
 USAGE
 }
 
@@ -62,7 +63,7 @@ required_patterns=(
   'm_bCoriolisTriggerShiftingSands=False'
   'm_CoriolisLightDamage=0.000000'
   'm_CoriolisHeavyDamage=0.000000'
-  'm_CycleDurationInDays=7'
+  'm_CycleDurationInDays=36524'
   'm_bShouldRestartServerOnCycleEnd=False'
   'm_bIsDbWipeEnabled=False'
 )

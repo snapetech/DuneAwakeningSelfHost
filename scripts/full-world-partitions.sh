@@ -67,7 +67,7 @@ with desired(partition_id, map, dimension_index, label) as (
     (5, 'CB_Story_Hephaestus', 0, null),
     (6, 'CB_Story_Ecolab_Carthag', 0, null),
     (7, 'CB_Story_WaterFatManor', 0, null),
-    (8, 'DeepDesert_1', 0, 'PVE Casual'),
+    (8, 'DeepDesert_1', 0, '01 Recommended PVE Casual'),
     (9, 'Story_ProcesVerbal', 0, null),
     (10, 'DLC_Story_LostHarvest_EcolabA', 0, null),
     (11, 'DLC_Story_LostHarvest_EcolabB', 0, null),
@@ -90,7 +90,7 @@ with desired(partition_id, map, dimension_index, label) as (
     (28, 'CB_Overland_S_07', 0, null),
     (29, 'CB_Overland_S_08', 0, null),
     (30, 'CB_Dungeon_ThePit', 0, null),
-    (31, 'DeepDesert_1', 1, 'PVE Hardcore')
+    (31, 'DeepDesert_1', 1, '02 PVE Hardcore')
 ),
 definition as (
   select '{"box": {"max_x": 1, "max_y": 1, "min_x": 0, "min_y": 0}, "type": "box2d_array"}'::jsonb as value
@@ -109,8 +109,8 @@ where d.partition_id <= :partition_count
 
 with desired(partition_id, label) as (
   values
-    (8, 'PVE Casual'),
-    (31, case when :partition_count >= 31 then 'PVE Hardcore' else null end)
+    (8, '01 Recommended PVE Casual'),
+    (31, case when :partition_count >= 31 then '02 PVE Hardcore' else null end)
 )
 update dune.world_partition wp
 set label = desired.label
