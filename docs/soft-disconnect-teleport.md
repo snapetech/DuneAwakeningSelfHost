@@ -240,6 +240,40 @@ The client-side dialog text still displayed the five-minute warning during that
 test. Treat that warning as stale UI until client-side assets/config are found.
 The server-side persistence deadline was immediate.
 
+Additional validation on 2026-06-01 showed that clamping only the recorded
+deadline still allowed the actual timer-manager callback to use the original
+duration. A Deep Desert logout at `2026.06.01-23.28.18` recorded an immediate
+deadline but stayed `LoggingOut` for roughly five minutes and flipped `Offline`
+around `2026.06.01-23.35.07`.
+
+The current script therefore also patches the timer-registration duration reload
+inside `SetLeavingGameTimer` at ELF/runtime offset `0x0d50fcba`. The original
+instruction is:
+
+```text
+c5 fa 10 45 d4    vmovss -0x2c(%rbp),%xmm0
+```
+
+That reloads the saved duration before the timer-manager call. The patched bytes
+are:
+
+```text
+c5 f8 57 c0 90    vxorps %xmm0,%xmm0,%xmm0; nop
+```
+
+That forces the registered timer duration to `0.0`. Live dry-run verification on
+`kspls0` after applying showed both `dune_server-survival-1` and
+`dune_server-deep-desert-1` with:
+
+```text
+deadline clamp bytes: 48 89 c1
+timer duration bytes: c5 f8 57 c0 90
+```
+
+Confidence is high that future `SetLeavingGameTimer` calls now schedule a zero
+delay timer. A fresh login/quit test after this duration patch is still needed
+to confirm the DB moves from `LoggingOut` to `Offline` immediately.
+
 Rejected attempt: on 2026-06-01, a live runtime patch changed the accessor entry
 at runtime offset `0x12f49050` from:
 
