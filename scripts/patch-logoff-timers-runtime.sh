@@ -2,10 +2,10 @@
 set -euo pipefail
 
 REMOTE_HOST="${DUNE_CURRENT_HOST:-kspls0}"
-EXPECTED_BUILD_ID="${DUNE_LOGOFF_TIMER_BUILD_ID:-f8298652f037c94b1c54264e06e8d020574d938b}"
-VALUE_A_OFFSET=0x16520698
-VALUE_B_OFFSET=0x165206b0
-TARGET_VALUE="${DUNE_LOGOFF_TIMER_VALUE:-0.0}"
+EXPECTED_BUILD_ID="${DUNE_LOGOFF_TIMER_BUILD_ID:-9bf5fbdef43a6d6d64459df973f3d252c01ab4ad}"
+PATCH_OFFSET="${DUNE_LOGOFF_TIMER_PATCH_OFFSET:-0x12f49050}"
+ORIGINAL_BYTES="${DUNE_LOGOFF_TIMER_ORIGINAL_BYTES:-554889e5f687a402000010751a}"
+PATCH_BYTES="${DUNE_LOGOFF_TIMER_PATCH_BYTES:-31c0c3}"
 
 if [[ "${1:-}" == "--host" ]]; then
   REMOTE_HOST="${2:?missing host after --host}"
@@ -18,8 +18,18 @@ else
   MODE="apply"
 fi
 
+if [[ "$MODE" != "dry-run" ]]; then
+  cat >&2 <<'MSG'
+refusing apply: the current build's duration accessor returns a pointer-like
+duration payload, not an inline scalar. The 2026-06-01 return-zero code patch
+matched the expected bytes but crashed survival-1 and deep-desert-1 with
+signal 139. Use --dry-run only until a data/object-field patch is validated.
+MSG
+  exit 2
+fi
+
 ssh "$REMOTE_HOST" \
-  "EXPECTED_BUILD_ID='$EXPECTED_BUILD_ID' VALUE_A_OFFSET='$VALUE_A_OFFSET' VALUE_B_OFFSET='$VALUE_B_OFFSET' TARGET_VALUE='$TARGET_VALUE' MODE='$MODE' bash -s" <<'REMOTE'
+  "EXPECTED_BUILD_ID='$EXPECTED_BUILD_ID' PATCH_OFFSET='$PATCH_OFFSET' ORIGINAL_BYTES='$ORIGINAL_BYTES' PATCH_BYTES='$PATCH_BYTES' MODE='$MODE' bash -s" <<'REMOTE'
 set -euo pipefail
 
 mapfile -t containers < <(
@@ -52,33 +62,23 @@ for container in "${containers[@]}"; do
     exit 1
   fi
 
-  addr_a="$(printf '0x%x' $((base + VALUE_A_OFFSET)))"
-  addr_b="$(printf '0x%x' $((base + VALUE_B_OFFSET)))"
-  echo "$container: pid=$pid base=$base pointers=$addr_a,$addr_b mode=$MODE"
+  addr="$(printf '0x%x' $((base + PATCH_OFFSET)))"
+  patch_len="$(( ${#PATCH_BYTES} / 2 ))"
+  original_len="$(( ${#ORIGINAL_BYTES} / 2 ))"
+  echo "$container: pid=$pid base=$base patch_addr=$addr patch_offset=$PATCH_OFFSET mode=$MODE"
 
   if [[ "$MODE" == "dry-run" ]]; then
     sudo -n gdb -q -batch -p "$pid" \
       -ex "set pagination off" \
-      -ex "set \$p1 = *(void**)$addr_a" \
-      -ex "set \$p2 = *(void**)$addr_b" \
-      -ex "printf \"before p1=%p p2=%p\\n\", \$p1, \$p2" \
-      -ex "x/4fw \$p1" \
-      -ex "x/4fw \$p2"
+      -ex "x/${original_len}xb $addr"
   else
-    sudo -n gdb -q -batch -p "$pid" \
-      -ex "set pagination off" \
-      -ex "set \$p1 = *(void**)$addr_a" \
-      -ex "set \$p2 = *(void**)$addr_b" \
-      -ex "printf \"before p1=%p p2=%p\\n\", \$p1, \$p2" \
-      -ex "x/4fw \$p1" \
-      -ex "x/4fw \$p2" \
-      -ex "set {float}\$p1 = $TARGET_VALUE" \
-      -ex "set {float}((char*)\$p1 + 4) = $TARGET_VALUE" \
-      -ex "set {float}\$p2 = $TARGET_VALUE" \
-      -ex "set {float}((char*)\$p2 + 4) = $TARGET_VALUE" \
-      -ex "printf \"after p1=%p p2=%p\\n\", \$p1, \$p2" \
-      -ex "x/4fw \$p1" \
-      -ex "x/4fw \$p2"
+    gdb_args=(-q -batch -p "$pid" -ex "set pagination off" -ex "x/${original_len}xb $addr")
+    for ((i = 0; i < patch_len; i++)); do
+      byte="0x${PATCH_BYTES:$((i * 2)):2}"
+      gdb_args+=(-ex "set {unsigned char}($addr + $i) = $byte")
+    done
+    gdb_args+=(-ex "x/${original_len}xb $addr")
+    sudo -n gdb "${gdb_args[@]}"
   fi
 done
 REMOTE

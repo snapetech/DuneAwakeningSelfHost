@@ -165,6 +165,41 @@ The current verified block primitive is timeout-shaped. Name UI and audit events
 
 The runtime patch is build-specific and process-local. It does not edit the shipped binary or config files, and it must be reapplied after Survival or Deep Desert restarts.
 
+Status as of 2026-06-01: blocked for the current build. The old data-pointer
+patch no longer applies to build `9bf5fbdef43a6d6d64459df973f3d252c01ab4ad`.
+Ghidra showed the current path:
+
+- `ADunePlayerCharacter::OnLeavingGame`: Ghidra `0x0d60f270`, ELF/runtime offset `0x0d50f270`.
+- `ADunePlayerCharacter::SetLeavingGameTimer`: Ghidra `0x0d60f810`, ELF/runtime offset `0x0d50f810`.
+- Duration accessor called before `SetLeavingGameTimer`: Ghidra `0x13049050`, ELF/runtime offset `0x12f49050`.
+
+The duration accessor returns a pointer-like duration payload from either
+`object + 0x800` or `*(object + 0x320) + 0x138`. It is not an inline float or
+integer duration.
+
+Rejected attempt: on 2026-06-01, a live runtime patch changed the accessor entry
+at runtime offset `0x12f49050` from:
+
+```text
+55 48 89 e5 f6 87 a4 02 00 00 10 75 1a
+```
+
+to:
+
+```text
+31 c0 c3 ...
+```
+
+That is `xor eax,eax; ret`. It matched the expected bytes in
+`dune_server-survival-1` and `dune_server-deep-desert-1`, but both processes
+exited with signal `139` shortly afterward. The containers were recreated and
+started again immediately. Do not reapply that code-return patch.
+
+Next viable path: locate and patch the duration object data itself, or return a
+valid pointer to an existing zero-duration object. Confidence is high that this
+is the right subsystem; confidence is low that a safe live patch is known for
+the current build.
+
 Script:
 
 ```bash
@@ -190,7 +225,7 @@ dune_server-survival-1
 dune_server-deep-desert-1
 ```
 
-It reads two runtime float arrays through `gdb`. Before the patch on 2026-05-24, both containers had:
+For the old 2026-05-24 build, it read two runtime float arrays through `gdb`. Before that patch, both containers had:
 
 ```text
 30 30 0 0
