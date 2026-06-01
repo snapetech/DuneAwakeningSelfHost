@@ -204,6 +204,42 @@ payload from either `object + 0x800` or `*(object + 0x320) + 0x138`. The
 offset `0x0d510870`; that helper chooses between the two moved global pointers
 above and reads their first float.
 
+Follow-up validation on 2026-06-01 showed the data-pointer patch alone was not
+enough for deliberate client "Exit to main" quits in Deep Desert. The client
+still showed the five-minute warning, and a live quit at `2026.06.01-23.11.36`
+recorded:
+
+```text
+SetLeavingGameTimer ... to 2026.06.01-23.16.11 - reason: OnLeavingGame
+RecordLogoffPersistenceEndTime ... to 2026.06.01-23.16.11
+```
+
+The current script also patches `ADunePlayerCharacter::SetLeavingGameTimer`
+itself at ELF/runtime offset `0x0d50f864`. The original instruction is:
+
+```text
+48 01 c1    add rax, rcx
+```
+
+That computes `deadline = now + rounded_duration`. The patched instruction is:
+
+```text
+48 89 c1    mov rax, rcx
+```
+
+That preserves the surrounding function and forces `deadline = now` for both
+unsafe disconnects and deliberate exit quits. A live Deep Desert quit after this
+clamp at `2026.06.01-23.19.25` recorded:
+
+```text
+SetLeavingGameTimer ... to 2026.06.01-23.19.25 - reason: OnLeavingGame
+RecordLogoffPersistenceEndTime ... to 2026.06.01-23.19.25
+```
+
+The client-side dialog text still displayed the five-minute warning during that
+test. Treat that warning as stale UI until client-side assets/config are found.
+The server-side persistence deadline was immediate.
+
 Rejected attempt: on 2026-06-01, a live runtime patch changed the accessor entry
 at runtime offset `0x12f49050` from:
 
