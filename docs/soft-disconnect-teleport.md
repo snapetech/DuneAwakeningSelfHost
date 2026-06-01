@@ -165,17 +165,44 @@ The current verified block primitive is timeout-shaped. Name UI and audit events
 
 The runtime patch is build-specific and process-local. It does not edit the shipped binary or config files, and it must be reapplied after Survival or Deep Desert restarts.
 
-Status as of 2026-06-01: blocked for the current build. The old data-pointer
-patch no longer applies to build `9bf5fbdef43a6d6d64459df973f3d252c01ab4ad`.
-Ghidra showed the current path:
+Status as of 2026-06-01: patched live for the current build. The old
+data-pointer offsets moved in build `9bf5fbdef43a6d6d64459df973f3d252c01ab4ad`;
+the current data-pointer offsets are:
+
+- `0x16521698`: 30-second unsafe-location timer array.
+- `0x165216b0`: 300-second unsafe-location timer array.
+
+Live validation on `kspls0` found both pointers in `dune_server-survival-1` and
+`dune_server-deep-desert-1`; before patch they contained:
+
+```text
+30 30 0 0
+300 300 0 0
+```
+
+After applying `scripts/patch-logoff-timers-runtime.sh --host kspls0` they read:
+
+```text
+0 0 0 0
+0 0 0 0
+```
+
+The target containers remained running after the data-pointer patch. Confidence
+is high that the runtime values are patched to zero. Confidence is moderate-high
+that this restores immediate unsafe-location logoff, pending a live player
+disconnect proof showing no future `SetLeavingGameTimer` / persistence end time.
+
+Ghidra showed the current call path:
 
 - `ADunePlayerCharacter::OnLeavingGame`: Ghidra `0x0d60f270`, ELF/runtime offset `0x0d50f270`.
 - `ADunePlayerCharacter::SetLeavingGameTimer`: Ghidra `0x0d60f810`, ELF/runtime offset `0x0d50f810`.
 - Duration accessor called before `SetLeavingGameTimer`: Ghidra `0x13049050`, ELF/runtime offset `0x12f49050`.
 
-The duration accessor returns a pointer-like duration payload from either
-`object + 0x800` or `*(object + 0x320) + 0x138`. It is not an inline float or
-integer duration.
+The accessor at runtime offset `0x12f49050` returns a pointer-like duration
+payload from either `object + 0x800` or `*(object + 0x320) + 0x138`. The
+`SetLeavingGameTimer` helper then calls the float-duration reader at runtime
+offset `0x0d510870`; that helper chooses between the two moved global pointers
+above and reads their first float.
 
 Rejected attempt: on 2026-06-01, a live runtime patch changed the accessor entry
 at runtime offset `0x12f49050` from:
@@ -195,10 +222,8 @@ That is `xor eax,eax; ret`. It matched the expected bytes in
 exited with signal `139` shortly afterward. The containers were recreated and
 started again immediately. Do not reapply that code-return patch.
 
-Next viable path: locate and patch the duration object data itself, or return a
-valid pointer to an existing zero-duration object. Confidence is high that this
-is the right subsystem; confidence is low that a safe live patch is known for
-the current build.
+That failed code patch was reverted by recreating the two containers. The safe
+current path is the data-pointer patch, not a return-value code patch.
 
 Script:
 
