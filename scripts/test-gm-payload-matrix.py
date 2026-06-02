@@ -43,6 +43,26 @@ class GmPayloadMatrixTests(unittest.TestCase):
         self.assertIn("AuthToken", body["PayloadJSON"])
         self.assertIn("PrintAllowedCommands", body["PayloadJSON"])
 
+    def test_native_notification_candidates_include_fls_sender(self):
+        bodies = probe_gm_payload_matrix.build_bodies("PrintAllowedCommands", "Target", "Admin")
+        body = bodies["notification-native-fls-notifications-serverrequesteventnotifications-clientauth-content-auth"]
+        self.assertEqual(body["EventNamespace"], "notifications")
+        self.assertEqual(body["Name"], "ServerRequestEventNotifications")
+        self.assertEqual(body["SenderId"], "fls")
+        self.assertEqual(body["Sender"], "fls")
+        self.assertEqual(body["Version"], 1)
+
+    def test_engine_service_notification_candidates_include_event_fields(self):
+        bodies = probe_gm_payload_matrix.build_bodies("PrintAllowedCommands", "Target", "Admin")
+        body = bodies["engine-service-fls-notifications-serverrequesteventnotifications-clientauth-content-auth"]
+        self.assertEqual(body["Version"], 1)
+        self.assertEqual(body["EntityId"], "fls")
+        self.assertEqual(body["EntityType"], "fls")
+        self.assertEqual(body["EventName"], "ServerRequestEventNotifications")
+        self.assertEqual(body["EventNamespace"], "notifications")
+        self.assertEqual(body["EventSettings"]["SenderId"], "fls")
+        self.assertIn("PrintAllowedCommands", body["EventData"])
+
 
 if __name__ == "__main__":
     unittest.main()

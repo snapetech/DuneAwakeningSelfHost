@@ -71,6 +71,29 @@ Future research should compare RabbitMQ bindings, generated users, and server qu
   `Handling ServiceBroadcast Server command`, `Now running ServerCommand`, or
   command output log. Confidence: high that these candidates are still not the
   working native command payload.
+- A follow-up Ghidra pass with
+  `scripts/research/DumpNativeGmNotificationLayout.java` found a stricter
+  native gate in `FUN_09ee73c0`: after auth/content extraction, it checks the
+  decoded notification sender and logs `Invalid Sender ID, we only accept
+  server commands from 'fls'.` The message struct also serializes
+  `EventNamespace`, required `Name`, `OriginalId`, `OriginalTimestamp`,
+  `Payload`, and `PayloadJSON`. Confidence: moderate/high. This means the next
+  safe proof must deliver a decoded FLS-style event with sender `fls`; plain
+  RMQ JSON bodies that lack the native sender field can be consumed and still
+  rejected before command parsing.
+- The same pass found an `EngineServiceNotification` event surface:
+  `FUN_137af590` serializes `EntityId`, `EntityType`, `EventData`, `EventName`,
+  `EventNamespace`, and `EventSettings`; `FUN_121360e0` registers the
+  `EngineServiceNotification` name. Confidence: moderate that this is closer to
+  the missing outer wrapper than the previous bare `EventContents` candidates.
+  `scripts/probe-gm-payload-matrix.py` now includes safe
+  `engine-service-fls-notifications-serverrequesteventnotifications-*`
+  candidates with sender settings set to `fls`. Confidence: high that these are
+  not proven working yet.
+- `FUN_13db62f0` is a versioned parameter JSON parser requiring `Version` and a
+  `Parameters` array with `Name`, `Type`, and `Value`. Confidence: moderate that
+  it is useful only after the notification delivery wrapper is solved, not the
+  missing outer FLS notification route.
 - The active dedicated server allow-list found in `DuneSandbox/Config/DedicatedServerGame.ini` includes:
   - Console commands: `obj`, `FGL.ComponentAuditRequested`
   - GM commands: `AddItemToInventory`, `AddBasicInventoryToCharacter`, `SpawnVehicle`, teleport/travel helpers, `Fly`, `Ghost`, `Walk`, targeted destroy helpers, and `PrintPos`.

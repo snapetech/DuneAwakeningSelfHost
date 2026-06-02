@@ -58,14 +58,53 @@ def service_broadcast_payload(command_text, broadcast_type):
     }
 
 
-def notification_envelope(event_namespace, payload, original_id):
+def notification_envelope(event_namespace, payload, original_id, name=None, sender=None, version=None):
     payload_json = payload if isinstance(payload, str) else json.dumps(payload, separators=(",", ":"))
-    return {
+    envelope = {
         "EventNamespace": event_namespace,
         "OriginalId": original_id,
         "OriginalTimestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "PayloadJSON": payload_json,
     }
+    if name is not None:
+        envelope["Name"] = name
+    if sender is not None:
+        envelope.update(
+            {
+                "SenderId": sender,
+                "SenderID": sender,
+                "Sender": sender,
+                "From": sender,
+                "Source": sender,
+                "MessageSenderId": sender,
+            }
+        )
+    if version is not None:
+        envelope["Version"] = version
+    return envelope
+
+
+def engine_service_notification(event_namespace, event_name, event_data, sender=None, version=None):
+    event_data_json = event_data if isinstance(event_data, str) else json.dumps(event_data, separators=(",", ":"))
+    envelope = {
+        "EntityId": sender or "",
+        "EntityType": "fls" if sender else "",
+        "EventData": event_data_json,
+        "EventName": event_name,
+        "EventNamespace": event_namespace,
+    }
+    if sender is not None:
+        envelope["EventSettings"] = {
+            "SenderId": sender,
+            "SenderID": sender,
+            "Sender": sender,
+            "From": sender,
+            "Source": sender,
+            "MessageSenderId": sender,
+        }
+    if version is not None:
+        envelope["Version"] = version
+    return envelope
 
 
 def build_bodies(command_text, target_player, admin_player):
@@ -199,6 +238,41 @@ def build_bodies(command_text, target_player, admin_player):
         )
         envelope_with_payload["Payload"] = payload
         base[f"notification-servercommand-payload-object-{payload_name}"] = envelope_with_payload
+        for event_namespace, notification_name in (
+            ("notifications", "ServerRequestEventNotifications"),
+            ("ServerRequestEventNotifications", "ServerCommand"),
+            ("ServerCommand", "ServerRequestEventNotifications"),
+            ("ServiceBroadcast", "ServerRequestEventNotifications"),
+        ):
+            base[f"notification-native-fls-{event_namespace.lower()}-{notification_name.lower()}-{payload_name}"] = notification_envelope(
+                event_namespace,
+                payload_json,
+                f"dash-gm-{uuid.uuid4().hex[:10]}",
+                name=notification_name,
+                sender="fls",
+                version=1,
+            )
+        base[f"engine-service-fls-notifications-serverrequesteventnotifications-{payload_name}"] = engine_service_notification(
+            "notifications",
+            "ServerRequestEventNotifications",
+            payload,
+            sender="fls",
+            version=1,
+        )
+        base[f"engine-service-fls-notifications-serverrequesteventnotifications-payloadjson-{payload_name}"] = engine_service_notification(
+            "notifications",
+            "ServerRequestEventNotifications",
+            notification_envelope(
+                "notifications",
+                payload_json,
+                f"dash-gm-{uuid.uuid4().hex[:10]}",
+                name="ServerRequestEventNotifications",
+                sender="fls",
+                version=1,
+            ),
+            sender="fls",
+            version=1,
+        )
     if auth_token:
         auth_fields = {
             "AuthToken": auth_token,

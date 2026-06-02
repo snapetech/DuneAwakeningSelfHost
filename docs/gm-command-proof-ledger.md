@@ -96,6 +96,33 @@ content pass. Confidence: moderate. The next useful proof is reconstructing the
 native notification struct or capturing a real FLS notification message, not
 running mutating GM commands.
 
+Additional static work with
+`scripts/research/DumpNativeGmNotificationLayout.java` narrowed the required
+native envelope further. `FUN_09ee73c0` has an explicit sender gate and logs
+`NotificationSystem message handling failed. Invalid Sender ID, we only accept
+server commands from 'fls'.` The recovered JSON serializer emits
+`EventNamespace`, required `Name`, `OriginalId`, `OriginalTimestamp`, `Payload`,
+and `PayloadJSON`. Confidence: moderate/high. The payload matrix now includes
+sender-aware safe candidates with `Name`, `Version`, and sender aliases set to
+`fls`; they still need empty-route proof before any broader command testing.
+
+The same Ghidra pass also pulled in the parser-side event surface:
+`FUN_137af590` serializes `EntityId`, `EntityType`, `EventData`, `EventName`,
+`EventNamespace`, and `EventSettings`, while `FUN_121360e0` registers
+`EngineServiceNotification`. Confidence: moderate that the next safe payload
+family should wrap the server-command event as an `EngineServiceNotification`
+instead of publishing bare `EventContents` JSON. The payload matrix now includes
+`engine-service-fls-notifications-serverrequesteventnotifications-*` candidates
+with `EventName=ServerRequestEventNotifications`, `EventNamespace=notifications`,
+`Version=1`, and sender settings set to `fls`. These are still unproven and
+must be tested only with `PrintAllowedCommands`/`PrintPos` on an empty route.
+
+`FUN_13db62f0` is a separate versioned parameter JSON parser. It requires
+`Version` and a `Parameters` array whose entries have `Name`, `Type`, and
+`Value`; supported versions are `0..3`. Confidence: moderate that this is useful
+for typed command parameters after delivery is solved, but low that it is the
+missing native notification wrapper.
+
 Use the proof runner:
 
 ```bash
