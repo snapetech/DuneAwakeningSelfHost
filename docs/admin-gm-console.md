@@ -157,6 +157,14 @@ Future research should compare RabbitMQ bindings, generated users, and server qu
   service-broadcast commands and log `Handling ServiceBroadcast Server
   command:`. Confidence: high. `scripts/probe-gm-payload-matrix.py` now has
   exact `native-derived-notification-*` bodies for empty-route safe probes.
+- Follow-up Ghidra work with
+  `scripts/research/DumpServiceBroadcastPayloadShape.java` narrowed that path:
+  `FUN_0da5fd90` reads the native `BroadcastType` field, and the proven
+  ServiceBroadcast type labels are `Generic` and `ServerShutdown`.
+  `Generic` reaches the command-handling log through `FUN_0da61730`;
+  `ServerShutdown` is real but unsafe for live proof. Confidence: high. The
+  first safe empty-route probes should use the
+  `native-positive-notification-generic-*` bodies.
 - The active dedicated server allow-list found in `DuneSandbox/Config/DedicatedServerGame.ini` includes:
   - Console commands: `obj`, `FGL.ComponentAuditRequested`
   - GM commands: `AddItemToInventory`, `AddBasicInventoryToCharacter`, `SpawnVehicle`, teleport/travel helpers, `Fly`, `Ghost`, `Walk`, targeted destroy helpers, and `PrintPos`.

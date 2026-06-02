@@ -144,6 +144,7 @@ def build_bodies(command_text, target_player, admin_player):
         for payload_name, raw_content in (
             ("clientauth", service_payload_json["serverbroadcast-clientauth"]),
             ("serverbroadcast", service_payload_json["serverbroadcast"]),
+            ("generic", service_payload_json["generic-broadcast"]),
         ):
             notification_payloads[f"{payload_name}-content-auth"] = {
                 "AuthToken": auth_token,
@@ -252,28 +253,37 @@ def build_bodies(command_text, target_player, admin_player):
                     auth_field: auth_token,
                     "Content": json.dumps(broadcast_payload, separators=(",", ":")),
                 }
-                base[f"native-derived-notification-{broadcast_name}-{auth_field.lower()}-content"] = native_notification(
+                content_body = native_notification(
                     command_payload,
                     f"dash-gm-{uuid.uuid4().hex[:10]}",
                     "ServerRequestEventNotifications",
                     include_payload_json=True,
                 )
+                base[f"native-derived-notification-{broadcast_name}-{auth_field.lower()}-content"] = content_body
+                if broadcast_name == "generic":
+                    base[f"native-positive-notification-generic-{auth_field.lower()}-content"] = content_body
                 object_payload = {
                     auth_field: auth_token,
                     "Content": broadcast_payload,
                 }
-                base[f"native-derived-notification-{broadcast_name}-{auth_field.lower()}-object-content"] = native_notification(
+                object_body = native_notification(
                     object_payload,
                     f"dash-gm-{uuid.uuid4().hex[:10]}",
                     "ServerRequestEventNotifications",
                     include_payload_json=True,
                 )
-                base[f"native-derived-notification-{broadcast_name}-{auth_field.lower()}-payload-only"] = native_notification(
+                base[f"native-derived-notification-{broadcast_name}-{auth_field.lower()}-object-content"] = object_body
+                if broadcast_name == "generic":
+                    base[f"native-positive-notification-generic-{auth_field.lower()}-object-content"] = object_body
+                payload_only_body = native_notification(
                     object_payload,
                     f"dash-gm-{uuid.uuid4().hex[:10]}",
                     "NotificationSystemHandleServerMessages",
                     include_payload_json=False,
                 )
+                base[f"native-derived-notification-{broadcast_name}-{auth_field.lower()}-payload-only"] = payload_only_body
+                if broadcast_name == "generic":
+                    base[f"native-positive-notification-generic-{auth_field.lower()}-payload-only"] = payload_only_body
     for payload_name, payload in notification_payloads.items():
         payload_json = json.dumps(payload, separators=(",", ":"))
         base[f"notification-servercommand-payloadjson-{payload_name}"] = notification_envelope(

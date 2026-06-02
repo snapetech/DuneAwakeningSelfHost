@@ -78,6 +78,16 @@ class GmPayloadMatrixTests(unittest.TestCase):
         )
         self.assertIn('"ServerCommand":"PrintAllowedCommands"', body["PayloadJSON"])
 
+    def test_native_positive_generic_candidates_target_proven_broadcast_type(self):
+        bodies = probe_gm_payload_matrix.build_bodies("PrintAllowedCommands", "Target", "Admin")
+        body = bodies["native-positive-notification-generic-servercommandsauthtoken-object-content"]
+        self.assertEqual(body["Name"], "ServerRequestEventNotifications")
+        self.assertEqual(body["SenderId"], "fls")
+        self.assertEqual(body["Payload"]["ServerCommandsAuthToken"], "test-token")
+        self.assertEqual(body["Payload"]["Content"]["BroadcastType"], "Generic")
+        self.assertEqual(body["Payload"]["Content"]["BroadcastPayload"]["ServerCommand"], "PrintAllowedCommands")
+        self.assertIn('"BroadcastType":"Generic"', body["PayloadJSON"])
+
     def test_native_derived_payload_only_candidate_can_omit_payload_json(self):
         bodies = probe_gm_payload_matrix.build_bodies("PrintAllowedCommands", "Target", "Admin")
         body = bodies["native-derived-notification-servercommand-only-servercommandsauthtoken-payload-only"]

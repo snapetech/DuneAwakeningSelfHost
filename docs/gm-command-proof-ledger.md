@@ -278,6 +278,30 @@ Confidence: high.
   candidate family should carry both object `Payload` and string `PayloadJSON`
   where possible. Confidence: moderate/high.
 
+Follow-up Ghidra work with
+`scripts/research/DumpServiceBroadcastPayloadShape.java` wrote
+`/tmp/ghidra-work/service-broadcast-payload-shape.txt` and proved a narrower
+positive ServiceBroadcast shape. Confidence: high.
+
+- `FUN_0da5fd90` is the native `BroadcastType` field accessor; it calls the
+  string accessor on `L"BroadcastType"`. Confidence: high.
+- The only explicit `BroadcastType:` display labels found by this pass are
+  `Generic` and `ServerShutdown`. `ServerBroadcastClientAuthenticated` exists
+  as a string, but this pass did not prove it as a ServiceBroadcast
+  `BroadcastType`. Confidence: moderate/high.
+- `FUN_0da61730` is the generic ServiceBroadcast handler. It parses the payload
+  through `FUN_0f1bf7b0`, dispatches through `FUN_0f1bcd20`, applies the parsed
+  generic broadcast through `FUN_0f1c0a70`, then logs
+  `Handling ServiceBroadcast Server command:`. Confidence: high.
+- `FUN_0da61aa0` is the shutdown ServiceBroadcast handler. It calls
+  `FUN_0f1bfb30` and `FUN_0d8d4e30`, then logs the same handling string.
+  This proves `ServerShutdown`, but that path is not safe for live proof.
+  Confidence: high.
+- The shutdown payload parser references `ShutdownType`, `ShutdownTimestamp`,
+  `ShutdownDuration`, `DateTimestamp`, and `LocalizedText`, plus enum labels
+  `Accept`, `Cancel`, `Completed`, `Maintenance`, `Restart`, and `Update`.
+  That is useful documentation, not a live-test target. Confidence: high.
+
 The probe matrix now has a native-derived candidate family named
 `native-derived-notification-*`. These bodies keep sender aliases set to `fls`,
 use `Name=ServerRequestEventNotifications` or
@@ -286,7 +310,9 @@ use `Name=ServerRequestEventNotifications` or
 real `BroadcastPayload.ServerCommand`. Confidence: high that these are more
 binary-derived than the previous broad alias matrix.
 
-Use an empty route only. Example exact-body safe probe:
+The current positive-priority bodies are the `Generic` aliases named
+`native-positive-notification-generic-*`. Use an empty route only. Example
+exact-body safe probe:
 
 ```bash
 python3 scripts/probe-gm-payload-matrix.py \
@@ -298,18 +324,19 @@ python3 scripts/probe-gm-payload-matrix.py \
   --only-broker game \
   --target-kind direct \
   --command PrintAllowedCommands \
-  --body native-derived-notification-clientauth-authtoken-object-content \
-  --body native-derived-notification-clientauth-servercommandsauthtoken-object-content \
-  --body native-derived-notification-serverbroadcast-authtoken-object-content \
-  --body native-derived-notification-servercommand-only-servercommandsauthtoken-payload-only \
+  --body native-positive-notification-generic-authtoken-object-content \
+  --body native-positive-notification-generic-servercommandsauthtoken-object-content \
+  --body native-positive-notification-generic-authtoken-payload-only \
+  --body native-positive-notification-generic-servercommandsauthtoken-payload-only \
   --content-type native \
   --amqp-type empty
 ```
 
 Conclusion: no live command execution is proven yet, but the current positive
-path is now specific: test the native-derived notification bodies above on the
-empty route and look for `Server command received`, `Handling ServiceBroadcast
-Server command:`, or `Now running ServerCommand`. Confidence: high.
+path is now specific: test the native-positive generic notification bodies
+above on the empty route and look for `Server command received`,
+`Handling ServiceBroadcast Server command:`, or `Now running ServerCommand`.
+Confidence: high.
 
 Use the proof runner:
 
