@@ -43,6 +43,49 @@ DESTRUCTIVE_COMMANDS = {
 CONSOLE_COMMANDS = {"obj", "FGL.ComponentAuditRequested"}
 REJECTED_COMMANDS = {"RemoveSessionMember", "KickLobbyMember", "BattlEyeMegaKick"}
 
+SAFE_ROUTE_DETAIL = {
+    "fixture": "Empty route preferred; live route allowed only because command should log/print state and not mutate player data.",
+    "passCriteria": "Server logs show the command entered the native handler, ideally `Now running ServerCommand`, and command-specific output appears without queue backlog or server restart.",
+    "rollback": "No rollback expected. If the route destabilizes, stop the target map only and preserve logs.",
+    "proofOrder": 10,
+    "liveEligible": True,
+}
+ISOLATED_ADMIN_DETAIL = {
+    "fixture": "One isolated admin/test character on an empty route or private map; record starting map, dimension, position, and movement mode.",
+    "passCriteria": "The admin character changes only as expected, then returns to the recorded baseline with no other online players on the route.",
+    "rollback": "Run `Walk` if movement mode changed, then return the admin to the recorded baseline position/map.",
+    "proofOrder": 20,
+    "liveEligible": False,
+}
+ISOLATED_MUTATION_DETAIL = {
+    "fixture": "Disposable target character/object on an empty route after `PrintAllowedCommands` and `PrintPos` have already proven the payload route.",
+    "passCriteria": "Only the disposable target changes, verified by DB/log delta before and after the command.",
+    "rollback": "Delete granted test inventory/vehicle/object or restore the disposable target snapshot.",
+    "proofOrder": 30,
+    "liveEligible": False,
+}
+DESTRUCTIVE_DETAIL = {
+    "fixture": "Disposable lab vehicle, totem, placeable, building, or building piece with a fresh DB/export snapshot and no players on the route.",
+    "passCriteria": "Exactly the disposable fixture is destroyed; no neighboring structures, characters, or inventories change.",
+    "rollback": "Restore the fixture from snapshot or discard/recreate the lab route.",
+    "proofOrder": 40,
+    "liveEligible": False,
+}
+CONSOLE_DETAIL = {
+    "fixture": "Lab route only, with exact command arguments chosen from static evidence before execution.",
+    "passCriteria": "Console command produces the expected bounded log/audit output without changing gameplay state.",
+    "rollback": "Restart or recreate the lab route if the console command changes runtime state.",
+    "proofOrder": 50,
+    "liveEligible": False,
+}
+REJECTED_DETAIL = {
+    "fixture": "Static binary/config evidence only.",
+    "passCriteria": "Command is absent from the shipped dedicated-server GM allow-list or resolves to non-GM UE/FLS helper code.",
+    "rollback": "None; do not execute.",
+    "proofOrder": 0,
+    "liveEligible": False,
+}
+
 
 def load_catalog():
     spec = importlib.util.spec_from_file_location("gm_command_catalog", CATALOG_PATH)
@@ -59,6 +102,7 @@ def proof_policy(command):
             "nonDisruptiveRequirement": "Can run on a live route; it should only print/log command output.",
             "defaultAction": "execute only with --execute-safe; otherwise preview.",
             "confidence": "moderate",
+            **SAFE_ROUTE_DETAIL,
         }
     if name in ADMIN_ONLY_COMMANDS:
         return {
@@ -66,6 +110,7 @@ def proof_policy(command):
             "nonDisruptiveRequirement": "Run only on an isolated admin/test character on an empty lab route or a private map with no players.",
             "defaultAction": "preview only.",
             "confidence": "moderate",
+            **ISOLATED_ADMIN_DETAIL,
         }
     if name in ISOLATED_MUTATION_COMMANDS:
         return {
@@ -73,6 +118,7 @@ def proof_policy(command):
             "nonDisruptiveRequirement": "Run only against an isolated disposable test character or disposable spawned object after route proof succeeds.",
             "defaultAction": "preview only.",
             "confidence": "moderate",
+            **ISOLATED_MUTATION_DETAIL,
         }
     if name in DESTRUCTIVE_COMMANDS:
         return {
@@ -80,6 +126,7 @@ def proof_policy(command):
             "nonDisruptiveRequirement": "Never run on a populated/live route; use a disposable lab base, vehicle, or placeable with rollback evidence.",
             "defaultAction": "blocked.",
             "confidence": "high",
+            **DESTRUCTIVE_DETAIL,
         }
     if name in CONSOLE_COMMANDS:
         return {
@@ -87,6 +134,7 @@ def proof_policy(command):
             "nonDisruptiveRequirement": "Needs exact argument contract; do not execute broad Unreal console commands on live routes.",
             "defaultAction": "preview only.",
             "confidence": "moderate",
+            **CONSOLE_DETAIL,
         }
     if name in REJECTED_COMMANDS or command["status"] == "rejected":
         return {
@@ -94,12 +142,18 @@ def proof_policy(command):
             "nonDisruptiveRequirement": "No live execution; binary/config evidence rejects this as a shipped dedicated-server GM command.",
             "defaultAction": "do not execute.",
             "confidence": "high",
+            **REJECTED_DETAIL,
         }
     return {
         "proofStage": "unclassified-preview",
         "nonDisruptiveRequirement": "Classify before execution.",
         "defaultAction": "preview only.",
         "confidence": "low",
+        "fixture": "Unknown.",
+        "passCriteria": "Unknown.",
+        "rollback": "Unknown.",
+        "proofOrder": 90,
+        "liveEligible": False,
     }
 
 
@@ -193,16 +247,19 @@ def markdown(payload):
         "",
         f"Confidence: {payload['confidence']}. Host: `{payload['host']}`. Route: `{payload['route']}`.",
         "",
-        "| Command | Stage | Result | Non-disruptive requirement | Confidence |",
-        "| --- | --- | --- | --- | --- |",
+        "| Command | Stage | Result | Fixture | Pass criteria | Rollback | Live eligible | Confidence |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
-    for row in payload["commands"]:
+    for row in sorted(payload["commands"], key=lambda item: (item["proofOrder"], item["command"])):
         lines.append(
-            "| {command} | {stage} | {result} | {requirement} | {confidence} |".format(
+            "| {command} | {stage} | {result} | {fixture} | {pass_criteria} | {rollback} | {live_eligible} | {confidence} |".format(
                 command=row["command"],
                 stage=row["proofStage"],
                 result=row["result"],
-                requirement=row["nonDisruptiveRequirement"],
+                fixture=row["fixture"],
+                pass_criteria=row["passCriteria"],
+                rollback=row["rollback"],
+                live_eligible="yes" if row["liveEligible"] else "no",
                 confidence=row["confidence"],
             )
         )

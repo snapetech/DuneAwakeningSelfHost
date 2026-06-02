@@ -45,8 +45,59 @@ def json_bytes(value):
     return json.dumps(value, separators=(",", ":")).encode("utf-8")
 
 
+def auth_token_value():
+    return env("DUNE_GM_SERVER_COMMAND_AUTH_TOKEN", env("DUNE_SERVER_COMMANDS_AUTH_TOKEN", ""))
+
+
+def service_broadcast_payload(command_text, broadcast_type):
+    return {
+        "BroadcastType": broadcast_type,
+        "BroadcastPayload": {
+            "ServerCommand": command_text,
+        },
+    }
+
+
+def notification_envelope(event_namespace, payload, original_id):
+    payload_json = payload if isinstance(payload, str) else json.dumps(payload, separators=(",", ":"))
+    return {
+        "EventNamespace": event_namespace,
+        "OriginalId": original_id,
+        "OriginalTimestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "PayloadJSON": payload_json,
+    }
+
+
 def build_bodies(command_text, target_player, admin_player):
     command, _, args = command_text.partition(" ")
+    auth_token = auth_token_value()
+    service_payloads = {
+        "serverbroadcast-clientauth": service_broadcast_payload(command_text, "ServerBroadcastClientAuthenticated"),
+        "serverbroadcast": service_broadcast_payload(command_text, "ServerBroadcast"),
+        "generic-broadcast": service_broadcast_payload(command_text, "Generic"),
+    }
+    service_payload_json = {
+        name: json.dumps(value, separators=(",", ":"))
+        for name, value in service_payloads.items()
+    }
+    notification_payloads = {}
+    if auth_token:
+        for payload_name, raw_content in (
+            ("clientauth", service_payload_json["serverbroadcast-clientauth"]),
+            ("serverbroadcast", service_payload_json["serverbroadcast"]),
+        ):
+            notification_payloads[f"{payload_name}-content-auth"] = {
+                "AuthToken": auth_token,
+                "Content": raw_content,
+            }
+            notification_payloads[f"{payload_name}-rawcontent-auth"] = {
+                "AuthToken": auth_token,
+                "RawContent": raw_content,
+            }
+            notification_payloads[f"{payload_name}-servercommandstoken-content"] = {
+                "ServerCommandsAuthToken": auth_token,
+                "Content": raw_content,
+            }
     base = {
         "jsonrpc-method-command-array": {"jsonrpc": "2.0", "method": command, "params": [args] if args else [], "id": None},
         "jsonrpc-id-method-command-array": {"jsonrpc": "2.0", "method": command, "params": [args] if args else [], "id": "dash-gm-probe"},
@@ -85,8 +136,32 @@ def build_bodies(command_text, target_player, admin_player):
         "servercommand-object": {"ServerCommand": command_text},
         "servercommand-command-object": {"ServerCommand": command, "Args": args},
         "dune-server-command-object": {"DuneServerCommand": command_text},
+        "broadcast-clientauth-object": service_payloads["serverbroadcast-clientauth"],
+        "broadcast-server-object": service_payloads["serverbroadcast"],
+        "broadcast-generic-object": service_payloads["generic-broadcast"],
+        "payloadjson-broadcast-clientauth": {"PayloadJSON": service_payload_json["serverbroadcast-clientauth"]},
+        "payloadjson-broadcast-server": {"PayloadJSON": service_payload_json["serverbroadcast"]},
+        "payloadjson-broadcast-generic": {"PayloadJSON": service_payload_json["generic-broadcast"]},
+        "payloadtype-payloadjson-clientauth": {
+            "PayloadType": "ServiceBroadcast",
+            "PayloadJSON": service_payload_json["serverbroadcast-clientauth"],
+        },
+        "payloadtype-payloadjson-serverbroadcast": {
+            "PayloadType": "ServiceBroadcast",
+            "PayloadJSON": service_payload_json["serverbroadcast"],
+        },
         "servicebroadcast-servercommand-object": {"ServiceBroadcast": {"ServerCommand": command_text}},
         "servicebroadcast-command-object": {"ServiceBroadcast": {"Command": command_text}},
+        "servicebroadcast-payloadjson-clientauth": {
+            "ServiceBroadcast": {
+                "PayloadJSON": service_payload_json["serverbroadcast-clientauth"],
+            }
+        },
+        "servicebroadcast-payloadjson-server": {
+            "ServiceBroadcast": {
+                "PayloadJSON": service_payload_json["serverbroadcast"],
+            }
+        },
         "command-commandtext": {"Command": "ServerCommand", "CommandText": command_text, "TargetPlayer": target_player, "AdminPlayer": admin_player},
         "command-direct": {"Command": command, "Args": args, "TargetPlayer": target_player, "AdminPlayer": admin_player},
         "command-params": {"Command": "SendDuneServerCommand", "Params": [command_text, target_player, admin_player]},
@@ -105,6 +180,36 @@ def build_bodies(command_text, target_player, admin_player):
         "raw-string": command_text,
         "raw-serverexec-string": f"ServerExec {target_player} {command_text}",
     }
+    for payload_name, payload in notification_payloads.items():
+        payload_json = json.dumps(payload, separators=(",", ":"))
+        base[f"notification-servercommand-payloadjson-{payload_name}"] = notification_envelope(
+            "ServerCommand",
+            payload_json,
+            f"dash-gm-{uuid.uuid4().hex[:10]}",
+        )
+        base[f"notification-servicebroadcast-payloadjson-{payload_name}"] = notification_envelope(
+            "ServiceBroadcast",
+            payload_json,
+            f"dash-gm-{uuid.uuid4().hex[:10]}",
+        )
+        envelope_with_payload = notification_envelope(
+            "ServerCommand",
+            payload_json,
+            f"dash-gm-{uuid.uuid4().hex[:10]}",
+        )
+        envelope_with_payload["Payload"] = payload
+        base[f"notification-servercommand-payload-object-{payload_name}"] = envelope_with_payload
+    if auth_token:
+        auth_fields = {
+            "AuthToken": auth_token,
+            "AuthorizationToken": auth_token,
+            "ServerCommandsAuthToken": auth_token,
+        }
+        for body_name, body_value in list(base.items()):
+            if isinstance(body_value, dict):
+                with_auth = dict(body_value)
+                with_auth.update(auth_fields)
+                base[f"authfields-{body_name}"] = with_auth
     wrapped = {}
     for body_name, body_value in base.items():
         if isinstance(body_value, str):
@@ -138,6 +243,17 @@ def bind_safely(channel, queue, exchange, routing_key):
 
 
 def publish_one(channel, exchange, routing_key, body, content_type, amqp_type, reply_to, user_id, tag):
+    auth_token = auth_token_value()
+    headers = {"dash_gm_matrix": True, "dash_nonce": secrets.token_hex(4), "dash_tag": tag}
+    if auth_token:
+        headers.update(
+            {
+                "AuthToken": auth_token,
+                "AuthorizationToken": auth_token,
+                "ServerCommandsAuthToken": auth_token,
+                "X-Auth-Token": auth_token,
+            }
+        )
     props = pika.BasicProperties(
         content_type=content_type,
         delivery_mode=1,
@@ -148,7 +264,7 @@ def publish_one(channel, exchange, routing_key, body, content_type, amqp_type, r
         message_id=tag,
         app_id="DASH-GM-Matrix",
         user_id=user_id or None,
-        headers={"dash_gm_matrix": True, "dash_nonce": secrets.token_hex(4), "dash_tag": tag},
+        headers=headers,
     )
     channel.basic_publish(exchange=exchange, routing_key=routing_key, body=body, properties=props, mandatory=True)
 

@@ -70,6 +70,32 @@ handler. The `ServerCommand` field is extracted by the service-broadcast payload
 parsers, so the next proof must derive the exact service-broadcast payload and
 auth-token route instead of guessing method names on RMQ. Confidence: moderate.
 
+Additional 2026-06-02 proof work on the empty `testing-waterfat` route tested
+the auth-aware service-broadcast shapes and a full notification-envelope
+candidate family containing `EventNamespace`, `OriginalId`, `OriginalTimestamp`,
+`PayloadJSON`, auth token, and raw service-broadcast content. Confidence: high.
+
+- Host was verified as `kspls0`.
+- The target route stayed `ready=true`, `alive=true`, active, and
+  `connected_players=0`.
+- Game-RMQ and admin-RMQ publishes had zero publish errors; admin-RMQ returned
+  only `director_state` responses.
+- Queue state stayed clean: the game server queue had one consumer and zero
+  ready/unacknowledged messages.
+- `testing-waterfat` stayed running with restart count `0`, OOM false, exit `0`.
+- Logs still showed no `Server command received`, `Invalid Auth Token`,
+  `Empty message content`, `Handling ServiceBroadcast Server command`,
+  `Now running ServerCommand`, command output, crash, or fatal line.
+
+Conclusion: the newly tested auth-aware payloads still do not reach the native
+server-command notification handler. Confidence: high. Ghidra now identifies the
+outer native path as `FUN_09f3ff90 -> FUN_09ee73c0`, with
+`FUN_09ee73c0` checking notification prefilter strings, extracting auth/content
+through `FUN_09ee7970`, then calling the raw-content parser only after auth and
+content pass. Confidence: moderate. The next useful proof is reconstructing the
+native notification struct or capturing a real FLS notification message, not
+running mutating GM commands.
+
 Use the proof runner:
 
 ```bash

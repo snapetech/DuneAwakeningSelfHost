@@ -1,7 +1,7 @@
 COMPOSE ?= docker compose
 ENV_FILE ?= .env.example
 
-.PHONY: validate compose-config check-compose-static-ips validate-research-build-tags secret-scan test-watch-maps test-admin-panel-safe-surfaces test-character-slot-tool test-research-catalog test-discovery-tools test-admin-chat test-admin-grant-item test-operational-borrowing test-artificial-exchange test-artificial-exchange-service artificial-exchange-smoke artificial-exchange-bootstrap-catalog artificial-exchange-research-prices test-vehicle-fidelity-investigation gm-catalog gm-probe-preview gm-probe-safe research-catalog research-catalog-markdown surface-ledger surface-ledger-markdown discovery-queue binary-candidate-scores asset-reference-graph extract-build-surfaces diff-build-surfaces db-function-classifier fixture-runner knob-experiment capture-rmq-window diff-rmq-captures list-publishable preflight operational-identity-check operational-report operational-bundle verify-operational-bundle status standby-status failover-topology-status failover-bidirectional-audit sync-standby-files sync-standby-images promote-standby postgres-failover-seal postgres-cutback-proof rebuild-postgres-standby set-active-gameserver handoff-ready handoff-experiment summarize-handoff handoff-lab-config handoff-lab-up handoff-lab-seed handoff-lab-status handoff-lab-stop handoff-lab-remote-up handoff-lab-remote-status handoff-lab-remote-stop handoff-lab failover-orchestrate failover-role-services cutover-check cutover-network-status browser-ping-diagnostics watch-browser-probe host-network-failover router-cutover install-dune-status-service check-steam-update backup-dry-run backup-state restore-dry-run verify-backup start-full-warm-pool recover-survival recover-map watch-maps watch-maps-status install-map-watchdog-service install-artificial-exchange-service install-artificial-exchange-buyer-service install-artificial-exchange-populator-service install-full-farm-service install-daily-maintenance-timer full-world-partitions update-hagga-pois public-site-check public-site-package public-site-deploy public-site-verify admin-panel-deploy admin-panel-verify verify-local-state-ignored rabbitmq-cert-check rabbitmq-cert-generate rabbitmq-cert-stage rabbitmq-cert-install-staged rabbitmq-cert-recreate-stack
+.PHONY: validate compose-config check-compose-static-ips validate-research-build-tags secret-scan test-watch-maps test-admin-panel-safe-surfaces test-character-slot-tool test-research-catalog test-discovery-tools test-admin-chat test-admin-grant-item test-operational-borrowing test-artificial-exchange test-artificial-exchange-service artificial-exchange-smoke artificial-exchange-bootstrap-catalog artificial-exchange-research-prices test-vehicle-fidelity-investigation gm-catalog gm-probe-preview gm-probe-safe research-catalog research-catalog-markdown surface-ledger surface-ledger-markdown discovery-queue binary-candidate-scores asset-reference-graph extract-build-surfaces diff-build-surfaces db-function-classifier fixture-runner knob-experiment capture-rmq-window diff-rmq-captures list-publishable preflight operational-identity-check operational-report operational-bundle verify-operational-bundle status standby-status failover-topology-status failover-bidirectional-audit sync-standby-files sync-standby-images promote-standby postgres-failover-seal postgres-cutback-proof rebuild-postgres-standby set-active-gameserver handoff-ready handoff-experiment summarize-handoff handoff-lab-config handoff-lab-up handoff-lab-seed handoff-lab-status handoff-lab-stop handoff-lab-remote-up handoff-lab-remote-status handoff-lab-remote-stop handoff-lab brt-dd-lab-config brt-dd-lab-images brt-dd-lab-up brt-dd-lab-seed brt-dd-lab-status brt-dd-lab-verify-config brt-dd-lab-logs brt-dd-lab-stop brt-dd-next-downtime-stage brt-dd-next-downtime-status brt-dd-live-preflight brt-dd-live-restart brt-dd-live-verify brt-dd-live-logs brt-dd-live-checklist failover-orchestrate failover-role-services cutover-check cutover-network-status browser-ping-diagnostics watch-browser-probe host-network-failover router-cutover install-dune-status-service check-steam-update backup-dry-run backup-state restore-dry-run verify-backup start-full-warm-pool recover-survival recover-map watch-maps watch-maps-status install-map-watchdog-service install-artificial-exchange-service install-artificial-exchange-buyer-service install-artificial-exchange-populator-service install-full-farm-service install-daily-maintenance-timer full-world-partitions update-hagga-pois public-site-check public-site-package public-site-deploy public-site-verify admin-panel-deploy admin-panel-verify verify-local-state-ignored rabbitmq-cert-check rabbitmq-cert-generate rabbitmq-cert-stage rabbitmq-cert-install-staged rabbitmq-cert-recreate-stack
 
 validate: compose-config check-compose-static-ips validate-research-build-tags surface-ledger secret-scan test-watch-maps test-admin-panel-safe-surfaces test-character-slot-tool test-research-catalog test-discovery-tools test-admin-chat test-admin-grant-item test-smugglers-run-mp test-operational-borrowing test-artificial-exchange test-artificial-exchange-service test-vehicle-fidelity-investigation public-site-check verify-local-state-ignored
 
@@ -116,6 +116,51 @@ handoff-lab-remote-stop:
 
 handoff-lab:
 	./scripts/handoff-lab.sh handoff $(ENV_FILE) $(SRC) $(DST)
+
+brt-dd-lab-config:
+	./scripts/brt-dd-lab.sh config $(ENV_FILE)
+
+brt-dd-lab-images:
+	./scripts/brt-dd-lab.sh images $(ENV_FILE)
+
+brt-dd-lab-up:
+	./scripts/brt-dd-lab.sh up $(ENV_FILE)
+
+brt-dd-lab-seed:
+	./scripts/brt-dd-lab.sh seed $(ENV_FILE)
+
+brt-dd-lab-status:
+	./scripts/brt-dd-lab.sh status $(ENV_FILE)
+
+brt-dd-lab-verify-config:
+	./scripts/brt-dd-lab.sh verify-config $(ENV_FILE)
+
+brt-dd-lab-logs:
+	./scripts/brt-dd-lab.sh logs $(ENV_FILE)
+
+brt-dd-lab-stop:
+	./scripts/brt-dd-lab.sh stop $(ENV_FILE)
+
+brt-dd-next-downtime-stage:
+	./scripts/brt-dd-next-downtime.sh stage $(ENV_FILE)
+
+brt-dd-next-downtime-status:
+	./scripts/brt-dd-next-downtime.sh status $(ENV_FILE)
+
+brt-dd-live-preflight:
+	./scripts/brt-dd-live-readiness.sh preflight $(ENV_FILE)
+
+brt-dd-live-restart:
+	./scripts/brt-dd-live-readiness.sh restart-deep-desert $(ENV_FILE) "$(CONFIRM)"
+
+brt-dd-live-verify:
+	./scripts/brt-dd-live-readiness.sh verify-after-restart $(ENV_FILE)
+
+brt-dd-live-logs:
+	./scripts/brt-dd-live-readiness.sh logs $(ENV_FILE)
+
+brt-dd-live-checklist:
+	./scripts/brt-dd-live-readiness.sh checklist $(ENV_FILE)
 
 failover-orchestrate:
 	./scripts/failover-orchestrate.sh $(ENV_FILE) $(ROLE) $(APPLY)

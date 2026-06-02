@@ -35,6 +35,12 @@ seed_neighbors() {
   fi
 }
 
+run_post_start_hooks() {
+  if [[ -x "$script_dir/brt-dd-next-downtime.sh" ]]; then
+    "$script_dir/brt-dd-next-downtime.sh" apply-pending "$env_file"
+  fi
+}
+
 postgres_accepts_connections() {
   is_running "$postgres_container" || return 1
   docker exec "$postgres_container" sh -lc 'pg_isready -U "${POSTGRES_USER:-postgres}" >/dev/null 2>&1 || pg_isready >/dev/null 2>&1'
@@ -65,6 +71,7 @@ while (( SECONDS < deadline )); do
   fi
 
   if [[ -x "$verify_script" ]] && "$verify_script"; then
+    run_post_start_hooks
     if [[ "$text_router_recreated" == "true" ]]; then
       printf 'post-start recovery recreated text-router and verified RMQ/auth routing\n'
     else

@@ -54,6 +54,23 @@ Future research should compare RabbitMQ bindings, generated users, and server qu
   service-broadcast payload parsing helpers. Confidence: moderate that the next
   proof target is the exact service-broadcast payload/auth-token route, not more
   admin-RMQ method-name guessing.
+- A later 2026-06-02 targeted Ghidra pass with
+  `scripts/research/DumpNotificationServerCommandSurface.java` and
+  `scripts/research/DumpServerCommandPayload.java` found the outer
+  notification path: `FUN_09f3ff90` calls `FUN_09ee73c0`.
+  `FUN_09ee73c0` owns the `NotificationSystem message handling failed. Invalid
+  Auth Token.`, `Empty message content.`, and `Server command received. Raw
+  Content:` log strings. It checks notification prefilter strings, extracts
+  auth/content via `FUN_09ee7970`, then calls the raw-content parser only after
+  auth/content validation. Confidence: moderate.
+- The auth-aware service-broadcast and notification-envelope candidates added
+  to `scripts/probe-gm-payload-matrix.py` were tested on the empty
+  `testing-waterfat` route with the notification subsystem enabled. They
+  published cleanly and caused no player disruption, queue backlog, restart, or
+  crash, but still produced no `Server command received`, `Invalid Auth Token`,
+  `Handling ServiceBroadcast Server command`, `Now running ServerCommand`, or
+  command output log. Confidence: high that these candidates are still not the
+  working native command payload.
 - The active dedicated server allow-list found in `DuneSandbox/Config/DedicatedServerGame.ini` includes:
   - Console commands: `obj`, `FGL.ComponentAuditRequested`
   - GM commands: `AddItemToInventory`, `AddBasicInventoryToCharacter`, `SpawnVehicle`, teleport/travel helpers, `Fly`, `Ghost`, `Walk`, targeted destroy helpers, and `PrintPos`.

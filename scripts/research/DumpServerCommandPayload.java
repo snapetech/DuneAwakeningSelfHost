@@ -33,6 +33,10 @@ public class DumpServerCommandPayload extends GhidraScript {
 
     private static final long[] OFFSETS = new long[] {
         0x09ee83c0L, // subsystem/settings setup, ServerCommandsAuthToken
+        0x09ee73c0L, // notification server-command outer handler
+        0x09ee7970L, // notification message auth/content extraction
+        0x09eb7e60L, // notification message extraction implementation
+        0x09691b80L, // raw content parser after auth/content validation
         0x12f2f980L, // wrapper/native dispatch reached by server-command thunk
         0x0da5c3c0L, // DuneServerCommandSubsystem command execution target
         0x0da5bee0L, // SendDuneServerCommand cheat path
@@ -49,6 +53,9 @@ public class DumpServerCommandPayload extends GhidraScript {
     };
 
     private static final long[] REF_TARGETS = new long[] {
+        0x09ee73c0L,
+        0x09ee7970L,
+        0x09eb7e60L,
         0x12f2f980L,
         0x0da5c3c0L,
         0x0da5bee0L,
