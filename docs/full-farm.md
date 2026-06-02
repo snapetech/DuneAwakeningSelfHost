@@ -93,9 +93,10 @@ Forward `7888-7917/udp` from the router to the host for the full 30-partition wa
 
 Partition 31 / the second Deep Desert dimension is opt-in through
 `DUNE_WORLD_PARTITION_COUNT=31`. When enabled, full-farm restarts include the
-`deep-desert-pvp` service with its own `config/UserGame.deep-desert-pvp.ini`
-override, the dedicated `config/UserEngine.deep-desert-pvp.ini` 3x harvest
-override, separate saved-data directory, and ports `7807/udp` plus `7918/udp`.
+`deep-desert` and `deep-desert-pvp` services with their own `UserEngine`
+overrides. DD#2 uses the dedicated `config/UserEngine.deep-desert-pvp.ini`
+3x-harvest override, separate saved-data directory, and ports `7807/udp` plus
+`7918/udp`.
 
 Rules by Deep Desert instance:
 

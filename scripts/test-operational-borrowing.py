@@ -240,10 +240,10 @@ class ComposeCommandTests(unittest.TestCase):
         self.assertEqual(config["services"]["text-router"]["environment"]["FuncomLiveServices__DefaultFlsEnvironment"], "retail")
         self.assertEqual(config["services"]["gateway"]["environment"]["FuncomLiveServices__DefaultFlsEnvironment"], "retail")
 
-    def test_deep_desert_uses_shared_engine_config(self):
+    def test_deep_desert_uses_dedicated_engine_config(self):
         config = self.compose_config("compose.yaml")
         environment = config["services"]["deep-desert"]["environment"]
-        self.assertNotIn("DUNE_USERENGINE_CONFIG_PATH", environment)
+        self.assertEqual(environment["DUNE_USERENGINE_CONFIG_PATH"], "/workspace/config/UserEngine.deep-desert.ini")
 
     def test_partition_31_deep_desert_uses_dedicated_engine_config(self):
         config = self.compose_config(

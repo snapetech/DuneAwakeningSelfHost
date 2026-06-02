@@ -134,12 +134,12 @@ dw.VehicleDurabilityDamageMultiplier=1.15
 ```
 
 `compose.allmaps.yaml` wires that file into only the partition-31 Deep Desert
-service. The partition-8 Deep Desert service uses the shared
-`config/UserEngine.ini` values, which keep harvest at 1.0x.
-Because `run_server_safe.sh` copies `DUNE_USERENGINE_CONFIG_PATH` only into that
-map server process, the "global" mining values are isolated to the second DD
-service. This keeps the 3x second-DD harvest bonus scoped to partition `31`
-without advertising the instance as PvP.
+service. The partition-8 Deep Desert service uses
+`config/UserEngine.deep-desert.ini`, which keeps harvest at 1.0x.
+Because `run_server_safe.sh` copies `DUNE_USERENGINE_CONFIG_PATH` only into the
+target map server process, the "global" mining values are isolated to the
+intended DD service. This keeps the 3x second-DD harvest bonus scoped to
+partition `31` without advertising the instance as PvP.
 
 Player-facing Paul notices should say:
 
