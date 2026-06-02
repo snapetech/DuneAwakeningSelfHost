@@ -57,6 +57,14 @@ if [[ -x "$script_dir/seed-gateway-neighbor.sh" ]]; then
   "$script_dir/seed-gateway-neighbor.sh" || true
 fi
 
+case "${DUNE_LANDSRAAD_CORIOLIS_GUARD_ENABLED:-true}" in
+  1|true|yes|on|TRUE|True|YES|ON)
+    if [[ -x "$script_dir/validate-landsraad-coriolis-cycle.sh" ]]; then
+      "$script_dir/validate-landsraad-coriolis-cycle.sh" "$env_file"
+    fi
+    ;;
+esac
+
 printf 'starting/recreating map services with post hooks: %s\n' "${services[*]}"
 "${compose[@]}" up -d --force-recreate --no-deps "${services[@]}"
 

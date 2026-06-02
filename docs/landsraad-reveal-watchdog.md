@@ -131,3 +131,35 @@ Next Coriolis Cycle start date UTC: 2026.06.09-15.52.00
 
 Do not reintroduce the 36524-day cycle. It prevents visible Coriolis rollover
 but also suspends Landsraad.
+
+## Permanent Guardrail
+
+`scripts/validate-landsraad-coriolis-cycle.sh` validates the two Standard PvE
+configs that can take Landsraad down:
+
+- `config/UserGame.ini`
+- `config/UserGame.deep-desert-coriolis.ini`
+
+It requires:
+
+- `m_CycleDurationInDays=7`
+- `m_bCoriolisAutoSpawnEnabled=False`
+- `m_bCoriolisDoesDamage=False`
+- `m_bCoriolisTriggerShiftingSands=False`
+- `m_bShouldRestartServerOnCycleEnd=False`
+- `m_bIsDbWipeEnabled=False`
+
+The script is wired into:
+
+- `scripts/restart-target.sh` pre-start hygiene
+- `scripts/start-map-with-post-hooks.sh` before manual map recreate/start
+- `scripts/restart-post-start-health.sh` post-start hooks
+
+Manual check:
+
+```bash
+./scripts/validate-landsraad-coriolis-cycle.sh .env
+```
+
+The guard is enabled by default through
+`DUNE_LANDSRAAD_CORIOLIS_GUARD_ENABLED=true`.

@@ -731,6 +731,7 @@ Root-level research indexes:
 - [`scripts/recover-map.sh`](scripts/recover-map.sh): fixed-partition recovery.
 - [`scripts/start-map-with-post-hooks.sh`](scripts/start-map-with-post-hooks.sh): manual map start wrapper that runs post-start hooks and verifies runtime patches.
 - [`scripts/restart-target.sh`](scripts/restart-target.sh): scheduled restart execution hook.
+- [`scripts/validate-landsraad-coriolis-cycle.sh`](scripts/validate-landsraad-coriolis-cycle.sh): guardrail that keeps Standard PvE DD on a weekly Coriolis cycle so Landsraad does not globally suspend.
 - [`scripts/install-daily-maintenance-timer.sh`](scripts/install-daily-maintenance-timer.sh): daily maintenance timer installer.
 - [`scripts/install-artificial-exchange-service.sh`](scripts/install-artificial-exchange-service.sh): artificial Exchange service installer.
 - [`scripts/install-artificial-exchange-watchdog-timer.sh`](scripts/install-artificial-exchange-watchdog-timer.sh): artificial Exchange watchdog timer installer.

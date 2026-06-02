@@ -10,6 +10,13 @@
   the target host with `hostname`. If it is not `kspls0`, stop and connect to
   `kspls0`.
 - Do not run production mutations through `docker compose` from `kspld0`.
+- Do not set Standard PvE DD Coriolis cycle duration to a far-future value.
+  Landsraad uses the Coriolis cycle for its active/suspended window. DD1 can
+  have Coriolis damage, shifting sands, restart, and DB wipe disabled, but
+  `config/UserGame.ini` and `config/UserGame.deep-desert-coriolis.ini` must
+  keep `m_CycleDurationInDays=7`. Run
+  `scripts/validate-landsraad-coriolis-cycle.sh .env` before and after live map
+  restarts when touching Coriolis config.
 - Do not manually recreate/start live game-map containers with raw
   `docker compose up`, `docker compose restart`, or `docker compose start`
   unless you immediately run `scripts/restart-post-start-health.sh` on

@@ -328,6 +328,39 @@ Use `scripts/recover-map.sh` instead when the map has stale partition
 registration or `Local partition is not found`; the wrapper does not mark old
 partition owners dead.
 
+## Landsraad Coriolis Guard
+
+Confidence: high.
+
+Standard PvE DD must keep a weekly Coriolis cycle even when Coriolis damage,
+shifting sands, cycle-end restart, and DB wipe are disabled. Landsraad derives
+its active/suspended window from the Coriolis cycle. Setting
+`m_CycleDurationInDays=36524` prevented visible Coriolis rollover, but also
+globally suspended Landsraad while the database term still looked active.
+
+Required live values in `config/UserGame.ini` and
+`config/UserGame.deep-desert-coriolis.ini`:
+
+```ini
+m_bCoriolisAutoSpawnEnabled=False
+m_bCoriolisDoesDamage=False
+m_bCoriolisTriggerShiftingSands=False
+m_CycleDurationInDays=7
+m_bShouldRestartServerOnCycleEnd=False
+m_bIsDbWipeEnabled=False
+```
+
+Run the guard before and after any Coriolis or DD1 map restart work:
+
+```bash
+./scripts/validate-landsraad-coriolis-cycle.sh .env
+```
+
+`scripts/restart-target.sh`, `scripts/start-map-with-post-hooks.sh`, and
+`scripts/restart-post-start-health.sh` run this guard by default. Leave
+`DUNE_LANDSRAAD_CORIOLIS_GUARD_ENABLED=true` unless intentionally testing in a
+non-production lab.
+
 On hosts affected by the Docker bridge neighbor-learning failure, run the host
 systemd watchdog with `DUNE_WATCH_SEED_NEIGHBORS=true`. That makes the watchdog
 run `scripts/seed-gateway-neighbor.sh` before each recovery scan, keeping the

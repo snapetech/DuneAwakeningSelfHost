@@ -100,11 +100,27 @@ run_landsraad_reveal_watchdog() {
   ./scripts/landsraad-reveal-watchdog.sh "$env_file" --execute
 }
 
+run_landsraad_coriolis_guard() {
+  env_file="${ENV_FILE:-.env}"
+  enabled="${DUNE_LANDSRAAD_CORIOLIS_GUARD_ENABLED:-$(env_file_value DUNE_LANDSRAAD_CORIOLIS_GUARD_ENABLED "$env_file")}"
+  enabled="${enabled:-true}"
+  case "$enabled" in
+    1|true|yes|on) ;;
+    *) return 0 ;;
+  esac
+  if [ ! -x ./scripts/validate-landsraad-coriolis-cycle.sh ]; then
+    printf 'Landsraad Coriolis guard enabled but scripts/validate-landsraad-coriolis-cycle.sh is missing or not executable\n' >&2
+    return 1
+  fi
+  ./scripts/validate-landsraad-coriolis-cycle.sh "$env_file"
+}
+
 pre_start_hygiene() {
   env_file="${ENV_FILE:-.env}"
   if [ -x ./scripts/apply-official-db-patches.sh ]; then
     ./scripts/apply-official-db-patches.sh "$env_file"
   fi
+  run_landsraad_coriolis_guard
   run_landsraad_goal_tuning
   run_landsraad_reveal_watchdog
   run_hardcore_dd_weekly_wipe

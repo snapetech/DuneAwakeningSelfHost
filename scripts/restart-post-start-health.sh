@@ -17,6 +17,7 @@ verify_script="${DUNE_VERIFY_RMQ_AUTH_PATH_SCRIPT:-./scripts/verify-rmq-auth-pat
 timeout="${DUNE_RESTART_POST_START_TIMEOUT_SECONDS:-180}"
 interval="${DUNE_RESTART_POST_START_INTERVAL_SECONDS:-5}"
 logoff_patch_enabled="${DUNE_LOGOFF_TIMER_RUNTIME_PATCH_ENABLED:-true}"
+landsraad_coriolis_guard_enabled="${DUNE_LANDSRAAD_CORIOLIS_GUARD_ENABLED:-true}"
 
 compose_cmd=(docker compose)
 IFS=':' read -r -a compose_file_array <<< "$compose_files"
@@ -37,6 +38,9 @@ seed_neighbors() {
 }
 
 run_post_start_hooks() {
+  if [[ "$landsraad_coriolis_guard_enabled" =~ ^([Tt][Rr][Uu][Ee]|1|[Yy][Ee][Ss]|[Yy])$ && -x "$script_dir/validate-landsraad-coriolis-cycle.sh" ]]; then
+    "$script_dir/validate-landsraad-coriolis-cycle.sh" "$env_file"
+  fi
   if [[ -x "$script_dir/brt-dd-next-downtime.sh" ]]; then
     "$script_dir/brt-dd-next-downtime.sh" apply-pending "$env_file"
   fi
