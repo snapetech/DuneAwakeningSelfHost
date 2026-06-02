@@ -103,12 +103,19 @@ Future research should compare RabbitMQ bindings, generated users, and server qu
   but logs still showed no `Server command received`, `Now running
   ServerCommand`, sender/auth/content error, JSON-to-struct failure, or command
   output. Confidence: high that these candidates are also not working payloads.
-- The latest static pass added `NotificationSystemListenQueue`,
-  `JsonObjectStringToUStruct`, and `Deserialized message has unknown Server
-  Command` to the Ghidra script. Those strings are present but did not produce
-  simple direct code xrefs in the focused pass. Confidence: moderate that the
-  missing contract is in generated notification descriptor/deserializer tables
-  around `FUN_09ed8710 -> FUN_09ed8ed0 -> FUN_09ede9a0`.
+- The latest static pass added
+  `scripts/research/DumpNativeGmRmqDeserializer.java` and corrected the
+  receive-path hypothesis. `FUN_09ede9a0` calls `amqp_basic_publish` and is an
+  outbound publisher, not the inbound notification deserializer. Confidence:
+  high. `FUN_09ed8710` is still the RMQ listen loop; after connection setup and
+  the periodic outbound gate, inbound receive/dispatch appears to live behind
+  consumer vtable calls `+0x40` and `+0x48`. Confidence: high.
+- The same pass found concrete listener callback targets:
+  `FUN_0a05c5b0` and `FUN_0a05d070` call `FUN_09f8cf00(*param_1)` when a
+  received message object is present, while `FUN_09fa5a70` handles
+  notification-system queue/work-item setup. Confidence: high for the callback
+  targets, moderate for the exact object layout. The next proof target is the
+  consumer vtable/message-object layout, not another blind top-level JSON alias.
 - The active dedicated server allow-list found in `DuneSandbox/Config/DedicatedServerGame.ini` includes:
   - Console commands: `obj`, `FGL.ComponentAuditRequested`
   - GM commands: `AddItemToInventory`, `AddBasicInventoryToCharacter`, `SpawnVehicle`, teleport/travel helpers, `Fly`, `Ghost`, `Walk`, targeted destroy helpers, and `PrintPos`.

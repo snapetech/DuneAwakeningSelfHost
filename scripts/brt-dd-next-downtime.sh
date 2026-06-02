@@ -37,6 +37,18 @@ required_config_patterns=(
   'm_MaxLandclaimSegmentsPerMap=.*DeepDesert_1'
 )
 
+dd1_no_shift_patterns=(
+  'm_ShiftingSands=False'
+  'm_bCoriolisAutoSpawnEnabled=False'
+  'm_bCoriolisDoesDamage=False'
+  'm_bCoriolisTriggerShiftingSands=False'
+  'm_CoriolisLightDamage=0.000000'
+  'm_CoriolisHeavyDamage=0.000000'
+  'm_CycleDurationInDays=36524'
+  'm_bShouldRestartServerOnCycleEnd=False'
+  'm_bIsDbWipeEnabled=False'
+)
+
 if [[ -z "$cmd" || "$cmd" == "-h" || "$cmd" == "--help" ]]; then
   usage
   exit 0
@@ -81,22 +93,42 @@ compose_command() {
   compose+=(--env-file "$env_file")
 }
 
+check_rendered_patterns() {
+  local file="$1"
+  local rendered="$2"
+  local pattern
+  shift 2
+  for pattern in "$@"; do
+    if ! grep -Eq "$pattern" <<<"$rendered"; then
+      printf 'missing required config pattern in %s: %s\n' "$file" "$pattern" >&2
+      return 1
+    fi
+  done
+}
+
+check_dd1_no_shift_config() {
+  local file="$1"
+  local rendered
+  if [[ ! -f "$file" ]]; then
+    printf 'missing DD#1 no-shift config file: %s\n' "$file" >&2
+    return 1
+  fi
+  rendered="$(cat "$file")"
+  check_rendered_patterns "$file" "$rendered" "${required_config_patterns[@]}" "${dd1_no_shift_patterns[@]}"
+}
+
 check_repo_config() {
-  local file rendered pattern
+  local file rendered
   for file in config/UserGame.ini config/UserGame.deep-desert-coriolis.ini config/UserGame.deep-desert-pvp.ini; do
     if [[ ! -f "$file" ]]; then
       printf 'missing config file: %s\n' "$file" >&2
       return 1
     fi
     rendered="$(cat "$file")"
-    for pattern in "${required_config_patterns[@]}"; do
-      if ! grep -Eq "$pattern" <<<"$rendered"; then
-        printf 'missing repo config pattern in %s: %s\n' "$file" "$pattern" >&2
-        return 1
-      fi
-    done
+    check_rendered_patterns "$file" "$rendered" "${required_config_patterns[@]}"
   done
-  printf 'repo configs contain DeepDesert and DeepDesert_1 landclaim entries\n'
+  check_dd1_no_shift_config "$target_config"
+  printf 'repo configs contain DeepDesert landclaim entries and DD#1 no-shift/no-wipe guardrails\n'
 }
 
 container_id() {
@@ -115,9 +147,7 @@ deep_desert_ready() {
 
   rendered="$("$runtime" exec "$id" sh -lc "test -f '$copied_config' && cat '$copied_config'" 2>/dev/null || true)"
   [[ -n "$rendered" ]] || return 1
-  for pattern in "${required_config_patterns[@]}"; do
-    grep -Eq "$pattern" <<<"$rendered" || return 1
-  done
+  check_rendered_patterns "$copied_config" "$rendered" "${required_config_patterns[@]}" "${dd1_no_shift_patterns[@]}" || return 1
 
   if [[ -n "$(postgres_id)" ]]; then
     row="$("${compose[@]}" exec -T postgres psql -U dune -d "$db" -Atc "

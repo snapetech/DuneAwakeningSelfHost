@@ -159,10 +159,33 @@ The latest static pass expanded
 `Deserialized message has unknown Server Command` strings. These strings are
 present in the binary, but the focused string pass did not recover simple direct
 code xrefs for the JSON-to-struct failure or unknown-command log. Confidence:
-moderate that these are table/generated serializer surfaces. The next useful
-reverse-engineering step is the RMQ receive path around
-`FUN_09ed8710 -> FUN_09ed8ed0 -> FUN_09ede9a0`, plus the generated
-notification descriptor tables, rather than more live publishing.
+moderate that these are table/generated serializer surfaces.
+
+A follow-up static pass with
+`scripts/research/DumpNativeGmRmqDeserializer.java` corrected one prior
+assumption: `FUN_09ede9a0` is an outbound AMQP publisher, not the inbound
+notification deserializer. It calls `amqp_basic_publish` at `09edef63`.
+Confidence: high. `FUN_09ed8710` is still the RMQ listen loop; it creates the
+connection with `FUN_09ed8920`, then calls consumer vtable slots `+0x40` and
+`+0x48` after the periodic `FUN_09ed8ed0` outbound gate. Confidence: high.
+
+The useful receive-side targets are now the listener callback functions found
+through the `NotificationSystemListenQueue` strings:
+
+- `FUN_0a05c5b0` and `FUN_0a05d070` call `FUN_09f8cf00(*param_1)` when a
+  received message object is present. Confidence: high.
+- `FUN_09fa5a70` handles notification-system initialization/queue state and
+  allocates callback work items, but it is not enough by itself to identify the
+  payload shape. Confidence: moderate.
+- `NotificationSystemHandleServerMessages` appears as a C++ type/function-name
+  string for `Dreamworld::FFuncomLiveServicesWithPlayFab`, not as a simple
+  direct code xref. Confidence: high.
+
+Conclusion: the latest static result is bad news for the earlier
+`FUN_09ed8710 -> FUN_09ed8ed0 -> FUN_09ede9a0` inbound hypothesis. It is good
+news for narrowing the next work: reverse the consumer vtable callbacks and the
+message object consumed by `FUN_09f8cf00` before doing more live
+`PrintAllowedCommands` payload probes. Confidence: high.
 
 Use the proof runner:
 
