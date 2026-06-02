@@ -35,6 +35,25 @@ Future research should compare RabbitMQ bindings, generated users, and server qu
   reported `InGameOrInTransitPlayerCount:0`. The running server command line had
   `server.NotificationSystem.Enabled=false` and blank `ServerCommandsAuthToken`,
   so lack of command execution is expected. Confidence: high.
+- On 2026-06-02, `testing-waterfat` was recreated on `kspls0` with only the
+  server-command notification subsystem enabled and a private auth token. The
+  route had `connected_players=0` before restart and stayed empty. Safe
+  `PrintAllowedCommands` and `PrintPos` probes were sent through the game-RMQ
+  server queue and observed notification bindings. Queue state stayed clean,
+  restart count stayed `0`, and logs showed no `Now running ServerCommand`,
+  command output, parser error, crash, or fatal line. Confidence: high that the
+  current guessed game-RMQ/admin-RMQ envelopes still do not execute commands.
+  Confidence: high that the proof did not disrupt players.
+- A 2026-06-02 targeted Ghidra pass with
+  `scripts/research/DumpServerCommandPayload.java` found that
+  `FUN_0da5c3c0`, the `UDuneServerCommandSubsystem` command thunk, is called
+  from `SendDuneServerCommand` and metadata/data refs. The broad
+  `FUN_12f2f980` target decompiles as a generic Unreal class/object validity
+  helper with hundreds of callers, not a server-command-specific broker handler.
+  `FUN_0da5cea0` extracts the `ServerCommand` field and is referenced by
+  service-broadcast payload parsing helpers. Confidence: moderate that the next
+  proof target is the exact service-broadcast payload/auth-token route, not more
+  admin-RMQ method-name guessing.
 - The active dedicated server allow-list found in `DuneSandbox/Config/DedicatedServerGame.ini` includes:
   - Console commands: `obj`, `FGL.ComponentAuditRequested`
   - GM commands: `AddItemToInventory`, `AddBasicInventoryToCharacter`, `SpawnVehicle`, teleport/travel helpers, `Fly`, `Ghost`, `Walk`, targeted destroy helpers, and `PrintPos`.
@@ -255,7 +274,7 @@ Additional negative probes:
 Binary follow-up:
 
 - `ServerCommand` is a real string field in nearby `DuneServerCommands` serialization code, so payloads containing `{"ServerCommand":"PrintPos"}` were worth testing. Those tests were delivered and still failed.
-- `AdminLogin` has an `ADunePlayerControllerBase::AdminLogin(const FString&)` symbol trail, and server commands have a `UDuneServerCommandsCheatManager` trail. The next useful capture is from a real in-game admin action or client-side admin login, not more blind admin-queue shape guessing. Confidence: moderate/high.
+- `AdminLogin` has an `ADunePlayerControllerBase::AdminLogin(const FString&)` symbol trail, and server commands have a `UDuneServerCommandsCheatManager` trail. `SendDuneServerCommand` is player-controller/cheat-manager scoped and checks world/player context before reaching `UDuneServerCommandSubsystem`. The next useful capture is from a real in-game admin action/client-side admin login or a derived service-broadcast payload with auth-token verification, not more blind admin-queue shape guessing. Confidence: moderate/high.
 
 `scripts/dune_gm_command.py` is the shared adapter for probe and chat-command code. It supports TLS AMQP and now sends the required JSON-RPC AMQP properties (`type=json_rpc`, `user_id`, and `reply_to`). Online teleport chat commands are connected to it but remain hard-gated:
 

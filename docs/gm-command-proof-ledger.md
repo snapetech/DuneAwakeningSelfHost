@@ -18,7 +18,8 @@ impact occurred, and the next non-disruptive step is bringing up or selecting an
 isolated broker/route, then rerunning only the safe probe set.
 
 Second safe-only execution attempt on `kspls0` used the empty
-`CB_Story_WaterFatManor7` / `testing-waterfat` route. Confidence: high.
+`CB_Story_WaterFatManor7` / `testing-waterfat` route with the default server
+command subsystem settings. Confidence: high.
 
 - Host was verified as `kspls0`.
 - Online roster before and after stayed at four players:
@@ -34,9 +35,40 @@ Second safe-only execution attempt on `kspls0` used the empty
   output, parser error, crash, or fatal line.
 
 Conclusion: admin-RMQ delivery to an empty route is safe, but command execution
-is still not proven. Confidence: high. The current running server command line
-has `server.NotificationSystem.Enabled=false` and a blank
+is still not proven. Confidence: high. That running server command line had
+`server.NotificationSystem.Enabled=false` and a blank
 `ServerCommandsAuthToken`, so the negative result is expected. Confidence: high.
+
+Third safe-only execution attempt on `kspls0` used the same empty route after
+recreating only `testing-waterfat` with the server-command notification subsystem
+enabled and a private auth token. Confidence: high.
+
+- Host was verified as `kspls0`.
+- The target route had `connected_players=0` before restart and stayed empty.
+- Only `testing-waterfat` / `CB_Story_WaterFatManor7` partition `7` was
+  recreated.
+- Online roster before and after did not include anyone on `testing-waterfat`.
+- `PrintAllowedCommands` and `PrintPos` were sent through the game-RMQ server
+  queue and observed notification bindings using the bounded safe matrix.
+- Queue state stayed clean on both game-RMQ and admin-RMQ.
+- `testing-waterfat` stayed running with restart count `0`, OOM false, exit `0`.
+- Logs showed the notification subsystem enabled, but no
+  `PrintAllowedCommands`, `PrintPos`, `Now running ServerCommand`, command
+  output, parser error, crash, or fatal line from the probes.
+
+Conclusion: enabling the subsystem and publishing the current guessed
+game-RMQ/admin-RMQ safe matrix still does not execute commands. Confidence:
+high. The bad result is real: blind broker payload shapes are not enough. The
+good result is also real: the proof did not disrupt live players. Confidence:
+high.
+
+Ghidra follow-up on 2026-06-02 narrowed the failure. `SendDuneServerCommand`
+calls the `UDuneServerCommandSubsystem` execution thunk only from a
+player-controller/cheat-manager scoped path. The suspected `FUN_12f2f980`
+target is a generic Unreal class/object validity helper, not a broker command
+handler. The `ServerCommand` field is extracted by the service-broadcast payload
+parsers, so the next proof must derive the exact service-broadcast payload and
+auth-token route instead of guessing method names on RMQ. Confidence: moderate.
 
 Use the proof runner:
 

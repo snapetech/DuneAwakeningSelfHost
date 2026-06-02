@@ -29,18 +29,32 @@ import java.util.Set;
 
 public class DumpServerCommandPayload extends GhidraScript {
     private static final String OUT = "/tmp/ghidra-work/server-command-payload-findings.txt";
+    private static final int MAX_REFS_PER_TARGET = 80;
 
     private static final long[] OFFSETS = new long[] {
         0x09ee83c0L, // subsystem/settings setup, ServerCommandsAuthToken
+        0x12f2f980L, // wrapper/native dispatch reached by server-command thunk
         0x0da5c3c0L, // DuneServerCommandSubsystem command execution target
         0x0da5bee0L, // SendDuneServerCommand cheat path
         0x0da5cea0L, // ServerCommand field serialization evidence
         0x0da5cad0L, // DuneServerCommandSubsystem registration-adjacent
         0x0da5cae0L,
+        0x0da5cb20L,
+        0x0da5cbf0L,
+        0x0da5cc00L,
         0x0da5cb10L,
         0x0da984a0L,
         0x0da5c1c0L,
         0x0da5c110L
+    };
+
+    private static final long[] REF_TARGETS = new long[] {
+        0x12f2f980L,
+        0x0da5c3c0L,
+        0x0da5bee0L,
+        0x0da5cea0L,
+        0x0da5cae0L,
+        0x154a5a88L
     };
 
     private static final long[] VTABLES = new long[] {
@@ -88,12 +102,41 @@ public class DumpServerCommandPayload extends GhidraScript {
             log("Program: " + currentProgram.getName());
             log("Image base: " + currentProgram.getImageBase());
             dumpOffsetFunctions();
+            dumpRefTargets();
             dumpVtablesAndDataRefs();
             dumpNeedleXrefs();
             decompileCollectedFunctions();
         } finally {
             decomp.dispose();
             out.close();
+        }
+    }
+
+    private void dumpRefTargets() throws Exception {
+        log("");
+        log("== explicit references-to targets");
+        for (long offset : REF_TARGETS) {
+            Address addr = toAddr(offset);
+            Function target = currentProgram.getFunctionManager().getFunctionContaining(addr);
+            log("");
+            log("-- refs to 0x" + Long.toHexString(offset) + " " + addr +
+                (target == null ? "" : " target_function=" + target.getName() + " @ " + target.getEntryPoint()));
+            ReferenceIterator it = refs.getReferencesTo(addr);
+            int count = 0;
+            while (it.hasNext()) {
+                Reference ref = it.next();
+                count++;
+                if (count > MAX_REFS_PER_TARGET) {
+                    continue;
+                }
+                Function from = currentProgram.getFunctionManager().getFunctionContaining(ref.getFromAddress());
+                log("  ref " + ref.getFromAddress() + " type=" + ref.getReferenceType() +
+                    (from == null ? "" : " function=" + from.getName() + " @ " + from.getEntryPoint()));
+                if (from != null && offset != 0x12f2f980L) {
+                    functions.add(from.getEntryPoint());
+                }
+            }
+            log("  refs=" + count);
         }
     }
 
