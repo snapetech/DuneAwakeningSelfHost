@@ -125,6 +125,21 @@ class GmPayloadMatrixTests(unittest.TestCase):
         self.assertEqual(props.app_id, "fls-app")
         self.assertEqual(props.correlation_id, "corr-1")
 
+    def test_defaults_include_native_receive_helper_values(self):
+        self.assertIn("grant", probe_gm_payload_matrix.NATIVE_AMQP_TYPES)
+        self.assertIn("gme_token_response", probe_gm_payload_matrix.NATIVE_AMQP_TYPES)
+        self.assertIn("json_rpc", probe_gm_payload_matrix.NATIVE_AMQP_TYPES)
+        self.assertIn("Content", probe_gm_payload_matrix.DEFAULT_CONTENT_TYPE_MODES)
+        self.assertIn("application/json", probe_gm_payload_matrix.DEFAULT_CONTENT_TYPE_MODES)
+        self.assertEqual(
+            probe_gm_payload_matrix.normalize_amqp_types(["empty", "grant"]),
+            ["", "grant"],
+        )
+        self.assertEqual(
+            probe_gm_payload_matrix.normalize_content_type_modes(["empty", "Content"]),
+            ["", "Content"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

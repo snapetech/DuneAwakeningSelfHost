@@ -16,6 +16,28 @@ import pika
 from dune_gm_command import amqp_connection, env, env_bool
 
 
+NATIVE_AMQP_TYPES = [
+    "json_rpc",
+    "grant",
+    "update",
+    "validation",
+    "gme_token_request",
+    "gme_token_response",
+    "login_response",
+    "travel_response",
+    "server_state",
+    "director_state",
+    "director_respawned",
+    "text_chat",
+    "text_chat_edited",
+    "text_chat_vetoed",
+    "courier_notification",
+    "",
+]
+
+DEFAULT_CONTENT_TYPE_MODES = ["Content", "native", "application/json", ""]
+
+
 def game_amqp_connection():
     host = env("DUNE_ANNOUNCE_HOST_AMQP_HOST", env("DUNE_ANNOUNCE_GAME_RMQ_AMQP_HOST", "127.0.0.1"))
     port = int(env("DUNE_ANNOUNCE_HOST_AMQP_PORT", env("DUNE_ANNOUNCE_GAME_RMQ_AMQP_PORT", env("GAME_RMQ_PUBLIC_PORT", "31982"))))
@@ -373,6 +395,14 @@ def serialize_body(value):
     return json_bytes(value), "application/json"
 
 
+def normalize_amqp_types(values):
+    return ["" if mode == "empty" else mode for mode in (values or NATIVE_AMQP_TYPES)]
+
+
+def normalize_content_type_modes(values):
+    return ["" if mode == "empty" else mode for mode in (values or DEFAULT_CONTENT_TYPE_MODES)]
+
+
 def bind_safely(channel, queue, exchange, routing_key):
     try:
         channel.queue_bind(queue=queue, exchange=exchange, routing_key=routing_key)
@@ -467,7 +497,7 @@ def main():
     parser.add_argument("--body", action="append", default=[], help="Only send these exact body names. Repeatable.")
     parser.add_argument("--body-contains", action="append", default=[], help="Only send body names containing these substrings. Repeatable.")
     parser.add_argument("--amqp-type", action="append", default=[], help="Only send these AMQP type values. Repeatable; use empty for omitted type.")
-    parser.add_argument("--content-type", action="append", default=[], help="Only send these content type modes: native, application/json, empty. Repeatable.")
+    parser.add_argument("--content-type", action="append", default=[], help="Only send these content_type values or modes. native uses the serialized body type; empty omits the property.")
     args = parser.parse_args()
 
     bodies = build_bodies(args.command, args.target_player, args.admin_player)
@@ -483,10 +513,8 @@ def main():
             for name, value in bodies.items()
             if any(pattern in name for pattern in args.body_contains)
         }
-    content_type_modes = args.content_type or ["native", "application/json", ""]
-    content_type_modes = ["" if mode == "empty" else mode for mode in content_type_modes]
-    amqp_types = args.amqp_type or ["json_rpc", "json-rpc", "request", ""]
-    amqp_types = ["" if mode == "empty" else mode for mode in amqp_types]
+    content_type_modes = normalize_content_type_modes(args.content_type)
+    amqp_types = normalize_amqp_types(args.amqp_type)
     targets = [("admin", "rpc", args.route), ("admin", "", args.queue)]
     if args.include_game_rmq and args.game_server_queue:
         targets.append(("game", "", args.game_server_queue))

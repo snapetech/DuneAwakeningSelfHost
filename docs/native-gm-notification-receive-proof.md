@@ -33,6 +33,10 @@ ServiceBroadcast JSON object.
   `scripts/research/DumpRmqRunnableVtables.java`
 - Latest local output:
   `/tmp/ghidra-work/rmq-runnable-vtables.txt`
+- Ghidra script:
+  `scripts/research/DumpRmqInboundMessageFields.java`
+- Latest local output:
+  `/tmp/ghidra-work/rmq-inbound-message-fields.txt`
 - Run commands:
 
 ```bash
@@ -41,6 +45,7 @@ scripts/research/run-ghidra-headless.sh --script DumpNativeGmReceiveCallbacks.ja
 scripts/research/run-ghidra-headless.sh --script DumpFNotificationsCommandAcceptance.java
 scripts/research/run-ghidra-headless.sh --script DumpFNotificationsAdjacentHelpers.java
 scripts/research/run-ghidra-headless.sh --script DumpRmqRunnableVtables.java
+scripts/research/run-ghidra-headless.sh --script DumpRmqInboundMessageFields.java
 ```
 
 ## Positive Static Result
@@ -320,10 +325,100 @@ key, not only JSON field aliases inside the message body. Confidence: high.
 --reply-to-property auto|empty|<value>
 --correlation-id auto|empty|<value>
 --amqp-type <value-or-empty>
---content-type native|application/json|empty
+--content-type Content|native|application/json|empty|<value>
 ```
 
 Confidence: high.
+
+## Inbound AMQP Field Helpers
+
+`DumpRmqInboundMessageFields.java` decompiled the helper layer under
+`FUN_09edc750`. Confidence: high.
+
+Confirmed helper responsibilities:
+
+```text
+FUN_09edd340(envelope):
+  copies envelope bytes at +0x110/+0x118 into the first decoded string
+
+FUN_09ee0490(out, envelope, bytes, property_name, flag):
+  checks envelope property flags at +0x48 and copies the named AMQP property
+
+FUN_09edd540(envelope):
+  reads AMQP type with flag 0x20 and maps it to a native message-kind enum
+
+FUN_09edd810(out, reply_to_bytes):
+  copies the reply_to byte span into the registered-consumer lookup key
+
+FUN_09edd980(envelope):
+  reads AMQP content_type with flag 0x8000 and maps Content/Close to a small enum
+
+FUN_09edda40(consumer_delegate, decoded_message):
+  copies the decoded message through FUN_09ec9f00 and enqueues/invokes the
+  registered consumer delegate
+```
+
+Confidence: high for these helper roles.
+
+`FUN_09edd540` recognizes these AMQP `type` strings:
+
+```text
+login_response -> 1
+grant -> 2
+update -> 3
+validation -> 4
+travel_response -> 5
+server_state -> 6
+director_state -> 7
+director_respawned -> 8
+gme_token_request -> 9
+gme_token_response -> 10
+json_rpc -> 11
+text_chat -> 12
+text_chat_edited -> 13
+text_chat_vetoed -> 14
+courier_notification -> 15
+anything else or omitted -> 0
+```
+
+Confidence: high.
+
+`FUN_09edd980` recognizes AMQP `content_type` values:
+
+```text
+Content -> 1
+Close -> 2
+anything else or omitted -> 0
+```
+
+Confidence: high.
+
+Focused string scans found direct receive-cluster references for
+`app_id`, `user_id`, `correlation_id`, `reply_to`, `type`, and
+`content_type`. They did not find direct receive-cluster references for
+`message_id`, `delivery_mode`, or `content_encoding`. Confidence: moderate/high.
+
+Most important field mapping from `FUN_09edc750` to the decoded-message copy:
+
+```text
+local_c0 from FUN_09edd340       -> copied into decoded offset +0x48/+0x50
+local_f0 from AMQP app_id        -> copied into decoded offset +0x58/+0x60
+local_78 from AMQP user_id       -> copied into decoded offset +0x68/+0x70
+local_88 from AMQP correlation_id and local_68 from reply_to/body metadata
+                                  -> copied into later decoded fields
+local_31 from AMQP type enum     -> copied into decoded scalar at +0x8d area
+uStack_178 from content_type enum -> copied into decoded scalar area
+```
+
+Confidence: high that these fields are copied into the same
+`FUN_09ec9f00` decoded-message family consumed by the server-command handler.
+Confidence: moderate for the semantic names of the later scalar fields because
+the binary has no retained symbols there.
+
+Operational consequence: `Content` should be tried as AMQP `content_type`,
+and AMQP `type` should use the native recognized strings rather than broad
+guesses such as `request` or `json-rpc`. The probe matrix defaults now include
+the native `type` strings and `Content`. Confidence: high.
 
 ## Log String Map
 

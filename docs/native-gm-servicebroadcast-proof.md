@@ -191,6 +191,21 @@ The object-content form is the best current first probe because it preserves a
 structured `Content` object and also includes `PayloadJSON`. Confidence:
 moderate.
 
+The native RMQ receive helper pass now proves the broker-property side of the
+candidate better:
+
+```text
+AMQP type: json_rpc, grant, update, validation, gme_token_request,
+           gme_token_response, login_response, travel_response,
+           server_state, director_state, director_respawned, text_chat,
+           text_chat_edited, text_chat_vetoed, courier_notification, or omitted
+AMQP content_type: Content, native serialized type, application/json, or omitted
+AMQP app_id/user_id/correlation_id/reply_to: directly read by FUN_09edc750
+```
+
+`Content` is now the highest-priority `content_type` because
+`FUN_09edd980` explicitly maps it to enum value `1`. Confidence: high.
+
 ## Safe Proof Command
 
 Use only an empty route and only non-mutating commands. `PrintAllowedCommands`
@@ -211,7 +226,11 @@ python3 scripts/probe-gm-payload-matrix.py \
   --body native-positive-notification-generic-servercommandsauthtoken-object-content \
   --body native-positive-notification-generic-authtoken-payload-only \
   --body native-positive-notification-generic-servercommandsauthtoken-payload-only \
-  --content-type native \
+  --content-type Content \
+  --amqp-type json_rpc \
+  --amqp-type grant \
+  --amqp-type gme_token_request \
+  --amqp-type gme_token_response \
   --amqp-type empty
 ```
 
@@ -268,12 +287,11 @@ still incomplete. Confidence: high.
 
 ## Next Reverse-Engineering Targets
 
-1. Resolve the PlayFab/FLS `FNotificationsSystemMessage` inbound deserializer
+1. Resolve the body/deserializer side after `FUN_09edc750` now that the
+   broker-property side is mapped. Confidence: high.
+2. Resolve the PlayFab/FLS `FNotificationsSystemMessage` inbound deserializer
    anchored around `NotificationSystem message parsing failed. Failed to
    deserialize.` Confidence: moderate.
-2. Determine whether inbound RabbitMQ expects the notification body as
-   `EngineServiceNotification`, `FNotificationsSystemMessage`, or another
-   wrapper before `FUN_09f3ff90 -> FUN_09ee73c0`. Confidence: moderate.
 3. Tighten `FUN_0f1c0a70` and adjacent type metadata to identify the exact
    generic broadcast apply type. Confidence: low/moderate.
 4. Only after a safe command reaches the handler, test operator-visible command

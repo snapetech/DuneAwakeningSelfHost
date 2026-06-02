@@ -409,6 +409,33 @@ raw body are now first-class inputs to test on an empty route. Confidence: high.
 `--reply-to-property`, and `--correlation-id` in addition to the existing
 `--user-id`, `--amqp-type`, and `--content-type` controls. Confidence: high.
 
+Follow-up helper pass added
+`scripts/research/DumpRmqInboundMessageFields.java` and wrote
+`/tmp/ghidra-work/rmq-inbound-message-fields.txt`. Confidence: high.
+
+- `FUN_09ee0490` is the named AMQP basic-property extractor. It checks property
+  flags at envelope `+0x48` before copying the requested property. Confidence:
+  high.
+- `FUN_09edd540` reads AMQP `type` with flag `0x20` and maps native values:
+  `login_response`, `grant`, `update`, `validation`, `travel_response`,
+  `server_state`, `director_state`, `director_respawned`, `gme_token_request`,
+  `gme_token_response`, `json_rpc`, `text_chat`, `text_chat_edited`,
+  `text_chat_vetoed`, and `courier_notification`. Confidence: high.
+- `FUN_09edd980` reads AMQP `content_type` with flag `0x8000`; `Content` maps
+  to enum `1`, `Close` maps to enum `2`, and anything else maps to `0`.
+  Confidence: high.
+- Focused scans found no direct receive-cluster evidence for `message_id`,
+  `delivery_mode`, or `content_encoding`. Confidence: moderate/high.
+- `FUN_09edc750` builds the local decoded message and `FUN_09ec9f00` copies
+  the decoded string slots at `+0x48`, `+0x58`, `+0x68`, and `+0x78`, matching
+  the family later consumed by `FUN_09f3ff90` and `FUN_09ee73c0`. Confidence:
+  high.
+
+Result: the next positive probe set should prioritize `content_type=Content`
+and native AMQP `type` strings such as `json_rpc`, `grant`,
+`gme_token_request`, and `gme_token_response`, while still restricting live
+testing to empty routes and safe commands. Confidence: high.
+
 Conclusion: no live command execution is proven yet, but the current positive
 path is now specific: test the native-positive generic notification bodies
 above on the empty route and look for `Server command received`,
