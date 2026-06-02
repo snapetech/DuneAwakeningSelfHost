@@ -34,6 +34,109 @@ COMMANDS = [
     {"name": "FGL.ComponentAuditRequested", "tier": "console", "status": "cataloged", "syntax": "FGL.ComponentAuditRequested <args...>", "chat": "&gm dry FGL.ComponentAuditRequested <args...>", "notes": "Console command allowed by DedicatedServerGame.ini."},
 ]
 
+BINARY_METHODS = [
+    "UCharacterTransferCheatManager::CharacterTransfer_CancelCurrentTransfer",
+    "UCharacterTransferCheatManager::CharacterTransfer_CheckTransferStatus",
+    "UCharacterTransferCheatManager::CharacterTransfer_ExportData",
+    "UCharacterTransferCheatManager::CharacterTransfer_FullFlow",
+    "UCharacterTransferCheatManager::CharacterTransfer_ImportData",
+    "UCharacterTransferCheatManager::CharacterTransfer_PreTransferCheck_InGame",
+    "UCharacterTransferCheatManager::CharacterTransfer_PreTransferCheck_MainMenu",
+    "UCharacterTransferCheatManager::CharacterTransfer_RequestReservation",
+    "UClaimSystemCheatManager::ClaimSystemPrintCharacterPacks_Client",
+    "UClaimSystemCheatManager::ClaimSystemPrintCharacterPacks_Server",
+    "UClaimSystemCheatManager::ClaimSystemServerConsumeEntirePackForCharacter",
+    "UClaimSystemCheatManager::ClaimSystemServerConsumeFrom2StacksFromPackForCharacter",
+    "UClaimSystemCheatManager::ClaimSystemServerConsumeFromPackForCharacter",
+    "UDuneCheatManager::AchievementTestPrintAllAchievements",
+    "UDuneCheatManager::AchievementTestResetAllAchievements",
+    "UDuneCheatManager::AddItemToInventory",
+    "UDuneCheatManager::AddItemToVehicleInventory",
+    "UDuneCheatManager::AddWeaponToInventory",
+    "UDuneCheatManager::CheatCurrentDungeonCompletion",
+    "UDuneCheatManager::ClearFlsCharacterData",
+    "UDuneCheatManager::CompleteCurrentDungeon",
+    "UDuneCheatManager::ConditionsLogRegisteredConditions",
+    "UDuneCheatManager::ConditionsLogRegisteredConditionsForCurrentPlayer",
+    "UDuneCheatManager::ConditionsLogRegisteredConditionsForEvent",
+    "UDuneCheatManager::ConditionsLogRegisteredConditionsForEventAndCurrentPlayer",
+    "UDuneCheatManager::ConditionsLogRegisteredConditionsForEventAndPlayerId",
+    "UDuneCheatManager::ConditionsLogRegisteredConditionsForPlayerId",
+    "UDuneCheatManager::ConditionsLogRegistrationKeys",
+    "UDuneCheatManager::ConditionsLogSummary",
+    "UDuneCheatManager::CoriolisPrintStoredSeeds",
+    "UDuneCheatManager::CoriolisSetFarmSeed",
+    "UDuneCheatManager::CoriolisSetMapSeed",
+    "UDuneCheatManager::CoriolisSetPartitionSeed",
+    "UDuneCheatManager::DeleteAllCompletionsForAllDungeonsByThisPlayer",
+    "UDuneCheatManager::DeleteAllCompletionsForCurrentDungeon",
+    "UDuneCheatManager::DeleteAllCompletionsForCurrentDungeonByThisPlayer",
+    "UDuneCheatManager::DisplayFlsBattlegroupsServerBrowserInfo",
+    "UDuneCheatManager::FlushActorPersistence",
+    "UDuneCheatManager::GlobalDistributionPrintLootSettingsForCurrentLocation",
+    "UDuneCheatManager::GlobalDistributionPrintTagsForCurrentLocation",
+    "UDuneCheatManager::InitializeContractsAutoCompleteNamesList",
+    "UDuneCheatManager::LogInAs",
+    "UDuneCheatManager::MigrateMyVehicles",
+    "UDuneCheatManager::OpenUIScene",
+    "UDuneCheatManager::OverrideDungeonPlayerCount",
+    "UDuneCheatManager::PatrolShipListSpawned",
+    "UDuneCheatManager::PatrolShipTeleportToNearest",
+    "UDuneCheatManager::PayAllTaxesForNearbyTotem",
+    "UDuneCheatManager::PlayNow",
+    "UDuneCheatManager::PrintListPlayersInFarm",
+    "UDuneCheatManager::PrintMapSettings",
+    "UDuneCheatManager::PrintNpcRespawnTimerHere",
+    "UDuneCheatManager::PrintPlayerCap",
+    "UDuneCheatManager::RaiseDatabaseException",
+    "UDuneCheatManager::RequestFakeGroupTravel",
+    "UDuneCheatManager::ResetCurrentDungeon",
+    "UDuneCheatManager::ResetCurrentDungeonRoom",
+    "UDuneCheatManager::ResetVendorStockData",
+    "UDuneCheatManager::ReturnToHomeDimension",
+    "UDuneCheatManager::SandBuildupSetOnAllObjects",
+    "UDuneCheatManager::ScheduleMTXEvent",
+    "UDuneCheatManager::ScheduleMTXEventJson",
+    "UDuneCheatManager::SetEyesOfIbad",
+    "UDuneCheatManager::SetUpItemList",
+    "UDuneCheatManager::SpiceAddictionDecreaseSpiceAmount",
+    "UDuneCheatManager::SpiceFieldForceSpawnNearestField",
+    "UDuneCheatManager::SpiceFieldPrimeNearestField",
+    "UDuneCheatManager::SpiceFieldPrimeRandomField",
+    "UDuneCheatManager::SpiceFieldPrintNearestFieldInfo",
+    "UDuneCheatManager::SpiceFieldReplenishNearestField",
+    "UDuneCheatManager::SpiceFieldSetAgeForNearestField",
+    "UDuneCheatManager::SpiceFieldSetFieldSpawnRate",
+    "UDuneCheatManager::SpiceFieldSetSpawningEnabled",
+    "UDuneCheatManager::SpiceFieldShowNearestFieldContents",
+    "UDuneCheatManager::SpiceFieldTeleportToNearestField",
+    "UDuneCheatManager::SpiceFieldUpdateGlobalRules",
+    "UDuneCheatManager::TestDatabaseTransaction",
+    "UDuneCheatManager::TestDatabaseTransactionDataChange",
+    "UDuneCheatManager::TestIgwObjectFollowRemotePlayer",
+    "UDuneCheatManager::TravelToDimension",
+    "UDuneCheatManager::VisitFriend",
+    "UDuneS2sCheatManager::EncountersRandomSetEnabled",
+    "UDuneS2sCheatManager::EncountersRandomSetInstigationAroundPlayersDelayInSec",
+    "UDuneS2sCheatManager::EncountersRandomSetInstigationAroundPlayersEnabled",
+    "UDuneS2sCheatManager::EncountersRandomSetInstigationAroundPlayersRadius",
+    "UDuneS2sCheatManager::EncountersRandomSetInstigationByAreaDelayInSecOverride",
+    "UDuneS2sCheatManager::EncountersRandomSetInstigationByAreaEnabled",
+    "UDuneS2sCheatManager::EncountersRandomSetInstigationOnWholeServerDelayInSec",
+    "UDuneS2sCheatManager::EncountersRandomSetInstigationOnWholeServerEnabled",
+    "UDuneS2sCheatManager::EncountersRandomSetInstigationOnWholeServerForced",
+    "UDuneS2sCheatManager::EncountersSetAreaLimitsEnabled",
+    "UDuneS2sCheatManager::EncountersSetEnabled",
+    "UDuneS2sCheatManager::EncountersSetSpawnCooldownEnabled",
+    "UFlsCharacterTransfersCheatManager::FlsRestoreAllTokens",
+    "UFlsCheatManager::GetFlsPlayerSession",
+    "UFlsPlayerAccountCheatManager::FlsDeletePlayerAccountData",
+    "UFlsPlayerAccountCheatManager::FlsSetIsDemoAccount",
+    "UFlsPlayerAccountCheatManager::FlsUpdateDemoPlaytime",
+    "UFlsPlayerRewardsCheatManager::FlsClaimPendingRewards",
+    "UOvermapCheatManager::OvermapTravelToDimension",
+]
+
 CHEAT_SCRIPTS = {
     "LeaveMeAlone": ["EncountersDestroyAndDisableAll", "DestroyAllNpcs", "SetAutoSandstormSpawnEnabled 0", "DestroyAllSandStorms", "ServerExec sandworm.dune.Enabled 0"],
     "StartHitchVehicleTest": ["ServerExec t.maxfps 20", "ServerExec CauseHitchesPeriod 10", "ServerExec CauseHitchesHitchMS 1000", "ServerExec CauseHitches 1", "ServerExec t.UnsteadyFps 1", "CauseHitchesPeriod 20", "CauseHitchesHitchMS 200", "CauseHitches 1", "t.UnsteadyFps 1"],
@@ -52,6 +155,52 @@ STATUSES = {
 }
 
 
+def classify_binary_method(method):
+    class_name, method_name = method.split("::", 1)
+    command = next((item for item in COMMANDS if item["name"] == method_name), None)
+    if command is not None:
+        status = "allow-listed" if command["status"] != "rejected" else "rejected"
+        tier = command["tier"]
+        notes = command["notes"]
+    elif method == "UOvermapCheatManager::OvermapTravelToDimension":
+        status = "format-evidence-only"
+        tier = "movement"
+        notes = "Overmap-specific dimension travel; not in the shipped dedicated-server GM allow-list."
+    else:
+        status = "binary-only-unverified"
+        tier = infer_tier(method_name)
+        notes = "Recovered from cheat-manager method strings; not in the shipped dedicated-server GM allow-list."
+    return {
+        "class": class_name,
+        "method": method_name,
+        "qualifiedName": method,
+        "tier": tier,
+        "status": status,
+        "notes": notes,
+    }
+
+
+def infer_tier(name):
+    lowered = name.lower()
+    if lowered.startswith("conditionslog") or "print" in lowered or "show" in lowered or "info" in lowered:
+        return "inspection"
+    if "teleport" in lowered or "travel" in lowered or "visit" in lowered or "returntohome" in lowered:
+        return "movement"
+    if "item" in lowered or "weapon" in lowered or "inventory" in lowered or "claim" in lowered or "reward" in lowered:
+        return "inventory"
+    if "seed" in lowered or "database" in lowered or "fls" in lowered or "transfer" in lowered:
+        return "account-data"
+    if "reset" in lowered or "delete" in lowered or "destroy" in lowered or "clear" in lowered:
+        return "destructive"
+    if "spicefield" in lowered or "encounter" in lowered or "vendor" in lowered:
+        return "world-mutation"
+    if "spawn" in lowered or "vehicle" in lowered:
+        return "spawn"
+    if "achievement" in lowered or "dungeon" in lowered or "contract" in lowered:
+        return "progression"
+    return "misc"
+
+
 def catalog():
     return {
         "confidence": "moderate",
@@ -62,6 +211,7 @@ def catalog():
         },
         "statuses": STATUSES,
         "commands": COMMANDS,
+        "binaryMethods": [classify_binary_method(method) for method in BINARY_METHODS],
         "cheatScripts": [{"name": name, "commands": commands, "status": "cataloged"} for name, commands in sorted(CHEAT_SCRIPTS.items())],
     }
 
@@ -77,6 +227,15 @@ def markdown(data):
     ]
     for command in data["commands"]:
         lines.append(f"| {command['name']} | {command['tier']} | {command['status']} | `{command['syntax']}` | {command['chat'] or 'none'} |")
+    lines.extend(["", "## Full Binary Cheat-Manager Methods", ""])
+    lines.extend([
+        f"Recovered method count: {len(data['binaryMethods'])}. These are binary-resident methods, not automatically callable dedicated-server commands.",
+        "",
+        "| Qualified method | Tier | Status |",
+        "| --- | --- | --- |",
+    ])
+    for method in data["binaryMethods"]:
+        lines.append(f"| `{method['qualifiedName']}` | {method['tier']} | {method['status']} |")
     lines.extend(["", "## Cheat Scripts", ""])
     for script in data["cheatScripts"]:
         lines.append(f"- `{script['name']}`: " + "; ".join(f"`{line}`" for line in script["commands"]))
@@ -88,17 +247,23 @@ def main():
     parser.add_argument("--format", choices=("json", "markdown", "names"), default="json")
     parser.add_argument("--tier")
     parser.add_argument("--status")
+    parser.add_argument("--include-binary-methods", action="store_true", help="Include recovered binary-only cheat-manager methods in names output.")
     args = parser.parse_args()
     data = catalog()
     if args.tier:
         data["commands"] = [command for command in data["commands"] if command["tier"] == args.tier]
+        data["binaryMethods"] = [method for method in data["binaryMethods"] if method["tier"] == args.tier]
     if args.status:
         data["commands"] = [command for command in data["commands"] if command["status"] == args.status]
+        data["binaryMethods"] = [method for method in data["binaryMethods"] if method["status"] == args.status]
     if args.format == "markdown":
         print(markdown(data), end="")
     elif args.format == "names":
         for command in data["commands"]:
             print(command["name"])
+        if args.include_binary_methods:
+            for method in data["binaryMethods"]:
+                print(method["qualifiedName"])
     else:
         print(json.dumps(data, indent=2))
 

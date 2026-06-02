@@ -120,7 +120,7 @@ check_repo_config() {
       return 1
     fi
   done
-  printf 'repo_config=%s contains DeepDesert and DeepDesert_1 landclaim entries\n' "$target_config"
+  printf 'repo_config=%s contains DeepDesert and DeepDesert_1 landclaim and BRT map restriction entries\n' "$target_config"
 }
 
 check_compose_surface() {
@@ -195,7 +195,7 @@ verify_copied_config() {
       return 1
     fi
   done
-  printf 'copied_config=%s contains DeepDesert BRT landclaim candidate\n' "$copied_config"
+  printf 'copied_config=%s contains DeepDesert landclaim and BRT map restriction candidate\n' "$copied_config"
 }
 
 preflight() {
@@ -255,7 +255,7 @@ Next downtime BRT/DD rollout:
    make brt-dd-live-logs ENV_FILE=.env
 
 Rollback is to restore the previous ${target_config}
-m_MaxLandclaimSegmentsPerMap line and rerun step 3.
+m_MaxLandclaimSegmentsPerMap and m_BaseBackupToolMapRestriction lines, then rerun step 3.
 USAGE
 }
 

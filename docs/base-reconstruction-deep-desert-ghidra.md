@@ -67,6 +67,11 @@ Findings:
   only accepts that map name.
 - Existing repo config allowed landclaim segments only for `HaggaBasin` and
   `Survival_1`. Deep Desert had no `m_MaxLandclaimSegmentsPerMap` entry.
+- Follow-up live testing showed the landclaim candidate did apply to DD#1, but
+  the client still reported the BRT as not allowed in the region. The shipped
+  `m_BaseBackupToolMapRestriction` default only lists `HaggaBasin`,
+  `Editor_Default`, and `IGW_Test_Small`, which is a closer match for that
+  exact failure text.
 
 ## Candidate Change
 
@@ -74,6 +79,7 @@ Add both Deep Desert identifiers to `[/Script/DuneSandbox.BuildingSettings]`:
 
 ```ini
 m_MaxLandclaimSegmentsPerMap=(((Name="HaggaBasin"), 6),((Name="Survival_1"), 6),((Name="DeepDesert"), 6),((Name="DeepDesert_1"), 6))
+m_BaseBackupToolMapRestriction=((Name="HaggaBasin"), (Name="Survival_1"), (Name="DeepDesert"), (Name="DeepDesert_1"), (Name="Editor_Default"), (Name="IGW_Test_Small"))
 ```
 
 The repo configs now include this candidate for the full config files and the
@@ -84,9 +90,10 @@ until runtime evidence proves which name the landclaim/BRT path uses.
 
 ### Next Downtime Live Candidate
 
-Confidence: moderate that the first live candidate is enabling Deep Desert map
-names in `m_MaxLandclaimSegmentsPerMap` and restarting only the Deep Desert map
-service so the server copies the updated config.
+Confidence: high that the landclaim-only candidate was deployed to DD#1 on
+2026-06-02, and moderate-to-high that the next live candidate should also add
+Deep Desert map names to `m_BaseBackupToolMapRestriction`. Restart only the Deep
+Desert map service so the server copies the updated config.
 
 The automatic next-downtime path is:
 
@@ -177,6 +184,7 @@ as `DeepDesert_1` dimension `0`, and verifies the copied
 
 ```text
 m_MaxLandclaimSegmentsPerMap=...DeepDesert...DeepDesert_1...
+m_BaseBackupToolMapRestriction=...DeepDesert...DeepDesert_1...
 m_BaseBackupMaxExtensions=8
 m_bBuildingRestrictionLimitsEnabled=True
 ```

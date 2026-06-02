@@ -130,7 +130,7 @@ check_repo_config() {
     check_rendered_patterns "$file" "$rendered" "${required_config_patterns[@]}"
   done
   check_dd1_no_shift_config "$target_config"
-  printf 'repo configs contain DeepDesert landclaim entries and DD#1 no-shift/no-wipe guardrails\n'
+  printf 'repo configs contain DeepDesert landclaim and BRT map restriction entries plus DD#1 no-shift/no-wipe guardrails\n'
 }
 
 container_id() {

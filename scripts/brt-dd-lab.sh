@@ -172,7 +172,7 @@ verify_copied_config() {
       return 1
     fi
   done
-  printf 'copied_config=%s contains DeepDesert BRT landclaim candidate\n' "$copied"
+  printf 'copied_config=%s contains DeepDesert landclaim and BRT map restriction candidate\n' "$copied"
 }
 
 verify_config() {

@@ -107,6 +107,13 @@ strings and embedded mangled fragments in the current binary. Treat these as
 binary-resident cheat-manager methods, not automatically callable dedicated
 server commands. The extractor returns `count=100` for this build.
 
+The same 100 recovered methods are also exposed by
+`scripts/gm-command-catalog.py` as `binaryMethods`. Use:
+
+```bash
+./scripts/gm-command-catalog.py --format names --include-binary-methods
+```
+
 ### `UCharacterTransferCheatManager`
 
 - `CharacterTransfer_CancelCurrentTransfer`

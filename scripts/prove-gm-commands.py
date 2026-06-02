@@ -85,6 +85,13 @@ REJECTED_DETAIL = {
     "proofOrder": 0,
     "liveEligible": False,
 }
+BINARY_METHOD_DETAIL = {
+    "fixture": "Static binary inventory only; method was recovered from cheat-manager strings.",
+    "passCriteria": "Classify allow-list exposure and exact handler/payload contract before any execution attempt.",
+    "rollback": "None; do not execute from this static inventory.",
+    "proofOrder": 80,
+    "liveEligible": False,
+}
 
 
 def load_catalog():
@@ -229,6 +236,39 @@ def build_rows(args):
             )
             row["result"] = "executed-safe-probe" if row["evidence"]["returnCode"] == 0 else "safe-probe-failed"
         rows.append(row)
+    if args.include_binary_methods:
+        binary_methods = data.get("binaryMethods", [])
+        if args.command:
+            requested = set(args.command)
+            binary_methods = [
+                method for method in binary_methods
+                if method["method"] in requested or method["qualifiedName"] in requested
+            ]
+        operational_names = {command["name"] for command in commands}
+        for method in binary_methods:
+            if method["method"] in operational_names:
+                continue
+            rows.append(
+                {
+                    "command": method["qualifiedName"],
+                    "tier": method["tier"],
+                    "catalogStatus": method["status"],
+                    "syntax": method["method"],
+                    "proofStage": "binary-method-static-only",
+                    "nonDisruptiveRequirement": "Static classification only; binary-only methods are not shipped dedicated-server GM commands until proven otherwise.",
+                    "defaultAction": "do not execute.",
+                    "confidence": "moderate",
+                    **BINARY_METHOD_DETAIL,
+                    "preview": {
+                        "route": args.route,
+                        "commandText": method["method"],
+                        "targetPlayer": args.target_player,
+                        "adminPlayer": args.admin_player,
+                        "status": "static-only",
+                    },
+                    "result": "not-run",
+                }
+            )
     return {
         "ok": True,
         "confidence": "moderate",
@@ -274,6 +314,7 @@ def main():
     parser.add_argument("--host", default="")
     parser.add_argument("--command", action="append", help="Limit to one command name. Repeatable.")
     parser.add_argument("--execute-safe", action="store_true", help="Execute only harmless route probes: PrintAllowedCommands and PrintPos.")
+    parser.add_argument("--include-binary-methods", action="store_true", help="Include static-only rows for recovered binary cheat-manager methods.")
     parser.add_argument("--wait-response", type=float, default=3.0)
     parser.add_argument("--mode", action="append", default=[], help="Limit probe-gm-command envelope modes when --execute-safe is set.")
     parser.add_argument("--format", choices=("json", "markdown"), default="json")

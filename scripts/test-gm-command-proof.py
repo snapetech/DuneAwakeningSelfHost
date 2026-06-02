@@ -54,6 +54,25 @@ class GmCommandProofPolicyTests(unittest.TestCase):
         self.assertFalse(policy["liveEligible"])
         self.assertIn("exact command arguments", policy["fixture"])
 
+    def test_include_binary_methods_adds_static_only_rows(self):
+        class Args:
+            route = "Survival_11"
+            target_player = "Target"
+            admin_player = "Admin"
+            host = "kspld0"
+            command = []
+            execute_safe = False
+            wait_response = 0
+            mode = []
+            include_binary_methods = True
+
+        payload = prove_gm_commands.build_rows(Args())
+        rows = {row["command"]: row for row in payload["commands"]}
+        key = "UDuneCheatManager::CoriolisSetPartitionSeed"
+        self.assertIn(key, rows)
+        self.assertEqual(rows[key]["proofStage"], "binary-method-static-only")
+        self.assertEqual(rows[key]["defaultAction"], "do not execute.")
+
 
 if __name__ == "__main__":
     unittest.main()
