@@ -71,6 +71,11 @@ if [[ "$landsraad_vendor_gate_enabled" == "true" ]] && file_exists compose.lands
   add_file compose.landsraad-vendor-faction-gate.yaml
 fi
 
+brt_dd_invalid_map_enabled="${DUNE_BRT_DD_INVALID_MAP_BINARY_PATCH_ENABLED:-$(read_env DUNE_BRT_DD_INVALID_MAP_BINARY_PATCH_ENABLED)}"
+if [[ "$brt_dd_invalid_map_enabled" == "true" ]] && file_exists compose.brt-dd-invalid-map.yaml; then
+  add_file compose.brt-dd-invalid-map.yaml
+fi
+
 fls_ipv4_hosts_enabled="${DUNE_FLS_IPV4_HOSTS_ENABLED:-$(read_env DUNE_FLS_IPV4_HOSTS_ENABLED)}"
 fls_ipv4_hosts_enabled="${fls_ipv4_hosts_enabled:-true}"
 if [[ "$fls_ipv4_hosts_enabled" == "true" ]] && file_exists compose.fls-ipv4-hosts.yaml; then

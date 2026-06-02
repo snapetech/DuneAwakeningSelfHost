@@ -39,6 +39,10 @@ required_config_patterns=(
   'm_BaseBackupToolMapRestriction=.*DeepDesert_1'
 )
 
+dd_brt_bypass_patterns=(
+  'm_bBuildingRestrictionLimitsEnabled=False'
+)
+
 dd1_no_shift_patterns=(
   'm_ShiftingSands=False'
   'm_bCoriolisAutoSpawnEnabled=False'
@@ -116,7 +120,7 @@ check_dd1_no_shift_config() {
     return 1
   fi
   rendered="$(cat "$file")"
-  check_rendered_patterns "$file" "$rendered" "${required_config_patterns[@]}" "${dd1_no_shift_patterns[@]}"
+  check_rendered_patterns "$file" "$rendered" "${required_config_patterns[@]}" "${dd_brt_bypass_patterns[@]}" "${dd1_no_shift_patterns[@]}"
 }
 
 check_repo_config() {
@@ -128,6 +132,10 @@ check_repo_config() {
     fi
     rendered="$(cat "$file")"
     check_rendered_patterns "$file" "$rendered" "${required_config_patterns[@]}"
+  done
+  for file in config/UserGame.deep-desert-coriolis.ini config/UserGame.deep-desert-pvp.ini; do
+    rendered="$(cat "$file")"
+    check_rendered_patterns "$file" "$rendered" "${dd_brt_bypass_patterns[@]}"
   done
   check_dd1_no_shift_config "$target_config"
   printf 'repo configs contain DeepDesert landclaim and BRT map restriction entries plus DD#1 no-shift/no-wipe guardrails\n'
@@ -149,7 +157,7 @@ deep_desert_ready() {
 
   rendered="$("$runtime" exec "$id" sh -lc "test -f '$copied_config' && cat '$copied_config'" 2>/dev/null || true)"
   [[ -n "$rendered" ]] || return 1
-  check_rendered_patterns "$copied_config" "$rendered" "${required_config_patterns[@]}" "${dd1_no_shift_patterns[@]}" || return 1
+  check_rendered_patterns "$copied_config" "$rendered" "${required_config_patterns[@]}" "${dd_brt_bypass_patterns[@]}" "${dd1_no_shift_patterns[@]}" || return 1
 
   if [[ -n "$(postgres_id)" ]]; then
     row="$("${compose[@]}" exec -T postgres psql -U dune -d "$db" -Atc "

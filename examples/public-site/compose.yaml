@@ -16,6 +16,10 @@ services:
     security_opt:
       - no-new-privileges:true
     volumes:
+      - ../../vendor/bin/rg:/usr/local/bin/rg:ro
+      - ../../vendor/bin/busybox:/usr/local/bin/busybox:ro
+      - ../../vendor/bin/jq:/usr/local/bin/jq:ro
+      - ../../vendor/bin/curl:/usr/local/bin/curl:ro
       - ./dune-public-caddy.Caddyfile:/etc/caddy/Caddyfile:ro
       - /srv/dash-public-site:/srv/dash-public-site:ro
       - caddy-data:/data

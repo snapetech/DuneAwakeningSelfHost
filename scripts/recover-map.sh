@@ -77,6 +77,21 @@ wait_for_healthy() {
   return 1
 }
 
+run_post_start_health() {
+  case "${DUNE_RECOVER_MAP_POST_START_HEALTH_ENABLED:-true}" in
+    1|true|yes|on|TRUE|True|YES|ON) ;;
+    *) return 0 ;;
+  esac
+
+  if [[ -x "$script_dir/restart-post-start-health.sh" ]]; then
+    printf 'running post-start health hooks\n'
+    ENV_FILE="$env_file" "$script_dir/restart-post-start-health.sh"
+  elif [[ -x "$script_dir/verify-rmq-auth-path.sh" ]]; then
+    printf 'running post-start RMQ/auth verification\n'
+    ENV_FILE="$env_file" "$script_dir/verify-rmq-auth-path.sh"
+  fi
+}
+
 printf 'starting stateful dependencies\n'
 "${compose[@]}" up -d --no-recreate postgres admin-rmq game-rmq
 wait_for_healthy postgres
@@ -136,6 +151,8 @@ if [[ "${ready_count:-0}" != "1" ]]; then
   printf 'partition %s did not become ready/alive/active after %s seconds\n' "$partition_id" "$wait_seconds" >&2
   exit 1
 fi
+
+run_post_start_health
 
 psql -c "
 select wp.partition_id, wp.server_id, wp.map, fs.ready, fs.alive, asi.server_id is not null as active

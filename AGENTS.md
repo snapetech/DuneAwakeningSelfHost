@@ -10,6 +10,14 @@
   the target host with `hostname`. If it is not `kspls0`, stop and connect to
   `kspls0`.
 - Do not run production mutations through `docker compose` from `kspld0`.
+- Do not manually recreate/start live game-map containers with raw
+  `docker compose up`, `docker compose restart`, or `docker compose start`
+  unless you immediately run `scripts/restart-post-start-health.sh` on
+  `kspls0` afterward and verify the logoff timer runtime patch with
+  `scripts/patch-logoff-timers-runtime.sh --local --dry-run`. Prefer
+  `scripts/restart-target.sh`, `scripts/recover-map.sh`, or
+  `scripts/start-map-with-post-hooks.sh`, because those paths run the
+  post-start hooks that restore process-local patches.
 
 ## Reverse engineering tooling
 

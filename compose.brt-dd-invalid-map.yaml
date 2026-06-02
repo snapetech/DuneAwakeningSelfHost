@@ -1,0 +1,9 @@
+x-brt-dd-invalid-map-patch: &brt-dd-invalid-map-patch
+  environment:
+    DUNE_BRT_DD_INVALID_MAP_BINARY_PATCH_ENABLED: "true"
+    DUNE_BRT_DD_ACTION_GATE_BINARY_PATCH_ENABLED: "true"
+    DUNE_BRT_DD_TOOL_ENABLE_BINARY_PATCH_ENABLED: "false"
+
+services:
+  deep-desert: *brt-dd-invalid-map-patch
+  deep-desert-pvp: *brt-dd-invalid-map-patch

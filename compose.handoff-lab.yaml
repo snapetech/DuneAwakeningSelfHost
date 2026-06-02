@@ -1,6 +1,10 @@
 services:
   postgres:
     volumes:
+      - ./vendor/bin/rg:/usr/local/bin/rg:ro
+      - ./vendor/bin/busybox:/usr/local/bin/busybox:ro
+      - ./vendor/bin/jq:/usr/local/bin/jq:ro
+      - ./vendor/bin/curl:/usr/local/bin/curl:ro
       - ./data/handoff-lab/postgres:/var/lib/postgresql/data
     ports: !override
       - "127.0.0.1:${HANDOFF_LAB_POSTGRES_LOCAL_PORT:-16431}:5432"
@@ -11,6 +15,10 @@ services:
 
   admin-rmq:
     volumes:
+      - ./vendor/bin/rg:/usr/local/bin/rg:ro
+      - ./vendor/bin/busybox:/usr/local/bin/busybox:ro
+      - ./vendor/bin/jq:/usr/local/bin/jq:ro
+      - ./vendor/bin/curl:/usr/local/bin/curl:ro
       - ./config/rabbitmq-enabled-plugins:/etc/rabbitmq/enabled_plugins:ro
       - ./config/rabbitmq-admin.conf:/etc/rabbitmq/conf.d/99-dune.conf:ro
       - ./data/handoff-lab/rabbitmq/admin:/var/lib/rabbitmq
@@ -23,6 +31,10 @@ services:
 
   game-rmq:
     volumes:
+      - ./vendor/bin/rg:/usr/local/bin/rg:ro
+      - ./vendor/bin/busybox:/usr/local/bin/busybox:ro
+      - ./vendor/bin/jq:/usr/local/bin/jq:ro
+      - ./vendor/bin/curl:/usr/local/bin/curl:ro
       - ./config/rabbitmq-enabled-plugins:/etc/rabbitmq/enabled_plugins:ro
       - ./config/rabbitmq-game.conf:/etc/rabbitmq/conf.d/99-dune.conf:ro
       - ./config/tls/rabbitmq/ca.crt:/etc/rabbitmq/cacert.pem:ro
@@ -112,6 +124,7 @@ services:
       DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED: ${DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED:-false}
       DUNE_BUILDING_PIECE_LIMIT: ${DUNE_BUILDING_PIECE_LIMIT:-7500}
       DUNE_LANDSRAAD_VENDOR_FACTION_GATE_PATCH_ENABLED: ${DUNE_LANDSRAAD_VENDOR_FACTION_GATE_PATCH_ENABLED:-false}
+      DUNE_BRT_DD_INVALID_MAP_BINARY_PATCH_ENABLED: ${DUNE_BRT_DD_INVALID_MAP_BINARY_PATCH_ENABLED:-false}
       DUNE_OODLE_LIBRARY: ${DUNE_OODLE_LIBRARY:-/tmp/oodle/liboodle-data-shared.so}
     ports: !override
       - "${HANDOFF_LAB_GAME_UDP_PORT:-17777}:7777/udp"

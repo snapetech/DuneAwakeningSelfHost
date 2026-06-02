@@ -84,6 +84,19 @@ BUILDING_SERVER_SIGNATURE = [
 ]
 
 
+# Building-piece composed/server cap check. Ghidra/file offset 0xcf011e4 is
+# the `je` to a fail block that writes enum 0x80
+# (Fail_ReachedBuildableStructureComposedLimitInServer).
+BUILDING_COMPOSED_SERVER_SIGNATURE = [
+    0x48, 0x89, 0xdf,                            # mov rdi, rbx
+    0xe8, None, None, None, None,                # call 0xedf0f20
+    0x84, 0xc0,                                  # test al, al
+    0x0f, 0x84, None, None, None, None,          # je <fail>  (PATCH)
+    0x48, 0x8b, 0x05, None, None, None, None,    # mov rax, [rip+disp]
+    0xc5, 0xf8, 0x28, 0x05,                     # vmovaps xmm0, ...
+]
+
+
 # Building-piece map-wide cap check. Ghidra/file offset 0xcf027e6 is the `je`
 # to a fail block that writes enum 0x7f
 # (Fail_ReachedBuildableStructureLimitInMap).
@@ -91,6 +104,19 @@ BUILDING_MAP_SIGNATURE = [
     0xc4, 0xc1, 0x7c, 0x11, 0x44, 0x24, 0x44,    # vmovups [r12+0x44], ymm0
     0xe9, None, None, None, None,                # jmp <rel32>
     0x4c, 0x89, 0xf7,                            # mov rdi, r14
+    0xe8, None, None, None, None,                # call 0xedf0f20
+    0x84, 0xc0,                                  # test al, al
+    0x0f, 0x84, None, None, None, None,          # je <fail>  (PATCH)
+    0x48, 0x8b, 0x05, None, None, None, None,    # mov rax, [rip+disp]
+    0xc5, 0xf8, 0x28, 0x05,                     # vmovaps xmm0, ...
+]
+
+
+# Building-piece composed/map cap check. Ghidra/file offset 0xcf02a62 is the
+# `je` to a fail block that writes enum 0x81
+# (Fail_ReachedBuildableStructureComposedLimitInMap).
+BUILDING_COMPOSED_MAP_SIGNATURE = [
+    0x48, 0x8b, 0xbd, 0xf8, 0xfe, 0xff, 0xff,    # mov rdi, [rbp-0x108]
     0xe8, None, None, None, None,                # call 0xedf0f20
     0x84, 0xc0,                                  # test al, al
     0x0f, 0x84, None, None, None, None,          # je <fail>  (PATCH)
@@ -114,12 +140,26 @@ TARGETS = {
         je_offset=14,
         expected_fail_enum=0x7e,
     ),
+    "building-composed-server": PatchTarget(
+        name="building-composed-server",
+        description="server-wide composed building-piece cap",
+        signature=BUILDING_COMPOSED_SERVER_SIGNATURE,
+        je_offset=10,
+        expected_fail_enum=0x80,
+    ),
     "building-map": PatchTarget(
         name="building-map",
         description="map-wide building-piece structure cap",
         signature=BUILDING_MAP_SIGNATURE,
         je_offset=22,
         expected_fail_enum=0x7f,
+    ),
+    "building-composed-map": PatchTarget(
+        name="building-composed-map",
+        description="map-wide composed building-piece cap",
+        signature=BUILDING_COMPOSED_MAP_SIGNATURE,
+        je_offset=14,
+        expected_fail_enum=0x81,
     ),
 }
 
@@ -224,9 +264,20 @@ def find_patch_site(data: bytes, target: PatchTarget) -> tuple[int, bool]:
 
 def selected_targets(name: str) -> list[PatchTarget]:
     if name == "all":
-        return [TARGETS["subfief"], TARGETS["building-server"], TARGETS["building-map"]]
+        return [
+            TARGETS["subfief"],
+            TARGETS["building-server"],
+            TARGETS["building-composed-server"],
+            TARGETS["building-map"],
+            TARGETS["building-composed-map"],
+        ]
     if name == "building":
-        return [TARGETS["building-server"], TARGETS["building-map"]]
+        return [
+            TARGETS["building-server"],
+            TARGETS["building-composed-server"],
+            TARGETS["building-map"],
+            TARGETS["building-composed-map"],
+        ]
     return [TARGETS[name]]
 
 

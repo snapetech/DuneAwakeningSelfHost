@@ -36,6 +36,7 @@ required_config_patterns=(
   'm_MaxLandclaimSegmentsPerMap=.*DeepDesert_1'
   'm_BaseBackupToolMapRestriction=.*DeepDesert'
   'm_BaseBackupToolMapRestriction=.*DeepDesert_1'
+  'm_bBuildingRestrictionLimitsEnabled=False'
 )
 
 if [[ -z "$cmd" || "$cmd" == "-h" || "$cmd" == "--help" ]]; then

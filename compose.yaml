@@ -15,12 +15,20 @@ x-game-server-base: &game-server-base
     DUNE_SUBFIEF_CAP_BINARY_PATCH_ENABLED: ${DUNE_SUBFIEF_CAP_BINARY_PATCH_ENABLED:-false}
     DUNE_SUBFIEF_CAP_BINARY_TARGET: ${DUNE_SUBFIEF_CAP_BINARY_TARGET:-subfief}
     DUNE_SUBFIEF_CAP: ${DUNE_SUBFIEF_CAP:-6}
+    DUNE_BRT_DD_INVALID_MAP_BINARY_PATCH_ENABLED: ${DUNE_BRT_DD_INVALID_MAP_BINARY_PATCH_ENABLED:-false}
+    DUNE_BRT_DD_ACTION_GATE_BINARY_PATCH_ENABLED: ${DUNE_BRT_DD_ACTION_GATE_BINARY_PATCH_ENABLED:-false}
+    DUNE_BRT_DD_TOOL_ENABLE_BINARY_PATCH_ENABLED: ${DUNE_BRT_DD_TOOL_ENABLE_BINARY_PATCH_ENABLED:-false}
     DUNE_OODLE_LIBRARY: ${DUNE_OODLE_LIBRARY:-/tmp/oodle/liboodle-data-shared.so}
     WORLD_NAME: ${WORLD_NAME}
   depends_on:
     - postgres
     - admin-rmq
     - game-rmq
+
+x-rg-bin-volume: &rg-bin-volume ./vendor/bin/rg:/usr/local/bin/rg:ro
+x-busybox-bin-volume: &busybox-bin-volume ./vendor/bin/busybox:/usr/local/bin/busybox:ro
+x-jq-bin-volume: &jq-bin-volume ./vendor/bin/jq:/usr/local/bin/jq:ro
+x-curl-bin-volume: &curl-bin-volume ./vendor/bin/curl:/usr/local/bin/curl:ro
 
 x-game-server-command:
   run: &cmd-run /workspace/scripts/run_server_safe.sh
@@ -55,6 +63,10 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_DUNE_PASSWORD}
       POSTGRES_SUPER_PASSWORD: ${POSTGRES_SUPER_PASSWORD}
     volumes:
+      - *rg-bin-volume
+      - *busybox-bin-volume
+      - *jq-bin-volume
+      - *curl-bin-volume
       - ./data/postgres:/var/lib/postgresql/data
     ports:
       - "127.0.0.1:15431:5432"
@@ -78,6 +90,10 @@ services:
       RMQ_HTTP_TOKEN_AUTH_SECRET: ${RMQ_HTTP_TOKEN_AUTH_SECRET}
       FuncomLiveServices__RmqTlsEnabled: "false"
     volumes:
+      - *rg-bin-volume
+      - *busybox-bin-volume
+      - *jq-bin-volume
+      - *curl-bin-volume
       - ./config/rabbitmq-enabled-plugins:/etc/rabbitmq/enabled_plugins:ro
       - ./config/rabbitmq-admin.conf:/etc/rabbitmq/conf.d/99-dune.conf:ro
       - ./data/rabbitmq/admin:/var/lib/rabbitmq
@@ -103,6 +119,10 @@ services:
       RMQ_HTTP_TOKEN_AUTH_SECRET: ${RMQ_HTTP_TOKEN_AUTH_SECRET}
       FuncomLiveServices__RmqTlsEnabled: "true"
     volumes:
+      - *rg-bin-volume
+      - *busybox-bin-volume
+      - *jq-bin-volume
+      - *curl-bin-volume
       - ./config/rabbitmq-enabled-plugins:/etc/rabbitmq/enabled_plugins:ro
       - ./config/rabbitmq-game.conf:/etc/rabbitmq/conf.d/99-dune.conf:ro
       - ./config/tls/rabbitmq/ca.crt:/etc/rabbitmq/cacert.pem:ro
@@ -134,6 +154,10 @@ services:
     command:
       - /workspace/scripts/rmq_auth_shim.py
     volumes:
+      - *rg-bin-volume
+      - *busybox-bin-volume
+      - *jq-bin-volume
+      - *curl-bin-volume
       - .:/workspace:ro
     depends_on:
       - text-router
@@ -151,6 +175,10 @@ services:
     command:
       - /workspace/scripts/bootstrap_db.py
     volumes:
+      - *rg-bin-volume
+      - *busybox-bin-volume
+      - *jq-bin-volume
+      - *curl-bin-volume
       - .:/workspace:ro
     depends_on:
       - postgres
@@ -190,6 +218,10 @@ services:
       HOST_DATACENTER_IP_ADDRESS: ${EXTERNAL_ADDRESS}
       FuncomLiveServices__DefaultFlsEnvironment: ${DUNE_FLS_ENV:-retail}
     volumes:
+      - *rg-bin-volume
+      - *busybox-bin-volume
+      - *jq-bin-volume
+      - *curl-bin-volume
       - ./config/director.ini:/etc/app/conf.d/director.ini:ro
     depends_on:
       - postgres
@@ -240,6 +272,11 @@ services:
       - postgres
       - admin-rmq
       - game-rmq
+    volumes:
+      - *rg-bin-volume
+      - *busybox-bin-volume
+      - *jq-bin-volume
+      - *curl-bin-volume
     networks:
       default:
         ipv4_address: 172.31.240.6
@@ -278,6 +315,10 @@ services:
       HOST_DATACENTER_ID: ${WORLD_DATACENTER_ID}
       HOST_DATACENTER_IP_ADDRESS: ${EXTERNAL_ADDRESS}
     volumes:
+      - *rg-bin-volume
+      - *busybox-bin-volume
+      - *jq-bin-volume
+      - *curl-bin-volume
       - ./config/gateway.ini:/etc/app/conf.d/gateway.ini:ro
     depends_on:
       - postgres
@@ -603,11 +644,21 @@ services:
       WORLD_NAME: ${WORLD_NAME}
       DUNE_USERGAME_CONFIG_PATH: /workspace/config/UserGame.deep-desert-coriolis.ini
       DUNE_USERENGINE_CONFIG_PATH: /workspace/config/UserEngine.deep-desert.ini
+      DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED: "true"
+      DUNE_BUILDING_PIECE_LIMIT: ${DUNE_BUILDING_PIECE_LIMIT:-7500}
+      DUNE_SUBFIEF_CAP_BINARY_PATCH_ENABLED: "true"
+      DUNE_SUBFIEF_CAP_BINARY_TARGET: ${DUNE_SUBFIEF_CAP_BINARY_TARGET:-all}
+      DUNE_SUBFIEF_CAP: ${DUNE_SUBFIEF_CAP:-6}
+      DUNE_BRT_DD_INVALID_MAP_BINARY_PATCH_ENABLED: "true"
+      DUNE_BRT_DD_ACTION_GATE_BINARY_PATCH_ENABLED: "true"
+      DUNE_BRT_DD_TOOL_ENABLE_BINARY_PATCH_ENABLED: "false"
+      DUNE_OODLE_LIBRARY: ${DUNE_OODLE_LIBRARY:-/tmp/oodle/liboodle-data-shared.so}
     ports:
       - "7784:7784/udp"
       - "7895:7895/udp"
     volumes:
       - .:/workspace:ro
+      - ${DUNE_OODLE_HOST_LIBRARY:-/home/keith/Documents/code/DuneAwakeningSelfHost/backups/operator-oodle/liboodle-data-shared.so}:/tmp/oodle/liboodle-data-shared.so:ro
       - ./data/server-saved/deep-desert:/home/dune/server/DuneSandbox/Saved
     networks:
       default:
@@ -795,6 +846,10 @@ services:
       postgres:
         condition: service_healthy
     volumes:
+      - *rg-bin-volume
+      - *busybox-bin-volume
+      - *jq-bin-volume
+      - *curl-bin-volume
       - ./admin:/workspace/admin:ro
       - ./scripts:/workspace/scripts:ro
       - ./config:/workspace/config
@@ -830,6 +885,11 @@ services:
       - admin-panel:8080
     ports:
       - "${DUNE_ADMIN_BIND_ADDRESS:-127.0.0.1}:${DUNE_ADMIN_HOST_PORT:-18080}:8080"
+    volumes:
+      - *rg-bin-volume
+      - *busybox-bin-volume
+      - *jq-bin-volume
+      - *curl-bin-volume
     networks:
       default:
         ipv4_address: 172.31.240.8
@@ -940,6 +1000,10 @@ services:
       game-rmq:
         condition: service_healthy
     volumes:
+      - *rg-bin-volume
+      - *busybox-bin-volume
+      - *jq-bin-volume
+      - *curl-bin-volume
       - ./scripts:/workspace/scripts:ro
       - ./.env:/workspace/.env:ro
       - ./backups:/workspace/backups

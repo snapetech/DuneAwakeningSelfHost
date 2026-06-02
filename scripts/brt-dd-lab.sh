@@ -34,7 +34,7 @@ required_config_patterns=(
   'm_BaseBackupToolMapRestriction=.*DeepDesert'
   'm_BaseBackupToolMapRestriction=.*DeepDesert_1'
   'm_BaseBackupMaxExtensions=8'
-  'm_bBuildingRestrictionLimitsEnabled=True'
+  'm_bBuildingRestrictionLimitsEnabled=False'
 )
 
 if [[ -z "$cmd" || "$cmd" == "-h" || "$cmd" == "--help" ]]; then

@@ -13,6 +13,10 @@ services:
       POSTGRES_PRIMARY_HOST: ${POSTGRES_PRIMARY_HOST:-postgres}
       POSTGRES_PRIMARY_PORT: ${POSTGRES_PRIMARY_PORT:-5432}
     volumes:
+      - ./vendor/bin/rg:/usr/local/bin/rg:ro
+      - ./vendor/bin/busybox:/usr/local/bin/busybox:ro
+      - ./vendor/bin/jq:/usr/local/bin/jq:ro
+      - ./vendor/bin/curl:/usr/local/bin/curl:ro
       - ./data/postgres-replica:/var/lib/postgresql/data
       - ./scripts/postgres-replica-entrypoint.sh:/workspace/scripts/postgres-replica-entrypoint.sh:ro
     command: ["/workspace/scripts/postgres-replica-entrypoint.sh"]

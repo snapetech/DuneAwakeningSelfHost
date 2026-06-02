@@ -729,6 +729,7 @@ Root-level research indexes:
 - [`scripts/check-steam-update.sh`](scripts/check-steam-update.sh): compare `.env` image pin with current Steam package tarballs.
 - [`scripts/watch-maps.sh`](scripts/watch-maps.sh): map watchdog.
 - [`scripts/recover-map.sh`](scripts/recover-map.sh): fixed-partition recovery.
+- [`scripts/start-map-with-post-hooks.sh`](scripts/start-map-with-post-hooks.sh): manual map start wrapper that runs post-start hooks and verifies runtime patches.
 - [`scripts/restart-target.sh`](scripts/restart-target.sh): scheduled restart execution hook.
 - [`scripts/install-daily-maintenance-timer.sh`](scripts/install-daily-maintenance-timer.sh): daily maintenance timer installer.
 - [`scripts/install-artificial-exchange-service.sh`](scripts/install-artificial-exchange-service.sh): artificial Exchange service installer.

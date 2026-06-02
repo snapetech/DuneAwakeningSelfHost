@@ -375,6 +375,41 @@ patch after successful restart health checks when
 `DUNE_LOGOFF_TIMER_RUNTIME_PATCH_ENABLED=true`, because the patch is
 process-local and container recreation restores the original values.
 
+### 2026-06-02 DD1 Manual Restart Incident
+
+On 2026-06-02, DD1 was recreated with a direct `docker compose up -d
+deep-desert` while repairing Lukano's Landsraad contract state. That bypassed
+`scripts/restart-post-start-health.sh`, so the DD1 process came back with the
+upstream unsafe-location logoff timers restored:
+
+```text
+30 30 0 0
+300 300 0 0
+```
+
+The repo INI values were still correct, but they only control reconnect grace.
+The unsafe-location logoff timer is process-local runtime state. Reapply it
+after any manual game-server start/recreate:
+
+```bash
+./scripts/restart-post-start-health.sh
+./scripts/patch-logoff-timers-runtime.sh --local --dry-run
+```
+
+Expected dry-run proof for affected containers is:
+
+```text
+0 0 0 0
+0 0 0 0
+deadline clamp bytes: 0x48 0x89 0xc1
+timer duration bytes: 0xc5 0xf8 0x57 0xc0 0x90
+```
+
+`scripts/restart-target.sh` already runs the post-start health script.
+`scripts/recover-map.sh` now also runs it after the recovered partition becomes
+ready/alive/active. Avoid raw Compose starts for live maps; if one is
+unavoidable, run the post-start health script before leaving the host.
+
 For the old 2026-05-24 build, it read two runtime float arrays through `gdb`. Before that patch, targeted containers had:
 
 ```text

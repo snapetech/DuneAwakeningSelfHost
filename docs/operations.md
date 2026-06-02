@@ -303,7 +303,30 @@ COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' \
   ./scripts/watch-maps.sh .env
 ```
 
-The watchdog only recovers services that already have containers; it does not start maps that were intentionally never launched. It recovers containers that are `exited` or `dead`, and it also checks running maps against Postgres for partition registration. A running map is recovered when its partition is not alive or is missing from `active_server_ids`. Recovery delegates to `scripts/recover-map.sh`, so the old partition owner is marked dead and aged out before the service starts again.
+The watchdog only recovers services that already have containers; it does not start maps that were intentionally never launched. It recovers containers that are `exited` or `dead`, and it also checks running maps against Postgres for partition registration. A running map is recovered when its partition is not alive or is missing from `active_server_ids`. Recovery delegates to `scripts/recover-map.sh`, so the old partition owner is marked dead and aged out before the service starts again. After the recovered partition is ready/alive/active, `recover-map.sh` runs `scripts/restart-post-start-health.sh`; that reapplies process-local runtime patches such as the instant-logoff timer patch. Do not replace this with a raw `docker compose up -d <map>` on live maps.
+
+If a raw Compose map start or recreate is unavoidable during live repair, finish
+with:
+
+```bash
+./scripts/restart-post-start-health.sh
+./scripts/patch-logoff-timers-runtime.sh --local --dry-run
+```
+
+The dry run must show the target containers' logoff timer arrays as `0 0 0 0`.
+On 2026-06-02, DD1 lost instant logout because it was manually recreated without
+that post-start step; the process came back with `30`/`300` second runtime
+timers despite correct INI values.
+
+For intentional manual starts, use the wrapper instead of raw Compose:
+
+```bash
+./scripts/start-map-with-post-hooks.sh .env deep-desert
+```
+
+Use `scripts/recover-map.sh` instead when the map has stale partition
+registration or `Local partition is not found`; the wrapper does not mark old
+partition owners dead.
 
 On hosts affected by the Docker bridge neighbor-learning failure, run the host
 systemd watchdog with `DUNE_WATCH_SEED_NEIGHBORS=true`. That makes the watchdog

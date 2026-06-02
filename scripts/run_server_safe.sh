@@ -6,11 +6,16 @@ main() {
   local dune_home="${DUNE_HOME:-/home/dune}"
   local dry_run="${DUNE_RUN_SERVER_SAFE_DRY_RUN:-false}"
 
+  install_workspace_tools "$dry_run"
   install_cert
   install_building_piece_limit_patch "$server_root" "$dry_run"
   install_landsraad_vendor_faction_gate_patch "$server_root" "$dry_run"
   install_subfief_cap_binary_patch "$server_root" "$dry_run"
+  install_brt_dd_invalid_map_binary_patch "$server_root" "$dry_run"
+  install_brt_dd_action_gate_binary_patch "$server_root" "$dry_run"
+  install_brt_dd_tool_enable_binary_patch "$server_root" "$dry_run"
   install_user_configs "$server_root"
+  sync_default_game_from_usergame "$server_root"
   install_server_login_password "$server_root" "$@"
   load_workspace_value DUNE_SERVER_DISPLAY_NAME
   load_workspace_value DUNE_SERVER_STARTUP_EXECCMDS
@@ -87,6 +92,52 @@ load_workspace_value() {
   export "$name"
 }
 
+install_workspace_tools() {
+  local dry_run="$1"
+
+  install_workspace_tool "rg" \
+    "${DUNE_INSTALL_RG_ENABLED:-true}" \
+    "${DUNE_RG_SOURCE:-/workspace/vendor/bin/rg}" \
+    "${DUNE_RG_TARGET:-/usr/local/bin/rg}" \
+    "$dry_run"
+  install_workspace_tool "busybox" \
+    "${DUNE_INSTALL_BUSYBOX_ENABLED:-true}" \
+    "${DUNE_BUSYBOX_SOURCE:-/workspace/vendor/bin/busybox}" \
+    "${DUNE_BUSYBOX_TARGET:-/usr/local/bin/busybox}" \
+    "$dry_run"
+  install_workspace_tool "jq" \
+    "${DUNE_INSTALL_JQ_ENABLED:-true}" \
+    "${DUNE_JQ_SOURCE:-/workspace/vendor/bin/jq}" \
+    "${DUNE_JQ_TARGET:-/usr/local/bin/jq}" \
+    "$dry_run"
+  install_workspace_tool "curl" \
+    "${DUNE_INSTALL_CURL_ENABLED:-true}" \
+    "${DUNE_CURL_SOURCE:-/workspace/vendor/bin/curl}" \
+    "${DUNE_CURL_TARGET:-/usr/local/bin/curl}" \
+    "$dry_run"
+}
+
+install_workspace_tool() {
+  local name="$1"
+  local enabled="$2"
+  local source="$3"
+  local target="$4"
+  local dry_run="$5"
+
+  [ "$enabled" = "true" ] || return 0
+  [ -x "$source" ] || return 0
+  if [ "$dry_run" = "true" ]; then
+    printf '%s install available: %s -> %s\n' "$name" "$source" "$target"
+    return 0
+  fi
+  if command -v "$name" >/dev/null 2>&1; then
+    return 0
+  fi
+  mkdir -p "$(dirname "$target")"
+  cp "$source" "$target"
+  chmod 0755 "$target"
+}
+
 install_user_configs() {
   local server_root="$1"
   local source_dir=/workspace/config
@@ -108,6 +159,53 @@ copy_user_config() {
   local target="$2"
   [ -f "$source" ] || return 0
   cp "$source" "$target"
+}
+
+sync_default_game_from_usergame() {
+  local server_root="$1"
+  local source_dir=/workspace/config
+  local user_game_config="${DUNE_USERGAME_CONFIG_PATH:-${source_dir}/UserGame.ini}"
+  local default_game_ini="$server_root/DuneSandbox/Config/DefaultGame.ini"
+  [ -f "$user_game_config" ] || return 0
+  [ -f "$default_game_ini" ] || return 0
+
+  local keys="${DUNE_DEFAULTGAME_SYNC_KEYS:-m_BaseBackupToolMapRestriction m_BaseBackupToolTimeRestrictionInSeconds m_BaseBackupMaxExtensions m_bBuildingRestrictionLimitsEnabled m_MaxLandclaimSegmentsPerMap m_MaxNumLandclaimSegments}"
+  local key value
+  for key in $keys; do
+    value="$(extract_ini_assignment "$user_game_config" "$key")"
+    [ -n "$value" ] || continue
+    replace_or_append_ini_assignment "$default_game_ini" "$key" "$value"
+  done
+}
+
+extract_ini_assignment() {
+  local ini_file="$1"
+  local key="$2"
+  awk -v key="$key" '
+    $0 ~ "^[[:space:]]*;?[[:space:]]*" key "=" {
+      line = $0
+      sub(/^[[:space:]]*;?[[:space:]]*/, "", line)
+      value = line
+    }
+    END {
+      if (value != "") {
+        print value
+      }
+    }
+  ' "$ini_file"
+}
+
+replace_or_append_ini_assignment() {
+  local ini_file="$1"
+  local key="$2"
+  local assignment="$3"
+  local escaped_key
+  escaped_key="$(printf '%s' "$key" | sed -e 's/[][\.^$*+?{}|()]/\\&/g')"
+  if grep -Eq "^[[:space:]]*;?[[:space:]]*${escaped_key}=" "$ini_file"; then
+    sed -i -E "s|^[[:space:]]*;?[[:space:]]*${escaped_key}=.*|${assignment}|" "$ini_file"
+  else
+    printf '\n%s\n' "$assignment" >> "$ini_file"
+  fi
 }
 
 install_server_login_password() {
@@ -193,6 +291,23 @@ engine_ini_quote() {
   printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/[&/]/\\&/g'
 }
 
+resolve_oodle_library() {
+  local configured="${1:-/tmp/oodle/liboodle-data-shared.so}"
+  local fallback=/workspace/backups/operator-oodle/liboodle-data-shared.so
+
+  if [ -f "$configured" ]; then
+    printf '%s\n' "$configured"
+    return 0
+  fi
+
+  if [ -f "$fallback" ]; then
+    printf '%s\n' "$fallback"
+    return 0
+  fi
+
+  printf '%s\n' "$configured"
+}
+
 install_cert() {
   local service_account=/var/run/secrets/kubernetes.io/serviceaccount
   if [ -d "$service_account" ]; then
@@ -208,7 +323,8 @@ install_building_piece_limit_patch() {
 
   local limit="${DUNE_BUILDING_PIECE_LIMIT:-7500}"
   local pak="${DUNE_BUILDING_PIECE_LIMIT_PAK:-$server_root/DuneSandbox/Content/Paks/pakchunk0-LinuxServer.pak}"
-  local oodle="${DUNE_OODLE_LIBRARY:-/tmp/oodle/liboodle-data-shared.so}"
+  local oodle
+  oodle="$(resolve_oodle_library "${DUNE_OODLE_LIBRARY:-/tmp/oodle/liboodle-data-shared.so}")"
 
   if [ "$dry_run" = "true" ]; then
     python3 /workspace/scripts/patch-building-piece-limit-pak.py \
@@ -249,13 +365,68 @@ install_subfief_cap_binary_patch() {
     --new-cap "$cap"
 }
 
+install_brt_dd_invalid_map_binary_patch() {
+  local server_root="$1"
+  local dry_run="$2"
+  [ "${DUNE_BRT_DD_INVALID_MAP_BINARY_PATCH_ENABLED:-false}" = "true" ] || return 0
+
+  local binary="${DUNE_BRT_DD_INVALID_MAP_BINARY:-$server_root/DuneSandbox/Binaries/Linux/DuneSandboxServer-Linux-Shipping}"
+
+  if [ "$dry_run" = "true" ]; then
+    python3 /workspace/scripts/patch-brt-dd-invalid-map-binary.py \
+      --binary "$binary" \
+      --dry-run
+    return 0
+  fi
+
+  python3 /workspace/scripts/patch-brt-dd-invalid-map-binary.py \
+    --binary "$binary"
+}
+
+install_brt_dd_action_gate_binary_patch() {
+  local server_root="$1"
+  local dry_run="$2"
+  [ "${DUNE_BRT_DD_ACTION_GATE_BINARY_PATCH_ENABLED:-false}" = "true" ] || return 0
+
+  local binary="${DUNE_BRT_DD_ACTION_GATE_BINARY:-$server_root/DuneSandbox/Binaries/Linux/DuneSandboxServer-Linux-Shipping}"
+
+  if [ "$dry_run" = "true" ]; then
+    python3 /workspace/scripts/patch-brt-dd-action-gate-binary.py \
+      --binary "$binary" \
+      --dry-run
+    return 0
+  fi
+
+  python3 /workspace/scripts/patch-brt-dd-action-gate-binary.py \
+    --binary "$binary"
+}
+
+install_brt_dd_tool_enable_binary_patch() {
+  local server_root="$1"
+  local dry_run="$2"
+  [ "${DUNE_BRT_DD_TOOL_ENABLE_BINARY_PATCH_ENABLED:-false}" = "true" ] || return 0
+
+  local binary="${DUNE_BRT_DD_TOOL_ENABLE_BINARY:-$server_root/DuneSandbox/Binaries/Linux/DuneSandboxServer-Linux-Shipping}"
+
+  if [ "$dry_run" = "true" ]; then
+    python3 /workspace/scripts/patch-brt-dd-tool-enable-binary.py \
+      --binary "$binary" \
+      --dry-run
+    return 0
+  fi
+
+  python3 /workspace/scripts/patch-brt-dd-tool-enable-binary.py \
+    --binary "$binary"
+}
+
 install_landsraad_vendor_faction_gate_patch() {
   local server_root="$1"
   local dry_run="$2"
   [ "${DUNE_LANDSRAAD_VENDOR_FACTION_GATE_PATCH_ENABLED:-false}" = "true" ] || return 0
 
   local pak="${DUNE_LANDSRAAD_VENDOR_FACTION_GATE_PAK:-$server_root/DuneSandbox/Content/Paks/pakchunk0-LinuxServer.pak}"
-  local oodle="${DUNE_OODLE_LIBRARY:-/tmp/oodle/liboodle-data-shared.so}"
+  local oodle
+  oodle="$(resolve_oodle_library "${DUNE_OODLE_LIBRARY:-/tmp/oodle/liboodle-data-shared.so}")"
 
   if [ "$dry_run" = "true" ]; then
     python3 /workspace/scripts/patch-landsraad-vendor-faction-gate-pak.py \
