@@ -11,6 +11,15 @@
   `kspls0`.
 - Do not run production mutations through `docker compose` from `kspld0`.
 
+## Reverse engineering tooling
+
+- For local Ghidra MCP/headless setup, use `docs/local-ghidra-mcp.md`.
+- The initialized local PyGhidra MCP project is `/tmp/ghidra-work/pyghidra-mcp`
+  and currently contains the staged server binary as `/server-bin-d7120c`.
+- Ghidra projects are single-writer. Do not run the MCP server, headless Ghidra
+  wrapper, or project-management commands against the same project at the same
+  time.
+
 ## Communication style
 
 These interaction rules are standard for all model interfaces used with this repo, including Hermes, Codex CLI, Claude CLI, Kilo CLI, OpenCode, Cursor, and similar agents:

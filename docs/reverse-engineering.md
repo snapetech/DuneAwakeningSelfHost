@@ -37,6 +37,19 @@ Store bulky run output under ignored paths such as
 `backups/research/<timestamp>/` or `captures/research/<timestamp>/`. Do not
 commit Funcom binaries, cooked assets, raw proprietary dumps, or secrets.
 
+## Ghidra MCP And Headless Runs
+
+Local setup details live in `docs/local-ghidra-mcp.md`. The short version:
+
+- `scripts/research/run-ghidra-headless.sh` runs checked-in Ghidra scripts
+  against staged binaries in a repeatable way.
+- Codex local MCP is wired through `~/.codex/config.toml` as
+  `mcp_servers.pyghidra_mcp`, using `~/.local/bin/dune-pyghidra-mcp`.
+- The local PyGhidra MCP project is `/tmp/ghidra-work/pyghidra-mcp`; the staged
+  server binary is imported as `/server-bin-d7120c`.
+- Ghidra projects are single-writer. Stop the MCP server before running
+  headless/project-management commands against the same project.
+
 ## Promotion Rules
 
 - Binary strings are leads only until section, syntax, and runtime effect are

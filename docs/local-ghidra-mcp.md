@@ -76,11 +76,34 @@ sha256sum /tmp/ghidra-work/server-bin > /tmp/ghidra-work/server-bin.sha256
 
 Confidence: moderate. Exact client config keys vary by MCP host.
 
-Install `pyghidra-mcp` outside this repo. A typical local command is:
+Install `pyghidra-mcp` outside this repo. The normal local startup command is:
 
 ```bash
-uvx pyghidra-mcp --transport stdio --project-path /tmp/ghidra-work/pyghidra /tmp/ghidra-work/server-bin
+~/.local/bin/dune-pyghidra-mcp
 ```
+
+To import the staged binary on startup, use:
+
+```bash
+DUNE_PYGHIDRA_IMPORT_ON_START=1 ~/.local/bin/dune-pyghidra-mcp
+```
+
+Codex is wired through the local user config at `~/.codex/config.toml` as
+`mcp_servers.pyghidra_mcp`. It calls the local launcher
+`~/.local/bin/dune-pyghidra-mcp`, which checks that Ghidra exists before
+starting the MCP server. The local PyGhidra project is initialized at
+`/tmp/ghidra-work/pyghidra-mcp` and currently contains the staged server binary
+as `/server-bin-d7120c`. Restart the agent session for newly configured MCP
+tools to become available.
+
+The launcher supports these overrides:
+
+- `DUNE_GHIDRA_BINARY`: staged binary path, default `/tmp/ghidra-work/server-bin`
+- `DUNE_PYGHIDRA_PROJECT_PATH`: PyGhidra project path, default `/tmp/ghidra-work/pyghidra-mcp`
+- `DUNE_PYGHIDRA_PROJECT_NAME`: project name, default `DuneServer`
+- `DUNE_PYGHIDRA_TRANSPORT`: MCP transport, default `stdio`
+- `DUNE_PYGHIDRA_IMPORT_ON_START`: set to `1` to import `DUNE_GHIDRA_BINARY` on startup; default `0`
+- `GHIDRA_INSTALL_DIR`: Ghidra installation, default `/opt/ghidra`
 
 For an MCP client that uses JSON-style server definitions, the local entry
 should be shaped like this:
@@ -89,15 +112,7 @@ should be shaped like this:
 {
   "mcpServers": {
     "pyghidra-mcp": {
-      "command": "uvx",
-      "args": [
-        "pyghidra-mcp",
-        "--transport",
-        "stdio",
-        "--project-path",
-        "/tmp/ghidra-work/pyghidra",
-        "/tmp/ghidra-work/server-bin"
-      ],
+      "command": "/home/keith/.local/bin/dune-pyghidra-mcp",
       "env": {
         "GHIDRA_INSTALL_DIR": "/opt/ghidra"
       }
@@ -108,6 +123,10 @@ should be shaped like this:
 
 If using an HTTP transport, bind it to localhost only. Treat an unauthenticated
 Ghidra MCP as full Ghidra API access to the loaded program.
+
+Ghidra projects are single-writer. Do not run the headless wrapper, the MCP
+server, and project-management commands against the same project at the same
+time; one of them will fail with a project lock error.
 
 ## Agent Operating Rules
 
