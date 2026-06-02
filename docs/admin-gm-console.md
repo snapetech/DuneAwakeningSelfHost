@@ -29,6 +29,12 @@ Future research should compare RabbitMQ bindings, generated users, and server qu
   - `DUNE_SERVER_NOTIFICATION_SYSTEM_ENABLED`, default `false`
   - `DUNE_SERVER_COMMANDS_AUTH_TOKEN`, default blank
 - With those two settings enabled on Survival, publishing to the live game-RMQ server queue through the existing `heartbeats` exchange proved delivery into the running server notification parser. The proof probe used routing keys `MHh7RJrGT3CLt9lNDmRMCQ` and `notifications`; the server consumed the messages and logged `JsonObjectStringToUStruct` failures for invalid array/object-wrapper shapes. Confidence: high that the route reaches the game-server notification parser. Confidence: low that the final native `UDuneServerCommandSubsystem` command payload is solved; `PrintAllowedCommands` and `PrintPos` still produced no `Now running ServerCommand` or command-output log.
+- On 2026-06-02, safe admin-RMQ probes against empty route
+  `CB_Story_WaterFatManor7` / `testing-waterfat` delivered with no player
+  disruption, no queue backlog, no restart, and no command-output log. The route
+  reported `InGameOrInTransitPlayerCount:0`. The running server command line had
+  `server.NotificationSystem.Enabled=false` and blank `ServerCommandsAuthToken`,
+  so lack of command execution is expected. Confidence: high.
 - The active dedicated server allow-list found in `DuneSandbox/Config/DedicatedServerGame.ini` includes:
   - Console commands: `obj`, `FGL.ComponentAuditRequested`
   - GM commands: `AddItemToInventory`, `AddBasicInventoryToCharacter`, `SpawnVehicle`, teleport/travel helpers, `Fly`, `Ghost`, `Walk`, targeted destroy helpers, and `PrintPos`.
