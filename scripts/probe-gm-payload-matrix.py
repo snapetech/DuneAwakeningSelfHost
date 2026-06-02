@@ -58,6 +58,26 @@ def service_broadcast_payload(command_text, broadcast_type):
     }
 
 
+def native_notification(command_payload, original_id, name, sender="fls", version=1, include_payload_json=True):
+    body = {
+        "EventNamespace": "notifications",
+        "Name": name,
+        "OriginalId": original_id,
+        "OriginalTimestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "Payload": command_payload,
+        "SenderId": sender,
+        "SenderID": sender,
+        "Sender": sender,
+        "From": sender,
+        "Source": sender,
+        "MessageSenderId": sender,
+        "Version": version,
+    }
+    if include_payload_json:
+        body["PayloadJSON"] = json.dumps(command_payload, separators=(",", ":"))
+    return body
+
+
 def notification_envelope(event_namespace, payload, original_id, name=None, sender=None, version=None):
     payload_json = payload if isinstance(payload, str) else json.dumps(payload, separators=(",", ":"))
     envelope = {
@@ -219,6 +239,41 @@ def build_bodies(command_text, target_player, admin_player):
         "raw-string": command_text,
         "raw-serverexec-string": f"ServerExec {target_player} {command_text}",
     }
+    if auth_token:
+        native_service_broadcasts = {
+            "clientauth": service_payloads["serverbroadcast-clientauth"],
+            "serverbroadcast": service_payloads["serverbroadcast"],
+            "generic": service_payloads["generic-broadcast"],
+            "servercommand-only": {"ServerCommand": command_text},
+        }
+        for broadcast_name, broadcast_payload in native_service_broadcasts.items():
+            for auth_field in ("AuthToken", "ServerCommandsAuthToken"):
+                command_payload = {
+                    auth_field: auth_token,
+                    "Content": json.dumps(broadcast_payload, separators=(",", ":")),
+                }
+                base[f"native-derived-notification-{broadcast_name}-{auth_field.lower()}-content"] = native_notification(
+                    command_payload,
+                    f"dash-gm-{uuid.uuid4().hex[:10]}",
+                    "ServerRequestEventNotifications",
+                    include_payload_json=True,
+                )
+                object_payload = {
+                    auth_field: auth_token,
+                    "Content": broadcast_payload,
+                }
+                base[f"native-derived-notification-{broadcast_name}-{auth_field.lower()}-object-content"] = native_notification(
+                    object_payload,
+                    f"dash-gm-{uuid.uuid4().hex[:10]}",
+                    "ServerRequestEventNotifications",
+                    include_payload_json=True,
+                )
+                base[f"native-derived-notification-{broadcast_name}-{auth_field.lower()}-payload-only"] = native_notification(
+                    object_payload,
+                    f"dash-gm-{uuid.uuid4().hex[:10]}",
+                    "NotificationSystemHandleServerMessages",
+                    include_payload_json=False,
+                )
     for payload_name, payload in notification_payloads.items():
         payload_json = json.dumps(payload, separators=(",", ":"))
         base[f"notification-servercommand-payloadjson-{payload_name}"] = notification_envelope(

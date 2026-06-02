@@ -148,6 +148,15 @@ Future research should compare RabbitMQ bindings, generated users, and server qu
   `FuncomLiveServicesWithPlayFab.cpp`, anchored around the
   `NotificationSystem message parsing failed. Failed to deserialize.` table near
   `1490e420`.
+- Follow-up Ghidra work with
+  `scripts/research/DumpServerCommandPayload.java` and
+  `scripts/research/DumpNotificationServerCommandSurface.java` found positive
+  native surfaces: `FUN_09ee83c0` loads
+  `FuncomLiveServices.ServerCommandsAuthToken`, `FUN_0da5cea0` extracts the
+  real JSON field `ServerCommand`, and `FUN_0da61730` / `FUN_0da61aa0` handle
+  service-broadcast commands and log `Handling ServiceBroadcast Server
+  command:`. Confidence: high. `scripts/probe-gm-payload-matrix.py` now has
+  exact `native-derived-notification-*` bodies for empty-route safe probes.
 - The active dedicated server allow-list found in `DuneSandbox/Config/DedicatedServerGame.ini` includes:
   - Console commands: `obj`, `FGL.ComponentAuditRequested`
   - GM commands: `AddItemToInventory`, `AddBasicInventoryToCharacter`, `SpawnVehicle`, teleport/travel helpers, `Fly`, `Ghost`, `Walk`, targeted destroy helpers, and `PrintPos`.

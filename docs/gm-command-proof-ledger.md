@@ -257,11 +257,59 @@ around `1490e420` and by callbacks that produce the decoded
 `FNotificationsSystemMessage` consumed by `FUN_09f3ff90` and `FUN_09ee73c0`.
 Confidence: moderate.
 
-Conclusion: this is still bad news for live operation: no working native GM
-payload is proven. The good news is that the decoded notification object layout
-is now much tighter, and the remaining target is the generated
-PlayFab/FLS-to-`FNotificationsSystemMessage` bridge rather than another
-top-level RMQ JSON alias. Confidence: high.
+Positive static result: a later focused Ghidra pass reran
+`scripts/research/DumpServerCommandPayload.java` and
+`scripts/research/DumpNotificationServerCommandSurface.java` against the same
+build and found real native server-command surfaces, not just names.
+Confidence: high.
+
+- `FUN_09ee83c0` loads `FuncomLiveServices.ServerCommandsAuthToken` into the
+  notification subsystem at offset `0x240`; `FUN_09ee73c0` compares extracted
+  auth content against that configured value before it accepts command content.
+  Confidence: high.
+- `FUN_0da5cea0` extracts the JSON field `ServerCommand`; this proves
+  `{"ServerCommand":"PrintAllowedCommands"}` is a real native command payload
+  field for the server-command serializer/parser family. Confidence: high.
+- `FUN_0da61730` and `FUN_0da61aa0` are real handlers that log
+  `Handling ServiceBroadcast Server command:` after parsing service-broadcast
+  payloads. Confidence: high.
+- `FUN_1385a4f0` serializes notification objects with `EventNamespace`, `Name`,
+  `OriginalId`, `OriginalTimestamp`, `Payload`, and `PayloadJSON`; the useful
+  candidate family should carry both object `Payload` and string `PayloadJSON`
+  where possible. Confidence: moderate/high.
+
+The probe matrix now has a native-derived candidate family named
+`native-derived-notification-*`. These bodies keep sender aliases set to `fls`,
+use `Name=ServerRequestEventNotifications` or
+`Name=NotificationSystemHandleServerMessages`, include `Version=1`, and carry
+`AuthToken` or `ServerCommandsAuthToken` plus service-broadcast content with a
+real `BroadcastPayload.ServerCommand`. Confidence: high that these are more
+binary-derived than the previous broad alias matrix.
+
+Use an empty route only. Example exact-body safe probe:
+
+```bash
+python3 scripts/probe-gm-payload-matrix.py \
+  --route CB_Story_WaterFatManor7 \
+  --queue CB_Story_WaterFatManor7_queue \
+  --game-server-queue queue.server.<server-id> \
+  --include-game-rmq \
+  --include-game-bindings \
+  --only-broker game \
+  --target-kind direct \
+  --command PrintAllowedCommands \
+  --body native-derived-notification-clientauth-authtoken-object-content \
+  --body native-derived-notification-clientauth-servercommandsauthtoken-object-content \
+  --body native-derived-notification-serverbroadcast-authtoken-object-content \
+  --body native-derived-notification-servercommand-only-servercommandsauthtoken-payload-only \
+  --content-type native \
+  --amqp-type empty
+```
+
+Conclusion: no live command execution is proven yet, but the current positive
+path is now specific: test the native-derived notification bodies above on the
+empty route and look for `Server command received`, `Handling ServiceBroadcast
+Server command:`, or `Now running ServerCommand`. Confidence: high.
 
 Use the proof runner:
 

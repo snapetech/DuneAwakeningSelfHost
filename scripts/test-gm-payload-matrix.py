@@ -63,6 +63,29 @@ class GmPayloadMatrixTests(unittest.TestCase):
         self.assertEqual(body["EventSettings"]["SenderId"], "fls")
         self.assertIn("PrintAllowedCommands", body["EventData"])
 
+    def test_native_derived_notification_candidates_include_object_payload(self):
+        bodies = probe_gm_payload_matrix.build_bodies("PrintAllowedCommands", "Target", "Admin")
+        body = bodies["native-derived-notification-clientauth-authtoken-object-content"]
+        self.assertEqual(body["EventNamespace"], "notifications")
+        self.assertEqual(body["Name"], "ServerRequestEventNotifications")
+        self.assertEqual(body["SenderId"], "fls")
+        self.assertEqual(body["Sender"], "fls")
+        self.assertEqual(body["Version"], 1)
+        self.assertEqual(body["Payload"]["AuthToken"], "test-token")
+        self.assertEqual(
+            body["Payload"]["Content"]["BroadcastPayload"]["ServerCommand"],
+            "PrintAllowedCommands",
+        )
+        self.assertIn('"ServerCommand":"PrintAllowedCommands"', body["PayloadJSON"])
+
+    def test_native_derived_payload_only_candidate_can_omit_payload_json(self):
+        bodies = probe_gm_payload_matrix.build_bodies("PrintAllowedCommands", "Target", "Admin")
+        body = bodies["native-derived-notification-servercommand-only-servercommandsauthtoken-payload-only"]
+        self.assertEqual(body["Name"], "NotificationSystemHandleServerMessages")
+        self.assertNotIn("PayloadJSON", body)
+        self.assertEqual(body["Payload"]["ServerCommandsAuthToken"], "test-token")
+        self.assertEqual(body["Payload"]["Content"]["ServerCommand"], "PrintAllowedCommands")
+
 
 if __name__ == "__main__":
     unittest.main()
