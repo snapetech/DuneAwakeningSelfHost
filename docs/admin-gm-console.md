@@ -164,7 +164,8 @@ Future research should compare RabbitMQ bindings, generated users, and server qu
   `Generic` reaches the command-handling log through `FUN_0da61730`;
   `ServerShutdown` is real but unsafe for live proof. Confidence: high. The
   first safe empty-route probes should use the
-  `native-positive-notification-generic-*` bodies.
+  `native-positive-notification-generic-*` bodies. Full details are in
+  [native-gm-servicebroadcast-proof.md](native-gm-servicebroadcast-proof.md).
 - The active dedicated server allow-list found in `DuneSandbox/Config/DedicatedServerGame.ini` includes:
   - Console commands: `obj`, `FGL.ComponentAuditRequested`
   - GM commands: `AddItemToInventory`, `AddBasicInventoryToCharacter`, `SpawnVehicle`, teleport/travel helpers, `Fly`, `Ghost`, `Walk`, targeted destroy helpers, and `PrintPos`.

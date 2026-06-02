@@ -281,7 +281,9 @@ Confidence: high.
 Follow-up Ghidra work with
 `scripts/research/DumpServiceBroadcastPayloadShape.java` wrote
 `/tmp/ghidra-work/service-broadcast-payload-shape.txt` and proved a narrower
-positive ServiceBroadcast shape. Confidence: high.
+positive ServiceBroadcast shape. The detailed function-chain documentation is
+in [native-gm-servicebroadcast-proof.md](native-gm-servicebroadcast-proof.md).
+Confidence: high.
 
 - `FUN_0da5fd90` is the native `BroadcastType` field accessor; it calls the
   string accessor on `L"BroadcastType"`. Confidence: high.
