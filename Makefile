@@ -3,7 +3,7 @@ ENV_FILE ?= .env.example
 
 .PHONY: validate compose-config check-compose-static-ips validate-research-build-tags secret-scan test-watch-maps test-admin-panel-safe-surfaces test-character-slot-tool test-research-catalog test-discovery-tools test-admin-chat test-admin-grant-item test-operational-borrowing test-artificial-exchange test-artificial-exchange-service artificial-exchange-smoke artificial-exchange-bootstrap-catalog artificial-exchange-research-prices test-vehicle-fidelity-investigation gm-catalog gm-probe-preview gm-probe-safe research-catalog research-catalog-markdown surface-ledger surface-ledger-markdown discovery-queue binary-candidate-scores asset-reference-graph extract-build-surfaces diff-build-surfaces db-function-classifier fixture-runner knob-experiment capture-rmq-window diff-rmq-captures list-publishable preflight operational-identity-check operational-report operational-bundle verify-operational-bundle status standby-status failover-topology-status failover-bidirectional-audit sync-standby-files sync-standby-images promote-standby postgres-failover-seal postgres-cutback-proof rebuild-postgres-standby set-active-gameserver handoff-ready handoff-experiment summarize-handoff handoff-lab-config handoff-lab-up handoff-lab-seed handoff-lab-status handoff-lab-stop handoff-lab-remote-up handoff-lab-remote-status handoff-lab-remote-stop handoff-lab failover-orchestrate failover-role-services cutover-check cutover-network-status browser-ping-diagnostics watch-browser-probe host-network-failover router-cutover install-dune-status-service check-steam-update backup-dry-run backup-state restore-dry-run verify-backup start-full-warm-pool recover-survival recover-map watch-maps watch-maps-status install-map-watchdog-service install-artificial-exchange-service install-artificial-exchange-buyer-service install-artificial-exchange-populator-service install-full-farm-service install-daily-maintenance-timer full-world-partitions update-hagga-pois public-site-check public-site-package public-site-deploy public-site-verify admin-panel-deploy admin-panel-verify verify-local-state-ignored rabbitmq-cert-check rabbitmq-cert-generate rabbitmq-cert-stage rabbitmq-cert-install-staged rabbitmq-cert-recreate-stack
 
-validate: compose-config check-compose-static-ips validate-research-build-tags surface-ledger secret-scan test-watch-maps test-admin-panel-safe-surfaces test-character-slot-tool test-research-catalog test-discovery-tools test-admin-chat test-admin-grant-item test-operational-borrowing test-artificial-exchange test-artificial-exchange-service test-vehicle-fidelity-investigation public-site-check verify-local-state-ignored
+validate: compose-config check-compose-static-ips validate-research-build-tags surface-ledger secret-scan test-watch-maps test-admin-panel-safe-surfaces test-character-slot-tool test-research-catalog test-discovery-tools test-admin-chat test-admin-grant-item test-smugglers-run-mp test-operational-borrowing test-artificial-exchange test-artificial-exchange-service test-vehicle-fidelity-investigation public-site-check verify-local-state-ignored
 
 validate-research-build-tags:
 	./scripts/validate-research-build-tags.sh $(ENV_FILE)
@@ -247,6 +247,11 @@ test-admin-chat:
 test-admin-grant-item:
 	python3 scripts/test-admin-grant-item.py
 
+.PHONY: test-smugglers-run-mp
+
+test-smugglers-run-mp:
+	python3 scripts/test-smugglers-run-mp.py
+
 gm-catalog:
 	python3 scripts/gm-command-catalog.py --format markdown
 
@@ -288,6 +293,32 @@ db-function-classifier:
 
 fixture-runner:
 	python3 scripts/fixture-runner.py $(FIXTURE) --env-file $(ENV_FILE) $(FIXTURE_FLAGS)
+
+.PHONY: smugglers-run-mp-inspect smugglers-run-mp-session smugglers-run-mp-compare smugglers-run-mp-loaner smugglers-run-mp-shared-fixture-before smugglers-run-mp-shared-fixture-after smugglers-run-mp-vehicle-fixture-before smugglers-run-mp-vehicle-fixture-after
+
+smugglers-run-mp-inspect:
+	python3 scripts/smugglers-run-mp.py --env-file $(ENV_FILE) inspect $(SMUGGLERS_FLAGS)
+
+smugglers-run-mp-session:
+	python3 scripts/smugglers-run-mp.py --env-file $(ENV_FILE) init $(SMUGGLERS_FLAGS)
+
+smugglers-run-mp-compare:
+	python3 scripts/smugglers-run-mp.py --env-file $(ENV_FILE) compare $(SMUGGLERS_FLAGS)
+
+smugglers-run-mp-loaner:
+	python3 scripts/smugglers-run-mp.py --env-file $(ENV_FILE) loaner $(SMUGGLERS_FLAGS)
+
+smugglers-run-mp-shared-fixture-before:
+	python3 scripts/fixture-runner.py fixtures/smugglers-run-mp-shared-map.json --env-file $(ENV_FILE) --phase before
+
+smugglers-run-mp-shared-fixture-after:
+	python3 scripts/fixture-runner.py fixtures/smugglers-run-mp-shared-map.json --env-file $(ENV_FILE) --phase after
+
+smugglers-run-mp-vehicle-fixture-before:
+	python3 scripts/fixture-runner.py fixtures/smugglers-run-mp-owned-vehicle-safety.json --env-file $(ENV_FILE) --phase before
+
+smugglers-run-mp-vehicle-fixture-after:
+	python3 scripts/fixture-runner.py fixtures/smugglers-run-mp-owned-vehicle-safety.json --env-file $(ENV_FILE) --phase after
 
 knob-experiment:
 	python3 scripts/knob-experiment.py --catalog $(CATALOG) --env-file $(ENV_FILE) $(EXPERIMENT_FLAGS)

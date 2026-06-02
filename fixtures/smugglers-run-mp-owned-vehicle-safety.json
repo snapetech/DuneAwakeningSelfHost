@@ -1,0 +1,41 @@
+{
+  "id": "smugglers-run-mp-owned-vehicle-safety",
+  "requiresClientAction": true,
+  "before": {
+    "sql": [
+      "select 'vehicles' as table_name, count(*) from dune.vehicles union all select 'vehicle_modules', count(*) from dune.vehicle_modules union all select 'backup_vehicles', count(*) from dune.backup_vehicles union all select 'recovered_vehicles', count(*) from dune.recovered_vehicles;",
+      "select p.proname, pg_get_function_identity_arguments(p.oid) as args, pg_get_function_result(p.oid) as result from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='dune' and p.proname ilike '%vehicle%' order by p.proname;"
+    ]
+  },
+  "during": {
+    "operatorSteps": [
+      "Record the test racers and run: python3 scripts/smugglers-run-mp.py --env-file .env init --entrant <name1> --entrant <name2> --vehicle-mode both",
+      "Have each player bring an owned sandbike to Smugglers Run and drop/deploy it inside the map.",
+      "Run a short race, exit the map, relog, and verify each player still owns and can recover/use the same bike.",
+      "If owned bikes fail, repeat with GM-spawned loaner bikes and leave player-owned bikes outside the map."
+    ]
+  },
+  "after": {
+    "sql": [
+      "select * from dune.vehicles order by id desc limit 25;",
+      "select * from dune.vehicle_modules order by id desc limit 100;",
+      "select * from dune.backup_vehicles order by account_id desc nulls last limit 25;",
+      "select * from dune.recovered_vehicles order by account_id desc nulls last limit 25;",
+      "select account_id, \"group\", locator_name, map, dimension, last_used_timestamp from dune.player_respawn_locations where \"group\"='Vehicle' order by last_used_timestamp desc nulls last limit 50;"
+    ],
+    "logs": [
+      "vehicle|module|backup|recover|ownership|TimeTrial|GroundVehicleTimeTrial"
+    ]
+  },
+  "verdict": {
+    "pass": [
+      "Owned vehicle actor/module rows remain associated with the same player/account.",
+      "No unexpected recovered_vehicles or backup_vehicles row appears for a racer after normal exit.",
+      "Vehicle respawn/recovery location remains usable by the owner."
+    ],
+    "fail": [
+      "Bike becomes ownerless, moves to recovered/backup state unexpectedly, loses modules/inventory, or cannot be used by the owner after relog.",
+      "Dropping a bike inside the map changes ownership or deletes module inventory rows."
+    ]
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "id": "smugglers-run-mp-shared-map",
+  "requiresClientAction": true,
+  "before": {
+    "sql": [
+      "select partition_id, server_id, map, dimension_index, label, blocked from dune.world_partition where partition_id=26 or map='CB_Overland_S_06';",
+      "select wp.partition_id, wp.server_id, wp.map, fs.ready, fs.alive, fs.connected_players, asi.server_id is not null as active from dune.world_partition wp left join dune.farm_state fs on fs.server_id=wp.server_id left join dune.active_server_ids asi on asi.server_id=wp.server_id where wp.partition_id=26 or wp.map='CB_Overland_S_06';"
+    ]
+  },
+  "during": {
+    "operatorSteps": [
+      "Start the full warm pool or otherwise start overland-s-06.",
+      "Have two unrelated online players enter Ground Vehicle Time Trial Island / Smugglers Run.",
+      "Confirm whether both clients can see each other and interact in the same running map."
+    ]
+  },
+  "after": {
+    "sql": [
+      "select ps.account_id, ps.character_name, ps.online_status::text, ps.server_id, wp.partition_id, wp.map, a.map as actor_map, a.partition_id as actor_partition_id, ((a.transform).location).x::float8 as x, ((a.transform).location).y::float8 as y, ((a.transform).location).z::float8 as z from dune.player_state ps left join dune.actors a on a.id=ps.player_pawn_id left join dune.world_partition wp on wp.server_id=ps.server_id where wp.partition_id=26 or a.partition_id=26 or wp.map='CB_Overland_S_06' order by ps.character_name nulls last;",
+      "select wp.partition_id, wp.server_id, wp.map, fs.ready, fs.alive, fs.connected_players, asi.server_id is not null as active from dune.world_partition wp left join dune.farm_state fs on fs.server_id=wp.server_id left join dune.active_server_ids asi on asi.server_id=wp.server_id where wp.partition_id=26 or wp.map='CB_Overland_S_06';"
+    ],
+    "logs": [
+      "CB_Overland_S_06|GroundVehicleTimeTrial|TimeTrial|travel|instance|party"
+    ]
+  },
+  "verdict": {
+    "expected": {
+      "sharedOccupancy": "Two unrelated players are visible to each other in partition 26 / CB_Overland_S_06."
+    },
+    "blockedIf": [
+      "Players enter separate dimensions or private instances.",
+      "One player is returned to Overmap or Survival while the other remains inside.",
+      "Director/farm_state reports partition 26 unhealthy during travel."
+    ]
+  }
+}
