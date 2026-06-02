@@ -764,13 +764,9 @@ def move_offline_player_to_partition(conn, fls_id, partition_id, x, y, z):
 
 
 def player_disconnect_command(target_name):
-    command = env("DUNE_PLAYER_DISCONNECT_COMMAND", "RemoveSessionMember").strip()
-    allowed = {"RemoveSessionMember", "KickLobbyMember"}
-    if env_bool("DUNE_PLAYER_DISCONNECT_ALLOW_BATTLEYE", False):
-        allowed.add("BattlEyeMegaKick")
-    if command not in allowed:
-        raise ValueError(f"DUNE_PLAYER_DISCONNECT_COMMAND must be one of: {', '.join(sorted(allowed))}")
-    return f"{command} {target_name}"
+    raise ValueError(
+        "native targeted disconnect is rejected for this build; Ghidra/config show no shipped GM kick command"
+    )
 
 
 def chat_auction_enabled():
@@ -1935,7 +1931,7 @@ def kick_candidate_routes(conn, target):
     return [
         {
             "name": "native-gm-session-command",
-            "status": "gated",
+            "status": "rejected",
             "route": route,
             "candidateCommands": [
                 f"PrintAllowedCommands",
@@ -1943,7 +1939,7 @@ def kick_candidate_routes(conn, target):
                 f"KickLobbyMember {target['character_name']}",
                 f"BattlEyeMegaKick {target['character_name']}",
             ],
-            "reason": "Use RemoveSessionMember first for the least punitive disconnect. Execution requires DUNE_ADMIN_GM_COMMANDS_ENABLED=true, DUNE_GM_COMMAND_PAYLOAD_VERIFIED=true, and DUNE_CHAT_COMMAND_EXECUTE_PLAYER_DISCONNECT=true.",
+            "reason": "Ghidra and DedicatedServerGame.ini show these are not shipped dedicated-server GM kick commands for this build.",
         },
         {
             "name": "map-service-restart",

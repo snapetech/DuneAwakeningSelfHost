@@ -6,7 +6,8 @@ This records what is known about the native Dune admin/cheat path without guessi
 
 Confidence: high. The public CubeCoders AMP Dune Awakening template does not expose GM, teleport, item grant, or kick execution payloads. It is useful for operational settings research, but it does not verify a native command route for DASH.
 
-Current kick candidates remain unverified:
+Current kick candidates remain unverified and are not in the shipped
+`DedicatedServerGame.ini` GM allow-list:
 
 - `RemoveSessionMember`
 - `KickLobbyMember`
@@ -31,6 +32,10 @@ Future research should compare RabbitMQ bindings, generated users, and server qu
 - The active dedicated server allow-list found in `DuneSandbox/Config/DedicatedServerGame.ini` includes:
   - Console commands: `obj`, `FGL.ComponentAuditRequested`
   - GM commands: `AddItemToInventory`, `AddBasicInventoryToCharacter`, `SpawnVehicle`, teleport/travel helpers, `Fly`, `Ghost`, `Walk`, targeted destroy helpers, and `PrintPos`.
+- A 2026-06-02 Ghidra pass over command strings, xrefs, and decompiled
+  command-format functions is recorded in
+  [gm-command-ghidra-surface.md](gm-command-ghidra-surface.md). It found no
+  shipped allow-listed nice kick/return-to-menu GM command. Confidence: high.
 
 ## Current Panel Behavior
 
@@ -288,9 +293,11 @@ and game-RMQ probes for `BattlEyeMegaKick`, `ClientReturnToMainMenu`,
 `ClientReturnToMainMenuWithTextReason`, `ClientWasKicked`,
 `RemoveSessionMember`, `KickLobbyMember`, `ServerStartLogOffTimer`, and
 `ClientLogOff` produced no useful player disconnect and no confirming command
-logs. A targeted UDP `DROP` did disconnect the target, but it produced a
-network-error/login-screen style timeout and eventual reconnect, not a nice
-return-to-menu notice.
+logs. The shipped `DedicatedServerGame.ini` allow-list also does not include
+`KickPlayer`, `AdminKick`, `DisconnectPlayer`, `RemoveSessionMember`,
+`KickLobbyMember`, or `BattlEyeMegaKick`. A targeted UDP `DROP` did disconnect
+the target, but it produced a network-error/login-screen style timeout and
+eventual reconnect, not a nice return-to-menu notice.
 
 Direct `gdb` invocation of `ADunePlayerController` client RPC thunks is unsafe
 for production. Calling `ClientReturnToMainMenu`/`ClientReturnToMainMenuWithTextReason`
@@ -336,7 +343,8 @@ What we verified:
 
 - The active `DedicatedServerGame.ini` GM allow-list does not include a clear `KickPlayer`, `AdminKick`, or `DisconnectPlayer` command.
 - The live server binary does contain lower-level session and disconnect strings including `KickLobbyMember`, `RemoveSessionMember`, `BattlEyeMegaKick`, and `ClientWasKicked`.
-- `RemoveSessionMember` and `KickLobbyMember` are present as UE Online Services operations, not as verified dedicated-server GM command handlers.
+- `RemoveSessionMember` and `KickLobbyMember` are present as UE Online Services operations, not as dedicated-server GM command handlers.
+- `KickPlayer` exists as a string/data-table entry, but Ghidra did not find a Dune GM handler for it and it is not in the shipped GM allow-list.
 - Those strings are not enough to execute safely unless the native RabbitMQ command envelope is verified for the current build.
 - The database exposes player online state, `server_id`, `player_controller_id`, pawn id, FLS id, and map location, but it does not expose a live socket/session handle that can be safely closed.
 - Host/container UDP listeners do not provide a reliable per-character connection to kill. A network-level kick would require a verified character-to-client-IP mapping first.

@@ -22,9 +22,9 @@ COMMANDS = [
     {"name": "Fly", "tier": "movement", "status": "wired-preview", "syntax": "Fly", "chat": "&gm fly", "notes": "Admin movement mode."},
     {"name": "Ghost", "tier": "movement", "status": "wired-preview", "syntax": "Ghost", "chat": "&gm ghost", "notes": "Admin movement mode."},
     {"name": "Walk", "tier": "movement", "status": "wired-preview", "syntax": "Walk", "chat": "&gm walk", "notes": "Return movement mode to normal walking."},
-    {"name": "RemoveSessionMember", "tier": "player", "status": "gated-preview", "syntax": "RemoveSessionMember <player>", "chat": "&disconnect <player>", "notes": "Online Services session-remove candidate, not a proven GM soft-disconnect command."},
-    {"name": "KickLobbyMember", "tier": "player", "status": "gated-preview", "syntax": "KickLobbyMember <player>", "chat": "&gm dry KickLobbyMember <player>", "notes": "Online Services lobby-kick candidate, not a proven GM soft-disconnect command."},
-    {"name": "BattlEyeMegaKick", "tier": "player", "status": "opt-in-only", "syntax": "BattlEyeMegaKick <player>", "chat": "", "notes": "Binary string candidate only; harsher kick behavior is not verified."},
+    {"name": "RemoveSessionMember", "tier": "player", "status": "rejected", "syntax": "RemoveSessionMember <player>", "chat": "", "notes": "Ghidra shows a UE Online Services operation/result helper, not a shipped dedicated-server GM command; not in DedicatedServerGame.ini."},
+    {"name": "KickLobbyMember", "tier": "player", "status": "rejected", "syntax": "KickLobbyMember <player>", "chat": "", "notes": "Ghidra shows a UE Online Services lobby operation/result helper, not a shipped dedicated-server GM command; not in DedicatedServerGame.ini."},
+    {"name": "BattlEyeMegaKick", "tier": "player", "status": "rejected", "syntax": "BattlEyeMegaKick <player>", "chat": "", "notes": "Binary string only in the Ghidra pass; no xref and not in DedicatedServerGame.ini."},
     {"name": "DestroyTargetVehicle", "tier": "destructive", "status": "blocked", "syntax": "DestroyTargetVehicle", "chat": "", "notes": "Do not expose as casual chat command; needs explicit confirmation/audit if ever enabled."},
     {"name": "DestroyTotem", "tier": "destructive", "status": "blocked", "syntax": "DestroyTotem", "chat": "", "notes": "Do not expose as casual chat command."},
     {"name": "DestroyPlaceable", "tier": "destructive", "status": "blocked", "syntax": "DestroyPlaceable", "chat": "", "notes": "Do not expose as casual chat command."},
@@ -47,6 +47,7 @@ STATUSES = {
     "probe-only": "Safe for route testing after the payload envelope is proven; not exposed as a normal admin action.",
     "cataloged": "Known native command name, no dedicated wrapper yet; use &gm dry for envelope previews.",
     "opt-in-only": "Candidate exists but is intentionally not wired by default.",
+    "rejected": "Binary/config evidence says this is not a shipped dedicated-server GM command.",
     "blocked": "Known destructive command intentionally not executable through chat.",
 }
 
