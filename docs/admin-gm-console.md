@@ -145,6 +145,13 @@ Future research should compare RabbitMQ bindings, generated users, and server qu
   `scripts/research/DumpFNotificationsCommandAcceptance.java` records the
   compact acceptance checklist and log milestones for the native
   server-command path. Confidence: high.
+- Follow-up Ghidra work with `scripts/research/DumpRmqRunnableVtables.java`
+  found the inbound AMQP consumer: `FUN_09edc750` calls
+  `amqp_consume_message`, extracts `app_id`, `user_id`, `correlation_id`, and
+  `reply_to`, builds a local decoded notification object, and hands it to
+  `FUN_09edda40`, which copies the same `FNotificationsSystemMessage` family.
+  Confidence: high. The next probe family must control AMQP delivery key and
+  properties, not just body JSON aliases.
 - Follow-up Ghidra work with
   `scripts/research/DumpFNotificationsDataBridge.java` proved that the previous
   `FUN_09e05650`/`FUN_09e067f0` target was wrong: those functions are generic

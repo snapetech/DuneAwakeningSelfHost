@@ -29,6 +29,10 @@ ServiceBroadcast JSON object.
   `scripts/research/DumpFNotificationsAdjacentHelpers.java`
 - Latest local output:
   `/tmp/ghidra-work/fnotifications-adjacent-helpers.txt`
+- Ghidra script:
+  `scripts/research/DumpRmqRunnableVtables.java`
+- Latest local output:
+  `/tmp/ghidra-work/rmq-runnable-vtables.txt`
 - Run commands:
 
 ```bash
@@ -36,6 +40,7 @@ scripts/research/run-ghidra-headless.sh --script DumpNativeGmRmqDeserializer.jav
 scripts/research/run-ghidra-headless.sh --script DumpNativeGmReceiveCallbacks.java
 scripts/research/run-ghidra-headless.sh --script DumpFNotificationsCommandAcceptance.java
 scripts/research/run-ghidra-headless.sh --script DumpFNotificationsAdjacentHelpers.java
+scripts/research/run-ghidra-headless.sh --script DumpRmqRunnableVtables.java
 ```
 
 ## Positive Static Result
@@ -255,6 +260,58 @@ structures. The inbound parser still sits earlier, before the generated
 `TBaseFunctorDelegateInstance<...FNotificationsSystemMessage...>` callback gets
 the object consumed by `FUN_09f8cf00`. Confidence: high.
 
+## Inbound AMQP Consumer
+
+`DumpRmqRunnableVtables.java` found the RMQ runnable vtables used by
+`FUN_09ed8710`. Confidence: high.
+
+The consumer runnable table around `1490ca78` identifies:
+
+```text
+slot +6 -> FUN_09edbb50  consumer init/start path
+slot +8 -> FUN_09edc750  inbound AMQP consume-message path
+slot +9 -> FUN_09edb420  consumer task/registration path
+```
+
+The table is anchored by `FlsRmqRunnables.cpp` strings and consumer logs such as
+`Failed to cancel consumer for {queue}` and `Failed to start consumer on
+{queue}`. Confidence: high.
+
+`FUN_09edc750` is the first confirmed inbound AMQP message function in this
+chain. Confidence: high. Recovered flow:
+
+```text
+FUN_09edc750
+  amqp_maybe_release_buffers
+  amqp_consume_message
+  handles heartbeat/timeout/connection-close cases
+  on delivered message:
+    FUN_09edd340(...)                 delivery/routing metadata
+    FUN_09ee0490(..., "app_id", 8)
+    FUN_09ee0490(..., "user_id", 0x10)
+    FUN_09ee0490(..., "correlation_id", 0x400)
+    FUN_09ee0490(..., "reply_to", 0x200)
+    FUN_09edd540(...)
+    FUN_09edd810(...)
+    FUN_09edd980(...)
+    amqp_destroy_envelope
+    hashes the delivery key and finds a registered consumer entry
+    builds a local decoded AMQP notification object
+    FUN_09edda40(consumer_entry + 0x160, local_decoded_message)
+    FUN_09edda40(global/default consumer, local_decoded_message)
+```
+
+Confidence: high for the call sequence and AMQP property names. Confidence:
+moderate for the exact names of the helper outputs that do not retain symbols.
+
+Operational consequence: the missing wrapper is now more specific than
+"some JSON envelope." The native receive path constructs the decoded
+`FNotificationsSystemMessage` from AMQP delivery metadata/properties and body
+before the generated `FNotificationsSystemMessage` delegate runs. Therefore a
+safe live probe must control AMQP properties such as `app_id`, `user_id`,
+`correlation_id`, `reply_to`, AMQP type/body metadata, and the delivery/routing
+key, not only JSON field aliases inside the message body. Confidence: high.
+
 ## Log String Map
 
 These strings are directly tied to `FUN_09ee73c0` through pointer tables:
@@ -354,9 +411,9 @@ because native code has not accepted the outer notification. Confidence: high.
 2. Resolve the inbound constructor/deserializer that populates decoded offsets
    `0x48/0x50`, `0x58/0x60`, and `0x78/0x80`, plus the auth/content fields
    extracted from `param_2 + 0x48`. Confidence: high value.
-3. Build the next probe family around the decoded notification struct and AMQP
-   properties, not around more top-level JSON-RPC method names. Confidence:
-   high.
+3. Build the next probe family around `FUN_09edc750` inputs: delivery key,
+   `app_id`, `user_id`, `correlation_id`, `reply_to`, AMQP type/body metadata,
+   and raw body. Confidence: high.
 4. Keep live proof restricted to empty routes and `PrintAllowedCommands` until
    `Server command received` and `Handling ServiceBroadcast Server command:`
    are observed. Confidence: high.

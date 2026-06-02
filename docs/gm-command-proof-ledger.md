@@ -382,6 +382,30 @@ remaining target is still earlier than the generated
 `FNotificationsSystemMessage` callback object consumed by `FUN_09f8cf00`.
 Confidence: high.
 
+Follow-up vtable pass added `scripts/research/DumpRmqRunnableVtables.java` and
+wrote `/tmp/ghidra-work/rmq-runnable-vtables.txt`. Confidence: high.
+
+- `FUN_09ed8710` uses RMQ runnable vtables from `FlsRmqRunnables.cpp`.
+  Confidence: high.
+- The consumer table around `1490ca78` maps slot `+6` to `FUN_09edbb50`
+  consumer init/start, slot `+8` to `FUN_09edc750` inbound
+  `amqp_consume_message`, and slot `+9` to `FUN_09edb420` consumer
+  task/registration handling. Confidence: high.
+- `FUN_09edc750` calls `amqp_consume_message`, extracts AMQP properties
+  `app_id`, `user_id`, `correlation_id`, and `reply_to`, pulls delivery/body
+  metadata through `FUN_09edd340`, `FUN_09edd540`, `FUN_09edd810`, and
+  `FUN_09edd980`, matches the delivery key to a registered consumer entry, then
+  calls `FUN_09edda40(..., local_decoded_message)`. Confidence: high for the
+  call sequence and property names.
+- `FUN_09edda40` then copies that decoded AMQP notification object through
+  `FUN_09ec9f00`, which is the same decoded-message family later consumed by
+  `FUN_09f3ff90` and `FUN_09ee73c0`. Confidence: high.
+
+Result: the inbound AMQP consume function is now found. The next payload work
+must control AMQP delivery key/properties/body metadata, not only JSON aliases:
+`app_id`, `user_id`, `correlation_id`, `reply_to`, AMQP type/body metadata, and
+raw body are now first-class inputs to test on an empty route. Confidence: high.
+
 Conclusion: no live command execution is proven yet, but the current positive
 path is now specific: test the native-positive generic notification bodies
 above on the empty route and look for `Server command received`,
