@@ -362,6 +362,26 @@ is `Handling ServiceBroadcast Server command:`; the third is
 names are irrelevant because the outer decoded notification has not passed the
 native gates. Confidence: high.
 
+Follow-up static pass added
+`scripts/research/DumpFNotificationsAdjacentHelpers.java` and wrote
+`/tmp/ghidra-work/fnotifications-adjacent-helpers.txt`. Confidence: high.
+
+- `FUN_09ec5b60`, `FUN_09ec9f00`, `FUN_09ed72c0`, and `FUN_09ed82d0` are
+  decoded-message copy helpers. Confidence: high.
+- `FUN_09eca180` and `FUN_09ec8390` are cleanup/destructor-style helpers.
+  Confidence: high.
+- `FUN_09eca430` moves AMQP operation task fields. Confidence: high.
+- `FUN_09ec9730` and `FUN_09ec9b30` forward or enqueue an already-decoded
+  notification object. Confidence: moderate/high.
+- `FUN_09ed8ed0` and `FUN_09ede1c0` are outbound/AMQP-operation paths:
+  `FUN_09ede1c0` case 1 calls `FUN_09ede9a0`, while other cases cover
+  exchange/queue create/delete/bind/unbind-style operations. Confidence: high.
+
+Result: that adjacent cluster is not the inbound body parser either. The
+remaining target is still earlier than the generated
+`FNotificationsSystemMessage` callback object consumed by `FUN_09f8cf00`.
+Confidence: high.
+
 Conclusion: no live command execution is proven yet, but the current positive
 path is now specific: test the native-positive generic notification bodies
 above on the empty route and look for `Server command received`,

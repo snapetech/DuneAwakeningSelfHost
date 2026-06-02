@@ -25,12 +25,17 @@ ServiceBroadcast JSON object.
   `scripts/research/DumpFNotificationsCommandAcceptance.java`
 - Latest local output:
   `/tmp/ghidra-work/fnotifications-command-acceptance.txt`
+- Ghidra script:
+  `scripts/research/DumpFNotificationsAdjacentHelpers.java`
+- Latest local output:
+  `/tmp/ghidra-work/fnotifications-adjacent-helpers.txt`
 - Run commands:
 
 ```bash
 scripts/research/run-ghidra-headless.sh --script DumpNativeGmRmqDeserializer.java
 scripts/research/run-ghidra-headless.sh --script DumpNativeGmReceiveCallbacks.java
 scripts/research/run-ghidra-headless.sh --script DumpFNotificationsCommandAcceptance.java
+scripts/research/run-ghidra-headless.sh --script DumpFNotificationsAdjacentHelpers.java
 ```
 
 ## Positive Static Result
@@ -211,6 +216,44 @@ This explains why successful `basic_publish` calls and empty queues are not
 sufficient proof. A message can be valid AMQP and still fail to construct the
 decoded `FNotificationsSystemMessage` object required by `FUN_09f3ff90` and
 `FUN_09ee73c0`. Confidence: high.
+
+## Adjacent Helper Result
+
+`DumpFNotificationsAdjacentHelpers.java` checked the helper cluster around
+`FUN_09ec9f00` and the RMQ operation loop. Confidence: high.
+
+Positive results:
+
+```text
+FUN_09ec5b60, FUN_09ec9f00, FUN_09ed72c0, FUN_09ed82d0:
+  copy decoded string fields between existing message objects
+
+FUN_09eca180, FUN_09ec8390:
+  clean up decoded message/operation structures
+
+FUN_09eca430:
+  move/copy an AMQP operation task structure
+
+FUN_09ec9730:
+  builds or forwards an already-decoded notification object, then calls
+  FUN_09ec9b30
+
+FUN_09ec9b30:
+  allocates or enqueues callback work for an existing message object
+
+FUN_09ed8ed0:
+  periodic outbound gate; prepares a message and calls FUN_09ede9a0
+
+FUN_09ede1c0:
+  AMQP operation state machine; case 1 calls outbound publish, other cases
+  cover queue/exchange create/delete/bind/unbind-style operations
+```
+
+Confidence: high that this adjacent cluster is not the inbound RabbitMQ body
+deserializer. It manipulates already-existing decoded message/operation
+structures. The inbound parser still sits earlier, before the generated
+`TBaseFunctorDelegateInstance<...FNotificationsSystemMessage...>` callback gets
+the object consumed by `FUN_09f8cf00`. Confidence: high.
 
 ## Log String Map
 
