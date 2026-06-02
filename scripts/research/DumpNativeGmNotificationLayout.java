@@ -65,6 +65,8 @@ public class DumpNativeGmNotificationLayout extends GhidraScript {
     private static final String[] NEEDLES = new String[] {
         "AuthToken",
         "NotificationSystem message parsing failed. Failed to deserialize.",
+        "NotificationSystemListenQueue failed for queue",
+        "NotificationSystemListenQueue message receive failed for queue",
         "NotificationSystem message ignored. Outdated message version:",
         "NotificationSystem message handling failed. Empty message content.",
         "NotificationSystem message handling failed. Invalid Auth Token.",
@@ -81,6 +83,8 @@ public class DumpNativeGmNotificationLayout extends GhidraScript {
         "Version",
         "Field 'Version' is absent",
         "Field 'Version' equal",
+        "JsonObjectStringToUStruct",
+        "Deserialized message has unknown Server Command",
         "ServerCommand",
         "ServerCommandsAuthToken",
         "ServiceBroadcast",

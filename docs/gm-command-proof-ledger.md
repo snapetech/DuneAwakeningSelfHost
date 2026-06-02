@@ -123,6 +123,47 @@ must be tested only with `PrintAllowedCommands`/`PrintPos` on an empty route.
 for typed command parameters after delivery is solved, but low that it is the
 missing native notification wrapper.
 
+Follow-up live proof on `kspls0` used only the empty `WaterFat_0` route:
+partition `7`, map `CB_Story_WaterFatManor`, server id
+`s0JD4zOYTPyN3oV0wU8f3A`, game queue
+`queue.server.s0JD4zOYTPyN3oV0wU8f3A`, and admin queue
+`CB_Story_WaterFatManor7_queue`. Confidence: high.
+
+- Host was verified as `kspls0`.
+- `testing-waterfat` was alive, active, `connected_players=0`, restart count
+  `0`, OOM false, and both target queues were at zero ready/unacked messages.
+- Eight `engine-service-fls-notifications-serverrequesteventnotifications-*`
+  `PrintAllowedCommands` publishes were sent through the mapped game queue and
+  notification/heartbeat bindings.
+- Sixteen `notification-native-fls-*serverrequesteventnotifications*`
+  `PrintAllowedCommands` publishes were sent through the same mapped game queue
+  and notification/heartbeat bindings.
+- All publishes completed without RMQ errors; no player route was occupied.
+- Logs showed no `Server command received`, `Now running ServerCommand`,
+  `PrintAllowedCommands`, `Invalid Sender`, `Invalid Auth Token`,
+  `Empty message content`, `Failed to deserialize`, `JsonObjectStringToUStruct`,
+  `Handling ServiceBroadcast`, crash, fatal, or restart.
+- Target queue state remained clean and `WaterFat_0` stayed
+  `connected_players=0`.
+
+Conclusion: the new `engine-service` and sender-aware native JSON candidates
+are also not working payloads. Confidence: high. They appear to be consumed or
+ignored before the `FUN_09f3ff90 -> FUN_09ee73c0` native server-command handler
+logs anything. Confidence: moderate/high that the remaining blocker is the
+generated RMQ notification deserializer/event-dispatch contract, not another
+top-level alias for `SenderId`, `EventNamespace`, or `ServerCommand`.
+
+The latest static pass expanded
+`scripts/research/DumpNativeGmNotificationLayout.java` with
+`NotificationSystemListenQueue`, `JsonObjectStringToUStruct`, and
+`Deserialized message has unknown Server Command` strings. These strings are
+present in the binary, but the focused string pass did not recover simple direct
+code xrefs for the JSON-to-struct failure or unknown-command log. Confidence:
+moderate that these are table/generated serializer surfaces. The next useful
+reverse-engineering step is the RMQ receive path around
+`FUN_09ed8710 -> FUN_09ed8ed0 -> FUN_09ede9a0`, plus the generated
+notification descriptor tables, rather than more live publishing.
+
 Use the proof runner:
 
 ```bash

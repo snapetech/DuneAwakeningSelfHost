@@ -94,6 +94,21 @@ Future research should compare RabbitMQ bindings, generated users, and server qu
   `Parameters` array with `Name`, `Type`, and `Value`. Confidence: moderate that
   it is useful only after the notification delivery wrapper is solved, not the
   missing outer FLS notification route.
+- Live proof on the empty `WaterFat_0` route then tested the new
+  `engine-service-fls-notifications-serverrequesteventnotifications-*` and
+  sender-aware `notification-native-fls-*serverrequesteventnotifications*`
+  `PrintAllowedCommands` candidates against the mapped game-RMQ queue
+  `queue.server.s0JD4zOYTPyN3oV0wU8f3A`. Confidence: high. The route stayed
+  `connected_players=0`, queues stayed clean, and the container did not restart,
+  but logs still showed no `Server command received`, `Now running
+  ServerCommand`, sender/auth/content error, JSON-to-struct failure, or command
+  output. Confidence: high that these candidates are also not working payloads.
+- The latest static pass added `NotificationSystemListenQueue`,
+  `JsonObjectStringToUStruct`, and `Deserialized message has unknown Server
+  Command` to the Ghidra script. Those strings are present but did not produce
+  simple direct code xrefs in the focused pass. Confidence: moderate that the
+  missing contract is in generated notification descriptor/deserializer tables
+  around `FUN_09ed8710 -> FUN_09ed8ed0 -> FUN_09ede9a0`.
 - The active dedicated server allow-list found in `DuneSandbox/Config/DedicatedServerGame.ini` includes:
   - Console commands: `obj`, `FGL.ComponentAuditRequested`
   - GM commands: `AddItemToInventory`, `AddBasicInventoryToCharacter`, `SpawnVehicle`, teleport/travel helpers, `Fly`, `Ghost`, `Walk`, targeted destroy helpers, and `PrintPos`.
