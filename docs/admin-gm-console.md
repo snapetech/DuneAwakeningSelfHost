@@ -179,6 +179,17 @@ make gm-catalog
 
 The chat bridge also exposes a short operational summary through `&gm catalog`. Confidence is moderate: the command names come from the live server allow-list and binary/string research, but live execution is still preview-only until the native RabbitMQ payload contract is proven.
 
+Use `scripts/prove-gm-commands.py` to build the non-disruptive proof ledger and
+execute only the harmless route probes:
+
+```bash
+./scripts/prove-gm-commands.py --format markdown
+./scripts/prove-gm-commands.py --execute-safe --command PrintAllowedCommands --command PrintPos
+```
+
+The proof runner refuses to execute mutating/destructive commands by default.
+See [gm-command-proof-ledger.md](gm-command-proof-ledger.md).
+
 Use `scripts/probe-gm-command.py` to test harmless native command envelopes without wiring unverified execution into the dashboard:
 
 ```bash
