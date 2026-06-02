@@ -85,12 +85,28 @@ run_landsraad_goal_tuning() {
   ./scripts/tune-landsraad-goals.sh "$env_file" --execute
 }
 
+run_landsraad_reveal_watchdog() {
+  env_file="${ENV_FILE:-.env}"
+  enabled="${DUNE_LANDSRAAD_REVEAL_WATCHDOG_ENABLED:-$(env_file_value DUNE_LANDSRAAD_REVEAL_WATCHDOG_ENABLED "$env_file")}"
+  enabled="${enabled:-true}"
+  case "$enabled" in
+    1|true|yes|on) ;;
+    *) return 0 ;;
+  esac
+  if [ ! -x ./scripts/landsraad-reveal-watchdog.sh ]; then
+    printf 'Landsraad reveal watchdog enabled but scripts/landsraad-reveal-watchdog.sh is missing or not executable\n' >&2
+    return 1
+  fi
+  ./scripts/landsraad-reveal-watchdog.sh "$env_file" --execute
+}
+
 pre_start_hygiene() {
   env_file="${ENV_FILE:-.env}"
   if [ -x ./scripts/apply-official-db-patches.sh ]; then
     ./scripts/apply-official-db-patches.sh "$env_file"
   fi
   run_landsraad_goal_tuning
+  run_landsraad_reveal_watchdog
   run_hardcore_dd_weekly_wipe
   clear_player_rmq="${DUNE_RESTART_CLEAR_PLAYER_RMQ_SESSIONS:-}"
   if [ -z "$clear_player_rmq" ]; then
@@ -484,6 +500,8 @@ def run_host_compose(services):
     compose_command.extend(["--env-file", env_file, "up", "-d", "--force-recreate", "--no-deps"])
     compose_command.extend(services)
     service_words = " ".join(services)
+    landsraad_goal_tuning_enabled = os.environ.get("DUNE_LANDSRAAD_GOAL_TUNING_ENABLED") or read_env_value(env_file, "DUNE_LANDSRAAD_GOAL_TUNING_ENABLED") or ""
+    landsraad_reveal_watchdog_enabled = os.environ.get("DUNE_LANDSRAAD_REVEAL_WATCHDOG_ENABLED") or read_env_value(env_file, "DUNE_LANDSRAAD_REVEAL_WATCHDOG_ENABLED") or "true"
     hardcore_dd_wipe_enabled = (
         os.environ.get("DUNE_HARDCORE_DD_WEEKLY_WIPE_ENABLED")
         or read_env_value(env_file, "DUNE_HARDCORE_DD_WEEKLY_WIPE_ENABLED")
@@ -500,6 +518,14 @@ def run_host_compose(services):
         + "if [ -x ./scripts/apply-official-db-patches.sh ]; then "
         + f"./scripts/apply-official-db-patches.sh {shlex.quote(env_file)}; "
         + "fi; "
+        + "case " + shlex.quote(landsraad_goal_tuning_enabled) + " in 1|true|yes|on) "
+        + "if [ -x ./scripts/tune-landsraad-goals.sh ]; then "
+        + f"./scripts/tune-landsraad-goals.sh {shlex.quote(env_file)} --execute; "
+        + "else echo 'Landsraad goal tuning enabled but script missing' >&2; exit 1; fi ;; esac; "
+        + "case " + shlex.quote(landsraad_reveal_watchdog_enabled) + " in 1|true|yes|on) "
+        + "if [ -x ./scripts/landsraad-reveal-watchdog.sh ]; then "
+        + f"./scripts/landsraad-reveal-watchdog.sh {shlex.quote(env_file)} --execute; "
+        + "else echo 'Landsraad reveal watchdog enabled but script missing' >&2; exit 1; fi ;; esac; "
         + "case " + shlex.quote(hardcore_dd_wipe_enabled) + " in 1|true|yes|on) "
         + "case " + shlex.quote(" " + service_words + " ") + " in *' deep-desert-pvp '*) "
         + "if [ -x ./scripts/wipe-hardcore-deep-desert.sh ]; then "

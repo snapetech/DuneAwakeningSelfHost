@@ -477,6 +477,36 @@ again. Set the scale to `1.0` to restore stock goals for incomplete current-term
 tasks and future terms. Completed Landsraad tiles are not reopened by this
 script.
 
+## Landsraad Reveal Watchdog
+
+`DUNE_LANDSRAAD_REVEAL_WATCHDOG_ENABLED=true` runs
+`scripts/landsraad-reveal-watchdog.sh` during restart pre-start hygiene. The
+script catches the suspended-board state where the active term has tasks but
+`last_processed_reveal_day=0` and no `dune.landsraad_task_reveal_state` rows.
+When eligible, it calls the first-party
+`dune.landsraad_perform_daily_task_reveal` function for day-one boards `0..4`
+and both Landsraad factions.
+
+The execute path is host-gated by
+`DUNE_LANDSRAAD_REVEAL_WATCHDOG_REQUIRE_HOST=kspls0`. Every execute run records
+either a skip or repair row in `dune.landsraad_reveal_watchdog_audit`.
+
+Dry-run:
+
+```bash
+./scripts/landsraad-reveal-watchdog.sh .env
+```
+
+Apply:
+
+```bash
+hostname
+./scripts/landsraad-reveal-watchdog.sh .env --execute
+```
+
+Incident details and the 2026-06-02 repair record are in
+`docs/landsraad-reveal-watchdog.md`.
+
 ### Restore World State
 
 Use a state restore only if the server booted and then wrote bad world state, or if Postgres/RabbitMQ/server-saved data is otherwise suspect. Do not restore state for a simple patcher startup failure.
