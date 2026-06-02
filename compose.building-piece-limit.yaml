@@ -2,6 +2,9 @@ x-building-piece-limit-patch: &building-piece-limit-patch
   environment:
     DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED: "true"
     DUNE_BUILDING_PIECE_LIMIT: ${DUNE_BUILDING_PIECE_LIMIT:-7500}
+    DUNE_SUBFIEF_CAP_BINARY_PATCH_ENABLED: ${DUNE_SUBFIEF_CAP_BINARY_PATCH_ENABLED:-false}
+    DUNE_SUBFIEF_CAP_BINARY_TARGET: ${DUNE_SUBFIEF_CAP_BINARY_TARGET:-all}
+    DUNE_SUBFIEF_CAP: ${DUNE_SUBFIEF_CAP:-6}
     DUNE_OODLE_LIBRARY: /tmp/oodle/liboodle-data-shared.so
   volumes:
     - ${DUNE_OODLE_HOST_LIBRARY:-/home/keith/Documents/code/DuneAwakeningSelfHost/backups/operator-oodle/liboodle-data-shared.so}:/tmp/oodle/liboodle-data-shared.so:ro
