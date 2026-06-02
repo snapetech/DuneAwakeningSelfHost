@@ -381,8 +381,8 @@ GM_COMMAND_NOTES = {
     "Fly": "Enable fly movement on the admin player.",
     "Ghost": "Enable collision-free movement on the admin player.",
     "Walk": "Return movement mode to normal walking.",
-    "RemoveSessionMember": "Best current candidate for a soft targeted disconnect. Keep behind GM payload verification and player-disconnect execution gates.",
-    "KickLobbyMember": "Fallback targeted lobby kick candidate if RemoveSessionMember is ineffective.",
+    "RemoveSessionMember": "Online Services session-remove candidate, not a proven GM soft-disconnect command. Keep behind GM payload verification and player-disconnect execution gates.",
+    "KickLobbyMember": "Online Services lobby-kick candidate, not a proven GM soft-disconnect command.",
     "DestroyTargetVehicle": "Destroys targeted vehicle.",
     "DestroyTotem": "Destroys targeted totem.",
     "DestroyPlaceable": "Destroys targeted placeable.",
@@ -460,8 +460,8 @@ GM_PANEL_PRESETS = (
     {"label": "Fly", "command": "Fly", "args": "", "risk": "movement"},
     {"label": "Ghost", "command": "Ghost", "args": "", "risk": "movement"},
     {"label": "Walk", "command": "Walk", "args": "", "risk": "movement"},
-    {"label": "Soft Disconnect", "command": "RemoveSessionMember", "args": "<player>", "risk": "player"},
-    {"label": "Lobby Kick", "command": "KickLobbyMember", "args": "<player>", "risk": "player"},
+    {"label": "Session Remove Candidate", "command": "RemoveSessionMember", "args": "<player>", "risk": "player"},
+    {"label": "Lobby Kick Candidate", "command": "KickLobbyMember", "args": "<player>", "risk": "player"},
 )
 
 ALLOWED_CONFIGS = {

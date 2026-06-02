@@ -272,10 +272,46 @@ The stack now treats targeted disconnect as a gated native GM/session command. T
 
 A network-disconnect teleport path is now verified separately from native GM/session commands. DB-only presence flips were a false positive: they triggered automation but did not disconnect the game client or release the live pawn. The verified test player forced a real `UNetConnection` timeout, waited for `Offline`, called `dune.admin_move_offline_player_to_partition(...)`, and reconnect loaded the moved pawn. Confidence: high for the observed test, moderate for generalized automation.
 
+Update 2026-06-02: Ghidra confirms that `RemoveSessionMember` and
+`KickLobbyMember` are real UE Online Services operations, but not proven
+dedicated-server GM commands. `RemoveSessionMember` is backed by
+`UE::Online::FSessionsCommon::FRemoveSessionMember`; `KickLobbyMember` is
+backed by `UE::Online::FLobbiesCommon::FKickLobbyMember`. The current build
+does not expose a simple `KickPlayer`, `AdminKick`, or `DisconnectPlayer`
+command in `DedicatedServerGame.ini`, and previous delivered RabbitMQ probes for
+the string commands were consumed or ignored. Confidence: high that the current
+admin/chat labels must treat these as session/lobby operation candidates, not a
+verified "soft disconnect" button.
+
+Ghidra helper:
+
+```bash
+/opt/ghidra/support/analyzeHeadless /tmp/ghidra-work/project DuneServer \
+  -process server-bin \
+  -noanalysis \
+  -postScript DumpDisconnectOperationHandlers.java \
+  -scriptPath scripts/research \
+  -log /tmp/ghidra-work/disconnect-handlers-ghidra.log
+```
+
+Current vtable anchors from that run:
+
+- `FKickLobbyMember` exec handler vtable: Ghidra `0x148cda28`.
+- `FRemoveSessionMember` exec handler vtable: Ghidra `0x148d3c10`.
+- `FKickLobbyMember` async op vtable: Ghidra `0x148cfc00`.
+- `FRemoveSessionMember` async op vtable: Ghidra `0x148d7c50`.
+
+This does not yet give an operational route. The next useful reverse-engineering
+step is to trace callers that construct the `FRemoveSessionMember::Params` or
+`FKickLobbyMember::Params` structs, then determine whether any server-side admin
+surface can supply those params for a live player. Until then, keep
+`DUNE_GM_COMMAND_PAYLOAD_VERIFIED=false` and keep `&disconnect` as preview-only.
+
 What we verified:
 
 - The active `DedicatedServerGame.ini` GM allow-list does not include a clear `KickPlayer`, `AdminKick`, or `DisconnectPlayer` command.
 - The live server binary does contain lower-level session and disconnect strings including `KickLobbyMember`, `RemoveSessionMember`, `BattlEyeMegaKick`, and `ClientWasKicked`.
+- `RemoveSessionMember` and `KickLobbyMember` are present as UE Online Services operations, not as verified dedicated-server GM command handlers.
 - Those strings are not enough to execute safely unless the native RabbitMQ command envelope is verified for the current build.
 - The database exposes player online state, `server_id`, `player_controller_id`, pawn id, FLS id, and map location, but it does not expose a live socket/session handle that can be safely closed.
 - Host/container UDP listeners do not provide a reliable per-character connection to kill. A network-level kick would require a verified character-to-client-IP mapping first.
