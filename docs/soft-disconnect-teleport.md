@@ -349,20 +349,33 @@ Dry run:
 ./scripts/patch-logoff-timers-runtime.sh --host kspls0 --dry-run
 ```
 
+Post-start/local host mode:
+
+```bash
+./scripts/patch-logoff-timers-runtime.sh --local
+```
+
 The script guards against the wrong server build with the current expected ELF Build ID:
 
 ```text
 9bf5fbdef43a6d6d64459df973f3d252c01ab4ad
 ```
 
-It only targets these active production containers:
+It defaults to these active production containers:
 
 ```text
 dune_server-survival-1
 dune_server-deep-desert-1
+dune_server-deep-desert-pvp-1
 ```
 
-For the old 2026-05-24 build, it read two runtime float arrays through `gdb`. Before that patch, both containers had:
+Override the target list with `DUNE_LOGOFF_TIMER_CONTAINERS` if the live map
+layout changes. `scripts/restart-post-start-health.sh` reapplies this runtime
+patch after successful restart health checks when
+`DUNE_LOGOFF_TIMER_RUNTIME_PATCH_ENABLED=true`, because the patch is
+process-local and container recreation restores the original values.
+
+For the old 2026-05-24 build, it read two runtime float arrays through `gdb`. Before that patch, targeted containers had:
 
 ```text
 30 30 0 0

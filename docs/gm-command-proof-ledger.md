@@ -187,6 +187,36 @@ news for narrowing the next work: reverse the consumer vtable callbacks and the
 message object consumed by `FUN_09f8cf00` before doing more live
 `PrintAllowedCommands` payload probes. Confidence: high.
 
+A follow-up callback pass added
+`scripts/research/DumpNativeGmReceiveCallbacks.java` and decompiled the
+receive-side delegates. Confidence: high.
+
+- The callback tables are generated
+  `TBaseFunctorDelegateInstance<...FNotificationsSystemMessage...>` tables
+  around `1492b4c8`, `1492b598`, and `1492b688`. Confidence: high.
+- `FUN_0a05bfb0` identifies the owner path as
+  `Dreamworld::FPlayFabPlayerSession::NotificationSystemInitialize(...)`.
+  Confidence: high.
+- `FUN_0a05c580` / `FUN_0a05c590` thunk into `FUN_0a05c5b0`; `FUN_0a05d040`
+  / `FUN_0a05d050` thunk into `FUN_0a05d070`. Confidence: high.
+- `FUN_0a05c5b0` and `FUN_0a05d070` both validate/refcount the received
+  notification message object and then call `FUN_09f8cf00(*param_1)` when the
+  object pointer is present. Confidence: high.
+- `FUN_09f8cf00` is a thin wrapper over `FUN_09f6ecb0(param_1, 0, 0, 0)`.
+  Confidence: high.
+- `FUN_09f3ff90` filters decoded notification sender/type fields at offsets
+  `0x48` and `0x50`, then calls `FUN_09ee73c0`.
+- `FUN_09ee73c0` reads additional decoded notification fields at offsets
+  `0x58`, `0x60`, `0x78`, and `0x80`, extracts auth/content through
+  `FUN_09ee7970(param_2 + 0x48, ...)`, and only logs `Server command received`
+  when content is non-empty. Confidence: high.
+
+Conclusion: native delivery is not a raw JSON body published to the queue. The
+server command path expects an already decoded `FNotificationsSystemMessage`
+object produced by the PlayFab/FLS notification system. The next useful static
+target is the deserializer that constructs that object and populates offsets
+`0x48..0x80`, not more live RMQ payload aliases. Confidence: high.
+
 Use the proof runner:
 
 ```bash

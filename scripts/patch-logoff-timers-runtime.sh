@@ -2,6 +2,7 @@
 set -euo pipefail
 
 REMOTE_HOST="${DUNE_CURRENT_HOST:-kspls0}"
+RUN_LOCAL=false
 EXPECTED_BUILD_ID="${DUNE_LOGOFF_TIMER_BUILD_ID:-9bf5fbdef43a6d6d64459df973f3d252c01ab4ad}"
 VALUE_A_OFFSET="${DUNE_LOGOFF_TIMER_VALUE_A_OFFSET:-0x16521698}"
 VALUE_B_OFFSET="${DUNE_LOGOFF_TIMER_VALUE_B_OFFSET:-0x165216b0}"
@@ -11,25 +12,80 @@ UI_VALUE_A_OFFSET="${DUNE_LOGOFF_TIMER_UI_VALUE_A_OFFSET:-0x16523ce0}"
 UI_VALUE_B_OFFSET="${DUNE_LOGOFF_TIMER_UI_VALUE_B_OFFSET:-0x16523d10}"
 UI_VALUE_C_OFFSET="${DUNE_LOGOFF_TIMER_UI_VALUE_C_OFFSET:-0x16523d28}"
 TARGET_VALUE="${DUNE_LOGOFF_TIMER_VALUE:-0.0}"
+TARGET_CONTAINERS="${DUNE_LOGOFF_TIMER_CONTAINERS:-dune_server-survival-1 dune_server-deep-desert-1 dune_server-deep-desert-pvp-1}"
 
-if [[ "${1:-}" == "--host" ]]; then
-  REMOTE_HOST="${2:?missing host after --host}"
-  shift 2
-fi
+MODE="apply"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --host)
+      REMOTE_HOST="${2:?missing host after --host}"
+      shift 2
+      ;;
+    --local)
+      RUN_LOCAL=true
+      shift
+      ;;
+    --dry-run)
+      MODE="dry-run"
+      shift
+      ;;
+    *)
+      echo "usage: $0 [--host HOST | --local] [--dry-run]" >&2
+      exit 2
+      ;;
+  esac
+done
 
-if [[ "${1:-}" == "--dry-run" ]]; then
-  MODE="dry-run"
+env_command=(
+  "EXPECTED_BUILD_ID='$EXPECTED_BUILD_ID'"
+  "VALUE_A_OFFSET='$VALUE_A_OFFSET'"
+  "VALUE_B_OFFSET='$VALUE_B_OFFSET'"
+  "DEADLINE_CLAMP_OFFSET='$DEADLINE_CLAMP_OFFSET'"
+  "TIMER_DURATION_ZERO_OFFSET='$TIMER_DURATION_ZERO_OFFSET'"
+  "UI_VALUE_A_OFFSET='$UI_VALUE_A_OFFSET'"
+  "UI_VALUE_B_OFFSET='$UI_VALUE_B_OFFSET'"
+  "UI_VALUE_C_OFFSET='$UI_VALUE_C_OFFSET'"
+  "TARGET_VALUE='$TARGET_VALUE'"
+  "TARGET_CONTAINERS='$TARGET_CONTAINERS'"
+  "MODE='$MODE'"
+  "bash -s"
+)
+local_env=(
+  "EXPECTED_BUILD_ID=$EXPECTED_BUILD_ID"
+  "VALUE_A_OFFSET=$VALUE_A_OFFSET"
+  "VALUE_B_OFFSET=$VALUE_B_OFFSET"
+  "DEADLINE_CLAMP_OFFSET=$DEADLINE_CLAMP_OFFSET"
+  "TIMER_DURATION_ZERO_OFFSET=$TIMER_DURATION_ZERO_OFFSET"
+  "UI_VALUE_A_OFFSET=$UI_VALUE_A_OFFSET"
+  "UI_VALUE_B_OFFSET=$UI_VALUE_B_OFFSET"
+  "UI_VALUE_C_OFFSET=$UI_VALUE_C_OFFSET"
+  "TARGET_VALUE=$TARGET_VALUE"
+  "TARGET_CONTAINERS=$TARGET_CONTAINERS"
+  "MODE=$MODE"
+)
+
+if [[ "$RUN_LOCAL" == "true" ]]; then
+  runner=(env "${local_env[@]}" bash -s)
 else
-  MODE="apply"
+  runner=(ssh "$REMOTE_HOST" "${env_command[*]}")
 fi
 
-ssh "$REMOTE_HOST" \
-  "EXPECTED_BUILD_ID='$EXPECTED_BUILD_ID' VALUE_A_OFFSET='$VALUE_A_OFFSET' VALUE_B_OFFSET='$VALUE_B_OFFSET' DEADLINE_CLAMP_OFFSET='$DEADLINE_CLAMP_OFFSET' TIMER_DURATION_ZERO_OFFSET='$TIMER_DURATION_ZERO_OFFSET' UI_VALUE_A_OFFSET='$UI_VALUE_A_OFFSET' UI_VALUE_B_OFFSET='$UI_VALUE_B_OFFSET' UI_VALUE_C_OFFSET='$UI_VALUE_C_OFFSET' TARGET_VALUE='$TARGET_VALUE' MODE='$MODE' bash -s" <<'REMOTE'
+"${runner[@]}" <<'REMOTE'
 set -euo pipefail
 
 mapfile -t containers < <(
   docker ps --format '{{.Names}}' |
-    awk '$0 == "dune_server-survival-1" || $0 == "dune_server-deep-desert-1"'
+    awk -v targets="$TARGET_CONTAINERS" '
+      BEGIN {
+        split(targets, names, /[[:space:]]+/)
+        for (idx in names) {
+          if (names[idx] != "") {
+            wanted[names[idx]] = 1
+          }
+        }
+      }
+      wanted[$0]
+    '
 )
 
 if [[ "${#containers[@]}" -eq 0 ]]; then

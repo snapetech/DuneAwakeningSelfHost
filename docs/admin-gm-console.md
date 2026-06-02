@@ -116,6 +116,22 @@ Future research should compare RabbitMQ bindings, generated users, and server qu
   notification-system queue/work-item setup. Confidence: high for the callback
   targets, moderate for the exact object layout. The next proof target is the
   consumer vtable/message-object layout, not another blind top-level JSON alias.
+- Follow-up Ghidra work with
+  `scripts/research/DumpNativeGmReceiveCallbacks.java` decompiled the generated
+  callback tables. The owner path is
+  `Dreamworld::FPlayFabPlayerSession::NotificationSystemInitialize(...)`, and
+  the delegate type is
+  `TBaseFunctorDelegateInstance<...FNotificationsSystemMessage...>`.
+  `FUN_0a05c5b0` and `FUN_0a05d070` refcount a received message object, then
+  call `FUN_09f8cf00(*param_1)`; `FUN_09f8cf00` is a thin wrapper over
+  `FUN_09f6ecb0(param_1, 0, 0, 0)`. Confidence: high.
+- `FUN_09f3ff90` and `FUN_09ee73c0` now give concrete decoded-message offsets:
+  `0x48/0x50` for the prefilter sender/type check, then `0x58/0x60` and
+  `0x78/0x80` for later server-command validation. Confidence: high. The bad
+  result remains that no live payload is proven. The good result is that the
+  remaining reverse-engineering target is now the PlayFab/FLS
+  `FNotificationsSystemMessage` deserializer, not another RMQ method-name
+  guess.
 - The active dedicated server allow-list found in `DuneSandbox/Config/DedicatedServerGame.ini` includes:
   - Console commands: `obj`, `FGL.ComponentAuditRequested`
   - GM commands: `AddItemToInventory`, `AddBasicInventoryToCharacter`, `SpawnVehicle`, teleport/travel helpers, `Fly`, `Ghost`, `Walk`, targeted destroy helpers, and `PrintPos`.
