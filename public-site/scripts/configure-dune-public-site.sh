@@ -70,7 +70,7 @@ escape_html() {
 }
 
 escape_sed() {
-  printf '%s' "$1" | sed -e 's/[\/&]/\\&/g'
+  printf '%s' "$1" | sed -e 's/[#\/&]/\\&/g'
 }
 
 title_html="$(escape_html "$site_title")"
