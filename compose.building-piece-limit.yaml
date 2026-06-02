@@ -40,3 +40,4 @@ services:
   overland-s-07: *building-piece-limit-patch
   overland-s-08: *building-piece-limit-patch
   dungeon-thepit: *building-piece-limit-patch
+  deep-desert-pvp: *building-piece-limit-patch

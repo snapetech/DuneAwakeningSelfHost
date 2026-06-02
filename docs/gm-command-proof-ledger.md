@@ -240,6 +240,23 @@ A follow-up static layout pass added
   `FUN_09e067f0`, which map property/data-function metadata to object fields.
   Confidence: moderate.
 
+A follow-up pass added
+`scripts/research/DumpFNotificationsDataBridge.java` and wrote
+`/tmp/ghidra-work/fnotifications-data-bridge.txt`. That result corrected the
+target list: `FUN_09e05650` and `FUN_09e067f0` are generic
+`UOptimusNode_DataInterface` data-function support, not the PlayFab/FLS
+notification deserializer. The nearby diagnostic table at `148e60f8..148e6198`
+contains Optimus messages such as missing data read/write functions, and the
+registration path identifies `/Script/OptimusCore` and
+`OptimusNode_DataInterface`. Confidence: high.
+
+The remaining static target is the PlayFab/FLS notification deserialize path in
+`FuncomLiveServicesWithPlayFab.cpp`, anchored by the
+`NotificationSystem message parsing failed. Failed to deserialize.` string/table
+around `1490e420` and by callbacks that produce the decoded
+`FNotificationsSystemMessage` consumed by `FUN_09f3ff90` and `FUN_09ee73c0`.
+Confidence: moderate.
+
 Conclusion: this is still bad news for live operation: no working native GM
 payload is proven. The good news is that the decoded notification object layout
 is now much tighter, and the remaining target is the generated

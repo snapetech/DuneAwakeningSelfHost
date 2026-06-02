@@ -36,3 +36,4 @@ services:
   overland-s-07: *landsraad-vendor-faction-gate-patch
   overland-s-08: *landsraad-vendor-faction-gate-patch
   dungeon-thepit: *landsraad-vendor-faction-gate-patch
+  deep-desert-pvp: *landsraad-vendor-faction-gate-patch
