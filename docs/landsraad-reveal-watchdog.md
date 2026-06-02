@@ -95,3 +95,39 @@ Manual execute on production:
 hostname
 scripts/landsraad-reveal-watchdog.sh .env --execute
 ```
+
+## 2026-06-02 Follow-Up: Coriolis Cycle Gate
+
+Confidence: high.
+
+The reveal repair above was necessary but not sufficient. After term 3 had day
+one reveal rows, players still saw Landsraad suspended. The remaining cause was
+the Standard PvE Coriolis config: `config/UserGame.ini` and
+`config/UserGame.deep-desert-coriolis.ini` used `m_CycleDurationInDays=36524`.
+The server logs then showed the Coriolis cycle parked far in the future, while
+the Landsraad UI still derives its active/suspended window from that Coriolis
+cycle.
+
+The repair is to keep the weekly cycle active while disabling the destructive
+parts:
+
+```ini
+m_bCoriolisAutoSpawnEnabled=False
+m_bCoriolisDoesDamage=False
+m_bCoriolisTriggerShiftingSands=False
+m_CoriolisLightDamage=0.000000
+m_CoriolisHeavyDamage=0.000000
+m_CycleDurationInDays=7
+m_bShouldRestartServerOnCycleEnd=False
+m_bIsDbWipeEnabled=False
+```
+
+After restarting Survival and DD1 on `2026-06-02`, both maps logged:
+
+```text
+This Coriolis Cycle start date UTC: 2026.06.02-15.52.00
+Next Coriolis Cycle start date UTC: 2026.06.09-15.52.00
+```
+
+Do not reintroduce the 36524-day cycle. It prevents visible Coriolis rollover
+but also suspends Landsraad.

@@ -50,7 +50,7 @@ dd1_no_shift_patterns=(
   'm_bCoriolisTriggerShiftingSands=False'
   'm_CoriolisLightDamage=0.000000'
   'm_CoriolisHeavyDamage=0.000000'
-  'm_CycleDurationInDays=36524'
+  'm_CycleDurationInDays=7'
   'm_bShouldRestartServerOnCycleEnd=False'
   'm_bIsDbWipeEnabled=False'
 )
