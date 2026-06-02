@@ -7,6 +7,9 @@ VALUE_A_OFFSET="${DUNE_LOGOFF_TIMER_VALUE_A_OFFSET:-0x16521698}"
 VALUE_B_OFFSET="${DUNE_LOGOFF_TIMER_VALUE_B_OFFSET:-0x165216b0}"
 DEADLINE_CLAMP_OFFSET="${DUNE_LOGOFF_TIMER_DEADLINE_CLAMP_OFFSET:-0xd50f864}"
 TIMER_DURATION_ZERO_OFFSET="${DUNE_LOGOFF_TIMER_DURATION_ZERO_OFFSET:-0xd50fcba}"
+UI_VALUE_A_OFFSET="${DUNE_LOGOFF_TIMER_UI_VALUE_A_OFFSET:-0x16523ce0}"
+UI_VALUE_B_OFFSET="${DUNE_LOGOFF_TIMER_UI_VALUE_B_OFFSET:-0x16523d10}"
+UI_VALUE_C_OFFSET="${DUNE_LOGOFF_TIMER_UI_VALUE_C_OFFSET:-0x16523d28}"
 TARGET_VALUE="${DUNE_LOGOFF_TIMER_VALUE:-0.0}"
 
 if [[ "${1:-}" == "--host" ]]; then
@@ -21,7 +24,7 @@ else
 fi
 
 ssh "$REMOTE_HOST" \
-  "EXPECTED_BUILD_ID='$EXPECTED_BUILD_ID' VALUE_A_OFFSET='$VALUE_A_OFFSET' VALUE_B_OFFSET='$VALUE_B_OFFSET' DEADLINE_CLAMP_OFFSET='$DEADLINE_CLAMP_OFFSET' TIMER_DURATION_ZERO_OFFSET='$TIMER_DURATION_ZERO_OFFSET' TARGET_VALUE='$TARGET_VALUE' MODE='$MODE' bash -s" <<'REMOTE'
+  "EXPECTED_BUILD_ID='$EXPECTED_BUILD_ID' VALUE_A_OFFSET='$VALUE_A_OFFSET' VALUE_B_OFFSET='$VALUE_B_OFFSET' DEADLINE_CLAMP_OFFSET='$DEADLINE_CLAMP_OFFSET' TIMER_DURATION_ZERO_OFFSET='$TIMER_DURATION_ZERO_OFFSET' UI_VALUE_A_OFFSET='$UI_VALUE_A_OFFSET' UI_VALUE_B_OFFSET='$UI_VALUE_B_OFFSET' UI_VALUE_C_OFFSET='$UI_VALUE_C_OFFSET' TARGET_VALUE='$TARGET_VALUE' MODE='$MODE' bash -s" <<'REMOTE'
 set -euo pipefail
 
 mapfile -t containers < <(
@@ -58,16 +61,26 @@ for container in "${containers[@]}"; do
   addr_b="$(printf '0x%x' $((base + VALUE_B_OFFSET)))"
   addr_clamp="$(printf '0x%x' $((base + DEADLINE_CLAMP_OFFSET)))"
   addr_duration_zero="$(printf '0x%x' $((base + TIMER_DURATION_ZERO_OFFSET)))"
-  echo "$container: pid=$pid base=$base pointers=$addr_a,$addr_b clamp=$addr_clamp duration_zero=$addr_duration_zero mode=$MODE"
+  addr_ui_a="$(printf '0x%x' $((base + UI_VALUE_A_OFFSET)))"
+  addr_ui_b="$(printf '0x%x' $((base + UI_VALUE_B_OFFSET)))"
+  addr_ui_c="$(printf '0x%x' $((base + UI_VALUE_C_OFFSET)))"
+  echo "$container: pid=$pid base=$base pointers=$addr_a,$addr_b ui_pointers=$addr_ui_a,$addr_ui_b,$addr_ui_c clamp=$addr_clamp duration_zero=$addr_duration_zero mode=$MODE"
 
   if [[ "$MODE" == "dry-run" ]]; then
     sudo -n gdb -q -batch -p "$pid" \
       -ex "set pagination off" \
       -ex "set \$p1 = *(void**)$addr_a" \
       -ex "set \$p2 = *(void**)$addr_b" \
+      -ex "set \$ui1 = *(void**)$addr_ui_a" \
+      -ex "set \$ui2 = *(void**)$addr_ui_b" \
+      -ex "set \$ui3 = *(void**)$addr_ui_c" \
       -ex "printf \"before p1=%p p2=%p\\n\", \$p1, \$p2" \
       -ex "x/4fw \$p1" \
       -ex "x/4fw \$p2" \
+      -ex "printf \"ui before ui1=%p ui2=%p ui3=%p\\n\", \$ui1, \$ui2, \$ui3" \
+      -ex "x/4fw \$ui1" \
+      -ex "x/4fw \$ui2" \
+      -ex "x/4fw \$ui3" \
       -ex "printf \"deadline clamp bytes: \"" \
       -ex "x/3xb $addr_clamp" \
       -ex "printf \"timer duration bytes: \"" \
@@ -77,13 +90,24 @@ for container in "${containers[@]}"; do
       -ex "set pagination off" \
       -ex "set \$p1 = *(void**)$addr_a" \
       -ex "set \$p2 = *(void**)$addr_b" \
+      -ex "set \$ui1 = *(void**)$addr_ui_a" \
+      -ex "set \$ui2 = *(void**)$addr_ui_b" \
+      -ex "set \$ui3 = *(void**)$addr_ui_c" \
       -ex "printf \"before p1=%p p2=%p\\n\", \$p1, \$p2" \
       -ex "x/4fw \$p1" \
       -ex "x/4fw \$p2" \
+      -ex "printf \"ui before ui1=%p ui2=%p ui3=%p\\n\", \$ui1, \$ui2, \$ui3" \
+      -ex "x/4fw \$ui1" \
+      -ex "x/4fw \$ui2" \
+      -ex "x/4fw \$ui3" \
       -ex "set {float}\$p1 = $TARGET_VALUE" \
       -ex "set {float}((char*)\$p1 + 4) = $TARGET_VALUE" \
       -ex "set {float}\$p2 = $TARGET_VALUE" \
       -ex "set {float}((char*)\$p2 + 4) = $TARGET_VALUE" \
+      -ex "set {float}\$ui1 = $TARGET_VALUE" \
+      -ex "set {float}((char*)\$ui1 + 4) = $TARGET_VALUE" \
+      -ex "set {float}\$ui2 = $TARGET_VALUE" \
+      -ex "set {float}((char*)\$ui2 + 4) = $TARGET_VALUE" \
       -ex "set \$clamp = (unsigned char*)$addr_clamp" \
       -ex "printf \"deadline clamp before: %02x %02x %02x\\n\", \$clamp[0], \$clamp[1], \$clamp[2]" \
       -ex "set \$clamp[1] = 0x89" \
@@ -97,6 +121,10 @@ for container in "${containers[@]}"; do
       -ex "printf \"after p1=%p p2=%p\\n\", \$p1, \$p2" \
       -ex "x/4fw \$p1" \
       -ex "x/4fw \$p2" \
+      -ex "printf \"ui after ui1=%p ui2=%p ui3=%p\\n\", \$ui1, \$ui2, \$ui3" \
+      -ex "x/4fw \$ui1" \
+      -ex "x/4fw \$ui2" \
+      -ex "x/4fw \$ui3" \
       -ex "printf \"deadline clamp bytes: \"" \
       -ex "x/3xb $addr_clamp" \
       -ex "printf \"timer duration bytes: \"" \

@@ -271,8 +271,41 @@ timer duration bytes: c5 f8 57 c0 90
 ```
 
 Confidence is high that future `SetLeavingGameTimer` calls now schedule a zero
-delay timer. A fresh login/quit test after this duration patch is still needed
-to confirm the DB moves from `LoggingOut` to `Offline` immediately.
+delay timer. A live Deep Desert quit at `2026.06.02-00.06.01` showed the
+backend path working: `SetLeavingGameTimer`, `RecordLogoffPersistenceEndTime`,
+`LoggingOut`, and `Offline` all landed in the same second.
+
+That live quit still showed the stale five-minute client warning. A focused
+trace caught `ServerInitiateLogOffDialog` and `ServerStartLogOffTimer`, proving
+the warning/countdown is driven by the server RPC path even though the backend
+persistence timer is already zero.
+
+The missing client-visible duration source is a separate set of global
+pointers read by the `ServerStartLogOffTimer` implementation at runtime offset
+`0x0d55f9a0`. Its duration helper at runtime offset `0x0d55f730` reads:
+
+- `0x16523ce0`: client-visible logoff timer array, live value `300 300 0 0`.
+- `0x16523d10`: client-visible logoff timer array, live value `300 300 0 0`.
+- `0x16523d28`: alternate client-visible array, live value `0 0 0 0`.
+
+The current script patches the first two client-visible arrays to `0.0` in
+addition to the backend persistence arrays and code clamps. The third array is
+reported in dry-run output but is already zero and is not mutated.
+
+After applying this UI-duration patch live, both `dune_server-survival-1` and
+`dune_server-deep-desert-1` reported:
+
+```text
+ui after ui1=... ui2=... ui3=...
+0 0 0 0
+0 0 0 0
+0 0 0 0
+```
+
+A Deep Desert logout immediately afterward at `2026.06.02-00.14.48` recorded
+`SetLeavingGameTimer ... to 2026.06.02-00.14.48`, then `LoggingOut` at
+`00.14.49.030`, `RecordLogoffPersistenceEndTime ... to 00.14.48` at
+`00.14.49.031`, and `Offline` at `00.14.49.084`.
 
 Rejected attempt: on 2026-06-01, a live runtime patch changed the accessor entry
 at runtime offset `0x12f49050` from:
@@ -310,7 +343,7 @@ Dry run:
 The script guards against the wrong server build with the current expected ELF Build ID:
 
 ```text
-f8298652f037c94b1c54264e06e8d020574d938b
+9bf5fbdef43a6d6d64459df973f3d252c01ab4ad
 ```
 
 It only targets these active production containers:
