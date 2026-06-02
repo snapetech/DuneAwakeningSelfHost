@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import csv
 import importlib.util
+import json
 import pathlib
 import types
 import tempfile
@@ -152,6 +153,7 @@ class ArtificialExchangeBotTest(unittest.TestCase):
         bot.FILE_ENV.clear()
         bot.SOURCE_CATEGORY_MAP_CACHE.clear()
         bot.VERIFIED_CATEGORY_MAP_CACHE.clear()
+        bot.STATS_LIBRARY_CACHE.clear()
         bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_SOURCE_CATEGORY"] = "false"
 
     def tearDown(self):
@@ -159,6 +161,7 @@ class ArtificialExchangeBotTest(unittest.TestCase):
         bot.FILE_ENV.update(self.original_env)
         bot.SOURCE_CATEGORY_MAP_CACHE.clear()
         bot.VERIFIED_CATEGORY_MAP_CACHE.clear()
+        bot.STATS_LIBRARY_CACHE.clear()
 
     def order(self, **overrides):
         row = {"id": 1, "owner_id": 10, "template_id": "ItemA", "item_price": 75, "revision": "1"}
@@ -489,6 +492,7 @@ class ArtificialExchangeBotTest(unittest.TestCase):
 
     def test_populator_category_gate_requires_source_category(self):
         bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_SOURCE_CATEGORY"] = "true"
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_STATS_FOR_STATEFUL_ITEMS"] = "false"
         with tempfile.TemporaryDirectory() as tmp:
             path = pathlib.Path(tmp) / "source-category-map.json"
             path.write_text('{"items":{"ItemA":{"category":"weapons/ranged","category_mask":1,"category_depth":2}}}', encoding="utf-8")
@@ -502,6 +506,7 @@ class ArtificialExchangeBotTest(unittest.TestCase):
     def test_verified_category_map_overrides_catalog_masks(self):
         bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_CATEGORY_SEEDING_VERIFIED"] = "true"
         bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_SOURCE_CATEGORY"] = "false"
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_STATS_FOR_STATEFUL_ITEMS"] = "false"
         with tempfile.TemporaryDirectory() as tmp:
             path = pathlib.Path(tmp) / "verified-category-map.json"
             mask, depth = bot.CATEGORY_MASKS["weapons/ranged"]
@@ -584,6 +589,59 @@ class ArtificialExchangeBotTest(unittest.TestCase):
         row = self.catalog_row(category_mask=258, category_depth=2)
         self.assertEqual(bot.populator_category_mask(row), 258)
         self.assertEqual(bot.populator_category_depth(row), 2)
+
+    def test_populator_skips_stateful_items_without_stats(self):
+        mask, depth = bot.CATEGORY_MASKS["weapons/ranged"]
+        weapon = self.catalog_row(category="weapons/ranged", category_mask=mask, category_depth=depth)
+        resource = self.catalog_row(category="resources/components")
+        schematic = self.catalog_row(category="schematics/weapons")
+
+        self.assertTrue(bot.populator_requires_stats(weapon))
+        self.assertEqual(bot.populator_category_skip_reason(weapon), "stateful item stats unavailable")
+        self.assertFalse(bot.populator_requires_stats(resource))
+        self.assertFalse(bot.populator_requires_stats(schematic))
+
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_STATS_FOR_STATEFUL_ITEMS"] = "false"
+        self.assertFalse(bot.populator_requires_stats(weapon))
+
+    def test_stats_library_allows_stateful_template(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "stats-library.json"
+            path.write_text(json.dumps({
+                "items": {
+                    "RifleA": {
+                        "selected": {
+                            "stats": {
+                                "FWeaponItemStats": [[], {}],
+                                "FItemStackAndDurabilityStats": [[], {"CurrentDurability": 100.0, "MaxDurability": 100.0}],
+                            }
+                        }
+                    }
+                }
+            }), encoding="utf-8")
+            bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_STATS_LIBRARY"] = str(path)
+            bot.STATS_LIBRARY_CACHE.clear()
+            mask, depth = bot.CATEGORY_MASKS["weapons/ranged"]
+            weapon = self.catalog_row("RifleA", category="weapons/ranged", category_mask=mask, category_depth=depth)
+            self.assertEqual(bot.populator_category_skip_reason(weapon), "")
+            self.assertIn("FWeaponItemStats", bot.stats_payload_for_row(weapon))
+
+    def test_normalized_seed_stats_restores_durability(self):
+        stats = {"FItemStackAndDurabilityStats": [[], {"CurrentDurability": 5.0, "MaxDurability": 100.0, "DecayedMaxDurability": 80.0}]}
+        normalized = bot.normalized_seed_stats(stats)
+        values = normalized["FItemStackAndDurabilityStats"][1]
+        self.assertEqual(values["CurrentDurability"], 100.0)
+        self.assertEqual(values["DecayedMaxDurability"], 100.0)
+        self.assertEqual(stats["FItemStackAndDurabilityStats"][1]["CurrentDurability"], 5.0)
+
+    def test_generalized_inferred_stats_strips_customization(self):
+        stats = {
+            "FCustomizationStats": [[], {"SwatchId": "red", "VariantId": "skin"}],
+            "FItemStackAndDurabilityStats": [[], {"CurrentDurability": 1.0, "MaxDurability": 10.0}],
+        }
+        generalized = bot.generalized_inferred_stats(stats)
+        self.assertEqual(generalized["FCustomizationStats"][1], {})
+        self.assertEqual(generalized["FItemStackAndDurabilityStats"][1]["CurrentDurability"], 10.0)
 
     def test_dune_exchange_import_sets_midpoint_floor(self):
         self.assertEqual(dune_exchange_import.midpoint_floor(100, 1100), 600)

@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 import traceback
+import difflib
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -23,8 +24,10 @@ AUDIT_PATH = STATE_DIR / "bot-audit.jsonl"
 STATE_PATH = STATE_DIR / "bot-state.json"
 SOURCE_CATEGORY_MAP_PATH = STATE_DIR / "source-category-map.json"
 VERIFIED_CATEGORY_MAP_PATH = STATE_DIR / "verified-category-map.json"
+STATS_LIBRARY_PATH = STATE_DIR / "stats-library.json"
 SOURCE_CATEGORY_MAP_CACHE = {}
 VERIFIED_CATEGORY_MAP_CACHE = {}
+STATS_LIBRARY_CACHE = {}
 CONFIRM = "RUN ARTIFICIAL EXCHANGE"
 CLAIM_CONFIRM = "CLAIM ARTIFICIAL EXCHANGE"
 FUND_CONFIRM = "FUND ARTIFICIAL EXCHANGE"
@@ -376,6 +379,37 @@ def load_verified_category_map(path=None):
     return VERIFIED_CATEGORY_MAP_CACHE[cache_key]
 
 
+def stats_library_path(path=None):
+    source_path = pathlib.Path(path or env("DUNE_ARTIFICIAL_EXCHANGE_STATS_LIBRARY", str(STATS_LIBRARY_PATH)))
+    if not source_path.is_absolute():
+        source_path = ROOT / source_path
+    return source_path
+
+
+def load_stats_library(path=None):
+    source_path = stats_library_path(path)
+    cache_key = str(source_path)
+    if cache_key in STATS_LIBRARY_CACHE:
+        return STATS_LIBRARY_CACHE[cache_key]
+    payload = load_json(source_path, {"items": {}})
+    items = payload.get("items", {})
+    STATS_LIBRARY_CACHE[cache_key] = items if isinstance(items, dict) else {}
+    return STATS_LIBRARY_CACHE[cache_key]
+
+
+def stats_library_row(row):
+    return load_stats_library().get(row["template_id"])
+
+
+def stats_payload_for_row(row):
+    library_row = stats_library_row(row)
+    if not library_row:
+        return None
+    sample = library_row.get("selected") or {}
+    stats = sample.get("stats")
+    return stats if isinstance(stats, dict) and stats else None
+
+
 def verified_category_row(row):
     if not env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_CATEGORY_SEEDING_VERIFIED", False):
         return None
@@ -562,6 +596,8 @@ def populator_category_skip_reason(row):
             return "non-augment in augments category"
     if has_blueprint_identity(row) and not is_blueprint_category(category):
         return "blueprint outside blueprint category"
+    if populator_requires_stats(row) and not stats_payload_for_row(row):
+        return "stateful item stats unavailable"
     return ""
 
 
@@ -789,6 +825,23 @@ def populator_stack_size(row):
     return max(1, int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_STACK_SIZE", "1")))
 
 
+def populator_stateful_stat_categories():
+    raw = env(
+        "DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_STATEFUL_STAT_CATEGORIES",
+        "armor/,tools/,vehicles/,weapons/",
+    )
+    return tuple(item.strip() for item in raw.split(",") if item.strip())
+
+
+def populator_requires_stats(row):
+    if not env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_STATS_FOR_STATEFUL_ITEMS", True):
+        return False
+    category = str(row.get("category") or "")
+    if is_blueprint_category(category) or populator_is_stackable(row):
+        return False
+    return category.startswith(populator_stateful_stat_categories())
+
+
 def populator_max_stack_size(row):
     if populator_is_stackable(row):
         return max(populator_stack_size(row), int(env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_FULL_STACK_SIZE", "100")))
@@ -867,6 +920,392 @@ def fetch_seeded_orders(conn, exchange_id, owner_id, limit):
             (exchange_id, owner_id, limit),
         )
         return list(cur.fetchall())
+
+
+def audit_seeded_stats(conn, args, catalog):
+    owner_filter = "and o.owner_id=%s" if args.populator_owner_id > 0 else ""
+    params = [args.exchange_id]
+    if args.populator_owner_id > 0:
+        params.append(args.populator_owner_id)
+    params.append(args.limit)
+    with conn.cursor() as cur:
+        cur.execute(
+            f"""
+            select
+                o.id, o.owner_id, o.template_id, o.item_price, o.quality_level as order_quality_level,
+                i.id as item_id, i.quality_level as item_quality_level, i.stack_size,
+                coalesce(i.stats, '{{}}'::jsonb) = '{{}}'::jsonb as empty_stats,
+                o.category_mask, o.category_depth
+            from dune.dune_exchange_orders o
+            left join dune.items i on i.id=o.item_id
+            where o.exchange_id=%s
+              and o.is_npc_order=true
+              and o.item_id is not null
+              {owner_filter}
+            order by o.id desc
+            limit %s
+            """,
+            tuple(params),
+        )
+        rows = [dict(row) for row in cur.fetchall()]
+
+    by_category = {}
+    unsafe = []
+    mismatched_quality = []
+    for row in rows:
+        catalog_row = catalog.get(row.get("template_id")) or {}
+        category = catalog_row.get("category") or "unknown"
+        requires_stats = populator_requires_stats(catalog_row) if catalog_row else False
+        key = category
+        stats = by_category.setdefault(key, {"category": key, "orders": 0, "emptyStats": 0, "requiresStats": 0})
+        stats["orders"] += 1
+        if row.get("empty_stats"):
+            stats["emptyStats"] += 1
+        if requires_stats:
+            stats["requiresStats"] += 1
+        if row.get("empty_stats") and requires_stats:
+            unsafe.append({**row, "category": category, "reason": "stateful item has empty stats"})
+        if row.get("order_quality_level") != row.get("item_quality_level"):
+            mismatched_quality.append({**row, "category": category, "reason": "order/item quality mismatch"})
+
+    return {
+        "ok": True,
+        "dryRun": True,
+        "exchangeId": args.exchange_id,
+        "ownerId": args.populator_owner_id if args.populator_owner_id > 0 else None,
+        "ordersChecked": len(rows),
+        "emptyStats": sum(1 for row in rows if row.get("empty_stats")),
+        "unsafeStatefulEmptyStats": len(unsafe),
+        "qualityMismatches": len(mismatched_quality),
+        "byCategory": sorted(by_category.values(), key=lambda item: (-item["emptyStats"], item["category"])),
+        "unsafeExamples": unsafe[: args.report_skips],
+        "qualityMismatchExamples": mismatched_quality[: args.report_skips],
+    }
+
+
+def stat_keys(stats):
+    return sorted(stats.keys()) if isinstance(stats, dict) else []
+
+
+def normalized_seed_stats(stats):
+    if not isinstance(stats, dict):
+        return {}
+    cloned = copy.deepcopy(stats)
+    durability = cloned.get("FItemStackAndDurabilityStats")
+    if isinstance(durability, list) and len(durability) >= 2 and isinstance(durability[1], dict):
+        values = durability[1]
+        max_candidates = [
+            values.get("MaxDurability"),
+            values.get("DecayedMaxDurability"),
+            values.get("CurrentDurability"),
+        ]
+        numeric = [float(value) for value in max_candidates if isinstance(value, (int, float))]
+        if numeric:
+            max_value = max(numeric)
+            if "MaxDurability" in values:
+                values["MaxDurability"] = max_value
+            if "DecayedMaxDurability" in values:
+                values["DecayedMaxDurability"] = max_value
+            if "CurrentDurability" in values:
+                values["CurrentDurability"] = max_value
+    return cloned
+
+
+def generalized_inferred_stats(stats):
+    cloned = normalized_seed_stats(stats)
+    customization = cloned.get("FCustomizationStats")
+    if isinstance(customization, list) and len(customization) >= 2 and isinstance(customization[1], dict):
+        customization[1] = {}
+    return cloned
+
+
+def stats_sample_score(row):
+    stats = row.get("stats") or {}
+    keys = set(stat_keys(stats))
+    score = len(keys) * 10
+    durability = stats.get("FItemStackAndDurabilityStats")
+    if isinstance(durability, list) and len(durability) >= 2 and isinstance(durability[1], dict):
+        values = durability[1]
+        for key in ("MaxDurability", "DecayedMaxDurability", "CurrentDurability"):
+            if key in values:
+                score += 1
+    return score
+
+
+def template_similarity(left, right):
+    def parts(value):
+        return [part for part in re.split(r"[^A-Za-z0-9]+", str(value).lower()) if part and part not in {"d", "t"}]
+
+    left_parts = set(parts(left))
+    right_parts = set(parts(right))
+    overlap = len(left_parts & right_parts) / max(1, len(left_parts | right_parts))
+    ratio = difflib.SequenceMatcher(None, str(left).lower(), str(right).lower()).ratio()
+    return overlap * 0.65 + ratio * 0.35
+
+
+def top_level_category(category):
+    return str(category or "unknown").split("/", 1)[0]
+
+
+def catalog_rows_requiring_stats(catalog):
+    return {
+        row["template_id"]: row
+        for row in catalog.values()
+        if row.get("enabled") and populator_requires_stats(row)
+    }
+
+
+def fetch_stats_samples(conn, limit):
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            select
+                i.id as item_id,
+                i.template_id,
+                i.quality_level,
+                i.stack_size,
+                i.stats,
+                inv.id as inventory_id,
+                inv.actor_id,
+                inv.exchange_id,
+                exists (
+                    select 1 from dune.dune_exchange_orders o where o.item_id=i.id
+                ) as active_exchange_order_item
+            from dune.items i
+            left join dune.inventories inv on inv.id=i.inventory_id
+            where i.template_id is not null
+              and i.stats <> '{}'::jsonb
+              and not exists (
+                  select 1
+                  from dune.dune_exchange_orders o
+                  where o.item_id=i.id
+                    and coalesce(o.is_npc_order, false)=true
+              )
+            order by i.id desc
+            limit %s
+            """,
+            (limit,),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+
+def merge_stats_library(existing, samples_by_template, catalog, source_label, samples_per_template):
+    payload = copy.deepcopy(existing) if isinstance(existing, dict) else {}
+    items = payload.setdefault("items", {})
+    now = int(time.time())
+    for template_id, samples in sorted(samples_by_template.items()):
+        catalog_row = catalog.get(template_id) or {}
+        row = items.setdefault(template_id, {
+            "templateId": template_id,
+            "category": catalog_row.get("category"),
+            "samples": [],
+        })
+        if catalog_row.get("category"):
+            row["category"] = catalog_row.get("category")
+        seen = {int(sample.get("itemId") or 0) for sample in row.get("samples", [])}
+        for sample in samples:
+            if int(sample["itemId"]) in seen:
+                continue
+            row.setdefault("samples", []).append(sample)
+            seen.add(int(sample["itemId"]))
+        row["samples"] = sorted(
+            row.get("samples", []),
+            key=lambda sample: (-int(sample.get("score") or 0), int(sample.get("itemId") or 0)),
+        )[:samples_per_template]
+        if row["samples"]:
+            row["selected"] = row["samples"][0]
+            row["qualityLevels"] = sorted({int(sample.get("qualityLevel") or 0) for sample in row["samples"]})
+            row["statKeys"] = sorted({key for sample in row["samples"] for key in sample.get("statKeys", [])})
+        row["updatedAt"] = now
+        sources = set(row.get("sources", []))
+        sources.add(source_label)
+        row["sources"] = sorted(sources)
+    payload["generatedAt"] = now
+    return payload
+
+
+def build_stats_library(conn, args, catalog):
+    path = stats_library_path(args.stats_library)
+    existing = load_json(path, {"items": {}}) if args.merge_stats_library else {"items": {}}
+    required = catalog_rows_requiring_stats(catalog)
+    rows = fetch_stats_samples(conn, args.stats_sample_limit)
+    samples_by_template = {}
+    for row in rows:
+        template_id = row.get("template_id")
+        if not template_id:
+            continue
+        stats = row.get("stats") or {}
+        if not isinstance(stats, dict) or not stats:
+            continue
+        catalog_row = catalog.get(template_id) or {}
+        if catalog_row and not populator_requires_stats(catalog_row):
+            continue
+        sample = {
+            "itemId": int(row["item_id"]),
+            "templateId": template_id,
+            "qualityLevel": int(row.get("quality_level") or 0),
+            "stackSize": int(row.get("stack_size") or 0),
+            "inventoryId": row.get("inventory_id"),
+            "actorId": row.get("actor_id"),
+            "source": args.stats_source_label,
+            "statKeys": stat_keys(stats),
+            "score": stats_sample_score(row),
+            "stats": normalized_seed_stats(stats),
+        }
+        samples_by_template.setdefault(template_id, []).append(sample)
+
+    merged = merge_stats_library(existing, samples_by_template, catalog, args.stats_source_label, args.stats_samples_per_template)
+    covered = set(merged.get("items", {}))
+    missing_required = sorted(set(required) - covered)
+    payload_items = merged.get("items", {})
+    summary = {
+        "ok": True,
+        "dryRun": args.dry_run,
+        "path": str(path),
+        "sourceLabel": args.stats_source_label,
+        "dbRowsScanned": len(rows),
+        "templatesWithSamplesFromThisRun": len(samples_by_template),
+        "libraryTemplates": len(payload_items),
+        "requiredStatefulTemplates": len(required),
+        "coveredRequiredStatefulTemplates": len(set(required) & covered),
+        "missingRequiredStatefulTemplates": len(missing_required),
+        "missingExamples": missing_required[: args.report_skips],
+    }
+    merged["summary"] = summary
+    if not args.dry_run:
+        save_json(path, merged)
+        STATS_LIBRARY_CACHE.clear()
+    return summary
+
+
+def stats_library_report(args, catalog):
+    items = load_stats_library(args.stats_library)
+    required = catalog_rows_requiring_stats(catalog)
+    covered = set(items)
+    missing = sorted(set(required) - covered)
+    by_category = {}
+    for template_id, row in required.items():
+        category = row.get("category") or "unknown"
+        bucket = by_category.setdefault(category, {"category": category, "required": 0, "covered": 0, "missing": 0})
+        bucket["required"] += 1
+        if template_id in covered:
+            bucket["covered"] += 1
+        else:
+            bucket["missing"] += 1
+    return {
+        "ok": True,
+        "dryRun": True,
+        "libraryTemplates": len(items),
+        "requiredStatefulTemplates": len(required),
+        "coveredRequiredStatefulTemplates": len(set(required) & covered),
+        "missingRequiredStatefulTemplates": len(missing),
+        "missingExamples": missing[: args.report_skips],
+        "byCategory": sorted(by_category.values(), key=lambda row: (-row["missing"], row["category"])),
+    }
+
+
+def derive_stats_library(args, catalog):
+    path = stats_library_path(args.stats_library)
+    payload = load_json(path, {"items": {}})
+    items = payload.setdefault("items", {})
+    required = catalog_rows_requiring_stats(catalog)
+    missing = [row for template_id, row in sorted(required.items()) if template_id not in items]
+    candidates_by_category = {}
+    for template_id, library_row in items.items():
+        category = library_row.get("category") or (catalog.get(template_id) or {}).get("category")
+        sample = library_row.get("selected") or {}
+        stats = sample.get("stats")
+        if not category or not isinstance(stats, dict) or not stats:
+            continue
+        candidates_by_category.setdefault(category, []).append((template_id, library_row, sample))
+
+    derived = []
+    skipped = []
+    now = int(time.time())
+    for row in missing:
+        category = row.get("category") or "unknown"
+        inference = "same-category-template-similarity"
+        candidates = candidates_by_category.get(category) or []
+        if not candidates:
+            family = top_level_category(category)
+            candidates = [
+                candidate
+                for candidate_category, category_candidates in candidates_by_category.items()
+                if top_level_category(candidate_category) == family
+                for candidate in category_candidates
+            ]
+            inference = "same-family-template-similarity"
+        if not candidates:
+            skipped.append({"templateId": row["template_id"], "category": category, "reason": "no category sample"})
+            continue
+        ranked = sorted(
+            candidates,
+            key=lambda item: (
+                template_similarity(row["template_id"], item[0]),
+                int((item[2] or {}).get("score") or 0),
+            ),
+            reverse=True,
+        )
+        source_template, source_row, source_sample = ranked[0]
+        similarity = template_similarity(row["template_id"], source_template)
+        stats = generalized_inferred_stats(source_sample["stats"])
+        items[row["template_id"]] = {
+            "templateId": row["template_id"],
+            "category": category,
+            "derived": True,
+            "confidence": "derived-category",
+            "inference": inference,
+            "inferredFromTemplate": source_template,
+            "inferredFromCategory": source_row.get("category") or (catalog.get(source_template) or {}).get("category"),
+            "similarity": round(similarity, 4),
+            "statKeys": stat_keys(stats),
+            "qualityLevels": [populator_quality_level(row)],
+            "sources": sorted(set((source_row.get("sources") or []) + [args.stats_source_label])),
+            "selected": {
+                "templateId": row["template_id"],
+                "source": args.stats_source_label,
+                "derivedFromTemplate": source_template,
+                "derivedFromCategory": source_row.get("category") or (catalog.get(source_template) or {}).get("category"),
+                "derivedFromItemId": source_sample.get("itemId"),
+                "qualityLevel": populator_quality_level(row),
+                "statKeys": stat_keys(stats),
+                "score": int(source_sample.get("score") or 0),
+                "stats": stats,
+            },
+            "samples": [],
+            "updatedAt": now,
+        }
+        derived.append({
+            "templateId": row["template_id"],
+            "category": category,
+            "fromTemplate": source_template,
+            "similarity": round(similarity, 4),
+        })
+
+    required_after = catalog_rows_requiring_stats(catalog)
+    covered_after = set(items) & set(required_after)
+    still_missing = sorted(set(required_after) - set(items))
+    result = {
+        "ok": True,
+        "dryRun": args.dry_run,
+        "path": str(path),
+        "sourceLabel": args.stats_source_label,
+        "derived": len(derived),
+        "skipped": len(skipped),
+        "libraryTemplates": len(items),
+        "requiredStatefulTemplates": len(required_after),
+        "coveredRequiredStatefulTemplates": len(covered_after),
+        "missingRequiredStatefulTemplates": len(still_missing),
+        "derivedExamples": derived[: args.report_skips],
+        "skippedExamples": skipped[: args.report_skips],
+        "missingExamples": still_missing[: args.report_skips],
+    }
+    payload["generatedAt"] = now
+    payload["deriveSummary"] = result
+    if not args.dry_run:
+        save_json(path, payload)
+        STATS_LIBRARY_CACHE.clear()
+    return result
 
 
 def seeded_order_ids(rows):
@@ -1054,6 +1493,7 @@ def create_staging_item(cur, row, source_inventory_id, position_index, stack_siz
     cur.execute("select dune.advance_items_id_sequencer(1) as item_id")
     item_id = int(cur.fetchone()["item_id"])
     quality_level = populator_quality_level(row)
+    stats = stats_payload_for_row(row) if populator_requires_stats(row) else {}
     cur.execute(
         """
         select dune.save_item((
@@ -1068,7 +1508,7 @@ def create_staging_item(cur, row, source_inventory_id, position_index, stack_siz
             row["template_id"],
             True,
             int(time.time() * 1000),
-            "{}",
+            json.dumps(stats),
             quality_level,
             None,
         ),
@@ -2191,6 +2631,15 @@ def main():
     parser.add_argument("--populate-loop", action="store_true")
     parser.add_argument("--expire-seeded", action="store_true")
     parser.add_argument("--validate-populator-once", action="store_true")
+    parser.add_argument("--audit-seeded-stats", action="store_true")
+    parser.add_argument("--build-stats-library", action="store_true")
+    parser.add_argument("--derive-stats-library", action="store_true")
+    parser.add_argument("--stats-library-report", action="store_true")
+    parser.add_argument("--stats-library", type=pathlib.Path, default=STATS_LIBRARY_PATH)
+    parser.add_argument("--stats-source-label", default=env("DUNE_ARTIFICIAL_EXCHANGE_STATS_SOURCE_LABEL", "local-db"))
+    parser.add_argument("--stats-sample-limit", type=int, default=int(env("DUNE_ARTIFICIAL_EXCHANGE_STATS_SAMPLE_LIMIT", "50000")))
+    parser.add_argument("--stats-samples-per-template", type=int, default=int(env("DUNE_ARTIFICIAL_EXCHANGE_STATS_SAMPLES_PER_TEMPLATE", "5")))
+    parser.add_argument("--merge-stats-library", action="store_true", default=env_bool("DUNE_ARTIFICIAL_EXCHANGE_STATS_LIBRARY_MERGE", True))
     parser.add_argument("--confirm", default="")
     parser.add_argument("--ignore-enabled-gate", action="store_true")
     parser.add_argument("--include-npc-test-orders", action="store_true")
@@ -2214,6 +2663,9 @@ def main():
     parser.add_argument("--dry-run", dest="dry_run", action="store_true", default=None)
     parser.add_argument("--apply", dest="dry_run", action="store_false")
     args = parser.parse_args()
+    if args.stats_library:
+        FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_STATS_LIBRARY"] = str(args.stats_library)
+        STATS_LIBRARY_CACHE.clear()
     populator_mode = (
         args.populate_once
         or args.populate_categories_once
@@ -2240,6 +2692,30 @@ def main():
     )
     if args.settlement_report:
         print(json.dumps(print_settlement_report(args), indent=2, default=str))
+        return
+    if args.audit_seeded_stats:
+        catalog = load_catalog(args.catalog)
+        conn = connect_db()
+        try:
+            print(json.dumps(audit_seeded_stats(conn, args, catalog), indent=2, default=str))
+        finally:
+            conn.close()
+        return
+    if args.build_stats_library:
+        catalog = load_catalog(args.catalog)
+        conn = connect_db()
+        try:
+            print(json.dumps(build_stats_library(conn, args, catalog), indent=2, default=str))
+        finally:
+            conn.close()
+        return
+    if args.derive_stats_library:
+        catalog = load_catalog(args.catalog)
+        print(json.dumps(derive_stats_library(args, catalog), indent=2, default=str))
+        return
+    if args.stats_library_report:
+        catalog = load_catalog(args.catalog)
+        print(json.dumps(stats_library_report(args, catalog), indent=2, default=str))
         return
     if args.check_ready:
         print(json.dumps(readiness_check(args), indent=2, default=str))

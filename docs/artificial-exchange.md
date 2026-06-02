@@ -810,6 +810,48 @@ Current default item quality:
 - The minimum allowed quality is
   `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_MIN_QUALITY_LEVEL`, current broad profile
   `1`.
+- Stateful seeded items, currently categories matching
+  `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_STATEFUL_STAT_CATEGORIES`, are skipped by
+  default unless stats generation is explicitly solved. The Exchange order can
+  display a high `quality_level` while an empty `items.stats` payload causes the
+  purchased item to materialize with base/grade-0 behavior in client.
+- Valid stateful seeded items use
+  `backups/admin-panel/artificial-exchange/stats-library.json`, built from real
+  non-empty `dune.items.stats` rows. Build or merge the library with
+  `scripts/artificial-exchange-bot.py --build-stats-library --apply
+  --stats-source-label <source>`, then check coverage with
+  `scripts/artificial-exchange-bot.py --stats-library-report`.
+- Run `scripts/artificial-exchange-bot.py --audit-seeded-stats` to inspect
+  existing seeded orders for empty stats and order/item quality mismatches
+  before re-enabling the populator after a market cleanup.
+
+Stateful stats library workflow:
+
+- Build exact samples from a trusted DB source:
+  `scripts/artificial-exchange-bot.py --build-stats-library --apply
+  --stats-source-label <source>`.
+- Merge exact samples from every available lab/live source before deriving.
+  The builder ignores NPC-seeded order items so bad generated stock does not
+  become training data.
+- Fill remaining gaps only after exact samples are exhausted:
+  `scripts/artificial-exchange-bot.py --derive-stats-library --apply
+  --stats-source-label derived`.
+- Derived rows are marked with `derived`, `inference`,
+  `inferredFromTemplate`, `inferredFromCategory`, and `derivedFromItemId`.
+  They reuse real same-category or same-family stat structures, strip
+  customization values, and normalize durability to full condition.
+- Before a live refill, run:
+  `scripts/artificial-exchange-bot.py --stats-library-report` and require
+  `missingRequiredStatefulTemplates: 0`.
+- After a live refill, run:
+  `scripts/artificial-exchange-bot.py --audit-seeded-stats --limit 30000` and
+  require `unsafeStatefulEmptyStats: 0` and `qualityMismatches: 0`.
+- Current remediation result on `kspls0`, verified 2026-06-02: `1136 / 1136`
+  required stateful templates covered, `0` missing, `1998` seeded NPC item
+  orders checked, `0` unsafe stateful empty-stat orders, and `0` order/item
+  quality mismatches. Confidence: high for audit coverage; moderate for
+  derived-template purchase behavior until representative in-client buy tests
+  are performed.
 
 Known grade boundary:
 
