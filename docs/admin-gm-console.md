@@ -132,6 +132,15 @@ Future research should compare RabbitMQ bindings, generated users, and server qu
   remaining reverse-engineering target is now the PlayFab/FLS
   `FNotificationsSystemMessage` deserializer, not another RMQ method-name
   guess.
+- Follow-up Ghidra work with
+  `scripts/research/DumpFNotificationsSystemMessageLayout.java` tightened the
+  decoded notification layout. `FUN_09ec9f00` copies the decoded message fields
+  `0x48/0x50`, `0x58/0x60`, `0x68/0x70`, `0x78/0x80`, and trailing state around
+  `0x88..0x94`; `FUN_09ede9a0` serializes the same layout outbound into AMQP
+  properties before `amqp_basic_publish`. Confidence: high. This still does not
+  produce a working inbound command payload. Confidence: high. The next static
+  target is the generated data-function/UStruct bridge around `FUN_09e05650`
+  and `FUN_09e067f0`, not more live blind JSON aliases.
 - The active dedicated server allow-list found in `DuneSandbox/Config/DedicatedServerGame.ini` includes:
   - Console commands: `obj`, `FGL.ComponentAuditRequested`
   - GM commands: `AddItemToInventory`, `AddBasicInventoryToCharacter`, `SpawnVehicle`, teleport/travel helpers, `Fly`, `Ghost`, `Walk`, targeted destroy helpers, and `PrintPos`.

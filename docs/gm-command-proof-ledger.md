@@ -217,6 +217,35 @@ object produced by the PlayFab/FLS notification system. The next useful static
 target is the deserializer that constructs that object and populates offsets
 `0x48..0x80`, not more live RMQ payload aliases. Confidence: high.
 
+A follow-up static layout pass added
+`scripts/research/DumpFNotificationsSystemMessageLayout.java` and wrote
+`/tmp/ghidra-work/fnotifications-system-message-layout.txt`. Confidence: high.
+
+- `FUN_09ec9f00` is a decoded-message copy/failure helper, not the missing
+  inbound JSON parser. It copies string-like fields from source to destination:
+  `0x48/0x50`, `0x58/0x60`, `0x68/0x70`, `0x78/0x80`, plus trailing state at
+  `0x88..0x94`. Confidence: high.
+- `FUN_09f3ff90` still gates on the decoded field at `0x48/0x50` before
+  handing the message to `FUN_09ee73c0`. Confidence: high.
+- `FUN_09ee73c0` still gates on `0x78/0x80`, extracts auth/content from
+  `param_2 + 0x48`, then checks sender through `0x58/0x60`. Confidence: high.
+- The outbound publisher `FUN_09ede9a0` serializes the same decoded-message
+  fields into AMQP properties before calling `amqp_basic_publish`, which
+  reinforces the field layout but does not solve inbound delivery. Confidence:
+  high.
+- A bounded scan found 220 functions in the `0x09e00000..0x0a100000`
+  notification/serializer band touching these offsets; many are generic
+  generated serialization/copy helpers. The highest-value next static target is
+  the generated data-function/UStruct bridge around `FUN_09e05650` and
+  `FUN_09e067f0`, which map property/data-function metadata to object fields.
+  Confidence: moderate.
+
+Conclusion: this is still bad news for live operation: no working native GM
+payload is proven. The good news is that the decoded notification object layout
+is now much tighter, and the remaining target is the generated
+PlayFab/FLS-to-`FNotificationsSystemMessage` bridge rather than another
+top-level RMQ JSON alias. Confidence: high.
+
 Use the proof runner:
 
 ```bash
