@@ -356,6 +356,10 @@ That command only generates the ledger. It does not publish anything.
 
 ## Non-Disruptive Proof Order
 
+The broad static command inventory is documented in
+[native-gm-command-catalog.md](native-gm-command-catalog.md). This proof order
+applies only after the native payload route is proven with safe commands.
+
 1. Safe route proof:
    `PrintAllowedCommands` and `PrintPos` are the only commands allowed for
    live-route smoke tests. Run with `--execute-safe` only after selecting the

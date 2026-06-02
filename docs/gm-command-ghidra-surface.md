@@ -114,6 +114,9 @@ The same 100 recovered methods are also exposed by
 ./scripts/gm-command-catalog.py --format names --include-binary-methods
 ```
 
+The broad static command catalog is summarized in
+[native-gm-command-catalog.md](native-gm-command-catalog.md).
+
 ### `UCharacterTransferCheatManager`
 
 - `CharacterTransfer_CancelCurrentTransfer`

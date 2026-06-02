@@ -328,7 +328,8 @@ map from the full recovered 100-method cheat-manager inventory under
 for inferred purpose/risk. The chat bridge exposes only the short operational
 summary through `&gm catalog`; binary-only methods are not automatically
 callable dedicated-server commands. Live execution is still preview-only until
-the native RabbitMQ payload contract is proven.
+the native RabbitMQ payload contract is proven. The broad static catalog is in
+[native-gm-command-catalog.md](native-gm-command-catalog.md).
 
 Use `scripts/prove-gm-commands.py` to build the non-disruptive proof ledger and
 execute only the harmless route probes:
