@@ -9,6 +9,10 @@ It is intentionally separate from the operational probe ledger so the static
 binary facts, inferred payload shape, and live proof status do not get mixed
 together.
 
+The receive-side notification wrapper that must deliver this inner
+ServiceBroadcast body is documented separately in
+[native-gm-notification-receive-proof.md](native-gm-notification-receive-proof.md).
+
 ## Source Artifacts
 
 - Ghidra script:

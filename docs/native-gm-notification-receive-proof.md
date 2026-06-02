@@ -1,0 +1,247 @@
+# Native GM Notification Receive Proof
+
+Confidence: high for the static callback chain. Confidence: moderate for the
+exact inbound RabbitMQ wrapper shape because the deserializer before the
+callbacks is still not fully resolved.
+
+This page documents the receive-side native notification path that runs before
+the ServiceBroadcast payload handler. It explains why publishing plausible
+inner JSON bodies has not yet reached `Now running ServerCommand`: the native
+server-command handler receives a decoded
+`Dreamworld::FNotificationsSystemMessage`-style object, not a bare
+ServiceBroadcast JSON object.
+
+## Source Artifacts
+
+- Ghidra script:
+  `scripts/research/DumpNativeGmRmqDeserializer.java`
+- Latest local output:
+  `/tmp/ghidra-work/native-gm-rmq-deserializer.txt`
+- Ghidra script:
+  `scripts/research/DumpNativeGmReceiveCallbacks.java`
+- Latest local output:
+  `/tmp/ghidra-work/native-gm-receive-callbacks.txt`
+- Run commands:
+
+```bash
+scripts/research/run-ghidra-headless.sh --script DumpNativeGmRmqDeserializer.java
+scripts/research/run-ghidra-headless.sh --script DumpNativeGmReceiveCallbacks.java
+```
+
+## Positive Static Result
+
+The receive path is real and reaches the server-command notification handler:
+
+```text
+NotificationSystemListenQueue callback
+  -> FUN_09f8cf00
+  -> FUN_09f6ecb0
+  -> registered FNotificationsSystemMessage delegate
+  -> FUN_09f3ff50 or FUN_09f3ff60
+  -> FUN_09f3ff90
+  -> FUN_09ee73c0
+  -> FUN_09ee7970
+  -> FUN_09eb7e60
+  -> FUN_09691b80 after auth/content validation
+```
+
+Confidence: high for the observed function chain through `FUN_09ee73c0`.
+Confidence: moderate for the exact role of `FUN_09f6ecb0`; the decompile looks
+like delegate/container dispatch, not the JSON deserializer itself.
+
+## Listen Queue Callbacks
+
+`FUN_0a05c5b0` and `FUN_0a05d070` are
+`NotificationSystemListenQueue` callbacks. Both call `FUN_09f8cf00(*param_1)`
+after successful receive-side checks. Confidence: high.
+
+Evidence:
+
+```text
+FUN_0a05c5b0 -> FUN_09f8cf00(*param_1)
+FUN_0a05d070 -> FUN_09f8cf00(*param_1)
+```
+
+The nearby pointer tables include C++ type strings for:
+
+```text
+TBaseFunctorDelegateInstance<...Dreamworld::FNotificationsSystemMessage...>
+```
+
+Interpretation: these callbacks are already operating on a decoded
+`FNotificationsSystemMessage` delegate payload. They are not simply passing a
+raw AMQP body string into `FUN_09ee73c0`. Confidence: high.
+
+The same tables point at the source path:
+
+```text
+Plugins/Funcom/Dreamworld/Source/FuncomLiveServices/Private/PlayFab/PlayFabPlayerSession.cpp
+```
+
+Confidence: high.
+
+## Callback Handoff
+
+`FUN_09f8cf00` is a thin handoff:
+
+```text
+FUN_09f8cf00(param_1)
+  -> FUN_09f6ecb0(param_1, 0, 0, 0)
+```
+
+`FUN_09f6ecb0` walks a callback/container structure keyed by global string data
+and appears to dispatch the decoded notification to registered handlers.
+Confidence: moderate.
+
+The dispatch thunks are:
+
+```text
+FUN_09f3ff50(param_1) -> FUN_09f3ff90(param_1 + 0x10)
+FUN_09f3ff60(param_1) -> FUN_09f3ff90(param_1 + 0x10), returns true
+```
+
+Confidence: high.
+
+## Server-Command Dispatch Gate
+
+`FUN_09f3ff90` filters a decoded notification string field before it calls
+`FUN_09ee73c0`. It compares the field at `param_2 + 0x48/0x50` against the
+global string at `DAT_16562160/DAT_16562168`; only matching messages reach the
+server-command handler. Confidence: high for the offset and call, moderate for
+the field name.
+
+Observed call:
+
+```text
+FUN_09f3ff90
+  checks param_2 + 0x48/0x50
+  calls FUN_09ee73c0(*param_1, param_2)
+```
+
+Operational meaning: a body can be delivered to the notification queue and
+still miss the GM handler if the decoded message field used at
+`param_2 + 0x48/0x50` does not match the registered server-command event name.
+Confidence: high.
+
+## Server-Command Handler Gate
+
+`FUN_09ee73c0` is the native server-command notification handler. Confidence:
+high.
+
+Observed control flow:
+
+```text
+FUN_09ee73c0(param_1, param_2)
+  checks a decoded message field at param_2 + 0x78/0x80
+  calls FUN_09ee7970(param_2 + 0x48, &local_3c, local_38, local_28)
+  rejects if local_3c < 2
+  checks sender-like field at param_2 + 0x58/0x60
+  checks auth token extracted into local_38
+  checks raw content extracted into local_28
+  logs "Server command received. Raw Content: %s"
+  calls FUN_09691b80(&local_d8, local_28_length, 0)
+```
+
+Confidence: high for the gates and log sequence. Confidence: moderate for the
+exact source field names because the decompiler output does not retain type
+names.
+
+`FUN_09ee7970` calls `FUN_09eb7e60` and then allocates a result object. The
+decompiler does not recover the extraction fields cleanly, but the caller shows
+the extracted values:
+
+- `local_3c`: version/status-like value; values below `2` hit the outdated
+  message log.
+- `local_38`: auth token string candidate.
+- `local_28`: raw command content string candidate.
+
+Confidence: moderate.
+
+## Log String Map
+
+These strings are directly tied to `FUN_09ee73c0` through pointer tables:
+
+```text
+1490e380 -> NotificationSystem message ignored. Outdated message version: "%d"
+1490e3a0 -> NotificationSystem message handling failed. Invalid Sender ID, we only accept server commands from 'fls'.
+1490e3c0 -> NotificationSystem message handling failed. Invalid Auth Token.
+1490e3e0 -> NotificationSystem message handling failed. Empty message content.
+1490e400 -> Server command received. Raw Content: %s
+```
+
+Confidence: high.
+
+The receive-side parse failure string is present nearby:
+
+```text
+1490e420 -> NotificationSystem message parsing failed. Failed to deserialize.
+```
+
+The script found that table in
+`FuncomLiveServicesWithPlayFab.cpp`, but did not recover a direct code reference
+to it in this pass. Confidence: high for the string/table, low/moderate for the
+exact parser function until another focused script resolves that call site.
+
+## Current Wrapper Implication
+
+The receive path expects a decoded notification message with at least these
+logical fields before the inner ServiceBroadcast content can matter:
+
+```text
+registered server-command event discriminator
+message version/status
+sender ID equal to fls
+auth token matching FuncomLiveServices.ServerCommandsAuthToken
+non-empty raw content
+```
+
+Confidence: moderate/high.
+
+The raw content is the likely place for the proven inner ServiceBroadcast body:
+
+```json
+{
+  "BroadcastType": "Generic",
+  "BroadcastPayload": {
+    "ServerCommand": "PrintAllowedCommands"
+  }
+}
+```
+
+Confidence: moderate.
+
+The missing part is the exact AMQP/body wrapper that deserializes into
+`FNotificationsSystemMessage` with those fields populated. Confidence: high.
+
+## Why Previous Payloads Failed
+
+Previous payloads could be delivered and still produce no native GM logs because
+they may have failed before `FUN_09f3ff90`, or they may have decoded with the
+wrong discriminator/sender/auth/content fields. Confidence: high.
+
+Specific failure interpretations:
+
+- No `Server command received`: the message did not pass
+  `FUN_09ee73c0` auth/content gates. Confidence: high.
+- No `Invalid Sender ID`: the message likely did not reach `FUN_09ee73c0`, or
+  logging level did not emit that branch. Confidence: moderate.
+- No `Handling ServiceBroadcast Server command:`: even if raw content was
+  present, it did not pass the inner ServiceBroadcast parser. Confidence:
+  moderate/high.
+- `JsonObjectStringToUStruct` failures from earlier probes prove parser
+  reachability for some route/body combinations, but not the final
+  `FNotificationsSystemMessage` shape. Confidence: high.
+
+## Safe Next Targets
+
+1. Resolve the function that logs or references
+   `NotificationSystem message parsing failed. Failed to deserialize.` from
+   the table at `1490e420`. Confidence: high value, moderate difficulty.
+2. Dump constructors/serializers for `FNotificationsSystemMessage` to map
+   offsets `0x48/0x50`, `0x58/0x60`, `0x78/0x80`, and the extracted
+   auth/content fields. Confidence: high value.
+3. Build the next probe family around the decoded notification struct fields,
+   not around more top-level JSON-RPC method names. Confidence: high.
+4. Keep live proof restricted to empty routes and `PrintAllowedCommands` until
+   `Server command received` and `Handling ServiceBroadcast Server command:`
+   are observed. Confidence: high.

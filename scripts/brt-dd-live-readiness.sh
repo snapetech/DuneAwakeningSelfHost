@@ -34,6 +34,8 @@ copied_config="/home/dune/server/DuneSandbox/Saved/UserSettings/UserGame.ini"
 required_config_patterns=(
   'm_MaxLandclaimSegmentsPerMap=.*DeepDesert'
   'm_MaxLandclaimSegmentsPerMap=.*DeepDesert_1'
+  'm_BaseBackupToolMapRestriction=.*DeepDesert'
+  'm_BaseBackupToolMapRestriction=.*DeepDesert_1'
 )
 
 if [[ -z "$cmd" || "$cmd" == "-h" || "$cmd" == "--help" ]]; then

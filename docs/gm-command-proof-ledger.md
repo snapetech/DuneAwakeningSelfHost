@@ -257,6 +257,12 @@ around `1490e420` and by callbacks that produce the decoded
 `FNotificationsSystemMessage` consumed by `FUN_09f3ff90` and `FUN_09ee73c0`.
 Confidence: moderate.
 
+The receive-side callback and handler gates are documented in
+[native-gm-notification-receive-proof.md](native-gm-notification-receive-proof.md).
+Confidence: high that the native server-command handler expects an already
+decoded `FNotificationsSystemMessage`-style object before the inner
+ServiceBroadcast body is parsed.
+
 Positive static result: a later focused Ghidra pass reran
 `scripts/research/DumpServerCommandPayload.java` and
 `scripts/research/DumpNotificationServerCommandSurface.java` against the same

@@ -148,6 +148,13 @@ Future research should compare RabbitMQ bindings, generated users, and server qu
   `FuncomLiveServicesWithPlayFab.cpp`, anchored around the
   `NotificationSystem message parsing failed. Failed to deserialize.` table near
   `1490e420`.
+- Follow-up receive-path documentation in
+  [native-gm-notification-receive-proof.md](native-gm-notification-receive-proof.md)
+  records the proven callback chain:
+  `NotificationSystemListenQueue -> FUN_09f8cf00 -> FUN_09f6ecb0 ->
+  FUN_09f3ff90 -> FUN_09ee73c0`. Confidence: high. The practical result is
+  that the missing piece is the decoded `FNotificationsSystemMessage` wrapper,
+  not another bare top-level ServiceBroadcast or JSON-RPC method shape.
 - Follow-up Ghidra work with
   `scripts/research/DumpServerCommandPayload.java` and
   `scripts/research/DumpNotificationServerCommandSurface.java` found positive

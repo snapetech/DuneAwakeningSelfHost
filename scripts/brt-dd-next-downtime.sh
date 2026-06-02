@@ -35,6 +35,8 @@ db="${DUNE_DB_NAME:-dune_sb_1_4_0_0}"
 required_config_patterns=(
   'm_MaxLandclaimSegmentsPerMap=.*DeepDesert'
   'm_MaxLandclaimSegmentsPerMap=.*DeepDesert_1'
+  'm_BaseBackupToolMapRestriction=.*DeepDesert'
+  'm_BaseBackupToolMapRestriction=.*DeepDesert_1'
 )
 
 dd1_no_shift_patterns=(

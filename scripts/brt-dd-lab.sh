@@ -31,6 +31,8 @@ lab_services=(postgres admin-rmq game-rmq db-init text-router director gateway r
 required_config_patterns=(
   'm_MaxLandclaimSegmentsPerMap=.*DeepDesert'
   'm_MaxLandclaimSegmentsPerMap=.*DeepDesert_1'
+  'm_BaseBackupToolMapRestriction=.*DeepDesert'
+  'm_BaseBackupToolMapRestriction=.*DeepDesert_1'
   'm_BaseBackupMaxExtensions=8'
   'm_bBuildingRestrictionLimitsEnabled=True'
 )
