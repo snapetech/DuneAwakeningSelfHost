@@ -125,13 +125,15 @@ Future research should compare RabbitMQ bindings, generated users, and server qu
   `FUN_0a05c5b0` and `FUN_0a05d070` refcount a received message object, then
   call `FUN_09f8cf00(*param_1)`; `FUN_09f8cf00` is a thin wrapper over
   `FUN_09f6ecb0(param_1, 0, 0, 0)`. Confidence: high.
-- `FUN_09f3ff90` and `FUN_09ee73c0` now give concrete decoded-message offsets:
-  `0x48/0x50` for the prefilter sender/type check, then `0x58/0x60` and
-  `0x78/0x80` for later server-command validation. Confidence: high. The bad
-  result remains that no live payload is proven. The good result is that the
-  remaining reverse-engineering target is now the PlayFab/FLS
-  `FNotificationsSystemMessage` deserializer, not another RMQ method-name
-  guess.
+- `FUN_09f3ff90` and `FUN_09ee73c0` now give concrete decoded-message gates:
+  `0x48/0x50` must pass the first discriminator before `FUN_09ee73c0` runs;
+  `0x78/0x80` must pass the server-command notification gate; `0x58/0x60` must
+  match the accepted sender; and `FUN_09ee7970(param_2+0x48, ...)` must extract
+  version/auth/content before `Server command received. Raw Content` can log.
+  Confidence: high. The bad result remains that no live payload is proven. The
+  good result is that the first positive milestone is now exact:
+  `Server command received. Raw Content`, before `Handling ServiceBroadcast
+  Server command:` or `Now running ServerCommand`.
 - Follow-up Ghidra work with
   `scripts/research/DumpFNotificationsSystemMessageLayout.java` tightened the
   decoded notification layout. `FUN_09ec9f00` copies the decoded message fields
@@ -139,6 +141,10 @@ Future research should compare RabbitMQ bindings, generated users, and server qu
   `0x88..0x94`; `FUN_09ede9a0` serializes the same layout outbound into AMQP
   properties before `amqp_basic_publish`. Confidence: high. This still does not
   produce a working inbound command payload. Confidence: high.
+- Follow-up Ghidra work with
+  `scripts/research/DumpFNotificationsCommandAcceptance.java` records the
+  compact acceptance checklist and log milestones for the native
+  server-command path. Confidence: high.
 - Follow-up Ghidra work with
   `scripts/research/DumpFNotificationsDataBridge.java` proved that the previous
   `FUN_09e05650`/`FUN_09e067f0` target was wrong: those functions are generic

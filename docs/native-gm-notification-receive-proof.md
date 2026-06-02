@@ -21,11 +21,16 @@ ServiceBroadcast JSON object.
   `scripts/research/DumpNativeGmReceiveCallbacks.java`
 - Latest local output:
   `/tmp/ghidra-work/native-gm-receive-callbacks.txt`
+- Ghidra script:
+  `scripts/research/DumpFNotificationsCommandAcceptance.java`
+- Latest local output:
+  `/tmp/ghidra-work/fnotifications-command-acceptance.txt`
 - Run commands:
 
 ```bash
 scripts/research/run-ghidra-headless.sh --script DumpNativeGmRmqDeserializer.java
 scripts/research/run-ghidra-headless.sh --script DumpNativeGmReceiveCallbacks.java
+scripts/research/run-ghidra-headless.sh --script DumpFNotificationsCommandAcceptance.java
 ```
 
 ## Positive Static Result
@@ -146,6 +151,30 @@ Confidence: high for the gates and log sequence. Confidence: moderate for the
 exact source field names because the decompiler output does not retain type
 names.
 
+The tighter offset-level read is:
+
+```text
+FUN_09f3ff90:
+  compares param_2 + 0x48/0x50 against DAT_16562160/DAT_16562168
+  calls FUN_09ee73c0 only after that discriminator matches
+
+FUN_09ee73c0:
+  compares param_2 + 0x78/0x80 against subsystem fields +0x210/+0x218
+  calls FUN_09ec9f00(&local_d8, param_2) when the +0x78/0x80 gate matches
+  calls FUN_09ee7970(param_2 + 0x48, &version, auth, content)
+  rejects version/status below 2
+  compares param_2 + 0x58/0x60 against subsystem fields +0x220/+0x228
+  compares extracted auth against configured token fields +0x230/+0x238 and
+    +0x240/+0x248
+  accepts only non-empty extracted content
+```
+
+Confidence: high for the offsets and ordering. Confidence: moderate for the
+human field names. The key operational point is that `SenderId=fls` in a JSON
+body is not automatically enough; the decoded field at `0x58/0x60` must be
+populated by the PlayFab/FLS notification deserializer before the sender gate
+can pass.
+
 `FUN_09ee7970` calls `FUN_09eb7e60` and then allocates a result object. The
 decompiler does not recover the extraction fields cleanly, but the caller shows
 the extracted values:
@@ -156,6 +185,32 @@ the extracted values:
 - `local_28`: raw command content string candidate.
 
 Confidence: moderate.
+
+## Outbound Publisher Evidence
+
+`FUN_09ede9a0` is not the inbound deserializer. It is still useful because it
+serializes the same notification-message family before calling
+`amqp_basic_publish`. Confidence: high.
+
+Recovered behavior:
+
+```text
+FUN_09ede9a0(connection, optional_property_string, notification_message)
+  converts decoded notification strings to AMQP byte spans
+  maps message strings into basic_publish exchange/routing/body arguments
+  maps optional decoded fields into AMQP basic properties
+  maps a message enum to "Unknown", "Content", or "Close"
+  calls amqp_basic_publish(...)
+```
+
+Confidence: high for outbound publish role and the `"Unknown"`, `"Content"`,
+`"Close"` enum labels. Confidence: moderate for naming the individual decoded
+fields until the inbound constructor/deserializer is resolved.
+
+This explains why successful `basic_publish` calls and empty queues are not
+sufficient proof. A message can be valid AMQP and still fail to construct the
+decoded `FNotificationsSystemMessage` object required by `FUN_09f3ff90` and
+`FUN_09ee73c0`. Confidence: high.
 
 ## Log String Map
 
@@ -189,6 +244,7 @@ logical fields before the inner ServiceBroadcast content can matter:
 
 ```text
 registered server-command event discriminator
+server-command notification type/discriminator
 message version/status
 sender ID equal to fls
 auth token matching FuncomLiveServices.ServerCommandsAuthToken
@@ -232,16 +288,32 @@ Specific failure interpretations:
   reachability for some route/body combinations, but not the final
   `FNotificationsSystemMessage` shape. Confidence: high.
 
+## Proof Milestones
+
+The proof ladder is now concrete:
+
+1. `Server command received. Raw Content: %s` proves the decoded
+   `FNotificationsSystemMessage` passed discriminator, sender, auth, and
+   content gates. Confidence: high.
+2. `Handling ServiceBroadcast Server command:` proves the raw content parsed as
+   native ServiceBroadcast. Confidence: high.
+3. `Now running ServerCommand` proves the command reached
+   `UDuneServerCommandSubsystem`. Confidence: high.
+
+Until milestone 1 appears, changing the inner `ServerCommand` name is not useful
+because native code has not accepted the outer notification. Confidence: high.
+
 ## Safe Next Targets
 
 1. Resolve the function that logs or references
    `NotificationSystem message parsing failed. Failed to deserialize.` from
    the table at `1490e420`. Confidence: high value, moderate difficulty.
-2. Dump constructors/serializers for `FNotificationsSystemMessage` to map
-   offsets `0x48/0x50`, `0x58/0x60`, `0x78/0x80`, and the extracted
-   auth/content fields. Confidence: high value.
-3. Build the next probe family around the decoded notification struct fields,
-   not around more top-level JSON-RPC method names. Confidence: high.
+2. Resolve the inbound constructor/deserializer that populates decoded offsets
+   `0x48/0x50`, `0x58/0x60`, and `0x78/0x80`, plus the auth/content fields
+   extracted from `param_2 + 0x48`. Confidence: high value.
+3. Build the next probe family around the decoded notification struct and AMQP
+   properties, not around more top-level JSON-RPC method names. Confidence:
+   high.
 4. Keep live proof restricted to empty routes and `PrintAllowedCommands` until
    `Server command received` and `Handling ServiceBroadcast Server command:`
    are observed. Confidence: high.

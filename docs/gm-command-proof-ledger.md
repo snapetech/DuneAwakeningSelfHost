@@ -340,6 +340,28 @@ python3 scripts/probe-gm-payload-matrix.py \
   --amqp-type empty
 ```
 
+Latest static pass added
+`scripts/research/DumpFNotificationsCommandAcceptance.java`, a compact Ghidra
+script for the exact native acceptance gates. Confidence: high.
+
+- `FUN_09f3ff90` gates on the decoded string at `param_2+0x48/0x50` before it
+  calls `FUN_09ee73c0`. Confidence: high.
+- `FUN_09ee73c0` then gates on `param_2+0x78/0x80`, extracts
+  version/auth/content through `FUN_09ee7970(param_2+0x48, ...)`, checks sender
+  at `param_2+0x58/0x60`, checks the extracted auth against the configured
+  `FuncomLiveServices.ServerCommandsAuthToken`, and only then logs
+  `Server command received. Raw Content: %s`. Confidence: high.
+- `FUN_09ede9a0` remains useful only as outbound evidence: it maps decoded
+  notification strings into AMQP exchange/routing/body/properties and calls
+  `amqp_basic_publish`; it is not the inbound parser. Confidence: high.
+
+Practical result: the next proof target is not "try every command name." The
+first positive milestone is `Server command received. Raw Content`; the second
+is `Handling ServiceBroadcast Server command:`; the third is
+`Now running ServerCommand`. Until the first milestone appears, inner command
+names are irrelevant because the outer decoded notification has not passed the
+native gates. Confidence: high.
+
 Conclusion: no live command execution is proven yet, but the current positive
 path is now specific: test the native-positive generic notification bodies
 above on the empty route and look for `Server command received`,
