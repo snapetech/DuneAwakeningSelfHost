@@ -22,6 +22,12 @@ Output:
 - `/tmp/ghidra-work/gm-command-surface-findings.txt`
 - `/tmp/ghidra-work/gm-command-surface-ghidra.log`
 
+Supplemental extraction of reflected/demangled cheat-manager method names:
+
+```bash
+scripts/research/extract-cheat-manager-methods.py /tmp/ghidra-work/server-bin --format markdown
+```
+
 The live image also ships the authoritative allow-list at:
 
 ```text
@@ -93,6 +99,154 @@ Ghidra found decompiled command-format or handler-adjacent evidence for:
 Some of these are not in `DedicatedServerGame.ini`, so they are not exposed by
 the shipped dedicated-server GM allow-list even though code exists in the
 binary.
+
+## Full Cheat-Manager Inventory
+
+This is the full command/method inventory recovered from cheat-manager method
+strings and embedded mangled fragments in the current binary. Treat these as
+binary-resident cheat-manager methods, not automatically callable dedicated
+server commands. The extractor returns `count=100` for this build.
+
+### `UCharacterTransferCheatManager`
+
+- `CharacterTransfer_CancelCurrentTransfer`
+- `CharacterTransfer_CheckTransferStatus`
+- `CharacterTransfer_ExportData`
+- `CharacterTransfer_FullFlow`
+- `CharacterTransfer_ImportData`
+- `CharacterTransfer_PreTransferCheck_InGame`
+- `CharacterTransfer_PreTransferCheck_MainMenu`
+- `CharacterTransfer_RequestReservation`
+
+### `UClaimSystemCheatManager`
+
+- `ClaimSystemPrintCharacterPacks_Client`
+- `ClaimSystemPrintCharacterPacks_Server`
+- `ClaimSystemServerConsumeEntirePackForCharacter`
+- `ClaimSystemServerConsumeFrom2StacksFromPackForCharacter`
+- `ClaimSystemServerConsumeFromPackForCharacter`
+
+### `UDuneCheatManager`
+
+- `AchievementTestPrintAllAchievements`
+- `AchievementTestResetAllAchievements`
+- `AddItemToInventory`
+- `AddItemToVehicleInventory`
+- `AddWeaponToInventory`
+- `CheatCurrentDungeonCompletion`
+- `ClearFlsCharacterData`
+- `CompleteCurrentDungeon`
+- `ConditionsLogRegisteredConditions`
+- `ConditionsLogRegisteredConditionsForCurrentPlayer`
+- `ConditionsLogRegisteredConditionsForEvent`
+- `ConditionsLogRegisteredConditionsForEventAndCurrentPlayer`
+- `ConditionsLogRegisteredConditionsForEventAndPlayerId`
+- `ConditionsLogRegisteredConditionsForPlayerId`
+- `ConditionsLogRegistrationKeys`
+- `ConditionsLogSummary`
+- `CoriolisPrintStoredSeeds`
+- `CoriolisSetFarmSeed`
+- `CoriolisSetMapSeed`
+- `CoriolisSetPartitionSeed`
+- `DeleteAllCompletionsForAllDungeonsByThisPlayer`
+- `DeleteAllCompletionsForCurrentDungeon`
+- `DeleteAllCompletionsForCurrentDungeonByThisPlayer`
+- `DisplayFlsBattlegroupsServerBrowserInfo`
+- `FlushActorPersistence`
+- `GlobalDistributionPrintLootSettingsForCurrentLocation`
+- `GlobalDistributionPrintTagsForCurrentLocation`
+- `InitializeContractsAutoCompleteNamesList`
+- `LogInAs`
+- `MigrateMyVehicles`
+- `OpenUIScene`
+- `OverrideDungeonPlayerCount`
+- `PatrolShipListSpawned`
+- `PatrolShipTeleportToNearest`
+- `PayAllTaxesForNearbyTotem`
+- `PlayNow`
+- `PrintListPlayersInFarm`
+- `PrintMapSettings`
+- `PrintNpcRespawnTimerHere`
+- `PrintPlayerCap`
+- `RaiseDatabaseException`
+- `RequestFakeGroupTravel`
+- `ResetCurrentDungeon`
+- `ResetCurrentDungeonRoom`
+- `ResetVendorStockData`
+- `ReturnToHomeDimension`
+- `SandBuildupSetOnAllObjects`
+- `ScheduleMTXEvent`
+- `ScheduleMTXEventJson`
+- `SetEyesOfIbad`
+- `SetUpItemList`
+- `SpiceAddictionDecreaseSpiceAmount`
+- `SpiceFieldForceSpawnNearestField`
+- `SpiceFieldPrimeNearestField`
+- `SpiceFieldPrimeRandomField`
+- `SpiceFieldPrintNearestFieldInfo`
+- `SpiceFieldReplenishNearestField`
+- `SpiceFieldSetAgeForNearestField`
+- `SpiceFieldSetFieldSpawnRate`
+- `SpiceFieldSetSpawningEnabled`
+- `SpiceFieldShowNearestFieldContents`
+- `SpiceFieldTeleportToNearestField`
+- `SpiceFieldUpdateGlobalRules`
+- `TestDatabaseTransaction`
+- `TestDatabaseTransactionDataChange`
+- `TestIgwObjectFollowRemotePlayer`
+- `TravelToDimension`
+- `VisitFriend`
+
+### `UDuneS2sCheatManager`
+
+- `EncountersRandomSetEnabled`
+- `EncountersRandomSetInstigationAroundPlayersDelayInSec`
+- `EncountersRandomSetInstigationAroundPlayersEnabled`
+- `EncountersRandomSetInstigationAroundPlayersRadius`
+- `EncountersRandomSetInstigationByAreaDelayInSecOverride`
+- `EncountersRandomSetInstigationByAreaEnabled`
+- `EncountersRandomSetInstigationOnWholeServerDelayInSec`
+- `EncountersRandomSetInstigationOnWholeServerEnabled`
+- `EncountersRandomSetInstigationOnWholeServerForced`
+- `EncountersSetAreaLimitsEnabled`
+- `EncountersSetEnabled`
+- `EncountersSetSpawnCooldownEnabled`
+
+### `UFlsCharacterTransfersCheatManager`
+
+- `FlsRestoreAllTokens`
+
+### `UFlsCheatManager`
+
+- `GetFlsPlayerSession`
+
+### `UFlsPlayerAccountCheatManager`
+
+- `FlsDeletePlayerAccountData`
+- `FlsSetIsDemoAccount`
+- `FlsUpdateDemoPlaytime`
+
+### `UFlsPlayerRewardsCheatManager`
+
+- `FlsClaimPendingRewards`
+
+### `UOvermapCheatManager`
+
+- `OvermapTravelToDimension`
+
+## Exposure Notes
+
+- Only the `DedicatedServerGame.ini` list above is exposed through the shipped
+  dedicated-server admin GM allow-list.
+- `AwardXP`, `SpawnVehicleAt`, `TeleportToLocation`,
+  `TravelToDimensionByDestination`, `OvermapTravelToDimensionByDestination`,
+  and `DestroyAllSandStormsOnThisMapAndDimension` have command-format evidence
+  but are not allow-listed.
+- The larger cheat-manager inventory contains client/admin/debug methods that
+  may require in-game admin state, a player-controller cheat manager, editor
+  context, or an internal service path. Do not assume broker publishability.
+- No method in the full cheat-manager inventory is a targeted nice kick,
+  return-to-main-menu, or player-session-close command.
 
 ## Kick / Disconnect Result
 
