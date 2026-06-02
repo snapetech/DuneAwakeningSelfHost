@@ -96,6 +96,35 @@ class GmPayloadMatrixTests(unittest.TestCase):
         self.assertEqual(body["Payload"]["ServerCommandsAuthToken"], "test-token")
         self.assertEqual(body["Payload"]["Content"]["ServerCommand"], "PrintAllowedCommands")
 
+    def test_publish_one_allows_native_amqp_property_controls(self):
+        class FakeChannel:
+            def basic_publish(self, **kwargs):
+                self.kwargs = kwargs
+
+        channel = FakeChannel()
+        probe_gm_payload_matrix.publish_one(
+            channel,
+            "notifications",
+            "route-key",
+            b"{}",
+            "application/json",
+            "Content",
+            "reply.queue",
+            "fls",
+            "probe-tag",
+            "fls-app",
+            "corr-1",
+        )
+
+        props = channel.kwargs["properties"]
+        self.assertEqual(channel.kwargs["exchange"], "notifications")
+        self.assertEqual(channel.kwargs["routing_key"], "route-key")
+        self.assertEqual(props.type, "Content")
+        self.assertEqual(props.reply_to, "reply.queue")
+        self.assertEqual(props.user_id, "fls")
+        self.assertEqual(props.app_id, "fls-app")
+        self.assertEqual(props.correlation_id, "corr-1")
+
 
 if __name__ == "__main__":
     unittest.main()

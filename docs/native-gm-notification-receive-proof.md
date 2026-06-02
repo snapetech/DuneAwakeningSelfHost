@@ -312,6 +312,19 @@ safe live probe must control AMQP properties such as `app_id`, `user_id`,
 `correlation_id`, `reply_to`, AMQP type/body metadata, and the delivery/routing
 key, not only JSON field aliases inside the message body. Confidence: high.
 
+`scripts/probe-gm-payload-matrix.py` now exposes the relevant property controls:
+
+```bash
+--app-id <value-or-empty>
+--user-id <value>
+--reply-to-property auto|empty|<value>
+--correlation-id auto|empty|<value>
+--amqp-type <value-or-empty>
+--content-type native|application/json|empty
+```
+
+Confidence: high.
+
 ## Log String Map
 
 These strings are directly tied to `FUN_09ee73c0` through pointer tables:

@@ -405,6 +405,9 @@ Result: the inbound AMQP consume function is now found. The next payload work
 must control AMQP delivery key/properties/body metadata, not only JSON aliases:
 `app_id`, `user_id`, `correlation_id`, `reply_to`, AMQP type/body metadata, and
 raw body are now first-class inputs to test on an empty route. Confidence: high.
+`scripts/probe-gm-payload-matrix.py` now exposes `--app-id`,
+`--reply-to-property`, and `--correlation-id` in addition to the existing
+`--user-id`, `--amqp-type`, and `--content-type` controls. Confidence: high.
 
 Conclusion: no live command execution is proven yet, but the current positive
 path is now specific: test the native-positive generic notification bodies

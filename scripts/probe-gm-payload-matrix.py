@@ -381,7 +381,19 @@ def bind_safely(channel, queue, exchange, routing_key):
         return False
 
 
-def publish_one(channel, exchange, routing_key, body, content_type, amqp_type, reply_to, user_id, tag):
+def publish_one(
+    channel,
+    exchange,
+    routing_key,
+    body,
+    content_type,
+    amqp_type,
+    reply_to,
+    user_id,
+    tag,
+    app_id,
+    correlation_id,
+):
     auth_token = auth_token_value()
     headers = {"dash_gm_matrix": True, "dash_nonce": secrets.token_hex(4), "dash_tag": tag}
     if auth_token:
@@ -399,9 +411,9 @@ def publish_one(channel, exchange, routing_key, body, content_type, amqp_type, r
         timestamp=int(time.time()),
         type=amqp_type or None,
         reply_to=reply_to or None,
-        correlation_id=tag,
+        correlation_id=correlation_id or None,
         message_id=tag,
-        app_id="DASH-GM-Matrix",
+        app_id=app_id or None,
         user_id=user_id or None,
         headers=headers,
     )
@@ -449,6 +461,9 @@ def main():
     parser.add_argument("--only-broker", choices=("admin", "game", "all"), default="all")
     parser.add_argument("--target-kind", choices=("all", "rpc", "direct"), default="all", help="Limit admin/game publishes to exchange RPC routes or direct queue routes.")
     parser.add_argument("--user-id", default="", help="AMQP user_id property to send. Leave empty to omit.")
+    parser.add_argument("--app-id", default="DASH-GM-Matrix", help="AMQP app_id property to send. Use empty to omit.")
+    parser.add_argument("--reply-to-property", default="auto", help="AMQP reply_to property: auto, empty, or an explicit value.")
+    parser.add_argument("--correlation-id", default="auto", help="AMQP correlation_id property: auto, empty, or an explicit value.")
     parser.add_argument("--body", action="append", default=[], help="Only send these exact body names. Repeatable.")
     parser.add_argument("--body-contains", action="append", default=[], help="Only send body names containing these substrings. Repeatable.")
     parser.add_argument("--amqp-type", action="append", default=[], help="Only send these AMQP type values. Repeatable; use empty for omitted type.")
@@ -521,16 +536,50 @@ def main():
         tag = f"gm-matrix-{uuid.uuid4().hex[:10]}"
         body, native_content_type = serialize_body(body_value)
         content_type = native_content_type if content_type_mode == "native" else content_type_mode
+        app_id = "" if args.app_id == "empty" else args.app_id
+        correlation_id = tag if args.correlation_id == "auto" else args.correlation_id
+        if correlation_id == "empty":
+            correlation_id = ""
         try:
             if broker == "admin":
-                publish_one(admin_ch, exchange, routing_key, body, content_type, amqp_type, reply_queue, args.user_id, tag)
+                reply_to = reply_queue if args.reply_to_property == "auto" else args.reply_to_property
+                if reply_to == "empty":
+                    reply_to = ""
+                publish_one(
+                    admin_ch,
+                    exchange,
+                    routing_key,
+                    body,
+                    content_type,
+                    amqp_type,
+                    reply_to,
+                    args.user_id,
+                    tag,
+                    app_id,
+                    correlation_id,
+                )
             else:
                 if game_conn is None:
                     game_conn = game_amqp_connection()
                     game_ch = game_conn.channel()
                     game_reply_queue = game_ch.queue_declare(queue="", exclusive=True, auto_delete=True).method.queue
                     bind_safely(game_ch, game_reply_queue, "rpc", game_reply_queue)
-                publish_one(game_ch, exchange, routing_key, body, content_type, amqp_type, game_reply_queue, args.user_id, tag)
+                reply_to = game_reply_queue if args.reply_to_property == "auto" else args.reply_to_property
+                if reply_to == "empty":
+                    reply_to = ""
+                publish_one(
+                    game_ch,
+                    exchange,
+                    routing_key,
+                    body,
+                    content_type,
+                    amqp_type,
+                    reply_to,
+                    args.user_id,
+                    tag,
+                    app_id,
+                    correlation_id,
+                )
             sent.append(
                 {
                     "tag": tag,
@@ -540,6 +589,10 @@ def main():
                     "body": body_name,
                     "contentType": content_type,
                     "amqpType": amqp_type,
+                    "appId": app_id or None,
+                    "userId": args.user_id or None,
+                    "replyTo": reply_to or None,
+                    "correlationId": correlation_id or None,
                 }
             )
         except Exception as exc:
