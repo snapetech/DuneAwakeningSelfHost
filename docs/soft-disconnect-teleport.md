@@ -120,6 +120,15 @@ Observed failures:
 - Guessed `kick`, `RemoveSessionMember`, and `KickLobbyMember` payloads sent to the admin RPC route and the game server queue were routed or consumed but did not close the target game session.
 - Targeted ICMP `REJECT` and conntrack flow deletion did not trigger a useful soft reconnect in the tested deployment.
 - Startup `-ExecCmds` executes console commands, but tested command names did not expose a useful online teleport route.
+- Live 2026-06-02 probes for `BattlEyeMegaKick`, `ClientReturnToMainMenu`,
+  `ClientReturnToMainMenuWithTextReason`, `ClientWasKicked`,
+  `RemoveSessionMember`, `KickLobbyMember`, `ServerStartLogOffTimer`, and
+  `ClientLogOff` through the observed RMQ/admin routes did not close the target
+  game session or produce confirming command logs.
+- Direct `gdb` calls into `ADunePlayerController` return-to-menu client RPC
+  thunks are rejected as an operational path. They can close the target
+  `UNetConnection`, but the live Deep Desert test also crashed the map process
+  and left stale duplicate `farm_state` rows for the public map port.
 
 ## First-Party SQL Contract
 
@@ -436,3 +445,7 @@ Expected shape after reconnect:
 - Validate cross-map movement.
 - Find a cleaner targeted disconnect knob than network packet drop, preferably a native `UNetConnection::Close`, game-session kick, or Online Services `RemoveSessionMember`/`KickLobbyMember` path.
 - Automate endpoint discovery from Survival logs or packet capture.
+- If a map crash follows a failed disconnect experiment, remove only duplicate
+  `dune.farm_state` rows where the old server id has `alive=false` and the
+  public `game_port` conflicts with the restarted live map, then run
+  `scripts/fls-publication-health.py`.

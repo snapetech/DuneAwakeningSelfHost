@@ -283,6 +283,31 @@ the string commands were consumed or ignored. Confidence: high that the current
 admin/chat labels must treat these as session/lobby operation candidates, not a
 verified "soft disconnect" button.
 
+Live validation on 2026-06-02 did not find a working native button. Admin-RMQ
+and game-RMQ probes for `BattlEyeMegaKick`, `ClientReturnToMainMenu`,
+`ClientReturnToMainMenuWithTextReason`, `ClientWasKicked`,
+`RemoveSessionMember`, `KickLobbyMember`, `ServerStartLogOffTimer`, and
+`ClientLogOff` produced no useful player disconnect and no confirming command
+logs. A targeted UDP `DROP` did disconnect the target, but it produced a
+network-error/login-screen style timeout and eventual reconnect, not a nice
+return-to-menu notice.
+
+Direct `gdb` invocation of `ADunePlayerController` client RPC thunks is unsafe
+for production. Calling `ClientReturnToMainMenu`/`ClientReturnToMainMenuWithTextReason`
+against a live `BP_DunePlayerController_C` closed the target client's
+`UNetConnection`, but it also destabilized and crashed the Deep Desert map
+process. Treat these thunks as reverse-engineering evidence only, not an
+operator control path. Confidence: high.
+
+If a failed live test crashes a map and the browser shows the server offline,
+check `dune.farm_state` for duplicate dead rows on the same public
+`game_port`. On 2026-06-02, Deep Desert came back as
+`dkudsd1kTTO_CszGtbcLig`, but stale dead rows for `igFkOF7rTZCsbJtVWhbaDw` and
+`sKOEet45Tse+SweBaX2zGw` still advertised port `7784`. Removing only the
+`alive=false` duplicate rows restored a single valid `DeepDesert_1` registration;
+`scripts/fls-publication-health.py` then reported a healthy FLS publication
+window.
+
 Ghidra helper:
 
 ```bash
