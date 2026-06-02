@@ -99,7 +99,10 @@ public class FindBaseBackupToolDeepDesert extends GhidraScript {
 
     private List<String> loadNeedles() {
         LinkedHashSet<String> values = new LinkedHashSet<>();
-        for (String needle : NEEDLES) values.add(needle);
+        boolean onlyExtra = "true".equalsIgnoreCase(System.getenv("DUNE_BRT_DD_ONLY_EXTRA"));
+        if (!onlyExtra) {
+            for (String needle : NEEDLES) values.add(needle);
+        }
         String extra = System.getenv("DUNE_BRT_DD_EXTRA_NEEDLES");
         if (extra != null) {
             for (String item : extra.split(",")) {
@@ -164,16 +167,23 @@ public class FindBaseBackupToolDeepDesert extends GhidraScript {
     }
 
     private boolean logStringHit(StringHit hit) throws Exception {
-        ReferenceIterator rit = refs.getReferencesTo(hit.address);
+        List<Address> hitAddresses = new ArrayList<>();
+        int span = hit.encoding.equals("utf16le") ? hit.value.length() * 2 : hit.value.length();
+        for (int i = 0; i <= span; i++) {
+            hitAddresses.add(hit.address.add(i));
+        }
         List<String> froms = new ArrayList<>();
         Set<Address> entries = new LinkedHashSet<>();
-        while (rit.hasNext()) {
-            Reference ref = rit.next();
-            Address from = ref.getFromAddress();
-            Function f = currentProgram.getFunctionManager().getFunctionContaining(from);
-            String fdesc = f == null ? "" : " func=" + f.getName() + " entry=" + f.getEntryPoint();
-            froms.add(from + " " + ref.getReferenceType() + fdesc);
-            if (f != null) entries.add(f.getEntryPoint());
+        for (Address addr : hitAddresses) {
+            ReferenceIterator rit = refs.getReferencesTo(addr);
+            while (rit.hasNext()) {
+                Reference ref = rit.next();
+                Address from = ref.getFromAddress();
+                Function f = currentProgram.getFunctionManager().getFunctionContaining(from);
+                String fdesc = f == null ? "" : " func=" + f.getName() + " entry=" + f.getEntryPoint();
+                froms.add(from + " -> " + addr + " " + ref.getReferenceType() + fdesc);
+                if (f != null) entries.add(f.getEntryPoint());
+            }
         }
         if (froms.isEmpty()) return false;
         log("string " + hit.address + " encoding=" + hit.encoding + " refs=" + froms.size() + " value=\"" + clean(hit.value) + "\"");
