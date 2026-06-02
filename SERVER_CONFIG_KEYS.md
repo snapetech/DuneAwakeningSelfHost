@@ -31,7 +31,13 @@ Evidence levels:
 | `[/Script/DuneSandbox.PvpPveSettings]` | `m_bShouldForceEnablePvpOnAllPartitions` | `False` | Known | Global PvP override. `True` should force PvP on all partitions; `False` leaves normal partition/security-zone rules in control. |
 | `[/Script/DuneSandbox.PvpPveSettings]` | `+m_PvpEnabledPartitions` | commented examples `1`, `2` | Unknown / investigate | Per-partition PvP allow-list. Present as commented examples in the shipped setup config. Needs live validation before enabling. |
 | `[/Script/DuneSandbox.SecurityZonesSubsystem]` | `m_bAreSecurityZonesEnabled` | `True` | Known | Enables security zones. Turning this off should disable the server-side security-zone system. |
+| `[/Script/DuneSandbox.PingSystemSettings]` | `m_PingsPerPlayerLimit` | `10` | Inferred / validate | Private-server group QoL override. Shipped default is `5`; raises simultaneous ping capacity for exploration/coordination. |
+| `[/Script/DuneSandbox.PingSystemSettings]` | `m_PingMaximumDistance` | `5000.000000` | Inferred / validate | Private-server group QoL override. Shipped default is `2000`; extends ping placement/use distance. |
+| `[/Script/DuneSandbox.PingSystemSettings]` | `m_PingInWorldMarkerExpiryTime` | `15` | Inferred / validate | Private-server group QoL override. Shipped default is `5`; keeps in-world pings visible longer. |
+| `[/Script/DuneSandbox.PingSystemSettings]` | `m_PingMapMarkerExpiryTime` | `300` | Inferred / validate | Private-server group QoL override. Shipped default is `60`; keeps map pings visible longer. |
 | `[/DeteriorationSystem.ItemDeteriorationConstants]` | `UpdateRateInSeconds` | `1.0` | Known | Item deterioration tick/update cadence in seconds. Lower values update more frequently; higher values update less frequently. |
+| `[/Script/DuneSandbox.SpiceHarvestingSystem]` | `m_PerMapSystemSettings` | Deep Desert small `60/60`, medium `24/24`, large `3/3`; Survival small `5/5` | Known / validate balance | Private-server spice caps. Large fields are raised from shipped `1/1` to `3/3`; medium fields are raised to `24/24` for a busier Deep Desert. |
+| `[/Script/DuneSandbox.ContractsSubsystem]` | `m_MaxGlobalContractsNumberPerServer` | `20` | Inferred / validate | Private-server activity override. Shipped default is `10`; keeps more global contracts available on low-pop worlds. |
 | `[/Script/DuneSandbox.SandStormConfig]` | `m_bCoriolisAutoSpawnEnabled` | `False` | Known | Controls automatic Coriolis storm spawning. Shipped setup default is `True`; this repo disables auto-spawn. |
 | `[/Script/DuneSandbox.PlayerOnlineStateSettings]` | `m_DefaultReconnectGracePeriodSeconds` | `0` | Known | Normal-map reconnect grace period before the server stops preserving an offline/disconnected session. Shipped default observed in build `1963158` is `300`. |
 | `[/Script/DuneSandbox.PlayerOnlineStateSettings]` | `m_OvermapReturnGracePeriodSeconds` | `0` | Known | Overmap return/reconnect grace period. Shipped default observed in build `1963158` is `90`. |
@@ -44,6 +50,9 @@ Evidence levels:
 | `[/Script/DuneSandbox.BuildingSettings]` | `m_BaseBackupMaxExtensions` | `8` | Known | Maximum extension count used by base backup/reconstruction-related data. Shipped default is `8`. This is not the active base-count knob. |
 | `[/Script/DuneSandbox.BuildingSettings]` | `m_bBuildingRestrictionLimitsEnabled` | `True` | Known | Enables server-side building restriction limits. Funcom's setup comment says this must also be applied to each client. |
 | `[/Script/DuneSandbox.CharacterRecustomizerSubsystem]` | `m_CostAmount` | `0` | Known | Solaris cost for character recustomization. Shipped/default observed in build `1963158` is `5000`; this repo makes it free. |
+| `[/Script/DuneSandbox.DuneExchangeSettings]` | `SellOrderDailySolarisFee` | `0` | Known / validate balance | Private-server economy override. Shipped default is `20`; this repo keeps exchange listing friction removed. |
+| `[/Script/DuneSandbox.DuneExchangeSettings]` | `SellOrderPricePercentageFee` | `0.000000` | Known / validate balance | Private-server economy override. Shipped default is `2.000000`; this repo keeps exchange listing friction removed. |
+| `[/Script/DuneSandbox.GuildSettings]` | `m_MaxGuildsAllowed` | `999` | Inferred / validate | Private-server social override. Shipped default is `3`; removes the practical guild count cap for this community. |
 
 ## Building Knob Notes
 

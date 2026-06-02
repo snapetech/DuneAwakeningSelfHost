@@ -499,6 +499,41 @@ Execution requires:
 
 The live schema currently has `dune.factions` rows for `1=Atreides`, `2=Harkonnen`, `3=None`, and `4=Smuggler`. Confidence is moderate because the faction-change function is first-party; guild side effects and client refresh behavior still need disposable-character validation.
 
+Faction chat seeding is handled by `scripts/player-presence-announcer.py`. The
+game records effective side choice on the player controller, while the faction
+chat/UI path can still see the pawn as neutral on self-host. By default the
+seeder infers Atreides/Harkonnen only from
+`dune.get_player_faction(player_controller_id, 3)`, then uses the first-party
+`dune.change_player_faction` function to seed the pawn-side faction row. It can
+also bind the online player queue to `chat.faction.<id>` and optionally tune
+configured Communinet channel names. Reputation-only inference is available via
+`DUNE_PLAYER_PRESENCE_FACTION_CHAT_INFER_FROM_REPUTATION=true`, but keep it off
+unless low reputation tutorial/intro rows have been ruled out.
+
+Dry-run backfill:
+
+```bash
+scripts/player-presence-announcer.py --seed-faction-chat-backfill --all-players
+```
+
+Execution requires the explicit CLI `--execute`, or both
+`DUNE_PLAYER_PRESENCE_FACTION_CHAT_SEED_ENABLED=true` and
+`DUNE_PLAYER_PRESENCE_FACTION_CHAT_SEED_EXECUTE=true` for the loop path.
+Queue binding defaults on through `DUNE_PLAYER_PRESENCE_FACTION_CHAT_BIND_QUEUES=true`;
+Communinet channel writes stay off unless
+`DUNE_PLAYER_PRESENCE_FACTION_CHAT_TUNE_COMMUNINET=true` and
+`DUNE_PLAYER_PRESENCE_FACTION_CHAT_COMMUNINET_CHANNELS` maps faction names to
+known channel IDs.
+
+Live validation on 2026-06-02 found the self-host state had controller-side
+faction choices but neutral pawn-side faction rows. The dry-run reported 11
+safe candidates whose controller faction was already explicit: 10 Atreides and
+1 Harkonnen. After a DB backup, the execute backfill repaired those 11 pawn
+rows, bound the three online Atreides queues to `chat.faction.1`, and the
+follow-up dry-run reported `count=0`. Confidence is high for controller-side
+inference and DB repair; confidence is moderate that already-online clients may
+need a relog or UI refresh before exposing the tab.
+
 `POST /api/admin/landsraad` plans or executes Landsraad term administration. Supported actions are `change-end-time` and `force-end`.
 
 Dry-run body:

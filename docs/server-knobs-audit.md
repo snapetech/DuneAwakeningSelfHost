@@ -89,9 +89,11 @@ Safe candidates for admin editing:
 - `m_bShouldForceEnablePvpOnAllPartitions`: force PvP across all partitions.
 - `m_PvpEnabledPartitions`: explicitly enable PvP on listed partitions.
 - `m_bAreSecurityZonesEnabled`: enable/disable security zones.
+- `m_PingsPerPlayerLimit`, `m_PingMaximumDistance`, `m_PingInWorldMarkerExpiryTime`, and `m_PingMapMarkerExpiryTime`: ping count/range/lifetime settings for group coordination. The current private-server override uses `10`, `5000`, `15`, and `300` instead of shipped `5`, `2000`, `5`, and `60`.
 - `m_CostAmount` under `[/Script/DuneSandbox.CharacterRecustomizerSubsystem]`: Solaris cost for character recustomization. The local override sets this to `0`; shipped/default is `5000`.
 - `UpdateRateInSeconds`: item deterioration update cadence.
 - `m_bCoriolisAutoSpawnEnabled`: Coriolis storm auto-spawn behavior.
+- `m_MaxGlobalContractsNumberPerServer`: global contract availability cap. The current private-server override is `20`; shipped/default is `10`.
 - `m_DefaultReconnectGracePeriodSeconds`: normal-map reconnect grace/logoff persistence window; set to `0` for immediate disconnect/logout expiry.
 - `m_OvermapReturnGracePeriodSeconds`: overmap return grace window; set to `0` for Steam Deck suspend-friendly immediate exit.
 - `m_InstancedMapReconnectGracePeriodSeconds`: instanced-map reconnect grace/logoff persistence window; set to `0` for immediate disconnect/logout expiry.
@@ -105,6 +107,7 @@ Safe candidates for admin editing:
 - `m_BuildingBlueprintMaxExtensions`: blueprint extension cap.
 - `m_BaseBackupMaxExtensions`: base backup extension cap.
 - `m_bBuildingRestrictionLimitsEnabled`: enable/disable building restriction limits.
+- `m_MaxGuildsAllowed`: global guild-count cap. The current private-server override is `999`; shipped/default is `3`.
 
 Typed controls currently implemented:
 
@@ -164,6 +167,18 @@ The typed knob id is:
 ```text
 spiceDeepDesertCaps
 ```
+
+Current private-server profile:
+
+- Small Deep Desert spice fields: `60` primed, `60` active.
+- Medium Deep Desert spice fields: `24` primed, `24` active.
+- Large Deep Desert spice fields: `3` primed, `3` active.
+- Survival small spice fields: `5` primed, `5` active.
+
+Medium fields were raised from the previous private-server `12/12` target to
+`24/24` so both Standard DD and Hardcore DD feel busier without raising the
+large-field cap further. Confidence is high that the cap writes are accepted by
+the spice system; balance still needs post-restart observation.
 
 Structured dry-run example:
 

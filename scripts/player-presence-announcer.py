@@ -7,6 +7,7 @@ import os
 import pathlib
 import re
 import subprocess
+import ssl
 import sys
 import time
 
@@ -928,6 +929,230 @@ def grant_starter_emotes(account_id):
     return payload
 
 
+def parse_faction_channel_map(raw):
+    mapping = {}
+    for item in (raw or "").split(","):
+        item = item.strip()
+        if not item or "=" not in item:
+            continue
+        key, value = item.split("=", 1)
+        values = [part.strip() for part in value.replace("|", ";").split(";") if part.strip()]
+        if key.strip() and values:
+            mapping[key.strip()] = values
+    return mapping
+
+
+def faction_chat_channel_map():
+    return parse_faction_channel_map(env("DUNE_PLAYER_PRESENCE_FACTION_CHAT_COMMUNINET_CHANNELS", ""))
+
+
+def faction_chat_candidates(online_only=True):
+    neutral_faction_id = int(env("DUNE_PLAYER_PRESENCE_FACTION_CHAT_NEUTRAL_FACTION_ID", "3"))
+    allowed_ids = [
+        int(item.strip())
+        for item in env("DUNE_PLAYER_PRESENCE_FACTION_CHAT_ALLOWED_FACTION_IDS", "1,2").split(",")
+        if item.strip()
+    ]
+    allowed_values = ", ".join(str(item) for item in allowed_ids) or "1,2"
+    online_filter = "and ps.online_status::text = 'Online'" if online_only else ""
+    reputation_fallback = env_bool("DUNE_PLAYER_PRESENCE_FACTION_CHAT_INFER_FROM_REPUTATION", False)
+    reputation_cases = ""
+    if reputation_fallback:
+        reputation_cases = """
+               when coalesce(c.atreides_rep, -1) > coalesce(c.harkonnen_rep, -1) and coalesce(c.atreides_rep, 0) > 0 then 1
+               when coalesce(c.harkonnen_rep, -1) > coalesce(c.atreides_rep, -1) and coalesce(c.harkonnen_rep, 0) > 0 then 2
+"""
+    sql = f"""
+    with reps as (
+      select actor_id,
+             max(reputation_amount) filter (where faction_id = 1) as atreides_rep,
+             max(reputation_amount) filter (where faction_id = 2) as harkonnen_rep
+      from dune.player_faction_reputation
+      group by actor_id
+    ),
+    candidates as (
+      select
+        ps.account_id::text,
+        coalesce(nullif(ps.character_name, ''), ps.account_id::text) as character_name,
+        ps.online_status::text as online_status,
+        coalesce(acc.user, '') as fls_id,
+        ps.player_controller_id::text,
+        ps.player_pawn_id::text,
+        dune.get_player_faction(ps.player_controller_id, {neutral_faction_id}::smallint)::int as controller_faction_id,
+        dune.get_player_faction(ps.player_pawn_id, {neutral_faction_id}::smallint)::int as pawn_faction_id,
+        reps.atreides_rep,
+        reps.harkonnen_rep
+      from dune.player_state ps
+      left join dune.accounts acc on acc.id = ps.account_id
+      left join reps on reps.actor_id = ps.player_controller_id
+      where ps.player_controller_id is not null
+        and ps.player_pawn_id is not null
+        {online_filter}
+    ),
+    inferred as (
+      select c.*,
+             case
+               when c.controller_faction_id in ({allowed_values}) then c.controller_faction_id
+               {reputation_cases}
+               else null
+             end as inferred_faction_id
+      from candidates c
+    )
+    select i.account_id,
+           i.character_name,
+           i.online_status,
+           i.fls_id,
+           i.player_controller_id,
+           i.player_pawn_id,
+           i.controller_faction_id::text,
+           i.pawn_faction_id::text,
+           i.inferred_faction_id::text,
+           coalesce(f.name, ''),
+           coalesce(i.atreides_rep::text, ''),
+           coalesce(i.harkonnen_rep::text, '')
+    from inferred i
+    left join dune.factions f on f.id = i.inferred_faction_id
+    where i.inferred_faction_id is not null
+      and i.pawn_faction_id <> i.inferred_faction_id
+    order by i.online_status desc, i.character_name nulls last, i.account_id;
+    """
+    result = run(
+        compose_cmd("exec", "-T", "postgres", "psql", "-U", "dune", "-d", DB, "-At", "-F", "\t", "-c", sql),
+        timeout=int(env("DUNE_PLAYER_PRESENCE_SQL_TIMEOUT_SECONDS", "10")),
+    )
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or "faction chat candidate query failed")
+    rows = []
+    for line in result.stdout.splitlines():
+        if not line.strip():
+            continue
+        parts = (line.split("\t") + [""] * 12)[:12]
+        rows.append({
+            "accountId": parts[0],
+            "characterName": parts[1],
+            "onlineStatus": parts[2],
+            "flsId": parts[3],
+            "playerControllerId": parts[4],
+            "playerPawnId": parts[5],
+            "controllerFactionId": int(parts[6] or neutral_faction_id),
+            "pawnFactionId": int(parts[7] or neutral_faction_id),
+            "inferredFactionId": int(parts[8]),
+            "factionName": parts[9],
+            "atreidesRep": int(parts[10]) if parts[10] else None,
+            "harkonnenRep": int(parts[11]) if parts[11] else None,
+        })
+    return rows
+
+
+def seed_player_faction(candidate):
+    neutral_faction_id = int(env("DUNE_PLAYER_PRESENCE_FACTION_CHAT_NEUTRAL_FACTION_ID", "3"))
+    sql = f"""
+    select dune.change_player_faction(
+      {int(candidate["playerPawnId"])}::bigint,
+      {int(candidate["inferredFactionId"])}::smallint,
+      {neutral_faction_id}::smallint,
+      timezone('utc', now())::timestamp
+    );
+    select dune.get_player_faction({int(candidate["playerPawnId"])}::bigint, {neutral_faction_id}::smallint);
+    """
+    result = run(
+        compose_cmd("exec", "-T", "postgres", "psql", "-U", "dune", "-d", DB, "-At", "-c", sql),
+        timeout=int(env("DUNE_PLAYER_PRESENCE_SQL_TIMEOUT_SECONDS", "10")),
+    )
+    if result.returncode != 0:
+        return {"ok": False, "error": result.stderr.strip() or "change_player_faction failed"}
+    lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    after = int(lines[-1]) if lines and lines[-1].isdigit() else None
+    return {"ok": after == int(candidate["inferredFactionId"]), "afterFactionId": after, "stdout": result.stdout.strip()}
+
+
+def tune_faction_communinet_channels(candidate):
+    channels = faction_chat_channel_map().get(candidate.get("factionName") or "", [])
+    if not channels:
+        return {"ok": True, "skipped": True, "reason": "no configured Communinet channel names"}
+    results = []
+    for channel_name in channels:
+        sql = (
+            "select dune.update_communinet_player_channel("
+            f"{int(candidate['accountId'])}::bigint,"
+            f"{sql_literal(channel_name)}::text,"
+            "true"
+            ");"
+        )
+        result = run(
+            compose_cmd("exec", "-T", "postgres", "psql", "-U", "dune", "-d", DB, "-At", "-c", sql),
+            timeout=int(env("DUNE_PLAYER_PRESENCE_SQL_TIMEOUT_SECONDS", "10")),
+        )
+        results.append({
+            "channelName": channel_name,
+            "ok": result.returncode == 0,
+            "stdout": result.stdout.strip(),
+            "stderr": result.stderr.strip(),
+        })
+    return {"ok": all(item["ok"] for item in results), "channels": results}
+
+
+def faction_chat_connection_params():
+    sys.path.insert(0, str(ROOT / "scripts" / "vendor"))
+    import pika
+
+    host = env("DUNE_ANNOUNCE_HOST_AMQP_HOST", env("DUNE_ANNOUNCE_GAME_RMQ_AMQP_HOST", "127.0.0.1"))
+    port = int(env("DUNE_ANNOUNCE_HOST_AMQP_PORT", env("DUNE_ANNOUNCE_GAME_RMQ_AMQP_PORT", env("GAME_RMQ_PUBLIC_PORT", "31982"))))
+    tls = env_bool("DUNE_ANNOUNCE_GAME_RMQ_AMQP_TLS", True)
+    user = env("DUNE_ANNOUNCE_CHAT_USER", "A000000000000001")
+    password = env("DUNE_ANNOUNCE_CHAT_PASSWORD", "")
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    return pika.ConnectionParameters(
+        host=host,
+        port=port,
+        virtual_host="/",
+        credentials=pika.PlainCredentials(user, password),
+        ssl_options=pika.SSLOptions(context, host) if tls else None,
+        heartbeat=0,
+        blocked_connection_timeout=10,
+    )
+
+
+def bind_faction_chat_queue(candidate):
+    fls_id = candidate.get("flsId") or ""
+    if not fls_id:
+        return {"ok": False, "skipped": True, "reason": "missing FLS id"}
+    sys.path.insert(0, str(ROOT / "scripts" / "vendor"))
+    import pika
+
+    exchange = f"chat.faction.{int(candidate['inferredFactionId'])}"
+    queue = f"{fls_id}_queue"
+    try:
+        connection = pika.BlockingConnection(faction_chat_connection_params())
+        try:
+            channel = connection.channel()
+            channel.queue_bind(queue=queue, exchange=exchange, routing_key="")
+        finally:
+            connection.close()
+        return {"ok": True, "exchange": exchange, "queue": queue, "routingKey": ""}
+    except Exception as exc:
+        return {"ok": False, "exchange": exchange, "queue": queue, "routingKey": "", "error": str(exc)}
+
+
+def seed_faction_chat(online_only=True, execute=False):
+    candidates = faction_chat_candidates(online_only=online_only)
+    results = []
+    bind_enabled = env_bool("DUNE_PLAYER_PRESENCE_FACTION_CHAT_BIND_QUEUES", True)
+    communinet_enabled = env_bool("DUNE_PLAYER_PRESENCE_FACTION_CHAT_TUNE_COMMUNINET", False)
+    for candidate in candidates:
+        item = {"candidate": candidate, "execute": execute}
+        if execute:
+            item["playerFaction"] = seed_player_faction(candidate)
+            if communinet_enabled:
+                item["communinet"] = tune_faction_communinet_channels(candidate)
+            if bind_enabled and candidate.get("onlineStatus") == "Online":
+                item["binding"] = bind_faction_chat_queue(candidate)
+        results.append(item)
+    return {"ok": True, "onlineOnly": online_only, "execute": execute, "count": len(results), "results": results}
+
+
 def private_broadcast(current, message, job_id):
     if not current:
         return {"ok": False, "mode": "whisper", "error": "no current online players"}
@@ -1398,6 +1623,17 @@ def check_once():
                 granted_ids.add(str(account_id))
         state["starterEmotesGranted"] = sorted(granted_ids, key=lambda value: (0, int(value)) if value.isdigit() else (1, value))
 
+    faction_chat_seed_results = []
+    if env_bool("DUNE_PLAYER_PRESENCE_FACTION_CHAT_SEED_ENABLED", False):
+        try:
+            seed_result = seed_faction_chat(
+                online_only=True,
+                execute=env_bool("DUNE_PLAYER_PRESENCE_FACTION_CHAT_SEED_EXECUTE", False),
+            )
+            faction_chat_seed_results = seed_result.get("results", [])
+        except Exception as exc:
+            faction_chat_seed_results = [{"ok": False, "error": str(exc)}]
+
     journey_results = []
     if env_bool("DUNE_PLAYER_PRESENCE_VERMILIUS_GAP_ENABLED", False):
         story_node_id = env("DUNE_PLAYER_PRESENCE_VERMILIUS_GAP_NODE", "DA_SQ_VermiliusGap.Relocate.RelocateOutsideHBS.Drive north to the Vermilius Gap")
@@ -1764,6 +2000,7 @@ def check_once():
         "starterBaseToolGrants": starter_grant_results,
         "starterBaseToolMessages": starter_message_results,
         "starterEmoteGrants": starter_emote_grant_results,
+        "factionChatSeeds": faction_chat_seed_results,
         "journeyAnnouncements": journey_results,
         "restartPrivateWarnings": restart_private_results,
         "postRestartReturnMessages": post_restart_results,
@@ -1776,7 +2013,13 @@ def main():
     parser = argparse.ArgumentParser(description="Announce Dune player join/leave events through the configured Paul/DASH Admin chat path.")
     parser.add_argument("--once", action="store_true", help="Run one poll and exit.")
     parser.add_argument("--loop", action="store_true", help="Poll forever.")
+    parser.add_argument("--seed-faction-chat-backfill", action="store_true", help="Plan or apply faction chat seeding for existing players.")
+    parser.add_argument("--all-players", action="store_true", help="With --seed-faction-chat-backfill, include offline players.")
+    parser.add_argument("--execute", action="store_true", help="Execute --seed-faction-chat-backfill instead of dry-run planning.")
     args = parser.parse_args()
+    if args.seed_faction_chat_backfill:
+        print(json.dumps(seed_faction_chat(online_only=not args.all_players, execute=args.execute), indent=2), flush=True)
+        return 0
     if not args.once and not args.loop:
         args.once = True
     while True:

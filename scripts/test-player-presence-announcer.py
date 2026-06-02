@@ -168,6 +168,70 @@ class PublicAnnouncementRoutingTests(unittest.TestCase):
         self.assertEqual(state["seenAccounts"], ["123", "456"])
 
 
+class FactionChatSeedingTests(unittest.TestCase):
+    def test_faction_channel_map_supports_multiple_channels(self):
+        parsed = player_presence_announcer.parse_faction_channel_map(
+            "Atreides=AtreidesChannel;Atreides,Harkonnen=HarkonnenChannel"
+        )
+
+        self.assertEqual(parsed["Atreides"], ["AtreidesChannel", "Atreides"])
+        self.assertEqual(parsed["Harkonnen"], ["HarkonnenChannel"])
+
+    def test_seed_faction_chat_dry_run_only_plans_candidates(self):
+        candidate = {
+            "accountId": "2",
+            "characterName": "Lukano",
+            "onlineStatus": "Online",
+            "flsId": "TEST_FLS_ID",
+            "playerControllerId": "17",
+            "playerPawnId": "19",
+            "controllerFactionId": 1,
+            "pawnFactionId": 3,
+            "inferredFactionId": 1,
+            "factionName": "Atreides",
+            "atreidesRep": 4025,
+            "harkonnenRep": 0,
+        }
+
+        with unittest.mock.patch.object(player_presence_announcer, "faction_chat_candidates", lambda online_only=True: [candidate]), \
+             unittest.mock.patch.object(player_presence_announcer, "seed_player_faction", side_effect=AssertionError("should not execute")):
+            result = player_presence_announcer.seed_faction_chat(online_only=True, execute=False)
+
+        self.assertEqual(result["count"], 1)
+        self.assertFalse(result["execute"])
+        self.assertEqual(result["results"][0]["candidate"], candidate)
+        self.assertNotIn("playerFaction", result["results"][0])
+
+    def test_seed_faction_chat_execute_applies_faction_and_binding(self):
+        candidate = {
+            "accountId": "2",
+            "characterName": "Lukano",
+            "onlineStatus": "Online",
+            "flsId": "TEST_FLS_ID",
+            "playerControllerId": "17",
+            "playerPawnId": "19",
+            "controllerFactionId": 1,
+            "pawnFactionId": 3,
+            "inferredFactionId": 1,
+            "factionName": "Atreides",
+        }
+        file_env = {
+            "DUNE_PLAYER_PRESENCE_FACTION_CHAT_BIND_QUEUES": "true",
+            "DUNE_PLAYER_PRESENCE_FACTION_CHAT_TUNE_COMMUNINET": "false",
+        }
+
+        with unittest.mock.patch.object(player_presence_announcer, "FILE_ENV", file_env), \
+             unittest.mock.patch.dict(player_presence_announcer.os.environ, {}, clear=True), \
+             unittest.mock.patch.object(player_presence_announcer, "faction_chat_candidates", lambda online_only=True: [candidate]), \
+             unittest.mock.patch.object(player_presence_announcer, "seed_player_faction", lambda row: {"ok": True, "afterFactionId": row["inferredFactionId"]}), \
+             unittest.mock.patch.object(player_presence_announcer, "bind_faction_chat_queue", lambda row: {"ok": True, "exchange": "chat.faction.1"}):
+            result = player_presence_announcer.seed_faction_chat(online_only=True, execute=True)
+
+        self.assertTrue(result["execute"])
+        self.assertTrue(result["results"][0]["playerFaction"]["ok"])
+        self.assertEqual(result["results"][0]["binding"]["exchange"], "chat.faction.1")
+
+
 class StarterEmoteGrantTests(unittest.TestCase):
     def test_joined_player_gets_quiet_starter_emotes_once(self):
         player = {"name": "FirstTimer", "flsId": "FIRST_FLS"}

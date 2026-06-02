@@ -409,6 +409,18 @@ dune.change_player_faction(
 
 Risk: the function is first-party, but guild side effects and live-client refresh behavior need disposable-character validation.
 
+Faction chat repair uses the player-presence announcer rather than this admin
+endpoint. Use:
+
+```bash
+scripts/player-presence-announcer.py --seed-faction-chat-backfill --all-players
+```
+
+This dry-run infers the chosen side from `player_controller_id` and plans a
+pawn-side `dune.change_player_faction(...)` call for players whose pawn still
+resolves to neutral. Reputation-only inference is off by default. Add
+`--execute` only after reviewing the plan.
+
 ## Landsraad Term Admin
 
 ### `POST /api/admin/landsraad`
