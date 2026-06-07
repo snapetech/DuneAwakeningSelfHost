@@ -9,7 +9,7 @@ Installs an idempotent Landsraad goal scaler and applies it to the current
 term. Dry-run is the default.
 
 Defaults:
-  DUNE_LANDSRAAD_GOAL_SCALE=0.5
+  DUNE_LANDSRAAD_GOAL_SCALE=0.35714285714285714285
   DUNE_LANDSRAAD_GOAL_MIN=1
   DUNE_LANDSRAAD_GOAL_REQUIRE_HOST=kspls0
   DUNE_DATABASE=dune_sb_1_4_0_0
@@ -72,7 +72,7 @@ host_short() {
   fi
 }
 
-goal_scale="$(env_or_file DUNE_LANDSRAAD_GOAL_SCALE 0.5)"
+goal_scale="$(env_or_file DUNE_LANDSRAAD_GOAL_SCALE 0.35714285714285714285)"
 goal_min="$(env_or_file DUNE_LANDSRAAD_GOAL_MIN 1)"
 required_host="$(env_or_file DUNE_LANDSRAAD_GOAL_REQUIRE_HOST kspls0)"
 db="$(env_or_file DUNE_DATABASE dune_sb_1_4_0_0)"
@@ -123,6 +123,22 @@ BEGIN
   END IF;
 END $$;
 
+CREATE TEMP TABLE landsraad_goal_tuning_applied_preview (
+  task_id bigint PRIMARY KEY,
+  original_goal_amount integer NOT NULL
+);
+
+DO $$
+BEGIN
+  IF to_regclass('dune.landsraad_goal_tuning_applied') IS NOT NULL THEN
+    EXECUTE '
+      INSERT INTO landsraad_goal_tuning_applied_preview (task_id, original_goal_amount)
+      SELECT task_id, original_goal_amount
+        FROM dune.landsraad_goal_tuning_applied
+    ';
+  END IF;
+END $$;
+
 \echo current_term_goal_preview
 WITH current_term AS (
   SELECT term_id, start_time, end_time, winning_faction_id
@@ -140,7 +156,7 @@ task_goals AS (
          COALESCE(a.original_goal_amount, t.goal_amount) AS source_goal
     FROM dune.landsraad_tasks t
     JOIN current_term ct ON ct.term_id = t.term_id
-    LEFT JOIN dune.landsraad_goal_tuning_applied a ON a.task_id = t.id
+    LEFT JOIN landsraad_goal_tuning_applied_preview a ON a.task_id = t.id
 )
 SELECT id,
        board_index,

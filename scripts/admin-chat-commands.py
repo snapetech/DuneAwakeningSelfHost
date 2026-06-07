@@ -38,6 +38,7 @@ ONLINE_GM_TELEPORT_ARM_FILE = ROOT / "backups" / "admin-panel" / "online-gm-tele
 ITEM_CATALOG = ROOT / "config" / "artificial-exchange-prices.csv"
 SPAM_STATE = {}
 AUCTION_CONFIRMATIONS = {}
+DD1_RESTORE_CONFIRMATIONS = {}
 LAST_ANNOUNCE_RESULT = None
 ITEM_DISPLAY_NAMES = None
 
@@ -176,6 +177,13 @@ def connect_db():
         dbname=env("DUNE_ADMIN_DB_NAME", "dune_sb_1_4_0_0"),
         connect_timeout=5,
     )
+
+
+def rollback_quietly(conn):
+    try:
+        conn.rollback()
+    except AttributeError:
+        pass
 
 
 def character_row(conn, name):
@@ -781,6 +789,47 @@ def chat_exchange_cashout_enabled():
     return env_bool("DUNE_CHAT_COMMAND_EXCHANGE_CASHOUT_ENABLED", False)
 
 
+def chat_dd1_backup_enabled():
+    return env_bool("DUNE_CHAT_COMMAND_DD1_BRT_BACKUP_ENABLED", False)
+
+
+def chat_dd1_restore_enabled():
+    return env_bool("DUNE_CHAT_COMMAND_DD1_BRT_RESTORE_ENABLED", False)
+
+
+def chat_dd1_restore_copy_source_enabled():
+    return env_bool("DUNE_CHAT_COMMAND_DD1_BRT_RESTORE_COPY_SOURCE_ENABLED", False)
+
+
+def dd1_partition_id():
+    return int(env("DUNE_CHAT_COMMAND_DD1_PARTITION_ID", env("DUNE_DD1_PARTITION_ID", "8")))
+
+
+def dd1_map_names():
+    names = split_csv(env("DUNE_CHAT_COMMAND_DD1_MAP_NAMES", "DeepDesert,DeepDesert_1"))
+    return names or ["DeepDesert", "DeepDesert_1"]
+
+
+def dd1_restore_confirmation_ttl():
+    return int(env("DUNE_CHAT_COMMAND_DD1_RESTORE_CONFIRM_SECONDS", "120"))
+
+
+def dd1_restore_confirmation_key(sender_name="", sender_fls_id="", resolved_name=""):
+    return (sender_fls_id or resolved_name or sender_name or "unknown").lower()
+
+
+def dd1_base_containment_padding():
+    return float(env("DUNE_CHAT_COMMAND_DD1_BASE_CONTAINMENT_PADDING", "1500"))
+
+
+def dd1_restore_offset():
+    return {
+        "x": float(env("DUNE_CHAT_COMMAND_DD1_RESTORE_OFFSET_X", "1000")),
+        "y": float(env("DUNE_CHAT_COMMAND_DD1_RESTORE_OFFSET_Y", "0")),
+        "z": float(env("DUNE_CHAT_COMMAND_DD1_RESTORE_OFFSET_Z", "0")),
+    }
+
+
 def normalize_item_search(value):
     return re.sub(r"[^a-z0-9]+", "", (value or "").lower())
 
@@ -1168,7 +1217,7 @@ def player_exchange_cashout(conn, player, dry_run=True):
                 claimed.append(execute_player_exchange_cashout_row(cur, row, owner_id))
         conn.commit()
     except Exception:
-        conn.rollback()
+        rollback_quietly(conn)
         raise
     return {
         "ok": True,
@@ -1195,6 +1244,467 @@ def format_exchange_cashout(result):
         return "exchange cashout: no completed sales ready"
     suffix = "; rerun to claim remaining completed sales" if int(result.get("total") or 0) > len(claimed) else ""
     return f"exchange cashout: credited {credited} Solaris from {len(claimed)} completed sales{suffix}"
+
+
+def dd1_totems_for_player(conn, player_id):
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            with owned as (
+              select f.totem_id
+              from dune.base_backup_find_totems_from_player_owner(%s) f
+            ),
+            roots as (
+              select o.totem_id, root.owner_entity_id
+              from owned o
+              join dune.placeables root on root.id=o.totem_id
+            ),
+            child_placeables as (
+              select root.id as totem_id, count(child.id) as placeable_count
+              from owned o
+              join dune.placeables root on root.id=o.totem_id
+              left join dune.placeables child on child.owner_entity_id=root.owner_entity_id and child.id<>root.id
+              group by root.id
+            ),
+            building_pieces as (
+              select root.id as totem_id, count(bi.*) as building_piece_count
+              from owned o
+              join dune.placeables root on root.id=o.totem_id
+              left join dune.building_instances bi on bi.owner_entity_id=root.owner_entity_id
+              group by root.id
+            ),
+            base_points as (
+              select
+                r.totem_id,
+                ((a.transform).location).x::float8 as x,
+                ((a.transform).location).y::float8 as y,
+                ((a.transform).location).z::float8 as z
+              from roots r
+              join dune.actors a on a.id=r.totem_id
+              union all
+              select
+                r.totem_id,
+                ((a.transform).location).x::float8 as x,
+                ((a.transform).location).y::float8 as y,
+                ((a.transform).location).z::float8 as z
+              from roots r
+              join dune.placeables child on child.owner_entity_id=r.owner_entity_id and child.id<>r.totem_id
+              join dune.actors a on a.id=child.id
+              union all
+              select
+                r.totem_id,
+                bi.transform[array_lower(bi.transform, 1)]::float8 as x,
+                bi.transform[array_lower(bi.transform, 1) + 1]::float8 as y,
+                bi.transform[array_lower(bi.transform, 1) + 2]::float8 as z
+              from roots r
+              join dune.building_instances bi on bi.owner_entity_id=r.owner_entity_id
+              where bi.transform is not null
+                and array_length(bi.transform, 1) >= 3
+            ),
+            bounds as (
+              select
+                totem_id,
+                min(x) as min_x,
+                max(x) as max_x,
+                min(y) as min_y,
+                max(y) as max_y,
+                min(z) as min_z,
+                max(z) as max_z
+              from base_points
+              group by totem_id
+            )
+            select
+              o.totem_id,
+              a.map,
+              a.partition_id,
+              a.dimension_index,
+              ((a.transform).location).x::float8 as x,
+              ((a.transform).location).y::float8 as y,
+              ((a.transform).location).z::float8 as z,
+              p.owner_entity_id,
+              p.building_type,
+              coalesce(cp.placeable_count, 0)::integer as placeable_count,
+              coalesce(bp.building_piece_count, 0)::integer as building_piece_count,
+              coalesce(b.min_x, ((a.transform).location).x)::float8 as min_x,
+              coalesce(b.max_x, ((a.transform).location).x)::float8 as max_x,
+              coalesce(b.min_y, ((a.transform).location).y)::float8 as min_y,
+              coalesce(b.max_y, ((a.transform).location).y)::float8 as max_y,
+              coalesce(b.min_z, ((a.transform).location).z)::float8 as min_z,
+              coalesce(b.max_z, ((a.transform).location).z)::float8 as max_z
+            from owned o
+            join dune.actors a on a.id=o.totem_id
+            left join dune.placeables p on p.id=o.totem_id
+            left join child_placeables cp on cp.totem_id=o.totem_id
+            left join building_pieces bp on bp.totem_id=o.totem_id
+            left join bounds b on b.totem_id=o.totem_id
+            where a.partition_id=%s
+              and a.map = any(%s)
+            order by o.totem_id
+            """,
+            (int(player_id), dd1_partition_id(), dd1_map_names()),
+        )
+        return cur.fetchall()
+
+
+def format_dd1_totem(row):
+    return (
+        f"{row.get('totem_id')} {row.get('map')} p{row.get('partition_id')} "
+        f"x={float(row.get('x') or 0):.1f} y={float(row.get('y') or 0):.1f} "
+        f"pieces={int(row.get('building_piece_count') or 0)} "
+        f"placeables={int(row.get('placeable_count') or 0)}"
+    )
+
+
+def format_dd1_totem_choices(rows, command_name="DD1_backup"):
+    if not rows:
+        return "no DD1 totems found for your character"
+    choices = "; ".join(format_dd1_totem(row) for row in rows[:8])
+    return f"multiple DD1 totems found: {choices}; use &{command_name} <totem_id>"
+
+
+def dd1_float(value, default=None):
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def dd1_bounds_for_totem(row):
+    x = dd1_float(row.get("x"), 0.0)
+    y = dd1_float(row.get("y"), 0.0)
+    z = dd1_float(row.get("z"), 0.0)
+    return {
+        "minX": dd1_float(row.get("min_x"), x),
+        "maxX": dd1_float(row.get("max_x"), x),
+        "minY": dd1_float(row.get("min_y"), y),
+        "maxY": dd1_float(row.get("max_y"), y),
+        "minZ": dd1_float(row.get("min_z"), z),
+        "maxZ": dd1_float(row.get("max_z"), z),
+    }
+
+
+def point_in_dd1_totem(row, location, padding=None):
+    if not location:
+        return False
+    bounds = dd1_bounds_for_totem(row)
+    padding = dd1_base_containment_padding() if padding is None else float(padding)
+    x = dd1_float(location.get("x"))
+    y = dd1_float(location.get("y"))
+    z = dd1_float(location.get("z"))
+    if x is None or y is None or z is None:
+        return False
+    return (
+        bounds["minX"] - padding <= x <= bounds["maxX"] + padding
+        and bounds["minY"] - padding <= y <= bounds["maxY"] + padding
+        and bounds["minZ"] - padding <= z <= bounds["maxZ"] + padding
+    )
+
+
+def dd1_current_location_from_sender(player, sender_origin=None, action="DD1 command"):
+    if int(player.get("partition_id") or -1) != dd1_partition_id():
+        raise ValueError(f"{action} must be requested while your character is in DD1")
+    origin = normalize_origin_location(sender_origin)
+    if origin:
+        source = "chat-origin"
+    elif player.get("x") is not None and player.get("y") is not None and player.get("z") is not None:
+        origin = {"x": float(player["x"]), "y": float(player["y"]), "z": float(player["z"])}
+        source = "stored-player-transform"
+    else:
+        raise ValueError(f"could not resolve your current DD1 position for {action}")
+    return {
+        "source": source,
+        "map": player.get("partition_map") or player.get("actor_map") or "DeepDesert_1",
+        "partitionId": dd1_partition_id(),
+        "dimensionIndex": int(player.get("dimension_index") or 0),
+        **origin,
+    }
+
+
+def format_dd1_not_in_base(rows):
+    owned = "; ".join(format_dd1_totem(row) for row in rows[:8])
+    suffix = f"; owned DD1 totems: {owned}" if owned else ""
+    return f"you are not standing inside one of your owned DD1 bases{suffix}"
+
+
+def select_dd1_totem(conn, player, args, command_name="DD1_backup", current_location=None):
+    rows = dd1_totems_for_player(conn, player["player_controller_id"])
+    if args:
+        if len(args) != 1 or not re.fullmatch(r"\d+", args[0]):
+            raise ValueError(f"usage: &{command_name} [totem_id]")
+        wanted = int(args[0])
+        for row in rows:
+            if int(row["totem_id"]) == wanted:
+                if current_location and not point_in_dd1_totem(row, current_location):
+                    raise ValueError(f"you are not standing inside owned DD1 totem {wanted}")
+                return row, rows
+        raise ValueError(f"totem {wanted} is not one of your DD1 totems")
+    if current_location:
+        containing = [row for row in rows if point_in_dd1_totem(row, current_location)]
+        if len(containing) == 1:
+            return containing[0], rows
+        if not containing:
+            raise ValueError(format_dd1_not_in_base(rows))
+        choices = "; ".join(format_dd1_totem(row) for row in containing[:8])
+        raise ValueError(f"multiple owned DD1 bases contain your current position: {choices}; use &{command_name} <totem_id>")
+    if len(rows) == 1:
+        return rows[0], rows
+    raise ValueError(format_dd1_totem_choices(rows, command_name=command_name))
+
+
+def dd1_backup_payload_summary(conn, backup_id):
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            with d as (
+              select * from dune.base_backup_get_data(%s)
+            ),
+            points as (
+              select
+                ((s.transform).location).x::float8 as x,
+                ((s.transform).location).y::float8 as y,
+                ((s.transform).location).z::float8 as z
+              from dune.base_backup_get_actors_to_spawn(%s) s
+              union all
+              select
+                bp.transform[array_lower(bp.transform, 1)]::float8 as x,
+                bp.transform[array_lower(bp.transform, 1) + 1]::float8 as y,
+                bp.transform[array_lower(bp.transform, 1) + 2]::float8 as z
+              from d, unnest(d.building_pieces) bp
+            ),
+            totem_spawn as (
+              select
+                ((s.transform).location).x::float8 as x,
+                ((s.transform).location).y::float8 as y,
+                ((s.transform).location).z::float8 as z
+              from d, dune.base_backup_get_actors_to_spawn(%s) s
+              where s.id = (d.totem).totem_actor_id
+              limit 1
+            )
+            select
+              d.name,
+              (d.totem).totem_actor_id as source_totem_id,
+              (d.totem).totem_building_type as totem_building_type,
+              (d.totem).totem_map as source_map,
+              (d.totem).landclaim_original_global_location as source_landclaim_location,
+              (d.totem).landclaim_original_global_yaw_rotation as source_landclaim_yaw,
+              coalesce(array_length((d.totem).landclaim_grid, 1), 0)::integer as landclaim_segment_count,
+              coalesce(array_length(d.building_pieces, 1), 0)::integer as building_piece_count,
+              coalesce(array_length(d.placeables, 1), 0)::integer as placeable_count,
+              (select count(*) from dune.base_backup_get_actors_to_spawn(%s))::integer as actor_count,
+              coalesce((select x from totem_spawn), ((d.totem).landclaim_original_global_location)[array_lower((d.totem).landclaim_original_global_location, 1)]::float8) as source_anchor_x,
+              coalesce((select y from totem_spawn), ((d.totem).landclaim_original_global_location)[array_lower((d.totem).landclaim_original_global_location, 1) + 1]::float8) as source_anchor_y,
+              coalesce((select z from totem_spawn), ((d.totem).landclaim_original_global_location)[array_lower((d.totem).landclaim_original_global_location, 1) + 2]::float8) as source_anchor_z,
+              min(points.x) as min_x,
+              max(points.x) as max_x,
+              min(points.y) as min_y,
+              max(points.y) as max_y,
+              min(points.z) as min_z,
+              max(points.z) as max_z
+            from d, points
+            group by d.name, d.totem, d.building_pieces, d.placeables
+            """,
+            (int(backup_id), int(backup_id), int(backup_id), int(backup_id)),
+        )
+        row = cur.fetchone()
+    if not row:
+        raise ValueError(f"backup {backup_id} was not found")
+    return dict(row)
+
+
+def dd1_create_backup(conn, player, totem, dry_run=True, current_location=None):
+    plan = {
+        "player": player.get("character_name"),
+        "playerId": int(player["player_controller_id"]),
+        "totemId": int(totem["totem_id"]),
+        "partitionId": int(totem["partition_id"]),
+        "map": totem.get("map"),
+        "buildingPieceCount": int(totem.get("building_piece_count") or 0),
+        "placeableCount": int(totem.get("placeable_count") or 0),
+        "dryRun": dry_run,
+    }
+    if current_location:
+        plan["currentLocation"] = current_location
+    if dry_run:
+        return {"ok": True, "dryRun": True, "plan": plan}
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                "select dune.base_backup_save_from_totem(%s, %s) as backup_id",
+                (int(player["player_controller_id"]), int(totem["totem_id"])),
+            )
+            backup_id = int(cur.fetchone()["backup_id"])
+            cur.execute("select count(*)::integer as count from dune.base_backup_linked_actors where id=%s", (backup_id,))
+            linked_count = int((cur.fetchone() or {}).get("count") or 0)
+        summary = dd1_backup_payload_summary(conn, backup_id)
+        conn.commit()
+        return {"ok": True, "dryRun": False, "backupId": backup_id, "linkedActorCount": linked_count, "plan": plan, "summary": summary}
+    except Exception:
+        rollback_quietly(conn)
+        raise
+
+
+def format_dd1_backup_result(result):
+    plan = result.get("plan") or {}
+    if result.get("dryRun"):
+        return (
+            f"DD1 backup preview: totem {plan.get('totemId')} has "
+            f"{plan.get('buildingPieceCount')} pieces and {plan.get('placeableCount')} placeables; "
+            "backup execution is disabled because DB backup marks the base BaseBackup but does not live-unload it from DD"
+        )
+    summary = result.get("summary") or {}
+    return (
+        f"DD1 backup created: backup {result.get('backupId')} from totem {plan.get('totemId')} "
+        f"with {summary.get('building_piece_count', 0)} pieces, {summary.get('placeable_count', 0)} placeables"
+    )
+
+
+def dd1_backups_for_player(conn, player_id):
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            select *
+            from dune.base_backup_get_available_backups(%s)
+            order by id desc
+            """,
+            (int(player_id),),
+        )
+        return cur.fetchall()
+
+
+def format_dd1_backup_choice(row):
+    loc = row.get("landclaim_original_global_location")
+    loc_text = ""
+    if loc and len(loc) >= 2:
+        loc_text = f" x={float(loc[0]):.1f} y={float(loc[1]):.1f}"
+    return f"{row.get('id')} {row.get('base_backup_name')} {row.get('base_backup_map')}{loc_text}"
+
+
+def select_dd1_backup(conn, player, args):
+    backups = dd1_backups_for_player(conn, player["player_controller_id"])
+    if args:
+        if len(args) != 1 or not re.fullmatch(r"\d+", args[0]):
+            raise ValueError("usage: &DD1_restore [backup_id] or &DD1_restore yes")
+        wanted = int(args[0])
+        for row in backups:
+            if int(row["id"]) == wanted:
+                return row, backups
+        raise ValueError(f"backup {wanted} is not one of your available BRT backups")
+    dd_backups = [row for row in backups if row.get("base_backup_map") in dd1_map_names()]
+    candidates = dd_backups or backups
+    if len(candidates) == 1:
+        return candidates[0], backups
+    if not candidates:
+        raise ValueError("no BRT backups found for your character; use &DD1_backup first")
+    choices = "; ".join(format_dd1_backup_choice(row) for row in candidates[:8])
+    raise ValueError(f"multiple BRT backups found: {choices}; use &DD1_restore <backup_id>")
+
+
+def normalize_origin_location(origin):
+    if not isinstance(origin, dict):
+        return None
+    try:
+        x = origin.get("X", origin.get("x"))
+        y = origin.get("Y", origin.get("y"))
+        z = origin.get("Z", origin.get("z"))
+        if x is None or y is None or z is None:
+            return None
+        x = float(x)
+        y = float(y)
+        z = float(z)
+    except (TypeError, ValueError):
+        return None
+    if abs(x) < 0.001 and abs(y) < 0.001 and abs(z) < 0.001:
+        return None
+    return {"x": x, "y": y, "z": z}
+
+
+def dd1_restore_target_from_sender(player, sender_origin=None):
+    origin = dd1_current_location_from_sender(player, sender_origin=sender_origin, action="DD1 restore")
+    offset = dd1_restore_offset()
+    return {
+        "source": origin["source"],
+        "map": origin["map"],
+        "partitionId": origin["partitionId"],
+        "dimensionIndex": origin["dimensionIndex"],
+        "x": float(origin["x"]) + float(offset["x"]),
+        "y": float(origin["y"]) + float(offset["y"]),
+        "z": float(origin["z"]) + float(offset["z"]),
+        "playerLocation": origin,
+        "restoreOffset": offset,
+    }
+
+
+def dd1_restore_plan(conn, player, backup, target):
+    summary = dd1_backup_payload_summary(conn, int(backup["id"]))
+    dx = float(target["x"]) - float(summary["source_anchor_x"])
+    dy = float(target["y"]) - float(summary["source_anchor_y"])
+    dz = float(target["z"]) - float(summary["source_anchor_z"])
+    bbox = {
+        "minX": float(summary["min_x"]) + dx if summary.get("min_x") is not None else None,
+        "maxX": float(summary["max_x"]) + dx if summary.get("max_x") is not None else None,
+        "minY": float(summary["min_y"]) + dy if summary.get("min_y") is not None else None,
+        "maxY": float(summary["max_y"]) + dy if summary.get("max_y") is not None else None,
+        "minZ": float(summary["min_z"]) + dz if summary.get("min_z") is not None else None,
+        "maxZ": float(summary["max_z"]) + dz if summary.get("max_z") is not None else None,
+    }
+    return {
+        "player": player.get("character_name"),
+        "playerId": int(player["player_controller_id"]),
+        "backupId": int(backup["id"]),
+        "backupName": backup.get("base_backup_name"),
+        "sourceMap": summary.get("source_map"),
+        "sourceTotemId": int(summary["source_totem_id"]),
+        "target": target,
+        "offset": {"x": dx, "y": dy, "z": dz},
+        "bbox": bbox,
+        "actorCount": int(summary.get("actor_count") or 0),
+        "buildingPieceCount": int(summary.get("building_piece_count") or 0),
+        "placeableCount": int(summary.get("placeable_count") or 0),
+        "landclaimSegmentCount": int(summary.get("landclaim_segment_count") or 0),
+    }
+
+
+def format_dd1_restore_preview(plan, expires_seconds=None):
+    target = plan["target"]
+    expires_seconds = dd1_restore_confirmation_ttl() if expires_seconds is None else expires_seconds
+    gate = "enabled" if chat_dd1_restore_enabled() else "disabled"
+    return (
+        f"DD1 restore preview: backup {plan['backupId']} has {plan['buildingPieceCount']} pieces, "
+        f"{plan['placeableCount']} placeables, {plan['landclaimSegmentCount']} landclaim segments; "
+        f"target x={target['x']:.1f} y={target['y']:.1f} z={target['z']:.1f} via {target['source']}; "
+        f"restore gate {gate}; reply &DD1_restore yes within {expires_seconds}s"
+    )
+
+
+def dd1_restore_max_confirm_distance():
+    return float(env("DUNE_CHAT_COMMAND_DD1_RESTORE_CONFIRM_MAX_DISTANCE", "500"))
+
+
+def dd1_restore_confirm_position_ok(pending, current_target):
+    previous = pending.get("target") or {}
+    if previous.get("source") != "chat-origin" or current_target.get("source") != "chat-origin":
+        return True, 0.0
+    dx = float(previous["x"]) - float(current_target["x"])
+    dy = float(previous["y"]) - float(current_target["y"])
+    dz = float(previous["z"]) - float(current_target["z"])
+    distance = (dx * dx + dy * dy + dz * dz) ** 0.5
+    return distance <= dd1_restore_max_confirm_distance(), distance
+
+
+def dd1_restore_backup_to_location(conn, plan, dry_run=True):
+    if dry_run:
+        return {"ok": True, "dryRun": True, "plan": plan}
+    if not chat_dd1_restore_copy_source_enabled():
+        raise RuntimeError(
+            "DD1 restore execution is blocked: set DUNE_CHAT_COMMAND_DD1_BRT_RESTORE_COPY_SOURCE_ENABLED=true "
+            "only after disposable validation of the persistence copy writer"
+        )
+    raise NotImplementedError(
+        "DD1 restore persistence copy writer is not promoted yet; backup, placement capture, preview, "
+        "confirmation, and safety gates are wired"
+    )
 
 
 def fuzzy_item_suggestion(rows, search_text, count):
@@ -2191,7 +2701,109 @@ def enforce_spam_protect(conn, text, sender_name="", sender_fls_id=""):
     }
 
 
-def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=False):
+def resolve_player_for_self_command(conn, sender_name="", sender_fls_id="", action="command"):
+    resolved_name = resolve_sender_character(conn, sender_name, sender_fls_id)
+    player, matches = character_row(conn, resolved_name)
+    if player is None:
+        if matches:
+            raise ValueError("no unique character match: " + ", ".join(row["character_name"] for row in matches))
+        raise ValueError(f"could not resolve your character for {action}")
+    return resolved_name, player
+
+
+def handle_dd1_backup_command(conn, args, sender_name="", sender_fls_id="", sender_origin=None, reply=False):
+    resolved_name = sender_name
+    try:
+        resolved_name, player = resolve_player_for_self_command(conn, sender_name, sender_fls_id, action="DD1 backup")
+        current_location = dd1_current_location_from_sender(player, sender_origin=sender_origin, action="DD1 backup")
+        totem, _ = select_dd1_totem(conn, player, args, command_name="DD1_backup", current_location=current_location)
+        dry_run = not chat_dd1_backup_enabled()
+        result = dd1_create_backup(conn, player, totem, dry_run=dry_run, current_location=current_location)
+        response = format_dd1_backup_result(result)
+        ok = bool(result.get("ok"))
+    except Exception as exc:
+        rollback_quietly(conn)
+        result = {"ok": False, "error": str(exc)}
+        response = f"DD1 backup failed: {exc}"
+        ok = False
+    announce_result = maybe_reply(response, reply, target_name=resolved_name or sender_name, target_fls_id=sender_fls_id)
+    return result | {"ok": ok, "action": "dd1_backup", "message": response, "reply": announce_result}
+
+
+def parse_dd1_restore_args(args):
+    if not args:
+        return "preview", []
+    first = args[0].lower()
+    if first in ("yes", "y", "confirm"):
+        return "confirm", args[1:]
+    if first in ("no", "n", "cancel"):
+        return "cancel", args[1:]
+    if first in ("preview", "dry", "dry-run"):
+        return "preview", args[1:]
+    return "preview", args
+
+
+def handle_dd1_restore_command(conn, args, sender_name="", sender_fls_id="", sender_origin=None, reply=False):
+    mode, rest = parse_dd1_restore_args(args)
+    resolved_name = sender_name
+    try:
+        resolved_name, player = resolve_player_for_self_command(conn, sender_name, sender_fls_id, action="DD1 restore")
+        confirm_key = dd1_restore_confirmation_key(sender_name, sender_fls_id, resolved_name)
+
+        if mode == "cancel":
+            DD1_RESTORE_CONFIRMATIONS.pop(confirm_key, None)
+            response = "DD1 restore cancelled"
+            announce_result = maybe_reply(response, reply, target_name=resolved_name or sender_name, target_fls_id=sender_fls_id)
+            return {"ok": True, "action": "dd1_restore.cancel", "message": response, "reply": announce_result}
+
+        if mode == "confirm":
+            if rest:
+                raise ValueError("usage: &DD1_restore yes")
+            pending = DD1_RESTORE_CONFIRMATIONS.get(confirm_key)
+            now = int(time.time())
+            if not pending or now > int(pending.get("expiresAt") or 0):
+                DD1_RESTORE_CONFIRMATIONS.pop(confirm_key, None)
+                raise ValueError("no pending DD1 restore preview; run &DD1_restore [backup_id] first")
+            current_target = dd1_restore_target_from_sender(player, sender_origin=sender_origin)
+            position_ok, distance = dd1_restore_confirm_position_ok(pending, current_target)
+            if not position_ok:
+                raise ValueError(f"you moved {distance:.1f}cm since preview; run &DD1_restore again at the target")
+            dry_run = env_bool("DUNE_CHAT_COMMAND_DRY_RUN", True) or not chat_dd1_restore_enabled()
+            result = dd1_restore_backup_to_location(conn, pending["plan"], dry_run=dry_run)
+            if not dry_run:
+                conn.commit()
+            DD1_RESTORE_CONFIRMATIONS.pop(confirm_key, None)
+            if result.get("dryRun"):
+                response = (
+                    f"DD1 restore preview confirmed for backup {pending['plan']['backupId']}; "
+                    "execution is still dry-run or disabled"
+                )
+            else:
+                response = f"DD1 restore executed for backup {pending['plan']['backupId']}"
+            announce_result = maybe_reply(response, reply, target_name=resolved_name or sender_name, target_fls_id=sender_fls_id)
+            return result | {"ok": bool(result.get("ok")), "action": "dd1_restore.confirm", "message": response, "reply": announce_result}
+
+        backup, _ = select_dd1_backup(conn, player, rest)
+        target = dd1_restore_target_from_sender(player, sender_origin=sender_origin)
+        plan = dd1_restore_plan(conn, player, backup, target)
+        expires = int(time.time()) + dd1_restore_confirmation_ttl()
+        DD1_RESTORE_CONFIRMATIONS[confirm_key] = {
+            "expiresAt": expires,
+            "backupId": int(backup["id"]),
+            "target": target,
+            "plan": plan,
+        }
+        response = format_dd1_restore_preview(plan)
+        announce_result = maybe_reply(response, reply, target_name=resolved_name or sender_name, target_fls_id=sender_fls_id)
+        return {"ok": True, "action": "dd1_restore.preview", "message": response, "plan": plan, "expiresAt": expires, "reply": announce_result}
+    except Exception as exc:
+        rollback_quietly(conn)
+        response = f"DD1 restore failed: {exc}"
+        announce_result = maybe_reply(response, reply, target_name=resolved_name or sender_name, target_fls_id=sender_fls_id)
+        return {"ok": False, "action": "dd1_restore", "error": str(exc), "message": response, "reply": announce_result}
+
+
+def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=False, sender_origin=None):
     prefix = env("DUNE_CHAT_COMMAND_PREFIX", "&")
     if not command_text.startswith(prefix):
         return {"ok": True, "ignored": True}
@@ -2383,6 +2995,26 @@ def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=F
                 )
         announce_result = maybe_reply(response, reply, target_name=resolved_name or sender_name, target_fls_id=sender_fls_id)
         return result | {"message": response, "dryRun": dry_run, "reply": announce_result}
+
+    if command in ("dd1_backup", "dd1backup", "dd_backup"):
+        return handle_dd1_backup_command(
+            conn,
+            parts[1:],
+            sender_name=sender_name,
+            sender_fls_id=sender_fls_id,
+            sender_origin=sender_origin,
+            reply=reply,
+        )
+
+    if command in ("dd1_restore", "dd1restore", "dd_restore"):
+        return handle_dd1_restore_command(
+            conn,
+            parts[1:],
+            sender_name=sender_name,
+            sender_fls_id=sender_fls_id,
+            sender_origin=sender_origin,
+            reply=reply,
+        )
 
     allowed, resolved_admin = is_admin(conn, sender_name, sender_fls_id)
     if not allowed:
@@ -2776,14 +3408,24 @@ def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=F
     return {"ok": False, "error": response, "reply": announce_result}
 
 
-def parse_chat_message(body):
+def parse_chat_message_context(body):
     outer = json.loads(body.decode("utf-8"))
     content = outer.get("content", outer)
     if isinstance(content, str):
         content = json.loads(content)
     message = content.get("m_Message", {}).get("m_UnlocalizedMessage", "")
     sender = content.get("m_FuncomIdFrom", "")
-    return message, sender
+    return {
+        "message": message,
+        "sender": sender,
+        "origin": normalize_origin_location(content.get("m_OriginLocation")),
+        "content": content,
+    }
+
+
+def parse_chat_message(body):
+    context = parse_chat_message_context(body)
+    return context["message"], context["sender"]
 
 
 def consume_forever():
@@ -2835,14 +3477,17 @@ def consume_forever():
 
     def on_message(ch, method, props, body):
         try:
-            text, sender_name = parse_chat_message(body)
+            context = parse_chat_message_context(body)
+            text = context["message"]
+            sender_name = context["sender"]
+            sender_origin = context.get("origin")
             sender_fls_id = getattr(props, "user_id", "") or ""
             spam_result = enforce_spam_protect(conn, text, sender_name=sender_name, sender_fls_id=sender_fls_id)
             if spam_result:
                 print(json.dumps({"ts": int(time.time()), "routingKey": method.routing_key, "sender": sender_name, "senderFlsId": sender_fls_id, "result": spam_result}, default=str, separators=(",", ":")), flush=True)
             if text.startswith(env("DUNE_CHAT_COMMAND_PREFIX", "&")):
-                result = handle_command(conn, text, sender_name=sender_name, sender_fls_id=sender_fls_id, reply=True)
-                print(json.dumps({"ts": int(time.time()), "routingKey": method.routing_key, "sender": sender_name, "senderFlsId": sender_fls_id, "result": result}, default=str, separators=(",", ":")), flush=True)
+                result = handle_command(conn, text, sender_name=sender_name, sender_fls_id=sender_fls_id, sender_origin=sender_origin, reply=True)
+                print(json.dumps({"ts": int(time.time()), "routingKey": method.routing_key, "sender": sender_name, "senderFlsId": sender_fls_id, "origin": sender_origin, "result": result}, default=str, separators=(",", ":")), flush=True)
             ch.basic_ack(method.delivery_tag)
         except Exception as exc:
             conn.rollback()

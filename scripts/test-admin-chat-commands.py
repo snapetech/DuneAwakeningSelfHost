@@ -341,6 +341,222 @@ class CommandReplyTargetTests(unittest.TestCase):
         self.assertEqual(calls["player"], player)
         self.assertEqual(result["message"], "exchange cashout: credited 1200 Solaris from 1 completed sales")
 
+    def dd1_player(self):
+        return {
+            "account_id": 1,
+            "character_name": "Lukano",
+            "online_status": "Online",
+            "life_state": "Alive",
+            "server_id": "DeepDesert_18",
+            "player_controller_id": 17,
+            "player_pawn_id": 200,
+            "fls_id": "TEST_FLS_ID",
+            "funcom_id": "Lukano#1234",
+            "actor_map": "DeepDesert",
+            "partition_id": 8,
+            "dimension_index": 0,
+            "partition_label": "01 Recommended PVE Casual",
+            "partition_map": "DeepDesert_1",
+            "x": -1010000.0,
+            "y": -1030000.0,
+            "z": 9000.0,
+        }
+
+    def dd1_totem(self):
+        return {
+            "totem_id": 5903,
+            "map": "DeepDesert",
+            "partition_id": 8,
+            "dimension_index": 0,
+            "x": -1015966.0,
+            "y": -1032936.0,
+            "z": 8816.0,
+            "owner_entity_id": 7880824217141391841,
+            "building_type": "Totem_Placeable",
+            "building_piece_count": 622,
+            "placeable_count": 118,
+            "min_x": -1020000.0,
+            "max_x": -1009000.0,
+            "min_y": -1040000.0,
+            "max_y": -1029000.0,
+            "min_z": 2600.0,
+            "max_z": 12000.0,
+        }
+
+    def backup_summary(self):
+        return {
+            "name": "##Totem_Placeable",
+            "source_totem_id": 5903,
+            "totem_building_type": "Totem_Placeable",
+            "source_map": "DeepDesert",
+            "source_landclaim_location": [-1015401.0, -1034909.0, 8704.0],
+            "source_landclaim_yaw": 90,
+            "landclaim_segment_count": 4,
+            "building_piece_count": 622,
+            "placeable_count": 118,
+            "actor_count": 119,
+            "source_anchor_x": -1015966.0,
+            "source_anchor_y": -1032936.0,
+            "source_anchor_z": 8816.0,
+            "min_x": -1020000.0,
+            "max_x": -1010000.0,
+            "min_y": -1040000.0,
+            "max_y": -1030000.0,
+            "min_z": 2600.0,
+            "max_z": 12000.0,
+        }
+
+    def test_dd1_backup_previews_sender_totem_without_admin_gate(self):
+        player = self.dd1_player()
+        totem = self.dd1_totem()
+
+        with unittest.mock.patch.object(admin_chat_commands, "resolve_sender_character", lambda conn, sender_name, sender_fls_id: "Lukano"), \
+             unittest.mock.patch.object(admin_chat_commands, "character_row", lambda conn, name: (player, [])), \
+             unittest.mock.patch.object(admin_chat_commands, "dd1_totems_for_player", lambda conn, player_id: [totem]), \
+             unittest.mock.patch.object(admin_chat_commands, "chat_dd1_backup_enabled", lambda: False), \
+             unittest.mock.patch.object(admin_chat_commands, "is_admin", side_effect=AssertionError("DD1 backup should be self-service")):
+            result = admin_chat_commands.handle_command(
+                object(),
+                "&DD1_backup",
+                sender_name="Lukano",
+                sender_fls_id="TEST_FLS_ID",
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["action"], "dd1_backup")
+        self.assertTrue(result["dryRun"])
+        self.assertIn("DD1 backup preview", result["message"])
+        self.assertIn("totem 5903", result["message"])
+
+    def test_dd1_backup_executes_when_feature_gate_enabled(self):
+        player = self.dd1_player()
+        totem = self.dd1_totem()
+        calls = {}
+
+        def fake_create(conn, resolved_player, resolved_totem, dry_run=True, current_location=None):
+            calls["player"] = resolved_player
+            calls["totem"] = resolved_totem
+            calls["dryRun"] = dry_run
+            calls["currentLocation"] = current_location
+            return {
+                "ok": True,
+                "dryRun": False,
+                "backupId": 52,
+                "plan": {"totemId": 5903},
+                "summary": {"building_piece_count": 622, "placeable_count": 118},
+            }
+
+        with unittest.mock.patch.object(admin_chat_commands, "resolve_sender_character", lambda conn, sender_name, sender_fls_id: "Lukano"), \
+             unittest.mock.patch.object(admin_chat_commands, "character_row", lambda conn, name: (player, [])), \
+             unittest.mock.patch.object(admin_chat_commands, "dd1_totems_for_player", lambda conn, player_id: [totem]), \
+             unittest.mock.patch.object(admin_chat_commands, "chat_dd1_backup_enabled", lambda: True), \
+             unittest.mock.patch.object(admin_chat_commands, "dd1_create_backup", fake_create):
+            result = admin_chat_commands.handle_command(
+                object(),
+                "&DD1_backup 5903",
+                sender_name="Lukano",
+                sender_fls_id="TEST_FLS_ID",
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertFalse(calls["dryRun"])
+        self.assertEqual(calls["player"], player)
+        self.assertEqual(calls["totem"], totem)
+        self.assertEqual(calls["currentLocation"]["source"], "stored-player-transform")
+        self.assertIn("backup 52", result["message"])
+
+    def test_dd1_backup_rejects_owned_totem_when_sender_is_not_inside_it(self):
+        player = self.dd1_player()
+        totem = self.dd1_totem()
+
+        with unittest.mock.patch.object(admin_chat_commands, "resolve_sender_character", lambda conn, sender_name, sender_fls_id: "Lukano"), \
+             unittest.mock.patch.object(admin_chat_commands, "character_row", lambda conn, name: (player, [])), \
+             unittest.mock.patch.object(admin_chat_commands, "dd1_totems_for_player", lambda conn, player_id: [totem]):
+            result = admin_chat_commands.handle_command(
+                object(),
+                "&DD1_backup 5903",
+                sender_name="Lukano",
+                sender_fls_id="TEST_FLS_ID",
+                sender_origin={"X": -900000, "Y": -900000, "Z": 9000},
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertIn("not standing inside", result["message"])
+
+    def test_dd1_restore_preview_uses_chat_origin_and_stores_confirmation(self):
+        admin_chat_commands.DD1_RESTORE_CONFIRMATIONS.clear()
+        player = self.dd1_player()
+        backup = {"id": 52, "base_backup_name": "##Totem_Placeable", "base_backup_map": "DeepDesert"}
+
+        with unittest.mock.patch.object(admin_chat_commands, "resolve_sender_character", lambda conn, sender_name, sender_fls_id: "Lukano"), \
+             unittest.mock.patch.object(admin_chat_commands, "character_row", lambda conn, name: (player, [])), \
+             unittest.mock.patch.object(admin_chat_commands, "dd1_backups_for_player", lambda conn, player_id: [backup]), \
+             unittest.mock.patch.object(admin_chat_commands, "dd1_backup_payload_summary", lambda conn, backup_id: self.backup_summary()), \
+             unittest.mock.patch.object(admin_chat_commands, "dd1_restore_offset", lambda: {"x": 1000, "y": 0, "z": 0}):
+            result = admin_chat_commands.handle_command(
+                object(),
+                "&DD1_restore 52",
+                sender_name="Lukano",
+                sender_fls_id="TEST_FLS_ID",
+                sender_origin={"X": 1000, "Y": 2000, "Z": 3000},
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["action"], "dd1_restore.preview")
+        self.assertEqual(result["plan"]["target"]["source"], "chat-origin")
+        self.assertEqual(result["plan"]["target"]["x"], 2000)
+        self.assertEqual(result["plan"]["target"]["playerLocation"]["x"], 1000)
+        self.assertIn("backup 52", result["message"])
+        self.assertIn("test_fls_id", admin_chat_commands.DD1_RESTORE_CONFIRMATIONS)
+
+    def test_dd1_restore_confirm_is_dry_run_when_gate_disabled(self):
+        admin_chat_commands.DD1_RESTORE_CONFIRMATIONS.clear()
+        player = self.dd1_player()
+        backup = {"id": 52, "base_backup_name": "##Totem_Placeable", "base_backup_map": "DeepDesert"}
+
+        with unittest.mock.patch.object(admin_chat_commands, "resolve_sender_character", lambda conn, sender_name, sender_fls_id: "Lukano"), \
+             unittest.mock.patch.object(admin_chat_commands, "character_row", lambda conn, name: (player, [])), \
+             unittest.mock.patch.object(admin_chat_commands, "dd1_backups_for_player", lambda conn, player_id: [backup]), \
+             unittest.mock.patch.object(admin_chat_commands, "dd1_backup_payload_summary", lambda conn, backup_id: self.backup_summary()), \
+             unittest.mock.patch.object(admin_chat_commands, "dd1_restore_offset", lambda: {"x": 1000, "y": 0, "z": 0}):
+            preview = admin_chat_commands.handle_command(
+                object(),
+                "&DD1_restore 52",
+                sender_name="Lukano",
+                sender_fls_id="TEST_FLS_ID",
+                sender_origin={"X": 1000, "Y": 2000, "Z": 3000},
+            )
+            confirm = admin_chat_commands.handle_command(
+                object(),
+                "&DD1_restore yes",
+                sender_name="Lukano",
+                sender_fls_id="TEST_FLS_ID",
+                sender_origin={"X": 1000, "Y": 2000, "Z": 3000},
+            )
+
+        self.assertTrue(preview["ok"])
+        self.assertTrue(confirm["ok"])
+        self.assertTrue(confirm["dryRun"])
+        self.assertEqual(confirm["action"], "dd1_restore.confirm")
+        self.assertNotIn("test_fls_id", admin_chat_commands.DD1_RESTORE_CONFIRMATIONS)
+
+    def test_parse_chat_message_context_extracts_origin_location(self):
+        body = {
+            "content": (
+                '{"m_FuncomIdFrom":"Lukano#1234","m_Message":{"m_UnlocalizedMessage":"&DD1_restore"},'
+                '"m_OriginLocation":{"X":1.5,"Y":2.5,"Z":3.5}}'
+            ),
+            "Type": "TextChat",
+        }
+
+        context = admin_chat_commands.parse_chat_message_context(
+            __import__("json").dumps(body).encode("utf-8")
+        )
+
+        self.assertEqual(context["message"], "&DD1_restore")
+        self.assertEqual(context["sender"], "Lukano#1234")
+        self.assertEqual(context["origin"], {"x": 1.5, "y": 2.5, "z": 3.5})
+
     def test_gm_subcommand_includes_inferred_private_reply_metadata(self):
         def fake_run_announce(message, target_name="", target_fls_id=""):
             admin_chat_commands.LAST_ANNOUNCE_RESULT = {"ok": True, "stdout": '{"transport":"chat.whispers"}', "stderr": ""}

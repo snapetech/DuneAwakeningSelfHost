@@ -162,7 +162,14 @@ from dune.world_partition
 order by partition_id;
 
 select
-  coalesce((select sum(connected_players) from dune.farm_state), 0) as connected_players_reported,
+  coalesce((
+    select sum(fs.connected_players)
+    from dune.world_partition wp
+    join dune.farm_state fs on fs.server_id = wp.server_id
+    join dune.active_server_ids asi on asi.server_id = wp.server_id
+    where fs.alive
+  ), 0) as active_farm_connected_players,
+  coalesce((select sum(connected_players) from dune.farm_state), 0) as raw_farm_connected_players,
   (select count(*) from dune.get_online_player_controller_ids_on_farm()) as online_controller_ids,
   (select count(*) from dune.get_all_online_or_recently_disconnected_player_online_state()) as online_or_recently_disconnected,
   (select count(*) from dune.get_player_online_state_within_grace_period_for_each_server()) as grace_period_entries;

@@ -22,6 +22,7 @@ DEFAULT_BINARY = Path("/home/dune/server/DuneSandbox/Binaries/Linux/DuneSandboxS
 
 
 class PatchSite(NamedTuple):
+    key: str
     name: str
     anchor_after_patch: bytes
     clean: bytes
@@ -30,6 +31,7 @@ class PatchSite(NamedTuple):
 
 PATCHES = [
     PatchSite(
+        key="failure-reason",
         name="BRT failure-reason method force success",
         anchor_after_patch=bytes.fromhex(
             "41 56 41 55 41 54 53 48 83 ec 78 41 b6 32 48 85 "
@@ -40,6 +42,7 @@ PATCHES = [
         patched=bytes.fromhex("b8 03 00 00 00 c3"),
     ),
     PatchSite(
+        key="can-use",
         name="BRT can-use method force enabled",
         anchor_after_patch=bytes.fromhex(
             "41 56 41 55 41 54 53 48 83 ec 68 41 b6 01 48 85 "
@@ -85,14 +88,32 @@ def find_site(data: bytes, site: PatchSite) -> tuple[int, bool]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
+    parser.add_argument(
+        "--sites",
+        default="all",
+        help="comma-separated patch site keys to apply: all, failure-reason, can-use",
+    )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--backup", type=Path, default=None)
     args = parser.parse_args()
 
+    requested = {site.strip() for site in args.sites.split(",") if site.strip()}
+    valid = {site.key for site in PATCHES}
+    if not requested or requested == {"all"}:
+        selected = PATCHES
+    else:
+        unknown = requested - valid
+        if unknown:
+            raise SystemExit(
+                f"unknown --sites value(s): {', '.join(sorted(unknown))}; "
+                f"valid values: all, {', '.join(sorted(valid))}"
+            )
+        selected = [site for site in PATCHES if site.key in requested]
+
     data = args.binary.read_bytes()
     to_patch = []
     already = []
-    for site in PATCHES:
+    for site in selected:
         offset, is_patched = find_site(data, site)
         if is_patched:
             already.append((site, offset))
@@ -102,7 +123,7 @@ def main() -> None:
     for site, offset in already:
         print(f"already patched @ 0x{offset:x}: {site.name}")
     if not to_patch:
-        print("BRT tool-enable force patch already applied; nothing to do")
+        print("requested BRT tool-enable force patch site(s) already applied; nothing to do")
         return
 
     sha_before = hashlib.sha256(data).hexdigest()

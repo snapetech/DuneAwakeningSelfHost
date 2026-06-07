@@ -215,6 +215,94 @@ Admin-private recipients are derived from currently online players whose charact
 
 The starter Base Reconstruction Tool path grants one `BaseBackupTool` to each newly observed joining account that has not already been recorded in `backups/admin-bot/player-presence.json`. When the grant succeeds, it sends a private message telling the player they may need to log out and back in before the item appears.
 
+## DD1 BRT Chat Commands
+
+`scripts/admin-chat-commands.py` now wires two player-scoped PM commands for
+the Deep Desert #1 BRT workaround:
+
+```text
+&DD1_backup [totem_id]
+&DD1_restore [backup_id]
+&DD1_restore yes
+&DD1_restore cancel
+```
+
+The commands are self-service: they resolve the whisper sender and only operate
+on that character's own totems/backups. `&DD1_backup` uses
+`dune.base_backup_save_from_totem(player_id, totem_id)` when enabled. It first
+resolves the sender's current DD1 position from the incoming whisper
+`m_OriginLocation`, falling back to the stored DB actor transform. The selected
+totem must be an owned DD1 totem whose base footprint contains that current
+position. An explicit totem id is allowed, but it still has to be the base the
+player is standing in.
+
+`&DD1_restore` is currently a guarded preview/confirmation flow. It captures the
+target from the incoming whisper's `m_OriginLocation` when present, otherwise it
+falls back to the stored DB actor transform, then applies the configured restore
+offset so the placement target is slightly away from the player's current
+location. The restore preview computes the translation from the backup's
+original totem actor position to the requested DD1 target and stores a
+short-lived confirmation. The actual persistence writer is blocked until the
+row-copy mapper is disposable-base validated; this is intentional because a real
+base spans actors, building instances, placeables, totems, landclaim segments,
+permission rows, FGL entities, inventories, and items. This is not currently the
+native client BRT restore path, so restore execution must stay disabled until
+support/foundation behavior is validated.
+
+Relevant gates:
+
+```env
+DUNE_CHAT_COMMAND_DD1_BRT_BACKUP_ENABLED=false
+DUNE_CHAT_COMMAND_DD1_BRT_RESTORE_ENABLED=false
+DUNE_CHAT_COMMAND_DD1_BRT_RESTORE_COPY_SOURCE_ENABLED=false
+DUNE_CHAT_COMMAND_DD1_RESTORE_CONFIRM_SECONDS=120
+DUNE_CHAT_COMMAND_DD1_RESTORE_CONFIRM_MAX_DISTANCE=500
+DUNE_CHAT_COMMAND_DD1_PARTITION_ID=8
+DUNE_CHAT_COMMAND_DD1_MAP_NAMES=DeepDesert,DeepDesert_1
+DUNE_CHAT_COMMAND_DD1_BASE_CONTAINMENT_PADDING=1500
+DUNE_CHAT_COMMAND_DD1_RESTORE_OFFSET_X=1000
+DUNE_CHAT_COMMAND_DD1_RESTORE_OFFSET_Y=0
+DUNE_CHAT_COMMAND_DD1_RESTORE_OFFSET_Z=0
+```
+
+The backup command must stay disabled for public use until a live actor unload
+route is proven. `dune.base_backup_save_from_totem(...)` creates a real backup
+and marks the linked actors `BaseBackup`, but it does not live-unload actors
+already loaded by the running DD process. If DD later reloads while the partial
+state remains, the base can disappear from persistence. The safe undo for that
+partial state is `dune.base_backup_finish_placing(backup_id)` plus recreating
+the totem `permission_actor` / owner rank.
+
+`scripts/dd1-brt-emulator.py` contains the current DB mapper and safety tooling
+for restore experiments. Read-only commands:
+
+```bash
+scripts/dd1-brt-emulator.py list-totems --player-id 17
+scripts/dd1-brt-emulator.py list-backups --player-id 17
+scripts/dd1-brt-emulator.py inspect-backup --backup-id 59
+```
+
+Rollback-only transform validation:
+
+```bash
+scripts/dd1-brt-emulator.py simulate-from-totem \
+  --player-id 17 --totem-id 5903 --offset-x 1000 --offset-y 0 --offset-z 0
+```
+
+For a backup accidentally left staged by `base_backup_save_from_totem`, the
+guarded in-place undo path is:
+
+```bash
+scripts/dd1-brt-emulator.py finish-staged-backup --backup-id 59
+scripts/dd1-brt-emulator.py finish-staged-backup --backup-id 59 \
+  --commit --confirm 'FINISH DD1 BRT BACKUP'
+```
+
+Commit mode refuses to run off `kspls0` and requires the exact confirmation
+phrase. This validates and repairs DB shape only. Restore execution must stay
+disabled until the mapper is committed on a disposable base and a live runtime
+unload/native RPC route is known.
+
 The quiet starter emote path grants `DUNE_PLAYER_PRESENCE_STARTER_EMOTE_TEMPLATES` into the configured emote inventory type, default `14`, for newly observed joining accounts. It records successful accounts under `starterEmotesGranted` in the same state file and does not send a public or private message.
 
 The Vermilius Gap announcement watches `dune.journey_story_node` for the configured node's `complete_condition_state = true`. It records completed account ids under `backups/admin-bot/player-presence.json`, so each player is congratulated once. The first poll after enabling the feature baselines already-completed players and does not announce them retroactively.

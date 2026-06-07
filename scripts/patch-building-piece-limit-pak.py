@@ -17,6 +17,19 @@ NEXT_ROW = b"UI/BuildingMenu_StructureCategory_Production"
 DEFAULT_OLD_LIMIT = 5000
 
 
+def is_steam_client_pak(path):
+    try:
+        normalized = str(path.expanduser().resolve()).replace("\\", "/")
+    except OSError:
+        normalized = str(path.expanduser()).replace("\\", "/")
+    return "/steamapps/common/DuneAwakening/DuneSandbox/Content/Paks/" in normalized
+
+
+def refuse_client_write(path, dry_run):
+    if not dry_run and is_steam_client_pak(path):
+        raise SystemExit("refusing to modify Steam client pak; server-side pak edits only")
+
+
 def read_footer(data):
     magic_bytes = struct.pack("<I", PAK_MAGIC)
     magic_pos = data.rfind(magic_bytes, max(0, len(data) - 512))
@@ -180,6 +193,7 @@ def find_target(data, footer, decompress):
             continue
         if len(decoded) >= 2 and TARGET_TABLE in decoded[-2][1] and BUILDING_ROW in blob and NEXT_ROW in blob:
             return entry, blob
+
     raise RuntimeError("target BuildingPiece row payload was not found")
 
 
@@ -238,6 +252,7 @@ def main():
         raise SystemExit(f"missing pak: {args.pak}")
     if not args.oodle.exists():
         raise SystemExit(f"missing Oodle library: {args.oodle}")
+    refuse_client_write(args.pak, args.dry_run)
 
     data = bytearray(args.pak.read_bytes())
     footer = read_footer(data)

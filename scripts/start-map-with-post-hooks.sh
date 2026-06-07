@@ -78,8 +78,12 @@ elif [[ -x "$script_dir/verify-rmq-auth-path.sh" ]]; then
   ENV_FILE="$env_file" "$script_dir/verify-rmq-auth-path.sh"
 fi
 
-if [[ -x "$script_dir/patch-logoff-timers-runtime.sh" ]]; then
-  "$script_dir/patch-logoff-timers-runtime.sh" --local --dry-run
-fi
+case "${DUNE_LOGOFF_TIMER_RUNTIME_PATCH_ENABLED:-true}" in
+  1|true|yes|on|TRUE|True|YES|ON)
+    if [[ -x "$script_dir/patch-logoff-timers-runtime.sh" ]]; then
+      "$script_dir/patch-logoff-timers-runtime.sh" --local --dry-run
+    fi
+    ;;
+esac
 
 "${compose[@]}" ps "${services[@]}"

@@ -4979,12 +4979,19 @@ class Handler(BaseHTTPRequestHandler):
         active_count = len(active)
         player_counts = query("""
             select
-              coalesce((select sum(connected_players) from dune.farm_state), 0) as connected_players_reported,
+              coalesce((
+                select sum(fs.connected_players)
+                from dune.world_partition wp
+                join dune.farm_state fs on fs.server_id = wp.server_id
+                join dune.active_server_ids asi on asi.server_id = wp.server_id
+                where fs.alive
+              ), 0) as active_farm_connected_players,
+              coalesce((select sum(connected_players) from dune.farm_state), 0) as raw_farm_connected_players,
               (select count(*) from dune.get_online_player_controller_ids_on_farm()) as online_controller_ids,
               (select count(*) from dune.get_all_online_or_recently_disconnected_player_online_state()) as online_or_recently_disconnected,
               (select count(*) from dune.get_player_online_state_within_grace_period_for_each_server()) as grace_period_entries
         """)[0]
-        current_players = int(player_counts.get("connected_players_reported") or 0)
+        current_players = int(player_counts.get("online_controller_ids") or 0)
         player_peak = update_daily_player_peak(current_players)
         verdicts = [
             {"name": "current partitions have alive active farm rows", "ok": expected > 0 and current_alive_active == expected, "value": f"{current_alive_active}/{expected}"},
@@ -8608,7 +8615,8 @@ function overviewResourceCard(resources){
 function overviewRealtimeHtml(health, rosterCounts={}, resources=null){
   const state = health || {};
   const summary = state.summary || {};
-  const players = (state.farmState || []).reduce((sum, r) => sum + Number(r.connected_players || 0), 0);
+  const pc = state.playerCounts || {};
+  const players = pc.online_controller_ids ?? (state.farmState || []).reduce((sum, r) => sum + Number(r.connected_players || 0), 0);
   const playerPeak = state.playerPeak || {};
   const fls = state.flsPublication || {};
   const flsState = fls.state || summary.flsPublication || 'unknown';
@@ -8623,7 +8631,7 @@ function opsRealtimeMetricsHtml(health){
   const flsState = fls.state || (health || {}).summary?.flsPublication || 'unknown';
   const flsTone = flsState === 'healthy' ? 'ok' : flsState === 'refreshing' ? 'warn' : 'dangerText';
   const flsMeta = fls.cached ? `cached ${fls.cacheAgeSeconds ?? 0}s` : (fls.refreshing ? 'refreshing' : '');
-  return `${metric('Connected Players', pc.connected_players_reported ?? 0)}${metric('Online Controllers', pc.online_controller_ids ?? 0)}${metric('Recent Online State', pc.online_or_recently_disconnected ?? 0)}${metric('Grace Entries', pc.grace_period_entries ?? 0)}${metric('FLS Publication', flsState, flsTone, flsMeta)}`;
+  return `${metric('Connected Players', pc.online_controller_ids ?? 0)}${metric('Active Farm Report', pc.active_farm_connected_players ?? 0)}${metric('Raw Farm Report', pc.raw_farm_connected_players ?? 0)}${metric('Recent Online State', pc.online_or_recently_disconnected ?? 0)}${metric('Grace Entries', pc.grace_period_entries ?? 0)}${metric('FLS Publication', flsState, flsTone, flsMeta)}`;
 }
 function renderOverviewRealtime(health){
   const container = document.getElementById('overviewRealtime');

@@ -57,6 +57,31 @@ env_or_file() {
   fi
 }
 
+steam_appmanifest() {
+  local dir="$steam_dir"
+  if [[ -f "$steam_dir/steamapps/appmanifest_${app_id}.acf" ]]; then
+    printf '%s/steamapps/appmanifest_%s.acf\n' "$steam_dir" "$app_id"
+    return 0
+  fi
+  if [[ "$steam_dir" == */steamapps/common/* ]]; then
+    printf '%s/appmanifest_%s.acf\n' "${steam_dir%%/common/*}" "$app_id"
+    return 0
+  fi
+  while [[ "$dir" != "/" && -n "$dir" ]]; do
+    if [[ "$(basename "$dir")" == "steamapps" ]]; then
+      printf '%s/appmanifest_%s.acf\n' "$dir" "$app_id"
+      return 0
+    fi
+    dir="$(dirname "$dir")"
+  done
+}
+
+manifest_value() {
+  local file="$1"
+  local key="$2"
+  awk -v key="$key" '$1 == "\"" key "\"" {gsub(/"/, "", $2); print $2; exit}' "$file" 2>/dev/null
+}
+
 image_tars=(
   "images/battlegroup/server-rabbitmq.tar"
   "images/battlegroup/server-text-router.tar"
@@ -78,6 +103,8 @@ fi
 
 steam_dir="$(env_or_file DUNE_STEAM_SERVER_DIR)"
 current_tag="$(env_or_file DUNE_IMAGE_TAG)"
+app_id="$(env_or_file DUNE_STEAM_APP_ID)"
+app_id="${app_id:-4754530}"
 
 if [[ -z "$steam_dir" ]]; then
   echo "fail: DUNE_STEAM_SERVER_DIR is empty" >&2
@@ -109,9 +136,23 @@ done
 
 mapfile -t package_tags < <(sort -u "$tmp_tags")
 
+appmanifest="$(steam_appmanifest || true)"
+installed_buildid=""
+target_buildid=""
+if [[ -n "$appmanifest" && -f "$appmanifest" ]]; then
+  installed_buildid="$(manifest_value "$appmanifest" buildid)"
+  target_buildid="$(manifest_value "$appmanifest" TargetBuildID)"
+fi
+
 printf 'env file: %s\n' "$env_file"
 printf 'Steam server dir: %s\n' "$steam_dir"
 printf 'current DUNE_IMAGE_TAG: %s\n' "${current_tag:-unset}"
+if [[ -n "$installed_buildid" ]]; then
+  printf 'Steam installed buildid: %s\n' "$installed_buildid"
+fi
+if [[ -n "$target_buildid" ]]; then
+  printf 'Steam target buildid: %s\n' "$target_buildid"
+fi
 
 if [[ "${#package_tags[@]}" -eq 0 ]]; then
   echo "package server tags: none found"
@@ -133,6 +174,14 @@ if [[ "${#package_tags[@]}" -gt 1 ]]; then
 fi
 
 package_tag="${package_tags[0]}"
+
+if [[ -n "$installed_buildid" && -n "$target_buildid" && "$installed_buildid" != "$target_buildid" ]]; then
+  echo "status: Steam package install incomplete"
+  echo "installed buildid: $installed_buildid"
+  echo "target buildid: $target_buildid"
+  echo "rerun the Steam package update before loading images or restarting maps"
+  exit 2
+fi
 
 if [[ "$current_tag" == "$package_tag" ]]; then
   echo "status: current"

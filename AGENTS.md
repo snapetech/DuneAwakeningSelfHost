@@ -10,6 +10,8 @@
   the target host with `hostname`. If it is not `kspls0`, stop and connect to
   `kspls0`.
 - Do not run production mutations through `docker compose` from `kspld0`.
+- Never edit local Steam/Dune client game files. Client pak/binary edits are not
+  a viable path for this project; use server-side changes only.
 - Do not set Standard PvE DD Coriolis cycle duration to a far-future value.
   Landsraad uses the Coriolis cycle for its active/suspended window. DD1 can
   have Coriolis damage, shifting sands, restart, and DB wipe disabled, but

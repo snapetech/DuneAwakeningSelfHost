@@ -33,3 +33,4 @@ images/
 .DS_Store
 .idea/
 .vscode/
+.worktrees/

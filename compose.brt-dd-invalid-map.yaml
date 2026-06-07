@@ -2,8 +2,13 @@ x-brt-dd-invalid-map-patch: &brt-dd-invalid-map-patch
   environment:
     DUNE_BRT_DD_INVALID_MAP_BINARY_PATCH_ENABLED: "true"
     DUNE_BRT_DD_ACTION_GATE_BINARY_PATCH_ENABLED: "true"
-    DUNE_BRT_DD_TOOL_ENABLE_BINARY_PATCH_ENABLED: "false"
-
+    DUNE_BRT_DD_BUILDABLE_MAP_REGION_PATCH_ENABLED: "false"
+    DUNE_BRT_DD_BUILDABLE_MAP_REGION_PATCH_MODE: "dd-full-region"
+    DUNE_BRT_DD_BUILDABLE_MAP_REGION_PATCH_TARGET: "overlay"
+    DUNE_BRT_DD_BUILDABLE_MAP_REGION_OVERLAY_PAK: "/home/dune/server/DuneSandbox/Content/Paks/pakchunk9999-LinuxServer.pak"
+    DUNE_BRT_DD_NARROW_TOOL_STATE_BINARY_PATCH_ENABLED: "true"
+    DUNE_BRT_DD_NARROW_TOOL_STATE_PATCH_SITES: "can-use-empty-context,state-empty-context,failure-reason-action-method,can-use-region-fail-join"
+    DUNE_BRT_DD_TOOL_ENABLE_BINARY_PATCH_ENABLED: "true"
 services:
   deep-desert: *brt-dd-invalid-map-patch
   deep-desert-pvp: *brt-dd-invalid-map-patch

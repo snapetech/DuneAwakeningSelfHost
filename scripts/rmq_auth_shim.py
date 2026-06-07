@@ -46,6 +46,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(b"deny")
                 return
             if SERVICE_USER_RE.match(username):
+                if self.path == "/v0/auth/user":
+                    self.respond(b"allow administrator")
+                    return
                 self.respond(b"allow")
                 return
             if PLAYER_USER_RE.match(username):

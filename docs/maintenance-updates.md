@@ -449,16 +449,48 @@ python3 /workspace/scripts/patch-landsraad-vendor-faction-gate-pak.py \
 
 Rollback is the same as the building-piece patch: set `DUNE_LANDSRAAD_VENDOR_FACTION_GATE_PATCH_ENABLED=false` and recreate the affected game-server containers. The patch only touches the container overlay pak, not the official image or persisted world data.
 
+## Landsraad Term Length Tuning
+
+`DUNE_LANDSRAAD_TERM_LENGTH_TUNING_ENABLED=true` runs
+`scripts/tune-landsraad-term-length.sh` during restart pre-start hygiene. The
+script uses `dune.landsraad_change_term_end_time` to move the active term to
+`start_time + DUNE_LANDSRAAD_TERM_LENGTH_DAYS`, rounded up to the next configured
+Coriolis cycle boundary by default. The default is `7` days with
+`DUNE_LANDSRAAD_TERM_LENGTH_ALIGN_TO_CORIOLIS=true`. Execute mode is
+host-guarded to `kspls0` by default.
+
+Do not use unaligned Landsraad end times. Landsraad period state is derived from
+Coriolis timing, and a term ending between Coriolis boundaries can make the UI
+show Suspended even while the DB term and tasks are valid.
+
+Restart pre-start hygiene also runs
+`scripts/validate-landsraad-term-coriolis-alignment.sh` by default through
+`DUNE_LANDSRAAD_TERM_CORIOLIS_ALIGNMENT_GUARD_ENABLED=true`. The guard fails if
+the active term end is more than
+`DUNE_LANDSRAAD_TERM_ALIGNMENT_TOLERANCE_SECONDS` from a Coriolis boundary.
+
+Dry-run:
+
+```bash
+./scripts/tune-landsraad-term-length.sh .env
+```
+
+Apply:
+
+```bash
+./scripts/tune-landsraad-term-length.sh .env --execute
+```
+
 ## Landsraad Goal Tuning
 
 `DUNE_LANDSRAAD_GOAL_TUNING_ENABLED=true` runs `scripts/tune-landsraad-goals.sh`
 during restart pre-start hygiene. The script installs a small DB-owned tuning
 table, patches `dune.landsraad_insert_tasks` so future terms use the configured
 scale, and idempotently applies the same scale to the current term. The default
-scale is `DUNE_LANDSRAAD_GOAL_SCALE=0.5`, changing the stock `70,000` per-house
-tile goal to `35,000`. A term is won by completing a row, column, or diagonal on
-the 5x5 board, so the default winning-line target drops from `350,000` to
-`175,000`.
+scale is `DUNE_LANDSRAAD_GOAL_SCALE=0.35714285714285714285`, changing the stock
+`70,000` per-house tile goal to `25,000`. A term is won by completing a row,
+column, or diagonal on the 5x5 board, so the default winning-line target drops
+from `350,000` to `125,000`.
 
 Dry-run:
 

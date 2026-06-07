@@ -230,9 +230,12 @@ def load_map_health():
                    case
                      when wp.blocked then 'offline'
                      when wp.server_id is null then 'offline'
-                     when coalesce(fs.alive, false) and exists (
+                     when coalesce(fs.ready, false) and coalesce(fs.alive, false) and exists (
                        select 1 from dune.active_server_ids asi where asi.server_id = wp.server_id
                      ) then 'online'
+                     when coalesce(fs.alive, false) and exists (
+                       select 1 from dune.active_server_ids asi where asi.server_id = wp.server_id
+                     ) then 'degraded'
                      else 'offline'
                    end as status,
                    coalesce(fs.ready, false) as ready,
@@ -244,7 +247,6 @@ def load_map_health():
                    coalesce(fs.connected_players, 0) as players
             from dune.world_partition wp
             left join dune.farm_state fs on fs.server_id = wp.server_id
-            where wp.server_id is not null
             order by wp.partition_id
         ) t
     """

@@ -1,0 +1,109 @@
+{
+  "generatedAt": "2026-06-03T05:12:49Z",
+  "background": "/home/keith/Documents/code/DuneAwakeningSelfHost/admin/static/deep-desert.webp",
+  "hotspots": "/home/keith/Documents/code/DuneAwakeningSelfHost/admin/static/deep-desert-hotspots.json",
+  "output": "admin/static/deep-desert-full-map-ingame.webp",
+  "style": "ingame",
+  "database": "dune_sb_1_4_0_0",
+  "dbOk": true,
+  "dbError": null,
+  "hotspotCount": 9,
+  "markerCount": 92,
+  "resourceSummaries": [
+    {
+      "dimension_index": 0,
+      "field_kind_id": 0,
+      "fields": 4,
+      "value_remaining": 240000
+    },
+    {
+      "dimension_index": 1,
+      "field_kind_id": 0,
+      "fields": 21,
+      "value_remaining": 1260000
+    },
+    {
+      "dimension_index": 1,
+      "field_kind_id": 1,
+      "fields": 27,
+      "value_remaining": 4225000
+    }
+  ],
+  "spice": [
+    {
+      "field_type": "Large",
+      "dimension_index": 0,
+      "max_globally_primed": 1,
+      "max_globally_active": 1,
+      "current_globally_primed": 0,
+      "current_globally_active": 0,
+      "is_spawning_active": true
+    },
+    {
+      "field_type": "Medium",
+      "dimension_index": 0,
+      "max_globally_primed": 12,
+      "max_globally_active": 12,
+      "current_globally_primed": 0,
+      "current_globally_active": 0,
+      "is_spawning_active": true
+    },
+    {
+      "field_type": "Small",
+      "dimension_index": 0,
+      "max_globally_primed": 60,
+      "max_globally_active": 60,
+      "current_globally_primed": 0,
+      "current_globally_active": 0,
+      "is_spawning_active": true
+    },
+    {
+      "field_type": "Large",
+      "dimension_index": 1,
+      "max_globally_primed": 1,
+      "max_globally_active": 1,
+      "current_globally_primed": 0,
+      "current_globally_active": 1,
+      "is_spawning_active": true
+    },
+    {
+      "field_type": "Medium",
+      "dimension_index": 1,
+      "max_globally_primed": 12,
+      "max_globally_active": 12,
+      "current_globally_primed": 0,
+      "current_globally_active": 11,
+      "is_spawning_active": true
+    },
+    {
+      "field_type": "Small",
+      "dimension_index": 1,
+      "max_globally_primed": 60,
+      "max_globally_active": 60,
+      "current_globally_primed": 0,
+      "current_globally_active": 15,
+      "is_spawning_active": true
+    }
+  ],
+  "scanCoverage": [
+    {
+      "account_id": 33,
+      "character_name": "Paul",
+      "rows": 82,
+      "discovered_rows": 82,
+      "entered_rows": 82,
+      "survey_rows": 9
+    }
+  ],
+  "bounds": {
+    "min_x": -1250000.0,
+    "max_x": 1150000.0,
+    "min_y": -1250000.0,
+    "max_y": 1050000.0
+  },
+  "confidence": {
+    "heatmaps": "moderate: broad distribution masks, not exact node coordinates",
+    "dbMarkers": "high for persisted marker rows, mixed for whether every live node is present",
+    "scanCoverage": "high for dune.map_areas row counts"
+  }
+}

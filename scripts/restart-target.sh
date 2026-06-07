@@ -85,6 +85,35 @@ run_landsraad_goal_tuning() {
   ./scripts/tune-landsraad-goals.sh "$env_file" --execute
 }
 
+run_landsraad_term_length_tuning() {
+  env_file="${ENV_FILE:-.env}"
+  enabled="${DUNE_LANDSRAAD_TERM_LENGTH_TUNING_ENABLED:-$(env_file_value DUNE_LANDSRAAD_TERM_LENGTH_TUNING_ENABLED "$env_file")}"
+  case "$enabled" in
+    1|true|yes|on) ;;
+    *) return 0 ;;
+  esac
+  if [ ! -x ./scripts/tune-landsraad-term-length.sh ]; then
+    printf 'Landsraad term length tuning enabled but scripts/tune-landsraad-term-length.sh is missing or not executable\n' >&2
+    return 1
+  fi
+  ./scripts/tune-landsraad-term-length.sh "$env_file" --execute
+}
+
+run_landsraad_term_alignment_guard() {
+  env_file="${ENV_FILE:-.env}"
+  enabled="${DUNE_LANDSRAAD_TERM_CORIOLIS_ALIGNMENT_GUARD_ENABLED:-$(env_file_value DUNE_LANDSRAAD_TERM_CORIOLIS_ALIGNMENT_GUARD_ENABLED "$env_file")}"
+  enabled="${enabled:-true}"
+  case "$enabled" in
+    1|true|yes|on) ;;
+    *) return 0 ;;
+  esac
+  if [ ! -x ./scripts/validate-landsraad-term-coriolis-alignment.sh ]; then
+    printf 'Landsraad term Coriolis alignment guard enabled but scripts/validate-landsraad-term-coriolis-alignment.sh is missing or not executable\n' >&2
+    return 1
+  fi
+  ./scripts/validate-landsraad-term-coriolis-alignment.sh "$env_file"
+}
+
 run_landsraad_reveal_watchdog() {
   env_file="${ENV_FILE:-.env}"
   enabled="${DUNE_LANDSRAAD_REVEAL_WATCHDOG_ENABLED:-$(env_file_value DUNE_LANDSRAAD_REVEAL_WATCHDOG_ENABLED "$env_file")}"
@@ -121,6 +150,8 @@ pre_start_hygiene() {
     ./scripts/apply-official-db-patches.sh "$env_file"
   fi
   run_landsraad_coriolis_guard
+  run_landsraad_term_length_tuning
+  run_landsraad_term_alignment_guard
   run_landsraad_goal_tuning
   run_landsraad_reveal_watchdog
   run_hardcore_dd_weekly_wipe
@@ -160,6 +191,8 @@ env_file_value() {
 
 run_steam_update_check() {
   env_file="${ENV_FILE:-.env}"
+  steam_required="$(env_file_value DUNE_RESTART_STEAMCMD_REQUIRED "$env_file")"
+  steam_required="${steam_required:-false}"
   if ! steam_update_enabled; then
     printf 'Steam package update check disabled by DUNE_RESTART_CHECK_STEAM_UPDATE\n'
     return 0
@@ -215,9 +248,21 @@ run_steam_update_check() {
     fi
   else
     printf 'SteamCMD package update skipped: scripts/update-steam-tool.sh is missing or not executable\n' >&2
+    case "$steam_required" in
+      1|true|yes|on)
+        printf 'Steam package update is required; aborting restart\n' >&2
+        exit 127
+        ;;
+    esac
   fi
   if [ ! -x ./scripts/check-steam-update.sh ]; then
     printf 'Steam package update check skipped: scripts/check-steam-update.sh is missing or not executable\n' >&2
+    case "$steam_required" in
+      1|true|yes|on)
+        printf 'Steam package update check is required; aborting restart\n' >&2
+        exit 127
+        ;;
+    esac
     return 0
   fi
   set +e
@@ -225,6 +270,7 @@ run_steam_update_check() {
   rc=$?
   set -e
   if [ "$rc" -eq 0 ]; then
+    ensure_official_images_loaded
     return 0
   fi
   if [ "$rc" -eq 1 ]; then
@@ -233,8 +279,48 @@ run_steam_update_check() {
     ./scripts/check-steam-update.sh "$env_file" --write-env
     return 0
   fi
+  case "$steam_required" in
+    1|true|yes|on)
+      printf 'Steam package update is required and package state is unsafe; aborting restart\n' >&2
+      exit "$rc"
+      ;;
+  esac
   printf 'Steam package update check could not determine a safe tag; continuing without changing DUNE_IMAGE_TAG\n' >&2
+  ensure_official_images_loaded
   return 0
+}
+
+ensure_official_images_loaded() {
+  env_file="${ENV_FILE:-.env}"
+  image_tag="$(env_file_value DUNE_IMAGE_TAG "$env_file")"
+  if [ -z "$image_tag" ]; then
+    printf 'DUNE_IMAGE_TAG is empty; cannot verify official Dune images before start\n' >&2
+    exit 1
+  fi
+  missing_image=0
+  for repo in \
+    seabass-server-rabbitmq \
+    seabass-server-text-router \
+    seabass-server-bg-director \
+    seabass-server-gateway \
+    seabass-server-db-utils \
+    seabass-server
+  do
+    image="registry.funcom.com/funcom/self-hosting/${repo}:${image_tag}"
+    if ! docker image inspect "$image" >/dev/null 2>&1; then
+      printf 'official Dune image is not loaded: %s\n' "$image" >&2
+      missing_image=1
+    fi
+  done
+  if [ "$missing_image" -eq 0 ]; then
+    return 0
+  fi
+  if [ ! -x ./scripts/load-images.sh ]; then
+    printf 'one or more official Dune images are missing and scripts/load-images.sh is unavailable\n' >&2
+    exit 1
+  fi
+  printf 'loading official Dune images from Steam package because one or more required images are missing\n'
+  ./scripts/load-images.sh "$env_file"
 }
 
 if ! command -v docker >/dev/null 2>&1; then
@@ -516,6 +602,8 @@ def run_host_compose(services):
     compose_command.extend(["--env-file", env_file, "up", "-d", "--force-recreate", "--no-deps"])
     compose_command.extend(services)
     service_words = " ".join(services)
+    landsraad_term_length_tuning_enabled = os.environ.get("DUNE_LANDSRAAD_TERM_LENGTH_TUNING_ENABLED") or read_env_value(env_file, "DUNE_LANDSRAAD_TERM_LENGTH_TUNING_ENABLED") or ""
+    landsraad_term_alignment_guard_enabled = os.environ.get("DUNE_LANDSRAAD_TERM_CORIOLIS_ALIGNMENT_GUARD_ENABLED") or read_env_value(env_file, "DUNE_LANDSRAAD_TERM_CORIOLIS_ALIGNMENT_GUARD_ENABLED") or "true"
     landsraad_goal_tuning_enabled = os.environ.get("DUNE_LANDSRAAD_GOAL_TUNING_ENABLED") or read_env_value(env_file, "DUNE_LANDSRAAD_GOAL_TUNING_ENABLED") or ""
     landsraad_reveal_watchdog_enabled = os.environ.get("DUNE_LANDSRAAD_REVEAL_WATCHDOG_ENABLED") or read_env_value(env_file, "DUNE_LANDSRAAD_REVEAL_WATCHDOG_ENABLED") or "true"
     hardcore_dd_wipe_enabled = (
@@ -528,12 +616,49 @@ def run_host_compose(services):
     clear_player_rmq = os.environ.get("DUNE_RESTART_CLEAR_PLAYER_RMQ_SESSIONS") or read_env_value(env_file, "DUNE_RESTART_CLEAR_PLAYER_RMQ_SESSIONS") or ""
     if not clear_player_rmq:
         clear_player_rmq = "true" if target == "all" else "false"
+    official_image_repos = " ".join(
+        shlex.quote(repo)
+        for repo in [
+            "seabass-server-rabbitmq",
+            "seabass-server-text-router",
+            "seabass-server-bg-director",
+            "seabass-server-gateway",
+            "seabass-server-db-utils",
+            "seabass-server",
+        ]
+    )
+    ensure_official_images_shell = (
+        "image_tag=$(awk -F= '$1 == \"DUNE_IMAGE_TAG\" {print $2; exit}' "
+        + shlex.quote(env_file)
+        + " 2>/dev/null || true); "
+        "if [ -z \"$image_tag\" ]; then echo 'DUNE_IMAGE_TAG is empty; cannot verify official Dune images before start' >&2; exit 1; fi; "
+        "missing_image=0; "
+        + "for repo in "
+        + official_image_repos
+        + "; do image=\"registry.funcom.com/funcom/self-hosting/${repo}:${image_tag}\"; "
+        "if ! docker image inspect \"$image\" >/dev/null 2>&1; then echo \"official Dune image is not loaded: $image\" >&2; missing_image=1; fi; "
+        "done; "
+        "if [ \"$missing_image\" -ne 0 ]; then "
+        "if [ -x ./scripts/load-images.sh ]; then echo 'loading official Dune images from Steam package because one or more required images are missing'; "
+        + f"./scripts/load-images.sh {shlex.quote(env_file)}; "
+        "else echo 'one or more official Dune images are missing and scripts/load-images.sh is unavailable' >&2; exit 1; fi; "
+        "fi; "
+    )
     shell_command = (
         "set -e; "
         + "apk add --no-cache bash iproute2 util-linux sudo >/dev/null; "
+        + ensure_official_images_shell
         + "if [ -x ./scripts/apply-official-db-patches.sh ]; then "
         + f"./scripts/apply-official-db-patches.sh {shlex.quote(env_file)}; "
         + "fi; "
+        + "case " + shlex.quote(landsraad_term_length_tuning_enabled) + " in 1|true|yes|on) "
+        + "if [ -x ./scripts/tune-landsraad-term-length.sh ]; then "
+        + f"./scripts/tune-landsraad-term-length.sh {shlex.quote(env_file)} --execute; "
+        + "else echo 'Landsraad term length tuning enabled but script missing' >&2; exit 1; fi ;; esac; "
+        + "case " + shlex.quote(landsraad_term_alignment_guard_enabled) + " in 1|true|yes|on) "
+        + "if [ -x ./scripts/validate-landsraad-term-coriolis-alignment.sh ]; then "
+        + f"./scripts/validate-landsraad-term-coriolis-alignment.sh {shlex.quote(env_file)}; "
+        + "else echo 'Landsraad term Coriolis alignment guard enabled but script missing' >&2; exit 1; fi ;; esac; "
         + "case " + shlex.quote(landsraad_goal_tuning_enabled) + " in 1|true|yes|on) "
         + "if [ -x ./scripts/tune-landsraad-goals.sh ]; then "
         + f"./scripts/tune-landsraad-goals.sh {shlex.quote(env_file)} --execute; "
@@ -557,6 +682,7 @@ def run_host_compose(services):
         + "if [ -x /workspace/scripts/full-world-partitions.sh ]; then "
         + f"/workspace/scripts/full-world-partitions.sh {shlex.quote(env_file)}; "
         + "fi; "
+        + ensure_official_images_shell
         + " ".join(shlex.quote(part) for part in compose_command)
         + "; if [ -x /workspace/scripts/seed-gateway-neighbor.sh ]; then "
         + "/workspace/scripts/seed-gateway-neighbor.sh; "
@@ -729,8 +855,17 @@ def run_host_update_check():
         "images/battlegroup/server.tar",
     ]
     load_tars = image_tars + ["images/prerequisites/igw-postgres.tar"]
+    image_repos = [
+        "seabass-server-rabbitmq",
+        "seabass-server-text-router",
+        "seabass-server-bg-director",
+        "seabass-server-gateway",
+        "seabass-server-db-utils",
+        "seabass-server",
+    ]
     image_tars_shell = " ".join(shlex.quote(item) for item in image_tars)
     load_tars_shell = " ".join(shlex.quote(item) for item in load_tars)
+    image_repos_shell = " ".join(shlex.quote(item) for item in image_repos)
     steam_dir_shell = shlex.quote(steam_dir or "")
     env_file_shell = shlex.quote(env_file)
     inline_package_ingest = (
@@ -754,7 +889,22 @@ def run_host_update_check():
         "echo 'Steam package update check could not determine a safe tag; continuing without changing DUNE_IMAGE_TAG' >&2; rm -f \"$tag_file\"; exit 0; "
         "fi; "
         "package_tag=$(printf '%s\\n' \"$tags\" | sed '/^$/d' | head -1); "
-        "if [ \"$current_tag\" = \"$package_tag\" ]; then echo 'status: current'; rm -f \"$tag_file\"; exit 0; fi; "
+        "if [ \"$current_tag\" = \"$package_tag\" ]; then "
+        "echo 'status: current'; "
+        "missing_image=0; "
+        "for repo in " + image_repos_shell + "; do "
+        "image=\"registry.funcom.com/funcom/self-hosting/${repo}:${current_tag}\"; "
+        "if ! docker image inspect \"$image\" >/dev/null 2>&1; then echo \"official Dune image is not loaded: $image\" >&2; missing_image=1; fi; "
+        "done; "
+        "if [ \"$missing_image\" -ne 0 ]; then "
+        "echo 'loading official Dune images from Steam package because one or more required images are missing'; "
+        "for rel in " + load_tars_shell + "; do "
+        "path=\"$steam_dir/$rel\"; "
+        "if [ ! -f \"$path\" ]; then echo \"missing image tar: $path\" >&2; rm -f \"$tag_file\"; exit 1; fi; "
+        "docker load -i \"$path\"; "
+        "done; "
+        "fi; "
+        "rm -f \"$tag_file\"; exit 0; fi; "
         "current_build=${current_tag%%-*}; package_build=${package_tag%%-*}; "
         "case \"$current_build:$package_build\" in *[!0-9:]*|:*|*:) ;; *) "
         "if [ \"$package_build\" -lt \"$current_build\" ]; then echo 'status: package older than current DUNE_IMAGE_TAG'; echo \"keeping current tag: $current_tag\"; rm -f \"$tag_file\"; exit 0; fi; "
@@ -976,6 +1126,7 @@ if [ "$phase" = "shutdown" ] || [ "$phase" = "stop" ]; then
   exec "$@" stop -t 30 $services
 fi
 if [ "$phase" = "start" ]; then
+  ensure_official_images_loaded
   map_watchdog_control stop
   pre_start_hygiene
   if [ -x ./scripts/seed-gateway-neighbor.sh ]; then
@@ -984,6 +1135,7 @@ if [ "$phase" = "start" ]; then
   if [ -x ./scripts/full-world-partitions.sh ]; then
     ./scripts/full-world-partitions.sh "${ENV_FILE:-.env}"
   fi
+  ensure_official_images_loaded
   "$@" up -d --force-recreate --no-deps $services
   if [ -x ./scripts/seed-gateway-neighbor.sh ]; then
     ./scripts/seed-gateway-neighbor.sh || true
@@ -996,11 +1148,13 @@ if [ "$phase" = "start" ]; then
   map_watchdog_control start
   exit 0
 fi
+ensure_official_images_loaded
 map_watchdog_control stop
 pre_start_hygiene
 if [ -x ./scripts/seed-gateway-neighbor.sh ]; then
   ./scripts/seed-gateway-neighbor.sh || true
 fi
+ensure_official_images_loaded
 "$@" up -d --force-recreate --no-deps $services
 if [ -x ./scripts/seed-gateway-neighbor.sh ]; then
   ./scripts/seed-gateway-neighbor.sh || true

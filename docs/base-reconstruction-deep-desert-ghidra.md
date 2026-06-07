@@ -3,6 +3,10 @@
 Confidence: moderate that the first lab candidate is a config/data gap, not a
 new binary branch.
 
+> **Active plan:** the sequenced diagnostic/fix plan that supersedes the
+> "stack every patch at once" posture lives in
+> [brt-deep-desert-plan.md](brt-deep-desert-plan.md). Start there.
+
 ## Ghidra Evidence
 
 Headless Ghidra was run against the existing `/tmp/ghidra-work/project`
