@@ -216,6 +216,16 @@ EOF
 chmod +x "$seed_command"
 seed_log="$tmp_dir/seed.log"
 
+cat > "$status_file" <<'EOF'
+survival=running
+heighliner-dungeon=running
+EOF
+
+cat > "$health_file" <<'EOF'
+1=t t t
+18=t t t
+EOF
+
 FAKE_RUNTIME_LOG="$log_file" \
 FAKE_RUNTIME_STATUS_FILE="$status_file" \
 FAKE_RUNTIME_HEALTH_FILE="$health_file" \
@@ -231,6 +241,42 @@ DUNE_WATCH_SEED_COMMAND="$seed_command" \
 
 if ! grep -q '^seeded$' "$seed_log"; then
   printf 'one-shot watchdog did not run neighbor seeding\n' >&2
+  exit 1
+fi
+
+cat > "$seed_command" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'start\n' >> "${FAKE_SEED_LOG:?}"
+sleep 5
+printf 'done\n' >> "${FAKE_SEED_LOG:?}"
+EOF
+chmod +x "$seed_command"
+: > "$seed_log"
+
+timeout_output="$(
+  FAKE_RUNTIME_LOG="$log_file" \
+  FAKE_RUNTIME_STATUS_FILE="$status_file" \
+  FAKE_RUNTIME_HEALTH_FILE="$health_file" \
+  FAKE_RECOVERY_LOG="$recovery_log" \
+  FAKE_SEED_LOG="$seed_log" \
+  CONTAINER_RUNTIME="$fake_runtime" \
+  COMPOSE_FILES=compose.yaml:compose.allmaps.yaml \
+  DUNE_WATCH_STARTUP_GRACE=0 \
+  DUNE_WATCH_RECOVER_COMMAND="$recover_command" \
+  DUNE_WATCH_SEED_NEIGHBORS=true \
+  DUNE_WATCH_SEED_COMMAND="$seed_command" \
+  DUNE_WATCH_SEED_TIMEOUT=1 \
+    "$repo_root/scripts/watch-maps.sh" "$env_file" --once
+)"
+
+if ! grep -q "neighbor seeding failed or timed out" <<< "$timeout_output"; then
+  printf 'one-shot watchdog did not log neighbor seeding timeout\n' >&2
+  exit 1
+fi
+
+if grep -q '^done$' "$seed_log"; then
+  printf 'neighbor seeding timeout did not stop the seed command\n' >&2
   exit 1
 fi
 

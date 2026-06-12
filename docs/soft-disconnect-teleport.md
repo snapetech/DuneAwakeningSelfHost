@@ -174,9 +174,29 @@ The current verified block primitive is timeout-shaped. Name UI and audit events
 
 The runtime patch is build-specific and process-local. It does not edit the shipped binary or config files, and it must be reapplied after Survival or Deep Desert restarts.
 
-Status as of 2026-06-01: patched live for the current build. The old
-data-pointer offsets moved in build `9bf5fbdef43a6d6d64459df973f3d252c01ab4ad`;
-the current data-pointer offsets are:
+Status as of 2026-06-10: patched live for build
+`6f8ca9ee5f3420c0b4c1ef7cefb412347bcba04b` / revision `1988751`. The current
+runtime patch offsets are:
+
+- `0x1652e898`: 30-second unsafe-location timer array pointer.
+- `0x1652e8b0`: 300-second unsafe-location timer array pointer.
+- `0x0d515424`: deadline clamp instruction, original `48 01 c1`, patched to `48 89 c1`.
+- `0x0d51587a`: timer duration reload, original `c5 fa 10 45 d4`, patched to `c5 f8 57 c0 90`.
+- `0x16530ee0`: client-visible logoff timer array pointer, live value `300 300 0 0`.
+- `0x16530f10`: client-visible logoff timer array pointer, live value `300 300 0 0`.
+- `0x16530f28`: alternate client-visible array pointer, live value `0 0 0 0`.
+
+Post-apply dry-run on `kspls0` showed all target arrays as `0 0 0 0` and both
+code patches present on `dune_server-survival-1`,
+`dune_server-deep-desert-1`, and `dune_server-deep-desert-pvp-1`. The live
+`.env` has `DUNE_LOGOFF_TIMER_RUNTIME_PATCH_ENABLED=true`, so
+`scripts/restart-post-start-health.sh`, `scripts/recover-map.sh`, and
+`scripts/start-map-with-post-hooks.sh` reapply or verify this process-local patch
+after map recovery/restart paths.
+
+Status as of 2026-06-01: patched live for build
+`9bf5fbdef43a6d6d64459df973f3d252c01ab4ad`. The old data-pointer offsets moved
+in that build; the data-pointer offsets were:
 
 - `0x16521698`: 30-second unsafe-location timer array.
 - `0x165216b0`: 300-second unsafe-location timer array.
@@ -355,10 +375,23 @@ Post-start/local host mode:
 ./scripts/patch-logoff-timers-runtime.sh --local
 ```
 
-The script guards against the wrong server build with the current expected ELF Build ID:
+The script first uses a known-offset table for the current expected ELF Build ID:
 
 ```text
-9bf5fbdef43a6d6d64459df973f3d252c01ab4ad
+6f8ca9ee5f3420c0b4c1ef7cefb412347bcba04b
+```
+
+If the running Build ID does not match the table, the script defaults to
+`DUNE_LOGOFF_TIMER_AUTO_REMAP_ENABLED=true`. It scans the live server ELF for
+the `SetLeavingGameTimer` and UI timer instruction patterns, derives the moved
+offsets, and then validates the live runtime pointers, float values, and patch
+instruction bytes before any write. If the signatures are missing, ambiguous, or
+the live validation fails, it exits without patching.
+
+Force the auto-remap path for a dry-run test with:
+
+```bash
+DUNE_LOGOFF_TIMER_BUILD_ID=auto ./scripts/patch-logoff-timers-runtime.sh --local --dry-run
 ```
 
 It defaults to these active production containers:

@@ -252,7 +252,7 @@ services:
       DuneDatabaseInterfacePSQL_DatabasePort: "5432"
       DuneDatabaseInterfacePSQL_DatabaseUser: dune
       DuneDatabaseInterfacePSQL_DatabasePassword: ${POSTGRES_DUNE_PASSWORD}
-      DuneDatabaseInterfacePSQL_DatabaseName: dune_sb_1_4_0_0
+      DuneDatabaseInterfacePSQL_DatabaseName: ${DUNE_GAME_DB_NAME:-dune_sb_1_4_0_0}
       RMQ_HTTP_TOKEN_AUTH_SECRET: ${RMQ_HTTP_TOKEN_AUTH_SECRET}
       Database__address: postgres
       Database__port: "5432"
@@ -303,7 +303,7 @@ services:
       DuneDatabaseInterfacePSQL_DatabasePort: "5432"
       DuneDatabaseInterfacePSQL_DatabaseUser: dune
       DuneDatabaseInterfacePSQL_DatabasePassword: ${POSTGRES_DUNE_PASSWORD}
-      DuneDatabaseInterfacePSQL_DatabaseName: dune_sb_1_4_0_0
+      DuneDatabaseInterfacePSQL_DatabaseName: ${DUNE_GAME_DB_NAME:-dune_sb_1_4_0_0}
       FuncomLiveServices__ServiceAuthToken: ${FLS_SECRET}
       FuncomLiveServices__RmqTlsEnabled: "true"
       FuncomLiveServices__BattlegroupAuthorizationPreset: BattlegroupInternal

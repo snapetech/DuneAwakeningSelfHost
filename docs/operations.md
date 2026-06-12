@@ -363,9 +363,13 @@ non-production lab.
 
 On hosts affected by the Docker bridge neighbor-learning failure, run the host
 systemd watchdog with `DUNE_WATCH_SEED_NEIGHBORS=true`. That makes the watchdog
-run `scripts/seed-gateway-neighbor.sh` before each recovery scan, keeping the
-known control-plane and map-to-RabbitMQ/Postgres neighbor entries warm instead
-of only seeding during startup/restart flows.
+run `scripts/seed-gateway-neighbor.sh` periodically after recovery scans,
+keeping the known control-plane and map-to-RabbitMQ/Postgres neighbor entries
+warm without putting seeding ahead of map crash detection. Neighbor seeding is
+best-effort, runs no more often than `DUNE_WATCH_SEED_INTERVAL`, default `300`
+seconds, and is bounded by `DUNE_WATCH_SEED_TIMEOUT`, default `90` seconds, so
+a slow Docker inspection or namespace command cannot stall map recovery
+indefinitely.
 
 By default the watchdog does not recover solely on `farm_state.ready=false`, because some live builds can report `ready=false` after the map log has reached `Server farm is READY`. To make readiness strict, set:
 

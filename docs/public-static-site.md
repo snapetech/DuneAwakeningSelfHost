@@ -62,8 +62,12 @@ DUNE_ROOT=/opt/DuneAwakeningSelfHost
 STATIC_DIR=/srv/dash-public-site
 INDEX_FILE=/srv/dash-public-site/index.html
 STATUS_FILE=/srv/dash-public-site/status.html
-DUNE_DATABASE=dune_sb_1_4_0_0
 ```
+
+The public-site renderer reads the live game database and compose-file settings
+from the DASH game env file, defaulting to `$DUNE_ROOT/.env`. Do not duplicate
+`DUNE_DATABASE` in `/etc/dune-public-site.env`; that can drift after official
+database upgrades.
 
 Customize public text:
 

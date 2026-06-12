@@ -38,7 +38,6 @@ for compose_file in "${compose_files[@]}"; do
   compose+=(-f "$compose_file")
 done
 compose+=(--env-file "$env_file")
-db=dune_sb_1_4_0_0
 
 if [[ ! -f "$env_file" ]]; then
   printf 'env file not found: %s\n' "$env_file" >&2
@@ -60,6 +59,10 @@ env_value() {
 world_unique_name="$(env_value WORLD_UNIQUE_NAME)"
 dune_fls_env="$(env_value DUNE_FLS_ENV)"
 game_rmq_public_host="$(env_value GAME_RMQ_PUBLIC_HOST)"
+db="${DUNE_GAME_DB_NAME:-$(env_value DUNE_GAME_DB_NAME)}"
+db="${db:-${DUNE_DATABASE:-$(env_value DUNE_DATABASE)}}"
+db="${db:-${DUNE_DB_NAME:-$(env_value DUNE_DB_NAME)}}"
+db="${db:-dune_sb_1_4_0_0}"
 
 if [[ "$dry_run" == true ]]; then
   printf 'backup dry run OK\n'

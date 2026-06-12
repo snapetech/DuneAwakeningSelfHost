@@ -27,6 +27,8 @@ Environment:
   DUNE_WATCH_RECOVER_COMMAND Recovery command. Default: scripts/recover-map.sh
   DUNE_WATCH_SEED_NEIGHBORS Seed known Docker bridge neighbor entries. Default: false
   DUNE_WATCH_SEED_COMMAND   Neighbor seed command. Default: scripts/seed-gateway-neighbor.sh
+  DUNE_WATCH_SEED_INTERVAL  Seconds between neighbor seeding attempts. Default: 300
+  DUNE_WATCH_SEED_TIMEOUT   Max seconds for neighbor seeding. Default: 90
   DUNE_WORLD_PARTITION_COUNT Monitored partition ceiling. Default: 30; set 31
                              only when the second Deep Desert is intentionally online.
 USAGE
@@ -67,6 +69,8 @@ require_ready="${DUNE_WATCH_REQUIRE_READY:-false}"
 recover_command="${DUNE_WATCH_RECOVER_COMMAND:-$script_dir/recover-map.sh}"
 seed_neighbors="${DUNE_WATCH_SEED_NEIGHBORS:-false}"
 seed_command="${DUNE_WATCH_SEED_COMMAND:-$script_dir/seed-gateway-neighbor.sh}"
+seed_interval="${DUNE_WATCH_SEED_INTERVAL:-300}"
+seed_timeout="${DUNE_WATCH_SEED_TIMEOUT:-90}"
 
 read_env() {
   local key="$1" value
@@ -77,6 +81,10 @@ read_env() {
 
 partition_count="${DUNE_WORLD_PARTITION_COUNT:-$(read_env DUNE_WORLD_PARTITION_COUNT)}"
 partition_count="${partition_count:-30}"
+db="${DUNE_GAME_DB_NAME:-$(read_env DUNE_GAME_DB_NAME)}"
+db="${db:-${DUNE_DATABASE:-$(read_env DUNE_DATABASE)}}"
+db="${db:-${DUNE_DB_NAME:-$(read_env DUNE_DB_NAME)}}"
+db="${db:-dune_sb_1_4_0_0}"
 case "$partition_count" in
   30|31) ;;
   *)
@@ -85,8 +93,8 @@ case "$partition_count" in
     ;;
 esac
 
-if [[ ! "$interval" =~ ^[0-9]+$ || ! "$recovery_wait" =~ ^[0-9]+$ || ! "$cooldown" =~ ^[0-9]+$ || ! "$startup_grace" =~ ^[0-9]+$ ]]; then
-  printf 'DUNE_WATCH_INTERVAL, DUNE_WATCH_RECOVERY_WAIT, DUNE_WATCH_COOLDOWN, and DUNE_WATCH_STARTUP_GRACE must be numeric\n' >&2
+if [[ ! "$interval" =~ ^[0-9]+$ || ! "$recovery_wait" =~ ^[0-9]+$ || ! "$cooldown" =~ ^[0-9]+$ || ! "$startup_grace" =~ ^[0-9]+$ || ! "$seed_interval" =~ ^[0-9]+$ || ! "$seed_timeout" =~ ^[0-9]+$ ]]; then
+  printf 'DUNE_WATCH_INTERVAL, DUNE_WATCH_RECOVERY_WAIT, DUNE_WATCH_COOLDOWN, DUNE_WATCH_STARTUP_GRACE, DUNE_WATCH_SEED_INTERVAL, and DUNE_WATCH_SEED_TIMEOUT must be numeric\n' >&2
   exit 2
 fi
 
@@ -133,6 +141,7 @@ MAP_PARTITIONS=(
 )
 
 declare -A LAST_RECOVERY=()
+last_seed=0
 
 log() {
   printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"
@@ -183,7 +192,7 @@ container_age_seconds() {
 partition_health() {
   local partition_id="$1"
 
-  "${compose[@]}" exec -T postgres psql -U dune -d dune_sb_1_4_0_0 -Atc "
+  "${compose[@]}" exec -T postgres psql -U dune -d "$db" -Atc "
     select
       coalesce(fs.ready, false) || ' ' ||
       coalesce(fs.alive, false) || ' ' ||
@@ -266,9 +275,40 @@ seed_network_neighbors() {
     return
   fi
 
+  if (( seed_timeout > 0 )) && command -v timeout >/dev/null 2>&1; then
+    set +e
+    timeout --kill-after=5s "${seed_timeout}s" env CONTAINER_RUNTIME="$container_runtime" "$seed_command" >/dev/null
+    rc=$?
+    set -e
+    if (( rc != 0 )); then
+      log "neighbor seeding failed or timed out: command=$seed_command rc=$rc timeout=${seed_timeout}s"
+    fi
+    return
+  fi
+
   if ! CONTAINER_RUNTIME="$container_runtime" "$seed_command" >/dev/null; then
     log "neighbor seeding failed: command=$seed_command"
   fi
+}
+
+maybe_seed_network_neighbors() {
+  local now
+
+  if [[ "$mode" == "--status" || "$mode" == "--dry-run" ]]; then
+    return
+  fi
+
+  if [[ "$mode" == "--once" ]]; then
+    seed_network_neighbors
+    return
+  fi
+
+  now="$(date +%s)"
+  if (( last_seed > 0 && seed_interval > 0 && now - last_seed < seed_interval )); then
+    return
+  fi
+  last_seed="$now"
+  seed_network_neighbors
 }
 
 wait_if_paused() {
@@ -338,10 +378,8 @@ check_once() {
 
 while true; do
   wait_if_paused
-  if [[ "$mode" != "--status" && "$mode" != "--dry-run" ]]; then
-    seed_network_neighbors
-  fi
   check_once
+  maybe_seed_network_neighbors
   if [[ "$mode" == "--once" || "$mode" == "--status" || "$mode" == "--dry-run" ]]; then
     exit 0
   fi

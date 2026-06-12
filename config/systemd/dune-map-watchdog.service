@@ -12,6 +12,8 @@ Environment=DUNE_WATCH_COOLDOWN=300
 Environment=DUNE_WATCH_STARTUP_GRACE=300
 Environment=DUNE_WATCH_LOCK_DIR=/tmp/dune-map-watchdog.lock
 Environment=DUNE_WATCH_SEED_NEIGHBORS=true
+Environment=DUNE_WATCH_SEED_INTERVAL=300
+Environment=DUNE_WATCH_SEED_TIMEOUT=90
 ExecStart=/home/keith/Documents/code/DuneAwakeningSelfHost/scripts/watch-maps.sh /home/keith/Documents/code/DuneAwakeningSelfHost/.env
 Restart=always
 RestartSec=10

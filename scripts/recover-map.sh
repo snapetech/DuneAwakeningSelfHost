@@ -46,7 +46,23 @@ for compose_file in "${compose_files[@]}"; do
   compose+=(-f "$compose_file")
 done
 compose+=(--env-file "$env_file")
-db=dune_sb_1_4_0_0
+
+env_value() {
+  local key="$1"
+  awk -F= -v key="$key" '
+    $0 ~ "^[[:space:]]*" key "=" {
+      sub(/^[^=]*=/, "")
+      gsub(/^["'\''"]|["'\''"]$/, "")
+      print
+      exit
+    }
+  ' "$env_file" 2>/dev/null
+}
+
+db="${DUNE_GAME_DB_NAME:-$(env_value DUNE_GAME_DB_NAME)}"
+db="${db:-${DUNE_DATABASE:-$(env_value DUNE_DATABASE)}}"
+db="${db:-${DUNE_DB_NAME:-$(env_value DUNE_DB_NAME)}}"
+db="${db:-dune_sb_1_4_0_0}"
 
 psql() {
   "${compose[@]}" exec -T postgres psql -U dune -d "$db" "$@"

@@ -12,15 +12,10 @@ import sys
 
 DUNE_ROOT = pathlib.Path(os.environ.get("DUNE_ROOT", "/opt/DuneAwakeningSelfHost"))
 STATIC_DIR = pathlib.Path(os.environ.get("STATIC_DIR", "/srv/dash-public-site"))
-DATABASE = os.environ.get("DUNE_DATABASE", "dune_sb_1_4_0_0")
 WIDTH = 1600
 HEIGHT = 1600
 PUBLIC_VIEWBOX_WIDTH = 2133.333
 PUBLIC_X_SCALE = PUBLIC_VIEWBOX_WIDTH / WIDTH
-PEAKS_FILE = pathlib.Path(os.environ.get(
-    "DUNE_PLAYER_PEAKS_FILE",
-    str(DUNE_ROOT / "backups" / "admin-panel" / "player-peaks.json"),
-))
 
 
 def env_file_values(path):
@@ -36,17 +31,54 @@ def env_file_values(path):
     return values
 
 
-ENV = env_file_values(DUNE_ROOT / ".env")
+def resolved_game_env_file():
+    raw = os.environ.get("DUNE_ENV_FILE") or os.environ.get("ENV_FILE") or ".env"
+    path = pathlib.Path(raw)
+    if not path.is_absolute():
+        path = DUNE_ROOT / path
+    return path
+
+
+GAME_ENV_FILE = resolved_game_env_file()
+ENV = env_file_values(GAME_ENV_FILE)
+
+
+def public_env_value(key, default=""):
+    return os.environ.get(key) or ENV.get(key) or default
+
+
+def game_env_value(*keys, default=""):
+    for key in keys:
+        value = ENV.get(key)
+        if value:
+            return value
+    for key in keys:
+        value = os.environ.get(key)
+        if value:
+            return value
+    return default
+
+
+DATABASE = game_env_value(
+    "DUNE_GAME_DB_NAME",
+    "DUNE_DATABASE",
+    "DUNE_DB_NAME",
+    default="dune_sb_1_4_0_0",
+)
+PEAKS_FILE = pathlib.Path(public_env_value(
+    "DUNE_PLAYER_PEAKS_FILE",
+    str(DUNE_ROOT / "backups" / "admin-panel" / "player-peaks.json"),
+))
 
 
 def bool_env(key, default):
-    value = ENV.get(key, os.environ.get(key, default))
+    value = public_env_value(key, default)
     return str(value).lower() not in ("0", "false", "no", "off")
 
 
 def float_env(key, default):
     try:
-        return float(ENV.get(key, os.environ.get(key, default)))
+        return float(public_env_value(key, default))
     except ValueError:
         return float(default)
 
@@ -65,12 +97,41 @@ CAL = {
 }
 
 
+def resolved_compose_files():
+    explicit = game_env_value("COMPOSE_FILES")
+    if explicit:
+        return [item for item in explicit.split(":") if item]
+
+    script = DUNE_ROOT / "scripts" / "compose-files.sh"
+    if script.exists() and os.access(script, os.X_OK):
+        try:
+            result = subprocess.run(
+                [str(script), str(GAME_ENV_FILE)],
+                cwd=DUNE_ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+                check=False,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return [item for item in result.stdout.strip().splitlines()[-1].split(":") if item]
+        except Exception:
+            pass
+
+    default_files = game_env_value("DUNE_DEFAULT_COMPOSE_FILES", default="compose.yaml:compose.allmaps.yaml")
+    return [item for item in default_files.split(":") if item]
+
+
+COMPOSE_FILES = resolved_compose_files()
+
+
 def compose_psql(sql):
-    cmd = [
-        "docker",
-        "compose",
-        "--env-file",
-        ".env",
+    cmd = ["docker", "compose"]
+    for compose_file in COMPOSE_FILES:
+        cmd.extend(["-f", compose_file])
+    cmd.extend([
+        "--env-file", str(GAME_ENV_FILE),
         "exec",
         "-T",
         "postgres",
@@ -85,7 +146,7 @@ def compose_psql(sql):
         "-A",
         "-c",
         "copy (" + sql + ") to stdout",
-    ]
+    ])
     return subprocess.check_output(cmd, cwd=DUNE_ROOT, text=True, timeout=20)
 
 

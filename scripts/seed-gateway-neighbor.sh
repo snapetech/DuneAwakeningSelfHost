@@ -17,6 +17,10 @@ gateway_ip="${GATEWAY_IP:-172.31.240.40}"
 gateway_static_mac="${GATEWAY_MAC_ADDRESS:-02:42:ac:1f:f0:28}"
 bridge_ip="${DUNE_BRIDGE_IP:-172.31.240.1}"
 bridge_mac="${DUNE_BRIDGE_MAC_ADDRESS:-}"
+declare -A container_pid_cache=()
+declare -A container_ip_cache=()
+declare -A container_mac_cache=()
+declare -A pid_dev_cache=()
 
 run_root() {
   if [[ "$(id -u)" -eq 0 ]]; then
@@ -27,21 +31,44 @@ run_root() {
 }
 
 container_pid() {
-  "$runtime" inspect -f '{{.State.Pid}}' "$1"
+  local container="$1"
+  if [[ ${container_pid_cache[$container]+set} ]]; then
+    printf '%s\n' "${container_pid_cache[$container]}"
+    return
+  fi
+  container_pid_cache[$container]="$("$runtime" inspect -f '{{.State.Pid}}' "$container")"
+  printf '%s\n' "${container_pid_cache[$container]}"
 }
 
 container_mac() {
-  "$runtime" inspect -f '{{range .NetworkSettings.Networks}}{{.MacAddress}}{{end}}' "$1"
+  local container="$1"
+  if [[ ${container_mac_cache[$container]+set} ]]; then
+    printf '%s\n' "${container_mac_cache[$container]}"
+    return
+  fi
+  container_mac_cache[$container]="$("$runtime" inspect -f '{{range .NetworkSettings.Networks}}{{.MacAddress}}{{end}}' "$container")"
+  printf '%s\n' "${container_mac_cache[$container]}"
 }
 
 container_ip() {
-  "$runtime" inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$1"
+  local container="$1"
+  if [[ ${container_ip_cache[$container]+set} ]]; then
+    printf '%s\n' "${container_ip_cache[$container]}"
+    return
+  fi
+  container_ip_cache[$container]="$("$runtime" inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$container")"
+  printf '%s\n' "${container_ip_cache[$container]}"
 }
 
 container_dev() {
   local pid="$1"
-  run_root nsenter -t "$pid" -n ip route show default 2>/dev/null \
-    | awk '{for (i=1; i<=NF; i++) if ($i == "dev") {print $(i+1); exit}}'
+  if [[ ${pid_dev_cache[$pid]+set} ]]; then
+    printf '%s\n' "${pid_dev_cache[$pid]}"
+    return
+  fi
+  pid_dev_cache[$pid]="$(run_root nsenter -t "$pid" -n ip route show default 2>/dev/null \
+    | awk '{for (i=1; i<=NF; i++) if ($i == "dev") {print $(i+1); exit}}')"
+  printf '%s\n' "${pid_dev_cache[$pid]}"
 }
 
 is_running() {
@@ -118,7 +145,7 @@ seed_pair() {
   local target_mac
 
   source_pid="$(container_pid "$source" 2>/dev/null || true)"
-  target_ip="$("$runtime" inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$target" 2>/dev/null || true)"
+  target_ip="$(container_ip "$target" 2>/dev/null || true)"
   target_mac="$(container_mac "$target" 2>/dev/null || true)"
 
   if [[ -n "$source_pid" && "$source_pid" != "0" && -n "$target_ip" && -n "$target_mac" ]]; then

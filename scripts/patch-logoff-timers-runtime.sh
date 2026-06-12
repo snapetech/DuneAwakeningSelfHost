@@ -3,7 +3,8 @@ set -euo pipefail
 
 REMOTE_HOST="${DUNE_CURRENT_HOST:-kspls0}"
 RUN_LOCAL=false
-EXPECTED_BUILD_ID="${DUNE_LOGOFF_TIMER_BUILD_ID:-caebf04f4447a65da2e3df7a1a6b1593937af793}"
+EXPECTED_BUILD_ID="${DUNE_LOGOFF_TIMER_BUILD_ID:-6f8ca9ee5f3420c0b4c1ef7cefb412347bcba04b}"
+AUTO_REMAP_ENABLED="${DUNE_LOGOFF_TIMER_AUTO_REMAP_ENABLED:-true}"
 TARGET_VALUE="${DUNE_LOGOFF_TIMER_VALUE:-0.0}"
 TARGET_CONTAINERS="${DUNE_LOGOFF_TIMER_CONTAINERS:-dune_server-survival-1 dune_server-deep-desert-1 dune_server-deep-desert-pvp-1}"
 
@@ -26,31 +27,57 @@ case "$EXPECTED_BUILD_ID" in
     DEFAULT_UI_VALUE_B_OFFSET="0x16520b10"
     DEFAULT_UI_VALUE_C_OFFSET="0x16520b28"
     ;;
+  6f8ca9ee5f3420c0b4c1ef7cefb412347bcba04b)
+    DEFAULT_VALUE_A_OFFSET="0x1652e898"
+    DEFAULT_VALUE_B_OFFSET="0x1652e8b0"
+    DEFAULT_DEADLINE_CLAMP_OFFSET="0xd515424"
+    DEFAULT_TIMER_DURATION_ZERO_OFFSET="0xd51587a"
+    DEFAULT_UI_VALUE_A_OFFSET="0x16530ee0"
+    DEFAULT_UI_VALUE_B_OFFSET="0x16530f10"
+    DEFAULT_UI_VALUE_C_OFFSET="0x16530f28"
+    ;;
   *)
-    : "${DUNE_LOGOFF_TIMER_VALUE_A_OFFSET:?unknown build: set DUNE_LOGOFF_TIMER_VALUE_A_OFFSET}"
-    : "${DUNE_LOGOFF_TIMER_VALUE_B_OFFSET:?unknown build: set DUNE_LOGOFF_TIMER_VALUE_B_OFFSET}"
-    : "${DUNE_LOGOFF_TIMER_DEADLINE_CLAMP_OFFSET:?unknown build: set DUNE_LOGOFF_TIMER_DEADLINE_CLAMP_OFFSET}"
-    : "${DUNE_LOGOFF_TIMER_DURATION_ZERO_OFFSET:?unknown build: set DUNE_LOGOFF_TIMER_DURATION_ZERO_OFFSET}"
-    : "${DUNE_LOGOFF_TIMER_UI_VALUE_A_OFFSET:?unknown build: set DUNE_LOGOFF_TIMER_UI_VALUE_A_OFFSET}"
-    : "${DUNE_LOGOFF_TIMER_UI_VALUE_B_OFFSET:?unknown build: set DUNE_LOGOFF_TIMER_UI_VALUE_B_OFFSET}"
-    : "${DUNE_LOGOFF_TIMER_UI_VALUE_C_OFFSET:?unknown build: set DUNE_LOGOFF_TIMER_UI_VALUE_C_OFFSET}"
-    DEFAULT_VALUE_A_OFFSET="$DUNE_LOGOFF_TIMER_VALUE_A_OFFSET"
-    DEFAULT_VALUE_B_OFFSET="$DUNE_LOGOFF_TIMER_VALUE_B_OFFSET"
-    DEFAULT_DEADLINE_CLAMP_OFFSET="$DUNE_LOGOFF_TIMER_DEADLINE_CLAMP_OFFSET"
-    DEFAULT_TIMER_DURATION_ZERO_OFFSET="$DUNE_LOGOFF_TIMER_DURATION_ZERO_OFFSET"
-    DEFAULT_UI_VALUE_A_OFFSET="$DUNE_LOGOFF_TIMER_UI_VALUE_A_OFFSET"
-    DEFAULT_UI_VALUE_B_OFFSET="$DUNE_LOGOFF_TIMER_UI_VALUE_B_OFFSET"
-    DEFAULT_UI_VALUE_C_OFFSET="$DUNE_LOGOFF_TIMER_UI_VALUE_C_OFFSET"
+    if [[ -n "${DUNE_LOGOFF_TIMER_VALUE_A_OFFSET:-}" &&
+          -n "${DUNE_LOGOFF_TIMER_VALUE_B_OFFSET:-}" &&
+          -n "${DUNE_LOGOFF_TIMER_DEADLINE_CLAMP_OFFSET:-}" &&
+          -n "${DUNE_LOGOFF_TIMER_DURATION_ZERO_OFFSET:-}" &&
+          -n "${DUNE_LOGOFF_TIMER_UI_VALUE_A_OFFSET:-}" &&
+          -n "${DUNE_LOGOFF_TIMER_UI_VALUE_B_OFFSET:-}" &&
+          -n "${DUNE_LOGOFF_TIMER_UI_VALUE_C_OFFSET:-}" ]]; then
+      DEFAULT_VALUE_A_OFFSET="$DUNE_LOGOFF_TIMER_VALUE_A_OFFSET"
+      DEFAULT_VALUE_B_OFFSET="$DUNE_LOGOFF_TIMER_VALUE_B_OFFSET"
+      DEFAULT_DEADLINE_CLAMP_OFFSET="$DUNE_LOGOFF_TIMER_DEADLINE_CLAMP_OFFSET"
+      DEFAULT_TIMER_DURATION_ZERO_OFFSET="$DUNE_LOGOFF_TIMER_DURATION_ZERO_OFFSET"
+      DEFAULT_UI_VALUE_A_OFFSET="$DUNE_LOGOFF_TIMER_UI_VALUE_A_OFFSET"
+      DEFAULT_UI_VALUE_B_OFFSET="$DUNE_LOGOFF_TIMER_UI_VALUE_B_OFFSET"
+      DEFAULT_UI_VALUE_C_OFFSET="$DUNE_LOGOFF_TIMER_UI_VALUE_C_OFFSET"
+    elif [[ "$AUTO_REMAP_ENABLED" =~ ^([Tt][Rr][Uu][Ee]|1|[Yy][Ee][Ss]|[Yy])$ ]]; then
+      DEFAULT_VALUE_A_OFFSET=""
+      DEFAULT_VALUE_B_OFFSET=""
+      DEFAULT_DEADLINE_CLAMP_OFFSET=""
+      DEFAULT_TIMER_DURATION_ZERO_OFFSET=""
+      DEFAULT_UI_VALUE_A_OFFSET=""
+      DEFAULT_UI_VALUE_B_OFFSET=""
+      DEFAULT_UI_VALUE_C_OFFSET=""
+    else
+      : "${DUNE_LOGOFF_TIMER_VALUE_A_OFFSET:?unknown build: set DUNE_LOGOFF_TIMER_VALUE_A_OFFSET}"
+      : "${DUNE_LOGOFF_TIMER_VALUE_B_OFFSET:?unknown build: set DUNE_LOGOFF_TIMER_VALUE_B_OFFSET}"
+      : "${DUNE_LOGOFF_TIMER_DEADLINE_CLAMP_OFFSET:?unknown build: set DUNE_LOGOFF_TIMER_DEADLINE_CLAMP_OFFSET}"
+      : "${DUNE_LOGOFF_TIMER_DURATION_ZERO_OFFSET:?unknown build: set DUNE_LOGOFF_TIMER_DURATION_ZERO_OFFSET}"
+      : "${DUNE_LOGOFF_TIMER_UI_VALUE_A_OFFSET:?unknown build: set DUNE_LOGOFF_TIMER_UI_VALUE_A_OFFSET}"
+      : "${DUNE_LOGOFF_TIMER_UI_VALUE_B_OFFSET:?unknown build: set DUNE_LOGOFF_TIMER_UI_VALUE_B_OFFSET}"
+      : "${DUNE_LOGOFF_TIMER_UI_VALUE_C_OFFSET:?unknown build: set DUNE_LOGOFF_TIMER_UI_VALUE_C_OFFSET}"
+    fi
     ;;
 esac
 
-VALUE_A_OFFSET="${DUNE_LOGOFF_TIMER_VALUE_A_OFFSET:-$DEFAULT_VALUE_A_OFFSET}"
-VALUE_B_OFFSET="${DUNE_LOGOFF_TIMER_VALUE_B_OFFSET:-$DEFAULT_VALUE_B_OFFSET}"
-DEADLINE_CLAMP_OFFSET="${DUNE_LOGOFF_TIMER_DEADLINE_CLAMP_OFFSET:-$DEFAULT_DEADLINE_CLAMP_OFFSET}"
-TIMER_DURATION_ZERO_OFFSET="${DUNE_LOGOFF_TIMER_DURATION_ZERO_OFFSET:-$DEFAULT_TIMER_DURATION_ZERO_OFFSET}"
-UI_VALUE_A_OFFSET="${DUNE_LOGOFF_TIMER_UI_VALUE_A_OFFSET:-$DEFAULT_UI_VALUE_A_OFFSET}"
-UI_VALUE_B_OFFSET="${DUNE_LOGOFF_TIMER_UI_VALUE_B_OFFSET:-$DEFAULT_UI_VALUE_B_OFFSET}"
-UI_VALUE_C_OFFSET="${DUNE_LOGOFF_TIMER_UI_VALUE_C_OFFSET:-$DEFAULT_UI_VALUE_C_OFFSET}"
+VALUE_A_OFFSET="${DUNE_LOGOFF_TIMER_VALUE_A_OFFSET:-${DEFAULT_VALUE_A_OFFSET:-}}"
+VALUE_B_OFFSET="${DUNE_LOGOFF_TIMER_VALUE_B_OFFSET:-${DEFAULT_VALUE_B_OFFSET:-}}"
+DEADLINE_CLAMP_OFFSET="${DUNE_LOGOFF_TIMER_DEADLINE_CLAMP_OFFSET:-${DEFAULT_DEADLINE_CLAMP_OFFSET:-}}"
+TIMER_DURATION_ZERO_OFFSET="${DUNE_LOGOFF_TIMER_DURATION_ZERO_OFFSET:-${DEFAULT_TIMER_DURATION_ZERO_OFFSET:-}}"
+UI_VALUE_A_OFFSET="${DUNE_LOGOFF_TIMER_UI_VALUE_A_OFFSET:-${DEFAULT_UI_VALUE_A_OFFSET:-}}"
+UI_VALUE_B_OFFSET="${DUNE_LOGOFF_TIMER_UI_VALUE_B_OFFSET:-${DEFAULT_UI_VALUE_B_OFFSET:-}}"
+UI_VALUE_C_OFFSET="${DUNE_LOGOFF_TIMER_UI_VALUE_C_OFFSET:-${DEFAULT_UI_VALUE_C_OFFSET:-}}"
 
 MODE="apply"
 while [[ $# -gt 0 ]]; do
@@ -85,6 +112,7 @@ env_command=(
   "UI_VALUE_C_OFFSET='$UI_VALUE_C_OFFSET'"
   "TARGET_VALUE='$TARGET_VALUE'"
   "TARGET_CONTAINERS='$TARGET_CONTAINERS'"
+  "AUTO_REMAP_ENABLED='$AUTO_REMAP_ENABLED'"
   "MODE='$MODE'"
   "bash -s"
 )
@@ -99,6 +127,7 @@ local_env=(
   "UI_VALUE_C_OFFSET=$UI_VALUE_C_OFFSET"
   "TARGET_VALUE=$TARGET_VALUE"
   "TARGET_CONTAINERS=$TARGET_CONTAINERS"
+  "AUTO_REMAP_ENABLED=$AUTO_REMAP_ENABLED"
   "MODE=$MODE"
 )
 
@@ -110,6 +139,309 @@ fi
 
 "${runner[@]}" <<'REMOTE'
 set -euo pipefail
+
+truthy() {
+  [[ "${1:-}" =~ ^([Tt][Rr][Uu][Ee]|1|[Yy][Ee][Ss]|[Yy])$ ]]
+}
+
+offsets_complete() {
+  [[ -n "${VALUE_A_OFFSET:-}" &&
+     -n "${VALUE_B_OFFSET:-}" &&
+     -n "${DEADLINE_CLAMP_OFFSET:-}" &&
+     -n "${TIMER_DURATION_ZERO_OFFSET:-}" &&
+     -n "${UI_VALUE_A_OFFSET:-}" &&
+     -n "${UI_VALUE_B_OFFSET:-}" &&
+     -n "${UI_VALUE_C_OFFSET:-}" ]]
+}
+
+auto_remap_offsets() {
+  local exe_path="$1"
+
+  sudo -n python3 - "$exe_path" <<'PY'
+import re
+import struct
+import sys
+
+path = sys.argv[1]
+data = open(path, "rb").read()
+
+if data[:4] != b"\x7fELF" or data[4] != 2 or data[5] != 1:
+    raise SystemExit("not an ELF64 little-endian binary")
+
+eh = struct.unpack_from("<16sHHIQQQIHHHHHH", data, 0)
+e_shoff, e_shentsize, e_shnum, e_shstrndx = eh[6], eh[11], eh[12], eh[13]
+raw_sections = []
+for idx in range(e_shnum):
+    raw_sections.append(struct.unpack_from("<IIQQQQIIQQ", data, e_shoff + idx * e_shentsize))
+
+shstr = raw_sections[e_shstrndx]
+shstr_data = data[shstr[4]:shstr[4] + shstr[5]]
+sections = {}
+for section in raw_sections:
+    name_offset = section[0]
+    name_end = shstr_data.find(b"\0", name_offset)
+    name = shstr_data[name_offset:name_end].decode("utf-8", "replace")
+    sections[name] = {
+        "type": section[1],
+        "addr": section[3],
+        "off": section[4],
+        "size": section[5],
+    }
+
+def s32(chunk):
+    return struct.unpack("<i", chunk)[0]
+
+def va_to_file_offset(va):
+    for section in sections.values():
+        if section["type"] == 8:
+            continue
+        if section["addr"] <= va < section["addr"] + section["size"]:
+            return section["off"] + (va - section["addr"])
+    return None
+
+def rip_target(insn_va, insn_len, disp):
+    return insn_va + insn_len + disp
+
+text = sections.get(".text")
+if not text:
+    raise SystemExit("missing .text section")
+
+text_bytes = data[text["off"]:text["off"] + text["size"]]
+text_va = text["addr"]
+
+backend_prefix = bytes.fromhex(
+    "55 48 89 e5 41 57 41 56 41 55 41 54 53 "
+    "48 81 ec a8 02 00 00 49 89 d7 49 89 f5 48 89 fb e8"
+)
+deadline_context = bytes.fromhex("c4 e1 fb 2c c8 48 01 c1")
+duration_reload = bytes.fromhex("c5 fa 10 45 d4")
+lea_r15_rip = bytes.fromhex("4c 8d 3d")
+
+backend_candidates = []
+search_at = 0
+while True:
+    idx = text_bytes.find(backend_prefix, search_at)
+    if idx < 0:
+        break
+
+    func_va = text_va + idx
+    window = text_bytes[idx:idx + 0x800]
+    deadline_rel = window.find(deadline_context)
+    duration_rels = [m.start() for m in re.finditer(re.escape(duration_reload), window)]
+
+    call_off = idx + len(backend_prefix) - 1
+    call_rel = s32(text_bytes[call_off + 1:call_off + 5])
+    accessor_va = text_va + call_off + 5 + call_rel
+    accessor_off = va_to_file_offset(accessor_va)
+
+    if deadline_rel >= 0 and duration_rels and accessor_off is not None:
+        accessor = data[accessor_off:accessor_off + 0x90]
+        leas = []
+        lea_at = 0
+        while True:
+            lea_rel = accessor.find(lea_r15_rip, lea_at)
+            if lea_rel < 0:
+                break
+            lea_va = accessor_va + lea_rel
+            target = rip_target(lea_va, 7, s32(accessor[lea_rel + 3:lea_rel + 7]))
+            leas.append(target)
+            lea_at = lea_rel + 1
+
+        if len(leas) >= 2:
+            backend_candidates.append({
+                "value_a": leas[1],
+                "value_b": leas[0],
+                "deadline": func_va + deadline_rel + 5,
+                "duration": func_va + duration_rels[-1],
+            })
+
+    search_at = idx + 1
+
+if len(backend_candidates) != 1:
+    raise SystemExit(f"expected one backend timer candidate, found {len(backend_candidates)}")
+
+mov_rbx_rip = bytes.fromhex("48 8b 1d")
+ui_load_context = bytes.fromhex("31 c0 c5 fa 10 04 83")
+ui_candidates = []
+search_at = 0
+while True:
+    idx = text_bytes.find(mov_rbx_rip, search_at)
+    if idx < 0:
+        break
+
+    local = text_bytes[idx:idx + 0x100]
+    if len(local) < 0x80 or local[7] != 0xE8 or local.find(ui_load_context, 0, 0x40) < 0:
+        search_at = idx + 1
+        continue
+
+    movs = []
+    mov_at = 0
+    while True:
+        mov_rel = local.find(mov_rbx_rip, mov_at)
+        if mov_rel < 0 or mov_rel >= 0x80:
+            break
+        mov_va = text_va + idx + mov_rel
+        target = rip_target(mov_va, 7, s32(local[mov_rel + 3:mov_rel + 7]))
+        movs.append((mov_rel, target))
+        mov_at = mov_rel + 1
+
+    if len(movs) >= 3:
+        ui_a = movs[0][1]
+        ui_c = movs[1][1]
+        ui_b = movs[2][1]
+        if ui_a < ui_b < ui_c and ui_c - ui_a <= 0x200:
+            ui_candidates.append({
+                "ui_a": ui_a,
+                "ui_b": ui_b,
+                "ui_c": ui_c,
+            })
+
+    search_at = idx + 1
+
+if len(ui_candidates) != 1:
+    raise SystemExit(f"expected one UI timer candidate, found {len(ui_candidates)}")
+
+backend = backend_candidates[0]
+ui = ui_candidates[0]
+print(f"VALUE_A_OFFSET=0x{backend['value_a']:x}")
+print(f"VALUE_B_OFFSET=0x{backend['value_b']:x}")
+print(f"DEADLINE_CLAMP_OFFSET=0x{backend['deadline']:x}")
+print(f"TIMER_DURATION_ZERO_OFFSET=0x{backend['duration']:x}")
+print(f"UI_VALUE_A_OFFSET=0x{ui['ui_a']:x}")
+print(f"UI_VALUE_B_OFFSET=0x{ui['ui_b']:x}")
+print(f"UI_VALUE_C_OFFSET=0x{ui['ui_c']:x}")
+PY
+}
+
+resolve_offsets_for_build() {
+  local container="$1"
+  local exe_path="$2"
+  local build_id="$3"
+  local remap_output
+
+  if [[ "$build_id" == "$EXPECTED_BUILD_ID" ]] && offsets_complete; then
+    return
+  fi
+
+  if ! truthy "$AUTO_REMAP_ENABLED"; then
+    if [[ "$build_id" != "$EXPECTED_BUILD_ID" ]]; then
+      echo "$container: refusing build $build_id; expected $EXPECTED_BUILD_ID" >&2
+    else
+      echo "$container: missing logoff timer offsets and auto-remap is disabled" >&2
+    fi
+    exit 1
+  fi
+
+  if ! remap_output="$(auto_remap_offsets "$exe_path")"; then
+    echo "$container: auto-remap failed for build $build_id" >&2
+    exit 1
+  fi
+
+  eval "$remap_output"
+  EXPECTED_BUILD_ID="$build_id"
+  echo "$container: auto-remapped logoff timer offsets for build $build_id: value_a=$VALUE_A_OFFSET value_b=$VALUE_B_OFFSET clamp=$DEADLINE_CLAMP_OFFSET duration_zero=$TIMER_DURATION_ZERO_OFFSET ui=$UI_VALUE_A_OFFSET,$UI_VALUE_B_OFFSET,$UI_VALUE_C_OFFSET"
+}
+
+validate_patch_targets() {
+  local pid="$1"
+  local addr_a="$2"
+  local addr_b="$3"
+  local addr_ui_a="$4"
+  local addr_ui_b="$5"
+  local addr_ui_c="$6"
+  local addr_clamp="$7"
+  local addr_duration_zero="$8"
+  local validation_output
+  local ptr_line
+  local float_line
+  local byte_line
+  local _
+  local p1 p2 ui1 ui2 ui3
+  local p10 p11 p12 p13 p20 p21 p22 p23
+  local u10 u11 u12 u13 u20 u21 u22 u23 u30 u31 u32 u33
+  local c0 c1 c2 d0 d1 d2 d3 d4
+
+  validation_output="$(
+    sudo -n gdb -q -batch -p "$pid" \
+      -ex "set confirm off" \
+      -ex "set pagination off" \
+      -ex "set \$p1 = *(void**)$addr_a" \
+      -ex "set \$p2 = *(void**)$addr_b" \
+      -ex "set \$ui1 = *(void**)$addr_ui_a" \
+      -ex "set \$ui2 = *(void**)$addr_ui_b" \
+      -ex "set \$ui3 = *(void**)$addr_ui_c" \
+      -ex "printf \"LOGOFF_PTR %p %p %p %p %p\\n\", \$p1, \$p2, \$ui1, \$ui2, \$ui3" \
+      -ex "printf \"LOGOFF_FLOATS %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g\\n\", *(float*)\$p1, *(float*)((char*)\$p1 + 4), *(float*)((char*)\$p1 + 8), *(float*)((char*)\$p1 + 12), *(float*)\$p2, *(float*)((char*)\$p2 + 4), *(float*)((char*)\$p2 + 8), *(float*)((char*)\$p2 + 12), *(float*)\$ui1, *(float*)((char*)\$ui1 + 4), *(float*)((char*)\$ui1 + 8), *(float*)((char*)\$ui1 + 12), *(float*)\$ui2, *(float*)((char*)\$ui2 + 4), *(float*)((char*)\$ui2 + 8), *(float*)((char*)\$ui2 + 12), *(float*)\$ui3, *(float*)((char*)\$ui3 + 4), *(float*)((char*)\$ui3 + 8), *(float*)((char*)\$ui3 + 12)" \
+      -ex "set \$clamp = (unsigned char*)$addr_clamp" \
+      -ex "set \$duration = (unsigned char*)$addr_duration_zero" \
+      -ex "printf \"LOGOFF_BYTES %02x %02x %02x %02x %02x %02x %02x %02x\\n\", \$clamp[0], \$clamp[1], \$clamp[2], \$duration[0], \$duration[1], \$duration[2], \$duration[3], \$duration[4]"
+  )"
+
+  ptr_line="$(awk '/^LOGOFF_PTR / {line=$0} END {print line}' <<< "$validation_output")"
+  float_line="$(awk '/^LOGOFF_FLOATS / {line=$0} END {print line}' <<< "$validation_output")"
+  byte_line="$(awk '/^LOGOFF_BYTES / {line=$0} END {print line}' <<< "$validation_output")"
+  if [[ -z "$ptr_line" || -z "$float_line" || -z "$byte_line" ]]; then
+    printf 'invalid logoff timer validation output\n%s\n' "$validation_output" >&2
+    return 1
+  fi
+
+  read -r _ p1 p2 ui1 ui2 ui3 <<< "$ptr_line"
+  for ptr in "$p1" "$p2" "$ui1" "$ui2" "$ui3"; do
+    if [[ "$ptr" == "(nil)" || "$ptr" == "0x0" ]]; then
+      printf 'invalid logoff timer pointer: %s\n' "$ptr" >&2
+      return 1
+    fi
+  done
+
+  read -r _ p10 p11 p12 p13 p20 p21 p22 p23 u10 u11 u12 u13 u20 u21 u22 u23 u30 u31 u32 u33 <<< "$float_line"
+  read -r _ c0 c1 c2 d0 d1 d2 d3 d4 <<< "$byte_line"
+
+  float_close() {
+    awk -v a="$1" -v b="$2" 'BEGIN { d = a - b; if (d < 0) d = -d; exit(d <= 0.001 ? 0 : 1) }'
+  }
+
+  float_allowed() {
+    local value="$1"
+    shift
+    local allowed
+    for allowed in "$@"; do
+      if float_close "$value" "$allowed"; then
+        return 0
+      fi
+    done
+    return 1
+  }
+
+  for value in "$p10" "$p11"; do
+    float_allowed "$value" "$TARGET_VALUE" 0 30 || { printf 'invalid backend 30-second timer value: %s\n' "$value" >&2; return 1; }
+  done
+  for value in "$p12" "$p13"; do
+    float_allowed "$value" 0 || { printf 'invalid backend 30-second timer tail: %s\n' "$value" >&2; return 1; }
+  done
+  for value in "$p20" "$p21"; do
+    float_allowed "$value" "$TARGET_VALUE" 0 300 || { printf 'invalid backend 300-second timer value: %s\n' "$value" >&2; return 1; }
+  done
+  for value in "$p22" "$p23"; do
+    float_allowed "$value" 0 || { printf 'invalid backend 300-second timer tail: %s\n' "$value" >&2; return 1; }
+  done
+  for value in "$u10" "$u11" "$u20" "$u21" "$u30" "$u31"; do
+    float_allowed "$value" "$TARGET_VALUE" 0 300 || { printf 'invalid UI timer value: %s\n' "$value" >&2; return 1; }
+  done
+  for value in "$u12" "$u13" "$u22" "$u23" "$u32" "$u33"; do
+    float_allowed "$value" 0 || { printf 'invalid UI timer tail: %s\n' "$value" >&2; return 1; }
+  done
+
+  if [[ "$c0" != "48" || "$c2" != "c1" || ( "$c1" != "01" && "$c1" != "89" ) ]]; then
+    printf 'invalid deadline clamp bytes: %s %s %s\n' "$c0" "$c1" "$c2" >&2
+    return 1
+  fi
+
+  if [[ ! ( "$d0" == "c5" && "$d1" == "fa" && "$d2" == "10" && "$d3" == "45" && "$d4" == "d4" ) &&
+        ! ( "$d0" == "c5" && "$d1" == "f8" && "$d2" == "57" && "$d3" == "c0" && "$d4" == "90" ) ]]; then
+    printf 'invalid timer duration bytes: %s %s %s %s %s\n' "$d0" "$d1" "$d2" "$d3" "$d4" >&2
+    return 1
+  fi
+}
 
 mapfile -t containers < <(
   docker ps --format '{{.Names}}' |
@@ -140,10 +472,7 @@ for container in "${containers[@]}"; do
 
   exe_path="$(sudo -n readlink "/proc/$pid/exe")"
   build_id="$(sudo -n readelf -n "/proc/$pid/exe" | awk '/Build ID:/ {print $3; exit}')"
-  if [[ "$build_id" != "$EXPECTED_BUILD_ID" ]]; then
-    echo "$container: refusing build $build_id; expected $EXPECTED_BUILD_ID" >&2
-    exit 1
-  fi
+  resolve_offsets_for_build "$container" "/proc/$pid/exe" "$build_id"
 
   base="$(sudo -n awk -v exe="$exe_path" '
     $2 ~ /r.xp/ && $3 == "00000000" {
@@ -171,6 +500,8 @@ for container in "${containers[@]}"; do
   addr_ui_b="$(printf '0x%x' $((base + UI_VALUE_B_OFFSET)))"
   addr_ui_c="$(printf '0x%x' $((base + UI_VALUE_C_OFFSET)))"
   echo "$container: pid=$pid base=$base pointers=$addr_a,$addr_b ui_pointers=$addr_ui_a,$addr_ui_b,$addr_ui_c clamp=$addr_clamp duration_zero=$addr_duration_zero mode=$MODE"
+
+  validate_patch_targets "$pid" "$addr_a" "$addr_b" "$addr_ui_a" "$addr_ui_b" "$addr_ui_c" "$addr_clamp" "$addr_duration_zero"
 
   if [[ "$MODE" == "dry-run" ]]; then
     sudo -n gdb -q -batch -p "$pid" \
