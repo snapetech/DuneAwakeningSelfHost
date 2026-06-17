@@ -94,6 +94,13 @@ SOURCE_MAP_FALLBACK_CATEGORIES = {
     "tools/mining",
 }
 PRICE_CATEGORY_FLOORS = {
+    # Commodity floors keep game-file placeholder rows (baseline_price=1) from
+    # seeding as ~1-Solari junk. Applied to the pre-multiplier anchor, so real
+    # market-priced commodities (Spice Melange, Plasteel, etc.) keep their price.
+    "resources/raw": 20,
+    "resources/refined": 100,
+    "resources/fuel": 120,
+    "resources/components": 250,
     "armor/combat": 1000,
     "armor/heavy": 1000,
     "armor/light": 1000,

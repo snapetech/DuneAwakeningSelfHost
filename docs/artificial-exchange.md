@@ -126,6 +126,20 @@ not pricing bugs. Some of those uniques are mis-bucketed (a buggy mining module
 seeded under gathering tools, water containers/deployables under consumables);
 that is a category-map issue, not a price issue.
 
+Commodity organization (2026-06-17): commodity prices are sourced from
+dune.exchange where it has data (run `import-dune-exchange-prices.py`; it covers
+high-value refined goods like Spice Melange, Stravidium Fiber, Plastanium,
+Plasteel, Diamondine Dust and a few components), and from game-file/wiki base
+prices otherwise. dune.exchange's public scanner is sparse for low/mid
+commodities, so `PRICE_CATEGORY_FLOORS` now includes resource floors
+(`resources/raw` 20, `resources/refined` 100, `resources/fuel` 120,
+`resources/components` 250) applied to the pre-multiplier anchor. This keeps
+game-file placeholder rows (`baseline_price=1`) from seeding as ~1-Solari junk
+while leaving real market-priced commodities untouched. To re-price live
+commodities after a refresh, prune the affected listings
+(`prune-broken-exchange-listings.py --template-ids ...` or `--category-masks ...`)
+and let the populator reseed them.
+
 Buyer demand was retuned 2026-06-17 after finding the buyer's Exchange Solari
 balance was effectively empty (`123`): per-tier buy probabilities raised to
 `0.0008/0.0015/0.0025` (low/medium/high), daily caps raised to

@@ -63,6 +63,7 @@ def classify(conn, args, catalog):
         rows = [dict(r) for r in cur.fetchall()]
 
     target_templates = {t.strip() for t in (args.template_ids or "").split(",") if t.strip()}
+    target_masks = {int(m.strip()) for m in (args.category_masks or "").split(",") if m.strip()}
     schematic_ids, empty_gear_ids = [], []
     by_reason_category = {}
     for row in rows:
@@ -72,6 +73,9 @@ def classify(conn, args, catalog):
         if target_templates and row.get("template_id") in target_templates:
             schematic_ids.append(int(row["id"]))
             reason = "template-id"
+        elif target_masks and int(row.get("category_mask") or -1) in target_masks:
+            schematic_ids.append(int(row["id"]))
+            reason = "category-mask"
         elif args.mode in ("schematics", "both") and is_schematic_order(row, catalog_row):
             schematic_ids.append(int(row["id"]))
             reason = "schematic"
@@ -92,6 +96,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--mode", choices=["schematics", "empty-stateful", "both"], default="both")
     parser.add_argument("--template-ids", default="", help="Comma-separated template_ids to prune outright (e.g. moving them to a new category bucket). Combined with --mode.")
+    parser.add_argument("--category-masks", default="", help="Comma-separated category_mask ints to prune outright (e.g. re-pricing a whole commodity bucket). Combined with --mode.")
     parser.add_argument("--exchange-id", type=int, default=int(bot.env("DUNE_ARTIFICIAL_EXCHANGE_EXCHANGE_ID", "2")))
     parser.add_argument("--populator-owner-id", type=int, default=int(bot.env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_OWNER_ID", "0")))
     parser.add_argument("--catalog", default=str(bot.CATALOG_PATH))
