@@ -1,0 +1,5 @@
+template_id,category,notes
+SpicedFuelCell,resources/fuel,observed at fuel mask 0x05030000 on live before source-map mis-tagged it refined
+WindTurbineLubricant1,resources/fuel,industrial lubricant belongs in the Fuel bucket for power-gen sellers
+WindTurbineLubricant2,resources/fuel,industrial lubricant belongs in the Fuel bucket for power-gen sellers
+FuelCanister,resources/fuel,vehicle fuel canister belongs in the Fuel bucket

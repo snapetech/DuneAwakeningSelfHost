@@ -57,29 +57,116 @@ Confidence levels:
 - Native `dune_exchange_retrieve_solaris_from_item(...)`: low and not used by
   the bot because this server build showed unsafe behavior.
 
+## Recipes, Schematics, And Patents Do Not Grant On Purchase
+
+Verified on `kspls0` build `dune_sb_1_4_5_0`, 2026-06-17: there is no relational
+known-recipes table on this server build. Crafting pattern / recipe unlock state
+lives in `encrypted_player_state`. `removed_recipes` is empty and
+`building_progression.learned_building_sets` is buildings only. A seeded
+schematic listing therefore only delivers an inert item; buying it does not raise
+the player's known-pattern count, and seeded schematic items carry an empty
+`items.stats` payload. This is the root cause of the player report "bought a
+recipe twice, patterns still show 0", and the "armor package that does nothing"
+(those armor packages were armor schematics).
+
+Consequence: schematics, blueprints, and building patents are excluded from
+seeding via `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_SKIP_BLUEPRINT_CATEGORIES=true`
+until a genuine learnable schematic payload is proven through in-client
+buy-and-learn testing. Re-enabling recipe seeding requires that proof, not just a
+template id. Confidence: high that the current item path cannot grant patterns.
+
+Use `scripts/prune-broken-exchange-listings.py` to remove already-seeded
+non-functional listings. It reuses `delete_seeded_orders` (scoped to exchange +
+populator owner + `is_npc_order=true`) and targets two classes:
+
+- `--mode schematics`: blueprint-category / schematic / patent listings
+- `--mode empty-stateful`: stateful gear with an empty stats payload
+- `--mode both` (default)
+
+Dry-run by default; live prune requires `--apply --confirm "PRUNE ARTIFICIAL EXCHANGE"`.
+
+### Making seeded schematics learnable
+
+Genuine player-owned schematics on `dune_sb_1_4_5_0` carry one uniform stats
+payload, identical across all 308 samples / 148 templates:
+
+```json
+{"FItemStackAndDurabilityStats": [[], {"DecayedMaxDurability": 0.0}]}
+```
+
+The empty `{}` payload on old seeds was the only structural difference between a
+dud and a real, learnable schematic. The populator now attaches the durability
+payload to every blueprint-category staging item (`staging_stats_for_row`), so
+seeded schematics are structurally identical to legitimately-acquired ones. The
+`template_id` already carries the recipe identity; no server-side grant call
+exists (recipe unlock is a client-side learn action against actor/fgl
+properties), so the player must still learn the purchased item in-game.
+
+A 100-listing probe is seeded live (priced ~2k-6k). Before enabling schematics
+market-wide, verify in-client:
+
+1. On a test character, buy one seeded schematic from the Exchange.
+2. Relog so the purchased item materializes, then learn it from inventory.
+3. Confirm the known-pattern count increases and the recipe is craftable.
+
+If the learn succeeds, set
+`DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_SKIP_BLUEPRINT_CATEGORIES=false` to enable
+recipe seeding market-wide. If it fails, run
+`prune-broken-exchange-listings.py --mode schematics --apply` to remove the probe
+and keep the gate on. Confidence: high that the seeded item is structurally
+correct; the in-client learn step is the one unverified link.
+
+### Pricing model note (2026-06-17 review)
+
+The pricing model (dune.exchange market price, geometric-mean outlier damping vs
+game-file price, category multipliers, category floors, blueprint floors) is
+sound. The highest seeded prices (StaticCompactor_Unique_Compact_06 ~420k,
+BuggyMining_Unique_YieldIncrease_06 ~500-667k) are legitimate T6 unique items,
+not pricing bugs. Some of those uniques are mis-bucketed (a buggy mining module
+seeded under gathering tools, water containers/deployables under consumables);
+that is a category-map issue, not a price issue.
+
+Buyer demand was retuned 2026-06-17 after finding the buyer's Exchange Solari
+balance was effectively empty (`123`): per-tier buy probabilities raised to
+`0.0008/0.0015/0.0025` (low/medium/high), daily caps raised to
+`150000/60000/80000` (global/seller/template) so valuable goods are buyable, and
+the buyer funded to `~1,000,000`. The buyer balance is not auto-refunded; refund
+periodically with `--fund-buyer`. Daily Solari injection is bounded by the global
+cap (`150000`).
+
 ## Current Production Snapshot
 
-As of the current validated run, Artificial Exchange seeding is a first-class
-feature with category-targeted broad population enabled. Confidence: high for
-the category map and catalog reconciliation used by the current seed, moderate
-for exact economy balance because player demand can still move faster than
-static seeded supply.
+As of 2026-06-17 on `kspls0` (`dune_sb_1_4_5_0`), the market was re-evaluated
+after player feedback. The populator service was never installed, so the market
+had drained from the old `5432` snapshot to `~1878` seeded orders dominated by
+schematics and other unsold dregs, with the commodity core (refined/fuel/
+components resources) at zero. Remediation removed `957` schematic/patent
+listings and reseeded `3100` functional orders.
 
 Current verified market state:
 
 - Exchange id: `2`
 - Populator/controller owner id: `124`
 - Source inventory id: `485`
-- Live seeded orders: `5432`
-- Eligible catalog rows: `1758`
-- Live seeded templates: `1176`
-- Live seeded categories: `50`
-- Dry-run planned additions after audit: `0`
-- Missing catalog rows after audit: `0`
-- Live/catalog category mask mismatches after audit: `0`
-- Eligible/source-map mismatches after audit: `0`
-- Empty eligible categories after audit: `0`
-- Under-target categories after audit: `0`
+- Live seeded orders: `4021` across `672` distinct templates
+- Schematics/patents seeded: `0` (gated out)
+- Commodity core present: MelangeSpice, SpiceResidue, SpicedFuelCell,
+  WindTurbineLubricant, T6Watertube at `30` listings each
+- Stateful-gear audit: `0` unsafe empty-stats orders, `0` quality mismatches
+
+Replenishment caveat: the buyer service (`dune-artificial-exchange-bot.service`,
+`--loop`) runs, but no populator service/watchdog is installed, so seeded supply
+does not auto-replenish as players buy it. Install the populator service +
+watchdog timer to keep the market topped up, or re-run the reseed periodically.
+
+Interim gate note: `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_SOURCE_CATEGORY`
+was set `false` because the generated `source-category-map.json` disagrees with
+`exchange_category_map.py` on resource depth (says depth 1; the live-rendering
+orders and the static map use depth 2). The catalog's own mask reconcile is the
+authority for now. Regenerating a correct source map for build `1.4.5` is the
+proper fix. The fuel commodities also still reconcile into `resources/refined`
+instead of `resources/fuel`; the catalog reconcile pass overrides the CSV
+category and needs a fuel-bucket fix.
 
 The current audit report is
 `backups/admin-panel/artificial-exchange/market-category-audit.json`. A clean

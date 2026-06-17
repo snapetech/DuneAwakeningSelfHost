@@ -68,6 +68,11 @@ PRICE_CATEGORY_MULTIPLIERS = {
     "weapons/melee": 2.4,
     "weapons/ranged": 3.0,
 }
+# Verified uniform stats payload on genuine, learnable schematic/recipe items
+# (kspls0 dune_sb_1_4_5_0: identical across all 308 player-owned samples spanning
+# 148 distinct schematic templates). The template_id carries the recipe identity;
+# this payload only marks the item as a real, full-durability learnable token.
+SCHEMATIC_DURABILITY_STATS = {"FItemStackAndDurabilityStats": [[], {"DecayedMaxDurability": 0.0}]}
 DEFAULT_STACKABLE_CATEGORIES = {
     "consumables/medical",
     "consumables/spice",
@@ -532,6 +537,8 @@ def has_blueprint_identity(row):
 
 def populator_category_skip_reason(row):
     category = str(row.get("category") or "")
+    if env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_SKIP_BLUEPRINT_CATEGORIES", False) and is_blueprint_category(category):
+        return "blueprint category seeding disabled"
     verified_row = verified_category_row(row)
     if env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_CATEGORY_SEEDING_VERIFIED", False) and not verified_row:
         return "missing verified category"
@@ -1488,12 +1495,24 @@ def delete_seeded_orders(cur, order_ids, exchange_id, owner_id):
     return deleted_orders
 
 
+def staging_stats_for_row(row):
+    if populator_requires_stats(row):
+        return stats_payload_for_row(row)
+    if is_blueprint_category(row.get("category")):
+        # Genuine learnable schematics/recipes carry this uniform durability
+        # payload (verified across 148 player-owned templates on kspls0
+        # dune_sb_1_4_5_0). Seeding empty stats produces an inert "package"
+        # that cannot be learned, so blueprint rows always get the real payload.
+        return copy.deepcopy(SCHEMATIC_DURABILITY_STATS)
+    return {}
+
+
 def create_staging_item(cur, row, source_inventory_id, position_index, stack_size):
     item_id = None
     cur.execute("select dune.advance_items_id_sequencer(1) as item_id")
     item_id = int(cur.fetchone()["item_id"])
     quality_level = populator_quality_level(row)
-    stats = stats_payload_for_row(row) if populator_requires_stats(row) else {}
+    stats = staging_stats_for_row(row)
     cur.execute(
         """
         select dune.save_item((

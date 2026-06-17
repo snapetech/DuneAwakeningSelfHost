@@ -16,6 +16,7 @@ DEFAULT_MANUAL = ROOT / "config" / "artificial-exchange-prices.csv"
 DEFAULT_SNAPSHOT_DIR = ROOT / "data" / "exchange-price-snapshots"
 DEFAULT_OUTPUT_DIR = ROOT / "backups" / "admin-panel" / "artificial-exchange"
 DEFAULT_SOURCE_CATEGORY_MAP = DEFAULT_OUTPUT_DIR / "source-category-map.json"
+DEFAULT_CATEGORY_OVERRIDES = ROOT / "config" / "exchange-category-overrides.csv"
 FIELDS = [
     "template_id",
     "display_name",
@@ -356,6 +357,48 @@ def category_from_identity(row):
     return None
 
 
+def load_category_overrides(path):
+    """Reviewed template_id -> category overrides applied last, winning over the
+    source-category-map and identity heuristics. Use for templates whose correct
+    Exchange bucket is known but the generated source map mis-tags them (e.g.
+    fuel commodities the wiki tags as generic refined resources)."""
+    if not path or not path.exists():
+        return {}
+    overrides = {}
+    with path.open(newline="", encoding="utf-8") as fh:
+        for raw in csv.DictReader(fh):
+            tid = (raw.get("template_id") or "").strip()
+            category = (raw.get("category") or "").strip()
+            if tid and category:
+                overrides[tid] = category
+    return overrides
+
+
+def apply_category_overrides(rows, overrides):
+    if not overrides:
+        return rows, {"updated": 0}
+    updated = 0
+    out = []
+    for row in rows:
+        category = overrides.get(row["template_id"])
+        if not category or row.get("category") == category:
+            out.append(row)
+            continue
+        next_row = dict(row)
+        next_row["category"] = category
+        # Clear mask/depth so reconcile_known_category_masks recomputes them from
+        # the reviewed category instead of the stale source value.
+        next_row["category_mask"] = 0
+        next_row["category_depth"] = 0
+        notes = next_row.get("notes") or ""
+        marker = "category set from reviewed override"
+        if marker not in notes:
+            next_row["notes"] = f"{notes}; {marker}".strip("; ")
+        updated += 1
+        out.append(next_row)
+    return out, {"updated": updated}
+
+
 def reconcile_identity_categories(rows):
     updated = 0
     out = []
@@ -397,6 +440,7 @@ def main():
     parser.add_argument("--snapshot-dir", type=pathlib.Path, default=DEFAULT_SNAPSHOT_DIR)
     parser.add_argument("--output-dir", type=pathlib.Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--source-category-map", type=pathlib.Path, default=DEFAULT_SOURCE_CATEGORY_MAP)
+    parser.add_argument("--category-overrides", type=pathlib.Path, default=DEFAULT_CATEGORY_OVERRIDES)
     parser.add_argument("--no-source-category-reconcile", action="store_true")
     parser.add_argument("--no-db", action="store_true")
     args = parser.parse_args()
@@ -424,6 +468,8 @@ def main():
             warnings.append(error)
         rows, category_reconcile = reconcile_source_categories(rows, source_map)
     rows, identity_reconcile = reconcile_identity_categories(rows)
+    overrides = load_category_overrides(args.category_overrides)
+    rows, override_reconcile = apply_category_overrides(rows, overrides)
     rows, mask_reconcile = reconcile_known_category_masks(rows)
     latest_json, latest_csv = write_outputs(rows, args.output_dir)
     print(json.dumps({
@@ -434,6 +480,7 @@ def main():
         "csv": str(latest_csv),
         "categoryReconcile": category_reconcile,
         "identityReconcile": identity_reconcile,
+        "categoryOverrides": override_reconcile,
         "categoryMaskReconcile": mask_reconcile,
         "warnings": warnings,
     }, indent=2))

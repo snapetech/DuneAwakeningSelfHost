@@ -126,6 +126,24 @@ class ArtificialExchangeCatalogTest(unittest.TestCase):
         self.assertEqual(rows[1]["category_mask"], 0)
         self.assertEqual(rows[1]["category_depth"], 0)
 
+    def test_category_override_wins_then_mask_recomputes(self):
+        rows, stats = catalog.apply_category_overrides(
+            [
+                self.base_row("SpicedFuelCell", category="resources/refined", category_mask=0x05010000, category_depth=2),
+                self.base_row("MelangeSpice", category="resources/refined", category_mask=0x05010000, category_depth=2),
+            ],
+            {"SpicedFuelCell": "resources/fuel"},
+        )
+        self.assertEqual(stats, {"updated": 1})
+        self.assertEqual(rows[0]["category"], "resources/fuel")
+        self.assertEqual(rows[0]["category_mask"], 0)  # cleared for recompute
+        self.assertIn("category set from reviewed override", rows[0]["notes"])
+        self.assertEqual(rows[1]["category"], "resources/refined")  # untouched
+        # mask reconcile then derives the correct fuel mask from the override
+        rows, _ = catalog.reconcile_known_category_masks(rows)
+        self.assertEqual(rows[0]["category_mask"], 0x05030000)
+        self.assertEqual(rows[0]["category_depth"], 2)
+
 
 class ArtificialExchangePriceResearchTest(unittest.TestCase):
     def test_extract_item_data_reads_wiki_price_and_item_id(self):
@@ -479,6 +497,26 @@ class ArtificialExchangeBotTest(unittest.TestCase):
         self.assertEqual(bot.populator_category_skip_reason(augment), "")
         unknown = self.catalog_row("MysteryItem", category="unknown", category_mask=0, category_depth=0, notes="tier=4")
         self.assertEqual(bot.populator_category_skip_reason(unknown), "unknown category")
+
+    def test_staging_stats_gives_blueprints_learnable_payload(self):
+        schematic = self.catalog_row("D_T4_Vehicle_BuggyChassis2_Schematic", category="schematics/vehicles", category_mask=117440512, category_depth=2, notes="tier=4")
+        patent = self.catalog_row("LargeWaterCistern_Patent", category="building/patents", category_mask=50790400, category_depth=2, notes="tier=4")
+        commodity = self.catalog_row("SpiceResidue", category="resources/raw", category_mask=83886080, category_depth=2, notes="tier=2")
+        self.assertEqual(bot.staging_stats_for_row(schematic), bot.SCHEMATIC_DURABILITY_STATS)
+        self.assertEqual(bot.staging_stats_for_row(patent), bot.SCHEMATIC_DURABILITY_STATS)
+        # stateless commodities stay empty; only blueprint rows get the token payload
+        self.assertEqual(bot.staging_stats_for_row(commodity), {})
+
+    def test_populator_skip_blueprint_categories_gate(self):
+        weapon = self.catalog_row("AtreLMG3", category="weapons/ranged", category_mask=16844544, category_depth=3, notes="tier=5")
+        schematic = self.catalog_row("D_T4_Vehicle_BuggyChassis2_Schematic", category="schematics/vehicles", category_mask=117440512, category_depth=2, notes="tier=4")
+        patent = self.catalog_row("LargeWaterCistern_Patent", category="building/patents", category_mask=50790400, category_depth=2, notes="tier=4")
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_SKIP_BLUEPRINT_CATEGORIES"] = "false"
+        self.assertEqual(bot.populator_category_skip_reason(schematic), "")
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_SKIP_BLUEPRINT_CATEGORIES"] = "true"
+        self.assertEqual(bot.populator_category_skip_reason(schematic), "blueprint category seeding disabled")
+        self.assertEqual(bot.populator_category_skip_reason(patent), "blueprint category seeding disabled")
+        self.assertEqual(bot.populator_category_skip_reason(weapon), "")
 
     def test_populator_category_gate_requires_deterministic_category(self):
         bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_DETERMINISTIC_CATEGORY"] = "true"
