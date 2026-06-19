@@ -3,9 +3,333 @@ ENV_FILE ?= .env.example
 CONTAINER ?= dune_server-deep-desert-1
 TRACE_LOG ?= /tmp/brt-place-trace-lab.log
 
-.PHONY: validate compose-config check-compose-static-ips validate-research-build-tags secret-scan test-watch-maps test-admin-panel-safe-surfaces test-character-slot-tool test-research-catalog test-discovery-tools test-admin-chat test-admin-grant-item test-operational-borrowing test-artificial-exchange test-artificial-exchange-service artificial-exchange-smoke artificial-exchange-bootstrap-catalog artificial-exchange-research-prices test-vehicle-fidelity-investigation gm-catalog gm-probe-preview gm-probe-safe research-catalog research-catalog-markdown surface-ledger surface-ledger-markdown discovery-queue binary-candidate-scores asset-reference-graph extract-build-surfaces diff-build-surfaces db-function-classifier fixture-runner knob-experiment capture-rmq-window diff-rmq-captures list-publishable preflight operational-identity-check operational-report operational-bundle verify-operational-bundle status standby-status failover-topology-status failover-bidirectional-audit sync-standby-files sync-standby-images promote-standby postgres-failover-seal postgres-cutback-proof rebuild-postgres-standby set-active-gameserver handoff-ready handoff-experiment summarize-handoff handoff-lab-config handoff-lab-up handoff-lab-seed handoff-lab-status handoff-lab-stop handoff-lab-remote-up handoff-lab-remote-status handoff-lab-remote-stop handoff-lab brt-dd-lab-config brt-dd-lab-images brt-dd-lab-up brt-dd-lab-seed brt-dd-lab-status brt-dd-lab-verify-config brt-dd-lab-logs brt-dd-lab-stop brt-dd-next-downtime-stage brt-dd-next-downtime-status brt-dd-trace brt-dd-trace-stop brt-dd-live-preflight brt-dd-live-restart brt-dd-live-verify brt-dd-live-logs brt-dd-live-checklist failover-orchestrate failover-role-services cutover-check cutover-network-status browser-ping-diagnostics watch-browser-probe host-network-failover router-cutover install-dune-status-service check-steam-update backup-dry-run backup-state restore-dry-run verify-backup start-full-warm-pool recover-survival recover-map watch-maps watch-maps-status install-map-watchdog-service install-artificial-exchange-service install-artificial-exchange-buyer-service install-artificial-exchange-populator-service install-full-farm-service install-daily-maintenance-timer full-world-partitions update-hagga-pois public-site-check public-site-package public-site-deploy public-site-verify admin-panel-deploy admin-panel-verify verify-local-state-ignored rabbitmq-cert-check rabbitmq-cert-generate rabbitmq-cert-stage rabbitmq-cert-install-staged rabbitmq-cert-recreate-stack
+.PHONY: validate compose-config check-compose-static-ips validate-research-build-tags secret-scan test-watch-maps test-admin-panel-safe-surfaces test-character-slot-tool test-research-catalog test-discovery-tools test-admin-chat test-admin-grant-item test-operational-borrowing test-artificial-exchange test-artificial-exchange-service artificial-exchange-smoke artificial-exchange-bootstrap-catalog artificial-exchange-research-prices test-vehicle-fidelity-investigation gm-catalog gm-probe-preview gm-probe-safe research-catalog research-catalog-markdown surface-ledger surface-ledger-markdown discovery-queue binary-candidate-scores asset-reference-graph extract-build-surfaces diff-build-surfaces db-function-classifier fixture-runner knob-experiment capture-rmq-window diff-rmq-captures list-publishable preflight operational-identity-check operational-report operational-bundle verify-operational-bundle target-safety-audit reconcile-map-patch-overlays status standby-status failover-topology-status failover-bidirectional-audit sync-standby-files sync-standby-images promote-standby postgres-failover-seal postgres-cutback-proof rebuild-postgres-standby set-active-gameserver handoff-ready handoff-experiment summarize-handoff handoff-lab-config handoff-lab-up handoff-lab-seed handoff-lab-status handoff-lab-stop handoff-lab-remote-up handoff-lab-remote-status handoff-lab-remote-stop handoff-lab brt-dd-lab-config brt-dd-lab-images brt-dd-lab-up brt-dd-lab-seed brt-dd-lab-status brt-dd-lab-verify-config brt-dd-lab-logs brt-dd-lab-stop brt-dd-next-downtime-stage brt-dd-next-downtime-status brt-dd-trace brt-dd-trace-stop brt-dd-live-preflight brt-dd-live-restart brt-dd-live-verify brt-dd-live-logs brt-dd-live-checklist failover-orchestrate failover-role-services cutover-check cutover-network-status browser-ping-diagnostics watch-browser-probe host-network-failover router-cutover install-dune-status-service check-steam-update backup-dry-run backup-state dd-pre-restore-backup restore-dry-run verify-backup start-full-warm-pool recover-survival recover-map watch-maps watch-maps-status install-map-watchdog-service install-artificial-exchange-service install-artificial-exchange-buyer-service install-artificial-exchange-populator-service install-full-farm-service install-daily-maintenance-timer full-world-partitions update-hagga-pois public-site-check public-site-package public-site-deploy public-site-verify admin-panel-deploy admin-panel-verify verify-local-state-ignored rabbitmq-cert-check rabbitmq-cert-generate rabbitmq-cert-stage rabbitmq-cert-install-staged rabbitmq-cert-recreate-stack build-linux-server-loader package-linux-server-loader smoke-linux-server-loader smoke-linux-server-loader-package-preflight build-linux-client-loader package-linux-client-loader smoke-linux-client-loader smoke-linux-client-loader-package-preflight build-windows-client-loader package-windows-client-loader smoke-windows-client-loader stage-windows-lua-runtime smoke-windows-client-loader-lua smoke-windows-client-loader-package-preflight smoke-windows-client-loader-full build-client-loaders package-client-loaders smoke-client-loaders smoke-client-loaders-full
+.PHONY: summarize-linux-loader-scan summarize-linux-loader-xrefs summarize-linux-loader-anchors summarize-linux-client-loader-xrefs summarize-linux-client-loader-anchors validate-elf-signatures export-elf-signature-manifest test-linux-loader-scan-summary test-linux-loader-xrefs test-linux-loader-anchors test-elf-signatures test-elf-signature-manifest summarize-client-loader-scan summarize-client-loader-xrefs validate-client-pe-signatures export-client-pe-signature-manifest export-ue-anchor-env summarize-client-ue-anchors ue4ss-port-readiness plan-ue4ss-canary-env proton-proxy-candidates proton-dll-override-query proton-dll-override-set proton-dll-override-unset test-client-loader-scan-summary test-client-loader-xrefs test-client-pe-signatures test-client-pe-signature-manifest test-export-ue-anchor-env test-prepare-ue-anchor-canary test-canary-linux-server-loader test-plan-ue4ss-canary-env test-client-ue-anchors test-ue4ss-port-readiness test-loader-container-api-parity test-loader-scheduler-api-parity test-loader-modref-api-parity test-loader-mod-lifecycle-api-parity test-loader-unregister-api-parity test-loader-fname-api-parity test-loader-native-identity-parity test-loader-hook-path-alias-parity test-loader-custom-property-api-parity test-loader-compat-globals-api-parity test-loader-world-engine-api-parity test-loader-object-notify-api-parity test-loader-console-command-api-parity test-loader-anchor-group-parity test-loader-scan-preset-parity test-proton-proxy-candidates test-client-loader-tools
+.PHONY: install-target-safety-audit-timer loader-build-toolchain-check loader-build-toolchain-install verify-loader-artifacts test-verify-loader-artifacts
 
 validate: compose-config check-compose-static-ips validate-research-build-tags surface-ledger secret-scan test-watch-maps test-admin-panel-safe-surfaces test-character-slot-tool test-research-catalog test-discovery-tools test-admin-chat test-admin-grant-item test-smugglers-run-mp test-operational-borrowing test-artificial-exchange test-artificial-exchange-service test-vehicle-fidelity-investigation public-site-check verify-local-state-ignored
+
+build-linux-server-loader:
+	./scripts/build-linux-server-loader.sh
+
+loader-build-toolchain-check:
+	./scripts/ensure-loader-build-toolchain.sh --check
+
+loader-build-toolchain-install:
+	./scripts/ensure-loader-build-toolchain.sh --install
+
+verify-loader-artifacts:
+	./scripts/verify-loader-artifacts.py
+
+test-verify-loader-artifacts:
+	python3 -m unittest scripts/test-verify-loader-artifacts.py
+
+package-linux-server-loader:
+	./scripts/package-linux-server-loader.sh
+
+smoke-linux-server-loader:
+	./scripts/smoke-linux-server-loader.sh
+
+smoke-linux-server-loader-package-preflight:
+	./scripts/smoke-linux-server-loader-package-preflight.sh
+
+summarize-linux-loader-scan:
+	@if [ -z "$(LOADER_SCAN_LOG)" ]; then \
+		echo "Usage: make summarize-linux-loader-scan LOADER_SCAN_LOG=/path/to/loader.log"; \
+		exit 2; \
+	fi
+	./scripts/summarize-linux-loader-scan.py "$(LOADER_SCAN_LOG)"
+
+summarize-linux-loader-xrefs:
+	@if [ -z "$(SERVER_BINARY)" ]; then \
+		echo "Usage: make summarize-linux-loader-xrefs SERVER_BINARY=/path/to/DuneSandboxServer-Linux-Shipping LOADER_SCAN_LOG=/path/to/loader.log [CATEGORY=brt] [NAME=PerformCanBePlaced]"; \
+		exit 2; \
+	fi
+	@if [ -z "$(LOADER_SCAN_LOG)" ]; then \
+		echo "Usage: make summarize-linux-loader-xrefs SERVER_BINARY=/path/to/DuneSandboxServer-Linux-Shipping LOADER_SCAN_LOG=/path/to/loader.log [CATEGORY=brt] [NAME=PerformCanBePlaced]"; \
+		exit 2; \
+	fi
+	./scripts/summarize-linux-loader-xrefs.py "$(SERVER_BINARY)" --loader-log "$(LOADER_SCAN_LOG)" $(if $(CATEGORY),--category "$(CATEGORY)",) $(if $(NAME),--name "$(NAME)",)
+
+summarize-linux-loader-anchors:
+	@if [ -z "$(SERVER_BINARY)" ]; then \
+		echo "Usage: make summarize-linux-loader-anchors SERVER_BINARY=/path/to/DuneSandboxServer-Linux-Shipping LOADER_SCAN_LOG=/path/to/loader.log [CATEGORY=brt] [NAME=PerformCanBePlaced]"; \
+		exit 2; \
+	fi
+	@if [ -z "$(LOADER_SCAN_LOG)" ]; then \
+		echo "Usage: make summarize-linux-loader-anchors SERVER_BINARY=/path/to/DuneSandboxServer-Linux-Shipping LOADER_SCAN_LOG=/path/to/loader.log [CATEGORY=brt] [NAME=PerformCanBePlaced]"; \
+		exit 2; \
+	fi
+	./scripts/summarize-linux-loader-anchors.py "$(SERVER_BINARY)" --loader-log "$(LOADER_SCAN_LOG)" $(if $(CATEGORY),--category "$(CATEGORY)",) $(if $(NAME),--name "$(NAME)",)
+
+summarize-linux-client-loader-xrefs:
+	@if [ -z "$(CLIENT_BINARY)" ]; then \
+		echo "Usage: make summarize-linux-client-loader-xrefs CLIENT_BINARY=/path/to/DuneSandbox-Linux-Shipping CLIENT_LOADER_LOG=/path/to/client-loader.log [CATEGORY=cheat] [NAME=CheatManager] [CLIENT_EXE_SUBSTRING=DuneSandbox]"; \
+		exit 2; \
+	fi
+	@if [ -z "$(CLIENT_LOADER_LOG)" ]; then \
+		echo "Usage: make summarize-linux-client-loader-xrefs CLIENT_BINARY=/path/to/DuneSandbox-Linux-Shipping CLIENT_LOADER_LOG=/path/to/client-loader.log [CATEGORY=cheat] [NAME=CheatManager] [CLIENT_EXE_SUBSTRING=DuneSandbox]"; \
+		exit 2; \
+	fi
+	./scripts/summarize-linux-loader-xrefs.py "$(CLIENT_BINARY)" --loader-log "$(CLIENT_LOADER_LOG)" --exe-substring "$(or $(CLIENT_EXE_SUBSTRING),DuneSandbox)" $(if $(CATEGORY),--category "$(CATEGORY)",) $(if $(NAME),--name "$(NAME)",)
+
+summarize-linux-client-loader-anchors:
+	@if [ -z "$(CLIENT_BINARY)" ]; then \
+		echo "Usage: make summarize-linux-client-loader-anchors CLIENT_BINARY=/path/to/DuneSandbox-Linux-Shipping CLIENT_LOADER_LOG=/path/to/client-loader.log [CATEGORY=cheat] [NAME=CheatManager] [CLIENT_EXE_SUBSTRING=DuneSandbox]"; \
+		exit 2; \
+	fi
+	@if [ -z "$(CLIENT_LOADER_LOG)" ]; then \
+		echo "Usage: make summarize-linux-client-loader-anchors CLIENT_BINARY=/path/to/DuneSandbox-Linux-Shipping CLIENT_LOADER_LOG=/path/to/client-loader.log [CATEGORY=cheat] [NAME=CheatManager] [CLIENT_EXE_SUBSTRING=DuneSandbox]"; \
+		exit 2; \
+	fi
+	./scripts/summarize-linux-loader-anchors.py "$(CLIENT_BINARY)" --loader-log "$(CLIENT_LOADER_LOG)" --exe-substring "$(or $(CLIENT_EXE_SUBSTRING),DuneSandbox)" $(if $(CATEGORY),--category "$(CATEGORY)",) $(if $(NAME),--name "$(NAME)",)
+
+validate-elf-signatures:
+	@if [ -z "$(ELF_BINARY)" ]; then \
+		echo "Usage: make validate-elf-signatures ELF_BINARY=/path/to/ELF LOADER_SCAN_LOG=/path/to/loader.log [CATEGORY=brt] [NAME=PerformCanBePlaced]"; \
+		echo "   or: make validate-elf-signatures ELF_BINARY=/path/to/ELF ELF_SIGNATURE_MANIFEST=build/linux-server-loader/elf-signature-manifest.json [IGNORE_EXPECTED_OFFSETS=1]"; \
+		exit 2; \
+	fi
+	@if [ -z "$(LOADER_SCAN_LOG)" ] && [ -z "$(ELF_SIGNATURE_MANIFEST)" ]; then \
+		echo "Usage: make validate-elf-signatures ELF_BINARY=/path/to/ELF LOADER_SCAN_LOG=/path/to/loader.log [CATEGORY=brt] [NAME=PerformCanBePlaced]"; \
+		echo "   or: make validate-elf-signatures ELF_BINARY=/path/to/ELF ELF_SIGNATURE_MANIFEST=build/linux-server-loader/elf-signature-manifest.json [IGNORE_EXPECTED_OFFSETS=1]"; \
+		exit 2; \
+	fi
+	./scripts/validate-elf-signatures.py "$(ELF_BINARY)" $(if $(LOADER_SCAN_LOG),--loader-log "$(LOADER_SCAN_LOG)",) $(if $(ELF_SIGNATURE_MANIFEST),--manifest-json "$(ELF_SIGNATURE_MANIFEST)",) $(if $(IGNORE_EXPECTED_OFFSETS),--ignore-expected-offsets,) $(if $(ELF_EXE_SUBSTRING),--exe-substring "$(ELF_EXE_SUBSTRING)",) $(if $(CATEGORY),--category "$(CATEGORY)",) $(if $(NAME),--name "$(NAME)",)
+
+export-elf-signature-manifest:
+	@if [ -z "$(ELF_BINARY)" ]; then \
+		echo "Usage: make export-elf-signature-manifest ELF_BINARY=/path/to/ELF LOADER_SCAN_LOG=/path/to/loader.log [ELF_TARGET_LOADER=server|linux-client] [CATEGORY=brt] [NAME=PerformCanBePlaced] [SIGNATURE_FORMAT=json|env|signatures|markdown] [OUTPUT=path]"; \
+		exit 2; \
+	fi
+	@if [ -z "$(LOADER_SCAN_LOG)" ]; then \
+		echo "Usage: make export-elf-signature-manifest ELF_BINARY=/path/to/ELF LOADER_SCAN_LOG=/path/to/loader.log [ELF_TARGET_LOADER=server|linux-client] [CATEGORY=brt] [NAME=PerformCanBePlaced] [SIGNATURE_FORMAT=json|env|signatures|markdown] [OUTPUT=path]"; \
+		exit 2; \
+	fi
+	./scripts/export-elf-signature-manifest.py "$(ELF_BINARY)" --loader-log "$(LOADER_SCAN_LOG)" --target-loader "$(or $(ELF_TARGET_LOADER),server)" --format "$(or $(SIGNATURE_FORMAT),markdown)" $(if $(ELF_EXE_SUBSTRING),--exe-substring "$(ELF_EXE_SUBSTRING)",) $(if $(CATEGORY),--category "$(CATEGORY)",) $(if $(NAME),--name "$(NAME)",) $(if $(OUTPUT),--output "$(OUTPUT)",)
+
+test-linux-loader-scan-summary:
+	python3 -m unittest scripts/test-linux-loader-scan-summary.py
+
+test-linux-loader-xrefs:
+	python3 -m unittest scripts/test-linux-loader-xrefs.py
+
+test-linux-loader-anchors:
+	python3 -m unittest scripts/test-linux-loader-anchors.py
+
+test-elf-signatures:
+	python3 -m unittest scripts/test-elf-signatures.py
+
+test-elf-signature-manifest:
+	python3 -m unittest scripts/test-elf-signature-manifest.py
+
+summarize-client-loader-scan:
+	@if [ -z "$(CLIENT_LOADER_LOG)" ]; then \
+		echo "Usage: make summarize-client-loader-scan CLIENT_LOADER_LOG=/path/to/client-loader.log"; \
+		exit 2; \
+	fi
+	./scripts/summarize-client-loader-scan.py "$(CLIENT_LOADER_LOG)"
+
+summarize-client-loader-xrefs:
+	@if [ -z "$(CLIENT_BINARY)" ]; then \
+		echo "Usage: make summarize-client-loader-xrefs CLIENT_BINARY=/path/to/DuneSandbox-Win64-Shipping.exe CLIENT_LOADER_LOG=/path/to/client-loader.log [CATEGORY=cheat] [NAME=CheatManager]"; \
+		exit 2; \
+	fi
+	@if [ -z "$(CLIENT_LOADER_LOG)" ]; then \
+		echo "Usage: make summarize-client-loader-xrefs CLIENT_BINARY=/path/to/DuneSandbox-Win64-Shipping.exe CLIENT_LOADER_LOG=/path/to/client-loader.log [CATEGORY=cheat] [NAME=CheatManager]"; \
+		exit 2; \
+	fi
+	./scripts/summarize-client-loader-xrefs.py "$(CLIENT_BINARY)" --loader-log "$(CLIENT_LOADER_LOG)" $(if $(CATEGORY),--category "$(CATEGORY)",) $(if $(NAME),--name "$(NAME)",)
+
+validate-client-pe-signatures:
+	@if [ -z "$(CLIENT_BINARY)" ]; then \
+		echo "Usage: make validate-client-pe-signatures CLIENT_BINARY=/path/to/DuneSandbox-Win64-Shipping.exe CLIENT_LOADER_LOG=/path/to/client-loader.log [CATEGORY=brt] [NAME=PerformCanBePlaced]"; \
+		echo "   or: make validate-client-pe-signatures CLIENT_BINARY=/path/to/DuneSandbox-Win64-Shipping.exe CLIENT_SIGNATURE_MANIFEST=build/windows-client-loader/client-pe-signature-manifest.json [IGNORE_EXPECTED_OFFSETS=1]"; \
+		exit 2; \
+	fi
+	@if [ -z "$(CLIENT_LOADER_LOG)" ] && [ -z "$(CLIENT_SIGNATURE_MANIFEST)" ]; then \
+		echo "Usage: make validate-client-pe-signatures CLIENT_BINARY=/path/to/DuneSandbox-Win64-Shipping.exe CLIENT_LOADER_LOG=/path/to/client-loader.log [CATEGORY=brt] [NAME=PerformCanBePlaced]"; \
+		echo "   or: make validate-client-pe-signatures CLIENT_BINARY=/path/to/DuneSandbox-Win64-Shipping.exe CLIENT_SIGNATURE_MANIFEST=build/windows-client-loader/client-pe-signature-manifest.json [IGNORE_EXPECTED_OFFSETS=1]"; \
+		exit 2; \
+	fi
+	./scripts/validate-client-pe-signatures.py "$(CLIENT_BINARY)" $(if $(CLIENT_LOADER_LOG),--loader-log "$(CLIENT_LOADER_LOG)",) $(if $(CLIENT_SIGNATURE_MANIFEST),--manifest-json "$(CLIENT_SIGNATURE_MANIFEST)",) $(if $(IGNORE_EXPECTED_OFFSETS),--ignore-expected-offsets,) $(if $(CATEGORY),--category "$(CATEGORY)",) $(if $(NAME),--name "$(NAME)",)
+
+export-client-pe-signature-manifest:
+	@if [ -z "$(CLIENT_BINARY)" ]; then \
+		echo "Usage: make export-client-pe-signature-manifest CLIENT_BINARY=/path/to/DuneSandbox-Win64-Shipping.exe CLIENT_LOADER_LOG=/path/to/client-loader.log [CATEGORY=brt] [NAME=PerformCanBePlaced] [SIGNATURE_FORMAT=json|env|signatures|markdown] [OUTPUT=path]"; \
+		exit 2; \
+	fi
+	@if [ -z "$(CLIENT_LOADER_LOG)" ]; then \
+		echo "Usage: make export-client-pe-signature-manifest CLIENT_BINARY=/path/to/DuneSandbox-Win64-Shipping.exe CLIENT_LOADER_LOG=/path/to/client-loader.log [CATEGORY=brt] [NAME=PerformCanBePlaced] [SIGNATURE_FORMAT=json|env|signatures|markdown] [OUTPUT=path]"; \
+		exit 2; \
+	fi
+	./scripts/export-client-pe-signature-manifest.py "$(CLIENT_BINARY)" --loader-log "$(CLIENT_LOADER_LOG)" --format "$(or $(SIGNATURE_FORMAT),markdown)" $(if $(CATEGORY),--category "$(CATEGORY)",) $(if $(NAME),--name "$(NAME)",) $(if $(OUTPUT),--output "$(OUTPUT)",)
+
+export-ue-anchor-env:
+	@if [ -z "$(CLIENT_LOADER_LOG)" ]; then \
+		echo "Usage: make export-ue-anchor-env CLIENT_LOADER_LOG=/path/to/loader.log [CLIENT_LOADER=server|win-client|client|linux-client] [UE_ANCHOR_PLATFORM=auto|server|windows|linux] [NAME=FNamePool]"; \
+		exit 2; \
+	fi
+	./scripts/export-ue-anchor-env.py "$(CLIENT_LOADER_LOG)" $(if $(CLIENT_LOADER),--loader "$(CLIENT_LOADER)",) $(if $(UE_ANCHOR_PLATFORM),--platform "$(UE_ANCHOR_PLATFORM)",) $(if $(NAME),--name "$(NAME)",)
+
+summarize-client-ue-anchors:
+	@if [ -z "$(CLIENT_LOADER_LOG)" ]; then \
+		echo "Usage: make summarize-client-ue-anchors CLIENT_LOADER_LOG=/path/to/client-loader.log"; \
+		exit 2; \
+	fi
+	./scripts/summarize-client-ue-anchors.py "$(CLIENT_LOADER_LOG)"
+
+ue4ss-port-readiness:
+	@if [ -z "$(CLIENT_LOADER_LOG)" ] && [ -z "$(LOADER_SCAN_LOG)" ]; then \
+		echo "Usage: make ue4ss-port-readiness CLIENT_LOADER_LOG=/path/to/client-loader.log [CLIENT_SIGNATURE_VALIDATION=/path/to/validation.json] [CLIENT_LOADER=win-client|client|linux-client]"; \
+		echo "   or: make ue4ss-port-readiness LOADER_SCAN_LOG=/path/to/server-loader.log"; \
+		exit 2; \
+	fi
+	./scripts/ue4ss-port-readiness.py $(if $(CLIENT_LOADER_LOG),--client-log "$(CLIENT_LOADER_LOG)",) $(if $(LOADER_SCAN_LOG),--server-log "$(LOADER_SCAN_LOG)",) $(if $(CLIENT_LOADER),--loader "$(CLIENT_LOADER)",) $(if $(CLIENT_SIGNATURE_VALIDATION),--signature-validation-json "$(CLIENT_SIGNATURE_VALIDATION)",)
+
+plan-ue4ss-canary-env:
+	@if [ -z "$(UE4SS_CANARY_PLATFORM)" ]; then \
+		echo "Usage: make plan-ue4ss-canary-env UE4SS_CANARY_PLATFORM=server|linux-client|windows CLIENT_LOADER_LOG=/path/to/client.log [CLIENT_SIGNATURE_VALIDATION=/path/to/validation.json] [UE4SS_MAX_STAGE=read-only|hook-probe|live-hook|lua-dispatch] [UE4SS_LIVE_CALL_LOG_LIMIT=8]"; \
+		echo "   or: make plan-ue4ss-canary-env UE4SS_CANARY_PLATFORM=server LOADER_SCAN_LOG=/path/to/server.log"; \
+		exit 2; \
+	fi
+	./scripts/plan-ue4ss-canary-env.py --platform "$(UE4SS_CANARY_PLATFORM)" $(if $(CLIENT_LOADER_LOG),--client-log "$(CLIENT_LOADER_LOG)",) $(if $(LOADER_SCAN_LOG),--server-log "$(LOADER_SCAN_LOG)",) $(if $(CLIENT_LOADER),--loader "$(CLIENT_LOADER)",) $(if $(CLIENT_SIGNATURE_VALIDATION),--signature-validation-json "$(CLIENT_SIGNATURE_VALIDATION)",) --max-stage "$(or $(UE4SS_MAX_STAGE),read-only)" $(if $(UE4SS_LIVE_CALL_LOG_LIMIT),--live-call-log-limit "$(UE4SS_LIVE_CALL_LOG_LIMIT)",)
+
+proton-proxy-candidates:
+	@if [ -z "$(CLIENT_EXE)" ]; then \
+		echo "Usage: make proton-proxy-candidates CLIENT_EXE=/path/to/DuneSandbox-Win64-Shipping.exe"; \
+		exit 2; \
+	fi
+	./scripts/proton-proxy-candidates.py "$(CLIENT_EXE)"
+
+proton-dll-override-query:
+	./scripts/proton-dll-override-control.sh --query
+
+proton-dll-override-set:
+	./scripts/proton-dll-override-control.sh --set
+
+proton-dll-override-unset:
+	./scripts/proton-dll-override-control.sh --unset
+
+test-client-loader-scan-summary:
+	python3 -m unittest scripts/test-client-loader-scan-summary.py
+
+test-client-loader-xrefs:
+	python3 -m unittest scripts/test-client-loader-xrefs.py
+
+test-client-pe-signatures:
+	python3 -m unittest scripts/test-client-pe-signatures.py
+
+test-client-pe-signature-manifest:
+	python3 -m unittest scripts/test-client-pe-signature-manifest.py
+
+test-export-ue-anchor-env:
+	python3 -m unittest scripts/test-export-ue-anchor-env.py
+
+test-prepare-ue-anchor-canary:
+	python3 -m unittest scripts/test-prepare-ue-anchor-canary.py
+
+test-canary-linux-server-loader:
+	python3 -m unittest scripts/test-canary-linux-server-loader.py
+
+test-plan-ue4ss-canary-env:
+	python3 -m unittest scripts/test-plan-ue4ss-canary-env.py
+
+test-client-ue-anchors:
+	python3 -m unittest scripts/test-client-ue-anchors.py
+
+test-ue4ss-port-readiness:
+	python3 -m unittest scripts/test-ue4ss-port-readiness.py
+
+test-loader-container-api-parity:
+	python3 -m unittest scripts/test-loader-container-api-parity.py
+
+test-loader-scheduler-api-parity:
+	python3 -m unittest scripts/test-loader-scheduler-api-parity.py
+
+test-loader-modref-api-parity:
+	python3 -m unittest scripts/test-loader-modref-api-parity.py
+
+test-loader-mod-lifecycle-api-parity:
+	python3 -m unittest scripts/test-loader-mod-lifecycle-api-parity.py
+
+test-loader-unregister-api-parity:
+	python3 -m unittest scripts/test-loader-unregister-api-parity.py
+
+test-loader-fname-api-parity:
+	python3 -m unittest scripts/test-loader-fname-api-parity.py
+
+test-loader-native-identity-parity:
+	python3 -m unittest scripts/test-loader-native-identity-parity.py
+
+test-loader-hook-path-alias-parity:
+	python3 -m unittest scripts/test-loader-hook-path-alias-parity.py
+
+test-loader-custom-property-api-parity:
+	python3 -m unittest scripts/test-loader-custom-property-api-parity.py
+
+test-loader-compat-globals-api-parity:
+	python3 -m unittest scripts/test-loader-compat-globals-api-parity.py
+
+test-loader-world-engine-api-parity:
+	python3 -m unittest scripts/test-loader-world-engine-api-parity.py
+
+test-loader-object-notify-api-parity:
+	python3 -m unittest scripts/test-loader-object-notify-api-parity.py
+
+test-loader-console-command-api-parity:
+	python3 -m unittest scripts/test-loader-console-command-api-parity.py
+
+test-loader-anchor-group-parity:
+	python3 -m unittest scripts/test-loader-anchor-group-parity.py
+
+test-loader-scan-preset-parity:
+	python3 -m unittest scripts/test-loader-scan-preset-parity.py
+
+test-proton-proxy-candidates:
+	python3 -m unittest scripts/test-proton-proxy-candidates.py
+
+test-client-loader-tools: test-client-loader-scan-summary test-linux-loader-xrefs test-linux-loader-anchors test-elf-signatures test-elf-signature-manifest test-client-loader-xrefs test-client-pe-signatures test-client-pe-signature-manifest test-export-ue-anchor-env test-prepare-ue-anchor-canary test-canary-linux-server-loader test-plan-ue4ss-canary-env test-client-ue-anchors test-ue4ss-port-readiness test-loader-container-api-parity test-loader-scheduler-api-parity test-loader-modref-api-parity test-loader-mod-lifecycle-api-parity test-loader-unregister-api-parity test-loader-fname-api-parity test-loader-native-identity-parity test-loader-hook-path-alias-parity test-loader-custom-property-api-parity test-loader-compat-globals-api-parity test-loader-world-engine-api-parity test-loader-object-notify-api-parity test-loader-console-command-api-parity test-loader-anchor-group-parity test-loader-scan-preset-parity test-proton-proxy-candidates test-verify-loader-artifacts
+
+build-linux-client-loader:
+	./scripts/build-linux-client-loader.sh
+
+package-linux-client-loader:
+	./scripts/package-linux-client-loader.sh
+
+smoke-linux-client-loader:
+	./scripts/smoke-linux-client-loader.sh
+
+smoke-linux-client-loader-package-preflight:
+	./scripts/smoke-linux-client-loader-package-preflight.sh
+
+build-windows-client-loader:
+	./scripts/build-windows-client-loader.sh
+
+package-windows-client-loader:
+	./scripts/package-windows-client-loader.sh
+
+smoke-windows-client-loader:
+	./scripts/smoke-windows-client-loader.sh
+
+stage-windows-lua-runtime:
+	./scripts/stage-windows-lua-runtime.sh
+
+smoke-windows-client-loader-lua:
+	./scripts/smoke-windows-client-loader-lua.sh
+
+smoke-windows-client-loader-package-preflight:
+	./scripts/smoke-windows-client-loader-package-preflight.sh
+
+smoke-windows-client-loader-full: smoke-windows-client-loader smoke-windows-client-loader-lua smoke-windows-client-loader-package-preflight
+
+build-client-loaders: build-linux-client-loader build-windows-client-loader
+
+package-client-loaders: package-linux-client-loader package-windows-client-loader
+
+smoke-client-loaders: smoke-linux-client-loader smoke-windows-client-loader
+
+smoke-client-loaders-full: smoke-linux-client-loader smoke-linux-client-loader-package-preflight smoke-windows-client-loader-full
 
 validate-research-build-tags:
 	./scripts/validate-research-build-tags.sh $(ENV_FILE)
@@ -28,6 +352,15 @@ verify-operational-bundle:
 		exit 2; \
 	fi
 	./scripts/verify-operational-bundle.sh $(BUNDLE_FILE)
+
+target-safety-audit:
+	./scripts/live-target-safety-audit.sh $(ENV_FILE)
+
+reconcile-map-patch-overlays:
+	./scripts/reconcile-map-patch-overlays.sh $(ENV_FILE) $(if $(EXECUTE),--execute,)
+
+install-target-safety-audit-timer:
+	./scripts/install-target-safety-audit-timer.sh $(ENV_FILE)
 
 rabbitmq-cert-check:
 	./scripts/check-rabbitmq-cert-sans.sh $(ENV_FILE)
@@ -164,6 +497,9 @@ brt-dd-live-restart:
 brt-dd-live-verify:
 	./scripts/brt-dd-live-readiness.sh verify-after-restart $(ENV_FILE)
 
+brt-dd-live-verify-stack:
+	./scripts/brt-dd-live-readiness.sh verify-brt-stack $(ENV_FILE)
+
 brt-dd-live-logs:
 	./scripts/brt-dd-live-readiness.sh logs $(ENV_FILE)
 
@@ -205,6 +541,9 @@ backup-dry-run:
 
 backup-state:
 	./scripts/backup-state.sh $(ENV_FILE)
+
+dd-pre-restore-backup:
+	./scripts/dd-pre-restore-backup.sh --env-file $(ENV_FILE) $(if $(LABEL),--label "$(LABEL)",) $(if $(BRT_PLAYER_ID),--brt-player-id $(BRT_PLAYER_ID),) $(if $(BRT_CHARACTER),--brt-character "$(BRT_CHARACTER)",) $(if $(BRT_TOTEM_ID),--brt-totem-id $(BRT_TOTEM_ID),) $(if $(COMMIT_BRT_BACKUP),--commit-brt-backup,)
 
 restore-dry-run:
 	@if [ -z "$(BACKUP_DIR)" ]; then \

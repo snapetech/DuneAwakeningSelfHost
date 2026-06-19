@@ -43,6 +43,8 @@ dd_brt_bypass_patterns=(
   'm_bBuildingRestrictionLimitsEnabled=False'
 )
 
+required_brt_patch_site='can-use-region-fail-join'
+
 dd1_no_shift_patterns=(
   'm_ShiftingSands=False'
   'm_bCoriolisAutoSpawnEnabled=False'
@@ -123,6 +125,23 @@ check_dd1_no_shift_config() {
   check_rendered_patterns "$file" "$rendered" "${required_config_patterns[@]}" "${dd_brt_bypass_patterns[@]}" "${dd1_no_shift_patterns[@]}"
 }
 
+check_brt_patch_site_config() {
+  local rendered service_block site_line
+  compose_command
+  rendered="$("${compose[@]}" config 2>/dev/null)"
+  service_block="$(awk -v service="$service" '
+    $0 ~ "^  " service ":" { in_service = 1; print; next }
+    in_service && $0 ~ "^  [A-Za-z0-9_-]+:" { in_service = 0 }
+    in_service { print }
+  ' <<<"$rendered")"
+  site_line="$(grep -E 'DUNE_BRT_DD_NARROW_TOOL_STATE_PATCH_SITES:' <<<"$service_block" || true)"
+  if [[ -z "$site_line" || "$site_line" != *"$required_brt_patch_site"* ]]; then
+    printf 'missing required BRT/DD runtime patch site for %s: %s\n' "$service" "$required_brt_patch_site" >&2
+    return 1
+  fi
+  printf 'rendered %s BRT/DD runtime patch sites include %s\n' "$service" "$required_brt_patch_site"
+}
+
 check_repo_config() {
   local file rendered
   for file in config/UserGame.ini config/UserGame.deep-desert-coriolis.ini config/UserGame.deep-desert-pvp.ini; do
@@ -138,6 +157,7 @@ check_repo_config() {
     check_rendered_patterns "$file" "$rendered" "${dd_brt_bypass_patterns[@]}"
   done
   check_dd1_no_shift_config "$target_config"
+  check_brt_patch_site_config
   printf 'repo configs contain DeepDesert landclaim and BRT map restriction entries plus DD#1 no-shift/no-wipe guardrails\n'
 }
 

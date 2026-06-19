@@ -2,12 +2,13 @@
 set -euo pipefail
 
 env_file=".env"
-database="${DUNE_DB_NAME:-dune_sb_1_4_0_0}"
+database="${DUNE_DB_NAME:-}"
 required_host="${DUNE_BRT_DD_SYNTHETIC_HOST:-kspls0}"
 player_id=""
 character_name=""
 totem_id=""
 commit="false"
+dd_partitions="${DUNE_BRT_DD_SYNTHETIC_DD_PARTITIONS:-8,31}"
 
 usage() {
   sed -n '1,80p' "$0" | sed -n '/^# Usage:/,/^$/p'
@@ -61,7 +62,37 @@ while [[ $# -gt 0 ]]; do
 done
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+script_dir="${repo_root}/scripts"
 cd "$repo_root"
+
+env_value() {
+  local key="$1"
+  awk -F= -v key="$key" '
+    $0 ~ "^[[:space:]]*" key "=" {
+      sub(/^[^=]*=/, "")
+      gsub(/^["'\'']|["'\'']$/, "")
+      print
+      exit
+    }
+  ' "$env_file" 2>/dev/null
+}
+
+database="${database:-${DUNE_GAME_DB_NAME:-$(env_value DUNE_GAME_DB_NAME)}}"
+database="${database:-${DUNE_DATABASE:-$(env_value DUNE_DATABASE)}}"
+database="${database:-${DUNE_DB_NAME:-$(env_value DUNE_DB_NAME)}}"
+database="${database:-dune_sb_1_4_0_0}"
+
+container_runtime="${CONTAINER_RUNTIME:-docker}"
+if [[ -x "$script_dir/compose-files.sh" ]]; then
+  COMPOSE_FILES="$("$script_dir/compose-files.sh" "$env_file")"
+  export COMPOSE_FILES
+fi
+compose=("$container_runtime" compose)
+IFS=':' read -ra compose_files <<< "${COMPOSE_FILES:-compose.yaml}"
+for compose_file in "${compose_files[@]}"; do
+  compose+=(-f "$compose_file")
+done
+compose+=(--env-file "$env_file")
 
 short_host="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
 if [[ "$short_host" != "$required_host" && "${DUNE_BRT_DD_SYNTHETIC_ALLOW_ANY_HOST:-0}" != "1" ]]; then
@@ -75,9 +106,26 @@ if [[ "$commit" == "true" && "${CONFIRM:-}" != "CREATE BRT DB BACKUP" ]]; then
 fi
 
 psql_db() {
-  docker compose --env-file "$env_file" exec -T postgres \
+  "${compose[@]}" exec -T postgres \
     psql -U dune -d "$database" -v ON_ERROR_STOP=1 -P pager=off "$@"
 }
+
+if [[ "$commit" == "true" && "${DUNE_BRT_DD_SYNTHETIC_ALLOW_DD_PLAYERS:-0}" != "1" ]]; then
+  dd_connected_players="$(psql_db -qAt -v dd_partitions="$dd_partitions" <<'SQL'
+with wanted(partition_id) as (
+  select unnest(string_to_array(:'dd_partitions', ',')::int[])
+)
+select coalesce(sum(coalesce(fs.connected_players, 0)), 0)::integer
+from wanted w
+join dune.world_partition wp on wp.partition_id = w.partition_id
+left join dune.farm_state fs on fs.server_id = wp.server_id;
+SQL
+)"
+  if [[ "${dd_connected_players:-0}" != "0" ]]; then
+    echo "ERROR: refusing committed BRT backup while DD connected_players=${dd_connected_players} for partitions ${dd_partitions}." >&2
+    exit 1
+  fi
+fi
 
 if [[ -z "$player_id" ]]; then
   if [[ -z "$character_name" ]]; then

@@ -184,14 +184,14 @@ public class DumpCanBePlacedVerdicts extends GhidraScript {
             ReferenceIterator rit = refs.getReferencesTo(stringAddr.add(i));
             while (rit.hasNext()) {
                 Reference ref = rit.next();
-                Function f = getFunctionContaining(ref.getFromAddress());
+                Function f = functionContaining(ref.getFromAddress());
                 if (f != null) entries.add(f.getEntryPoint());
             }
         }
         return entries;
     }
 
-    private Function getFunctionContaining(Address a) {
+    private Function functionContaining(Address a) {
         return currentProgram.getFunctionManager().getFunctionContaining(a);
     }
 

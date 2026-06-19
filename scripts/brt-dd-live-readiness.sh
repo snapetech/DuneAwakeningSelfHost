@@ -9,6 +9,7 @@ Commands:
   preflight             Read-only checks before the downtime window.
   restart-deep-desert  Restart only the live Deep Desert partition.
   verify-after-restart Read-only DB/container checks after restart.
+  verify-brt-stack     Verify overlay, DB shim, rollback plan, self-test, and canary.
   logs                 Print recent high-signal Deep Desert BRT/building logs.
   checklist            Print the next-downtime operator checklist.
 
@@ -20,7 +21,7 @@ USAGE
 cmd="${1:-}"
 env_file="${2:-${ENV_FILE:-.env}}"
 confirm="${3:-${CONFIRM:-}}"
-db="${DUNE_DB_NAME:-dune_sb_1_4_0_0}"
+db="${DUNE_DB_NAME:-}"
 runtime="${CONTAINER_RUNTIME:-docker}"
 service="${DUNE_BRT_DD_LIVE_SERVICE:-deep-desert}"
 partition_id="${DUNE_BRT_DD_LIVE_PARTITION_ID:-8}"
@@ -58,6 +59,11 @@ env_value() {
     }
   ' "$env_file" | tail -n 1
 }
+
+if [[ -z "$db" ]]; then
+  db="$(env_value DUNE_GAME_DB_NAME)"
+  db="${db:-dune_sb_1_4_5_0}"
+fi
 
 if [[ -z "${WORLD_DATACENTER_ID:-}" ]]; then
   WORLD_DATACENTER_ID="$(env_value WORLD_DATACENTER_ID)"
@@ -217,6 +223,40 @@ verify_after_restart() {
   verify_copied_config required
 }
 
+verify_overlay() {
+  local id host_pak container_pak host_sha container_sha
+  host_pak="${DUNE_BRT_DD_OVERLAY_PAK:-backups/operations/brt-dd-overlay/pakchunk9999-LinuxServer.pak}"
+  container_pak="${DUNE_BRT_DD_CONTAINER_OVERLAY_PAK:-/home/dune/server/DuneSandbox/Content/Paks/pakchunk9999-LinuxServer.pak}"
+
+  "$script_dir/verify-brt-dd-overlay-pak.sh" "$host_pak"
+  host_sha="$(sha256sum "$host_pak" | awk '{print $1}')"
+
+  id="$(container_id)"
+  if [[ -z "$id" ]]; then
+    printf '%s is not running; live overlay checksum check failed\n' "$service" >&2
+    return 1
+  fi
+  container_sha="$("$runtime" exec "$id" sha256sum "$container_pak" | awk '{print $1}')"
+  printf 'overlay_host_sha256=%s\n' "$host_sha"
+  printf 'overlay_container_sha256=%s\n' "$container_sha"
+  [[ "$host_sha" == "$container_sha" ]] || {
+    printf 'overlay checksum mismatch: host=%s container=%s\n' "$host_sha" "$container_sha" >&2
+    return 1
+  }
+}
+
+verify_brt_stack() {
+  printf 'host=%s required_live_host=%s db=%s service=%s partition=%s\n' "$(host_name)" "$required_host" "$db" "$service" "$partition_id"
+  verify_db_partition required
+  verify_copied_config required
+  verify_overlay
+  "$script_dir/brt-dd-db-metadata-map-shim.sh" status "$env_file"
+  "$script_dir/brt-dd-db-metadata-map-shim.sh" rollback-plan "$env_file"
+  "$script_dir/brt-dd-db-metadata-map-shim.sh" self-test "$env_file"
+  "$script_dir/brt-dd-live-canary.sh" arm "$env_file"
+  "$script_dir/brt-dd-live-canary.sh" collect "$env_file"
+}
+
 restart_deep_desert() {
   assert_live_host_for_mutation
   printf 'pausing map watchdog before %s restart\n' "$service"
@@ -269,6 +309,9 @@ case "$cmd" in
     ;;
   verify-after-restart)
     verify_after_restart
+    ;;
+  verify-brt-stack)
+    verify_brt_stack
     ;;
   logs)
     show_logs

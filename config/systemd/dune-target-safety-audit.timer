@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Dune target safety audit
+
+[Timer]
+OnCalendar=*-*-* 04:20:00
+AccuracySec=1min
+Persistent=true
+Unit=dune-target-safety-audit.service
+
+[Install]
+WantedBy=timers.target

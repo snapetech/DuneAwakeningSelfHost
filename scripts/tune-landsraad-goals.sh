@@ -5,10 +5,11 @@ usage() {
   cat <<'USAGE'
 Usage: scripts/tune-landsraad-goals.sh [ENV_FILE] [--execute]
 
-Installs an idempotent Landsraad goal scaler and applies it to the current
+Installs an idempotent Landsraad goal targeter and applies it to the current
 term. Dry-run is the default.
 
 Defaults:
+  DUNE_LANDSRAAD_GOAL_TARGET=25000
   DUNE_LANDSRAAD_GOAL_SCALE=0.35714285714285714285
   DUNE_LANDSRAAD_GOAL_MIN=1
   DUNE_LANDSRAAD_GOAL_REQUIRE_HOST=kspls0
@@ -72,12 +73,20 @@ host_short() {
   fi
 }
 
+goal_target="$(env_or_file DUNE_LANDSRAAD_GOAL_TARGET 25000)"
 goal_scale="$(env_or_file DUNE_LANDSRAAD_GOAL_SCALE 0.35714285714285714285)"
 goal_min="$(env_or_file DUNE_LANDSRAAD_GOAL_MIN 1)"
 required_host="$(env_or_file DUNE_LANDSRAAD_GOAL_REQUIRE_HOST kspls0)"
 db="$(env_or_file DUNE_DATABASE dune_sb_1_4_0_0)"
 container_runtime="$(env_or_file CONTAINER_RUNTIME docker)"
 
+case "$goal_target" in
+  ''|*[!0-9]*) printf 'DUNE_LANDSRAAD_GOAL_TARGET must be a positive integer\n' >&2; exit 64 ;;
+esac
+if ((goal_target < 1)); then
+  printf 'DUNE_LANDSRAAD_GOAL_TARGET must be at least 1\n' >&2
+  exit 64
+fi
 case "$goal_min" in
   ''|*[!0-9]*) printf 'DUNE_LANDSRAAD_GOAL_MIN must be a positive integer\n' >&2; exit 64 ;;
 esac
@@ -100,6 +109,7 @@ done
 psql_base=(
   "${compose[@]}" exec -T postgres
   psql -U dune -d "$db" -v ON_ERROR_STOP=1
+  -v "goal_target=$goal_target"
   -v "goal_scale=$goal_scale"
   -v "goal_min=$goal_min"
 )
@@ -109,17 +119,22 @@ if [[ "$execute" != true ]]; then
 \pset pager off
 SELECT set_config('landsraad_goal.scale', :'goal_scale', false);
 SELECT set_config('landsraad_goal.min_goal', :'goal_min', false);
+SELECT set_config('landsraad_goal.target', :'goal_target', false);
 
 DO $$
 DECLARE
   scale numeric := current_setting('landsraad_goal.scale')::numeric;
   min_goal integer := current_setting('landsraad_goal.min_goal')::integer;
+  target_goal integer := current_setting('landsraad_goal.target')::integer;
 BEGIN
   IF scale <= 0 THEN
     RAISE EXCEPTION 'DUNE_LANDSRAAD_GOAL_SCALE must be greater than zero: %', scale;
   END IF;
   IF min_goal < 1 THEN
     RAISE EXCEPTION 'DUNE_LANDSRAAD_GOAL_MIN must be at least 1: %', min_goal;
+  END IF;
+  IF target_goal < 1 THEN
+    RAISE EXCEPTION 'DUNE_LANDSRAAD_GOAL_TARGET must be at least 1: %', target_goal;
   END IF;
 END $$;
 
@@ -164,24 +179,26 @@ SELECT id,
        completed,
        winning_faction_id,
        current_goal,
-       GREATEST(current_setting('landsraad_goal.min_goal')::integer, CEIL(source_goal * current_setting('landsraad_goal.scale')::numeric)::integer) AS tuned_goal
+       current_setting('landsraad_goal.target')::integer AS tuned_goal
   FROM task_goals
   ORDER BY board_index;
 SQL
   exit 0
 fi
 
-printf 'Executing Landsraad goal tuning: scale=%s min=%s db=%s\n' "$goal_scale" "$goal_min" "$db"
+printf 'Executing Landsraad goal tuning: target=%s scale=%s min=%s db=%s\n' "$goal_target" "$goal_scale" "$goal_min" "$db"
 "${psql_base[@]}" <<'SQL'
 \pset pager off
 BEGIN;
 SELECT set_config('landsraad_goal.scale', :'goal_scale', true);
 SELECT set_config('landsraad_goal.min_goal', :'goal_min', true);
+SELECT set_config('landsraad_goal.target', :'goal_target', true);
 
 DO $$
 DECLARE
   scale numeric := current_setting('landsraad_goal.scale')::numeric;
   min_goal integer := current_setting('landsraad_goal.min_goal')::integer;
+  target_goal integer := current_setting('landsraad_goal.target')::integer;
 BEGIN
   IF scale <= 0 THEN
     RAISE EXCEPTION 'DUNE_LANDSRAAD_GOAL_SCALE must be greater than zero: %', scale;
@@ -189,19 +206,32 @@ BEGIN
   IF min_goal < 1 THEN
     RAISE EXCEPTION 'DUNE_LANDSRAAD_GOAL_MIN must be at least 1: %', min_goal;
   END IF;
+  IF target_goal < 1 THEN
+    RAISE EXCEPTION 'DUNE_LANDSRAAD_GOAL_TARGET must be at least 1: %', target_goal;
+  END IF;
 END $$;
 
 CREATE TABLE IF NOT EXISTS dune.landsraad_goal_tuning (
   id boolean PRIMARY KEY DEFAULT TRUE CHECK (id),
+  goal_target integer CHECK (goal_target >= 1),
   goal_scale numeric NOT NULL CHECK (goal_scale > 0),
   min_goal integer NOT NULL DEFAULT 1 CHECK (min_goal >= 1),
   updated_at timestamp with time zone NOT NULL DEFAULT now()
 );
+ALTER TABLE dune.landsraad_goal_tuning
+  ADD COLUMN IF NOT EXISTS goal_target integer CHECK (goal_target >= 1);
 
-INSERT INTO dune.landsraad_goal_tuning (id, goal_scale, min_goal, updated_at)
-VALUES (TRUE, current_setting('landsraad_goal.scale')::numeric, current_setting('landsraad_goal.min_goal')::integer, now())
+INSERT INTO dune.landsraad_goal_tuning (id, goal_target, goal_scale, min_goal, updated_at)
+VALUES (
+  TRUE,
+  current_setting('landsraad_goal.target')::integer,
+  current_setting('landsraad_goal.scale')::numeric,
+  current_setting('landsraad_goal.min_goal')::integer,
+  now()
+)
 ON CONFLICT (id)
-DO UPDATE SET goal_scale = EXCLUDED.goal_scale,
+DO UPDATE SET goal_target = EXCLUDED.goal_target,
+              goal_scale = EXCLUDED.goal_scale,
               min_goal = EXCLUDED.min_goal,
               updated_at = now();
 
@@ -223,6 +253,7 @@ CREATE OR REPLACE PROCEDURE dune.landsraad_insert_tasks(
 LANGUAGE plpgsql
 AS $procedure$
 DECLARE
+  configured_target integer := (SELECT goal_target FROM dune.landsraad_goal_tuning WHERE id = TRUE);
   configured_scale numeric := COALESCE((SELECT goal_scale FROM dune.landsraad_goal_tuning WHERE id = TRUE), 1);
   configured_min integer := COALESCE((SELECT min_goal FROM dune.landsraad_goal_tuning WHERE id = TRUE), 1);
 BEGIN
@@ -230,8 +261,36 @@ BEGIN
     SELECT in_term_id,
            tasks.board_index,
            tasks.house_name,
-           GREATEST(configured_min, CEIL(tasks.goal_amount * configured_scale)::integer)
+           COALESCE(configured_target, GREATEST(configured_min, CEIL(tasks.goal_amount * configured_scale)::integer))
       FROM UNNEST(in_tasks) AS tasks;
+
+  INSERT INTO dune.landsraad_goal_tuning_applied (
+    task_id,
+    term_id,
+    original_goal_amount,
+    applied_goal_amount,
+    goal_scale,
+    min_goal,
+    applied_at
+  )
+  SELECT inserted.id,
+         inserted.term_id,
+         source_tasks.goal_amount,
+         inserted.goal_amount,
+         configured_scale,
+         configured_min,
+         now()
+    FROM dune.landsraad_tasks inserted
+    JOIN UNNEST(in_tasks) AS source_tasks
+      ON source_tasks.board_index = inserted.board_index
+     AND source_tasks.house_name = inserted.house_name
+   WHERE inserted.term_id = in_term_id
+  ON CONFLICT (task_id)
+  DO UPDATE SET original_goal_amount = EXCLUDED.original_goal_amount,
+                applied_goal_amount = EXCLUDED.applied_goal_amount,
+                goal_scale = EXCLUDED.goal_scale,
+                min_goal = EXCLUDED.min_goal,
+                applied_at = EXCLUDED.applied_at;
 
   INSERT INTO dune.landsraad_task_rewards (task_id, threshold, template_id, amount)
     SELECT tasks.id,
@@ -256,7 +315,7 @@ WITH current_term AS (
     LIMIT 1
 ),
 configured AS (
-  SELECT goal_scale, min_goal
+  SELECT goal_target, goal_scale, min_goal
     FROM dune.landsraad_goal_tuning
    WHERE id = TRUE
 ),
@@ -273,7 +332,7 @@ applied AS (
   SELECT t.id,
          t.term_id,
          t.goal_amount,
-         GREATEST(c.min_goal, CEIL(t.goal_amount * c.goal_scale)::integer),
+         COALESCE(c.goal_target, GREATEST(c.min_goal, CEIL(t.goal_amount * c.goal_scale)::integer)),
          c.goal_scale,
          c.min_goal,
          now()
@@ -281,9 +340,12 @@ applied AS (
     JOIN current_term ct ON ct.term_id = t.term_id
     CROSS JOIN configured c
   ON CONFLICT (task_id)
-  DO UPDATE SET applied_goal_amount = GREATEST(
-                  EXCLUDED.min_goal,
-                  CEIL(dune.landsraad_goal_tuning_applied.original_goal_amount * EXCLUDED.goal_scale)::integer
+  DO UPDATE SET applied_goal_amount = COALESCE(
+                  (SELECT goal_target FROM dune.landsraad_goal_tuning WHERE id = TRUE),
+                  GREATEST(
+                    EXCLUDED.min_goal,
+                    CEIL(dune.landsraad_goal_tuning_applied.original_goal_amount * EXCLUDED.goal_scale)::integer
+                  )
                 ),
                 goal_scale = EXCLUDED.goal_scale,
                 min_goal = EXCLUDED.min_goal,

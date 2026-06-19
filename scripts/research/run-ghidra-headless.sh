@@ -198,4 +198,5 @@ if [[ "$DRY_RUN" == true ]]; then
     exit 0
 fi
 
+export DUNE_GHIDRA_WORK_DIR="$WORK_DIR"
 exec "${cmd[@]}"

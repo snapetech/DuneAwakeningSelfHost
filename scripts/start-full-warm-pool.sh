@@ -61,7 +61,8 @@ for compose_file in "${compose_files[@]}"; do
   compose+=(-f "$compose_file")
 done
 compose+=(--env-file "$env_file")
-db=dune_sb_1_4_0_0
+db="${DUNE_GAME_DB_NAME:-$(read_env DUNE_GAME_DB_NAME)}"
+db="${db:-dune_sb_1_4_0_0}"
 
 psql_at() {
   "${compose[@]}" exec -T postgres psql -U dune -d "$db" -Atc "$1"

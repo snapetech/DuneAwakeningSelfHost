@@ -22,7 +22,7 @@
 //     -log /tmp/ghidra-work/brt-trace-anchors-ghidra.log
 //
 // Output:
-//   /tmp/ghidra-work/brt-trace-anchors.txt
+//   ${BRT_TRACE_ANCHORS_FILE:-${DUNE_GHIDRA_WORK_DIR:-/tmp/ghidra-work}/brt-trace-anchors.txt}
 //
 // @category Reverse Engineering
 
@@ -35,6 +35,7 @@ import ghidra.program.model.symbol.ReferenceIterator;
 import ghidra.program.model.symbol.ReferenceManager;
 
 import java.io.FileWriter;
+import java.io.File;
 import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -42,8 +43,6 @@ import java.util.List;
 import java.util.Set;
 
 public class DumpBrtTraceAnchors extends GhidraScript {
-    private static final String OUT = "/tmp/ghidra-work/brt-trace-anchors.txt";
-
     // Each anchor: trace env var the operator should set, plus the strings whose
     // xref functions we report. The first string that resolves to a single
     // containing function wins for the headline offset; all hits are listed.
@@ -63,11 +62,16 @@ public class DumpBrtTraceAnchors extends GhidraScript {
 
     @Override
     public void run() throws Exception {
-        out = new PrintWriter(new FileWriter(OUT));
+        String outPath = outputPath();
+        File parent = new File(outPath).getParentFile();
+        if (parent != null) {
+            parent.mkdirs();
+        }
+        out = new PrintWriter(new FileWriter(outPath));
         refs = currentProgram.getReferenceManager();
         imageBase = currentProgram.getImageBase().getOffset();
         try {
-            log("Output: " + OUT);
+            log("Output: " + outPath);
             log("Program: " + currentProgram.getName());
             log("Image base: 0x" + Long.toHexString(imageBase));
             log("");
@@ -82,6 +86,18 @@ public class DumpBrtTraceAnchors extends GhidraScript {
         } finally {
             out.close();
         }
+    }
+
+    private String outputPath() {
+        String explicit = System.getenv("BRT_TRACE_ANCHORS_FILE");
+        if (explicit != null && !explicit.isEmpty()) {
+            return explicit;
+        }
+        String workDir = System.getenv("DUNE_GHIDRA_WORK_DIR");
+        if (workDir == null || workDir.isEmpty()) {
+            workDir = "/tmp/ghidra-work";
+        }
+        return workDir + "/brt-trace-anchors.txt";
     }
 
     private void dumpAnchor(String[] anchor) throws Exception {

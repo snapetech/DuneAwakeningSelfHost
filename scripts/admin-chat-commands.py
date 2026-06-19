@@ -35,6 +35,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 GM_LOCATION_FILE = ROOT / "backups" / "admin-panel" / "gm-locations.json"
 TELEPORT_SLOT_FILE = ROOT / "backups" / "admin-panel" / "teleport-slots.json"
 ONLINE_GM_TELEPORT_ARM_FILE = ROOT / "backups" / "admin-panel" / "online-gm-teleport-arm.json"
+DD1_RESTORE_AUDIT_DIR = ROOT / "backups" / "admin-chat-dd1-restore"
 ITEM_CATALOG = ROOT / "config" / "artificial-exchange-prices.csv"
 SPAM_STATE = {}
 AUCTION_CONFIRMATIONS = {}
@@ -163,6 +164,10 @@ def db_default_port():
     return "5432" if pathlib.Path("/workspace/.env").exists() else "15431"
 
 
+def db_default_name():
+    return env("DUNE_GAME_DB_NAME", env("DUNE_DATABASE", env("DUNE_DB_NAME", "dune_sb_1_4_0_0")))
+
+
 def connect_db():
     db_host = env("DUNE_ADMIN_DB_HOST", db_default_host())
     db_port = env("DUNE_ADMIN_DB_PORT", db_default_port())
@@ -174,7 +179,7 @@ def connect_db():
         port=db_port,
         user=env("DUNE_ADMIN_DB_USER", "dune"),
         password=env("DUNE_ADMIN_DB_PASSWORD", env("POSTGRES_DUNE_PASSWORD", "")),
-        dbname=env("DUNE_ADMIN_DB_NAME", "dune_sb_1_4_0_0"),
+        dbname=env("DUNE_ADMIN_DB_NAME", db_default_name()),
         connect_timeout=5,
     )
 
@@ -797,8 +802,31 @@ def chat_dd1_restore_enabled():
     return env_bool("DUNE_CHAT_COMMAND_DD1_BRT_RESTORE_ENABLED", False)
 
 
+def chat_dd1_restore_dry_run():
+    override = env("DUNE_CHAT_COMMAND_DD1_BRT_RESTORE_DRY_RUN", "")
+    if override != "":
+        return override.lower() in ("1", "true", "yes", "on")
+    return env_bool("DUNE_CHAT_COMMAND_DRY_RUN", True)
+
+
 def chat_dd1_restore_copy_source_enabled():
     return env_bool("DUNE_CHAT_COMMAND_DD1_BRT_RESTORE_COPY_SOURCE_ENABLED", False)
+
+
+def chat_dd1_restore_execution_allowed(player, sender_fls_id=""):
+    allowed_fls_ids = split_csv(env("DUNE_CHAT_COMMAND_DD1_BRT_RESTORE_ALLOWED_FLS_IDS", ""))
+    allowed_player_ids = split_csv(env("DUNE_CHAT_COMMAND_DD1_BRT_RESTORE_ALLOWED_PLAYER_IDS", ""))
+    if "*" in allowed_fls_ids or "*" in allowed_player_ids:
+        return True
+    if not allowed_fls_ids and not allowed_player_ids:
+        return False
+    player_fls_id = player.get("fls_id") or ""
+    player_id = str(player.get("player_controller_id") or "")
+    return bool(
+        (sender_fls_id and sender_fls_id in allowed_fls_ids)
+        or (player_fls_id and player_fls_id in allowed_fls_ids)
+        or (player_id and player_id in allowed_player_ids)
+    )
 
 
 def dd1_partition_id():
@@ -810,8 +838,35 @@ def dd1_map_names():
     return names or ["DeepDesert", "DeepDesert_1"]
 
 
+def dd1_restore_allowed_source_maps():
+    value = env("DUNE_CHAT_COMMAND_DD1_RESTORE_ALLOWED_SOURCE_MAPS", "*")
+    if value.strip() == "*":
+        return None
+    return split_csv(value)
+
+
 def dd1_restore_confirmation_ttl():
     return int(env("DUNE_CHAT_COMMAND_DD1_RESTORE_CONFIRM_SECONDS", "120"))
+
+
+def dd1_restore_max_connected_players():
+    return int(env("DUNE_CHAT_COMMAND_DD1_RESTORE_MAX_DD_CONNECTED_PLAYERS", "1"))
+
+
+def dd1_restore_recent_backup_required():
+    return env_bool("DUNE_CHAT_COMMAND_DD1_RESTORE_REQUIRE_RECENT_BACKUP", True)
+
+
+def dd1_restore_backup_max_age_seconds():
+    return int(env("DUNE_CHAT_COMMAND_DD1_RESTORE_BACKUP_MAX_AGE_SECONDS", "86400"))
+
+
+def dd1_restore_collision_guard_enabled():
+    return env_bool("DUNE_CHAT_COMMAND_DD1_RESTORE_COLLISION_GUARD_ENABLED", True)
+
+
+def dd1_restore_collision_padding():
+    return float(env("DUNE_CHAT_COMMAND_DD1_RESTORE_COLLISION_PADDING", "1000"))
 
 
 def dd1_restore_confirmation_key(sender_name="", sender_fls_id="", resolved_name=""):
@@ -824,7 +879,7 @@ def dd1_base_containment_padding():
 
 def dd1_restore_offset():
     return {
-        "x": float(env("DUNE_CHAT_COMMAND_DD1_RESTORE_OFFSET_X", "1000")),
+        "x": float(env("DUNE_CHAT_COMMAND_DD1_RESTORE_OFFSET_X", "3000")),
         "y": float(env("DUNE_CHAT_COMMAND_DD1_RESTORE_OFFSET_Y", "0")),
         "z": float(env("DUNE_CHAT_COMMAND_DD1_RESTORE_OFFSET_Z", "0")),
     }
@@ -1693,6 +1748,168 @@ def dd1_restore_confirm_position_ok(pending, current_target):
     return distance <= dd1_restore_max_confirm_distance(), distance
 
 
+def dd1_restore_totem_permission(cur, totem_id, player_id, actor_name="##Totem_Placeable", owner_rank=1):
+    cur.execute(
+        """
+        insert into dune.permission_actor(actor_id, actor_name, actor_type, access_level, is_child)
+        values (%s, %s, 3, 3, false)
+        on conflict (actor_id) do update set
+          actor_name=excluded.actor_name,
+          actor_type=excluded.actor_type,
+          access_level=excluded.access_level,
+          is_child=excluded.is_child
+        """,
+        (int(totem_id), actor_name),
+    )
+    permission_actor_rows = cur.rowcount
+    cur.execute(
+        """
+        insert into dune.permission_actor_rank(permission_actor_id, player_id, rank)
+        values (%s, %s, %s)
+        on conflict (permission_actor_id, player_id) do update set rank=excluded.rank
+        """,
+        (int(totem_id), int(player_id), int(owner_rank)),
+    )
+    permission_rank_rows = cur.rowcount
+    return {
+        "permissionActorRows": permission_actor_rows,
+        "permissionRankRows": permission_rank_rows,
+    }
+
+
+def read_manifest_file(path):
+    values = {}
+    try:
+        for raw in pathlib.Path(path).read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            values[key.strip()] = value.strip()
+    except OSError:
+        return {}
+    return values
+
+
+def latest_dd_pre_restore_backup():
+    root = ROOT / "backups" / "manual"
+    try:
+        candidates = [p for p in root.glob("dd-pre-restore-*") if p.is_dir()]
+    except OSError:
+        return None
+    if not candidates:
+        return None
+    return max(candidates, key=lambda p: p.stat().st_mtime)
+
+
+def dd1_verify_recent_pre_restore_backup():
+    if not dd1_restore_recent_backup_required():
+        return {"required": False, "ok": True}
+    backup_dir = latest_dd_pre_restore_backup()
+    if backup_dir is None:
+        raise RuntimeError("DD1 restore execution is blocked: no dd-pre-restore backup exists")
+    manifest = read_manifest_file(backup_dir / "manifest.txt")
+    dump_name = manifest.get("postgres_dump")
+    dump_path = backup_dir / dump_name if dump_name else None
+    if not dump_name or not dump_path.exists() or not dump_path.is_file():
+        raise RuntimeError(f"DD1 restore execution is blocked: backup {backup_dir} has no postgres dump")
+    age_seconds = max(0, int(time.time() - backup_dir.stat().st_mtime))
+    max_age = dd1_restore_backup_max_age_seconds()
+    if max_age >= 0 and age_seconds > max_age:
+        raise RuntimeError(
+            f"DD1 restore execution is blocked: latest backup {backup_dir.name} is {age_seconds}s old "
+            f"(max {max_age}s)"
+        )
+    return {
+        "required": True,
+        "ok": True,
+        "backupDir": str(backup_dir),
+        "postgresDump": str(dump_path),
+        "ageSeconds": age_seconds,
+        "manifest": manifest,
+    }
+
+
+def dd1_restore_collision_rows(cur, backup_id, target_map, target_partition, target_dimension, bbox):
+    if not dd1_restore_collision_guard_enabled():
+        return []
+    if any(bbox.get(key) is None for key in ("minX", "maxX", "minY", "maxY")):
+        raise RuntimeError("DD1 restore execution is blocked: restore footprint bounds are unavailable")
+    padding = dd1_restore_collision_padding()
+    cur.execute(
+        """
+        with linked as (
+          select actor_id
+          from dune.base_backup_linked_actors
+          where id=%s
+        )
+        select
+          t.id as totem_id,
+          a.map,
+          a.partition_id,
+          a.dimension_index,
+          ((a.transform).location).x::float8 as x,
+          ((a.transform).location).y::float8 as y,
+          ((a.transform).location).z::float8 as z
+        from dune.totems t
+        join dune.actors a on a.id=t.id
+        where a.map=%s
+          and a.partition_id=%s
+          and a.dimension_index=%s
+          and t.id not in (select actor_id from linked)
+          and ((a.transform).location).x::float8 between %s and %s
+          and ((a.transform).location).y::float8 between %s and %s
+        order by t.id
+        limit 8
+        """,
+        (
+            int(backup_id),
+            target_map,
+            int(target_partition),
+            int(target_dimension),
+            float(bbox["minX"]) - padding,
+            float(bbox["maxX"]) + padding,
+            float(bbox["minY"]) - padding,
+            float(bbox["maxY"]) + padding,
+        ),
+    )
+    return [dict(row) for row in cur.fetchall()]
+
+
+def write_dd1_restore_audit(result, plan, backup_guard):
+    try:
+        DD1_RESTORE_AUDIT_DIR.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        backup_id = int(result.get("backupId") or plan.get("backupId") or 0)
+        path = DD1_RESTORE_AUDIT_DIR / f"{stamp}-backup-{backup_id}.json"
+        payload = {
+            "createdUtc": stamp,
+            "result": result,
+            "plan": plan,
+            "backupGuard": backup_guard,
+        }
+        path.write_text(json.dumps(payload, default=str, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        return str(path)
+    except Exception as exc:
+        return f"audit-write-failed: {exc}"
+
+
+def dd1_connected_players(conn):
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            select coalesce(sum(coalesce(fs.connected_players, 0)), 0)::integer as connected_players
+            from dune.world_partition wp
+            left join dune.farm_state fs on fs.server_id=wp.server_id
+            where wp.partition_id=%s
+              and wp.map = any(%s)
+            """,
+            (dd1_partition_id(), dd1_map_names()),
+        )
+        row = cur.fetchone() or {}
+    return int(row.get("connected_players") or 0)
+
+
 def dd1_restore_backup_to_location(conn, plan, dry_run=True):
     if dry_run:
         return {"ok": True, "dryRun": True, "plan": plan}
@@ -1701,10 +1918,189 @@ def dd1_restore_backup_to_location(conn, plan, dry_run=True):
             "DD1 restore execution is blocked: set DUNE_CHAT_COMMAND_DD1_BRT_RESTORE_COPY_SOURCE_ENABLED=true "
             "only after disposable validation of the persistence copy writer"
         )
-    raise NotImplementedError(
-        "DD1 restore persistence copy writer is not promoted yet; backup, placement capture, preview, "
-        "confirmation, and safety gates are wired"
-    )
+    backup_guard = dd1_verify_recent_pre_restore_backup()
+    connected_players = dd1_connected_players(conn)
+    max_connected_players = dd1_restore_max_connected_players()
+    if max_connected_players >= 0 and connected_players > max_connected_players:
+        raise RuntimeError(
+            f"DD1 restore execution is blocked: DD connected_players={connected_players} exceeds "
+            f"DUNE_CHAT_COMMAND_DD1_RESTORE_MAX_DD_CONNECTED_PLAYERS={max_connected_players}"
+        )
+
+    backup_id = int(plan["backupId"])
+    player_id = int(plan["playerId"])
+    target = plan["target"]
+    target_partition = int(target["partitionId"])
+    target_dimension = int(target["dimensionIndex"])
+    target_map = target.get("map") or ""
+    if target_partition != dd1_partition_id():
+        raise ValueError(f"DD1 restore target partition must be {dd1_partition_id()}, got {target_partition}")
+    if target_map not in dd1_map_names():
+        raise ValueError(f"DD1 restore target map must be one of {dd1_map_names()}, got {target_map}")
+
+    summary = dd1_backup_payload_summary(conn, backup_id)
+    source_map = summary.get("source_map") or ""
+    allowed_source_maps = dd1_restore_allowed_source_maps()
+    if allowed_source_maps is not None and source_map not in allowed_source_maps:
+        raise ValueError(f"DD1 restore source map must be one of {allowed_source_maps}, got {source_map}")
+    totem_id = int(summary["source_totem_id"])
+    dx = float(target["x"]) - float(summary["source_anchor_x"])
+    dy = float(target["y"]) - float(summary["source_anchor_y"])
+    dz = float(target["z"]) - float(summary["source_anchor_z"])
+    bbox = plan.get("bbox") or {}
+    if not bbox:
+        bbox = {
+            "minX": float(summary["min_x"]) + dx if summary.get("min_x") is not None else None,
+            "maxX": float(summary["max_x"]) + dx if summary.get("max_x") is not None else None,
+            "minY": float(summary["min_y"]) + dy if summary.get("min_y") is not None else None,
+            "maxY": float(summary["max_y"]) + dy if summary.get("max_y") is not None else None,
+            "minZ": float(summary["min_z"]) + dz if summary.get("min_z") is not None else None,
+            "maxZ": float(summary["max_z"]) + dz if summary.get("max_z") is not None else None,
+        }
+
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            with linked as (
+              select actor_id
+              from dune.base_backup_linked_actors
+              where id=%s
+            )
+            select
+              bb.player_id,
+              player_actor.map as player_map,
+              player_actor.partition_id as player_partition_id,
+              player_actor.dimension_index as player_dimension_index,
+              (select count(*) from linked)::integer as linked_actor_count,
+              (select count(*) from linked l join dune.actors a on a.id=l.actor_id)::integer as linked_actors_present,
+              (select count(*) from linked where actor_id=%s)::integer as linked_totem_count
+            from dune.base_backups bb
+            join dune.actors player_actor on player_actor.id=bb.player_id
+            where bb.id=%s
+            """,
+            (backup_id, totem_id, backup_id),
+        )
+        health = cur.fetchone()
+        if not health:
+            raise ValueError(f"backup {backup_id} was not found")
+        if int(health["player_id"]) != player_id:
+            raise ValueError(f"backup {backup_id} does not belong to player {player_id}")
+        player_partition = int(health["player_partition_id"])
+        player_dimension = int(health["player_dimension_index"])
+        player_map = health.get("player_map") or ""
+        if player_partition != target_partition:
+            raise ValueError(
+                f"DD1 restore player actor must be in target partition {target_partition}, got {player_partition}"
+            )
+        if player_dimension != target_dimension:
+            raise ValueError(
+                f"DD1 restore player actor must be in target dimension {target_dimension}, got {player_dimension}"
+            )
+        if player_map not in dd1_map_names():
+            raise ValueError(f"DD1 restore player actor map must be one of {dd1_map_names()}, got {player_map}")
+        actor_map = player_map
+        linked_actor_count = int(health["linked_actor_count"] or 0)
+        linked_actors_present = int(health["linked_actors_present"] or 0)
+        linked_totem_count = int(health["linked_totem_count"] or 0)
+        if linked_actor_count <= 0:
+            raise ValueError(f"backup {backup_id} has no linked actors")
+        if linked_actors_present != linked_actor_count:
+            raise ValueError(
+                f"backup {backup_id} linked actors are incomplete: {linked_actors_present}/{linked_actor_count} present"
+            )
+        if linked_totem_count != 1:
+            raise ValueError(f"backup {backup_id} does not link expected totem {totem_id}")
+        collisions = dd1_restore_collision_rows(cur, backup_id, actor_map, target_partition, target_dimension, bbox)
+        if collisions:
+            found = "; ".join(
+                f"{row.get('totem_id')} x={float(row.get('x') or 0):.1f} y={float(row.get('y') or 0):.1f}"
+                for row in collisions
+            )
+            raise RuntimeError(f"DD1 restore execution is blocked: target overlaps nearby totems: {found}")
+
+        cur.execute(
+            """
+            update dune.actors a
+            set
+              map=%s,
+              partition_id=%s,
+              dimension_index=%s,
+              transform=row(
+                row(
+                  ((a.transform).location).x + %s::float8,
+                  ((a.transform).location).y + %s::float8,
+                  ((a.transform).location).z + %s::float8
+                )::dune.vector,
+                (a.transform).rotation
+              )::dune.transform
+            where a.id in (
+              select actor_id from dune.base_backup_linked_actors where id=%s
+            )
+            """,
+            (actor_map, target_partition, target_dimension, dx, dy, dz, backup_id),
+        )
+        actor_rows = cur.rowcount
+
+        cur.execute(
+            """
+            update dune.building_instances bi
+            set
+              transform[array_lower(bi.transform, 1)] = bi.transform[array_lower(bi.transform, 1)] + %s::real,
+              transform[array_lower(bi.transform, 1) + 1] = bi.transform[array_lower(bi.transform, 1) + 1] + %s::real,
+              transform[array_lower(bi.transform, 1) + 2] = bi.transform[array_lower(bi.transform, 1) + 2] + %s::real
+            where bi.building_id in (
+              select actor_id from dune.base_backup_linked_actors where id=%s
+            )
+            """,
+            (dx, dy, dz, backup_id),
+        )
+        building_instance_rows = cur.rowcount
+
+        cur.execute(
+            """
+            update dune.totems t
+            set
+              landclaim_original_global_location[array_lower(t.landclaim_original_global_location, 1)] =
+                landclaim_original_global_location[array_lower(t.landclaim_original_global_location, 1)] + %s::real,
+              landclaim_original_global_location[array_lower(t.landclaim_original_global_location, 1) + 1] =
+                landclaim_original_global_location[array_lower(t.landclaim_original_global_location, 1) + 1] + %s::real,
+              landclaim_original_global_location[array_lower(t.landclaim_original_global_location, 1) + 2] =
+                landclaim_original_global_location[array_lower(t.landclaim_original_global_location, 1) + 2] + %s::real
+            where t.id=%s
+            """,
+            (dx, dy, dz, totem_id),
+        )
+        totem_rows = cur.rowcount
+
+        cur.execute("select dune.base_backup_finish_placing(%s)", (backup_id,))
+        permission_counts = dd1_restore_totem_permission(cur, totem_id, player_id)
+
+    result = {
+        "ok": True,
+        "dryRun": False,
+        "backupId": backup_id,
+        "playerId": player_id,
+        "totemId": totem_id,
+        "sourceMap": source_map,
+        "actorMap": actor_map,
+        "target": target,
+        "connectedPlayers": connected_players,
+        "backupGuard": backup_guard,
+        "offset": {"x": dx, "y": dy, "z": dz},
+        "counts": {
+            "actorsUpdated": actor_rows,
+            "buildingInstancesUpdated": building_instance_rows,
+            "totemsUpdated": totem_rows,
+            "buildingPieces": int(summary.get("building_piece_count") or 0),
+            "placeables": int(summary.get("placeable_count") or 0),
+            "linkedActors": linked_actor_count,
+            "actorSpawns": int(summary.get("actor_count") or 0),
+            "landclaimSegments": int(summary.get("landclaim_segment_count") or 0),
+            **permission_counts,
+        },
+    }
+    result["auditPath"] = write_dd1_restore_audit(result, plan, backup_guard)
+    return result
 
 
 def fuzzy_item_suggestion(rows, search_text, count):
@@ -2768,7 +3164,13 @@ def handle_dd1_restore_command(conn, args, sender_name="", sender_fls_id="", sen
             position_ok, distance = dd1_restore_confirm_position_ok(pending, current_target)
             if not position_ok:
                 raise ValueError(f"you moved {distance:.1f}cm since preview; run &DD1_restore again at the target")
-            dry_run = env_bool("DUNE_CHAT_COMMAND_DRY_RUN", True) or not chat_dd1_restore_enabled()
+            dry_run = chat_dd1_restore_dry_run() or not chat_dd1_restore_enabled()
+            if not dry_run and not chat_dd1_restore_execution_allowed(player, sender_fls_id=sender_fls_id):
+                raise RuntimeError(
+                    "DD1 restore execution is blocked: sender is not in "
+                    "DUNE_CHAT_COMMAND_DD1_BRT_RESTORE_ALLOWED_FLS_IDS or "
+                    "DUNE_CHAT_COMMAND_DD1_BRT_RESTORE_ALLOWED_PLAYER_IDS"
+                )
             result = dd1_restore_backup_to_location(conn, pending["plan"], dry_run=dry_run)
             if not dry_run:
                 conn.commit()

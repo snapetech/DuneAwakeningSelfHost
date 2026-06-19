@@ -102,10 +102,35 @@ Tooling built for this phase:
   `BRT_REGION_REJECT_OFFSET` to arm the keystone breakpoints, and
   `BRT_TRACE_KEYSTONE_ONLY=1` to **skip the dense state/preview/PerformCanBePlaced
   breakpoints** that would otherwise trap on every live player's building preview.
+- `scripts/research/brt-dd-points-1988751.tsv` — current-build trace points for
+  build id `6f8ca9ee5f3420c0b4c1ef7cefb412347bcba04b`. The uprobe and
+  persistent trace scripts validate this build id against the running process
+  before arming. Stale built-in offsets require explicit
+  `DUNE_BRT_DD_TRACE_ALLOW_STALE_BUILTINS=1`.
+- `scripts/brt-dd-uprobe-watch.sh arm|status|dump|stop` — tracefs uprobe runner
+  for low-overhead current point canaries. It does not prove a BRT restore
+  without a tester action, but it verifies current offsets can arm on the live
+  process without gdb stops.
 - `scripts/brt-dd-trace.sh arm|stop` (+ `make brt-dd-trace` / `brt-dd-trace-stop`)
   — live-safe runner: refuses to run off `kspls0`, resolves offsets via Ghidra,
   pauses the map watchdog while armed (keystone-only by default), and `stop`
   cleanly detaches gdb + resumes the watchdog.
+
+2026-06-16 status: on build `1988751`, the anchor dump and static ELF xref scan
+found no executable xrefs for `ServerRequestBaseBackup_Implementation`,
+`ServerRequestBaseBackup`, or `m_BaseBackupToolMapRestriction`. Confidence: high
+that the known BRT action/`PerformCanBePlaced` points are current.
+
+Follow-up static pointer-table proof resolved the RPC keystone without guessing:
+`ServerRequestBaseBackup` at `0x5a553f9` relocates into metadata table
+`0x15214210`; the adjacent native exec thunk is `0xd1093f0`; that thunk calls
+`UBuildingReplicationComponent` vtable offset `0x588`, whose relocation-applied
+entry at `0x15214a18` is `0xd109ff0`. These two current-build points are now in
+`scripts/research/brt-dd-points-1988751.tsv` as
+`brt_rpc_exec_server_request_basebackup` and
+`brt_rpc_impl_server_request_basebackup`. Confidence: high for the RPC entry
+mapping, unknown for restore outcome until a tester action hits or misses those
+points.
 
 Steps (on kspls0, ideally a low-population window):
 

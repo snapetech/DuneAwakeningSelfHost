@@ -486,11 +486,11 @@ Apply:
 `DUNE_LANDSRAAD_GOAL_TUNING_ENABLED=true` runs `scripts/tune-landsraad-goals.sh`
 during restart pre-start hygiene. The script installs a small DB-owned tuning
 table, patches `dune.landsraad_insert_tasks` so future terms use the configured
-scale, and idempotently applies the same scale to the current term. The default
-scale is `DUNE_LANDSRAAD_GOAL_SCALE=0.35714285714285714285`, changing the stock
-`70,000` per-house tile goal to `25,000`. A term is won by completing a row,
-column, or diagonal on the 5x5 board, so the default winning-line target drops
-from `350,000` to `125,000`.
+target, and idempotently applies the same target to the current term. The
+default is `DUNE_LANDSRAAD_GOAL_TARGET=25000`, which keeps every per-house tile
+goal at `25,000` even if stock goals change. A term is won by completing a row,
+column, or diagonal on the 5x5 board, so the winning-line target stays at
+`125,000`.
 
 Dry-run:
 
@@ -504,10 +504,8 @@ Apply:
 ./scripts/tune-landsraad-goals.sh .env --execute
 ```
 
-Rollback or retune by changing `DUNE_LANDSRAAD_GOAL_SCALE` and running the script
-again. Set the scale to `1.0` to restore stock goals for incomplete current-term
-tasks and future terms. Completed Landsraad tiles are not reopened by this
-script.
+Rollback or retune by changing `DUNE_LANDSRAAD_GOAL_TARGET` and running the
+script again. Completed Landsraad tiles are not reopened by this script.
 
 ## Landsraad Reveal Watchdog
 

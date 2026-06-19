@@ -7,6 +7,8 @@ required_host="${DUNE_BRT_DD_TRACE_HOST:-kspls0}"
 supervisor_pid_file="${DUNE_BRT_DD_TRACE_PID_FILE:-/tmp/brt-dd-focused-persistent-trace.pid}"
 gdb_pid_file="${DUNE_BRT_DD_TRACE_GDB_PID_FILE:-/tmp/brt-dd-focused-persistent-trace.gdb.pid}"
 gdb_cmd_file="${DUNE_BRT_DD_TRACE_GDB_CMD_FILE:-/tmp/brt-dd-focused-persistent-trace.gdb}"
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+source "$script_dir/lib/brt-dd-trace-guards.sh"
 
 ts() { date -u '+%Y-%m-%dT%H:%M:%SZ'; }
 
@@ -79,7 +81,7 @@ emit_bp() {
 }
 
 write_gdb_cmd() {
-  local pid="$1" base="$2"
+  local pid="$1" base="$2" points_file="$3"
   {
     printf 'set pagination off\n'
     printf 'set confirm off\n'
@@ -89,10 +91,16 @@ write_gdb_cmd() {
     printf 'handle SIGPIPE nostop noprint pass\n'
     printf 'printf "BRT_DD_FOCUSED_TRACE armed container=%s pid=%s base=%s profile=focused-brt points=dynamic\\n"\n' "$container" "$pid" "$base"
 
-    while read -r name off; do
-      [[ -z "${name:-}" || "${name:0:1}" == "#" ]] && continue
-      emit_bp "$base" "$name" "$off"
-    done <<'POINTS'
+    if [[ -n "$points_file" ]]; then
+      while read -r name off; do
+        [[ -z "${name:-}" || "${name:0:1}" == "#" ]] && continue
+        emit_bp "$base" "$name" "$off"
+      done < <(brt_dd_trace_emit_points "$points_file" focused)
+    else
+      while read -r name off; do
+        [[ -z "${name:-}" || "${name:0:1}" == "#" ]] && continue
+        emit_bp "$base" "$name" "$off"
+      done <<'POINTS'
 tool_reason_entry 0xe0430e0
 tool_can_entry 0xe0436e0
 tool_can_region_fail_join 0xe043874
@@ -134,6 +142,7 @@ place_action_perform 0xcf56b50
 place_action_method_gate 0xcf56220
 server_request_basebackup_registration 0xd21f03c
 POINTS
+    fi
 
     printf 'continue\n'
   } >"$gdb_cmd_file"
@@ -156,8 +165,9 @@ while true; do
     continue
   fi
 
-  write_gdb_cmd "$pid" "$base"
-  echo "$(ts) BRT_DD_FOCUSED_TRACE attaching pid=$pid base=$base" >>"$log"
+  points_file="$(brt_dd_trace_points_or_stale_override "$pid" "brt-dd-focused-persistent-trace")"
+  write_gdb_cmd "$pid" "$base" "$points_file"
+  echo "$(ts) BRT_DD_FOCUSED_TRACE attaching pid=$pid base=$base points=${points_file:-builtins}" >>"$log"
   sudo -n stdbuf -oL -eL gdb -q -p "$pid" -x "$gdb_cmd_file" >>"$log" 2>&1 &
   child_pid="$!"
   sudo -n rm -f "$gdb_pid_file" 2>/dev/null || rm -f "$gdb_pid_file" 2>/dev/null || true

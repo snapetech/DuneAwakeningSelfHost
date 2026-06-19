@@ -518,7 +518,8 @@ class CommandReplyTargetTests(unittest.TestCase):
              unittest.mock.patch.object(admin_chat_commands, "character_row", lambda conn, name: (player, [])), \
              unittest.mock.patch.object(admin_chat_commands, "dd1_backups_for_player", lambda conn, player_id: [backup]), \
              unittest.mock.patch.object(admin_chat_commands, "dd1_backup_payload_summary", lambda conn, backup_id: self.backup_summary()), \
-             unittest.mock.patch.object(admin_chat_commands, "dd1_restore_offset", lambda: {"x": 1000, "y": 0, "z": 0}):
+             unittest.mock.patch.object(admin_chat_commands, "dd1_restore_offset", lambda: {"x": 1000, "y": 0, "z": 0}), \
+             unittest.mock.patch.object(admin_chat_commands, "chat_dd1_restore_enabled", lambda: False):
             preview = admin_chat_commands.handle_command(
                 object(),
                 "&DD1_restore 52",
@@ -539,6 +540,326 @@ class CommandReplyTargetTests(unittest.TestCase):
         self.assertTrue(confirm["dryRun"])
         self.assertEqual(confirm["action"], "dd1_restore.confirm")
         self.assertNotIn("test_fls_id", admin_chat_commands.DD1_RESTORE_CONFIRMATIONS)
+
+    def test_dd1_restore_writer_uses_source_map_and_restores_permission(self):
+        class Cursor:
+            def __init__(self):
+                self.calls = []
+                self.rowcount = 0
+                self._row = None
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def execute(self, sql, params=None):
+                self.calls.append((sql, params))
+                if "from dune.world_partition wp" in sql and "connected_players" in sql:
+                    self._row = {"connected_players": 1}
+                    self.rowcount = 1
+                elif "from dune.base_backups bb" in sql:
+                    self._row = {
+                        "player_id": 17,
+                        "player_map": "DeepDesert",
+                        "player_partition_id": 8,
+                        "player_dimension_index": 0,
+                        "linked_actor_count": 120,
+                        "linked_actors_present": 120,
+                        "linked_totem_count": 1,
+                    }
+                    self.rowcount = 1
+                elif "update dune.actors" in sql:
+                    self.rowcount = 120
+                elif "update dune.building_instances" in sql:
+                    self.rowcount = 622
+                elif "update dune.totems" in sql:
+                    self.rowcount = 1
+                elif "insert into dune.permission_actor_rank" in sql:
+                    self.rowcount = 1
+                elif "insert into dune.permission_actor" in sql:
+                    self.rowcount = 1
+                else:
+                    self.rowcount = 0
+
+            def fetchone(self):
+                return self._row
+
+            def fetchall(self):
+                return []
+
+        class Conn:
+            def __init__(self):
+                self.cursor_obj = Cursor()
+
+            def cursor(self, *args, **kwargs):
+                return self.cursor_obj
+
+        conn = Conn()
+        plan = {
+            "backupId": 65,
+            "playerId": 17,
+            "target": {
+                "source": "chat-origin",
+                "map": "DeepDesert_1",
+                "partitionId": 8,
+                "dimensionIndex": 0,
+                "x": -1014966.0,
+                "y": -1032936.0,
+                "z": 8816.0,
+            },
+        }
+
+        with unittest.mock.patch.object(admin_chat_commands, "chat_dd1_restore_copy_source_enabled", lambda: True), \
+             unittest.mock.patch.object(admin_chat_commands, "dd1_verify_recent_pre_restore_backup", lambda: {"required": True, "ok": True}), \
+             unittest.mock.patch.object(admin_chat_commands, "dd1_backup_payload_summary", lambda conn, backup_id: self.backup_summary()), \
+             unittest.mock.patch.object(admin_chat_commands, "write_dd1_restore_audit", lambda result, plan, backup_guard: "audit.json"):
+            result = admin_chat_commands.dd1_restore_backup_to_location(conn, plan, dry_run=False)
+
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["dryRun"])
+        self.assertEqual(result["actorMap"], "DeepDesert")
+        self.assertEqual(result["connectedPlayers"], 1)
+        self.assertEqual(result["offset"], {"x": 1000.0, "y": 0.0, "z": 0.0})
+        self.assertEqual(result["counts"]["actorsUpdated"], 120)
+        self.assertEqual(result["counts"]["buildingInstancesUpdated"], 622)
+        self.assertEqual(result["counts"]["permissionActorRows"], 1)
+        actor_update = next(call for call in conn.cursor_obj.calls if "update dune.actors" in call[0])
+        self.assertEqual(actor_update[1][0], "DeepDesert")
+        self.assertTrue(any("base_backup_finish_placing" in call[0] for call in conn.cursor_obj.calls))
+        self.assertTrue(any("insert into dune.permission_actor_rank" in call[0] for call in conn.cursor_obj.calls))
+
+    def test_dd1_restore_writer_allows_hagga_source_backup(self):
+        class Cursor:
+            def __init__(self):
+                self.calls = []
+                self.rowcount = 0
+                self._row = None
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def execute(self, sql, params=None):
+                self.calls.append((sql, params))
+                if "from dune.world_partition wp" in sql and "connected_players" in sql:
+                    self._row = {"connected_players": 0}
+                elif "from dune.base_backups bb" in sql:
+                    self._row = {
+                        "player_id": 17,
+                        "player_map": "DeepDesert",
+                        "player_partition_id": 8,
+                        "player_dimension_index": 0,
+                        "linked_actor_count": 12,
+                        "linked_actors_present": 12,
+                        "linked_totem_count": 1,
+                    }
+                elif "update dune.actors" in sql:
+                    self.rowcount = 12
+                elif "update dune.building_instances" in sql:
+                    self.rowcount = 20
+                elif "update dune.totems" in sql:
+                    self.rowcount = 1
+                elif "insert into dune.permission_actor" in sql:
+                    self.rowcount = 1
+                elif "insert into dune.permission_actor_rank" in sql:
+                    self.rowcount = 1
+
+            def fetchone(self):
+                return self._row
+
+            def fetchall(self):
+                return []
+
+        class Conn:
+            def cursor(self, *args, **kwargs):
+                return Cursor()
+
+        summary = self.backup_summary()
+        summary["source_map"] = "HaggaBasin"
+        plan = {
+            "backupId": 65,
+            "playerId": 17,
+            "target": {"map": "DeepDesert_1", "partitionId": 8, "dimensionIndex": 0, "x": 1, "y": 2, "z": 3},
+        }
+
+        with unittest.mock.patch.object(admin_chat_commands, "chat_dd1_restore_copy_source_enabled", lambda: True), \
+             unittest.mock.patch.object(admin_chat_commands, "dd1_verify_recent_pre_restore_backup", lambda: {"required": True, "ok": True}), \
+             unittest.mock.patch.object(admin_chat_commands, "dd1_backup_payload_summary", lambda conn, backup_id: summary), \
+             unittest.mock.patch.object(admin_chat_commands, "write_dd1_restore_audit", lambda result, plan, backup_guard: "audit.json"):
+            result = admin_chat_commands.dd1_restore_backup_to_location(Conn(), plan, dry_run=False)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["sourceMap"], "HaggaBasin")
+        self.assertEqual(result["actorMap"], "DeepDesert")
+
+    def test_dd1_restore_writer_blocks_when_player_actor_not_in_target_partition(self):
+        class Cursor:
+            def __init__(self):
+                self.rowcount = 0
+                self._row = None
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def execute(self, sql, params=None):
+                if "from dune.world_partition wp" in sql and "connected_players" in sql:
+                    self._row = {"connected_players": 0}
+                elif "from dune.base_backups bb" in sql:
+                    self._row = {
+                        "player_id": 17,
+                        "player_map": "Arrakeen",
+                        "player_partition_id": 3,
+                        "player_dimension_index": 0,
+                        "linked_actor_count": 120,
+                        "linked_actors_present": 120,
+                        "linked_totem_count": 1,
+                    }
+
+            def fetchone(self):
+                return self._row
+
+        class Conn:
+            def cursor(self, *args, **kwargs):
+                return Cursor()
+
+        plan = {
+            "backupId": 65,
+            "playerId": 17,
+            "target": {"map": "DeepDesert_1", "partitionId": 8, "dimensionIndex": 0, "x": 1, "y": 2, "z": 3},
+        }
+
+        with unittest.mock.patch.object(admin_chat_commands, "chat_dd1_restore_copy_source_enabled", lambda: True), \
+             unittest.mock.patch.object(admin_chat_commands, "dd1_verify_recent_pre_restore_backup", lambda: {"required": True, "ok": True}), \
+             unittest.mock.patch.object(admin_chat_commands, "dd1_backup_payload_summary", lambda conn, backup_id: self.backup_summary()):
+            with self.assertRaisesRegex(ValueError, "player actor must be in target partition"):
+                admin_chat_commands.dd1_restore_backup_to_location(Conn(), plan, dry_run=False)
+
+    def test_dd1_restore_execution_requires_explicit_allowlist(self):
+        player = self.dd1_player()
+
+        with unittest.mock.patch.object(admin_chat_commands, "env", lambda name, default="": default):
+            self.assertFalse(admin_chat_commands.chat_dd1_restore_execution_allowed(player, sender_fls_id="TEST_FLS_ID"))
+
+        def fake_env(name, default=""):
+            values = {
+                "DUNE_CHAT_COMMAND_DD1_BRT_RESTORE_ALLOWED_FLS_IDS": "TEST_FLS_ID",
+                "DUNE_CHAT_COMMAND_DD1_BRT_RESTORE_ALLOWED_PLAYER_IDS": "",
+            }
+            return values.get(name, default)
+
+        with unittest.mock.patch.object(admin_chat_commands, "env", fake_env):
+            self.assertTrue(admin_chat_commands.chat_dd1_restore_execution_allowed(player, sender_fls_id="TEST_FLS_ID"))
+
+    def test_dd1_restore_dry_run_can_be_overridden_without_global_dry_run(self):
+        def fake_env(name, default=""):
+            values = {
+                "DUNE_CHAT_COMMAND_DD1_BRT_RESTORE_DRY_RUN": "false",
+                "DUNE_CHAT_COMMAND_DRY_RUN": "true",
+            }
+            return values.get(name, default)
+
+        with unittest.mock.patch.object(admin_chat_commands, "env", fake_env):
+            self.assertFalse(admin_chat_commands.chat_dd1_restore_dry_run())
+
+    def test_dd1_restore_writer_blocks_when_dd_has_other_players(self):
+        class Cursor:
+            rowcount = 0
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def execute(self, sql, params=None):
+                self._row = {"connected_players": 2}
+
+            def fetchone(self):
+                return self._row
+
+        class Conn:
+            def cursor(self, *args, **kwargs):
+                return Cursor()
+
+        plan = {
+            "backupId": 65,
+            "playerId": 17,
+            "target": {"map": "DeepDesert_1", "partitionId": 8, "dimensionIndex": 0, "x": 1, "y": 2, "z": 3},
+        }
+
+        with unittest.mock.patch.object(admin_chat_commands, "chat_dd1_restore_copy_source_enabled", lambda: True), \
+             unittest.mock.patch.object(admin_chat_commands, "dd1_verify_recent_pre_restore_backup", lambda: {"required": True, "ok": True}):
+            with self.assertRaisesRegex(RuntimeError, "connected_players=2"):
+                admin_chat_commands.dd1_restore_backup_to_location(Conn(), plan, dry_run=False)
+
+    def test_dd1_restore_writer_blocks_near_existing_totem(self):
+        class Cursor:
+            def __init__(self):
+                self.rowcount = 0
+                self._row = None
+                self._rows = []
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def execute(self, sql, params=None):
+                if "from dune.world_partition wp" in sql and "connected_players" in sql:
+                    self._row = {"connected_players": 0}
+                    self._rows = []
+                elif "from dune.base_backups bb" in sql:
+                    self._row = {
+                        "player_id": 17,
+                        "player_map": "DeepDesert",
+                        "player_partition_id": 8,
+                        "player_dimension_index": 0,
+                        "linked_actor_count": 120,
+                        "linked_actors_present": 120,
+                        "linked_totem_count": 1,
+                    }
+                    self._rows = []
+                elif "from dune.totems t" in sql:
+                    self._row = None
+                    self._rows = [{"totem_id": 9999, "x": -1014000.0, "y": -1032000.0}]
+
+            def fetchone(self):
+                return self._row
+
+            def fetchall(self):
+                return self._rows
+
+        class Conn:
+            def cursor(self, *args, **kwargs):
+                return Cursor()
+
+        plan = {
+            "backupId": 65,
+            "playerId": 17,
+            "target": {
+                "source": "chat-origin",
+                "map": "DeepDesert_1",
+                "partitionId": 8,
+                "dimensionIndex": 0,
+                "x": -1014966.0,
+                "y": -1032936.0,
+                "z": 8816.0,
+            },
+        }
+
+        with unittest.mock.patch.object(admin_chat_commands, "chat_dd1_restore_copy_source_enabled", lambda: True), \
+             unittest.mock.patch.object(admin_chat_commands, "dd1_verify_recent_pre_restore_backup", lambda: {"required": True, "ok": True}), \
+             unittest.mock.patch.object(admin_chat_commands, "dd1_backup_payload_summary", lambda conn, backup_id: self.backup_summary()):
+            with self.assertRaisesRegex(RuntimeError, "overlaps nearby totems"):
+                admin_chat_commands.dd1_restore_backup_to_location(Conn(), plan, dry_run=False)
 
     def test_parse_chat_message_context_extracts_origin_location(self):
         body = {

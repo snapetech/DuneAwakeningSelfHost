@@ -13,6 +13,7 @@ Environment:
   DUNE_WATCH_PAUSE_FILE       Pause marker. Default: /tmp/dune-map-watchdog.paused
   DUNE_MAP_WATCHDOG_UNIT      systemd unit. Default: dune-map-watchdog.service
   DUNE_MAP_WATCHDOG_CONTROL   Set false/0/no/off to disable actions.
+  DUNE_MAP_WATCHDOG_SUDO      Set false/0/no/off to avoid sudo fallback.
 USAGE
 }
 
@@ -47,12 +48,30 @@ systemctl_available() {
   command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files "$unit" >/dev/null 2>&1
 }
 
+systemctl_cmd() {
+  if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+    printf '%s\n' systemctl
+    return 0
+  fi
+  case "${DUNE_MAP_WATCHDOG_SUDO:-true}" in
+    0|false|no|off) ;;
+    *)
+      if command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+        printf '%s\n' 'sudo -n systemctl'
+        return 0
+      fi
+      ;;
+  esac
+  printf '%s\n' systemctl
+}
+
 run_systemctl() {
   local verb="$1"
   if ! systemctl_available; then
     return 1
   fi
-  systemctl "$verb" "$unit"
+  read -r -a cmd <<< "$(systemctl_cmd)"
+  "${cmd[@]}" "$verb" "$unit"
 }
 
 pause_watchdog() {
@@ -88,7 +107,8 @@ status_watchdog() {
     printf 'not paused: %s\n' "$pause_file"
   fi
   if systemctl_available; then
-    systemctl is-active "$unit" || true
+    read -r -a cmd <<< "$(systemctl_cmd)"
+    "${cmd[@]}" is-active "$unit" || true
   fi
   pgrep -af "$watch_script $env_file" || true
 }

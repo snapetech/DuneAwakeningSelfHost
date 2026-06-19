@@ -32,11 +32,13 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+source "$repo_root/scripts/lib/brt-dd-trace-guards.sh"
 action="${1:-arm}"
 container="${2:-dune_server-deep-desert-1}"
 
 work_dir="${DUNE_GHIDRA_WORK_DIR:-/tmp/ghidra-work}"
 anchors_file="${BRT_TRACE_ANCHORS_FILE:-$work_dir/brt-trace-anchors.txt}"
+points_file="${DUNE_BRT_DD_POINTS_FILE:-$repo_root/scripts/research/brt-dd-points-1988751.tsv}"
 required_host="${DUNE_BRT_DD_TRACE_HOST:-kspls0}"
 gdb_pid_file="/tmp/brt-place-trace-gdb.pid"
 
@@ -68,6 +70,14 @@ parse_offset() {
     | tail -n 1 | sed -E "s/.*=(0x[0-9a-fA-F]+)/\1/"
 }
 
+parse_point_offset() {
+  local name="$1"
+  awk -v name="$name" '
+    /^[[:space:]]*(#|$)/ { next }
+    NF >= 3 && $2 == name { print $3; exit }
+  ' "$points_file" 2>/dev/null
+}
+
 server_pid() {
   docker top "$container" -eo pid,args 2>/dev/null \
     | awk '/DuneSandboxServer-Linux-Shipping/ {print $1; exit}'
@@ -77,27 +87,39 @@ do_arm() {
   assert_host
   local trace_log="${1:-/tmp/brt-place-trace-lab.log}"
 
-  if [[ "${BRT_TRACE_RESOLVE:-0}" == "1" || ! -f "$anchors_file" ]]; then
+  local points_rpc_exec points_rpc_impl
+  points_rpc_exec="$(parse_point_offset brt_rpc_exec_server_request_basebackup)"
+  points_rpc_impl="$(parse_point_offset brt_rpc_impl_server_request_basebackup)"
+
+  if [[ "${BRT_TRACE_RESOLVE:-0}" == "1" ]]; then
     resolve_offsets
-  else
+  elif [[ -f "$anchors_file" ]]; then
     echo "reusing anchors file: $anchors_file (BRT_TRACE_RESOLVE=1 to refresh)"
+  elif [[ -n "$points_rpc_exec" || -n "$points_rpc_impl" ]]; then
+    echo "anchors file absent; using RPC offsets from current points file: $points_file"
   fi
 
   export BRT_RPC_PLACE_OFFSET="${BRT_RPC_PLACE_OFFSET:-$(parse_offset BRT_RPC_PLACE_OFFSET)}"
+  export BRT_RPC_EXEC_OFFSET="${BRT_RPC_EXEC_OFFSET:-$points_rpc_exec}"
+  if [[ -z "${BRT_RPC_PLACE_OFFSET:-}" ]]; then
+    export BRT_RPC_PLACE_OFFSET="$points_rpc_impl"
+  fi
   export BRT_RESTRICTION_GATE_OFFSET="${BRT_RESTRICTION_GATE_OFFSET:-$(parse_offset BRT_RESTRICTION_GATE_OFFSET)}"
   export BRT_REGION_REJECT_OFFSET="${BRT_REGION_REJECT_OFFSET:-$(parse_offset BRT_REGION_REJECT_OFFSET)}"
   export BRT_TRACE_KEYSTONE_ONLY="${BRT_TRACE_KEYSTONE_ONLY:-1}"
 
   echo "resolved offsets:"
+  echo "  points_file=$points_file"
+  echo "  BRT_RPC_EXEC_OFFSET=${BRT_RPC_EXEC_OFFSET:-<unresolved>}"
   echo "  BRT_RPC_PLACE_OFFSET=${BRT_RPC_PLACE_OFFSET:-<unresolved>}"
   echo "  BRT_RESTRICTION_GATE_OFFSET=${BRT_RESTRICTION_GATE_OFFSET:-<unresolved>}"
   echo "  BRT_REGION_REJECT_OFFSET=${BRT_REGION_REJECT_OFFSET:-<unresolved>}"
   echo "  BRT_TRACE_KEYSTONE_ONLY=$BRT_TRACE_KEYSTONE_ONLY"
 
-  if [[ -z "$BRT_RPC_PLACE_OFFSET" && "${BRT_TRACE_ALLOW_UNRESOLVED:-0}" != "1" ]]; then
-    echo "ERROR: BRT_RPC_PLACE_OFFSET unresolved -> the keystone (did the request" >&2
+  if [[ -z "${BRT_RPC_EXEC_OFFSET:-}" && -z "${BRT_RPC_PLACE_OFFSET:-}" && "${BRT_TRACE_ALLOW_UNRESOLVED:-0}" != "1" ]]; then
+    echo "ERROR: RPC offsets unresolved -> the keystone (did the request" >&2
     echo "       reach the server) cannot be answered. Inspect $anchors_file and" >&2
-    echo "       set BRT_RPC_PLACE_OFFSET, or pass BRT_TRACE_ALLOW_UNRESOLVED=1." >&2
+    echo "       $points_file, set BRT_RPC_*_OFFSET, or pass BRT_TRACE_ALLOW_UNRESOLVED=1." >&2
     exit 1
   fi
 

@@ -213,6 +213,214 @@ class RunServerSafeTests(unittest.TestCase):
             decoded = [item.decode("utf-8") for item in raw_args]
             self.assertIn("-IGWBindAddress=172.31.240.40", decoded)
 
+    def test_dry_run_can_enable_linux_server_preload(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            server_root = tmp_path / "server"
+            dune_home = tmp_path / "home"
+            args_out = tmp_path / "args.nul"
+            env_out = tmp_path / "env.txt"
+            loader = tmp_path / "libdune_server_probe_loader.so"
+            server_root.mkdir()
+            loader.write_bytes(b"placeholder")
+
+            env = {
+                **os.environ,
+                "DUNE_SERVER_ROOT": str(server_root),
+                "DUNE_HOME": str(dune_home),
+                "DUNE_RUN_SERVER_SAFE_DRY_RUN": "true",
+                "DUNE_RUN_SERVER_SAFE_ARGS_OUT": str(args_out),
+                "DUNE_RUN_SERVER_SAFE_ENV_OUT": str(env_out),
+                "DUNE_ENABLE_LINUX_SERVER_PRELOAD": "true",
+                "DUNE_LINUX_SERVER_PRELOAD": str(loader),
+                "DUNE_LINUX_SERVER_PRELOAD_PARTITIONS": "7,8",
+                "DUNE_PROBE_LOADER_LOG": "/tmp/dune-preload-test.log",
+                "DUNE_PROBE_LOADER_TARGET": "DuneSandboxServer;DuneSandbox",
+                "DUNE_PROBE_LOADER_FORCE": "false",
+                "DUNE_PROBE_LOADER_SNAPSHOT_DELAY_SECONDS": "0",
+                "DUNE_PROBE_LOADER_UE_DELAYED_PROBE_SECONDS": "30",
+                "DUNE_PROBE_LOADER_SCAN_ENABLED": "true",
+                "DUNE_PROBE_LOADER_SCAN_PRESETS": "brt,building",
+                "DUNE_PROBE_LOADER_SCAN_STRINGS": "DeepDesert;ServerRequestBaseBackup",
+                "DUNE_PROBE_LOADER_SCAN_SIGNATURES": "test=48 85 ?? 74",
+                "DUNE_PROBE_LOADER_SCAN_SIGNATURES_FILE": "/tmp/server-signatures.txt",
+                "DUNE_PROBE_LOADER_SCAN_PATH_FILTER": "DuneSandboxServer",
+                "DUNE_PROBE_LOADER_SCAN_LOG_MAPPINGS": "true",
+                "DUNE_PROBE_LOADER_SCAN_MAX_HITS_PER_NEEDLE": "4",
+                "DUNE_PROBE_LOADER_SCAN_MAX_MAPPING_BYTES": "1048576",
+                "DUNE_PROBE_LOADER_UE_ANCHORS": "FNamePool=0x1000;GUObjectArray=0x2000",
+                "DUNE_PROBE_LOADER_UE_ANCHOR_SIGNATURES": "GWorldRef=48 8d 0d ?? ?? ?? ??",
+                "DUNE_PROBE_LOADER_UE_ANCHOR_SIGNATURES_FILE": "/tmp/server-anchor-signatures.txt",
+                "DUNE_PROBE_LOADER_UE_AUTO_DISCOVER_ROOTS": "true",
+                "DUNE_PROBE_LOADER_UE_AUTO_DISCOVER_INCLUDE_ANONYMOUS_RW": "true",
+                "DUNE_PROBE_LOADER_UE_AUTO_DISCOVER_INCLUDE_PRIVATE_RW": "true",
+                "DUNE_PROBE_LOADER_UE_AUTO_DISCOVER_MAX_MAPPING_BYTES": "268435456",
+                "DUNE_PROBE_LOADER_UE_AUTO_DISCOVER_MAX_CANDIDATES": "8",
+                "DUNE_PROBE_LOADER_UE_AUTO_DISCOVER_MIN_OBJECT_ARRAY_ELEMENTS": "128",
+                "DUNE_PROBE_LOADER_UE_AUTO_DISCOVER_MAX_REJECTED_FNAME_SAMPLES": "16",
+                "DUNE_PROBE_LOADER_UE_POINTER_PROBE": "true",
+                "DUNE_PROBE_LOADER_UE_LAYOUT_PROBE": "true",
+                "DUNE_PROBE_LOADER_UE_LAYOUT_SLOTS": "6",
+                "DUNE_PROBE_LOADER_UE_UOBJECT_PROBE": "true",
+                "DUNE_PROBE_LOADER_UE_OBJECT_ARRAY_PROBE": "true",
+                "DUNE_PROBE_LOADER_UE_OBJECT_ARRAY_MAX_OBJECTS": "16",
+                "DUNE_PROBE_LOADER_UE_OBJECT_ARRAY_OFFSET": "0x20",
+                "DUNE_PROBE_LOADER_UE_OBJECT_ARRAY_ITEM_SIZE": "24",
+                "DUNE_PROBE_LOADER_UE_OBJECT_ARRAY_OBJECT_OFFSET": "0",
+                "DUNE_PROBE_LOADER_UE_OBJECT_ARRAY_CHUNK_SIZE": "65536",
+                "DUNE_PROBE_LOADER_UE_FNAME_PROBE": "true",
+                "DUNE_PROBE_LOADER_UE_FNAME_POOL": "0x3000",
+                "DUNE_PROBE_LOADER_UE_FNAME_POOL_ADDR": "0x3000",
+                "DUNE_PROBE_LOADER_UE_FNAME_POOL_OFFSET": "0",
+                "DUNE_PROBE_LOADER_UE_FNAME_BLOCKS_OFFSET": "0x10",
+                "DUNE_PROBE_LOADER_UE_FNAME_STRIDE": "2",
+                "DUNE_PROBE_LOADER_UE_FNAME_MAX_LENGTH": "128",
+                "DUNE_PROBE_LOADER_UE_FNAME_DIAGNOSTICS": "true",
+                "DUNE_PROBE_LOADER_UE_FNAME_DIAGNOSTICS_MAX": "32",
+                "DUNE_PROBE_LOADER_UE_SELF_TEST_ANCHOR": "true",
+                "DUNE_PROBE_LOADER_HOOK_SELF_TEST": "true",
+                "DUNE_PROBE_LOADER_MOD_SELF_TEST": "true",
+                "DUNE_PROBE_LOADER_LUA_SELF_TEST": "true",
+                "DUNE_PROBE_LOADER_LUA_LIBRARY": "liblua5.4.so",
+                "DUNE_PROBE_LOADER_LUA_REFLECTION_SELF_TEST": "true",
+                "DUNE_PROBE_LOADER_UE_PROCESS_EVENT_HOOK_PROBE": "true",
+                "DUNE_PROBE_LOADER_UE_PROCESS_EVENT_HOOK_ADDRESS": "0x4000",
+                "DUNE_PROBE_LOADER_UE_PROCESS_EVENT_ADDRESS": "0x4000",
+                "DUNE_PROBE_LOADER_UE_PROCESS_EVENT_HOOK_SELF_TEST_TARGET": "false",
+                "DUNE_PROBE_LOADER_UE_PROCESS_EVENT_HOOK_INSTALL": "false",
+                "DUNE_PROBE_LOADER_UE_PROCESS_EVENT_HOOK_CALL_SELF_TEST": "false",
+                "DUNE_PROBE_LOADER_UE_PROCESS_EVENT_LIVE_HOOK": "true",
+                "DUNE_PROBE_LOADER_UE_PROCESS_EVENT_LIVE_HOOK_ADDRESS": "0x4000",
+                "DUNE_PROBE_LOADER_UE_PROCESS_EVENT_LIVE_HOOK_SELF_TEST_TARGET": "false",
+                "DUNE_PROBE_LOADER_UE_PROCESS_EVENT_LIVE_HOOK_CALL_SELF_TEST": "false",
+                "DUNE_PROBE_LOADER_UE_PROCESS_EVENT_LIVE_HOOK_LOG_CALLS": "false",
+                "DUNE_PROBE_LOADER_UE_PROCESS_EVENT_LIVE_HOOK_CALL_LOG_LIMIT": "8",
+                "DUNE_PROBE_LOADER_UE_PROCESS_EVENT_DISPATCH_SELF_TEST": "false",
+                "DUNE_PROBE_LOADER_UE_PROCESS_EVENT_LIVE_LUA_DISPATCH": "true",
+                "DUNE_PROBE_LOADER_UE_PROCESS_EVENT_LIVE_LUA_SCRIPT": "return RegisterHook('/Script/DuneServerProbe.LiveProcessEvent:Function', function() return 11 end, function() return 31 end)",
+                "DUNE_PROBE_LOADER_LUA_PROCESS_EVENT_SELF_TEST": "true",
+                "DUNE_PROBE_LOADER_LUA_MODS_ENABLED": "true",
+                "DUNE_PROBE_LOADER_LUA_MOD_SCRIPTS": "/tmp/mod.lua",
+                "DUNE_PROBE_LOADER_LUA_MOD_DISPATCH_SELF_TEST": "true",
+            }
+            subprocess.run(
+                [
+                    str(ROOT / "scripts" / "run_server_safe.sh"),
+                    "/Game/Dune/Maps/Test",
+                    "-PartitionIndex=7",
+                ],
+                cwd=ROOT,
+                env=env,
+                check=True,
+            )
+
+            env_text = env_out.read_text(encoding="utf-8")
+            self.assertIn(f"LD_PRELOAD={loader}", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_LOG=/tmp/dune-preload-test.log", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_TARGET=DuneSandboxServer;DuneSandbox", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_FORCE=false", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_SNAPSHOT_DELAY_SECONDS=0", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_DELAYED_PROBE_SECONDS=30", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_SCAN_ENABLED=true", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_SCAN_PRESETS=brt,building", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_SCAN_STRINGS=DeepDesert;ServerRequestBaseBackup", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_SCAN_SIGNATURES=test=48 85 ?? 74", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_SCAN_SIGNATURES_FILE=/tmp/server-signatures.txt", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_SCAN_PATH_FILTER=DuneSandboxServer", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_SCAN_LOG_MAPPINGS=true", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_SCAN_MAX_HITS_PER_NEEDLE=4", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_SCAN_MAX_MAPPING_BYTES=1048576", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_ANCHORS=FNamePool=0x1000;GUObjectArray=0x2000", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_ANCHOR_SIGNATURES=GWorldRef=48 8d 0d ?? ?? ?? ??", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_ANCHOR_SIGNATURES_FILE=/tmp/server-anchor-signatures.txt", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_AUTO_DISCOVER_ROOTS=true", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_AUTO_DISCOVER_INCLUDE_ANONYMOUS_RW=true", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_AUTO_DISCOVER_INCLUDE_PRIVATE_RW=true", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_AUTO_DISCOVER_MAX_MAPPING_BYTES=268435456", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_AUTO_DISCOVER_MAX_CANDIDATES=8", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_AUTO_DISCOVER_MIN_OBJECT_ARRAY_ELEMENTS=128", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_AUTO_DISCOVER_MAX_REJECTED_FNAME_SAMPLES=16", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_POINTER_PROBE=true", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_LAYOUT_PROBE=true", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_LAYOUT_SLOTS=6", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_UOBJECT_PROBE=true", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_OBJECT_ARRAY_PROBE=true", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_OBJECT_ARRAY_MAX_OBJECTS=16", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_OBJECT_ARRAY_OFFSET=0x20", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_OBJECT_ARRAY_ITEM_SIZE=24", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_OBJECT_ARRAY_OBJECT_OFFSET=0", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_OBJECT_ARRAY_CHUNK_SIZE=65536", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_FNAME_PROBE=true", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_FNAME_POOL=0x3000", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_FNAME_POOL_ADDR=0x3000", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_FNAME_POOL_OFFSET=0", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_FNAME_BLOCKS_OFFSET=0x10", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_FNAME_STRIDE=2", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_FNAME_MAX_LENGTH=128", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_FNAME_DIAGNOSTICS=true", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_FNAME_DIAGNOSTICS_MAX=32", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_SELF_TEST_ANCHOR=true", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_HOOK_SELF_TEST=true", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_MOD_SELF_TEST=true", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_LUA_SELF_TEST=true", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_LUA_LIBRARY=liblua5.4.so", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_LUA_REFLECTION_SELF_TEST=true", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_HOOK_PROBE=true", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_HOOK_ADDRESS=0x4000", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_ADDRESS=0x4000", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_HOOK_SELF_TEST_TARGET=false", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_HOOK_INSTALL=false", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_HOOK_CALL_SELF_TEST=false", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_LIVE_HOOK=true", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_LIVE_HOOK_ADDRESS=0x4000", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_LIVE_HOOK_SELF_TEST_TARGET=false", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_LIVE_HOOK_CALL_SELF_TEST=false", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_LIVE_HOOK_LOG_CALLS=false", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_LIVE_HOOK_CALL_LOG_LIMIT=8", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_DISPATCH_SELF_TEST=false", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_LIVE_LUA_DISPATCH=true", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_LIVE_LUA_SCRIPT=return RegisterHook('/Script/DuneServerProbe.LiveProcessEvent:Function', function() return 11 end, function() return 31 end)", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_LUA_PROCESS_EVENT_SELF_TEST=true", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_LUA_MODS_ENABLED=true", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_LUA_MOD_SCRIPTS=/tmp/mod.lua", env_text)
+            self.assertIn("DUNE_PROBE_LOADER_LUA_MOD_DISPATCH_SELF_TEST=true", env_text)
+
+    def test_dry_run_skips_linux_server_preload_for_non_matching_partition(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            server_root = tmp_path / "server"
+            dune_home = tmp_path / "home"
+            args_out = tmp_path / "args.nul"
+            env_out = tmp_path / "env.txt"
+            loader = tmp_path / "libdune_server_probe_loader.so"
+            server_root.mkdir()
+            loader.write_bytes(b"placeholder")
+
+            env = {
+                **os.environ,
+                "DUNE_SERVER_ROOT": str(server_root),
+                "DUNE_HOME": str(dune_home),
+                "DUNE_RUN_SERVER_SAFE_DRY_RUN": "true",
+                "DUNE_RUN_SERVER_SAFE_ARGS_OUT": str(args_out),
+                "DUNE_RUN_SERVER_SAFE_ENV_OUT": str(env_out),
+                "DUNE_ENABLE_LINUX_SERVER_PRELOAD": "true",
+                "DUNE_LINUX_SERVER_PRELOAD": str(loader),
+                "DUNE_LINUX_SERVER_PRELOAD_PARTITIONS": "7",
+            }
+            subprocess.run(
+                [
+                    str(ROOT / "scripts" / "run_server_safe.sh"),
+                    "-PartitionIndex=8",
+                ],
+                cwd=ROOT,
+                env=env,
+                check=True,
+            )
+
+            env_text = env_out.read_text(encoding="utf-8")
+            self.assertIn("LD_PRELOAD=", env_text)
+            self.assertNotIn(str(loader), env_text)
+
 
 class ComposeCommandTests(unittest.TestCase):
     def compose_config(self, *files, env_file=".env.example", profiles=None):
@@ -263,6 +471,44 @@ class ComposeCommandTests(unittest.TestCase):
         config = self.compose_config("compose.yaml", "compose.allmaps.yaml")
         command = config["services"]["lostharvest-ecolab-a"]["command"]
         self.assertIn("-ini:engine:[FuncomLiveServices]:DefaultFlsEnvironment=retail", command)
+
+    def test_compose_exposes_linux_loader_runtime_discovery_env(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env_file = Path(tmp) / "compose.env"
+            env_text = (ROOT / ".env.example").read_text(encoding="utf-8")
+            env_text += "\n".join(
+                [
+                    "",
+                    "DUNE_PROBE_LOADER_TARGET=DuneSandboxServer;DuneSandbox",
+                    "DUNE_PROBE_LOADER_UE_DELAYED_PROBE_SECONDS=30",
+                    "DUNE_PROBE_LOADER_UE_FNAME_DIAGNOSTICS=true",
+                    "DUNE_PROBE_LOADER_UE_FNAME_DIAGNOSTICS_MAX=32",
+                    "DUNE_PROBE_LOADER_UE_AUTO_DISCOVER_ROOTS=true",
+                    "DUNE_PROBE_LOADER_UE_AUTO_DISCOVER_INCLUDE_ANONYMOUS_RW=true",
+                    "DUNE_PROBE_LOADER_UE_AUTO_DISCOVER_INCLUDE_PRIVATE_RW=true",
+                    "DUNE_PROBE_LOADER_UE_AUTO_DISCOVER_MAX_MAPPING_BYTES=268435456",
+                    "DUNE_PROBE_LOADER_UE_AUTO_DISCOVER_MAX_CANDIDATES=8",
+                    "DUNE_PROBE_LOADER_UE_AUTO_DISCOVER_MIN_OBJECT_ARRAY_ELEMENTS=128",
+                    "DUNE_PROBE_LOADER_UE_AUTO_DISCOVER_MAX_REJECTED_FNAME_SAMPLES=16",
+                    "",
+                ]
+            )
+            env_file.write_text(env_text, encoding="utf-8")
+
+            config = self.compose_config("compose.yaml", env_file=env_file)
+            environment = config["services"]["survival"]["environment"]
+
+        self.assertEqual(environment["DUNE_PROBE_LOADER_TARGET"], "DuneSandboxServer;DuneSandbox")
+        self.assertEqual(environment["DUNE_PROBE_LOADER_UE_DELAYED_PROBE_SECONDS"], "30")
+        self.assertEqual(environment["DUNE_PROBE_LOADER_UE_FNAME_DIAGNOSTICS"], "true")
+        self.assertEqual(environment["DUNE_PROBE_LOADER_UE_FNAME_DIAGNOSTICS_MAX"], "32")
+        self.assertEqual(environment["DUNE_PROBE_LOADER_UE_AUTO_DISCOVER_ROOTS"], "true")
+        self.assertEqual(environment["DUNE_PROBE_LOADER_UE_AUTO_DISCOVER_INCLUDE_ANONYMOUS_RW"], "true")
+        self.assertEqual(environment["DUNE_PROBE_LOADER_UE_AUTO_DISCOVER_INCLUDE_PRIVATE_RW"], "true")
+        self.assertEqual(environment["DUNE_PROBE_LOADER_UE_AUTO_DISCOVER_MAX_MAPPING_BYTES"], "268435456")
+        self.assertEqual(environment["DUNE_PROBE_LOADER_UE_AUTO_DISCOVER_MAX_CANDIDATES"], "8")
+        self.assertEqual(environment["DUNE_PROBE_LOADER_UE_AUTO_DISCOVER_MIN_OBJECT_ARRAY_ELEMENTS"], "128")
+        self.assertEqual(environment["DUNE_PROBE_LOADER_UE_AUTO_DISCOVER_MAX_REJECTED_FNAME_SAMPLES"], "16")
 
     def test_compose_propagates_non_default_fls_environment(self):
         with tempfile.TemporaryDirectory() as tmp:

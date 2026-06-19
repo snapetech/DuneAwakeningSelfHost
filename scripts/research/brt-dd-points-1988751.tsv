@@ -1,0 +1,200 @@
+# BRT/DD trace points for Dune dedicated-server build 1988751.
+# build_id=6f8ca9ee5f3420c0b4c1ef7cefb412347bcba04b
+# pristine_sha256=f23e19cb7a6dae5c147cf754c8a52bafd35522ace5e8169e82470da16e55cd20
+# patched_sha256=9a5fa936ab0fea8ed3f8a7091305ac121349c4ec1e5888a01e6ece1f11f3c7de
+#
+# Format:
+#   profile name image_offset
+#
+# These are image/file-relative offsets proven from the 1988751 binary. They are
+# not a full BRT call graph.
+#
+# RPC proof:
+# - ServerRequestBaseBackup string at 0x5a553f9 relocates into metadata table
+#   slot 0x15214210.
+# - The adjacent native exec thunk is 0xd1093f0.
+# - The thunk dispatches through UBuildingReplicationComponent vtable offset
+#   0x588; the relocation-applied vtable entry at 0x15214a18 is 0xd109ff0.
+#
+# Hotbar/action proof:
+# - The hotbar profile uses current-build function entries that precede mutated
+#   decision bytes, so tracefs uprobes do not overwrite runtime canary patches.
+hotbar brt_action_failreason_entry 0xe04e0d3
+hotbar brt_action_state_entry 0xe04e9c0
+hotbar brt_action_canuse_entry 0xe04eb90
+hotbar brt_rpc_exec_server_request_basebackup 0xd1093f0
+hotbar brt_rpc_impl_server_request_basebackup 0xd109ff0
+hotbar brt_rpc_async_handler_entry 0xd202ad0
+hotbar brt_rpc_async_handler_args 0xd202ad0 rdi=%di:x64 rsi=%si:x64 rdx=%dx:x64 rcx=%cx:x64 r8=%r8:x64 r9=%r9:x64
+hotbar brt_rpc_request_handler_entry 0xd202c00
+hotbar brt_rpc_request_handler_args 0xd202c00 rdi=%di:x64 rsi=%si:x64 rdx=%dx:x64 rcx=%cx:x64 r8=%r8:x64 r9=%r9:x64
+hotbar brt_rpc_request_mode_branch 0xd202c45
+hotbar brt_rpc_request_immediate_path 0xd202c49
+hotbar brt_rpc_request_immediate_path_args 0xd202c49 rdi=%di:x64 rsi=%si:x64 rdx=%dx:x64 rcx=%cx:x64 r8=%r8:x64 r9=%r9:x64
+hotbar brt_rpc_request_placeable_load_path 0xd202ca7
+hotbar brt_rpc_request_placeable_load_path_args 0xd202ca7 rdi=%di:x64 rsi=%si:x64 rdx=%dx:x64 rcx=%cx:x64 r8=%r8:x64 r9=%r9:x64
+hotbar brt_rpc_request_schedule_load_place 0xd202d3c
+hotbar brt_rpc_request_schedule_load_place_args 0xd202d3c rdi=%di:x64 rsi=%si:x64 rdx=%dx:x64 rcx=%cx:x64 r8=%r8:x64 r9=%r9:x64
+hotbar brt_rpc_load_place_callback_entry 0xd202d80
+hotbar perform_can_be_placed_entry 0xcfc5440
+backup brt_component_input_bool_entry 0xd076410
+backup brt_component_state_entry 0xd078070
+backup brt_component_internal_state_entry 0xd0782f0
+backup brt_component_internal_state_context_ok 0xd078370
+backup brt_component_status_backup_builder_a 0xd078800
+backup brt_component_status_backup_builder_b 0xd078a40
+backup brt_component_status_backup_blocked 0xd078c60
+backup brt_component_status_backup_commit 0xd078d40
+backup brt_component_can_backup_call_a 0xd079290
+backup brt_component_can_backup_call_b 0xd079370
+backup brt_component_can_backup_blueprint_entry 0xd081230
+backup brt_component_can_backup_blueprint_args 0xd081230 rdi=%di:x64 rsi=%si:x64 selected=+0x350(%si):x64 selected_count=+0x358(%si):u32 rdx=%dx:x64 rcx=%cx:x64 r8=%r8:x64 r9=%r9:x64
+backup brt_component_can_backup_blueprint_context_check 0xd08124a
+backup brt_component_can_backup_blueprint_selected_check 0xd081279
+backup brt_component_can_backup_blueprint_selected_invalid 0xd081294
+backup brt_component_can_backup_blueprint_selected_valid 0xd081404
+backup brt_component_can_backup_blueprint_status_text_a 0xd081308
+backup brt_component_can_backup_blueprint_status_text_a_args 0xd081308 rdi=%di:x64 rsi=%si:x64 rdx=%dx:x64 rcx=%cx:x64 r8=%r8:x64 r9=%r9:x64
+backup brt_component_can_backup_blueprint_status_text_b 0xd081490
+backup brt_component_can_backup_blueprint_status_text_b_args 0xd081490 rdi=%di:x64 rsi=%si:x64 rdx=%dx:x64 rcx=%cx:x64 r8=%r8:x64 r9=%r9:x64
+backup brt_component_can_backup_blueprint_status_text_c 0xd0817a5
+backup brt_component_can_backup_blueprint_status_text_c_args 0xd0817a5 rdi=%di:x64 rsi=%si:x64 rdx=%dx:x64 rcx=%cx:x64 r8=%r8:x64 r9=%r9:x64
+backup brt_component_can_backup_blueprint_status_text_d 0xd081885
+backup brt_component_can_backup_blueprint_status_text_d_args 0xd081885 rdi=%di:x64 rsi=%si:x64 rdx=%dx:x64 rcx=%cx:x64 r8=%r8:x64 r9=%r9:x64
+backup brt_component_can_backup_blueprint_valid_owner_check 0xd081071
+backup brt_component_can_backup_blueprint_prompt_path 0xd0810f2
+backup brt_component_can_backup_blueprint_success_path 0xd081195
+backup brt_component_can_backup_blueprint_failure_path 0xd08121a
+backup brt_component_activate_entry 0xd079f80
+backup brt_component_status_finalize 0xd07a183
+backup brt_component_set_status_a 0xd07a310
+backup brt_component_set_status_b 0xd07a580
+backup brt_component_use_entry 0xd080050
+backup brt_component_use_entry_args 0xd080050 rdi=%di:x64 rsi=%si:x64 component_mode=+0x1b0(%di):u8 selected=+0x350(%di):x64 selected_count=+0x358(%di):u32
+backup brt_component_use_after_can 0xd0800b0
+backup brt_component_use_after_can_args 0xd0800b0 rdi=%di:x64 component_mode=+0x1b0(%di):u8 selected=+0x350(%di):x64 selected_count=+0x358(%di):u32
+backup brt_component_use_late 0xd0802d0
+backup brt_component_use_late_args 0xd0802d0 rdi=%di:x64 component_mode=+0x1b0(%di):u8 selected=+0x350(%di):x64 selected_count=+0x358(%di):u32
+backup brt_action_backup_candidate_00 0xcf58430
+backup brt_action_backup_candidate_01 0xcf58570
+backup brt_action_backup_candidate_02 0xcf5858a
+backup brt_action_backup_candidate_03 0xcf585ff
+backup brt_action_backup_candidate_04 0xcf5861f
+backup brt_action_backup_candidate_05 0xcf58642
+backup brt_action_backup_candidate_06 0xcf5865e
+backup brt_action_backup_candidate_07 0xcf5867d
+backup brt_action_backup_candidate_08 0xcf586bd
+backup brt_action_backup_candidate_09 0xcf586e0
+backup brt_action_backup_candidate_10 0xcf58710
+backup brt_action_backup_candidate_11 0xcf58720
+backup brt_action_backup_candidate_12 0xcf58890
+backup brt_action_backup_candidate_13 0xcf588ad
+backup brt_action_backup_candidate_14 0xcf58940
+backup brt_action_backup_candidate_15 0xcf5895d
+backup brt_action_backup_ctor 0xcf58980
+backup brt_action_backup_ctor2 0xcf589c0
+backup brt_action_backup_candidate_16 0xcf58a10
+backup brt_action_backup_candidate_17 0xcf58a2d
+backup brt_action_backup_candidate_18 0xcf58ac0
+backup brt_action_backup_candidate_19 0xcf58b00
+backup brt_action_backup_candidate_20 0xcf58b1d
+backup brt_action_backup_candidate_21 0xcf58bbd
+backup brt_action_backup_candidate_22 0xcf58be0
+backup brt_action_backup_candidate_23 0xcf58bf0
+backup brt_action_backup_candidate_24 0xcf58c10
+backup brt_action_backup_candidate_25 0xcf58c60
+backup brt_action_backup_candidate_26 0xcf58d70
+backup brt_action_backup_candidate_27 0xcf5a100
+backup brt_action_backup_candidate_28 0xcf5a130
+backup brt_action_backup_candidate_29 0xcf5a190
+backup brt_action_backup_candidate_30 0xcf5a2b0
+backup brt_action_backup_candidate_31 0xcf5a310
+backup brt_action_backup_candidate_32 0xcf5a340
+backup brt_action_backup_candidate_33 0xcf5a3b0
+backup brt_action_backup_candidate_34 0xcf5a420
+backup brt_action_backup_candidate_35 0xcf5ac60
+backup brt_action_backup_candidate_35_args 0xcf5ac60 rdi=%di:x64 rsi=%si:x64 rdx=%dx:x64 rcx=%cx:x64 r8=%r8:x64 r9=%r9:x64
+backup brt_action_backup_candidate_36 0xcf5b110
+backup brt_backup_perform_entry 0xcf58d70
+backup brt_backup_perform_entry_args 0xcf58d70 rdi=%di:x64 rsi=%si:x64 mode=%dx:u8 rdx=%dx:x64 rcx=%cx:x64 r8=%r8:x64 r9=%r9:x64
+backup brt_backup_config_guard_disabled_path 0xcf58ec7
+backup brt_backup_context_valid_check 0xcf58df3
+backup brt_backup_selected_item_check 0xcf58e0a
+backup brt_backup_selected_item_allowed_flags 0xcf592f0 selected=%ax:x64 selected_flags=%cx:u32
+backup brt_backup_request_actor_path 0xcf5941f context=%r14:x64 selected=%ax:x64 mode=%r12:u8
+backup brt_backup_request_actor_valid 0xcf59458 request_actor=%r15:x64 context=%r14:x64 mode=%r12:u8
+backup brt_backup_payload_lookup 0xcf594ee request_actor=%r15:x64 context=%r14:x64 mode=%r12:u8
+backup brt_backup_payload_nonempty 0xcf595b2 request_actor=%r15:x64 payload_count=%r13:s64 context=%r14:x64 mode=%r12:u8
+backup brt_backup_base_context_check 0xcf5978c context=%r14:x64 request_actor=%r15:x64 mode=%r12:u8
+backup brt_backup_base_owner_check_call 0xcf597ec owner_base=%r13:x64 owner=%si:x64 mode=%r12:u8
+backup brt_backup_base_owner_check_fail 0xcf5999f
+backup brt_backup_mode_byte_check 0xcf597f9 mode=%r12:u8 request_actor=%r15:x64 context=%r14:x64
+backup brt_backup_mode_byte_fail 0xcf59f30 mode=%r12:u8 context=%r14:x64
+backup brt_backup_inventory_match_check 0xcf59820 inventory_candidate=%r12:x64 owner_inventory=%si:x64
+backup brt_backup_inventory_match_fail 0xcf59b49
+backup brt_backup_target_anchor_setup 0xcf59b9d
+backup brt_backup_target_actor_check 0xcf59bfc
+backup brt_backup_target_actor_valid 0xcf59cfa
+backup brt_backup_target_actor_invalid 0xcf59c10
+backup brt_backup_response_failure_commit 0xcf59fc4
+backup brt_rpc_exec_server_request_basebackup 0xd1093f0
+backup brt_rpc_exec_server_request_basebackup_args 0xd1093f0 rdi=%di:x64 rsi=%si:x64 rdx=%dx:x64 rcx=%cx:x64 r8=%r8:x64 r9=%r9:x64
+backup brt_rpc_exec_server_request_building_blueprint 0xd109470
+backup brt_rpc_exec_server_request_building_blueprint_args 0xd109470 rdi=%di:x64 rsi=%si:x64 rdx=%dx:x64 rcx=%cx:x64 r8=%r8:x64 r9=%r9:x64
+backup brt_rpc_impl_server_request_building_blueprint 0xd109e90
+backup brt_rpc_impl_server_request_building_blueprint_args 0xd109e90 rdi=%di:x64 rsi=%si:x64 rdx=%dx:x64 rcx=%cx:x64 r8=%r8:x64 r9=%r9:x64
+backup brt_rpc_building_blueprint_async_handler_entry 0xd202710
+backup brt_rpc_building_blueprint_async_handler_args 0xd202710 rdi=%di:x64 rsi=%si:x64 rdx=%dx:x64 rcx=%cx:x64 r8=%r8:x64 r9=%r9:x64
+backup brt_rpc_building_blueprint_request_handler_entry 0xd202840
+backup brt_rpc_building_blueprint_request_handler_args 0xd202840 rdi=%di:x64 rsi=%si:x64 rdx=%dx:x64 rcx=%cx:x64 r8=%r8:x64 r9=%r9:x64
+backup brt_rpc_building_blueprint_request_mode_branch 0xd202885
+backup brt_rpc_building_blueprint_request_immediate_path 0xd202889
+backup brt_rpc_building_blueprint_request_placeable_load_path 0xd2028e7
+backup brt_rpc_building_blueprint_request_schedule_load_place 0xd20297c
+backup brt_rpc_impl_server_request_basebackup 0xd109ff0
+backup brt_rpc_impl_server_request_basebackup_args 0xd109ff0 rdi=%di:x64 rsi=%si:x64 rdx=%dx:x64 rcx=%cx:x64 r8=%r8:x64 r9=%r9:x64
+backup brt_rpc_async_handler_entry 0xd202ad0
+backup brt_rpc_async_handler_args 0xd202ad0 rdi=%di:x64 rsi=%si:x64 rdx=%dx:x64 rcx=%cx:x64 r8=%r8:x64 r9=%r9:x64
+backup brt_rpc_request_handler_entry 0xd202c00
+backup brt_rpc_request_handler_args 0xd202c00 rdi=%di:x64 rsi=%si:x64 rdx=%dx:x64 rcx=%cx:x64 r8=%r8:x64 r9=%r9:x64
+backup brt_rpc_request_mode_branch 0xd202c45
+backup brt_rpc_request_immediate_path 0xd202c49
+backup brt_rpc_request_immediate_path_args 0xd202c49 rdi=%di:x64 rsi=%si:x64 rdx=%dx:x64 rcx=%cx:x64 r8=%r8:x64 r9=%r9:x64
+backup brt_rpc_request_placeable_load_path 0xd202ca7
+backup brt_rpc_request_placeable_load_path_args 0xd202ca7 rdi=%di:x64 rsi=%si:x64 rdx=%dx:x64 rcx=%cx:x64 r8=%r8:x64 r9=%r9:x64
+backup brt_rpc_request_schedule_load_place 0xd202d3c
+backup brt_rpc_request_schedule_load_place_args 0xd202d3c rdi=%di:x64 rsi=%si:x64 rdx=%dx:x64 rcx=%cx:x64 r8=%r8:x64 r9=%r9:x64
+place brt_rpc_exec_server_request_basebackup 0xd1093f0
+place brt_rpc_impl_server_request_basebackup 0xd109ff0
+place brt_rpc_async_handler_entry 0xd202ad0
+place brt_rpc_request_handler_entry 0xd202c00
+place brt_rpc_request_mode_branch 0xd202c45
+place brt_rpc_request_immediate_path 0xd202c49
+place brt_rpc_request_placeable_load_path 0xd202ca7
+place brt_rpc_request_schedule_load_place 0xd202d3c
+place brt_rpc_load_place_callback_entry 0xd202d80
+place brt_action_place_can_place_entry 0xcf5e260
+place brt_action_place_place_entry 0xcf5eb90
+place brt_action_place_commit_entry 0xcf5f090
+place perform_can_be_placed_entry 0xcfc5440
+minimal brt_rpc_exec_server_request_basebackup 0xd1093f0
+minimal brt_rpc_impl_server_request_basebackup 0xd109ff0
+minimal brt_rpc_async_handler_entry 0xd202ad0
+minimal brt_rpc_request_handler_entry 0xd202c00
+minimal brt_rpc_request_mode_branch 0xd202c45
+minimal brt_rpc_request_immediate_path 0xd202c49
+minimal brt_rpc_request_placeable_load_path 0xd202ca7
+minimal brt_rpc_request_schedule_load_place 0xd202d3c
+minimal brt_rpc_load_place_callback_entry 0xd202d80
+minimal brt_action_method_failure_reason 0xe04e81e
+minimal brt_action_state_empty_context 0xe04e9e3
+minimal brt_action_canuse_empty_context 0xe04ec15
+minimal brt_action_canuse_actor_lookup_null 0xe04ed18
+minimal brt_action_canuse_map_area_guard 0xe04ed22
+minimal brt_action_canuse_region_fail_join 0xe04ed24
+decision brt_action_invalid_map_reason_guard 0xe04e6e6
+decision perform_can_be_placed_entry 0xcfc5440
+decision perform_invalid_map_site_a 0xcfc5a7e
+decision perform_invalid_map_site_b 0xcfc5c88
+decision perform_invalid_map_site_c 0xcfc5fe6
+decision perform_invalid_map_site_d 0xcfc60d2

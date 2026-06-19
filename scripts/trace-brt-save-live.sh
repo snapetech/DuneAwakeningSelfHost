@@ -2,14 +2,23 @@
 set -euo pipefail
 
 container="${1:-dune_server-deep-desert-1}"
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+source "$script_dir/lib/brt-dd-trace-guards.sh"
+required_host="${DUNE_BRT_DD_TRACE_HOST:-kspls0}"
 
-hostname
+short_host="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
+echo "$short_host"
+if [[ "$short_host" != "$required_host" && "${DUNE_BRT_DD_TRACE_ALLOW_ANY_HOST:-0}" != "1" ]]; then
+  echo "ERROR: refusing to trace on host '$short_host'; required '$required_host'." >&2
+  exit 1
+fi
 
 pid="$(docker top "$container" -eo pid,args | awk '/DuneSandboxServer-Linux-Shipping/ {print $1; exit}')"
 if [[ -z "$pid" ]]; then
   echo "$container: no DuneSandboxServer-Linux-Shipping process found" >&2
   exit 1
 fi
+brt_dd_trace_refuse_dense_builtins_unless_allowed "$pid" "trace-brt-save-live"
 
 exe_path="$(sudo -n readlink "/proc/$pid/exe")"
 base="$(sudo -n awk -v exe="$exe_path" '$6 == exe && $3 == "00000000" {split($1,a,"-"); print "0x"a[1]; exit}' "/proc/$pid/maps")"

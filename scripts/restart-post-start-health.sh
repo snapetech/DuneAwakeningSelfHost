@@ -16,7 +16,7 @@ seed_script="${DUNE_SEED_NEIGHBOR_SCRIPT:-./scripts/seed-gateway-neighbor.sh}"
 verify_script="${DUNE_VERIFY_RMQ_AUTH_PATH_SCRIPT:-./scripts/verify-rmq-auth-path.sh}"
 timeout="${DUNE_RESTART_POST_START_TIMEOUT_SECONDS:-180}"
 interval="${DUNE_RESTART_POST_START_INTERVAL_SECONDS:-5}"
-seed_timeout="${DUNE_SEED_NEIGHBOR_TIMEOUT_SECONDS:-20}"
+seed_timeout="${DUNE_SEED_NEIGHBOR_TIMEOUT_SECONDS:-90}"
 logoff_patch_enabled="${DUNE_LOGOFF_TIMER_RUNTIME_PATCH_ENABLED:-true}"
 landsraad_coriolis_guard_enabled="${DUNE_LANDSRAAD_CORIOLIS_GUARD_ENABLED:-true}"
 
@@ -35,7 +35,7 @@ is_running() {
 seed_neighbors() {
   if [[ -x "$seed_script" ]]; then
     if command -v timeout >/dev/null 2>&1; then
-      timeout "$seed_timeout" "$seed_script" || true
+      timeout --kill-after=5s "${seed_timeout}s" "$seed_script" || true
     else
       "$seed_script" || true
     fi

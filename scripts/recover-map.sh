@@ -35,6 +35,7 @@ if [[ ! "$wait_seconds" =~ ^[0-9]+$ ]]; then
 fi
 
 container_runtime="${CONTAINER_RUNTIME:-docker}"
+seed_timeout="${DUNE_RECOVER_MAP_SEED_TIMEOUT_SECONDS:-90}"
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -x "$script_dir/compose-files.sh" ]]; then
   COMPOSE_FILES="$("$script_dir/compose-files.sh" "$env_file")"
@@ -46,6 +47,11 @@ for compose_file in "${compose_files[@]}"; do
   compose+=(-f "$compose_file")
 done
 compose+=(--env-file "$env_file")
+
+if [[ ! "$seed_timeout" =~ ^[0-9]+$ ]]; then
+  printf 'DUNE_RECOVER_MAP_SEED_TIMEOUT_SECONDS must be numeric\n' >&2
+  exit 2
+fi
 
 env_value() {
   local key="$1"
@@ -108,11 +114,32 @@ run_post_start_health() {
   fi
 }
 
+run_seed_neighbors() {
+  case "${DUNE_RECOVER_MAP_SEED_NEIGHBORS_ENABLED:-true}" in
+    1|true|yes|on|TRUE|True|YES|ON) ;;
+    *) return 0 ;;
+  esac
+
+  if [[ ! -x "$script_dir/seed-gateway-neighbor.sh" ]]; then
+    return 0
+  fi
+
+  printf 'seeding bridge neighbor entries\n'
+  if (( seed_timeout > 0 )) && command -v timeout >/dev/null 2>&1; then
+    if ! timeout --kill-after=5s "${seed_timeout}s" env CONTAINER_RUNTIME="$container_runtime" "$script_dir/seed-gateway-neighbor.sh"; then
+      printf 'warning: bridge neighbor seeding failed or timed out after %ss\n' "$seed_timeout" >&2
+    fi
+  elif ! CONTAINER_RUNTIME="$container_runtime" "$script_dir/seed-gateway-neighbor.sh"; then
+    printf 'warning: bridge neighbor seeding failed\n' >&2
+  fi
+}
+
 printf 'starting stateful dependencies\n'
-"${compose[@]}" up -d --no-recreate postgres admin-rmq game-rmq
+"${compose[@]}" up -d --no-recreate --no-deps postgres admin-rmq game-rmq
 wait_for_healthy postgres
 wait_for_healthy admin-rmq
 wait_for_healthy game-rmq
+run_seed_neighbors
 
 old_server_id="$(psql -Atc "select coalesce(server_id, '') from dune.world_partition where partition_id = ${partition_id};")"
 if [[ -z "$old_server_id" ]]; then
@@ -142,8 +169,9 @@ if [[ -n "$old_server_id" ]]; then
   fi
 fi
 
-printf 'starting map service: %s\n' "$service"
-"${compose[@]}" up -d "$service"
+printf 'starting/recreating map service: %s\n' "$service"
+"${compose[@]}" up -d --force-recreate --no-deps "$service"
+run_seed_neighbors
 
 printf 'waiting for partition %s to become ready/alive/active\n' "$partition_id"
 deadline=$((SECONDS + wait_seconds))

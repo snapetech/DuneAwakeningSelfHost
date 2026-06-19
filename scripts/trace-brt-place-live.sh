@@ -3,13 +3,25 @@ set -euo pipefail
 
 container="${1:-dune_server-deep-desert-1}"
 log="${2:-/tmp/brt-place-trace-live.log}"
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+source "$script_dir/lib/brt-dd-trace-guards.sh"
+required_host="${DUNE_BRT_DD_TRACE_HOST:-kspls0}"
 
-hostname
+short_host="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
+echo "$short_host"
+if [[ "$short_host" != "$required_host" && "${DUNE_BRT_DD_TRACE_ALLOW_ANY_HOST:-0}" != "1" ]]; then
+  echo "ERROR: refusing to trace on host '$short_host'; required '$required_host'." >&2
+  exit 1
+fi
 
 pid="$(docker top "$container" -eo pid,args | awk '/DuneSandboxServer-Linux-Shipping/ {print $1; exit}')"
 if [[ -z "$pid" ]]; then
   echo "$container: no DuneSandboxServer-Linux-Shipping process found" >&2
   exit 1
+fi
+BRT_TRACE_KEYSTONE_ONLY="${BRT_TRACE_KEYSTONE_ONLY:-1}"
+if [[ "$BRT_TRACE_KEYSTONE_ONLY" != "1" ]]; then
+  brt_dd_trace_refuse_dense_builtins_unless_allowed "$pid" "trace-brt-place-live"
 fi
 
 if [[ -s /tmp/brt-place-trace-gdb.pid ]]; then
@@ -50,7 +62,7 @@ cmd="/tmp/brt-place-trace.gdb"
   # Deep Desert that is a hot path; set BRT_TRACE_KEYSTONE_ONLY=1 to skip them and
   # arm only the env-driven keystone breakpoints (RPC entry / restriction gate /
   # region reject), which fire only when someone actually uses the BRT.
-  if [[ "${BRT_TRACE_KEYSTONE_ONLY:-0}" != "1" ]]; then
+  if [[ "$BRT_TRACE_KEYSTONE_ONLY" != "1" ]]; then
   # UBuildingBlueprintBackupToolPlayerCharacterComponent state / preview path.
   add_bp 0xd07a460 'printf "BRT_PLACE hit state-entry comp=%p mode=%u ctx108=%p selected350=%p b358=%u b359=%u\n", $rdi, *(unsigned char*)($rdi+0x1b0), *(void**)($rdi+0x108), *(void**)($rdi+0x350), *(unsigned char*)($rdi+0x358), *(unsigned char*)($rdi+0x359)'
   add_bp 0xd07a4c7 'printf "BRT_PLACE hit state-after-nearby code=%u rbp=%p\n", *(unsigned char*)($rbp-0x68), $rbp'
@@ -101,8 +113,19 @@ cmd="/tmp/brt-place-trace.gdb"
   #
   # BRT_RPC_PLACE_OFFSET answers unknown #1: if this never fires during a DD
   # restore attempt, the block is client-side and no server patch can help.
+  if [[ -n "${BRT_RPC_EXEC_OFFSET:-}" ]]; then
+    add_bp "$BRT_RPC_EXEC_OFFSET" 'printf "BRT_PLACE hit SERVER-RPC-EXEC request-dispatched-to-native-exec rdi=%p rsi=%p rdx=%p rcx=%p r8=%p r9=%p\n", $rdi, $rsi, $rdx, $rcx, $r8, $r9
+if '"${BRT_TRACE_RPC_BACKTRACE:-0}"' != 0
+  info registers rdi rsi rdx rcx r8 r9 rax rbx rbp rsp rip
+  bt 12
+end'
+  fi
   if [[ -n "${BRT_RPC_PLACE_OFFSET:-}" ]]; then
-    add_bp "$BRT_RPC_PLACE_OFFSET" 'printf "BRT_PLACE hit SERVER-RPC-ENTRY request-reached-server rdi=%p rsi=%p rdx=%p\n", $rdi, $rsi, $rdx'
+    add_bp "$BRT_RPC_PLACE_OFFSET" 'printf "BRT_PLACE hit SERVER-RPC-ENTRY request-reached-server rdi=%p rsi=%p rdx=%p rcx=%p r8=%p r9=%p\n", $rdi, $rsi, $rdx, $rcx, $r8, $r9
+if '"${BRT_TRACE_RPC_BACKTRACE:-0}"' != 0
+  info registers rdi rsi rdx rcx r8 r9 rax rbx rbp rsp rip
+  bt 12
+end'
   fi
   # BRT_RESTRICTION_GATE_OFFSET answers unknown #2: at the map-restriction read
   # site, dump the argument registers so the live restriction array/object can be
@@ -130,8 +153,8 @@ echo "--out--"
 tail -80 /tmp/brt-place-trace-gdb.out 2>/dev/null || true
 echo "--log--"
 tail -80 "$log" 2>/dev/null || true
-echo "keystone_bps: rpc=${BRT_RPC_PLACE_OFFSET:-unset} restriction_gate=${BRT_RESTRICTION_GATE_OFFSET:-unset} region_reject=${BRT_REGION_REJECT_OFFSET:-unset}"
-if [[ -z "${BRT_RPC_PLACE_OFFSET:-}" ]]; then
-  echo "note: BRT_RPC_PLACE_OFFSET unset -> cannot prove the place request reached the server (Phase 1 keystone). Resolve it with scripts/research/DumpBrtTraceAnchors.java." >&2
+echo "keystone_bps: rpc_exec=${BRT_RPC_EXEC_OFFSET:-unset} rpc_impl=${BRT_RPC_PLACE_OFFSET:-unset} restriction_gate=${BRT_RESTRICTION_GATE_OFFSET:-unset} region_reject=${BRT_REGION_REJECT_OFFSET:-unset}"
+if [[ -z "${BRT_RPC_EXEC_OFFSET:-}" && -z "${BRT_RPC_PLACE_OFFSET:-}" ]]; then
+  echo "note: RPC offsets unset -> cannot prove the place request reached the server (Phase 1 keystone). Resolve them with scripts/research/summarize-elf-pointer-context.py or scripts/research/DumpBrtTraceAnchors.java." >&2
 fi
 echo "armed target_pid=$pid base=$base log=$log"

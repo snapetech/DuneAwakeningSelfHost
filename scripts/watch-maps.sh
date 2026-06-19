@@ -19,12 +19,14 @@ Environment:
   CONTAINER_RUNTIME          Container runtime. Default: docker
   DUNE_WATCH_INTERVAL        Seconds between checks. Default: 30
   DUNE_WATCH_RECOVERY_WAIT   Seconds recover-map waits per recovery. Default: 180
+  DUNE_WATCH_RECOVER_TIMEOUT Max seconds for recover-map command. Default: wait+180; 0 disables.
   DUNE_WATCH_COOLDOWN        Minimum seconds between recoveries per service. Default: 300
   DUNE_WATCH_STARTUP_GRACE   Seconds to let running maps warm before DB recovery. Default: 300
   DUNE_WATCH_LOCK_DIR        Single-instance lock dir. Default: /tmp/dune-map-watchdog.lock
   DUNE_WATCH_PAUSE_FILE      Pause marker honored in loop mode. Default: /tmp/dune-map-watchdog.paused
   DUNE_WATCH_REQUIRE_READY    Recover running maps with ready=false. Default: false
   DUNE_WATCH_RECOVER_COMMAND Recovery command. Default: scripts/recover-map.sh
+  DUNE_WATCH_COMMAND_TIMEOUT Max seconds for Docker/DB probe commands. Default: 20; 0 disables.
   DUNE_WATCH_SEED_NEIGHBORS Seed known Docker bridge neighbor entries. Default: false
   DUNE_WATCH_SEED_COMMAND   Neighbor seed command. Default: scripts/seed-gateway-neighbor.sh
   DUNE_WATCH_SEED_INTERVAL  Seconds between neighbor seeding attempts. Default: 300
@@ -61,12 +63,14 @@ compose+=(--env-file "$env_file")
 
 interval="${DUNE_WATCH_INTERVAL:-30}"
 recovery_wait="${DUNE_WATCH_RECOVERY_WAIT:-180}"
+recovery_timeout="${DUNE_WATCH_RECOVER_TIMEOUT:-}"
 cooldown="${DUNE_WATCH_COOLDOWN:-300}"
 startup_grace="${DUNE_WATCH_STARTUP_GRACE:-300}"
 lock_dir="${DUNE_WATCH_LOCK_DIR:-/tmp/dune-map-watchdog.lock}"
 pause_file="${DUNE_WATCH_PAUSE_FILE:-/tmp/dune-map-watchdog.paused}"
 require_ready="${DUNE_WATCH_REQUIRE_READY:-false}"
 recover_command="${DUNE_WATCH_RECOVER_COMMAND:-$script_dir/recover-map.sh}"
+command_timeout="${DUNE_WATCH_COMMAND_TIMEOUT:-20}"
 seed_neighbors="${DUNE_WATCH_SEED_NEIGHBORS:-false}"
 seed_command="${DUNE_WATCH_SEED_COMMAND:-$script_dir/seed-gateway-neighbor.sh}"
 seed_interval="${DUNE_WATCH_SEED_INTERVAL:-300}"
@@ -93,8 +97,15 @@ case "$partition_count" in
     ;;
 esac
 
-if [[ ! "$interval" =~ ^[0-9]+$ || ! "$recovery_wait" =~ ^[0-9]+$ || ! "$cooldown" =~ ^[0-9]+$ || ! "$startup_grace" =~ ^[0-9]+$ || ! "$seed_interval" =~ ^[0-9]+$ || ! "$seed_timeout" =~ ^[0-9]+$ ]]; then
-  printf 'DUNE_WATCH_INTERVAL, DUNE_WATCH_RECOVERY_WAIT, DUNE_WATCH_COOLDOWN, DUNE_WATCH_STARTUP_GRACE, DUNE_WATCH_SEED_INTERVAL, and DUNE_WATCH_SEED_TIMEOUT must be numeric\n' >&2
+if [[ ! "$interval" =~ ^[0-9]+$ || ! "$recovery_wait" =~ ^[0-9]+$ || ! "$cooldown" =~ ^[0-9]+$ || ! "$startup_grace" =~ ^[0-9]+$ || ! "$command_timeout" =~ ^[0-9]+$ || ! "$seed_interval" =~ ^[0-9]+$ || ! "$seed_timeout" =~ ^[0-9]+$ ]]; then
+  printf 'DUNE_WATCH_INTERVAL, DUNE_WATCH_RECOVERY_WAIT, DUNE_WATCH_COOLDOWN, DUNE_WATCH_STARTUP_GRACE, DUNE_WATCH_COMMAND_TIMEOUT, DUNE_WATCH_SEED_INTERVAL, and DUNE_WATCH_SEED_TIMEOUT must be numeric\n' >&2
+  exit 2
+fi
+if [[ -z "$recovery_timeout" ]]; then
+  recovery_timeout=$((recovery_wait + 180))
+fi
+if [[ ! "$recovery_timeout" =~ ^[0-9]+$ ]]; then
+  printf 'DUNE_WATCH_RECOVER_TIMEOUT must be numeric\n' >&2
   exit 2
 fi
 
@@ -147,17 +158,41 @@ log() {
   printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"
 }
 
+run_bounded() {
+  if (( command_timeout > 0 )) && command -v timeout >/dev/null 2>&1; then
+    timeout --kill-after=5s "${command_timeout}s" "$@"
+  else
+    "$@"
+  fi
+}
+
+run_recovery_command() {
+  if (( recovery_timeout > 0 )) && command -v timeout >/dev/null 2>&1; then
+    timeout --kill-after=10s "${recovery_timeout}s" "$@"
+  else
+    "$@"
+  fi
+}
+
 container_status() {
   local service="$1"
   local container_id
+  local status
 
-  container_id="$("${compose[@]}" ps -aq "$service" 2>/dev/null || true)"
+  if ! container_id="$(run_bounded "${compose[@]}" ps -aq "$service" 2>/dev/null)"; then
+    printf 'unknown'
+    return
+  fi
   if [[ -z "$container_id" ]]; then
     printf 'missing'
     return
   fi
 
-  "$container_runtime" inspect --format '{{ .State.Status }}' "$container_id" 2>/dev/null || printf 'missing'
+  if ! status="$(run_bounded "$container_runtime" inspect --format '{{ .State.Status }}' "$container_id" 2>/dev/null)"; then
+    printf 'unknown'
+    return
+  fi
+  printf '%s' "${status:-unknown}"
 }
 
 container_age_seconds() {
@@ -167,13 +202,13 @@ container_age_seconds() {
   local started_epoch
   local now
 
-  container_id="$("${compose[@]}" ps -aq "$service" 2>/dev/null || true)"
+  container_id="$(run_bounded "${compose[@]}" ps -aq "$service" 2>/dev/null || true)"
   if [[ -z "$container_id" ]]; then
     printf '0'
     return
   fi
 
-  started_at="$("$container_runtime" inspect --format '{{ .State.StartedAt }}' "$container_id" 2>/dev/null || true)"
+  started_at="$(run_bounded "$container_runtime" inspect --format '{{ .State.StartedAt }}' "$container_id" 2>/dev/null || true)"
   if [[ -z "$started_at" || "$started_at" == "0001-01-01T00:00:00Z" ]]; then
     printf '0'
     return
@@ -192,7 +227,7 @@ container_age_seconds() {
 partition_health() {
   local partition_id="$1"
 
-  "${compose[@]}" exec -T postgres psql -U dune -d "$db" -Atc "
+  run_bounded "${compose[@]}" exec -T postgres psql -U dune -d "$db" -Atc "
     select
       coalesce(fs.ready, false) || ' ' ||
       coalesce(fs.alive, false) || ' ' ||
@@ -257,7 +292,7 @@ recover_service() {
 
   log "recovering map: service=$service partition=$partition_id reason=$reason"
   if ! COMPOSE_FILES="$COMPOSE_FILES" CONTAINER_RUNTIME="$container_runtime" \
-    "$recover_command" "$env_file" "$service" "$partition_id" "$recovery_wait"; then
+    run_recovery_command "$recover_command" "$env_file" "$service" "$partition_id" "$recovery_wait"; then
     log "map recovery failed: service=$service partition=$partition_id reason=$reason"
     if [[ "$mode" == "--once" ]]; then
       return 1
@@ -363,6 +398,9 @@ check_once() {
         esac
         ;;
       created|restarting|removing|paused)
+        ;;
+      unknown)
+        log "skip recovery because container status is unavailable: service=$service partition=$partition_id"
         ;;
       exited|dead)
         recover_service "$service" "$partition_id" "$status"

@@ -7,6 +7,10 @@ required_host="${DUNE_BRT_DD_TRACE_HOST:-kspls0}"
 tracefs="${DUNE_TRACEFS:-/sys/kernel/tracing}"
 group="${DUNE_BRT_DD_UPROBE_GROUP:-brt_dd}"
 profile="${DUNE_BRT_DD_UPROBE_PROFILE:-minimal}"
+skip_events_csv="${DUNE_BRT_DD_UPROBE_SKIP_EVENTS:-}"
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+source "$script_dir/lib/brt-dd-trace-guards.sh"
+active_points_file=""
 
 assert_host() {
   local short
@@ -164,6 +168,14 @@ EOF
 }
 
 events() {
+  local points_file="${1:-}"
+  if [[ -n "$points_file" ]]; then
+    brt_dd_trace_emit_points "$points_file" "$profile"
+    if [[ -n "${BRT_RPC_PLACE_OFFSET:-}" ]]; then
+      printf 'brt_rpc_place_entry %s\n' "$BRT_RPC_PLACE_OFFSET"
+    fi
+    return 0
+  fi
   case "$profile" in
     minimal) events_minimal ;;
     decision) events_decision ;;
@@ -176,6 +188,20 @@ events() {
   if [[ -n "${BRT_RPC_PLACE_OFFSET:-}" ]]; then
     printf 'brt_rpc_place_entry %s\n' "$BRT_RPC_PLACE_OFFSET"
   fi
+}
+
+event_is_skipped() {
+  local event_name="$1" entry
+  [[ -n "$skip_events_csv" ]] || return 1
+  IFS=',' read -ra entries <<<"$skip_events_csv"
+  for entry in "${entries[@]}"; do
+    entry="${entry#"${entry%%[![:space:]]*}"}"
+    entry="${entry%"${entry##*[![:space:]]}"}"
+    if [[ "$entry" == "$event_name" ]]; then
+      return 0
+    fi
+  done
+  return 1
 }
 
 remove_events() {
@@ -195,9 +221,10 @@ remove_events() {
 arm() {
   assert_host
   [[ -w "$tracefs/uprobe_events" || -w "$tracefs/trace" ]] || sudo -n true
-  local pid event_path name offset
+  local pid event_path name offset fetch_args
   pid="$(server_pid)"
   [[ -n "$pid" ]] || { echo "ERROR: no server process found for $container" >&2; exit 1; }
+  active_points_file="$(brt_dd_trace_points_or_stale_override "$pid" "brt-dd-uprobe-watch/$profile")"
   event_path="$(event_path_for_pid "$pid")"
   sudo -n test -e "$event_path" || { echo "ERROR: event binary path not found: $event_path" >&2; exit 1; }
 
@@ -205,18 +232,29 @@ arm() {
   sudo_write "$tracefs/tracing_on" 0 || true
   sudo_write "$tracefs/trace" "" || true
 
-  while read -r name offset; do
+  events_file="$(mktemp)"
+  events "$active_points_file" >"$events_file"
+  [[ -s "$events_file" ]] || { rm -f "$events_file"; echo "ERROR: no trace points for profile=$profile" >&2; exit 1; }
+
+  while read -r name offset fetch_args; do
     [[ -n "$name" && -n "$offset" ]] || continue
-    sudo_append "$tracefs/uprobe_events" "p:$group/$name $event_path:$offset"
-  done < <(events)
+    event_is_skipped "$name" && continue
+    if [[ -n "${fetch_args:-}" ]]; then
+      sudo_append "$tracefs/uprobe_events" "p:$group/$name $event_path:$offset $fetch_args"
+    else
+      sudo_append "$tracefs/uprobe_events" "p:$group/$name $event_path:$offset"
+    fi
+  done <"$events_file"
 
   while read -r name _; do
     [[ -n "$name" ]] || continue
+    event_is_skipped "$name" && continue
     sudo_write "$tracefs/events/$group/$name/enable" 1
-  done < <(events)
+  done <"$events_file"
+  rm -f "$events_file"
 
   sudo_write "$tracefs/tracing_on" 1
-  echo "armed tracefs uprobes group=$group profile=$profile container=$container pid=$pid binary=$event_path"
+  echo "armed tracefs uprobes group=$group profile=$profile container=$container pid=$pid binary=$event_path points=${active_points_file:-builtins} skip_events=${skip_events_csv:-none}"
   echo "dump with: $0 dump $container"
   echo "stop with: $0 stop $container"
 }
@@ -227,9 +265,35 @@ dump() {
 }
 
 status() {
-  local pid
+  local pid enabled_names inferred_profile
   pid="$(server_pid || true)"
-  echo "container=$container pid=${pid:-missing} group=$group profile=$profile tracefs=$tracefs"
+  enabled_names=""
+  inferred_profile="not-armed"
+  if [[ -d "$tracefs/events/$group" ]]; then
+    enabled_names="$(sudo -n sh -c "for f in '$tracefs/events/$group'/*/enable; do [ \"\$(cat \"\$f\")\" = 1 ] || continue; basename \"\$(dirname \"\$f\")\"; done" | sort | paste -sd, -)"
+    case ",$enabled_names," in
+      *,brt_action_failreason_entry,*brt_action_place_can_place_entry,*|*,brt_action_place_can_place_entry,*brt_action_failreason_entry,*)
+        inferred_profile="brt"
+        ;;
+      *,brt_action_place_can_place_entry,*|*,brt_action_place_place_entry,*|*,brt_action_place_commit_entry,*)
+        inferred_profile="place"
+        ;;
+      *,brt_action_canuse_entry,*|*,brt_action_state_entry,*|*,brt_action_failreason_entry,*)
+        inferred_profile="hotbar-action"
+        ;;
+      *,brt_rpc_exec_server_request_basebackup,*|*,brt_rpc_impl_server_request_basebackup,*|*,perform_can_be_placed_entry,*)
+        inferred_profile="rpc-placement"
+        ;;
+      ,)
+        inferred_profile="disabled"
+        ;;
+      *)
+        inferred_profile="custom"
+        ;;
+    esac
+  fi
+  echo "container=$container pid=${pid:-missing} group=$group requested_profile=$profile inferred_profile=$inferred_profile tracefs=$tracefs"
+  [[ -z "$enabled_names" ]] || echo "enabled_events=$enabled_names"
   if [[ -d "$tracefs/events/$group" ]]; then
     sudo -n sh -c "for f in '$tracefs/events/$group'/*/enable; do printf '%s=' \"\$f\"; cat \"\$f\"; done"
   else

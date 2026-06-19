@@ -1,0 +1,16 @@
+[Unit]
+Description=Dune target safety audit
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/DuneAwakeningSelfHost
+EnvironmentFile=/opt/DuneAwakeningSelfHost/.env
+Environment=DUNE_TARGET_AUDIT_PATCH_PROBE_SERVICES=all
+Environment=DUNE_TARGET_AUDIT_PATCH_PROBE_EXCLUDE_SERVICES=survival
+Environment=DUNE_RECONCILE_EXCLUDE_SERVICES=survival
+Environment=DUNE_RECONCILE_FAIL_ON_DRIFT=true
+ExecStart=/opt/DuneAwakeningSelfHost/scripts/target-safety-guard.sh /opt/DuneAwakeningSelfHost/.env
+TimeoutStartSec=60min

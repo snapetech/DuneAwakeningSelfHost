@@ -74,8 +74,9 @@ fi
 brt_dd_invalid_map_enabled="${DUNE_BRT_DD_INVALID_MAP_BINARY_PATCH_ENABLED:-$(read_env DUNE_BRT_DD_INVALID_MAP_BINARY_PATCH_ENABLED)}"
 brt_dd_action_gate_enabled="${DUNE_BRT_DD_ACTION_GATE_BINARY_PATCH_ENABLED:-$(read_env DUNE_BRT_DD_ACTION_GATE_BINARY_PATCH_ENABLED)}"
 brt_dd_buildable_region_enabled="${DUNE_BRT_DD_BUILDABLE_MAP_REGION_PATCH_ENABLED:-$(read_env DUNE_BRT_DD_BUILDABLE_MAP_REGION_PATCH_ENABLED)}"
+brt_dd_narrow_tool_state_enabled="${DUNE_BRT_DD_NARROW_TOOL_STATE_BINARY_PATCH_ENABLED:-$(read_env DUNE_BRT_DD_NARROW_TOOL_STATE_BINARY_PATCH_ENABLED)}"
 brt_dd_tool_enable_enabled="${DUNE_BRT_DD_TOOL_ENABLE_BINARY_PATCH_ENABLED:-$(read_env DUNE_BRT_DD_TOOL_ENABLE_BINARY_PATCH_ENABLED)}"
-if [[ "$brt_dd_invalid_map_enabled" == "true" || "$brt_dd_action_gate_enabled" == "true" || "$brt_dd_buildable_region_enabled" == "true" || "$brt_dd_tool_enable_enabled" == "true" ]]; then
+if [[ "$brt_dd_invalid_map_enabled" == "true" || "$brt_dd_action_gate_enabled" == "true" || "$brt_dd_buildable_region_enabled" == "true" || "$brt_dd_narrow_tool_state_enabled" == "true" || "$brt_dd_tool_enable_enabled" == "true" ]]; then
   if [[ "$brt_dd_tool_enable_enabled" == "true" ]] && file_exists compose.brt-dd-invalid-map.yaml; then
     add_file compose.brt-dd-invalid-map.yaml
   elif file_exists compose.brt-dd-tool-selected.yaml; then
