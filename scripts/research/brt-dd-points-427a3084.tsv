@@ -26,6 +26,16 @@ minimal brt_rpc_impl_server_request_basebackup_args 0xd1435c0 rdi=%di:x64 rsi=%s
 minimal brt_rpc_exec_server_request_building_blueprint 0xd143390
 minimal brt_rpc_exec_server_request_building_blueprint_args 0xd143390 rdi=%di:x64 rsi=%si:x64 rdx=%dx:x64 rcx=%cx:x64 r8=%r8:x64 r9=%r9:x64
 
+hotbar brt_action_failreason_entry 0xe08d913
+hotbar brt_action_state_entry 0xe08e200
+hotbar brt_action_canuse_entry 0xe08e3d0
+hotbar brt_rpc_exec_server_request_basebackup 0xd143310
+hotbar brt_rpc_exec_server_request_basebackup_args 0xd143310 rdi=%di:x64 rsi=%si:x64 rdx=%dx:x64 rcx=%cx:x64 r8=%r8:x64 r9=%r9:x64
+hotbar brt_rpc_impl_server_request_basebackup 0xd1435c0
+hotbar brt_rpc_impl_server_request_basebackup_args 0xd1435c0 rdi=%di:x64 rsi=%si:x64 rdx=%dx:x64 rcx=%cx:x64 r8=%r8:x64 r9=%r9:x64
+hotbar brt_rpc_exec_server_request_building_blueprint 0xd143390
+hotbar brt_rpc_exec_server_request_building_blueprint_args 0xd143390 rdi=%di:x64 rsi=%si:x64 rdx=%dx:x64 rcx=%cx:x64 r8=%r8:x64 r9=%r9:x64
+
 backup brt_rpc_exec_server_request_basebackup 0xd143310
 backup brt_rpc_exec_server_request_basebackup_args 0xd143310 rdi=%di:x64 rsi=%si:x64 rdx=%dx:x64 rcx=%cx:x64 r8=%r8:x64 r9=%r9:x64
 backup brt_rpc_impl_server_request_basebackup 0xd1435c0

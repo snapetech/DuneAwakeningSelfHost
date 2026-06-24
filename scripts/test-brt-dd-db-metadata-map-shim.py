@@ -74,6 +74,20 @@ class BrtDdDbMetadataMapShimTests(unittest.TestCase):
         self.assertIn("get_available_backups_hidden_for_backup_only", body)
         self.assertIn("RETURN;", body)
 
+    def test_hidden_available_backups_still_runs_brt_triggered_auto_backup_first(self):
+        body = self.sql_function_body("base_backup_get_available_backups")
+        hidden_pos = body.find("IF hide_existing_backups THEN")
+        auto_pos = body.find("PERFORM brt_dd_try_auto_backup(in_player_id, 'get_available_backups_hidden', NULL);", hidden_pos)
+        log_pos = body.find("'get_available_backups_hidden_for_backup_only'", hidden_pos)
+        return_pos = body.find("RETURN;", hidden_pos)
+
+        self.assertGreaterEqual(hidden_pos, 0)
+        self.assertGreaterEqual(auto_pos, 0)
+        self.assertGreaterEqual(log_pos, 0)
+        self.assertGreaterEqual(return_pos, 0)
+        self.assertLess(auto_pos, log_pos)
+        self.assertLess(auto_pos, return_pos)
+
     def test_get_data_can_deny_cached_restore_selection_for_backup_only_canary(self):
         body = self.sql_function_body("base_backup_get_data")
 
@@ -111,7 +125,7 @@ class BrtDdDbMetadataMapShimTests(unittest.TestCase):
         body = self.function_body("set_auto_backup_canary")
 
         self.assertIn("('auto_backup_on_brt_call', :'mode')", body)
-        self.assertIn("('auto_backup_source_events', 'get_data')", body)
+        self.assertIn("('auto_backup_source_events', 'get_data,get_available_backups_hidden')", body)
         self.assertIn("('auto_backup_player_allowlist', :'player_id')", body)
         self.assertIn("('auto_backup_one_shot', 'true')", body)
         self.assertIn("('auto_backup_cooldown_seconds', '15')", body)

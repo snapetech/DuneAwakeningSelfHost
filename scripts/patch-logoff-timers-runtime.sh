@@ -6,7 +6,7 @@ RUN_LOCAL=false
 EXPECTED_BUILD_ID="${DUNE_LOGOFF_TIMER_BUILD_ID:-6f8ca9ee5f3420c0b4c1ef7cefb412347bcba04b}"
 AUTO_REMAP_ENABLED="${DUNE_LOGOFF_TIMER_AUTO_REMAP_ENABLED:-true}"
 TARGET_VALUE="${DUNE_LOGOFF_TIMER_VALUE:-0.0}"
-TARGET_CONTAINERS="${DUNE_LOGOFF_TIMER_CONTAINERS:-dune_server-survival-1 dune_server-deep-desert-1 dune_server-deep-desert-pvp-1}"
+TARGET_CONTAINERS="${DUNE_LOGOFF_TIMER_CONTAINERS:-}"
 DIRECT_ARRAYS="${DUNE_LOGOFF_TIMER_DIRECT_ARRAYS:-false}"
 
 case "$EXPECTED_BUILD_ID" in
@@ -18,6 +18,7 @@ case "$EXPECTED_BUILD_ID" in
     DEFAULT_UI_VALUE_A_OFFSET="0x16523ce0"
     DEFAULT_UI_VALUE_B_OFFSET="0x16523d10"
     DEFAULT_UI_VALUE_C_OFFSET="0x16523d28"
+    DEFAULT_DIALOG_TRIPLE_OFFSET=""
     ;;
   caebf04f4447a65da2e3df7a1a6b1593937af793)
     DEFAULT_VALUE_A_OFFSET="0x1651e498"
@@ -27,6 +28,7 @@ case "$EXPECTED_BUILD_ID" in
     DEFAULT_UI_VALUE_A_OFFSET="0x16520ae0"
     DEFAULT_UI_VALUE_B_OFFSET="0x16520b10"
     DEFAULT_UI_VALUE_C_OFFSET="0x16520b28"
+    DEFAULT_DIALOG_TRIPLE_OFFSET=""
     ;;
   6f8ca9ee5f3420c0b4c1ef7cefb412347bcba04b)
     DEFAULT_VALUE_A_OFFSET="0x1652e898"
@@ -36,6 +38,7 @@ case "$EXPECTED_BUILD_ID" in
     DEFAULT_UI_VALUE_A_OFFSET="0x16530ee0"
     DEFAULT_UI_VALUE_B_OFFSET="0x16530f10"
     DEFAULT_UI_VALUE_C_OFFSET="0x16530f28"
+    DEFAULT_DIALOG_TRIPLE_OFFSET=""
     ;;
   427a3084dcc00057ad21f98555a7d17d5f3c1020)
     DEFAULT_VALUE_A_OFFSET="0x16649ab0"
@@ -45,6 +48,7 @@ case "$EXPECTED_BUILD_ID" in
     DEFAULT_UI_VALUE_A_OFFSET="0x16649ab0"
     DEFAULT_UI_VALUE_B_OFFSET="0x16649ac8"
     DEFAULT_UI_VALUE_C_OFFSET="0x16649ac8"
+    DEFAULT_DIALOG_TRIPLE_OFFSET="0x16905c58"
     DIRECT_ARRAYS="${DUNE_LOGOFF_TIMER_DIRECT_ARRAYS:-true}"
     ;;
   *)
@@ -70,6 +74,7 @@ case "$EXPECTED_BUILD_ID" in
       DEFAULT_UI_VALUE_A_OFFSET=""
       DEFAULT_UI_VALUE_B_OFFSET=""
       DEFAULT_UI_VALUE_C_OFFSET=""
+      DEFAULT_DIALOG_TRIPLE_OFFSET=""
     else
       : "${DUNE_LOGOFF_TIMER_VALUE_A_OFFSET:?unknown build: set DUNE_LOGOFF_TIMER_VALUE_A_OFFSET}"
       : "${DUNE_LOGOFF_TIMER_VALUE_B_OFFSET:?unknown build: set DUNE_LOGOFF_TIMER_VALUE_B_OFFSET}"
@@ -89,6 +94,7 @@ TIMER_DURATION_ZERO_OFFSET="${DUNE_LOGOFF_TIMER_DURATION_ZERO_OFFSET:-${DEFAULT_
 UI_VALUE_A_OFFSET="${DUNE_LOGOFF_TIMER_UI_VALUE_A_OFFSET:-${DEFAULT_UI_VALUE_A_OFFSET:-}}"
 UI_VALUE_B_OFFSET="${DUNE_LOGOFF_TIMER_UI_VALUE_B_OFFSET:-${DEFAULT_UI_VALUE_B_OFFSET:-}}"
 UI_VALUE_C_OFFSET="${DUNE_LOGOFF_TIMER_UI_VALUE_C_OFFSET:-${DEFAULT_UI_VALUE_C_OFFSET:-}}"
+DIALOG_TRIPLE_OFFSET="${DUNE_LOGOFF_TIMER_DIALOG_TRIPLE_OFFSET:-${DEFAULT_DIALOG_TRIPLE_OFFSET:-}}"
 
 MODE="apply"
 while [[ $# -gt 0 ]]; do
@@ -121,6 +127,7 @@ env_command=(
   "UI_VALUE_A_OFFSET='$UI_VALUE_A_OFFSET'"
   "UI_VALUE_B_OFFSET='$UI_VALUE_B_OFFSET'"
   "UI_VALUE_C_OFFSET='$UI_VALUE_C_OFFSET'"
+  "DIALOG_TRIPLE_OFFSET='$DIALOG_TRIPLE_OFFSET'"
   "TARGET_VALUE='$TARGET_VALUE'"
   "TARGET_CONTAINERS='$TARGET_CONTAINERS'"
   "AUTO_REMAP_ENABLED='$AUTO_REMAP_ENABLED'"
@@ -137,6 +144,7 @@ local_env=(
   "UI_VALUE_A_OFFSET=$UI_VALUE_A_OFFSET"
   "UI_VALUE_B_OFFSET=$UI_VALUE_B_OFFSET"
   "UI_VALUE_C_OFFSET=$UI_VALUE_C_OFFSET"
+  "DIALOG_TRIPLE_OFFSET=$DIALOG_TRIPLE_OFFSET"
   "TARGET_VALUE=$TARGET_VALUE"
   "TARGET_CONTAINERS=$TARGET_CONTAINERS"
   "AUTO_REMAP_ENABLED=$AUTO_REMAP_ENABLED"
@@ -344,6 +352,7 @@ resolve_offsets_for_build() {
       UI_VALUE_A_OFFSET="0x16649ab0"
       UI_VALUE_B_OFFSET="0x16649ac8"
       UI_VALUE_C_OFFSET="0x16649ac8"
+      DIALOG_TRIPLE_OFFSET="${DUNE_LOGOFF_TIMER_DIALOG_TRIPLE_OFFSET:-0x16905c58}"
       DIRECT_ARRAYS="${DUNE_LOGOFF_TIMER_DIRECT_ARRAYS:-true}"
       EXPECTED_BUILD_ID="$build_id"
       return
@@ -494,23 +503,87 @@ validate_patch_targets() {
   fi
 }
 
-mapfile -t containers < <(
-  docker ps --format '{{.Names}}' |
-    awk -v targets="$TARGET_CONTAINERS" '
-      BEGIN {
-        split(targets, names, /[[:space:]]+/)
-        for (idx in names) {
-          if (names[idx] != "") {
-            wanted[names[idx]] = 1
+patch_dialog_triple() {
+  local pid="$1"
+  local addr_dialog="$2"
+  local validation_output
+  local line
+  local _
+  local v0 v1 v2 v3 v4 v5
+
+  validation_output="$(
+    sudo -n gdb -q -batch -p "$pid" \
+      -ex "set confirm off" \
+      -ex "set pagination off" \
+      -ex "printf \"LOGOFF_DIALOG %.9g %.9g %.9g %.9g %.9g %.9g\\n\", *(float*)$addr_dialog, *(float*)($addr_dialog + 4), *(float*)($addr_dialog + 8), *(float*)($addr_dialog + 12), *(float*)($addr_dialog + 16), *(float*)($addr_dialog + 20)"
+  )"
+  line="$(awk '/^LOGOFF_DIALOG / {line=$0} END {print line}' <<< "$validation_output")"
+  if [[ -z "$line" ]]; then
+    printf 'invalid logoff dialog validation output\n%s\n' "$validation_output" >&2
+    return 1
+  fi
+
+  read -r _ v0 v1 v2 v3 v4 v5 <<< "$line"
+  float_close() {
+    awk -v a="$1" -v b="$2" 'BEGIN { d = a - b; if (d < 0) d = -d; exit(d <= 0.001 ? 0 : 1) }'
+  }
+
+  if ! { float_close "$v0" 30 || float_close "$v0" "$TARGET_VALUE"; } ||
+     ! { float_close "$v1" 30 || float_close "$v1" "$TARGET_VALUE"; } ||
+     ! { float_close "$v2" 30 || float_close "$v2" "$TARGET_VALUE"; } ||
+     ! float_close "$v3" 0 ||
+     ! float_close "$v4" 0 ||
+     ! float_close "$v5" 0; then
+    printf 'invalid logoff dialog timer signature at %s: %s %s %s %s %s %s\n' "$addr_dialog" "$v0" "$v1" "$v2" "$v3" "$v4" "$v5" >&2
+    return 1
+  fi
+
+  if [[ "$MODE" == "dry-run" ]]; then
+    sudo -n gdb -q -batch -p "$pid" \
+      -ex "set pagination off" \
+      -ex "printf \"dialog triple before addr=%p\\n\", (void*)$addr_dialog" \
+      -ex "x/6fw $addr_dialog"
+  else
+    sudo -n gdb -q -batch -p "$pid" \
+      -ex "set pagination off" \
+      -ex "printf \"dialog triple before addr=%p\\n\", (void*)$addr_dialog" \
+      -ex "x/6fw $addr_dialog" \
+      -ex "set {float}$addr_dialog = $TARGET_VALUE" \
+      -ex "set {float}($addr_dialog + 4) = $TARGET_VALUE" \
+      -ex "set {float}($addr_dialog + 8) = $TARGET_VALUE" \
+      -ex "printf \"dialog triple after addr=%p\\n\", (void*)$addr_dialog" \
+      -ex "x/6fw $addr_dialog"
+  fi
+}
+
+if [[ -n "$TARGET_CONTAINERS" ]]; then
+  mapfile -t containers < <(
+    docker ps --format '{{.Names}}' |
+      awk -v targets="$TARGET_CONTAINERS" '
+        BEGIN {
+          split(targets, names, /[[:space:]]+/)
+          for (idx in names) {
+            if (names[idx] != "") {
+              wanted[names[idx]] = 1
+            }
           }
         }
-      }
-      wanted[$0]
-    '
-)
+        wanted[$0]
+      '
+  )
+else
+  mapfile -t containers < <(
+    docker ps --format '{{.Names}}' |
+      while IFS= read -r container; do
+        if docker top "$container" 2>/dev/null | grep -q 'DuneSandboxServer-Linux-Shipping'; then
+          printf '%s\n' "$container"
+        fi
+      done
+  )
+fi
 
 if [[ "${#containers[@]}" -eq 0 ]]; then
-  echo "no active survival/deep-desert containers found" >&2
+  echo "no active DuneSandboxServer containers found" >&2
   exit 1
 fi
 
@@ -556,7 +629,11 @@ for container in "${containers[@]}"; do
   addr_ui_a="$(printf '0x%x' $((base + UI_VALUE_A_OFFSET)))"
   addr_ui_b="$(printf '0x%x' $((base + UI_VALUE_B_OFFSET)))"
   addr_ui_c="$(printf '0x%x' $((base + UI_VALUE_C_OFFSET)))"
-  echo "$container: pid=$pid base=$base pointers=$addr_a,$addr_b ui_pointers=$addr_ui_a,$addr_ui_b,$addr_ui_c clamp=$addr_clamp duration_zero=$addr_duration_zero mode=$MODE"
+  addr_dialog=""
+  if [[ -n "${DIALOG_TRIPLE_OFFSET:-}" ]]; then
+    addr_dialog="$(printf '0x%x' $((base + DIALOG_TRIPLE_OFFSET)))"
+  fi
+  echo "$container: pid=$pid base=$base pointers=$addr_a,$addr_b ui_pointers=$addr_ui_a,$addr_ui_b,$addr_ui_c dialog_triple=${addr_dialog:-none} clamp=$addr_clamp duration_zero=$addr_duration_zero mode=$MODE"
 
   validate_patch_targets "$pid" "$addr_a" "$addr_b" "$addr_ui_a" "$addr_ui_b" "$addr_ui_c" "$addr_clamp" "$addr_duration_zero"
 
@@ -662,6 +739,10 @@ for container in "${containers[@]}"; do
       -ex "x/3xb $addr_clamp" \
       -ex "printf \"timer duration bytes: \"" \
       -ex "x/5xb $addr_duration_zero"
+  fi
+
+  if [[ -n "$addr_dialog" ]]; then
+    patch_dialog_triple "$pid" "$addr_dialog"
   fi
 done
 REMOTE

@@ -381,6 +381,7 @@ services:
       - *cmd-rmq-admin-host
       - *cmd-rmq-admin-port
       - *cmd-multihome
+      - -ini:game:[/Script/DuneSandbox.BuildingSettings]:m_BaseBackupToolTimeRestrictionInSeconds=0
       - -PartitionIndex=1
     environment:
       <<: [*game-server-env, *game-server-preload-env]

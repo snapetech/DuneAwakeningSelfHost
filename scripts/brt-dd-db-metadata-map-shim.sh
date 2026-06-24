@@ -577,6 +577,8 @@ BEGIN
         );
 
     IF hide_existing_backups THEN
+        PERFORM brt_dd_try_auto_backup(in_player_id, 'get_available_backups_hidden', NULL);
+
         PERFORM brt_dd_log_event(
             'get_available_backups_hidden_for_backup_only',
             NULL,
@@ -603,11 +605,11 @@ BEGIN
         t.id AS totem_id,
         p.building_type,
         CASE
-            WHEN current_player_map IN ('DeepDesert', 'DeepDesert_1') THEN current_player_location
+            WHEN current_player_map IS NOT NULL THEN current_player_location
             ELSE t.landclaim_original_global_location
         END AS landclaim_original_global_location,
         CASE
-            WHEN current_player_map IN ('DeepDesert', 'DeepDesert_1') THEN current_player_map
+            WHEN current_player_map IS NOT NULL THEN current_player_map
             ELSE a.map
         END AS base_backup_map
     FROM base_backups bb
@@ -647,7 +649,7 @@ BEGIN
 
     result := base_backup_get_totem_data_from_totem_id(totem_id);
 
-    IF current_player_map IN ('DeepDesert', 'DeepDesert_1') THEN
+    IF current_player_map IS NOT NULL THEN
         result := ROW(
             result.totem_actor_id,
             result.totem_building_type,
@@ -694,7 +696,7 @@ BEGIN
         p.building_type,
         bb.player_id,
         CASE
-            WHEN player_actor.map IN ('DeepDesert', 'DeepDesert_1') THEN player_actor.map
+            WHEN player_actor.map IS NOT NULL THEN player_actor.map
             ELSE a.map
         END AS totem_map,
         player_actor.partition_id,
@@ -735,7 +737,7 @@ BEGIN
         RAISE EXCEPTION 'No totem found for totem_id %', in_totem_id;
     END IF;
 
-    IF result.totem_map IN ('DeepDesert', 'DeepDesert_1') AND current_player_location IS NOT NULL THEN
+    IF current_player_location IS NOT NULL THEN
         result := ROW(
             result.totem_actor_id,
             result.totem_building_type,
@@ -824,7 +826,6 @@ BEGIN
         FROM base_backups bb
         JOIN actors a ON a.id = bb.player_id
         WHERE bb.id = in_base_backup_id
-          AND a.map IN ('DeepDesert', 'DeepDesert_1')
         LIMIT 1;
 
     SELECT coalesce(nullif(value, ''), 'normal')
@@ -1047,7 +1048,6 @@ BEGIN
         FROM base_backups bb
         JOIN actors a ON a.id = bb.player_id
         WHERE bb.id = in_base_backup_id
-          AND a.map IN ('DeepDesert', 'DeepDesert_1')
         LIMIT 1;
 
     IF source_anchor IS NOT NULL
@@ -1253,7 +1253,6 @@ BEGIN
         FROM base_backups bb
         JOIN actors a ON a.id = bb.player_id
         WHERE bb.id = in_base_backup_id
-          AND a.map IN ('DeepDesert', 'DeepDesert_1')
         LIMIT 1;
 
     IF source_anchor IS NOT NULL
@@ -1675,7 +1674,7 @@ set_auto_backup_canary() {
 INSERT INTO dune.brt_dd_shim_settings (key, value)
 VALUES
     ('auto_backup_on_brt_call', :'mode'),
-    ('auto_backup_source_events', 'get_data'),
+    ('auto_backup_source_events', 'get_data,get_available_backups_hidden'),
     ('auto_backup_player_allowlist', :'player_id'),
     ('auto_backup_one_shot', 'true'),
     ('auto_backup_cooldown_seconds', '15'),
@@ -1685,7 +1684,7 @@ SET value = EXCLUDED.value,
     updated_at = clock_timestamp();
 SQL
   echo "auto_backup_on_brt_call=$mode"
-  echo "auto_backup_source_events=get_data"
+  echo "auto_backup_source_events=get_data,get_available_backups_hidden"
   echo "auto_backup_player_allowlist=$player_id"
   echo "auto_backup_one_shot=true"
   echo "auto_backup_cooldown_seconds=15"

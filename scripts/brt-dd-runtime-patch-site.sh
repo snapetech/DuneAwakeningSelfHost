@@ -82,37 +82,37 @@ site_spec() {
   local key="$1"
   case "$key" in
     failure-reason-action-method)
-    offset=0xe04e81e
+    offset=0xe08e05e
     original="41 b6 32"
     patched="41 b6 03"
     ;;
     state-empty-context)
-    offset=0xe04e9e3
+    offset=0xe08e223
     original="31 db"
     patched="b3 01"
     ;;
     can-use-empty-context)
-    offset=0xe04ec15
+    offset=0xe08e455
     original="45 31 f6"
     patched="41 b6 01"
     ;;
     can-use-actor-lookup-null)
-    offset=0xe04ed18
+    offset=0xe08e558
     original="74 0a"
     patched="90 90"
     ;;
     can-use-map-area-guard)
-    offset=0xe04ed22
+    offset=0xe08e562
     original="75 03"
     patched="eb 03"
     ;;
     can-use-region-fail-join)
-    offset=0xe04ed24
+    offset=0xe08e564
     original="45 31 f6"
     patched="41 b6 01"
     ;;
     invalid-map-reason-guard)
-    offset=0xe04e6e6
+    offset=0xe08df26
     original="0f 85 f3 fe ff ff"
     patched="90 90 90 90 90 90"
     ;;
