@@ -31,6 +31,7 @@ CANONICAL_GROUPS = {
     "CallFunctionByNameWithArguments": "dispatch",
     "CallFunctionByName": "dispatch",
     "StaticLoadObject": "package",
+    "StaticLoadClass": "package",
     "LoadObject": "package",
     "LoadPackage": "package",
     "ResolveName": "package",

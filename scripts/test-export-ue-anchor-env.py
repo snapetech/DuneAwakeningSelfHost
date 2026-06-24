@@ -33,6 +33,7 @@ WINDOWS_ALIAS_LOG = """\
 2026-06-16T17:43:39Z pid=312 loader=win-client event=loaded phase=thread exe=C:\\game\\DuneSandbox-Win64-Shipping.exe native=pe
 2026-06-16T17:43:39Z pid=312 loader=win-client event=scan-hit kind=signature name=sig-core-fnamepool addr=0x140010000 rva=0x10000 allocationBase=0x140000000 module=C:\\game\\DuneSandbox-Win64-Shipping.exe
 2026-06-16T17:43:39Z pid=312 loader=win-client event=scan-hit kind=signature name=gu-object-array-candidate addr=0x140020000 rva=0x20000 allocationBase=0x140000000 module=C:\\game\\DuneSandbox-Win64-Shipping.exe
+2026-06-16T17:43:39Z pid=312 loader=win-client event=scan-hit kind=signature name=uobject-static-load-class addr=0x140030000 rva=0x30000 allocationBase=0x140000000 module=C:\\game\\DuneSandbox-Win64-Shipping.exe
 """
 
 
@@ -44,6 +45,9 @@ WINDOWS_SIGNATURE_ANCHOR_LOG = """\
 2026-06-16T17:43:39Z pid=312 loader=win-client event=ue-anchor-signature name=ProcessEvent status=resolved hit=0x140004000 addr=0x140040000 transform=callrel32 rva=0x40000 allocationBase=0x140000000 module=C:\\game\\DuneSandbox-Win64-Shipping.exe
 2026-06-16T17:43:39Z pid=312 loader=win-client event=ue-anchor-signature name=CallFunctionByNameWithArguments status=resolved hit=0x140004800 addr=0x140048000 transform=callrel32 rva=0x48000 allocationBase=0x140000000 module=C:\\game\\DuneSandbox-Win64-Shipping.exe
 2026-06-16T17:43:39Z pid=312 loader=win-client event=ue-anchor-signature name=StaticLoadObject status=resolved hit=0x140004c00 addr=0x14004c000 transform=callrel32 rva=0x4c000 allocationBase=0x140000000 module=C:\\game\\DuneSandbox-Win64-Shipping.exe
+2026-06-16T17:43:39Z pid=312 loader=win-client event=ue-anchor-signature name=StaticLoadClass status=resolved hit=0x140004d00 addr=0x14004d000 transform=callrel32 rva=0x4d000 allocationBase=0x140000000 module=C:\\game\\DuneSandbox-Win64-Shipping.exe
+2026-06-16T17:43:39Z pid=312 loader=win-client event=ue-anchor-signature name=LoadAsset status=resolved hit=0x140004e00 addr=0x14004e000 transform=callrel32 rva=0x4e000 allocationBase=0x140000000 module=C:\\game\\DuneSandbox-Win64-Shipping.exe
+2026-06-16T17:43:39Z pid=312 loader=win-client event=ue-anchor-signature name=LoadClass status=resolved hit=0x140004f00 addr=0x14004f000 transform=callrel32 rva=0x4f000 allocationBase=0x140000000 module=C:\\game\\DuneSandbox-Win64-Shipping.exe
 2026-06-16T17:43:39Z pid=312 loader=win-client event=ue-anchor-signature name=UObject status=resolved hit=0x140005000 addr=0x140050000 transform=hit rva=0x50000 allocationBase=0x140000000 module=C:\\game\\DuneSandbox-Win64-Shipping.exe
 2026-06-16T17:43:39Z pid=312 loader=win-client event=ue-anchor-signature name=UFunction status=resolved hit=0x140006000 addr=0x140060000 transform=hit rva=0x60000 allocationBase=0x140000000 module=C:\\game\\DuneSandbox-Win64-Shipping.exe
 2026-06-16T17:43:39Z pid=312 loader=win-client event=ue-anchor-signature name=FProperty status=ambiguous hits=2 firstHit=0x140007000 firstAddr=0x140070000 transform=hit
@@ -144,16 +148,17 @@ class ExportUeAnchorEnvTests(unittest.TestCase):
                 ["win-client"],
                 [],
                 [],
-                ["FNamePool", "GUObjectArray"],
+                ["FNamePool", "GUObjectArray", "StaticLoadClass"],
                 "auto",
                 include_scan_hits=True,
             )
             text = exporter.env_text(export)
 
         self.assertTrue(export["includeScanHits"])
-        self.assertEqual(export["entryCount"], 2)
+        self.assertEqual(export["entryCount"], 3)
         self.assertIn("FNamePool=0x140010000", text)
         self.assertIn("GUObjectArray=0x140020000", text)
+        self.assertIn("StaticLoadClass=0x140030000", text)
         self.assertEqual(export["entries"][0]["matchedName"], "sig-core-fnamepool")
 
     def test_exports_resolved_signature_anchors_by_default_including_reflection(self):
@@ -163,13 +168,16 @@ class ExportUeAnchorEnvTests(unittest.TestCase):
             export = exporter.build_export(log, ["win-client"], [], [], list(exporter.DEFAULT_ANCHORS), "auto")
             text = exporter.env_text(export)
 
-        self.assertEqual(export["entryCount"], 8)
+        self.assertEqual(export["entryCount"], 11)
         self.assertIn("FNamePool=0x140010000", text)
         self.assertIn("GUObjectArray=0x140020000", text)
         self.assertIn("GWorld=0x140030000", text)
         self.assertIn("ProcessEvent=0x140040000", text)
         self.assertIn("CallFunctionByNameWithArguments=0x140048000", text)
         self.assertIn("StaticLoadObject=0x14004c000", text)
+        self.assertIn("StaticLoadClass=0x14004d000", text)
+        self.assertIn("LoadAsset=0x14004e000", text)
+        self.assertIn("LoadClass=0x14004f000", text)
         self.assertIn("UObject=0x140050000", text)
         self.assertIn("UFunction=0x140060000", text)
         self.assertNotIn("FProperty=0x140070000", text)

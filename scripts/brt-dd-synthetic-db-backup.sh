@@ -183,6 +183,26 @@ if [[ "$owned_count" != "1" ]]; then
   exit 1
 fi
 
+totem_partition="$(psql_db -qAt -v totem_id="$totem_id" <<'SQL'
+select partition_id
+from dune.actors
+where id = :totem_id;
+SQL
+)"
+totem_map="$(psql_db -qAt -v totem_id="$totem_id" <<'SQL'
+select map
+from dune.actors
+where id = :totem_id;
+SQL
+)"
+if [[ "$commit" == "true" && "$totem_partition" == "8" ]]; then
+  if [[ "${DUNE_ALLOW_LIVE_DD1_BRT_MUTATION:-0}" != "1" || "${CONFIRM_DD1_BRT:-}" != "I UNDERSTAND DD1 BRT MAY BREAK BASE OWNERSHIP" ]]; then
+    echo "ERROR: refusing committed DD1 BRT backup for totem $totem_id map=$totem_map partition=$totem_partition." >&2
+    echo "DD1 BRT has not been proven safe. Set DUNE_ALLOW_LIVE_DD1_BRT_MUTATION=1 and CONFIRM_DD1_BRT='I UNDERSTAND DD1 BRT MAY BREAK BASE OWNERSHIP' only for an explicitly authorized live test." >&2
+    exit 1
+  fi
+fi
+
 if [[ "$commit" == "true" ]]; then
   end_statement="commit;"
   mode_label="COMMIT"

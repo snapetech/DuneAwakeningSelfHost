@@ -564,7 +564,7 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_RESTART_STEAM_CLIENT_MIN_WAIT_SECONDS": {"group": "Install", "secret": False, "restart": False, "why": "Minimum wait after asking the Steam client to validate/update, so queued client work can begin."},
     "DUNE_STEAM_CLIENT_COMMAND": {"group": "Install", "secret": False, "restart": False, "why": "Steam client executable used for steam:// validation requests on desktop Steam hosts."},
     "DUNE_RESTART_STEAMCMD_UPDATE": {"group": "Install", "secret": False, "restart": False, "why": "Runs SteamCMD app_update for the self-hosted server tool during maintenance before DASH loads image tarballs."},
-    "DUNE_RESTART_STEAMCMD_REQUIRED": {"group": "Install", "secret": False, "restart": False, "why": "When true, maintenance fails instead of starting from the old package if SteamCMD cannot run."},
+    "DUNE_RESTART_STEAMCMD_REQUIRED": {"group": "Install", "secret": False, "restart": False, "why": "When true, maintenance fails instead of starting from the old package if SteamCMD cannot run or the package update is incomplete."},
     "DUNE_RESTART_STEAMCMD_HELPER_IMAGE": {"group": "Install", "secret": False, "restart": False, "why": "Container image used to run SteamCMD when the restart hook is operating through the Docker socket helper."},
     "DUNE_STEAM_APP_ID": {"group": "Install", "secret": False, "restart": False, "why": "Steam app id for the Dune: Awakening Self-Hosted Server tool."},
     "DUNE_STEAM_LOGIN": {"group": "Install", "secret": False, "restart": False, "why": "SteamCMD login name. Use anonymous if the tool allows anonymous updates."},
@@ -1292,9 +1292,8 @@ def execute_restart(job):
         update_warning = update_result.get("error") or "Steam package update check failed"
         append_restart_warning(result, update_warning)
         result["output"] = "\n".join(part for part in [stop_result.get("output", ""), update_result.get("output", ""), update_warning] if part)
-        if action == "shutdown":
-            result["error"] = update_warning
-            return result
+        result["error"] = update_warning
+        return result
 
     if action == "shutdown":
         result["ok"] = True

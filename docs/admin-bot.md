@@ -295,13 +295,25 @@ guarded in-place undo path is:
 ```bash
 scripts/dd1-brt-emulator.py finish-staged-backup --backup-id 59
 scripts/dd1-brt-emulator.py finish-staged-backup --backup-id 59 \
-  --commit --confirm 'FINISH DD1 BRT BACKUP'
+  --commit \
+  --confirm 'FINISH DD1 BRT BACKUP' \
+  --rpc-classification-json /tmp/brt-dd-trace-classification.json
 ```
 
-Commit mode refuses to run off `kspls0` and requires the exact confirmation
-phrase. This validates and repairs DB shape only. Restore execution must stay
-disabled until the mapper is committed on a disposable base and a live runtime
-unload/native RPC route is known.
+Commit mode refuses to run off `kspls0`, requires the exact confirmation phrase,
+and requires an RPC classification. Prefer a classifier artifact:
+
+```bash
+scripts/classify-brt-dd-trace.py /tmp/brt-place-trace-lab.log --format json \
+  > /tmp/brt-dd-trace-classification.json
+```
+
+The classifier records whether `SERVER-RPC-ENTRY` / `SERVER-RPC-EXEC` or the
+equivalent uprobe `brt_rpc_*` events fired. If they did not, the normal request
+is classified as not observed and the repair path is server-side emulation, not
+client file modification. This validates and repairs DB shape only. Restore
+execution must stay disabled until the mapper is committed on a disposable base
+and a live runtime unload/native RPC route is known.
 
 The quiet starter emote path grants `DUNE_PLAYER_PRESENCE_STARTER_EMOTE_TEMPLATES` into the configured emote inventory type, default `14`, for newly observed joining accounts. It records successful accounts under `starterEmotesGranted` in the same state file and does not send a public or private message.
 

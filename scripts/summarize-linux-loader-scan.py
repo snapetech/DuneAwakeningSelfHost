@@ -9,6 +9,7 @@ from pathlib import Path
 CATEGORY_NEEDLES = {
     "package": (
         "StaticLoadObject",
+        "StaticLoadClass",
         "LoadObject",
         "LoadPackage",
         "ResolveName",
@@ -142,6 +143,55 @@ def record_bool(record, key):
     return str(record.get(key, "")).lower() in {"1", "true", "yes", "on"}
 
 
+def record_field_class_is_property(record):
+    field_class_name = str(record.get("fieldClassName", ""))
+    return not field_class_name or field_class_name.lower().endswith("property")
+
+
+def process_event_active_validation_candidate(record):
+    object_address = record.get("object", "")
+    function_address = record.get("function", "")
+    if not object_address or not function_address:
+        return None
+    function_path = record.get("functionPath", "")
+    command = ""
+    if function_path and function_path.endswith(":Function") and "." in function_path:
+        command = function_path.rsplit(".", 1)[-1][: -len(":Function")]
+    candidate = {
+        "objectAddress": object_address,
+        "functionAddress": function_address,
+        "functionPath": function_path,
+        "functionRuntimePath": record.get("functionRuntimePath", ""),
+        "objectPath": record.get("objectPath", ""),
+        "functionProvenance": record.get("functionProvenance", ""),
+        "callFunctionCommand": command,
+    }
+    if record.get("params"):
+        candidate["paramsAddress"] = record.get("params")
+    return {key: value for key, value in candidate.items() if value}
+
+
+def unique_active_validation_candidates(records, limit=16):
+    candidates = []
+    seen = set()
+    for record in records:
+        candidate = process_event_active_validation_candidate(record)
+        if not candidate:
+            continue
+        key = (
+            candidate.get("objectAddress", ""),
+            candidate.get("functionAddress", ""),
+            candidate.get("functionPath", ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        candidates.append(candidate)
+        if len(candidates) >= limit:
+            break
+    return candidates
+
+
 def record_float(record, key, default=0.0):
     try:
         return float(str(record.get(key, default)))
@@ -170,12 +220,72 @@ def runtime_discovery_summary(records, mapped_ue_anchors):
         if any(location.values()):
             candidate_locations.append(location)
     candidate_image_counts = dict(Counter(item["map"] for item in candidate_locations if item.get("map")))
+    candidates_by_addr = {
+        item.get("addr"): item
+        for item in candidate_locations
+        if item.get("addr")
+    }
+    for record in mapped_ue_anchors:
+        address = record.get("addr", "")
+        if address and address not in candidates_by_addr:
+            candidates_by_addr[address] = {
+                "name": record.get("name", ""),
+                "addr": address,
+                "imageOffset": record.get("imageOffset") or record.get("rva", ""),
+                "fileOffset": record.get("fileOffset", ""),
+                "map": record.get("map") or record.get("module", ""),
+                "perms": record.get("perms", ""),
+                "targetImage": record.get("targetImage", ""),
+            }
     outcomes = [
         record
         for record in records
         if record.get("event") == "ue-runtime-discovery"
         and record.get("name") not in {"target-writable-image-mappings", "target-writable-image-regions"}
     ]
+    raw_validations = [
+        record
+        for record in records
+        if record.get("event") == "ue-runtime-root-validation"
+        and record.get("status") == "validated"
+        and record.get("name", "").startswith("Runtime")
+    ]
+    validations = [
+        record
+        for record in raw_validations
+        if record.get("name") != "RuntimeGUObjectArray"
+        or record.get("consumer") != "object-array"
+        or record_int(record, "registryCount") > 0
+    ]
+    finished_object_arrays = [
+        record
+        for record in records
+        if record.get("event") == "ue-object-array"
+        and record.get("status") == "finished"
+        and record.get("name", "").startswith("Runtime")
+    ]
+    validated_locations = []
+    for record in validations:
+        name = record.get("name", "")
+        address = record.get("pool", "")
+        if not address and name == "RuntimeGUObjectArray":
+            match = next(
+                (
+                    item
+                    for item in finished_object_arrays
+                    if item.get("name") == name and item.get("base")
+                ),
+                {},
+            )
+            address = match.get("base", "")
+        location = dict(candidates_by_addr.get(address, {}))
+        if not location and address:
+            location = {"name": name, "addr": address}
+        if location:
+            location["name"] = name
+            location["consumer"] = record.get("consumer", "")
+            location["validated"] = "true"
+            validated_locations.append(location)
     target_writable_missing = [
         record
         for record in records
@@ -232,6 +342,7 @@ def runtime_discovery_summary(records, mapped_ue_anchors):
         "candidateCount": len(candidates),
         "candidateNameCounts": candidate_name_counts,
         "candidateLocations": candidate_locations[:32],
+        "validatedLocations": sorted(validated_locations, key=lambda item: item.get("name", ""))[:8],
         "candidateImageCounts": candidate_image_counts,
         "outcomeCount": len(outcomes),
         "targetWritableMissingCount": len(target_writable_missing),
@@ -285,6 +396,7 @@ def lua_load_asset_backend_anchor_surface_passed(record):
     return lua_load_asset_backend_state_surface_passed(record) and (
         record_bool(record, "loadAssetPackageAvailable")
         or record_bool(record, "loadAssetStaticLoadObjectResolved")
+        or record_bool(record, "loadAssetStaticLoadClassResolved")
         or record_bool(record, "loadAssetLoadObjectResolved")
         or record_bool(record, "loadAssetLoadPackageResolved")
         or record_bool(record, "loadAssetResolveNameResolved")
@@ -303,6 +415,93 @@ def lua_load_asset_package_native_invoke_surface_passed(record):
     return (
         record_int(record, "loadAssetPackageNativeCalls") > 0
         and record_int(record, "loadAssetPackageNativeGateHits") > 0
+    )
+
+
+def lua_load_asset_package_native_invoked_event(record):
+    return (
+        record.get("event") == "lua-load-asset-package-native-invoke"
+        and record.get("status") == "native-return-validated"
+        and record.get("nativeInvoked") == "true"
+        and record.get("nativeCallable") == "true"
+        and record.get("nativeCallExecutionMode") == "guarded-native-package-load"
+        and record.get("nativeCallGuardPolicy") == "crash-guard+guarded-call+return-validation"
+        and record.get("targetImage") == "true"
+        and record.get("nativeReturnNonNull") == "true"
+        and record.get("nativeReturnMapped") == "true"
+        and record.get("nativeReturnReadable") == "true"
+        and record.get("nativeReturnValidated") == "true"
+        and record_int(record, "target") > 0
+    )
+
+
+def lua_load_class_package_abi_state_event_passed(record):
+    return (
+        record.get("event") == "lua-load-class-package-abi-state"
+        and package_target_image_evidence_consistent(record)
+        and record.get("targetName") == "StaticLoadClass"
+        and record.get("signatureFamily") == "StaticLoadClass"
+        and record.get("abiVerified") in {"false", "true"}
+        and record.get("callFrameReady") == "false"
+        and record.get("classRootReady") in {"false", "true"}
+        and record.get("platformAbi") in {"sysv-x86_64", "win64-ms-abi"}
+    )
+
+
+def lua_load_class_package_call_frame_verification_event_passed(record):
+    return (
+        record.get("event") == "lua-load-class-package-call-frame-verification-state"
+        and package_target_image_evidence_consistent(record)
+        and record.get("targetName") == "StaticLoadClass"
+        and record.get("signatureFamily") == "StaticLoadClass"
+        and record.get("boundedInput") == "true"
+        and record.get("abiVerified") in {"false", "true"}
+        and record.get("classRootReady") in {"false", "true"}
+        and record.get("callFrameReady") in {"false", "true"}
+        and record.get("nativeInvoked") == "false"
+        and record.get("platformAbi") in {"sysv-x86_64", "win64-ms-abi"}
+    )
+
+
+def lua_load_class_package_native_executor_event_passed(record):
+    return (
+        record.get("event") == "lua-load-class-package-native-executor-state"
+        and record.get("status") == "prepared"
+        and record.get("targetName") == "StaticLoadClass"
+        and record.get("platformAbi") in {"sysv-x86_64", "win64-ms-abi"}
+        and record.get("nativeExecutorReady") in {"false", "true"}
+        and record.get("executorPreflightPassed") in {"false", "true"}
+        and record.get("finalNativeCallEligible") in {"false", "true"}
+        and record.get("nativeExecutorBlockReason") is not None
+        and record.get("nativeInvoked") == "false"
+    )
+
+
+def lua_load_class_package_native_executor_ready_event(record):
+    return (
+        lua_load_class_package_native_executor_event_passed(record)
+        and record_int(record, "target") > 0
+        and record.get("targetImage") == "true"
+        and record.get("nativeExecutorReady") == "true"
+        and record.get("executorPreflightPassed") == "true"
+        and record.get("finalNativeCallEligible") == "true"
+    )
+
+
+def lua_load_class_package_native_invoked_event(record):
+    return (
+        record.get("event") == "lua-load-class-package-native-invoke"
+        and record.get("targetName") == "StaticLoadClass"
+        and record_int(record, "target") > 0
+        and record.get("targetImage") == "true"
+        and record.get("invokeRequested") == "true"
+        and record.get("invokeEnabled") == "true"
+        and record.get("abiVerified") == "true"
+        and record.get("classRootReady") == "true"
+        and record.get("callFrameReady") == "true"
+        and record.get("nativeCallable") == "true"
+        and record.get("nativeInvoked") == "true"
+        and record.get("nativeCallPlanAccepted") == "true"
     )
 
 
@@ -454,6 +653,43 @@ def lua_load_asset_package_native_executor_ready_event(record):
         and record.get("nativeExecutorReady") == "true"
         and record.get("executorPreflightPassed") == "true"
         and record.get("finalNativeCallEligible") == "true"
+    )
+
+
+def lua_static_construct_object_native_executor_state_ready(record):
+    return (
+        record.get("event") == "lua-static-construct-object-native-executor-state"
+        and record.get("status") == "prepared"
+        and record.get("executorKind") == "guarded-static-construct-object-native-executor"
+        and record.get("targetName") == "StaticConstructObject"
+        and record_int(record, "target") > 0
+        and record_bool(record, "targetImage")
+        and record_bool(record, "invokeEnabled")
+        and record_bool(record, "abiEvidenceProvided")
+        and record_bool(record, "abiVerified")
+        and record_bool(record, "callFrameReady")
+        and record_bool(record, "finalInvokeConfirmed")
+        and record_bool(record, "nativeCallable")
+        and not record_bool(record, "nativeInvoked")
+    )
+
+
+def lua_static_construct_object_native_invoke_event(record):
+    return record.get("event") == "lua-static-construct-object-native-invoke"
+
+
+def lua_static_construct_object_native_invoked_event(record):
+    return (
+        lua_static_construct_object_native_invoke_event(record)
+        and record.get("targetName") == "StaticConstructObject"
+        and record_bool(record, "targetImage")
+        and record_bool(record, "invokeRequested")
+        and record_bool(record, "invokeEnabled")
+        and record_bool(record, "abiVerified")
+        and record_bool(record, "callFrameReady")
+        and record_bool(record, "finalInvokeConfirmed")
+        and record_bool(record, "nativeCallable")
+        and record_bool(record, "nativeInvoked")
     )
 
 
@@ -690,6 +926,75 @@ def lua_process_event_native_invoke_surface_passed(record):
     )
 
 
+def lua_call_function_native_invoke_surface_passed(record):
+    return (
+        record_int(record, "callFunctionNativeCalls") > 0
+        and record_int(record, "callFunctionNativeHits") > 0
+    )
+
+
+def lua_call_function_native_invoke_non_self_test_gate_passed(record):
+    if record.get("event") != "lua-call-function-native-invoke":
+        return False
+    if record.get("status") != "non-self-test-invoke-disabled":
+        return False
+    if record.get("liveCallsBefore") is None or record.get("liveCallsAfter") is None:
+        return False
+    if record.get("originalCallsBefore") is None or record.get("originalCallsAfter") is None:
+        return False
+    return (
+        record_bool(record, "objectRegistryAllowed")
+        and not record_bool(record, "selfTestCallable")
+        and record_bool(record, "invokeRequested")
+        and not record_bool(record, "nativeNonSelfTestEnabled")
+        and not record_bool(record, "nativeNonSelfTestInvoked")
+        and record_int(record, "liveCallsBefore") == record_int(record, "liveCallsAfter")
+        and record_int(record, "originalCallsBefore") == record_int(record, "originalCallsAfter")
+    )
+
+
+def lua_call_function_native_invoke_preflight_ready(record):
+    if record.get("event") != "lua-call-function-native-invoke":
+        return False
+    if record.get("status") != "preflight-ready":
+        return False
+    if record.get("liveCallsBefore") is None or record.get("liveCallsAfter") is None:
+        return False
+    if record.get("originalCallsBefore") is None or record.get("originalCallsAfter") is None:
+        return False
+    return (
+        record_bool(record, "objectRegistryAllowed")
+        and not record_bool(record, "selfTestCallable")
+        and not record_bool(record, "invokeRequested")
+        and not record_bool(record, "nativeNonSelfTestInvoked")
+        and record_int(record, "liveCallsBefore") == record_int(record, "liveCallsAfter")
+        and record_int(record, "originalCallsBefore") == record_int(record, "originalCallsAfter")
+    )
+
+
+def lua_call_function_native_invoke_non_self_test_invoked(record):
+    return (
+        record.get("event") == "lua-call-function-native-invoke"
+        and record.get("status") == "non-self-test-invoked"
+        and record_bool(record, "nativeNonSelfTestInvoked")
+    )
+
+
+def lua_call_function_native_executor_state_ready(record):
+    return (
+        record.get("event") == "lua-call-function-native-executor-state"
+        and record.get("status") == "prepared"
+        and record_bool(record, "bridgeArmed")
+        and record_bool(record, "objectAllowed")
+        and record_bool(record, "functionAllowed")
+        and record_bool(record, "objectRegistryAllowed")
+        and not record_bool(record, "selfTestCallable")
+        and record_bool(record, "nativeCallable")
+        and record.get("nativeExecutorBlockReason") == "none"
+        and not record_bool(record, "nativeInvoked")
+    )
+
+
 def lua_process_event_native_invoke_non_self_test_gate_passed(record):
     if record.get("event") != "lua-process-event-native-invoke":
         return False
@@ -746,6 +1051,26 @@ def lua_process_event_native_invoke_non_self_test_invoked(record):
         record.get("event") == "lua-process-event-native-invoke"
         and record.get("status") == "non-self-test-invoked"
         and record_bool(record, "nativeNonSelfTestInvoked")
+    )
+
+
+def lua_process_event_native_executor_state_ready(record):
+    return (
+        record.get("event") == "lua-process-event-native-executor-state"
+        and record.get("status") == "prepared"
+        and record_bool(record, "bridgeArmed")
+        and record_bool(record, "objectAllowed")
+        and record_bool(record, "functionAllowed")
+        and record_bool(record, "objectRegistryAllowed")
+        and record_bool(record, "functionDescriptorAllowed")
+        and not record_bool(record, "selfTestCallable")
+        and record_bool(record, "descriptorBackedCallable")
+        and record_bool(record, "nativeCallable")
+        and record_bool(record, "paramsBufferConstructible")
+        and record_int(record, "paramsDescriptorCount") > 0
+        and record_int(record, "paramsBufferSize") > 0
+        and record.get("nativeExecutorBlockReason") == "none"
+        and not record_bool(record, "nativeInvoked")
     )
 
 
@@ -1427,6 +1752,65 @@ def summarize(records, exe_substring, pid):
         for record in lua_load_asset_package_native_executor_events
         if lua_load_asset_package_native_executor_ready_event(record)
     ]
+    lua_load_asset_package_native_invoked_events = [
+        record
+        for record in records
+        if lua_load_asset_package_native_invoked_event(record)
+        and (not server_pids or record.get("pid") in server_pids)
+    ]
+    lua_load_class_package_abi_state_events = [
+        record
+        for record in records
+        if lua_load_class_package_abi_state_event_passed(record)
+        and (not server_pids or record.get("pid") in server_pids)
+    ]
+    lua_load_class_package_call_frame_verification_events = [
+        record
+        for record in records
+        if lua_load_class_package_call_frame_verification_event_passed(record)
+        and (not server_pids or record.get("pid") in server_pids)
+    ]
+    lua_load_class_package_native_executor_events = [
+        record
+        for record in records
+        if lua_load_class_package_native_executor_event_passed(record)
+        and (not server_pids or record.get("pid") in server_pids)
+    ]
+    lua_load_class_package_native_executor_ready_events = [
+        record
+        for record in lua_load_class_package_native_executor_events
+        if lua_load_class_package_native_executor_ready_event(record)
+    ]
+    lua_load_class_package_native_invoked_events = [
+        record
+        for record in records
+        if lua_load_class_package_native_invoked_event(record)
+        and (not server_pids or record.get("pid") in server_pids)
+    ]
+    lua_static_construct_object_native_executor_states = [
+        record
+        for record in records
+        if (not server_pids or record.get("pid") in server_pids)
+        and record.get("event") == "lua-static-construct-object-native-executor-state"
+    ]
+    lua_static_construct_object_native_executor_ready_states = [
+        record
+        for record in records
+        if (not server_pids or record.get("pid") in server_pids)
+        and lua_static_construct_object_native_executor_state_ready(record)
+    ]
+    lua_static_construct_object_native_invoke_events = [
+        record
+        for record in records
+        if (not server_pids or record.get("pid") in server_pids)
+        and lua_static_construct_object_native_invoke_event(record)
+    ]
+    lua_static_construct_object_native_invoked_events = [
+        record
+        for record in records
+        if (not server_pids or record.get("pid") in server_pids)
+        and lua_static_construct_object_native_invoked_event(record)
+    ]
     lua_load_asset_package_preflight_mod_finishes = [
         record for record in passed_lua_mod_finishes if lua_load_asset_package_preflight_surface_passed(record)
     ]
@@ -1494,6 +1878,9 @@ def summarize(records, exe_substring, pid):
     lua_process_event_native_invoke_mod_finishes = [
         record for record in passed_lua_mod_finishes if lua_process_event_native_invoke_surface_passed(record)
     ]
+    lua_call_function_native_invoke_mod_finishes = [
+        record for record in passed_lua_mod_finishes if lua_call_function_native_invoke_surface_passed(record)
+    ]
     lua_process_event_native_invoke_self_tests = [
         record
         for record in records
@@ -1502,11 +1889,25 @@ def summarize(records, exe_substring, pid):
         and (not server_pids or record.get("pid") in server_pids)
         and lua_process_event_native_invoke_surface_passed(record)
     ]
+    lua_call_function_native_invoke_self_tests = [
+        record
+        for record in records
+        if record.get("event") == "lua-call-function-native-invoke-self-test"
+        and record.get("status") == "passed"
+        and (not server_pids or record.get("pid") in server_pids)
+        and lua_call_function_native_invoke_surface_passed(record)
+    ]
     lua_process_event_native_invoke_non_self_test_gates = [
         record
         for record in records
         if (not server_pids or record.get("pid") in server_pids)
         and lua_process_event_native_invoke_non_self_test_gate_passed(record)
+    ]
+    lua_call_function_native_invoke_non_self_test_gates = [
+        record
+        for record in records
+        if (not server_pids or record.get("pid") in server_pids)
+        and lua_call_function_native_invoke_non_self_test_gate_passed(record)
     ]
     lua_process_event_native_invoke_descriptor_preflights = [
         record
@@ -1514,11 +1915,47 @@ def summarize(records, exe_substring, pid):
         if (not server_pids or record.get("pid") in server_pids)
         and lua_process_event_native_invoke_descriptor_preflight_ready(record)
     ]
+    lua_call_function_native_invoke_preflights = [
+        record
+        for record in records
+        if (not server_pids or record.get("pid") in server_pids)
+        and lua_call_function_native_invoke_preflight_ready(record)
+    ]
+    lua_process_event_native_executor_states = [
+        record
+        for record in records
+        if (not server_pids or record.get("pid") in server_pids)
+        and record.get("event") == "lua-process-event-native-executor-state"
+    ]
+    lua_process_event_native_executor_ready_states = [
+        record
+        for record in records
+        if (not server_pids or record.get("pid") in server_pids)
+        and lua_process_event_native_executor_state_ready(record)
+    ]
+    lua_call_function_native_executor_states = [
+        record
+        for record in records
+        if (not server_pids or record.get("pid") in server_pids)
+        and record.get("event") == "lua-call-function-native-executor-state"
+    ]
+    lua_call_function_native_executor_ready_states = [
+        record
+        for record in records
+        if (not server_pids or record.get("pid") in server_pids)
+        and lua_call_function_native_executor_state_ready(record)
+    ]
     lua_process_event_native_invoke_non_self_test_invocations = [
         record
         for record in records
         if (not server_pids or record.get("pid") in server_pids)
         and lua_process_event_native_invoke_non_self_test_invoked(record)
+    ]
+    lua_call_function_native_invoke_non_self_test_invocations = [
+        record
+        for record in records
+        if (not server_pids or record.get("pid") in server_pids)
+        and lua_call_function_native_invoke_non_self_test_invoked(record)
     ]
     lua_process_event_params_buffers = [
         record
@@ -1576,7 +2013,11 @@ def summarize(records, exe_substring, pid):
     ue_runtime_discovery_records = [
         record
         for record in records
-        if str(record.get("event", "")).startswith("ue-runtime-discovery")
+        if (
+            str(record.get("event", "")).startswith("ue-runtime-discovery")
+            or record.get("event") == "ue-runtime-root-validation"
+            or record.get("event") == "ue-object-array"
+        )
         and (not server_pids or record.get("pid") in server_pids)
     ]
     ue_runtime_discovery = runtime_discovery_summary(ue_runtime_discovery_records, mapped_ue_anchors)
@@ -1640,6 +2081,45 @@ def summarize(records, exe_substring, pid):
     ]
     class_mapped_ue_reflection_fields = [
         record for record in candidate_ue_reflection_fields if record.get("classMapped") == "true"
+    ]
+    ue_ffield_layout_candidates = [
+        record
+        for record in records
+        if record.get("event") == "ue-ffield-layout-candidate"
+        and (not server_pids or record.get("pid") in server_pids)
+    ]
+    mapped_ue_ffield_layout_candidates = [
+        record for record in ue_ffield_layout_candidates if record.get("classMapped") == "true"
+    ]
+    named_ue_ffield_layout_candidates = [
+        record
+        for record in ue_ffield_layout_candidates
+        if record.get("classNameReadable") == "true" and record.get("fieldClassName")
+    ]
+    property_like_ue_ffield_layout_candidates = [
+        record for record in ue_ffield_layout_candidates if record.get("fieldClassLooksProperty") == "true"
+    ]
+    sane_ue_ffield_layout_candidates = [
+        record for record in ue_ffield_layout_candidates if record.get("descriptorSane") == "true"
+    ]
+    property_like_sane_ue_ffield_layout_candidates = [
+        record
+        for record in property_like_ue_ffield_layout_candidates
+        if record.get("descriptorSane") == "true"
+    ]
+    ue_reflection_property_root_scans = [
+        record
+        for record in records
+        if record.get("event") == "ue-reflection-property-root-scan"
+        and (not server_pids or record.get("pid") in server_pids)
+    ]
+    candidate_ue_reflection_property_root_scans = [
+        record for record in ue_reflection_property_root_scans if record.get("status") == "candidate"
+    ]
+    sane_ue_reflection_property_root_scans = [
+        record
+        for record in candidate_ue_reflection_property_root_scans
+        if record.get("descriptorSane") == "true"
     ]
     ue_reflection_properties = [
         record
@@ -1738,6 +2218,7 @@ def summarize(records, exe_substring, pid):
         and record.get("elementSizeReadable") == "true"
         and record.get("propertyFlagsReadable") == "true"
         and record.get("offsetInternalReadable") == "true"
+        and record_field_class_is_property(record)
         and 0 < record_int(record, "arrayDim") <= 1024
         and 0 < record_int(record, "elementSize") <= 4096
         and record_int(record, "offsetInternal", -1) >= 0
@@ -2074,6 +2555,27 @@ def summarize(records, exe_substring, pid):
         for record in handled_ue_call_function_live_lua_hooks
         if proven_call_function_hook_target_record(record, mapped_ue_anchors + resolved_ue_anchor_signatures)
     ]
+    ue_call_function_active_validations = [
+        record
+        for record in records
+        if record.get("event") == "ue-call-function-active-validate"
+        and (not server_pids or record.get("pid") in server_pids)
+    ]
+    invoked_ue_call_function_active_validations = [
+        record
+        for record in ue_call_function_active_validations
+        if record.get("status") == "invoked" and record_int(record, "liveCallsDelta") > 0
+    ]
+    original_ue_call_function_active_validations = [
+        record
+        for record in invoked_ue_call_function_active_validations
+        if record_int(record, "originalCallsDelta") > 0
+    ]
+    target_entry_ue_call_function_active_validations = [
+        record
+        for record in original_ue_call_function_active_validations
+        if record.get("targetEntry") == "true" or record.get("callSource") == "target-entry"
+    ]
     ue_process_event_live_hooks = [
         record
         for record in records
@@ -2090,6 +2592,44 @@ def summarize(records, exe_substring, pid):
         record
         for record in installed_ue_process_event_live_hooks
         if proven_process_event_hook_target_record(record, mapped_ue_anchors + resolved_ue_anchor_signatures)
+    ]
+    ue_process_event_active_validations = [
+        record
+        for record in records
+        if record.get("event") == "ue-process-event-active-validate"
+        and (not server_pids or record.get("pid") in server_pids)
+    ]
+    invoked_ue_process_event_active_validations = [
+        record
+        for record in ue_process_event_active_validations
+        if record.get("status") == "invoked" and record_int(record, "liveCallsDelta") > 0
+    ]
+    original_ue_process_event_active_validations = [
+        record
+        for record in invoked_ue_process_event_active_validations
+        if record_int(record, "originalCallsDelta") > 0
+    ]
+    suppressed_ue_process_event_active_validations = [
+        record
+        for record in invoked_ue_process_event_active_validations
+        if record.get("originalSuppressed") == "true"
+    ]
+    target_entry_ue_process_event_active_validations = [
+        record
+        for record in original_ue_process_event_active_validations
+        if record.get("targetEntry") == "true" or record.get("callSource") == "target-entry"
+    ]
+    suppressed_target_entry_ue_process_event_active_validations = [
+        record
+        for record in suppressed_ue_process_event_active_validations
+        if record.get("targetEntry") == "true" or record.get("callSource") == "target-entry"
+    ]
+    descriptor_buffer_ue_process_event_active_validations = [
+        record
+        for record in target_entry_ue_process_event_active_validations
+        if record.get("paramsSource") == "descriptor-buffer"
+        and record_int(record, "paramsBufferSize") > 0
+        and record_int(record, "paramsDescriptorCount") > 0
     ]
     ue_process_event_live_contexts = [
         record
@@ -2156,6 +2696,10 @@ def summarize(records, exe_substring, pid):
     runtime_matched_ue_process_event_live_registry_contexts = [
         record for record in matched_ue_process_event_live_registry_contexts if runtime_process_event_context_record(record)
     ]
+    active_validation_candidates = unique_active_validation_candidates(
+        runtime_matched_ue_process_event_live_contexts
+        + runtime_matched_ue_process_event_live_registry_contexts
+    )
     self_test_provenance_ue_process_event_live_registry_contexts = [
         record for record in ue_process_event_live_registry_contexts if record.get("functionProvenance") == "self-test"
     ]
@@ -2508,6 +3052,28 @@ def summarize(records, exe_substring, pid):
         "luaLoadAssetPackageNativeExecutorReadyEventCount": len(
             lua_load_asset_package_native_executor_ready_events
         ),
+        "luaLoadAssetPackageNativeInvokedEventCount": len(lua_load_asset_package_native_invoked_events),
+        "luaLoadClassPackageAbiStateEventCount": len(lua_load_class_package_abi_state_events),
+        "luaLoadClassPackageCallFrameVerificationEventCount": len(
+            lua_load_class_package_call_frame_verification_events
+        ),
+        "luaLoadClassPackageNativeExecutorEventCount": len(
+            lua_load_class_package_native_executor_events
+        ),
+        "luaLoadClassPackageNativeExecutorReadyEventCount": len(
+            lua_load_class_package_native_executor_ready_events
+        ),
+        "luaLoadClassPackageNativeInvokedEventCount": len(lua_load_class_package_native_invoked_events),
+        "luaStaticConstructObjectNativeExecutorStateCount": len(
+            lua_static_construct_object_native_executor_states
+        ),
+        "luaStaticConstructObjectNativeExecutorReadyStateCount": len(
+            lua_static_construct_object_native_executor_ready_states
+        ),
+        "luaStaticConstructObjectNativeInvokeCount": len(lua_static_construct_object_native_invoke_events),
+        "luaStaticConstructObjectNativeInvokedCount": len(
+            lua_static_construct_object_native_invoked_events
+        ),
         "luaLoadAssetPackagePreflightModFinishCount": len(lua_load_asset_package_preflight_mod_finishes),
         "luaLoadAssetPackageModFinishCount": len(lua_load_asset_package_mod_finishes),
         "luaFunctionIterationModFinishCount": len(lua_function_iteration_mod_finishes),
@@ -2527,15 +3093,41 @@ def summarize(records, exe_substring, pid):
             len(lua_process_event_native_invoke_mod_finishes)
             + len(lua_process_event_native_invoke_self_tests)
         ),
+        "luaCallFunctionNativeInvokeModFinishCount": (
+            len(lua_call_function_native_invoke_mod_finishes)
+            + len(lua_call_function_native_invoke_self_tests)
+        ),
         "luaProcessEventNativeInvokeSelfTestCount": len(lua_process_event_native_invoke_self_tests),
+        "luaCallFunctionNativeInvokeSelfTestCount": len(lua_call_function_native_invoke_self_tests),
         "luaProcessEventNativeInvokeNonSelfTestGateCount": len(
             lua_process_event_native_invoke_non_self_test_gates
+        ),
+        "luaCallFunctionNativeInvokeNonSelfTestGateCount": len(
+            lua_call_function_native_invoke_non_self_test_gates
         ),
         "luaProcessEventNativeInvokeDescriptorPreflightCount": len(
             lua_process_event_native_invoke_descriptor_preflights
         ),
+        "luaCallFunctionNativeInvokePreflightCount": len(
+            lua_call_function_native_invoke_preflights
+        ),
+        "luaProcessEventNativeExecutorStateCount": len(
+            lua_process_event_native_executor_states
+        ),
+        "luaProcessEventNativeExecutorReadyStateCount": len(
+            lua_process_event_native_executor_ready_states
+        ),
+        "luaCallFunctionNativeExecutorStateCount": len(
+            lua_call_function_native_executor_states
+        ),
+        "luaCallFunctionNativeExecutorReadyStateCount": len(
+            lua_call_function_native_executor_ready_states
+        ),
         "luaProcessEventNativeInvokeNonSelfTestInvokedCount": len(
             lua_process_event_native_invoke_non_self_test_invocations
+        ),
+        "luaCallFunctionNativeInvokeNonSelfTestInvokedCount": len(
+            lua_call_function_native_invoke_non_self_test_invocations
         ),
         "luaProcessEventParamsBufferCount": len(lua_process_event_params_buffers),
         "luaLifecycleHookModFinishCount": len(lua_lifecycle_hook_mod_finishes),
@@ -2582,6 +3174,15 @@ def summarize(records, exe_substring, pid):
         "ueReflectionFieldCount": len(ue_reflection_fields),
         "candidateUeReflectionFieldCount": len(candidate_ue_reflection_fields),
         "classMappedUeReflectionFieldCount": len(class_mapped_ue_reflection_fields),
+        "ueFFieldLayoutCandidateCount": len(ue_ffield_layout_candidates),
+        "mappedUeFFieldLayoutCandidateCount": len(mapped_ue_ffield_layout_candidates),
+        "namedUeFFieldLayoutCandidateCount": len(named_ue_ffield_layout_candidates),
+        "propertyLikeUeFFieldLayoutCandidateCount": len(property_like_ue_ffield_layout_candidates),
+        "saneUeFFieldLayoutCandidateCount": len(sane_ue_ffield_layout_candidates),
+        "propertyLikeSaneUeFFieldLayoutCandidateCount": len(property_like_sane_ue_ffield_layout_candidates),
+        "ueReflectionPropertyRootScanCount": len(ue_reflection_property_root_scans),
+        "candidateUeReflectionPropertyRootScanCount": len(candidate_ue_reflection_property_root_scans),
+        "saneUeReflectionPropertyRootScanCount": len(sane_ue_reflection_property_root_scans),
         "ueReflectionPropertyCount": len(ue_reflection_properties),
         "candidateUeReflectionPropertyCount": len(candidate_ue_reflection_properties),
         "readableUeReflectionPropertyCount": len(readable_ue_reflection_properties),
@@ -2669,10 +3270,21 @@ def summarize(records, exe_substring, pid):
         "provenTargetInstalledUeCallFunctionLiveHookCount": len(proven_target_installed_ue_call_function_live_hooks),
         "provenTargetRoutedUeCallFunctionLiveLuaHookCount": len(proven_target_routed_ue_call_function_live_lua_hooks),
         "provenTargetHandledUeCallFunctionLiveLuaHookCount": len(proven_target_handled_ue_call_function_live_lua_hooks),
+        "ueCallFunctionActiveValidationCount": len(ue_call_function_active_validations),
+        "invokedUeCallFunctionActiveValidationCount": len(invoked_ue_call_function_active_validations),
+        "originalUeCallFunctionActiveValidationCount": len(original_ue_call_function_active_validations),
+        "targetEntryUeCallFunctionActiveValidationCount": len(target_entry_ue_call_function_active_validations),
         "ueProcessEventLiveHookCount": len(ue_process_event_live_hooks),
         "installedUeProcessEventLiveHookCount": len(installed_ue_process_event_live_hooks),
         "nonSelfTestInstalledUeProcessEventLiveHookCount": len(non_self_test_installed_ue_process_event_live_hooks),
         "provenTargetInstalledUeProcessEventLiveHookCount": len(proven_target_installed_ue_process_event_live_hooks),
+        "ueProcessEventActiveValidationCount": len(ue_process_event_active_validations),
+        "invokedUeProcessEventActiveValidationCount": len(invoked_ue_process_event_active_validations),
+        "originalUeProcessEventActiveValidationCount": len(original_ue_process_event_active_validations),
+        "suppressedUeProcessEventActiveValidationCount": len(suppressed_ue_process_event_active_validations),
+        "targetEntryUeProcessEventActiveValidationCount": len(target_entry_ue_process_event_active_validations),
+        "suppressedTargetEntryUeProcessEventActiveValidationCount": len(suppressed_target_entry_ue_process_event_active_validations),
+        "descriptorBufferUeProcessEventActiveValidationCount": len(descriptor_buffer_ue_process_event_active_validations),
         "ueProcessEventLiveContextCount": len(ue_process_event_live_contexts),
         "resolvedUeProcessEventLiveContextCount": len(resolved_ue_process_event_live_contexts),
         "matchedUeProcessEventLiveContextCount": len(matched_ue_process_event_live_contexts),
@@ -2684,6 +3296,7 @@ def summarize(records, exe_substring, pid):
         "nativeIdentityUeProcessEventLiveRegistryContextCount": len(native_identity_ue_process_event_live_registry_contexts),
         "matchedUeProcessEventLiveRegistryContextCount": len(matched_ue_process_event_live_registry_contexts),
         "runtimeMatchedUeProcessEventLiveRegistryContextCount": len(runtime_matched_ue_process_event_live_registry_contexts),
+        "activeValidationCandidates": active_validation_candidates,
         "selfTestProvenanceUeProcessEventLiveRegistryContextCount": len(self_test_provenance_ue_process_event_live_registry_contexts),
         "runtimeProvenanceUeProcessEventLiveRegistryContextCount": len(runtime_provenance_ue_process_event_live_registry_contexts),
         "ueProcessEventLuaContextHandleCount": len(ue_process_event_lua_context_handle_hooks),
@@ -2899,6 +3512,21 @@ def markdown(summary, top):
             f"`{summary['candidateUeReflectionFieldCount']}/{summary['ueReflectionFieldCount']}`, "
             f"class-mapped `{summary['classMappedUeReflectionFieldCount']}`"
         )
+    if summary.get("ueFFieldLayoutCandidateCount", 0):
+        lines.append(
+            f"- UE FField layout candidates: "
+            f"mapped `{summary['mappedUeFFieldLayoutCandidateCount']}/{summary['ueFFieldLayoutCandidateCount']}`, "
+            f"named `{summary['namedUeFFieldLayoutCandidateCount']}`, "
+            f"property-like `{summary['propertyLikeUeFFieldLayoutCandidateCount']}`, "
+            f"sane descriptors `{summary['saneUeFFieldLayoutCandidateCount']}`, "
+            f"property-like sane `{summary['propertyLikeSaneUeFFieldLayoutCandidateCount']}`"
+        )
+    if summary.get("ueReflectionPropertyRootScanCount", 0):
+        lines.append(
+            f"- UE reflection property root scans: "
+            f"candidates `{summary['candidateUeReflectionPropertyRootScanCount']}/{summary['ueReflectionPropertyRootScanCount']}`, "
+            f"sane roots `{summary['saneUeReflectionPropertyRootScanCount']}`"
+        )
     if summary["ueReflectionPropertyCount"]:
         lines.append(
             f"- UE reflection properties: candidates "
@@ -2951,10 +3579,14 @@ def markdown(summary, top):
             f"process event bridge state `{summary['luaProcessEventBridgeStateModFinishCount']}`, "
             f"process event native invoke `{summary['luaProcessEventNativeInvokeSelfTestCount']}`, "
             f"process event native non-self-test gate `{summary['luaProcessEventNativeInvokeNonSelfTestGateCount']}`, "
+            f"call function native invoke `{summary['luaCallFunctionNativeInvokeSelfTestCount']}`, "
+            f"call function native non-self-test gate `{summary['luaCallFunctionNativeInvokeNonSelfTestGateCount']}`, "
             f"process event params buffers `{summary['luaProcessEventParamsBufferCount']}`, "
             f"lifecycle hooks `{summary['luaLifecycleHookModFinishCount']}`, "
             f"object notify `{summary['luaNotifyOnNewObjectModFinishCount']}`, "
             f"synthetic outer `{summary['luaSyntheticOuterModFinishCount']}`, "
+            f"static construct native executor `{summary['luaStaticConstructObjectNativeExecutorReadyStateCount']}/{summary['luaStaticConstructObjectNativeExecutorStateCount']}`, "
+            f"static construct native invoked `{summary['luaStaticConstructObjectNativeInvokedCount']}/{summary['luaStaticConstructObjectNativeInvokeCount']}`, "
             f"world context `{summary['luaWorldContextModFinishCount']}`, "
             f"class default object `{summary['luaClassDefaultObjectModFinishCount']}`, "
             f"level `{summary['luaLevelModFinishCount']}`"

@@ -106,6 +106,90 @@ class PromoteUeAnchorXrefCandidatesTests(unittest.TestCase):
         self.assertEqual(result["candidateCount"], 1)
         self.assertEqual(result["targets"][0]["name"], "FNamePool")
 
+    def test_rejects_loader_owned_sources_by_default(self):
+        summary = {
+            "format": "elf64",
+            "targets": [
+                {
+                    "name": "ProcessEvent",
+                    "category": "ue",
+                    "kind": "signature",
+                    "vaddr": "0x5000",
+                    "source": "/tmp/linux-client-loader/libdune_client_probe_loader.so",
+                    "xrefs": [xref(pattern="e8 ?? ?? ?? ??")],
+                }
+            ],
+        }
+
+        result = promoter.promote_candidates(summary)
+
+        self.assertEqual(result["candidateCount"], 0)
+        self.assertEqual(result["rejected"][0]["reason"], "loader-source")
+
+    def test_can_allow_loader_sources_only_when_explicit(self):
+        summary = {
+            "format": "elf64",
+            "targets": [
+                {
+                    "name": "ProcessEvent",
+                    "category": "ue",
+                    "kind": "signature",
+                    "vaddr": "0x5000",
+                    "source": "/tmp/linux-client-loader/libdune_client_probe_loader.so",
+                    "xrefs": [xref(pattern="e8 ?? ?? ?? ??")],
+                }
+            ],
+        }
+
+        result = promoter.promote_candidates(summary, allow_loader_sources=True)
+
+        self.assertEqual(result["candidateCount"], 1)
+        self.assertEqual(result["targets"][0]["sourceProvenance"], "loader")
+        self.assertEqual(result["sourceProvenanceCounts"], {"loader": 1})
+
+    def test_strict_target_source_rejects_unknown_manual_candidates(self):
+        summary = {
+            "format": "elf64",
+            "targets": [
+                {
+                    "name": "GUObjectArray",
+                    "category": "ue",
+                    "kind": "manual",
+                    "vaddr": "0x5000",
+                    "xrefs": [xref()],
+                }
+            ],
+        }
+
+        result = promoter.promote_candidates(summary, require_target_source=True)
+
+        self.assertEqual(result["candidateCount"], 0)
+        self.assertEqual(result["rejected"][0]["reason"], "non-target-source")
+
+    def test_promotes_target_source_with_provenance(self):
+        summary = {
+            "format": "elf64",
+            "targets": [
+                {
+                    "name": "GUObjectArray",
+                    "category": "ue",
+                    "kind": "signature",
+                    "vaddr": "0x5000",
+                    "source": "/game/DuneSandbox/Binaries/Linux/DuneSandbox-Linux-Shipping",
+                    "xrefs": [xref()],
+                }
+            ],
+        }
+
+        result = promoter.promote_candidates(summary, require_target_source=True)
+
+        self.assertEqual(result["candidateCount"], 1)
+        self.assertEqual(result["targets"][0]["sourceProvenance"], "target")
+        self.assertEqual(
+            result["targets"][0]["sourcePath"],
+            "/game/DuneSandbox/Binaries/Linux/DuneSandbox-Linux-Shipping",
+        )
+
     def test_promotes_widened_anchor_aliases_as_first_class_candidates(self):
         summary = {
             "format": "pe64",
@@ -116,6 +200,7 @@ class PromoteUeAnchorXrefCandidatesTests(unittest.TestCase):
                 {"name": "FUObjectArray", "category": "ue", "kind": "signature", "rva": "0x4000", "xrefs": [xref(file_offset="0x400")]},
                 {"name": "CallFunctionByName", "category": "ue", "kind": "signature", "rva": "0x5000", "xrefs": [xref(file_offset="0x500")]},
                 {"name": "StaticLoadObject", "category": "ue", "kind": "signature", "rva": "0x6000", "xrefs": [xref(file_offset="0x600")]},
+                {"name": "StaticLoadClass", "category": "ue", "kind": "signature", "rva": "0x6800", "xrefs": [xref(file_offset="0x680")]},
                 {"name": "LoadObject", "category": "ue", "kind": "signature", "rva": "0x7000", "xrefs": [xref(file_offset="0x700")]},
                 {"name": "LoadPackage", "category": "ue", "kind": "signature", "rva": "0x8000", "xrefs": [xref(file_offset="0x800")]},
                 {"name": "ResolveName", "category": "ue", "kind": "signature", "rva": "0x9000", "xrefs": [xref(file_offset="0x900")]},
@@ -128,7 +213,7 @@ class PromoteUeAnchorXrefCandidatesTests(unittest.TestCase):
 
         result = promoter.promote_candidates(summary)
 
-        self.assertEqual(result["candidateCount"], 13)
+        self.assertEqual(result["candidateCount"], 14)
         self.assertEqual(
             result["anchorCounts"],
             {
@@ -138,6 +223,7 @@ class PromoteUeAnchorXrefCandidatesTests(unittest.TestCase):
                 "FUObjectArray": 1,
                 "CallFunctionByName": 1,
                 "StaticLoadObject": 1,
+                "StaticLoadClass": 1,
                 "LoadObject": 1,
                 "LoadPackage": 1,
                 "ResolveName": 1,
@@ -150,9 +236,34 @@ class PromoteUeAnchorXrefCandidatesTests(unittest.TestCase):
         self.assertEqual(result["groups"]["names"]["present"], 2)
         self.assertEqual(result["groups"]["objects"]["present"], 2)
         self.assertEqual(result["groups"]["dispatch"]["present"], 1)
-        self.assertEqual(result["groups"]["package"]["present"], 6)
+        self.assertEqual(result["groups"]["package"]["present"], 7)
         self.assertTrue(result["groups"]["package"]["complete"])
         self.assertEqual(result["groups"]["reflection"]["present"], 2)
+
+    def test_promotes_package_anchor_aliases(self):
+        summary = {
+            "format": "elf64",
+            "targets": [
+                {"name": "uobject-static-load-object", "category": "ue", "kind": "signature", "vaddr": "0x6000", "xrefs": [xref(file_offset="0x600")]},
+                {"name": "uobject-static-load-class", "category": "ue", "kind": "signature", "vaddr": "0x6800", "xrefs": [xref(file_offset="0x680")]},
+                {"name": "load-asset-package-path", "category": "ue", "kind": "signature", "vaddr": "0x7000", "xrefs": [xref(file_offset="0x700")]},
+                {"name": "load-class-package-path", "category": "ue", "kind": "signature", "vaddr": "0x7800", "xrefs": [xref(file_offset="0x780")]},
+            ],
+        }
+
+        result = promoter.promote_candidates(summary)
+
+        self.assertEqual(result["candidateCount"], 4)
+        self.assertEqual(
+            result["anchorCounts"],
+            {
+                "StaticLoadObject": 1,
+                "StaticLoadClass": 1,
+                "LoadAsset": 1,
+                "LoadClass": 1,
+            },
+        )
+        self.assertEqual(result["groups"]["package"]["present"], 4)
 
     def test_cli_outputs_validator_ready_xref_json(self):
         summary = {

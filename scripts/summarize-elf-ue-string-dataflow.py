@@ -21,7 +21,7 @@ UE_GROUP_HINTS = {
     "objects": ("UObject", "GUObject", "GObject", "ObjectArray", "FUObject"),
     "world": ("UWorld", "GWorld", "WorldContext"),
     "dispatch": ("ProcessEvent", "StaticFindObject", "CallFunctionByName"),
-    "package": ("LoadObject", "LoadPackage", "StaticLoadObject", "ResolveName", "LoadAsset", "LoadClass"),
+    "package": ("LoadObject", "LoadPackage", "StaticLoadObject", "StaticLoadClass", "ResolveName", "LoadAsset", "LoadClass"),
     "reflection": ("UClass", "UFunction", "FProperty", "FObjectProperty", "FArrayProperty", "FBoolProperty", "FStructProperty", "UStruct", "UEnum"),
 }
 EXACT_ANCHOR_HINTS = {
@@ -39,12 +39,13 @@ EXACT_ANCHOR_HINTS = {
     "StaticFindObject": ("StaticFindObject",),
     "CallFunctionByNameWithArguments": ("CallFunctionByNameWithArguments",),
     "CallFunctionByName": ("CallFunctionByName",),
-    "StaticLoadObject": ("StaticLoadObject",),
-    "LoadAsset": ("LoadAsset",),
+    "StaticLoadObject": ("StaticLoadObject", "load-object-static", "uobject-static-load-object"),
+    "StaticLoadClass": ("StaticLoadClass", "load-class-static", "uobject-static-load-class"),
+    "LoadAsset": ("LoadAsset", "load-asset"),
     "LoadClass": ("LoadClass",),
-    "LoadObject": ("LoadObject",),
-    "LoadPackage": ("LoadPackage",),
-    "ResolveName": ("ResolveName",),
+    "LoadObject": ("LoadObject", "uobject-load-object"),
+    "LoadPackage": ("LoadPackage", "load-package", "upackage-load-package"),
+    "ResolveName": ("ResolveName", "resolve-name", "uresolve-name"),
     "UObject": ("UObject",),
     "UFunction": ("UFunction",),
     "UClass": ("UClass",),
@@ -122,6 +123,37 @@ def load_targets(scan_xrefs, categories, names):
                 "fileOffset": row.get("fileOffset", ""),
                 "imageOffset": row.get("imageOffset", ""),
                 "groups": classify_groups(row.get("name", "")),
+            }
+        )
+    return targets
+
+
+def load_manual_targets(raw_targets):
+    targets = []
+    seen = set()
+    for raw in raw_targets or []:
+        if "=" in raw:
+            name, value_text = raw.split("=", 1)
+        else:
+            name = f"manual-{raw}"
+            value_text = raw
+        value = parse_int(value_text)
+        if value is None:
+            raise ValueError(f"invalid manual target address: {raw}")
+        key = (name, value)
+        if key in seen:
+            continue
+        seen.add(key)
+        targets.append(
+            {
+                "name": name,
+                "category": "manual",
+                "kind": "manual",
+                "value": value,
+                "valueText": f"0x{value:x}",
+                "fileOffset": f"0x{value:x}",
+                "imageOffset": f"0x{value:x}",
+                "groups": classify_groups(name),
             }
         )
     return targets
@@ -333,6 +365,7 @@ def summarize(args):
     relocations = ptrctx.load_relocations(data, sections)
     scan_xrefs = load_json(args.scan_xrefs_json)
     targets = load_targets(scan_xrefs, args.category, args.name)
+    targets.extend(load_manual_targets(args.target))
     for target in targets:
         target["pointerSlots"] = pointer_slots_for_target(ptrctx, data, sections, relocations, target)
     source_target_count = len(targets)
@@ -435,6 +468,12 @@ def main(argv=None):
         help="include every scan-xref category instead of the default UE anchor category",
     )
     parser.add_argument("--name", action="append", default=[])
+    parser.add_argument(
+        "--target",
+        action="append",
+        default=[],
+        help="explicit string/data target as NAME=ADDR or ADDR; useful when loader logs did not emit the anchor",
+    )
     parser.add_argument("--context-window", type=int, default=256)
     parser.add_argument("--context-limit", type=int, default=12)
     parser.add_argument("--limit", type=int, default=80)

@@ -125,6 +125,9 @@ class PeUeFunctionNeighborhoodTests(unittest.TestCase):
     def test_exact_anchor_hints_use_token_boundaries(self):
         self.assertEqual(module.exact_anchor_hints("GUObjectArray"), ["GUObjectArray"])
         self.assertEqual(module.exact_anchor_hints("UObject"), ["UObject"])
+        self.assertEqual(module.exact_anchor_hints("uobject-static-load-class"), ["StaticLoadClass"])
+        self.assertEqual(module.exact_anchor_hints("load-asset-package-path"), ["LoadAsset"])
+        self.assertEqual(module.exact_anchor_hints("LoadClass"), ["LoadClass"])
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@
 // Unlike FindBaseBackupToolDeepDesert.java (broad discovery), this prints a
 // short, copy-paste set of offsets the live trace needs to answer the two
 // gating unknowns:
-//   1. client-vs-server block  -> the BRT place RPC server entry
+//   1. RPC arrival             -> the BRT place RPC server entry
 //   2. did the config land      -> the function(s) that read the map restriction
 //   plus the player-visible "not allowed in the region" emitter (Phase 2).
 //

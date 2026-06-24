@@ -24,5 +24,11 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 "$script_dir/live-target-safety-audit.sh" "$env_file"
 
+case "${DUNE_DD1_OWNERSHIP_AUDIT_ENABLED:-true}" in
+  1|true|yes|on|TRUE|True|YES|ON)
+    "$script_dir/audit-dd1-base-ownership.sh" "$env_file"
+    ;;
+esac
+
 DUNE_RECONCILE_FAIL_ON_DRIFT="${DUNE_RECONCILE_FAIL_ON_DRIFT:-true}" \
   "$script_dir/reconcile-map-patch-overlays.sh" "$env_file"

@@ -134,6 +134,14 @@ class RabbitMqCertSanTests(unittest.TestCase):
 
 
 class RunServerSafeTests(unittest.TestCase):
+    def test_workspace_probe_env_overrides_inherited_container_env(self):
+        source = (ROOT / "scripts" / "run_server_safe.sh").read_text(encoding="utf-8")
+        self.assertIn("workspace_env_overrides_runtime()", source)
+        self.assertIn("DUNE_PROBE_LOADER_*)", source)
+        self.assertIn("DUNE_ENABLE_LINUX_SERVER_PRELOAD|DUNE_LINUX_SERVER_PRELOAD|DUNE_LINUX_SERVER_PRELOAD_PARTITIONS", source)
+        self.assertIn('if [ -n "${!name:-}" ] && ! workspace_env_overrides_runtime "$name"; then', source)
+        self.assertIn('value="$(workspace_env_value "$name")"', source)
+
     def test_dry_run_preserves_args_and_writes_config(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -212,6 +220,70 @@ class RunServerSafeTests(unittest.TestCase):
             raw_args = args_out.read_bytes().rstrip(b"\0").split(b"\0")
             decoded = [item.decode("utf-8") for item in raw_args]
             self.assertIn("-IGWBindAddress=172.31.240.40", decoded)
+
+    def test_dry_run_can_set_explicit_igw_bind_address(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            server_root = tmp_path / "server"
+            dune_home = tmp_path / "home"
+            args_out = tmp_path / "args.nul"
+            server_root.mkdir()
+
+            env = {
+                **os.environ,
+                "DUNE_SERVER_ROOT": str(server_root),
+                "DUNE_HOME": str(dune_home),
+                "DUNE_RUN_SERVER_SAFE_DRY_RUN": "true",
+                "DUNE_RUN_SERVER_SAFE_ARGS_OUT": str(args_out),
+                "POD_IP": "172.31.240.40",
+                "DUNE_IGW_BIND_ADDRESS": "24.109.206.134",
+            }
+            subprocess.run(
+                [
+                    str(ROOT / "scripts" / "run_server_safe.sh"),
+                    "-MultiHome=$POD_IP",
+                ],
+                cwd=ROOT,
+                env=env,
+                check=True,
+            )
+
+            raw_args = args_out.read_bytes().rstrip(b"\0").split(b"\0")
+            decoded = [item.decode("utf-8") for item in raw_args]
+            self.assertIn("-IGWBindAddress=24.109.206.134", decoded)
+
+    def test_private_igw_bind_address_overrides_explicit_igw_bind_address(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            server_root = tmp_path / "server"
+            dune_home = tmp_path / "home"
+            args_out = tmp_path / "args.nul"
+            server_root.mkdir()
+
+            env = {
+                **os.environ,
+                "DUNE_SERVER_ROOT": str(server_root),
+                "DUNE_HOME": str(dune_home),
+                "DUNE_RUN_SERVER_SAFE_DRY_RUN": "true",
+                "DUNE_RUN_SERVER_SAFE_ARGS_OUT": str(args_out),
+                "POD_IP": "172.31.240.40",
+                "DUNE_FORCE_PRIVATE_IGW_BIND_ADDRESS": "true",
+                "DUNE_IGW_BIND_ADDRESS": "24.109.206.134",
+            }
+            subprocess.run(
+                [
+                    str(ROOT / "scripts" / "run_server_safe.sh"),
+                    "-MultiHome=$POD_IP",
+                ],
+                cwd=ROOT,
+                env=env,
+                check=True,
+            )
+
+            raw_args = args_out.read_bytes().rstrip(b"\0").split(b"\0")
+            decoded = [item.decode("utf-8") for item in raw_args]
+            self.assertIn("-IGWBindAddress=172.31.240.40", decoded)
+            self.assertNotIn("-IGWBindAddress=24.109.206.134", decoded)
 
     def test_dry_run_can_enable_linux_server_preload(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -787,6 +859,31 @@ class VerifyBackupTests(unittest.TestCase):
 
 
 class FailoverScriptTests(unittest.TestCase):
+    def test_compose_files_adds_director_hostnet_overlays_when_enabled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env_file = Path(tmp) / "dune.env"
+            env_file.write_text(
+                "DUNE_DIRECTOR_HOSTNET_ENABLED=true\n"
+                "DUNE_DIRECTOR_HOSTNET_PORT_COMPOSE_FILE=compose.director-hostnet-port.yaml\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [str(ROOT / "scripts" / "compose-files.sh"), str(env_file)],
+                cwd=ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            files = result.stdout.strip().split(":")
+            self.assertIn("compose.fls-ipv4-hosts.yaml", files)
+            self.assertIn("compose.director-hostnet-cutover.yaml", files)
+            self.assertIn("compose.director-hostnet-port.yaml", files)
+            self.assertLess(files.index("compose.fls-ipv4-hosts.yaml"), files.index("compose.director-hostnet-cutover.yaml"))
+
     def test_router_cutover_dry_run_rewrites_env_driven_ports(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)

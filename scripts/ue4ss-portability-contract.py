@@ -41,6 +41,7 @@ SURFACES = {
     ),
     "package-loading-anchors": (
         "StaticLoadObject",
+        "StaticLoadClass",
         "LOAD_ASSET_PACKAGE_SELF_TEST_ANCHOR",
         "LoadObject",
         "LoadPackage",
@@ -57,6 +58,12 @@ SURFACES = {
         "GetLoadAssetPackageNativeCallAdapterState",
         "GetLoadAssetPackageInvocationDescriptorState",
         "GetLoadAssetPackageNativeExecutorState",
+        "load_asset_package_run_guarded_native_call",
+        "native-return-validated",
+        "nativeReturn",
+        "nativeReturnValidated",
+        "NativeReturnAddress",
+        "NativeReturnValidated",
         "PackageBackendTargetImage",
         "target-not-target-image",
         "NativeCallPlanConstructed",
@@ -83,8 +90,23 @@ SURFACES = {
         "lua-load-asset-package-native-call-adapter-state",
         "lua-load-asset-package-invocation-descriptor-state",
         "lua-load-asset-package-native-executor-state",
+        "lua-load-asset-package-native-invoke",
+        "native_invoked ? \"true\" : \"false\"",
         "guarded-native-package-load",
         "lua-load-asset-package-call-frame-state",
+        "GetLoadClassPackageBridgeState",
+        "GetLoadClassPackageAbiState",
+        "GetLoadClassPackageCallFrameVerificationState",
+        "GetLoadClassPackageNativeExecutorState",
+        "InvokeLoadClassPackageNative",
+        "lua-load-class-package-preflight",
+        "lua-load-class-package-bridge-state",
+        "lua-load-class-package-abi-state",
+        "lua-load-class-package-call-frame-verification-state",
+        "lua-load-class-package-native-executor-state",
+        "lua-load-class-package-native-invoke",
+        "ClassRootReady",
+        "signatureFamily=StaticLoadClass",
         "\"package\"",
     ),
     "uobject-registry": (
@@ -121,6 +143,9 @@ SURFACES = {
         "ProcessEventDispatchContext",
         "register_process_event_dispatch_callback",
         "ue-process-event-live-hook",
+        "ue-process-event-vtable-candidate",
+        "ue-process-event-vtable-scan",
+        "targetSource=vtable-candidate",
         "CreateProcessEventParams",
         "lua_create_process_event_params_callback",
         "MAX_SYNTHETIC_PROCESS_EVENT_PARAMS",
@@ -146,6 +171,13 @@ SURFACES = {
         "install_call_function_live_hook",
         "CallFunctionLiveHook",
         "ue-call-function-live-hook",
+        "InvokeCallFunctionNative",
+        "lua-call-function-native-invoke",
+        "lua-call-function-native-invoke-self-test",
+        "loader-call-function-native-bridge",
+        "NativeNonSelfTestInvoked",
+        "non-self-test-invoked",
+        "ALLOW_NON_SELF_TEST_CALL_FUNCTION_INVOKE",
     ),
     "lua-hook-dispatch": (
         "RegisterHook",
@@ -163,9 +195,13 @@ SURFACES = {
         "MAX_LUA_MOD_MANIFEST_ENTRIES",
     ),
     "scheduler-and-input": (
+        "ExecuteInGameThread",
+        "DrainGameThreadQueue",
+        "lua_drain_game_thread_queue_internal",
         "ExecuteAsync",
         "ExecuteWithDelay",
         "LoopAsync",
+        "lua_drain_scheduler_queue_internal",
         "RegisterKeyBind",
         "RegisterConsoleCommandHandler",
     ),
@@ -191,9 +227,24 @@ SURFACES = {
     ),
     "object-notify": (
         "NotifyOnNewObject",
+        "UnregisterNotifyOnNewObject",
         "StaticConstructObject",
+        "GetStaticConstructObjectNativeExecutorState",
+        "InvokeStaticConstructObjectNative",
+        "lua-static-construct-object-native-executor-state",
+        "lua-static-construct-object-native-invoke",
+        "STATIC_CONSTRUCT_OBJECT_FNAME_COMPARISON_INDEX",
+        "STATIC_CONSTRUCT_OBJECT_FNAME_NUMBER",
+        "CONFIRM_STATIC_CONSTRUCT_OBJECT_FNAME",
+        "ENABLE_STATIC_CONSTRUCT_OBJECT_CRASH_GUARD",
+        "fname-unconfirmed",
+        "crash-guard-missing",
+        "native-invoked",
+        "NativeReturnAddress",
+        "NativeReturnReadable",
         "notifyOnNewObjectCallbacks",
         "notifyOnNewObjectResult",
+        "lua_unregister_notify_on_new_object_callback",
     ),
     "container-marshalling": (
         "FScriptArray",
@@ -231,6 +282,11 @@ PACKAGE_SURFACES = {
         "strictRuntimeContract",
         "contractReady",
         "runtimeRootDiscovery",
+        "UE_AUTO_DISCOVER_PROMOTE_AMBIGUOUS_ROOTS",
+        "RuntimeFNamePoolCandidate",
+        "RuntimeGUObjectArrayCandidate",
+        "promoteAmbiguousRoots",
+        "same-run FName/object-array validation",
         "signatureAnchorReady",
         "targetObjectDiscovery",
         "targetHooks",
@@ -242,6 +298,9 @@ PACKAGE_SURFACES = {
         "NativeExecutorReady",
         "ExecutorPreflightPassed",
         "FinalNativeCallEligible",
+        "luaLoadAssetPackageNativeInvocation",
+        "nativeInvoked=true",
+        "nativeReturnValidated=true",
         "runtimeObjectRegistry",
         "runtimeReflection",
         "runtimeProcessEventDispatch",
@@ -251,6 +310,8 @@ PACKAGE_SURFACES = {
         "descriptor-backed param accessors",
         "container alias/layout methods",
         "runtimeCallFunctionDispatch",
+        "luaProcessEventNativeInvokeNonSelfTestInvoked",
+        "luaCallFunctionNativeInvokeNonSelfTestInvoked",
         "missingSignatureAnchorReadyKeys",
     ),
     "source-group-matched-root-recovery": (
@@ -258,10 +319,28 @@ PACKAGE_SURFACES = {
         "--require-source-group-match",
         "ue-root-recovery-candidates-complete-source-matched.json",
     ),
+    "canary-next-plan-chaining": (
+        "summarize-ue-vtable-candidates.py",
+        "ue-vtable-candidates.json",
+        "ue-vtable-candidates.md",
+        "next-canary-plan.json",
+        "next-canary-plan.env",
+        "next-canary-plan.md",
+        "--hook-targets-json",
+        "plan-ue4ss-canary-env.py",
+    ),
 }
 
 TARGET_PACKAGE_SURFACES = {
     "linux-server": {
+        "generic-unreal-target-selection": (
+            "DUNE_PROBE_LOADER_TARGET",
+            "DUNE_PROBE_LOADER_FORCE",
+            "For non-Dune targets",
+            "DUNE_UE4SS_PACKAGE_TRACE_PID",
+            "DUNE_UE4SS_PACKAGE_TRACE_PROCESS_PATTERN",
+            "explicit process without Docker discovery",
+        ),
         "elf-qword-root-shape-hardening": (
             "summarize-elf-writable-root-shapes.py",
             "export-ue-writable-root-shape-candidates.py",
@@ -272,21 +351,97 @@ TARGET_PACKAGE_SURFACES = {
             "canary-linux-server-loader.sh",
             "test-canary-linux-server-loader.py",
         ),
+        "server-canary-next-plan-wrapper": (
+            "canary-linux-server-loader.sh",
+            "DUNE_LINUX_SERVER_CANARY_PLAN_JSON",
+            "test-canary-linux-server-loader.py",
+        ),
+        "package-root-artifact-verification": (
+            "scripts/verify-loader-artifacts.py --target linux-server --package-root .",
+            "--package-target linux-server",
+            "--package-only",
+            "loader-artifact-verification.txt",
+            "loader-artifact-verification.json",
+            "ue4ss-package-runtime-trace.sh",
+            "verify-ue4ss-package-review-bundle.py",
+            "plan-ue4ss-package-next-action.py",
+            "tracePidMatchesRequested",
+            "playerGuardPhase",
+            "playerGuardPartition",
+            "playerGuardConnectedPlayers",
+        ),
+        "package-route-slot-proof": (
+            "verify-ue4ss-package-route-slot-recovery.py",
+            "routeSlotTraceRequirement",
+            "UE4SS_PACKAGE_ROUTE_TRACE_HIT",
+            "routeVtableStaticSlotMatches",
+            "requiredSlots=[0x3a0,0x3d8]",
+            "requiredRegisters=[rbx,r14]",
+            "routeGdb",
+            "required object/vtable capture",
+            "rbx, r14",
+        ),
+        "package-archive-artifact-verification": (
+            "--package-archive \"$archive\"",
+            "${archive}.verification.txt",
+            "${archive}.verification.json",
+            "package verification: %s",
+        ),
     },
     "linux-client": {
+        "generic-unreal-target-selection": (
+            "DUNE_CLIENT_PROBE_TARGET",
+            "DUNE_CLIENT_PROBE_FORCE",
+            "For non-Dune native UE targets",
+            "target executable fragment",
+            "without editing installed game files",
+        ),
         "elf-qword-root-shape-hardening": (
             "summarize-elf-writable-root-shapes.py",
             "export-ue-writable-root-shape-candidates.py",
             "test-elf-writable-root-shapes.py",
             "test-export-ue-writable-root-shape-candidates.py",
         ),
+        "client-canary-next-plan-verifier": (
+            "verify-client-probe-canary.sh",
+            "test-client-launch-preflight.py",
+            "linux-client",
+        ),
+        "package-root-artifact-verification": (
+            "analysis/verify-loader-artifacts.py --target linux-client --package-root .",
+            "--package-target linux-client",
+            "--package-only",
+            "loader-artifact-verification.txt",
+            "loader-artifact-verification.json",
+        ),
     },
     "windows-client": {
+        "generic-unreal-target-selection": (
+            "--game-dir",
+            "--exe-rel",
+            "--dll-name",
+            "--stage-dir",
+            "For non-Dune Windows UE targets",
+            "without editing installed game files",
+        ),
         "pe-qword-root-shape-hardening": (
             "summarize-pe-writable-root-shapes.py",
             "export-ue-writable-root-shape-candidates.py",
             "test-pe-writable-root-shapes.py",
             "test-export-ue-writable-root-shape-candidates.py",
+        ),
+        "client-canary-next-plan-verifier": (
+            "verify-client-probe-canary.sh",
+            "test-client-launch-preflight.py",
+            "windows",
+            "win-client",
+        ),
+        "package-root-artifact-verification": (
+            "analysis/verify-loader-artifacts.py --target windows-client --package-root .",
+            "--package-target windows-client",
+            "--package-only",
+            "loader-artifact-verification.txt",
+            "loader-artifact-verification.json",
         ),
     },
 }
@@ -311,6 +466,64 @@ TARGET_LAUNCH_SURFACES = {
     },
 }
 
+PACKAGE_ARTIFACT_LAYOUTS = {
+    "linux-server": (
+        "$stage/scripts/ue4ss-port-readiness.py",
+        "$stage/scripts/summarize-ue4ss-port-gaps.py",
+        "$stage/scripts/summarize-ue4ss-evidence-inventory.py",
+        "$stage/scripts/ue4ss-portability-contract.py",
+        "$stage/scripts/verify-loader-artifacts.py",
+        "$stage/scripts/plan-ue4ss-package-runtime-trace.py",
+        "$stage/scripts/summarize-ue4ss-package-runtime-trace-evidence.py",
+        "$stage/scripts/export-ue4ss-package-promotion-env.py",
+        "$stage/scripts/review-ue4ss-package-abi.py",
+        "$stage/scripts/verify-ue4ss-package-review-bundle.py",
+        "$stage/scripts/ue4ss-package-runtime-trace.sh",
+        "$stage/tests/test-ue4ss-port-readiness.py",
+        "$stage/tests/test-ue4ss-port-gaps.py",
+        "$stage/tests/test-ue4ss-evidence-inventory.py",
+        "$stage/tests/test-ue4ss-portability-contract.py",
+        "$stage/tests/test-verify-loader-artifacts.py",
+        "$stage/tests/test-ue4ss-package-runtime-trace-plan.py",
+        "$stage/tests/test-ue4ss-package-runtime-trace-evidence.py",
+        "$stage/tests/test-export-ue4ss-package-promotion-env.py",
+        "$stage/tests/test-review-ue4ss-package-abi.py",
+        "$stage/tests/test-verify-ue4ss-package-review-bundle.py",
+        "$stage/docs/ue4ss-portability-contract.json",
+        "$stage/docs/ue4ss-portability-contract.md",
+    ),
+    "linux-client": (
+        "$stage/analysis/ue4ss-port-readiness.py",
+        "$stage/analysis/summarize-ue4ss-port-gaps.py",
+        "$stage/analysis/summarize-ue4ss-evidence-inventory.py",
+        "$stage/analysis/ue4ss-portability-contract.py",
+        "$stage/analysis/verify-loader-artifacts.py",
+        "$stage/analysis/plan-ue4ss-package-runtime-trace.py",
+        "$stage/tests/test-ue4ss-port-readiness.py",
+        "$stage/tests/test-ue4ss-port-gaps.py",
+        "$stage/tests/test-ue4ss-evidence-inventory.py",
+        "$stage/tests/test-ue4ss-portability-contract.py",
+        "$stage/tests/test-verify-loader-artifacts.py",
+        "$stage/tests/test-ue4ss-package-runtime-trace-plan.py",
+        "$stage/docs/ue4ss-portability-contract.json",
+        "$stage/docs/ue4ss-portability-contract.md",
+    ),
+    "windows-client": (
+        "$stage/analysis/ue4ss-port-readiness.py",
+        "$stage/analysis/summarize-ue4ss-port-gaps.py",
+        "$stage/analysis/summarize-ue4ss-evidence-inventory.py",
+        "$stage/analysis/ue4ss-portability-contract.py",
+        "$stage/analysis/verify-loader-artifacts.py",
+        "$stage/tests/test-ue4ss-port-readiness.py",
+        "$stage/tests/test-ue4ss-port-gaps.py",
+        "$stage/tests/test-ue4ss-evidence-inventory.py",
+        "$stage/tests/test-ue4ss-portability-contract.py",
+        "$stage/tests/test-verify-loader-artifacts.py",
+        "$stage/docs/ue4ss-portability-contract.json",
+        "$stage/docs/ue4ss-portability-contract.md",
+    ),
+}
+
 DOCS = (
     "docs/client-loader-support.md",
     "docs/linux-client-loader.md",
@@ -329,7 +542,7 @@ def read_first(paths):
 
 def surface_result(text, markers):
     missing = [marker for marker in markers if marker not in text]
-    return {"passed": not missing, "missing": missing}
+    return {"passed": not missing, "missing": missing, "required": list(markers)}
 
 
 def injection_result(target, config, texts):
@@ -356,6 +569,13 @@ def injection_result(target, config, texts):
         "passed": not missing,
         "missing": missing,
     }
+
+
+def package_artifact_layout_result(target, package_text):
+    required = PACKAGE_ARTIFACT_LAYOUTS.get(target, ())
+    result = surface_result(package_text, required)
+    result["required"] = list(required)
+    return result
 
 
 def build_report(target_mode="all"):
@@ -385,6 +605,7 @@ def build_report(target_mode="all"):
             name: surface_result(launcher_text, markers)
             for name, markers in TARGET_LAUNCH_SURFACES.get(target, {}).items()
         }
+        artifact_layout = package_artifact_layout_result(target, package_text)
         injection = injection_result(
             target,
             config,
@@ -395,6 +616,7 @@ def build_report(target_mode="all"):
             "launcher": str(launcher_path.relative_to(ROOT)) if launcher_path else None,
             "package": config["package"] if package_path.exists() else None,
             "injection": injection,
+            "artifactLayout": artifact_layout,
             "surfaces": surfaces,
             "packageSurfaces": package_surfaces,
             "launchSurfaces": launch_surfaces,
@@ -403,6 +625,7 @@ def build_report(target_mode="all"):
                 and bool(launcher_path)
                 and (target_mode == "available" or package_path.exists())
                 and injection["passed"]
+                and artifact_layout["passed"]
                 and all(item["passed"] for item in surfaces.values())
                 and all(item["passed"] for item in package_surfaces.values())
                 and all(item["passed"] for item in launch_surfaces.values())
@@ -431,6 +654,8 @@ def build_report(target_mode="all"):
             "targetPackageLoadingSurface",
             "liveTargetImageCanaryContract",
             "ue4ssLuaApiComplete",
+            "ue4ss-evidence-inventory.md",
+            "summarize-ue4ss-evidence-inventory.py",
             "targetImageAnchors",
             "runtimePackageLoading",
             "NativeExecutorReady",
@@ -471,6 +696,11 @@ def markdown(report):
         lines.append(f"- `{status}` `{target}` injection `{item['injection']['model']}`")
         if item["injection"]["missing"]:
             lines.append("  - missing injection markers: `" + "`, `".join(item["injection"]["missing"]) + "`")
+        artifact_layout = item.get("artifactLayout", {"passed": False, "missing": ["missing artifact layout report"]})
+        artifact_status = "pass" if artifact_layout["passed"] else "block"
+        lines.append(f"  - `{artifact_status}` package `artifact-layout`")
+        if artifact_layout["missing"]:
+            lines.append("    - missing: `" + "`, `".join(artifact_layout["missing"]) + "`")
         for surface_name, surface in item["surfaces"].items():
             surface_status = "pass" if surface["passed"] else "block"
             lines.append(f"  - `{surface_status}` `{surface_name}`")

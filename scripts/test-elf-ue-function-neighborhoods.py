@@ -62,6 +62,15 @@ class ElfUeFunctionNeighborhoodTests(unittest.TestCase):
 
         self.assertEqual([seed.vaddr for seed in seeds], [0x1000, 0x2000])
 
+    def test_parse_explicit_seeds_accepts_named_and_unnamed_addresses(self):
+        seeds = module.parse_explicit_seeds(["streamable=0xa721210", "4096"])
+
+        self.assertEqual([seed.vaddr for seed in seeds], [0xA721210, 0x1000])
+        self.assertEqual(seeds[0].source_name, "streamable")
+        self.assertEqual(seeds[0].source_group, "explicit")
+        self.assertEqual(seeds[0].source_role, "manual-seed")
+        self.assertEqual(seeds[1].source_name, "explicit-4096")
+
     def test_writable_target_summary_preserves_exact_anchor_context(self):
         functions = [
             {
@@ -118,6 +127,9 @@ class ElfUeFunctionNeighborhoodTests(unittest.TestCase):
     def test_exact_anchor_hints_use_token_boundaries(self):
         self.assertEqual(module.exact_anchor_hints("GUObjectArray"), ["GUObjectArray"])
         self.assertEqual(module.exact_anchor_hints("UObject"), ["UObject"])
+        self.assertEqual(module.exact_anchor_hints("uobject-static-load-class"), ["StaticLoadClass"])
+        self.assertEqual(module.exact_anchor_hints("load-asset-package-path"), ["LoadAsset"])
+        self.assertEqual(module.exact_anchor_hints("LoadClass"), ["LoadClass"])
 
 
 if __name__ == "__main__":

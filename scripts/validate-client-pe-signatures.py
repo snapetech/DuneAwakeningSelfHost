@@ -19,6 +19,29 @@ class PatternSpec:
     source: str
     xref_rva: str
     target_rva: str
+    source_provenance: str = ""
+
+
+def is_loader_source(source):
+    normalized = str(source or "").lower().replace("\\", "/")
+    loader_needles = (
+        "dune_client_probe_loader",
+        "dune_server_probe_loader",
+        "dune_win_client_probe_loader",
+        "linux-client-loader",
+        "linux-server-loader",
+        "windows-client-loader",
+        "libdune_",
+    )
+    return any(needle in normalized for needle in loader_needles)
+
+
+def source_provenance(source):
+    if not source:
+        return "unknown"
+    if is_loader_source(source):
+        return "loader"
+    return "target"
 
 
 def parse_int(value):
@@ -84,6 +107,7 @@ def pattern_from_assignment(raw, category="manual", source="manual"):
         expected_file_offset=None,
         category=category,
         source=source,
+        source_provenance=source_provenance(source),
         xref_rva="",
         target_rva="",
     )
@@ -130,6 +154,7 @@ def patterns_from_manifest(path, categories, names, max_seeds, ignore_expected_o
                 expected_file_offset=expected,
                 category=category or "manifest",
                 source=str(path),
+                source_provenance=source_provenance(str(path)),
                 xref_rva=entry.get("xrefRva", ""),
                 target_rva=entry.get("targetRva", ""),
             )
@@ -158,6 +183,7 @@ def patterns_from_xref_summary(summary, categories, names, max_seeds):
                 continue
             values, mask = parse_pattern(pattern)
             expected = parse_int(seed.get("fileOffset"))
+            source = target.get("source", "")
             specs.append(
                 PatternSpec(
                     name=f"{name}@{target_rva}#{index}" if target_rva else f"{name}#{index}",
@@ -166,7 +192,8 @@ def patterns_from_xref_summary(summary, categories, names, max_seeds):
                     mask=mask,
                     expected_file_offset=expected,
                     category=category,
-                    source=target.get("source", ""),
+                    source=source,
+                    source_provenance=target.get("sourceProvenance") or source_provenance(source),
                     xref_rva=ref.get("xrefRva", ""),
                     target_rva=ref.get("targetRva", ""),
                 )
@@ -313,6 +340,7 @@ def validate_patterns(pe, specs, scope, max_matches):
                 "name": spec.name,
                 "category": spec.category,
                 "source": spec.source,
+                "sourceProvenance": spec.source_provenance,
                 "xrefRva": spec.xref_rva,
                 "targetRva": spec.target_rva,
                 "pattern": spec.pattern,

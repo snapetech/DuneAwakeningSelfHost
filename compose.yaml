@@ -25,29 +25,32 @@ x-game-server-preload-env: &game-server-preload-env
   DUNE_PROBE_LOADER_UE_AUTO_DISCOVER_MIN_OBJECT_ARRAY_ELEMENTS: ${DUNE_PROBE_LOADER_UE_AUTO_DISCOVER_MIN_OBJECT_ARRAY_ELEMENTS:-1}
   DUNE_PROBE_LOADER_UE_AUTO_DISCOVER_MAX_REJECTED_FNAME_SAMPLES: ${DUNE_PROBE_LOADER_UE_AUTO_DISCOVER_MAX_REJECTED_FNAME_SAMPLES:-0}
 
+x-game-server-env: &game-server-env
+  DUNE_SERVER_LOGIN_PASSWORD: ${DUNE_SERVER_LOGIN_PASSWORD:-}
+  DUNE_SERVER_DISPLAY_NAME: ${DUNE_SERVER_DISPLAY_NAME:-}
+  DUNE_SERVER_STARTUP_EXECCMDS: ${DUNE_SERVER_STARTUP_EXECCMDS:-}
+  DUNE_FORCE_PRIVATE_IGW_BIND_ADDRESS: ${DUNE_FORCE_PRIVATE_IGW_BIND_ADDRESS:-false}
+  DUNE_IGW_BIND_ADDRESS: ${DUNE_IGW_BIND_ADDRESS:-}
+  DUNE_DISABLE_MULTIHOME: ${DUNE_DISABLE_MULTIHOME:-false}
+  DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED: ${DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED:-false}
+  DUNE_BUILDING_PIECE_LIMIT: ${DUNE_BUILDING_PIECE_LIMIT:-7500}
+  DUNE_LANDSRAAD_VENDOR_FACTION_GATE_PATCH_ENABLED: ${DUNE_LANDSRAAD_VENDOR_FACTION_GATE_PATCH_ENABLED:-false}
+  DUNE_SUBFIEF_CAP_BINARY_PATCH_ENABLED: ${DUNE_SUBFIEF_CAP_BINARY_PATCH_ENABLED:-false}
+  DUNE_SUBFIEF_CAP_BINARY_TARGET: ${DUNE_SUBFIEF_CAP_BINARY_TARGET:-subfief}
+  DUNE_SUBFIEF_CAP: ${DUNE_SUBFIEF_CAP:-6}
+  DUNE_BRT_DD_INVALID_MAP_BINARY_PATCH_ENABLED: ${DUNE_BRT_DD_INVALID_MAP_BINARY_PATCH_ENABLED:-false}
+  DUNE_BRT_DD_ACTION_GATE_BINARY_PATCH_ENABLED: ${DUNE_BRT_DD_ACTION_GATE_BINARY_PATCH_ENABLED:-false}
+  DUNE_BRT_DD_BUILDABLE_MAP_REGION_PATCH_ENABLED: ${DUNE_BRT_DD_BUILDABLE_MAP_REGION_PATCH_ENABLED:-false}
+  DUNE_BRT_DD_TOOL_ENABLE_BINARY_PATCH_ENABLED: ${DUNE_BRT_DD_TOOL_ENABLE_BINARY_PATCH_ENABLED:-false}
+  DUNE_OODLE_LIBRARY: ${DUNE_OODLE_LIBRARY:-/tmp/oodle/liboodle-data-shared.so}
+
 x-game-server-base: &game-server-base
   image: registry.funcom.com/funcom/self-hosting/seabass-server:${DUNE_IMAGE_TAG}
   dns:
     - 1.1.1.1
     - 8.8.8.8
   environment:
-    DUNE_SERVER_LOGIN_PASSWORD: ${DUNE_SERVER_LOGIN_PASSWORD:-}
-    DUNE_SERVER_DISPLAY_NAME: ${DUNE_SERVER_DISPLAY_NAME:-}
-    DUNE_SERVER_STARTUP_EXECCMDS: ${DUNE_SERVER_STARTUP_EXECCMDS:-}
-    DUNE_FORCE_PRIVATE_IGW_BIND_ADDRESS: ${DUNE_FORCE_PRIVATE_IGW_BIND_ADDRESS:-false}
-    DUNE_DISABLE_MULTIHOME: ${DUNE_DISABLE_MULTIHOME:-false}
-    DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED: ${DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED:-false}
-    DUNE_BUILDING_PIECE_LIMIT: ${DUNE_BUILDING_PIECE_LIMIT:-7500}
-    DUNE_LANDSRAAD_VENDOR_FACTION_GATE_PATCH_ENABLED: ${DUNE_LANDSRAAD_VENDOR_FACTION_GATE_PATCH_ENABLED:-false}
-    DUNE_SUBFIEF_CAP_BINARY_PATCH_ENABLED: ${DUNE_SUBFIEF_CAP_BINARY_PATCH_ENABLED:-false}
-    DUNE_SUBFIEF_CAP_BINARY_TARGET: ${DUNE_SUBFIEF_CAP_BINARY_TARGET:-subfief}
-    DUNE_SUBFIEF_CAP: ${DUNE_SUBFIEF_CAP:-6}
-    DUNE_BRT_DD_INVALID_MAP_BINARY_PATCH_ENABLED: ${DUNE_BRT_DD_INVALID_MAP_BINARY_PATCH_ENABLED:-false}
-    DUNE_BRT_DD_ACTION_GATE_BINARY_PATCH_ENABLED: ${DUNE_BRT_DD_ACTION_GATE_BINARY_PATCH_ENABLED:-false}
-    DUNE_BRT_DD_BUILDABLE_MAP_REGION_PATCH_ENABLED: ${DUNE_BRT_DD_BUILDABLE_MAP_REGION_PATCH_ENABLED:-false}
-    DUNE_BRT_DD_TOOL_ENABLE_BINARY_PATCH_ENABLED: ${DUNE_BRT_DD_TOOL_ENABLE_BINARY_PATCH_ENABLED:-false}
-    DUNE_OODLE_LIBRARY: ${DUNE_OODLE_LIBRARY:-/tmp/oodle/liboodle-data-shared.so}
-    <<: *game-server-preload-env
+    <<: [*game-server-env, *game-server-preload-env]
     WORLD_NAME: ${WORLD_NAME}
   depends_on:
     - postgres
@@ -380,7 +383,7 @@ services:
       - *cmd-multihome
       - -PartitionIndex=1
     environment:
-      <<: *game-server-preload-env
+      <<: [*game-server-env, *game-server-preload-env]
       POD_IP: 172.31.240.10
       NODE_NAME: dune-node
       BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
@@ -422,7 +425,7 @@ services:
       - -IGWPort=7889
       - -PartitionIndex=2
     environment:
-      <<: *game-server-preload-env
+      <<: [*game-server-env, *game-server-preload-env]
       POD_IP: 172.31.240.11
       NODE_NAME: dune-node
       BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
@@ -464,7 +467,7 @@ services:
       - -IGWPort=7890
       - -PartitionIndex=3
     environment:
-      <<: *game-server-preload-env
+      <<: [*game-server-env, *game-server-preload-env]
       POD_IP: 172.31.240.12
       NODE_NAME: dune-node
       BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
@@ -506,7 +509,7 @@ services:
       - -IGWPort=7891
       - -PartitionIndex=4
     environment:
-      <<: *game-server-preload-env
+      <<: [*game-server-env, *game-server-preload-env]
       POD_IP: 172.31.240.13
       NODE_NAME: dune-node
       BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
@@ -548,7 +551,7 @@ services:
       - -IGWPort=7892
       - -PartitionIndex=5
     environment:
-      <<: *game-server-preload-env
+      <<: [*game-server-env, *game-server-preload-env]
       POD_IP: 172.31.240.14
       NODE_NAME: dune-node
       BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
@@ -590,7 +593,7 @@ services:
       - -IGWPort=7893
       - -PartitionIndex=6
     environment:
-      <<: *game-server-preload-env
+      <<: [*game-server-env, *game-server-preload-env]
       POD_IP: 172.31.240.15
       NODE_NAME: dune-node
       BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
@@ -632,7 +635,7 @@ services:
       - -IGWPort=7894
       - -PartitionIndex=7
     environment:
-      <<: *game-server-preload-env
+      <<: [*game-server-env, *game-server-preload-env]
       POD_IP: 172.31.240.16
       NODE_NAME: dune-node
       BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
@@ -674,16 +677,16 @@ services:
       - -IGWPort=7895
       - -PartitionIndex=8
     environment:
-      <<: *game-server-preload-env
+      <<: [*game-server-env, *game-server-preload-env]
       POD_IP: 172.31.240.17
       NODE_NAME: dune-node
       BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}
       WORLD_NAME: ${WORLD_NAME}
       DUNE_USERGAME_CONFIG_PATH: /workspace/config/UserGame.deep-desert-coriolis.ini
       DUNE_USERENGINE_CONFIG_PATH: /workspace/config/UserEngine.deep-desert.ini
-      DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED: "true"
+      DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED: ${DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED:-false}
       DUNE_BUILDING_PIECE_LIMIT: ${DUNE_BUILDING_PIECE_LIMIT:-7500}
-      DUNE_SUBFIEF_CAP_BINARY_PATCH_ENABLED: "true"
+      DUNE_SUBFIEF_CAP_BINARY_PATCH_ENABLED: ${DUNE_SUBFIEF_CAP_BINARY_PATCH_ENABLED:-false}
       DUNE_SUBFIEF_CAP_BINARY_TARGET: ${DUNE_SUBFIEF_CAP_BINARY_TARGET:-all}
       DUNE_SUBFIEF_CAP: ${DUNE_SUBFIEF_CAP:-6}
       DUNE_BRT_DD_INVALID_MAP_BINARY_PATCH_ENABLED: "false"
@@ -734,7 +737,7 @@ services:
       - -IGWPort=7896
       - -PartitionIndex=9
     environment:
-      <<: *game-server-preload-env
+      <<: [*game-server-env, *game-server-preload-env]
       POD_IP: 172.31.240.18
       NODE_NAME: dune-node
       BATTLEGROUP_DISPLAY_NAME: ${WORLD_UNIQUE_NAME}

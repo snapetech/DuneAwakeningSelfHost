@@ -14,7 +14,7 @@ CORE_ANCHOR_GROUPS = {
     "objects": ("GUObjectArray", "GObjectArray", "GObjects", "FUObjectArray"),
     "world": ("GWorld", "GEngine"),
     "dispatch": ("ProcessEvent", "StaticFindObject", "CallFunctionByNameWithArguments", "CallFunctionByName"),
-    "package": ("StaticLoadObject", "LoadObject", "LoadPackage", "ResolveName", "LoadAsset", "LoadClass"),
+    "package": ("StaticLoadObject", "StaticLoadClass", "LoadObject", "LoadPackage", "ResolveName", "LoadAsset", "LoadClass"),
     "reflection": ("UObject", "UFunction", "UClass", "FProperty", "FObjectProperty", "FArrayProperty", "FBoolProperty", "FStructProperty", "UStruct", "UEnum"),
 }
 REQUIRED_DISCOVERY_GROUPS = ("names", "objects", "world", "dispatch")
@@ -84,6 +84,10 @@ def default_canary_log_path(platform):
 def load_json(path):
     with path.open("r", encoding="utf-8", errors="replace") as handle:
         return json.load(handle)
+
+
+def command_text(argv):
+    return " ".join(shlex.quote(str(part)) for part in argv)
 
 
 def build_manifest(args, config):
@@ -199,6 +203,10 @@ def write_post_canary_verify_script(path, platform, config):
         'if [ ! -f "$gaps_script" ]; then',
         '  gaps_script="scripts/summarize-ue4ss-port-gaps.py"',
         "fi",
+        f"inventory_script=${{DUNE_UE4SS_EVIDENCE_INVENTORY_SCRIPT:-{shlex.quote(str(Path(__file__).resolve().parent / 'summarize-ue4ss-evidence-inventory.py'))}}}",
+        'if [ ! -f "$inventory_script" ]; then',
+        '  inventory_script="scripts/summarize-ue4ss-evidence-inventory.py"',
+        "fi",
         f"loader_log=${{1:-{shlex.quote(default_log)}}}",
         '"${PYTHON:-python3}" "$readiness_script" \\',
         f"  {shlex.quote(log_arg)} \"$loader_log\" \\",
@@ -240,7 +248,19 @@ def write_post_canary_verify_script(path, platform, config):
         "    'ueCallFunctionHookRuntimeTarget': 'ue-call-function-hook-runtime-target',",
         "    'ueProcessEventLiveHookRuntimeTarget': 'ue-process-event-live-hook-runtime-target',",
         "    'ueCallFunctionLiveHookRuntimeTarget': 'ue-call-function-live-hook-runtime-target',",
+        "    'ueProcessEventActiveValidation': 'ue-process-event-active-validation',",
+        "    'ueCallFunctionActiveValidation': 'ue-call-function-active-validation',",
         "    'ueCallFunctionLiveLuaDispatch': 'ue-call-function-live-lua-dispatch',",
+        "    'luaCallFunctionNativeInvoke': 'lua-call-function-native-invoke',",
+        "    'luaCallFunctionNativeInvokePreflight': 'lua-call-function-native-invoke-preflight',",
+        "    'luaCallFunctionNativeExecutorState': 'lua-call-function-native-executor-state',",
+        "    'luaCallFunctionNativeInvokeNonSelfTestGate': 'lua-call-function-native-invoke-non-self-test-gate',",
+        "    'luaCallFunctionNativeInvokeNonSelfTestInvoked': 'lua-call-function-native-invoke-non-self-test-invoked',",
+        "    'luaProcessEventNativeInvoke': 'lua-process-event-native-invoke',",
+        "    'luaProcessEventNativeInvokeDescriptorPreflight': 'lua-process-event-native-invoke-descriptor-preflight',",
+        "    'luaProcessEventNativeExecutorState': 'lua-process-event-native-executor-state',",
+        "    'luaProcessEventNativeInvokeNonSelfTestGate': 'lua-process-event-native-invoke-non-self-test-gate',",
+        "    'luaProcessEventNativeInvokeNonSelfTestInvoked': 'lua-process-event-native-invoke-non-self-test-invoked',",
         "    'ueProcessEventLiveLuaDispatch': 'ue-process-event-live-lua-dispatch',",
         "    'ueProcessEventLiveFunctionPath': 'ue-process-event-live-function-path',",
         "    'ueProcessEventLiveRuntimeContext': 'ue-process-event-live-runtime-context',",
@@ -283,6 +303,9 @@ def write_post_canary_verify_script(path, platform, config):
         "    'luaObjectOuterChainIdentities': 'lua-object-outer-chain-identities',",
         "    'luaObjectApi': 'lua-object-api',",
         "    'luaFunctionIterationRuntime': 'lua-function-iteration-runtime',",
+        "    'luaStaticConstructObjectNativeExecutorState': 'lua-static-construct-object-native-executor-state',",
+        "    'luaStaticConstructObjectNativeExecutorReady': 'lua-static-construct-object-native-executor-ready',",
+        "    'luaStaticConstructObjectNativeInvoke': 'lua-static-construct-object-native-invoke',",
         "    'ueReflectionPropertyDescriptorsRuntime': 'ue-reflection-property-descriptors-runtime',",
         "    'ueReflectionPropertyValuesRuntime': 'ue-reflection-property-values-runtime',",
         "    'luaReflectionForEachPropertyRuntime': 'lua-reflection-for-each-property-runtime',",
@@ -296,7 +319,12 @@ def write_post_canary_verify_script(path, platform, config):
         "    'luaLoadAssetPackageNativeCallAdapter': 'lua-load-asset-package-native-call-adapter',",
         "    'luaLoadAssetPackageInvocationDescriptor': 'lua-load-asset-package-invocation-descriptor',",
         "    'luaLoadAssetPackageNativeExecutor': 'lua-load-asset-package-native-executor',",
+        "    'luaLoadAssetPackageNativeInvocation': 'lua-load-asset-package-native-invocation',",
         "    'luaLoadAssetPackage': 'lua-load-asset-package',",
+        "    'luaLoadClassPackageAbiState': 'lua-load-class-package-abi-state',",
+        "    'luaLoadClassPackageCallFrameVerification': 'lua-load-class-package-call-frame-verification',",
+        "    'luaLoadClassPackageNativeExecutor': 'lua-load-class-package-native-executor',",
+        "    'luaLoadClassPackageNativeInvocation': 'lua-load-class-package-native-invocation',",
         "}",
         "runtime_contract_status = {key: runtime_ready(key, gate) for key, gate in runtime_contract_key_gates.items()}",
         "missing_runtime_contract = [key for key, value in runtime_contract_status.items() if not value]",
@@ -311,11 +339,11 @@ def write_post_canary_verify_script(path, platform, config):
         "missing_signature_anchor_contract = [key for key, value in strict_signature_anchor_status.items() if not value]",
         "live_target_image_contract_groups = {",
         "    'targetImageAnchors': ('targetImageProcess', 'runtimeRootDiscovery', 'runtimeRootValidation', 'targetObjectDiscovery', 'targetHooks', 'targetPackageLoadingSurface', 'signatureManifestExact', 'signatureManifestPromotable', 'anchorCoverageObjectDiscovery', 'anchorCoverageHookPlanning', 'anchorCoveragePackageLoading'),",
-        "    'runtimePackageLoading': ('luaLoadAssetPackageCrashGuard', 'luaLoadAssetPackageGuardedCall', 'luaLoadAssetPackageReturnValidation', 'luaLoadAssetPackageNativeCallAdapter', 'luaLoadAssetPackageInvocationDescriptor', 'luaLoadAssetPackageNativeExecutor', 'luaLoadAssetPackage'),",
-        "    'runtimeObjectRegistry': ('objectDiscoveryCoverage', 'findObjectSemantics', 'luaObjectRegistryRuntime', 'luaFunctionRegistryRuntime', 'luaDecodedObjectAliasesRuntime', 'ueObjectArrayShape', 'ueObjectArrayRegistryRuntime', 'ueObjectNativeIdentities', 'ueObjectInternalFlags', 'ueFNameDecoder', 'luaObjectOuterChainIdentities', 'luaObjectApi', 'luaFunctionIterationRuntime'),",
+        "    'runtimePackageLoading': ('luaLoadAssetPackageCrashGuard', 'luaLoadAssetPackageGuardedCall', 'luaLoadAssetPackageReturnValidation', 'luaLoadAssetPackageNativeCallAdapter', 'luaLoadAssetPackageInvocationDescriptor', 'luaLoadAssetPackageNativeExecutor', 'luaLoadAssetPackageNativeInvocation', 'luaLoadAssetPackage', 'luaLoadClassPackageAbiState', 'luaLoadClassPackageCallFrameVerification', 'luaLoadClassPackageNativeExecutor', 'luaLoadClassPackageNativeInvocation'),",
+        "    'runtimeObjectRegistry': ('objectDiscoveryCoverage', 'findObjectSemantics', 'luaObjectRegistryRuntime', 'luaFunctionRegistryRuntime', 'luaDecodedObjectAliasesRuntime', 'ueObjectArrayShape', 'ueObjectArrayRegistryRuntime', 'ueObjectNativeIdentities', 'ueObjectInternalFlags', 'ueFNameDecoder', 'luaObjectOuterChainIdentities', 'luaObjectApi', 'luaFunctionIterationRuntime', 'luaStaticConstructObjectNativeExecutorState', 'luaStaticConstructObjectNativeExecutorReady', 'luaStaticConstructObjectNativeInvoke'),",
         "    'runtimeReflection': ('ueReflectionPropertyDescriptorsRuntime', 'ueReflectionPropertyValuesRuntime', 'luaReflectionForEachPropertyRuntime', 'luaReflectionLiveDescriptorTypedClassRuntime', 'luaReflectionLiveDescriptorTypedValuesRuntime', 'luaReflectionLiveDescriptorTypedSetValuesRuntime', 'luaReflectionLiveDescriptorValuesRuntime'),",
-        "    'runtimeProcessEventDispatch': ('ueProcessEventHookRuntimeTarget', 'ueProcessEventLiveHookRuntimeTarget', 'ueProcessEventLiveLuaDispatch', 'ueProcessEventLiveFunctionPath', 'ueProcessEventLiveRuntimeContext', 'ueProcessEventLiveRegistryContext', 'ueProcessEventLiveRuntimeRegistryContext', 'ueProcessEventLiveParamValues', 'ueProcessEventLiveRawParamValues', 'ueProcessEventLiveContainerParamValues', 'ueProcessEventLiveArrayContainerParamValues', 'ueProcessEventLiveSetContainerParamValues', 'ueProcessEventLiveMapContainerParamValues', 'ueProcessEventLiveSetMapContainerParamValues', 'ueProcessEventLiveContainerDataSamples', 'ueProcessEventLuaContextHandles', 'ueProcessEventLuaParamAccessors', 'ueProcessEventLiveClassAwareParamValues', 'ueProcessEventFunctionParamMethod', 'ueProcessEventFunctionParamLookupMethod', 'ueProcessEventFunctionParamIterationMethod', 'ueProcessEventContainerAliasMethods', 'ueProcessEventContainerStorageLayoutMethods', 'ueProcessEventLuaScalarParamAccessors', 'ueProcessEventLuaNameStringParamAccessors', 'ueProcessEventLuaStructParamAccessors', 'ueProcessEventLuaEnumParamAccessors', 'ueProcessEventLuaObjectParamAccessors', 'ueProcessEventLuaBoolParamAccessors', 'ueProcessEventLuaHookRouting', 'ueProcessEventLuaHookAliasRouting'),",
-        "    'runtimeCallFunctionDispatch': ('ueCallFunctionHookRuntimeTarget', 'ueCallFunctionLiveHookRuntimeTarget', 'ueCallFunctionLiveLuaDispatch'),",
+        "    'runtimeProcessEventDispatch': ('ueProcessEventHookRuntimeTarget', 'ueProcessEventLiveHookRuntimeTarget', 'ueProcessEventActiveValidation', 'ueProcessEventLiveLuaDispatch', 'ueProcessEventLiveFunctionPath', 'ueProcessEventLiveRuntimeContext', 'ueProcessEventLiveRegistryContext', 'ueProcessEventLiveRuntimeRegistryContext', 'ueProcessEventLiveParamValues', 'ueProcessEventLiveRawParamValues', 'ueProcessEventLiveContainerParamValues', 'ueProcessEventLiveArrayContainerParamValues', 'ueProcessEventLiveSetContainerParamValues', 'ueProcessEventLiveMapContainerParamValues', 'ueProcessEventLiveSetMapContainerParamValues', 'ueProcessEventLiveContainerDataSamples', 'ueProcessEventLuaContextHandles', 'ueProcessEventLuaParamAccessors', 'ueProcessEventLiveClassAwareParamValues', 'ueProcessEventFunctionParamMethod', 'ueProcessEventFunctionParamLookupMethod', 'ueProcessEventFunctionParamIterationMethod', 'ueProcessEventContainerAliasMethods', 'ueProcessEventContainerStorageLayoutMethods', 'ueProcessEventLuaScalarParamAccessors', 'ueProcessEventLuaNameStringParamAccessors', 'ueProcessEventLuaStructParamAccessors', 'ueProcessEventLuaEnumParamAccessors', 'ueProcessEventLuaObjectParamAccessors', 'ueProcessEventLuaBoolParamAccessors', 'ueProcessEventLuaHookRouting', 'ueProcessEventLuaHookAliasRouting', 'luaProcessEventNativeInvoke', 'luaProcessEventNativeInvokeDescriptorPreflight', 'luaProcessEventNativeExecutorState', 'luaProcessEventNativeInvokeNonSelfTestGate', 'luaProcessEventNativeInvokeNonSelfTestInvoked'),",
+        "    'runtimeCallFunctionDispatch': ('ueCallFunctionHookRuntimeTarget', 'ueCallFunctionLiveHookRuntimeTarget', 'ueCallFunctionActiveValidation', 'ueCallFunctionLiveLuaDispatch', 'luaCallFunctionNativeInvoke', 'luaCallFunctionNativeInvokePreflight', 'luaCallFunctionNativeExecutorState', 'luaCallFunctionNativeInvokeNonSelfTestGate', 'luaCallFunctionNativeInvokeNonSelfTestInvoked'),",
         "}",
         "live_target_image_status = {}",
         "combined_contract_status = {}",
@@ -350,7 +378,7 @@ def write_post_canary_verify_script(path, platform, config):
         "lines.append('')",
         "lines.append('## Runtime Evidence')",
         "lines.append('')",
-        "for key in ('targetImageProcess', 'runtimeRootDiscovery', 'runtimeRootValidation', 'targetObjectDiscovery', 'targetHooks', 'ueProcessEventHookRuntimeTarget', 'ueCallFunctionHookRuntimeTarget', 'ueProcessEventLiveHookRuntimeTarget', 'ueCallFunctionLiveHookRuntimeTarget', 'ueCallFunctionLiveLuaDispatch', 'ueProcessEventLiveLuaDispatch', 'ueProcessEventLiveFunctionPath', 'ueProcessEventLiveRuntimeContext', 'ueProcessEventLiveRegistryContext', 'ueProcessEventLiveRuntimeRegistryContext', 'ueProcessEventLiveParamValues', 'ueProcessEventLiveRawParamValues', 'ueProcessEventLiveContainerParamValues', 'ueProcessEventLiveArrayContainerParamValues', 'ueProcessEventLiveSetContainerParamValues', 'ueProcessEventLiveMapContainerParamValues', 'ueProcessEventLiveSetMapContainerParamValues', 'ueProcessEventLiveContainerDataSamples', 'ueProcessEventLuaContextHandles', 'ueProcessEventLuaParamAccessors', 'ueProcessEventLiveClassAwareParamValues', 'ueProcessEventFunctionParamMethod', 'ueProcessEventFunctionParamLookupMethod', 'ueProcessEventFunctionParamIterationMethod', 'ueProcessEventContainerAliasMethods', 'ueProcessEventContainerStorageLayoutMethods', 'ueProcessEventLuaScalarParamAccessors', 'ueProcessEventLuaNameStringParamAccessors', 'ueProcessEventLuaStructParamAccessors', 'ueProcessEventLuaEnumParamAccessors', 'ueProcessEventLuaObjectParamAccessors', 'ueProcessEventLuaBoolParamAccessors', 'ueProcessEventLuaHookRouting', 'ueProcessEventLuaHookAliasRouting', 'luaObjectRegistryRuntime', 'luaFunctionRegistryRuntime', 'luaDecodedObjectAliasesRuntime', 'ueObjectArrayRegistryRuntime', 'luaFunctionIterationRuntime'):",
+        "for key in ('targetImageProcess', 'runtimeRootDiscovery', 'runtimeRootValidation', 'targetObjectDiscovery', 'targetHooks', 'ueProcessEventHookRuntimeTarget', 'ueCallFunctionHookRuntimeTarget', 'ueProcessEventLiveHookRuntimeTarget', 'ueCallFunctionLiveHookRuntimeTarget', 'ueProcessEventActiveValidation', 'ueCallFunctionActiveValidation', 'ueCallFunctionLiveLuaDispatch', 'luaCallFunctionNativeInvoke', 'luaCallFunctionNativeInvokePreflight', 'luaCallFunctionNativeExecutorState', 'luaCallFunctionNativeInvokeNonSelfTestGate', 'luaCallFunctionNativeInvokeNonSelfTestInvoked', 'luaProcessEventNativeInvoke', 'luaProcessEventNativeInvokeDescriptorPreflight', 'luaProcessEventNativeExecutorState', 'luaProcessEventNativeInvokeNonSelfTestGate', 'luaProcessEventNativeInvokeNonSelfTestInvoked', 'ueProcessEventLiveLuaDispatch', 'ueProcessEventLiveFunctionPath', 'ueProcessEventLiveRuntimeContext', 'ueProcessEventLiveRegistryContext', 'ueProcessEventLiveRuntimeRegistryContext', 'ueProcessEventLiveParamValues', 'ueProcessEventLiveRawParamValues', 'ueProcessEventLiveContainerParamValues', 'ueProcessEventLiveArrayContainerParamValues', 'ueProcessEventLiveSetContainerParamValues', 'ueProcessEventLiveMapContainerParamValues', 'ueProcessEventLiveSetMapContainerParamValues', 'ueProcessEventLiveContainerDataSamples', 'ueProcessEventLuaContextHandles', 'ueProcessEventLuaParamAccessors', 'ueProcessEventLiveClassAwareParamValues', 'ueProcessEventFunctionParamMethod', 'ueProcessEventFunctionParamLookupMethod', 'ueProcessEventFunctionParamIterationMethod', 'ueProcessEventContainerAliasMethods', 'ueProcessEventContainerStorageLayoutMethods', 'ueProcessEventLuaScalarParamAccessors', 'ueProcessEventLuaNameStringParamAccessors', 'ueProcessEventLuaStructParamAccessors', 'ueProcessEventLuaEnumParamAccessors', 'ueProcessEventLuaObjectParamAccessors', 'ueProcessEventLuaBoolParamAccessors', 'ueProcessEventLuaHookRouting', 'ueProcessEventLuaHookAliasRouting', 'luaObjectRegistryRuntime', 'luaFunctionRegistryRuntime', 'luaDecodedObjectAliasesRuntime', 'ueObjectArrayRegistryRuntime', 'luaFunctionIterationRuntime', 'luaStaticConstructObjectNativeExecutorState', 'luaStaticConstructObjectNativeExecutorReady', 'luaStaticConstructObjectNativeInvoke', 'luaLoadAssetPackageNativeExecutor', 'luaLoadAssetPackageNativeInvocation', 'luaLoadAssetPackage', 'luaLoadClassPackageAbiState', 'luaLoadClassPackageCallFrameVerification', 'luaLoadClassPackageNativeExecutor', 'luaLoadClassPackageNativeInvocation'):",
         "    lines.append(f\"- {key}: `{str(bool(runtime_contract_status.get(key))).lower()}`\")",
         "lines.append('')",
         "lines.append('## Runtime Evidence Contract')",
@@ -358,6 +386,8 @@ def write_post_canary_verify_script(path, platform, config):
         "lines.append('- Registry rows must include `registryProvenance=runtime`; `self-test` rows do not unlock runtime readiness.')",
         "lines.append('- Live ProcessEvent context rows must include `functionProvenance=runtime` before Lua dispatch is treated as runtime-backed.')",
         "lines.append('- Live CallFunctionByNameWithArguments hook rows must show `luaDispatch=true` before CallFunction Lua parity is treated as proven.')",
+        "lines.append('- Active ProcessEvent validation must emit `event=ue-process-event-active-validate status=invoked targetEntry=true` with positive live/original deltas.')",
+        "lines.append('- Active CallFunctionByNameWithArguments validation must emit `event=ue-call-function-active-validate status=invoked targetEntry=true` with positive live/original deltas.')",
         "lines.append('- Hook target rows must show `selfTestTarget=false` and `callSelfTest=false` before live-hook escalation.')",
         "lines.append('- Target-image readiness requires core anchors to resolve in the game executable/module, not the probe loader image.')",
         "lines.append('- Signature validation must show exact same-build and promotable UE anchor signatures before strict readiness.')",
@@ -409,12 +439,24 @@ def write_post_canary_verify_script(path, platform, config):
         '  "${PYTHON:-python3}" "$gaps_script" "${gap_args[@]}" --format json > "$script_dir/ue4ss-port-gaps.json"',
         '  "${PYTHON:-python3}" "$gaps_script" "${gap_args[@]}" --format markdown > "$script_dir/ue4ss-port-gaps.md"',
         "fi",
+        'if [ -f "$inventory_script" ]; then',
+        '  inventory_args=("$script_dir" --limit 12)',
+        '  if [ "${DUNE_UE4SS_STRICT_RUNTIME_CONTRACT:-}" = "true" ]; then',
+        '    inventory_args+=(--require-complete)',
+        "  fi",
+        '  "${PYTHON:-python3}" "$inventory_script" "${inventory_args[@]}" --format json > "$script_dir/ue4ss-evidence-inventory.json"',
+        '  "${PYTHON:-python3}" "$inventory_script" "${inventory_args[@]}" --format markdown > "$script_dir/ue4ss-evidence-inventory.md"',
+        "fi",
         'echo "wrote $script_dir/ue4ss-readiness.json"',
         'echo "wrote $script_dir/object-discovery-coverage.json"',
         'echo "wrote $script_dir/post-canary-summary.md"',
         'if [ -f "$script_dir/ue4ss-port-gaps.md" ]; then',
         '  echo "wrote $script_dir/ue4ss-port-gaps.json"',
         '  echo "wrote $script_dir/ue4ss-port-gaps.md"',
+        "fi",
+        'if [ -f "$script_dir/ue4ss-evidence-inventory.md" ]; then',
+        '  echo "wrote $script_dir/ue4ss-evidence-inventory.json"',
+        '  echo "wrote $script_dir/ue4ss-evidence-inventory.md"',
         "fi",
         "",
     ]
@@ -467,7 +509,206 @@ def anchor_entry_provenance(entry):
     return "target"
 
 
-def build_anchor_coverage(exporter, manifest, anchor_export):
+def source_provenance_from_entry(entry):
+    return anchor_entry_provenance(entry)
+
+
+def canonical_core_anchor_from_symbol(row):
+    demangled = row.get("demangled") or row.get("name") or ""
+    raw = row.get("name") or ""
+    role = row.get("role") or ""
+    haystacks = (demangled, raw)
+    if role == "process-event" or any("ProcessEvent" in value for value in haystacks):
+        return "ProcessEvent"
+    if any("StaticFindObject" in value for value in haystacks):
+        return "StaticFindObject"
+    if any("CallFunctionByNameWithArguments" in value for value in haystacks):
+        return "CallFunctionByNameWithArguments"
+    if any("CallFunctionByName" in value for value in haystacks):
+        return "CallFunctionByName"
+    if any("StaticLoadObject" in value for value in haystacks):
+        return "StaticLoadObject"
+    if any("StaticLoadClass" in value for value in haystacks):
+        return "StaticLoadClass"
+    if any("LoadPackage" in value for value in haystacks):
+        return "LoadPackage"
+    if any("ResolveName" in value for value in haystacks):
+        return "ResolveName"
+    if any("LoadObject" in value for value in haystacks):
+        return "LoadObject"
+    if any("LoadClass" in value for value in haystacks):
+        return "LoadClass"
+    if any("LoadAsset" in value for value in haystacks):
+        return "LoadAsset"
+    for anchor in ("FNamePool", "NamePoolData", "GNames", "GName", "GUObjectArray", "GObjectArray", "GObjects", "FUObjectArray", "GWorld", "GEngine"):
+        if any(anchor in value for value in haystacks):
+            return anchor
+    for anchor in CORE_ANCHOR_GROUPS["reflection"]:
+        if any(anchor in value for value in haystacks):
+            return anchor
+    return None
+
+
+def symbol_surface_anchor_entries(symbol_surface):
+    if not isinstance(symbol_surface, dict):
+        return []
+    binary = symbol_surface.get("binary", "")
+    entries = []
+    seen = set()
+    for row in symbol_surface.get("rows", []):
+        if row.get("falsePositive"):
+            continue
+        if row.get("role") not in ("process-event", "dispatch-function", "package-function", "global-symbol"):
+            continue
+        anchor = canonical_core_anchor_from_symbol(row)
+        if not anchor:
+            continue
+        key = (anchor, row.get("section"), row.get("value"), row.get("name"))
+        if key in seen:
+            continue
+        seen.add(key)
+        entries.append(
+            {
+                "name": anchor,
+                "source": binary,
+                "symbolName": row.get("name", ""),
+                "demangled": row.get("demangled", ""),
+                "role": row.get("role", ""),
+                "section": row.get("section", ""),
+                "value": row.get("value", 0),
+                "sourceProvenance": "loader" if is_loader_source(binary) else ("target" if binary else "unknown"),
+            }
+        )
+    return entries
+
+
+def candidate_global_anchor_entries(candidate_globals):
+    if not isinstance(candidate_globals, dict):
+        return []
+    entries = []
+    seen = set()
+    for row in candidate_globals.get("candidates", []):
+        anchor = row.get("name", "")
+        if not anchor:
+            continue
+        key = (anchor, row.get("imageOffset", ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        source = row.get("source") or candidate_globals.get("binary", "")
+        entries.append(
+            {
+                "name": anchor,
+                "source": source,
+                "imageOffset": row.get("imageOffset", ""),
+                "sourceTarget": row.get("sourceTarget", ""),
+                "score": row.get("score", 0),
+                "sourceProvenance": row.get("sourceProvenance") or ("loader" if is_loader_source(source) else ("target" if source else "unknown")),
+            }
+        )
+    return entries
+
+
+def vtable_candidate_anchor_entries(vtable_candidates):
+    if not isinstance(vtable_candidates, dict):
+        return []
+    entries = []
+    seen = set()
+    for row in vtable_candidates.get("hookProbeShortlist", []) + vtable_candidates.get("rankedSlots", []):
+        top_target = row.get("topTarget") or {}
+        if top_target.get("targetName") != "ProcessEvent":
+            continue
+        if top_target.get("targetSource") != "vtable-candidate":
+            continue
+        candidate_count = int(row.get("candidateCount", 0) or 0)
+        if float(row.get("objectCoverage", 0.0) or 0.0) < 0.45 and candidate_count < 128:
+            continue
+        if float(row.get("topTargetShare", 0.0) or 0.0) < 0.75:
+            continue
+        reasons = set(row.get("reasons", []) or [])
+        if "ue4-uobject-process-event-slot-heuristic" not in reasons:
+            continue
+        image_offset = top_target.get("imageOffset") or top_target.get("rva") or ""
+        source = top_target.get("map") or top_target.get("module") or vtable_candidates.get("binary", "")
+        key = ("ProcessEvent", image_offset, row.get("slot"))
+        if key in seen:
+            continue
+        seen.add(key)
+        entries.append(
+            {
+                "name": "ProcessEvent",
+                "source": source,
+                "imageOffset": image_offset,
+                "slot": row.get("slot"),
+                "score": row.get("score", 0),
+                "objectCoverage": row.get("objectCoverage", 0),
+                "topTargetShare": row.get("topTargetShare", 0),
+                "sourceProvenance": "loader" if is_loader_source(source) else ("target" if source else "unknown"),
+            }
+        )
+    return entries
+
+
+def package_loader_vtable_candidates(package_loader_vtables):
+    if not isinstance(package_loader_vtables, dict):
+        return {
+            "entryCount": 0,
+            "methodEntryCount": 0,
+            "vtableCount": 0,
+            "vtables": [],
+            "strongestMethods": [],
+        }
+    entries = []
+    vtable_names = set()
+    vtable_rows = []
+    vtable_rows.extend(package_loader_vtables.get("vtables", []) or [])
+    vtable_rows.extend(package_loader_vtables.get("rows", []) or [])
+    for vtable in vtable_rows:
+        vtable_name = vtable.get("demangled") or vtable.get("name") or ""
+        if vtable_name:
+            vtable_names.add(vtable_name)
+        slot_rows = vtable.get("executableSlots") or vtable.get("slots", []) or []
+        for slot in slot_rows:
+            candidate_kind = slot.get("candidateKind") or slot.get("kind") or ""
+            entry = {
+                "vtable": vtable_name,
+                "slot": slot.get("index") if slot.get("index") is not None else slot.get("slot"),
+                "target": slot.get("target") or slot.get("value") or slot.get("imageOffset") or "",
+                "demangled": slot.get("demangled") or slot.get("symbol") or "",
+                "candidateKind": candidate_kind,
+                "sourceHints": slot.get("sourceHints") or slot.get("sourcePathHints") or [],
+            }
+            entries.append(entry)
+    method_entries = [
+        entry for entry in entries
+        if entry.get("candidateKind") == "method"
+    ]
+    strongest_methods = sorted(
+        method_entries,
+        key=lambda entry: (
+            str(entry.get("vtable") or ""),
+            int(entry.get("slot") or 0),
+            str(entry.get("target") or ""),
+        ),
+    )[:8]
+    return {
+        "entryCount": len(entries),
+        "methodEntryCount": len(method_entries),
+        "vtableCount": len(vtable_names),
+        "vtables": sorted(vtable_names),
+        "strongestMethods": strongest_methods,
+    }
+
+
+def build_anchor_coverage(
+    exporter,
+    manifest,
+    anchor_export,
+    symbol_surface=None,
+    candidate_globals=None,
+    vtable_candidates=None,
+    package_loader_vtables=None,
+):
     explicit_entries_by_anchor = {}
     for entry in anchor_export["entries"]:
         explicit_entries_by_anchor.setdefault(entry["name"], []).append(entry)
@@ -488,9 +729,57 @@ def build_anchor_coverage(exporter, manifest, anchor_export):
         category = entry.get("category") or "unknown"
         signature_entry_category_counts[category] = signature_entry_category_counts.get(category, 0) + 1
     signature_transforms = {}
+    signature_provenance_counts_by_anchor = {}
     for entry in signature_entries:
-        signature_transforms.setdefault(entry["anchorName"], set()).add(entry["anchorTransform"])
-    combined_anchors = sorted(explicit_anchors | signature_anchors, key=anchor_sort_key)
+        anchor_name = entry["anchorName"]
+        signature_transforms.setdefault(anchor_name, set()).add(entry["anchorTransform"])
+        provenance = entry.get("sourceProvenance") or source_provenance_from_entry(entry)
+        counts = signature_provenance_counts_by_anchor.setdefault(
+            anchor_name,
+            {"target": 0, "loader": 0, "unknown": 0},
+        )
+        counts[provenance if provenance in counts else "unknown"] += 1
+    symbol_entries_by_anchor = {}
+    symbol_provenance_counts_by_anchor = {}
+    for entry in symbol_surface_anchor_entries(symbol_surface):
+        anchor_name = entry["name"]
+        symbol_entries_by_anchor.setdefault(anchor_name, []).append(entry)
+        provenance = entry.get("sourceProvenance", "unknown")
+        counts = symbol_provenance_counts_by_anchor.setdefault(
+            anchor_name,
+            {"target": 0, "loader": 0, "unknown": 0},
+        )
+        counts[provenance if provenance in counts else "unknown"] += 1
+    symbol_anchors = set(symbol_entries_by_anchor)
+    candidate_global_entries_by_anchor = {}
+    candidate_global_provenance_counts_by_anchor = {}
+    for entry in candidate_global_anchor_entries(candidate_globals):
+        anchor_name = entry["name"]
+        candidate_global_entries_by_anchor.setdefault(anchor_name, []).append(entry)
+        provenance = entry.get("sourceProvenance", "unknown")
+        counts = candidate_global_provenance_counts_by_anchor.setdefault(
+            anchor_name,
+            {"target": 0, "loader": 0, "unknown": 0},
+        )
+        counts[provenance if provenance in counts else "unknown"] += 1
+    candidate_global_anchors = set(candidate_global_entries_by_anchor)
+    vtable_entries_by_anchor = {}
+    vtable_provenance_counts_by_anchor = {}
+    for entry in vtable_candidate_anchor_entries(vtable_candidates):
+        anchor_name = entry["name"]
+        vtable_entries_by_anchor.setdefault(anchor_name, []).append(entry)
+        provenance = entry.get("sourceProvenance", "unknown")
+        counts = vtable_provenance_counts_by_anchor.setdefault(
+            anchor_name,
+            {"target": 0, "loader": 0, "unknown": 0},
+        )
+        counts[provenance if provenance in counts else "unknown"] += 1
+    vtable_anchors = set(vtable_entries_by_anchor)
+    package_loader_vtable_summary = package_loader_vtable_candidates(package_loader_vtables)
+    combined_anchors = sorted(
+        explicit_anchors | signature_anchors | symbol_anchors | candidate_global_anchors | vtable_anchors,
+        key=anchor_sort_key,
+    )
 
     groups = {}
     for group_name, group_anchors in CORE_ANCHOR_GROUPS.items():
@@ -507,6 +796,12 @@ def build_anchor_coverage(exporter, manifest, anchor_export):
                 sources.append("runtime-candidate")
             if anchor in signature_anchors:
                 sources.append("signature")
+            if anchor in symbol_anchors:
+                sources.append("symbol-surface")
+            if anchor in candidate_global_anchors:
+                sources.append("candidate-global")
+            if anchor in vtable_anchors:
+                sources.append("vtable-candidate")
             present = bool(sources)
             if present:
                 present_count += 1
@@ -521,10 +816,43 @@ def build_anchor_coverage(exporter, manifest, anchor_export):
                     explicit_loader_count += 1
                 else:
                     explicit_unknown_count += 1
-            signature_target_count = 1 if anchor in signature_anchors else 0
-            target_source_count = explicit_target_count + signature_target_count
-            loader_source_count = explicit_loader_count
-            unknown_source_count = explicit_unknown_count
+            signature_counts = signature_provenance_counts_by_anchor.get(anchor, {})
+            signature_target_count = signature_counts.get("target", 0)
+            signature_loader_count = signature_counts.get("loader", 0)
+            signature_unknown_count = signature_counts.get("unknown", 0)
+            symbol_counts = symbol_provenance_counts_by_anchor.get(anchor, {})
+            symbol_target_count = symbol_counts.get("target", 0)
+            symbol_loader_count = symbol_counts.get("loader", 0)
+            symbol_unknown_count = symbol_counts.get("unknown", 0)
+            candidate_global_counts = candidate_global_provenance_counts_by_anchor.get(anchor, {})
+            candidate_global_target_count = candidate_global_counts.get("target", 0)
+            candidate_global_loader_count = candidate_global_counts.get("loader", 0)
+            candidate_global_unknown_count = candidate_global_counts.get("unknown", 0)
+            vtable_counts = vtable_provenance_counts_by_anchor.get(anchor, {})
+            vtable_target_count = vtable_counts.get("target", 0)
+            vtable_loader_count = vtable_counts.get("loader", 0)
+            vtable_unknown_count = vtable_counts.get("unknown", 0)
+            target_source_count = (
+                explicit_target_count
+                + signature_target_count
+                + symbol_target_count
+                + candidate_global_target_count
+                + vtable_target_count
+            )
+            loader_source_count = (
+                explicit_loader_count
+                + signature_loader_count
+                + symbol_loader_count
+                + candidate_global_loader_count
+                + vtable_loader_count
+            )
+            unknown_source_count = (
+                explicit_unknown_count
+                + signature_unknown_count
+                + symbol_unknown_count
+                + candidate_global_unknown_count
+                + vtable_unknown_count
+            )
             target_present = target_source_count > 0
             loader_present = loader_source_count > 0
             unknown_present = unknown_source_count > 0
@@ -547,6 +875,31 @@ def build_anchor_coverage(exporter, manifest, anchor_export):
             }
             if anchor in signature_transforms:
                 row["signatureTransforms"] = sorted(signature_transforms[anchor])
+            if anchor in symbol_entries_by_anchor:
+                row["symbolSurfaceRoles"] = sorted({entry.get("role", "") for entry in symbol_entries_by_anchor[anchor]})
+            if anchor in candidate_global_entries_by_anchor:
+                row["candidateGlobalOffsets"] = sorted(
+                    {
+                        entry.get("imageOffset", "")
+                        for entry in candidate_global_entries_by_anchor[anchor]
+                        if entry.get("imageOffset", "")
+                    }
+                )
+            if anchor in vtable_entries_by_anchor:
+                row["vtableCandidateSlots"] = sorted(
+                    {
+                        int(entry.get("slot"))
+                        for entry in vtable_entries_by_anchor[anchor]
+                        if entry.get("slot") is not None
+                    }
+                )
+                row["vtableCandidateOffsets"] = sorted(
+                    {
+                        entry.get("imageOffset", "")
+                        for entry in vtable_entries_by_anchor[anchor]
+                        if entry.get("imageOffset", "")
+                    }
+                )
             anchor_rows.append(row)
         groups[group_name] = {
             "present": present_count,
@@ -584,6 +937,7 @@ def build_anchor_coverage(exporter, manifest, anchor_export):
 
     return {
         "schemaVersion": "dune-ue-anchor-coverage/v1",
+        "provided": True,
         "explicitAnchorCount": len(explicit_anchors),
         "runtimeCandidateAnchorCount": len(runtime_candidate_anchors),
         "runtimeCandidateAnchors": sorted(runtime_candidate_anchors, key=anchor_sort_key),
@@ -592,9 +946,28 @@ def build_anchor_coverage(exporter, manifest, anchor_export):
         "signatureAnchorEntryCount": len(signature_entries),
         "signatureAnchorEntryCategoryCounts": signature_entry_category_counts,
         "signatureAnchorCount": len(signature_anchors),
+        "symbolSurfaceAnchorEntryCount": sum(len(entries) for entries in symbol_entries_by_anchor.values()),
+        "symbolSurfaceAnchorCount": len(symbol_anchors),
+        "candidateGlobalAnchorEntryCount": sum(len(entries) for entries in candidate_global_entries_by_anchor.values()),
+        "candidateGlobalAnchorCount": len(candidate_global_anchors),
+        "vtableCandidateAnchorEntryCount": sum(len(entries) for entries in vtable_entries_by_anchor.values()),
+        "vtableCandidateAnchorCount": len(vtable_anchors),
+        "packageLoaderVTableCandidateEntryCount": package_loader_vtable_summary["entryCount"],
+        "packageLoaderVTableMethodCandidateCount": package_loader_vtable_summary["methodEntryCount"],
+        "packageLoaderVTableCount": package_loader_vtable_summary["vtableCount"],
+        "packageLoaderVTables": package_loader_vtable_summary["vtables"],
+        "packageLoaderVTableStrongestMethods": package_loader_vtable_summary["strongestMethods"],
+        "packageLoaderVTablePromotable": False,
+        "packageLoaderVTableNonPromotableReason": (
+            "package-loader vtable methods do not match the current guarded package bridge ABI "
+            "(StaticLoadObject/StaticLoadClass/LoadObject/LoadPackage/ResolveName)"
+        ),
         "combinedAnchorCount": len(combined_anchors),
         "explicitAnchors": sorted(explicit_anchors, key=anchor_sort_key),
         "signatureAnchors": sorted(signature_anchors, key=anchor_sort_key),
+        "symbolSurfaceAnchors": sorted(symbol_anchors, key=anchor_sort_key),
+        "candidateGlobalAnchors": sorted(candidate_global_anchors, key=anchor_sort_key),
+        "vtableCandidateAnchors": sorted(vtable_anchors, key=anchor_sort_key),
         "combinedAnchors": combined_anchors,
         "groups": groups,
         "missingRequiredGroups": missing_required_groups,
@@ -606,10 +979,11 @@ def build_anchor_coverage(exporter, manifest, anchor_export):
         "readyForTargetObjectDiscovery": ready_for_target_object_discovery,
         "readyForTargetHookPlanning": ready_for_target_hook_planning,
         "readyForTargetPackageLoading": ready_for_target_package_loading,
+        "targetCoverageFieldsPresent": True,
     }
 
 
-def write_summary(path, platform, manifest, anchor_export, anchor_coverage, files):
+def write_summary(path, args, platform, manifest, anchor_export, anchor_coverage, files):
     lines = ["# UE Anchor Canary Prep", ""]
     lines.append(f"- Platform: `{platform}`")
     lines.append(f"- Manifest entries: `{manifest['entryCount']}`")
@@ -618,6 +992,17 @@ def write_summary(path, platform, manifest, anchor_export, anchor_coverage, file
     lines.append(f"- Runtime candidate anchors: `{anchor_coverage['runtimeCandidateAnchorCount']}`")
     lines.append(f"- Signature anchor entries: `{anchor_coverage['signatureAnchorEntryCount']}`")
     lines.append(f"- Signature anchors: `{anchor_coverage['signatureAnchorCount']}`")
+    lines.append(f"- Symbol-surface anchor entries: `{anchor_coverage['symbolSurfaceAnchorEntryCount']}`")
+    lines.append(f"- Symbol-surface anchors: `{anchor_coverage['symbolSurfaceAnchorCount']}`")
+    lines.append(f"- Candidate-global anchor entries: `{anchor_coverage['candidateGlobalAnchorEntryCount']}`")
+    lines.append(f"- Candidate-global anchors: `{anchor_coverage['candidateGlobalAnchorCount']}`")
+    lines.append(f"- VTable candidate anchor entries: `{anchor_coverage['vtableCandidateAnchorEntryCount']}`")
+    lines.append(f"- VTable candidate anchors: `{anchor_coverage['vtableCandidateAnchorCount']}`")
+    lines.append(f"- Package-loader vtable candidate slots: `{anchor_coverage['packageLoaderVTableCandidateEntryCount']}`")
+    lines.append(f"- Package-loader vtable method candidates: `{anchor_coverage['packageLoaderVTableMethodCandidateCount']}`")
+    if anchor_coverage["packageLoaderVTableCandidateEntryCount"]:
+        lines.append(f"- Package-loader vtable promotable: `{str(anchor_coverage['packageLoaderVTablePromotable']).lower()}`")
+        lines.append(f"- Package-loader vtable non-promotable reason: `{anchor_coverage['packageLoaderVTableNonPromotableReason']}`")
     lines.append(f"- Combined anchors: `{anchor_coverage['combinedAnchorCount']}`")
     lines.append(f"- Ready for object discovery: `{str(anchor_coverage['readyForObjectDiscovery']).lower()}`")
     lines.append(f"- Ready for hook planning: `{str(anchor_coverage['readyForHookPlanning']).lower()}`")
@@ -647,6 +1032,22 @@ def write_summary(path, platform, manifest, anchor_export, anchor_coverage, file
             f"- {group_name}: `{group['present']}/{group['total']}` "
             f"target=`{group['targetPresent']}/{group['total']}`"
         )
+    if anchor_coverage["packageLoaderVTableStrongestMethods"]:
+        lines.append("")
+        lines.append("## Package Loader VTable Candidates")
+        lines.append("")
+        for entry in anchor_coverage["packageLoaderVTableStrongestMethods"]:
+            lines.append(
+                f"- slot `{entry.get('slot')}` target `{entry.get('target') or 'unknown'}` "
+                f"kind `{entry.get('candidateKind') or 'unknown'}` "
+                f"vtable `{entry.get('vtable') or 'unknown'}`"
+            )
+    if not (
+        anchor_coverage["readyForTargetObjectDiscovery"]
+        and anchor_coverage["readyForTargetHookPlanning"]
+        and anchor_coverage["readyForTargetPackageLoading"]
+    ):
+        lines.extend(target_image_recovery_lines(path.parent, args, platform, manifest, anchor_coverage))
     lines.append("")
     lines.append("## Outputs")
     lines.append("")
@@ -654,6 +1055,192 @@ def write_summary(path, platform, manifest, anchor_export, anchor_coverage, file
         lines.append(f"- {label}: `{output}`")
     lines.append("")
     path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def target_image_missing_groups(anchor_coverage):
+    groups = anchor_coverage.get("groups", {})
+    object_groups = [
+        group_name for group_name in REQUIRED_DISCOVERY_GROUPS
+        if groups.get(group_name, {}).get("targetPresent", 0) == 0
+    ]
+    hook_groups = list(object_groups)
+    dispatch = groups.get("dispatch", {})
+    if not any(
+        anchor.get("name") == "ProcessEvent" and anchor.get("targetPresent")
+        for anchor in dispatch.get("anchors", [])
+    ) and "dispatch" not in hook_groups:
+        hook_groups.append("dispatch")
+    package_groups = []
+    if not groups.get("package", {}).get("targetPresent", 0):
+        package_groups.append("package")
+    return {
+        "object": object_groups,
+        "hook": hook_groups,
+        "package": package_groups,
+    }
+
+
+def target_image_recovery_reasons(anchor_coverage, missing):
+    reasons = []
+    if missing["object"]:
+        reasons.append("missing-target-object-anchor-groups")
+    if missing["hook"]:
+        reasons.append("missing-target-hook-anchor-groups")
+    if missing["package"]:
+        reasons.append("missing-target-package-anchor-groups")
+    if not anchor_coverage.get("readyForTargetObjectDiscovery"):
+        reasons.append("incomplete-target-object-anchor-coverage")
+    if not anchor_coverage.get("readyForTargetHookPlanning"):
+        reasons.append("incomplete-target-hook-anchor-coverage")
+    if not anchor_coverage.get("readyForTargetPackageLoading"):
+        reasons.append("incomplete-target-package-anchor-coverage")
+    return reasons
+
+
+def target_image_recovery_lines(output_dir, args, platform, manifest, anchor_coverage):
+    binary = manifest.get("binary", {}).get("path") or "<target-binary>"
+    loader_log = manifest.get("source", {}).get("loaderLog") or default_canary_log_path(platform)
+    xref_json = output_dir / "ue-anchor-xrefs.json"
+    candidates_json = output_dir / "ue-anchor-candidates.json"
+    symbol_surface_json = output_dir / "elf-ue-symbol-surface.json"
+    package_route_json = output_dir / "ue4ss-package-route-evidence.json"
+    package_external_plan_json = output_dir / "ue4ss-package-external-symbol-plan.json"
+    package_external_plan_md = output_dir / "ue4ss-package-external-symbol-plan.md"
+    recovered_dir = output_dir / "recovered-target-anchors"
+    missing = target_image_missing_groups(anchor_coverage)
+    reasons = target_image_recovery_reasons(anchor_coverage, missing)
+    if platform == "windows":
+        xref_command = [
+            "python3",
+            "scripts/summarize-client-loader-xrefs.py",
+            binary,
+            "--loader-log",
+            loader_log,
+        ]
+        for loader in args.loader or ["win-client"]:
+            xref_command.extend(["--loader", loader])
+    else:
+        xref_command = [
+            "python3",
+            "scripts/summarize-linux-loader-xrefs.py",
+            binary,
+            "--loader-log",
+            loader_log,
+        ]
+    for pid in args.pid:
+        xref_command.extend(["--pid", pid])
+    exe_substrings = args.exe_substring or ["DuneSandbox" if platform == "linux-client" else "DuneSandboxServer"]
+    for substring in exe_substrings:
+        xref_command.extend(["--exe-substring", substring])
+    xref_command.extend(["--category", "ue", "--format", "json"])
+    promote_command = [
+        "python3",
+        "scripts/promote-ue-anchor-xref-candidates.py",
+        str(xref_json),
+        "--require-target-source",
+        "--format",
+        "json",
+    ]
+    prepare_command = [
+        "python3",
+        "scripts/prepare-ue-anchor-canary.py",
+        "--platform",
+        platform,
+        "--binary",
+        binary,
+        "--loader-log",
+        loader_log,
+        "--xref-json",
+        str(candidates_json),
+        "--output-dir",
+        str(recovered_dir),
+        "--skip-readiness",
+    ]
+    symbol_surface_command = []
+    if platform != "windows":
+        symbol_surface_command = [
+            "python3",
+            "scripts/summarize-elf-ue-symbol-surface.py",
+            binary,
+            "--format",
+            "json",
+        ]
+        prepare_command.extend(["--symbol-surface-json", str(symbol_surface_json)])
+    if platform == "windows":
+        default_loader = "win-client"
+    elif platform == "linux-client":
+        default_loader = "client"
+    else:
+        default_loader = "server"
+    for loader in args.loader or [default_loader]:
+        prepare_command.extend(["--loader", loader])
+    for pid in args.pid:
+        prepare_command.extend(["--pid", pid])
+    for substring in args.exe_substring:
+        prepare_command.extend(["--exe-substring", substring])
+    package_recovery_commands = []
+    if missing["package"]:
+        package_route_command = [
+            "python3",
+            "scripts/summarize-ue4ss-package-route-evidence.py",
+            "--format",
+            "json",
+        ]
+        package_plan_json_command = [
+            "python3",
+            "scripts/summarize-ue4ss-package-external-symbol-plan.py",
+            "--evidence",
+            str(package_route_json),
+            "--binary",
+            binary,
+            "--format",
+            "json",
+        ]
+        package_plan_md_command = [
+            "python3",
+            "scripts/summarize-ue4ss-package-external-symbol-plan.py",
+            "--evidence",
+            str(package_route_json),
+            "--binary",
+            binary,
+            "--format",
+            "markdown",
+        ]
+        package_recovery_commands = [
+            "",
+            "Package-loading anchors require a callable target-image StaticLoadObject, StaticLoadClass, LoadObject, LoadPackage, or ResolveName ABI. Do not promote async-package vtable methods or string-only hits.",
+            f"```sh\n{command_text(package_route_command)} > {shlex.quote(str(package_route_json))}\n```",
+            f"```sh\n{command_text(package_plan_json_command)} > {shlex.quote(str(package_external_plan_json))}\n```",
+            f"```sh\n{command_text(package_plan_md_command)} > {shlex.quote(str(package_external_plan_md))}\n```",
+        ]
+    return [
+        "",
+        "## Target-Image Anchor Recovery",
+        "",
+        "Run these when target-image object, hook, or package anchor coverage is false:",
+        "",
+        f"- Recovery reasons: `{', '.join(reasons) or 'none'}`",
+        (
+            "- Missing target groups: "
+            f"`object={', '.join(missing['object']) or 'none'}; "
+            f"hook={', '.join(missing['hook']) or 'none'}; "
+            f"package={', '.join(missing['package']) or 'none'}`"
+        ),
+        "",
+        *(
+            [f"```sh\n{command_text(symbol_surface_command)} > {shlex.quote(str(symbol_surface_json))}\n```"]
+            if symbol_surface_command
+            else []
+        ),
+        f"```sh\n{command_text(xref_command)} > {shlex.quote(str(xref_json))}\n```",
+        f"```sh\n{command_text(promote_command)} > {shlex.quote(str(candidates_json))}\n```",
+        f"```sh\n{command_text(prepare_command)}\n```",
+        *package_recovery_commands,
+        (
+            f"```sh\n{shlex.quote(str(recovered_dir / 'post-canary-verify.sh'))} "
+            f"{shlex.quote(loader_log)}\n```"
+        ),
+    ]
 
 
 def main(argv=None):
@@ -666,6 +1253,26 @@ def main(argv=None):
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--validation-json", type=Path)
     parser.add_argument("--xref-json", type=Path)
+    parser.add_argument(
+        "--symbol-surface-json",
+        type=Path,
+        help="optional summarize-elf-ue-symbol-surface.py JSON output to count target ELF exports as anchor evidence",
+    )
+    parser.add_argument(
+        "--candidate-globals-json",
+        type=Path,
+        help="optional export-ue-candidate-globals.py JSON output to count reviewed target globals as anchor evidence",
+    )
+    parser.add_argument(
+        "--vtable-candidates-json",
+        type=Path,
+        help="optional summarize-ue-vtable-candidates.py JSON output to count stable target ProcessEvent vtable candidates",
+    )
+    parser.add_argument(
+        "--package-loader-vtables-json",
+        type=Path,
+        help="optional summarize-elf-ue-package-loader-vtables.py JSON output to record non-promotable package-loader vtable candidates",
+    )
     parser.add_argument("--loader", action="append", default=[])
     parser.add_argument("--pid", action="append", default=[])
     parser.add_argument("--exe-substring", action="append", default=[])
@@ -714,7 +1321,19 @@ def main(argv=None):
         f"{anchor_export['anchorSignatureFileEnvName']}={anchor_exporter.shell_quote(str(anchor_signature_path))}\n"
     )
     anchor_env_path.write_text(anchor_env_text, encoding="utf-8")
-    anchor_coverage = build_anchor_coverage(exporter, manifest, anchor_export)
+    symbol_surface = load_json(args.symbol_surface_json) if args.symbol_surface_json else None
+    candidate_globals = load_json(args.candidate_globals_json) if args.candidate_globals_json else None
+    vtable_candidates = load_json(args.vtable_candidates_json) if args.vtable_candidates_json else None
+    package_loader_vtables = load_json(args.package_loader_vtables_json) if args.package_loader_vtables_json else None
+    anchor_coverage = build_anchor_coverage(
+        exporter,
+        manifest,
+        anchor_export,
+        symbol_surface,
+        candidate_globals,
+        vtable_candidates,
+        package_loader_vtables,
+    )
     anchor_coverage_path = args.output_dir / "anchor-coverage.json"
     anchor_coverage_path.write_text(json.dumps(anchor_coverage, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     post_canary_verify_path = args.output_dir / "post-canary-verify.sh"
@@ -750,7 +1369,7 @@ def main(argv=None):
         files["objectDiscoveryCoverage"] = object_discovery_coverage_path
 
     summary_path = args.output_dir / "README.md"
-    write_summary(summary_path, args.platform, manifest, anchor_export, anchor_coverage, files)
+    write_summary(summary_path, args, args.platform, manifest, anchor_export, anchor_coverage, files)
     files["summary"] = summary_path
 
     result = {
@@ -759,6 +1378,16 @@ def main(argv=None):
         "manifestEntryCount": manifest["entryCount"],
         "anchorEnvEntryCount": anchor_export["entryCount"],
         "anchorSignatureEntryCount": anchor_coverage["signatureAnchorEntryCount"],
+        "symbolSurfaceAnchorEntryCount": anchor_coverage["symbolSurfaceAnchorEntryCount"],
+        "symbolSurfaceAnchorCount": anchor_coverage["symbolSurfaceAnchorCount"],
+        "candidateGlobalAnchorEntryCount": anchor_coverage["candidateGlobalAnchorEntryCount"],
+        "candidateGlobalAnchorCount": anchor_coverage["candidateGlobalAnchorCount"],
+        "vtableCandidateAnchorEntryCount": anchor_coverage["vtableCandidateAnchorEntryCount"],
+        "vtableCandidateAnchorCount": anchor_coverage["vtableCandidateAnchorCount"],
+        "packageLoaderVTableCandidateEntryCount": anchor_coverage["packageLoaderVTableCandidateEntryCount"],
+        "packageLoaderVTableMethodCandidateCount": anchor_coverage["packageLoaderVTableMethodCandidateCount"],
+        "packageLoaderVTableCount": anchor_coverage["packageLoaderVTableCount"],
+        "packageLoaderVTablePromotable": anchor_coverage["packageLoaderVTablePromotable"],
         "combinedAnchorCount": anchor_coverage["combinedAnchorCount"],
         "readyForObjectDiscovery": anchor_coverage["readyForObjectDiscovery"],
         "readyForHookPlanning": anchor_coverage["readyForHookPlanning"],

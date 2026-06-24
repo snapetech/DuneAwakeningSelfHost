@@ -181,10 +181,16 @@ status declaration, and no later FLS errors such as `INVALID_DATA` or
 `does not exist or is inactive`.
 
 ```bash
-COMPOSE_FILES='compose.yaml:compose.allmaps.yaml:compose.gateway-hostnet.yaml' \
-  ./scripts/fls-publication-health.py .env \
-  --compose-files 'compose.yaml:compose.allmaps.yaml:compose.gateway-hostnet.yaml'
+compose_files="$(./scripts/compose-files.sh .env)"
+./scripts/fls-publication-health.py .env --compose-files "$compose_files"
 ```
+
+If Director can reach FLS only from host networking, set
+`DUNE_DIRECTOR_HOSTNET_ENABLED=true` and keep
+`compose.director-hostnet-port.yaml` pointed at a free host-local port. This
+adds `compose.director-hostnet-cutover.yaml` plus the port override to the
+normal compose-file resolver, so later `director` recreates do not drop the
+working network shape.
 
 Admin alerts can include the same signal when
 `DUNE_PLAYER_PRESENCE_INFRA_ADMIN_ALERTS_ENABLED=true`; the FLS publication
@@ -525,6 +531,33 @@ For the 30-partition warm pool, forward:
 `7888-7918/udp` are the IGW ports paired with the 31 warm-pool game ports. If your deployment relies on them for live-client routing or server-browser checks, forward them to the Dune host. Do not remove IGW forwards from a working deployment without packet-capture evidence and a router backup.
 
 Live-client login also asks FLS for a game RabbitMQ address before it starts the gameplay UDP leg. `GAME_RMQ_PUBLIC_HOST` and `GAME_RMQ_PUBLIC_PORT` control the AMQP address Gateway reports to FLS. `GAME_RMQ_PUBLIC_HTTP_PORT`, default `15673/tcp`, controls the HTTP address Gateway reports to FLS, while `GAME_RMQ_HTTP_BIND_ADDRESS` controls the host bind for RabbitMQ management and defaults to `127.0.0.1`. For a publicly reachable live self-hosted server, forward `GAME_RMQ_PUBLIC_PORT` TCP, default `31982/tcp`, to the host. Do not forward Postgres, RabbitMQ management, or admin panel ports unless a targeted browser-ping experiment explicitly requires it.
+
+For server-browser ping work, use the non-mutating diagnostics first:
+
+```bash
+make browser-ping-proof ENV_FILE=.env
+make browser-ping-diagnostics ENV_FILE=.env
+make client-browser-ping-verifier ENV_FILE=.env
+make client-browser-ping-verifier-external ENV_FILE=.env
+```
+
+`browser-ping-proof` runs the server-side diagnostics plus the external client
+verifier. `browser-ping-diagnostics` checks the server-side publication path,
+including the latest FLS battlegroup declaration and whether the starting
+partition is advertised as `EXTERNAL_ADDRESS:GamePort`.
+`client-browser-ping-verifier` checks the local client host's public/LAN ICMP,
+AMQP, and RMQ HTTP reachability and inspects the Dune client log for fresh
+browser/RMQ evidence. The `-external` target also runs public Globalping probes
+against the advertised host to prove WAN ICMP reachability independently of LAN
+reflection. To wait for the next in-game browser refresh without packet
+capture:
+
+```bash
+make watch-client-browser-ping-log ENV_FILE=.env SECONDS=300
+```
+
+`watch-browser-probe` is a packet-capture helper and should only be used when
+that evidence is explicitly wanted.
 
 ### Internal Clients and LAN Reflection
 

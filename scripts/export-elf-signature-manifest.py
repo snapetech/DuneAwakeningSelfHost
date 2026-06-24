@@ -28,6 +28,7 @@ UE_ANCHORS = (
     "CallFunctionByNameWithArguments",
     "CallFunctionByName",
     "StaticLoadObject",
+    "StaticLoadClass",
     "LoadObject",
     "LoadPackage",
     "ResolveName",
@@ -60,10 +61,11 @@ UE_ANCHOR_ALIASES = {
     "StaticFindObject": ("staticfindobject", "findobject"),
     "CallFunctionByNameWithArguments": ("callfunctionbynamewitharguments", "uobjectcallfunctionbynamewitharguments"),
     "CallFunctionByName": ("callfunctionbyname",),
-    "StaticLoadObject": ("staticloadobject",),
-    "LoadObject": ("loadobject",),
-    "LoadPackage": ("loadpackage",),
-    "ResolveName": ("resolvename",),
+    "StaticLoadObject": ("staticloadobject", "loadobjectstatic", "uobjectstaticloadobject"),
+    "StaticLoadClass": ("staticloadclass", "loadclassstatic", "uobjectstaticloadclass"),
+    "LoadObject": ("loadobject", "uobjectloadobject"),
+    "LoadPackage": ("loadpackage", "upackageloadpackage"),
+    "ResolveName": ("resolvename", "uresolvename"),
     "LoadAsset": ("loadasset",),
     "LoadClass": ("loadclass",),
     "UObject": ("uobject", "uobjectbase"),
@@ -82,7 +84,7 @@ UE_ANCHOR_GROUPS = {
     "objects": ("GUObjectArray", "GObjectArray", "GObjects", "FUObjectArray"),
     "world": ("GWorld", "GEngine"),
     "dispatch": ("ProcessEvent", "StaticFindObject", "CallFunctionByNameWithArguments", "CallFunctionByName"),
-    "package": ("StaticLoadObject", "LoadObject", "LoadPackage", "ResolveName", "LoadAsset", "LoadClass"),
+    "package": ("StaticLoadObject", "StaticLoadClass", "LoadObject", "LoadPackage", "ResolveName", "LoadAsset", "LoadClass"),
     "reflection": ("UObject", "UFunction", "UClass", "FProperty", "FObjectProperty", "FArrayProperty", "FBoolProperty", "FStructProperty", "UStruct", "UEnum"),
 }
 UE_ANCHOR_GROUP_BY_NAME = {
@@ -164,6 +166,28 @@ def canonical_anchor_name(value):
     return None
 
 
+def is_loader_source(source):
+    normalized = str(source or "").lower().replace("\\", "/")
+    loader_needles = (
+        "dune_client_probe_loader",
+        "dune_server_probe_loader",
+        "dune_win_client_probe_loader",
+        "linux-client-loader",
+        "linux-server-loader",
+        "windows-client-loader",
+        "libdune_",
+    )
+    return any(needle in normalized for needle in loader_needles)
+
+
+def source_provenance(source):
+    if not source:
+        return "unknown"
+    if is_loader_source(source):
+        return "loader"
+    return "target"
+
+
 def build_validation(binary, loader_log, xref_json, exe_substring, pid, categories, names, prefix, suffix, scope, max_matches):
     validator = import_script("validate-elf-signatures.py", "validate_elf_signatures")
     xrefs = import_script("summarize-linux-loader-xrefs.py", "summarize_linux_loader_xrefs")
@@ -224,9 +248,13 @@ def entry_from_row(row, index):
         "expectedFileOffset": row.get("expectedFileOffset", ""),
         "expectedImageOffset": first_match.get("imageOffset", "") if first_match.get("expected") else "",
         "expectedVaddr": first_match.get("vaddr", "") if first_match.get("expected") else "",
+        "matchFileOffset": first_match.get("fileOffset", ""),
+        "matchImageOffset": first_match.get("imageOffset", ""),
+        "matchVaddr": first_match.get("vaddr", ""),
         "xrefVaddr": row.get("xrefVaddr", ""),
         "targetVaddr": row.get("targetVaddr", ""),
         "source": row.get("source", ""),
+        "sourceProvenance": row.get("sourceProvenance") or source_provenance(row.get("source", "")),
     }
 
 
@@ -436,7 +464,8 @@ def markdown(manifest, limit):
         lines.append(
             f"- `{entry['id']}` category=`{entry['category']}` "
             f"file=`{entry['expectedFileOffset']}` image=`{entry['expectedImageOffset']}` "
-            f"vaddr=`{entry['expectedVaddr']}`"
+            f"vaddr=`{entry['expectedVaddr']}` "
+            f"matchImage=`{entry.get('matchImageOffset', '')}` matchVaddr=`{entry.get('matchVaddr', '')}`"
         )
     if manifest["entryCount"] > limit:
         lines.append(f"- ... +{manifest['entryCount'] - limit} more")

@@ -134,6 +134,37 @@ run_seed_neighbors() {
   fi
 }
 
+refresh_postgres_neighbor_for_service() {
+  local service="$1"
+  local postgres_container="${POSTGRES_CONTAINER:-dune_server-postgres-1}"
+  local postgres_pid
+  local postgres_dev
+  local service_container
+  local service_ip
+  local service_mac
+
+  service_container="$("${compose[@]}" ps -q "$service" 2>/dev/null || true)"
+  [[ -n "$service_container" ]] || return 0
+  postgres_pid="$("$container_runtime" inspect -f '{{.State.Pid}}' "$postgres_container" 2>/dev/null || true)"
+  [[ -n "$postgres_pid" && "$postgres_pid" != "0" ]] || return 0
+  service_ip="$("$container_runtime" inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$service_container" 2>/dev/null || true)"
+  service_mac="$("$container_runtime" inspect -f '{{range .NetworkSettings.Networks}}{{.MacAddress}}{{end}}' "$service_container" 2>/dev/null || true)"
+  [[ -n "$service_ip" && -n "$service_mac" ]] || return 0
+
+  if [[ "$(id -u)" -eq 0 ]]; then
+    postgres_dev="$(nsenter -t "$postgres_pid" -n ip route show default 2>/dev/null \
+      | awk '{for (i=1; i<=NF; i++) if ($i == "dev") {print $(i+1); exit}}')"
+    [[ -n "$postgres_dev" ]] || return 0
+    nsenter -t "$postgres_pid" -n ip neigh replace "$service_ip" lladdr "$service_mac" dev "$postgres_dev" nud permanent
+  else
+    postgres_dev="$(sudo nsenter -t "$postgres_pid" -n ip route show default 2>/dev/null \
+      | awk '{for (i=1; i<=NF; i++) if ($i == "dev") {print $(i+1); exit}}')"
+    [[ -n "$postgres_dev" ]] || return 0
+    sudo nsenter -t "$postgres_pid" -n ip neigh replace "$service_ip" lladdr "$service_mac" dev "$postgres_dev" nud permanent
+  fi
+  printf 'refreshed postgres neighbor for %s: %s/%s\n' "$service" "$service_ip" "$service_mac"
+}
+
 printf 'starting stateful dependencies\n'
 "${compose[@]}" up -d --no-recreate --no-deps postgres admin-rmq game-rmq
 wait_for_healthy postgres
@@ -171,6 +202,7 @@ fi
 
 printf 'starting/recreating map service: %s\n' "$service"
 "${compose[@]}" up -d --force-recreate --no-deps "$service"
+refresh_postgres_neighbor_for_service "$service"
 run_seed_neighbors
 
 printf 'waiting for partition %s to become ready/alive/active\n' "$partition_id"

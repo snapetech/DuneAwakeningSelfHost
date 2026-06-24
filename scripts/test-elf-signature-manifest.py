@@ -129,6 +129,7 @@ class ElfSignatureManifestTests(unittest.TestCase):
             self.assertEqual(manifest["entryCount"], 1)
             self.assertEqual(manifest["entries"][0]["status"], "unique-expected")
             self.assertEqual(manifest["entries"][0]["expectedVaddr"], "0x1100")
+            self.assertEqual(manifest["entries"][0]["sourceProvenance"], "target")
             self.assertEqual(manifest["runtimeLimits"]["loaderEnv"], "DUNE_PROBE_LOADER_SCAN_SIGNATURES")
             self.assertEqual(manifest["runtimeLimits"]["signatureFileEnv"], "DUNE_PROBE_LOADER_SCAN_SIGNATURES_FILE")
 
@@ -206,6 +207,92 @@ class ElfSignatureManifestTests(unittest.TestCase):
                 manifest["runtimeLimits"]["anchorSignatureFileEnv"],
                 "DUNE_CLIENT_PROBE_UE_ANCHOR_SIGNATURES_FILE",
             )
+
+    def test_default_ue_anchor_set_includes_static_load_class(self):
+        self.assertIn("StaticLoadClass", exporter.UE_ANCHORS)
+        self.assertIn("StaticLoadClass", exporter.UE_ANCHOR_GROUPS["package"])
+        self.assertIn("staticloadclass", exporter.UE_ANCHOR_ALIASES["StaticLoadClass"])
+        self.assertIn("uobjectstaticloadclass", exporter.UE_ANCHOR_ALIASES["StaticLoadClass"])
+
+    def test_package_aliases_promote_to_anchor_signature_entries(self):
+        validation = {
+            "scope": "executable",
+            "patterns": [
+                {
+                    "name": "uobject-static-load-class",
+                    "category": "ue",
+                    "source": "test",
+                    "xrefVaddr": "0x5000",
+                    "targetVaddr": "0x5080",
+                    "pattern": "e8 ?? ?? ?? ??",
+                    "length": 5,
+                    "fixedBytes": 1,
+                    "expectedFileOffset": "0x500",
+                    "status": "unique-expected",
+                    "promotable": True,
+                    "matches": [{"fileOffset": "0x500", "imageOffset": "0x500", "vaddr": "0x5000", "expected": True}],
+                }
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "DuneSandbox-Linux-Shipping"
+            binary.write_bytes(b"\x7fELF-test")
+            entries = exporter.build_entries(validation)
+            manifest = exporter.make_manifest(binary, validation, entries, None, None, 256, 1800, "linux-client")
+
+        anchors = exporter.anchor_signature_entries(manifest)
+
+        self.assertEqual(len(anchors), 1)
+        self.assertEqual(anchors[0]["anchorName"], "StaticLoadClass")
+        self.assertEqual(anchors[0]["anchorGroup"], "package")
+        self.assertTrue(anchors[0]["anchorTransformExpected"])
+
+    def test_donor_unique_unexpected_entry_preserves_target_match_offsets(self):
+        validation = {
+            "scope": "executable",
+            "promotableCount": 1,
+            "patterns": [
+                {
+                    "name": "StaticLoadObject",
+                    "category": "package",
+                    "source": "StaticLoadObject(UClass*)",
+                    "sourceProvenance": "external-donor",
+                    "xrefVaddr": "",
+                    "targetVaddr": "",
+                    "pattern": "e8 ?? ?? ?? ??",
+                    "length": 5,
+                    "fixedBytes": 1,
+                    "expectedFileOffset": "",
+                    "status": "unique-unexpected",
+                    "promotable": True,
+                    "matches": [
+                        {
+                            "fileOffset": "0x1234",
+                            "imageOffset": "0x1234",
+                            "vaddr": "0x2234",
+                            "expected": False,
+                        }
+                    ],
+                }
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "DuneSandboxServer-Linux-Shipping"
+            binary.write_bytes(b"\x7fELF-test")
+            entries = exporter.build_entries(validation)
+            manifest = exporter.make_manifest(binary, validation, entries, None, None, 256, 1800, "server")
+
+        entry = manifest["entries"][0]
+        anchors = exporter.anchor_signature_entries(manifest)
+
+        self.assertEqual(entry["sourceProvenance"], "external-donor")
+        self.assertEqual(entry["expectedImageOffset"], "")
+        self.assertEqual(entry["matchFileOffset"], "0x1234")
+        self.assertEqual(entry["matchImageOffset"], "0x1234")
+        self.assertEqual(entry["matchVaddr"], "0x2234")
+        self.assertEqual(anchors[0]["anchorName"], "StaticLoadObject")
+        self.assertEqual(anchors[0]["anchorGroup"], "package")
+        self.assertTrue(anchors[0]["anchorTransformExpected"])
 
 
 if __name__ == "__main__":

@@ -17,7 +17,7 @@ Environment:
                                         Minimum wait after client trigger. Default: 30.
   DUNE_STEAM_CLIENT_COMMAND             Steam client executable. Default: steam.
   DUNE_RESTART_STEAMCMD_UPDATE          Legacy SteamCMD enable flag. Default: true.
-  DUNE_RESTART_STEAMCMD_REQUIRED        Fail if SteamCMD cannot run. Default: false.
+  DUNE_RESTART_STEAMCMD_REQUIRED        Fail if SteamCMD cannot run or update fails. Default: true.
   DUNE_STEAM_APP_ID                     Steam app id. Default: 4754530.
   DUNE_STEAM_FORCE_PLATFORM             SteamCMD platform override. Default: linux.
   DUNE_STEAM_LOGIN                      Steam login user. Default: anonymous.
@@ -200,7 +200,7 @@ steamcmd_command="$(env_or_file DUNE_STEAMCMD_COMMAND)"
 validate="$(env_or_file DUNE_STEAMCMD_VALIDATE)"
 timeout_seconds="$(env_or_file DUNE_STEAMCMD_TIMEOUT_SECONDS)"
 
-required="${required:-false}"
+required="${required:-true}"
 login="${login:-anonymous}"
 steamcmd_command="${steamcmd_command:-steamcmd}"
 validate="${validate:-true}"

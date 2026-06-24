@@ -40,6 +40,10 @@ class ClientLaunchPreflightTests(unittest.TestCase):
             "DUNE_CLIENT_PROBE_UE_ANCHORS='GWorld=0x1234'\n",
             encoding="utf-8",
         )
+        (prep / "anchor-coverage.json").write_text(
+            '{"provided": true, "groups": {"world": {"targetPresent": 1, "total": 1}}}\n',
+            encoding="utf-8",
+        )
         verifier = prep / "post-canary-verify.sh"
         verifier.write_text(
             "#!/usr/bin/env bash\n"
@@ -64,6 +68,24 @@ class ClientLaunchPreflightTests(unittest.TestCase):
         )
         strict.chmod(0o755)
         return prep
+
+    def test_client_post_canary_verify_wrapper_finds_packaged_analysis_tools(self):
+        if not VERIFY_WRAPPER.exists():
+            self.skipTest("client post-canary verifier wrapper is not packaged here")
+        source = VERIFY_WRAPPER.read_text(encoding="utf-8")
+        self.assertIn("tool_path()", source)
+        self.assertIn('"$script_dir/../analysis"', source)
+        self.assertIn("summarize-ue-vtable-candidates.py", source)
+        self.assertIn("summarize-client-loader-scan.py", source)
+        self.assertIn("export-process-event-active-validation-candidates.py", source)
+        self.assertIn("plan-ue4ss-canary-env.py", source)
+        self.assertIn("summarize-ue4ss-evidence-inventory.py", source)
+        self.assertIn("missing required strict evidence inventory tool", source)
+        self.assertIn('elif $strict && [ "$verify_rc" -eq 0 ]; then', source)
+        self.assertIn('"$inventory_tool" "$output_dir" "$prep_dir" --limit 12 --require-complete --format markdown > "$output_dir/ue4ss-evidence-inventory.md"', source)
+        self.assertIn('"$inventory_tool" "$output_dir" "$prep_dir" --limit 12 --require-complete --format json > "$output_dir/ue4ss-evidence-inventory.json"', source)
+        self.assertIn('"$inventory_tool" "$output_dir" "$prep_dir" --limit 12 --format markdown > "$output_dir/ue4ss-evidence-inventory.md" || true', source)
+        self.assertIn('"$inventory_tool" "$output_dir" "$prep_dir" --limit 12 --format json > "$output_dir/ue4ss-evidence-inventory.json" || true', source)
 
     def test_linux_client_preflight_validates_without_exec_or_build(self):
         if not LINUX_WRAPPER.exists():
@@ -387,13 +409,69 @@ class ClientLaunchPreflightTests(unittest.TestCase):
             self.assertIn("verify_rc=0", result.stdout)
             self.assertTrue((output / "client.log").exists())
             self.assertTrue((output / "ue-anchors.env").exists())
+            self.assertTrue((output / "anchor-coverage.json").exists())
             self.assertTrue((output / "ue4ss-readiness.json").exists())
             self.assertTrue((output / "object-discovery-coverage.json").exists())
             self.assertTrue((output / "post-canary-summary.md").exists())
             self.assertTrue((output / "ue4ss-port-gaps.md").exists())
+            self.assertTrue((output / "ue-vtable-candidates.json").exists())
+            self.assertTrue((output / "ue-vtable-candidates.md").exists())
+            self.assertTrue((output / "client-summary.json").exists())
+            self.assertTrue((output / "process-event-active-validation-candidates.json").exists())
+            self.assertTrue((output / "process-event-active-validation-candidates.md").exists())
+            self.assertTrue((output / "next-canary-plan.json").exists())
+            self.assertTrue((output / "next-canary-plan.env").exists())
+            self.assertTrue((output / "next-canary-plan.md").exists())
+            self.assertTrue((output / "ue4ss-evidence-inventory.md").exists())
+            self.assertTrue((output / "ue4ss-evidence-inventory.json").exists())
             self.assertIn(
                 "verify_rc=0", (output / "summary.env").read_text(encoding="utf-8")
             )
+
+    def test_client_post_canary_verify_wrapper_promotes_vtable_shortlist_to_next_plan(self):
+        if not VERIFY_WRAPPER.exists():
+            self.skipTest("client post-canary verifier wrapper is not packaged here")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prep = self.make_prep_bundle(root)
+            log = root / "client.log"
+            log.write_text(
+                "\n".join(
+                    [
+                        "pid=1 loader=client event=loaded exe=/opt/DuneSandbox/Binaries/Linux/DuneSandbox-Linux-Shipping",
+                        "pid=1 loader=client event=ue-process-event-vtable-scan status=scanned platform=linux readableSlots=1 executableSlots=1 zeroSlots=0",
+                        "pid=1 loader=client event=ue-process-event-vtable-candidate platform=linux objectName=Foo className=Class vtable=0x100 slot=67 target=0x500 imageOffset=0x1500 fileOffset=0x500 map=/game/DuneSandbox targetName=ProcessEvent targetSource=vtable-candidate",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            output = root / "evidence"
+
+            result = subprocess.run(
+                [
+                    str(VERIFY_WRAPPER),
+                    "--platform",
+                    "linux-client",
+                    "--prep-dir",
+                    str(prep),
+                    "--log",
+                    str(log),
+                    "--output-dir",
+                    str(output),
+                ],
+                cwd=ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            plan = (output / "next-canary-plan.env").read_text(encoding="utf-8")
+            self.assertIn("DUNE_CLIENT_PROBE_UE_PROCESS_EVENT_HOOK_IMAGE_OFFSET=0x1500", plan)
+            self.assertIn("--active-validation-candidates-json", VERIFY_WRAPPER.read_text(encoding="utf-8"))
+            self.assertIn("Hook Probe Shortlist", (output / "ue-vtable-candidates.md").read_text(encoding="utf-8"))
 
     def test_client_post_canary_verify_wrapper_uses_strict_verifier(self):
         if not VERIFY_WRAPPER.exists():
@@ -431,6 +509,7 @@ class ClientLaunchPreflightTests(unittest.TestCase):
             self.assertIn("platform=windows", summary)
             self.assertIn("strict=true", summary)
             self.assertIn("post-canary-verify-strict.sh", summary)
+            self.assertTrue((output / "next-canary-plan.json").exists())
 
     def test_client_post_canary_verify_wrapper_rejects_missing_anchor_env(self):
         if not VERIFY_WRAPPER.exists():

@@ -139,9 +139,14 @@ mapfile -t package_tags < <(sort -u "$tmp_tags")
 appmanifest="$(steam_appmanifest || true)"
 installed_buildid=""
 target_buildid=""
+loaded_buildid=""
+loaded_buildid_file="$steam_dir/images/battlegroup/.loaded_buildid"
 if [[ -n "$appmanifest" && -f "$appmanifest" ]]; then
   installed_buildid="$(manifest_value "$appmanifest" buildid)"
   target_buildid="$(manifest_value "$appmanifest" TargetBuildID)"
+fi
+if [[ -f "$loaded_buildid_file" ]]; then
+  loaded_buildid="$(<"$loaded_buildid_file")"
 fi
 
 printf 'env file: %s\n' "$env_file"
@@ -152,6 +157,9 @@ if [[ -n "$installed_buildid" ]]; then
 fi
 if [[ -n "$target_buildid" ]]; then
   printf 'Steam target buildid: %s\n' "$target_buildid"
+fi
+if [[ -n "$loaded_buildid" ]]; then
+  printf 'last loaded buildid: %s\n' "$loaded_buildid"
 fi
 
 if [[ "${#package_tags[@]}" -eq 0 ]]; then
@@ -184,6 +192,11 @@ if [[ -n "$installed_buildid" && -n "$target_buildid" && "$installed_buildid" !=
 fi
 
 if [[ "$current_tag" == "$package_tag" ]]; then
+  if [[ -n "$installed_buildid" && "$installed_buildid" != "$loaded_buildid" ]]; then
+    echo "status: same tag but Steam build changed"
+    echo "reload required: $package_tag buildid $installed_buildid"
+    exit 1
+  fi
   echo "status: current"
   exit 0
 fi

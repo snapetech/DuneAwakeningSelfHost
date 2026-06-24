@@ -18,6 +18,7 @@ class ExportUeCandidateGlobalsTests(unittest.TestCase):
     def test_exports_ranked_candidates_and_skips_rejected_log_offsets(self):
         summary = {
             "schemaVersion": "dune-elf-writable-global-refs/v1",
+            "binary": "/tmp/DuneSandboxServer-Linux-Shipping",
             "top": [
                 {
                     "target": "0x165ff4a8",
@@ -87,6 +88,9 @@ class ExportUeCandidateGlobalsTests(unittest.TestCase):
         self.assertIn("FNamePool=0x1686df70", result["env"])
         self.assertNotIn("0x165ff4a8", result["env"])
         self.assertEqual(result["anchorCounts"], {"FNamePool": 1, "GUObjectArray": 1})
+        self.assertEqual(result["binary"], "/tmp/DuneSandboxServer-Linux-Shipping")
+        self.assertEqual(result["candidates"][0]["source"], "/tmp/DuneSandboxServer-Linux-Shipping")
+        self.assertEqual(result["candidates"][0]["sourceProvenance"], "target")
 
     def test_reject_log_matches_bad_anchor_address_before_same_name_fallback(self):
         with tempfile.TemporaryDirectory() as tmp:

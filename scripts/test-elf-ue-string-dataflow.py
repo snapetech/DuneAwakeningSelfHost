@@ -104,6 +104,23 @@ class ElfUeStringDataflowTests(unittest.TestCase):
 
         self.assertEqual([row["name"] for row in rows], ["GUObjectArray", "CheatManager"])
 
+    def test_load_manual_targets_accepts_named_and_unnamed_addresses(self):
+        rows = module.load_manual_targets(["CallFunctionByNameWithArguments=0x53790e6", "4096"])
+
+        self.assertEqual([row["value"] for row in rows], [0x53790E6, 0x1000])
+        self.assertEqual(rows[0]["name"], "CallFunctionByNameWithArguments")
+        self.assertEqual(rows[0]["category"], "manual")
+        self.assertEqual(rows[0]["kind"], "manual")
+        self.assertEqual(rows[0]["groups"], ["dispatch"])
+        self.assertEqual(rows[1]["name"], "manual-4096")
+
+    def test_exact_anchor_aliases_include_package_loading(self):
+        self.assertEqual(module.exact_anchor_hints("uobject-static-load-object"), ["StaticLoadObject"])
+        self.assertEqual(module.exact_anchor_hints("uobject-static-load-class"), ["StaticLoadClass"])
+        self.assertEqual(module.exact_anchor_hints("load-asset-package-path"), ["LoadAsset"])
+        self.assertEqual(module.exact_anchor_hints("LoadClass"), ["LoadClass"])
+        self.assertEqual(module.exact_anchor_hints("uobject-load-object"), ["LoadObject"])
+
     def test_markdown_distinguishes_source_and_emitted_target_counts(self):
         text = module.markdown(
             {

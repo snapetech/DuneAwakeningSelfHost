@@ -48,6 +48,9 @@ SAMPLE_LOG = """\
 2026-06-16T17:43:39Z pid=312 loader=win-client event=ue-fname source=ue-reflection-field objectName=GUObjectArray.children_0 status=decoded object=0x140060000 pool=0x1400a0000 resolver=FNamePool:direct comparisonIndex=1234 number=1 block=0 offset=0x4d2 entry=0x1400b1348 wide=false decoded=DecodedField_0
 2026-06-16T17:43:39Z pid=312 loader=win-client event=ue-reflection-field name=GUObjectArray chain=children index=0 status=candidate field=0x140060000 class=0x140050000 classMapped=true nameComparisonIndex=1234 nameNumber=1 next=0x0 nextReadable=true nextMapped=false
 2026-06-16T17:43:39Z pid=312 loader=win-client event=ue-reflection-field name=GUObjectArray chain=propertyLink index=0 status=candidate field=0x140061000 class=0x140050000 classMapped=true nameComparisonIndex=1234 nameNumber=1 next=0x0 nextReadable=true nextMapped=false
+2026-06-16T17:43:39Z pid=312 loader=win-client event=ue-ffield-layout-candidate name=GUObjectArray chain=propertyLink index=0 layout=ffield-ue4 field=0x140061000 classOffset=0x8 class=0x140050000 classReadable=true classMapped=true classNameOffset=0x0 classNameReadable=true fieldClassName=FIntProperty fieldClassLooksProperty=true nameOffset=0x20 nameReadable=true fieldName=DecodedField_0 nameComparisonIndex=1234 nameNumber=1 nextOffset=0x18 next=0x0 nextReadable=true nextMapped=false descriptorLayout=fproperty-ue4 descriptorSane=true arrayDim=1 elementSize=4 propertyFlags=0x1 offsetInternal=12
+2026-06-16T17:43:39Z pid=312 loader=win-client event=ue-reflection-property-root-scan name=GUObjectArray status=candidate class=0x140050000 offset=0x60 root=0x140061000 rootReadable=true rootMapped=true descriptorLayout=fproperty-ue4 descriptorSane=true arrayDim=1 elementSize=4 offsetInternal=12
+2026-06-16T17:43:39Z pid=312 loader=win-client event=ue-reflection-property-root-scan name=GUObjectArray status=complete class=0x140050000 scanned=32 candidates=1 start=0x28 end=0x180
 2026-06-16T17:43:39Z pid=312 loader=win-client event=ue-reflection-field name=GUObjectArray chain=functionLink index=0 status=candidate field=0x140062000 class=0x140050000 classMapped=true nameComparisonIndex=1234 nameNumber=1 next=0x0 nextReadable=true nextMapped=false
 2026-06-16T17:43:39Z pid=312 loader=win-client event=ue-function-param-root name=GUObjectArray functionIndex=0 chain=childProperties status=root function=0x140062000 offset=0x40 root=0x140063000 functionFlags=0x400 functionFlagsReadable=true functionFlagsOffset=0x58
 2026-06-16T17:43:39Z pid=312 loader=win-client event=ue-function-native-identity source=ue-function-param status=promoted name=GUObjectArray functionIndex=0 chain=childProperties function=0x140062000 functionName=DecodedFunction_0 functionPath=/Script/GUObjectArray.DecodedFunction_0:Function functionRuntimePath=/RuntimeProbe/GUObjectArray.DecodedFunction_0:Function root=0x140063000 functionFlags=0x400 functionFlagsReadable=true
@@ -116,7 +119,7 @@ SAMPLE_LOG = SAMPLE_LOG.replace(
     "staticConstructObjectCalls=1 staticConstructObjectHits=1\n",
     (
         "staticConstructObjectCalls=1 staticConstructObjectHits=1 "
-        "notifyOnNewObjectCalls=3 notifyOnNewObjectCallbacks=2 "
+        "notifyOnNewObjectCalls=4 notifyOnNewObjectCallbacks=2 "
         "notifyOnNewObjectResult=19 notifyOnNewObjectIsNumber=true "
         "notifyOnNewObjectStatus=0 staticConstructObjectOuterHits=1 "
         "getWorldCalls=3 getWorldHits=2 "
@@ -181,6 +184,31 @@ SAMPLE_LOG += (
     "originalCallsBefore=2 originalCallsAfter=2\n"
     "2026-06-16T00:00:18Z pid=123 loader=win-client event=lua-process-event-native-invoke-self-test "
     "phase=smoke status=passed processEventNativeCalls=3 processEventNativeHits=1 liveCalls=2 originalCalls=2\n"
+    "2026-06-16T00:00:18Z pid=123 loader=win-client event=lua-process-event-native-executor-state "
+    "status=prepared bridgeArmed=true objectAllowed=true functionAllowed=true "
+    "objectRegistryAllowed=true functionDescriptorAllowed=true selfTestCallable=false "
+    "descriptorBackedCallable=true nativeCallable=true nativeNonSelfTestEnabled=false "
+    "paramsBufferConstructible=true descriptorCount=6 paramsDescriptorCount=17 "
+    "paramsBufferSize=152 nativeExecutorBlockReason=none nativeInvoked=false "
+    "object=0x1000 function=0x2000\n"
+    "2026-06-16T00:00:19Z pid=123 loader=win-client event=lua-call-function-native-invoke "
+    "phase=smoke status=preflight-ready objectRegistryAllowed=true selfTestCallable=false "
+    "invokeRequested=false nativeNonSelfTestEnabled=false nativeNonSelfTestInvoked=false "
+    "object=0x1000 function=DoubleProbeValue args= forceCall=true result=0 "
+    "liveCallsBefore=2 liveCallsAfter=2 originalCallsBefore=2 originalCallsAfter=2\n"
+    "2026-06-16T00:00:20Z pid=123 loader=win-client event=lua-call-function-native-invoke "
+    "phase=smoke status=non-self-test-invoke-disabled objectRegistryAllowed=true "
+    "selfTestCallable=false invokeRequested=true nativeNonSelfTestEnabled=false "
+    "nativeNonSelfTestInvoked=false object=0x1000 function=DoubleProbeValue args= "
+    "forceCall=true result=0 liveCallsBefore=2 liveCallsAfter=2 "
+    "originalCallsBefore=2 originalCallsAfter=2\n"
+    "2026-06-16T00:00:21Z pid=123 loader=win-client event=lua-call-function-native-invoke-self-test "
+    "phase=smoke status=passed callFunctionNativeCalls=3 callFunctionNativeHits=1 liveCalls=2 originalCalls=3\n"
+    "2026-06-16T00:00:21Z pid=123 loader=win-client event=lua-call-function-native-executor-state "
+    "status=prepared bridgeArmed=true objectAllowed=true functionAllowed=true "
+    "objectRegistryAllowed=true selfTestCallable=false nativeCallable=true "
+    "nativeNonSelfTestEnabled=false object=0x1000 function=DoubleProbeValue args= "
+    "forceCall=true nativeExecutorBlockReason=none nativeInvoked=false\n"
 )
 
 
@@ -227,6 +255,31 @@ class ClientLoaderScanSummaryTests(unittest.TestCase):
         self.assertEqual(summary["ueRuntimeDiscovery"]["validatedNames"], [])
         self.assertEqual(summary["ueRuntimeDiscovery"]["coverage"]["targetWritableImageCount"], 2)
         self.assertEqual(summary["ueRuntimeDiscovery"]["coverage"]["objectArrayProbes"], 2048)
+
+    def test_zero_count_runtime_guobjectarray_validation_is_ignored(self):
+        log = """\
+2026-06-18T00:00:00Z pid=312 loader=win-client event=loaded exe=C:\\game\\DuneSandbox-Win64-Shipping.exe
+2026-06-18T00:00:01Z pid=312 loader=win-client event=ue-runtime-discovery-start phase=thread maxRegionBytes=33554432 maxCandidates=8
+2026-06-18T00:00:01Z pid=312 loader=win-client event=ue-runtime-discovery-candidate name=RuntimeGUObjectArray addr=0x140070000 base=0x140070000 numElements=42 numChunks=1 hit=1 rva=0x70000 allocationBase=0x140000000 regionBase=0x140070000 protect=0x4 module=C:\\game\\DuneSandbox-Win64-Shipping.exe
+2026-06-18T00:00:01Z pid=312 loader=win-client event=ue-anchor name=RuntimeGUObjectArray group=objects status=mapped addr=0x140070000 rva=0x70000 allocationBase=0x140000000 regionBase=0x140070000 protect=0x4 type=0x1000000 module=C:\\game\\DuneSandbox-Win64-Shipping.exe
+2026-06-18T00:00:01Z pid=312 loader=win-client event=ue-object-array name=RuntimeGUObjectArray mode=direct status=empty base=0x140070000 chunks=0x0 maxElements=0 numElements=0 maxChunks=0 numChunks=0
+2026-06-18T00:00:01Z pid=312 loader=win-client event=ue-object-array-finish phase=thread registryCount=0
+2026-06-18T00:00:01Z pid=312 loader=win-client event=ue-runtime-root-validation phase=thread name=RuntimeGUObjectArray status=validated consumer=object-array registryCount=0
+2026-06-18T00:00:01Z pid=312 loader=win-client event=ue-runtime-discovery-finish phase=thread fnameHits=0 objectArrayHits=1 targetWritableRegions=2 oversizedRegions=0 scannedSlots=2048 fnameProbes=2048 objectArrayProbes=2048 anchors=1
+"""
+        records = [scan_summary.parse_line(line) for line in log.splitlines()]
+        summary = scan_summary.summarize(records, loader_filter=["win-client"])
+
+        self.assertFalse(summary["ueRuntimeDiscoveryReady"])
+        self.assertNotIn(
+            "RuntimeGUObjectArray",
+            summary["ueRuntimeDiscovery"]["rootValidationNames"],
+        )
+        self.assertEqual(summary["ueRuntimeDiscovery"]["consumerValidatedNames"], [])
+        self.assertEqual(
+            summary["ueRuntimeDiscovery"]["validatedBy"]["objectArrayRegistryFinishes"],
+            0,
+        )
 
     def test_runtime_discovery_summary_classifies_missing_target_writable_region(self):
         log = """\
@@ -307,6 +360,15 @@ class ClientLoaderScanSummaryTests(unittest.TestCase):
         self.assertEqual(summary["ueReflectionFieldCount"], 3)
         self.assertEqual(summary["candidateUeReflectionFieldCount"], 3)
         self.assertEqual(summary["classMappedUeReflectionFieldCount"], 3)
+        self.assertEqual(summary["ueFFieldLayoutCandidateCount"], 1)
+        self.assertEqual(summary["mappedUeFFieldLayoutCandidateCount"], 1)
+        self.assertEqual(summary["namedUeFFieldLayoutCandidateCount"], 1)
+        self.assertEqual(summary["propertyLikeUeFFieldLayoutCandidateCount"], 1)
+        self.assertEqual(summary["saneUeFFieldLayoutCandidateCount"], 1)
+        self.assertEqual(summary["propertyLikeSaneUeFFieldLayoutCandidateCount"], 1)
+        self.assertEqual(summary["ueReflectionPropertyRootScanCount"], 2)
+        self.assertEqual(summary["candidateUeReflectionPropertyRootScanCount"], 1)
+        self.assertEqual(summary["saneUeReflectionPropertyRootScanCount"], 1)
         self.assertEqual(summary["ueReflectionPropertyCount"], 2)
         self.assertEqual(summary["candidateUeReflectionPropertyCount"], 2)
         self.assertEqual(summary["readableUeReflectionPropertyCount"], 2)
@@ -410,6 +472,18 @@ class ClientLoaderScanSummaryTests(unittest.TestCase):
         self.assertEqual(summary["resolvedUeProcessEventLiveContextCount"], 1)
         self.assertEqual(summary["matchedUeProcessEventLiveContextCount"], 1)
         self.assertEqual(summary["runtimeMatchedUeProcessEventLiveContextCount"], 1)
+        self.assertIn(
+            {
+                "objectAddress": "0x140050000",
+                "functionAddress": "0x140062000",
+                "functionPath": "/RuntimeProbe/GUObjectArray.DecodedFunction_0:Function",
+                "objectPath": "/RuntimeProbe/GUObjectArray",
+                "functionProvenance": "runtime",
+                "callFunctionCommand": "DecodedFunction_0",
+                "paramsAddress": "0x20",
+            },
+            summary["activeValidationCandidates"],
+        )
         self.assertEqual(summary["runtimeProvenanceUeProcessEventLiveContextCount"], 1)
         self.assertEqual(summary["selfTestProvenanceUeProcessEventLiveContextCount"], 0)
         self.assertEqual(summary["ueProcessEventLiveRegistryContextCount"], 1)
@@ -478,8 +552,17 @@ class ClientLoaderScanSummaryTests(unittest.TestCase):
         self.assertEqual(summary["luaProcessEventNativeInvokeModFinishCount"], 1)
         self.assertEqual(summary["luaProcessEventNativeInvokeSelfTestCount"], 1)
         self.assertEqual(summary["luaProcessEventNativeInvokeDescriptorPreflightCount"], 1)
+        self.assertEqual(summary["luaProcessEventNativeExecutorStateCount"], 1)
+        self.assertEqual(summary["luaProcessEventNativeExecutorReadyStateCount"], 1)
         self.assertEqual(summary["luaProcessEventNativeInvokeNonSelfTestGateCount"], 1)
         self.assertEqual(summary["luaProcessEventNativeInvokeNonSelfTestInvokedCount"], 0)
+        self.assertEqual(summary["luaCallFunctionNativeInvokeModFinishCount"], 1)
+        self.assertEqual(summary["luaCallFunctionNativeInvokeSelfTestCount"], 1)
+        self.assertEqual(summary["luaCallFunctionNativeInvokePreflightCount"], 1)
+        self.assertEqual(summary["luaCallFunctionNativeExecutorStateCount"], 1)
+        self.assertEqual(summary["luaCallFunctionNativeExecutorReadyStateCount"], 1)
+        self.assertEqual(summary["luaCallFunctionNativeInvokeNonSelfTestGateCount"], 1)
+        self.assertEqual(summary["luaCallFunctionNativeInvokeNonSelfTestInvokedCount"], 0)
         self.assertEqual(summary["luaProcessEventParamsBufferCount"], 1)
         self.assertEqual(summary["luaLifecycleHookModFinishCount"], 1)
         self.assertEqual(summary["luaCustomEventModFinishCount"], 1)
@@ -873,6 +956,62 @@ class ClientLoaderScanSummaryTests(unittest.TestCase):
         summary = scan_summary.summarize(records, loader_filter=["win-client"])
         self.assertEqual(summary["luaLoadAssetPackageModFinishCount"], 1)
 
+    def test_static_construct_object_native_summary_requires_target_image_and_invocation(self):
+        dry_run_log = (
+            "2026-01-01T00:00:00Z pid=1 loader=win-client "
+            "event=lua-static-construct-object-native-executor-state status=anchor-missing "
+            "executorKind=guarded-static-construct-object-native-executor targetName=StaticConstructObject "
+            "target=0x0 targetImage=false platformAbi=win64-ms-abi class=0x1000 outer=0x2000 "
+            "name=NativeConstructPreflightProbe invokeRequested=false invokeEnabled=false "
+            "abiEvidenceProvided=false abiVerified=false callFrameReady=false "
+            "finalInvokeConfirmed=false nativeCallable=false nativeInvoked=false\n"
+            "2026-01-01T00:00:00Z pid=1 loader=win-client "
+            "event=lua-static-construct-object-native-invoke status=anchor-missing "
+            "executorKind=guarded-static-construct-object-native-executor targetName=StaticConstructObject "
+            "target=0x0 targetImage=false platformAbi=win64-ms-abi class=0x1000 outer=0x2000 "
+            "name=NativeConstructPreflightProbe invokeRequested=true invokeEnabled=false "
+            "abiEvidenceProvided=false abiVerified=false callFrameReady=false "
+            "finalInvokeConfirmed=false nativeCallable=false nativeInvoked=false\n"
+        )
+        records = [
+            record
+            for record in (scan_summary.parse_line(line) for line in dry_run_log.splitlines())
+            if record
+        ]
+        summary = scan_summary.summarize(records, loader_filter=["win-client"])
+        self.assertEqual(summary["luaStaticConstructObjectNativeExecutorStateCount"], 1)
+        self.assertEqual(summary["luaStaticConstructObjectNativeExecutorReadyStateCount"], 0)
+        self.assertEqual(summary["luaStaticConstructObjectNativeInvokeCount"], 1)
+        self.assertEqual(summary["luaStaticConstructObjectNativeInvokedCount"], 0)
+
+        target_ready_log = (
+            dry_run_log
+            + "2026-01-01T00:00:00Z pid=1 loader=win-client "
+            "event=lua-static-construct-object-native-executor-state status=prepared "
+            "executorKind=guarded-static-construct-object-native-executor targetName=StaticConstructObject "
+            "target=0x140040000 targetImage=true platformAbi=win64-ms-abi class=0x1000 outer=0x2000 "
+            "name=NativeConstructPreflightProbe invokeRequested=false invokeEnabled=true "
+            "abiEvidenceProvided=true abiVerified=true callFrameReady=true "
+            "finalInvokeConfirmed=true nativeCallable=true nativeInvoked=false\n"
+            "2026-01-01T00:00:00Z pid=1 loader=win-client "
+            "event=lua-static-construct-object-native-invoke status=native-invoked "
+            "executorKind=guarded-static-construct-object-native-executor targetName=StaticConstructObject "
+            "target=0x140040000 targetImage=true platformAbi=win64-ms-abi class=0x1000 outer=0x2000 "
+            "name=NativeConstructPreflightProbe invokeRequested=true invokeEnabled=true "
+            "abiEvidenceProvided=true abiVerified=true callFrameReady=true "
+            "finalInvokeConfirmed=true nativeCallable=true nativeInvoked=true\n"
+        )
+        records = [
+            record
+            for record in (scan_summary.parse_line(line) for line in target_ready_log.splitlines())
+            if record
+        ]
+        summary = scan_summary.summarize(records, loader_filter=["win-client"])
+        self.assertEqual(summary["luaStaticConstructObjectNativeExecutorStateCount"], 2)
+        self.assertEqual(summary["luaStaticConstructObjectNativeExecutorReadyStateCount"], 1)
+        self.assertEqual(summary["luaStaticConstructObjectNativeInvokeCount"], 2)
+        self.assertEqual(summary["luaStaticConstructObjectNativeInvokedCount"], 1)
+
     def test_package_state_events_require_target_image_provenance(self):
         log = (
             SAMPLE_LOG
@@ -946,6 +1085,28 @@ class ClientLoaderScanSummaryTests(unittest.TestCase):
         self.assertEqual(summary["runtimeReadableUeReflectionPropertyCount"], 0)
         self.assertEqual(summary["runtimeReadUeReflectionValueCount"], 0)
         self.assertEqual(summary["runtimeDescriptorMatchedReadUeReflectionValueCount"], 0)
+
+    def test_function_param_summary_rejects_non_property_field_class(self):
+        bad_param_log = (
+            "2026-01-01T00:00:00Z pid=1 loader=server event=ue-function-param "
+            "name=Actor functionIndex=0 chain=childProperties index=0 status=candidate "
+            "function=0x1000 functionName=WasRecentlyRendered "
+            "functionPath=/RuntimeProbe/Actor.WasRecentlyRendered:Function "
+            "field=0x2000 class=0x3000 classMapped=true fieldName=Actor "
+            "fieldClassName=WasRecentlyRendered arrayDim=69 elementSize=1 "
+            "propertyFlags=0x180 offsetInternal=1572880 "
+            "arrayDimReadable=true elementSizeReadable=true "
+            "propertyFlagsReadable=true offsetInternalReadable=true "
+            "functionFlags=0x400 functionFlagsReadable=true next=0x0\n"
+        )
+
+        records = [scan_summary.parse_line(line) for line in bad_param_log.splitlines()]
+        summary = scan_summary.summarize(records, loader_filter=["server"])
+
+        self.assertEqual(summary["ueFunctionParamCount"], 1)
+        self.assertEqual(summary["candidateUeFunctionParamCount"], 1)
+        self.assertEqual(summary["readableUeFunctionParamCount"], 0)
+        self.assertEqual(summary["namedUeFunctionParamCount"], 0)
 
     def test_cli_json_output(self):
         with tempfile.TemporaryDirectory() as tmp:

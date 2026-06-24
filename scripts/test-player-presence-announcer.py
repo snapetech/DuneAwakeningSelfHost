@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import importlib.util
+import os
 import pathlib
 import tempfile
 import unittest
@@ -10,6 +11,57 @@ SCRIPT_PATH = pathlib.Path(__file__).with_name("player-presence-announcer.py")
 SPEC = importlib.util.spec_from_file_location("player_presence_announcer", SCRIPT_PATH)
 player_presence_announcer = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(player_presence_announcer)
+
+
+def load_announcer_with_env(env):
+    spec = importlib.util.spec_from_file_location("player_presence_announcer_reloaded", SCRIPT_PATH)
+    module = importlib.util.module_from_spec(spec)
+    with unittest.mock.patch.dict(os.environ, env, clear=False):
+        spec.loader.exec_module(module)
+    return module
+
+
+class DatabaseConfigurationTests(unittest.TestCase):
+    def test_database_name_comes_from_environment(self):
+        module = load_announcer_with_env({
+            "DUNE_DB_NAME": "dune_sb_current",
+            "DUNE_ADMIN_BOT_ENV_FILE": "/tmp/dune-announcer-test-missing.env",
+        })
+
+        self.assertEqual(module.DB, "dune_sb_current")
+
+    def test_database_name_comes_from_env_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env_path = pathlib.Path(tmp) / ".env"
+            env_path.write_text("DUNE_DB_NAME=dune_sb_from_file\n", encoding="utf-8")
+            module = load_announcer_with_env({
+                "DUNE_ADMIN_BOT_ENV_FILE": str(env_path),
+            })
+
+        self.assertEqual(module.DB, "dune_sb_from_file")
+
+    def test_online_players_queries_configured_database(self):
+        module = load_announcer_with_env({
+            "DUNE_DB_NAME": "dune_sb_query_target",
+            "DUNE_ADMIN_BOT_ENV_FILE": "/tmp/dune-announcer-test-missing.env",
+        })
+        captured = {}
+
+        def fake_run(command, timeout=30):
+            captured["command"] = command
+
+            class Result:
+                returncode = 0
+                stdout = ""
+                stderr = ""
+
+            return Result()
+
+        with unittest.mock.patch.object(module, "run", fake_run):
+            self.assertEqual(module.online_players(), {})
+
+        db_arg = captured["command"].index("-d") + 1
+        self.assertEqual(captured["command"][db_arg], "dune_sb_query_target")
 
 
 class PrivateMessageRoutingTests(unittest.TestCase):

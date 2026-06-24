@@ -50,6 +50,23 @@ map_watchdog_control() {
   fi
 }
 
+seed_gateway_neighbors() {
+  seed_timeout="${DUNE_SEED_NEIGHBOR_TIMEOUT_SECONDS:-90}"
+  if [ ! -x ./scripts/seed-gateway-neighbor.sh ]; then
+    return 0
+  fi
+  case "$seed_timeout" in
+    ''|*[!0-9]*)
+      seed_timeout=90
+      ;;
+  esac
+  if [ "$seed_timeout" -gt 0 ] && command -v timeout >/dev/null 2>&1; then
+    timeout --kill-after=5s "${seed_timeout}s" ./scripts/seed-gateway-neighbor.sh || true
+  else
+    ./scripts/seed-gateway-neighbor.sh || true
+  fi
+}
+
 run_hardcore_dd_weekly_wipe() {
   env_file="${ENV_FILE:-.env}"
   enabled="${DUNE_HARDCORE_DD_WEEKLY_WIPE_ENABLED:-$(env_file_value DUNE_HARDCORE_DD_WEEKLY_WIPE_ENABLED "$env_file")}"
@@ -192,7 +209,7 @@ env_file_value() {
 run_steam_update_check() {
   env_file="${ENV_FILE:-.env}"
   steam_required="$(env_file_value DUNE_RESTART_STEAMCMD_REQUIRED "$env_file")"
-  steam_required="${steam_required:-false}"
+  steam_required="${steam_required:-true}"
   if ! steam_update_enabled; then
     printf 'Steam package update check disabled by DUNE_RESTART_CHECK_STEAM_UPDATE\n'
     return 0
@@ -285,9 +302,8 @@ run_steam_update_check() {
       exit "$rc"
       ;;
   esac
-  printf 'Steam package update check could not determine a safe tag; continuing without changing DUNE_IMAGE_TAG\n' >&2
-  ensure_official_images_loaded
-  return 0
+  printf 'Steam package update check could not determine a safe tag; aborting restart before starting old images\n' >&2
+  exit "$rc"
 }
 
 ensure_official_images_loaded() {
@@ -884,9 +900,33 @@ def run_host_update_check():
         "tag_count=$(printf '%s\\n' \"$tags\" | sed '/^$/d' | wc -l | tr -d ' '); "
         "current_tag=$(awk -F= '$1 == \"DUNE_IMAGE_TAG\" {print $2; exit}' \"$env_file\" 2>/dev/null || true); "
         "echo \"env file: $env_file\"; echo \"Steam server dir: $steam_dir\"; echo \"current DUNE_IMAGE_TAG: ${current_tag:-unset}\"; "
+        "app_id=${DUNE_STEAM_APP_ID:-" + shlex.quote(read_env_value(env_file, "DUNE_STEAM_APP_ID") or "4754530") + "}; "
+        "appmanifest=\"\"; "
+        "if [ -f \"$steam_dir/steamapps/appmanifest_${app_id}.acf\" ]; then appmanifest=\"$steam_dir/steamapps/appmanifest_${app_id}.acf\"; "
+        "elif printf '%s' \"$steam_dir\" | grep -q '/steamapps/common/'; then appmanifest=\"${steam_dir%%/common/*}/appmanifest_${app_id}.acf\"; "
+        "else dir=\"$steam_dir\"; while [ \"$dir\" != / ] && [ -n \"$dir\" ]; do "
+        "if [ \"$(basename \"$dir\")\" = steamapps ]; then appmanifest=\"$dir/appmanifest_${app_id}.acf\"; break; fi; "
+        "dir=$(dirname \"$dir\"); done; fi; "
+        "installed_buildid=\"\"; target_buildid=\"\"; "
+        "loaded_buildid_file=\"$steam_dir/images/battlegroup/.loaded_buildid\"; loaded_buildid=\"\"; "
+        "if [ -n \"$appmanifest\" ] && [ -f \"$appmanifest\" ]; then "
+        "installed_buildid=$(awk '$1 == \"\\\"buildid\\\"\" {gsub(/\\\"/, \"\", $2); print $2; exit}' \"$appmanifest\" 2>/dev/null || true); "
+        "target_buildid=$(awk '$1 == \"\\\"TargetBuildID\\\"\" {gsub(/\\\"/, \"\", $2); print $2; exit}' \"$appmanifest\" 2>/dev/null || true); "
+        "fi; "
+        "if [ -f \"$loaded_buildid_file\" ]; then loaded_buildid=$(cat \"$loaded_buildid_file\" 2>/dev/null || true); fi; "
+        "if [ -n \"$installed_buildid\" ]; then echo \"Steam installed buildid: $installed_buildid\"; fi; "
+        "if [ -n \"$target_buildid\" ]; then echo \"Steam target buildid: $target_buildid\"; fi; "
+        "if [ -n \"$loaded_buildid\" ]; then echo \"last loaded buildid: $loaded_buildid\"; fi; "
+        "if [ -n \"$installed_buildid\" ] && [ -n \"$target_buildid\" ] && [ \"$installed_buildid\" != \"$target_buildid\" ]; then "
+        "echo 'status: Steam package install incomplete' >&2; "
+        "echo \"installed buildid: $installed_buildid\" >&2; "
+        "echo \"target buildid: $target_buildid\" >&2; "
+        "echo 'rerun the Steam package update before loading images or restarting maps' >&2; "
+        "rm -f \"$tag_file\"; exit 2; "
+        "fi; "
         "echo 'package server tags:'; printf '%s\\n' \"$tags\" | sed 's/^/  /'; "
         "if [ \"$missing\" -gt 0 ] || [ \"$tag_count\" -ne 1 ]; then "
-        "echo 'Steam package update check could not determine a safe tag; continuing without changing DUNE_IMAGE_TAG' >&2; rm -f \"$tag_file\"; exit 0; "
+        "echo 'Steam package update check could not determine a safe tag; aborting restart before starting old images' >&2; rm -f \"$tag_file\"; exit 2; "
         "fi; "
         "package_tag=$(printf '%s\\n' \"$tags\" | sed '/^$/d' | head -1); "
         "if [ \"$current_tag\" = \"$package_tag\" ]; then "
@@ -896,13 +936,17 @@ def run_host_update_check():
         "image=\"registry.funcom.com/funcom/self-hosting/${repo}:${current_tag}\"; "
         "if ! docker image inspect \"$image\" >/dev/null 2>&1; then echo \"official Dune image is not loaded: $image\" >&2; missing_image=1; fi; "
         "done; "
-        "if [ \"$missing_image\" -ne 0 ]; then "
-        "echo 'loading official Dune images from Steam package because one or more required images are missing'; "
+        "same_tag_build_changed=0; "
+        "if [ -n \"$installed_buildid\" ] && [ \"$installed_buildid\" != \"$loaded_buildid\" ]; then same_tag_build_changed=1; fi; "
+        "if [ \"$missing_image\" -ne 0 ] || [ \"$same_tag_build_changed\" -ne 0 ]; then "
+        "if [ \"$same_tag_build_changed\" -ne 0 ]; then echo \"loading official Dune images from Steam package because Steam build changed under same Docker tag: ${loaded_buildid:-unset} -> $installed_buildid\"; "
+        "else echo 'loading official Dune images from Steam package because one or more required images are missing'; fi; "
         "for rel in " + load_tars_shell + "; do "
         "path=\"$steam_dir/$rel\"; "
         "if [ ! -f \"$path\" ]; then echo \"missing image tar: $path\" >&2; rm -f \"$tag_file\"; exit 1; fi; "
         "docker load -i \"$path\"; "
         "done; "
+        "if [ -n \"$installed_buildid\" ]; then mkdir -p \"$(dirname \"$loaded_buildid_file\")\"; printf '%s\\n' \"$installed_buildid\" > \"$loaded_buildid_file\"; fi; "
         "fi; "
         "rm -f \"$tag_file\"; exit 0; fi; "
         "current_build=${current_tag%%-*}; package_build=${package_tag%%-*}; "
@@ -915,6 +959,7 @@ def run_host_update_check():
         "if [ ! -f \"$path\" ]; then echo \"missing image tar: $path\" >&2; rm -f \"$tag_file\"; exit 1; fi; "
         "docker load -i \"$path\"; "
         "done; "
+        "if [ -n \"$installed_buildid\" ]; then mkdir -p \"$(dirname \"$loaded_buildid_file\")\"; printf '%s\\n' \"$installed_buildid\" > \"$loaded_buildid_file\"; fi; "
         "if grep -q '^DUNE_IMAGE_TAG=' \"$env_file\"; then sed -i \"s/^DUNE_IMAGE_TAG=.*/DUNE_IMAGE_TAG=$package_tag/\" \"$env_file\"; "
         "else printf '\\nDUNE_IMAGE_TAG=%s\\n' \"$package_tag\" >> \"$env_file\"; fi; "
         "echo \"updated $env_file: DUNE_IMAGE_TAG=$package_tag\"; "
@@ -1129,17 +1174,13 @@ if [ "$phase" = "start" ]; then
   ensure_official_images_loaded
   map_watchdog_control stop
   pre_start_hygiene
-  if [ -x ./scripts/seed-gateway-neighbor.sh ]; then
-    ./scripts/seed-gateway-neighbor.sh || true
-  fi
+  seed_gateway_neighbors
   if [ -x ./scripts/full-world-partitions.sh ]; then
     ./scripts/full-world-partitions.sh "${ENV_FILE:-.env}"
   fi
   ensure_official_images_loaded
   "$@" up -d --force-recreate --no-deps $services
-  if [ -x ./scripts/seed-gateway-neighbor.sh ]; then
-    ./scripts/seed-gateway-neighbor.sh || true
-  fi
+  seed_gateway_neighbors
   if [ -x ./scripts/restart-post-start-health.sh ]; then
     ./scripts/restart-post-start-health.sh
   elif [ -x ./scripts/verify-rmq-auth-path.sh ]; then
@@ -1151,14 +1192,10 @@ fi
 ensure_official_images_loaded
 map_watchdog_control stop
 pre_start_hygiene
-if [ -x ./scripts/seed-gateway-neighbor.sh ]; then
-  ./scripts/seed-gateway-neighbor.sh || true
-fi
+seed_gateway_neighbors
 ensure_official_images_loaded
 "$@" up -d --force-recreate --no-deps $services
-if [ -x ./scripts/seed-gateway-neighbor.sh ]; then
-  ./scripts/seed-gateway-neighbor.sh || true
-fi
+seed_gateway_neighbors
 if [ -x ./scripts/restart-post-start-health.sh ]; then
   ./scripts/restart-post-start-health.sh
 elif [ -x ./scripts/verify-rmq-auth-path.sh ]; then

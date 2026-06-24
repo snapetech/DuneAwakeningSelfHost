@@ -33,6 +33,7 @@ files=(
   "config/UserGame.ini"
   "config/UserGame.deep-desert-coriolis.ini"
 )
+dd2_file="config/UserGame.deep-desert-pvp.ini"
 
 read_ini_value() {
   local file="$1"
@@ -50,6 +51,24 @@ read_ini_value() {
       exit
     }
   ' "$file"
+}
+
+require_map_shift_state() {
+  local file="$1"
+  local map_name="$2"
+  local expected="$3"
+  local maps
+  maps="$(read_ini_value "$file" "/Script/DuneSandbox.MapFeatures" "m_Maps")"
+
+  if [[ "$maps" != *"(Name=\"$map_name\")"* ]]; then
+    printf '%s: missing MapFeatures entry for %s\n' "$file" "$map_name" >&2
+    return 1
+  fi
+  if [[ "$maps" != *"(Name=\"$map_name\"), (m_Taxation=False,m_DeepDesertGameplay=True,m_ShiftingSands=$expected"* ]]; then
+    printf '%s: %s MapFeatures must set m_ShiftingSands=%s\n' "$file" "$map_name" "$expected" >&2
+    return 1
+  fi
+  return 0
 }
 
 failures=0
@@ -82,11 +101,27 @@ for file in "${files[@]}"; do
       "$file" "${restart_on_end:-missing}" "${db_wipe:-missing}" >&2
     failures=$((failures + 1))
   fi
+  for map_name in DeepDesert DeepDesert_1; do
+    if ! require_map_shift_state "$file" "$map_name" "False"; then
+      failures=$((failures + 1))
+    fi
+  done
 done
 
+if [[ ! -f "$dd2_file" ]]; then
+  printf 'missing Hardcore DD map-feature config: %s\n' "$dd2_file" >&2
+  failures=$((failures + 1))
+else
+  for map_name in DeepDesert DeepDesert_1; do
+    if ! require_map_shift_state "$dd2_file" "$map_name" "True"; then
+      failures=$((failures + 1))
+    fi
+  done
+fi
+
 if (( failures > 0 )); then
-  printf 'Landsraad Coriolis guard failed: keep weekly cycle at %s days and disable destructive Coriolis effects.\n' "$required_cycle_days" >&2
+  printf 'Landsraad Coriolis guard failed: keep weekly cycle at %s days, disable DD1 destructive Coriolis/shifting effects, and keep DD2 shifting explicitly enabled.\n' "$required_cycle_days" >&2
   exit 1
 fi
 
-printf 'Landsraad Coriolis guard OK: weekly cycle=%s days, destructive effects disabled\n' "$required_cycle_days"
+printf 'Landsraad Coriolis guard OK: weekly cycle=%s days, DD1 shifting disabled, DD2 shifting enabled\n' "$required_cycle_days"

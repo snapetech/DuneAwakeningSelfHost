@@ -36,7 +36,56 @@ RUNTIME_CANDIDATE_LOG = """\
 """
 
 
-def pe_row(name, xref, pattern, category="ue"):
+def pe_row(name, xref, pattern, category="ue", source="test", source_provenance=None):
+    row = {
+        "name": f"{name}@0x{xref + 0x1000:x}#1",
+        "category": category,
+        "source": source,
+        "xrefRva": f"0x{xref:x}",
+        "targetRva": f"0x{xref + 0x1000:x}",
+        "pattern": pattern,
+        "length": len(pattern.split()),
+        "fixedBytes": sum(1 for part in pattern.split() if part != "??"),
+        "expectedFileOffset": f"0x{xref:x}",
+        "matchCount": 1,
+        "status": "unique-expected",
+        "promotable": True,
+        "matches": [{"fileOffset": f"0x{xref:x}", "rva": f"0x{xref:x}", "section": ".text", "expected": True}],
+    }
+    if source_provenance:
+        row["sourceProvenance"] = source_provenance
+    return row
+
+
+def elf_row(name, xref, pattern, category="ue", source="test", source_provenance=None):
+    row = {
+        "name": f"{name}@0x{xref + 0x1000:x}#1",
+        "category": category,
+        "source": source,
+        "xrefVaddr": f"0x{xref:x}",
+        "targetVaddr": f"0x{xref + 0x1000:x}",
+        "pattern": pattern,
+        "length": len(pattern.split()),
+        "fixedBytes": sum(1 for part in pattern.split() if part != "??"),
+        "expectedFileOffset": f"0x{xref:x}",
+        "matchCount": 1,
+        "status": "unique-expected",
+        "promotable": True,
+        "matches": [
+            {
+                "fileOffset": f"0x{xref:x}",
+                "imageOffset": f"0x{xref:x}",
+                "vaddr": f"0x{xref:x}",
+                "expected": True,
+            }
+        ],
+    }
+    if source_provenance:
+        row["sourceProvenance"] = source_provenance
+    return row
+
+
+def legacy_pe_row(name, xref, pattern, category="ue"):
     return {
         "name": f"{name}@0x{xref + 0x1000:x}#1",
         "category": category,
@@ -54,7 +103,7 @@ def pe_row(name, xref, pattern, category="ue"):
     }
 
 
-def elf_row(name, xref, pattern, category="ue"):
+def legacy_elf_row(name, xref, pattern, category="ue"):
     return {
         "name": f"{name}@0x{xref + 0x1000:x}#1",
         "category": category,
@@ -91,6 +140,116 @@ def validation(rows):
         "statusCounts": {"unique-expected": len(rows)},
         "categoryCounts": category_counts,
         "patterns": rows,
+    }
+
+
+def symbol_surface(binary, rows):
+    return {
+        "schemaVersion": "dune-elf-ue-symbol-surface/v1",
+        "binary": binary,
+        "symbolCount": len(rows),
+        "matchedCount": len(rows),
+        "nonFalsePositiveMatchedCount": sum(1 for row in rows if not row.get("falsePositive")),
+        "rows": rows,
+    }
+
+
+def symbol_row(name, demangled, role, value, groups=None, false_positive=False):
+    return {
+        "section": ".dynsym",
+        "name": name,
+        "demangled": demangled,
+        "value": value,
+        "size": 16,
+        "bind": "STB_GLOBAL",
+        "type": "STT_FUNC" if role in ("process-event", "dispatch-function", "package-function") else "STT_OBJECT",
+        "visibility": "STV_DEFAULT",
+        "shndx": "1",
+        "groups": groups or [],
+        "falsePositive": false_positive,
+        "role": role,
+    }
+
+
+def candidate_globals(binary, candidates):
+    return {
+        "schemaVersion": "dune-ue-candidate-globals/v1",
+        "binary": binary,
+        "candidateCount": len(candidates),
+        "anchorCounts": {},
+        "groups": {},
+        "candidates": candidates,
+    }
+
+
+def vtable_candidates(binary):
+    return {
+        "schemaVersion": "dune-ue-vtable-candidates/v1",
+        "binary": binary,
+        "hookProbeShortlist": [
+            {
+                "slot": 64,
+                "score": 2.26,
+                "candidateCount": 252,
+                "objectCoverage": 1.0,
+                "topTargetShare": 1.0,
+                "reasons": [
+                    "ue4-uobject-process-event-slot-heuristic",
+                    "present-on-most-scanned-objects",
+                    "stable-target-for-slot",
+                    "observed-across-multiple-vtables",
+                ],
+                "topTarget": {
+                    "targetName": "ProcessEvent",
+                    "targetSource": "vtable-candidate",
+                    "imageOffset": "0xfb4b060",
+                    "map": binary,
+                },
+            },
+            {
+                "slot": 32,
+                "score": 1.1,
+                "candidateCount": 8,
+                "objectCoverage": 0.2,
+                "topTargetShare": 0.4,
+                "reasons": [],
+                "topTarget": {
+                    "targetName": "ProcessEvent",
+                    "targetSource": "vtable-candidate",
+                    "imageOffset": "0x111",
+                    "map": binary,
+                },
+            },
+        ],
+        "rankedSlots": [],
+    }
+
+
+def package_loader_vtables(binary):
+    return {
+        "schemaVersion": "dune-elf-ue-package-loader-vtables/v1",
+        "binary": binary,
+        "vtables": [
+            {
+                "name": "_ZTV14FAsyncPackage2",
+                "demangled": "vtable for FAsyncPackage2",
+                "slots": [
+                    {
+                        "slot": 66,
+                        "target": "0xfa7a630",
+                        "candidateKind": "method",
+                        "demangled": "FAsyncPackage2::TickAsyncPackage(bool, bool)",
+                        "sourceHints": ["Runtime/CoreUObject/Private/Serialization/AsyncLoading2.cpp"],
+                    },
+                    {
+                        "slot": 67,
+                        "target": "0xfa7a680",
+                        "candidateKind": "trap",
+                        "demangled": "FAsyncPackage2::Trap()",
+                    },
+                ],
+            }
+        ],
     }
 
 
@@ -134,6 +293,192 @@ class PrepareUeAnchorCanaryTests(unittest.TestCase):
         )
         return json.loads(result.stdout), output_dir
 
+    def test_symbol_surface_json_counts_target_elf_exports_as_anchor_coverage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "DuneSandboxServer-Linux-Shipping"
+            symbol_json = Path(tmp) / "elf-ue-symbol-surface.json"
+            symbols = symbol_surface(
+                str(binary),
+                [
+                    symbol_row("GName", "GName", "global-symbol", 0x1000, ["names"]),
+                    symbol_row("GUObjectArray", "GUObjectArray", "global-symbol", 0x2000, ["objects"]),
+                    symbol_row("GWorld", "GWorld", "global-symbol", 0x3000, ["world"]),
+                    symbol_row("_ZN7UObject12ProcessEventEP9UFunctionPv", "UObject::ProcessEvent(UFunction*, void*)", "process-event", 0x4000, ["dispatch"]),
+                    symbol_row("_Z16StaticLoadObjectv", "StaticLoadObject()", "package-function", 0x5000, ["package"]),
+                    symbol_row("SDL_LoadObject", "SDL_LoadObject", "package-function", 0x6000, ["package"], false_positive=True),
+                ],
+            )
+            symbol_json.write_text(json.dumps(symbols), encoding="utf-8")
+            result, output_dir = self.run_prepare(
+                tmp,
+                "server",
+                binary.name,
+                [],
+                "",
+                extra_args=["--symbol-surface-json", str(symbol_json)],
+            )
+            coverage = json.loads((output_dir / "anchor-coverage.json").read_text(encoding="utf-8"))
+            prep_summary = (output_dir / "README.md").read_text(encoding="utf-8")
+
+        self.assertEqual(result["manifestEntryCount"], 0)
+        self.assertEqual(result["anchorSignatureEntryCount"], 0)
+        self.assertEqual(result["symbolSurfaceAnchorEntryCount"], 5)
+        self.assertEqual(result["symbolSurfaceAnchorCount"], 5)
+        self.assertTrue(result["readyForTargetObjectDiscovery"])
+        self.assertTrue(result["readyForTargetHookPlanning"])
+        self.assertTrue(result["readyForTargetPackageLoading"])
+        self.assertEqual(coverage["groups"]["names"]["targetPresent"], 1)
+        self.assertEqual(coverage["groups"]["objects"]["targetPresent"], 1)
+        self.assertEqual(coverage["groups"]["world"]["targetPresent"], 1)
+        self.assertEqual(coverage["groups"]["dispatch"]["targetPresent"], 1)
+        self.assertEqual(coverage["groups"]["package"]["targetPresent"], 1)
+        process_event = coverage["groups"]["dispatch"]["anchors"][0]
+        self.assertIn("symbol-surface", process_event["sources"])
+        self.assertEqual(process_event["targetSourceCount"], 1)
+        self.assertIn("process-event", process_event["symbolSurfaceRoles"])
+        self.assertNotIn("SDL_LoadObject", json.dumps(coverage))
+        self.assertIn("- Symbol-surface anchors: `5`", prep_summary)
+
+    def test_candidate_globals_json_counts_reviewed_target_globals_as_anchor_coverage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "DuneSandboxServer-Linux-Shipping"
+            candidates_json = Path(tmp) / "ue-candidate-globals.json"
+            candidates_json.write_text(
+                json.dumps(
+                    candidate_globals(
+                        str(binary),
+                        [
+                            {
+                                "name": "GUObjectArray",
+                                "group": "objects",
+                                "imageOffset": "0x165ff4a8",
+                                "source": str(binary),
+                                "sourceProvenance": "target",
+                                "score": 2336,
+                            },
+                            {
+                                "name": "GEngine",
+                                "group": "world",
+                                "imageOffset": "0x1686df70",
+                                "source": str(binary),
+                                "sourceProvenance": "target",
+                                "score": 8703,
+                            },
+                        ],
+                    )
+                ),
+                encoding="utf-8",
+            )
+            result, output_dir = self.run_prepare(
+                tmp,
+                "server",
+                binary.name,
+                [],
+                "",
+                extra_args=["--candidate-globals-json", str(candidates_json)],
+            )
+            coverage = json.loads((output_dir / "anchor-coverage.json").read_text(encoding="utf-8"))
+            prep_summary = (output_dir / "README.md").read_text(encoding="utf-8")
+
+        self.assertEqual(result["candidateGlobalAnchorEntryCount"], 2)
+        self.assertEqual(result["candidateGlobalAnchorCount"], 2)
+        self.assertFalse(result["readyForTargetObjectDiscovery"])
+        self.assertEqual(coverage["groups"]["objects"]["targetPresent"], 1)
+        self.assertEqual(coverage["groups"]["world"]["targetPresent"], 1)
+        object_anchor = coverage["groups"]["objects"]["anchors"][0]
+        world_anchor = coverage["groups"]["world"]["anchors"][1]
+        self.assertIn("candidate-global", object_anchor["sources"])
+        self.assertIn("candidate-global", world_anchor["sources"])
+        self.assertEqual(object_anchor["candidateGlobalOffsets"], ["0x165ff4a8"])
+        self.assertEqual(world_anchor["candidateGlobalOffsets"], ["0x1686df70"])
+        self.assertIn("- Candidate-global anchors: `2`", prep_summary)
+
+    def test_vtable_candidates_json_counts_stable_target_process_event_as_dispatch_coverage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "DuneSandboxServer-Linux-Shipping"
+            vtable_json = Path(tmp) / "ue-vtable-candidates.json"
+            vtable_json.write_text(json.dumps(vtable_candidates(str(binary))), encoding="utf-8")
+            result, output_dir = self.run_prepare(
+                tmp,
+                "server",
+                binary.name,
+                [],
+                "",
+                extra_args=["--vtable-candidates-json", str(vtable_json)],
+            )
+            coverage = json.loads((output_dir / "anchor-coverage.json").read_text(encoding="utf-8"))
+            prep_summary = (output_dir / "README.md").read_text(encoding="utf-8")
+
+        self.assertEqual(result["vtableCandidateAnchorEntryCount"], 1)
+        self.assertEqual(result["vtableCandidateAnchorCount"], 1)
+        process_event = coverage["groups"]["dispatch"]["anchors"][0]
+        self.assertIn("vtable-candidate", process_event["sources"])
+        self.assertTrue(process_event["targetPresent"])
+        self.assertEqual(process_event["targetSourceCount"], 1)
+        self.assertEqual(process_event["vtableCandidateSlots"], [64])
+        self.assertEqual(process_event["vtableCandidateOffsets"], ["0xfb4b060"])
+        self.assertFalse(result["readyForTargetHookPlanning"])
+        self.assertFalse(result["readyForTargetPackageLoading"])
+        self.assertIn("- VTable candidate anchors: `1`", prep_summary)
+
+    def test_vtable_candidates_accept_noisy_high_count_process_event_slot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "DuneSandboxServer-Linux-Shipping"
+            vtable_json = Path(tmp) / "ue-vtable-candidates.json"
+            noisy = vtable_candidates(str(binary))
+            noisy["hookProbeShortlist"][0]["objectCoverage"] = 0.5
+            noisy["hookProbeShortlist"][0]["candidateCount"] = 217
+            vtable_json.write_text(json.dumps(noisy), encoding="utf-8")
+            result, output_dir = self.run_prepare(
+                tmp,
+                "server",
+                binary.name,
+                [],
+                "",
+                extra_args=["--vtable-candidates-json", str(vtable_json)],
+            )
+            coverage = json.loads((output_dir / "anchor-coverage.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(result["vtableCandidateAnchorEntryCount"], 1)
+        process_event = coverage["groups"]["dispatch"]["anchors"][0]
+        self.assertTrue(process_event["targetPresent"])
+        self.assertEqual(process_event["vtableCandidateSlots"], [64])
+
+    def test_package_loader_vtables_are_recorded_but_do_not_unlock_package_coverage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "DuneSandboxServer-Linux-Shipping"
+            package_vtables_json = Path(tmp) / "ue-package-loader-vtables.json"
+            package_vtables_json.write_text(json.dumps(package_loader_vtables(str(binary))), encoding="utf-8")
+            result, output_dir = self.run_prepare(
+                tmp,
+                "server",
+                binary.name,
+                [],
+                "",
+                extra_args=["--package-loader-vtables-json", str(package_vtables_json)],
+            )
+            coverage = json.loads((output_dir / "anchor-coverage.json").read_text(encoding="utf-8"))
+            prep_summary = (output_dir / "README.md").read_text(encoding="utf-8")
+
+        self.assertEqual(result["packageLoaderVTableCandidateEntryCount"], 2)
+        self.assertEqual(result["packageLoaderVTableMethodCandidateCount"], 1)
+        self.assertEqual(result["packageLoaderVTableCount"], 1)
+        self.assertFalse(result["packageLoaderVTablePromotable"])
+        self.assertFalse(result["readyForTargetObjectDiscovery"])
+        self.assertFalse(result["readyForTargetHookPlanning"])
+        self.assertFalse(result["readyForTargetPackageLoading"])
+        self.assertEqual(result["combinedAnchorCount"], 0)
+        self.assertEqual(coverage["groups"]["package"]["targetPresent"], 0)
+        self.assertEqual(coverage["packageLoaderVTableStrongestMethods"][0]["target"], "0xfa7a630")
+        self.assertIn("StaticLoadObject/StaticLoadClass/LoadObject/LoadPackage/ResolveName", coverage["packageLoaderVTableNonPromotableReason"])
+        self.assertIn("- Package-loader vtable method candidates: `1`", prep_summary)
+        self.assertIn("- Package-loader vtable promotable: `false`", prep_summary)
+        self.assertIn("## Package Loader VTable Candidates", prep_summary)
+        self.assertIn("Package-loading anchors require a callable target-image StaticLoadObject", prep_summary)
+        self.assertIn("summarize-ue4ss-package-route-evidence.py", prep_summary)
+        self.assertIn("summarize-ue4ss-package-external-symbol-plan.py", prep_summary)
+        self.assertIn("ue4ss-package-external-symbol-plan.json", prep_summary)
+
     def test_prepared_canary_can_include_unique_runtime_root_candidates(self):
         rows = [
             pe_row("ProcessEvent", 0x2000, "e8 ?? ?? ?? ??"),
@@ -155,6 +500,8 @@ class PrepareUeAnchorCanaryTests(unittest.TestCase):
         self.assertEqual(result["anchorEnvEntryCount"], 2)
         self.assertIn("FNamePool=0x140060000", env_text)
         self.assertIn("GUObjectArray=0x140070000", env_text)
+        self.assertTrue(coverage["provided"])
+        self.assertTrue(coverage["targetCoverageFieldsPresent"])
         self.assertEqual(coverage["runtimeCandidateAnchorCount"], 2)
         self.assertEqual(coverage["runtimeCandidateAnchors"], ["FNamePool", "GUObjectArray"])
         names_group = coverage["groups"]["names"]
@@ -197,6 +544,18 @@ class PrepareUeAnchorCanaryTests(unittest.TestCase):
                     "schemaVersion": "dune-ue-object-discovery-coverage/v1",
                     "missingObjectDiscoveryComponents": [],
                     "missingFindObjectComponents": [],
+                },
+                "liveTargetImageCanaryContract": {
+                    "ready": True,
+                    "missingKeys": [],
+                    "groups": {
+                        "targetImageAnchors": {"ready": True, "missingKeys": []},
+                        "runtimePackageLoading": {"ready": True, "missingKeys": []},
+                        "runtimeObjectRegistry": {"ready": True, "missingKeys": []},
+                        "runtimeReflection": {"ready": True, "missingKeys": []},
+                        "runtimeProcessEventDispatch": {"ready": True, "missingKeys": []},
+                        "runtimeCallFunctionDispatch": {"ready": True, "missingKeys": []},
+                    },
                 },
                 "anchorCoverage": {"provided": True},
                 "runtimeDiscovery": {
@@ -318,20 +677,56 @@ class PrepareUeAnchorCanaryTests(unittest.TestCase):
         self.assertTrue(coverage["groups"]["package"]["anchors"][0]["targetPresent"])
         self.assertEqual(coverage["groups"]["package"]["anchors"][0]["targetSourceCount"], 2)
         self.assertIn("Ready for target-image package loading anchors: `true`", prep_summary)
-        self.assertIn("- package: `1/6` target=`1/6`", prep_summary)
+        self.assertIn("- package: `1/7` target=`1/7`", prep_summary)
         self.assertTrue(verifier_mode & 0o111)
         self.assertTrue(strict_verifier_mode & 0o111)
         self.assertIn("DUNE_UE4SS_STRICT_RUNTIME_CONTRACT=true", strict_verifier_text)
         self.assertIn("post-canary-verify.sh", strict_verifier_text)
         self.assertIn("'runtimeRootDiscovery': 'ue-runtime-root-discovery'", verifier_text)
+        self.assertIn("'luaStaticConstructObjectNativeExecutorReady': 'lua-static-construct-object-native-executor-ready'", verifier_text)
+        self.assertIn("'luaLoadClassPackageNativeInvocation': 'lua-load-class-package-native-invocation'", verifier_text)
+        self.assertIn("'luaLoadClassPackageNativeInvocation'", verifier_text)
         self.assertIn("Runtime discovery promoted roots", verifier_text)
         self.assertIn("Runtime discovery validated roots", verifier_text)
         self.assertIn("--client-log", verifier_text)
         self.assertIn("/tmp/dune-win-client-probe-loader.log", verifier_text)
         self.assertIn("--loader win-client", verifier_text)
         self.assertIn("summarize-ue4ss-port-gaps.py", verifier_text)
+        self.assertIn("summarize-ue4ss-evidence-inventory.py", verifier_text)
+        self.assertIn("--require-complete", verifier_text)
         self.assertIn("--canary-plan-json", verifier_text)
         self.assertIn("--format json", verifier_text)
+
+    def test_loader_provenance_signature_does_not_unlock_target_anchor_coverage(self):
+        rows = [
+            pe_row(
+                "GUObjectArray",
+                0x1000,
+                "48 8d 0d ?? ?? ?? ??",
+                source="C:\\tools\\windows-client-loader\\dune_win_client_probe_loader.dll",
+                source_provenance="loader",
+            ),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            result, output_dir = self.run_prepare(
+                tmp,
+                "windows",
+                "DuneSandbox-Win64-Shipping.exe",
+                rows,
+                "",
+            )
+            coverage = json.loads((output_dir / "anchor-coverage.json").read_text(encoding="utf-8"))
+
+        object_anchor = coverage["groups"]["objects"]["anchors"][0]
+        self.assertEqual(result["anchorSignatureEntryCount"], 1)
+        self.assertEqual(coverage["groups"]["objects"]["present"], 1)
+        self.assertEqual(coverage["groups"]["objects"]["targetPresent"], 0)
+        self.assertEqual(coverage["groups"]["objects"]["loaderPresent"], 1)
+        self.assertFalse(coverage["readyForTargetObjectDiscovery"])
+        self.assertFalse(object_anchor["targetPresent"])
+        self.assertTrue(object_anchor["loaderPresent"])
+        self.assertEqual(object_anchor["targetSourceCount"], 0)
+        self.assertEqual(object_anchor["loaderSourceCount"], 1)
 
     def test_post_canary_verifier_rebuilds_readiness_sidecars(self):
         rows = [
@@ -380,12 +775,16 @@ class PrepareUeAnchorCanaryTests(unittest.TestCase):
             post_summary = output_dir / "post-canary-summary.md"
             gap_summary_json = output_dir / "ue4ss-port-gaps.json"
             gap_summary = output_dir / "ue4ss-port-gaps.md"
+            evidence_inventory_json = output_dir / "ue4ss-evidence-inventory.json"
+            evidence_inventory = output_dir / "ue4ss-evidence-inventory.md"
             self.assertNotIn("readinessJson", result["outputs"])
             self.assertFalse(readiness_json.exists())
             self.assertFalse(object_coverage.exists())
             self.assertFalse(post_summary.exists())
             self.assertFalse(gap_summary_json.exists())
             self.assertFalse(gap_summary.exists())
+            self.assertFalse(evidence_inventory_json.exists())
+            self.assertFalse(evidence_inventory.exists())
             subprocess.run(
                 [str(output_dir / "post-canary-verify.sh"), str(log)],
                 cwd=ROOT,
@@ -399,6 +798,8 @@ class PrepareUeAnchorCanaryTests(unittest.TestCase):
             summary = post_summary.read_text(encoding="utf-8")
             gaps_json = json.loads(gap_summary_json.read_text(encoding="utf-8"))
             gaps = gap_summary.read_text(encoding="utf-8")
+            inventory_json = json.loads(evidence_inventory_json.read_text(encoding="utf-8"))
+            inventory = evidence_inventory.read_text(encoding="utf-8")
 
         self.assertEqual(readiness["schemaVersion"], "dune-ue4ss-port-readiness/v1")
         self.assertEqual(coverage, readiness["objectDiscoveryCoverage"])
@@ -407,13 +808,18 @@ class PrepareUeAnchorCanaryTests(unittest.TestCase):
         self.assertIn("- Ready objectDiscovery:", summary)
         self.assertIn("- ueProcessEventHookRuntimeTarget:", summary)
         self.assertIn("- ueCallFunctionHookRuntimeTarget:", summary)
+        self.assertIn("- ueProcessEventActiveValidation:", summary)
+        self.assertIn("- ueCallFunctionActiveValidation:", summary)
         self.assertIn("- ueCallFunctionLiveLuaDispatch:", summary)
+        self.assertIn("- luaCallFunctionNativeInvokeNonSelfTestGate:", summary)
         self.assertIn("- ueProcessEventLiveLuaDispatch:", summary)
         self.assertIn("- ueProcessEventLuaHookAliasRouting:", summary)
         self.assertIn("## Runtime Evidence Contract", summary)
         self.assertIn("registryProvenance=runtime", summary)
         self.assertIn("functionProvenance=runtime", summary)
         self.assertIn("luaDispatch=true", summary)
+        self.assertIn("ue-process-event-active-validate", summary)
+        self.assertIn("ue-call-function-active-validate", summary)
         self.assertIn("Package native executor readiness requires", summary)
         self.assertIn("FinalNativeCallEligible=true", summary)
         self.assertIn("- Strict runtime contract: `disabled`", summary)
@@ -433,6 +839,8 @@ class PrepareUeAnchorCanaryTests(unittest.TestCase):
         self.assertIn("# UE4SS Port Gap Summary", gaps)
         self.assertIn("Recommended next stage", gaps)
         self.assertIn("Root-Recovery Candidate Coverage", gaps)
+        self.assertEqual(inventory_json["schemaVersion"], "dune-ue4ss-evidence-inventory/v1")
+        self.assertIn("# UE4SS Evidence Inventory", inventory)
         self.assertIn("Missing groups: `world`", gaps)
         self.assertEqual(gaps_json["schemaVersion"], "dune-ue4ss-port-gap-summary/v1")
         self.assertEqual(gaps_json["rootRecoveryCandidateCoverage"]["missingGroups"], ["world"])
@@ -479,7 +887,10 @@ class PrepareUeAnchorCanaryTests(unittest.TestCase):
         self.assertIn("missing strict UE4SS contract keys", wrapper_result.stderr)
         self.assertIn("- Strict runtime contract: `enabled`", summary)
         self.assertIn("ueProcessEventHookRuntimeTarget", summary)
+        self.assertIn("ueProcessEventActiveValidation", summary)
+        self.assertIn("ueCallFunctionActiveValidation", summary)
         self.assertIn("ueProcessEventLiveLuaDispatch", summary)
+        self.assertIn("luaCallFunctionNativeInvokeNonSelfTestGate", summary)
         self.assertIn("luaFunctionRegistryRuntime", summary)
         self.assertIn("signatureManifestPromotable", summary)
         self.assertIn("anchorCoverageHookPlanning", summary)
@@ -498,7 +909,19 @@ class PrepareUeAnchorCanaryTests(unittest.TestCase):
             "ue-call-function-hook-runtime-target",
             "ue-process-event-live-hook-runtime-target",
             "ue-call-function-live-hook-runtime-target",
+            "ue-process-event-active-validation",
+            "ue-call-function-active-validation",
             "ue-call-function-live-lua-dispatch",
+            "lua-call-function-native-invoke",
+            "lua-call-function-native-invoke-preflight",
+            "lua-call-function-native-executor-state",
+            "lua-call-function-native-invoke-non-self-test-gate",
+            "lua-call-function-native-invoke-non-self-test-invoked",
+            "lua-process-event-native-invoke",
+            "lua-process-event-native-invoke-descriptor-preflight",
+            "lua-process-event-native-executor-state",
+            "lua-process-event-native-invoke-non-self-test-gate",
+            "lua-process-event-native-invoke-non-self-test-invoked",
             "ue-process-event-live-lua-dispatch",
             "ue-process-event-live-function-path",
             "ue-process-event-live-runtime-context",
@@ -539,6 +962,9 @@ class PrepareUeAnchorCanaryTests(unittest.TestCase):
             "lua-object-outer-chain-identities",
             "lua-object-api",
             "lua-function-iteration-runtime",
+            "lua-static-construct-object-native-executor-state",
+            "lua-static-construct-object-native-executor-ready",
+            "lua-static-construct-object-native-invoke",
             "ue-reflection-property-descriptors-runtime",
             "ue-reflection-property-values-runtime",
             "lua-reflection-for-each-property-runtime",
@@ -552,7 +978,12 @@ class PrepareUeAnchorCanaryTests(unittest.TestCase):
             "lua-load-asset-package-native-call-adapter",
             "lua-load-asset-package-invocation-descriptor",
             "lua-load-asset-package-native-executor",
+            "lua-load-asset-package-native-invocation",
             "lua-load-asset-package",
+            "lua-load-class-package-abi-state",
+            "lua-load-class-package-call-frame-verification",
+            "lua-load-class-package-native-executor",
+            "lua-load-class-package-native-invocation",
             "signature-manifest-exact",
             "signature-manifest-promotable",
             "anchor-coverage-object-discovery",
@@ -569,6 +1000,22 @@ class PrepareUeAnchorCanaryTests(unittest.TestCase):
                 "DuneSandbox-Win64-Shipping.exe",
                 rows,
                 ANCHOR_LOG,
+            )
+            (output_dir / "anchor-coverage.json").write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": "dune-ue-anchor-coverage/v1",
+                        "targetCoverageFieldsPresent": True,
+                        "groups": {
+                            "names": {"present": 1, "targetPresent": 1, "total": 1},
+                            "objects": {"present": 1, "targetPresent": 1, "total": 1},
+                            "world": {"present": 1, "targetPresent": 1, "total": 1},
+                            "dispatch": {"present": 1, "targetPresent": 1, "total": 1},
+                            "package": {"present": 1, "targetPresent": 1, "total": 1},
+                        },
+                    }
+                ),
+                encoding="utf-8",
             )
             log = Path(tmp) / "post-canary.log"
             log.write_text(ANCHOR_LOG, encoding="utf-8")
@@ -601,6 +1048,9 @@ class PrepareUeAnchorCanaryTests(unittest.TestCase):
                     "luaFunctionRegistryRuntime": True,
                     "luaDecodedObjectAliasesRuntime": True,
                     "luaFunctionIterationRuntime": True,
+                    "luaStaticConstructObjectNativeExecutorState": True,
+                    "luaStaticConstructObjectNativeExecutorReady": True,
+                    "luaStaticConstructObjectNativeInvoke": True,
                     "ueReflectionPropertyDescriptorsRuntime": True,
                     "ueReflectionPropertyValuesRuntime": True,
                     "reflection": True,
@@ -613,14 +1063,44 @@ class PrepareUeAnchorCanaryTests(unittest.TestCase):
                     "luaLoadAssetPackageNativeCallAdapter": True,
                     "luaLoadAssetPackageInvocationDescriptor": True,
                     "luaLoadAssetPackageNativeExecutor": True,
+                    "luaLoadAssetPackageNativeInvocation": True,
                     "luaLoadAssetPackage": True,
+                    "luaLoadClassPackageAbiState": True,
+                    "luaLoadClassPackageCallFrameVerification": True,
+                    "luaLoadClassPackageNativeExecutor": True,
+                    "luaLoadClassPackageNativeInvocation": True,
+                    "ueProcessEventActiveValidation": True,
+                    "ueCallFunctionActiveValidation": True,
+                    "luaCallFunctionNativeInvoke": True,
+                    "luaCallFunctionNativeInvokePreflight": True,
+                    "luaCallFunctionNativeExecutorState": True,
+                    "luaCallFunctionNativeInvokeNonSelfTestGate": True,
+                    "luaCallFunctionNativeInvokeNonSelfTestInvoked": True,
+                    "luaProcessEventNativeInvoke": True,
+                    "luaProcessEventNativeInvokeDescriptorPreflight": True,
+                    "luaProcessEventNativeExecutorState": True,
+                    "luaProcessEventNativeInvokeNonSelfTestGate": True,
+                    "luaProcessEventNativeInvokeNonSelfTestInvoked": True,
                     "luaDispatch": True,
+                    "ue4ssLuaApiComplete": True,
                 },
                 "gates": [{"name": name, "passed": True} for name in gate_names],
                 "objectDiscoveryCoverage": {
                     "schemaVersion": "dune-ue-object-discovery-coverage/v1",
                     "missingObjectDiscoveryComponents": [],
                     "missingFindObjectComponents": [],
+                },
+                "liveTargetImageCanaryContract": {
+                    "ready": True,
+                    "missingKeys": [],
+                    "groups": {
+                        "targetImageAnchors": {"ready": True, "missingKeys": []},
+                        "runtimePackageLoading": {"ready": True, "missingKeys": []},
+                        "runtimeObjectRegistry": {"ready": True, "missingKeys": []},
+                        "runtimeReflection": {"ready": True, "missingKeys": []},
+                        "runtimeProcessEventDispatch": {"ready": True, "missingKeys": []},
+                        "runtimeCallFunctionDispatch": {"ready": True, "missingKeys": []},
+                    },
                 },
                 "anchorCoverage": {"provided": True},
                 "runtimeDiscovery": {
@@ -681,7 +1161,17 @@ class PrepareUeAnchorCanaryTests(unittest.TestCase):
         self.assertIn("- Runtime candidate anchors injected: `none`", summary)
         self.assertIn("- Runtime discovery failures: `none`", summary)
         self.assertIn("- Live target-image runtimePackageLoading: `ready=true, missing=none`", summary)
+        self.assertIn("- luaLoadClassPackageNativeInvocation: `true`", summary)
+        self.assertIn("- luaStaticConstructObjectNativeExecutorReady: `true`", summary)
         self.assertIn("- Live target-image runtimeProcessEventDispatch: `ready=true, missing=none`", summary)
+        self.assertIn("- Live target-image runtimeCallFunctionDispatch: `ready=true, missing=none`", summary)
+        self.assertIn("- ueProcessEventActiveValidation: `true`", summary)
+        self.assertIn("- ueCallFunctionActiveValidation: `true`", summary)
+        self.assertIn("- luaCallFunctionNativeExecutorState: `true`", summary)
+        self.assertIn("- luaCallFunctionNativeInvokeNonSelfTestGate: `true`", summary)
+        self.assertIn("- luaCallFunctionNativeInvokeNonSelfTestInvoked: `true`", summary)
+        self.assertIn("- luaProcessEventNativeExecutorState: `true`", summary)
+        self.assertIn("- luaProcessEventNativeInvokeNonSelfTestInvoked: `true`", summary)
         self.assertIn("- signatureManifestExact: `true`", summary)
         self.assertIn("- anchorCoverageHookPlanning: `true`", summary)
         self.assertIn("- anchorCoveragePackageLoading: `true`", summary)
@@ -744,6 +1234,47 @@ class PrepareUeAnchorCanaryTests(unittest.TestCase):
         self.assertIn("--client-log", verifier_text)
         self.assertIn("/tmp/dune-client-probe-loader.log", verifier_text)
         self.assertIn("--loader client", verifier_text)
+
+    def test_readme_includes_linux_target_anchor_recovery_commands_when_not_ready(self):
+        rows = [
+            elf_row("GWorld", 0x1000, "48 8b 0d ?? ?? ?? ??"),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            _result, output_dir = self.run_prepare(
+                tmp,
+                "linux-client",
+                "DuneSandbox-Linux-Shipping",
+                rows,
+                "",
+                extra_args=[
+                    "--loader",
+                    "client",
+                    "--pid",
+                    "1234",
+                    "--exe-substring",
+                    "DuneSandbox",
+                    "--exe-substring",
+                    "DuneClient",
+                ],
+            )
+            summary = (output_dir / "README.md").read_text(encoding="utf-8")
+
+        self.assertIn("## Target-Image Anchor Recovery", summary)
+        self.assertIn("- Recovery reasons: `", summary)
+        self.assertIn("missing-target-object-anchor-groups", summary)
+        self.assertIn("- Missing target groups: `object=names, objects", summary)
+        self.assertIn("scripts/summarize-linux-loader-xrefs.py", summary)
+        self.assertIn("--pid 1234", summary)
+        self.assertIn("--exe-substring DuneSandbox", summary)
+        self.assertIn("--exe-substring DuneClient", summary)
+        self.assertIn("scripts/promote-ue-anchor-xref-candidates.py", summary)
+        self.assertIn("--require-target-source", summary)
+        self.assertIn("ue-anchor-candidates.json", summary)
+        self.assertIn("scripts/prepare-ue-anchor-canary.py --platform linux-client", summary)
+        self.assertIn("--xref-json", summary)
+        self.assertIn("--loader client", summary)
+        self.assertIn("--pid 1234", summary)
+        self.assertIn("recovered-target-anchors/post-canary-verify.sh", summary)
 
     def test_non_anchor_signature_manifest_does_not_create_ue_anchor_coverage(self):
         rows = [

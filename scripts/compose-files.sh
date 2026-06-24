@@ -92,6 +92,18 @@ if [[ "$fls_ipv4_hosts_enabled" == "true" ]] && file_exists compose.fls-ipv4-hos
   add_file compose.fls-ipv4-hosts.yaml
 fi
 
+director_hostnet_enabled="${DUNE_DIRECTOR_HOSTNET_ENABLED:-$(read_env DUNE_DIRECTOR_HOSTNET_ENABLED)}"
+if [[ "$director_hostnet_enabled" == "true" ]]; then
+  if file_exists compose.director-hostnet-cutover.yaml; then
+    add_file compose.director-hostnet-cutover.yaml
+  fi
+  director_hostnet_port_file="${DUNE_DIRECTOR_HOSTNET_PORT_COMPOSE_FILE:-$(read_env DUNE_DIRECTOR_HOSTNET_PORT_COMPOSE_FILE)}"
+  director_hostnet_port_file="${director_hostnet_port_file:-compose.director-hostnet-port.yaml}"
+  if file_exists "$director_hostnet_port_file"; then
+    add_file "$director_hostnet_port_file"
+  fi
+fi
+
 host_limits_file="${DUNE_HOST_LIMITS_COMPOSE_FILE:-$(read_env DUNE_HOST_LIMITS_COMPOSE_FILE)}"
 if [[ -n "$host_limits_file" ]] && file_exists "$host_limits_file"; then
   add_file "$host_limits_file"

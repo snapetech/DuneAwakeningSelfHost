@@ -60,6 +60,7 @@ class LinuxLoaderXrefTests(unittest.TestCase):
             file_offset=0x2000,
             image_offset=0x2000,
             vaddr=target_vaddr,
+            source="/game/DuneSandbox/Binaries/Linux/DuneSandboxServer-Linux-Shipping",
         )
 
         found = xrefs.scan_xrefs(data, segments, [target])
@@ -68,9 +69,30 @@ class LinuxLoaderXrefTests(unittest.TestCase):
         self.assertEqual(found[target][0]["xrefVaddr"], base)
 
         summary = xrefs.serializable(data, segments, [target], found, signature_prefix=0, signature_suffix=1)
+        self.assertEqual(
+            summary["targets"][0]["source"],
+            "/game/DuneSandbox/Binaries/Linux/DuneSandboxServer-Linux-Shipping",
+        )
         seed = summary["targets"][0]["xrefs"][0]["signatureSeed"]
         self.assertEqual(seed["fileOffset"], "0x0")
         self.assertEqual(seed["pattern"], "48 8d 05 ?? ?? ?? ?? 90")
+
+    def test_manual_targets_inherit_scanned_binary_source(self):
+        segments = [xrefs.Segment(file_offset=0, file_size=0x3000, vaddr=0, mem_size=0x3000, flags=xrefs.PF_X)]
+
+        targets = xrefs.targets_from_args(["GEngine=0x2000"], [], segments, default_source="/tmp/DuneSandboxServer-Linux-Shipping")
+        summary = xrefs.serializable(
+            b"\x90" * 0x3000,
+            segments,
+            targets,
+            {},
+            binary_path="/tmp/DuneSandboxServer-Linux-Shipping",
+        )
+
+        self.assertEqual(targets[0].source, "/tmp/DuneSandboxServer-Linux-Shipping")
+        self.assertEqual(summary["format"], "dune-linux-loader-xrefs/v1")
+        self.assertEqual(summary["binary"], "/tmp/DuneSandboxServer-Linux-Shipping")
+        self.assertEqual(summary["targets"][0]["source"], "/tmp/DuneSandboxServer-Linux-Shipping")
 
 
 if __name__ == "__main__":

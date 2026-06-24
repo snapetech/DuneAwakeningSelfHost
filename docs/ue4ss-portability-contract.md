@@ -1,0 +1,90 @@
+# UE4SS Portability Contract
+
+- Passed: `true`
+
+## Targets
+
+- `pass` `linux-client` injection `ld-preload-elf`
+  - `pass` package `artifact-layout`
+  - `pass` `runtime-anchors`
+  - `pass` `package-loading-anchors`
+  - `pass` `uobject-registry`
+  - `pass` `ufunction-registry`
+  - `pass` `reflection`
+  - `pass` `process-event-hooks`
+  - `pass` `call-function-hooks`
+  - `pass` `lua-hook-dispatch`
+  - `pass` `lua-mod-lifecycle`
+  - `pass` `scheduler-and-input`
+  - `pass` `compat-globals`
+  - `pass` `world-engine-helpers`
+  - `pass` `object-notify`
+  - `pass` `container-marshalling`
+  - `pass` `custom-property`
+  - `pass` package `post-canary-strict-contract`
+  - `pass` package `source-group-matched-root-recovery`
+  - `pass` package `canary-next-plan-chaining`
+  - `pass` package `generic-unreal-target-selection`
+  - `pass` package `elf-qword-root-shape-hardening`
+  - `pass` package `client-canary-next-plan-verifier`
+  - `pass` package `package-root-artifact-verification`
+  - `pass` launcher `non-mutating-client-preflight`
+- `pass` `linux-server` injection `ld-preload-elf`
+  - `pass` package `artifact-layout`
+  - `pass` `runtime-anchors`
+  - `pass` `package-loading-anchors`
+  - `pass` `uobject-registry`
+  - `pass` `ufunction-registry`
+  - `pass` `reflection`
+  - `pass` `process-event-hooks`
+  - `pass` `call-function-hooks`
+  - `pass` `lua-hook-dispatch`
+  - `pass` `lua-mod-lifecycle`
+  - `pass` `scheduler-and-input`
+  - `pass` `compat-globals`
+  - `pass` `world-engine-helpers`
+  - `pass` `object-notify`
+  - `pass` `container-marshalling`
+  - `pass` `custom-property`
+  - `pass` package `post-canary-strict-contract`
+  - `pass` package `source-group-matched-root-recovery`
+  - `pass` package `canary-next-plan-chaining`
+  - `pass` package `generic-unreal-target-selection`
+  - `pass` package `elf-qword-root-shape-hardening`
+  - `pass` package `zero-player-server-canary-preflight`
+  - `pass` package `server-canary-next-plan-wrapper`
+  - `pass` package `package-root-artifact-verification`
+  - `pass` package `package-route-slot-proof`
+  - `pass` package `package-archive-artifact-verification`
+- `pass` `windows-client` injection `proton-version-dll-proxy`
+  - `pass` package `artifact-layout`
+  - `pass` `runtime-anchors`
+  - `pass` `package-loading-anchors`
+  - `pass` `uobject-registry`
+  - `pass` `ufunction-registry`
+  - `pass` `reflection`
+  - `pass` `process-event-hooks`
+  - `pass` `call-function-hooks`
+  - `pass` `lua-hook-dispatch`
+  - `pass` `lua-mod-lifecycle`
+  - `pass` `scheduler-and-input`
+  - `pass` `compat-globals`
+  - `pass` `world-engine-helpers`
+  - `pass` `object-notify`
+  - `pass` `container-marshalling`
+  - `pass` `custom-property`
+  - `pass` package `post-canary-strict-contract`
+  - `pass` package `source-group-matched-root-recovery`
+  - `pass` package `canary-next-plan-chaining`
+  - `pass` package `generic-unreal-target-selection`
+  - `pass` package `pe-qword-root-shape-hardening`
+  - `pass` package `client-canary-next-plan-verifier`
+  - `pass` package `package-root-artifact-verification`
+  - `pass` launcher `non-mutating-client-preflight`
+
+## Docs
+
+- `pass` `docs/client-loader-support.md`
+- `pass` `docs/linux-client-loader.md`
+- `pass` `docs/windows-client-loader.md`
+- `pass` `docs/ue4ss-linux-loader-evaluation.md`

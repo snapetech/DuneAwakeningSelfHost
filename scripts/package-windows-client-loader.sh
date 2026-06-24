@@ -52,6 +52,7 @@ cp "$repo_root/scripts/export-client-pe-signature-manifest.py" "$stage/analysis/
 cp "$repo_root/scripts/summarize-client-ue-anchors.py" "$stage/analysis/summarize-client-ue-anchors.py"
 cp "$repo_root/scripts/ue4ss-port-readiness.py" "$stage/analysis/ue4ss-port-readiness.py"
 cp "$repo_root/scripts/summarize-ue4ss-port-gaps.py" "$stage/analysis/summarize-ue4ss-port-gaps.py"
+cp "$repo_root/scripts/summarize-ue4ss-evidence-inventory.py" "$stage/analysis/summarize-ue4ss-evidence-inventory.py"
 cp "$repo_root/scripts/ue4ss-portability-contract.py" "$stage/analysis/ue4ss-portability-contract.py"
 cp "$repo_root/scripts/verify-loader-artifacts.py" "$stage/analysis/verify-loader-artifacts.py"
 cp "$repo_root/scripts/export-ue-anchor-env.py" "$stage/analysis/export-ue-anchor-env.py"
@@ -59,6 +60,8 @@ cp "$repo_root/scripts/export-ue-candidate-globals.py" "$stage/analysis/export-u
 cp "$repo_root/scripts/summarize-ue-candidate-outcomes.py" "$stage/analysis/summarize-ue-candidate-outcomes.py"
 cp "$repo_root/scripts/summarize-ue-candidate-shapes.py" "$stage/analysis/summarize-ue-candidate-shapes.py"
 cp "$repo_root/scripts/summarize-ue-code-pointer-context.py" "$stage/analysis/summarize-ue-code-pointer-context.py"
+cp "$repo_root/scripts/summarize-ue-vtable-candidates.py" "$stage/analysis/summarize-ue-vtable-candidates.py"
+cp "$repo_root/scripts/export-process-event-active-validation-candidates.py" "$stage/analysis/export-process-event-active-validation-candidates.py"
 cp "$repo_root/scripts/summarize-ue-root-recovery-queue.py" "$stage/analysis/summarize-ue-root-recovery-queue.py"
 cp "$repo_root/scripts/cluster-ue-root-recovery-queue.py" "$stage/analysis/cluster-ue-root-recovery-queue.py"
 cp "$repo_root/scripts/export-ue-root-recovery-candidates.py" "$stage/analysis/export-ue-root-recovery-candidates.py"
@@ -77,6 +80,8 @@ cp "$repo_root/scripts/test-client-pe-signature-manifest.py" "$stage/tests/test-
 cp "$repo_root/scripts/test-client-ue-anchors.py" "$stage/tests/test-client-ue-anchors.py"
 cp "$repo_root/scripts/test-ue4ss-port-readiness.py" "$stage/tests/test-ue4ss-port-readiness.py"
 cp "$repo_root/scripts/test-ue4ss-port-gaps.py" "$stage/tests/test-ue4ss-port-gaps.py"
+cp "$repo_root/scripts/test-ue4ss-portability-contract.py" "$stage/tests/test-ue4ss-portability-contract.py"
+cp "$repo_root/scripts/test-ue4ss-evidence-inventory.py" "$stage/tests/test-ue4ss-evidence-inventory.py"
 cp "$repo_root/scripts/test-verify-loader-artifacts.py" "$stage/tests/test-verify-loader-artifacts.py"
 cp "$repo_root/scripts/test-loader-container-api-parity.py" "$stage/tests/test-loader-container-api-parity.py"
 cp "$repo_root/scripts/test-loader-scheduler-api-parity.py" "$stage/tests/test-loader-scheduler-api-parity.py"
@@ -97,6 +102,8 @@ cp "$repo_root/scripts/test-export-ue-candidate-globals.py" "$stage/tests/test-e
 cp "$repo_root/scripts/test-ue-candidate-outcomes.py" "$stage/tests/test-ue-candidate-outcomes.py"
 cp "$repo_root/scripts/test-ue-candidate-shapes.py" "$stage/tests/test-ue-candidate-shapes.py"
 cp "$repo_root/scripts/test-ue-code-pointer-context.py" "$stage/tests/test-ue-code-pointer-context.py"
+cp "$repo_root/scripts/test-ue-vtable-candidates.py" "$stage/tests/test-ue-vtable-candidates.py"
+cp "$repo_root/scripts/test-export-process-event-active-validation-candidates.py" "$stage/tests/test-export-process-event-active-validation-candidates.py"
 cp "$repo_root/scripts/test-ue-root-recovery-queue.py" "$stage/tests/test-ue-root-recovery-queue.py"
 cp "$repo_root/scripts/test-ue-root-recovery-clusters.py" "$stage/tests/test-ue-root-recovery-clusters.py"
 cp "$repo_root/scripts/test-export-ue-root-recovery-candidates.py" "$stage/tests/test-export-ue-root-recovery-candidates.py"
@@ -129,6 +136,7 @@ chmod 0755 "$stage/analysis/export-client-pe-signature-manifest.py"
 chmod 0755 "$stage/analysis/summarize-client-ue-anchors.py"
 chmod 0755 "$stage/analysis/ue4ss-port-readiness.py"
 chmod 0755 "$stage/analysis/summarize-ue4ss-port-gaps.py"
+chmod 0755 "$stage/analysis/summarize-ue4ss-evidence-inventory.py"
 chmod 0755 "$stage/analysis/ue4ss-portability-contract.py"
 chmod 0755 "$stage/analysis/verify-loader-artifacts.py"
 chmod 0755 "$stage/analysis/export-ue-anchor-env.py"
@@ -136,6 +144,8 @@ chmod 0755 "$stage/analysis/export-ue-candidate-globals.py"
 chmod 0755 "$stage/analysis/summarize-ue-candidate-outcomes.py"
 chmod 0755 "$stage/analysis/summarize-ue-candidate-shapes.py"
 chmod 0755 "$stage/analysis/summarize-ue-code-pointer-context.py"
+chmod 0755 "$stage/analysis/summarize-ue-vtable-candidates.py"
+chmod 0755 "$stage/analysis/export-process-event-active-validation-candidates.py"
 chmod 0755 "$stage/analysis/summarize-ue-root-recovery-queue.py"
 chmod 0755 "$stage/analysis/cluster-ue-root-recovery-queue.py"
 chmod 0755 "$stage/analysis/export-ue-root-recovery-candidates.py"
@@ -196,11 +206,17 @@ DUNE_WIN_CLIENT_PROBE_UE_REFLECTION_VALUE_PROBE=false
 DUNE_WIN_CLIENT_PROBE_UE_REFLECTION_VALUE_MAX_BYTES=16
 DUNE_WIN_CLIENT_PROBE_UE_OBJECT_ARRAY_PROBE=false
 DUNE_WIN_CLIENT_PROBE_UE_OBJECT_ARRAY_MAX_OBJECTS=128
+DUNE_WIN_CLIENT_PROBE_UE_OBJECT_ARRAY_CLASS_REFLECTION_PROBE=false
+DUNE_WIN_CLIENT_PROBE_UE_OBJECT_ARRAY_CLASS_REFLECTION_MAX=32
+DUNE_WIN_CLIENT_PROBE_UE_PROCESS_EVENT_VTABLE_SCAN=false
+DUNE_WIN_CLIENT_PROBE_UE_PROCESS_EVENT_VTABLE_SCAN_SLOTS=96
+DUNE_WIN_CLIENT_PROBE_UE_PROCESS_EVENT_VTABLE_SCAN_MAX_OBJECTS=0
 DUNE_WIN_CLIENT_PROBE_UE_FNAME_PROBE=false
 DUNE_WIN_CLIENT_PROBE_UE_FNAME_POOL=
 DUNE_WIN_CLIENT_PROBE_UE_FNAME_BLOCKS_OFFSET=0x10
 DUNE_WIN_CLIENT_PROBE_UE_FNAME_STRIDE=2
 DUNE_WIN_CLIENT_PROBE_UE_FNAME_MAX_LENGTH=128
+DUNE_WIN_CLIENT_PROBE_UE_FNAME_ALLOW_MISSING_NONE=false
 DUNE_WIN_CLIENT_PROBE_UE_FNAME_DIAGNOSTICS=false
 DUNE_WIN_CLIENT_PROBE_UE_FNAME_DIAGNOSTICS_MAX=16
 DUNE_WIN_CLIENT_PROBE_UE_LAYOUT_SLOTS=8
@@ -215,28 +231,50 @@ DUNE_WIN_CLIENT_PROBE_LUA_REFLECTION_SELF_TEST_SCRIPT=
 DUNE_WIN_CLIENT_PROBE_UE_PROCESS_EVENT_HOOK_PROBE=false
 DUNE_WIN_CLIENT_PROBE_UE_PROCESS_EVENT_HOOK_ADDRESS=
 DUNE_WIN_CLIENT_PROBE_UE_PROCESS_EVENT_ADDRESS=
+DUNE_WIN_CLIENT_PROBE_UE_PROCESS_EVENT_HOOK_RVA=
+DUNE_WIN_CLIENT_PROBE_UE_PROCESS_EVENT_RVA=
 DUNE_WIN_CLIENT_PROBE_UE_PROCESS_EVENT_HOOK_SELF_TEST_TARGET=false
 DUNE_WIN_CLIENT_PROBE_UE_PROCESS_EVENT_HOOK_INSTALL=false
 DUNE_WIN_CLIENT_PROBE_UE_PROCESS_EVENT_HOOK_CALL_SELF_TEST=false
 DUNE_WIN_CLIENT_PROBE_UE_CALL_FUNCTION_HOOK_PROBE=false
 DUNE_WIN_CLIENT_PROBE_UE_CALL_FUNCTION_HOOK_ADDRESS=
 DUNE_WIN_CLIENT_PROBE_UE_CALL_FUNCTION_ADDRESS=
+DUNE_WIN_CLIENT_PROBE_UE_CALL_FUNCTION_HOOK_RVA=
+DUNE_WIN_CLIENT_PROBE_UE_CALL_FUNCTION_RVA=
 DUNE_WIN_CLIENT_PROBE_UE_CALL_FUNCTION_HOOK_SELF_TEST_TARGET=false
 DUNE_WIN_CLIENT_PROBE_UE_CALL_FUNCTION_HOOK_INSTALL=false
 DUNE_WIN_CLIENT_PROBE_UE_CALL_FUNCTION_HOOK_CALL_SELF_TEST=false
 DUNE_WIN_CLIENT_PROBE_UE_CALL_FUNCTION_LIVE_HOOK=false
 DUNE_WIN_CLIENT_PROBE_UE_CALL_FUNCTION_LIVE_HOOK_ADDRESS=
+DUNE_WIN_CLIENT_PROBE_UE_CALL_FUNCTION_LIVE_HOOK_RVA=
 DUNE_WIN_CLIENT_PROBE_UE_CALL_FUNCTION_LIVE_HOOK_SELF_TEST_TARGET=false
 DUNE_WIN_CLIENT_PROBE_UE_CALL_FUNCTION_LIVE_HOOK_CALL_SELF_TEST=false
 DUNE_WIN_CLIENT_PROBE_UE_CALL_FUNCTION_LIVE_HOOK_LOG_CALLS=false
 DUNE_WIN_CLIENT_PROBE_UE_CALL_FUNCTION_LIVE_HOOK_CALL_LOG_LIMIT=8
 DUNE_WIN_CLIENT_PROBE_UE_CALL_FUNCTION_LIVE_LUA_DISPATCH=false
+DUNE_WIN_CLIENT_PROBE_UE_CALL_FUNCTION_ACTIVE_VALIDATE=false
+DUNE_WIN_CLIENT_PROBE_UE_CALL_FUNCTION_ACTIVE_VALIDATE_ALLOW_NATIVE_CALL=false
+DUNE_WIN_CLIENT_PROBE_UE_CALL_FUNCTION_ACTIVE_VALIDATE_THROUGH_TARGET=false
+DUNE_WIN_CLIENT_PROBE_UE_CALL_FUNCTION_ACTIVE_VALIDATE_OBJECT_ADDRESS=
+DUNE_WIN_CLIENT_PROBE_UE_CALL_FUNCTION_ACTIVE_VALIDATE_COMMAND=
+DUNE_WIN_CLIENT_PROBE_UE_CALL_FUNCTION_ACTIVE_VALIDATE_COMMAND_ADDRESS=
+DUNE_WIN_CLIENT_PROBE_UE_CALL_FUNCTION_ACTIVE_VALIDATE_OUTPUT_ADDRESS=
+DUNE_WIN_CLIENT_PROBE_UE_CALL_FUNCTION_ACTIVE_VALIDATE_EXECUTOR_ADDRESS=
+DUNE_WIN_CLIENT_PROBE_UE_CALL_FUNCTION_ACTIVE_VALIDATE_FORCE_CALL=true
 DUNE_WIN_CLIENT_PROBE_UE_PROCESS_EVENT_LIVE_HOOK=false
 DUNE_WIN_CLIENT_PROBE_UE_PROCESS_EVENT_LIVE_HOOK_ADDRESS=
+DUNE_WIN_CLIENT_PROBE_UE_PROCESS_EVENT_LIVE_HOOK_RVA=
 DUNE_WIN_CLIENT_PROBE_UE_PROCESS_EVENT_LIVE_HOOK_SELF_TEST_TARGET=false
 DUNE_WIN_CLIENT_PROBE_UE_PROCESS_EVENT_LIVE_HOOK_CALL_SELF_TEST=false
 DUNE_WIN_CLIENT_PROBE_UE_PROCESS_EVENT_LIVE_HOOK_LOG_CALLS=false
 DUNE_WIN_CLIENT_PROBE_UE_PROCESS_EVENT_LIVE_HOOK_CALL_LOG_LIMIT=8
+DUNE_WIN_CLIENT_PROBE_UE_PROCESS_EVENT_ACTIVE_VALIDATE=false
+DUNE_WIN_CLIENT_PROBE_UE_PROCESS_EVENT_ACTIVE_VALIDATE_ALLOW_NATIVE_CALL=false
+DUNE_WIN_CLIENT_PROBE_UE_PROCESS_EVENT_ACTIVE_VALIDATE_THROUGH_TARGET=false
+DUNE_WIN_CLIENT_PROBE_UE_PROCESS_EVENT_ACTIVE_VALIDATE_SUPPRESS_ORIGINAL=false
+DUNE_WIN_CLIENT_PROBE_UE_PROCESS_EVENT_ACTIVE_VALIDATE_OBJECT_ADDRESS=
+DUNE_WIN_CLIENT_PROBE_UE_PROCESS_EVENT_ACTIVE_VALIDATE_FUNCTION_ADDRESS=
+DUNE_WIN_CLIENT_PROBE_UE_PROCESS_EVENT_ACTIVE_VALIDATE_PARAMS_ADDRESS=
 DUNE_WIN_CLIENT_PROBE_UE_PROCESS_EVENT_DISPATCH_SELF_TEST=false
 DUNE_WIN_CLIENT_PROBE_UE_PROCESS_EVENT_LIVE_LUA_DISPATCH=false
 DUNE_WIN_CLIENT_PROBE_UE_PROCESS_EVENT_LIVE_LUA_SCRIPT=
@@ -286,10 +324,11 @@ image mappings for configured anchors. The Dune shipping executable imports
 - examples/stage-windows-lua-runtime.sh: staged LuaBinaries 5.4.8 helper for parity smoke tests.
 - examples/smoke-windows-client-loader-lua.sh: real Lua DLL smoke test.
 - examples/env.scan.example: scan environment settings.
-- analysis/: log summarizer, PE xref summarizer, PE signature validator, manifest/env exporter, UE anchor readiness, candidate-global outcome/shape/export tools, portability contract, and proxy candidate tools.
+- analysis/: log summarizer, PE xref summarizer, PE signature validator, manifest/env exporter, UE anchor readiness, candidate-global outcome/shape/export tools, active-validation candidate exporter, portability contract, and proxy candidate tools.
 - tests/: unit tests for the packaged analysis tools.
 - docs/client-loader-support.md: shared Linux/Windows support matrix.
 - docs/ue4ss-portability-contract.md: repo-generated all-target portability contract.
+- loader-artifact-verification.txt and loader-artifact-verification.json: package-root artifact verification outputs.
 - docs/windows-client-loader-canary-2026-06-16.md: real Proton client canary result.
 - docs/windows-client-loader-xrefs-2026-06-16.md: real Proton client static xref follow-up.
 - abi/: PE header and export reports when local tools are available.
@@ -307,6 +346,13 @@ beside the game executable. The script backs up any existing DLL with the same
 name before replacing it. It also writes \`dune-win-client-probe.env\` beside
 the proxy DLL so a normal Steam launch can still enable scan mode even when the
 wrapper environment is not inherited.
+
+For non-Dune Windows UE targets, keep the proxy package repo-contained by
+using \`--game-dir\`, \`--exe-rel\`, \`--dll-name\`, and \`--stage-dir\` to point
+at the target install, executable path, imported DLL proxy name, and external
+staging directory. This makes the package usable with another Unreal title
+without editing installed game files; use \`--stage-to-game-dir\` only after
+reviewing the target DLL search path and keeping the generated manifest.
 
 If the real game process still loads Proton's builtin \`version.dll\`, set the
 per-app Wine override:
@@ -339,23 +385,31 @@ examples/smoke-windows-client-loader-lua.sh
 ## Analysis
 
 \`\`\`bash
+TARGET_BINARY="\${TARGET_BINARY:-/path/to/DuneSandbox-Win64-Shipping.exe}"
+TARGET_FILTER_ARGS=(\${TARGET_FILTER_ARGS[@]:---exe-substring DuneSandbox})
+
 analysis/summarize-client-loader-scan.py /tmp/dune-win-client-probe-loader.log
-analysis/summarize-client-loader-xrefs.py /path/to/DuneSandbox-Win64-Shipping.exe --loader-log /tmp/dune-win-client-probe-loader.log --category cheat --show-context --show-seeds
-analysis/summarize-client-loader-xrefs.py /path/to/DuneSandbox-Win64-Shipping.exe --loader-log /tmp/dune-win-client-probe-loader.log --category ue --format json > client-loader-xrefs.json
-analysis/validate-client-pe-signatures.py /path/to/DuneSandbox-Win64-Shipping.exe --loader-log /tmp/dune-win-client-probe-loader.log --category cheat
-analysis/export-client-pe-signature-manifest.py /path/to/DuneSandbox-Win64-Shipping.exe --loader-log /tmp/dune-win-client-probe-loader.log --category cheat --format env
-analysis/export-client-pe-signature-manifest.py /path/to/DuneSandbox-Win64-Shipping.exe --loader-log /tmp/dune-win-client-probe-loader.log --category cheat --format signatures > client-signatures.txt
-analysis/export-client-pe-signature-manifest.py /path/to/DuneSandbox-Win64-Shipping.exe --loader-log /tmp/dune-win-client-probe-loader.log --category ue --format anchor-signatures > client-anchor-signatures.txt
-analysis/validate-client-pe-signatures.py /path/to/DuneSandbox-Win64-Shipping.exe --manifest-json client-pe-signature-manifest.json --ignore-expected-offsets
+analysis/summarize-client-loader-xrefs.py "\$TARGET_BINARY" --loader-log /tmp/dune-win-client-probe-loader.log --category cheat --show-context --show-seeds
+analysis/summarize-client-loader-xrefs.py "\$TARGET_BINARY" --loader-log /tmp/dune-win-client-probe-loader.log --category ue --format json > client-loader-xrefs.json
+analysis/validate-client-pe-signatures.py "\$TARGET_BINARY" --loader-log /tmp/dune-win-client-probe-loader.log --category cheat
+analysis/export-client-pe-signature-manifest.py "\$TARGET_BINARY" --loader-log /tmp/dune-win-client-probe-loader.log --category cheat --format env
+analysis/export-client-pe-signature-manifest.py "\$TARGET_BINARY" --loader-log /tmp/dune-win-client-probe-loader.log --category cheat --format signatures > client-signatures.txt
+analysis/export-client-pe-signature-manifest.py "\$TARGET_BINARY" --loader-log /tmp/dune-win-client-probe-loader.log --category ue --format anchor-signatures > client-anchor-signatures.txt
+analysis/validate-client-pe-signatures.py "\$TARGET_BINARY" --manifest-json client-pe-signature-manifest.json --ignore-expected-offsets
 analysis/export-ue-anchor-env.py /tmp/dune-win-client-probe-loader.log --loader win-client --platform windows > ue-anchors.env
 analysis/summarize-ue-candidate-outcomes.py /tmp/dune-win-client-probe-loader.log --format markdown > ue-candidate-outcomes.md
 analysis/summarize-ue-candidate-outcomes.py /tmp/dune-win-client-probe-loader.log --format json > ue-candidate-outcomes.json
 analysis/summarize-ue-candidate-shapes.py /tmp/dune-win-client-probe-loader.log --format markdown > ue-candidate-shapes.md
 analysis/summarize-ue-candidate-shapes.py /tmp/dune-win-client-probe-loader.log --format json > ue-candidate-shapes.json
-analysis/summarize-ue-code-pointer-context.py /path/to/DuneSandbox-Win64-Shipping.exe ue-candidate-outcomes.json --format markdown > ue-code-pointer-context.md
-analysis/summarize-pe-ue-function-neighborhoods.py /path/to/DuneSandbox-Win64-Shipping.exe --xref-json client-loader-xrefs.json --format json > ue-function-neighborhoods.json
-analysis/summarize-pe-writable-root-shapes.py /path/to/DuneSandbox-Win64-Shipping.exe --candidate-outcomes-json ue-candidate-outcomes.json --require-read-write --require-qword --min-qword-refs 16 --max-scalar-ratio 0.10 --format markdown > pe-writable-root-shapes.md
-analysis/summarize-pe-writable-root-shapes.py /path/to/DuneSandbox-Win64-Shipping.exe --candidate-outcomes-json ue-candidate-outcomes.json --require-read-write --require-qword --min-qword-refs 16 --max-scalar-ratio 0.10 --format json > pe-writable-root-shapes.json
+analysis/summarize-ue-code-pointer-context.py "\$TARGET_BINARY" ue-candidate-outcomes.json --format markdown > ue-code-pointer-context.md
+analysis/summarize-ue-vtable-candidates.py /tmp/dune-win-client-probe-loader.log --format markdown > ue-vtable-candidates.md
+analysis/summarize-ue-vtable-candidates.py /tmp/dune-win-client-probe-loader.log --format json > ue-vtable-candidates.json
+analysis/summarize-client-loader-scan.py /tmp/dune-win-client-probe-loader.log --format json > client-summary.json
+analysis/export-process-event-active-validation-candidates.py client-summary.json --format markdown > process-event-active-validation-candidates.md
+analysis/export-process-event-active-validation-candidates.py client-summary.json --format json > process-event-active-validation-candidates.json
+analysis/summarize-pe-ue-function-neighborhoods.py "\$TARGET_BINARY" --xref-json client-loader-xrefs.json --format json > ue-function-neighborhoods.json
+analysis/summarize-pe-writable-root-shapes.py "\$TARGET_BINARY" --candidate-outcomes-json ue-candidate-outcomes.json --require-read-write --require-qword --min-qword-refs 16 --max-scalar-ratio 0.10 --format markdown > pe-writable-root-shapes.md
+analysis/summarize-pe-writable-root-shapes.py "\$TARGET_BINARY" --candidate-outcomes-json ue-candidate-outcomes.json --require-read-write --require-qword --min-qword-refs 16 --max-scalar-ratio 0.10 --format json > pe-writable-root-shapes.json
 analysis/export-ue-writable-root-shape-candidates.py pe-writable-root-shapes.json --platform windows --include FNamePool=0x0 --anchor GUObjectArray --anchor GObjectArray --anchor GWorld --anchor GEngine --format json > ue-writable-root-shape-candidates.json
 analysis/summarize-ue-root-recovery-queue.py ue-function-neighborhoods.json --candidate-outcomes-json ue-candidate-outcomes.json --format markdown > ue-root-recovery-queue.md
 analysis/summarize-ue-root-recovery-queue.py ue-function-neighborhoods.json --candidate-outcomes-json ue-candidate-outcomes.json --format json > ue-root-recovery-queue.json
@@ -364,16 +418,19 @@ analysis/cluster-ue-root-recovery-queue.py ue-root-recovery-queue.json --format 
 analysis/export-ue-root-recovery-candidates.py ue-root-recovery-queue.json --clusters-json ue-root-recovery-clusters.json --candidate-outcomes-json ue-candidate-outcomes.json --platform windows --anchor-preset object-discovery --format markdown > ue-root-recovery-candidates.md
 analysis/export-ue-root-recovery-candidates.py ue-root-recovery-queue.json --clusters-json ue-root-recovery-clusters.json --candidate-outcomes-json ue-candidate-outcomes.json --platform windows --anchor-preset object-discovery --format json > ue-root-recovery-candidates.json
 analysis/export-ue-root-recovery-candidates.py ue-root-recovery-queue.json --clusters-json ue-root-recovery-clusters.json --candidate-outcomes-json ue-candidate-outcomes.json --platform windows --anchor-preset complete --require-source-group-match --format json > ue-root-recovery-candidates-complete-source-matched.json
-analysis/prepare-ue-anchor-canary.py --platform windows --binary /path/to/DuneSandbox-Win64-Shipping.exe --loader-log /tmp/dune-win-client-probe-loader.log --output-dir build/windows-client-anchor-canary
+analysis/prepare-ue-anchor-canary.py --platform windows --binary "\$TARGET_BINARY" --loader-log /tmp/dune-win-client-probe-loader.log --output-dir build/windows-client-anchor-canary
 examples/verify-client-probe-canary.sh --platform windows --prep-dir build/windows-client-anchor-canary --log /tmp/dune-win-client-probe-loader.log --output-dir backups/client-probe-canary/windows/manual
-analysis/plan-ue4ss-canary-env.py --platform windows --client-log /tmp/dune-win-client-probe-loader.log --loader win-client --root-recovery-candidates-json ue-root-recovery-candidates.json --candidate-shapes-json ue-candidate-shapes.json --max-stage read-only --format json > next-canary.json
-analysis/plan-ue4ss-canary-env.py --platform windows --client-log /tmp/dune-win-client-probe-loader.log --loader win-client --root-recovery-candidates-json ue-root-recovery-candidates.json --candidate-shapes-json ue-candidate-shapes.json --max-stage read-only > next-canary.env
-analysis/ue4ss-port-readiness.py --client-log /tmp/dune-win-client-probe-loader.log --loader win-client --signature-validation-json client-pe-signature-validation.json --format json > ue4ss-readiness.json
+analysis/plan-ue4ss-canary-env.py --platform windows --client-log /tmp/dune-win-client-probe-loader.log --loader win-client "\${TARGET_FILTER_ARGS[@]}" --root-recovery-candidates-json ue-root-recovery-candidates.json --candidate-shapes-json ue-candidate-shapes.json --active-validation-candidates-json process-event-active-validation-candidates.json --max-stage read-only --format json > next-canary.json
+analysis/plan-ue4ss-canary-env.py --platform windows --client-log /tmp/dune-win-client-probe-loader.log --loader win-client "\${TARGET_FILTER_ARGS[@]}" --root-recovery-candidates-json ue-root-recovery-candidates.json --candidate-shapes-json ue-candidate-shapes.json --active-validation-candidates-json process-event-active-validation-candidates.json --max-stage read-only > next-canary.env
+analysis/ue4ss-port-readiness.py --client-log /tmp/dune-win-client-probe-loader.log --loader win-client "\${TARGET_FILTER_ARGS[@]}" --signature-validation-json client-pe-signature-validation.json --anchor-coverage-json build/windows-client-anchor-canary/anchor-coverage.json --format json > ue4ss-readiness.json
 analysis/summarize-ue4ss-port-gaps.py --readiness-json ue4ss-readiness.json --canary-plan-json next-canary.json --format markdown > ue4ss-port-gaps.md
+analysis/summarize-ue4ss-evidence-inventory.py build backups /tmp --limit 12 --format markdown > ue4ss-evidence-inventory.md
 analysis/summarize-client-ue-anchors.py /tmp/dune-win-client-probe-loader.log
-analysis/proton-proxy-candidates.py /path/to/DuneSandbox-Win64-Shipping.exe
+analysis/proton-proxy-candidates.py "\$TARGET_BINARY"
+analysis/verify-loader-artifacts.py --target windows-client --package-root . --package-target windows-client --package-only --format text > loader-artifact-verification.txt
+analysis/verify-loader-artifacts.py --target windows-client --package-root . --package-target windows-client --package-only --format json > loader-artifact-verification.json
 analysis/ue4ss-portability-contract.py --targets available --format markdown --check > ue4ss-portability-contract.md
-python3 -m unittest tests/test-client-loader-scan-summary.py tests/test-client-loader-xrefs.py tests/test-client-pe-signatures.py tests/test-client-pe-signature-manifest.py tests/test-client-ue-anchors.py tests/test-ue4ss-port-readiness.py tests/test-ue4ss-port-gaps.py tests/test-loader-scheduler-api-parity.py tests/test-loader-modref-api-parity.py tests/test-loader-mod-lifecycle-api-parity.py tests/test-loader-unregister-api-parity.py tests/test-loader-fname-api-parity.py tests/test-loader-native-identity-parity.py tests/test-loader-custom-property-api-parity.py tests/test-loader-compat-globals-api-parity.py tests/test-loader-world-engine-api-parity.py tests/test-loader-object-notify-api-parity.py tests/test-loader-console-command-api-parity.py tests/test-loader-anchor-group-parity.py tests/test-loader-scan-preset-parity.py tests/test-export-ue-anchor-env.py tests/test-export-ue-candidate-globals.py tests/test-ue-candidate-outcomes.py tests/test-ue-candidate-shapes.py tests/test-ue-code-pointer-context.py tests/test-ue-root-recovery-queue.py tests/test-ue-root-recovery-clusters.py tests/test-export-ue-root-recovery-candidates.py tests/test-pe-writable-root-shapes.py tests/test-export-ue-writable-root-shape-candidates.py tests/test-pe-ue-function-neighborhoods.py tests/test-prepare-ue-anchor-canary.py tests/test-plan-ue4ss-canary-env.py tests/test-proton-proxy-candidates.py tests/test-client-launch-preflight.py
+python3 -m unittest tests/test-client-loader-scan-summary.py tests/test-client-loader-xrefs.py tests/test-client-pe-signatures.py tests/test-client-pe-signature-manifest.py tests/test-client-ue-anchors.py tests/test-ue4ss-port-readiness.py tests/test-ue4ss-port-gaps.py tests/test-ue4ss-portability-contract.py tests/test-ue4ss-evidence-inventory.py tests/test-loader-scheduler-api-parity.py tests/test-loader-modref-api-parity.py tests/test-loader-mod-lifecycle-api-parity.py tests/test-loader-unregister-api-parity.py tests/test-loader-fname-api-parity.py tests/test-loader-native-identity-parity.py tests/test-loader-custom-property-api-parity.py tests/test-loader-compat-globals-api-parity.py tests/test-loader-world-engine-api-parity.py tests/test-loader-object-notify-api-parity.py tests/test-loader-console-command-api-parity.py tests/test-loader-anchor-group-parity.py tests/test-loader-scan-preset-parity.py tests/test-export-ue-anchor-env.py tests/test-export-ue-candidate-globals.py tests/test-ue-candidate-outcomes.py tests/test-ue-candidate-shapes.py tests/test-ue-code-pointer-context.py tests/test-ue-vtable-candidates.py tests/test-export-process-event-active-validation-candidates.py tests/test-ue-root-recovery-queue.py tests/test-ue-root-recovery-clusters.py tests/test-export-ue-root-recovery-candidates.py tests/test-pe-writable-root-shapes.py tests/test-export-ue-writable-root-shape-candidates.py tests/test-pe-ue-function-neighborhoods.py tests/test-promote-ue-anchor-xref-candidates.py tests/test-prepare-ue-anchor-canary.py tests/test-plan-ue4ss-canary-env.py tests/test-proton-proxy-candidates.py tests/test-client-launch-preflight.py
 \`\`\`
 
 \`export-ue-anchor-env.py\` exports core discovery anchors plus reflection
@@ -392,12 +449,24 @@ post-canary summary from the collected log.
 \`post-canary-verify-strict.sh [loader-log]\` sets
 \`DUNE_UE4SS_STRICT_RUNTIME_CONTRACT=true\` and fails until
 \`strictRuntimeContract.contractReady=true\`, including \`runtimeRootDiscovery\`.
+\`examples/verify-client-probe-canary.sh --strict\` also requires
+\`summarize-ue4ss-evidence-inventory.py\` to write
+\`ue4ss-evidence-inventory.json\` and \`ue4ss-evidence-inventory.md\`; strict
+client canaries run the inventory with \`--require-complete\` and must not
+treat missing or incomplete inventory as a best-effort side artifact.
 Runtime root discovery means both \`RuntimeFNamePool\` and
 \`RuntimeGUObjectArray\` are validated by FName/object-array consumers, not just
 mapped or promoted. Strict readiness also requires exact/promotable signature
 validation, target-image \`targetObjectDiscovery\`,
 \`targetHooks\`, and \`targetPackageLoadingSurface\` evidence,
 \`signatureAnchorReady=true\`, and no \`missingSignatureAnchorReadyKeys\`.
+For a bounded ambiguous-root canary, set
+\`DUNE_WIN_CLIENT_PROBE_UE_AUTO_DISCOVER_PROMOTE_AMBIGUOUS_ROOTS=true\`; the
+loader promotes \`RuntimeFNamePoolCandidate<N>\` and
+\`RuntimeGUObjectArrayCandidate<N>\` anchors so the same consumers can validate
+the real root without a second explicit replay. The canary planner emits this
+as \`promoteAmbiguousRoots\` for same-run FName/object-array validation when
+bounded ambiguous root evidence is present.
 The full UE4SS completion gate remains \`ue4ssLuaApiComplete=true\`, which also
 requires \`liveTargetImageCanaryContract.ready=true\` across
 \`targetImageAnchors\`, \`runtimePackageLoading\`, \`runtimeObjectRegistry\`,
@@ -409,17 +478,42 @@ decoded live function path, runtime registry context, active params, raw and
 container param samples, Lua context handles, descriptor-backed param accessors,
 typed scalar/name/string/struct/enum/object/bool accessor coverage, container
 alias/layout methods, and hook routing/alias routing must all be present.
+It also requires \`luaProcessEventNativeInvokeNonSelfTestInvoked=true\`, proving
+an explicitly enabled descriptor-backed non-self-test ProcessEvent target was
+invoked through the Lua native bridge.
 In short: container alias/layout methods are required, not optional.
+The \`runtimeCallFunctionDispatch\` group requires
+\`luaCallFunctionNativeInvokeNonSelfTestInvoked=true\`, proving an explicitly
+enabled non-self-test CallFunction target was invoked through the Lua native
+bridge.
 The \`runtimePackageLoading\` group treats \`luaLoadAssetPackageNativeExecutor\`
 as ready only when target-image evidence reports \`NativeExecutorReady=true\`,
 \`ExecutorPreflightPassed=true\`, and \`FinalNativeCallEligible=true\`;
 dry-run executor shape rows remain diagnostic only.
+It also requires \`luaLoadAssetPackageNativeInvocation=true\`, proven by
+\`lua-load-asset-package-native-invoke nativeInvoked=true nativeCallable=true
+targetImage=true nativeReturnValidated=true\`; executor readiness alone is not
+package-load completion.
+The same group also requires the package-backed \`LoadClass\` chain:
+\`luaLoadClassPackageAbiState=true\`,
+\`luaLoadClassPackageCallFrameVerification=true\`,
+\`luaLoadClassPackageNativeExecutor=true\`, and
+\`luaLoadClassPackageNativeInvocation=true\` from target-image
+\`StaticLoadClass\` evidence. The \`runtimeObjectRegistry\` group similarly
+requires guarded target-image \`StaticConstructObject\` executor state,
+executor readiness, and native invocation evidence before synthetic
+construction counts toward 1:1 object API parity.
 \`ue4ss-port-readiness.py\` auto-scopes mixed-process logs to loaded
 \`DuneSandbox\` target PIDs when no explicit \`--pid\` or \`--exe-substring\`
 filter is supplied. Strict completion requires \`targetImageProcess=true\` and
 validated \`runtimeRootDiscovery=true\`; helper shell/tool process evidence,
 mapped-only runtime roots, or self-test-only logs cannot satisfy target-image
 runtime proof.
+\`verify-client-probe-canary.sh\` also writes \`ue-vtable-candidates.json\`,
+\`ue-vtable-candidates.md\`, \`next-canary-plan.json\`,
+\`next-canary-plan.env\`, and \`next-canary-plan.md\` into the evidence
+directory, using any ranked vtable shortlist as hook-target input for the next
+guarded Proton/Windows plan through \`--hook-targets-json\`.
 \`plan-ue4ss-canary-env.py\` reads readiness evidence and emits the next guarded
 canary env. It defaults to read-only discovery/reflection and only emits
 ProcessEvent/CallFunction hook or live Lua dispatch flags when \`--max-stage\`

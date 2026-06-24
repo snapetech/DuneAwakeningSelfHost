@@ -70,6 +70,14 @@ class BrtDdLiveCanaryWorkflowTests(unittest.TestCase):
         self.assertIn("restore_preview_rpc_only", body)
         self.assertIn("/brt_backup_/", body)
 
+    def test_collect_writes_machine_readable_rpc_classification(self):
+        collect_body = self.function_body("collect")
+        self.assertIn('trace_classification_json="${DUNE_BRT_DD_CANARY_TRACE_CLASSIFICATION_JSON:-${trace_log}.classification.json}"', self.source)
+        self.assertIn("== trace rpc classification ==", collect_body)
+        self.assertIn('scripts/classify-brt-dd-trace.py "$trace_log" --format json | tee "$trace_classification_json"', collect_body)
+        arm_body = self.function_body("arm")
+        self.assertIn("trace_classification_json=", arm_body)
+
     def test_tested_alias_collects_without_rearming(self):
         case_match = re.search(r"^case \"\$action\" in\n(?P<body>.*?)\nesac", self.source, re.M | re.S)
         self.assertIsNotNone(case_match, "missing action dispatcher")

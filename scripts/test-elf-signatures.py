@@ -236,6 +236,46 @@ class ElfSignatureTests(unittest.TestCase):
             self.assertEqual(moved_rows[0]["status"], "unique-unexpected")
             self.assertTrue(moved_rows[0]["promotable"])
 
+    def test_extracts_patterns_from_donor_candidate_validation(self):
+        binary, _expected_file, _target_file, _target_vaddr = make_synthetic_elf()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            binary_path = tmp_path / "DuneSandboxServer-Linux-Shipping"
+            binary_path.write_bytes(binary)
+            candidate_path = tmp_path / "donor-candidate-validation.json"
+            candidate_path.write_text(
+                json.dumps(
+                    {
+                        "format": "elf64-donor-transfer",
+                        "patterns": [
+                            {
+                                "name": "StaticLoadObject",
+                                "category": "package",
+                                "sourceProvenance": "external-donor",
+                                "pattern": "48 8d 05 ?? ?? ?? ??",
+                                "donor": {
+                                    "symbol": "StaticLoadObject(UClass*)",
+                                    "fileOffset": "0x200",
+                                },
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            binary_data, segments = xrefs.load_elf_segments(binary_path)
+
+            specs = validator.patterns_from_donor_candidate_validation(candidate_path, ["package"], [], 0)
+            rows = validator.validate_patterns(binary_data, segments, specs, "executable", 8)
+
+            self.assertEqual(len(specs), 1)
+            self.assertEqual(specs[0].name, "StaticLoadObject")
+            self.assertEqual(specs[0].category, "package")
+            self.assertEqual(specs[0].source, "StaticLoadObject(UClass*)")
+            self.assertEqual(specs[0].source_provenance, "external-donor")
+            self.assertEqual(rows[0]["status"], "unique-unexpected")
+            self.assertTrue(rows[0]["promotable"])
+
 
 if __name__ == "__main__":
     unittest.main()

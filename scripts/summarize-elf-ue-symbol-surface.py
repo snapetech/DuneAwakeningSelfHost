@@ -14,7 +14,7 @@ ANCHOR_GROUPS = {
     "objects": ("GUObjectArray", "GObjectArray", "GObjects", "FUObjectArray"),
     "world": ("GWorld", "UWorld::", "UWorld "),
     "dispatch": ("ProcessEvent", "StaticFindObject", "CallFunctionByNameWithArguments", "CallFunctionByName"),
-    "package": ("StaticLoadObject", "LoadObject", "LoadPackage", "ResolveName", "LoadAsset", "LoadClass"),
+    "package": ("StaticLoadObject", "StaticLoadClass", "LoadObject", "LoadPackage", "ResolveName", "LoadAsset", "LoadClass"),
     "reflection": ("UObject::", "UFunction::", "UClass::", "FProperty::", "FObjectProperty", "FArrayProperty", "FBoolProperty", "FStructProperty", "UStruct::", "UEnum::"),
 }
 FALSE_POSITIVE_PREFIXES = (
@@ -104,7 +104,7 @@ def classify_role(row):
         return "process-event"
     if symbol_type == "STT_FUNC" and any(name in demangled for name in ("StaticFindObject", "CallFunctionByNameWithArguments")):
         return "dispatch-function"
-    if symbol_type == "STT_FUNC" and any(name in demangled for name in ("StaticLoadObject", "LoadObject", "LoadPackage", "ResolveName")):
+    if symbol_type == "STT_FUNC" and any(name in demangled for name in ("StaticLoadObject", "StaticLoadClass", "LoadObject", "LoadPackage", "ResolveName")):
         return "package-function"
     if any(name in demangled for name in ("GUObjectArray", "GObjectArray", "GWorld", "FNamePool", "GNames")):
         return "global-symbol"

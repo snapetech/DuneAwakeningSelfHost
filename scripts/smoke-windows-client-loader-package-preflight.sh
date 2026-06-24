@@ -35,6 +35,12 @@ printf "%s\n" "PackagePreflight" >"$mod_root/mods.txt"
 cat >"$mod_root/PackagePreflight/Scripts/main.lua" <<'LUA'
 local path='/Script/DuneProbe.MissingPackageAsset'
 local packagePreflight=LoadAsset(path,{Backend='package'})
+local packageClass=LoadClass('DuneProbeSelfTestClass',{Backend='package'})
+local classBridge=GetLoadClassPackageBridgeState()
+local classAbi=GetLoadClassPackageAbiState()
+local classFrame=GetLoadClassPackageCallFrameVerificationState('/Script/DuneProbe.SelfTestClass')
+local classExecutor=GetLoadClassPackageNativeExecutorState('/Script/DuneProbe.SelfTestClass')
+local classNative=InvokeLoadClassPackageNative('/Script/DuneProbe.SelfTestClass',{Invoke=true})
 local backend=GetLoadAssetBackendState()
 local bridge=GetLoadAssetPackageBridgeState()
 local abi=GetLoadAssetPackageAbiState()
@@ -46,6 +52,12 @@ local descriptor=GetLoadAssetPackageInvocationDescriptorState(path)
 local executor=GetLoadAssetPackageNativeExecutorState(path)
 local native=InvokeLoadAssetPackageNative(path,{Invoke=true})
 if packagePreflight ~= nil then error('package LoadAsset preflight returned an object before native bridge exists') end
+if not (packageClass and packageClass.Name=='DuneProbeSelfTestClass' and packageClass.ClassName=='UClass') then error('package LoadClass did not preserve registry class fallback') end
+if not (classBridge and classBridge.TargetName=='StaticLoadClass' and classBridge.Status=='anchor-missing' and not classBridge.NativeBridgeArmed) then error('LoadClass package bridge state did not block missing StaticLoadClass anchor') end
+if not (classAbi and classAbi.SignatureFamily=='StaticLoadClass' and classAbi.PlatformAbi=='win64-ms-abi' and not classAbi.AbiVerified and not classAbi.CallFrameReady) then error('LoadClass package ABI state did not expose StaticLoadClass contract') end
+if not (classFrame and classFrame.Status=='anchor-missing' and classFrame.BoundedInput and not classFrame.AbiVerified and not classFrame.ClassRootReady and not classFrame.CallFrameReady and not classFrame.NativeInvoked) then error('LoadClass package call frame state did not block missing anchor') end
+if not (classExecutor and classExecutor.ExecutorKind=='guarded-class-package-native-executor' and classExecutor.TargetName=='StaticLoadClass' and not classExecutor.NativeExecutorReady and classExecutor.NativeExecutorBlockReason=='anchor-missing' and not classExecutor.NativeInvoked) then error('LoadClass package executor state did not block missing anchor') end
+if not (classNative and classNative.Status=='anchor-missing' and classNative.TargetName=='StaticLoadClass' and classNative.InvokeEnabled==false and not classNative.NativeCallable and not classNative.NativeInvoked and not classNative.NativeCallPlanAccepted) then error('LoadClass package native invoke did not block missing anchor') end
 if not (crash and crash.CrashGuardAvailable and crash.CrashGuardEnabled and not crash.NativeInvoked) then error('package crash guard unavailable') end
 if crash.CrashGuardRecoverable and not (crash.Status=='armed' and crash.CrashGuardArmed) then error('recoverable package crash guard did not arm') end
 if (not crash.CrashGuardRecoverable) and crash.CrashGuardArmed then error('non-recoverable package crash guard armed') end
@@ -99,6 +111,10 @@ require_log() {
 
 require_log 'event=lua-load-asset-package-bridge-state status=target-not-target-image .*targetImage=false .*packageAvailable=true'
 require_log 'event=lua-load-asset-package-preflight status=native-bridge-missing .*targetName=StaticLoadObject .*target=0x[1-9a-fA-F][0-9a-fA-F]* .*targetImage=false .*targetMapped=true .*targetReadable=true .*targetExecutable=true .*targetProtect=0x[1-9a-fA-F][0-9a-fA-F]* platformAbi=win64-ms-abi invokeEnabled=true nativeBridgeArmed=false nativeCallable=false nativeInvoked=false packageAvailable=true'
+require_log 'event=lua-load-class-package-preflight status=anchor-missing .*targetName=StaticLoadClass .*target=0x0 .*platformAbi=win64-ms-abi .*nativeBridgeArmed=false nativeCallable=false nativeInvoked=false .*staticLoadClass=false'
+require_log 'event=lua-load-class-package-bridge-state status=anchor-missing .*targetName=StaticLoadClass .*target=0x0 .*platformAbi=win64-ms-abi .*nativeBridgeArmed=false abiVerified=false packageAvailable=false'
+require_log 'event=lua-load-class-package-native-executor-state status=prepared .*targetName=StaticLoadClass .*target=0x0 .*platformAbi=win64-ms-abi .*nativeExecutorReady=false executorPreflightPassed=false finalNativeCallEligible=false nativeExecutorBlockReason=anchor-missing nativeInvoked=false'
+require_log 'event=lua-load-class-package-native-invoke status=anchor-missing .*targetName=StaticLoadClass .*target=0x0 .*platformAbi=win64-ms-abi .*nativeCallable=false nativeInvoked=false nativeCallPlanAccepted=false'
 require_log 'event=lua-load-asset-package-call-frame-verification-state status=target-not-target-image .*targetImage=false .*abiVerified=false .*tcharLayoutVerified=false .*callFrameReady=false nativeInvoked=false'
 require_log 'event=lua-load-asset-package-crash-guard-state status=.* platformAbi=win64-ms-abi mechanism=windows-.* available=true enabled=true recoverable=.* armed=.* nativeInvoked=false'
 require_log 'event=lua-load-asset-package-native-call-adapter-state status=target-not-target-image .*functionPointerReady=false .*nativeBridgeArmed=false adapterReady=false .*nativeCallable=false nativeInvoked=false'

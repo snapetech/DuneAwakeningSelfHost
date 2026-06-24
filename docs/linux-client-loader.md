@@ -20,6 +20,10 @@ the Proton target uses `version.dll`.
 Strict completion also requires `runtimeRootDiscovery=true`, meaning the live
 target image promoted both runtime roots before hook, reflection, Lua, or
 package-loading evidence can count toward full UE4SS parity.
+For a bounded ambiguous-root pass, add
+`DUNE_CLIENT_PROBE_UE_AUTO_DISCOVER_PROMOTE_AMBIGUOUS_ROOTS=true` so numbered
+runtime root candidates are passed to the same FName and object-array
+validation consumers.
 
 ## Supported Target
 
@@ -107,7 +111,7 @@ Useful scan variables:
 DUNE_CLIENT_PROBE_SCAN_ENABLED=true
 DUNE_CLIENT_PROBE_LOG_MODULES=true
 DUNE_CLIENT_PROBE_SCAN_PRESETS=core,ue,client,cheat,brt,deep-desert
-DUNE_CLIENT_PROBE_SCAN_STRINGS=ProcessEvent;CallFunctionByNameWithArguments;FNamePool;GUObjectArray;StaticLoadObject;LoadObject;LoadPackage;ResolveName;CheatManager
+DUNE_CLIENT_PROBE_SCAN_STRINGS=ProcessEvent;CallFunctionByNameWithArguments;FNamePool;GUObjectArray;StaticLoadObject;StaticLoadClass;LoadObject;LoadPackage;ResolveName;CheatManager
 DUNE_CLIENT_PROBE_SCAN_SIGNATURES=name=48 8b ?? ?? 48 85 c0
 DUNE_CLIENT_PROBE_SCAN_SIGNATURES_FILE=/path/to/client-signatures.txt
 DUNE_CLIENT_PROBE_UE_ANCHORS=FNamePool=0x0;GUObjectArray=0x0;GWorld=0x0;GEngine=0x0;ProcessEvent=0x0;CallFunctionByNameWithArguments=0x0
@@ -138,11 +142,16 @@ DUNE_CLIENT_PROBE_UE_REFLECTION_VALUE_PROBE=false
 DUNE_CLIENT_PROBE_UE_REFLECTION_VALUE_MAX_BYTES=16
 DUNE_CLIENT_PROBE_UE_OBJECT_ARRAY_PROBE=false
 DUNE_CLIENT_PROBE_UE_OBJECT_ARRAY_MAX_OBJECTS=128
+DUNE_CLIENT_PROBE_UE_OBJECT_ARRAY_CLASS_REFLECTION_PROBE=false
+DUNE_CLIENT_PROBE_UE_OBJECT_ARRAY_CLASS_REFLECTION_MAX=32
+DUNE_CLIENT_PROBE_UE_PROCESS_EVENT_VTABLE_SCAN=false
+DUNE_CLIENT_PROBE_UE_PROCESS_EVENT_VTABLE_SCAN_SLOTS=96
 DUNE_CLIENT_PROBE_UE_FNAME_PROBE=false
 DUNE_CLIENT_PROBE_UE_FNAME_POOL=
 DUNE_CLIENT_PROBE_UE_FNAME_BLOCKS_OFFSET=0x10
 DUNE_CLIENT_PROBE_UE_FNAME_STRIDE=2
 DUNE_CLIENT_PROBE_UE_FNAME_MAX_LENGTH=128
+DUNE_CLIENT_PROBE_UE_FNAME_ALLOW_MISSING_NONE=false
 DUNE_CLIENT_PROBE_UE_FNAME_DIAGNOSTICS=false
 DUNE_CLIENT_PROBE_UE_FNAME_DIAGNOSTICS_MAX=16
 DUNE_CLIENT_PROBE_UE_LAYOUT_SLOTS=8
@@ -157,17 +166,22 @@ DUNE_CLIENT_PROBE_LUA_REFLECTION_SELF_TEST_SCRIPT=
 DUNE_CLIENT_PROBE_UE_PROCESS_EVENT_HOOK_PROBE=false
 DUNE_CLIENT_PROBE_UE_PROCESS_EVENT_HOOK_ADDRESS=
 DUNE_CLIENT_PROBE_UE_PROCESS_EVENT_ADDRESS=
+DUNE_CLIENT_PROBE_UE_PROCESS_EVENT_HOOK_IMAGE_OFFSET=
+DUNE_CLIENT_PROBE_UE_PROCESS_EVENT_IMAGE_OFFSET=
 DUNE_CLIENT_PROBE_UE_PROCESS_EVENT_HOOK_SELF_TEST_TARGET=false
 DUNE_CLIENT_PROBE_UE_PROCESS_EVENT_HOOK_INSTALL=false
 DUNE_CLIENT_PROBE_UE_PROCESS_EVENT_HOOK_CALL_SELF_TEST=false
 DUNE_CLIENT_PROBE_UE_CALL_FUNCTION_HOOK_PROBE=false
 DUNE_CLIENT_PROBE_UE_CALL_FUNCTION_HOOK_ADDRESS=
 DUNE_CLIENT_PROBE_UE_CALL_FUNCTION_ADDRESS=
+DUNE_CLIENT_PROBE_UE_CALL_FUNCTION_HOOK_IMAGE_OFFSET=
+DUNE_CLIENT_PROBE_UE_CALL_FUNCTION_IMAGE_OFFSET=
 DUNE_CLIENT_PROBE_UE_CALL_FUNCTION_HOOK_SELF_TEST_TARGET=false
 DUNE_CLIENT_PROBE_UE_CALL_FUNCTION_HOOK_INSTALL=false
 DUNE_CLIENT_PROBE_UE_CALL_FUNCTION_HOOK_CALL_SELF_TEST=false
 DUNE_CLIENT_PROBE_UE_PROCESS_EVENT_LIVE_HOOK=false
 DUNE_CLIENT_PROBE_UE_PROCESS_EVENT_LIVE_HOOK_ADDRESS=
+DUNE_CLIENT_PROBE_UE_PROCESS_EVENT_LIVE_HOOK_IMAGE_OFFSET=
 DUNE_CLIENT_PROBE_UE_PROCESS_EVENT_LIVE_HOOK_SELF_TEST_TARGET=false
 DUNE_CLIENT_PROBE_UE_PROCESS_EVENT_LIVE_HOOK_CALL_SELF_TEST=false
 DUNE_CLIENT_PROBE_UE_PROCESS_EVENT_LIVE_HOOK_LOG_CALLS=false
@@ -295,8 +309,8 @@ both callbacks. A pass logs `event=lua-dispatch-self-test ... result=42` plus
 `executeAsyncCalls=1 executeWithDelayCalls=2 loopAsyncCalls=1 schedulerQueueDrains=1 schedulerCancelCalls=1 schedulerCancelHits=1`,
 `keyBindLookupHits=1`, `keyBindCallbackHandled=1`,
 `keyBindUnregisterCalls=1`, `keyBindUnregisterHits=1`,
-`consoleCommandHandlers=2`, `consoleCommandGlobalHandlers=1`,
-`consoleCommandUnregisterCalls=1`, and `consoleCommandUnregisterHits=1`,
+`consoleCommandHandlers=2`, `consoleCommandGlobalHandlers=2`,
+`consoleCommandUnregisterCalls=2`, and `consoleCommandUnregisterHits=2`,
 plus direct dispatch counters `consoleCommandHandlerCalls=1` and
 `consoleCommandGlobalHandlerHandled=1`.
 The direct paths are exposed as
@@ -324,10 +338,12 @@ returns a queued id; `DrainGameThreadQueue()` drains that queue in smoke tests.
 bounded scheduler queue; `DrainSchedulerQueue()` drains it and
 `CancelScheduledCallback` releases queued scheduler or game-thread callbacks
 before dispatch. These queues are Lua-state-owned, so callbacks are only
-drained, cancelled, or released by the Lua state that created them. They are the
-future handoff point for a real Unreal tick/game-thread pump; when live Lua
-ProcessEvent dispatch is enabled, the live ProcessEvent post-hook pumps the
-owning scheduler queue after post-hook callbacks.
+drained, cancelled, or released by the Lua state that created them. When live
+Lua `ProcessEvent` or `CallFunctionByNameWithArguments` dispatch is enabled,
+the live ProcessEvent post-hook and live CallFunction post-hook pump the owning
+game-thread queue and scheduler queue after post-hook callbacks, giving
+`ExecuteInGameThread` a hook-driven Unreal-thread execution path instead of a
+smoke-test-only manual drain.
 `RegisterULocalPlayerExecPreHook`, `RegisterULocalPlayerExecPostHook`,
 `RegisterLocalPlayerExecPreHook`, `RegisterLocalPlayerExecPostHook`,
 `DuneProbeDispatchCustomEvent`, `DuneProbeLoadMap`, `DuneProbeBeginPlay`,
@@ -359,9 +375,11 @@ and nested `require("lib.file")` work from `Scripts/`. Use
 The Linux client smoke proves this path with real Lua.
 `StaticFindObject`, `FindObject`, `FindFirstOf`, `FindObjects`, and
 `FindAllOf` return bounded object-handle tables from the loader's object
-registry; `GetKnownObjects()` returns a table keyed by runtime `PathName` plus
-`Count`; `ForEachUObject(callback[, class])` iterates that same registry; and
-`IsA(object, class)` checks the handle class or the base `UObject`.
+registry; `GetObjectFromAddress(address)` and
+`FindObjectByAddress(address)` resolve a known runtime address back to the same
+handle shape; `GetKnownObjects()` returns a table keyed by runtime `PathName`
+plus `Count`; `ForEachUObject(callback[, class])` iterates that same registry;
+and `IsA(object, class)` checks the handle class or the base `UObject`.
 `ProcessEvent(object, functionOrName[, args])` and
 `object:ProcessEvent(functionOrName[, args])` are exposed as UE-shaped Lua
 compatibility aliases for the existing hook-aware bounded `CallFunction` shim.
@@ -383,12 +401,13 @@ that can safely run through the current trampoline. A successful smoke emits
 `event=lua-process-event-native-invoke-self-test status=passed` with
 `ObjectRegistryAllowed=true`, `FunctionDescriptorAllowed=true`,
 `SelfTestCallable=true`, `processEventNativeCalls=2`, and
-`processEventNativeHits=1`; readiness reports that as
+`processEventNativeHits=2`; readiness reports that as
 `luaProcessEventNativeInvoke=true`. The second call is the descriptor-backed
-non-self-test preflight that stays behind the closed gate and is reported as
-`luaProcessEventNativeInvokeNonSelfTestGate=true`. This proves the
+non-self-test preflight. The full local smoke also enables the explicit
+non-self-test opt-in, proves `status=non-self-test-invoked`, and reports
+`luaProcessEventNativeInvokeNonSelfTestInvoked=true`. This proves the
 Lua-to-native ProcessEvent trampoline path plus registry/descriptors gates, not
-arbitrary live UE ProcessEvent dispatch.
+arbitrary target-image UE ProcessEvent dispatch.
 `CreateProcessEventParams(function)` allocates a bounded loader-owned params
 buffer from promoted descriptors and returns the same `ProcessEventParams`
 table shape used by live hook callbacks. Loaded mods can use
@@ -396,7 +415,8 @@ table shape used by live hook callbacks. Loaded mods can use
 `params.Value:get()` against that buffer. The Linux client smoke exercises this
 outside an active callback so descriptor-backed params marshaling is proven
 before arbitrary native `ProcessEvent` invocation is enabled. Readiness exposes
-that direct construction proof as `luaProcessEventParamsBuffer`.
+that direct construction proof as `luaProcessEventParamsBuffer`, backed by the
+`event=lua-process-event-params-buffer status=created` log row.
 `InvokeProcessEventNative` also reports descriptor preflight fields:
 `DescriptorBackedCallable`, `ParamsBufferConstructible`,
 `ParamsDescriptorCount`, `ParamsBufferSize`, `InvokeRequested`, and
@@ -407,19 +427,38 @@ unset, the result is `non-self-test-invoke-disabled`, counted as
 `luaProcessEventNativeInvokeNonSelfTestGateCount`. Readiness exposes the
 no-call state as `luaProcessEventNativeInvokeDescriptorPreflight` and the
 closed explicit-invoke state as `luaProcessEventNativeInvokeNonSelfTestGate`.
+`GetProcessEventNativeExecutorState(object, function)` exposes the same no-call
+executor decision as `ExecutorKind='guarded-process-event-native-executor'`,
+including `NativeCallable`, `NativeExecutorBlockReason`, and
+`NativeInvoked=false`; the Linux smoke exercises it before invoking the bridge.
 With both gates open, the loader seeds a descriptor-sized params buffer from matching Lua table fields,
 calls the original ProcessEvent trampoline, and reports
 `NativeNonSelfTestInvoked=true`, `ParamsWritten=<n>`, and
 `status=non-self-test-invoked`.
+`InvokeCallFunctionNative(object, functionName, args, options)` is also
+registered for loaded mods. The self-test path proves the armed
+`CallFunctionByNameWithArguments` trampoline can be driven from Lua and returns
+`Result=42`; non-self-test objects stay at `preflight-ready`, or
+`non-self-test-invoke-disabled` when `{Invoke=true}` is requested without
+`DUNE_CLIENT_PROBE_ALLOW_NON_SELF_TEST_CALL_FUNCTION_INVOKE`. Readiness exposes
+the self-test, no-call preflight, and closed invoke gate as
+`luaCallFunctionNativeInvoke`, `luaCallFunctionNativeInvokePreflight`, and
+`luaCallFunctionNativeInvokeNonSelfTestGate`.
+`GetCallFunctionNativeExecutorState(object, functionName, args, options)` is
+the matching no-call executor view. It reports
+`ExecutorKind='guarded-call-function-native-executor'`, `NativeCallable`,
+`NativeExecutorBlockReason`, and `NativeInvoked=false`; the Linux smoke
+exercises it before `InvokeCallFunctionNative`.
 `LoadAsset(pathOrName)` resolves an already-registered object handle by path or
-name and returns `nil` when the object is not in the registry; it does not load
-packages yet. Readiness exposes that remaining full-port gap separately as
-`luaLoadAssetPackage=false`; `luaObjectApi=true` only proves registry-backed
-lookup/enumeration. `GetLoadAssetBackendState()` returns a guarded backend
+name by default. With `{Backend="package"}`, `{Package=true}`,
+`{TryPackage=true}`, or `DUNE_CLIENT_PROBE_LOAD_ASSET_PACKAGE_DRY_RUN=1`, it
+routes through the guarded package path before returning. Readiness exposes the
+full package path separately as `luaLoadAssetPackage`; `luaObjectApi=true` only
+proves registry-backed lookup/enumeration. `GetLoadAssetBackendState()` returns a guarded backend
 contract with `Backend="registry"`, `RegistryFallback=true`, and
 `PackageBackendArmed=false` until a real `StaticLoadObject`/`LoadPackage`
 bridge is installed. It also reports package-anchor visibility through
-`PackageBackendAvailable`, `StaticLoadObjectResolved`, `LoadObjectResolved`,
+`PackageBackendAvailable`, `StaticLoadObjectResolved`, `StaticLoadClassResolved`, `LoadObjectResolved`,
 `LoadPackageResolved`, and `ResolveNameResolved`. It also reports
 `PackageBackendTargetImage`; this must be true before the guarded native
 package-call path can arm. Readiness reports mod
@@ -489,15 +528,18 @@ non-invoking package-call descriptor. It returns
 `CallFrameReady=false`, and `NativeInvoked=false`; the loader logs
 `event=lua-load-asset-package-call-frame-state`. Readiness reports this as
 `luaLoadAssetPackageCallFrame`, still not `luaLoadAssetPackage`.
-`InvokeLoadAssetPackageNative(path, {Invoke=true})` exercises the next guarded
-invocation checkpoint without crossing into UE yet. It returns
+`InvokeLoadAssetPackageNative(path, {Invoke=true})` exercises the guarded
+native invocation checkpoint. It returns
 `Source="loader-load-asset-package-native-bridge"`, `ContractVersion=1`,
-`Invoked=false`, `InvokeRequested`, `InvokeEnabled`, `AbiVerified`,
-`TCharLayoutVerified`, `CallFrameReady`, and `NativeBridgeArmed`.
+`Invoked`, `InvokeRequested`, `InvokeEnabled`, `AbiVerified`,
+`TCharLayoutVerified`, `CallFrameReady`, `NativeBridgeArmed`,
+`NativeReturnAddress`, and `NativeSignal`.
 `NativeBridgeArmed` only becomes true after the package ABI and `TCHAR`
 evidence gates pass, `PackageBackendTargetImage=true`, and
-`DUNE_CLIENT_PROBE_ALLOW_LOAD_ASSET_PACKAGE_INVOKE` is enabled; this checkpoint
-still does not call UE. The loader logs
+`DUNE_CLIENT_PROBE_ALLOW_LOAD_ASSET_PACKAGE_INVOKE` is enabled. The loader only
+calls the selected target when `NativeCallable=true` and
+`DUNE_CLIENT_PROBE_CONFIRM_LOAD_ASSET_PACKAGE_NATIVE_CALL=true`; otherwise the
+row remains diagnostic and `Invoked=false`. The loader logs
 `event=lua-load-asset-package-native-invoke` and counts
 `loadAssetPackageNativeCalls`/`loadAssetPackageNativeGateHits`. Readiness
 reports this as `luaLoadAssetPackageNativeInvoke`, which is still not
@@ -518,20 +560,39 @@ executor boundary for the same guarded package call. Readiness reports
 `FinalNativeCallEligible=true` in the target image. Dry-run executor shape rows
 remain diagnostic evidence and do not satisfy the runtime package-loading
 contract.
+Full package-loading parity also requires
+`luaLoadAssetPackageNativeInvocation=true`, proven by a guarded
+`lua-load-asset-package-native-invoke` row with `nativeInvoked=true`,
+`nativeCallable=true`, `targetImage=true`, and `nativeReturnValidated=true`.
 A mod can also request the guarded
 package path with `LoadAsset(path, {Backend="package"})`, `{Package=true}`, or
 `{TryPackage=true}`; setting `DUNE_CLIENT_PROBE_LOAD_ASSET_PACKAGE_DRY_RUN=1`
 requests the same path for unknown registry assets. The loader refreshes package
-anchors, logs `event=lua-load-asset-package-preflight
-status=native-bridge-missing`, increments
-`loadAssetPackagePreflightCalls`/`loadAssetPackageGateHits`, and still returns
-`nil`. Readiness exposes that as `luaLoadAssetPackagePreflight`; it is not
-`luaLoadAssetPackage` and does not complete `ue4ssLuaApiComplete`.
-`StaticConstructObject` creates a loader-owned
+anchors, logs `event=lua-load-asset-package-preflight`, and increments
+`loadAssetPackagePreflightCalls`/`loadAssetPackageGateHits`. When executor
+readiness and return validation pass and the requested path already has a
+validated UObject handle, it returns that handle through the package branch,
+increments `loadAssetPackageCalls`/`loadAssetPackageHits`, and emits
+`loadAssetBackend=package`. Readiness exposes the preflight row as
+`luaLoadAssetPackagePreflight` and the returned package branch as
+`luaLoadAssetPackage`.
+`LoadClass(path, {Backend="package"})`, `{Package=true}`, `{TryPackage=true}`,
+or `DUNE_CLIENT_PROBE_LOAD_CLASS_PACKAGE_DRY_RUN=1` logs
+`event=lua-load-class-package-preflight` against `StaticLoadClass` with the same
+SysV x86_64 target-image, mapping, executable, invoke, ABI, TCHAR, and
+call-frame gates. `GetLoadClassPackageBridgeState()`,
+`GetLoadClassPackageAbiState()`,
+`GetLoadClassPackageCallFrameVerificationState(path)`,
+`GetLoadClassPackageNativeExecutorState(path)`, and
+`InvokeLoadClassPackageNative(path, {Invoke=true})` expose the same staged
+`StaticLoadClass` call plan and keep `NativeInvoked=false` until native
+`StaticLoadClass` ABI/root-class proof exists. `LoadClass` still returns through
+registry-backed `UClass` fallback until that proof exists.
+`GetStaticConstructObjectNativeExecutorState(class, outer, name)` and `InvokeStaticConstructObjectNative(class, outer, name, {Invoke=true})` now expose the guarded `StaticConstructObject` native executor contract. They report target address, target-image confirmation, class/outer/name call-frame state, FName indices, object/internal flags, ABI evidence, invoke gates, crash-guard state, native return address, and return memory readability. `InvokeStaticConstructObjectNative` calls the SysV x86_64 `StaticConstructObject` target only after `DUNE_CLIENT_PROBE_STATIC_CONSTRUCT_OBJECT_TARGET`, target-image confirmation, `DUNE_CLIENT_PROBE_STATIC_CONSTRUCT_OBJECT_ABI_EVIDENCE`, `DUNE_CLIENT_PROBE_CONFIRM_STATIC_CONSTRUCT_OBJECT_ABI`, `DUNE_CLIENT_PROBE_CONFIRM_STATIC_CONSTRUCT_OBJECT_FNAME`, `DUNE_CLIENT_PROBE_CONFIRM_STATIC_CONSTRUCT_OBJECT_FINAL_NATIVE_CALL`, `DUNE_CLIENT_PROBE_ENABLE_STATIC_CONSTRUCT_OBJECT_INVOKE`, `DUNE_CLIENT_PROBE_ENABLE_STATIC_CONSTRUCT_OBJECT_CRASH_GUARD`, and `{Invoke=true}` are all present. It logs `native-invoked` only when the guarded call actually ran. `StaticConstructObject` still creates a loader-owned
 synthetic `/RuntimeProbe/Constructed/<Name>` handle. It does not allocate or
 initialize a live Unreal object yet, but it preserves `ClassAddress` when the
 class argument is a known object or `UClass` handle.
-The `ue` scan preset includes `StaticLoadObject`, `LoadObject`, `LoadPackage`,
+The `ue` scan preset includes `StaticLoadObject`, `StaticLoadClass`, `LoadObject`, `LoadPackage`,
 and `ResolveName` as read-only candidates for the eventual package backend.
 Readiness exposes proven package anchors as `packageLoadingSurface` and
 prepared canary package coverage as `anchorCoveragePackageLoading`.
@@ -541,6 +602,10 @@ not satisfy the strict contract. Confidence: high.
 `NotifyOnNewObject(filter, callback)` is bounded to that synthetic path: it
 stores up to 32 class/path/name filter registrations and dispatches every
 matching callback when `StaticConstructObject` creates a loader-owned handle.
+It returns a stable active-registration id, and
+`UnregisterNotifyOnNewObject(id)` removes the registration before dispatch.
+The smoke path proves a cancelled matching registration does not fire while the
+two still-active matching registrations do.
 The default Lua dispatch self-test requires `notifyOnNewObjectCallbacks=1`,
 `notifyOnNewObjectResult=17`, and `notifyOnNewObjectStatus=0`.
 Returned object/function handle tables
@@ -591,8 +656,15 @@ addresses; it is not full `GUObjectArray`-backed hierarchy enumeration yet.
 `RegisterConsoleCommandHandler`/`RegisterConsoleCommandGlobalHandler`
 callbacks, then `RegisterProcessConsoleExecPostHook` callbacks. Console exec
 hooks receive `(context, rawCommand, command, args, handled)` and may return
-boolean true to mark the command handled. It does not hook live engine console
-routing yet,
+boolean true to mark the command handled. Console command handlers receive the
+UE4SS-shaped `(fullCommand, parameters, outputDevice)` tuple first, with
+loader context compatibility appended as
+`(context, command, args)`. `parameters[0]` is the command token,
+`parameters[1..n]` are whitespace-split arguments, and `parameters.RawArgs`
+keeps the unsplit tail. The output device exposes `Log`, `Serialize`, `Write`,
+`GetOutput`, `ToString`, and `Clear` methods, increments `WriteCount`, and
+records the last loader-handled message; it is not backed by the live engine
+`FOutputDevice` yet. It does not hook live engine console routing yet,
 `ULocalPlayerExec` dispatches loader-owned
 `RegisterULocalPlayerExecPreHook` callbacks and
 `RegisterULocalPlayerExecPostHook` callbacks with the same
@@ -698,6 +770,19 @@ When a UObject or object-array item is promoted, the loader also logs
 class pointer, and `OuterPrivate`; readiness exposes this as
 `ueObjectNativeIdentities` before treating native object handles as real UE
 identity evidence.
+
+Set `DUNE_CLIENT_PROBE_UE_PROCESS_EVENT_VTABLE_SCAN=true` after object-array
+identity is stable to log bounded executable vtable slot candidates from
+runtime UObjects as `event=ue-process-event-vtable-candidate`. Rows include
+object/class identity, slot coordinates, target address, image/file offsets,
+and `targetSource=vtable-candidate`. Each scanned object also emits
+`event=ue-process-event-vtable-scan` with readable/executable slot counts so a
+zero-candidate canary still explains the miss. This ranks concrete ProcessEvent
+hook targets for the next guarded probe; it is not hook or dispatch proof by
+itself. Run
+`scripts/summarize-ue-vtable-candidates.py <loader.log> --format json` against
+the captured log and use only the ranked `hookProbeShortlist` for any later
+hookability probe.
 Confidence: high on hosts with a compatible Lua 5.4 C API library.
 
 Set `DUNE_CLIENT_PROBE_UE_REFLECTION_PROBE=true` after the UObject and FName
@@ -807,9 +892,11 @@ this as `pathExactMatches` and `pathAliasMatches`. This is not full live
 Confidence: high on hosts with a compatible Lua 5.4 C API library.
 
 Set `DUNE_CLIENT_PROBE_UE_PROCESS_EVENT_HOOK_PROBE=true` after a unique
-`ProcessEvent` target has been resolved from explicit anchors or
-`DUNE_CLIENT_PROBE_UE_ANCHOR_SIGNATURES`. The loader first validates that the
-target is mapped and executable. With
+`ProcessEvent` target has been resolved from explicit anchors,
+`DUNE_CLIENT_PROBE_UE_ANCHOR_SIGNATURES`, or the restart-safe
+`DUNE_CLIENT_PROBE_UE_PROCESS_EVENT_HOOK_IMAGE_OFFSET` /
+`DUNE_CLIENT_PROBE_UE_PROCESS_EVENT_IMAGE_OFFSET` fields from a ranked vtable
+shortlist. The loader first validates that the target is mapped and executable. With
 `DUNE_CLIENT_PROBE_UE_PROCESS_EVENT_HOOK_INSTALL=true`, it installs an inline
 hook and immediately restores it; use
 `DUNE_CLIENT_PROBE_UE_PROCESS_EVENT_HOOK_SELF_TEST_TARGET=true` to constrain
@@ -819,7 +906,7 @@ high.
 
 Set `DUNE_CLIENT_PROBE_UE_CALL_FUNCTION_HOOK_PROBE=true` after a unique
 `CallFunctionByNameWithArguments` target has been resolved from explicit
-anchors or `DUNE_CLIENT_PROBE_UE_ANCHOR_SIGNATURES`. With
+anchors, restart-safe image offsets, or `DUNE_CLIENT_PROBE_UE_ANCHOR_SIGNATURES`. With
 `DUNE_CLIENT_PROBE_UE_CALL_FUNCTION_HOOK_INSTALL=true`, it temporarily installs
 and restores `CallFunctionHookProbe`; use
 `DUNE_CLIENT_PROBE_UE_CALL_FUNCTION_HOOK_SELF_TEST_TARGET=true` only for
@@ -829,8 +916,8 @@ marshaling. Confidence: high.
 Set `DUNE_CLIENT_PROBE_UE_CALL_FUNCTION_LIVE_HOOK=true` after the guarded
 CallFunction hook probe passes on the same target. The scaffold resolves from
 `DUNE_CLIENT_PROBE_UE_CALL_FUNCTION_LIVE_HOOK_ADDRESS`, the hook-probe address,
-the generic CallFunction address, explicit anchors, or signature-resolved
-anchors. It installs once, calls the original through the trampoline, optionally
+the generic CallFunction address, explicit anchors, restart-safe image offsets,
+or signature-resolved anchors. It installs once, calls the original through the trampoline, optionally
 logs bounded calls, and restores on unload. This proves the persistent native
 interception spine; Lua command/function argument marshaling remains gated on
 runtime object and command parsing evidence. Confidence: high.
@@ -838,8 +925,11 @@ runtime object and command parsing evidence. Confidence: high.
 Set `DUNE_CLIENT_PROBE_UE_PROCESS_EVENT_LIVE_HOOK=true` only after the guarded
 hook probe passes on the same target. The scaffold resolves the target from
 `DUNE_CLIENT_PROBE_UE_PROCESS_EVENT_LIVE_HOOK_ADDRESS`, the hook-probe address,
-the generic ProcessEvent address, explicit anchors, or signature-resolved
-anchors. It installs once, leaves the hook active for the process lifetime,
+the generic ProcessEvent address, explicit anchors, signature-resolved anchors,
+or restart-safe offsets from
+`DUNE_CLIENT_PROBE_UE_PROCESS_EVENT_LIVE_HOOK_IMAGE_OFFSET`,
+`DUNE_CLIENT_PROBE_UE_PROCESS_EVENT_HOOK_IMAGE_OFFSET`, or
+`DUNE_CLIENT_PROBE_UE_PROCESS_EVENT_IMAGE_OFFSET`. It installs once, leaves the hook active for the process lifetime,
 calls the original through the trampoline, optionally logs bounded calls, and
 restores on unload. When bounded call logging is enabled,
 `event=ue-process-event-live-context status=resolved` proves sampled raw
@@ -875,13 +965,19 @@ only for older logs. Confidence: high.
 evidence contract for native Linux as for Proton/Windows: registry rows require
 `registryProvenance=runtime`, live ProcessEvent context rows require
 `functionProvenance=runtime`, and hook target rows require
-`selfTestTarget=false callSelfTest=false`. The generated
+`selfTestTarget=false callSelfTest=false`. The ProcessEvent contract also
+requires `event=ue-process-event-active-validate status=invoked
+targetEntry=true` with positive `liveCallsDelta` and `originalCallsDelta` for
+strict dispatch parity. The generated
 `post-canary-verify.sh` summary repeats those requirements beside the gate
 results. Confidence: high.
 The same planner output includes `callFunctionRuntimeEvidenceContract`:
 CallFunction hook probe/live-hook rows need the non-self-test fields, and
 `ue-call-function-live-hook` must report `luaDispatch=true` before
-CallFunction Lua hook parity is treated as runtime-backed. Confidence: high.
+CallFunction Lua hook parity is treated as runtime-backed. It also requires
+`event=ue-call-function-active-validate status=invoked targetEntry=true` with
+positive `liveCallsDelta` and `originalCallsDelta` before strict CallFunction
+dispatch parity is closed. Confidence: high.
 Readiness exposes the combined promoted
 runtime registry plus active-param accessor proof as
 `ueProcessEventLiveClassAwareParamValues`; self-test provenance does not count.
@@ -897,15 +993,24 @@ metadata. If the array data pointer is readable, the table also includes
 `DataSampleAddress`, `DataSampleReadSize`, and `DataSampleBytesHex`, and the log
 value includes `dataSampleHex=...`. `FScriptArray` tables expose
 `GetNum()`, `NumElements()`, `GetData()`, `GetDataSampleBytes()`,
-`GetRawElement(index, byteCount)`, and `GetElement(index)`. `GetElement` uses
-promoted `Inner*` metadata when present to decode bounded scalar, object,
+`GetRawElement(index, byteCount)`, and `GetElement(index)`. They also expose
+UE4SS-style `TArray:Empty()`, implemented as a safe logical empty on the
+Lua/container handle by setting `Num` to zero; it does not free or rewrite
+target allocator storage. `GetElement` uses promoted `Inner*` metadata when present to decode bounded scalar, object,
 `FName`, `FString`/`FText`, and `FVector` elements; unsupported element classes return a raw element table with
 `BytesHex`. For sets and maps it emits `FScriptSetHeader` and
 `FScriptMapHeader` tables with `GetNum()`, `NumElements()`, `GetData()`, and
-bounded raw reads. Sets expose `GetRawEntry(index, byteCount)`, `GetRawElement(index, byteCount)`, and
-`GetElement(index)`, `Get(index)`, and `get(index)`; maps expose `GetRawPair(index, byteCount)`,
-`GetRawElement(index, byteCount)`, `GetPair(index)`, `Get(index)`, `get(index)`,
-`GetKey(index)`, and `GetValue(index)`. Promoted set headers
+bounded raw reads. Sets expose UE4SS-style `Add(element)`, `Remove(element)`,
+`Contains(element)`, `ForEach(callback)`, and `Empty()`, plus `GetRawEntry(index, byteCount)`,
+`GetRawElement(index, byteCount)`, `GetElement(index)`, `Get(index)`, and
+`get(index)`. Maps expose UE4SS-style `Add(key, value)`, `Remove(key)`,
+`Contains(key)`, `Find(key)`, `ForEach(callback)`, and `Empty()`, plus `GetRawPair(index, byteCount)`,
+`GetRawElement(index, byteCount)`, `GetPair(index)`, `Get(index)`,
+`get(index)`, `GetKey(index)`, and `GetValue(index)`. `Empty()` is a logical
+handle empty, matching the TArray implementation; it does not free or rewrite
+target allocator storage. `Add()` and `Remove()` are guarded dense scalar writable backing storage mutations: they require descriptor-backed dense layout,
+supported scalar key/value sizes, writable `Data`, and spare `Max` capacity for
+adds; removals compact entries and update the handle `Num`. Real UE set/map allocator and hash mutation is not proven yet. Promoted set headers
 include `Element*` metadata, and promoted map headers include `Key*` and
 `Value*` metadata. `GetElement(index)`, `GetPair(index)`, `GetKey(index)`, and `GetValue(index)` use that metadata
 to decode bounded scalar, object, `FName`, `FString`/`FText`, and `FVector` values for descriptor-backed dense storage.
@@ -1000,6 +1105,33 @@ resolved native function target with the same bounded table-to-command-string
 argument subset as the loader-owned shim, not full arbitrary `FProperty`
 argument marshaling by itself. Confidence: high.
 
+Active native dispatch validation is closed by default. For the native Linux
+client, `DUNE_CLIENT_PROBE_UE_PROCESS_EVENT_ACTIVE_VALIDATE=true` also requires
+`DUNE_CLIENT_PROBE_UE_PROCESS_EVENT_ACTIVE_VALIDATE_ALLOW_NATIVE_CALL=true`,
+runtime object/function addresses, and optionally a params address. The
+CallFunction path uses `DUNE_CLIENT_PROBE_UE_CALL_FUNCTION_ACTIVE_VALIDATE=true`,
+`DUNE_CLIENT_PROBE_UE_CALL_FUNCTION_ACTIVE_VALIDATE_ALLOW_NATIVE_CALL=true`, a
+runtime object address, and either
+`DUNE_CLIENT_PROBE_UE_CALL_FUNCTION_ACTIVE_VALIDATE_COMMAND` or
+`DUNE_CLIENT_PROBE_UE_CALL_FUNCTION_ACTIVE_VALIDATE_COMMAND_ADDRESS`. Passing
+runs emit `ue-process-event-active-validate` or
+`ue-call-function-active-validate` rows with `targetEntry=true` and positive
+live/original deltas when
+`DUNE_CLIENT_PROBE_UE_PROCESS_EVENT_ACTIVE_VALIDATE_THROUGH_TARGET=true` or
+`DUNE_CLIENT_PROBE_UE_CALL_FUNCTION_ACTIVE_VALIDATE_THROUGH_TARGET=true` is
+enabled. Direct replacement-shim validation remains diagnostic but does not
+satisfy strict readiness. Confidence: high for the gate mechanics, moderate
+until proven on a live client target.
+For a safer client hook-entry proof, set
+`DUNE_CLIENT_PROBE_UE_PROCESS_EVENT_ACTIVE_VALIDATE_SUPPRESS_ORIGINAL=true`.
+That lets the synthetic ProcessEvent validation enter the patched target and
+run dispatch/Lua callbacks without forwarding the synthetic call to the native
+original. It is a hook-dispatch proof, not original-forwarding parity.
+If no `DUNE_CLIENT_PROBE_UE_PROCESS_EVENT_ACTIVE_VALIDATE_PARAMS_ADDRESS` is
+provided, the loader builds a bounded descriptor-backed params buffer from the
+promoted UFunction descriptors and logs `paramsSource=descriptor-buffer` with
+size/count evidence. Confidence: high.
+
 Set `DUNE_CLIENT_PROBE_LUA_REFLECTION_SELF_TEST=true` after the plain Lua
 self-test passes. It exposes UE4SS-shaped `GetPropertyValue`,
 `SetPropertyValue`, and `CallFunction` globals to Lua and exercises them against
@@ -1070,11 +1202,12 @@ high.
 
 Loader-owned registrations now return stable ids for active registrations and
 can be removed without waiting for Lua teardown. The native Linux client exposes
-`UnregisterKeyBind`, `UnregisterConsoleCommandHandler`,
+`UnregisterKeyBind`, `UnregisterConsoleCommandHandler`, `UnregisterConsoleCommandGlobalHandler`,
 `UnregisterCustomEvent`, and the lifecycle unregister family including
-`UnregisterModUnloadCallback`; unregistering compacts the active registration
+`UnregisterModUnloadCallback`, plus `UnregisterNotifyOnNewObject`;
+unregistering compacts the active registration
 array, releases the Lua registry ref, and reports
-`callbackUnregisterCalls=16 callbackUnregisterHits=16` for the UE4SS-style
+`callbackUnregisterCalls=17 callbackUnregisterHits=17` for the UE4SS-style
 callback families covered by the smoke path. Confidence: high.
 
 `DUNE_CLIENT_PROBE_LUA_MOD_ROOT` also honors a UE4SS-style `mods.txt` file:
@@ -1157,17 +1290,20 @@ scripts/prepare-ue-anchor-canary.py \
 scripts/plan-ue4ss-canary-env.py \
   --platform linux-client \
   --client-log /tmp/dune-client-probe-loader.log \
+  --hook-targets-json build/linux-client-loader/selected-hook-targets.json \
   --max-stage read-only \
   --format json \
   > build/linux-client-loader/next-canary.json
 scripts/plan-ue4ss-canary-env.py \
   --platform linux-client \
   --client-log /tmp/dune-client-probe-loader.log \
+  --process-event-image-offset 0xfa92d50 \
   --max-stage read-only \
   > build/linux-client-loader/next-canary.env
 scripts/ue4ss-port-readiness.py \
   --client-log /tmp/dune-client-probe-loader.log \
-  --loader client
+  --loader client \
+  --anchor-coverage-json build/linux-client-loader/client-anchor-canary/anchor-coverage.json
 ```
 
 `export-ue-anchor-env.py` exports core discovery anchors plus reflection anchors
@@ -1180,6 +1316,13 @@ The readiness core-anchor gates use that same conservative evidence rule:
 mapped `ue-anchor` or resolved `ue-anchor-signature` only. Plain scan hits do
 not pass `ue-names`, `ue-objects`, `ue-world`, `ue-dispatch`, or
 `ue-reflection-surface`. Confidence: high.
+
+Use `--process-event-image-offset`, `--call-function-image-offset`, or
+`--hook-targets-json` to carry selected restart-safe ELF targets into native
+Linux client hook-probe, live-hook, and Lua-dispatch plans. The planner emits
+the generic, hook, and live-hook `*_IMAGE_OFFSET` env keys together so the
+target does not fall back to a process-specific absolute address. Confidence:
+high.
 Readiness also reports `targetObjectDiscovery` and `targetHooks`; these require
 the core anchors to resolve in the native client executable or game module, not
 inside `libdune_client_probe_loader.so`. Confidence: high.
@@ -1204,8 +1347,15 @@ object discovery or hook planning; the generated readiness report receives the
 same coverage file via `--anchor-coverage-json`. After the next native-client
 canary, run `post-canary-verify.sh [loader-log]` from that output directory to
 rebuild readiness, object-discovery coverage, the UE4SS gap summaries
-(`ue4ss-port-gaps.json` and `ue4ss-port-gaps.md`), and a compact post-canary
-summary from the collected log.
+(`ue4ss-port-gaps.json` and `ue4ss-port-gaps.md`), the evidence inventory
+(`ue4ss-evidence-inventory.md` from `summarize-ue4ss-evidence-inventory.py`),
+and a compact post-canary summary from the collected log.
+When the repo wrapper is run with `--strict`, evidence inventory is mandatory:
+`ue4ss-evidence-inventory.json` and `ue4ss-evidence-inventory.md` must be
+generated, and missing `summarize-ue4ss-evidence-inventory.py` or inventory
+generation failure exits nonzero instead of being treated as best-effort. The
+wrapper runs the inventory with `--require-complete`, so strict evidence must
+include at least one complete entry.
 For the repo wrapper that also snapshots the collected log, prepared anchor env,
 and generated verifier artifacts into one evidence directory, run:
 
@@ -1216,6 +1366,13 @@ scripts/verify-client-probe-canary.sh \
   --log /tmp/dune-client-probe-loader.log \
   --output-dir backups/client-probe-canary/linux-client/manual
 ```
+
+The verifier also writes `ue-vtable-candidates.json`,
+`ue-vtable-candidates.md`, `next-canary-plan.json`, `next-canary-plan.env`, and
+`next-canary-plan.md` into the evidence directory. When vtable scan rows are
+present, the generated next plan carries the ranked restart-safe
+`ProcessEvent` image offset into the next guarded native-client canary.
+Confidence: high.
 
 The native Linux launch wrapper can source the prepared bundle directly:
 
@@ -1247,6 +1404,10 @@ and `signatureAnchorReady=true` are satisfied with no
 `missingSignatureAnchorReadyKeys`. The verifier accepts either current `ready`
 booleans or passed readiness `gates` as evidence, matching the canary planner.
 Confidence: high.
+Strict mode also requires `ueProcessEventActiveValidation` and
+`ueCallFunctionActiveValidation`. A canary that only installs target-image hooks
+or arms Lua dispatch is still incomplete until explicitly allowed active
+validation enters the hook and original trampoline. Confidence: high.
 The readiness JSON also includes `perLoaderReadiness`, and Markdown output
 includes `Per Loader Readiness`. Check the `client` row, which is the native
 Linux client log label; `linux-client` is accepted as a filter alias. Aggregate
@@ -1273,6 +1434,7 @@ scripts/summarize-linux-loader-xrefs.py /path/to/DuneSandbox-Linux-Shipping \
 
 scripts/promote-ue-anchor-xref-candidates.py \
   build/linux-client-loader/ue-anchor-xrefs.json \
+  --require-target-source \
   --format json > build/linux-client-loader/ue-anchor-candidates.json
 
 scripts/validate-elf-signatures.py /path/to/DuneSandbox-Linux-Shipping \
@@ -1309,7 +1471,12 @@ is collected in the same canary. The planner also requires
 `ueProcessEventHookRuntimeTarget`, `ueProcessEventLiveHookRuntimeTarget`,
 `ueProcessEventLiveRuntimeContext`, and
 `ueProcessEventLiveRuntimeRegistryContext` before escalation: self-test-only or
-older readiness evidence stays at hook-probe/live-hook and does not emit live
+loader-owned evidence does not count. If active ProcessEvent or
+`CallFunctionByNameWithArguments` validation is missing, the same live-hook plan
+emits native-client `DUNE_CLIENT_PROBE_*_ACTIVE_VALIDATE=true` variables while
+keeping native invocation disabled until `--allow-active-native-call` and
+reviewed runtime object/function/command inputs are supplied. Confidence: high.
+Older readiness evidence stays at hook-probe/live-hook and does not emit live
 Lua dispatch. It also requires `luaObjectRegistryRuntime`,
 `luaFunctionRegistryRuntime`, `luaDecodedObjectAliasesRuntime`, and
 `ueObjectArrayRegistryRuntime`, plus `luaFunctionIterationRuntime`; missing or
@@ -1448,6 +1615,10 @@ with the `targetImageAnchors`, `runtimePackageLoading`,
 `runtimeObjectRegistry`, `runtimeReflection`,
 `runtimeProcessEventDispatch`, and `runtimeCallFunctionDispatch` groups all
 ready; self-test-only logs are not enough.
+`runtimePackageLoading` includes both guarded `LoadAsset` native invocation and
+the package-backed `LoadClass` chain through target-image `StaticLoadClass`.
+`runtimeObjectRegistry` includes guarded target-image `StaticConstructObject`
+executor state, executor readiness, and native invocation evidence.
 `runtimeProcessEventDispatch` requires more than a live hook install: decoded
 live function path, runtime registry context, active params, raw/container
 param samples, Lua context handles, descriptor-backed param accessors, typed
@@ -1458,6 +1629,17 @@ The decoded live function path is a required readiness marker.
 `luaReflectionDescriptorValues=true` now requires descriptor `GetValue()` /
 `SetValue()` and shorthand `get()` / `set()` on loader-owned property handles.
 Confidence: high.
+
+The native Linux client emits `ue-ffield-layout-candidate` during reflection
+property walks. These rows test UE4 `FField` offsets and older UObject-shaped
+field offsets, then report whether the decoded class name looks like an
+`F*Property` plus whether the descriptor layout is sane. Use the matching
+`ueFFieldLayoutCandidate*` summary counters to decide whether live reflection
+layout was actually found.
+It also emits `ue-reflection-property-root-scan` for bounded alternate
+UStruct/class property-root slots and walks those roots as `propertyScan0x...`
+chains. Treat sane alternate roots plus property-like FField candidates as the
+next proof target.
 
 ## UE4SS-Port Roadmap
 
@@ -1499,3 +1681,5 @@ Server-authoritative gameplay still has to land on the server. Client-side
 hooks can expose UI/console surfaces and help with discovery, but they do not
 make BRT placement, inventory grants, map state, or other authoritative changes
 valid unless the server path accepts them.
+
+FindObjects(limit, className, objectName, bannedFlags, requiredFlags, exactClass) and FindObject(className, objectName, bannedFlags, requiredFlags) are supported as UE4SS-style bounded registry queries on Linux server, native Linux client, and Windows/Proton. Returned tables keep numeric entries for array-style iteration, path keys for existing lookup compatibility, and Count for bounded result accounting.

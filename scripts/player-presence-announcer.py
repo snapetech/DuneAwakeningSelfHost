@@ -17,7 +17,6 @@ from dune_whisper_route import whisper_route_for_fls_id
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 STATE_DIR = ROOT / "backups" / "admin-bot"
 STATE_FILE = STATE_DIR / "player-presence.json"
-DB = "dune_sb_1_4_0_0"
 STARTER_BASE_TOOL_TEMPLATE = "BaseBackupTool"
 STARTER_BASE_TOOL_MESSAGE = "A Base Reconstruction Tool has been added to your inventory. You may need to log out and back in before it appears."
 STARTER_EMOTE_TEMPLATES = (
@@ -47,6 +46,7 @@ def read_env_file(path):
 
 
 FILE_ENV = read_env_file(ROOT / os.environ.get("DUNE_ADMIN_BOT_ENV_FILE", ".env"))
+DB = os.environ.get("DUNE_DB_NAME") or FILE_ENV.get("DUNE_DB_NAME") or "dune_sb_1_4_0_0"
 
 
 def env(name, default=""):

@@ -31,6 +31,7 @@ class LoaderSchedulerApiParityTests(unittest.TestCase):
             "MAX_LUA_SCHEDULED_CALLBACKS",
             "LuaScheduledCallback",
             "lua_game_thread_queue",
+            "lua_drain_game_thread_queue_internal",
             "lua_drain_game_thread_queue_callback",
             "lua_unref_scheduled_callbacks",
             '"ExecuteInGameThread"',
@@ -41,6 +42,7 @@ class LoaderSchedulerApiParityTests(unittest.TestCase):
             "owner_state",
             "scheduled->owner_state != state",
             "lua_drain_scheduler_queue_internal",
+            "lua_drain_game_thread_queue_internal(&process_event_live_lua_api, process_event_live_lua_state)",
             "lua_drain_scheduler_queue_internal(&process_event_live_lua_api, process_event_live_lua_state, 0)",
         )
         for target, source in self.existing_sources().items():
@@ -59,6 +61,7 @@ class LoaderSchedulerApiParityTests(unittest.TestCase):
             "bounded scheduler queue",
             "Lua-state-owned",
             "live ProcessEvent post-hook",
+            "live CallFunction post-hook",
         )
         for doc in self.existing_docs():
             with self.subTest(doc=doc.name):

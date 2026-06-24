@@ -6,7 +6,8 @@
 //       --mode process --analysis off
 //
 // Output:
-//   /tmp/ghidra-work/focused-functions.txt
+//   $DUNE_GHIDRA_FOCUSED_OUT, $DUNE_GHIDRA_WORK_DIR/focused-functions.txt,
+//   or /tmp/ghidra-work/focused-functions.txt
 //
 // @category Reverse Engineering
 
@@ -24,35 +25,47 @@ import ghidra.util.task.ConsoleTaskMonitor;
 
 import java.io.FileWriter;
 import java.io.PrintWriter;
+import java.nio.file.Paths;
 import java.util.LinkedHashSet;
 import java.util.Set;
 
 public class DumpFocusedFunctions extends GhidraScript {
-    private static final String OUT = "/tmp/ghidra-work/focused-functions.txt";
+    private static final String DEFAULT_OUT = "/tmp/ghidra-work/focused-functions.txt";
 
     private PrintWriter out;
     private DecompInterface decomp;
 
     @Override
     public void run() throws Exception {
-        out = new PrintWriter(new FileWriter(OUT));
+        String outputPath = outputPath();
+        out = new PrintWriter(new FileWriter(outputPath));
         decomp = new DecompInterface();
         decomp.openProgram(currentProgram);
         try {
-            log("Output: " + OUT);
+            log("Output: " + outputPath);
             log("Program: " + currentProgram.getName());
             log("Image base: " + currentProgram.getImageBase());
             String raw = System.getenv("DUNE_GHIDRA_OFFSETS");
             if (raw == null || raw.trim().isEmpty()) {
                 raw = "0xd17c560,0xd17adf0,0xd17b5e0,0xd058610,0xd053120,0xd050f30,0xd177090,0xd059ac0,0xd05f0b0,0xd148810,0xcfdcb40,0xcf6e850,0xedf0f20,0xfa7ec00,0x12e2d0f0";
             }
+            boolean forceExact = "1".equals(System.getenv("DUNE_GHIDRA_FORCE_EXACT_FUNCTIONS"));
             Set<Address> entries = new LinkedHashSet<>();
             for (String item : raw.split(",")) {
                 String trimmed = item.trim();
                 if (trimmed.isEmpty()) continue;
                 long off = Long.decode(trimmed);
                 Address addr = toAddr(off);
-                Function f = currentProgram.getFunctionManager().getFunctionContaining(addr);
+                Function f = forceExact ? currentProgram.getFunctionManager().getFunctionAt(addr)
+                        : currentProgram.getFunctionManager().getFunctionContaining(addr);
+                if (f == null) {
+                    try {
+                        disassemble(addr);
+                        f = createFunction(addr, null);
+                    } catch (Exception exc) {
+                        log("    create-function failed: " + exc.getMessage());
+                    }
+                }
                 log("");
                 log("== requested " + trimmed + " addr=" + addr + " containing="
                         + (f == null ? "<none>" : f.getName() + " @ " + f.getEntryPoint()));
@@ -132,5 +145,17 @@ public class DumpFocusedFunctions extends GhidraScript {
     private void log(String line) {
         println(line);
         out.println(line);
+    }
+
+    private String outputPath() {
+        String explicit = System.getenv("DUNE_GHIDRA_FOCUSED_OUT");
+        if (explicit != null && !explicit.trim().isEmpty()) {
+            return explicit.trim();
+        }
+        String workDir = System.getenv("DUNE_GHIDRA_WORK_DIR");
+        if (workDir != null && !workDir.trim().isEmpty()) {
+            return Paths.get(workDir.trim(), "focused-functions.txt").toString();
+        }
+        return DEFAULT_OUT;
     }
 }

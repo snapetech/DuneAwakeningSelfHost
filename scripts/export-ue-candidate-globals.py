@@ -21,7 +21,7 @@ GROUP_ANCHORS = {
     "objects": ("GUObjectArray", "GObjectArray", "GObjects", "FUObjectArray"),
     "world": ("GWorld", "GEngine"),
     "dispatch": ("ProcessEvent", "StaticFindObject", "CallFunctionByNameWithArguments", "CallFunctionByName"),
-    "package": ("StaticLoadObject", "LoadObject", "LoadPackage", "ResolveName", "LoadAsset", "LoadClass"),
+    "package": ("StaticLoadObject", "StaticLoadClass", "LoadObject", "LoadPackage", "ResolveName", "LoadAsset", "LoadClass"),
     "reflection": ("UObject", "UFunction", "UClass", "FProperty", "FObjectProperty", "FArrayProperty", "FBoolProperty", "FStructProperty", "UStruct", "UEnum"),
 }
 ANCHOR_GROUP = {
@@ -352,6 +352,8 @@ def export_candidates(summary, args):
                     "name": anchor,
                     "group": group,
                     "imageOffset": f"0x{offset:x}",
+                    "source": summary.get("binary", ""),
+                    "sourceProvenance": "target",
                     "sourceTarget": row.get("target", ""),
                     "sourceFileOffset": row.get("fileOffset", ""),
                     "refCount": row.get("refCount", 0),
@@ -386,6 +388,7 @@ def export_candidates(summary, args):
     return {
         "schemaVersion": "dune-ue-candidate-globals/v1",
         "sourceFormat": summary.get("schemaVersion", ""),
+        "binary": summary.get("binary", ""),
         "candidateCount": len(candidates),
         "anchorCounts": dict(sorted(counts.items())),
         "groups": dict(sorted(Counter(row["group"] for row in candidates).items())),

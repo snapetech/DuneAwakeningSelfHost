@@ -1,0 +1,5 @@
+services:
+  director:
+    environment:
+      ASPNETCORE_HTTP_PORTS: "18085"
+      ASPNETCORE_URLS: http://127.0.0.1:18085

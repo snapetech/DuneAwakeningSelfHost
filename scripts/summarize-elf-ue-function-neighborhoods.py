@@ -22,7 +22,7 @@ ANCHOR_GROUPS = {
     "objects": ("GUObjectArray", "GObjectArray", "GObjects", "FUObjectArray"),
     "world": ("GWorld", "UWorld::", "UWorld "),
     "dispatch": ("ProcessEvent", "StaticFindObject", "CallFunctionByNameWithArguments", "CallFunctionByName"),
-    "package": ("StaticLoadObject", "LoadObject", "LoadPackage", "ResolveName", "LoadAsset", "LoadClass"),
+    "package": ("StaticLoadObject", "StaticLoadClass", "LoadObject", "LoadPackage", "ResolveName", "LoadAsset", "LoadClass"),
     "reflection": ("UObject::", "UFunction::", "UClass::", "FProperty::", "FObjectProperty", "FArrayProperty", "FBoolProperty", "FStructProperty", "UStruct::", "UEnum::"),
 }
 EXACT_ANCHOR_HINTS = {
@@ -40,12 +40,13 @@ EXACT_ANCHOR_HINTS = {
     "StaticFindObject": ("StaticFindObject",),
     "CallFunctionByNameWithArguments": ("CallFunctionByNameWithArguments",),
     "CallFunctionByName": ("CallFunctionByName",),
-    "StaticLoadObject": ("StaticLoadObject",),
-    "LoadAsset": ("LoadAsset",),
+    "StaticLoadObject": ("StaticLoadObject", "load-object-static", "uobject-static-load-object"),
+    "StaticLoadClass": ("StaticLoadClass", "load-class-static", "uobject-static-load-class"),
+    "LoadAsset": ("LoadAsset", "load-asset"),
     "LoadClass": ("LoadClass",),
-    "LoadObject": ("LoadObject",),
-    "LoadPackage": ("LoadPackage",),
-    "ResolveName": ("ResolveName",),
+    "LoadObject": ("LoadObject", "uobject-load-object"),
+    "LoadPackage": ("LoadPackage", "load-package", "upackage-load-package"),
+    "ResolveName": ("ResolveName", "resolve-name", "uresolve-name"),
     "UObject": ("UObject",),
     "UFunction": ("UFunction",),
     "UClass": ("UClass",),
@@ -78,6 +79,26 @@ def parse_int(value):
     if isinstance(value, int):
         return value
     return int(str(value), 0)
+
+
+def parse_explicit_seeds(raw_seeds):
+    seeds = []
+    for raw in raw_seeds or []:
+        if "=" in raw:
+            name, value = raw.split("=", 1)
+        else:
+            value = raw
+            name = f"explicit-{value}"
+        seeds.append(
+            FunctionSeed(
+                vaddr=parse_int(value),
+                source_name=name,
+                source_group="explicit",
+                source_role="manual-seed",
+                source_slot=value,
+            )
+        )
+    return seeds
 
 
 def load_json(path):
@@ -431,6 +452,10 @@ def summarize(args):
         source_summaries["loaderLogTargetsWithXrefs"] = xref_summary.get("targetsWithXrefs", 0)
         for seed in harvest_xref_summary_seeds(xref_summary, args.seed_limit, args.category, args.name):
             seed_map.setdefault(seed.vaddr, seed)
+    if args.seed:
+        source_summaries["explicitSeedCount"] = len(args.seed)
+        for seed in parse_explicit_seeds(args.seed):
+            seed_map.setdefault(seed.vaddr, seed)
     for seed in harvest_init_array_seeds(ptrctx, data, sections, relocations, args.init_limit):
         seed_map.setdefault(seed.vaddr, seed)
     seeds = list(seed_map.values())
@@ -541,6 +566,7 @@ def main(argv=None):
     parser.add_argument("--relocation-surface", type=Path)
     parser.add_argument("--xref-json", type=Path)
     parser.add_argument("--loader-log", type=Path)
+    parser.add_argument("--seed", action="append", default=[], help="Explicit function seed as NAME=VADDR or VADDR")
     parser.add_argument("--exe-substring", default="DuneSandboxServer")
     parser.add_argument("--pid", type=int)
     parser.add_argument("--category", action="append", default=[])
@@ -554,8 +580,8 @@ def main(argv=None):
     parser.add_argument("--format", choices=("json", "markdown"), default="markdown")
     parser.add_argument("--limit", type=int, default=80)
     args = parser.parse_args(argv)
-    if not args.relocation_surface and not args.xref_json and not args.loader_log and args.init_limit <= 0:
-        parser.error("provide --relocation-surface, --xref-json, --loader-log, or --init-limit")
+    if not args.relocation_surface and not args.xref_json and not args.loader_log and not args.seed and args.init_limit <= 0:
+        parser.error("provide --relocation-surface, --xref-json, --loader-log, --seed, or --init-limit")
 
     summary = summarize(args)
     if args.format == "json":

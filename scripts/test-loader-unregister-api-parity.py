@@ -29,6 +29,7 @@ class LoaderUnregisterApiParityTests(unittest.TestCase):
     REQUIRED_GLOBALS = (
         "UnregisterKeyBind",
         "UnregisterConsoleCommandHandler",
+        "UnregisterConsoleCommandGlobalHandler",
         "UnregisterCustomEvent",
         "UnregisterLoadMapPreHook",
         "UnregisterLoadMapPostHook",
@@ -45,6 +46,7 @@ class LoaderUnregisterApiParityTests(unittest.TestCase):
         "UnregisterCallFunctionByNameWithArgumentsPostHook",
         "UnregisterULocalPlayerExecPreHook",
         "UnregisterULocalPlayerExecPostHook",
+        "UnregisterNotifyOnNewObject",
     )
 
     def existing_sources(self):
@@ -66,6 +68,7 @@ class LoaderUnregisterApiParityTests(unittest.TestCase):
             "lua_unregister_key_bind_callback",
             "lua_unregister_console_command_handler_callback",
             "lua_unregister_custom_event_callback",
+            "lua_unregister_notify_on_new_object_callback",
         ) + self.REQUIRED_GLOBALS
         for target, source in self.existing_sources().items():
             with self.subTest(target=target):
@@ -89,10 +92,13 @@ class LoaderUnregisterApiParityTests(unittest.TestCase):
     def test_smokes_exercise_unregister_surface(self):
         required = (
             "UnregisterKeyBind",
+            "UnregisterConsoleCommandGlobalHandler",
+            "tempGlobalHits==0",
             "UnregisterCustomEvent",
             "UnregisterModUnloadCallback",
-            "callbackUnregisterCalls=16",
-            "callbackUnregisterHits=16",
+            "UnregisterNotifyOnNewObject",
+            "callbackUnregisterCalls=17",
+            "callbackUnregisterHits=17",
         )
         for smoke in self.existing_smokes():
             with self.subTest(smoke=smoke.name):
@@ -104,9 +110,11 @@ class LoaderUnregisterApiParityTests(unittest.TestCase):
         required = (
             "`UnregisterKeyBind`",
             "`UnregisterConsoleCommandHandler`",
+            "`UnregisterConsoleCommandGlobalHandler`",
             "`UnregisterCustomEvent`",
             "`UnregisterModUnloadCallback`",
-            "`callbackUnregisterCalls=16 callbackUnregisterHits=16`",
+            "`UnregisterNotifyOnNewObject`",
+            "`callbackUnregisterCalls=17 callbackUnregisterHits=17`",
             "active registrations",
         )
         for doc in self.existing_docs():

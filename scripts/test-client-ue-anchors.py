@@ -34,12 +34,15 @@ class ClientUeAnchorTests(unittest.TestCase):
             "ProcessEvent": {"count": 1, "first": {"offset": "0x4"}, "sources": {}},
             "CallFunctionByNameWithArguments": {"count": 1, "first": {"offset": "0x5"}, "sources": {}},
             "StaticLoadObject": {"count": 1, "first": {"offset": "0x6"}, "sources": {}},
+            "StaticLoadClass": {"count": 1, "first": {"offset": "0x7"}, "sources": {}},
+            "LoadAsset": {"count": 1, "first": {"offset": "0x8"}, "sources": {}},
+            "LoadClass": {"count": 1, "first": {"offset": "0x9"}, "sources": {}},
         }
         report = ue_anchors.summarize({"hitsByName": hits})
 
         self.assertTrue(report["readyForObjectDiscovery"])
         self.assertTrue(report["readyForHooks"])
-        self.assertEqual(report["groups"]["package"]["present"], 1)
+        self.assertEqual(report["groups"]["package"]["present"], 4)
 
     def test_proven_only_ignores_raw_scan_hits(self):
         hits = {
@@ -74,6 +77,9 @@ class ClientUeAnchorTests(unittest.TestCase):
             "uobject-process-event": {"count": 1, "first": {"offset": "0x4"}, "sources": {"scan": 1}},
             "uobject-call-function-by-name-with-arguments": {"count": 1, "first": {"offset": "0x5"}, "sources": {"scan": 1}},
             "dune-static-load-object": {"count": 1, "first": {"offset": "0x6"}, "sources": {"scan": 1}},
+            "uobject-static-load-class": {"count": 1, "first": {"offset": "0x7"}, "sources": {"scan": 1}},
+            "load-asset-package-path": {"count": 1, "first": {"offset": "0x8"}, "sources": {"scan": 1}},
+            "load-class-package-path": {"count": 1, "first": {"offset": "0x9"}, "sources": {"scan": 1}},
         }
         report = ue_anchors.summarize({"hitsByName": hits})
 
@@ -85,6 +91,9 @@ class ClientUeAnchorTests(unittest.TestCase):
             ["uobject-call-function-by-name-with-arguments"],
         )
         self.assertEqual(report["groups"]["package"]["anchors"][0]["matchedNames"], ["dune-static-load-object"])
+        self.assertEqual(report["groups"]["package"]["anchors"][1]["matchedNames"], ["uobject-static-load-class"])
+        self.assertEqual(report["groups"]["package"]["anchors"][5]["matchedNames"], ["load-asset-package-path"])
+        self.assertEqual(report["groups"]["package"]["anchors"][6]["matchedNames"], ["load-class-package-path"])
 
     def test_call_function_dispatch_anchor_does_not_open_process_event_hook_readiness(self):
         hits = {

@@ -2,6 +2,7 @@
 import argparse
 import importlib.util
 import json
+import os
 import pathlib
 import socket
 import sys
@@ -13,6 +14,12 @@ SPEC = importlib.util.spec_from_file_location("admin_chat_commands", ADMIN_CHAT_
 admin_chat_commands = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(admin_chat_commands)
 
+RPC_CLASSIFICATION_CHOICES = (
+    "normal-request-not-observed",
+    "operator-controlled-fallback",
+)
+TRACE_CLASSIFICATION_SCHEMA_VERSION = "dune-brt-dd-trace-classification/v1"
+
 
 def print_json(value):
     print(json.dumps(value, default=str, separators=(",", ":")))
@@ -21,6 +28,70 @@ def print_json(value):
 def fetch_one(cur):
     row = cur.fetchone()
     return dict(row) if row else None
+
+
+def require_live_dd1_brt_mutation_allowed():
+    if os.environ.get("DUNE_ALLOW_LIVE_DD1_BRT_MUTATION") != "1":
+        raise SystemExit(
+            "commit refused: DD1 BRT has not been proven safe; set "
+            "DUNE_ALLOW_LIVE_DD1_BRT_MUTATION=1 only for an explicitly authorized live test"
+        )
+    if os.environ.get("CONFIRM_DD1_BRT") != "I UNDERSTAND DD1 BRT MAY BREAK BASE OWNERSHIP":
+        raise SystemExit(
+            "commit refused: set CONFIRM_DD1_BRT='I UNDERSTAND DD1 BRT MAY BREAK BASE OWNERSHIP'"
+        )
+
+
+def require_rpc_classification(args):
+    classification = getattr(args, "rpc_classification", "")
+    classification_file = getattr(args, "rpc_classification_json", "")
+    if classification_file:
+        classification = rpc_classification_from_file(classification_file)
+    if classification not in RPC_CLASSIFICATION_CHOICES:
+        raise SystemExit(
+            "commit refused: pass --rpc-classification normal-request-not-observed "
+            "after a trace shows the normal BRT request did not reach SERVER-RPC-ENTRY/"
+            "SERVER-RPC-EXEC, or --rpc-classification operator-controlled-fallback "
+            "for an explicitly authorized admin fallback. First classify whether "
+            "the normal request reaches the server; if it does not, spoof/emulate "
+            "the equivalent request server-side instead of adding a client "
+            "modification requirement."
+        )
+    return classification
+
+
+def rpc_classification_from_file(path):
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            data = json.load(handle)
+    except OSError as exc:
+        raise SystemExit(f"commit refused: cannot read BRT trace classification JSON: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"commit refused: invalid BRT trace classification JSON: {exc}") from exc
+    if not isinstance(data, dict) or data.get("schemaVersion") != TRACE_CLASSIFICATION_SCHEMA_VERSION:
+        raise SystemExit("commit refused: not a BRT DD trace classification JSON")
+    if data.get("clientModificationRequired") is True:
+        raise SystemExit("commit refused: classification requires client modification")
+    if data.get("rpcReachedServer") is True and data.get("serverSideEmulationAllowed") is True:
+        raise SystemExit("commit refused: inconsistent trace classification; RPC reached server but emulation is marked allowed")
+    classification = str(data.get("emulatorRpcClassification") or data.get("rpcClassification") or "")
+    if classification == "normal-request-reached-server":
+        classification = "operator-controlled-fallback"
+    return classification
+
+
+def emulation_context(args, classification):
+    return {
+        "rpcClassification": classification,
+        "rpcClassificationJson": getattr(args, "rpc_classification_json", "") or "",
+        "serverSideEmulation": True,
+        "clientModificationRequired": False,
+        "classificationContract": (
+            "If SERVER-RPC-ENTRY/SERVER-RPC-EXEC fires, fix the reached server-side "
+            "branch. If the normal request is not observed, emulate the equivalent "
+            "request server-side through the BRT persistence path."
+        ),
+    }
 
 
 def restore_totem_permission(cur, totem_id, player_id, actor_name="##Totem_Placeable", owner_rank=1):
@@ -308,6 +379,10 @@ def run_finish_staged_backup(args):
             raise SystemExit("commit refused: host is not kspls0")
         if args.confirm != "FINISH DD1 BRT BACKUP":
             raise SystemExit("commit refused: pass --confirm 'FINISH DD1 BRT BACKUP'")
+        require_live_dd1_brt_mutation_allowed()
+        rpc_classification = require_rpc_classification(args)
+    else:
+        rpc_classification = "dry-run"
     conn = admin_chat_commands.connect_db()
     try:
         with conn.cursor(cursor_factory=admin_chat_commands.psycopg2.extras.RealDictCursor) as cur:
@@ -336,6 +411,7 @@ def run_finish_staged_backup(args):
             print_json({
                 "ok": True,
                 "mode": "finish-staged-backup",
+                "emulation": emulation_context(args, rpc_classification),
                 "backupId": args.backup_id,
                 "playerId": player_id,
                 "totemId": totem_id,
@@ -374,6 +450,7 @@ def run_simulate_from_totem(args):
             result["ok"] = True
             result["rolledBack"] = True
             result["mode"] = "simulate-from-totem"
+            result["emulation"] = emulation_context(args, "dry-run")
             print_json(result)
     finally:
         conn.close()
@@ -385,6 +462,10 @@ def run_restore_backup(args):
             raise SystemExit("commit refused: host is not kspls0")
         if args.confirm != "RESTORE DD1 BRT BACKUP":
             raise SystemExit("commit refused: pass --confirm 'RESTORE DD1 BRT BACKUP'")
+        require_live_dd1_brt_mutation_allowed()
+        rpc_classification = require_rpc_classification(args)
+    else:
+        rpc_classification = "dry-run"
     conn = admin_chat_commands.connect_db()
     try:
         with conn.cursor(cursor_factory=admin_chat_commands.psycopg2.extras.RealDictCursor) as cur:
@@ -409,13 +490,19 @@ def run_restore_backup(args):
                 result["rolledBack"] = True
             result["ok"] = True
             result["mode"] = "restore-backup"
+            result["emulation"] = emulation_context(args, rpc_classification)
             print_json(result)
     finally:
         conn.close()
 
 
 def main():
-    parser = argparse.ArgumentParser(description="DD1 BRT DB-emulation experiments. Defaults are rollback-only.")
+    parser = argparse.ArgumentParser(
+        description=(
+            "DD1 BRT server-side request emulation. Defaults are rollback-only; "
+            "live commits require an explicit RPC classification."
+        )
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     list_totems = sub.add_parser("list-totems", help="List owned DD1 totems that the DB BRT path can see.")
@@ -456,6 +543,22 @@ def main():
     restore.add_argument("--dimension-index", type=int)
     restore.add_argument("--commit", action="store_true")
     restore.add_argument("--confirm", default="")
+    restore.add_argument(
+        "--rpc-classification",
+        choices=RPC_CLASSIFICATION_CHOICES,
+        default="",
+        help=(
+            "Required with --commit. Use normal-request-not-observed only after "
+            "SERVER-RPC-ENTRY/SERVER-RPC-EXEC did not fire for the normal BRT "
+            "attempt, or operator-controlled-fallback for an explicitly authorized "
+            "admin fallback."
+        ),
+    )
+    restore.add_argument(
+        "--rpc-classification-json",
+        default="",
+        help="Classification JSON from scripts/classify-brt-dd-trace.py; overrides --rpc-classification.",
+    )
     restore.set_defaults(func=run_restore_backup)
 
     finish = sub.add_parser(
@@ -468,6 +571,20 @@ def main():
     finish.add_argument("--owner-rank", type=int, default=1)
     finish.add_argument("--commit", action="store_true")
     finish.add_argument("--confirm", default="")
+    finish.add_argument(
+        "--rpc-classification",
+        choices=RPC_CLASSIFICATION_CHOICES,
+        default="",
+        help=(
+            "Required with --commit. Documents why server-side request emulation "
+            "is being used without requiring client-side file changes."
+        ),
+    )
+    finish.add_argument(
+        "--rpc-classification-json",
+        default="",
+        help="Classification JSON from scripts/classify-brt-dd-trace.py; overrides --rpc-classification.",
+    )
     finish.set_defaults(func=run_finish_staged_backup)
 
     args = parser.parse_args()

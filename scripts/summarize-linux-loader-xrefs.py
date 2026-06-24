@@ -118,6 +118,7 @@ class Target:
     file_offset: int
     image_offset: int
     vaddr: int
+    source: str = ""
 
 
 def parse_int(value):
@@ -180,7 +181,7 @@ def import_scan_summary():
     return module
 
 
-def targets_from_log(log_path, segments, exe_substring, pid, categories, names):
+def targets_from_log(log_path, segments, exe_substring, pid, categories, names, default_source=""):
     scan_summary = import_scan_summary()
     summary = scan_summary.summarize(scan_summary.load_records(log_path), exe_substring, pid)
     targets = []
@@ -216,12 +217,13 @@ def targets_from_log(log_path, segments, exe_substring, pid, categories, names):
                     file_offset=file_offset,
                     image_offset=image_offset,
                     vaddr=vaddr,
+                    source=offset_record.get("source") or default_source,
                 )
             )
     return targets
 
 
-def targets_from_args(raw_targets, raw_offsets, segments):
+def targets_from_args(raw_targets, raw_offsets, segments, default_source=""):
     targets = []
     for raw in raw_targets or []:
         if "=" not in raw:
@@ -236,6 +238,7 @@ def targets_from_args(raw_targets, raw_offsets, segments):
                 file_offset=file_offset,
                 image_offset=file_offset,
                 vaddr=file_offset_to_vaddr(segments, file_offset),
+                source=default_source,
             )
         )
     for raw in raw_offsets or []:
@@ -248,6 +251,7 @@ def targets_from_args(raw_targets, raw_offsets, segments):
                 file_offset=file_offset,
                 image_offset=file_offset,
                 vaddr=file_offset_to_vaddr(segments, file_offset),
+                source=default_source,
             )
         )
     return targets
@@ -465,7 +469,7 @@ def signature_seed(binary_data, segments, ref, prefix, suffix):
     }
 
 
-def serializable(binary_data, segments, targets, xrefs, signature_prefix=8, signature_suffix=16):
+def serializable(binary_data, segments, targets, xrefs, signature_prefix=8, signature_suffix=16, binary_path=""):
     rows = []
     for target in targets:
         refs = xrefs.get(target, [])
@@ -477,6 +481,7 @@ def serializable(binary_data, segments, targets, xrefs, signature_prefix=8, sign
                 "fileOffset": f"0x{target.file_offset:x}",
                 "imageOffset": f"0x{target.image_offset:x}",
                 "vaddr": f"0x{target.vaddr:x}",
+                "source": target.source,
                 "xrefCount": len(refs),
                 "xrefs": [
                     {
@@ -491,6 +496,8 @@ def serializable(binary_data, segments, targets, xrefs, signature_prefix=8, sign
             }
         )
     return {
+        "format": "dune-linux-loader-xrefs/v1",
+        "binary": str(binary_path),
         "targetCount": len(targets),
         "targetsWithXrefs": sum(1 for target in targets if xrefs.get(target)),
         "targets": rows,
@@ -544,14 +551,30 @@ def main(argv=None):
     targets = []
     if args.loader_log:
         targets.extend(
-            targets_from_log(args.loader_log, segments, args.exe_substring, args.pid, args.category, args.name)
+            targets_from_log(
+                args.loader_log,
+                segments,
+                args.exe_substring,
+                args.pid,
+                args.category,
+                args.name,
+                default_source=str(args.binary),
+            )
         )
-    targets.extend(targets_from_args(args.target, args.offset, segments))
+    targets.extend(targets_from_args(args.target, args.offset, segments, default_source=str(args.binary)))
     if not targets:
         parser.error("provide --loader-log, --target, or --offset")
 
     xrefs = scan_xrefs(binary_data, segments, targets)
-    summary = serializable(binary_data, segments, targets, xrefs, args.signature_prefix, args.signature_suffix)
+    summary = serializable(
+        binary_data,
+        segments,
+        targets,
+        xrefs,
+        args.signature_prefix,
+        args.signature_suffix,
+        binary_path=str(args.binary),
+    )
     if args.format == "json":
         json.dump(summary, sys.stdout, indent=2, sort_keys=True)
         sys.stdout.write("\n")

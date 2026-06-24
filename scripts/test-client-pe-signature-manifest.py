@@ -127,6 +127,7 @@ class ClientPeSignatureManifestTests(unittest.TestCase):
             self.assertEqual(manifest["entryCount"], 1)
             self.assertEqual(manifest["entries"][0]["status"], "unique-expected")
             self.assertEqual(manifest["entries"][0]["expectedRva"], "0x1000")
+            self.assertEqual(manifest["entries"][0]["sourceProvenance"], "target")
             self.assertEqual(manifest["runtimeLimits"]["signatureFileEnv"], "DUNE_WIN_CLIENT_PROBE_SCAN_SIGNATURES_FILE")
             self.assertIn("sha256", manifest["binary"])
 
@@ -198,6 +199,45 @@ class ClientPeSignatureManifestTests(unittest.TestCase):
                 manifest["runtimeLimits"]["anchorSignatureFileEnv"],
                 "DUNE_WIN_CLIENT_PROBE_UE_ANCHOR_SIGNATURES_FILE",
             )
+
+    def test_default_ue_anchor_set_includes_static_load_class(self):
+        self.assertIn("StaticLoadClass", exporter.UE_ANCHORS)
+        self.assertIn("StaticLoadClass", exporter.UE_ANCHOR_GROUPS["package"])
+        self.assertIn("staticloadclass", exporter.UE_ANCHOR_ALIASES["StaticLoadClass"])
+        self.assertIn("uobjectstaticloadclass", exporter.UE_ANCHOR_ALIASES["StaticLoadClass"])
+
+    def test_package_aliases_promote_to_anchor_signature_entries(self):
+        validation = {
+            "scope": "executable",
+            "patterns": [
+                {
+                    "name": "uobject-static-load-class",
+                    "category": "ue",
+                    "source": "test",
+                    "xrefRva": "0x5000",
+                    "targetRva": "0x5080",
+                    "pattern": "e8 ?? ?? ?? ??",
+                    "length": 5,
+                    "fixedBytes": 1,
+                    "expectedFileOffset": "0x500",
+                    "status": "unique-expected",
+                    "promotable": True,
+                    "matches": [{"fileOffset": "0x500", "rva": "0x5000", "section": ".text", "expected": True}],
+                }
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "DuneSandbox-Win64-Shipping.exe"
+            binary.write_bytes(b"MZ-test")
+            entries = exporter.build_entries(validation)
+            manifest = exporter.make_manifest(binary, validation, entries, None, None, 256, 1800)
+
+        anchors = exporter.anchor_signature_entries(manifest)
+
+        self.assertEqual(len(anchors), 1)
+        self.assertEqual(anchors[0]["anchorName"], "StaticLoadClass")
+        self.assertEqual(anchors[0]["anchorGroup"], "package")
+        self.assertTrue(anchors[0]["anchorTransformExpected"])
 
 
 if __name__ == "__main__":

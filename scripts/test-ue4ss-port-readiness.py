@@ -147,8 +147,19 @@ READY_LOG = READY_LOG.replace(
     "event=ue-call-function-live-hook phase=thread status=installed target=0x140041000 selfTestTarget=false targetSource=explicit targetName=CallFunctionByNameWithArguments callSelfTest=false liveCalls=1 originalCalls=1 result=0 luaDispatch=true luaPreCalls=1 luaPostCalls=1 luaPreHandled=1 luaPostHandled=1 trampoline=0x1400c2000",
 )
 READY_LOG = READY_LOG.replace(
+    "event=ue-call-function-live-hook phase=thread status=installed target=0x140041000 selfTestTarget=false targetSource=explicit targetName=CallFunctionByNameWithArguments callSelfTest=false liveCalls=1 originalCalls=1 result=0 luaDispatch=true luaPreCalls=1 luaPostCalls=1 luaPreHandled=1 luaPostHandled=1 trampoline=0x1400c2000",
+    (
+        "event=ue-call-function-live-hook phase=thread status=installed target=0x140041000 selfTestTarget=false targetSource=explicit targetName=CallFunctionByNameWithArguments callSelfTest=false liveCalls=1 originalCalls=1 result=0 luaDispatch=true luaPreCalls=1 luaPostCalls=1 luaPreHandled=1 luaPostHandled=1 trampoline=0x1400c2000\n"
+        "2026-06-16T17:43:39Z pid=312 loader=win-client event=ue-call-function-active-validate phase=thread status=invoked object=0x140070000 command=0x140130000 commandSource=env-string output=0x0 executor=0x0 forceCall=true callSource=target-entry targetEntry=true result=84 liveCallsDelta=1 originalCallsDelta=1 luaDispatch=true"
+    ),
+)
+READY_LOG = READY_LOG.replace(
     "event=ue-call-function-hook phase=thread status=passed target=0x140041000 installed=true restored=true selfTestTarget=false callSelfTest=false",
     "event=ue-call-function-hook phase=thread status=passed target=0x140041000 installed=true restored=true selfTestTarget=false targetSource=explicit targetName=CallFunctionByNameWithArguments callSelfTest=false",
+)
+READY_LOG = READY_LOG.replace(
+    "event=ue-process-event-live-hook phase=thread status=installed target=0x140040000 selfTestTarget=false callSelfTest=false dispatchCallbacks=4 luaDispatch=true",
+    "2026-06-16T17:43:39Z pid=312 loader=win-client event=ue-process-event-active-validate phase=thread status=invoked object=0x140070000 function=0x140082000 params=0x20 paramsSource=descriptor-buffer paramsBufferSize=152 paramsDescriptorCount=17 callSource=target-entry targetEntry=true liveCallsDelta=1 originalCallsDelta=1 luaDispatch=true preCallbacks=2 postCallbacks=2\n2026-06-16T17:43:39Z pid=312 loader=win-client event=ue-process-event-live-hook phase=thread status=installed target=0x140040000 selfTestTarget=false callSelfTest=false dispatchCallbacks=4 luaDispatch=true",
 )
 READY_LOG = READY_LOG.replace(
     "hooks=2 skipped=0 objectHandles=4",
@@ -206,14 +217,53 @@ READY_LOG += (
     "paramsBufferSize=152 paramsWritten=0 object=0x1000 function=0x2000 value=74 "
     "originalResult=0 touched=0 liveCallsBefore=2 liveCallsAfter=2 "
     "originalCallsBefore=2 originalCallsAfter=2\n"
+    "2026-06-16T00:00:17Z pid=312 loader=win-client event=lua-process-event-native-invoke "
+    "phase=smoke status=non-self-test-invoked objectRegistryAllowed=true "
+    "functionDescriptorAllowed=true selfTestCallable=false descriptorBackedCallable=true "
+    "invokeRequested=true nativeNonSelfTestEnabled=true nativeNonSelfTestInvoked=true "
+    "paramsBufferConstructible=true descriptorCount=6 paramsDescriptorCount=17 "
+    "paramsBufferSize=152 paramsWritten=1 object=0x1000 function=0x2000 value=74 "
+    "originalResult=0 touched=1 liveCallsBefore=2 liveCallsAfter=3 "
+    "originalCallsBefore=2 originalCallsAfter=3\n"
     "2026-06-16T00:00:18Z pid=312 loader=win-client event=lua-process-event-native-invoke-self-test "
     "phase=smoke status=passed processEventNativeCalls=3 processEventNativeHits=1 liveCalls=2 originalCalls=2\n"
+    "2026-06-16T00:00:18Z pid=312 loader=win-client event=lua-process-event-native-executor-state "
+    "status=prepared bridgeArmed=true objectAllowed=true functionAllowed=true "
+    "objectRegistryAllowed=true functionDescriptorAllowed=true selfTestCallable=false "
+    "descriptorBackedCallable=true nativeCallable=true nativeNonSelfTestEnabled=true "
+    "paramsBufferConstructible=true descriptorCount=6 paramsDescriptorCount=17 "
+    "paramsBufferSize=152 nativeExecutorBlockReason=none nativeInvoked=false "
+    "object=0x1000 function=0x2000\n"
+    "2026-06-16T00:00:19Z pid=312 loader=win-client event=lua-call-function-native-invoke "
+    "phase=smoke status=preflight-ready objectRegistryAllowed=true selfTestCallable=false "
+    "invokeRequested=false nativeNonSelfTestEnabled=false nativeNonSelfTestInvoked=false "
+    "object=0x1000 function=DoubleProbeValue args= forceCall=true result=0 "
+    "liveCallsBefore=2 liveCallsAfter=2 originalCallsBefore=2 originalCallsAfter=2\n"
+    "2026-06-16T00:00:20Z pid=312 loader=win-client event=lua-call-function-native-invoke "
+    "phase=smoke status=non-self-test-invoke-disabled objectRegistryAllowed=true "
+    "selfTestCallable=false invokeRequested=true nativeNonSelfTestEnabled=false "
+    "nativeNonSelfTestInvoked=false object=0x1000 function=DoubleProbeValue args= "
+    "forceCall=true result=0 liveCallsBefore=2 liveCallsAfter=2 "
+    "originalCallsBefore=2 originalCallsAfter=2\n"
+    "2026-06-16T00:00:20Z pid=312 loader=win-client event=lua-call-function-native-invoke "
+    "phase=smoke status=non-self-test-invoked objectRegistryAllowed=true "
+    "selfTestCallable=false invokeRequested=true nativeNonSelfTestEnabled=true "
+    "nativeNonSelfTestInvoked=true object=0x1000 function=DoubleProbeValue args= "
+    "forceCall=true result=42 liveCallsBefore=2 liveCallsAfter=3 "
+    "originalCallsBefore=2 originalCallsAfter=3\n"
+    "2026-06-16T00:00:21Z pid=312 loader=win-client event=lua-call-function-native-invoke-self-test "
+    "phase=smoke status=passed callFunctionNativeCalls=3 callFunctionNativeHits=1 liveCalls=2 originalCalls=3\n"
+    "2026-06-16T00:00:21Z pid=312 loader=win-client event=lua-call-function-native-executor-state "
+    "status=prepared bridgeArmed=true objectAllowed=true functionAllowed=true "
+    "objectRegistryAllowed=true selfTestCallable=false nativeCallable=true "
+    "nativeNonSelfTestEnabled=true object=0x1000 function=DoubleProbeValue args= "
+    "forceCall=true nativeExecutorBlockReason=none nativeInvoked=false\n"
 )
 READY_LOG = READY_LOG.replace(
     "staticConstructObjectCalls=1 staticConstructObjectHits=1\n",
     (
         "staticConstructObjectCalls=1 staticConstructObjectHits=1 "
-        "notifyOnNewObjectCalls=3 notifyOnNewObjectCallbacks=2 "
+        "notifyOnNewObjectCalls=4 notifyOnNewObjectCallbacks=2 "
         "notifyOnNewObjectResult=19 notifyOnNewObjectIsNumber=true "
         "notifyOnNewObjectStatus=0 staticConstructObjectOuterHits=1 "
         "getWorldCalls=3 getWorldHits=2 "
@@ -261,7 +311,7 @@ def ready_anchor_coverage():
 def load_asset_package_guard_evidence(loader="win-client", platform_abi="win64-ms-abi", executor_ready=False):
     ready = "true" if executor_ready else "false"
     block_reason = "none" if executor_ready else "invoke-disabled"
-    return (
+    evidence = (
         f"2026-06-16T17:43:39Z pid=312 loader={loader} event=lua-load-asset-package-crash-guard-state "
         f"status=available platformAbi={platform_abi} mechanism=test available=true enabled=false armed=false nativeInvoked=false\n"
         f"2026-06-16T17:43:39Z pid=312 loader={loader} event=lua-load-asset-package-guarded-call-state "
@@ -294,6 +344,56 @@ def load_asset_package_guard_evidence(loader="win-client", platform_abi="win64-m
         f"finalNativeCallEligible={ready} nativeExecutorBlockReason={block_reason} "
         "finalNativeCallBlocked=true finalNativeCallBlockReason=preflight-state-only nativeInvoked=false\n"
     )
+    if executor_ready:
+        evidence += (
+            f"2026-06-16T17:43:39Z pid=312 loader={loader} event=lua-load-asset-package-native-invoke "
+            "status=native-return-validated path=/Script/DuneProbe.SelfTestObject targetName=StaticLoadObject "
+            "target=0x140048000 targetImage=true invokeRequested=true invokeEnabled=true pathStaged=true "
+            "boundedInput=true abiEvidenceProvided=true abiVerificationEnabled=true abiVerified=true "
+            "tcharLayoutVerified=true callFrameReady=true nativeBridgeArmed=true finalInvokeConfirmed=true "
+            "crashGuardRequired=true crashGuardArmed=true guardedCallRequired=true guardedCallReady=true "
+            "guardedCallResult=17 returnValidationReady=true invocationDescriptorRequired=true "
+            "invocationDescriptorConsumed=true nativeCallPlanAccepted=true "
+            "nativeCallExecutionMode=guarded-native-package-load "
+            "nativeCallGuardPolicy=crash-guard+guarded-call+return-validation "
+            "nativeCallable=true nativeInvoked=true nativeReturn=0x140088000 nativeSignal=0 "
+            "nativeReturnNonNull=true nativeReturnMapped=true nativeReturnReadable=true "
+            "nativeReturnValidated=true packageAvailable=true\n"
+            f"2026-06-16T17:43:39Z pid=312 loader={loader} event=lua-load-class-package-abi-state "
+            f"status=target-ready targetName=StaticLoadClass target=0x140049000 targetImage=true "
+            f"platformAbi={platform_abi} signatureFamily=StaticLoadClass abiVerified=true "
+            "callFrameReady=false stringBridgeReady=false classRootReady=true packageAvailable=true\n"
+            f"2026-06-16T17:43:39Z pid=312 loader={loader} event=lua-load-class-package-call-frame-verification-state "
+            "status=target-ready path=/Script/DuneProbe.SelfTestObject targetName=StaticLoadClass "
+            f"target=0x140049000 targetImage=true platformAbi={platform_abi} "
+            "signatureFamily=StaticLoadClass argumentCount=7 boundedInput=true "
+            "abiVerified=true classRootReady=true callFrameReady=true nativeInvoked=false\n"
+            f"2026-06-16T17:43:39Z pid=312 loader={loader} event=lua-load-class-package-native-executor-state "
+            "status=prepared targetName=StaticLoadClass target=0x140049000 targetImage=true "
+            f"platformAbi={platform_abi} nativeExecutorReady=true executorPreflightPassed=true "
+            "finalNativeCallEligible=true nativeExecutorBlockReason=none nativeInvoked=false\n"
+            f"2026-06-16T17:43:39Z pid=312 loader={loader} event=lua-load-class-package-native-invoke "
+            "status=native-invoked path=/Script/DuneProbe.SelfTestObject targetName=StaticLoadClass "
+            "target=0x140049000 targetImage=true "
+            f"platformAbi={platform_abi} invokeRequested=true invokeEnabled=true abiVerified=true "
+            "classRootReady=true callFrameReady=true nativeCallable=true nativeInvoked=true "
+            "nativeCallPlanAccepted=true\n"
+            f"2026-06-16T17:43:39Z pid=312 loader={loader} "
+            "event=lua-static-construct-object-native-executor-state status=prepared "
+            "executorKind=guarded-static-construct-object-native-executor targetName=StaticConstructObject "
+            f"target=0x140049000 targetImage=true platformAbi={platform_abi} class=0x140070000 outer=0x140071000 "
+            "name=NativeConstructPreflightProbe className=UObjectCandidate invokeRequested=false "
+            "invokeEnabled=true abiEvidenceProvided=true abiVerified=true callFrameReady=true "
+            "finalInvokeConfirmed=true nativeCallable=true nativeInvoked=false\n"
+            f"2026-06-16T17:43:39Z pid=312 loader={loader} "
+            "event=lua-static-construct-object-native-invoke status=native-invoked "
+            "executorKind=guarded-static-construct-object-native-executor targetName=StaticConstructObject "
+            f"target=0x140049000 targetImage=true platformAbi={platform_abi} class=0x140070000 outer=0x140071000 "
+            "name=NativeConstructPreflightProbe className=UObjectCandidate invokeRequested=true "
+            "invokeEnabled=true abiEvidenceProvided=true abiVerified=true callFrameReady=true "
+            "finalInvokeConfirmed=true nativeCallable=true nativeInvoked=true\n"
+        )
+    return evidence
 
 
 class Ue4ssPortReadinessTests(unittest.TestCase):
@@ -330,6 +430,9 @@ class Ue4ssPortReadinessTests(unittest.TestCase):
         self.assertFalse(report["ready"]["luaLocalPlayerExecHooks"])
         self.assertFalse(report["ready"]["luaCallFunctionHooks"])
         self.assertFalse(report["ready"]["luaCallFunctionStructuredArgs"])
+        self.assertFalse(report["ready"]["luaCallFunctionNativeInvoke"])
+        self.assertFalse(report["ready"]["luaCallFunctionNativeInvokePreflight"])
+        self.assertFalse(report["ready"]["luaCallFunctionNativeInvokeNonSelfTestGate"])
         self.assertFalse(report["ready"]["luaProcessEventCompat"])
         self.assertFalse(report["ready"]["luaProcessEventBridgeState"])
         self.assertFalse(report["ready"]["luaProcessEventNativeInvoke"])
@@ -553,9 +656,65 @@ class Ue4ssPortReadinessTests(unittest.TestCase):
         self.assertFalse(report["ready"]["luaProcessEventNativeInvoke"])
         self.assertTrue(report["ready"]["luaProcessEventNativeInvokeDescriptorPreflight"])
         self.assertTrue(report["ready"]["luaProcessEventNativeInvokeNonSelfTestGate"])
+        self.assertTrue(report["ready"]["luaCallFunctionNativeInvoke"])
+        self.assertTrue(report["ready"]["luaCallFunctionNativeInvokePreflight"])
+        self.assertTrue(report["ready"]["luaCallFunctionNativeInvokeNonSelfTestGate"])
         self.assertTrue(report["ready"]["luaProcessEventParamsBuffer"])
         self.assertFalse(report["ready"]["luaDispatch"])
         self.assertIn("native ProcessEvent", report["nextSteps"][0])
+
+    def test_lua_dispatch_requires_process_event_non_self_test_invoked_evidence(self):
+        validation = {
+            "patternCount": 2,
+            "promotableCount": 2,
+            "statusCounts": {"unique-expected": 2},
+        }
+        missing_non_self_test_invoked = "\n".join(
+            line for line in READY_LOG.splitlines()
+            if "event=lua-process-event-native-invoke " not in line
+            or "status=non-self-test-invoked" not in line
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "missing-process-event-non-self-test-invoked.log"
+            log.write_text(missing_non_self_test_invoked, encoding="utf-8")
+            summary = readiness.summarize_log(log, ["win-client"], [], [])
+            report = readiness.build_report([summary], [validation])
+
+        gate = next(
+            item for item in report["gates"]
+            if item["name"] == "lua-process-event-native-invoke-non-self-test-invoked"
+        )
+        self.assertTrue(report["ready"]["luaProcessEventNativeInvokeDescriptorPreflight"])
+        self.assertTrue(report["ready"]["luaProcessEventNativeInvokeNonSelfTestGate"])
+        self.assertFalse(report["ready"]["luaProcessEventNativeInvokeNonSelfTestInvoked"])
+        self.assertFalse(report["ready"]["luaDispatch"])
+        self.assertIn("non-self-test ProcessEvent", gate["blocker"])
+
+    def test_process_event_non_self_test_invoked_satisfies_gate_without_disabled_row(self):
+        validation = {
+            "patternCount": 2,
+            "promotableCount": 2,
+            "statusCounts": {"unique-expected": 2},
+        }
+        invoked_only = "\n".join(
+            line for line in READY_LOG.splitlines()
+            if "event=lua-process-event-native-invoke " not in line
+            or "status=non-self-test-invoke-disabled" not in line
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "process-event-invoked-only.log"
+            log.write_text(invoked_only, encoding="utf-8")
+            summary = readiness.summarize_log(log, ["win-client"], [], [])
+            report = readiness.build_report([summary], [validation])
+
+        gate = next(
+            item for item in report["gates"]
+            if item["name"] == "lua-process-event-native-invoke-non-self-test-gate"
+        )
+        self.assertTrue(report["ready"]["luaProcessEventNativeInvokeNonSelfTestGate"])
+        self.assertTrue(report["ready"]["luaProcessEventNativeInvokeNonSelfTestInvoked"])
+        self.assertIn("closedGates=0", gate["evidence"])
+        self.assertIn("invoked=1", gate["evidence"])
 
     def test_lua_dispatch_requires_process_event_descriptor_preflight_evidence(self):
         validation = {
@@ -582,6 +741,88 @@ class Ue4ssPortReadinessTests(unittest.TestCase):
         self.assertTrue(report["ready"]["luaProcessEventNativeInvokeNonSelfTestGate"])
         self.assertFalse(report["ready"]["luaDispatch"])
         self.assertIn("descriptor-preflight-ready", gate["blocker"])
+
+    def test_lua_dispatch_requires_call_function_native_invoke_evidence(self):
+        validation = {
+            "patternCount": 2,
+            "promotableCount": 2,
+            "statusCounts": {"unique-expected": 2},
+        }
+        missing_call_function_native_invoke = READY_LOG.replace(
+            "event=lua-call-function-native-invoke-self-test "
+            "phase=smoke status=passed callFunctionNativeCalls=3 callFunctionNativeHits=1",
+            "event=lua-call-function-native-invoke-self-test "
+            "phase=smoke status=failed callFunctionNativeCalls=3 callFunctionNativeHits=0",
+            1,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "missing-call-function-native-invoke.log"
+            log.write_text(missing_call_function_native_invoke, encoding="utf-8")
+            summary = readiness.summarize_log(log, ["win-client"], [], [])
+            report = readiness.build_report([summary], [validation])
+
+        gate = next(
+            item for item in report["gates"]
+            if item["name"] == "lua-call-function-native-invoke"
+        )
+        self.assertFalse(report["ready"]["luaCallFunctionNativeInvoke"])
+        self.assertTrue(report["ready"]["luaCallFunctionNativeInvokePreflight"])
+        self.assertTrue(report["ready"]["luaCallFunctionNativeInvokeNonSelfTestGate"])
+        self.assertFalse(report["ready"]["luaDispatch"])
+        self.assertIn("native CallFunction", gate["blocker"])
+
+    def test_lua_dispatch_requires_call_function_non_self_test_invoked_evidence(self):
+        validation = {
+            "patternCount": 2,
+            "promotableCount": 2,
+            "statusCounts": {"unique-expected": 2},
+        }
+        missing_non_self_test_invoked = "\n".join(
+            line for line in READY_LOG.splitlines()
+            if "event=lua-call-function-native-invoke " not in line
+            or "status=non-self-test-invoked" not in line
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "missing-call-function-non-self-test-invoked.log"
+            log.write_text(missing_non_self_test_invoked, encoding="utf-8")
+            summary = readiness.summarize_log(log, ["win-client"], [], [])
+            report = readiness.build_report([summary], [validation])
+
+        gate = next(
+            item for item in report["gates"]
+            if item["name"] == "lua-call-function-native-invoke-non-self-test-invoked"
+        )
+        self.assertTrue(report["ready"]["luaCallFunctionNativeInvokePreflight"])
+        self.assertTrue(report["ready"]["luaCallFunctionNativeInvokeNonSelfTestGate"])
+        self.assertFalse(report["ready"]["luaCallFunctionNativeInvokeNonSelfTestInvoked"])
+        self.assertFalse(report["ready"]["luaDispatch"])
+        self.assertIn("non-self-test CallFunction", gate["blocker"])
+
+    def test_call_function_non_self_test_invoked_satisfies_gate_without_disabled_row(self):
+        validation = {
+            "patternCount": 2,
+            "promotableCount": 2,
+            "statusCounts": {"unique-expected": 2},
+        }
+        invoked_only = "\n".join(
+            line for line in READY_LOG.splitlines()
+            if "event=lua-call-function-native-invoke " not in line
+            or "status=non-self-test-invoke-disabled" not in line
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "call-function-invoked-only.log"
+            log.write_text(invoked_only, encoding="utf-8")
+            summary = readiness.summarize_log(log, ["win-client"], [], [])
+            report = readiness.build_report([summary], [validation])
+
+        gate = next(
+            item for item in report["gates"]
+            if item["name"] == "lua-call-function-native-invoke-non-self-test-gate"
+        )
+        self.assertTrue(report["ready"]["luaCallFunctionNativeInvokeNonSelfTestGate"])
+        self.assertTrue(report["ready"]["luaCallFunctionNativeInvokeNonSelfTestInvoked"])
+        self.assertIn("closedGates=0", gate["evidence"])
+        self.assertIn("invoked=1", gate["evidence"])
 
     def test_lua_dispatch_requires_process_event_params_buffer_evidence(self):
         validation = {
@@ -655,11 +896,18 @@ class Ue4ssPortReadinessTests(unittest.TestCase):
         self.assertTrue(report["ready"]["luaLocalPlayerExecHooks"])
         self.assertTrue(report["ready"]["luaCallFunctionHooks"])
         self.assertTrue(report["ready"]["luaCallFunctionStructuredArgs"])
+        self.assertTrue(report["ready"]["luaCallFunctionNativeInvoke"])
+        self.assertTrue(report["ready"]["luaCallFunctionNativeInvokePreflight"])
+        self.assertTrue(report["ready"]["luaCallFunctionNativeExecutorState"])
+        self.assertTrue(report["ready"]["luaCallFunctionNativeInvokeNonSelfTestGate"])
+        self.assertTrue(report["ready"]["luaCallFunctionNativeInvokeNonSelfTestInvoked"])
         self.assertTrue(report["ready"]["luaProcessEventCompat"])
         self.assertTrue(report["ready"]["luaProcessEventBridgeState"])
         self.assertTrue(report["ready"]["luaProcessEventNativeInvoke"])
         self.assertTrue(report["ready"]["luaProcessEventNativeInvokeDescriptorPreflight"])
+        self.assertTrue(report["ready"]["luaProcessEventNativeExecutorState"])
         self.assertTrue(report["ready"]["luaProcessEventNativeInvokeNonSelfTestGate"])
+        self.assertTrue(report["ready"]["luaProcessEventNativeInvokeNonSelfTestInvoked"])
         self.assertTrue(report["ready"]["luaProcessEventParamsBuffer"])
         self.assertTrue(report["ready"]["luaLifecycleHooks"])
         self.assertTrue(report["ready"]["luaCustomEventHooks"])
@@ -700,12 +948,21 @@ class Ue4ssPortReadinessTests(unittest.TestCase):
         self.assertTrue(report["ready"]["ueCallFunctionHookRuntimeTarget"])
         self.assertTrue(report["ready"]["ueCallFunctionLiveHook"])
         self.assertTrue(report["ready"]["ueCallFunctionLiveHookRuntimeTarget"])
+        self.assertTrue(report["ready"]["ueCallFunctionActiveValidation"])
         self.assertTrue(report["ready"]["ueCallFunctionLiveLuaDispatch"])
+        self.assertEqual(summary["scan"]["invokedUeCallFunctionActiveValidationCount"], 1)
+        self.assertEqual(summary["scan"]["originalUeCallFunctionActiveValidationCount"], 1)
+        self.assertEqual(summary["scan"]["targetEntryUeCallFunctionActiveValidationCount"], 1)
         self.assertEqual(summary["scan"]["provenTargetRoutedUeCallFunctionLiveLuaHookCount"], 1)
         self.assertEqual(summary["scan"]["provenTargetHandledUeCallFunctionLiveLuaHookCount"], 1)
         self.assertTrue(report["ready"]["ueProcessEventLiveHook"])
         self.assertTrue(report["ready"]["ueProcessEventLiveHookRuntimeTarget"])
+        self.assertTrue(report["ready"]["ueProcessEventActiveValidation"])
         self.assertTrue(report["ready"]["ueProcessEventDispatch"])
+        self.assertEqual(summary["scan"]["invokedUeProcessEventActiveValidationCount"], 1)
+        self.assertEqual(summary["scan"]["originalUeProcessEventActiveValidationCount"], 1)
+        self.assertEqual(summary["scan"]["targetEntryUeProcessEventActiveValidationCount"], 1)
+        self.assertEqual(summary["scan"]["descriptorBufferUeProcessEventActiveValidationCount"], 1)
         self.assertTrue(report["ready"]["ueProcessEventLiveLuaDispatch"])
         self.assertTrue(report["ready"]["ueProcessEventLiveContext"])
         self.assertTrue(report["ready"]["ueProcessEventLiveFunctionPath"])
@@ -764,13 +1021,50 @@ class Ue4ssPortReadinessTests(unittest.TestCase):
         self.assertFalse(report["ready"]["luaLoadAssetPackageNativeInvoke"])
         self.assertFalse(report["ready"]["luaLoadAssetPackagePreflight"])
         self.assertFalse(report["ready"]["ue4ssLuaApiComplete"])
-        self.assertIn("real package/asset backend", " ".join(report["nextSteps"]))
+        self.assertIn("guarded LoadAsset package bridge state", " ".join(report["nextSteps"]))
         self.assertIn("/RuntimeProbe/GWorld.DecodedFunction_0:Function", report["canaryHints"]["ueFunctionPaths"])
         self.assertIn("/Script/GWorld.DecodedFunction_0:Function", report["canaryHints"]["ue4ssFunctionPaths"])
+        self.assertIn(
+            {
+                "objectAddress": "0x140070000",
+                "functionAddress": "0x140082000",
+                "functionPath": "/RuntimeProbe/GWorld.DecodedFunction_0:Function",
+                "objectPath": "/RuntimeProbe/GWorld",
+                "functionProvenance": "runtime",
+                "callFunctionCommand": "DecodedFunction_0",
+                "paramsAddress": "0x20",
+            },
+            report["canaryHints"]["activeValidationCandidates"],
+        )
         self.assertIn(
             "- Ready target-image package loading surface: `true`",
             readiness.markdown(report),
         )
+
+    def test_active_validation_requires_target_entry_proof(self):
+        validation = {
+            "patternCount": 2,
+            "promotableCount": 2,
+            "statusCounts": {"unique-expected": 2},
+        }
+        direct_replacement_log = READY_LOG.replace(
+            "callSource=target-entry targetEntry=true",
+            "callSource=replacement-direct targetEntry=false",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "direct-active-validation.log"
+            log.write_text(direct_replacement_log, encoding="utf-8")
+            summary = readiness.summarize_log(log, ["win-client"], [], [])
+            report = readiness.build_report([summary], [validation])
+
+        self.assertEqual(summary["scan"]["invokedUeCallFunctionActiveValidationCount"], 1)
+        self.assertEqual(summary["scan"]["originalUeCallFunctionActiveValidationCount"], 1)
+        self.assertEqual(summary["scan"]["targetEntryUeCallFunctionActiveValidationCount"], 0)
+        self.assertFalse(report["ready"]["ueCallFunctionActiveValidation"])
+        self.assertEqual(summary["scan"]["invokedUeProcessEventActiveValidationCount"], 1)
+        self.assertEqual(summary["scan"]["originalUeProcessEventActiveValidationCount"], 1)
+        self.assertEqual(summary["scan"]["targetEntryUeProcessEventActiveValidationCount"], 0)
+        self.assertFalse(report["ready"]["ueProcessEventActiveValidation"])
 
     def test_complete_ue4ss_lua_api_requires_live_target_image_contract(self):
         package_backend_log = READY_LOG.replace(
@@ -825,15 +1119,50 @@ class Ue4ssPortReadinessTests(unittest.TestCase):
         self.assertTrue(report["ready"]["luaLoadAssetPackageCrashGuard"])
         self.assertTrue(report["ready"]["luaLoadAssetPackageGuardedCall"])
         self.assertTrue(report["ready"]["luaLoadAssetPackageReturnValidation"])
+        self.assertTrue(report["ready"]["luaLoadClassPackageAbiState"])
+        self.assertTrue(report["ready"]["luaLoadClassPackageCallFrameVerification"])
+        self.assertTrue(report["ready"]["luaLoadClassPackageNativeExecutor"])
+        self.assertTrue(report["ready"]["luaLoadClassPackageNativeInvocation"])
+        self.assertTrue(report["ready"]["luaStaticConstructObjectNativeExecutorState"])
+        self.assertTrue(report["ready"]["luaStaticConstructObjectNativeExecutorReady"])
+        self.assertTrue(report["ready"]["luaStaticConstructObjectNativeInvoke"])
         self.assertTrue(report["ready"]["liveTargetImageCanary"])
         self.assertTrue(report["ready"]["ue4ssLuaApiComplete"])
         self.assertEqual(report["liveTargetImageCanaryContract"]["missingKeys"], [])
         self.assertTrue(report["ready"]["targetImageProcess"])
+        self.assertTrue(report["ready"]["signatureManifestExact"])
+        self.assertTrue(report["ready"]["signatureManifestPromotable"])
         self.assertTrue(report["liveTargetImageCanaryContract"]["groups"]["runtimeProcessEventDispatch"]["ready"])
         self.assertTrue(report["liveTargetImageCanaryContract"]["groups"]["runtimeCallFunctionDispatch"]["ready"])
         self.assertTrue(report["liveTargetImageCanaryContract"]["groups"]["runtimePackageLoading"]["ready"])
         self.assertIn("- Ready live target-image canary: `true`", readiness.markdown(report))
         self.assertIn("- Missing live target-image canary keys: `none`", readiness.markdown(report))
+
+    def test_live_target_contract_keys_are_exposed_in_ready_map(self):
+        package_backend_log = (
+            READY_LOG.replace(
+                "isACalls=5 isAHits=2 loadAssetCalls=1 loadAssetHits=1",
+                "isACalls=5 isAHits=2 loadAssetCalls=1 loadAssetHits=1 "
+                "loadAssetPackageCalls=1 loadAssetPackageHits=1",
+            )
+            + load_asset_package_guard_evidence(executor_ready=True)
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "ready-with-complete-contract.log"
+            log.write_text(package_backend_log, encoding="utf-8")
+            summary = readiness.summarize_log(log, [], [], [])
+            report = readiness.build_report(
+                [summary],
+                [{"patternCount": 2, "promotableCount": 2, "statusCounts": {"unique-expected": 2}}],
+                [ready_anchor_coverage()],
+            )
+
+        contract_keys = {
+            key
+            for keys in readiness.LIVE_TARGET_IMAGE_CANARY_CONTRACT_GROUPS.values()
+            for key in keys
+        }
+        self.assertEqual(sorted(contract_keys - set(report["ready"])), [])
 
     def test_complete_ue4ss_lua_api_rejects_missing_runtime_root_discovery(self):
         package_backend_log = (
@@ -903,6 +1232,45 @@ class Ue4ssPortReadinessTests(unittest.TestCase):
         target_gate = next(item for item in report["gates"] if item["name"] == "target-image-process")
         self.assertFalse(target_gate["passed"])
         self.assertIn("real game/server process", target_gate["blocker"])
+
+    def test_explicit_exe_substring_accepts_non_dune_target_image(self):
+        generic_log = (
+            READY_LOG.replace("DuneSandbox-Win64-Shipping.exe", "ExampleGame-Linux-Shipping")
+            + load_asset_package_guard_evidence(executor_ready=True)
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "generic-unreal-target.log"
+            log.write_text(generic_log, encoding="utf-8")
+            summary = readiness.summarize_log(log, [], [], ["ExampleGame"])
+            report = readiness.build_report(
+                [summary],
+                [{"patternCount": 2, "promotableCount": 2, "statusCounts": {"unique-expected": 2}}],
+                [ready_anchor_coverage()],
+            )
+
+        self.assertEqual(summary["targetImageSubstrings"], ["ExampleGame"])
+        self.assertEqual(report["targetImageSubstrings"], ["ExampleGame"])
+        self.assertTrue(report["ready"]["targetImageProcess"])
+        target_gate = next(item for item in report["gates"] if item["name"] == "target-image-process")
+        self.assertTrue(target_gate["passed"])
+        self.assertIn("targetFilters=ExampleGame", target_gate["evidence"])
+
+    def test_non_dune_target_requires_explicit_exe_substring(self):
+        generic_log = READY_LOG.replace("DuneSandbox-Win64-Shipping.exe", "ExampleGame-Linux-Shipping")
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "generic-unreal-target.log"
+            log.write_text(generic_log, encoding="utf-8")
+            summary = readiness.summarize_log(log, [], [], [])
+            report = readiness.build_report(
+                [summary],
+                [{"patternCount": 2, "promotableCount": 2, "statusCounts": {"unique-expected": 2}}],
+                [ready_anchor_coverage()],
+            )
+
+        self.assertEqual(report["targetImageSubstrings"], ["DuneSandbox"])
+        self.assertFalse(report["ready"]["targetImageProcess"])
+        target_gate = next(item for item in report["gates"] if item["name"] == "target-image-process")
+        self.assertIn("pass --exe-substring", target_gate["blocker"])
 
     def test_mixed_helper_process_log_auto_scopes_to_target_pid(self):
         helper_log = (
@@ -1183,6 +1551,7 @@ class Ue4ssPortReadinessTests(unittest.TestCase):
         self.assertFalse(report["ready"]["luaLoadAssetPackageNativeExecutor"])
         self.assertFalse(report["ready"]["luaLoadAssetPackage"])
         self.assertFalse(report["ready"]["ue4ssLuaApiComplete"])
+        self.assertIn("crash-guard state", " ".join(report["nextSteps"]))
 
     def test_load_asset_package_preflight_does_not_complete_package_api(self):
         package_preflight_log = READY_LOG.replace(
@@ -1239,6 +1608,7 @@ class Ue4ssPortReadinessTests(unittest.TestCase):
         self.assertFalse(report["ready"]["luaLoadAssetPackage"])
         self.assertFalse(report["ready"]["liveTargetImageCanary"])
         self.assertFalse(report["ready"]["ue4ssLuaApiComplete"])
+        self.assertIn("guarded LoadAsset package bridge state", " ".join(report["nextSteps"]))
         self.assertIn(
             "luaLoadAssetPackageNativeExecutor",
             report["liveTargetImageCanaryContract"]["groups"]["runtimePackageLoading"]["missingKeys"],
@@ -1484,8 +1854,10 @@ class Ue4ssPortReadinessTests(unittest.TestCase):
 2026-06-19T09:42:13Z pid=340 loader=server event=ue-anchor name=RuntimeGUObjectArray group=objects status=mapped addr=0x557e120c74c0 readable=true writable=true executable=false imageOffset=0x0 fileOffset=0x28c4c0 perms=rw-p map=
 2026-06-19T09:42:13Z pid=340 loader=server event=ue-object-array name=RuntimeGUObjectArray mode=direct status=finished base=0x557e120c74c0 scanned=128 registered=15
 2026-06-19T09:42:13Z pid=340 loader=server event=ue-object-array-finish phase=ue-delayed registryCount=32
+2026-06-19T09:42:13Z pid=340 loader=server event=ue-runtime-root-validation phase=ue-delayed name=RuntimeGUObjectArray status=validated consumer=object-array registryCount=32
 2026-06-19T09:42:13Z pid=340 loader=server event=ue-fname source=ue-object-array objectName=RuntimeGUObjectArray_0 status=decoded object=0x7efe0abdac40 pool=0x557e1201ce18 resolver=RuntimeFNamePool:direct comparisonIndex=2429 number=0 decoded=_Script_CoreUObject
 2026-06-19T09:42:13Z pid=340 loader=server event=ue-fname-finish phase=ue-delayed status=ready pool=0x557e1201ce18 source=RuntimeFNamePool:direct
+2026-06-19T09:42:13Z pid=340 loader=server event=ue-runtime-root-validation phase=ue-delayed name=RuntimeFNamePool status=validated consumer=fname pool=0x557e1201ce18 source=RuntimeFNamePool:direct
 2026-06-19T09:42:13Z pid=340 loader=server event=scan-finish
 """
         with tempfile.TemporaryDirectory() as tmp:
@@ -1507,6 +1879,33 @@ class Ue4ssPortReadinessTests(unittest.TestCase):
         self.assertEqual(
             report["runtimeDiscovery"]["rootValidationNames"],
             ["RuntimeFNamePool", "RuntimeGUObjectArray"],
+        )
+        self.assertEqual(
+            report["runtimeDiscovery"]["validatedLocations"],
+            [
+                {
+                    "addr": "0x557e1201ce18",
+                    "consumer": "fname",
+                    "fileOffset": "0x1e1e18",
+                    "imageOffset": "0x0",
+                    "map": "",
+                    "name": "RuntimeFNamePool",
+                    "perms": "rw-p",
+                    "targetImage": "",
+                    "validated": "true",
+                },
+                {
+                    "addr": "0x557e120c74c0",
+                    "consumer": "object-array",
+                    "fileOffset": "0x28c4c0",
+                    "imageOffset": "0x0",
+                    "map": "",
+                    "name": "RuntimeGUObjectArray",
+                    "perms": "rw-p",
+                    "targetImage": "",
+                    "validated": "true",
+                },
+            ],
         )
 
     def test_self_test_registry_records_do_not_open_runtime_registry_readiness(self):
@@ -2295,6 +2694,171 @@ class Ue4ssPortReadinessTests(unittest.TestCase):
         self.assertTrue(report["ready"]["anchorCoverageObjectDiscovery"])
         self.assertTrue(report["ready"]["anchorCoverageHookPlanning"])
         self.assertEqual(report["anchorCoverage"]["combinedAnchorCount"], 4)
+
+    def test_legacy_anchor_coverage_groups_derive_non_target_readiness(self):
+        coverage = {
+            "schemaVersion": "dune-ue-anchor-coverage/v1",
+            "groups": {
+                "names": {"present": 1, "total": 2},
+                "objects": {"present": 1, "total": 2},
+                "world": {"present": 1, "total": 1},
+                "dispatch": {"present": 1, "total": 2},
+                "package": {"present": 1, "total": 4},
+            },
+            "missingRequiredGroups": [],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "ready.log"
+            log.write_text(READY_LOG, encoding="utf-8")
+            summary = readiness.summarize_log(log, ["win-client"], [], [])
+            report = readiness.build_report(
+                [summary],
+                [{"patternCount": 2, "promotableCount": 2, "statusCounts": {"unique-expected": 2}}],
+                [coverage],
+            )
+
+        self.assertTrue(report["anchorCoverage"]["provided"])
+        self.assertTrue(report["anchorCoverage"]["readyForObjectDiscovery"])
+        self.assertTrue(report["anchorCoverage"]["readyForHookPlanning"])
+        self.assertTrue(report["anchorCoverage"]["readyForPackageLoading"])
+        self.assertFalse(report["anchorCoverage"]["targetCoverageFieldsPresent"])
+        self.assertTrue(report["ready"]["anchorCoverageObjectDiscovery"])
+        self.assertTrue(report["ready"]["anchorCoverageHookPlanning"])
+
+    def test_target_anchor_coverage_fields_gate_live_target_readiness(self):
+        coverage = ready_anchor_coverage()
+        coverage.update(
+            {
+                "readyForTargetObjectDiscovery": False,
+                "readyForTargetHookPlanning": False,
+                "readyForTargetPackageLoading": False,
+            }
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "ready.log"
+            log.write_text(READY_LOG, encoding="utf-8")
+            anchor_coverage = Path(tmp) / "anchor-coverage.json"
+            anchor_coverage.write_text(json.dumps(coverage), encoding="utf-8")
+            summary = readiness.summarize_log(log, ["win-client"], [], [])
+            loaded_coverage = json.loads(anchor_coverage.read_text(encoding="utf-8"))
+            report = readiness.build_report(
+                [summary],
+                [{"patternCount": 2, "promotableCount": 2, "statusCounts": {"unique-expected": 2}}],
+                [loaded_coverage],
+            )
+
+        self.assertTrue(report["anchorCoverage"]["readyForObjectDiscovery"])
+        self.assertFalse(report["anchorCoverage"]["readyForTargetObjectDiscovery"])
+        self.assertFalse(report["ready"]["anchorCoverageObjectDiscovery"])
+        self.assertFalse(report["ready"]["anchorCoverageHookPlanning"])
+        self.assertFalse(report["ready"]["anchorCoveragePackageLoading"])
+        live_group = report["liveTargetImageCanaryContract"]["groups"]["targetImageAnchors"]
+        self.assertIn("anchorCoverageObjectDiscovery", live_group["missingKeys"])
+        self.assertIn("anchorCoverageHookPlanning", live_group["missingKeys"])
+        self.assertIn("anchorCoveragePackageLoading", live_group["missingKeys"])
+
+    def test_target_object_discovery_accepts_target_dispatch_from_anchor_coverage_sidecar(self):
+        coverage = ready_anchor_coverage()
+        coverage.update(
+            {
+                "readyForTargetObjectDiscovery": True,
+                "readyForTargetHookPlanning": True,
+                "readyForTargetPackageLoading": False,
+                "targetCoverageFieldsPresent": True,
+            }
+        )
+        log_without_dispatch = "\n".join(
+            line
+            for line in READY_LOG.splitlines()
+            if " name=ProcessEvent " not in line
+            and " group=dispatch " not in line
+            and "event=ue-process-event-hook" not in line
+            and "event=ue-process-event-live-hook" not in line
+            and "event=ue-process-event-dispatch" not in line
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "ready.log"
+            log.write_text(log_without_dispatch, encoding="utf-8")
+            inventory = Path(tmp) / "ue4ss-evidence-inventory.json"
+            inventory.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": "dune-ue4ss-evidence-inventory/v1",
+                        "best": {"anchorCoverage": coverage},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            summary = readiness.summarize_log(log, ["win-client"], [], [])
+            report = readiness.build_report(
+                [summary],
+                [{"patternCount": 2, "promotableCount": 2, "statusCounts": {"unique-expected": 2}}],
+                [readiness.normalize_anchor_coverage_sidecar(json.loads(inventory.read_text(encoding="utf-8")))],
+            )
+
+        self.assertFalse(report["ready"]["targetDispatch"])
+        self.assertTrue(report["ready"]["anchorCoverageHookPlanning"])
+        self.assertTrue(report["ready"]["targetObjectDiscovery"])
+        self.assertFalse(report["ready"]["targetHooks"])
+
+    def test_anchor_coverage_report_preserves_loader_provenance_counts(self):
+        coverage = ready_anchor_coverage()
+        coverage.update(
+            {
+                "readyForTargetObjectDiscovery": False,
+                "readyForTargetHookPlanning": False,
+                "readyForTargetPackageLoading": False,
+                "groups": {
+                    "names": {"present": 1, "targetPresent": 0, "loaderPresent": 1, "unknownPresent": 0, "total": 1},
+                    "objects": {"present": 1, "targetPresent": 0, "loaderPresent": 1, "unknownPresent": 0, "total": 1},
+                    "world": {"present": 1, "targetPresent": 0, "loaderPresent": 1, "unknownPresent": 0, "total": 1},
+                    "dispatch": {"present": 1, "targetPresent": 0, "loaderPresent": 1, "unknownPresent": 0, "total": 1},
+                    "package": {"present": 1, "targetPresent": 0, "loaderPresent": 1, "unknownPresent": 0, "total": 1},
+                },
+            }
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "ready.log"
+            log.write_text(READY_LOG, encoding="utf-8")
+            summary = readiness.summarize_log(log, ["win-client"], [], [])
+            report = readiness.build_report(
+                [summary],
+                [{"patternCount": 2, "promotableCount": 2, "statusCounts": {"unique-expected": 2}}],
+                [coverage],
+            )
+
+        self.assertFalse(report["ready"]["anchorCoverageObjectDiscovery"])
+        self.assertEqual(report["anchorCoverage"]["groups"]["objects"]["targetPresent"], 0)
+        self.assertEqual(report["anchorCoverage"]["groups"]["objects"]["loaderPresent"], 1)
+        self.assertFalse(report["anchorCoverage"]["groups"]["objects"]["targetComplete"])
+        object_gate = next(item for item in report["gates"] if item["name"] == "anchor-coverage-object-discovery")
+        self.assertFalse(object_gate["passed"])
+        self.assertIn("'loaderPresent': 1", object_gate["evidence"])
+
+    def test_cli_rejects_empty_runtime_log(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "empty.log"
+            log.write_text("", encoding="utf-8")
+            result = subprocess.run(
+                ["python3", str(SCRIPT), "--server-log", str(log), "--format", "json"],
+                check=False,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("runtime log must not be empty", result.stderr)
+
+    def test_cli_rejects_special_device_runtime_log(self):
+        result = subprocess.run(
+            ["python3", str(SCRIPT), "--server-log", "/dev/null", "--format", "json"],
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("runtime log must be a regular file", result.stderr)
 
 
 if __name__ == "__main__":

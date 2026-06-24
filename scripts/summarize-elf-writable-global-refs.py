@@ -21,7 +21,7 @@ UE_HINTS = {
     "objects": ("UObject", "GUObject", "GObject", "ObjectArray", "FUObject"),
     "world": ("UWorld", "GWorld", "WorldContext"),
     "dispatch": ("ProcessEvent", "StaticFindObject", "CallFunctionByName"),
-    "package": ("LoadObject", "LoadPackage", "StaticLoadObject", "ResolveName", "LoadAsset", "LoadClass"),
+    "package": ("LoadObject", "LoadPackage", "StaticLoadObject", "StaticLoadClass", "ResolveName", "LoadAsset", "LoadClass"),
     "reflection": ("UClass", "UFunction", "FProperty", "FObjectProperty", "FArrayProperty", "FBoolProperty", "FStructProperty", "UStruct", "UEnum"),
 }
 EXACT_ANCHOR_HINTS = {
@@ -39,12 +39,13 @@ EXACT_ANCHOR_HINTS = {
     "StaticFindObject": ("StaticFindObject",),
     "CallFunctionByNameWithArguments": ("CallFunctionByNameWithArguments", "CallFunctionByName"),
     "CallFunctionByName": ("CallFunctionByName",),
-    "StaticLoadObject": ("StaticLoadObject",),
-    "LoadAsset": ("LoadAsset",),
+    "StaticLoadObject": ("StaticLoadObject", "load-object-static", "uobject-static-load-object"),
+    "StaticLoadClass": ("StaticLoadClass", "load-class-static", "uobject-static-load-class"),
+    "LoadAsset": ("LoadAsset", "load-asset"),
     "LoadClass": ("LoadClass",),
-    "LoadObject": ("LoadObject",),
-    "LoadPackage": ("LoadPackage",),
-    "ResolveName": ("ResolveName",),
+    "LoadObject": ("LoadObject", "uobject-load-object"),
+    "LoadPackage": ("LoadPackage", "load-package", "upackage-load-package"),
+    "ResolveName": ("ResolveName", "resolve-name", "uresolve-name"),
     "UObject": ("UObject",),
     "UFunction": ("UFunction",),
     "UClass": ("UClass",),
@@ -132,6 +133,34 @@ def scan_writable_refs(xrefs, ptrctx, data, segments, sections):
                     continue
                 refs_by_target[target].append(ref)
     return refs_by_target
+
+
+def scan_refs_to_targets(xrefs, data, segments, target_vaddrs):
+    target_set = set(target_vaddrs)
+    refs_by_target = defaultdict(list)
+    for segment in segments:
+        if not (segment.flags & xrefs.PF_X):
+            continue
+        start = segment.file_offset
+        end = start + segment.file_size
+        code = data[start:end]
+        for pos in xrefs.iter_candidate_positions(code):
+            for ref in xrefs.decode_rip_memory_refs(code, pos, segment.vaddr):
+                target = int(ref["targetVaddr"])
+                if target in target_set:
+                    refs_by_target[target].append(ref)
+    return refs_by_target
+
+
+def parse_target_args(values):
+    targets = []
+    for value in values or []:
+        if "=" in value:
+            _name, raw = value.split("=", 1)
+        else:
+            raw = value
+        targets.append(parse_int(raw))
+    return sorted(set(targets))
 
 
 def scan_nearby_context(xrefs, ptrctx, data, segments, sections, symbols, xref_vaddr, window, limit, scan_limit):
@@ -247,7 +276,13 @@ def summarize(args):
     data, segments = xrefs.load_elf_segments(args.binary)
     sections = ptrctx.load_sections(data)
     symbols = ptrctx.load_symbols(data, sections)
-    refs_by_target = scan_writable_refs(xrefs, ptrctx, data, segments, sections)
+    explicit_targets = parse_target_args(args.target)
+    if explicit_targets:
+        refs_by_target = scan_refs_to_targets(xrefs, data, segments, explicit_targets)
+        for target in explicit_targets:
+            refs_by_target.setdefault(target, [])
+    else:
+        refs_by_target = scan_writable_refs(xrefs, ptrctx, data, segments, sections)
     rows = [
         summarize_target(
             xrefs,
@@ -263,7 +298,7 @@ def summarize(args):
             args.context_scan_limit,
         )
         for target, refs in refs_by_target.items()
-        if len(refs) >= args.min_refs
+        if explicit_targets or len(refs) >= args.min_refs
     ]
     rows.sort(key=lambda row: (-row["score"], -row["refCount"], row["target"]))
     section_counts = Counter(row["section"] for row in rows)
@@ -275,6 +310,7 @@ def summarize(args):
         "targetCount": len(refs_by_target),
         "reportedTargetCount": len(rows),
         "minRefs": args.min_refs,
+        "explicitTargets": [f"0x{target:x}" for target in explicit_targets],
         "sectionCounts": dict(sorted(section_counts.items())),
         "groupCounts": dict(sorted(group_counts.items())),
         "exactAnchorHintCounts": dict(sorted(exact_anchor_counts.items())),
@@ -320,6 +356,12 @@ def main(argv=None):
         description="Cluster anonymous writable ELF globals referenced by executable RIP-relative memory operands."
     )
     parser.add_argument("binary", type=Path)
+    parser.add_argument(
+        "--target",
+        action="append",
+        default=[],
+        help="focus on one writable/global address, optionally name=0xaddr; avoids full-binary writable ranking",
+    )
     parser.add_argument("--min-refs", type=int, default=8)
     parser.add_argument("--context-window", type=int, default=192)
     parser.add_argument("--context-limit", type=int, default=12)

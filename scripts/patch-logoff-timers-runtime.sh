@@ -7,6 +7,7 @@ EXPECTED_BUILD_ID="${DUNE_LOGOFF_TIMER_BUILD_ID:-6f8ca9ee5f3420c0b4c1ef7cefb4123
 AUTO_REMAP_ENABLED="${DUNE_LOGOFF_TIMER_AUTO_REMAP_ENABLED:-true}"
 TARGET_VALUE="${DUNE_LOGOFF_TIMER_VALUE:-0.0}"
 TARGET_CONTAINERS="${DUNE_LOGOFF_TIMER_CONTAINERS:-dune_server-survival-1 dune_server-deep-desert-1 dune_server-deep-desert-pvp-1}"
+DIRECT_ARRAYS="${DUNE_LOGOFF_TIMER_DIRECT_ARRAYS:-false}"
 
 case "$EXPECTED_BUILD_ID" in
   9bf5fbdef43a6d6d64459df973f3d252c01ab4ad)
@@ -35,6 +36,16 @@ case "$EXPECTED_BUILD_ID" in
     DEFAULT_UI_VALUE_A_OFFSET="0x16530ee0"
     DEFAULT_UI_VALUE_B_OFFSET="0x16530f10"
     DEFAULT_UI_VALUE_C_OFFSET="0x16530f28"
+    ;;
+  427a3084dcc00057ad21f98555a7d17d5f3c1020)
+    DEFAULT_VALUE_A_OFFSET="0x16649ab0"
+    DEFAULT_VALUE_B_OFFSET="0x16649ac8"
+    DEFAULT_DEADLINE_CLAMP_OFFSET=""
+    DEFAULT_TIMER_DURATION_ZERO_OFFSET=""
+    DEFAULT_UI_VALUE_A_OFFSET="0x16649ab0"
+    DEFAULT_UI_VALUE_B_OFFSET="0x16649ac8"
+    DEFAULT_UI_VALUE_C_OFFSET="0x16649ac8"
+    DIRECT_ARRAYS="${DUNE_LOGOFF_TIMER_DIRECT_ARRAYS:-true}"
     ;;
   *)
     if [[ -n "${DUNE_LOGOFF_TIMER_VALUE_A_OFFSET:-}" &&
@@ -113,6 +124,7 @@ env_command=(
   "TARGET_VALUE='$TARGET_VALUE'"
   "TARGET_CONTAINERS='$TARGET_CONTAINERS'"
   "AUTO_REMAP_ENABLED='$AUTO_REMAP_ENABLED'"
+  "DIRECT_ARRAYS='$DIRECT_ARRAYS'"
   "MODE='$MODE'"
   "bash -s"
 )
@@ -128,6 +140,7 @@ local_env=(
   "TARGET_VALUE=$TARGET_VALUE"
   "TARGET_CONTAINERS=$TARGET_CONTAINERS"
   "AUTO_REMAP_ENABLED=$AUTO_REMAP_ENABLED"
+  "DIRECT_ARRAYS=$DIRECT_ARRAYS"
   "MODE=$MODE"
 )
 
@@ -147,11 +160,14 @@ truthy() {
 offsets_complete() {
   [[ -n "${VALUE_A_OFFSET:-}" &&
      -n "${VALUE_B_OFFSET:-}" &&
-     -n "${DEADLINE_CLAMP_OFFSET:-}" &&
-     -n "${TIMER_DURATION_ZERO_OFFSET:-}" &&
      -n "${UI_VALUE_A_OFFSET:-}" &&
      -n "${UI_VALUE_B_OFFSET:-}" &&
-     -n "${UI_VALUE_C_OFFSET:-}" ]]
+     -n "${UI_VALUE_C_OFFSET:-}" ]] || return 1
+  if truthy "${DIRECT_ARRAYS:-false}"; then
+    return 0
+  fi
+  [[ -n "${DEADLINE_CLAMP_OFFSET:-}" &&
+     -n "${TIMER_DURATION_ZERO_OFFSET:-}" ]]
 }
 
 auto_remap_offsets() {
@@ -319,6 +335,21 @@ resolve_offsets_for_build() {
   local build_id="$3"
   local remap_output
 
+  case "$build_id" in
+    427a3084dcc00057ad21f98555a7d17d5f3c1020)
+      VALUE_A_OFFSET="0x16649ab0"
+      VALUE_B_OFFSET="0x16649ac8"
+      DEADLINE_CLAMP_OFFSET=""
+      TIMER_DURATION_ZERO_OFFSET=""
+      UI_VALUE_A_OFFSET="0x16649ab0"
+      UI_VALUE_B_OFFSET="0x16649ac8"
+      UI_VALUE_C_OFFSET="0x16649ac8"
+      DIRECT_ARRAYS="${DUNE_LOGOFF_TIMER_DIRECT_ARRAYS:-true}"
+      EXPECTED_BUILD_ID="$build_id"
+      return
+      ;;
+  esac
+
   if [[ "$build_id" == "$EXPECTED_BUILD_ID" ]] && offsets_complete; then
     return
   fi
@@ -361,21 +392,37 @@ validate_patch_targets() {
   local u10 u11 u12 u13 u20 u21 u22 u23 u30 u31 u32 u33
   local c0 c1 c2 d0 d1 d2 d3 d4
 
-  validation_output="$(
-    sudo -n gdb -q -batch -p "$pid" \
-      -ex "set confirm off" \
-      -ex "set pagination off" \
-      -ex "set \$p1 = *(void**)$addr_a" \
-      -ex "set \$p2 = *(void**)$addr_b" \
-      -ex "set \$ui1 = *(void**)$addr_ui_a" \
-      -ex "set \$ui2 = *(void**)$addr_ui_b" \
-      -ex "set \$ui3 = *(void**)$addr_ui_c" \
-      -ex "printf \"LOGOFF_PTR %p %p %p %p %p\\n\", \$p1, \$p2, \$ui1, \$ui2, \$ui3" \
-      -ex "printf \"LOGOFF_FLOATS %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g\\n\", *(float*)\$p1, *(float*)((char*)\$p1 + 4), *(float*)((char*)\$p1 + 8), *(float*)((char*)\$p1 + 12), *(float*)\$p2, *(float*)((char*)\$p2 + 4), *(float*)((char*)\$p2 + 8), *(float*)((char*)\$p2 + 12), *(float*)\$ui1, *(float*)((char*)\$ui1 + 4), *(float*)((char*)\$ui1 + 8), *(float*)((char*)\$ui1 + 12), *(float*)\$ui2, *(float*)((char*)\$ui2 + 4), *(float*)((char*)\$ui2 + 8), *(float*)((char*)\$ui2 + 12), *(float*)\$ui3, *(float*)((char*)\$ui3 + 4), *(float*)((char*)\$ui3 + 8), *(float*)((char*)\$ui3 + 12)" \
-      -ex "set \$clamp = (unsigned char*)$addr_clamp" \
-      -ex "set \$duration = (unsigned char*)$addr_duration_zero" \
-      -ex "printf \"LOGOFF_BYTES %02x %02x %02x %02x %02x %02x %02x %02x\\n\", \$clamp[0], \$clamp[1], \$clamp[2], \$duration[0], \$duration[1], \$duration[2], \$duration[3], \$duration[4]"
-  )"
+  if truthy "${DIRECT_ARRAYS:-false}"; then
+    validation_output="$(
+      sudo -n gdb -q -batch -p "$pid" \
+        -ex "set confirm off" \
+        -ex "set pagination off" \
+        -ex "set \$p1 = (void*)$addr_a" \
+        -ex "set \$p2 = (void*)$addr_b" \
+        -ex "set \$ui1 = (void*)$addr_ui_a" \
+        -ex "set \$ui2 = (void*)$addr_ui_b" \
+        -ex "set \$ui3 = (void*)$addr_ui_c" \
+        -ex "printf \"LOGOFF_PTR %p %p %p %p %p\\n\", \$p1, \$p2, \$ui1, \$ui2, \$ui3" \
+        -ex "printf \"LOGOFF_FLOATS %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g\\n\", *(float*)\$p1, *(float*)((char*)\$p1 + 4), *(float*)((char*)\$p1 + 8), *(float*)((char*)\$p1 + 12), *(float*)\$p2, *(float*)((char*)\$p2 + 4), *(float*)((char*)\$p2 + 8), *(float*)((char*)\$p2 + 12), *(float*)\$ui1, *(float*)((char*)\$ui1 + 4), *(float*)((char*)\$ui1 + 8), *(float*)((char*)\$ui1 + 12), *(float*)\$ui2, *(float*)((char*)\$ui2 + 4), *(float*)((char*)\$ui2 + 8), *(float*)((char*)\$ui2 + 12), *(float*)\$ui3, *(float*)((char*)\$ui3 + 4), *(float*)((char*)\$ui3 + 8), *(float*)((char*)\$ui3 + 12)" \
+        -ex "printf \"LOGOFF_BYTES skipped skipped skipped skipped skipped skipped skipped skipped\\n\""
+    )"
+  else
+    validation_output="$(
+      sudo -n gdb -q -batch -p "$pid" \
+        -ex "set confirm off" \
+        -ex "set pagination off" \
+        -ex "set \$p1 = *(void**)$addr_a" \
+        -ex "set \$p2 = *(void**)$addr_b" \
+        -ex "set \$ui1 = *(void**)$addr_ui_a" \
+        -ex "set \$ui2 = *(void**)$addr_ui_b" \
+        -ex "set \$ui3 = *(void**)$addr_ui_c" \
+        -ex "printf \"LOGOFF_PTR %p %p %p %p %p\\n\", \$p1, \$p2, \$ui1, \$ui2, \$ui3" \
+        -ex "printf \"LOGOFF_FLOATS %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g\\n\", *(float*)\$p1, *(float*)((char*)\$p1 + 4), *(float*)((char*)\$p1 + 8), *(float*)((char*)\$p1 + 12), *(float*)\$p2, *(float*)((char*)\$p2 + 4), *(float*)((char*)\$p2 + 8), *(float*)((char*)\$p2 + 12), *(float*)\$ui1, *(float*)((char*)\$ui1 + 4), *(float*)((char*)\$ui1 + 8), *(float*)((char*)\$ui1 + 12), *(float*)\$ui2, *(float*)((char*)\$ui2 + 4), *(float*)((char*)\$ui2 + 8), *(float*)((char*)\$ui2 + 12), *(float*)\$ui3, *(float*)((char*)\$ui3 + 4), *(float*)((char*)\$ui3 + 8), *(float*)((char*)\$ui3 + 12)" \
+        -ex "set \$clamp = (unsigned char*)$addr_clamp" \
+        -ex "set \$duration = (unsigned char*)$addr_duration_zero" \
+        -ex "printf \"LOGOFF_BYTES %02x %02x %02x %02x %02x %02x %02x %02x\\n\", \$clamp[0], \$clamp[1], \$clamp[2], \$duration[0], \$duration[1], \$duration[2], \$duration[3], \$duration[4]"
+    )"
+  fi
 
   ptr_line="$(awk '/^LOGOFF_PTR / {line=$0} END {print line}' <<< "$validation_output")"
   float_line="$(awk '/^LOGOFF_FLOATS / {line=$0} END {print line}' <<< "$validation_output")"
@@ -430,6 +477,10 @@ validate_patch_targets() {
   for value in "$u12" "$u13" "$u22" "$u23" "$u32" "$u33"; do
     float_allowed "$value" 0 || { printf 'invalid UI timer tail: %s\n' "$value" >&2; return 1; }
   done
+
+  if truthy "${DIRECT_ARRAYS:-false}"; then
+    return 0
+  fi
 
   if [[ "$c0" != "48" || "$c2" != "c1" || ( "$c1" != "01" && "$c1" != "89" ) ]]; then
     printf 'invalid deadline clamp bytes: %s %s %s\n' "$c0" "$c1" "$c2" >&2
@@ -494,8 +545,14 @@ for container in "${containers[@]}"; do
 
   addr_a="$(printf '0x%x' $((base + VALUE_A_OFFSET)))"
   addr_b="$(printf '0x%x' $((base + VALUE_B_OFFSET)))"
-  addr_clamp="$(printf '0x%x' $((base + DEADLINE_CLAMP_OFFSET)))"
-  addr_duration_zero="$(printf '0x%x' $((base + TIMER_DURATION_ZERO_OFFSET)))"
+  addr_clamp="0x0"
+  addr_duration_zero="0x0"
+  if [[ -n "${DEADLINE_CLAMP_OFFSET:-}" ]]; then
+    addr_clamp="$(printf '0x%x' $((base + DEADLINE_CLAMP_OFFSET)))"
+  fi
+  if [[ -n "${TIMER_DURATION_ZERO_OFFSET:-}" ]]; then
+    addr_duration_zero="$(printf '0x%x' $((base + TIMER_DURATION_ZERO_OFFSET)))"
+  fi
   addr_ui_a="$(printf '0x%x' $((base + UI_VALUE_A_OFFSET)))"
   addr_ui_b="$(printf '0x%x' $((base + UI_VALUE_B_OFFSET)))"
   addr_ui_c="$(printf '0x%x' $((base + UI_VALUE_C_OFFSET)))"
@@ -503,7 +560,44 @@ for container in "${containers[@]}"; do
 
   validate_patch_targets "$pid" "$addr_a" "$addr_b" "$addr_ui_a" "$addr_ui_b" "$addr_ui_c" "$addr_clamp" "$addr_duration_zero"
 
-  if [[ "$MODE" == "dry-run" ]]; then
+  if [[ "$MODE" == "dry-run" && "${DIRECT_ARRAYS:-false}" =~ ^([Tt][Rr][Uu][Ee]|1|[Yy][Ee][Ss]|[Yy])$ ]]; then
+    sudo -n gdb -q -batch -p "$pid" \
+      -ex "set pagination off" \
+      -ex "printf \"direct arrays before p1=%p p2=%p\\n\", (void*)$addr_a, (void*)$addr_b" \
+      -ex "x/4fw $addr_a" \
+      -ex "x/4fw $addr_b" \
+      -ex "printf \"direct ui before ui1=%p ui2=%p ui3=%p\\n\", (void*)$addr_ui_a, (void*)$addr_ui_b, (void*)$addr_ui_c" \
+      -ex "x/4fw $addr_ui_a" \
+      -ex "x/4fw $addr_ui_b" \
+      -ex "x/4fw $addr_ui_c"
+  elif [[ "${DIRECT_ARRAYS:-false}" =~ ^([Tt][Rr][Uu][Ee]|1|[Yy][Ee][Ss]|[Yy])$ ]]; then
+    sudo -n gdb -q -batch -p "$pid" \
+      -ex "set pagination off" \
+      -ex "printf \"direct arrays before p1=%p p2=%p\\n\", (void*)$addr_a, (void*)$addr_b" \
+      -ex "x/4fw $addr_a" \
+      -ex "x/4fw $addr_b" \
+      -ex "printf \"direct ui before ui1=%p ui2=%p ui3=%p\\n\", (void*)$addr_ui_a, (void*)$addr_ui_b, (void*)$addr_ui_c" \
+      -ex "x/4fw $addr_ui_a" \
+      -ex "x/4fw $addr_ui_b" \
+      -ex "x/4fw $addr_ui_c" \
+      -ex "set {float}$addr_a = $TARGET_VALUE" \
+      -ex "set {float}($addr_a + 4) = $TARGET_VALUE" \
+      -ex "set {float}$addr_b = $TARGET_VALUE" \
+      -ex "set {float}($addr_b + 4) = $TARGET_VALUE" \
+      -ex "set {float}$addr_ui_a = $TARGET_VALUE" \
+      -ex "set {float}($addr_ui_a + 4) = $TARGET_VALUE" \
+      -ex "set {float}$addr_ui_b = $TARGET_VALUE" \
+      -ex "set {float}($addr_ui_b + 4) = $TARGET_VALUE" \
+      -ex "set {float}$addr_ui_c = $TARGET_VALUE" \
+      -ex "set {float}($addr_ui_c + 4) = $TARGET_VALUE" \
+      -ex "printf \"direct arrays after p1=%p p2=%p\\n\", (void*)$addr_a, (void*)$addr_b" \
+      -ex "x/4fw $addr_a" \
+      -ex "x/4fw $addr_b" \
+      -ex "printf \"direct ui after ui1=%p ui2=%p ui3=%p\\n\", (void*)$addr_ui_a, (void*)$addr_ui_b, (void*)$addr_ui_c" \
+      -ex "x/4fw $addr_ui_a" \
+      -ex "x/4fw $addr_ui_b" \
+      -ex "x/4fw $addr_ui_c"
+  elif [[ "$MODE" == "dry-run" ]]; then
     sudo -n gdb -q -batch -p "$pid" \
       -ex "set pagination off" \
       -ex "set \$p1 = *(void**)$addr_a" \

@@ -17,12 +17,14 @@ Environment:
   DUNE_LINUX_SERVER_CANARY_ALLOW_PLAYERS default: false
   DUNE_LINUX_SERVER_CANARY_LOG_PATH      default: .env DUNE_PROBE_LOADER_LOG
   DUNE_LINUX_SERVER_CANARY_EXTRA_ENV     optional KEY=VALUE lines to apply only during canary
+  DUNE_LINUX_SERVER_CANARY_PLAN_JSON     optional plan-ue4ss-canary-env.py JSON to apply during canary
   DUNE_LINUX_SERVER_CANARY_PREP_DIR      optional prepare-ue-anchor-canary.py output dir
   DUNE_LINUX_SERVER_CANARY_STRICT_VERIFY default: false; run strict post-canary verifier
   DUNE_LINUX_SERVER_CANARY_PRELOAD       optional loader .so path to apply only during canary
   DUNE_LINUX_SERVER_CANARY_SKIP_BUILD    default: false
   DUNE_LINUX_SERVER_CANARY_PREFLIGHT_ONLY default: false; check host/env/player guard only
   DUNE_LINUX_SERVER_CANARY_CAPTURE_DELAY_SECONDS default: 10; seconds before copying loader log
+  DUNE_LINUX_SERVER_CANARY_ANALYSIS_TIMEOUT_SECONDS default: 45; per-analysis timeout after capture
 USAGE
 }
 
@@ -38,10 +40,13 @@ required_host="${DUNE_LINUX_SERVER_CANARY_HOST:-kspls0}"
 allow_players="${DUNE_LINUX_SERVER_CANARY_ALLOW_PLAYERS:-false}"
 canary_preload="${DUNE_LINUX_SERVER_CANARY_PRELOAD:-}"
 prep_dir="${DUNE_LINUX_SERVER_CANARY_PREP_DIR:-}"
+plan_json="${DUNE_LINUX_SERVER_CANARY_PLAN_JSON:-}"
 strict_verify="${DUNE_LINUX_SERVER_CANARY_STRICT_VERIFY:-false}"
+post_canary_verify_rc=0
 skip_build="${DUNE_LINUX_SERVER_CANARY_SKIP_BUILD:-false}"
 preflight_only="${DUNE_LINUX_SERVER_CANARY_PREFLIGHT_ONLY:-false}"
 capture_delay="${DUNE_LINUX_SERVER_CANARY_CAPTURE_DELAY_SECONDS:-10}"
+analysis_timeout="${DUNE_LINUX_SERVER_CANARY_ANALYSIS_TIMEOUT_SECONDS:-45}"
 runtime="${CONTAINER_RUNTIME:-docker}"
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "$script_dir/.." && pwd)"
@@ -120,7 +125,9 @@ apply_extra_env_file() {
     printf 'missing extra env file: %s\n' "$path" >&2
     exit 2
   fi
-  cp -a "$path" "$backup_dir/$label"
+  if [[ "$(readlink -f "$path")" != "$(readlink -f "$backup_dir/$label" 2>/dev/null || printf '%s' "$backup_dir/$label")" ]]; then
+    cp -a "$path" "$backup_dir/$label"
+  fi
   while IFS= read -r line || [[ -n "$line" ]]; do
     line="${line%%#*}"
     line="${line#"${line%%[![:space:]]*}"}"
@@ -151,7 +158,44 @@ apply_extra_env_file() {
 }
 
 apply_extra_env() {
+  apply_plan_env_json
   apply_extra_env_file "${DUNE_LINUX_SERVER_CANARY_EXTRA_ENV:-}" "extra.env"
+}
+
+apply_plan_env_json() {
+  local extracted_env
+  if [[ -z "$plan_json" ]]; then
+    return 0
+  fi
+  if [[ ! -f "$plan_json" ]]; then
+    printf 'missing canary plan JSON: %s\n' "$plan_json" >&2
+    exit 2
+  fi
+  cp -a "$plan_json" "$backup_dir/applied-canary-plan.json"
+  extracted_env="$backup_dir/applied-canary-plan.env"
+  python3 - "$plan_json" > "$extracted_env" <<'PY'
+import json
+import re
+import sys
+
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as handle:
+    data = json.load(handle)
+env = data.get("env", [])
+if not isinstance(env, list):
+    raise SystemExit("plan JSON env must be a list")
+for item in env:
+    if not isinstance(item, dict):
+        raise SystemExit("plan JSON env item must be an object")
+    name = str(item.get("name", ""))
+    value = str(item.get("value", ""))
+    if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name):
+        raise SystemExit(f"invalid env name in plan JSON: {name}")
+    if "\n" in value or "\r" in value:
+        raise SystemExit(f"invalid multiline env value in plan JSON: {name}")
+    print(f"{name}={value}")
+PY
+  apply_extra_env_file "$extracted_env" "applied-canary-plan.env"
 }
 
 prep_anchor_env_path() {
@@ -193,6 +237,16 @@ validate_prep_dir() {
   fi
 }
 
+validate_plan_json() {
+  if [[ -z "$plan_json" ]]; then
+    return 0
+  fi
+  if [[ ! -f "$plan_json" ]]; then
+    printf 'missing canary plan JSON: %s\n' "$plan_json" >&2
+    exit 2
+  fi
+}
+
 run_post_canary_verify() {
   local captured_log="$1"
   local verify_script verify_rc artifact name
@@ -205,10 +259,12 @@ run_post_canary_verify() {
   set +e
   "$verify_script" "$captured_log" > "$backup_dir/post-canary-verify.log" 2>&1
   verify_rc=$?
+  post_canary_verify_rc="$verify_rc"
   set -e
   printf 'post_canary_verify_rc=%s\n' "$verify_rc" | tee -a "$backup_dir/summary.txt"
   for name in \
     ue4ss-readiness.json \
+    anchor-coverage.json \
     object-discovery-coverage.json \
     post-canary-summary.md \
     ue4ss-port-gaps.json \
@@ -219,6 +275,46 @@ run_post_canary_verify() {
     fi
   done
   return 0
+}
+
+write_next_canary_plan() {
+  local captured_log="$1"
+  local hook_targets_json="$backup_dir/ue-vtable-candidates.json"
+  local active_validation_candidates_json="$backup_dir/process-event-active-validation-candidates.json"
+  local planner=("$script_dir/plan-ue4ss-canary-env.py" --platform server --server-log "$captured_log")
+  if [[ ! -x "$script_dir/plan-ue4ss-canary-env.py" ]]; then
+    return 0
+  fi
+  if [[ -f "$hook_targets_json" ]]; then
+    planner+=(--hook-targets-json "$hook_targets_json")
+  fi
+  if [[ -f "$active_validation_candidates_json" ]]; then
+    planner+=(--active-validation-candidates-json "$active_validation_candidates_json")
+  fi
+  run_analysis "${planner[@]}" --format json > "$backup_dir/next-canary-plan.json" || true
+  run_analysis "${planner[@]}" --format env > "$backup_dir/next-canary-plan.env" || true
+  run_analysis "${planner[@]}" --format markdown > "$backup_dir/next-canary-plan.md" || true
+}
+
+write_evidence_inventory() {
+  local inventory=("$script_dir/summarize-ue4ss-evidence-inventory.py" "$backup_dir")
+  if [[ ! -x "$script_dir/summarize-ue4ss-evidence-inventory.py" ]]; then
+    if [[ "$strict_verify" == "true" ]]; then
+      printf 'missing required strict evidence inventory tool: %s\n' "$script_dir/summarize-ue4ss-evidence-inventory.py" >&2
+      return 1
+    fi
+    return 0
+  fi
+  if [[ -n "$prep_dir" ]]; then
+    inventory+=("$prep_dir")
+  fi
+  if [[ "$strict_verify" == "true" && "$post_canary_verify_rc" == "0" ]]; then
+    run_analysis "${inventory[@]}" --limit 12 --require-complete --format markdown > "$backup_dir/ue4ss-evidence-inventory.md"
+    run_analysis "${inventory[@]}" --limit 12 --require-complete --format json > "$backup_dir/ue4ss-evidence-inventory.json"
+  else
+    run_analysis "${inventory[@]}" --limit 12 --format markdown > "$backup_dir/ue4ss-evidence-inventory.md" || true
+    run_analysis "${inventory[@]}" --limit 12 --format json > "$backup_dir/ue4ss-evidence-inventory.json" || true
+  fi
 }
 
 restore_extra_env() {
@@ -276,15 +372,27 @@ require_zero_players() {
   return 0
 }
 
+run_analysis() {
+  if [[ "$analysis_timeout" == "0" ]]; then
+    "$@"
+  else
+    timeout --kill-after=5s "$analysis_timeout" "$@"
+  fi
+}
+
 players="$(current_connected_players)"
 players="${players:-999}"
 validate_prep_dir
+validate_plan_json
 if [[ "$preflight_only" == "true" ]]; then
   printf 'canary=%s service=%s partition=%s connected_players=%s\n' "$stamp" "$service" "$partition_id" "$players"
   if [[ -n "$prep_dir" ]]; then
     printf 'prepared_canary_dir=%s\n' "$prep_dir"
     printf 'prepared_canary_anchor_env=%s\n' "$(prep_anchor_env_path)"
     printf 'post_canary_verify_script=%s\n' "$(prep_verify_script_path)"
+  fi
+  if [[ -n "$plan_json" ]]; then
+    printf 'canary_plan_json=%s\n' "$plan_json"
   fi
   if [[ "$allow_players" != "true" && "$players" != "0" ]]; then
     printf 'refusing canary: connected_players=%s\n' "$players" >&2
@@ -346,6 +454,9 @@ if [[ -n "$canary_preload" ]]; then
 fi
 if [[ -n "$prep_dir" ]]; then
   apply_extra_env_file "$(prep_anchor_env_path)" "prepared-canary.env"
+  if [[ -f "$prep_dir/anchor-coverage.json" ]]; then
+    cp -a "$prep_dir/anchor-coverage.json" "$backup_dir/anchor-coverage.json"
+  fi
 fi
 apply_extra_env
 cleanup_needed=true
@@ -355,6 +466,12 @@ restart_canary_if_zero_players preload | tee "$backup_dir/preload-restart.log"
 case "$capture_delay" in
   ''|*[!0-9]*)
     printf 'invalid capture delay seconds: %s\n' "$capture_delay" >&2
+    exit 2
+    ;;
+esac
+case "$analysis_timeout" in
+  ''|*[!0-9]*)
+    printf 'invalid analysis timeout seconds: %s\n' "$analysis_timeout" >&2
     exit 2
     ;;
 esac
@@ -369,15 +486,33 @@ if [[ -z "$cid" ]]; then
 fi
 printf 'preload_container=%s\n' "$cid" | tee -a "$backup_dir/summary.txt"
 printf 'capture_delay_seconds=%s\n' "$capture_delay" | tee -a "$backup_dir/summary.txt"
+printf 'analysis_timeout_seconds=%s\n' "$analysis_timeout" | tee -a "$backup_dir/summary.txt"
 sleep "$capture_delay"
 if [[ -n "$cid" ]] && "$runtime" cp "$cid:$loader_log" "$backup_dir/$(basename "$loader_log")"; then
   captured_log="$backup_dir/$(basename "$loader_log")"
-  "$script_dir/summarize-linux-loader-scan.py" "$captured_log" > "$backup_dir/$(basename "$loader_log").summary.txt" || true
-  if [[ -x "$script_dir/ue4ss-port-readiness.py" ]]; then
-    "$script_dir/ue4ss-port-readiness.py" --server-log "$captured_log" > "$backup_dir/ue4ss-readiness.md" || true
-    "$script_dir/ue4ss-port-readiness.py" --server-log "$captured_log" --format json > "$backup_dir/ue4ss-readiness.json" || true
+  if [[ -x "$script_dir/export-process-event-active-validation-candidates.py" ]]; then
+    run_analysis "$script_dir/export-process-event-active-validation-candidates.py" --loader-log "$captured_log" --format json > "$backup_dir/process-event-active-validation-candidates.json" || true
+    run_analysis "$script_dir/export-process-event-active-validation-candidates.py" --loader-log "$captured_log" --format markdown > "$backup_dir/process-event-active-validation-candidates.md" || true
+    run_analysis "$script_dir/export-process-event-active-validation-candidates.py" --loader-log "$captured_log" --include-high-risk --format json > "$backup_dir/process-event-active-validation-candidates.high-risk.json" || true
+    run_analysis "$script_dir/export-process-event-active-validation-candidates.py" --loader-log "$captured_log" --include-high-risk --format markdown > "$backup_dir/process-event-active-validation-candidates.high-risk.md" || true
   fi
+  run_analysis "$script_dir/summarize-linux-loader-scan.py" "$captured_log" > "$backup_dir/$(basename "$loader_log").summary.txt" || true
+  run_analysis "$script_dir/summarize-linux-loader-scan.py" "$captured_log" --format json > "$backup_dir/loader-summary.json" || true
+  if [[ -x "$script_dir/export-process-event-active-validation-candidates.py" && -s "$backup_dir/loader-summary.json" ]]; then
+    run_analysis "$script_dir/export-process-event-active-validation-candidates.py" "$backup_dir/loader-summary.json" --format json > "$backup_dir/process-event-active-validation-candidates.json" || true
+    run_analysis "$script_dir/export-process-event-active-validation-candidates.py" "$backup_dir/loader-summary.json" --format markdown > "$backup_dir/process-event-active-validation-candidates.md" || true
+  fi
+  if [[ -x "$script_dir/summarize-ue-vtable-candidates.py" ]]; then
+    run_analysis "$script_dir/summarize-ue-vtable-candidates.py" "$captured_log" --format json > "$backup_dir/ue-vtable-candidates.json" || true
+    run_analysis "$script_dir/summarize-ue-vtable-candidates.py" "$captured_log" --format markdown > "$backup_dir/ue-vtable-candidates.md" || true
+  fi
+  if [[ -x "$script_dir/ue4ss-port-readiness.py" ]]; then
+    run_analysis "$script_dir/ue4ss-port-readiness.py" --server-log "$captured_log" > "$backup_dir/ue4ss-readiness.md" || true
+    run_analysis "$script_dir/ue4ss-port-readiness.py" --server-log "$captured_log" --format json > "$backup_dir/ue4ss-readiness.json" || true
+  fi
+  write_next_canary_plan "$captured_log"
   run_post_canary_verify "$captured_log"
+  write_evidence_inventory
 else
   printf 'WARN: loader log not found in canary container: %s\n' "$loader_log" | tee -a "$backup_dir/summary.txt"
 fi

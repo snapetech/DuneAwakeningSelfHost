@@ -5,7 +5,17 @@ set -euo pipefail
 # This exposes only coarse player-facing state. It does not publish ports,
 # hosts, container names, routes, logs, tokens, or map topology.
 
-DUNE_ROOT="${DUNE_ROOT:-/opt/DuneAwakeningSelfHost}"
+if [[ -z "${DUNE_ROOT:-}" ]]; then
+  script_repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+  if [[ -x "$script_repo_root/scripts/status.sh" ]]; then
+    DUNE_ROOT="$script_repo_root"
+  elif [[ -x /home/keith/Documents/code/DuneAwakeningSelfHost/scripts/status.sh ]]; then
+    DUNE_ROOT="/home/keith/Documents/code/DuneAwakeningSelfHost"
+  else
+    DUNE_ROOT="/opt/DuneAwakeningSelfHost"
+  fi
+fi
+export DUNE_ROOT
 INDEX_FILE="${INDEX_FILE:-/srv/dash-public-site/index.html}"
 STATUS_FILE="${STATUS_FILE:-$(dirname "$INDEX_FILE")/status.html}"
 STATIC_DIR="${STATIC_DIR:-$(dirname "$INDEX_FILE")}"
@@ -73,6 +83,7 @@ access_class="status-warn"
 access_text="Unknown"
 runtime_class="status-unknown"
 runtime_text="Unknown"
+runtime_label="Since maintenance"
 runtime_detail_html="Runtime data unavailable."
 
 if [[ -d "$DUNE_ROOT" ]] && (cd "$DUNE_ROOT" && timeout "$STATUS_TIMEOUT_SECONDS" ./scripts/status.sh .env) >"$tmp_status" 2>&1; then
@@ -131,6 +142,11 @@ services = {
     "dungeon-thepit",
 }
 project = os.environ.get("DOCKER_COMPOSE_PROJECT", "dune_server")
+dune_root = os.environ.get("DUNE_ROOT", "/opt/DuneAwakeningSelfHost")
+restart_state_file = os.environ.get(
+    "DUNE_PUBLIC_RESTART_STATE_FILE",
+    os.path.join(dune_root, "backups", "admin-panel", "restart-jobs.json"),
+)
 
 def read_env_value(path, key):
     try:
@@ -175,6 +191,36 @@ def fmt(seconds):
         return f"{hours}h {minutes}m"
     return f"{minutes}m"
 
+def parse_epoch(value):
+    try:
+        epoch = float(value)
+    except (TypeError, ValueError):
+        return None
+    if epoch <= 0:
+        return None
+    return datetime.datetime.fromtimestamp(epoch, datetime.timezone.utc)
+
+def latest_maintenance_restart():
+    try:
+        with open(restart_state_file, encoding="utf-8") as handle:
+            state = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return None
+    candidates = []
+    for job in state.get("jobs", []):
+        status = job.get("status")
+        if status not in ("executed", "failed", "completed_with_warnings"):
+            continue
+        if job.get("action") != "restart" or not job.get("execute"):
+            continue
+        executed = parse_epoch(job.get("executedAt"))
+        if not executed:
+            continue
+        candidates.append((executed, job))
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: item[0])
+
 try:
     ps = subprocess.check_output(
         [
@@ -218,15 +264,44 @@ newest = max(started for _, started in rows)
 oldest = min(started for _, started in rows)
 last_restart = int((now - newest).total_seconds())
 oldest_uptime = int((now - oldest).total_seconds())
+maintenance = latest_maintenance_restart()
+runtime_label = "Since restart"
+runtime_text = fmt(last_restart)
+runtime_class = "status-ok" if len(rows) == len(services) else "status-warn"
 detail = (
     f"<strong>Running maps</strong> {len(rows)}/{len(services)}<br>"
     f"<strong>Most recent restart</strong> {html.escape(newest.strftime('%Y-%m-%d %H:%M UTC'))}<br>"
     f"<strong>Oldest map uptime</strong> {html.escape(fmt(oldest_uptime))}<br>"
     f"<strong>Container restarts</strong> {restart_count}"
 )
+if maintenance:
+    executed, job = maintenance
+    age = int((now - executed).total_seconds())
+    backup_state = "requested" if job.get("backup") else "not requested"
+    status = str(job.get("status") or "unknown")
+    status_label = {
+        "executed": "completed",
+        "failed": "failed",
+        "completed_with_warnings": "completed with warnings",
+    }.get(status, status)
+    runtime_label = "Since maintenance"
+    runtime_text = fmt(age)
+    if status == "failed" or age > 36 * 3600:
+        runtime_class = "status-warn"
+    detail = (
+        f"<strong>Last maintenance</strong> {html.escape(executed.strftime('%Y-%m-%d %H:%M UTC'))}<br>"
+        f"<strong>Status</strong> {html.escape(status_label)}<br>"
+        f"<strong>Target</strong> {html.escape(str(job.get('targetLabel') or job.get('target') or 'restart'))}<br>"
+        f"<strong>Backup</strong> {html.escape(backup_state)}<br>"
+        f"<strong>Most recent container restart</strong> {html.escape(newest.strftime('%Y-%m-%d %H:%M UTC'))}<br>"
+        f"<strong>Oldest map uptime</strong> {html.escape(fmt(oldest_uptime))}"
+    )
+    if age > 36 * 3600:
+        detail += "<br><strong>Schedule</strong> stale"
 values = {
-    "runtime_class": "status-ok" if len(rows) == len(services) else "status-warn",
-    "runtime_text": fmt(last_restart),
+    "runtime_class": runtime_class,
+    "runtime_label": runtime_label,
+    "runtime_text": runtime_text,
     "runtime_detail_html": detail,
 }
 for key, value in values.items():
@@ -246,7 +321,7 @@ status_block="$(cat <<EOF
 <dt><span class="status-dot ${server_class}"></span>Server</dt><dd>${server_text}</dd>
 <dt><span class="status-dot ${world_class}"></span>World health</dt><dd>${world_text}</dd>
 <dt><span class="status-dot ${access_class}"></span>Player access</dt><dd>${access_text}</dd>
-<dt><span class="status-dot ${runtime_class}"></span>Since restart</dt><dd><span class="status-help" tabindex="0">${runtime_text}<span class="status-popover" role="dialog" aria-label="Uptime details">${runtime_detail_html}</span></span></dd>
+<dt><span class="status-dot ${runtime_class}"></span>${runtime_label}</dt><dd><span class="status-help" tabindex="0">${runtime_text}<span class="status-popover" role="dialog" aria-label="Uptime details">${runtime_detail_html}</span></span></dd>
 </dl>
 <p class="status-updated">Last checked ${checked_at}.</p>
 </section>

@@ -133,8 +133,12 @@ do_arm() {
 
 ARMED. Now have a tester attempt a BRT restore in Deep Desert.
 Watch:   tail -f $trace_log
-Keystone read: if SERVER-RPC-ENTRY never appears during the attempt, the block
-is client-side. If it fires, the request reached the server.
+Classify:
+    scripts/classify-brt-dd-trace.py $trace_log --format json > /tmp/brt-dd-trace-classification.json
+Keystone read: if SERVER-RPC-ENTRY/SERVER-RPC-EXEC fires, the request reached
+the server and the next fix belongs on the reached server-side gate. If neither
+fires during the attempt, do not require client-side file changes by default;
+treat the normal request as not observed and use the server-side emulation path.
 
 *** REMEMBER to disarm and resume the watchdog when done: ***
     scripts/brt-dd-trace.sh stop $container

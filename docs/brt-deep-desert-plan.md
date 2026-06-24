@@ -19,16 +19,18 @@ ever lands in the live process.
 
 ## Two Unknowns That Gate Everything
 
-1. **Client-side vs server-side block.** If the client gates on a cooked table
-   in its own pak and never sends `ServerRequestBaseBackup`, every server-side
-   binary/pak patch is dead on arrival. Never confirmed by a live trace hit.
+1. **Does the BRT RPC arrive at the server?** The first required proof is
+   whether a DD1 BRT save/restore attempt reaches `ServerRequestBaseBackup`.
+   If it arrives, fix the reached server-side gate. If it does not arrive, do
+   not require client-side file changes; emulate the missing request server-side
+   through the native DB/BRT persistence path.
 2. **Do the INI keys reach the live CDO?** We keep adding
    `m_BaseBackupToolMapRestriction=(...)` but never read the running
    `UBuildingSettings` array back. UE array properties often need the
    `+m_BaseBackupToolMapRestriction=(...)` append form to override a C++
    default; a plain `=(...)` reassignment can be silently ignored.
 
-Resolve these before touching any patch.
+Resolve these before treating any patch or emulator path as validated.
 
 ## Operating Rules
 
@@ -45,8 +47,8 @@ Resolve these before touching any patch.
   `scripts/brt-dd-trace.sh stop` (or `make brt-dd-trace-stop`) — that cleanly
   detaches gdb (kernel resumes the server) and resumes the watchdog. Do not leave
   a trace armed.
-- The **keystone trace needs no restart**: it answers client-vs-server against
-  the current (patched) DD#1. Only restart DD#1 (`make brt-dd-live-restart`) when
+- The **keystone trace needs no restart**: it answers RPC-arrival against the
+  current (patched) DD#1. Only restart DD#1 (`make brt-dd-live-restart`) when
   a phase explicitly needs a patches-off baseline or a config change, and do it
   in a downtime window.
 - Change **one lever at a time** and record the trace outcome each time.
@@ -66,7 +68,7 @@ Resolve these before touching any patch.
 
 Goal: confirm the live DD#1 target without disturbing it. The keystone trace
 (Phase 1) runs against the **current, patched** DD#1 — patch state does not change
-whether the client sends the request, so no restart is needed yet.
+whether the RPC arrives, so no restart is needed yet.
 
 ```bash
 ssh kspls0
@@ -86,10 +88,11 @@ downtime window. Not required for the keystone.
 
 ---
 
-## Phase 1 — KEYSTONE: client-vs-server trace (Idea 1 + 2)
+## Phase 1 — KEYSTONE: RPC-arrival trace (Idea 1 + 2)
 
-Goal: one decisive trace that says whether the block is client-side or
-server-side, and whether the config landed.
+Goal: one decisive trace that says whether the DD1 BRT attempt reaches
+`ServerRequestBaseBackup`, which server-side branch it hits if it does, and
+whether the config landed.
 
 Tooling built for this phase:
 - `scripts/research/DumpBrtTraceAnchors.java` — Ghidra headless dumper that emits
@@ -168,8 +171,10 @@ Steps (on kspls0, ideally a low-population window):
 
 **Decision branches:**
 
-- **No server-side hit** → block is client-side. Skip all server binary work.
-  Go to Phase 3 (replication/identity) and Phase 6 (server-side DB restore).
+- **No server-side hit** → the normal BRT client did not send the server RPC.
+  Skip more server binary bypasses for the UI path. Go to Phase 3 only if we
+  still want to prove the data/config reason, and go to Phase 6 to emulate the
+  missing request server-side.
 - **Hit, returns `Fail_InvalidMap`** → server-side gate confirmed. Go to Phase 2
   (find the true emitter) and Phase 4 (bounding test).
 - **Server returns success but client still errors** → response/replicated-state
@@ -179,9 +184,10 @@ Steps (on kspls0, ideally a low-population window):
 
 Record: the branch taken. Everything after this is conditional on it.
 
-### Interim finding (2026-06-03, read-only, no gdb/tester yet)
+### Interim evidence (2026-06-03, read-only, no gdb/tester yet)
 
-Confidence: moderate-to-high that the DD BRT block is **client-side**.
+Confidence: moderate-to-high that the next proof should be RPC-arrival tracing,
+not additional stacked patches.
 
 Inspected live DD#1 on `kspls0` (build **1979201**, binary re-patched
 2026-06-03). Startup log shows **every** server-side BRT gate applied cleanly,
@@ -195,32 +201,34 @@ with no signature-match failures:
 - buildable-region overlay pak present + 3 jump-NOP sites
   (0xcddb77a/0xceff076/0xcefedf4).
 
-Every reachable server-side decision point is forced open and BRT reportedly
-still rejects in DD. When the verdict, reason path, can-use guard, action-state
-gates, and buildable-region data are all bypassed server-side and the rejection
-persists, the rejection is made before the server is consulted → the client
-evaluates the cooked `DT_BuildableMapRegion` / `m_BaseBackupToolMapRestriction`
-locally and never sends the request.
+Every known server-side decision point was forced open and BRT reportedly still
+rejected in DD. That does not prove the RPC is absent; it only proves the stacked
+patch state is not sufficient evidence. The keystone trace must classify the
+attempt by runtime behavior.
 
-This is strong circumstantial proof, not yet airtight. The airtight test remains
-the keystone trace (tester attempts on kspls0; `SERVER-RPC-ENTRY` never fires).
-**Lean: proceed as if client-side → Phase 3 (replicated vs client-cooked) and
-Phase 6 (server-side DB restore that bypasses the client tool).**
+The airtight test remains the keystone trace with a tester action on `kspls0`.
+If `SERVER-RPC-ENTRY` fires, continue on the server-side gate branch. If it does
+not fire, use Phase 6 to spoof the missing request server-side with no
+client-side file changes. Convert the trace log into a proof artifact with:
+
+```bash
+scripts/classify-brt-dd-trace.py /tmp/brt-place-trace-lab.log --format json \
+  > /tmp/brt-dd-trace-classification.json
+```
 
 Build note: live is **1979201**, not 1973075. Signature-based patch scripts and
 `DumpBrtTraceAnchors.java` adapt; the trace script's hardcoded dense offsets and
 the `/tmp/ghidra-work` project are stale and must be refreshed before any trace.
 
-### Live save test (2026-06-03 ~18:36 UTC) — inconclusive by logs, lean unchanged
+### Live save test (2026-06-03 ~18:36 UTC) — inconclusive by logs
 
 Tester attempted a base-backup **save** in DD#1 (rejection is the same region
 gate for save and place). Result: **the server logged nothing.** Calibration:
 the Hagga (`survival`) container also has **zero** `BaseBackup` log lines ever, so
 the handler simply does not log at this verbosity — log-absence cannot prove
-client-vs-server either way. `dune.base_backups` has 0 rows (the rejected save
-persisted nothing). Net: no new signal, but the save gate is among the patched-
-open server gates, so its failure still points client-side. Airtight proof still
-requires the RPC-arrival trace (needs offsets re-derived for 1979201).
+RPC arrival either way. `dune.base_backups` has 0 rows (the rejected save
+persisted nothing). Net: no new signal. Airtight proof still requires the
+RPC-arrival trace.
 
 ---
 
@@ -264,8 +272,7 @@ Phase-1 trace hit, not by string proximity.
 
 ## Phase 3 — Map-identity and config-replication (Idea 2 + 3)
 
-Run if Phase 1 shows client-side block, success-but-error, or a missing CDO
-entry.
+Run if Phase 1 shows no RPC arrival, success-but-error, or a missing CDO entry.
 
 1. **Append-form config.** Switch the DD config from
    `m_BaseBackupToolMapRestriction=(...)` to the append form and confirm the
@@ -283,9 +290,9 @@ entry.
    or an FName string. If it is the enum, FName INI entries will never match and
    the fix must target the enum/data-table path, not the INI.
 3. **Replication.** Confirm whether the server replicates the patched
-   `UBuildingSettings` value to the client. If the client reads only its own
-   cooked pak, server config can never satisfy a client-side gate — escalate to
-   Phase 6.
+   `UBuildingSettings` value to the client. If the UI reads only its own cooked
+   pak, server config cannot make it send the RPC — escalate to Phase 6
+   server-side request emulation.
 
 Record: which identity form the gate uses; whether the CDO/replicated value now
 includes DD.
@@ -306,7 +313,7 @@ building restriction limits globally, so it must not stay on with players presen
 
 - **BRT now works** → the block is purely a building-restriction gate; narrow
   back down to a DD-scoped fix (Phase 2/3/5).
-- **Still fails** → the block is elsewhere (client, height/boundary,
+- **Still fails** → the block is elsewhere (RPC not sent, height/boundary,
   replication). Saves binary spelunking.
 
 ---
@@ -329,10 +336,22 @@ authored (not Hagga geometry imported into DD).
 
 ---
 
-## Phase 6 — Server-side DB restore, sidestepping the client (Idea 7)
+## Phase 6 — Server-side request emulation (Idea 7)
 
-Run if Phase 1/3 prove the block is client-side and unfixable server-side, or as
-a parallel fallback. **This is now the lead path** (Phase 1 evidence is client-side).
+Run if Phase 1 proves the normal DD1 BRT UI does not send the RPC, if Phase 3
+shows the UI reads only client-cooked data, or as a parallel fallback for
+operator-controlled backup/restore. This path removes client-side file changes
+from the requirements by issuing the equivalent server-side persistence
+operations.
+
+Do not turn a missing normal request into a client-file requirement. The required
+classification is:
+
+1. prove whether the BRT save/restore RPC reaches the server;
+2. if it reaches the server, fix or bypass the reached server-side branch;
+3. if it does not reach the server, spoof the missing client request from the
+   server side by driving the native BRT DB path or reconstructing the equivalent
+   persistence rows.
 
 ### Live API mapping (2026-06-03, read-only on kspls0)
 
@@ -360,15 +379,110 @@ the `building_pieces[]`/`placeables[]` arrays passed to `base_backup_save`.
 
 ### Critical finding
 
-There is **no GM/admin command that spawns or places a base backup** (the GM
-catalog only has `DestroyTotem`/`DestroyPlaceable`/etc.). The only native
-actor-spawn for a backup is the **gated client RPC** (`ServerRequestBaseBackup`).
-So a pure-DB call chain can *stage* a backup but cannot make actors appear in DD.
+There is **no mapped GM/admin command that directly places a base backup** (the
+GM catalog only has `DestroyTotem`/`DestroyPlaceable`/etc.). The two viable
+server-side request-emulation routes are:
 
-The viable client-bypassing route is **direct persistence reconstruction**: write
-the base's totem + placeables + building-piece actors as persistence rows keyed to
-the DD map/dimension (`DeepDesert_1`, partition 8, dimension by instance), then
-force a map refresh so the DD server loads them on stream-in.
+1. **Native BRT DB functions where they are sufficient:** create/list/inspect
+   backups with `base_backup_save_from_totem`, `base_backup_get_available_backups`,
+   `base_backup_get_data`, `base_backup_get_actors_to_spawn`, and finish staged
+   placement with `base_backup_finish_placing`.
+2. **Direct persistence reconstruction when native placement is not exposed:**
+   write the base's totem + placeables + building-piece actors as persistence
+   rows keyed to the DD map/dimension (`DeepDesert_1`, partition 8, dimension by
+   instance), then force a map refresh so the DD server loads them on stream-in.
+
+`scripts/dd1-brt-emulator.py` is the operator wrapper for this branch. It defaults
+to rollback-only and requires explicit live DD1 confirmations plus an RPC
+classification for committed restore/finish operations. Use
+`--rpc-classification normal-request-not-observed` only after the keystone trace
+shows the normal BRT request did not hit `SERVER-RPC-ENTRY`/`SERVER-RPC-EXEC`.
+Use `--rpc-classification operator-controlled-fallback` only for an explicitly
+authorized admin fallback. Prefer `--rpc-classification-json` with the output of
+`scripts/classify-brt-dd-trace.py` so the commit records the trace-derived
+classification. Neither branch requires client-side file changes.
+
+### Operator runbook
+
+This is the current quickest path to making the BRT usable for DD1 base backup
+and restore without requiring client-side file changes. Confidence: moderate for
+backup/list/inspect because they use mapped native DB functions; low-to-moderate
+for committed restore until a disposable-base validation survives map refresh.
+
+All commands below must run on `kspls0` for a live mutation. Dry-run/read-only
+commands can be used first to inspect the shape.
+
+1. Confirm target host and list the player's DD1-visible totems:
+
+   ```bash
+   hostname   # must be kspls0 before any live mutation
+   scripts/dd1-brt-emulator.py list-totems --player-id 17
+   ```
+
+2. Create a native BRT backup from a known totem. Default mode rolls back and is
+   the first test; `--commit` persists the backup only after the operator chooses
+   to create it:
+
+   ```bash
+   scripts/brt-dd-synthetic-db-backup.sh --player-id 17 --totem-id 5903
+
+   CONFIRM='CREATE BRT DB BACKUP' \
+     scripts/brt-dd-synthetic-db-backup.sh --player-id 17 --totem-id 5903 --commit
+   ```
+
+3. List and inspect available backups:
+
+   ```bash
+   scripts/dd1-brt-emulator.py list-backups --player-id 17
+   scripts/dd1-brt-emulator.py inspect-backup --backup-id <backup_id>
+   ```
+
+4. Simulate a restore at the target DD1 location. This creates, transforms, and
+   finishes inside one transaction, then rolls back:
+
+   ```bash
+   scripts/dd1-brt-emulator.py simulate-from-totem \
+     --player-id 17 \
+     --totem-id 5903 \
+     --map DeepDesert \
+     --partition-id 8 \
+     --dimension-index 0 \
+     --target-x <x> \
+     --target-y <y> \
+     --target-z <z>
+   ```
+
+5. Commit an existing backup restore only for an explicitly authorized
+   disposable-base validation:
+
+   ```bash
+   scripts/classify-brt-dd-trace.py /tmp/brt-place-trace-lab.log --format json \
+     > /tmp/brt-dd-trace-classification.json
+
+   DUNE_ALLOW_LIVE_DD1_BRT_MUTATION=1 \
+   CONFIRM_DD1_BRT='I UNDERSTAND DD1 BRT MAY BREAK BASE OWNERSHIP' \
+     scripts/dd1-brt-emulator.py restore-backup \
+       --backup-id <backup_id> \
+       --map DeepDesert \
+       --partition-id 8 \
+       --dimension-index 0 \
+       --target-x <x> \
+       --target-y <y> \
+       --target-z <z> \
+       --commit \
+       --confirm 'RESTORE DD1 BRT BACKUP' \
+       --rpc-classification-json /tmp/brt-dd-trace-classification.json
+   ```
+
+6. Validate immediately:
+
+   ```bash
+   scripts/dd1-brt-emulator.py inspect-backup --backup-id <backup_id>
+   scripts/audit-dd1-base-ownership.sh --player-id 17
+   ```
+
+   Then run the approved DD1 map recovery/restart path only if a stream/load
+   refresh is required. Do not use raw `docker compose restart` for live DD1.
 
 ### Steps
 
@@ -380,15 +494,16 @@ force a map refresh so the DD server loads them on stream-in.
    keyed by map/dimension (cross-ref
    [deep-desert-map-state.md](deep-desert-map-state.md): `map_areas` has no
    dimension, but `resourcefield_state`/`spicefield_types` do).
-3. Prototype on a **disposable test account/base on DD#1** (no lab available):
-   `base_backup_save_from_totem` a throwaway base, then reconstruct its actors as
-   DD persistence rows and `recover-map.sh` DD to force load.
+3. Prototype on a **disposable test account/base on DD#1**:
+   `dd1-brt-emulator.py simulate-from-totem` first, then either finish the staged
+   native backup or reconstruct its actors as DD persistence rows and
+   `recover-map.sh` DD to force load.
 4. Validate before exposing: `serverinfo`, nested `transform`, inventory
    ownership, spawned-actor ownership, account ownership, live map refresh, and
    rollback (timestamped backup table per `reset-deep-desert-map-areas.sh` style).
 
 Pass: a disposable base appears in DD with correct ownership and survives a map
-refresh, with no client tool involved.
+refresh, with no client tool or client-side file changes involved.
 
 ---
 
@@ -421,9 +536,9 @@ restore the prior config line), then re-run `brt-dd-live-restart` +
 | 2026-06-03 | 1 (prep) | Built `DumpBrtTraceAnchors.java` + extended `trace-brt-place-live.sh` keystone breakpoints. | (superseded) |
 | 2026-06-03 | plan | Lab host `kspld0` unreachable; retargeted all testing to live `kspls0` / DD#1. Added keystone-only mode, `scripts/brt-dd-trace.sh arm\|stop` with host guard + watchdog pause/clean-detach, `make brt-dd-trace` / `brt-dd-trace-stop`. | Run `make brt-dd-trace ENV_FILE=.env` on kspls0 in a low-pop window, attempt DD#1 restore, then `brt-dd-trace-stop` |
 | 2026-06-03 | 2 (prep) | Built `scripts/research/DumpCanBePlacedVerdicts.java` (verdict enum + emitter sites + all `0x88` stores) so Phase 2 works from the verdict enum, not a guessed English string. | Run it on host if Phase 1 shows a server-side block |
-| 2026-06-03 | 1 (evidence) | Read-only inspection of live DD#1 (build 1979201): all server-side BRT gates applied cleanly yet BRT still fails → **strong lean to client-side**. No gdb/tester yet. Build shifted from 1973075 → trace dense offsets + Ghidra project stale. | Confirm with keystone trace + tester on kspls0, OR pivot to Phase 3/6 |
-| 2026-06-03 | 1 (save test) | Tester saved a base in DD#1; server logged nothing. Hagga also never logs BaseBackup → log test inconclusive. `base_backups`=0 rows. Lean to client-side unchanged. | Pivot to Phase 6 |
-| 2026-06-03 | 6 (prep) | Mapped full `base_backup_*` API live; **no GM spawn command exists** → lead path is direct persistence reconstruction + map refresh. | Resolve composite types + persistence table mapping, then disposable-base prototype |
+| 2026-06-03 | 1 (evidence) | Read-only inspection of live DD#1 (build 1979201): stacked server-side BRT gates applied cleanly yet BRT still fails. This is not proof of no RPC; it means the next required proof is the keystone RPC-arrival trace. Build shifted from 1973075 → trace dense offsets + Ghidra project stale. | Confirm with keystone trace + tester on kspls0; if no RPC, use Phase 6 server-side request emulation |
+| 2026-06-03 | 1 (save test) | Tester saved a base in DD#1; server logged nothing. Hagga also never logs BaseBackup → log test inconclusive. `base_backups`=0 rows. | Run RPC-arrival trace or use Phase 6 under explicit operator control |
+| 2026-06-03 | 6 (prep) | Mapped full `base_backup_*` API live; no mapped GM placement command exists → server-side request emulation needs native DB functions where sufficient, otherwise direct persistence reconstruction + map refresh. | Resolve composite types + persistence table mapping, then disposable-base prototype |
 | 2026-06-04 | 6 (tooling) | Added `scripts/dd1-brt-emulator.py` read-only `list-totems`/`list-backups`/`inspect-backup` and guarded `finish-staged-backup`. Deployed to `kspls0`; live gates remain `false/false/false`. Lukano/player `17` has totem `5903`, `622` building pieces, `117` child placeables, and zero available backups. | Use emulator for disposable-base-only validation; keep public backup/restore disabled |
 | 2026-06-04 | native route | Rechecked current 1979201 binary by symbols/strings: BRT classes, `UBaseBackupSpawner`, and internal `UBuildingSubsystem` delegates exist, but no shipped admin/GM command or proven RMQ route invokes BRT placement or live actor unload. `FlushActorPersistence` is still binary-only `UDuneCheatManager::FlushActorPersistence()` and not a proven dedicated-server command. | Do not chase new command names; only resume native route after solving safe `PrintAllowedCommands`/`PrintPos` payload proof |
-| _pending_ | 1 | _client-vs-server trace result_ | branch per decision tree |
+| _pending_ | 1 | _RPC-arrival trace result_ | branch per decision tree |

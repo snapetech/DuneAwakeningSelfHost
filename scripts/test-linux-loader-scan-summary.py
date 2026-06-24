@@ -39,6 +39,9 @@ SAMPLE_LOG = """\
 2026-06-16T17:27:28+0000 pid=100 loader=server event=ue-fname source=ue-reflection-field objectName=SelfTestUObject.children_0 status=decoded object=0x2100 decoded=SelfTestUObjectName_0
 2026-06-16T17:27:28+0000 pid=100 loader=server event=ue-reflection-field name=SelfTestUObject chain=children index=0 status=candidate field=0x2100 class=0x3000 classMapped=true nameComparisonIndex=1234 nameNumber=1 next=0x0 nextReadable=true nextMapped=false
 2026-06-16T17:27:28+0000 pid=100 loader=server event=ue-reflection-field name=SelfTestUObject chain=propertyLink index=0 status=candidate field=0x2200 class=0x3000 classMapped=true nameComparisonIndex=1234 nameNumber=1 next=0x0 nextReadable=true nextMapped=false
+2026-06-16T17:27:28+0000 pid=100 loader=server event=ue-ffield-layout-candidate name=SelfTestUObject chain=propertyLink index=0 layout=ffield-ue4 field=0x2200 classOffset=0x8 class=0x3000 classReadable=true classMapped=true classNameOffset=0x0 classNameReadable=true fieldClassName=FIntProperty fieldClassLooksProperty=true nameOffset=0x20 nameReadable=true fieldName=ProbeValue nameComparisonIndex=1234 nameNumber=1 nextOffset=0x18 next=0x0 nextReadable=true nextMapped=false descriptorLayout=fproperty-ue4 descriptorSane=true arrayDim=1 elementSize=4 propertyFlags=0x1 offsetInternal=12
+2026-06-16T17:27:28+0000 pid=100 loader=server event=ue-reflection-property-root-scan name=SelfTestUObject status=candidate class=0x3000 offset=0x60 root=0x2200 rootReadable=true rootMapped=true descriptorLayout=fproperty-ue4 descriptorSane=true arrayDim=1 elementSize=4 offsetInternal=12
+2026-06-16T17:27:28+0000 pid=100 loader=server event=ue-reflection-property-root-scan name=SelfTestUObject status=complete class=0x3000 scanned=32 candidates=1 start=0x28 end=0x180
 2026-06-16T17:27:28+0000 pid=100 loader=server event=ue-reflection-field name=SelfTestUObject chain=functionLink index=0 status=candidate field=0x2300 class=0x3000 classMapped=true nameComparisonIndex=1234 nameNumber=1 next=0x0 nextReadable=true nextMapped=false
 2026-06-16T17:27:28+0000 pid=100 loader=server event=ue-function-param-root name=SelfTestUObject functionIndex=0 chain=childProperties status=root function=0x2300 offset=0x40 root=0x2400 functionFlags=0x400 functionFlagsReadable=true functionFlagsOffset=0x58
 2026-06-16T17:27:28+0000 pid=100 loader=server event=ue-function-native-identity source=ue-function-param status=promoted name=SelfTestUObject functionIndex=0 chain=childProperties function=0x2300 functionName=SelfTestUObjectName_0 functionPath=/Script/SelfTestUObject.SelfTestUObjectName_0:Function functionRuntimePath=/RuntimeProbe/SelfTestUObject.SelfTestUObjectName_0:Function root=0x2400 functionFlags=0x400 functionFlagsReadable=true
@@ -99,7 +102,7 @@ SAMPLE_LOG = SAMPLE_LOG.replace(
     (
         "loadAssetCalls=1 loadAssetHits=1 "
         "staticConstructObjectCalls=1 staticConstructObjectHits=1 notifyOnNewObjectCalls=1 notifyOnNewObjectCallbacks=1 notifyOnNewObjectResult=17 notifyOnNewObjectIsNumber=true notifyOnNewObjectStatus=0 executeInGameThreadCalls=1 executeInGameThreadCallbacks=1 executeInGameThreadResult=9 executeInGameThreadIsNumber=true executeAsyncCalls=1 executeAsyncCallbacks=1 executeWithDelayCalls=2 executeWithDelayCallbacks=1 loopAsyncCalls=1 loopAsyncCallbacks=1 schedulerQueueDrains=1 schedulerCancelCalls=1 schedulerCancelHits=1 "
-        "notifyOnNewObjectCalls=3 notifyOnNewObjectCallbacks=2 "
+        "notifyOnNewObjectCalls=4 notifyOnNewObjectCallbacks=2 "
         "notifyOnNewObjectResult=19 notifyOnNewObjectIsNumber=true "
         "notifyOnNewObjectStatus=0 staticConstructObjectOuterHits=1 "
         "getWorldCalls=3 getWorldHits=2 "
@@ -164,6 +167,31 @@ SAMPLE_LOG += (
     "originalCallsBefore=2 originalCallsAfter=2\n"
     "2026-06-16T00:00:18Z pid=100 loader=server event=lua-process-event-native-invoke-self-test "
     "phase=snapshot status=passed processEventNativeCalls=3 processEventNativeHits=1 liveCalls=2 originalCalls=2\n"
+    "2026-06-16T00:00:18Z pid=100 loader=server event=lua-process-event-native-executor-state "
+    "status=prepared bridgeArmed=true objectAllowed=true functionAllowed=true "
+    "objectRegistryAllowed=true functionDescriptorAllowed=true selfTestCallable=false "
+    "descriptorBackedCallable=true nativeCallable=true nativeNonSelfTestEnabled=false "
+    "paramsBufferConstructible=true descriptorCount=6 paramsDescriptorCount=17 "
+    "paramsBufferSize=152 nativeExecutorBlockReason=none nativeInvoked=false "
+    "object=0x1000 function=0x2000\n"
+    "2026-06-16T00:00:19Z pid=100 loader=server event=lua-call-function-native-invoke "
+    "phase=snapshot status=preflight-ready objectRegistryAllowed=true selfTestCallable=false "
+    "invokeRequested=false nativeNonSelfTestEnabled=false nativeNonSelfTestInvoked=false "
+    "object=0x1000 function=DoubleProbeValue args= forceCall=true result=0 "
+    "liveCallsBefore=2 liveCallsAfter=2 originalCallsBefore=2 originalCallsAfter=2\n"
+    "2026-06-16T00:00:20Z pid=100 loader=server event=lua-call-function-native-invoke "
+    "phase=snapshot status=non-self-test-invoke-disabled objectRegistryAllowed=true "
+    "selfTestCallable=false invokeRequested=true nativeNonSelfTestEnabled=false "
+    "nativeNonSelfTestInvoked=false object=0x1000 function=DoubleProbeValue args= "
+    "forceCall=true result=0 liveCallsBefore=2 liveCallsAfter=2 "
+    "originalCallsBefore=2 originalCallsAfter=2\n"
+    "2026-06-16T00:00:21Z pid=100 loader=server event=lua-call-function-native-invoke-self-test "
+    "phase=snapshot status=passed callFunctionNativeCalls=3 callFunctionNativeHits=1 liveCalls=2 originalCalls=3\n"
+    "2026-06-16T00:00:21Z pid=100 loader=server event=lua-call-function-native-executor-state "
+    "status=prepared bridgeArmed=true objectAllowed=true functionAllowed=true "
+    "objectRegistryAllowed=true selfTestCallable=false nativeCallable=true "
+    "nativeNonSelfTestEnabled=false object=0x1000 function=DoubleProbeValue args= "
+    "forceCall=true nativeExecutorBlockReason=none nativeInvoked=false\n"
 )
 
 
@@ -209,6 +237,30 @@ class LinuxLoaderScanSummaryTests(unittest.TestCase):
         )
         self.assertEqual(summary["ueRuntimeDiscovery"]["coverage"]["targetWritableImageCount"], 3)
         self.assertEqual(summary["ueRuntimeDiscovery"]["coverage"]["scannedSlots"], 4096)
+
+    def test_zero_count_runtime_guobjectarray_validation_is_ignored(self):
+        log = """\
+2026-06-18T00:00:00Z pid=44 event=loaded exe=/home/dune/server/DuneSandbox/Binaries/Linux/DuneSandboxServer-Linux-Shipping
+2026-06-18T00:00:01Z pid=44 loader=server event=ue-runtime-discovery-start phase=snapshot mappings=12 maxMappingBytes=33554432 maxCandidates=8
+2026-06-18T00:00:01Z pid=44 loader=server event=ue-runtime-discovery-candidate name=RuntimeGUObjectArray addr=0x7000 base=0x7000 numElements=42 numChunks=1 hit=1 imageOffset=0x7000 fileOffset=0x7000 perms=rw-p map=/home/dune/server/DuneSandbox/Binaries/Linux/DuneSandboxServer-Linux-Shipping
+2026-06-18T00:00:01Z pid=44 loader=server event=ue-anchor name=RuntimeGUObjectArray group=objects status=mapped addr=0x7000 imageOffset=0x7000 fileOffset=0x7000 perms=rw-p map=/home/dune/server/DuneSandbox/Binaries/Linux/DuneSandboxServer-Linux-Shipping
+2026-06-18T00:00:01Z pid=44 loader=server event=ue-object-array name=RuntimeGUObjectArray mode=direct status=empty base=0x7000 chunks=0x0 maxElements=0 numElements=0 maxChunks=0 numChunks=0
+2026-06-18T00:00:01Z pid=44 loader=server event=ue-object-array-finish phase=snapshot registryCount=0
+2026-06-18T00:00:01Z pid=44 loader=server event=ue-runtime-root-validation phase=snapshot name=RuntimeGUObjectArray status=validated consumer=object-array registryCount=0
+2026-06-18T00:00:01Z pid=44 loader=server event=ue-runtime-discovery-finish phase=snapshot fnameHits=0 objectArrayHits=1 targetWritableMappings=3 oversizedMappings=0 scannedSlots=4096 fnameProbes=4096 objectArrayProbes=4096 anchors=1
+"""
+        records = [scan_summary.parse_line(line) for line in log.splitlines()]
+        summary = scan_summary.summarize(records, "DuneSandboxServer", None)
+
+        self.assertFalse(summary["ueRuntimeDiscoveryReady"])
+        self.assertNotIn(
+            "RuntimeGUObjectArray",
+            summary["ueRuntimeDiscovery"]["rootValidationNames"],
+        )
+        self.assertEqual(
+            summary["ueRuntimeDiscovery"]["validatedBy"]["objectArrayRegistryFinishes"],
+            0,
+        )
 
     def test_runtime_discovery_summary_classifies_missing_target_writable_mapping(self):
         log = """\
@@ -258,6 +310,15 @@ class LinuxLoaderScanSummaryTests(unittest.TestCase):
         self.assertEqual(summary["ueReflectionFieldCount"], 3)
         self.assertEqual(summary["candidateUeReflectionFieldCount"], 3)
         self.assertEqual(summary["classMappedUeReflectionFieldCount"], 3)
+        self.assertEqual(summary["ueFFieldLayoutCandidateCount"], 1)
+        self.assertEqual(summary["mappedUeFFieldLayoutCandidateCount"], 1)
+        self.assertEqual(summary["namedUeFFieldLayoutCandidateCount"], 1)
+        self.assertEqual(summary["propertyLikeUeFFieldLayoutCandidateCount"], 1)
+        self.assertEqual(summary["saneUeFFieldLayoutCandidateCount"], 1)
+        self.assertEqual(summary["propertyLikeSaneUeFFieldLayoutCandidateCount"], 1)
+        self.assertEqual(summary["ueReflectionPropertyRootScanCount"], 2)
+        self.assertEqual(summary["candidateUeReflectionPropertyRootScanCount"], 1)
+        self.assertEqual(summary["saneUeReflectionPropertyRootScanCount"], 1)
         self.assertEqual(summary["ueReflectionPropertyCount"], 2)
         self.assertEqual(summary["candidateUeReflectionPropertyCount"], 2)
         self.assertEqual(summary["readableUeReflectionPropertyCount"], 2)
@@ -406,8 +467,17 @@ class LinuxLoaderScanSummaryTests(unittest.TestCase):
         self.assertEqual(summary["luaProcessEventNativeInvokeModFinishCount"], 1)
         self.assertEqual(summary["luaProcessEventNativeInvokeSelfTestCount"], 1)
         self.assertEqual(summary["luaProcessEventNativeInvokeDescriptorPreflightCount"], 1)
+        self.assertEqual(summary["luaProcessEventNativeExecutorStateCount"], 1)
+        self.assertEqual(summary["luaProcessEventNativeExecutorReadyStateCount"], 1)
         self.assertEqual(summary["luaProcessEventNativeInvokeNonSelfTestGateCount"], 1)
         self.assertEqual(summary["luaProcessEventNativeInvokeNonSelfTestInvokedCount"], 0)
+        self.assertEqual(summary["luaCallFunctionNativeInvokeModFinishCount"], 1)
+        self.assertEqual(summary["luaCallFunctionNativeInvokeSelfTestCount"], 1)
+        self.assertEqual(summary["luaCallFunctionNativeInvokePreflightCount"], 1)
+        self.assertEqual(summary["luaCallFunctionNativeExecutorStateCount"], 1)
+        self.assertEqual(summary["luaCallFunctionNativeExecutorReadyStateCount"], 1)
+        self.assertEqual(summary["luaCallFunctionNativeInvokeNonSelfTestGateCount"], 1)
+        self.assertEqual(summary["luaCallFunctionNativeInvokeNonSelfTestInvokedCount"], 0)
         self.assertEqual(summary["luaProcessEventParamsBufferCount"], 1)
         self.assertEqual(summary["luaLifecycleHookModFinishCount"], 1)
         self.assertEqual(summary["luaCustomEventModFinishCount"], 1)
@@ -460,6 +530,31 @@ class LinuxLoaderScanSummaryTests(unittest.TestCase):
 
         self.assertEqual(summary["ueFunctionPaths"], ["/RuntimeProbe/SelfTestUObject.SelfTestUObjectName_0:Function"])
         self.assertEqual(summary["ue4ssFunctionPaths"], ["/Script/SelfTestUObject.SelfTestUObjectName_0:Function"])
+
+    def test_runtime_live_context_exports_active_validation_candidate(self):
+        log = """\
+2026-06-16T17:27:26+0000 pid=100 event=loaded exe=/home/dune/server/DuneSandbox/Binaries/Linux/DuneSandboxServer-Linux-Shipping
+2026-06-16T17:27:28+0000 pid=100 loader=server event=ue-function-param name=GWorld functionIndex=0 chain=childProperties index=0 status=candidate function=0x2300 functionName=DecodedFunction_0 functionPath=/RuntimeProbe/GWorld.DecodedFunction_0:Function field=0x2400 fieldName=DecodedParam_0 arrayDim=1 elementSize=4 propertyFlags=0x80 offsetInternal=16 arrayDimReadable=true elementSizeReadable=true propertyFlagsReadable=true offsetInternalReadable=true functionFlags=0x400 functionFlagsReadable=true
+2026-06-16T17:27:28+0000 pid=100 loader=server event=ue-process-event-live-context status=resolved call=1 object=0x2000 objectResolved=true objectPath=/RuntimeProbe/GWorld objectClass=UObjectCandidate function=0x2300 functionPath=/RuntimeProbe/GWorld.DecodedFunction_0:Function functionProvenance=runtime functionParamDescriptors=1 params=0x20 paramsPresent=true
+"""
+        records = [scan_summary.parse_line(line) for line in log.splitlines()]
+        summary = scan_summary.summarize(records, "DuneSandboxServer", None)
+
+        self.assertEqual(summary["runtimeMatchedUeProcessEventLiveContextCount"], 1)
+        self.assertEqual(
+            summary["activeValidationCandidates"],
+            [
+                {
+                    "objectAddress": "0x2000",
+                    "functionAddress": "0x2300",
+                    "functionPath": "/RuntimeProbe/GWorld.DecodedFunction_0:Function",
+                    "objectPath": "/RuntimeProbe/GWorld",
+                    "functionProvenance": "runtime",
+                    "callFunctionCommand": "DecodedFunction_0",
+                    "paramsAddress": "0x20",
+                }
+            ],
+        )
 
     def test_load_asset_package_mod_finish_requires_package_backend_evidence(self):
         backend_state_log = SAMPLE_LOG.replace(
@@ -765,6 +860,62 @@ class LinuxLoaderScanSummaryTests(unittest.TestCase):
         records = [scan_summary.parse_line(line) for line in backend_package_log.splitlines()]
         summary = scan_summary.summarize(records, "DuneSandboxServer", None)
         self.assertEqual(summary["luaLoadAssetPackageModFinishCount"], 1)
+
+    def test_static_construct_object_native_summary_requires_target_image_and_invocation(self):
+        dry_run_log = (
+            "2026-01-01T00:00:00Z pid=100 loader=server "
+            "event=lua-static-construct-object-native-executor-state status=anchor-missing "
+            "executorKind=guarded-static-construct-object-native-executor targetName=StaticConstructObject "
+            "target=0x0 targetImage=false platformAbi=sysv-x86_64 class=0x1000 outer=0x2000 "
+            "name=NativeConstructPreflightProbe invokeRequested=false invokeEnabled=false "
+            "abiEvidenceProvided=false abiVerified=false callFrameReady=false "
+            "finalInvokeConfirmed=false nativeCallable=false nativeInvoked=false\n"
+            "2026-01-01T00:00:00Z pid=100 loader=server "
+            "event=lua-static-construct-object-native-invoke status=anchor-missing "
+            "executorKind=guarded-static-construct-object-native-executor targetName=StaticConstructObject "
+            "target=0x0 targetImage=false platformAbi=sysv-x86_64 class=0x1000 outer=0x2000 "
+            "name=NativeConstructPreflightProbe invokeRequested=true invokeEnabled=false "
+            "abiEvidenceProvided=false abiVerified=false callFrameReady=false "
+            "finalInvokeConfirmed=false nativeCallable=false nativeInvoked=false\n"
+        )
+        records = [
+            record
+            for record in (scan_summary.parse_line(line) for line in dry_run_log.splitlines())
+            if record
+        ]
+        summary = scan_summary.summarize(records, "DuneSandboxServer", None)
+        self.assertEqual(summary["luaStaticConstructObjectNativeExecutorStateCount"], 1)
+        self.assertEqual(summary["luaStaticConstructObjectNativeExecutorReadyStateCount"], 0)
+        self.assertEqual(summary["luaStaticConstructObjectNativeInvokeCount"], 1)
+        self.assertEqual(summary["luaStaticConstructObjectNativeInvokedCount"], 0)
+
+        target_ready_log = (
+            dry_run_log
+            + "2026-01-01T00:00:00Z pid=100 loader=server "
+            "event=lua-static-construct-object-native-executor-state status=prepared "
+            "executorKind=guarded-static-construct-object-native-executor targetName=StaticConstructObject "
+            "target=0x7f004000 targetImage=true platformAbi=sysv-x86_64 class=0x1000 outer=0x2000 "
+            "name=NativeConstructPreflightProbe invokeRequested=false invokeEnabled=true "
+            "abiEvidenceProvided=true abiVerified=true callFrameReady=true "
+            "finalInvokeConfirmed=true nativeCallable=true nativeInvoked=false\n"
+            "2026-01-01T00:00:00Z pid=100 loader=server "
+            "event=lua-static-construct-object-native-invoke status=native-invoked "
+            "executorKind=guarded-static-construct-object-native-executor targetName=StaticConstructObject "
+            "target=0x7f004000 targetImage=true platformAbi=sysv-x86_64 class=0x1000 outer=0x2000 "
+            "name=NativeConstructPreflightProbe invokeRequested=true invokeEnabled=true "
+            "abiEvidenceProvided=true abiVerified=true callFrameReady=true "
+            "finalInvokeConfirmed=true nativeCallable=true nativeInvoked=true\n"
+        )
+        records = [
+            record
+            for record in (scan_summary.parse_line(line) for line in target_ready_log.splitlines())
+            if record
+        ]
+        summary = scan_summary.summarize(records, "DuneSandboxServer", None)
+        self.assertEqual(summary["luaStaticConstructObjectNativeExecutorStateCount"], 2)
+        self.assertEqual(summary["luaStaticConstructObjectNativeExecutorReadyStateCount"], 1)
+        self.assertEqual(summary["luaStaticConstructObjectNativeInvokeCount"], 2)
+        self.assertEqual(summary["luaStaticConstructObjectNativeInvokedCount"], 1)
 
     def test_package_state_events_require_target_image_provenance(self):
         log = (

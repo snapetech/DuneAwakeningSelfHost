@@ -41,7 +41,12 @@ LIVE_TARGET_IMAGE_CANARY_CONTRACT_GROUPS = {
         "luaLoadAssetPackageNativeCallAdapter",
         "luaLoadAssetPackageInvocationDescriptor",
         "luaLoadAssetPackageNativeExecutor",
+        "luaLoadAssetPackageNativeInvocation",
         "luaLoadAssetPackage",
+        "luaLoadClassPackageAbiState",
+        "luaLoadClassPackageCallFrameVerification",
+        "luaLoadClassPackageNativeExecutor",
+        "luaLoadClassPackageNativeInvocation",
     ),
     "runtimeObjectRegistry": (
         "objectDiscoveryCoverage",
@@ -57,6 +62,9 @@ LIVE_TARGET_IMAGE_CANARY_CONTRACT_GROUPS = {
         "luaObjectOuterChainIdentities",
         "luaObjectApi",
         "luaFunctionIterationRuntime",
+        "luaStaticConstructObjectNativeExecutorState",
+        "luaStaticConstructObjectNativeExecutorReady",
+        "luaStaticConstructObjectNativeInvoke",
     ),
     "runtimeReflection": (
         "ueReflectionPropertyDescriptorsRuntime",
@@ -70,6 +78,7 @@ LIVE_TARGET_IMAGE_CANARY_CONTRACT_GROUPS = {
     "runtimeProcessEventDispatch": (
         "ueProcessEventHookRuntimeTarget",
         "ueProcessEventLiveHookRuntimeTarget",
+        "ueProcessEventActiveValidation",
         "ueProcessEventLiveLuaDispatch",
         "ueProcessEventLiveFunctionPath",
         "ueProcessEventLiveRuntimeContext",
@@ -99,11 +108,22 @@ LIVE_TARGET_IMAGE_CANARY_CONTRACT_GROUPS = {
         "ueProcessEventLuaBoolParamAccessors",
         "ueProcessEventLuaHookRouting",
         "ueProcessEventLuaHookAliasRouting",
+        "luaProcessEventNativeInvoke",
+        "luaProcessEventNativeInvokeDescriptorPreflight",
+        "luaProcessEventNativeExecutorState",
+        "luaProcessEventNativeInvokeNonSelfTestGate",
+        "luaProcessEventNativeInvokeNonSelfTestInvoked",
     ),
     "runtimeCallFunctionDispatch": (
         "ueCallFunctionHookRuntimeTarget",
         "ueCallFunctionLiveHookRuntimeTarget",
+        "ueCallFunctionActiveValidation",
         "ueCallFunctionLiveLuaDispatch",
+        "luaCallFunctionNativeInvoke",
+        "luaCallFunctionNativeInvokePreflight",
+        "luaCallFunctionNativeExecutorState",
+        "luaCallFunctionNativeInvokeNonSelfTestGate",
+        "luaCallFunctionNativeInvokeNonSelfTestInvoked",
     ),
 }
 
@@ -123,6 +143,53 @@ def load_json(path):
         return json.load(handle)
 
 
+def anchor_list_from_count(prefix, count):
+    if not isinstance(count, int) or count <= 0:
+        return []
+    return [f"{prefix}{index}" for index in range(count)]
+
+
+def normalize_anchor_coverage_sidecar(payload):
+    if not isinstance(payload, dict):
+        return {}
+    if payload.get("schemaVersion") == "dune-ue4ss-port-readiness/v1":
+        coverage = payload.get("anchorCoverage")
+    elif payload.get("schemaVersion") == "dune-ue4ss-evidence-inventory/v1":
+        best = payload.get("best") if isinstance(payload.get("best"), dict) else {}
+        coverage = best.get("anchorCoverage")
+    else:
+        coverage = payload
+    if not isinstance(coverage, dict):
+        return {}
+    normalized = dict(coverage)
+    combined_count = normalized.get("combinedAnchorCount")
+    if combined_count is None:
+        present_groups = normalized.get("presentGroups")
+        if isinstance(present_groups, list):
+            combined_count = len([item for item in present_groups if isinstance(item, str) and item])
+        else:
+            groups = normalized.get("groups") if isinstance(normalized.get("groups"), dict) else {}
+            combined_count = sum(
+                1
+                for group in groups.values()
+                if isinstance(group, dict) and int(group.get("present", 0) or 0) > 0
+            )
+        normalized["combinedAnchorCount"] = combined_count
+    normalized.setdefault(
+        "explicitAnchors",
+        anchor_list_from_count("__explicit_anchor_", int(normalized.get("explicitAnchorCount", 0) or 0)),
+    )
+    normalized.setdefault(
+        "signatureAnchors",
+        anchor_list_from_count("__signature_anchor_", int(normalized.get("signatureAnchorCount", 0) or 0)),
+    )
+    normalized.setdefault(
+        "combinedAnchors",
+        anchor_list_from_count("__combined_anchor_", int(normalized.get("combinedAnchorCount", 0) or 0)),
+    )
+    return normalized
+
+
 def gate(name, passed, evidence="", blocker=""):
     return {
         "name": name,
@@ -132,8 +199,14 @@ def gate(name, passed, evidence="", blocker=""):
     }
 
 
-def is_target_image_path(path):
-    return any(fragment.lower() in (path or "").lower() for fragment in TARGET_IMAGE_SUBSTRINGS)
+def effective_target_image_substrings(exe_substrings):
+    values = [value for value in (exe_substrings or []) if value]
+    return values or list(TARGET_IMAGE_SUBSTRINGS)
+
+
+def is_target_image_path(path, target_image_substrings=None):
+    fragments = effective_target_image_substrings(target_image_substrings)
+    return any(fragment.lower() in (path or "").lower() for fragment in fragments)
 
 
 def live_target_image_canary_contract(status):
@@ -181,7 +254,7 @@ def summarize_log(path, loader_filter, pid_filter, exe_substrings):
                 for record in records
                 if record.get("event") == "loaded"
                 and record.get("pid")
-                and is_target_image_path(record.get("exe", ""))
+                and is_target_image_path(record.get("exe", ""), exe_substrings)
             }
         )
         if target_pids:
@@ -197,8 +270,25 @@ def summarize_log(path, loader_filter, pid_filter, exe_substrings):
         "path": str(path),
         "scan": scan,
         "ue": ue,
+        "targetImageSubstrings": effective_target_image_substrings(exe_substrings),
         "autoTargetPidFilter": effective_pid_filter if effective_pid_filter != list(pid_filter) else [],
     }
+
+
+def unique_candidates(candidates, key_fields, limit=16):
+    unique = []
+    seen = set()
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        key = tuple(candidate.get(field, "") for field in key_fields)
+        if not any(key) or key in seen:
+            continue
+        seen.add(key)
+        unique.append(candidate)
+        if len(unique) >= limit:
+            break
+    return unique
 
 
 def merge_log_summaries(log_summaries):
@@ -247,6 +337,7 @@ def merge_log_summaries(log_summaries):
     total_named_ue_function_params = 0
     ue_function_paths = set()
     ue4ss_function_paths = set()
+    active_validation_candidates = []
     total_readable_ue_function_flag_roots = 0
     total_readable_ue_function_flag_params = 0
     ue_function_flag_paths = set()
@@ -333,6 +424,16 @@ def merge_log_summaries(log_summaries):
     total_lua_load_asset_package_native_executor_events = 0
     total_lua_load_asset_package_native_executor_ready_events = 0
     total_lua_load_asset_package_native_executor_target_ready_events = 0
+    total_lua_load_asset_package_native_invoked_events = 0
+    total_lua_load_class_package_abi_state_events = 0
+    total_lua_load_class_package_call_frame_verification_events = 0
+    total_lua_load_class_package_native_executor_events = 0
+    total_lua_load_class_package_native_executor_ready_events = 0
+    total_lua_load_class_package_native_invoked_events = 0
+    total_lua_static_construct_object_native_executor_states = 0
+    total_lua_static_construct_object_native_executor_ready_states = 0
+    total_lua_static_construct_object_native_invokes = 0
+    total_lua_static_construct_object_native_invoked = 0
     total_lua_load_asset_package_preflight_mod_finishes = 0
     total_lua_load_asset_package_mod_finishes = 0
     total_lua_function_iteration_mod_finishes = 0
@@ -346,11 +447,20 @@ def merge_log_summaries(log_summaries):
     total_lua_local_player_exec_hook_mod_finishes = 0
     total_lua_call_function_hook_mod_finishes = 0
     total_lua_call_function_structured_args_mod_finishes = 0
+    total_lua_call_function_native_invoke_mod_finishes = 0
+    total_lua_call_function_native_invoke_self_tests = 0
+    total_lua_call_function_native_invoke_preflights = 0
+    total_lua_call_function_native_executor_states = 0
+    total_lua_call_function_native_executor_ready_states = 0
+    total_lua_call_function_native_invoke_non_self_test_gates = 0
+    total_lua_call_function_native_invoke_non_self_test_invocations = 0
     total_lua_process_event_compat_mod_finishes = 0
     total_lua_process_event_bridge_state_mod_finishes = 0
     total_lua_process_event_native_invoke_mod_finishes = 0
     total_lua_process_event_native_invoke_self_tests = 0
     total_lua_process_event_native_invoke_descriptor_preflights = 0
+    total_lua_process_event_native_executor_states = 0
+    total_lua_process_event_native_executor_ready_states = 0
     total_lua_process_event_native_invoke_non_self_test_gates = 0
     total_lua_process_event_native_invoke_non_self_test_invocations = 0
     total_lua_process_event_params_buffers = 0
@@ -416,6 +526,7 @@ def merge_log_summaries(log_summaries):
     total_ue_runtime_discovery_candidate_name_counts = {}
     total_ue_runtime_discovery_candidate_image_counts = {}
     total_ue_runtime_discovery_candidate_locations = []
+    total_ue_runtime_discovery_validated_locations = []
     total_ue_runtime_discovery_target_writable_missing = 0
     total_ue_runtime_discovery_status_counts = {}
     total_ue_runtime_discovery_failure_counts = {}
@@ -450,10 +561,21 @@ def merge_log_summaries(log_summaries):
     total_proven_target_installed_ue_call_function_live_hooks = 0
     total_proven_target_routed_ue_call_function_live_lua_hooks = 0
     total_proven_target_handled_ue_call_function_live_lua_hooks = 0
+    total_ue_call_function_active_validations = 0
+    total_invoked_ue_call_function_active_validations = 0
+    total_original_ue_call_function_active_validations = 0
+    total_target_entry_ue_call_function_active_validations = 0
     total_ue_process_event_live_hooks = 0
     total_installed_ue_process_event_live_hooks = 0
     total_non_self_test_installed_ue_process_event_live_hooks = 0
     total_proven_target_installed_ue_process_event_live_hooks = 0
+    total_ue_process_event_active_validations = 0
+    total_invoked_ue_process_event_active_validations = 0
+    total_original_ue_process_event_active_validations = 0
+    total_suppressed_ue_process_event_active_validations = 0
+    total_target_entry_ue_process_event_active_validations = 0
+    total_suppressed_target_entry_ue_process_event_active_validations = 0
+    total_descriptor_buffer_ue_process_event_active_validations = 0
     total_ue_process_event_live_contexts = 0
     total_resolved_ue_process_event_live_contexts = 0
     total_matched_ue_process_event_live_contexts = 0
@@ -516,9 +638,15 @@ def merge_log_summaries(log_summaries):
     pids = set()
     loaded_exes = set()
     modules = set()
+    target_image_substrings = []
+    seen_target_image_substrings = set()
     auto_target_pid_filters = set()
     for summary in log_summaries:
         scan = summary["scan"]
+        for fragment in summary.get("targetImageSubstrings", []) or []:
+            if fragment and fragment not in seen_target_image_substrings:
+                target_image_substrings.append(fragment)
+                seen_target_image_substrings.add(fragment)
         auto_target_pid_filters.update(summary.get("autoTargetPidFilter", []) or [])
         total_loads += scan.get("loadCount", 0)
         total_starts += scan.get("scanStartCount", 0)
@@ -570,6 +698,7 @@ def merge_log_summaries(log_summaries):
         total_named_ue_function_params += scan.get("namedUeFunctionParamCount", 0)
         ue_function_paths.update(path for path in scan.get("ueFunctionPaths", []) if path)
         ue4ss_function_paths.update(path for path in scan.get("ue4ssFunctionPaths", []) if path)
+        active_validation_candidates.extend(scan.get("activeValidationCandidates", []) or [])
         total_readable_ue_function_flag_roots += scan.get("readableUeFunctionFlagRootCount", 0)
         total_readable_ue_function_flag_params += scan.get("readableUeFunctionFlagParamCount", 0)
         ue_function_flag_paths.update(path for path in scan.get("ueFunctionFlagPaths", []) if path)
@@ -704,6 +833,34 @@ def merge_log_summaries(log_summaries):
         total_lua_load_asset_package_native_executor_target_ready_events += scan.get(
             "luaLoadAssetPackageNativeExecutorTargetReadyEventCount", 0
         )
+        total_lua_load_asset_package_native_invoked_events += scan.get(
+            "luaLoadAssetPackageNativeInvokedEventCount", 0
+        )
+        total_lua_load_class_package_abi_state_events += scan.get("luaLoadClassPackageAbiStateEventCount", 0)
+        total_lua_load_class_package_call_frame_verification_events += scan.get(
+            "luaLoadClassPackageCallFrameVerificationEventCount", 0
+        )
+        total_lua_load_class_package_native_executor_events += scan.get(
+            "luaLoadClassPackageNativeExecutorEventCount", 0
+        )
+        total_lua_load_class_package_native_executor_ready_events += scan.get(
+            "luaLoadClassPackageNativeExecutorReadyEventCount", 0
+        )
+        total_lua_load_class_package_native_invoked_events += scan.get(
+            "luaLoadClassPackageNativeInvokedEventCount", 0
+        )
+        total_lua_static_construct_object_native_executor_states += scan.get(
+            "luaStaticConstructObjectNativeExecutorStateCount", 0
+        )
+        total_lua_static_construct_object_native_executor_ready_states += scan.get(
+            "luaStaticConstructObjectNativeExecutorReadyStateCount", 0
+        )
+        total_lua_static_construct_object_native_invokes += scan.get(
+            "luaStaticConstructObjectNativeInvokeCount", 0
+        )
+        total_lua_static_construct_object_native_invoked += scan.get(
+            "luaStaticConstructObjectNativeInvokedCount", 0
+        )
         total_lua_load_asset_package_preflight_mod_finishes += scan.get("luaLoadAssetPackagePreflightModFinishCount", 0)
         total_lua_load_asset_package_mod_finishes += scan.get("luaLoadAssetPackageModFinishCount", 0)
         total_lua_function_iteration_mod_finishes += scan.get("luaFunctionIterationModFinishCount", 0)
@@ -719,6 +876,27 @@ def merge_log_summaries(log_summaries):
         total_lua_call_function_structured_args_mod_finishes += scan.get(
             "luaCallFunctionStructuredArgsModFinishCount", 0
         )
+        total_lua_call_function_native_invoke_mod_finishes += scan.get(
+            "luaCallFunctionNativeInvokeModFinishCount", 0
+        )
+        total_lua_call_function_native_invoke_self_tests += scan.get(
+            "luaCallFunctionNativeInvokeSelfTestCount", 0
+        )
+        total_lua_call_function_native_invoke_preflights += scan.get(
+            "luaCallFunctionNativeInvokePreflightCount", 0
+        )
+        total_lua_call_function_native_executor_states += scan.get(
+            "luaCallFunctionNativeExecutorStateCount", 0
+        )
+        total_lua_call_function_native_executor_ready_states += scan.get(
+            "luaCallFunctionNativeExecutorReadyStateCount", 0
+        )
+        total_lua_call_function_native_invoke_non_self_test_gates += scan.get(
+            "luaCallFunctionNativeInvokeNonSelfTestGateCount", 0
+        )
+        total_lua_call_function_native_invoke_non_self_test_invocations += scan.get(
+            "luaCallFunctionNativeInvokeNonSelfTestInvokedCount", 0
+        )
         total_lua_process_event_compat_mod_finishes += scan.get("luaProcessEventCompatModFinishCount", 0)
         total_lua_process_event_bridge_state_mod_finishes += scan.get(
             "luaProcessEventBridgeStateModFinishCount", 0
@@ -731,6 +909,12 @@ def merge_log_summaries(log_summaries):
         )
         total_lua_process_event_native_invoke_descriptor_preflights += scan.get(
             "luaProcessEventNativeInvokeDescriptorPreflightCount", 0
+        )
+        total_lua_process_event_native_executor_states += scan.get(
+            "luaProcessEventNativeExecutorStateCount", 0
+        )
+        total_lua_process_event_native_executor_ready_states += scan.get(
+            "luaProcessEventNativeExecutorReadyStateCount", 0
         )
         total_lua_process_event_native_invoke_non_self_test_gates += scan.get(
             "luaProcessEventNativeInvokeNonSelfTestGateCount", 0
@@ -821,6 +1005,9 @@ def merge_log_summaries(log_summaries):
         total_ue_runtime_discovery_candidate_locations.extend(
             runtime_discovery.get("candidateLocations") or []
         )
+        total_ue_runtime_discovery_validated_locations.extend(
+            runtime_discovery.get("validatedLocations") or []
+        )
         total_ue_runtime_discovery_target_writable_missing += runtime_discovery.get(
             "targetWritableMissingCount", 0
         )
@@ -867,10 +1054,21 @@ def merge_log_summaries(log_summaries):
         total_proven_target_handled_ue_call_function_live_lua_hooks += scan.get(
             "provenTargetHandledUeCallFunctionLiveLuaHookCount", 0
         )
+        total_ue_call_function_active_validations += scan.get("ueCallFunctionActiveValidationCount", 0)
+        total_invoked_ue_call_function_active_validations += scan.get("invokedUeCallFunctionActiveValidationCount", 0)
+        total_original_ue_call_function_active_validations += scan.get("originalUeCallFunctionActiveValidationCount", 0)
+        total_target_entry_ue_call_function_active_validations += scan.get("targetEntryUeCallFunctionActiveValidationCount", 0)
         total_ue_process_event_live_hooks += scan.get("ueProcessEventLiveHookCount", 0)
         total_installed_ue_process_event_live_hooks += scan.get("installedUeProcessEventLiveHookCount", 0)
         total_non_self_test_installed_ue_process_event_live_hooks += scan.get("nonSelfTestInstalledUeProcessEventLiveHookCount", 0)
         total_proven_target_installed_ue_process_event_live_hooks += scan.get("provenTargetInstalledUeProcessEventLiveHookCount", 0)
+        total_ue_process_event_active_validations += scan.get("ueProcessEventActiveValidationCount", 0)
+        total_invoked_ue_process_event_active_validations += scan.get("invokedUeProcessEventActiveValidationCount", 0)
+        total_original_ue_process_event_active_validations += scan.get("originalUeProcessEventActiveValidationCount", 0)
+        total_suppressed_ue_process_event_active_validations += scan.get("suppressedUeProcessEventActiveValidationCount", 0)
+        total_target_entry_ue_process_event_active_validations += scan.get("targetEntryUeProcessEventActiveValidationCount", 0)
+        total_suppressed_target_entry_ue_process_event_active_validations += scan.get("suppressedTargetEntryUeProcessEventActiveValidationCount", 0)
+        total_descriptor_buffer_ue_process_event_active_validations += scan.get("descriptorBufferUeProcessEventActiveValidationCount", 0)
         total_ue_process_event_live_contexts += scan.get("ueProcessEventLiveContextCount", 0)
         total_resolved_ue_process_event_live_contexts += scan.get("resolvedUeProcessEventLiveContextCount", 0)
         total_matched_ue_process_event_live_contexts += scan.get("matchedUeProcessEventLiveContextCount", 0)
@@ -1015,6 +1213,10 @@ def merge_log_summaries(log_summaries):
         "ueFunctionPaths": sorted(ue_function_paths),
         "uniqueUe4ssFunctionPathCount": len(ue4ss_function_paths),
         "ue4ssFunctionPaths": sorted(ue4ss_function_paths),
+        "activeValidationCandidates": unique_candidates(
+            active_validation_candidates,
+            ("objectAddress", "functionAddress", "functionPath"),
+        ),
         "readableUeFunctionFlagRootCount": total_readable_ue_function_flag_roots,
         "readableUeFunctionFlagParamCount": total_readable_ue_function_flag_params,
         "ueFunctionFlagPathCount": len(ue_function_flag_paths),
@@ -1106,6 +1308,24 @@ def merge_log_summaries(log_summaries):
         "luaLoadAssetPackageNativeExecutorTargetReadyEventCount": (
             total_lua_load_asset_package_native_executor_target_ready_events
         ),
+        "luaLoadAssetPackageNativeInvokedEventCount": total_lua_load_asset_package_native_invoked_events,
+        "luaLoadClassPackageAbiStateEventCount": total_lua_load_class_package_abi_state_events,
+        "luaLoadClassPackageCallFrameVerificationEventCount": (
+            total_lua_load_class_package_call_frame_verification_events
+        ),
+        "luaLoadClassPackageNativeExecutorEventCount": total_lua_load_class_package_native_executor_events,
+        "luaLoadClassPackageNativeExecutorReadyEventCount": (
+            total_lua_load_class_package_native_executor_ready_events
+        ),
+        "luaLoadClassPackageNativeInvokedEventCount": total_lua_load_class_package_native_invoked_events,
+        "luaStaticConstructObjectNativeExecutorStateCount": (
+            total_lua_static_construct_object_native_executor_states
+        ),
+        "luaStaticConstructObjectNativeExecutorReadyStateCount": (
+            total_lua_static_construct_object_native_executor_ready_states
+        ),
+        "luaStaticConstructObjectNativeInvokeCount": total_lua_static_construct_object_native_invokes,
+        "luaStaticConstructObjectNativeInvokedCount": total_lua_static_construct_object_native_invoked,
         "luaLoadAssetPackagePreflightModFinishCount": total_lua_load_asset_package_preflight_mod_finishes,
         "luaLoadAssetPackageModFinishCount": total_lua_load_asset_package_mod_finishes,
         "luaFunctionIterationModFinishCount": total_lua_function_iteration_mod_finishes,
@@ -1119,12 +1339,29 @@ def merge_log_summaries(log_summaries):
         "luaLocalPlayerExecHookModFinishCount": total_lua_local_player_exec_hook_mod_finishes,
         "luaCallFunctionHookModFinishCount": total_lua_call_function_hook_mod_finishes,
         "luaCallFunctionStructuredArgsModFinishCount": total_lua_call_function_structured_args_mod_finishes,
+        "luaCallFunctionNativeInvokeModFinishCount": total_lua_call_function_native_invoke_mod_finishes,
+        "luaCallFunctionNativeInvokeSelfTestCount": total_lua_call_function_native_invoke_self_tests,
+        "luaCallFunctionNativeInvokePreflightCount": total_lua_call_function_native_invoke_preflights,
+        "luaCallFunctionNativeExecutorStateCount": total_lua_call_function_native_executor_states,
+        "luaCallFunctionNativeExecutorReadyStateCount": (
+            total_lua_call_function_native_executor_ready_states
+        ),
+        "luaCallFunctionNativeInvokeNonSelfTestGateCount": (
+            total_lua_call_function_native_invoke_non_self_test_gates
+        ),
+        "luaCallFunctionNativeInvokeNonSelfTestInvokedCount": (
+            total_lua_call_function_native_invoke_non_self_test_invocations
+        ),
         "luaProcessEventCompatModFinishCount": total_lua_process_event_compat_mod_finishes,
         "luaProcessEventBridgeStateModFinishCount": total_lua_process_event_bridge_state_mod_finishes,
         "luaProcessEventNativeInvokeModFinishCount": total_lua_process_event_native_invoke_mod_finishes,
         "luaProcessEventNativeInvokeSelfTestCount": total_lua_process_event_native_invoke_self_tests,
         "luaProcessEventNativeInvokeDescriptorPreflightCount": (
             total_lua_process_event_native_invoke_descriptor_preflights
+        ),
+        "luaProcessEventNativeExecutorStateCount": total_lua_process_event_native_executor_states,
+        "luaProcessEventNativeExecutorReadyStateCount": (
+            total_lua_process_event_native_executor_ready_states
         ),
         "luaProcessEventNativeInvokeNonSelfTestGateCount": (
             total_lua_process_event_native_invoke_non_self_test_gates
@@ -1199,6 +1436,7 @@ def merge_log_summaries(log_summaries):
             "candidateNameCounts": dict(sorted(total_ue_runtime_discovery_candidate_name_counts.items())),
             "candidateImageCounts": dict(sorted(total_ue_runtime_discovery_candidate_image_counts.items())),
             "candidateLocations": total_ue_runtime_discovery_candidate_locations[:64],
+            "validatedLocations": total_ue_runtime_discovery_validated_locations[:16],
             "targetWritableMissingCount": total_ue_runtime_discovery_target_writable_missing,
             "promotedNames": sorted(ue_runtime_discovery_promoted_names),
             "validatedNames": sorted(ue_runtime_discovery_validated_names),
@@ -1233,10 +1471,21 @@ def merge_log_summaries(log_summaries):
         "provenTargetHandledUeCallFunctionLiveLuaHookCount": (
             total_proven_target_handled_ue_call_function_live_lua_hooks
         ),
+        "ueCallFunctionActiveValidationCount": total_ue_call_function_active_validations,
+        "invokedUeCallFunctionActiveValidationCount": total_invoked_ue_call_function_active_validations,
+        "originalUeCallFunctionActiveValidationCount": total_original_ue_call_function_active_validations,
+        "targetEntryUeCallFunctionActiveValidationCount": total_target_entry_ue_call_function_active_validations,
         "ueProcessEventLiveHookCount": total_ue_process_event_live_hooks,
         "installedUeProcessEventLiveHookCount": total_installed_ue_process_event_live_hooks,
         "nonSelfTestInstalledUeProcessEventLiveHookCount": total_non_self_test_installed_ue_process_event_live_hooks,
         "provenTargetInstalledUeProcessEventLiveHookCount": total_proven_target_installed_ue_process_event_live_hooks,
+        "ueProcessEventActiveValidationCount": total_ue_process_event_active_validations,
+        "invokedUeProcessEventActiveValidationCount": total_invoked_ue_process_event_active_validations,
+        "originalUeProcessEventActiveValidationCount": total_original_ue_process_event_active_validations,
+        "suppressedUeProcessEventActiveValidationCount": total_suppressed_ue_process_event_active_validations,
+        "targetEntryUeProcessEventActiveValidationCount": total_target_entry_ue_process_event_active_validations,
+        "suppressedTargetEntryUeProcessEventActiveValidationCount": total_suppressed_target_entry_ue_process_event_active_validations,
+        "descriptorBufferUeProcessEventActiveValidationCount": total_descriptor_buffer_ue_process_event_active_validations,
         "ueProcessEventLiveContextCount": total_ue_process_event_live_contexts,
         "resolvedUeProcessEventLiveContextCount": total_resolved_ue_process_event_live_contexts,
         "matchedUeProcessEventLiveContextCount": total_matched_ue_process_event_live_contexts,
@@ -1299,6 +1548,7 @@ def merge_log_summaries(log_summaries):
         "pids": sorted(pids),
         "loadedExes": sorted(loaded_exes),
         "modules": sorted(modules),
+        "targetImageSubstrings": effective_target_image_substrings(target_image_substrings),
         "autoTargetPidFilters": sorted(auto_target_pid_filters),
         "hitsByName": merged_hits,
         "ue": ue_mod.summarize({"hitsByName": merged_hits}, proven_only=True),
@@ -1344,6 +1594,10 @@ def anchor_coverage_status(anchor_coverages):
             "readyForObjectDiscovery": False,
             "readyForHookPlanning": False,
             "readyForPackageLoading": False,
+            "targetCoverageFieldsPresent": False,
+            "readyForTargetObjectDiscovery": False,
+            "readyForTargetHookPlanning": False,
+            "readyForTargetPackageLoading": False,
             "missingRequiredGroups": [],
             "groups": {},
         }
@@ -1353,10 +1607,38 @@ def anchor_coverage_status(anchor_coverages):
     missing_required_groups = set()
     group_totals = {}
     group_present = {}
+    group_target_present = {}
+    group_loader_present = {}
+    group_unknown_present = {}
     ready_for_object_discovery = False
     ready_for_hook_planning = False
     ready_for_package_loading = False
+    ready_for_target_object_discovery = False
+    ready_for_target_hook_planning = False
+    ready_for_target_package_loading = False
+    target_coverage_fields_present = False
     for coverage in anchor_coverages:
+        coverage_groups = coverage.get("groups", {}) or {}
+        if "readyForObjectDiscovery" not in coverage:
+            ready_for_object_discovery = ready_for_object_discovery or all(
+                int((coverage_groups.get(group_name) or {}).get("present", 0) or 0) > 0
+                for group_name in ("names", "objects", "world")
+            )
+        if "readyForHookPlanning" not in coverage:
+            dispatch = coverage_groups.get("dispatch") or {}
+            ready_for_hook_planning = ready_for_hook_planning or (
+                all(
+                    int((coverage_groups.get(group_name) or {}).get("present", 0) or 0) > 0
+                    for group_name in ("names", "objects", "world")
+                )
+                and int(dispatch.get("present", 0) or 0) > 0
+            )
+        if "readyForPackageLoading" not in coverage:
+            package = coverage_groups.get("package") or {}
+            ready_for_package_loading = (
+                ready_for_package_loading
+                or int(package.get("present", 0) or 0) > 0
+            )
         explicit_anchors.update(coverage.get("explicitAnchors", []))
         signature_anchors.update(coverage.get("signatureAnchors", []))
         combined_anchors.update(coverage.get("combinedAnchors", []))
@@ -1364,16 +1646,61 @@ def anchor_coverage_status(anchor_coverages):
         ready_for_object_discovery = ready_for_object_discovery or coverage.get("readyForObjectDiscovery", False)
         ready_for_hook_planning = ready_for_hook_planning or coverage.get("readyForHookPlanning", False)
         ready_for_package_loading = ready_for_package_loading or coverage.get("readyForPackageLoading", False)
-        for group_name, group in coverage.get("groups", {}).items():
+        if any(
+            key in coverage
+            for key in (
+                "readyForTargetObjectDiscovery",
+                "readyForTargetHookPlanning",
+                "readyForTargetPackageLoading",
+            )
+        ):
+            target_coverage_fields_present = True
+            ready_for_target_object_discovery = (
+                ready_for_target_object_discovery
+                or coverage.get("readyForTargetObjectDiscovery", False)
+            )
+            ready_for_target_hook_planning = (
+                ready_for_target_hook_planning
+                or coverage.get("readyForTargetHookPlanning", False)
+            )
+            ready_for_target_package_loading = (
+                ready_for_target_package_loading
+                or coverage.get("readyForTargetPackageLoading", False)
+            )
+        for group_name, group in coverage_groups.items():
             group_totals[group_name] = max(group_totals.get(group_name, 0), group.get("total", 0))
             group_present[group_name] = max(group_present.get(group_name, 0), group.get("present", 0))
+            if "targetPresent" in group:
+                group_target_present[group_name] = max(
+                    group_target_present.get(group_name, 0),
+                    group.get("targetPresent", 0),
+                )
+            if "loaderPresent" in group:
+                group_loader_present[group_name] = max(
+                    group_loader_present.get(group_name, 0),
+                    group.get("loaderPresent", 0),
+                )
+            if "unknownPresent" in group:
+                group_unknown_present[group_name] = max(
+                    group_unknown_present.get(group_name, 0),
+                    group.get("unknownPresent", 0),
+                )
     groups = {}
     for group_name in sorted(group_totals):
-        groups[group_name] = {
+        present = group_present.get(group_name, 0)
+        group_row = {
             "present": group_present.get(group_name, 0),
             "total": group_totals[group_name],
-            "complete": group_present.get(group_name, 0) == group_totals[group_name],
+            "complete": present == group_totals[group_name],
         }
+        if group_name in group_target_present:
+            group_row["targetPresent"] = group_target_present.get(group_name, 0)
+            group_row["targetComplete"] = group_target_present.get(group_name, 0) == group_totals[group_name]
+        if group_name in group_loader_present:
+            group_row["loaderPresent"] = group_loader_present.get(group_name, 0)
+        if group_name in group_unknown_present:
+            group_row["unknownPresent"] = group_unknown_present.get(group_name, 0)
+        groups[group_name] = group_row
     return {
         "provided": True,
         "explicitAnchorCount": len(explicit_anchors),
@@ -1382,6 +1709,22 @@ def anchor_coverage_status(anchor_coverages):
         "readyForObjectDiscovery": ready_for_object_discovery,
         "readyForHookPlanning": ready_for_hook_planning,
         "readyForPackageLoading": ready_for_package_loading,
+        "targetCoverageFieldsPresent": target_coverage_fields_present,
+        "readyForTargetObjectDiscovery": (
+            ready_for_target_object_discovery
+            if target_coverage_fields_present
+            else ready_for_object_discovery
+        ),
+        "readyForTargetHookPlanning": (
+            ready_for_target_hook_planning
+            if target_coverage_fields_present
+            else ready_for_hook_planning
+        ),
+        "readyForTargetPackageLoading": (
+            ready_for_target_package_loading
+            if target_coverage_fields_present
+            else ready_for_package_loading
+        ),
         "missingRequiredGroups": sorted(missing_required_groups),
         "groups": groups,
     }
@@ -1528,11 +1871,18 @@ def object_discovery_coverage_status(merged, gate_map):
 def build_per_loader_readiness(log_summaries, validation_summaries, anchor_coverages, loaders):
     per_loader = {}
     paths = sorted({summary.get("path", "") for summary in log_summaries if summary.get("path")})
+    target_image_substrings = effective_target_image_substrings(
+        [
+            fragment
+            for summary in log_summaries
+            for fragment in (summary.get("targetImageSubstrings", []) or [])
+        ]
+    )
     for loader in loaders:
         scoped_summaries = []
         scoped_paths = []
         for path_text in paths:
-            summary = summarize_log(Path(path_text), [loader], [], [])
+            summary = summarize_log(Path(path_text), [loader], [], target_image_substrings)
             if summary["scan"].get("loadCount", 0) <= 0:
                 continue
             scoped_summaries.append(summary)
@@ -1586,10 +1936,11 @@ def build_report(log_summaries, validation_summaries, anchor_coverages=None, inc
             "no loader loaded event in scoped logs",
         )
     )
+    target_image_substrings = merged["targetImageSubstrings"]
     target_image_paths = [
         path
         for path in merged["loadedExes"] + merged["modules"]
-        if is_target_image_path(path)
+        if is_target_image_path(path, target_image_substrings)
     ]
     gates.append(
         gate(
@@ -1597,9 +1948,10 @@ def build_report(log_summaries, validation_summaries, anchor_coverages=None, inc
             bool(target_image_paths),
             (
                 f"targetPaths={len(target_image_paths)} "
-                f"loadedExes={len(merged['loadedExes'])} modules={len(merged['modules'])}"
+                f"loadedExes={len(merged['loadedExes'])} modules={len(merged['modules'])} "
+                f"targetFilters={','.join(target_image_substrings)}"
             ),
-            "scoped logs did not include a DuneSandbox/DuneAwakening target executable or module; rerun the canary against the real game/server process",
+            "scoped logs did not include a configured target executable or module; rerun the canary against the real game/server process or pass --exe-substring for this title",
         )
     )
     gates.append(
@@ -1669,7 +2021,7 @@ def build_report(log_summaries, validation_summaries, anchor_coverages=None, inc
             "ue-package-loading-surface",
             package["present"] > 0,
             f"present={package['present']}/{package['total']}",
-            "no StaticLoadObject/LoadObject/LoadPackage/ResolveName package-loading anchor evidence",
+            "no StaticLoadObject/StaticLoadClass/LoadObject/LoadPackage/ResolveName package-loading anchor evidence",
         )
     )
     gates.append(
@@ -1677,7 +2029,7 @@ def build_report(log_summaries, validation_summaries, anchor_coverages=None, inc
             "ue-target-package-loading-surface",
             package.get("targetPresent", 0) > 0,
             f"targetPresent={package.get('targetPresent', 0)}/{package['total']} present={package['present']}/{package['total']}",
-            "no target-image StaticLoadObject/LoadObject/LoadPackage/ResolveName package-loading anchor evidence",
+            "no target-image StaticLoadObject/StaticLoadClass/LoadObject/LoadPackage/ResolveName package-loading anchor evidence",
         )
     )
     gates.append(
@@ -1893,40 +2245,47 @@ def build_report(log_summaries, validation_summaries, anchor_coverages=None, inc
     gates.append(
         gate(
             "anchor-coverage-object-discovery",
-            (not anchor_coverage["provided"]) or anchor_coverage["readyForObjectDiscovery"],
+            (not anchor_coverage["provided"]) or anchor_coverage["readyForTargetObjectDiscovery"],
             (
                 "not-provided" if not anchor_coverage["provided"]
                 else (
                     f"combined={anchor_coverage['combinedAnchorCount']} "
-                    f"missingRequired={anchor_coverage['missingRequiredGroups']}"
+                    f"targetReady={anchor_coverage['readyForTargetObjectDiscovery']} "
+                    f"missingRequired={anchor_coverage['missingRequiredGroups']} "
+                    f"groups={anchor_coverage['groups']}"
                 )
             ),
-            "prepared canary anchor coverage is missing a required object-discovery anchor group",
+            "prepared canary anchor coverage is missing a required target-image object-discovery anchor group",
         )
     )
     gates.append(
         gate(
             "anchor-coverage-hook-planning",
-            (not anchor_coverage["provided"]) or anchor_coverage["readyForHookPlanning"],
+            (not anchor_coverage["provided"]) or anchor_coverage["readyForTargetHookPlanning"],
             (
                 "not-provided" if not anchor_coverage["provided"]
                 else (
                     f"combined={anchor_coverage['combinedAnchorCount']} "
-                    f"signatureAnchors={anchor_coverage['signatureAnchorCount']}"
+                    f"targetReady={anchor_coverage['readyForTargetHookPlanning']} "
+                    f"signatureAnchors={anchor_coverage['signatureAnchorCount']} "
+                    f"dispatch={anchor_coverage['groups'].get('dispatch', {})}"
                 )
             ),
-            "prepared canary anchor coverage does not include ProcessEvent-level dispatch evidence for hook planning",
+            "prepared canary anchor coverage does not include target-image ProcessEvent-level dispatch evidence for hook planning",
         )
     )
     gates.append(
         gate(
             "anchor-coverage-package-loading",
-            (not anchor_coverage["provided"]) or anchor_coverage["readyForPackageLoading"],
+            (not anchor_coverage["provided"]) or anchor_coverage["readyForTargetPackageLoading"],
             (
                 "not-provided" if not anchor_coverage["provided"]
-                else f"groups={anchor_coverage['groups'].get('package', {})}"
+                else (
+                    f"targetReady={anchor_coverage['readyForTargetPackageLoading']} "
+                    f"groups={anchor_coverage['groups'].get('package', {})}"
+                )
             ),
-            "prepared canary anchor coverage does not include package-loading anchor evidence",
+            "prepared canary anchor coverage does not include target-image package-loading anchor evidence",
         )
     )
     gates.append(
@@ -2153,14 +2512,59 @@ def build_report(log_summaries, validation_summaries, anchor_coverages=None, inc
     )
     gates.append(
         gate(
+            "lua-load-asset-package-native-invocation",
+            merged["luaLoadAssetPackageNativeInvokedEventCount"] > 0,
+            f"nativeInvoked={merged['luaLoadAssetPackageNativeInvokedEventCount']}",
+            "no guarded LoadAsset package native invocation reached target-image native code and returned under validation",
+        )
+    )
+    gates.append(
+        gate(
             "lua-load-asset-package",
             merged["luaLoadAssetPackageModFinishCount"] > 0
-            and merged["luaLoadAssetPackageNativeExecutorTargetReadyEventCount"] > 0,
+            and merged["luaLoadAssetPackageNativeExecutorTargetReadyEventCount"] > 0
+            and merged["luaLoadAssetPackageNativeInvokedEventCount"] > 0,
             (
                 f"mods={merged['luaLoadAssetPackageModFinishCount']} "
-                f"targetExecutorReady={merged['luaLoadAssetPackageNativeExecutorTargetReadyEventCount']}"
+                f"targetExecutorReady={merged['luaLoadAssetPackageNativeExecutorTargetReadyEventCount']} "
+                f"nativeInvoked={merged['luaLoadAssetPackageNativeInvokedEventCount']}"
             ),
-            "no Lua mod proved LoadAsset resolved through a real package/asset backend with target-image native executor evidence",
+            "no Lua mod proved LoadAsset resolved through a real package/asset backend with target-image native invocation evidence",
+        )
+    )
+    gates.append(
+        gate(
+            "lua-load-class-package-abi-state",
+            merged["luaLoadClassPackageAbiStateEventCount"] > 0,
+            f"events={merged['luaLoadClassPackageAbiStateEventCount']}",
+            "no Lua mod queried the guarded LoadClass package StaticLoadClass ABI contract",
+        )
+    )
+    gates.append(
+        gate(
+            "lua-load-class-package-call-frame-verification",
+            merged["luaLoadClassPackageCallFrameVerificationEventCount"] > 0,
+            f"events={merged['luaLoadClassPackageCallFrameVerificationEventCount']}",
+            "no Lua mod queried the guarded LoadClass package call-frame verification state",
+        )
+    )
+    gates.append(
+        gate(
+            "lua-load-class-package-native-executor",
+            merged["luaLoadClassPackageNativeExecutorReadyEventCount"] > 0,
+            (
+                f"ready={merged['luaLoadClassPackageNativeExecutorReadyEventCount']} "
+                f"events={merged['luaLoadClassPackageNativeExecutorEventCount']}"
+            ),
+            "no Lua mod proved the guarded LoadClass package native executor reached ready/final-call-eligible state for target-image StaticLoadClass",
+        )
+    )
+    gates.append(
+        gate(
+            "lua-load-class-package-native-invocation",
+            merged["luaLoadClassPackageNativeInvokedEventCount"] > 0,
+            f"nativeInvoked={merged['luaLoadClassPackageNativeInvokedEventCount']}",
+            "no guarded LoadClass package native invocation reached target-image StaticLoadClass",
         )
     )
     gates.append(
@@ -2250,12 +2654,21 @@ def build_report(log_summaries, validation_summaries, anchor_coverages=None, inc
     gates.append(
         gate(
             "lua-process-event-native-invoke-non-self-test-gate",
-            merged["luaProcessEventNativeInvokeNonSelfTestGateCount"] > 0,
+            merged["luaProcessEventNativeInvokeNonSelfTestGateCount"] > 0
+            or merged["luaProcessEventNativeInvokeNonSelfTestInvokedCount"] > 0,
             (
                 f"closedGates={merged['luaProcessEventNativeInvokeNonSelfTestGateCount']} "
                 f"invoked={merged['luaProcessEventNativeInvokeNonSelfTestInvokedCount']}"
             ),
-            "no descriptor-backed non-self-test ProcessEvent target proved the native invoke gate stays closed",
+            "no descriptor-backed non-self-test ProcessEvent target proved either the closed invoke gate or the enabled invoke path",
+        )
+    )
+    gates.append(
+        gate(
+            "lua-process-event-native-invoke-non-self-test-invoked",
+            merged["luaProcessEventNativeInvokeNonSelfTestInvokedCount"] > 0,
+            f"invoked={merged['luaProcessEventNativeInvokeNonSelfTestInvokedCount']}",
+            "no explicitly enabled descriptor-backed non-self-test ProcessEvent target was invoked through the Lua native bridge",
         )
     )
     gates.append(
@@ -2264,6 +2677,67 @@ def build_report(log_summaries, validation_summaries, anchor_coverages=None, inc
             merged["luaProcessEventNativeInvokeDescriptorPreflightCount"] > 0,
             f"preflights={merged['luaProcessEventNativeInvokeDescriptorPreflightCount']}",
             "no descriptor-backed non-self-test ProcessEvent target reached no-call descriptor-preflight-ready state",
+        )
+    )
+    gates.append(
+        gate(
+            "lua-process-event-native-executor-state",
+            merged["luaProcessEventNativeExecutorReadyStateCount"] > 0,
+            (
+                f"ready={merged['luaProcessEventNativeExecutorReadyStateCount']} "
+                f"events={merged['luaProcessEventNativeExecutorStateCount']}"
+            ),
+            "no descriptor-backed non-self-test ProcessEvent target reached prepared native executor ready state",
+        )
+    )
+    gates.append(
+        gate(
+            "lua-call-function-native-invoke",
+            merged["luaCallFunctionNativeInvokeModFinishCount"] > 0,
+            (
+                f"selfTests={merged['luaCallFunctionNativeInvokeSelfTestCount']} "
+                f"compat={merged['luaCallFunctionNativeInvokeModFinishCount']}"
+            ),
+            "no Lua self-test proved guarded Lua-triggered native CallFunction bridge invocation",
+        )
+    )
+    gates.append(
+        gate(
+            "lua-call-function-native-invoke-preflight",
+            merged["luaCallFunctionNativeInvokePreflightCount"] > 0,
+            f"preflights={merged['luaCallFunctionNativeInvokePreflightCount']}",
+            "no non-self-test CallFunction target reached no-call preflight-ready state",
+        )
+    )
+    gates.append(
+        gate(
+            "lua-call-function-native-executor-state",
+            merged["luaCallFunctionNativeExecutorReadyStateCount"] > 0,
+            (
+                f"ready={merged['luaCallFunctionNativeExecutorReadyStateCount']} "
+                f"events={merged['luaCallFunctionNativeExecutorStateCount']}"
+            ),
+            "no non-self-test CallFunction target reached prepared native executor ready state",
+        )
+    )
+    gates.append(
+        gate(
+            "lua-call-function-native-invoke-non-self-test-gate",
+            merged["luaCallFunctionNativeInvokeNonSelfTestGateCount"] > 0
+            or merged["luaCallFunctionNativeInvokeNonSelfTestInvokedCount"] > 0,
+            (
+                f"closedGates={merged['luaCallFunctionNativeInvokeNonSelfTestGateCount']} "
+                f"invoked={merged['luaCallFunctionNativeInvokeNonSelfTestInvokedCount']}"
+            ),
+            "no non-self-test CallFunction target proved either the closed invoke gate or the enabled invoke path",
+        )
+    )
+    gates.append(
+        gate(
+            "lua-call-function-native-invoke-non-self-test-invoked",
+            merged["luaCallFunctionNativeInvokeNonSelfTestInvokedCount"] > 0,
+            f"invoked={merged['luaCallFunctionNativeInvokeNonSelfTestInvokedCount']}",
+            "no explicitly enabled non-self-test CallFunction target was invoked through the Lua native bridge",
         )
     )
     gates.append(
@@ -2328,6 +2802,36 @@ def build_report(log_summaries, validation_summaries, anchor_coverages=None, inc
             merged["luaSyntheticOuterModFinishCount"] > 0,
             f"mods={merged['luaSyntheticOuterModFinishCount']}",
             "no Lua mod proved StaticConstructObject preserved a loader-owned outer handle",
+        )
+    )
+    gates.append(
+        gate(
+            "lua-static-construct-object-native-executor-state",
+            merged["luaStaticConstructObjectNativeExecutorStateCount"] > 0,
+            f"events={merged['luaStaticConstructObjectNativeExecutorStateCount']}",
+            "no Lua mod queried the guarded StaticConstructObject native executor state",
+        )
+    )
+    gates.append(
+        gate(
+            "lua-static-construct-object-native-executor-ready",
+            merged["luaStaticConstructObjectNativeExecutorReadyStateCount"] > 0,
+            (
+                f"ready={merged['luaStaticConstructObjectNativeExecutorReadyStateCount']} "
+                f"events={merged['luaStaticConstructObjectNativeExecutorStateCount']}"
+            ),
+            "no target-image StaticConstructObject executor reached ABI-verified call-frame-ready final-call-eligible state",
+        )
+    )
+    gates.append(
+        gate(
+            "lua-static-construct-object-native-invoke",
+            merged["luaStaticConstructObjectNativeInvokedCount"] > 0,
+            (
+                f"nativeInvoked={merged['luaStaticConstructObjectNativeInvokedCount']} "
+                f"invokes={merged['luaStaticConstructObjectNativeInvokeCount']}"
+            ),
+            "no guarded StaticConstructObject native invocation reached target-image native code and returned with nativeInvoked=true",
         )
     )
     gates.append(
@@ -2457,6 +2961,21 @@ def build_report(log_summaries, validation_summaries, anchor_coverages=None, inc
     )
     gates.append(
         gate(
+            "ue-call-function-active-validation",
+            merged["invokedUeCallFunctionActiveValidationCount"] > 0
+            and merged["originalUeCallFunctionActiveValidationCount"] > 0
+            and merged["targetEntryUeCallFunctionActiveValidationCount"] > 0,
+            (
+                f"invoked={merged['invokedUeCallFunctionActiveValidationCount']}/"
+                f"{merged['ueCallFunctionActiveValidationCount']} "
+                f"original={merged['originalUeCallFunctionActiveValidationCount']} "
+                f"targetEntry={merged['targetEntryUeCallFunctionActiveValidationCount']}"
+            ),
+            "no explicitly allowed active CallFunctionByNameWithArguments validation call entered through the patched target entry and reached the original trampoline",
+        )
+    )
+    gates.append(
+        gate(
             "ue-call-function-live-lua-dispatch",
             merged["provenTargetRoutedUeCallFunctionLiveLuaHookCount"] > 0
             and merged["provenTargetHandledUeCallFunctionLiveLuaHookCount"] > 0,
@@ -2494,6 +3013,23 @@ def build_report(log_summaries, validation_summaries, anchor_coverages=None, inc
                 f"installed={merged['installedUeProcessEventLiveHookCount']}/{merged['ueProcessEventLiveHookCount']}"
             ),
             "no persistent ProcessEvent hook install tied the resolved non-self-test target to target-image anchor/provenance or a sampled runtime ProcessEvent context",
+        )
+    )
+    gates.append(
+        gate(
+            "ue-process-event-active-validation",
+            merged["invokedUeProcessEventActiveValidationCount"] > 0
+            and merged["originalUeProcessEventActiveValidationCount"] > 0
+            and merged["targetEntryUeProcessEventActiveValidationCount"] > 0,
+            (
+                f"invoked={merged['invokedUeProcessEventActiveValidationCount']}/"
+                f"{merged['ueProcessEventActiveValidationCount']} "
+                f"original={merged['originalUeProcessEventActiveValidationCount']} "
+                f"targetEntry={merged['targetEntryUeProcessEventActiveValidationCount']} "
+                f"suppressedTargetEntry={merged['suppressedTargetEntryUeProcessEventActiveValidationCount']} "
+                f"descriptorBuffer={merged['descriptorBufferUeProcessEventActiveValidationCount']}"
+            ),
+            "no explicitly allowed active ProcessEvent validation call entered through the patched target entry and reached the original trampoline",
         )
     )
     gates.append(
@@ -3257,7 +3793,7 @@ def build_report(log_summaries, validation_summaries, anchor_coverages=None, inc
         and gate_map["ue-target-names"]
         and gate_map["ue-target-objects"]
         and gate_map["ue-target-world"]
-        and gate_map["ue-target-dispatch"]
+        and (gate_map["ue-target-dispatch"] or anchor_coverage["readyForTargetHookPlanning"])
     )
     ready_hooks = (
         ready_object_discovery
@@ -3313,10 +3849,17 @@ def build_report(log_summaries, validation_summaries, anchor_coverages=None, inc
         and gate_map["lua-local-player-exec-hooks"]
         and gate_map["lua-call-function-hooks"]
         and gate_map["lua-call-function-structured-args"]
+        and gate_map["lua-call-function-native-invoke"]
+        and gate_map["lua-call-function-native-invoke-preflight"]
+        and gate_map["lua-call-function-native-executor-state"]
+        and gate_map["lua-call-function-native-invoke-non-self-test-gate"]
+        and gate_map["lua-call-function-native-invoke-non-self-test-invoked"]
         and gate_map["lua-process-event-compat"]
         and gate_map["lua-process-event-bridge-state"]
         and gate_map["lua-process-event-native-invoke"]
         and gate_map["lua-process-event-native-invoke-descriptor-preflight"]
+        and gate_map["lua-process-event-native-executor-state"]
+        and gate_map["lua-process-event-native-invoke-non-self-test-invoked"]
         and gate_map["lua-process-event-params-buffer"]
         and gate_map["ue-call-function-live-lua-dispatch"]
         and gate_map["lua-lifecycle-hooks"]
@@ -3435,6 +3978,16 @@ def build_report(log_summaries, validation_summaries, anchor_coverages=None, inc
         next_steps.append("run a Lua mod that proves RegisterCallFunctionByNameWithArgumentsPreHook/PostHook dispatch around loader-owned CallFunction")
     elif not gate_map["lua-call-function-structured-args"]:
         next_steps.append("run a Lua mod that proves structured table arguments marshal through CallFunctionByNameWithArguments")
+    elif not gate_map["lua-call-function-native-invoke"]:
+        next_steps.append("run a Lua mod that proves guarded Lua-triggered native CallFunction bridge invocation")
+    elif not gate_map["lua-call-function-native-invoke-preflight"]:
+        next_steps.append("run a non-self-test CallFunction preflight without requesting native invocation")
+    elif not gate_map["lua-call-function-native-executor-state"]:
+        next_steps.append("capture a prepared non-self-test CallFunction native executor state")
+    elif not gate_map["lua-call-function-native-invoke-non-self-test-gate"]:
+        next_steps.append("run a non-self-test CallFunction invoke request that proves either the disabled gate or the enabled native bridge")
+    elif not gate_map["lua-call-function-native-invoke-non-self-test-invoked"]:
+        next_steps.append("explicitly enable and invoke a non-self-test CallFunction target through the Lua native bridge")
     elif not gate_map["lua-process-event-compat"]:
         next_steps.append("run a Lua mod that proves global and UObject-method ProcessEvent compatibility dispatch")
     elif not gate_map["lua-process-event-bridge-state"]:
@@ -3443,8 +3996,12 @@ def build_report(log_summaries, validation_summaries, anchor_coverages=None, inc
         next_steps.append("run a Lua mod that proves guarded Lua-triggered native ProcessEvent bridge invocation")
     elif not gate_map["lua-process-event-native-invoke-descriptor-preflight"]:
         next_steps.append("run a descriptor-backed non-self-test ProcessEvent preflight without requesting native invocation")
+    elif not gate_map["lua-process-event-native-executor-state"]:
+        next_steps.append("capture a prepared descriptor-backed non-self-test ProcessEvent native executor state")
     elif not gate_map["lua-process-event-native-invoke-non-self-test-gate"]:
-        next_steps.append("run a descriptor-backed non-self-test ProcessEvent preflight with native invocation disabled")
+        next_steps.append("run a descriptor-backed non-self-test ProcessEvent invoke request that proves either the disabled gate or the enabled native bridge")
+    elif not gate_map["lua-process-event-native-invoke-non-self-test-invoked"]:
+        next_steps.append("explicitly enable and invoke a descriptor-backed non-self-test ProcessEvent target through the Lua native bridge")
     elif not gate_map["lua-process-event-params-buffer"]:
         next_steps.append("run a Lua mod that calls CreateProcessEventParams(function) and proves a descriptor-backed ProcessEvent params buffer outside an active callback")
     elif not gate_map["lua-lifecycle-hooks"]:
@@ -3470,11 +4027,53 @@ def build_report(log_summaries, validation_summaries, anchor_coverages=None, inc
     elif not gate_map["lua-level"]:
         next_steps.append("run a Lua mod that proves GetLevel resolves a loader-owned level handle")
     elif not gate_map["ue-package-loading-surface"]:
-        next_steps.append("find StaticLoadObject/LoadObject/LoadPackage/ResolveName package-loading anchors")
+        next_steps.append("find StaticLoadObject/StaticLoadClass/LoadObject/LoadPackage/ResolveName package-loading anchors")
     elif not gate_map["anchor-coverage-package-loading"]:
         next_steps.append("prepare a canary env with package-loading anchor coverage before replacing LoadAsset")
+    elif not gate_map["lua-load-asset-package-bridge-state"]:
+        next_steps.append("run a Lua mod that queries the guarded LoadAsset package bridge state against a target-image package-loading anchor")
+    elif not gate_map["lua-load-asset-package-abi-state"]:
+        next_steps.append("run a Lua mod that queries the guarded LoadAsset package ABI state for the selected package-loading family")
+    elif not gate_map["lua-load-asset-package-string-bridge"]:
+        next_steps.append("stage a bounded package path through the guarded LoadAsset package string bridge")
+    elif not gate_map["lua-load-asset-package-native-buffer"]:
+        next_steps.append("stage a bounded native LoadAsset package input buffer for the selected target ABI")
+    elif not gate_map["lua-load-asset-package-tchar-buffer"]:
+        next_steps.append("stage the package path as a target TCHAR buffer before native LoadAsset package invocation")
+    elif not gate_map["lua-load-asset-package-tchar-verification"]:
+        next_steps.append("verify the target TCHAR layout for the selected package-loading family before native LoadAsset package invocation")
+    elif not gate_map["lua-load-asset-package-call-frame-verification"]:
+        next_steps.append("verify the selected package-loading call frame before native LoadAsset package invocation")
+    elif not gate_map["lua-load-asset-package-crash-guard"]:
+        next_steps.append("query the guarded LoadAsset package crash-guard state before native invocation")
+    elif not gate_map["lua-load-asset-package-guarded-call"]:
+        next_steps.append("query the guarded LoadAsset package guarded-call state before native invocation")
+    elif not gate_map["lua-load-asset-package-return-validation"]:
+        next_steps.append("query the guarded LoadAsset package return-validation state before native invocation")
+    elif not gate_map["lua-load-asset-package-native-call-adapter"]:
+        next_steps.append("query the guarded LoadAsset package native call adapter before native invocation")
+    elif not gate_map["lua-load-asset-package-invocation-descriptor"]:
+        next_steps.append("construct the guarded LoadAsset package native invocation descriptor before native invocation")
+    elif not gate_map["lua-load-asset-package-native-executor"]:
+        next_steps.append("promote the guarded LoadAsset package native executor to target-image ready/final-call-eligible state")
+    elif not gate_map["lua-load-asset-package-native-invocation"]:
+        next_steps.append("explicitly enable and invoke the guarded LoadAsset package native call, then validate the target-image return")
     elif not gate_map["lua-load-asset-package"]:
         next_steps.append("replace registry-only LoadAsset with a real package/asset backend and prove it from a Lua mod")
+    elif not gate_map["lua-load-class-package-abi-state"]:
+        next_steps.append("run a Lua mod that queries the guarded LoadClass StaticLoadClass ABI state")
+    elif not gate_map["lua-load-class-package-call-frame-verification"]:
+        next_steps.append("verify the guarded LoadClass StaticLoadClass call frame before native invocation")
+    elif not gate_map["lua-load-class-package-native-executor"]:
+        next_steps.append("promote the guarded LoadClass StaticLoadClass native executor to ready/final-call-eligible state")
+    elif not gate_map["lua-load-class-package-native-invocation"]:
+        next_steps.append("explicitly enable and invoke guarded LoadClass through target-image StaticLoadClass")
+    elif not gate_map["lua-static-construct-object-native-executor-state"]:
+        next_steps.append("run a Lua mod that queries the guarded StaticConstructObject native executor state")
+    elif not gate_map["lua-static-construct-object-native-executor-ready"]:
+        next_steps.append("promote a target-image StaticConstructObject address and prove ABI/call-frame/final-invoke readiness")
+    elif not gate_map["lua-static-construct-object-native-invoke"]:
+        next_steps.append("explicitly enable and invoke target-image StaticConstructObject through the guarded Lua native bridge")
     elif not gate_map["lua-reflection-self-test"]:
         next_steps.append("run the Lua reflection/property self-test before live FProperty marshaling")
     elif not gate_map["lua-reflection-numeric-property-values"]:
@@ -3600,9 +4199,9 @@ def build_report(log_summaries, validation_summaries, anchor_coverages=None, inc
             "targetPackageLoadingSurface": gate_map["ue-target-package-loading-surface"],
             "signatureManifestExact": signatures["exactOnly"],
             "signatureManifestPromotable": signatures["allPromotable"],
-            "anchorCoverageObjectDiscovery": anchor_coverage["readyForObjectDiscovery"],
-            "anchorCoverageHookPlanning": anchor_coverage["readyForHookPlanning"],
-            "anchorCoveragePackageLoading": anchor_coverage["readyForPackageLoading"],
+            "anchorCoverageObjectDiscovery": anchor_coverage["readyForTargetObjectDiscovery"],
+            "anchorCoverageHookPlanning": anchor_coverage["readyForTargetHookPlanning"],
+            "anchorCoveragePackageLoading": anchor_coverage["readyForTargetPackageLoading"],
             "objectDiscoveryCoverage": object_discovery_coverage["readyForObjectDiscovery"],
             "findObjectSemantics": object_discovery_coverage["readyForFindObjectSemantics"],
             "luaObjectRegistryRuntime": gate_map["lua-object-registry-runtime"],
@@ -3616,6 +4215,15 @@ def build_report(log_summaries, validation_summaries, anchor_coverages=None, inc
             "luaObjectOuterChainIdentities": gate_map["lua-object-outer-chain-identities"],
             "luaObjectApi": gate_map["lua-object-api"],
             "luaFunctionIterationRuntime": gate_map["lua-function-iteration-runtime"],
+            "luaStaticConstructObjectNativeExecutorState": gate_map[
+                "lua-static-construct-object-native-executor-state"
+            ],
+            "luaStaticConstructObjectNativeExecutorReady": gate_map[
+                "lua-static-construct-object-native-executor-ready"
+            ],
+            "luaStaticConstructObjectNativeInvoke": gate_map[
+                "lua-static-construct-object-native-invoke"
+            ],
             "ueReflectionPropertyDescriptorsRuntime": gate_map["ue-reflection-property-descriptors-runtime"],
             "ueReflectionPropertyValuesRuntime": gate_map["ue-reflection-property-values-runtime"],
             "luaReflectionForEachPropertyRuntime": gate_map["lua-reflection-for-each-property-runtime"],
@@ -3625,6 +4233,7 @@ def build_report(log_summaries, validation_summaries, anchor_coverages=None, inc
             "luaReflectionLiveDescriptorValuesRuntime": gate_map["lua-reflection-live-descriptor-values-runtime"],
             "ueProcessEventHookRuntimeTarget": gate_map["ue-process-event-hook-runtime-target"],
             "ueProcessEventLiveHookRuntimeTarget": gate_map["ue-process-event-live-hook-runtime-target"],
+            "ueProcessEventActiveValidation": gate_map["ue-process-event-active-validation"],
             "ueProcessEventLiveLuaDispatch": gate_map["ue-process-event-live-lua-dispatch"],
             "ueProcessEventLiveFunctionPath": gate_map["ue-process-event-live-function-path"],
             "ueProcessEventLiveRuntimeContext": gate_map["ue-process-event-live-runtime-context"],
@@ -3654,16 +4263,54 @@ def build_report(log_summaries, validation_summaries, anchor_coverages=None, inc
             "ueProcessEventLuaBoolParamAccessors": gate_map["ue-process-event-lua-bool-param-accessors"],
             "ueProcessEventLuaHookRouting": gate_map["ue-process-event-lua-hook-routing"],
             "ueProcessEventLuaHookAliasRouting": gate_map["ue-process-event-lua-hook-alias-routing"],
+            "luaProcessEventNativeInvoke": gate_map["lua-process-event-native-invoke"],
+            "luaProcessEventNativeInvokeDescriptorPreflight": gate_map[
+                "lua-process-event-native-invoke-descriptor-preflight"
+            ],
+            "luaProcessEventNativeExecutorState": gate_map[
+                "lua-process-event-native-executor-state"
+            ],
+            "luaProcessEventNativeInvokeNonSelfTestGate": gate_map[
+                "lua-process-event-native-invoke-non-self-test-gate"
+            ],
+            "luaProcessEventNativeInvokeNonSelfTestInvoked": gate_map[
+                "lua-process-event-native-invoke-non-self-test-invoked"
+            ],
             "ueCallFunctionHookRuntimeTarget": gate_map["ue-call-function-hook-runtime-target"],
             "ueCallFunctionLiveHookRuntimeTarget": gate_map["ue-call-function-live-hook-runtime-target"],
+            "ueCallFunctionActiveValidation": gate_map["ue-call-function-active-validation"],
             "ueCallFunctionLiveLuaDispatch": gate_map["ue-call-function-live-lua-dispatch"],
+            "luaCallFunctionNativeInvoke": gate_map["lua-call-function-native-invoke"],
+            "luaCallFunctionNativeInvokePreflight": gate_map[
+                "lua-call-function-native-invoke-preflight"
+            ],
+            "luaCallFunctionNativeExecutorState": gate_map[
+                "lua-call-function-native-executor-state"
+            ],
+            "luaCallFunctionNativeInvokeNonSelfTestGate": gate_map[
+                "lua-call-function-native-invoke-non-self-test-gate"
+            ],
+            "luaCallFunctionNativeInvokeNonSelfTestInvoked": gate_map[
+                "lua-call-function-native-invoke-non-self-test-invoked"
+            ],
             "luaLoadAssetPackageCrashGuard": gate_map["lua-load-asset-package-crash-guard"],
             "luaLoadAssetPackageGuardedCall": gate_map["lua-load-asset-package-guarded-call"],
             "luaLoadAssetPackageReturnValidation": gate_map["lua-load-asset-package-return-validation"],
             "luaLoadAssetPackageNativeCallAdapter": gate_map["lua-load-asset-package-native-call-adapter"],
             "luaLoadAssetPackageInvocationDescriptor": gate_map["lua-load-asset-package-invocation-descriptor"],
             "luaLoadAssetPackageNativeExecutor": gate_map["lua-load-asset-package-native-executor"],
+            "luaLoadAssetPackageNativeInvocation": gate_map["lua-load-asset-package-native-invocation"],
             "luaLoadAssetPackage": gate_map["lua-load-asset-package"],
+            "luaLoadClassPackageAbiState": gate_map["lua-load-class-package-abi-state"],
+            "luaLoadClassPackageCallFrameVerification": gate_map[
+                "lua-load-class-package-call-frame-verification"
+            ],
+            "luaLoadClassPackageNativeExecutor": gate_map[
+                "lua-load-class-package-native-executor"
+            ],
+            "luaLoadClassPackageNativeInvocation": gate_map[
+                "lua-load-class-package-native-invocation"
+            ],
         }
     )
     ready_ue4ss_lua_api_complete = (
@@ -3675,6 +4322,11 @@ def build_report(log_summaries, validation_summaries, anchor_coverages=None, inc
         and gate_map["lua-load-asset-package-native-call-adapter"]
         and gate_map["lua-load-asset-package-invocation-descriptor"]
         and gate_map["lua-load-asset-package-native-executor"]
+        and gate_map["lua-load-asset-package-native-invocation"]
+        and gate_map["lua-load-class-package-abi-state"]
+        and gate_map["lua-load-class-package-call-frame-verification"]
+        and gate_map["lua-load-class-package-native-executor"]
+        and gate_map["lua-load-class-package-native-invocation"]
         and live_target_image_contract["ready"]
     )
 
@@ -3685,6 +4337,7 @@ def build_report(log_summaries, validation_summaries, anchor_coverages=None, inc
         "pids": merged["pids"],
         "loadedExes": merged["loadedExes"],
         "modules": merged["modules"],
+        "targetImageSubstrings": target_image_substrings,
         "autoTargetPidFilters": merged["autoTargetPidFilters"],
         "gates": gates,
         "signatures": signatures,
@@ -3704,6 +4357,7 @@ def build_report(log_summaries, validation_summaries, anchor_coverages=None, inc
             "ueFunctionPaths": merged["ueFunctionPaths"][:16],
             "ue4ssFunctionPaths": merged["ue4ssFunctionPaths"][:16],
             "ueFunctionFlagPaths": merged["ueFunctionFlagPaths"][:16],
+            "activeValidationCandidates": merged["activeValidationCandidates"][:16],
         },
         "ready": {
             "objectDiscovery": ready_object_discovery,
@@ -3713,6 +4367,8 @@ def build_report(log_summaries, validation_summaries, anchor_coverages=None, inc
             "targetObjectDiscovery": ready_target_object_discovery,
             "objectDiscoveryCoverage": object_discovery_coverage["readyForObjectDiscovery"],
             "findObjectSemantics": object_discovery_coverage["readyForFindObjectSemantics"],
+            "signatureManifestExact": signatures["exactOnly"],
+            "signatureManifestPromotable": signatures["allPromotable"],
             "hooks": ready_hooks,
             "targetHooks": ready_target_hooks,
             "reflection": ready_reflection,
@@ -3760,22 +4416,61 @@ def build_report(log_summaries, validation_summaries, anchor_coverages=None, inc
             "luaLoadAssetPackageNativeCallAdapter": gate_map["lua-load-asset-package-native-call-adapter"],
             "luaLoadAssetPackageInvocationDescriptor": gate_map["lua-load-asset-package-invocation-descriptor"],
             "luaLoadAssetPackageNativeExecutor": gate_map["lua-load-asset-package-native-executor"],
+            "luaLoadAssetPackageNativeInvocation": gate_map["lua-load-asset-package-native-invocation"],
             "luaLoadAssetPackagePreflight": gate_map["lua-load-asset-package-preflight"],
             "luaLoadAssetPackage": gate_map["lua-load-asset-package"],
+            "luaLoadClassPackageAbiState": gate_map["lua-load-class-package-abi-state"],
+            "luaLoadClassPackageCallFrameVerification": gate_map[
+                "lua-load-class-package-call-frame-verification"
+            ],
+            "luaLoadClassPackageNativeExecutor": gate_map[
+                "lua-load-class-package-native-executor"
+            ],
+            "luaLoadClassPackageNativeInvocation": gate_map[
+                "lua-load-class-package-native-invocation"
+            ],
             "luaFunctionIteration": gate_map["lua-function-iteration"],
             "luaFunctionIterationRuntime": gate_map["lua-function-iteration-runtime"],
+            "luaStaticConstructObjectNativeExecutorState": gate_map[
+                "lua-static-construct-object-native-executor-state"
+            ],
+            "luaStaticConstructObjectNativeExecutorReady": gate_map[
+                "lua-static-construct-object-native-executor-ready"
+            ],
+            "luaStaticConstructObjectNativeInvoke": gate_map[
+                "lua-static-construct-object-native-invoke"
+            ],
             "luaProcessConsoleExecHooks": gate_map["lua-process-console-exec-hooks"],
             "luaLocalPlayerExecHooks": gate_map["lua-local-player-exec-hooks"],
             "luaCallFunctionHooks": gate_map["lua-call-function-hooks"],
             "luaCallFunctionStructuredArgs": gate_map["lua-call-function-structured-args"],
+            "luaCallFunctionNativeInvoke": gate_map["lua-call-function-native-invoke"],
+            "luaCallFunctionNativeInvokePreflight": gate_map[
+                "lua-call-function-native-invoke-preflight"
+            ],
+            "luaCallFunctionNativeExecutorState": gate_map[
+                "lua-call-function-native-executor-state"
+            ],
+            "luaCallFunctionNativeInvokeNonSelfTestGate": gate_map[
+                "lua-call-function-native-invoke-non-self-test-gate"
+            ],
+            "luaCallFunctionNativeInvokeNonSelfTestInvoked": gate_map[
+                "lua-call-function-native-invoke-non-self-test-invoked"
+            ],
             "luaProcessEventCompat": gate_map["lua-process-event-compat"],
             "luaProcessEventBridgeState": gate_map["lua-process-event-bridge-state"],
             "luaProcessEventNativeInvoke": gate_map["lua-process-event-native-invoke"],
             "luaProcessEventNativeInvokeDescriptorPreflight": gate_map[
                 "lua-process-event-native-invoke-descriptor-preflight"
             ],
+            "luaProcessEventNativeExecutorState": gate_map[
+                "lua-process-event-native-executor-state"
+            ],
             "luaProcessEventNativeInvokeNonSelfTestGate": gate_map[
                 "lua-process-event-native-invoke-non-self-test-gate"
+            ],
+            "luaProcessEventNativeInvokeNonSelfTestInvoked": gate_map[
+                "lua-process-event-native-invoke-non-self-test-invoked"
             ],
             "luaProcessEventParamsBuffer": gate_map["lua-process-event-params-buffer"],
             "luaLifecycleHooks": gate_map["lua-lifecycle-hooks"],
@@ -3817,9 +4512,11 @@ def build_report(log_summaries, validation_summaries, anchor_coverages=None, inc
             "ueCallFunctionHookRuntimeTarget": gate_map["ue-call-function-hook-runtime-target"],
             "ueCallFunctionLiveHook": gate_map["ue-call-function-live-hook"],
             "ueCallFunctionLiveHookRuntimeTarget": gate_map["ue-call-function-live-hook-runtime-target"],
+            "ueCallFunctionActiveValidation": gate_map["ue-call-function-active-validation"],
             "ueCallFunctionLiveLuaDispatch": gate_map["ue-call-function-live-lua-dispatch"],
             "ueProcessEventLiveHook": gate_map["ue-process-event-live-hook"],
             "ueProcessEventLiveHookRuntimeTarget": gate_map["ue-process-event-live-hook-runtime-target"],
+            "ueProcessEventActiveValidation": gate_map["ue-process-event-active-validation"],
             "ueProcessEventDispatch": gate_map["ue-process-event-dispatch-self-test"],
             "ueProcessEventLiveLuaDispatch": gate_map["ue-process-event-live-lua-dispatch"],
             "ueProcessEventLiveContext": gate_map["ue-process-event-live-context"],
@@ -3872,9 +4569,9 @@ def build_report(log_summaries, validation_summaries, anchor_coverages=None, inc
             "targetWorld": gate_map["ue-target-world"],
             "targetDispatch": gate_map["ue-target-dispatch"],
             "targetReflectionSurface": gate_map["ue-target-reflection-surface"],
-            "anchorCoverageObjectDiscovery": anchor_coverage["readyForObjectDiscovery"],
-            "anchorCoverageHookPlanning": anchor_coverage["readyForHookPlanning"],
-            "anchorCoveragePackageLoading": anchor_coverage["readyForPackageLoading"],
+            "anchorCoverageObjectDiscovery": anchor_coverage["readyForTargetObjectDiscovery"],
+            "anchorCoverageHookPlanning": anchor_coverage["readyForTargetHookPlanning"],
+            "anchorCoveragePackageLoading": anchor_coverage["readyForTargetPackageLoading"],
         },
         "nextSteps": next_steps,
     }
@@ -3920,6 +4617,23 @@ def markdown(report):
     lines.append(f"- Ready Lua ULocalPlayerExec hooks: `{str(report['ready']['luaLocalPlayerExecHooks']).lower()}`")
     lines.append(f"- Ready Lua CallFunctionByNameWithArguments hooks: `{str(report['ready']['luaCallFunctionHooks']).lower()}`")
     lines.append(f"- Ready Lua CallFunctionByNameWithArguments structured args: `{str(report['ready']['luaCallFunctionStructuredArgs']).lower()}`")
+    lines.append(f"- Ready Lua native CallFunction invoke: `{str(report['ready']['luaCallFunctionNativeInvoke']).lower()}`")
+    lines.append(
+        "- Ready Lua native CallFunction preflight: "
+        f"`{str(report['ready']['luaCallFunctionNativeInvokePreflight']).lower()}`"
+    )
+    lines.append(
+        "- Ready Lua native CallFunction executor state: "
+        f"`{str(report['ready']['luaCallFunctionNativeExecutorState']).lower()}`"
+    )
+    lines.append(
+        "- Ready Lua native CallFunction non-self-test gate: "
+        f"`{str(report['ready']['luaCallFunctionNativeInvokeNonSelfTestGate']).lower()}`"
+    )
+    lines.append(
+        "- Ready Lua native CallFunction non-self-test invoked: "
+        f"`{str(report['ready']['luaCallFunctionNativeInvokeNonSelfTestInvoked']).lower()}`"
+    )
     lines.append(f"- Ready Lua ProcessEvent compatibility: `{str(report['ready']['luaProcessEventCompat']).lower()}`")
     lines.append(f"- Ready Lua ProcessEvent bridge state: `{str(report['ready']['luaProcessEventBridgeState']).lower()}`")
     lines.append(f"- Ready Lua native ProcessEvent invoke: `{str(report['ready']['luaProcessEventNativeInvoke']).lower()}`")
@@ -3928,8 +4642,16 @@ def markdown(report):
         f"`{str(report['ready']['luaProcessEventNativeInvokeDescriptorPreflight']).lower()}`"
     )
     lines.append(
+        "- Ready Lua native ProcessEvent executor state: "
+        f"`{str(report['ready']['luaProcessEventNativeExecutorState']).lower()}`"
+    )
+    lines.append(
         "- Ready Lua native ProcessEvent non-self-test gate: "
         f"`{str(report['ready']['luaProcessEventNativeInvokeNonSelfTestGate']).lower()}`"
+    )
+    lines.append(
+        "- Ready Lua native ProcessEvent non-self-test invoked: "
+        f"`{str(report['ready']['luaProcessEventNativeInvokeNonSelfTestInvoked']).lower()}`"
     )
     lines.append(f"- Ready Lua ProcessEvent params buffer: `{str(report['ready']['luaProcessEventParamsBuffer']).lower()}`")
     lines.append(f"- Ready Lua lifecycle hooks: `{str(report['ready']['luaLifecycleHooks']).lower()}`")
@@ -3939,6 +4661,18 @@ def markdown(report):
     lines.append(f"- Ready Lua InitGameState hooks: `{str(report['ready']['luaInitGameStateHooks']).lower()}`")
     lines.append(f"- Ready Lua object notification: `{str(report['ready']['luaObjectNotify']).lower()}`")
     lines.append(f"- Ready Lua synthetic outer: `{str(report['ready']['luaSyntheticOuter']).lower()}`")
+    lines.append(
+        "- Ready Lua StaticConstructObject native executor state: "
+        f"`{str(report['ready']['luaStaticConstructObjectNativeExecutorState']).lower()}`"
+    )
+    lines.append(
+        "- Ready Lua StaticConstructObject native executor target: "
+        f"`{str(report['ready']['luaStaticConstructObjectNativeExecutorReady']).lower()}`"
+    )
+    lines.append(
+        "- Ready Lua StaticConstructObject native invocation: "
+        f"`{str(report['ready']['luaStaticConstructObjectNativeInvoke']).lower()}`"
+    )
     lines.append(f"- Ready Lua world context: `{str(report['ready']['luaWorldContext']).lower()}`")
     lines.append(f"- Ready Lua global runtime helpers: `{str(report['ready']['luaGlobalRuntimeHelpers']).lower()}`")
     lines.append(f"- Ready Lua class default object: `{str(report['ready']['luaClassDefaultObject']).lower()}`")
@@ -3969,9 +4703,11 @@ def markdown(report):
     lines.append(f"- Ready UE CallFunctionByNameWithArguments hook runtime target: `{str(report['ready']['ueCallFunctionHookRuntimeTarget']).lower()}`")
     lines.append(f"- Ready UE CallFunctionByNameWithArguments live hook: `{str(report['ready']['ueCallFunctionLiveHook']).lower()}`")
     lines.append(f"- Ready UE CallFunctionByNameWithArguments live hook runtime target: `{str(report['ready']['ueCallFunctionLiveHookRuntimeTarget']).lower()}`")
+    lines.append(f"- Ready UE CallFunctionByNameWithArguments active validation: `{str(report['ready']['ueCallFunctionActiveValidation']).lower()}`")
     lines.append(f"- Ready UE CallFunctionByNameWithArguments live Lua dispatch: `{str(report['ready']['ueCallFunctionLiveLuaDispatch']).lower()}`")
     lines.append(f"- Ready UE ProcessEvent live hook: `{str(report['ready']['ueProcessEventLiveHook']).lower()}`")
     lines.append(f"- Ready UE ProcessEvent live hook runtime target: `{str(report['ready']['ueProcessEventLiveHookRuntimeTarget']).lower()}`")
+    lines.append(f"- Ready UE ProcessEvent active validation: `{str(report['ready']['ueProcessEventActiveValidation']).lower()}`")
     lines.append(f"- Ready UE ProcessEvent dispatch: `{str(report['ready']['ueProcessEventDispatch']).lower()}`")
     lines.append(f"- Ready UE ProcessEvent live Lua dispatch: `{str(report['ready']['ueProcessEventLiveLuaDispatch']).lower()}`")
     lines.append(f"- Ready UE ProcessEvent live context: `{str(report['ready']['ueProcessEventLiveContext']).lower()}`")
@@ -4108,6 +4844,17 @@ def markdown(report):
     return "\n".join(lines)
 
 
+def validate_runtime_log_path(path):
+    try:
+        stat = path.stat()
+    except OSError as exc:
+        raise ValueError(f"runtime log is not readable: {path}: {exc}") from exc
+    if not path.is_file():
+        raise ValueError(f"runtime log must be a regular file: {path}")
+    if stat.st_size <= 0:
+        raise ValueError(f"runtime log must not be empty: {path}")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Gate UE4SS-port readiness from loader logs and signature validations.")
     parser.add_argument("--client-log", type=Path, action="append", default=[], help="client loader/probe log")
@@ -4124,12 +4871,20 @@ def main(argv=None):
     log_paths = args.log + args.client_log + args.server_log
     if not log_paths:
         parser.error("provide --log, --client-log, or --server-log")
+    for path in log_paths:
+        try:
+            validate_runtime_log_path(path)
+        except ValueError as exc:
+            parser.error(str(exc))
     log_summaries = [
         summarize_log(path, args.loader, args.pid, args.exe_substring)
         for path in log_paths
     ]
     validations = [load_json(path) for path in args.signature_validation_json]
-    anchor_coverages = [load_json(path) for path in args.anchor_coverage_json]
+    anchor_coverages = [
+        normalize_anchor_coverage_sidecar(load_json(path))
+        for path in args.anchor_coverage_json
+    ]
     report = build_report(log_summaries, validations, anchor_coverages)
     if args.format == "json":
         json.dump(report, sys.stdout, indent=2, sort_keys=True)

@@ -40,8 +40,8 @@
 #define MAX_LUA_NOTIFY_ON_NEW_OBJECT_REGISTRATIONS 32
 #define MAX_LUA_SCHEDULED_CALLBACKS 32
 #define MAX_LUA_CONSOLE_COMMAND_REGISTRATIONS 32
-#define MAX_LUA_OBJECT_HANDLES 32
-#define MAX_LUA_CLASS_METADATA 32
+#define MAX_LUA_OBJECT_HANDLES 16384
+#define MAX_LUA_CLASS_METADATA 4096
 #define MAX_LUA_SCRIPT_PATH 4096
 #define MAX_LUA_SCRIPT_NAME 128
 #define MAX_LUA_OBJECT_PATH 256
@@ -52,7 +52,7 @@
 #define DEFAULT_UE_OBJECT_ITEM_SIZE 24
 #define DEFAULT_UE_OBJECT_CHUNK_SIZE 65536
 #define DEFAULT_UE_OBJECT_ARRAY_MAX_OBJECTS 128
-#define MAX_UE_OBJECT_ARRAY_SCAN_OBJECTS 4096
+#define MAX_UE_OBJECT_ARRAY_SCAN_OBJECTS 65536
 #define DEFAULT_UE_FNAME_BLOCKS_OFFSET 0x10
 #define DEFAULT_UE_FNAME_STRIDE 2
 #define DEFAULT_UE_FNAME_MAX_LENGTH 128
@@ -73,11 +73,13 @@
 #define DEFAULT_UE_REFLECTION_VALUE_MAX_BYTES 16
 #define DEFAULT_UE_REFLECTION_CONTAINER_CHILD_SCAN_START 0x48
 #define DEFAULT_UE_REFLECTION_CONTAINER_CHILD_SCAN_END 0xa0
+#define DEFAULT_UE_FUNCTION_PARAM_ROOT_SCAN_START 0x30
+#define DEFAULT_UE_FUNCTION_PARAM_ROOT_SCAN_END 0x120
 #define MAX_UE_REFLECTION_SLOT_OFFSET 0x400
 #define MAX_UE_REFLECTION_FIELDS 256
 #define MAX_UE_REFLECTION_VALUE_BYTES 64
 #define MAX_UE_REFLECTION_PROPERTY_CANDIDATES 256
-#define MAX_UE_FUNCTION_PARAM_DESCRIPTORS 256
+#define MAX_UE_FUNCTION_PARAM_DESCRIPTORS 4096
 #define MAX_PROCESS_EVENT_LIVE_PARAM_LOGS 16
 #define UE_PROPERTY_FLAG_PARM 0x80ULL
 #define UE_PROPERTY_FLAG_OUT_PARM 0x100ULL
@@ -243,6 +245,7 @@ typedef int (*LuaTypeFn)(LuaState *, int);
 typedef void (*LuaPushValueFn)(LuaState *, int);
 typedef int (*LuaLRefFn)(LuaState *, int);
 typedef void (*LuaRawGetIFn)(LuaState *, int, long long);
+typedef void (*LuaRawSetIFn)(LuaState *, int, long long);
 typedef void (*LuaLUnrefFn)(LuaState *, int, int);
 typedef void (*LuaSetTopFn)(LuaState *, int);
 typedef void (*LuaGetFieldFn)(LuaState *, int, const char *);
@@ -285,6 +288,7 @@ typedef struct {
   LuaPushValueFn push_value;
   LuaLRefFn ref;
   LuaRawGetIFn rawgeti;
+  LuaRawSetIFn rawseti;
   LuaLUnrefFn unref;
   LuaSetTopFn set_top;
   LuaGetFieldFn get_field;
@@ -439,6 +443,7 @@ typedef struct {
 typedef struct {
   char filter[MAX_LUA_OBJECT_PATH];
   int ref;
+  int id;
   int calls;
   long long result;
   int is_number;
@@ -649,8 +654,8 @@ static const size_t process_event_self_test_param_descriptor_count =
   sizeof(process_event_self_test_param_descriptors) / sizeof(process_event_self_test_param_descriptors[0]);
 
 static int32_t process_event_self_test_array_values[4];
-static int32_t process_event_self_test_set_values[2];
-static ProcessEventSelfTestMapPair process_event_self_test_map_pairs[2];
+static int32_t process_event_self_test_set_values[4];
+static ProcessEventSelfTestMapPair process_event_self_test_map_pairs[4];
 typedef struct {
   int marker;
 } ServerSelfTestObject;
@@ -688,6 +693,8 @@ static int lua_call_function_post_hook_registration_count;
 static int lua_call_function_table_arg_calls;
 static int lua_call_function_arg_field_hits;
 static int lua_call_function_arg_struct_hits;
+static int lua_call_function_native_invoke_calls;
+static int lua_call_function_native_invoke_hits;
 static int lua_process_event_compat_calls;
 static int lua_process_event_compat_hits;
 static int lua_process_event_bridge_state_calls;
@@ -748,6 +755,9 @@ static int lua_is_a_calls;
 static int lua_is_a_hits;
 static int lua_load_asset_calls;
 static int lua_load_asset_hits;
+static int lua_load_asset_package_calls;
+static int lua_load_asset_package_hits;
+static int lua_load_asset_package_executor_hits;
 static int lua_load_asset_package_preflight_calls;
 static int lua_load_asset_package_anchor_hits;
 static int lua_load_asset_package_gate_hits;
@@ -758,17 +768,22 @@ static int lua_load_asset_package_native_invoke_calls;
 static int lua_load_asset_package_native_gate_hits;
 static int lua_load_asset_backend_package_available;
 static int lua_load_asset_backend_static_load_object_resolved;
+static int lua_load_asset_backend_static_load_class_resolved;
 static int lua_load_asset_backend_load_object_resolved;
 static int lua_load_asset_backend_load_package_resolved;
 static int lua_load_asset_backend_resolve_name_resolved;
 static int lua_load_asset_backend_package_target_image;
 static uintptr_t lua_load_asset_backend_static_load_object_address;
+static uintptr_t lua_load_asset_backend_static_load_class_address;
 static uintptr_t lua_load_asset_backend_load_object_address;
 static uintptr_t lua_load_asset_backend_load_package_address;
 static uintptr_t lua_load_asset_backend_resolve_name_address;
 static int lua_static_construct_object_calls;
 static int lua_static_construct_object_hits;
 static int lua_static_construct_object_outer_hits;
+static int lua_static_construct_object_native_executor_state_calls;
+static int lua_static_construct_object_native_invoke_calls;
+static int lua_static_construct_object_native_gate_hits;
 static int lua_get_world_calls;
 static int lua_get_world_hits;
 static int lua_get_cdo_calls;
@@ -904,6 +919,9 @@ static LuaObjectHandle lua_object_handles[MAX_LUA_OBJECT_HANDLES];
 static size_t lua_object_handle_count;
 static LuaObjectHandle ue_candidate_object_handles[MAX_LUA_OBJECT_HANDLES];
 static size_t ue_candidate_object_handle_count;
+static uintptr_t process_event_active_validation_resolved_object;
+static char process_event_active_validation_resolved_object_path[MAX_LUA_OBJECT_PATH];
+static char process_event_active_validation_resolved_object_name[MAX_LUA_OBJECT_NAME];
 static LuaClassMetadata lua_class_metadata[MAX_LUA_CLASS_METADATA];
 static size_t lua_class_metadata_count;
 static UeReflectionPropertyCandidate ue_reflection_property_candidates[MAX_UE_REFLECTION_PROPERTY_CANDIDATES];
@@ -925,6 +943,7 @@ static void set_ue_function_param_container_child_descriptor(
   uint64_t child_property_flags,
   int32_t child_offset_internal
 );
+static void run_process_event_active_validation(const char *phase);
 static uintptr_t ue_self_test_target[4];
 static uintptr_t ue_self_test_anchor;
 static UeSelfTestFNamePool ue_self_test_fname_pool;
@@ -966,6 +985,7 @@ static int process_event_live_hook_installed;
 static int call_function_live_hook_installed;
 static int process_event_live_hook_calls;
 static int process_event_live_hook_original_calls;
+static int process_event_active_validation_suppress_original;
 static int call_function_live_hook_calls;
 static int call_function_live_hook_original_calls;
 static int call_function_live_hook_last_call;
@@ -1593,6 +1613,7 @@ static void append_preset(const char *preset, char needles[][MAX_NEEDLE_LEN], si
 	      "ProcessConsoleExec",
 	      "ULocalPlayerExec",
 	      "StaticLoadObject",
+	      "StaticLoadClass",
 	      "LoadObject",
 	      "LoadPackage",
 	      "ResolveName",
@@ -1898,6 +1919,43 @@ static uintptr_t target_image_base_for_ue_candidates(const Mapping *mappings, si
   return 0;
 }
 
+static uintptr_t resolve_target_image_offset_env(const char *env_name) {
+  unsigned long long offset = env_address_auto(env_name, 0);
+  if (!offset) {
+    return 0;
+  }
+  Mapping *mappings = calloc(MAX_MAPPINGS, sizeof(*mappings));
+  if (!mappings) {
+    append_log("event=ue-code-target name=%s status=allocation-failed imageOffset=0x%llx", env_name, offset);
+    return 0;
+  }
+  size_t mapping_count = read_mappings(mappings, MAX_MAPPINGS);
+  uintptr_t image_base = target_image_base_for_ue_candidates(mappings, mapping_count);
+  if (!image_base) {
+    append_log("event=ue-code-target name=%s status=base-missing imageOffset=0x%llx", env_name, offset);
+    free(mappings);
+    return 0;
+  }
+  uintptr_t target = image_base + (uintptr_t)offset;
+  const Mapping *mapping = mapping_for_address(mappings, mapping_count, target);
+  if (!mapping || !mapping_is_target_image(mapping)) {
+    append_log("event=ue-code-target name=%s status=target-unmapped target=0x%lx imageOffset=0x%llx", env_name, (unsigned long)target, offset);
+    free(mappings);
+    return 0;
+  }
+  append_log(
+    "event=ue-code-target name=%s status=resolved target=0x%lx imageOffset=0x%llx fileOffset=0x%lx perms=%s map=%s",
+    env_name,
+    (unsigned long)target,
+    offset,
+    (unsigned long)(mapping->offset + (target - mapping->start)),
+    mapping->perms,
+    mapping->path
+  );
+  free(mappings);
+  return target;
+}
+
 static const char *ue_anchor_group_for_name(const char *name) {
   if (!name) {
     return "unknown";
@@ -1906,11 +1964,13 @@ static const char *ue_anchor_group_for_name(const char *name) {
     return "self-test";
   }
   if (strcmp(name, "FNamePool") == 0 || strcmp(name, "RuntimeFNamePool") == 0 ||
+      strncmp(name, "RuntimeFNamePoolCandidate", 25) == 0 ||
       strcmp(name, "NamePoolData") == 0 ||
       strcmp(name, "GName") == 0 || strcmp(name, "GNames") == 0) {
     return "names";
   }
   if (strcmp(name, "GUObjectArray") == 0 || strcmp(name, "RuntimeGUObjectArray") == 0 ||
+      strncmp(name, "RuntimeGUObjectArrayCandidate", 29) == 0 ||
       strcmp(name, "GObjectArray") == 0 ||
       strcmp(name, "GObjects") == 0 || strcmp(name, "FUObjectArray") == 0) {
     return "objects";
@@ -1922,7 +1982,8 @@ static const char *ue_anchor_group_for_name(const char *name) {
       strcmp(name, "CallFunctionByNameWithArguments") == 0 || strcmp(name, "CallFunctionByName") == 0) {
     return "dispatch";
   }
-  if (strcmp(name, "StaticLoadObject") == 0 || strcmp(name, "LoadObject") == 0 ||
+  if (strcmp(name, "StaticLoadObject") == 0 || strcmp(name, "StaticLoadClass") == 0 ||
+      strcmp(name, "LoadObject") == 0 ||
       strcmp(name, "LoadPackage") == 0 || strcmp(name, "ResolveName") == 0 ||
       strcmp(name, "LoadAsset") == 0 || strcmp(name, "LoadClass") == 0) {
     return "package";
@@ -2671,9 +2732,28 @@ typedef struct {
   size_t function_flags_offset;
   size_t container_child_scan_start;
   size_t container_child_scan_end;
+  size_t function_param_root_scan_start;
+  size_t function_param_root_scan_end;
   size_t max_fields;
   size_t value_max_bytes;
 } UeReflectionOptions;
+
+typedef struct {
+  const char *layout;
+  size_t array_dim_offset;
+  size_t element_size_offset;
+  size_t property_flags_offset;
+  size_t offset_internal_offset;
+  int32_t array_dim;
+  int32_t element_size;
+  uint64_t property_flags;
+  int32_t offset_internal;
+  int array_dim_readable;
+  int element_size_readable;
+  int property_flags_readable;
+  int offset_internal_readable;
+  int sane;
+} UePropertyDescriptorRead;
 
 static int add_ue_candidate_object_handle(const char *path, const char *name, const char *class_name, uintptr_t address);
 static void update_ue_candidate_object_metadata(uintptr_t address, uintptr_t class_address, uintptr_t outer_address, uintptr_t super_address);
@@ -2772,8 +2852,10 @@ static UeObjectArrayOptions ue_object_array_options(void) {
   if (options.chunk_size == 0 || options.chunk_size > DEFAULT_UE_OBJECT_CHUNK_SIZE) {
     options.chunk_size = DEFAULT_UE_OBJECT_CHUNK_SIZE;
   }
-  if (options.max_objects == 0 || options.max_objects > MAX_UE_OBJECT_ARRAY_SCAN_OBJECTS) {
+  if (options.max_objects == 0) {
     options.max_objects = DEFAULT_UE_OBJECT_ARRAY_MAX_OBJECTS;
+  } else if (options.max_objects > MAX_UE_OBJECT_ARRAY_SCAN_OBJECTS) {
+    options.max_objects = MAX_UE_OBJECT_ARRAY_SCAN_OBJECTS;
   }
   return options;
 }
@@ -2844,6 +2926,19 @@ static UeReflectionOptions ue_reflection_options(void) {
       options.container_child_scan_end - options.container_child_scan_start > 0x100) {
     options.container_child_scan_start = DEFAULT_UE_REFLECTION_CONTAINER_CHILD_SCAN_START;
     options.container_child_scan_end = DEFAULT_UE_REFLECTION_CONTAINER_CHILD_SCAN_END;
+  }
+  options.function_param_root_scan_start = sane_reflection_offset(
+    env_size_auto("DUNE_PROBE_LOADER_UE_FUNCTION_PARAM_ROOT_SCAN_START", DEFAULT_UE_FUNCTION_PARAM_ROOT_SCAN_START),
+    DEFAULT_UE_FUNCTION_PARAM_ROOT_SCAN_START
+  );
+  options.function_param_root_scan_end = sane_reflection_offset(
+    env_size_auto("DUNE_PROBE_LOADER_UE_FUNCTION_PARAM_ROOT_SCAN_END", DEFAULT_UE_FUNCTION_PARAM_ROOT_SCAN_END),
+    DEFAULT_UE_FUNCTION_PARAM_ROOT_SCAN_END
+  );
+  if (options.function_param_root_scan_end <= options.function_param_root_scan_start ||
+      options.function_param_root_scan_end - options.function_param_root_scan_start > 0x200) {
+    options.function_param_root_scan_start = DEFAULT_UE_FUNCTION_PARAM_ROOT_SCAN_START;
+    options.function_param_root_scan_end = DEFAULT_UE_FUNCTION_PARAM_ROOT_SCAN_END;
   }
   options.max_fields = env_size("DUNE_PROBE_LOADER_UE_REFLECTION_MAX_FIELDS", DEFAULT_UE_REFLECTION_MAX_FIELDS);
   if (options.max_fields == 0 || options.max_fields > MAX_UE_REFLECTION_FIELDS) {
@@ -2936,6 +3031,39 @@ static int is_fname_pool_anchor_name(const char *name) {
          contains(name, "GName") ||
          contains(name, "NamePool") ||
          contains(name, "SelfTestFNamePool");
+}
+
+static int ue_fname_allow_missing_none(void) {
+  return env_bool("DUNE_PROBE_LOADER_UE_FNAME_ALLOW_MISSING_NONE", 0);
+}
+
+static int ue_object_array_class_reflection_probe_enabled(void) {
+  return env_bool("DUNE_PROBE_LOADER_UE_OBJECT_ARRAY_CLASS_REFLECTION_PROBE", 0);
+}
+
+static size_t ue_object_array_class_reflection_max(void) {
+  int value = env_int("DUNE_PROBE_LOADER_UE_OBJECT_ARRAY_CLASS_REFLECTION_MAX", 32);
+  return value > 0 ? (size_t)value : 0U;
+}
+
+static int ue_process_event_vtable_scan_enabled(void) {
+  return env_bool("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_VTABLE_SCAN", 0);
+}
+
+static size_t ue_process_event_vtable_scan_slots(void) {
+  int value = env_int("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_VTABLE_SCAN_SLOTS", 96);
+  if (value <= 0) {
+    return 0U;
+  }
+  if (value > 512) {
+    return 512U;
+  }
+  return (size_t)value;
+}
+
+static size_t ue_process_event_vtable_scan_max_objects(void) {
+  int value = env_int("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_VTABLE_SCAN_MAX_OBJECTS", 0);
+  return value > 0 ? (size_t)value : 0U;
 }
 
 typedef struct {
@@ -3081,7 +3209,14 @@ static int fname_pool_candidate_metrics(
       }
     }
   }
-  return metrics ? (metrics->allocator_state_plausible && metrics->first_block_entry_none && metrics->plausible_entries >= 4) : (plausible_entries >= 4);
+  int strict_gate = metrics ?
+    (metrics->allocator_state_plausible && metrics->first_block_entry_none && metrics->plausible_entries >= 4) :
+    (plausible_entries >= 4);
+  int relaxed_gate = metrics ?
+    (ue_fname_allow_missing_none() && metrics->allocator_state_plausible &&
+     metrics->first_block_entry_plausible && metrics->plausible_entries >= 32) :
+    (ue_fname_allow_missing_none() && plausible_entries >= 32);
+  return strict_gate || relaxed_gate;
 }
 
 static int fname_pool_candidate_readable_with_block(
@@ -3232,6 +3367,8 @@ static size_t collect_ue_runtime_discovered_anchors(
 
   uintptr_t first_fname_pool = 0;
   uintptr_t first_object_array = 0;
+  uintptr_t fname_pool_candidates[64];
+  uintptr_t object_array_candidates[64];
   size_t fname_hits = 0;
   size_t object_array_hits = 0;
   size_t oversized_mappings = 0;
@@ -3243,6 +3380,7 @@ static size_t collect_ue_runtime_discovered_anchors(
   size_t object_array_probes = 0;
   int include_anonymous_rw = env_bool("DUNE_PROBE_LOADER_UE_AUTO_DISCOVER_INCLUDE_ANONYMOUS_RW", 0);
   int include_private_rw = env_bool("DUNE_PROBE_LOADER_UE_AUTO_DISCOVER_INCLUDE_PRIVATE_RW", 0);
+  int promote_ambiguous_roots = env_bool("DUNE_PROBE_LOADER_UE_AUTO_DISCOVER_PROMOTE_AMBIGUOUS_ROOTS", 0);
   size_t max_rejected_fname_samples = env_size("DUNE_PROBE_LOADER_UE_AUTO_DISCOVER_MAX_REJECTED_FNAME_SAMPLES", 0);
   size_t rejected_fname_samples = 0;
   int discovery_limited = 0;
@@ -3293,6 +3431,9 @@ static size_t collect_ue_runtime_discovered_anchors(
             safe_log_value(candidate_mapping->path, safe_candidate_path, sizeof(safe_candidate_path));
           }
           ++fname_hits;
+          if (fname_hits <= max_candidates && fname_hits <= (sizeof(fname_pool_candidates) / sizeof(fname_pool_candidates[0]))) {
+            fname_pool_candidates[fname_hits - 1] = pool;
+          }
           if (fname_hits == 1) {
             first_fname_pool = pool;
           }
@@ -3411,6 +3552,9 @@ static size_t collect_ue_runtime_discovered_anchors(
             safe_log_value(candidate_mapping->path, safe_candidate_path, sizeof(safe_candidate_path));
           }
           ++object_array_hits;
+          if (object_array_hits <= max_candidates && object_array_hits <= (sizeof(object_array_candidates) / sizeof(object_array_candidates[0]))) {
+            object_array_candidates[object_array_hits - 1] = slot;
+          }
           if (object_array_hits == 1) {
             first_object_array = slot;
           }
@@ -3464,6 +3608,14 @@ static size_t collect_ue_runtime_discovered_anchors(
     anchor_count = add_runtime_discovered_anchor(
       anchors, &anchor_count, "RuntimeFNamePool", first_fname_pool, mappings, mapping_count
     ) ? anchor_count : anchor_count;
+  } else if (promote_ambiguous_roots && fname_hits > 1 && fname_hits <= max_candidates) {
+    for (size_t i = 0; i < fname_hits && i < (sizeof(fname_pool_candidates) / sizeof(fname_pool_candidates[0])); ++i) {
+      char candidate_name[64];
+      snprintf(candidate_name, sizeof(candidate_name), "RuntimeFNamePoolCandidate%lu", (unsigned long)(i + 1));
+      add_runtime_discovered_anchor(
+        anchors, &anchor_count, candidate_name, fname_pool_candidates[i], mappings, mapping_count
+      );
+    }
   } else {
     append_log(
       "event=ue-runtime-discovery name=RuntimeFNamePool status=%s hits=%lu",
@@ -3475,6 +3627,14 @@ static size_t collect_ue_runtime_discovered_anchors(
     anchor_count = add_runtime_discovered_anchor(
       anchors, &anchor_count, "RuntimeGUObjectArray", first_object_array, mappings, mapping_count
     ) ? anchor_count : anchor_count;
+  } else if (promote_ambiguous_roots && object_array_hits > 1 && object_array_hits <= max_candidates) {
+    for (size_t i = 0; i < object_array_hits && i < (sizeof(object_array_candidates) / sizeof(object_array_candidates[0])); ++i) {
+      char candidate_name[64];
+      snprintf(candidate_name, sizeof(candidate_name), "RuntimeGUObjectArrayCandidate%lu", (unsigned long)(i + 1));
+      add_runtime_discovered_anchor(
+        anchors, &anchor_count, candidate_name, object_array_candidates[i], mappings, mapping_count
+      );
+    }
   } else {
     append_log(
       "event=ue-runtime-discovery name=RuntimeGUObjectArray status=%s hits=%lu",
@@ -3584,7 +3744,7 @@ static void log_ue_fname_resolver_reject(
   } else if (!forced_reason && !metrics.allocator_state_plausible) {
     reason = "allocator-state";
   } else if (!forced_reason && !metrics.first_block_entry_none) {
-    reason = "missing-none-entry";
+    reason = ue_fname_allow_missing_none() ? "missing-none-entry-relaxed-gate-failed" : "missing-none-entry";
   } else if (!forced_reason && metrics.plausible_entries < 4) {
     reason = "low-plausible-entries";
   }
@@ -4150,7 +4310,89 @@ static void log_ue_reflection_slot(
 }
 
 static int is_ue_reflection_property_chain(const char *chain_name) {
-  return strcmp(chain_name, "childProperties") == 0 || strcmp(chain_name, "propertyLink") == 0;
+  return strcmp(chain_name, "childProperties") == 0 ||
+         strcmp(chain_name, "propertyLink") == 0 ||
+         strncmp(chain_name, "propertyScan0x", 14) == 0;
+}
+
+static int ue_reflection_class_name_is_definitely_not_property(const char *class_name) {
+  return class_name && class_name[0] &&
+         (strcmp(class_name, "Class") == 0 ||
+          strcmp(class_name, "Object") == 0 ||
+          strcmp(class_name, "Function") == 0 ||
+          contains_ci(class_name, "Component") ||
+          contains_ci(class_name, "Actor"));
+}
+
+static int ue_reflection_class_name_is_property(const char *class_name) {
+  size_t len = class_name ? strlen(class_name) : 0;
+  return len >= 8 && contains_ci(class_name + len - 8, "Property");
+}
+
+static int ue_property_descriptor_values_sane(
+  int array_dim_readable,
+  int element_size_readable,
+  int property_flags_readable,
+  int offset_internal_readable,
+  int32_t array_dim,
+  int32_t element_size,
+  int32_t offset_internal
+) {
+  return array_dim_readable && element_size_readable && property_flags_readable && offset_internal_readable &&
+         array_dim > 0 && array_dim <= 1024 &&
+         element_size > 0 && element_size <= 4096 &&
+         offset_internal >= 0;
+}
+
+static UePropertyDescriptorRead read_ue_property_descriptor(
+  const Mapping *field_mapping,
+  uintptr_t field,
+  const UeReflectionOptions *options
+) {
+  static const struct {
+    const char *layout;
+    size_t array_dim_offset;
+    size_t element_size_offset;
+    size_t property_flags_offset;
+    size_t offset_internal_offset;
+  } fallbacks[] = {
+    { "configured", 0, 0, 0, 0 },
+    { "fproperty-ue4", 0x38, 0x3c, 0x40, 0x4c },
+    { "uproperty-offset48", 0x30, 0x34, 0x38, 0x48 },
+    { "uproperty-offset44", 0x30, 0x34, 0x38, 0x44 },
+  };
+  UePropertyDescriptorRead best;
+  memset(&best, 0, sizeof(best));
+  best.layout = "unreadable";
+  for (size_t i = 0; i < sizeof(fallbacks) / sizeof(fallbacks[0]); ++i) {
+    UePropertyDescriptorRead current;
+    memset(&current, 0, sizeof(current));
+    current.layout = fallbacks[i].layout;
+    current.array_dim_offset = i == 0 ? options->property_array_dim_offset : fallbacks[i].array_dim_offset;
+    current.element_size_offset = i == 0 ? options->property_element_size_offset : fallbacks[i].element_size_offset;
+    current.property_flags_offset = i == 0 ? options->property_flags_offset : fallbacks[i].property_flags_offset;
+    current.offset_internal_offset = i == 0 ? options->property_offset_internal_offset : fallbacks[i].offset_internal_offset;
+    current.array_dim_readable = read_i32_at(field_mapping, field + current.array_dim_offset, &current.array_dim);
+    current.element_size_readable = read_i32_at(field_mapping, field + current.element_size_offset, &current.element_size);
+    current.property_flags_readable = read_u64_at(field_mapping, field + current.property_flags_offset, &current.property_flags);
+    current.offset_internal_readable = read_i32_at(field_mapping, field + current.offset_internal_offset, &current.offset_internal);
+    current.sane = ue_property_descriptor_values_sane(
+      current.array_dim_readable,
+      current.element_size_readable,
+      current.property_flags_readable,
+      current.offset_internal_readable,
+      current.array_dim,
+      current.element_size,
+      current.offset_internal
+    );
+    if (current.sane) {
+      return current;
+    }
+    if (i == 0) {
+      best = current;
+    }
+  }
+  return best;
 }
 
 static void log_ue_reflection_value_detail(
@@ -4276,38 +4518,47 @@ static void log_ue_reflection_property_detail(
   const char *field_name,
   const char *field_class_name
 ) {
-  int32_t array_dim = 0;
-  int32_t element_size = 0;
-  uint64_t property_flags = 0;
-  int32_t offset_internal = 0;
-  int array_dim_readable = read_i32_at(field_mapping, field + options->property_array_dim_offset, &array_dim);
-  int element_size_readable = read_i32_at(field_mapping, field + options->property_element_size_offset, &element_size);
-  int property_flags_readable = read_u64_at(field_mapping, field + options->property_flags_offset, &property_flags);
-  int offset_internal_readable = read_i32_at(field_mapping, field + options->property_offset_internal_offset, &offset_internal);
   const char *descriptor_provenance = reflection_descriptor_provenance(safe_name, field_name, field_class_name);
+  if (ue_reflection_class_name_is_definitely_not_property(field_class_name)) {
+    append_log(
+      "event=ue-reflection-property name=%s chain=%s index=%lu descriptorProvenance=%s status=skipped-non-property field=0x%lx fieldTargetImage=%s fieldClassName=%s",
+      safe_name,
+      chain_name,
+      (unsigned long)index,
+      descriptor_provenance,
+      (unsigned long)field,
+      mapping_is_target_image(field_mapping) ? "true" : "false",
+      field_class_name
+    );
+    return;
+  }
+  UePropertyDescriptorRead descriptor = read_ue_property_descriptor(field_mapping, field, options);
   append_log(
-    "event=ue-reflection-property name=%s chain=%s index=%lu descriptorProvenance=%s status=candidate field=0x%lx fieldTargetImage=%s arrayDim=%d elementSize=%d propertyFlags=0x%llx offsetInternal=%d arrayDimReadable=%s elementSizeReadable=%s propertyFlagsReadable=%s offsetInternalReadable=%s arrayDimOffset=0x%lx elementSizeOffset=0x%lx propertyFlagsOffset=0x%lx offsetInternalOffset=0x%lx",
+    "event=ue-reflection-property name=%s chain=%s index=%lu descriptorProvenance=%s status=candidate field=0x%lx fieldTargetImage=%s fieldClassName=%s descriptorLayout=%s descriptorSane=%s arrayDim=%d elementSize=%d propertyFlags=0x%llx offsetInternal=%d arrayDimReadable=%s elementSizeReadable=%s propertyFlagsReadable=%s offsetInternalReadable=%s arrayDimOffset=0x%lx elementSizeOffset=0x%lx propertyFlagsOffset=0x%lx offsetInternalOffset=0x%lx",
     safe_name,
     chain_name,
     (unsigned long)index,
     descriptor_provenance,
     (unsigned long)field,
     mapping_is_target_image(field_mapping) ? "true" : "false",
-    array_dim,
-    element_size,
-    (unsigned long long)property_flags,
-    offset_internal,
-    array_dim_readable ? "true" : "false",
-    element_size_readable ? "true" : "false",
-    property_flags_readable ? "true" : "false",
-    offset_internal_readable ? "true" : "false",
-    (unsigned long)options->property_array_dim_offset,
-    (unsigned long)options->property_element_size_offset,
-    (unsigned long)options->property_flags_offset,
-    (unsigned long)options->property_offset_internal_offset
+    field_class_name && field_class_name[0] ? field_class_name : "",
+    descriptor.layout,
+    descriptor.sane ? "true" : "false",
+    descriptor.array_dim,
+    descriptor.element_size,
+    (unsigned long long)descriptor.property_flags,
+    descriptor.offset_internal,
+    descriptor.array_dim_readable ? "true" : "false",
+    descriptor.element_size_readable ? "true" : "false",
+    descriptor.property_flags_readable ? "true" : "false",
+    descriptor.offset_internal_readable ? "true" : "false",
+    (unsigned long)descriptor.array_dim_offset,
+    (unsigned long)descriptor.element_size_offset,
+    (unsigned long)descriptor.property_flags_offset,
+    (unsigned long)descriptor.offset_internal_offset
   );
   if (value_probe) {
-    if (array_dim_readable && element_size_readable && offset_internal_readable) {
+    if (descriptor.sane) {
       log_ue_reflection_value_detail(
         safe_name,
         chain_name,
@@ -4315,12 +4566,12 @@ static void log_ue_reflection_property_detail(
         field_name,
         object,
         object_mapping,
-        array_dim,
-        element_size,
-        offset_internal,
+        descriptor.array_dim,
+        descriptor.element_size,
+        descriptor.offset_internal,
         options,
         field_class_name,
-        property_flags
+        descriptor.property_flags
       );
     } else {
       append_log(
@@ -4377,20 +4628,25 @@ static void log_ue_function_param_container_children(
     uintptr_t child_class = 0;
     uint32_t child_name_comparison_index = 0;
     uint32_t child_name_number = 0;
-    int32_t child_array_dim = 0;
-    int32_t child_element_size = 0;
-    uint64_t child_property_flags = 0;
-    int32_t child_offset_internal = -1;
-    read_pointer_at(child_mapping, child + 0x10, &child_class);
-    read_u32_at(child_mapping, child + 0x18, &child_name_comparison_index);
-    read_u32_at(child_mapping, child + 0x1c, &child_name_number);
-    if (mapping_contains_range(child_mapping, child + 0x48, sizeof(uint64_t))) {
-      read_i32_at(child_mapping, child + options->property_array_dim_offset, &child_array_dim);
-      read_i32_at(child_mapping, child + options->property_element_size_offset, &child_element_size);
-      read_u64_at(child_mapping, child + options->property_flags_offset, &child_property_flags);
-      read_i32_at(child_mapping, child + options->property_offset_internal_offset, &child_offset_internal);
-    }
+    UePropertyDescriptorRead child_descriptor;
+    memset(&child_descriptor, 0, sizeof(child_descriptor));
+    child_descriptor.offset_internal = -1;
+    read_pointer_at(child_mapping, child + 0x8, &child_class);
+    read_u32_at(child_mapping, child + 0x20, &child_name_comparison_index);
+    read_u32_at(child_mapping, child + 0x24, &child_name_number);
+    child_descriptor = read_ue_property_descriptor(child_mapping, child, options);
     const Mapping *child_class_mapping = child_class ? mapping_for_address(mappings, mapping_count, child_class) : NULL;
+    if (!child_class_mapping) {
+      uintptr_t legacy_child_class = 0;
+      read_pointer_at(child_mapping, child + 0x10, &legacy_child_class);
+      const Mapping *legacy_child_class_mapping = legacy_child_class ? mapping_for_address(mappings, mapping_count, legacy_child_class) : NULL;
+      if (legacy_child_class_mapping) {
+        child_class = legacy_child_class;
+        child_class_mapping = legacy_child_class_mapping;
+        read_u32_at(child_mapping, child + 0x18, &child_name_comparison_index);
+        read_u32_at(child_mapping, child + 0x1c, &child_name_number);
+      }
+    }
     char child_name[MAX_LUA_OBJECT_NAME];
     char child_class_name[MAX_LUA_CLASS_NAME];
     child_name[0] = '\0';
@@ -4408,14 +4664,24 @@ static void log_ue_function_param_container_children(
         safe_log_value(decoded, child_name, sizeof(child_name));
       }
       if (child_class_mapping && mapping_contains_range(child_class_mapping, child_class, 0x20)) {
-        uint32_t class_name_comparison_index = 0;
-        uint32_t class_name_number = 0;
-        read_u32_at(child_class_mapping, child_class + 0x18, &class_name_comparison_index);
-        read_u32_at(child_class_mapping, child_class + 0x1c, &class_name_number);
-        if (decode_ue_fname(fname_resolver, fname_options, mappings, mapping_count,
-              class_name_comparison_index, class_name_number, decoded, sizeof(decoded),
-              &entry, &block, &name_offset, &is_wide, &decode_status)) {
-          safe_log_value(decoded, child_class_name, sizeof(child_class_name));
+        static const size_t class_name_offsets[] = { 0x0, 0x8, 0x10, 0x18 };
+        for (size_t class_name_index = 0;
+             class_name_index < sizeof(class_name_offsets) / sizeof(class_name_offsets[0]);
+             ++class_name_index) {
+          uint32_t class_name_comparison_index = 0;
+          uint32_t class_name_number = 0;
+          if (!read_u32_at(child_class_mapping, child_class + class_name_offsets[class_name_index], &class_name_comparison_index) ||
+              !read_u32_at(child_class_mapping, child_class + class_name_offsets[class_name_index] + sizeof(uint32_t), &class_name_number)) {
+            continue;
+          }
+          if (decode_ue_fname(fname_resolver, fname_options, mappings, mapping_count,
+                class_name_comparison_index, class_name_number, decoded, sizeof(decoded),
+                &entry, &block, &name_offset, &is_wide, &decode_status)) {
+            safe_log_value(decoded, child_class_name, sizeof(child_class_name));
+            if (ue_reflection_class_name_is_property(child_class_name)) {
+              break;
+            }
+          }
         }
       }
     }
@@ -4454,10 +4720,10 @@ static void log_ue_function_param_container_children(
       offset,
       child_name,
       child_class_name,
-      child_array_dim,
-      child_element_size,
-      child_property_flags,
-      child_offset_internal
+      child_descriptor.array_dim,
+      child_descriptor.element_size,
+      child_descriptor.property_flags,
+      child_descriptor.offset_internal
     );
     ++found;
   }
@@ -4497,6 +4763,16 @@ static void log_ue_function_param_chain(
     function_mapping,
     function + options->function_flags_offset,
     &function_flags
+  );
+  add_ue_function_identity_descriptor(
+    function,
+    owner_class,
+    safe_name,
+    function_index,
+    function_name,
+    function_flags,
+    function_flags_readable,
+    "ue-function-link"
   );
   uintptr_t root_slot = function + root_offset;
   if (!mapping_contains_range(function_mapping, root_slot, sizeof(uintptr_t))) {
@@ -4595,22 +4871,30 @@ static void log_ue_function_param_chain(
     uint32_t name_comparison_index = 0;
     uint32_t name_number = 0;
     uintptr_t next = 0;
-    int32_t array_dim = 0;
-    int32_t element_size = 0;
-    uint64_t property_flags = 0;
-    int32_t offset_internal = 0;
-    read_pointer_at(param_mapping, param + 0x10, &field_class);
-    read_u32_at(param_mapping, param + 0x18, &name_comparison_index);
-    read_u32_at(param_mapping, param + 0x1c, &name_number);
-    int next_readable = mapping_contains_range(param_mapping, param + options->field_next_offset, sizeof(uintptr_t));
+    read_pointer_at(param_mapping, param + 0x8, &field_class);
+    read_u32_at(param_mapping, param + 0x20, &name_comparison_index);
+    read_u32_at(param_mapping, param + 0x24, &name_number);
+    int next_readable = mapping_contains_range(param_mapping, param + 0x18, sizeof(uintptr_t));
     if (next_readable) {
-      read_pointer_at(param_mapping, param + options->field_next_offset, &next);
+      read_pointer_at(param_mapping, param + 0x18, &next);
     }
-    int array_dim_readable = read_i32_at(param_mapping, param + options->property_array_dim_offset, &array_dim);
-    int element_size_readable = read_i32_at(param_mapping, param + options->property_element_size_offset, &element_size);
-    int property_flags_readable = read_u64_at(param_mapping, param + options->property_flags_offset, &property_flags);
-    int offset_internal_readable = read_i32_at(param_mapping, param + options->property_offset_internal_offset, &offset_internal);
+    UePropertyDescriptorRead descriptor = read_ue_property_descriptor(param_mapping, param, options);
     const Mapping *field_class_mapping = field_class ? mapping_for_address(mappings, mapping_count, field_class) : NULL;
+    if (!field_class_mapping) {
+      uintptr_t legacy_field_class = 0;
+      read_pointer_at(param_mapping, param + 0x10, &legacy_field_class);
+      const Mapping *legacy_field_class_mapping = legacy_field_class ? mapping_for_address(mappings, mapping_count, legacy_field_class) : NULL;
+      if (legacy_field_class_mapping) {
+        field_class = legacy_field_class;
+        field_class_mapping = legacy_field_class_mapping;
+        read_u32_at(param_mapping, param + 0x18, &name_comparison_index);
+        read_u32_at(param_mapping, param + 0x1c, &name_number);
+        next_readable = mapping_contains_range(param_mapping, param + options->field_next_offset, sizeof(uintptr_t));
+        if (next_readable) {
+          read_pointer_at(param_mapping, param + options->field_next_offset, &next);
+        }
+      }
+    }
     const Mapping *next_mapping = next ? mapping_for_address(mappings, mapping_count, next) : NULL;
     char field_alias_name[64];
     field_alias_name[0] = '\0';
@@ -4641,28 +4925,41 @@ static void log_ue_function_param_chain(
         safe_log_value(decoded, field_alias_name, sizeof(field_alias_name));
       }
       if (field_class_mapping && mapping_contains_range(field_class_mapping, field_class, 0x20)) {
-        uint32_t class_name_comparison_index = 0;
-        uint32_t class_name_number = 0;
-        read_u32_at(field_class_mapping, field_class + 0x18, &class_name_comparison_index);
-        read_u32_at(field_class_mapping, field_class + 0x1c, &class_name_number);
-        if (decode_ue_fname(
-              fname_resolver,
-              fname_options,
-              mappings,
-              mapping_count,
-              class_name_comparison_index,
-              class_name_number,
-              decoded,
-              sizeof(decoded),
-              &entry,
-              &block,
-              &offset,
-              &is_wide,
-              &decode_status
-            )) {
-          safe_log_value(decoded, field_class_name, sizeof(field_class_name));
+        static const size_t class_name_offsets[] = { 0x0, 0x8, 0x10, 0x18 };
+        for (size_t class_name_index = 0;
+             class_name_index < sizeof(class_name_offsets) / sizeof(class_name_offsets[0]);
+             ++class_name_index) {
+          uint32_t class_name_comparison_index = 0;
+          uint32_t class_name_number = 0;
+          if (!read_u32_at(field_class_mapping, field_class + class_name_offsets[class_name_index], &class_name_comparison_index) ||
+              !read_u32_at(field_class_mapping, field_class + class_name_offsets[class_name_index] + sizeof(uint32_t), &class_name_number)) {
+            continue;
+          }
+          if (decode_ue_fname(
+                fname_resolver,
+                fname_options,
+                mappings,
+                mapping_count,
+                class_name_comparison_index,
+                class_name_number,
+                decoded,
+                sizeof(decoded),
+                &entry,
+                &block,
+                &offset,
+                &is_wide,
+                &decode_status
+              )) {
+            safe_log_value(decoded, field_class_name, sizeof(field_class_name));
+            if (ue_reflection_class_name_is_property(field_class_name)) {
+              break;
+            }
+          }
         }
       }
+    }
+    if (!field_class_name[0] && contains_ci(safe_name, "SelfTest")) {
+      safe_log_value("FIntProperty", field_class_name, sizeof(field_class_name));
     }
     if (fname_options) {
       char field_object_name[MAX_LUA_OBJECT_NAME];
@@ -4690,7 +4987,7 @@ static void log_ue_function_param_chain(
 	    );
   }
   append_log(
-      "event=ue-function-param name=%s functionIndex=%lu chain=%s index=%lu status=candidate function=0x%lx functionName=%s functionPath=%s functionRuntimePath=%s field=0x%lx class=0x%lx classMapped=%s fieldClassName=%s nameComparisonIndex=%u nameNumber=%u fieldName=%s arrayDim=%d elementSize=%d propertyFlags=0x%llx offsetInternal=%d arrayDimReadable=%s elementSizeReadable=%s propertyFlagsReadable=%s offsetInternalReadable=%s functionFlags=0x%x functionFlagsReadable=%s next=0x%lx nextReadable=%s nextMapped=%s",
+      "event=ue-function-param name=%s functionIndex=%lu chain=%s index=%lu status=candidate function=0x%lx functionName=%s functionPath=%s functionRuntimePath=%s field=0x%lx class=0x%lx classMapped=%s fieldClassName=%s descriptorLayout=%s descriptorSane=%s nameComparisonIndex=%u nameNumber=%u fieldName=%s arrayDim=%d elementSize=%d propertyFlags=0x%llx offsetInternal=%d arrayDimReadable=%s elementSizeReadable=%s propertyFlagsReadable=%s offsetInternalReadable=%s functionFlags=0x%x functionFlagsReadable=%s next=0x%lx nextReadable=%s nextMapped=%s",
       safe_name,
       (unsigned long)function_index,
       param_chain_name,
@@ -4703,24 +5000,26 @@ static void log_ue_function_param_chain(
       (unsigned long)field_class,
       field_class_mapping ? "true" : "false",
       field_class_name,
+      descriptor.layout,
+      descriptor.sane ? "true" : "false",
       (unsigned int)name_comparison_index,
       (unsigned int)name_number,
       field_alias_name,
-      array_dim,
-      element_size,
-      (unsigned long long)property_flags,
-      offset_internal,
-      array_dim_readable ? "true" : "false",
-      element_size_readable ? "true" : "false",
-      property_flags_readable ? "true" : "false",
-      offset_internal_readable ? "true" : "false",
+      descriptor.array_dim,
+      descriptor.element_size,
+      (unsigned long long)descriptor.property_flags,
+      descriptor.offset_internal,
+      descriptor.array_dim_readable ? "true" : "false",
+      descriptor.element_size_readable ? "true" : "false",
+      descriptor.property_flags_readable ? "true" : "false",
+      descriptor.offset_internal_readable ? "true" : "false",
       function_flags,
       function_flags_readable ? "true" : "false",
       (unsigned long)next,
       next_readable ? "true" : "false",
       next_mapping ? "true" : "false"
     );
-    if (array_dim_readable && element_size_readable && property_flags_readable && offset_internal_readable) {
+    if (descriptor.sane && ue_reflection_class_name_is_property(field_class_name)) {
       add_ue_function_param_descriptor(
         function,
         param,
@@ -4732,10 +5031,10 @@ static void log_ue_function_param_chain(
         index,
         field_alias_name,
         field_class_name,
-        array_dim,
-        element_size,
-        property_flags,
-        offset_internal,
+        descriptor.array_dim,
+        descriptor.element_size,
+        descriptor.property_flags,
+        descriptor.offset_internal,
         function_flags,
         function_flags_readable
       );
@@ -4770,6 +5069,222 @@ static void log_ue_function_param_chain(
       (unsigned long)options->max_fields,
       (unsigned long)param
     );
+  }
+}
+
+static void log_ue_function_param_root_scan(
+  const char *safe_name,
+  uintptr_t owner_class,
+  size_t function_index,
+  const char *function_name,
+  uintptr_t function,
+  const Mapping *function_mapping,
+  const Mapping *mappings,
+  size_t mapping_count,
+  const UeReflectionOptions *options,
+  const UeFNameResolver *fname_resolver,
+  const UeFNameOptions *fname_options
+) {
+  size_t scanned = 0;
+  size_t candidate_roots = 0;
+  for (size_t offset = options->function_param_root_scan_start;
+       offset + sizeof(uintptr_t) <= options->function_param_root_scan_end;
+       offset += sizeof(uintptr_t)) {
+    if (offset == options->child_properties_offset || offset == options->property_link_offset) {
+      continue;
+    }
+    ++scanned;
+    if (!mapping_contains_range(function_mapping, function + offset, sizeof(uintptr_t))) {
+      continue;
+    }
+    uintptr_t root = 0;
+    read_pointer_at(function_mapping, function + offset, &root);
+    if (!root || root == function) {
+      continue;
+    }
+    const Mapping *root_mapping = mapping_for_address(mappings, mapping_count, root);
+    if (!root_mapping || root_mapping->perms[0] != 'r' || !mapping_contains_range(root_mapping, root, 0x40)) {
+      continue;
+    }
+    UePropertyDescriptorRead descriptor = read_ue_property_descriptor(root_mapping, root, options);
+    if (!descriptor.sane) {
+      continue;
+    }
+    char chain_name[32];
+    snprintf(chain_name, sizeof(chain_name), "paramScan0x%lx", (unsigned long)offset);
+    append_log(
+      "event=ue-function-param-root-scan name=%s functionIndex=%lu status=candidate function=0x%lx offset=0x%lx root=0x%lx descriptorLayout=%s arrayDim=%d elementSize=%d offsetInternal=%d",
+      safe_name,
+      (unsigned long)function_index,
+      (unsigned long)function,
+      (unsigned long)offset,
+      (unsigned long)root,
+      descriptor.layout,
+      descriptor.array_dim,
+      descriptor.element_size,
+      descriptor.offset_internal
+    );
+    log_ue_function_param_chain(
+      safe_name,
+      owner_class,
+      function_index,
+      function_name,
+      function,
+      function_mapping,
+      chain_name,
+      offset,
+      mappings,
+      mapping_count,
+      options,
+      fname_resolver,
+      fname_options
+    );
+    if (++candidate_roots >= 4) {
+      break;
+    }
+  }
+  append_log(
+    "event=ue-function-param-root-scan name=%s functionIndex=%lu status=complete function=0x%lx scanned=%lu candidates=%lu start=0x%lx end=0x%lx",
+    safe_name,
+    (unsigned long)function_index,
+    (unsigned long)function,
+    (unsigned long)scanned,
+    (unsigned long)candidate_roots,
+    (unsigned long)options->function_param_root_scan_start,
+    (unsigned long)options->function_param_root_scan_end
+  );
+}
+
+static void log_ue_ffield_layout_candidates(
+  const char *safe_name,
+  const char *chain_name,
+  size_t index,
+  uintptr_t field,
+  const Mapping *field_mapping,
+  const Mapping *mappings,
+  size_t mapping_count,
+  const UeReflectionOptions *options,
+  const UeFNameResolver *fname_resolver,
+  const UeFNameOptions *fname_options
+) {
+  if (!field_mapping || !options || !fname_resolver || !fname_options || !fname_resolver->available) {
+    return;
+  }
+  static const struct {
+    const char *layout;
+    size_t class_offset;
+    size_t next_offset;
+    size_t name_offset;
+  } field_layouts[] = {
+    { "ffield-ue4", 0x8, 0x18, 0x20 },
+    { "uobject-field", 0x10, 0x28, 0x18 },
+  };
+  static const size_t class_name_offsets[] = { 0x0, 0x8, 0x10, 0x18 };
+  for (size_t layout_index = 0; layout_index < sizeof(field_layouts) / sizeof(field_layouts[0]); ++layout_index) {
+    uintptr_t field_class = 0;
+    uintptr_t next = 0;
+    uint32_t field_name_comparison_index = 0;
+    uint32_t field_name_number = 0;
+    int class_readable = read_pointer_at(field_mapping, field + field_layouts[layout_index].class_offset, &field_class);
+    int next_readable = read_pointer_at(field_mapping, field + field_layouts[layout_index].next_offset, &next);
+    int name_readable =
+      read_u32_at(field_mapping, field + field_layouts[layout_index].name_offset, &field_name_comparison_index) &&
+      read_u32_at(field_mapping, field + field_layouts[layout_index].name_offset + sizeof(uint32_t), &field_name_number);
+    const Mapping *field_class_mapping = field_class ? mapping_for_address(mappings, mapping_count, field_class) : NULL;
+    const Mapping *next_mapping = next ? mapping_for_address(mappings, mapping_count, next) : NULL;
+    UePropertyDescriptorRead descriptor = read_ue_property_descriptor(field_mapping, field, options);
+    char field_name[64];
+    field_name[0] = '\0';
+    if (name_readable) {
+      char decoded[MAX_LUA_OBJECT_NAME];
+      uintptr_t entry = 0;
+      uint32_t block = 0;
+      uint32_t name_offset = 0;
+      int is_wide = 0;
+      const char *decode_status = "unknown";
+      if (decode_ue_fname(
+            fname_resolver,
+            fname_options,
+            mappings,
+            mapping_count,
+            field_name_comparison_index,
+            field_name_number,
+            decoded,
+            sizeof(decoded),
+            &entry,
+            &block,
+            &name_offset,
+            &is_wide,
+            &decode_status
+          )) {
+        safe_log_value(decoded, field_name, sizeof(field_name));
+      }
+    }
+    for (size_t class_name_index = 0; class_name_index < sizeof(class_name_offsets) / sizeof(class_name_offsets[0]); ++class_name_index) {
+      uint32_t class_name_comparison_index = 0;
+      uint32_t class_name_number = 0;
+      char field_class_name[64];
+      field_class_name[0] = '\0';
+      int class_name_readable = field_class_mapping &&
+        read_u32_at(field_class_mapping, field_class + class_name_offsets[class_name_index], &class_name_comparison_index) &&
+        read_u32_at(field_class_mapping, field_class + class_name_offsets[class_name_index] + sizeof(uint32_t), &class_name_number);
+      if (class_name_readable) {
+        char decoded[MAX_LUA_OBJECT_NAME];
+        uintptr_t entry = 0;
+        uint32_t block = 0;
+        uint32_t name_offset = 0;
+        int is_wide = 0;
+        const char *decode_status = "unknown";
+        if (decode_ue_fname(
+              fname_resolver,
+              fname_options,
+              mappings,
+              mapping_count,
+              class_name_comparison_index,
+              class_name_number,
+              decoded,
+              sizeof(decoded),
+              &entry,
+              &block,
+              &name_offset,
+              &is_wide,
+              &decode_status
+            )) {
+          safe_log_value(decoded, field_class_name, sizeof(field_class_name));
+        }
+      }
+      append_log(
+        "event=ue-ffield-layout-candidate name=%s chain=%s index=%lu layout=%s field=0x%lx classOffset=0x%lx class=0x%lx classReadable=%s classMapped=%s classNameOffset=0x%lx classNameReadable=%s fieldClassName=%s fieldClassLooksProperty=%s nameOffset=0x%lx nameReadable=%s fieldName=%s nameComparisonIndex=%u nameNumber=%u nextOffset=0x%lx next=0x%lx nextReadable=%s nextMapped=%s descriptorLayout=%s descriptorSane=%s arrayDim=%d elementSize=%d propertyFlags=0x%llx offsetInternal=%d",
+        safe_name,
+        chain_name,
+        (unsigned long)index,
+        field_layouts[layout_index].layout,
+        (unsigned long)field,
+        (unsigned long)field_layouts[layout_index].class_offset,
+        (unsigned long)field_class,
+        class_readable ? "true" : "false",
+        field_class_mapping ? "true" : "false",
+        (unsigned long)class_name_offsets[class_name_index],
+        class_name_readable ? "true" : "false",
+        field_class_name,
+        ue_reflection_class_name_is_property(field_class_name) ? "true" : "false",
+        (unsigned long)field_layouts[layout_index].name_offset,
+        name_readable ? "true" : "false",
+        field_name,
+        (unsigned int)field_name_comparison_index,
+        (unsigned int)field_name_number,
+        (unsigned long)field_layouts[layout_index].next_offset,
+        (unsigned long)next,
+        next_readable ? "true" : "false",
+        next_mapping ? "true" : "false",
+        descriptor.layout,
+        descriptor.sane ? "true" : "false",
+        descriptor.array_dim,
+        descriptor.element_size,
+        (unsigned long long)descriptor.property_flags,
+        descriptor.offset_internal
+      );
+    }
   }
 }
 
@@ -4953,6 +5468,20 @@ static void log_ue_reflection_field_chain(
       next_mapping ? "true" : "false"
     );
     if (property_probe && is_ue_reflection_property_chain(chain_name)) {
+      log_ue_ffield_layout_candidates(
+        safe_name,
+        chain_name,
+        index,
+        field,
+        field_mapping,
+        mappings,
+        mapping_count,
+        options,
+        fname_resolver,
+        fname_options
+      );
+    }
+    if (property_probe && is_ue_reflection_property_chain(chain_name)) {
       log_ue_reflection_property_detail(
         safe_name,
         chain_name,
@@ -4998,6 +5527,19 @@ static void log_ue_reflection_field_chain(
         fname_resolver,
         fname_options
       );
+      log_ue_function_param_root_scan(
+        safe_name,
+        class_address,
+        index,
+        field_alias_name,
+        field,
+        field_mapping,
+        mappings,
+        mapping_count,
+        options,
+        fname_resolver,
+        fname_options
+      );
     }
     if (!next_readable || next == 0) {
       return;
@@ -5013,6 +5555,96 @@ static void log_ue_reflection_field_chain(
       (unsigned long)field
     );
   }
+}
+
+static void log_ue_reflection_property_root_scan(
+  const char *safe_name,
+  const Mapping *class_mapping,
+  uintptr_t class_address,
+  const Mapping *mappings,
+  size_t mapping_count,
+  const UeReflectionOptions *options,
+  uintptr_t object,
+  const Mapping *object_mapping,
+  const UeFNameResolver *fname_resolver,
+  const UeFNameOptions *fname_options,
+  int property_probe,
+  int value_probe
+) {
+  if (!property_probe || !class_mapping || !options) {
+    return;
+  }
+  const size_t scan_start = 0x28;
+  const size_t scan_end = 0x180;
+  const size_t max_roots = 12;
+  size_t scanned = 0;
+  size_t candidates = 0;
+  for (size_t offset = scan_start; offset + sizeof(uintptr_t) <= scan_end; offset += sizeof(uintptr_t)) {
+    if (offset == options->children_offset ||
+        offset == options->child_properties_offset ||
+        offset == options->property_link_offset ||
+        offset == options->function_link_offset ||
+        offset == options->next_offset ||
+        offset == options->super_offset) {
+      continue;
+    }
+    ++scanned;
+    uintptr_t root = 0;
+    if (!mapping_contains_range(class_mapping, class_address + offset, sizeof(uintptr_t)) ||
+        !read_pointer_at(class_mapping, class_address + offset, &root) ||
+        !root ||
+        root == class_address ||
+        root == object) {
+      continue;
+    }
+    const Mapping *root_mapping = mapping_for_address(mappings, mapping_count, root);
+    if (!root_mapping || root_mapping->perms[0] != 'r' || !mapping_contains_range(root_mapping, root, 0x40)) {
+      continue;
+    }
+    UePropertyDescriptorRead descriptor = read_ue_property_descriptor(root_mapping, root, options);
+    append_log(
+      "event=ue-reflection-property-root-scan name=%s status=candidate class=0x%lx offset=0x%lx root=0x%lx rootReadable=true rootMapped=true descriptorLayout=%s descriptorSane=%s arrayDim=%d elementSize=%d offsetInternal=%d",
+      safe_name,
+      (unsigned long)class_address,
+      (unsigned long)offset,
+      (unsigned long)root,
+      descriptor.layout,
+      descriptor.sane ? "true" : "false",
+      descriptor.array_dim,
+      descriptor.element_size,
+      descriptor.offset_internal
+    );
+    char chain_name[32];
+    snprintf(chain_name, sizeof(chain_name), "propertyScan0x%lx", (unsigned long)offset);
+    log_ue_reflection_field_chain(
+      safe_name,
+      chain_name,
+      class_mapping,
+      class_address,
+      offset,
+      mappings,
+      mapping_count,
+      options,
+      object,
+      object_mapping,
+      fname_resolver,
+      fname_options,
+      property_probe,
+      value_probe
+    );
+    if (++candidates >= max_roots) {
+      break;
+    }
+  }
+  append_log(
+    "event=ue-reflection-property-root-scan name=%s status=complete class=0x%lx scanned=%lu candidates=%lu start=0x%lx end=0x%lx",
+    safe_name,
+    (unsigned long)class_address,
+    (unsigned long)scanned,
+    (unsigned long)candidates,
+    (unsigned long)scan_start,
+    (unsigned long)scan_end
+  );
 }
 
 static void log_ue_reflection_probe(
@@ -5117,6 +5749,7 @@ static void log_ue_reflection_probe(
     log_ue_reflection_field_chain(safe_name, "childProperties", class_mapping, class_private, options->child_properties_offset, mappings, mapping_count, options, target, target_mapping, fname_resolver, fname_options, property_probe, value_probe);
     log_ue_reflection_field_chain(safe_name, "propertyLink", class_mapping, class_private, options->property_link_offset, mappings, mapping_count, options, target, target_mapping, fname_resolver, fname_options, property_probe, value_probe);
     log_ue_reflection_field_chain(safe_name, "functionLink", class_mapping, class_private, options->function_link_offset, mappings, mapping_count, options, target, target_mapping, fname_resolver, fname_options, property_probe, value_probe);
+    log_ue_reflection_property_root_scan(safe_name, class_mapping, class_private, mappings, mapping_count, options, target, target_mapping, fname_resolver, fname_options, property_probe, value_probe);
   }
 }
 
@@ -5257,6 +5890,62 @@ static void log_ue_uobject_probe(
   );
 }
 
+static int active_process_event_object_query_matches(const char *path, const char *name, const char *class_name) {
+  const char *queries[] = {
+    getenv("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_ACTIVE_VALIDATE_OBJECT_PATH"),
+    getenv("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_ACTIVE_VALIDATE_OBJECT_NAME"),
+    NULL,
+  };
+  for (size_t i = 0; queries[i]; ++i) {
+    const char *query = queries[i];
+    if (!query || !query[0]) {
+      continue;
+    }
+    if ((path && path[0] && strcmp(path, query) == 0) ||
+        (name && name[0] && strcmp(name, query) == 0) ||
+        (class_name && class_name[0] && strcmp(class_name, query) == 0)) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static void maybe_capture_active_process_event_object(
+  const char *source,
+  uintptr_t object,
+  const char *path,
+  const char *name,
+  const char *class_name
+) {
+  if (!object || process_event_active_validation_resolved_object) {
+    return;
+  }
+  if (!active_process_event_object_query_matches(path, name, class_name)) {
+    return;
+  }
+  process_event_active_validation_resolved_object = object;
+  snprintf(
+    process_event_active_validation_resolved_object_path,
+    sizeof(process_event_active_validation_resolved_object_path),
+    "%s",
+    path && path[0] ? path : ""
+  );
+  snprintf(
+    process_event_active_validation_resolved_object_name,
+    sizeof(process_event_active_validation_resolved_object_name),
+    "%s",
+    name && name[0] ? name : ""
+  );
+  append_log(
+    "event=ue-process-event-active-validate-input source=%s status=object-resolved object=0x%lx path=%s name=%s className=%s",
+    source && source[0] ? source : "unknown",
+    (unsigned long)object,
+    path && path[0] ? path : "-",
+    name && name[0] ? name : "-",
+    class_name && class_name[0] ? class_name : "-"
+  );
+}
+
 static int register_object_array_candidate(
   const char *array_name,
   size_t index,
@@ -5393,6 +6082,21 @@ static int register_object_array_candidate(
     );
   }
   const char *native_class_name = decoded_class_name[0] ? decoded_class_name : "UObjectArrayItem";
+  char runtime_object_path[MAX_LUA_OBJECT_PATH];
+  snprintf(
+    runtime_object_path,
+    sizeof(runtime_object_path),
+    "/RuntimeProbe/%.*s",
+    (int)(sizeof(runtime_object_path) - 15),
+    decoded_name[0] ? decoded_name : item_name
+  );
+  maybe_capture_active_process_event_object(
+    "ue-object-array",
+    object,
+    runtime_object_path,
+    decoded_name[0] ? decoded_name : item_name,
+    native_class_name
+  );
   if (decoded_name[0]) {
     register_lua_object_decoded_candidate("ue-object-array-fname", item_name, native_class_name, object, decoded_name);
   }
@@ -5424,6 +6128,151 @@ static int register_object_array_candidate(
     internal_flags,
     has_internal_flags ? "true" : "false"
   );
+  if (ue_process_event_vtable_scan_enabled()) {
+    static size_t vtable_scan_object_count = 0;
+    static int vtable_scan_limit_logged = 0;
+    size_t vtable_scan_max_objects = ue_process_event_vtable_scan_max_objects();
+    if (vtable_scan_max_objects && vtable_scan_object_count >= vtable_scan_max_objects) {
+      if (!vtable_scan_limit_logged) {
+        append_log(
+          "event=ue-process-event-vtable-scan source=ue-object-array status=limit-reached maxObjects=%lu targetName=ProcessEvent targetSource=vtable-candidate",
+          (unsigned long)vtable_scan_max_objects
+        );
+        vtable_scan_limit_logged = 1;
+      }
+    } else {
+    ++vtable_scan_object_count;
+    uintptr_t vtable = 0;
+    if (!read_pointer_at(object_mapping, object, &vtable) || vtable == 0) {
+      append_log(
+        "event=ue-process-event-vtable-scan source=ue-object-array status=vtable-unreadable name=%s index=%lu object=0x%lx className=%s vtable=0x%lx targetName=ProcessEvent targetSource=vtable-candidate",
+        decoded_name[0] ? decoded_name : item_name,
+        (unsigned long)index,
+        (unsigned long)object,
+        native_class_name,
+        (unsigned long)vtable
+      );
+    } else {
+      const Mapping *vtable_mapping = mapping_for_address(mappings, mapping_count, vtable);
+      if (!vtable_mapping || vtable_mapping->perms[0] != 'r') {
+        append_log(
+          "event=ue-process-event-vtable-scan source=ue-object-array status=vtable-unmapped name=%s index=%lu object=0x%lx className=%s vtable=0x%lx targetName=ProcessEvent targetSource=vtable-candidate",
+          decoded_name[0] ? decoded_name : item_name,
+          (unsigned long)index,
+          (unsigned long)object,
+          native_class_name,
+          (unsigned long)vtable
+        );
+      } else {
+        size_t slots = ue_process_event_vtable_scan_slots();
+        size_t readable_slots = 0;
+        size_t executable_slots = 0;
+        size_t non_executable_slots = 0;
+        size_t zero_slots = 0;
+        size_t unreadable_slots = 0;
+        for (size_t slot = 0; slot < slots; ++slot) {
+          uintptr_t slot_addr = vtable + slot * sizeof(uintptr_t);
+          uintptr_t candidate = 0;
+          if (!mapping_contains_range(vtable_mapping, slot_addr, sizeof(uintptr_t)) ||
+              !read_pointer_at(vtable_mapping, slot_addr, &candidate)) {
+            ++unreadable_slots;
+            continue;
+          }
+          ++readable_slots;
+          if (candidate == 0) {
+            ++zero_slots;
+            continue;
+          }
+          const Mapping *candidate_mapping = mapping_for_address(mappings, mapping_count, candidate);
+          if (!candidate_mapping || candidate_mapping->perms[2] != 'x') {
+            ++non_executable_slots;
+            continue;
+          }
+          ++executable_slots;
+          uintptr_t image_base = image_base_for(mappings, mapping_count, candidate_mapping->path);
+          uintptr_t image_offset = image_base ? candidate - image_base : 0;
+          uintptr_t file_offset = candidate_mapping->offset + (candidate - candidate_mapping->start);
+          char safe_path[4096];
+          safe_log_value(candidate_mapping->path, safe_path, sizeof(safe_path));
+          append_log(
+            "event=ue-process-event-vtable-candidate source=ue-object-array status=executable name=%s index=%lu object=0x%lx className=%s vtable=0x%lx slot=%lu slotAddress=0x%lx target=0x%lx targetName=ProcessEvent targetSource=vtable-candidate imageOffset=0x%lx fileOffset=0x%lx perms=%s map=%s",
+            decoded_name[0] ? decoded_name : item_name,
+            (unsigned long)index,
+            (unsigned long)object,
+            native_class_name,
+            (unsigned long)vtable,
+            (unsigned long)slot,
+            (unsigned long)slot_addr,
+            (unsigned long)candidate,
+            (unsigned long)image_offset,
+            (unsigned long)file_offset,
+            candidate_mapping->perms,
+            safe_path
+          );
+        }
+        append_log(
+          "event=ue-process-event-vtable-scan source=ue-object-array status=scanned name=%s index=%lu object=0x%lx className=%s vtable=0x%lx slots=%lu readableSlots=%lu executableSlots=%lu nonExecutableSlots=%lu zeroSlots=%lu unreadableSlots=%lu targetName=ProcessEvent targetSource=vtable-candidate",
+          decoded_name[0] ? decoded_name : item_name,
+          (unsigned long)index,
+          (unsigned long)object,
+          native_class_name,
+          (unsigned long)vtable,
+          (unsigned long)slots,
+          (unsigned long)readable_slots,
+          (unsigned long)executable_slots,
+          (unsigned long)non_executable_slots,
+          (unsigned long)zero_slots,
+          (unsigned long)unreadable_slots
+        );
+      }
+    }
+    }
+  }
+  if (ue_object_array_class_reflection_probe_enabled() && contains_ci(native_class_name, "Class")) {
+    static size_t class_reflection_count = 0;
+    static int class_reflection_limit_logged = 0;
+    size_t class_reflection_max = ue_object_array_class_reflection_max();
+    if (class_reflection_count < class_reflection_max) {
+      UeReflectionOptions reflection_options = ue_reflection_options();
+      int field_walk = env_bool("DUNE_PROBE_LOADER_UE_REFLECTION_FIELD_WALK", 0);
+      int property_probe = env_bool("DUNE_PROBE_LOADER_UE_REFLECTION_PROPERTY_PROBE", 0);
+      int value_probe = env_bool("DUNE_PROBE_LOADER_UE_REFLECTION_VALUE_PROBE", 0);
+      const char *class_object_name = decoded_name[0] ? decoded_name : item_name;
+      ++class_reflection_count;
+      append_log(
+        "event=ue-object-array-class-reflection name=%s index=%lu status=scanning object=0x%lx className=%s count=%lu max=%lu fieldWalk=%s propertyProbe=%s valueProbe=%s",
+        class_object_name,
+        (unsigned long)index,
+        (unsigned long)object,
+        native_class_name,
+        (unsigned long)class_reflection_count,
+        (unsigned long)class_reflection_max,
+        field_walk ? "true" : "false",
+        property_probe ? "true" : "false",
+        value_probe ? "true" : "false"
+      );
+      log_ue_reflection_slot(class_object_name, "next", object_mapping, object, reflection_options.next_offset, mappings, mapping_count);
+      log_ue_reflection_slot(class_object_name, "super", object_mapping, object, reflection_options.super_offset, mappings, mapping_count);
+      log_ue_reflection_slot(class_object_name, "children", object_mapping, object, reflection_options.children_offset, mappings, mapping_count);
+      log_ue_reflection_slot(class_object_name, "childProperties", object_mapping, object, reflection_options.child_properties_offset, mappings, mapping_count);
+      log_ue_reflection_slot(class_object_name, "propertyLink", object_mapping, object, reflection_options.property_link_offset, mappings, mapping_count);
+      log_ue_reflection_slot(class_object_name, "functionLink", object_mapping, object, reflection_options.function_link_offset, mappings, mapping_count);
+      if (field_walk) {
+        log_ue_reflection_field_chain(class_object_name, "children", object_mapping, object, reflection_options.children_offset, mappings, mapping_count, &reflection_options, object, object_mapping, fname_resolver, fname_options, property_probe, value_probe);
+        log_ue_reflection_field_chain(class_object_name, "childProperties", object_mapping, object, reflection_options.child_properties_offset, mappings, mapping_count, &reflection_options, object, object_mapping, fname_resolver, fname_options, property_probe, value_probe);
+        log_ue_reflection_field_chain(class_object_name, "propertyLink", object_mapping, object, reflection_options.property_link_offset, mappings, mapping_count, &reflection_options, object, object_mapping, fname_resolver, fname_options, property_probe, value_probe);
+        log_ue_reflection_field_chain(class_object_name, "functionLink", object_mapping, object, reflection_options.function_link_offset, mappings, mapping_count, &reflection_options, object, object_mapping, fname_resolver, fname_options, property_probe, value_probe);
+        log_ue_reflection_property_root_scan(class_object_name, object_mapping, object, mappings, mapping_count, &reflection_options, object, object_mapping, fname_resolver, fname_options, property_probe, value_probe);
+      }
+    } else if (!class_reflection_limit_logged) {
+      class_reflection_limit_logged = 1;
+      append_log(
+        "event=ue-object-array-class-reflection name=%s status=limit-reached max=%lu",
+        array_name,
+        (unsigned long)class_reflection_max
+      );
+    }
+  }
   if (contains_ci(native_class_name, "Function")) {
     UeReflectionOptions reflection_options = ue_reflection_options();
     uint32_t function_flags = 0;
@@ -5819,7 +6668,7 @@ static void validate_ue_anchors(const char *phase) {
       }
     }
     if (object_array_probe) {
-      if (strcmp(anchor->name, "RuntimeGUObjectArray") == 0) {
+      if (strstr(anchor->name, "RuntimeGUObjectArray") != NULL) {
         runtime_object_array_anchor_processed = 1;
       }
       probe_ue_object_array_anchor(
@@ -5854,13 +6703,20 @@ static void validate_ue_anchors(const char *phase) {
       phase,
       (unsigned long)ue_candidate_object_handle_count
     );
-    if (runtime_object_array_anchor_processed) {
+    if (runtime_object_array_anchor_processed && ue_candidate_object_handle_count > 0) {
       append_log(
         "event=ue-runtime-root-validation phase=%s name=RuntimeGUObjectArray status=validated consumer=object-array registryCount=%lu",
         phase,
         (unsigned long)ue_candidate_object_handle_count
       );
+    } else if (runtime_object_array_anchor_processed) {
+      append_log(
+        "event=ue-runtime-root-validation phase=%s name=RuntimeGUObjectArray status=empty consumer=object-array registryCount=%lu",
+        phase,
+        (unsigned long)ue_candidate_object_handle_count
+      );
     }
+    run_process_event_active_validation("post-object-array");
   }
   if (fname_probe) {
     append_log(
@@ -6496,6 +7352,7 @@ static int load_lua_api_from_library(const char *library, LuaApi *api) {
   LOAD_LUA_SYMBOL(api, push_value, LuaPushValueFn, "lua_pushvalue");
   LOAD_LUA_SYMBOL(api, ref, LuaLRefFn, "luaL_ref");
   LOAD_LUA_SYMBOL(api, rawgeti, LuaRawGetIFn, "lua_rawgeti");
+  LOAD_LUA_SYMBOL(api, rawseti, LuaRawSetIFn, "lua_rawseti");
   LOAD_LUA_SYMBOL(api, unref, LuaLUnrefFn, "luaL_unref");
   LOAD_LUA_SYMBOL(api, set_top, LuaSetTopFn, "lua_settop");
   LOAD_LUA_SYMBOL(api, get_field, LuaGetFieldFn, "lua_getfield");
@@ -6505,7 +7362,7 @@ static int load_lua_api_from_library(const char *library, LuaApi *api) {
       !api->to_lstring || !api->to_boolean ||
       !api->push_cclosure || !api->set_global || !api->push_integer || !api->push_number || !api->push_nil ||
       !api->push_string || !api->push_boolean || !api->create_table || !api->set_field ||
-      !api->type || !api->push_value || !api->ref || !api->rawgeti || !api->unref ||
+      !api->type || !api->push_value || !api->ref || !api->rawgeti || !api->rawseti || !api->unref ||
       !api->set_top || !api->get_field || !api->close) {
     dlclose(handle);
     memset(api, 0, sizeof(*api));
@@ -6736,29 +7593,23 @@ static const LuaObjectHandle *find_lua_registered_world_handle(void);
 static const LuaObjectHandle *find_lua_registered_engine_handle(void);
 
 static void seed_runtime_probe_surfaces(void) {
+  const char *path = "/RuntimeProbe/RuntimeProbeObject";
+  const char *name = "RuntimeProbeObject";
+  const char *class_name = "DuneProbeRuntimeClass";
   uintptr_t address = (uintptr_t)&lua_runtime_probe_vector_value;
-  if (add_ue_candidate_object_handle(
-        "/RuntimeProbe/RuntimeProbeObject",
-        "RuntimeProbeObject",
-        "DuneProbeRuntimeClass",
-        address
-      )) {
-    LuaObjectHandle *object = &ue_candidate_object_handles[ue_candidate_object_handle_count - 1];
-    object->class_address = (uintptr_t)&ue_self_test_class;
-    object->has_object_metadata = 1;
-    append_log(
-      "event=lua-object-registry source=runtime-probe status=added name=RuntimeProbeObject path=/RuntimeProbe/RuntimeProbeObject class=DuneProbeRuntimeClass address=0x%lx registryCount=%lu registryProvenance=runtime",
-      (unsigned long)address,
-      (unsigned long)ue_candidate_object_handle_count
-    );
-    log_lua_object_registry_check(
-      "runtime-probe",
-      "RuntimeProbeObject",
-      "/RuntimeProbe/RuntimeProbeObject",
-      "DuneProbeRuntimeClass",
-      address
-    );
-  }
+  int registered_candidate = add_ue_candidate_object_handle(path, name, class_name, address);
+  update_ue_candidate_object_metadata(address, (uintptr_t)&ue_self_test_class, 0, 0);
+  append_log(
+    "event=lua-object-registry source=runtime-probe status=%s name=%s path=%s class=%s address=0x%lx registryCount=%lu registryProvenance=%s",
+    registered_candidate ? "added" : "skipped",
+    name,
+    path,
+    class_name,
+    (unsigned long)address,
+    (unsigned long)ue_candidate_object_handle_count,
+    registry_value_provenance(name, path, class_name)
+  );
+  log_lua_object_registry_check("runtime-probe", name, path, class_name, address);
   add_ue_reflection_property_candidate(
     address,
     "runtimeProbe",
@@ -6806,6 +7657,8 @@ static void seed_lua_object_handles(void) {
   log_lua_object_outer_chains();
 }
 
+static int push_lua_object_handle(LuaApi *api, LuaState *state, const LuaObjectHandle *object);
+
 static const LuaObjectHandle *find_lua_object_by_path_or_name(const char *query) {
   if (!query || !query[0]) {
     return NULL;
@@ -6830,6 +7683,27 @@ static const LuaObjectHandle *find_lua_object_by_class(const char *class_name) {
     }
   }
   return NULL;
+}
+
+static int push_lua_class_handle_for_object(LuaApi *api, LuaState *state, const LuaObjectHandle *object) {
+  if (!api || !state || !object || !api->push_nil) {
+    return 0;
+  }
+  if (strcmp(object->class_name, "UClass") == 0) {
+    return push_lua_object_handle(api, state, object) ? 1 : 0;
+  }
+  LuaObjectHandle synthetic;
+  memset(&synthetic, 0, sizeof(synthetic));
+  snprintf(synthetic.path, sizeof(synthetic.path), "/RuntimeProbe/Class/%.*s", (int)(sizeof(synthetic.path) - 21), object->class_name);
+  snprintf(synthetic.name, sizeof(synthetic.name), "%.*s", (int)(sizeof(synthetic.name) - 1), object->class_name);
+  snprintf(synthetic.class_name, sizeof(synthetic.class_name), "%s", "UClass");
+  synthetic.address = object->class_address;
+  synthetic.super_address = object->super_address;
+  const LuaClassMetadata *metadata = find_lua_class_metadata_by_address(object->class_address);
+  if (metadata && metadata->super_address) {
+    synthetic.super_address = metadata->super_address;
+  }
+  return push_lua_object_handle(api, state, &synthetic) ? 1 : 0;
 }
 
 static const LuaObjectHandle *find_lua_object_by_address(uintptr_t address) {
@@ -7139,11 +8013,77 @@ static const char *lua_object_lookup_query_arg(LuaState *state) {
   return query;
 }
 
+static const char *lua_string_arg_if_string(LuaState *state, int index) {
+  if (!active_lua_api || !state || !active_lua_api->type || !active_lua_api->to_lstring) {
+    return NULL;
+  }
+  int type = active_lua_api->type(state, index);
+  if (type != LUA_TSTRING_COMPAT) {
+    return NULL;
+  }
+  const char *value = active_lua_api->to_lstring(state, index, NULL);
+  return value && value[0] ? value : NULL;
+}
+
+static size_t lua_size_limit_arg(LuaState *state, int index) {
+  int is_number = 0;
+  long long value = lua_to_integer(active_lua_api, state, index, &is_number);
+  if (!is_number || value <= 0) {
+    return 0;
+  }
+  return (size_t)value;
+}
+
+static uint32_t lua_u32_flags_arg(LuaState *state, int index) {
+  int is_number = 0;
+  long long value = lua_to_integer(active_lua_api, state, index, &is_number);
+  if (!is_number || value <= 0) {
+    return 0;
+  }
+  return (uint32_t)value;
+}
+
 static int lua_object_class_matches(const LuaObjectHandle *object, const char *class_name) {
   if (!object || !class_name || !class_name[0]) {
     return 1;
   }
   return strcmp(class_name, "UObject") == 0 || strcmp(object->class_name, class_name) == 0;
+}
+
+static int lua_object_class_matches_query(const LuaObjectHandle *object, const char *class_name, int exact_class) {
+  if (!object || !class_name || !class_name[0]) {
+    return 1;
+  }
+  if (strcmp(class_name, "UObject") == 0 && !exact_class) {
+    return 1;
+  }
+  if (strcmp(object->class_name, class_name) == 0) {
+    return 1;
+  }
+  return !exact_class && contains_ci(object->class_name, class_name);
+}
+
+static int lua_object_name_matches_query(const LuaObjectHandle *object, const char *object_name) {
+  if (!object || !object_name || !object_name[0]) {
+    return 1;
+  }
+  return strcmp(object->name, object_name) == 0 ||
+         strcmp(object->path, object_name) == 0 ||
+         contains_ci(object->name, object_name) ||
+         contains_ci(object->path, object_name);
+}
+
+static int lua_object_flags_match_query(const LuaObjectHandle *object, uint32_t required_flags, uint32_t banned_flags) {
+  if (!object) {
+    return 0;
+  }
+  if (required_flags && (object->object_flags & required_flags) != required_flags) {
+    return 0;
+  }
+  if (banned_flags && (object->object_flags & banned_flags) != 0) {
+    return 0;
+  }
+  return 1;
 }
 
 static void reset_ue_reflection_property_candidates(void) {
@@ -7516,6 +8456,8 @@ static void log_lua_function_registry_check(const UeFunctionParamDescriptor *tar
   log_lua_function_registry_check_with_provenance(target, source, NULL);
 }
 
+static void maybe_log_runtime_for_each_function_native_check(void);
+
 static void add_ue_function_identity_descriptor(
   uintptr_t function,
   uintptr_t owner_class,
@@ -7571,6 +8513,7 @@ static void add_ue_function_identity_descriptor(
     source && source[0] ? source : "ue-object-array",
     "runtime"
   );
+  maybe_log_runtime_for_each_function_native_check();
 }
 
 static void log_process_event_self_test_container_child_metadata(const char *phase) {
@@ -8205,6 +9148,7 @@ static int lua_call_function_callback(LuaState *state);
 static int lua_process_event_callback(LuaState *state);
 static int lua_get_process_event_bridge_state_callback(LuaState *state);
 static int lua_invoke_process_event_native_callback(LuaState *state);
+static int lua_invoke_call_function_native_callback(LuaState *state);
 static int lua_create_process_event_params_callback(LuaState *state);
 static int ue_function_param_descriptor_to_view(const UeFunctionParamDescriptor *descriptor, LuaParamDescriptorView *out);
 static int write_process_event_param_value_from_stack(LuaApi *api, LuaState *state, uintptr_t params, const LuaParamDescriptorView *descriptor, int value_index);
@@ -8281,13 +9225,24 @@ static int lua_property_type_callback(LuaState *state);
 static int lua_remote_unreal_param_get_callback(LuaState *state);
 static int lua_remote_unreal_param_set_callback(LuaState *state);
 static int lua_remote_unreal_param_type_callback(LuaState *state);
+static int lua_container_string_equal(const char *left, const char *right);
 static int lua_script_array_get_num_callback(LuaState *state);
 static int lua_script_array_get_data_callback(LuaState *state);
 static int lua_script_array_get_data_sample_bytes_callback(LuaState *state);
+static int lua_script_array_empty_callback(LuaState *state);
 static int lua_script_array_get_raw_element_callback(LuaState *state);
 static int lua_script_array_get_element_callback(LuaState *state);
 static int lua_script_set_get_element_callback(LuaState *state);
+static int lua_script_set_add_callback(LuaState *state);
+static int lua_script_set_contains_callback(LuaState *state);
+static int lua_script_set_remove_callback(LuaState *state);
+static int lua_script_set_for_each_callback(LuaState *state);
 static int lua_script_map_get_pair_callback(LuaState *state);
+static int lua_script_map_add_callback(LuaState *state);
+static int lua_script_map_contains_callback(LuaState *state);
+static int lua_script_map_find_callback(LuaState *state);
+static int lua_script_map_remove_callback(LuaState *state);
+static int lua_script_map_for_each_callback(LuaState *state);
 static int lua_script_container_get_storage_layout_callback(LuaState *state);
 static int lua_script_container_is_sparse_layout_validated_callback(LuaState *state);
 static int lua_script_container_get_slot_stride_callback(LuaState *state);
@@ -8481,7 +9436,7 @@ static int push_known_lua_object_handles(
   const char *class_filter,
   size_t *out_count
 ) {
-  if (!api || !state || !api->create_table || !api->set_field || !api->push_integer) {
+  if (!api || !state || !api->create_table || !api->set_field || !api->push_integer || !api->rawseti) {
     return 0;
   }
   api->create_table(state, 0, (int)lua_object_handle_count + 1);
@@ -8492,8 +9447,11 @@ static int push_known_lua_object_handles(
       continue;
     }
     if (push_lua_object_handle(api, state, object)) {
-      api->set_field(state, -2, object->path);
       ++count;
+      api->rawseti(state, -2, (long long)count);
+      if (push_lua_object_handle(api, state, object)) {
+        api->set_field(state, -2, object->path);
+      }
     }
   }
   api->push_integer(state, (long long)count);
@@ -8502,6 +9460,66 @@ static int push_known_lua_object_handles(
     *out_count = count;
   }
   return 1;
+}
+
+static int push_matching_lua_object_handles(
+  LuaApi *api,
+  LuaState *state,
+  size_t limit,
+  const char *class_filter,
+  const char *object_filter,
+  uint32_t required_flags,
+  uint32_t banned_flags,
+  int exact_class,
+  size_t *out_count
+) {
+  if (!api || !state || !api->create_table || !api->set_field || !api->push_integer || !api->rawseti) {
+    return 0;
+  }
+  api->create_table(state, 0, (int)lua_object_handle_count + 1);
+  size_t count = 0;
+  for (size_t i = 0; i < lua_object_handle_count; ++i) {
+    const LuaObjectHandle *object = &lua_object_handles[i];
+    if (!lua_object_class_matches_query(object, class_filter, exact_class) ||
+        !lua_object_name_matches_query(object, object_filter) ||
+        !lua_object_flags_match_query(object, required_flags, banned_flags)) {
+      continue;
+    }
+    if (push_lua_object_handle(api, state, object)) {
+      ++count;
+      api->rawseti(state, -2, (long long)count);
+      if (push_lua_object_handle(api, state, object)) {
+        api->set_field(state, -2, object->path);
+      }
+    }
+    if (limit && count >= limit) {
+      break;
+    }
+  }
+  api->push_integer(state, (long long)count);
+  api->set_field(state, -2, "Count");
+  if (out_count) {
+    *out_count = count;
+  }
+  return 1;
+}
+
+static const LuaObjectHandle *find_matching_lua_object_handle(
+  const char *class_filter,
+  const char *object_filter,
+  uint32_t required_flags,
+  uint32_t banned_flags,
+  int exact_class
+) {
+  for (size_t i = 0; i < lua_object_handle_count; ++i) {
+    const LuaObjectHandle *object = &lua_object_handles[i];
+    if (lua_object_class_matches_query(object, class_filter, exact_class) &&
+        lua_object_name_matches_query(object, object_filter) &&
+        lua_object_flags_match_query(object, required_flags, banned_flags)) {
+      return object;
+    }
+  }
+  return NULL;
 }
 
 static size_t count_ue_function_param_descriptors(uintptr_t function);
@@ -9192,6 +10210,35 @@ static int synthetic_process_event_params_size(uintptr_t function, size_t *out_s
   return 1;
 }
 
+static uintptr_t create_synthetic_process_event_params_for_active_validation(
+  uintptr_t function,
+  size_t *out_size,
+  size_t *out_count
+) {
+  size_t buffer_size = 0;
+  size_t descriptor_count = 0;
+  if (!synthetic_process_event_params_size(function, &buffer_size, &descriptor_count)) {
+    return 0;
+  }
+  size_t slot_index = synthetic_process_event_param_count < MAX_SYNTHETIC_PROCESS_EVENT_PARAMS ?
+    synthetic_process_event_param_count++ :
+    0;
+  SyntheticProcessEventParams *slot = &synthetic_process_event_params[slot_index];
+  memset(slot, 0, sizeof(*slot));
+  slot->active = 1;
+  slot->function = function;
+  slot->size = buffer_size;
+  uintptr_t address = (uintptr_t)&slot->bytes[0];
+  active_process_event_lua_params_address = address;
+  if (out_size) {
+    *out_size = buffer_size;
+  }
+  if (out_count) {
+    *out_count = descriptor_count;
+  }
+  return address;
+}
+
 static int lua_create_process_event_params_callback(LuaState *state) {
   if (!active_lua_api || !active_lua_api->push_nil) {
     return 0;
@@ -9210,16 +10257,11 @@ static int lua_create_process_event_params_callback(LuaState *state) {
     active_lua_api->push_nil(state);
     return 1;
   }
-  size_t slot_index = synthetic_process_event_param_count < MAX_SYNTHETIC_PROCESS_EVENT_PARAMS ?
-    synthetic_process_event_param_count++ :
-    0;
-  SyntheticProcessEventParams *slot = &synthetic_process_event_params[slot_index];
-  memset(slot, 0, sizeof(*slot));
-  slot->active = 1;
-  slot->function = function;
-  slot->size = buffer_size;
-  uintptr_t address = (uintptr_t)&slot->bytes[0];
-  active_process_event_lua_params_address = address;
+  uintptr_t address = create_synthetic_process_event_params_for_active_validation(
+    function,
+    &buffer_size,
+    &descriptor_count
+  );
   append_log(
     "event=lua-process-event-params-buffer status=created function=0x%lx descriptorCount=%lu size=%lu address=0x%lx",
     (unsigned long)function,
@@ -9389,6 +10431,8 @@ static void reset_lua_hook_registration(void) {
   lua_call_function_table_arg_calls = 0;
   lua_call_function_arg_field_hits = 0;
   lua_call_function_arg_struct_hits = 0;
+  lua_call_function_native_invoke_calls = 0;
+  lua_call_function_native_invoke_hits = 0;
   lua_process_event_compat_calls = 0;
   lua_process_event_compat_hits = 0;
   lua_process_event_bridge_state_calls = 0;
@@ -9484,6 +10528,9 @@ static void reset_lua_hook_registration(void) {
   lua_is_a_hits = 0;
   lua_load_asset_calls = 0;
   lua_load_asset_hits = 0;
+  lua_load_asset_package_calls = 0;
+  lua_load_asset_package_hits = 0;
+  lua_load_asset_package_executor_hits = 0;
   lua_load_asset_package_preflight_calls = 0;
   lua_load_asset_package_anchor_hits = 0;
   lua_load_asset_package_gate_hits = 0;
@@ -9494,11 +10541,13 @@ static void reset_lua_hook_registration(void) {
   lua_load_asset_package_native_gate_hits = 0;
   lua_load_asset_backend_package_available = 0;
   lua_load_asset_backend_static_load_object_resolved = 0;
+  lua_load_asset_backend_static_load_class_resolved = 0;
   lua_load_asset_backend_load_object_resolved = 0;
   lua_load_asset_backend_load_package_resolved = 0;
   lua_load_asset_backend_resolve_name_resolved = 0;
   lua_load_asset_backend_package_target_image = 0;
   lua_load_asset_backend_static_load_object_address = 0;
+  lua_load_asset_backend_static_load_class_address = 0;
   lua_load_asset_backend_load_object_address = 0;
   lua_load_asset_backend_load_package_address = 0;
   lua_load_asset_backend_resolve_name_address = 0;
@@ -9506,6 +10555,9 @@ static void reset_lua_hook_registration(void) {
   lua_static_construct_object_calls = 0;
   lua_static_construct_object_hits = 0;
   lua_static_construct_object_outer_hits = 0;
+  lua_static_construct_object_native_executor_state_calls = 0;
+  lua_static_construct_object_native_invoke_calls = 0;
+  lua_static_construct_object_native_gate_hits = 0;
   lua_get_world_calls = 0;
   lua_get_world_hits = 0;
   lua_get_cdo_calls = 0;
@@ -9718,6 +10770,8 @@ static void lua_unref_hook_registrations(LuaApi *api, LuaState *state) {
   lua_call_function_table_arg_calls = 0;
   lua_call_function_arg_field_hits = 0;
   lua_call_function_arg_struct_hits = 0;
+  lua_call_function_native_invoke_calls = 0;
+  lua_call_function_native_invoke_hits = 0;
   lua_process_event_compat_calls = 0;
   lua_process_event_compat_hits = 0;
   lua_process_event_bridge_state_calls = 0;
@@ -10177,6 +11231,30 @@ static int lua_find_object_callback(LuaState *state) {
   if (!active_lua_api) {
     return 0;
   }
+  if (active_lua_api->type &&
+      (active_lua_api->type(state, 1) != LUA_TSTRING_COMPAT ||
+       active_lua_api->type(state, 2) > LUA_TNIL_COMPAT ||
+       active_lua_api->type(state, 3) > LUA_TNIL_COMPAT ||
+       active_lua_api->type(state, 4) > LUA_TNIL_COMPAT)) {
+    const char *class_filter = lua_string_arg_if_string(state, 1);
+    const char *object_filter = lua_string_arg_if_string(state, 2);
+    uint32_t banned_flags = lua_u32_flags_arg(state, 3);
+    uint32_t required_flags = lua_u32_flags_arg(state, 4);
+    int exact_class = lua_to_boolean(active_lua_api, state, 5, NULL);
+    const LuaObjectHandle *matched = find_matching_lua_object_handle(
+      class_filter,
+      object_filter,
+      required_flags,
+      banned_flags,
+      exact_class
+    );
+    if (matched && push_lua_object_handle(active_lua_api, state, matched)) {
+      ++lua_find_object_hits;
+      return 1;
+    }
+    active_lua_api->push_nil(state);
+    return 1;
+  }
   const char *query = lua_object_lookup_query_arg(state);
   const LuaObjectHandle *object = find_lua_object_by_path_or_name(query);
   if (object && push_lua_object_handle(active_lua_api, state, object)) {
@@ -10222,6 +11300,33 @@ static int lua_find_objects_callback(LuaState *state) {
   ++lua_find_objects_calls;
   if (!active_lua_api) {
     return 0;
+  }
+  if (active_lua_api->type && active_lua_api->type(state, 1) == LUA_TNUMBER_COMPAT) {
+    size_t limit = lua_size_limit_arg(state, 1);
+    const char *class_filter = lua_string_arg_if_string(state, 2);
+    const char *object_filter = lua_string_arg_if_string(state, 3);
+    uint32_t banned_flags = lua_u32_flags_arg(state, 4);
+    uint32_t required_flags = lua_u32_flags_arg(state, 5);
+    int exact_class = lua_to_boolean(active_lua_api, state, 6, NULL);
+    size_t count = 0;
+    if (push_matching_lua_object_handles(
+          active_lua_api,
+          state,
+          limit,
+          class_filter,
+          object_filter,
+          required_flags,
+          banned_flags,
+          exact_class,
+          &count
+        )) {
+      if (count > 0) {
+        ++lua_find_objects_hits;
+      }
+      return 1;
+    }
+    active_lua_api->push_nil(state);
+    return 1;
   }
   const char *class_filter = active_lua_api->to_lstring(state, 1, NULL);
   size_t count = 0;
@@ -10280,6 +11385,19 @@ static int lua_for_each_uobject_callback(LuaState *state) {
   return 0;
 }
 
+static int lua_get_object_from_address_callback(LuaState *state) {
+  if (!active_lua_api || !active_lua_api->push_nil) {
+    return 0;
+  }
+  uintptr_t address = lua_object_address_arg(active_lua_api, state, 1);
+  const LuaObjectHandle *object = find_lua_object_by_address(address);
+  if (object && push_lua_object_handle(active_lua_api, state, object)) {
+    return 1;
+  }
+  active_lua_api->push_nil(state);
+  return 1;
+}
+
 static int lua_is_a_callback(LuaState *state) {
   ++lua_is_a_calls;
   if (!active_lua_api) {
@@ -10293,6 +11411,460 @@ static int lua_is_a_callback(LuaState *state) {
     ++lua_is_a_hits;
   }
   active_lua_api->push_boolean(state, ok);
+  return 1;
+}
+
+static void refresh_load_asset_backend_anchor_state(const char *phase);
+
+static int lua_load_class_package_requested(LuaState *state) {
+  int package_requested = env_bool("DUNE_PROBE_LOADER_LOAD_CLASS_PACKAGE_DRY_RUN", 0);
+  if (!package_requested && active_lua_api && active_lua_api->type &&
+      active_lua_api->type(state, 2) == LUA_TTABLE_COMPAT &&
+      active_lua_api->get_field && active_lua_api->set_top) {
+    active_lua_api->get_field(state, 2, "Backend");
+    const char *backend = active_lua_api->to_lstring ? active_lua_api->to_lstring(state, -1, NULL) : NULL;
+    package_requested = backend && strcmp(backend, "package") == 0;
+    active_lua_api->set_top(state, -2);
+    if (!package_requested) {
+      active_lua_api->get_field(state, 2, "Package");
+      int is_boolean = 0;
+      package_requested = lua_to_boolean(active_lua_api, state, -1, &is_boolean) && is_boolean;
+      active_lua_api->set_top(state, -2);
+    }
+    if (!package_requested) {
+      active_lua_api->get_field(state, 2, "TryPackage");
+      int is_boolean = 0;
+      package_requested = lua_to_boolean(active_lua_api, state, -1, &is_boolean) && is_boolean;
+      active_lua_api->set_top(state, -2);
+    }
+  }
+  return package_requested;
+}
+
+static void log_load_class_package_preflight(const char *query) {
+  refresh_load_asset_backend_anchor_state("lua-load-class-package-preflight");
+  uintptr_t target = lua_load_asset_backend_static_load_class_address;
+  int mapped = 0;
+  int readable = 0;
+  int executable = 0;
+  char perms[16];
+  perms[0] = '\0';
+  Mapping *mappings = calloc(MAX_MAPPINGS, sizeof(*mappings));
+  if (mappings) {
+    size_t mapping_count = read_mappings(mappings, MAX_MAPPINGS);
+    const Mapping *mapping = target ? mapping_for_address(mappings, mapping_count, target) : NULL;
+    mapped = mapping != NULL;
+    readable = mapping && mapping->perms[0] == 'r';
+    executable = mapping && mapping->perms[2] == 'x';
+    if (mapping) {
+      snprintf(perms, sizeof(perms), "%s", mapping->perms);
+    }
+    free(mappings);
+  }
+  const int invoke_enabled = env_bool("DUNE_PROBE_LOADER_ALLOW_LOAD_CLASS_PACKAGE_INVOKE", 0);
+  const char *status = "anchor-missing";
+  if (target && !mapped) {
+    status = "target-not-mapped";
+  } else if (target && !lua_load_asset_backend_package_target_image) {
+    status = "target-not-target-image";
+  } else if (target && !executable) {
+    status = "target-not-executable";
+  } else if (target && executable && !invoke_enabled) {
+    status = "invoke-disabled";
+  } else if (target && executable) {
+    status = "abi-unverified";
+  }
+  char safe_query[256];
+  safe_log_value(query ? query : "", safe_query, sizeof(safe_query));
+  append_log(
+    "event=lua-load-class-package-preflight status=%s query=%s targetName=StaticLoadClass target=0x%lx targetImage=%s targetMapped=%s targetReadable=%s targetExecutable=%s targetPerms=%s platformAbi=sysv-x86_64 invokeEnabled=%s nativeBridgeArmed=false nativeCallable=false nativeInvoked=false packageAvailable=%s staticLoadClass=%s dryRun=%s abiVerified=false tcharLayoutVerified=false callFrameReady=false",
+    status,
+    safe_query,
+    (unsigned long)target,
+    lua_load_asset_backend_package_target_image ? "true" : "false",
+    mapped ? "true" : "false",
+    readable ? "true" : "false",
+    executable ? "true" : "false",
+    perms[0] ? perms : "none",
+    invoke_enabled ? "true" : "false",
+    lua_load_asset_backend_package_available ? "true" : "false",
+    lua_load_asset_backend_static_load_class_resolved ? "true" : "false",
+    env_bool("DUNE_PROBE_LOADER_LOAD_CLASS_PACKAGE_DRY_RUN", 0) ? "true" : "false"
+  );
+}
+
+static void load_class_package_probe_state(
+  uintptr_t *target_out,
+  int *mapped_out,
+  int *readable_out,
+  int *executable_out,
+  char *perms_out,
+  size_t perms_out_size,
+  const char **status_out
+) {
+  refresh_load_asset_backend_anchor_state("lua-load-class-package-state");
+  uintptr_t target = lua_load_asset_backend_static_load_class_address;
+  int mapped = 0;
+  int readable = 0;
+  int executable = 0;
+  if (perms_out && perms_out_size) {
+    perms_out[0] = '\0';
+  }
+  Mapping *mappings = calloc(MAX_MAPPINGS, sizeof(*mappings));
+  if (mappings) {
+    size_t mapping_count = read_mappings(mappings, MAX_MAPPINGS);
+    const Mapping *mapping = target ? mapping_for_address(mappings, mapping_count, target) : NULL;
+    mapped = mapping != NULL;
+    readable = mapping && mapping->perms[0] == 'r';
+    executable = mapping && mapping->perms[2] == 'x';
+    if (mapping && perms_out && perms_out_size) {
+      snprintf(perms_out, perms_out_size, "%s", mapping->perms);
+    }
+    free(mappings);
+  }
+  const int invoke_enabled = env_bool("DUNE_PROBE_LOADER_ALLOW_LOAD_CLASS_PACKAGE_INVOKE", 0);
+  const char *status = "anchor-missing";
+  if (target && !mapped) {
+    status = "target-not-mapped";
+  } else if (target && !lua_load_asset_backend_package_target_image) {
+    status = "target-not-target-image";
+  } else if (target && !executable) {
+    status = "target-not-executable";
+  } else if (target && executable && !invoke_enabled) {
+    status = "invoke-disabled";
+  } else if (target && executable) {
+    status = "abi-unverified";
+  }
+  if (target_out) *target_out = target;
+  if (mapped_out) *mapped_out = mapped;
+  if (readable_out) *readable_out = readable;
+  if (executable_out) *executable_out = executable;
+  if (status_out) *status_out = status;
+}
+
+static int lua_get_load_class_package_bridge_state_callback(LuaState *state) {
+  if (!active_lua_api || !active_lua_api->create_table || !active_lua_api->push_string ||
+      !active_lua_api->push_boolean || !active_lua_api->push_integer || !active_lua_api->set_field) {
+    return 0;
+  }
+  uintptr_t target = 0;
+  int mapped = 0, readable = 0, executable = 0;
+  char perms[16];
+  const char *status = NULL;
+  load_class_package_probe_state(&target, &mapped, &readable, &executable, perms, sizeof(perms), &status);
+  const int invoke_enabled = env_bool("DUNE_PROBE_LOADER_ALLOW_LOAD_CLASS_PACKAGE_INVOKE", 0);
+  append_log(
+    "event=lua-load-class-package-bridge-state status=%s targetName=StaticLoadClass target=0x%lx targetImage=%s mapped=%s readable=%s executable=%s perms=%s platformAbi=sysv-x86_64 invokeEnabled=%s nativeBridgeArmed=false abiVerified=false packageAvailable=%s",
+    status,
+    (unsigned long)target,
+    lua_load_asset_backend_package_target_image ? "true" : "false",
+    mapped ? "true" : "false",
+    readable ? "true" : "false",
+    executable ? "true" : "false",
+    perms[0] ? perms : "none",
+    invoke_enabled ? "true" : "false",
+    lua_load_asset_backend_static_load_class_resolved ? "true" : "false"
+  );
+  active_lua_api->create_table(state, 0, 16);
+  active_lua_api->push_string(state, status);
+  active_lua_api->set_field(state, -2, "Status");
+  active_lua_api->push_string(state, "StaticLoadClass");
+  active_lua_api->set_field(state, -2, "TargetName");
+  active_lua_api->push_integer(state, (long long)target);
+  active_lua_api->set_field(state, -2, "TargetAddress");
+  active_lua_api->push_boolean(state, mapped);
+  active_lua_api->set_field(state, -2, "TargetMapped");
+  active_lua_api->push_boolean(state, readable);
+  active_lua_api->set_field(state, -2, "TargetReadable");
+  active_lua_api->push_boolean(state, executable);
+  active_lua_api->set_field(state, -2, "TargetExecutable");
+  active_lua_api->push_string(state, perms[0] ? perms : "");
+  active_lua_api->set_field(state, -2, "TargetPerms");
+  active_lua_api->push_boolean(state, lua_load_asset_backend_package_target_image);
+  active_lua_api->set_field(state, -2, "TargetImage");
+  active_lua_api->push_boolean(state, invoke_enabled);
+  active_lua_api->set_field(state, -2, "InvokeEnabled");
+  active_lua_api->push_boolean(state, lua_load_asset_backend_static_load_class_resolved);
+  active_lua_api->set_field(state, -2, "PackageBackendAvailable");
+  active_lua_api->push_boolean(state, 0);
+  active_lua_api->set_field(state, -2, "AbiVerified");
+  active_lua_api->push_boolean(state, 0);
+  active_lua_api->set_field(state, -2, "NativeBridgeArmed");
+  active_lua_api->push_string(state, "loader-load-class-package-bridge");
+  active_lua_api->set_field(state, -2, "Source");
+  active_lua_api->push_integer(state, 1);
+  active_lua_api->set_field(state, -2, "ContractVersion");
+  return 1;
+}
+
+static int lua_get_load_class_package_abi_state_callback(LuaState *state) {
+  if (!active_lua_api || !active_lua_api->create_table || !active_lua_api->push_string ||
+      !active_lua_api->push_boolean || !active_lua_api->push_integer || !active_lua_api->set_field) {
+    return 0;
+  }
+  uintptr_t target = 0;
+  int mapped = 0, readable = 0, executable = 0;
+  char perms[16];
+  const char *status = NULL;
+  load_class_package_probe_state(&target, &mapped, &readable, &executable, perms, sizeof(perms), &status);
+  const char *abi_evidence = getenv("DUNE_PROBE_LOADER_LOAD_CLASS_PACKAGE_ABI_EVIDENCE");
+  const int abi_verified =
+    abi_evidence && abi_evidence[0] && env_bool("DUNE_PROBE_LOADER_CONFIRM_LOAD_CLASS_PACKAGE_ABI", 0) &&
+    target && lua_load_asset_backend_package_target_image && executable;
+  if (target && executable && !abi_verified) {
+    status = "abi-contract-unverified";
+  }
+  append_log(
+    "event=lua-load-class-package-abi-state status=%s targetName=StaticLoadClass target=0x%lx targetImage=%s platformAbi=sysv-x86_64 signatureFamily=StaticLoadClass abiVerified=%s callFrameReady=false stringBridgeReady=false classRootReady=false packageAvailable=%s",
+    status,
+    (unsigned long)target,
+    lua_load_asset_backend_package_target_image ? "true" : "false",
+    abi_verified ? "true" : "false",
+    lua_load_asset_backend_static_load_class_resolved ? "true" : "false"
+  );
+  active_lua_api->create_table(state, 0, 20);
+  active_lua_api->push_string(state, status);
+  active_lua_api->set_field(state, -2, "Status");
+  active_lua_api->push_string(state, "StaticLoadClass");
+  active_lua_api->set_field(state, -2, "TargetName");
+  active_lua_api->push_integer(state, (long long)target);
+  active_lua_api->set_field(state, -2, "TargetAddress");
+  active_lua_api->push_boolean(state, lua_load_asset_backend_package_target_image);
+  active_lua_api->set_field(state, -2, "TargetImage");
+  active_lua_api->push_string(state, "sysv-x86_64");
+  active_lua_api->set_field(state, -2, "PlatformAbi");
+  active_lua_api->push_string(state, "StaticLoadClass");
+  active_lua_api->set_field(state, -2, "SignatureFamily");
+  active_lua_api->push_string(state, "UClass*(UClass*,UObject*,const TCHAR*,const TCHAR*,uint32,UPackageMap*)");
+  active_lua_api->set_field(state, -2, "RequiredSignature");
+  active_lua_api->push_boolean(state, abi_verified);
+  active_lua_api->set_field(state, -2, "AbiVerified");
+  active_lua_api->push_boolean(state, 0);
+  active_lua_api->set_field(state, -2, "CallFrameReady");
+  active_lua_api->push_boolean(state, 0);
+  active_lua_api->set_field(state, -2, "StringBridgeReady");
+  active_lua_api->push_boolean(state, 0);
+  active_lua_api->set_field(state, -2, "ClassRootReady");
+  active_lua_api->push_boolean(state, 0);
+  active_lua_api->set_field(state, -2, "NativeBridgeArmed");
+  active_lua_api->push_integer(state, 1);
+  active_lua_api->set_field(state, -2, "ContractVersion");
+  return 1;
+}
+
+static int lua_get_load_class_package_call_frame_verification_state_callback(LuaState *state) {
+  if (!active_lua_api || !active_lua_api->create_table || !active_lua_api->push_string ||
+      !active_lua_api->push_boolean || !active_lua_api->push_integer || !active_lua_api->set_field) {
+    return 0;
+  }
+  size_t path_len = 0;
+  const char *path = active_lua_api->to_lstring ? active_lua_api->to_lstring(state, 1, &path_len) : NULL;
+  uintptr_t target = 0;
+  int mapped = 0, readable = 0, executable = 0;
+  char perms[16];
+  const char *status = NULL;
+  load_class_package_probe_state(&target, &mapped, &readable, &executable, perms, sizeof(perms), &status);
+  const int bounded_input = path && path[0] && path_len < 4096;
+  const char *abi_evidence = getenv("DUNE_PROBE_LOADER_LOAD_CLASS_PACKAGE_ABI_EVIDENCE");
+  const int abi_verified =
+    abi_evidence && abi_evidence[0] && env_bool("DUNE_PROBE_LOADER_CONFIRM_LOAD_CLASS_PACKAGE_ABI", 0) &&
+    target && lua_load_asset_backend_package_target_image && executable;
+  const int class_root_ready = env_bool("DUNE_PROBE_LOADER_CONFIRM_LOAD_CLASS_PACKAGE_ROOT_CLASS", 0);
+  const int call_frame_ready = bounded_input && abi_verified && class_root_ready;
+  if (!bounded_input) {
+    status = "path-missing";
+  } else if (target && executable && !abi_verified) {
+    status = "abi-unverified";
+  } else if (abi_verified && !class_root_ready) {
+    status = "class-root-unverified";
+  } else if (call_frame_ready) {
+    status = "call-frame-ready";
+  }
+  char safe_path[256];
+  safe_log_value(path ? path : "", safe_path, sizeof(safe_path));
+  append_log(
+    "event=lua-load-class-package-call-frame-verification-state status=%s path=%s targetName=StaticLoadClass target=0x%lx targetImage=%s platformAbi=sysv-x86_64 boundedInput=%s abiVerified=%s classRootReady=%s callFrameReady=%s nativeInvoked=false",
+    status,
+    safe_path,
+    (unsigned long)target,
+    lua_load_asset_backend_package_target_image ? "true" : "false",
+    bounded_input ? "true" : "false",
+    abi_verified ? "true" : "false",
+    class_root_ready ? "true" : "false",
+    call_frame_ready ? "true" : "false"
+  );
+  active_lua_api->create_table(state, 0, 18);
+  active_lua_api->push_string(state, status);
+  active_lua_api->set_field(state, -2, "Status");
+  active_lua_api->push_string(state, path ? path : "");
+  active_lua_api->set_field(state, -2, "Path");
+  active_lua_api->push_integer(state, (long long)target);
+  active_lua_api->set_field(state, -2, "TargetAddress");
+  active_lua_api->push_boolean(state, lua_load_asset_backend_package_target_image);
+  active_lua_api->set_field(state, -2, "TargetImage");
+  active_lua_api->push_boolean(state, bounded_input);
+  active_lua_api->set_field(state, -2, "BoundedInput");
+  active_lua_api->push_boolean(state, abi_verified);
+  active_lua_api->set_field(state, -2, "AbiVerified");
+  active_lua_api->push_boolean(state, class_root_ready);
+  active_lua_api->set_field(state, -2, "ClassRootReady");
+  active_lua_api->push_boolean(state, call_frame_ready);
+  active_lua_api->set_field(state, -2, "CallFrameReady");
+  active_lua_api->push_boolean(state, 0);
+  active_lua_api->set_field(state, -2, "NativeInvoked");
+  active_lua_api->push_integer(state, 1);
+  active_lua_api->set_field(state, -2, "ContractVersion");
+  return 1;
+}
+
+static int lua_get_load_class_package_native_executor_state_callback(LuaState *state) {
+  if (!active_lua_api || !active_lua_api->create_table || !active_lua_api->push_string ||
+      !active_lua_api->push_boolean || !active_lua_api->push_integer || !active_lua_api->set_field) {
+    return 0;
+  }
+  size_t path_len = 0;
+  const char *path = active_lua_api->to_lstring ? active_lua_api->to_lstring(state, 1, &path_len) : NULL;
+  uintptr_t target = 0;
+  int mapped = 0, readable = 0, executable = 0;
+  char perms[16];
+  const char *status = NULL;
+  load_class_package_probe_state(&target, &mapped, &readable, &executable, perms, sizeof(perms), &status);
+  const int bounded_input = path && path[0] && path_len < 4096;
+  const char *abi_evidence = getenv("DUNE_PROBE_LOADER_LOAD_CLASS_PACKAGE_ABI_EVIDENCE");
+  const int abi_verified =
+    abi_evidence && abi_evidence[0] && env_bool("DUNE_PROBE_LOADER_CONFIRM_LOAD_CLASS_PACKAGE_ABI", 0) &&
+    target && lua_load_asset_backend_package_target_image && executable;
+  const int class_root_ready = env_bool("DUNE_PROBE_LOADER_CONFIRM_LOAD_CLASS_PACKAGE_ROOT_CLASS", 0);
+  const int invoke_enabled = env_bool("DUNE_PROBE_LOADER_ALLOW_LOAD_CLASS_PACKAGE_INVOKE", 0);
+  const int final_invoke_confirmed = env_bool("DUNE_PROBE_LOADER_CONFIRM_LOAD_CLASS_PACKAGE_NATIVE_CALL", 0);
+  const int call_frame_ready = bounded_input && abi_verified && class_root_ready;
+  const int native_callable = invoke_enabled && call_frame_ready && final_invoke_confirmed;
+  const char *block_reason = native_callable ? "none" : status;
+  if (bounded_input && target && executable && !abi_verified) block_reason = "abi-unverified";
+  if (bounded_input && abi_verified && !class_root_ready) block_reason = "class-root-unverified";
+  if (bounded_input && call_frame_ready && !final_invoke_confirmed) block_reason = "native-call-unconfirmed";
+  append_log(
+    "event=lua-load-class-package-native-executor-state status=prepared targetName=StaticLoadClass target=0x%lx targetImage=%s platformAbi=sysv-x86_64 nativeExecutorReady=%s executorPreflightPassed=%s finalNativeCallEligible=%s nativeExecutorBlockReason=%s nativeInvoked=false",
+    (unsigned long)target,
+    lua_load_asset_backend_package_target_image ? "true" : "false",
+    native_callable ? "true" : "false",
+    call_frame_ready ? "true" : "false",
+    native_callable ? "true" : "false",
+    block_reason
+  );
+  active_lua_api->create_table(state, 0, 18);
+  active_lua_api->push_string(state, "prepared");
+  active_lua_api->set_field(state, -2, "Status");
+  active_lua_api->push_string(state, "guarded-class-package-native-executor");
+  active_lua_api->set_field(state, -2, "ExecutorKind");
+  active_lua_api->push_string(state, "StaticLoadClass");
+  active_lua_api->set_field(state, -2, "TargetName");
+  active_lua_api->push_integer(state, (long long)target);
+  active_lua_api->set_field(state, -2, "TargetAddress");
+  active_lua_api->push_boolean(state, lua_load_asset_backend_package_target_image);
+  active_lua_api->set_field(state, -2, "TargetImage");
+  active_lua_api->push_boolean(state, native_callable);
+  active_lua_api->set_field(state, -2, "NativeExecutorReady");
+  active_lua_api->push_boolean(state, call_frame_ready);
+  active_lua_api->set_field(state, -2, "ExecutorPreflightPassed");
+  active_lua_api->push_boolean(state, native_callable);
+  active_lua_api->set_field(state, -2, "FinalNativeCallEligible");
+  active_lua_api->push_string(state, block_reason);
+  active_lua_api->set_field(state, -2, "NativeExecutorBlockReason");
+  active_lua_api->push_boolean(state, 0);
+  active_lua_api->set_field(state, -2, "NativeInvoked");
+  active_lua_api->push_integer(state, 1);
+  active_lua_api->set_field(state, -2, "ContractVersion");
+  return 1;
+}
+
+static int lua_invoke_load_class_package_native_callback(LuaState *state) {
+  size_t path_len = 0;
+  const char *path = active_lua_api && active_lua_api->to_lstring ? active_lua_api->to_lstring(state, 1, &path_len) : NULL;
+  if (!active_lua_api || !active_lua_api->create_table || !active_lua_api->push_string ||
+      !active_lua_api->push_boolean || !active_lua_api->push_integer || !active_lua_api->set_field) {
+    return 0;
+  }
+  uintptr_t target = 0;
+  int mapped = 0, readable = 0, executable = 0;
+  char perms[16];
+  const char *status = NULL;
+  load_class_package_probe_state(&target, &mapped, &readable, &executable, perms, sizeof(perms), &status);
+  const int bounded_input = path && path[0] && path_len < 4096;
+  const char *abi_evidence = getenv("DUNE_PROBE_LOADER_LOAD_CLASS_PACKAGE_ABI_EVIDENCE");
+  const int abi_verified =
+    abi_evidence && abi_evidence[0] && env_bool("DUNE_PROBE_LOADER_CONFIRM_LOAD_CLASS_PACKAGE_ABI", 0) &&
+    target && lua_load_asset_backend_package_target_image && executable;
+  const int class_root_ready = env_bool("DUNE_PROBE_LOADER_CONFIRM_LOAD_CLASS_PACKAGE_ROOT_CLASS", 0);
+  const int invoke_enabled = env_bool("DUNE_PROBE_LOADER_ALLOW_LOAD_CLASS_PACKAGE_INVOKE", 0);
+  const int final_invoke_confirmed = env_bool("DUNE_PROBE_LOADER_CONFIRM_LOAD_CLASS_PACKAGE_NATIVE_CALL", 0);
+  const int call_frame_ready = bounded_input && abi_verified && class_root_ready;
+  const int native_callable = invoke_enabled && call_frame_ready && final_invoke_confirmed;
+  const char *final_status = native_callable ? "native-call-not-implemented" : status;
+  if (bounded_input && target && executable && !abi_verified) final_status = "abi-unverified";
+  if (bounded_input && abi_verified && !class_root_ready) final_status = "class-root-unverified";
+  if (bounded_input && call_frame_ready && !final_invoke_confirmed) final_status = "native-call-unconfirmed";
+  char safe_path[256];
+  safe_log_value(path ? path : "", safe_path, sizeof(safe_path));
+  append_log(
+    "event=lua-load-class-package-native-invoke status=%s path=%s targetName=StaticLoadClass target=0x%lx targetImage=%s platformAbi=sysv-x86_64 invokeRequested=true invokeEnabled=%s abiVerified=%s classRootReady=%s callFrameReady=%s nativeCallable=%s nativeInvoked=false nativeCallPlanAccepted=%s",
+    final_status,
+    safe_path,
+    (unsigned long)target,
+    lua_load_asset_backend_package_target_image ? "true" : "false",
+    invoke_enabled ? "true" : "false",
+    abi_verified ? "true" : "false",
+    class_root_ready ? "true" : "false",
+    call_frame_ready ? "true" : "false",
+    native_callable ? "true" : "false",
+    native_callable ? "true" : "false"
+  );
+  active_lua_api->create_table(state, 0, 18);
+  active_lua_api->push_string(state, final_status);
+  active_lua_api->set_field(state, -2, "Status");
+  active_lua_api->push_string(state, "StaticLoadClass");
+  active_lua_api->set_field(state, -2, "TargetName");
+  active_lua_api->push_integer(state, (long long)target);
+  active_lua_api->set_field(state, -2, "TargetAddress");
+  active_lua_api->push_boolean(state, lua_load_asset_backend_package_target_image);
+  active_lua_api->set_field(state, -2, "TargetImage");
+  active_lua_api->push_boolean(state, invoke_enabled);
+  active_lua_api->set_field(state, -2, "InvokeEnabled");
+  active_lua_api->push_boolean(state, abi_verified);
+  active_lua_api->set_field(state, -2, "AbiVerified");
+  active_lua_api->push_boolean(state, class_root_ready);
+  active_lua_api->set_field(state, -2, "ClassRootReady");
+  active_lua_api->push_boolean(state, call_frame_ready);
+  active_lua_api->set_field(state, -2, "CallFrameReady");
+  active_lua_api->push_boolean(state, native_callable);
+  active_lua_api->set_field(state, -2, "NativeCallable");
+  active_lua_api->push_boolean(state, 0);
+  active_lua_api->set_field(state, -2, "NativeInvoked");
+  active_lua_api->push_boolean(state, native_callable);
+  active_lua_api->set_field(state, -2, "NativeCallPlanAccepted");
+  active_lua_api->push_integer(state, 1);
+  active_lua_api->set_field(state, -2, "ContractVersion");
+  return 1;
+}
+
+static int lua_load_class_callback(LuaState *state) {
+  if (!active_lua_api || !active_lua_api->push_nil) {
+    return 0;
+  }
+  const char *query = lua_object_lookup_query_arg(state);
+  int package_requested = lua_load_class_package_requested(state);
+  if (package_requested) {
+    log_load_class_package_preflight(query);
+  }
+  const LuaObjectHandle *object = find_lua_object_by_path_or_name(query);
+  if (object && push_lua_class_handle_for_object(active_lua_api, state, object)) {
+    return 1;
+  }
+  object = find_lua_object_by_class(query);
+  if (object && push_lua_class_handle_for_object(active_lua_api, state, object)) {
+    return 1;
+  }
+  active_lua_api->push_nil(state);
   return 1;
 }
 
@@ -10379,6 +11951,19 @@ static int lua_for_each_ufunction_callback(LuaState *state) {
 }
 
 static void refresh_load_asset_backend_anchor_state(const char *phase);
+static int load_asset_package_crash_guard_armed(void);
+static int load_asset_package_run_guarded_self_test(int *result_out, int *signal_out);
+static int load_asset_package_return_validation_ready(
+  const char *self_test_path,
+  uintptr_t candidate_address,
+  const char *expected_class,
+  uintptr_t *address_out,
+  const char **path_out,
+  int *registry_hit_out,
+  int *mapped_out,
+  int *readable_out,
+  int *class_match_out
+);
 
 static int lua_load_asset_callback(LuaState *state) {
   ++lua_load_asset_calls;
@@ -10386,11 +11971,6 @@ static int lua_load_asset_callback(LuaState *state) {
     return 0;
   }
   const char *query = active_lua_api->to_lstring(state, 1, NULL);
-  const LuaObjectHandle *object = find_lua_object_by_path_or_name(query);
-  if (object && push_lua_object_handle(active_lua_api, state, object)) {
-    ++lua_load_asset_hits;
-    return 1;
-  }
   int package_requested = env_bool("DUNE_PROBE_LOADER_LOAD_ASSET_PACKAGE_DRY_RUN", 0);
   if (!package_requested && active_lua_api->type && active_lua_api->type(state, 2) == LUA_TTABLE_COMPAT &&
       active_lua_api->get_field && active_lua_api->set_top) {
@@ -10411,7 +11991,13 @@ static int lua_load_asset_callback(LuaState *state) {
       active_lua_api->set_top(state, -2);
     }
   }
+  const LuaObjectHandle *object = find_lua_object_by_path_or_name(query);
+  if (!package_requested && object && push_lua_object_handle(active_lua_api, state, object)) {
+    ++lua_load_asset_hits;
+    return 1;
+  }
   if (package_requested) {
+    ++lua_load_asset_package_calls;
     ++lua_load_asset_package_preflight_calls;
     refresh_load_asset_backend_anchor_state("lua-load-asset-package-preflight");
     if (lua_load_asset_backend_package_available) {
@@ -10448,10 +12034,56 @@ static int lua_load_asset_callback(LuaState *state) {
       free(mappings);
     }
     const int invoke_enabled = env_bool("DUNE_PROBE_LOADER_ALLOW_LOAD_ASSET_PACKAGE_INVOKE", 0);
+    const char *abi_evidence = getenv("DUNE_PROBE_LOADER_LOAD_ASSET_PACKAGE_ABI_EVIDENCE");
+    const int abi_evidence_provided = abi_evidence && abi_evidence[0] != '\0';
+    const int abi_verification_enabled = env_bool("DUNE_PROBE_LOADER_CONFIRM_LOAD_ASSET_PACKAGE_ABI", 0);
+    const int abi_verified =
+      abi_evidence_provided && abi_verification_enabled && target != 0 && lua_load_asset_backend_package_target_image;
+    unsigned long long observed_unit_bytes = 0;
+    const char *tchar_unit_raw = getenv("DUNE_PROBE_LOADER_TCHAR_UNIT_BYTES");
+    const char *tchar_evidence = getenv("DUNE_PROBE_LOADER_TCHAR_EVIDENCE");
+    const int tchar_observed_valid =
+      parse_unsigned(tchar_unit_raw, 10, &observed_unit_bytes) && observed_unit_bytes > 0;
+    const int tchar_evidence_provided = tchar_observed_valid && tchar_evidence && tchar_evidence[0] != '\0';
+    const int tchar_layout_verified =
+      env_bool("DUNE_PROBE_LOADER_CONFIRM_TCHAR_LAYOUT", 0) &&
+      tchar_evidence_provided &&
+      observed_unit_bytes == sizeof(wchar_t) &&
+      target != 0 &&
+      lua_load_asset_backend_package_target_image;
+    const int call_frame_ready =
+      query && query[0] && strlen(query) < 4096 && target != 0 &&
+      lua_load_asset_backend_package_target_image && abi_verified && tchar_layout_verified;
+    const int final_invoke_confirmed = env_bool("DUNE_PROBE_LOADER_CONFIRM_LOAD_ASSET_PACKAGE_NATIVE_CALL", 0);
+    int guarded_call_result = 0;
+    int guarded_call_signal = 0;
+    const int guarded_call_ready = load_asset_package_run_guarded_self_test(
+      &guarded_call_result,
+      &guarded_call_signal
+    );
+    const int return_validation_ready = load_asset_package_return_validation_ready(
+      object ? object->path : (query ? query : ""),
+      object ? object->address : 0,
+      object ? object->class_name : NULL,
+      NULL,
+      NULL,
+      NULL,
+      NULL,
+      NULL,
+      NULL
+    );
+    const int native_executor_ready =
+      invoke_enabled &&
+      call_frame_ready &&
+      final_invoke_confirmed &&
+      load_asset_package_crash_guard_armed() &&
+      guarded_call_ready &&
+      return_validation_ready;
     char safe_query[256];
     safe_log_value(query ? query : "", safe_query, sizeof(safe_query));
     append_log(
-      "event=lua-load-asset-package-preflight status=native-bridge-missing query=%s targetName=%s target=0x%lx targetImage=%s targetMapped=%s targetReadable=%s targetExecutable=%s targetPerms=%s platformAbi=sysv-x86_64 invokeEnabled=%s nativeBridgeArmed=false nativeCallable=false nativeInvoked=false packageAvailable=%s staticLoadObject=%s loadObject=%s loadPackage=%s resolveName=%s dryRun=%s",
+      "event=lua-load-asset-package-preflight status=%s query=%s targetName=%s target=0x%lx targetImage=%s targetMapped=%s targetReadable=%s targetExecutable=%s targetPerms=%s platformAbi=sysv-x86_64 invokeEnabled=%s nativeBridgeArmed=%s nativeCallable=%s nativeInvoked=false packageAvailable=%s staticLoadObject=%s staticLoadClass=%s loadObject=%s loadPackage=%s resolveName=%s dryRun=%s abiVerified=%s tcharLayoutVerified=%s callFrameReady=%s finalInvokeConfirmed=%s crashGuardArmed=%s guardedCallReady=%s returnValidationReady=%s",
+      native_executor_ready ? "native-executor-ready" : "native-bridge-missing",
       safe_query,
       target_name,
       (unsigned long)target,
@@ -10461,13 +12093,31 @@ static int lua_load_asset_callback(LuaState *state) {
       executable ? "true" : "false",
       perms[0] ? perms : "none",
       invoke_enabled ? "true" : "false",
+      native_executor_ready ? "true" : "false",
+      native_executor_ready ? "true" : "false",
       lua_load_asset_backend_package_available ? "true" : "false",
       lua_load_asset_backend_static_load_object_resolved ? "true" : "false",
+      lua_load_asset_backend_static_load_class_resolved ? "true" : "false",
       lua_load_asset_backend_load_object_resolved ? "true" : "false",
       lua_load_asset_backend_load_package_resolved ? "true" : "false",
       lua_load_asset_backend_resolve_name_resolved ? "true" : "false",
-      env_bool("DUNE_PROBE_LOADER_LOAD_ASSET_PACKAGE_DRY_RUN", 0) ? "true" : "false"
+      env_bool("DUNE_PROBE_LOADER_LOAD_ASSET_PACKAGE_DRY_RUN", 0) ? "true" : "false",
+      abi_verified ? "true" : "false",
+      tchar_layout_verified ? "true" : "false",
+      call_frame_ready ? "true" : "false",
+      final_invoke_confirmed ? "true" : "false",
+      load_asset_package_crash_guard_armed() ? "true" : "false",
+      guarded_call_ready ? "true" : "false",
+      return_validation_ready ? "true" : "false"
     );
+    if (native_executor_ready) {
+      ++lua_load_asset_package_executor_hits;
+    }
+    if (native_executor_ready && object && push_lua_object_handle(active_lua_api, state, object)) {
+      ++lua_load_asset_hits;
+      ++lua_load_asset_package_hits;
+      return 1;
+    }
   }
   active_lua_api->push_nil(state);
   return 1;
@@ -10475,6 +12125,7 @@ static int lua_load_asset_callback(LuaState *state) {
 
 static void refresh_load_asset_backend_anchor_state(const char *phase) {
   lua_load_asset_backend_static_load_object_address = 0;
+  lua_load_asset_backend_static_load_class_address = 0;
   lua_load_asset_backend_load_object_address = 0;
   lua_load_asset_backend_load_package_address = 0;
   lua_load_asset_backend_resolve_name_address = 0;
@@ -10510,6 +12161,10 @@ static void refresh_load_asset_backend_anchor_state(const char *phase) {
       lua_load_asset_backend_static_load_object_address = anchors[i].address;
       lua_load_asset_backend_package_target_image =
         lua_load_asset_backend_package_target_image || anchors[i].target_image;
+    } else if (strcmp(anchors[i].name, "StaticLoadClass") == 0) {
+      lua_load_asset_backend_static_load_class_address = anchors[i].address;
+      lua_load_asset_backend_package_target_image =
+        lua_load_asset_backend_package_target_image || anchors[i].target_image;
     } else if (strcmp(anchors[i].name, "LoadObject") == 0) {
       lua_load_asset_backend_load_object_address = anchors[i].address;
       lua_load_asset_backend_package_target_image =
@@ -10528,6 +12183,8 @@ static void refresh_load_asset_backend_anchor_state(const char *phase) {
 
   lua_load_asset_backend_static_load_object_resolved =
     lua_load_asset_backend_static_load_object_address != 0;
+  lua_load_asset_backend_static_load_class_resolved =
+    lua_load_asset_backend_static_load_class_address != 0;
   lua_load_asset_backend_load_object_resolved =
     lua_load_asset_backend_load_object_address != 0;
   lua_load_asset_backend_load_package_resolved =
@@ -10561,6 +12218,8 @@ static int lua_get_load_asset_backend_state_callback(LuaState *state) {
   active_lua_api->set_field(state, -2, "PackageBackendTargetImage");
   active_lua_api->push_boolean(state, lua_load_asset_backend_static_load_object_resolved);
   active_lua_api->set_field(state, -2, "StaticLoadObjectResolved");
+  active_lua_api->push_boolean(state, lua_load_asset_backend_static_load_class_resolved);
+  active_lua_api->set_field(state, -2, "StaticLoadClassResolved");
   active_lua_api->push_boolean(state, lua_load_asset_backend_load_package_resolved);
   active_lua_api->set_field(state, -2, "LoadPackageResolved");
   active_lua_api->push_boolean(state, lua_load_asset_backend_resolve_name_resolved);
@@ -10569,6 +12228,8 @@ static int lua_get_load_asset_backend_state_callback(LuaState *state) {
   active_lua_api->set_field(state, -2, "LoadObjectResolved");
   active_lua_api->push_integer(state, (long long)lua_load_asset_backend_static_load_object_address);
   active_lua_api->set_field(state, -2, "StaticLoadObjectAddress");
+  active_lua_api->push_integer(state, (long long)lua_load_asset_backend_static_load_class_address);
+  active_lua_api->set_field(state, -2, "StaticLoadClassAddress");
   active_lua_api->push_integer(state, (long long)lua_load_asset_backend_load_object_address);
   active_lua_api->set_field(state, -2, "LoadObjectAddress");
   active_lua_api->push_integer(state, (long long)lua_load_asset_backend_load_package_address);
@@ -11382,6 +13043,76 @@ static int load_asset_package_run_guarded_self_test(int *result_out, int *signal
   return load_asset_package_guard_signal == 0 && load_asset_package_guard_result == 17;
 }
 
+typedef void *(*LoadAssetPackageStaticLoadObjectFn)(void *, void *, const wchar_t *, const wchar_t *, uint32_t, void *, int);
+typedef void *(*LoadAssetPackageLoadPackageFn)(void *, const wchar_t *, uint32_t);
+
+static int load_asset_package_make_tchar_path(const char *path, wchar_t *out, size_t out_count) {
+  if (!path || !path[0] || !out || out_count == 0) {
+    return 0;
+  }
+  size_t i = 0;
+  for (; path[i] && i + 1 < out_count; ++i) {
+    unsigned char c = (unsigned char)path[i];
+    if (c >= 0x80) {
+      return 0;
+    }
+    out[i] = (wchar_t)c;
+  }
+  if (path[i]) {
+    return 0;
+  }
+  out[i] = 0;
+  return 1;
+}
+
+static int load_asset_package_run_guarded_native_call(
+  uintptr_t target,
+  const char *target_name,
+  const char *path,
+  uintptr_t *result_out,
+  int *signal_out
+) {
+  if (!target || !target_name || !path || !path[0]) {
+    return 0;
+  }
+  wchar_t tchar_path[4096];
+  if (!load_asset_package_make_tchar_path(path, tchar_path, sizeof(tchar_path) / sizeof(tchar_path[0]))) {
+    return 0;
+  }
+
+  struct sigaction old_segv;
+  struct sigaction old_bus;
+  struct sigaction action;
+  memset(&old_segv, 0, sizeof(old_segv));
+  memset(&old_bus, 0, sizeof(old_bus));
+  memset(&action, 0, sizeof(action));
+  action.sa_handler = load_asset_package_guard_signal_handler;
+  sigemptyset(&action.sa_mask);
+
+  int installed_segv = sigaction(SIGSEGV, &action, &old_segv) == 0;
+  int installed_bus = sigaction(SIGBUS, &action, &old_bus) == 0;
+  load_asset_package_guard_signal = 0;
+  load_asset_package_guard_active = 1;
+  void *result = NULL;
+  if (installed_segv && installed_bus && sigsetjmp(load_asset_package_guard_jmp, 1) == 0) {
+    if (strcmp(target_name, "LoadPackage") == 0) {
+      result = ((LoadAssetPackageLoadPackageFn)(void *)target)(NULL, tchar_path, 0);
+    } else {
+      result = ((LoadAssetPackageStaticLoadObjectFn)(void *)target)(NULL, NULL, tchar_path, NULL, 0, NULL, 0);
+    }
+  }
+  load_asset_package_guard_active = 0;
+  if (installed_bus) {
+    sigaction(SIGBUS, &old_bus, NULL);
+  }
+  if (installed_segv) {
+    sigaction(SIGSEGV, &old_segv, NULL);
+  }
+  if (result_out) *result_out = (uintptr_t)result;
+  if (signal_out) *signal_out = (int)load_asset_package_guard_signal;
+  return load_asset_package_guard_signal == 0;
+}
+
 static int load_asset_package_return_validation_ready(
   const char *self_test_path,
   uintptr_t candidate_address,
@@ -11420,6 +13151,31 @@ static int load_asset_package_return_validation_ready(
   if (readable_out) *readable_out = readable;
   if (class_match_out) *class_match_out = class_match;
   return registry_hit && mapped && readable && class_match;
+}
+
+static int load_asset_package_native_return_memory_ready(
+  uintptr_t address,
+  int *non_null_out,
+  int *mapped_out,
+  int *readable_out
+) {
+  int non_null = address != 0;
+  int mapped = 0;
+  int readable = 0;
+  if (non_null) {
+    Mapping *mappings = calloc(MAX_MAPPINGS, sizeof(*mappings));
+    if (mappings) {
+      size_t mapping_count = read_mappings(mappings, MAX_MAPPINGS);
+      const Mapping *mapping = mapping_for_address(mappings, mapping_count, address);
+      mapped = mapping != NULL;
+      readable = mapping && mapping->perms[0] == 'r' && mapping_contains_range(mapping, address, sizeof(void *));
+      free(mappings);
+    }
+  }
+  if (non_null_out) *non_null_out = non_null;
+  if (mapped_out) *mapped_out = mapped;
+  if (readable_out) *readable_out = readable;
+  return non_null && mapped && readable;
 }
 
 static int lua_get_load_asset_package_crash_guard_state_callback(LuaState *state) {
@@ -12018,7 +13774,27 @@ static int lua_invoke_load_asset_package_native_callback(LuaState *state) {
   const int invocation_descriptor_required = 1;
   const int invocation_descriptor_consumed = 1;
   const int native_call_plan_accepted = invocation_descriptor_consumed && path_staged && bounded_input && lua_load_asset_backend_package_target_image;
-  const int native_invoked = 0;
+  uintptr_t native_return_address = 0;
+  int native_call_signal = 0;
+  const int native_invoked = native_callable && load_asset_package_run_guarded_native_call(
+    target,
+    target_name,
+    path,
+    &native_return_address,
+    &native_call_signal
+  );
+  int native_return_non_null = 0;
+  int native_return_mapped = 0;
+  int native_return_readable = 0;
+  const int native_return_validated =
+    native_invoked &&
+    native_call_signal == 0 &&
+    load_asset_package_native_return_memory_ready(
+      native_return_address,
+      &native_return_non_null,
+      &native_return_mapped,
+      &native_return_readable
+    );
   const char *status = "path-missing";
   if (path_staged && !bounded_input) {
     status = "path-too-long";
@@ -12042,6 +13818,10 @@ static int lua_invoke_load_asset_package_native_callback(LuaState *state) {
     status = "guarded-call-missing";
   } else if (bounded_input && target && invoke_requested && native_bridge_armed && final_invoke_confirmed && crash_guard_armed && guarded_call_ready && !return_validation_ready) {
     status = "return-validation-missing";
+  } else if (bounded_input && target && invoke_requested && native_callable && native_return_validated) {
+    status = "native-return-validated";
+  } else if (bounded_input && target && invoke_requested && native_callable && native_invoked) {
+    status = "native-return-invalid";
   } else if (bounded_input && target && invoke_requested && native_callable) {
     status = "native-bridge-armed";
   }
@@ -12057,6 +13837,7 @@ static int lua_invoke_load_asset_package_native_callback(LuaState *state) {
       strcmp(status, "crash-guard-missing") == 0 ||
       strcmp(status, "guarded-call-missing") == 0 ||
       strcmp(status, "return-validation-missing") == 0 ||
+      strcmp(status, "native-return-invalid") == 0 ||
       strcmp(status, "native-bridge-armed") == 0) {
     ++lua_load_asset_package_native_gate_hits;
   }
@@ -12064,7 +13845,7 @@ static int lua_invoke_load_asset_package_native_callback(LuaState *state) {
   char safe_path[256];
   safe_log_value(path ? path : "", safe_path, sizeof(safe_path));
   append_log(
-    "event=lua-load-asset-package-native-invoke status=%s path=%s targetName=%s target=0x%lx targetImage=%s invokeRequested=%s invokeEnabled=%s pathStaged=%s boundedInput=%s abiEvidenceProvided=%s abiVerificationEnabled=%s abiVerified=%s tcharLayoutVerified=%s callFrameReady=%s nativeBridgeArmed=%s finalInvokeConfirmed=%s crashGuardRequired=%s crashGuardArmed=%s guardedCallRequired=%s guardedCallReady=%s guardedCallResult=%d returnValidationReady=%s invocationDescriptorRequired=%s invocationDescriptorConsumed=%s nativeCallPlanAccepted=%s nativeCallExecutionMode=guarded-native-package-load nativeCallGuardPolicy=crash-guard+guarded-call+return-validation nativeCallable=%s nativeInvoked=false packageAvailable=%s",
+    "event=lua-load-asset-package-native-invoke status=%s path=%s targetName=%s target=0x%lx targetImage=%s invokeRequested=%s invokeEnabled=%s pathStaged=%s boundedInput=%s abiEvidenceProvided=%s abiVerificationEnabled=%s abiVerified=%s tcharLayoutVerified=%s callFrameReady=%s nativeBridgeArmed=%s finalInvokeConfirmed=%s crashGuardRequired=%s crashGuardArmed=%s guardedCallRequired=%s guardedCallReady=%s guardedCallResult=%d returnValidationReady=%s invocationDescriptorRequired=%s invocationDescriptorConsumed=%s nativeCallPlanAccepted=%s nativeCallExecutionMode=guarded-native-package-load nativeCallGuardPolicy=crash-guard+guarded-call+return-validation nativeCallable=%s nativeInvoked=%s nativeReturn=0x%lx nativeSignal=%d nativeReturnNonNull=%s nativeReturnMapped=%s nativeReturnReadable=%s nativeReturnValidated=%s packageAvailable=%s",
     status,
     safe_path,
     target_name,
@@ -12091,6 +13872,13 @@ static int lua_invoke_load_asset_package_native_callback(LuaState *state) {
     invocation_descriptor_consumed ? "true" : "false",
     native_call_plan_accepted ? "true" : "false",
     native_callable ? "true" : "false",
+    native_invoked ? "true" : "false",
+    (unsigned long)native_return_address,
+    native_call_signal,
+    native_return_non_null ? "true" : "false",
+    native_return_mapped ? "true" : "false",
+    native_return_readable ? "true" : "false",
+    native_return_validated ? "true" : "false",
     lua_load_asset_backend_package_available ? "true" : "false"
   );
 
@@ -12103,6 +13891,8 @@ static int lua_invoke_load_asset_package_native_callback(LuaState *state) {
   active_lua_api->set_field(state, -2, "TargetName");
   active_lua_api->push_integer(state, (long long)target);
   active_lua_api->set_field(state, -2, "TargetAddress");
+  active_lua_api->push_boolean(state, lua_load_asset_backend_package_target_image);
+  active_lua_api->set_field(state, -2, "TargetImage");
   active_lua_api->push_string(state, path ? path : "");
   active_lua_api->set_field(state, -2, "Path");
   active_lua_api->push_boolean(state, invoke_requested);
@@ -12151,6 +13941,18 @@ static int lua_invoke_load_asset_package_native_callback(LuaState *state) {
   active_lua_api->set_field(state, -2, "NativeCallGuardPolicy");
   active_lua_api->push_boolean(state, native_callable);
   active_lua_api->set_field(state, -2, "NativeCallable");
+  active_lua_api->push_integer(state, (long long)native_return_address);
+  active_lua_api->set_field(state, -2, "NativeReturnAddress");
+  active_lua_api->push_integer(state, native_call_signal);
+  active_lua_api->set_field(state, -2, "NativeSignal");
+  active_lua_api->push_boolean(state, native_return_non_null);
+  active_lua_api->set_field(state, -2, "NativeReturnNonNull");
+  active_lua_api->push_boolean(state, native_return_mapped);
+  active_lua_api->set_field(state, -2, "NativeReturnMapped");
+  active_lua_api->push_boolean(state, native_return_readable);
+  active_lua_api->set_field(state, -2, "NativeReturnReadable");
+  active_lua_api->push_boolean(state, native_return_validated);
+  active_lua_api->set_field(state, -2, "NativeReturnValidated");
   active_lua_api->push_boolean(state, lua_load_asset_backend_package_available);
   active_lua_api->set_field(state, -2, "PackageBackendAvailable");
   active_lua_api->push_string(state, "loader-load-asset-package-native-bridge");
@@ -12239,6 +14041,357 @@ static int lua_static_construct_object_callback(LuaState *state) {
   return 1;
 }
 
+static uintptr_t static_construct_object_native_target_address(void) {
+  unsigned long long parsed = 0;
+  const char *raw = getenv("DUNE_PROBE_LOADER_STATIC_CONSTRUCT_OBJECT_ADDRESS");
+  if (parse_unsigned_auto(raw, &parsed)) {
+    return (uintptr_t)parsed;
+  }
+  return 0;
+}
+
+typedef struct StaticConstructObjectFNameArg {
+  int32_t comparison_index;
+  int32_t number;
+} StaticConstructObjectFNameArg;
+
+typedef void *(*StaticConstructObjectNativeFn)(
+  void *,
+  void *,
+  StaticConstructObjectFNameArg,
+  uint32_t,
+  uint32_t,
+  void *,
+  int,
+  void *,
+  int
+);
+
+static int static_construct_object_env_u32(const char *name, uint32_t default_value, uint32_t *out, int *provided_out) {
+  unsigned long long parsed = 0;
+  const char *raw = getenv(name);
+  int provided = raw && raw[0] && parse_unsigned_auto(raw, &parsed) && parsed <= 0xffffffffULL;
+  if (out) {
+    *out = provided ? (uint32_t)parsed : default_value;
+  }
+  if (provided_out) {
+    *provided_out = provided;
+  }
+  return provided;
+}
+
+static int static_construct_object_crash_guard_armed(void) {
+  return load_asset_package_crash_guard_available() &&
+         env_bool("DUNE_PROBE_LOADER_ENABLE_STATIC_CONSTRUCT_OBJECT_CRASH_GUARD", 0);
+}
+
+static int static_construct_object_run_guarded_native_call(
+  uintptr_t target,
+  uintptr_t class_address,
+  uintptr_t outer_address,
+  StaticConstructObjectFNameArg fname,
+  uint32_t object_flags,
+  uint32_t internal_flags,
+  uintptr_t *result_out,
+  int *signal_out
+) {
+  if (!target || !class_address) {
+    return 0;
+  }
+  struct sigaction old_segv;
+  struct sigaction old_bus;
+  struct sigaction action;
+  memset(&old_segv, 0, sizeof(old_segv));
+  memset(&old_bus, 0, sizeof(old_bus));
+  memset(&action, 0, sizeof(action));
+  action.sa_handler = load_asset_package_guard_signal_handler;
+  sigemptyset(&action.sa_mask);
+
+  int installed_segv = sigaction(SIGSEGV, &action, &old_segv) == 0;
+  int installed_bus = sigaction(SIGBUS, &action, &old_bus) == 0;
+  load_asset_package_guard_signal = 0;
+  load_asset_package_guard_active = 1;
+  void *result = NULL;
+  if (installed_segv && installed_bus && sigsetjmp(load_asset_package_guard_jmp, 1) == 0) {
+    result = ((StaticConstructObjectNativeFn)(void *)target)(
+      (void *)class_address,
+      (void *)outer_address,
+      fname,
+      object_flags,
+      internal_flags,
+      NULL,
+      0,
+      NULL,
+      0
+    );
+  }
+  load_asset_package_guard_active = 0;
+  if (installed_bus) {
+    sigaction(SIGBUS, &old_bus, NULL);
+  }
+  if (installed_segv) {
+    sigaction(SIGSEGV, &old_segv, NULL);
+  }
+  if (result_out) *result_out = (uintptr_t)result;
+  if (signal_out) *signal_out = (int)load_asset_package_guard_signal;
+  return load_asset_package_guard_signal == 0;
+}
+
+static int lua_static_construct_object_native_state(
+  LuaState *state,
+  const char *event_name,
+  int invoke_mode
+) {
+  if (!active_lua_api || !active_lua_api->create_table || !active_lua_api->push_string ||
+      !active_lua_api->push_boolean || !active_lua_api->push_integer || !active_lua_api->set_field) {
+    return 0;
+  }
+  if (invoke_mode) {
+    ++lua_static_construct_object_native_invoke_calls;
+  } else {
+    ++lua_static_construct_object_native_executor_state_calls;
+  }
+
+  char class_name[MAX_LUA_CLASS_NAME];
+  lua_copy_string_arg_or_field(active_lua_api, state, 1, "ClassName", class_name, sizeof(class_name), "ConstructedObjectClass");
+  uintptr_t class_address = lua_object_uintptr_field_arg(active_lua_api, state, 1, "ClassAddress");
+  uintptr_t object_class_address = lua_object_address_arg(active_lua_api, state, 1);
+  if (!class_address) {
+    class_address = object_class_address;
+  }
+  uintptr_t outer_address = lua_object_address_arg(active_lua_api, state, 2);
+  char name[MAX_LUA_OBJECT_NAME];
+  lua_copy_string_arg_or_field(active_lua_api, state, 3, NULL, name, sizeof(name), "ConstructedObject");
+
+  int invoke_requested = 0;
+  if (invoke_mode && active_lua_api->type && active_lua_api->type(state, 4) == LUA_TTABLE_COMPAT &&
+      active_lua_api->get_field && active_lua_api->set_top) {
+    active_lua_api->get_field(state, 4, "Invoke");
+    int is_boolean = 0;
+    invoke_requested = lua_to_boolean(active_lua_api, state, -1, &is_boolean) && is_boolean;
+    active_lua_api->set_top(state, -2);
+  }
+
+  uintptr_t target = static_construct_object_native_target_address();
+  const int target_image = env_bool("DUNE_PROBE_LOADER_CONFIRM_STATIC_CONSTRUCT_OBJECT_TARGET_IMAGE", 0) && target != 0;
+  const char *abi_evidence = getenv("DUNE_PROBE_LOADER_STATIC_CONSTRUCT_OBJECT_ABI_EVIDENCE");
+  const int abi_evidence_provided = abi_evidence && abi_evidence[0] != '\0';
+  const int abi_verified =
+    abi_evidence_provided &&
+    env_bool("DUNE_PROBE_LOADER_CONFIRM_STATIC_CONSTRUCT_OBJECT_ABI", 0) &&
+    target_image &&
+    class_address != 0;
+  const int invoke_enabled = env_bool("DUNE_PROBE_LOADER_ALLOW_STATIC_CONSTRUCT_OBJECT_INVOKE", 0);
+  const int final_invoke_confirmed = env_bool("DUNE_PROBE_LOADER_CONFIRM_STATIC_CONSTRUCT_OBJECT_NATIVE_CALL", 0);
+  uint32_t fname_comparison_index = 0;
+  uint32_t fname_number = 0;
+  uint32_t object_flags = 0;
+  uint32_t internal_flags = 0;
+  int fname_index_provided = 0;
+  static_construct_object_env_u32(
+    "DUNE_PROBE_LOADER_STATIC_CONSTRUCT_OBJECT_FNAME_COMPARISON_INDEX",
+    0,
+    &fname_comparison_index,
+    &fname_index_provided
+  );
+  static_construct_object_env_u32(
+    "DUNE_PROBE_LOADER_STATIC_CONSTRUCT_OBJECT_FNAME_NUMBER",
+    0,
+    &fname_number,
+    NULL
+  );
+  static_construct_object_env_u32(
+    "DUNE_PROBE_LOADER_STATIC_CONSTRUCT_OBJECT_OBJECT_FLAGS",
+    0,
+    &object_flags,
+    NULL
+  );
+  static_construct_object_env_u32(
+    "DUNE_PROBE_LOADER_STATIC_CONSTRUCT_OBJECT_INTERNAL_FLAGS",
+    0,
+    &internal_flags,
+    NULL
+  );
+  const int fname_confirmed = env_bool("DUNE_PROBE_LOADER_CONFIRM_STATIC_CONSTRUCT_OBJECT_FNAME", 0);
+  const int crash_guard_armed = static_construct_object_crash_guard_armed();
+  const int bounded_name = name[0] != '\0' && strlen(name) < sizeof(name);
+  const int fname_ready = fname_confirmed && (fname_index_provided || fname_comparison_index == 0);
+  const int call_frame_ready = target != 0 && target_image && abi_verified && class_address != 0 && bounded_name && fname_ready;
+  const int native_callable = invoke_enabled && call_frame_ready && final_invoke_confirmed && crash_guard_armed;
+  StaticConstructObjectFNameArg fname_arg;
+  fname_arg.comparison_index = (int32_t)fname_comparison_index;
+  fname_arg.number = (int32_t)fname_number;
+  uintptr_t native_return = 0;
+  int native_signal = 0;
+  int native_return_non_null = 0;
+  int native_return_mapped = 0;
+  int native_return_readable = 0;
+  const int native_invoked = invoke_mode && invoke_requested && native_callable &&
+    static_construct_object_run_guarded_native_call(
+      target,
+      class_address,
+      outer_address,
+      fname_arg,
+      object_flags,
+      internal_flags,
+      &native_return,
+      &native_signal
+    );
+  load_asset_package_native_return_memory_ready(
+    native_return,
+    &native_return_non_null,
+    &native_return_mapped,
+    &native_return_readable
+  );
+  const char *status = "prepared";
+  if (!target) {
+    status = "anchor-missing";
+  } else if (!target_image) {
+    status = "target-not-target-image";
+  } else if (!class_address) {
+    status = "class-missing";
+  } else if (!bounded_name) {
+    status = "name-missing";
+  } else if (!fname_ready) {
+    status = "fname-unconfirmed";
+  } else if (!abi_verified) {
+    status = "abi-unverified";
+  } else if (invoke_mode && !invoke_requested) {
+    status = "descriptor-preflight-ready";
+  } else if (invoke_mode && invoke_requested && !invoke_enabled) {
+    status = "invoke-disabled";
+  } else if (invoke_mode && invoke_requested && !final_invoke_confirmed) {
+    status = "native-call-confirmation-missing";
+  } else if (invoke_mode && invoke_requested && !crash_guard_armed) {
+    status = "crash-guard-missing";
+  } else if (invoke_mode && invoke_requested && native_invoked) {
+    status = "native-invoked";
+  } else if (invoke_mode && invoke_requested && native_callable) {
+    status = "native-call-failed";
+  }
+  if (strcmp(status, "prepared") != 0 && strcmp(status, "descriptor-preflight-ready") != 0) {
+    ++lua_static_construct_object_native_gate_hits;
+  }
+
+  char safe_name[128];
+  char safe_class[128];
+  safe_log_value(name, safe_name, sizeof(safe_name));
+  safe_log_value(class_name, safe_class, sizeof(safe_class));
+  append_log(
+    "event=%s status=%s targetName=StaticConstructObject target=0x%lx targetImage=%s platformAbi=sysv-x86_64 class=0x%lx outer=0x%lx name=%s className=%s fnameComparisonIndex=%u fnameNumber=%u fnameConfirmed=%s objectFlags=0x%x internalFlags=0x%x invokeRequested=%s invokeEnabled=%s abiEvidenceProvided=%s abiVerified=%s callFrameReady=%s finalInvokeConfirmed=%s crashGuardArmed=%s nativeCallable=%s nativeInvoked=%s nativeReturn=0x%lx nativeSignal=%d nativeReturnNonNull=%s nativeReturnMapped=%s nativeReturnReadable=%s",
+    event_name,
+    status,
+    (unsigned long)target,
+    target_image ? "true" : "false",
+    (unsigned long)class_address,
+    (unsigned long)outer_address,
+    safe_name,
+    safe_class,
+    fname_comparison_index,
+    fname_number,
+    fname_confirmed ? "true" : "false",
+    object_flags,
+    internal_flags,
+    invoke_requested ? "true" : "false",
+    invoke_enabled ? "true" : "false",
+    abi_evidence_provided ? "true" : "false",
+    abi_verified ? "true" : "false",
+    call_frame_ready ? "true" : "false",
+    final_invoke_confirmed ? "true" : "false",
+    crash_guard_armed ? "true" : "false",
+    native_callable ? "true" : "false",
+    native_invoked ? "true" : "false",
+    (unsigned long)native_return,
+    native_signal,
+    native_return_non_null ? "true" : "false",
+    native_return_mapped ? "true" : "false",
+    native_return_readable ? "true" : "false"
+  );
+
+  active_lua_api->create_table(state, 0, 24);
+  active_lua_api->push_string(state, invoke_mode ? "loader-static-construct-object-native-bridge" : "loader-static-construct-object-native-executor-state");
+  active_lua_api->set_field(state, -2, "Source");
+  active_lua_api->push_string(state, status);
+  active_lua_api->set_field(state, -2, "Status");
+  active_lua_api->push_string(state, "guarded-static-construct-object-native-executor");
+  active_lua_api->set_field(state, -2, "ExecutorKind");
+  active_lua_api->push_string(state, "StaticConstructObject");
+  active_lua_api->set_field(state, -2, "TargetName");
+  active_lua_api->push_integer(state, (long long)target);
+  active_lua_api->set_field(state, -2, "TargetAddress");
+  active_lua_api->push_boolean(state, target_image);
+  active_lua_api->set_field(state, -2, "TargetImage");
+  active_lua_api->push_integer(state, (long long)class_address);
+  active_lua_api->set_field(state, -2, "ClassAddress");
+  active_lua_api->push_integer(state, (long long)outer_address);
+  active_lua_api->set_field(state, -2, "OuterAddress");
+  active_lua_api->push_string(state, name);
+  active_lua_api->set_field(state, -2, "Name");
+  active_lua_api->push_integer(state, (long long)fname_comparison_index);
+  active_lua_api->set_field(state, -2, "FNameComparisonIndex");
+  active_lua_api->push_integer(state, (long long)fname_number);
+  active_lua_api->set_field(state, -2, "FNameNumber");
+  active_lua_api->push_boolean(state, fname_confirmed);
+  active_lua_api->set_field(state, -2, "FNameConfirmed");
+  active_lua_api->push_integer(state, (long long)object_flags);
+  active_lua_api->set_field(state, -2, "ObjectFlags");
+  active_lua_api->push_integer(state, (long long)internal_flags);
+  active_lua_api->set_field(state, -2, "InternalFlags");
+  active_lua_api->push_boolean(state, invoke_requested);
+  active_lua_api->set_field(state, -2, "InvokeRequested");
+  active_lua_api->push_boolean(state, invoke_enabled);
+  active_lua_api->set_field(state, -2, "InvokeEnabled");
+  active_lua_api->push_boolean(state, abi_evidence_provided);
+  active_lua_api->set_field(state, -2, "AbiEvidenceProvided");
+  active_lua_api->push_boolean(state, abi_verified);
+  active_lua_api->set_field(state, -2, "AbiVerified");
+  active_lua_api->push_boolean(state, call_frame_ready);
+  active_lua_api->set_field(state, -2, "CallFrameReady");
+  active_lua_api->push_boolean(state, native_callable);
+  active_lua_api->set_field(state, -2, "NativeCallable");
+  active_lua_api->push_boolean(state, native_callable);
+  active_lua_api->set_field(state, -2, "NativeExecutorReady");
+  active_lua_api->push_boolean(state, call_frame_ready);
+  active_lua_api->set_field(state, -2, "ExecutorPreflightPassed");
+  active_lua_api->push_boolean(state, final_invoke_confirmed);
+  active_lua_api->set_field(state, -2, "FinalInvokeConfirmed");
+  active_lua_api->push_boolean(state, crash_guard_armed);
+  active_lua_api->set_field(state, -2, "CrashGuardArmed");
+  active_lua_api->push_boolean(state, native_invoked);
+  active_lua_api->set_field(state, -2, "NativeInvoked");
+  active_lua_api->push_integer(state, (long long)native_return);
+  active_lua_api->set_field(state, -2, "NativeReturnAddress");
+  active_lua_api->push_integer(state, native_signal);
+  active_lua_api->set_field(state, -2, "NativeSignal");
+  active_lua_api->push_boolean(state, native_return_non_null);
+  active_lua_api->set_field(state, -2, "NativeReturnNonNull");
+  active_lua_api->push_boolean(state, native_return_mapped);
+  active_lua_api->set_field(state, -2, "NativeReturnMapped");
+  active_lua_api->push_boolean(state, native_return_readable);
+  active_lua_api->set_field(state, -2, "NativeReturnReadable");
+  active_lua_api->push_string(state, status);
+  active_lua_api->set_field(state, -2, "NativeExecutorBlockReason");
+  active_lua_api->push_integer(state, 1);
+  active_lua_api->set_field(state, -2, "ContractVersion");
+  return 1;
+}
+
+static int lua_get_static_construct_object_native_executor_state_callback(LuaState *state) {
+  return lua_static_construct_object_native_state(
+    state,
+    "lua-static-construct-object-native-executor-state",
+    0
+  );
+}
+
+static int lua_invoke_static_construct_object_native_callback(LuaState *state) {
+  return lua_static_construct_object_native_state(
+    state,
+    "lua-static-construct-object-native-invoke",
+    1
+  );
+}
+
 static int lua_notify_on_new_object_callback(LuaState *state) {
   ++lua_notify_on_new_object_calls;
   if (!active_lua_api) {
@@ -12269,9 +14422,52 @@ static int lua_notify_on_new_object_callback(LuaState *state) {
   registration->ref = LUA_NOREF_COMPAT;
   snprintf(registration->filter, sizeof(registration->filter), "%s", filter);
   if (lua_store_hook_ref(active_lua_api, state, callback_index, &registration->ref)) {
+    registration->id = ++lua_compat_registration_count;
     ++lua_notify_on_new_object_registration_count;
+    if (active_lua_api->push_integer) {
+      active_lua_api->push_integer(state, registration->id);
+      return 1;
+    }
   }
   return 0;
+}
+
+static int lua_read_registration_id(LuaState *state, int index, int *out_id);
+
+static int lua_unregister_notify_on_new_object_callback(LuaState *state) {
+  ++lua_callback_unregister_calls;
+  if (!active_lua_api) {
+    return 0;
+  }
+  int id = 0;
+  if (!lua_read_registration_id(state, 1, &id)) {
+    active_lua_api->push_boolean(state, 0);
+    return 1;
+  }
+  int count = lua_notify_on_new_object_registration_count;
+  if (count > MAX_LUA_NOTIFY_ON_NEW_OBJECT_REGISTRATIONS) {
+    count = MAX_LUA_NOTIFY_ON_NEW_OBJECT_REGISTRATIONS;
+  }
+  for (int i = 0; i < count; ++i) {
+    LuaNotifyOnNewObjectRegistration *registration = &lua_notify_on_new_object_registrations[i];
+    if (registration->id != id) {
+      continue;
+    }
+    lua_unref_hook_ref(active_lua_api, state, &registration->ref);
+    for (int j = i; j + 1 < count; ++j) {
+      lua_notify_on_new_object_registrations[j] = lua_notify_on_new_object_registrations[j + 1];
+    }
+    memset(&lua_notify_on_new_object_registrations[count - 1], 0, sizeof(lua_notify_on_new_object_registrations[count - 1]));
+    lua_notify_on_new_object_registrations[count - 1].ref = LUA_NOREF_COMPAT;
+    if (lua_notify_on_new_object_registration_count > 0) {
+      --lua_notify_on_new_object_registration_count;
+    }
+    ++lua_callback_unregister_hits;
+    active_lua_api->push_boolean(state, 1);
+    return 1;
+  }
+  active_lua_api->push_boolean(state, 0);
+  return 1;
 }
 
 static int lua_execute_in_game_thread_callback(LuaState *state) {
@@ -12308,8 +14504,8 @@ static int lua_execute_in_game_thread_callback(LuaState *state) {
   return 1;
 }
 
-static int lua_drain_game_thread_queue_callback(LuaState *state) {
-  if (!active_lua_api || !state) {
+static int lua_drain_game_thread_queue_internal(LuaApi *api, LuaState *state) {
+  if (!api || !state) {
     return 0;
   }
   int drained = 0;
@@ -12328,20 +14524,28 @@ static int lua_drain_game_thread_queue_callback(LuaState *state) {
       --lua_game_thread_queue_depth;
     }
     int status = invoke_lua_hook_ref(
-      active_lua_api,
+      api,
       state,
       ref,
       &lua_execute_in_game_thread_callbacks,
       &lua_execute_in_game_thread_result,
       &lua_execute_in_game_thread_is_number
     );
-    lua_unref_hook_ref(active_lua_api, state, &ref);
+    lua_unref_hook_ref(api, state, &ref);
     if (status != 0) {
       lua_execute_in_game_thread_is_number = 0;
     }
     ++drained;
   }
   ++lua_game_thread_queue_drains;
+  return drained;
+}
+
+static int lua_drain_game_thread_queue_callback(LuaState *state) {
+  if (!active_lua_api || !state) {
+    return 0;
+  }
+  int drained = lua_drain_game_thread_queue_internal(active_lua_api, state);
   if (active_lua_api->push_integer) {
     active_lua_api->push_integer(state, drained);
     return 1;
@@ -12724,6 +14928,76 @@ static int lua_unregister_call_function_registration_by_id(
   return 1;
 }
 
+static void lua_key_code_to_name(long long key_code, char *out, size_t out_size) {
+  if (!out || out_size == 0) {
+    return;
+  }
+  out[0] = '\0';
+  if (key_code >= 'A' && key_code <= 'Z') {
+    snprintf(out, out_size, "%c", (char)key_code);
+    return;
+  }
+  switch (key_code) {
+    case 0x09: snprintf(out, out_size, "TAB"); return;
+    case 0x0d: snprintf(out, out_size, "ENTER"); return;
+    case 0x1b: snprintf(out, out_size, "ESCAPE"); return;
+    case 0x20: snprintf(out, out_size, "SPACE"); return;
+    case 0x70: snprintf(out, out_size, "F1"); return;
+    case 0x71: snprintf(out, out_size, "F2"); return;
+    case 0x72: snprintf(out, out_size, "F3"); return;
+    case 0x73: snprintf(out, out_size, "F4"); return;
+    default: snprintf(out, out_size, "%lld", key_code); return;
+  }
+}
+
+static int lua_read_key_bind_key_at(LuaState *state, int index, char *out, size_t out_size) {
+  if (!active_lua_api || !state || !out || out_size == 0 || !active_lua_api->type) {
+    return 0;
+  }
+  out[0] = '\0';
+  int value_type = active_lua_api->type(state, index);
+  if (value_type == LUA_TSTRING_COMPAT && active_lua_api->to_lstring) {
+    const char *key = active_lua_api->to_lstring(state, index, NULL);
+    if (key && key[0]) {
+      snprintf(out, out_size, "%.*s", (int)(out_size - 1), key);
+      return 1;
+    }
+  }
+  if (value_type == LUA_TNUMBER_COMPAT) {
+    int is_number = 0;
+    long long key_code = lua_to_integer(active_lua_api, state, index, &is_number);
+    if (is_number) {
+      lua_key_code_to_name(key_code, out, out_size);
+      return out[0] != '\0';
+    }
+  }
+  return 0;
+}
+
+static int lua_read_key_bind_key(LuaState *state, int index, char *out, size_t out_size) {
+  if (!active_lua_api || !state || !out || out_size == 0) {
+    return 0;
+  }
+  out[0] = '\0';
+  if (lua_read_key_bind_key_at(state, index, out, out_size)) {
+    return 1;
+  }
+  if (active_lua_api->type && active_lua_api->type(state, index) == LUA_TTABLE_COMPAT &&
+      active_lua_api->get_field && active_lua_api->set_top) {
+    active_lua_api->get_field(state, index, "Key");
+    int found = lua_read_key_bind_key_at(state, -1, out, out_size);
+    active_lua_api->set_top(state, -2);
+    if (found) {
+      return 1;
+    }
+    active_lua_api->get_field(state, index, "key");
+    found = lua_read_key_bind_key_at(state, -1, out, out_size);
+    active_lua_api->set_top(state, -2);
+    return found;
+  }
+  return 0;
+}
+
 static int lua_register_key_bind_callback(LuaState *state) {
   int callback_index = active_lua_api && active_lua_api->type &&
                        active_lua_api->type(state, 3) == LUA_TFUNCTION_COMPAT ? 3 : lua_first_function_arg(state);
@@ -12737,10 +15011,7 @@ static int lua_register_key_bind_callback(LuaState *state) {
   }
   LuaKeyBindRegistration *registration = &lua_key_bind_registrations[lua_key_bind_registration_count];
   lua_clear_key_bind_registration(registration);
-  const char *key = active_lua_api->to_lstring ? active_lua_api->to_lstring(state, 1, NULL) : NULL;
-  if (key && key[0]) {
-    snprintf(registration->key, sizeof(registration->key), "%.*s", (int)(sizeof(registration->key) - 1), key);
-  }
+  lua_read_key_bind_key(state, 1, registration->key, sizeof(registration->key));
   if (!lua_store_hook_ref(active_lua_api, state, callback_index, &registration->ref)) {
     active_lua_api->push_integer(state, 0);
     return 1;
@@ -12756,7 +15027,9 @@ static int lua_is_key_bind_registered_callback(LuaState *state) {
     return 0;
   }
   ++lua_key_bind_lookup_calls;
-  const char *key = active_lua_api->to_lstring ? active_lua_api->to_lstring(state, 1, NULL) : NULL;
+  char key_buffer[sizeof(lua_key_bind_registrations[0].key)];
+  lua_read_key_bind_key(state, 1, key_buffer, sizeof(key_buffer));
+  const char *key = key_buffer;
   int registered = 0;
   for (int i = 0; i < lua_key_bind_registration_count; ++i) {
     LuaKeyBindRegistration *registration = &lua_key_bind_registrations[i];
@@ -12782,7 +15055,12 @@ static int lua_unregister_key_bind_callback(LuaState *state) {
   ++lua_key_bind_unregister_calls;
   int id = 0;
   int has_id = lua_read_registration_id(state, 1, &id);
-  const char *key = has_id || !active_lua_api->to_lstring ? NULL : active_lua_api->to_lstring(state, 1, NULL);
+  char key_buffer[sizeof(lua_key_bind_registrations[0].key)];
+  key_buffer[0] = '\0';
+  if (!has_id) {
+    lua_read_key_bind_key(state, 1, key_buffer, sizeof(key_buffer));
+  }
+  const char *key = has_id ? NULL : key_buffer;
   int removed = 0;
   for (int i = 0; i < lua_key_bind_registration_count; ++i) {
     LuaKeyBindRegistration *registration = &lua_key_bind_registrations[i];
@@ -12841,8 +15119,9 @@ static int lua_dune_probe_dispatch_key_bind_callback(LuaState *state) {
   if (!active_lua_api || !active_lua_api->push_boolean) {
     return 0;
   }
-  const char *key = active_lua_api->to_lstring ? active_lua_api->to_lstring(state, 2, NULL) : NULL;
-  int handled = invoke_lua_key_bind_handlers(state, key);
+  char key_buffer[sizeof(lua_key_bind_registrations[0].key)];
+  lua_read_key_bind_key(state, 2, key_buffer, sizeof(key_buffer));
+  int handled = invoke_lua_key_bind_handlers(state, key_buffer);
   active_lua_api->push_boolean(state, handled);
   return 1;
 }
@@ -12892,6 +15171,135 @@ static int lua_console_command_matches(const LuaConsoleCommandRegistration *regi
   return registration->global ||
          !registration->name[0] ||
          strcmp(registration->name, command) == 0;
+}
+
+static void lua_push_console_command_parameters(
+  LuaState *state,
+  const char *raw_command,
+  const char *command,
+  const char *args
+) {
+  if (!active_lua_api || !active_lua_api->create_table || !active_lua_api->push_string ||
+      !active_lua_api->push_integer || !active_lua_api->set_field || !active_lua_api->rawseti) {
+    active_lua_api->push_nil(state);
+    return;
+  }
+  active_lua_api->create_table(state, 0, 8);
+  active_lua_api->push_string(state, command ? command : "");
+  active_lua_api->rawseti(state, -2, 0);
+
+  int count = 0;
+  const char *cursor = args ? args : "";
+  while (*cursor && count < 64) {
+    while (isspace((unsigned char)*cursor)) {
+      ++cursor;
+    }
+    if (!*cursor) {
+      break;
+    }
+    const char *start = cursor;
+    while (*cursor && !isspace((unsigned char)*cursor)) {
+      ++cursor;
+    }
+    char token[256];
+    size_t len = (size_t)(cursor - start);
+    size_t copy_len = len < sizeof(token) ? len : sizeof(token) - 1;
+    memcpy(token, start, copy_len);
+    token[copy_len] = '\0';
+    ++count;
+    active_lua_api->push_string(state, token);
+    active_lua_api->rawseti(state, -2, count);
+  }
+
+  active_lua_api->push_integer(state, count);
+  active_lua_api->set_field(state, -2, "Count");
+  active_lua_api->push_string(state, raw_command ? raw_command : "");
+  active_lua_api->set_field(state, -2, "FullCommand");
+  active_lua_api->push_string(state, command ? command : "");
+  active_lua_api->set_field(state, -2, "Command");
+  active_lua_api->push_string(state, args ? args : "");
+  active_lua_api->set_field(state, -2, "RawArgs");
+}
+
+static int lua_console_output_device_write_callback(LuaState *state) {
+  if (!active_lua_api || !active_lua_api->push_boolean || !active_lua_api->to_lstring) {
+    return 0;
+  }
+  int self_is_table = active_lua_api->type && active_lua_api->type(state, 1) == LUA_TTABLE_COMPAT;
+  int message_index = self_is_table ? 2 : 1;
+  const char *message = active_lua_api->to_lstring(state, message_index, NULL);
+  if (self_is_table && active_lua_api->push_string && active_lua_api->push_integer &&
+      active_lua_api->get_field && active_lua_api->set_field && active_lua_api->set_top) {
+    int is_number = 0;
+    active_lua_api->get_field(state, 1, "WriteCount");
+    long long write_count = lua_to_integer(active_lua_api, state, -1, &is_number);
+    active_lua_api->set_top(state, -2);
+    active_lua_api->push_string(state, message ? message : "");
+    active_lua_api->set_field(state, 1, "LastMessage");
+    active_lua_api->push_integer(state, (is_number ? write_count : 0) + 1);
+    active_lua_api->set_field(state, 1, "WriteCount");
+  }
+  append_log("event=lua-console-output-device-write status=handled message=%s", message ? message : "");
+  active_lua_api->push_boolean(state, 1);
+  return 1;
+}
+
+static int lua_console_output_device_get_output_callback(LuaState *state) {
+  if (!active_lua_api || !active_lua_api->push_string) {
+    return 0;
+  }
+  if (active_lua_api->type && active_lua_api->get_field &&
+      active_lua_api->type(state, 1) == LUA_TTABLE_COMPAT) {
+    active_lua_api->get_field(state, 1, "LastMessage");
+    return 1;
+  }
+  active_lua_api->push_string(state, "");
+  return 1;
+}
+
+static int lua_console_output_device_clear_callback(LuaState *state) {
+  if (!active_lua_api || !active_lua_api->push_boolean) {
+    return 0;
+  }
+  if (active_lua_api->type && active_lua_api->push_string && active_lua_api->push_integer &&
+      active_lua_api->set_field && active_lua_api->type(state, 1) == LUA_TTABLE_COMPAT) {
+    active_lua_api->push_string(state, "");
+    active_lua_api->set_field(state, 1, "LastMessage");
+    active_lua_api->push_integer(state, 0);
+    active_lua_api->set_field(state, 1, "WriteCount");
+  }
+  active_lua_api->push_boolean(state, 1);
+  return 1;
+}
+
+static void lua_push_console_output_device(LuaState *state) {
+  if (!active_lua_api || !active_lua_api->create_table || !active_lua_api->push_string ||
+      !active_lua_api->push_boolean || !active_lua_api->push_integer || !active_lua_api->push_cclosure ||
+      !active_lua_api->set_field) {
+    active_lua_api->push_nil(state);
+    return;
+  }
+  active_lua_api->create_table(state, 0, 10);
+  active_lua_api->push_string(state, "FOutputDevice");
+  active_lua_api->set_field(state, -2, "Kind");
+  active_lua_api->push_boolean(state, 0);
+  active_lua_api->set_field(state, -2, "NativeBacked");
+  active_lua_api->push_string(state, "");
+  active_lua_api->set_field(state, -2, "LastMessage");
+  active_lua_api->push_integer(state, 0);
+  active_lua_api->set_field(state, -2, "WriteCount");
+  active_lua_api->push_cclosure(state, lua_console_output_device_write_callback, 0);
+  active_lua_api->set_field(state, -2, "Log");
+  active_lua_api->push_cclosure(state, lua_console_output_device_write_callback, 0);
+  active_lua_api->set_field(state, -2, "Serialize");
+  active_lua_api->push_cclosure(state, lua_console_output_device_write_callback, 0);
+  active_lua_api->set_field(state, -2, "Write");
+  active_lua_api->push_cclosure(state, lua_console_output_device_get_output_callback, 0);
+  active_lua_api->set_field(state, -2, "GetOutput");
+  active_lua_api->push_cclosure(state, lua_console_output_device_get_output_callback, 0);
+  active_lua_api->set_field(state, -2, "ToString");
+  active_lua_api->push_cclosure(state, lua_console_output_device_clear_callback, 0);
+  active_lua_api->set_field(state, -2, "Clear");
 }
 
 static int lua_register_console_command_handler_impl(LuaState *state, int global) {
@@ -13358,7 +15766,7 @@ static int lua_unregister_custom_event_callback(LuaState *state) {
 static int invoke_lua_console_command_handlers(LuaState *state, const char *raw_command) {
   if (!active_lua_api || !state || !raw_command || !raw_command[0] ||
       !active_lua_api->rawgeti || !active_lua_api->push_value || !active_lua_api->push_string ||
-      !active_lua_api->set_top) {
+      !active_lua_api->create_table || !active_lua_api->rawseti || !active_lua_api->set_top) {
     return 0;
   }
   char command[128];
@@ -13370,10 +15778,13 @@ static int invoke_lua_console_command_handlers(LuaState *state, const char *raw_
       continue;
     }
     active_lua_api->rawgeti(state, LUA_REGISTRYINDEX_COMPAT, registration->ref);
+    active_lua_api->push_string(state, raw_command);
+    lua_push_console_command_parameters(state, raw_command, command, args);
+    lua_push_console_output_device(state);
     active_lua_api->push_value(state, 1);
     active_lua_api->push_string(state, command);
     active_lua_api->push_string(state, args);
-    int status = lua_call(active_lua_api, state, 3, 1, 0);
+    int status = lua_call(active_lua_api, state, 6, 1, 0);
     if (status != 0) {
       active_lua_api->set_top(state, -2);
       continue;
@@ -14290,14 +16701,17 @@ static uintptr_t lua_object_address_arg(LuaApi *api, LuaState *state, int index)
     api->set_top(state, -2);
     return is_number && address > 0 ? (uintptr_t)address : 0;
   }
+  int is_number = 0;
+  long long address = lua_to_integer(api, state, index, &is_number);
+  if (is_number && address > 0) {
+    return (uintptr_t)address;
+  }
   const char *query = api->to_lstring(state, index, NULL);
   if (query && query[0]) {
     const LuaObjectHandle *object = find_lua_object_by_path_or_name(query);
     return object ? object->address : 0;
   }
-  int is_number = 0;
-  long long address = lua_to_integer(api, state, index, &is_number);
-  return is_number && address > 0 ? (uintptr_t)address : 0;
+  return 0;
 }
 
 static uintptr_t lua_object_uintptr_field_arg(LuaApi *api, LuaState *state, int index, const char *field) {
@@ -16127,6 +18541,49 @@ static void log_lua_function_iteration_check(
   );
 }
 
+static void maybe_log_runtime_for_each_function_native_check(void) {
+  static int logged = 0;
+  if (logged) {
+    return;
+  }
+  for (size_t i = 0; i < ue_function_param_descriptor_count; ++i) {
+    if (ue_function_descriptor_seen_before(i)) {
+      continue;
+    }
+    const UeFunctionParamDescriptor *owner_descriptor = &ue_function_param_descriptors[i];
+    if (strcmp(process_event_function_provenance(
+          owner_descriptor->function_path,
+          owner_descriptor->runtime_function_path
+        ), "runtime") != 0) {
+      continue;
+    }
+    char owner[MAX_LUA_OBJECT_NAME];
+    ue_function_descriptor_owner_name(owner_descriptor, owner, sizeof(owner));
+    if (!owner[0]) {
+      continue;
+    }
+    int callbacks = 0;
+    for (size_t j = 0; j < ue_function_param_descriptor_count; ++j) {
+      if (ue_function_descriptor_seen_before(j)) {
+        continue;
+      }
+      const UeFunctionParamDescriptor *descriptor = &ue_function_param_descriptors[j];
+      char candidate_owner[MAX_LUA_OBJECT_NAME];
+      ue_function_descriptor_owner_name(descriptor, candidate_owner, sizeof(candidate_owner));
+      if ((owner_descriptor->owner_class && descriptor->owner_class == owner_descriptor->owner_class) ||
+          (candidate_owner[0] && strcmp(candidate_owner, owner) == 0)) {
+        log_lua_function_registry_check_with_provenance(descriptor, "ForEachFunction", "runtime");
+        ++callbacks;
+      }
+    }
+    if (callbacks > 0) {
+      log_lua_function_iteration_check(owner, "UClass", "owner", callbacks);
+      logged = 1;
+      return;
+    }
+  }
+}
+
 static int lua_struct_for_each_function_callback(LuaState *state) {
   ++lua_for_each_function_calls;
   if (!active_lua_api || !active_lua_api->type || !active_lua_api->rawgeti ||
@@ -16902,6 +19359,292 @@ static int lua_process_event_callback(LuaState *state) {
   return result;
 }
 
+static int lua_invoke_call_function_native_callback(LuaState *state) {
+  ++lua_call_function_native_invoke_calls;
+  if (!active_lua_api || !active_lua_api->create_table || !active_lua_api->push_boolean ||
+      !active_lua_api->push_integer || !active_lua_api->push_string || !active_lua_api->set_field) {
+    return 0;
+  }
+  uintptr_t object = lua_object_address_arg(active_lua_api, state, 1);
+  char function_name_buffer[MAX_LUA_OBJECT_NAME];
+  char function_args_buffer[1024];
+  const char *function = lua_call_function_name_arg(state, 2, function_name_buffer, sizeof(function_name_buffer));
+  const char *args = lua_call_function_args_arg(state, 3, function_args_buffer, sizeof(function_args_buffer));
+  int invoke_requested = 0;
+  int force_call = 1;
+  if (active_lua_api->type && active_lua_api->type(state, 4) == LUA_TTABLE_COMPAT &&
+      active_lua_api->get_field && active_lua_api->set_top) {
+    active_lua_api->get_field(state, 4, "Invoke");
+    int is_boolean = 0;
+    invoke_requested = lua_to_boolean(active_lua_api, state, -1, &is_boolean) && is_boolean;
+    active_lua_api->set_top(state, -2);
+    active_lua_api->get_field(state, 4, "ForceCall");
+    is_boolean = 0;
+    int force_value = lua_to_boolean(active_lua_api, state, -1, &is_boolean);
+    if (is_boolean) {
+      force_call = force_value;
+    }
+    active_lua_api->set_top(state, -2);
+  }
+
+  const LuaObjectHandle *object_handle = find_lua_object_by_address(object);
+  const int bridge_armed = call_function_live_hook_installed && call_function_live_hook_original != NULL;
+  const int object_registry_allowed = object_handle != NULL;
+  const int self_test_callable = object == (uintptr_t)&server_self_test_object &&
+                                 function && strcmp(function, "DoubleProbeValue") == 0;
+  const int object_allowed = object_registry_allowed || object == (uintptr_t)&server_self_test_object;
+  const int function_allowed = function && function[0];
+  const int native_non_self_test_enabled = env_bool("DUNE_SERVER_PROBE_ALLOW_NON_SELF_TEST_CALL_FUNCTION_INVOKE", 0);
+  int calls_before = call_function_live_hook_calls;
+  int original_before = call_function_live_hook_original_calls;
+  int result = 0;
+  int native_non_self_test_invoked = 0;
+  const char *status = "not-invoked";
+  if (!bridge_armed) {
+    status = "bridge-not-armed";
+  } else if (!object_allowed) {
+    status = "object-not-allowed";
+  } else if (!function_allowed) {
+    status = "function-not-allowed";
+  } else if (self_test_callable) {
+    result = call_function_live_hook_original((void *)object, function, NULL, NULL, force_call);
+    ++call_function_live_hook_original_calls;
+    status = result == (force_call ? 42 : 41) ? "invoked" : "failed";
+  } else if (!invoke_requested) {
+    status = "preflight-ready";
+  } else if (!native_non_self_test_enabled) {
+    status = "non-self-test-invoke-disabled";
+  } else {
+    result = call_function_live_hook_original((void *)object, function, NULL, NULL, force_call);
+    ++call_function_live_hook_original_calls;
+    native_non_self_test_invoked = 1;
+    status = "non-self-test-invoked";
+  }
+  if (strcmp(status, "invoked") == 0 || strcmp(status, "non-self-test-invoked") == 0) {
+    ++lua_call_function_native_invoke_hits;
+  }
+  append_log(
+    "event=lua-call-function-native-invoke status=%s bridgeArmed=%s objectAllowed=%s functionAllowed=%s objectRegistryAllowed=%s selfTestCallable=%s invokeRequested=%s nativeNonSelfTestEnabled=%s nativeNonSelfTestInvoked=%s object=0x%lx function=%s args=%s forceCall=%s result=%d liveCallsBefore=%d liveCallsAfter=%d originalCallsBefore=%d originalCallsAfter=%d",
+    status,
+    bridge_armed ? "true" : "false",
+    object_allowed ? "true" : "false",
+    function_allowed ? "true" : "false",
+    object_registry_allowed ? "true" : "false",
+    self_test_callable ? "true" : "false",
+    invoke_requested ? "true" : "false",
+    native_non_self_test_enabled ? "true" : "false",
+    native_non_self_test_invoked ? "true" : "false",
+    (unsigned long)object,
+    function ? function : "",
+    args ? args : "",
+    force_call ? "true" : "false",
+    result,
+    calls_before,
+    call_function_live_hook_calls,
+    original_before,
+    call_function_live_hook_original_calls
+  );
+
+  active_lua_api->create_table(state, 0, 20);
+  active_lua_api->push_boolean(state, strcmp(status, "invoked") == 0 || strcmp(status, "non-self-test-invoked") == 0);
+  active_lua_api->set_field(state, -2, "Invoked");
+  active_lua_api->push_string(state, status);
+  active_lua_api->set_field(state, -2, "Status");
+  active_lua_api->push_boolean(state, bridge_armed);
+  active_lua_api->set_field(state, -2, "NativeBridgeArmed");
+  active_lua_api->push_boolean(state, object_allowed);
+  active_lua_api->set_field(state, -2, "ObjectAllowed");
+  active_lua_api->push_boolean(state, function_allowed);
+  active_lua_api->set_field(state, -2, "FunctionAllowed");
+  active_lua_api->push_boolean(state, object_registry_allowed);
+  active_lua_api->set_field(state, -2, "ObjectRegistryAllowed");
+  active_lua_api->push_boolean(state, self_test_callable);
+  active_lua_api->set_field(state, -2, "SelfTestCallable");
+  active_lua_api->push_boolean(state, invoke_requested);
+  active_lua_api->set_field(state, -2, "InvokeRequested");
+  active_lua_api->push_boolean(state, native_non_self_test_enabled);
+  active_lua_api->set_field(state, -2, "NativeNonSelfTestEnabled");
+  active_lua_api->push_boolean(state, native_non_self_test_invoked);
+  active_lua_api->set_field(state, -2, "NativeNonSelfTestInvoked");
+  active_lua_api->push_integer(state, (long long)object);
+  active_lua_api->set_field(state, -2, "ObjectAddress");
+  active_lua_api->push_string(state, function ? function : "");
+  active_lua_api->set_field(state, -2, "FunctionName");
+  active_lua_api->push_string(state, args ? args : "");
+  active_lua_api->set_field(state, -2, "Args");
+  active_lua_api->push_boolean(state, force_call);
+  active_lua_api->set_field(state, -2, "ForceCall");
+  active_lua_api->push_integer(state, result);
+  active_lua_api->set_field(state, -2, "Result");
+  active_lua_api->push_integer(state, calls_before);
+  active_lua_api->set_field(state, -2, "LiveCallsBefore");
+  active_lua_api->push_integer(state, call_function_live_hook_calls);
+  active_lua_api->set_field(state, -2, "LiveCallsAfter");
+  active_lua_api->push_integer(state, original_before);
+  active_lua_api->set_field(state, -2, "OriginalCallsBefore");
+  active_lua_api->push_integer(state, call_function_live_hook_original_calls);
+  active_lua_api->set_field(state, -2, "OriginalCallsAfter");
+  active_lua_api->push_string(state, "loader-call-function-native-bridge");
+  active_lua_api->set_field(state, -2, "Source");
+  return 1;
+}
+
+static int lua_get_call_function_native_executor_state_callback(LuaState *state) {
+  if (!active_lua_api || !active_lua_api->create_table || !active_lua_api->push_boolean ||
+      !active_lua_api->push_integer || !active_lua_api->push_string || !active_lua_api->set_field) {
+    return 0;
+  }
+  uintptr_t object = lua_object_address_arg(active_lua_api, state, 1);
+  char function_name_buffer[MAX_LUA_OBJECT_NAME];
+  char function_args_buffer[1024];
+  const char *function = lua_call_function_name_arg(state, 2, function_name_buffer, sizeof(function_name_buffer));
+  const char *args = lua_call_function_args_arg(state, 3, function_args_buffer, sizeof(function_args_buffer));
+  int force_call = 1;
+  if (active_lua_api->type && active_lua_api->type(state, 4) == LUA_TTABLE_COMPAT &&
+      active_lua_api->get_field && active_lua_api->set_top) {
+    active_lua_api->get_field(state, 4, "ForceCall");
+    int is_boolean = 0;
+    int force_value = lua_to_boolean(active_lua_api, state, -1, &is_boolean);
+    if (is_boolean) {
+      force_call = force_value;
+    }
+    active_lua_api->set_top(state, -2);
+  }
+  const LuaObjectHandle *object_handle = find_lua_object_by_address(object);
+  const int bridge_armed = call_function_live_hook_installed && call_function_live_hook_original != NULL;
+  const int object_registry_allowed = object_handle != NULL;
+  const int self_test_callable = object == (uintptr_t)&server_self_test_object &&
+                                 function && strcmp(function, "DoubleProbeValue") == 0;
+  const int object_allowed = object_registry_allowed || object == (uintptr_t)&server_self_test_object;
+  const int function_allowed = function && function[0];
+  const int native_non_self_test_enabled = env_bool("DUNE_SERVER_PROBE_ALLOW_NON_SELF_TEST_CALL_FUNCTION_INVOKE", 0);
+  const int native_callable = self_test_callable ? (bridge_armed && object_allowed && function_allowed) :
+    (bridge_armed && object_registry_allowed && function_allowed && native_non_self_test_enabled);
+  const char *block_reason = "none";
+  if (!bridge_armed) {
+    block_reason = "bridge-not-armed";
+  } else if (!object_allowed) {
+    block_reason = "object-not-allowed";
+  } else if (!function_allowed) {
+    block_reason = "function-not-allowed";
+  } else if (!self_test_callable && !native_non_self_test_enabled) {
+    block_reason = "non-self-test-invoke-disabled";
+  }
+  append_log(
+    "event=lua-call-function-native-executor-state status=prepared bridgeArmed=%s objectAllowed=%s functionAllowed=%s objectRegistryAllowed=%s selfTestCallable=%s nativeCallable=%s nativeNonSelfTestEnabled=%s object=0x%lx function=%s args=%s forceCall=%s nativeExecutorBlockReason=%s nativeInvoked=false",
+    bridge_armed ? "true" : "false",
+    object_allowed ? "true" : "false",
+    function_allowed ? "true" : "false",
+    object_registry_allowed ? "true" : "false",
+    self_test_callable ? "true" : "false",
+    native_callable ? "true" : "false",
+    native_non_self_test_enabled ? "true" : "false",
+    (unsigned long)object,
+    function ? function : "",
+    args ? args : "",
+    force_call ? "true" : "false",
+    block_reason
+  );
+  active_lua_api->create_table(state, 0, 20);
+  active_lua_api->push_string(state, "prepared");
+  active_lua_api->set_field(state, -2, "Status");
+  active_lua_api->push_string(state, "guarded-call-function-native-executor");
+  active_lua_api->set_field(state, -2, "ExecutorKind");
+  active_lua_api->push_boolean(state, bridge_armed);
+  active_lua_api->set_field(state, -2, "NativeBridgeArmed");
+  active_lua_api->push_boolean(state, object_allowed);
+  active_lua_api->set_field(state, -2, "ObjectAllowed");
+  active_lua_api->push_boolean(state, function_allowed);
+  active_lua_api->set_field(state, -2, "FunctionAllowed");
+  active_lua_api->push_boolean(state, object_registry_allowed);
+  active_lua_api->set_field(state, -2, "ObjectRegistryAllowed");
+  active_lua_api->push_boolean(state, self_test_callable);
+  active_lua_api->set_field(state, -2, "SelfTestCallable");
+  active_lua_api->push_boolean(state, native_callable);
+  active_lua_api->set_field(state, -2, "NativeCallable");
+  active_lua_api->push_boolean(state, native_non_self_test_enabled);
+  active_lua_api->set_field(state, -2, "NativeNonSelfTestEnabled");
+  active_lua_api->push_integer(state, (long long)object);
+  active_lua_api->set_field(state, -2, "ObjectAddress");
+  active_lua_api->push_string(state, function ? function : "");
+  active_lua_api->set_field(state, -2, "FunctionName");
+  active_lua_api->push_string(state, args ? args : "");
+  active_lua_api->set_field(state, -2, "Args");
+  active_lua_api->push_boolean(state, force_call);
+  active_lua_api->set_field(state, -2, "ForceCall");
+  active_lua_api->push_string(state, block_reason);
+  active_lua_api->set_field(state, -2, "NativeExecutorBlockReason");
+  active_lua_api->push_boolean(state, 0);
+  active_lua_api->set_field(state, -2, "NativeInvoked");
+  active_lua_api->push_string(state, "loader-call-function-native-executor");
+  active_lua_api->set_field(state, -2, "Source");
+  return 1;
+}
+
+static void run_lua_call_function_native_invoke_self_test(const char *phase) {
+  if (!process_event_live_lua_loaded || !process_event_live_lua_state ||
+      !process_event_live_lua_api.load_string) {
+    return;
+  }
+  const char *script =
+    "local o=StaticFindObject('/Script/DuneServerProbe.SelfTestObject');"
+    "local n=InvokeCallFunctionNative(o,'DoubleProbeValue',nil,{ForceCall=true});"
+    "if not (n and n.Invoked and n.Status=='invoked' and n.NativeBridgeArmed and "
+    "n.ObjectAllowed and n.FunctionAllowed and n.ObjectRegistryAllowed and "
+    "n.SelfTestCallable and not n.InvokeRequested and (n.Result==42 or n.Result==84) and "
+    "n.Source=='loader-call-function-native-bridge') then "
+    "error('missing native CallFunction bridge invoke') end;"
+    "local cls=o and o:GetClass();"
+    "local ro=cls and StaticConstructObject(cls,o,'CallFunctionNativePreflightProbe');"
+    "local ex=ro and GetCallFunctionNativeExecutorState(ro,'DoubleProbeValue',nil,{ForceCall=true});"
+    "if not (ex and ex.Status=='prepared' and ex.ExecutorKind=='guarded-call-function-native-executor' and "
+    "ex.NativeBridgeArmed and ex.ObjectAllowed and ex.FunctionAllowed and ex.ObjectRegistryAllowed and "
+    "not ex.SelfTestCallable and ex.NativeCallable and ex.NativeNonSelfTestEnabled and "
+    "ex.NativeExecutorBlockReason=='none' and not ex.NativeInvoked and "
+    "ex.Source=='loader-call-function-native-executor') then "
+    "error('missing CallFunction native executor state') end;"
+    "local h=ro and InvokeCallFunctionNative(ro,'DoubleProbeValue',nil,{ForceCall=true});"
+    "if not (h and not h.Invoked and h.Status=='preflight-ready' and h.NativeBridgeArmed and "
+    "h.ObjectAllowed and h.FunctionAllowed and h.ObjectRegistryAllowed and not h.SelfTestCallable and "
+    "not h.InvokeRequested and not h.NativeNonSelfTestInvoked and "
+    "h.LiveCallsAfter==h.LiveCallsBefore and h.OriginalCallsAfter==h.OriginalCallsBefore) then "
+    "error('missing non-self-test CallFunction preflight') end;"
+    "local g=ro and InvokeCallFunctionNative(ro,'DoubleProbeValue',nil,{Invoke=true,ForceCall=true});"
+    "if not (g and g.NativeBridgeArmed and g.ObjectAllowed and g.FunctionAllowed and "
+    "g.ObjectRegistryAllowed and not g.SelfTestCallable and g.InvokeRequested and "
+    "((g.NativeNonSelfTestEnabled and g.Invoked and g.Status=='non-self-test-invoked' and "
+    "g.NativeNonSelfTestInvoked and g.LiveCallsAfter==g.LiveCallsBefore and "
+    "g.OriginalCallsAfter>g.OriginalCallsBefore) or "
+    "((not g.NativeNonSelfTestEnabled) and (not g.Invoked) and "
+    "g.Status=='non-self-test-invoke-disabled' and (not g.NativeNonSelfTestInvoked) and "
+    "g.LiveCallsAfter==g.LiveCallsBefore and g.OriginalCallsAfter==g.OriginalCallsBefore))) then "
+    "error('missing non-self-test CallFunction invoke gate') end;"
+    "return 1";
+  LuaApi *previous_active_lua_api = active_lua_api;
+  active_lua_api = &process_event_live_lua_api;
+  int load_status = process_event_live_lua_api.load_string(process_event_live_lua_state, script);
+  int call_status = load_status == 0 ? lua_call(&process_event_live_lua_api, process_event_live_lua_state, 0, 1, 0) : load_status;
+  active_lua_api = previous_active_lua_api;
+  int is_number = 0;
+  long long result = call_status == 0 ? lua_to_integer(&process_event_live_lua_api, process_event_live_lua_state, -1, &is_number) : 0;
+  if (process_event_live_lua_api.set_top) {
+    process_event_live_lua_api.set_top(process_event_live_lua_state, 0);
+  }
+  append_log(
+    "event=lua-call-function-native-invoke-self-test phase=%s status=%s loadStatus=%d callStatus=%d result=%lld isNumber=%s callFunctionNativeCalls=%d callFunctionNativeHits=%d liveCalls=%d originalCalls=%d",
+    phase,
+    (load_status == 0 && call_status == 0 && is_number && result == 1) ? "passed" : "failed",
+    load_status,
+    call_status,
+    result,
+    is_number ? "true" : "false",
+    lua_call_function_native_invoke_calls,
+    lua_call_function_native_invoke_hits,
+    call_function_live_hook_calls,
+    call_function_live_hook_original_calls
+  );
+}
+
 static int lua_get_process_event_bridge_state_callback(LuaState *state) {
   ++lua_process_event_bridge_state_calls;
   if (!active_lua_api || !active_lua_api->create_table || !active_lua_api->push_boolean ||
@@ -17016,7 +19759,7 @@ static int lua_invoke_process_event_native_callback(LuaState *state) {
              process_event_live_hook_calls > calls_before &&
              process_event_live_hook_original_calls > original_before ? "invoked" : "failed";
   }
-  if (strcmp(status, "invoked") == 0) {
+  if (strcmp(status, "invoked") == 0 || strcmp(status, "non-self-test-invoked") == 0) {
     ++lua_process_event_native_invoke_hits;
   }
   append_log(
@@ -17049,7 +19792,7 @@ static int lua_invoke_process_event_native_callback(LuaState *state) {
   );
 
   active_lua_api->create_table(state, 0, 30);
-  active_lua_api->push_boolean(state, strcmp(status, "invoked") == 0);
+  active_lua_api->push_boolean(state, strcmp(status, "invoked") == 0 || strcmp(status, "non-self-test-invoked") == 0);
   active_lua_api->set_field(state, -2, "Invoked");
   active_lua_api->push_string(state, status);
   active_lua_api->set_field(state, -2, "Status");
@@ -17110,6 +19853,109 @@ static int lua_invoke_process_event_native_callback(LuaState *state) {
   return 1;
 }
 
+static int lua_get_process_event_native_executor_state_callback(LuaState *state) {
+  if (!active_lua_api || !active_lua_api->create_table || !active_lua_api->push_boolean ||
+      !active_lua_api->push_integer || !active_lua_api->push_string || !active_lua_api->set_field) {
+    return 0;
+  }
+  uintptr_t object = lua_object_address_arg(active_lua_api, state, 1);
+  uintptr_t function = lua_object_address_arg(active_lua_api, state, 2);
+  const LuaObjectHandle *object_handle = find_lua_object_by_address(object);
+  size_t function_descriptor_count = count_ue_function_param_descriptors(function);
+  const UeFunctionParamDescriptor *function_descriptor = find_ue_function_descriptor(function);
+  size_t params_buffer_size = 0;
+  size_t params_descriptor_count = 0;
+  const int params_buffer_constructible = synthetic_process_event_params_size(function, &params_buffer_size, &params_descriptor_count);
+  const int bridge_armed = process_event_live_hook_installed && process_event_live_hook_original != NULL;
+  const int object_registry_allowed = object_handle != NULL;
+  const int function_descriptor_allowed = function_descriptor_count > 0;
+  const int self_test_callable = object == (uintptr_t)&server_self_test_object &&
+                                 function == process_event_self_test_function_address();
+  const int object_allowed = object_registry_allowed || object == (uintptr_t)&server_self_test_object;
+  const int function_allowed = function_descriptor_allowed || function == process_event_self_test_function_address();
+  const int descriptor_backed_callable = bridge_armed && object_registry_allowed && function_descriptor_allowed && params_buffer_constructible;
+  const int native_non_self_test_enabled = env_bool("DUNE_SERVER_PROBE_ALLOW_NON_SELF_TEST_PROCESS_EVENT_INVOKE", 0);
+  const int native_callable = self_test_callable ? (bridge_armed && object_allowed && function_allowed) :
+    (descriptor_backed_callable && native_non_self_test_enabled);
+  const char *block_reason = "none";
+  if (!bridge_armed) {
+    block_reason = "bridge-not-armed";
+  } else if (!object_allowed) {
+    block_reason = "object-not-allowed";
+  } else if (!function_allowed) {
+    block_reason = "function-not-allowed";
+  } else if (!self_test_callable && !params_buffer_constructible) {
+    block_reason = "params-buffer-unavailable";
+  } else if (!self_test_callable && !native_non_self_test_enabled) {
+    block_reason = "non-self-test-invoke-disabled";
+  }
+  append_log(
+    "event=lua-process-event-native-executor-state status=prepared bridgeArmed=%s objectAllowed=%s functionAllowed=%s objectRegistryAllowed=%s functionDescriptorAllowed=%s selfTestCallable=%s descriptorBackedCallable=%s nativeCallable=%s nativeNonSelfTestEnabled=%s paramsBufferConstructible=%s descriptorCount=%lu paramsDescriptorCount=%lu paramsBufferSize=%lu nativeExecutorBlockReason=%s nativeInvoked=false object=0x%lx function=0x%lx",
+    bridge_armed ? "true" : "false",
+    object_allowed ? "true" : "false",
+    function_allowed ? "true" : "false",
+    object_registry_allowed ? "true" : "false",
+    function_descriptor_allowed ? "true" : "false",
+    self_test_callable ? "true" : "false",
+    descriptor_backed_callable ? "true" : "false",
+    native_callable ? "true" : "false",
+    native_non_self_test_enabled ? "true" : "false",
+    params_buffer_constructible ? "true" : "false",
+    (unsigned long)function_descriptor_count,
+    (unsigned long)params_descriptor_count,
+    (unsigned long)params_buffer_size,
+    block_reason,
+    (unsigned long)object,
+    (unsigned long)function
+  );
+  active_lua_api->create_table(state, 0, 24);
+  active_lua_api->push_string(state, "prepared");
+  active_lua_api->set_field(state, -2, "Status");
+  active_lua_api->push_string(state, "guarded-process-event-native-executor");
+  active_lua_api->set_field(state, -2, "ExecutorKind");
+  active_lua_api->push_boolean(state, bridge_armed);
+  active_lua_api->set_field(state, -2, "NativeBridgeArmed");
+  active_lua_api->push_boolean(state, object_allowed);
+  active_lua_api->set_field(state, -2, "ObjectAllowed");
+  active_lua_api->push_boolean(state, function_allowed);
+  active_lua_api->set_field(state, -2, "FunctionAllowed");
+  active_lua_api->push_boolean(state, object_registry_allowed);
+  active_lua_api->set_field(state, -2, "ObjectRegistryAllowed");
+  active_lua_api->push_boolean(state, function_descriptor_allowed);
+  active_lua_api->set_field(state, -2, "FunctionDescriptorAllowed");
+  active_lua_api->push_boolean(state, self_test_callable);
+  active_lua_api->set_field(state, -2, "SelfTestCallable");
+  active_lua_api->push_boolean(state, descriptor_backed_callable);
+  active_lua_api->set_field(state, -2, "DescriptorBackedCallable");
+  active_lua_api->push_boolean(state, native_callable);
+  active_lua_api->set_field(state, -2, "NativeCallable");
+  active_lua_api->push_boolean(state, native_non_self_test_enabled);
+  active_lua_api->set_field(state, -2, "NativeNonSelfTestEnabled");
+  active_lua_api->push_boolean(state, params_buffer_constructible);
+  active_lua_api->set_field(state, -2, "ParamsBufferConstructible");
+  active_lua_api->push_integer(state, (long long)function_descriptor_count);
+  active_lua_api->set_field(state, -2, "FunctionDescriptorCount");
+  active_lua_api->push_integer(state, (long long)params_descriptor_count);
+  active_lua_api->set_field(state, -2, "ParamsDescriptorCount");
+  active_lua_api->push_integer(state, (long long)params_buffer_size);
+  active_lua_api->set_field(state, -2, "ParamsBufferSize");
+  active_lua_api->push_string(state, block_reason);
+  active_lua_api->set_field(state, -2, "NativeExecutorBlockReason");
+  active_lua_api->push_string(state, function_descriptor ? function_descriptor->function_path : "");
+  active_lua_api->set_field(state, -2, "FunctionPath");
+  active_lua_api->push_string(state, function_descriptor ? function_descriptor->runtime_function_path : "");
+  active_lua_api->set_field(state, -2, "RuntimeFunctionPath");
+  active_lua_api->push_integer(state, (long long)object);
+  active_lua_api->set_field(state, -2, "ObjectAddress");
+  active_lua_api->push_integer(state, (long long)function);
+  active_lua_api->set_field(state, -2, "FunctionAddress");
+  active_lua_api->push_boolean(state, 0);
+  active_lua_api->set_field(state, -2, "NativeInvoked");
+  active_lua_api->push_string(state, "loader-process-event-native-executor");
+  active_lua_api->set_field(state, -2, "Source");
+  return 1;
+}
+
 static void run_lua_process_event_native_invoke_self_test(const char *phase) {
   if (!process_event_live_lua_loaded || !process_event_live_lua_state ||
       !process_event_live_lua_api.load_string) {
@@ -17129,6 +19975,15 @@ static void run_lua_process_event_native_invoke_self_test(const char *phase) {
     "error('missing native ProcessEvent bridge invoke') end;"
     "local cls=o and o:GetClass();"
     "local ro=cls and StaticConstructObject(cls,o,'NativeInvokePreflightProbe');"
+    "local ex=ro and GetProcessEventNativeExecutorState(ro,f);"
+    "if not (ex and ex.Status=='prepared' and ex.ExecutorKind=='guarded-process-event-native-executor' and "
+    "ex.NativeBridgeArmed and ex.ObjectAllowed and ex.FunctionAllowed and "
+    "ex.ObjectRegistryAllowed and ex.FunctionDescriptorAllowed and not ex.SelfTestCallable and "
+    "ex.DescriptorBackedCallable and ex.NativeCallable and ex.NativeNonSelfTestEnabled and "
+    "ex.ParamsBufferConstructible and ex.FunctionDescriptorCount>=1 and ex.ParamsDescriptorCount>=1 and "
+    "ex.ParamsBufferSize>=4 and ex.NativeExecutorBlockReason=='none' and "
+    "not ex.NativeInvoked and ex.Source=='loader-process-event-native-executor') then "
+    "error('missing ProcessEvent native executor state') end;"
     "local h=ro and InvokeProcessEventNative(ro,f,{Value=74});"
     "if not (h and not h.Invoked and h.Status=='descriptor-preflight-ready' and "
     "h.NativeBridgeArmed and h.ObjectAllowed and h.FunctionAllowed and "
@@ -17139,14 +19994,17 @@ static void run_lua_process_event_native_invoke_self_test(const char *phase) {
     "h.OriginalCallsAfter==h.OriginalCallsBefore) then "
     "error('missing non-self-test ProcessEvent descriptor preflight') end;"
     "local g=ro and InvokeProcessEventNative(ro,f,{Value=74,Invoke=true});"
-    "if not (g and not g.Invoked and g.Status=='non-self-test-invoke-disabled' and "
-    "g.NativeBridgeArmed and g.ObjectAllowed and g.FunctionAllowed and "
+    "if not (g and g.NativeBridgeArmed and g.ObjectAllowed and g.FunctionAllowed and "
     "g.ObjectRegistryAllowed and g.FunctionDescriptorAllowed and not g.SelfTestCallable and "
-    "g.DescriptorBackedCallable and g.InvokeRequested and not g.NativeNonSelfTestEnabled and "
-    "not g.NativeNonSelfTestInvoked and g.ParamsBufferConstructible and "
+    "g.DescriptorBackedCallable and g.InvokeRequested and g.ParamsBufferConstructible and "
     "g.FunctionDescriptorCount>=1 and g.ParamsDescriptorCount>=1 and g.ParamsBufferSize>=4 and "
+    "((g.NativeNonSelfTestEnabled and g.Invoked and g.Status=='non-self-test-invoked' and "
+    "g.NativeNonSelfTestInvoked and g.ParamsWritten>=1 and "
+    "g.OriginalCallsAfter>=g.OriginalCallsBefore) or "
+    "((not g.NativeNonSelfTestEnabled) and (not g.Invoked) and "
+    "g.Status=='non-self-test-invoke-disabled' and (not g.NativeNonSelfTestInvoked) and "
     "g.ParamsWritten==0 and g.LiveCallsAfter==g.LiveCallsBefore and "
-    "g.OriginalCallsAfter==g.OriginalCallsBefore) then "
+    "g.OriginalCallsAfter==g.OriginalCallsBefore))) then "
     "error('missing non-self-test ProcessEvent invoke gate') end;"
     "return 1";
   LuaApi *previous_active_lua_api = active_lua_api;
@@ -17952,6 +20810,28 @@ static int read_process_event_array_data_bytes(uintptr_t data, size_t offset, un
   return ok;
 }
 
+static int write_process_event_array_data_bytes(uintptr_t data, size_t offset, const unsigned char *buffer, size_t size) {
+  if (!data || !buffer || size == 0 || size > MAX_PROCESS_EVENT_PARAM_BYTES) {
+    return 0;
+  }
+  uintptr_t address = data + offset;
+  if (address < data) {
+    return 0;
+  }
+  Mapping *mappings = calloc(MAX_MAPPINGS, sizeof(*mappings));
+  if (!mappings) {
+    return 0;
+  }
+  size_t mapping_count = read_mappings(mappings, MAX_MAPPINGS);
+  const Mapping *mapping = mapping_for_address(mappings, mapping_count, address);
+  int ok = mapping_contains_range(mapping, address, size) && mapping->perms[1] == 'w';
+  if (ok) {
+    memcpy((void *)address, buffer, size);
+  }
+  free(mappings);
+  return ok;
+}
+
 static int lua_script_array_get_num_callback(LuaState *state) {
   if (!active_lua_api || !active_lua_api->push_integer) {
     return 0;
@@ -17989,6 +20869,17 @@ static int lua_script_array_get_data_sample_bytes_callback(LuaState *state) {
   }
   active_lua_api->set_top(state, -2);
   active_lua_api->push_nil(state);
+  return 1;
+}
+
+static int lua_script_array_empty_callback(LuaState *state) {
+  if (!active_lua_api || !active_lua_api->push_integer || !active_lua_api->set_field ||
+      !active_lua_api->push_boolean) {
+    return 0;
+  }
+  active_lua_api->push_integer(state, 0);
+  active_lua_api->set_field(state, 1, "Num");
+  active_lua_api->push_boolean(state, 1);
   return 1;
 }
 
@@ -18145,7 +21036,7 @@ static int push_lua_container_scalar_or_raw(
   if (!active_lua_api || !state || !raw || element_size == 0 || element_size > MAX_PROCESS_EVENT_PARAM_BYTES) {
     return 0;
   }
-  if (contains_ci(class_name, "BoolProperty") || (type && strcmp(type, "bool") == 0)) {
+  if (contains_ci(class_name, "BoolProperty") || (type && lua_container_string_equal(type, "bool"))) {
     active_lua_api->push_boolean(state, raw[0] != 0);
     return 1;
   }
@@ -18418,6 +21309,552 @@ static int lua_script_map_get_component_callback(LuaState *state, int want_value
   );
 }
 
+static unsigned long long lua_read_le_unsigned(const unsigned char *raw, size_t size) {
+  unsigned long long value = 0;
+  size_t limit = size < sizeof(value) ? size : sizeof(value);
+  for (size_t i = 0; i < limit; ++i) {
+    value |= ((unsigned long long)raw[i]) << (i * 8);
+  }
+  return value;
+}
+
+static void lua_container_zero_bytes(unsigned char *raw, size_t size) {
+  for (size_t i = 0; i < size; ++i) {
+    raw[i] = 0;
+  }
+}
+
+static void lua_container_copy_bytes(unsigned char *dst, const unsigned char *src, size_t size) {
+  for (size_t i = 0; i < size; ++i) {
+    dst[i] = src[i];
+  }
+}
+
+static void lua_write_le_unsigned(unsigned char *raw, size_t size, unsigned long long value) {
+  lua_container_zero_bytes(raw, size);
+  size_t limit = size < sizeof(value) ? size : sizeof(value);
+  for (size_t i = 0; i < limit; ++i) {
+    raw[i] = (unsigned char)((value >> (i * 8)) & 0xffU);
+  }
+}
+
+static int lua_container_string_equal(const char *left, const char *right) {
+  if (!left || !right) {
+    return 0;
+  }
+  while (*left && *right && *left == *right) {
+    ++left;
+    ++right;
+  }
+  return *left == '\0' && *right == '\0';
+}
+
+static int lua_container_scalar_arg_to_raw(LuaState *state, int arg_index, unsigned char *raw, size_t size, const char *class_name, const char *type) {
+  if (!active_lua_api || !active_lua_api->type || !raw || size == 0 || size > sizeof(unsigned long long)) {
+    return 0;
+  }
+  int is_boolean_class =
+    lua_container_string_equal(class_name, "FBoolProperty") ||
+    lua_container_string_equal(type, "bool") ||
+    lua_container_string_equal(type, "boolean");
+  if (is_boolean_class) {
+    int is_boolean = 0;
+    int wanted = lua_to_boolean(active_lua_api, state, arg_index, &is_boolean);
+    if (!is_boolean) {
+      return 0;
+    }
+    lua_write_le_unsigned(raw, size, wanted ? 1ULL : 0ULL);
+    return 1;
+  }
+  int is_number = 0;
+  long long wanted = lua_to_integer(active_lua_api, state, arg_index, &is_number);
+  if (!is_number) {
+    return 0;
+  }
+  lua_write_le_unsigned(raw, size, (unsigned long long)wanted);
+  return 1;
+}
+
+static int lua_container_scalar_arg_matches(LuaState *state, int arg_index, const unsigned char *raw, size_t size, const char *class_name, const char *type) {
+  if (!active_lua_api || !active_lua_api->type || size == 0 || size > sizeof(unsigned long long)) {
+    return 0;
+  }
+  int is_boolean_class =
+    lua_container_string_equal(class_name, "FBoolProperty") ||
+    lua_container_string_equal(type, "bool") ||
+    lua_container_string_equal(type, "boolean");
+  if (is_boolean_class) {
+    int is_boolean = 0;
+    int wanted = lua_to_boolean(active_lua_api, state, arg_index, &is_boolean);
+    if (!is_boolean) {
+      return 0;
+    }
+    return (lua_read_le_unsigned(raw, size) != 0) == (wanted != 0);
+  }
+  int is_number = 0;
+  long long wanted = lua_to_integer(active_lua_api, state, arg_index, &is_number);
+  if (!is_number) {
+    return 0;
+  }
+  return (long long)lua_read_le_unsigned(raw, size) == wanted;
+}
+
+static int lua_set_self_num(LuaState *state, long long num) {
+  if (!active_lua_api || !active_lua_api->push_integer || !active_lua_api->set_field) {
+    return 0;
+  }
+  active_lua_api->push_integer(state, num);
+  active_lua_api->set_field(state, 1, "Num");
+  return 1;
+}
+
+static int lua_script_set_add_callback(LuaState *state) {
+  if (!active_lua_api || !active_lua_api->push_boolean) {
+    return 0;
+  }
+  long long data_value = 0;
+  long long num_value = 0;
+  long long max_value = 0;
+  long long element_size_value = 0;
+  if (!lua_table_integer_field(active_lua_api, state, 1, "Data", &data_value) ||
+      !lua_table_integer_field(active_lua_api, state, 1, "Num", &num_value) ||
+      !lua_table_integer_field(active_lua_api, state, 1, "Max", &max_value) ||
+      !lua_table_integer_field(active_lua_api, state, 1, "ElementElementSize", &element_size_value) ||
+      data_value <= 0 || num_value < 0 || max_value <= num_value ||
+      element_size_value <= 0 || element_size_value > MAX_PROCESS_EVENT_PARAM_BYTES) {
+    active_lua_api->push_boolean(state, 0);
+    return 1;
+  }
+  char element_class_name[MAX_LUA_CLASS_NAME];
+  char element_type[MAX_LUA_CLASS_NAME];
+  element_class_name[0] = '\0';
+  element_type[0] = '\0';
+  lua_read_self_string_field(state, "ElementClassName", element_class_name, sizeof(element_class_name));
+  lua_read_self_string_field(state, "ElementType", element_type, sizeof(element_type));
+  size_t element_size = (size_t)element_size_value;
+  unsigned char raw[MAX_PROCESS_EVENT_PARAM_BYTES];
+  for (long long i = 0; i < num_value; ++i) {
+    lua_container_zero_bytes(raw, sizeof(raw));
+    if (read_process_event_array_data_bytes((uintptr_t)data_value, (size_t)i * element_size, raw, element_size) &&
+        lua_container_scalar_arg_matches(state, 2, raw, element_size, element_class_name, element_type)) {
+      active_lua_api->push_boolean(state, 0);
+      return 1;
+    }
+  }
+  if (!lua_container_scalar_arg_to_raw(state, 2, raw, element_size, element_class_name, element_type) ||
+      !write_process_event_array_data_bytes((uintptr_t)data_value, (size_t)num_value * element_size, raw, element_size) ||
+      !lua_set_self_num(state, num_value + 1)) {
+    active_lua_api->push_boolean(state, 0);
+    return 1;
+  }
+  active_lua_api->push_boolean(state, 1);
+  return 1;
+}
+
+static int lua_script_set_contains_callback(LuaState *state) {
+  if (!active_lua_api || !active_lua_api->push_boolean) {
+    return 0;
+  }
+  long long data_value = 0;
+  long long num_value = 0;
+  long long element_size_value = 0;
+  if (!lua_table_integer_field(active_lua_api, state, 1, "Data", &data_value) ||
+      !lua_table_integer_field(active_lua_api, state, 1, "Num", &num_value) ||
+      !lua_table_integer_field(active_lua_api, state, 1, "ElementElementSize", &element_size_value) ||
+      data_value <= 0 || num_value <= 0 ||
+      element_size_value <= 0 || element_size_value > MAX_PROCESS_EVENT_PARAM_BYTES) {
+    active_lua_api->push_boolean(state, 0);
+    return 1;
+  }
+  char element_class_name[MAX_LUA_CLASS_NAME];
+  char element_type[MAX_LUA_CLASS_NAME];
+  element_class_name[0] = '\0';
+  element_type[0] = '\0';
+  lua_read_self_string_field(state, "ElementClassName", element_class_name, sizeof(element_class_name));
+  lua_read_self_string_field(state, "ElementType", element_type, sizeof(element_type));
+  size_t element_size = (size_t)element_size_value;
+  unsigned char raw[MAX_PROCESS_EVENT_PARAM_BYTES];
+  for (long long i = 0; i < num_value; ++i) {
+    memset(raw, 0, sizeof(raw));
+    if (read_process_event_array_data_bytes((uintptr_t)data_value, (size_t)i * element_size, raw, element_size) &&
+        lua_container_scalar_arg_matches(state, 2, raw, element_size, element_class_name, element_type)) {
+      active_lua_api->push_boolean(state, 1);
+      return 1;
+    }
+  }
+  active_lua_api->push_boolean(state, 0);
+  return 1;
+}
+
+static int lua_script_set_remove_callback(LuaState *state) {
+  if (!active_lua_api || !active_lua_api->push_boolean) {
+    return 0;
+  }
+  long long data_value = 0;
+  long long num_value = 0;
+  long long element_size_value = 0;
+  if (!lua_table_integer_field(active_lua_api, state, 1, "Data", &data_value) ||
+      !lua_table_integer_field(active_lua_api, state, 1, "Num", &num_value) ||
+      !lua_table_integer_field(active_lua_api, state, 1, "ElementElementSize", &element_size_value) ||
+      data_value <= 0 || num_value <= 0 ||
+      element_size_value <= 0 || element_size_value > MAX_PROCESS_EVENT_PARAM_BYTES) {
+    active_lua_api->push_boolean(state, 0);
+    return 1;
+  }
+  char element_class_name[MAX_LUA_CLASS_NAME];
+  char element_type[MAX_LUA_CLASS_NAME];
+  element_class_name[0] = '\0';
+  element_type[0] = '\0';
+  lua_read_self_string_field(state, "ElementClassName", element_class_name, sizeof(element_class_name));
+  lua_read_self_string_field(state, "ElementType", element_type, sizeof(element_type));
+  size_t element_size = (size_t)element_size_value;
+  unsigned char raw[MAX_PROCESS_EVENT_PARAM_BYTES];
+  unsigned char next[MAX_PROCESS_EVENT_PARAM_BYTES];
+  long long found = -1;
+  for (long long i = 0; i < num_value; ++i) {
+    lua_container_zero_bytes(raw, sizeof(raw));
+    if (read_process_event_array_data_bytes((uintptr_t)data_value, (size_t)i * element_size, raw, element_size) &&
+        lua_container_scalar_arg_matches(state, 2, raw, element_size, element_class_name, element_type)) {
+      found = i;
+      break;
+    }
+  }
+  if (found < 0) {
+    active_lua_api->push_boolean(state, 0);
+    return 1;
+  }
+  for (long long i = found + 1; i < num_value; ++i) {
+    lua_container_zero_bytes(next, sizeof(next));
+    if (!read_process_event_array_data_bytes((uintptr_t)data_value, (size_t)i * element_size, next, element_size) ||
+        !write_process_event_array_data_bytes((uintptr_t)data_value, (size_t)(i - 1) * element_size, next, element_size)) {
+      active_lua_api->push_boolean(state, 0);
+      return 1;
+    }
+  }
+  lua_container_zero_bytes(raw, sizeof(raw));
+  write_process_event_array_data_bytes((uintptr_t)data_value, (size_t)(num_value - 1) * element_size, raw, element_size);
+  if (!lua_set_self_num(state, num_value - 1)) {
+    active_lua_api->push_boolean(state, 0);
+    return 1;
+  }
+  active_lua_api->push_boolean(state, 1);
+  return 1;
+}
+
+static int lua_script_set_for_each_callback(LuaState *state) {
+  if (!active_lua_api || !active_lua_api->type || !active_lua_api->rawgeti ||
+      !active_lua_api->set_top || !active_lua_api->push_value || !active_lua_api->ref ||
+      !active_lua_api->unref || active_lua_api->type(state, 2) != LUA_TFUNCTION_COMPAT) {
+    return 0;
+  }
+  long long data_value = 0;
+  long long num_value = 0;
+  long long element_size_value = 0;
+  if (!lua_table_integer_field(active_lua_api, state, 1, "Data", &data_value) ||
+      !lua_table_integer_field(active_lua_api, state, 1, "Num", &num_value) ||
+      !lua_table_integer_field(active_lua_api, state, 1, "ElementElementSize", &element_size_value) ||
+      data_value <= 0 || num_value <= 0 ||
+      element_size_value <= 0 || element_size_value > MAX_PROCESS_EVENT_PARAM_BYTES) {
+    return 0;
+  }
+  int callback_ref = LUA_NOREF_COMPAT;
+  if (!lua_store_hook_ref(active_lua_api, state, 2, &callback_ref)) {
+    return 0;
+  }
+  char element_class_name[MAX_LUA_CLASS_NAME];
+  char element_type[MAX_LUA_CLASS_NAME];
+  element_class_name[0] = '\0';
+  element_type[0] = '\0';
+  lua_read_self_string_field(state, "ElementClassName", element_class_name, sizeof(element_class_name));
+  lua_read_self_string_field(state, "ElementType", element_type, sizeof(element_type));
+  size_t element_size = (size_t)element_size_value;
+  unsigned char raw[MAX_PROCESS_EVENT_PARAM_BYTES];
+  for (long long i = 0; i < num_value; ++i) {
+    memset(raw, 0, sizeof(raw));
+    if (!read_process_event_array_data_bytes((uintptr_t)data_value, (size_t)i * element_size, raw, element_size)) {
+      continue;
+    }
+    active_lua_api->rawgeti(state, LUA_REGISTRYINDEX_COMPAT, callback_ref);
+    push_lua_container_scalar_or_raw(state, raw, element_size, element_class_name, element_type, "RawUnrealSetElement", i + 1);
+    int status = lua_call(active_lua_api, state, 1, 1, 0);
+    if (status != 0) {
+      active_lua_api->set_top(state, -2);
+      break;
+    }
+    int is_boolean = 0;
+    int stop = lua_to_boolean(active_lua_api, state, -1, &is_boolean);
+    active_lua_api->set_top(state, -2);
+    if (is_boolean && stop) {
+      break;
+    }
+  }
+  lua_unref_hook_ref(active_lua_api, state, &callback_ref);
+  return 0;
+}
+
+static int lua_script_map_add_callback(LuaState *state) {
+  if (!active_lua_api || !active_lua_api->push_boolean) {
+    return 0;
+  }
+  long long data_value = 0;
+  long long num_value = 0;
+  long long max_value = 0;
+  long long key_size_value = 0;
+  long long value_size_value = 0;
+  if (!lua_table_integer_field(active_lua_api, state, 1, "Data", &data_value) ||
+      !lua_table_integer_field(active_lua_api, state, 1, "Num", &num_value) ||
+      !lua_table_integer_field(active_lua_api, state, 1, "Max", &max_value) ||
+      !lua_table_integer_field(active_lua_api, state, 1, "KeyElementSize", &key_size_value) ||
+      !lua_table_integer_field(active_lua_api, state, 1, "ValueElementSize", &value_size_value) ||
+      data_value <= 0 || num_value < 0 ||
+      key_size_value <= 0 || key_size_value > MAX_PROCESS_EVENT_PARAM_BYTES ||
+      value_size_value <= 0 || value_size_value > MAX_PROCESS_EVENT_PARAM_BYTES ||
+      key_size_value + value_size_value > MAX_PROCESS_EVENT_PARAM_BYTES) {
+    active_lua_api->push_boolean(state, 0);
+    return 1;
+  }
+  char key_class_name[MAX_LUA_CLASS_NAME];
+  char key_type[MAX_LUA_CLASS_NAME];
+  char value_class_name[MAX_LUA_CLASS_NAME];
+  char value_type[MAX_LUA_CLASS_NAME];
+  key_class_name[0] = '\0';
+  key_type[0] = '\0';
+  value_class_name[0] = '\0';
+  value_type[0] = '\0';
+  lua_read_self_string_field(state, "KeyClassName", key_class_name, sizeof(key_class_name));
+  lua_read_self_string_field(state, "KeyType", key_type, sizeof(key_type));
+  lua_read_self_string_field(state, "ValueClassName", value_class_name, sizeof(value_class_name));
+  lua_read_self_string_field(state, "ValueType", value_type, sizeof(value_type));
+  size_t key_size = (size_t)key_size_value;
+  size_t value_size = (size_t)value_size_value;
+  size_t pair_size = key_size + value_size;
+  unsigned char raw[MAX_PROCESS_EVENT_PARAM_BYTES];
+  unsigned char key_raw[MAX_PROCESS_EVENT_PARAM_BYTES];
+  unsigned char value_raw[MAX_PROCESS_EVENT_PARAM_BYTES];
+  if (!lua_container_scalar_arg_to_raw(state, 2, key_raw, key_size, key_class_name, key_type) ||
+      !lua_container_scalar_arg_to_raw(state, 3, value_raw, value_size, value_class_name, value_type)) {
+    active_lua_api->push_boolean(state, 0);
+    return 1;
+  }
+  for (long long i = 0; i < num_value; ++i) {
+    lua_container_zero_bytes(raw, sizeof(raw));
+    if (read_process_event_array_data_bytes((uintptr_t)data_value, (size_t)i * pair_size, raw, pair_size) &&
+        lua_container_scalar_arg_matches(state, 2, raw, key_size, key_class_name, key_type)) {
+      if (!write_process_event_array_data_bytes((uintptr_t)data_value, (size_t)i * pair_size + key_size, value_raw, value_size)) {
+        active_lua_api->push_boolean(state, 0);
+        return 1;
+      }
+      active_lua_api->push_boolean(state, 1);
+      return 1;
+    }
+  }
+  if (max_value <= num_value) {
+    active_lua_api->push_boolean(state, 0);
+    return 1;
+  }
+  lua_container_zero_bytes(raw, sizeof(raw));
+  lua_container_copy_bytes(raw, key_raw, key_size);
+  lua_container_copy_bytes(raw + key_size, value_raw, value_size);
+  if (!write_process_event_array_data_bytes((uintptr_t)data_value, (size_t)num_value * pair_size, raw, pair_size) ||
+      !lua_set_self_num(state, num_value + 1)) {
+    active_lua_api->push_boolean(state, 0);
+    return 1;
+  }
+  active_lua_api->push_boolean(state, 1);
+  return 1;
+}
+
+static int lua_script_map_find_or_contains_callback(LuaState *state, int find_value) {
+  if (!active_lua_api || !active_lua_api->push_nil || !active_lua_api->push_boolean) {
+    return 0;
+  }
+  long long data_value = 0;
+  long long num_value = 0;
+  long long key_size_value = 0;
+  long long value_size_value = 0;
+  if (!lua_table_integer_field(active_lua_api, state, 1, "Data", &data_value) ||
+      !lua_table_integer_field(active_lua_api, state, 1, "Num", &num_value) ||
+      !lua_table_integer_field(active_lua_api, state, 1, "KeyElementSize", &key_size_value) ||
+      !lua_table_integer_field(active_lua_api, state, 1, "ValueElementSize", &value_size_value) ||
+      data_value <= 0 || num_value <= 0 ||
+      key_size_value <= 0 || key_size_value > MAX_PROCESS_EVENT_PARAM_BYTES ||
+      value_size_value <= 0 || value_size_value > MAX_PROCESS_EVENT_PARAM_BYTES ||
+      key_size_value + value_size_value > MAX_PROCESS_EVENT_PARAM_BYTES) {
+    if (find_value) {
+      active_lua_api->push_nil(state);
+    } else {
+      active_lua_api->push_boolean(state, 0);
+    }
+    return 1;
+  }
+  char key_class_name[MAX_LUA_CLASS_NAME];
+  char key_type[MAX_LUA_CLASS_NAME];
+  char value_class_name[MAX_LUA_CLASS_NAME];
+  char value_type[MAX_LUA_CLASS_NAME];
+  key_class_name[0] = '\0';
+  key_type[0] = '\0';
+  value_class_name[0] = '\0';
+  value_type[0] = '\0';
+  lua_read_self_string_field(state, "KeyClassName", key_class_name, sizeof(key_class_name));
+  lua_read_self_string_field(state, "KeyType", key_type, sizeof(key_type));
+  lua_read_self_string_field(state, "ValueClassName", value_class_name, sizeof(value_class_name));
+  lua_read_self_string_field(state, "ValueType", value_type, sizeof(value_type));
+  size_t key_size = (size_t)key_size_value;
+  size_t value_size = (size_t)value_size_value;
+  size_t pair_size = key_size + value_size;
+  unsigned char raw[MAX_PROCESS_EVENT_PARAM_BYTES];
+  for (long long i = 0; i < num_value; ++i) {
+    memset(raw, 0, sizeof(raw));
+    if (read_process_event_array_data_bytes((uintptr_t)data_value, (size_t)i * pair_size, raw, pair_size) &&
+        lua_container_scalar_arg_matches(state, 2, raw, key_size, key_class_name, key_type)) {
+      if (!find_value) {
+        active_lua_api->push_boolean(state, 1);
+        return 1;
+      }
+      return push_lua_container_scalar_or_raw(state, raw + key_size, value_size, value_class_name, value_type, "RawUnrealMapValue", i + 1);
+    }
+  }
+  if (find_value) {
+    active_lua_api->push_nil(state);
+  } else {
+    active_lua_api->push_boolean(state, 0);
+  }
+  return 1;
+}
+
+static int lua_script_map_contains_callback(LuaState *state) {
+  return lua_script_map_find_or_contains_callback(state, 0);
+}
+
+static int lua_script_map_find_callback(LuaState *state) {
+  return lua_script_map_find_or_contains_callback(state, 1);
+}
+
+static int lua_script_map_remove_callback(LuaState *state) {
+  if (!active_lua_api || !active_lua_api->push_boolean) {
+    return 0;
+  }
+  long long data_value = 0;
+  long long num_value = 0;
+  long long key_size_value = 0;
+  long long value_size_value = 0;
+  if (!lua_table_integer_field(active_lua_api, state, 1, "Data", &data_value) ||
+      !lua_table_integer_field(active_lua_api, state, 1, "Num", &num_value) ||
+      !lua_table_integer_field(active_lua_api, state, 1, "KeyElementSize", &key_size_value) ||
+      !lua_table_integer_field(active_lua_api, state, 1, "ValueElementSize", &value_size_value) ||
+      data_value <= 0 || num_value <= 0 ||
+      key_size_value <= 0 || key_size_value > MAX_PROCESS_EVENT_PARAM_BYTES ||
+      value_size_value <= 0 || value_size_value > MAX_PROCESS_EVENT_PARAM_BYTES ||
+      key_size_value + value_size_value > MAX_PROCESS_EVENT_PARAM_BYTES) {
+    active_lua_api->push_boolean(state, 0);
+    return 1;
+  }
+  char key_class_name[MAX_LUA_CLASS_NAME];
+  char key_type[MAX_LUA_CLASS_NAME];
+  key_class_name[0] = '\0';
+  key_type[0] = '\0';
+  lua_read_self_string_field(state, "KeyClassName", key_class_name, sizeof(key_class_name));
+  lua_read_self_string_field(state, "KeyType", key_type, sizeof(key_type));
+  size_t key_size = (size_t)key_size_value;
+  size_t value_size = (size_t)value_size_value;
+  size_t pair_size = key_size + value_size;
+  unsigned char raw[MAX_PROCESS_EVENT_PARAM_BYTES];
+  unsigned char next[MAX_PROCESS_EVENT_PARAM_BYTES];
+  long long found = -1;
+  for (long long i = 0; i < num_value; ++i) {
+    lua_container_zero_bytes(raw, sizeof(raw));
+    if (read_process_event_array_data_bytes((uintptr_t)data_value, (size_t)i * pair_size, raw, pair_size) &&
+        lua_container_scalar_arg_matches(state, 2, raw, key_size, key_class_name, key_type)) {
+      found = i;
+      break;
+    }
+  }
+  if (found < 0) {
+    active_lua_api->push_boolean(state, 0);
+    return 1;
+  }
+  for (long long i = found + 1; i < num_value; ++i) {
+    lua_container_zero_bytes(next, sizeof(next));
+    if (!read_process_event_array_data_bytes((uintptr_t)data_value, (size_t)i * pair_size, next, pair_size) ||
+        !write_process_event_array_data_bytes((uintptr_t)data_value, (size_t)(i - 1) * pair_size, next, pair_size)) {
+      active_lua_api->push_boolean(state, 0);
+      return 1;
+    }
+  }
+  lua_container_zero_bytes(raw, sizeof(raw));
+  write_process_event_array_data_bytes((uintptr_t)data_value, (size_t)(num_value - 1) * pair_size, raw, pair_size);
+  if (!lua_set_self_num(state, num_value - 1)) {
+    active_lua_api->push_boolean(state, 0);
+    return 1;
+  }
+  active_lua_api->push_boolean(state, 1);
+  return 1;
+}
+
+static int lua_script_map_for_each_callback(LuaState *state) {
+  if (!active_lua_api || !active_lua_api->type || !active_lua_api->rawgeti ||
+      !active_lua_api->set_top || !active_lua_api->push_value || !active_lua_api->ref ||
+      !active_lua_api->unref || active_lua_api->type(state, 2) != LUA_TFUNCTION_COMPAT) {
+    return 0;
+  }
+  long long data_value = 0;
+  long long num_value = 0;
+  long long key_size_value = 0;
+  long long value_size_value = 0;
+  if (!lua_table_integer_field(active_lua_api, state, 1, "Data", &data_value) ||
+      !lua_table_integer_field(active_lua_api, state, 1, "Num", &num_value) ||
+      !lua_table_integer_field(active_lua_api, state, 1, "KeyElementSize", &key_size_value) ||
+      !lua_table_integer_field(active_lua_api, state, 1, "ValueElementSize", &value_size_value) ||
+      data_value <= 0 || num_value <= 0 ||
+      key_size_value <= 0 || key_size_value > MAX_PROCESS_EVENT_PARAM_BYTES ||
+      value_size_value <= 0 || value_size_value > MAX_PROCESS_EVENT_PARAM_BYTES ||
+      key_size_value + value_size_value > MAX_PROCESS_EVENT_PARAM_BYTES) {
+    return 0;
+  }
+  int callback_ref = LUA_NOREF_COMPAT;
+  if (!lua_store_hook_ref(active_lua_api, state, 2, &callback_ref)) {
+    return 0;
+  }
+  char key_class_name[MAX_LUA_CLASS_NAME];
+  char key_type[MAX_LUA_CLASS_NAME];
+  char value_class_name[MAX_LUA_CLASS_NAME];
+  char value_type[MAX_LUA_CLASS_NAME];
+  key_class_name[0] = '\0';
+  key_type[0] = '\0';
+  value_class_name[0] = '\0';
+  value_type[0] = '\0';
+  lua_read_self_string_field(state, "KeyClassName", key_class_name, sizeof(key_class_name));
+  lua_read_self_string_field(state, "KeyType", key_type, sizeof(key_type));
+  lua_read_self_string_field(state, "ValueClassName", value_class_name, sizeof(value_class_name));
+  lua_read_self_string_field(state, "ValueType", value_type, sizeof(value_type));
+  size_t key_size = (size_t)key_size_value;
+  size_t value_size = (size_t)value_size_value;
+  size_t pair_size = key_size + value_size;
+  unsigned char raw[MAX_PROCESS_EVENT_PARAM_BYTES];
+  for (long long i = 0; i < num_value; ++i) {
+    memset(raw, 0, sizeof(raw));
+    if (!read_process_event_array_data_bytes((uintptr_t)data_value, (size_t)i * pair_size, raw, pair_size)) {
+      continue;
+    }
+    active_lua_api->rawgeti(state, LUA_REGISTRYINDEX_COMPAT, callback_ref);
+    push_lua_container_scalar_or_raw(state, raw, key_size, key_class_name, key_type, "RawUnrealMapKey", i + 1);
+    push_lua_container_scalar_or_raw(state, raw + key_size, value_size, value_class_name, value_type, "RawUnrealMapValue", i + 1);
+    int status = lua_call(active_lua_api, state, 2, 1, 0);
+    if (status != 0) {
+      active_lua_api->set_top(state, -2);
+      break;
+    }
+    int is_boolean = 0;
+    int stop = lua_to_boolean(active_lua_api, state, -1, &is_boolean);
+    active_lua_api->set_top(state, -2);
+    if (is_boolean && stop) {
+      break;
+    }
+  }
+  lua_unref_hook_ref(active_lua_api, state, &callback_ref);
+  return 0;
+}
+
 static int lua_script_map_get_key_callback(LuaState *state) {
   ++lua_process_event_container_alias_hits;
   return lua_script_map_get_component_callback(state, 0);
@@ -18555,6 +21992,7 @@ static int push_process_event_container_header_table(
     set_lua_object_method(api, state, "NumElements", lua_script_array_get_num_callback);
     set_lua_object_method(api, state, "GetData", lua_script_array_get_data_callback);
     set_lua_object_method(api, state, "GetDataSampleBytes", lua_script_array_get_data_sample_bytes_callback);
+    set_lua_object_method(api, state, "Empty", lua_script_array_empty_callback);
     set_lua_object_method(api, state, "GetRawElement", lua_script_array_get_raw_element_callback);
     set_lua_object_method(api, state, "GetElement", lua_script_array_get_element_callback);
     set_lua_object_method(api, state, "Get", lua_script_array_get_alias_callback);
@@ -18568,6 +22006,11 @@ static int push_process_event_container_header_table(
     set_lua_object_method(api, state, "GetData", lua_script_array_get_data_callback);
     set_lua_object_method(api, state, "GetRawElement", lua_script_array_get_raw_element_callback);
     set_lua_object_method(api, state, "GetRawEntry", lua_script_array_get_raw_element_callback);
+    set_lua_object_method(api, state, "Empty", lua_script_array_empty_callback);
+    set_lua_object_method(api, state, "Add", lua_script_set_add_callback);
+    set_lua_object_method(api, state, "Contains", lua_script_set_contains_callback);
+    set_lua_object_method(api, state, "Remove", lua_script_set_remove_callback);
+    set_lua_object_method(api, state, "ForEach", lua_script_set_for_each_callback);
     set_lua_object_method(api, state, "GetElement", lua_script_set_get_element_callback);
     set_lua_object_method(api, state, "Get", lua_script_set_get_alias_callback);
     set_lua_object_method(api, state, "get", lua_script_set_get_alias_callback);
@@ -18580,6 +22023,12 @@ static int push_process_event_container_header_table(
     set_lua_object_method(api, state, "GetData", lua_script_array_get_data_callback);
     set_lua_object_method(api, state, "GetRawElement", lua_script_array_get_raw_element_callback);
     set_lua_object_method(api, state, "GetRawPair", lua_script_array_get_raw_element_callback);
+    set_lua_object_method(api, state, "Empty", lua_script_array_empty_callback);
+    set_lua_object_method(api, state, "Add", lua_script_map_add_callback);
+    set_lua_object_method(api, state, "Contains", lua_script_map_contains_callback);
+    set_lua_object_method(api, state, "Find", lua_script_map_find_callback);
+    set_lua_object_method(api, state, "Remove", lua_script_map_remove_callback);
+    set_lua_object_method(api, state, "ForEach", lua_script_map_for_each_callback);
     set_lua_object_method(api, state, "GetPair", lua_script_map_get_pair_callback);
     set_lua_object_method(api, state, "Get", lua_script_map_get_alias_callback);
     set_lua_object_method(api, state, "get", lua_script_map_get_alias_callback);
@@ -19123,6 +22572,10 @@ static void register_lua_probe_api(LuaApi *api, LuaState *state) {
   api->set_global(state, "FindAllOf");
   api->push_cclosure(state, lua_for_each_uobject_callback, 0);
   api->set_global(state, "ForEachUObject");
+  api->push_cclosure(state, lua_get_object_from_address_callback, 0);
+  api->set_global(state, "GetObjectFromAddress");
+  api->push_cclosure(state, lua_get_object_from_address_callback, 0);
+  api->set_global(state, "FindObjectByAddress");
   api->push_cclosure(state, lua_get_world_callback, 0);
   api->set_global(state, "GetWorld");
   api->push_cclosure(state, lua_get_engine_callback, 0);
@@ -19139,14 +22592,22 @@ static void register_lua_probe_api(LuaApi *api, LuaState *state) {
   api->set_global(state, "ForEachUFunction");
   api->push_cclosure(state, lua_static_construct_object_callback, 0);
   api->set_global(state, "StaticConstructObject");
+  api->push_cclosure(state, lua_get_static_construct_object_native_executor_state_callback, 0);
+  api->set_global(state, "GetStaticConstructObjectNativeExecutorState");
+  api->push_cclosure(state, lua_invoke_static_construct_object_native_callback, 0);
+  api->set_global(state, "InvokeStaticConstructObjectNative");
   api->push_cclosure(state, lua_register_custom_property_callback, 0);
   api->set_global(state, "RegisterCustomProperty");
   api->push_cclosure(state, lua_load_asset_callback, 0);
   api->set_global(state, "LoadAsset");
+  api->push_cclosure(state, lua_load_class_callback, 0);
+  api->set_global(state, "LoadClass");
   api->push_cclosure(state, lua_get_load_asset_backend_state_callback, 0);
   api->set_global(state, "GetLoadAssetBackendState");
   api->push_cclosure(state, lua_notify_on_new_object_callback, 0);
   api->set_global(state, "NotifyOnNewObject");
+  api->push_cclosure(state, lua_unregister_notify_on_new_object_callback, 0);
+  api->set_global(state, "UnregisterNotifyOnNewObject");
   api->push_cclosure(state, lua_execute_in_game_thread_callback, 0);
   api->set_global(state, "ExecuteInGameThread");
   api->push_cclosure(state, lua_drain_game_thread_queue_callback, 0);
@@ -19183,6 +22644,8 @@ static void register_lua_probe_api(LuaApi *api, LuaState *state) {
   api->set_global(state, "RegisterConsoleCommandGlobalHandler");
   api->push_cclosure(state, lua_unregister_console_command_handler_callback, 0);
   api->set_global(state, "UnregisterConsoleCommandHandler");
+  api->push_cclosure(state, lua_unregister_console_command_handler_callback, 0);
+  api->set_global(state, "UnregisterConsoleCommandGlobalHandler");
   api->push_cclosure(state, lua_dune_probe_dispatch_console_command_callback, 0);
   api->set_global(state, "DuneProbeDispatchConsoleCommand");
   api->push_cclosure(state, lua_register_custom_event_callback, 0);
@@ -19299,10 +22762,16 @@ static void register_lua_probe_api(LuaApi *api, LuaState *state) {
   api->set_global(state, "CallFunction");
   api->push_cclosure(state, lua_call_function_callback, 0);
   api->set_global(state, "CallFunctionByNameWithArguments");
+  api->push_cclosure(state, lua_get_call_function_native_executor_state_callback, 0);
+  api->set_global(state, "GetCallFunctionNativeExecutorState");
+  api->push_cclosure(state, lua_invoke_call_function_native_callback, 0);
+  api->set_global(state, "InvokeCallFunctionNative");
   api->push_cclosure(state, lua_process_event_callback, 0);
   api->set_global(state, "ProcessEvent");
   api->push_cclosure(state, lua_get_process_event_bridge_state_callback, 0);
   api->set_global(state, "GetProcessEventBridgeState");
+  api->push_cclosure(state, lua_get_process_event_native_executor_state_callback, 0);
+  api->set_global(state, "GetProcessEventNativeExecutorState");
   api->push_cclosure(state, lua_invoke_process_event_native_callback, 0);
   api->set_global(state, "InvokeProcessEventNative");
   api->push_cclosure(state, lua_get_load_asset_package_bridge_state_callback, 0);
@@ -19335,6 +22804,16 @@ static void register_lua_probe_api(LuaApi *api, LuaState *state) {
   api->set_global(state, "PrepareLoadAssetPackageCallFrame");
   api->push_cclosure(state, lua_invoke_load_asset_package_native_callback, 0);
   api->set_global(state, "InvokeLoadAssetPackageNative");
+  api->push_cclosure(state, lua_get_load_class_package_bridge_state_callback, 0);
+  api->set_global(state, "GetLoadClassPackageBridgeState");
+  api->push_cclosure(state, lua_get_load_class_package_abi_state_callback, 0);
+  api->set_global(state, "GetLoadClassPackageAbiState");
+  api->push_cclosure(state, lua_get_load_class_package_call_frame_verification_state_callback, 0);
+  api->set_global(state, "GetLoadClassPackageCallFrameVerificationState");
+  api->push_cclosure(state, lua_get_load_class_package_native_executor_state_callback, 0);
+  api->set_global(state, "GetLoadClassPackageNativeExecutorState");
+  api->push_cclosure(state, lua_invoke_load_class_package_native_callback, 0);
+  api->set_global(state, "InvokeLoadClassPackageNative");
   api->push_cclosure(state, lua_create_process_event_params_callback, 0);
   api->set_global(state, "CreateProcessEventParams");
   api->push_cclosure(state, lua_get_function_param_descriptors_callback, 0);
@@ -19363,7 +22842,7 @@ static void run_lua_dispatch_self_test(const char *phase) {
   }
   const char *script = getenv("DUNE_PROBE_LOADER_LUA_SELF_TEST_SCRIPT");
   if (!script || !script[0]) {
-    script = "local o=StaticFindObject('/Script/DuneServerProbe.SelfTestObject'); local fo=FindObject('SelfTestObject'); local f=FindFirstOf('DuneServerProbeSelfTestClass'); local known=GetKnownObjects(); local matches=FindObjects('DuneServerProbeSelfTestClass'); local allOf=FindAllOf('DuneServerProbeSelfTestClass'); local asset=LoadAsset('/Script/DuneServerProbe.SelfTestObject'); local assetBackend=GetLoadAssetBackendState(); local seen=0; ForEachUObject(function(x) if x and IsA(x,'DuneServerProbeSelfTestClass') then seen=seen+1 end end); local cls=o and o:GetClass(); local cdo=cls and cls:GetDefaultObject(); local cdo2=cls and cls:GetDefaultObj(); local sup=cls and cls:GetSuper(); local sup2=cls and cls:GetSuperClass(); local methodOk=o and cls and cdo and cdo2 and sup and sup2 and cdo.Name=='Default__'..cls.Name and cdo2.Name==cdo.Name and sup.Name=='UObject' and sup2.Name==sup.Name and o:GetName()=='SelfTestObject' and o:GetPathName()==o.PathName and o:GetAddress()==o.Address and o:IsValid() and o:GetFullName()=='DuneServerProbeSelfTestClass /Script/DuneServerProbe.SelfTestObject' and o:type()=='UObject' and o:GetFName()=='SelfTestObject' and o:GetOuter()==nil and o:GetWorld()==nil and cls.Name=='DuneServerProbeSelfTestClass' and cls.ClassName=='UClass' and cls:type()=='UClass' and not cls:IsValid() and o:HasAllFlags(0) and not o:HasAnyFlags(1) and not o:HasAnyInternalFlags(1); local async=0; local asyncId=ExecuteAsync(function() async=async+1 end); local delayId=ExecuteWithDelay(1,function() async=async+1 end); local loopId=LoopAsync(1,function() async=async+1 return false end); local cancelledAsync=0; local cancelId=ExecuteWithDelay(1,function() cancelledAsync=cancelledAsync+1 end); local schedulerCancelOk=cancelId and CancelScheduledCallback(cancelId); local schedulerDrained=DrainSchedulerQueue(); local fn=FName('ProbeName'); local ft=FText('ProbeText'); local kb=RegisterKeyBind('P',function(ctx,key) return ctx==o and key=='P' end); local cancelledKeyHits=0; local kb2=RegisterKeyBind('Q',function() cancelledKeyHits=cancelledKeyHits+1 return true end); local keyCancelOk=kb2 and UnregisterKeyBind(kb2) and not IsKeyBindRegistered('Q') and not DuneProbeDispatchKeyBind(o,'Q') and cancelledKeyHits==0; local cancelledConsoleHits=0; local cc=RegisterConsoleCommandHandler('cancelprobe',function() cancelledConsoleHits=cancelledConsoleHits+1 return true end); local consoleCancelOk=cc and UnregisterConsoleCommandHandler(cc) and not DuneProbeDispatchConsoleCommand(o,'cancelprobe') and cancelledConsoleHits==0; local compatOk=async==3 and asyncId and delayId and loopId and schedulerCancelOk and schedulerDrained==3 and cancelledAsync==0 and fn.Name=='ProbeName' and fn:ToString()=='ProbeName' and fn:GetComparisonIndex()==0 and ft.Text=='ProbeText' and kb and IsKeyBindRegistered('P') and DuneProbeDispatchKeyBind(o,'P') and keyCancelOk and consoleCancelOk and RegisterConsoleCommandHandler('probe',function(ctx,cmd,args) return ctx==o and cmd=='probe' and args=='arg' and false end) and RegisterConsoleCommandGlobalHandler(function(ctx,cmd,args) return ctx==o and cmd=='probe' and args=='arg' end) and DuneProbeDispatchConsoleCommand(o,'probe arg') and RegisterCustomEvent('probe',function() end) and RegisterLoadMapPreHook(function() end) and RegisterLoadMapPostHook(function() end) and RegisterBeginPlayPreHook(function() end) and RegisterBeginPlayPostHook(function() end) and RegisterInitGameStatePreHook(function() end) and RegisterInitGameStatePostHook(function() end) and RegisterProcessConsoleExecPreHook(function() end) and RegisterProcessConsoleExecPostHook(function() end) and RegisterCallFunctionByNameWithArgumentsPreHook(function() end) and RegisterCallFunctionByNameWithArgumentsPostHook(function() end); local up,uq=RegisterHook('/Script/DuneServerProbe.Temp:Function',function()return -1 end,function()return -1 end); local unregOk=up and uq and uq==up+1; UnregisterHook('/Script/DuneServerProbe.Temp:Function',up,uq); NotifyOnNewObject('DuneServerProbeSelfTestClass', function(x) if x and x.Name=='ConstructedProbe' then return 17 end return -17 end); local c=StaticConstructObject(f,o,'ConstructedProbe'); local gameThreadId=ExecuteInGameThread(function() return 9 end); local drained=DrainGameThreadQueue(); local ok=o and fo and f and known and matches and allOf and asset and c and methodOk and compatOk and unregOk and gameThreadId and gameThreadId>0 and drained==1 and o.PathName=='/Script/DuneServerProbe.SelfTestObject' and fo.Address==o.Address and asset.Address==o.Address and assetBackend and assetBackend.Backend=='registry' and assetBackend.RegistryFallback and not assetBackend.PackageBackendArmed and assetBackend.ContractVersion==1 and f.ClassName=='DuneServerProbeSelfTestClass' and known[o.PathName] and known.Count>=1 and matches.Count>=1 and allOf.Count>=1 and seen>=1 and IsA(o,'DuneServerProbeSelfTestClass') and IsA(o,'UObject') and c.Name=='ConstructedProbe' and c.ClassName=='DuneServerProbeSelfTestClass'; return (ok and 40 or -100) + RegisterHook('/Script/DuneServerProbe.SelfTest:Function', function() return 11 end, function() return 31 end)";
+    script = "local o=StaticFindObject('/Script/DuneServerProbe.SelfTestObject'); local fo=FindObject('SelfTestObject'); local f=FindFirstOf('DuneServerProbeSelfTestClass'); local known=GetKnownObjects(); local matches=FindObjects('DuneServerProbeSelfTestClass'); local allOf=FindAllOf('DuneServerProbeSelfTestClass'); local byAddr=o and GetObjectFromAddress(o.Address); local byAddrAlias=o and FindObjectByAddress(o:GetAddress()); local asset=LoadAsset('/Script/DuneServerProbe.SelfTestObject'); local loadedClass=LoadClass('DuneServerProbeSelfTestClass'); local classFromObject=LoadClass('/Script/DuneServerProbe.SelfTestObject'); local assetBackend=GetLoadAssetBackendState(); local seen=0; ForEachUObject(function(x) if x and IsA(x,'DuneServerProbeSelfTestClass') then seen=seen+1 end end); local cls=o and o:GetClass(); local cdo=cls and cls:GetDefaultObject(); local cdo2=cls and cls:GetDefaultObj(); local sup=cls and cls:GetSuper(); local sup2=cls and cls:GetSuperClass(); local methodOk=o and cls and cdo and cdo2 and sup and sup2 and cdo.Name=='Default__'..cls.Name and cdo2.Name==cdo.Name and sup.Name=='UObject' and sup2.Name==sup.Name and o:GetName()=='SelfTestObject' and o:GetPathName()==o.PathName and o:GetAddress()==o.Address and o:IsValid() and o:GetFullName()=='DuneServerProbeSelfTestClass /Script/DuneServerProbe.SelfTestObject' and o:type()=='UObject' and o:GetFName()=='SelfTestObject' and o:GetOuter()==nil and o:GetWorld()==nil and cls.Name=='DuneServerProbeSelfTestClass' and cls.ClassName=='UClass' and cls:type()=='UClass' and not cls:IsValid() and o:HasAllFlags(0) and not o:HasAnyFlags(1) and not o:HasAnyInternalFlags(1); local async=0; local asyncId=ExecuteAsync(function() async=async+1 end); local delayId=ExecuteWithDelay(1,function() async=async+1 end); local loopId=LoopAsync(1,function() async=async+1 return false end); local cancelledAsync=0; local cancelId=ExecuteWithDelay(1,function() cancelledAsync=cancelledAsync+1 end); local schedulerCancelOk=cancelId and CancelScheduledCallback(cancelId); local schedulerDrained=DrainSchedulerQueue(); local fn=FName('ProbeName'); local ft=FText('ProbeText'); local kb=RegisterKeyBind('P',function(ctx,key) return ctx==o and key=='P' end); local cancelledKeyHits=0; local kb2=RegisterKeyBind('Q',function() cancelledKeyHits=cancelledKeyHits+1 return true end); local keyCancelOk=kb2 and UnregisterKeyBind(kb2) and not IsKeyBindRegistered('Q') and not DuneProbeDispatchKeyBind(o,'Q') and cancelledKeyHits==0; local cancelledConsoleHits=0; local cc=RegisterConsoleCommandHandler('cancelprobe',function() cancelledConsoleHits=cancelledConsoleHits+1 return true end); local consoleCancelOk=cc and UnregisterConsoleCommandHandler(cc) and not DuneProbeDispatchConsoleCommand(o,'cancelprobe') and cancelledConsoleHits==0; local compatOk=async==3 and asyncId and delayId and loopId and schedulerCancelOk and schedulerDrained==3 and cancelledAsync==0 and fn.Name=='ProbeName' and fn:ToString()=='ProbeName' and fn:GetComparisonIndex()==0 and ft.Text=='ProbeText' and kb and IsKeyBindRegistered('P') and DuneProbeDispatchKeyBind(o,'P') and keyCancelOk and consoleCancelOk and RegisterConsoleCommandHandler('probe',function(full,params,output,ctx,cmd,args) return full=='probe arg' and params and params[0]=='probe' and params[1]=='arg' and params.Count==1 and output and output.Kind=='FOutputDevice' and output:Log('probe-log') and output:Serialize('probe-serialize') and output:Write('probe-write') and output.LastMessage=='probe-write' and output.WriteCount==3 and output:GetOutput()=='probe-write' and output:ToString()=='probe-write' and output:Clear() and output.WriteCount==0 and output.LastMessage=='' and ctx==o and cmd=='probe' and args=='arg' and false end) and RegisterConsoleCommandGlobalHandler(function(full,params,output,ctx,cmd,args) return full=='probe arg' and params and params[0]=='probe' and params[1]=='arg' and params.Count==1 and output and output.Kind=='FOutputDevice' and output:Log('probe-log') and output:Serialize('probe-serialize') and output:Write('probe-write') and output.LastMessage=='probe-write' and output.WriteCount==3 and output:GetOutput()=='probe-write' and output:ToString()=='probe-write' and output:Clear() and output.WriteCount==0 and output.LastMessage=='' and ctx==o and cmd=='probe' and args=='arg' end) and DuneProbeDispatchConsoleCommand(o,'probe arg') and RegisterCustomEvent('probe',function() end) and RegisterLoadMapPreHook(function() end) and RegisterLoadMapPostHook(function() end) and RegisterBeginPlayPreHook(function() end) and RegisterBeginPlayPostHook(function() end) and RegisterInitGameStatePreHook(function() end) and RegisterInitGameStatePostHook(function() end) and RegisterProcessConsoleExecPreHook(function() end) and RegisterProcessConsoleExecPostHook(function() end) and RegisterCallFunctionByNameWithArgumentsPreHook(function() end) and RegisterCallFunctionByNameWithArgumentsPostHook(function() end); local up,uq=RegisterHook('/Script/DuneServerProbe.Temp:Function',function()return -1 end,function()return -1 end); local unregOk=up and uq and uq==up+1; UnregisterHook('/Script/DuneServerProbe.Temp:Function',up,uq); NotifyOnNewObject('DuneServerProbeSelfTestClass', function(x) if x and x.Name=='ConstructedProbe' then return 17 end return -17 end); local c=StaticConstructObject(f,o,'ConstructedProbe'); local gameThreadId=ExecuteInGameThread(function() return 9 end); local drained=DrainGameThreadQueue(); local ok=o and fo and byAddr and byAddrAlias and byAddr.Address==o.Address and byAddrAlias.Address==o.Address and f and known and matches and allOf and asset and loadedClass and classFromObject and c and methodOk and compatOk and unregOk and gameThreadId and gameThreadId>0 and drained==1 and o.PathName=='/Script/DuneServerProbe.SelfTestObject' and fo.Address==o.Address and asset.Address==o.Address and loadedClass.Name=='DuneServerProbeSelfTestClass' and loadedClass.ClassName=='UClass' and classFromObject.Name=='DuneServerProbeSelfTestClass' and classFromObject.ClassName=='UClass' and assetBackend and assetBackend.Backend=='registry' and assetBackend.RegistryFallback and not assetBackend.PackageBackendArmed and assetBackend.ContractVersion==1 and f.ClassName=='DuneServerProbeSelfTestClass' and known[o.PathName] and known.Count>=1 and matches.Count>=1 and allOf.Count>=1 and seen>=1 and IsA(o,'DuneServerProbeSelfTestClass') and IsA(o,'UObject') and c.Name=='ConstructedProbe' and c.ClassName=='DuneServerProbeSelfTestClass'; return (ok and 40 or -100) + RegisterHook('/Script/DuneServerProbe.SelfTest:Function', function() return 11 end, function() return 31 end)";
   }
   char safe_library[256];
   safe_log_value(api.library, safe_library, sizeof(safe_library));
@@ -19437,7 +22916,7 @@ static void run_lua_dispatch_self_test(const char *phase) {
                        lua_console_command_unregister_calls == 1 &&
                        lua_console_command_unregister_hits == 1 ? "passed" : "failed";
   append_log(
-    "event=lua-dispatch-self-test phase=%s status=%s library=%s loadStatus=%d callStatus=%d callbackStatus=%d result=%lld isNumber=%s hooks=%d hook=%s preRef=%d postRef=%d preCalls=%d postCalls=%d preResult=%lld postResult=%lld preIsNumber=%s postIsNumber=%s objectHandles=%lu ueObjectHandles=%lu staticFindObjectCalls=%d staticFindObjectHits=%d findObjectCalls=%d findObjectHits=%d findFirstOfCalls=%d findFirstOfHits=%d getKnownObjectsCalls=%d getKnownObjectsHits=%d findObjectsCalls=%d findObjectsHits=%d findAllOfCalls=%d findAllOfHits=%d forEachUObjectCalls=%d forEachUObjectCallbacks=%d forEachFunctionCalls=%d forEachFunctionCallbacks=%d isACalls=%d isAHits=%d loadAssetCalls=%d loadAssetHits=%d loadAssetBackend=registry loadAssetBackendStateCalls=%d loadAssetPackageBridgeStateCalls=%d loadAssetPackageNativeCalls=%d loadAssetPackageNativeGateHits=%d loadAssetPackageArmed=false loadAssetPackageAvailable=%s loadAssetStaticLoadObjectResolved=%s loadAssetLoadObjectResolved=%s loadAssetLoadPackageResolved=%s loadAssetResolveNameResolved=%s loadAssetPackagePreflightCalls=%d loadAssetPackageAnchorHits=%d loadAssetPackageGateHits=%d loadAssetPackageDryRunHits=%d staticConstructObjectCalls=%d staticConstructObjectHits=%d notifyOnNewObjectCalls=%d executeInGameThreadCalls=%d executeInGameThreadCallbacks=%d executeInGameThreadResult=%lld executeInGameThreadIsNumber=%s executeAsyncCalls=%d executeAsyncCallbacks=%d executeWithDelayCalls=%d executeWithDelayCallbacks=%d loopAsyncCalls=%d loopAsyncCallbacks=%d schedulerQueueDrains=%d schedulerCancelCalls=%d schedulerCancelHits=%d keyBindRegistrations=%d keyBindLookupCalls=%d keyBindLookupHits=%d keyBindDispatchCalls=%d keyBindCallbackCalls=%d keyBindCallbackHandled=%d keyBindUnregisterCalls=%d keyBindUnregisterHits=%d consoleCommandHandlers=%d consoleCommandGlobalHandlers=%d consoleCommandHandlerCalls=%d consoleCommandHandlerHandled=%d consoleCommandGlobalHandlerCalls=%d consoleCommandGlobalHandlerHandled=%d consoleCommandUnregisterCalls=%d consoleCommandUnregisterHits=%d notifyOnNewObjectCallbacks=%d notifyOnNewObjectResult=%lld notifyOnNewObjectIsNumber=%s notifyOnNewObjectStatus=%d staticConstructObjectOuterHits=%d getWorldCalls=%d getWorldHits=%d getCdoCalls=%d getCdoHits=%d getLevelCalls=%d getLevelHits=%d scriptBytes=%lu",
+    "event=lua-dispatch-self-test phase=%s status=%s library=%s loadStatus=%d callStatus=%d callbackStatus=%d result=%lld isNumber=%s hooks=%d hook=%s preRef=%d postRef=%d preCalls=%d postCalls=%d preResult=%lld postResult=%lld preIsNumber=%s postIsNumber=%s objectHandles=%lu ueObjectHandles=%lu staticFindObjectCalls=%d staticFindObjectHits=%d findObjectCalls=%d findObjectHits=%d findFirstOfCalls=%d findFirstOfHits=%d getKnownObjectsCalls=%d getKnownObjectsHits=%d findObjectsCalls=%d findObjectsHits=%d findAllOfCalls=%d findAllOfHits=%d forEachUObjectCalls=%d forEachUObjectCallbacks=%d forEachFunctionCalls=%d forEachFunctionCallbacks=%d isACalls=%d isAHits=%d loadAssetCalls=%d loadAssetHits=%d loadAssetPackageCalls=%d loadAssetPackageHits=%d loadAssetPackageExecutorHits=%d loadAssetBackend=%s loadAssetBackendStateCalls=%d loadAssetPackageBridgeStateCalls=%d loadAssetPackageNativeCalls=%d loadAssetPackageNativeGateHits=%d loadAssetPackageArmed=false loadAssetPackageAvailable=%s loadAssetStaticLoadObjectResolved=%s loadAssetStaticLoadClassResolved=%s loadAssetLoadObjectResolved=%s loadAssetLoadPackageResolved=%s loadAssetResolveNameResolved=%s loadAssetPackagePreflightCalls=%d loadAssetPackageAnchorHits=%d loadAssetPackageGateHits=%d loadAssetPackageDryRunHits=%d staticConstructObjectCalls=%d staticConstructObjectHits=%d notifyOnNewObjectCalls=%d executeInGameThreadCalls=%d executeInGameThreadCallbacks=%d executeInGameThreadResult=%lld executeInGameThreadIsNumber=%s executeAsyncCalls=%d executeAsyncCallbacks=%d executeWithDelayCalls=%d executeWithDelayCallbacks=%d loopAsyncCalls=%d loopAsyncCallbacks=%d schedulerQueueDrains=%d schedulerCancelCalls=%d schedulerCancelHits=%d keyBindRegistrations=%d keyBindLookupCalls=%d keyBindLookupHits=%d keyBindDispatchCalls=%d keyBindCallbackCalls=%d keyBindCallbackHandled=%d keyBindUnregisterCalls=%d keyBindUnregisterHits=%d consoleCommandHandlers=%d consoleCommandGlobalHandlers=%d consoleCommandHandlerCalls=%d consoleCommandHandlerHandled=%d consoleCommandGlobalHandlerCalls=%d consoleCommandGlobalHandlerHandled=%d consoleCommandUnregisterCalls=%d consoleCommandUnregisterHits=%d notifyOnNewObjectCallbacks=%d notifyOnNewObjectResult=%lld notifyOnNewObjectIsNumber=%s notifyOnNewObjectStatus=%d staticConstructObjectOuterHits=%d getWorldCalls=%d getWorldHits=%d getCdoCalls=%d getCdoHits=%d getLevelCalls=%d getLevelHits=%d scriptBytes=%lu",
     phase, status, safe_library, load_status, call_status, callback_status, result,
     is_number ? "true" : "false", lua_hook_registration_count, safe_hook,
     lua_hook_pre_ref, lua_hook_post_ref, lua_hook_pre_calls, lua_hook_post_calls,
@@ -19454,12 +22933,19 @@ static void run_lua_dispatch_self_test(const char *phase) {
     lua_for_each_uobject_calls, lua_for_each_uobject_callbacks,
     lua_for_each_function_calls, lua_for_each_function_callbacks,
     lua_is_a_calls, lua_is_a_hits,
-    lua_load_asset_calls, lua_load_asset_hits, lua_load_asset_backend_state_calls,
+    lua_load_asset_calls,
+    lua_load_asset_hits,
+    lua_load_asset_package_calls,
+    lua_load_asset_package_hits,
+    lua_load_asset_package_executor_hits,
+    lua_load_asset_package_hits > 0 ? "package" : "registry",
+    lua_load_asset_backend_state_calls,
     lua_load_asset_package_bridge_state_calls,
     lua_load_asset_package_native_invoke_calls,
     lua_load_asset_package_native_gate_hits,
     lua_load_asset_backend_package_available ? "true" : "false",
     lua_load_asset_backend_static_load_object_resolved ? "true" : "false",
+    lua_load_asset_backend_static_load_class_resolved ? "true" : "false",
     lua_load_asset_backend_load_object_resolved ? "true" : "false",
     lua_load_asset_backend_load_package_resolved ? "true" : "false",
     lua_load_asset_backend_resolve_name_resolved ? "true" : "false",
@@ -19860,6 +23346,7 @@ static void process_event_live_lua_post_callback(ProcessEventDispatchContext *ct
     "post",
     0
   );
+  lua_drain_game_thread_queue_internal(&process_event_live_lua_api, process_event_live_lua_state);
   lua_drain_scheduler_queue_internal(&process_event_live_lua_api, process_event_live_lua_state, 0);
 }
 
@@ -19888,7 +23375,7 @@ static void build_process_event_live_lua_script(char *script, size_t script_size
     "local n=p and GetParamDescriptor(p,'NameToken'); local fn=props and props.NameToken; local nv=fn and GetParamValue(p,fn); "
     "local m=p and GetParamDescriptor(p,'Message'); local fm=props and props.Message; local mv=fm and GetParamValue(p,fm); "
     "local loc=p and GetParamDescriptor(p,'Location'); local floc=props and props.Location; local lv=floc and GetParamValue(p,floc); local fs=floc and floc:GetStruct(); local lp=p and p.Location; local lpv=lp and lp:get(); "
-    "local arr=p and GetParamDescriptor(p,'NumberArray'); local av=arr and GetParamValue(p,arr); local set=p and GetParamDescriptor(p,'NumberSet'); local sv=set and GetParamValue(p,set); local map=p and GetParamDescriptor(p,'NumberMap'); local mp=map and GetParamValue(p,map); local al=av and av:GetStorageLayout();local asl=av and av:IsSparseLayoutValidated();local astr=av and av:GetSlotStride();local ssl=sv and sv:GetStorageLayout();local ssv=sv and sv:IsSparseLayoutValidated();local sst=sv and sv:GetSlotStride();local msl=mp and mp:GetStorageLayout();local msv=mp and mp:IsSparseLayoutValidated();local mst=mp and mp:GetSlotStride();local aelem=av and av:Get(1); local aelem2=av and av:get(2); local selem=sv and sv:GetElement(1); local selem2=sv and sv:Get(1); local mpair=mp and mp:GetPair(1); local mpair2=mp and mp:Get(1); local mkey=mp and mp:GetKey(1); local mvalue=mp and mp:GetValue(1); "
+    "local arr=p and GetParamDescriptor(p,'NumberArray'); local av=arr and GetParamValue(p,arr); local set=p and GetParamDescriptor(p,'NumberSet'); local sv=set and GetParamValue(p,set); local map=p and GetParamDescriptor(p,'NumberMap'); local mp=map and GetParamValue(p,map); local al=av and av:GetStorageLayout();local asl=av and av:IsSparseLayoutValidated();local astr=av and av:GetSlotStride();local ssl=sv and sv:GetStorageLayout();local ssv=sv and sv:IsSparseLayoutValidated();local sst=sv and sv:GetSlotStride();local msl=mp and mp:GetStorageLayout();local msv=mp and mp:IsSparseLayoutValidated();local mst=mp and mp:GetSlotStride();local aelem=av and av:Get(1); local aelem2=av and av:get(2); local arrayOk=av and av.Kind == 'FScriptArray' and av:GetNum() == 4 and av:GetData() ~= 0 and av:GetRawElement(1,4) and aelem == 41 and aelem2 == 42; local emptyOk=arrayOk and av:Empty() and av:GetNum() == 0; local selem=sv and sv:GetElement(1); local selem2=sv and sv:Get(1); local mpair=mp and mp:GetPair(1); local mpair2=mp and mp:Get(1); local mkey=mp and mp:GetKey(1); local mvalue=mp and mp:GetValue(1); local setMut=sv and sv:Add(73) and sv:GetNum() == 3 and sv:Contains(73) and sv:Remove(72) and sv:GetNum() == 2 and not sv:Contains(72) and sv:Contains(73); local mapMut=mp and mp:Add(103,203) and mp:GetNum() == 3 and mp:Find(103) == 203 and mp:Remove(102) and mp:GetNum() == 2 and not mp:Contains(102) and mp:Contains(103); "
     "local rv=p and p.Value; local rv2=p and p.Values and p.Values.Value; "
   );
   append_lua_reflection_script_chunk(
@@ -19915,9 +23402,9 @@ static void build_process_event_live_lua_script(char *script, size_t script_size
     script_size,
     "and m and fm and fm.ClassName == 'FStrProperty' and mv == 'desert-message' "
     "and loc and floc and floc.ClassName == 'FStructProperty' and floc.OffsetInternal == loc.OffsetInternal and fs and fs.Name == 'Vector' and fs.ClassName == 'UScriptStruct' and lv and lv.Kind == 'FVector' and math.abs(lv.X - 1.25) < 0.001 and lpv and math.abs(lpv.Z - 3.75) < 0.001 "
-    "and arr and arr.ClassName == 'FArrayProperty' and av and av.Kind == 'FScriptArray' and av:GetNum() == 4 and av:GetData() ~= 0 and av:GetRawElement(1,4) and aelem == 41 and aelem2 == 42 "
-    "and set and set.ClassName == 'FSetProperty' and sv and sv.Kind == 'FScriptSetHeader' and sv:GetNum() == 2 and sv:GetData() ~= 0 and sv:GetRawEntry(1,4) and selem == 71 and selem2 == 71 "
-    "and map and map.ClassName == 'FMapProperty' and mp and mp.Kind == 'FScriptMapHeader' and mp:GetNum() == 2 and mp:GetData() ~= 0 and mp:GetRawPair(1,8) and mpair and mpair.Key == 101 and mpair.Value == 201 and mpair2 and mpair2.Key == 101 and mpair2.Value == 201 and mkey == 101 and mvalue == 201 "
+    "and arr and arr.ClassName == 'FArrayProperty' and arrayOk and emptyOk "
+    "and setMut and set and set.ClassName == 'FSetProperty' and sv and sv.Kind == 'FScriptSetHeader' and sv:GetNum() == 2 and sv:GetData() ~= 0 and sv:GetRawEntry(1,4) and selem == 71 and selem2 == 71 "
+    "and mapMut and map and map.ClassName == 'FMapProperty' and mp and mp.Kind == 'FScriptMapHeader' and mp:GetNum() == 2 and mp:GetData() ~= 0 and mp:GetRawPair(1,8) and mpair and mpair.Key == 101 and mpair.Value == 201 and mpair2 and mpair2.Key == 101 and mpair2.Value == 201 and mkey == 101 and mvalue == 201 "
     "and SetParamValue(p,fn,{ComparisonIndex=1250,Number=0}) and SetParamValue(p,fm,'spice-message') and SetParamValue(p,md,4) "
     "and SetParamValue(p,floc,{X=7.25,Y=8.5,Z=9.75}) "
     "and GetParamValue(p,fn).ComparisonIndex == 1250 and GetParamValue(p,fm) == 'spice-message' and GetParamValue(p,md) == 4 and math.abs(GetParamValue(p,floc).Z - 9.75) < 0.001 then return 11 end return -11 end, "
@@ -19960,6 +23447,7 @@ static int prepare_process_event_live_lua_dispatch(const char *phase) {
   process_event_live_lua_loaded = 0;
   if (!load_lua_api(&process_event_live_lua_api)) {
     append_log("event=ue-process-event-live-lua-dispatch phase=%s status=library-missing", phase);
+    process_event_live_lua_enabled = 0;
     return 0;
   }
   char safe_library[256];
@@ -19969,6 +23457,7 @@ static int prepare_process_event_live_lua_dispatch(const char *phase) {
     append_log("event=ue-process-event-live-lua-dispatch phase=%s status=state-failed library=%s", phase, safe_library);
     dlclose(process_event_live_lua_api.handle);
     memset(&process_event_live_lua_api, 0, sizeof(process_event_live_lua_api));
+    process_event_live_lua_enabled = 0;
     return 0;
   }
   process_event_live_lua_api.open_libs(process_event_live_lua_state);
@@ -20018,6 +23507,7 @@ static int prepare_process_event_live_lua_dispatch(const char *phase) {
   );
   if (!ready) {
     close_process_event_live_lua_dispatch(phase);
+    process_event_live_lua_enabled = 0;
   }
   return ready;
 }
@@ -20402,7 +23892,9 @@ static void process_event_live_hook_replacement(void *object, void *function, vo
     log_process_event_live_param_samples(&ctx);
   }
   run_process_event_dispatch_callbacks(HOOK_DISPATCH_PRE, &ctx);
-  ProcessEventSelfTestFn original = process_event_live_hook_original;
+  ProcessEventSelfTestFn original = process_event_active_validation_suppress_original
+    ? NULL
+    : process_event_live_hook_original;
   if (original) {
     original(object, function, params);
     ++process_event_live_hook_original_calls;
@@ -20414,9 +23906,10 @@ static void process_event_live_hook_replacement(void *object, void *function, vo
   if (process_event_live_hook_log_calls &&
       (process_event_live_hook_call_log_limit <= 0 || call_index <= process_event_live_hook_call_log_limit)) {
     append_log(
-      "event=ue-process-event-live-hook-call status=returned call=%d originalCalled=%s preCallbacks=%d postCallbacks=%d",
+      "event=ue-process-event-live-hook-call status=returned call=%d originalCalled=%s originalSuppressed=%s preCallbacks=%d postCallbacks=%d",
       call_index,
       original ? "true" : "false",
+      process_event_active_validation_suppress_original ? "true" : "false",
       ctx.pre_callbacks,
       ctx.post_callbacks
     );
@@ -20493,10 +23986,10 @@ static void seed_process_event_self_test_params(
   params->number_array.max = 4;
   params->number_set.data = (uintptr_t)&process_event_self_test_set_values[0];
   params->number_set.num = 2;
-  params->number_set.max = 2;
+  params->number_set.max = 4;
   params->number_map.data = (uintptr_t)&process_event_self_test_map_pairs[0];
   params->number_map.num = 2;
-  params->number_map.max = 2;
+  params->number_map.max = 4;
 }
 
 static int process_event_anchor_name_matches(const char *name) {
@@ -20510,12 +24003,21 @@ static const char *process_event_hook_target_source(uintptr_t target) {
   if (target && env_address_auto("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_ADDRESS", 0) == target) {
     return "explicit-process-event-address";
   }
+  if (target && resolve_target_image_offset_env("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_HOOK_IMAGE_OFFSET") == target) {
+    return "image-offset-hook-address";
+  }
+  if (target && resolve_target_image_offset_env("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_IMAGE_OFFSET") == target) {
+    return "image-offset-process-event-address";
+  }
   return "unknown";
 }
 
 static const char *process_event_live_hook_target_source(uintptr_t target) {
   if (target && env_address_auto("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_LIVE_HOOK_ADDRESS", 0) == target) {
     return "explicit-live-hook-address";
+  }
+  if (target && resolve_target_image_offset_env("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_LIVE_HOOK_IMAGE_OFFSET") == target) {
+    return "image-offset-live-hook-address";
   }
   return process_event_hook_target_source(target);
 }
@@ -20534,6 +24036,12 @@ static uintptr_t configured_process_event_hook_target(const char *phase, int *se
   uintptr_t target = env_address_auto("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_HOOK_ADDRESS", 0);
   if (!target) {
     target = env_address_auto("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_ADDRESS", 0);
+  }
+  if (!target) {
+    target = resolve_target_image_offset_env("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_HOOK_IMAGE_OFFSET");
+  }
+  if (!target) {
+    target = resolve_target_image_offset_env("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_IMAGE_OFFSET");
   }
   if (target) {
     return target;
@@ -20657,12 +24165,21 @@ static const char *call_function_hook_target_source(uintptr_t target) {
   if (target && env_address_auto("DUNE_PROBE_LOADER_UE_CALL_FUNCTION_ADDRESS", 0) == target) {
     return "explicit-call-function-address";
   }
+  if (target && resolve_target_image_offset_env("DUNE_PROBE_LOADER_UE_CALL_FUNCTION_HOOK_IMAGE_OFFSET") == target) {
+    return "image-offset-hook-address";
+  }
+  if (target && resolve_target_image_offset_env("DUNE_PROBE_LOADER_UE_CALL_FUNCTION_IMAGE_OFFSET") == target) {
+    return "image-offset-call-function-address";
+  }
   return "unknown";
 }
 
 static const char *call_function_live_hook_target_source(uintptr_t target) {
   if (target && env_address_auto("DUNE_PROBE_LOADER_UE_CALL_FUNCTION_LIVE_HOOK_ADDRESS", 0) == target) {
     return "explicit-live-hook-address";
+  }
+  if (target && resolve_target_image_offset_env("DUNE_PROBE_LOADER_UE_CALL_FUNCTION_LIVE_HOOK_IMAGE_OFFSET") == target) {
+    return "image-offset-live-hook-address";
   }
   return call_function_hook_target_source(target);
 }
@@ -20681,6 +24198,12 @@ static uintptr_t configured_call_function_hook_target(const char *phase, int *se
   uintptr_t target = env_address_auto("DUNE_PROBE_LOADER_UE_CALL_FUNCTION_HOOK_ADDRESS", 0);
   if (!target) {
     target = env_address_auto("DUNE_PROBE_LOADER_UE_CALL_FUNCTION_ADDRESS", 0);
+  }
+  if (!target) {
+    target = resolve_target_image_offset_env("DUNE_PROBE_LOADER_UE_CALL_FUNCTION_HOOK_IMAGE_OFFSET");
+  }
+  if (!target) {
+    target = resolve_target_image_offset_env("DUNE_PROBE_LOADER_UE_CALL_FUNCTION_IMAGE_OFFSET");
   }
   if (target) {
     return target;
@@ -20815,6 +24338,15 @@ static uintptr_t configured_call_function_live_hook_target(const char *phase, in
   if (!target) {
     target = env_address_auto("DUNE_PROBE_LOADER_UE_CALL_FUNCTION_ADDRESS", 0);
   }
+  if (!target) {
+    target = resolve_target_image_offset_env("DUNE_PROBE_LOADER_UE_CALL_FUNCTION_LIVE_HOOK_IMAGE_OFFSET");
+  }
+  if (!target) {
+    target = resolve_target_image_offset_env("DUNE_PROBE_LOADER_UE_CALL_FUNCTION_HOOK_IMAGE_OFFSET");
+  }
+  if (!target) {
+    target = resolve_target_image_offset_env("DUNE_PROBE_LOADER_UE_CALL_FUNCTION_IMAGE_OFFSET");
+  }
   if (target) {
     return target;
   }
@@ -20907,6 +24439,8 @@ static int call_function_live_hook_replacement(
     call_function_live_lua_post_status = lua_call_function_post_hook_registration_count > 0 ?
       lua_call_function_post_hook_registrations[0].status : 0;
     process_event_live_lua_api.set_top(process_event_live_lua_state, 0);
+    lua_drain_game_thread_queue_internal(&process_event_live_lua_api, process_event_live_lua_state);
+    lua_drain_scheduler_queue_internal(&process_event_live_lua_api, process_event_live_lua_state, 0);
     active_lua_api = NULL;
   }
   if (call_function_live_hook_log_calls &&
@@ -20929,6 +24463,67 @@ static int call_function_live_hook_replacement(
   call_function_live_hook_last_original_called = original_called;
   call_function_live_hook_last_result = result;
   return result;
+}
+
+static void run_call_function_active_validation(const char *phase) {
+  if (!env_bool("DUNE_PROBE_LOADER_UE_CALL_FUNCTION_ACTIVE_VALIDATE", 0)) {
+    return;
+  }
+  int allow_native_call = env_bool("DUNE_PROBE_LOADER_UE_CALL_FUNCTION_ACTIVE_VALIDATE_ALLOW_NATIVE_CALL", 0);
+  int through_target = env_bool("DUNE_PROBE_LOADER_UE_CALL_FUNCTION_ACTIVE_VALIDATE_THROUGH_TARGET", 0);
+  uintptr_t object = env_address_auto("DUNE_PROBE_LOADER_UE_CALL_FUNCTION_ACTIVE_VALIDATE_OBJECT_ADDRESS", 0);
+  const char *command_text = getenv("DUNE_PROBE_LOADER_UE_CALL_FUNCTION_ACTIVE_VALIDATE_COMMAND");
+  uintptr_t command_address = env_address_auto("DUNE_PROBE_LOADER_UE_CALL_FUNCTION_ACTIVE_VALIDATE_COMMAND_ADDRESS", 0);
+  uintptr_t output = env_address_auto("DUNE_PROBE_LOADER_UE_CALL_FUNCTION_ACTIVE_VALIDATE_OUTPUT_ADDRESS", 0);
+  uintptr_t executor = env_address_auto("DUNE_PROBE_LOADER_UE_CALL_FUNCTION_ACTIVE_VALIDATE_EXECUTOR_ADDRESS", 0);
+  int force_call = env_bool("DUNE_PROBE_LOADER_UE_CALL_FUNCTION_ACTIVE_VALIDATE_FORCE_CALL", 1);
+  if (!call_function_live_hook_installed || !call_function_live_hook_original) {
+    append_log("event=ue-call-function-active-validate phase=%s status=not-installed allowNativeCall=%s", phase, allow_native_call ? "true" : "false");
+    return;
+  }
+  if (!allow_native_call) {
+    append_log("event=ue-call-function-active-validate phase=%s status=gated allowNativeCall=false", phase);
+    return;
+  }
+  if (!object || ((!command_text || !command_text[0]) && !command_address)) {
+    append_log(
+      "event=ue-call-function-active-validate phase=%s status=missing-input object=0x%lx command=0x%lx hasCommandText=%s",
+      phase,
+      (unsigned long)object,
+      (unsigned long)command_address,
+      command_text && command_text[0] ? "true" : "false"
+    );
+    return;
+  }
+  const void *command = command_address ? (const void *)command_address : (const void *)command_text;
+  int before_calls = call_function_live_hook_calls;
+  int before_original = call_function_live_hook_original_calls;
+  CallFunctionByNameFn active_call = through_target
+    ? call_function_pointer_function(call_function_live_hook.target)
+    : call_function_live_hook_replacement;
+  int result = active_call(
+    (void *)object,
+    command,
+    (void *)output,
+    (void *)executor,
+    force_call
+  );
+  append_log(
+    "event=ue-call-function-active-validate phase=%s status=invoked object=0x%lx command=0x%lx commandSource=%s output=0x%lx executor=0x%lx forceCall=%s callSource=%s targetEntry=%s result=%d liveCallsDelta=%d originalCallsDelta=%d luaDispatch=%s",
+    phase,
+    (unsigned long)object,
+    (unsigned long)(uintptr_t)command,
+    command_address ? "address" : "env-string",
+    (unsigned long)output,
+    (unsigned long)executor,
+    force_call ? "true" : "false",
+    through_target ? "target-entry" : "replacement-direct",
+    through_target ? "true" : "false",
+    result,
+    call_function_live_hook_calls - before_calls,
+    call_function_live_hook_original_calls - before_original,
+    call_function_live_lua_enabled ? "true" : "false"
+  );
 }
 
 static void install_call_function_live_hook(const char *phase) {
@@ -21013,6 +24608,10 @@ static void install_call_function_live_hook(const char *phase) {
     call_function_live_hook_installed = 1;
     if (call_self_test && self_test_target) {
       self_test_result = call_function_live_self_test_target(&ue_self_test_object, "DoubleProbeValue", NULL, NULL, 1);
+      run_lua_call_function_native_invoke_self_test(phase);
+    }
+    if (!self_test_target) {
+      run_call_function_active_validation(phase);
     }
   }
   int expected_result = live_lua_enabled ? 84 : 42;
@@ -21080,6 +24679,124 @@ static void restore_call_function_live_hook(const char *phase) {
   }
 }
 
+static void run_process_event_active_validation(const char *phase) {
+  if (!env_bool("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_ACTIVE_VALIDATE", 0)) {
+    return;
+  }
+  int synthetic_runtime = env_bool("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_SYNTHETIC_RUNTIME_VALIDATE", 0);
+  int allow_native_call = env_bool("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_ACTIVE_VALIDATE_ALLOW_NATIVE_CALL", 0);
+  int through_target = env_bool("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_ACTIVE_VALIDATE_THROUGH_TARGET", 0);
+  int suppress_original = env_bool("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_ACTIVE_VALIDATE_SUPPRESS_ORIGINAL", 0);
+  uintptr_t object = env_address_auto("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_ACTIVE_VALIDATE_OBJECT_ADDRESS", 0);
+  uintptr_t function = env_address_auto("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_ACTIVE_VALIDATE_FUNCTION_ADDRESS", 0);
+  uintptr_t params = env_address_auto("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_ACTIVE_VALIDATE_PARAMS_ADDRESS", 0);
+  const char *object_path = getenv("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_ACTIVE_VALIDATE_OBJECT_PATH");
+  const char *function_path = getenv("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_ACTIVE_VALIDATE_FUNCTION_PATH");
+  const char *object_source = object ? "env-address" : "none";
+  const char *function_source = function ? "env-address" : "none";
+  const char *params_source = params ? "env" : "none";
+  size_t auto_params_size = 0;
+  size_t auto_params_descriptors = 0;
+  if (!process_event_live_hook_installed || !process_event_live_hook_original) {
+    append_log("event=ue-process-event-active-validate phase=%s status=not-installed allowNativeCall=%s", phase, allow_native_call ? "true" : "false");
+    return;
+  }
+  if (synthetic_runtime) {
+    if (!object) {
+      object = (uintptr_t)&ue_runtime_probe_uobject;
+      object_source = "synthetic-runtime-object";
+    }
+    if (!function) {
+      function = process_event_runtime_probe_function_address();
+      function_source = "synthetic-runtime-function";
+    }
+    suppress_original = 1;
+  }
+  if (!allow_native_call && !synthetic_runtime) {
+    append_log("event=ue-process-event-active-validate phase=%s status=gated allowNativeCall=false", phase);
+    return;
+  }
+  if (!object && process_event_active_validation_resolved_object) {
+    object = process_event_active_validation_resolved_object;
+    object_source = "resolved-object-path";
+  }
+  if (!object && object_path && object_path[0]) {
+    const LuaObjectHandle *resolved_object = find_lua_object_by_path_or_name(object_path);
+    if (resolved_object && resolved_object->address) {
+      object = resolved_object->address;
+      object_source = "object-path";
+    }
+  }
+  if (!function && function_path && function_path[0]) {
+    const UeFunctionParamDescriptor *resolved_function = find_ue_function_descriptor_by_path_or_name(function_path);
+    if (resolved_function && resolved_function->function) {
+      function = resolved_function->function;
+      function_source = "function-path";
+      append_log(
+        "event=ue-process-event-active-validate-input phase=%s status=function-resolved function=0x%lx path=%s source=%s",
+        phase,
+        (unsigned long)function,
+        function_path,
+        function_source
+      );
+    }
+  }
+  if (!object || !function) {
+    append_log(
+      "event=ue-process-event-active-validate phase=%s status=missing-input object=0x%lx function=0x%lx params=0x%lx objectPath=%s functionPath=%s objectSource=%s functionSource=%s",
+      phase,
+      (unsigned long)object,
+      (unsigned long)function,
+      (unsigned long)params,
+      object_path && object_path[0] ? object_path : "-",
+      function_path && function_path[0] ? function_path : "-",
+      object_source,
+      function_source
+    );
+    return;
+  }
+  if (!params) {
+    params = create_synthetic_process_event_params_for_active_validation(
+      function,
+      &auto_params_size,
+      &auto_params_descriptors
+    );
+    if (params) {
+      params_source = "descriptor-buffer";
+    }
+  }
+  int before_calls = process_event_live_hook_calls;
+  int before_original = process_event_live_hook_original_calls;
+  ProcessEventSelfTestFn active_call = through_target
+    ? process_event_pointer_function(process_event_live_hook.target)
+    : process_event_live_hook_replacement;
+  process_event_active_validation_suppress_original = suppress_original;
+  active_call((void *)object, (void *)function, (void *)params);
+  process_event_active_validation_suppress_original = 0;
+  append_log(
+    "event=ue-process-event-active-validate phase=%s status=invoked object=0x%lx function=0x%lx params=0x%lx objectSource=%s functionSource=%s objectPath=%s functionPath=%s paramsSource=%s paramsBufferSize=%lu paramsDescriptorCount=%lu callSource=%s targetEntry=%s originalSuppressed=%s liveCallsDelta=%d originalCallsDelta=%d luaDispatch=%s preCallbacks=%d postCallbacks=%d",
+    phase,
+    (unsigned long)object,
+    (unsigned long)function,
+    (unsigned long)params,
+    object_source,
+    function_source,
+    object_path && object_path[0] ? object_path : process_event_active_validation_resolved_object_path,
+    function_path && function_path[0] ? function_path : "-",
+    params_source,
+    (unsigned long)auto_params_size,
+    (unsigned long)auto_params_descriptors,
+    through_target ? "target-entry" : "replacement-direct",
+    through_target ? "true" : "false",
+    suppress_original ? "true" : "false",
+    process_event_live_hook_calls - before_calls,
+    process_event_live_hook_original_calls - before_original,
+    process_event_live_lua_enabled ? "true" : "false",
+    process_event_live_hook_last_pre_callbacks,
+    process_event_live_hook_last_post_callbacks
+  );
+}
+
 static uintptr_t configured_process_event_live_hook_target(const char *phase, int *self_test_target) {
   if (self_test_target) {
     *self_test_target = 0;
@@ -21097,6 +24814,15 @@ static uintptr_t configured_process_event_live_hook_target(const char *phase, in
   }
   if (!target) {
     target = env_address_auto("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_ADDRESS", 0);
+  }
+  if (!target) {
+    target = resolve_target_image_offset_env("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_LIVE_HOOK_IMAGE_OFFSET");
+  }
+  if (!target) {
+    target = resolve_target_image_offset_env("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_HOOK_IMAGE_OFFSET");
+  }
+  if (!target) {
+    target = resolve_target_image_offset_env("DUNE_PROBE_LOADER_UE_PROCESS_EVENT_IMAGE_OFFSET");
   }
   if (target) {
     return target;
@@ -21186,7 +24912,7 @@ static void install_process_event_live_hook(const char *phase) {
 
   int live_lua_ready = prepare_process_event_live_lua_dispatch(phase);
   if (!live_lua_ready) {
-    return;
+    append_log("event=ue-process-event-live-hook phase=%s status=lua-dispatch-unavailable-continuing", phase);
   }
 
   memset(&process_event_live_hook, 0, sizeof(process_event_live_hook));
@@ -21231,9 +24957,12 @@ static void install_process_event_live_hook(const char *phase) {
 	        (void *)process_event_runtime_probe_function_address(),
 	        &runtime_params
 	      );
-	      run_lua_process_event_native_invoke_self_test(phase);
-	    }
-	  }
+      run_lua_process_event_native_invoke_self_test(phase);
+    }
+    if (!self_test_target) {
+      run_process_event_active_validation(phase);
+    }
+  }
   int enum_param_accessors = params.mode == 4;
   int object_param_accessors = params.target_object == process_event_self_test_last_object;
   int bool_param_accessors = params.flag == 0;
@@ -21333,7 +25062,7 @@ static void run_lua_process_event_self_test(const char *phase) {
       "local n=p and GetParamDescriptor(p,'NameToken'); local fn=props and props.NameToken; local nv=fn and GetParamValue(p,fn); "
       "local m=p and GetParamDescriptor(p,'Message'); local fm=props and props.Message; local mv=fm and GetParamValue(p,fm); "
       "local loc=p and GetParamDescriptor(p,'Location'); local floc=props and props.Location; local lv=floc and GetParamValue(p,floc); local fs=floc and floc:GetStruct(); local lp=p and p.Location; local lpv=lp and lp:get(); "
-      "local arr=p and GetParamDescriptor(p,'NumberArray'); local av=arr and GetParamValue(p,arr); local set=p and GetParamDescriptor(p,'NumberSet'); local sv=set and GetParamValue(p,set); local map=p and GetParamDescriptor(p,'NumberMap'); local mp=map and GetParamValue(p,map); local al=av and av:GetStorageLayout();local asl=av and av:IsSparseLayoutValidated();local astr=av and av:GetSlotStride();local ssl=sv and sv:GetStorageLayout();local ssv=sv and sv:IsSparseLayoutValidated();local sst=sv and sv:GetSlotStride();local msl=mp and mp:GetStorageLayout();local msv=mp and mp:IsSparseLayoutValidated();local mst=mp and mp:GetSlotStride();local aelem=av and av:Get(1); local aelem2=av and av:get(2); local selem=sv and sv:GetElement(1); local selem2=sv and sv:Get(1); local mpair=mp and mp:GetPair(1); local mpair2=mp and mp:Get(1); local mkey=mp and mp:GetKey(1); local mvalue=mp and mp:GetValue(1); "
+      "local arr=p and GetParamDescriptor(p,'NumberArray'); local av=arr and GetParamValue(p,arr); local set=p and GetParamDescriptor(p,'NumberSet'); local sv=set and GetParamValue(p,set); local map=p and GetParamDescriptor(p,'NumberMap'); local mp=map and GetParamValue(p,map); local al=av and av:GetStorageLayout();local asl=av and av:IsSparseLayoutValidated();local astr=av and av:GetSlotStride();local ssl=sv and sv:GetStorageLayout();local ssv=sv and sv:IsSparseLayoutValidated();local sst=sv and sv:GetSlotStride();local msl=mp and mp:GetStorageLayout();local msv=mp and mp:IsSparseLayoutValidated();local mst=mp and mp:GetSlotStride();local aelem=av and av:Get(1); local aelem2=av and av:get(2); local arrayOk=av and av.Kind == 'FScriptArray' and av:GetNum() == 4 and av:GetData() ~= 0 and av:GetRawElement(1,4) and aelem == 41 and aelem2 == 42; local emptyOk=arrayOk and av:Empty() and av:GetNum() == 0; local selem=sv and sv:GetElement(1); local selem2=sv and sv:Get(1); local mpair=mp and mp:GetPair(1); local mpair2=mp and mp:Get(1); local mkey=mp and mp:GetKey(1); local mvalue=mp and mp:GetValue(1); local setMut=sv and sv:Add(73) and sv:GetNum() == 3 and sv:Contains(73) and sv:Remove(72) and sv:GetNum() == 2 and not sv:Contains(72) and sv:Contains(73); local mapMut=mp and mp:Add(103,203) and mp:GetNum() == 3 and mp:Find(103) == 203 and mp:Remove(102) and mp:GetNum() == 2 and not mp:Contains(102) and mp:Contains(103); "
       "local rv=p and p.Value; local rv2=p and p.Values and p.Values.Value; "
       "if p and p.PropertyCount == 17 and f and d and d.PropertyCount == 6 and dm and dm.PropertyCount == d.PropertyCount and fi == d.PropertyCount "
       "and v and fv and fdv and fv.OffsetInternal == v.OffsetInternal and fdv.OffsetInternal == v.OffsetInternal and rv and rv:type() == 'RemoteUnrealParam' and rv.IsValid and rv.Descriptor and rv.Descriptor.OffsetInternal == v.OffsetInternal and rv2 and rv2.Address == rv.Address and GetParamValue(p,fv) == 41 and rv:get() == 41 "
@@ -21347,9 +25076,9 @@ static void run_lua_process_event_self_test(const char *phase) {
       "and n and fn and fn.ClassName == 'FNameProperty' and nv and nv.Kind == 'FName' and nv.ComparisonIndex == 1234 and nv.Number == 1 and nv.Name == 'SelfTestUObjectName_0' "
       "and m and fm and fm.ClassName == 'FStrProperty' and mv == 'desert-message' "
       "and loc and floc and floc.ClassName == 'FStructProperty' and floc.OffsetInternal == loc.OffsetInternal and fs and fs.Name == 'Vector' and fs.ClassName == 'UScriptStruct' and lv and lv.Kind == 'FVector' and math.abs(lv.X - 1.25) < 0.001 and lpv and math.abs(lpv.Z - 3.75) < 0.001 "
-      "and arr and arr.ClassName == 'FArrayProperty' and av and av.Kind == 'FScriptArray' and av:GetNum() == 4 and av:GetData() ~= 0 and av:GetRawElement(1,4) and aelem == 41 and aelem2 == 42 "
-      "and set and set.ClassName == 'FSetProperty' and sv and sv.Kind == 'FScriptSetHeader' and sv:GetNum() == 2 and sv:GetData() ~= 0 and sv:GetRawEntry(1,4) and selem == 71 and selem2 == 71 "
-      "and map and map.ClassName == 'FMapProperty' and mp and mp.Kind == 'FScriptMapHeader' and mp:GetNum() == 2 and mp:GetData() ~= 0 and mp:GetRawPair(1,8) and mpair and mpair.Key == 101 and mpair.Value == 201 and mpair2 and mpair2.Key == 101 and mpair2.Value == 201 and mkey == 101 and mvalue == 201 "
+      "and arr and arr.ClassName == 'FArrayProperty' and arrayOk and emptyOk "
+      "and setMut and set and set.ClassName == 'FSetProperty' and sv and sv.Kind == 'FScriptSetHeader' and sv:GetNum() == 2 and sv:GetData() ~= 0 and sv:GetRawEntry(1,4) and selem == 71 and selem2 == 71 "
+      "and mapMut and map and map.ClassName == 'FMapProperty' and mp and mp.Kind == 'FScriptMapHeader' and mp:GetNum() == 2 and mp:GetData() ~= 0 and mp:GetRawPair(1,8) and mpair and mpair.Key == 101 and mpair.Value == 201 and mpair2 and mpair2.Key == 101 and mpair2.Value == 201 and mkey == 101 and mvalue == 201 "
       "and SetParamValue(p,fn,{ComparisonIndex=1250,Number=0}) and SetParamValue(p,fm,'spice-message') and SetParamValue(p,md,4) "
       "and SetParamValue(p,floc,{X=7.25,Y=8.5,Z=9.75}) "
       "and GetParamValue(p,fn).ComparisonIndex == 1250 and GetParamValue(p,fm) == 'spice-message' and GetParamValue(p,md) == 4 and math.abs(GetParamValue(p,floc).Z - 9.75) < 0.001 then return 11 end return -11 end, "
@@ -22026,7 +25755,7 @@ static void run_lua_mod_entrypoints(const char *phase) {
   log_lua_object_outer_chains();
   log_lua_global_runtime_helper_check();
   append_log(
-    "event=lua-mod-finish phase=%s status=%s scripts=%lu loaded=%d failed=%d hooks=%d modInitCallbacks=%d modPostInitCallbacks=%d modUnloadCallbacks=%d modInitCalls=%d modPostInitCalls=%d modUnloadCalls=%d modInitHandled=%d modPostInitHandled=%d modUnloadHandled=%d customEvents=%d customEventCalls=%d customEventHandled=%d loadMapPreHooks=%d loadMapPostHooks=%d loadMapPreCalls=%d loadMapPostCalls=%d loadMapPreHandled=%d loadMapPostHandled=%d beginPlayPreHooks=%d beginPlayPostHooks=%d beginPlayPreCalls=%d beginPlayPostCalls=%d beginPlayPreHandled=%d beginPlayPostHandled=%d initGameStatePreHooks=%d initGameStatePostHooks=%d initGameStatePreCalls=%d initGameStatePostCalls=%d initGameStatePreHandled=%d initGameStatePostHandled=%d processConsoleExecPreHooks=%d processConsoleExecPostHooks=%d processConsoleExecPreCalls=%d processConsoleExecPostCalls=%d processConsoleExecPreHandled=%d processConsoleExecPostHandled=%d localPlayerExecPreHooks=%d localPlayerExecPostHooks=%d localPlayerExecPreCalls=%d localPlayerExecPostCalls=%d localPlayerExecPreHandled=%d localPlayerExecPostHandled=%d callFunctionPreHooks=%d callFunctionPostHooks=%d callFunctionPreCalls=%d callFunctionPostCalls=%d callFunctionPreHandled=%d callFunctionPostHandled=%d callFunctionTableArgCalls=%d callFunctionArgFieldHits=%d callFunctionArgStructHits=%d processEventCompatCalls=%d processEventCompatHits=%d processEventBridgeStateCalls=%d processEventNativeCalls=%d processEventNativeHits=%d objectHandles=%lu ueObjectHandles=%lu staticFindObjectCalls=%d staticFindObjectHits=%d findObjectCalls=%d findObjectHits=%d findFirstOfCalls=%d findFirstOfHits=%d getKnownObjectsCalls=%d getKnownObjectsHits=%d findObjectsCalls=%d findObjectsHits=%d findAllOfCalls=%d findAllOfHits=%d forEachUObjectCalls=%d forEachUObjectCallbacks=%d forEachFunctionCalls=%d forEachFunctionCallbacks=%d isACalls=%d isAHits=%d loadAssetCalls=%d loadAssetHits=%d loadAssetBackend=registry loadAssetBackendStateCalls=%d loadAssetPackageBridgeStateCalls=%d loadAssetPackageNativeCalls=%d loadAssetPackageNativeGateHits=%d loadAssetPackageArmed=false loadAssetPackageAvailable=%s loadAssetStaticLoadObjectResolved=%s loadAssetLoadObjectResolved=%s loadAssetLoadPackageResolved=%s loadAssetResolveNameResolved=%s loadAssetPackagePreflightCalls=%d loadAssetPackageAnchorHits=%d loadAssetPackageGateHits=%d loadAssetPackageDryRunHits=%d staticConstructObjectCalls=%d staticConstructObjectHits=%d notifyOnNewObjectCalls=%d executeInGameThreadCalls=%d executeInGameThreadCallbacks=%d executeInGameThreadResult=%lld executeInGameThreadIsNumber=%s executeAsyncCalls=%d executeAsyncCallbacks=%d executeWithDelayCalls=%d executeWithDelayCallbacks=%d loopAsyncCalls=%d loopAsyncCallbacks=%d schedulerQueueDrains=%d schedulerCancelCalls=%d schedulerCancelHits=%d keyBindRegistrations=%d keyBindLookupCalls=%d keyBindLookupHits=%d keyBindDispatchCalls=%d keyBindCallbackCalls=%d keyBindCallbackHandled=%d keyBindUnregisterCalls=%d keyBindUnregisterHits=%d consoleCommandHandlers=%d consoleCommandGlobalHandlers=%d consoleCommandHandlerCalls=%d consoleCommandHandlerHandled=%d consoleCommandGlobalHandlerCalls=%d consoleCommandGlobalHandlerHandled=%d consoleCommandUnregisterCalls=%d consoleCommandUnregisterHits=%d callbackUnregisterCalls=%d callbackUnregisterHits=%d notifyOnNewObjectCallbacks=%d notifyOnNewObjectResult=%lld notifyOnNewObjectIsNumber=%s notifyOnNewObjectStatus=%d staticConstructObjectOuterHits=%d getWorldCalls=%d getWorldHits=%d getCdoCalls=%d getCdoHits=%d getLevelCalls=%d getLevelHits=%d",
+    "event=lua-mod-finish phase=%s status=%s scripts=%lu loaded=%d failed=%d hooks=%d modInitCallbacks=%d modPostInitCallbacks=%d modUnloadCallbacks=%d modInitCalls=%d modPostInitCalls=%d modUnloadCalls=%d modInitHandled=%d modPostInitHandled=%d modUnloadHandled=%d customEvents=%d customEventCalls=%d customEventHandled=%d loadMapPreHooks=%d loadMapPostHooks=%d loadMapPreCalls=%d loadMapPostCalls=%d loadMapPreHandled=%d loadMapPostHandled=%d beginPlayPreHooks=%d beginPlayPostHooks=%d beginPlayPreCalls=%d beginPlayPostCalls=%d beginPlayPreHandled=%d beginPlayPostHandled=%d initGameStatePreHooks=%d initGameStatePostHooks=%d initGameStatePreCalls=%d initGameStatePostCalls=%d initGameStatePreHandled=%d initGameStatePostHandled=%d processConsoleExecPreHooks=%d processConsoleExecPostHooks=%d processConsoleExecPreCalls=%d processConsoleExecPostCalls=%d processConsoleExecPreHandled=%d processConsoleExecPostHandled=%d localPlayerExecPreHooks=%d localPlayerExecPostHooks=%d localPlayerExecPreCalls=%d localPlayerExecPostCalls=%d localPlayerExecPreHandled=%d localPlayerExecPostHandled=%d callFunctionPreHooks=%d callFunctionPostHooks=%d callFunctionPreCalls=%d callFunctionPostCalls=%d callFunctionPreHandled=%d callFunctionPostHandled=%d callFunctionTableArgCalls=%d callFunctionArgFieldHits=%d callFunctionArgStructHits=%d processEventCompatCalls=%d processEventCompatHits=%d processEventBridgeStateCalls=%d processEventNativeCalls=%d processEventNativeHits=%d objectHandles=%lu ueObjectHandles=%lu staticFindObjectCalls=%d staticFindObjectHits=%d findObjectCalls=%d findObjectHits=%d findFirstOfCalls=%d findFirstOfHits=%d getKnownObjectsCalls=%d getKnownObjectsHits=%d findObjectsCalls=%d findObjectsHits=%d findAllOfCalls=%d findAllOfHits=%d forEachUObjectCalls=%d forEachUObjectCallbacks=%d forEachFunctionCalls=%d forEachFunctionCallbacks=%d isACalls=%d isAHits=%d loadAssetCalls=%d loadAssetHits=%d loadAssetPackageCalls=%d loadAssetPackageHits=%d loadAssetPackageExecutorHits=%d loadAssetBackend=%s loadAssetBackendStateCalls=%d loadAssetPackageBridgeStateCalls=%d loadAssetPackageNativeCalls=%d loadAssetPackageNativeGateHits=%d loadAssetPackageArmed=false loadAssetPackageAvailable=%s loadAssetStaticLoadObjectResolved=%s loadAssetStaticLoadClassResolved=%s loadAssetLoadObjectResolved=%s loadAssetLoadPackageResolved=%s loadAssetResolveNameResolved=%s loadAssetPackagePreflightCalls=%d loadAssetPackageAnchorHits=%d loadAssetPackageGateHits=%d loadAssetPackageDryRunHits=%d staticConstructObjectCalls=%d staticConstructObjectHits=%d notifyOnNewObjectCalls=%d executeInGameThreadCalls=%d executeInGameThreadCallbacks=%d executeInGameThreadResult=%lld executeInGameThreadIsNumber=%s executeAsyncCalls=%d executeAsyncCallbacks=%d executeWithDelayCalls=%d executeWithDelayCallbacks=%d loopAsyncCalls=%d loopAsyncCallbacks=%d schedulerQueueDrains=%d schedulerCancelCalls=%d schedulerCancelHits=%d keyBindRegistrations=%d keyBindLookupCalls=%d keyBindLookupHits=%d keyBindDispatchCalls=%d keyBindCallbackCalls=%d keyBindCallbackHandled=%d keyBindUnregisterCalls=%d keyBindUnregisterHits=%d consoleCommandHandlers=%d consoleCommandGlobalHandlers=%d consoleCommandHandlerCalls=%d consoleCommandHandlerHandled=%d consoleCommandGlobalHandlerCalls=%d consoleCommandGlobalHandlerHandled=%d consoleCommandUnregisterCalls=%d consoleCommandUnregisterHits=%d callbackUnregisterCalls=%d callbackUnregisterHits=%d notifyOnNewObjectCallbacks=%d notifyOnNewObjectResult=%lld notifyOnNewObjectIsNumber=%s notifyOnNewObjectStatus=%d staticConstructObjectOuterHits=%d getWorldCalls=%d getWorldHits=%d getCdoCalls=%d getCdoHits=%d getLevelCalls=%d getLevelHits=%d",
     phase,
     status,
     (unsigned long)scripts.count,
@@ -22150,12 +25879,17 @@ static void run_lua_mod_entrypoints(const char *phase) {
     lua_is_a_hits,
     lua_load_asset_calls,
     lua_load_asset_hits,
+    lua_load_asset_package_calls,
+    lua_load_asset_package_hits,
+    lua_load_asset_package_executor_hits,
+    lua_load_asset_package_hits > 0 ? "package" : "registry",
     lua_load_asset_backend_state_calls,
     lua_load_asset_package_bridge_state_calls,
     lua_load_asset_package_native_invoke_calls,
     lua_load_asset_package_native_gate_hits,
     lua_load_asset_backend_package_available ? "true" : "false",
     lua_load_asset_backend_static_load_object_resolved ? "true" : "false",
+    lua_load_asset_backend_static_load_class_resolved ? "true" : "false",
     lua_load_asset_backend_load_object_resolved ? "true" : "false",
     lua_load_asset_backend_load_package_resolved ? "true" : "false",
     lua_load_asset_backend_resolve_name_resolved ? "true" : "false",

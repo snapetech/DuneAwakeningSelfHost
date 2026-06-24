@@ -19,6 +19,29 @@ class PatternSpec:
     source: str
     xref_vaddr: str
     target_vaddr: str
+    source_provenance: str = ""
+
+
+def is_loader_source(source):
+    normalized = str(source or "").lower().replace("\\", "/")
+    loader_needles = (
+        "dune_client_probe_loader",
+        "dune_server_probe_loader",
+        "dune_win_client_probe_loader",
+        "linux-client-loader",
+        "linux-server-loader",
+        "windows-client-loader",
+        "libdune_",
+    )
+    return any(needle in normalized for needle in loader_needles)
+
+
+def source_provenance(source):
+    if not source:
+        return "unknown"
+    if is_loader_source(source):
+        return "loader"
+    return "target"
 
 
 def import_xrefs():
@@ -88,6 +111,7 @@ def pattern_from_assignment(raw, category="manual", source="manual"):
         expected_file_offset=None,
         category=category,
         source=source,
+        source_provenance=source_provenance(source),
         xref_vaddr="",
         target_vaddr="",
     )
@@ -134,8 +158,49 @@ def patterns_from_manifest(path, categories, names, max_seeds, ignore_expected_o
                 expected_file_offset=expected,
                 category=category or "manifest",
                 source=str(path),
+                source_provenance=source_provenance(str(path)),
                 xref_vaddr=entry.get("xrefVaddr", ""),
                 target_vaddr=entry.get("targetVaddr", ""),
+            )
+        )
+        if max_seeds and len(specs) >= max_seeds:
+            break
+    return specs
+
+
+def patterns_from_donor_candidate_validation(path, categories, names, max_seeds):
+    category_filter = set(categories or [])
+    name_filter = set(names or [])
+    specs = []
+    with path.open("r", encoding="utf-8", errors="replace") as handle:
+        validation = json.load(handle)
+    if validation.get("format") != "elf64-donor-transfer":
+        raise ValueError(f"{path} is not a donor candidate validation JSON")
+    for row in validation.get("patterns", []):
+        category = row.get("category", "")
+        name = row.get("name", "")
+        if category_filter and category not in category_filter:
+            continue
+        if name_filter and name not in name_filter:
+            continue
+        pattern = row.get("pattern", "")
+        if not pattern:
+            continue
+        values, mask = parse_pattern(pattern)
+        donor = row.get("donor") if isinstance(row.get("donor"), dict) else {}
+        donor_source = donor.get("symbol") or row.get("source") or str(path)
+        specs.append(
+            PatternSpec(
+                name=name or f"donor-candidate-{len(specs) + 1}",
+                pattern=normalized_pattern(values, mask),
+                bytes_=values,
+                mask=mask,
+                expected_file_offset=None,
+                category=category or "package",
+                source=donor_source,
+                source_provenance=row.get("sourceProvenance") or "external-donor",
+                xref_vaddr=row.get("xrefVaddr", ""),
+                target_vaddr=row.get("targetVaddr", ""),
             )
         )
         if max_seeds and len(specs) >= max_seeds:
@@ -162,6 +227,7 @@ def patterns_from_xref_summary(summary, categories, names, max_seeds):
                 continue
             values, mask = parse_pattern(pattern)
             expected = parse_int(seed.get("fileOffset"))
+            source = target.get("source", "")
             specs.append(
                 PatternSpec(
                     name=f"{name}@{target_vaddr}#{index}" if target_vaddr else f"{name}#{index}",
@@ -170,7 +236,8 @@ def patterns_from_xref_summary(summary, categories, names, max_seeds):
                     mask=mask,
                     expected_file_offset=expected,
                     category=category,
-                    source=target.get("source", ""),
+                    source=source,
+                    source_provenance=target.get("sourceProvenance") or source_provenance(source),
                     xref_vaddr=ref.get("xrefVaddr", ""),
                     target_vaddr=ref.get("targetVaddr", ""),
                 )
@@ -318,6 +385,7 @@ def validate_patterns(binary_data, segments, specs, scope, max_matches):
                 "name": spec.name,
                 "category": spec.category,
                 "source": spec.source,
+                "sourceProvenance": spec.source_provenance,
                 "xrefVaddr": spec.xref_vaddr,
                 "targetVaddr": spec.target_vaddr,
                 "pattern": spec.pattern,
@@ -401,6 +469,13 @@ def main(argv=None):
     parser.add_argument("--xref-json", type=Path, help="load signature seeds from summarize-linux-loader-xrefs.py JSON")
     parser.add_argument("--manifest-json", type=Path, action="append", default=[], help="load signatures from exported manifest JSON")
     parser.add_argument(
+        "--donor-candidate-validation-json",
+        type=Path,
+        action="append",
+        default=[],
+        help="load donor-derived package candidate patterns from summarize-ue4ss-package-donor-symbols.py",
+    )
+    parser.add_argument(
         "--ignore-expected-offsets",
         action="store_true",
         help="when using --manifest-json, treat unique matches at moved offsets as promotable",
@@ -429,6 +504,8 @@ def main(argv=None):
         specs.extend(patterns_from_file(path))
     for path in args.manifest_json:
         specs.extend(patterns_from_manifest(path, args.category, args.name, args.max_seeds, args.ignore_expected_offsets))
+    for path in args.donor_candidate_validation_json:
+        specs.extend(patterns_from_donor_candidate_validation(path, args.category, args.name, args.max_seeds))
     if args.xref_json:
         specs.extend(patterns_from_xref_summary(xref_summary_from_json(args.xref_json), args.category, args.name, args.max_seeds))
     if args.loader_log:
@@ -445,7 +522,7 @@ def main(argv=None):
         specs.extend(patterns_from_xref_summary(xref_summary, [], [], args.max_seeds))
 
     if not specs:
-        parser.error("provide --pattern, --pattern-file, --manifest-json, --xref-json, or --loader-log")
+        parser.error("provide --pattern, --pattern-file, --manifest-json, --donor-candidate-validation-json, --xref-json, or --loader-log")
 
     rows = validate_patterns(binary_data, segments, specs, args.scope, args.max_matches)
     summary = summarize(segments, rows, args.scope)

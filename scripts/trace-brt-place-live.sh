@@ -111,8 +111,9 @@ cmd="/tmp/brt-place-trace.gdb"
   #   BRT_RPC_PLACE_OFFSET=0x... BRT_RESTRICTION_GATE_OFFSET=0x... \
   #     scripts/trace-brt-place-live.sh dune_server-deep-desert-1
   #
-  # BRT_RPC_PLACE_OFFSET answers unknown #1: if this never fires during a DD
-  # restore attempt, the block is client-side and no server patch can help.
+  # BRT_RPC_PLACE_OFFSET answers unknown #1: whether the DD restore attempt
+  # reaches the server RPC. If it never fires, use server-side request emulation
+  # instead of requiring client-side file changes.
   if [[ -n "${BRT_RPC_EXEC_OFFSET:-}" ]]; then
     add_bp "$BRT_RPC_EXEC_OFFSET" 'printf "BRT_PLACE hit SERVER-RPC-EXEC request-dispatched-to-native-exec rdi=%p rsi=%p rdx=%p rcx=%p r8=%p r9=%p\n", $rdi, $rsi, $rdx, $rcx, $r8, $r9
 if '"${BRT_TRACE_RPC_BACKTRACE:-0}"' != 0

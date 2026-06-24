@@ -18,6 +18,18 @@ prep_dir=""
 loader_log=""
 output_dir=""
 strict=false
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+tool_path() {
+  local name="$1"
+  for dir in "$script_dir" "$script_dir/../analysis" "$script_dir/../scripts"; do
+    if [ -x "$dir/$name" ]; then
+      printf '%s\n' "$dir/$name"
+      return 0
+    fi
+  done
+  return 1
+}
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -107,6 +119,9 @@ mkdir -p "$output_dir"
 
 cp -a "$loader_log" "$output_dir/$(basename "$loader_log")"
 cp -a "$prep_dir/ue-anchors.env" "$output_dir/ue-anchors.env"
+if [ -f "$prep_dir/anchor-coverage.json" ]; then
+  cp -a "$prep_dir/anchor-coverage.json" "$output_dir/anchor-coverage.json"
+fi
 
 set +e
 "$verify_script" "$loader_log" > "$output_dir/post-canary-verify.log" 2>&1
@@ -115,6 +130,7 @@ set -e
 
 for name in \
   ue4ss-readiness.json \
+  anchor-coverage.json \
   object-discovery-coverage.json \
   post-canary-summary.md \
   ue4ss-port-gaps.json \
@@ -123,6 +139,60 @@ for name in \
     cp -a "$prep_dir/$name" "$output_dir/$name"
   fi
 done
+
+vtable_tool="$(tool_path summarize-ue-vtable-candidates.py || true)"
+if [ -n "$vtable_tool" ]; then
+  "$vtable_tool" "$loader_log" --format json > "$output_dir/ue-vtable-candidates.json" || true
+  "$vtable_tool" "$loader_log" --format markdown > "$output_dir/ue-vtable-candidates.md" || true
+fi
+
+summary_tool="$(tool_path summarize-client-loader-scan.py || true)"
+active_candidates_tool="$(tool_path export-process-event-active-validation-candidates.py || true)"
+if [ -n "$summary_tool" ]; then
+  "$summary_tool" "$loader_log" --format json > "$output_dir/client-summary.json" || true
+fi
+if [ -n "$active_candidates_tool" ] && [ -f "$output_dir/client-summary.json" ]; then
+  "$active_candidates_tool" "$output_dir/client-summary.json" --format json > "$output_dir/process-event-active-validation-candidates.json" || true
+  "$active_candidates_tool" "$output_dir/client-summary.json" --format markdown > "$output_dir/process-event-active-validation-candidates.md" || true
+fi
+
+write_next_canary_plan() {
+  local planner_tool
+  planner_tool="$(tool_path plan-ue4ss-canary-env.py || true)"
+  if [ -z "$planner_tool" ]; then
+    return 0
+  fi
+  local hook_targets_json="$output_dir/ue-vtable-candidates.json"
+  local active_validation_candidates_json="$output_dir/process-event-active-validation-candidates.json"
+  local planner=("$planner_tool" --platform "$platform" --client-log "$loader_log")
+  if [ "$platform" = "windows" ]; then
+    planner+=(--loader win-client)
+  fi
+  if [ -f "$hook_targets_json" ]; then
+    planner+=(--hook-targets-json "$hook_targets_json")
+  fi
+  if [ -f "$active_validation_candidates_json" ]; then
+    planner+=(--active-validation-candidates-json "$active_validation_candidates_json")
+  fi
+  "${planner[@]}" --format json > "$output_dir/next-canary-plan.json" || true
+  "${planner[@]}" --format env > "$output_dir/next-canary-plan.env" || true
+  "${planner[@]}" --format markdown > "$output_dir/next-canary-plan.md" || true
+}
+write_next_canary_plan
+
+inventory_tool="$(tool_path summarize-ue4ss-evidence-inventory.py || true)"
+if [ -z "$inventory_tool" ]; then
+  if $strict; then
+    echo "missing required strict evidence inventory tool: summarize-ue4ss-evidence-inventory.py" >&2
+    exit 2
+  fi
+elif $strict && [ "$verify_rc" -eq 0 ]; then
+  "$inventory_tool" "$output_dir" "$prep_dir" --limit 12 --require-complete --format markdown > "$output_dir/ue4ss-evidence-inventory.md"
+  "$inventory_tool" "$output_dir" "$prep_dir" --limit 12 --require-complete --format json > "$output_dir/ue4ss-evidence-inventory.json"
+else
+  "$inventory_tool" "$output_dir" "$prep_dir" --limit 12 --format markdown > "$output_dir/ue4ss-evidence-inventory.md" || true
+  "$inventory_tool" "$output_dir" "$prep_dir" --limit 12 --format json > "$output_dir/ue4ss-evidence-inventory.json" || true
+fi
 
 {
   printf 'platform=%s\n' "$platform"

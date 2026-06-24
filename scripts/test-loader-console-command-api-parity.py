@@ -24,9 +24,26 @@ class LoaderConsoleCommandApiParityTests(unittest.TestCase):
         required = (
             "lua_dune_probe_dispatch_console_command_callback",
             "invoke_lua_console_command_handlers",
+            "lua_push_console_command_parameters",
+            "LuaRawSetIFn",
+            '"lua_rawseti"',
+            "FOutputDevice",
+            "lua_console_output_device_write_callback",
+            '"Log"',
+            '"Serialize"',
+            '"Write"',
+            '"GetOutput"',
+            '"ToString"',
+            '"Clear"',
+            "lua_console_output_device_get_output_callback",
+            "lua_console_output_device_clear_callback",
+            "lua_call(active_lua_api, state, 6, 1, 0)",
             "lua_dune_probe_dispatch_key_bind_callback",
+            "lua_key_code_to_name",
+            "lua_read_key_bind_key",
             '"DuneProbeDispatchConsoleCommand"',
             '"DuneProbeDispatchKeyBind"',
+            '"UnregisterConsoleCommandGlobalHandler"',
             "keyBindDispatchCalls",
             "keyBindCallbackHandled",
             "consoleCommandHandlerCalls",
@@ -39,6 +56,42 @@ class LoaderConsoleCommandApiParityTests(unittest.TestCase):
                 for needle in required:
                     self.assertIn(needle, text)
 
+    def test_smokes_exercise_ue4ss_keybind_overloads(self):
+        required = (
+            "RegisterKeyBind(Key.O",
+            "RegisterKeyBind({Key=Key.P}",
+            "IsKeyBindRegistered(Key.O)",
+            "IsKeyBindRegistered({Key=Key.P})",
+            "DuneProbeDispatchKeyBind(o,Key.O)",
+            "DuneProbeDispatchKeyBind(o,{Key=Key.P})",
+            "missing UE4SS keybind overloads",
+            "params[0]=='probe_args'",
+            "params[1]=='spice'",
+            "params[2]=='flow'",
+            "output.Kind=='FOutputDevice'",
+            "output:Log('probe-log')",
+            "output:Serialize('probe-serialize')",
+            "output:Write('probe-write')",
+            "output.LastMessage=='probe-write'",
+            "output.WriteCount==3",
+            "output:GetOutput()=='probe-write'",
+            "output:ToString()=='probe-write'",
+            "output:Clear()",
+            "RegisterConsoleCommandGlobalHandler(function(full)",
+            "UnregisterConsoleCommandGlobalHandler(tempGlobal)",
+            "tempGlobalHits==0",
+            "missing UE4SS ProcessConsoleExec dispatch",
+        )
+        for smoke in (
+            REPO_ROOT / "scripts/smoke-linux-client-loader.sh",
+            REPO_ROOT / "scripts/smoke-linux-server-loader.sh",
+            REPO_ROOT / "scripts/smoke-windows-client-loader-lua.sh",
+        ):
+            with self.subTest(smoke=smoke.name):
+                text = smoke.read_text(encoding="utf-8")
+                for needle in required:
+                    self.assertIn(needle, text)
+
     def test_docs_describe_direct_console_command_dispatch(self):
         required = (
             "DuneProbeDispatchConsoleCommand",
@@ -46,6 +99,7 @@ class LoaderConsoleCommandApiParityTests(unittest.TestCase):
             "keyBindCallbackHandled",
             "consoleCommandHandlerCalls",
             "consoleCommandGlobalHandlerHandled",
+            "UnregisterConsoleCommandGlobalHandler",
         )
         for doc in self.DOCS:
             with self.subTest(doc=doc.name):

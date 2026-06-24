@@ -22,6 +22,7 @@ shift
 services=("$@")
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "$script_dir/.." && pwd)"
+seed_timeout="${DUNE_SEED_NEIGHBOR_TIMEOUT_SECONDS:-90}"
 
 cd "$repo_root"
 
@@ -42,6 +43,17 @@ for compose_file in "${compose_files[@]}"; do
 done
 compose+=(--env-file "$env_file")
 
+seed_neighbors() {
+  if [[ ! -x "$script_dir/seed-gateway-neighbor.sh" ]]; then
+    return
+  fi
+  if command -v timeout >/dev/null 2>&1; then
+    timeout --kill-after=5s "${seed_timeout}s" "$script_dir/seed-gateway-neighbor.sh" || true
+  else
+    "$script_dir/seed-gateway-neighbor.sh" || true
+  fi
+}
+
 case "${DUNE_REQUIRE_PRODUCTION_HOST_FOR_MANUAL_MAP_START:-true}" in
   1|true|yes|on|TRUE|True|YES|ON)
     current_host="$(hostname)"
@@ -53,9 +65,7 @@ case "${DUNE_REQUIRE_PRODUCTION_HOST_FOR_MANUAL_MAP_START:-true}" in
     ;;
 esac
 
-if [[ -x "$script_dir/seed-gateway-neighbor.sh" ]]; then
-  "$script_dir/seed-gateway-neighbor.sh" || true
-fi
+seed_neighbors
 
 case "${DUNE_LANDSRAAD_CORIOLIS_GUARD_ENABLED:-true}" in
   1|true|yes|on|TRUE|True|YES|ON)
@@ -68,9 +78,7 @@ esac
 printf 'starting/recreating map services with post hooks: %s\n' "${services[*]}"
 "${compose[@]}" up -d --force-recreate --no-deps "${services[@]}"
 
-if [[ -x "$script_dir/seed-gateway-neighbor.sh" ]]; then
-  "$script_dir/seed-gateway-neighbor.sh" || true
-fi
+seed_neighbors
 
 if [[ -x "$script_dir/restart-post-start-health.sh" ]]; then
   ENV_FILE="$env_file" "$script_dir/restart-post-start-health.sh"

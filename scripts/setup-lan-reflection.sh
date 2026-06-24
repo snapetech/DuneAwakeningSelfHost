@@ -25,6 +25,15 @@ GAME_RMQ_PUBLIC_PORT="${GAME_RMQ_PUBLIC_PORT:-31982}"
 GAME_UDP_PORT_RANGE="${GAME_UDP_PORT_RANGE:-7777:7810}"
 IGW_UDP_PORT_RANGE="${IGW_UDP_PORT_RANGE:-7888:7918}"
 KNOCK_DUNE_TCP_COMMENT="knock-scanner dune tcp auto-block"
+DOCKER_PUBLIC_UDP_HAIRPIN_COMMENT="dune docker public udp hairpin"
+
+port_in_range() {
+    local port="$1" range="$2" start end
+    start="${range%%:*}"
+    end="${range##*:}"
+    [[ "$start" =~ ^[0-9]+$ && "$end" =~ ^[0-9]+$ && "$port" =~ ^[0-9]+$ ]] || return 1
+    ((port >= start && port <= end))
+}
 
 if [[ "$(id -u)" -ne 0 ]]; then
     if command -v sudo >/dev/null 2>&1; then
@@ -96,6 +105,37 @@ if [ -n "$bridge_if" ] && command -v nft >/dev/null 2>&1 \
     if ! nft list chain inet filter forward 2>/dev/null | grep -qE "iifname \"${bridge_if}\" +ip saddr ${DUNE_BRIDGE_CIDR//./\\.}"; then
         nft add rule inet filter forward iifname "$bridge_if" ip saddr "$DUNE_BRIDGE_CIDR" accept comment \"Dune docker bridge outbound\"
     fi
+fi
+
+# Docker's published-port DNAT intentionally excludes packets arriving from the
+# same Docker bridge (`! -i br-...`). That is correct for normal container
+# routing, but it breaks Dune farm rows that advertise the public /32 for IGW:
+# sibling containers send to PUBLIC_IP:IGWPort, the host owns that /32 locally,
+# and the packet dies on host INPUT instead of reaching the target map
+# container. Add exact bridge-source DNAT rules for published Dune UDP ports so
+# public game/IGW addresses are reachable both externally and from the farm.
+if [ -n "$bridge_if" ] && command -v docker >/dev/null 2>&1; then
+    while read -r container_id; do
+        [ -n "$container_id" ] || continue
+        container_ip="$(docker inspect --format "{{range .NetworkSettings.Networks}}{{if eq .NetworkID \"$network_id\"}}{{.IPAddress}}{{end}}{{end}}" "$container_id" 2>/dev/null || true)"
+        [ -n "$container_ip" ] || continue
+        docker inspect --format '{{range $port, $bindings := .NetworkSettings.Ports}}{{if $bindings}}{{range $bindings}}{{println $port .HostPort}}{{end}}{{end}}{{end}}' "$container_id" 2>/dev/null \
+            | while read -r container_port_proto host_port; do
+                [ -n "$container_port_proto" ] && [ -n "$host_port" ] || continue
+                proto="${container_port_proto##*/}"
+                container_port="${container_port_proto%%/*}"
+                [ "$proto" = "udp" ] || continue
+                if port_in_range "$host_port" "$GAME_UDP_PORT_RANGE" || port_in_range "$host_port" "$IGW_UDP_PORT_RANGE"; then
+                    if ! iptables -t nat -C PREROUTING -i "$bridge_if" -d "$PUBLIC_IP" -p udp --dport "$host_port" \
+                        -m comment --comment "$DOCKER_PUBLIC_UDP_HAIRPIN_COMMENT" \
+                        -j DNAT --to-destination "${container_ip}:${container_port}" 2>/dev/null; then
+                        iptables -t nat -I PREROUTING 1 -i "$bridge_if" -d "$PUBLIC_IP" -p udp --dport "$host_port" \
+                            -m comment --comment "$DOCKER_PUBLIC_UDP_HAIRPIN_COMMENT" \
+                            -j DNAT --to-destination "${container_ip}:${container_port}"
+                    fi
+                fi
+            done
+    done < <(docker ps --filter "network=${DUNE_DOCKER_NETWORK}" --format '{{.ID}}')
 fi
 
 # The host knock-scanner sync can leave this as a broad Docker DROP for the

@@ -14,7 +14,7 @@ GROUP_ALIASES = {
     "objects": ("GUObjectArray", "RuntimeGUObjectArray", "GObjectArray", "GObjects", "FUObjectArray"),
     "world": ("GWorld", "GEngine"),
     "dispatch": ("ProcessEvent", "StaticFindObject", "CallFunctionByNameWithArguments", "CallFunctionByName"),
-    "package": ("StaticLoadObject", "LoadObject", "LoadPackage", "ResolveName", "LoadAsset", "LoadClass"),
+    "package": ("StaticLoadObject", "StaticLoadClass", "LoadObject", "LoadPackage", "ResolveName", "LoadAsset", "LoadClass"),
     "reflection": (
         "UObject",
         "UFunction",

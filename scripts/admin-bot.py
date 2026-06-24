@@ -15,11 +15,28 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 STATE_DIR = ROOT / "backups" / "admin-bot"
 STATE_FILE = STATE_DIR / "state.json"
 AUDIT_FILE = ROOT / "backups" / "admin-panel" / "audit.jsonl"
-DB = "dune_sb_1_4_0_0"
+
+
+def read_env_file(path):
+    values = {}
+    try:
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            values[key.strip()] = value.strip().strip('"').strip("'")
+    except FileNotFoundError:
+        pass
+    return values
+
+
+FILE_ENV = read_env_file(ROOT / os.environ.get("DUNE_ADMIN_BOT_ENV_FILE", ".env"))
+DB = os.environ.get("DUNE_DB_NAME") or FILE_ENV.get("DUNE_DB_NAME") or "dune_sb_1_4_0_0"
 
 
 def env(name, default=""):
-    return os.environ.get(name, default)
+    return os.environ.get(name) or FILE_ENV.get(name) or default
 
 
 def env_bool(name, default=False):
