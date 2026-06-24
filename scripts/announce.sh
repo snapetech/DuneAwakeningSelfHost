@@ -681,7 +681,7 @@ def cleanup_with_management(bound):
     return errors
 
 timestamp = time.strftime("%Y.%m.%d-%H.%M.%S", time.gmtime())
-timestamp_field = env("DUNE_ANNOUNCE_CHAT_TIMESTAMP_FIELD", "m_Timestamp")
+timestamp_field = env("DUNE_ANNOUNCE_CHAT_TIMESTAMP_FIELD", "m_TimeStamp")
 chat_message = {
     "m_Id": uuid.uuid4().hex.upper(),
     "m_ChannelType": channel_type,

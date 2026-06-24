@@ -6,8 +6,8 @@
 # useless evidence. Keep this helper small and fail closed.
 
 brt_dd_trace_repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-brt_dd_trace_current_build_id="6f8ca9ee5f3420c0b4c1ef7cefb412347bcba04b"
-brt_dd_trace_current_points_file="$brt_dd_trace_repo_root/scripts/research/brt-dd-points-1988751.tsv"
+brt_dd_trace_current_build_id="427a3084dcc00057ad21f98555a7d17d5f3c1020"
+brt_dd_trace_current_points_file="$brt_dd_trace_repo_root/scripts/research/brt-dd-points-427a3084.tsv"
 
 brt_dd_trace_die() {
   echo "ERROR: $*" >&2

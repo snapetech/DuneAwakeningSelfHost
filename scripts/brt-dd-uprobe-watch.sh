@@ -206,11 +206,11 @@ event_is_skipped() {
 
 remove_events() {
   local name
-  if [[ -d "$tracefs/events/$group" ]]; then
-    for event_dir in "$tracefs/events/$group"/*; do
-      [[ -d "$event_dir" ]] || continue
-      sudo_write "$event_dir/enable" 0 || true
-    done
+  if sudo -n test -d "$tracefs/events/$group" 2>/dev/null; then
+    sudo -n find "$tracefs/events/$group" -mindepth 2 -maxdepth 2 -name enable -print 2>/dev/null |
+      while IFS= read -r enable_file; do
+        sudo_write "$enable_file" 0 || true
+      done
   fi
   while read -r name; do
     [[ -n "$name" ]] || continue
@@ -269,8 +269,16 @@ status() {
   pid="$(server_pid || true)"
   enabled_names=""
   inferred_profile="not-armed"
-  if [[ -d "$tracefs/events/$group" ]]; then
-    enabled_names="$(sudo -n sh -c "for f in '$tracefs/events/$group'/*/enable; do [ \"\$(cat \"\$f\")\" = 1 ] || continue; basename \"\$(dirname \"\$f\")\"; done" | sort | paste -sd, -)"
+  if sudo -n test -d "$tracefs/events/$group" 2>/dev/null; then
+    enabled_names="$(
+      sudo -n find "$tracefs/events/$group" -mindepth 2 -maxdepth 2 -name enable -print 2>/dev/null |
+        while IFS= read -r enable_file; do
+          [[ "$(sudo -n cat "$enable_file" 2>/dev/null || true)" == "1" ]] || continue
+          basename "$(dirname "$enable_file")"
+        done |
+        sort |
+        paste -sd, -
+    )"
     case ",$enabled_names," in
       *,brt_action_failreason_entry,*brt_action_place_can_place_entry,*|*,brt_action_place_can_place_entry,*brt_action_failreason_entry,*)
         inferred_profile="brt"
@@ -294,8 +302,12 @@ status() {
   fi
   echo "container=$container pid=${pid:-missing} group=$group requested_profile=$profile inferred_profile=$inferred_profile tracefs=$tracefs"
   [[ -z "$enabled_names" ]] || echo "enabled_events=$enabled_names"
-  if [[ -d "$tracefs/events/$group" ]]; then
-    sudo -n sh -c "for f in '$tracefs/events/$group'/*/enable; do printf '%s=' \"\$f\"; cat \"\$f\"; done"
+  if sudo -n test -d "$tracefs/events/$group" 2>/dev/null; then
+    sudo -n find "$tracefs/events/$group" -mindepth 2 -maxdepth 2 -name enable -print 2>/dev/null |
+      while IFS= read -r enable_file; do
+        printf '%s=' "$enable_file"
+        sudo -n cat "$enable_file"
+      done
   else
     echo "not armed"
   fi

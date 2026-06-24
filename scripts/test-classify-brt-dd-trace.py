@@ -52,6 +52,17 @@ class ClassifyBrtDdTraceTests(unittest.TestCase):
         self.assertFalse(result["serverSideEmulationAllowed"])
         self.assertEqual(result["markerHits"][0]["marker"], "brt_rpc_impl_server_request_basebackup")
 
+    def test_current_server_request_basebackup_marker_selects_reached_server_branch(self):
+        result = classifier.classify_trace(
+            "dune-123 [001] ... brt_dd:server_request_basebackup_entry: (0xd21efa0)\n",
+            "/tmp/brt-dd-live-canary-trace.log",
+        )
+        self.assertTrue(result["rpcReachedServer"])
+        self.assertEqual(result["rpcClassification"], "normal-request-reached-server")
+        self.assertEqual(result["emulatorRpcClassification"], "operator-controlled-fallback")
+        self.assertFalse(result["serverSideEmulationAllowed"])
+        self.assertEqual(result["markerHits"][0]["marker"], "server_request_basebackup_entry")
+
     def test_cli_outputs_valid_json(self):
         with tempfile.TemporaryDirectory() as tmp:
             log = Path(tmp) / "trace.log"

@@ -145,6 +145,69 @@ def staged_backup_health(cur, backup_id, totem_id=None):
     return fetch_one(cur)
 
 
+def backup_buildable_counts(cur, backup_id):
+    cur.execute(
+        """
+        select buildable_type, total_count
+        from dune.base_backup_get_buildable_data(%s)
+        order by buildable_type
+        """,
+        (backup_id,),
+    )
+    return [dict(row) for row in cur.fetchall()]
+
+
+def created_backup_summary(cur, backup_id):
+    cur.execute(
+        """
+        select
+          bb.id as backup_id,
+          bb.player_id,
+          bb.base_backup_name,
+          count(bbla.actor_id)::integer as linked_actor_count
+        from dune.base_backups bb
+        left join dune.base_backup_linked_actors bbla on bbla.id=bb.id
+        where bb.id=%s
+        group by bb.id, bb.player_id, bb.base_backup_name
+        """,
+        (backup_id,),
+    )
+    row = fetch_one(cur)
+    if not row:
+        raise ValueError(f"backup {backup_id} not found")
+    buildables = backup_buildable_counts(cur, backup_id)
+    row["buildableCounts"] = buildables
+    row["buildableTotal"] = sum(int(item.get("total_count") or 0) for item in buildables)
+    return row
+
+
+def staged_backups_for_player(cur, player_id):
+    cur.execute(
+        """
+        select
+          bb.id as backup_id,
+          bb.player_id,
+          bb.base_backup_name,
+          count(bbla.actor_id)::integer as linked_actor_count,
+          min(bbla.actor_id)::bigint as first_linked_actor_id,
+          count(ast.actor_id)::integer as basebackup_state_count
+        from dune.base_backups bb
+        left join dune.base_backup_linked_actors bbla on bbla.id=bb.id
+        left join dune.actor_state ast on ast.actor_id=bbla.actor_id and ast.state='BaseBackup'
+        where bb.player_id=%s
+        group by bb.id, bb.player_id, bb.base_backup_name
+        order by bb.id desc
+        """,
+        (player_id,),
+    )
+    rows = []
+    for row in cur.fetchall():
+        item = dict(row)
+        item["staged"] = int(item.get("basebackup_state_count") or 0) > 0
+        rows.append(item)
+    return rows
+
+
 def backup_summary(cur, backup_id):
     cur.execute(
         """
@@ -357,6 +420,21 @@ def run_list_backups(args):
         conn.close()
 
 
+def run_list_staged_backups(args):
+    conn = admin_chat_commands.connect_db()
+    try:
+        with conn.cursor(cursor_factory=admin_chat_commands.psycopg2.extras.RealDictCursor) as cur:
+            backups = staged_backups_for_player(cur, args.player_id)
+        print_json({
+            "ok": True,
+            "mode": "list-staged-backups",
+            "playerId": args.player_id,
+            "backups": backups,
+        })
+    finally:
+        conn.close()
+
+
 def run_inspect_backup(args):
     conn = admin_chat_commands.connect_db()
     try:
@@ -369,6 +447,79 @@ def run_inspect_backup(args):
             "summary": summary,
             "health": health,
         })
+    finally:
+        conn.close()
+
+
+def run_create_backup(args):
+    if args.commit:
+        if socket.gethostname() != "kspls0":
+            raise SystemExit("commit refused: host is not kspls0")
+        if args.confirm != "CREATE DD1 BRT BACKUP":
+            raise SystemExit("commit refused: pass --confirm 'CREATE DD1 BRT BACKUP'")
+        require_live_dd1_brt_mutation_allowed()
+        rpc_classification = require_rpc_classification(args)
+    else:
+        rpc_classification = "dry-run"
+    conn = admin_chat_commands.connect_db()
+    try:
+        with conn.cursor(cursor_factory=admin_chat_commands.psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("begin")
+            before = {
+                "baseBackups": None,
+                "linkedActors": None,
+            }
+            cur.execute("select count(*)::integer as count from dune.base_backups")
+            before["baseBackups"] = int(cur.fetchone()["count"])
+            cur.execute("select count(*)::integer as count from dune.base_backup_linked_actors")
+            before["linkedActors"] = int(cur.fetchone()["count"])
+            cur.execute(
+                "select count(*)::integer as count from dune.base_backup_find_totems_from_player_owner(%s) where totem_id=%s",
+                (args.player_id, args.totem_id),
+            )
+            if int(cur.fetchone()["count"] or 0) != 1:
+                raise ValueError(f"totem {args.totem_id} is not owned by player {args.player_id}")
+            cur.execute(
+                "select dune.base_backup_save_from_totem(%s, %s) as backup_id",
+                (args.player_id, args.totem_id),
+            )
+            backup_id = int(cur.fetchone()["backup_id"])
+            summary = created_backup_summary(cur, backup_id)
+            after_inside = {
+                "baseBackups": None,
+                "linkedActors": None,
+            }
+            cur.execute("select count(*)::integer as count from dune.base_backups")
+            after_inside["baseBackups"] = int(cur.fetchone()["count"])
+            cur.execute("select count(*)::integer as count from dune.base_backup_linked_actors")
+            after_inside["linkedActors"] = int(cur.fetchone()["count"])
+            if args.commit:
+                cur.execute("commit")
+                committed = True
+                rolled_back = False
+            else:
+                cur.execute("rollback")
+                committed = False
+                rolled_back = True
+            print_json({
+                "ok": True,
+                "mode": "create-backup",
+                "emulation": emulation_context(args, rpc_classification),
+                "playerId": args.player_id,
+                "totemId": args.totem_id,
+                "backupId": backup_id,
+                "summary": summary,
+                "before": before,
+                "afterInsideTransaction": after_inside,
+                "deltasInsideTransaction": {
+                    "baseBackups": after_inside["baseBackups"] - before["baseBackups"],
+                    "linkedActors": after_inside["linkedActors"] - before["linkedActors"],
+                },
+                "liveBaseStaged": True,
+                "restoreCommand": f"scripts/dd1-brt-emulator.py finish-staged-backup --backup-id {backup_id} --player-id {args.player_id}",
+                "committed": committed,
+                "rolledBack": rolled_back,
+            })
     finally:
         conn.close()
 
@@ -387,9 +538,13 @@ def run_finish_staged_backup(args):
     try:
         with conn.cursor(cursor_factory=admin_chat_commands.psycopg2.extras.RealDictCursor) as cur:
             cur.execute("begin")
-            summary = backup_summary(cur, args.backup_id)
-            totem_id = int(summary["totem_id"])
+            summary = created_backup_summary(cur, args.backup_id)
             player_id = int(args.player_id if args.player_id is not None else summary["player_id"])
+            cur.execute("select actor_id from dune.base_backup_linked_actors where id=%s order by actor_id limit 1", (args.backup_id,))
+            totem_row = cur.fetchone()
+            if not totem_row:
+                raise ValueError(f"backup {args.backup_id} has no linked actors")
+            totem_id = int(totem_row["actor_id"])
             before = staged_backup_health(cur, args.backup_id, totem_id)
             cur.execute("select dune.base_backup_finish_placing(%s)", (args.backup_id,))
             permission_counts = restore_totem_permission(
@@ -514,6 +669,10 @@ def main():
     list_backups.add_argument("--player-id", type=int, required=True)
     list_backups.set_defaults(func=run_list_backups)
 
+    list_staged = sub.add_parser("list-staged-backups", help="List raw staged BRT backups for a player, including DD backups hidden from the normal available-backups API.")
+    list_staged.add_argument("--player-id", type=int, required=True)
+    list_staged.set_defaults(func=run_list_staged_backups)
+
     inspect = sub.add_parser("inspect-backup", help="Inspect a staged BRT backup without mutating it.")
     inspect.add_argument("--backup-id", type=int, required=True)
     inspect.set_defaults(func=run_inspect_backup)
@@ -531,6 +690,24 @@ def main():
     sim.add_argument("--partition-id", type=int)
     sim.add_argument("--dimension-index", type=int)
     sim.set_defaults(func=run_simulate_from_totem)
+
+    create = sub.add_parser("create-backup", help="Create a DD1 BRT backup from a totem. Rollback unless --commit is passed.")
+    create.add_argument("--player-id", type=int, required=True)
+    create.add_argument("--totem-id", type=int, required=True)
+    create.add_argument("--commit", action="store_true")
+    create.add_argument("--confirm", default="")
+    create.add_argument(
+        "--rpc-classification",
+        choices=RPC_CLASSIFICATION_CHOICES,
+        default="",
+        help="Required with --commit; use normal-request-not-observed after the DD1 RPC trace misses.",
+    )
+    create.add_argument(
+        "--rpc-classification-json",
+        default="",
+        help="Classification JSON from scripts/classify-brt-dd-trace.py; overrides --rpc-classification.",
+    )
+    create.set_defaults(func=run_create_backup)
 
     restore = sub.add_parser("restore-backup", help="Transform and finish an existing backup. Rollback unless --commit is passed.")
     restore.add_argument("--backup-id", type=int, required=True)

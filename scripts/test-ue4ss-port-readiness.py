@@ -962,7 +962,9 @@ class Ue4ssPortReadinessTests(unittest.TestCase):
         self.assertEqual(summary["scan"]["invokedUeProcessEventActiveValidationCount"], 1)
         self.assertEqual(summary["scan"]["originalUeProcessEventActiveValidationCount"], 1)
         self.assertEqual(summary["scan"]["targetEntryUeProcessEventActiveValidationCount"], 1)
+        self.assertEqual(summary["scan"]["syntheticTargetEntryUeProcessEventActiveValidationCount"], 0)
         self.assertEqual(summary["scan"]["descriptorBufferUeProcessEventActiveValidationCount"], 1)
+        self.assertFalse(report["ready"]["ueProcessEventSyntheticTargetEntry"])
         self.assertTrue(report["ready"]["ueProcessEventLiveLuaDispatch"])
         self.assertTrue(report["ready"]["ueProcessEventLiveContext"])
         self.assertTrue(report["ready"]["ueProcessEventLiveFunctionPath"])
@@ -1065,6 +1067,25 @@ class Ue4ssPortReadinessTests(unittest.TestCase):
         self.assertEqual(summary["scan"]["originalUeProcessEventActiveValidationCount"], 1)
         self.assertEqual(summary["scan"]["targetEntryUeProcessEventActiveValidationCount"], 0)
         self.assertFalse(report["ready"]["ueProcessEventActiveValidation"])
+
+    def test_suppressed_process_event_target_entry_is_tracked_without_full_validation(self):
+        synthetic_log = READY_LOG.replace(
+            "event=ue-process-event-active-validate phase=thread status=invoked object=0x140070000 function=0x140082000 params=0x20 paramsSource=descriptor-buffer paramsBufferSize=152 paramsDescriptorCount=17 callSource=target-entry targetEntry=true liveCallsDelta=1 originalCallsDelta=1 luaDispatch=true preCallbacks=2 postCallbacks=2",
+            "event=ue-process-event-active-validate phase=thread status=invoked object=0x140070000 function=0x140082000 params=0x0 objectSource=synthetic-runtime-object functionSource=synthetic-runtime-function paramsSource=none paramsBufferSize=0 paramsDescriptorCount=0 callSource=target-entry targetEntry=true originalSuppressed=true liveCallsDelta=1 originalCallsDelta=0 luaDispatch=false preCallbacks=1 postCallbacks=1",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "synthetic-active-validation.log"
+            log.write_text(synthetic_log, encoding="utf-8")
+            summary = readiness.summarize_log(log, ["win-client"], [], [])
+            report = readiness.build_report([summary], [])
+
+        self.assertEqual(summary["scan"]["invokedUeProcessEventActiveValidationCount"], 1)
+        self.assertEqual(summary["scan"]["originalUeProcessEventActiveValidationCount"], 0)
+        self.assertEqual(summary["scan"]["targetEntryUeProcessEventActiveValidationCount"], 1)
+        self.assertEqual(summary["scan"]["suppressedTargetEntryUeProcessEventActiveValidationCount"], 1)
+        self.assertEqual(summary["scan"]["syntheticTargetEntryUeProcessEventActiveValidationCount"], 1)
+        self.assertFalse(report["ready"]["ueProcessEventActiveValidation"])
+        self.assertTrue(report["ready"]["ueProcessEventSyntheticTargetEntry"])
 
     def test_complete_ue4ss_lua_api_requires_live_target_image_contract(self):
         package_backend_log = READY_LOG.replace(

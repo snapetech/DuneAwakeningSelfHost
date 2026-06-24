@@ -220,7 +220,7 @@ print_trace_summary() {
     /brt_action_place_/ || /perform_can_be_placed/ || /perform_invalid_map_site_/ {
       place++
     }
-    /brt_rpc_/ {
+    /brt_rpc_/ || /server_request_basebackup_/ {
       rpc++
     }
     /brt_rpc_.*building_blueprint/ {
@@ -230,6 +230,7 @@ print_trace_summary() {
       args++
     }
     /brt_rpc_impl_server_request_basebackup_args:.*rsi=0x44.*rdx=0x8/ ||
+    /server_request_basebackup_entry/ ||
     /brt_rpc_request_handler_args:.*rsi=0x41/ ||
     /brt_rpc_request_handler_args:.*rsi=0x44/ {
       restore_preview_rpc++

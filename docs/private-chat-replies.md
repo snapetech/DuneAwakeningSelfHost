@@ -9,7 +9,7 @@ Working private/pink chat rendering is confirmed. Confidence: high.
 The client-visible payload requires:
 
 - `m_ChannelType` set to `Whispers`
-- `m_Timestamp` on the current live build. Older tests rendered with `m_TimeStamp`; keep `DUNE_ANNOUNCE_CHAT_TIMESTAMP_FIELD=m_TimeStamp` available as a rollback knob.
+- `m_TimeStamp`, the confirmed client-visible whisper field. Keep `DUNE_ANNOUNCE_CHAT_TIMESTAMP_FIELD=m_Timestamp` available only as a rollback knob if a future build proves it is needed.
 - a normal `TextChat` courier wrapper
 - delivery to the player's private queue, usually `{FLS_ID}_queue`
 
@@ -27,7 +27,7 @@ Outer AMQP body:
 
 ```json
 {
-  "content": "{\"m_Id\":\"...\",\"m_ChannelType\":\"Whispers\",\"m_bUseSpoofedUserName\":true,\"m_SpoofedUserNameFrom\":{\"m_TableId\":\"\",\"m_Key\":\"\",\"m_UnlocalizedName\":\"Paul\"},\"m_FuncomIdFrom\":\"ADMIN#00001\",\"m_UserNameTo\":\"SamplePlayer\",\"m_Message\":{\"m_UnlocalizedMessage\":\"message text\",\"m_LocalizedMessage\":{\"m_TableId\":\"\",\"m_Key\":\"\",\"m_FormatArgs\":[]}},\"m_Timestamp\":\"2026.05.21-02.43.11\",\"m_OriginLocation\":{\"X\":0.0,\"Y\":0.0,\"Z\":0.0},\"m_HasSeenMessage\":false}",
+  "content": "{\"m_Id\":\"...\",\"m_ChannelType\":\"Whispers\",\"m_bUseSpoofedUserName\":true,\"m_SpoofedUserNameFrom\":{\"m_TableId\":\"\",\"m_Key\":\"\",\"m_UnlocalizedName\":\"Paul\"},\"m_FuncomIdFrom\":\"ADMIN#00001\",\"m_UserNameTo\":\"SamplePlayer\",\"m_Message\":{\"m_UnlocalizedMessage\":\"message text\",\"m_LocalizedMessage\":{\"m_TableId\":\"\",\"m_Key\":\"\",\"m_FormatArgs\":[]}},\"m_TimeStamp\":\"2026.05.21-02.43.11\",\"m_OriginLocation\":{\"X\":0.0,\"Y\":0.0,\"Z\":0.0},\"m_HasSeenMessage\":false}",
   "Type": "TextChat"
 }
 ```
@@ -42,7 +42,7 @@ message_id=<unique id>
 user_id=<announcer user>
 ```
 
-Timestamp spelling is build-sensitive. The decompiled TextRouter C# model uses `m_TimeStamp`, and older live testing rendered that spelling. On 2026-05-27, real player Map chat on live emitted `m_Timestamp`, so `scripts/announce.sh` now defaults to `m_Timestamp` and exposes `DUNE_ANNOUNCE_CHAT_TIMESTAMP_FIELD` for rollback.
+Timestamp spelling is build-sensitive, but the confirmed client-visible Paul whisper path uses `m_TimeStamp`. `scripts/announce.sh` defaults to `m_TimeStamp`; set `DUNE_ANNOUNCE_CHAT_TIMESTAMP_FIELD=m_Timestamp` only after a live render test proves a future build needs it.
 
 ## Working Delivery Modes
 
@@ -132,7 +132,7 @@ Use those only as diagnostics or deliberate non-private reply modes.
 ## Implementation Map
 
 - `scripts/dune_whisper_route.py` is the shared FLS-id-to-whisper-route resolver. It derives `routing_key=<FLS_ID>` and `queue=<FLS_ID>_queue`.
-- `scripts/announce.sh` is the shared publisher. It emits the timestamp field named by `DUNE_ANNOUNCE_CHAT_TIMESTAMP_FIELD`, defaulting to `m_Timestamp`; accepts `DUNE_ANNOUNCE_CHAT_EXCHANGE`, `DUNE_ANNOUNCE_CHAT_CHANNEL`, `DUNE_ANNOUNCE_CHAT_TARGET_FLS_IDS`, `DUNE_ANNOUNCE_CHAT_TARGET_QUEUES`, and `DUNE_ANNOUNCE_CHAT_ROUTING_KEYS`; and reports the actual exchange in `transport`.
+- `scripts/announce.sh` is the shared publisher. It emits the timestamp field named by `DUNE_ANNOUNCE_CHAT_TIMESTAMP_FIELD`, defaulting to `m_TimeStamp`; accepts `DUNE_ANNOUNCE_CHAT_EXCHANGE`, `DUNE_ANNOUNCE_CHAT_CHANNEL`, `DUNE_ANNOUNCE_CHAT_TARGET_FLS_IDS`, `DUNE_ANNOUNCE_CHAT_TARGET_QUEUES`, and `DUNE_ANNOUNCE_CHAT_ROUTING_KEYS`; and reports the actual exchange in `transport`.
 - `scripts/admin-chat-commands.py` handles chat commands. `run_announce()` infers the command sender from the `handle_command()` frame when no explicit target is provided. Command JSON replies include `reply.stdout` metadata from `scripts/announce.sh` where practical.
 - `scripts/player-presence-announcer.py` handles presence automation. `private_message()` forces `chat.whispers`, channel `Whispers`, the target `{FLS_ID}_queue`, cleanup, and no dashboard wrapping.
 - `Makefile` target `test-admin-chat` runs command/private-route and presence-private-route tests. `make validate` includes that target.
@@ -231,7 +231,7 @@ These were tested and should not be reintroduced as fixes:
 - `m_UserNameTo` by itself. It can render as normal visible chat, not private chat.
 - `m_ChannelType=Private`. Delivered variants did not render as private chat.
 - `m_ChannelType=Whisper`. Delivered variants did not render as private chat.
-- Older test: `m_ChannelType=Whispers` with `m_Timestamp` was delivered and consumed, but did not render. This result is no longer treated as authoritative for the current build because live player chat on 2026-05-27 used `m_Timestamp`.
+- Older test: `m_ChannelType=Whispers` with `m_Timestamp` was delivered and consumed, but did not render.
 - localized sender key `UI/TextChat_Channel_Title_Whispers` without the corrected timestamp field. It did not solve rendering.
 - TextRouter intercept redirect without AMQP `user_id`. TextRouter hits `DemoPlayersFilter` with an `ArgumentNullException`.
 - TextRouter intercept redirect with AMQP `user_id` in normal mode. TextRouter preserves the original `user_id`, then RabbitMQ rejects the republish because TextRouter is authenticated as its generated `tr.<world>.<correlation>` account.
@@ -259,7 +259,7 @@ The fixed-credential TextRouter experiment proved the broker failure mechanism b
 
 If private replies stop rendering:
 
-1. Verify `scripts/announce.sh` emits the timestamp field expected by the current game build. The default is `m_Timestamp`; set `DUNE_ANNOUNCE_CHAT_TIMESTAMP_FIELD=m_TimeStamp` only if a live render test proves the older spelling is required.
+1. Verify `scripts/announce.sh` emits the timestamp field expected by the current game build. The default is `m_TimeStamp`; set `DUNE_ANNOUNCE_CHAT_TIMESTAMP_FIELD=m_Timestamp` only if a live render test proves the newer spelling is required.
 2. Verify the channel is `Whispers`.
 3. Verify the target queue is online and has one consumer:
 

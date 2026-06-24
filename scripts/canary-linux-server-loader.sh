@@ -23,6 +23,7 @@ Environment:
   DUNE_LINUX_SERVER_CANARY_PRELOAD       optional loader .so path to apply only during canary
   DUNE_LINUX_SERVER_CANARY_SKIP_BUILD    default: false
   DUNE_LINUX_SERVER_CANARY_PREFLIGHT_ONLY default: false; check host/env/player guard only
+  DUNE_LINUX_SERVER_CANARY_REQUIRE_ACTIVE default: true; require selected partition ready/alive/active
   DUNE_LINUX_SERVER_CANARY_CAPTURE_DELAY_SECONDS default: 10; seconds before copying loader log
   DUNE_LINUX_SERVER_CANARY_ANALYSIS_TIMEOUT_SECONDS default: 45; per-analysis timeout after capture
 USAGE
@@ -45,6 +46,7 @@ strict_verify="${DUNE_LINUX_SERVER_CANARY_STRICT_VERIFY:-false}"
 post_canary_verify_rc=0
 skip_build="${DUNE_LINUX_SERVER_CANARY_SKIP_BUILD:-false}"
 preflight_only="${DUNE_LINUX_SERVER_CANARY_PREFLIGHT_ONLY:-false}"
+require_active="${DUNE_LINUX_SERVER_CANARY_REQUIRE_ACTIVE:-true}"
 capture_delay="${DUNE_LINUX_SERVER_CANARY_CAPTURE_DELAY_SECONDS:-10}"
 analysis_timeout="${DUNE_LINUX_SERVER_CANARY_ANALYSIS_TIMEOUT_SECONDS:-45}"
 runtime="${CONTAINER_RUNTIME:-docker}"
@@ -67,7 +69,7 @@ env_value() {
   awk -F= -v key="$key" '
     $0 ~ "^[[:space:]]*" key "=" {
       sub(/^[^=]*=/, "")
-      gsub(/^["'\'']|["'\'']$/, "")
+      gsub(/^["\047]|["\047]$/, "")
       print
       exit
     }
@@ -360,6 +362,50 @@ SQL
   printf '%s\n' "${value:-999}"
 }
 
+current_partition_runtime_state() {
+  "${compose[@]}" exec -T postgres psql -U dune -d "$db" -qAt -v pid="$partition_id" <<'SQL'
+select concat_ws(' ',
+  coalesce(fs.ready, false)::text,
+  coalesce(fs.alive, false)::text,
+  (asi.server_id is not null)::text
+)
+from dune.world_partition wp
+left join dune.farm_state fs on fs.server_id = wp.server_id
+left join dune.active_server_ids asi on asi.server_id = wp.server_id
+where wp.partition_id = :pid;
+SQL
+}
+
+write_summary_line() {
+  local line="$1"
+  if [[ -d "$backup_dir" ]]; then
+    printf '%s\n' "$line" | tee -a "$backup_dir/summary.txt"
+  else
+    printf '%s\n' "$line"
+  fi
+}
+
+require_partition_active() {
+  local phase="$1"
+  local state ready alive active
+  case "$require_active" in
+    0|false|no|off|FALSE|False|NO|OFF)
+      write_summary_line "partition_active_guard_${phase}_skipped=true"
+      return 0
+      ;;
+  esac
+  state="$(current_partition_runtime_state)"
+  state="${state:-false false false}"
+  read -r ready alive active <<< "$state"
+  write_summary_line "partition_guard_${phase}_ready=${ready:-false} alive=${alive:-false} active=${active:-false}"
+  if [[ "${ready:-false}" != "true" || "${alive:-false}" != "true" || "${active:-false}" != "true" ]]; then
+    printf 'refusing canary %s: partition %s ready=%s alive=%s active=%s\n' \
+      "$phase" "$partition_id" "${ready:-false}" "${alive:-false}" "${active:-false}" >&2
+    return 1
+  fi
+  return 0
+}
+
 require_zero_players() {
   local phase="$1"
   local value
@@ -398,6 +444,9 @@ if [[ "$preflight_only" == "true" ]]; then
     printf 'refusing canary: connected_players=%s\n' "$players" >&2
     exit 1
   fi
+  if ! require_partition_active preflight; then
+    exit 1
+  fi
   printf 'preflight_only=true\n'
   printf 'preflight_ok=true\n'
   exit 0
@@ -407,6 +456,7 @@ mkdir -p "$backup_dir"
 cp -a "$env_file" "$backup_dir/env.before"
 printf 'canary=%s service=%s partition=%s connected_players=%s\n' "$stamp" "$service" "$partition_id" "$players" | tee "$backup_dir/summary.txt"
 require_zero_players preflight
+require_partition_active preflight
 
 restart_canary() {
   DUNE_RESTART_CHECK_STEAM_UPDATE=false DUNE_RESTART_SERVICES="$service" ./scripts/restart-target.sh linux-loader-canary
@@ -414,7 +464,7 @@ restart_canary() {
 
 restart_canary_if_zero_players() {
   local phase="$1"
-  if require_zero_players "$phase"; then
+  if require_zero_players "$phase" && require_partition_active "$phase"; then
     restart_canary
   else
     printf 'restart_skipped_%s_due_players=true\n' "$phase" | tee -a "$backup_dir/summary.txt"

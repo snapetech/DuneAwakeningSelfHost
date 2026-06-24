@@ -1,0 +1,34 @@
+# BRT/DD trace points for the current DD1 dedicated-server build.
+# build_id=427a3084dcc00057ad21f98555a7d17d5f3c1020
+#
+# Generated 2026-06-24 from the live dune_server-deep-desert-1 binary staged at:
+#   /tmp/dune-ghidra-427a3084/server-bin
+#
+# Scope here is intentionally narrow: answer the Phase-1 keystone question,
+# "does the normal BRT request reach the server?", without using stale dense
+# action/placement offsets from build 1988751.
+#
+# Evidence:
+# - `ServerRequestBaseBackup` string: 0x5a7b625.
+# - Relocation-applied metadata table slot 0x15282d60 gives native exec thunk
+#   0xd143310; disassembly shows it unpacks the request and calls vtable +0x588.
+# - Relocation-applied function metadata slot 0x15282ec8 gives the BaseBackup
+#   implementation accessor at 0xd1435c0.
+# - `ServerRequestBuildingBlueprint` adjacent exec thunk is 0xd143390.
+#
+# Format:
+#   profile name image_offset [tracefs fetch args...]
+
+minimal brt_rpc_exec_server_request_basebackup 0xd143310
+minimal brt_rpc_exec_server_request_basebackup_args 0xd143310 rdi=%di:x64 rsi=%si:x64 rdx=%dx:x64 rcx=%cx:x64 r8=%r8:x64 r9=%r9:x64
+minimal brt_rpc_impl_server_request_basebackup 0xd1435c0
+minimal brt_rpc_impl_server_request_basebackup_args 0xd1435c0 rdi=%di:x64 rsi=%si:x64 rdx=%dx:x64 rcx=%cx:x64 r8=%r8:x64 r9=%r9:x64
+minimal brt_rpc_exec_server_request_building_blueprint 0xd143390
+minimal brt_rpc_exec_server_request_building_blueprint_args 0xd143390 rdi=%di:x64 rsi=%si:x64 rdx=%dx:x64 rcx=%cx:x64 r8=%r8:x64 r9=%r9:x64
+
+backup brt_rpc_exec_server_request_basebackup 0xd143310
+backup brt_rpc_exec_server_request_basebackup_args 0xd143310 rdi=%di:x64 rsi=%si:x64 rdx=%dx:x64 rcx=%cx:x64 r8=%r8:x64 r9=%r9:x64
+backup brt_rpc_impl_server_request_basebackup 0xd1435c0
+backup brt_rpc_impl_server_request_basebackup_args 0xd1435c0 rdi=%di:x64 rsi=%si:x64 rdx=%dx:x64 rcx=%cx:x64 r8=%r8:x64 r9=%r9:x64
+backup brt_rpc_exec_server_request_building_blueprint 0xd143390
+backup brt_rpc_exec_server_request_building_blueprint_args 0xd143390 rdi=%di:x64 rsi=%si:x64 rdx=%dx:x64 rcx=%cx:x64 r8=%r8:x64 r9=%r9:x64

@@ -647,6 +647,7 @@ test-discovery-tools:
 
 test-admin-chat:
 	python3 scripts/test-dune-whisper-route.py
+	python3 scripts/test-paul-whisper-defaults.py
 	python3 scripts/test-admin-chat-commands.py
 	python3 scripts/test-player-presence-announcer.py
 

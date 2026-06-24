@@ -13,6 +13,7 @@ SERVER_RPC_MARKERS = (
 UPROBE_RPC_MARKERS = (
     "brt_rpc_exec_server_request_basebackup",
     "brt_rpc_impl_server_request_basebackup",
+    "server_request_basebackup_entry",
     "brt_rpc_request_handler",
     "brt_rpc_exec_server_request_building_blueprint",
     "brt_rpc_impl_server_request_building_blueprint",
@@ -58,13 +59,15 @@ def classify_trace(text, source_path):
         "markerHits": marker_hits,
         "nextAction": next_action,
         "decision": (
-            "SERVER-RPC-ENTRY/SERVER-RPC-EXEC fired; the request reached the server, "
+            "SERVER-RPC-ENTRY/SERVER-RPC-EXEC or an equivalent current-build "
+            "server_request_basebackup/brt_rpc uprobe fired; the request reached the server, "
             "so fix the reached server-side branch before using an operator fallback."
             if reached
             else
-            "SERVER-RPC-ENTRY/SERVER-RPC-EXEC did not fire; classify the normal "
-            "request as not observed and use server-side request emulation rather "
-            "than making client modification a requirement."
+            "SERVER-RPC-ENTRY/SERVER-RPC-EXEC and equivalent current-build "
+            "server_request_basebackup/brt_rpc uprobes did not fire; classify "
+            "the normal request as not observed and use server-side request "
+            "emulation rather than making client modification a requirement."
         ),
     }
 

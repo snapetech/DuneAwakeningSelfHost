@@ -26,14 +26,30 @@ read_env() {
   printf '%s' "$value"
 }
 
+read_first_env() {
+  local value
+  while (($#)); do
+    value="$(read_env "$1" "")"
+    if [[ -n "$value" ]]; then
+      printf '%s' "$value"
+      return
+    fi
+    shift
+  done
+}
+
 limit="$(read_env DUNE_SUBFIEF_LIMIT "${DUNE_SUBFIEF_LIMIT:-}")"
 base="$(read_env DUNE_SUBFIEF_BASE_LIMIT "${DUNE_SUBFIEF_BASE_LIMIT:-3}")"
 explicit_bonus="$(read_env DUNE_SUBFIEF_LIMIT_BONUS "${DUNE_SUBFIEF_LIMIT_BONUS:-}")"
 project="$(read_env COMPOSE_PROJECT_NAME "${COMPOSE_PROJECT_NAME:-dune_server}")"
 db_service="$(read_env DUNE_POSTGRES_SERVICE "${DUNE_POSTGRES_SERVICE:-postgres}")"
-db_name="$(read_env DUNE_POSTGRES_DB "${DUNE_POSTGRES_DB:-dune_sb_1_4_0_0}")"
+db_name="$(read_first_env DUNE_POSTGRES_DB DUNE_GAME_DB_NAME DUNE_DATABASE DUNE_DB_NAME)"
 db_user="$(read_env DUNE_POSTGRES_USER "${DUNE_POSTGRES_USER:-dune}")"
 
+if [[ -z "$db_name" ]]; then
+  echo "set DUNE_GAME_DB_NAME, DUNE_DATABASE, DUNE_DB_NAME, or DUNE_POSTGRES_DB; refusing to guess database" >&2
+  exit 1
+fi
 if [[ -z "$limit" && -z "$explicit_bonus" ]]; then
   echo "set DUNE_SUBFIEF_LIMIT or DUNE_SUBFIEF_LIMIT_BONUS; nothing to apply" >&2
   exit 1

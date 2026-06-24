@@ -32,6 +32,10 @@ class Dd1BrtEmulatorContractTests(unittest.TestCase):
         self.assertIn('"rpcClassificationJson"', self.source)
         self.assertIn("classification requires client modification", self.source)
         self.assertIn("normal-request-reached-server", self.source)
+        self.assertIn("run_create_backup", self.source)
+        self.assertIn("CREATE DD1 BRT BACKUP", self.source)
+        self.assertIn("base_backup_save_from_totem", self.source)
+        self.assertIn("created_backup_summary", self.source)
 
     def test_runbook_documents_classification_for_server_side_emulation(self):
         self.assertIn("--rpc-classification normal-request-not-observed", self.doc)

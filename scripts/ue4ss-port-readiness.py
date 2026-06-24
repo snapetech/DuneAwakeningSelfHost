@@ -575,6 +575,7 @@ def merge_log_summaries(log_summaries):
     total_suppressed_ue_process_event_active_validations = 0
     total_target_entry_ue_process_event_active_validations = 0
     total_suppressed_target_entry_ue_process_event_active_validations = 0
+    total_synthetic_target_entry_ue_process_event_active_validations = 0
     total_descriptor_buffer_ue_process_event_active_validations = 0
     total_ue_process_event_live_contexts = 0
     total_resolved_ue_process_event_live_contexts = 0
@@ -1068,6 +1069,10 @@ def merge_log_summaries(log_summaries):
         total_suppressed_ue_process_event_active_validations += scan.get("suppressedUeProcessEventActiveValidationCount", 0)
         total_target_entry_ue_process_event_active_validations += scan.get("targetEntryUeProcessEventActiveValidationCount", 0)
         total_suppressed_target_entry_ue_process_event_active_validations += scan.get("suppressedTargetEntryUeProcessEventActiveValidationCount", 0)
+        total_synthetic_target_entry_ue_process_event_active_validations += min(
+            scan.get("invokedUeProcessEventActiveValidationCount", 0),
+            scan.get("suppressedTargetEntryUeProcessEventActiveValidationCount", 0),
+        )
         total_descriptor_buffer_ue_process_event_active_validations += scan.get("descriptorBufferUeProcessEventActiveValidationCount", 0)
         total_ue_process_event_live_contexts += scan.get("ueProcessEventLiveContextCount", 0)
         total_resolved_ue_process_event_live_contexts += scan.get("resolvedUeProcessEventLiveContextCount", 0)
@@ -1485,6 +1490,7 @@ def merge_log_summaries(log_summaries):
         "suppressedUeProcessEventActiveValidationCount": total_suppressed_ue_process_event_active_validations,
         "targetEntryUeProcessEventActiveValidationCount": total_target_entry_ue_process_event_active_validations,
         "suppressedTargetEntryUeProcessEventActiveValidationCount": total_suppressed_target_entry_ue_process_event_active_validations,
+        "syntheticTargetEntryUeProcessEventActiveValidationCount": total_synthetic_target_entry_ue_process_event_active_validations,
         "descriptorBufferUeProcessEventActiveValidationCount": total_descriptor_buffer_ue_process_event_active_validations,
         "ueProcessEventLiveContextCount": total_ue_process_event_live_contexts,
         "resolvedUeProcessEventLiveContextCount": total_resolved_ue_process_event_live_contexts,
@@ -3034,6 +3040,19 @@ def build_report(log_summaries, validation_summaries, anchor_coverages=None, inc
     )
     gates.append(
         gate(
+            "ue-process-event-synthetic-target-entry",
+            merged["syntheticTargetEntryUeProcessEventActiveValidationCount"] > 0,
+            (
+                f"syntheticTargetEntry={merged['syntheticTargetEntryUeProcessEventActiveValidationCount']} "
+                f"invoked={merged['invokedUeProcessEventActiveValidationCount']} "
+                f"original={merged['originalUeProcessEventActiveValidationCount']} "
+                f"suppressedTargetEntry={merged['suppressedTargetEntryUeProcessEventActiveValidationCount']}"
+            ),
+            "no no-native synthetic ProcessEvent validation call entered through the patched target entry",
+        )
+    )
+    gates.append(
+        gate(
             "ue-process-event-dispatch-self-test",
             merged["armedUeProcessEventDispatchSelfTestCount"] > 0,
             f"armed={merged['armedUeProcessEventDispatchSelfTestCount']}/{merged['ueProcessEventDispatchSelfTestCount']}",
@@ -4234,6 +4253,7 @@ def build_report(log_summaries, validation_summaries, anchor_coverages=None, inc
             "ueProcessEventHookRuntimeTarget": gate_map["ue-process-event-hook-runtime-target"],
             "ueProcessEventLiveHookRuntimeTarget": gate_map["ue-process-event-live-hook-runtime-target"],
             "ueProcessEventActiveValidation": gate_map["ue-process-event-active-validation"],
+            "ueProcessEventSyntheticTargetEntry": gate_map["ue-process-event-synthetic-target-entry"],
             "ueProcessEventLiveLuaDispatch": gate_map["ue-process-event-live-lua-dispatch"],
             "ueProcessEventLiveFunctionPath": gate_map["ue-process-event-live-function-path"],
             "ueProcessEventLiveRuntimeContext": gate_map["ue-process-event-live-runtime-context"],
@@ -4517,6 +4537,7 @@ def build_report(log_summaries, validation_summaries, anchor_coverages=None, inc
             "ueProcessEventLiveHook": gate_map["ue-process-event-live-hook"],
             "ueProcessEventLiveHookRuntimeTarget": gate_map["ue-process-event-live-hook-runtime-target"],
             "ueProcessEventActiveValidation": gate_map["ue-process-event-active-validation"],
+            "ueProcessEventSyntheticTargetEntry": gate_map["ue-process-event-synthetic-target-entry"],
             "ueProcessEventDispatch": gate_map["ue-process-event-dispatch-self-test"],
             "ueProcessEventLiveLuaDispatch": gate_map["ue-process-event-live-lua-dispatch"],
             "ueProcessEventLiveContext": gate_map["ue-process-event-live-context"],
