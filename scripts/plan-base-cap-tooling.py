@@ -61,6 +61,8 @@ def build_report(config: Path) -> dict:
     run_safe = read_text(ROOT / "scripts" / "run_server_safe.sh")
     post_start = read_text(ROOT / "scripts" / "restart-post-start-health.sh")
     subfief_patcher = read_text(ROOT / "scripts" / "patch-subfief-cap-binary.py")
+    ue4ss_building_mod = read_text(ROOT / "tools" / "ue4ss-mods" / "BuildingPieceCap" / "Scripts" / "main.lua")
+    ue4ss_building_compose = read_text(ROOT / "compose.ue4ss-building-piece-limit-lab.yaml")
 
     extension_configured = (
         first_int(values, "m_MaxNumLandclaimSegments") is not None
@@ -110,6 +112,37 @@ def build_report(config: Path) -> dict:
                 "enabledBy": "DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED=true and DUNE_SUBFIEF_CAP_BINARY_TARGET=all",
                 "ready": all(needle in subfief_patcher for needle in ("building-server", "building-map"))
                 and "The live-patched binary has all five branch sites NOPed" in runtime_surface,
+            },
+            "ue4ssBuildingPieceCap": {
+                "status": "lab-ready",
+                "confidence": "moderate",
+                "evidence": [
+                    "tools/ue4ss-mods/BuildingPieceCap/Scripts/main.lua",
+                    "compose.ue4ss-building-piece-limit-lab.yaml",
+                    "DUNE_PROBE_LOADER_LUA_MOD_ROOT=/workspace/tools/ue4ss-mods",
+                    "DUNE_BUILDING_PIECE_LIMIT_UE4SS_APPLY=false by default",
+                ],
+                "enabledBy": (
+                    "compose.ue4ss-building-piece-limit-lab.yaml plus "
+                    "DUNE_BUILDING_PIECE_LIMIT_UE4SS_APPLY=true only after dry-run evidence"
+                ),
+                "nextStep": (
+                    "run the overlay on kspld0 survival, inspect "
+                    "BuildingPieceCap observed/patched summary, then enable raw-set apply"
+                ),
+                "ready": all(
+                    needle in ue4ss_building_mod
+                    for needle in (
+                        "DT_BuildableStructureCategoryData",
+                        "m_MaximumNumberOfBuildables",
+                        "DUNE_BUILDING_PIECE_LIMIT_UE4SS_APPLY",
+                        "RegisterModInitCallback",
+                    )
+                )
+                and "DUNE_PROBE_LOADER_LUA_MOD_ROOT" in run_safe
+                and "DUNE_PROBE_LOADER_LUA_REFLECTION_RAW_SET_ENABLED" in run_safe
+                and "DUNE_BUILDING_PIECE_LIMIT_UE4SS_APPLY" in run_safe
+                and "DUNE_PROBE_LOADER_LUA_MOD_ROOT: /workspace/tools/ue4ss-mods" in ue4ss_building_compose,
             },
             "brtDeepDesertBackupRestore": {
                 "status": "partially-buildable",
