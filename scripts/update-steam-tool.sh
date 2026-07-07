@@ -21,6 +21,8 @@ Environment:
   DUNE_STEAM_APP_ID                     Steam app id. Default: 4754530.
   DUNE_STEAM_FORCE_PLATFORM             SteamCMD platform override. Default: linux.
   DUNE_STEAM_LOGIN                      Steam login user. Default: anonymous.
+  DUNE_OWNED_STEAM_LOGIN                Owned-account fallback for app 4754530
+                                        when DUNE_STEAM_LOGIN is anonymous.
   DUNE_STEAM_PASSWORD                   Optional Steam password.
   DUNE_STEAMCMD_COMMAND                 SteamCMD executable. Default: steamcmd.
   DUNE_STEAMCMD_VALIDATE                Add validate to app_update. Default: true.
@@ -195,6 +197,7 @@ esac
 
 required="$(env_or_file DUNE_RESTART_STEAMCMD_REQUIRED)"
 login="$(env_or_file DUNE_STEAM_LOGIN)"
+owned_login="$(env_or_file DUNE_OWNED_STEAM_LOGIN)"
 password="$(env_or_file DUNE_STEAM_PASSWORD)"
 steamcmd_command="$(env_or_file DUNE_STEAMCMD_COMMAND)"
 validate="$(env_or_file DUNE_STEAMCMD_VALIDATE)"
@@ -202,9 +205,14 @@ timeout_seconds="$(env_or_file DUNE_STEAMCMD_TIMEOUT_SECONDS)"
 
 required="${required:-true}"
 login="${login:-anonymous}"
+owned_login="${owned_login:-}"
 steamcmd_command="${steamcmd_command:-steamcmd}"
 validate="${validate:-true}"
 timeout_seconds="${timeout_seconds:-1800}"
+
+if [[ "$app_id" == "4754530" && "$login" == "anonymous" && -n "$owned_login" ]]; then
+  login="$owned_login"
+fi
 
 if ! command -v "$steamcmd_command" >/dev/null 2>&1; then
   if [[ "$steamcmd_command" == "steamcmd" ]] && command -v steamcmd.sh >/dev/null 2>&1; then

@@ -14,6 +14,8 @@ KEYS = (
     "m_MaxNumLandclaimSegments",
     "m_BuildingBlueprintMaxExtensions",
     "m_BaseBackupMaxExtensions",
+    "m_StakingUnitExtensionDefaultTimes",
+    "m_StakingUnitVerticalExtensionDefaultTimes",
     "m_BaseBackupToolMapRestriction",
     "m_BaseBackupToolTimeRestrictionInSeconds",
     "m_bBuildingRestrictionLimitsEnabled",

@@ -412,6 +412,59 @@ class ArtificialExchangeBotTest(unittest.TestCase):
         self.assertEqual(result["selected"][0]["sellerNotification"], {"ok": True, "message": "sent"})
         notify.assert_called_once()
 
+    def test_scan_apply_rejects_unfinalized_native_purchase(self):
+        class FakeConn:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def close(self):
+                pass
+
+        args = types.SimpleNamespace(
+            dry_run=False,
+            exchange_id=2,
+            buyer_controller_id=124,
+            limit=200,
+            settlement_limit=50,
+            auto_claim_after_scan=False,
+            catalog="catalog.json",
+            report_skips=50,
+            ignore_enabled_gate=False,
+            confirm=bot.CONFIRM,
+            include_npc_test_orders=False,
+        )
+        order = self.order(seller_character_name="Seller", seller_fls_id="TEST_FLS_ID", seller_online_status="Online")
+        state = {"spent_global": 0, "spent_by_seller": {}, "spent_by_template": {}, "claimed_settlements": []}
+        rejected = {
+            "ok": False,
+            "item_id": 0,
+            "order_slots_used": 4113,
+            "postcondition": {"activeOrderExists": True, "fulfilledRows": 0},
+            "reason": "native fulfill did not finalize order",
+        }
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_ENABLED"] = "true"
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_PURCHASES_ENABLED"] = "true"
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_MEDIUM_BUY_PROBABILITY"] = "1"
+        with mock.patch.object(bot, "load_catalog", return_value={"ItemA": self.catalog_row(max_buy_price=100)}), \
+            mock.patch.object(bot, "load_state", return_value=state), \
+            mock.patch.object(bot, "connect_db", return_value=FakeConn()), \
+            mock.patch.object(bot, "inspect_settlement", return_value=[]), \
+            mock.patch.object(bot, "fetch_orders", return_value=[order]), \
+            mock.patch.object(bot, "revision_matches", return_value=True), \
+            mock.patch.object(bot, "execute_purchase", return_value=rejected), \
+            mock.patch.object(bot, "notify_purchase_seller") as notify, \
+            mock.patch.object(bot, "save_json"), \
+            mock.patch.object(bot.random, "random", return_value=0):
+            result = bot.scan_once(args)
+
+        self.assertEqual(result["selected"], [])
+        self.assertEqual(result["skipped"][0]["reason"], "native fulfill did not finalize order")
+        self.assertEqual(state["spent_global"], 0)
+        notify.assert_not_called()
+
     def test_populator_catalog_filter_requires_enabled_baseline_and_validated(self):
         catalog_rows = {
             "enabled": self.catalog_row("enabled"),

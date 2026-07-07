@@ -113,20 +113,23 @@ competing SteamCMD process against the same library.
 
 For headless hosts without a running Steam client, auto mode falls back to
 SteamCMD. It runs app `4754530`, the Dune: Awakening Self-Hosted Server tool,
-with `+login anonymous`, `validate`, and `+@sSteamCmdForcePlatformType linux`
-by default. On a production headless host, prefer a SteamCMD-owned directory
-such as `/home/keith/dune-steamcmd-server` over a nested Steam desktop client
-library path. If the Steam tool requires an owned Steam account instead of
-anonymous access, set `DUNE_STEAM_LOGIN` and `DUNE_STEAM_PASSWORD` in `.env`. If
-`steamcmd` is not installed on the host, the restart hook can run SteamCMD
-through `DUNE_RESTART_STEAMCMD_HELPER_IMAGE`. The default helper image is
-`cm2network/steamcmd:root`; pre-pull it before relying on unattended maintenance
-if you do not want the maintenance window to depend on a Docker Hub pull.
+with `validate` and `+@sSteamCmdForcePlatformType linux`. Anonymous access is
+not reliable for production hotfixes; set `DUNE_OWNED_STEAM_LOGIN` or
+`DUNE_STEAM_LOGIN` to an account that owns the tool, and set
+`DUNE_STEAMCMD_HOME` to a persistent SteamCMD cache such as
+`/home/keith/.steamcmd-dune`. If unattended login cannot use cached Steam Guard
+state, set `DUNE_STEAM_PASSWORD` in the protected host `.env`. On a production
+headless host, prefer a SteamCMD-owned directory such as
+`/home/keith/dune-steamcmd-server` over a nested Steam desktop client library
+path. If `steamcmd` is not installed on the host, the restart hook can run
+SteamCMD through `DUNE_RESTART_STEAMCMD_HELPER_IMAGE`. The default helper image
+is `cm2network/steamcmd:root`; pre-pull it before relying on unattended
+maintenance if you do not want the maintenance window to depend on a Docker Hub
+pull.
 
-When `DUNE_RESTART_STEAMCMD_REQUIRED=false`, missing SteamCMD logs a warning and
-the flow continues with the package already present on disk. Set
-`DUNE_RESTART_STEAMCMD_REQUIRED=true` if you prefer maintenance to leave services
-stopped rather than start from an unrefreshed Steam package.
+Keep `DUNE_RESTART_STEAMCMD_REQUIRED=true` on live. When it is false, missing or
+failed SteamCMD logs a warning and the flow may continue with the package
+already present on disk, which can start stale images after a Funcom hotfix.
 
 After SteamCMD returns, the update phase runs:
 
@@ -292,7 +295,7 @@ Rollback after an image-tag upgrade means restoring the old `DUNE_IMAGE_TAG` and
 
 ## Building And Subfief Cap Patch Rollback
 
-The `7500` building-piece experiment is applied during game-server startup. The
+The `10000` building-piece experiment is applied during game-server startup. The
 pak patch updates the cooked `BuildingPiece` data-table row inside the recreated
 container overlay; it does not edit the official image or host save data
 directly. The binary patcher can also bypass the Ghidra-confirmed subfief/totem
@@ -305,7 +308,7 @@ be included, and the cap patches are enabled by feature flags:
 ```env
 POSTGRES_REMOTE_REPLICA_HOST=kspls0
 DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED=true
-DUNE_BUILDING_PIECE_LIMIT=7500
+DUNE_BUILDING_PIECE_LIMIT=10000
 DUNE_SUBFIEF_CAP_BINARY_PATCH_ENABLED=true
 DUNE_SUBFIEF_CAP_BINARY_TARGET=all
 DUNE_SUBFIEF_CAP=6

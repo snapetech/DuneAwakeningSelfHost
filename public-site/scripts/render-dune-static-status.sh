@@ -30,6 +30,53 @@ tmp_status="$(mktemp)"
 tmp_index="$(mktemp)"
 trap 'rm -f "$tmp_status" "$tmp_index"' EXIT
 
+install_output_file() {
+  local src="$1"
+  local dst="$2"
+  if [[ -w "$(dirname "$dst")" ]]; then
+    install -m 0644 "$src" "$dst"
+  else
+    sudo install -m 0644 "$src" "$dst"
+  fi
+}
+
+ensure_static_dir() {
+  if [[ -d "$STATIC_DIR" ]]; then
+    return 0
+  fi
+  if [[ -w "$(dirname "$STATIC_DIR")" ]]; then
+    install -d -m 0755 "$STATIC_DIR"
+  else
+    sudo install -d -m 0755 "$STATIC_DIR"
+  fi
+}
+
+seed_static_asset_if_empty() {
+  local name="$1"
+  local src="$DUNE_ROOT/public-site/static/$name"
+  local dst="$STATIC_DIR/$name"
+  [[ -s "$src" && ! -s "$dst" ]] || return 0
+  install_output_file "$src" "$dst"
+}
+
+seed_static_assets() {
+  ensure_static_dir
+  seed_static_asset_if_empty style.css
+  seed_static_asset_if_empty app.js
+  seed_static_asset_if_empty hagga-pois.json
+  seed_static_asset_if_empty hagga-basin.webp
+}
+
+require_browser_assets() {
+  local name
+  for name in style.css app.js; do
+    if [[ ! -s "$STATIC_DIR/$name" ]]; then
+      echo "missing or empty required public site browser asset: $STATIC_DIR/$name" >&2
+      exit 1
+    fi
+  done
+}
+
 asset_version() {
   local file="$1"
   if command -v sha256sum >/dev/null 2>&1; then
@@ -60,6 +107,9 @@ stamp_static_asset_versions() {
   fi
   rm -f "$tmp_versioned"
 }
+
+seed_static_assets
+require_browser_assets
 
 if [[ -f "$SOURCE_INDEX_FILE" ]]; then
   if [[ -w "$(dirname "$INDEX_FILE")" ]]; then

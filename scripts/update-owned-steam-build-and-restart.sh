@@ -13,6 +13,11 @@ Options:
   --login USER       Steam account name to use. Default: DUNE_OWNED_STEAM_LOGIN
                      or ksnape when DUNE_STEAM_LOGIN is anonymous.
   --no-restart      Stop after updating/loading images and writing .env.
+  --restart-only-on-update
+                    Do not restart when the Steam package already matches the
+                    loaded Docker images.
+  --non-interactive Run SteamCMD without a TTY. Requires cached credentials or
+                    DUNE_STEAM_PASSWORD.
   --check-only      Validate host/env/script resolution and exit before SteamCMD.
   --yes             Do not ask for the final restart confirmation.
   -h, --help        Show this help.
@@ -30,6 +35,8 @@ die() {
 env_file=".env"
 steam_login="${DUNE_OWNED_STEAM_LOGIN:-}"
 restart=true
+restart_only_on_update=false
+non_interactive=false
 assume_yes=false
 check_only=false
 
@@ -45,6 +52,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-restart)
       restart=false
+      shift
+      ;;
+    --restart-only-on-update)
+      restart_only_on_update=true
+      shift
+      ;;
+    --non-interactive)
+      non_interactive=true
       shift
       ;;
     --check-only)
@@ -73,7 +88,7 @@ cd "$repo_root"
 
 [[ -f "$env_file" ]] || die "env file not found: $env_file"
 [[ "$(hostname)" == "kspls0" ]] || die "must run on kspls0; current host is $(hostname)"
-if [[ "$check_only" != "true" ]]; then
+if [[ "$check_only" != "true" && "$non_interactive" != "true" ]]; then
   [[ -t 0 && -t 1 ]] || die "interactive Steam login requires a TTY; run with ssh -t kspls0"
 fi
 
@@ -139,10 +154,11 @@ if [[ "$check_only" == "true" ]]; then
 fi
 
 uid_gid="$(id -u):$(id -g)"
+steam_password="${DUNE_STEAM_PASSWORD:-$(env_value DUNE_STEAM_PASSWORD)}"
 login_args=(+login "$steam_login")
-if [[ -n "${DUNE_STEAM_PASSWORD:-}" ]]; then
-  login_args=(+login "$steam_login" "$DUNE_STEAM_PASSWORD")
-  printf 'using DUNE_STEAM_PASSWORD from process environment\n'
+if [[ -n "$steam_password" ]]; then
+  login_args=(+login "$steam_login" "$steam_password")
+  printf 'using DUNE_STEAM_PASSWORD\n'
 fi
 
 cat <<EOF
@@ -167,13 +183,17 @@ has_dependency() {
 
 run_steamcmd_update() {
   local update_args=()
+  local docker_flags=(--rm)
   local dep
+  if [[ "$non_interactive" != "true" ]]; then
+    docker_flags+=(-it)
+  fi
   for dep in "${dependencies[@]}"; do
     update_args+=(+app_update "$dep" validate)
   done
   update_args+=(+app_update "$app_id" validate)
 
-  docker run --rm -it \
+  docker run "${docker_flags[@]}" \
     --network host \
     --user "$uid_gid" \
     -v "$steamcmd_home:$steamcmd_home" \
@@ -242,18 +262,24 @@ set +e
 check_rc="${PIPESTATUS[0]}"
 set -e
 
+updated=false
 case "$check_rc" in
   0)
     printf 'package tag already matches DUNE_IMAGE_TAG\n'
     ;;
   1)
-    if ! grep -q 'status: update available' "$check_file"; then
-      die "check-steam-update exited 1 without update-available status"
+    if grep -q 'status: update available' "$check_file"; then
+      printf '\nloading Funcom Docker images from Steam package\n'
+      ./scripts/load-images.sh "$env_file"
+      printf '\nwriting DUNE_IMAGE_TAG to %s\n' "$env_file"
+      ./scripts/check-steam-update.sh "$env_file" --write-env
+    elif grep -q 'status: same tag but Steam build changed' "$check_file"; then
+      printf '\nreloading Funcom Docker images for changed Steam build under existing tag\n'
+      ./scripts/load-images.sh "$env_file"
+    else
+      die "check-steam-update exited 1 without an update/reload status"
     fi
-    printf '\nloading Funcom Docker images from Steam package\n'
-    ./scripts/load-images.sh "$env_file"
-    printf '\nwriting DUNE_IMAGE_TAG to %s\n' "$env_file"
-    ./scripts/check-steam-update.sh "$env_file" --write-env
+    updated=true
     ;;
   *)
     die "Steam package is still incomplete or unreadable; not loading images or restarting"
@@ -262,6 +288,11 @@ esac
 
 printf '\nverifying final Steam/package state\n'
 ./scripts/check-steam-update.sh "$env_file"
+
+if [[ "$restart_only_on_update" == "true" && "$updated" != "true" ]]; then
+  printf '\nSteam package already current; restart skipped by --restart-only-on-update\n'
+  exit 0
+fi
 
 printf '\nensuring active database branch for current image\n'
 ./scripts/apply-official-db-patches.sh "$env_file"

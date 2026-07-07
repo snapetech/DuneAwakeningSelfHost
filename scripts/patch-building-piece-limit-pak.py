@@ -237,7 +237,7 @@ def main():
     parser = argparse.ArgumentParser(description="Patch Dune's cooked BuildingPiece buildable limit in pakchunk0.")
     parser.add_argument("--pak", type=Path, default=DEFAULT_PAK)
     parser.add_argument("--oodle", type=Path, default=Path(os.environ.get("DUNE_OODLE_LIBRARY", DEFAULT_OODLE)))
-    parser.add_argument("--limit", type=int, default=int(os.environ.get("DUNE_BUILDING_PIECE_LIMIT", "7500")))
+    parser.add_argument("--limit", type=int, default=int(os.environ.get("DUNE_BUILDING_PIECE_LIMIT", "10000")))
     parser.add_argument("--old-limit", type=int, default=DEFAULT_OLD_LIMIT)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--quiet-oodle", action="store_true", default=True)

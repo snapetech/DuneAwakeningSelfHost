@@ -254,7 +254,9 @@ run_steam_update_check() {
           -e "DUNE_STEAM_APP_ID=$(env_file_value DUNE_STEAM_APP_ID "$env_file")" \
           -e "DUNE_STEAM_FORCE_PLATFORM=$(env_file_value DUNE_STEAM_FORCE_PLATFORM "$env_file")" \
           -e "DUNE_STEAM_LOGIN=$(env_file_value DUNE_STEAM_LOGIN "$env_file")" \
+          -e "DUNE_OWNED_STEAM_LOGIN=$(env_file_value DUNE_OWNED_STEAM_LOGIN "$env_file")" \
           -e "DUNE_STEAM_PASSWORD=$(env_file_value DUNE_STEAM_PASSWORD "$env_file")" \
+          -e "DUNE_STEAMCMD_HOME=$(env_file_value DUNE_STEAMCMD_HOME "$env_file")" \
           -e "DUNE_STEAMCMD_COMMAND=$(env_file_value DUNE_STEAMCMD_COMMAND "$env_file")" \
           -e "DUNE_STEAMCMD_VALIDATE=$(env_file_value DUNE_STEAMCMD_VALIDATE "$env_file")" \
           -e "DUNE_STEAMCMD_TIMEOUT_SECONDS=$(env_file_value DUNE_STEAMCMD_TIMEOUT_SECONDS "$env_file")" \
@@ -805,7 +807,9 @@ def run_host_update_check():
         "DUNE_RESTART_STEAMCMD_REQUIRED",
         "DUNE_STEAM_APP_ID",
         "DUNE_STEAM_LOGIN",
+        "DUNE_OWNED_STEAM_LOGIN",
         "DUNE_STEAM_PASSWORD",
+        "DUNE_STEAMCMD_HOME",
         "DUNE_STEAMCMD_COMMAND",
         "DUNE_STEAMCMD_VALIDATE",
         "DUNE_STEAMCMD_TIMEOUT_SECONDS",
@@ -819,6 +823,7 @@ def run_host_update_check():
             steamcmd_env.extend(["-e", f"{key}={value}"])
     steamcmd_container = ""
     if steam_dir and os.path.isabs(steam_dir) and steamcmd_helper_image:
+        steamcmd_home = os.environ.get("DUNE_STEAMCMD_HOME") or read_env_value(env_file, "DUNE_STEAMCMD_HOME") or os.path.expanduser("~/.steamcmd-dune")
         steam_mount = steam_dir
         if os.path.basename(os.path.dirname(steam_dir)) == "common" and os.path.basename(os.path.dirname(os.path.dirname(steam_dir))) == "steamapps":
             steam_mount = os.path.dirname(os.path.dirname(os.path.dirname(steam_dir)))
@@ -828,8 +833,9 @@ def run_host_update_check():
             "-v", f"{host_workspace}:{host_workspace}",
             "-v", f"{host_workspace}:/workspace",
             "-v", f"{steam_mount}:{steam_mount}",
+            "-v", f"{steamcmd_home}:{steamcmd_home}",
             "-w", host_workspace,
-            "-e", "HOME=/tmp",
+            "-e", f"HOME={steamcmd_home}",
         ]
         docker_run.extend(steamcmd_env)
         docker_run.extend([

@@ -1416,7 +1416,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn("deep-desert-pvp", panel.GAME_MAP_SERVICES)
         self.assertIn("deep-desert-pvp", panel.RESTART_TARGETS["all"]["services"])
 
-    def test_restart_start_runs_after_update_check_failure(self):
+    def test_restart_fails_closed_after_update_check_failure(self):
         command = self.workspace / "scripts" / "restart-target.sh"
         command.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         command.chmod(0o755)
@@ -1455,9 +1455,9 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
             "backup": False,
         })
 
-        self.assertTrue(result["ok"])
-        self.assertEqual(phases, ["stop", "update", "start"])
-        self.assertIn("Steam package update check failed", result["warning"])
+        self.assertFalse(result["ok"])
+        self.assertEqual(phases, ["stop", "update"])
+        self.assertEqual(result["error"], "Steam package update check failed")
         self.assertIn("missing helper image", result["output"])
 
     def test_restart_start_runs_after_maintenance_backup_failure(self):

@@ -1,0 +1,12 @@
+[Unit]
+Description=Dune owned Steam hotfix auto-update and restart
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/DuneAwakeningSelfHost
+EnvironmentFile=/opt/DuneAwakeningSelfHost/.env
+ExecStart=/opt/DuneAwakeningSelfHost/scripts/hotfix-auto-update-and-restart.sh /opt/DuneAwakeningSelfHost/.env
+TimeoutStartSec=45min

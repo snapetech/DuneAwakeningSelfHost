@@ -2128,6 +2128,30 @@ def fulfill_signature(conn):
         return [row["args"] for row in cur.fetchall()]
 
 
+def purchase_postcondition(conn, order_id):
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            select exists(
+                select 1
+                from dune.dune_exchange_orders
+                where id=%s
+            ) as active_order_exists,
+            (
+                select count(*)
+                from dune.dune_exchange_fulfilled_orders
+                where order_id=%s or original_order_id=%s
+            ) as fulfilled_rows
+            """,
+            (order_id, order_id, order_id),
+        )
+        row = cur.fetchone() or {}
+    return {
+        "activeOrderExists": bool(row.get("active_order_exists")),
+        "fulfilledRows": int(row.get("fulfilled_rows") or 0),
+    }
+
+
 def execute_purchase(conn, order, buyer_controller_id):
     log_event(
         "purchase-attempt",
@@ -2173,8 +2197,19 @@ def execute_purchase(conn, order, buyer_controller_id):
             ),
         )
         result = cur.fetchone()
-    log_event("purchase-result", orderId=order["id"], result=dict(result) if result else None)
+    result = dict(result) if result else {}
+    postcondition = purchase_postcondition(conn, order["id"])
+    result["postcondition"] = postcondition
+    result["ok"] = postcondition["fulfilledRows"] > 0 and not postcondition["activeOrderExists"]
+    if not result["ok"]:
+        result["reason"] = "native fulfill did not finalize order"
+        log_event("purchase-postcondition-failed", orderId=order["id"], result=result)
+    log_event("purchase-result", orderId=order["id"], result=result)
     return result
+
+
+def purchase_result_ok(result):
+    return bool(result and result.get("ok"))
 
 
 def purchase_notice_stack_size(order):
@@ -2614,8 +2649,13 @@ def scan_once(args):
                 if args.confirm != CONFIRM:
                     raise RuntimeError(f"confirmation phrase required: {CONFIRM}")
                 result = execute_purchase(conn, order, args.buyer_controller_id)
+                if not purchase_result_ok(result):
+                    reason = (result or {}).get("reason") or "purchase failed"
+                    skipped.append({"orderId": order["id"], "templateId": order["template_id"], "reason": reason, "result": result})
+                    audit({"event": "purchase-rejected", "orderId": order["id"], "templateId": order["template_id"], "sellerId": order["owner_id"], "price": order["item_price"], "reason": reason, "result": result})
+                    continue
                 decision["dryRun"] = False
-                decision["result"] = dict(result) if result else None
+                decision["result"] = result
                 record_spend(state, order)
                 if result:
                     try:

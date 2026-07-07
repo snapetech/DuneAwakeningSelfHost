@@ -26,6 +26,7 @@ GAME_UDP_PORT_RANGE="${GAME_UDP_PORT_RANGE:-7777:7810}"
 IGW_UDP_PORT_RANGE="${IGW_UDP_PORT_RANGE:-7888:7918}"
 KNOCK_DUNE_TCP_COMMENT="knock-scanner dune tcp auto-block"
 DOCKER_PUBLIC_UDP_HAIRPIN_COMMENT="dune docker public udp hairpin"
+DOCKER_PUBLIC_UDP_HAIRPIN_ENABLED="${DUNE_DOCKER_PUBLIC_UDP_HAIRPIN_ENABLED:-false}"
 
 port_in_range() {
     local port="$1" range="$2" start end
@@ -45,6 +46,7 @@ if [[ "$(id -u)" -ne 0 ]]; then
             GAME_RMQ_PUBLIC_PORT="$GAME_RMQ_PUBLIC_PORT" \
             GAME_UDP_PORT_RANGE="$GAME_UDP_PORT_RANGE" \
             IGW_UDP_PORT_RANGE="$IGW_UDP_PORT_RANGE" \
+            DUNE_DOCKER_PUBLIC_UDP_HAIRPIN_ENABLED="$DOCKER_PUBLIC_UDP_HAIRPIN_ENABLED" \
             "$0" "$env_file"
     fi
     echo "root privileges required for ip, sysctl, and iptables changes" >&2
@@ -108,13 +110,11 @@ if [ -n "$bridge_if" ] && command -v nft >/dev/null 2>&1 \
 fi
 
 # Docker's published-port DNAT intentionally excludes packets arriving from the
-# same Docker bridge (`! -i br-...`). That is correct for normal container
-# routing, but it breaks Dune farm rows that advertise the public /32 for IGW:
-# sibling containers send to PUBLIC_IP:IGWPort, the host owns that /32 locally,
-# and the packet dies on host INPUT instead of reaching the target map
-# container. Add exact bridge-source DNAT rules for published Dune UDP ports so
-# public game/IGW addresses are reachable both externally and from the farm.
-if [ -n "$bridge_if" ] && command -v docker >/dev/null 2>&1; then
+# same Docker bridge (`! -i br-...`). Do not enable bridge-to-public UDP hairpin
+# by default: Dune S2S should use private IGW addresses, and public-IP hairpin
+# can create duplicate S2S paths that destabilize Deep Desert farm membership.
+if [ -n "$bridge_if" ] && command -v docker >/dev/null 2>&1 \
+    && [[ "$DOCKER_PUBLIC_UDP_HAIRPIN_ENABLED" =~ ^([Tt][Rr][Uu][Ee]|1|[Yy][Ee][Ss]|[Oo][Nn])$ ]]; then
     while read -r container_id; do
         [ -n "$container_id" ] || continue
         container_ip="$(docker inspect --format "{{range .NetworkSettings.Networks}}{{if eq .NetworkID \"$network_id\"}}{{.IPAddress}}{{end}}{{end}}" "$container_id" 2>/dev/null || true)"

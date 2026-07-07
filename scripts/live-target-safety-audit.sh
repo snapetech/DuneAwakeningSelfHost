@@ -429,7 +429,7 @@ for service in "${probe_services[@]}"; do
       python3 /workspace/scripts/patch-building-piece-limit-pak.py \
         --pak /home/dune/server/DuneSandbox/Content/Paks/pakchunk0-LinuxServer.pak \
         --oodle "$oodle" \
-        --limit "${DUNE_BUILDING_PIECE_LIMIT:-7500}" \
+        --limit "${DUNE_BUILDING_PIECE_LIMIT:-10000}" \
         --dry-run
     ' >"$building_out" 2>&1; then
     if grep -q 'already-patched' "$building_out"; then

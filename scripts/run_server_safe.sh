@@ -668,7 +668,7 @@ sync_default_game_from_usergame() {
   [ -f "$user_game_config" ] || return 0
   [ -f "$default_game_ini" ] || return 0
 
-  local keys="${DUNE_DEFAULTGAME_SYNC_KEYS:-m_Maps m_BaseBackupToolMapRestriction m_BaseBackupToolTimeRestrictionInSeconds m_BaseBackupMaxExtensions m_bBuildingRestrictionLimitsEnabled m_MaxLandclaimSegmentsPerMap m_MaxNumLandclaimSegments m_bCoriolisAutoSpawnEnabled m_CoriolisSpawnWarningsDurationInHours m_CoriolisStage1DurationInSeconds m_CoriolisStage2DurationInSeconds m_CoriolisStage3DurationSeconds m_CoriolisStage4DurationSeconds m_CoriolisStage5DurationSeconds m_CoriolisSandstormSpawnPreventionSeconds m_bCoriolisDoesDamage m_bCoriolisTriggerShiftingSands m_CoriolisLightDamage m_CoriolisHeavyDamage m_CycleDurationInDays m_ForcedCoriolisWorldSeed m_bShouldRestartServerOnCycleEnd m_bIsDbWipeEnabled}"
+  local keys="${DUNE_DEFAULTGAME_SYNC_KEYS:-m_Maps m_BaseBackupToolMapRestriction m_BaseBackupToolTimeRestrictionInSeconds m_BaseBackupMaxExtensions m_bBuildingRestrictionLimitsEnabled m_MaxLandclaimSegmentsPerMap m_MaxNumLandclaimSegments m_StakingUnitExtensionDefaultTimes m_StakingUnitVerticalExtensionDefaultTimes m_bCoriolisAutoSpawnEnabled m_CoriolisSpawnWarningsDurationInHours m_CoriolisStage1DurationInSeconds m_CoriolisStage2DurationInSeconds m_CoriolisStage3DurationSeconds m_CoriolisStage4DurationSeconds m_CoriolisStage5DurationSeconds m_CoriolisSandstormSpawnPreventionSeconds m_bCoriolisDoesDamage m_bCoriolisTriggerShiftingSands m_CoriolisLightDamage m_CoriolisHeavyDamage m_CycleDurationInDays m_ForcedCoriolisWorldSeed m_bShouldRestartServerOnCycleEnd m_bIsDbWipeEnabled}"
   local key value
   for key in $keys; do
     value="$(extract_ini_assignment "$user_game_config" "$key")"
@@ -871,7 +871,7 @@ install_building_piece_limit_patch() {
   local dry_run="$2"
   [ "${DUNE_BUILDING_PIECE_LIMIT_PATCH_ENABLED:-false}" = "true" ] || return 0
 
-  local limit="${DUNE_BUILDING_PIECE_LIMIT:-7500}"
+  local limit="${DUNE_BUILDING_PIECE_LIMIT:-10000}"
   local pak
   pak="$(resolve_server_pak "$server_root" "${DUNE_BUILDING_PIECE_LIMIT_PAK:-}")"
   local oodle

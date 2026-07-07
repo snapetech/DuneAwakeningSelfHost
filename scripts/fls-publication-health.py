@@ -247,6 +247,15 @@ def line_sample(lines, needles, limit=3):
     return samples[-limit:]
 
 
+def has_positive_jsonish_field(lines, field_name):
+    pattern = re.compile(rf'"{re.escape(field_name)}"\s*:\s*([0-9]+)')
+    for line in lines:
+        match = pattern.search(line)
+        if match and int(match.group(1)) > 0:
+            return True
+    return False
+
+
 def evaluate(env_file, compose_files, since):
     LOG_SOURCE_NOTES.clear()
     base = compose_cmd(env_file, compose_files)
@@ -271,6 +280,19 @@ def evaluate(env_file, compose_files, since):
     population_idx = last_index(director_lines, '("api/Battlegroups_DeclarePopulationAndActivity") Request successful')
     capacity_idx = last_index(director_lines, '("api/Battlegroups_DeclareMaxPlayerCapacities") Request successful')
     update_idx = last_index(director_lines, '("api/Battlegroups_DeclareBattlegroupUpdates") Request successful')
+    population_capacity_seen = has_positive_jsonish_field(director_lines, "BattlegroupMaxPlayerCapacity")
+    update_capacity_seen = has_positive_jsonish_field(director_lines, "MaxPlayerCapacity")
+    capacity_seen = capacity_idx >= 0 or population_capacity_seen or update_capacity_seen
+    if capacity_idx >= 0:
+        capacity_value = "dedicated-api"
+    elif population_capacity_seen and update_capacity_seen:
+        capacity_value = "population-and-update-payloads"
+    elif population_capacity_seen:
+        capacity_value = "population-payload"
+    elif update_capacity_seen:
+        capacity_value = "update-payload"
+    else:
+        capacity_value = "missing"
     gateway_decl_idx_full = last_index(gateway_full_lines, "Request: api/GatewayDeclareFarmStatus")
     gateway_monitor_idx_full = last_index(gateway_full_lines, "Monitoring for servers going up or down")
     gateway_map_idx_full = last_index(gateway_full_lines, "Server ")
@@ -292,7 +314,7 @@ def evaluate(env_file, compose_files, since):
         {"name": "director initialized with FLS or has active heartbeat", "ok": initialize_idx >= 0 or heartbeat_idx >= 0, "value": "seen" if initialize_idx >= 0 else "heartbeat-only"},
         {"name": "director heartbeat accepted by FLS", "ok": heartbeat_idx >= 0, "value": "seen" if heartbeat_idx >= 0 else "missing"},
         {"name": "director population accepted by FLS", "ok": population_idx >= 0, "value": "seen" if population_idx >= 0 else "missing"},
-        {"name": "director capacity accepted by FLS", "ok": capacity_idx >= 0, "value": "seen" if capacity_idx >= 0 else "missing"},
+        {"name": "director capacity accepted by FLS", "ok": capacity_seen, "value": capacity_value},
         {"name": "director battlegroup update or population accepted by FLS", "ok": update_idx >= 0 or population_idx >= 0, "value": "seen" if update_idx >= 0 else "population-only"},
         {"name": "no director FLS errors after latest population success", "ok": not director_bad_after_population, "value": "; ".join(director_bad_after_population) if director_bad_after_population else "clean"},
         {"name": "gateway farm status declared", "ok": gateway_decl_idx_full >= 0 and gateway_monitor_idx_full > gateway_decl_idx_full, "value": "seen" if gateway_decl_idx_full >= 0 else "missing"},

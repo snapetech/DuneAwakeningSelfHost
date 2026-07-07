@@ -14,14 +14,18 @@ tmp_headers="$(mktemp)"
 tmp_index="$(mktemp)"
 tmp_status="$(mktemp)"
 tmp_players="$(mktemp)"
+tmp_style="$(mktemp)"
+tmp_app="$(mktemp)"
 tmp_index_status="$(mktemp)"
 tmp_expected_status="$(mktemp)"
-trap 'rm -f "$tmp_headers" "$tmp_index" "$tmp_status" "$tmp_players" "$tmp_index_status" "$tmp_expected_status"' EXIT
+trap 'rm -f "$tmp_headers" "$tmp_index" "$tmp_status" "$tmp_players" "$tmp_style" "$tmp_app" "$tmp_index_status" "$tmp_expected_status"' EXIT
 
 curl -fsSL --max-time 15 "$base_url/?v=$(date +%s)" -o "$tmp_index"
 curl -fsSIL --max-time 15 "$base_url/" -o "$tmp_headers"
 curl -fsSL --max-time 15 "$base_url/status.html?v=$(date +%s)" -o "$tmp_status"
 curl -fsSL --max-time 15 "$base_url/players.json?v=$(date +%s)" -o "$tmp_players"
+curl -fsSL --max-time 15 "$base_url/style.css?v=$(date +%s)" -o "$tmp_style"
+curl -fsSL --max-time 15 "$base_url/app.js?v=$(date +%s)" -o "$tmp_app"
 
 if ! grep -Eiq '^cache-control:.*no-store' "$tmp_headers"; then
   echo "missing no-store Cache-Control on $base_url/" >&2
@@ -33,6 +37,14 @@ if grep -Eiq '^age: [1-9]' "$tmp_headers"; then
 fi
 if ! grep -q 'World health' "$tmp_status"; then
   echo "status.html does not contain status block" >&2
+  exit 1
+fi
+if [[ ! -s "$tmp_style" ]]; then
+  echo "style.css is empty on $base_url" >&2
+  exit 1
+fi
+if [[ ! -s "$tmp_app" ]]; then
+  echo "app.js is empty on $base_url" >&2
   exit 1
 fi
 

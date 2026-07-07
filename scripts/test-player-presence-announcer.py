@@ -107,6 +107,41 @@ class PrivateMessageRoutingTests(unittest.TestCase):
         self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_CLEANUP_TARGET_BINDINGS"], "true")
         self.assertEqual(captured["env"]["DUNE_ANNOUNCE_WRAP_DASHBOARD_MESSAGES"], "false")
 
+    def test_private_message_dedupes_same_target_job_and_message(self):
+        calls = []
+
+        def fake_run(command, **kwargs):
+            calls.append({"command": command, "env": kwargs["env"]})
+
+            class Result:
+                returncode = 0
+                stdout = "{}"
+                stderr = ""
+
+            return Result()
+
+        player = {
+            "name": "AdminUser",
+            "flsId": "TEST_FLS_ID",
+        }
+        file_env = {
+            "DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_COMMAND": "/bin/echo",
+            "DUNE_PLAYER_PRESENCE_PRIVATE_DEDUPE_ENABLED": "true",
+            "DUNE_PLAYER_PRESENCE_PRIVATE_DEDUPE_SECONDS": "3600",
+        }
+
+        with tempfile.TemporaryDirectory() as tmp, \
+             unittest.mock.patch.object(player_presence_announcer, "FILE_ENV", file_env), \
+             unittest.mock.patch.object(player_presence_announcer, "DELIVERY_FILE", pathlib.Path(tmp) / "deliveries.json"), \
+             unittest.mock.patch.object(player_presence_announcer.subprocess, "run", fake_run):
+            first = player_presence_announcer.private_message(player, "same message", "same-job")
+            second = player_presence_announcer.private_message(player, "same message", "same-job")
+
+        self.assertTrue(first["ok"])
+        self.assertTrue(second["ok"])
+        self.assertTrue(second["deduped"])
+        self.assertEqual(len(calls), 1)
+
 
 class PublicAnnouncementRoutingTests(unittest.TestCase):
     def test_public_presence_announcement_defaults_to_single_routing_key(self):

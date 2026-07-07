@@ -17,6 +17,7 @@ from dune_whisper_route import whisper_route_for_fls_id
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 STATE_DIR = ROOT / "backups" / "admin-bot"
 STATE_FILE = STATE_DIR / "player-presence.json"
+DELIVERY_FILE = STATE_DIR / "player-presence-delivery.json"
 STARTER_BASE_TOOL_TEMPLATE = "BaseBackupTool"
 STARTER_BASE_TOOL_MESSAGE = "A Base Reconstruction Tool has been added to your inventory. You may need to log out and back in before it appears."
 STARTER_EMOTE_TEMPLATES = (
@@ -161,6 +162,50 @@ def save_state(state):
     tmp = STATE_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     tmp.replace(STATE_FILE)
+
+
+def save_delivery_state(state):
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = DELIVERY_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    tmp.replace(DELIVERY_FILE)
+
+
+def private_delivery_key(player, message, job_id):
+    target = player_fls_id(player) or player_name(player)
+    payload = json.dumps(
+        {"jobId": str(job_id or ""), "target": str(target or ""), "message": str(message or "")},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def mark_private_delivery_attempt(player, message, job_id):
+    if not env_bool("DUNE_PLAYER_PRESENCE_PRIVATE_DEDUPE_ENABLED", True):
+        return None
+    ttl = int(env("DUNE_PLAYER_PRESENCE_PRIVATE_DEDUPE_SECONDS", "3600"))
+    if ttl <= 0:
+        return None
+    now = now_ts()
+    state = load_json_file(DELIVERY_FILE, {"deliveries": {}})
+    deliveries = state.setdefault("deliveries", {})
+    for key, entry in list(deliveries.items()):
+        if now - int(entry.get("ts", 0) or 0) > ttl:
+            deliveries.pop(key, None)
+    key = private_delivery_key(player, message, job_id)
+    previous = deliveries.get(key)
+    if previous and now - int(previous.get("ts", 0) or 0) <= ttl:
+        save_delivery_state(state)
+        return {"duplicate": True, "key": key, "previous": previous}
+    deliveries[key] = {
+        "ts": now,
+        "jobId": str(job_id or ""),
+        "target": player_fls_id(player) or player_name(player),
+        "message": str(message or ""),
+    }
+    save_delivery_state(state)
+    return {"duplicate": False, "key": key}
 
 
 def online_players():
@@ -654,7 +699,7 @@ def completed_journey_players(story_node_id):
     sql = f"""
     select ps.account_id::text, coalesce(nullif(ps.character_name, ''), ps.account_id::text) as character_name
     from dune.journey_story_node jsn
-    join dune.player_state ps on ps.account_id = jsn.account_id
+    join dune.player_state ps on ps.id = jsn.character_id
     where jsn.story_node_id = {sql_literal(story_node_id)}
       and jsn.complete_condition_state = 'true'::jsonb
     order by ps.character_name nulls last, ps.account_id;
@@ -1206,6 +1251,15 @@ def announce(message):
 
 
 def private_message(player, message, job_id="player-presence-private-message"):
+    delivery = mark_private_delivery_attempt(player, message, job_id)
+    if delivery and delivery.get("duplicate"):
+        return {
+            "ok": True,
+            "deduped": True,
+            "jobId": job_id,
+            "target": player_name(player),
+            "dedupeKey": delivery["key"],
+        }
     fls_id = player_fls_id(player)
     name = player_name(player)
     route = whisper_route_for_fls_id(fls_id)
@@ -1637,18 +1691,21 @@ def check_once():
     journey_results = []
     if env_bool("DUNE_PLAYER_PRESENCE_VERMILIUS_GAP_ENABLED", False):
         story_node_id = env("DUNE_PLAYER_PRESENCE_VERMILIUS_GAP_NODE", "DA_SQ_VermiliusGap.Relocate.RelocateOutsideHBS.Drive north to the Vermilius Gap")
-        completed = completed_journey_players(story_node_id)
-        journey_state = state.setdefault("announcedJourneyNodes", {})
-        previous_completed = set(journey_state.get(story_node_id, []))
-        current_completed = set(completed)
-        journey_first_run = story_node_id not in journey_state
-        newly_completed = sorted(current_completed - previous_completed, key=lambda account_id: completed.get(account_id, account_id).lower())
-        if not journey_first_run:
-            template = env("DUNE_PLAYER_PRESENCE_VERMILIUS_GAP_TEMPLATE", "Congrats! {playername} has outrun Shai-Hulud!")
-            for account_id in newly_completed:
-                message = render_journey_template(template, completed.get(account_id, account_id), story_node_id)
-                journey_results.append({"event": "vermilius-gap", "accountId": account_id, "message": message, "announce": public_announce(message, current, "player-presence-vermilius-gap")})
-        journey_state[story_node_id] = sorted(current_completed)
+        try:
+            completed = completed_journey_players(story_node_id)
+            journey_state = state.setdefault("announcedJourneyNodes", {})
+            previous_completed = set(journey_state.get(story_node_id, []))
+            current_completed = set(completed)
+            journey_first_run = story_node_id not in journey_state
+            newly_completed = sorted(current_completed - previous_completed, key=lambda account_id: completed.get(account_id, account_id).lower())
+            if not journey_first_run:
+                template = env("DUNE_PLAYER_PRESENCE_VERMILIUS_GAP_TEMPLATE", "Congrats! {playername} has outrun Shai-Hulud!")
+                for account_id in newly_completed:
+                    message = render_journey_template(template, completed.get(account_id, account_id), story_node_id)
+                    journey_results.append({"event": "vermilius-gap", "accountId": account_id, "message": message, "announce": public_announce(message, current, "player-presence-vermilius-gap")})
+            journey_state[story_node_id] = sorted(current_completed)
+        except Exception as exc:
+            journey_results.append({"event": "vermilius-gap", "ok": False, "error": str(exc)})
 
     restart_private_results = []
     if env_bool("DUNE_PLAYER_PRESENCE_RESTART_PRIVATE_WARNINGS_ENABLED", False):

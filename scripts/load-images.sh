@@ -42,6 +42,11 @@ if [[ -z "$server_dir" && -n "$env_file" ]]; then
   server_dir="$(get_env DUNE_STEAM_SERVER_DIR "$env_file")"
 fi
 server_dir="${server_dir:-$HOME/.local/share/Steam/steamapps/common/Dune Awakening Self-Hosted Server}"
+app_id="${DUNE_STEAM_APP_ID:-}"
+if [[ -z "$app_id" && -n "$env_file" ]]; then
+  app_id="$(get_env DUNE_STEAM_APP_ID "$env_file")"
+fi
+app_id="${app_id:-4754530}"
 
 images=(
   "images/battlegroup/server-rabbitmq.tar"
@@ -61,3 +66,19 @@ for image in "${images[@]}"; do
   fi
   docker load -i "$path"
 done
+
+manifest=""
+if [[ -f "$server_dir/steamapps/appmanifest_${app_id}.acf" ]]; then
+  manifest="$server_dir/steamapps/appmanifest_${app_id}.acf"
+elif [[ "$server_dir" == */steamapps/common/* ]]; then
+  manifest="${server_dir%%/common/*}/appmanifest_${app_id}.acf"
+fi
+
+if [[ -n "$manifest" && -f "$manifest" ]]; then
+  buildid="$(awk '$1 == "\"buildid\"" {gsub(/"/, "", $2); print $2; exit}' "$manifest" 2>/dev/null || true)"
+  if [[ -n "$buildid" ]]; then
+    mkdir -p "$server_dir/images/battlegroup"
+    printf '%s\n' "$buildid" >"$server_dir/images/battlegroup/.loaded_buildid"
+    printf 'recorded loaded Steam buildid: %s\n' "$buildid"
+  fi
+fi

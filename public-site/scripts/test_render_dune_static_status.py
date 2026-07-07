@@ -23,10 +23,14 @@ class StaticStatusRenderTest(unittest.TestCase):
             index_file = static_dir / "index.html"
             restart_state_file = dune_root / "backups" / "admin-panel" / "restart-jobs.json"
             scripts_dir = dune_root / "scripts"
+            source_static = dune_root / "public-site" / "static"
             scripts_dir.mkdir(parents=True)
+            source_static.mkdir(parents=True)
             static_dir.mkdir()
             bin_dir.mkdir()
             restart_state_file.parent.mkdir(parents=True)
+            (source_static / "style.css").write_text("body { color: #fff; }\n", encoding="utf-8")
+            (source_static / "app.js").write_text("window.__dunePublicSiteTest = true;\n", encoding="utf-8")
             restart_state_file.write_text(json.dumps(restart_state), encoding="utf-8")
             index_file.write_text(
                 "<html><body><!-- STATUS_BEGIN --><div id=\"server-status\"></div><!-- STATUS_END --></body></html>",
@@ -76,6 +80,65 @@ class StaticStatusRenderTest(unittest.TestCase):
             }
             subprocess.run([str(SCRIPT)], env=env, check=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             return status_file.read_text(encoding="utf-8")
+
+    def test_empty_browser_assets_are_seeded_before_version_stamp(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            dune_root = root / "dune"
+            static_dir = root / "static"
+            source_static = dune_root / "public-site" / "static"
+            scripts_dir = dune_root / "scripts"
+            bin_dir = root / "bin"
+            restart_state_file = dune_root / "backups" / "admin-panel" / "restart-jobs.json"
+            for directory in (source_static, scripts_dir, static_dir, bin_dir, restart_state_file.parent):
+                directory.mkdir(parents=True, exist_ok=True)
+            (source_static / "style.css").write_text("body { background: #101010; }\n", encoding="utf-8")
+            (source_static / "app.js").write_text("window.__assetSeeded = true;\n", encoding="utf-8")
+            (static_dir / "style.css").write_text("", encoding="utf-8")
+            (static_dir / "app.js").write_text("", encoding="utf-8")
+            (static_dir / "index.html").write_text(
+                "<html><head><link rel=\"stylesheet\" href=\"style.css\"></head>\n"
+                "<body>\n"
+                "<!-- STATUS_BEGIN -->\n"
+                "<div id=\"server-status\"></div>\n"
+                "<!-- STATUS_END -->\n"
+                "<script src=\"app.js\" defer></script>\n"
+                "</body></html>\n",
+                encoding="utf-8",
+            )
+            restart_state_file.write_text('{"jobs":[]}', encoding="utf-8")
+            (dune_root / ".env").write_text("DUNE_WORLD_PARTITION_COUNT=31\n", encoding="utf-8")
+            status_sh = scripts_dir / "status.sh"
+            status_sh.write_text(
+                "#!/bin/sh\n"
+                "echo 'current_ready_alive=31 current_alive_active=31 active_servers=31 partitions=31 game_sg_connections=31 admin_sg_connections=1'\n",
+                encoding="utf-8",
+            )
+            status_sh.chmod(0o755)
+            fake_docker = bin_dir / "docker"
+            fake_docker.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            fake_docker.chmod(0o755)
+            env = {
+                **os.environ,
+                "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+                "DUNE_ROOT": str(dune_root),
+                "INDEX_FILE": str(static_dir / "index.html"),
+                "STATUS_FILE": str(static_dir / "status.html"),
+                "STATIC_DIR": str(static_dir),
+                "SOURCE_INDEX_FILE": str(root / "missing-source-index.html"),
+                "CONFIGURE_SCRIPT": str(root / "missing-configure.sh"),
+                "DRIFT_CHECK_SCRIPT": str(root / "missing-drift.sh"),
+                "DUNE_PUBLIC_RESTART_STATE_FILE": str(restart_state_file),
+            }
+
+            subprocess.run([str(SCRIPT)], env=env, check=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+            self.assertGreater((static_dir / "style.css").stat().st_size, 0)
+            self.assertGreater((static_dir / "app.js").stat().st_size, 0)
+            index_html = (static_dir / "index.html").read_text(encoding="utf-8")
+            self.assertNotIn("e3b0c44298fc", index_html)
+            self.assertRegex(index_html, r'style\.css\?v=[0-9a-f]{12}')
+            self.assertRegex(index_html, r'app\.js\?v=[0-9a-f]{12}')
 
     def test_elapsed_time_uses_completed_maintenance_job(self):
         executed_at = time.time() - 3600

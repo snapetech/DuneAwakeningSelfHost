@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Dune faction desync repair
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+AccuracySec=1min
+Persistent=true
+Unit=dune-faction-desync-repair.service
+
+[Install]
+WantedBy=timers.target

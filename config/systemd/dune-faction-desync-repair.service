@@ -1,0 +1,12 @@
+[Unit]
+Description=Dune faction desync audit and safe repair
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/DuneAwakeningSelfHost
+EnvironmentFile=/opt/DuneAwakeningSelfHost/.env
+ExecStart=/opt/DuneAwakeningSelfHost/scripts/audit-faction-desync.py --env-file /opt/DuneAwakeningSelfHost/.env --execute --confirm "REPAIR FACTION DESYNC" --required-host kspls0
+TimeoutStartSec=5min
