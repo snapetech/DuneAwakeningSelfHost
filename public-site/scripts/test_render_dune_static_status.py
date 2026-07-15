@@ -204,6 +204,13 @@ class StaticStatusRenderTest(unittest.TestCase):
         self.assertIn("Since restart", html)
         self.assertIn("<strong>Most recent restart</strong>", html)
 
+    def test_render_includes_support_links(self):
+        html = self.render_status({"jobs": []})
+
+        self.assertIn("donations%40snape.tech", html)
+        self.assertIn("https://ko-fi.com/snapetech", html)
+        self.assertIn("Support this server", html)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -374,6 +374,7 @@ status_block="$(cat <<EOF
 <dt><span class="status-dot ${runtime_class}"></span>${runtime_label}</dt><dd><span class="status-help" tabindex="0">${runtime_text}<span class="status-popover" role="dialog" aria-label="Uptime details">${runtime_detail_html}</span></span></dd>
 </dl>
 <p class="status-updated">Last checked ${checked_at}.</p>
+<p class="status-support"><span>Support this server</span><a href="https://www.paypal.com/donate/?business=donations%40snape.tech" target="_blank" rel="noopener noreferrer">PayPal</a><a href="https://ko-fi.com/snapetech" target="_blank" rel="noopener noreferrer">Ko-fi</a></p>
 </section>
 EOF
 )"

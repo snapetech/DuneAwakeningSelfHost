@@ -6,6 +6,8 @@ It turns Funcom's self-host stack into a reproducible local layout with Compose 
 
 This repository does **not** contain, mirror, or license Funcom server binaries, container images, Steam package files, game assets, live server data, or secrets.
 
+Support DASH development and hosting through [PayPal](https://www.paypal.com/donate/?business=donations%40snape.tech) or [Ko-fi](https://ko-fi.com/snapetech).
+
 Always compare your `.env` image pin with the Steam package installed on your host.
 
 ## Contents

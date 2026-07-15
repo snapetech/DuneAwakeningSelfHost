@@ -160,6 +160,45 @@ section {
 	color: #c7bba9;
 }
 
+.status-support {
+	align-items: center;
+	border-top: 1px solid #3a342d;
+	display: flex;
+	flex-wrap: wrap;
+	font-size: 0.82rem;
+	gap: 7px;
+	justify-content: flex-end;
+	margin: 12px 0 0;
+	padding-top: 10px;
+}
+
+.status-support span {
+	color: #c7bba9;
+	margin-right: 2px;
+}
+
+.status-support a {
+	background: #252016;
+	border: 1px solid #6b5426;
+	border-radius: 999px;
+	color: #e6ba60;
+	font-weight: 700;
+	line-height: 1;
+	padding: 6px 9px;
+	text-decoration: none;
+}
+
+.status-support a:visited {
+	color: #e6ba60;
+}
+
+.status-support a:hover,
+.status-support a:focus-visible {
+	background: #332919;
+	border-color: #d9a63c;
+	outline: 0;
+}
+
 .live-card {
 	grid-column: auto;
 	display: flex;
@@ -836,8 +875,10 @@ a:visited {
 
 	.status-card h2,
 	.status-updated,
+	.status-support,
 	.hero-card .status-list dd {
 		text-align: left;
+		justify-content: flex-start;
 	}
 
 	.dashboard-grid {

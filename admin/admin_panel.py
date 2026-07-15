@@ -7202,6 +7202,11 @@ INDEX = r"""<!doctype html>
     textarea { width:100%; min-height:340px; box-sizing:border-box; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; }
     .brand { display:flex; align-items:baseline; gap:10px; }
     .brand .subtle { color:var(--muted); font-size:12px; }
+    .supportCard { display:block !important; border-color:#5c4b29; background:linear-gradient(135deg,#1d1d16,#171a15); }
+    .supportCard p { margin:0 0 9px; font-size:12px; }
+    .supportLinks { display:flex; flex-wrap:wrap; gap:6px; }
+    .supportLink { display:inline-flex; align-items:center; border:1px solid #6d5624; border-radius:999px; padding:5px 9px; color:var(--accent); background:#252416; font-size:12px; font-weight:700; text-decoration:none; }
+    .supportLink:hover { border-color:var(--accent); background:#302a19; }
     .tabs { display:grid; gap:6px; }
     .tab { padding:10px 11px; text-align:left; border-radius:7px; }
     .tab.active { border-color:var(--accent); color:var(--accent); background:#252416; }
@@ -7453,6 +7458,14 @@ INDEX = r"""<!doctype html>
           <pre id="statusRaw"></pre>
         </details>
       </div>
+      <aside class="card supportCard" aria-label="Support DASH">
+        <h3>Support DASH</h3>
+        <p class="muted">Help fund hosting and development.</p>
+        <div class="supportLinks">
+          <a class="supportLink" href="https://www.paypal.com/donate/?business=donations%40snape.tech" target="_blank" rel="noopener noreferrer">PayPal</a>
+          <a class="supportLink" href="https://ko-fi.com/snapetech" target="_blank" rel="noopener noreferrer">Ko-fi</a>
+        </div>
+      </aside>
     </nav>
     <section id="view" tabindex="-1" role="tabpanel" aria-live="polite"></section>
   </main>
