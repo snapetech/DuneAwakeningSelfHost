@@ -16,7 +16,10 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install validation dependencies
-        run: sudo apt-get update && sudo apt-get install -y ripgrep python3-psycopg2
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep python3-psycopg2
+          sudo install -m 0755 public-site/scripts/render-dune-static-status.sh /usr/local/sbin/render-dune-static-status.sh
 
       - name: Validate repository
         run: make validate
