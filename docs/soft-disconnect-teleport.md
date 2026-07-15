@@ -388,6 +388,17 @@ offsets, and then validates the live runtime pointers, float values, and patch
 instruction bytes before any write. If the signatures are missing, ambiguous, or
 the live validation fails, it exits without patching.
 
+The backend accessor scanner accepts the verified RIP-relative timer-global
+loads emitted through either `r15` or `rax`. Funcom build `2036754-0-shipping`
+changed only that destination register in this accessor; live pointer, float,
+and instruction-byte validation remains mandatory before patching.
+
+Build `2036754-0-shipping` has ELF Build ID
+`cde875918e7dee23366c71e0d7bc20237810ea92` and a verified known-offset entry.
+Its backend arrays resolve to `30 30 0 0` and `300 300 0 0`; its three UI
+arrays resolve to `300 300 0 0`. The known entry still runs all live pointer,
+float, and instruction-byte validation before writing.
+
 Force the auto-remap path for a dry-run test with:
 
 ```bash

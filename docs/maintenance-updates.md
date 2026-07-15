@@ -139,6 +139,12 @@ After SteamCMD returns, the update phase runs:
 
 The script reads Docker `manifest.json` entries from the official Steam package image tarballs under `DUNE_STEAM_SERVER_DIR`, then compares the package tag with `DUNE_IMAGE_TAG`.
 
+The hotfix timer also compares `DUNE_IMAGE_TAG` with every running game-map,
+Director, Gateway, Text Router, and RMQ auth-shim container before it skips a
+restart. If Steam and `.env` are already current but any live container still
+uses an older tag, the timer performs the normal backed-up full-farm restart to
+converge the deployment.
+
 When the tags match, the update phase does nothing.
 
 When exactly one newer package tag is found, the update phase runs:

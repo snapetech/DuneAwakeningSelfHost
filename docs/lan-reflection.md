@@ -87,6 +87,14 @@ The script:
 - redirects local same-host client traffic for `GAME_RMQ_PUBLIC_PORT` TCP and
   the gameplay UDP range back into the host-published services.
 
+Compose pins the Linux bridge interface to `dune-br0` by default through
+`DUNE_DOCKER_BRIDGE_NAME`. This prevents a network recreation from replacing it
+with a random `br-<network-id>` name and invalidating nftables interface rules.
+`scripts/restart-post-start-health.sh` also refreshes the rules after farm starts
+to repair legacy deployments and firewall reloads. Set
+`DUNE_LAN_REFLECTION_REFRESH_AFTER_START=false` only when another firewall
+manager owns equivalent dynamic rules.
+
 ## Per-Client Route Mode
 
 Use this when the router cannot add static routes and does not support UDP

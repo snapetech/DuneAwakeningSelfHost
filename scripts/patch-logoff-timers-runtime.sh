@@ -6,7 +6,7 @@ RUN_LOCAL=false
 EXPECTED_BUILD_ID="${DUNE_LOGOFF_TIMER_BUILD_ID:-6f8ca9ee5f3420c0b4c1ef7cefb412347bcba04b}"
 AUTO_REMAP_ENABLED="${DUNE_LOGOFF_TIMER_AUTO_REMAP_ENABLED:-true}"
 TARGET_VALUE="${DUNE_LOGOFF_TIMER_VALUE:-0.0}"
-TARGET_CONTAINERS="${DUNE_LOGOFF_TIMER_CONTAINERS:-}"
+TARGET_CONTAINERS="${DUNE_LOGOFF_TIMER_CONTAINERS:-dune_server-survival-1 dune_server-deep-desert-1 dune_server-deep-desert-pvp-1}"
 DIRECT_ARRAYS="${DUNE_LOGOFF_TIMER_DIRECT_ARRAYS:-false}"
 
 case "$EXPECTED_BUILD_ID" in
@@ -50,6 +50,16 @@ case "$EXPECTED_BUILD_ID" in
     DEFAULT_UI_VALUE_C_OFFSET="0x16649ac8"
     DEFAULT_DIALOG_TRIPLE_OFFSET="0x16905c58"
     DIRECT_ARRAYS="${DUNE_LOGOFF_TIMER_DIRECT_ARRAYS:-true}"
+    ;;
+  cde875918e7dee23366c71e0d7bc20237810ea92)
+    DEFAULT_VALUE_A_OFFSET="0x165a7488"
+    DEFAULT_VALUE_B_OFFSET="0x165a74a0"
+    DEFAULT_DEADLINE_CLAMP_OFFSET="0xd551604"
+    DEFAULT_TIMER_DURATION_ZERO_OFFSET="0xd551a5a"
+    DEFAULT_UI_VALUE_A_OFFSET="0x165a91d8"
+    DEFAULT_UI_VALUE_B_OFFSET="0x165a9a78"
+    DEFAULT_UI_VALUE_C_OFFSET="0x165a9aa8"
+    DEFAULT_DIALOG_TRIPLE_OFFSET=""
     ;;
   *)
     if [[ -n "${DUNE_LOGOFF_TIMER_VALUE_A_OFFSET:-}" &&
@@ -239,7 +249,10 @@ backend_prefix = bytes.fromhex(
 )
 deadline_context = bytes.fromhex("c4 e1 fb 2c c8 48 01 c1")
 duration_reload = bytes.fromhex("c5 fa 10 45 d4")
-lea_r15_rip = bytes.fromhex("4c 8d 3d")
+lea_rip_encodings = (
+    bytes.fromhex("4c 8d 3d"),  # lea disp32(%rip), %r15
+    bytes.fromhex("48 8d 05"),  # lea disp32(%rip), %rax
+)
 
 backend_candidates = []
 search_at = 0
@@ -261,15 +274,20 @@ while True:
     if deadline_rel >= 0 and duration_rels and accessor_off is not None:
         accessor = data[accessor_off:accessor_off + 0x90]
         leas = []
-        lea_at = 0
-        while True:
-            lea_rel = accessor.find(lea_r15_rip, lea_at)
-            if lea_rel < 0:
+        for lea_rip in lea_rip_encodings:
+            encoding_leas = []
+            lea_at = 0
+            while True:
+                lea_rel = accessor.find(lea_rip, lea_at)
+                if lea_rel < 0:
+                    break
+                lea_va = accessor_va + lea_rel
+                target = rip_target(lea_va, 7, s32(accessor[lea_rel + 3:lea_rel + 7]))
+                encoding_leas.append(target)
+                lea_at = lea_rel + 1
+            if len(encoding_leas) >= 2:
+                leas = encoding_leas
                 break
-            lea_va = accessor_va + lea_rel
-            target = rip_target(lea_va, 7, s32(accessor[lea_rel + 3:lea_rel + 7]))
-            leas.append(target)
-            lea_at = lea_rel + 1
 
         if len(leas) >= 2:
             backend_candidates.append({
@@ -344,6 +362,19 @@ resolve_offsets_for_build() {
   local remap_output
 
   case "$build_id" in
+    cde875918e7dee23366c71e0d7bc20237810ea92)
+      VALUE_A_OFFSET="0x165a7488"
+      VALUE_B_OFFSET="0x165a74a0"
+      DEADLINE_CLAMP_OFFSET="0xd551604"
+      TIMER_DURATION_ZERO_OFFSET="0xd551a5a"
+      UI_VALUE_A_OFFSET="0x165a91d8"
+      UI_VALUE_B_OFFSET="0x165a9a78"
+      UI_VALUE_C_OFFSET="0x165a9aa8"
+      DIALOG_TRIPLE_OFFSET=""
+      DIRECT_ARRAYS="false"
+      EXPECTED_BUILD_ID="$build_id"
+      return
+      ;;
     427a3084dcc00057ad21f98555a7d17d5f3c1020)
       VALUE_A_OFFSET="0x16649ab0"
       VALUE_B_OFFSET="0x16649ac8"

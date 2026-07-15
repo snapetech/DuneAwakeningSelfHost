@@ -290,8 +290,24 @@ printf '\nverifying final Steam/package state\n'
 ./scripts/check-steam-update.sh "$env_file"
 
 if [[ "$restart_only_on_update" == "true" && "$updated" != "true" ]]; then
-  printf '\nSteam package already current; restart skipped by --restart-only-on-update\n'
-  exit 0
+  printf '\nverifying running containers use DUNE_IMAGE_TAG before skipping restart\n'
+  set +e
+  ./scripts/verify-running-image-tag.sh "$env_file"
+  running_tag_rc=$?
+  set -e
+  case "$running_tag_rc" in
+    0)
+      printf '\nSteam package and running containers are current; restart skipped by --restart-only-on-update\n'
+      exit 0
+      ;;
+    1)
+      printf '\nrunning containers are stale; forcing convergence restart\n'
+      updated=true
+      ;;
+    *)
+      die "could not verify running container image convergence"
+      ;;
+  esac
 fi
 
 printf '\nensuring active database branch for current image\n'

@@ -85,6 +85,7 @@ for file in "${files[@]}"; do
   shifts_sands="$(read_ini_value "$file" "/Script/DuneSandbox.SandStormConfig" "m_bCoriolisTriggerShiftingSands")"
   restart_on_end="$(read_ini_value "$file" "/Script/DuneSandbox.CoriolisSubsystem" "m_bShouldRestartServerOnCycleEnd")"
   db_wipe="$(read_ini_value "$file" "/Script/DuneSandbox.CoriolisSubsystem" "m_bIsDbWipeEnabled")"
+  world_seed="$(read_ini_value "$file" "/Script/DuneSandbox.CoriolisSubsystem" "m_ForcedCoriolisWorldSeed")"
 
   if [[ "$cycle_days" != "$required_cycle_days" ]]; then
     printf '%s: m_CycleDurationInDays=%s; expected %s for Landsraad active-window health\n' \
@@ -99,6 +100,11 @@ for file in "${files[@]}"; do
   if [[ "$restart_on_end" != "False" || "$db_wipe" != "False" ]]; then
     printf '%s: Coriolis restart/DB wipe must stay disabled; restart=%s db_wipe=%s\n' \
       "$file" "${restart_on_end:-missing}" "${db_wipe:-missing}" >&2
+    failures=$((failures + 1))
+  fi
+  if [[ ! "$world_seed" =~ ^[0-9]+$ ]]; then
+    printf '%s: Standard PvE DD world seed must be pinned to a non-negative integer; got %s\n' \
+      "$file" "${world_seed:-missing}" >&2
     failures=$((failures + 1))
   fi
   for map_name in DeepDesert DeepDesert_1; do
@@ -120,8 +126,8 @@ else
 fi
 
 if (( failures > 0 )); then
-  printf 'Landsraad Coriolis guard failed: keep weekly cycle at %s days, disable DD1 destructive Coriolis/shifting effects, and keep DD2 shifting explicitly enabled.\n' "$required_cycle_days" >&2
+  printf 'Landsraad Coriolis guard failed: keep weekly cycle at %s days, pin the DD1 world seed, disable DD1 destructive Coriolis/shifting effects, and keep DD2 shifting explicitly enabled.\n' "$required_cycle_days" >&2
   exit 1
 fi
 
-printf 'Landsraad Coriolis guard OK: weekly cycle=%s days, DD1 shifting disabled, DD2 shifting enabled\n' "$required_cycle_days"
+printf 'Landsraad Coriolis guard OK: weekly cycle=%s days, DD1 world seed pinned, DD1 shifting disabled, DD2 shifting enabled\n' "$required_cycle_days"

@@ -1059,6 +1059,8 @@ services:
 
 networks:
   default:
+    driver_opts:
+      com.docker.network.bridge.name: ${DUNE_DOCKER_BRIDGE_NAME:-dune-br0}
     ipam:
       config:
         - subnet: 172.31.240.0/24

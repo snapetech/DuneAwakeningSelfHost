@@ -19,6 +19,7 @@ interval="${DUNE_RESTART_POST_START_INTERVAL_SECONDS:-5}"
 seed_timeout="${DUNE_SEED_NEIGHBOR_TIMEOUT_SECONDS:-90}"
 logoff_patch_enabled="${DUNE_LOGOFF_TIMER_RUNTIME_PATCH_ENABLED:-true}"
 landsraad_coriolis_guard_enabled="${DUNE_LANDSRAAD_CORIOLIS_GUARD_ENABLED:-true}"
+lan_reflection_refresh_enabled="${DUNE_LAN_REFLECTION_REFRESH_AFTER_START:-true}"
 
 compose_cmd=(docker compose)
 IFS=':' read -r -a compose_file_array <<< "$compose_files"
@@ -63,6 +64,14 @@ postgres_accepts_connections() {
 deadline=$((SECONDS + timeout))
 
 seed_neighbors
+
+# Refresh nftables DNAT-forward accepts after the Compose network exists. New
+# deployments use a stable bridge name, while this also repairs legacy networks.
+if [[ "$lan_reflection_refresh_enabled" =~ ^([Tt][Rr][Uu][Ee]|1|[Yy][Ee][Ss]|[Yy])$ \
+      && -x "$script_dir/setup-lan-reflection.sh" ]]; then
+  "$script_dir/setup-lan-reflection.sh" "$env_file" \
+    || printf 'warning: LAN reflection/firewall refresh failed after restart\n' >&2
+fi
 
 while ! postgres_accepts_connections; do
   if (( SECONDS >= deadline )); then

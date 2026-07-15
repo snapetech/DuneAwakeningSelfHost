@@ -20,6 +20,7 @@ LAN_IFACE="${DUNE_LAN_IFACE:-$default_iface}"
 LAN_IFACE="${LAN_IFACE:-enp17s0}"
 DUNE_BRIDGE_CIDR="${DUNE_BRIDGE_CIDR:-172.31.240.0/24}"
 DUNE_DOCKER_NETWORK="${DUNE_DOCKER_NETWORK:-dune_server_default}"
+DUNE_DOCKER_BRIDGE_NAME="${DUNE_DOCKER_BRIDGE_NAME:-$(read_env DUNE_DOCKER_BRIDGE_NAME)}"
 GAME_RMQ_PUBLIC_PORT="${GAME_RMQ_PUBLIC_PORT:-$(read_env GAME_RMQ_PUBLIC_PORT)}"
 GAME_RMQ_PUBLIC_PORT="${GAME_RMQ_PUBLIC_PORT:-31982}"
 GAME_UDP_PORT_RANGE="${GAME_UDP_PORT_RANGE:-7777:7810}"
@@ -43,6 +44,7 @@ if [[ "$(id -u)" -ne 0 ]]; then
             DUNE_LAN_IFACE="$LAN_IFACE" \
             DUNE_BRIDGE_CIDR="$DUNE_BRIDGE_CIDR" \
             DUNE_DOCKER_NETWORK="$DUNE_DOCKER_NETWORK" \
+            DUNE_DOCKER_BRIDGE_NAME="$DUNE_DOCKER_BRIDGE_NAME" \
             GAME_RMQ_PUBLIC_PORT="$GAME_RMQ_PUBLIC_PORT" \
             GAME_UDP_PORT_RANGE="$GAME_UDP_PORT_RANGE" \
             IGW_UDP_PORT_RANGE="$IGW_UDP_PORT_RANGE" \
@@ -84,7 +86,12 @@ bridge_if=""
 if command -v docker >/dev/null 2>&1; then
     network_id="$(docker network inspect "$DUNE_DOCKER_NETWORK" --format '{{.Id}}' 2>/dev/null || true)"
     if [ -n "$network_id" ]; then
-        bridge_if="br-${network_id:0:12}"
+        # Compose pins this option to dune-br0. Fall back to Docker's historical
+        # br-<network-id> convention while upgrading an existing deployment.
+        bridge_if="$(docker network inspect "$DUNE_DOCKER_NETWORK" \
+            --format '{{index .Options "com.docker.network.bridge.name"}}' 2>/dev/null || true)"
+        bridge_if="${bridge_if:-$DUNE_DOCKER_BRIDGE_NAME}"
+        bridge_if="${bridge_if:-br-${network_id:0:12}}"
         if ip link show "$bridge_if" >/dev/null 2>&1 \
             && ! iptables -C FORWARD -i "$bridge_if" -o "$bridge_if" -j ACCEPT 2>/dev/null; then
             iptables -I FORWARD 1 -i "$bridge_if" -o "$bridge_if" -j ACCEPT
