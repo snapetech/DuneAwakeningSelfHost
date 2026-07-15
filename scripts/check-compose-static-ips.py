@@ -34,6 +34,11 @@ def main() -> int:
     seen: dict[str, str] = {}
     errors: list[str] = []
     for service, service_config in sorted(config.get("services", {}).items()):
+        # Host-networked helpers intentionally have no Compose network attachment.
+        # They share the host namespace and therefore cannot consume or collide
+        # with an address from the project's static container subnet.
+        if service_config.get("network_mode") == "host":
+            continue
         service_networks = service_config.get("networks") or {}
         default_attachment = service_networks.get("default")
         if default_attachment is None:
