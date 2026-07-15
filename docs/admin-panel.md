@@ -683,6 +683,11 @@ Known machinery labels:
 
 The script targets carried inventory type `0` by default, chooses a free slot, and calls `dune.save_item(dune.inventoryitem)`. Use `--inventory-id` for an exact container, `--inventory-type` for a different resolved inventory type, or `--position` for an exact free slot. Live grants are additive: each execution creates a new stack and does not declare the player's full inventory state.
 
+For permission-aware base-box discovery, marker-stack identification, exact
+container dry-runs, execution, verification, equipment-stat caveats, and the
+Exchange-bank distinction, use
+[`base-storage-item-grants.md`](base-storage-item-grants.md).
+
 `POST /api/admin/player-lifecycle/inspect` reads account/player, party, tag, access-code, Communinet, dungeon, tutorial, and lifecycle evidence without writing.
 
 `POST /api/admin/player-tags` plans or executes player tag add/remove calls through `dune.update_player_tags`.

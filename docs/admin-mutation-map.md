@@ -47,6 +47,11 @@ It joins `dune.items`, `dune.inventories`, and `dune.player_state` through `play
 
 The panel shows recent inventory IDs from `dune.inventories` joined to `dune.player_state`, and character detail includes `dune.admin_get_inventory_details(account_id)`. Grants can target an explicit `inventory_id` or resolve the first owned inventory for an `account_id` / character name, optionally filtered by `inventory_type`. Template inputs use an HTML datalist populated from known local template sources.
 
+Actor-owned base storage requires a different discovery join because it is not
+owned by the player pawn/controller. See
+[`base-storage-item-grants.md`](base-storage-item-grants.md) for the
+permission-aware totem/placeable query and guarded exact-inventory workflow.
+
 ## Item Grants
 
 The panel uses the server DB function:

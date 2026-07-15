@@ -661,6 +661,7 @@ Start here:
 - [`docs/setup.md`](docs/setup.md): initial setup flow.
 - [`docs/operations.md`](docs/operations.md): health, recovery, startup, watchdog, ports, and restart workflow.
 - [`docs/admin-panel.md`](docs/admin-panel.md): admin panel features, security, announcements, chat commands, and mutation gates.
+- [`docs/base-storage-item-grants.md`](docs/base-storage-item-grants.md): generic, guarded workflow for discovering a base box inventory and granting an item stack to it.
 - [`docs/private-chat-replies.md`](docs/private-chat-replies.md): verified private whisper route for command replies and player/admin automation.
 - [`docs/backup-strategy.md`](docs/backup-strategy.md): local, onsite, offsite, replica, retention, and restore-test guidance.
 - [`docs/operational-identity-handoff.md`](docs/operational-identity-handoff.md): FLS identity, RabbitMQ TLS, backup identity layers, and redacted handoff artifacts.
