@@ -3,11 +3,25 @@ import importlib.util
 import json
 import os
 import pathlib
+import sys
 import tempfile
+import types
 import unittest
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+
+try:
+    import psycopg2  # noqa: F401
+except ModuleNotFoundError:
+    psycopg2_stub = types.ModuleType("psycopg2")
+    psycopg2_extras_stub = types.ModuleType("psycopg2.extras")
+    psycopg2_extras_stub.RealDictCursor = object
+    psycopg2_stub.extras = psycopg2_extras_stub
+    psycopg2_stub.connect = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("database access is not available in unit tests"))
+    sys.modules["psycopg2"] = psycopg2_stub
+    sys.modules["psycopg2.extras"] = psycopg2_extras_stub
 
 
 def load_admin_panel(workspace):
