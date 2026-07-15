@@ -7398,6 +7398,12 @@ INDEX = r"""<!doctype html>
     .eventList { display:grid; gap:8px; }
     .eventItem { border:1px solid var(--line); border-radius:7px; padding:9px; background:var(--panel2); }
     .eventItemHead { display:flex; gap:8px; align-items:center; justify-content:space-between; flex-wrap:wrap; margin-bottom:6px; }
+    .supportDock { display:grid; gap:7px; padding:10px; border:1px solid rgba(215,171,93,.25); border-radius:8px; background:linear-gradient(135deg,rgba(215,171,93,.08),rgba(88,126,92,.08)); }
+    .supportDockLabel { color:var(--muted); font-size:11px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }
+    .supportDockLinks { display:flex; gap:6px; }
+    .supportDock a { flex:1; padding:5px 8px; border:1px solid rgba(215,171,93,.35); border-radius:999px; color:var(--accent); font-size:12px; font-weight:700; text-align:center; text-decoration:none; }
+    .supportDock a:last-child { border-color:rgba(205,105,126,.35); color:#e79aaa; }
+    .supportDock a:hover, .supportDock a:focus-visible { border-color:currentColor; background:rgba(255,255,255,.04); outline:2px solid rgba(215,171,93,.18); outline-offset:1px; }
     .srOnly { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
     .muted { color:var(--muted); }
     .ok { color:var(--ok); }
@@ -7453,6 +7459,13 @@ INDEX = r"""<!doctype html>
           <pre id="statusRaw"></pre>
         </details>
       </div>
+      <aside class="supportDock" aria-label="Support DASH development">
+        <span class="supportDockLabel">Keep the sietch online</span>
+        <span class="supportDockLinks">
+          <a href="https://www.paypal.com/donate/?business=donations%40snape.tech" target="_blank" rel="noopener noreferrer" title="Support DASH development with PayPal">PayPal</a>
+          <a href="https://ko-fi.com/snapetech" target="_blank" rel="noopener noreferrer" title="Support DASH development on Ko-fi">Ko-fi</a>
+        </span>
+      </aside>
     </nav>
     <section id="view" tabindex="-1" role="tabpanel" aria-live="polite"></section>
   </main>
