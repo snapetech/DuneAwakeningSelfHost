@@ -1460,6 +1460,59 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertEqual(result["error"], "Steam package update check failed")
         self.assertIn("missing helper image", result["output"])
 
+    def test_full_restart_reboots_after_applied_steam_update_when_enabled(self):
+        command = self.workspace / "scripts" / "restart-target.sh"
+        command.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        command.chmod(0o755)
+        self.panel.RESTART_COMMAND = str(command)
+        self.panel.REBOOT_AFTER_STEAM_UPDATE = True
+        self.panel.soft_disconnect_online_players = lambda job: {"ok": True}
+        phases = []
+
+        def fake_run(command, job, phase):
+            phases.append(phase)
+            output = "DUNE_STEAM_UPDATE_APPLIED=100-0:101-0" if phase == "update" else phase
+            return {"ok": True, "phase": phase, "returncode": 0, "output": output}
+
+        self.panel.run_restart_command = fake_run
+        result = self.panel.execute_restart({
+            "id": "updated",
+            "execute": True,
+            "action": "restart",
+            "target": "all",
+            "services": [],
+            "backup": False,
+        })
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["deferred"])
+        self.assertEqual(phases, ["stop", "update", "reboot"])
+
+    def test_full_restart_does_not_reboot_when_steam_build_is_current(self):
+        command = self.workspace / "scripts" / "restart-target.sh"
+        command.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        command.chmod(0o755)
+        self.panel.RESTART_COMMAND = str(command)
+        self.panel.REBOOT_AFTER_STEAM_UPDATE = True
+        self.panel.soft_disconnect_online_players = lambda job: {"ok": True}
+        phases = []
+        self.panel.run_restart_command = lambda command, job, phase: phases.append(phase) or {
+            "ok": True, "phase": phase, "returncode": 0, "output": "status: current" if phase == "update" else phase,
+        }
+        self.panel.wait_for_restart_online = lambda: {"ok": True}
+
+        result = self.panel.execute_restart({
+            "id": "current",
+            "execute": True,
+            "action": "restart",
+            "target": "all",
+            "services": [],
+            "backup": False,
+        })
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(phases, ["stop", "update", "start"])
+
     def test_restart_start_runs_after_maintenance_backup_failure(self):
         command = self.workspace / "scripts" / "restart-target.sh"
         command.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
@@ -1552,6 +1605,26 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertEqual(commands[1][-2:], ["/etc/systemd/system/dune-artificial-exchange-populator.service", "populator"])
         self.assertTrue(commands[2][0].endswith("install-artificial-exchange-watchdog-timer.sh"))
         self.assertTrue(commands[3][0].endswith("artificial-exchange-watchdog.sh"))
+
+    def test_item_catalog_missing_file_is_safe_and_empty(self):
+        result = self.panel.load_item_catalog()
+
+        self.assertEqual(result["items"], [])
+        self.assertIn("not been generated", result["warning"])
+
+    def test_item_catalog_loads_visual_metadata(self):
+        payload = {
+            "schemaVersion": 1,
+            "source": {"label": "test"},
+            "items": [{"templateId": "WeldingTool_01", "name": "Welding Tool", "imageUrl": "https://media.awakening.wiki/wiki/a/a0/tool.png"}],
+        }
+        self.panel.ITEM_CATALOG_FILE.write_text(json.dumps(payload), encoding="utf-8")
+
+        result = self.panel.load_item_catalog()
+
+        self.assertEqual(result["items"][0]["templateId"], "WeldingTool_01")
+        self.assertEqual(self.panel.catalog_item("WeldingTool_01")["name"], "Welding Tool")
+        self.assertIsNone(self.panel.catalog_item("HouseWeldingTool"))
 
 
 if __name__ == "__main__":

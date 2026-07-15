@@ -25,6 +25,8 @@ Start the service:
 docker compose -f compose.yaml -f compose.allmaps.yaml --env-file .env up -d --no-deps --no-recreate admin-panel
 ```
 
+On the `kspld0` lab host, `scripts/start-admin-panel-local.sh` runs DASH directly against the locally published Postgres port when the Funcom utility image is unavailable. The launcher refuses to run on any other hostname and enables mutations/item grants only for that lab process.
+
 Open:
 
 ```text
@@ -197,6 +199,7 @@ server {
 - Player dropdowns in Admin Actions for currency, carried/bank Solari, XP, keystones, item grant targeting, and item maintenance.
 - Selected players pre-populate controller/account/name fields, current currency and specialization selectors, owned inventories, and owned inventory items for stack edits or deletion.
 - Exact-template item grants, dry-runs, stack edits, and item deletion behind admin gates.
+- Visual item-grant catalog with cached same-origin icons, name/template/category search, tier and max-stack metadata, favorites, an inspection tray, and an explicit final confirmation. Refresh committed metadata with `scripts/sync-item-catalog.py`; icon binaries are cached under ignored `backups/admin-panel/item-icons/` on first view.
 
 ## Content Catalog and Safe Expansion
 

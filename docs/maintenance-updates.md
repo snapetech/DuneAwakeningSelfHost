@@ -22,6 +22,7 @@ The 06:00 target is deliberately after Funcom's nightly maintenance window. If S
 06:00  maintenance backup is written
 06:00  SteamCMD is asked to update the local self-hosted server tool
 06:00  Steam package image tag is checked and updated if safe
+06:00  if a newer Steam build was installed, kspls0 reboots and arms boot-time resume
 06:00  official DB upgrade patches are applied
 06:00  operator DB patch markers and stale player RabbitMQ sessions are cleaned
 06:00  selected services are recreated
@@ -32,6 +33,8 @@ The configured defaults live in `.env`:
 
 ```env
 DUNE_RESTART_CHECK_STEAM_UPDATE=true
+DUNE_REBOOT_AFTER_STEAM_UPDATE=false
+DUNE_UPDATE_REBOOT_HOST=kspls0
 DUNE_RESTART_STEAM_UPDATE_MODE=auto
 DUNE_RESTART_STEAM_CLIENT_TRIGGER=true
 DUNE_RESTART_STEAM_CLIENT_WAIT_SECONDS=900
@@ -72,6 +75,27 @@ The timer runs at `05:30:00` and creates an admin-panel restart job with `delay=
 
 The timer is intentionally non-persistent. If the host is down at 05:30, DASH skips that day's automatic maintenance schedule instead of creating a late "06:00" restart at the wrong wall-clock time.
 
+To enable a host reboot only when maintenance actually installs a newer Steam
+build, first install the boot-time resume service on `kspls0`:
+
+```bash
+hostname  # must print kspls0
+./scripts/install-update-reboot-resume-service.sh .env
+systemctl status dune-update-reboot-resume.service --no-pager
+```
+
+Then set:
+
+```env
+DUNE_REBOOT_AFTER_STEAM_UPDATE=true
+DUNE_UPDATE_REBOOT_HOST=kspls0
+```
+
+The feature is disabled by default. Do not enable it until the resume service
+is installed and enabled. A changed Docker image tag and a changed Steam
+build ID under the same Docker tag both count as an update. A normal daily
+maintenance run with an already-current Steam build does not reboot the host.
+
 `scripts/schedule-daily-maintenance.sh` also refuses to schedule outside `DUNE_DAILY_RESTART_SCHEDULE_WINDOW` by default. This is a second guard for manual runs, timer mistakes, and stale installed units. For a deliberate manual test, set:
 
 ```bash
@@ -85,6 +109,18 @@ Executed restart jobs use this sequence:
 ```text
 soft-disconnect -> stop -> backup -> update -> start -> online wait
 ```
+
+With update-triggered reboot enabled and a new build detected, the sequence is:
+
+```text
+soft-disconnect -> stop -> backup -> update -> durable checkpoint -> host reboot
+-> boot-time start -> post-start hooks and farm readiness verification
+```
+
+The checkpoint is `backups/admin-panel/update-reboot-resume.env`. The admin
+job is persisted as `awaiting_reboot`, so the restarted admin panel does not
+repeat the stop, backup, or update phases. The resume service removes the
+checkpoint only after the normal `restart-target.sh` start phase succeeds.
 
 Executed shutdown jobs use this sequence:
 

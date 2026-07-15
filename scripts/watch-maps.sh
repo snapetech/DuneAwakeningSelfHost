@@ -110,11 +110,23 @@ if [[ ! "$recovery_timeout" =~ ^[0-9]+$ ]]; then
 fi
 
 if [[ -z "$mode" ]]; then
-  if ! mkdir "$lock_dir" 2>/dev/null; then
-    printf 'another map watchdog appears to be running: %s\n' "$lock_dir" >&2
-    exit 1
+  if command -v flock >/dev/null 2>&1; then
+    lock_file="${lock_dir%/}.flock"
+    exec 9>"$lock_file"
+    if ! flock -n 9; then
+      printf 'another map watchdog appears to be running: %s\n' "$lock_file" >&2
+      exit 1
+    fi
+    # Remove the legacy mkdir lock. Kernel-managed flock state cannot remain
+    # orphaned when systemd or the OOM killer terminates the watchdog.
+    rmdir "$lock_dir" 2>/dev/null || true
+  else
+    if ! mkdir "$lock_dir" 2>/dev/null; then
+      printf 'another map watchdog appears to be running: %s\n' "$lock_dir" >&2
+      exit 1
+    fi
+    trap 'rmdir "$lock_dir"' EXIT
   fi
-  trap 'rmdir "$lock_dir"' EXIT
 fi
 
 MAP_PARTITIONS=(

@@ -1,0 +1,15 @@
+[Unit]
+Description=Resume Dune maintenance after an update-triggered host reboot
+After=docker.service network-online.target
+Wants=docker.service network-online.target
+ConditionPathExists=/path/to/DuneAwakeningSelfHost/backups/admin-panel/update-reboot-resume.env
+
+[Service]
+Type=oneshot
+WorkingDirectory=/path/to/DuneAwakeningSelfHost
+Environment=DUNE_UPDATE_REBOOT_HOST=kspls0
+ExecStart=/path/to/DuneAwakeningSelfHost/scripts/update-reboot-resume.sh resume /path/to/DuneAwakeningSelfHost/.env
+TimeoutStartSec=45min
+
+[Install]
+WantedBy=multi-user.target

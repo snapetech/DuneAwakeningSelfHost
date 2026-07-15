@@ -3,6 +3,7 @@ import configparser
 import concurrent.futures
 import datetime
 import hmac
+import hashlib
 import html
 import importlib.util
 import json
@@ -43,6 +44,8 @@ CONFIG_ROOT = ROOT / "config"
 ENV_FILE = ROOT / ".env"
 BACKUP_ROOT = ROOT / "backups" / "admin-panel"
 STATIC_ROOT = ROOT / "admin" / "static"
+ITEM_CATALOG_FILE = CONFIG_ROOT / "item-catalog.json"
+ITEM_ICON_CACHE = BACKUP_ROOT / "item-icons"
 PLAYER_PEAKS_FILE = pathlib.Path(os.environ.get("DUNE_PLAYER_PEAKS_FILE", str(BACKUP_ROOT / "player-peaks.json")))
 ADMIN_PANEL_BUILD_LABEL = "20260522-live-refresh"
 ADMIN_PANEL_SELF_RELOAD_ENABLED = os.environ.get("DUNE_ADMIN_SELF_RELOAD_ENABLED", "true").lower() in ("1", "true", "yes", "on")
@@ -263,6 +266,7 @@ RESTART_RECOVERY_COMMAND = os.environ.get("DUNE_ADMIN_RESTART_RECOVERY_COMMAND",
 RESTART_RECOVERY_TIMEOUT_SECONDS = int(os.environ.get("DUNE_ADMIN_RESTART_RECOVERY_TIMEOUT_SECONDS", "900"))
 RESTART_DISCONNECT_WAIT_SECONDS = float(os.environ.get("DUNE_ADMIN_RESTART_DISCONNECT_WAIT_SECONDS", "5"))
 MAINTENANCE_BACKUP_ENABLED = os.environ.get("DUNE_ADMIN_MAINTENANCE_BACKUP_ENABLED", "true").lower() == "true"
+REBOOT_AFTER_STEAM_UPDATE = os.environ.get("DUNE_REBOOT_AFTER_STEAM_UPDATE", "false").lower() in ("1", "true", "yes", "on")
 MAINTENANCE_REPLICA_SNAPSHOT_ENABLED = os.environ.get("DUNE_ADMIN_MAINTENANCE_REPLICA_SNAPSHOT_ENABLED", "true").lower() == "true"
 MAINTENANCE_REPLICA_SNAPSHOT_TIMEOUT_SECONDS = int(os.environ.get("DUNE_ADMIN_MAINTENANCE_REPLICA_SNAPSHOT_TIMEOUT_SECONDS", "300"))
 DOCKER_SOCKET = os.environ.get("DUNE_RESTART_DOCKER_SOCKET", "/var/run/docker.sock")
@@ -1024,7 +1028,28 @@ def write_restart_state(state):
 
 
 def active_restart_jobs(state):
-    return [job for job in state.get("jobs", []) if job.get("status") in ("scheduled", "executing")]
+    return [job for job in state.get("jobs", []) if job.get("status") in ("scheduled", "executing", "awaiting_reboot")]
+
+
+def steam_update_was_applied(result):
+    output = str(result.get("output") or "")
+    return any(marker in output for marker in (
+        "DUNE_STEAM_UPDATE_APPLIED=",
+        "status: update available",
+        "loading official Dune images from Steam package because Steam build changed under same Docker tag",
+    ))
+
+
+def set_restart_job_status(job_id, status):
+    with RESTART_LOCK:
+        state = read_restart_state()
+        for persisted in state.get("jobs", []):
+            if persisted.get("id") == job_id:
+                persisted["status"] = status
+                if status == "awaiting_reboot":
+                    persisted["rebootRequestedAt"] = time.time()
+                break
+        write_restart_state(state)
 
 
 def schedule_restart(body):
@@ -1300,6 +1325,18 @@ def execute_restart(job):
         result["output"] = "\n".join(part for part in [stop_result.get("output", ""), update_result.get("output", "")] if part)
         return result
 
+    if REBOOT_AFTER_STEAM_UPDATE and job.get("target") == "all" and steam_update_was_applied(update_result):
+        set_restart_job_status(job.get("id", ""), "awaiting_reboot")
+        reboot_result = run_restart_command(command, job, "reboot")
+        result["reboot"] = reboot_result
+        result["ok"] = bool(reboot_result.get("ok"))
+        result["deferred"] = True
+        result["output"] = "\n".join(part for part in [stop_result.get("output", ""), update_result.get("output", ""), reboot_result.get("output", "")] if part)
+        if not reboot_result.get("ok"):
+            set_restart_job_status(job.get("id", ""), "executing")
+            result["error"] = reboot_result.get("error") or "failed to request update-triggered host reboot"
+        return result
+
     start_result = run_restart_command(command, job, "start")
     result["start"] = start_result
     online_result = wait_for_restart_online()
@@ -1412,6 +1449,8 @@ def announcement_worker():
         with RESTART_LOCK:
             restart_state = read_restart_state()
             for job in active_restart_jobs(restart_state):
+                if job.get("status") == "awaiting_reboot":
+                    continue
                 if now >= float(job.get("runAt", 0)):
                     job["status"] = "executing"
                     due_restarts.append(dict(job))
@@ -1443,7 +1482,9 @@ def announcement_worker():
             with RESTART_LOCK:
                 restart_state = read_restart_state()
                 for job in restart_state.get("jobs", []):
-                    if job.get("id") != due.get("id") or job.get("status") != "executing":
+                    if job.get("id") != due.get("id") or job.get("status") not in ("executing", "awaiting_reboot"):
+                        continue
+                    if job.get("status") == "awaiting_reboot" and result.get("deferred"):
                         continue
                     job["executedAt"] = time.time()
                     job["status"] = "executed" if result.get("ok") else "failed"
@@ -3287,6 +3328,20 @@ def create_maintenance_backup(job):
     return result
 
 
+def load_item_catalog():
+    try:
+        payload = json.loads(ITEM_CATALOG_FILE.read_text(encoding="utf-8"))
+        if not isinstance(payload.get("items"), list):
+            raise ValueError("items must be a list")
+        return payload
+    except FileNotFoundError:
+        return {"schemaVersion": 1, "generatedAt": None, "source": {}, "items": [], "warning": "item catalog has not been generated"}
+
+
+def catalog_item(template_id):
+    return next((item for item in load_item_catalog().get("items", []) if item.get("templateId") == template_id), None)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "dune-admin-panel"
     protocol_version = "HTTP/1.0"
@@ -3330,6 +3385,11 @@ class Handler(BaseHTTPRequestHandler):
                     "safeEnvKeys": sorted(SAFE_ENV_KEYS),
                     "configs": sorted(ALLOWED_CONFIGS),
                 })
+            elif parsed.path == "/api/admin/item-catalog":
+                self.require_token()
+                self.json(load_item_catalog())
+            elif parsed.path == "/api/admin/item-icon":
+                self.item_icon(parsed)
             elif parsed.path == "/api/server/state":
                 self.require_token()
                 self.json({
@@ -7037,6 +7097,44 @@ class Handler(BaseHTTPRequestHandler):
         if not head_only:
             self.wfile.write(data)
 
+    def item_icon(self, parsed, head_only=False):
+        template_id = (urllib.parse.parse_qs(parsed.query).get("template") or [""])[0]
+        item = catalog_item(template_id)
+        if not item or not item.get("imageUrl"):
+            self.error(HTTPStatus.NOT_FOUND, "item icon not found", head_only=head_only)
+            return
+        source = urllib.parse.urlparse(item["imageUrl"])
+        if source.scheme != "https" or source.hostname != "media.awakening.wiki":
+            self.error(HTTPStatus.BAD_REQUEST, "item icon source is not allowed", head_only=head_only)
+            return
+        cache_name = hashlib.sha256(template_id.encode()).hexdigest() + pathlib.Path(source.path).suffix.lower()
+        cache_path = ITEM_ICON_CACHE / cache_name
+        try:
+            if not cache_path.exists():
+                request = urllib.request.Request(item["imageUrl"], headers={"User-Agent": "DASH item icon cache/1.0"})
+                with urllib.request.urlopen(request, timeout=20) as response:
+                    content_type = response.headers.get_content_type()
+                    data = response.read(2 * 1024 * 1024 + 1)
+                if not content_type.startswith("image/") or len(data) > 2 * 1024 * 1024:
+                    raise ValueError("invalid item icon response")
+                ITEM_ICON_CACHE.mkdir(parents=True, exist_ok=True)
+                temp = cache_path.with_suffix(cache_path.suffix + ".tmp")
+                temp.write_bytes(data)
+                temp.replace(cache_path)
+            data = cache_path.read_bytes()
+        except Exception as exc:
+            self.error(HTTPStatus.BAD_GATEWAY, f"item icon unavailable: {exc}", head_only=head_only)
+            return
+        content_type = {".png": "image/png", ".webp": "image/webp", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}.get(cache_path.suffix, "application/octet-stream")
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "public, max-age=604800, immutable")
+        self.security_headers()
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        if not head_only:
+            self.wfile.write(data)
+
     def error(self, status, message, head_only=False):
         data = json.dumps({"error": message}).encode("utf-8")
         self.send_response(status)
@@ -7109,6 +7207,18 @@ INDEX = r"""<!doctype html>
     .tab.active { border-color:var(--accent); color:var(--accent); background:#252416; }
     .card { border:1px solid var(--line); border-radius:8px; background:var(--panel); padding:14px; margin-bottom:14px; }
     .panelBand { border:1px solid var(--line); border-radius:8px; background:var(--panel); padding:14px; margin-bottom:14px; }
+    .itemWorkbench { display:grid; grid-template-columns:minmax(0,1fr) 260px; gap:12px; margin:12px 0; }
+    .itemCatalogTools { display:grid; grid-template-columns:2fr 1fr; gap:8px; margin-bottom:8px; }
+    .itemCatalog { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:8px; max-height:430px; overflow:auto; padding:2px; }
+    .itemCard { min-width:0; text-align:left; padding:8px; background:var(--panel2); white-space:normal; }
+    .itemCard.selected { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
+    .itemCard img, .itemInspect img { width:100%; aspect-ratio:1; object-fit:contain; background:radial-gradient(circle,#30352b 0,#11140f 70%); border-radius:5px; }
+    .itemCard strong, .itemCard small { display:block; overflow:hidden; text-overflow:ellipsis; }
+    .itemCard small { color:var(--muted); white-space:nowrap; }
+    .itemInspect { border:1px solid var(--line); border-radius:7px; padding:10px; background:var(--panel3); position:sticky; top:72px; }
+    .itemInspect code { display:block; overflow-wrap:anywhere; color:var(--accent); }
+    .itemMeta { display:flex; gap:6px; flex-wrap:wrap; margin:7px 0; }
+    @media (max-width:900px) { .itemWorkbench { grid-template-columns:1fr; } .itemInspect { position:static; } }
     .pageStack { display:grid; gap:14px; }
     .pageStack > * { min-width:0; }
     .twoCol { display:grid; grid-template-columns:minmax(0,1.2fr) minmax(360px,.8fr); gap:14px; align-items:start; }
@@ -7798,6 +7908,53 @@ function templateDatalist(ref){
     .sort((a, b) => String(a[0]).localeCompare(String(b[0])))
     .map(([id, label]) => `<option value="${esc(id)}" label="${esc(label)}"></option>`)
     .join('');
+}
+let visualItemCatalog = [];
+let selectedVisualItem = null;
+function itemIcon(item){ return item.imageUrl ? `/api/admin/item-icon?template=${encodeURIComponent(item.templateId)}` : ''; }
+function selectVisualItem(item){
+  selectedVisualItem = item;
+  const input = document.getElementById('grantTemplate');
+  if (input) input.value = item.templateId;
+  const stack = document.getElementById('grantStack');
+  if (stack && Number(stack.value) > Number(item.maxStack || 1)) stack.value = item.maxStack || 1;
+  document.querySelectorAll('.itemCard').forEach(card => card.classList.toggle('selected', card.dataset.template === item.templateId));
+  const inspect = document.getElementById('itemInspect');
+  if (inspect) inspect.innerHTML = `${itemIcon(item) ? `<img src="${esc(itemIcon(item))}" alt="">` : ''}<h3>${esc(item.name)}</h3><code>${esc(item.templateId)}</code><div class="itemMeta"><span class="pill">${esc(item.category)}</span>${item.tier ? `<span class="pill ok">Tier ${esc(item.tier)}</span>` : ''}<span class="pill">Max ${esc(item.maxStack || 1)}</span></div><p>${esc(item.description || 'No description available.')}</p><button id="favoriteItemBtn" type="button">☆ Favorite</button>`;
+  document.getElementById('favoriteItemBtn')?.addEventListener('click', () => {
+    const favorites = new Set(JSON.parse(localStorage.getItem('duneItemFavorites') || '[]'));
+    favorites.has(item.templateId) ? favorites.delete(item.templateId) : favorites.add(item.templateId);
+    localStorage.setItem('duneItemFavorites', JSON.stringify([...favorites]));
+    renderVisualItems();
+  });
+}
+function renderVisualItems(){
+  const root = document.getElementById('itemCatalog');
+  if (!root) return;
+  const query = (document.getElementById('itemCatalogSearch')?.value || '').toLowerCase();
+  const category = document.getElementById('itemCatalogCategory')?.value || '';
+  const favorites = new Set(JSON.parse(localStorage.getItem('duneItemFavorites') || '[]'));
+  const filtered = visualItemCatalog.filter(item => (!category || item.category === category) && (!query || `${item.name} ${item.templateId} ${item.category}`.toLowerCase().includes(query))).slice(0, 240);
+  root.innerHTML = filtered.map(item => `<button type="button" class="itemCard${selectedVisualItem?.templateId === item.templateId ? ' selected' : ''}" data-template="${esc(item.templateId)}">${itemIcon(item) ? `<img loading="lazy" src="${esc(itemIcon(item))}" alt="">` : ''}<strong>${favorites.has(item.templateId) ? '★ ' : ''}${esc(item.name)}</strong><small>${esc(item.templateId)}</small><small>${esc(item.category)}${item.tier ? ` · T${esc(item.tier)}` : ''}</small></button>`).join('') || '<p class="muted">No matching items.</p>';
+  root.querySelectorAll('.itemCard').forEach(card => card.addEventListener('click', () => selectVisualItem(visualItemCatalog.find(item => item.templateId === card.dataset.template))));
+}
+async function loadVisualItemCatalog(){
+  const payload = await api('/api/admin/item-catalog');
+  visualItemCatalog = payload.items || [];
+  const select = document.getElementById('itemCatalogCategory');
+  if (select) select.innerHTML = '<option value="">All categories</option>' + [...new Set(visualItemCatalog.map(item => item.category))].sort().map(value => `<option>${esc(value)}</option>`).join('');
+  document.getElementById('itemCatalogSearch')?.addEventListener('input', renderVisualItems);
+  select?.addEventListener('change', renderVisualItems);
+  renderVisualItems();
+}
+function mountVisualItemCatalog(){
+  const template = document.getElementById('grantTemplate');
+  const panel = template?.closest('.panelBand');
+  const grid = template?.closest('.grid');
+  if (!panel || !grid || document.getElementById('itemWorkbench')) return;
+  panel.querySelector('.muted').textContent = 'Browse verified game items, inspect the exact template, then dry run before granting.';
+  grid.insertAdjacentHTML('beforebegin', `<div id="itemWorkbench" class="itemWorkbench"><div><div class="itemCatalogTools"><input id="itemCatalogSearch" type="search" placeholder="Search name, template, or category" aria-label="Search item catalog"><select id="itemCatalogCategory" aria-label="Filter item category"><option>Loading catalog…</option></select></div><div id="itemCatalog" class="itemCatalog"><p class="muted">Loading visual catalog…</p></div><p class="muted">Item data and icons: <a href="https://awakening.wiki/" target="_blank" rel="noreferrer">Dune: Awakening Community Wiki</a>. Showing up to 240 matches.</p></div><aside id="itemInspect" class="itemInspect"><h3>Inspection tray</h3><p class="muted">Select a card to verify its image, template, tier, and stack limit.</p></aside></div>`);
+  loadVisualItemCatalog().catch(error => { document.getElementById('itemCatalog').innerHTML = `<p class="dangerText">${esc(error.message)}</p>`; });
 }
 function checks(rows){
   return `<table><thead><tr><th>Check</th><th>Status</th><th>Value</th></tr></thead><tbody>${(rows || []).map(r=>`<tr><td>${esc(r.name)}</td><td class="${r.ok ? 'ok' : 'dangerText'}">${r.ok ? 'OK' : 'Needs attention'}</td><td>${esc(r.value ?? '')}</td></tr>`).join('')}</tbody></table>`;
@@ -9699,6 +9856,7 @@ async function mutations(serial=loadSerial){
   if (serial !== loadSerial) return;
   const referenceErrors = ref.errors && Object.keys(ref.errors).length ? `<div class="card"><h2>Reference Errors</h2><pre>${esc(JSON.stringify(ref.errors, null, 2))}</pre></div>` : '';
   view.innerHTML = `<div class="pageStack">${referenceErrors}<div class="sectionHeader"><h2>Admin Actions</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="settings">Settings</button><button data-jump="security">Audit</button></div></div><div class="panelBand"><h2>Target Player</h2><div class="grid"><label>Character<select id="adminCharacterSelect">${characterOptions(characterRows)}</select></label><label>Player controller ID<input id="pcid"></label><label>Account ID<input id="grantAccount" placeholder="auto-select player inventory"></label><label>Character name<input id="grantCharacter" placeholder="auto-select by name"></label></div></div>${offlineTeleportPanel(ref, characterRows)}<div class="panelBand"><h2>Character Slots</h2><div class="grid"><label>Action<select id="slotAction"><option>new-character</option><option>switch-character</option><option>restore-character</option></select></label><label>Target hibernated account ID<input id="slotTargetAccount"></label></div><p><button id="slotInspectBtn" class="primary">Inspect slots</button> <button id="slotPlanBtn" class="primary">Preview swap</button> <button id="slotExecuteBtn" class="danger">Execute swap</button></p><pre id="slotResult"></pre></div><div class="twoCol"><div class="panelBand"><h2>Currency and XP</h2><p class="muted">Select a character first; balances and tracks populate from that player.</p><div class="grid"><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button id="currencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Solari amount<input id="solariAmount" value="20000"></label></div><p><button id="solariInventoryDryRunBtn" class="primary">Preview inventory Solari</button> <button id="solariInventoryGrantBtn" class="danger">Grant inventory Solari</button> <button id="solariBankDryRunBtn" class="primary">Preview bank Solari</button> <button id="solariBankGrantBtn" class="danger">Grant bank Solari</button></p><pre id="solariGrantResult"></pre><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Level for set/new track<input id="xplevel" value="0"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button id="xpBtn" class="primary">Apply XP</button></p></div><div class="panelBand"><h2>Item Grants</h2><p class="muted">Use a known template ID and dry run before writing new items.</p><div class="grid"><label>Known inventory<select id="grantInventorySelect">${inventoryOptions(ref.recentInventories)}</select></label><label>Inventory ID<input id="grantInventory" placeholder="explicit inventory"></label><label class="hidden">Character<select id="grantCharacterSelect">${characterOptions(characterRows)}</select></label><label>Inventory type<select id="grantInventoryType">${inventoryTypeOptions(ref.inventoryTypes)}</select></label><label>Template ID<input id="grantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><details><summary>Advanced stats JSON</summary><textarea id="grantStats">{}</textarea></details><p><button id="dryRunItemBtn" class="primary">Dry run</button> <button id="grantItemBtn" class="danger">Grant item</button></p><pre id="grantResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Item Maintenance</h2><div class="grid"><label class="hidden">Character<select id="itemCharacterSelect">${characterOptions(characterRows)}</select></label><label>Owned item<select id="itemEditSelect"><option value="">Select a character first</option></select></label><label>Item ID<input id="itemEditId"></label><label>New stack size<input id="itemEditStack" value="1"></label><label>Delete count<input id="itemDeleteCount" placeholder="blank/all"></label></div><p><button id="setItemStackBtn" class="primary">Set stack</button> <button id="deleteItemBtn" class="danger">Delete item/count</button></p><pre id="itemEditResult"></pre></div><div class="panelBand"><h2>Specialization Keystones</h2><div class="grid"><label>Player/controller ID<input id="keyPlayer"></label><label>Keystone<select id="keystone">${options(ref.keystones, 'name')}</select></label></div><p><button id="purchaseKeystoneBtn" class="primary">Purchase keystone</button> <button id="resetKeystonesBtn" class="danger">Reset all keystones</button></p><pre id="keystoneResult"></pre></div></div><details class="panelBand"><summary>Backup</summary><p class="muted">Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button id="backupBtn" class="primary">Create DB backup</button><pre id="backupResult"></pre></details><datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><details class="panelBand"><summary>Known Item Templates</summary>${table(ref.knownItemTemplates)}</details><details class="panelBand"><summary>Observed Item Templates</summary>${table(ref.observedItemTemplates)}</details><details class="panelBand"><summary>Recent Inventories</summary>${table(ref.recentInventories)}</details><details class="panelBand"><summary>Inventory Types</summary>${table(ref.inventoryTypes)}</details></div>`;
+  mountVisualItemCatalog();
   const loadCharacterAdminDetails = async (accountId, serial=detailLoadSerial) => {
     const itemSelect = document.getElementById('itemEditSelect');
     const inventorySelect = document.getElementById('grantInventorySelect');
@@ -9948,8 +10106,17 @@ async function resetKeystones(){
   document.getElementById('keystoneResult').textContent = JSON.stringify(result, null, 2);
 }
 async function grantItem(dryRun=false){
+  if (!dryRun) {
+    const item = visualItemCatalog.find(candidate => candidate.templateId === grantTemplate.value);
+    const label = item ? `${item.name}\n${item.templateId}` : grantTemplate.value;
+    if (!confirm(`Grant this exact item?\n\n${label}\nStack: ${grantStack.value}\nInventory: ${grantInventory.value || 'auto-selected'}`)) return;
+  }
   const result = await api('/api/admin/item', {method:'POST', body:JSON.stringify({inventory_id:grantInventory.value,account_id:grantAccount.value,character_name:grantCharacter.value,inventory_type:grantInventoryType.value,template_id:grantTemplate.value,stack_size:grantStack.value,quality_level:grantQuality.value,position_index:grantPosition.value,stats:grantStats.value,dry_run:dryRun})});
   document.getElementById('grantResult').textContent = JSON.stringify(result, null, 2);
+  if (!dryRun && result.ok) {
+    const recent = JSON.parse(localStorage.getItem('duneRecentItemGrants') || '[]').filter(value => value !== grantTemplate.value);
+    localStorage.setItem('duneRecentItemGrants', JSON.stringify([grantTemplate.value, ...recent].slice(0, 20)));
+  }
 }
 async function grantItemForAccount(accountId, dryRun=false){
   const inventoryId = document.getElementById('detailGrantInventory')?.value || '';

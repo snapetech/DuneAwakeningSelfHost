@@ -18,7 +18,7 @@ case "$action" in
     ;;
 esac
 case "$phase" in
-  restart|shutdown|stop|update|start) ;;
+  restart|shutdown|stop|update|start|reboot) ;;
   *)
     printf 'invalid DUNE_RESTART_PHASE: %s\n' "$phase" >&2
     exit 64
@@ -1056,6 +1056,22 @@ if phase == "update":
     print(json.dumps({"ok": True, "target": target, "action": action, "phase": phase, "steamUpdate": True, "result": result}, separators=(",", ":")))
     sys.exit(0)
 
+if phase == "reboot":
+    if dry_run:
+        print(json.dumps({"ok": True, "target": target, "action": action, "phase": phase, "dryRun": True}, separators=(",", ":")))
+        sys.exit(0)
+    request_command = (
+        "set -e; apk add --no-cache bash util-linux >/dev/null 2>&1 || true; "
+        + "/workspace/scripts/update-reboot-resume.sh request "
+        + shlex.quote(env_file) + " "
+        + shlex.quote(os.environ.get("DUNE_RESTART_JOB_ID", "manual")) + " "
+        + shlex.quote(target) + " "
+        + shlex.quote(" ".join(services))
+    )
+    result = run_host_shell("admin-update-reboot", request_command)
+    print(json.dumps({"ok": bool(result.get("ok")), "target": target, "action": action, "phase": phase, "result": result}, separators=(",", ":")))
+    sys.exit(0 if result.get("ok") else int(result.get("returncode", 1)))
+
 
 if phase in ("start", "restart") and use_host_compose:
     if dry_run:
@@ -1169,8 +1185,16 @@ if [ "${DUNE_RESTART_DRY_RUN:-}" = "true" ] || [ "${DUNE_RESTART_DRY_RUN:-}" = "
   exit 0
 fi
 if [ "$phase" = "update" ]; then
+  image_tag_before="$(env_file_value DUNE_IMAGE_TAG "${ENV_FILE:-.env}")"
   run_steam_update_check
+  image_tag_after="$(env_file_value DUNE_IMAGE_TAG "${ENV_FILE:-.env}")"
+  if [ -n "$image_tag_after" ] && [ "$image_tag_after" != "$image_tag_before" ]; then
+    printf 'DUNE_STEAM_UPDATE_APPLIED=%s:%s\n' "$image_tag_before" "$image_tag_after"
+  fi
   exit 0
+fi
+if [ "$phase" = "reboot" ]; then
+  exec ./scripts/update-reboot-resume.sh request "${ENV_FILE:-.env}" "${DUNE_RESTART_JOB_ID:-manual}" "$target" "$services"
 fi
 if [ "$phase" = "shutdown" ] || [ "$phase" = "stop" ]; then
   map_watchdog_control stop
