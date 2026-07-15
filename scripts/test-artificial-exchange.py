@@ -564,6 +564,9 @@ class ArtificialExchangeBotTest(unittest.TestCase):
         weapon = self.catalog_row("AtreLMG3", category="weapons/ranged", category_mask=16844544, category_depth=3, notes="tier=5")
         schematic = self.catalog_row("D_T4_Vehicle_BuggyChassis2_Schematic", category="schematics/vehicles", category_mask=117440512, category_depth=2, notes="tier=4")
         patent = self.catalog_row("LargeWaterCistern_Patent", category="building/patents", category_mask=50790400, category_depth=2, notes="tier=4")
+        # This test isolates the blueprint-category switch; stateful-stat safety
+        # is covered separately below.
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_STATS_FOR_STATEFUL_ITEMS"] = "false"
         bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_SKIP_BLUEPRINT_CATEGORIES"] = "false"
         self.assertEqual(bot.populator_category_skip_reason(schematic), "")
         bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_SKIP_BLUEPRINT_CATEGORIES"] = "true"
