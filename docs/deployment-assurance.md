@@ -35,15 +35,25 @@ An assured deployment proves all of these facts:
 15. Prometheus had scraped readiness value `1`; a merely healthy direct
     collector response is insufficient.
 16. A full post-change backup passed the normal verifier.
-17. The receipt says both `recoveryExecuted=false` and
+17. Desired State, Change Intelligence/readiness, and Operational SLO
+    collectors produced at least two consecutive healthy samples after the
+    admin-only recreation.
+18. The receipt says both `recoveryExecuted=false` and
     `gameMutationExecuted=false`.
-18. A final full backup created after completion contains the signed receipt.
+19. A final full backup created after completion contains the signed receipt.
 
 Any false invariant makes `ready=false`. DASH signs and retains a failed
 receipt when it can safely characterize the failure; it does not rewrite the
 outcome green. An invalid/missing manifest, private path, missing backup,
 tampered window, expired window, or unreadable required source fails before
 finalization.
+
+The convergence gate defaults to two healthy samples five seconds apart and a
+300-second deadline. Installations can tune it with
+`DUNE_DEPLOYMENT_ASSURANCE_CONVERGENCE_TIMEOUT_SECONDS` (30..1800),
+`DUNE_DEPLOYMENT_ASSURANCE_CONVERGENCE_POLL_SECONDS` (1..60), and
+`DUNE_DEPLOYMENT_ASSURANCE_CONVERGENCE_SAMPLES` (2..10). These settings change
+how long the workflow waits; they do not remove or weaken receipt invariants.
 
 ## Trust And Safety Boundary
 
@@ -268,6 +278,9 @@ matching-key Change Intelligence backup contract.
   the overdue alert remains visible.
 - **source/map/health invariant fails:** retain the signed failed receipt and
   diagnose the exact false fields. Do not manually flip them.
+- **health convergence times out:** inspect the last printed collector sample.
+  The window is cancelled before finalization, so a transient collector does
+  not become a signed failed receipt.
 - **desired state is not attested:** review every finding; the host workflow
   seals the complete snapshot only through the existing exact-confirmation
   route.

@@ -108,6 +108,60 @@ verified_backup() {
   return 1
 }
 
+wait_for_assurance_health() {
+  local timeout interval required_samples deadline consecutive=0
+  timeout="$(read_env DUNE_DEPLOYMENT_ASSURANCE_CONVERGENCE_TIMEOUT_SECONDS)"
+  interval="$(read_env DUNE_DEPLOYMENT_ASSURANCE_CONVERGENCE_POLL_SECONDS)"
+  required_samples="$(read_env DUNE_DEPLOYMENT_ASSURANCE_CONVERGENCE_SAMPLES)"
+  timeout="${timeout:-300}"
+  interval="${interval:-5}"
+  required_samples="${required_samples:-2}"
+  [[ "$timeout" =~ ^[0-9]+$ && "$interval" =~ ^[0-9]+$ && "$required_samples" =~ ^[0-9]+$ ]] || {
+    printf 'deployment assurance convergence settings must be positive integers\n' >&2
+    return 1
+  }
+  (( timeout >= 30 && timeout <= 1800 && interval >= 1 && interval <= 60 && required_samples >= 2 && required_samples <= 10 )) || {
+    printf 'deployment assurance convergence settings are outside safe bounds\n' >&2
+    return 1
+  }
+  deadline=$((SECONDS + timeout))
+  while (( SECONDS <= deadline )); do
+    if api_get /api/ops/desired-state 30 >"$work/convergence-desired.json" \
+      && api_get /api/ops/change-intelligence 30 >"$work/convergence-change.json" \
+      && api_get /api/ops/slo 30 >"$work/convergence-slo.json"; then
+      if python3 - "$work/convergence-desired.json" "$work/convergence-change.json" "$work/convergence-slo.json" >"$work/convergence.json" <<'PY'
+import json, sys
+desired, change, slo = (json.load(open(path, encoding="utf-8")) for path in sys.argv[1:])
+certification = change.get("readinessCertification") or {}
+checks = {
+    "desiredStateAttested": desired.get("state") == "attested" and not (desired.get("openFindings") or []) and bool((desired.get("integrity") or {}).get("ok")),
+    "changeIntegrity": bool((change.get("integrity") or {}).get("ok")) and not (change.get("openIncidents") or []),
+    "readinessCurrent": bool(certification.get("currentReady") and certification.get("policyCurrent") and (certification.get("receiptVerification") or {}).get("ok")),
+    "sloHealthy": slo.get("overall") == "healthy" and not (slo.get("openIncidents") or []) and bool((slo.get("integrity") or {}).get("ok")),
+}
+print(json.dumps({"ready": all(checks.values()), "checks": checks}, sort_keys=True))
+raise SystemExit(0 if all(checks.values()) else 1)
+PY
+      then
+        consecutive=$((consecutive + 1))
+        printf 'assurance health convergence: %s/%s consecutive healthy samples\n' "$consecutive" "$required_samples"
+        if (( consecutive >= required_samples )); then
+          return 0
+        fi
+      else
+        consecutive=0
+        printf 'waiting for assurance health convergence: %s\n' "$(cat "$work/convergence.json")" >&2
+      fi
+    else
+      consecutive=0
+      printf 'waiting for assurance health convergence: health endpoint unavailable\n' >&2
+    fi
+    sleep "$interval"
+  done
+  printf 'deployment assurance health did not converge within %s seconds; last sample: %s\n' "$timeout" "$(cat "$work/convergence.json" 2>/dev/null || printf unavailable)" >&2
+  return 1
+}
+
 if [[ -n "$stage" ]]; then
   python3 "$code_root/scripts/deployment-assurance.py" verify --manifest "$manifest" --workspace "$stage" >"$work/manifest-verification.json"
 else
@@ -191,6 +245,7 @@ PY
 post_backup_output="$(verified_backup)"
 printf '%s\n' "$post_backup_output"
 post_backup="$(printf '%s\n' "$post_backup_output" | tail -1)"
+wait_for_assurance_health
 python3 - "$window_id" "$post_backup" >"$work/finish.json" <<'PY'
 import json,sys
 print(json.dumps({"action":"finish","windowId":sys.argv[1],"backupPath":sys.argv[2],"confirm":"FINALIZE ASSURED CHANGE WINDOW"}))

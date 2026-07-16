@@ -201,6 +201,12 @@ class DeploymentAssuranceTests(unittest.TestCase):
         self.assertGreaterEqual(source.count("verified_backup"), 4)  # definition plus pre/post/final calls
         self.assertIn("for attempt in 1 2 3", source)
         self.assertIn("could not create and verify a complete backup after 3 attempts", source)
+        self.assertIn("wait_for_assurance_health", source)
+        self.assertIn("consecutive healthy samples", source)
+        self.assertIn("DUNE_DEPLOYMENT_ASSURANCE_CONVERGENCE_TIMEOUT_SECONDS", source)
+        self.assertIn("DUNE_DEPLOYMENT_ASSURANCE_CONVERGENCE_POLL_SECONDS", source)
+        self.assertIn("DUNE_DEPLOYMENT_ASSURANCE_CONVERGENCE_SAMPLES", source)
+        self.assertLess(source.index("wait_for_assurance_health\n"), source.index('"$work/finish.json"'))
         for phrase in (
             "START ASSURED CHANGE WINDOW", "SEAL DESIRED STATE",
             "CERTIFY INCIDENT RESPONSE READINESS", "FINALIZE ASSURED CHANGE WINDOW",

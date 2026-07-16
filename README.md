@@ -166,10 +166,12 @@ tamper-evident receipt becomes part of every subsequent signed incident capsule.
 DASH now closes the deployment loop as well. An assured change window binds an
 exact commit and staged file manifest to verified pre/post backups, a private
 source rollback archive, every game-map container identity/start time, desired
-state, 12/12 response readiness, SLO health, and Prometheus evidence. It deploys
+state, 12/12 response readiness, converged SLO/change health, and Prometheus evidence. It deploys
 only the control plane through the normal tested path, fails on any unplanned
 map recreation/restart or stale health proof, and emits a semantically verified
 HMAC receipt that the final backup must contain.
+Finalization requires multiple consecutive healthy collector samples, so an
+admin restart cannot turn a transient stale sample into a failed receipt.
 
 See [`docs/ecosystem-feature-parity-audit.md`](docs/ecosystem-feature-parity-audit.md)
 for the pinned peer list, full capability matrix, confidence levels, exclusions,
