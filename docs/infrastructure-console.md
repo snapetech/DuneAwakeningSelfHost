@@ -323,13 +323,24 @@ This is an administrative data view. Keep DASH Admin on a trusted LAN/VPN.
 
 `GET /api/ops/updates` reports the local Steam package/image-tag comparison,
 current Git branch/commit/upstream/behind count, worktree cleanliness, and the
-hotfix auto-update timer state. Read checks do not require the mutation gate.
+hotfix auto-update timer state. It also embeds the candidate-bound Update
+Readiness evaluation and latest signed receipt. Read checks do not require the
+mutation gate.
+
+`GET /api/ops/update-readiness` exposes the same complete evaluation.
+`POST /api/ops/update-readiness` recollects all server-side inputs and requires
+`CERTIFY GAME UPDATE READINESS`. It writes a private HMAC receipt but executes
+no update, restart, or game mutation. See [`update-readiness.md`](update-readiness.md).
 
 `POST /api/ops/updates` supports:
 
 - `game-check`: rerun `check-steam-update.sh`;
-- `game-apply`: execute the existing full-farm stop, backup, Steam refresh,
-  image ingest/tag update, start, readiness, and post-hook workflow;
+- `game-stage`: acquire/settle the local Steam candidate without loading
+  images, writing the active tag, or touching containers/game state;
+- `game-apply`: execute the existing full-farm stop, backup, staged-package
+  validation, image ingest/tag update, start, readiness, and post-hook workflow. With the
+  default policy, this first requires a current candidate-bound signed update
+  readiness receipt and disables further Steam acquisition during apply;
 - `stack-check`: fetch and fast-forward-check the configured Git upstream;
 - `stack-apply`: require a clean tree, fetch, reject non-fast-forwards, write a
   pre-update Git bundle, validate the candidate in a temporary worktree, and
@@ -339,7 +350,7 @@ hotfix auto-update timer state. Read checks do not require the mutation gate.
 - `auto-update-install`: install/enable the existing hotfix update timer.
 
 Mutating actions require `DUNE_ADMIN_UPDATE_MUTATIONS_ENABLED=true`, the master
-mutation gate, and `APPLY GAME UPDATE`, `APPLY STACK UPDATE`, or
+mutation gate, and `STAGE GAME UPDATE`, `APPLY GAME UPDATE`, `APPLY STACK UPDATE`, or
 `REPAIR RUNTIME` as appropriate. `scripts/admin-stack-update.sh` never merges
 or rebases divergent history and never applies an unvalidated candidate.
 

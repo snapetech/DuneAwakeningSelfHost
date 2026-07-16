@@ -74,10 +74,12 @@ The local backup includes:
 - `operator-evidence.tgz` when portable signed evidence exists. Both verifiers
   confine and bound every member, dispatch by schema, recompute incident-plan
   and drill/certification digests or deployment manifest/continuity/health
+  semantics, or rederive exact game-update candidate/check/verdict/expiry
   semantics, and verify the outer HMAC with the matching key from this backup
   rather than the current live key. See
   [`incident-response.md`](incident-response.md) and
-  [`deployment-assurance.md`](deployment-assurance.md).
+  [`deployment-assurance.md`](deployment-assurance.md), and
+  [`update-readiness.md`](update-readiness.md).
 - `manifest.txt` with `WORLD_UNIQUE_NAME`, `DUNE_FLS_ENV`, and `GAME_RMQ_PUBLIC_HOST`.
 
 New CLI backups run with `umask 077`. Admin-panel dump, archive, manifest, and

@@ -2,6 +2,21 @@
 
 This page documents the daily restart, backup, Steam-package update check, and return-online flow.
 
+For operator-initiated browser updates, DASH adds a candidate-bound signed
+readiness gate before this existing workflow. It verifies recovery, current
+restore proof, Compose/Coriolis/post-start hooks, Desired State, SLO/change
+integrity, response readiness, and the latest assured deployment without
+executing an update. The browser stages Steam separately, certifies that exact
+local candidate, then disables further acquisition during apply so the build
+cannot change inside the restart workflow. See
+[`update-readiness.md`](update-readiness.md).
+
+The hotfix timer also stages-only by default when
+`DUNE_UPDATE_REQUIRE_READINESS_RECEIPT=true`. It does not load/restart until an
+operator certifies and applies the candidate in Infrastructure. The legacy
+fully automatic behavior requires the explicit
+`DUNE_HOTFIX_AUTO_APPLY_WITHOUT_READINESS=true` opt-out.
+
 ## Why 06:00
 
 The daily maintenance target is 06:00 local host time. The timer schedules the job at 05:30 so players receive a 30-minute warning window before the restart begins.

@@ -173,3 +173,18 @@ groups:
         for: 2m
         labels: {severity: critical}
         annotations: {summary: "A DASH assured change window expired without a completion or cancellation receipt"}
+      - alert: DashUpdateReadinessCollectorInvalid
+        expr: dash_update_readiness_collector_up == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "DASH game-update readiness evidence or collector verification failed"}
+      - alert: DashGameUpdateCandidateBlocked
+        expr: dash_update_readiness_candidate_update_required == 1 and dash_update_readiness_scheduled_ready == 0
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "A game update is available but one or more safety checks block certification"}
+      - alert: DashGameUpdateCandidateUncertified
+        expr: dash_update_readiness_candidate_update_required == 1 and dash_update_readiness_receipt_current == 0
+        for: 15m
+        labels: {severity: warning}
+        annotations: {summary: "A game update is available without a current candidate-bound readiness receipt"}

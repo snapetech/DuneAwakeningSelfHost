@@ -42,6 +42,37 @@ if ! flock -n 9; then
 fi
 
 export DUNE_RESTART_CHECK_STEAM_UPDATE=false
+require_readiness="${DUNE_UPDATE_REQUIRE_READINESS_RECEIPT:-true}"
+allow_uncertified_auto_apply="${DUNE_HOTFIX_AUTO_APPLY_WITHOUT_READINESS:-false}"
+if [[ "$require_readiness" =~ ^([Tt][Rr][Uu][Ee]|1|[Yy][Ee][Ss]|[Oo][Nn])$ ]] \
+  && [[ ! "$allow_uncertified_auto_apply" =~ ^([Tt][Rr][Uu][Ee]|1|[Yy][Ee][Ss]|[Oo][Nn])$ ]]; then
+  "$script_dir/update-steam-tool.sh" "$env_file"
+  check_file="$(mktemp)"
+  trap 'rm -f "$check_file"' EXIT
+  set +e
+  "$script_dir/check-steam-update.sh" "$env_file" 2>&1 | tee "$check_file"
+  check_rc="${PIPESTATUS[0]}"
+  set -e
+  case "$check_rc" in
+    0)
+      printf 'Steam candidate is current; readiness policy leaves the live farm unchanged\n'
+      ;;
+    1)
+      if grep -Eq 'status: update available|status: same tag but Steam build changed' "$check_file"; then
+        printf 'Steam candidate staged; readiness receipt required before image load or farm restart\n'
+      else
+        printf 'fail: candidate check returned 1 without a recognized staged update state\n' >&2
+        exit 1
+      fi
+      ;;
+    *)
+      printf 'fail: staged Steam candidate is incomplete or unreadable\n' >&2
+      exit "$check_rc"
+      ;;
+  esac
+  exit 0
+fi
+
 "$script_dir/update-owned-steam-build-and-restart.sh" \
   "$env_file" \
   --yes \

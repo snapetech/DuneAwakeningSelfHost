@@ -65,6 +65,9 @@ Always compare your `.env` image pin with the Steam package installed on your ho
 - Host-level map watchdog service for unattended recovery.
 - LAN/VPN admin panel with Overview, Ops, Infrastructure, World, Security, Runbook, Players, Cosmetics, Blueprints, Care Packages, Addons, Bootstrap, Settings, Admin Actions, Admin Digests, Catalog, and Discovery surfaces.
 - Browser service/log control, verified manual and automatic backup lifecycle, daily no-network PostgreSQL restore proof with hash-chained RPO/RTO receipts, time-weighted SLOs/error budgets and immutable incident history, HMAC-sealed file/container desired-state attestation, tamper-evident operational change intelligence with non-causal incident correlation, deterministic evidence-linked response plans, portable signed escalation capsules, layered disaster restore, bounded database query/row/password controls, dynamic map autoscaling, retained capacity intelligence with evidence-driven adaptive retention, live memory balancing, and retained Prometheus metrics.
+- Staged game-build acquisition and exact candidate-bound update certification
+  with recovery/configuration/health gates, expiring HMAC receipts, candidate
+  drift invalidation, and fail-closed browser apply enforcement.
 - Cache-aware, host-local CPU-affinity generation with guarded no-restart live application, Compose persistence, and rollback.
 - Backup-first Linux sysctl/THP/NIC-ring/IRQ tuning that preserves larger existing network maxima and never restarts Docker.
 - Live inventory slot-integrity audit plus hostname-, backup-, capacity-, and transaction-gated no-delete conflict repair.
@@ -166,12 +169,21 @@ tamper-evident receipt becomes part of every subsequent signed incident capsule.
 DASH now closes the deployment loop as well. An assured change window binds an
 exact commit and staged file manifest to verified pre/post backups, a private
 source rollback archive, every game-map container identity/start time, desired
-state, 12/12 response readiness, converged SLO/change health, and Prometheus evidence. It deploys
+state, 12/12 response readiness, converged SLO/change health, and Prometheus
+evidence. It deploys
 only the control plane through the normal tested path, fails on any unplanned
 map recreation/restart or stale health proof, and emits a semantically verified
 HMAC receipt that the final backup must contain.
 Finalization requires multiple consecutive healthy collector samples, so an
 admin restart cannot turn a transient stale sample into a failed receipt.
+
+Game-build upgrades now have their own candidate-bound safety gate. DASH binds
+the exact Steam build and Funcom image tag to a verified backup, isolated
+restore proof, Compose/Coriolis/post-start hooks, desired state, SLO/change
+integrity, fleet readiness, deployment assurance, and online-player state.
+The signed receipt expires and invalidates on candidate drift; browser update
+execution fails closed without a current receipt. Certification itself runs no
+update, restart, or game mutation.
 
 See [`docs/ecosystem-feature-parity-audit.md`](docs/ecosystem-feature-parity-audit.md)
 for the pinned peer list, full capability matrix, confidence levels, exclusions,
@@ -427,7 +439,7 @@ The admin surface requires authentication by default. Set a high-entropy `DUNE_A
 | --- | --- |
 | Overview | Readiness metrics, health summary, Hagga Basin player map, map details, and player preview. |
 | Ops | Restart planner, restart announcements, resource telemetry, map health, network checks, farm state, and partition state. |
-| Infrastructure | Compose service/log control, manual/automatic backup lifecycle, isolated recovery proof and restore, reliability SLO/error-budget control room, database query/row/password tools, autoscaling, memory controls, and update/repair. |
+| Infrastructure | Compose service/log control, manual/automatic backup lifecycle, isolated recovery proof and restore, reliability SLO/error-budget control room, database query/row/password tools, autoscaling, memory controls, candidate-bound game-update certification, and update/repair. |
 | Backup Encryption | Verified recipient OpenPGP archives, ciphertext receipts, safe decrypt staging, encrypted-only rclone/rsync mode, and encrypted restic repositories. |
 | World | Read-only guild/member, Landsraad term/task/reward/contribution, and aggregate storage views; Landsraad writes remain on Admin Actions. |
 | Security | Host/origin checks, auth mode, mutation gates, allowlists, and audit events. |
@@ -863,6 +875,8 @@ Server-browser ordering is deliberately split based on the observed in-game brow
 | `DUNE_ADMIN_DATABASE_ROW_MUTATIONS_ENABLED` / `DUNE_ADMIN_DATABASE_PASSWORD_MUTATIONS_ENABLED` | Primary-key row editor and coordinated credential-rotation gates. |
 | `DUNE_ADMIN_SERVICE_CONTROL_ENABLED` / `DUNE_ADMIN_STATEFUL_SERVICE_CONTROL_ENABLED` | Browser start/stop/restart gates; stateful Postgres/RabbitMQ control remains separately disabled by default. |
 | `DUNE_ADMIN_UPDATE_MUTATIONS_ENABLED` | Game update/restart, candidate-validated stack fast-forward, runtime repair, and auto-update timer installation gate. |
+| `DUNE_UPDATE_READINESS_ENABLED` / `DUNE_UPDATE_REQUIRE_READINESS_RECEIPT` / `DUNE_UPDATE_READINESS_TTL_SECONDS` / `DUNE_UPDATE_READINESS_POLL_SECONDS` | Candidate-bound signed game-update certification, browser apply enforcement, bounded receipt lifetime, and cached read-only collection cadence. |
+| `DUNE_HOTFIX_AUTO_APPLY_WITHOUT_READINESS` | Explicit legacy opt-out from stage-only unattended hotfix behavior; keep false to require certification before load/restart. |
 | `DUNE_ADMIN_PLAYER_RUNTIME_MUTATIONS_ENABLED` / `DUNE_SERVER_NOTIFICATION_SYSTEM_ENABLED` / `DUNE_SERVER_COMMANDS_AUTH_TOKEN` | Native skill/water/kick/vehicle action gate, game notification consumer, and shared Version 2 token. |
 | `DUNE_ADMIN_VEHICLE_MUTATIONS_ENABLED` | Offline vehicle durability/fuel database maintenance gate. |
 | `DUNE_ADMIN_MEMORY_MUTATIONS_ENABLED` / `DUNE_ADMIN_AUTOSCALER_MUTATIONS_ENABLED` | Live map memory/balancer and dynamic map-mode/travel-demand gates. |
@@ -989,6 +1003,7 @@ Start here:
 - [`docs/change-intelligence.md`](docs/change-intelligence.md): append-only HMAC operational timeline, authoritative incident reconciliation, privacy-bounded correlation, non-causal evidence capsules, portable ledger-head-bound signed exports with offline verification, metrics, and backup-bound recovery.
 - [`docs/incident-response.md`](docs/incident-response.md): policy-versioned deterministic response plans, evidence predicates, exact bounded diagnostics, guarded recovery contracts, plan/signature verification, UI navigation without execution, and backup-bound portable evidence.
 - [`docs/deployment-assurance.md`](docs/deployment-assurance.md): exact-commit staged promotion, pre/post recovery layers, map-continuity invariants, desired/readiness/SLO/Prometheus gates, signed receipts, dashboard, metrics, and failure recovery.
+- [`docs/update-readiness.md`](docs/update-readiness.md): exact Steam/image candidate certification, recovery and health gates, signed expiry-bound receipts, browser update enforcement, metrics, and failure recovery.
 - [`docs/operational-identity-handoff.md`](docs/operational-identity-handoff.md): FLS identity, RabbitMQ TLS, backup identity layers, and redacted handoff artifacts.
 - [`docs/postgres-replication.md`](docs/postgres-replication.md): local and remote Postgres standby.
 - [`docs/artificial-exchange.md`](docs/artificial-exchange.md): artificial Exchange catalog, buyer, settlement, populator, and services.

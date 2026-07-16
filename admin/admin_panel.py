@@ -62,6 +62,7 @@ import capacity_intelligence
 import desired_state
 import change_intelligence
 import deployment_assurance
+import update_readiness
 
 GM_CATALOG_PATH = CODE_ROOT / "scripts" / "gm-command-catalog.py"
 GM_CATALOG_SPEC = importlib.util.spec_from_file_location("gm_command_catalog", GM_CATALOG_PATH)
@@ -225,6 +226,7 @@ CONFIRM_BACKUP_RESTORE = "RESTORE BACKUP"
 CONFIRM_BACKUP_IMPORT = "IMPORT BACKUP"
 CONFIRM_SERVICE_CONTROL = "CONTROL SERVICE"
 CONFIRM_GAME_UPDATE = "APPLY GAME UPDATE"
+CONFIRM_GAME_UPDATE_STAGE = "STAGE GAME UPDATE"
 CONFIRM_STACK_UPDATE = "APPLY STACK UPDATE"
 CONFIRM_RUNTIME_REPAIR = "REPAIR RUNTIME"
 CONFIRM_MEMORY_BALANCER = "CHANGE MEMORY BALANCER"
@@ -242,6 +244,7 @@ CONFIRM_READINESS_CERTIFICATION = "CERTIFY INCIDENT RESPONSE READINESS"
 CONFIRM_DEPLOYMENT_ASSURANCE_START = "START ASSURED CHANGE WINDOW"
 CONFIRM_DEPLOYMENT_ASSURANCE_FINISH = "FINALIZE ASSURED CHANGE WINDOW"
 CONFIRM_DEPLOYMENT_ASSURANCE_CANCEL = "CANCEL ASSURED CHANGE WINDOW"
+CONFIRM_UPDATE_READINESS = "CERTIFY GAME UPDATE READINESS"
 CONFIRM_BOOTSTRAP = "RUN BOOTSTRAP"
 CONFIRM_PLAYER_RECOVERY = "MOVE OFFLINE PLAYER"
 CONFIRM_REPUTATION_MUTATION = "WRITE REPUTATION"
@@ -407,6 +410,14 @@ DEPLOYMENT_ASSURANCE_WORKSPACE = pathlib.Path(os.environ.get("DUNE_DEPLOYMENT_AS
 DEPLOYMENT_ASSURANCE_PROMETHEUS_URL = os.environ.get("DUNE_DEPLOYMENT_ASSURANCE_PROMETHEUS_URL", "http://prometheus:9090").rstrip("/")
 DEPLOYMENT_ASSURANCE_STORE = None
 DEPLOYMENT_ASSURANCE_STORE_LOCK = threading.Lock()
+UPDATE_READINESS_ENABLED = os.environ.get("DUNE_UPDATE_READINESS_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+UPDATE_READINESS_REQUIRE_RECEIPT = os.environ.get("DUNE_UPDATE_REQUIRE_READINESS_RECEIPT", "true").lower() in ("1", "true", "yes", "on")
+UPDATE_READINESS_TTL_SECONDS = max(300, min(int(os.environ.get("DUNE_UPDATE_READINESS_TTL_SECONDS", "3600")), 86400))
+UPDATE_READINESS_POLL_SECONDS = max(60, min(int(os.environ.get("DUNE_UPDATE_READINESS_POLL_SECONDS", "300")), 3600))
+UPDATE_READINESS_STORE = None
+UPDATE_READINESS_STORE_LOCK = threading.Lock()
+UPDATE_READINESS_SNAPSHOT_CACHE = {"at": 0.0, "value": None}
+UPDATE_READINESS_SNAPSHOT_LOCK = threading.Lock()
 DISCORD_ADAPTER_ROUTES = {
     "/api/integrations/discord/health", "/api/integrations/discord/status",
     "/api/integrations/discord/readiness", "/api/integrations/discord/services",
@@ -993,6 +1004,11 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_DEPLOYMENT_ASSURANCE_STATE_DIR": {"group": "Deployment Assurance", "secret": False, "restart": True, "why": "Private directory for HMAC-authenticated open/completed change-window state."},
     "DUNE_DEPLOYMENT_ASSURANCE_WORKSPACE": {"group": "Deployment Assurance", "secret": False, "restart": True, "why": "Read-only complete source-workspace mount used to independently verify every promoted manifest file."},
     "DUNE_DEPLOYMENT_ASSURANCE_PROMETHEUS_URL": {"group": "Deployment Assurance", "secret": False, "restart": True, "why": "Internal Prometheus URL used to prove the current readiness certification has been scraped."},
+    "DUNE_UPDATE_READINESS_ENABLED": {"group": "Update Readiness", "secret": False, "restart": True, "why": "Enables candidate-bound game-update readiness evaluation and signed certification receipts."},
+    "DUNE_UPDATE_REQUIRE_READINESS_RECEIPT": {"group": "Update Readiness", "secret": False, "restart": True, "why": "Requires a current signed readiness receipt before browser game-update execution."},
+    "DUNE_UPDATE_READINESS_TTL_SECONDS": {"group": "Update Readiness", "secret": False, "restart": True, "why": "Maximum 300..86400 second lifetime for a candidate-bound update readiness receipt."},
+    "DUNE_UPDATE_READINESS_POLL_SECONDS": {"group": "Update Readiness", "secret": False, "restart": True, "why": "Cached read-only candidate/readiness collection cadence from 60 to 3600 seconds."},
+    "DUNE_HOTFIX_AUTO_APPLY_WITHOUT_READINESS": {"group": "Update Readiness", "secret": False, "restart": False, "why": "Explicit legacy opt-out allowing the host hotfix timer to apply without a signed candidate receipt; keep false."},
     "DUNE_ADMIN_BACKUP_IMPORT_MAX_BODY_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum JSON request size for a base64 full-backup archive import."},
     "DUNE_BACKUP_ARCHIVE_ENCRYPTION_ENABLED": {"group": "Backup Encryption", "secret": False, "restart": False, "why": "Enables the documented host-side verified OpenPGP archive workflow."},
     "DUNE_BACKUP_GPG_RECIPIENT": {"group": "Backup Encryption", "secret": False, "restart": False, "why": "Exact 40- or 64-hex OpenPGP recipient fingerprint; never an ambiguous name/email selector."},
@@ -3227,6 +3243,171 @@ def run_workspace_command(args, timeout=45):
     }
 
 
+def update_readiness_candidate(game):
+    text = "\n".join([str(game.get("stdout") or ""), str(game.get("stderr") or "")])
+    def field(pattern):
+        match = re.search(pattern, text, re.MULTILINE)
+        return match.group(1).strip() if match else ""
+    current = field(r"^current DUNE_IMAGE_TAG:\s*(\S+)") or "unknown"
+    package_tags = re.findall(r"^\s{2}([A-Za-z0-9][A-Za-z0-9_.-]{0,127})\s*$", text, re.MULTILINE)
+    candidate_tag = field(r"^next tag:\s*(\S+)") or field(r"^reload required:\s*(\S+)") or (package_tags[0] if len(set(package_tags)) == 1 else current)
+    status = (
+        "update-available" if "status: update available" in text
+        else "reload-required" if "status: same tag but Steam build changed" in text or "reload required:" in text
+        else "current" if "status: current" in text
+        else "unknown"
+    )
+    return {
+        "imageTag": candidate_tag or "unknown", "currentImageTag": current,
+        "status": status, "installedBuildId": field(r"^Steam installed buildid:\s*([0-9]+)"),
+        "targetBuildId": field(r"^Steam target buildid:\s*([0-9]+)"),
+        "loadedBuildId": field(r"^last loaded buildid:\s*([0-9]+)"),
+    }, text, sorted(set(package_tags))
+
+
+def update_readiness_store():
+    global UPDATE_READINESS_STORE
+    if not UPDATE_READINESS_ENABLED:
+        raise PermissionError("update readiness is disabled; set DUNE_UPDATE_READINESS_ENABLED=true")
+    with UPDATE_READINESS_STORE_LOCK:
+        if UPDATE_READINESS_STORE is None:
+            UPDATE_READINESS_STORE = update_readiness.Store(
+                CHANGE_INTELLIGENCE_EVIDENCE_ROOT,
+                change_intelligence.read_secret(CHANGE_INTELLIGENCE_SECRET_FILE),
+                ttl_seconds=UPDATE_READINESS_TTL_SECONDS,
+                owner_uid=os.environ.get("DUNE_HOST_UID"), owner_gid=os.environ.get("DUNE_HOST_GID"),
+            )
+            UPDATE_READINESS_STORE.initialize()
+        return UPDATE_READINESS_STORE
+
+
+def update_readiness_snapshot(game=None, force=False):
+    if game is None and not force:
+        with UPDATE_READINESS_SNAPSHOT_LOCK:
+            if UPDATE_READINESS_SNAPSHOT_CACHE["value"] is not None and time.time() - UPDATE_READINESS_SNAPSHOT_CACHE["at"] <= UPDATE_READINESS_POLL_SECONDS:
+                return json.loads(json.dumps(UPDATE_READINESS_SNAPSHOT_CACHE["value"]))
+    game = game or run_workspace_command([str(ROOT / "scripts" / "check-steam-update.sh"), str(ENV_FILE)], timeout=90)
+    candidate, game_text, package_tags = update_readiness_candidate(game)
+    installed = candidate.get("installedBuildId")
+    target = candidate.get("targetBuildId")
+    package_identified = candidate["status"] != "unknown" and candidate["imageTag"] != "unknown" and len(package_tags) == 1
+    package_complete = game.get("returncode") in (0, 1) and len(package_tags) == 1 and "incomplete Steam package" not in game_text and "missing package image tar" not in game_text
+    steam_settled = bool(package_complete and (not installed or not target or installed == target))
+
+    compose = run_workspace_command(["docker", "compose", "--env-file", str(ENV_FILE), "config", "--quiet"], timeout=60)
+    coriolis = run_workspace_command([str(ROOT / "scripts" / "validate-landsraad-coriolis-cycle.sh"), str(ENV_FILE)], timeout=60)
+    latest_set = next((
+        row for row in (backup_inventory(100).get("sets") or [])
+        if any((BACKUPS_ROOT / row.get("path", "")).glob("*.dump"))
+        or any((BACKUPS_ROOT / row.get("path", "") / "maintenance").glob("*/*.dump"))
+    ), {})
+    backup = {"ok": False, "path": latest_set.get("path"), "exitCode": None}
+    if latest_set.get("path"):
+        try:
+            backup = verify_backup_set(latest_set["path"])
+        except Exception as exc:
+            backup = {"ok": False, "path": latest_set.get("path"), "exitCode": None, "error": str(exc)[:1000]}
+    try:
+        proof = _slo_restore_proof()
+        proof_age_ready = proof.get("ageSeconds") is not None and proof["ageSeconds"] <= OPERATIONAL_SLO_RESTORE_PROOF_MAX_AGE_HOURS * 3600
+        restore_ready = bool(proof.get("ok") and proof.get("integrityOk") and proof.get("policyOk") and proof.get("receiptHashValid") and proof_age_ready and proof.get("liveDatabaseTouched") is False)
+    except Exception as exc:
+        proof, restore_ready = {"error": str(exc)[:1000]}, False
+    try:
+        desired = desired_state_public_status()
+    except Exception as exc:
+        desired = {"state": "error", "error": str(exc)[:1000]}
+    try:
+        change = change_intelligence_public_status()
+    except Exception as exc:
+        change = {"error": str(exc)[:1000]}
+    try:
+        slo = operational_slo_public_status()
+    except Exception as exc:
+        slo = {"overall": "error", "error": str(exc)[:1000]}
+    try:
+        assurance = deployment_assurance_public_status()
+    except Exception as exc:
+        assurance = {"latestReady": False, "error": str(exc)[:1000]}
+    certification = change.get("readinessCertification") or {}
+    latest_assurance = assurance.get("latest") or {}
+    hooks = [
+        "scripts/restart-post-start-health.sh", "scripts/patch-logoff-timers-runtime.sh",
+        "scripts/validate-landsraad-coriolis-cycle.sh", "scripts/apply-official-db-patches.sh",
+        "scripts/clear-player-rmq-sessions.sh", "scripts/restart-target.sh",
+    ]
+    missing_hooks = [path for path in hooks if not (ROOT / path).is_file() or not os.access(ROOT / path, os.X_OK)]
+    try:
+        online_players = int(query("select count(*)::int as count from dune.player_state where online_status::text='Online'")[0]["count"])
+    except Exception:
+        online_players = 100000
+    checks = {
+        "backupVerified": bool(backup.get("ok")),
+        "changeIntegrity": bool((change.get("integrity") or {}).get("ok")) and not (change.get("openIncidents") or []),
+        "composeValid": bool(compose.get("ok")),
+        "coriolisSafe": bool(coriolis.get("ok")),
+        "deploymentAssuranceReady": bool(assurance.get("latestReady") and (latest_assurance.get("verification") or {}).get("ok") and not (assurance.get("openWindows") or []) and not (assurance.get("overdueWindows") or [])),
+        "desiredStateAttested": desired.get("state") == "attested" and not (desired.get("openFindings") or []) and bool((desired.get("integrity") or {}).get("ok")),
+        "packageComplete": package_complete,
+        "packageIdentified": package_identified,
+        "postStartHooksReady": not missing_hooks,
+        "readinessCurrent": bool(certification.get("currentReady") and certification.get("policyCurrent") and (certification.get("receiptVerification") or {}).get("ok")),
+        "restoreProofReady": restore_ready,
+        "sloHealthy": slo.get("overall") == "healthy" and not (slo.get("openIncidents") or []) and bool((slo.get("integrity") or {}).get("ok")),
+        "steamSettled": steam_settled,
+    }
+    snapshot = {
+        "candidate": candidate, "checks": checks, "onlinePlayers": online_players,
+        "details": {
+            "backup": {"path": backup.get("path"), "verified": bool(backup.get("ok")), "exitCode": backup.get("exitCode")},
+            "restoreProof": {key: proof.get(key) for key in ("id", "ok", "integrityOk", "policyOk", "receiptHashValid", "ageSeconds", "restoreSeconds", "liveDatabaseTouched")},
+            "compose": {"ok": bool(compose.get("ok")), "exitCode": compose.get("returncode")},
+            "coriolis": {"ok": bool(coriolis.get("ok")), "exitCode": coriolis.get("returncode")},
+            "desiredState": {"state": desired.get("state"), "openFindings": len(desired.get("openFindings") or []), "integrity": bool((desired.get("integrity") or {}).get("ok"))},
+            "changeIntelligence": {"openIncidents": len(change.get("openIncidents") or []), "integrity": bool((change.get("integrity") or {}).get("ok"))},
+            "slo": {"overall": slo.get("overall"), "openIncidents": len(slo.get("openIncidents") or []), "integrity": bool((slo.get("integrity") or {}).get("ok"))},
+            "readiness": {"current": bool(certification.get("currentReady")), "policyCurrent": bool(certification.get("policyCurrent")), "receiptValid": bool((certification.get("receiptVerification") or {}).get("ok"))},
+            "deploymentAssurance": {"id": latest_assurance.get("id"), "commit": latest_assurance.get("commit"), "ready": bool(assurance.get("latestReady")), "verification": bool((latest_assurance.get("verification") or {}).get("ok"))},
+            "postStartHooks": {"required": hooks, "missing": missing_hooks},
+            "packageTags": package_tags,
+        },
+    }
+    with UPDATE_READINESS_SNAPSHOT_LOCK:
+        UPDATE_READINESS_SNAPSHOT_CACHE.update({"at": time.time(), "value": json.loads(json.dumps(snapshot))})
+    return snapshot
+
+
+def update_readiness_public_status(game=None):
+    if not UPDATE_READINESS_ENABLED:
+        return {"ok": False, "enabled": False, "state": "disabled", "requireReceipt": UPDATE_READINESS_REQUIRE_RECEIPT}
+    snapshot = update_readiness_snapshot(game=game)
+    result = update_readiness_store().status(snapshot)
+    result.update({
+        "enabled": True, "requireReceipt": UPDATE_READINESS_REQUIRE_RECEIPT,
+        "receiptTtlSeconds": UPDATE_READINESS_TTL_SECONDS,
+        "pollSeconds": UPDATE_READINESS_POLL_SECONDS,
+        "requiredCapability": "infrastructure.write", "confirm": CONFIRM_UPDATE_READINESS,
+    })
+    return result
+
+
+def certify_update_readiness(principal):
+    snapshot = update_readiness_snapshot(force=True)
+    assurance = (snapshot.get("details") or {}).get("deploymentAssurance") or {}
+    result = update_readiness_store().certify(
+        snapshot, (principal or {}).get("id"), source_commit=assurance.get("commit"),
+    )
+    receipt = result["document"]["receipt"]
+    audit_event(
+        "game-update-readiness-certified", ok=True, receipt_id=receipt["id"],
+        candidate_fingerprint=receipt["candidate"]["fingerprint"], image_tag=receipt["candidate"]["imageTag"],
+        immediate_ready=receipt["immediateReady"], online_players=receipt["onlinePlayers"],
+        receipt_sha256=receipt["receiptSha256"], evidence_file=pathlib.Path(result["evidencePath"]).name,
+        update_executed=False, game_mutation_executed=False, principal_id=(principal or {}).get("id"),
+    )
+    return result
+
+
 def update_console_status():
     game = run_workspace_command([str(ROOT / "scripts" / "check-steam-update.sh"), str(ENV_FILE)], timeout=90)
     game_text = "\n".join([game.get("stdout", ""), game.get("stderr", "")])
@@ -3251,6 +3432,7 @@ def update_console_status():
         "game": game,
         "stack": git_rows,
         "automaticGameUpdate": auto,
+        "readiness": update_readiness_public_status(game=game),
         "mutationEnabled": UPDATE_MUTATIONS_ENABLED,
         "confirm": {"game": CONFIRM_GAME_UPDATE, "stack": CONFIRM_STACK_UPDATE, "repair": CONFIRM_RUNTIME_REPAIR},
     }
@@ -3262,9 +3444,17 @@ def update_console_action(action):
         return run_workspace_command([str(ROOT / "scripts" / "check-steam-update.sh"), str(ENV_FILE)], timeout=90)
     if action == "stack-check":
         return run_workspace_command([str(ROOT / "scripts" / "admin-stack-update.sh"), "--check"], timeout=180)
+    if action == "game-stage":
+        staged = run_workspace_command([str(ROOT / "scripts" / "update-steam-tool.sh"), str(ENV_FILE)], timeout=1900)
+        checked = run_workspace_command([str(ROOT / "scripts" / "check-steam-update.sh"), str(ENV_FILE)], timeout=90) if staged.get("ok") else None
+        return {"ok": bool(staged.get("ok") and checked and checked.get("returncode") in (0, 1)), "staged": staged, "candidate": checked, "gameMutationExecuted": False, "containersTouched": False}
     if action == "game-apply":
+        if UPDATE_READINESS_REQUIRE_RECEIPT:
+            readiness = update_readiness_store().status(update_readiness_snapshot(force=True))
+            if not readiness.get("applyReady") or not readiness.get("currentReceiptReady"):
+                raise PermissionError("game update requires a current candidate-bound signed readiness receipt")
         env = os.environ.copy()
-        env.update({"ENV_FILE": str(ENV_FILE), "DUNE_RESTART_TARGET": "all", "DUNE_RESTART_SERVICES": "all", "DUNE_RESTART_ACTION": "restart", "DUNE_RESTART_PHASE": "restart", "DUNE_RESTART_CHECK_STEAM_UPDATE": "true"})
+        env.update({"ENV_FILE": str(ENV_FILE), "DUNE_RESTART_TARGET": "all", "DUNE_RESTART_SERVICES": "all", "DUNE_RESTART_ACTION": "restart", "DUNE_RESTART_PHASE": "restart", "DUNE_RESTART_CHECK_STEAM_UPDATE": "true", "DUNE_RESTART_STEAM_UPDATE_MODE": "none"})
         completed = subprocess.run([str(ROOT / "scripts" / "restart-target.sh"), "all"], cwd=ROOT, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=3600, check=False)
         return {"ok": completed.returncode == 0, "exitCode": completed.returncode, "stdout": completed.stdout[-256 * 1024:], "stderr": completed.stderr[-256 * 1024:], "backupUpdateRestartWorkflow": True}
     if action == "stack-apply":
@@ -6891,9 +7081,12 @@ def verify_operator_evidence_archive(archive_path, secret_path):
             if handle is None:
                 raise ValueError(f"unreadable operator evidence member: {member.name}")
             document = json.loads(handle.read(10 * 1024 * 1024 + 1))
+            schema = document.get("schemaVersion")
             result = (
                 deployment_assurance.verify_signed_document(document, secret)
-                if document.get("schemaVersion") == deployment_assurance.SIGNED_SCHEMA
+                if schema == deployment_assurance.SIGNED_SCHEMA
+                else update_readiness.verify_signed_document(document, secret)
+                if schema == update_readiness.SCHEMA
                 else change_intelligence.verify_signed_capsule(document, secret)
             )
             if not result.get("ok"):
@@ -7850,6 +8043,13 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/metrics/change-intelligence":
                 metrics = change_intelligence_store().prometheus() if CHANGE_INTELLIGENCE_ENABLED else "dash_change_intelligence_collector_up 0\n"
                 metrics += deployment_assurance_store().prometheus() if DEPLOYMENT_ASSURANCE_ENABLED else "dash_deployment_assurance_collector_up 0\n"
+                if UPDATE_READINESS_ENABLED:
+                    try:
+                        metrics += update_readiness_store().prometheus(update_readiness_snapshot())
+                    except Exception:
+                        metrics += "dash_update_readiness_collector_up 0\n"
+                else:
+                    metrics += "dash_update_readiness_collector_up 0\n"
                 self.text(metrics, "text/plain; version=0.0.4; charset=utf-8")
             elif parsed.path in ("/api/integrations/discord/health", "/api/integrations/discord/version", "/api/integrations/discord/backups/list"):
                 self.require_discord_token()
@@ -8068,6 +8268,9 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/ops/deployment-assurance":
                 self.require_token()
                 self.json(deployment_assurance_public_status())
+            elif parsed.path == "/api/ops/update-readiness":
+                self.require_token()
+                self.json(update_readiness_public_status())
             elif parsed.path == "/api/ops/change-intelligence/capsule":
                 self.require_token()
                 params = urllib.parse.parse_qs(parsed.query)
@@ -8765,6 +8968,12 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     raise ValueError("deployment assurance action must be start, finish, or cancel")
                 self.json(result)
+            elif parsed.path == "/api/ops/update-readiness":
+                self.require_token()
+                body = parse_body(self)
+                require_confirmation(body, CONFIRM_UPDATE_READINESS)
+                principal = access_control.public_principal(getattr(self, "auth_principal", None)) or {}
+                self.json(certify_update_readiness(principal))
             elif parsed.path == "/api/ops/backups/verify":
                 self.require_token()
                 body = parse_body(self)
@@ -8789,7 +8998,7 @@ class Handler(BaseHTTPRequestHandler):
                     self.require_mutations()
                     if not UPDATE_MUTATIONS_ENABLED:
                         raise PermissionError("browser updates are disabled; set DUNE_ADMIN_UPDATE_MUTATIONS_ENABLED=true")
-                    phrase = CONFIRM_GAME_UPDATE if action in ("game-apply", "auto-update-install") else CONFIRM_STACK_UPDATE if action == "stack-apply" else CONFIRM_RUNTIME_REPAIR
+                    phrase = CONFIRM_GAME_UPDATE_STAGE if action == "game-stage" else CONFIRM_GAME_UPDATE if action in ("game-apply", "auto-update-install") else CONFIRM_STACK_UPDATE if action == "stack-apply" else CONFIRM_RUNTIME_REPAIR
                     require_confirmation(body, phrase)
                 result = update_console_action(action)
                 self.audit("update-console", ok=result.get("ok"), update_action=action, exit_code=result.get("exitCode", result.get("returncode")))
@@ -16519,7 +16728,15 @@ function mountInfrastructureUpdateControls(updateData){
   if (!page) return;
   const game = updateData.game || {};
   const stack = updateData.stack || {};
-  page.insertAdjacentHTML('beforeend', `<div class="panelBand"><div class="sectionHeader"><h2>Updates and Runtime Repair</h2><div class="toolbar"><span class="pill ${game.status === 'current' ? 'ok' : 'warn'}">game ${esc(game.status || 'unknown')}</span><span class="pill ${Number(stack.behind || 0) ? 'warn' : 'ok'}">stack behind ${esc(stack.behind ?? 'unknown')}</span><span class="pill ${updateData.mutationEnabled ? 'warn' : 'ok'}">apply ${updateData.mutationEnabled ? 'enabled' : 'disabled'}</span></div></div><div class="twoCol"><div><h3>Game package</h3><pre>${esc((game.stdout || '') + (game.stderr || ''))}</pre><p><button id="infraGameUpdateCheckBtn" class="primary">Check game update</button> <button id="infraGameUpdateApplyBtn" class="danger">Backup, update, restart</button> <button id="infraAutoUpdateInstallBtn">Install auto-update timer</button></p></div><div><h3>DASH stack</h3>${table([stack])}<p><button id="infraStackUpdateCheckBtn" class="primary">Fetch/check stack</button> <button id="infraStackUpdateApplyBtn" class="danger">Validate and fast-forward stack</button></p><h3>Runtime repair</h3><p><button id="infraRuntimeRepairBtn">Run post-start repair</button></p></div></div><pre id="infraUpdateResult"></pre></div>`);
+  const readiness = updateData.readiness || {};
+  const evaluation = readiness.evaluation || {};
+  const candidate = evaluation.candidate || {};
+  const failed = evaluation.failedChecks || [];
+  const latest = readiness.latest || {};
+  const applyBlocked = readiness.requireReceipt && !readiness.applyReady;
+  page.insertAdjacentHTML('beforeend', `<div class="panelBand"><div class="sectionHeader"><h2>Updates and Runtime Repair</h2><div class="toolbar"><span class="pill ${game.status === 'current' ? 'ok' : 'warn'}">game ${esc(game.status || 'unknown')}</span><span class="pill ${readiness.currentReceiptReady ? 'ok' : 'warn'}">receipt ${readiness.currentReceiptReady ? 'current' : 'required'}</span><span class="pill ${Number(stack.behind || 0) ? 'warn' : 'ok'}">stack behind ${esc(stack.behind ?? 'unknown')}</span><span class="pill ${updateData.mutationEnabled ? 'warn' : 'ok'}">apply ${updateData.mutationEnabled ? 'enabled' : 'disabled'}</span></div></div><div class="panelInset"><div class="sectionHeader"><h3>Candidate-bound Update Readiness</h3><div class="toolbar"><span class="pill ${evaluation.scheduledReady ? 'ok' : 'bad'}">scheduled ${evaluation.scheduledReady ? 'ready' : 'blocked'}</span><span class="pill ${evaluation.immediateReady ? 'ok' : 'warn'}">immediate ${evaluation.immediateReady ? 'ready' : 'players online'}</span><span class="pill">${esc(evaluation.onlinePlayers ?? '—')} online</span></div></div><p class="muted">Stage Steam first without touching game containers, then certify. The signed receipt binds that exact local build/image candidate to a verified backup, isolated restore proof, Compose and Coriolis validation, post-start hooks, desired state, SLO/change integrity, deployment assurance, and fleet response readiness. Apply disables further Steam acquisition so the certified candidate cannot silently change inside the restart workflow.</p>${table([{candidate:candidate.imageTag || 'unknown',build:candidate.installedBuildId || 'unknown',status:candidate.status || 'unknown',scheduledReady:!!evaluation.scheduledReady,immediateReady:!!evaluation.immediateReady,failedChecks:failed.join(', ') || 'none',latestReceipt:latest.id || 'none',expiresAt:latest.expiresAt || '—'}])}<p><button id="infraGameUpdateStageBtn">Stage Steam candidate</button> <button id="infraUpdateReadinessCertifyBtn" class="primary" ${evaluation.scheduledReady ? '' : 'disabled'}>Certify exact candidate</button></p></div><div class="twoCol"><div><h3>Game package</h3><pre>${esc((game.stdout || '') + (game.stderr || ''))}</pre><p><button id="infraGameUpdateCheckBtn" class="primary">Check game update</button> <button id="infraGameUpdateApplyBtn" class="danger" ${applyBlocked ? 'disabled' : ''}>Backup, apply staged candidate, restart</button> <button id="infraAutoUpdateInstallBtn">Install auto-update timer</button></p></div><div><h3>DASH stack</h3>${table([stack])}<p><button id="infraStackUpdateCheckBtn" class="primary">Fetch/check stack</button> <button id="infraStackUpdateApplyBtn" class="danger">Validate and fast-forward stack</button></p><h3>Runtime repair</h3><p><button id="infraRuntimeRepairBtn">Run post-start repair</button></p></div></div><pre id="infraUpdateResult"></pre></div>`);
+  document.getElementById('infraGameUpdateStageBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Staging...', () => infrastructureUpdateAction('game-stage')));
+  document.getElementById('infraUpdateReadinessCertifyBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Certifying...', certifyGameUpdateReadiness));
   document.getElementById('infraGameUpdateCheckBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Checking...', () => infrastructureUpdateAction('game-check')));
   document.getElementById('infraGameUpdateApplyBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Updating...', () => infrastructureUpdateAction('game-apply')));
   document.getElementById('infraStackUpdateCheckBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Checking...', () => infrastructureUpdateAction('stack-check')));
@@ -16527,10 +16744,17 @@ function mountInfrastructureUpdateControls(updateData){
   document.getElementById('infraRuntimeRepairBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Repairing...', () => infrastructureUpdateAction('runtime-repair')));
   document.getElementById('infraAutoUpdateInstallBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Installing...', () => infrastructureUpdateAction('auto-update-install')));
 }
+async function certifyGameUpdateReadiness(){
+  if (!confirm('Certify this exact game-update candidate? DASH will run only bounded read-only checks and write a signed evidence receipt. It will not update or restart the game.')) return;
+  const result = await api('/api/ops/update-readiness', {method:'POST',timeoutMs:300000,body:JSON.stringify({confirm:'CERTIFY GAME UPDATE READINESS'})});
+  document.getElementById('infraUpdateResult').textContent = JSON.stringify(result, null, 2);
+  notify('Exact game-update candidate certified', 'ok');
+  return result;
+}
 async function infrastructureUpdateAction(action){
   const mutating = !['game-check','stack-check'].includes(action);
   if (mutating && !confirm(`Execute ${action}? Review the update status and ensure the maintenance window is ready.`)) return;
-  const confirmPhrase = action === 'game-apply' || action === 'auto-update-install' ? 'APPLY GAME UPDATE' : action === 'stack-apply' ? 'APPLY STACK UPDATE' : action === 'runtime-repair' ? 'REPAIR RUNTIME' : '';
+  const confirmPhrase = action === 'game-stage' ? 'STAGE GAME UPDATE' : action === 'game-apply' || action === 'auto-update-install' ? 'APPLY GAME UPDATE' : action === 'stack-apply' ? 'APPLY STACK UPDATE' : action === 'runtime-repair' ? 'REPAIR RUNTIME' : '';
   const result = await api('/api/ops/updates', {method:'POST',timeoutMs:3700000,body:JSON.stringify({action,confirm:confirmPhrase})});
   document.getElementById('infraUpdateResult').textContent = JSON.stringify(result, null, 2);
   notify(result.ok ? `${action} completed` : `${action} reported a failure`, result.ok ? 'ok' : 'bad');

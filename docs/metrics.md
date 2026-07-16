@@ -16,6 +16,10 @@ incident, operator, command, runbook, gate, or digest labels.
 The same endpoint emits deployment-assurance verification, latest outcome/time,
 open windows, and overdue windows. It does not label commits, paths, services,
 operators, backups, or receipt digests.
+It also emits game-update readiness, exact-candidate receipt currency,
+candidate-update-required state, online-player count, and last-certification
+time. It does not label image tags, Steam build IDs, candidate fingerprints,
+operators, backup paths, or receipt identities.
 
 Start it with the normal world Compose files plus the overlay:
 
@@ -70,6 +74,9 @@ container-health, memory, disk, Postgres, failed/stale incident drills, and
 missing/failed/stale fleet-wide response certification alerts.
 It also alerts on invalid deployment evidence, a missing/failed latest assured
 deployment, seven-day staleness, and an expired open change window.
+Game-update alerts cover invalid readiness evidence, an available candidate
+blocked by safety checks, and an available candidate without a current signed
+receipt.
 Validate the exact Prometheus version and rules with:
 
 ```bash

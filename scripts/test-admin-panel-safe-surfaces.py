@@ -1646,6 +1646,65 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertEqual(result["error"], "Steam package update check failed")
         self.assertIn("missing helper image", result["output"])
 
+    def test_update_readiness_candidate_parser_binds_tag_and_build(self):
+        game = {
+            "returncode": 1,
+            "stdout": "\n".join([
+                "current DUNE_IMAGE_TAG: dune_sb_1_4_9_0",
+                "Steam installed buildid: 24146567",
+                "Steam target buildid: 24146567",
+                "last loaded buildid: 24000000",
+                "package server tags:",
+                "  dune_sb_1_4_10_0",
+                "status: update available",
+                "next tag: dune_sb_1_4_10_0",
+            ]),
+            "stderr": "",
+        }
+        candidate, text, tags = self.panel.update_readiness_candidate(game)
+        self.assertEqual("dune_sb_1_4_10_0", candidate["imageTag"])
+        self.assertEqual("dune_sb_1_4_9_0", candidate["currentImageTag"])
+        self.assertEqual("update-available", candidate["status"])
+        self.assertEqual("24146567", candidate["installedBuildId"])
+        self.assertEqual(["dune_sb_1_4_10_0"], tags)
+        self.assertIn("status: update available", text)
+
+    def test_browser_game_update_requires_current_signed_candidate_receipt(self):
+        original_required = self.panel.UPDATE_READINESS_REQUIRE_RECEIPT
+        original_snapshot = self.panel.update_readiness_snapshot
+        original_store = self.panel.update_readiness_store
+        self.panel.UPDATE_READINESS_REQUIRE_RECEIPT = True
+        self.panel.update_readiness_snapshot = lambda force=False: {"candidate": {"imageTag": "one"}}
+        self.panel.update_readiness_store = lambda: type("Store", (), {"status": lambda self, snapshot: {"applyReady": False, "currentReceiptReady": False}})()
+        self.addCleanup(lambda: setattr(self.panel, "UPDATE_READINESS_REQUIRE_RECEIPT", original_required))
+        self.addCleanup(lambda: setattr(self.panel, "update_readiness_snapshot", original_snapshot))
+        self.addCleanup(lambda: setattr(self.panel, "update_readiness_store", original_store))
+        with self.assertRaisesRegex(PermissionError, "candidate-bound signed readiness receipt"):
+            self.panel.update_console_action("game-apply")
+        self.panel.update_readiness_store = lambda: type("Store", (), {"status": lambda self, snapshot: {"applyReady": True, "currentReceiptReady": True}})()
+        completed = type("Completed", (), {"returncode": 0, "stdout": "updated", "stderr": ""})()
+        with mock.patch.object(self.panel.subprocess, "run", return_value=completed) as run:
+            result = self.panel.update_console_action("game-apply")
+        self.assertTrue(result["ok"])
+        self.assertEqual("none", run.call_args.kwargs["env"]["DUNE_RESTART_STEAM_UPDATE_MODE"])
+
+    def test_game_update_staging_acquires_candidate_without_touching_containers(self):
+        original = self.panel.run_workspace_command
+        calls = []
+        def fake(args, timeout=45):
+            calls.append((list(args), timeout))
+            if str(args[0]).endswith("update-steam-tool.sh"):
+                return {"ok": True, "returncode": 0, "stdout": "staged", "stderr": ""}
+            return {"ok": False, "returncode": 1, "stdout": "status: update available", "stderr": ""}
+        self.panel.run_workspace_command = fake
+        self.addCleanup(lambda: setattr(self.panel, "run_workspace_command", original))
+        result = self.panel.update_console_action("game-stage")
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["gameMutationExecuted"])
+        self.assertFalse(result["containersTouched"])
+        self.assertTrue(str(calls[0][0][0]).endswith("update-steam-tool.sh"))
+        self.assertTrue(str(calls[1][0][0]).endswith("check-steam-update.sh"))
+
     def test_full_restart_reboots_after_applied_steam_update_when_enabled(self):
         command = self.workspace / "scripts" / "restart-target.sh"
         command.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
@@ -1944,6 +2003,18 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
             health={"desiredStateAttested": True, "readinessCurrent": True, "sloHealthy": True, "changeIntegrity": True, "prometheusReadiness": True, "adminHealthy": True, "backupVerified": True},
             backup={"ok": True, "path": "after", "exitCode": 0}, now=1100,
         )
+        update_store = self.panel.update_readiness.Store(
+            evidence_root, self.panel.change_intelligence.read_secret(secret), ttl_seconds=600,
+        )
+        update_store.certify({
+            "candidate": {
+                "imageTag": "dune_sb_1_4_10_0", "currentImageTag": "dune_sb_1_4_9_0",
+                "status": "update-available", "installedBuildId": "24146567",
+                "targetBuildId": "24146567", "loadedBuildId": "24000000",
+            },
+            "checks": {key: True for key in self.panel.update_readiness.REQUIRED_CHECKS},
+            "onlinePlayers": 0, "details": {"fixture": True},
+        }, "owner", source_commit="b" * 40, now=1150)
         (evidence_root / "ignored.txt").write_text("not evidence", encoding="utf-8")
         (evidence_root / "linked.signed.json").symlink_to(signed)
         original_root = self.panel.CHANGE_INTELLIGENCE_EVIDENCE_ROOT
@@ -1953,12 +2024,13 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         archive = self.workspace / "operator-evidence.tgz"
         result = self.panel.archive_operator_evidence(archive)
         verification = self.panel.verify_operator_evidence_archive(archive, secret)
-        self.assertEqual(2, result["files"])
-        self.assertEqual(2, verification["files"])
+        self.assertEqual(3, result["files"])
+        self.assertEqual(3, verification["files"])
         self.assertEqual(0o600, archive.stat().st_mode & 0o777)
         with tarfile.open(archive, "r:gz") as handle:
-            self.assertEqual(2, len(handle.getnames()))
+            self.assertEqual(3, len(handle.getnames()))
             self.assertIn("operator-evidence/archive.signed.json", handle.getnames())
+            self.assertTrue(any(name.startswith("operator-evidence/update-readiness-") for name in handle.getnames()))
 
         unsafe_name = evidence_root / "unsafe name.signed.json"
         unsafe_name.write_text(signed.read_text(encoding="utf-8"), encoding="utf-8")
@@ -3246,20 +3318,30 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         original_store = self.panel.change_intelligence_store
         original_deployment_store = self.panel.deployment_assurance_store
         original_deployment_status = self.panel.deployment_assurance_public_status
+        original_update_store = self.panel.update_readiness_store
+        original_update_snapshot = self.panel.update_readiness_snapshot
+        original_update_status = self.panel.update_readiness_public_status
         fake_store = type("Store", (), {
             "prometheus": lambda self: "dash_change_intelligence_collector_up 1\n",
             "capsule": lambda self, key: {"ok": True, "incidentKey": key, "causalityClaimed": False},
             "signed_capsule": lambda self, key: {"schemaVersion": 2, "incidentKey": key, "signature": "a" * 64},
         })()
         fake_deployment_store = type("DeploymentStore", (), {"prometheus": lambda self: "dash_deployment_assurance_collector_up 1\n"})()
+        fake_update_store = type("UpdateStore", (), {"prometheus": lambda self, snapshot: "dash_update_readiness_collector_up 1\n"})()
         self.panel.change_intelligence_public_status = lambda: {"ok": True, "state": "active", "eventCount": 3}
         self.panel.change_intelligence_store = lambda: fake_store
         self.panel.deployment_assurance_store = lambda: fake_deployment_store
         self.panel.deployment_assurance_public_status = lambda: {"ok": True, "state": "active", "latestReady": True}
+        self.panel.update_readiness_store = lambda: fake_update_store
+        self.panel.update_readiness_snapshot = lambda: {}
+        self.panel.update_readiness_public_status = lambda: {"ok": True, "currentReceiptReady": True, "applyReady": True}
         self.addCleanup(lambda: setattr(self.panel, "change_intelligence_public_status", original_status))
         self.addCleanup(lambda: setattr(self.panel, "change_intelligence_store", original_store))
         self.addCleanup(lambda: setattr(self.panel, "deployment_assurance_store", original_deployment_store))
         self.addCleanup(lambda: setattr(self.panel, "deployment_assurance_public_status", original_deployment_status))
+        self.addCleanup(lambda: setattr(self.panel, "update_readiness_store", original_update_store))
+        self.addCleanup(lambda: setattr(self.panel, "update_readiness_snapshot", original_update_snapshot))
+        self.addCleanup(lambda: setattr(self.panel, "update_readiness_public_status", original_update_status))
 
         handler, captured = self.make_route_handler("/api/ops/change-intelligence")
         handler.is_app_route = lambda path: False
@@ -3283,13 +3365,18 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         handler.do_GET()
         self.assertTrue(captured["json"]["latestReady"])
 
+        handler, captured = self.make_route_handler("/api/ops/update-readiness")
+        handler.is_app_route = lambda path: False
+        handler.do_GET()
+        self.assertTrue(captured["json"]["currentReceiptReady"])
+
         handler, captured = self.make_route_handler("/metrics/change-intelligence")
         handler.is_app_route = lambda path: False
         texts = []
         handler.text = lambda value, content_type="", **kwargs: texts.append((value, content_type))
         handler.require_token = lambda: self.fail("bounded change-intelligence metrics must not require an admin credential")
         handler.do_GET()
-        self.assertEqual("dash_change_intelligence_collector_up 1\ndash_deployment_assurance_collector_up 1\n", texts[0][0])
+        self.assertEqual("dash_change_intelligence_collector_up 1\ndash_deployment_assurance_collector_up 1\ndash_update_readiness_collector_up 1\n", texts[0][0])
 
     def test_audit_event_feeds_change_intelligence_and_protects_reserved_fields(self):
         events = []
@@ -3590,6 +3677,18 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.invoke_post_route("/api/ops/deployment-assurance", {"action": "finish", "confirm": "FINALIZE ASSURED CHANGE WINDOW"})
         self.invoke_post_route("/api/ops/deployment-assurance", {"action": "cancel", "confirm": "CANCEL ASSURED CHANGE WINDOW"})
         self.assertEqual(["start", "finish", "cancel"], [row[0] for row in calls])
+
+    def test_update_readiness_route_requires_exact_confirmation_and_principal(self):
+        original = self.panel.certify_update_readiness
+        calls = []
+        self.panel.certify_update_readiness = lambda principal: calls.append(principal) or {"verification": {"ok": True}, "document": {"receipt": {"scheduledReady": True}}}
+        self.addCleanup(lambda: setattr(self.panel, "certify_update_readiness", original))
+        rejected = self.invoke_post_route("/api/ops/update-readiness", {"confirm": "wrong"})
+        self.assertEqual(401, rejected["errors"][0]["status"])
+        self.assertFalse(calls)
+        accepted = self.invoke_post_route("/api/ops/update-readiness", {"confirm": "CERTIFY GAME UPDATE READINESS"})
+        self.assertTrue(accepted["json"]["verification"]["ok"])
+        self.assertIsInstance(calls[0], dict)
 
     def test_capacity_application_is_evidence_gated_gradual_and_mode_preserving(self):
         fake = type("Store", (), {
