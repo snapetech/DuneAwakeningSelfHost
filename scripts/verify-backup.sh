@@ -200,28 +200,44 @@ if [[ -f "$backup_dir/desired-state.sqlite3" ]]; then
     printf 'FAIL desired-state verification requires the matching config archive and HMAC key\n' >&2
     ok=false
   else
-    desired_tmp="$(mktemp -d)"
-    mkdir -p "$desired_tmp/config/secrets"
-    if tar -xOf "$desired_archive" config/desired-state.json > "$desired_tmp/config/desired-state.json" 2>/dev/null &&
-       tar -xOf "$desired_archive" config/secrets/desired-state-hmac.secret > "$desired_tmp/config/secrets/desired-state-hmac.secret" 2>/dev/null; then
-      chmod 600 "$desired_tmp/config/secrets/desired-state-hmac.secret"
-      if PYTHONPATH="$repo_root/admin" python3 - "$backup_dir/desired-state.sqlite3" "$desired_tmp/config/desired-state.json" "$desired_tmp/config/secrets/desired-state-hmac.secret" <<'PY'
+    if PYTHONPATH="$repo_root/admin" python3 - "$backup_dir/desired-state.sqlite3" "$desired_archive" <<'PY'
+import os
+import pathlib
 import sys
+import tarfile
+import tempfile
 import desired_state
-result=desired_state.Store(sys.argv[1],sys.argv[2],sys.argv[3]).verify()
-raise SystemExit(0 if result.get("ok") else 1)
+
+database, archive = sys.argv[1:]
+try:
+    with tarfile.open(archive, "r:gz") as source, tempfile.TemporaryDirectory(prefix="dash-desired-verify-") as directory:
+        root = pathlib.Path(directory)
+        paths = {}
+        for name, maximum in (("config/desired-state.json", 1024 * 1024), ("config/secrets/desired-state-hmac.secret", 16 * 1024)):
+            member = source.getmember(name)
+            if not member.isfile() or member.size <= 0 or member.size > maximum:
+                raise ValueError(f"invalid backup member: {name}")
+            handle = source.extractfile(member)
+            if handle is None:
+                raise ValueError(f"unreadable backup member: {name}")
+            value = handle.read(maximum + 1)
+            if len(value) > maximum:
+                raise ValueError(f"oversized backup member: {name}")
+            path = root / pathlib.PurePosixPath(name).name
+            path.write_bytes(value)
+            os.chmod(path, 0o600)
+            paths[name] = path
+        result = desired_state.Store(database, paths["config/desired-state.json"], paths["config/secrets/desired-state-hmac.secret"]).verify()
+        raise SystemExit(0 if result.get("ok") else 1)
+except (OSError, KeyError, ValueError, tarfile.TarError):
+    raise SystemExit(1)
 PY
-      then
-        printf 'OK desired-state SQLite snapshot, baseline HMACs, observation HMACs, and event chain %s\n' "$backup_dir/desired-state.sqlite3"
-      else
-        printf 'FAIL desired-state SQLite snapshot or HMAC attestations %s\n' "$backup_dir/desired-state.sqlite3" >&2
-        ok=false
-      fi
+    then
+      printf 'OK desired-state SQLite snapshot, baseline/observation/finding HMACs, and event chain %s\n' "$backup_dir/desired-state.sqlite3"
     else
-      printf 'FAIL desired-state matching policy/HMAC key missing from %s\n' "$desired_archive" >&2
+      printf 'FAIL desired-state SQLite snapshot or matching policy/HMAC attestations %s\n' "$backup_dir/desired-state.sqlite3" >&2
       ok=false
     fi
-    rm -rf "$desired_tmp"
   fi
 else
   printf 'WARN no desired-state.sqlite3 found in %s\n' "$backup_dir"

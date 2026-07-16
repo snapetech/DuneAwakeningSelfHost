@@ -183,9 +183,9 @@ failure recovery are in [`restore-drills.md`](restore-drills.md).
 ## Reliability Control Room
 
 `GET /api/ops/slo` reports retained, time-weighted reliability rather than only
-the current health response. Seven default objectives cover the Dune database,
+the current health response. Eight default objectives cover the Dune database,
 control plane, currently required maps, backup RPO, verified restore proof,
-memory headroom, and admin authentication. Every objective includes 1h, 6h,
+memory headroom, admin authentication, and desired-state attestation. Every objective includes 1h, 6h,
 24h, 7d, and 30d availability, coverage, burn rate, and remaining budget.
 
 The background worker records every 60 seconds by default. Gaps are capped so
@@ -210,6 +210,23 @@ recompute it. Prometheus scrapes `/metrics/slo` inside the private Compose
 network and alerts on collector staleness, critical incidents, fast burn, and
 exhausted 30-day budget. The endpoint contains no identities, notes, paths,
 tokens, or player data. See [`operational-slo.md`](operational-slo.md).
+
+## Desired-State Attestation
+
+`GET /api/ops/desired-state` reports whether the approved repository/config
+and Compose-container snapshot is still current. The Infrastructure page shows
+the active baseline, last observation, critical/open/acknowledged drift,
+integrity proof, policy, superseded baselines, resolved findings, and signed
+events. File contents, environment values, and host mount sources are not
+returned.
+
+`POST /api/ops/desired-state` supports `seal` and `acknowledge`. Both require
+`infrastructure.write`, the master mutation gate, and
+`DUNE_ADMIN_DESIRED_STATE_MUTATIONS_ENABLED=true`. Sealing also requires a
+reason and exact `SEAL DESIRED STATE`; acknowledgement requires exact
+`ACKNOWLEDGE CONFIGURATION DRIFT`. Acknowledgement records ownership but cannot
+resolve or suppress the finding. See
+[`desired-state-attestation.md`](desired-state-attestation.md).
 
 ## Database Browser and Query Console
 

@@ -91,6 +91,16 @@ groups:
         annotations: {summary: "A dynamic map cold-start p95 exceeds three minutes"}
   - name: dash-desired-state
     rules:
+      - alert: DashDesiredStateCollectorDown
+        expr: up{job="dash-desired-state"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "DASH desired-state collector is unreachable"}
+      - alert: DashDesiredStateIntegrityInvalid
+        expr: dash_desired_state_collector_up == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "DASH desired-state SQLite, HMAC, trigger, or event-chain verification failed"}
       - alert: DashDesiredStateUnsealed
         expr: dash_desired_state_sealed == 0
         for: 15m

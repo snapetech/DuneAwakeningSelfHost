@@ -146,6 +146,9 @@ class DesiredStateTests(unittest.TestCase):
         self.assertNotEqual(first["baselineId"], second["baselineId"])
         self.assertEqual(status["state"], "attested")
         self.assertEqual(len([row for row in status["events"] if row["eventType"] == "baseline-sealed"]), 2)
+        self.assertEqual([row["id"] for row in status["baselineHistory"]], [second["baselineId"], first["baselineId"]])
+        self.assertTrue(status["baselineHistory"][0]["active"])
+        self.assertFalse(status["baselineHistory"][1]["active"])
 
     def test_tampering_and_missing_triggers_fail_verification(self):
         self.store.seal(self.snapshot(), "operator", "baseline", at=1000)
@@ -156,6 +159,49 @@ class DesiredStateTests(unittest.TestCase):
         connection.commit()
         connection.close()
         self.assertFalse(self.store.verify()["ok"])
+
+    def test_finding_resolution_and_notes_are_hmac_authenticated(self):
+        self.store.seal(self.snapshot(), "operator", "baseline", at=1000)
+        (self.root / ".env").write_text("DRIFT=yes\n", encoding="utf-8")
+        self.store.observe(self.snapshot(at=1060), at=1060)
+        finding = self.store.status()["openFindings"][0]
+        self.store.acknowledge(finding["id"], "operator", "owned", at=1070)
+        self.assertTrue(self.store.verify()["findingSignaturesValid"])
+        connection = sqlite3.connect(self.database)
+        connection.execute("update findings set resolved_at=1071,note='forged' where id=?", (finding["id"],))
+        connection.commit()
+        connection.close()
+        verification = self.store.verify()
+        self.assertFalse(verification["ok"])
+        self.assertFalse(verification["findingSignaturesValid"])
+        self.assertEqual("invalid", self.store.status()["state"])
+
+    def test_legacy_unsigned_findings_are_migrated_once(self):
+        database = self.root / "legacy" / "desired-state.sqlite3"
+        database.parent.mkdir()
+        connection = sqlite3.connect(database)
+        connection.execute("""create table findings (
+            id text primary key, finding_key text not null unique, category text not null,
+            subject text not null, change_type text not null, critical integer not null,
+            first_seen_at real not null, last_seen_at real not null, resolved_at real,
+            acknowledged_at real, acknowledged_by text, note text not null default '', details_json text not null
+        )""")
+        connection.execute(
+            "insert into findings values(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("legacy-1", "files:.env:changed", "files", ".env", "changed", 1, 1.0, 2.0, None, None, None, "", "{}"),
+        )
+        connection.commit()
+        connection.close()
+        migrated = desired_state.Store(database, self.policy_path, self.secret_path)
+        result = migrated.initialize()
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["findingSignaturesValid"])
+        connection = sqlite3.connect(database)
+        signature = connection.execute("select signature from findings where id='legacy-1'").fetchone()[0]
+        schema = connection.execute("select value from metadata where key='schema_version'").fetchone()[0]
+        connection.close()
+        self.assertEqual(64, len(signature))
+        self.assertEqual("2", schema)
 
     def test_backup_is_consistent_and_private(self):
         self.store.seal(self.snapshot(), "operator", "baseline", at=1000)

@@ -23,12 +23,18 @@ The versioned policy is [`config/operational-slo.json`](../config/operational-sl
 | Verified restore proof | A recent receipt has a valid hash, passed integrity and policy, met RTO, and confirms no live DB access. | 99.0% | 2 failures | no |
 | Host memory headroom | `MemAvailable` remains above the configured floor. | 99.0% | 5 failures | yes |
 | Admin authentication | Authentication is required and a real owner/RBAC credential source exists. | 99.9% | 1 failure | no |
+| Desired-state attestation | An HMAC-sealed file/container baseline exists, has no open drift, and its complete ledger verifies. | 99.9% | 2 failures | yes |
 
-Backup and authentication objectives deliberately continue through planned
+Backup, restore-proof, and authentication objectives deliberately continue through planned
 maintenance: a maintenance window is not permission to lose recovery coverage
 or expose the panel. Operators can edit the committed policy, but validation
 rejects duplicate/invalid identifiers, invalid targets, unknown severities,
 unbounded retention, and unsafe sample intervals.
+
+Desired-state drift collection also continues during maintenance. Its SLO time
+can be excluded and its alertable metric is suppressed, but findings remain
+open and visible; maintenance never acknowledges or resolves evidence. See
+[`desired-state-attestation.md`](desired-state-attestation.md).
 
 ## Time Weighting And Error Budgets
 
@@ -257,4 +263,3 @@ database immutability triggers, global hash verification, maintenance
 exclusions/overlap/bounds/cancel, missing signals, retention, Prometheus output,
 consistent backup, corruption detection, API gating, route capabilities, public
 metric bounds, and real-surface collector behavior.
-

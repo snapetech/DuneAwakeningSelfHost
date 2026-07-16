@@ -1866,6 +1866,33 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.panel.resolve_backup_set("/tmp/outside")
 
+    def test_native_backup_verifier_uses_matching_desired_state_key_not_live_key(self):
+        backup_set = self.workspace / "backups" / "20260715T130000Z"
+        backup_set.mkdir(parents=True)
+        (backup_set / "manifest.txt").write_text("WORLD_NAME=test\n", encoding="utf-8")
+        (backup_set / "postgres.dump").write_bytes(b"test")
+        policy = self.workspace / "config" / "desired-state.json"
+        policy.write_text((ROOT / "config" / "desired-state.json").read_text(encoding="utf-8"), encoding="utf-8")
+        secret_dir = self.workspace / "config" / "secrets"
+        secret_dir.mkdir(parents=True, exist_ok=True)
+        secret = secret_dir / "desired-state-hmac.secret"
+        secret.write_text("b" * 64 + "\n", encoding="utf-8")
+        secret.chmod(0o600)
+        store = self.panel.desired_state.Store(backup_set / "desired-state.sqlite3", policy, secret)
+        store.initialize()
+        store.seal({"schemaVersion": 1, "files": {}, "containers": {}}, "test", "fixture", at=1000)
+        with tarfile.open(backup_set / "config.tgz", "w:gz") as archive:
+            archive.add(policy, arcname="config/desired-state.json")
+            archive.add(secret, arcname="config/secrets/desired-state-hmac.secret")
+        secret.write_text("c" * 64 + "\n", encoding="utf-8")
+        secret.chmod(0o600)
+
+        with mock.patch.object(self.panel.shutil, "which", return_value=None):
+            ok, stdout, stderr = self.panel.verify_backup_set_native(backup_set)
+
+        self.assertTrue(ok, stderr)
+        self.assertIn("OK desired-state backup-bound HMAC attestations", stdout)
+
     def test_database_browser_is_allowlisted_capped_and_redacted(self):
         def fake_query(sql, params=None):
             if "from information_schema.tables" in sql and "table_name=%s" in sql:
@@ -3031,6 +3058,78 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertTrue(rows["survival"]["ready"])
         self.assertTrue(rows["arrakeen"]["demanded"])
         self.assertEqual(rows["arrakeen"]["retentionSeconds"], 600)
+
+    def test_desired_state_status_metrics_and_mutations_are_gated_and_confirmed(self):
+        original_status = self.panel.desired_state_public_status
+        original_store = self.panel.desired_state_store
+        original_seal = self.panel.desired_state_seal
+        calls = []
+        fake_store = type("Store", (), {
+            "prometheus": lambda self: "dash_desired_state_collector_up 1\n",
+            "acknowledge": lambda self, finding_id, actor, note: calls.append(("ack", finding_id, actor, note)) or {"ok": True, "id": finding_id},
+        })()
+        self.panel.desired_state_public_status = lambda: {"ok": True, "state": "attested"}
+        self.panel.desired_state_store = lambda: fake_store
+        self.panel.desired_state_seal = lambda actor, reason: calls.append(("seal", actor, reason)) or {"ok": True, "baselineId": "desired-1"}
+        self.addCleanup(lambda: setattr(self.panel, "desired_state_public_status", original_status))
+        self.addCleanup(lambda: setattr(self.panel, "desired_state_store", original_store))
+        self.addCleanup(lambda: setattr(self.panel, "desired_state_seal", original_seal))
+
+        handler, captured = self.make_route_handler("/api/ops/desired-state")
+        handler.is_app_route = lambda path: False
+        handler.do_GET()
+        self.assertEqual("attested", captured["json"]["state"])
+
+        handler, captured = self.make_route_handler("/metrics/desired-state")
+        handler.is_app_route = lambda path: False
+        texts = []
+        handler.text = lambda value, content_type="", **kwargs: texts.append((value, content_type))
+        handler.require_token = lambda: self.fail("bounded desired-state metrics must not require an admin credential")
+        handler.do_GET()
+        self.assertEqual("dash_desired_state_collector_up 1\n", texts[0][0])
+
+        self.patch_flag("MUTATIONS_ENABLED", True)
+        self.patch_flag("DESIRED_STATE_MUTATIONS_ENABLED", False)
+        disabled = self.invoke_post_route("/api/ops/desired-state", {"action": "seal", "reason": "reviewed", "confirm": "SEAL DESIRED STATE"})
+        self.assertEqual(401, disabled["errors"][0]["status"])
+        self.assertFalse(calls)
+        self.panel.DESIRED_STATE_MUTATIONS_ENABLED = True
+        rejected = self.invoke_post_route("/api/ops/desired-state", {"action": "seal", "reason": "reviewed", "confirm": "wrong"})
+        self.assertEqual(401, rejected["errors"][0]["status"])
+        accepted = self.invoke_post_route("/api/ops/desired-state", {"action": "seal", "reason": "reviewed deployment", "confirm": "SEAL DESIRED STATE"})
+        self.assertEqual("desired-1", accepted["json"]["baselineId"])
+        self.assertEqual(("seal", "owner-recovery", "reviewed deployment"), calls[-1])
+        acknowledged = self.invoke_post_route("/api/ops/desired-state", {"action": "acknowledge", "findingId": "drift-1", "note": "owned", "confirm": "ACKNOWLEDGE CONFIGURATION DRIFT"})
+        self.assertTrue(acknowledged["json"]["ok"])
+        self.assertEqual(("ack", "drift-1", "owner-recovery", "owned"), calls[-1])
+
+    def test_desired_state_container_collector_confines_project_and_detects_label_race(self):
+        original_docker_api = self.panel.docker_api
+        container_id = "a" * 64
+        calls = []
+
+        def docker_api(path, *args, **kwargs):
+            calls.append(path)
+            if path.startswith("/containers/json?"):
+                return [{"Id": container_id}]
+            return {"Config": {"Labels": {"com.docker.compose.project": self.panel.DOCKER_COMPOSE_PROJECT}}}
+
+        self.panel.docker_api = docker_api
+        self.addCleanup(lambda: setattr(self.panel, "docker_api", original_docker_api))
+        rows = self.panel.desired_state_container_inspections()
+        self.assertEqual(1, len(rows))
+        self.assertIn("com.docker.compose.project", calls[0])
+        self.assertEqual(f"/containers/{container_id}/json", calls[1])
+        self.panel.docker_api = lambda path, *args, **kwargs: ([{"Id": container_id}] if path.startswith("/containers/json?") else {"Config": {"Labels": {"com.docker.compose.project": "other"}}})
+        with self.assertRaisesRegex(RuntimeError, "label changed"):
+            self.panel.desired_state_container_inspections()
+
+    def test_infrastructure_mounts_desired_state_review_workflow(self):
+        source = self.panel.INDEX
+        self.assertIn("mountInfrastructureDesiredState(desiredStateData)", source)
+        self.assertIn("Acknowledgement records ownership in the signed event chain", source)
+        self.assertIn("SEAL DESIRED STATE", source)
+        self.assertIn("ACKNOWLEDGE CONFIGURATION DRIFT", source)
 
     def test_capacity_application_is_evidence_gated_gradual_and_mode_preserving(self):
         fake = type("Store", (), {

@@ -187,7 +187,8 @@ without reproducing that wrapper.
 | Layered backup/list/download/import/restore | Red-Blink, dashboards | Parity | Verified, quarantined restore lifecycle |
 | Scheduled backup and retention | Icehunter, Reditus, Manaiakalani | Parity | Host timers and panel schedule |
 | Automated real restore rehearsal and RPO/RTO evidence | BIGMOS documents manual `pg_restore`; other peers inspect/archive backups | DASH exceeds | Daily no-network disposable PostgreSQL restore, Dune schema/data/index/constraint checks, analyze, round-trip dump, measured RPO/RTO, verified cleanup, private hash-chained receipts, dashboard/API, and hardened timer; see `docs/restore-drills.md` |
-| Time-weighted reliability objectives and error budgets | Peers expose current health and retained infrastructure metrics | DASH exceeds | Seven service objectives, five time windows, observation coverage, burn rates, remaining budget, debounced incidents, immutable globally hash-chained events, bounded maintenance exclusions, dashboard/API/Prometheus, and transactionally consistent recovery; see `docs/operational-slo.md` |
+| Time-weighted reliability objectives and error budgets | Peers expose current health and retained infrastructure metrics | DASH exceeds | Eight service objectives, five time windows, observation coverage, burn rates, remaining budget, debounced incidents, immutable globally hash-chained events, bounded maintenance exclusions, dashboard/API/Prometheus, and transactionally consistent recovery; see `docs/operational-slo.md` |
+| Continuous desired-state attestation and drift ownership | No surveyed Dune peer | DASH exceeds | HMAC-sealed repository/configuration and Compose-container baselines, keyed redaction of environment values and mount sources, retained findings, non-resolving acknowledgement, immutable baseline/event history, private dashboard/API/metrics, SLO integration, and backup-bound key verification; see `docs/desired-state-attestation.md` |
 | Offsite/mirror/failover backup | DST, Reditus | Parity | Replica, snapshot, rsync/rclone/restic examples |
 | Scheduled restart with warnings and backup | adainrivers, Manaiakalani, AMP | Parity | Daily maintenance timer loaded |
 | Authenticated Steam update and Steam Guard bootstrap | Manaiakalani | Parity | Protected owned-account login/password settings, interactive SteamCMD bootstrap for password/Steam Guard, persistent private Steam home, locked unattended hotfix updater, and restart-only-on-change behavior; one-time Steam Guard codes are not retained |
@@ -327,6 +328,10 @@ only when explicitly authorized for a concrete client task, as required by
   warm-idle cost, warm/cold outcomes, empirical revisit gaps, and routable-ready
   start latency feed gradual per-map recommendations while LRU/memory budgets
   and operator-selected modes remain authoritative.
+- **High confidence:** DASH now also exceeds surveyed configuration-management
+  evidence with continuous HMAC-sealed file/container desired-state
+  attestation, retained drift ownership, immutable baseline history, private
+  metrics/SLO coupling, and backup-bound key verification.
 - **High confidence:** local RBAC, outbound events, the first-party Discord bot,
   community rewards/shop/tracks, host tuning, inventory integrity repair,
   recurring event automation, moderation case history, native policy-ban

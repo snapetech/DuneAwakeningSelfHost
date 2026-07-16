@@ -6,9 +6,29 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+import sys
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "admin"))
+
+import desired_state
+
+
+def create_desired_state_fixture(backup_dir):
+    config_dir = backup_dir / "config"
+    secret_dir = config_dir / "secrets"
+    secret_dir.mkdir(parents=True, exist_ok=True)
+    policy = config_dir / "desired-state.json"
+    policy.write_text((ROOT / "config" / "desired-state.json").read_text(encoding="utf-8"), encoding="utf-8")
+    secret = secret_dir / "desired-state-hmac.secret"
+    secret.write_text("b" * 64 + "\n", encoding="utf-8")
+    secret.chmod(0o600)
+    database = backup_dir / "desired-state.sqlite3"
+    store = desired_state.Store(database, policy, secret)
+    store.initialize()
+    store.seal({"schemaVersion": 1, "files": {}, "containers": {}}, "test", "backup fixture", at=1000)
+    return database
 
 
 def write_self_signed_cert(tmp_path, sans):
@@ -610,7 +630,14 @@ class RestoreStateTests(unittest.TestCase):
                 "config_tls_archive=config-tls.tgz\n",
                 encoding="utf-8",
             )
-            for archive_name in ("config.tgz", "config-tls.tgz", "rabbitmq-admin.tgz", "rabbitmq-game.tgz", "server-saved.tgz"):
+            create_desired_state_fixture(backup_dir)
+            subprocess.run(
+                ["tar", "-czf", str(backup_dir / "config.tgz"), "-C", str(backup_dir), "manifest.txt", "config"],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            for archive_name in ("config-tls.tgz", "rabbitmq-admin.tgz", "rabbitmq-game.tgz", "server-saved.tgz"):
                 subprocess.run(
                     ["tar", "-czf", str(backup_dir / archive_name), "-C", str(backup_dir), "manifest.txt"],
                     check=True,
@@ -654,6 +681,7 @@ class RestoreStateTests(unittest.TestCase):
                     "--base-gallery",
                     "--operational-slo",
                     "--capacity-intelligence",
+                    "--desired-state",
                     str(env_file),
                     str(backup_dir.relative_to(ROOT)),
                 ],
@@ -671,6 +699,7 @@ class RestoreStateTests(unittest.TestCase):
             self.assertIn("restore_base_gallery=true", result.stdout)
             self.assertIn("restore_operational_slo=true", result.stdout)
             self.assertIn("restore_capacity_intelligence=true", result.stdout)
+            self.assertIn("restore_desired_state=true", result.stdout)
             self.assertIn("backup_world_unique_name=sh-backed-up", result.stdout)
             self.assertIn("current_world_unique_name=sh-current", result.stdout)
             self.assertIn("differs from current", result.stderr)
@@ -867,7 +896,14 @@ class VerifyBackupTests(unittest.TestCase):
             (backup_dir / "postgres-dune_sb_1_4_0_0.dump").write_bytes(b"placeholder")
             (backup_dir / ".env").write_text("WORLD_UNIQUE_NAME=sh-test\n", encoding="utf-8")
             (backup_dir / "manifest.txt").write_text("world_unique_name=sh-test\n", encoding="utf-8")
-            for archive_name in ("config.tgz", "config-tls.tgz"):
+            create_desired_state_fixture(backup_dir)
+            subprocess.run(
+                ["tar", "-czf", str(backup_dir / "config.tgz"), "-C", str(backup_dir), "manifest.txt", "config"],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            for archive_name in ("config-tls.tgz",):
                 subprocess.run(
                     ["tar", "-czf", str(backup_dir / archive_name), "-C", str(backup_dir), "manifest.txt"],
                     check=True,
@@ -917,6 +953,7 @@ class VerifyBackupTests(unittest.TestCase):
             self.assertIn("OK base gallery SQLite snapshot", result.stdout)
             self.assertIn("OK operational SLO SQLite snapshot and incident hash chain", result.stdout)
             self.assertIn("OK capacity intelligence SQLite snapshot and application receipts", result.stdout)
+            self.assertIn("OK desired-state SQLite snapshot, baseline/observation/finding HMACs, and event chain", result.stdout)
 
 
 class FailoverScriptTests(unittest.TestCase):

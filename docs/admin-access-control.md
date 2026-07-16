@@ -50,6 +50,7 @@ Route authorization is fail-closed:
 - restart, announcements, events, autoscaler, and normal operational writes
   require `operations.write`;
 - raw database operations, password rotation, destructive backup operations,
+  restore drills, SLO/capacity controls, desired-state seal/acknowledgement,
   and updates require `infrastructure.write`;
 - settings, bootstrap, and addon lifecycle require `configuration.write`;
 - currency/Solari/Exchange/vendor writes require `economy.write`;

@@ -156,6 +156,11 @@ server {
   evidence-qualified gradual per-map retention, append-only application
   receipts, private metrics, and recovery. See
   [`capacity-intelligence.md`](capacity-intelligence.md).
+- Desired-State Attestation beside reliability and capacity: HMAC-sealed
+  repository/configuration and project-container baselines, retained drift,
+  non-resolving ownership acknowledgements, baseline/event history, private
+  metrics, SLO coupling, and backup-bound key verification. See
+  [`desired-state-attestation.md`](desired-state-attestation.md).
 - Infrastructure backup controls report recipient-encryption readiness,
   encrypted archive/receipt inventory, and exact host encrypt/decrypt commands.
   The private recovery key stays outside the admin container. See

@@ -316,7 +316,7 @@ class Store:
                   subject text not null, change_type text not null, critical integer not null check(critical in (0,1)),
                   first_seen_at real not null, last_seen_at real not null, resolved_at real,
                   acknowledged_at real, acknowledged_by text, note text not null default '',
-                  details_json text not null
+                  details_json text not null, signature text not null default ''
                 );
                 create table if not exists events (
                   sequence integer primary key autoincrement, event_type text not null,
@@ -336,7 +336,12 @@ class Store:
                 create trigger if not exists desired_state_events_no_delete before delete on events begin select raise(abort,'desired-state events are append-only'); end;
                 create table if not exists metadata (key text primary key, value text not null);
             """)
-            connection.execute("insert into metadata(key,value) values('schema_version','1') on conflict(key) do update set value=excluded.value")
+            finding_columns = {row[1] for row in connection.execute("pragma table_info(findings)")}
+            if "signature" not in finding_columns:
+                connection.execute("alter table findings add column signature text")
+                for row in connection.execute("select id from findings"):
+                    self._sign_finding(connection, row["id"])
+            connection.execute("insert into metadata(key,value) values('schema_version','2') on conflict(key) do update set value=excluded.value")
             connection.commit()
         finally:
             connection.close()
@@ -345,6 +350,27 @@ class Store:
 
     def _sign(self, payload):
         return hmac.new(self.secret, _canonical(payload).encode(), hashlib.sha256).hexdigest()
+
+    @staticmethod
+    def _finding_document(row):
+        details = row["details_json"]
+        if isinstance(details, str):
+            details = json.loads(details)
+        return {
+            "id": row["id"], "findingKey": row["finding_key"], "category": row["category"],
+            "subject": row["subject"], "changeType": row["change_type"], "critical": bool(row["critical"]),
+            "firstSeenAt": row["first_seen_at"], "lastSeenAt": row["last_seen_at"],
+            "resolvedAt": row["resolved_at"], "acknowledgedAt": row["acknowledged_at"],
+            "acknowledgedBy": row["acknowledged_by"], "note": row["note"], "details": details,
+        }
+
+    def _sign_finding(self, connection, finding_id):
+        row = connection.execute("select * from findings where id=?", (finding_id,)).fetchone()
+        if not row:
+            raise ValueError("desired-state finding not found while signing")
+        signature = self._sign(self._finding_document(row))
+        connection.execute("update findings set signature=? where id=?", (signature, finding_id))
+        return signature
 
     def _event(self, connection, event_type, actor, payload, at):
         previous = connection.execute("select signature from events order by sequence desc limit 1").fetchone()
@@ -378,7 +404,10 @@ class Store:
                 "insert into baselines(id,created_at,actor,reason,snapshot_json,snapshot_sha256,signature,active) values(?,?,?,?,?,?,?,1)",
                 (baseline_id, now, actor, reason, _canonical(snapshot_payload), snapshot_sha, signature),
             )
+            open_findings = [row["id"] for row in connection.execute("select id from findings where resolved_at is null")]
             connection.execute("update findings set resolved_at=? where resolved_at is null", (now,))
+            for finding_id in open_findings:
+                self._sign_finding(connection, finding_id)
             self._event(connection, "baseline-sealed", actor, {"baselineId": baseline_id, "priorBaselineId": prior["id"] if prior else None, "snapshotSha256": snapshot_sha, "reason": reason}, now)
             connection.commit()
         except Exception:
@@ -419,6 +448,7 @@ class Store:
                 row = existing.get(change["key"])
                 if row:
                     connection.execute("update findings set last_seen_at=?,details_json=? where finding_key=?", (now, _canonical(change["details"]), change["key"]))
+                    self._sign_finding(connection, row["id"])
                 else:
                     prior = connection.execute("select id from findings where finding_key=?", (change["key"],)).fetchone()
                     if prior:
@@ -433,10 +463,12 @@ class Store:
                             "insert into findings(id,finding_key,category,subject,change_type,critical,first_seen_at,last_seen_at,details_json) values(?,?,?,?,?,?,?,?,?)",
                             (finding_id, change["key"], change["category"], change["subject"], change["change"], int(change["critical"]), now, now, _canonical(change["details"])),
                         )
+                    self._sign_finding(connection, finding_id)
                     opened.append(finding_id)
             for key, row in existing.items():
                 if key not in active_keys:
                     connection.execute("update findings set resolved_at=? where finding_key=?", (now, key))
+                    self._sign_finding(connection, row["id"])
                     resolved.append(row["id"])
             observation = {
                 "observedAt": now, "baselineId": baseline["id"] if baseline else None,
@@ -475,6 +507,7 @@ class Store:
             if not row:
                 raise ValueError("open drift finding not found")
             connection.execute("update findings set acknowledged_at=?,acknowledged_by=?,note=? where id=?", (now, actor, note, row["id"]))
+            self._sign_finding(connection, row["id"])
             self._event(connection, "drift-acknowledged", actor, {"findingId": row["id"], "note": note}, now)
             connection.commit()
             return {"ok": True, "id": row["id"], "acknowledgedAt": _iso(now), "acknowledgedBy": actor, "note": note}
@@ -501,11 +534,19 @@ class Store:
             events = []
             for row in connection.execute("select * from events order by sequence desc limit ?", (max(1, min(int(limit), 1000)),)):
                 events.append({"sequence": row["sequence"], "eventType": row["event_type"], "createdAt": _iso(row["created_at"]), "actor": row["actor"], "payload": json.loads(row["payload_json"]), "signature": row["signature"]})
+            baseline_history = []
+            for row in connection.execute("select * from baselines order by created_at desc,id desc limit ?", (max(1, min(int(limit), 1000)),)):
+                baseline_history.append({
+                    "id": row["id"], "createdAt": _iso(row["created_at"]), "actor": row["actor"],
+                    "reason": row["reason"], "snapshotSha256": row["snapshot_sha256"],
+                    "signature": row["signature"], "active": bool(row["active"]),
+                })
             active = [row for row in findings if row["resolvedAt"] is None]
+            integrity = self.verify(connection)
             return {
                 "ok": True,
                 "sealed": bool(baseline),
-                "state": "unsealed" if not baseline else "drift" if active else "attested",
+                "state": "invalid" if not integrity["ok"] else "unsealed" if not baseline else "drift" if active else "attested",
                 "baseline": None if not baseline else {key: baseline[key] for key in ("id", "createdAt", "actor", "reason", "snapshotSha256", "signature")},
                 "latestObservation": None if not latest else {
                     "observedAt": _iso(latest["observed_at"]), "baselineId": latest["baseline_id"], "snapshotSha256": latest["snapshot_sha256"],
@@ -513,8 +554,9 @@ class Store:
                 },
                 "openFindings": active,
                 "findings": findings,
+                "baselineHistory": baseline_history,
                 "events": events,
-                "integrity": self.verify(connection),
+                "integrity": integrity,
             }
         finally:
             connection.close()
@@ -547,6 +589,10 @@ class Store:
                 }
                 if not hmac.compare_digest(self._sign(document), row["signature"]):
                     observations_valid = False
+            findings_valid = True
+            for row in connection.execute("select * from findings order by id"):
+                if not row["signature"] or not hmac.compare_digest(self._sign(self._finding_document(row)), row["signature"]):
+                    findings_valid = False
             events_valid = True
             previous = None
             event_count = 0
@@ -556,10 +602,14 @@ class Store:
                 if row["previous_signature"] != previous or not hmac.compare_digest(self._sign(document), row["signature"]):
                     events_valid = False
                 previous = row["signature"]
-            ok = integrity == "ok" and required.issubset(triggers) and baselines_valid and observations_valid and events_valid
-            return {"ok": ok, "sqlite": integrity, "appendOnlyTriggers": required.issubset(triggers), "baselineSignaturesValid": baselines_valid, "observationSignaturesValid": observations_valid, "eventChainValid": events_valid, "eventCount": event_count, "lastEventSignature": previous}
+            ok = integrity == "ok" and required.issubset(triggers) and baselines_valid and observations_valid and findings_valid and events_valid
+            return {"ok": ok, "sqlite": integrity, "appendOnlyTriggers": required.issubset(triggers), "baselineSignaturesValid": baselines_valid, "observationSignaturesValid": observations_valid, "findingSignaturesValid": findings_valid, "eventChainValid": events_valid, "eventCount": event_count, "lastEventSignature": previous}
         except (sqlite3.Error, ValueError, json.JSONDecodeError, OSError) as exc:
-            return {"ok": False, "sqlite": "error", "baselineSignaturesValid": False, "eventChainValid": False, "error": str(exc)}
+            return {
+                "ok": False, "sqlite": "error", "baselineSignaturesValid": False,
+                "observationSignaturesValid": False, "findingSignaturesValid": False,
+                "eventChainValid": False, "error": str(exc),
+            }
         finally:
             if own:
                 connection.close()
@@ -593,7 +643,7 @@ class Store:
     def prometheus(self):
         status = self.status()
         latest = status.get("latestObservation") or {}
-        observed_at = _datetime.datetime.fromisoformat(latest["observedAt"]).timestamp() if latest.get("observedAt") else float("nan")
+        observed_at = str(_datetime.datetime.fromisoformat(latest["observedAt"]).timestamp()) if latest.get("observedAt") else "NaN"
         open_rows = status.get("openFindings") or []
         maintenance = bool(latest.get("maintenanceActive"))
         critical = sum(1 for row in open_rows if row["critical"])

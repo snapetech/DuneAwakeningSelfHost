@@ -4542,11 +4542,37 @@ def verify_backup_set_native(path):
             errors.append(f"FAIL capacity application receipts {capacity_database}: {capacity_check}")
     desired_database = path / "desired-state.sqlite3"
     if desired_database.is_file():
-        desired_check = desired_state.Store(desired_database, DESIRED_STATE_POLICY, DESIRED_STATE_SECRET_FILE).verify()
-        if desired_check.get("ok"):
-            output.append(f"OK desired-state HMAC attestations {desired_database}")
+        archive = next((candidate for candidate in (path / "config.tgz", path / "config-and-env.tgz") if candidate.is_file()), None)
+        if archive is None:
+            errors.append(f"FAIL desired-state HMAC verification requires matching config archive in {path}")
         else:
-            errors.append(f"FAIL desired-state HMAC attestations {desired_database}: {desired_check}")
+            try:
+                with tarfile.open(archive, "r:gz") as handle, tempfile.TemporaryDirectory(prefix="dash-desired-verify-") as directory:
+                    material = {}
+                    for name, maximum in (("config/desired-state.json", 1024 * 1024), ("config/secrets/desired-state-hmac.secret", 16 * 1024)):
+                        member = handle.getmember(name)
+                        if not member.isfile() or member.size <= 0 or member.size > maximum:
+                            raise ValueError(f"invalid desired-state backup member: {name}")
+                        extracted = handle.extractfile(member)
+                        if extracted is None:
+                            raise ValueError(f"unreadable desired-state backup member: {name}")
+                        material[name] = extracted.read(maximum + 1)
+                        if len(material[name]) > maximum:
+                            raise ValueError(f"oversized desired-state backup member: {name}")
+                    verify_root = pathlib.Path(directory)
+                    policy = verify_root / "desired-state.json"
+                    secret = verify_root / "desired-state-hmac.secret"
+                    policy.write_bytes(material["config/desired-state.json"])
+                    secret.write_bytes(material["config/secrets/desired-state-hmac.secret"])
+                    os.chmod(policy, 0o600)
+                    os.chmod(secret, 0o600)
+                    desired_check = desired_state.Store(desired_database, policy, secret).verify()
+                if desired_check.get("ok"):
+                    output.append(f"OK desired-state backup-bound HMAC attestations {desired_database}")
+                else:
+                    errors.append(f"FAIL desired-state HMAC attestations {desired_database}: {desired_check}")
+            except (OSError, KeyError, ValueError, tarfile.TarError) as exc:
+                errors.append(f"FAIL desired-state matching policy/HMAC material in {archive}: {exc}")
     manifest_json = path / "manifest.json"
     manifest_text = path / "manifest.txt"
     try:
@@ -15351,7 +15377,7 @@ async function ops(serial=loadSerial){
   startHealthRefresh();
 }
 async function infrastructure(serial=loadSerial){
-  const [serviceData, backupData, databaseData, updateData, memoryData, autoscalerData, restoreDrillData, sloData, capacityData] = await Promise.all([
+  const [serviceData, backupData, databaseData, updateData, memoryData, autoscalerData, restoreDrillData, sloData, capacityData, desiredStateData] = await Promise.all([
     api('/api/ops/services'),
     api('/api/ops/backups'),
     api('/api/ops/database'),
@@ -15360,7 +15386,8 @@ async function infrastructure(serial=loadSerial){
     api('/api/ops/autoscaler', {timeoutMs: 30000}),
     api('/api/ops/restore-drill', {timeoutMs: 30000}),
     api('/api/ops/slo', {timeoutMs: 30000}),
-    api('/api/ops/capacity', {timeoutMs: 30000})
+    api('/api/ops/capacity', {timeoutMs: 30000}),
+    api('/api/ops/desired-state', {timeoutMs: 30000})
   ]);
   if (serial !== loadSerial) return;
   const services = serviceData.services || [];
@@ -15378,6 +15405,7 @@ async function infrastructure(serial=loadSerial){
   mountInfrastructureMemoryControls(memoryData);
   mountInfrastructureAutoscalerControls(autoscalerData);
   mountInfrastructureCapacity(capacityData);
+  mountInfrastructureDesiredState(desiredStateData);
   mountInfrastructureRestoreDrill(restoreDrillData);
   mountInfrastructureSlo(sloData);
   document.getElementById('infraLoadLogsBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Loading...', loadInfrastructureLogs));
@@ -15425,6 +15453,59 @@ async function infrastructureCapacityApply(){
   const output=document.getElementById('infraCapacityResult');
   if (output) output.textContent=JSON.stringify(result,null,2);
   notify(result.applied ? `Applied ${result.changes.length} capacity recommendations` : result.reason, result.applied?'warn':'ok');
+  await infrastructure(loadSerial);
+  return result;
+}
+function mountInfrastructureDesiredState(data){
+  const page = document.querySelector('#view .pageStack');
+  if (!page) return;
+  const baseline = data.baseline || {};
+  const latest = data.latestObservation || {};
+  const open = data.openFindings || [];
+  const critical = open.filter(row => row.critical);
+  const acknowledged = open.filter(row => row.acknowledgedAt);
+  const stateClass = data.state === 'attested' ? 'ok' : data.state === 'unsealed' ? 'warn' : 'bad';
+  const findingOptions = open.map(row => `<option value="${esc(row.id)}">${row.critical ? 'CRITICAL · ' : ''}${esc(row.category)} · ${esc(row.subject)} · ${esc(row.change)}</option>`).join('');
+  const findings = open.map(row => ({
+    severity: row.critical ? 'critical' : 'standard',
+    category: row.category,
+    subject: row.subject,
+    change: row.change,
+    firstSeen: row.firstSeenAt,
+    lastSeen: row.lastSeenAt,
+    acknowledged: row.acknowledgedAt ? `${row.acknowledgedBy || 'operator'} · ${row.acknowledgedAt}` : '',
+    note: row.note || '',
+  }));
+  page.insertAdjacentHTML('beforeend', `<div class="panelBand">
+    <div class="sectionHeader"><h2>Desired-State Attestation</h2><div class="toolbar"><span class="pill ${stateClass}">${esc(data.state || 'unknown')}</span><span class="pill ${data.integrity?.ok ? 'ok' : 'bad'}">HMAC ledger ${data.integrity?.ok ? 'verified' : 'invalid'}</span><span class="pill">poll ${esc(data.pollSeconds || '—')}s</span><button id="infraDesiredRefreshBtn">Refresh</button></div></div>
+    <p class="muted">DASH continuously compares the approved repository configuration and Compose project-container runtime against an HMAC-sealed baseline. File contents, environment values, and host mount sources are never returned here: files use SHA-256 metadata and sensitive runtime values use keyed HMAC fingerprints. Maintenance suppresses alert paging only; it does not hide, acknowledge, or resolve evidence.</p>
+    <div class="metricGrid">${metric('State', data.state || 'unknown', stateClass)}${metric('Open drift', open.length, open.length ? 'bad' : 'ok')}${metric('Critical drift', critical.length, critical.length ? 'bad' : 'ok')}${metric('Acknowledged open', acknowledged.length, acknowledged.length ? 'warn' : '')}${metric('Last observation', latest.observedAt || 'none', latest.observedAt ? 'ok' : 'warn')}${metric('Ledger events', data.integrity?.eventCount ?? 0, data.integrity?.eventChainValid ? 'ok' : 'bad')}</div>
+    <div class="twoCol"><div class="panelInset"><h3>Approved baseline</h3><div class="metricGrid">${metric('Baseline', baseline.id || 'not sealed', baseline.id ? 'ok' : 'warn')}${metric('Sealed at', baseline.createdAt || '—')}${metric('Sealed by', baseline.actor || '—')}${metric('Snapshot', baseline.snapshotSha256 ? baseline.snapshotSha256.slice(0,16) : '—')}</div><p>${baseline.reason ? esc(baseline.reason) : '<span class="muted">No approved baseline exists. Review the complete current snapshot before sealing it.</span>'}</p><label>Review reason<input id="infraDesiredReason" maxlength="1000" placeholder="Why the complete current state is approved"></label><button id="infraDesiredSealBtn" class="primary" ${data.mutationEnabled ? '' : 'disabled'}>${baseline.id ? 'Review and reseal current state' : 'Review and seal current state'}</button><p class="muted">Sealing approves the complete current file and container snapshot, supersedes the active baseline without deleting history, and resolves findings against the old baseline. It does not change containers or files.</p></div>
+    <div class="panelInset"><h3>Drift ownership</h3><label>Open finding<select id="infraDesiredFinding">${findingOptions || '<option value="">No open findings</option>'}</select></label><label>Operator note<textarea id="infraDesiredNote" maxlength="2000" placeholder="Owner, investigation, or remediation context"></textarea></label><button id="infraDesiredAckBtn" ${(!data.mutationEnabled || !open.length) ? 'disabled' : ''}>Acknowledge selected finding</button><p class="muted">Acknowledgement records ownership in the signed event chain. It never suppresses drift or marks the finding resolved.</p></div></div>
+    ${findings.length ? table(findings) : '<div class="emptyState">No drift from the approved baseline.</div>'}
+    <details><summary>Evidence, policy, baseline history, resolved findings, and signed events</summary><pre id="infraDesiredResult">${esc(JSON.stringify({baseline:data.baseline,baselineHistory:data.baselineHistory || [],latestObservation:data.latestObservation,integrity:data.integrity,runtime:data.runtime,policy:data.policy,findings:data.findings || [],events:data.events || []}, null, 2))}</pre></details>
+  </div>`);
+  document.getElementById('infraDesiredRefreshBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Refreshing...', () => infrastructure(loadSerial)));
+  document.getElementById('infraDesiredSealBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Sealing...', infrastructureDesiredSeal));
+  document.getElementById('infraDesiredAckBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Acknowledging...', infrastructureDesiredAcknowledge));
+}
+async function infrastructureDesiredSeal(){
+  const reason = document.getElementById('infraDesiredReason')?.value?.trim() || '';
+  if (!reason) throw new Error('A review reason is required before sealing the complete current state');
+  if (!confirm('Seal the complete current repository configuration and Compose runtime as the approved desired state? Review all displayed drift first.')) return;
+  const result = await api('/api/ops/desired-state', {method:'POST',timeoutMs:60000,body:JSON.stringify({action:'seal',reason,confirm:'SEAL DESIRED STATE'})});
+  notify(`Desired-state baseline ${result.baselineId} sealed`,'warn');
+  await infrastructure(loadSerial);
+  return result;
+}
+async function infrastructureDesiredAcknowledge(){
+  const findingId = document.getElementById('infraDesiredFinding')?.value || '';
+  const note = document.getElementById('infraDesiredNote')?.value?.trim() || '';
+  if (!findingId) throw new Error('Select an open drift finding');
+  if (!note) throw new Error('An ownership or investigation note is required');
+  if (!confirm(`Acknowledge ${findingId}? This records ownership but does not resolve or suppress the drift.`)) return;
+  const result = await api('/api/ops/desired-state', {method:'POST',body:JSON.stringify({action:'acknowledge',findingId,note,confirm:'ACKNOWLEDGE CONFIGURATION DRIFT'})});
+  notify('Drift acknowledgement recorded; finding remains open','warn');
   await infrastructure(loadSerial);
   return result;
 }
