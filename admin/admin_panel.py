@@ -418,6 +418,8 @@ UPDATE_READINESS_STORE = None
 UPDATE_READINESS_STORE_LOCK = threading.Lock()
 UPDATE_READINESS_SNAPSHOT_CACHE = {"at": 0.0, "value": None}
 UPDATE_READINESS_SNAPSHOT_LOCK = threading.Lock()
+UPDATE_READINESS_REFRESH_RUNTIME = {"running": False, "lastAt": None, "lastError": ""}
+UPDATE_READINESS_REFRESH_LOCK = threading.Lock()
 DISCORD_ADAPTER_ROUTES = {
     "/api/integrations/discord/health", "/api/integrations/discord/status",
     "/api/integrations/discord/readiness", "/api/integrations/discord/services",
@@ -3375,6 +3377,30 @@ def update_readiness_snapshot(game=None, force=False):
     with UPDATE_READINESS_SNAPSHOT_LOCK:
         UPDATE_READINESS_SNAPSHOT_CACHE.update({"at": time.time(), "value": json.loads(json.dumps(snapshot))})
     return snapshot
+
+
+def update_readiness_metrics_snapshot():
+    with UPDATE_READINESS_SNAPSHOT_LOCK:
+        cached = json.loads(json.dumps(UPDATE_READINESS_SNAPSHOT_CACHE["value"])) if UPDATE_READINESS_SNAPSHOT_CACHE["value"] is not None else None
+        fresh = cached is not None and time.time() - UPDATE_READINESS_SNAPSHOT_CACHE["at"] <= UPDATE_READINESS_POLL_SECONDS
+    if fresh:
+        return cached
+    with UPDATE_READINESS_REFRESH_LOCK:
+        if not UPDATE_READINESS_REFRESH_RUNTIME["running"]:
+            UPDATE_READINESS_REFRESH_RUNTIME["running"] = True
+            def worker():
+                try:
+                    update_readiness_snapshot(force=True)
+                    with UPDATE_READINESS_REFRESH_LOCK:
+                        UPDATE_READINESS_REFRESH_RUNTIME.update({"lastAt": time.time(), "lastError": ""})
+                except Exception as exc:
+                    with UPDATE_READINESS_REFRESH_LOCK:
+                        UPDATE_READINESS_REFRESH_RUNTIME.update({"lastAt": time.time(), "lastError": str(exc)[:1000]})
+                finally:
+                    with UPDATE_READINESS_REFRESH_LOCK:
+                        UPDATE_READINESS_REFRESH_RUNTIME["running"] = False
+            threading.Thread(target=worker, name="update-readiness-refresh", daemon=True).start()
+    return cached
 
 
 def update_readiness_public_status(game=None):
@@ -8045,7 +8071,8 @@ class Handler(BaseHTTPRequestHandler):
                 metrics += deployment_assurance_store().prometheus() if DEPLOYMENT_ASSURANCE_ENABLED else "dash_deployment_assurance_collector_up 0\n"
                 if UPDATE_READINESS_ENABLED:
                     try:
-                        metrics += update_readiness_store().prometheus(update_readiness_snapshot())
+                        update_snapshot = update_readiness_metrics_snapshot()
+                        metrics += update_readiness_store().prometheus(update_snapshot) if update_snapshot is not None else "dash_update_readiness_collector_up 0\n"
                     except Exception:
                         metrics += "dash_update_readiness_collector_up 0\n"
                 else:

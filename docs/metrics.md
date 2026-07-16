@@ -20,6 +20,8 @@ It also emits game-update readiness, exact-candidate receipt currency,
 candidate-update-required state, online-player count, and last-certification
 time. It does not label image tags, Steam build IDs, candidate fingerprints,
 operators, backup paths, or receipt identities.
+Steam/archive/full-backup collection runs as a single cached background refresh;
+the Prometheus request path never performs those expensive checks inline.
 
 Start it with the normal world Compose files plus the overlay:
 

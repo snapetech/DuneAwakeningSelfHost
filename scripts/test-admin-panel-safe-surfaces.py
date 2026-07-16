@@ -3319,7 +3319,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         original_deployment_store = self.panel.deployment_assurance_store
         original_deployment_status = self.panel.deployment_assurance_public_status
         original_update_store = self.panel.update_readiness_store
-        original_update_snapshot = self.panel.update_readiness_snapshot
+        original_update_snapshot = self.panel.update_readiness_metrics_snapshot
         original_update_status = self.panel.update_readiness_public_status
         fake_store = type("Store", (), {
             "prometheus": lambda self: "dash_change_intelligence_collector_up 1\n",
@@ -3333,14 +3333,14 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.panel.deployment_assurance_store = lambda: fake_deployment_store
         self.panel.deployment_assurance_public_status = lambda: {"ok": True, "state": "active", "latestReady": True}
         self.panel.update_readiness_store = lambda: fake_update_store
-        self.panel.update_readiness_snapshot = lambda: {}
+        self.panel.update_readiness_metrics_snapshot = lambda: {}
         self.panel.update_readiness_public_status = lambda: {"ok": True, "currentReceiptReady": True, "applyReady": True}
         self.addCleanup(lambda: setattr(self.panel, "change_intelligence_public_status", original_status))
         self.addCleanup(lambda: setattr(self.panel, "change_intelligence_store", original_store))
         self.addCleanup(lambda: setattr(self.panel, "deployment_assurance_store", original_deployment_store))
         self.addCleanup(lambda: setattr(self.panel, "deployment_assurance_public_status", original_deployment_status))
         self.addCleanup(lambda: setattr(self.panel, "update_readiness_store", original_update_store))
-        self.addCleanup(lambda: setattr(self.panel, "update_readiness_snapshot", original_update_snapshot))
+        self.addCleanup(lambda: setattr(self.panel, "update_readiness_metrics_snapshot", original_update_snapshot))
         self.addCleanup(lambda: setattr(self.panel, "update_readiness_public_status", original_update_status))
 
         handler, captured = self.make_route_handler("/api/ops/change-intelligence")
@@ -3377,6 +3377,20 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         handler.require_token = lambda: self.fail("bounded change-intelligence metrics must not require an admin credential")
         handler.do_GET()
         self.assertEqual("dash_change_intelligence_collector_up 1\ndash_deployment_assurance_collector_up 1\ndash_update_readiness_collector_up 1\n", texts[0][0])
+
+    def test_update_readiness_metrics_never_run_expensive_collection_inline(self):
+        original_cache = dict(self.panel.UPDATE_READINESS_SNAPSHOT_CACHE)
+        original_runtime = dict(self.panel.UPDATE_READINESS_REFRESH_RUNTIME)
+        self.panel.UPDATE_READINESS_SNAPSHOT_CACHE.update({"at": 0.0, "value": None})
+        self.panel.UPDATE_READINESS_REFRESH_RUNTIME.update({"running": False, "lastAt": None, "lastError": ""})
+        self.addCleanup(lambda: self.panel.UPDATE_READINESS_SNAPSHOT_CACHE.update(original_cache))
+        self.addCleanup(lambda: self.panel.UPDATE_READINESS_REFRESH_RUNTIME.update(original_runtime))
+        with mock.patch.object(self.panel.threading, "Thread") as thread:
+            result = self.panel.update_readiness_metrics_snapshot()
+        self.assertIsNone(result)
+        thread.assert_called_once()
+        self.assertTrue(thread.call_args.kwargs["daemon"])
+        self.assertEqual("update-readiness-refresh", thread.call_args.kwargs["name"])
 
     def test_audit_event_feeds_change_intelligence_and_protects_reserved_fields(self):
         events = []

@@ -130,9 +130,11 @@ post-start hooks, or hostname protections.
 
 The status/metrics collector caches its bounded but comparatively expensive
 Steam archive and full-backup verification for five minutes by default; the UI
-and Prometheus reuse that snapshot. Explicit certification and game apply
-always force a fresh collection. `DUNE_UPDATE_READINESS_POLL_SECONDS` accepts
-60..3600 seconds.
+and Prometheus reuse that snapshot. A stale/missing metrics snapshot starts one
+single background refresh and returns immediately, so concurrent scrapes cannot
+create a verification thundering herd or exceed Prometheus's scrape timeout.
+Explicit certification and game apply always force a fresh collection.
+`DUNE_UPDATE_READINESS_POLL_SECONDS` accepts 60..3600 seconds.
 
 The unattended hotfix timer follows the same trust boundary. With receipt
 enforcement enabled and the legacy opt-out false, it acquires and validates the
