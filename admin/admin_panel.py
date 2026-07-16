@@ -3287,8 +3287,16 @@ def update_readiness_native_candidate():
             missing.append(relative)
             continue
         try:
-            with tarfile.open(path, "r:*") as archive:
-                member = archive.getmember("manifest.json")
+            with tarfile.open(path, "r|*") as archive:
+                member = None
+                for index, candidate_member in enumerate(archive):
+                    if index >= 32:
+                        break
+                    if candidate_member.name == "manifest.json":
+                        member = candidate_member
+                        break
+                if member is None:
+                    raise ValueError("manifest.json is not present in the first 32 archive members")
                 if not member.isfile() or not 1 <= member.size <= 8 * 1024 * 1024:
                     raise ValueError("manifest.json is missing or oversized")
                 handle = archive.extractfile(member)
