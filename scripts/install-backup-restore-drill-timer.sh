@@ -30,6 +30,11 @@ if ! id -nG "$operator" | tr ' ' '\n' | grep -Fxq "$socket_group" && [[ "$operat
   exit 1
 fi
 
+receipt_dir="$repo_root/backups/admin-panel/restore-drills"
+install_dir=(install -d -m 0700 -o "$operator" -g "$operator_group" "$receipt_dir")
+if [[ ! -w "$(dirname "$receipt_dir")" ]]; then install_dir=(sudo "${install_dir[@]}"); fi
+"${install_dir[@]}"
+
 service_template="$repo_root/config/systemd/dune-backup-restore-drill.service"
 timer_template="$repo_root/config/systemd/dune-backup-restore-drill.timer"
 tmp_service="$(mktemp)"
