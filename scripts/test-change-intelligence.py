@@ -102,6 +102,20 @@ class ChangeIntelligenceTests(unittest.TestCase):
         self.assertTrue(second["duplicate"])
         self.assertEqual(1, self.store.status()["eventCount"])
 
+    def test_batch_import_is_atomic_bounded_and_can_skip_invalid_legacy_rows(self):
+        events = [
+            {"action": "settings-write", "ts": 1000 + index, "ok": True, "method": "POST", "eventId": f"audit-{index}"}
+            for index in range(100)
+        ]
+        events.append({"action": "invalid action", "ts": 1200})
+        first = self.store.record_many(events, skip_invalid=True, ingested_at=1300)
+        second = self.store.record_many(events[:-1], skip_invalid=True, ingested_at=1400)
+        self.assertEqual(100, first["insertedCount"])
+        self.assertEqual(1, first["errors"])
+        self.assertEqual(100, second["duplicates"])
+        self.assertEqual(100, self.store.status()["eventCount"])
+        self.assertTrue(self.store.verify()["eventChainValid"])
+
     def test_append_only_hmac_chain_detects_tampering_and_missing_trigger(self):
         self.record("settings-write", 1000, method="POST")
         self.record("service-control", 1100, method="POST")

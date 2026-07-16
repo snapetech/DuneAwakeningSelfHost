@@ -283,7 +283,7 @@ class Store:
             "previousSignature": row["previous_signature"],
         }
 
-    def record(self, raw_event, *, source="admin-audit", ingested_at=None):
+    def _prepare(self, raw_event, source, ingested_at):
         if not isinstance(raw_event, dict):
             raise ValueError("change-intelligence event must be an object")
         action = str(raw_event.get("action") or "").strip()[:128]
@@ -308,44 +308,106 @@ class Store:
             raise ValueError("change-intelligence source is invalid")
         scope = event_scope(action, raw_event, self.secret)
         source_fingerprint = self.source_fingerprint(raw_event)
-        event_id = "change-" + uuid.uuid4().hex
+        return {
+            "raw": raw_event, "action": action, "classification": classification,
+            "occurred": occurred, "ingested": ingested, "payload": payload,
+            "encoded": encoded, "actor": actor, "key": key, "source": source,
+            "scope": scope, "sourceFingerprint": source_fingerprint,
+            "eventId": "change-" + uuid.uuid4().hex,
+        }
+
+    def _insert_prepared(self, connection, prepared, previous):
+        classification = prepared["classification"]
+        document = {
+            "id": prepared["eventId"], "occurredAt": prepared["occurred"], "ingestedAt": prepared["ingested"],
+            "action": prepared["action"], "kind": classification["kind"], "category": classification["category"],
+            "impact": classification["impact"], "ok": bool(prepared["raw"].get("ok", True)),
+            "actor": prepared["actor"], "source": prepared["source"], "sourceFingerprint": prepared["sourceFingerprint"],
+            "incidentKey": prepared["key"], "isChange": classification["kind"] == "change",
+            "scope": prepared["scope"], "data": prepared["payload"], "previousSignature": previous,
+        }
+        signature = self._sign(document)
+        connection.execute(
+            "insert into events(id,occurred_at,ingested_at,action,kind,category,impact,ok,actor,source,source_fingerprint,incident_key,is_change,scope_json,data_json,previous_signature,signature) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (prepared["eventId"], prepared["occurred"], prepared["ingested"], prepared["action"], classification["kind"], classification["category"], classification["impact"], int(document["ok"]), prepared["actor"], prepared["source"], prepared["sourceFingerprint"], prepared["key"], int(document["isChange"]), _canonical(prepared["scope"]), prepared["encoded"], previous, signature),
+        )
+        return {
+            "ok": True, "id": prepared["eventId"], "occurredAt": _iso(prepared["occurred"]),
+            **classification, "incidentKey": prepared["key"], "signature": signature,
+        }
+
+    def record(self, raw_event, *, source="admin-audit", ingested_at=None):
+        prepared = self._prepare(raw_event, source, ingested_at)
         connection = self.connect()
         try:
             connection.execute("begin immediate")
-            duplicate = connection.execute("select * from events where source_fingerprint=?", (source_fingerprint,)).fetchone()
+            duplicate = connection.execute("select * from events where source_fingerprint=?", (prepared["sourceFingerprint"],)).fetchone()
             if duplicate:
                 connection.rollback()
                 result = self._public(duplicate)
-                result.update({"duplicate": True, "pattern": classification["pattern"]})
+                result.update({"duplicate": True, "pattern": prepared["classification"]["pattern"]})
                 return result
             count = connection.execute("select count(*) from events").fetchone()[0]
             if count >= self.policy["maxEvents"]:
                 raise RuntimeError("change-intelligence maxEvents reached; archive and rotate the ledger")
             prior = connection.execute("select signature from events order by sequence desc limit 1").fetchone()
             previous = prior["signature"] if prior else None
-            document = {
-                "id": event_id, "occurredAt": occurred, "ingestedAt": ingested,
-                "action": action, "kind": classification["kind"], "category": classification["category"],
-                "impact": classification["impact"], "ok": bool(raw_event.get("ok", True)),
-                "actor": actor, "source": source, "sourceFingerprint": source_fingerprint,
-                "incidentKey": key, "isChange": classification["kind"] == "change",
-                "scope": scope, "data": payload, "previousSignature": previous,
-            }
-            signature = self._sign(document)
-            connection.execute(
-                "insert into events(id,occurred_at,ingested_at,action,kind,category,impact,ok,actor,source,source_fingerprint,incident_key,is_change,scope_json,data_json,previous_signature,signature) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (event_id, occurred, ingested, action, classification["kind"], classification["category"], classification["impact"], int(document["ok"]), actor, source, source_fingerprint, key, int(document["isChange"]), _canonical(scope), encoded, previous, signature),
-            )
+            result = self._insert_prepared(connection, prepared, previous)
             connection.commit()
         except Exception:
             connection.rollback()
             raise
         finally:
             connection.close()
-        result = {"ok": True, "id": event_id, "occurredAt": _iso(occurred), **classification, "incidentKey": key, "signature": signature}
-        if classification["kind"] == "incident-open":
-            result["candidates"] = self.correlate(key)
+        if prepared["classification"]["kind"] == "incident-open":
+            result["candidates"] = self.correlate(prepared["key"])
         return result
+
+    def record_many(self, raw_events, *, source="admin-audit-history", ingested_at=None, skip_invalid=False):
+        raw_events = list(raw_events)
+        if len(raw_events) > self.policy["historyImportLimit"]:
+            raise ValueError("change-intelligence batch exceeds historyImportLimit")
+        prepared_rows = []
+        errors = 0
+        for event in raw_events:
+            try:
+                prepared_rows.append(self._prepare(event, source, ingested_at))
+            except (ValueError, TypeError, OverflowError):
+                if not skip_invalid:
+                    raise
+                errors += 1
+        connection = self.connect()
+        inserted = []
+        duplicates = 0
+        try:
+            connection.execute("begin immediate")
+            count = connection.execute("select count(*) from events").fetchone()[0]
+            prior = connection.execute("select signature from events order by sequence desc limit 1").fetchone()
+            previous = prior["signature"] if prior else None
+            fingerprints = list(dict.fromkeys(row["sourceFingerprint"] for row in prepared_rows))
+            known = set()
+            for offset in range(0, len(fingerprints), 500):
+                chunk = fingerprints[offset:offset + 500]
+                placeholders = ",".join("?" for _ in chunk)
+                known.update(row["source_fingerprint"] for row in connection.execute(f"select source_fingerprint from events where source_fingerprint in ({placeholders})", chunk))
+            for prepared in prepared_rows:
+                if prepared["sourceFingerprint"] in known:
+                    duplicates += 1
+                    continue
+                if count >= self.policy["maxEvents"]:
+                    raise RuntimeError("change-intelligence maxEvents reached; archive and rotate the ledger")
+                result = self._insert_prepared(connection, prepared, previous)
+                inserted.append(result)
+                known.add(prepared["sourceFingerprint"])
+                previous = result["signature"]
+                count += 1
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+        return {"ok": errors == 0, "inserted": inserted, "insertedCount": len(inserted), "duplicates": duplicates, "errors": errors}
 
     @staticmethod
     def _public(row):

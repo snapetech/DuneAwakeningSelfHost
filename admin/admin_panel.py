@@ -5394,23 +5394,18 @@ def change_intelligence_import_history():
                     errors += 1
         except OSError:
             errors += 1
-    imported = 0
     fingerprints = [store.source_fingerprint(event) for event in rows]
     known = store.existing_source_fingerprints(fingerprints)
     duplicates = sum(1 for fingerprint in fingerprints if fingerprint in known)
-    for event in rows:
-        try:
-            fingerprint = store.source_fingerprint(event)
-            if fingerprint in known:
-                continue
-            result = store.record(event, source="admin-audit-history")
-            if result.get("duplicate"):
-                duplicates += 1
-            else:
-                imported += 1
-                known.add(fingerprint)
-        except (ValueError, RuntimeError, OSError, sqlite3.Error):
-            errors += 1
+    missing = [event for event, fingerprint in zip(rows, fingerprints) if fingerprint not in known]
+    try:
+        batch = store.record_many(missing, source="admin-audit-history", skip_invalid=True)
+        imported = batch["insertedCount"]
+        duplicates += batch["duplicates"]
+        errors += batch["errors"]
+    except (ValueError, RuntimeError, OSError, sqlite3.Error):
+        imported = 0
+        errors += len(missing)
     store.set_metadata("audit_history_last_catchup", datetime.datetime.now(datetime.timezone.utc).isoformat())
     result = {"ok": errors == 0, "skipped": False, "imported": imported, "duplicates": duplicates, "errors": errors}
     CHANGE_INTELLIGENCE_RUNTIME.update({"imported": imported, "duplicates": duplicates, "importErrors": errors})
@@ -5422,8 +5417,9 @@ def ensure_change_intelligence():
         return
     try:
         change_intelligence_store()
-        change_intelligence_import_history()
-        CHANGE_INTELLIGENCE_RUNTIME.update({"ready": True, "lastError": ""})
+        catchup = change_intelligence_import_history()
+        last_error = "" if catchup.get("ok") else f"audit history catch-up completed with {catchup.get('errors', 0)} error(s)"
+        CHANGE_INTELLIGENCE_RUNTIME.update({"ready": True, "lastError": last_error})
     except Exception as exc:
         CHANGE_INTELLIGENCE_RUNTIME.update({"ready": False, "lastError": str(exc)[:2000]})
 
