@@ -1749,7 +1749,10 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         historical.mkdir(parents=True)
         atomic.mkdir(parents=True)
         (historical / "historical.dump").write_bytes(b"old")
+        (aggregate / "loose-admin.dump").write_bytes(b"not-a-full-backup")
         (atomic / "current.dump").write_bytes(b"current")
+        (atomic / "manifest.txt").write_text("WORLD_UNIQUE_NAME=test\n", encoding="utf-8")
+        (atomic / "config.tgz").write_bytes(b"config")
         original_inventory = self.panel.backup_inventory
         self.panel.backup_inventory = lambda limit=100: {
             "sets": [{"path": "admin-panel"}, {"path": "20260716T221526Z"}]

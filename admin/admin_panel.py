@@ -3458,7 +3458,12 @@ def latest_full_backup_set(limit=100):
         if not path.is_dir() or path.is_symlink():
             continue
         direct_dumps = [candidate for candidate in path.glob("*.dump") if candidate.is_file() and not candidate.is_symlink()]
-        if direct_dumps:
+        manifest = path / "manifest.txt"
+        config_archive = next((
+            candidate for candidate in (path / "config.tgz", path / "config-and-env.tgz")
+            if candidate.is_file() and not candidate.is_symlink()
+        ), None)
+        if direct_dumps and manifest.is_file() and not manifest.is_symlink() and config_archive:
             return row
     return {}
 

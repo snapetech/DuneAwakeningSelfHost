@@ -158,11 +158,12 @@ are diagnostic fields, not part of the candidate fingerprint or authorization
 verdict. Overall collection evidence also reports `durationMs`, whether the
 collection was forced, and the backup-selection policy.
 
-Recovery evidence always selects the newest atomic backup directory containing
-a direct PostgreSQL dump. Aggregate parents such as `backups/admin-panel`,
-which may contain years of nested maintenance history, are never treated as one
-backup set. This keeps forced certification proportional to one recovery set
-without weakening the normal verifier applied to that set.
+Recovery evidence always selects the newest atomic full-backup directory with a
+direct PostgreSQL dump, `manifest.txt`, and config archive. Aggregate parents
+such as `backups/admin-panel` may contain years of nested maintenance history
+and old loose admin dumps; they are never treated as one backup set. This keeps
+forced certification proportional to one recovery set without weakening the
+normal verifier applied to that set.
 
 Compose mounts `DUNE_STEAM_SERVER_DIR` read-only at
 `DUNE_UPDATE_READINESS_STEAM_DIR` for native Python inspection. This fixes the

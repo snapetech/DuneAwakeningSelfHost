@@ -187,8 +187,8 @@ execution fails closed without a current receipt. Certification itself runs no
 update, restart, or game mutation. Package identity reads at most the first and
 last 16 MiB of each uncompressed Docker-save tar, validates the manifest header,
 and seeks directly to bounded JSON instead of streaming image-layer payloads.
-Recovery gating verifies the newest atomic direct-dump backup, never an
-aggregate maintenance-history parent.
+Recovery gating verifies the newest atomic manifest/config/direct-dump backup,
+never an aggregate maintenance-history parent or loose admin dump directory.
 
 See [`docs/ecosystem-feature-parity-audit.md`](docs/ecosystem-feature-parity-audit.md)
 for the pinned peer list, full capability matrix, confidence levels, exclusions,
