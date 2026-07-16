@@ -198,8 +198,10 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         with self.assertRaisesRegex(PermissionError, "invalid admin token"):
             handler.require_token()
         handler.headers = {"X-Admin-Token": "real-owner-token"}
+        self.panel.AUTH_FAILURES["127.0.0.1"] = [time.time()] * self.panel.AUTH_FAILURE_LIMIT
         handler.require_token()
         self.assertEqual(handler.auth_principal["id"], "owner-recovery")
+        self.assertNotIn("127.0.0.1", self.panel.AUTH_FAILURES)
         self.panel.ADMIN_REQUIRE_TOKEN = False
         handler.headers = {}
         handler.require_token()

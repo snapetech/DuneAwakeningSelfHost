@@ -12432,9 +12432,6 @@ class Handler(BaseHTTPRequestHandler):
         now = time.time()
         failures = [ts for ts in AUTH_FAILURES.get(peer, []) if now - ts < AUTH_FAILURE_WINDOW_SECONDS]
         AUTH_FAILURES[peer] = failures
-        if len(failures) >= AUTH_FAILURE_LIMIT:
-            self.audit("auth-throttled", ok=False, failures=len(failures))
-            raise PermissionError("too many failed admin token attempts")
         provided = self.headers.get("X-Admin-Token", "").strip()
         if not provided:
             authorization = self.headers.get("Authorization", "").strip()
@@ -12451,6 +12448,9 @@ class Handler(BaseHTTPRequestHandler):
             except (PermissionError, ValueError, OSError, json.JSONDecodeError):
                 principal = None
         if not principal:
+            if len(failures) >= AUTH_FAILURE_LIMIT:
+                self.audit("auth-throttled", ok=False, failures=len(failures))
+                raise PermissionError("too many failed admin token attempts")
             failures.append(now)
             AUTH_FAILURES[peer] = failures
             self.audit("auth-failed", ok=False, failures=len(failures))
