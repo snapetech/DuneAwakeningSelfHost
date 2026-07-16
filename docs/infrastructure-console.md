@@ -55,13 +55,28 @@ Safety and resource limits:
 ## Adaptive Map Pool
 
 The Infrastructure autoscaler card supports minimum-footprint, balanced,
-full-warm, and custom profiles. It displays current map mode/state, players,
+adaptive, full-warm, and custom profiles. It displays current map mode/state, players,
 retention, warm deadline, last activity, demand count, and eviction reason.
 Balanced mode caps empty optional-warm maps by least-recent activity and can
 evict them when host `MemAvailable` falls below its configured floor. It never
 selects always-on maps, maps with players, or maps with an active demand lease.
 See [`autoscaling-memory.md`](autoscaling-memory.md) for the complete state and
 configuration contract.
+
+## Capacity Intelligence
+
+`GET /api/ops/capacity` reports retained 1-day, 7-day, and 30-day map
+efficiency. The card shows map-hours saved against a continuously running farm,
+idle warm cost, productive-running ratio, observation coverage, warm/cold
+revisits, revisit-gap quantiles, request-to-ready cold-start p50/p95, and the
+next-visit forecast for each dynamic map.
+
+`POST /api/ops/capacity` applies only evidence-qualified retention
+recommendations. It requires `infrastructure.write`, the master mutation gate,
+the autoscaler mutation gate, and `APPLY CAPACITY RECOMMENDATIONS`. Application
+preserves map modes and LRU/memory-pressure budgets, moves each value by at most
+the committed fractional bound, and writes a tamper-evident receipt. See
+[`capacity-intelligence.md`](capacity-intelligence.md).
 
 ## Backup Lifecycle
 

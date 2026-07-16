@@ -65,6 +65,7 @@ immediately and persists it in `backups/admin-panel/autoscaler.json`.
 | --- | --- | --- | --- |
 | `minimum-footprint` | Configured core maps are `always-on`; all other maps are `dynamic`. | Dynamic maps use `DUNE_AUTOSCALER_IDLE_SECONDS`; no global warm-map or memory budget. | Smallest normal idle footprint. |
 | `balanced` | Configured core maps are `always-on`; all other maps are `dynamic`. | Default/per-map retention, LRU warm-map cap, and available-memory floor. | Recommended general-purpose production policy. |
+| `adaptive` | Same safe core/dynamic modes as balanced. | Balanced LRU/memory bounds plus evidence-qualified per-map retention from the capacity ledger. | Sites that want the resource/latency middle ground to converge from observed demand. |
 | `full-warm` | Every configured map is `always-on`. | Nothing is automatically evicted. | Original all-maps-running behavior and latency-sensitive large hosts. |
 | `custom` | Each map keeps its selected `always-on`, `dynamic`, or `disabled` mode. | Operator-selected default/per-map retention and budgets. | Mixed policies and experiments. |
 
@@ -73,6 +74,12 @@ retention, default retention, maximum optional warm maps, minimum available
 memory, demand TTL, live heat/activity data, and the latest eviction reason.
 The JSON endpoint is `GET/POST /api/ops/autoscaler`; writes require
 `CHANGE AUTOSCALER`.
+
+The adjacent Capacity Intelligence card retains map-hours saved, idle warm
+cost, warm/cold revisits, request-to-ready latency, and observation coverage.
+Its adaptive recommendations are separately confirmed, evidence-thresholded,
+gradual, and mode-preserving. See
+[`capacity-intelligence.md`](capacity-intelligence.md).
 
 ### Balanced profile
 
@@ -103,7 +110,7 @@ and is dry-run by default:
 ./scripts/configure-autoscaler-profile.sh .env balanced --execute
 ```
 
-Replace `balanced` with `minimum-footprint`, `full-warm`, or `custom`. Recreate
+Replace `balanced` with `minimum-footprint`, `adaptive`, `full-warm`, or `custom`. Recreate
 the admin panel after changing defaults, then apply the same profile from
 Infrastructure to reconcile persistent runtime state.
 
@@ -180,6 +187,13 @@ Runtime changes made in the browser persist in the state file. Change `.env`
 as well when the same policy must be the installation default after deleting
 state or moving the deployment to another host.
 
+Use `adaptive` to start from balanced bounds and enable the retained model:
+
+```bash
+./scripts/configure-autoscaler-profile.sh .env adaptive
+./scripts/configure-autoscaler-profile.sh .env adaptive --execute
+```
+
 ### Persistent state fields
 
 | Field | Meaning |
@@ -205,7 +219,7 @@ autoscaler lock.
 | Variable | Default | Purpose |
 | --- | ---: | --- |
 | `DUNE_AUTOSCALER_ENABLED` | `false` | Start the worker and allow profile reconciliation. |
-| `DUNE_AUTOSCALER_PROFILE` | `balanced` | Fresh-state installation profile. |
+| `DUNE_AUTOSCALER_PROFILE` | `balanced` | Fresh-state installation profile: minimum-footprint, balanced, adaptive, full-warm, or custom. |
 | `DUNE_AUTOSCALER_ALWAYS_ON_SERVICES` | `survival,overmap` | Core maps for minimum and balanced profiles. |
 | `DUNE_AUTOSCALER_IDLE_SECONDS` | `300` | Minimum-profile retention and legacy fallback. |
 | `DUNE_AUTOSCALER_DEMAND_TTL_SECONDS` | `900` | Maximum protection for a demand with no observed player. |
@@ -219,6 +233,8 @@ autoscaler lock.
 The admin container must be recreated after changing these `.env` defaults.
 Applying a profile afterward copies the loaded defaults into persistent state.
 Changing only `.env` does not overwrite an existing state file automatically.
+Adaptive application changes only the persistent per-service retention map; it
+does not rewrite `.env`, map modes, warm-map caps, or the memory floor.
 
 This lifecycle controller is what reduces CPU and resident memory. Docker
 memory limits do not reserve memory and lowering a limit does not make a game

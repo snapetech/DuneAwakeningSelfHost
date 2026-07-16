@@ -17,7 +17,7 @@ or documented operational path.
 ## Audit snapshot
 
 - Audit date: **2026-07-15**, full GitHub search and remote HEAD refresh
-  **2026-07-16 15:45 UTC**
+  **2026-07-16 17:17 UTC**
 - Search scope: GitHub repository search, project documentation, Funcom's
   self-host guide, CubeCoders' Dune template and guide, Nexus Mods' Dune:
   Awakening category, and public community discussions used only to discover
@@ -25,8 +25,9 @@ or documented operational path.
 - Primary-source rule: feature claims come from upstream repositories or
   official project documentation. Community posts are not treated as proof that
   a feature works.
-- Target source: the current dirty DASH worktree, including the completed
-  Red-Blink parity and adaptive-autoscaler tranches.
+- Target source: the current DASH worktree, including the completed Red-Blink
+  parity, adaptive-autoscaler, recovery-proof, SLO, and capacity-intelligence
+  tranches.
 
 Confidence labels in this document use the repository standard:
 
@@ -155,7 +156,8 @@ without reproducing that wrapper.
 | Compose profiles and per-map policies | Red-Blink, Manaiakalani | Parity | Adaptive profiles exceed static peer layouts |
 | Start/stop/restart/update/status | All full stacks/managers | Parity | Guarded target-aware paths are loaded |
 | Per-map start/stop/restart/recovery | Red-Blink, Manaiakalani, DST | Parity | Native post-start hooks preserved |
-| Dynamic maps and warm retention | Red-Blink | Parity | Balanced/minimum/full/custom supported |
+| Dynamic maps and warm retention | Red-Blink | DASH exceeds | Minimum/balanced/adaptive/full/custom supported |
+| Measured scaling efficiency and evidence-driven retention | No surveyed Dune peer | DASH exceeds | Private time-weighted ledger measures map-hours saved, idle warm cost, productive running, warm/cold revisits, request-to-ready p50/p95, coverage and forecasts; adaptive recommendations are evidence-gated, gradual, mode-preserving, receipted, backed up, and alertable; see `docs/capacity-intelligence.md` |
 | Explicitly disabled maps survive update/restart | Manaiakalani | Parity | Persisted custom autoscaler modes and selective startup keep stopped/dynamic maps out of normal startup; full-warm remains an explicit operator choice |
 | Multi-Sietch management | Red-Blink, the4rchangel | Parity | Up to 64 guarded dimensions |
 | Public-IP/routing repair | Red-Blink, comfuzio | Parity | Monitor and LAN reflection paths loaded |
@@ -185,6 +187,7 @@ without reproducing that wrapper.
 | Layered backup/list/download/import/restore | Red-Blink, dashboards | Parity | Verified, quarantined restore lifecycle |
 | Scheduled backup and retention | Icehunter, Reditus, Manaiakalani | Parity | Host timers and panel schedule |
 | Automated real restore rehearsal and RPO/RTO evidence | BIGMOS documents manual `pg_restore`; other peers inspect/archive backups | DASH exceeds | Daily no-network disposable PostgreSQL restore, Dune schema/data/index/constraint checks, analyze, round-trip dump, measured RPO/RTO, verified cleanup, private hash-chained receipts, dashboard/API, and hardened timer; see `docs/restore-drills.md` |
+| Time-weighted reliability objectives and error budgets | Peers expose current health and retained infrastructure metrics | DASH exceeds | Seven service objectives, five time windows, observation coverage, burn rates, remaining budget, debounced incidents, immutable globally hash-chained events, bounded maintenance exclusions, dashboard/API/Prometheus, and transactionally consistent recovery; see `docs/operational-slo.md` |
 | Offsite/mirror/failover backup | DST, Reditus | Parity | Replica, snapshot, rsync/rclone/restic examples |
 | Scheduled restart with warnings and backup | adainrivers, Manaiakalani, AMP | Parity | Daily maintenance timer loaded |
 | Authenticated Steam update and Steam Guard bootstrap | Manaiakalani | Parity | Protected owned-account login/password settings, interactive SteamCMD bootstrap for password/Steam Guard, persistent private Steam home, locked unattended hotfix updater, and restart-only-on-change behavior; one-time Steam Guard codes are not retained |
@@ -319,6 +322,11 @@ only when explicitly authorized for a concrete client task, as required by
   DASH automatically proves a real dump restores and records measured,
   tamper-evident recovery evidence instead of stopping at archive creation or a
   manual `pg_restore` instruction.
+- **High confidence:** DASH now goes beyond the surveyed scaling implementations
+  by measuring both sides of the cold/warm tradeoff. Retained map-hours,
+  warm-idle cost, warm/cold outcomes, empirical revisit gaps, and routable-ready
+  start latency feed gradual per-map recommendations while LRU/memory budgets
+  and operator-selected modes remain authoritative.
 - **High confidence:** local RBAC, outbound events, the first-party Discord bot,
   community rewards/shop/tracks, host tuning, inventory integrity repair,
   recurring event automation, moderation case history, native policy-ban
