@@ -83,6 +83,10 @@ set_value() {
 }
 
 for key in "${keys[@]}"; do set_value "$key" true; done
+# This deployment is intentionally hosted only on the trusted internal admin
+# surface. Feature-parity activation must not silently re-enable browser token
+# authentication after the operator has disabled it.
+set_value DUNE_ADMIN_REQUIRE_TOKEN false
 if [[ ! -f "$repo_root/config/community-rewards.json" ]]; then
   install -m 600 "$repo_root/config/community-rewards.example.json" "$repo_root/config/community-rewards.json"
 else

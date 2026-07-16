@@ -8140,7 +8140,8 @@ class Handler(BaseHTTPRequestHandler):
         landmarks = []
         diagnostics = query("""
             with online_players as (
-                select ps.account_id, ps.character_name, ps.player_controller_id, ps.player_pawn_id, ps.player_state_id
+                select ps.id as character_id, ps.account_id, ps.character_name,
+                       ps.player_controller_id, ps.player_pawn_id, ps.player_state_id
                 from dune.player_state ps
                 where ps.online_status::text = 'Online'
             ),
@@ -8200,7 +8201,7 @@ class Handler(BaseHTTPRequestHandler):
                        a.partition_id, coalesce(a.dimension_index, prl.dimension) as dimension_index,
                        coalesce(prl.locator_actor_id::text, prl.locator_name, prl.id::text) as ref
                 from online_players op
-                join dune.player_respawn_locations prl on prl.account_id = op.account_id
+                join dune.player_respawn_locations prl on prl.character_id = op.character_id
                 left join dune.actors a on a.id = prl.locator_actor_id
             ),
             recent_events as (
@@ -8524,13 +8525,13 @@ class Handler(BaseHTTPRequestHandler):
             """, (controller_id,)),
             "overmap": query("select * from dune.overmap_players where player_id in (%s,%s) order by player_id", (controller_id, pawn_id)),
             "respawnLocations": query("""
-                select id, account_id, "group", locator_transform, locator_actor_id,
+                select id, character_id, "group", locator_transform, locator_actor_id,
                        locator_name, map, dimension, last_used_timestamp, locator_name_index
                 from dune.player_respawn_locations
-                where account_id=%s
+                where character_id=%s
                 order by last_used_timestamp desc nulls last
                 limit 25
-            """, (account_id,)),
+            """, (player[0].get("id"),)),
             "currency": query("select * from dune.player_virtual_currency_balances where player_controller_id=%s order by currency_id", (controller_id,)),
             "specialization": query("select * from dune.specialization_tracks where player_id=%s order by track_type::text", (controller_id,)),
             "faction": query("select * from dune.player_faction where actor_id=%s order by faction_id", (pawn_id,)),
@@ -10204,10 +10205,10 @@ class Handler(BaseHTTPRequestHandler):
             """, (int(player_id or 0), int(account_id), ADMIN_REFERENCE_LIMIT))
             respawns = reference_query(errors, "respawnLocations", """
                 select * from dune.player_respawn_locations
-                where account_id=%s
+                where character_id=%s
                 order by last_used_timestamp desc nulls last
                 limit %s
-            """, (int(account_id), ADMIN_REFERENCE_LIMIT))
+            """, (int(player_id), ADMIN_REFERENCE_LIMIT))
         functions = reference_query(errors, "functions", """
             select n.nspname as schema, p.proname as name,
                    pg_get_function_identity_arguments(p.oid) as args,
@@ -10580,7 +10581,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def resolve_player_identity(self, account_id):
         rows = query("""
-            select ps.account_id, ps.character_name, ps.online_status::text,
+            select ps.id as character_id, ps.account_id, ps.character_name, ps.online_status::text,
                    ps.player_controller_id, ps.player_pawn_id,
                    a.funcom_id, a."user" as fls_id
             from dune.player_state ps
@@ -11224,13 +11225,14 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("respawn_id must be a UUID")
         dry_run = str(body.get("dry_run", body.get("dryRun", "true"))).lower() not in ("0", "false", "no", "off")
         player, _ = self.resolve_player_identity(account_id)
-        current_rows = query("select * from dune.player_respawn_locations where account_id=%s order by last_used_timestamp desc nulls last", (account_id,))
+        character_id = int(player["character_id"])
+        current_rows = query("select * from dune.player_respawn_locations where character_id=%s order by last_used_timestamp desc nulls last", (character_id,))
         target = [row for row in current_rows if str(row.get("id")) == respawn_id]
         if not target:
             raise ValueError("respawn_id not found for account_id")
         plan = {
             "function": "dune.update_respawn_locations",
-            "args": [account_id, f"get_respawn_locations({account_id}) minus {respawn_id}"],
+            "args": [character_id, f"get_respawn_locations({character_id}) minus {respawn_id}"],
             "player": player,
             "currentRows": current_rows,
             "delete": target[0],
@@ -11251,8 +11253,8 @@ class Handler(BaseHTTPRequestHandler):
                 from unnest(dune.get_respawn_locations(%s)) as current_location(loc)
                 where (current_location.loc).id <> %s::uuid
             ), array[]::dune.respawnlocation[]))
-        """, (account_id, account_id, respawn_id))
-        after = query("select * from dune.player_respawn_locations where account_id=%s order by last_used_timestamp desc nulls last", (account_id,))
+        """, (character_id, character_id, respawn_id))
+        after = query("select * from dune.player_respawn_locations where character_id=%s order by last_used_timestamp desc nulls last", (character_id,))
         return {"ok": True, "dryRun": False, "accountId": account_id, "respawnId": respawn_id, "action": action, "before": current_rows, "after": after, "rollback": plan["rollback"]}
 
     def runtime_player_action(self, body):

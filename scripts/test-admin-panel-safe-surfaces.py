@@ -1340,6 +1340,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
 
     def test_journey_respawn_landsraad_dry_runs(self):
         self.handler.resolve_player_identity = lambda account_id: ({
+            "character_id": 110,
             "account_id": account_id,
             "character_name": "Tester",
             "online_status": "Offline",
@@ -1354,7 +1355,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
             if "player_respawn_locations" in sql:
                 return [{
                     "id": "0a0556f6-a387-41f2-b613-deacee4e2bd0",
-                    "account_id": 10,
+                    "character_id": 110,
                     "map": "HaggaBasin",
                     "last_used_timestamp": 100,
                 }]
