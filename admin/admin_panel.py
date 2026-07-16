@@ -3640,7 +3640,7 @@ def update_readiness_snapshot(game=None, force=False):
     snapshot["details"]["collection"] = {
         "durationMs": round((time.monotonic() - collection_started) * 1000, 3),
         "forced": bool(force),
-        "backupSelection": "newest-direct-dump-leaf",
+        "backupSelection": "newest-manifest-config-direct-dump-leaf",
     }
     with UPDATE_READINESS_SNAPSHOT_LOCK:
         UPDATE_READINESS_SNAPSHOT_CACHE.update({"at": time.time(), "value": json.loads(json.dumps(snapshot))})

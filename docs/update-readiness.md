@@ -156,7 +156,8 @@ The API's package evidence includes the inspection mode, configured byte
 ceilings, required/successful archive counts, and measured `durationMs`. These
 are diagnostic fields, not part of the candidate fingerprint or authorization
 verdict. Overall collection evidence also reports `durationMs`, whether the
-collection was forced, and the backup-selection policy.
+collection was forced, and the exact
+`newest-manifest-config-direct-dump-leaf` backup-selection policy.
 
 Recovery evidence always selects the newest atomic full-backup directory with a
 direct PostgreSQL dump, `manifest.txt`, and config archive. Aggregate parents

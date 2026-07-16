@@ -91,7 +91,7 @@ class UpdateReadinessTests(unittest.TestCase):
         self.assertIn("dash_update_readiness_collection_duration_seconds 4.488203", metrics)
         self.assertIn("dash_update_readiness_package_inspection_duration_seconds 0.566542", metrics)
         snapshot["details"]["collection"]["durationMs"] = "nan"
-        self.assertIn("dash_update_readiness_collection_duration_seconds 0.0", self.store.prometheus(snapshot, now=1100))
+        self.assertIn("dash_update_readiness_collection_duration_seconds 0.000000", self.store.prometheus(snapshot, now=1100))
 
 
 if __name__ == "__main__":

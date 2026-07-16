@@ -292,7 +292,7 @@ class Store:
             f"dash_update_readiness_candidate_update_required {1 if evaluation['candidate']['updateRequired'] else 0}",
             f"dash_update_readiness_receipt_current {1 if status['currentReceiptReady'] else 0}",
             f"dash_update_readiness_online_players {evaluation['onlinePlayers']}",
-            f"dash_update_readiness_collection_duration_seconds {collection_seconds}",
-            f"dash_update_readiness_package_inspection_duration_seconds {package_seconds}",
+            f"dash_update_readiness_collection_duration_seconds {collection_seconds:.6f}",
+            f"dash_update_readiness_package_inspection_duration_seconds {package_seconds:.6f}",
             f"dash_update_readiness_last_certification_timestamp_seconds {timestamp}",
         ]) + "\n"
