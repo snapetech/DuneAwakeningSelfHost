@@ -54,7 +54,7 @@ keys=(
 
 if [[ -z "$mode" ]]; then
   printf 'plan: enable %s feature gates on %s\n' "${#keys[@]}" "$required_host"
-  printf 'plan: autoscaler=balanced always-on=survival,overmap retention=900s overrides=arrakeen/harko/deep-desert warm-cap=4 memory-floor=16GiB\n'
+  printf 'plan: autoscaler=adaptive (balanced baseline plus evidence-qualified retention) always-on=survival,overmap retention=900s overrides=arrakeen/harko/deep-desert warm-cap=4 memory-floor=16GiB\n'
   printf 'plan: metrics=enabled public-ip-monitor=enabled/dry-run sietch-gate=enabled\n'
   printf 'no changes made; rerun with --execute\n'
   exit 0
