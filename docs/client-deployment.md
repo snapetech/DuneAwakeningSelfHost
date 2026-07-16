@@ -38,6 +38,37 @@ scripts/launch-proton-client-probe.sh --stage-dir build/windows-client-loader/pr
 That last command generates the proxy DLL and sidecar under `build/`; it does
 not require client-directory staging. Review their checksums before continuing.
 
+The packaged Windows loader is self-contained: it includes
+`scripts/client-deployment.py`, this runbook, the deployment tests, the current
+build-bound canary record, complete `SHA256SUMS`, and package-verification
+receipts. Verify a downloaded archive before extraction, then verify every
+extracted file and rerun the packaged contract:
+
+```bash
+sha256sum -c dune-windows-client-loader-<version>-windows-x86_64.tar.gz.sha256
+tar -xzf dune-windows-client-loader-<version>-windows-x86_64.tar.gz
+cd dune-windows-client-loader-<version>-windows-x86_64
+sha256sum -c SHA256SUMS
+analysis/verify-loader-artifacts.py \
+  --target windows-client \
+  --package-root . \
+  --package-target windows-client \
+  --package-archive ../dune-windows-client-loader-<version>-windows-x86_64.tar.gz \
+  --package-archive-sha256 ../dune-windows-client-loader-<version>-windows-x86_64.tar.gz.sha256 \
+  --package-only
+python3 -m unittest tests/test-client-deployment.py
+```
+
+`client-deployment-test.txt` is the build-time receipt from that same packaged
+test suite; `loader-artifact-verification.json` is the staged-tree contract
+receipt. The archive is accompanied by `.verification.txt` and
+`.verification.json` receipts covering the staged root, outer digest, and safe
+tar layout. The expanded verifier command above reproduces those checks.
+
+The verifier rejects incomplete checksums, checksum drift, package symlinks,
+and unsafe archive members such as traversal paths, links, devices, or multiple
+top-level roots.
+
 ## Create and review an install receipt without mutation
 
 ```bash

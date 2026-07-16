@@ -89,7 +89,9 @@ Always compare your `.env` image pin with the Steam package installed on your ho
 - Receipt-bound, transactional deployment for reviewed Windows client loader,
   Lua, and additive Pak artifacts, with confined paths, build/source/target
   checksums, fail-closed manifests, installed-file/backup verification, and
-  retryable drift-safe rollback plus a whole-state audit.
+  retryable drift-safe rollback plus a whole-state audit; the verified Windows
+  archive includes the manager, runbook, current canary evidence, and test
+  receipts.
 - Immutable commit/SHA-256 release installation with atomic activation,
   persistent state, no-restart rollback, and malicious-archive preflight;
   clean-host Ansible, secret-free cloud-init, token-authenticated Proxmox,

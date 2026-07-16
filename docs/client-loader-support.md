@@ -691,6 +691,16 @@ dist/linux-client-loader/
 dist/windows-client-loader/
 ```
 
+The Windows archive also carries the receipt-bound transactional deployment
+manager, its operator runbook and tests, and the current build-specific canary
+record. Packaging runs the manager tests, verifies every internal checksum,
+rejects unsafe tar members, verifies the outer archive digest, and records the
+results as `client-deployment-test.txt` plus
+`loader-artifact-verification.{txt,json}` inside the archive and sibling
+`.verification.{txt,json}` reports beside every Windows/Linux loader archive.
+Use `docs/client-deployment.md` from the extracted package instead of staging
+the DLL with an untracked copy command.
+
 Each package includes source, build helper, launch helper, smoke helper, docs,
 ABI/header reports, and `SHA256SUMS`.
 

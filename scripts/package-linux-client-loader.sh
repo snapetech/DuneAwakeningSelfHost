@@ -360,6 +360,7 @@ process and refuses Windows/PE Proton targets in the launch wrapper.
 - docs/client-loader-support.md: shared Linux/Windows support matrix.
 - docs/ue4ss-portability-contract.md: repo-generated all-target portability contract.
 - loader-artifact-verification.txt and loader-artifact-verification.json: package-root artifact verification outputs.
+- The packaged tarball also writes sibling .verification.txt and .verification.json reports that verify the staged root, tarball, and portable .sha256 sidecar together.
 - abi/: dependency and symbol-version report.
 - SHA256SUMS: checksums for package contents.
 
@@ -580,7 +581,25 @@ file "$loader" > "$stage/abi/file.txt"
 )
 
 tar -C "$dist_root" -czf "$archive" "$package_name"
-sha256sum "$archive" > "${archive}.sha256"
+archive_digest="$(sha256sum "$archive" | awk '{print $1}')"
+printf '%s  %s\n' "$archive_digest" "$(basename "$archive")" > "${archive}.sha256"
+python3 "$repo_root/scripts/verify-loader-artifacts.py" \
+  --target linux-client \
+  --package-root "$stage" \
+  --package-target linux-client \
+  --package-archive "$archive" \
+  --package-archive-sha256 "${archive}.sha256" \
+  --package-only \
+  --format text > "${archive}.verification.txt"
+python3 "$repo_root/scripts/verify-loader-artifacts.py" \
+  --target linux-client \
+  --package-root "$stage" \
+  --package-target linux-client \
+  --package-archive "$archive" \
+  --package-archive-sha256 "${archive}.sha256" \
+  --package-only \
+  --format json > "${archive}.verification.json"
 
 printf 'packaged Linux client loader: %s\n' "$archive"
 printf 'package checksum: %s\n' "${archive}.sha256"
+printf 'package verification: %s\n' "${archive}.verification.json"

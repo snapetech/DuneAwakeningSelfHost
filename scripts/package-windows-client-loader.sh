@@ -32,6 +32,7 @@ mkdir -p \
   "$stage/docs" \
   "$stage/examples" \
   "$stage/analysis" \
+  "$stage/scripts" \
   "$stage/tests" \
   "$stage/abi"
 
@@ -73,6 +74,7 @@ cp "$repo_root/scripts/prepare-ue-anchor-canary.py" "$stage/analysis/prepare-ue-
 cp "$repo_root/scripts/plan-ue4ss-canary-env.py" "$stage/analysis/plan-ue4ss-canary-env.py"
 cp "$repo_root/scripts/proton-proxy-candidates.py" "$stage/analysis/proton-proxy-candidates.py"
 cp "$repo_root/scripts/ensure-loader-build-toolchain.sh" "$stage/analysis/ensure-loader-build-toolchain.sh"
+cp "$repo_root/scripts/client-deployment.py" "$stage/scripts/client-deployment.py"
 cp "$repo_root/scripts/test-client-loader-scan-summary.py" "$stage/tests/test-client-loader-scan-summary.py"
 cp "$repo_root/scripts/test-client-loader-xrefs.py" "$stage/tests/test-client-loader-xrefs.py"
 cp "$repo_root/scripts/test-client-pe-signatures.py" "$stage/tests/test-client-pe-signatures.py"
@@ -115,9 +117,12 @@ cp "$repo_root/scripts/test-prepare-ue-anchor-canary.py" "$stage/tests/test-prep
 cp "$repo_root/scripts/test-plan-ue4ss-canary-env.py" "$stage/tests/test-plan-ue4ss-canary-env.py"
 cp "$repo_root/scripts/test-proton-proxy-candidates.py" "$stage/tests/test-proton-proxy-candidates.py"
 cp "$repo_root/scripts/test-client-launch-preflight.py" "$stage/tests/test-client-launch-preflight.py"
+cp "$repo_root/scripts/test-client-deployment.py" "$stage/tests/test-client-deployment.py"
 cp "$repo_root/docs/client-loader-support.md" "$stage/docs/client-loader-support.md"
 cp "$repo_root/docs/windows-client-loader.md" "$stage/docs/windows-client-loader.md"
+cp "$repo_root/docs/client-deployment.md" "$stage/docs/client-deployment.md"
 cp "$repo_root/docs/windows-client-loader-canary-2026-06-16.md" "$stage/docs/windows-client-loader-canary-2026-06-16.md"
+cp "$repo_root/docs/windows-client-loader-canary-2026-07-15.md" "$stage/docs/windows-client-loader-canary-2026-07-15.md"
 cp "$repo_root/docs/windows-client-loader-xrefs-2026-06-16.md" "$stage/docs/windows-client-loader-xrefs-2026-06-16.md"
 python3 "$repo_root/scripts/ue4ss-portability-contract.py" --format json --check > "$stage/docs/ue4ss-portability-contract.json"
 python3 "$repo_root/scripts/ue4ss-portability-contract.py" --format markdown --check > "$stage/docs/ue4ss-portability-contract.md"
@@ -157,6 +162,8 @@ chmod 0755 "$stage/analysis/prepare-ue-anchor-canary.py"
 chmod 0755 "$stage/analysis/plan-ue4ss-canary-env.py"
 chmod 0755 "$stage/analysis/proton-proxy-candidates.py"
 chmod 0755 "$stage/analysis/ensure-loader-build-toolchain.sh"
+chmod 0755 "$stage/scripts/client-deployment.py"
+chmod 0755 "$stage/tests/test-client-deployment.py"
 chmod 0644 "$stage/lib/dune_win_client_probe_loader.dll" "$stage/lib/version.dll"
 
 cat > "$stage/examples/env.scan.example" <<'EOF'
@@ -324,20 +331,65 @@ image mappings for configured anchors. The Dune shipping executable imports
 - examples/stage-windows-lua-runtime.sh: staged LuaBinaries 5.4.8 helper for parity smoke tests.
 - examples/smoke-windows-client-loader-lua.sh: real Lua DLL smoke test.
 - examples/env.scan.example: scan environment settings.
+- scripts/client-deployment.py: receipt-bound install, verification, whole-state audit, and retryable rollback manager.
 - analysis/: log summarizer, PE xref summarizer, PE signature validator, manifest/env exporter, UE anchor readiness, candidate-global outcome/shape/export tools, active-validation candidate exporter, portability contract, and proxy candidate tools.
-- tests/: unit tests for the packaged analysis tools.
+- tests/: unit tests for the packaged deployment and analysis tools.
 - docs/client-loader-support.md: shared Linux/Windows support matrix.
+- docs/client-deployment.md: transactional deployment and recovery runbook.
 - docs/ue4ss-portability-contract.md: repo-generated all-target portability contract.
 - loader-artifact-verification.txt and loader-artifact-verification.json: package-root artifact verification outputs.
+- The packaged tarball also writes sibling .verification.txt and .verification.json reports that verify the staged root, safe tar layout, and portable .sha256 sidecar together.
+- client-deployment-test.txt: packaged transactional-manager test receipt.
 - docs/windows-client-loader-canary-2026-06-16.md: real Proton client canary result.
+- docs/windows-client-loader-canary-2026-07-15.md: build-bound proxy/root/reflection canary and verified cleanup.
 - docs/windows-client-loader-xrefs-2026-06-16.md: real Proton client static xref follow-up.
 - abi/: PE header and export reports when local tools are available.
 - SHA256SUMS: checksums for package contents.
 
 ## Steam Launch Option
 
+The recommended installation path is the packaged transactional manager. It
+binds the reviewed plan to the game executable, source artifacts, current
+targets, and private backup state; it refuses drift and running-client
+mutation:
+
 \`\`\`bash
-$repo_root/scripts/launch-proton-client-probe.sh --stage-to-game-dir -- %command%
+game=/absolute/path/to/steamapps/common/DuneAwakening
+state="\$PWD/backups/client-deployments"
+receipt="\$PWD/current-loader.plan.json"
+
+scripts/client-deployment.py --state-root "\$state" plan \\
+  --game-dir "\$game" \\
+  --deployment current-loader \\
+  --file "\$PWD/lib/version.dll::DuneSandbox/Binaries/Win64/version.dll" \\
+  --file "\$PWD/examples/env.scan.example::DuneSandbox/Binaries/Win64/dune-win-client-probe.env" \\
+  > "\$receipt"
+
+python3 -m json.tool "\$receipt"
+scripts/client-deployment.py --state-root "\$state" install \\
+  --reviewed-plan "\$receipt" \\
+  --confirm 'MUTATE DUNE CLIENT FILES'
+scripts/client-deployment.py --state-root "\$state" verify --deployment current-loader
+scripts/client-deployment.py --state-root "\$state" audit
+\`\`\`
+
+Rollback uses the same private state and is retryable after a recorded
+interrupted install or partial rollback:
+
+\`\`\`bash
+scripts/client-deployment.py --state-root "\$state" rollback \\
+  --deployment current-loader \\
+  --confirm 'MUTATE DUNE CLIENT FILES'
+\`\`\`
+
+Read \`docs/client-deployment.md\` before using adoption or installing an
+additive Pak overlay. The commands above do not set the Proton DLL override;
+use the separately reversible override helper only after deployment verifies.
+
+### Experimental launch wrapper
+
+\`\`\`bash
+examples/launch-proton-client-probe.sh --stage-to-game-dir -- %command%
 \`\`\`
 
 The wrapper can stage the DLL outside the Steam game directory for experiments,
@@ -346,6 +398,10 @@ beside the game executable. The script backs up any existing DLL with the same
 name before replacing it. It also writes \`dune-win-client-probe.env\` beside
 the proxy DLL so a normal Steam launch can still enable scan mode even when the
 wrapper environment is not inherited.
+
+Prefer the manager above for persistent staging because its reviewed receipt,
+collision checks, private backup verification, audit, and crash-recovery state
+machine are stronger than the experimental wrapper's single backup manifest.
 
 For non-Dune Windows UE targets, keep the proxy package repo-contained by
 using \`--game-dir\`, \`--exe-rel\`, \`--dll-name\`, and \`--stage-dir\` to point
@@ -429,7 +485,9 @@ analysis/summarize-client-ue-anchors.py /tmp/dune-win-client-probe-loader.log
 analysis/proton-proxy-candidates.py "\$TARGET_BINARY"
 analysis/verify-loader-artifacts.py --target windows-client --package-root . --package-target windows-client --package-only --format text > loader-artifact-verification.txt
 analysis/verify-loader-artifacts.py --target windows-client --package-root . --package-target windows-client --package-only --format json > loader-artifact-verification.json
+analysis/verify-loader-artifacts.py --target windows-client --package-root . --package-target windows-client --package-archive "../${package_name}.tar.gz" --package-archive-sha256 "../${package_name}.tar.gz.sha256" --package-only --format json > downloaded-package-verification.json
 analysis/ue4ss-portability-contract.py --targets available --format markdown --check > ue4ss-portability-contract.md
+python3 -m unittest tests/test-client-deployment.py
 python3 -m unittest tests/test-client-loader-scan-summary.py tests/test-client-loader-xrefs.py tests/test-client-pe-signatures.py tests/test-client-pe-signature-manifest.py tests/test-client-ue-anchors.py tests/test-ue4ss-port-readiness.py tests/test-ue4ss-port-gaps.py tests/test-ue4ss-portability-contract.py tests/test-ue4ss-evidence-inventory.py tests/test-loader-scheduler-api-parity.py tests/test-loader-modref-api-parity.py tests/test-loader-mod-lifecycle-api-parity.py tests/test-loader-unregister-api-parity.py tests/test-loader-fname-api-parity.py tests/test-loader-native-identity-parity.py tests/test-loader-custom-property-api-parity.py tests/test-loader-compat-globals-api-parity.py tests/test-loader-world-engine-api-parity.py tests/test-loader-object-notify-api-parity.py tests/test-loader-console-command-api-parity.py tests/test-loader-anchor-group-parity.py tests/test-loader-scan-preset-parity.py tests/test-export-ue-anchor-env.py tests/test-export-ue-candidate-globals.py tests/test-ue-candidate-outcomes.py tests/test-ue-candidate-shapes.py tests/test-ue-code-pointer-context.py tests/test-ue-vtable-candidates.py tests/test-export-process-event-active-validation-candidates.py tests/test-ue-root-recovery-queue.py tests/test-ue-root-recovery-clusters.py tests/test-export-ue-root-recovery-candidates.py tests/test-pe-writable-root-shapes.py tests/test-export-ue-writable-root-shape-candidates.py tests/test-pe-ue-function-neighborhoods.py tests/test-promote-ue-anchor-xref-candidates.py tests/test-prepare-ue-anchor-canary.py tests/test-plan-ue4ss-canary-env.py tests/test-proton-proxy-candidates.py tests/test-client-launch-preflight.py
 \`\`\`
 
@@ -544,11 +602,42 @@ fi
 
 (
   cd "$stage"
+  python3 -m unittest tests/test-client-deployment.py > client-deployment-test.txt 2>&1
+)
+
+(
+  cd "$stage"
+  find . -type f ! -name SHA256SUMS -print | sort | sed 's#^\./##' | xargs sha256sum > SHA256SUMS
+  verification_text="$(mktemp)"
+  verification_json="$(mktemp)"
+  trap 'rm -f "$verification_text" "$verification_json"' EXIT
+  analysis/verify-loader-artifacts.py --target windows-client --package-root . --package-target windows-client --package-only --format text > "$verification_text"
+  analysis/verify-loader-artifacts.py --target windows-client --package-root . --package-target windows-client --package-only --format json > "$verification_json"
+  mv "$verification_text" loader-artifact-verification.txt
+  mv "$verification_json" loader-artifact-verification.json
   find . -type f ! -name SHA256SUMS -print | sort | sed 's#^\./##' | xargs sha256sum > SHA256SUMS
 )
 
 tar -C "$dist_root" -czf "$archive" "$package_name"
-sha256sum "$archive" > "${archive}.sha256"
+archive_digest="$(sha256sum "$archive" | awk '{print $1}')"
+printf '%s  %s\n' "$archive_digest" "$(basename "$archive")" > "${archive}.sha256"
+python3 "$repo_root/scripts/verify-loader-artifacts.py" \
+  --target windows-client \
+  --package-root "$stage" \
+  --package-target windows-client \
+  --package-archive "$archive" \
+  --package-archive-sha256 "${archive}.sha256" \
+  --package-only \
+  --format text > "${archive}.verification.txt"
+python3 "$repo_root/scripts/verify-loader-artifacts.py" \
+  --target windows-client \
+  --package-root "$stage" \
+  --package-target windows-client \
+  --package-archive "$archive" \
+  --package-archive-sha256 "${archive}.sha256" \
+  --package-only \
+  --format json > "${archive}.verification.json"
 
 printf 'packaged Windows client loader: %s\n' "$archive"
 printf 'package checksum: %s\n' "${archive}.sha256"
+printf 'package verification: %s\n' "${archive}.verification.json"

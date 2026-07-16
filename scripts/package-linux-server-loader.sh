@@ -1107,7 +1107,8 @@ file "$loader" > "$stage/abi/file.txt"
 )
 
 tar -C "$dist_root" -czf "$archive" "$package_name"
-sha256sum "$archive" > "${archive}.sha256"
+archive_digest="$(sha256sum "$archive" | awk '{print $1}')"
+printf '%s  %s\n' "$archive_digest" "$(basename "$archive")" > "${archive}.sha256"
 python3 "$repo_root/scripts/verify-loader-artifacts.py" \
   --target linux-server \
   --package-root "$stage" \

@@ -4,6 +4,7 @@ import hashlib
 import json
 import subprocess
 import sys
+import tarfile
 from pathlib import Path
 
 
@@ -145,15 +146,21 @@ PACKAGE_LAYOUTS = {
         "analysis/summarize-ue4ss-evidence-inventory.py",
         "analysis/ue4ss-portability-contract.py",
         "analysis/verify-loader-artifacts.py",
+        "scripts/client-deployment.py",
+        "tests/test-client-deployment.py",
         "tests/test-ue4ss-port-readiness.py",
         "tests/test-ue4ss-port-gaps.py",
         "tests/test-ue4ss-evidence-inventory.py",
         "tests/test-ue4ss-portability-contract.py",
         "tests/test-verify-loader-artifacts.py",
         "docs/client-loader-support.md",
+        "docs/client-deployment.md",
         "docs/windows-client-loader.md",
+        "docs/windows-client-loader-canary-2026-07-15.md",
         "docs/ue4ss-portability-contract.json",
         "docs/ue4ss-portability-contract.md",
+        "client-deployment-test.txt",
+        "README.md",
     ),
 }
 
@@ -208,6 +215,8 @@ PACKAGE_EXECUTABLES = {
         "analysis/summarize-ue4ss-evidence-inventory.py",
         "analysis/ue4ss-portability-contract.py",
         "analysis/verify-loader-artifacts.py",
+        "scripts/client-deployment.py",
+        "tests/test-client-deployment.py",
     ),
 }
 
@@ -291,6 +300,26 @@ PACKAGE_DOC_MARKERS = {
             "ue4ss-evidence-inventory.json",
             "ue4ss-evidence-inventory.md",
             "summarize-ue4ss-evidence-inventory.py",
+        ),
+        "docs/client-deployment.md": (
+            "# Transactional Client Loader and Pak Deployment",
+            "planSha256",
+            "scripts/client-deployment.py audit",
+            "failed-rollback-required",
+        ),
+        "docs/windows-client-loader-canary-2026-07-15.md": (
+            "# Windows Client Loader Canary — 2026-07-15",
+            "24146567",
+            "0xb951768",
+            "0xb9f8ec0",
+            "app-specific Wine DLL override was removed",
+        ),
+        "README.md": (
+            "# Dune Windows Client Loader",
+            "scripts/client-deployment.py --state-root",
+            "--reviewed-plan",
+            "docs/client-deployment.md",
+            "loader-artifact-verification.json",
         ),
     },
 }
@@ -605,6 +634,24 @@ PACKAGE_FILE_MARKERS = {
             "routeVtableStaticSlotMatches",
         ),
     },
+    "windows-client": {
+        "scripts/client-deployment.py": (
+            'CONFIRMATION = "MUTATE DUNE CLIENT FILES"',
+            '"dune-client-deployment-audit/v1"',
+            '"failed-rollback-required"',
+            'sub.add_parser("audit")',
+        ),
+        "tests/test-client-deployment.py": (
+            "test_install_is_bound_to_reviewed_plan",
+            "test_failed_partial_rollback_is_retryable",
+            "test_interrupted_prepared_install_can_converge_to_original_state",
+            "test_audit_reports_clean_active_state",
+        ),
+        "client-deployment-test.txt": (
+            "Ran 24 tests",
+            "OK",
+        ),
+    },
 }
 
 
@@ -720,7 +767,15 @@ def verify_target(target):
 def verify_package_root(target, package_root):
     root = Path(package_root)
     required = PACKAGE_LAYOUTS[target]
-    missing = [relative for relative in required if not (root / relative).is_file()]
+    missing = [relative for relative in required if not (root / relative).is_file() or (root / relative).is_symlink()]
+    package_files = set()
+    if root.is_dir():
+        for path in root.rglob("*"):
+            relative = path.relative_to(root).as_posix()
+            if path.is_symlink():
+                missing.append(f"packagePath:{relative}:symlink")
+            elif path.is_file() and relative != "SHA256SUMS":
+                package_files.add(relative)
     for relative in PACKAGE_EXECUTABLES[target]:
         path = root / relative
         if path.is_file():
@@ -791,18 +846,35 @@ def verify_package_root(target, package_root):
                 if relative in checksum_rows:
                     missing.append(f"SHA256SUMS:{line_number}:duplicate")
                     continue
-                checksum_rows[relative] = parts[0].lower()
-            for relative in required:
-                path = root / relative
-                if not path.is_file():
+                if relative == "SHA256SUMS":
+                    missing.append(f"SHA256SUMS:{line_number}:self-reference")
                     continue
-                expected = checksum_rows.get(relative)
-                if not expected:
+                checksum_rows[relative] = parts[0].lower()
+            for relative, expected in checksum_rows.items():
+                path = root / relative
+                cursor = root
+                unsafe_component = False
+                for part in Path(relative).parts:
+                    cursor = cursor / part
+                    if cursor.is_symlink():
+                        unsafe_component = True
+                        break
+                if unsafe_component:
+                    missing.append(f"SHA256SUMS:{relative}:symlink")
+                    continue
+                if not path.is_file():
                     missing.append(f"SHA256SUMS:{relative}:missing")
                     continue
                 actual = hashlib.sha256(path.read_bytes()).hexdigest()
                 if actual != expected:
                     missing.append(f"SHA256SUMS:{relative}:mismatch")
+            for relative in sorted(package_files - set(checksum_rows)):
+                missing.append(f"SHA256SUMS:{relative}:missing")
+            for relative in required:
+                if (root / relative).is_file() and relative not in checksum_rows:
+                    marker = f"SHA256SUMS:{relative}:missing"
+                    if marker not in missing:
+                        missing.append(marker)
     contract_path = root / "docs" / "ue4ss-portability-contract.json"
     contract = None
     if contract_path.is_file():
@@ -878,6 +950,32 @@ def verify_package_archive(archive_path, checksum_path=None):
         actual = hashlib.sha256(archive_path.read_bytes()).hexdigest()
         if actual != expected:
             missing.append("packageArchiveSha256:mismatch")
+    member_count = 0
+    top_levels = set()
+    if archive_path.is_file():
+        try:
+            with tarfile.open(archive_path, "r:*") as archive:
+                seen = set()
+                for member in archive.getmembers():
+                    member_count += 1
+                    name = member.name.rstrip("/")
+                    path = Path(name)
+                    if not name or path.is_absolute() or ".." in path.parts:
+                        missing.append(f"packageArchive:{member_count}:unsafe-path")
+                        continue
+                    top_levels.add(path.parts[0])
+                    if name in seen:
+                        missing.append(f"packageArchive:{member_count}:duplicate")
+                    seen.add(name)
+                    if member.issym() or member.islnk():
+                        missing.append(f"packageArchive:{name}:link")
+                    elif not (member.isfile() or member.isdir()):
+                        missing.append(f"packageArchive:{name}:special-file")
+        except (OSError, tarfile.TarError):
+            missing.append("packageArchive:invalid-tar")
+        else:
+            if len(top_levels) != 1:
+                missing.append("packageArchive:top-level-layout")
     return {
         "passed": not missing,
         "missing": missing,
@@ -885,6 +983,8 @@ def verify_package_archive(archive_path, checksum_path=None):
             "path": str(archive_path),
             "kind": "package-archive",
             "checksumPath": str(checksum_path),
+            "memberCount": member_count,
+            "topLevel": sorted(top_levels),
         },
     }
 

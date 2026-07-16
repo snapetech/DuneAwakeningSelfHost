@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 import importlib.util
 import hashlib
+import io
 import json
 import sys
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
@@ -109,6 +111,11 @@ def write_package_checksums(root, target, skip=()):
         path = root / relative
         rows.append(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {relative}")
     (root / "SHA256SUMS").write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+
+def write_package_archive(archive, source, arcname="package"):
+    with tarfile.open(archive, "w:gz") as stream:
+        stream.add(source, arcname=arcname)
 
 
 class VerifyLoaderArtifactsTests(unittest.TestCase):
@@ -263,6 +270,42 @@ class VerifyLoaderArtifactsTests(unittest.TestCase):
 
         self.assertFalse(row["passed"], row)
         self.assertIn("lib/version.dll", row["missing"])
+
+    def test_verify_windows_package_requires_transactional_deployment_manager(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_required_package_layout(root, "windows-client", skip={"scripts/client-deployment.py"})
+
+            row = module.verify_package_root("windows-client", root)
+
+        self.assertFalse(row["passed"], row)
+        self.assertIn("scripts/client-deployment.py", row["missing"])
+
+    def test_verify_windows_package_requires_current_canary_record(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_required_package_layout(root, "windows-client", skip={"docs/windows-client-loader-canary-2026-07-15.md"})
+
+            row = module.verify_package_root("windows-client", root)
+
+        self.assertFalse(row["passed"], row)
+        self.assertIn("docs/windows-client-loader-canary-2026-07-15.md", row["missing"])
+
+    def test_verify_windows_package_rejects_stale_deployment_manager(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_required_package_layout(root, "windows-client")
+            manager = root / "scripts/client-deployment.py"
+            manager.write_text("#!/usr/bin/env python3\nprint('old manager')\n", encoding="utf-8")
+            write_package_checksums(root, "windows-client")
+
+            row = module.verify_package_root("windows-client", root)
+
+        self.assertFalse(row["passed"], row)
+        self.assertIn(
+            'scripts/client-deployment.py:missing-marker:"dune-client-deployment-audit/v1"',
+            row["missing"],
+        )
 
     def test_verify_package_root_rejects_missing_packaged_source(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1324,6 +1367,29 @@ class VerifyLoaderArtifactsTests(unittest.TestCase):
         self.assertFalse(row["passed"], row)
         self.assertIn("SHA256SUMS:analysis/verify-loader-artifacts.py:mismatch", row["missing"])
 
+    def test_verify_package_root_requires_checksum_for_every_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_required_package_layout(root, "windows-client")
+            extra = root / "analysis/extra-tool.py"
+            extra.write_text("print('must be hashed')\n", encoding="utf-8")
+
+            row = module.verify_package_root("windows-client", root)
+
+        self.assertFalse(row["passed"], row)
+        self.assertIn("SHA256SUMS:analysis/extra-tool.py:missing", row["missing"])
+
+    def test_verify_package_root_rejects_symlinked_content(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_required_package_layout(root, "windows-client")
+            (root / "docs/linked.md").symlink_to(root / "README.md")
+
+            row = module.verify_package_root("windows-client", root)
+
+        self.assertFalse(row["passed"], row)
+        self.assertIn("packagePath:docs/linked.md:symlink", row["missing"])
+
     def test_verify_package_root_rejects_unsafe_checksum_paths(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1378,7 +1444,9 @@ class VerifyLoaderArtifactsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             archive = root / "package.tar.gz"
-            archive.write_bytes(b"archive bytes")
+            content = root / "content"; content.mkdir()
+            (content / "README.md").write_text("package\n", encoding="utf-8")
+            write_package_archive(archive, content)
             checksum = root / "package.tar.gz.sha256"
             checksum.write_text(f"{hashlib.sha256(archive.read_bytes()).hexdigest()}  {archive.name}\n", encoding="utf-8")
 
@@ -1387,6 +1455,43 @@ class VerifyLoaderArtifactsTests(unittest.TestCase):
         self.assertTrue(row["passed"], row)
         self.assertEqual(row["missing"], [])
         self.assertEqual(row["details"]["kind"], "package-archive")
+        self.assertEqual(row["details"]["topLevel"], ["package"])
+
+    def test_verify_package_archive_rejects_traversal_member(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive = root / "package.tar.gz"
+            with tarfile.open(archive, "w:gz") as stream:
+                member = tarfile.TarInfo("../escape")
+                member.size = 1
+                stream.addfile(member, io.BytesIO(b"x"))
+            checksum = root / "package.tar.gz.sha256"
+            checksum.write_text(f"{hashlib.sha256(archive.read_bytes()).hexdigest()}  {archive.name}\n", encoding="utf-8")
+
+            row = module.verify_package_archive(archive)
+
+        self.assertFalse(row["passed"], row)
+        self.assertIn("packageArchive:1:unsafe-path", row["missing"])
+
+    def test_verify_package_archive_rejects_link_member(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive = root / "package.tar.gz"
+            with tarfile.open(archive, "w:gz") as stream:
+                directory = tarfile.TarInfo("package")
+                directory.type = tarfile.DIRTYPE
+                stream.addfile(directory)
+                member = tarfile.TarInfo("package/link")
+                member.type = tarfile.SYMTYPE
+                member.linkname = "/tmp/outside"
+                stream.addfile(member)
+            checksum = root / "package.tar.gz.sha256"
+            checksum.write_text(f"{hashlib.sha256(archive.read_bytes()).hexdigest()}  {archive.name}\n", encoding="utf-8")
+
+            row = module.verify_package_archive(archive)
+
+        self.assertFalse(row["passed"], row)
+        self.assertIn("packageArchive:package/link:link", row["missing"])
 
     def test_verify_package_archive_rejects_mismatched_sidecar_checksum(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1459,7 +1564,7 @@ class VerifyLoaderArtifactsTests(unittest.TestCase):
             root = Path(tmp)
             write_required_package_layout(root, "linux-server")
             archive = root.parent / "package.tar.gz"
-            archive.write_bytes(b"archive bytes")
+            write_package_archive(archive, root)
             checksum = root.parent / "package.tar.gz.sha256"
             checksum.write_text(f"{hashlib.sha256(archive.read_bytes()).hexdigest()}  package.tar.gz\n", encoding="utf-8")
 

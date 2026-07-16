@@ -1916,6 +1916,15 @@ scripts/proton-proxy-candidates.py ~/.steam/steam/steamapps/common/DuneAwakening
 scripts/package-windows-client-loader.sh
 ```
 
+The package contains the transactional `scripts/client-deployment.py` manager,
+its tests and runbook, the current build-bound canary record, internal
+`SHA256SUMS`, and generated verification receipts. The packager verifies the
+packaged deployment test receipt, complete staged tree, and final tar
+structure/checksum before reporting success. It writes sibling
+`.verification.txt` and `.verification.json` receipts beside the archive. See
+`docs/client-deployment.md` for the reviewed receipt, audit, and retryable
+rollback workflow.
+
 Default package location:
 
 ```text
