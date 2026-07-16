@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import importlib.util
 import base64
+import gzip
 import hashlib
 import hmac
 import io
@@ -1692,7 +1693,54 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertTrue(evidence["steamSettled"])
         self.assertEqual("update-available", evidence["candidate"]["status"])
         self.assertEqual("24146567", evidence["candidate"]["installedBuildId"])
+        self.assertEqual("bounded-seekable-tar-headers", evidence["archiveInspection"]["mode"])
+        self.assertEqual(6, evidence["archiveInspection"]["successfullyInspectedArchives"])
+        self.assertGreaterEqual(evidence["archiveInspection"]["durationMs"], 0)
         self.assertTrue(coriolis["ok"], coriolis["failures"])
+
+    def test_bounded_docker_manifest_finds_tail_header_without_streaming_layers(self):
+        archive_path = self.workspace / "tail-manifest.tar"
+        manifest = [{"RepoTags": ["registry.example.test/game:tail"]}]
+        payload = json.dumps(manifest).encode()
+        with tarfile.open(archive_path, "w") as archive:
+            filler = tarfile.TarInfo("large-layer/layer.tar")
+            filler.size = 64 * 1024
+            archive.addfile(filler, io.BytesIO(b"x" * filler.size))
+            info = tarfile.TarInfo("manifest.json")
+            info.size = len(payload)
+            archive.addfile(info, io.BytesIO(payload))
+        result = self.panel.bounded_docker_manifest(archive_path, window_bytes=16 * 1024)
+        self.assertEqual(manifest, result)
+
+    def test_bounded_docker_manifest_rejects_corrupt_header_checksum(self):
+        archive_path = self.workspace / "corrupt-manifest.tar"
+        payload = json.dumps([{"RepoTags": ["registry.example.test/game:corrupt"]}]).encode()
+        with tarfile.open(archive_path, "w") as archive:
+            info = tarfile.TarInfo("manifest.json")
+            info.size = len(payload)
+            archive.addfile(info, io.BytesIO(payload))
+        content = bytearray(archive_path.read_bytes())
+        header_offset = next(
+            offset for offset in range(0, len(content), 512)
+            if content[offset:offset + len(b"manifest.json")] == b"manifest.json"
+        )
+        content[header_offset + 100] ^= 1
+        archive_path.write_bytes(content)
+        with self.assertRaisesRegex(ValueError, "checksum does not match"):
+            self.panel.bounded_docker_manifest(archive_path)
+
+    def test_bounded_docker_manifest_rejects_compressed_archive(self):
+        raw_path = self.workspace / "manifest.tar"
+        compressed_path = self.workspace / "manifest.tar.gz"
+        payload = json.dumps([{"RepoTags": ["registry.example.test/game:gzip"]}]).encode()
+        with tarfile.open(raw_path, "w") as archive:
+            info = tarfile.TarInfo("manifest.json")
+            info.size = len(payload)
+            archive.addfile(info, io.BytesIO(payload))
+        with gzip.open(compressed_path, "wb") as handle:
+            handle.write(raw_path.read_bytes())
+        with self.assertRaisesRegex(ValueError, "uncompressed seekable tar"):
+            self.panel.bounded_docker_manifest(compressed_path)
 
     def test_browser_game_update_requires_current_signed_candidate_receipt(self):
         original_required = self.panel.UPDATE_READINESS_REQUIRE_RECEIPT

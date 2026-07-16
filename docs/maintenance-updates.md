@@ -194,7 +194,11 @@ After SteamCMD returns, the update phase runs:
 ./scripts/check-steam-update.sh .env
 ```
 
-The script reads Docker `manifest.json` entries from the official Steam package image tarballs under `DUNE_STEAM_SERVER_DIR`, then compares the package tag with `DUNE_IMAGE_TAG`.
+The script reads Docker `manifest.json` entries from the official Steam package
+image tarballs under `DUNE_STEAM_SERVER_DIR`, then compares the package tag with
+`DUNE_IMAGE_TAG`. Dashboard readiness performs the same identity check with a
+bounded seekable-tar reader: it validates headers in only the first/last 16 MiB
+and seeks directly to the manifest instead of traversing image-layer payloads.
 
 The hotfix timer also compares `DUNE_IMAGE_TAG` with every running game-map,
 Director, Gateway, Text Router, and RMQ auth-shim container before it skips a

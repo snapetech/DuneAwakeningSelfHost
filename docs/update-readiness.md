@@ -138,13 +138,24 @@ the receipt requirement removes this additional browser gate; it does not
 remove the existing master/update gates, exact confirmation, backup, restart,
 post-start hooks, or hostname protections.
 
-The status/metrics collector caches its bounded but comparatively expensive
-Steam archive and full-backup verification for five minutes by default; the UI
-and Prometheus reuse that snapshot. A stale/missing metrics snapshot starts one
-single background refresh and returns immediately, so concurrent scrapes cannot
-create a verification thundering herd or exceed Prometheus's scrape timeout.
-Explicit certification and game apply always force a fresh collection.
+The status/metrics collector caches Steam archive and full-backup verification
+for five minutes by default; the UI and Prometheus reuse that snapshot. Steam
+package inspection does not stream multi-gigabyte image layers. Docker-save
+archives are required to be uncompressed and seekable: DASH scans valid
+512-byte tar headers only in the first and last 16 MiB, verifies the
+`manifest.json` header checksum/type/size, and seeks directly to its payload.
+The hard header-read ceiling is 32 MiB per archive and the JSON ceiling is
+8 MiB. A manifest outside those windows, a compressed archive, a symlink, a
+bad checksum, or malformed JSON fails closed. A stale/missing metrics snapshot
+starts one single background refresh and returns immediately, so concurrent
+scrapes cannot create a verification thundering herd or exceed Prometheus's
+scrape timeout. Explicit certification and game apply always force a fresh collection.
 `DUNE_UPDATE_READINESS_POLL_SECONDS` accepts 60..3600 seconds.
+
+The API's package evidence includes the inspection mode, configured byte
+ceilings, required/successful archive counts, and measured `durationMs`. These
+are diagnostic fields, not part of the candidate fingerprint or authorization
+verdict.
 
 Compose mounts `DUNE_STEAM_SERVER_DIR` read-only at
 `DUNE_UPDATE_READINESS_STEAM_DIR` for native Python inspection. This fixes the
@@ -205,5 +216,6 @@ docker compose --env-file .env.example config --quiet
 ```
 
 The test suite covers candidate binding, expiry, online-player semantics,
-failed-check refusal, nested/outer tampering, bounded inputs, parsing of Steam
-tag/build output, browser execution enforcement, metrics, and route access.
+failed-check refusal, nested/outer tampering, bounded inputs, first/tail tar
+header lookup, corrupt-header and compressed-archive rejection, parsing of
+Steam tag/build output, browser execution enforcement, metrics, and route access.

@@ -18,6 +18,7 @@ import secrets
 import shutil
 import socket
 import sqlite3
+import stat
 import subprocess
 import sys
 import tarfile
@@ -3270,7 +3271,110 @@ def update_readiness_candidate(game):
     }, text, sorted(set(package_tags))
 
 
+DOCKER_MANIFEST_SCAN_WINDOW_BYTES = 16 * 1024 * 1024
+DOCKER_MANIFEST_MAX_BYTES = 8 * 1024 * 1024
+TAR_BLOCK_BYTES = 512
+
+
+def bounded_docker_manifest(path, window_bytes=DOCKER_MANIFEST_SCAN_WINDOW_BYTES, max_manifest_bytes=DOCKER_MANIFEST_MAX_BYTES):
+    """Read Docker save manifest.json without traversing image-layer payloads."""
+    path = pathlib.Path(path)
+    if path.is_symlink():
+        raise ValueError("Docker image archive must not be a symlink")
+    try:
+        window_bytes = int(window_bytes)
+        max_manifest_bytes = int(max_manifest_bytes)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Docker manifest scan bounds must be integers") from exc
+    if window_bytes < TAR_BLOCK_BYTES or max_manifest_bytes < 1:
+        raise ValueError("Docker manifest scan bounds are invalid")
+    window_blocks = max(1, window_bytes // TAR_BLOCK_BYTES)
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    with os.fdopen(descriptor, "rb") as handle:
+        metadata = os.fstat(handle.fileno())
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ValueError("Docker image archive must be a regular file")
+        archive_bytes = metadata.st_size
+        magic = handle.read(6)
+        compressed_magic = (
+            magic.startswith(b"\x1f\x8b"),
+            magic.startswith(b"BZh"),
+            magic.startswith(b"\xfd7zXZ\x00"),
+            magic.startswith(b"\x28\xb5\x2f\xfd"),
+        )
+        if any(compressed_magic):
+            raise ValueError("Docker image archive must be an uncompressed seekable tar")
+        block_count = archive_bytes // TAR_BLOCK_BYTES
+        if block_count < 2:
+            raise ValueError("Docker image archive is too small to be a tar archive")
+
+        raw_ranges = [
+            (0, min(block_count, window_blocks)),
+            (max(0, block_count - window_blocks), block_count),
+        ]
+        ranges = []
+        for start_block, end_block in sorted(raw_ranges):
+            if ranges and start_block <= ranges[-1][1]:
+                ranges[-1] = (ranges[-1][0], max(ranges[-1][1], end_block))
+            else:
+                ranges.append((start_block, end_block))
+
+        invalid_candidates = []
+        for start_block, end_block in ranges:
+            handle.seek(start_block * TAR_BLOCK_BYTES)
+            data = handle.read((end_block - start_block) * TAR_BLOCK_BYTES)
+            if len(data) != (end_block - start_block) * TAR_BLOCK_BYTES:
+                raise ValueError("Docker image archive changed during bounded inspection")
+            for relative in range(0, len(data), TAR_BLOCK_BYTES):
+                header = data[relative:relative + TAR_BLOCK_BYTES]
+                name = header[:100].split(b"\0", 1)[0]
+                prefix = header[345:500].split(b"\0", 1)[0]
+                full_name = prefix + b"/" + name if prefix else name
+                if full_name != b"manifest.json":
+                    continue
+                try:
+                    checksum_text = header[148:156].strip(b" \0")
+                    if not checksum_text or any(value not in b"01234567" for value in checksum_text):
+                        raise ValueError("checksum field is not octal")
+                    stored_checksum = int(checksum_text, 8)
+                    computed_checksum = sum(header[:148]) + (8 * ord(" ")) + sum(header[156:])
+                    if stored_checksum != computed_checksum:
+                        raise ValueError("checksum does not match")
+                    if header[156:157] not in (b"\0", b"0"):
+                        raise ValueError("entry is not a regular file")
+                    size_text = header[124:136].strip(b" \0")
+                    if not size_text or any(value not in b"01234567" for value in size_text):
+                        raise ValueError("size field is not octal")
+                    manifest_bytes = int(size_text, 8)
+                    if not 1 <= manifest_bytes <= max_manifest_bytes:
+                        raise ValueError("payload is empty or exceeds the configured bound")
+                    header_offset = (start_block * TAR_BLOCK_BYTES) + relative
+                    payload_offset = header_offset + TAR_BLOCK_BYTES
+                    if payload_offset + manifest_bytes > archive_bytes:
+                        raise ValueError("payload extends beyond the archive")
+                    handle.seek(payload_offset)
+                    payload = handle.read(manifest_bytes)
+                    if len(payload) != manifest_bytes:
+                        raise ValueError("payload is truncated")
+                    manifest = json.loads(payload)
+                    if not isinstance(manifest, list) or not manifest:
+                        raise ValueError("payload is not a nonempty Docker manifest list")
+                    if not all(isinstance(image, dict) for image in manifest):
+                        raise ValueError("Docker manifest entries must be objects")
+                    return manifest
+                except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                    invalid_candidates.append(str(exc))
+        if invalid_candidates:
+            raise ValueError(f"manifest.json header failed validation: {invalid_candidates[0]}")
+        raise ValueError(
+            "manifest.json is not present in the bounded first/last "
+            f"{window_blocks * TAR_BLOCK_BYTES} byte tar-header windows"
+        )
+
+
 def update_readiness_native_candidate():
+    inspection_started = time.monotonic()
     steam_root = pathlib.Path(os.environ.get("DUNE_UPDATE_READINESS_STEAM_DIR", "/steam-server"))
     current = str(os.environ.get("DUNE_IMAGE_TAG") or env_file_value("DUNE_IMAGE_TAG") or "unknown").strip()
     required = (
@@ -3281,34 +3385,21 @@ def update_readiness_native_candidate():
     missing = []
     tags = set()
     errors = []
+    inspected_archives = 0
     for relative in required:
         path = steam_root / relative
         if not path.is_file() or path.is_symlink():
             missing.append(relative)
             continue
         try:
-            with tarfile.open(path, "r|*") as archive:
-                member = None
-                for index, candidate_member in enumerate(archive):
-                    if index >= 32:
-                        break
-                    if candidate_member.name == "manifest.json":
-                        member = candidate_member
-                        break
-                if member is None:
-                    raise ValueError("manifest.json is not present in the first 32 archive members")
-                if not member.isfile() or not 1 <= member.size <= 8 * 1024 * 1024:
-                    raise ValueError("manifest.json is missing or oversized")
-                handle = archive.extractfile(member)
-                if handle is None:
-                    raise ValueError("manifest.json is unreadable")
-                manifest = json.loads(handle.read(8 * 1024 * 1024 + 1))
-            for image in manifest if isinstance(manifest, list) else []:
+            manifest = bounded_docker_manifest(path)
+            inspected_archives += 1
+            for image in manifest:
                 for tag in image.get("RepoTags") or []:
                     prefix = "registry.funcom.com/funcom/self-hosting/seabass-server:"
                     if str(tag).startswith(prefix):
                         tags.add(str(tag).removeprefix(prefix))
-        except (OSError, KeyError, ValueError, json.JSONDecodeError, tarfile.TarError) as exc:
+        except (OSError, KeyError, TypeError, ValueError) as exc:
             errors.append(f"{relative}: {exc}")
 
     def acf_value(path, key):
@@ -3347,6 +3438,15 @@ def update_readiness_native_candidate():
         "packageTags": sorted(tags), "missing": missing, "errors": errors,
         "packageIdentified": status != "unknown" and len(tags) == 1,
         "packageComplete": package_complete, "steamSettled": steam_settled,
+        "archiveInspection": {
+            "mode": "bounded-seekable-tar-headers",
+            "windowBytes": DOCKER_MANIFEST_SCAN_WINDOW_BYTES,
+            "maximumHeaderBytesPerArchive": 2 * DOCKER_MANIFEST_SCAN_WINDOW_BYTES,
+            "maximumManifestBytes": DOCKER_MANIFEST_MAX_BYTES,
+            "requiredArchives": len(required),
+            "successfullyInspectedArchives": inspected_archives,
+            "durationMs": round((time.monotonic() - inspection_started) * 1000, 3),
+        },
         "source": str(steam_root),
     }
 

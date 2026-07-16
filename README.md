@@ -67,7 +67,8 @@ Always compare your `.env` image pin with the Steam package installed on your ho
 - Browser service/log control, verified manual and automatic backup lifecycle, daily no-network PostgreSQL restore proof with hash-chained RPO/RTO receipts, time-weighted SLOs/error budgets and immutable incident history, HMAC-sealed file/container desired-state attestation, tamper-evident operational change intelligence with non-causal incident correlation, deterministic evidence-linked response plans, portable signed escalation capsules, layered disaster restore, bounded database query/row/password controls, dynamic map autoscaling, retained capacity intelligence with evidence-driven adaptive retention, live memory balancing, and retained Prometheus metrics.
 - Staged game-build acquisition and exact candidate-bound update certification
   with recovery/configuration/health gates, expiring HMAC receipts, candidate
-  drift invalidation, and fail-closed browser apply enforcement.
+  drift invalidation, fail-closed browser apply enforcement, and constant-I/O
+  Docker manifest inspection that skips multi-gigabyte image layers.
 - Cache-aware, host-local CPU-affinity generation with guarded no-restart live application, Compose persistence, and rollback.
 - Backup-first Linux sysctl/THP/NIC-ring/IRQ tuning that preserves larger existing network maxima and never restarts Docker.
 - Live inventory slot-integrity audit plus hostname-, backup-, capacity-, and transaction-gated no-delete conflict repair.
@@ -183,7 +184,9 @@ restore proof, Compose/Coriolis/post-start hooks, desired state, SLO/change
 integrity, fleet readiness, deployment assurance, and online-player state.
 The signed receipt expires and invalidates on candidate drift; browser update
 execution fails closed without a current receipt. Certification itself runs no
-update, restart, or game mutation.
+update, restart, or game mutation. Package identity reads at most the first and
+last 16 MiB of each uncompressed Docker-save tar, validates the manifest header,
+and seeks directly to bounded JSON instead of streaming image-layer payloads.
 
 See [`docs/ecosystem-feature-parity-audit.md`](docs/ecosystem-feature-parity-audit.md)
 for the pinned peer list, full capability matrix, confidence levels, exclusions,
