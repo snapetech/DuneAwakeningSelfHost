@@ -19,6 +19,8 @@ import uuid
 
 KINDS = {"change", "incident-open", "incident-resolved", "evidence", "observation"}
 IMPACTS = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
+RESPONSE_STEP_KINDS = {"evidence", "diagnostic", "review", "recovery"}
+RESPONSE_PREDICATES = {"ledger-verified", "incident-resolved", "candidate-review", "followup-review", "always-pending"}
 SENSITIVE_KEY = re.compile(r"(?:password|passwd|secret|token|cookie|authorization|private.?key|credential)", re.I)
 IDENTITY_KEY = re.compile(r"(?:^|_)(?:account|fls|player|character|peer|client|target|subject)(?:_|$)", re.I)
 ABSOLUTE_PATH = re.compile(r"^(?:/|[A-Za-z]:[\\/])")
@@ -73,6 +75,97 @@ def load_policy(path):
         if not pattern or len(pattern) > 128 or kind not in KINDS or impact not in IMPACTS or not re.fullmatch(r"[a-z][a-z0-9-]{1,63}", category):
             raise ValueError("invalid change-intelligence rule")
         normalized.append({"pattern": pattern, "kind": kind, "category": category, "impact": impact})
+    response = raw.get("response")
+    if not isinstance(response, dict) or response.get("schemaVersion") != 1:
+        raise ValueError("change-intelligence response policy must be a schemaVersion 1 object")
+
+    def normalize_steps(steps, location):
+        if not isinstance(steps, list) or not 1 <= len(steps) <= 32:
+            raise ValueError(f"{location} must contain 1..32 response steps")
+        seen = set()
+        output = []
+        for step in steps:
+            if not isinstance(step, dict):
+                raise ValueError(f"{location} steps must be objects")
+            step_id = str(step.get("id") or "")
+            title = str(step.get("title") or "")
+            description = str(step.get("description") or "")
+            kind = str(step.get("kind") or "")
+            predicate = str(step.get("predicate") or "")
+            surface = str(step.get("surface") or "")
+            capability = str(step.get("requiredCapability") or "read")
+            gate = str(step.get("featureGate") or "")
+            confirmation = str(step.get("confirmation") or "")
+            command_id = str(step.get("commandId") or "")
+            if not re.fullmatch(r"[a-z][a-z0-9-]{1,63}", step_id) or step_id in seen:
+                raise ValueError(f"{location} response step id is invalid or duplicate")
+            seen.add(step_id)
+            if not 3 <= len(title) <= 128 or not 10 <= len(description) <= 1000:
+                raise ValueError(f"{location} response step text is invalid")
+            if kind not in RESPONSE_STEP_KINDS or predicate not in RESPONSE_PREDICATES:
+                raise ValueError(f"{location} response step kind or predicate is invalid")
+            if not re.fullmatch(r"[a-z][a-z0-9-]*(?::[a-z][a-z0-9-]*)?", surface):
+                raise ValueError(f"{location} response surface is invalid")
+            if not re.fullmatch(r"(?:\*|[a-z][a-z0-9.*-]{1,63})", capability):
+                raise ValueError(f"{location} response capability is invalid")
+            if gate and not re.fullmatch(r"DUNE_[A-Z0-9_]{3,120}", gate):
+                raise ValueError(f"{location} response feature gate is invalid")
+            if confirmation and (len(confirmation) > 128 or not re.fullmatch(r"[A-Z0-9][A-Z0-9 _-]+", confirmation)):
+                raise ValueError(f"{location} response confirmation is invalid")
+            if command_id and not re.fullmatch(r"[a-z][a-z0-9-]{1,63}", command_id):
+                raise ValueError(f"{location} response command id is invalid")
+            mutation = bool(step.get("mutation", False))
+            if mutation != (kind == "recovery") or (command_id and (kind != "diagnostic" or mutation)):
+                raise ValueError(f"{location} response mutation/command contract is invalid")
+            output.append({
+                "id": step_id, "title": title, "description": description,
+                "kind": kind, "predicate": predicate, "surface": surface,
+                "requiredCapability": capability, "mutation": mutation,
+                **({"featureGate": gate} if gate else {}),
+                **({"confirmation": confirmation} if confirmation else {}),
+                **({"commandId": command_id} if command_id else {}),
+            })
+        return output
+
+    common_steps = normalize_steps(response.get("commonSteps"), "response.commonSteps")
+    runbooks = response.get("runbooks")
+    if not isinstance(runbooks, list) or not 1 <= len(runbooks) <= 64:
+        raise ValueError("change-intelligence response.runbooks must contain 1..64 entries")
+    normalized_runbooks = []
+    seen_runbooks = set()
+    seen_matches = set()
+    for index, runbook in enumerate(runbooks):
+        if not isinstance(runbook, dict):
+            raise ValueError("change-intelligence response runbooks must be objects")
+        runbook_id = str(runbook.get("id") or "")
+        title = str(runbook.get("title") or "")
+        match = runbook.get("match") or {}
+        prefix = str(match.get("incidentPrefix") or "*")
+        objective = str(match.get("objectivePattern") or "*")
+        action = str(match.get("actionPattern") or "*")
+        if not re.fullmatch(r"[a-z][a-z0-9-]{1,63}", runbook_id) or runbook_id in seen_runbooks:
+            raise ValueError("change-intelligence response runbook id is invalid or duplicate")
+        seen_runbooks.add(runbook_id)
+        if not 3 <= len(title) <= 128 or prefix not in {"slo:", "desired:", "event:", "*"}:
+            raise ValueError("change-intelligence response runbook title or prefix is invalid")
+        for pattern in (objective, action):
+            if not pattern or len(pattern) > 128 or not re.fullmatch(r"[A-Za-z0-9_.*:/-]+", pattern):
+                raise ValueError("change-intelligence response runbook pattern is invalid")
+        match_document = {"incidentPrefix": prefix, "objectivePattern": objective, "actionPattern": action}
+        match_key = (prefix, objective, action)
+        if match_key in seen_matches:
+            raise ValueError("change-intelligence response runbook match is duplicate")
+        seen_matches.add(match_key)
+        runbook_steps = normalize_steps(runbook.get("steps"), f"response.runbooks[{index}].steps")
+        if {step["id"] for step in common_steps} & {step["id"] for step in runbook_steps}:
+            raise ValueError("change-intelligence response common/runbook step ids overlap")
+        normalized_runbooks.append({
+            "id": runbook_id, "title": title, "match": match_document, "steps": runbook_steps,
+        })
+    if normalized_runbooks[-1]["match"] != {"incidentPrefix": "*", "objectivePattern": "*", "actionPattern": "*"}:
+        raise ValueError("last change-intelligence response runbook must be the generic fallback")
+    normalized_response = {"schemaVersion": 1, "commonSteps": common_steps, "runbooks": normalized_runbooks}
+    normalized_response["policySha256"] = hashlib.sha256(_canonical(normalized_response).encode()).hexdigest()
     return {
         "schemaVersion": 1,
         "maxEvents": _bounded_int(raw.get("maxEvents", 1000000), "maxEvents", 1000, 10000000),
@@ -84,7 +177,106 @@ def load_policy(path):
         "capsuleEvidenceLimit": _bounded_int(raw.get("capsuleEvidenceLimit", 200), "capsuleEvidenceLimit", 10, 1000),
         "historyImportLimit": _bounded_int(raw.get("historyImportLimit", 10000), "historyImportLimit", 0, 100000),
         "rules": normalized,
+        "response": normalized_response,
     }
+
+
+def verify_response_plan(plan):
+    try:
+        expected_keys = {"schemaVersion", "runbookId", "title", "incidentKey", "objectiveId", "incidentAction", "policySha256", "inputSha256", "state", "summary", "steps", "executesAutomatically", "causalityClaimed", "interpretation", "planSha256"}
+        if not isinstance(plan, dict) or set(plan) != expected_keys or plan.get("schemaVersion") != 1:
+            raise ValueError("response plan schema is invalid")
+        validate_incident_key(plan.get("incidentKey"))
+        if plan.get("executesAutomatically") is not False or plan.get("causalityClaimed") is not False:
+            raise ValueError("response plan execution/causality contract is invalid")
+        if plan.get("state") not in {"blocked", "requires-operator-review", "verified"}:
+            raise ValueError("response plan state is invalid")
+        for key in ("policySha256", "inputSha256", "planSha256"):
+            if not re.fullmatch(r"[0-9a-f]{64}", str(plan.get(key) or "")):
+                raise ValueError(f"response plan {key} is invalid")
+        steps = plan.get("steps")
+        if not isinstance(steps, list) or not 1 <= len(steps) <= 64:
+            raise ValueError("response plan steps are invalid")
+        for index, step in enumerate(steps, 1):
+            if not isinstance(step, dict) or step.get("order") != index or step.get("kind") not in RESPONSE_STEP_KINDS or step.get("status") not in {"verified", "pending", "not-applicable", "blocked"}:
+                raise ValueError("response plan step structure is invalid")
+            if bool(step.get("mutation")) != (step.get("kind") == "recovery"):
+                raise ValueError("response plan step mutation contract is invalid")
+            expected_execution = "manual-gated" if step.get("mutation") else "read-only-catalog" if step.get("commandId") else "operator-review"
+            if step.get("execution") != expected_execution or (step.get("mutation") and (not step.get("featureGate") or step.get("requiredCapability") == "read")):
+                raise ValueError("response plan step execution contract is invalid")
+        digest = str(plan.get("planSha256") or "")
+        payload = {key: value for key, value in plan.items() if key != "planSha256"}
+        valid = hmac.compare_digest(digest, hashlib.sha256(_canonical(payload).encode()).hexdigest())
+        return {"ok": valid, "planSha256": digest, **({} if valid else {"error": "response plan digest does not match"})}
+    except (ValueError, TypeError) as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def compile_response_plan(capsule, policy, ledger=None):
+    """Compile one deterministic, non-executing response plan from signed evidence."""
+    if not isinstance(capsule, dict) or not isinstance(policy, dict):
+        raise ValueError("capsule and policy are required for response planning")
+    key = validate_incident_key(capsule.get("incidentKey"))
+    opened = capsule.get("opened") or {}
+    opened_data = opened.get("data") or {}
+    objective = str(opened_data.get("objective_id") or opened_data.get("objectiveId") or "unknown")[:128]
+    action = str(opened.get("action") or "")[:128]
+    response = policy.get("response") or {}
+    selected = None
+    for runbook in response.get("runbooks") or []:
+        match = runbook["match"]
+        if match["incidentPrefix"] != "*" and not key.startswith(match["incidentPrefix"]):
+            continue
+        if not fnmatch.fnmatchcase(objective, match["objectivePattern"]):
+            continue
+        if not fnmatch.fnmatchcase(action, match["actionPattern"]):
+            continue
+        selected = runbook
+        break
+    if not selected:
+        raise ValueError("response policy has no matching fallback runbook")
+    candidates = capsule.get("candidateChanges") or []
+    followup = capsule.get("followupEvidence") or []
+    ledger = ledger or {}
+    ledger_ok = ledger.get("sqlite") == "ok" and ledger.get("appendOnlyTriggers") is True and ledger.get("eventChainValid") is True
+
+    def evaluate(step):
+        predicate = step["predicate"]
+        if predicate == "ledger-verified":
+            return ("verified" if ledger_ok else "blocked", f"SQLite, append-only triggers, and HMAC chain {'verified' if ledger_ok else 'are not all verified'} at {int(ledger.get('eventCount') or 0)} events.")
+        if predicate == "incident-resolved":
+            resolved = capsule.get("status") == "resolved"
+            return ("verified" if resolved else "pending", "The authoritative incident has a retained resolution event." if resolved else "The incident remains open in the retained evidence timeline.")
+        if predicate == "candidate-review":
+            return (("pending", f"Review {len(candidates)} ranked preceding change candidate(s); ranking is not causality.") if candidates else ("not-applicable", "No preceding recorded change met the bounded correlation policy."))
+        if predicate == "followup-review":
+            return (("pending", f"Review {len(followup)} bounded follow-up evidence event(s).") if followup else ("not-applicable", "No follow-up event falls inside the bounded evidence window."))
+        return ("pending", "This operator step is intentionally never auto-completed by DASH.")
+
+    steps = []
+    for order, source in enumerate([*(response.get("commonSteps") or []), *selected["steps"]], 1):
+        status, evidence = evaluate(source)
+        steps.append({"order": order, **source, "status": status, "evidence": evidence, "execution": "manual-gated" if source["mutation"] else "read-only-catalog" if source.get("commandId") else "operator-review"})
+    counts = {status: sum(1 for step in steps if step["status"] == status) for status in ("verified", "pending", "not-applicable", "blocked")}
+    inputs = {
+        "incidentKey": key, "openedEventId": opened.get("id"),
+        "resolvedEventId": (capsule.get("resolved") or {}).get("id"),
+        "candidateEventIds": [row.get("id") for row in candidates],
+        "followupEventIds": [row.get("id") for row in followup],
+        "ledgerEventCount": ledger.get("eventCount"), "ledgerHeadSignature": ledger.get("lastEventSignature"),
+    }
+    plan = {
+        "schemaVersion": 1, "runbookId": selected["id"], "title": selected["title"],
+        "incidentKey": key, "objectiveId": objective, "incidentAction": action,
+        "policySha256": response["policySha256"], "inputSha256": hashlib.sha256(_canonical(inputs).encode()).hexdigest(),
+        "state": "blocked" if counts["blocked"] else "requires-operator-review" if counts["pending"] else "verified",
+        "summary": {**counts, "mutationSteps": sum(1 for step in steps if step["mutation"])},
+        "steps": steps, "executesAutomatically": False, "causalityClaimed": False,
+        "interpretation": "This deterministic runbook organizes evidence and existing guarded surfaces; it does not identify a root cause or execute recovery.",
+    }
+    plan["planSha256"] = hashlib.sha256(_canonical(plan).encode()).hexdigest()
+    return plan
 
 
 def read_secret(path):
@@ -103,7 +295,8 @@ def verify_signed_capsule(document, secret):
     try:
         if not isinstance(document, dict) or set(document) != expected_keys:
             raise ValueError("signed capsule fields are invalid")
-        if document.get("schemaVersion") != 1 or document.get("signatureAlgorithm") != "hmac-sha256":
+        schema = document.get("schemaVersion")
+        if schema not in {1, 2} or document.get("signatureAlgorithm") != "hmac-sha256":
             raise ValueError("signed capsule schema or algorithm is unsupported")
         key = validate_incident_key(document.get("incidentKey"))
         _epoch(document.get("generatedAt"))
@@ -113,6 +306,15 @@ def verify_signed_capsule(document, secret):
             raise ValueError("signed capsule ledger and capsule must be objects")
         if capsule.get("incidentKey") != key or capsule.get("causalityClaimed") is not False:
             raise ValueError("signed capsule incident or causality contract is invalid")
+        plan_verification = None
+        if schema == 2:
+            plan_verification = verify_response_plan(capsule.get("responsePlan"))
+            if not plan_verification.get("ok"):
+                raise ValueError("signed capsule response plan is invalid: " + str(plan_verification.get("error") or "digest mismatch"))
+            if capsule["responsePlan"].get("incidentKey") != key:
+                raise ValueError("signed capsule response plan incident does not match")
+        elif "responsePlan" in capsule:
+            raise ValueError("schema 1 signed capsule must not contain a response plan")
         if not isinstance(ledger.get("eventCount"), int) or ledger["eventCount"] < 1:
             raise ValueError("signed capsule eventCount is invalid")
         head = str(ledger.get("lastEventSignature") or "")
@@ -126,8 +328,10 @@ def verify_signed_capsule(document, secret):
         expected = hmac.new(secret, _canonical(payload).encode(), hashlib.sha256).hexdigest()
         valid = hmac.compare_digest(signature, expected)
         return {
-            "ok": valid, "schemaVersion": 1, "incidentKey": key,
-            "signatureValid": valid, "signingKeyFingerprint": fingerprint,
+            "ok": valid, "schemaVersion": schema, "incidentKey": key,
+            "signatureValid": valid, "responsePlanValid": True if schema == 2 else None,
+            "responsePlanSha256": plan_verification["planSha256"] if plan_verification else None,
+            "legacyWithoutResponsePlan": schema == 1, "signingKeyFingerprint": fingerprint,
             "payloadSha256": hashlib.sha256(_canonical(payload).encode()).hexdigest(),
             **({} if valid else {"error": "signed capsule HMAC is invalid"}),
         }
@@ -493,7 +697,7 @@ class Store:
         finally:
             connection.close()
 
-    def _capsule_connection(self, connection, key, now=None):
+    def _capsule_connection(self, connection, key, now=None, ledger=None):
         rows = connection.execute("select * from events where incident_key=? order by occurred_at,sequence", (str(key),)).fetchall()
         if not rows:
             raise ValueError("change-intelligence incident does not exist")
@@ -509,20 +713,24 @@ class Store:
             "select * from events where occurred_at>? and occurred_at<=? order by occurred_at,sequence limit ?",
             (opened["occurred_at"], end, self.policy["capsuleEvidenceLimit"]),
         ).fetchall()
-        return {
+        capsule = {
             "ok": True, "incidentKey": key, "status": "resolved" if resolved else "open",
             "opened": self._public(opened), "resolved": self._public(resolved) if resolved else None,
             "candidateChanges": self._correlate_connection(connection, key), "followupEvidence": [self._public(row) for row in followup],
             "causalityClaimed": False,
             "interpretation": "Candidates are ranked temporal/scope correlations, not proof of causality.",
         }
+        capsule["responsePlan"] = compile_response_plan(capsule, self.policy, ledger)
+        return capsule
 
     def capsule(self, key):
         self.initialize_if_needed()
         key = validate_incident_key(key)
         connection = self.connect(readonly=True)
         try:
-            return self._capsule_connection(connection, key)
+            connection.execute("begin")
+            integrity = self._verify_connection(connection)
+            return self._capsule_connection(connection, key, ledger=integrity)
         finally:
             connection.close()
 
@@ -537,11 +745,11 @@ class Store:
             integrity = self._verify_connection(connection)
             if not integrity.get("ok"):
                 raise RuntimeError("cannot export a capsule from an invalid change-intelligence ledger")
-            capsule = self._capsule_connection(connection, key, now=generated)
+            capsule = self._capsule_connection(connection, key, now=generated, ledger=integrity)
         finally:
             connection.close()
         payload = {
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "generatedAt": _iso(generated),
             "incidentKey": capsule["incidentKey"],
             "signatureAlgorithm": "hmac-sha256",

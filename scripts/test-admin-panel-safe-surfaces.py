@@ -1889,6 +1889,11 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         change_store = self.panel.change_intelligence.Store(backup_set / "change-intelligence.sqlite3", change_policy, change_secret)
         change_store.initialize()
         change_store.record({"action": "settings-write", "ts": 1000, "ok": True, "eventId": "fixture"}, ingested_at=1001)
+        change_store.record({"action": "slo-incident-opened", "ts": 1100, "ok": False, "incident_id": "fixture", "objective_id": "database_availability", "eventId": "fixture-open"}, ingested_at=1101)
+        capsule = self.workspace / "fixture.signed.json"
+        capsule.write_text(json.dumps(change_store.signed_capsule("slo:fixture", at=1200)), encoding="utf-8")
+        with tarfile.open(backup_set / "operator-evidence.tgz", "w:gz") as archive:
+            archive.add(capsule, arcname="operator-evidence/fixture.signed.json")
         with tarfile.open(backup_set / "config.tgz", "w:gz") as archive:
             archive.add(policy, arcname="config/desired-state.json")
             archive.add(secret, arcname="config/secrets/desired-state-hmac.secret")
@@ -1905,6 +1910,46 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertTrue(ok, stderr)
         self.assertIn("OK desired-state backup-bound HMAC attestations", stdout)
         self.assertIn("OK change-intelligence backup-bound HMAC event chain", stdout)
+        self.assertIn("OK 1 portable signed operator evidence capsule(s)", stdout)
+
+    def test_operator_evidence_archive_is_confined_private_and_fully_verified(self):
+        evidence_root = self.workspace / "backups" / "operator-evidence"
+        evidence_root.mkdir(parents=True)
+        policy = self.workspace / "config" / "change-intelligence.json"
+        policy.write_text((ROOT / "config" / "change-intelligence.json").read_text(encoding="utf-8"), encoding="utf-8")
+        secret_dir = self.workspace / "config" / "secrets"
+        secret_dir.mkdir(parents=True, exist_ok=True)
+        secret = secret_dir / "change-intelligence-hmac.secret"
+        secret.write_text("e" * 64 + "\n", encoding="utf-8")
+        secret.chmod(0o600)
+        store = self.panel.change_intelligence.Store(self.workspace / "change.sqlite3", policy, secret)
+        store.initialize()
+        store.record({"action": "slo-incident-opened", "ts": 1000, "ok": False, "incident_id": "archive", "objective_id": "database_availability", "eventId": "open"}, ingested_at=1001)
+        signed = evidence_root / "archive.signed.json"
+        signed.write_text(json.dumps(store.signed_capsule("slo:archive", at=1100)), encoding="utf-8")
+        (evidence_root / "ignored.txt").write_text("not evidence", encoding="utf-8")
+        (evidence_root / "linked.signed.json").symlink_to(signed)
+        original_root = self.panel.CHANGE_INTELLIGENCE_EVIDENCE_ROOT
+        self.panel.CHANGE_INTELLIGENCE_EVIDENCE_ROOT = evidence_root
+        self.addCleanup(lambda: setattr(self.panel, "CHANGE_INTELLIGENCE_EVIDENCE_ROOT", original_root))
+
+        archive = self.workspace / "operator-evidence.tgz"
+        result = self.panel.archive_operator_evidence(archive)
+        verification = self.panel.verify_operator_evidence_archive(archive, secret)
+        self.assertEqual(1, result["files"])
+        self.assertEqual(1, verification["files"])
+        self.assertEqual(0o600, archive.stat().st_mode & 0o777)
+        with tarfile.open(archive, "r:gz") as handle:
+            self.assertEqual(["operator-evidence/archive.signed.json"], handle.getnames())
+
+        unsafe_name = evidence_root / "unsafe name.signed.json"
+        unsafe_name.write_text(signed.read_text(encoding="utf-8"), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "unsafe backup name"):
+            self.panel.archive_operator_evidence(self.workspace / "unsafe.tgz")
+        unsafe_name.unlink()
+        signed.write_bytes(b"x" * (10 * 1024 * 1024 + 1))
+        with self.assertRaisesRegex(ValueError, "invalid size"):
+            self.panel.archive_operator_evidence(self.workspace / "oversized.tgz")
 
     def test_database_browser_is_allowlisted_capped_and_redacted(self):
         def fake_query(sql, params=None):
@@ -3184,7 +3229,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         fake_store = type("Store", (), {
             "prometheus": lambda self: "dash_change_intelligence_collector_up 1\n",
             "capsule": lambda self, key: {"ok": True, "incidentKey": key, "causalityClaimed": False},
-            "signed_capsule": lambda self, key: {"schemaVersion": 1, "incidentKey": key, "signature": "a" * 64},
+            "signed_capsule": lambda self, key: {"schemaVersion": 2, "incidentKey": key, "signature": "a" * 64},
         })()
         self.panel.change_intelligence_public_status = lambda: {"ok": True, "state": "active", "eventCount": 3}
         self.panel.change_intelligence_store = lambda: fake_store
@@ -3205,7 +3250,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         handler, captured = self.make_route_handler("/api/ops/change-intelligence/capsule?incidentKey=slo%3Aone&signed=true")
         handler.is_app_route = lambda path: False
         handler.do_GET()
-        self.assertEqual(1, captured["json"]["schemaVersion"])
+        self.assertEqual(2, captured["json"]["schemaVersion"])
         self.assertEqual("a" * 64, captured["json"]["signature"])
 
         handler, captured = self.make_route_handler("/metrics/change-intelligence")
@@ -3323,6 +3368,31 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn("/api/ops/change-intelligence/capsule", source)
         self.assertIn("Download signed capsule", source)
         self.assertIn("infrastructureChangeCapsuleExport", source)
+        self.assertIn("deterministic response plan", source)
+        self.assertIn("responsePlanJump", source)
+        self.assertIn("Response-plan diagnostic", source)
+
+    def test_response_policy_reuses_only_existing_diagnostics_gates_and_confirmations(self):
+        policy = self.panel.change_intelligence.load_policy(ROOT / "config" / "change-intelligence.json")
+        confirmations = {
+            self.panel.CONFIRM_SERVICE_CONTROL,
+            self.panel.CONFIRM_RESTORE_DRILL,
+            self.panel.CONFIRM_CAPACITY_APPLY,
+            self.panel.CONFIRM_DESIRED_STATE_SEAL,
+            self.panel.CONFIRM_BACKUP_RESTORE,
+        }
+        mutation_steps = []
+        for runbook in policy["response"]["runbooks"]:
+            for step in runbook["steps"]:
+                if step.get("commandId"):
+                    self.assertIn(step["commandId"], self.panel.command_console.COMMANDS)
+                if step["mutation"]:
+                    mutation_steps.append(step)
+                    self.assertIn(step["featureGate"], self.panel.ENV_KEY_DEFINITIONS)
+                    if step.get("confirmation"):
+                        self.assertIn(step["confirmation"], confirmations)
+        self.assertGreaterEqual(len(mutation_steps), 9)
+        self.assertTrue(all(step["requiredCapability"] != "read" for step in mutation_steps))
 
     def test_capacity_application_is_evidence_gated_gradual_and_mode_preserving(self):
         fake = type("Store", (), {

@@ -165,7 +165,10 @@ server {
   deployments, settings writes, service actions, restarts, restores, and
   capacity decisions in an append-only HMAC timeline. Evidence capsules rank
   candidates but never claim causality. Operators can download a bounded
-  capsule signed over the verified ledger head and verify it offline. See
+  capsule signed over the verified ledger head and verify it offline. Each
+  capsule includes a deterministic, policy-digested response plan that reuses
+  exact bounded diagnostics and guarded recovery surfaces without executing
+  them. See [`incident-response.md`](incident-response.md) and
   [`change-intelligence.md`](change-intelligence.md).
 - Infrastructure backup controls report recipient-encryption readiness,
   encrypted archive/receipt inventory, and exact host encrypt/decrypt commands.

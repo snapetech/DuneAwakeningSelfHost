@@ -38,7 +38,7 @@ def write_private_json(path, value):
 
 def main():
     parser = argparse.ArgumentParser(description="Inspect and verify DASH operational change intelligence")
-    parser.add_argument("command", choices=("status", "verify", "metrics", "capsule", "export-capsule", "verify-capsule"))
+    parser.add_argument("command", choices=("status", "verify", "metrics", "capsule", "plan", "export-capsule", "verify-capsule"))
     parser.add_argument("--incident-key", default="")
     parser.add_argument("--capsule-file", default="")
     parser.add_argument("--output", default="")
@@ -64,10 +64,11 @@ def main():
         raise SystemExit(0 if result.get("ok") else 1)
     elif args.command == "metrics":
         print(store.prometheus(), end="")
-    elif args.command == "capsule":
+    elif args.command in ("capsule", "plan"):
         if not args.incident_key:
-            parser.error("capsule requires --incident-key")
-        print(json.dumps(store.capsule(args.incident_key), indent=2, sort_keys=True))
+            parser.error(f"{args.command} requires --incident-key")
+        capsule = store.capsule(args.incident_key)
+        print(json.dumps(capsule["responsePlan"] if args.command == "plan" else capsule, indent=2, sort_keys=True))
     else:
         if not args.incident_key:
             parser.error("export-capsule requires --incident-key")

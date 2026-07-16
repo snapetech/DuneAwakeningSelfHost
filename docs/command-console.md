@@ -92,3 +92,9 @@ scripts/validate-landsraad-coriolis-cycle.sh .env
 ```
 
 No game-map restart is required to deploy or use the console.
+
+Change Intelligence response plans may link to a catalog command. The
+Infrastructure page opens Command Console and preselects only that exact fixed
+ID. It does not run the command, add arguments, or weaken the
+`operations.write` requirement. See
+[`incident-response.md`](incident-response.md).

@@ -154,6 +154,8 @@ set_value DUNE_DESIRED_STATE_POLL_SECONDS 60
 set_value DUNE_CHANGE_INTELLIGENCE_POLICY /workspace/config/change-intelligence.json
 set_value DUNE_CHANGE_INTELLIGENCE_DATABASE /workspace/backups/change-intelligence/change-intelligence.sqlite3
 set_value DUNE_CHANGE_INTELLIGENCE_HMAC_SECRET_FILE /workspace/config/secrets/change-intelligence-hmac.secret
+set_value DUNE_CHANGE_INTELLIGENCE_EVIDENCE_DIR /workspace/backups/operator-evidence
+set_value DUNE_CHANGE_INTELLIGENCE_HOST_EVIDENCE_DIR backups/operator-evidence
 set_value DUNE_MODERATION_POLL_SECONDS 15
 set_value DUNE_MODERATION_RETENTION_DAYS 90
 set_value DUNE_MODERATION_HEATMAP_CELL_SIZE 25000

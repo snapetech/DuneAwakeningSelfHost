@@ -39,7 +39,10 @@ open and visible; maintenance never acknowledges or resolves evidence. See
 
 Operational evidence integrity also continues through maintenance. A planned
 window cannot convert a broken or unverifiable change timeline into good time.
-See [`change-intelligence.md`](change-intelligence.md).
+Every SLO incident maps to an exact deterministic response runbook embedded in
+its Change Intelligence capsule; the plan does not execute recovery or affect
+the objective calculation. See [`change-intelligence.md`](change-intelligence.md)
+and [`incident-response.md`](incident-response.md).
 
 ## Time Weighting And Error Budgets
 

@@ -13,6 +13,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "admin"))
 
 import change_intelligence
+import command_console
 
 
 class ChangeIntelligenceTests(unittest.TestCase):
@@ -38,9 +39,23 @@ class ChangeIntelligenceTests(unittest.TestCase):
         self.assertEqual(0o700, self.database.parent.stat().st_mode & 0o777)
         self.assertEqual(0o600, self.database.stat().st_mode & 0o777)
         self.assertEqual(3600, self.store.policy["correlationWindowBeforeSeconds"])
+        self.assertEqual(12, len(self.store.policy["response"]["runbooks"]))
+        self.assertEqual(64, len(self.store.policy["response"]["policySha256"]))
         self.secret.chmod(0o644)
         with self.assertRaises(PermissionError):
             change_intelligence.read_secret(self.secret)
+
+    def test_response_policy_rejects_missing_fallback_and_unsafe_mutation_contract(self):
+        document = json.loads((ROOT / "config" / "change-intelligence.json").read_text(encoding="utf-8"))
+        document["response"]["runbooks"].pop()
+        self.policy.write_text(json.dumps(document), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "generic fallback"):
+            change_intelligence.load_policy(self.policy)
+        document = json.loads((ROOT / "config" / "change-intelligence.json").read_text(encoding="utf-8"))
+        document["response"]["runbooks"][0]["steps"][0]["mutation"] = True
+        self.policy.write_text(json.dumps(document), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "mutation/command contract"):
+            change_intelligence.load_policy(self.policy)
 
     def test_redaction_hashes_identity_paths_and_credentials(self):
         userinfo = "operator" + ":" + "password"
@@ -100,6 +115,9 @@ class ChangeIntelligenceTests(unittest.TestCase):
         self.assertEqual("slo:portable", verified["incidentKey"])
         self.assertEqual(self.store.verify()["lastEventSignature"], document["ledger"]["lastEventSignature"])
         self.assertFalse(document["capsule"]["causalityClaimed"])
+        self.assertEqual("generic-slo", document["capsule"]["responsePlan"]["runbookId"])
+        self.assertTrue(change_intelligence.verify_response_plan(document["capsule"]["responsePlan"])["ok"])
+        self.assertTrue(verified["responsePlanValid"])
 
         tampered = json.loads(json.dumps(document))
         tampered["capsule"]["status"] = "open"
@@ -107,6 +125,81 @@ class ChangeIntelligenceTests(unittest.TestCase):
         with_extra = {**document, "unsignedNote": "not covered"}
         self.assertFalse(change_intelligence.verify_signed_capsule(with_extra, change_intelligence.read_secret(self.secret))["ok"])
         self.assertFalse(change_intelligence.verify_signed_capsule(document, b"e" * 64)["ok"])
+
+        legacy = json.loads(json.dumps(document))
+        legacy["schemaVersion"] = 1
+        legacy["capsule"].pop("responsePlan")
+        legacy.pop("signature")
+        legacy["signature"] = change_intelligence.hmac.new(
+            change_intelligence.read_secret(self.secret), change_intelligence._canonical(legacy).encode(), change_intelligence.hashlib.sha256,
+        ).hexdigest()
+        legacy_verified = change_intelligence.verify_signed_capsule(legacy, change_intelligence.read_secret(self.secret))
+        self.assertTrue(legacy_verified["ok"])
+        self.assertTrue(legacy_verified["legacyWithoutResponsePlan"])
+        self.assertIsNone(legacy_verified["responsePlanValid"])
+
+    def test_response_policy_maps_every_objective_and_only_reuses_bounded_diagnostics(self):
+        expected = {
+            "database_availability": "database-availability",
+            "control_plane_availability": "control-plane-availability",
+            "required_map_availability": "required-map-availability",
+            "backup_rpo": "backup-rpo",
+            "restore_proof": "restore-proof",
+            "memory_headroom": "memory-headroom",
+            "admin_authentication": "admin-authentication",
+            "desired_state_attestation": "desired-state-attestation",
+            "change_intelligence_integrity": "change-intelligence-integrity",
+        }
+        ledger = {"sqlite": "ok", "appendOnlyTriggers": True, "eventChainValid": True, "eventCount": 42, "lastEventSignature": "a" * 64}
+        for objective, runbook in expected.items():
+            capsule = {
+                "incidentKey": f"slo:{objective}", "status": "open", "candidateChanges": [], "followupEvidence": [],
+                "opened": {"id": f"open-{objective}", "action": "slo-incident-opened", "data": {"objective_id": objective}},
+                "resolved": None, "causalityClaimed": False,
+            }
+            plan = change_intelligence.compile_response_plan(capsule, self.store.policy, ledger)
+            self.assertEqual(runbook, plan["runbookId"])
+            self.assertFalse(plan["executesAutomatically"])
+            self.assertFalse(plan["causalityClaimed"])
+            self.assertEqual("verified", plan["steps"][0]["status"])
+            self.assertEqual("pending", plan["steps"][1]["status"])
+            self.assertTrue(change_intelligence.verify_response_plan(plan)["ok"])
+            for step in plan["steps"]:
+                if step.get("commandId"):
+                    self.assertIn(step["commandId"], command_console.COMMANDS)
+                if step["mutation"]:
+                    self.assertEqual("manual-gated", step["execution"])
+                    self.assertNotEqual("read", step["requiredCapability"])
+                    self.assertTrue(step.get("featureGate"))
+
+    def test_response_plan_predicates_fallback_and_digest_tamper_detection(self):
+        self.record("settings-write", 1000, method="POST")
+        self.record("desired-state-drift-opened", 1100, finding_id="response")
+        self.record("backup-finished", 1150, path="backups/one")
+        self.record("desired-state-drift-resolved", 1200, finding_id="response")
+        plan = self.store.capsule("desired:response")["responsePlan"]
+        self.assertEqual("desired-state-drift", plan["runbookId"])
+        statuses = {step["id"]: step["status"] for step in plan["steps"]}
+        self.assertEqual("verified", statuses["verify-evidence-chain"])
+        self.assertEqual("verified", statuses["confirm-incident-state"])
+        self.assertEqual("pending", statuses["review-ranked-candidates"])
+        self.assertEqual("pending", statuses["review-followup-evidence"])
+        tampered = json.loads(json.dumps(plan))
+        tampered["steps"][-1]["description"] = "unsafe replacement"
+        self.assertFalse(change_intelligence.verify_response_plan(tampered)["ok"])
+        unsafe = json.loads(json.dumps(plan))
+        unsafe["executesAutomatically"] = True
+        unsafe.pop("planSha256")
+        unsafe["planSha256"] = change_intelligence.hashlib.sha256(change_intelligence._canonical(unsafe).encode()).hexdigest()
+        self.assertFalse(change_intelligence.verify_response_plan(unsafe)["ok"])
+
+        generic = change_intelligence.compile_response_plan({
+            "incidentKey": "event:custom", "status": "open", "candidateChanges": [], "followupEvidence": [],
+            "opened": {"id": "open-custom", "action": "custom-incident", "data": {}}, "resolved": None, "causalityClaimed": False,
+        }, self.store.policy, {"sqlite": "error", "appendOnlyTriggers": False, "eventChainValid": False, "eventCount": 0})
+        self.assertEqual("generic-incident", generic["runbookId"])
+        self.assertEqual("blocked", generic["state"])
+        self.assertEqual("blocked", generic["steps"][0]["status"])
 
     def test_signed_capsule_uses_one_snapshot_when_writer_appends_mid_export(self):
         self.record("settings-write", 1000, method="POST")
@@ -144,6 +237,13 @@ class ChangeIntelligenceTests(unittest.TestCase):
         ], cwd=ROOT, text=True, capture_output=True, check=False)
         self.assertEqual(0, verified.returncode, verified.stderr)
         self.assertTrue(json.loads(verified.stdout)["signatureValid"])
+        planned = subprocess.run([
+            sys.executable, str(ROOT / "scripts" / "change-intelligence.py"), "plan",
+            "--incident-key", "desired:portable", "--database", str(self.database),
+            "--policy", str(self.policy), "--secret-file", str(self.secret),
+        ], cwd=ROOT, text=True, capture_output=True, check=False)
+        self.assertEqual(0, planned.returncode, planned.stderr)
+        self.assertEqual("desired-state-drift", json.loads(planned.stdout)["runbookId"])
 
     def test_post_fallback_is_change_and_read_is_observation(self):
         write = self.record("new-admin-surface", 1000, method="POST")

@@ -22,5 +22,110 @@
     {"pattern": "backup-restore*", "kind": "change", "category": "recovery", "impact": "critical"},
     {"pattern": "backup-*", "kind": "evidence", "category": "recovery", "impact": "low"},
     {"pattern": "*-mutation", "kind": "change", "category": "administration", "impact": "high"}
-  ]
+  ],
+  "response": {
+    "schemaVersion": 1,
+    "commonSteps": [
+      {"id": "verify-evidence-chain", "title": "Verify the evidence chain", "description": "Require SQLite integrity, both append-only triggers, and the complete HMAC chain before relying on this incident evidence.", "kind": "evidence", "predicate": "ledger-verified", "surface": "change-intelligence", "requiredCapability": "read", "mutation": false},
+      {"id": "confirm-incident-state", "title": "Confirm current incident state", "description": "Check whether the authoritative SLO or desired-state source has emitted a retained resolution for this incident generation.", "kind": "evidence", "predicate": "incident-resolved", "surface": "incident-evidence", "requiredCapability": "read", "mutation": false},
+      {"id": "review-ranked-candidates", "title": "Review preceding change candidates", "description": "Inspect every bounded temporal and scope correlation without treating score or ordering as proof of root cause.", "kind": "review", "predicate": "candidate-review", "surface": "change-intelligence", "requiredCapability": "read", "mutation": false},
+      {"id": "review-followup-evidence", "title": "Review response evidence", "description": "Inspect bounded events after incident onset for recovery attempts, verification, recurrence, and the final authoritative resolution.", "kind": "review", "predicate": "followup-review", "surface": "change-intelligence", "requiredCapability": "read", "mutation": false}
+    ],
+    "runbooks": [
+      {
+        "id": "database-availability", "title": "Database availability response", "match": {"incidentPrefix": "slo:", "objectivePattern": "database_availability", "actionPattern": "*"},
+        "steps": [
+          {"id": "diagnose-database-stack", "title": "Run bounded stack diagnosis", "description": "Use the native stack-status diagnostic to inspect PostgreSQL container state, bounded database readiness, routing, and dependent services.", "kind": "diagnostic", "predicate": "always-pending", "surface": "command-console:stack-status", "commandId": "stack-status", "requiredCapability": "operations.write", "mutation": false},
+          {"id": "review-database-logs", "title": "Review bounded PostgreSQL and service logs", "description": "Correlate database and dependent service logs with incident onset while retaining redaction and output limits.", "kind": "review", "predicate": "always-pending", "surface": "infrastructure:logs", "requiredCapability": "read", "mutation": false},
+          {"id": "recover-database-service", "title": "Use guarded stateful service recovery only if justified", "description": "If diagnosis proves a lifecycle fault, use project-confined service control so normal health and post-start hooks remain authoritative.", "kind": "recovery", "predicate": "always-pending", "surface": "infrastructure:service-control", "requiredCapability": "infrastructure.write", "mutation": true, "featureGate": "DUNE_ADMIN_STATEFUL_SERVICE_CONTROL_ENABLED", "confirmation": "CONTROL SERVICE"}
+        ]
+      },
+      {
+        "id": "control-plane-availability", "title": "Control-plane availability response", "match": {"incidentPrefix": "slo:", "objectivePattern": "control_plane_availability", "actionPattern": "*"},
+        "steps": [
+          {"id": "diagnose-control-plane", "title": "Run bounded stack diagnosis", "description": "Inspect Director, Gateway, TextRouter, PostgreSQL, and RabbitMQ state through the native stack-status diagnostic.", "kind": "diagnostic", "predicate": "always-pending", "surface": "command-console:stack-status", "commandId": "stack-status", "requiredCapability": "operations.write", "mutation": false},
+          {"id": "diagnose-control-rmq", "title": "Run bounded RabbitMQ diagnosis", "description": "Probe both configured RabbitMQ services and compare their project-container state without sending or deleting messages.", "kind": "diagnostic", "predicate": "always-pending", "surface": "command-console:rmq-health", "commandId": "rmq-health", "requiredCapability": "operations.write", "mutation": false},
+          {"id": "recover-control-service", "title": "Recover only the proven failed service", "description": "Use repository service control for the exact failed component; stateful services retain their independent second gate.", "kind": "recovery", "predicate": "always-pending", "surface": "infrastructure:service-control", "requiredCapability": "infrastructure.write", "mutation": true, "featureGate": "DUNE_ADMIN_SERVICE_CONTROL_ENABLED", "confirmation": "CONTROL SERVICE"}
+        ]
+      },
+      {
+        "id": "required-map-availability", "title": "Required-map availability response", "match": {"incidentPrefix": "slo:", "objectivePattern": "required_map_availability", "actionPattern": "*"},
+        "steps": [
+          {"id": "diagnose-required-maps", "title": "Inspect required-map readiness", "description": "Use stack-status to compare configured always-on policy, container state, farm registration, and readiness evidence.", "kind": "diagnostic", "predicate": "always-pending", "surface": "command-console:stack-status", "commandId": "stack-status", "requiredCapability": "operations.write", "mutation": false},
+          {"id": "review-map-logs", "title": "Review the affected map and routing logs", "description": "Identify whether the failure is container lifecycle, farm registration, routing, database, or post-start patch related before recovery.", "kind": "review", "predicate": "always-pending", "surface": "infrastructure:logs", "requiredCapability": "read", "mutation": false},
+          {"id": "recover-required-map", "title": "Use post-hook-aware map recovery", "description": "Recover the exact required map through repository service control so bridge, health, Coriolis validation, and runtime patches are restored.", "kind": "recovery", "predicate": "always-pending", "surface": "infrastructure:service-control", "requiredCapability": "infrastructure.write", "mutation": true, "featureGate": "DUNE_ADMIN_SERVICE_CONTROL_ENABLED", "confirmation": "CONTROL SERVICE"}
+        ]
+      },
+      {
+        "id": "backup-rpo", "title": "Backup RPO response", "match": {"incidentPrefix": "slo:", "objectivePattern": "backup_rpo", "actionPattern": "*"},
+        "steps": [
+          {"id": "review-backup-inventory", "title": "Review backup age and verification", "description": "Inspect the newest recognized dump, manifest, world identity, archive layers, and prior verification outcome before creating more evidence.", "kind": "review", "predicate": "always-pending", "surface": "infrastructure:backups", "requiredCapability": "read", "mutation": false},
+          {"id": "diagnose-backup-storage", "title": "Run bounded storage diagnosis", "description": "Check workspace, backup, and container storage capacity without cleanup or deletion.", "kind": "diagnostic", "predicate": "always-pending", "surface": "command-console:storage-status", "commandId": "storage-status", "requiredCapability": "operations.write", "mutation": false},
+          {"id": "create-verified-backup", "title": "Create and verify a full backup", "description": "After storage and source health are confirmed, create a new layered backup and require the normal full verifier to pass.", "kind": "recovery", "predicate": "always-pending", "surface": "infrastructure:backups", "requiredCapability": "infrastructure.write", "mutation": true, "featureGate": "DUNE_ADMIN_BACKUP_MUTATIONS_ENABLED"}
+        ]
+      },
+      {
+        "id": "restore-proof", "title": "Restore-proof response", "match": {"incidentPrefix": "slo:", "objectivePattern": "restore_proof", "actionPattern": "*"},
+        "steps": [
+          {"id": "review-restore-receipt", "title": "Review the last restore-drill receipt", "description": "Inspect source digest, disposable restore result, Dune invariants, RPO/RTO, cleanup, and receipt-chain integrity.", "kind": "review", "predicate": "always-pending", "surface": "infrastructure:restore-drill", "requiredCapability": "read", "mutation": false},
+          {"id": "diagnose-restore-storage", "title": "Run bounded storage diagnosis", "description": "Confirm enough local capacity exists for a no-network disposable restore and round-trip dump.", "kind": "diagnostic", "predicate": "always-pending", "surface": "command-console:storage-status", "commandId": "storage-status", "requiredCapability": "operations.write", "mutation": false},
+          {"id": "run-isolated-restore-drill", "title": "Run an isolated restore rehearsal", "description": "Queue the hardened no-network restore drill against a reviewed backup; this never writes the live game database.", "kind": "recovery", "predicate": "always-pending", "surface": "infrastructure:restore-drill", "requiredCapability": "infrastructure.write", "mutation": true, "featureGate": "DUNE_ADMIN_RESTORE_DRILL_EXECUTION_ENABLED", "confirmation": "RUN ISOLATED RESTORE DRILL"}
+        ]
+      },
+      {
+        "id": "memory-headroom", "title": "Memory-headroom response", "match": {"incidentPrefix": "slo:", "objectivePattern": "memory_headroom", "actionPattern": "*"},
+        "steps": [
+          {"id": "diagnose-memory-pressure", "title": "Inspect host and map memory pressure", "description": "Use stack-status and retained capacity evidence to identify the actual consumers and current map-demand state.", "kind": "diagnostic", "predicate": "always-pending", "surface": "command-console:stack-status", "commandId": "stack-status", "requiredCapability": "operations.write", "mutation": false},
+          {"id": "review-capacity-recommendations", "title": "Review evidence-qualified capacity recommendations", "description": "Compare warm-idle cost, revisits, request-to-ready latency, confidence, memory floor, and current operator-selected modes.", "kind": "review", "predicate": "always-pending", "surface": "infrastructure:capacity", "requiredCapability": "read", "mutation": false},
+          {"id": "apply-capacity-recommendations", "title": "Apply only eligible gradual recommendations", "description": "Use the existing evidence gate and bounded application fraction; never change always-on or explicitly disabled map modes.", "kind": "recovery", "predicate": "always-pending", "surface": "infrastructure:capacity", "requiredCapability": "infrastructure.write", "mutation": true, "featureGate": "DUNE_ADMIN_AUTOSCALER_MUTATIONS_ENABLED", "confirmation": "APPLY CAPACITY RECOMMENDATIONS"}
+        ]
+      },
+      {
+        "id": "admin-authentication", "title": "Admin-authentication response", "match": {"incidentPrefix": "slo:", "objectivePattern": "admin_authentication", "actionPattern": "*"},
+        "steps": [
+          {"id": "review-auth-posture", "title": "Review credential and identity posture", "description": "Confirm token enforcement, a non-placeholder recovery credential, RBAC file validity, federated mapping, allowed hosts, and allowed origins.", "kind": "review", "predicate": "always-pending", "surface": "settings:access", "requiredCapability": "read", "mutation": false},
+          {"id": "review-auth-events", "title": "Review bounded authentication events", "description": "Inspect failed, throttled, and successful authentication metadata without exposing submitted credentials or session secrets.", "kind": "review", "predicate": "always-pending", "surface": "change-intelligence", "requiredCapability": "read", "mutation": false},
+          {"id": "repair-auth-settings", "title": "Repair configuration through guarded settings", "description": "Change only the proven invalid access setting, retain the owner recovery path, and verify login before ending the existing session.", "kind": "recovery", "predicate": "always-pending", "surface": "settings:access", "requiredCapability": "configuration.write", "mutation": true, "featureGate": "DUNE_ADMIN_MUTATIONS_ENABLED"}
+        ]
+      },
+      {
+        "id": "desired-state-attestation", "title": "Desired-state attestation response", "match": {"incidentPrefix": "slo:", "objectivePattern": "desired_state_attestation", "actionPattern": "*"},
+        "steps": [
+          {"id": "review-attestation-findings", "title": "Review every open drift finding", "description": "Compare file digests and container fields with the approved baseline; acknowledgement records ownership but cannot resolve drift.", "kind": "review", "predicate": "always-pending", "surface": "infrastructure:desired-state", "requiredCapability": "read", "mutation": false},
+          {"id": "verify-deployment-provenance", "title": "Verify deployment provenance", "description": "Match changed repository files to the intended published commit and separately review environment, secret-file, mount, image, and container changes.", "kind": "review", "predicate": "always-pending", "surface": "change-intelligence", "requiredCapability": "read", "mutation": false},
+          {"id": "seal-reviewed-state", "title": "Revert drift or seal the fully reviewed state", "description": "Prefer restoring the approved source when drift is unintended; seal only after every current finding is reviewed because sealing approves the complete snapshot.", "kind": "recovery", "predicate": "always-pending", "surface": "infrastructure:desired-state", "requiredCapability": "infrastructure.write", "mutation": true, "featureGate": "DUNE_ADMIN_DESIRED_STATE_MUTATIONS_ENABLED", "confirmation": "SEAL DESIRED STATE"}
+        ]
+      },
+      {
+        "id": "change-intelligence-integrity", "title": "Operational-evidence integrity response", "match": {"incidentPrefix": "slo:", "objectivePattern": "change_intelligence_integrity", "actionPattern": "*"},
+        "steps": [
+          {"id": "preserve-invalid-ledger", "title": "Preserve the current ledger before intervention", "description": "Do not delete rows, remove triggers, rotate the key, or overwrite the database; preserve it for comparison and forensic review.", "kind": "review", "predicate": "always-pending", "surface": "change-intelligence", "requiredCapability": "read", "mutation": false},
+          {"id": "review-matching-backup", "title": "Verify the newest matching backup set", "description": "Use the backup-bound policy, key, and SQLite snapshot to identify the newest independently valid event chain.", "kind": "review", "predicate": "always-pending", "surface": "infrastructure:backups", "requiredCapability": "read", "mutation": false},
+          {"id": "restore-evidence-ledger", "title": "Restore only from a matching verified backup", "description": "Use the guarded restore preflight and preserve the suspect ledger separately; a newly generated key cannot repair historical signatures.", "kind": "recovery", "predicate": "always-pending", "surface": "infrastructure:backups", "requiredCapability": "infrastructure.write", "mutation": true, "featureGate": "DUNE_ADMIN_BACKUP_RESTORE_ENABLED", "confirmation": "RESTORE BACKUP"}
+        ]
+      },
+      {
+        "id": "generic-slo", "title": "Generic SLO incident response", "match": {"incidentPrefix": "slo:", "objectivePattern": "*", "actionPattern": "*"},
+        "steps": [
+          {"id": "diagnose-generic-slo", "title": "Run bounded stack diagnosis", "description": "Establish current service, database, routing, and resource state before selecting a narrower recovery path.", "kind": "diagnostic", "predicate": "always-pending", "surface": "command-console:stack-status", "commandId": "stack-status", "requiredCapability": "operations.write", "mutation": false},
+          {"id": "review-generic-slo", "title": "Review objective context and logs", "description": "Use the objective snapshot, retained logs, candidates, and follow-up events to define the failed contract before intervention.", "kind": "review", "predicate": "always-pending", "surface": "infrastructure:reliability", "requiredCapability": "read", "mutation": false}
+        ]
+      },
+      {
+        "id": "desired-state-drift", "title": "Desired-state drift response", "match": {"incidentPrefix": "desired:", "objectivePattern": "*", "actionPattern": "*"},
+        "steps": [
+          {"id": "review-drift-finding", "title": "Review the exact drift finding", "description": "Inspect category, subject, changed fields, criticality, first/last observation, and any ownership note without exposing secret values.", "kind": "review", "predicate": "always-pending", "surface": "infrastructure:desired-state", "requiredCapability": "read", "mutation": false},
+          {"id": "compare-drift-provenance", "title": "Compare with intended source and deployment evidence", "description": "Verify repository checksums and independently explain environment, key, image, mount, and runtime fingerprint changes.", "kind": "review", "predicate": "always-pending", "surface": "change-intelligence", "requiredCapability": "read", "mutation": false},
+          {"id": "resolve-drift", "title": "Revert unintended drift or seal reviewed state", "description": "Use the normal deployment/rollback path for unintended change; seal only when the complete observed snapshot is the intended approved state.", "kind": "recovery", "predicate": "always-pending", "surface": "infrastructure:desired-state", "requiredCapability": "infrastructure.write", "mutation": true, "featureGate": "DUNE_ADMIN_DESIRED_STATE_MUTATIONS_ENABLED", "confirmation": "SEAL DESIRED STATE"}
+        ]
+      },
+      {
+        "id": "generic-incident", "title": "Generic evidence-led incident response", "match": {"incidentPrefix": "*", "objectivePattern": "*", "actionPattern": "*"},
+        "steps": [
+          {"id": "review-generic-contract", "title": "Define the failed contract from evidence", "description": "Review the incident event, scope, candidates, and follow-up evidence before choosing any recovery workflow.", "kind": "review", "predicate": "always-pending", "surface": "change-intelligence", "requiredCapability": "read", "mutation": false},
+          {"id": "diagnose-generic-stack", "title": "Run bounded stack diagnosis when applicable", "description": "Use the native read-only stack diagnostic to establish current runtime state without executing shell text or accepting arguments.", "kind": "diagnostic", "predicate": "always-pending", "surface": "command-console:stack-status", "commandId": "stack-status", "requiredCapability": "operations.write", "mutation": false}
+        ]
+      }
+    ]
+  }
 }

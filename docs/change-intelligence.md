@@ -32,6 +32,11 @@ For each incident capsule it preserves:
 - bounded follow-up evidence after the incident; and
 - the explicit statement that no causal conclusion was generated.
 
+Every capsule also carries a deterministic response plan compiled from the
+versioned policy. It organizes verified evidence, operator review, bounded
+diagnostics, and existing guarded recovery surfaces without executing any step.
+See [`incident-response.md`](incident-response.md).
+
 Reopened desired-state findings begin a fresh capsule window. Prior resolved
 history remains in the append-only event chain.
 
@@ -179,7 +184,7 @@ transitions, not manually fabricated through the UI.
 
 ### Portable signed capsules
 
-The `signed=true` form freezes the same privacy-bounded capsule into schema 1
+The `signed=true` form freezes the same privacy-bounded capsule into schema 2
 and HMAC-authenticates the complete export. The signed payload includes:
 
 - its generation time and incident key;
@@ -187,6 +192,8 @@ and HMAC-authenticates the complete export. The signed payload includes:
 - the verified ledger event count and exact head signature at export time;
 - SQLite, append-only-trigger, and event-chain verification results; and
 - the complete bounded incident, candidate, and follow-up evidence capsule.
+- the deterministic response plan, its policy/input digests, and its own
+  complete-plan digest.
 
 The outer signature covers every field except the signature itself. Verification
 rejects missing or extra top-level fields, a different incident key, a changed
@@ -205,6 +212,12 @@ froze this exact capsule from a ledger whose chain verified at that head. It doe
 not prove causality, prove that no later events exist, or replace the independent
 backup containing the source ledger and key. Treat exports as private operator
 evidence even though credentials and player identities are removed.
+Offline verification also recomputes the nested response-plan digest and reports
+`responsePlanValid`.
+Authentic schema-1 exports created before response plans remain verifiable and
+report `legacyWithoutResponsePlan=true` with `responsePlanValid=null`. A schema-1
+artifact that claims to contain a response plan is rejected instead of silently
+assigning new semantics to the old format.
 
 ## Configuration
 
@@ -214,6 +227,8 @@ evidence even though credentials and player identities are removed.
 | `DUNE_CHANGE_INTELLIGENCE_POLICY` | `/workspace/config/change-intelligence.json` | Classification, impact, correlation, and bounds. |
 | `DUNE_CHANGE_INTELLIGENCE_DATABASE` | `/workspace/backups/change-intelligence/change-intelligence.sqlite3` | Private append-only ledger. |
 | `DUNE_CHANGE_INTELLIGENCE_HMAC_SECRET_FILE` | `/workspace/config/secrets/change-intelligence-hmac.secret` | Private authentication key. |
+| `DUNE_CHANGE_INTELLIGENCE_EVIDENCE_DIR` | `/workspace/backups/operator-evidence` | Container path for private portable signed capsules. |
+| `DUNE_CHANGE_INTELLIGENCE_HOST_EVIDENCE_DIR` | `backups/operator-evidence` | Host path archived by full backups. |
 
 Host CLI overrides are `DUNE_CHANGE_INTELLIGENCE_HOST_DATABASE`,
 `DUNE_CHANGE_INTELLIGENCE_HOST_POLICY`, and
@@ -240,6 +255,7 @@ make change-intelligence-verify
 make change-intelligence-metrics
 
 ./scripts/change-intelligence.py capsule --incident-key 'slo:<id>'
+./scripts/change-intelligence.py plan --incident-key 'slo:<id>'
 
 # Atomic mode-0600 export tied to the current verified ledger head.
 ./scripts/change-intelligence.py export-capsule \

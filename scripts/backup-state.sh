@@ -81,6 +81,14 @@ desired_state_snapshot=""
 change_intelligence_db="${DUNE_CHANGE_INTELLIGENCE_HOST_DATABASE:-backups/change-intelligence/change-intelligence.sqlite3}"
 change_intelligence_snapshot=""
 [[ -f "$change_intelligence_db" ]] && change_intelligence_snapshot="change-intelligence.sqlite3"
+operator_evidence_dir="${DUNE_CHANGE_INTELLIGENCE_HOST_EVIDENCE_DIR:-$(env_value DUNE_CHANGE_INTELLIGENCE_HOST_EVIDENCE_DIR)}"
+operator_evidence_dir="${operator_evidence_dir:-backups/operator-evidence}"
+operator_evidence_count=0
+if [[ -d "$operator_evidence_dir" ]]; then
+  operator_evidence_count="$(find "$operator_evidence_dir" -maxdepth 1 -type f -name '*.signed.json' -printf . | wc -c)"
+fi
+operator_evidence_archive=""
+[[ "$operator_evidence_count" -gt 0 ]] && operator_evidence_archive="operator-evidence.tgz"
 db="${DUNE_GAME_DB_NAME:-$(env_value DUNE_GAME_DB_NAME)}"
 db="${db:-${DUNE_DATABASE:-$(env_value DUNE_DATABASE)}}"
 db="${db:-${DUNE_DB_NAME:-$(env_value DUNE_DB_NAME)}}"
@@ -125,6 +133,12 @@ if [[ "$dry_run" == true ]]; then
     printf 'change_intelligence_snapshot=change-intelligence.sqlite3\n'
   else
     printf 'change_intelligence_snapshot=<missing %s>\n' "$change_intelligence_db"
+  fi
+  if [[ "$operator_evidence_count" -gt 0 ]]; then
+    printf 'operator_evidence_archive=operator-evidence.tgz\n'
+    printf 'operator_evidence_files=%s\n' "$operator_evidence_count"
+  else
+    printf 'operator_evidence_archive=<no signed capsules under %s>\n' "$operator_evidence_dir"
   fi
   if [[ -d config/tls ]]; then
     printf 'config_tls_archive=config-tls.tgz\n'
@@ -275,6 +289,34 @@ PY
   chmod 600 "${backup_dir}/change-intelligence.sqlite3"
 fi
 
+if [[ "$operator_evidence_count" -gt 0 ]]; then
+  python3 - "$operator_evidence_dir" "${backup_dir}/operator-evidence.tgz" <<'PY'
+import pathlib
+import re
+import tarfile
+import sys
+
+source = pathlib.Path(sys.argv[1])
+target = pathlib.Path(sys.argv[2])
+files = sorted(path for path in source.glob("*.signed.json") if path.is_file() and not path.is_symlink())
+if not 1 <= len(files) <= 1000:
+    raise SystemExit("operator evidence backup requires 1..1000 regular signed capsules")
+total = 0
+with tarfile.open(target, "w:gz") as archive:
+    for path in files:
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+\.signed\.json", path.name):
+            raise SystemExit(f"operator evidence capsule has unsafe backup name: {path.name}")
+        size = path.stat().st_size
+        if not 1 <= size <= 10 * 1024 * 1024:
+            raise SystemExit(f"operator evidence capsule has invalid size: {path}")
+        total += size
+        if total > 100 * 1024 * 1024:
+            raise SystemExit("operator evidence capsules exceed the 100 MiB backup bound")
+        archive.add(path, arcname=f"operator-evidence/{path.name}", recursive=False)
+PY
+  chmod 600 "${backup_dir}/operator-evidence.tgz"
+fi
+
 "${compose[@]}" exec -T postgres \
   pg_dump -U dune -d "$db" -Fc \
   > "${backup_dir}/postgres-${db}.dump"
@@ -316,6 +358,8 @@ operational_slo_snapshot=${slo_snapshot}
 capacity_intelligence_snapshot=${capacity_snapshot}
 desired_state_snapshot=${desired_state_snapshot}
 change_intelligence_snapshot=${change_intelligence_snapshot}
+operator_evidence_archive=${operator_evidence_archive}
+operator_evidence_files=${operator_evidence_count}
 world_unique_name=${world_unique_name}
 dune_fls_env=${dune_fls_env:-retail}
 game_rmq_public_host=${game_rmq_public_host}

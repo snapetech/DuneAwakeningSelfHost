@@ -199,6 +199,7 @@ without reproducing that wrapper.
 | Time-weighted reliability objectives and error budgets | Peers expose current health and retained infrastructure metrics | DASH exceeds | Nine service objectives, five time windows, observation coverage, burn rates, remaining budget, debounced incidents, immutable globally hash-chained events, bounded maintenance exclusions, dashboard/API/Prometheus, and transactionally consistent recovery; see `docs/operational-slo.md` |
 | Continuous desired-state attestation and drift ownership | No surveyed Dune peer | DASH exceeds | HMAC-sealed repository/configuration and Compose-container baselines, keyed redaction of environment values and mount sources, retained findings, non-resolving acknowledgement, immutable baseline/event history, private dashboard/API/metrics, SLO integration, and backup-bound key verification; see `docs/desired-state-attestation.md` |
 | Operational change intelligence and incident evidence capsules | No surveyed Dune peer | DASH exceeds | Append-only HMAC event timeline, authoritative incident reconciliation, credential stripping, identity/path pseudonymization, policy-classified impact, bounded temporal/scope candidate ranking, explicit non-causality, portable ledger-head-bound signed exports with offline verification, dashboard/API/CLI/metrics, and backup-bound verification; see `docs/change-intelligence.md` |
+| Deterministic evidence-linked incident response plans | No surveyed Dune peer | DASH exceeds | Every default SLO plus desired/generic incidents maps to a policy-digested runbook with machine-evaluated evidence predicates, exact bounded diagnostic IDs, existing capability/gate/confirmation recovery contracts, zero automatic execution, nested plan integrity inside portable signed capsules, UI navigation, CLI, and backup-bound archived-capsule verification; see `docs/incident-response.md` |
 | Offsite/mirror/failover backup | DST, Reditus | Parity | Replica, snapshot, rsync/rclone/restic examples |
 | Scheduled restart with warnings and backup | adainrivers, Manaiakalani, AMP | Parity | Daily maintenance timer loaded |
 | Authenticated Steam update and Steam Guard bootstrap | Manaiakalani | Parity | Protected owned-account login/password settings, interactive SteamCMD bootstrap for password/Steam Guard, persistent private Steam home, locked unattended hotfix updater, and restart-only-on-change behavior; one-time Steam Guard codes are not retained |
@@ -347,6 +348,11 @@ only when explicitly authorized for a concrete client task, as required by
   and ranked evidence capsules while explicitly refusing to infer causality.
   Capsules can also be frozen into portable ledger-head-bound artifacts and
   verified offline without trusting the live dashboard or source database.
+- **High confidence:** DASH now turns those capsules into deterministic response
+  plans for every default SLO plus desired/generic incidents. Plans distinguish
+  verified facts from pending operator work, reuse exact bounded diagnostics,
+  preserve every existing recovery gate, execute nothing automatically, and
+  remain independently digest- and HMAC-verifiable in backups and escalation.
 - **High confidence:** local RBAC, outbound events, the first-party Discord bot,
   community rewards/shop/tracks, host tuning, inventory integrity repair,
   recurring event automation, moderation case history, native policy-ban

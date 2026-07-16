@@ -295,6 +295,71 @@ else
   printf 'WARN no change-intelligence.sqlite3 found in %s\n' "$backup_dir"
 fi
 
+if [[ -f "$backup_dir/operator-evidence.tgz" ]]; then
+  evidence_config_archive=""
+  for candidate in "$backup_dir/config.tgz" "$backup_dir/config-and-env.tgz"; do
+    if [[ -f "$candidate" ]]; then evidence_config_archive="$candidate"; break; fi
+  done
+  if [[ -z "$evidence_config_archive" ]]; then
+    printf 'FAIL signed operator evidence verification requires the matching config archive and HMAC key\n' >&2
+    ok=false
+  else
+    if evidence_count="$(PYTHONPATH="$repo_root/admin" python3 - "$backup_dir/operator-evidence.tgz" "$evidence_config_archive" <<'PY'
+import json
+import os
+import pathlib
+import re
+import sys
+import tarfile
+import tempfile
+import change_intelligence
+
+evidence_archive, config_archive = sys.argv[1:]
+try:
+    with tarfile.open(config_archive, "r:gz") as config, tempfile.TemporaryDirectory(prefix="dash-evidence-verify-") as directory:
+        member = config.getmember("config/secrets/change-intelligence-hmac.secret")
+        if not member.isfile() or member.size <= 0 or member.size > 16 * 1024:
+            raise ValueError("invalid change-intelligence key backup member")
+        handle = config.extractfile(member)
+        if handle is None:
+            raise ValueError("unreadable change-intelligence key backup member")
+        secret_path = pathlib.Path(directory) / "change-intelligence-hmac.secret"
+        secret_path.write_bytes(handle.read(16 * 1024 + 1))
+        os.chmod(secret_path, 0o600)
+        secret = change_intelligence.read_secret(secret_path)
+        with tarfile.open(evidence_archive, "r:gz") as evidence:
+            members = evidence.getmembers()
+            if not 1 <= len(members) <= 1000:
+                raise ValueError("operator evidence archive must contain 1..1000 files")
+            total = 0
+            for item in members:
+                if not item.isfile() or not re.fullmatch(r"operator-evidence/[A-Za-z0-9_.-]+\.signed\.json", item.name) or not 1 <= item.size <= 10 * 1024 * 1024:
+                    raise ValueError(f"invalid operator evidence member: {item.name}")
+                total += item.size
+                if total > 100 * 1024 * 1024:
+                    raise ValueError("operator evidence archive exceeds 100 MiB")
+                extracted = evidence.extractfile(item)
+                if extracted is None:
+                    raise ValueError(f"unreadable operator evidence member: {item.name}")
+                document = json.loads(extracted.read(10 * 1024 * 1024 + 1))
+                result = change_intelligence.verify_signed_capsule(document, secret)
+                if not result.get("ok"):
+                    raise ValueError(f"invalid signed capsule {item.name}: {result.get('error')}")
+            print(len(members))
+except (OSError, KeyError, ValueError, json.JSONDecodeError, tarfile.TarError):
+    raise SystemExit(1)
+PY
+    )"; then
+      printf 'OK %s portable signed operator evidence capsule(s) %s\n' "$evidence_count" "$backup_dir/operator-evidence.tgz"
+    else
+      printf 'FAIL portable signed operator evidence capsules or matching HMAC key %s\n' "$backup_dir/operator-evidence.tgz" >&2
+      ok=false
+    fi
+  fi
+else
+  printf 'WARN no operator-evidence.tgz found in %s\n' "$backup_dir"
+fi
+
 if [[ -f "$backup_dir/manifest.json" ]]; then
   if command -v jq >/dev/null 2>&1; then
     jq . "$backup_dir/manifest.json" >/dev/null

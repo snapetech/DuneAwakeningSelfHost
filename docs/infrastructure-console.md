@@ -247,6 +247,13 @@ that portable artifact, and the host CLI verifies it offline without the source
 database or policy. Exporting remains a read-only operation; no incident or
 ledger row is created or changed.
 
+Every capsule includes a deterministic response plan. The panel renders its
+verified/pending/not-applicable/blocked steps and the exact existing diagnostic,
+review, or guarded recovery surface. Navigation can preselect a fixed Command
+Console diagnostic but never runs it; recovery suggestions retain their normal
+capability, feature gate, and confirmation. See
+[`incident-response.md`](incident-response.md).
+
 ## Database Browser and Query Console
 
 `GET /api/ops/database` lists tables and views in the `dune` and `public`

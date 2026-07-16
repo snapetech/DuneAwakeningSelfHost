@@ -1,0 +1,297 @@
+# Deterministic Incident Response Plans
+
+DASH compiles every Change Intelligence capsule into a versioned response plan.
+The plan converts retained incident evidence into an ordered operator workflow
+without guessing a root cause, executing a shell, or bypassing an existing
+mutation gate.
+
+The authoritative policy is the `response` object in
+[`config/change-intelligence.json`](../config/change-intelligence.json). Live
+capsules, portable signed exports, the host CLI, the Infrastructure dashboard,
+backup verification, and offline verification all use that same policy.
+
+## Outcome
+
+An incident capsule now answers four separate questions:
+
+1. **Can this evidence be trusted?** The plan checks SQLite integrity, both
+   append-only triggers, and the complete HMAC event chain.
+2. **Is the incident still open?** It binds to the latest open/resolution pair
+   for that incident generation.
+3. **What evidence must be reviewed?** It counts and links the bounded preceding
+   change candidates and follow-up evidence without calling either causation.
+4. **Which existing DASH surfaces apply next?** It names exact bounded
+   diagnostics, review surfaces, capabilities, feature gates, and confirmation
+   phrases for the matched runbook.
+
+The output is deterministic for one policy, incident generation, ledger head,
+candidate set, and follow-up set. The plan carries SHA-256 digests for both its
+policy and immutable inputs, then hashes its complete normalized output as
+`planSha256`.
+
+## Safety Contract
+
+Response planning is read-only. A plan:
+
+- never runs a diagnostic automatically;
+- never executes a recovery action;
+- never accepts command text, arguments, paths, environment overrides, stdin,
+  pipes, redirects, or shell substitutions;
+- never changes an incident's open/resolved state;
+- never marks an operator-review step complete merely because it was displayed;
+- never labels a ranked candidate as the cause;
+- never weakens the capability required by the destination API;
+- never substitutes for the destination feature gate or confirmation phrase;
+  and
+- never hides a blocked evidence-integrity step.
+
+Diagnostic steps may reference only committed command-console IDs. The current
+policy uses `stack-status`, `rmq-health`, and `storage-status`; each is an exact
+native read-only handler from [`admin/command_console.py`](../admin/command_console.py).
+The UI can preselect that ID in Command Console, but the operator must still
+review and press **Run selected command**.
+
+Recovery steps are navigation and contract metadata, not callable code. Each
+step records:
+
+- the existing DASH surface;
+- the required RBAC capability;
+- `mutation: true` and `execution: manual-gated`;
+- the existing environment feature gate; and
+- the existing exact confirmation phrase when that workflow has one.
+
+The destination handler remains authoritative for hostname checks, master
+mutation gates, input validation, backups, locks, confirmations, rollback,
+post-start hooks, and auditing.
+
+## Plan Structure
+
+Every plan contains:
+
+| Field | Meaning |
+| --- | --- |
+| `schemaVersion` | Portable response-plan schema; currently `1`. |
+| `runbookId` / `title` | First matching versioned policy runbook. |
+| `incidentKey` | Validated `slo:`, `desired:`, or internal `event:` key. |
+| `objectiveId` | Retained SLO objective ID, or `unknown` when the source event predates that field. |
+| `incidentAction` | Retained incident-open action. |
+| `policySha256` | SHA-256 of the normalized response policy. |
+| `inputSha256` | SHA-256 of incident event IDs, candidate/follow-up IDs, ledger count, and ledger head. |
+| `state` | `blocked`, `requires-operator-review`, or `verified`. |
+| `summary` | Verified, pending, not-applicable, blocked, and mutation-step counts. |
+| `steps` | Ordered immutable response steps and evaluated evidence. |
+| `executesAutomatically` | Always `false`. |
+| `causalityClaimed` | Always `false`. |
+| `planSha256` | SHA-256 of every preceding normalized plan field. |
+
+Each step includes its order, stable ID, kind, predicate, evaluated status,
+title, description, evidence explanation, surface, capability, execution mode,
+and optional command ID, feature gate, and confirmation.
+
+## Step Statuses
+
+Statuses describe machine-verifiable evidence only:
+
+- `verified`: the predicate is proven by the same SQLite snapshot;
+- `pending`: an incident remains open or an operator action/review is required;
+- `not-applicable`: no candidate or follow-up event exists for that bounded
+  review step; and
+- `blocked`: the evidence ledger does not pass all required integrity checks.
+
+The compiler currently supports five bounded predicates:
+
+| Predicate | Evaluation |
+| --- | --- |
+| `ledger-verified` | SQLite is `ok`, both append-only triggers exist, and the HMAC chain verifies. |
+| `incident-resolved` | The capsule contains a resolution after its latest open event. |
+| `candidate-review` | Pending for one or more candidates; otherwise not applicable. |
+| `followup-review` | Pending for one or more bounded follow-up events; otherwise not applicable. |
+| `always-pending` | Requires explicit operator work and is never auto-completed. |
+
+A displayed diagnostic result does not update the response plan. Re-export the
+capsule after new retained evidence or authoritative resolution to obtain a new
+input digest and plan digest.
+
+## Runbook Coverage
+
+Policy order is deterministic: the first matching runbook wins, and a validated
+generic fallback must be last.
+
+| Incident contract | Runbook | Reused bounded surfaces |
+| --- | --- | --- |
+| Database availability | `database-availability` | stack diagnosis, bounded logs, guarded stateful service control |
+| Control-plane availability | `control-plane-availability` | stack and RMQ diagnosis, exact service recovery |
+| Required-map availability | `required-map-availability` | map/farm readiness, logs, post-hook-aware map recovery |
+| Backup RPO | `backup-rpo` | backup inventory, storage diagnosis, verified full backup |
+| Restore proof | `restore-proof` | receipt review, storage diagnosis, isolated restore drill |
+| Memory headroom | `memory-headroom` | stack/capacity evidence, gradual eligible recommendation apply |
+| Admin authentication | `admin-authentication` | access posture, auth events, guarded settings repair |
+| Desired-state attestation | `desired-state-attestation` | drift/provenance review, revert or complete-snapshot reseal |
+| Change Intelligence integrity | `change-intelligence-integrity` | preserve ledger, matching-backup verification, guarded restore |
+| Older/unknown SLO | `generic-slo` | stack diagnosis and objective-context review |
+| Desired-state finding | `desired-state-drift` | exact finding/provenance review, revert or reviewed reseal |
+| Other retained incident | `generic-incident` | evidence-contract review and bounded stack diagnosis |
+
+Every default operational SLO has an exact runbook. Events imported from older
+audit history without `objective_id` safely fall to `generic-slo` rather than
+being assigned a guessed objective.
+
+## Policy Validation
+
+Startup refuses malformed response policy. Validation bounds:
+
+- one schema-1 response object;
+- 1–32 common steps;
+- 1–64 runbooks;
+- 1–32 steps per runbook;
+- unique, syntax-bounded runbook and per-list step IDs;
+- bounded title and description lengths;
+- allowlisted kinds and predicates;
+- syntax-bounded incident prefixes, objective/action glob patterns, surfaces,
+  capabilities, environment gates, confirmations, and command IDs;
+- command IDs only on non-mutating diagnostic steps;
+- `mutation: true` only for recovery steps; and
+- a final match-all fallback.
+
+Tests additionally prove that every diagnostic command ID exists in the fixed
+Command Console catalog and every default SLO objective resolves to its exact
+runbook. All default recovery steps have a non-read capability and feature gate.
+
+## Transaction And Integrity Model
+
+Capsule selection, complete event-chain verification, ledger-head selection,
+incident state, candidate ranking, follow-up selection, and response-plan
+compilation occur inside one SQLite read transaction. WAL writers may continue,
+but a concurrent append cannot appear in only part of the plan.
+
+`verify_response_plan()` recomputes `planSha256`. Portable signed-capsule
+verification requires both a valid plan digest and the outer capsule HMAC. A
+changed step, status, gate, confirmation, input digest, policy digest, or nested
+evidence value therefore fails offline verification.
+
+The plan digest proves internal plan immutability. The outer HMAC proves the
+plan was exported by the holder of the matching DASH key. The policy digest
+identifies the exact normalized runbook policy; compare it with a reviewed Git
+revision or the matching backup when provenance matters.
+
+## Dashboard And API
+
+Open **Infrastructure → Change Intelligence**, select an incident, and press
+**Open evidence capsule**. DASH displays:
+
+- runbook ID and title;
+- plan state, policy-digest prefix, and plan-digest prefix;
+- every ordered step, status, kind, surface, capability, gate, confirmation,
+  and evaluated evidence statement;
+- navigation buttons for each referenced surface; and
+- the complete bounded capsule and immutable plan inputs.
+
+A Command Console navigation stores only the fixed command ID in browser
+session storage, opens Command Console, preselects the matching allowlisted
+diagnostic, removes the pending selection, and asks the operator to review it.
+It does not run the command.
+
+Both existing capsule forms include `responsePlan`:
+
+```text
+GET /api/ops/change-intelligence/capsule?incidentKey=slo:<id>
+GET /api/ops/change-intelligence/capsule?incidentKey=slo:<id>&signed=true
+```
+
+They require the normal `read` capability. Merely reading or signing a plan
+does not require mutation authority because neither path executes a step.
+
+## CLI
+
+Print only the compiled plan:
+
+```bash
+./scripts/change-intelligence.py plan --incident-key 'slo:<id>'
+make change-intelligence-plan INCIDENT_KEY='slo:<id>'
+```
+
+Print the complete live capsule and plan:
+
+```bash
+./scripts/change-intelligence.py capsule --incident-key 'slo:<id>'
+```
+
+Export and verify the plan inside a portable signed capsule:
+
+```bash
+./scripts/change-intelligence.py export-capsule \
+  --incident-key 'slo:<id>' \
+  --output backups/operator-evidence/incident.signed.json
+
+./scripts/change-intelligence.py verify-capsule \
+  --capsule-file backups/operator-evidence/incident.signed.json \
+  --secret-file config/secrets/change-intelligence-hmac.secret
+
+make change-intelligence-export-capsule \
+  INCIDENT_KEY='slo:<id>' \
+  CAPSULE_OUTPUT=backups/operator-evidence/incident.signed.json
+make change-intelligence-verify-capsule \
+  CAPSULE_FILE=backups/operator-evidence/incident.signed.json
+```
+
+The atomic export is mode `0600`. Offline verification reports both
+`signatureValid` and `responsePlanValid` and does not require the source SQLite
+database or policy file.
+
+New plan-bearing signed capsules use outer schema 2. Authentic legacy schema-1
+capsules remain valid and report `legacyWithoutResponsePlan=true` plus
+`responsePlanValid=null`; schema 1 is never reinterpreted as carrying a plan.
+
+## Backup And Recovery
+
+Full host backups and browser/maintenance backups include up to 1,000 regular
+`*.signed.json` files from `backups/operator-evidence` as
+`operator-evidence.tgz`. Each source file is bounded to 10 MiB and the archive
+is bounded to 100 MiB. Symlinks, nested arbitrary files, empty files, oversized
+files, and non-signed suffixes are not archived.
+
+Both backup verifiers require every archive member to be a regular confined
+`operator-evidence/<safe-name>.signed.json` file. They verify every response-plan
+digest and outer capsule HMAC against the matching key from that backup's
+config archive. A structurally valid capsule signed by the current key cannot
+make a backup with a different key pass.
+
+The evidence archive is portable, not live mutable state. Recovery is explicit:
+verify the full backup, extract the archive to a private staging directory, and
+retain or distribute only the required capsules. Do not overwrite the live
+append-only SQLite ledger with a portable export.
+
+## Failure Handling
+
+- **plan state is blocked:** preserve the ledger and use the
+  `change-intelligence-integrity` runbook; do not act on ranked candidates.
+- **generic runbook selected:** inspect `objectiveId`; older imported events may
+  legitimately lack it. Do not rewrite history to force a match.
+- **diagnostic unavailable:** use the named Command Console catalog/status to
+  diagnose feature availability; never replace it with arbitrary shell input.
+- **recovery gate disabled:** retain the plan and escalate to an identity with
+  the required capability; enabling a gate is a separate reviewed change.
+- **plan digest invalid:** reject the artifact even if its prose appears
+  plausible.
+- **outer HMAC invalid:** locate the matching key/backup or reject the artifact.
+- **policy digest differs:** compare the exact reviewed policy revisions before
+  merging or following two plans.
+- **incident still open after recovery:** wait for or run the authoritative
+  health observation path; never fabricate a resolution event.
+
+## Validation
+
+```bash
+make test-change-intelligence
+make test-command-console
+make test-admin-panel-safe-surfaces
+make test-operational-borrowing
+make validate
+```
+
+Coverage includes every default SLO-to-runbook mapping, desired/generic
+fallbacks, policy bounds, fixed diagnostic catalog membership, mutation-step
+contracts, predicate statuses, policy/input/plan digests, plan tampering, outer
+HMAC tampering, concurrent append snapshot isolation, UI navigation without
+execution, CLI output, private export modes, native/minimal backup verification,
+matching-key enforcement, and tampered archived-capsule rejection.

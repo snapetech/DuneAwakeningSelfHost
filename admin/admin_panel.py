@@ -390,6 +390,7 @@ DESIRED_STATE_RUNTIME = {"running": False, "lastSampleAt": None, "lastResult": N
 CHANGE_INTELLIGENCE_POLICY = pathlib.Path(os.environ.get("DUNE_CHANGE_INTELLIGENCE_POLICY", str(CONFIG_ROOT / "change-intelligence.json")))
 CHANGE_INTELLIGENCE_DATABASE = pathlib.Path(os.environ.get("DUNE_CHANGE_INTELLIGENCE_DATABASE", str(BACKUPS_ROOT / "change-intelligence" / "change-intelligence.sqlite3")))
 CHANGE_INTELLIGENCE_SECRET_FILE = pathlib.Path(os.environ.get("DUNE_CHANGE_INTELLIGENCE_HMAC_SECRET_FILE", str(CONFIG_ROOT / "secrets" / "change-intelligence-hmac.secret")))
+CHANGE_INTELLIGENCE_EVIDENCE_ROOT = pathlib.Path(os.environ.get("DUNE_CHANGE_INTELLIGENCE_EVIDENCE_DIR", str(BACKUPS_ROOT / "operator-evidence")))
 CHANGE_INTELLIGENCE_STORE = None
 CHANGE_INTELLIGENCE_STORE_LOCK = threading.Lock()
 CHANGE_INTELLIGENCE_RUNTIME = {"ready": False, "imported": 0, "duplicates": 0, "importErrors": 0, "reconciled": 0, "lastEventAt": None, "lastEventId": None, "lastError": ""}
@@ -967,6 +968,8 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_CHANGE_INTELLIGENCE_POLICY": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Versioned event bounds, classification, impact, and correlation windows."},
     "DUNE_CHANGE_INTELLIGENCE_DATABASE": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Private append-only HMAC-chained operational event ledger."},
     "DUNE_CHANGE_INTELLIGENCE_HMAC_SECRET_FILE": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Private HMAC key authenticating the operational change timeline."},
+    "DUNE_CHANGE_INTELLIGENCE_EVIDENCE_DIR": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Container path holding private portable signed incident capsules included in maintenance backups."},
+    "DUNE_CHANGE_INTELLIGENCE_HOST_EVIDENCE_DIR": {"group": "Change Intelligence", "secret": False, "restart": False, "why": "Host-relative portable signed capsule path used by full backup-state archives."},
     "DUNE_ADMIN_BACKUP_IMPORT_MAX_BODY_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum JSON request size for a base64 full-backup archive import."},
     "DUNE_BACKUP_ARCHIVE_ENCRYPTION_ENABLED": {"group": "Backup Encryption", "secret": False, "restart": False, "why": "Enables the documented host-side verified OpenPGP archive workflow."},
     "DUNE_BACKUP_GPG_RECIPIENT": {"group": "Backup Encryption", "secret": False, "restart": False, "why": "Exact 40- or 64-hex OpenPGP recipient fingerprint; never an ambiguous name/email selector."},
@@ -4627,6 +4630,29 @@ def verify_backup_set_native(path):
                     errors.append(f"FAIL change-intelligence HMAC event chain {change_database}: {change_check}")
             except (OSError, KeyError, ValueError, tarfile.TarError) as exc:
                 errors.append(f"FAIL change-intelligence matching policy/HMAC material in {archive}: {exc}")
+    evidence_archive = path / "operator-evidence.tgz"
+    if evidence_archive.is_file():
+        archive = next((candidate for candidate in (path / "config.tgz", path / "config-and-env.tgz") if candidate.is_file()), None)
+        if archive is None:
+            errors.append(f"FAIL portable signed operator evidence verification requires matching config archive in {path}")
+        else:
+            try:
+                with tarfile.open(archive, "r:gz") as handle, tempfile.TemporaryDirectory(prefix="dash-evidence-verify-") as directory:
+                    member = handle.getmember("config/secrets/change-intelligence-hmac.secret")
+                    if not member.isfile() or member.size <= 0 or member.size > 16 * 1024:
+                        raise ValueError("invalid change-intelligence key backup member")
+                    extracted = handle.extractfile(member)
+                    if extracted is None:
+                        raise ValueError("unreadable change-intelligence key backup member")
+                    secret = pathlib.Path(directory) / "change-intelligence-hmac.secret"
+                    secret.write_bytes(extracted.read(16 * 1024 + 1))
+                    os.chmod(secret, 0o600)
+                    evidence_check = verify_operator_evidence_archive(evidence_archive, secret)
+                output.append(f"OK {evidence_check['files']} portable signed operator evidence capsule(s) {evidence_archive}")
+            except (OSError, KeyError, ValueError, json.JSONDecodeError, tarfile.TarError) as exc:
+                errors.append(f"FAIL portable signed operator evidence capsules or matching HMAC key {evidence_archive}: {exc}")
+    else:
+        output.append(f"WARN no operator-evidence.tgz found in {path}")
     manifest_json = path / "manifest.json"
     manifest_text = path / "manifest.txt"
     try:
@@ -6475,6 +6501,50 @@ def add_tree_archive(archive_path, entries):
     return {"path": str(archive_path), "bytes": archive_path.stat().st_size, "added": added, "skipped": skipped}
 
 
+def archive_operator_evidence(archive_path):
+    files = sorted(path for path in CHANGE_INTELLIGENCE_EVIDENCE_ROOT.glob("*.signed.json") if path.is_file() and not path.is_symlink())
+    if not files:
+        return None
+    if len(files) > 1000:
+        raise ValueError("operator evidence archive is limited to 1000 signed capsules")
+    total = 0
+    with tarfile.open(archive_path, "w:gz") as archive:
+        for path in files:
+            if not re.fullmatch(r"[A-Za-z0-9_.-]+\.signed\.json", path.name):
+                raise ValueError(f"operator evidence capsule has unsafe backup name: {path.name}")
+            size = path.stat().st_size
+            if not 1 <= size <= 10 * 1024 * 1024:
+                raise ValueError(f"operator evidence capsule has invalid size: {path.name}")
+            total += size
+            if total > 100 * 1024 * 1024:
+                raise ValueError("operator evidence archive exceeds 100 MiB")
+            archive.add(path, arcname=f"operator-evidence/{path.name}", recursive=False)
+    secure_admin_backup_path(archive_path)
+    return {"path": str(archive_path), "bytes": archive_path.stat().st_size, "files": len(files), "sourceBytes": total}
+
+
+def verify_operator_evidence_archive(archive_path, secret_path):
+    secret = change_intelligence.read_secret(secret_path)
+    with tarfile.open(archive_path, "r:gz") as archive:
+        members = archive.getmembers()
+        if not 1 <= len(members) <= 1000:
+            raise ValueError("operator evidence archive must contain 1..1000 files")
+        total = 0
+        for member in members:
+            if not member.isfile() or not re.fullmatch(r"operator-evidence/[A-Za-z0-9_.-]+\.signed\.json", member.name) or not 1 <= member.size <= 10 * 1024 * 1024:
+                raise ValueError(f"invalid operator evidence member: {member.name}")
+            total += member.size
+            if total > 100 * 1024 * 1024:
+                raise ValueError("operator evidence archive exceeds 100 MiB")
+            handle = archive.extractfile(member)
+            if handle is None:
+                raise ValueError(f"unreadable operator evidence member: {member.name}")
+            result = change_intelligence.verify_signed_capsule(json.loads(handle.read(10 * 1024 * 1024 + 1)), secret)
+            if not result.get("ok"):
+                raise ValueError(f"invalid signed capsule {member.name}: {result.get('error')}")
+    return {"ok": True, "files": len(members), "sourceBytes": total}
+
+
 def create_postgres_layers_report(backup_dir):
     report = {
         "streamingReplication": {"checked": False, "slots": [], "senders": [], "error": None},
@@ -6613,6 +6683,12 @@ def create_maintenance_backup(job):
             result["artifacts"]["changeIntelligence"] = change_intelligence_store().backup(backup_dir / "change-intelligence.sqlite3")
         except Exception as exc:
             result["warnings"].append({"artifact": "changeIntelligence", "error": str(exc)})
+        try:
+            evidence = archive_operator_evidence(backup_dir / "operator-evidence.tgz")
+            if evidence:
+                result["artifacts"]["operatorEvidence"] = evidence
+        except Exception as exc:
+            result["warnings"].append({"artifact": "operatorEvidence", "error": str(exc)})
 
     manifest = backup_dir / "manifest.json"
     manifest.write_text(json.dumps(result, indent=2, sort_keys=True, default=json_default), encoding="utf-8")
@@ -15749,7 +15825,7 @@ function mountInfrastructureChangeIntelligence(data){
     <div class="metricGrid">${metric('Ledger', data.integrity?.ok ? 'verified' : 'invalid', data.integrity?.ok ? 'ok' : 'bad')}${metric('Events', data.eventCount || 0)}${metric('Open incidents', open.length, open.length ? 'warn' : 'ok')}${metric('Open with candidates', open.filter(row => (row.candidateChanges || []).length).length, open.some(row => (row.candidateChanges || []).length) ? 'warn' : '')}${metric('Last event', data.recentEvents?.[0]?.occurredAt || 'none')}${metric('Import errors', data.runtime?.importErrors || 0, data.runtime?.importErrors ? 'bad' : 'ok')}</div>
     ${incidentRows.length ? table(incidentRows) : '<div class="emptyState">No retained SLO or desired-state incidents yet.</div>'}
     <div class="commandBar"><select id="infraChangeIncident">${incidentOptions || '<option value="">No incident capsules</option>'}</select><button id="infraChangeCapsuleBtn" ${incidents.length ? '' : 'disabled'}>Open evidence capsule</button><button id="infraChangeCapsuleExportBtn" ${incidents.length ? '' : 'disabled'}>Download signed capsule</button></div>
-    <pre id="infraChangeCapsuleResult">Select an incident to inspect ranked preceding changes and bounded follow-up evidence.</pre>
+    <div id="infraChangeCapsuleResult" class="panelInset"><p class="muted">Select an incident to inspect its deterministic response plan, ranked preceding changes, and bounded follow-up evidence.</p></div>
     <details><summary>Recent changes, policy, runtime, and verification</summary>${table(changeRows)}<pre>${esc(JSON.stringify({policy:data.policy,runtime:data.runtime,integrity:data.integrity}, null, 2))}</pre></details>
   </div>`);
   document.getElementById('infraChangeRefreshBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Refreshing...', () => infrastructure(loadSerial)));
@@ -15761,8 +15837,24 @@ async function infrastructureChangeCapsule(){
   if (!incidentKey) throw new Error('Select a retained incident');
   const result = await api(`/api/ops/change-intelligence/capsule?incidentKey=${encodeURIComponent(incidentKey)}`);
   const output = document.getElementById('infraChangeCapsuleResult');
-  if (output) output.textContent = JSON.stringify(result, null, 2);
-  notify(`Evidence capsule loaded for ${incidentKey}`);
+  const plan = result.responsePlan || {};
+  const steps = plan.steps || [];
+  const rows = steps.map(step => ({order:step.order,status:step.status,kind:step.kind,step:step.title,surface:step.surface,capability:step.requiredCapability,gate:step.featureGate || '—',confirmation:step.confirmation || '—',evidence:step.evidence}));
+  const seen = new Set();
+  const jumps = steps.map(step => {
+    const surface = String(step.surface || '');
+    const tab = surface.startsWith('command-console:') ? 'console' : surface.startsWith('settings:') ? 'settings' : 'infrastructure';
+    const key = `${tab}:${step.commandId || ''}:${surface}`;
+    if (seen.has(key)) return '';
+    seen.add(key);
+    return `<button class="responsePlanJump" data-response-tab="${esc(tab)}" data-response-command="${esc(step.commandId || '')}">Open ${esc(surface)}</button>`;
+  }).filter(Boolean).join('');
+  if (output) output.innerHTML = `<div class="sectionHeader"><h3>${esc(plan.title || 'Response plan')}</h3><div class="toolbar"><span class="pill ${plan.state === 'blocked' ? 'bad' : 'warn'}">${esc(plan.state || 'unknown')}</span><span class="pill">${esc(plan.runbookId || 'no runbook')}</span><span class="pill">policy ${esc(String(plan.policySha256 || '').slice(0,12))}</span><span class="pill">plan ${esc(String(plan.planSha256 || '').slice(0,12))}</span></div></div><p>${esc(plan.interpretation || '')}</p>${table(rows)}<div class="commandBar">${jumps}</div><details><summary>Complete capsule and immutable plan inputs</summary><pre>${esc(JSON.stringify(result, null, 2))}</pre></details>`;
+  output?.querySelectorAll('.responsePlanJump').forEach(button => button.addEventListener('click', () => {
+    if (button.dataset.responseCommand) sessionStorage.setItem('duneResponseCommand', button.dataset.responseCommand);
+    show(button.dataset.responseTab || 'infrastructure');
+  }));
+  notify(`Evidence capsule and ${plan.runbookId || 'response plan'} loaded for ${incidentKey}`);
   return result;
 }
 async function infrastructureChangeCapsuleExport(){
@@ -16801,6 +16893,9 @@ async function commandConsole(serial=loadSerial){
   const data=await api('/api/ops/console');if(serial!==loadSerial)return;const commands=data.commands||[];
   const rows=commands.map(row=>({id:row.id,label:row.label,category:row.category,available:row.available,timeoutSeconds:row.timeoutSeconds,description:row.description}));
   view.innerHTML=`<div class="pageStack"><div class="sectionHeader"><h2>Command Console</h2><div class="toolbar"><span class="pill ${data.featureEnabled?'ok':'bad'}">${data.featureEnabled?'enabled':'disabled'}</span><span class="pill ok">native read-only handlers</span><span class="pill ok">no subprocess</span><span class="pill ok">no shell</span><span class="pill">${esc(data.outputLimitBytes)} byte output cap</span></div></div><div class="panelBand"><p class="muted">This is a bounded operator console, not a browser shell. Select one reviewed command ID. User arguments, processes, pipes, redirects, substitutions, environment overrides, arbitrary paths, and interactive stdin are not accepted. Execution requires the <code>operations.write</code> capability; output is time-bounded, capped, redacted, and the receipt is audited.</p></div><div class="twoCol"><div class="panelBand"><h2>Run diagnostic</h2><label>Named command<select id="consoleCommandId">${commands.map(row=>`<option value="${esc(row.id)}" ${row.available?'':'disabled'}>${esc(row.category)} · ${esc(row.label)}${row.available?'':' · unavailable'}</option>`).join('')}</select></label><button id="consoleRunBtn" class="primary" ${data.featureEnabled?'':'disabled'}>Run selected command</button><pre id="consoleResult">No command has run in this browser session.</pre></div><div class="panelBand"><h2>Execution contract</h2><dl class="keyValue"><dt>Backend</dt><dd>native read-only handlers</dd><dt>Subprocess</dt><dd>false</dd><dt>Shell parsing</dt><dd>${esc(data.shell)}</dd><dt>User arguments</dt><dd>${esc(data.argumentsAccepted)}</dd><dt>Capability</dt><dd>${esc(data.requiredCapability)}</dd><dt>Persistence</dt><dd>receipt in admin audit; command output is not stored</dd></dl></div></div><div class="panelBand"><h2>Allowlist</h2>${table(rows)}</div></div>`;
+  const responseCommand=sessionStorage.getItem('duneResponseCommand');
+  const responseOption=responseCommand ? Array.from(document.getElementById('consoleCommandId')?.options || []).find(option=>option.value===responseCommand && !option.disabled) : null;
+  if(responseOption){document.getElementById('consoleCommandId').value=responseCommand;sessionStorage.removeItem('duneResponseCommand');notify(`Response-plan diagnostic ${responseCommand} selected; review before running`,'warn')}
   document.getElementById('consoleRunBtn').onclick=async()=>{const button=document.getElementById('consoleRunBtn');await runAction(button,'Running…',async()=>{const result=await api('/api/ops/console',{method:'POST',timeoutMs:75000,body:JSON.stringify({commandId:document.getElementById('consoleCommandId').value})});document.getElementById('consoleResult').textContent=JSON.stringify({...result,output:undefined},null,2)+'\n\n'+(result.output||'');notify(result.ok?'Command completed':'Command failed',result.ok?'ok':'bad')})};
 }
 

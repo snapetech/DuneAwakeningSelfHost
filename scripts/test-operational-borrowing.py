@@ -4,6 +4,7 @@ import json
 import shutil
 import subprocess
 import tempfile
+import tarfile
 import unittest
 from pathlib import Path
 import sys
@@ -45,6 +46,13 @@ def create_change_intelligence_fixture(backup_dir):
     store = change_intelligence.Store(database, policy, secret)
     store.initialize()
     store.record({"action": "settings-write", "ts": 1000, "ok": True, "method": "POST", "eventId": "fixture"}, ingested_at=1001)
+    store.record({"action": "slo-incident-opened", "ts": 1100, "ok": False, "incident_id": "fixture", "objective_id": "database_availability", "eventId": "fixture-open"}, ingested_at=1101)
+    store.record({"action": "slo-incident-resolved", "ts": 1200, "ok": True, "incident_id": "fixture", "objective_id": "database_availability", "eventId": "fixture-resolved"}, ingested_at=1201)
+    capsule = backup_dir / "fixture.signed.json"
+    capsule.write_text(json.dumps(store.signed_capsule("slo:fixture", at=1300)), encoding="utf-8")
+    with tarfile.open(backup_dir / "operator-evidence.tgz", "w:gz") as archive:
+        archive.add(capsule, arcname="operator-evidence/fixture.signed.json")
+    capsule.unlink()
     return database
 
 
@@ -751,6 +759,24 @@ class BackupStateTests(unittest.TestCase):
             self.assertIn("dune_fls_env=retail", result.stdout)
             self.assertIn("game_rmq_public_host=rmq.example.test", result.stdout)
 
+    def test_backup_dry_run_reports_portable_operator_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            env_file = tmp_path / "backup.env"
+            evidence = tmp_path / "evidence"
+            evidence.mkdir()
+            (evidence / "one.signed.json").write_text("{}\n", encoding="utf-8")
+            env_file.write_text("WORLD_UNIQUE_NAME=sh-backup\n", encoding="utf-8")
+            result = subprocess.run(
+                [str(ROOT / "scripts" / "backup-state.sh"), "--dry-run", str(env_file)],
+                cwd=ROOT,
+                env={**os.environ, "CONTAINER_RUNTIME": "definitely-not-a-runtime", "DUNE_CHANGE_INTELLIGENCE_HOST_EVIDENCE_DIR": str(evidence)},
+                text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+            )
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+            self.assertIn("operator_evidence_archive=operator-evidence.tgz", result.stdout)
+            self.assertIn("operator_evidence_files=1", result.stdout)
+
 
 class OperationalIdentityCheckTests(unittest.TestCase):
     def test_operational_identity_check_reports_rendered_fls_environment(self):
@@ -976,6 +1002,22 @@ class VerifyBackupTests(unittest.TestCase):
             self.assertIn("OK capacity intelligence SQLite snapshot and application receipts", result.stdout)
             self.assertIn("OK desired-state SQLite snapshot, baseline/observation/finding HMACs, and event chain", result.stdout)
             self.assertIn("OK change-intelligence SQLite snapshot and HMAC event chain", result.stdout)
+            self.assertIn("OK 1 portable signed operator evidence capsule(s)", result.stdout)
+
+            with tarfile.open(backup_dir / "operator-evidence.tgz", "r:gz") as archive:
+                document = json.load(archive.extractfile("operator-evidence/fixture.signed.json"))
+            document["capsule"]["responsePlan"]["title"] = "tampered response plan"
+            payload = backup_dir / "fixture.signed.json"
+            payload.write_text(json.dumps(document), encoding="utf-8")
+            with tarfile.open(backup_dir / "operator-evidence.tgz", "w:gz") as archive:
+                archive.add(payload, arcname="operator-evidence/fixture.signed.json")
+            payload.unlink()
+            tampered = subprocess.run(
+                [str(ROOT / "scripts" / "verify-backup.sh"), str(backup_dir)], cwd=ROOT, env=env,
+                text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+            )
+            self.assertEqual(1, tampered.returncode)
+            self.assertIn("FAIL portable signed operator evidence capsules", tampered.stderr)
 
 
 class FailoverScriptTests(unittest.TestCase):
