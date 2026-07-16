@@ -161,6 +161,11 @@ server {
   non-resolving ownership acknowledgements, baseline/event history, private
   metrics, SLO coupling, and backup-bound key verification. See
   [`desired-state-attestation.md`](desired-state-attestation.md).
+- Change Intelligence correlates SLO/drift incident onset with preceding
+  deployments, settings writes, service actions, restarts, restores, and
+  capacity decisions in an append-only HMAC timeline. Evidence capsules rank
+  candidates but never claim causality. See
+  [`change-intelligence.md`](change-intelligence.md).
 - Infrastructure backup controls report recipient-encryption readiness,
   encrypted archive/receipt inventory, and exact host encrypt/decrypt commands.
   The private recovery key stays outside the admin container. See

@@ -21,12 +21,13 @@ for compose_file in "${compose_files[@]}"; do
 done
 compose+=(--env-file "$env_file")
 
-python3 -m py_compile admin/admin_panel.py admin/cosmetics_admin.py admin/restore_drill.py admin/operational_slo.py admin/capacity_intelligence.py admin/desired_state.py scripts/backup-restore-drill.py scripts/operational-slo.py scripts/capacity-intelligence.py scripts/desired-state.py scripts/build-cosmetic-catalog.py scripts/admin-chat-commands.py scripts/player-presence-announcer.py
+python3 -m py_compile admin/admin_panel.py admin/cosmetics_admin.py admin/restore_drill.py admin/operational_slo.py admin/capacity_intelligence.py admin/desired_state.py admin/change_intelligence.py scripts/backup-restore-drill.py scripts/operational-slo.py scripts/capacity-intelligence.py scripts/desired-state.py scripts/change-intelligence.py scripts/build-cosmetic-catalog.py scripts/admin-chat-commands.py scripts/player-presence-announcer.py
 python3 -m unittest scripts/test-cosmetics-admin.py
 python3 scripts/test-restore-drill.py
 python3 scripts/test-operational-slo.py
 python3 scripts/test-capacity-intelligence.py
 python3 scripts/test-desired-state.py
+python3 scripts/test-change-intelligence.py
 python3 scripts/test-admin-panel-safe-surfaces.py
 
 "${compose[@]}" up -d --no-recreate postgres

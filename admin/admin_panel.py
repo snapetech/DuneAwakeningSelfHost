@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import configparser
 import concurrent.futures
+import collections
 import base64
 import datetime
 import gzip
@@ -59,6 +60,7 @@ import restore_drill
 import operational_slo
 import capacity_intelligence
 import desired_state
+import change_intelligence
 
 GM_CATALOG_PATH = CODE_ROOT / "scripts" / "gm-command-catalog.py"
 GM_CATALOG_SPEC = importlib.util.spec_from_file_location("gm_command_catalog", GM_CATALOG_PATH)
@@ -290,6 +292,7 @@ CAPACITY_INTELLIGENCE_ENABLED = os.environ.get("DUNE_CAPACITY_INTELLIGENCE_ENABL
 CAPACITY_AUTO_APPLY_ENABLED = os.environ.get("DUNE_CAPACITY_AUTO_APPLY_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 DESIRED_STATE_ENABLED = os.environ.get("DUNE_DESIRED_STATE_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 DESIRED_STATE_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_DESIRED_STATE_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+CHANGE_INTELLIGENCE_ENABLED = os.environ.get("DUNE_CHANGE_INTELLIGENCE_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 SERVICE_CONTROL_ENABLED = os.environ.get("DUNE_ADMIN_SERVICE_CONTROL_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 STATEFUL_SERVICE_CONTROL_ENABLED = os.environ.get("DUNE_ADMIN_STATEFUL_SERVICE_CONTROL_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 UPDATE_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_UPDATE_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
@@ -384,6 +387,12 @@ DESIRED_STATE_STORE = None
 DESIRED_STATE_STORE_LOCK = threading.Lock()
 DESIRED_STATE_THREAD_STARTED = False
 DESIRED_STATE_RUNTIME = {"running": False, "lastSampleAt": None, "lastResult": None, "lastError": None}
+CHANGE_INTELLIGENCE_POLICY = pathlib.Path(os.environ.get("DUNE_CHANGE_INTELLIGENCE_POLICY", str(CONFIG_ROOT / "change-intelligence.json")))
+CHANGE_INTELLIGENCE_DATABASE = pathlib.Path(os.environ.get("DUNE_CHANGE_INTELLIGENCE_DATABASE", str(BACKUPS_ROOT / "change-intelligence" / "change-intelligence.sqlite3")))
+CHANGE_INTELLIGENCE_SECRET_FILE = pathlib.Path(os.environ.get("DUNE_CHANGE_INTELLIGENCE_HMAC_SECRET_FILE", str(CONFIG_ROOT / "secrets" / "change-intelligence-hmac.secret")))
+CHANGE_INTELLIGENCE_STORE = None
+CHANGE_INTELLIGENCE_STORE_LOCK = threading.Lock()
+CHANGE_INTELLIGENCE_RUNTIME = {"ready": False, "imported": 0, "duplicates": 0, "importErrors": 0, "lastEventAt": None, "lastEventId": None, "lastError": ""}
 DISCORD_ADAPTER_ROUTES = {
     "/api/integrations/discord/health", "/api/integrations/discord/status",
     "/api/integrations/discord/readiness", "/api/integrations/discord/services",
@@ -442,6 +451,8 @@ def admin_panel_reload_paths():
         CAPACITY_INTELLIGENCE_POLICY,
         CODE_ROOT / "admin" / "desired_state.py",
         DESIRED_STATE_POLICY,
+        CODE_ROOT / "admin" / "change_intelligence.py",
+        CHANGE_INTELLIGENCE_POLICY,
         GAMEPLAY_PRESETS_FILE,
         COSMETIC_CATALOG_FILE,
         CODE_ROOT / "admin" / "access_control.py",
@@ -952,6 +963,10 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_DESIRED_STATE_DATABASE": {"group": "Desired State", "secret": False, "restart": True, "why": "Private baseline, observation, finding, and signed-event ledger."},
     "DUNE_DESIRED_STATE_HMAC_SECRET_FILE": {"group": "Desired State", "secret": False, "restart": True, "why": "Private HMAC key used to authenticate baselines, observations, and the event chain."},
     "DUNE_DESIRED_STATE_POLL_SECONDS": {"group": "Desired State", "secret": False, "restart": True, "why": "Continuous file/runtime attestation cadence from 15 to 3600 seconds."},
+    "DUNE_CHANGE_INTELLIGENCE_ENABLED": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Records a tamper-evident operational timeline and correlates incidents with preceding changes."},
+    "DUNE_CHANGE_INTELLIGENCE_POLICY": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Versioned event bounds, classification, impact, and correlation windows."},
+    "DUNE_CHANGE_INTELLIGENCE_DATABASE": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Private append-only HMAC-chained operational event ledger."},
+    "DUNE_CHANGE_INTELLIGENCE_HMAC_SECRET_FILE": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Private HMAC key authenticating the operational change timeline."},
     "DUNE_ADMIN_BACKUP_IMPORT_MAX_BODY_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum JSON request size for a base64 full-backup archive import."},
     "DUNE_BACKUP_ARCHIVE_ENCRYPTION_ENABLED": {"group": "Backup Encryption", "secret": False, "restart": False, "why": "Enables the documented host-side verified OpenPGP archive workflow."},
     "DUNE_BACKUP_GPG_RECIPIENT": {"group": "Backup Encryption", "secret": False, "restart": False, "why": "Exact 40- or 64-hex OpenPGP recipient fingerprint; never an ambiguous name/email selector."},
@@ -1245,11 +1260,17 @@ def audit_event(action, ok=True, **fields):
             "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "action": action,
             "ok": bool(ok),
+            "eventId": "audit-" + secrets.token_hex(16),
         }
-        event.update({key: audit_safe(value) for key, value in fields.items()})
+        event.update({key: audit_safe(value) for key, value in fields.items() if key not in {"ts", "action", "ok", "eventId"}})
         with AUDIT_LOCK:
             with AUDIT_LOG.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(event, sort_keys=True, default=json_default) + "\n")
+        if CHANGE_INTELLIGENCE_ENABLED:
+            try:
+                change_intelligence_record_event(event)
+            except Exception as exc:
+                CHANGE_INTELLIGENCE_RUNTIME["lastError"] = str(exc)[:2000]
         WEBHOOK_DISPATCHER.enqueue(event)
     except OSError:
         return
@@ -4517,7 +4538,7 @@ def verify_backup_set_native(path):
             output.append(f"OK archive {archive}")
         except (OSError, tarfile.TarError) as exc:
             errors.append(f"FAIL archive {archive}: {exc}")
-    for name in ("community-rewards.sqlite3", "moderation.sqlite3", "base-gallery.sqlite3", "operational-slo.sqlite3", "capacity-intelligence.sqlite3", "desired-state.sqlite3"):
+    for name in ("community-rewards.sqlite3", "moderation.sqlite3", "base-gallery.sqlite3", "operational-slo.sqlite3", "capacity-intelligence.sqlite3", "desired-state.sqlite3", "change-intelligence.sqlite3"):
         database = path / name
         if not database.is_file():
             output.append(f"WARN no {name} found in {path}")
@@ -4573,6 +4594,39 @@ def verify_backup_set_native(path):
                     errors.append(f"FAIL desired-state HMAC attestations {desired_database}: {desired_check}")
             except (OSError, KeyError, ValueError, tarfile.TarError) as exc:
                 errors.append(f"FAIL desired-state matching policy/HMAC material in {archive}: {exc}")
+    change_database = path / "change-intelligence.sqlite3"
+    if change_database.is_file():
+        archive = next((candidate for candidate in (path / "config.tgz", path / "config-and-env.tgz") if candidate.is_file()), None)
+        if archive is None:
+            errors.append(f"FAIL change-intelligence HMAC verification requires matching config archive in {path}")
+        else:
+            try:
+                with tarfile.open(archive, "r:gz") as handle, tempfile.TemporaryDirectory(prefix="dash-change-verify-") as directory:
+                    material = {}
+                    for name, maximum in (("config/change-intelligence.json", 1024 * 1024), ("config/secrets/change-intelligence-hmac.secret", 16 * 1024)):
+                        member = handle.getmember(name)
+                        if not member.isfile() or member.size <= 0 or member.size > maximum:
+                            raise ValueError(f"invalid change-intelligence backup member: {name}")
+                        extracted = handle.extractfile(member)
+                        if extracted is None:
+                            raise ValueError(f"unreadable change-intelligence backup member: {name}")
+                        material[name] = extracted.read(maximum + 1)
+                        if len(material[name]) > maximum:
+                            raise ValueError(f"oversized change-intelligence backup member: {name}")
+                    verify_root = pathlib.Path(directory)
+                    policy = verify_root / "change-intelligence.json"
+                    secret = verify_root / "change-intelligence-hmac.secret"
+                    policy.write_bytes(material["config/change-intelligence.json"])
+                    secret.write_bytes(material["config/secrets/change-intelligence-hmac.secret"])
+                    os.chmod(policy, 0o600)
+                    os.chmod(secret, 0o600)
+                    change_check = change_intelligence.Store(change_database, policy, secret).verify()
+                if change_check.get("ok"):
+                    output.append(f"OK change-intelligence backup-bound HMAC event chain {change_database}")
+                else:
+                    errors.append(f"FAIL change-intelligence HMAC event chain {change_database}: {change_check}")
+            except (OSError, KeyError, ValueError, tarfile.TarError) as exc:
+                errors.append(f"FAIL change-intelligence matching policy/HMAC material in {archive}: {exc}")
     manifest_json = path / "manifest.json"
     manifest_text = path / "manifest.txt"
     try:
@@ -4958,6 +5012,17 @@ def collect_operational_slo_signals():
     except Exception as exc:
         desired_state_attested = False
         errors["desiredState"] = str(exc)[:1000]
+    try:
+        change_integrity = change_intelligence_store().verify() if CHANGE_INTELLIGENCE_ENABLED else {"ok": False, "state": "disabled"}
+        change_intelligence_ready = bool(change_integrity.get("ok"))
+        context["changeIntelligence"] = {
+            "enabled": CHANGE_INTELLIGENCE_ENABLED,
+            "integrityOk": change_intelligence_ready,
+            "eventCount": change_integrity.get("eventCount", 0),
+        }
+    except Exception as exc:
+        change_intelligence_ready = False
+        errors["changeIntelligence"] = str(exc)[:1000]
     context["errors"] = errors
     return {
         "signals": {
@@ -4969,6 +5034,7 @@ def collect_operational_slo_signals():
             "memory_headroom_ready": memory_headroom_ready,
             "admin_auth_ready": admin_auth_ready,
             "desired_state_attested": desired_state_attested,
+            "change_intelligence_ready": change_intelligence_ready,
         },
         "context": context,
     }
@@ -4981,9 +5047,11 @@ def operational_slo_tick():
         result = operational_slo_store().record(collected["signals"], context=collected["context"])
         OPERATIONAL_SLO_RUNTIME.update({"lastSampleAt": time.time(), "lastResult": result, "lastError": ""})
         for incident_id in result.get("incidentsOpened") or []:
-            audit_event("slo-incident-opened", ok=False, incident_id=incident_id)
+            objective_id = incident_id[4:].rsplit("-", 1)[0] if str(incident_id).startswith("slo-") else "unknown"
+            audit_event("slo-incident-opened", ok=False, incident_id=incident_id, objective_id=objective_id)
         for incident_id in result.get("incidentsResolved") or []:
-            audit_event("slo-incident-resolved", ok=True, incident_id=incident_id)
+            objective_id = incident_id[4:].rsplit("-", 1)[0] if str(incident_id).startswith("slo-") else "unknown"
+            audit_event("slo-incident-resolved", ok=True, incident_id=incident_id, objective_id=objective_id)
         return result
     except Exception as exc:
         OPERATIONAL_SLO_RUNTIME.update({"lastError": str(exc)[:2000]})
@@ -5288,6 +5356,95 @@ def ensure_desired_state_thread():
         return
     DESIRED_STATE_THREAD_STARTED = True
     threading.Thread(target=desired_state_worker, name="desired-state-worker", daemon=True).start()
+
+
+def change_intelligence_store():
+    global CHANGE_INTELLIGENCE_STORE
+    with CHANGE_INTELLIGENCE_STORE_LOCK:
+        if CHANGE_INTELLIGENCE_STORE is None:
+            CHANGE_INTELLIGENCE_STORE = change_intelligence.Store(
+                CHANGE_INTELLIGENCE_DATABASE,
+                CHANGE_INTELLIGENCE_POLICY,
+                CHANGE_INTELLIGENCE_SECRET_FILE,
+                owner_uid=os.environ.get("DUNE_HOST_UID"),
+                owner_gid=os.environ.get("DUNE_HOST_GID"),
+            )
+            CHANGE_INTELLIGENCE_STORE.initialize()
+        return CHANGE_INTELLIGENCE_STORE
+
+
+def change_intelligence_import_history():
+    store = change_intelligence_store()
+    limit = store.policy["historyImportLimit"]
+    rows = collections.deque(maxlen=limit)
+    errors = 0
+    paths = sorted(BACKUP_ROOT.glob("*-audit.jsonl"))
+    if AUDIT_LOG.is_file():
+        paths.append(AUDIT_LOG)
+    for path in paths:
+        try:
+            for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+                try:
+                    value = json.loads(line)
+                    if isinstance(value, dict):
+                        rows.append(value)
+                    else:
+                        errors += 1
+                except json.JSONDecodeError:
+                    errors += 1
+        except OSError:
+            errors += 1
+    imported = 0
+    fingerprints = [store.source_fingerprint(event) for event in rows]
+    known = store.existing_source_fingerprints(fingerprints)
+    duplicates = sum(1 for fingerprint in fingerprints if fingerprint in known)
+    for event in rows:
+        try:
+            fingerprint = store.source_fingerprint(event)
+            if fingerprint in known:
+                continue
+            result = store.record(event, source="admin-audit-history")
+            if result.get("duplicate"):
+                duplicates += 1
+            else:
+                imported += 1
+                known.add(fingerprint)
+        except (ValueError, RuntimeError, OSError, sqlite3.Error):
+            errors += 1
+    store.set_metadata("audit_history_last_catchup", datetime.datetime.now(datetime.timezone.utc).isoformat())
+    result = {"ok": errors == 0, "skipped": False, "imported": imported, "duplicates": duplicates, "errors": errors}
+    CHANGE_INTELLIGENCE_RUNTIME.update({"imported": imported, "duplicates": duplicates, "importErrors": errors})
+    return result
+
+
+def ensure_change_intelligence():
+    if not CHANGE_INTELLIGENCE_ENABLED:
+        return
+    try:
+        change_intelligence_store()
+        change_intelligence_import_history()
+        CHANGE_INTELLIGENCE_RUNTIME.update({"ready": True, "lastError": ""})
+    except Exception as exc:
+        CHANGE_INTELLIGENCE_RUNTIME.update({"ready": False, "lastError": str(exc)[:2000]})
+
+
+def change_intelligence_record_event(event):
+    result = change_intelligence_store().record(event, source="admin-audit")
+    CHANGE_INTELLIGENCE_RUNTIME.update({
+        "ready": True,
+        "lastEventAt": time.time(),
+        "lastEventId": result.get("id"),
+        "lastError": "",
+    })
+    return result
+
+
+def change_intelligence_public_status():
+    if not CHANGE_INTELLIGENCE_ENABLED:
+        return {"ok": False, "enabled": False, "state": "disabled", "runtime": dict(CHANGE_INTELLIGENCE_RUNTIME)}
+    status = change_intelligence_store().status()
+    status.update({"enabled": True, "runtime": dict(CHANGE_INTELLIGENCE_RUNTIME)})
+    return status
 
 
 def bootstrap_status():
@@ -6422,6 +6579,12 @@ def create_maintenance_backup(job):
         except Exception as exc:
             result["warnings"].append({"artifact": "desiredState", "error": str(exc)})
 
+    if CHANGE_INTELLIGENCE_ENABLED:
+        try:
+            result["artifacts"]["changeIntelligence"] = change_intelligence_store().backup(backup_dir / "change-intelligence.sqlite3")
+        except Exception as exc:
+            result["warnings"].append({"artifact": "changeIntelligence", "error": str(exc)})
+
     manifest = backup_dir / "manifest.json"
     manifest.write_text(json.dumps(result, indent=2, sort_keys=True, default=json_default), encoding="utf-8")
     secure_admin_backup_path(manifest)
@@ -7223,6 +7386,9 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/metrics/desired-state":
                 metrics = desired_state_store().prometheus() if DESIRED_STATE_ENABLED else "dash_desired_state_collector_up 0\n"
                 self.text(metrics, "text/plain; version=0.0.4; charset=utf-8")
+            elif parsed.path == "/metrics/change-intelligence":
+                metrics = change_intelligence_store().prometheus() if CHANGE_INTELLIGENCE_ENABLED else "dash_change_intelligence_collector_up 0\n"
+                self.text(metrics, "text/plain; version=0.0.4; charset=utf-8")
             elif parsed.path in ("/api/integrations/discord/health", "/api/integrations/discord/version", "/api/integrations/discord/backups/list"):
                 self.require_discord_token()
                 if parsed.path.endswith("/health"):
@@ -7434,6 +7600,13 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/ops/desired-state":
                 self.require_token()
                 self.json(desired_state_public_status())
+            elif parsed.path == "/api/ops/change-intelligence":
+                self.require_token()
+                self.json(change_intelligence_public_status())
+            elif parsed.path == "/api/ops/change-intelligence/capsule":
+                self.require_token()
+                params = urllib.parse.parse_qs(parsed.query)
+                self.json(change_intelligence_store().capsule((params.get("incidentKey") or [""])[0]))
             elif parsed.path == "/api/ops/database":
                 self.require_token()
                 self.json(dict(database_browser_catalog(), queryEnabled=DATABASE_QUERY_ENABLED, writeEnabled=DATABASE_WRITE_ENABLED, rowMutationsEnabled=DATABASE_ROW_MUTATIONS_ENABLED, passwordMutationsEnabled=DATABASE_PASSWORD_MUTATIONS_ENABLED, writeConfirm=CONFIRM_DATABASE_WRITE, rowConfirm=CONFIRM_DATABASE_ROW_UPDATE, passwordConfirm=CONFIRM_DATABASE_PASSWORD))
@@ -15377,7 +15550,7 @@ async function ops(serial=loadSerial){
   startHealthRefresh();
 }
 async function infrastructure(serial=loadSerial){
-  const [serviceData, backupData, databaseData, updateData, memoryData, autoscalerData, restoreDrillData, sloData, capacityData, desiredStateData] = await Promise.all([
+  const [serviceData, backupData, databaseData, updateData, memoryData, autoscalerData, restoreDrillData, sloData, capacityData, desiredStateData, changeData] = await Promise.all([
     api('/api/ops/services'),
     api('/api/ops/backups'),
     api('/api/ops/database'),
@@ -15387,7 +15560,8 @@ async function infrastructure(serial=loadSerial){
     api('/api/ops/restore-drill', {timeoutMs: 30000}),
     api('/api/ops/slo', {timeoutMs: 30000}),
     api('/api/ops/capacity', {timeoutMs: 30000}),
-    api('/api/ops/desired-state', {timeoutMs: 30000})
+    api('/api/ops/desired-state', {timeoutMs: 30000}),
+    api('/api/ops/change-intelligence', {timeoutMs: 30000})
   ]);
   if (serial !== loadSerial) return;
   const services = serviceData.services || [];
@@ -15406,6 +15580,7 @@ async function infrastructure(serial=loadSerial){
   mountInfrastructureAutoscalerControls(autoscalerData);
   mountInfrastructureCapacity(capacityData);
   mountInfrastructureDesiredState(desiredStateData);
+  mountInfrastructureChangeIntelligence(changeData);
   mountInfrastructureRestoreDrill(restoreDrillData);
   mountInfrastructureSlo(sloData);
   document.getElementById('infraLoadLogsBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Loading...', loadInfrastructureLogs));
@@ -15507,6 +15682,55 @@ async function infrastructureDesiredAcknowledge(){
   const result = await api('/api/ops/desired-state', {method:'POST',body:JSON.stringify({action:'acknowledge',findingId,note,confirm:'ACKNOWLEDGE CONFIGURATION DRIFT'})});
   notify('Drift acknowledgement recorded; finding remains open','warn');
   await infrastructure(loadSerial);
+  return result;
+}
+function mountInfrastructureChangeIntelligence(data){
+  const page = document.querySelector('#view .pageStack');
+  if (!page) return;
+  const incidents = data.incidents || [];
+  const open = data.openIncidents || [];
+  const changes = (data.recentEvents || []).filter(row => row.isChange).slice(0,100);
+  const incidentOptions = incidents.map(row => `<option value="${esc(row.incidentKey)}">${esc(row.status)} · ${esc(row.opened?.action || '')} · ${esc(row.incidentKey)}</option>`).join('');
+  const incidentRows = incidents.map(row => {
+    const top = (row.candidateChanges || [])[0] || {};
+    return {
+      status: row.status,
+      incident: row.incidentKey,
+      opened: row.opened?.occurredAt || '',
+      signal: row.opened?.action || '',
+      topCandidate: top.action || '',
+      candidateAge: top.ageSeconds == null ? '—' : fmtRuntimeSeconds(top.ageSeconds),
+      score: top.score ?? '—',
+    };
+  });
+  const changeRows = changes.map(row => ({
+    occurredAt: row.occurredAt,
+    action: row.action,
+    category: row.category,
+    impact: row.impact,
+    actor: row.actor || '',
+    ok: row.ok,
+    scope: (row.scope || []).join(', '),
+  }));
+  page.insertAdjacentHTML('beforeend', `<div class="panelBand">
+    <div class="sectionHeader"><h2>Change Intelligence</h2><div class="toolbar"><span class="pill ${data.integrity?.ok ? 'ok' : 'bad'}">HMAC chain ${data.integrity?.ok ? 'verified' : 'invalid'}</span><span class="pill ${open.length ? 'warn' : 'ok'}">${esc(open.length)} open incidents</span><span class="pill">${esc(data.eventCount || 0)} retained events</span><button id="infraChangeRefreshBtn">Refresh</button></div></div>
+    <p class="muted">This timeline correlates SLO incidents and desired-state drift with preceding deployments, settings writes, service actions, restarts, restores, and capacity decisions. Ranking uses time, declared impact, and shared scope. A candidate is evidence for investigation—not a claim that the change caused the incident. Player/client identifiers and host paths are HMAC-pseudonymized; credentials are removed.</p>
+    <div class="metricGrid">${metric('Ledger', data.integrity?.ok ? 'verified' : 'invalid', data.integrity?.ok ? 'ok' : 'bad')}${metric('Events', data.eventCount || 0)}${metric('Open incidents', open.length, open.length ? 'warn' : 'ok')}${metric('Open with candidates', open.filter(row => (row.candidateChanges || []).length).length, open.some(row => (row.candidateChanges || []).length) ? 'warn' : '')}${metric('Last event', data.recentEvents?.[0]?.occurredAt || 'none')}${metric('Import errors', data.runtime?.importErrors || 0, data.runtime?.importErrors ? 'bad' : 'ok')}</div>
+    ${incidentRows.length ? table(incidentRows) : '<div class="emptyState">No retained SLO or desired-state incidents yet.</div>'}
+    <div class="commandBar"><select id="infraChangeIncident">${incidentOptions || '<option value="">No incident capsules</option>'}</select><button id="infraChangeCapsuleBtn" ${incidents.length ? '' : 'disabled'}>Open evidence capsule</button></div>
+    <pre id="infraChangeCapsuleResult">Select an incident to inspect ranked preceding changes and bounded follow-up evidence.</pre>
+    <details><summary>Recent changes, policy, runtime, and verification</summary>${table(changeRows)}<pre>${esc(JSON.stringify({policy:data.policy,runtime:data.runtime,integrity:data.integrity}, null, 2))}</pre></details>
+  </div>`);
+  document.getElementById('infraChangeRefreshBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Refreshing...', () => infrastructure(loadSerial)));
+  document.getElementById('infraChangeCapsuleBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Loading...', infrastructureChangeCapsule));
+}
+async function infrastructureChangeCapsule(){
+  const incidentKey = document.getElementById('infraChangeIncident')?.value || '';
+  if (!incidentKey) throw new Error('Select a retained incident');
+  const result = await api(`/api/ops/change-intelligence/capsule?incidentKey=${encodeURIComponent(incidentKey)}`);
+  const output = document.getElementById('infraChangeCapsuleResult');
+  if (output) output.textContent = JSON.stringify(result, null, 2);
+  notify(`Evidence capsule loaded for ${incidentKey}`);
   return result;
 }
 function mountInfrastructureSlo(data){
@@ -17359,6 +17583,7 @@ load();
 
 
 def main():
+    ensure_change_intelligence()
     ensure_announcement_thread()
     ensure_care_package_auto_thread()
     ensure_memory_balancer_thread()

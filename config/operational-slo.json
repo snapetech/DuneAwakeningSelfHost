@@ -83,6 +83,16 @@
       "severity": "critical",
       "consecutiveFailures": 2,
       "excludeMaintenance": true
+    },
+    {
+      "id": "change_intelligence_integrity",
+      "name": "Operational evidence integrity",
+      "description": "The append-only operational change timeline passes SQLite, trigger, and HMAC-chain verification.",
+      "signal": "change_intelligence_ready",
+      "targetAvailability": 0.999,
+      "severity": "critical",
+      "consecutiveFailures": 2,
+      "excludeMaintenance": false
     }
   ]
 }

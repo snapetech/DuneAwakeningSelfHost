@@ -243,6 +243,58 @@ else
   printf 'WARN no desired-state.sqlite3 found in %s\n' "$backup_dir"
 fi
 
+if [[ -f "$backup_dir/change-intelligence.sqlite3" ]]; then
+  change_archive=""
+  for candidate in "$backup_dir/config.tgz" "$backup_dir/config-and-env.tgz"; do
+    if [[ -f "$candidate" ]]; then change_archive="$candidate"; break; fi
+  done
+  if [[ -z "$change_archive" ]]; then
+    printf 'FAIL change-intelligence verification requires the matching config archive and HMAC key\n' >&2
+    ok=false
+  else
+    if PYTHONPATH="$repo_root/admin" python3 - "$backup_dir/change-intelligence.sqlite3" "$change_archive" <<'PY'
+import os
+import pathlib
+import sys
+import tarfile
+import tempfile
+import change_intelligence
+
+database, archive = sys.argv[1:]
+try:
+    with tarfile.open(archive, "r:gz") as source, tempfile.TemporaryDirectory(prefix="dash-change-verify-") as directory:
+        root = pathlib.Path(directory)
+        paths = {}
+        for name, maximum in (("config/change-intelligence.json", 1024 * 1024), ("config/secrets/change-intelligence-hmac.secret", 16 * 1024)):
+            member = source.getmember(name)
+            if not member.isfile() or member.size <= 0 or member.size > maximum:
+                raise ValueError(f"invalid backup member: {name}")
+            handle = source.extractfile(member)
+            if handle is None:
+                raise ValueError(f"unreadable backup member: {name}")
+            value = handle.read(maximum + 1)
+            if len(value) > maximum:
+                raise ValueError(f"oversized backup member: {name}")
+            path = root / pathlib.PurePosixPath(name).name
+            path.write_bytes(value)
+            os.chmod(path, 0o600)
+            paths[name] = path
+        result = change_intelligence.Store(database, paths["config/change-intelligence.json"], paths["config/secrets/change-intelligence-hmac.secret"]).verify()
+        raise SystemExit(0 if result.get("ok") else 1)
+except (OSError, KeyError, ValueError, tarfile.TarError):
+    raise SystemExit(1)
+PY
+    then
+      printf 'OK change-intelligence SQLite snapshot and HMAC event chain %s\n' "$backup_dir/change-intelligence.sqlite3"
+    else
+      printf 'FAIL change-intelligence SQLite snapshot or matching policy/HMAC event chain %s\n' "$backup_dir/change-intelligence.sqlite3" >&2
+      ok=false
+    fi
+  fi
+else
+  printf 'WARN no change-intelligence.sqlite3 found in %s\n' "$backup_dir"
+fi
+
 if [[ -f "$backup_dir/manifest.json" ]]; then
   if command -v jq >/dev/null 2>&1; then
     jq . "$backup_dir/manifest.json" >/dev/null

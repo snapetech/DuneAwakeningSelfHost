@@ -17,7 +17,7 @@ or documented operational path.
 ## Audit snapshot
 
 - Audit date: **2026-07-15**, full GitHub search and remote HEAD refresh
-  **2026-07-16 17:17 UTC**
+  **2026-07-16 18:13 UTC**
 - Search scope: GitHub repository search, project documentation, Funcom's
   self-host guide, CubeCoders' Dune template and guide, Nexus Mods' Dune:
   Awakening category, and public community discussions used only to discover
@@ -26,8 +26,17 @@ or documented operational path.
   official project documentation. Community posts are not treated as proof that
   a feature works.
 - Target source: the current DASH worktree, including the completed Red-Blink
-  parity, adaptive-autoscaler, recovery-proof, SLO, and capacity-intelligence
-  tranches.
+  parity, adaptive-autoscaler, recovery-proof, SLO, capacity-intelligence, and
+  desired-state-attestation and change-intelligence tranches.
+
+The 18:13 UTC refresh repeated all four repository searches below. The active
+credible results introduced no new peer, and current default-branch HEAD still
+matches every pinned fast-moving peer checked directly: Red-Blink
+`12ac3b8b`, Manaiakalani `f1044620`, DST `7bafc137`, Sietch Console
+`80897fc5`, adainrivers `f7dfeb0d`, Easy Dune Admin `b530670f`,
+the4rchangel `749e77b8`, and BIGMOS `18ba6bc6`. Search-result-only cheat-guide
+and placeholder repositories remain excluded because they contain no credible
+self-host operator implementation.
 
 Confidence labels in this document use the repository standard:
 
@@ -187,8 +196,9 @@ without reproducing that wrapper.
 | Layered backup/list/download/import/restore | Red-Blink, dashboards | Parity | Verified, quarantined restore lifecycle |
 | Scheduled backup and retention | Icehunter, Reditus, Manaiakalani | Parity | Host timers and panel schedule |
 | Automated real restore rehearsal and RPO/RTO evidence | BIGMOS documents manual `pg_restore`; other peers inspect/archive backups | DASH exceeds | Daily no-network disposable PostgreSQL restore, Dune schema/data/index/constraint checks, analyze, round-trip dump, measured RPO/RTO, verified cleanup, private hash-chained receipts, dashboard/API, and hardened timer; see `docs/restore-drills.md` |
-| Time-weighted reliability objectives and error budgets | Peers expose current health and retained infrastructure metrics | DASH exceeds | Eight service objectives, five time windows, observation coverage, burn rates, remaining budget, debounced incidents, immutable globally hash-chained events, bounded maintenance exclusions, dashboard/API/Prometheus, and transactionally consistent recovery; see `docs/operational-slo.md` |
+| Time-weighted reliability objectives and error budgets | Peers expose current health and retained infrastructure metrics | DASH exceeds | Nine service objectives, five time windows, observation coverage, burn rates, remaining budget, debounced incidents, immutable globally hash-chained events, bounded maintenance exclusions, dashboard/API/Prometheus, and transactionally consistent recovery; see `docs/operational-slo.md` |
 | Continuous desired-state attestation and drift ownership | No surveyed Dune peer | DASH exceeds | HMAC-sealed repository/configuration and Compose-container baselines, keyed redaction of environment values and mount sources, retained findings, non-resolving acknowledgement, immutable baseline/event history, private dashboard/API/metrics, SLO integration, and backup-bound key verification; see `docs/desired-state-attestation.md` |
+| Operational change intelligence and incident evidence capsules | No surveyed Dune peer | DASH exceeds | Append-only HMAC event timeline, idempotent legacy audit import, credential stripping, identity/path pseudonymization, policy-classified impact, bounded temporal/scope candidate ranking, explicit non-causality, response evidence, dashboard/API/CLI/metrics, and backup-bound verification; see `docs/change-intelligence.md` |
 | Offsite/mirror/failover backup | DST, Reditus | Parity | Replica, snapshot, rsync/rclone/restic examples |
 | Scheduled restart with warnings and backup | adainrivers, Manaiakalani, AMP | Parity | Daily maintenance timer loaded |
 | Authenticated Steam update and Steam Guard bootstrap | Manaiakalani | Parity | Protected owned-account login/password settings, interactive SteamCMD bootstrap for password/Steam Guard, persistent private Steam home, locked unattended hotfix updater, and restart-only-on-change behavior; one-time Steam Guard codes are not retained |
@@ -332,6 +342,9 @@ only when explicitly authorized for a concrete client task, as required by
   evidence with continuous HMAC-sealed file/container desired-state
   attestation, retained drift ownership, immutable baseline history, private
   metrics/SLO coupling, and backup-bound key verification.
+- **High confidence:** no surveyed peer correlates retained operator changes
+  with SLO/drift incident onset. DASH now adds a privacy-bounded HMAC timeline
+  and ranked evidence capsules while explicitly refusing to infer causality.
 - **High confidence:** local RBAC, outbound events, the first-party Discord bot,
   community rewards/shop/tracks, host tuning, inventory integrity repair,
   recurring event automation, moderation case history, native policy-ban

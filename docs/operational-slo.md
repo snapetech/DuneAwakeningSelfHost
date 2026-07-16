@@ -24,6 +24,7 @@ The versioned policy is [`config/operational-slo.json`](../config/operational-sl
 | Host memory headroom | `MemAvailable` remains above the configured floor. | 99.0% | 5 failures | yes |
 | Admin authentication | Authentication is required and a real owner/RBAC credential source exists. | 99.9% | 1 failure | no |
 | Desired-state attestation | An HMAC-sealed file/container baseline exists, has no open drift, and its complete ledger verifies. | 99.9% | 2 failures | yes |
+| Operational evidence integrity | The append-only Change Intelligence SQLite, triggers, and complete HMAC event chain verify. | 99.9% | 2 failures | no |
 
 Backup, restore-proof, and authentication objectives deliberately continue through planned
 maintenance: a maintenance window is not permission to lose recovery coverage
@@ -35,6 +36,10 @@ Desired-state drift collection also continues during maintenance. Its SLO time
 can be excluded and its alertable metric is suppressed, but findings remain
 open and visible; maintenance never acknowledges or resolves evidence. See
 [`desired-state-attestation.md`](desired-state-attestation.md).
+
+Operational evidence integrity also continues through maintenance. A planned
+window cannot convert a broken or unverifiable change timeline into good time.
+See [`change-intelligence.md`](change-intelligence.md).
 
 ## Time Weighting And Error Budgets
 

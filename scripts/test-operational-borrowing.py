@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "admin"))
 
 import desired_state
+import change_intelligence
 
 
 def create_desired_state_fixture(backup_dir):
@@ -28,6 +29,22 @@ def create_desired_state_fixture(backup_dir):
     store = desired_state.Store(database, policy, secret)
     store.initialize()
     store.seal({"schemaVersion": 1, "files": {}, "containers": {}}, "test", "backup fixture", at=1000)
+    return database
+
+
+def create_change_intelligence_fixture(backup_dir):
+    config_dir = backup_dir / "config"
+    secret_dir = config_dir / "secrets"
+    secret_dir.mkdir(parents=True, exist_ok=True)
+    policy = config_dir / "change-intelligence.json"
+    policy.write_text((ROOT / "config" / "change-intelligence.json").read_text(encoding="utf-8"), encoding="utf-8")
+    secret = secret_dir / "change-intelligence-hmac.secret"
+    secret.write_text("e" * 64 + "\n", encoding="utf-8")
+    secret.chmod(0o600)
+    database = backup_dir / "change-intelligence.sqlite3"
+    store = change_intelligence.Store(database, policy, secret)
+    store.initialize()
+    store.record({"action": "settings-write", "ts": 1000, "ok": True, "method": "POST", "eventId": "fixture"}, ingested_at=1001)
     return database
 
 
@@ -631,6 +648,7 @@ class RestoreStateTests(unittest.TestCase):
                 encoding="utf-8",
             )
             create_desired_state_fixture(backup_dir)
+            create_change_intelligence_fixture(backup_dir)
             subprocess.run(
                 ["tar", "-czf", str(backup_dir / "config.tgz"), "-C", str(backup_dir), "manifest.txt", "config"],
                 check=True,
@@ -682,6 +700,7 @@ class RestoreStateTests(unittest.TestCase):
                     "--operational-slo",
                     "--capacity-intelligence",
                     "--desired-state",
+                    "--change-intelligence",
                     str(env_file),
                     str(backup_dir.relative_to(ROOT)),
                 ],
@@ -700,6 +719,7 @@ class RestoreStateTests(unittest.TestCase):
             self.assertIn("restore_operational_slo=true", result.stdout)
             self.assertIn("restore_capacity_intelligence=true", result.stdout)
             self.assertIn("restore_desired_state=true", result.stdout)
+            self.assertIn("restore_change_intelligence=true", result.stdout)
             self.assertIn("backup_world_unique_name=sh-backed-up", result.stdout)
             self.assertIn("current_world_unique_name=sh-current", result.stdout)
             self.assertIn("differs from current", result.stderr)
@@ -897,6 +917,7 @@ class VerifyBackupTests(unittest.TestCase):
             (backup_dir / ".env").write_text("WORLD_UNIQUE_NAME=sh-test\n", encoding="utf-8")
             (backup_dir / "manifest.txt").write_text("world_unique_name=sh-test\n", encoding="utf-8")
             create_desired_state_fixture(backup_dir)
+            create_change_intelligence_fixture(backup_dir)
             subprocess.run(
                 ["tar", "-czf", str(backup_dir / "config.tgz"), "-C", str(backup_dir), "manifest.txt", "config"],
                 check=True,
@@ -954,6 +975,7 @@ class VerifyBackupTests(unittest.TestCase):
             self.assertIn("OK operational SLO SQLite snapshot and incident hash chain", result.stdout)
             self.assertIn("OK capacity intelligence SQLite snapshot and application receipts", result.stdout)
             self.assertIn("OK desired-state SQLite snapshot, baseline/observation/finding HMACs, and event chain", result.stdout)
+            self.assertIn("OK change-intelligence SQLite snapshot and HMAC event chain", result.stdout)
 
 
 class FailoverScriptTests(unittest.TestCase):

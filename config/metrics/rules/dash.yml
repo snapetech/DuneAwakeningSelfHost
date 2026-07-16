@@ -116,3 +116,20 @@ groups:
         for: 2m
         labels: {severity: critical}
         annotations: {summary: "Critical DASH source, configuration, or container drift is active"}
+  - name: dash-change-intelligence
+    rules:
+      - alert: DashChangeIntelligenceCollectorDown
+        expr: up{job="dash-change-intelligence"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "DASH change-intelligence collector is unreachable"}
+      - alert: DashChangeIntelligenceIntegrityInvalid
+        expr: dash_change_intelligence_collector_up == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "DASH operational change HMAC chain or append-only enforcement failed"}
+      - alert: DashIncidentHasCandidateChange
+        expr: dash_change_intelligence_open_incidents_with_candidate_changes > 0
+        for: 2m
+        labels: {severity: warning}
+        annotations: {summary: "An open DASH incident has temporally correlated preceding changes to review"}

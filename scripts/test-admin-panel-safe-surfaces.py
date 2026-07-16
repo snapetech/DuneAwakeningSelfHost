@@ -1881,17 +1881,30 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         store = self.panel.desired_state.Store(backup_set / "desired-state.sqlite3", policy, secret)
         store.initialize()
         store.seal({"schemaVersion": 1, "files": {}, "containers": {}}, "test", "fixture", at=1000)
+        change_policy = self.workspace / "config" / "change-intelligence.json"
+        change_policy.write_text((ROOT / "config" / "change-intelligence.json").read_text(encoding="utf-8"), encoding="utf-8")
+        change_secret = secret_dir / "change-intelligence-hmac.secret"
+        change_secret.write_text("d" * 64 + "\n", encoding="utf-8")
+        change_secret.chmod(0o600)
+        change_store = self.panel.change_intelligence.Store(backup_set / "change-intelligence.sqlite3", change_policy, change_secret)
+        change_store.initialize()
+        change_store.record({"action": "settings-write", "ts": 1000, "ok": True, "eventId": "fixture"}, ingested_at=1001)
         with tarfile.open(backup_set / "config.tgz", "w:gz") as archive:
             archive.add(policy, arcname="config/desired-state.json")
             archive.add(secret, arcname="config/secrets/desired-state-hmac.secret")
+            archive.add(change_policy, arcname="config/change-intelligence.json")
+            archive.add(change_secret, arcname="config/secrets/change-intelligence-hmac.secret")
         secret.write_text("c" * 64 + "\n", encoding="utf-8")
         secret.chmod(0o600)
+        change_secret.write_text("f" * 64 + "\n", encoding="utf-8")
+        change_secret.chmod(0o600)
 
         with mock.patch.object(self.panel.shutil, "which", return_value=None):
             ok, stdout, stderr = self.panel.verify_backup_set_native(backup_set)
 
         self.assertTrue(ok, stderr)
         self.assertIn("OK desired-state backup-bound HMAC attestations", stdout)
+        self.assertIn("OK change-intelligence backup-bound HMAC event chain", stdout)
 
     def test_database_browser_is_allowlisted_capped_and_redacted(self):
         def fake_query(sql, params=None):
@@ -2969,6 +2982,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         original_restore_status = self.panel.restore_drill.status
         original_meminfo = self.panel.read_meminfo
         original_desired_state_store = self.panel.desired_state_store
+        original_change_intelligence_store = self.panel.change_intelligence_store
         original_token = self.panel.ADMIN_TOKEN
         dump = self.workspace / "backups" / "latest.dump"
         dump.parent.mkdir(parents=True)
@@ -2986,6 +3000,9 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
                 "integrity": {"ok": True},
             },
         })()
+        self.panel.change_intelligence_store = lambda: type("Store", (), {
+            "verify": lambda self: {"ok": True, "eventCount": 10},
+        })()
         self.panel.ADMIN_TOKEN = "real-token"
         self.patch_flag("ADMIN_REQUIRE_TOKEN", True)
         self.patch_db(lambda sql, params=None: [{"ready": True}])
@@ -2995,6 +3012,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.addCleanup(lambda: setattr(self.panel.restore_drill, "status", original_restore_status))
         self.addCleanup(lambda: setattr(self.panel, "read_meminfo", original_meminfo))
         self.addCleanup(lambda: setattr(self.panel, "desired_state_store", original_desired_state_store))
+        self.addCleanup(lambda: setattr(self.panel, "change_intelligence_store", original_change_intelligence_store))
         self.addCleanup(lambda: setattr(self.panel, "ADMIN_TOKEN", original_token))
         collected = self.panel.collect_operational_slo_signals()
         self.assertTrue(all(collected["signals"].values()), collected)
@@ -3130,6 +3148,106 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn("Acknowledgement records ownership in the signed event chain", source)
         self.assertIn("SEAL DESIRED STATE", source)
         self.assertIn("ACKNOWLEDGE CONFIGURATION DRIFT", source)
+
+    def test_change_intelligence_status_metrics_and_capsule_are_read_only(self):
+        original_status = self.panel.change_intelligence_public_status
+        original_store = self.panel.change_intelligence_store
+        fake_store = type("Store", (), {
+            "prometheus": lambda self: "dash_change_intelligence_collector_up 1\n",
+            "capsule": lambda self, key: {"ok": True, "incidentKey": key, "causalityClaimed": False},
+        })()
+        self.panel.change_intelligence_public_status = lambda: {"ok": True, "state": "active", "eventCount": 3}
+        self.panel.change_intelligence_store = lambda: fake_store
+        self.addCleanup(lambda: setattr(self.panel, "change_intelligence_public_status", original_status))
+        self.addCleanup(lambda: setattr(self.panel, "change_intelligence_store", original_store))
+
+        handler, captured = self.make_route_handler("/api/ops/change-intelligence")
+        handler.is_app_route = lambda path: False
+        handler.do_GET()
+        self.assertEqual("active", captured["json"]["state"])
+
+        handler, captured = self.make_route_handler("/api/ops/change-intelligence/capsule?incidentKey=slo%3Aone")
+        handler.is_app_route = lambda path: False
+        handler.do_GET()
+        self.assertEqual("slo:one", captured["json"]["incidentKey"])
+        self.assertFalse(captured["json"]["causalityClaimed"])
+
+        handler, captured = self.make_route_handler("/metrics/change-intelligence")
+        handler.is_app_route = lambda path: False
+        texts = []
+        handler.text = lambda value, content_type="", **kwargs: texts.append((value, content_type))
+        handler.require_token = lambda: self.fail("bounded change-intelligence metrics must not require an admin credential")
+        handler.do_GET()
+        self.assertEqual("dash_change_intelligence_collector_up 1\n", texts[0][0])
+
+    def test_audit_event_feeds_change_intelligence_and_protects_reserved_fields(self):
+        events = []
+        original_record = self.panel.change_intelligence_record_event
+        original_enabled = self.panel.CHANGE_INTELLIGENCE_ENABLED
+        original_dispatcher = self.panel.WEBHOOK_DISPATCHER
+        original_log = self.panel.AUDIT_LOG
+        self.panel.change_intelligence_record_event = lambda event: events.append(event) or {"ok": True, "id": "change-1"}
+        self.panel.CHANGE_INTELLIGENCE_ENABLED = True
+        self.panel.WEBHOOK_DISPATCHER = type("Dispatcher", (), {"enqueue": lambda self, event: None})()
+        self.panel.AUDIT_LOG = self.workspace / "backups" / "audit.jsonl"
+        self.addCleanup(lambda: setattr(self.panel, "change_intelligence_record_event", original_record))
+        self.addCleanup(lambda: setattr(self.panel, "CHANGE_INTELLIGENCE_ENABLED", original_enabled))
+        self.addCleanup(lambda: setattr(self.panel, "WEBHOOK_DISPATCHER", original_dispatcher))
+        self.addCleanup(lambda: setattr(self.panel, "AUDIT_LOG", original_log))
+
+        self.panel.audit_event("service-control", ok=True, ts="forged", eventId="forged", service="director")
+        self.assertEqual(1, len(events))
+        self.assertEqual("service-control", events[0]["action"])
+        self.assertNotEqual("forged", events[0]["ts"])
+        self.assertTrue(events[0]["eventId"].startswith("audit-"))
+        self.assertEqual("director", events[0]["service"])
+        persisted = json.loads(self.panel.AUDIT_LOG.read_text(encoding="utf-8"))
+        self.assertEqual(events[0], persisted)
+
+    def test_change_intelligence_catches_up_existing_audit_history_idempotently(self):
+        policy = self.workspace / "config" / "change-intelligence.json"
+        policy.write_text((ROOT / "config" / "change-intelligence.json").read_text(encoding="utf-8"), encoding="utf-8")
+        secret_dir = self.workspace / "config" / "secrets"
+        secret_dir.mkdir(parents=True, exist_ok=True)
+        secret = secret_dir / "change-intelligence-hmac.secret"
+        secret.write_text("a" * 64 + "\n", encoding="utf-8")
+        secret.chmod(0o600)
+        audit = self.workspace / "backups" / "admin-panel" / "audit.jsonl"
+        audit.parent.mkdir(parents=True, exist_ok=True)
+        audit.write_text(
+            json.dumps({"ts": "2026-07-16T10:00:00Z", "action": "settings-write", "ok": True, "method": "POST"}) + "\n" +
+            json.dumps({"ts": "2026-07-16T10:05:00Z", "action": "slo-incident-opened", "ok": False, "incident_id": "old-incident"}) + "\n",
+            encoding="utf-8",
+        )
+        originals = {
+            "CHANGE_INTELLIGENCE_POLICY": self.panel.CHANGE_INTELLIGENCE_POLICY,
+            "CHANGE_INTELLIGENCE_DATABASE": self.panel.CHANGE_INTELLIGENCE_DATABASE,
+            "CHANGE_INTELLIGENCE_SECRET_FILE": self.panel.CHANGE_INTELLIGENCE_SECRET_FILE,
+            "CHANGE_INTELLIGENCE_STORE": self.panel.CHANGE_INTELLIGENCE_STORE,
+            "AUDIT_LOG": self.panel.AUDIT_LOG,
+        }
+        self.panel.CHANGE_INTELLIGENCE_POLICY = policy
+        self.panel.CHANGE_INTELLIGENCE_DATABASE = self.workspace / "backups" / "change-intelligence" / "change.sqlite3"
+        self.panel.CHANGE_INTELLIGENCE_SECRET_FILE = secret
+        self.panel.CHANGE_INTELLIGENCE_STORE = None
+        self.panel.AUDIT_LOG = audit
+        for name, value in originals.items():
+            self.addCleanup(lambda name=name, value=value: setattr(self.panel, name, value))
+
+        first = self.panel.change_intelligence_import_history()
+        second = self.panel.change_intelligence_import_history()
+        status = self.panel.change_intelligence_store().status()
+        self.assertEqual(2, first["imported"])
+        self.assertEqual(0, second["imported"])
+        self.assertEqual(2, second["duplicates"])
+        self.assertEqual(2, status["eventCount"])
+        self.assertEqual("slo:old-incident", status["openIncidents"][0]["incidentKey"])
+
+    def test_infrastructure_mounts_change_intelligence_without_causality_claim(self):
+        source = self.panel.INDEX
+        self.assertIn("mountInfrastructureChangeIntelligence(changeData)", source)
+        self.assertIn("not a claim that the change caused the incident", source)
+        self.assertIn("/api/ops/change-intelligence/capsule", source)
 
     def test_capacity_application_is_evidence_gated_gradual_and_mode_preserving(self):
         fake = type("Store", (), {

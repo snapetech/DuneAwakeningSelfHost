@@ -28,7 +28,8 @@ keys=(
   DUNE_ADMIN_RESTORE_DRILL_EXECUTION_ENABLED DUNE_OPERATIONAL_SLO_ENABLED
   DUNE_ADMIN_OPERATIONAL_SLO_MUTATIONS_ENABLED DUNE_CAPACITY_INTELLIGENCE_ENABLED
   DUNE_CAPACITY_AUTO_APPLY_ENABLED DUNE_DESIRED_STATE_ENABLED
-  DUNE_ADMIN_DESIRED_STATE_MUTATIONS_ENABLED DUNE_ADMIN_MEMORY_MUTATIONS_ENABLED
+  DUNE_ADMIN_DESIRED_STATE_MUTATIONS_ENABLED DUNE_CHANGE_INTELLIGENCE_ENABLED
+  DUNE_ADMIN_MEMORY_MUTATIONS_ENABLED
   DUNE_ADMIN_AUTOSCALER_MUTATIONS_ENABLED DUNE_DISCORD_ADAPTER_ENABLED
   DUNE_ADMIN_ADDON_MUTATIONS_ENABLED DUNE_ADMIN_SERVICE_CONTROL_ENABLED
   DUNE_ADMIN_STATEFUL_SERVICE_CONTROL_ENABLED DUNE_ADMIN_UPDATE_MUTATIONS_ENABLED
@@ -117,6 +118,12 @@ if [[ ! -s "$desired_state_secret_file" ]]; then
   openssl rand -hex 32 > "$desired_state_secret_file"
   chmod 600 "$desired_state_secret_file"
 fi
+change_intelligence_secret_file="$repo_root/config/secrets/change-intelligence-hmac.secret"
+if [[ ! -s "$change_intelligence_secret_file" ]]; then
+  command -v openssl >/dev/null 2>&1 || { printf 'openssl is required to generate the change-intelligence HMAC secret\n' >&2; exit 1; }
+  openssl rand -hex 32 > "$change_intelligence_secret_file"
+  chmod 600 "$change_intelligence_secret_file"
+fi
 set_value DUNE_FEATURE_PARITY_ALLOWED_HOST "$required_host"
 set_value DUNE_HOST_UID "$(id -u)"
 set_value DUNE_HOST_GID "$(id -g)"
@@ -144,6 +151,9 @@ set_value DUNE_DESIRED_STATE_POLICY /workspace/config/desired-state.json
 set_value DUNE_DESIRED_STATE_DATABASE /workspace/backups/desired-state/desired-state.sqlite3
 set_value DUNE_DESIRED_STATE_HMAC_SECRET_FILE /workspace/config/secrets/desired-state-hmac.secret
 set_value DUNE_DESIRED_STATE_POLL_SECONDS 60
+set_value DUNE_CHANGE_INTELLIGENCE_POLICY /workspace/config/change-intelligence.json
+set_value DUNE_CHANGE_INTELLIGENCE_DATABASE /workspace/backups/change-intelligence/change-intelligence.sqlite3
+set_value DUNE_CHANGE_INTELLIGENCE_HMAC_SECRET_FILE /workspace/config/secrets/change-intelligence-hmac.secret
 set_value DUNE_MODERATION_POLL_SECONDS 15
 set_value DUNE_MODERATION_RETENTION_DAYS 90
 set_value DUNE_MODERATION_HEATMAP_CELL_SIZE 25000

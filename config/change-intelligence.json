@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "maxEvents": 1000000,
+  "maxPayloadBytes": 32768,
+  "correlationWindowBeforeSeconds": 3600,
+  "correlationWindowAfterSeconds": 1800,
+  "statusEventLimit": 200,
+  "candidateLimit": 20,
+  "capsuleEvidenceLimit": 200,
+  "historyImportLimit": 10000,
+  "rules": [
+    {"pattern": "slo-incident-opened", "kind": "incident-open", "category": "reliability", "impact": "critical"},
+    {"pattern": "slo-incident-resolved", "kind": "incident-resolved", "category": "reliability", "impact": "info"},
+    {"pattern": "desired-state-drift-opened", "kind": "incident-open", "category": "configuration", "impact": "critical"},
+    {"pattern": "desired-state-drift-resolved", "kind": "incident-resolved", "category": "configuration", "impact": "info"},
+    {"pattern": "desired-state", "kind": "change", "category": "configuration", "impact": "high"},
+    {"pattern": "capacity-intelligence", "kind": "change", "category": "capacity", "impact": "medium"},
+    {"pattern": "service-control", "kind": "change", "category": "lifecycle", "impact": "high"},
+    {"pattern": "restart-*", "kind": "change", "category": "lifecycle", "impact": "high"},
+    {"pattern": "update-*", "kind": "change", "category": "deployment", "impact": "critical"},
+    {"pattern": "settings-*", "kind": "change", "category": "configuration", "impact": "high"},
+    {"pattern": "backup-restore*", "kind": "change", "category": "recovery", "impact": "critical"},
+    {"pattern": "backup-*", "kind": "evidence", "category": "recovery", "impact": "low"},
+    {"pattern": "*-mutation", "kind": "change", "category": "administration", "impact": "high"}
+  ]
+}

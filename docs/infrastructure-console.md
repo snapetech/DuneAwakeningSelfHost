@@ -183,9 +183,10 @@ failure recovery are in [`restore-drills.md`](restore-drills.md).
 ## Reliability Control Room
 
 `GET /api/ops/slo` reports retained, time-weighted reliability rather than only
-the current health response. Eight default objectives cover the Dune database,
+the current health response. Nine default objectives cover the Dune database,
 control plane, currently required maps, backup RPO, verified restore proof,
-memory headroom, admin authentication, and desired-state attestation. Every objective includes 1h, 6h,
+memory headroom, admin authentication, desired-state attestation, and operational
+evidence integrity. Every objective includes 1h, 6h,
 24h, 7d, and 30d availability, coverage, burn rate, and remaining budget.
 
 The background worker records every 60 seconds by default. Gaps are capped so
@@ -227,6 +228,19 @@ reason and exact `SEAL DESIRED STATE`; acknowledgement requires exact
 `ACKNOWLEDGE CONFIGURATION DRIFT`. Acknowledgement records ownership but cannot
 resolve or suppress the finding. See
 [`desired-state-attestation.md`](desired-state-attestation.md).
+
+## Change Intelligence
+
+`GET /api/ops/change-intelligence` returns the privacy-bounded append-only
+operational timeline and incident summaries. The Infrastructure page aligns SLO
+and desired-state incident onset with preceding classified changes. Candidate
+ranking uses bounded recency, declared impact, and shared scope; it is displayed
+as investigation evidence and never as a causal conclusion.
+
+`GET /api/ops/change-intelligence/capsule?incidentKey=...` returns the incident
+open/resolution events, ranked preceding candidates, and bounded follow-up
+evidence. Both routes are authenticated reads. There is deliberately no manual
+browser insertion route. See [`change-intelligence.md`](change-intelligence.md).
 
 ## Database Browser and Query Console
 

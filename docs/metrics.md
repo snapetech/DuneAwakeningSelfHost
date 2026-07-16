@@ -4,10 +4,11 @@ The optional metrics overlay provides the same retained Prometheus outcome as
 the audited Red-Blink stack: Prometheus, node-exporter, cAdvisor, a Postgres
 exporter, and the RabbitMQ Prometheus endpoints already enabled by DASH.
 The private admin service also exposes label-safe `/metrics/slo`,
-`/metrics/capacity`, and `/metrics/desired-state` endpoints. They add retained
-reliability/error-budget, autoscaler-efficiency, and configuration-attestation
-evidence without exporting player identities, notes, coordinates, paths,
-digests, or credentials.
+`/metrics/capacity`, `/metrics/desired-state`, and
+`/metrics/change-intelligence` endpoints. They add retained
+reliability/error-budget, autoscaler-efficiency, configuration-attestation, and
+incident/change-correlation evidence without exporting player identities,
+notes, coordinates, paths, candidates, digests, or credentials.
 
 Start it with the normal world Compose files plus the overlay:
 
@@ -57,7 +58,8 @@ docker compose --env-file .env.example \
 
 `config/metrics/rules/dash.yml` includes collector-freshness, critical SLO,
 fast-burn, exhausted-budget, slow cold-start, desired-state target/unsealed/
-stale/critical-drift, container-health, memory, disk, and Postgres alerts.
+stale/critical-drift, change-ledger target/integrity/candidate-review,
+container-health, memory, disk, and Postgres alerts.
 Validate the exact Prometheus version and rules with:
 
 ```bash

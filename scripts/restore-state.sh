@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/restore-state.sh [--dry-run] [--rabbitmq] [--server-saved] [--config] [--tls] [--community-rewards] [--moderation] [--base-gallery] [--operational-slo] [--capacity-intelligence] [--desired-state] [env-file] <backup-dir>
+Usage: ./scripts/restore-state.sh [--dry-run] [--rabbitmq] [--server-saved] [--config] [--tls] [--community-rewards] [--moderation] [--base-gallery] [--operational-slo] [--capacity-intelligence] [--desired-state] [--change-intelligence] [env-file] <backup-dir>
 
 Restores the Postgres dump from a backup created by scripts/backup-state.sh.
 RabbitMQ and server saved-state archives are restored only when their flags are
@@ -14,7 +14,7 @@ world identity, secrets, local tuning, and RabbitMQ certificate material.
 Examples:
   ./scripts/restore-state.sh --dry-run .env backups/20260519T150000Z
   ./scripts/restore-state.sh .env backups/20260519T150000Z
-  ./scripts/restore-state.sh --rabbitmq --server-saved --config --tls --community-rewards --moderation --base-gallery --operational-slo --capacity-intelligence --desired-state .env backups/20260519T150000Z
+  ./scripts/restore-state.sh --rabbitmq --server-saved --config --tls --community-rewards --moderation --base-gallery --operational-slo --capacity-intelligence --desired-state --change-intelligence .env backups/20260519T150000Z
 EOF
 }
 
@@ -29,6 +29,7 @@ restore_base_gallery=false
 restore_operational_slo=false
 restore_capacity_intelligence=false
 restore_desired_state=false
+restore_change_intelligence=false
 
 while [[ "${1:-}" == --* ]]; do
   case "$1" in
@@ -74,6 +75,10 @@ while [[ "${1:-}" == --* ]]; do
       ;;
     --desired-state)
       restore_desired_state=true
+      shift
+      ;;
+    --change-intelligence)
+      restore_change_intelligence=true
       shift
       ;;
     -h|--help)
@@ -204,6 +209,10 @@ if [[ "$restore_desired_state" == true && ! -f "${backup_dir}/desired-state.sqli
   printf 'desired-state snapshot not found: %s\n' "${backup_dir}/desired-state.sqlite3" >&2
   exit 1
 fi
+if [[ "$restore_change_intelligence" == true && ! -f "${backup_dir}/change-intelligence.sqlite3" ]]; then
+  printf 'change-intelligence snapshot not found: %s\n' "${backup_dir}/change-intelligence.sqlite3" >&2
+  exit 1
+fi
 
 if [[ "$restore_desired_state" == true ]]; then
   desired_policy="config/desired-state.json"
@@ -225,6 +234,29 @@ import desired_state
 result=desired_state.Store(sys.argv[1],sys.argv[2],sys.argv[3]).verify()
 if not result.get("ok"):
     raise SystemExit(f"desired-state HMAC verification failed: {result}")
+PY
+fi
+
+if [[ "$restore_change_intelligence" == true ]]; then
+  change_policy="config/change-intelligence.json"
+  change_secret="config/secrets/change-intelligence-hmac.secret"
+  change_verify_tmp=""
+  if [[ "$restore_config" == true ]]; then
+    change_verify_tmp="$(mktemp -d)"
+    trap 'rm -rf "${desired_verify_tmp:-}" "${change_verify_tmp:-}"' EXIT
+    mkdir -p "$change_verify_tmp/config/secrets"
+    tar -xOf "${backup_dir}/config.tgz" config/change-intelligence.json > "$change_verify_tmp/config/change-intelligence.json"
+    tar -xOf "${backup_dir}/config.tgz" config/secrets/change-intelligence-hmac.secret > "$change_verify_tmp/config/secrets/change-intelligence-hmac.secret"
+    chmod 600 "$change_verify_tmp/config/secrets/change-intelligence-hmac.secret"
+    change_policy="$change_verify_tmp/config/change-intelligence.json"
+    change_secret="$change_verify_tmp/config/secrets/change-intelligence-hmac.secret"
+  fi
+  PYTHONPATH=admin python3 - "${backup_dir}/change-intelligence.sqlite3" "$change_policy" "$change_secret" <<'PY'
+import sys
+import change_intelligence
+result=change_intelligence.Store(sys.argv[1],sys.argv[2],sys.argv[3]).verify()
+if not result.get("ok"):
+    raise SystemExit(f"change-intelligence HMAC verification failed: {result}")
 PY
 fi
 
@@ -250,6 +282,7 @@ if [[ "$dry_run" == true ]]; then
   printf 'restore_operational_slo=%s\n' "$restore_operational_slo"
   printf 'restore_capacity_intelligence=%s\n' "$restore_capacity_intelligence"
   printf 'restore_desired_state=%s\n' "$restore_desired_state"
+  printf 'restore_change_intelligence=%s\n' "$restore_change_intelligence"
   printf 'backup_world_unique_name=%s\n' "${backup_world:-}"
   printf 'current_world_unique_name=%s\n' "${current_world:-}"
   exit 0
@@ -294,6 +327,12 @@ if [[ "$restore_desired_state" == true ]]; then
   mkdir -p backups/desired-state
   rm -f backups/desired-state/desired-state.sqlite3-wal backups/desired-state/desired-state.sqlite3-shm
   install -m 600 "${backup_dir}/desired-state.sqlite3" backups/desired-state/desired-state.sqlite3
+fi
+if [[ "$restore_change_intelligence" == true ]]; then
+  printf 'restoring HMAC-verified change-intelligence ledger from %s\n' "${backup_dir}/change-intelligence.sqlite3"
+  mkdir -p backups/change-intelligence
+  rm -f backups/change-intelligence/change-intelligence.sqlite3-wal backups/change-intelligence/change-intelligence.sqlite3-shm
+  install -m 600 "${backup_dir}/change-intelligence.sqlite3" backups/change-intelligence/change-intelligence.sqlite3
 fi
 
 if [[ "$restore_config" == true ]]; then
