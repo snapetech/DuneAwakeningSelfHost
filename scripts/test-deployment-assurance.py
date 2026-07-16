@@ -209,6 +209,7 @@ class DeploymentAssuranceTests(unittest.TestCase):
         self.assertIn("tar -C \"$repo_root\" -czf -", push)
         self.assertIn("--stage $stage_q", push)
         self.assertIn("DUNE_PRODUCTION_HOST=$required_q", push)
+        self.assertIn('remote_env="${remote_workspace%/}/$remote_env"', push)
 
     def test_staged_apply_is_verified_atomic_and_has_source_rollback(self):
         stage = self.root / "stage"

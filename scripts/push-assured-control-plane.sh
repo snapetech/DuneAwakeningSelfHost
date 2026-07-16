@@ -35,6 +35,9 @@ done
 [[ "$required_host" =~ ^[A-Za-z0-9_.-]{1,128}$ ]] || { printf 'invalid required hostname\n' >&2; exit 2; }
 [[ "$remote_workspace" == /* && "$remote_workspace" != *$'\n'* ]] || { printf 'remote workspace must be absolute\n' >&2; exit 2; }
 [[ "$remote_env" != *$'\n'* ]] || { printf 'invalid remote env path\n' >&2; exit 2; }
+if [[ "$remote_env" != /* ]]; then
+  remote_env="${remote_workspace%/}/$remote_env"
+fi
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
