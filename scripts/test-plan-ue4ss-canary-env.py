@@ -1596,7 +1596,7 @@ class PlanUe4ssCanaryEnvTests(unittest.TestCase):
         self.assertEqual(env["DUNE_WIN_CLIENT_PROBE_LUA_REFLECTION_SELF_TEST"], "false")
         self.assertEqual(env["DUNE_WIN_CLIENT_PROBE_UE_PROCESS_EVENT_VTABLE_SCAN"], "true")
         self.assertEqual(env["DUNE_WIN_CLIENT_PROBE_UE_PROCESS_EVENT_VTABLE_SCAN_SLOTS"], "128")
-        self.assertEqual(env["DUNE_WIN_CLIENT_PROBE_UE_PROCESS_EVENT_VTABLE_SCAN_MAX_OBJECTS"], "512")
+        self.assertEqual(env["DUNE_WIN_CLIENT_PROBE_UE_PROCESS_EVENT_VTABLE_SCAN_MAX_OBJECTS"], "64")
         self.assertNotIn("DUNE_WIN_CLIENT_PROBE_UE_PROCESS_EVENT_HOOK_PROBE", env)
         note_text = " ".join(plan["notes"])
         self.assertIn("wide read-only GUObjectArray walk", note_text)

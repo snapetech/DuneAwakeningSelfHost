@@ -4254,11 +4254,11 @@ def plan_env(args, report, anchor_export=None):
             set_env(
                 lines,
                 f"{prefix}_UE_PROCESS_EVENT_VTABLE_SCAN_MAX_OBJECTS",
-                "512",
-                "bound read-only ProcessEvent vtable candidate scan across runtime UObjectArray entries",
+                "64",
+                "bound read-only ProcessEvent vtable candidate logging while sampling multiple UObject classes",
             )
             notes.append(
-                "Runtime roots are validated but target dispatch anchors are still missing; next canary should scan runtime UObject vtables for ProcessEvent candidates."
+                "Runtime roots are validated but target dispatch anchors are still missing; next canary should scan runtime UObject vtables for ProcessEvent candidates using a 64-object sample without repeating the prior 65,536-row trace."
             )
 
     if stage in ("reflection", "hook-probe", "live-hook", "lua-dispatch", "complete") or (

@@ -86,6 +86,10 @@ Always compare your `.env` image pin with the Steam package installed on your ho
 - Optional public static site package with status, settings, player list, and Hagga Basin map.
 - Artificial Exchange as a first-class economy feature: reviewed price catalog, artificial buyer, validated seller settlement, optional buyer funding, controlled seeded listings, readiness checks, smoke tests, admin-panel controls, optional systemd services, and watchdog timer.
 - Publication and validation guardrails for keeping local state and secrets out of shared artifacts.
+- Receipt-bound, transactional deployment for reviewed Windows client loader,
+  Lua, and additive Pak artifacts, with confined paths, build/source/target
+  checksums, fail-closed manifests, installed-file/backup verification, and
+  retryable drift-safe rollback plus a whole-state audit.
 - Immutable commit/SHA-256 release installation with atomic activation,
   persistent state, no-restart rollback, and malicious-archive preflight;
   clean-host Ansible, secret-free cloud-init, token-authenticated Proxmox,
@@ -846,8 +850,11 @@ Start here:
 - [`docs/cvar-catalog.md`](docs/cvar-catalog.md): binary-hash-bound console
   catalogue generation/search and its relationship to the shipped INI index.
 - [`docs/client-deployment.md`](docs/client-deployment.md): transactional,
-  reversible loader/Lua/Pak-overlay deployment and the live UE4SS canary
-  boundary.
+  receipt-bound reversible loader/Lua/Pak-overlay deployment, verified backup
+  lifecycle, and the live UE4SS canary boundary.
+- [`docs/windows-client-loader-canary-2026-07-15.md`](docs/windows-client-loader-canary-2026-07-15.md):
+  build-bound live proxy/root/reflection evidence, negative findings, remaining
+  dispatch gates, and verified client cleanup.
 - [`docs/infrastructure-console.md`](docs/infrastructure-console.md): scoped service control/logs, verified backup lifecycle, database query/row/password controls, and update/repair workflows.
 - [`docs/bootstrap-console.md`](docs/bootstrap-console.md): browser first-run settings, preflight, TLS, database initialization, and stack reconcile.
 - [`docs/autoscaling-memory.md`](docs/autoscaling-memory.md): map modes, Director travel demand, idle scale-down, live limits, and memory balancing.
