@@ -319,6 +319,12 @@ class Store:
         for path in (self.root, self.evidence_root):
             path.mkdir(parents=True, exist_ok=True)
             self._secure_owner(path)
+        for path in self.root.glob("deployment-window-*.json"):
+            if path.is_file() and not path.is_symlink():
+                self._secure_owner(path)
+        for path in self.evidence_root.glob("deployment-assurance-*.signed.json"):
+            if path.is_file() and not path.is_symlink():
+                self._secure_owner(path)
 
     def _window_path(self, window_id):
         if not WINDOW_PATTERN.fullmatch(str(window_id or "")):
