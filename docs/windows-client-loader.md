@@ -1923,7 +1923,10 @@ packaged deployment test receipt, complete staged tree, and final tar
 structure/checksum before reporting success. It writes sibling
 `.verification.txt` and `.verification.json` receipts beside the archive. See
 `docs/client-deployment.md` for the reviewed receipt, audit, and retryable
-rollback workflow.
+rollback workflow. The package also contains `package-provenance.json`, and its
+archive metadata and generated receipts are normalized for repeatable output.
+See `docs/reproducible-loader-packages.md` for the exact build-input contract
+and verification procedure.
 
 Default package location:
 

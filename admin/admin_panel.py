@@ -1504,6 +1504,23 @@ def run_restart_command(command, job, phase):
 
 
 def restart_online_snapshot():
+    required_partition_ids = list(range(1, len(GAME_MAP_SERVICES) + 1))
+    required_services = list(GAME_MAP_SERVICES)
+    verification_mode = "full-farm"
+    try:
+        autoscaler_state = read_autoscaler_state()
+    except Exception:
+        autoscaler_state = None
+    if autoscaler_state and autoscaler_state.get("enabled"):
+        always_on = [
+            service
+            for service in GAME_MAP_SERVICES
+            if autoscaler_state.get("modes", {}).get(service) == "always-on"
+        ]
+        if always_on:
+            required_services = always_on
+            required_partition_ids = [GAME_MAP_SERVICES.index(service) + 1 for service in always_on]
+            verification_mode = "autoscaler-always-on"
     rows = query("""
         select
           count(*)::int as expected,
@@ -1525,7 +1542,8 @@ def restart_online_snapshot():
         from dune.world_partition wp
         left join dune.farm_state fs on fs.server_id = wp.server_id
         left join dune.active_server_ids asi on asi.server_id = wp.server_id
-    """)
+        where wp.partition_id = any(%s)
+    """, (required_partition_ids,))
     row = rows[0] if rows else {}
     expected = int(row.get("expected") or 0)
     online = int(row.get("online") or 0)
@@ -1537,6 +1555,8 @@ def restart_online_snapshot():
         "readyOnline": ready_online,
         "alive": int(row.get("alive") or 0),
         "active": int(row.get("active") or 0),
+        "verificationMode": verification_mode,
+        "requiredServices": required_services,
     }
 
 

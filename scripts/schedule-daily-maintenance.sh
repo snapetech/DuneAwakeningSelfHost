@@ -142,15 +142,16 @@ PY
 )"
 
 args=(-fsS -H "Content-Type: application/json" -X POST --data "$body")
-case "${require_token,,}" in
-  1|true|yes|on)
-    if [[ -z "$token" ]]; then
+if [[ -n "$token" ]]; then
+  args+=(-H "Authorization: Bearer $token")
+else
+  case "${require_token,,}" in
+    1|true|yes|on)
       printf 'DUNE_ADMIN_REQUIRE_TOKEN is enabled but DUNE_ADMIN_TOKEN is empty\n' >&2
       exit 1
-    fi
-    args+=(-H "Authorization: Bearer $token")
-    ;;
-esac
+      ;;
+  esac
+fi
 
 curl "${args[@]}" "http://${admin_host}:${admin_port}/api/ops/restart"
 printf '\n'

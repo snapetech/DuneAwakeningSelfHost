@@ -3,13 +3,17 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
+source "$repo_root/scripts/loader-package-common.sh"
+loader_package_init_metadata "$repo_root"
 build_script="$repo_root/scripts/build-windows-client-loader.sh"
 build_dir="${DUNE_WINDOWS_CLIENT_LOADER_BUILD_DIR:-$repo_root/build/windows-client-loader}"
 loader="$build_dir/dune_win_client_probe_loader.dll"
 dist_root="${DUNE_WINDOWS_CLIENT_LOADER_DIST_DIR:-$repo_root/dist/windows-client-loader}"
-default_version="$(git -C "$repo_root" rev-parse --short HEAD 2>/dev/null || date -u +%Y%m%dT%H%M%SZ)"
-if ! git -C "$repo_root" diff --quiet --ignore-submodules -- 2>/dev/null ||
-   ! git -C "$repo_root" diff --cached --quiet --ignore-submodules -- 2>/dev/null; then
+default_version="${LOADER_PACKAGE_SOURCE_COMMIT:0:7}"
+if [ "$LOADER_PACKAGE_SOURCE_COMMIT" = unknown ]; then
+  default_version="$LOADER_PACKAGE_SOURCE_DATE_EPOCH"
+fi
+if [ "$LOADER_PACKAGE_SOURCE_DIRTY" = true ]; then
   default_version="${default_version}-dirty"
 fi
 version="${DUNE_WINDOWS_CLIENT_LOADER_VERSION:-$default_version}"
@@ -121,6 +125,7 @@ cp "$repo_root/scripts/test-client-deployment.py" "$stage/tests/test-client-depl
 cp "$repo_root/docs/client-loader-support.md" "$stage/docs/client-loader-support.md"
 cp "$repo_root/docs/windows-client-loader.md" "$stage/docs/windows-client-loader.md"
 cp "$repo_root/docs/client-deployment.md" "$stage/docs/client-deployment.md"
+cp "$repo_root/docs/reproducible-loader-packages.md" "$stage/docs/reproducible-loader-packages.md"
 cp "$repo_root/docs/windows-client-loader-canary-2026-06-16.md" "$stage/docs/windows-client-loader-canary-2026-06-16.md"
 cp "$repo_root/docs/windows-client-loader-canary-2026-07-15.md" "$stage/docs/windows-client-loader-canary-2026-07-15.md"
 cp "$repo_root/docs/windows-client-loader-xrefs-2026-06-16.md" "$stage/docs/windows-client-loader-xrefs-2026-06-16.md"
@@ -308,8 +313,11 @@ cat > "$stage/README.md" <<EOF
 # Dune Windows Client Loader
 
 Package: ${package_name}
-Built: $(date -u +%Y-%m-%dT%H:%M:%SZ)
-Source commit: $(git -C "$repo_root" rev-parse HEAD 2>/dev/null || printf unknown)
+Built: ${LOADER_PACKAGE_BUILT_UTC}
+Source commit: ${LOADER_PACKAGE_SOURCE_COMMIT}
+Source tree: ${LOADER_PACKAGE_SOURCE_TREE}
+Source dirty: ${LOADER_PACKAGE_SOURCE_DIRTY}
+Source date epoch: ${LOADER_PACKAGE_SOURCE_DATE_EPOCH}
 Platform: ${platform}
 
 This is a Windows PE client-process proxy/probe for Dune under Wine/Proton. It
@@ -336,10 +344,12 @@ image mappings for configured anchors. The Dune shipping executable imports
 - tests/: unit tests for the packaged deployment and analysis tools.
 - docs/client-loader-support.md: shared Linux/Windows support matrix.
 - docs/client-deployment.md: transactional deployment and recovery runbook.
+- docs/reproducible-loader-packages.md: deterministic-build and provenance contract.
 - docs/ue4ss-portability-contract.md: repo-generated all-target portability contract.
 - loader-artifact-verification.txt and loader-artifact-verification.json: package-root artifact verification outputs.
 - The packaged tarball also writes sibling .verification.txt and .verification.json reports that verify the staged root, safe tar layout, and portable .sha256 sidecar together.
 - client-deployment-test.txt: packaged transactional-manager test receipt.
+- package-provenance.json: source commit/tree/dirty state, reproducible epoch, build type, and loader digest.
 - docs/windows-client-loader-canary-2026-06-16.md: real Proton client canary result.
 - docs/windows-client-loader-canary-2026-07-15.md: build-bound proxy/root/reflection canary and verified cleanup.
 - docs/windows-client-loader-xrefs-2026-06-16.md: real Proton client static xref follow-up.
@@ -592,7 +602,7 @@ inconvenient; env output is chunked. Use \`--manifest-json\` with
 client builds before canary scanning.
 EOF
 
-file "$loader" > "$stage/abi/file.txt"
+file -b "$loader" > "$stage/abi/file.txt"
 if command -v llvm-objdump >/dev/null 2>&1; then
   llvm-objdump -p "$loader" > "$stage/abi/pe-headers.txt"
 fi
@@ -602,8 +612,31 @@ fi
 
 (
   cd "$stage"
-  python3 -m unittest tests/test-client-deployment.py > client-deployment-test.txt 2>&1
+  test_output="$(mktemp)"
+  trap 'rm -f "$test_output"' EXIT
+  if ! PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests/test-client-deployment.py > "$test_output" 2>&1; then
+    cat "$test_output" >&2
+    exit 1
+  fi
+  test_count="$(sed -n 's/^Ran \([0-9][0-9]*\) tests.*$/\1/p' "$test_output")"
+  if [ -z "$test_count" ]; then
+    cat "$test_output" >&2
+    echo "could not parse packaged deployment test count" >&2
+    exit 1
+  fi
+  printf 'schemaVersion=dune-loader-package-test-receipt/v1\nsuite=client-deployment\ntestCount=%s\npassed=true\n' \
+    "$test_count" > client-deployment-test.txt
 )
+
+loader_package_write_provenance \
+  "$stage/package-provenance.json" \
+  "$package_name" \
+  windows-client \
+  "$version" \
+  "$platform" \
+  "$loader" \
+  lib/dune_win_client_probe_loader.dll \
+  "${CMAKE_BUILD_TYPE:-RelWithDebInfo}"
 
 (
   cd "$stage"
@@ -618,7 +651,7 @@ fi
   find . -type f ! -name SHA256SUMS -print | sort | sed 's#^\./##' | xargs sha256sum > SHA256SUMS
 )
 
-tar -C "$dist_root" -czf "$archive" "$package_name"
+loader_package_create_archive "$dist_root" "$package_name" "$archive"
 archive_digest="$(sha256sum "$archive" | awk '{print $1}')"
 printf '%s  %s\n' "$archive_digest" "$(basename "$archive")" > "${archive}.sha256"
 python3 "$repo_root/scripts/verify-loader-artifacts.py" \

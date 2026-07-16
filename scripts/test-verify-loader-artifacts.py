@@ -76,6 +76,31 @@ def write_required_package_layout(root, target, skip=()):
                 ),
                 encoding="utf-8",
             )
+        elif relative == "package-provenance.json":
+            loader = root / module.PACKAGE_LOADER_PATHS[target]
+            loader_bytes = loader.read_bytes() if loader.is_file() else b""
+            path.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": "dune-loader-package-provenance/v1",
+                        "packageName": root.name,
+                        "target": target,
+                        "version": "test",
+                        "platform": module.PACKAGE_PLATFORMS[target],
+                        "builtUtc": "1970-01-01T00:00:00Z",
+                        "sourceDateEpoch": 0,
+                        "source": {"commit": "0" * 40, "tree": "1" * 40, "dirty": False},
+                        "build": {"type": "RelWithDebInfo"},
+                        "loader": {
+                            "path": module.PACKAGE_LOADER_PATHS[target],
+                            "sha256": hashlib.sha256(loader_bytes).hexdigest(),
+                            "size": len(loader_bytes),
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
         elif relative == "docs/ue4ss-portability-contract.md":
             path.write_text("# UE4SS Portability Contract\n\n- Passed: `true`\n", encoding="utf-8")
         elif relative in module.PACKAGE_DOC_MARKERS[target]:
@@ -260,6 +285,46 @@ class VerifyLoaderArtifactsTests(unittest.TestCase):
 
         self.assertFalse(row["passed"], row)
         self.assertIn("lib/libdune_server_probe_loader.so", row["missing"])
+
+    def test_verify_package_root_requires_provenance_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_required_package_layout(root, "windows-client", skip={"package-provenance.json"})
+
+            row = module.verify_package_root("windows-client", root)
+
+        self.assertFalse(row["passed"], row)
+        self.assertIn("package-provenance.json", row["missing"])
+
+    def test_verify_package_root_rejects_loader_provenance_mismatch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_required_package_layout(root, "windows-client")
+            path = root / "package-provenance.json"
+            provenance = json.loads(path.read_text(encoding="utf-8"))
+            provenance["loader"]["sha256"] = "f" * 64
+            path.write_text(json.dumps(provenance), encoding="utf-8")
+            write_package_checksums(root, "windows-client")
+
+            row = module.verify_package_root("windows-client", root)
+
+        self.assertFalse(row["passed"], row)
+        self.assertIn("package-provenance.json:loader.sha256", row["missing"])
+
+    def test_verify_package_root_rejects_inconsistent_provenance_epoch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_required_package_layout(root, "linux-client")
+            path = root / "package-provenance.json"
+            provenance = json.loads(path.read_text(encoding="utf-8"))
+            provenance["builtUtc"] = "2026-01-01T00:00:00Z"
+            path.write_text(json.dumps(provenance), encoding="utf-8")
+            write_package_checksums(root, "linux-client")
+
+            row = module.verify_package_root("linux-client", root)
+
+        self.assertFalse(row["passed"], row)
+        self.assertIn("package-provenance.json:builtUtc", row["missing"])
 
     def test_verify_package_root_requires_windows_proxy_alias(self):
         with tempfile.TemporaryDirectory() as tmp:

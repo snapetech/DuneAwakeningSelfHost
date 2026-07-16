@@ -3,13 +3,17 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
+source "$repo_root/scripts/loader-package-common.sh"
+loader_package_init_metadata "$repo_root"
 build_script="$repo_root/scripts/build-linux-server-loader.sh"
 build_dir="${DUNE_LINUX_SERVER_LOADER_BUILD_DIR:-$repo_root/build/linux-server-loader}"
 loader="$build_dir/libdune_server_probe_loader.so"
 dist_root="${DUNE_LINUX_SERVER_LOADER_DIST_DIR:-$repo_root/dist/linux-server-loader}"
-default_version="$(git -C "$repo_root" rev-parse --short HEAD 2>/dev/null || date -u +%Y%m%dT%H%M%SZ)"
-if ! git -C "$repo_root" diff --quiet --ignore-submodules -- 2>/dev/null ||
-   ! git -C "$repo_root" diff --cached --quiet --ignore-submodules -- 2>/dev/null; then
+default_version="${LOADER_PACKAGE_SOURCE_COMMIT:0:7}"
+if [ "$LOADER_PACKAGE_SOURCE_COMMIT" = unknown ]; then
+  default_version="$LOADER_PACKAGE_SOURCE_DATE_EPOCH"
+fi
+if [ "$LOADER_PACKAGE_SOURCE_DIRTY" = true ]; then
   default_version="${default_version}-dirty"
 fi
 version="${DUNE_LINUX_SERVER_LOADER_VERSION:-$default_version}"
@@ -167,6 +171,7 @@ cp "$repo_root/scripts/test-plan-ue4ss-canary-env.py" "$stage/tests/test-plan-ue
 cp "$repo_root/scripts/test-canary-linux-server-loader.py" "$stage/tests/test-canary-linux-server-loader.py"
 cp "$repo_root/scripts/smoke-linux-server-loader.sh" "$stage/examples/smoke-linux-server-loader.sh"
 cp "$repo_root/docs/ue4ss-linux-loader-evaluation.md" "$stage/docs/ue4ss-linux-loader-evaluation.md"
+cp "$repo_root/docs/reproducible-loader-packages.md" "$stage/docs/reproducible-loader-packages.md"
 if [ -f "$repo_root/docs/linux-server-loader-canary-2026-06-16.md" ]; then
   cp "$repo_root/docs/linux-server-loader-canary-2026-06-16.md" "$stage/docs/linux-server-loader-canary-2026-06-16.md"
 fi
@@ -449,8 +454,11 @@ cat > "$stage/README.md" <<EOF
 # Dune Linux Server Loader
 
 Package: ${package_name}
-Built: $(date -u +%Y-%m-%dT%H:%M:%SZ)
-Source commit: $(git -C "$repo_root" rev-parse HEAD 2>/dev/null || printf unknown)
+Built: ${LOADER_PACKAGE_BUILT_UTC}
+Source commit: ${LOADER_PACKAGE_SOURCE_COMMIT}
+Source tree: ${LOADER_PACKAGE_SOURCE_TREE}
+Source dirty: ${LOADER_PACKAGE_SOURCE_DIRTY}
+Source date epoch: ${LOADER_PACKAGE_SOURCE_DATE_EPOCH}
 Platform: ${platform}
 
 This is a native Linux server-process loader/probe for this Dune self-host repo.
@@ -477,10 +485,12 @@ for UE candidates, and loader-owned hook/mod/Lua/ProcessEvent-shaped self-tests.
 - examples/smoke-linux-server-loader.sh: local loader-owned dispatch/Lua smoke test.
 - examples/smoke-cached-funcom-image.sh: one-off Docker smoke test for a cached image.
 - docs/ue4ss-portability-contract.md: repo-generated all-target portability contract.
+- docs/reproducible-loader-packages.md: deterministic-build and provenance contract.
 - loader-artifact-verification.txt and loader-artifact-verification.json: package-root artifact verification outputs.
 - The packaged tarball also writes sibling .verification.txt and .verification.json reports that verify the staged root, tarball, and tarball .sha256 sidecar together.
 - abi/: dependency and symbol-version report.
 - SHA256SUMS: checksums for package contents.
+- package-provenance.json: source identity, normalized build epoch, build type, and loader digest.
 
 ## Safe Smoke Test
 
@@ -1099,14 +1109,24 @@ EOF
 
 readelf -d "$loader" > "$stage/abi/readelf-dynamic.txt"
 objdump -T "$loader" | grep -E 'GLIBC|GLIBCXX|CXXABI|GCC_' | sort -u > "$stage/abi/symbol-versions.txt" || true
-file "$loader" > "$stage/abi/file.txt"
+file -b "$loader" > "$stage/abi/file.txt"
+
+loader_package_write_provenance \
+  "$stage/package-provenance.json" \
+  "$package_name" \
+  linux-server \
+  "$version" \
+  "$platform" \
+  "$loader" \
+  lib/libdune_server_probe_loader.so \
+  "${CMAKE_BUILD_TYPE:-RelWithDebInfo}"
 
 (
   cd "$stage"
   find . -type f ! -name SHA256SUMS -print | sort | sed 's#^\./##' | xargs sha256sum > SHA256SUMS
 )
 
-tar -C "$dist_root" -czf "$archive" "$package_name"
+loader_package_create_archive "$dist_root" "$package_name" "$archive"
 archive_digest="$(sha256sum "$archive" | awk '{print $1}')"
 printf '%s  %s\n' "$archive_digest" "$(basename "$archive")" > "${archive}.sha256"
 python3 "$repo_root/scripts/verify-loader-artifacts.py" \

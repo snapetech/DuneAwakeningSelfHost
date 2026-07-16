@@ -102,6 +102,12 @@ maintenance run with an already-current Steam build does not reboot the host.
 DUNE_DAILY_RESTART_ALLOW_OUTSIDE_WINDOW=true ./scripts/schedule-daily-maintenance.sh
 ```
 
+The scheduler sends `DUNE_ADMIN_TOKEN` as a Bearer credential whenever the
+token is configured, even when `DUNE_ADMIN_REQUIRE_TOKEN=false`. This supports
+route-level access control and owner audit attribution on otherwise trusted
+private deployments. If `DUNE_ADMIN_REQUIRE_TOKEN=true` and the token is empty,
+the scheduler fails before making the request.
+
 ## Restart Flow
 
 Executed restart jobs use this sequence:

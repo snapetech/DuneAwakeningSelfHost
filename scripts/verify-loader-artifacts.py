@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import datetime
 import hashlib
 import json
 import subprocess
@@ -107,6 +108,8 @@ PACKAGE_LAYOUTS = {
         "docs/ue4ss-linux-loader-evaluation.md",
         "docs/ue4ss-portability-contract.json",
         "docs/ue4ss-portability-contract.md",
+        "docs/reproducible-loader-packages.md",
+        "package-provenance.json",
         "README.md",
     ),
     "linux-client": (
@@ -131,6 +134,8 @@ PACKAGE_LAYOUTS = {
         "docs/linux-client-loader.md",
         "docs/ue4ss-portability-contract.json",
         "docs/ue4ss-portability-contract.md",
+        "docs/reproducible-loader-packages.md",
+        "package-provenance.json",
     ),
     "windows-client": (
         "lib/dune_win_client_probe_loader.dll",
@@ -159,9 +164,23 @@ PACKAGE_LAYOUTS = {
         "docs/windows-client-loader-canary-2026-07-15.md",
         "docs/ue4ss-portability-contract.json",
         "docs/ue4ss-portability-contract.md",
+        "docs/reproducible-loader-packages.md",
         "client-deployment-test.txt",
+        "package-provenance.json",
         "README.md",
     ),
+}
+
+PACKAGE_LOADER_PATHS = {
+    "linux-server": "lib/libdune_server_probe_loader.so",
+    "linux-client": "lib/libdune_client_probe_loader.so",
+    "windows-client": "lib/dune_win_client_probe_loader.dll",
+}
+
+PACKAGE_PLATFORMS = {
+    "linux-server": "linux-x86_64",
+    "linux-client": "linux-x86_64",
+    "windows-client": "windows-x86_64",
 }
 
 PACKAGE_EXECUTABLES = {
@@ -648,8 +667,10 @@ PACKAGE_FILE_MARKERS = {
             "test_audit_reports_clean_active_state",
         ),
         "client-deployment-test.txt": (
-            "Ran 24 tests",
-            "OK",
+            "schemaVersion=dune-loader-package-test-receipt/v1",
+            "suite=client-deployment",
+            "testCount=",
+            "passed=true",
         ),
     },
 }
@@ -901,6 +922,60 @@ def verify_package_root(target, package_root):
                 missing.append("docs/ue4ss-portability-contract.md:heading")
             if "- Passed: `true`" not in contract_md:
                 missing.append("docs/ue4ss-portability-contract.md:passed")
+    provenance_path = root / "package-provenance.json"
+    provenance = None
+    if provenance_path.is_file():
+        try:
+            provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            missing.append("package-provenance.json:invalid-json")
+        else:
+            if not isinstance(provenance, dict):
+                missing.append("package-provenance.json:not-object")
+            else:
+                if provenance.get("schemaVersion") != "dune-loader-package-provenance/v1":
+                    missing.append("package-provenance.json:schemaVersion")
+                if provenance.get("packageName") != root.resolve().name:
+                    missing.append("package-provenance.json:packageName")
+                if provenance.get("target") != target:
+                    missing.append("package-provenance.json:target")
+                if provenance.get("platform") != PACKAGE_PLATFORMS[target]:
+                    missing.append("package-provenance.json:platform")
+                source = provenance.get("source")
+                if not isinstance(source, dict):
+                    missing.append("package-provenance.json:source")
+                else:
+                    for key in ("commit", "tree"):
+                        value = source.get(key)
+                        if value != "unknown" and (not isinstance(value, str) or len(value) != 40 or
+                                                   any(char not in "0123456789abcdef" for char in value)):
+                            missing.append(f"package-provenance.json:source.{key}")
+                    if not isinstance(source.get("dirty"), bool):
+                        missing.append("package-provenance.json:source.dirty")
+                epoch = provenance.get("sourceDateEpoch")
+                built_utc = provenance.get("builtUtc")
+                if not isinstance(epoch, int) or epoch < 0:
+                    missing.append("package-provenance.json:sourceDateEpoch")
+                else:
+                    expected_built = datetime.datetime.fromtimestamp(
+                        epoch, datetime.timezone.utc
+                    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    if built_utc != expected_built:
+                        missing.append("package-provenance.json:builtUtc")
+                loader_info = provenance.get("loader")
+                expected_loader_relative = PACKAGE_LOADER_PATHS[target]
+                expected_loader = root / expected_loader_relative
+                if not isinstance(loader_info, dict):
+                    missing.append("package-provenance.json:loader")
+                else:
+                    if loader_info.get("path") != expected_loader_relative:
+                        missing.append("package-provenance.json:loader.path")
+                    if expected_loader.is_file():
+                        expected_digest = hashlib.sha256(expected_loader.read_bytes()).hexdigest()
+                        if loader_info.get("sha256") != expected_digest:
+                            missing.append("package-provenance.json:loader.sha256")
+                        if loader_info.get("size") != expected_loader.stat().st_size:
+                            missing.append("package-provenance.json:loader.size")
     return {
         "target": target,
         "passed": not missing,
@@ -912,6 +987,7 @@ def verify_package_root(target, package_root):
             "checksumPath": str(checksum_path),
             "portabilityContractPath": str(contract_path),
             "portabilityContractMarkdownPath": str(contract_md_path),
+            "provenancePath": str(provenance_path),
         },
     }
 

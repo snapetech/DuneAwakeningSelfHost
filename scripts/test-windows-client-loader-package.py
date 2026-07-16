@@ -35,9 +35,11 @@ class WindowsClientLoaderPackageTests(unittest.TestCase):
 
     def test_package_emits_test_and_verification_receipts(self):
         self.assertIn(
-            "python3 -m unittest tests/test-client-deployment.py > client-deployment-test.txt 2>&1",
+            "PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests/test-client-deployment.py",
             self.package,
         )
+        self.assertIn("schemaVersion=dune-loader-package-test-receipt/v1", self.package)
+        self.assertIn("testCount=%s", self.package)
         self.assertIn("loader-artifact-verification.txt", self.package)
         self.assertIn("loader-artifact-verification.json", self.package)
         self.assertIn('--package-archive "$archive"', self.package)

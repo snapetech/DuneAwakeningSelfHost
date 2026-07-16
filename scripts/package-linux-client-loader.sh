@@ -3,13 +3,17 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
+source "$repo_root/scripts/loader-package-common.sh"
+loader_package_init_metadata "$repo_root"
 build_script="$repo_root/scripts/build-linux-client-loader.sh"
 build_dir="${DUNE_LINUX_CLIENT_LOADER_BUILD_DIR:-$repo_root/build/linux-client-loader}"
 loader="$build_dir/libdune_client_probe_loader.so"
 dist_root="${DUNE_LINUX_CLIENT_LOADER_DIST_DIR:-$repo_root/dist/linux-client-loader}"
-default_version="$(git -C "$repo_root" rev-parse --short HEAD 2>/dev/null || date -u +%Y%m%dT%H%M%SZ)"
-if ! git -C "$repo_root" diff --quiet --ignore-submodules -- 2>/dev/null ||
-   ! git -C "$repo_root" diff --cached --quiet --ignore-submodules -- 2>/dev/null; then
+default_version="${LOADER_PACKAGE_SOURCE_COMMIT:0:7}"
+if [ "$LOADER_PACKAGE_SOURCE_COMMIT" = unknown ]; then
+  default_version="$LOADER_PACKAGE_SOURCE_DATE_EPOCH"
+fi
+if [ "$LOADER_PACKAGE_SOURCE_DIRTY" = true ]; then
   default_version="${default_version}-dirty"
 fi
 version="${DUNE_LINUX_CLIENT_LOADER_VERSION:-$default_version}"
@@ -138,6 +142,7 @@ cp "$repo_root/scripts/test-plan-ue4ss-canary-env.py" "$stage/tests/test-plan-ue
 cp "$repo_root/scripts/test-client-launch-preflight.py" "$stage/tests/test-client-launch-preflight.py"
 cp "$repo_root/docs/client-loader-support.md" "$stage/docs/client-loader-support.md"
 cp "$repo_root/docs/linux-client-loader.md" "$stage/docs/linux-client-loader.md"
+cp "$repo_root/docs/reproducible-loader-packages.md" "$stage/docs/reproducible-loader-packages.md"
 python3 "$repo_root/scripts/ue4ss-portability-contract.py" --format json --check > "$stage/docs/ue4ss-portability-contract.json"
 python3 "$repo_root/scripts/ue4ss-portability-contract.py" --format markdown --check > "$stage/docs/ue4ss-portability-contract.md"
 
@@ -322,8 +327,11 @@ cat > "$stage/README.md" <<EOF
 # Dune Linux Client Loader
 
 Package: ${package_name}
-Built: $(date -u +%Y-%m-%dT%H:%M:%SZ)
-Source commit: $(git -C "$repo_root" rev-parse HEAD 2>/dev/null || printf unknown)
+Built: ${LOADER_PACKAGE_BUILT_UTC}
+Source commit: ${LOADER_PACKAGE_SOURCE_COMMIT}
+Source tree: ${LOADER_PACKAGE_SOURCE_TREE}
+Source dirty: ${LOADER_PACKAGE_SOURCE_DIRTY}
+Source date epoch: ${LOADER_PACKAGE_SOURCE_DATE_EPOCH}
 Platform: ${platform}
 
 This is a native Linux client-process preload/probe for this repo. It is not
@@ -358,11 +366,13 @@ process and refuses Windows/PE Proton targets in the launch wrapper.
 - analysis/export-ue-candidate-globals.py: bounded candidate-global env exporter with reject-log feedback.
 - tests/: unit tests for the packaged analysis tools.
 - docs/client-loader-support.md: shared Linux/Windows support matrix.
+- docs/reproducible-loader-packages.md: deterministic-build and provenance contract.
 - docs/ue4ss-portability-contract.md: repo-generated all-target portability contract.
 - loader-artifact-verification.txt and loader-artifact-verification.json: package-root artifact verification outputs.
 - The packaged tarball also writes sibling .verification.txt and .verification.json reports that verify the staged root, tarball, and portable .sha256 sidecar together.
 - abi/: dependency and symbol-version report.
 - SHA256SUMS: checksums for package contents.
+- package-provenance.json: source identity, normalized build epoch, build type, and loader digest.
 
 ## Native Client Launch
 
@@ -573,14 +583,24 @@ EOF
 
 readelf -d "$loader" > "$stage/abi/readelf-dynamic.txt"
 objdump -T "$loader" | grep -E 'GLIBC|GLIBCXX|CXXABI|GCC_' | sort -u > "$stage/abi/symbol-versions.txt" || true
-file "$loader" > "$stage/abi/file.txt"
+file -b "$loader" > "$stage/abi/file.txt"
+
+loader_package_write_provenance \
+  "$stage/package-provenance.json" \
+  "$package_name" \
+  linux-client \
+  "$version" \
+  "$platform" \
+  "$loader" \
+  lib/libdune_client_probe_loader.so \
+  "${CMAKE_BUILD_TYPE:-RelWithDebInfo}"
 
 (
   cd "$stage"
   find . -type f ! -name SHA256SUMS -print | sort | sed 's#^\./##' | xargs sha256sum > SHA256SUMS
 )
 
-tar -C "$dist_root" -czf "$archive" "$package_name"
+loader_package_create_archive "$dist_root" "$package_name" "$archive"
 archive_digest="$(sha256sum "$archive" | awk '{print $1}')"
 printf '%s  %s\n' "$archive_digest" "$(basename "$archive")" > "${archive}.sha256"
 python3 "$repo_root/scripts/verify-loader-artifacts.py" \

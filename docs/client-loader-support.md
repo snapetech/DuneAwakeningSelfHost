@@ -702,7 +702,11 @@ Use `docs/client-deployment.md` from the extracted package instead of staging
 the DLL with an untracked copy command.
 
 Each package includes source, build helper, launch helper, smoke helper, docs,
-ABI/header reports, and `SHA256SUMS`.
+ABI/header reports, `package-provenance.json`, and `SHA256SUMS`. Archive member
+metadata, generated timestamps, gzip headers, ABI paths, and packaged test
+receipts are normalized for reproducible output. See
+[`reproducible-loader-packages.md`](reproducible-loader-packages.md) for the
+build-input contract, provenance schema, and independent verification flow.
 
 ## Analysis Tools
 

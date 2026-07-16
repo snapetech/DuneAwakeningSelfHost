@@ -854,6 +854,9 @@ Start here:
 - [`docs/client-deployment.md`](docs/client-deployment.md): transactional,
   receipt-bound reversible loader/Lua/Pak-overlay deployment, verified backup
   lifecycle, and the live UE4SS canary boundary.
+- [`docs/reproducible-loader-packages.md`](docs/reproducible-loader-packages.md):
+  deterministic Linux/Windows loader archives, source/build provenance,
+  checksum verification, and reproducibility regression coverage.
 - [`docs/windows-client-loader-canary-2026-07-15.md`](docs/windows-client-loader-canary-2026-07-15.md):
   build-bound live proxy/root/reflection evidence, negative findings, remaining
   dispatch gates, and verified client cleanup.

@@ -1513,6 +1513,28 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn("deep-desert-pvp", panel.GAME_MAP_SERVICES)
         self.assertIn("deep-desert-pvp", panel.RESTART_TARGETS["all"]["services"])
 
+    def test_restart_readiness_uses_autoscaler_always_on_maps(self):
+        captured = {}
+        self.panel.read_autoscaler_state = lambda: {
+            "enabled": True,
+            "modes": {
+                service: ("always-on" if service in ("survival", "overmap") else "dynamic")
+                for service in self.panel.GAME_MAP_SERVICES
+            },
+        }
+
+        def fake_query(sql, params=None):
+            captured["params"] = params
+            return [{"expected": 2, "online": 2, "ready_online": 2, "alive": 2, "active": 2}]
+
+        self.panel.query = fake_query
+        result = self.panel.restart_online_snapshot()
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["verificationMode"], "autoscaler-always-on")
+        self.assertEqual(result["requiredServices"], ["survival", "overmap"])
+        self.assertEqual(captured["params"], ([1, 2],))
+
     def test_restart_fails_closed_after_update_check_failure(self):
         command = self.workspace / "scripts" / "restart-target.sh"
         command.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
