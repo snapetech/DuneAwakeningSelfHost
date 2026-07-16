@@ -379,7 +379,7 @@ http://127.0.0.1:${DUNE_ADMIN_HOST_PORT:-18080}/
 
 If another process owns `18080`, set `DUNE_ADMIN_HOST_PORT=18081` in `.env`, include that host in `DUNE_ADMIN_ALLOWED_HOSTS`, and recreate only the admin panel.
 
-By default the local deployment is configured for a trusted private admin surface. To require a token, set `DUNE_ADMIN_REQUIRE_TOKEN=true` and `DUNE_ADMIN_TOKEN`; protected requests then send `X-Admin-Token`.
+The admin surface requires authentication by default. Set a high-entropy `DUNE_ADMIN_TOKEN`, enable named RBAC identities, or configure federated login; protected token requests send `X-Admin-Token`. An explicitly unlocked panel requires `DUNE_ADMIN_REQUIRE_TOKEN=false` and must remain confined to a trusted local boundary.
 
 | Page | Purpose |
 | --- | --- |
@@ -775,7 +775,7 @@ Start from [`.env.example`](.env.example). It is the source of truth for the ful
 | `RMQ_HTTP_TOKEN_AUTH_SECRET` | Internal RabbitMQ auth-shim secret. |
 | `DUNE_ADMIN_BIND_ADDRESS` / `DUNE_ADMIN_HOST_PORT` | Admin panel bind and host port; keep private. |
 | `DUNE_ADMIN_ALLOWED_HOSTS` | Host header allowlist for the admin panel. |
-| `DUNE_ADMIN_TOKEN` / `DUNE_ADMIN_REQUIRE_TOKEN` | Optional token protection for private admin API requests. |
+| `DUNE_ADMIN_TOKEN` / `DUNE_ADMIN_REQUIRE_TOKEN` | Owner recovery credential and authentication-required switch; authentication defaults on. |
 | `DUNE_ADMIN_MUTATIONS_ENABLED` | Master gate for admin writes; example default is fail-closed. |
 | `DUNE_ADMIN_ITEM_GRANTS_ENABLED` | Separate gate for item grants, stack edits, and deletion; example default is fail-closed. |
 | `DUNE_ADMIN_GM_COMMANDS_ENABLED` / `DUNE_GM_COMMAND_PAYLOAD_VERIFIED` | Generic legacy GM/RPC gates. The catalog-backed player actions use the first gate plus their dedicated runtime gate, not the legacy payload-verified flag. |

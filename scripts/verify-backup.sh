@@ -157,6 +157,32 @@ else
   printf 'WARN no operational-slo.sqlite3 found in %s\n' "$backup_dir"
 fi
 
+if [[ -f "$backup_dir/capacity-intelligence.sqlite3" ]]; then
+  if python3 - "$backup_dir/capacity-intelligence.sqlite3" <<'PY'
+import hashlib,json,sqlite3,sys
+connection=sqlite3.connect(f"file:{sys.argv[1]}?mode=ro",uri=True)
+connection.row_factory=sqlite3.Row
+try:
+    if connection.execute("pragma integrity_check").fetchone()[0]!="ok": raise SystemExit(1)
+    triggers={row[0] for row in connection.execute("select name from sqlite_master where type='trigger'")}
+    if not {"capacity_applications_no_update","capacity_applications_no_delete"}.issubset(triggers): raise SystemExit(1)
+    rows=connection.execute("select applied_at,actor,source,changes_json,sha256 from applications order by applied_at,id").fetchall()
+finally: connection.close()
+for row in rows:
+    document={"appliedAt":row["applied_at"],"actor":row["actor"],"source":row["source"],"changes":json.loads(row["changes_json"])}
+    expected=hashlib.sha256(json.dumps(document,sort_keys=True,separators=(",",":"),ensure_ascii=True).encode()).hexdigest()
+    if row["sha256"]!=expected: raise SystemExit(1)
+PY
+  then
+    printf 'OK capacity intelligence SQLite snapshot and application receipts %s\n' "$backup_dir/capacity-intelligence.sqlite3"
+  else
+    printf 'FAIL capacity intelligence SQLite snapshot or application receipts %s\n' "$backup_dir/capacity-intelligence.sqlite3" >&2
+    ok=false
+  fi
+else
+  printf 'WARN no capacity-intelligence.sqlite3 found in %s\n' "$backup_dir"
+fi
+
 if [[ -f "$backup_dir/manifest.json" ]]; then
   if command -v jq >/dev/null 2>&1; then
     jq . "$backup_dir/manifest.json" >/dev/null

@@ -175,6 +175,7 @@ DATABASE = (
     or "dune_sb_1_4_0_0"
 )
 ADMIN_TOKEN = os.environ.get("DUNE_ADMIN_TOKEN", "")
+ADMIN_REQUIRE_TOKEN = os.environ.get("DUNE_ADMIN_REQUIRE_TOKEN", "true").lower() in ("1", "true", "yes", "on")
 RBAC_ENABLED = os.environ.get("DUNE_ADMIN_RBAC_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 ADMIN_ACCESS_FILE = pathlib.Path(os.environ.get("DUNE_ADMIN_ACCESS_FILE", str(CONFIG_ROOT / "admin-access.json")))
 FEDERATED_AUTH_ENABLED = os.environ.get("DUNE_ADMIN_FEDERATED_AUTH_ENABLED", "false").lower() in ("1", "true", "yes", "on")
@@ -4880,10 +4881,10 @@ def collect_operational_slo_signals():
         "floorBytes": int(OPERATIONAL_SLO_MEMORY_FLOOR_GIB * 1024 ** 3),
         "totalBytes": int(memory.get("totalBytes") or 0),
     }
-    token_required = False
+    token_required = ADMIN_REQUIRE_TOKEN
     credential_ready = bool(ADMIN_TOKEN and ADMIN_TOKEN != "change-me-admin-token") or bool(RBAC_ENABLED and ADMIN_ACCESS_FILE.exists())
-    admin_auth_ready = True
-    context["adminAuth"] = {"tokenRequired": token_required, "credentialSourceConfigured": credential_ready, "rbacEnabled": RBAC_ENABLED, "mode": "trusted-internal"}
+    admin_auth_ready = token_required and credential_ready
+    context["adminAuth"] = {"tokenRequired": token_required, "credentialSourceConfigured": credential_ready, "rbacEnabled": RBAC_ENABLED, "mode": "authenticated" if token_required else "unlocked"}
     context["errors"] = errors
     return {
         "signals": {
@@ -7146,7 +7147,7 @@ class Handler(BaseHTTPRequestHandler):
                     "mutationsEnabled": MUTATIONS_ENABLED,
                     "itemGrantsEnabled": ITEM_GRANTS_ENABLED,
                     "adminTokenConfigured": bool(ADMIN_TOKEN) or (RBAC_ENABLED and ADMIN_ACCESS_FILE.exists()),
-                    "adminTokenRequired": False,
+                    "adminTokenRequired": ADMIN_REQUIRE_TOKEN,
                     "rbacEnabled": RBAC_ENABLED,
                     "webhooks": {
                         "enabled": WEBHOOK_DISPATCHER.enabled,
@@ -9946,7 +9947,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def security_audit(self):
         env_values = read_env()
-        token_required = False
+        token_required = ADMIN_REQUIRE_TOKEN
         checks = [
             {"name": "admin auth mode", "ok": True, "value": "token required" if token_required else "local unlocked"},
             {"name": "admin token configured", "ok": bool(ADMIN_TOKEN) if token_required else True, "value": "required" if token_required else "not required"},
@@ -12411,10 +12412,45 @@ class Handler(BaseHTTPRequestHandler):
         path.write_text(content, encoding="utf-8")
 
     def require_token(self):
-        # This instance is intentionally hosted only on the trusted internal
-        # admin surface. Keep token auth disabled even if stale env automation
-        # writes DUNE_ADMIN_REQUIRE_TOKEN=true again.
-        return
+        if not ADMIN_REQUIRE_TOKEN:
+            return
+        if not ADMIN_TOKEN and not RBAC_ENABLED and not FEDERATED_AUTH_ENABLED:
+            raise PermissionError("no admin credential source is configured")
+        peer = self.client_address[0] if self.client_address else "unknown"
+        now = time.time()
+        failures = [ts for ts in AUTH_FAILURES.get(peer, []) if now - ts < AUTH_FAILURE_WINDOW_SECONDS]
+        AUTH_FAILURES[peer] = failures
+        if len(failures) >= AUTH_FAILURE_LIMIT:
+            self.audit("auth-throttled", ok=False, failures=len(failures))
+            raise PermissionError("too many failed admin token attempts")
+        provided = self.headers.get("X-Admin-Token", "").strip()
+        if not provided:
+            authorization = self.headers.get("Authorization", "").strip()
+            if authorization.lower().startswith("bearer "):
+                provided = authorization[7:].strip()
+        principal = None
+        if ADMIN_TOKEN and hmac.compare_digest(provided, ADMIN_TOKEN):
+            principal = {"id": "owner-recovery", "displayName": "Owner recovery token", "role": "owner", "capabilities": ["*"]}
+        elif RBAC_ENABLED:
+            principal = access_control.authenticate(ADMIN_ACCESS_FILE, provided)
+        if not principal and FEDERATED_AUTH_ENABLED:
+            try:
+                principal = self.federated_principal()
+            except (PermissionError, ValueError, OSError, json.JSONDecodeError):
+                principal = None
+        if not principal:
+            failures.append(now)
+            AUTH_FAILURES[peer] = failures
+            self.audit("auth-failed", ok=False, failures=len(failures))
+            raise PermissionError("invalid admin token")
+        AUTH_FAILURES.pop(peer, None)
+        required = access_control.required_capability(getattr(self, "command", "GET"), self.path)
+        try:
+            access_control.authorize(principal, required)
+        except PermissionError:
+            self.audit("auth-forbidden", ok=False, principal_id=principal["id"], capability=required, path=self.path)
+            raise
+        self.auth_principal = principal
 
     def require_discord_token(self):
         if not DISCORD_ADAPTER_ENABLED:
@@ -15118,7 +15154,7 @@ async function ops(serial=loadSerial){
   startHealthRefresh();
 }
 async function infrastructure(serial=loadSerial){
-  const [serviceData, backupData, databaseData, updateData, memoryData, autoscalerData, restoreDrillData, sloData] = await Promise.all([
+  const [serviceData, backupData, databaseData, updateData, memoryData, autoscalerData, restoreDrillData, sloData, capacityData] = await Promise.all([
     api('/api/ops/services'),
     api('/api/ops/backups'),
     api('/api/ops/database'),
@@ -15126,7 +15162,8 @@ async function infrastructure(serial=loadSerial){
     api('/api/ops/memory', {timeoutMs: 30000}),
     api('/api/ops/autoscaler', {timeoutMs: 30000}),
     api('/api/ops/restore-drill', {timeoutMs: 30000}),
-    api('/api/ops/slo', {timeoutMs: 30000})
+    api('/api/ops/slo', {timeoutMs: 30000}),
+    api('/api/ops/capacity', {timeoutMs: 30000})
   ]);
   if (serial !== loadSerial) return;
   const services = serviceData.services || [];
@@ -15143,12 +15180,56 @@ async function infrastructure(serial=loadSerial){
   mountInfrastructureUpdateControls(updateData);
   mountInfrastructureMemoryControls(memoryData);
   mountInfrastructureAutoscalerControls(autoscalerData);
+  mountInfrastructureCapacity(capacityData);
   mountInfrastructureRestoreDrill(restoreDrillData);
   mountInfrastructureSlo(sloData);
   document.getElementById('infraLoadLogsBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Loading...', loadInfrastructureLogs));
   document.getElementById('infraVerifyBackupBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Verifying...', verifyInfrastructureBackup));
   document.getElementById('infraLoadTableBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Loading...', loadInfrastructureTable));
   if (services.length) loadInfrastructureLogs().catch(error => { document.getElementById('infraLogsResult').textContent = error.message; });
+}
+function mountInfrastructureCapacity(data){
+  const page = document.querySelector('#view .pageStack');
+  if (!page) return;
+  const fleet = data.windows?.['604800']?.fleet || {};
+  const recommendations = Object.entries(data.recommendations || {}).map(([service,row]) => ({
+    service,
+    confidence:row.confidence,
+    eligible:row.eligible,
+    current:fmtRuntimeSeconds(row.currentRetentionSeconds),
+    recommended:fmtRuntimeSeconds(row.recommendedRetentionSeconds),
+    revisitSamples:row.revisitSamples,
+    startSamples:row.startSamples,
+    revisitP75:row.revisitGapP75Seconds == null ? '—' : fmtRuntimeSeconds(row.revisitGapP75Seconds),
+    coldStartP95:row.coldStartP95Seconds == null ? '—' : fmtRuntimeSeconds(row.coldStartP95Seconds),
+    warmHits:row.warmHits,
+    coldRevisits:row.coldRevisits,
+    next15m:row.nextVisitProbability == null ? '—' : `${(Number(row.nextVisitProbability)*100).toFixed(1)}%`,
+  }));
+  const eligible = recommendations.filter(row=>row.eligible).length;
+  const avoidance = fleet.resourceAvoidanceRatio == null ? '—' : `${(Number(fleet.resourceAvoidanceRatio)*100).toFixed(1)}%`;
+  const productive = fleet.productiveRunningRatio == null ? '—' : `${(Number(fleet.productiveRunningRatio)*100).toFixed(1)}%`;
+  const coverage = fleet.coverageRatio == null ? '—' : `${(Number(fleet.coverageRatio)*100).toFixed(1)}%`;
+  page.insertAdjacentHTML('beforeend', `<div class="panelBand">
+    <div class="sectionHeader"><h2>Capacity Intelligence</h2><div class="toolbar"><span class="pill ${data.integrity?.ok?'ok':'bad'}">ledger ${data.integrity?.ok?'verified':'invalid'}</span><span class="pill">${esc(eligible)} eligible recommendations</span><span class="pill ${data.autoApplyEnabled?'warn':'ok'}">auto-apply ${data.autoApplyEnabled?'enabled':'off'}</span><button id="infraCapacityRefreshBtn">Refresh</button></div></div>
+    <p class="muted">This is the evidence layer behind the middle ground between fully cold and full warm. It measures map-hours avoided against an all-running baseline, idle warm cost, productive running time, warm versus cold revisits, and request-to-ready latency. Retention recommendations minimize observed idle seconds plus a policy-weighted player wait cost; they never change map modes and each application moves at most ${esc(Math.round(Number(data.policy?.maximumApplyFraction || 0)*100))}%.</p>
+    <div class="metricGrid">${metric('7d map-hours saved', Number(fleet.mapHoursSaved || 0).toFixed(2), Number(fleet.mapHoursSaved || 0)>0?'ok':'')}${metric('7d idle map-hours', Number(fleet.idleMapHours || 0).toFixed(2))}${metric('Resource avoidance', avoidance)}${metric('Productive running', productive)}${metric('Observation coverage', coverage)}${metric('Last sample', data.runtime?.lastSampleAt ? new Date(Number(data.runtime.lastSampleAt)*1000).toLocaleString() : 'none', data.runtime?.lastError?'bad':'ok')}</div>
+    ${table(recommendations)}
+    <div class="commandBar"><button id="infraCapacityApplyBtn" class="primary" ${(!data.mutationEnabled || !eligible)?'disabled':''}>Apply eligible recommendations</button></div>
+    <p class="muted">Application is gradual, append-only receipted, and preserves always-on/dynamic/disabled choices. Low-confidence rows remain advisory until the policy's revisit and measured-start thresholds are met.</p>
+    <details><summary>Cold starts, applications, policy, and runtime</summary>${table(data.recentStarts || [])}${table(data.applications || [])}<pre id="infraCapacityResult">${esc(JSON.stringify({policy:data.policy,runtime:data.runtime,integrity:data.integrity}, null, 2))}</pre></details>
+  </div>`);
+  document.getElementById('infraCapacityRefreshBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Refreshing...', () => infrastructure(loadSerial)));
+  document.getElementById('infraCapacityApplyBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Applying...', infrastructureCapacityApply));
+}
+async function infrastructureCapacityApply(){
+  if (!confirm('Apply evidence-qualified retention recommendations? Map modes will not change and each retention moves only within the configured fractional bound.')) return;
+  const result=await api('/api/ops/capacity',{method:'POST',timeoutMs:60000,body:JSON.stringify({action:'apply-recommendations',confirm:'APPLY CAPACITY RECOMMENDATIONS'})});
+  const output=document.getElementById('infraCapacityResult');
+  if (output) output.textContent=JSON.stringify(result,null,2);
+  notify(result.applied ? `Applied ${result.changes.length} capacity recommendations` : result.reason, result.applied?'warn':'ok');
+  await infrastructure(loadSerial);
+  return result;
 }
 function mountInfrastructureSlo(data){
   const page = document.querySelector('#view .pageStack');
@@ -15267,7 +15348,7 @@ function mountInfrastructureAutoscalerControls(data){
       <span class="pill">available ${esc(availableGiB.toFixed(1))} GiB</span>
       <span class="pill ${data.mutationEnabled ? 'warn' : 'ok'}">writes ${data.mutationEnabled ? 'enabled' : 'disabled'}</span>
     </div></div>
-    <p class="muted">Profiles cover the full range: minimum footprint starts maps only on demand, balanced retains recently used maps within an LRU and memory budget, full warm keeps every map running, and custom preserves per-map choices. Players, active demand leases, and always-on maps are never evicted.</p>
+    <p class="muted">Profiles cover the full range: minimum footprint starts maps only on demand, balanced retains recently used maps within an LRU and memory budget, adaptive uses evidence-qualified per-map retention, full warm keeps every map running, and custom preserves per-map choices. Players, active demand leases, and always-on maps are never evicted.</p>
     ${table(maps)}
     <div class="grid">
       <label>Map<select id="infraAutoscalerService">${options}</select></label>
@@ -15279,7 +15360,7 @@ function mountInfrastructureAutoscalerControls(data){
       <label>Demand lease seconds<input id="infraAutoscalerDemandTtl" value="${esc(data.demandTtlSeconds || 900)}"></label>
     </div>
     <div class="commandBar"><button id="infraAutoscalerModeBtn">Save map mode</button><button id="infraAutoscalerRetentionBtn">Save map retention</button><button id="infraAutoscalerDemandBtn">Queue demand/start</button><button id="infraAutoscalerSettingsBtn">Save budgets</button></div>
-    <div class="commandBar"><button id="infraAutoscalerMinimumBtn">Minimum footprint</button><button id="infraAutoscalerBalancedBtn" class="primary">Balanced adaptive</button><button id="infraAutoscalerFullBtn" class="danger">Full warm</button><button id="infraAutoscalerReconcileBtn">Reconcile now</button><button id="infraAutoscalerToggleBtn" class="${data.enabled ? 'danger' : 'primary'}">${data.enabled ? 'Stop autoscaler' : 'Start autoscaler'}</button></div>
+    <div class="commandBar"><button id="infraAutoscalerMinimumBtn">Minimum footprint</button><button id="infraAutoscalerBalancedBtn" class="primary">Balanced</button><button id="infraAutoscalerAdaptiveBtn">Adaptive baseline</button><button id="infraAutoscalerFullBtn" class="danger">Full warm</button><button id="infraAutoscalerReconcileBtn">Reconcile now</button><button id="infraAutoscalerToggleBtn" class="${data.enabled ? 'danger' : 'primary'}">${data.enabled ? 'Stop autoscaler' : 'Start autoscaler'}</button></div>
     <pre id="infraAutoscalerResult">${esc(JSON.stringify({lastMessage:data.lastMessage,lastActions:data.lastActions,lastError:data.lastError,updatedAt:data.updatedAt}, null, 2))}</pre>
   </div>`);
   document.getElementById('infraAutoscalerModeBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Saving...', () => infrastructureAutoscalerAction('set-mode')));
@@ -15288,6 +15369,7 @@ function mountInfrastructureAutoscalerControls(data){
   document.getElementById('infraAutoscalerSettingsBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Saving...', () => infrastructureAutoscalerAction('settings')));
   document.getElementById('infraAutoscalerMinimumBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Applying...', () => infrastructureAutoscalerAction('minimum-footprint')));
   document.getElementById('infraAutoscalerBalancedBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Applying...', () => infrastructureAutoscalerAction('balanced')));
+  document.getElementById('infraAutoscalerAdaptiveBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Applying...', () => infrastructureAutoscalerAction('adaptive')));
   document.getElementById('infraAutoscalerFullBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Applying...', () => infrastructureAutoscalerAction('full-warm')));
   document.getElementById('infraAutoscalerReconcileBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Reconciling...', () => infrastructureAutoscalerAction('reconcile')));
   document.getElementById('infraAutoscalerToggleBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Changing...', () => infrastructureAutoscalerAction(data.enabled ? 'stop' : 'start')));
