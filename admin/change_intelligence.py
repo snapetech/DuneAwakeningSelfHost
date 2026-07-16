@@ -265,6 +265,7 @@ def compile_response_plan(capsule, policy, ledger=None):
         "candidateEventIds": [row.get("id") for row in candidates],
         "followupEventIds": [row.get("id") for row in followup],
         "responseDrillEventIds": [row.get("id") for row in capsule.get("responseDrills") or []],
+        "readinessCertificationEventId": (capsule.get("readinessCertification") or {}).get("id"),
         "ledgerEventCount": ledger.get("eventCount"), "ledgerHeadSignature": ledger.get("lastEventSignature"),
     }
     plan = {
@@ -342,6 +343,38 @@ def verify_signed_capsule(document, secret):
 
 def _hmac_value(secret, value):
     return hmac.new(secret, str(value).encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def verify_readiness_receipt(event):
+    """Recompute the nested readiness receipt digest carried by an HMAC event."""
+    try:
+        if not isinstance(event, dict) or event.get("action") not in {"incident-response-drill", "incident-readiness-certification"}:
+            raise ValueError("event is not a readiness receipt")
+        data = event.get("data") or {}
+        if event["action"] == "incident-response-drill":
+            receipt = {
+                "id": data.get("drill_id"), "incidentKey": event.get("incidentKey"), "runbookId": data.get("runbook_id"),
+                "planSha256": data.get("plan_sha256"), "policySha256": data.get("policy_sha256"),
+                "principalId": event.get("actor"), "diagnostics": data.get("diagnostics") or [],
+                "recoveryContracts": data.get("recovery_contracts") or [],
+                "diagnosticsReady": data.get("diagnostics_ready"), "recoveryContractsReady": data.get("recovery_contracts_ready"),
+                "ready": bool(event.get("ok")), "recoveryExecuted": data.get("recovery_executed"),
+                "gameMutationExecuted": data.get("game_mutation_executed"),
+            }
+        else:
+            receipt = {
+                "id": data.get("certification_id"), "policySha256": data.get("policy_sha256"),
+                "principalId": event.get("actor"), "diagnostics": data.get("diagnostics") or [],
+                "runbooks": data.get("runbooks") or [], "summary": data.get("summary") or {},
+                "ready": bool(event.get("ok")), "recoveryExecuted": data.get("recovery_executed"),
+                "gameMutationExecuted": data.get("game_mutation_executed"),
+            }
+        expected = hashlib.sha256(_canonical(receipt).encode()).hexdigest()
+        actual = str(data.get("receipt_sha256") or "")
+        valid = bool(re.fullmatch(r"[0-9a-f]{64}", actual)) and hmac.compare_digest(actual, expected)
+        return {"ok": valid, "receiptSha256": actual, "expectedSha256": expected, **({} if valid else {"error": "readiness receipt digest does not match"})}
+    except (ValueError, TypeError, KeyError) as exc:
+        return {"ok": False, "error": str(exc)}
 
 
 def sanitize(value, secret, *, key="", depth=0):
@@ -656,7 +689,7 @@ class Store:
 
     @staticmethod
     def _public(row):
-        return {
+        event = {
             "sequence": row["sequence"], "id": row["id"], "occurredAt": _iso(row["occurred_at"]),
             "ingestedAt": _iso(row["ingested_at"]), "action": row["action"], "kind": row["kind"],
             "category": row["category"], "impact": row["impact"], "ok": bool(row["ok"]),
@@ -664,6 +697,9 @@ class Store:
             "scope": json.loads(row["scope_json"]), "data": json.loads(row["data_json"]),
             "signature": row["signature"],
         }
+        if event["action"] in {"incident-response-drill", "incident-readiness-certification"}:
+            event["receiptVerification"] = verify_readiness_receipt(event)
+        return event
 
     def _correlate_connection(self, connection, key):
         incident = connection.execute("select * from events where incident_key=? and kind='incident-open' order by occurred_at desc limit 1", (str(key),)).fetchone()
@@ -720,11 +756,15 @@ class Store:
             "select * from events where incident_key=? and action='incident-response-drill' order by occurred_at desc,sequence desc limit 20",
             (str(key),),
         ).fetchall()
+        certification = connection.execute(
+            "select * from events where action='incident-readiness-certification' order by occurred_at desc,sequence desc limit 1"
+        ).fetchone()
         capsule = {
             "ok": True, "incidentKey": key, "status": "resolved" if resolved else "open",
             "opened": self._public(opened), "resolved": self._public(resolved) if resolved else None,
             "candidateChanges": self._correlate_connection(connection, key), "followupEvidence": [self._public(row) for row in followup],
             "responseDrills": [self._public(row) for row in drills],
+            "readinessCertification": self._public(certification) if certification else None,
             "causalityClaimed": False,
             "interpretation": "Candidates are ranked temporal/scope correlations, not proof of causality.",
         }

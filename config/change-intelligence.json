@@ -14,6 +14,7 @@
     {"pattern": "desired-state-drift-opened", "kind": "incident-open", "category": "configuration", "impact": "critical"},
     {"pattern": "desired-state-drift-resolved", "kind": "incident-resolved", "category": "configuration", "impact": "info"},
     {"pattern": "incident-response-drill", "kind": "evidence", "category": "reliability", "impact": "info"},
+    {"pattern": "incident-readiness-certification", "kind": "evidence", "category": "reliability", "impact": "info"},
     {"pattern": "desired-state", "kind": "change", "category": "configuration", "impact": "high"},
     {"pattern": "capacity-intelligence", "kind": "change", "category": "capacity", "impact": "medium"},
     {"pattern": "service-control", "kind": "change", "category": "lifecycle", "impact": "high"},
