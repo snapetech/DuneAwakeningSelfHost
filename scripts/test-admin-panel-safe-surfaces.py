@@ -3020,6 +3020,41 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertTrue(rows["arrakeen"]["demanded"])
         self.assertEqual(rows["arrakeen"]["retentionSeconds"], 600)
 
+    def test_capacity_application_is_evidence_gated_gradual_and_mode_preserving(self):
+        fake = type("Store", (), {
+            "status": lambda self: {
+                "policy": {"maximumApplyFraction": 0.5, "minimumRetentionSeconds": 60, "maximumRetentionSeconds": 3600},
+                "recommendations": {
+                    "arrakeen": {"eligible": True, "recommendedRetentionSeconds": 60, "confidence": "moderate", "revisitSamples": 5, "startSamples": 2},
+                    "survival": {"eligible": True, "recommendedRetentionSeconds": 60, "confidence": "high", "revisitSamples": 30, "startSamples": 10},
+                    "deep-desert": {"eligible": False, "recommendedRetentionSeconds": 3600, "confidence": "low", "revisitSamples": 1, "startSamples": 0},
+                },
+            },
+            "record_application": lambda self, actor, source, changes: {"id": "receipt", "changes": changes},
+        })()
+        state = {
+            "modes": {"arrakeen": "dynamic", "survival": "always-on", "deep-desert": "dynamic"},
+            "retentionByService": {}, "retentionSeconds": 900, "profile": "balanced",
+        }
+        written = []
+        original_store = self.panel.capacity_intelligence_store
+        original_read = self.panel.read_autoscaler_state
+        original_write = self.panel.write_autoscaler_state
+        self.panel.capacity_intelligence_store = lambda: fake
+        self.panel.read_autoscaler_state = lambda: state
+        self.panel.write_autoscaler_state = lambda value: written.append(json.loads(json.dumps(value)))
+        self.addCleanup(lambda: setattr(self.panel, "capacity_intelligence_store", original_store))
+        self.addCleanup(lambda: setattr(self.panel, "read_autoscaler_state", original_read))
+        self.addCleanup(lambda: setattr(self.panel, "write_autoscaler_state", original_write))
+        result = self.panel.capacity_apply_recommendations(actor="operator", source="manual")
+        self.assertTrue(result["applied"])
+        self.assertEqual(result["changes"], [{
+            "service": "arrakeen", "beforeSeconds": 900, "recommendedSeconds": 60,
+            "appliedSeconds": 450, "confidence": "moderate", "revisitSamples": 5, "startSamples": 2,
+        }])
+        self.assertEqual(written[-1]["profile"], "adaptive")
+        self.assertEqual(written[-1]["modes"], state["modes"])
+
     def test_landsraad_reward_and_contribution_plans_preserve_rollback(self):
         def fake_query(sql, params=None):
             if "landsraad_load_current_term" in sql:

@@ -4512,6 +4512,13 @@ def verify_backup_set_native(path):
             output.append(f"OK SQLite snapshot {database}")
         except (sqlite3.Error, ValueError) as exc:
             errors.append(f"FAIL SQLite snapshot {database}: {exc}")
+    capacity_database = path / "capacity-intelligence.sqlite3"
+    if capacity_database.is_file():
+        capacity_check = capacity_intelligence.Store(capacity_database, CAPACITY_INTELLIGENCE_POLICY).verify()
+        if capacity_check.get("ok"):
+            output.append(f"OK capacity application receipts {capacity_database}")
+        else:
+            errors.append(f"FAIL capacity application receipts {capacity_database}: {capacity_check}")
     manifest_json = path / "manifest.json"
     manifest_text = path / "manifest.txt"
     try:

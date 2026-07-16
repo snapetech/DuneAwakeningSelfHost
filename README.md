@@ -306,7 +306,7 @@ Expected server-side readiness:
 current_alive_active=30 active_servers=30 partitions=30
 ```
 
-That 30/30 expectation applies to `full-warm`. The recommended balanced policy
+That 30/30 expectation applies to `full-warm`. The balanced baseline
 keeps Survival and Overmap always on, retains recently used maps, caps optional
 warm maps with LRU eviction, and evicts only empty/non-demanded dynamic maps
 when available memory crosses the configured floor:
@@ -323,7 +323,7 @@ DUNE_AUTOSCALER_BALANCED_MIN_AVAILABLE_MEMORY_GIB=16
 ```
 
 The Infrastructure page can switch between `minimum-footprint`, `balanced`,
-`full-warm`, and `custom`, and can edit per-map retention and global budgets.
+`adaptive`, `full-warm`, and `custom`, and can edit per-map retention and global budgets.
 For file-based installation, preview and apply a profile without touching
 unrelated `.env` keys:
 

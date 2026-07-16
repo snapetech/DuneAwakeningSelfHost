@@ -49,7 +49,7 @@ production enablement; that validation boundary is not an omitted feature.
 | Landsraad | Overview, term, task-goal, reward and contribution workflows | Terms/tasks/rewards/contributions browser; end-time/force-end, individual/all-term goals, reward-tier and player-contribution writes with backup, dry-run, rollback and aggregate recomputation | Added/parity |
 | Live maps | Players, bases, storage, services, markers, overlays, teleport | Hagga Basin and Deep Desert maps, players, POIs, markers, resources/spice diagnostics, services, bases, storage and guarded offline teleport | Parity |
 | Map layouts | Always-on/dynamic maps, up to 64 Sietches, per-Sietch display/password, and Deep Desert | Nine-map farm, 30-partition warm pool, guarded additional Survival dimensions up to 64 with isolated saved data and deterministic ports, per-partition settings, all-farm lifecycle integration, partition seed/recovery, DD overlays and watchdog | Added/parity |
-| Autoscaling | Dynamic demand, spawn/despawn and reconcile controls | Configurable off/manual/player/director modes, Director travel-log demand, idle stop, explicit demand, bounded reconciliation and watchdog integration | Added/parity |
+| Autoscaling | Dynamic demand, spawn/despawn and reconcile controls | Configurable minimum/balanced/adaptive/full/custom modes, Director travel-log demand, idle stop, explicit demand, bounded reconciliation, watchdog integration, retained map-hours/warm-hit/cold-start evidence, and gradual per-map retention recommendations | DASH exceeds |
 | Memory | Per-map settings and automatic balancing | Per-service limits, runtime profiles, host/container telemetry, bounded automatic memory balancer | Added/parity |
 | Settings | Structured and raw game settings | Typed settings, safe environment editor, raw INI editor with backups, logout controls and Coriolis/Landsraad guardrails | DASH exceeds |
 | Transfers and spice | Director transfer rules and spice controls | Typed transfer rulesets; spice caps, field inspection, lifecycle scripts and map diagnostics | Parity |
@@ -85,6 +85,8 @@ The parity tranche added or expanded these documented surfaces:
   the separately gated Landsraad write API.
 - [`autoscaling-memory.md`](autoscaling-memory.md): map autoscaling, Director
   demand and automatic memory balancing.
+- [`capacity-intelligence.md`](capacity-intelligence.md): retained scaling
+  efficiency, cold-start/revisit evidence, forecasts, and adaptive retention.
 - [`metrics.md`](metrics.md): retained Prometheus metrics stack.
 - [`discord-adapter.md`](discord-adapter.md): pinned Red-compatible adapter.
 - [`addons.md`](addons.md): community addon lifecycle and containment contract.
@@ -149,7 +151,7 @@ complete gate set on the production host:
 The activation script refuses any host except the configured exact hostname
 (`kspls0` by default), backs up `.env`, generates a private native-command
 token only when one is missing, enables the metrics overlay and all parity
-gates, selects the minimum-footprint autoscaler profile, and leaves the public
+gates, selects the evidence-driven adaptive autoscaler profile, and leaves the public
 IP monitor in dry-run for its first validation. It does not execute grants,
 database writes, restores, updates, or addon installations; those operations
 retain their per-action confirmation phrases and backups.

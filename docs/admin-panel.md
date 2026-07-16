@@ -145,11 +145,17 @@ server {
   and an allowlisted `dune`/`public` database console with query, row, export,
   and password controls. See [`infrastructure-console.md`](infrastructure-console.md).
 - Infrastructure controls for automatic verified full backups, layered restore,
-  minimum-footprint/balanced/full-warm/custom map profiles, per-map retention,
+  minimum-footprint/balanced/adaptive/full-warm/custom map profiles, per-map retention,
   Director travel-demand starts, LRU and memory-floor eviction, live map
   limits, the automatic memory balancer, retained Prometheus metrics, updates,
   and runtime repair. See [`autoscaling-memory.md`](autoscaling-memory.md) and
   [`metrics.md`](metrics.md).
+- Capacity Intelligence beside the autoscaler: retained map-hours saved,
+  idle-running cost, productive-running ratio, warm/cold revisits,
+  demand-to-ready cold-start distributions, empirical next-visit forecasts,
+  evidence-qualified gradual per-map retention, append-only application
+  receipts, private metrics, and recovery. See
+  [`capacity-intelligence.md`](capacity-intelligence.md).
 - Infrastructure backup controls report recipient-encryption readiness,
   encrypted archive/receipt inventory, and exact host encrypt/decrypt commands.
   The private recovery key stays outside the admin container. See
