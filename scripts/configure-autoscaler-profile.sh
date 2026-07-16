@@ -5,9 +5,9 @@ usage() {
   cat >&2 <<'USAGE'
 Usage: scripts/configure-autoscaler-profile.sh [ENV_FILE] PROFILE [--execute]
 
-PROFILE is one of: minimum-footprint, balanced, full-warm, custom.
+PROFILE is one of: minimum-footprint, balanced, adaptive, full-warm, custom.
 Without --execute, prints the planned values and does not change ENV_FILE.
-The script changes only autoscaler keys and preserves unrelated settings.
+The script changes only autoscaler/capacity keys and preserves unrelated settings.
 USAGE
 }
 
@@ -15,7 +15,7 @@ env_file="${1:-.env}"
 profile="${2:-}"
 mode="${3:-}"
 [[ -f "$env_file" ]] || { printf 'env file not found: %s\n' "$env_file" >&2; exit 2; }
-case "$profile" in minimum-footprint|balanced|full-warm|custom) ;; *) usage; exit 2 ;; esac
+case "$profile" in minimum-footprint|balanced|adaptive|full-warm|custom) ;; *) usage; exit 2 ;; esac
 [[ -z "$mode" || "$mode" == "--execute" ]] || { usage; exit 2; }
 
 declare -A values=(
@@ -32,12 +32,16 @@ case "$profile" in
     values[DUNE_AUTOSCALER_DEFAULT_MODE]=dynamic
     values[DUNE_AUTOSCALER_IDLE_SECONDS]="${DUNE_AUTOSCALER_IDLE_SECONDS:-300}"
     ;;
-  balanced)
+  balanced|adaptive)
     values[DUNE_AUTOSCALER_DEFAULT_MODE]=dynamic
     values[DUNE_AUTOSCALER_BALANCED_RETENTION_SECONDS]="${DUNE_AUTOSCALER_BALANCED_RETENTION_SECONDS:-900}"
     values[DUNE_AUTOSCALER_BALANCED_RETENTION_BY_SERVICE]="${DUNE_AUTOSCALER_BALANCED_RETENTION_BY_SERVICE:-arrakeen=2700,harko-village=2700,deep-desert=1800}"
     values[DUNE_AUTOSCALER_BALANCED_MAX_WARM_MAPS]="${DUNE_AUTOSCALER_BALANCED_MAX_WARM_MAPS:-4}"
     values[DUNE_AUTOSCALER_BALANCED_MIN_AVAILABLE_MEMORY_GIB]="${DUNE_AUTOSCALER_BALANCED_MIN_AVAILABLE_MEMORY_GIB:-16}"
+    if [[ "$profile" == "adaptive" ]]; then
+      values[DUNE_CAPACITY_INTELLIGENCE_ENABLED]=true
+      values[DUNE_CAPACITY_AUTO_APPLY_ENABLED]=true
+    fi
     ;;
   full-warm)
     values[DUNE_AUTOSCALER_DEFAULT_MODE]=always-on

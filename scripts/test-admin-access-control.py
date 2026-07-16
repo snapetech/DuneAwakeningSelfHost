@@ -58,6 +58,7 @@ class AccessControlTest(unittest.TestCase):
             ("POST", "/api/ops/database/password"): "infrastructure.write",
             ("POST", "/api/ops/restore-drill"): "infrastructure.write",
             ("POST", "/api/ops/slo"): "infrastructure.write",
+            ("POST", "/api/ops/capacity"): "infrastructure.write",
             ("POST", "/api/settings/env"): "configuration.write",
             ("POST", "/api/admin/currency"): "economy.write",
             ("POST", "/api/admin/guild"): "world.write",

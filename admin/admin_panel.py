@@ -943,7 +943,7 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ADMIN_MEMORY_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Enables live per-map memory limits and the persistent automatic memory balancer."},
     "DUNE_ADMIN_AUTOSCALER_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Enables dynamic/always-on/disabled map modes, idle scale-down, demand starts, and reconciliation."},
     "DUNE_AUTOSCALER_ENABLED": {"group": "Autoscaling", "secret": False, "restart": True, "why": "Starts the persistent map lifecycle worker."},
-    "DUNE_AUTOSCALER_PROFILE": {"group": "Autoscaling", "secret": False, "restart": True, "why": "Fresh-state/reboot default: minimum-footprint, balanced, full-warm, or custom."},
+    "DUNE_AUTOSCALER_PROFILE": {"group": "Autoscaling", "secret": False, "restart": True, "why": "Fresh-state/reboot default: minimum-footprint, balanced, adaptive, full-warm, or custom."},
     "DUNE_AUTOSCALER_DEFAULT_MODE": {"group": "Autoscaling", "secret": False, "restart": True, "why": "Fallback mode for maps missing from persistent state."},
     "DUNE_AUTOSCALER_ALWAYS_ON_SERVICES": {"group": "Autoscaling", "secret": False, "restart": True, "why": "Comma-separated core maps retained by minimum and balanced profiles."},
     "DUNE_AUTOSCALER_IDLE_SECONDS": {"group": "Autoscaling", "secret": False, "restart": True, "why": "Minimum-profile and legacy default retention seconds."},
@@ -9948,10 +9948,15 @@ class Handler(BaseHTTPRequestHandler):
     def security_audit(self):
         env_values = read_env()
         token_required = ADMIN_REQUIRE_TOKEN
+        credential_configured = bool(
+            (ADMIN_TOKEN and ADMIN_TOKEN != "change-me-admin-token") or
+            (RBAC_ENABLED and ADMIN_ACCESS_FILE.exists()) or
+            FEDERATED_AUTH_ENABLED
+        )
         checks = [
-            {"name": "admin auth mode", "ok": True, "value": "token required" if token_required else "local unlocked"},
-            {"name": "admin token configured", "ok": bool(ADMIN_TOKEN) if token_required else True, "value": "required" if token_required else "not required"},
-            {"name": "admin token not placeholder", "ok": ADMIN_TOKEN not in ("", "change-me-admin-token") if token_required else True, "value": "required" if token_required else "not required"},
+            {"name": "admin auth mode", "ok": token_required, "value": "authentication required" if token_required else "unlocked"},
+            {"name": "admin credential source configured", "ok": credential_configured if token_required else False, "value": "owner/RBAC/federated" if credential_configured else "missing"},
+            {"name": "owner token not placeholder", "ok": ADMIN_TOKEN not in ("", "change-me-admin-token") if ADMIN_TOKEN else bool(RBAC_ENABLED or FEDERATED_AUTH_ENABLED), "value": "configured" if ADMIN_TOKEN else "alternate identity source"},
             {"name": "mutation gate configured", "ok": True, "value": "enabled" if MUTATIONS_ENABLED else "off"},
             {"name": "item grants enabled", "ok": ITEM_GRANTS_ENABLED, "value": ITEM_GRANTS_ENABLED},
             {"name": "allowed hosts configured", "ok": bool(ALLOWED_HOSTS), "value": ", ".join(sorted(ALLOWED_HOSTS))},
@@ -12448,7 +12453,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             access_control.authorize(principal, required)
         except PermissionError:
-            self.audit("auth-forbidden", ok=False, principal_id=principal["id"], capability=required, path=self.path)
+            self.audit("auth-forbidden", ok=False, principal_id=principal["id"], capability=required, request_path=self.path)
             raise
         self.auth_principal = principal
 

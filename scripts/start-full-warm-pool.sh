@@ -84,7 +84,7 @@ fi
 selective_startup=false
 if [[ "$autoscaler_enabled" =~ ^(1|true|yes|on)$ ]]; then
   case "$autoscaler_profile" in
-    minimum-footprint|balanced) selective_startup=true ;;
+    minimum-footprint|balanced|adaptive) selective_startup=true ;;
     full-warm) selective_startup=false ;;
     custom)
       if [[ "${autoscaler_state_selective:-}" == "true" || "$autoscaler_default_mode" == "dynamic" ]]; then

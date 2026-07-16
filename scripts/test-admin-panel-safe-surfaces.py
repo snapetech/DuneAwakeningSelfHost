@@ -184,10 +184,25 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertEqual("DASH", self.panel.Handler.server_version)
         self.assertEqual("", self.panel.Handler.sys_version)
 
-    def test_internal_panel_token_auth_is_disabled_at_runtime(self):
+    def test_admin_token_auth_enforces_required_default_and_allows_explicit_unlock(self):
         handler = object.__new__(self.panel.Handler)
-        with mock.patch.dict(os.environ, {"DUNE_ADMIN_REQUIRE_TOKEN": "true"}):
+        handler.path = "/api/status"
+        handler.command = "GET"
+        handler.client_address = ("127.0.0.1", 12345)
+        handler.headers = {}
+        handler.audit = lambda *args, **kwargs: None
+        self.patch_flag("ADMIN_REQUIRE_TOKEN", True)
+        self.patch_flag("ADMIN_TOKEN", "real-owner-token")
+        self.patch_flag("RBAC_ENABLED", False)
+        self.patch_flag("FEDERATED_AUTH_ENABLED", False)
+        with self.assertRaisesRegex(PermissionError, "invalid admin token"):
             handler.require_token()
+        handler.headers = {"X-Admin-Token": "real-owner-token"}
+        handler.require_token()
+        self.assertEqual(handler.auth_principal["id"], "owner-recovery")
+        self.panel.ADMIN_REQUIRE_TOKEN = False
+        handler.headers = {}
+        handler.require_token()
 
     def test_page_navigation_cancels_detached_player_detail_loads(self):
         source = self.panel.INDEX
@@ -2934,6 +2949,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.panel.restore_drill.status = lambda root, limit=1: {"latest": {"id": "proof", "ok": True, "integrityOk": True, "policyOk": True, "receiptHashValid": True, "finishedAt": self.panel.datetime.datetime.now(self.panel.datetime.timezone.utc).isoformat(), "liveDatabaseTouched": False, "timings": {"restoreSeconds": 1}}}
         self.panel.read_meminfo = lambda: {"availableBytes": 32 * 1024**3, "totalBytes": 64 * 1024**3}
         self.panel.ADMIN_TOKEN = "real-token"
+        self.patch_flag("ADMIN_REQUIRE_TOKEN", True)
         self.patch_db(lambda sql, params=None: [{"ready": True}])
         self.addCleanup(lambda: setattr(self.panel, "docker_service_inventory", original_inventory))
         self.addCleanup(lambda: setattr(self.panel, "restart_online_snapshot", original_restart))
@@ -2941,16 +2957,68 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.addCleanup(lambda: setattr(self.panel.restore_drill, "status", original_restore_status))
         self.addCleanup(lambda: setattr(self.panel, "read_meminfo", original_meminfo))
         self.addCleanup(lambda: setattr(self.panel, "ADMIN_TOKEN", original_token))
-        old_auth = self.panel.os.environ.get("DUNE_ADMIN_REQUIRE_TOKEN")
-        self.panel.os.environ["DUNE_ADMIN_REQUIRE_TOKEN"] = "true"
-        self.addCleanup(lambda: self.panel.os.environ.__setitem__("DUNE_ADMIN_REQUIRE_TOKEN", old_auth) if old_auth is not None else self.panel.os.environ.pop("DUNE_ADMIN_REQUIRE_TOKEN", None))
-
         collected = self.panel.collect_operational_slo_signals()
         self.assertTrue(all(collected["signals"].values()), collected)
         self.panel.restart_online_snapshot = lambda: (_ for _ in ()).throw(RuntimeError("farm unavailable"))
         failed = self.panel.collect_operational_slo_signals()
         self.assertFalse(failed["signals"]["required_maps_ready"])
         self.assertIn("farm unavailable", failed["context"]["errors"]["requiredMaps"])
+
+    def test_capacity_status_metrics_and_apply_route(self):
+        original_status = self.panel.capacity_intelligence_public_status
+        original_store = self.panel.capacity_intelligence_store
+        original_apply = self.panel.capacity_apply_recommendations
+        self.panel.capacity_intelligence_public_status = lambda: {"ok": True, "recommendations": {}}
+        self.panel.capacity_intelligence_store = lambda: type("Store", (), {"prometheus": lambda self: "dash_capacity_collector_up 1\n"})()
+        applied = []
+        self.panel.capacity_apply_recommendations = lambda actor, source: applied.append((actor, source)) or {"ok": True, "applied": True, "changes": [{"service": "arrakeen"}], "receipt": {"id": "r1"}}
+        self.addCleanup(lambda: setattr(self.panel, "capacity_intelligence_public_status", original_status))
+        self.addCleanup(lambda: setattr(self.panel, "capacity_intelligence_store", original_store))
+        self.addCleanup(lambda: setattr(self.panel, "capacity_apply_recommendations", original_apply))
+
+        handler, captured = self.make_route_handler("/api/ops/capacity")
+        handler.is_app_route = lambda path: False
+        handler.do_GET()
+        self.assertTrue(captured["json"]["ok"])
+
+        handler, captured = self.make_route_handler("/metrics/capacity")
+        handler.is_app_route = lambda path: False
+        texts = []
+        handler.text = lambda value, content_type="", **kwargs: texts.append((value, content_type))
+        handler.require_token = lambda: self.fail("bounded capacity metrics must not require an admin credential")
+        handler.do_GET()
+        self.assertEqual("dash_capacity_collector_up 1\n", texts[0][0])
+
+        self.patch_flag("MUTATIONS_ENABLED", True)
+        self.patch_flag("AUTOSCALER_MUTATIONS_ENABLED", True)
+        rejected = self.invoke_post_route("/api/ops/capacity", {"action": "apply-recommendations", "confirm": "wrong"})
+        self.assertEqual(401, rejected["errors"][0]["status"])
+        accepted = self.invoke_post_route("/api/ops/capacity", {"action": "apply-recommendations", "confirm": "APPLY CAPACITY RECOMMENDATIONS"})
+        self.assertTrue(accepted["json"]["applied"])
+        self.assertEqual(("owner-recovery", "manual"), applied[-1])
+
+    def test_capacity_collector_uses_autoscaler_inventory_players_and_readiness(self):
+        original_state = self.panel.read_autoscaler_state
+        original_inventory = self.panel.docker_service_inventory
+        original_counts = self.panel.autoscaler_player_counts
+        original_services = self.panel.GAME_MAP_SERVICES
+        self.panel.GAME_MAP_SERVICES = ("survival", "arrakeen")
+        self.panel.read_autoscaler_state = lambda: {
+            "modes": {"survival": "always-on", "arrakeen": "dynamic"},
+            "demand": {"arrakeen": time.time()}, "demandTtlSeconds": 900,
+            "retentionByService": {"arrakeen": 600}, "retentionSeconds": 900,
+        }
+        self.panel.docker_service_inventory = lambda: [{"service": "survival", "state": "running"}, {"service": "arrakeen", "state": "running"}]
+        self.panel.autoscaler_player_counts = lambda: {"survival": 1, "arrakeen": 0}
+        self.patch_db(lambda sql, params=None: [{"partition_id": 1, "ready": True}, {"partition_id": 2, "ready": False}])
+        self.addCleanup(lambda: setattr(self.panel, "read_autoscaler_state", original_state))
+        self.addCleanup(lambda: setattr(self.panel, "docker_service_inventory", original_inventory))
+        self.addCleanup(lambda: setattr(self.panel, "autoscaler_player_counts", original_counts))
+        self.addCleanup(lambda: setattr(self.panel, "GAME_MAP_SERVICES", original_services))
+        rows = {row["service"]: row for row in self.panel.collect_capacity_intelligence_maps()}
+        self.assertTrue(rows["survival"]["ready"])
+        self.assertTrue(rows["arrakeen"]["demanded"])
+        self.assertEqual(rows["arrakeen"]["retentionSeconds"], 600)
 
     def test_landsraad_reward_and_contribution_plans_preserve_rollback(self):
         def fake_query(sql, params=None):
