@@ -201,6 +201,30 @@ class ChangeIntelligenceTests(unittest.TestCase):
         self.assertEqual("blocked", generic["state"])
         self.assertEqual("blocked", generic["steps"][0]["status"])
 
+    def test_response_drill_is_incident_linked_evidence_and_changes_signed_plan_inputs(self):
+        self.record("settings-write", 1000, method="POST")
+        self.record("slo-incident-opened", 1100, incident_id="drill", objective_id="database_availability")
+        before = self.store.capsule("slo:drill")
+        event = self.store.record({
+            "action": "incident-response-drill", "ts": 1200, "ok": True,
+            "response_incident_key": "slo:drill", "runbook_id": "database-availability",
+            "drill_id": "response-drill-one", "diagnostics_ready": True,
+            "recovery_contracts_ready": True, "recovery_executed": False,
+            "game_mutation_executed": False, "receipt_sha256": "a" * 64,
+        }, ingested_at=1201)
+        after = self.store.capsule("slo:drill")
+        self.assertEqual("evidence", event["kind"])
+        self.assertEqual("slo:drill", event["incidentKey"])
+        self.assertEqual("incident-response-drill", after["responseDrills"][0]["action"])
+        self.assertEqual(event["id"], after["responseDrills"][0]["id"])
+        self.assertNotEqual(before["responsePlan"]["inputSha256"], after["responsePlan"]["inputSha256"])
+        self.assertTrue(change_intelligence.verify_response_plan(after["responsePlan"])["ok"])
+        signed = self.store.signed_capsule("slo:drill", at=1300)
+        self.assertTrue(change_intelligence.verify_signed_capsule(signed, change_intelligence.read_secret(self.secret))["ok"])
+        metrics = self.store.prometheus()
+        self.assertIn("dash_incident_response_latest_drill_ready 1", metrics)
+        self.assertIn("dash_incident_response_last_drill_timestamp_seconds 1200.0", metrics)
+
     def test_signed_capsule_uses_one_snapshot_when_writer_appends_mid_export(self):
         self.record("settings-write", 1000, method="POST")
         self.record("slo-incident-opened", 1100, incident_id="race")

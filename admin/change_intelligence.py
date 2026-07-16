@@ -264,6 +264,7 @@ def compile_response_plan(capsule, policy, ledger=None):
         "resolvedEventId": (capsule.get("resolved") or {}).get("id"),
         "candidateEventIds": [row.get("id") for row in candidates],
         "followupEventIds": [row.get("id") for row in followup],
+        "responseDrillEventIds": [row.get("id") for row in capsule.get("responseDrills") or []],
         "ledgerEventCount": ledger.get("eventCount"), "ledgerHeadSignature": ledger.get("lastEventSignature"),
     }
     plan = {
@@ -384,6 +385,8 @@ def classify(action, event, policy):
 
 
 def incident_key(action, event, kind):
+    if action == "incident-response-drill" and event.get("response_incident_key"):
+        return validate_incident_key(event["response_incident_key"])
     if kind not in {"incident-open", "incident-resolved"}:
         return None
     if event.get("finding_id"):
@@ -402,7 +405,7 @@ def validate_incident_key(value):
 
 def event_scope(action, event, secret):
     values = {"action:" + action}
-    for key in ("path", "target", "service", "map", "category", "subject", "objective_id", "desired_state_action", "capacity_action", "slo_action"):
+    for key in ("path", "target", "service", "map", "category", "subject", "objective_id", "desired_state_action", "capacity_action", "slo_action", "response_incident_key", "runbook_id"):
         value = event.get(key)
         if value is not None and str(value).strip():
             if key in {"target", "subject"}:
@@ -713,10 +716,15 @@ class Store:
             "select * from events where occurred_at>? and occurred_at<=? order by occurred_at,sequence limit ?",
             (opened["occurred_at"], end, self.policy["capsuleEvidenceLimit"]),
         ).fetchall()
+        drills = connection.execute(
+            "select * from events where incident_key=? and action='incident-response-drill' order by occurred_at desc,sequence desc limit 20",
+            (str(key),),
+        ).fetchall()
         capsule = {
             "ok": True, "incidentKey": key, "status": "resolved" if resolved else "open",
             "opened": self._public(opened), "resolved": self._public(resolved) if resolved else None,
             "candidateChanges": self._correlate_connection(connection, key), "followupEvidence": [self._public(row) for row in followup],
+            "responseDrills": [self._public(row) for row in drills],
             "causalityClaimed": False,
             "interpretation": "Candidates are ranked temporal/scope correlations, not proof of causality.",
         }
@@ -879,6 +887,12 @@ class Store:
         events = status["recentEvents"]
         latest = _epoch(events[0]["occurredAt"]) if events else "NaN"
         with_candidates = sum(1 for row in status["openIncidents"] if row["candidateChanges"])
+        connection = self.connect(readonly=True)
+        try:
+            row = connection.execute("select * from events where action='incident-response-drill' order by occurred_at desc,sequence desc limit 1").fetchone()
+            latest_drill = self._public(row) if row else None
+        finally:
+            connection.close()
         return "\n".join([
             "# HELP dash_change_intelligence_collector_up Change timeline SQLite, triggers, and HMAC chain verify.",
             "# TYPE dash_change_intelligence_collector_up gauge",
@@ -887,4 +901,6 @@ class Store:
             f"dash_change_intelligence_open_incidents {len(status['openIncidents'])}",
             f"dash_change_intelligence_open_incidents_with_candidate_changes {with_candidates}",
             f"dash_change_intelligence_last_event_timestamp_seconds {latest}",
+            f"dash_incident_response_latest_drill_ready {1 if latest_drill and latest_drill.get('ok') else 0}",
+            f"dash_incident_response_last_drill_timestamp_seconds {_epoch(latest_drill['occurredAt']) if latest_drill else 'NaN'}",
         ]) + "\n"

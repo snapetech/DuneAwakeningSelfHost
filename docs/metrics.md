@@ -9,6 +9,9 @@ The private admin service also exposes label-safe `/metrics/slo`,
 reliability/error-budget, autoscaler-efficiency, configuration-attestation, and
 incident/change-correlation evidence without exporting player identities,
 notes, coordinates, paths, candidates, digests, or credentials.
+Change Intelligence also emits only the latest response-readiness drill result
+and timestamp. Those series have no incident, operator, command, runbook, gate,
+or digest labels.
 
 Start it with the normal world Compose files plus the overlay:
 

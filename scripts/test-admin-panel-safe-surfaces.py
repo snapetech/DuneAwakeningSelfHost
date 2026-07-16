@@ -3394,6 +3394,69 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertGreaterEqual(len(mutation_steps), 9)
         self.assertTrue(all(step["requiredCapability"] != "read" for step in mutation_steps))
 
+    def test_response_readiness_drill_runs_only_fixed_diagnostics_and_records_digest_receipt(self):
+        plan = {
+            "incidentKey": "slo:one", "runbookId": "control-plane-availability",
+            "planSha256": "a" * 64, "policySha256": "b" * 64, "state": "requires-operator-review",
+            "steps": [
+                {"id": "diagnose", "commandId": "rmq-health", "mutation": False},
+                {"id": "recover", "surface": "infrastructure:service-control", "requiredCapability": "infrastructure.write", "featureGate": "DUNE_ADMIN_SERVICE_CONTROL_ENABLED", "confirmation": "CONTROL SERVICE", "mutation": True},
+            ],
+        }
+        events = []
+        calls = []
+        store = type("Store", (), {
+            "capsule": lambda self, key: {"responsePlan": plan, "responseDrills": ([{"id": "change-drill", "action": "incident-response-drill", "data": {"drill_id": events[-1][2]["drill_id"]}}] if events else [])},
+        })()
+        originals = {
+            "RESPONSE_DRILLS_ENABLED": self.panel.RESPONSE_DRILLS_ENABLED,
+            "COMMAND_CONSOLE_ENABLED": self.panel.COMMAND_CONSOLE_ENABLED,
+            "change_intelligence_store": self.panel.change_intelligence_store,
+            "audit_event": self.panel.audit_event,
+        }
+        self.panel.RESPONSE_DRILLS_ENABLED = True
+        self.panel.COMMAND_CONSOLE_ENABLED = True
+        self.panel.change_intelligence_store = lambda: store
+        self.panel.audit_event = lambda action, ok=True, **data: events.append((action, ok, data))
+        for name, value in originals.items():
+            self.addCleanup(lambda name=name, value=value: setattr(self.panel, name, value))
+        principal = {"id": "owner", "capabilities": ["*"]}
+
+        def executor(command_id):
+            calls.append(command_id)
+            return {"ok": True, "bounded": True}
+
+        with mock.patch.dict(os.environ, {"DUNE_ADMIN_SERVICE_CONTROL_ENABLED": "true"}):
+            result = self.panel.run_response_readiness_drill("slo:one", "a" * 64, principal, executor)
+        self.assertTrue(result["ready"])
+        self.assertFalse(result["recoveryExecuted"])
+        self.assertFalse(result["gameMutationExecuted"])
+        self.assertEqual(["rmq-health"], calls)
+        self.assertEqual(64, len(result["diagnostics"][0]["outputSha256"]))
+        self.assertNotIn("output", result["diagnostics"][0])
+        self.assertTrue(result["recoveryContracts"][0]["ready"])
+        self.assertEqual("incident-response-drill", events[0][0])
+        self.assertTrue(events[0][1])
+        self.assertFalse(events[0][2]["recovery_executed"])
+        self.assertEqual("change-drill", result["ledgerEvent"]["id"])
+        with self.assertRaisesRegex(ValueError, "plan changed"):
+            self.panel.run_response_readiness_drill("slo:one", "c" * 64, principal, executor)
+        self.assertEqual(["rmq-health"], calls)
+
+    def test_response_drill_route_requires_confirmation_and_passes_authenticated_principal(self):
+        original = self.panel.run_response_readiness_drill
+        calls = []
+        self.panel.run_response_readiness_drill = lambda key, digest, principal, executor: calls.append((key, digest, principal, callable(executor))) or {"ready": True, "recoveryExecuted": False}
+        self.addCleanup(lambda: setattr(self.panel, "run_response_readiness_drill", original))
+        rejected = self.invoke_post_route("/api/ops/change-intelligence/drill", {"incidentKey": "slo:one", "planSha256": "a" * 64, "confirm": "wrong"})
+        self.assertEqual(401, rejected["errors"][0]["status"])
+        self.assertFalse(calls)
+        accepted = self.invoke_post_route("/api/ops/change-intelligence/drill", {"incidentKey": "slo:one", "planSha256": "a" * 64, "confirm": "RUN RESPONSE READINESS DRILL"})
+        self.assertTrue(accepted["json"]["ready"])
+        self.assertEqual("slo:one", calls[0][0])
+        self.assertIsInstance(calls[0][2], dict)
+        self.assertTrue(calls[0][3])
+
     def test_capacity_application_is_evidence_gated_gradual_and_mode_preserving(self):
         fake = type("Store", (), {
             "status": lambda self: {

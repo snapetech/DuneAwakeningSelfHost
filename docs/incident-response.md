@@ -191,6 +191,32 @@ session storage, opens Command Console, preselects the matching allowlisted
 diagnostic, removes the pending selection, and asks the operator to review it.
 It does not run the command.
 
+### Response-readiness drills
+
+Press **Run readiness drill** after reviewing the current plan and confirming
+`RUN RESPONSE READINESS DRILL`. The request binds to the displayed
+`planSha256`; if any incident evidence, prior drill receipt, or ledger head
+changed, the server rejects the stale plan and requires a reload.
+
+The drill refuses blocked evidence, runs each distinct fixed `commandId`
+through the existing native Command Console runner, and evaluates every recovery
+step against the authenticated principal's current capability, environment
+feature gate, and committed confirmation contract. It executes no recovery and
+no game mutation.
+
+Diagnostic output is hashed and discarded. The retained receipt contains only
+its byte count and SHA-256 plus success, return code, timeout, duration, and the
+proof that shell, subprocess, and arguments were false. DASH appends that
+bounded receipt as `incident-response-drill` evidence under the exact incident
+key in the existing HMAC chain.
+
+`ready=true` means every fixed diagnostic passed and every suggested recovery
+contract was currently executable by that principal with its gate enabled. It
+does not mean recovery ran, the incident is fixed, or a ranked candidate is a
+cause. Drill events remain visible even after the normal resolved-incident
+follow-up window. Their ledger IDs enter the next plan `inputSha256`, so each
+rehearsal necessarily changes the plan digest and subsequent signed capsule.
+
 Both existing capsule forms include `responsePlan`:
 
 ```text
@@ -200,6 +226,17 @@ GET /api/ops/change-intelligence/capsule?incidentKey=slo:<id>&signed=true
 
 They require the normal `read` capability. Merely reading or signing a plan
 does not require mutation authority because neither path executes a step.
+
+The explicit rehearsal route is:
+
+```text
+POST /api/ops/change-intelligence/drill
+{"incidentKey":"slo:<id>","planSha256":"<64 hex>","confirm":"RUN RESPONSE READINESS DRILL"}
+```
+
+It requires `operations.write`, `DUNE_RESPONSE_DRILLS_ENABLED=true`, and
+`DUNE_COMMAND_CONSOLE_ENABLED=true`. It does not use the master game-mutation
+gate because its only write is the private audit/HMAC evidence receipt.
 
 ## CLI
 
@@ -261,6 +298,10 @@ verify the full backup, extract the archive to a private staging directory, and
 retain or distribute only the required capsules. Do not overwrite the live
 append-only SQLite ledger with a portable export.
 
+Prometheus exposes the latest drill readiness and timestamp without incident,
+operator, command, runbook, gate, or digest labels. Alerts fire when the latest
+drill is not ready or when an existing drill becomes older than seven days.
+
 ## Failure Handling
 
 - **plan state is blocked:** preserve the ledger and use the
@@ -278,6 +319,10 @@ append-only SQLite ledger with a portable export.
   merging or following two plans.
 - **incident still open after recovery:** wait for or run the authoritative
   health observation path; never fabricate a resolution event.
+- **drill not ready:** inspect diagnostic and recovery-contract booleans. Repair
+  or enable a missing gate through a separate reviewed change; never bypass it.
+- **stale plan rejection:** reload the capsule. New evidence changed immutable
+  plan inputs as designed.
 
 ## Validation
 

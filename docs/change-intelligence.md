@@ -229,6 +229,7 @@ assigning new semantics to the old format.
 | `DUNE_CHANGE_INTELLIGENCE_HMAC_SECRET_FILE` | `/workspace/config/secrets/change-intelligence-hmac.secret` | Private authentication key. |
 | `DUNE_CHANGE_INTELLIGENCE_EVIDENCE_DIR` | `/workspace/backups/operator-evidence` | Container path for private portable signed capsules. |
 | `DUNE_CHANGE_INTELLIGENCE_HOST_EVIDENCE_DIR` | `backups/operator-evidence` | Host path archived by full backups. |
+| `DUNE_RESPONSE_DRILLS_ENABLED` | `true` | Enables explicit fixed-diagnostic response-readiness rehearsals. |
 
 Host CLI overrides are `DUNE_CHANGE_INTELLIGENCE_HOST_DATABASE`,
 `DUNE_CHANGE_INTELLIGENCE_HOST_POLICY`, and
@@ -276,7 +277,8 @@ GET /metrics/change-intelligence
 ```
 
 It exposes ledger verification, total events, open incidents, open incidents
-with at least one candidate change, and last-event time. Prometheus alerts when
+with at least one candidate change, last-event time, latest response-drill
+readiness, and last-drill time. Prometheus alerts when
 the target is unreachable, integrity verification fails, or an open incident
 has preceding changes requiring review. The latter is an investigation alert,
 not a root-cause verdict.

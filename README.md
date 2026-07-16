@@ -154,6 +154,10 @@ or drift contract. Plans separate verified facts from operator work, link only
 to bounded diagnostics and existing guarded recovery surfaces, execute nothing
 automatically, and remain verifiable inside portable signed escalation
 artifacts and matching-key backups.
+Operators can rehearse a plan without disruption: DASH runs only fixed
+read-only diagnostics, validates current recovery capabilities and gates,
+discards diagnostic output after hashing it, executes no recovery, and appends
+the readiness receipt to the incident's HMAC evidence chain.
 
 See [`docs/ecosystem-feature-parity-audit.md`](docs/ecosystem-feature-parity-audit.md)
 for the pinned peer list, full capability matrix, confidence levels, exclusions,

@@ -236,6 +236,7 @@ CONFIRM_SLO_MAINTENANCE = "CHANGE SLO MAINTENANCE"
 CONFIRM_CAPACITY_APPLY = "APPLY CAPACITY RECOMMENDATIONS"
 CONFIRM_DESIRED_STATE_SEAL = "SEAL DESIRED STATE"
 CONFIRM_DESIRED_STATE_ACK = "ACKNOWLEDGE CONFIGURATION DRIFT"
+CONFIRM_RESPONSE_DRILL = "RUN RESPONSE READINESS DRILL"
 CONFIRM_BOOTSTRAP = "RUN BOOTSTRAP"
 CONFIRM_PLAYER_RECOVERY = "MOVE OFFLINE PLAYER"
 CONFIRM_REPUTATION_MUTATION = "WRITE REPUTATION"
@@ -391,6 +392,7 @@ CHANGE_INTELLIGENCE_POLICY = pathlib.Path(os.environ.get("DUNE_CHANGE_INTELLIGEN
 CHANGE_INTELLIGENCE_DATABASE = pathlib.Path(os.environ.get("DUNE_CHANGE_INTELLIGENCE_DATABASE", str(BACKUPS_ROOT / "change-intelligence" / "change-intelligence.sqlite3")))
 CHANGE_INTELLIGENCE_SECRET_FILE = pathlib.Path(os.environ.get("DUNE_CHANGE_INTELLIGENCE_HMAC_SECRET_FILE", str(CONFIG_ROOT / "secrets" / "change-intelligence-hmac.secret")))
 CHANGE_INTELLIGENCE_EVIDENCE_ROOT = pathlib.Path(os.environ.get("DUNE_CHANGE_INTELLIGENCE_EVIDENCE_DIR", str(BACKUPS_ROOT / "operator-evidence")))
+RESPONSE_DRILLS_ENABLED = os.environ.get("DUNE_RESPONSE_DRILLS_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 CHANGE_INTELLIGENCE_STORE = None
 CHANGE_INTELLIGENCE_STORE_LOCK = threading.Lock()
 CHANGE_INTELLIGENCE_RUNTIME = {"ready": False, "imported": 0, "duplicates": 0, "importErrors": 0, "reconciled": 0, "lastEventAt": None, "lastEventId": None, "lastError": ""}
@@ -970,6 +972,7 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_CHANGE_INTELLIGENCE_HMAC_SECRET_FILE": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Private HMAC key authenticating the operational change timeline."},
     "DUNE_CHANGE_INTELLIGENCE_EVIDENCE_DIR": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Container path holding private portable signed incident capsules included in maintenance backups."},
     "DUNE_CHANGE_INTELLIGENCE_HOST_EVIDENCE_DIR": {"group": "Change Intelligence", "secret": False, "restart": False, "why": "Host-relative portable signed capsule path used by full backup-state archives."},
+    "DUNE_RESPONSE_DRILLS_ENABLED": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Enables explicit non-disruptive response-plan rehearsals using fixed read-only diagnostics only."},
     "DUNE_ADMIN_BACKUP_IMPORT_MAX_BODY_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum JSON request size for a base64 full-backup archive import."},
     "DUNE_BACKUP_ARCHIVE_ENCRYPTION_ENABLED": {"group": "Backup Encryption", "secret": False, "restart": False, "why": "Enables the documented host-side verified OpenPGP archive workflow."},
     "DUNE_BACKUP_GPG_RECIPIENT": {"group": "Backup Encryption", "secret": False, "restart": False, "why": "Exact 40- or 64-hex OpenPGP recipient fingerprint; never an ambiguous name/email selector."},
@@ -5498,8 +5501,79 @@ def change_intelligence_public_status():
     if not CHANGE_INTELLIGENCE_ENABLED:
         return {"ok": False, "enabled": False, "state": "disabled", "runtime": dict(CHANGE_INTELLIGENCE_RUNTIME)}
     status = change_intelligence_store().status()
-    status.update({"enabled": True, "runtime": dict(CHANGE_INTELLIGENCE_RUNTIME)})
+    status.update({"enabled": True, "runtime": dict(CHANGE_INTELLIGENCE_RUNTIME), "responseDrillsEnabled": RESPONSE_DRILLS_ENABLED, "responseDrillConfirm": CONFIRM_RESPONSE_DRILL})
     return status
+
+
+def run_response_readiness_drill(incident_key, expected_plan_sha256, principal, executor):
+    if not RESPONSE_DRILLS_ENABLED:
+        raise PermissionError("response readiness drills are disabled; set DUNE_RESPONSE_DRILLS_ENABLED=true")
+    if not COMMAND_CONSOLE_ENABLED:
+        raise PermissionError("response readiness drills require DUNE_COMMAND_CONSOLE_ENABLED=true")
+    capsule = change_intelligence_store().capsule(incident_key)
+    plan = capsule["responsePlan"]
+    expected = str(expected_plan_sha256 or "").strip()
+    if not re.fullmatch(r"[0-9a-f]{64}", expected) or not hmac.compare_digest(expected, plan["planSha256"]):
+        raise ValueError("response plan changed; reload the capsule and review the current plan before drilling")
+    if plan["state"] == "blocked":
+        raise RuntimeError("response drill refuses an incident whose evidence plan is blocked")
+    diagnostics = []
+    seen = set()
+    for step in plan["steps"]:
+        command_id = step.get("commandId")
+        if not command_id or command_id in seen:
+            continue
+        seen.add(command_id)
+        result = command_console.run(command_id, executor)
+        output = str(result.pop("output", ""))
+        diagnostics.append({
+            "stepId": step["id"], "commandId": command_id, "ok": result["ok"],
+            "returncode": result["returncode"], "timedOut": result["timedOut"],
+            "durationMs": result["durationMs"], "outputBytes": len(output.encode("utf-8")),
+            "outputSha256": hashlib.sha256(output.encode("utf-8")).hexdigest(),
+            "shell": result["shell"], "subprocess": result["subprocess"], "argumentsAccepted": result["argumentsAccepted"],
+        })
+    recovery = []
+    for step in plan["steps"]:
+        if not step["mutation"]:
+            continue
+        gate = step.get("featureGate") or ""
+        capability_ready = access_control.has_capability(principal, step["requiredCapability"])
+        gate_enabled = bool(gate and os.environ.get(gate, "false").lower() in ("1", "true", "yes", "on"))
+        confirmation_ready = not step.get("confirmation") or bool(str(step["confirmation"]).strip())
+        recovery.append({
+            "stepId": step["id"], "surface": step["surface"], "requiredCapability": step["requiredCapability"],
+            "capabilityReady": capability_ready, "featureGate": gate, "featureGateEnabled": gate_enabled,
+            "confirmation": step.get("confirmation"), "confirmationConfigured": confirmation_ready,
+            "ready": capability_ready and gate_enabled and confirmation_ready,
+        })
+    diagnostics_ready = all(row["ok"] and not row["shell"] and not row["subprocess"] and not row["argumentsAccepted"] for row in diagnostics)
+    recovery_ready = all(row["ready"] for row in recovery)
+    ready = diagnostics_ready and recovery_ready
+    drill_id = "response-drill-" + secrets.token_hex(16)
+    receipt = {
+        "id": drill_id, "incidentKey": plan["incidentKey"], "runbookId": plan["runbookId"],
+        "planSha256": plan["planSha256"], "policySha256": plan["policySha256"],
+        "principalId": str((principal or {}).get("id") or "unknown")[:128],
+        "diagnostics": diagnostics, "recoveryContracts": recovery,
+        "diagnosticsReady": diagnostics_ready, "recoveryContractsReady": recovery_ready,
+        "ready": ready, "recoveryExecuted": False, "gameMutationExecuted": False,
+    }
+    receipt["receiptSha256"] = hashlib.sha256(json.dumps(receipt, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()).hexdigest()
+    audit_event(
+        "incident-response-drill", ok=ready, response_incident_key=plan["incidentKey"],
+        drill_id=drill_id, runbook_id=plan["runbookId"], plan_sha256=plan["planSha256"],
+        policy_sha256=plan["policySha256"], principal_id=receipt["principalId"], diagnostics=diagnostics,
+        recovery_contracts=recovery, diagnostics_ready=diagnostics_ready,
+        recovery_contracts_ready=recovery_ready, recovery_executed=False,
+        game_mutation_executed=False, receipt_sha256=receipt["receiptSha256"],
+    )
+    refreshed = change_intelligence_store().capsule(plan["incidentKey"])
+    ledger_event = (refreshed.get("responseDrills") or [None])[0]
+    if not ledger_event or (ledger_event.get("data") or {}).get("drill_id") != drill_id:
+        raise RuntimeError("response drill completed but its HMAC ledger receipt was not retained")
+    receipt["ledgerEvent"] = ledger_event
+    return receipt
 
 
 def bootstrap_status():
@@ -7714,6 +7788,9 @@ class Handler(BaseHTTPRequestHandler):
                 incident_key = (params.get("incidentKey") or [""])[0]
                 signed = str((params.get("signed") or [""])[0]).lower() in ("1", "true", "yes", "on")
                 self.json(change_intelligence_store().signed_capsule(incident_key) if signed else change_intelligence_store().capsule(incident_key))
+            elif parsed.path == "/api/ops/change-intelligence/drill":
+                self.require_token()
+                raise PermissionError("response readiness drills require POST")
             elif parsed.path == "/api/ops/database":
                 self.require_token()
                 self.json(dict(database_browser_catalog(), queryEnabled=DATABASE_QUERY_ENABLED, writeEnabled=DATABASE_WRITE_ENABLED, rowMutationsEnabled=DATABASE_ROW_MUTATIONS_ENABLED, passwordMutationsEnabled=DATABASE_PASSWORD_MUTATIONS_ENABLED, writeConfirm=CONFIRM_DATABASE_WRITE, rowConfirm=CONFIRM_DATABASE_ROW_UPDATE, passwordConfirm=CONFIRM_DATABASE_PASSWORD))
@@ -8367,6 +8444,13 @@ class Handler(BaseHTTPRequestHandler):
                 result = command_console.run(body.get("commandId"), self.command_console_operation)
                 principal = access_control.public_principal(getattr(self, "auth_principal", None)) or {}
                 self.audit("command-console", ok=result["ok"], command_id=result["commandId"], principal_id=principal.get("id"), returncode=result["returncode"], timed_out=result["timedOut"], duration_ms=result["durationMs"])
+                self.json(result)
+            elif parsed.path == "/api/ops/change-intelligence/drill":
+                self.require_token()
+                body = parse_body(self)
+                require_confirmation(body, CONFIRM_RESPONSE_DRILL)
+                principal = access_control.public_principal(getattr(self, "auth_principal", None)) or {}
+                result = run_response_readiness_drill(body.get("incidentKey"), body.get("planSha256"), principal, self.command_console_operation)
                 self.json(result)
             elif parsed.path == "/api/ops/backups/verify":
                 self.require_token()
@@ -15849,12 +15933,24 @@ async function infrastructureChangeCapsule(){
     seen.add(key);
     return `<button class="responsePlanJump" data-response-tab="${esc(tab)}" data-response-command="${esc(step.commandId || '')}">Open ${esc(surface)}</button>`;
   }).filter(Boolean).join('');
-  if (output) output.innerHTML = `<div class="sectionHeader"><h3>${esc(plan.title || 'Response plan')}</h3><div class="toolbar"><span class="pill ${plan.state === 'blocked' ? 'bad' : 'warn'}">${esc(plan.state || 'unknown')}</span><span class="pill">${esc(plan.runbookId || 'no runbook')}</span><span class="pill">policy ${esc(String(plan.policySha256 || '').slice(0,12))}</span><span class="pill">plan ${esc(String(plan.planSha256 || '').slice(0,12))}</span></div></div><p>${esc(plan.interpretation || '')}</p>${table(rows)}<div class="commandBar">${jumps}</div><details><summary>Complete capsule and immutable plan inputs</summary><pre>${esc(JSON.stringify(result, null, 2))}</pre></details>`;
+  const drills = result.responseDrills || [];
+  if (output) output.innerHTML = `<div class="sectionHeader"><h3>${esc(plan.title || 'Response plan')}</h3><div class="toolbar"><span class="pill ${plan.state === 'blocked' ? 'bad' : 'warn'}">${esc(plan.state || 'unknown')}</span><span class="pill">${esc(plan.runbookId || 'no runbook')}</span><span class="pill">policy ${esc(String(plan.policySha256 || '').slice(0,12))}</span><span class="pill">plan ${esc(String(plan.planSha256 || '').slice(0,12))}</span><span class="pill ${drills[0]?.ok ? 'ok' : drills.length ? 'bad' : ''}">${drills.length ? `latest drill ${drills[0].ok ? 'ready' : 'not ready'}` : 'not rehearsed'}</span></div></div><p>${esc(plan.interpretation || '')}</p>${table(rows)}<div class="commandBar">${jumps}<button id="infraResponseDrillBtn" data-plan-sha="${esc(plan.planSha256 || '')}" ${plan.state === 'blocked' ? 'disabled' : ''}>Run readiness drill</button></div>${drills.length ? `<details><summary>Readiness drill receipts (${drills.length})</summary>${table(drills.map(row=>({occurredAt:row.occurredAt,ok:row.ok,actor:row.actor,drillId:row.data?.drill_id,diagnosticsReady:row.data?.diagnostics_ready,recoveryContractsReady:row.data?.recovery_contracts_ready,receiptSha256:row.data?.receipt_sha256})))}</details>` : ''}<details><summary>Complete capsule and immutable plan inputs</summary><pre>${esc(JSON.stringify(result, null, 2))}</pre></details>`;
   output?.querySelectorAll('.responsePlanJump').forEach(button => button.addEventListener('click', () => {
     if (button.dataset.responseCommand) sessionStorage.setItem('duneResponseCommand', button.dataset.responseCommand);
     show(button.dataset.responseTab || 'infrastructure');
   }));
+  document.getElementById('infraResponseDrillBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Rehearsing...', infrastructureResponseDrill));
   notify(`Evidence capsule and ${plan.runbookId || 'response plan'} loaded for ${incidentKey}`);
+  return result;
+}
+async function infrastructureResponseDrill(){
+  const incidentKey = document.getElementById('infraChangeIncident')?.value || '';
+  const planSha256 = document.getElementById('infraResponseDrillBtn')?.dataset.planSha || '';
+  if (!incidentKey || !planSha256) throw new Error('Reload and review the current incident response plan');
+  if (!confirm('Run this non-disruptive readiness drill? DASH will execute only fixed read-only diagnostics and validate recovery contracts. No recovery or game mutation will run.')) return;
+  const result = await api('/api/ops/change-intelligence/drill', {method:'POST',timeoutMs:180000,body:JSON.stringify({incidentKey,planSha256,confirm:'RUN RESPONSE READINESS DRILL'})});
+  notify(result.ready ? 'Response readiness drill passed' : 'Response readiness gaps found', result.ready ? 'ok' : 'warn');
+  await infrastructureChangeCapsule();
   return result;
 }
 async function infrastructureChangeCapsuleExport(){

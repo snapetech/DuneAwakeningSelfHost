@@ -133,3 +133,13 @@ groups:
         for: 2m
         labels: {severity: warning}
         annotations: {summary: "An open DASH incident has temporally correlated preceding changes to review"}
+      - alert: DashIncidentResponseDrillNotReady
+        expr: dash_incident_response_last_drill_timestamp_seconds > 0 and dash_incident_response_latest_drill_ready == 0
+        for: 2m
+        labels: {severity: warning}
+        annotations: {summary: "The latest DASH incident-response readiness drill found diagnostic or recovery-contract gaps"}
+      - alert: DashIncidentResponseDrillStale
+        expr: time() - dash_incident_response_last_drill_timestamp_seconds > 604800
+        for: 1h
+        labels: {severity: warning}
+        annotations: {summary: "No successful or failed DASH incident-response readiness drill has been recorded in seven days"}
