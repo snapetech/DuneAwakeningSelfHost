@@ -2717,8 +2717,25 @@ def autoscaler_tick(force=False):
                     actions.append({"service": service, "action": "refused-stop", "reason": f"{players} online players"})
                     continue
                 if not running and desired_running:
+                    capacity_start_recorded = False
+                    if CAPACITY_INTELLIGENCE_ENABLED:
+                        try:
+                            capacity_intelligence_store().record_start(
+                                service,
+                                source="autoscaler",
+                                at=now,
+                                details={"mode": mode, "demanded": demanded, "players": players},
+                            )
+                            capacity_start_recorded = True
+                        except Exception as exc:
+                            actions.append({"service": service, "action": "capacity-start-warning", "error": str(exc)[:500]})
                     result = autoscaler_service_action(service, "start")
                     actions.append({"service": service, "action": "start", "ok": result.get("ok")})
+                    if capacity_start_recorded and not result.get("ok"):
+                        try:
+                            capacity_intelligence_store().fail_start(service, result.get("error") or "start action failed")
+                        except Exception as exc:
+                            actions.append({"service": service, "action": "capacity-failure-warning", "error": str(exc)[:500]})
                     state["idleSince"].pop(service, None)
                     state["lastEvictionReason"].pop(service, None)
                     continue
@@ -4478,7 +4495,7 @@ def verify_backup_set_native(path):
             output.append(f"OK archive {archive}")
         except (OSError, tarfile.TarError) as exc:
             errors.append(f"FAIL archive {archive}: {exc}")
-    for name in ("community-rewards.sqlite3", "moderation.sqlite3", "base-gallery.sqlite3", "operational-slo.sqlite3"):
+    for name in ("community-rewards.sqlite3", "moderation.sqlite3", "base-gallery.sqlite3", "operational-slo.sqlite3", "capacity-intelligence.sqlite3"):
         database = path / name
         if not database.is_file():
             output.append(f"WARN no {name} found in {path}")
@@ -4933,6 +4950,156 @@ def ensure_operational_slo_thread():
         return
     OPERATIONAL_SLO_THREAD_STARTED = True
     threading.Thread(target=operational_slo_worker, name="operational-slo-worker", daemon=True).start()
+
+
+def capacity_intelligence_store():
+    global CAPACITY_INTELLIGENCE_STORE
+    with CAPACITY_INTELLIGENCE_STORE_LOCK:
+        if CAPACITY_INTELLIGENCE_STORE is None:
+            CAPACITY_INTELLIGENCE_STORE = capacity_intelligence.Store(
+                CAPACITY_INTELLIGENCE_DATABASE,
+                CAPACITY_INTELLIGENCE_POLICY,
+                owner_uid=os.environ.get("DUNE_HOST_UID"),
+                owner_gid=os.environ.get("DUNE_HOST_GID"),
+            )
+            CAPACITY_INTELLIGENCE_STORE.initialize()
+        return CAPACITY_INTELLIGENCE_STORE
+
+
+def collect_capacity_intelligence_maps():
+    autoscaler = read_autoscaler_state()
+    inventory = {row["service"]: row for row in docker_service_inventory() if row["service"] in GAME_MAP_SERVICES}
+    counts = autoscaler_player_counts()
+    readiness_rows = query("""
+        select wp.partition_id,
+          bool_or(wp.server_id is not null and coalesce(fs.alive,false) and coalesce(fs.ready,false)
+            and asi.server_id is not null and not coalesce(wp.blocked,false)) as ready
+        from dune.world_partition wp
+        left join dune.farm_state fs on fs.server_id=wp.server_id
+        left join dune.active_server_ids asi on asi.server_id=wp.server_id
+        where wp.partition_id = any(%s)
+        group by wp.partition_id
+    """, (list(range(1, len(GAME_MAP_SERVICES) + 1)),))
+    readiness = {}
+    for row in readiness_rows:
+        partition = int(row.get("partition_id") or 0)
+        if 1 <= partition <= len(GAME_MAP_SERVICES):
+            readiness[GAME_MAP_SERVICES[partition - 1]] = bool(row.get("ready"))
+    now = time.time()
+    maps = []
+    for service in GAME_MAP_SERVICES:
+        mode = autoscaler["modes"].get(service, "always-on")
+        state = str(inventory.get(service, {}).get("state") or "missing").lower()
+        players = int(counts.get(service, 0))
+        demand_at = float(autoscaler["demand"].get(service) or 0)
+        demanded = demand_at > 0 and now - demand_at <= autoscaler["demandTtlSeconds"]
+        running = state == "running"
+        maps.append({
+            "service": service,
+            "mode": mode,
+            "state": state,
+            "players": players,
+            "demanded": demanded,
+            "ready": bool(readiness.get(service, False)),
+            "optionalWarm": running and mode == "dynamic" and players == 0 and not demanded,
+            "retentionSeconds": autoscaler_retention_seconds(autoscaler, service),
+        })
+    return maps
+
+
+def capacity_apply_recommendations(actor="system", source="manual"):
+    store = capacity_intelligence_store()
+    status = store.status()
+    policy = status["policy"]
+    changes = []
+    with AUTOSCALER_LOCK:
+        state = read_autoscaler_state()
+        for service, recommendation in sorted(status.get("recommendations", {}).items()):
+            if not recommendation.get("eligible") or state["modes"].get(service) != "dynamic":
+                continue
+            current = autoscaler_retention_seconds(state, service)
+            target = int(recommendation["recommendedRetentionSeconds"])
+            fraction = float(policy["maximumApplyFraction"])
+            lower = max(int(policy["minimumRetentionSeconds"]), int(math.floor(current * (1.0 - fraction))))
+            upper = min(int(policy["maximumRetentionSeconds"]), int(math.ceil(current * (1.0 + fraction))))
+            applied = max(lower, min(target, upper))
+            if applied == current:
+                continue
+            state["retentionByService"][service] = applied
+            changes.append({
+                "service": service,
+                "beforeSeconds": current,
+                "recommendedSeconds": target,
+                "appliedSeconds": applied,
+                "confidence": recommendation["confidence"],
+                "revisitSamples": recommendation["revisitSamples"],
+                "startSamples": recommendation["startSamples"],
+            })
+        if changes:
+            state["profile"] = "adaptive"
+            write_autoscaler_state(state)
+    receipt = store.record_application(actor, source, changes) if changes else None
+    return {
+        "ok": True,
+        "applied": bool(changes),
+        "changes": changes,
+        "receipt": receipt,
+        "reason": "no eligible recommendation changed the current policy" if not changes else "bounded recommendations applied",
+        "maximumApplyFraction": policy["maximumApplyFraction"],
+    }
+
+
+def capacity_intelligence_tick():
+    CAPACITY_INTELLIGENCE_RUNTIME["running"] = True
+    try:
+        result = capacity_intelligence_store().observe(collect_capacity_intelligence_maps())
+        auto_result = None
+        if MUTATIONS_ENABLED and AUTOSCALER_MUTATIONS_ENABLED and CAPACITY_AUTO_APPLY_ENABLED:
+            last = CAPACITY_INTELLIGENCE_RUNTIME.get("lastAutoApplyAt") or 0
+            if time.time() - float(last) >= CAPACITY_AUTO_APPLY_INTERVAL_HOURS * 3600:
+                auto_result = capacity_apply_recommendations(actor="system:capacity-intelligence", source="automatic")
+                CAPACITY_INTELLIGENCE_RUNTIME.update({"lastAutoApplyAt": time.time(), "lastAutoApply": auto_result})
+        CAPACITY_INTELLIGENCE_RUNTIME.update({"lastSampleAt": time.time(), "lastResult": result, "lastError": ""})
+        return {**result, "autoApply": auto_result}
+    except Exception as exc:
+        CAPACITY_INTELLIGENCE_RUNTIME["lastError"] = str(exc)[:2000]
+        raise
+    finally:
+        CAPACITY_INTELLIGENCE_RUNTIME["running"] = False
+
+
+def capacity_intelligence_public_status():
+    if not CAPACITY_INTELLIGENCE_ENABLED:
+        return {"ok": False, "enabled": False, "overall": "disabled", "runtime": dict(CAPACITY_INTELLIGENCE_RUNTIME)}
+    status = capacity_intelligence_store().status()
+    status.update({
+        "enabled": True,
+        "runtime": dict(CAPACITY_INTELLIGENCE_RUNTIME),
+        "pollSeconds": CAPACITY_INTELLIGENCE_POLL_SECONDS,
+        "mutationEnabled": MUTATIONS_ENABLED and AUTOSCALER_MUTATIONS_ENABLED,
+        "autoApplyEnabled": MUTATIONS_ENABLED and AUTOSCALER_MUTATIONS_ENABLED and CAPACITY_AUTO_APPLY_ENABLED,
+        "autoApplyIntervalHours": CAPACITY_AUTO_APPLY_INTERVAL_HOURS,
+        "confirmApply": CONFIRM_CAPACITY_APPLY,
+    })
+    return status
+
+
+def capacity_intelligence_worker():
+    while True:
+        try:
+            if CAPACITY_INTELLIGENCE_ENABLED:
+                capacity_intelligence_tick()
+        except Exception:
+            pass
+        time.sleep(CAPACITY_INTELLIGENCE_POLL_SECONDS)
+
+
+def ensure_capacity_intelligence_thread():
+    global CAPACITY_INTELLIGENCE_THREAD_STARTED
+    if CAPACITY_INTELLIGENCE_THREAD_STARTED:
+        return
+    CAPACITY_INTELLIGENCE_THREAD_STARTED = True
+    threading.Thread(target=capacity_intelligence_worker, name="capacity-intelligence-worker", daemon=True).start()
 
 
 def bootstrap_status():
@@ -6055,6 +6222,12 @@ def create_maintenance_backup(job):
         except Exception as exc:
             result["warnings"].append({"artifact": "operationalSlo", "error": str(exc)})
 
+    if CAPACITY_INTELLIGENCE_ENABLED:
+        try:
+            result["artifacts"]["capacityIntelligence"] = capacity_intelligence_store().backup(backup_dir / "capacity-intelligence.sqlite3")
+        except Exception as exc:
+            result["warnings"].append({"artifact": "capacityIntelligence", "error": str(exc)})
+
     manifest = backup_dir / "manifest.json"
     manifest.write_text(json.dumps(result, indent=2, sort_keys=True, default=json_default), encoding="utf-8")
     secure_admin_backup_path(manifest)
@@ -6850,6 +7023,9 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/metrics/slo":
                 metrics = operational_slo_store().prometheus() if OPERATIONAL_SLO_ENABLED else "dash_slo_collector_up 0\n"
                 self.text(metrics, "text/plain; version=0.0.4; charset=utf-8")
+            elif parsed.path == "/metrics/capacity":
+                metrics = capacity_intelligence_store().prometheus() if CAPACITY_INTELLIGENCE_ENABLED else "dash_capacity_collector_up 0\n"
+                self.text(metrics, "text/plain; version=0.0.4; charset=utf-8")
             elif parsed.path in ("/api/integrations/discord/health", "/api/integrations/discord/version", "/api/integrations/discord/backups/list"):
                 self.require_discord_token()
                 if parsed.path.endswith("/health"):
@@ -7055,6 +7231,9 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/ops/slo":
                 self.require_token()
                 self.json(operational_slo_public_status())
+            elif parsed.path == "/api/ops/capacity":
+                self.require_token()
+                self.json(capacity_intelligence_public_status())
             elif parsed.path == "/api/ops/database":
                 self.require_token()
                 self.json(dict(database_browser_catalog(), queryEnabled=DATABASE_QUERY_ENABLED, writeEnabled=DATABASE_WRITE_ENABLED, rowMutationsEnabled=DATABASE_ROW_MUTATIONS_ENABLED, passwordMutationsEnabled=DATABASE_PASSWORD_MUTATIONS_ENABLED, writeConfirm=CONFIRM_DATABASE_WRITE, rowConfirm=CONFIRM_DATABASE_ROW_UPDATE, passwordConfirm=CONFIRM_DATABASE_PASSWORD))
@@ -7821,6 +8000,21 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     raise ValueError("SLO action must be acknowledge, note, maintenance-create, or maintenance-cancel")
                 self.audit("operational-slo", ok=True, slo_action=action, incident_id=body.get("incidentId"), maintenance_id=result.get("id"))
+                self.json(result)
+            elif parsed.path == "/api/ops/capacity":
+                self.require_token()
+                self.require_mutations()
+                if not AUTOSCALER_MUTATIONS_ENABLED:
+                    raise PermissionError("capacity recommendation application requires DUNE_ADMIN_AUTOSCALER_MUTATIONS_ENABLED=true")
+                body = parse_body(self)
+                action = str(body.get("action") or "").strip().lower()
+                if action != "apply-recommendations":
+                    raise ValueError("capacity action must be apply-recommendations")
+                require_confirmation(body, CONFIRM_CAPACITY_APPLY)
+                principal = access_control.public_principal(getattr(self, "auth_principal", None)) or {}
+                actor = str(principal.get("id") or "owner-recovery")
+                result = capacity_apply_recommendations(actor=actor, source="manual")
+                self.audit("capacity-intelligence", ok=True, capacity_action=action, applied=result.get("applied"), changes=result.get("changes"), receipt=(result.get("receipt") or {}).get("id"))
                 self.json(result)
             elif parsed.path == "/api/ops/backups/schedule":
                 self.require_token()
@@ -16811,6 +17005,7 @@ def main():
     ensure_autoscaler_thread()
     ensure_backup_schedule_thread()
     ensure_operational_slo_thread()
+    ensure_capacity_intelligence_thread()
     ensure_event_scheduler_thread()
     ensure_community_worker_thread()
     ensure_moderation_worker_thread()

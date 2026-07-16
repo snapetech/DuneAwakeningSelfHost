@@ -127,6 +127,7 @@ def required_capability(method, path):
         "/api/ops/backups/restore",
         "/api/ops/restore-drill",
         "/api/ops/slo",
+        "/api/ops/capacity",
         "/api/ops/updates",
     }:
         return "infrastructure.write"
