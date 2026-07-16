@@ -1069,9 +1069,12 @@ def merge_log_summaries(log_summaries):
         total_suppressed_ue_process_event_active_validations += scan.get("suppressedUeProcessEventActiveValidationCount", 0)
         total_target_entry_ue_process_event_active_validations += scan.get("targetEntryUeProcessEventActiveValidationCount", 0)
         total_suppressed_target_entry_ue_process_event_active_validations += scan.get("suppressedTargetEntryUeProcessEventActiveValidationCount", 0)
-        total_synthetic_target_entry_ue_process_event_active_validations += min(
-            scan.get("invokedUeProcessEventActiveValidationCount", 0),
-            scan.get("suppressedTargetEntryUeProcessEventActiveValidationCount", 0),
+        total_synthetic_target_entry_ue_process_event_active_validations += scan.get(
+            "syntheticTargetEntryUeProcessEventActiveValidationCount",
+            min(
+                scan.get("invokedUeProcessEventActiveValidationCount", 0),
+                scan.get("suppressedTargetEntryUeProcessEventActiveValidationCount", 0),
+            ),
         )
         total_descriptor_buffer_ue_process_event_active_validations += scan.get("descriptorBufferUeProcessEventActiveValidationCount", 0)
         total_ue_process_event_live_contexts += scan.get("ueProcessEventLiveContextCount", 0)
@@ -3048,7 +3051,7 @@ def build_report(log_summaries, validation_summaries, anchor_coverages=None, inc
                 f"original={merged['originalUeProcessEventActiveValidationCount']} "
                 f"suppressedTargetEntry={merged['suppressedTargetEntryUeProcessEventActiveValidationCount']}"
             ),
-            "no no-native synthetic ProcessEvent validation call entered through the patched target entry",
+            "no no-original-call synthetic ProcessEvent validation entered through the patched target entry",
         )
     )
     gates.append(
@@ -3953,6 +3956,7 @@ def build_report(log_summaries, validation_summaries, anchor_coverages=None, inc
             and item["name"].startswith("ue-")
             and item["name"] != "ue-call-function-live-lua-dispatch"
             and item["name"] != "ue-runtime-root-discovery"
+            and item["name"] != "ue-process-event-synthetic-target-entry"
         ):
             next_steps.append(item["blocker"])
     if not ready_object_discovery:

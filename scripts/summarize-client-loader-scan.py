@@ -2649,13 +2649,19 @@ def summarize(records, loader_filter=None, pid_filter=None, exe_substrings=None,
     ]
     target_entry_ue_process_event_active_validations = [
         record
-        for record in original_ue_process_event_active_validations
+        for record in invoked_ue_process_event_active_validations
         if record.get("targetEntry") == "true" or record.get("callSource") == "target-entry"
     ]
     suppressed_target_entry_ue_process_event_active_validations = [
         record
         for record in suppressed_ue_process_event_active_validations
         if record.get("targetEntry") == "true" or record.get("callSource") == "target-entry"
+    ]
+    synthetic_target_entry_ue_process_event_active_validations = [
+        record
+        for record in suppressed_target_entry_ue_process_event_active_validations
+        if str(record.get("objectSource", "")).startswith("synthetic")
+        or str(record.get("functionSource", "")).startswith("synthetic")
     ]
     descriptor_buffer_ue_process_event_active_validations = [
         record
@@ -3375,6 +3381,7 @@ def summarize(records, loader_filter=None, pid_filter=None, exe_substrings=None,
         "suppressedUeProcessEventActiveValidationCount": len(suppressed_ue_process_event_active_validations),
         "targetEntryUeProcessEventActiveValidationCount": len(target_entry_ue_process_event_active_validations),
         "suppressedTargetEntryUeProcessEventActiveValidationCount": len(suppressed_target_entry_ue_process_event_active_validations),
+        "syntheticTargetEntryUeProcessEventActiveValidationCount": len(synthetic_target_entry_ue_process_event_active_validations),
         "descriptorBufferUeProcessEventActiveValidationCount": len(descriptor_buffer_ue_process_event_active_validations),
         "ueProcessEventLiveContextCount": len(ue_process_event_live_contexts),
         "resolvedUeProcessEventLiveContextCount": len(resolved_ue_process_event_live_contexts),

@@ -95,6 +95,11 @@ Always compare your `.env` image pin with the Steam package installed on your ho
   rotation; privacy-bounded on-demand conntrack peer diagnostics; and a
   searchable, binary-hash-bound 7,028-entry console catalogue alongside the
   2,242-key shipped INI index.
+- Transactional client loader, sidecar, Lua runtime, and confined Pak-overlay
+  deployment with non-mutating plans, shipping-executable checksums,
+  pre-change backups, private manifests, atomic installation, verification,
+  collision detection, and drift-safe rollback. Direct Steam mutation remains
+  an explicitly authorized canary step.
 
 ## Ecosystem Feature Parity
 
@@ -840,6 +845,9 @@ Start here:
   privacy-bounded conntrack diagnostics for Dune ports.
 - [`docs/cvar-catalog.md`](docs/cvar-catalog.md): binary-hash-bound console
   catalogue generation/search and its relationship to the shipped INI index.
+- [`docs/client-deployment.md`](docs/client-deployment.md): transactional,
+  reversible loader/Lua/Pak-overlay deployment and the live UE4SS canary
+  boundary.
 - [`docs/infrastructure-console.md`](docs/infrastructure-console.md): scoped service control/logs, verified backup lifecycle, database query/row/password controls, and update/repair workflows.
 - [`docs/bootstrap-console.md`](docs/bootstrap-console.md): browser first-run settings, preflight, TLS, database initialization, and stack reconcile.
 - [`docs/autoscaling-memory.md`](docs/autoscaling-memory.md): map modes, Director travel demand, idle scale-down, live limits, and memory balancing.

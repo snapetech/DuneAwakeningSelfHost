@@ -223,7 +223,7 @@ without reproducing that wrapper.
 | Addon discovery/install/permissions | Red-Blink, EDA addon | Parity | SHA-pinned sandbox and constrained bridge |
 | Server runtime loader/Lua API | UE4SS capability model | Parity with surveyed Dune peers; broader model remains build-specific research | No surveyed peer ships a proven live UE4SS-compatible Dune dedicated-server runtime. DASH ships a Linux server loader, packaged Lua lifecycle/scheduler APIs, and staged evidence gates; package-backed `LoadAsset` and current-build live-target promotion remain explicitly unproven research limits, not an aggregate peer gap; see `docs/ue4ss-linux-loader-evaluation.md` |
 | Pak extraction/overlay/build tools | community mod workflows | Parity | Repo-contained, reversible server-side tooling exists |
-| Client loader/Pak deployment | Nexus/UE4SS client workflows | Authorization required | Do not mutate Steam clients without explicit task authorization and backup/checksum manifest |
+| Client loader/Pak deployment | Nexus/UE4SS client workflows | Parity implementation; live client canary authorization required | Transactional manager provides confined loader/sidecar/Lua/Pak-overlay planning, pre-change checksummed backups, private manifests, atomic install, verification, collision detection, and drift-safe rollback. Actual Steam mutation and live mounting/UE4SS proof remain per-task authorization gates; see `docs/client-deployment.md` |
 | Voice chat/Tencent GME | proprietary provider contract | External contract | No peer has public working Funcom-compatible credentials or token generation |
 
 ## Gap tranches
