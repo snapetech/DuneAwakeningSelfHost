@@ -81,6 +81,25 @@ desired_state_snapshot=""
 change_intelligence_db="${DUNE_CHANGE_INTELLIGENCE_HOST_DATABASE:-backups/change-intelligence/change-intelligence.sqlite3}"
 change_intelligence_snapshot=""
 [[ -f "$change_intelligence_db" ]] && change_intelligence_snapshot="change-intelligence.sqlite3"
+audit_ledger_db="${DUNE_ADMIN_AUDIT_LEDGER_HOST_DATABASE:-backups/admin-panel/audit-ledger.sqlite3}"
+audit_ledger_key="${DUNE_ADMIN_AUDIT_LEDGER_HOST_KEY:-backups/admin-panel/audit-ledger.hmac.key}"
+audit_ledger_anchor="${DUNE_ADMIN_AUDIT_LEDGER_HOST_ANCHOR:-backups/admin-panel/audit-ledger.anchor.json}"
+audit_ledger_artifacts=0
+for artifact in "$audit_ledger_db" "$audit_ledger_key" "$audit_ledger_anchor"; do
+  [[ -f "$artifact" ]] && audit_ledger_artifacts=$((audit_ledger_artifacts + 1))
+done
+if [[ "$audit_ledger_artifacts" -ne 0 && "$audit_ledger_artifacts" -ne 3 ]]; then
+  printf 'audit ledger backup requires database, HMAC key, and authenticated anchor together\n' >&2
+  exit 1
+fi
+audit_ledger_snapshot=""
+audit_ledger_key_snapshot=""
+audit_ledger_anchor_snapshot=""
+if [[ "$audit_ledger_artifacts" -eq 3 ]]; then
+  audit_ledger_snapshot="audit-ledger.sqlite3"
+  audit_ledger_key_snapshot="audit-ledger.hmac.key"
+  audit_ledger_anchor_snapshot="audit-ledger.anchor.json"
+fi
 operator_evidence_dir="${DUNE_CHANGE_INTELLIGENCE_HOST_EVIDENCE_DIR:-$(env_value DUNE_CHANGE_INTELLIGENCE_HOST_EVIDENCE_DIR)}"
 operator_evidence_dir="${operator_evidence_dir:-backups/operator-evidence}"
 operator_evidence_count=0
@@ -133,6 +152,13 @@ if [[ "$dry_run" == true ]]; then
     printf 'change_intelligence_snapshot=change-intelligence.sqlite3\n'
   else
     printf 'change_intelligence_snapshot=<missing %s>\n' "$change_intelligence_db"
+  fi
+  if [[ "$audit_ledger_artifacts" -eq 3 ]]; then
+    printf 'audit_ledger_snapshot=audit-ledger.sqlite3\n'
+    printf 'audit_ledger_key=audit-ledger.hmac.key\n'
+    printf 'audit_ledger_anchor=audit-ledger.anchor.json\n'
+  else
+    printf 'audit_ledger_snapshot=<not initialized>\n'
   fi
   if [[ "$operator_evidence_count" -gt 0 ]]; then
     printf 'operator_evidence_archive=operator-evidence.tgz\n'
@@ -289,6 +315,11 @@ PY
   chmod 600 "${backup_dir}/change-intelligence.sqlite3"
 fi
 
+if [[ "$audit_ledger_artifacts" -eq 3 ]]; then
+  python3 scripts/snapshot-audit-ledger.py \
+    "$audit_ledger_db" "$audit_ledger_key" "$audit_ledger_anchor" "$backup_dir"
+fi
+
 if [[ "$operator_evidence_count" -gt 0 ]]; then
   python3 - "$operator_evidence_dir" "${backup_dir}/operator-evidence.tgz" <<'PY'
 import pathlib
@@ -358,6 +389,9 @@ operational_slo_snapshot=${slo_snapshot}
 capacity_intelligence_snapshot=${capacity_snapshot}
 desired_state_snapshot=${desired_state_snapshot}
 change_intelligence_snapshot=${change_intelligence_snapshot}
+audit_ledger_snapshot=${audit_ledger_snapshot}
+audit_ledger_key=${audit_ledger_key_snapshot}
+audit_ledger_anchor=${audit_ledger_anchor_snapshot}
 operator_evidence_archive=${operator_evidence_archive}
 operator_evidence_files=${operator_evidence_count}
 world_unique_name=${world_unique_name}

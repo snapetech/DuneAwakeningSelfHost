@@ -133,6 +133,16 @@ groups:
         for: 2m
         labels: {severity: critical}
         annotations: {summary: "DASH four-eyes approval request or event HMAC verification failed"}
+      - alert: DashAdminAuditLedgerInvalid
+        expr: dash_admin_audit_ledger_enabled == 1 and dash_admin_audit_ledger_valid == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "DASH mutation flight-recorder HMAC chain or authenticated head is invalid"}
+      - alert: DashPrivilegedRequestOutcomeUnknown
+        expr: dash_admin_audit_privileged_request_oldest_open_age_seconds > 300
+        for: 2m
+        labels: {severity: warning}
+        annotations: {summary: "A DASH privileged request was admitted but has no completion receipt"}
       - alert: DashIncidentHasCandidateChange
         expr: dash_change_intelligence_open_incidents_with_candidate_changes > 0
         for: 2m

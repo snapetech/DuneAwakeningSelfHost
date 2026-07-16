@@ -71,6 +71,10 @@ The local backup includes:
 - A transactionally consistent `change-intelligence.sqlite3` snapshot when the
   operational timeline exists. Verification extracts the matching policy/key
   from `config.tgz` and recomputes every event HMAC and chain link.
+- A consistent `audit-ledger.sqlite3`, `audit-ledger.hmac.key`, and
+  `audit-ledger.anchor.json` set when the mutation flight recorder exists. The
+  backup retries around concurrent admin events until the copied SQLite chain
+  and authenticated head verify together.
 - `operator-evidence.tgz` when portable signed evidence exists. Both verifiers
   confine and bound every member, dispatch by schema, recompute incident-plan
   and drill/certification digests or deployment manifest/continuity/health
@@ -98,7 +102,7 @@ Restores are disruptive. Stop game/admin writers first.
 RabbitMQ, saved-state, config, and TLS replacement are opt-in:
 
 ```bash
-./scripts/restore-state.sh --rabbitmq --server-saved --config --tls --community-rewards --moderation --base-gallery --operational-slo --capacity-intelligence --desired-state --change-intelligence .env backups/<UTC timestamp>
+./scripts/restore-state.sh --rabbitmq --server-saved --config --tls --community-rewards --moderation --base-gallery --operational-slo --capacity-intelligence --desired-state --change-intelligence --audit-ledger .env backups/<UTC timestamp>
 ```
 
 Run `--dry-run` first. If the manifest `WORLD_UNIQUE_NAME` differs from the current `.env`, restore will warn because that value is the durable FLS battlegroup identity.
@@ -106,7 +110,7 @@ Run `--dry-run` first. If the manifest `WORLD_UNIQUE_NAME` differs from the curr
 The equivalent Make target accepts optional restore layer flags:
 
 ```bash
-make restore-dry-run ENV_FILE=.env BACKUP_DIR=backups/<UTC timestamp> RESTORE_FLAGS='--rabbitmq --server-saved --config --tls --community-rewards --moderation --base-gallery --operational-slo --capacity-intelligence --desired-state --change-intelligence'
+make restore-dry-run ENV_FILE=.env BACKUP_DIR=backups/<UTC timestamp> RESTORE_FLAGS='--rabbitmq --server-saved --config --tls --community-rewards --moderation --base-gallery --operational-slo --capacity-intelligence --desired-state --change-intelligence --audit-ledger'
 ```
 
 ## Offsite and Onsite Sync
@@ -251,6 +255,13 @@ For offsite backups, periodically restore to a temporary directory from the remo
 The automated drill proves the PostgreSQL layer. Continue periodic full-layer
 exercises for RabbitMQ, server-saved data, configuration, TLS identity, and an
 artifact downloaded from the actual offsite provider.
+
+The mutation flight recorder is a three-artifact recovery unit:
+`backups/admin-panel/audit-ledger.sqlite3`, `audit-ledger.hmac.key`, and
+`audit-ledger.anchor.json`. Restore those files from the same backup. The HMAC
+chain cannot be verified with a mismatched key, and the authenticated anchor
+deliberately rejects a database whose tail differs. See
+[`audit-ledger.md`](audit-ledger.md).
 
 ## Retention
 

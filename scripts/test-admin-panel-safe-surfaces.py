@@ -255,6 +255,69 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn("DashChangeApprovalLedgerInvalid", rules)
         self.assertIn("dash_change_approval_ledger_valid", rules)
 
+    def test_mutation_flight_recorder_admits_before_dispatch_and_correlates_completion(self):
+        body = {"action": "add-intel", "account_id": 7, "amount": 10, "confirm": "WRITE PLAYER PROGRESSION"}
+        timeline = []
+
+        def fake_audit_event(action, ok=True, _ledger_required=False, **fields):
+            timeline.append({"action": action, "ok": ok, "required": _ledger_required, **fields})
+            return {"event": {"eventId": f"audit-{len(timeline):032x}"}, "ledger": {"sequence": len(timeline)}}
+
+        original_audit_event = self.panel.audit_event
+        original_validate = self.panel.validate_json_post
+        original_parse = self.panel.parse_body
+        self.panel.audit_event = fake_audit_event
+        self.panel.validate_json_post = lambda handler, **kwargs: None
+        self.panel.parse_body = lambda handler, **kwargs: body
+        self.addCleanup(lambda: setattr(self.panel, "audit_event", original_audit_event))
+        self.addCleanup(lambda: setattr(self.panel, "validate_json_post", original_validate))
+        self.addCleanup(lambda: setattr(self.panel, "parse_body", original_parse))
+        self.patch_flag("AUDIT_LEDGER_ENABLED", True)
+        self.patch_flag("AUDIT_LEDGER_REQUIRED_FOR_MUTATIONS", True)
+        self.patch_flag("DUAL_CONTROL_ENABLED", False)
+
+        handler, captured = self.make_route_handler("/api/admin/player-maintenance")
+        handler.headers = {}
+        handler.require_token = lambda: setattr(handler, "auth_principal", {"id": "operator", "capabilities": ["players.write"]})
+
+        def dispatch(request, principal=None):
+            timeline.append({"action": "dispatch"})
+            return {"ok": True, "dryRun": False}
+
+        handler.player_maintenance_mutation = dispatch
+        handler.do_POST()
+        self.assertEqual([], captured["errors"])
+        self.assertEqual("privileged-request-admitted", timeline[0]["action"])
+        self.assertTrue(timeline[0]["required"])
+        self.assertEqual(self.panel.canonical_json_sha256(body), timeline[0]["body_sha256"])
+        self.assertEqual("dispatch", timeline[1]["action"])
+        self.panel.Handler.complete_privileged_audit(handler, 200)
+        self.assertEqual("privileged-request-completed", timeline[2]["action"])
+        self.assertEqual(timeline[0]["request_id"], timeline[2]["request_id"])
+        self.assertEqual(200, timeline[2]["status_code"])
+
+        def refuse_admission(action, **kwargs):
+            if action == "privileged-request-admitted":
+                raise RuntimeError("ledger invalid")
+            return fake_audit_event(action, **kwargs)
+
+        self.panel.audit_event = refuse_admission
+        blocked, blocked_capture = self.make_route_handler("/api/admin/player-maintenance")
+        blocked.headers = {}
+        blocked.require_token = lambda: setattr(blocked, "auth_principal", {"id": "operator", "capabilities": ["players.write"]})
+        blocked.player_maintenance_mutation = lambda *_args, **_kwargs: self.fail("dispatch must not run after admission failure")
+        blocked.do_POST()
+        self.assertIn("ledger invalid", blocked_capture["errors"][0]["message"])
+
+    def test_mutation_flight_recorder_dashboard_metrics_and_alert_contract(self):
+        self.assertIn("Mutation Flight Recorder", self.panel.INDEX)
+        self.assertIn("privileged-request-admitted", pathlib.Path(self.panel.__file__).read_text(encoding="utf-8"))
+        rules = (ROOT / "config" / "metrics" / "rules" / "dash.yml").read_text(encoding="utf-8")
+        self.assertIn("DashAdminAuditLedgerInvalid", rules)
+        self.assertIn("DashPrivilegedRequestOutcomeUnknown", rules)
+        self.assertIn("dash_admin_audit_ledger_valid", rules)
+        self.assertIn("dash_admin_audit_privileged_request_oldest_open_age_seconds", rules)
+
     def test_page_navigation_cancels_detached_player_detail_loads(self):
         source = self.panel.INDEX
         load_body = source.split("async function load(){", 1)[1].split("async function overview(", 1)[0]
@@ -2133,6 +2196,35 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn("OK change-intelligence backup-bound HMAC event chain", stdout)
         self.assertIn("OK 1 portable signed operator evidence capsule(s)", stdout)
 
+    def test_native_backup_verifier_requires_complete_valid_audit_ledger_set(self):
+        backup_set = self.workspace / "backups" / "20260716T220000Z"
+        backup_set.mkdir(parents=True)
+        (backup_set / "manifest.txt").write_text("WORLD_NAME=test\n", encoding="utf-8")
+        (backup_set / "postgres.dump").write_bytes(b"test")
+        store = self.panel.audit_ledger.Store(
+            backup_set / "audit-ledger.sqlite3",
+            key_path=backup_set / "audit-ledger.hmac.key",
+            anchor_path=backup_set / "audit-ledger.anchor.json",
+        )
+        store.initialize()
+        store.append({
+            "ts": "2026-07-16T22:00:00Z",
+            "action": "backup-fixture",
+            "ok": True,
+            "eventId": "audit-" + "1" * 32,
+        })
+
+        with mock.patch.object(self.panel.shutil, "which", return_value=None):
+            ok, stdout, stderr = self.panel.verify_backup_set_native(backup_set)
+        self.assertTrue(ok, stderr)
+        self.assertIn("OK audit ledger backup-bound HMAC chain and authenticated head", stdout)
+
+        (backup_set / "audit-ledger.anchor.json").unlink()
+        with mock.patch.object(self.panel.shutil, "which", return_value=None):
+            ok, stdout, stderr = self.panel.verify_backup_set_native(backup_set)
+        self.assertFalse(ok)
+        self.assertIn("requires database, HMAC key, and authenticated anchor together", stderr)
+
     def test_operator_evidence_archive_is_confined_private_and_fully_verified(self):
         evidence_root = self.workspace / "backups" / "operator-evidence"
         evidence_root.mkdir(parents=True)
@@ -3542,6 +3634,8 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn("dash_deployment_assurance_collector_up 1\n", texts[0][0])
         self.assertIn("dash_change_approval_enabled 0\n", texts[0][0])
         self.assertIn("dash_change_approval_ledger_valid 1\n", texts[0][0])
+        self.assertIn("dash_admin_audit_ledger_enabled 1\n", texts[0][0])
+        self.assertIn("dash_admin_audit_ledger_valid 1\n", texts[0][0])
         self.assertIn("dash_update_readiness_collector_up 1\n", texts[0][0])
 
     def test_update_readiness_metrics_never_run_expensive_collection_inline(self):

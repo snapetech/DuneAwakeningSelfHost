@@ -105,9 +105,12 @@ curl -H "X-Admin-Token: $TOKEN" \
 ```
 
 The response returns id, display name, role, and capabilities. It never returns
-a token or digest. Authorization failures are written to the normal admin audit
-log with identity, required capability, and path; invalid-token responses do
-not disclose whether an identity or digest exists.
+a token or digest. Authorization failures are written to the admin audit stream
+with identity, required capability, and path; invalid-token responses do not
+disclose whether an identity or digest exists. With the default mutation flight
+recorder, sanitized events are independently HMAC-sealed and every non-read
+POST requires a verified identity/capability/path/body-digest-bound admission
+before dispatch. See [`audit-ledger.md`](audit-ledger.md).
 
 ## Recovery
 

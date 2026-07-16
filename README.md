@@ -78,6 +78,7 @@ Always compare your `.env` image pin with the Steam package installed on your ho
 - First-party dependency-free Discord Gateway bot with seven groups and 37 guild-scoped `/dune` subcommands, channel restrictions, ephemeral responses, role propagation, and a hardened credential-waiting systemd service.
 - Named hashed-token admin identities with explicit route capabilities and the original owner token retained as a recovery credential.
 - Optional four-eyes change control for governed critical/high/standard mutations: distinct named requester/approver identities, target-capability rechecks, exact secret-preserving body HMACs, redacted review, 60–3,600-second expiry, atomic one-attempt consumption, tamper-evident request/state/event ledgers, dashboard workflow, and label-free integrity metrics.
+- Fail-closed mutation flight recorder with complete-chain verification before privileged dispatch, canonical secret-free request digests, correlated admission/completion receipts, HMAC-chained events, a separately authenticated tail-deletion anchor, request-ID response headers, dashboard evidence, and label-free alerts.
 - Signed, filtered outbound audit-event delivery for generic HTTPS receivers and Discord webhooks, with asynchronous bounded retries, recursive redaction, redirect refusal, and secret-free delivery records.
 - An isolated community-credit economy with one-time Discord account linking, immutable hash-chained ledger, atomic shop/kit stock and orders, playtime/vote/manual-payment accrual, movement-verified scaled session airdrops, daily streaks, weekly active-time thresholds, append-only engagement claims, versioned reward tracks, offline delivery receipts, and failure refunds.
 - Persistent one-time/recurring event automation with safe announcement and non-executing restart-plan primitives, dry-run mutation proposals, manual run/cancel, and a bounded execution ledger.
@@ -450,7 +451,7 @@ The admin surface requires authentication by default. Set a high-entropy `DUNE_A
 | Infrastructure | Compose service/log control, manual/automatic backup lifecycle, isolated recovery proof and restore, reliability SLO/error-budget control room, database query/row/password tools, autoscaling, memory controls, candidate-bound game-update certification, and update/repair. |
 | Backup Encryption | Verified recipient OpenPGP archives, ciphertext receipts, safe decrypt staging, encrypted-only rclone/rsync mode, and encrypted restic repositories. |
 | World | Read-only guild/member, Landsraad term/task/reward/contribution, and aggregate storage views; Landsraad writes remain on Admin Actions. |
-| Security | Host/origin checks, auth mode, mutation gates, allowlists, audit events, and optional HMAC-bound two-person change approvals. |
+| Security | Host/origin checks, auth mode, mutation gates, allowlists, HMAC-sealed mutation flight recorder, and optional HMAC-bound two-person change approvals. |
 | Federated Login | Provider-neutral OIDC or Discord OAuth code+PKCE login, explicit subject-to-local-RBAC mapping, signed HttpOnly sessions, logout, and owner-token recovery. |
 | Runbook | Copy/paste operational commands for health, backups, restores, logs, profiling, and routing capture. |
 | Command Console | Six reviewed native read-only diagnostics with no subprocess/shell/arguments, bounded timeout/output, redaction, operator RBAC, and receipt-only audit. |
@@ -859,6 +860,7 @@ Start from [`.env.example`](.env.example). It is the source of truth for the ful
 | `DUNE_ADMIN_ITEM_GRANTS_ENABLED` | Separate gate for item grants, stack edits, and deletion; example default is fail-closed. |
 | `DUNE_ADMIN_GM_COMMANDS_ENABLED` / `DUNE_GM_COMMAND_PAYLOAD_VERIFIED` | Generic legacy GM/RPC gates. The catalog-backed player actions use the first gate plus their dedicated runtime gate, not the legacy payload-verified flag. |
 | `DUNE_ADMIN_*_ENABLED` write gates | Per-family gates for typed knobs, events, bundles, progression, faction, Landsraad, respawn, guild, markers, landclaim, Exchange, tags, access codes, Communinet, tutorial, permission, vendor, and character-slot operations. |
+| `DUNE_ADMIN_AUDIT_LEDGER_ENABLED` / `DUNE_ADMIN_AUDIT_LEDGER_REQUIRED_FOR_MUTATIONS` | Seal sanitized audit events and require a verified admission receipt before privileged POST dispatch. |
 
 Server-browser ordering is deliberately split based on the observed in-game browser. `config/gateway.ini` `[gateway].display_name` is the parent/top row and must stay the branded server title. `WORLD_NAME` and `DUNE_SERVER_DISPLAY_NAME` are the nested/details row and must stay the feature-list description. Do not copy the branded title into `WORLD_NAME` or `DUNE_SERVER_DISPLAY_NAME`.
 | `DUNE_ADMIN_RESTART_COMMAND` | Hook used by scheduled restart jobs. |
@@ -995,6 +997,7 @@ Start here:
 - [`docs/player-runtime-actions.md`](docs/player-runtime-actions.md): native skill/water/kick/vehicle actions, offline vehicle maintenance, and Landsraad writes.
 - [`docs/player-progression-receipts.md`](docs/player-progression-receipts.md): bounded Intel/recipe/research JSON writes, self-hashed receipts, and compare-and-swap rollback.
 - [`docs/change-approvals.md`](docs/change-approvals.md): HMAC-bound, capability-aware, expiring two-person approvals and single-use execution.
+- [`docs/audit-ledger.md`](docs/audit-ledger.md): fail-closed privileged-request admission/completion evidence, HMAC event chain, authenticated head anchor, metrics, and recovery.
 - [`docs/world-console.md`](docs/world-console.md): read-only guild, Landsraad, and aggregate storage views plus separately gated Landsraad reward/contribution actions.
 - [`docs/care-packages.md`](docs/care-packages.md): reviewed manual/automatic package schema, eligibility, persistent claims, gates, backup, and history.
 - [`docs/discord-adapter.md`](docs/discord-adapter.md): permission-mapped Discord bot API, narrowly typed community actions, and setup.
@@ -1100,9 +1103,10 @@ Root-level research indexes:
 - [`scripts/admin-bot.py`](scripts/admin-bot.py): report-first operational/admin automation.
 - [`scripts/seed-gateway-neighbor.sh`](scripts/seed-gateway-neighbor.sh): Docker bridge neighbor refresh helper.
 - [`scripts/backup-offsite.sh`](scripts/backup-offsite.sh): local backup plus rclone, rsync, restic, or local-only sync helper.
-- [`scripts/backup-state.sh`](scripts/backup-state.sh): local Postgres/RabbitMQ/saved-state/env/config/TLS backup helper.
-- [`scripts/restore-state.sh`](scripts/restore-state.sh): disruptive restore helper with opt-in RabbitMQ, saved-state, config, and TLS layers.
-- [`scripts/verify-backup.sh`](scripts/verify-backup.sh): structural backup check.
+- [`scripts/backup-state.sh`](scripts/backup-state.sh): local Postgres/RabbitMQ/saved-state/env/config/TLS and private-ledger backup helper.
+- [`scripts/snapshot-audit-ledger.py`](scripts/snapshot-audit-ledger.py): retrying consistent SQLite/key/anchor flight-recorder snapshot.
+- [`scripts/restore-state.sh`](scripts/restore-state.sh): disruptive restore helper with opt-in state, configuration, private-ledger, and TLS layers.
+- [`scripts/verify-backup.sh`](scripts/verify-backup.sh): structural plus HMAC/anchor backup verification.
 - [`scripts/backup-restore-drill.py`](scripts/backup-restore-drill.py): actual isolated PostgreSQL restore, Dune validation, round-trip dump proof, cleanup, and private receipt.
 - [`scripts/install-backup-restore-drill-timer.sh`](scripts/install-backup-restore-drill-timer.sh): hardened daily recovery-proof systemd timer installer.
 - [`scripts/operational-slo.py`](scripts/operational-slo.py): reliability status, integrity/hash-chain verification, Prometheus exposition, and explicit fixture/external signal ingestion.

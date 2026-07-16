@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/restore-state.sh [--dry-run] [--rabbitmq] [--server-saved] [--config] [--tls] [--community-rewards] [--moderation] [--base-gallery] [--operational-slo] [--capacity-intelligence] [--desired-state] [--change-intelligence] [env-file] <backup-dir>
+Usage: ./scripts/restore-state.sh [--dry-run] [--rabbitmq] [--server-saved] [--config] [--tls] [--community-rewards] [--moderation] [--base-gallery] [--operational-slo] [--capacity-intelligence] [--desired-state] [--change-intelligence] [--audit-ledger] [env-file] <backup-dir>
 
 Restores the Postgres dump from a backup created by scripts/backup-state.sh.
 RabbitMQ and server saved-state archives are restored only when their flags are
@@ -14,7 +14,7 @@ world identity, secrets, local tuning, and RabbitMQ certificate material.
 Examples:
   ./scripts/restore-state.sh --dry-run .env backups/20260519T150000Z
   ./scripts/restore-state.sh .env backups/20260519T150000Z
-  ./scripts/restore-state.sh --rabbitmq --server-saved --config --tls --community-rewards --moderation --base-gallery --operational-slo --capacity-intelligence --desired-state --change-intelligence .env backups/20260519T150000Z
+  ./scripts/restore-state.sh --rabbitmq --server-saved --config --tls --community-rewards --moderation --base-gallery --operational-slo --capacity-intelligence --desired-state --change-intelligence --audit-ledger .env backups/20260519T150000Z
 EOF
 }
 
@@ -30,6 +30,7 @@ restore_operational_slo=false
 restore_capacity_intelligence=false
 restore_desired_state=false
 restore_change_intelligence=false
+restore_audit_ledger=false
 
 while [[ "${1:-}" == --* ]]; do
   case "$1" in
@@ -79,6 +80,10 @@ while [[ "${1:-}" == --* ]]; do
       ;;
     --change-intelligence)
       restore_change_intelligence=true
+      shift
+      ;;
+    --audit-ledger)
+      restore_audit_ledger=true
       shift
       ;;
     -h|--help)
@@ -213,6 +218,21 @@ if [[ "$restore_change_intelligence" == true && ! -f "${backup_dir}/change-intel
   printf 'change-intelligence snapshot not found: %s\n' "${backup_dir}/change-intelligence.sqlite3" >&2
   exit 1
 fi
+if [[ "$restore_audit_ledger" == true ]]; then
+  for artifact in audit-ledger.sqlite3 audit-ledger.hmac.key audit-ledger.anchor.json; do
+    if [[ ! -f "${backup_dir}/${artifact}" ]]; then
+      printf 'audit ledger backup artifact not found: %s\n' "${backup_dir}/${artifact}" >&2
+      exit 1
+    fi
+  done
+  PYTHONPATH=admin python3 - "${backup_dir}/audit-ledger.sqlite3" "${backup_dir}/audit-ledger.hmac.key" "${backup_dir}/audit-ledger.anchor.json" <<'PY'
+import sys
+import audit_ledger
+result = audit_ledger.Store(sys.argv[1], key_path=sys.argv[2], anchor_path=sys.argv[3]).verify()
+if not result.get("ok"):
+    raise SystemExit(f"audit ledger HMAC/head verification failed: {result}")
+PY
+fi
 
 if [[ "$restore_desired_state" == true ]]; then
   desired_policy="config/desired-state.json"
@@ -283,6 +303,7 @@ if [[ "$dry_run" == true ]]; then
   printf 'restore_capacity_intelligence=%s\n' "$restore_capacity_intelligence"
   printf 'restore_desired_state=%s\n' "$restore_desired_state"
   printf 'restore_change_intelligence=%s\n' "$restore_change_intelligence"
+  printf 'restore_audit_ledger=%s\n' "$restore_audit_ledger"
   printf 'backup_world_unique_name=%s\n' "${backup_world:-}"
   printf 'current_world_unique_name=%s\n' "${current_world:-}"
   exit 0
@@ -333,6 +354,15 @@ if [[ "$restore_change_intelligence" == true ]]; then
   mkdir -p backups/change-intelligence
   rm -f backups/change-intelligence/change-intelligence.sqlite3-wal backups/change-intelligence/change-intelligence.sqlite3-shm
   install -m 600 "${backup_dir}/change-intelligence.sqlite3" backups/change-intelligence/change-intelligence.sqlite3
+fi
+if [[ "$restore_audit_ledger" == true ]]; then
+  printf 'restoring HMAC-verified admin audit ledger and authenticated head from %s\n' "$backup_dir"
+  mkdir -p backups/admin-panel
+  chmod 700 backups/admin-panel
+  rm -f backups/admin-panel/audit-ledger.sqlite3-wal backups/admin-panel/audit-ledger.sqlite3-shm
+  install -m 600 "${backup_dir}/audit-ledger.sqlite3" backups/admin-panel/audit-ledger.sqlite3
+  install -m 600 "${backup_dir}/audit-ledger.hmac.key" backups/admin-panel/audit-ledger.hmac.key
+  install -m 600 "${backup_dir}/audit-ledger.anchor.json" backups/admin-panel/audit-ledger.anchor.json
 fi
 
 if [[ "$restore_config" == true ]]; then

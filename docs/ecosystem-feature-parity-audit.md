@@ -182,6 +182,7 @@ without reproducing that wrapper.
 | Single owner token, host/origin checks, audit | Red-Blink, Manaiakalani | Parity | Existing hardened LAN/VPN mode |
 | Multiple local users | Icehunter, AMP | Parity | Named identities, one-time high-entropy tokens, SHA-256-only storage, rotate/disable/enable/remove lifecycle, and owner recovery token |
 | Fine-grained RBAC/capabilities | Icehunter, AMP | Parity | Protected routes map to read, operations, player, economy, world, configuration, infrastructure, and community capabilities; unknown writes fail closed |
+| Tamper-evident privileged mutation flight recorder | No surveyed Dune peer | DASH exceeds | Every non-read admin POST verifies the complete HMAC chain and separately authenticated head before dispatch, seals a canonical secret-free body digest plus principal/path/capability admission, correlates response construction under `X-DASH-Request-ID`, exposes unknown outcomes, rejects payload/chain/tail edits, and ships dashboard/API/metrics/alerts/recovery; see `docs/audit-ledger.md` |
 | Two-person approval for high-impact changes | No surveyed Dune peer | DASH exceeds | Optional critical/high/all policies bind one exact secret-preserving body HMAC to a named requester, distinct capable approver, route, risk, short expiry, and atomic one-attempt consumption; immutable request, mutable state and global event-chain HMACs, redacted dashboard review, metrics and alerting fail closed; see `docs/change-approvals.md` |
 | Discord OAuth/OIDC SSO | Icehunter, AMP | Parity implementation; provider canary pending | Authorization code + PKCE, OIDC discovery/RS256/issuer/audience/nonce validation, Discord `identify`, exact subject-to-local-RBAC mapping, signed HttpOnly sessions, replay defense, logout, and owner-token recovery; external application credentials and an HTTPS callback are required for a live canary; see `docs/federated-auth.md` |
 | TLS/reverse-proxy guidance | Reditus, AMP | Parity | Private VPN/authenticated proxy patterns, exact host/origin handling, TLS/identity boundary, verification, and Caddy example; see `docs/remote-admin-access.md` |
@@ -371,6 +372,12 @@ only when explicitly authorized for a concrete client task, as required by
   secret-preserving body binding, redacted review, short expiry, atomic replay
   refusal, independently HMAC-protected request and state records, a global
   transition chain, dashboard execution, metrics, and fail-closed alerts.
+- **High confidence:** DASH now seals its primary privileged-request boundary,
+  not only downstream change analysis. A complete HMAC-chain and authenticated
+  head verification precedes dispatch; exact body digests and identity/scope
+  admissions correlate with response completion, and missing outcomes become
+  explicit alertable evidence. No surveyed Dune peer provides this mutation
+  flight-recorder contract.
 - **High confidence:** local RBAC, outbound events, the first-party Discord bot,
   community rewards/shop/tracks, host tuning, inventory integrity repair,
   recurring event automation, moderation case history, native policy-ban

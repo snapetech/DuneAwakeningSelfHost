@@ -1611,6 +1611,13 @@ and can be consumed once through `X-DASH-Approval-ID`. See
 `docs/change-approvals.md` for policy levels, browser/API workflows, storage,
 metrics, recovery, and fail-closed behavior.
 
+The same page exposes the default-on Mutation Flight Recorder. Before any
+authenticated non-read POST dispatches, DASH verifies the complete HMAC event
+chain and separately authenticated head, then seals an identity/path/
+capability/body-digest admission. Response construction appends a correlated
+completion and returns `X-DASH-Request-ID`; old unmatched admissions are
+explicit unknown outcomes. See [`audit-ledger.md`](audit-ledger.md).
+
 - Do not expose this service to the public internet.
 - Use a long random `DUNE_ADMIN_TOKEN` whenever `DUNE_ADMIN_REQUIRE_TOKEN=true`.
 - `DUNE_ADMIN_MUTATIONS_ENABLED=false` is the example default. Enable it only after backup/restore validation and operator access controls are in place.
@@ -1622,6 +1629,7 @@ metrics, recovery, and fail-closed behavior.
 - `UserEngine.ini` and `UserGame.ini` edits are copied into game containers during game-service startup. Recreate affected game containers before relying on changed gameplay knobs.
 - Keep `DUNE_ADMIN_MAX_BODY_BYTES` small unless editing unusually large config files; the default is `65536`.
 - Keep `DUNE_ADMIN_AUDIT_MAX_BYTES` bounded; the default rotates the JSONL audit log at 5 MiB.
+- Keep `DUNE_ADMIN_AUDIT_LEDGER_ENABLED=true` and `DUNE_ADMIN_AUDIT_LEDGER_REQUIRED_FOR_MUTATIONS=true`; restore the ledger database, HMAC key, and authenticated anchor as one backup unit if verification fails.
 - Keep `config/outbound-webhooks.json` ignored and mode `0600`; its URL paths and HMAC keys are credentials. Leave `DUNE_WEBHOOK_ALLOW_HTTP=false` outside controlled local receiver tests.
 - Keep `DUNE_ADMIN_REQUEST_TIMEOUT_SECONDS` bounded; the default is `10` seconds to limit slow-body and idle connection abuse.
 - Keep `DUNE_ADMIN_MAX_ITEM_STACK_SIZE` bounded; the default is `1000000` to prevent accidental enormous stack writes.

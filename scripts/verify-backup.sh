@@ -295,6 +295,31 @@ else
   printf 'WARN no change-intelligence.sqlite3 found in %s\n' "$backup_dir"
 fi
 
+audit_ledger_artifacts=0
+for artifact in audit-ledger.sqlite3 audit-ledger.hmac.key audit-ledger.anchor.json; do
+  [[ -f "$backup_dir/$artifact" ]] && audit_ledger_artifacts=$((audit_ledger_artifacts + 1))
+done
+if [[ "$audit_ledger_artifacts" -eq 3 ]]; then
+  if PYTHONPATH="$repo_root/admin" python3 - "$backup_dir/audit-ledger.sqlite3" "$backup_dir/audit-ledger.hmac.key" "$backup_dir/audit-ledger.anchor.json" <<'PY'
+import sys
+import audit_ledger
+
+result = audit_ledger.Store(sys.argv[1], key_path=sys.argv[2], anchor_path=sys.argv[3]).verify()
+raise SystemExit(0 if result.get("ok") else 1)
+PY
+  then
+    printf 'OK audit ledger SQLite snapshot, HMAC event chain, and authenticated head %s\n' "$backup_dir/audit-ledger.sqlite3"
+  else
+    printf 'FAIL audit ledger SQLite snapshot, HMAC event chain, or authenticated head %s\n' "$backup_dir/audit-ledger.sqlite3" >&2
+    ok=false
+  fi
+elif [[ "$audit_ledger_artifacts" -eq 0 ]]; then
+  printf 'WARN no audit-ledger snapshot found in %s\n' "$backup_dir"
+else
+  printf 'FAIL audit ledger backup must contain database, HMAC key, and authenticated anchor together\n' >&2
+  ok=false
+fi
+
 if [[ -f "$backup_dir/operator-evidence.tgz" ]]; then
   evidence_config_archive=""
   for candidate in "$backup_dir/config.tgz" "$backup_dir/config-and-env.tgz"; do

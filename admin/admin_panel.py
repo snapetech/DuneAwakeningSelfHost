@@ -48,6 +48,7 @@ import augment_admin
 import addon_admin
 import native_command_admin
 import access_control
+import audit_ledger
 import change_approvals
 import outbound_webhooks
 import community_rewards
@@ -153,6 +154,9 @@ ADMIN_PANEL_RESTART_EVENT = threading.Event()
 AUDIT_LOG = BACKUP_ROOT / "audit.jsonl"
 STEAM_PROFILE_CACHE_FILE = BACKUP_ROOT / "steam-profiles.json"
 AUDIT_MAX_BYTES = int(os.environ.get("DUNE_ADMIN_AUDIT_MAX_BYTES", str(5 * 1024 * 1024)))
+AUDIT_LEDGER_ENABLED = os.environ.get("DUNE_ADMIN_AUDIT_LEDGER_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+AUDIT_LEDGER_REQUIRED_FOR_MUTATIONS = os.environ.get("DUNE_ADMIN_AUDIT_LEDGER_REQUIRED_FOR_MUTATIONS", "true").lower() in ("1", "true", "yes", "on")
+AUDIT_LEDGER_DATABASE = pathlib.Path(os.environ.get("DUNE_ADMIN_AUDIT_LEDGER_DATABASE", str(BACKUP_ROOT / "audit-ledger.sqlite3")))
 REQUEST_TIMEOUT_SECONDS = int(os.environ.get("DUNE_ADMIN_REQUEST_TIMEOUT_SECONDS", "10"))
 MAX_CONCURRENT_REQUESTS = max(4, min(int(os.environ.get("DUNE_ADMIN_MAX_CONCURRENT_REQUESTS", "32")), 128))
 MAX_ITEM_STACK_SIZE = int(os.environ.get("DUNE_ADMIN_MAX_ITEM_STACK_SIZE", "1000000"))
@@ -468,6 +472,62 @@ EVENT_LOCK = threading.Lock()
 CARE_PACKAGE_LOCK = threading.Lock()
 CHANGE_APPROVAL_LOCK = threading.Lock()
 CHANGE_APPROVAL_STORE = None
+AUDIT_LEDGER_LOCK = threading.Lock()
+AUDIT_LEDGER_STORE = None
+AUDIT_LEDGER_RUNTIME = {"ready": False, "lastError": "", "lastAppendAt": None, "lastSequence": 0}
+
+
+def admin_audit_ledger():
+    global AUDIT_LEDGER_STORE
+    with AUDIT_LEDGER_LOCK:
+        if AUDIT_LEDGER_STORE is None:
+            store = audit_ledger.Store(
+                AUDIT_LEDGER_DATABASE,
+                owner_uid=os.environ.get("DUNE_HOST_UID"),
+                owner_gid=os.environ.get("DUNE_HOST_GID"),
+            )
+            store.initialize()
+            AUDIT_LEDGER_STORE = store
+        return AUDIT_LEDGER_STORE
+
+
+def audit_ledger_public_status():
+    if not AUDIT_LEDGER_ENABLED:
+        return {
+            "ok": True,
+            "enabled": False,
+            "requiredForMutations": False,
+            "ledger": {"ok": True, "events": 0, "headSequence": 0, "headHmacSha256": ""},
+            "requests": {"admitted": 0, "completed": 0, "open": 0, "oldestOpenAgeSeconds": 0},
+            "runtime": dict(AUDIT_LEDGER_RUNTIME),
+        }
+    try:
+        status = admin_audit_ledger().status()
+        AUDIT_LEDGER_RUNTIME.update({"ready": bool(status["ok"]), "lastError": status.get("error") or ""})
+    except Exception as exc:
+        AUDIT_LEDGER_RUNTIME.update({"ready": False, "lastError": str(exc)[:2000]})
+        status = {
+            "ok": False,
+            "ledger": {"ok": False, "events": 0, "headSequence": 0, "headHmacSha256": ""},
+            "requests": {"admitted": 0, "completed": 0, "open": 0, "oldestOpenAgeSeconds": 0},
+            "appendFailures": 0,
+            "error": str(exc)[:1000],
+        }
+    status.update({
+        "enabled": True,
+        "requiredForMutations": AUDIT_LEDGER_REQUIRED_FOR_MUTATIONS,
+        "runtime": dict(AUDIT_LEDGER_RUNTIME),
+    })
+    return status
+
+
+def audit_ledger_prometheus():
+    if not AUDIT_LEDGER_ENABLED:
+        return "dash_admin_audit_ledger_enabled 0\ndash_admin_audit_ledger_valid 1\n"
+    try:
+        return admin_audit_ledger().prometheus(enabled=True)
+    except Exception:
+        return "dash_admin_audit_ledger_enabled 1\ndash_admin_audit_ledger_valid 0\n"
 
 
 def change_approval_store():
@@ -500,6 +560,8 @@ def admin_panel_reload_paths():
         CODE_ROOT / "admin" / "command_console.py",
         CODE_ROOT / "admin" / "federated_auth.py",
         CODE_ROOT / "admin" / "cosmetics_admin.py",
+        CODE_ROOT / "admin" / "progression_admin.py",
+        CODE_ROOT / "admin" / "audit_ledger.py",
         CODE_ROOT / "admin" / "restore_drill.py",
         CODE_ROOT / "admin" / "operational_slo.py",
         OPERATIONAL_SLO_POLICY,
@@ -963,6 +1025,8 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ADMIN_DUAL_CONTROL_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Requires a second named operator approval for governed high-impact mutations."},
     "DUNE_ADMIN_DUAL_CONTROL_POLICY": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Four-eyes enforcement scope: critical, high, or all governed mutation rules."},
     "DUNE_ADMIN_DUAL_CONTROL_TTL_SECONDS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Lifetime of a body-bound change approval, limited to 60-3600 seconds."},
+    "DUNE_ADMIN_AUDIT_LEDGER_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "HMAC-seals sanitized admin events and authenticates the current chain head."},
+    "DUNE_ADMIN_AUDIT_LEDGER_REQUIRED_FOR_MUTATIONS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Refuses privileged POST admission unless its intent can be durably sealed first."},
     "DUNE_ADMIN_FEDERATED_AUTH_ENABLED": {"group": "Federated Auth", "secret": False, "restart": True, "why": "Enables provider-neutral OIDC or Discord OAuth authorization-code login when all credentials and mappings are configured."},
     "DUNE_ADMIN_AUTH_PROVIDER": {"group": "Federated Auth", "secret": False, "restart": True, "why": "Federated login provider type: oidc or discord."},
     "DUNE_ADMIN_AUTH_ISSUER": {"group": "Federated Auth", "secret": False, "restart": True, "why": "Exact HTTPS OIDC issuer; Discord uses https://discord.com."},
@@ -1331,28 +1395,52 @@ def audit_safe(value):
     return text
 
 
-def audit_event(action, ok=True, **fields):
+def canonical_json_sha256(value):
+    digest = hashlib.sha256()
+    encoder = json.JSONEncoder(sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    for chunk in encoder.iterencode(value):
+        digest.update(chunk.encode("utf-8"))
+    return digest.hexdigest()
+
+
+def audit_event(action, ok=True, _ledger_required=False, **fields):
+    event = {
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "action": action,
+        "ok": bool(ok),
+        "eventId": "audit-" + secrets.token_hex(16),
+    }
+    event.update({key: audit_safe(value) for key, value in fields.items() if key not in {"ts", "action", "ok", "eventId"}})
+    ledger_receipt = None
+    if AUDIT_LEDGER_ENABLED:
+        try:
+            ledger_receipt = admin_audit_ledger().append(event, verify_chain=_ledger_required)
+            AUDIT_LEDGER_RUNTIME.update({
+                "ready": True,
+                "lastError": "",
+                "lastAppendAt": event["ts"],
+                "lastSequence": ledger_receipt.get("sequence", 0),
+            })
+        except Exception as exc:
+            AUDIT_LEDGER_RUNTIME.update({"ready": False, "lastError": str(exc)[:2000]})
+            if _ledger_required:
+                raise RuntimeError(f"privileged request refused because the audit ledger is unavailable: {exc}") from exc
     try:
         BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
-        rotate_audit_log()
-        event = {
-            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "action": action,
-            "ok": bool(ok),
-            "eventId": "audit-" + secrets.token_hex(16),
-        }
-        event.update({key: audit_safe(value) for key, value in fields.items() if key not in {"ts", "action", "ok", "eventId"}})
         with AUDIT_LOCK:
+            rotate_audit_log()
             with AUDIT_LOG.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(event, sort_keys=True, default=json_default) + "\n")
-        if CHANGE_INTELLIGENCE_ENABLED:
-            try:
-                change_intelligence_record_event(event)
-            except Exception as exc:
-                CHANGE_INTELLIGENCE_RUNTIME["lastError"] = str(exc)[:2000]
-        WEBHOOK_DISPATCHER.enqueue(event)
     except OSError:
-        return
+        if _ledger_required and not ledger_receipt:
+            raise
+    if CHANGE_INTELLIGENCE_ENABLED:
+        try:
+            change_intelligence_record_event(event)
+        except Exception as exc:
+            CHANGE_INTELLIGENCE_RUNTIME["lastError"] = str(exc)[:2000]
+    WEBHOOK_DISPATCHER.enqueue(event)
+    return {"event": event, "ledger": ledger_receipt}
 
 
 def rotate_audit_log():
@@ -5229,6 +5317,25 @@ def verify_backup_set_native(path):
                     errors.append(f"FAIL change-intelligence HMAC event chain {change_database}: {change_check}")
             except (OSError, KeyError, ValueError, tarfile.TarError) as exc:
                 errors.append(f"FAIL change-intelligence matching policy/HMAC material in {archive}: {exc}")
+    audit_database = path / "audit-ledger.sqlite3"
+    audit_key = path / "audit-ledger.hmac.key"
+    audit_anchor = path / "audit-ledger.anchor.json"
+    audit_artifacts = sum(candidate.is_file() for candidate in (audit_database, audit_key, audit_anchor))
+    if audit_artifacts == 3:
+        try:
+            audit_check = audit_ledger.Store(
+                audit_database, key_path=audit_key, anchor_path=audit_anchor
+            ).verify()
+            if audit_check.get("ok"):
+                output.append(f"OK audit ledger backup-bound HMAC chain and authenticated head {audit_database}")
+            else:
+                errors.append(f"FAIL audit ledger backup-bound HMAC chain and authenticated head {audit_database}: {audit_check}")
+        except (OSError, RuntimeError, sqlite3.Error, ValueError) as exc:
+            errors.append(f"FAIL audit ledger backup-bound HMAC chain and authenticated head {audit_database}: {exc}")
+    elif audit_artifacts:
+        errors.append("FAIL audit ledger backup requires database, HMAC key, and authenticated anchor together")
+    else:
+        output.append(f"WARN no audit-ledger snapshot found in {path}")
     evidence_archive = path / "operator-evidence.tgz"
     if evidence_archive.is_file():
         archive = next((candidate for candidate in (path / "config.tgz", path / "config-and-env.tgz") if candidate.is_file()), None)
@@ -7625,6 +7732,12 @@ def create_maintenance_backup(job):
         except Exception as exc:
             result["warnings"].append({"artifact": "operatorEvidence", "error": str(exc)})
 
+    if AUDIT_LEDGER_ENABLED:
+        try:
+            result["artifacts"]["auditLedger"] = admin_audit_ledger().backup(backup_dir / "audit-ledger.sqlite3")
+        except Exception as exc:
+            result["warnings"].append({"artifact": "auditLedger", "error": str(exc)})
+
     manifest = backup_dir / "manifest.json"
     manifest.write_text(json.dumps(result, indent=2, sort_keys=True, default=json_default), encoding="utf-8")
     secure_admin_backup_path(manifest)
@@ -8430,6 +8543,7 @@ class Handler(BaseHTTPRequestHandler):
                 metrics = change_intelligence_store().prometheus() if CHANGE_INTELLIGENCE_ENABLED else "dash_change_intelligence_collector_up 0\n"
                 metrics += deployment_assurance_store().prometheus() if DEPLOYMENT_ASSURANCE_ENABLED else "dash_deployment_assurance_collector_up 0\n"
                 metrics += change_approval_store().prometheus(enabled=DUAL_CONTROL_ENABLED)
+                metrics += audit_ledger_prometheus()
                 if UPDATE_READINESS_ENABLED:
                     try:
                         update_snapshot = update_readiness_metrics_snapshot()
@@ -8629,7 +8743,11 @@ class Handler(BaseHTTPRequestHandler):
                 self.json(self.security_audit())
             elif parsed.path == "/api/ops/audit":
                 self.require_token()
-                self.json({"events": recent_audit_events()})
+                ledger_status = audit_ledger_public_status()
+                sealed_events = []
+                if AUDIT_LEDGER_ENABLED and ledger_status.get("ok"):
+                    sealed_events = admin_audit_ledger().list(AUDIT_EVENT_LIMIT)
+                self.json({"events": recent_audit_events(), "sealedEvents": sealed_events, "ledger": ledger_status})
             elif parsed.path == "/api/ops/webhooks":
                 self.require_token()
                 self.json(WEBHOOK_DISPATCHER.status())
@@ -8992,6 +9110,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
         self._parsed_body = None
+        self._privileged_audit = None
         try:
             self.validate_host()
             webhook_match = re.fullmatch(r"/api/community/webhooks/(vote|payment)", parsed.path)
@@ -9003,6 +9122,36 @@ class Handler(BaseHTTPRequestHandler):
             self.validate_same_origin()
             request_limit = BLUEPRINT_MAX_BODY_BYTES if parsed.path == "/api/admin/blueprints" else BACKUP_IMPORT_MAX_BODY_BYTES if parsed.path == "/api/ops/backups/import" else MAX_BODY_BYTES
             validate_json_post(self, max_bytes=request_limit)
+            required_capability = access_control.required_capability("POST", parsed.path)
+            if (
+                AUDIT_LEDGER_ENABLED
+                and AUDIT_LEDGER_REQUIRED_FOR_MUTATIONS
+                and required_capability != "read"
+                and parsed.path not in DISCORD_ADAPTER_ROUTES
+            ):
+                self.require_token()
+                privileged_body = parse_body(self, max_bytes=request_limit)
+                principal = access_control.public_principal(getattr(self, "auth_principal", None)) or {}
+                request_id = "request-" + secrets.token_hex(16)
+                admitted = audit_event(
+                    "privileged-request-admitted",
+                    _ledger_required=True,
+                    request_id=request_id,
+                    principal_id=principal.get("id"),
+                    method="POST",
+                    path=parsed.path,
+                    capability=required_capability,
+                    body_sha256=canonical_json_sha256(privileged_body),
+                    approval_id=getattr(self, "headers", {}).get("X-DASH-Approval-ID", "").strip() or None,
+                )
+                self._privileged_audit = {
+                    "requestId": request_id,
+                    "admissionEventId": admitted["event"]["eventId"],
+                    "principalId": principal.get("id"),
+                    "capability": required_capability,
+                    "path": parsed.path,
+                    "completed": False,
+                }
             if DUAL_CONTROL_ENABLED and parsed.path in change_approvals.GOVERNED_PATHS:
                 self.require_token()
                 governed_body = parse_body(self, max_bytes=request_limit)
@@ -11532,6 +11681,7 @@ class Handler(BaseHTTPRequestHandler):
             FEDERATED_AUTH_ENABLED
         )
         approval_status = change_approval_store().status() if DUAL_CONTROL_ENABLED else {"ledger": {"ok": True}}
+        audit_ledger_status = audit_ledger_public_status()
         checks = [
             {"name": "admin auth mode", "ok": token_required, "value": "authentication required" if token_required else "unlocked"},
             {"name": "admin credential source configured", "ok": credential_configured if token_required else False, "value": "owner/RBAC/federated" if credential_configured else "missing"},
@@ -11541,6 +11691,9 @@ class Handler(BaseHTTPRequestHandler):
             {"name": "allowed hosts configured", "ok": bool(ALLOWED_HOSTS), "value": ", ".join(sorted(ALLOWED_HOSTS))},
             {"name": "request body limit", "ok": MAX_BODY_BYTES <= 262144, "value": MAX_BODY_BYTES},
             {"name": "audit log rotation limit", "ok": 0 < AUDIT_MAX_BYTES <= 50 * 1024 * 1024, "value": AUDIT_MAX_BYTES},
+            {"name": "audit HMAC ledger", "ok": not AUDIT_LEDGER_ENABLED or audit_ledger_status.get("ok", False), "value": f"{audit_ledger_status.get('ledger', {}).get('events', 0)} sealed events" if AUDIT_LEDGER_ENABLED else "disabled"},
+            {"name": "privileged request flight recorder", "ok": not AUDIT_LEDGER_REQUIRED_FOR_MUTATIONS or AUDIT_LEDGER_ENABLED, "value": "fail-closed admission" if AUDIT_LEDGER_REQUIRED_FOR_MUTATIONS and AUDIT_LEDGER_ENABLED else "best-effort"},
+            {"name": "incomplete privileged requests", "ok": not AUDIT_LEDGER_ENABLED or audit_ledger_status.get("requests", {}).get("oldestOpenAgeSeconds", 0) < 300, "value": audit_ledger_status.get("requests", {}).get("open", 0)},
             {"name": "request timeout bounded", "ok": 1 <= REQUEST_TIMEOUT_SECONDS <= 60, "value": REQUEST_TIMEOUT_SECONDS},
             {"name": "item stack mutation limit", "ok": 1 <= MAX_ITEM_STACK_SIZE <= 10000000, "value": MAX_ITEM_STACK_SIZE},
             {"name": "audit event response limit", "ok": 1 <= AUDIT_EVENT_LIMIT <= 1000, "value": AUDIT_EVENT_LIMIT},
@@ -11567,6 +11720,7 @@ class Handler(BaseHTTPRequestHandler):
                 "Keep the panel on trusted LAN/VPN only.",
                 "Do not expose RabbitMQ, Postgres, or this panel directly to the internet.",
                 "Take a backup before broad admin mutations or config surgery.",
+                "The mutation flight recorder seals an intent before dispatch and a completion after response construction; an unmatched old intent means execution outcome is unknown and must be investigated.",
                 "When four-eyes control is enabled, requester and approver must be distinct named identities; approvals are exact-body-bound and single-use.",
             ],
         }
@@ -11574,6 +11728,26 @@ class Handler(BaseHTTPRequestHandler):
     def audit(self, action, ok=True, **fields):
         peer = self.client_address[0] if self.client_address else "unknown"
         audit_event(action, ok=ok, peer=peer, method=self.command, path=urllib.parse.urlparse(self.path).path, **fields)
+
+    def complete_privileged_audit(self, status):
+        context = getattr(self, "_privileged_audit", None)
+        if not context or context.get("completed"):
+            return
+        context["completed"] = True
+        try:
+            audit_event(
+                "privileged-request-completed",
+                ok=int(status) < 400,
+                request_id=context["requestId"],
+                admission_event_id=context["admissionEventId"],
+                principal_id=context["principalId"],
+                method="POST",
+                path=context["path"],
+                capability=context["capability"],
+                status_code=int(status),
+            )
+        except Exception as exc:
+            AUDIT_LEDGER_RUNTIME.update({"ready": False, "lastError": str(exc)[:2000]})
 
     def optimization_signals(self):
         return {
@@ -14156,6 +14330,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def json(self, value, head_only=False, cookies=(), status=HTTPStatus.OK):
         data = json.dumps(value, default=json_default, indent=2).encode("utf-8")
+        self.complete_privileged_audit(status)
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         for cookie in cookies:
@@ -14266,6 +14441,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def error(self, status, message, head_only=False):
         data = json.dumps({"error": message}).encode("utf-8")
+        self.complete_privileged_audit(status)
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.security_headers()
@@ -14280,6 +14456,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Pragma", "no-cache")
         self.send_header("Expires", "0")
         self.send_header("X-Admin-Panel-Build", admin_panel_build())
+        privileged_audit = getattr(self, "_privileged_audit", None)
+        if privileged_audit and privileged_audit.get("requestId"):
+            self.send_header("X-DASH-Request-ID", privileged_audit["requestId"])
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
@@ -17620,7 +17799,11 @@ async function security(serial=loadSerial){
   if (serial !== loadSerial) return;
   const failed = (audit.checks || []).filter(c => !c.ok).length;
   const failedChecks = (audit.checks || []).filter(c => !c.ok);
-  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Security</h2><div class="toolbar"><span class="pill ${failed ? 'warn' : 'ok'}">${failed ? failed + ' checks need attention' : 'checks OK'}</span><button data-jump="settings">Settings</button><button data-jump="mutations">Admin Actions</button></div></div>${failed ? `<div class="panelBand dangerZone"><h2>Needs Attention</h2>${checks(failedChecks)}</div>` : ''}${changeApprovalPanel(approvals)}<div class="twoCol"><div class="panelBand"><h2>Security Checks</h2>${checks(audit.checks)}</div><div class="panelBand"><h2>Recent Audit Events</h2>${auditEventsTable(events.events)}<details><summary>Raw audit events</summary>${table(events.events)}</details></div></div><div class="panelBand"><h2>Operating Notes</h2><ul>${audit.notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul></div><details class="panelBand"><summary>Editable Env Keys</summary><div class="toolbar">${audit.safeEnvKeys.map(k => `<span class="pill">${esc(k)}</span>`).join('')}</div></details><details class="panelBand"><summary>Editable Config Files</summary><div class="toolbar">${audit.allowedConfigFiles.map(k => `<span class="pill">${esc(k)}</span>`).join('')}</div></details></div>`;
+  const ledger = events.ledger || {};
+  const ledgerHead = ledger.ledger || {};
+  const ledgerRequests = ledger.requests || {};
+  const displayedEvents = (events.sealedEvents || []).length ? events.sealedEvents : (events.events || []);
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Security</h2><div class="toolbar"><span class="pill ${failed ? 'warn' : 'ok'}">${failed ? failed + ' checks need attention' : 'checks OK'}</span><button data-jump="settings">Settings</button><button data-jump="mutations">Admin Actions</button></div></div>${failed ? `<div class="panelBand dangerZone"><h2>Needs Attention</h2>${checks(failedChecks)}</div>` : ''}${changeApprovalPanel(approvals)}<div class="twoCol"><div class="panelBand"><h2>Security Checks</h2>${checks(audit.checks)}</div><div class="panelBand"><div class="sectionHeader"><h2>Mutation Flight Recorder</h2><div class="toolbar"><span class="pill ${ledger.ok ? 'ok' : 'bad'}">${ledger.ok ? 'chain valid' : 'chain invalid'}</span><span class="pill">${esc(ledgerHead.events || 0)} sealed</span><span class="pill ${Number(ledgerRequests.open || 0) ? 'warn' : 'ok'}">${esc(ledgerRequests.open || 0)} open</span></div></div><p class="muted">Each privileged POST is admitted only after a secret-free exact body digest is HMAC-sealed. A separately authenticated head detects tail deletion; admitted requests without a completion receipt expose interrupted or unknown outcomes.</p>${table([{headSequence:ledgerHead.headSequence || 0,headHmac:ledgerHead.headHmacSha256 || 'none',anchorUpdated:ledgerHead.anchorUpdatedAt || '—',oldestOpenSeconds:ledgerRequests.oldestOpenAgeSeconds || 0,requiredForMutations:!!ledger.requiredForMutations}])}<h3>Recent Sealed Audit Events</h3>${auditEventsTable(displayedEvents)}<details><summary>Raw current JSONL events</summary>${table(events.events || [])}</details></div></div><div class="panelBand"><h2>Operating Notes</h2><ul>${audit.notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul></div><details class="panelBand"><summary>Editable Env Keys</summary><div class="toolbar">${audit.safeEnvKeys.map(k => `<span class="pill">${esc(k)}</span>`).join('')}</div></details><details class="panelBand"><summary>Editable Config Files</summary><div class="toolbar">${audit.allowedConfigFiles.map(k => `<span class="pill">${esc(k)}</span>`).join('')}</div></details></div>`;
   bindChangeApprovalControls(approvals);
 }
 async function runbook(serial=loadSerial){

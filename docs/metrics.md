@@ -26,6 +26,10 @@ the Prometheus request path never performs those expensive checks inline.
 The same endpoint exports label-free four-eyes approval enablement, ledger
 validity, state totals, and oldest-pending age. It never labels an operator,
 route, capability, request ID, body HMAC, summary, or request value.
+It also exports mutation flight-recorder enablement, full-chain/head validity,
+event/head counts, append failures, privileged admissions/completions, open
+requests, and oldest-open age. It never labels a principal, path, capability,
+request/approval ID, request-body digest, event HMAC, or event value.
 
 Start it with the normal world Compose files plus the overlay:
 
@@ -87,6 +91,9 @@ package-inspection performance budgets, both with five-minute debounce, so a
 regression toward maintenance-window-scale control-plane latency is visible.
 Four-eyes approval alerts fail only when the feature is enabled and the
 immutable request, mutable state, or transition-event HMAC verification fails.
+Audit-ledger rules alert when its event chain/authenticated head is invalid and
+when a privileged admission remains without a completion receipt for more than
+five minutes.
 Validate the exact Prometheus version and rules with:
 
 ```bash
