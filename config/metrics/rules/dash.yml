@@ -89,3 +89,20 @@ groups:
         for: 15m
         labels: {severity: warning}
         annotations: {summary: "A dynamic map cold-start p95 exceeds three minutes"}
+  - name: dash-desired-state
+    rules:
+      - alert: DashDesiredStateUnsealed
+        expr: dash_desired_state_sealed == 0
+        for: 15m
+        labels: {severity: critical}
+        annotations: {summary: "DASH has no approved desired-state baseline"}
+      - alert: DashDesiredStateCollectorStale
+        expr: time() - dash_desired_state_last_observation_timestamp_seconds > 180
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "DASH desired-state attestation is stale"}
+      - alert: DashDesiredStateCriticalDrift
+        expr: dash_desired_state_alertable_critical_drift > 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "Critical DASH source, configuration, or container drift is active"}

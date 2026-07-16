@@ -2941,6 +2941,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         original_select = self.panel.restore_drill.select_dump
         original_restore_status = self.panel.restore_drill.status
         original_meminfo = self.panel.read_meminfo
+        original_desired_state_store = self.panel.desired_state_store
         original_token = self.panel.ADMIN_TOKEN
         dump = self.workspace / "backups" / "latest.dump"
         dump.parent.mkdir(parents=True)
@@ -2950,6 +2951,14 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.panel.restore_drill.select_dump = lambda root: dump
         self.panel.restore_drill.status = lambda root, limit=1: {"latest": {"id": "proof", "ok": True, "integrityOk": True, "policyOk": True, "receiptHashValid": True, "finishedAt": self.panel.datetime.datetime.now(self.panel.datetime.timezone.utc).isoformat(), "liveDatabaseTouched": False, "timings": {"restoreSeconds": 1}}}
         self.panel.read_meminfo = lambda: {"availableBytes": 32 * 1024**3, "totalBytes": 64 * 1024**3}
+        self.panel.desired_state_store = lambda: type("Store", (), {
+            "status": lambda self, **kwargs: {
+                "state": "attested",
+                "sealed": True,
+                "openFindings": [],
+                "integrity": {"ok": True},
+            },
+        })()
         self.panel.ADMIN_TOKEN = "real-token"
         self.patch_flag("ADMIN_REQUIRE_TOKEN", True)
         self.patch_db(lambda sql, params=None: [{"ready": True}])
@@ -2958,6 +2967,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.addCleanup(lambda: setattr(self.panel.restore_drill, "select_dump", original_select))
         self.addCleanup(lambda: setattr(self.panel.restore_drill, "status", original_restore_status))
         self.addCleanup(lambda: setattr(self.panel, "read_meminfo", original_meminfo))
+        self.addCleanup(lambda: setattr(self.panel, "desired_state_store", original_desired_state_store))
         self.addCleanup(lambda: setattr(self.panel, "ADMIN_TOKEN", original_token))
         collected = self.panel.collect_operational_slo_signals()
         self.assertTrue(all(collected["signals"].values()), collected)

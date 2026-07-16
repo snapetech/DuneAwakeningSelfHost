@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "pollSeconds": 60,
+  "observationRetentionDays": 90,
+  "maxFiles": 5000,
+  "maxFileBytes": 67108864,
+  "maxTotalBytes": 536870912,
+  "trackFileModes": true,
+  "trackContainers": true,
+  "includePatterns": [
+    ".env",
+    "compose*.yaml",
+    ".github/workflows/*",
+    "admin/**/*",
+    "scripts/*",
+    "config/**/*",
+    "packaging/**/*",
+    "public-site/scripts/**/*",
+    "public-site/systemd/**/*",
+    "public-site/docker/**/*"
+  ],
+  "excludePatterns": [
+    "admin/__pycache__/*",
+    "scripts/__pycache__/*",
+    "**/*.pyc",
+    "config/item-icons/**/*"
+  ],
+  "requiredPaths": [
+    ".env",
+    "compose.yaml",
+    "config/UserGame.ini",
+    "config/UserEngine.ini",
+    "config/director.ini",
+    "admin/admin_panel.py",
+    "scripts/restart-target.sh"
+  ],
+  "criticalPatterns": [
+    ".env",
+    "compose*.yaml",
+    "admin/**/*",
+    "config/secrets/**/*",
+    "config/tls/**/*",
+    "config/UserGame*.ini",
+    "config/UserEngine.ini",
+    "config/director.ini",
+    "scripts/restart*.sh",
+    "scripts/recover*.sh",
+    "scripts/enable-feature-parity.sh"
+  ]
+}

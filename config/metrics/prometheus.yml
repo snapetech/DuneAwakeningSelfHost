@@ -28,6 +28,10 @@ scrape_configs:
     metrics_path: /metrics/capacity
     static_configs:
       - targets: [admin-panel:8080]
+  - job_name: dash-desired-state
+    metrics_path: /metrics/desired-state
+    static_configs:
+      - targets: [admin-panel:8080]
   - job_name: rabbitmq-admin
     static_configs:
       - targets: [admin-rmq:15692]

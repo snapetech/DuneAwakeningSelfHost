@@ -75,6 +75,9 @@ slo_snapshot=""
 capacity_db="${DUNE_CAPACITY_INTELLIGENCE_HOST_DATABASE:-backups/capacity-intelligence/capacity.sqlite3}"
 capacity_snapshot=""
 [[ -f "$capacity_db" ]] && capacity_snapshot="capacity-intelligence.sqlite3"
+desired_state_db="${DUNE_DESIRED_STATE_HOST_DATABASE:-backups/desired-state/desired-state.sqlite3}"
+desired_state_snapshot=""
+[[ -f "$desired_state_db" ]] && desired_state_snapshot="desired-state.sqlite3"
 db="${DUNE_GAME_DB_NAME:-$(env_value DUNE_GAME_DB_NAME)}"
 db="${db:-${DUNE_DATABASE:-$(env_value DUNE_DATABASE)}}"
 db="${db:-${DUNE_DB_NAME:-$(env_value DUNE_DB_NAME)}}"
@@ -109,6 +112,11 @@ if [[ "$dry_run" == true ]]; then
     printf 'capacity_intelligence_snapshot=capacity-intelligence.sqlite3\n'
   else
     printf 'capacity_intelligence_snapshot=<missing %s>\n' "$capacity_db"
+  fi
+  if [[ -f "$desired_state_db" ]]; then
+    printf 'desired_state_snapshot=desired-state.sqlite3\n'
+  else
+    printf 'desired_state_snapshot=<missing %s>\n' "$desired_state_db"
   fi
   if [[ -d config/tls ]]; then
     printf 'config_tls_archive=config-tls.tgz\n'
@@ -229,6 +237,21 @@ PY
   chmod 600 "${backup_dir}/capacity-intelligence.sqlite3"
 fi
 
+if [[ -f "$desired_state_db" ]]; then
+  python3 - "$desired_state_db" "${backup_dir}/desired-state.sqlite3" <<'PY'
+import sqlite3
+import sys
+source=sqlite3.connect(f"file:{sys.argv[1]}?mode=ro",uri=True)
+target=sqlite3.connect(sys.argv[2])
+try:
+    source.backup(target)
+    if target.execute("pragma integrity_check").fetchone()[0]!="ok": raise SystemExit("desired-state snapshot failed integrity_check")
+finally:
+    target.close(); source.close()
+PY
+  chmod 600 "${backup_dir}/desired-state.sqlite3"
+fi
+
 "${compose[@]}" exec -T postgres \
   pg_dump -U dune -d "$db" -Fc \
   > "${backup_dir}/postgres-${db}.dump"
@@ -268,6 +291,7 @@ moderation_snapshot=${moderation_snapshot}
 base_gallery_snapshot=${base_gallery_snapshot}
 operational_slo_snapshot=${slo_snapshot}
 capacity_intelligence_snapshot=${capacity_snapshot}
+desired_state_snapshot=${desired_state_snapshot}
 world_unique_name=${world_unique_name}
 dune_fls_env=${dune_fls_env:-retail}
 game_rmq_public_host=${game_rmq_public_host}

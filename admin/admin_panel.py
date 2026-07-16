@@ -58,6 +58,7 @@ import cosmetics_admin
 import restore_drill
 import operational_slo
 import capacity_intelligence
+import desired_state
 
 GM_CATALOG_PATH = CODE_ROOT / "scripts" / "gm-command-catalog.py"
 GM_CATALOG_SPEC = importlib.util.spec_from_file_location("gm_command_catalog", GM_CATALOG_PATH)
@@ -231,6 +232,8 @@ CONFIRM_RESTORE_DRILL = "RUN ISOLATED RESTORE DRILL"
 CONFIRM_SLO_INCIDENT = "ACKNOWLEDGE SLO INCIDENT"
 CONFIRM_SLO_MAINTENANCE = "CHANGE SLO MAINTENANCE"
 CONFIRM_CAPACITY_APPLY = "APPLY CAPACITY RECOMMENDATIONS"
+CONFIRM_DESIRED_STATE_SEAL = "SEAL DESIRED STATE"
+CONFIRM_DESIRED_STATE_ACK = "ACKNOWLEDGE CONFIGURATION DRIFT"
 CONFIRM_BOOTSTRAP = "RUN BOOTSTRAP"
 CONFIRM_PLAYER_RECOVERY = "MOVE OFFLINE PLAYER"
 CONFIRM_REPUTATION_MUTATION = "WRITE REPUTATION"
@@ -285,6 +288,8 @@ OPERATIONAL_SLO_ENABLED = os.environ.get("DUNE_OPERATIONAL_SLO_ENABLED", "true")
 OPERATIONAL_SLO_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_OPERATIONAL_SLO_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 CAPACITY_INTELLIGENCE_ENABLED = os.environ.get("DUNE_CAPACITY_INTELLIGENCE_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 CAPACITY_AUTO_APPLY_ENABLED = os.environ.get("DUNE_CAPACITY_AUTO_APPLY_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+DESIRED_STATE_ENABLED = os.environ.get("DUNE_DESIRED_STATE_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+DESIRED_STATE_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_DESIRED_STATE_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 SERVICE_CONTROL_ENABLED = os.environ.get("DUNE_ADMIN_SERVICE_CONTROL_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 STATEFUL_SERVICE_CONTROL_ENABLED = os.environ.get("DUNE_ADMIN_STATEFUL_SERVICE_CONTROL_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 UPDATE_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_UPDATE_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
@@ -371,6 +376,14 @@ CAPACITY_INTELLIGENCE_STORE = None
 CAPACITY_INTELLIGENCE_STORE_LOCK = threading.Lock()
 CAPACITY_INTELLIGENCE_THREAD_STARTED = False
 CAPACITY_INTELLIGENCE_RUNTIME = {"running": False, "lastSampleAt": None, "lastResult": None, "lastError": None, "lastAutoApplyAt": None, "lastAutoApply": None}
+DESIRED_STATE_POLICY = pathlib.Path(os.environ.get("DUNE_DESIRED_STATE_POLICY", str(CONFIG_ROOT / "desired-state.json")))
+DESIRED_STATE_DATABASE = pathlib.Path(os.environ.get("DUNE_DESIRED_STATE_DATABASE", str(BACKUPS_ROOT / "desired-state" / "desired-state.sqlite3")))
+DESIRED_STATE_SECRET_FILE = pathlib.Path(os.environ.get("DUNE_DESIRED_STATE_HMAC_SECRET_FILE", str(CONFIG_ROOT / "secrets" / "desired-state-hmac.secret")))
+DESIRED_STATE_POLL_SECONDS = max(15, min(int(os.environ.get("DUNE_DESIRED_STATE_POLL_SECONDS", "60")), 3600))
+DESIRED_STATE_STORE = None
+DESIRED_STATE_STORE_LOCK = threading.Lock()
+DESIRED_STATE_THREAD_STARTED = False
+DESIRED_STATE_RUNTIME = {"running": False, "lastSampleAt": None, "lastResult": None, "lastError": None}
 DISCORD_ADAPTER_ROUTES = {
     "/api/integrations/discord/health", "/api/integrations/discord/status",
     "/api/integrations/discord/readiness", "/api/integrations/discord/services",
@@ -427,6 +440,8 @@ def admin_panel_reload_paths():
         OPERATIONAL_SLO_POLICY,
         CODE_ROOT / "admin" / "capacity_intelligence.py",
         CAPACITY_INTELLIGENCE_POLICY,
+        CODE_ROOT / "admin" / "desired_state.py",
+        DESIRED_STATE_POLICY,
         GAMEPLAY_PRESETS_FILE,
         COSMETIC_CATALOG_FILE,
         CODE_ROOT / "admin" / "access_control.py",
@@ -931,6 +946,12 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_CAPACITY_INTELLIGENCE_POLL_SECONDS": {"group": "Capacity Intelligence", "secret": False, "restart": True, "why": "Read-only map utilization and readiness observation cadence."},
     "DUNE_CAPACITY_AUTO_APPLY_ENABLED": {"group": "Capacity Intelligence", "secret": False, "restart": True, "why": "Allows evidence-qualified retention recommendations to converge gradually without changing map modes."},
     "DUNE_CAPACITY_AUTO_APPLY_INTERVAL_HOURS": {"group": "Capacity Intelligence", "secret": False, "restart": True, "why": "Minimum interval between eligible automatic retention-policy applications."},
+    "DUNE_DESIRED_STATE_ENABLED": {"group": "Desired State", "secret": False, "restart": True, "why": "Continuously verifies approved source/configuration and project-container fingerprints."},
+    "DUNE_ADMIN_DESIRED_STATE_MUTATIONS_ENABLED": {"group": "Desired State", "secret": False, "restart": True, "why": "Allows infrastructure administrators to seal a reviewed baseline and acknowledge retained drift findings."},
+    "DUNE_DESIRED_STATE_POLICY": {"group": "Desired State", "secret": False, "restart": True, "why": "Versioned file scope, criticality, bounds, cadence, and retention policy."},
+    "DUNE_DESIRED_STATE_DATABASE": {"group": "Desired State", "secret": False, "restart": True, "why": "Private baseline, observation, finding, and signed-event ledger."},
+    "DUNE_DESIRED_STATE_HMAC_SECRET_FILE": {"group": "Desired State", "secret": False, "restart": True, "why": "Private HMAC key used to authenticate baselines, observations, and the event chain."},
+    "DUNE_DESIRED_STATE_POLL_SECONDS": {"group": "Desired State", "secret": False, "restart": True, "why": "Continuous file/runtime attestation cadence from 15 to 3600 seconds."},
     "DUNE_ADMIN_BACKUP_IMPORT_MAX_BODY_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum JSON request size for a base64 full-backup archive import."},
     "DUNE_BACKUP_ARCHIVE_ENCRYPTION_ENABLED": {"group": "Backup Encryption", "secret": False, "restart": False, "why": "Enables the documented host-side verified OpenPGP archive workflow."},
     "DUNE_BACKUP_GPG_RECIPIENT": {"group": "Backup Encryption", "secret": False, "restart": False, "why": "Exact 40- or 64-hex OpenPGP recipient fingerprint; never an ambiguous name/email selector."},
@@ -4496,7 +4517,7 @@ def verify_backup_set_native(path):
             output.append(f"OK archive {archive}")
         except (OSError, tarfile.TarError) as exc:
             errors.append(f"FAIL archive {archive}: {exc}")
-    for name in ("community-rewards.sqlite3", "moderation.sqlite3", "base-gallery.sqlite3", "operational-slo.sqlite3", "capacity-intelligence.sqlite3"):
+    for name in ("community-rewards.sqlite3", "moderation.sqlite3", "base-gallery.sqlite3", "operational-slo.sqlite3", "capacity-intelligence.sqlite3", "desired-state.sqlite3"):
         database = path / name
         if not database.is_file():
             output.append(f"WARN no {name} found in {path}")
@@ -4519,6 +4540,13 @@ def verify_backup_set_native(path):
             output.append(f"OK capacity application receipts {capacity_database}")
         else:
             errors.append(f"FAIL capacity application receipts {capacity_database}: {capacity_check}")
+    desired_database = path / "desired-state.sqlite3"
+    if desired_database.is_file():
+        desired_check = desired_state.Store(desired_database, DESIRED_STATE_POLICY, DESIRED_STATE_SECRET_FILE).verify()
+        if desired_check.get("ok"):
+            output.append(f"OK desired-state HMAC attestations {desired_database}")
+        else:
+            errors.append(f"FAIL desired-state HMAC attestations {desired_database}: {desired_check}")
     manifest_json = path / "manifest.json"
     manifest_text = path / "manifest.txt"
     try:
@@ -4892,6 +4920,18 @@ def collect_operational_slo_signals():
     credential_ready = bool(ADMIN_TOKEN and ADMIN_TOKEN != "change-me-admin-token") or bool(RBAC_ENABLED and ADMIN_ACCESS_FILE.exists())
     admin_auth_ready = token_required and credential_ready
     context["adminAuth"] = {"tokenRequired": token_required, "credentialSourceConfigured": credential_ready, "rbacEnabled": RBAC_ENABLED, "mode": "authenticated" if token_required else "unlocked"}
+    try:
+        desired_status = desired_state_store().status(limit=20) if DESIRED_STATE_ENABLED else {"state": "disabled", "sealed": False, "openFindings": []}
+        desired_state_attested = bool(desired_status.get("sealed") and desired_status.get("state") == "attested" and desired_status.get("integrity", {}).get("ok"))
+        context["desiredState"] = {
+            "state": desired_status.get("state"),
+            "sealed": desired_status.get("sealed"),
+            "openFindings": len(desired_status.get("openFindings") or []),
+            "integrityOk": bool(desired_status.get("integrity", {}).get("ok")),
+        }
+    except Exception as exc:
+        desired_state_attested = False
+        errors["desiredState"] = str(exc)[:1000]
     context["errors"] = errors
     return {
         "signals": {
@@ -4902,6 +4942,7 @@ def collect_operational_slo_signals():
             "restore_proof_ready": restore_proof_ready,
             "memory_headroom_ready": memory_headroom_ready,
             "admin_auth_ready": admin_auth_ready,
+            "desired_state_attested": desired_state_attested,
         },
         "context": context,
     }
@@ -5108,6 +5149,119 @@ def ensure_capacity_intelligence_thread():
         return
     CAPACITY_INTELLIGENCE_THREAD_STARTED = True
     threading.Thread(target=capacity_intelligence_worker, name="capacity-intelligence-worker", daemon=True).start()
+
+
+def desired_state_store():
+    global DESIRED_STATE_STORE
+    with DESIRED_STATE_STORE_LOCK:
+        if DESIRED_STATE_STORE is None:
+            DESIRED_STATE_STORE = desired_state.Store(
+                DESIRED_STATE_DATABASE,
+                DESIRED_STATE_POLICY,
+                DESIRED_STATE_SECRET_FILE,
+                owner_uid=os.environ.get("DUNE_HOST_UID"),
+                owner_gid=os.environ.get("DUNE_HOST_GID"),
+            )
+            DESIRED_STATE_STORE.initialize()
+        return DESIRED_STATE_STORE
+
+
+def desired_state_container_inspections():
+    filters = urllib.parse.quote(json.dumps({"label": [f"com.docker.compose.project={DOCKER_COMPOSE_PROJECT}"]}))
+    rows = docker_api(f"/containers/json?all=1&filters={filters}")
+    if not isinstance(rows, list):
+        raise RuntimeError("Docker returned an invalid project container inventory")
+    inspections = []
+    for row in rows:
+        container_id = str(row.get("Id") or "")
+        if not re.fullmatch(r"[a-f0-9]{12,64}", container_id):
+            raise RuntimeError("Docker returned an invalid project container id")
+        inspected = docker_api(f"/containers/{container_id}/json")
+        labels = (inspected.get("Config") or {}).get("Labels") or {}
+        if labels.get("com.docker.compose.project") != DOCKER_COMPOSE_PROJECT:
+            raise RuntimeError("Docker project label changed between inventory and inspection")
+        inspections.append(inspected)
+    return inspections
+
+
+def collect_desired_state_snapshot():
+    store = desired_state_store()
+    return desired_state.build_snapshot(
+        ROOT,
+        store.policy,
+        desired_state_container_inspections(),
+        store.secret,
+    )
+
+
+def desired_state_maintenance_active():
+    if not OPERATIONAL_SLO_ENABLED:
+        return False
+    try:
+        return bool(operational_slo_store().status(limit=1).get("activeMaintenance"))
+    except Exception:
+        return False
+
+
+def desired_state_tick():
+    DESIRED_STATE_RUNTIME["running"] = True
+    try:
+        snapshot = collect_desired_state_snapshot()
+        result = desired_state_store().observe(snapshot, maintenance_active=desired_state_maintenance_active())
+        DESIRED_STATE_RUNTIME.update({"lastSampleAt": time.time(), "lastResult": result, "lastError": ""})
+        for finding_id in result.get("findingsOpened") or []:
+            audit_event("desired-state-drift-opened", ok=False, finding_id=finding_id)
+        for finding_id in result.get("findingsResolved") or []:
+            audit_event("desired-state-drift-resolved", ok=True, finding_id=finding_id)
+        return result
+    except Exception as exc:
+        DESIRED_STATE_RUNTIME["lastError"] = str(exc)[:2000]
+        raise
+    finally:
+        DESIRED_STATE_RUNTIME["running"] = False
+
+
+def desired_state_public_status():
+    if not DESIRED_STATE_ENABLED:
+        return {"ok": False, "enabled": False, "state": "disabled", "runtime": dict(DESIRED_STATE_RUNTIME)}
+    status = desired_state_store().status(limit=300)
+    status.update({
+        "enabled": True,
+        "runtime": dict(DESIRED_STATE_RUNTIME),
+        "pollSeconds": DESIRED_STATE_POLL_SECONDS,
+        "mutationEnabled": MUTATIONS_ENABLED and DESIRED_STATE_MUTATIONS_ENABLED,
+        "requiredCapability": "infrastructure.write",
+        "confirmSeal": CONFIRM_DESIRED_STATE_SEAL,
+        "confirmAcknowledge": CONFIRM_DESIRED_STATE_ACK,
+        "policy": desired_state_store().policy,
+        "secretConfigured": DESIRED_STATE_SECRET_FILE.is_file(),
+    })
+    return status
+
+
+def desired_state_seal(actor, reason):
+    snapshot = collect_desired_state_snapshot()
+    result = desired_state_store().seal(snapshot, actor, reason)
+    desired_state_store().observe(snapshot, maintenance_active=desired_state_maintenance_active())
+    return result
+
+
+def desired_state_worker():
+    while True:
+        try:
+            if DESIRED_STATE_ENABLED:
+                desired_state_tick()
+        except Exception:
+            pass
+        time.sleep(DESIRED_STATE_POLL_SECONDS)
+
+
+def ensure_desired_state_thread():
+    global DESIRED_STATE_THREAD_STARTED
+    if DESIRED_STATE_THREAD_STARTED:
+        return
+    DESIRED_STATE_THREAD_STARTED = True
+    threading.Thread(target=desired_state_worker, name="desired-state-worker", daemon=True).start()
 
 
 def bootstrap_status():
@@ -6236,6 +6390,12 @@ def create_maintenance_backup(job):
         except Exception as exc:
             result["warnings"].append({"artifact": "capacityIntelligence", "error": str(exc)})
 
+    if DESIRED_STATE_ENABLED:
+        try:
+            result["artifacts"]["desiredState"] = desired_state_store().backup(backup_dir / "desired-state.sqlite3")
+        except Exception as exc:
+            result["warnings"].append({"artifact": "desiredState", "error": str(exc)})
+
     manifest = backup_dir / "manifest.json"
     manifest.write_text(json.dumps(result, indent=2, sort_keys=True, default=json_default), encoding="utf-8")
     secure_admin_backup_path(manifest)
@@ -7034,6 +7194,9 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/metrics/capacity":
                 metrics = capacity_intelligence_store().prometheus() if CAPACITY_INTELLIGENCE_ENABLED else "dash_capacity_collector_up 0\n"
                 self.text(metrics, "text/plain; version=0.0.4; charset=utf-8")
+            elif parsed.path == "/metrics/desired-state":
+                metrics = desired_state_store().prometheus() if DESIRED_STATE_ENABLED else "dash_desired_state_collector_up 0\n"
+                self.text(metrics, "text/plain; version=0.0.4; charset=utf-8")
             elif parsed.path in ("/api/integrations/discord/health", "/api/integrations/discord/version", "/api/integrations/discord/backups/list"):
                 self.require_discord_token()
                 if parsed.path.endswith("/health"):
@@ -7242,6 +7405,9 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/ops/capacity":
                 self.require_token()
                 self.json(capacity_intelligence_public_status())
+            elif parsed.path == "/api/ops/desired-state":
+                self.require_token()
+                self.json(desired_state_public_status())
             elif parsed.path == "/api/ops/database":
                 self.require_token()
                 self.json(dict(database_browser_catalog(), queryEnabled=DATABASE_QUERY_ENABLED, writeEnabled=DATABASE_WRITE_ENABLED, rowMutationsEnabled=DATABASE_ROW_MUTATIONS_ENABLED, passwordMutationsEnabled=DATABASE_PASSWORD_MUTATIONS_ENABLED, writeConfirm=CONFIRM_DATABASE_WRITE, rowConfirm=CONFIRM_DATABASE_ROW_UPDATE, passwordConfirm=CONFIRM_DATABASE_PASSWORD))
@@ -8023,6 +8189,25 @@ class Handler(BaseHTTPRequestHandler):
                 actor = str(principal.get("id") or "owner-recovery")
                 result = capacity_apply_recommendations(actor=actor, source="manual")
                 self.audit("capacity-intelligence", ok=True, capacity_action=action, applied=result.get("applied"), changes=result.get("changes"), receipt=(result.get("receipt") or {}).get("id"))
+                self.json(result)
+            elif parsed.path == "/api/ops/desired-state":
+                self.require_token()
+                self.require_mutations()
+                if not DESIRED_STATE_MUTATIONS_ENABLED:
+                    raise PermissionError("desired-state mutations are disabled; set DUNE_ADMIN_DESIRED_STATE_MUTATIONS_ENABLED=true")
+                body = parse_body(self)
+                action = str(body.get("action") or "").strip().lower()
+                principal = access_control.public_principal(getattr(self, "auth_principal", None)) or {}
+                actor = str(principal.get("id") or "owner-recovery")
+                if action == "seal":
+                    require_confirmation(body, CONFIRM_DESIRED_STATE_SEAL)
+                    result = desired_state_seal(actor, body.get("reason"))
+                elif action == "acknowledge":
+                    require_confirmation(body, CONFIRM_DESIRED_STATE_ACK)
+                    result = desired_state_store().acknowledge(body.get("findingId"), actor, body.get("note", ""))
+                else:
+                    raise ValueError("desired-state action must be seal or acknowledge")
+                self.audit("desired-state", ok=True, desired_state_action=action, baseline_id=result.get("baselineId"), finding_id=result.get("id"), reason=body.get("reason"))
                 self.json(result)
             elif parsed.path == "/api/ops/backups/schedule":
                 self.require_token()
@@ -17100,6 +17285,7 @@ def main():
     ensure_backup_schedule_thread()
     ensure_operational_slo_thread()
     ensure_capacity_intelligence_thread()
+    ensure_desired_state_thread()
     ensure_event_scheduler_thread()
     ensure_community_worker_thread()
     ensure_moderation_worker_thread()

@@ -73,6 +73,16 @@
       "severity": "critical",
       "consecutiveFailures": 1,
       "excludeMaintenance": false
+    },
+    {
+      "id": "desired_state_attestation",
+      "name": "Desired-state attestation",
+      "description": "The approved HMAC-sealed file and container baseline has no unresolved drift.",
+      "signal": "desired_state_attested",
+      "targetAvailability": 0.999,
+      "severity": "critical",
+      "consecutiveFailures": 2,
+      "excludeMaintenance": true
     }
   ]
 }
