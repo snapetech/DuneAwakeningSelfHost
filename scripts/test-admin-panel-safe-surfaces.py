@@ -3056,6 +3056,50 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertEqual({"path": "backup.dump", "bytes": 1}, accepted["json"]["backup"])
         self.assertEqual([True], backups)
 
+    def test_base_retirement_routes_expose_preview_and_gate_native_archive(self):
+        original_scan = self.panel.base_retirement.scan
+        original_receipts = self.panel.base_retirement.list_receipts
+        original_plan = self.panel.base_retirement.plan
+        original_archive = self.panel.base_retirement.archive
+        self.panel.base_retirement.scan = lambda query_fn, limit=500: [{"totemId": 44, "status": "owned"}]
+        self.panel.base_retirement.list_receipts = lambda root: [{"status": "committed", "baseBackupId": 77}]
+        self.panel.base_retirement.plan = lambda query_fn, totem, recovery=None: {"ok": True, "canExecute": True, "expectedFingerprint": "f" * 64, "base": {"totemId": int(totem)}}
+        archive_calls = []
+        self.panel.base_retirement.archive = lambda *args, **kwargs: archive_calls.append(kwargs) or {"ok": True, "baseBackupId": 77}
+        self.addCleanup(lambda: setattr(self.panel.base_retirement, "scan", original_scan))
+        self.addCleanup(lambda: setattr(self.panel.base_retirement, "list_receipts", original_receipts))
+        self.addCleanup(lambda: setattr(self.panel.base_retirement, "plan", original_plan))
+        self.addCleanup(lambda: setattr(self.panel.base_retirement, "archive", original_archive))
+
+        handler, captured = self.make_route_handler("/api/admin/base-retirement")
+        handler.is_app_route = lambda path: False
+        handler.do_GET()
+        self.assertEqual("owned", captured["json"]["bases"][0]["status"])
+        self.assertTrue(captured["json"]["gameRecoverable"])
+        self.assertFalse(captured["json"]["destructiveDelete"])
+
+        preview = self.invoke_post_route("/api/admin/base-retirement", {"action": "preview", "totemId": 44, "recoveryPlayerId": 46})
+        self.assertEqual([], preview["errors"])
+        self.assertTrue(preview["json"]["canExecute"])
+
+        self.patch_flag("MUTATIONS_ENABLED", True)
+        self.patch_flag("BASE_RETIREMENT_MUTATIONS_ENABLED", False)
+        blocked = self.invoke_post_route("/api/admin/base-retirement", {"action": "archive", "totemId": 44, "recoveryPlayerId": 46, "expectedFingerprint": "f" * 64, "confirm": "ARCHIVE BASE 44"})
+        self.assertEqual(401, blocked["errors"][0]["status"])
+        self.assertEqual([], archive_calls)
+
+        self.patch_flag("BASE_RETIREMENT_MUTATIONS_ENABLED", True)
+        accepted = self.invoke_post_route("/api/admin/base-retirement", {"action": "archive", "totemId": 44, "recoveryPlayerId": 46, "expectedFingerprint": "f" * 64, "confirm": "ARCHIVE BASE 44"})
+        self.assertEqual([], accepted["errors"])
+        self.assertEqual(77, accepted["json"]["baseBackupId"])
+        self.assertEqual(44, archive_calls[0]["totem_id"])
+
+    def test_base_retirement_ui_names_native_recovery_safety_contract(self):
+        self.assertIn("Recoverable Base Retirement", self.panel.INDEX)
+        self.assertIn("base_backup_save_from_totem", self.panel.INDEX)
+        self.assertIn("expectedFingerprint", self.panel.INDEX)
+        self.assertIn("no destructive delete", self.panel.INDEX)
+
     def test_community_delivery_uses_offline_grant_path_and_completes_receipt(self):
         config_path = self.workspace / "config" / "community-rewards.json"
         config_path.write_text((ROOT / "config" / "community-rewards.example.json").read_text(), encoding="utf-8")

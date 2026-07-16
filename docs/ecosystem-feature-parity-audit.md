@@ -17,7 +17,7 @@ or documented operational path.
 ## Audit snapshot
 
 - Audit date: **2026-07-15**, full GitHub search and remote HEAD refresh
-  **2026-07-16 15:00 UTC**
+  **2026-07-16 15:45 UTC**
 - Search scope: GitHub repository search, project documentation, Funcom's
   self-host guide, CubeCoders' Dune template and guide, Nexus Mods' Dune:
   Awakening category, and public community discussions used only to discover
@@ -69,7 +69,7 @@ webhooks, and Dune-specific announcement/player/status commands.
 | Peer | Pinned revision | Distinct operator outcomes | Confidence |
 | --- | --- | --- | --- |
 | [Icehunter/dune-admin](https://github.com/Icehunter/dune-admin) | `b1a86b16d4126e5052fb74f6463fe40ec1bce49a` | AMP/kubectl/Docker/local providers; local and Discord login; fine-grained RBAC; player/world/economy administration including offline stack/quality edits; welcome/MOTD; market bot; events; battle pass; scheduled operations | high |
-| [AlphaNineGaming/AlphaNine-Dune-Suite](https://github.com/AlphaNineGaming/AlphaNine-Dune-Suite) | `bf3126ffcd7de563eda128e486009d21a325af3b` | Windows installer/setup wizard, receiver lifecycle, player/item tools, local live maps, market listings, diagnostics, settings portability, VM scheduling, and PWA metadata | moderate; source is present but current release notes outpace live-runtime evidence |
+| [AlphaNineGaming/AlphaNine-Dune-Suite](https://github.com/AlphaNineGaming/AlphaNine-Dune-Suite) | `bf3126ffcd7de563eda128e486009d21a325af3b` | Windows installer/setup wizard, receiver lifecycle, player/item tools, local live maps, market listings, orphan/owned-base cleanup, diagnostics, settings portability, VM scheduling, and PWA metadata | moderate; source is present but current release notes outpace live-runtime evidence |
 | [Nerrowake/sietch-console](https://github.com/Nerrowake/sietch-console) | `80897fc5bc3efcbaff8b00f6a2ce57ba1b1e8aee` | Native Windows profiles, Hyper-V/Steam setup, INI editor, backups/cloud sync, remote API/SSE, diagnostics, metrics and player policy UI | moderate overall; source labels join parsing and kick/ban commands TODO/unverified |
 | [adainrivers/dune-dedicated-server-manager](https://github.com/adainrivers/dune-dedicated-server-manager) | `f7dfeb0d1327273299a03802eb16a71d4523e05c` | Cross-platform desktop profiles and SSH tunnels; lifecycle/diagnostics; scheduled maintenance; live RMQ admin commands; welcome packages | high |
 | [xixACExix/Simple-Dune-Awakening-Manager](https://github.com/xixACExix/Simple-Dune-Awakening-Manager) | `483530671c0bf74c61b059da269ad145de8124ad` | Windows/Hyper-V setup and lifecycle GUI; typed settings, reinstall-safe database/config backup/restore, and a keep-running health/repair watchdog | high |
@@ -108,6 +108,7 @@ webhooks, and Dune-specific announcement/player/status commands.
 | [jeffstokes72/duneawakeningselfhost_ini_maker](https://github.com/jeffstokes72/duneawakeningselfhost_ini_maker) | `9d10bb7b31c1ed950a69d11fe2424f25c8a84a43` | Hosted UserGame/UserEngine INI generator | low to moderate; explicitly work in progress |
 | [atobo/dune-airdrop-addon](https://github.com/atobo/dune-airdrop-addon) | `cb13a7c6777edf6f56a3f73411d9e4a41c911aeb` | Movement/XP-aware playtime drops, daily streaks, weekly attendance, configurable tier multipliers and a retrying command-delivery daemon | high for source presence; runtime requires Dune-schema triggers plus Docker-socket companion |
 | [yacketrj/dune-ops-observability-addon](https://github.com/yacketrj/dune-ops-observability-addon) | `271b45e7494646988bec678316659ef85313e710` | Read-only player summaries, active-rate/level/faction/guild KPIs, explicit capability reporting and constrained addon bridge | high |
+| [BIGMOS/Dune-Dash-tools](https://github.com/BIGMOS/Dune-Dash-tools) | `18ba6bc654ccfb4f7758d3887c2aa20bd141567d` | Interactive/noninteractive Windows backup of game database, k3s resources, DASH configuration and server PVC configuration with destination selection and keep-last retention | high for source presence; restore is documented as a manual `pg_restore` command |
 
 The deprecated `thebadwolf79` startup gist and the removed
 `valknight/Easy-Dune-Admin` repository are historical sources; the active
@@ -213,6 +214,7 @@ without reproducing that wrapper.
 | Character cosmetics/skins bulk editor | the4rchangel | Parity | Independent 391-ID observed catalog, optional local-pak builder, searchable inspection, catalog-confined idempotent add/remove, customization-only bulk unlock, offline row lock, backup, compare-and-swap verification, private receipts, and guarded rollback; no first-party routine exists; see `docs/character-cosmetics.md` |
 | Base export/reconstruction/restore | Wormageddon, Icehunter | Parity for evidenced outcome | Exact plus recentered portable export and reconstruction are implemented. Wormageddon's source ships export but no import command and calls restore unfinished/experimental; DASH labels direct live restore unproven instead of claiming it |
 | Base designer/gallery/ratings | dune-base-market | Parity | Browser snapping/yaw grid editor, top-down preview, JSON lifecycle, isolated private/unlisted/public gallery, per-identity ratings, backups, and RBAC; see `docs/base-creator.md` |
+| Orphan/owned-base cleanup or retirement | AlphaNine | DASH exceeds; disposable live canary pending | Instead of permanently deleting a narrow row set, DASH classifies ownership, requires a stopped map and explicitly offline owners/recovery player, binds execution to a SHA-256 content preview under advisory/row locks, creates a full database dump and private receipt, calls the current build's native `base_backup_save_from_totem`, verifies the resulting player-owned linked-actor backup and permission removal before commit, and preserves in-game recovery; see `docs/base-retirement.md` |
 | Welcome kits and per-session MOTD | Icehunter, adainrivers | Parity | Care packages and presence automations |
 | Configurable item packages | DST, shop system | Parity | Care-package library and grant history |
 
@@ -317,14 +319,17 @@ only when explicitly authorized for a concrete client task, as required by
   community rewards/shop/tracks, host tuning, inventory integrity repair,
   recurring event automation, moderation case history, native policy-ban
   ejection, normalized security signals, coarse heatmaps, base creator tooling,
-  curated gameplay presets, federated identity, bounded browser diagnostics,
+  recoverable native base retirement, curated gameplay presets, federated identity, bounded browser diagnostics,
   encrypted archives, guarded cosmetics administration, and alternate
   deployment packaging are implemented.
-- **High confidence:** the 2026-07-16 live search added seven credible peers and
+- **High confidence:** the 2026-07-16 live search added eight credible peers and
   one rejected placeholder project. New executable outcomes were closed in the
   same refresh: movement-verified engagement airdrops now exceed the trigger +
   Docker-socket peer design, and existing-item stack/quality edits add offline,
-  backup, composite-preservation, and post-write verification gates.
+  backup, composite-preservation, and post-write verification gates. AlphaNine's
+  newly surfaced destructive base-cleanup outcome is superseded by a native,
+  recoverable, fingerprint-bound retirement path; its disposable live archive
+  and in-game restore canary remains pending.
 - **Unknown:** end-to-end Discord READY/interaction behavior until an operator
   supplies application, guild, and bot credentials. The unit, adapter, and
   protocol paths are locally validated and the service can wait without a

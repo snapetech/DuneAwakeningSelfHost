@@ -104,3 +104,14 @@ Tests cover exact transform preservation, recentering, unsupported-transform
 rejection, publish/update/list/get/rate behavior, visibility validation,
 component validation, bounds, and private file modes. The dashboard suite and
 embedded JavaScript parser cover routing and rendering integration.
+
+## Recoverable retirement
+
+Base retirement is separate from portable reconstruction and does not claim a
+direct live restore transaction. The Base Creator page can archive a stopped,
+offline-owned base through the game's current-build
+`dune.base_backup_save_from_totem` function after a fingerprint-bound preview,
+full database dump, locks, and native result verification. This preserves an
+in-game recovery record instead of deleting structural rows. See
+[`base-retirement.md`](base-retirement.md) for the complete contract and
+disposable live-canary procedure.

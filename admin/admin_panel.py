@@ -49,6 +49,7 @@ import outbound_webhooks
 import community_rewards
 import moderation
 import base_creator
+import base_retirement
 import gameplay_presets
 import command_console
 import federated_auth
@@ -289,6 +290,8 @@ MODERATION_KICK_COOLDOWN_SECONDS = max(10, min(int(os.environ.get("DUNE_MODERATI
 MODERATION_LOG_SERVICES = tuple(value.strip() for value in os.environ.get("DUNE_MODERATION_LOG_SERVICES", "survival,director,gateway,game-rmq").split(",") if value.strip())
 BASE_CREATOR_ENABLED = os.environ.get("DUNE_BASE_CREATOR_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 BASE_GALLERY_DATABASE = pathlib.Path(os.environ.get("DUNE_BASE_GALLERY_DATABASE", str(BACKUPS_ROOT / "base-gallery" / "gallery.sqlite3")))
+BASE_RETIREMENT_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_BASE_RETIREMENT_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+BASE_RETIREMENT_RECEIPTS = BACKUP_ROOT / "base-retirement"
 GAMEPLAY_PRESETS_ENABLED = os.environ.get("DUNE_GAMEPLAY_PRESETS_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 GAMEPLAY_PRESET_MUTATIONS_ENABLED = os.environ.get("DUNE_GAMEPLAY_PRESET_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 COMMAND_CONSOLE_ENABLED = os.environ.get("DUNE_COMMAND_CONSOLE_ENABLED", "true").lower() in ("1", "true", "yes", "on")
@@ -378,6 +381,7 @@ def admin_panel_reload_paths():
         CODE_ROOT / "admin" / "community_rewards.py",
         CODE_ROOT / "admin" / "moderation.py",
         CODE_ROOT / "admin" / "base_creator.py",
+        CODE_ROOT / "admin" / "base_retirement.py",
         CODE_ROOT / "admin" / "gameplay_presets.py",
         CODE_ROOT / "admin" / "command_console.py",
         CODE_ROOT / "admin" / "federated_auth.py",
@@ -903,6 +907,7 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_MODERATION_LOG_SERVICES": {"group": "Moderation", "secret": False, "restart": True, "why": "Comma-separated exact Compose services scanned for redacted anti-cheat and security signals."},
     "DUNE_BASE_CREATOR_ENABLED": {"group": "Creator", "secret": False, "restart": True, "why": "Enables read-only live-base exports and the isolated portable design gallery."},
     "DUNE_BASE_GALLERY_DATABASE": {"group": "Creator", "secret": False, "restart": True, "why": "Dedicated SQLite design/gallery/rating state path; never point this at the game database."},
+    "DUNE_ADMIN_BASE_RETIREMENT_MUTATIONS_ENABLED": {"group": "Creator", "secret": False, "restart": True, "why": "Second gate for preview-bound, full-backup-first native base retirement into the game's recoverable base-backup system."},
     "DUNE_GAMEPLAY_PRESETS_ENABLED": {"group": "Gameplay Presets", "secret": False, "restart": True, "why": "Loads the validated worm, threat, storm, harvest, day, hydration, and world preset catalog."},
     "DUNE_GAMEPLAY_PRESET_MUTATIONS_ENABLED": {"group": "Gameplay Presets", "secret": False, "restart": True, "why": "Second gate for backup-first preset apply and rollback. Preview remains available."},
     "DUNE_COMMAND_CONSOLE_ENABLED": {"group": "Command Console", "secret": False, "restart": True, "why": "Enables the fixed-argv, no-shell diagnostic command console for authenticated operators."},
@@ -6462,6 +6467,22 @@ class Handler(BaseHTTPRequestHandler):
                     self.json({"ok": True, "design": base_gallery().get(design_id)})
                 else:
                     self.json({"ok": True, "featureEnabled": BASE_CREATOR_ENABLED, "liveBases": base_creator.list_live_bases(query), "designs": base_gallery().list(), "format": base_creator.FORMAT, "gameRestoreSupported": False, "restoreNote": "Surveyed peer base-import is documented experimental/unfinished; no atomic live placement contract is proven. Export and portable reconstruction are complete."})
+            elif parsed.path == "/api/admin/base-retirement":
+                self.require_token()
+                params = urllib.parse.parse_qs(parsed.query)
+                self.json({
+                    "ok": True,
+                    "mutationEnabled": MUTATIONS_ENABLED and BASE_RETIREMENT_MUTATIONS_ENABLED,
+                    "bases": base_retirement.scan(query, limit=(params.get("limit") or [500])[0]),
+                    "receipts": base_retirement.list_receipts(BASE_RETIREMENT_RECEIPTS),
+                    "nativeFunction": "dune.base_backup_save_from_totem(bigint,bigint)",
+                    "gameRecoverable": True,
+                    "destructiveDelete": False,
+                    "mapMustBeStopped": True,
+                    "ownerMustBeOffline": True,
+                    "backupRequired": True,
+                    "requiredCapability": "world.write",
+                })
             elif parsed.path == "/api/presets/gameplay":
                 self.require_token()
                 catalog = gameplay_presets.load_catalog(GAMEPLAY_PRESETS_FILE)
@@ -7100,6 +7121,31 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("creator action must be publish or rate")
                 self.audit("base-creator", ok=True, creator_action=action, design_id=result.get("id"), visibility=result.get("visibility"))
                 self.json({"ok": True, "design": result})
+            elif parsed.path == "/api/admin/base-retirement":
+                self.require_token()
+                body = parse_body(self)
+                action = str(body.get("action") or "preview").strip().lower()
+                if action == "preview":
+                    result = base_retirement.plan(query, body.get("totemId", body.get("totem_id")), body.get("recoveryPlayerId", body.get("recovery_player_id")))
+                elif action == "archive":
+                    if not MUTATIONS_ENABLED or not BASE_RETIREMENT_MUTATIONS_ENABLED:
+                        raise PermissionError("base retirement writes are disabled; enable the global gate and DUNE_ADMIN_BASE_RETIREMENT_MUTATIONS_ENABLED=true")
+                    principal = access_control.public_principal(getattr(self, "auth_principal", None)) or {}
+                    actor = str(principal.get("id") or principal.get("displayName") or "owner-token")[:128]
+                    result = base_retirement.archive(
+                        db_connect,
+                        create_db_backup,
+                        BASE_RETIREMENT_RECEIPTS,
+                        totem_id=body.get("totemId", body.get("totem_id")),
+                        recovery_player_id=body.get("recoveryPlayerId", body.get("recovery_player_id")),
+                        expected_fingerprint=body.get("expectedFingerprint", body.get("expected_fingerprint")),
+                        confirm=body.get("confirm"),
+                        principal=actor,
+                    )
+                else:
+                    raise ValueError("base retirement action must be preview or archive")
+                self.audit("base-retirement", ok=True, retirement_action=action, totem_id=body.get("totemId", body.get("totem_id")), recovery_player_id=body.get("recoveryPlayerId", body.get("recovery_player_id")), base_backup_id=result.get("baseBackupId"), fingerprint=result.get("expectedFingerprint"))
+                self.json(result)
             elif parsed.path == "/api/presets/gameplay":
                 self.require_token()
                 if not GAMEPLAY_PRESETS_ENABLED:
@@ -15389,15 +15435,18 @@ function baseDesignPreview(archive){
   return `<div class="vizCard"><svg viewBox="0 0 ${w} ${h}" role="img" aria-label="Top-down portable base design"><rect width="${w}" height="${h}" fill="var(--surface-2)"/>${grid}${marks}</svg><div class="toolbar"><span class="pill">${components.length} components</span><span class="pill">blue building pieces</span><span class="pill warn">amber placeables</span><span class="pill">portable relative coordinates</span></div></div>`;
 }
 async function baseCreatorConsole(serial=loadSerial){
-  const data=await api('/api/creator/bases',{timeoutMs:30000}); if(serial!==loadSerial)return;
+  const [data,retirement]=await Promise.all([api('/api/creator/bases',{timeoutMs:30000}),api('/api/admin/base-retirement',{timeoutMs:60000})]); if(serial!==loadSerial)return;
   const blank={format:data.format||'dash-base/1',source:{kind:'designer'},exportedAt:new Date().toISOString(),anchor:{x:0,y:0,z:0},pieceCount:0,placeableCount:0,pieces:[],placeables:[],gameRestoreSupported:false,restoreNote:data.restoreNote};
   const saved=sessionStorage.getItem('duneBaseCreatorDraft'); let archive=blank; try{if(saved)archive=JSON.parse(saved)}catch(e){}
   const liveRows=(data.liveBases||[]).map(row=>({...row,export:`<button data-base-export="${esc(row.building_id)}">Load export</button>`}));
   const galleryRows=(data.designs||[]).map(row=>({...row,rating_average:Number(row.rating_average||0).toFixed(2),actions:`<button data-design-load="${esc(row.id)}">Load</button> <button data-design-rate="${esc(row.id)}">Rate</button>`}));
   const liveTable=`<div class="tableWrap"><table><thead><tr><th>Base</th><th>Owner</th><th>Pieces</th><th>Placeables</th><th>Sample</th><th></th></tr></thead><tbody>${liveRows.map(row=>`<tr><td>${esc(row.building_id)}</td><td>${esc(row.owner_entity_id)}</td><td>${esc(row.piece_count)}</td><td>${esc(row.placeable_count)}</td><td>${esc(row.sample_type)}</td><td>${row.export}</td></tr>`).join('')}</tbody></table></div>`;
   const galleryTable=`<div class="tableWrap"><table><thead><tr><th>Name</th><th>Author</th><th>Visibility</th><th>Rating</th><th>Updated</th><th></th></tr></thead><tbody>${galleryRows.map(row=>`<tr><td>${esc(row.name)}</td><td>${esc(row.author)}</td><td>${esc(row.visibility)}</td><td>${esc(row.rating_average)} (${esc(row.rating_count)})</td><td>${esc(row.updated_at)}</td><td>${row.actions}</td></tr>`).join('')}</tbody></table></div>`;
+  const retirementRows=(retirement.bases||[]).map(row=>`<tr><td><b>${esc(row.actorName)}</b><br><code>${esc(row.totemId)}</code></td><td><span class="pill ${row.status==='owned'?'ok':row.status==='orphaned'?'warn':'bad'}">${esc(row.status)}</span><br>${esc((row.owners||[]).map(owner=>owner.characterName||owner.playerId).join(', ')||'no verified player')}</td><td>${esc(row.map)} #${esc(row.partitionId??'')}<br><span class="pill ${row.partitionActive?'bad':'ok'}">${row.partitionActive?'running':'stopped'}</span></td><td>${esc(row.pieceCount)} / ${esc(row.placeableCount)}</td><td><button data-retire-select="${esc(row.totemId)}" data-retire-owner="${esc((row.owners||[]).find(owner=>owner.rank===1&&owner.accountId)?.playerId||'')}">Select</button></td></tr>`).join('');
+  const retirementTable=`<div class="tableWrap"><table><thead><tr><th>Totem</th><th>Ownership</th><th>Map</th><th>Pieces / placeables</th><th></th></tr></thead><tbody>${retirementRows||'<tr><td colspan="5" class="muted">No active base totems found.</td></tr>'}</tbody></table></div>`;
   view.innerHTML=`<div class="pageStack"><div class="sectionHeader"><h2>Portable Base Creator</h2><div class="toolbar"><span class="pill ${data.featureEnabled?'ok':'bad'}">${data.featureEnabled?'enabled':'disabled'}</span><span class="pill">format ${esc(data.format)}</span><span class="pill warn">live restore not claimed</span></div></div><div class="panelBand"><p class="muted">Live export is read-only and captures exact transforms plus recentered portable coordinates. The surveyed Wormageddon peer documents base import as experimental/unfinished and ships no implementation; DASH does not mislabel an unproven direct database write as restore. Designs can be edited, downloaded, published, rated, and reconstructed through the portable archive.</p></div>
   <div class="twoCol"><div class="panelBand"><h2>Live bases</h2><div id="baseLiveRows">${liveTable}</div></div><div class="panelBand"><h2>Gallery</h2>${galleryTable}</div></div>
+  <div class="panelBand dangerZone"><div class="sectionHeader"><h2>Recoverable Base Retirement</h2><div class="toolbar"><span class="pill ${retirement.mutationEnabled?'warn':'ok'}">writes ${retirement.mutationEnabled?'enabled':'preview only'}</span><span class="pill ok">native game backup</span><span class="pill ok">no destructive delete</span></div></div><p class="muted">Retire an abandoned or operator-selected base into Dune's own recoverable <code>base_backups</code> system through <code>dune.base_backup_save_from_totem</code>. DASH requires the target map stopped, every matched owner and recovery player explicitly offline, a fresh fingerprint-bound preview, an advisory/row lock, a non-empty full database dump, native post-call verification, and a private receipt. This does not imitate peers that directly delete structural rows.</p>${retirementTable}<div class="grid"><label>Totem actor ID<input id="baseRetireTotem" inputmode="numeric"></label><label>Recovery player controller ID<input id="baseRetirePlayer" inputmode="numeric" placeholder="required for orphaned bases"></label><label>Typed confirmation<input id="baseRetireConfirm" placeholder="preview first" autocomplete="off"></label></div><div class="commandBar"><button id="baseRetirePreviewBtn" class="primary">Generate locked-state preview</button><button id="baseRetireArchiveBtn" class="danger" disabled>Archive into game recovery</button></div><pre id="baseRetireResult">Select a base and preview. No write has run.</pre><details><summary>Retirement receipts</summary>${table(retirement.receipts||[])}</details></div>
   <div class="twoCol"><div class="panelBand"><h2>Grid editor</h2><div class="grid"><label>Building type<input id="basePieceType" value="Foundation"></label><label>X<input id="basePieceX" type="number" value="0"></label><label>Y<input id="basePieceY" type="number" value="0"></label><label>Z<input id="basePieceZ" type="number" value="0"></label><label>Yaw degrees<input id="basePieceYaw" type="number" value="0"></label><label>Snap size<input id="baseSnap" type="number" min="1" value="100"></label></div><div class="commandBar"><button id="baseAddPieceBtn" class="primary">Add snapped piece</button><button id="baseRemovePieceBtn">Remove last piece</button><button id="baseNewBtn">New design</button><button id="baseDownloadBtn">Download JSON</button></div><pre id="baseCreatorResult"></pre></div><div class="panelBand"><h2>Publish design</h2><div class="grid"><label>Name<input id="baseDesignName"></label><label>Visibility<select id="baseVisibility"><option>private</option><option>unlisted</option><option>public</option></select></label><label>Existing design ID<input id="baseDesignId" placeholder="blank creates new"></label></div><label>Description<textarea id="baseDescription" rows="3"></textarea></label><button id="basePublishBtn" class="primary">Publish / update gallery</button><hr><label>Rating (1–5)<input id="baseRating" type="number" min="1" max="5" value="5"></label><button id="baseRateBtn">Rate selected design</button></div></div>
   <div class="panelBand"><h2>Top-down reconstruction preview</h2><div id="basePreview">${baseDesignPreview(archive)}</div></div><details class="panelBand" open><summary>Portable archive JSON</summary><textarea id="baseArchiveText" rows="28">${esc(JSON.stringify(archive,null,2))}</textarea><div class="commandBar"><button id="baseApplyJsonBtn">Validate draft JSON</button></div></details></div>`;
   const text=document.getElementById('baseArchiveText'); const setArchive=value=>{archive=value; archive.pieceCount=(archive.pieces||[]).length;archive.placeableCount=(archive.placeables||[]).length;text.value=JSON.stringify(archive,null,2);sessionStorage.setItem('duneBaseCreatorDraft',JSON.stringify(archive));document.getElementById('basePreview').innerHTML=baseDesignPreview(archive)};
@@ -15410,6 +15459,10 @@ async function baseCreatorConsole(serial=loadSerial){
   view.querySelectorAll('[data-design-load]').forEach(button=>button.onclick=async()=>{const result=await api(`/api/creator/bases?design=${encodeURIComponent(button.dataset.designLoad)}`);setArchive(result.design.archive);document.getElementById('baseDesignId').value=result.design.id;document.getElementById('baseDesignName').value=result.design.name;document.getElementById('baseDescription').value=result.design.description;document.getElementById('baseVisibility').value=result.design.visibility;notify('Gallery design loaded')});
   const post=async body=>api('/api/creator/bases',{method:'POST',body:JSON.stringify(body)}); document.getElementById('basePublishBtn').onclick=async()=>{const result=await post({action:'publish',name:document.getElementById('baseDesignName').value,description:document.getElementById('baseDescription').value,visibility:document.getElementById('baseVisibility').value,designId:document.getElementById('baseDesignId').value||undefined,archive:parse()});document.getElementById('baseDesignId').value=result.design.id;document.getElementById('baseCreatorResult').textContent=JSON.stringify(result,null,2);notify('Design published')};
   const rate=async id=>{const rating=Number(document.getElementById('baseRating').value);const result=await post({action:'rate',designId:id,rating});document.getElementById('baseCreatorResult').textContent=JSON.stringify(result,null,2);notify('Rating saved')}; document.getElementById('baseRateBtn').onclick=()=>rate(document.getElementById('baseDesignId').value);view.querySelectorAll('[data-design-rate]').forEach(button=>button.onclick=()=>rate(button.dataset.designRate));
+  let retirementPlan=null; const retirementResult=document.getElementById('baseRetireResult'),archiveButton=document.getElementById('baseRetireArchiveBtn');
+  view.querySelectorAll('[data-retire-select]').forEach(button=>button.onclick=()=>{document.getElementById('baseRetireTotem').value=button.dataset.retireSelect;document.getElementById('baseRetirePlayer').value=button.dataset.retireOwner;document.getElementById('baseRetireConfirm').value='';retirementPlan=null;archiveButton.disabled=true;retirementResult.textContent='Base selected. Generate a current preview before archiving.';});
+  document.getElementById('baseRetirePreviewBtn').onclick=async()=>{retirementPlan=null;archiveButton.disabled=true;document.getElementById('baseRetireConfirm').value='';const result=await api('/api/admin/base-retirement',{method:'POST',timeoutMs:60000,body:JSON.stringify({action:'preview',totemId:document.getElementById('baseRetireTotem').value,recoveryPlayerId:document.getElementById('baseRetirePlayer').value||undefined})});retirementPlan=result;retirementResult.textContent=JSON.stringify(result,null,2);document.getElementById('baseRetireConfirm').placeholder=result.confirm||'preview blocked';archiveButton.disabled=!retirement.mutationEnabled||!result.canExecute;notify(result.canExecute?'Recoverable archive preview ready':'Archive preview is blocked',result.canExecute?'ok':'bad');};
+  document.getElementById('baseRetireArchiveBtn').onclick=async()=>{if(!retirementPlan?.canExecute)throw new Error('Generate an executable preview first');const typed=document.getElementById('baseRetireConfirm').value.trim();if(typed!==retirementPlan.confirm)throw new Error(`Type ${retirementPlan.confirm} exactly`);if(!confirm(`Archive base ${retirementPlan.base.totemId} into Dune recovery for player ${retirementPlan.recoveryPlayer.playerId}?\n\nThe target map must remain stopped. DASH will create a full database dump before calling the native function.`))return;archiveButton.disabled=true;const result=await api('/api/admin/base-retirement',{method:'POST',timeoutMs:240000,body:JSON.stringify({action:'archive',totemId:retirementPlan.base.totemId,recoveryPlayerId:retirementPlan.recoveryPlayer.playerId,expectedFingerprint:retirementPlan.expectedFingerprint,confirm:typed})});retirementResult.textContent=JSON.stringify(result,null,2);retirementPlan=null;notify('Base archived into native game recovery');};
 }
 
 function moderationHeatmap(rows){

@@ -178,7 +178,13 @@ server {
   JSON archives, snapping/yaw grid editing, top-down reconstruction preview,
   downloads, and an isolated visibility/rating gallery. Direct live restore is
   not claimed because no peer or current schema evidence proves an atomic
-  placement contract. See [`base-creator.md`](base-creator.md).
+  placement contract. The same page now adds recoverable base retirement through
+  the current build's native `dune.base_backup_save_from_totem` path. Retirement
+  requires the target map stopped, owners/recovery player offline, a current
+  SHA-256 preview fingerprint, a full PostgreSQL dump, transaction locks,
+  post-call verification, and a private receipt; it does not directly delete
+  base rows. See [`base-creator.md`](base-creator.md) and
+  [`base-retirement.md`](base-retirement.md).
 - Gameplay Presets page with nine curated worm, threat, storm, harvest, day,
   hydration, and world profiles; exact per-setting preview; fixed target and
   key/type/range allowlists; private backups; atomic apply; confined rollback;

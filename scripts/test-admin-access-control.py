@@ -59,6 +59,7 @@ class AccessControlTest(unittest.TestCase):
             ("POST", "/api/settings/env"): "configuration.write",
             ("POST", "/api/admin/currency"): "economy.write",
             ("POST", "/api/admin/guild"): "world.write",
+            ("POST", "/api/admin/base-retirement"): "world.write",
             ("POST", "/api/admin/item"): "players.write",
             ("POST", "/api/community/rewards"): "community.write",
             ("POST", "/api/auth/logout"): "read",

@@ -142,7 +142,7 @@ def required_capability(method, path):
         leaf = path[len("/api/admin/"):]
         if leaf.startswith(("artificial-exchange", "currency", "solari", "exchange", "vendor", "economy")):
             return "economy.write"
-        if leaf.startswith(("guild", "marker", "landclaim", "landsraad", "faction", "world-state", "permission", "communinet", "tutorial")):
+        if leaf.startswith(("guild", "marker", "landclaim", "landsraad", "faction", "world-state", "permission", "communinet", "tutorial", "base-retirement")):
             return "world.write"
         if leaf.startswith(("backup", "unsupported")):
             return "infrastructure.write"
