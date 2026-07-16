@@ -3142,6 +3142,35 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "label changed"):
             self.panel.desired_state_container_inspections()
 
+    def test_desired_state_seal_emits_resolution_evidence_for_every_closed_finding(self):
+        events = []
+        observations = []
+        snapshot = {"schemaVersion": 1, "files": {}, "containers": {}}
+        fake_store = type("Store", (), {
+            "status": lambda self, limit=1000: {"openFindings": [{"id": "drift-one"}, {"id": "drift-two"}]},
+            "seal": lambda self, value, actor, reason: {"ok": True, "baselineId": "desired-new"},
+            "observe": lambda self, value, maintenance_active=False: observations.append((value, maintenance_active)) or {"ok": True},
+        })()
+        originals = {
+            "collect_desired_state_snapshot": self.panel.collect_desired_state_snapshot,
+            "desired_state_store": self.panel.desired_state_store,
+            "desired_state_maintenance_active": self.panel.desired_state_maintenance_active,
+            "audit_event": self.panel.audit_event,
+        }
+        self.panel.collect_desired_state_snapshot = lambda: snapshot
+        self.panel.desired_state_store = lambda: fake_store
+        self.panel.desired_state_maintenance_active = lambda: False
+        self.panel.audit_event = lambda action, ok=True, **data: events.append((action, ok, data))
+        for name, value in originals.items():
+            self.addCleanup(lambda name=name, value=value: setattr(self.panel, name, value))
+
+        result = self.panel.desired_state_seal("operator", "reviewed")
+        self.assertEqual("desired-new", result["baselineId"])
+        self.assertEqual([(snapshot, False)], observations)
+        self.assertEqual(["drift-one", "drift-two"], [row[2]["finding_id"] for row in events])
+        self.assertTrue(all(row[0] == "desired-state-drift-resolved" and row[1] for row in events))
+        self.assertTrue(all(row[2]["resolution_source"] == "baseline-sealed" for row in events))
+
     def test_infrastructure_mounts_desired_state_review_workflow(self):
         source = self.panel.INDEX
         self.assertIn("mountInfrastructureDesiredState(desiredStateData)", source)
@@ -3242,6 +3271,43 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertEqual(2, second["duplicates"])
         self.assertEqual(2, status["eventCount"])
         self.assertEqual("slo:old-incident", status["openIncidents"][0]["incidentKey"])
+
+    def test_change_intelligence_reconciles_only_stale_authoritative_incidents(self):
+        events = []
+        fake_change = type("ChangeStore", (), {"status": lambda self: {"openIncidents": [
+            {"incidentKey": "desired:drift-active"},
+            {"incidentKey": "desired:drift-stale"},
+            {"incidentKey": "slo:slo-stale"},
+            {"incidentKey": "event:unmanaged"},
+        ]}})()
+        fake_desired = type("DesiredStore", (), {"status": lambda self, limit=1000: {"openFindings": [{"id": "drift-active"}]}})()
+        fake_slo = type("SloStore", (), {"status": lambda self, limit=1000: {"openIncidents": []}})()
+        originals = {
+            "CHANGE_INTELLIGENCE_ENABLED": self.panel.CHANGE_INTELLIGENCE_ENABLED,
+            "DESIRED_STATE_ENABLED": self.panel.DESIRED_STATE_ENABLED,
+            "OPERATIONAL_SLO_ENABLED": self.panel.OPERATIONAL_SLO_ENABLED,
+            "change_intelligence_store": self.panel.change_intelligence_store,
+            "desired_state_store": self.panel.desired_state_store,
+            "operational_slo_store": self.panel.operational_slo_store,
+            "audit_event": self.panel.audit_event,
+        }
+        self.panel.CHANGE_INTELLIGENCE_ENABLED = True
+        self.panel.DESIRED_STATE_ENABLED = True
+        self.panel.OPERATIONAL_SLO_ENABLED = True
+        self.panel.change_intelligence_store = lambda: fake_change
+        self.panel.desired_state_store = lambda: fake_desired
+        self.panel.operational_slo_store = lambda: fake_slo
+        self.panel.audit_event = lambda action, ok=True, **data: events.append((action, ok, data))
+        for name, value in originals.items():
+            self.addCleanup(lambda name=name, value=value: setattr(self.panel, name, value))
+
+        result = self.panel.change_intelligence_reconcile_incidents()
+        self.assertEqual(2, result["reconciled"])
+        self.assertEqual(
+            [("desired-state-drift-resolved", "drift-stale"), ("slo-incident-resolved", "slo-stale")],
+            [(action, data.get("finding_id") or data.get("incident_id")) for action, _ok, data in events],
+        )
+        self.assertTrue(all(ok and data["resolution_source"] == "authoritative-startup-reconciliation" for _action, ok, data in events))
 
     def test_infrastructure_mounts_change_intelligence_without_causality_claim(self):
         source = self.panel.INDEX

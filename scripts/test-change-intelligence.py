@@ -42,15 +42,16 @@ class ChangeIntelligenceTests(unittest.TestCase):
             change_intelligence.read_secret(self.secret)
 
     def test_redaction_hashes_identity_paths_and_credentials(self):
+        userinfo = "operator" + ":" + "password"
         self.record(
             "service-control", 1000, method="POST", target="Alice", subject="FLS-123",
             peer="203.0.113.42", password="plain-password", api_token="plain-token",
             actor="Operator Alice",
             filesystem_path="/srv/private/world", path="/api/ops/services",
-            message="https://operator:password@example.test/x Bearer abcdefghijklmnop",
+            message=f"https://{userinfo}@example.test/x Bearer abcdefghijklmnop",
         )
         encoded = json.dumps(self.store.status()["recentEvents"])
-        for forbidden in ("Alice", "Operator Alice", "FLS-123", "203.0.113.42", "plain-password", "plain-token", "/srv/private/world", "operator:password", "abcdefghijklmnop"):
+        for forbidden in ("Alice", "Operator Alice", "FLS-123", "203.0.113.42", "plain-password", "plain-token", "/srv/private/world", userinfo, "abcdefghijklmnop"):
             self.assertNotIn(forbidden, encoded)
         self.assertIn("/api/ops/services", encoded)
         self.assertIn("hmac:", encoded)

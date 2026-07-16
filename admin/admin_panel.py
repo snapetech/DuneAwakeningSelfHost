@@ -392,7 +392,7 @@ CHANGE_INTELLIGENCE_DATABASE = pathlib.Path(os.environ.get("DUNE_CHANGE_INTELLIG
 CHANGE_INTELLIGENCE_SECRET_FILE = pathlib.Path(os.environ.get("DUNE_CHANGE_INTELLIGENCE_HMAC_SECRET_FILE", str(CONFIG_ROOT / "secrets" / "change-intelligence-hmac.secret")))
 CHANGE_INTELLIGENCE_STORE = None
 CHANGE_INTELLIGENCE_STORE_LOCK = threading.Lock()
-CHANGE_INTELLIGENCE_RUNTIME = {"ready": False, "imported": 0, "duplicates": 0, "importErrors": 0, "lastEventAt": None, "lastEventId": None, "lastError": ""}
+CHANGE_INTELLIGENCE_RUNTIME = {"ready": False, "imported": 0, "duplicates": 0, "importErrors": 0, "reconciled": 0, "lastEventAt": None, "lastEventId": None, "lastError": ""}
 DISCORD_ADAPTER_ROUTES = {
     "/api/integrations/discord/health", "/api/integrations/discord/status",
     "/api/integrations/discord/readiness", "/api/integrations/discord/services",
@@ -5335,8 +5335,12 @@ def desired_state_public_status():
 
 def desired_state_seal(actor, reason):
     snapshot = collect_desired_state_snapshot()
-    result = desired_state_store().seal(snapshot, actor, reason)
-    desired_state_store().observe(snapshot, maintenance_active=desired_state_maintenance_active())
+    store = desired_state_store()
+    open_findings = [row["id"] for row in store.status(limit=1000).get("openFindings") or []]
+    result = store.seal(snapshot, actor, reason)
+    store.observe(snapshot, maintenance_active=desired_state_maintenance_active())
+    for finding_id in open_findings:
+        audit_event("desired-state-drift-resolved", ok=True, finding_id=finding_id, resolution_source="baseline-sealed")
     return result
 
 
@@ -5412,12 +5416,41 @@ def change_intelligence_import_history():
     return result
 
 
+def change_intelligence_reconcile_incidents():
+    """Close imported incident opens that authoritative stores already resolved."""
+    if not CHANGE_INTELLIGENCE_ENABLED:
+        return {"ok": True, "reconciled": 0, "skipped": True}
+    open_incidents = change_intelligence_store().status().get("openIncidents") or []
+    desired_open = set()
+    slo_open = set()
+    if DESIRED_STATE_ENABLED:
+        desired_open = {str(row.get("id") or "") for row in desired_state_store().status(limit=1000).get("openFindings") or []}
+    if OPERATIONAL_SLO_ENABLED:
+        slo_open = {str(row.get("id") or "") for row in operational_slo_store().status(limit=1000).get("openIncidents") or []}
+    reconciled = 0
+    for incident in open_incidents:
+        key = str(incident.get("incidentKey") or "")
+        if key.startswith("desired:") and DESIRED_STATE_ENABLED:
+            finding_id = key.removeprefix("desired:")
+            if finding_id not in desired_open:
+                audit_event("desired-state-drift-resolved", ok=True, finding_id=finding_id, resolution_source="authoritative-startup-reconciliation")
+                reconciled += 1
+        elif key.startswith("slo:") and OPERATIONAL_SLO_ENABLED:
+            incident_id = key.removeprefix("slo:")
+            if incident_id not in slo_open:
+                audit_event("slo-incident-resolved", ok=True, incident_id=incident_id, resolution_source="authoritative-startup-reconciliation")
+                reconciled += 1
+    CHANGE_INTELLIGENCE_RUNTIME["reconciled"] = reconciled
+    return {"ok": True, "reconciled": reconciled, "skipped": False}
+
+
 def ensure_change_intelligence():
     if not CHANGE_INTELLIGENCE_ENABLED:
         return
     try:
         change_intelligence_store()
         catchup = change_intelligence_import_history()
+        change_intelligence_reconcile_incidents()
         last_error = "" if catchup.get("ok") else f"audit history catch-up completed with {catchup.get('errors', 0)} error(s)"
         CHANGE_INTELLIGENCE_RUNTIME.update({"ready": True, "lastError": last_error})
     except Exception as exc:

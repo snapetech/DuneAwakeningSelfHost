@@ -59,6 +59,15 @@ recovered on restart instead of being abandoned. The catch-up time is marked in
 private SQLite metadata. Future events carry a random `audit-...` ID before
 being written to both stores.
 
+After catch-up, DASH reconciles unmatched imported SLO and desired-state opens
+against their authoritative SQLite stores. If the source already records an
+incident or finding as resolved, Change Intelligence appends a labeled
+`authoritative-startup-reconciliation` resolution; it never rewrites or deletes
+the historical open. A desired-state baseline seal also emits resolution events
+for every finding that the seal closes. These two paths keep capsule state
+truthful across upgrades, restarts, and historical audit windows while retaining
+the complete chain of what DASH observed and when.
+
 The original JSONL audit remains the webhook/digest compatibility surface.
 Change Intelligence is the durable authenticated correlation surface.
 
