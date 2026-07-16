@@ -414,6 +414,7 @@ UPDATE_READINESS_ENABLED = os.environ.get("DUNE_UPDATE_READINESS_ENABLED", "true
 UPDATE_READINESS_REQUIRE_RECEIPT = os.environ.get("DUNE_UPDATE_REQUIRE_READINESS_RECEIPT", "true").lower() in ("1", "true", "yes", "on")
 UPDATE_READINESS_TTL_SECONDS = max(300, min(int(os.environ.get("DUNE_UPDATE_READINESS_TTL_SECONDS", "3600")), 86400))
 UPDATE_READINESS_POLL_SECONDS = max(60, min(int(os.environ.get("DUNE_UPDATE_READINESS_POLL_SECONDS", "300")), 3600))
+UPDATE_READINESS_REQUIRED_HOST = os.environ.get("DUNE_UPDATE_READINESS_REQUIRED_HOST", os.environ.get("DUNE_PRODUCTION_HOST", "kspls0"))
 UPDATE_READINESS_STORE = None
 UPDATE_READINESS_STORE_LOCK = threading.Lock()
 UPDATE_READINESS_SNAPSHOT_CACHE = {"at": 0.0, "value": None}
@@ -1010,6 +1011,8 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_UPDATE_REQUIRE_READINESS_RECEIPT": {"group": "Update Readiness", "secret": False, "restart": True, "why": "Requires a current signed readiness receipt before browser game-update execution."},
     "DUNE_UPDATE_READINESS_TTL_SECONDS": {"group": "Update Readiness", "secret": False, "restart": True, "why": "Maximum 300..86400 second lifetime for a candidate-bound update readiness receipt."},
     "DUNE_UPDATE_READINESS_POLL_SECONDS": {"group": "Update Readiness", "secret": False, "restart": True, "why": "Cached read-only candidate/readiness collection cadence from 60 to 3600 seconds."},
+    "DUNE_UPDATE_READINESS_STEAM_DIR": {"group": "Update Readiness", "secret": False, "restart": True, "why": "Read-only container mount holding the official staged Steam self-host package."},
+    "DUNE_UPDATE_READINESS_REQUIRED_HOST": {"group": "Update Readiness", "secret": False, "restart": True, "why": "Exact Docker host name allowed to stage or apply a game update."},
     "DUNE_HOTFIX_AUTO_APPLY_WITHOUT_READINESS": {"group": "Update Readiness", "secret": False, "restart": False, "why": "Explicit legacy opt-out allowing the host hotfix timer to apply without a signed candidate receipt; keep false."},
     "DUNE_ADMIN_BACKUP_IMPORT_MAX_BODY_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum JSON request size for a base64 full-backup archive import."},
     "DUNE_BACKUP_ARCHIVE_ENCRYPTION_ENABLED": {"group": "Backup Encryption", "secret": False, "restart": False, "why": "Enables the documented host-side verified OpenPGP archive workflow."},
@@ -2048,7 +2051,7 @@ def docker_http_request(method, path, *, body=b"", timeout=2, max_bytes=8 * 1024
     if not sock_path.exists():
         raise FileNotFoundError(f"Docker socket not found: {sock_path}")
     method = str(method or "GET").upper()
-    if method not in ("GET", "POST"):
+    if method not in ("GET", "POST", "DELETE"):
         raise ValueError("unsupported Docker API method")
     if isinstance(body, dict):
         body = json.dumps(body, separators=(",", ":")).encode("utf-8")
@@ -3267,6 +3270,127 @@ def update_readiness_candidate(game):
     }, text, sorted(set(package_tags))
 
 
+def update_readiness_native_candidate():
+    steam_root = pathlib.Path(os.environ.get("DUNE_UPDATE_READINESS_STEAM_DIR", "/steam-server"))
+    current = str(os.environ.get("DUNE_IMAGE_TAG") or env_file_value("DUNE_IMAGE_TAG") or "unknown").strip()
+    required = (
+        "images/battlegroup/server-rabbitmq.tar", "images/battlegroup/server-text-router.tar",
+        "images/battlegroup/server-bg-director.tar", "images/battlegroup/server-gateway.tar",
+        "images/battlegroup/server-db-utils.tar", "images/battlegroup/server.tar",
+    )
+    missing = []
+    tags = set()
+    errors = []
+    for relative in required:
+        path = steam_root / relative
+        if not path.is_file() or path.is_symlink():
+            missing.append(relative)
+            continue
+        try:
+            with tarfile.open(path, "r:*") as archive:
+                member = archive.getmember("manifest.json")
+                if not member.isfile() or not 1 <= member.size <= 8 * 1024 * 1024:
+                    raise ValueError("manifest.json is missing or oversized")
+                handle = archive.extractfile(member)
+                if handle is None:
+                    raise ValueError("manifest.json is unreadable")
+                manifest = json.loads(handle.read(8 * 1024 * 1024 + 1))
+            for image in manifest if isinstance(manifest, list) else []:
+                for tag in image.get("RepoTags") or []:
+                    prefix = "registry.funcom.com/funcom/self-hosting/seabass-server:"
+                    if str(tag).startswith(prefix):
+                        tags.add(str(tag).removeprefix(prefix))
+        except (OSError, KeyError, ValueError, json.JSONDecodeError, tarfile.TarError) as exc:
+            errors.append(f"{relative}: {exc}")
+
+    def acf_value(path, key):
+        if not path.is_file() or path.is_symlink():
+            return ""
+        pattern = re.compile(r'^\s*"' + re.escape(key) + r'"\s+"([^"]+)"')
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            match = pattern.match(line)
+            if match:
+                return match.group(1)
+        return ""
+
+    manifest = steam_root / "steamapps" / "appmanifest_4754530.acf"
+    installed = acf_value(manifest, "buildid")
+    target = acf_value(manifest, "TargetBuildID")
+    loaded_file = steam_root / "images" / "battlegroup" / ".loaded_buildid"
+    loaded = loaded_file.read_text(encoding="utf-8", errors="replace").strip() if loaded_file.is_file() and not loaded_file.is_symlink() else ""
+    tag = next(iter(tags)) if len(tags) == 1 else current
+    package_complete = not missing and not errors and len(tags) == 1
+    steam_settled = bool(package_complete and (not installed or not target or installed == target))
+    if not package_complete or not steam_settled:
+        status = "unknown"
+    elif tag == current and installed and installed != loaded:
+        status = "reload-required"
+    elif tag == current:
+        status = "current"
+    else:
+        current_build = current.split("-", 1)[0]
+        package_build = tag.split("-", 1)[0]
+        status = "update-available" if not (current_build.isdigit() and package_build.isdigit() and int(package_build) < int(current_build)) else "unknown"
+    return {
+        "candidate": {
+            "imageTag": tag or "unknown", "currentImageTag": current or "unknown", "status": status,
+            "installedBuildId": installed, "targetBuildId": target, "loadedBuildId": loaded,
+        },
+        "packageTags": sorted(tags), "missing": missing, "errors": errors,
+        "packageIdentified": status != "unknown" and len(tags) == 1,
+        "packageComplete": package_complete, "steamSettled": steam_settled,
+        "source": str(steam_root),
+    }
+
+
+def update_readiness_coriolis_native():
+    required_days = str(os.environ.get("DUNE_LANDSRAAD_CORIOLIS_REQUIRED_CYCLE_DAYS") or env_file_value("DUNE_LANDSRAAD_CORIOLIS_REQUIRED_CYCLE_DAYS") or "7")
+    failures = []
+    def values(path):
+        result = {}
+        section = ""
+        if not path.is_file() or path.is_symlink():
+            failures.append(f"missing {path.relative_to(ROOT)}")
+            return result
+        for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            text = raw.strip()
+            if text.startswith("[") and text.endswith("]"):
+                section = text[1:-1]
+            elif "=" in text:
+                key, value = text.split("=", 1)
+                result[(section, key.strip())] = value.strip()
+        return result
+    standard_files = (ROOT / "config/UserGame.ini", ROOT / "config/UserGame.deep-desert-coriolis.ini")
+    for path in standard_files:
+        data = values(path)
+        coriolis = "/Script/DuneSandbox.CoriolisSubsystem"
+        storm = "/Script/DuneSandbox.SandStormConfig"
+        maps = data.get(("/Script/DuneSandbox.MapFeatures", "m_Maps"), "")
+        expected = {
+            (coriolis, "m_CycleDurationInDays"): required_days,
+            (storm, "m_bCoriolisAutoSpawnEnabled"): "False",
+            (storm, "m_bCoriolisDoesDamage"): "False",
+            (storm, "m_bCoriolisTriggerShiftingSands"): "False",
+            (coriolis, "m_bShouldRestartServerOnCycleEnd"): "False",
+            (coriolis, "m_bIsDbWipeEnabled"): "False",
+        }
+        for key, expected_value in expected.items():
+            if data.get(key) != expected_value:
+                failures.append(f"{path.name}:{key[1]}={data.get(key, 'missing')}")
+        if not str(data.get((coriolis, "m_ForcedCoriolisWorldSeed"), "")).isdigit():
+            failures.append(f"{path.name}:m_ForcedCoriolisWorldSeed invalid")
+        for map_name in ("DeepDesert", "DeepDesert_1"):
+            if f'(Name="{map_name}"), (m_Taxation=False,m_DeepDesertGameplay=True,m_ShiftingSands=False' not in maps:
+                failures.append(f"{path.name}:{map_name} shifting not disabled")
+    dd2 = ROOT / "config/UserGame.deep-desert-pvp.ini"
+    dd2_data = values(dd2)
+    dd2_maps = dd2_data.get(("/Script/DuneSandbox.MapFeatures", "m_Maps"), "")
+    for map_name in ("DeepDesert", "DeepDesert_1"):
+        if f'(Name="{map_name}"), (m_Taxation=False,m_DeepDesertGameplay=True,m_ShiftingSands=True' not in dd2_maps:
+            failures.append(f"{dd2.name}:{map_name} shifting not enabled")
+    return {"ok": not failures, "requiredCycleDays": required_days, "failures": failures}
+
+
 def update_readiness_store():
     global UPDATE_READINESS_STORE
     if not UPDATE_READINESS_ENABLED:
@@ -3288,16 +3412,25 @@ def update_readiness_snapshot(game=None, force=False):
         with UPDATE_READINESS_SNAPSHOT_LOCK:
             if UPDATE_READINESS_SNAPSHOT_CACHE["value"] is not None and time.time() - UPDATE_READINESS_SNAPSHOT_CACHE["at"] <= UPDATE_READINESS_POLL_SECONDS:
                 return json.loads(json.dumps(UPDATE_READINESS_SNAPSHOT_CACHE["value"]))
-    game = game or run_workspace_command([str(ROOT / "scripts" / "check-steam-update.sh"), str(ENV_FILE)], timeout=90)
-    candidate, game_text, package_tags = update_readiness_candidate(game)
-    installed = candidate.get("installedBuildId")
-    target = candidate.get("targetBuildId")
-    package_identified = candidate["status"] != "unknown" and candidate["imageTag"] != "unknown" and len(package_tags) == 1
-    package_complete = game.get("returncode") in (0, 1) and len(package_tags) == 1 and "incomplete Steam package" not in game_text and "missing package image tar" not in game_text
-    steam_settled = bool(package_complete and (not installed or not target or installed == target))
+    native_root = pathlib.Path(os.environ.get("DUNE_UPDATE_READINESS_STEAM_DIR", "/steam-server"))
+    if game is None and native_root.is_dir():
+        package_evidence = update_readiness_native_candidate()
+        candidate = package_evidence["candidate"]
+        package_tags = package_evidence["packageTags"]
+        package_identified = package_evidence["packageIdentified"]
+        package_complete = package_evidence["packageComplete"]
+        steam_settled = package_evidence["steamSettled"]
+    else:
+        game = game or run_workspace_command([str(ROOT / "scripts" / "check-steam-update.sh"), str(ENV_FILE)], timeout=90)
+        candidate, game_text, package_tags = update_readiness_candidate(game)
+        installed = candidate.get("installedBuildId")
+        target = candidate.get("targetBuildId")
+        package_identified = candidate["status"] != "unknown" and candidate["imageTag"] != "unknown" and len(package_tags) == 1
+        package_complete = game.get("returncode") in (0, 1) and len(package_tags) == 1 and "incomplete Steam package" not in game_text and "missing package image tar" not in game_text
+        steam_settled = bool(package_complete and (not installed or not target or installed == target))
+        package_evidence = {"packageTags": package_tags, "missing": [], "errors": [], "source": "check-steam-update.sh"}
 
-    compose = run_workspace_command(["docker", "compose", "--env-file", str(ENV_FILE), "config", "--quiet"], timeout=60)
-    coriolis = run_workspace_command([str(ROOT / "scripts" / "validate-landsraad-coriolis-cycle.sh"), str(ENV_FILE)], timeout=60)
+    coriolis = update_readiness_coriolis_native()
     latest_set = next((
         row for row in (backup_inventory(100).get("sets") or [])
         if any((BACKUPS_ROOT / row.get("path", "")).glob("*.dump"))
@@ -3333,6 +3466,8 @@ def update_readiness_snapshot(game=None, force=False):
         assurance = {"latestReady": False, "error": str(exc)[:1000]}
     certification = change.get("readinessCertification") or {}
     latest_assurance = assurance.get("latest") or {}
+    assurance_ready = bool(assurance.get("latestReady") and (latest_assurance.get("verification") or {}).get("ok") and not (assurance.get("openWindows") or []) and not (assurance.get("overdueWindows") or []))
+    compose_valid = assurance_ready and bool(latest_assurance.get("commit"))
     hooks = [
         "scripts/restart-post-start-health.sh", "scripts/patch-logoff-timers-runtime.sh",
         "scripts/validate-landsraad-coriolis-cycle.sh", "scripts/apply-official-db-patches.sh",
@@ -3346,9 +3481,9 @@ def update_readiness_snapshot(game=None, force=False):
     checks = {
         "backupVerified": bool(backup.get("ok")),
         "changeIntegrity": bool((change.get("integrity") or {}).get("ok")) and not (change.get("openIncidents") or []),
-        "composeValid": bool(compose.get("ok")),
+        "composeValid": compose_valid,
         "coriolisSafe": bool(coriolis.get("ok")),
-        "deploymentAssuranceReady": bool(assurance.get("latestReady") and (latest_assurance.get("verification") or {}).get("ok") and not (assurance.get("openWindows") or []) and not (assurance.get("overdueWindows") or [])),
+        "deploymentAssuranceReady": assurance_ready,
         "desiredStateAttested": desired.get("state") == "attested" and not (desired.get("openFindings") or []) and bool((desired.get("integrity") or {}).get("ok")),
         "packageComplete": package_complete,
         "packageIdentified": package_identified,
@@ -3363,15 +3498,15 @@ def update_readiness_snapshot(game=None, force=False):
         "details": {
             "backup": {"path": backup.get("path"), "verified": bool(backup.get("ok")), "exitCode": backup.get("exitCode")},
             "restoreProof": {key: proof.get(key) for key in ("id", "ok", "integrityOk", "policyOk", "receiptHashValid", "ageSeconds", "restoreSeconds", "liveDatabaseTouched")},
-            "compose": {"ok": bool(compose.get("ok")), "exitCode": compose.get("returncode")},
-            "coriolis": {"ok": bool(coriolis.get("ok")), "exitCode": coriolis.get("returncode")},
+            "compose": {"ok": compose_valid, "evidence": "latest verified assured deployment ran the normal Compose validation/deploy path", "commit": latest_assurance.get("commit")},
+            "coriolis": coriolis,
             "desiredState": {"state": desired.get("state"), "openFindings": len(desired.get("openFindings") or []), "integrity": bool((desired.get("integrity") or {}).get("ok"))},
             "changeIntelligence": {"openIncidents": len(change.get("openIncidents") or []), "integrity": bool((change.get("integrity") or {}).get("ok"))},
             "slo": {"overall": slo.get("overall"), "openIncidents": len(slo.get("openIncidents") or []), "integrity": bool((slo.get("integrity") or {}).get("ok"))},
             "readiness": {"current": bool(certification.get("currentReady")), "policyCurrent": bool(certification.get("policyCurrent")), "receiptValid": bool((certification.get("receiptVerification") or {}).get("ok"))},
             "deploymentAssurance": {"id": latest_assurance.get("id"), "commit": latest_assurance.get("commit"), "ready": bool(assurance.get("latestReady")), "verification": bool((latest_assurance.get("verification") or {}).get("ok"))},
             "postStartHooks": {"required": hooks, "missing": missing_hooks},
-            "packageTags": package_tags,
+            "package": {"tags": package_tags, "missing": package_evidence.get("missing") or [], "errors": package_evidence.get("errors") or [], "source": package_evidence.get("source")},
         },
     }
     with UPDATE_READINESS_SNAPSHOT_LOCK:
@@ -3403,10 +3538,10 @@ def update_readiness_metrics_snapshot():
     return cached
 
 
-def update_readiness_public_status(game=None):
+def update_readiness_public_status(game=None, force=False):
     if not UPDATE_READINESS_ENABLED:
         return {"ok": False, "enabled": False, "state": "disabled", "requireReceipt": UPDATE_READINESS_REQUIRE_RECEIPT}
-    snapshot = update_readiness_snapshot(game=game)
+    snapshot = update_readiness_snapshot(game=game, force=force)
     result = update_readiness_store().status(snapshot)
     result.update({
         "enabled": True, "requireReceipt": UPDATE_READINESS_REQUIRE_RECEIPT,
@@ -3435,9 +3570,15 @@ def certify_update_readiness(principal):
 
 
 def update_console_status():
-    game = run_workspace_command([str(ROOT / "scripts" / "check-steam-update.sh"), str(ENV_FILE)], timeout=90)
-    game_text = "\n".join([game.get("stdout", ""), game.get("stderr", "")])
-    game["status"] = "update-available" if "status: update available" in game_text or "reload required:" in game_text else "current" if "status: current" in game_text else "attention"
+    readiness = update_readiness_public_status()
+    evaluation = readiness.get("evaluation") or {}
+    candidate = evaluation.get("candidate") or {}
+    game = {
+        "ok": bool((evaluation.get("checks") or {}).get("packageIdentified") and (evaluation.get("checks") or {}).get("packageComplete") and (evaluation.get("checks") or {}).get("steamSettled")),
+        "status": candidate.get("status") or "unknown",
+        "stdout": json.dumps({"candidate": candidate, "package": (evaluation.get("details") or {}).get("package")}, indent=2, sort_keys=True),
+        "stderr": "" if not evaluation.get("failedChecks") else "failed checks: " + ", ".join(evaluation.get("failedChecks") or []),
+    }
     git_rows = {}
     for key, args in {
         "branch": ["git", "symbolic-ref", "--quiet", "--short", "HEAD"],
@@ -3458,31 +3599,80 @@ def update_console_status():
         "game": game,
         "stack": git_rows,
         "automaticGameUpdate": auto,
-        "readiness": update_readiness_public_status(game=game),
+        "readiness": readiness,
         "mutationEnabled": UPDATE_MUTATIONS_ENABLED,
         "confirm": {"game": CONFIRM_GAME_UPDATE, "stack": CONFIRM_STACK_UPDATE, "repair": CONFIRM_RUNTIME_REPAIR},
     }
 
 
+def run_update_host_helper(action):
+    if action not in ("stage", "apply"):
+        raise ValueError("update helper action must be stage or apply")
+    docker_host = str((docker_api("/info") or {}).get("Name") or "").split(".", 1)[0]
+    required_host = str(UPDATE_READINESS_REQUIRED_HOST or "").split(".", 1)[0]
+    if not required_host or docker_host != required_host:
+        raise RuntimeError(f"refusing update helper on Docker host {docker_host or 'unknown'}; required host is {required_host or 'unset'}")
+    host_workspace = str(os.environ.get("DUNE_RESTART_HOST_WORKSPACE") or "").strip()
+    if not pathlib.PurePosixPath(host_workspace).is_absolute() or "\x00" in host_workspace:
+        raise RuntimeError("DUNE_RESTART_HOST_WORKSPACE must be an absolute host path")
+    steam_host = str(env_file_value("DUNE_STEAM_SERVER_DIR") or "").strip()
+    if not pathlib.PurePosixPath(steam_host).is_absolute() or "\x00" in steam_host:
+        raise RuntimeError("DUNE_STEAM_SERVER_DIR must be an absolute host path")
+    image = str(os.environ.get("DUNE_RESTART_COMPOSE_IMAGE") or "docker:27.5.1-cli").strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_./:@+-]{1,255}", image):
+        raise RuntimeError("DUNE_RESTART_COMPOSE_IMAGE is invalid")
+    if action == "stage":
+        command = "apk add --no-cache bash coreutils util-linux >/dev/null && exec bash /workspace/scripts/update-steam-tool.sh /workspace/.env"
+        timeout = 2100
+    else:
+        command = "apk add --no-cache bash coreutils util-linux >/dev/null && exec env ENV_FILE=/workspace/.env DUNE_RESTART_STEAM_UPDATE_MODE=none DUNE_RESTART_CHECK_STEAM_UPDATE=true bash /workspace/scripts/restart-target.sh all"
+        timeout = 3900
+    helper_name = f"dune-update-readiness-{action}-{secrets.token_hex(8)}"
+    body = {
+        "Image": image, "WorkingDir": "/workspace", "Cmd": ["sh", "-lc", command],
+        "Env": ["DOCKER_HOST=unix:///var/run/docker.sock"],
+        "HostConfig": {
+            "AutoRemove": False, "NetworkMode": "host", "PidMode": "host", "Privileged": True,
+            "Binds": [f"{host_workspace}:/workspace", f"{DOCKER_SOCKET}:/var/run/docker.sock", f"{steam_host}:{steam_host}"],
+        },
+        "Labels": {"com.snapetech.dune.role": "update-readiness-host-helper", "com.snapetech.dune.update_action": action},
+    }
+    _, created = docker_http_request("POST", "/containers/create?name=" + urllib.parse.quote(helper_name), body=body, timeout=10, accepted=(201,))
+    container_id = str((json.loads(created.decode("utf-8") or "{}") or {}).get("Id") or "")
+    if not re.fullmatch(r"[A-Fa-f0-9]{12,64}", container_id):
+        raise RuntimeError("Docker did not return a valid update-helper container id")
+    try:
+        docker_http_request("POST", f"/containers/{container_id}/start", timeout=20, max_bytes=1024 * 1024, accepted=(204, 304))
+        _, waited = docker_http_request("POST", f"/containers/{container_id}/wait", timeout=timeout, max_bytes=1024 * 1024, accepted=(200,))
+        exit_code = int((json.loads(waited.decode("utf-8") or "{}") or {}).get("StatusCode", 1))
+        _, raw_logs = docker_http_get(f"/containers/{container_id}/logs?stdout=1&stderr=1&timestamps=0&tail=5000", timeout=30, max_bytes=4 * 1024 * 1024)
+        logs = decode_docker_log_stream(raw_logs)[-256 * 1024:]
+        return {"ok": exit_code == 0, "exitCode": exit_code, "output": logs, "helperImage": image, "action": action}
+    finally:
+        try:
+            docker_http_request("DELETE", f"/containers/{container_id}?force=true&v=true", timeout=20, max_bytes=1024 * 1024, accepted=(204, 404))
+        except Exception:
+            pass
+
+
 def update_console_action(action):
     action = str(action or "").strip().lower()
     if action == "game-check":
-        return run_workspace_command([str(ROOT / "scripts" / "check-steam-update.sh"), str(ENV_FILE)], timeout=90)
+        evidence = update_readiness_native_candidate()
+        return {"ok": bool(evidence["packageIdentified"] and evidence["packageComplete"] and evidence["steamSettled"]), **evidence, "gameMutationExecuted": False, "containersTouched": False}
     if action == "stack-check":
         return run_workspace_command([str(ROOT / "scripts" / "admin-stack-update.sh"), "--check"], timeout=180)
     if action == "game-stage":
-        staged = run_workspace_command([str(ROOT / "scripts" / "update-steam-tool.sh"), str(ENV_FILE)], timeout=1900)
-        checked = run_workspace_command([str(ROOT / "scripts" / "check-steam-update.sh"), str(ENV_FILE)], timeout=90) if staged.get("ok") else None
-        return {"ok": bool(staged.get("ok") and checked and checked.get("returncode") in (0, 1)), "staged": staged, "candidate": checked, "gameMutationExecuted": False, "containersTouched": False}
+        staged = run_update_host_helper("stage")
+        candidate = update_readiness_native_candidate() if staged.get("ok") else None
+        return {"ok": bool(staged.get("ok") and candidate and candidate.get("packageIdentified") and candidate.get("packageComplete") and candidate.get("steamSettled")), "staged": staged, "candidate": candidate, "gameMutationExecuted": False, "containersTouched": False}
     if action == "game-apply":
         if UPDATE_READINESS_REQUIRE_RECEIPT:
             readiness = update_readiness_store().status(update_readiness_snapshot(force=True))
             if not readiness.get("applyReady") or not readiness.get("currentReceiptReady"):
                 raise PermissionError("game update requires a current candidate-bound signed readiness receipt")
-        env = os.environ.copy()
-        env.update({"ENV_FILE": str(ENV_FILE), "DUNE_RESTART_TARGET": "all", "DUNE_RESTART_SERVICES": "all", "DUNE_RESTART_ACTION": "restart", "DUNE_RESTART_PHASE": "restart", "DUNE_RESTART_CHECK_STEAM_UPDATE": "true", "DUNE_RESTART_STEAM_UPDATE_MODE": "none"})
-        completed = subprocess.run([str(ROOT / "scripts" / "restart-target.sh"), "all"], cwd=ROOT, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=3600, check=False)
-        return {"ok": completed.returncode == 0, "exitCode": completed.returncode, "stdout": completed.stdout[-256 * 1024:], "stderr": completed.stderr[-256 * 1024:], "backupUpdateRestartWorkflow": True}
+        completed = run_update_host_helper("apply")
+        return {"ok": completed["ok"], "exitCode": completed["exitCode"], "stdout": completed["output"], "stderr": "" if completed["ok"] else completed["output"], "backupUpdateRestartWorkflow": True, "certifiedCandidateAcquisitionDisabled": True}
     if action == "stack-apply":
         return run_workspace_command([str(ROOT / "scripts" / "admin-stack-update.sh"), "--apply"], timeout=3600)
     if action == "runtime-repair":
@@ -8297,7 +8487,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.json(deployment_assurance_public_status())
             elif parsed.path == "/api/ops/update-readiness":
                 self.require_token()
-                self.json(update_readiness_public_status())
+                params = urllib.parse.parse_qs(parsed.query)
+                refresh = str((params.get("refresh") or [""])[0]).lower() in ("1", "true", "yes", "on")
+                self.json(update_readiness_public_status(force=refresh))
             elif parsed.path == "/api/ops/change-intelligence/capsule":
                 self.require_token()
                 params = urllib.parse.parse_qs(parsed.query)

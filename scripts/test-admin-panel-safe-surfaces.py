@@ -1669,41 +1669,88 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertEqual(["dune_sb_1_4_10_0"], tags)
         self.assertIn("status: update available", text)
 
+    def test_update_readiness_native_package_and_coriolis_checks_need_no_shell(self):
+        steam = self.workspace / "steam"
+        battlegroup = steam / "images" / "battlegroup"
+        battlegroup.mkdir(parents=True)
+        manifest = json.dumps([{"RepoTags": ["registry.funcom.com/funcom/self-hosting/seabass-server:dune_sb_1_4_10_0"]}]).encode()
+        for name in ("server-rabbitmq.tar", "server-text-router.tar", "server-bg-director.tar", "server-gateway.tar", "server-db-utils.tar", "server.tar"):
+            with tarfile.open(battlegroup / name, "w") as archive:
+                info = tarfile.TarInfo("manifest.json")
+                info.size = len(manifest)
+                archive.addfile(info, io.BytesIO(manifest))
+        (steam / "steamapps").mkdir()
+        (steam / "steamapps" / "appmanifest_4754530.acf").write_text('"buildid" "24146567"\n"TargetBuildID" "24146567"\n', encoding="utf-8")
+        (battlegroup / ".loaded_buildid").write_text("24000000\n", encoding="utf-8")
+        for name in ("UserGame.ini", "UserGame.deep-desert-coriolis.ini", "UserGame.deep-desert-pvp.ini"):
+            (self.workspace / "config" / name).write_text((ROOT / "config" / name).read_text(encoding="utf-8"), encoding="utf-8")
+        with mock.patch.dict(os.environ, {"DUNE_UPDATE_READINESS_STEAM_DIR": str(steam), "DUNE_IMAGE_TAG": "dune_sb_1_4_9_0"}):
+            evidence = self.panel.update_readiness_native_candidate()
+            coriolis = self.panel.update_readiness_coriolis_native()
+        self.assertTrue(evidence["packageIdentified"])
+        self.assertTrue(evidence["packageComplete"])
+        self.assertTrue(evidence["steamSettled"])
+        self.assertEqual("update-available", evidence["candidate"]["status"])
+        self.assertEqual("24146567", evidence["candidate"]["installedBuildId"])
+        self.assertTrue(coriolis["ok"], coriolis["failures"])
+
     def test_browser_game_update_requires_current_signed_candidate_receipt(self):
         original_required = self.panel.UPDATE_READINESS_REQUIRE_RECEIPT
         original_snapshot = self.panel.update_readiness_snapshot
         original_store = self.panel.update_readiness_store
+        original_helper = self.panel.run_update_host_helper
         self.panel.UPDATE_READINESS_REQUIRE_RECEIPT = True
         self.panel.update_readiness_snapshot = lambda force=False: {"candidate": {"imageTag": "one"}}
         self.panel.update_readiness_store = lambda: type("Store", (), {"status": lambda self, snapshot: {"applyReady": False, "currentReceiptReady": False}})()
         self.addCleanup(lambda: setattr(self.panel, "UPDATE_READINESS_REQUIRE_RECEIPT", original_required))
         self.addCleanup(lambda: setattr(self.panel, "update_readiness_snapshot", original_snapshot))
         self.addCleanup(lambda: setattr(self.panel, "update_readiness_store", original_store))
+        self.addCleanup(lambda: setattr(self.panel, "run_update_host_helper", original_helper))
         with self.assertRaisesRegex(PermissionError, "candidate-bound signed readiness receipt"):
             self.panel.update_console_action("game-apply")
         self.panel.update_readiness_store = lambda: type("Store", (), {"status": lambda self, snapshot: {"applyReady": True, "currentReceiptReady": True}})()
-        completed = type("Completed", (), {"returncode": 0, "stdout": "updated", "stderr": ""})()
-        with mock.patch.object(self.panel.subprocess, "run", return_value=completed) as run:
-            result = self.panel.update_console_action("game-apply")
+        self.panel.run_update_host_helper = lambda action: {"ok": True, "exitCode": 0, "output": "updated", "action": action}
+        result = self.panel.update_console_action("game-apply")
         self.assertTrue(result["ok"])
-        self.assertEqual("none", run.call_args.kwargs["env"]["DUNE_RESTART_STEAM_UPDATE_MODE"])
+        self.assertTrue(result["certifiedCandidateAcquisitionDisabled"])
 
     def test_game_update_staging_acquires_candidate_without_touching_containers(self):
-        original = self.panel.run_workspace_command
+        original_helper = self.panel.run_update_host_helper
+        original_candidate = self.panel.update_readiness_native_candidate
         calls = []
-        def fake(args, timeout=45):
-            calls.append((list(args), timeout))
-            if str(args[0]).endswith("update-steam-tool.sh"):
-                return {"ok": True, "returncode": 0, "stdout": "staged", "stderr": ""}
-            return {"ok": False, "returncode": 1, "stdout": "status: update available", "stderr": ""}
-        self.panel.run_workspace_command = fake
-        self.addCleanup(lambda: setattr(self.panel, "run_workspace_command", original))
+        self.panel.run_update_host_helper = lambda action: calls.append(action) or {"ok": True, "exitCode": 0, "output": "staged"}
+        self.panel.update_readiness_native_candidate = lambda: {"packageIdentified": True, "packageComplete": True, "steamSettled": True, "candidate": {"imageTag": "new"}}
+        self.addCleanup(lambda: setattr(self.panel, "run_update_host_helper", original_helper))
+        self.addCleanup(lambda: setattr(self.panel, "update_readiness_native_candidate", original_candidate))
         result = self.panel.update_console_action("game-stage")
         self.assertTrue(result["ok"])
         self.assertFalse(result["gameMutationExecuted"])
         self.assertFalse(result["containersTouched"])
-        self.assertTrue(str(calls[0][0][0]).endswith("update-steam-tool.sh"))
-        self.assertTrue(str(calls[1][0][0]).endswith("check-steam-update.sh"))
+        self.assertEqual(["stage"], calls)
+
+    def test_update_host_helper_uses_confined_fixed_candidate_workflow(self):
+        (self.workspace / ".env").write_text("DUNE_STEAM_SERVER_DIR=/srv/dune-steam\n", encoding="utf-8")
+        calls = []
+        def request(method, path, **kwargs):
+            calls.append((method, path, kwargs))
+            if path.startswith("/containers/create"):
+                return {}, json.dumps({"Id": "a" * 64}).encode()
+            if path.endswith("/wait"):
+                return {}, json.dumps({"StatusCode": 0}).encode()
+            return {}, b""
+        with mock.patch.dict(os.environ, {"DUNE_RESTART_HOST_WORKSPACE": "/srv/dash", "DUNE_RESTART_COMPOSE_IMAGE": "docker:27.5.1-cli"}), \
+             mock.patch.object(self.panel, "docker_api", return_value={"Name": "kspls0"}), \
+             mock.patch.object(self.panel, "docker_http_request", side_effect=request), \
+             mock.patch.object(self.panel, "docker_http_get", return_value=({}, b"")):
+            result = self.panel.run_update_host_helper("stage")
+        self.assertTrue(result["ok"])
+        create = next(row for row in calls if row[1].startswith("/containers/create"))
+        body = create[2]["body"]
+        self.assertIn("/srv/dash:/workspace", body["HostConfig"]["Binds"])
+        self.assertIn("/srv/dune-steam:/srv/dune-steam", body["HostConfig"]["Binds"])
+        self.assertIn("update-steam-tool.sh", body["Cmd"][2])
+        self.assertEqual("update-readiness-host-helper", body["Labels"]["com.snapetech.dune.role"])
+        self.assertTrue(any(row[0] == "DELETE" for row in calls))
 
     def test_full_restart_reboots_after_applied_steam_update_when_enabled(self):
         command = self.workspace / "scripts" / "restart-target.sh"
@@ -3334,7 +3381,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.panel.deployment_assurance_public_status = lambda: {"ok": True, "state": "active", "latestReady": True}
         self.panel.update_readiness_store = lambda: fake_update_store
         self.panel.update_readiness_metrics_snapshot = lambda: {}
-        self.panel.update_readiness_public_status = lambda: {"ok": True, "currentReceiptReady": True, "applyReady": True}
+        self.panel.update_readiness_public_status = lambda **kwargs: {"ok": True, "currentReceiptReady": True, "applyReady": True}
         self.addCleanup(lambda: setattr(self.panel, "change_intelligence_public_status", original_status))
         self.addCleanup(lambda: setattr(self.panel, "change_intelligence_store", original_store))
         self.addCleanup(lambda: setattr(self.panel, "deployment_assurance_store", original_deployment_store))

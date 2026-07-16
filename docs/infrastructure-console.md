@@ -332,15 +332,21 @@ mutation gate.
 `CERTIFY GAME UPDATE READINESS`. It writes a private HMAC receipt but executes
 no update, restart, or game mutation. See [`update-readiness.md`](update-readiness.md).
 
+Steam package inspection is native Python over a read-only mount; it does not
+depend on Bash, jq, Docker CLI, or a host-only path inside the minimal Admin
+container. Explicit stage/apply actions use a bounded short-lived Docker CLI
+helper after verifying Docker `/info` matches
+`DUNE_UPDATE_READINESS_REQUIRED_HOST`.
+
 `POST /api/ops/updates` supports:
 
 - `game-check`: rerun `check-steam-update.sh`;
 - `game-stage`: acquire/settle the local Steam candidate without loading
   images, writing the active tag, or touching containers/game state;
 - `game-apply`: execute the existing full-farm stop, backup, staged-package
-  validation, image ingest/tag update, start, readiness, and post-hook workflow. With the
-  default policy, this first requires a current candidate-bound signed update
-  readiness receipt and disables further Steam acquisition during apply;
+  validation, image ingest/tag update, start, readiness, and post-hook workflow.
+  With the default policy, this first requires a current candidate-bound signed
+  update readiness receipt and disables further Steam acquisition during apply;
 - `stack-check`: fetch and fast-forward-check the configured Git upstream;
 - `stack-apply`: require a clean tree, fetch, reject non-fast-forwards, write a
   pre-update Git bundle, validate the candidate in a temporary worktree, and

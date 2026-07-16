@@ -876,6 +876,7 @@ Server-browser ordering is deliberately split based on the observed in-game brow
 | `DUNE_ADMIN_SERVICE_CONTROL_ENABLED` / `DUNE_ADMIN_STATEFUL_SERVICE_CONTROL_ENABLED` | Browser start/stop/restart gates; stateful Postgres/RabbitMQ control remains separately disabled by default. |
 | `DUNE_ADMIN_UPDATE_MUTATIONS_ENABLED` | Game update/restart, candidate-validated stack fast-forward, runtime repair, and auto-update timer installation gate. |
 | `DUNE_UPDATE_READINESS_ENABLED` / `DUNE_UPDATE_REQUIRE_READINESS_RECEIPT` / `DUNE_UPDATE_READINESS_TTL_SECONDS` / `DUNE_UPDATE_READINESS_POLL_SECONDS` | Candidate-bound signed game-update certification, browser apply enforcement, bounded receipt lifetime, and cached read-only collection cadence. |
+| `DUNE_UPDATE_READINESS_STEAM_DIR` / `DUNE_UPDATE_READINESS_REQUIRED_HOST` | Read-only staged-package inspection mount and exact Docker-host gate for short-lived stage/apply helpers. |
 | `DUNE_HOTFIX_AUTO_APPLY_WITHOUT_READINESS` | Explicit legacy opt-out from stage-only unattended hotfix behavior; keep false to require certification before load/restart. |
 | `DUNE_ADMIN_PLAYER_RUNTIME_MUTATIONS_ENABLED` / `DUNE_SERVER_NOTIFICATION_SYSTEM_ENABLED` / `DUNE_SERVER_COMMANDS_AUTH_TOKEN` | Native skill/water/kick/vehicle action gate, game notification consumer, and shared Version 2 token. |
 | `DUNE_ADMIN_VEHICLE_MUTATIONS_ENABLED` | Offline vehicle durability/fuel database maintenance gate. |

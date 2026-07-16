@@ -22,6 +22,14 @@ sets `DUNE_RESTART_STEAM_UPDATE_MODE=none` for the guarded restart workflow.
 The restart can load and activate the already-staged candidate, but it cannot
 silently fetch a different Steam build after certification.
 
+Admin Panel's minimal image intentionally contains no Bash or Docker CLI. Stage
+and apply therefore run in a short-lived, uniquely named
+`DUNE_RESTART_COMPOSE_IMAGE` helper through the mounted Docker socket. The
+helper mounts only the configured host workspace and Steam directory, uses the
+normal repository scripts, captures bounded logs, and is forcibly removed.
+Before creation, DASH reads Docker `/info` and requires the exact configured
+host name; the default is `kspls0`.
+
 ## What Certification Proves
 
 A scheduled-update receipt is issued only when every check is true:
@@ -120,6 +128,8 @@ DUNE_UPDATE_READINESS_ENABLED=true
 DUNE_UPDATE_REQUIRE_READINESS_RECEIPT=true
 DUNE_UPDATE_READINESS_TTL_SECONDS=3600
 DUNE_UPDATE_READINESS_POLL_SECONDS=300
+DUNE_UPDATE_READINESS_STEAM_DIR=/steam-server
+DUNE_UPDATE_READINESS_REQUIRED_HOST=kspls0
 DUNE_HOTFIX_AUTO_APPLY_WITHOUT_READINESS=false
 ```
 
@@ -135,6 +145,12 @@ single background refresh and returns immediately, so concurrent scrapes cannot
 create a verification thundering herd or exceed Prometheus's scrape timeout.
 Explicit certification and game apply always force a fresh collection.
 `DUNE_UPDATE_READINESS_POLL_SECONDS` accepts 60..3600 seconds.
+
+Compose mounts `DUNE_STEAM_SERVER_DIR` read-only at
+`DUNE_UPDATE_READINESS_STEAM_DIR` for native Python inspection. This fixes the
+minimal Admin image boundary without granting the long-lived panel write
+access to Steam content. Only the short-lived, explicitly confirmed stage/apply
+helper receives a writable Steam bind.
 
 The unattended hotfix timer follows the same trust boundary. With receipt
 enforcement enabled and the legacy opt-out false, it acquires and validates the
