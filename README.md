@@ -27,6 +27,7 @@ Always compare your `.env` image pin with the Steam package installed on your ho
 - [Automation And Host Services](#automation-and-host-services)
 - [Public Static Site](#public-static-site)
 - [Artificial Exchange](#artificial-exchange)
+- [Ecosystem Feature Parity](#ecosystem-feature-parity)
 - [Configuration Map](#configuration-map)
 - [Validation Before Publishing](#validation-before-publishing)
 - [Full Manual](#full-manual)
@@ -47,7 +48,7 @@ Always compare your `.env` image pin with the Steam package installed on your ho
 | Goal | Start here | Public exposure |
 | --- | --- | --- |
 | Single-map validation | Prove Steam package, token, database bootstrap, Gateway, RabbitMQ, and `Survival_1`. | `7777/udp` plus `31982/tcp` for live-client login. |
-| Public self-host | Run the nine-map standing farm or the 30-partition warm pool after single-map validation passes. | Game UDP range for your layout plus `31982/tcp`. |
+| Public self-host | Run minimum-footprint, balanced adaptive, or full-warm map policy after single-map validation passes. | Game UDP range for your layout plus `31982/tcp`. |
 | Full warm-pool operator setup | Run all 30 official self-host partitions, watchdog recovery, restart planning, backups, and optional replica/sync. | `7777-7810/udp`, optional observed IGW `7888-7918/udp`, plus `31982/tcp`. |
 | Public-status-only website | Render static status, settings, players, and Hagga Basin map files from the private DASH host. | Only your normal static web server ports. |
 
@@ -56,11 +57,25 @@ Always compare your `.env` image pin with the Steam package installed on your ho
 - Compose topology for Postgres, admin RabbitMQ, game RabbitMQ, auth shim, text router, Gateway, Director, map services, and the admin panel.
 - Minimal single-map startup for `Survival_1`.
 - Expanded nine-map standing farm matching the current travel targets used by the Compose layout.
-- Full 30-partition warm pool through `compose.allmaps.yaml` and `scripts/start-full-warm-pool.sh`.
+- Configurable 30-partition lifecycle through `compose.allmaps.yaml` and `scripts/start-full-warm-pool.sh`: minimum footprint, balanced adaptive retention, full warm, or custom per-map policy.
+- Guarded additional `Survival_1` Sietch dimensions (up to 64 total), with
+  per-partition display/password settings, isolated saved-data volumes,
+  topology reconciliation, and all-farm lifecycle integration.
 - Recovery helpers for dependency loss and stale fixed-partition server IDs.
 - Host-level map watchdog service for unattended recovery.
-- LAN/VPN admin panel with Overview, Ops, Security, Runbook, Players, Settings, Admin Actions, Catalog, and Discovery surfaces.
-- Guarded admin writes for backups, currency, carried/bank Solari grants, XP, keystones, item grants, stack edits, item deletion, and catalog dry-runs.
+- LAN/VPN admin panel with Overview, Ops, Infrastructure, World, Security, Runbook, Players, Cosmetics, Blueprints, Care Packages, Addons, Bootstrap, Settings, Admin Actions, Admin Digests, Catalog, and Discovery surfaces.
+- Browser service/log control, verified manual and automatic backup lifecycle, layered restore, bounded database query/row/password controls, dynamic map autoscaling, live memory balancing, and retained Prometheus metrics.
+- Cache-aware, host-local CPU-affinity generation with guarded no-restart live application, Compose persistence, and rollback.
+- Backup-first Linux sysctl/THP/NIC-ring/IRQ tuning that preserves larger existing network maxima and never restarts Docker.
+- Live inventory slot-integrity audit plus hostname-, backup-, capacity-, and transaction-gated no-delete conflict repair.
+- Guarded admin writes for currency, Solari, XP, skills, water, kick/kick-all, vehicle spawn/repair/refuel, Landsraad rewards/contributions, blueprints, augments, items, care packages, and catalog workflows.
+- Searchable character cosmetics/skins with an independently observed 391-ID catalog, optional local-pak catalog generation, exact catalog-confined add/remove, customization-only bulk unlock, Offline row locking, automatic database backups, compare-and-swap verification, private receipts, and guarded rollback.
+- Permissioned Discord adapter routes: read/ops remain role-scoped, community writes are identity-bound and narrowly typed, and generic admin/broadcast writes remain blocked; community UI addons use a SHA-pinned permission-review lifecycle.
+- First-party dependency-free Discord Gateway bot with seven groups and 37 guild-scoped `/dune` subcommands, channel restrictions, ephemeral responses, role propagation, and a hardened credential-waiting systemd service.
+- Named hashed-token admin identities with explicit route capabilities and the original owner token retained as a recovery credential.
+- Signed, filtered outbound audit-event delivery for generic HTTPS receivers and Discord webhooks, with asynchronous bounded retries, recursive redaction, redirect refusal, and secret-free delivery records.
+- An isolated community-credit economy with one-time Discord account linking, immutable hash-chained ledger, atomic shop/kit stock and orders, playtime/vote/manual-payment accrual, versioned reward tracks, offline delivery receipts, and failure refunds.
+- Persistent one-time/recurring event automation with safe announcement and non-executing restart-plan primitives, dry-run mutation proposals, manual run/cancel, and a bounded execution ledger.
 - Reproducible backend item-grant helper with dry-run, explicit confirmation, and reviewed display-name labels such as `Complex Machinery` -> `T2MachineComponent`.
 - Restart announcements, restart planner hooks, chat-command bridge, player-presence announcer, and admin-bot monitoring.
 - Private whisper replies for admin chat commands, auction confirmations, player-presence messages, and admin-only digests through the verified `chat.whispers` route.
@@ -71,6 +86,43 @@ Always compare your `.env` image pin with the Steam package installed on your ho
 - Optional public static site package with status, settings, player list, and Hagga Basin map.
 - Artificial Exchange as a first-class economy feature: reviewed price catalog, artificial buyer, validated seller settlement, optional buyer funding, controlled seeded listings, readiness checks, smoke tests, admin-panel controls, optional systemd services, and watchdog timer.
 - Publication and validation guardrails for keeping local state and secrets out of shared artifacts.
+- Immutable commit/SHA-256 release installation with atomic activation,
+  persistent state, no-restart rollback, and malicious-archive preflight;
+  clean-host Ansible, secret-free cloud-init, token-authenticated Proxmox,
+  constrained Pelican/Pterodactyl remote control, and fenced active/passive VIP
+  packaging.
+- Strict remote SSH profiles with loopback tunnels and verified two-phase key
+  rotation; privacy-bounded on-demand conntrack peer diagnostics; and a
+  searchable, binary-hash-bound 7,028-entry console catalogue alongside the
+  2,242-key shipped INI index.
+
+## Ecosystem Feature Parity
+
+DASH maintains an evidence-backed aggregate comparison against the credible
+Dune: Awakening self-hosting, dashboard, deployment, administration, economy,
+community, and modding-tool ecosystem. The current catalogue covers the
+official Funcom baseline, AMP, Red-Blink, Arrakis Command Nexus, dune-admin,
+Dune Dedicated Server Manager, DST, the active community dashboards, Linux/KVM/
+Proxmox/Pelican deployment projects, Discord/economy tools, Wormageddon, and the
+base designer/gallery.
+
+The earlier Red-Blink-specific tranche and the feasible aggregate ecosystem
+parity build are complete for the pinned audit snapshot. Guarded inventory
+repair, multi-user local RBAC, host/CPU tuning, signed outbound events,
+recurring event execution, the first-party Discord bot, community rewards/shop,
+OIDC/Discord federated login, base creator, encrypted backup archives, bounded
+diagnostics, gameplay presets, guarded cosmetics administration, and alternate
+deployment packaging are implemented. Discord and federated login still need
+operator application credentials for external canaries. Client loader/Pak
+deployment remains separately authorization-gated, and self-host voice remains
+blocked on the proprietary Funcom-compatible Tencent GME contract rather than
+a missing peer implementation.
+
+See [`docs/ecosystem-feature-parity-audit.md`](docs/ecosystem-feature-parity-audit.md)
+for the pinned peer list, full capability matrix, confidence levels, exclusions,
+and implementation order. See
+[`docs/red-blink-feature-parity-audit.md`](docs/red-blink-feature-parity-audit.md)
+for the completed source-level Red-Blink comparison.
 
 ## What DASH Does Not Include
 
@@ -78,7 +130,7 @@ Always compare your `.env` image pin with the Steam package installed on your ho
 - A Funcom self-hosting/FLS token.
 - Production hosting, DDoS protection, router/firewall configuration, or account portal access.
 - Point-in-time recovery by replication alone. Replicas mirror bad writes and deletes too.
-- Unverified native GM, cheat, and kick/session commands. DB-backed admin actions such as item grants, currency, XP, stack edits, offline recovery, and the documented network-disconnect teleport primitive are separate guarded features.
+- Generic native GM/cheat commands outside the catalog-backed Version 2 player-action contract. Skill, water, kick/kick-all, and vehicle spawn use the pinned game-notification path documented in `docs/player-runtime-actions.md`; unrelated legacy RPC candidates remain preview-only.
 - Public exposure for Postgres, RabbitMQ management, the admin panel, debug ports, or private automation endpoints.
 
 ## Security Posture
@@ -163,6 +215,24 @@ More detail: [`docs/setup.md`](docs/setup.md).
 
 ## Install And Deployment Paths
 
+### Immutable Clean-Host Release
+
+For repeatable hosts, install an exact source archive without starting or
+restarting the farm:
+
+```bash
+sudo ./scripts/install-release.sh install \
+  --ref <full-40-hex-commit> \
+  --sha256 <exact-64-hex-archive-sha256> \
+  --activate
+```
+
+State and operator config remain under `/var/lib/dash`; releases live under
+`/opt/dash/releases`. Ansible, Proxmox, cloud-init, Pelican/Pterodactyl, and
+fenced active/passive deployment packages live under `packaging/`. See
+[`docs/deployment-packaging.md`](docs/deployment-packaging.md) before using any
+automated path.
+
 ### Minimal Single-Map Test
 
 Use this first on a new host. It proves the Steam package, `.env`, database initialization, Gateway/Director service layer, RabbitMQ auth path, and starting map registration.
@@ -199,9 +269,12 @@ Expected server-side readiness:
 current_alive_active=9 active_servers=9 partitions=9
 ```
 
-### Full 30-Partition Warm Pool
+### Adaptive Or Full 30-Partition Map Pool
 
-Compose cannot provide Kubernetes-style on-demand game-server scaling, so the all-maps overlay keeps one server warm for every official single-dimension self-host partition.
+The all-maps overlay defines every official single-dimension partition. The
+startup helper honors the persisted autoscaler policy: minimum and balanced
+start only core maps, while full warm starts every map. Director demand starts
+dynamic maps later through the guarded fast path.
 
 ```bash
 ./scripts/start-full-warm-pool.sh .env
@@ -213,6 +286,35 @@ Expected server-side readiness:
 ```text
 current_alive_active=30 active_servers=30 partitions=30
 ```
+
+That 30/30 expectation applies to `full-warm`. The recommended balanced policy
+keeps Survival and Overmap always on, retains recently used maps, caps optional
+warm maps with LRU eviction, and evicts only empty/non-demanded dynamic maps
+when available memory crosses the configured floor:
+
+```env
+DUNE_AUTOSCALER_ENABLED=true
+DUNE_AUTOSCALER_PROFILE=balanced
+DUNE_AUTOSCALER_DEFAULT_MODE=dynamic
+DUNE_AUTOSCALER_ALWAYS_ON_SERVICES=survival,overmap
+DUNE_AUTOSCALER_BALANCED_RETENTION_SECONDS=900
+DUNE_AUTOSCALER_BALANCED_RETENTION_BY_SERVICE=arrakeen=2700,harko-village=2700,deep-desert=1800
+DUNE_AUTOSCALER_BALANCED_MAX_WARM_MAPS=4
+DUNE_AUTOSCALER_BALANCED_MIN_AVAILABLE_MEMORY_GIB=16
+```
+
+The Infrastructure page can switch between `minimum-footprint`, `balanced`,
+`full-warm`, and `custom`, and can edit per-map retention and global budgets.
+For file-based installation, preview and apply a profile without touching
+unrelated `.env` keys:
+
+```bash
+./scripts/configure-autoscaler-profile.sh .env balanced
+./scripts/configure-autoscaler-profile.sh .env balanced --execute
+```
+
+See [`docs/autoscaling-memory.md`](docs/autoscaling-memory.md) for lifecycle,
+reboot, migration, safety, and measured startup details.
 
 Live-client login and travel still depend on a valid FLS token, public reachability, router/firewall state, and LAN reflection when joining from inside the same network. See [`docs/full-farm.md`](docs/full-farm.md), [`docs/operations.md`](docs/operations.md), and [`docs/lan-reflection.md`](docs/lan-reflection.md).
 
@@ -270,11 +372,24 @@ By default the local deployment is configured for a trusted private admin surfac
 | --- | --- |
 | Overview | Readiness metrics, health summary, Hagga Basin player map, map details, and player preview. |
 | Ops | Restart planner, restart announcements, resource telemetry, map health, network checks, farm state, and partition state. |
+| Infrastructure | Compose service/log control, manual/automatic backup lifecycle and restore, database query/row/password tools, autoscaling, memory controls, and update/repair. |
+| Backup Encryption | Verified recipient OpenPGP archives, ciphertext receipts, safe decrypt staging, encrypted-only rclone/rsync mode, and encrypted restic repositories. |
+| World | Read-only guild/member, Landsraad term/task/reward/contribution, and aggregate storage views; Landsraad writes remain on Admin Actions. |
 | Security | Host/origin checks, auth mode, mutation gates, allowlists, and audit events. |
+| Federated Login | Provider-neutral OIDC or Discord OAuth code+PKCE login, explicit subject-to-local-RBAC mapping, signed HttpOnly sessions, logout, and owner-token recovery. |
 | Runbook | Copy/paste operational commands for health, backups, restores, logs, profiling, and routing capture. |
+| Command Console | Six reviewed native read-only diagnostics with no subprocess/shell/arguments, bounded timeout/output, redaction, operator RBAC, and receipt-only audit. |
 | Players | Online/offline roster, player detail, account/controller/pawn context, currency, XP, inventory, and location views. |
+| Moderation | Case workflow, enforced policy bans/unban, allowlist registry/policy, presence sessions, coarse heatmaps, normalized security signals, and enforcement receipts. |
+| Base Creator | Read-only exact/recentered live-base export, snapping/yaw grid editor, reconstruction preview, JSON download, and isolated visibility/rating gallery. |
+| Gameplay Presets | Nine curated worm/threat/storm/harvest/day/hydration/world profiles with exact preview, fixed allowlists, backup-first atomic apply, confined rollback, Landsraad-cycle enforcement, and manual guarded restart handoff. |
+| Blueprints | Validated Solido list/export/import/delete/deduplicate workflow with rollback archives. |
+| Care Packages | Reviewed manual and automatic first-online/returning-player presets, persisted eligibility/claims, retry controls, backups, and history. |
+| Addons | SHA-pinned discovery, permission review, staging, lifecycle, quarantine, sandbox, and constrained bridge. |
+| Bootstrap | Required-setting status, preflight, TLS generation, database initialization, and stack reconcile. |
 | Settings | Selected `.env` and config edits with backups. |
-| Admin Actions | Database backups and guarded mutations for currency, carried/bank Solari, XP, keystones, grants, stack edits, and deletion. |
+| Admin Actions | Guarded runtime skill/water/kick/vehicle actions, persistent vehicle maintenance, Landsraad writes, currency/Solari/XP, augments, grants, keystones, stack edits, and deletion. |
+| Admin Digests | Private operator summaries derived from existing presence and operations state. |
 | Catalog | Content insertion evidence, typed knob dry-runs/writes, resource and progression inspection, event planning, economy bundle planning, and gated world/player/economy mutator families. |
 
 If the published local admin port accepts TCP but returns no HTTP bytes after a container recreate, refresh the observed Docker bridge neighbor entries:
@@ -284,7 +399,7 @@ If the published local admin port accepts TCP but returns no HTTP bytes after a 
 curl -H 'Host: admin-panel:8080' http://127.0.0.1:${DUNE_ADMIN_HOST_PORT:-18080}/api/status
 ```
 
-More detail: [`docs/admin-panel.md`](docs/admin-panel.md), [`docs/admin-safe-content-api.md`](docs/admin-safe-content-api.md), and [`CONTENT_INSERTION_SURFACES.md`](CONTENT_INSERTION_SURFACES.md).
+More detail: [`docs/admin-panel.md`](docs/admin-panel.md), [`docs/admin-access-control.md`](docs/admin-access-control.md), [`docs/federated-auth.md`](docs/federated-auth.md), [`docs/infrastructure-console.md`](docs/infrastructure-console.md), [`docs/backup-encryption.md`](docs/backup-encryption.md), [`docs/command-console.md`](docs/command-console.md), [`docs/world-console.md`](docs/world-console.md), [`docs/care-packages.md`](docs/care-packages.md), [`docs/community-rewards.md`](docs/community-rewards.md), [`docs/moderation-history.md`](docs/moderation-history.md), [`docs/base-creator.md`](docs/base-creator.md), [`docs/gameplay-presets.md`](docs/gameplay-presets.md), [`docs/character-cosmetics.md`](docs/character-cosmetics.md), [`docs/outbound-webhooks.md`](docs/outbound-webhooks.md), [`docs/admin-safe-content-api.md`](docs/admin-safe-content-api.md), and [`CONTENT_INSERTION_SURFACES.md`](CONTENT_INSERTION_SURFACES.md).
 
 ## Operations And Recovery
 
@@ -407,6 +522,9 @@ For LAN players joining through the public listing, keep `EXTERNAL_ADDRESS` set 
 ## Automation And Host Services
 
 DASH can install host systemd services and timers for operator workflows. Install these from the target checkout and `.env` so rendered units point at the correct paths.
+
+The rendered full-farm service includes an orderly `ExecStop`; stopping the
+unit or shutting down the host invokes the repository's world shutdown path.
 
 ```bash
 make install-map-watchdog-service ENV_FILE=.env
@@ -617,7 +735,7 @@ Start from [`.env.example`](.env.example). It is the source of truth for the ful
 | `DUNE_ADMIN_TOKEN` / `DUNE_ADMIN_REQUIRE_TOKEN` | Optional token protection for private admin API requests. |
 | `DUNE_ADMIN_MUTATIONS_ENABLED` | Master gate for admin writes; example default is fail-closed. |
 | `DUNE_ADMIN_ITEM_GRANTS_ENABLED` | Separate gate for item grants, stack edits, and deletion; example default is fail-closed. |
-| `DUNE_ADMIN_GM_COMMANDS_ENABLED` / `DUNE_GM_COMMAND_PAYLOAD_VERIFIED` | GM/native command gates; keep false unless verified. |
+| `DUNE_ADMIN_GM_COMMANDS_ENABLED` / `DUNE_GM_COMMAND_PAYLOAD_VERIFIED` | Generic legacy GM/RPC gates. The catalog-backed player actions use the first gate plus their dedicated runtime gate, not the legacy payload-verified flag. |
 | `DUNE_ADMIN_*_ENABLED` write gates | Per-family gates for typed knobs, events, bundles, progression, faction, Landsraad, respawn, guild, markers, landclaim, Exchange, tags, access codes, Communinet, tutorial, permission, vendor, and character-slot operations. |
 
 Server-browser ordering is deliberately split based on the observed in-game browser. `config/gateway.ini` `[gateway].display_name` is the parent/top row and must stay the branded server title. `WORLD_NAME` and `DUNE_SERVER_DISPLAY_NAME` are the nested/details row and must stay the feature-list description. Do not copy the branded title into `WORLD_NAME` or `DUNE_SERVER_DISPLAY_NAME`.
@@ -628,8 +746,54 @@ Server-browser ordering is deliberately split based on the observed in-game brow
 | `DUNE_CHAT_SPAM_*` | Repeat-message spam detection, exemptions, public announcements, and kick backend settings. |
 | `DUNE_PLAYER_PRESENCE_*` | Player-presence announcements, private welcomes, milestones, base reminders, restart notices, map-health alerts, admin digests, and starter-tool grants. |
 | `DUNE_ARTIFICIAL_EXCHANGE_*` | Artificial Exchange buyer, settlement, funding, populator, catalog, service, and watchdog gates/tuning. |
+| `DUNE_ADMIN_CARE_PACKAGES_ENABLED` | Manual execution gate for reviewed `config/care-packages.json` presets; preview remains available. |
+| `DUNE_ADMIN_CARE_PACKAGES_AUTO_ENABLED` | Independent gate for persistent first-online and returning-player scans. |
+| `DUNE_ADMIN_BLUEPRINT_MUTATIONS_ENABLED` | Blueprint import/delete execution gate; listing, export, and dry-run remain available. |
+| `DUNE_ADMIN_BLUEPRINT_MAX_BODY_BYTES` | Separate bounded request limit for blueprint archives; default 32 MiB. |
+| `DUNE_ADMIN_AUGMENT_MUTATIONS_ENABLED` | Existing-item and pre-augmented grant execution gate; compatibility reads and previews remain available. |
+| `DUNE_ADMIN_BACKUP_MUTATIONS_ENABLED` / `DUNE_ADMIN_BACKUP_RESTORE_ENABLED` | Separate browser gates for backup create/import/delete and disruptive restore execution. |
+| `DUNE_ADMIN_DATABASE_QUERY_ENABLED` / `DUNE_ADMIN_DATABASE_WRITE_ENABLED` | Bounded one-statement SQL console and its separately gated write mode. |
+| `DUNE_ADMIN_DATABASE_ROW_MUTATIONS_ENABLED` / `DUNE_ADMIN_DATABASE_PASSWORD_MUTATIONS_ENABLED` | Primary-key row editor and coordinated credential-rotation gates. |
+| `DUNE_ADMIN_SERVICE_CONTROL_ENABLED` / `DUNE_ADMIN_STATEFUL_SERVICE_CONTROL_ENABLED` | Browser start/stop/restart gates; stateful Postgres/RabbitMQ control remains separately disabled by default. |
+| `DUNE_ADMIN_UPDATE_MUTATIONS_ENABLED` | Game update/restart, candidate-validated stack fast-forward, runtime repair, and auto-update timer installation gate. |
+| `DUNE_ADMIN_PLAYER_RUNTIME_MUTATIONS_ENABLED` / `DUNE_SERVER_NOTIFICATION_SYSTEM_ENABLED` / `DUNE_SERVER_COMMANDS_AUTH_TOKEN` | Native skill/water/kick/vehicle action gate, game notification consumer, and shared Version 2 token. |
+| `DUNE_ADMIN_VEHICLE_MUTATIONS_ENABLED` | Offline vehicle durability/fuel database maintenance gate. |
+| `DUNE_ADMIN_MEMORY_MUTATIONS_ENABLED` / `DUNE_ADMIN_AUTOSCALER_MUTATIONS_ENABLED` | Live map memory/balancer and dynamic map-mode/travel-demand gates. |
+| `DUNE_AUTOSCALER_PROFILE` / `DUNE_AUTOSCALER_ALWAYS_ON_SERVICES` | Select minimum-footprint, balanced, full-warm, or custom startup policy and its core maps. |
+| `DUNE_AUTOSCALER_BALANCED_RETENTION_*` | Balanced default/per-map warm retention, optional warm-map LRU cap, and available-memory eviction floor. |
+| `DUNE_AUTOSCALER_DEMAND_TTL_SECONDS` / `DUNE_AUTOSCALER_POLL_SECONDS` / `DUNE_AUTOSCALER_FAST_START` | Demand protection, detection cadence, and guarded cold-start optimization. |
+| `DUNE_ADMIN_BOOTSTRAP_MUTATIONS_ENABLED` | Browser TLS/database/full-stack bootstrap action gate. |
+| `DUNE_DISCORD_ADAPTER_ENABLED` / `DUNE_ADMIN_ADDON_MUTATIONS_ENABLED` | Permissioned bot adapter (role-scoped reads plus typed community actions) and community addon lifecycle gates. |
+| `DUNE_COMMUNITY_REWARDS_ENABLED` / `DUNE_COMMUNITY_DELIVERY_ENABLED` | Isolated wallet/shop/playtime/webhook/reward-track APIs and the separately gated offline game-item delivery worker. |
+| `DUNE_PUBLIC_IP_MONITOR_*` | Optional hostname-gated, dry-run-first public IPv4 drift detection, TLS rotation, and orderly farm restart. |
+| `DUNE_SIETCH_MUTATIONS_ENABLED` / `DUNE_SIETCH_ALLOWED_HOST` | Separate gate and exact-host binding for additional Survival dimension topology/settings writes. |
 
 Most service settings require recreating or restarting affected containers before running processes pick them up. The admin panel documents runtime-only settings where applicable.
+
+For dynamic public IPv4 hosting, set the monitor keys in `.env`, leave dry-run
+enabled for the first check, and install its timer:
+
+```bash
+./scripts/public-ip-monitor.sh .env check
+make install-public-ip-monitor ENV_FILE=.env
+```
+
+The monitor refuses address changes unless
+`DUNE_PUBLIC_IP_MONITOR_ALLOWED_HOST` exactly matches `hostname -s`.
+
+Additional Survival/Sietch dimensions are dry-run-first and separately gated:
+
+```bash
+./scripts/sietches.sh .env list
+./scripts/sietches.sh .env set-active 3
+./scripts/sietches.sh .env set-active 3 --execute
+./scripts/sietches.sh .env set-settings <partition-id> "Sietch Alpha" "password" --execute
+```
+
+Committed topology and settings changes require
+`DUNE_SIETCH_MUTATIONS_ENABLED=true` plus an exact
+`DUNE_SIETCH_ALLOWED_HOST=$(hostname -s)`. Additional dimensions use
+`udp/8001-8063` for game traffic and `udp/8101-8163` for IGW traffic.
 
 ## Validation Before Publishing
 
@@ -650,6 +814,8 @@ If the full validation target cannot run in your local environment, run focused 
 
 ```bash
 python3 -m py_compile admin/admin_panel.py scripts/admin-chat-commands.py scripts/dune_gm_command.py scripts/probe-gm-command.py scripts/gm-command-catalog.py
+python3 scripts/test-admin-panel-safe-surfaces.py
+./scripts/test-storage-cleanup.sh
 make secret-scan
 make verify-local-state-ignored
 ```
@@ -663,6 +829,34 @@ Start here:
 - [`docs/setup.md`](docs/setup.md): initial setup flow.
 - [`docs/operations.md`](docs/operations.md): health, recovery, startup, watchdog, ports, and restart workflow.
 - [`docs/admin-panel.md`](docs/admin-panel.md): admin panel features, security, announcements, chat commands, and mutation gates.
+- [`docs/admin-access-control.md`](docs/admin-access-control.md): multi-user hashed tokens, roles, route capabilities, lifecycle, and owner recovery.
+- [`docs/outbound-webhooks.md`](docs/outbound-webhooks.md): signed generic/Discord event delivery, endpoint filters, redaction, retry limits, receiver contract, and operations.
+- [`docs/event-automation.md`](docs/event-automation.md): recurring schedules, safe primitives, execution gates, run ledger, UI/API, and validation.
+- [`docs/remote-admin-access.md`](docs/remote-admin-access.md): private TLS/VPN/proxy patterns and the bounded browser file-workspace security boundary.
+- [`docs/remote-targets.md`](docs/remote-targets.md): strict SSH profiles,
+  loopback admin tunnels, expected-host verification, and two-phase Ed25519
+  rotation.
+- [`docs/game-peer-diagnostics.md`](docs/game-peer-diagnostics.md): ephemeral,
+  privacy-bounded conntrack diagnostics for Dune ports.
+- [`docs/cvar-catalog.md`](docs/cvar-catalog.md): binary-hash-bound console
+  catalogue generation/search and its relationship to the shipped INI index.
+- [`docs/infrastructure-console.md`](docs/infrastructure-console.md): scoped service control/logs, verified backup lifecycle, database query/row/password controls, and update/repair workflows.
+- [`docs/bootstrap-console.md`](docs/bootstrap-console.md): browser first-run settings, preflight, TLS, database initialization, and stack reconcile.
+- [`docs/autoscaling-memory.md`](docs/autoscaling-memory.md): map modes, Director travel demand, idle scale-down, live limits, and memory balancing.
+- [`docs/cpu-affinity.md`](docs/cpu-affinity.md): cache/topology-aware foreground and background CPU pools for dynamic-map hosts.
+- [`docs/host-tuning.md`](docs/host-tuning.md): guarded memory/UDP/THP/NIC/IRQ tuning, persistence, evidence, and recovery.
+- [`docs/inventory-integrity.md`](docs/inventory-integrity.md): live duplicate-slot audit and guarded, backup-first transactional repair.
+- [`docs/player-runtime-actions.md`](docs/player-runtime-actions.md): native skill/water/kick/vehicle actions, offline vehicle maintenance, and Landsraad writes.
+- [`docs/world-console.md`](docs/world-console.md): read-only guild, Landsraad, and aggregate storage views plus separately gated Landsraad reward/contribution actions.
+- [`docs/care-packages.md`](docs/care-packages.md): reviewed manual/automatic package schema, eligibility, persistent claims, gates, backup, and history.
+- [`docs/discord-adapter.md`](docs/discord-adapter.md): permission-mapped Discord bot API, narrowly typed community actions, and setup.
+- [`docs/discord-bot.md`](docs/discord-bot.md): first-party slash-command bot, Discord application setup, command/role matrix, systemd lifecycle, Gateway safety, and validation.
+- [`docs/community-rewards.md`](docs/community-rewards.md): account linking, community wallets, immutable ledger, shop/kits, signed inbound rewards, playtime accrual, reward tracks, delivery/refund state machine, and recovery.
+- [`docs/addons.md`](docs/addons.md): SHA-pinned community UI addon lifecycle, permission approval, quarantine, and sandbox contract.
+- [`compose.admin-restore.yaml`](compose.admin-restore.yaml): temporary read-write data overlay for reviewed browser filesystem restores.
+- [`docs/red-blink-feature-parity-audit.md`](docs/red-blink-feature-parity-audit.md): pinned source comparison, completed operator-feature parity matrix, provenance, and validation limits.
+- [`docs/blueprints.md`](docs/blueprints.md): Solido blueprint list/export/import/delete workflow and transaction contract.
+- [`docs/augments.md`](docs/augments.md): compatibility picker, stat construction, slot unlocks, gates, and rollback behavior.
 - [`docs/base-storage-item-grants.md`](docs/base-storage-item-grants.md): generic, guarded workflow for discovering a base box inventory and granting an item stack to it.
 - [`docs/private-chat-replies.md`](docs/private-chat-replies.md): verified private whisper route for command replies and player/admin automation.
 - [`docs/backup-strategy.md`](docs/backup-strategy.md): local, onsite, offsite, replica, retention, and restore-test guidance.
@@ -700,6 +894,9 @@ Architecture and research:
 - [`docs/benchmarking.md`](docs/benchmarking.md): resource and transition benchmark notes.
 - [`docs/kubernetes.md`](docs/kubernetes.md): unsupported Kubernetes translation notes.
 - [`docs/packaging.md`](docs/packaging.md): publishable package boundaries and release checklist.
+- [`docs/deployment-packaging.md`](docs/deployment-packaging.md): immutable
+  installs, Ansible/Proxmox/cloud-init, Pelican remote control, fenced HA,
+  rollback, security boundaries, and clean-host validation.
 - [`docs/release-template.md`](docs/release-template.md): release/handoff note template.
 
 Root-level research indexes:

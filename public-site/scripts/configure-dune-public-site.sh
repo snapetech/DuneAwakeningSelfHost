@@ -82,12 +82,14 @@ stack_url_html="$(escape_html "$stack_url")"
 tmp="$(mktemp)"
 sed \
   -e "s#<title>.*</title>#<title>$(escape_sed "$title_html")</title>#" \
-  -e "s#<h1>.*</h1>#<h1>$(escape_sed "$server_html")</h1>#" \
+  -e "s#<p id=\"server-name\" class=\"server-name\">.*</p>#<p id=\"server-name\" class=\"server-name\">$(escape_sed "$server_html")</p>#" \
   -e "s#<p class=\"lede\">.*</p>#<p class=\"lede\">$(escape_sed "$description_html")</p>#" \
   -e "s#<p><strong>Server Name:</strong> .*<\\/p>#<p><strong>Server Name:</strong> $(escape_sed "$server_html")</p>#" \
   -e "s#<p><strong>How To Join:</strong> .*<\\/p>#<p><strong>How To Join:</strong> $(escape_sed "$where_html")</p>#" \
+  -e "s#<p id=\"join-instructions\">.*<\\/p>#<p id=\"join-instructions\">$(escape_sed "$where_html")</p>#" \
   -e "s#<p><a href=\"[^\"]*\">DuneAwakeningSelfHost</a> is the stack used to host this server\\.</p>#<p><a href=\"$(escape_sed "$stack_url_html")\">DuneAwakeningSelfHost</a> is the stack used to host this server.</p>#" \
   -e "s#<p class=\"stack-link\"><a href=\"[^\"]*\">DuneAwakeningSelfHost</a> powers this self-hosted server\\.</p>#<p class=\"stack-link\"><a href=\"$(escape_sed "$stack_url_html")\">DuneAwakeningSelfHost</a> powers this self-hosted server.</p>#" \
+  -e "s#<a class=\"text-action\" href=\"[^\"]*\">View server stack#<a class=\"text-action\" href=\"$(escape_sed "$stack_url_html")\">View server stack#" \
   "$index_file" > "$tmp"
 
 install -m 0644 "$tmp" "$index_file"

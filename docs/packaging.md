@@ -2,6 +2,11 @@
 
 DASH should be publishable without carrying private data or Funcom-owned artifacts.
 
+For the implemented immutable release installer, Ansible/Proxmox/cloud-init
+package, constrained Pelican controller, active/passive HA reference, state
+layout, rollback, and validation runbook, see
+[`deployment-packaging.md`](deployment-packaging.md).
+
 ## What Belongs In The Repo
 
 Safe to include:
@@ -80,6 +85,10 @@ For another operator, the handoff should be:
 7. Optional public static site package from `public-site/` if the operator wants a public status/settings/map page.
 
 The handoff should not include Funcom images or Steam files unless the recipient is entitled and obtains them through official channels.
+
+The supported automated handoff is `packaging/ansible`. Its environment content
+must come from Ansible Vault, it pins a full commit and archive SHA-256, and it
+does not start the farm unless the operator enables the separate startup gate.
 
 ## Platform Support Promise
 

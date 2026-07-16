@@ -1,0 +1,61 @@
+services:
+  prometheus:
+    image: ${DUNE_METRICS_PROMETHEUS_IMAGE:-quay.io/prometheus/prometheus:v3.5.0}
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${DUNE_METRICS_RETENTION_TIME:-7d}
+      - --storage.tsdb.retention.size=${DUNE_METRICS_RETENTION_SIZE:-2GB}
+      - --web.enable-lifecycle
+    ports:
+      - "${DUNE_METRICS_BIND_ADDRESS:-127.0.0.1}:${DUNE_METRICS_PROMETHEUS_PORT:-19090}:9090"
+    volumes:
+      - ./config/metrics/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./config/metrics/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    security_opt:
+      - no-new-privileges:true
+
+  node-exporter:
+    image: ${DUNE_METRICS_NODE_EXPORTER_IMAGE:-quay.io/prometheus/node-exporter:v1.9.1}
+    restart: unless-stopped
+    pid: host
+    command:
+      - --path.rootfs=/host
+      - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run/docker/netns|var/lib/docker/.+)($$|/)
+      - --collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|mqueue|overlay|proc|pstore|rpc_pipefs|securityfs|sysfs|tracefs)$$
+    volumes:
+      - /:/host:ro
+    security_opt:
+      - no-new-privileges:true
+
+  cadvisor:
+    image: ${DUNE_METRICS_CADVISOR_IMAGE:-gcr.io/cadvisor/cadvisor:v0.52.1}
+    restart: unless-stopped
+    privileged: true
+    command:
+      - --docker_only=true
+      - --housekeeping_interval=10s
+      - --store_container_labels=false
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+
+  postgres-exporter:
+    image: ${DUNE_METRICS_POSTGRES_EXPORTER_IMAGE:-quay.io/prometheuscommunity/postgres-exporter:v0.17.1}
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_URI: postgres:5432/dune_sb_1_4_0_0?sslmode=disable
+      DATA_SOURCE_USER: dune
+      DATA_SOURCE_PASS: ${POSTGRES_DUNE_PASSWORD}
+      PG_EXPORTER_DISABLE_DEFAULT_METRICS: "false"
+      PG_EXPORTER_DISABLE_SETTINGS_METRICS: "false"
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  prometheus-data:

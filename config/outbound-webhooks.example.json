@@ -1,0 +1,19 @@
+{
+  "endpoints": [
+    {
+      "enabled": false,
+      "events": [
+        "backup-*",
+        "service-control",
+        "update-*",
+        "event-*"
+      ],
+      "format": "dash",
+      "id": "operations",
+      "minIntervalSeconds": 0,
+      "secret": "generate-a-unique-random-signing-secret-at-least-32-bytes",
+      "url": "https://events.example.invalid/dash"
+    }
+  ],
+  "version": 1
+}

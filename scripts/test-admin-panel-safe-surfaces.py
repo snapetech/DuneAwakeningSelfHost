@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
 import importlib.util
+import base64
+import hashlib
+import hmac
+import io
 import json
 import os
 import pathlib
 import sys
 import tempfile
+import tarfile
+import time
 import types
 import unittest
 
@@ -143,12 +149,45 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         handler, captured = self.make_route_handler(path)
         original_validate = self.panel.validate_json_post
         original_parse = self.panel.parse_body
-        self.panel.validate_json_post = lambda request_handler: None
-        self.panel.parse_body = lambda request_handler: body
+        self.panel.validate_json_post = lambda request_handler, **kwargs: None
+        self.panel.parse_body = lambda request_handler, **kwargs: body
         self.addCleanup(lambda: setattr(self.panel, "validate_json_post", original_validate))
         self.addCleanup(lambda: setattr(self.panel, "parse_body", original_parse))
         handler.do_POST()
         return captured
+
+    def test_healthz_is_minimal_and_does_not_require_admin_token(self):
+        handler, captured = self.make_route_handler("/healthz")
+        handler.is_app_route = lambda path: False
+        handler.require_token = lambda: self.fail("healthz must remain usable by the container healthcheck")
+        handler.do_GET()
+        self.assertEqual({"ok": True, "service": "dune-admin-panel"}, captured["json"])
+
+    def test_detailed_status_requires_admin_token(self):
+        handler, captured = self.make_route_handler("/api/status")
+        handler.is_app_route = lambda path: False
+        handler.require_token = lambda: (_ for _ in ()).throw(PermissionError("admin token required"))
+        handler.do_GET()
+        self.assertEqual(401, captured["errors"][0]["status"])
+        self.assertIsNone(captured["json"])
+
+    def test_api_head_requires_admin_token(self):
+        handler, captured = self.make_route_handler("/api/status")
+        handler.is_app_route = lambda path: False
+        handler.require_token = lambda: (_ for _ in ()).throw(PermissionError("admin token required"))
+        handler.do_HEAD()
+        self.assertEqual(401, captured["errors"][0]["status"])
+        self.assertIsNone(captured["json"])
+
+    def test_server_banner_does_not_disclose_python_runtime(self):
+        self.assertEqual("DASH", self.panel.Handler.server_version)
+        self.assertEqual("", self.panel.Handler.sys_version)
+
+    def test_admin_http_concurrency_is_bounded(self):
+        self.assertGreaterEqual(self.panel.MAX_CONCURRENT_REQUESTS, 4)
+        self.assertLessEqual(self.panel.MAX_CONCURRENT_REQUESTS, 128)
+        self.assertTrue(self.panel.BoundedThreadingHTTPServer.daemon_threads)
+        self.assertLessEqual(self.panel.BoundedThreadingHTTPServer.request_queue_size, 64)
 
     def test_catalog_schema_has_required_fields(self):
         entries = self.panel.content_catalog_entries()
@@ -370,6 +409,50 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         event = self.panel.create_event({"name": "blocked", "actions": [{"type": "typed-knob-plan", "updates": {}}]})
         with self.assertRaises(PermissionError):
             self.panel.execute_event(event["id"])
+
+    def test_recurring_event_executes_safe_primitives_and_records_runs(self):
+        self.patch_flag("EVENT_EXECUTION_ENABLED", True)
+        announcement_calls = []
+        restart_calls = []
+        original_announcement = self.panel.schedule_announcement
+        original_restart = self.panel.schedule_restart
+        self.panel.schedule_announcement = lambda payload: announcement_calls.append(payload) or {"id": "announce-1"}
+        self.panel.schedule_restart = lambda payload: restart_calls.append(payload) or {"id": "restart-1"}
+        self.addCleanup(lambda: setattr(self.panel, "schedule_announcement", original_announcement))
+        self.addCleanup(lambda: setattr(self.panel, "schedule_restart", original_restart))
+        event = self.panel.create_event({
+            "name": "recurring operations",
+            "runAt": "2020-01-01T00:00:00Z",
+            "repeatSeconds": 60,
+            "maxRuns": 2,
+            "actions": [
+                {"type": "announcement", "message": "test notice"},
+                {"type": "restart", "target": "deep-desert"},
+                {"type": "typed-knob-plan", "updates": {}},
+            ],
+        })
+        self.assertEqual(self.panel.due_event_ids(now=1_700_000_000), [event["id"]])
+        first = self.panel.execute_event(event["id"], trigger="schedule")
+        self.assertTrue(first["ok"])
+        self.assertTrue(first["nextRunAt"])
+        self.assertEqual(announcement_calls[0]["message"], "test notice")
+        self.assertFalse(restart_calls[0]["execute"])
+        state = self.panel.read_event_state()
+        self.assertEqual(state["events"][0]["status"], "scheduled")
+        self.assertEqual(state["events"][0]["runCount"], 1)
+        self.assertEqual(state["runs"][0]["trigger"], "schedule")
+        second = self.panel.execute_event(event["id"], trigger="schedule")
+        self.assertTrue(second["ok"])
+        state = self.panel.read_event_state()
+        self.assertEqual(state["events"][0]["status"], "executed")
+        self.assertEqual(state["events"][0]["runCount"], 2)
+        self.assertEqual(len(state["runs"]), 2)
+
+    def test_event_recurrence_bounds_fail_closed(self):
+        with self.assertRaises(ValueError):
+            self.panel.event_dry_run({"repeatSeconds": 10, "actions": [{"type": "typed-knob-plan", "updates": {}}]})
+        with self.assertRaises(ValueError):
+            self.panel.event_dry_run({"runAt": "not-a-date", "actions": [{"type": "typed-knob-plan", "updates": {}}]})
 
     def test_player_tags_dry_run_and_gate(self):
         calls = []
@@ -1639,6 +1722,1255 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertEqual(result["items"][0]["templateId"], "WeldingTool_01")
         self.assertEqual(self.panel.catalog_item("WeldingTool_01")["name"], "Welding Tool")
         self.assertIsNone(self.panel.catalog_item("HouseWeldingTool"))
+
+    def test_docker_log_stream_decoder_handles_framed_and_plain_logs(self):
+        first = b"stdout line\n"
+        second = b"stderr line\n"
+        framed = b"\x01\x00\x00\x00" + len(first).to_bytes(4, "big") + first
+        framed += b"\x02\x00\x00\x00" + len(second).to_bytes(4, "big") + second
+
+        self.assertEqual(self.panel.decode_docker_log_stream(framed), "stdout line\nstderr line\n")
+        self.assertEqual(self.panel.decode_docker_log_stream(b"plain tty log\n"), "plain tty log\n")
+
+    def test_service_logs_only_accept_project_service_names(self):
+        original_containers = self.panel.docker_project_containers
+        original_http = self.panel.docker_http_get
+        self.panel.docker_project_containers = lambda: [{
+            "Id": "a" * 64,
+            "Names": ["/dune_server-director-1"],
+            "Labels": {"com.docker.compose.service": "director"},
+            "Created": 10,
+        }]
+        self.panel.docker_http_get = lambda path, **kwargs: ({}, b"director ready\n")
+        self.addCleanup(lambda: setattr(self.panel, "docker_project_containers", original_containers))
+        self.addCleanup(lambda: setattr(self.panel, "docker_http_get", original_http))
+
+        result = self.panel.docker_service_logs("director", 250)
+
+        self.assertEqual(result["tail"], 250)
+        self.assertEqual(result["logs"], "director ready\n")
+        with self.assertRaises(ValueError):
+            self.panel.docker_service_logs("../../postgres", 10)
+        with self.assertRaises(ValueError):
+            self.panel.docker_service_logs("not-in-project", 10)
+
+    def test_backup_inventory_and_verifier_reject_path_traversal(self):
+        backup_set = self.workspace / "backups" / "20260715T120000Z"
+        backup_set.mkdir(parents=True)
+        (backup_set / "manifest.txt").write_text("WORLD_NAME=test\n", encoding="utf-8")
+        (backup_set / "postgres.dump").write_bytes(b"test")
+        verifier = self.workspace / "scripts" / "verify-backup.sh"
+        verifier.write_text("#!/bin/sh\ntest -f \"$1/manifest.txt\"\n", encoding="utf-8")
+        verifier.chmod(0o755)
+
+        inventory = self.panel.backup_inventory()
+        verified = self.panel.verify_backup_set("20260715T120000Z")
+
+        self.assertEqual(inventory["sets"][0]["path"], "20260715T120000Z")
+        self.assertTrue(verified["ok"])
+        with self.assertRaises(ValueError):
+            self.panel.resolve_backup_set("../outside")
+        with self.assertRaises(ValueError):
+            self.panel.resolve_backup_set("/tmp/outside")
+
+    def test_database_browser_is_allowlisted_capped_and_redacted(self):
+        def fake_query(sql, params=None):
+            if "from information_schema.tables" in sql and "table_name=%s" in sql:
+                return [{"table_type": "BASE TABLE"}]
+            if sql.startswith('SELECT * FROM "dune"."accounts"'):
+                return [{"id": 1, "service_auth_token": "secret-token", "display_name": "Tester"}]
+            if "from information_schema.columns" in sql:
+                return [
+                    {"name": "id", "type": "bigint", "nullable": "NO"},
+                    {"name": "service_auth_token", "type": "text", "nullable": "YES"},
+                ]
+            if "from information_schema.tables" in sql:
+                return [{"schema": "dune", "name": "accounts", "type": "BASE TABLE"}]
+            raise AssertionError(sql)
+
+        self.patch_db(fake_query)
+
+        catalog = self.panel.database_browser_catalog()
+        preview = self.panel.database_table_preview("dune", "accounts", 999)
+
+        self.assertEqual(catalog["tables"][0]["name"], "accounts")
+        self.assertEqual(preview["limit"], 200)
+        self.assertEqual(preview["rows"][0]["service_auth_token"], "[redacted]")
+        self.assertEqual(preview["rows"][0]["display_name"], "Tester")
+        with self.assertRaises(ValueError):
+            self.panel.database_table_preview("pg_catalog", "pg_authid", 10)
+        with self.assertRaises(ValueError):
+            self.panel.database_table_preview("dune", "accounts; drop table dune.accounts", 10)
+
+    def test_infrastructure_page_and_routes_are_registered(self):
+        self.assertTrue(self.handler.is_app_route("/infrastructure"))
+        self.assertIn('data-tab="infrastructure"', self.panel.INDEX)
+        self.assertIn("/api/ops/services", self.panel.INDEX)
+        self.assertIn("/api/ops/backups/verify", self.panel.INDEX)
+        self.assertIn("/api/ops/database/table", self.panel.INDEX)
+
+    def test_world_views_are_read_only_bounded_and_registered(self):
+        executed = []
+
+        def fake_query(sql, params=None):
+            if "from dune.guilds g" in sql:
+                return [{"guild_id": 9, "guild_name": "Test Guild", "member_count": 1}]
+            if "get_guild_data" in sql:
+                return [{"guild_id": 9, "guild_name": "Test Guild"}]
+            if "get_guild_members" in sql:
+                return [{"guild_id": 9, "player_id": 200, "role_id": 1}]
+            if "get_guild_invites" in sql:
+                return []
+            if "landsraad_load_current_term" in sql:
+                return [{"term_id": 4, "end_time": "2026-07-20"}]
+            if "landsraad_decree_term" in sql:
+                return [{"term_id": 4}]
+            if "landsraad_decrees" in sql:
+                return [{"id": 1, "decree_name": "Test Decree"}]
+            if "landsraad_tasks" in sql and "landsraad_task_" not in sql:
+                return [{"id": 10, "term_id": 4, "board_index": 0}]
+            if "landsraad_task_rewards" in sql:
+                return [{"task_id": 10, "threshold": 100}]
+            if "landsraad_task_faction_contributions" in sql:
+                return [{"task_id": 10, "amount": 25}]
+            if "landsraad_task_player_contributions" in sql:
+                return [{"task_id": 10, "amount": 10}]
+            if "landsraad_task_guild_contributions" in sql:
+                return [{"task_id": 10, "amount": 15}]
+            if "from dune.placeables p" in sql:
+                return [{"id": 55, "class": "StorageContainer_Placeable", "item_count": 3, "owner_name": "Tester"}]
+            raise AssertionError(sql)
+
+        self.patch_db(fake_query, lambda sql, params=None: executed.append((sql, params)))
+
+        guilds = self.panel.world_guilds("Test")
+        members = self.panel.world_guild_members(9)
+        landsraad = self.panel.world_landsraad()
+        storage = self.panel.world_storage()
+
+        self.assertTrue(guilds["readOnly"])
+        self.assertEqual(guilds["maxRows"], 500)
+        self.assertEqual(members["members"][0]["player_id"], 200)
+        self.assertEqual(landsraad["tasks"][0]["term_id"], 4)
+        self.assertEqual(storage["maxRows"], 2000)
+        self.assertEqual(storage["rows"][0]["item_count"], 3)
+        self.assertEqual(executed, [])
+        self.assertTrue(self.handler.is_app_route("/world"))
+        self.assertIn('data-tab="world"', self.panel.INDEX)
+        self.assertIn("/api/world/guilds", self.panel.INDEX)
+        self.assertIn("/api/world/landsraad", self.panel.INDEX)
+        self.assertIn("/api/world/storage", self.panel.INDEX)
+
+    def test_world_routes_require_valid_guild_ids_and_return_reads(self):
+        self.patch_db(lambda sql, params=None: [] if "get_guild" in sql else [{"guild_id": 9}] if "from dune.guilds g" in sql else [])
+        handler, captured = self.make_route_handler("/api/world/guilds?q=Test")
+        handler.do_GET()
+        self.assertEqual(captured["errors"], [])
+        self.assertTrue(captured["json"]["readOnly"])
+
+        handler, captured = self.make_route_handler("/api/world/guild-members?guild_id=bad")
+        handler.do_GET()
+        self.assertEqual(len(captured["errors"]), 1)
+        self.assertIn("positive integer", captured["errors"][0]["message"])
+
+    def test_blueprint_archive_validation_normalizes_ids_and_rejects_bad_rows(self):
+        archive = self.panel.blueprint_admin.validate_archive({
+            "name": "Test_Base.v1",
+            "instances": [{"instance_id": 0, "building_type": "MTX_Smug_Foundation", "x": 1, "y": 2, "z": 3, "rotation": 90}],
+            "placeables": [{"placeable_id": 0, "building_type": "Generator_Placeable", "x": 4, "y": 5, "z": 6}],
+            "pentashields": [{"placeable_id": 0, "scale": [10, 2, 10]}],
+        })
+
+        self.assertEqual(archive["name"], "Test Base v1")
+        self.assertEqual(archive["instances"][0]["instance_id"], 1)
+        self.assertTrue(archive["instances"][0]["provides_stability"])
+        self.assertEqual(archive["placeables"][0]["placeable_id"], 1)
+        self.assertEqual(archive["pentashields"][0]["placeable_id"], 1)
+
+        with self.assertRaises(ValueError):
+            self.panel.blueprint_admin.validate_archive({"instances": []})
+        with self.assertRaises(ValueError):
+            self.panel.blueprint_admin.validate_archive({"instances": [{"building_type": "bad type with spaces"}]})
+        with self.assertRaises(ValueError):
+            self.panel.blueprint_admin.validate_archive({"placeables": [
+                {"placeable_id": 2, "building_type": "A"},
+                {"placeable_id": 2, "building_type": "B"},
+            ]})
+
+    def test_blueprint_import_plan_checks_player_inventory_without_writing(self):
+        executed = []
+
+        def fake_query(sql, params=None):
+            if "from dune.player_state" in sql:
+                return [{"player_pawn_id": 200, "character_name": "Tester", "online_status": "Offline"}]
+            if "from dune.inventories" in sql:
+                return [{"id": 300, "max_item_count": 40, "used_slots": 2}]
+            raise AssertionError(sql)
+
+        plan = self.panel.blueprint_admin.plan_import(fake_query, 200, {
+            "name": "Base",
+            "instances": [{"building_type": "MTX_Smug_Foundation", "x": 0, "y": 0, "z": 0, "rotation": 0}],
+        })
+
+        self.assertTrue(plan["dryRun"])
+        self.assertEqual(plan["inventory"]["available_slots"], 38)
+        self.assertEqual(plan["counts"]["instances"], 1)
+        self.assertEqual(executed, [])
+
+    def test_blueprint_routes_are_registered_and_execution_is_backed_up(self):
+        originals = {
+            "capabilities": self.panel.blueprint_admin.capabilities,
+            "list_blueprints": self.panel.blueprint_admin.list_blueprints,
+            "plan_import": self.panel.blueprint_admin.plan_import,
+            "import_blueprint": self.panel.blueprint_admin.import_blueprint,
+            "create_db_backup": self.panel.create_db_backup,
+        }
+        self.panel.blueprint_admin.capabilities = lambda query_fn: {"supported": True, "tables": {}}
+        self.panel.blueprint_admin.list_blueprints = lambda query_fn: [{"id": 1, "name": "Base"}]
+        self.panel.blueprint_admin.plan_import = lambda query_fn, player_id, payload, filename="": {
+            "ok": True, "dryRun": True, "playerPawnId": int(player_id), "archive": {"name": "Base", "instances": [{"building_type": "Foundation"}], "placeables": [], "pentashields": []}
+        }
+        imports = []
+        backups = []
+        self.panel.blueprint_admin.import_blueprint = lambda connect_fn, player_id, archive, fallback="": imports.append((player_id, archive)) or {"ok": True, "blueprintId": 4, "playerPawnId": player_id, "verified": True}
+        self.panel.create_db_backup = lambda: backups.append(True) or {"path": "backup.dump", "bytes": 1}
+        for name, value in originals.items():
+            target = self.panel if name == "create_db_backup" else self.panel.blueprint_admin
+            self.addCleanup(lambda target=target, name=name, value=value: setattr(target, name, value))
+
+        handler, captured = self.make_route_handler("/api/admin/blueprints")
+        handler.do_GET()
+        self.assertEqual(captured["errors"], [])
+        self.assertEqual(captured["json"]["rows"][0]["name"], "Base")
+        self.assertTrue(self.handler.is_app_route("/blueprints"))
+        self.assertIn('data-tab="blueprints"', self.panel.INDEX)
+
+        preview = self.invoke_post_route("/api/admin/blueprints", {
+            "action": "import", "dry_run": True, "player_pawn_id": 200,
+            "blueprint": {"instances": [{"building_type": "Foundation"}]},
+        })
+        self.assertEqual(preview["errors"], [])
+        self.assertEqual(preview["json"]["confirm"], "IMPORT BLUEPRINT")
+        self.assertEqual(backups, [])
+
+        self.patch_flag("BLUEPRINT_MUTATIONS_ENABLED", True)
+        handler = self.make_route_handler("/api/admin/blueprints")[0]
+        handler.require_mutations = lambda: None
+        handler.require_item_grants = lambda: None
+        original_validate = self.panel.validate_json_post
+        original_parse = self.panel.parse_body
+        self.panel.validate_json_post = lambda request_handler, max_bytes=self.panel.MAX_BODY_BYTES: None
+        self.panel.parse_body = lambda request_handler, max_bytes=self.panel.MAX_BODY_BYTES: {
+            "action": "import", "dry_run": False, "player_pawn_id": 200,
+            "blueprint": {"instances": [{"building_type": "Foundation"}]},
+            "confirm": "IMPORT BLUEPRINT",
+        }
+        self.addCleanup(lambda: setattr(self.panel, "validate_json_post", original_validate))
+        self.addCleanup(lambda: setattr(self.panel, "parse_body", original_parse))
+        handler.do_POST()
+        self.assertEqual(backups, [True])
+        self.assertEqual(imports[0][0], 200)
+
+    def test_structured_augment_catalog_enforces_item_limits_and_builds_stats(self):
+        item = {
+            "templateId": "Combat_Heavy_Unique_Reinforced_Boots_06",
+            "name": "Bulwark Boots",
+            "category": "armor/combat",
+        }
+        compatibility = self.panel.augment_admin.compatible_augments(item)
+        self.assertTrue(compatibility["supported"])
+        self.assertEqual(compatibility["kind"], "clothing")
+        self.assertEqual(compatibility["limit"], 2)
+        self.assertEqual(self.panel.augment_admin.slot_keystone_ids(compatibility), [42, 43])
+        augment_id = compatibility["augments"][0]["templateId"]
+        queries = []
+
+        def fake_query(sql, params=None):
+            queries.append((sql, params))
+            return []
+
+        built = self.panel.augment_admin.build_stats(fake_query, item, [augment_id], 5, {})
+        payload = built["stats"]["FAugmentedItemStats"][1]
+        self.assertEqual(payload["AppliedAugments"], [{"Name": augment_id}])
+        self.assertEqual(payload["AppliedAugmentQualities"], [5])
+        self.assertTrue(all(value == 1 for value in payload["AppliedAugmentRollData"][0]["StatRolls"]))
+        self.assertEqual(len(queries), 2)
+
+        with self.assertRaises(ValueError):
+            self.panel.augment_admin.validate_selection(item, [row["templateId"] for row in compatibility["augments"][:3]], 1)
+        with self.assertRaises(ValueError):
+            self.panel.augment_admin.validate_selection(item, ["T6_Augment_Acuracy1"], 1)
+
+    def test_augment_routes_preview_and_back_up_execution(self):
+        item = {
+            "id": 41,
+            "template_id": "Combat_Heavy_Unique_Reinforced_Boots_06",
+            "stats": {},
+            "account_id": 10,
+            "character_name": "Tester",
+            "player_controller_id": 11,
+            "online_status": "Offline",
+        }
+        self.patch_db(lambda sql, params=None: [item] if "from dune.items i join dune.inventories" in sql else [])
+        originals = {
+            "catalog_item": self.panel.catalog_item,
+            "build_stats": self.panel.augment_admin.build_stats,
+            "apply_to_item": self.panel.augment_admin.apply_to_item,
+            "create_db_backup": self.panel.create_db_backup,
+        }
+        self.panel.catalog_item = lambda template: {"templateId": template, "name": "Bulwark Boots", "category": "armor/combat"}
+        compatibility = {"kind": "clothing", "limit": 2, "itemTags": ["Items.Clothes.HeavyArmor"], "augments": [], "supported": True}
+        self.panel.augment_admin.build_stats = lambda query_fn, metadata, augments, grade, stats=None: {
+            "stats": {"FAugmentedItemStats": [[], {}]}, "augments": list(augments), "grade": int(grade), "compatibility": compatibility,
+        }
+        applied = []
+        self.panel.augment_admin.apply_to_item = lambda connect_fn, item_id, augments, grade, metadata: applied.append((item_id, augments, grade)) or {"ok": True, "itemId": item_id, "augments": augments, "grade": int(grade), "verified": True}
+        backups = []
+        self.panel.create_db_backup = lambda: backups.append(True) or {"path": "backup.dump", "bytes": 1}
+        for name, value in originals.items():
+            target = self.panel.augment_admin if name in ("build_stats", "apply_to_item") else self.panel
+            self.addCleanup(lambda target=target, name=name, value=value: setattr(target, name, value))
+
+        preview = self.invoke_post_route("/api/admin/augments", {
+            "action": "apply", "item_id": 41, "augments": ["T6_Augment_Armor1"], "grade": 5, "dry_run": True,
+        })
+        self.assertEqual(preview["errors"], [])
+        self.assertTrue(preview["json"]["eligible"])
+        self.assertEqual(preview["json"]["confirm"], "APPLY AUGMENTS")
+        self.assertEqual(backups, [])
+
+        self.patch_flag("AUGMENT_MUTATIONS_ENABLED", True)
+        handler, captured = self.make_route_handler("/api/admin/augments")
+        handler.require_mutations = lambda: None
+        handler.require_item_grants = lambda: None
+        original_validate = self.panel.validate_json_post
+        original_parse = self.panel.parse_body
+        self.panel.validate_json_post = lambda request_handler, **kwargs: None
+        self.panel.parse_body = lambda request_handler, **kwargs: {
+            "action": "apply", "item_id": 41, "augments": ["T6_Augment_Armor1"], "grade": 5,
+            "dry_run": False, "confirm": "APPLY AUGMENTS",
+        }
+        self.addCleanup(lambda: setattr(self.panel, "validate_json_post", original_validate))
+        self.addCleanup(lambda: setattr(self.panel, "parse_body", original_parse))
+        handler.do_POST()
+        self.assertEqual(captured["errors"], [])
+        self.assertEqual(backups, [True])
+        self.assertEqual(applied[0][0], 41)
+        self.assertEqual(captured["json"]["backup"]["path"], "backup.dump")
+
+    def test_database_sql_console_classifies_bounds_and_gates_writes(self):
+        self.assertTrue(self.panel.database_sql_is_read_only("-- note\nWITH rows AS (SELECT 1) SELECT * FROM rows"))
+        self.assertFalse(self.panel.database_sql_is_read_only("update dune.items set stack_size=1"))
+        with self.assertRaises(ValueError):
+            self.panel.normalize_database_sql("select 1; select 2")
+
+        original_runner = self.panel.run_database_sql
+        original_backup = self.panel.create_db_backup
+        calls = []
+        backups = []
+        self.panel.run_database_sql = lambda connect_fn, sql, allow_write=False, max_rows=200: calls.append((sql, allow_write, int(max_rows))) or {"ok": True, "readOnly": not allow_write, "rows": [], "rowCount": 0, "affectedRows": 1 if allow_write else None}
+        self.panel.create_db_backup = lambda: backups.append(True) or {"path": "backup.dump", "bytes": 1}
+        self.addCleanup(lambda: setattr(self.panel, "run_database_sql", original_runner))
+        self.addCleanup(lambda: setattr(self.panel, "create_db_backup", original_backup))
+        self.patch_flag("DATABASE_QUERY_ENABLED", True)
+
+        read = self.invoke_post_route("/api/ops/database/query", {"sql": "select 1", "max_rows": 50})
+        self.assertEqual(read["errors"], [])
+        self.assertTrue(read["json"]["readOnly"])
+        self.assertEqual(backups, [])
+
+        self.patch_flag("DATABASE_WRITE_ENABLED", True)
+        handler, captured = self.make_route_handler("/api/ops/database/query")
+        handler.require_mutations = lambda: None
+        original_validate = self.panel.validate_json_post
+        original_parse = self.panel.parse_body
+        self.panel.validate_json_post = lambda request_handler, **kwargs: None
+        self.panel.parse_body = lambda request_handler, **kwargs: {"sql": "update dune.items set stack_size=1 where false", "confirm": "EXECUTE DATABASE WRITE"}
+        self.addCleanup(lambda: setattr(self.panel, "validate_json_post", original_validate))
+        self.addCleanup(lambda: setattr(self.panel, "parse_body", original_parse))
+        handler.do_POST()
+        self.assertEqual(captured["errors"], [])
+        self.assertEqual(backups, [True])
+        self.assertTrue(calls[-1][1])
+
+    def test_backup_import_rejects_traversal_and_verifies_valid_archive(self):
+        original_verify = self.panel.verify_backup_set
+        self.panel.verify_backup_set = lambda path: {"ok": True, "path": path}
+        self.addCleanup(lambda: setattr(self.panel, "verify_backup_set", original_verify))
+
+        valid_buffer = io.BytesIO()
+        with tarfile.open(fileobj=valid_buffer, mode="w:gz") as archive:
+            payload = b"postgres custom dump fixture"
+            info = tarfile.TarInfo("export/postgres-dune_sb_1_4_0_0.dump")
+            info.size = len(payload)
+            archive.addfile(info, io.BytesIO(payload))
+            manifest = b"created_utc=test\n"
+            info = tarfile.TarInfo("export/manifest.txt")
+            info.size = len(manifest)
+            archive.addfile(info, io.BytesIO(manifest))
+        encoded = base64.b64encode(valid_buffer.getvalue()).decode()
+        result = self.panel.import_backup_archive("fixture.tar.gz", encoded, "")
+        self.assertTrue(result["ok"])
+        self.assertTrue((self.panel.BACKUPS_ROOT / result["path"] / "manifest.txt").exists())
+
+        bad_buffer = io.BytesIO()
+        with tarfile.open(fileobj=bad_buffer, mode="w:gz") as archive:
+            payload = b"bad"
+            info = tarfile.TarInfo("../escape.dump")
+            info.size = len(payload)
+            archive.addfile(info, io.BytesIO(payload))
+        with self.assertRaises(ValueError):
+            self.panel.import_backup_archive("bad.tar.gz", base64.b64encode(bad_buffer.getvalue()).decode(), "")
+
+    def test_native_restore_dry_run_resolves_current_backup_layout(self):
+        backup_set = self.panel.BACKUPS_ROOT / "maintenance" / "fixture"
+        backup_set.mkdir(parents=True)
+        (backup_set / "postgres-dune_sb_1_4_0_0.dump").write_bytes(b"fixture")
+        for name in ("server-saved.tgz", "rabbitmq.tgz", "config-and-env.tgz"):
+            with tarfile.open(backup_set / name, "w:gz"):
+                pass
+        original_verify = self.panel.verify_backup_set
+        self.panel.verify_backup_set = lambda path: {"ok": True, "path": path}
+        self.addCleanup(lambda: setattr(self.panel, "verify_backup_set", original_verify))
+
+        result = self.panel.restore_backup_set(
+            "maintenance/fixture",
+            {"serverSaved": True, "rabbitmq": True, "config": True, "tls": True},
+            dry_run=True,
+        )
+
+        self.assertTrue(result["dryRun"])
+        self.assertEqual(result["plan"]["postgres"], "postgres-dune_sb_1_4_0_0.dump")
+        self.assertTrue(result["layers"]["serverSaved"])
+        self.assertEqual(result["confirm"], "RESTORE BACKUP")
+
+    def test_native_restore_stops_writers_backs_up_restores_and_restarts(self):
+        backup_set = self.panel.BACKUPS_ROOT / "fixture"
+        backup_set.mkdir(parents=True)
+        (backup_set / "postgres-dune_sb_1_4_0_0.dump").write_bytes(b"fixture")
+        originals = {
+            "verify_backup_set": self.panel.verify_backup_set,
+            "stop_restore_writers": self.panel.stop_restore_writers,
+            "create_full_backup": self.panel.create_full_backup,
+            "restore_postgres_dump": self.panel.restore_postgres_dump,
+            "restore_selected_file_layers": self.panel.restore_selected_file_layers,
+            "start_restore_writers": self.panel.start_restore_writers,
+        }
+        calls = []
+        self.panel.verify_backup_set = lambda path: {"ok": True, "path": path}
+        self.panel.stop_restore_writers = lambda: calls.append("stop") or [{"service": "survival", "containerId": "a" * 64}]
+        self.panel.create_full_backup = lambda: calls.append("backup") or {"ok": True, "path": "maintenance/pre-restore"}
+        self.panel.restore_postgres_dump = lambda path: calls.append("postgres") or {"ok": True}
+        self.panel.restore_selected_file_layers = lambda artifacts, requested, staging: calls.append("layers") or {}
+        self.panel.start_restore_writers = lambda stopped: calls.append("restart") or [{"ok": True, "service": "survival"}]
+        for name, value in originals.items():
+            self.addCleanup(lambda name=name, value=value: setattr(self.panel, name, value))
+        self.patch_db(lambda sql, params=None: [{"count": 0}])
+
+        result = self.panel.restore_backup_set("fixture", {}, dry_run=False)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(calls, ["stop", "backup", "postgres", "layers", "restart"])
+        self.assertFalse(result["worldStartRequired"])
+
+    def test_restore_post_hooks_only_reconcile_maps_that_were_running(self):
+        original_action = self.panel.docker_container_action
+        original_run = self.panel.subprocess.run
+        starts = []
+        commands = []
+        self.panel.docker_container_action = lambda container_id, action, timeout=120: starts.append((container_id, action))
+        self.panel.subprocess.run = lambda argv, **kwargs: commands.append((argv, kwargs["env"])) or types.SimpleNamespace(returncode=0, stdout="ok", stderr="")
+        self.addCleanup(lambda: setattr(self.panel, "docker_container_action", original_action))
+        self.addCleanup(lambda: setattr(self.panel.subprocess, "run", original_run))
+
+        result = self.panel.start_restore_writers([
+            {"service": "survival", "containerId": "a" * 64},
+            {"service": "prometheus", "containerId": "b" * 64},
+        ])
+
+        self.assertEqual(len(starts), 2)
+        self.assertEqual(commands[0][1]["DUNE_RESTART_SERVICES"], "survival")
+        self.assertNotIn("deep-desert", commands[0][1]["DUNE_RESTART_SERVICES"])
+        self.assertTrue(all(row["ok"] for row in result))
+
+    def test_memory_balancer_transfers_one_gib_and_restores_baselines(self):
+        gib = 1024 ** 3
+        rows = [
+            {"service": "survival", "containerId": "a" * 64, "memoryUsageBytes": int(9.5 * gib), "memoryLimitBytes": 10 * gib, "memoryPercent": 95.0},
+            {"service": "deep-desert", "containerId": "b" * 64, "memoryUsageBytes": 2 * gib, "memoryLimitBytes": 10 * gib, "memoryPercent": 20.0},
+        ]
+        original_rows = self.panel.map_memory_rows
+        original_update = self.panel.update_container_memory
+        self.panel.map_memory_rows = lambda: [dict(row) for row in rows]
+        updates = []
+        self.panel.update_container_memory = lambda container_id, limit: updates.append((container_id, limit)) or {"ok": True, "limitBytes": limit}
+        self.addCleanup(lambda: setattr(self.panel, "map_memory_rows", original_rows))
+        self.addCleanup(lambda: setattr(self.panel, "update_container_memory", original_update))
+
+        enabled = self.panel.set_memory_balancer_enabled(True)
+        ticked = self.panel.memory_balancer_tick()
+        disabled = self.panel.set_memory_balancer_enabled(False)
+
+        self.assertTrue(enabled["enabled"])
+        self.assertEqual(updates[:2], [("a" * 64, 11 * gib), ("b" * 64, 9 * gib)])
+        self.assertIn("deep-desert -> survival", ticked["lastAction"])
+        self.assertFalse(disabled["enabled"])
+        self.assertIn(("a" * 64, 10 * gib), updates[2:])
+        self.assertIn(("b" * 64, 10 * gib), updates[2:])
+
+    def test_autoscaler_stops_idle_dynamic_map_and_restarts_on_demand(self):
+        original_inventory = self.panel.docker_service_inventory
+        original_counts = self.panel.autoscaler_player_counts
+        original_control = self.panel.autoscaler_service_action
+        original_travel_demand = self.panel.autoscaler_collect_travel_demand
+        running = {"value": True}
+        self.panel.docker_service_inventory = lambda: [{
+            "service": "deep-desert", "state": "running" if running["value"] else "exited",
+            "containerId": "a" * 12,
+        }]
+        self.panel.autoscaler_player_counts = lambda: {"deep-desert": 0}
+        self.panel.autoscaler_collect_travel_demand = lambda state, now=None: []
+        actions = []
+        def control(service, action):
+            actions.append((service, action))
+            running["value"] = action == "start"
+            return {"ok": True, "service": service, "action": action}
+        self.panel.autoscaler_service_action = control
+        self.addCleanup(lambda: setattr(self.panel, "docker_service_inventory", original_inventory))
+        self.addCleanup(lambda: setattr(self.panel, "autoscaler_player_counts", original_counts))
+        self.addCleanup(lambda: setattr(self.panel, "autoscaler_service_action", original_control))
+        self.addCleanup(lambda: setattr(self.panel, "autoscaler_collect_travel_demand", original_travel_demand))
+        state = self.panel.read_autoscaler_state()
+        state.update({
+            "enabled": True,
+            "profile": "custom",
+            "idleSeconds": 60,
+            "retentionSeconds": 60,
+            "retentionByService": {},
+            "maxWarmDynamicMaps": 0,
+            "modes": {"deep-desert": "dynamic"},
+            "idleSince": {"deep-desert": 1},
+            "demand": {},
+        })
+        self.panel.write_autoscaler_state(state)
+
+        stopped = self.panel.autoscaler_tick()
+        started = self.panel.autoscaler_control("demand", "deep-desert")
+
+        self.assertEqual(actions, [("deep-desert", "stop"), ("deep-desert", "start")])
+        self.assertFalse(stopped["lastError"])
+        self.assertFalse(started["lastError"])
+        self.assertIn("deep-desert", self.panel.read_autoscaler_state()["demand"])
+
+    def test_autoscaler_start_uses_guarded_fast_start(self):
+        original_control = self.panel.control_docker_service
+        original_fast_start = self.panel.AUTOSCALER_FAST_START
+        calls = []
+        self.panel.AUTOSCALER_FAST_START = True
+        self.panel.control_docker_service = lambda service, action, fast_dynamic_start=False: calls.append(
+            (service, action, fast_dynamic_start)
+        ) or {"ok": True}
+        self.addCleanup(lambda: setattr(self.panel, "control_docker_service", original_control))
+        self.addCleanup(lambda: setattr(self.panel, "AUTOSCALER_FAST_START", original_fast_start))
+
+        result = self.panel.autoscaler_service_action("arrakeen", "start")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(calls, [("arrakeen", "start", True)])
+
+    def test_autoscaler_mode_change_clears_stale_demand(self):
+        state = self.panel.read_autoscaler_state()
+        state.update({"enabled": False, "demand": {"arrakeen": time.time()}})
+        self.panel.write_autoscaler_state(state)
+
+        self.panel.autoscaler_control("set-mode", "arrakeen", "dynamic")
+
+        self.assertNotIn("arrakeen", self.panel.read_autoscaler_state()["demand"])
+
+    def test_autoscaler_profiles_cover_minimum_balanced_and_full_warm(self):
+        minimum = self.panel.autoscaler_apply_profile({}, "minimum-footprint")
+        balanced = self.panel.autoscaler_apply_profile({}, "balanced")
+        full = self.panel.autoscaler_apply_profile({}, "full-warm")
+
+        self.assertEqual(minimum["modes"]["survival"], "always-on")
+        self.assertEqual(minimum["modes"]["arrakeen"], "dynamic")
+        self.assertEqual(balanced["maxWarmDynamicMaps"], self.panel.AUTOSCALER_BALANCED_MAX_WARM_MAPS)
+        self.assertEqual(balanced["retentionByService"]["arrakeen"], 2700)
+        self.assertTrue(all(mode == "always-on" for mode in full["modes"].values()))
+
+    def test_autoscaler_balanced_budget_evicts_oldest_optional_warm_map(self):
+        original_inventory = self.panel.docker_service_inventory
+        original_counts = self.panel.autoscaler_player_counts
+        original_demand = self.panel.autoscaler_collect_travel_demand
+        original_action = self.panel.autoscaler_service_action
+        services = ["arrakeen", "harko-village", "testing-hephaestus"]
+        self.panel.docker_service_inventory = lambda: [{"service": service, "state": "running"} for service in services]
+        self.panel.autoscaler_player_counts = lambda: {}
+        self.panel.autoscaler_collect_travel_demand = lambda state, now=None: []
+        actions = []
+        self.panel.autoscaler_service_action = lambda service, action: actions.append((service, action)) or {"ok": True}
+        self.addCleanup(lambda: setattr(self.panel, "docker_service_inventory", original_inventory))
+        self.addCleanup(lambda: setattr(self.panel, "autoscaler_player_counts", original_counts))
+        self.addCleanup(lambda: setattr(self.panel, "autoscaler_collect_travel_demand", original_demand))
+        self.addCleanup(lambda: setattr(self.panel, "autoscaler_service_action", original_action))
+        now = time.time()
+        state = self.panel.read_autoscaler_state()
+        state.update({
+            "enabled": True, "profile": "balanced", "retentionSeconds": 3600,
+            "maxWarmDynamicMaps": 2, "minAvailableMemoryBytes": 0,
+            "modes": {service: "dynamic" for service in services},
+            "idleSince": {service: now - 10 for service in services},
+            "lastActivity": {"arrakeen": now - 300, "harko-village": now - 200, "testing-hephaestus": now - 100},
+            "demand": {},
+        })
+        self.panel.write_autoscaler_state(state)
+
+        result = self.panel.autoscaler_tick()
+
+        self.assertFalse(result["lastError"])
+        self.assertEqual(actions, [("arrakeen", "stop")])
+        self.assertEqual(self.panel.read_autoscaler_state()["lastEvictionReason"]["arrakeen"], "warm-budget-lru")
+
+    def test_autoscaler_memory_floor_evicts_only_until_available_recovers(self):
+        originals = {
+            "docker_service_inventory": self.panel.docker_service_inventory,
+            "autoscaler_player_counts": self.panel.autoscaler_player_counts,
+            "autoscaler_collect_travel_demand": self.panel.autoscaler_collect_travel_demand,
+            "autoscaler_service_action": self.panel.autoscaler_service_action,
+            "autoscaler_host_memory": self.panel.autoscaler_host_memory,
+        }
+        services = ["arrakeen", "harko-village"]
+        self.panel.docker_service_inventory = lambda: [{"service": service, "state": "running"} for service in services]
+        self.panel.autoscaler_player_counts = lambda: {}
+        self.panel.autoscaler_collect_travel_demand = lambda state, now=None: []
+        actions = []
+        self.panel.autoscaler_service_action = lambda service, action: actions.append((service, action)) or {"ok": True}
+        available = [8 * 1024 ** 3, 20 * 1024 ** 3]
+        self.panel.autoscaler_host_memory = lambda: {
+            "totalBytes": 64 * 1024 ** 3,
+            "availableBytes": available.pop(0) if len(available) > 1 else available[0],
+            "swapTotalBytes": 0, "swapFreeBytes": 0,
+        }
+        for name, value in originals.items():
+            self.addCleanup(lambda name=name, value=value: setattr(self.panel, name, value))
+        now = time.time()
+        state = self.panel.read_autoscaler_state()
+        state.update({
+            "enabled": True, "retentionSeconds": 3600,
+            "maxWarmDynamicMaps": 0, "minAvailableMemoryBytes": 16 * 1024 ** 3,
+            "modes": {service: "dynamic" for service in services},
+            "idleSince": {service: now - 10 for service in services},
+            "lastActivity": {"arrakeen": now - 300, "harko-village": now - 100},
+            "demand": {},
+        })
+        self.panel.write_autoscaler_state(state)
+
+        self.panel.autoscaler_tick()
+
+        self.assertEqual(actions, [("arrakeen", "stop")])
+        self.assertEqual(self.panel.read_autoscaler_state()["lastEvictionReason"]["arrakeen"], "memory-pressure-lru")
+
+    def test_discord_adapter_role_mapping_and_sanitization(self):
+        old = {name: os.environ.get(name) for name in (
+            "DISCORD_OBSERVER_ROLE_IDS", "DISCORD_MODERATOR_ROLE_IDS",
+            "DISCORD_ADMIN_ROLE_IDS", "DISCORD_OWNER_ROLE_IDS",
+        )}
+        os.environ["DISCORD_OBSERVER_ROLE_IDS"] = "observer"
+        os.environ["DISCORD_MODERATOR_ROLE_IDS"] = "moderator"
+        self.addCleanup(lambda: [os.environ.pop(name, None) if value is None else os.environ.__setitem__(name, value) for name, value in old.items()])
+        actor = {"guildId": "1", "channelId": "2", "userId": "3", "username": "tester", "roleIds": ["moderator"]}
+
+        self.assertEqual(self.panel.discord_require_tier(actor, "observer"), "moderator")
+        self.assertEqual(self.panel.discord_require_tier(actor, "moderator"), "moderator")
+        with self.assertRaises(PermissionError):
+            self.panel.discord_require_tier(dict(actor, roleIds=[]), "observer")
+        sanitized = self.panel.discord_sanitize({"database": "dune", "apiToken": "secret", "nested": {"password": "secret"}})
+        self.assertEqual(sanitized["apiToken"], "[redacted]")
+        self.assertEqual(sanitized["nested"]["password"], "[redacted]")
+
+    def test_discord_ops_domains_are_allowlisted_and_bounded(self):
+        original_query = self.panel.query
+        self.panel.query = lambda sql, params=None: [{"active_last_1h": 2, "active_last_24h": 5, "active_last_7d": 8}]
+        self.addCleanup(lambda: setattr(self.panel, "query", original_query))
+        self.assertEqual(self.panel.discord_ops_result("activity")["active_last_1h"], 2)
+        dashboard = self.panel.discord_ops_result("dashboard")
+        self.assertTrue(dashboard["private"])
+        self.assertNotIn("url", dashboard)
+        prometheus = self.panel.discord_ops_result("prometheus")
+        self.assertTrue(prometheus["private"])
+        with self.assertRaises(ValueError):
+            self.panel.discord_ops_result("shell")
+
+    def test_addon_manifest_permissions_and_paths_are_bounded(self):
+        manifest = self.panel.addon_admin.normalize_manifest({
+            "schemaVersion": 1, "id": "ops-addon", "name": "Ops", "version": "1.0.0",
+            "type": "ui", "entry": {"path": "web/index.html"},
+            "permissions": {"ops": ["read"]},
+        })
+        self.assertEqual(manifest["permissions"], ["ops:read"])
+        self.assertEqual(manifest["entry"]["path"], "web/index.html")
+        with self.assertRaises(ValueError):
+            self.panel.addon_admin.normalize_manifest({
+                "id": "bad-addon", "name": "Bad", "version": "1", "type": "ui",
+                "entry": {"path": "../escape.html"}, "permissions": [],
+            })
+        with self.assertRaises(ValueError):
+            self.panel.addon_admin.normalize_manifest({
+                "id": "bad-addon", "name": "Bad", "version": "1", "type": "ui",
+                "entry": {"path": "index.html"}, "permissions": ["shell:execute"],
+            })
+
+    def test_service_control_route_is_separately_gated_and_audited(self):
+        original_control = self.panel.control_docker_service
+        calls = []
+        self.panel.control_docker_service = lambda service, action: calls.append((service, action)) or {"ok": True, "service": service, "action": action, "exitCode": 0, "postState": {"state": "running"}}
+        self.addCleanup(lambda: setattr(self.panel, "control_docker_service", original_control))
+        self.patch_flag("SERVICE_CONTROL_ENABLED", True)
+        handler, captured = self.make_route_handler("/api/ops/services/control")
+        handler.require_mutations = lambda: None
+        original_validate = self.panel.validate_json_post
+        original_parse = self.panel.parse_body
+        self.panel.validate_json_post = lambda request_handler, **kwargs: None
+        self.panel.parse_body = lambda request_handler, **kwargs: {"service": "survival", "action": "restart", "confirm": "CONTROL SERVICE"}
+        self.addCleanup(lambda: setattr(self.panel, "validate_json_post", original_validate))
+        self.addCleanup(lambda: setattr(self.panel, "parse_body", original_parse))
+        handler.do_POST()
+        self.assertEqual(captured["errors"], [])
+        self.assertEqual(calls, [("survival", "restart")])
+        self.assertEqual(captured["audits"][0]["action"], "service-control")
+
+    def test_care_package_preview_targets_selected_player(self):
+        self.panel.CARE_PACKAGES_FILE.write_text(json.dumps({
+            "schemaVersion": 1,
+            "packages": [{
+                "id": "starter",
+                "label": "Starter",
+                "enabled": True,
+                "oncePerAccount": True,
+                "items": [{"template_id": "BasicBuildingTool", "stack_size": 1}],
+                "currency": [{"currency_id": 1, "amount": 500}],
+                "xp": [{"track_type": "Combat", "amount": 100}],
+            }],
+        }), encoding="utf-8")
+        self.patch_db(lambda sql, params=None: [{
+            "account_id": 10,
+            "character_name": "Tester",
+            "online_status": "Offline",
+            "player_controller_id": 200,
+            "player_pawn_id": 201,
+        }] if "from dune.player_state" in sql else [])
+        bundles = []
+        self.handler.economy_bundle = lambda body: bundles.append(body) or {"ok": True, "dryRun": True, "plan": []}
+
+        result = self.handler.care_package_grant({"package_id": "starter", "account_id": 10, "dry_run": True})
+
+        self.assertTrue(result["eligible"])
+        self.assertEqual(bundles[0]["items"][0]["account_id"], 10)
+        self.assertEqual(bundles[0]["currency"][0]["player_controller_id"], 200)
+        self.assertEqual(bundles[0]["xp"][0]["player_id"], 200)
+
+    def test_care_package_execution_is_gated_backed_up_and_recorded(self):
+        self.panel.CARE_PACKAGES_FILE.write_text(json.dumps({
+            "schemaVersion": 1,
+            "packages": [{
+                "id": "manual",
+                "enabled": True,
+                "items": [{"template_id": "BasicBuildingTool", "stack_size": 1}],
+                "currency": [],
+                "xp": [],
+            }],
+        }), encoding="utf-8")
+        self.patch_db(lambda sql, params=None: [{
+            "account_id": 10,
+            "character_name": "Tester",
+            "online_status": "Offline",
+            "player_controller_id": 200,
+            "player_pawn_id": 201,
+        }] if "from dune.player_state" in sql else [])
+        self.patch_flag("CARE_PACKAGES_ENABLED", True)
+        self.patch_flag("BUNDLE_MUTATIONS_ENABLED", True)
+        self.handler.require_mutations = lambda: None
+        calls = []
+        self.handler.economy_bundle = lambda body: calls.append(body) or {"ok": True, "dryRun": body.get("dry_run"), "plan": []}
+        original_backup = self.panel.create_db_backup
+        self.panel.create_db_backup = lambda: {"path": "backup.dump", "bytes": 4}
+        self.addCleanup(lambda: setattr(self.panel, "create_db_backup", original_backup))
+
+        result = self.handler.care_package_grant({
+            "package_id": "manual",
+            "account_id": 10,
+            "dry_run": False,
+            "confirm": "GRANT CARE PACKAGE",
+        })
+
+        self.assertFalse(result["dryRun"])
+        self.assertEqual(result["backup"]["path"], "backup.dump")
+        self.assertEqual(calls[-1]["confirm"], "EXECUTE BUNDLE")
+        history = self.panel.care_package_history()
+        self.assertEqual(history[0]["packageId"], "manual")
+        self.assertEqual(history[0]["accountId"], 10)
+
+    def test_care_package_execution_refuses_disabled_package(self):
+        self.panel.CARE_PACKAGES_FILE.write_text(json.dumps({
+            "schemaVersion": 1,
+            "packages": [{
+                "id": "disabled",
+                "enabled": False,
+                "items": [{"template_id": "BasicBuildingTool", "stack_size": 1}],
+                "currency": [],
+                "xp": [],
+            }],
+        }), encoding="utf-8")
+        self.patch_db(lambda sql, params=None: [{
+            "account_id": 10,
+            "character_name": "Tester",
+            "online_status": "Offline",
+            "player_controller_id": 200,
+            "player_pawn_id": 201,
+        }] if "from dune.player_state" in sql else [])
+        self.patch_flag("CARE_PACKAGES_ENABLED", True)
+        self.patch_flag("BUNDLE_MUTATIONS_ENABLED", True)
+        self.handler.require_mutations = lambda: None
+        self.handler.economy_bundle = lambda body: {"ok": True, "dryRun": True, "plan": []}
+
+        with self.assertRaises(PermissionError):
+            self.handler.care_package_grant({
+                "package_id": "disabled",
+                "account_id": 10,
+                "dry_run": False,
+                "confirm": "GRANT CARE PACKAGE",
+            })
+
+    def test_automatic_care_package_claim_prevents_duplicate_grant(self):
+        self.panel.CARE_PACKAGES_FILE.write_text(json.dumps({
+            "schemaVersion": 2,
+            "automatic": {
+                "enabled": True,
+                "intervalSeconds": 60,
+                "rules": [{
+                    "id": "starter-first-online",
+                    "enabled": True,
+                    "packageId": "starter",
+                    "grantWhen": "first_online",
+                }],
+            },
+            "packages": [{
+                "id": "starter",
+                "enabled": True,
+                "oncePerAccount": True,
+                "items": [{"template_id": "BasicBuildingTool", "stack_size": 1}],
+                "currency": [],
+                "xp": [],
+            }],
+        }), encoding="utf-8")
+        self.patch_db(lambda sql, params=None: [{
+            "account_id": 10,
+            "character_name": "Tester",
+            "online_status": "Online",
+            "player_controller_id": 200,
+            "player_pawn_id": 201,
+            "last_login_time": "2026-07-15T00:00:00+00:00",
+        }] if "from dune.player_state" in sql else [])
+        original_grant = self.panel.Handler.care_package_grant
+        grants = []
+        self.panel.Handler.care_package_grant = lambda handler, body: grants.append(body) or {
+            "ok": True, "packageId": body["package_id"], "accountId": body["account_id"]
+        }
+        self.addCleanup(lambda: setattr(self.panel.Handler, "care_package_grant", original_grant))
+
+        first = self.panel.care_package_auto_scan(dry_run=False)
+        second = self.panel.care_package_auto_scan(dry_run=False)
+
+        self.assertEqual(first["granted"], 1)
+        self.assertEqual(second["granted"], 0)
+        self.assertEqual(len(grants), 1)
+        claims = json.loads(self.panel.CARE_PACKAGE_CLAIMS_FILE.read_text(encoding="utf-8"))
+        self.assertIn("starter-first-online:starter:10", claims["claims"])
+
+    def test_returning_player_is_persisted_pending_until_online(self):
+        self.panel.CARE_PACKAGES_FILE.write_text(json.dumps({
+            "schemaVersion": 2,
+            "automatic": {
+                "enabled": True,
+                "intervalSeconds": 60,
+                "rules": [{
+                    "id": "returning",
+                    "enabled": True,
+                    "packageId": "return-kit",
+                    "grantWhen": "last_seen",
+                    "lastSeenDays": 30,
+                }],
+            },
+            "packages": [{
+                "id": "return-kit", "enabled": True, "oncePerAccount": True,
+                "items": [], "currency": [{"currency_id": 1, "amount": 100}], "xp": [],
+            }],
+        }), encoding="utf-8")
+        online = {"value": False}
+        self.patch_db(lambda sql, params=None: [{
+            "account_id": 10, "character_name": "Tester",
+            "online_status": "Online" if online["value"] else "Offline",
+            "player_controller_id": 200, "player_pawn_id": 201,
+            "last_login_time": "2025-01-01T00:00:00+00:00",
+        }] if "from dune.player_state" in sql else [])
+        original_grant = self.panel.Handler.care_package_grant
+        grants = []
+        self.panel.Handler.care_package_grant = lambda handler, body: grants.append(body) or {"ok": True}
+        self.addCleanup(lambda: setattr(self.panel.Handler, "care_package_grant", original_grant))
+
+        offline_scan = self.panel.care_package_auto_scan(dry_run=False)
+        online["value"] = True
+        online_scan = self.panel.care_package_auto_scan(dry_run=False)
+
+        self.assertEqual(offline_scan["pending"], 1)
+        self.assertEqual(online_scan["granted"], 1)
+        self.assertEqual(len(grants), 1)
+
+    def test_native_player_command_contract_and_redaction(self):
+        modules = self.panel.native_command_admin.load_catalog(ROOT / "config" / "admin-skill-modules.json")
+        vehicles = self.panel.native_command_admin.load_catalog(ROOT / "config" / "admin-vehicles.json")
+        skill, meta = self.panel.native_command_admin.build_inner(
+            "skill-module", "FLS#123", {"module": modules[0]["id"], "level": 1}, modules, vehicles
+        )
+        self.assertEqual(skill["ServerCommand"], "SkillsSetModuleLevel")
+        self.assertEqual(skill["PlayerId"], "FLS#123")
+        self.assertEqual(meta["skillModule"]["id"], modules[0]["id"])
+        spawned, _ = self.panel.native_command_admin.build_inner(
+            "spawn-vehicle", "FLS#123",
+            {"vehicle": vehicles[0]["id"], "x": 1, "y": 2, "z": 3, "rotation": 90},
+            modules, vehicles,
+        )
+        self.assertEqual(spawned["ServerCommand"], "SpawnVehicleAt")
+        self.assertEqual(spawned["Persistent"], 1.0)
+        outer = self.panel.native_command_admin.build_outer("secret", spawned)
+        self.assertEqual(outer["Version"], 2)
+        self.assertEqual(outer["AuthToken"], "secret")
+        preview = self.panel.native_command_admin.public_preview(outer)
+        self.assertEqual(preview["AuthToken"], "<redacted>")
+        self.assertNotIn("FLS#123", preview["MessageContent"])
+        with self.assertRaises(ValueError):
+            self.panel.native_command_admin.build_inner(
+                "skill-points", "FLS#123", {"skill_points": 100001}, modules, vehicles
+            )
+        teleported, _ = self.panel.native_command_admin.build_inner(
+            "teleport", "FLS#123", {"x": 1, "y": 2, "z": 3, "yaw": 90}, modules, vehicles
+        )
+        self.assertEqual(teleported["ServerCommand"], "TeleportTo")
+        self.assertEqual(teleported["Yaw"], 90.0)
+        self.assertEqual(
+            self.panel.native_command_admin.build_inner("clean-inventory", "FLS#123", {}, modules, vehicles)[0]["ServerCommand"],
+            "CleanPlayerInventory",
+        )
+
+    def test_native_notification_uses_game_rmq_heartbeats_notifications(self):
+        original_service = self.panel.docker_service_container
+        original_exec = self.panel.docker_container_exec
+        old_token = os.environ.get("DUNE_SERVER_COMMANDS_AUTH_TOKEN")
+        captured = {}
+        self.panel.docker_service_container = lambda service, running=True: {"Id": "a" * 64}
+        self.panel.docker_container_exec = lambda container, argv, timeout=20: captured.update(container=container, argv=argv) or {"ok": True, "exitCode": 0, "output": "publish=ok"}
+        os.environ["DUNE_SERVER_COMMANDS_AUTH_TOKEN"] = "unit-test-token"
+        self.addCleanup(lambda: setattr(self.panel, "docker_service_container", original_service))
+        self.addCleanup(lambda: setattr(self.panel, "docker_container_exec", original_exec))
+        self.addCleanup(lambda: os.environ.__setitem__("DUNE_SERVER_COMMANDS_AUTH_TOKEN", old_token) if old_token is not None else os.environ.pop("DUNE_SERVER_COMMANDS_AUTH_TOKEN", None))
+        result = self.panel.publish_native_player_notification({"ServerCommand": "KickPlayer", "PlayerId": "*"})
+        self.assertTrue(result["queued"])
+        command = captured["argv"][2]
+        self.assertIn('<<"heartbeats">>', command)
+        self.assertIn('<<"notifications">>', command)
+        self.assertNotIn("unit-test-token", command)
+
+    def test_runtime_action_preview_resolves_funcom_id_without_publish(self):
+        self.panel.ADMIN_SKILL_MODULES_FILE = ROOT / "config" / "admin-skill-modules.json"
+        self.panel.ADMIN_VEHICLES_FILE = ROOT / "config" / "admin-vehicles.json"
+        self.patch_db(lambda sql, params=None: [{
+            "account_id": 10, "character_name": "Tester", "online_status": "Online",
+            "player_controller_id": 20, "player_pawn_id": 21, "funcom_id": "FLS#123",
+        }] if "join dune.accounts" in sql else [])
+        original_publish = self.panel.publish_native_player_notification
+        self.panel.publish_native_player_notification = lambda inner: (_ for _ in ()).throw(AssertionError("dry-run must not publish"))
+        self.addCleanup(lambda: setattr(self.panel, "publish_native_player_notification", original_publish))
+        result = self.handler.runtime_player_action({"action": "refill-water", "account_id": 10, "dry_run": True})
+        self.assertTrue(result["dryRun"])
+        self.assertEqual(result["path"], "game-rmq:heartbeats/notifications")
+        self.assertNotIn("FLS#123", json.dumps(result))
+
+    def test_autoscaler_parses_director_travel_demand_once(self):
+        line_a = "Processing travel queue for ClassicalInstancing group SH_Arrakeen (servers: [], num: 2)"
+        line_b = "Received travel request for 1 player(s) to DeepDesert_1 (instancingMode=Dimension)"
+        line_c = "Processing travel queue for DeepDesert_1 (02 PVE Hardcore, id=abc, dimension=1, partition=31, num=3)"
+        events = self.panel.parse_director_travel_demand(f"{line_a}\n{line_a}\n{line_b}\n{line_c}\n")
+        self.assertEqual(
+            [(row["map"], row["count"]) for row in events],
+            [("SH_Arrakeen", 2), ("DeepDesert_1", 1), ("DeepDesert_1", 3)],
+        )
+        self.assertEqual(len({row["id"] for row in events}), 3)
+
+    def test_minimum_footprint_profile_keeps_only_core_always_on(self):
+        original_inventory = self.panel.docker_service_inventory
+        original_counts = self.panel.autoscaler_player_counts
+        original_control = self.panel.autoscaler_service_action
+        original_always_on = self.panel.AUTOSCALER_ALWAYS_ON_SERVICES
+        self.panel.AUTOSCALER_ALWAYS_ON_SERVICES = {"survival", "overmap"}
+        self.panel.docker_service_inventory = lambda: [
+            {"service": "survival", "state": "running"},
+            {"service": "overmap", "state": "running"},
+            {"service": "arrakeen", "state": "running"},
+        ]
+        self.panel.autoscaler_player_counts = lambda: {}
+        actions = []
+        self.panel.autoscaler_service_action = lambda service, action: actions.append((service, action)) or {"ok": True}
+        self.addCleanup(lambda: setattr(self.panel, "docker_service_inventory", original_inventory))
+        self.addCleanup(lambda: setattr(self.panel, "autoscaler_player_counts", original_counts))
+        self.addCleanup(lambda: setattr(self.panel, "autoscaler_service_action", original_control))
+        self.addCleanup(lambda: setattr(self.panel, "AUTOSCALER_ALWAYS_ON_SERVICES", original_always_on))
+
+        result = self.panel.autoscaler_control("minimum-footprint")
+        state = self.panel.read_autoscaler_state()
+
+        self.assertTrue(result["enabled"])
+        self.assertEqual(state["modes"]["survival"], "always-on")
+        self.assertEqual(state["modes"]["arrakeen"], "dynamic")
+        self.assertEqual(actions, [])
+
+    def test_backup_schedule_tick_creates_one_verified_backup(self):
+        self.panel.BACKUP_SCHEDULE_FILE = self.workspace / "backups" / "admin-panel" / "backup-schedule.json"
+        self.panel.configure_backup_schedule({"enabled": True, "time": "05:00", "interval_hours": 12, "retention_days": 0})
+        state = self.panel.read_backup_schedule()
+        state["nextRun"] = 100
+        self.panel.write_backup_schedule(state)
+        original_create = self.panel.create_full_backup
+        calls = []
+        self.panel.create_full_backup = lambda: calls.append(True) or {"ok": True, "path": "admin-panel/maintenance/test", "verification": {"ok": True}}
+        self.addCleanup(lambda: setattr(self.panel, "create_full_backup", original_create))
+        result = self.panel.backup_schedule_tick(now=200)
+        second = self.panel.backup_schedule_tick(now=201)
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(result["lastResult"]["ok"])
+        self.assertGreater(second["nextRun"], 201)
+
+    def test_landsraad_reward_and_contribution_plans_preserve_rollback(self):
+        def fake_query(sql, params=None):
+            if "landsraad_load_current_term" in sql:
+                return [{"term_id": 7, "end_time": "2026-07-22T00:00:00Z", "testterm": False}]
+            if "landsraad_decree_term" in sql:
+                return [{"term_id": 7}]
+            if "from pg_proc" in sql:
+                return []
+            if "landsraad_task_rewards" in sql:
+                return [{"task_id": 44, "threshold": 10, "template_id": "OldReward", "amount": 1}]
+            if "from dune.player_state" in sql:
+                return [{"account_id": 10, "player_controller_id": 200, "player_pawn_id": 201, "online_status": "Offline"}]
+            if "from dune.player_faction" in sql:
+                return [{"faction_id": 2}]
+            if "landsraad_task_player_contributions" in sql:
+                return [{"player_id": 200, "task_id": 44, "amount": 25}]
+            return []
+
+        self.patch_db(fake_query)
+        reward = self.handler.landsraad_mutation({
+            "action": "reward-tier", "task_id": 44, "threshold": 10,
+            "new_threshold": 20, "template_id": "NewReward", "amount": 2,
+            "dry_run": True,
+        })
+        contribution = self.handler.landsraad_mutation({
+            "action": "player-contribution", "task_id": 44,
+            "account_id": 10, "amount": 50, "dry_run": True,
+        })
+        self.assertEqual(reward["plan"]["rollback"]["new_threshold"], 10)
+        self.assertEqual(reward["plan"]["rollback"]["template_id"], "OldReward")
+        self.assertEqual(contribution["plan"]["rollback"]["amount"], 25)
+        self.assertEqual(contribution["plan"]["factionId"], 2)
+
+    def test_bootstrap_status_reports_secrets_only_as_configured_flags(self):
+        original_read_env = self.panel.read_env
+        original_socket = self.panel.DOCKER_SOCKET
+        self.panel.read_env = lambda: {
+            "DUNE_STEAM_SERVER_DIR": "/srv/dune", "DUNE_IMAGE_TAG": "1",
+            "WORLD_NAME": "world", "WORLD_UNIQUE_NAME": "unique",
+            "WORLD_REGION": "us", "EXTERNAL_ADDRESS": "example.test",
+            "FLS_SECRET": "private-secret", "POSTGRES_DUNE_PASSWORD": "private-db",
+            "DUNE_ADMIN_TOKEN": "private-admin",
+        }
+        self.panel.DOCKER_SOCKET = str(self.workspace / "missing-docker.sock")
+        self.patch_db(lambda sql, params=None: [{"database": "dune_sb_1_4_0_0", "schema_ready": True}])
+        self.addCleanup(lambda: setattr(self.panel, "read_env", original_read_env))
+        self.addCleanup(lambda: setattr(self.panel, "DOCKER_SOCKET", original_socket))
+
+        status = self.panel.bootstrap_status()
+
+        rendered = json.dumps(status)
+        self.assertTrue(status["ok"])
+        self.assertNotIn("private-secret", rendered)
+        self.assertNotIn("private-db", rendered)
+        self.assertNotIn("private-admin", rendered)
+
+    def test_player_maintenance_previews_gear_and_login_queue(self):
+        def fake_query(sql, params=None):
+            if "join dune.accounts" in sql:
+                return [{"account_id": 10, "player_pawn_id": 201, "player_controller_id": 301, "online_status": "Offline", "character_name": "Tester", "funcom_id": "FLS#123"}]
+            if "from dune.items" in sql:
+                return [{"id": 1, "template_id": "Knife", "stats": {"FItemStackAndDurabilityStats": [{}, {"MaxDurability": 100, "CurrentDurability": 25, "DecayedDurability": 20}]}}]
+            return []
+
+        self.patch_db(fake_query)
+        original_service = self.panel.docker_service_container
+        original_exec = self.panel.docker_container_exec
+        self.panel.docker_service_container = lambda service, running=True: {"Id": "a" * 64}
+        self.panel.docker_container_exec = lambda container, argv, timeout=20: {"ok": True, "output": "FLS#123_queue\t0\t1\trunning\n"}
+        self.addCleanup(lambda: setattr(self.panel, "docker_service_container", original_service))
+        self.addCleanup(lambda: setattr(self.panel, "docker_container_exec", original_exec))
+
+        gear = self.handler.player_maintenance_mutation({"action": "repair-gear", "account_id": 10, "dry_run": True})
+        queue = self.handler.player_maintenance_mutation({"action": "repair-login-queue", "account_id": 10, "dry_run": True})
+
+        self.assertEqual(gear["plan"]["repairable"][0]["target"], 100)
+        self.assertTrue(queue["plan"]["exists"])
+        self.assertEqual(queue["plan"]["queue"]["messages"], 1)
+
+    def test_player_progression_maintenance_previews_intel_recipe_and_research(self):
+        def fake_query(sql, params=None):
+            if "join dune.accounts" in sql:
+                return [{"account_id": 10, "player_pawn_id": 201, "online_status": "Offline", "character_name": "Tester", "funcom_id": "FLS#123"}]
+            if "m_TechKnowledgePoints" in sql:
+                return [{"value": 2700}]
+            if "select exists" in sql:
+                return [{"found": True}]
+            if "m_KnownItemRecipes' as values" in sql:
+                return [{"values": []}]
+            if "m_TechKnowledgeData' as values" in sql:
+                return [{"values": [{"ItemKey": "RCP_Test", "UnlockedState": "Available"}]}]
+            return []
+        self.patch_db(fake_query)
+
+        intel = self.handler.player_maintenance_mutation({"action": "add-intel", "account_id": 10, "amount": 100, "dry_run": True})
+        recipe = self.handler.player_maintenance_mutation({"action": "unlock-recipe", "account_id": 10, "key": "Test_Recipe", "dry_run": True})
+        research = self.handler.player_maintenance_mutation({"action": "unlock-research", "account_id": 10, "key": "RCP_Test", "dry_run": True})
+
+        self.assertEqual(intel["plan"]["newValue"], 2779)
+        self.assertEqual(recipe["plan"]["key"], "Test_Recipe")
+        self.assertEqual(research["plan"]["key"], "RCP_Test")
+        self.assertEqual(research["plan"]["recipeId"], "Test")
+        self.assertTrue(research["plan"]["recipeMaterialized"])
+        self.assertEqual(research["confirm"], "WRITE PLAYER PROGRESSION")
+
+    def test_player_progression_previews_specialization_and_all_keystones(self):
+        def fake_query(sql, params=None):
+            if "join dune.accounts" in sql:
+                return [{"account_id": 10, "player_pawn_id": 201, "player_controller_id": 301, "online_status": "Offline", "character_name": "Tester", "funcom_id": "FLS#123"}]
+            if "enum_range" in sql:
+                return [{"found": True}]
+            if "from dune.specialization_tracks" in sql:
+                return [{"xp_amount": 100, "level": 2}]
+            if "specialization_keystones_map" in sql:
+                return [{"available": 20, "purchased": 3}]
+            return []
+        self.patch_db(fake_query)
+
+        maximum = self.handler.player_maintenance_mutation({"action": "specialization-max", "account_id": 10, "track_type": "Combat", "dry_run": True})
+        reset = self.handler.player_maintenance_mutation({"action": "specialization-reset", "account_id": 10, "track_type": "Combat", "dry_run": True})
+        keystones = self.handler.player_maintenance_mutation({"action": "keystones-grant-all", "account_id": 10, "dry_run": True})
+
+        self.assertEqual(maximum["plan"]["xp"], 44182)
+        self.assertEqual(maximum["plan"]["level"], 100)
+        self.assertEqual(reset["plan"]["xp"], 0)
+        self.assertEqual(keystones["plan"]["available"], 20)
+
+    def test_world_storage_items_are_bounded_to_selected_actor(self):
+        calls = []
+        def fake_query(sql, params=None):
+            calls.append((sql, params))
+            if "from dune.placeables" in sql:
+                return [{"id": 88, "building_type": "GenericContainer_Placeable", "owner_entity_id": 2}]
+            if "from dune.inventories" in sql:
+                return [{"id": 99, "actor_id": 88}]
+            if "from dune.items" in sql:
+                return [{"id": 100, "inventory_id": 99, "template_id": "Water"}]
+            return []
+        self.patch_db(fake_query)
+
+        result = self.panel.world_storage_items(88)
+
+        self.assertEqual(result["actorId"], 88)
+        self.assertTrue(result["readOnly"])
+        self.assertEqual(result["items"][0]["template_id"], "Water")
+        self.assertTrue(all(params == (88,) for _, params in calls))
+
+    def test_community_delivery_uses_offline_grant_path_and_completes_receipt(self):
+        config_path = self.workspace / "config" / "community-rewards.json"
+        config_path.write_text((ROOT / "config" / "community-rewards.example.json").read_text(), encoding="utf-8")
+        store = self.panel.community_rewards.Store(self.workspace / "backups" / "community.sqlite3", config_path)
+        store.initialize()
+        store.credit(42, 100, "manual", "test:seed")
+        order = store.purchase(42, "starter-water", 1, "test:purchase")
+        original_store = self.panel.COMMUNITY_STORE
+        original_initialized = self.panel.COMMUNITY_STORE_INITIALIZED
+        original_config = self.panel.COMMUNITY_REWARDS_FILE
+        self.panel.COMMUNITY_STORE = store
+        self.panel.COMMUNITY_STORE_INITIALIZED = True
+        self.panel.COMMUNITY_REWARDS_FILE = config_path
+        self.addCleanup(lambda: setattr(self.panel, "COMMUNITY_STORE", original_store))
+        self.addCleanup(lambda: setattr(self.panel, "COMMUNITY_STORE_INITIALIZED", original_initialized))
+        self.addCleanup(lambda: setattr(self.panel, "COMMUNITY_REWARDS_FILE", original_config))
+        self.patch_flag("COMMUNITY_REWARDS_ENABLED", True)
+        self.patch_flag("COMMUNITY_DELIVERY_ENABLED", True)
+        self.patch_flag("MUTATIONS_ENABLED", True)
+        self.patch_flag("ITEM_GRANTS_ENABLED", True)
+        self.patch_db(lambda sql, params=None: [{"online_status": "Offline", "account_id": 42, "character_name": "Tester"}])
+
+        class GrantAdapter:
+            def __init__(self):
+                self.calls = []
+
+            def grant_item(self, body):
+                self.calls.append(dict(body))
+                return {"ok": True, "dry_run": bool(body["dry_run"]), "item_id": None if body["dry_run"] else 99}
+
+        adapter = GrantAdapter()
+        result = self.panel.community_delivery_tick(adapter)
+        self.assertEqual("delivered", result["delivery"]["status"])
+        self.assertEqual([True, False], [row["dry_run"] for row in adapter.calls])
+        self.assertEqual("delivered", store.status(42)["purchases"][0]["status"])
+        self.assertEqual(order["id"], store.status(42)["purchases"][0]["id"])
+
+    def test_community_webhook_requires_fresh_hmac_and_is_idempotent(self):
+        config_path = self.workspace / "config" / "community-rewards.json"
+        config = json.loads((ROOT / "config" / "community-rewards.example.json").read_text())
+        config["webhooks"]["vote"]["enabled"] = True
+        config_path.write_text(json.dumps(config), encoding="utf-8")
+        store = self.panel.community_rewards.Store(self.workspace / "backups" / "community-webhook.sqlite3", config_path)
+        store.initialize()
+        original_store = self.panel.COMMUNITY_STORE
+        original_initialized = self.panel.COMMUNITY_STORE_INITIALIZED
+        original_config = self.panel.COMMUNITY_REWARDS_FILE
+        self.panel.COMMUNITY_STORE = store
+        self.panel.COMMUNITY_STORE_INITIALIZED = True
+        self.panel.COMMUNITY_REWARDS_FILE = config_path
+        self.addCleanup(lambda: setattr(self.panel, "COMMUNITY_STORE", original_store))
+        self.addCleanup(lambda: setattr(self.panel, "COMMUNITY_STORE_INITIALIZED", original_initialized))
+        self.addCleanup(lambda: setattr(self.panel, "COMMUNITY_REWARDS_FILE", original_config))
+        self.patch_flag("COMMUNITY_REWARDS_ENABLED", True)
+        old_secret = os.environ.get("DUNE_COMMUNITY_VOTE_WEBHOOK_SECRET")
+        os.environ["DUNE_COMMUNITY_VOTE_WEBHOOK_SECRET"] = "test-secret"
+        self.addCleanup(lambda: os.environ.pop("DUNE_COMMUNITY_VOTE_WEBHOOK_SECRET", None) if old_secret is None else os.environ.__setitem__("DUNE_COMMUNITY_VOTE_WEBHOOK_SECRET", old_secret))
+        payload = {"eventId": "vote-1", "duneAccountId": 42, "amount": 5}
+        raw = json.dumps(payload, separators=(",", ":")).encode()
+        timestamp = str(int(time.time()))
+        signature = hmac.new(b"test-secret", timestamp.encode() + b"." + raw, hashlib.sha256).hexdigest()
+
+        class Headers(dict):
+            def get_all(self, key, default=None):
+                return [self[key]] if key in self else (default or [])
+
+        def request(sig):
+            return types.SimpleNamespace(headers=Headers({"Content-Length": str(len(raw)), "Content-Type": "application/json", "X-DASH-Timestamp": timestamp, "X-DASH-Signature": sig}), rfile=io.BytesIO(raw))
+
+        first = self.panel.community_webhook_request(request(signature), "vote")
+        replay = self.panel.community_webhook_request(request(signature), "vote")
+        self.assertFalse(first["idempotent"])
+        self.assertTrue(replay["idempotent"])
+        with self.assertRaises(PermissionError):
+            self.panel.community_webhook_request(request("0" * 64), "vote")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,11 @@
+services:
+  admin-panel:
+    # Opt-in overlay for the browser's validated Git fast-forward workflow.
+    # The base stack keeps application code read-only. This overlay exposes the
+    # complete repository and .git metadata only to the private admin panel.
+    volumes:
+      - .:/workspace
+      - ./admin:/workspace/admin
+      - ./scripts:/workspace/scripts
+      - ./data:/workspace/data:ro
+      - /var/run/docker.sock:/var/run/docker.sock

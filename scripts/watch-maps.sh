@@ -68,6 +68,7 @@ cooldown="${DUNE_WATCH_COOLDOWN:-300}"
 startup_grace="${DUNE_WATCH_STARTUP_GRACE:-300}"
 lock_dir="${DUNE_WATCH_LOCK_DIR:-/tmp/dune-map-watchdog.lock}"
 pause_file="${DUNE_WATCH_PAUSE_FILE:-/tmp/dune-map-watchdog.paused}"
+autoscaler_state_file="${DUNE_AUTOSCALER_STATE_FILE:-backups/admin-panel/autoscaler.json}"
 require_ready="${DUNE_WATCH_REQUIRE_READY:-false}"
 recover_command="${DUNE_WATCH_RECOVER_COMMAND:-$script_dir/recover-map.sh}"
 command_timeout="${DUNE_WATCH_COMMAND_TIMEOUT:-20}"
@@ -369,6 +370,18 @@ wait_if_paused() {
   done
 }
 
+autoscaler_manages_stopped_service() {
+  local service="$1"
+  [[ -f "$autoscaler_state_file" ]] || return 1
+  if command -v jq >/dev/null 2>&1; then
+    jq -e --arg service "$service" '
+      .enabled == true and ((.modes[$service] // "always-on") == "dynamic" or (.modes[$service] // "always-on") == "disabled")
+    ' "$autoscaler_state_file" >/dev/null 2>&1
+    return
+  fi
+  return 1
+}
+
 check_once() {
   local item
   local service
@@ -415,7 +428,11 @@ check_once() {
         log "skip recovery because container status is unavailable: service=$service partition=$partition_id"
         ;;
       exited|dead)
-        recover_service "$service" "$partition_id" "$status"
+        if autoscaler_manages_stopped_service "$service"; then
+          log "skip recovery for autoscaler-managed stopped map: service=$service partition=$partition_id mode=$status"
+        else
+          recover_service "$service" "$partition_id" "$status"
+        fi
         ;;
       missing)
         ;;

@@ -4,19 +4,13 @@ The admin helper panel is a LAN-only web UI for local server operators. It is no
 
 ## Start
 
-For the current local trusted deployment, the panel runs unlocked by default:
-
-```env
-DUNE_ADMIN_REQUIRE_TOKEN=false
-DUNE_ADMIN_MUTATIONS_ENABLED=false
-DUNE_ADMIN_ITEM_GRANTS_ENABLED=false
-```
-
-To require a browser token, set:
+The shipped example requires the owner token and keeps mutations disabled:
 
 ```env
 DUNE_ADMIN_REQUIRE_TOKEN=true
 DUNE_ADMIN_TOKEN=replace-with-a-long-random-token
+DUNE_ADMIN_MUTATIONS_ENABLED=false
+DUNE_ADMIN_ITEM_GRANTS_ENABLED=false
 ```
 
 Start the service:
@@ -53,6 +47,12 @@ DUNE_ADMIN_ALLOWED_HOSTS=127.0.0.1:18081,localhost:18081,admin.example.test,admi
 
 The admin panel should connect to Postgres through Compose DNS (`postgres:5432`). Do not point `DUNE_ADMIN_DB_HOST` at the host bridge address for normal use; that path is more fragile across Docker restarts.
 
+Compose also passes `DUNE_GAME_DB_NAME` explicitly as the panel's
+`DUNE_ADMIN_DB_NAME`. `/api/status` must report the same database used by the
+running game services after every official schema migration. A default-looking
+older schema name is a deployment failure: fix the environment and recreate
+only the panel before using any admin mutation or panel-created database backup.
+
 To use a LAN hostname such as `http://admin.example.test`, point LAN DNS or `/etc/hosts` at the host running the reverse proxy:
 
 ```text
@@ -81,7 +81,7 @@ If the local published port accepts TCP but returns no HTTP bytes, check for sta
 ```bash
 ip neigh show dev br-<dune-bridge-id> | grep '172.31.240.8\|172.31.240.9'
 ./scripts/seed-gateway-neighbor.sh
-curl -H 'Host: admin-panel:8080' http://127.0.0.1:${DUNE_ADMIN_HOST_PORT:-18081}/api/status
+curl -H 'Host: admin-panel:8080' http://127.0.0.1:${DUNE_ADMIN_HOST_PORT:-18081}/healthz
 ```
 
 `scripts/seed-gateway-neighbor.sh` refreshes the host bridge entries for the admin ingress and panel containers. This avoids the failure mode where Docker's localhost proxy connects but sends traffic to an old container MAC after a recreate.
@@ -89,7 +89,7 @@ curl -H 'Host: admin-panel:8080' http://127.0.0.1:${DUNE_ADMIN_HOST_PORT:-18081}
 Optional hardening probe:
 
 ```dotenv
-DUNE_ADMIN_LAN_URL=http://admin.example.test/api/status
+DUNE_ADMIN_LAN_URL=http://admin.example.test/healthz
 ```
 
 ```bash
@@ -140,6 +140,67 @@ server {
 - Location source diagnostics are shown under the map and returned by `/api/players/hagga-basin`. Current findings are documented in [`../PLAYER_LOCATION_SOURCE_AUDIT.md`](../PLAYER_LOCATION_SOURCE_AUDIT.md): actor transforms, `load_travel_to_player_info`, return info, respawn locations, actor state, overmap rows, game events, and normal server logs do not currently provide a proven live in-game arrow position.
 - Server/farm state view with per-map online/offline health derived from `world_partition`, `farm_state`, and `active_server_ids`.
 - Realtime resource view for host load, host memory, workspace disk, and Docker container CPU/memory/network/block I/O when the Docker socket is available.
+- Infrastructure page with project-scoped Compose service/log control, manual
+  and automatic verified backup lifecycle and restore, update/repair workflows,
+  and an allowlisted `dune`/`public` database console with query, row, export,
+  and password controls. See [`infrastructure-console.md`](infrastructure-console.md).
+- Infrastructure controls for automatic verified full backups, layered restore,
+  minimum-footprint/balanced/full-warm/custom map profiles, per-map retention,
+  Director travel-demand starts, LRU and memory-floor eviction, live map
+  limits, the automatic memory balancer, retained Prometheus metrics, updates,
+  and runtime repair. See [`autoscaling-memory.md`](autoscaling-memory.md) and
+  [`metrics.md`](metrics.md).
+- Infrastructure backup controls report recipient-encryption readiness,
+  encrypted archive/receipt inventory, and exact host encrypt/decrypt commands.
+  The private recovery key stays outside the admin container. See
+  [`backup-encryption.md`](backup-encryption.md).
+- Browser first-run Bootstrap page for settings readiness, read-only preflight,
+  RabbitMQ TLS generation, idempotent database initialization, and post-hook-aware
+  stack reconcile. See [`bootstrap-console.md`](bootstrap-console.md).
+- Catalog-backed native skill, water, kick/kick-all, and vehicle spawn actions,
+  plus offline vehicle repair/refuel. See
+  [`player-runtime-actions.md`](player-runtime-actions.md).
+- Blueprint archive lifecycle, structured augment selection/application,
+  automatic/manual care packages, permissioned Discord adapter routes, and the
+  SHA-pinned community addon runtime.
+- Community Rewards page with isolated wallets, verified append-only ledger,
+  account-link codes, versioned item/kit catalog and stock, purchases, playtime
+  and signed-provider accrual, reward tracks/claims, delivery receipts, and
+  ambiguous-outcome reconciliation. See
+  [`community-rewards.md`](community-rewards.md).
+- Moderation page with isolated case and policy-ban state, append-only case
+  history, confirmed native `KickPlayer` ejection, optional explicit allowlist
+  enforcement, presence sessions, privacy-bounded heatmaps, redacted security
+  signals, retention, and enforcement receipts. The current build has no proven
+  native persistent-ban/login-rejection contract. See
+  [`moderation-history.md`](moderation-history.md).
+- Base Creator page with read-only exact/recentered live-base exports, portable
+  JSON archives, snapping/yaw grid editing, top-down reconstruction preview,
+  downloads, and an isolated visibility/rating gallery. Direct live restore is
+  not claimed because no peer or current schema evidence proves an atomic
+  placement contract. See [`base-creator.md`](base-creator.md).
+- Gameplay Presets page with nine curated worm, threat, storm, harvest, day,
+  hydration, and world profiles; exact per-setting preview; fixed target and
+  key/type/range allowlists; private backups; atomic apply; confined rollback;
+  mandatory seven-day Landsraad validation; and a separate guarded restart
+  handoff. See [`gameplay-presets.md`](gameplay-presets.md).
+- Cosmetics page with an independently observed 391-ID reviewed catalog,
+  optional operator-owned pak generation, searchable current unlocks,
+  catalog-confined idempotent add/remove, customization-only bulk unlock,
+  Offline player enforcement under a row lock, automatic full database backup,
+  compare-and-swap/post-write verification, private receipts, and hash-guarded
+  rollback. Writes require relog but never restart a map. See
+  [`character-cosmetics.md`](character-cosmetics.md).
+- Command Console page with six named native read-only diagnostics, no
+  subprocess, shell, user arguments, or arbitrary paths; bounded
+  runtime/output, secret redaction, `operations.write` authorization, and
+  receipt-only auditing. See [`command-console.md`](command-console.md).
+- Provider-neutral OIDC or Discord OAuth authorization-code login with PKCE,
+  state/nonce/replay protection, RS256 ID-token validation, explicit immutable
+  subject mapping into live local RBAC, signed expiring HttpOnly sessions,
+  logout, secret rotation, and owner-token recovery. See
+  [`federated-auth.md`](federated-auth.md).
+- World page with bounded read-only guild/member, Landsraad term/task/reward/contribution, and aggregate storage views. See [`world-console.md`](world-console.md).
 - Local/upstream health checks for Postgres reachability, the Dune account portal, and public Dune/Funcom HTTP reachability.
 - Restart-announcement scheduler under Ops. It accepts a restart time, message, and repeat interval, persists state under `backups/admin-panel/announcements.json`, and invokes `DUNE_ADMIN_ANNOUNCE_COMMAND` for each delivery attempt.
 - Scheduled restart planner under Ops. It targets all components, core services, the service layer, all game maps, or key individual maps. Jobs persist under `backups/admin-panel/restart-jobs.json` and invoke `DUNE_ADMIN_RESTART_COMMAND` only when execution is explicitly enabled.
@@ -159,10 +220,17 @@ server {
   - `POST /api/admin/artificial-exchange`
   Supported actions are `build-catalog`, `check-ready`, `buyer-dry-run`, `settlement-report`, `validate-populator`, `install-buyer-service`, `install-populator-service`, `install-watchdog-timer`, `watchdog-once`, and `start|stop|restart|status:buyer|populator|watchdog`.
 - Typed gameplay knob API at `GET/POST /api/settings/typed-knobs`. Dry-runs are available without the typed-write gate; writes require backups, the global mutation gate, `DUNE_ADMIN_TYPED_KNOBS_ENABLED=true`, and the confirmation phrase `WRITE TYPED KNOBS`.
-- Config editor for selected local config files, including official `UserEngine.ini` and `UserGame.ini` overlays, with backups under `backups/admin-panel`.
+- Config editor for selected local config files, including official `UserEngine.ini` and `UserGame.ini` overlays and the validated versioned community-rewards policy, with backups under `backups/admin-panel`.
 - Director GME voice-chat credentials can be added through the `director.ini` config editor when Funcom/provider supplies real `GmeAppId` and `GmeAppKey` values. Leave them unset otherwise.
 - Currency and XP mutation endpoints gated by `DUNE_ADMIN_MUTATIONS_ENABLED`.
 - Economy bundle planning through `POST /api/admin/bundle`. It plans currency, XP, and item grants in one response and defaults to `dry_run=true`. Execution additionally requires `DUNE_ADMIN_BUNDLE_MUTATIONS_ENABLED=true` and confirmation `EXECUTE BUNDLE`.
+- Reviewed manual and automatic care packages through
+  `GET/POST /api/admin/care-packages`. Automatic rules support first-online and
+  returning-player grants with persisted claims/pending/history and retry/clear
+  controls. Preview remains available while execution requires the master,
+  bundle, care-package, automatic (for worker grants), and applicable item-grant
+  gates, exact confirmation, and an automatic database backup. See
+  [`care-packages.md`](care-packages.md).
 - Targeted Solari grants through `POST /api/admin/solari/inventory` for carried `SolarisCoin` stacks and `POST /api/admin/solari/bank` for Exchange/bank balance.
 - Offline player recovery preview through `POST /api/admin/player-recovery/offline-teleport`. Execution refuses online players, requires `MOVE OFFLINE PLAYER`, and calls the shipped `dune.admin_move_offline_player_to_partition(...)` pawn move helper.
 - Spice/resource field inspection through `POST /api/admin/spice-fields/inspect`.
@@ -170,7 +238,11 @@ server {
 - Faction reputation planning through `POST /api/admin/faction-reputation`, default `dry_run=true`. Execution requires `DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED=true` and confirmation `WRITE REPUTATION`.
 - Player faction-change planning through `POST /api/admin/faction`, default `dry_run=true`. Execution requires `DUNE_ADMIN_FACTION_MUTATIONS_ENABLED=true`, confirmation `CHANGE FACTION`, and an offline target player.
 - Journey story-node planning through `POST /api/admin/journey`, default `dry_run=true`. Execution requires `DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED=true`, confirmation `WRITE JOURNEY`, and an offline target player.
-- Landsraad term planning through `POST /api/admin/landsraad`, default `dry_run=true`. Execution requires `DUNE_ADMIN_LANDSRAAD_MUTATIONS_ENABLED=true` and confirmation `WRITE LANDSRAAD`.
+- Landsraad term, reward-tier, and player-contribution planning through
+  `POST /api/admin/landsraad`, default `dry_run=true`. Reward/contribution
+  execution creates a backup and recalculates contribution totals in one
+  transaction. Execution requires
+  `DUNE_ADMIN_LANDSRAAD_MUTATIONS_ENABLED=true` and `WRITE LANDSRAAD`.
 - Respawn-location delete planning through `POST /api/admin/respawn-location`, default `dry_run=true`. Execution requires `DUNE_ADMIN_RESPAWN_MUTATIONS_ENABLED=true`, confirmation `DELETE RESPAWN`, and an offline target player.
 - World-state inspection through `POST /api/admin/world-state/inspect` for guild, vehicle, marker, landclaim, recipe, and respawn evidence.
 - Guild description and role planning through `POST /api/admin/guild`, default `dry_run=true`. Execution requires `DUNE_ADMIN_GUILD_MUTATIONS_ENABLED=true` and confirmation `WRITE GUILD`.
@@ -195,6 +267,7 @@ server {
   Event execution is blocked unless `DUNE_ADMIN_EVENT_EXECUTION_ENABLED=true`.
 - Postgres custom-format backup under `backups/admin-panel`.
 - Redacted JSONL audit trail for rejected requests and admin writes under `backups/admin-panel/audit.jsonl`.
+- Asynchronous signed delivery of filtered audit events to generic HTTPS or Discord webhook receivers, with bounded retry/queue/rate controls, recursive redaction, and redirect refusal. Authenticated runtime status is available at `GET /api/ops/webhooks`; see [`outbound-webhooks.md`](outbound-webhooks.md).
 - Known item template, observed item template, inventory, and inventory-type references.
 - Player dropdowns in Admin Actions for currency, carried/bank Solari, XP, keystones, item grant targeting, and item maintenance.
 - Selected players pre-populate controller/account/name fields, current currency and specialization selectors, owned inventories, and owned inventory items for stack edits or deletion.
@@ -223,7 +296,10 @@ Evidence handling is deliberately strict:
 - Shipped config plus live database behavior is strong evidence.
 - Binary strings are leads until section, syntax, and runtime effect are proven.
 - Public websites are candidate lookup sources only.
-- Native GM command routes remain previews until `DUNE_GM_COMMAND_PAYLOAD_VERIFIED=true` is proven by live-client validation.
+- Generic admin-RMQ GM candidates remain previews until
+  `DUNE_GM_COMMAND_PAYLOAD_VERIFIED=true`. The separate catalog-backed player
+  actions use the pinned Version 2 game-notification contract and their own
+  runtime gate; see [`player-runtime-actions.md`](player-runtime-actions.md).
 
 The Catalog tab includes safe forms for:
 
@@ -263,9 +339,24 @@ DUNE_ADMIN_TUTORIAL_MUTATIONS_ENABLED=false
 DUNE_ADMIN_PERMISSION_MUTATIONS_ENABLED=false
 DUNE_ADMIN_VENDOR_MUTATIONS_ENABLED=false
 DUNE_ADMIN_CHARACTER_SWAP_ENABLED=false
+DUNE_ADMIN_PLAYER_RUNTIME_MUTATIONS_ENABLED=false
+DUNE_ADMIN_VEHICLE_MUTATIONS_ENABLED=false
+DUNE_ADMIN_MEMORY_MUTATIONS_ENABLED=false
+DUNE_ADMIN_AUTOSCALER_MUTATIONS_ENABLED=false
+DUNE_ADMIN_BOOTSTRAP_MUTATIONS_ENABLED=false
+DUNE_ADMIN_BACKUP_MUTATIONS_ENABLED=false
+DUNE_ADMIN_ADDON_MUTATIONS_ENABLED=false
+DUNE_DISCORD_ADAPTER_ENABLED=false
 ```
 
 Gate behavior:
+
+The safe environment editor also exposes the host-scoped network/topology
+controls `DUNE_PUBLIC_IP_MONITOR_*`, `DUNE_SIETCH_MUTATIONS_ENABLED`, and
+`DUNE_SIETCH_ALLOWED_HOST`. Editing those values does not install a timer or
+change topology by itself. Timer installation and Sietch reconciliation use the
+documented host scripts, exact-host checks, dry-run previews, and backups in
+[`operations.md`](operations.md).
 
 - `DUNE_ADMIN_CATALOG_ENABLED`: controls read-only catalog endpoints.
 - `DUNE_ADMIN_TYPED_KNOBS_ENABLED`: controls typed config writes only. Typed dry-runs still work.
@@ -287,6 +378,26 @@ Gate behavior:
 - `DUNE_ADMIN_PERMISSION_MUTATIONS_ENABLED`: controls permission actor name/access/rank server-function calls. World-state dry-runs still work.
 - `DUNE_ADMIN_VENDOR_MUTATIONS_ENABLED`: controls vendor stock-cycle timestamp server-function calls. Lifecycle dry-runs still work.
 - `DUNE_ADMIN_CHARACTER_SWAP_ENABLED`: controls character slot hibernation/switch execution. Slot inspection and planning still work; execution remains blocked unless the plan returns `executable: true`.
+- `DUNE_ADMIN_PLAYER_RUNTIME_MUTATIONS_ENABLED`: second gate for native
+  skill/water/kick/vehicle commands; also requires the general GM gate and
+  shared server-command token.
+- `DUNE_ADMIN_VEHICLE_MUTATIONS_ENABLED`: controls offline persistent vehicle
+  durability and fuel repair.
+- `DUNE_ADMIN_MEMORY_MUTATIONS_ENABLED`: controls live container limits and
+  automatic memory balancing.
+- `DUNE_ADMIN_AUTOSCALER_MUTATIONS_ENABLED`: controls minimum/balanced/full/custom
+  profiles, map modes, per-map retention, explicit and Director-derived demand,
+  LRU/memory-pressure eviction, and reconciliation. The profile/default editor
+  fields require an admin-panel recreate; live Infrastructure controls persist
+  immediately. See [`autoscaling-memory.md`](autoscaling-memory.md).
+- `DUNE_ADMIN_BOOTSTRAP_MUTATIONS_ENABLED`: controls browser TLS generation,
+  database initialization, and stack reconcile.
+- `DUNE_ADMIN_BACKUP_MUTATIONS_ENABLED`: controls full backup creation,
+  imports, quarantine delete, and the automatic schedule.
+- `DUNE_ADMIN_ADDON_MUTATIONS_ENABLED`: controls community addon install,
+  enable/disable, and quarantine removal.
+- `DUNE_DISCORD_ADAPTER_ENABLED`: exposes the separately authenticated,
+  role-mapped read-only Discord adapter route family.
 - `DUNE_ADMIN_GRANT_PRIVATE_MESSAGE_ENABLED`: controls best-effort private relog reminders after successful admin item and inventory-Solari grants.
 - `DUNE_ADMIN_GRANT_PRIVATE_MESSAGE_TEMPLATE`: private relog reminder template. Supports `{item}`, `{amount}`, and `{template_id}`.
 
@@ -321,6 +432,15 @@ WRITE TUTORIAL
 WRITE PERMISSION
 WRITE VENDOR
 RUN GM COMMAND
+RUN PLAYER ACTION
+KICK ALL ONLINE PLAYERS
+REPAIR VEHICLE DECAY
+REFUEL VEHICLE
+CHANGE MEMORY BALANCER
+SET MAP MEMORY
+CHANGE AUTOSCALER
+CHANGE BACKUP SCHEDULE
+RUN BOOTSTRAP
 ```
 
 ## Typed Gameplay Knobs
@@ -537,7 +657,10 @@ follow-up dry-run reported `count=0`. Confidence is high for controller-side
 inference and DB repair; confidence is moderate that already-online clients may
 need a relog or UI refresh before exposing the tab.
 
-`POST /api/admin/landsraad` plans or executes Landsraad term administration. Supported actions are `change-end-time` and `force-end`.
+`POST /api/admin/landsraad` plans or executes Landsraad term, reward-tier, and
+player-contribution administration. Supported actions are `change-end-time`,
+`force-end`, `task-goal`, `term-task-goals`, `reward-tier`, and
+`player-contribution`.
 
 Dry-run body:
 
@@ -557,7 +680,15 @@ Execution requires:
 - `DUNE_ADMIN_LANDSRAAD_MUTATIONS_ENABLED=true`
 - `confirm: "WRITE LANDSRAAD"`
 
-The endpoint reads `dune.landsraad_load_current_term()` and recent `dune.landsraad_decree_term` rows before planning. End-time changes are reversible by writing the previous `end_time`; `force-end` is not safely reversible. Confidence is moderate for function mechanics and high that the action is world-impacting.
+The endpoint reads `dune.landsraad_load_current_term()` and recent
+`dune.landsraad_decree_term` rows before planning. End-time and reward changes
+return compensating rollback bodies; `force-end` is not safely reversible.
+Player contribution writes replace the selected player's row and recompute
+faction and, when supported, guild totals in the same transaction. Reward and
+contribution writes create a database backup first. See
+[`player-runtime-actions.md`](player-runtime-actions.md). Confidence is
+moderate for proprietary live-server behavior and high that each action is
+world-impacting.
 
 `POST /api/admin/respawn-location` plans or executes deletion of one known respawn location by UUID.
 
@@ -1396,6 +1527,8 @@ Current mutation support is intentionally narrow:
 - Item grants through `dune.save_item(dune.inventoryitem)` when `DUNE_ADMIN_ITEM_GRANTS_ENABLED=true`.
 - Item grant dry-runs that resolve the target inventory and warnings without requiring `DUNE_ADMIN_MUTATIONS_ENABLED=true`.
 - Item stack changes and item/count deletion through the server's existing item functions.
+- Solido blueprint list/export/import/delete through the **Blueprints** page; import/delete use separate gates, backups, offline-owner checks, transaction verification, and downloadable rollback archives. See [`blueprints.md`](blueprints.md).
+- Structured compatible augments for new grants and existing owned items; execution unlocks the required augment slots in the same transaction. See [`augments.md`](augments.md).
 
 Item grants require an exact server `template_id`. You can enter an inventory ID directly, or let the panel resolve a player-owned inventory from account ID or character name. The mutation page now offers exact local template IDs from item, Landsraad reward, vendor, vehicle, and exchange tables. Public databases such as `https://dune.gaming.tools/items` and `https://dune.geno.gg/items/` are still useful for names and research, but dry-run and verify against local server data before bulk grants.
 
@@ -1433,11 +1566,14 @@ Recreate affected game-server containers after saving so `scripts/run_server_saf
 - Use a long random `DUNE_ADMIN_TOKEN` whenever `DUNE_ADMIN_REQUIRE_TOKEN=true`.
 - `DUNE_ADMIN_MUTATIONS_ENABLED=false` is the example default. Enable it only after backup/restore validation and operator access controls are in place.
 - `DUNE_ADMIN_ITEM_GRANTS_ENABLED=false` is the example default. Enable it only for item grant, stack edit, and deletion workflows that have been validated on the current build.
+- `DUNE_ADMIN_BLUEPRINT_MUTATIONS_ENABLED=false` leaves blueprint listing, export, and dry-run available while import/delete execution is disabled.
+- `DUNE_ADMIN_AUGMENT_MUTATIONS_ENABLED=false` leaves compatibility discovery and dry-run available while structured augment writes are disabled.
 - Director character-transfer settings write `config/director.ini`; recreate the Director container before relying on a changed transfer policy.
 - Director GME voice-chat settings also live in `config/director.ini`; recreate Director after changing them.
 - `UserEngine.ini` and `UserGame.ini` edits are copied into game containers during game-service startup. Recreate affected game containers before relying on changed gameplay knobs.
 - Keep `DUNE_ADMIN_MAX_BODY_BYTES` small unless editing unusually large config files; the default is `65536`.
 - Keep `DUNE_ADMIN_AUDIT_MAX_BYTES` bounded; the default rotates the JSONL audit log at 5 MiB.
+- Keep `config/outbound-webhooks.json` ignored and mode `0600`; its URL paths and HMAC keys are credentials. Leave `DUNE_WEBHOOK_ALLOW_HTTP=false` outside controlled local receiver tests.
 - Keep `DUNE_ADMIN_REQUEST_TIMEOUT_SECONDS` bounded; the default is `10` seconds to limit slow-body and idle connection abuse.
 - Keep `DUNE_ADMIN_MAX_ITEM_STACK_SIZE` bounded; the default is `1000000` to prevent accidental enormous stack writes.
 - Keep `DUNE_ADMIN_AUDIT_EVENT_LIMIT`, `DUNE_ADMIN_REFERENCE_LIMIT`, and `DUNE_ADMIN_CHARACTER_SEARCH_LIMIT` bounded so read endpoints stay predictable as local data grows.

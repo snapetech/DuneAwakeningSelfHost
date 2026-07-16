@@ -21,6 +21,9 @@ Common knobs:
   DUNE_BACKUP_CREATE_LOCAL=true
   DUNE_BACKUP_INCLUDE_MAINTENANCE=true
   DUNE_BACKUP_KEEP_LOCAL_DAYS=7
+  DUNE_BACKUP_ARCHIVE_ENCRYPTION_ENABLED=true
+  DUNE_BACKUP_GPG_RECIPIENT=<exact fingerprint>
+  DUNE_BACKUP_SYNC_ENCRYPTED_ONLY=true
 
 rclone:
   DUNE_BACKUP_RCLONE_DEST=remote:path
@@ -44,6 +47,8 @@ fi
 env_file="${1:-.env}"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
+[[ "$env_file" == /* ]] || env_file="$repo_root/$env_file"
+env_file_value() { sed -n "s/^${1}=//p" "$env_file" 2>/dev/null | tail -1; }
 
 if [[ -n "${DUNE_BACKUP_REMOTE_ENV:-}" ]]; then
   if [[ ! -f "$DUNE_BACKUP_REMOTE_ENV" ]]; then
@@ -81,6 +86,23 @@ if [[ "$create_local" == "true" ]]; then
   ./scripts/backup-state.sh "$env_file" 2>&1 | tee -a "$log_file"
 fi
 
+created_backup="$(sed -n 's/^backup complete: //p' "$log_file" | tail -1)"
+encryption_enabled="${DUNE_BACKUP_ARCHIVE_ENCRYPTION_ENABLED:-$(env_file_value DUNE_BACKUP_ARCHIVE_ENCRYPTION_ENABLED)}";encryption_enabled="${encryption_enabled:-false}"
+sync_encrypted_only="${DUNE_BACKUP_SYNC_ENCRYPTED_ONLY:-$(env_file_value DUNE_BACKUP_SYNC_ENCRYPTED_ONLY)}";sync_encrypted_only="${sync_encrypted_only:-false}"
+gpg_recipient="${DUNE_BACKUP_GPG_RECIPIENT:-$(env_file_value DUNE_BACKUP_GPG_RECIPIENT)}"
+if [[ "$encryption_enabled" == "true" && -n "$gpg_recipient" && -n "$created_backup" ]]; then
+  log "encrypting verified backup ${created_backup} for recipient fingerprint ${gpg_recipient: -16}"
+  ./scripts/encrypt-backup-archive.sh --env-file "$env_file" "$created_backup" 2>&1 | tee -a "$log_file"
+elif [[ "$encryption_enabled" == "true" && -z "$gpg_recipient" ]]; then
+  log "archive encryption gate is enabled but no GPG recipient is configured; existing sync source is unchanged"
+fi
+
+sync_source="backups"
+if [[ "$sync_encrypted_only" == "true" ]]; then
+  [[ "$encryption_enabled" == "true" && -n "$gpg_recipient" ]] || { printf 'encrypted-only sync requires enabled encryption and DUNE_BACKUP_GPG_RECIPIENT\n' >&2; exit 1; }
+  sync_source="backups/encrypted"
+fi
+
 if [[ ! -d backups ]]; then
   log "no backups directory exists; nothing to sync"
   exit 0
@@ -97,8 +119,8 @@ case "$mode" in
       printf 'DUNE_BACKUP_RCLONE_DEST is required for rclone mode\n' >&2
       exit 1
     fi
-    log "syncing backups/ to rclone destination ${dest}"
-    rclone sync backups "$dest" --create-empty-src-dirs 2>&1 | tee -a "$log_file"
+    log "syncing ${sync_source}/ to rclone destination ${dest}"
+    rclone sync "$sync_source" "$dest" --create-empty-src-dirs 2>&1 | tee -a "$log_file"
     keep_remote_days="${DUNE_BACKUP_KEEP_REMOTE_DAYS:-0}"
     if [[ "$keep_remote_days" =~ ^[0-9]+$ && "$keep_remote_days" -gt 0 ]]; then
       log "pruning remote files older than ${keep_remote_days} days"
@@ -113,8 +135,8 @@ case "$mode" in
       printf 'DUNE_BACKUP_RSYNC_DEST is required for rsync mode\n' >&2
       exit 1
     fi
-    log "syncing backups/ to rsync destination ${dest}"
-    rsync -a --delete backups/ "${dest%/}/" 2>&1 | tee -a "$log_file"
+    log "syncing ${sync_source}/ to rsync destination ${dest}"
+    rsync -a --delete "${sync_source%/}/" "${dest%/}/" 2>&1 | tee -a "$log_file"
     ;;
   restic)
     require_command restic

@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "project": "SetsuaD/DuneAwakening-Wormageddon",
+    "revision": "62ef3890886b8c7ddb5b764f36e5f83189ca7515",
+    "license": "MIT",
+    "adaptation": "calm, standard, and wormageddon values; DASH adds validated operational presets"
+  },
+  "presets": [
+    {
+      "id": "calm-worms", "label": "Calm Dunes", "category": "sandworm",
+      "description": "Sparse, slower-to-provoke worms with a high giant-worm threshold.",
+      "source": {"upstreamId": "calm"},
+      "settings": [
+        {"group":"Sandworm","key":"ThreatScale","value":"0.5"},{"group":"Sandworm","key":"DefaultMaxThreatScore","value":"12000"},{"group":"Sandworm","key":"WalkingThreatPerSec","value":"5"},{"group":"Sandworm","key":"RunningThreatPerSec","value":"8"},{"group":"Sandworm","key":"SprintingThreatPerSec","value":"8"},{"group":"Sandworm","key":"DashingThreatPerSec","value":"30"},{"group":"Sandworm","key":"SuspendingThreatPerSec","value":"60"},{"group":"Sandworm","key":"ShieldingThreatPerSec","value":"150"},{"group":"Sandworm","key":"m_MinDistanceBetweenSandworms","value":"150000"},{"group":"Sandworm","key":"m_bGiantWormSystemEnabled","value":"True"},{"group":"Sandworm","key":"m_GiantWormMinimumPlayersOnSpiceField","value":"8"},{"group":"Sandworm","key":"m_GiantWormMinimumSpiceAmountHarvested","value":"80000"},{"group":"Sandworm","key":"m_GiantWormSpawningCooldown","value":"14400"}
+      ]
+    },
+    {
+      "id": "standard-worms", "label": "Standard Worm Behaviour", "category": "sandworm",
+      "description": "Restores the shipped worm/threat values represented by the peer preset.",
+      "source": {"upstreamId": "standard"},
+      "settings": [
+        {"group":"Sandworm","key":"ThreatScale","value":"1.0"},{"group":"Sandworm","key":"DefaultMaxThreatScore","value":"5000"},{"group":"Sandworm","key":"ThreatDecreaseCooldownInSeconds","value":"5"},{"group":"Sandworm","key":"WalkingThreatPerSec","value":"15"},{"group":"Sandworm","key":"RunningThreatPerSec","value":"20"},{"group":"Sandworm","key":"SprintingThreatPerSec","value":"20"},{"group":"Sandworm","key":"DashingThreatPerSec","value":"90"},{"group":"Sandworm","key":"SuspendingThreatPerSec","value":"200"},{"group":"Sandworm","key":"ShieldingThreatPerSec","value":"500"},{"group":"Sandworm","key":"DrumsandThreatPerSec","value":"200"},{"group":"Sandworm","key":"m_MinDistanceBetweenSandworms","value":"80000"},{"group":"Sandworm","key":"m_bGiantWormSystemEnabled","value":"True"},{"group":"Sandworm","key":"m_GiantWormMinimumPlayersOnSpiceField","value":"4"},{"group":"Sandworm","key":"m_GiantWormMinimumSpiceAmountHarvested","value":"50000"},{"group":"Sandworm","key":"m_GiantWormSpawningCooldown","value":"7200"},{"group":"Sandworm","key":"m_GiantWormSpawningUpdateFrequency","value":"60"},{"group":"Storm","key":"m_bCoriolisAutoSpawnEnabled","value":"True"}
+      ]
+    },
+    {
+      "id": "wormageddon", "label": "WORMAGEDDON", "category": "sandworm",
+      "description": "Dense, hair-trigger worms and a giant worm summonable by one active harvester.",
+      "source": {"upstreamId": "wormageddon"},
+      "settings": [
+        {"group":"Sandworm","key":"ThreatScale","value":"2.5"},{"group":"Sandworm","key":"DefaultMaxThreatScore","value":"1500"},{"group":"Sandworm","key":"ThreatDecreaseCooldownInSeconds","value":"10"},{"group":"Sandworm","key":"WalkingThreatPerSec","value":"50"},{"group":"Sandworm","key":"RunningThreatPerSec","value":"60"},{"group":"Sandworm","key":"SprintingThreatPerSec","value":"70"},{"group":"Sandworm","key":"DashingThreatPerSec","value":"200"},{"group":"Sandworm","key":"SuspendingThreatPerSec","value":"400"},{"group":"Sandworm","key":"HyperSprintingThreatPerSec","value":"200"},{"group":"Sandworm","key":"ShieldingThreatPerSec","value":"900"},{"group":"Sandworm","key":"VehicleShieldingThreatPerSec","value":"200"},{"group":"Sandworm","key":"DrumsandThreatPerSec","value":"400"},{"group":"Sandworm","key":"m_MinDistanceBetweenSandworms","value":"30000"},{"group":"Sandworm","key":"m_bGiantWormSystemEnabled","value":"True"},{"group":"Sandworm","key":"m_GiantWormMinimumPlayersOnSpiceField","value":"1"},{"group":"Sandworm","key":"m_GiantWormMinimumSpiceAmountHarvested","value":"1000"},{"group":"Sandworm","key":"m_GiantWormSpawningCooldown","value":"60"},{"group":"Sandworm","key":"m_GiantWormSpawningUpdateFrequency","value":"10"},{"group":"Storm","key":"m_bCoriolisAutoSpawnEnabled","value":"True"}
+      ]
+    },
+    {
+      "id":"cosmetic-storms","label":"Cosmetic Coriolis Storms","category":"storm",
+      "description":"Keep automatic storms visible while disabling Coriolis damage. Does not touch cycle duration, wipe, seed, shifting sands, or restart fields.",
+      "settings":[{"group":"Storm","key":"m_bCoriolisAutoSpawnEnabled","value":"True"},{"group":"Storm","key":"m_bCoriolisDoesDamage","value":"False"},{"group":"Storm","key":"m_CoriolisLightDamage","value":"0"},{"group":"Storm","key":"m_CoriolisHeavyDamage","value":"0"},{"group":"Building","key":"m_bMitigateAllSandstormDamage","value":"True"}]
+    },
+    {
+      "id":"harsh-storms","label":"Harsh Coriolis Storms","category":"storm",
+      "description":"Enable automatic damaging storms using shipped light/heavy damage reference values.",
+      "settings":[{"group":"Storm","key":"m_bCoriolisAutoSpawnEnabled","value":"True"},{"group":"Storm","key":"m_bCoriolisDoesDamage","value":"True"},{"group":"Storm","key":"m_CoriolisLightDamage","value":"5"},{"group":"Storm","key":"m_CoriolisHeavyDamage","value":"5000"},{"group":"Building","key":"m_bMitigateAllSandstormDamage","value":"False"}]
+    },
+    {
+      "id":"abundant-arrakis","label":"Abundant Arrakis","category":"harvest",
+      "description":"Double the shipped spice node ratio, keep all flour-sand fields active, and halve the shipped repair multiplier.",
+      "settings":[{"group":"Harvest","key":"m_NodeValueToSpiceResourceRatio","value":"20"},{"group":"FlourSand","key":"m_FlourSandFieldsActivePercentage","value":"1.0"},{"group":"Building","key":"m_DefaultRepairCostMultiplier","value":"0.25"}]
+    },
+    {
+      "id":"long-days","label":"Long Days","category":"world",
+      "description":"Set the full day/night cycle to 90 real minutes.",
+      "settings":[{"group":"TimeOfDay","key":"m_DayLengthMinutes","value":"90"}]
+    },
+    {
+      "id":"no-hydration","label":"Hydration Disabled","category":"world",
+      "description":"Disable the global dehydration mechanic.",
+      "settings":[{"group":"Hydration","key":"m_bHydrationEnabled","value":"False"}]
+    },
+    {
+      "id":"standard-world-survival","label":"Standard World Survival","category":"world",
+      "description":"Restore shipped day length, hydration, PvP drop fraction, flour-sand activity, and repair multiplier.",
+      "settings":[{"group":"TimeOfDay","key":"m_DayLengthMinutes","value":"30"},{"group":"Hydration","key":"m_bHydrationEnabled","value":"True"},{"group":"GameMode","key":"m_DropAmountOnDefeat","value":"0.4"},{"group":"FlourSand","key":"m_FlourSandFieldsActivePercentage","value":"1.0"},{"group":"Building","key":"m_DefaultRepairCostMultiplier","value":"0.5"}]
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+[Unit]
+Description=DASH first-party Discord slash-command bot
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=keith
+Group=keith
+WorkingDirectory=/opt/DuneAwakeningSelfHost
+Environment=DUNE_DISCORD_BOT_ENV_FILE=/opt/DuneAwakeningSelfHost/.env
+ExecStart=/opt/DuneAwakeningSelfHost/scripts/discord-bot.py --wait-for-config
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=strict
+ReadWritePaths=/opt/DuneAwakeningSelfHost/backups/discord-bot
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target

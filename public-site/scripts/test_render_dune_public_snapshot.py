@@ -71,6 +71,44 @@ class PublicSnapshotConfigTest(unittest.TestCase):
             self.assertEqual(module.DATABASE, "dune_sb_1_4_5_0")
             self.assertEqual(module.COMPOSE_FILES, ["compose.yaml", "compose.allmaps.yaml", "compose.patch.yaml"])
 
+    def test_map_health_summary_separates_on_demand_from_offline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            module = load_snapshot_module({
+                "DUNE_ROOT": str(root),
+                "STATIC_DIR": str(root / "static"),
+                "PATH": os.environ.get("PATH", ""),
+            })
+
+            summary = module.summarize_map_health([
+                {"status": "online"},
+                {"status": "online"},
+                {"status": "warming"},
+                {"status": "on-demand"},
+                {"status": "on-demand"},
+                {"status": "offline"},
+            ])
+
+            self.assertEqual(summary, {
+                "online": 2,
+                "warming": 1,
+                "onDemand": 2,
+                "offline": 1,
+                "total": 6,
+            })
+
+    def test_core_partition_ids_are_sanitized(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            module = load_snapshot_module({
+                "DUNE_ROOT": str(root),
+                "STATIC_DIR": str(root / "static"),
+                "DUNE_CORE_PARTITION_IDS": "1, 2, nope, -3",
+                "PATH": os.environ.get("PATH", ""),
+            })
+
+            self.assertEqual(module.CORE_PARTITION_IDS, [1, 2])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -59,6 +59,15 @@ env_value() {
 world_unique_name="$(env_value WORLD_UNIQUE_NAME)"
 dune_fls_env="$(env_value DUNE_FLS_ENV)"
 game_rmq_public_host="$(env_value GAME_RMQ_PUBLIC_HOST)"
+community_db="${DUNE_COMMUNITY_REWARDS_HOST_DATABASE:-backups/community-rewards/community.sqlite3}"
+community_snapshot=""
+[[ -f "$community_db" ]] && community_snapshot="community-rewards.sqlite3"
+moderation_db="${DUNE_MODERATION_HOST_DATABASE:-backups/moderation/moderation.sqlite3}"
+moderation_snapshot=""
+[[ -f "$moderation_db" ]] && moderation_snapshot="moderation.sqlite3"
+base_gallery_db="${DUNE_BASE_GALLERY_HOST_DATABASE:-backups/base-gallery/gallery.sqlite3}"
+base_gallery_snapshot=""
+[[ -f "$base_gallery_db" ]] && base_gallery_snapshot="base-gallery.sqlite3"
 db="${DUNE_GAME_DB_NAME:-$(env_value DUNE_GAME_DB_NAME)}"
 db="${db:-${DUNE_DATABASE:-$(env_value DUNE_DATABASE)}}"
 db="${db:-${DUNE_DB_NAME:-$(env_value DUNE_DB_NAME)}}"
@@ -69,6 +78,21 @@ if [[ "$dry_run" == true ]]; then
   printf 'env_file=%s\n' "$env_file"
   printf 'env_copy=%s\n' "$(basename "$env_file")"
   printf 'config_archive=config.tgz\n'
+  if [[ -f "$community_db" ]]; then
+    printf 'community_rewards_snapshot=community-rewards.sqlite3\n'
+  else
+    printf 'community_rewards_snapshot=<missing %s>\n' "$community_db"
+  fi
+  if [[ -f "$moderation_db" ]]; then
+    printf 'moderation_snapshot=moderation.sqlite3\n'
+  else
+    printf 'moderation_snapshot=<missing %s>\n' "$moderation_db"
+  fi
+  if [[ -f "$base_gallery_db" ]]; then
+    printf 'base_gallery_snapshot=base-gallery.sqlite3\n'
+  else
+    printf 'base_gallery_snapshot=<missing %s>\n' "$base_gallery_db"
+  fi
   if [[ -d config/tls ]]; then
     printf 'config_tls_archive=config-tls.tgz\n'
   else
@@ -107,6 +131,57 @@ if [[ -d config/tls ]]; then
   tar -czf "${backup_dir}/config-tls.tgz" config/tls
 fi
 
+if [[ -f "$community_db" ]]; then
+  python3 - "$community_db" "${backup_dir}/community-rewards.sqlite3" <<'PY'
+import sqlite3
+import sys
+
+source = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
+target = sqlite3.connect(sys.argv[2])
+try:
+    source.backup(target)
+    if target.execute("pragma integrity_check").fetchone()[0] != "ok":
+        raise SystemExit("community rewards snapshot failed integrity_check")
+finally:
+    target.close()
+    source.close()
+PY
+  chmod 600 "${backup_dir}/community-rewards.sqlite3"
+fi
+
+if [[ -f "$moderation_db" ]]; then
+  python3 - "$moderation_db" "${backup_dir}/moderation.sqlite3" <<'PY'
+import sqlite3
+import sys
+
+source = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
+target = sqlite3.connect(sys.argv[2])
+try:
+    source.backup(target)
+    if target.execute("pragma integrity_check").fetchone()[0] != "ok":
+        raise SystemExit("moderation snapshot failed integrity_check")
+finally:
+    target.close()
+    source.close()
+PY
+  chmod 600 "${backup_dir}/moderation.sqlite3"
+fi
+
+if [[ -f "$base_gallery_db" ]]; then
+  python3 - "$base_gallery_db" "${backup_dir}/base-gallery.sqlite3" <<'PY'
+import sqlite3
+import sys
+source=sqlite3.connect(f"file:{sys.argv[1]}?mode=ro",uri=True)
+target=sqlite3.connect(sys.argv[2])
+try:
+    source.backup(target)
+    if target.execute("pragma integrity_check").fetchone()[0]!="ok": raise SystemExit("base gallery snapshot failed integrity_check")
+finally:
+    target.close(); source.close()
+PY
+  chmod 600 "${backup_dir}/base-gallery.sqlite3"
+fi
+
 "${compose[@]}" exec -T postgres \
   pg_dump -U dune -d "$db" -Fc \
   > "${backup_dir}/postgres-${db}.dump"
@@ -141,6 +216,9 @@ rabbitmq_game_archive=rabbitmq-game.tgz
 server_saved_archive=server-saved.tgz
 config_archive=config.tgz
 config_tls_archive=config-tls.tgz
+community_rewards_snapshot=${community_snapshot}
+moderation_snapshot=${moderation_snapshot}
+base_gallery_snapshot=${base_gallery_snapshot}
 world_unique_name=${world_unique_name}
 dune_fls_env=${dune_fls_env:-retail}
 game_rmq_public_host=${game_rmq_public_host}

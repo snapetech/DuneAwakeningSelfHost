@@ -96,11 +96,16 @@ Virtual machines work well when:
 A predictable Linux layout makes scripts and timers easier to reason about:
 
 ```text
-/srv/DuneAwakeningSelfHost       repo checkout
+/opt/dash/releases/<commit>      immutable packaged releases
+/opt/dash/current                atomically selected release
+/var/lib/dash                    private shared runtime state/config/backups
 /srv/dune-steam-server           optional Steam tool mirror
-/srv/dune-backups                optional external local backup target
-/etc/dash                        local-only secrets for backup tools
+/etc/dash                        local-only host/backup/HA configuration
 ```
+
+A traditional repo checkout remains supported. The immutable layout is created
+by `scripts/install-release.sh` and `packaging/ansible`; see
+`docs/deployment-packaging.md`.
 
 The repo itself assumes relative paths where possible. Installer scripts render absolute paths into systemd units so the checkout can live elsewhere.
 

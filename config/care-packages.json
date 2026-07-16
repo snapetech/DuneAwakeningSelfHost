@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 2,
+  "automatic": {
+    "enabled": false,
+    "intervalSeconds": 60,
+    "rules": [
+      {
+        "id": "starter-first-online",
+        "enabled": false,
+        "packageId": "starter-tools-example",
+        "grantWhen": "first_online",
+        "lastSeenDays": 30
+      }
+    ]
+  },
+  "packages": [
+    {
+      "id": "starter-tools-example",
+      "label": "Starter Tools Example",
+      "description": "Disabled reference preset. Review template IDs and quantities before enabling it.",
+      "enabled": false,
+      "oncePerAccount": true,
+      "cooldownHours": 0,
+      "items": [
+        {
+          "template_id": "BasicBuildingTool",
+          "stack_size": 1,
+          "quality_level": 0,
+          "stats": {}
+        },
+        {
+          "template_id": "BodyFluidExtractor",
+          "stack_size": 1,
+          "quality_level": 0,
+          "stats": {}
+        }
+      ],
+      "currency": [],
+      "xp": []
+    }
+  ]
+}

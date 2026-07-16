@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 720" role="img" aria-labelledby="title desc">
+  <title id="title">Desert world</title>
+  <desc id="desc">A stylized sun above layered dunes and a distant ornithopter.</desc>
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#301814"/>
+      <stop offset="0.57" stop-color="#bb5130"/>
+      <stop offset="1" stop-color="#f2aa5b"/>
+    </linearGradient>
+    <radialGradient id="sun">
+      <stop offset="0.58" stop-color="#fff3c5"/>
+      <stop offset="1" stop-color="#f5c879"/>
+    </radialGradient>
+    <linearGradient id="dune" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f7c679"/>
+      <stop offset="1" stop-color="#ae4327"/>
+    </linearGradient>
+  </defs>
+  <rect width="720" height="720" fill="url(#sky)"/>
+  <circle cx="492" cy="218" r="112" fill="#f7d98e" opacity=".12"/>
+  <circle cx="492" cy="218" r="76" fill="url(#sun)"/>
+  <path d="M0 472C129 369 258 387 372 436c108 47 210 34 348-70v354H0Z" fill="#6f281e"/>
+  <path d="M0 535c112-71 235-85 346-35 127 57 234 48 374-20v240H0Z" fill="url(#dune)"/>
+  <path d="M0 625c171-112 314-71 438-22 101 40 189 35 282-16v133H0Z" fill="#d45f35"/>
+  <path d="M17 657c150-78 286-64 405-20 104 39 195 42 281 3" fill="none" stroke="#ffd18b" stroke-width="8" stroke-linecap="round" opacity=".55"/>
+  <g fill="#2a1714" transform="translate(126 251) rotate(-8)">
+    <path d="M0 30 87 12l52 18-52 17Z"/>
+    <path d="m62 18 15-32 16 31ZM62 41l15 32 16-31Z"/>
+    <path d="m132 28 62-6-52 13Z"/>
+  </g>
+  <path d="M286 510c28-14 51-18 72-12-24 3-42 11-55 25 31-11 59-10 84 3-40-5-75 2-105 22" fill="none" stroke="#6f281e" stroke-width="7" stroke-linecap="round" opacity=".65"/>
+</svg>

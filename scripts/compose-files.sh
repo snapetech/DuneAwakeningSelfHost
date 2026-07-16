@@ -109,6 +109,18 @@ if [[ -n "$host_limits_file" ]] && file_exists "$host_limits_file"; then
   add_file "$host_limits_file"
 fi
 
+metrics_enabled="${DUNE_METRICS_ENABLED:-$(read_env DUNE_METRICS_ENABLED)}"
+if [[ "$metrics_enabled" == "true" ]] && file_exists compose.metrics.yaml; then
+  add_file compose.metrics.yaml
+fi
+
+cpu_affinity_enabled="${DUNE_CPU_AFFINITY_ENABLED:-$(read_env DUNE_CPU_AFFINITY_ENABLED)}"
+cpu_affinity_file="${DUNE_CPU_AFFINITY_COMPOSE_FILE:-$(read_env DUNE_CPU_AFFINITY_COMPOSE_FILE)}"
+cpu_affinity_file="${cpu_affinity_file:-compose.cpu-affinity.yaml}"
+if [[ "$cpu_affinity_enabled" == "true" ]] && file_exists "$cpu_affinity_file"; then
+  add_file "$cpu_affinity_file"
+fi
+
 (
   IFS=:
   printf '%s\n' "${resolved_files[*]}"

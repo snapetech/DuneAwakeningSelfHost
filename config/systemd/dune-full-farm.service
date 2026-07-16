@@ -16,8 +16,10 @@ User=DUNE_SERVICE_USER_PLACEHOLDER
 Group=DUNE_SERVICE_USER_PLACEHOLDER
 WorkingDirectory=/opt/DuneAwakeningSelfHost
 ExecStart=/opt/DuneAwakeningSelfHost/scripts/start-full-warm-pool.sh /opt/DuneAwakeningSelfHost/.env
+ExecStop=/opt/DuneAwakeningSelfHost/scripts/stop-full-warm-pool.sh /opt/DuneAwakeningSelfHost/.env
 RemainAfterExit=yes
 TimeoutStartSec=1800
+TimeoutStopSec=1800
 
 [Install]
 WantedBy=multi-user.target

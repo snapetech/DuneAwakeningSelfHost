@@ -1,0 +1,175 @@
+---
+- name: Validate immutable release inputs
+  ansible.builtin.assert:
+    that:
+      - dash_release_ref is match('^[0-9a-f]{40}$')
+      - dash_release_sha256 is match('^[0-9a-f]{64}$')
+      - dash_env_content | length > 0
+    fail_msg: Set a full commit, archive SHA-256, and Vault-backed dash_env_content.
+
+- name: Validate supported host architecture and AVX2
+  ansible.builtin.assert:
+    that:
+      - ansible_architecture in ['x86_64', 'amd64']
+      - "'avx2' in (ansible_processor_flags | default([]))"
+    fail_msg: DASH requires an x86_64 host exposing AVX2.
+
+- name: Install host prerequisites
+  ansible.builtin.apt:
+    name: "{{ dash_apt_packages + (dash_docker_apt_packages if dash_install_docker_packages else []) }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: ansible_os_family == 'Debian'
+
+- name: Create DASH service group
+  ansible.builtin.group:
+    name: "{{ dash_service_group }}"
+    system: true
+
+- name: Create DASH service account
+  ansible.builtin.user:
+    name: "{{ dash_service_user }}"
+    group: "{{ dash_service_group }}"
+    groups: "{{ dash_service_extra_groups }}"
+    append: true
+    create_home: true
+    shell: /bin/bash
+
+- name: Create release and state roots
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: "{{ dash_release_prefix }}", owner: root, group: root, mode: "0755"}
+    - {path: "{{ dash_state_root }}", owner: "{{ dash_service_user }}", group: "{{ dash_service_group }}", mode: "0700"}
+
+- name: Install the checksum-enforcing release installer
+  ansible.builtin.copy:
+    src: "{{ dash_release_installer_local_path }}"
+    dest: /usr/local/sbin/dash-install-release
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Inspect requested release manifest
+  ansible.builtin.stat:
+    path: "{{ dash_release_prefix }}/releases/{{ dash_release_ref }}/.dash-release.json"
+  register: dash_release_manifest
+
+- name: Install and atomically activate requested release
+  ansible.builtin.command:
+    argv: >-
+      {{
+        ['/usr/local/sbin/dash-install-release', 'install',
+         '--ref', dash_release_ref,
+         '--sha256', dash_release_sha256,
+         '--prefix', dash_release_prefix,
+         '--state-root', dash_state_root,
+         '--activate']
+        + (['--url', dash_release_url] if dash_release_url | length > 0 else [])
+      }}
+  register: dash_release_install
+  changed_when: not dash_release_manifest.stat.exists
+
+- name: Verify installed release identity
+  ansible.builtin.slurp:
+    src: "{{ dash_release_prefix }}/releases/{{ dash_release_ref }}/.dash-release.json"
+  register: dash_release_record
+
+- name: Reject a conflicting existing release
+  ansible.builtin.assert:
+    that:
+      - (dash_release_record.content | b64decode | from_json).commit == dash_release_ref
+      - (dash_release_record.content | b64decode | from_json).sha256 == dash_release_sha256
+
+- name: Install private DASH environment
+  ansible.builtin.copy:
+    content: "{{ dash_env_content }}"
+    dest: "{{ dash_state_root }}/.env"
+    owner: "{{ dash_service_user }}"
+    group: "{{ dash_service_group }}"
+    mode: "0600"
+  no_log: true
+
+- name: Give the service account ownership of shared state directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ dash_service_user }}"
+    group: "{{ dash_service_group }}"
+    mode: "0700"
+  loop:
+    - "{{ dash_state_root }}"
+    - "{{ dash_state_root }}/backups"
+    - "{{ dash_state_root }}/data"
+    - "{{ dash_state_root }}/config-overrides"
+    - "{{ dash_state_root }}/config-secrets"
+    - "{{ dash_state_root }}/config-tls"
+
+- name: Validate Docker Compose plugin
+  ansible.builtin.command: docker compose version
+  changed_when: false
+
+- name: Install guarded DASH service
+  ansible.builtin.template:
+    src: dash.service.j2
+    dest: /etc/systemd/system/dash.service
+    owner: root
+    group: root
+    mode: "0644"
+  register: dash_systemd_unit
+  when: dash_install_service
+
+- name: Reload systemd after unit changes
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: dash_install_service and dash_systemd_unit.changed
+
+- name: Load operator-owned Funcom image tarballs
+  ansible.builtin.command:
+    argv:
+      - "{{ dash_release_prefix }}/current/scripts/load-images.sh"
+      - "{{ dash_state_root }}/.env"
+  args:
+    chdir: "{{ dash_release_prefix }}/current"
+  environment:
+    DUNE_STEAM_SERVER_DIR: "{{ dash_steam_server_dir }}"
+  when: dash_load_images
+
+- name: Initialize database exactly once
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - --env-file
+      - "{{ dash_state_root }}/.env"
+      - run
+      - --rm
+      - db-init
+  args:
+    chdir: "{{ dash_release_prefix }}/current"
+    creates: "{{ dash_state_root }}/.ansible-db-initialized"
+  register: dash_db_init
+  when: dash_initialize_database
+
+- name: Record successful database initialization
+  ansible.builtin.file:
+    path: "{{ dash_state_root }}/.ansible-db-initialized"
+    state: touch
+    owner: "{{ dash_service_user }}"
+    group: "{{ dash_service_group }}"
+    mode: "0600"
+    modification_time: preserve
+    access_time: preserve
+  when: dash_initialize_database and dash_db_init is changed
+
+- name: Configure service enablement and optional startup
+  ansible.builtin.systemd_service:
+    name: dash.service
+    enabled: "{{ dash_enable_service }}"
+    state: "{{ 'started' if dash_start_service else omit }}"
+  when: dash_install_service

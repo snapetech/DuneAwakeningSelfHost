@@ -1,0 +1,14 @@
+[Unit]
+Description=Block direct public HTTP/S access to the Dune host origin
+After=network-pre.target
+Before=network.target cloudflared-media.service
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/dune-cloudflare-origin-guard apply-proxy
+ExecReload=/usr/local/sbin/dune-cloudflare-origin-guard apply-proxy
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

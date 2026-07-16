@@ -53,6 +53,12 @@ The local backup includes:
 - A copy of the env file used for the backup.
 - `config.tgz` for committed/local config files, excluding TLS key material.
 - `config-tls.tgz` for RabbitMQ TLS material under `config/tls/`.
+- A transactionally consistent `community-rewards.sqlite3` snapshot when the
+  isolated wallet/shop database exists.
+- A transactionally consistent `moderation.sqlite3` snapshot when the isolated
+  case/history database exists.
+- A transactionally consistent `base-gallery.sqlite3` snapshot when the
+  isolated creator/gallery database exists.
 - `manifest.txt` with `WORLD_UNIQUE_NAME`, `DUNE_FLS_ENV`, and `GAME_RMQ_PUBLIC_HOST`.
 
 Restore with:
@@ -65,7 +71,7 @@ Restores are disruptive. Stop game/admin writers first.
 RabbitMQ, saved-state, config, and TLS replacement are opt-in:
 
 ```bash
-./scripts/restore-state.sh --rabbitmq --server-saved --config --tls .env backups/<UTC timestamp>
+./scripts/restore-state.sh --rabbitmq --server-saved --config --tls --community-rewards --moderation --base-gallery .env backups/<UTC timestamp>
 ```
 
 Run `--dry-run` first. If the manifest `WORLD_UNIQUE_NAME` differs from the current `.env`, restore will warn because that value is the durable FLS battlegroup identity.
@@ -73,7 +79,7 @@ Run `--dry-run` first. If the manifest `WORLD_UNIQUE_NAME` differs from the curr
 The equivalent Make target accepts optional restore layer flags:
 
 ```bash
-make restore-dry-run ENV_FILE=.env BACKUP_DIR=backups/<UTC timestamp> RESTORE_FLAGS='--rabbitmq --server-saved --config --tls'
+make restore-dry-run ENV_FILE=.env BACKUP_DIR=backups/<UTC timestamp> RESTORE_FLAGS='--rabbitmq --server-saved --config --tls --community-rewards --moderation --base-gallery'
 ```
 
 ## Offsite and Onsite Sync
@@ -165,6 +171,25 @@ A backup that has never been restored is only a guess. At minimum:
 ```bash
 ./scripts/verify-backup.sh backups/<id>
 ```
+
+The private admin panel Infrastructure page lists backup sets below `backups/`
+and invokes the same `scripts/verify-backup.sh` check. It also provides gated
+create/download/import/quarantine-delete and dry-run/execute restore workflows.
+Browser restores still invoke the same `scripts/restore-state.sh`, create a
+verified pre-restore set, require zero online players, and keep layer selection
+explicit. See [`infrastructure-console.md`](infrastructure-console.md).
+
+The Infrastructure page can also schedule the same verified full backup by
+local start time and interval, with bounded retention. The scheduler records
+its next run before starting work to prevent duplicate execution after a slow
+backup, and retention only removes paths that the scheduler itself recorded
+under `backups/admin-panel/maintenance`. This complements rather than replaces
+offsite sync and replica snapshots.
+
+Recipient-encrypted portable archives and encrypted-only rclone/rsync staging
+are documented in [`backup-encryption.md`](backup-encryption.md). Restic remains
+the encrypted repository path; the OpenPGP path adds an independently portable
+artifact with exact fingerprint selection and a ciphertext receipt.
 
 For maintenance backups:
 

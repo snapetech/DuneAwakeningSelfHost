@@ -1,0 +1,872 @@
+[
+  {
+    "id": "Skills.Ability.BinduNerveStrike",
+    "name": "Prana-Bindu Strikes",
+    "category": "BeneGesserit",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Ability.Blindspot",
+    "name": "Ignore",
+    "category": "BeneGesserit",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Ability.Hypersprint",
+    "name": "Bindu Sprint",
+    "category": "BeneGesserit",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Ability.LitanyAgainstFear",
+    "name": "Litany Against Fear",
+    "category": "BeneGesserit",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Ability.VoiceCompel",
+    "name": "Compel",
+    "category": "BeneGesserit",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Ability.VoiceStop",
+    "name": "Stop",
+    "category": "BeneGesserit",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Ability.WeirdingStep",
+    "name": "Weirding Step",
+    "category": "BeneGesserit",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Attribute.Manipulation1",
+    "name": "Voice Training",
+    "category": "BeneGesserit",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.SelfControl1",
+    "name": "Recovery",
+    "category": "BeneGesserit",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.SelfControl2",
+    "name": "Sun Tolerance",
+    "category": "BeneGesserit",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.SelfControl3",
+    "name": "Vitality",
+    "category": "BeneGesserit",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.SelfControl4",
+    "name": "Self-Healing",
+    "category": "BeneGesserit",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.SelfControl5",
+    "name": "Poison Tolerance",
+    "category": "BeneGesserit",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.WeirdingWay1",
+    "name": "Blade Damage",
+    "category": "BeneGesserit",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.WeirdingWay2",
+    "name": "Short Blade Damage",
+    "category": "BeneGesserit",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Key.BeneGesserit1",
+    "name": "XX_Bene Gesserit Phase 1",
+    "category": "BeneGesserit",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Key.BeneGesserit2",
+    "name": "XX_Bene Gesserit Phase 2",
+    "category": "BeneGesserit",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Key.BeneGesserit3",
+    "name": "XX_Bene Gesserit Phase 3",
+    "category": "BeneGesserit",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Key.CapstoneManipulation",
+    "name": "XX_Manipulation Capstone",
+    "category": "BeneGesserit",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Key.CapstoneSelfControl",
+    "name": "XX_Self Control Capstone",
+    "category": "BeneGesserit",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Key.CapstoneWeirdingWay",
+    "name": "XX_Weirding Way Capstone",
+    "category": "BeneGesserit",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Perk.Backstabber",
+    "name": "Manipulate Instability",
+    "category": "BeneGesserit",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Perk.BinduStability",
+    "name": "Prana-Bindu Stability",
+    "category": "BeneGesserit",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Perk.MetabolizePoison",
+    "name": "Metabolize Poison",
+    "category": "BeneGesserit",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Perk.RegenCap",
+    "name": "Trauma Recovery",
+    "category": "BeneGesserit",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Perk.VoiceAnalysis",
+    "name": "Rapid Register",
+    "category": "BeneGesserit",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Spice.BinduDodge",
+    "name": "Bindu Dodge",
+    "category": "BeneGesserit",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Spice.VoiceSplash",
+    "name": "Screech",
+    "category": "BeneGesserit",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Ability.ControlSpace",
+    "name": "Control Space",
+    "category": "Hidden",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Ability.HealerSeeker",
+    "name": "LOC_Ability: Healer Seeker",
+    "category": "Hidden",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Ability.HealingCapsule",
+    "name": "LOC_Ability: Healing Capsule",
+    "category": "Hidden",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Ability.SuspensorGrenade_Stabilization",
+    "name": "Stabilization Bomb",
+    "category": "Hidden",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Ability.SuspensorMine_Stabilization",
+    "name": "Remote Stabilization Mine",
+    "category": "Hidden",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Attribute.Blade3",
+    "name": "XX_",
+    "category": "Hidden",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Perk.Gunsmith",
+    "name": "Gunsmith",
+    "category": "Hidden",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Ability.HunterSeeker",
+    "name": "Hunter-Seeker",
+    "category": "Mentat",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Ability.PoisonCapsuleLauncher",
+    "name": "Poison Capsule",
+    "category": "Mentat",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Ability.PoisonMine",
+    "name": "Poison Mine",
+    "category": "Mentat",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Ability.PortableGenerator",
+    "name": "Source of Power",
+    "category": "Mentat",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Ability.SolidoDecoy",
+    "name": "Solido Decoy",
+    "category": "Mentat",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Ability.StunDart",
+    "name": "Stunner",
+    "category": "Mentat",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Ability.SuspensorMine_Amplification",
+    "name": "Gravity Mine",
+    "category": "Mentat",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Ability.SuspensorMine_Reduction",
+    "name": "Anti-gravity Mine",
+    "category": "Mentat",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Ability.SuspensorWall",
+    "name": "Shield Wall",
+    "category": "Mentat",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Ability.TurretSeeker",
+    "name": "The Sentinel",
+    "category": "Mentat",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.Assassination1",
+    "name": "Headshot Damage",
+    "category": "Mentat",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.Assassination2",
+    "name": "Assassin's Shot",
+    "category": "Mentat",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.MentalCalculus1",
+    "name": "Garment Keeper",
+    "category": "Mentat",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.MentalCalculus2",
+    "name": "Ranged Damage",
+    "category": "Mentat",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.MentalCalculus3",
+    "name": "Tailoring",
+    "category": "Mentat",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.MentalCalculus4",
+    "name": "Pistol Damage",
+    "category": "Mentat",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.MentalCalculus5",
+    "name": "Rifle Damage",
+    "category": "Mentat",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Key.CapstoneAssassination",
+    "name": "XX_Assassination Capstone",
+    "category": "Mentat",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Key.CapstoneMentalCalculus",
+    "name": "XX_MentalCalculus Capstone",
+    "category": "Mentat",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Key.CapstoneTactician",
+    "name": "XX_Tactician Capstone",
+    "category": "Mentat",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Key.Mentat1",
+    "name": "XX_Mentat Phase 1",
+    "category": "Mentat",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Key.Mentat2",
+    "name": "XX_Mentat Phase 2",
+    "category": "Mentat",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Key.Mentat3",
+    "name": "XX_Mentat Phase 3",
+    "category": "Mentat",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Perk.ExploitWeakness",
+    "name": "Exploit Weakness",
+    "category": "Mentat",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Perk.HeadShots",
+    "name": "Marksman",
+    "category": "Mentat",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Perk.IronWill",
+    "name": "Iron Will",
+    "category": "Mentat",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Perk.PoisonTooth",
+    "name": "Poison Tooth",
+    "category": "Mentat",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Perk.ShieldWeakpoint",
+    "name": "Shield Overcharge",
+    "category": "Mentat",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Ability.SuspensorPad",
+    "name": "Suspensor Pad",
+    "category": "Planetologist",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Attribute.Driver1",
+    "name": "Vehicle Repair",
+    "category": "Planetologist",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.Driver2",
+    "name": "Fuel Efficient Driver",
+    "category": "Planetologist",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.Driver3",
+    "name": "Vehicle Mining",
+    "category": "Planetologist",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.Driver4",
+    "name": "Vehicle Scanning",
+    "category": "Planetologist",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.Driver5",
+    "name": "Fuel Efficient Pilot",
+    "category": "Planetologist",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.Driver6",
+    "name": "Sandcrawler Yield",
+    "category": "Planetologist",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.Explorer1",
+    "name": "Cartographer",
+    "category": "Planetologist",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Attribute.Explorer2",
+    "name": "Mountaineer",
+    "category": "Planetologist",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.Explorer3",
+    "name": "Scanner Mastery",
+    "category": "Planetologist",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.Explorer4",
+    "name": "Stillsuit Seals",
+    "category": "Planetologist",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.Explorer5",
+    "name": "Spice Surveyor",
+    "category": "Planetologist",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Attribute.Scientist1",
+    "name": "Cutteray Mining",
+    "category": "Planetologist",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.Scientist2",
+    "name": "Dew Gathering",
+    "category": "Planetologist",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.Scientist3",
+    "name": "Rerouting",
+    "category": "Planetologist",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.Scientist4",
+    "name": "Deep Analysis",
+    "category": "Planetologist",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.Scientist5",
+    "name": "Compaction",
+    "category": "Planetologist",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Key.CapstoneDriver",
+    "name": "XX_Driver Capstone",
+    "category": "Planetologist",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Key.CapstoneExplorer",
+    "name": "XX_Explorer Capstone",
+    "category": "Planetologist",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Key.CapstoneScientist",
+    "name": "XX_Scientist Capstone",
+    "category": "Planetologist",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Key.Planetologist1",
+    "name": "XX_Planetologist Phase 1",
+    "category": "Planetologist",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Key.Planetologist2",
+    "name": "XX_Planetologist Phase 2",
+    "category": "Planetologist",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Key.Planetologist3",
+    "name": "XX_Planetologist Phase 3",
+    "category": "Planetologist",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Perk.BatteryExpert",
+    "name": "Conservation of Energy",
+    "category": "Planetologist",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Science.m_PowerMax",
+    "name": "Overcharge",
+    "category": "Planetologist",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Spice.VehicleHeat",
+    "name": "Heat Management",
+    "category": "Planetologist",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Ability.BattleCry",
+    "name": "Inspiration",
+    "category": "Swordmaster",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Ability.CripplingStrike",
+    "name": "Crippling Strike",
+    "category": "Swordmaster",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Ability.DeflectionSlow",
+    "name": "Deflection",
+    "category": "Swordmaster",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Ability.KneeCharge",
+    "name": "Knee Charge",
+    "category": "Swordmaster",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Ability.RiposteBreak",
+    "name": "Foil",
+    "category": "Swordmaster",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Ability.RiposteInjure",
+    "name": "Retaliate",
+    "category": "Swordmaster",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Ability.Whirlwind",
+    "name": "Eye of the Storm",
+    "category": "Swordmaster",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.Aggression1",
+    "name": "Field Medicine",
+    "category": "Swordmaster",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.Aggression2",
+    "name": "Optimized Hydration",
+    "category": "Swordmaster",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.Aggression3",
+    "name": "General Conditioning",
+    "category": "Swordmaster",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.Aggression4",
+    "name": "Desert Conditioning",
+    "category": "Swordmaster",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.Blade1",
+    "name": "Blade Damage",
+    "category": "Swordmaster",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.Blade2",
+    "name": "Long Blade Damage",
+    "category": "Swordmaster",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.Resolve1",
+    "name": "Bleed Tolerance",
+    "category": "Swordmaster",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.Resolve2",
+    "name": "Solid Stance",
+    "category": "Swordmaster",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.UnstoppableAttacks",
+    "name": "Confidence",
+    "category": "Swordmaster",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Key.CapstoneAggression",
+    "name": "XX_Aggression Capstone",
+    "category": "Swordmaster",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Key.CapstoneBlade",
+    "name": "XX_Blade Capstone",
+    "category": "Swordmaster",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Key.CapstoneResolve",
+    "name": "XX_Resolve Capstone",
+    "category": "Swordmaster",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Key.Swordmaster1",
+    "name": "XX_Swordmaster Phase 1",
+    "category": "Swordmaster",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Key.Swordmaster2",
+    "name": "XX_Swordmaster Phase 2",
+    "category": "Swordmaster",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Key.Swordmaster3",
+    "name": "XX_Swordmaster Phase 3",
+    "category": "Swordmaster",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Perk.MeleeChain",
+    "name": "Dance of Blades",
+    "category": "Swordmaster",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Perk.SprintStamina",
+    "name": "Disciplined Breathing",
+    "category": "Swordmaster",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Perk.ThriveOnDanger",
+    "name": "Thrive on Danger",
+    "category": "Swordmaster",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Perk.ToughLunge",
+    "name": "Reckless Lunge",
+    "category": "Swordmaster",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Spice.ParryBoost",
+    "name": "Precise Parry",
+    "category": "Swordmaster",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Spice.ShadowStrike",
+    "name": "Prescient Strike",
+    "category": "Swordmaster",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Ability.AssaultSeeker",
+    "name": "Assault Seeker",
+    "category": "Trooper",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Ability.CablePull",
+    "name": "Shigawire Claw",
+    "category": "Trooper",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Ability.CollapseGrenade",
+    "name": "Collapse Grenade",
+    "category": "Trooper",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Ability.EnergyCapsule",
+    "name": "Energy Capsule",
+    "category": "Trooper",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Ability.FragGrenade",
+    "name": "Explosive Grenade",
+    "category": "Trooper",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Ability.MagneticAttractor",
+    "name": "Attractor Field",
+    "category": "Trooper",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Ability.SuspensorBlast",
+    "name": "Suspensor Blast",
+    "category": "Trooper",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Ability.SuspensorGrenade_Amplification",
+    "name": "Gravity Field",
+    "category": "Trooper",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Ability.SuspensorGrenade_Reduction",
+    "name": "Anti-gravity Field",
+    "category": "Trooper",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Attribute.SuspensorTech1",
+    "name": "Suspensor Efficiency",
+    "category": "Trooper",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.Weaponry1",
+    "name": "Ranged Damage",
+    "category": "Trooper",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.Weaponry2",
+    "name": "Disruptor Damage",
+    "category": "Trooper",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.Weaponry3",
+    "name": "Scattergun Damage",
+    "category": "Trooper",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.Weaponry4",
+    "name": "Field Maintenance",
+    "category": "Trooper",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.Weaponry5",
+    "name": "Heavy Weapon Damage",
+    "category": "Trooper",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Attribute.Weaponry6",
+    "name": "Gunsmith",
+    "category": "Trooper",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Key.CapstoneGadgets",
+    "name": "XX_Gadgets Capstone",
+    "category": "Trooper",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Key.CapstoneSuspensorTech",
+    "name": "XX_Suspensor Tech Capstone",
+    "category": "Trooper",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Key.CapstoneWeaponry",
+    "name": "XX_Weaponry Capstone",
+    "category": "Trooper",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Key.Trooper1",
+    "name": "XX_Trooper Phase 1",
+    "category": "Trooper",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Key.Trooper2",
+    "name": "XX_Trooper Phase 2",
+    "category": "Trooper",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Key.Trooper3",
+    "name": "XX_Trooper Phase 3",
+    "category": "Trooper",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Perk.BodyShots",
+    "name": "Center of Mass",
+    "category": "Trooper",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Perk.DeathFromAbove",
+    "name": "Death from Above",
+    "category": "Trooper",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Perk.HeavyWeaponNaib",
+    "name": "Heavy Weapon Agility",
+    "category": "Trooper",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Perk.SuspensorDash",
+    "name": "Suspensor Dash",
+    "category": "Trooper",
+    "maxLevel": 1
+  },
+  {
+    "id": "Skills.Perk.TrooperCooldowns",
+    "name": "Battle Hardened",
+    "category": "Trooper",
+    "maxLevel": 3
+  },
+  {
+    "id": "Skills.Spice.GadgetReload",
+    "name": "Reflexive Reload",
+    "category": "Trooper",
+    "maxLevel": 1
+  }
+]

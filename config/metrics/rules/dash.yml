@@ -1,0 +1,57 @@
+groups:
+  - name: dash-host
+    rules:
+      - alert: DashHostHighCpu
+        expr: 100 * (1 - avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m]))) > 85
+        for: 10m
+        labels: {severity: warning}
+        annotations: {summary: "DASH host CPU is above 85%"}
+      - alert: DashHostHighMemory
+        expr: 100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > 90
+        for: 10m
+        labels: {severity: warning}
+        annotations: {summary: "DASH host memory is above 90%"}
+      - alert: DashHostLowAvailableMemory
+        expr: node_memory_MemAvailable_bytes < 2147483648
+        for: 5m
+        labels: {severity: critical}
+        annotations: {summary: "DASH host has less than 2 GiB available"}
+      - alert: DashHostFilesystemCritical
+        expr: 100 * (1 - node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"}) > 95
+        for: 5m
+        labels: {severity: critical}
+        annotations: {summary: "DASH host filesystem is above 95%"}
+  - name: dash-datastores
+    rules:
+      - alert: DashPostgresDown
+        expr: pg_up == 0
+        for: 1m
+        labels: {severity: critical}
+        annotations: {summary: "DASH Postgres exporter reports down"}
+      - alert: DashPostgresDeadlocks
+        expr: increase(pg_stat_database_deadlocks{datname="dune_sb_1_4_0_0"}[5m]) > 0
+        for: 1m
+        labels: {severity: warning}
+        annotations: {summary: "DASH Postgres deadlocks increased"}
+      - alert: DashRabbitMQDown
+        expr: rabbitmq_up == 0
+        for: 1m
+        labels: {severity: critical}
+        annotations: {summary: "A DASH RabbitMQ broker reports down"}
+      - alert: DashRabbitMQQueueBacklog
+        expr: rabbitmq_queue_messages_ready > 1000
+        for: 10m
+        labels: {severity: warning}
+        annotations: {summary: "A DASH RabbitMQ queue has a sustained backlog"}
+  - name: dash-containers
+    rules:
+      - alert: DashContainerHighMemory
+        expr: 100 * container_memory_working_set_bytes{name=~"dune_server-.*"} / container_spec_memory_limit_bytes{name=~"dune_server-.*"} > 90 and container_spec_memory_limit_bytes{name=~"dune_server-.*"} > 0
+        for: 10m
+        labels: {severity: warning}
+        annotations: {summary: "A DASH container is above 90% of its memory limit"}
+      - alert: DashContainerMemoryFailures
+        expr: increase(container_memory_failcnt{name=~"dune_server-.*"}[10m]) > 0
+        for: 1m
+        labels: {severity: warning}
+        annotations: {summary: "A DASH container memory failure counter increased"}

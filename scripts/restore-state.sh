@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/restore-state.sh [--dry-run] [--rabbitmq] [--server-saved] [--config] [--tls] [env-file] <backup-dir>
+Usage: ./scripts/restore-state.sh [--dry-run] [--rabbitmq] [--server-saved] [--config] [--tls] [--community-rewards] [--moderation] [--base-gallery] [env-file] <backup-dir>
 
 Restores the Postgres dump from a backup created by scripts/backup-state.sh.
 RabbitMQ and server saved-state archives are restored only when their flags are
@@ -14,7 +14,7 @@ world identity, secrets, local tuning, and RabbitMQ certificate material.
 Examples:
   ./scripts/restore-state.sh --dry-run .env backups/20260519T150000Z
   ./scripts/restore-state.sh .env backups/20260519T150000Z
-  ./scripts/restore-state.sh --rabbitmq --server-saved --config --tls .env backups/20260519T150000Z
+  ./scripts/restore-state.sh --rabbitmq --server-saved --config --tls --community-rewards --moderation --base-gallery .env backups/20260519T150000Z
 EOF
 }
 
@@ -23,6 +23,9 @@ restore_rabbitmq=false
 restore_server_saved=false
 restore_config=false
 restore_tls=false
+restore_community_rewards=false
+restore_moderation=false
+restore_base_gallery=false
 
 while [[ "${1:-}" == --* ]]; do
   case "$1" in
@@ -44,6 +47,18 @@ while [[ "${1:-}" == --* ]]; do
       ;;
     --tls)
       restore_tls=true
+      shift
+      ;;
+    --community-rewards)
+      restore_community_rewards=true
+      shift
+      ;;
+    --moderation)
+      restore_moderation=true
+      shift
+      ;;
+    --base-gallery)
+      restore_base_gallery=true
       shift
       ;;
     -h|--help)
@@ -149,6 +164,20 @@ if [[ "$restore_tls" == true && ! -f "${backup_dir}/config-tls.tgz" ]]; then
   exit 1
 fi
 
+if [[ "$restore_community_rewards" == true && ! -f "${backup_dir}/community-rewards.sqlite3" ]]; then
+  printf 'community rewards snapshot not found: %s\n' "${backup_dir}/community-rewards.sqlite3" >&2
+  exit 1
+fi
+
+if [[ "$restore_moderation" == true && ! -f "${backup_dir}/moderation.sqlite3" ]]; then
+  printf 'moderation snapshot not found: %s\n' "${backup_dir}/moderation.sqlite3" >&2
+  exit 1
+fi
+if [[ "$restore_base_gallery" == true && ! -f "${backup_dir}/base-gallery.sqlite3" ]]; then
+  printf 'base gallery snapshot not found: %s\n' "${backup_dir}/base-gallery.sqlite3" >&2
+  exit 1
+fi
+
 backup_world="$(manifest_value world_unique_name)"
 current_world="$(env_value WORLD_UNIQUE_NAME)"
 if [[ -n "$backup_world" && -n "$current_world" && "$backup_world" != "$current_world" ]]; then
@@ -165,13 +194,36 @@ if [[ "$dry_run" == true ]]; then
   printf 'restore_server_saved=%s\n' "$restore_server_saved"
   printf 'restore_config=%s\n' "$restore_config"
   printf 'restore_tls=%s\n' "$restore_tls"
+  printf 'restore_community_rewards=%s\n' "$restore_community_rewards"
+  printf 'restore_moderation=%s\n' "$restore_moderation"
+  printf 'restore_base_gallery=%s\n' "$restore_base_gallery"
   printf 'backup_world_unique_name=%s\n' "${backup_world:-}"
   printf 'current_world_unique_name=%s\n' "${current_world:-}"
   exit 0
 fi
 
 printf 'stopping write services\n'
-"${compose[@]}" stop survival director gateway text-router rmq-auth-shim admin-rmq game-rmq || true
+"${compose[@]}" stop survival director gateway text-router rmq-auth-shim admin-rmq game-rmq admin-panel || true
+
+if [[ "$restore_community_rewards" == true ]]; then
+  printf 'restoring isolated community rewards state from %s\n' "${backup_dir}/community-rewards.sqlite3"
+  mkdir -p backups/community-rewards
+  rm -f backups/community-rewards/community.sqlite3-wal backups/community-rewards/community.sqlite3-shm
+  install -m 600 "${backup_dir}/community-rewards.sqlite3" backups/community-rewards/community.sqlite3
+fi
+
+if [[ "$restore_moderation" == true ]]; then
+  printf 'restoring isolated moderation state from %s\n' "${backup_dir}/moderation.sqlite3"
+  mkdir -p backups/moderation
+  rm -f backups/moderation/moderation.sqlite3-wal backups/moderation/moderation.sqlite3-shm
+  install -m 600 "${backup_dir}/moderation.sqlite3" backups/moderation/moderation.sqlite3
+fi
+if [[ "$restore_base_gallery" == true ]]; then
+  printf 'restoring isolated base gallery state from %s\n' "${backup_dir}/base-gallery.sqlite3"
+  mkdir -p backups/base-gallery
+  rm -f backups/base-gallery/gallery.sqlite3-wal backups/base-gallery/gallery.sqlite3-shm
+  install -m 600 "${backup_dir}/base-gallery.sqlite3" backups/base-gallery/gallery.sqlite3
+fi
 
 if [[ "$restore_config" == true ]]; then
   printf 'restoring config files from %s\n' "${backup_dir}/config.tgz"
@@ -213,4 +265,4 @@ printf 'restoring postgres from %s\n' "$dump_file"
   < "$dump_file"
 
 printf 'restore complete. Start remaining services when ready:\n'
-printf '  %s compose --env-file %s up -d admin-rmq game-rmq rmq-auth-shim text-router gateway director\n' "$container_runtime" "$env_file"
+printf '  %s compose --env-file %s up -d admin-rmq game-rmq rmq-auth-shim text-router gateway director admin-panel admin-panel-ingress\n' "$container_runtime" "$env_file"

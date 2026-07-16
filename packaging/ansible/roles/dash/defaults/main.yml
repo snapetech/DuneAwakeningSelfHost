@@ -1,0 +1,32 @@
+---
+dash_release_ref: ""
+dash_release_sha256: ""
+dash_release_url: ""
+dash_release_installer_local_path: "{{ playbook_dir }}/../../scripts/install-release.sh"
+dash_release_prefix: /opt/dash
+dash_state_root: /var/lib/dash
+dash_service_user: dash
+dash_service_group: dash
+dash_service_extra_groups:
+  - docker
+dash_env_content: ""
+dash_install_docker_packages: true
+dash_apt_packages:
+  - ca-certificates
+  - curl
+  - jq
+  - openssl
+  - python3
+  - ripgrep
+  - rsync
+  - tar
+dash_docker_apt_packages:
+  - docker.io
+  - docker-compose-v2
+dash_load_images: false
+dash_initialize_database: false
+dash_enable_service: false
+dash_start_service: false
+dash_steam_server_dir: /srv/dune-steam-server
+dash_wait_seconds: 600
+dash_install_service: true

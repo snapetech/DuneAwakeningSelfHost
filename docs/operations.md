@@ -79,7 +79,29 @@ That verifier covers the restart failure mode where maps are alive in the databa
 
 The admin panel Overview and Ops tabs expose the same high-level readiness from a browser. The map table is derived from `world_partition`, `farm_state`, and `active_server_ids`; the network table probes local Postgres plus upstream HTTP reachability for the Dune account portal and public Dune/Funcom sites. Treat those probes as operator signals, not proof that FLS registration or client travel is healthy.
 
+The Infrastructure tab adds project-scoped service/log inspection and control,
+scheduled/full backup lifecycle, bounded database operations, and update/repair
+workflows. The World tab adds read-only guild, Landsraad, and aggregate storage
+views; separately gated Landsraad actions live on Admin Actions. See
+[`infrastructure-console.md`](infrastructure-console.md) and
+[`world-console.md`](world-console.md). Each mutation path is disabled by
+default and requires its documented gate and exact confirmation.
+
 The Ops tab also has restart-announcement and scheduled restart planners. The daily maintenance target is 06:00 local host time, with the host timer firing at 05:30 to create a 30-minute warning window. Executed maintenance uses a stopped-world backup, then checks the current Steam package for updated Funcom image tarballs before recreating services. See [`docs/maintenance-updates.md`](maintenance-updates.md) for the full timeline, update logic, and timer install path.
+
+Inspect Docker storage and preview obsolete Dune image cleanup with:
+
+```bash
+make storage-status
+make storage-cleanup-dry-run
+```
+
+Deletion is limited to obsolete images in known Funcom Dune repositories. It
+protects the configured current image, every image referenced by any container,
+the pinned Postgres image, unrelated repositories, containers, volumes, data,
+and backups. Execution requires `scripts/storage-cleanup.sh cleanup --execute`
+plus the exact confirmation documented by the script. Build-cache pruning is a
+separate opt-in flag. See [`infrastructure-console.md`](infrastructure-console.md).
 
 For the expanded standing farm, the expected summary is:
 
@@ -406,6 +428,42 @@ systemctl status dune-map-watchdog.service
 
 The installer updates `WorkingDirectory` and `ExecStart` for the current repo path before copying the unit to `/etc/systemd/system/`.
 
+The full-farm unit also renders `ExecStop` to
+`scripts/stop-full-warm-pool.sh`. Systemd stop, reboot, and shutdown therefore
+use `restart-target.sh` in its shutdown phase, including the normal ordered
+world-stop behavior, instead of depending on Docker's process termination
+order. `TimeoutStopSec=1800` gives the clean stop the same bounded window as
+startup.
+
+### Dynamic public IPv4 changes
+
+`scripts/public-ip-monitor.sh` compares the public IPv4 with
+`EXTERNAL_ADDRESS`; unchanged addresses and DNS names are no-ops. A change is
+dry-run-only by default. Execution requires both
+`DUNE_PUBLIC_IP_MONITOR_ENABLED=true` and an exact short-hostname match in
+`DUNE_PUBLIC_IP_MONITOR_ALLOWED_HOST`.
+
+Before a committed change, the monitor archives `.env` and the RabbitMQ TLS
+directory. It generates and verifies replacement TLS material in staging before
+updating `EXTERNAL_ADDRESS`, and updates `GAME_RMQ_PUBLIC_HOST` only when that
+value followed the old address. It then installs the staged certificate and
+invokes the normal target-aware full-farm restart. A failed restart remains in
+`restarting` state and is retried on the next timer check even though the
+address already matches. Status is stored under
+`backups/admin-panel/public-ip-monitor.state`.
+
+```bash
+hostname -s
+./scripts/public-ip-monitor.sh .env status
+./scripts/public-ip-monitor.sh .env check
+make install-public-ip-monitor ENV_FILE=.env
+systemctl status dune-public-ip-monitor.timer
+```
+
+Changing the interval requires reinstalling the timer. Disable it with
+`systemctl disable --now dune-public-ip-monitor.timer`; uninstalling the timer
+does not remove backups or rewrite `.env`.
+
 ## Expanded Farm Startup
 
 Start the full standing farm after the core service layer is healthy:
@@ -438,10 +496,13 @@ COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' ./scripts/rmq-health.sh .env
 ```
 
 The helper starts Postgres and both RabbitMQ services first, waits for their
-health checks, writes the 30-partition layout, starts the service layer, then
-starts maps in batches: `survival`/`overmap`, partitions 3-9, then partitions
-10-30. It uses `--no-recreate` for normal startup so a routine online operation
-does not replace Postgres under running game servers.
+health checks, writes the 30-partition layout, and starts the service layer. It
+then reads `backups/admin-panel/autoscaler.json` when present, falling back to
+`.env`. Minimum, balanced, and selective custom profiles start only their
+always-on maps; full warm starts maps in batches: `survival`/`overmap`,
+partitions 3-9, then partitions 10-30. It uses `--no-recreate` for normal
+startup so a routine online operation does not replace Postgres under running
+game servers. See [`autoscaling-memory.md`](autoscaling-memory.md).
 
 The helper also seeds required Docker bridge neighbor entries before and after
 the control-plane services start. This is a site-specific guard for the current
@@ -486,6 +547,34 @@ docker compose --env-file .env up -d --force-recreate --no-deps gateway
 Known brittle area: Docker bridge peer discovery on this host. Do not remove
 the neighbor-seeding step until a maintenance-window network rebuild proves
 that newly recreated control-plane containers can connect without it.
+
+### Additional Survival Sietches
+
+The static warm pool keeps the official travel targets stable. Additional
+`Survival_1` dimensions are managed by `scripts/sietches.sh` and an overlay
+generated under `backups/admin-panel`. The configuration and overlay are mode
+`0600` because per-Sietch passwords are local secrets.
+
+`set-active` clones the first Survival partition definition for missing
+dimensions and blocks dimensions above the requested active count; it does not
+delete their world rows. Each committed topology change creates a custom-format
+Postgres backup first. Additional processes have isolated saved-data volumes,
+fixed Docker addresses, and deterministic port pairs. All-farm restart,
+shutdown, full-pool start, and systemd `ExecStop` include these managed
+containers.
+
+```bash
+./scripts/sietches.sh .env list
+./scripts/sietches.sh .env set-active 4
+./scripts/sietches.sh .env set-active 4 --execute
+./scripts/sietches.sh .env set-settings 32 "Sietch Alpha" "secret" --execute
+./scripts/sietches.sh .env reconcile --execute
+```
+
+Settings changes refuse a partition with connected players. Decreasing the
+active count also refuses to remove a managed container with connected players.
+The supported ceiling is 64 Survival dimensions. Forward `udp/8001-8063` and
+`udp/8101-8163` when those dimensions must be publicly reachable.
 
 For unattended operation, run the map watchdog as a host service after startup:
 

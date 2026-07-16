@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "enabled": true,
+  "currency": {
+    "name": "Sietch Credits",
+    "symbol": "SC"
+  },
+  "playtime": {
+    "enabled": true,
+    "intervalSeconds": 900,
+    "creditsPerInterval": 1,
+    "maxObservationGapSeconds": 600,
+    "trackId": "season-1",
+    "trackXpPerInterval": 1
+  },
+  "webhooks": {
+    "vote": {
+      "enabled": false,
+      "maxCredits": 100,
+      "trackId": "season-1",
+      "trackXp": 5
+    },
+    "payment": {
+      "enabled": false,
+      "maxCredits": 100000
+    }
+  },
+  "offers": [
+    {
+      "id": "starter-water",
+      "version": 1,
+      "name": "Starter Water",
+      "description": "A small, repeatable water reward.",
+      "kind": "item",
+      "price": 10,
+      "stock": null,
+      "enabled": true,
+      "rewards": [
+        {
+          "type": "item",
+          "templateId": "WaterPack_Consumable",
+          "count": 1,
+          "qualityLevel": 0
+        }
+      ]
+    },
+    {
+      "id": "field-kit",
+      "version": 1,
+      "name": "Field Kit",
+      "description": "A versioned multi-item kit with finite stock.",
+      "kind": "kit",
+      "price": 50,
+      "stock": 25,
+      "enabled": true,
+      "rewards": [
+        {
+          "type": "item",
+          "templateId": "WaterPack_Consumable",
+          "count": 2,
+          "qualityLevel": 0
+        },
+        {
+          "type": "item",
+          "templateId": "Bloodsack_02",
+          "count": 1,
+          "qualityLevel": 0
+        }
+      ]
+    }
+  ],
+  "tracks": [
+    {
+      "id": "season-1",
+      "version": 1,
+      "name": "Season 1",
+      "enabled": true,
+      "startsAt": null,
+      "endsAt": null,
+      "levels": [
+        {
+          "xp": 10,
+          "rewards": [
+            {
+              "type": "item",
+              "templateId": "WaterPack_Consumable",
+              "count": 1,
+              "qualityLevel": 0
+            }
+          ]
+        },
+        {
+          "xp": 25,
+          "rewards": [
+            {
+              "type": "item",
+              "templateId": "Bloodsack_02",
+              "count": 1,
+              "qualityLevel": 0
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -18,6 +18,13 @@ dist/windows-client-loader/
 experiments/runs/
 research/fixtures/
 config/tls/
+compose.cpu-affinity.yaml
+config/admin-access.json
+config/admin-auth-subjects.json
+config/outbound-webhooks.json
+config/community-rewards.json
+config/remote-targets.json
+config/secrets/
 
 *.log
 *.pid

@@ -1,0 +1,3528 @@
+{
+  "generatedAt": "2026-07-16T02:32:26Z",
+  "items": [
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "AllDyePackBonusUniversal01",
+      "name": "All Dye Pack Bonus Universal01",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "AllDyepackChoam",
+      "name": "All Dyepack Choam Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "AllDyepackMaula",
+      "name": "All Dyepack Maula Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "ArrakeenStillsuit_T4_Boots_MeshVariant",
+      "name": "Arrakeen Stillsuit T4 Boots Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "ArrakeenStillsuit_T4_Gloves_MeshVariant",
+      "name": "Arrakeen Stillsuit T4 Gloves Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "ArrakeenStillsuit_T4_Helmet_MeshVariant",
+      "name": "Arrakeen Stillsuit T4 Helmet Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "ArrakeenStillsuit_T4_Top_MeshVariant",
+      "name": "Arrakeen Stillsuit T4 Top Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Vehicle Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Artreides_Light_Ornithopter",
+      "name": "Artreides Light Ornithopter Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Atre_HeavyArmor",
+      "name": "Atre Heavy Armor Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Atre_HeavyArmor_Boots",
+      "name": "Atre Heavy Armor Boots Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Atre_HeavyArmor_Bottom",
+      "name": "Atre Heavy Armor Bottom Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Atre_HeavyArmor_Gloves",
+      "name": "Atre Heavy Armor Gloves Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Atre_HeavyArmor_Helmet",
+      "name": "Atre Heavy Armor Helmet Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Weapon Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Atre_Karpov_Rifle",
+      "name": "Atre Karpov Rifle Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Atre_Lasgun",
+      "name": "Atre Lasgun Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Atre_LightArmor",
+      "name": "Atre Light Armor Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Atre_LightArmor_Boots",
+      "name": "Atre Light Armor Boots Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Atre_LightArmor_Bottom",
+      "name": "Atre Light Armor Bottom Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Atre_LightArmor_Gloves",
+      "name": "Atre Light Armor Gloves Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Atre_LightArmor_Helmet",
+      "name": "Atre Light Armor Helmet Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Weapon Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Atre_Maula_Pistol",
+      "name": "Atre Maula Pistol Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Vehicle Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Atre_Ornitopther",
+      "name": "Atre Ornitopther Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Vehicle Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Atre_Sandcrawler",
+      "name": "Atre Sandcrawler Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Weapon Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Atre_Shotgun",
+      "name": "Atre Shotgun Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Weapon Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Atre_Spitdart_Rifle",
+      "name": "Atre Spitdart Rifle Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Weapon Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Atre_Sword",
+      "name": "Atre Sword Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Vehicle Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Atre_TransportOrnithopter",
+      "name": "Atre Transport Ornithopter Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "AtreidesDeserter_01_Boots_MeshVariant",
+      "name": "Atreides Deserter 01 Boots Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "AtreidesDeserter_01_Bottom_MeshVariant",
+      "name": "Atreides Deserter 01 Bottom Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "AtreidesDeserter_01_Gloves_MeshVariant",
+      "name": "Atreides Deserter 01 Gloves Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "AtreidesDeserter_01_Helmet_MeshVariant",
+      "name": "Atreides Deserter 01 Helmet Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "AtreidesDeserter_01_Top_MeshVariant",
+      "name": "Atreides Deserter 01 Top Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "AtreidesHeavy_Boots_MeshVariant",
+      "name": "Atreides Heavy Boots Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "AtreidesHeavy_Bottom_MeshVariant",
+      "name": "Atreides Heavy Bottom Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "AtreidesHeavy_Gloves_MeshVariant",
+      "name": "Atreides Heavy Gloves Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "AtreidesHeavy_Helmet_MeshVariant",
+      "name": "Atreides Heavy Helmet Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "AtreidesHeavy_Top_MeshVariant",
+      "name": "Atreides Heavy Top Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "AtreidesScout_Boots_MeshVariant",
+      "name": "Atreides Scout Boots Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "AtreidesScout_Bottom_MeshVariant",
+      "name": "Atreides Scout Bottom Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "AtreidesScout_Gloves_MeshVariant",
+      "name": "Atreides Scout Gloves Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "AtreidesScout_Helmet_MeshVariant",
+      "name": "Atreides Scout Helmet Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "AtreidesScout_Top_MeshVariant",
+      "name": "Atreides Scout Top Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Vehicle Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Atreides_Medium_Ornithopter",
+      "name": "Atreides Medium Ornithopter Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "B1C3_AtreidesRusher_Boots",
+      "name": "B1 C3 Atreides Rusher Boots Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "B1C3_AtreidesRusher_Bottom",
+      "name": "B1 C3 Atreides Rusher Bottom Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "B1C3_AtreidesRusher_Gloves",
+      "name": "B1 C3 Atreides Rusher Gloves Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "B1C3_AtreidesRusher_Helmet",
+      "name": "B1 C3 Atreides Rusher Helmet Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "B1C3_AtreidesRusher_Top",
+      "name": "B1 C3 Atreides Rusher Top Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Vehicle Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "B1C3_Atreides_Buggy_Variant",
+      "name": "B1 C3 Atreides Buggy Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Vehicle Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "B1C3_Atreides_Sandbike_Variant",
+      "name": "B1 C3 Atreides Sandbike Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "B1C3_HarkonnenAssault_Boots",
+      "name": "B1 C3 Harkonnen Assault Boots Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "B1C3_HarkonnenAssault_Bottom",
+      "name": "B1 C3 Harkonnen Assault Bottom Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "B1C3_HarkonnenAssault_Gloves",
+      "name": "B1 C3 Harkonnen Assault Gloves Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "B1C3_HarkonnenAssault_Helmet",
+      "name": "B1 C3 Harkonnen Assault Helmet Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "B1C3_HarkonnenAssault_Top",
+      "name": "B1 C3 Harkonnen Assault Top Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Vehicle Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "B1C3_Harkonnen_Buggy_Variant",
+      "name": "B1 C3 Harkonnen Buggy Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Vehicle Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "B1C3_Harkonnen_Sandbike_Variant",
+      "name": "B1 C3 Harkonnen Sandbike Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "B1C3_Laborer_Boots",
+      "name": "B1 C3 Laborer Boots Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "B1C3_Laborer_Bottom",
+      "name": "B1 C3 Laborer Bottom Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "B1C3_Laborer_Gloves",
+      "name": "B1 C3 Laborer Gloves Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "B1C3_Laborer_Helmet",
+      "name": "B1 C3 Laborer Helmet Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "B1C3_Laborer_Top",
+      "name": "B1 C3 Laborer Top Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "B1C3_Specializaton_Helmet_Combat",
+      "name": "B1 C3 Specializaton Helmet Combat Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "B1C3_Specializaton_Helmet_Crafting",
+      "name": "B1 C3 Specializaton Helmet Crafting Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "B1C3_Specializaton_Helmet_Exploration",
+      "name": "B1 C3 Specializaton Helmet Exploration Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "B1C3_Specializaton_Helmet_Gathering",
+      "name": "B1 C3 Specializaton Helmet Gathering Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "B1C3_Specializaton_Helmet_Sabotage",
+      "name": "B1 C3 Specializaton Helmet Sabotage Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Weapon Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Beta_Sword",
+      "name": "Beta Sword Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Vehicle Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "BuggyAtreides",
+      "name": "Buggy Atreides Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Vehicle Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "BuggyHarkonnen",
+      "name": "Buggy Harkonnen Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Weapon Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "ChoamTechRifle",
+      "name": "Choam Tech Rifle Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Weapon Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "ChoamTechSword",
+      "name": "Choam Tech Sword Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "FVehDyePackAtre01",
+      "name": "FVeh Dye Pack Atre01",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "FVehDyePackHark01",
+      "name": "FVeh Dye Pack Hark01",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "FVehDyePackUltimate01",
+      "name": "FVeh Dye Pack Ultimate01",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "GVehDyePackAtre01",
+      "name": "GVeh Dye Pack Atre01",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "GVehDyePackHark01",
+      "name": "GVeh Dye Pack Hark01",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HArmCharDyepackAgrosaz",
+      "name": "HArm Char Dyepack Agrosaz Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HArmCharDyepackAlexin",
+      "name": "HArm Char Dyepack Alexin Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HArmCharDyepackAtre",
+      "name": "HArm Char Dyepack Atre Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HArmCharDyepackDyvetz",
+      "name": "HArm Char Dyepack Dyvetz Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HArmCharDyepackEcaz",
+      "name": "HArm Char Dyepack Ecaz Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HArmCharDyepackHagal",
+      "name": "HArm Char Dyepack Hagal Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HArmCharDyepackHark",
+      "name": "HArm Char Dyepack Hark Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HArmCharDyepackHurata",
+      "name": "HArm Char Dyepack Hurata Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HArmCharDyepackImota",
+      "name": "HArm Char Dyepack Imota Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HArmCharDyepackKenola",
+      "name": "HArm Char Dyepack Kenola Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HArmCharDyepackLindaren",
+      "name": "HArm Char Dyepack Lindaren Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HArmCharDyepackMaros",
+      "name": "HArm Char Dyepack Maros Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HArmCharDyepackMikarrol",
+      "name": "HArm Char Dyepack Mikarrol Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HArmCharDyepackMoritani",
+      "name": "HArm Char Dyepack Moritani Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HArmCharDyepackMutelli",
+      "name": "HArm Char Dyepack Mutelli Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HArmCharDyepackNovebruns",
+      "name": "HArm Char Dyepack Novebruns Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HArmCharDyepackRichese",
+      "name": "HArm Char Dyepack Richese Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HArmCharDyepackSor",
+      "name": "HArm Char Dyepack Sor Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HArmCharDyepackSpinette",
+      "name": "HArm Char Dyepack Spinette Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HArmCharDyepackTalgari",
+      "name": "HArm Char Dyepack Talgari Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HArmCharDyepackThorvald",
+      "name": "HArm Char Dyepack Thorvald Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HArmCharDyepackTseida",
+      "name": "HArm Char Dyepack Tseida Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HArmCharDyepackVarota",
+      "name": "HArm Char Dyepack Varota Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HArmCharDyepackVernius",
+      "name": "HArm Char Dyepack Vernius Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HArmCharDyepackWallach",
+      "name": "HArm Char Dyepack Wallach Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HArmCharDyepackWayku",
+      "name": "HArm Char Dyepack Wayku Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HArmCharDyepackWydras",
+      "name": "HArm Char Dyepack Wydras Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Hark_HeavyArmor",
+      "name": "Hark Heavy Armor Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Hark_HeavyArmor_Boots",
+      "name": "Hark Heavy Armor Boots Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Hark_HeavyArmor_Bottom",
+      "name": "Hark Heavy Armor Bottom Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Hark_HeavyArmor_Gloves",
+      "name": "Hark Heavy Armor Gloves Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Hark_HeavyArmor_Helmet",
+      "name": "Hark Heavy Armor Helmet Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Weapon Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Hark_Karpov_Rifle",
+      "name": "Hark Karpov Rifle Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Hark_Lasgun",
+      "name": "Hark Lasgun Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Hark_LightArmor",
+      "name": "Hark Light Armor Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Hark_LightArmor_Boots",
+      "name": "Hark Light Armor Boots Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Hark_LightArmor_Bottom",
+      "name": "Hark Light Armor Bottom Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Hark_LightArmor_Gloves",
+      "name": "Hark Light Armor Gloves Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Hark_LightArmor_Helmet",
+      "name": "Hark Light Armor Helmet Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Weapon Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Hark_Maula_Pistol",
+      "name": "Hark Maula Pistol Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Vehicle Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Hark_Ornitopther",
+      "name": "Hark Ornitopther Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Vehicle Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Hark_Sandcrawler",
+      "name": "Hark Sandcrawler Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Weapon Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Hark_Shotgun",
+      "name": "Hark Shotgun Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Weapon Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Hark_Spitdart_Rifle",
+      "name": "Hark Spitdart Rifle Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Weapon Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Hark_Sword",
+      "name": "Hark Sword Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Vehicle Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Hark_TransportOrnithopter",
+      "name": "Hark Transport Ornithopter Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HarkonnenHeavy_Boots_MeshVariant",
+      "name": "Harkonnen Heavy Boots Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HarkonnenHeavy_Bottom_MeshVariant",
+      "name": "Harkonnen Heavy Bottom Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HarkonnenHeavy_Gloves_MeshVariant",
+      "name": "Harkonnen Heavy Gloves Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HarkonnenHeavy_Helmet_MeshVariant",
+      "name": "Harkonnen Heavy Helmet Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HarkonnenHeavy_Top_MeshVariant",
+      "name": "Harkonnen Heavy Top Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HarkonnenScout_Boots_MeshVariant",
+      "name": "Harkonnen Scout Boots Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HarkonnenScout_Bottom_MeshVariant",
+      "name": "Harkonnen Scout Bottom Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HarkonnenScout_Gloves_MeshVariant",
+      "name": "Harkonnen Scout Gloves Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HarkonnenScout_Helmet_MeshVariant",
+      "name": "Harkonnen Scout Helmet Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HarkonnenScout_Top_MeshVariant",
+      "name": "Harkonnen Scout Top Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HarkonnenTraitor_Boots_MeshVariant",
+      "name": "Harkonnen Traitor Boots Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HarkonnenTraitor_Bottom_MeshVariant",
+      "name": "Harkonnen Traitor Bottom Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HarkonnenTraitor_Gloves_MeshVariant",
+      "name": "Harkonnen Traitor Gloves Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HarkonnenTraitor_Helmet_MeshVariant",
+      "name": "Harkonnen Traitor Helmet Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "HarkonnenTraitor_Top_MeshVariant",
+      "name": "Harkonnen Traitor Top Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "KirabHeavy_T2_Boots_MeshVariant",
+      "name": "Kirab Heavy T2 Boots Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "KirabHeavy_T2_Bottom_MeshVariant",
+      "name": "Kirab Heavy T2 Bottom Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "KirabHeavy_T2_Gloves_MeshVariant",
+      "name": "Kirab Heavy T2 Gloves Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "KirabHeavy_T2_Helmet_MeshVariant",
+      "name": "Kirab Heavy T2 Helmet Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "KirabHeavy_T2_Top_MeshVariant",
+      "name": "Kirab Heavy T2 Top Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "KirabLightBoots_MeshVariant",
+      "name": "Kirab Light Boots Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "KirabLightBottom_MeshVariant",
+      "name": "Kirab Light Bottom Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "KirabLightGloves_MeshVariant",
+      "name": "Kirab Light Gloves Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "KirabLightHelmet_MeshVariant",
+      "name": "Kirab Light Helmet Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "KirabLightTop_MeshVariant",
+      "name": "Kirab Light Top Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "LArmCharDyepackAgrosaz",
+      "name": "LArm Char Dyepack Agrosaz Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "LArmCharDyepackAlexin",
+      "name": "LArm Char Dyepack Alexin Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "LArmCharDyepackAtre",
+      "name": "LArm Char Dyepack Atre Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "LArmCharDyepackDyvetz",
+      "name": "LArm Char Dyepack Dyvetz Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "LArmCharDyepackEcaz",
+      "name": "LArm Char Dyepack Ecaz Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "LArmCharDyepackHagal",
+      "name": "LArm Char Dyepack Hagal Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "LArmCharDyepackHark",
+      "name": "LArm Char Dyepack Hark Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "LArmCharDyepackHurata",
+      "name": "LArm Char Dyepack Hurata Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "LArmCharDyepackImota",
+      "name": "LArm Char Dyepack Imota Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "LArmCharDyepackKenola",
+      "name": "LArm Char Dyepack Kenola Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "LArmCharDyepackLindaren",
+      "name": "LArm Char Dyepack Lindaren Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "LArmCharDyepackMaros",
+      "name": "LArm Char Dyepack Maros Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "LArmCharDyepackMikarrol",
+      "name": "LArm Char Dyepack Mikarrol Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "LArmCharDyepackMoritani",
+      "name": "LArm Char Dyepack Moritani Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "LArmCharDyepackMutelli",
+      "name": "LArm Char Dyepack Mutelli Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "LArmCharDyepackNovebruns",
+      "name": "LArm Char Dyepack Novebruns Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "LArmCharDyepackRichese",
+      "name": "LArm Char Dyepack Richese Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "LArmCharDyepackSor",
+      "name": "LArm Char Dyepack Sor Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "LArmCharDyepackSpinette",
+      "name": "LArm Char Dyepack Spinette Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "LArmCharDyepackTalgari",
+      "name": "LArm Char Dyepack Talgari Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "LArmCharDyepackThorvald",
+      "name": "LArm Char Dyepack Thorvald Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "LArmCharDyepackTseida",
+      "name": "LArm Char Dyepack Tseida Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "LArmCharDyepackVarota",
+      "name": "LArm Char Dyepack Varota Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "LArmCharDyepackVernius",
+      "name": "LArm Char Dyepack Vernius Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "LArmCharDyepackWallach",
+      "name": "LArm Char Dyepack Wallach Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "LArmCharDyepackWayku",
+      "name": "LArm Char Dyepack Wayku Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "LArmCharDyepackWydras",
+      "name": "LArm Char Dyepack Wydras Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "LeakingStillsuit_T1_Boots_MeshVariant",
+      "name": "Leaking Stillsuit T1 Boots Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "LeakingStillsuit_T1_Gloves_MeshVariant",
+      "name": "Leaking Stillsuit T1 Gloves Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "LeakingStillsuit_T1_Helmet_MeshVariant",
+      "name": "Leaking Stillsuit T1 Helmet Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "LeakingStillsuit_T1_Top_MeshVariant",
+      "name": "Leaking Stillsuit T1 Top Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Vehicle Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "LightOrnithopterHarkonnen",
+      "name": "Light Ornithopter Harkonnen Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Weapon Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_ArtDeco_Sword",
+      "name": "Art Deco Sword Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Atre_Formal01_Bottom",
+      "name": "Atre Formal01 Bottom Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Atre_Formal01_Footwear",
+      "name": "Atre Formal01 Footwear Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Atre_Formal01_Gloves",
+      "name": "Atre Formal01 Gloves Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Atre_Formal01_Top",
+      "name": "Atre Formal01 Top Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Vehicle Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Buggy_Nomad",
+      "name": "Buggy Nomad Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_DesertMechanic_Dirk",
+      "name": "Desert Mechanic Dirk Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Weapon Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_DesertMechanic_MaulaPistol",
+      "name": "Desert Mechanic Maula Pistol Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Dragon_Flamethrower",
+      "name": "Dragon Flamethrower Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_DuneManCoveralls_Bottoms",
+      "name": "Dune Man Coveralls Bottoms Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_DuneManCoveralls_Footwear",
+      "name": "Dune Man Coveralls Footwear Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_DuneManCoveralls_Gloves",
+      "name": "Dune Man Coveralls Gloves Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_DuneManCoveralls_Headwear",
+      "name": "Dune Man Coveralls Headwear Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_DuneManCoveralls_Top",
+      "name": "Dune Man Coveralls Top Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_DuneManFlamethrower_Bottoms",
+      "name": "Dune Man Flamethrower Bottoms Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_DuneManFlamethrower_Footwear",
+      "name": "Dune Man Flamethrower Footwear Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_DuneManFlamethrower_Gloves",
+      "name": "Dune Man Flamethrower Gloves Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_DuneManFlamethrower_Headwear",
+      "name": "Dune Man Flamethrower Headwear Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_DuneManFlamethrower_Top",
+      "name": "Dune Man Flamethrower Top Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Weapon Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Frameblade_Knife",
+      "name": "Frameblade Knife Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Fremen_MovieSuit_Boots_MeshVariant",
+      "name": "Fremen Movie Suit Boots Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Fremen_MovieSuit_Gloves_MeshVariant",
+      "name": "Fremen Movie Suit Gloves Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Fremen_MovieSuit_Helmet_MeshVariant",
+      "name": "Fremen Movie Suit Helmet Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Fremen_MovieSuit_Top_MeshVariant",
+      "name": "Fremen Movie Suit Top Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Weapon Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_GunnerSniper_Rifle",
+      "name": "Gunner Sniper Rifle Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Weapon Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Gunner_Battlerifle",
+      "name": "Gunner Battlerifle Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Weapon Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Kirab_SniperRifle",
+      "name": "Kirab Sniper Rifle Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_MakeshiftMelee",
+      "name": "Makeshift Melee Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Sard_Stillsuit_01_Boots_MeshVariant",
+      "name": "Sard Stillsuit 01 Boots Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Sard_Stillsuit_01_Gloves_MeshVariant",
+      "name": "Sard Stillsuit 01 Gloves Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Sard_Stillsuit_01_Helmet_MeshVariant",
+      "name": "Sard Stillsuit 01 Helmet Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Sard_Stillsuit_01_Top_MeshVariant",
+      "name": "Sard Stillsuit 01 Top Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Smug_Formal01_Bottom",
+      "name": "Smug Formal01 Bottom Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Smug_Formal01_Footwear",
+      "name": "Smug Formal01 Footwear Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Smug_Formal01_Gloves",
+      "name": "Smug Formal01 Gloves Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Smug_Formal01_Helmet",
+      "name": "Smug Formal01 Helmet Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Smug_Formal01_Top",
+      "name": "Smug Formal01 Top Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Smug_HeavyArmor_Boots_MeshVariant",
+      "name": "Smug Heavy Armor Boots Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Smug_HeavyArmor_Bottom_MeshVariant",
+      "name": "Smug Heavy Armor Bottom Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Smug_HeavyArmor_Gloves_MeshVariant",
+      "name": "Smug Heavy Armor Gloves Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Smug_HeavyArmor_Helmet_MeshVariant",
+      "name": "Smug Heavy Armor Helmet Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Smug_HeavyArmor_Top_MeshVariant",
+      "name": "Smug Heavy Armor Top Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Smug_LightArmor_Boots_MeshVariant",
+      "name": "Smug Light Armor Boots Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Smug_LightArmor_Bottom_MeshVariant",
+      "name": "Smug Light Armor Bottom Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Smug_LightArmor_Gloves_MeshVariant",
+      "name": "Smug Light Armor Gloves Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Smug_LightArmor_Helmet_MeshVariant",
+      "name": "Smug Light Armor Helmet Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Smug_LightArmor_Top_MeshVariant",
+      "name": "Smug Light Armor Top Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Weapon Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Smug_Rifle",
+      "name": "Smug Rifle Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Smuggler_Kindjal",
+      "name": "Smuggler Kindjal Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Smuggler_Stillsuit_Boots",
+      "name": "Smuggler Stillsuit Boots Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Smuggler_Stillsuit_Gloves",
+      "name": "Smuggler Stillsuit Gloves Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Smuggler_Stillsuit_Helmet",
+      "name": "Smuggler Stillsuit Helmet Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Smuggler_Stillsuit_Top",
+      "name": "Smuggler Stillsuit Top Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Weapon Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Taligari_Rifle",
+      "name": "Taligari Rifle Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Weapon Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_Taligari_SMG",
+      "name": "Taligari SMG Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_ThopterGsuit_Boots",
+      "name": "Thopter Gsuit Boots Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_ThopterGsuit_Bottom",
+      "name": "Thopter Gsuit Bottom Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_ThopterGsuit_Gloves",
+      "name": "Thopter Gsuit Gloves Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_ThopterGsuit_Helmet",
+      "name": "Thopter Gsuit Helmet Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_ThopterGsuit_Top",
+      "name": "Thopter Gsuit Top Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_WaterS_AssaultArmor_Boots_MeshVariant",
+      "name": "Water S Assault Armor Boots Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_WaterS_AssaultArmor_Bottom_MeshVariant",
+      "name": "Water S Assault Armor Bottom Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_WaterS_AssaultArmor_Gloves_MeshVariant",
+      "name": "Water S Assault Armor Gloves Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_WaterS_AssaultArmor_Helmet_MeshVariant",
+      "name": "Water S Assault Armor Helmet Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_WaterS_AssaultArmor_Top_MeshVariant",
+      "name": "Water S Assault Armor Top Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_WaterS_Drillshot",
+      "name": "Water S Drillshot Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_WaterS_HeavyArmor_Boots_MeshVariant",
+      "name": "Water S Heavy Armor Boots Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_WaterS_HeavyArmor_Bottom_MeshVariant",
+      "name": "Water S Heavy Armor Bottom Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_WaterS_HeavyArmor_Gloves_MeshVariant",
+      "name": "Water S Heavy Armor Gloves Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_WaterS_HeavyArmor_Helmet_MeshVariant",
+      "name": "Water S Heavy Armor Helmet Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_WaterS_HeavyArmor_Top_MeshVariant",
+      "name": "Water S Heavy Armor Top Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Vehicle Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_WaterS_Light_Orni",
+      "name": "Water S Light Orni Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Weapon Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MTX_WaterS_Rapier",
+      "name": "Water S Rapier Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MWpnDyepackAtre",
+      "name": "MWpn Dyepack Atre Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MWpnDyepackHark",
+      "name": "MWpn Dyepack Hark Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Weapon Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MaulaPistol_T1",
+      "name": "Maula Pistol T1 Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Vehicle Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MediumOrnithopterHarkonnen",
+      "name": "Medium Ornithopter Harkonnen Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MercHeavy_T5_Boots_MeshVariant",
+      "name": "Merc Heavy T5 Boots Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MercHeavy_T5_Bottom_MeshVariant",
+      "name": "Merc Heavy T5 Bottom Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MercHeavy_T5_Gloves_MeshVariant",
+      "name": "Merc Heavy T5 Gloves Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MercHeavy_T5_Helmet_MeshVariant",
+      "name": "Merc Heavy T5 Helmet Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MercHeavy_T5_Top_MeshVariant",
+      "name": "Merc Heavy T5 Top Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MercLight_T5_Boots_MeshVariant",
+      "name": "Merc Light T5 Boots Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MercLight_T5_Bottom_MeshVariant",
+      "name": "Merc Light T5 Bottom Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MercLight_T5_Gloves_MeshVariant",
+      "name": "Merc Light T5 Gloves Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MercLight_T5_Helmet_MeshVariant",
+      "name": "Merc Light T5 Helmet Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MercLight_T5_Top_MeshVariant",
+      "name": "Merc Light T5 Top Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MercStillsuit_T5_Boots_MeshVariant",
+      "name": "Merc Stillsuit T5 Boots Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MercStillsuit_T5_Gloves_MeshVariant",
+      "name": "Merc Stillsuit T5 Gloves Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MercStillsuit_T5_Helmet_MeshVariant",
+      "name": "Merc Stillsuit T5 Helmet Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "MercStillsuit_T5_Top_MeshVariant",
+      "name": "Merc Stillsuit T5 Top Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "NativeStillsuit_T2_Boots_MeshVariant",
+      "name": "Native Stillsuit T2 Boots Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "NativeStillsuit_T2_Gloves_MeshVariant",
+      "name": "Native Stillsuit T2 Gloves Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "NativeStillsuit_T2_Helmet_MeshVariant",
+      "name": "Native Stillsuit T2 Helmet Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "NativeStillsuit_T2_Top_MeshVariant",
+      "name": "Native Stillsuit T2 Top Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "PlaceableDyePackAlexin",
+      "name": "Placeable Dye Pack Alexin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "PlaceableDyePackArgosaz",
+      "name": "Placeable Dye Pack Argosaz",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "PlaceableDyePackAtreides",
+      "name": "Placeable Dye Pack Atreides",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "PlaceableDyePackDyvetz",
+      "name": "Placeable Dye Pack Dyvetz",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "PlaceableDyePackHarkonnen",
+      "name": "Placeable Dye Pack Harkonnen",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "PlaceableDyePackHurata",
+      "name": "Placeable Dye Pack Hurata",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "PlaceableDyePackImota",
+      "name": "Placeable Dye Pack Imota",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "PlaceableDyePackLindaren",
+      "name": "Placeable Dye Pack Lindaren",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "PlaceableDyePackMikarrol",
+      "name": "Placeable Dye Pack Mikarrol",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "PlaceableDyePackMoritani",
+      "name": "Placeable Dye Pack Moritani",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "PlaceableDyePackMutelli",
+      "name": "Placeable Dye Pack Mutelli",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "PlaceableDyePackNovebruns",
+      "name": "Placeable Dye Pack Novebruns",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "PlaceableDyePackSor",
+      "name": "Placeable Dye Pack Sor",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "PlaceableDyePackSpinette",
+      "name": "Placeable Dye Pack Spinette",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "PlaceableDyePackTaligari",
+      "name": "Placeable Dye Pack Taligari",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "PlaceableDyePackVarota",
+      "name": "Placeable Dye Pack Varota",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "PlaceableDyePackWydras",
+      "name": "Placeable Dye Pack Wydras",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "RWpnDyepackAtre",
+      "name": "RWpn Dyepack Atre Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "RWpnDyepackHark",
+      "name": "RWpn Dyepack Hark Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "RedDesertGlobal",
+      "name": "Red Desert Global Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Vehicle Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "SandbikeAtreides",
+      "name": "Sandbike Atreides Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Vehicle Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "SandbikeDuneMen",
+      "name": "Sandbike Dune Men Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "SandbikeDyePackDeluxe01",
+      "name": "Sandbike Dye Pack Deluxe01",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Vehicle Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "SandbikeHarkonnen",
+      "name": "Sandbike Harkonnen Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "SandfliesHeavy_T4_Boots_MeshVariant",
+      "name": "Sandflies Heavy T4 Boots Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "SandfliesHeavy_T4_Bottom_MeshVariant",
+      "name": "Sandflies Heavy T4 Bottom Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "SandfliesHeavy_T4_Gloves_MeshVariant",
+      "name": "Sandflies Heavy T4 Gloves Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "SandfliesHeavy_T4_Helmet_MeshVariant",
+      "name": "Sandflies Heavy T4 Helmet Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "SandfliesHeavy_T4_Top_MeshVariant",
+      "name": "Sandflies Heavy T4 Top Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "SandfliesLight_T4_Boots_MeshVariant",
+      "name": "Sandflies Light T4 Boots Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "SandfliesLight_T4_Bottom_MeshVariant",
+      "name": "Sandflies Light T4 Bottom Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "SandfliesLight_T4_Gloves_MeshVariant",
+      "name": "Sandflies Light T4 Gloves Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "SandfliesLight_T4_Helmet_MeshVariant",
+      "name": "Sandflies Light T4 Helmet Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "SandfliesLight_T4_Top_MeshVariant",
+      "name": "Sandflies Light T4 Top Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Sandtrout_T0_Boots_MeshVariant",
+      "name": "Sandtrout T0 Boots Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Sandtrout_T0_Bottom_MeshVariant",
+      "name": "Sandtrout T0 Bottom Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Sandtrout_T0_Gloves_MeshVariant",
+      "name": "Sandtrout T0 Gloves Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Sandtrout_T0_Helmet_MeshVariant",
+      "name": "Sandtrout T0 Helmet Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Sandtrout_T0_Top_MeshVariant",
+      "name": "Sandtrout T0 Top Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "ScavengerRagsLight_T1_Boots_MeshVariant",
+      "name": "Scavenger Rags Light T1 Boots Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "ScavengerRagsLight_T1_Bottom_MeshVariant",
+      "name": "Scavenger Rags Light T1 Bottom Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "ScavengerRagsLight_T1_Gloves_MeshVariant",
+      "name": "Scavenger Rags Light T1 Gloves Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "ScavengerRagsLight_T1_Helmet_MeshVariant",
+      "name": "Scavenger Rags Light T1 Helmet Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "ScavengerRagsLight_T1_Top_MeshVariant",
+      "name": "Scavenger Rags Light T1 Top Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "SlaverHeavy_T3_Boots_MeshVariant",
+      "name": "Slaver Heavy T3 Boots Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "SlaverHeavy_T3_Bottom_MeshVariant",
+      "name": "Slaver Heavy T3 Bottom Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "SlaverHeavy_T3_Gloves_MeshVariant",
+      "name": "Slaver Heavy T3 Gloves Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "SlaverHeavy_T3_Helmet_MeshVariant",
+      "name": "Slaver Heavy T3 Helmet Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "SlaverHeavy_T3_Top_MeshVariant",
+      "name": "Slaver Heavy T3 Top Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "SlaverLight_T3_Boots_MeshVariant",
+      "name": "Slaver Light T3 Boots Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "SlaverLight_T3_Bottom_MeshVariant",
+      "name": "Slaver Light T3 Bottom Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "SlaverLight_T3_Gloves_MeshVariant",
+      "name": "Slaver Light T3 Gloves Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "SlaverLight_T3_Helmet_MeshVariant",
+      "name": "Slaver Light T3 Helmet Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "SlaverLight_T3_Top_MeshVariant",
+      "name": "Slaver Light T3 Top Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "SlaverStillsuit_T3_Boots_MeshVariant",
+      "name": "Slaver Stillsuit T3 Boots Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "SlaverStillsuit_T3_Gloves_MeshVariant",
+      "name": "Slaver Stillsuit T3 Gloves Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "SlaverStillsuit_T3_Helmet_MeshVariant",
+      "name": "Slaver Stillsuit T3 Helmet Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "SlaverStillsuit_T3_Top_MeshVariant",
+      "name": "Slaver Stillsuit T3 Top Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "SmugglerGlobal",
+      "name": "Smuggler Global Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "StillSCharDyepackAgrosaz",
+      "name": "Still SChar Dyepack Agrosaz Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "StillSCharDyepackAlexin",
+      "name": "Still SChar Dyepack Alexin Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "StillSCharDyepackAtre",
+      "name": "Still SChar Dyepack Atre Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "StillSCharDyepackDyvetz",
+      "name": "Still SChar Dyepack Dyvetz Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "StillSCharDyepackEcaz",
+      "name": "Still SChar Dyepack Ecaz Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "StillSCharDyepackHagal",
+      "name": "Still SChar Dyepack Hagal Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "StillSCharDyepackHark",
+      "name": "Still SChar Dyepack Hark Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "StillSCharDyepackHurata",
+      "name": "Still SChar Dyepack Hurata Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "StillSCharDyepackImota",
+      "name": "Still SChar Dyepack Imota Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "StillSCharDyepackKenola",
+      "name": "Still SChar Dyepack Kenola Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "StillSCharDyepackLindaren",
+      "name": "Still SChar Dyepack Lindaren Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "StillSCharDyepackMaros",
+      "name": "Still SChar Dyepack Maros Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "StillSCharDyepackMikarrol",
+      "name": "Still SChar Dyepack Mikarrol Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "StillSCharDyepackMoritani",
+      "name": "Still SChar Dyepack Moritani Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "StillSCharDyepackMutelli",
+      "name": "Still SChar Dyepack Mutelli Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "StillSCharDyepackNovebruns",
+      "name": "Still SChar Dyepack Novebruns Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "StillSCharDyepackRichese",
+      "name": "Still SChar Dyepack Richese Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "StillSCharDyepackSor",
+      "name": "Still SChar Dyepack Sor Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "StillSCharDyepackSpinette",
+      "name": "Still SChar Dyepack Spinette Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "StillSCharDyepackTalgari",
+      "name": "Still SChar Dyepack Talgari Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "StillSCharDyepackThorvald",
+      "name": "Still SChar Dyepack Thorvald Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "StillSCharDyepackTseida",
+      "name": "Still SChar Dyepack Tseida Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "StillSCharDyepackVarota",
+      "name": "Still SChar Dyepack Varota Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "StillSCharDyepackVernius",
+      "name": "Still SChar Dyepack Vernius Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "StillSCharDyepackWallach",
+      "name": "Still SChar Dyepack Wallach Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "StillSCharDyepackWayku",
+      "name": "Still SChar Dyepack Wayku Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "StillSCharDyepackWydras",
+      "name": "Still SChar Dyepack Wydras Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Trainer_BeneGeserit_Boots_MeshVariant",
+      "name": "Trainer Bene Geserit Boots Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Trainer_BeneGeserit_Bottom_MeshVariant",
+      "name": "Trainer Bene Geserit Bottom Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Trainer_BeneGeserit_Gloves_MeshVariant",
+      "name": "Trainer Bene Geserit Gloves Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Trainer_BeneGeserit_Helmet_MeshVariant",
+      "name": "Trainer Bene Geserit Helmet Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Trainer_BeneGeserit_Top_MeshVariant",
+      "name": "Trainer Bene Geserit Top Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Trainer_Mentat_Boots_MeshVariant",
+      "name": "Trainer Mentat Boots Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Trainer_Mentat_Bottom_MeshVariant",
+      "name": "Trainer Mentat Bottom Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Trainer_Mentat_Gloves_MeshVariant",
+      "name": "Trainer Mentat Gloves Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Trainer_Mentat_Helmet_MeshVariant",
+      "name": "Trainer Mentat Helmet Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Trainer_Mentat_Top_MeshVariant",
+      "name": "Trainer Mentat Top Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Trainer_Planetologist_Boots_MeshVariant",
+      "name": "Trainer Planetologist Boots Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Trainer_Planetologist_Bottom_MeshVariant",
+      "name": "Trainer Planetologist Bottom Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Trainer_Planetologist_Gloves_MeshVariant",
+      "name": "Trainer Planetologist Gloves Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Trainer_Planetologist_Helmet_MeshVariant",
+      "name": "Trainer Planetologist Helmet Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Trainer_Planetologist_Top_MeshVariant",
+      "name": "Trainer Planetologist Top Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Weapon Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Trainer_Swordmaster_Boots_MeshVariant",
+      "name": "Trainer Swordmaster Boots Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Weapon Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Trainer_Swordmaster_Bottom_MeshVariant",
+      "name": "Trainer Swordmaster Bottom Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Weapon Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Trainer_Swordmaster_Gloves_MeshVariant",
+      "name": "Trainer Swordmaster Gloves Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Weapon Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Trainer_Swordmaster_Helmet_MeshVariant",
+      "name": "Trainer Swordmaster Helmet Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Weapon Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Trainer_Swordmaster_Top_MeshVariant",
+      "name": "Trainer Swordmaster Top Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Trainer_Trooper_Boots_MeshVariant",
+      "name": "Trainer Trooper Boots Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Trainer_Trooper_Bottom_MeshVariant",
+      "name": "Trainer Trooper Bottom Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Trainer_Trooper_Gloves_MeshVariant",
+      "name": "Trainer Trooper Gloves Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Trainer_Trooper_Helmet_MeshVariant",
+      "name": "Trainer Trooper Helmet Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Trainer_Trooper_Top_MeshVariant",
+      "name": "Trainer Trooper Top Mesh Variant Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "WaterS_Stillsuit_Boots",
+      "name": "Water S Stillsuit Boots Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "WaterS_Stillsuit_Gloves",
+      "name": "Water S Stillsuit Gloves Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "WaterS_Stillsuit_Helmet",
+      "name": "Water S Stillsuit Helmet Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Armor Skins",
+      "confidence": "high",
+      "enabled": true,
+      "id": "WaterS_Stillsuit_Top",
+      "name": "Water S Stillsuit Top Skin",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    },
+    {
+      "category": "Dye Packs",
+      "confidence": "high",
+      "enabled": true,
+      "id": "Watershippers Global",
+      "name": "Watershippers Global Dye Pack",
+      "source": "live-schema-observation-2026-07-15",
+      "unlockMode": "customization"
+    }
+  ],
+  "notes": "Generated identifiers require operator review; inventory Swatch_* tokens are deliberately excluded from customization-library writes.",
+  "reviewRequired": true,
+  "source": "live-schema-observation-2026-07-15",
+  "version": 1
+}

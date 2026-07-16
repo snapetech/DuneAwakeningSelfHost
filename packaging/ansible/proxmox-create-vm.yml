@@ -1,0 +1,93 @@
+---
+- name: Create a DASH Ubuntu VM on Proxmox
+  hosts: localhost
+  gather_facts: false
+  vars:
+    proxmox_api_host: "{{ lookup('ansible.builtin.env', 'PROXMOX_API_HOST') }}"
+    proxmox_api_user: "{{ lookup('ansible.builtin.env', 'PROXMOX_API_USER') }}"
+    proxmox_api_token_id: "{{ lookup('ansible.builtin.env', 'PROXMOX_API_TOKEN_ID') }}"
+    proxmox_api_token_secret: "{{ lookup('ansible.builtin.env', 'PROXMOX_API_TOKEN_SECRET') }}"
+    dash_vm_ssh_public_key: "{{ lookup('ansible.builtin.env', 'DASH_VM_SSH_PUBLIC_KEY') }}"
+    proxmox_node: pve
+    dash_vm_id: 4754
+    dash_vm_name: dash-01
+    dash_cloud_image_storage: local-lvm
+    # Proxmox VE 9 import content. Override with a storage/path form supported
+    # by the target Proxmox release; never substitute an unverified URL.
+    dash_cloud_image_volume: local:import/ubuntu-24.04-server-cloudimg-amd64.img
+    dash_vm_bridge: vmbr0
+    dash_vm_ci_user: dash-admin
+    dash_vm_ipconfig0: ip=dhcp
+  tasks:
+    - name: Require token-authenticated Proxmox inputs
+      ansible.builtin.assert:
+        that:
+          - proxmox_api_host | length > 0
+          - proxmox_api_user | length > 0
+          - proxmox_api_token_id | length > 0
+          - proxmox_api_token_secret | length > 0
+          - dash_vm_ssh_public_key is match('^(ssh-ed25519|sk-ssh-ed25519@openssh.com) [A-Za-z0-9+/]+={0,3}( .*)?$')
+          - dash_cloud_image_storage | length > 0
+          - dash_cloud_image_volume | length > 0
+        fail_msg: Export the four PROXMOX_API_* values and one valid Ed25519 DASH_VM_SSH_PUBLIC_KEY.
+      no_log: true
+
+    - name: Create powered-off VM and cloud-init device
+      community.proxmox.proxmox_kvm:
+        api_host: "{{ proxmox_api_host }}"
+        api_user: "{{ proxmox_api_user }}"
+        api_token_id: "{{ proxmox_api_token_id }}"
+        api_token_secret: "{{ proxmox_api_token_secret }}"
+        node: "{{ proxmox_node }}"
+        vmid: "{{ dash_vm_id }}"
+        name: "{{ dash_vm_name }}"
+        ide:
+          ide2: "{{ dash_cloud_image_storage }}:cloudinit,format=raw"
+        ciuser: "{{ dash_vm_ci_user }}"
+        sshkeys: "{{ dash_vm_ssh_public_key }}"
+        ipconfig:
+          ipconfig0: "{{ dash_vm_ipconfig0 }}"
+        ciupgrade: false
+        scsihw: virtio-scsi-single
+        cores: 8
+        memory: 32768
+        cpu: host
+        net:
+          net0: "virtio,bridge={{ dash_vm_bridge }},firewall=1"
+        agent: enabled=1
+        onboot: false
+        state: present
+      no_log: true
+
+    - name: Import verified cloud image as the system disk
+      community.proxmox.proxmox_disk:
+        api_host: "{{ proxmox_api_host }}"
+        api_user: "{{ proxmox_api_user }}"
+        api_token_id: "{{ proxmox_api_token_id }}"
+        api_token_secret: "{{ proxmox_api_token_secret }}"
+        node: "{{ proxmox_node }}"
+        vmid: "{{ dash_vm_id }}"
+        disk: scsi0
+        storage: "{{ dash_cloud_image_storage }}"
+        import_from: "{{ dash_cloud_image_volume }}"
+        create: regular
+        format: raw
+        discard: "on"
+        ssd: true
+        iothread: true
+        state: present
+        timeout: 1200
+      no_log: true
+
+    - name: Set system disk boot order without starting the VM
+      community.proxmox.proxmox_kvm:
+        api_host: "{{ proxmox_api_host }}"
+        api_user: "{{ proxmox_api_user }}"
+        api_token_id: "{{ proxmox_api_token_id }}"
+        api_token_secret: "{{ proxmox_api_token_secret }}"
+        node: "{{ proxmox_node }}"
+        vmid: "{{ dash_vm_id }}"
+        boot: order=scsi0;net0
+        update: true
+        state: present
+      no_log: true

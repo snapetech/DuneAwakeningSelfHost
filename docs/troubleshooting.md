@@ -351,6 +351,17 @@ docker compose --env-file .env up -d --no-deps --force-recreate director
 
 Do not invent these values. Missing GME credentials affect voice-chat auth token generation; they are separate from world login, map travel, RabbitMQ game auth, and FLS registration.
 
+Tencent's [GME authentication-key documentation](https://www.tencentcloud.com/document/product/607/12218/)
+confirms that the room authentication buffer is derived from the SDK AppID,
+OpenID, room ID, expiry, and the authentication key belonging to that AppID.
+An auth buffer or key copied from another game/application is not a compatible
+credential source.
+
+The 2026-07-15 pinned audit of
+`Red-Blink/dune-awakening-selfhost-docker` found no GME settings, credential
+acquisition, token implementation, or public voice-specific issue/discussion.
+See [`red-blink-feature-parity-audit.md`](red-blink-feature-parity-audit.md).
+
 ## World Region With Spaces Breaks Startup
 
 Use the Compose list-form command and `scripts/run_server_safe.sh`. The local wrapper preserves arguments such as `-FarmRegion=North America` through the final server exec.

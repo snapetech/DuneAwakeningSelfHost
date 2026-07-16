@@ -26,6 +26,9 @@
 	var mapTools = document.getElementById("map-tools");
 	var mapLayout = document.getElementById("map-layout");
 	var mapHealthPanel = document.getElementById("map-health-panel");
+	if (target) {
+		target.setAttribute("aria-live", "polite");
+	}
 	if (typeof fetch !== "function") {
 		return;
 	}
@@ -106,21 +109,19 @@
 		lazyMapStarted = true;
 		var lazyTarget = mapViewport || mapLayout;
 		function armLazyMap() {
-			delayThenDefer(function () {
-				if (typeof IntersectionObserver === "function") {
-					var observer = new IntersectionObserver(function (entries) {
-						if (entries.some(function (entry) { return entry.isIntersecting; })) {
-							observer.disconnect();
-							delayThenDefer(function () {
-								loadActiveMap(false);
-							}, 750, 1500);
-						}
-					}, { rootMargin: "0px" });
-					observer.observe(lazyTarget);
-					return;
-				}
-				loadActiveMap(false);
-			}, 2000, 3000);
+			if (typeof IntersectionObserver === "function") {
+				var observer = new IntersectionObserver(function (entries) {
+					if (entries.some(function (entry) { return entry.isIntersecting; })) {
+						observer.disconnect();
+						deferWork(function () {
+							loadActiveMap(false);
+						}, 500);
+					}
+				}, { rootMargin: "500px" });
+				observer.observe(lazyTarget);
+				return;
+			}
+			loadActiveMap(false);
 		}
 		if (document.readyState === "complete") {
 			armLazyMap();
@@ -207,6 +208,7 @@
 			list.appendChild(dd);
 		});
 		section.appendChild(list);
+		appendTextElement(section, "p", "status-detail", "Core status is unavailable. Travel destinations normally start on demand.");
 		appendTextElement(section, "p", "status-updated", reason || "Live status unavailable.");
 		target.appendChild(section);
 	}
@@ -409,8 +411,11 @@
 		if (status === "online") {
 			return "ok";
 		}
-		if (status === "degraded") {
+		if (status === "warming" || status === "degraded") {
 			return "warn";
+		}
+		if (status === "on-demand") {
+			return "idle";
 		}
 		return "down";
 	}
@@ -420,8 +425,11 @@
 		if (status === "online") {
 			return "Online";
 		}
-		if (status === "degraded") {
-			return "Degraded";
+		if (status === "warming" || status === "degraded") {
+			return "Warming";
+		}
+		if (status === "on-demand") {
+			return "On demand";
 		}
 		return "Offline";
 	}
@@ -437,7 +445,8 @@
 		summaryRow.className = "map-health-summary";
 		[
 			["status-ok", "Online", summary.online || 0],
-			["status-warn", "Degraded", summary.degraded || 0],
+			["status-warn", "Warming", summary.warming || summary.degraded || 0],
+			["status-unknown", "On demand", summary.onDemand || 0],
 			["status-down", "Offline", summary.offline || 0],
 			["status-unknown", "Total", summary.total || rows.length || 0]
 		].forEach(function (item) {
@@ -461,7 +470,7 @@
 			var item = document.createElement("div");
 			item.className = "map-health-row map-health-" + state;
 			var dot = document.createElement("span");
-			dot.className = "status-dot " + (state === "ok" ? "status-ok" : state === "warn" ? "status-warn" : "status-down");
+			dot.className = "status-dot " + (state === "ok" ? "status-ok" : state === "warn" ? "status-warn" : state === "idle" ? "status-unknown" : "status-down");
 			var name = document.createElement("div");
 			name.className = "map-health-name";
 			appendTextElement(name, "strong", "", row.name || row.map || "Map");
@@ -472,17 +481,21 @@
 			appendTextElement(stateText, "small", "", String(row.players || 0) + " players");
 			var checks = document.createElement("div");
 			checks.className = "map-health-checks";
-			[
-				["ready", "r", row.ready],
-				["alive", "live", row.alive],
-				["active", "act", row.active]
-			].forEach(function (check) {
-				var chip = document.createElement("span");
-				chip.className = "map-health-chip " + (check[2] ? "ok" : "bad");
-				chip.title = check[0];
-				chip.textContent = check[1];
-				checks.appendChild(chip);
-			});
+			if (state === "idle") {
+				appendTextElement(checks, "span", "map-health-policy", "Starts when visited");
+			} else {
+				[
+					["ready", "r", row.ready],
+					["alive", "live", row.alive],
+					["active", "act", row.active]
+				].forEach(function (check) {
+					var chip = document.createElement("span");
+					chip.className = "map-health-chip " + (check[2] ? "ok" : "bad");
+					chip.title = check[0];
+					chip.textContent = check[1];
+					checks.appendChild(chip);
+				});
+			}
 			item.appendChild(dot);
 			item.appendChild(name);
 			item.appendChild(stateText);
@@ -537,7 +550,10 @@
 		if (!poiSummary) {
 			return;
 		}
-		poiSummary.textContent = "";
+		var enabled = Object.keys(selected || {}).filter(function (group) {
+			return selected[group] === true && data && data.groups && data.groups[group];
+		}).length;
+		poiSummary.textContent = enabled ? String(enabled) + " layers visible" : "No POI layers visible";
 	}
 
 	function renderPoiOverlay(data, selected) {
@@ -703,6 +719,7 @@
 			var selected = button.getAttribute("data-map-tab") === activeMapTab;
 			button.classList.toggle("active", selected);
 			button.setAttribute("aria-selected", selected ? "true" : "false");
+			button.tabIndex = selected ? 0 : -1;
 		});
 		if (poiLegend) {
 			poiLegend.hidden = activeMapTab !== "hagga";
@@ -718,6 +735,7 @@
 		}
 		if (mapLayout) {
 			mapLayout.hidden = activeMapTab === "health";
+			mapLayout.setAttribute("aria-labelledby", activeMapTab === "deep-desert" ? "map-tab-deep-desert" : "map-tab-hagga");
 		}
 		if (mapHealthPanel) {
 			mapHealthPanel.hidden = activeMapTab !== "health";
@@ -740,6 +758,24 @@
 	mapTabs.forEach(function (button) {
 		button.addEventListener("click", function () {
 			selectMapTab(button.getAttribute("data-map-tab"));
+		});
+		button.addEventListener("keydown", function (event) {
+			var currentIndex = mapTabs.indexOf(button);
+			var nextIndex = currentIndex;
+			if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+				nextIndex = (currentIndex + 1) % mapTabs.length;
+			} else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+				nextIndex = (currentIndex - 1 + mapTabs.length) % mapTabs.length;
+			} else if (event.key === "Home") {
+				nextIndex = 0;
+			} else if (event.key === "End") {
+				nextIndex = mapTabs.length - 1;
+			} else {
+				return;
+			}
+			event.preventDefault();
+			mapTabs[nextIndex].focus();
+			selectMapTab(mapTabs[nextIndex].getAttribute("data-map-tab"));
 		});
 	});
 

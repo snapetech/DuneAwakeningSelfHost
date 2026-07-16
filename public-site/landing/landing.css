@@ -1,0 +1,315 @@
+:root {
+	--night: #0d1118;
+	--night-soft: #171c25;
+	--paper: #f2f0e8;
+	--muted: #969da8;
+	--line: rgba(255, 255, 255, 0.14);
+}
+
+* {
+	box-sizing: border-box;
+}
+
+html {
+	color-scheme: dark;
+}
+
+body {
+	min-height: 100vh;
+	margin: 0;
+	color: var(--paper);
+	background:
+		radial-gradient(circle at 50% -25%, rgba(93, 116, 148, 0.3), transparent 42%),
+		linear-gradient(180deg, #111722 0%, var(--night) 62%);
+	font-family: "Arial Narrow", "Aptos Narrow", "Segoe UI", sans-serif;
+	-webkit-font-smoothing: antialiased;
+}
+
+body::before {
+	content: "";
+	position: fixed;
+	inset: 0;
+	pointer-events: none;
+	opacity: 0.34;
+	background-image:
+		linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+		linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+	background-size: 48px 48px;
+	mask-image: linear-gradient(to bottom, black, transparent 72%);
+}
+
+a {
+	color: inherit;
+}
+
+:focus-visible {
+	outline: 3px solid #ffffff;
+	outline-offset: 6px;
+}
+
+.skip-link {
+	position: fixed;
+	z-index: 10;
+	top: 12px;
+	left: 12px;
+	transform: translateY(-180%);
+	padding: 10px 14px;
+	border-radius: 8px;
+	color: var(--night);
+	background: #fff;
+	font-weight: 800;
+}
+
+.skip-link:focus {
+	transform: translateY(0);
+}
+
+.page-shell {
+	position: relative;
+	width: min(1500px, calc(100% - 64px));
+	min-height: 100vh;
+	margin: 0 auto;
+	display: grid;
+	grid-template-rows: auto 1fr auto;
+}
+
+.masthead {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	min-height: 86px;
+	border-bottom: 1px solid var(--line);
+	font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+	font-size: 0.67rem;
+	font-weight: 800;
+	letter-spacing: 0.14em;
+	text-transform: uppercase;
+}
+
+.wordmark {
+	font-size: 0.86rem;
+	letter-spacing: 0.22em;
+	text-decoration: none;
+}
+
+.masthead > span {
+	color: var(--muted);
+}
+
+main {
+	display: grid;
+	align-content: center;
+	gap: clamp(38px, 6vh, 76px);
+	padding: clamp(48px, 8vh, 100px) 0;
+}
+
+.hero-copy {
+	text-align: center;
+}
+
+.eyebrow {
+	margin: 0 0 18px;
+	color: var(--muted);
+	font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+	font-size: 0.68rem;
+	font-weight: 800;
+	letter-spacing: 0.18em;
+	text-transform: uppercase;
+}
+
+h1 {
+	margin: 0;
+	font-family: Georgia, "Times New Roman", serif;
+	font-size: clamp(3.2rem, 7vw, 7.4rem);
+	font-weight: 500;
+	letter-spacing: -0.065em;
+	line-height: 0.88;
+}
+
+.intro {
+	max-width: 46ch;
+	margin: 22px auto 0;
+	color: var(--muted);
+	font-size: clamp(0.95rem, 1.4vw, 1.12rem);
+	line-height: 1.55;
+}
+
+.game-grid {
+	width: min(1060px, 100%);
+	margin: 0 auto;
+	display: grid;
+	grid-template-columns: repeat(var(--game-count), minmax(0, 1fr));
+	gap: clamp(28px, 5vw, 80px);
+}
+
+.game-link {
+	position: relative;
+	min-width: 0;
+	text-decoration: none;
+}
+
+.game-art {
+	position: relative;
+	display: block;
+	aspect-ratio: 1;
+	overflow: hidden;
+	border: 1px solid color-mix(in srgb, var(--accent) 58%, white 12%);
+	border-radius: 27%;
+	background: var(--accent-soft);
+	box-shadow:
+		0 34px 80px color-mix(in srgb, var(--accent) 17%, transparent),
+		inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+	transition: transform 400ms cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 400ms ease, border-radius 400ms ease;
+}
+
+.game-art::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	background: linear-gradient(145deg, rgba(255, 255, 255, 0.18), transparent 35%, rgba(0, 0, 0, 0.16));
+	pointer-events: none;
+}
+
+.game-art img {
+	display: block;
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+	transition: transform 650ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.game-copy {
+	display: grid;
+	grid-template-columns: auto 1fr;
+	gap: 4px 12px;
+	align-items: baseline;
+	padding: 19px 4px 0;
+}
+
+.game-label {
+	grid-row: 1 / span 2;
+	min-width: 35px;
+	padding-top: 4px;
+	color: var(--accent);
+	font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+	font-size: 0.72rem;
+	font-weight: 900;
+	letter-spacing: 0.14em;
+}
+
+.game-name {
+	color: var(--paper);
+	font-family: Georgia, "Times New Roman", serif;
+	font-size: clamp(1.45rem, 2.6vw, 2.3rem);
+	letter-spacing: -0.035em;
+	line-height: 1;
+}
+
+.game-description {
+	color: var(--muted);
+	font-size: 0.82rem;
+	line-height: 1.35;
+}
+
+.game-arrow {
+	position: absolute;
+	top: 18px;
+	right: 18px;
+	display: grid;
+	place-items: center;
+	width: 42px;
+	height: 42px;
+	border: 1px solid rgba(255, 255, 255, 0.38);
+	border-radius: 50%;
+	color: var(--game-ink);
+	background: color-mix(in srgb, var(--accent-soft) 82%, transparent);
+	backdrop-filter: blur(10px);
+	font-size: 1.12rem;
+	transition: transform 250ms ease, background 250ms ease;
+}
+
+.game-link:hover .game-art {
+	border-radius: 23%;
+	transform: translateY(-9px) rotate(-1deg);
+	box-shadow:
+		0 42px 100px color-mix(in srgb, var(--accent) 28%, transparent),
+		inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+
+.game-link:nth-child(even):hover .game-art {
+	transform: translateY(-9px) rotate(1deg);
+}
+
+.game-link:hover .game-art img {
+	transform: scale(1.035);
+}
+
+.game-link:hover .game-arrow {
+	transform: translate(3px, -3px);
+	background: var(--paper);
+}
+
+footer {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 20px;
+	min-height: 72px;
+	border-top: 1px solid var(--line);
+	color: var(--muted);
+	font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+	font-size: 0.63rem;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+}
+
+footer p {
+	margin: 0;
+}
+
+@media (max-width: 800px) {
+	.page-shell {
+		width: min(100% - 32px, 560px);
+	}
+
+	.masthead {
+		min-height: 70px;
+	}
+
+	.masthead > span {
+		display: none;
+	}
+
+	main {
+		gap: 40px;
+		padding: 54px 0;
+	}
+
+	.game-grid {
+		grid-template-columns: 1fr;
+		gap: 44px;
+	}
+
+	.game-art {
+		border-radius: 24%;
+	}
+
+	footer {
+		justify-content: center;
+		text-align: center;
+	}
+
+	footer > span {
+		display: none;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		scroll-behavior: auto !important;
+		transition-duration: 0.01ms !important;
+	}
+}

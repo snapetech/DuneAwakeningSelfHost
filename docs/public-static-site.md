@@ -23,6 +23,20 @@ The public site is deliberately boring from a security perspective:
 
 The page JavaScript refreshes those files every 60 seconds inline. It does not reload the whole page.
 
+Public health follows the map lifecycle policy instead of requiring every world
+partition to stay running. By default, partitions `1,2` (Survival/Hagga Basin
+and the Overmap) are the required core. Dynamic destinations that are stopped
+or warming are shown as `On demand` or `Warming`; they do not make the server
+degraded. `Player access` also requires healthy FLS publication and enough game
+RabbitMQ connections for the required core.
+
+Override the required public/core partitions only when the always-on policy is
+intentionally changed:
+
+```text
+DUNE_CORE_PARTITION_IDS=1,2
+```
+
 `deep-desert-map.svg` is generated from server state. If `admin/static/deep-desert.webp`
 exists, the renderer embeds that registered weekly map image as the background; otherwise it
 uses a derived schematic background from Deep Desert markers, Coriolis seeds, resource fields,
@@ -121,6 +135,8 @@ Use any static web server. Copyable examples:
 ```text
 examples/public-site/caddy.Caddyfile
 examples/public-site/nginx.conf
+examples/public-site/caddy-subpaths.Caddyfile
+examples/public-site/nginx-subpaths.conf
 examples/public-site/compose.yaml
 examples/public-site/rclone-sync.sh
 ```
@@ -139,6 +155,101 @@ The example configs allow these top-level extensions so new map assets propagate
 ```
 
 Return `404` for everything else.
+
+## Production ingress hardening
+
+Do not expose the Caddy origin directly to the Internet. Public DNS should be a
+proxied CNAME to the named Cloudflare Tunnel (`<tunnel-id>.cfargotunnel.com`),
+and the host firewall should drop public TCP 80/443. Install the repository's
+guard on the production host with:
+
+```bash
+sudo ./scripts/install-cloudflare-origin-guard.sh
+```
+
+The installed `apply-proxy` mode permits only Cloudflare's published edge
+networks, private networks, and loopback. This supports an existing proxied
+origin DNS record without allowing direct-origin bypass. After every public
+hostname is routed to the named tunnel, change the systemd unit to use `apply`;
+that tunnel-only mode drops all non-private inbound TCP 80/443.
+
+For the remotely managed production tunnel, store a current root-readable API
+token with `Cloudflare Tunnel: Edit` and `Zone DNS: Edit` in
+`/etc/snape/cloudflare.env`, preview the change, and then apply it:
+
+```bash
+sudo ./scripts/configure-cloudflare-web-tunnel.sh
+sudo ./scripts/configure-cloudflare-web-tunnel.sh --apply
+```
+
+The script preserves unrelated published routes, sets the four game-site
+hostnames to loopback HTTP behind the encrypted tunnel, replaces each DNS record
+with a proxied tunnel CNAME, and refuses ambiguous duplicate DNS records.
+
+Keep the detailed admin panel off public DNS unless a deny-by-default
+Cloudflare Access application and MFA policy already protect its hostname.
+The supported default is loopback-bound ingress plus the private
+`duneadmin.home` route. `/healthz` is deliberately minimal; `/api/status` and
+all other detailed API routes require an admin token.
+
+## Optional Multi-Game Landing Page
+
+The package includes a deterministic static landing-page generator for operators
+who publish more than one game dashboard from a single hostname. The bundled
+manifest is deliberately Dune-only; keep site-specific additional game entries,
+icons, colors, and links in your own configuration.
+
+Generate the example locally:
+
+```bash
+./public-site/scripts/generate-game-landing.py \
+  --config public-site/landing/game-links.example.json \
+  --output /tmp/game-landing
+```
+
+Install a customized manifest:
+
+```bash
+sudo GAME_LANDING_CONFIG=/etc/game-links.json \
+  LANDING_DIR=/srv/game-landing \
+  ./public-site/scripts/install-game-landing.sh
+```
+
+The manifest accepts one to eight ordered `games` entries. Each entry provides
+its visible name, short label, destination, local icon, and three theme colors:
+
+```json
+{
+  "site_name": "YOUR.SERVER",
+  "eyebrow": "Self-hosted game servers",
+  "heading": "Choose your world.",
+  "intro": "Select a game to view its public server information.",
+  "footer": "Static public information",
+  "games": [
+    {
+      "slug": "dune-awakening",
+      "name": "Dune: Awakening",
+      "label": "DA",
+      "description": "Live status, players, rules, and maps.",
+      "href": "/dune/",
+      "icon": "assets/dune-awakening.svg",
+      "accent": "#e36c35",
+      "accent_soft": "#efb15f",
+      "ink": "#25130c"
+    }
+  ]
+}
+```
+
+Icon paths are resolved relative to the manifest and copied into the generated
+output with a content hash. Root-relative links and HTTPS links are accepted.
+The same manifest always produces byte-identical HTML, CSS, and asset names.
+
+Use `caddy-subpaths.Caddyfile` or `nginx-subpaths.conf` when the generated
+landing page owns `/` and the Dune dashboard should be reachable at `/dune/`,
+`/duneawakening/`, and `/da/`. Each bare alias redirects to its trailing-slash
+form so the dashboard's relative CSS, JavaScript, map, and telemetry paths stay
+inside the selected prefix.
 
 ## Windows And macOS
 
@@ -193,7 +304,7 @@ make public-site-check
 ./public-site/scripts/package-dune-public-site.sh /tmp/dash-public-site.tar.gz
 ```
 
-Inspect the tarball before sharing. It should contain only `public-site/`, `examples/public-site/`, and this document.
+Inspect the tarball before sharing. It should contain only `public-site/`, `examples/public-site/`, and this document. The optional landing generator, Dune example manifest, and Dune icon are included in `public-site/landing/`.
 
 ## Optional GitLab Publishing
 

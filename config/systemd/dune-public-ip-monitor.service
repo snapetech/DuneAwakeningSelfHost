@@ -1,0 +1,13 @@
+[Unit]
+Description=Dune public IP change monitor
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=DUNE_SERVICE_USER_PLACEHOLDER
+Group=DUNE_SERVICE_GROUP_PLACEHOLDER
+WorkingDirectory=/opt/DuneAwakeningSelfHost
+ExecStart=/opt/DuneAwakeningSelfHost/scripts/public-ip-monitor.sh /opt/DuneAwakeningSelfHost/.env check
+TimeoutStartSec=1800

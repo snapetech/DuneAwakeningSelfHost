@@ -21,7 +21,8 @@ for compose_file in "${compose_files[@]}"; do
 done
 compose+=(--env-file "$env_file")
 
-python3 -m py_compile admin/admin_panel.py scripts/admin-chat-commands.py scripts/player-presence-announcer.py
+python3 -m py_compile admin/admin_panel.py admin/cosmetics_admin.py scripts/build-cosmetic-catalog.py scripts/admin-chat-commands.py scripts/player-presence-announcer.py
+python3 -m unittest scripts/test-cosmetics-admin.py
 python3 scripts/test-admin-panel-safe-surfaces.py
 
 "${compose[@]}" up -d --no-recreate postgres
@@ -67,6 +68,12 @@ print((rows[0].get("Health") or rows[0].get("State") or "").lower() if rows else
   fi
   sleep 3
 done
+
+affinity_enabled="$(sed -n 's/^DUNE_CPU_AFFINITY_ENABLED=//p' "$env_file" | tail -1)"
+if [[ "$affinity_enabled" == "true" && -x "$script_dir/cpu-affinity.sh" ]]; then
+  "$script_dir/cpu-affinity.sh" --env-file "$env_file" apply --execute \
+    --confirm "APPLY DUNE CPU AFFINITY" --persist
+fi
 
 ./scripts/check-admin-ingress.sh "$env_file"
 printf 'OK: deployed admin-panel using %s\n' "$env_file"

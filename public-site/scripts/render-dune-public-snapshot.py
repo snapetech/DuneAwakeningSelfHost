@@ -71,6 +71,18 @@ PEAKS_FILE = pathlib.Path(public_env_value(
 ))
 
 
+def int_list_env(key, default):
+    values = []
+    for raw in public_env_value(key, default).split(","):
+        raw = raw.strip()
+        if raw.isdigit() and int(raw) > 0:
+            values.append(int(raw))
+    return values or [1, 2]
+
+
+CORE_PARTITION_IDS = int_list_env("DUNE_CORE_PARTITION_IDS", "1,2")
+
+
 def bool_env(key, default):
     value = public_env_value(key, default)
     return str(value).lower() not in ("0", "false", "no", "off")
@@ -283,21 +295,24 @@ def load_deep_desert_observations():
 
 
 def load_map_health():
-    sql = r"""
+    core_partition_ids = ",".join(str(value) for value in CORE_PARTITION_IDS)
+    sql = rf"""
         select coalesce(json_agg(row_to_json(t)), '[]'::json)
         from (
             select coalesce(wp.label, wp.map, 'Unknown') as name,
                    wp.map,
                    case
                      when wp.blocked then 'offline'
-                     when wp.server_id is null then 'offline'
+                     when wp.server_id is null and wp.partition_id in ({core_partition_ids}) then 'offline'
+                     when wp.server_id is null then 'on-demand'
                      when coalesce(fs.ready, false) and coalesce(fs.alive, false) and exists (
                        select 1 from dune.active_server_ids asi where asi.server_id = wp.server_id
                      ) then 'online'
                      when coalesce(fs.alive, false) and exists (
                        select 1 from dune.active_server_ids asi where asi.server_id = wp.server_id
-                     ) then 'degraded'
-                     else 'offline'
+                     ) then 'warming'
+                     when wp.partition_id in ({core_partition_ids}) then 'offline'
+                     else 'on-demand'
                    end as status,
                    coalesce(fs.ready, false) as ready,
                    coalesce(fs.alive, false) as alive,
@@ -313,6 +328,16 @@ def load_map_health():
     """
     text = compose_psql(sql).strip() or "[]"
     return json.loads(text)
+
+
+def summarize_map_health(rows):
+    return {
+        "online": sum(1 for row in rows if row.get("status") == "online"),
+        "warming": sum(1 for row in rows if row.get("status") == "warming"),
+        "onDemand": sum(1 for row in rows if row.get("status") == "on-demand"),
+        "offline": sum(1 for row in rows if row.get("status") == "offline"),
+        "total": len(rows),
+    }
 
 
 def clamp(value, low, high):
@@ -662,12 +687,7 @@ def main():
         for p in players
     ]
     daily_peak = update_daily_peak(len(public_players), generated_dt)
-    map_health_summary = {
-        "online": sum(1 for row in map_health if row.get("status") == "online"),
-        "degraded": sum(1 for row in map_health if row.get("status") == "degraded"),
-        "offline": sum(1 for row in map_health if row.get("status") == "offline"),
-        "total": len(map_health),
-    }
+    map_health_summary = summarize_map_health(map_health)
     snapshot = {
         "ok": ok,
         "generatedAt": generated,

@@ -1,0 +1,85 @@
+{
+	admin off
+}
+
+# Serve the generated game-link landing page at / and one Dune dashboard from
+# three memorable subpaths. Relative dashboard assets remain isolated beneath
+# the selected alias because bare aliases redirect to their trailing-slash URL.
+https://games.example.com {
+	root * /srv/game-landing
+	encode zstd gzip
+
+	header {
+		-Server
+		-Via
+		-X-Powered-By
+		Cache-Control "no-store, max-age=0, must-revalidate, no-transform"
+		Pragma "no-cache"
+		Expires "0"
+		Content-Security-Policy "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:"
+		Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=(), serial=(), bluetooth=(), browsing-topics=()"
+		Cross-Origin-Opener-Policy "same-origin"
+		Cross-Origin-Resource-Policy "same-origin"
+		Origin-Agent-Cluster "?1"
+		Referrer-Policy "no-referrer"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		X-Permitted-Cross-Domain-Policies "none"
+		X-Robots-Tag "noindex, nofollow, noarchive"
+	}
+
+	@cached_assets path /landing.css /landing-generated.css /assets/*.svg /assets/*.webp /assets/*.png /assets/*.jpg /assets/*.jpeg /dune/style.css /dune/app.js /dune/hagga-map.svg /dune/hagga-basin.webp /dune/deep-desert-map.svg /dune/deep-desert.webp /duneawakening/style.css /duneawakening/app.js /duneawakening/hagga-map.svg /duneawakening/hagga-basin.webp /duneawakening/deep-desert-map.svg /duneawakening/deep-desert.webp /da/style.css /da/app.js /da/hagga-map.svg /da/hagga-basin.webp /da/deep-desert-map.svg /da/deep-desert.webp
+	header @cached_assets {
+		Cache-Control "public, max-age=300, must-revalidate"
+		Cloudflare-CDN-Cache-Control "public, max-age=3600, stale-while-revalidate=86400, stale-if-error=86400"
+	}
+
+	@short_lived_data path /dune/players.json /dune/hagga-pois.json /duneawakening/players.json /duneawakening/hagga-pois.json /da/players.json /da/hagga-pois.json
+	header @short_lived_data {
+		Cache-Control "public, max-age=30, must-revalidate"
+		Cloudflare-CDN-Cache-Control "public, max-age=30, stale-while-revalidate=60, stale-if-error=300"
+	}
+
+	@unexpected_methods not method GET HEAD
+	respond @unexpected_methods "not found" 404
+
+	@scanner_paths path /.env* /.git* /.svn* /.hg* /wp-* /wordpress* /xmlrpc.php* /phpmyadmin* /pma* /adminer* /cgi-bin/* /vendor/phpunit* /actuator* /server-status* /server-info /config.json* /debug* /metrics* /swagger* /openapi.json* /api-docs* /graphql* /healthz /readyz /status /version *.php *.asp *.aspx *.jsp
+	respond @scanner_paths "not found" 404
+
+	@dune_bare path /dune /duneawakening /da
+	redir @dune_bare {path}/ 308
+
+	handle_path /dune/* {
+		root * /srv/dash-public-site
+		@dune_files path / /index.html /status.html /style.css /app.js /players.json /hagga-pois.json /hagga-map.svg /hagga-basin.webp /deep-desert-map.svg /deep-desert.webp
+		handle @dune_files {
+			file_server
+		}
+		respond "not found" 404
+	}
+
+	handle_path /duneawakening/* {
+		root * /srv/dash-public-site
+		@duneawakening_files path / /index.html /status.html /style.css /app.js /players.json /hagga-pois.json /hagga-map.svg /hagga-basin.webp /deep-desert-map.svg /deep-desert.webp
+		handle @duneawakening_files {
+			file_server
+		}
+		respond "not found" 404
+	}
+
+	handle_path /da/* {
+		root * /srv/dash-public-site
+		@da_files path / /index.html /status.html /style.css /app.js /players.json /hagga-pois.json /hagga-map.svg /hagga-basin.webp /deep-desert-map.svg /deep-desert.webp
+		handle @da_files {
+			file_server
+		}
+		respond "not found" 404
+	}
+
+	@landing_files path / /landing.css /landing-generated.css /assets/*.svg /assets/*.webp /assets/*.png /assets/*.jpg /assets/*.jpeg
+	handle @landing_files {
+		file_server
+	}
+
+	respond "not found" 404
+}

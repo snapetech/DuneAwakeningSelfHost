@@ -1,0 +1,38 @@
+#cloud-config
+# Secret-free Ubuntu 24.04 host bootstrap. This prepares SSH and prerequisites;
+# it deliberately does not download DASH, install Funcom content, or start it.
+users:
+  - default
+  - name: dash-admin
+    groups: [adm, sudo]
+    shell: /bin/bash
+    sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+    lock_passwd: true
+    ssh_authorized_keys:
+      - "ssh-ed25519 REPLACE_WITH_OPERATOR_PUBLIC_KEY"
+
+package_update: true
+package_upgrade: false
+packages:
+  - ca-certificates
+  - curl
+  - jq
+  - openssl
+  - python3
+  - qemu-guest-agent
+  - ripgrep
+  - rsync
+
+write_files:
+  - path: /etc/motd.d/90-dash-next-step
+    owner: root:root
+    permissions: "0644"
+    content: |
+      DASH bootstrap complete. Run packaging/ansible/site.yml from the operator workstation.
+      No DASH release, game content, token, database, or service was installed by cloud-init.
+
+runcmd:
+  - [systemctl, enable, --now, qemu-guest-agent.service]
+  - [install, -d, -m, "0700", -o, dash-admin, -g, dash-admin, /home/dash-admin/.ansible]
+
+final_message: "DASH prerequisite bootstrap finished; continue with Ansible."

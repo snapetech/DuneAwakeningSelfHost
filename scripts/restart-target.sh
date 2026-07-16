@@ -5,6 +5,7 @@ target="${DUNE_RESTART_TARGET:-${1:-}}"
 services="${DUNE_RESTART_SERVICES:-}"
 action="${DUNE_RESTART_ACTION:-restart}"
 phase="${DUNE_RESTART_PHASE:-$action}"
+fast_dynamic_start="${DUNE_RESTART_FAST_DYNAMIC_START:-false}"
 
 if [ -z "$target" ]; then
   printf 'missing DUNE_RESTART_TARGET\n' >&2
@@ -24,6 +25,24 @@ case "$phase" in
     exit 64
     ;;
 esac
+
+# Additional Survival_1 dimensions are generated services outside the static
+# Compose farm. Include them in all-farm restart/shutdown flows when enabled.
+if [ "$target" = "all" ] && [ "${DUNE_RESTART_DRY_RUN:-false}" != "true" ] && [ "${DUNE_RESTART_DRY_RUN:-0}" != "1" ] && [ -x "$(dirname "$0")/sietches.sh" ]; then
+  sietch_env="${ENV_FILE:-.env}"
+  if grep -Eq '^DUNE_SIETCH_MUTATIONS_ENABLED=(1|true|yes|on)$' "$sietch_env" 2>/dev/null; then
+    case "$phase" in
+      restart|shutdown|stop|reboot)
+        "$(dirname "$0")/sietches.sh" "$sietch_env" stop-managed --execute
+        ;;
+    esac
+    case "$phase" in
+      restart|start)
+        trap 'rc=$?; if [ "$rc" -eq 0 ]; then "$(dirname "$0")/sietches.sh" "${ENV_FILE:-.env}" reconcile --execute || rc=$?; fi; exit "$rc"' EXIT
+        ;;
+    esac
+  fi
+fi
 
 steam_update_enabled() {
   case "${DUNE_RESTART_CHECK_STEAM_UPDATE:-true}" in
@@ -372,6 +391,7 @@ phase = os.environ.get("DUNE_RESTART_PHASE", action)
 host_workspace = os.environ.get("DUNE_RESTART_HOST_WORKSPACE") or os.environ.get("DUNE_ANNOUNCE_HOST_WORKSPACE", "")
 compose_image = os.environ.get("DUNE_RESTART_COMPOSE_IMAGE", "docker:27.5.1-cli")
 use_host_compose = os.environ.get("DUNE_RESTART_USE_HOST_COMPOSE", "true").lower() in ("1", "true", "yes", "on")
+fast_dynamic_start = os.environ.get("DUNE_RESTART_FAST_DYNAMIC_START", "false").lower() in ("1", "true", "yes", "on")
 compose_files = [item for item in os.environ.get("COMPOSE_FILES", "compose.yaml:compose.allmaps.yaml").split(":") if item]
 env_file = os.environ.get("ENV_FILE", ".env")
 watchdog_control_enabled = os.environ.get("DUNE_MAP_WATCHDOG_CONTROL", "true").lower() not in ("0", "false", "no", "off")
@@ -617,7 +637,10 @@ def run_host_compose(services):
     compose_command = ["docker", "compose"]
     for file_name in compose_files:
         compose_command.extend(["-f", file_name])
-    compose_command.extend(["--env-file", env_file, "up", "-d", "--force-recreate", "--no-deps"])
+    compose_command.extend(["--env-file", env_file, "up", "-d"])
+    if not fast_dynamic_start:
+        compose_command.append("--force-recreate")
+    compose_command.append("--no-deps")
     compose_command.extend(services)
     service_words = " ".join(services)
     landsraad_term_length_tuning_enabled = os.environ.get("DUNE_LANDSRAAD_TERM_LENGTH_TUNING_ENABLED") or read_env_value(env_file, "DUNE_LANDSRAAD_TERM_LENGTH_TUNING_ENABLED") or ""
@@ -662,7 +685,25 @@ def run_host_compose(services):
         "else echo 'one or more official Dune images are missing and scripts/load-images.sh is unavailable' >&2; exit 1; fi; "
         "fi; "
     )
-    shell_command = (
+    if fast_dynamic_start:
+        shell_command = (
+            "set -e; "
+            "apk add --no-cache bash iproute2 util-linux sudo >/dev/null; "
+            "if [ -x /workspace/scripts/validate-landsraad-coriolis-cycle.sh ]; then "
+            f"/workspace/scripts/validate-landsraad-coriolis-cycle.sh {shlex.quote(env_file)}; "
+            "fi; "
+            + " ".join(shlex.quote(part) for part in compose_command)
+            + "; if [ -x /workspace/scripts/seed-gateway-neighbor.sh ]; then "
+            "/workspace/scripts/seed-gateway-neighbor.sh || true; "
+            "fi; "
+            "if [ -x /workspace/scripts/restart-post-start-health.sh ]; then "
+            f"ENV_FILE={shlex.quote(env_file)} /workspace/scripts/restart-post-start-health.sh; "
+            "elif [ -x /workspace/scripts/verify-rmq-auth-path.sh ]; then "
+            "/workspace/scripts/verify-rmq-auth-path.sh; "
+            "fi"
+        )
+    else:
+        shell_command = (
         "set -e; "
         + "apk add --no-cache bash iproute2 util-linux sudo >/dev/null; "
         + ensure_official_images_shell
@@ -1077,9 +1118,11 @@ if phase in ("start", "restart") and use_host_compose:
     if dry_run:
         print(json.dumps({"ok": True, "target": target, "action": action, "phase": phase, "dryRun": True, "hostCompose": True, "services": services}, separators=(",", ":")))
         sys.exit(0)
-    map_watchdog_control("stop")
+    if not fast_dynamic_start:
+        map_watchdog_control("stop")
     result = run_host_compose(services)
-    map_watchdog_control("start")
+    if not fast_dynamic_start:
+        map_watchdog_control("start")
     print(json.dumps({"ok": True, "target": target, "action": action, "phase": phase, "hostCompose": True, "affected": services, "result": result}, separators=(",", ":")))
     sys.exit(0)
 
@@ -1201,6 +1244,21 @@ if [ "$phase" = "shutdown" ] || [ "$phase" = "stop" ]; then
   exec "$@" stop -t 30 $services
 fi
 if [ "$phase" = "start" ]; then
+  case "$fast_dynamic_start" in
+    1|true|yes|on)
+      run_landsraad_coriolis_guard
+      # Compose starts the existing stopped container when its config hash is
+      # current and recreates it only when configuration actually changed.
+      "$@" up -d --no-deps $services
+      seed_gateway_neighbors
+      if [ -x ./scripts/restart-post-start-health.sh ]; then
+        ./scripts/restart-post-start-health.sh
+      elif [ -x ./scripts/verify-rmq-auth-path.sh ]; then
+        ./scripts/verify-rmq-auth-path.sh
+      fi
+      exit 0
+      ;;
+  esac
   ensure_official_images_loaded
   map_watchdog_control stop
   pre_start_hygiene

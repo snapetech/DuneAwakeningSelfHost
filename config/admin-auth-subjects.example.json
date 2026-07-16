@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "subjects": [
+    {
+      "issuer": "https://discord.com",
+      "subject": "123456789012345678",
+      "localUserId": "night-ops",
+      "enabled": false,
+      "label": "Replace with an explicitly reviewed Discord user ID"
+    }
+  ]
+}

@@ -88,19 +88,45 @@ active_servers="$("${compose[@]}" exec -T postgres psql -U dune -d "$db" -Atc "s
 partitions="$("${compose[@]}" exec -T postgres psql -U dune -d "$db" -Atc "select count(*) from dune.world_partition;" 2>/dev/null || printf '0')"
 game_sg_connections="$("${compose[@]}" exec -T game-rmq rabbitmqctl list_connections user 2>/dev/null | rg -c '^sg\.' || true)"
 admin_sg_connections="$("${compose[@]}" exec -T admin-rmq rabbitmqctl list_connections user 2>/dev/null | rg -c '^sg\.' || true)"
-if [[ "$current_alive_active" -gt 0 && "$current_alive_active" -eq "$partitions" && "$active_servers" -eq "$partitions" && "$game_sg_connections" -ge "$partitions" && "$admin_sg_connections" -ge "$partitions" ]]; then
-  echo "OK: all current partitions have alive active farm rows, active server ids exist, and game/admin RMQ service users are connected."
+core_partition_ids="${DUNE_CORE_PARTITION_IDS:-$(env_value DUNE_CORE_PARTITION_IDS)}"
+core_partition_ids="${core_partition_ids:-1,2}"
+if [[ ! "$core_partition_ids" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
+  echo "WARN: invalid DUNE_CORE_PARTITION_IDS; using survival/overmap partitions 1,2."
+  core_partition_ids="1,2"
+fi
+core_health="$("${compose[@]}" exec -T postgres psql -U dune -d "$db" -Atc "
+select
+  count(*) filter (where fs.ready and fs.alive and asi.server_id is not null) || ' ' ||
+  count(*) filter (where fs.alive and asi.server_id is not null) || ' ' ||
+  count(*) filter (where asi.server_id is not null) || ' ' ||
+  count(*)
+from dune.world_partition wp
+left join dune.farm_state fs on fs.server_id = wp.server_id
+left join dune.active_server_ids asi on asi.server_id = wp.server_id
+where wp.partition_id = any(string_to_array('$core_partition_ids', ',')::int[]);
+" 2>/dev/null || printf '0 0 0 0')"
+read -r core_ready_alive core_alive_active core_active_servers core_partitions <<< "$core_health"
+core_ready_alive="${core_ready_alive:-0}"
+core_alive_active="${core_alive_active:-0}"
+core_active_servers="${core_active_servers:-0}"
+core_partitions="${core_partitions:-0}"
+if [[ "$core_partitions" -gt 0 && "$core_ready_alive" -eq "$core_partitions" \
+    && "$core_alive_active" -eq "$core_partitions" && "$core_active_servers" -eq "$core_partitions" \
+    && "$game_sg_connections" -ge "$core_partitions" ]]; then
+  echo "OK: required always-on partitions are ready and connected. Other partitions may sleep until requested."
 else
-  echo "WARN: expected readiness signals are incomplete."
+  echo "WARN: required always-on partition readiness is incomplete."
 fi
-if [[ "$current_ready_alive" -lt "$partitions" ]]; then
-  echo "NOTE: one or more current partitions are alive/active but have ready=false in farm_state. Check game logs for 'Server farm is READY' before treating this as fatal."
+if [[ "$current_ready_alive" -lt "$current_alive_active" ]]; then
+  echo "NOTE: one or more running partitions are alive/active but still warming with ready=false."
 fi
-if [[ "$admin_sg_connections" -lt "$partitions" ]]; then
-  echo "NOTE: admin RMQ service-user connections are lower than farm-ready rows. This is expected for some warm-pool/on-demand maps, but investigate if admin mutations or heartbeats fail."
+if [[ "$admin_sg_connections" -lt "$current_ready_alive" ]]; then
+  echo "NOTE: admin RMQ service-user connections are lower than farm-ready rows. This is expected for some on-demand maps, but investigate if admin mutations or heartbeats fail."
 fi
 printf 'current_ready_alive=%s current_alive_active=%s active_servers=%s partitions=%s game_sg_connections=%s admin_sg_connections=%s\n' \
   "$current_ready_alive" "$current_alive_active" "$active_servers" "$partitions" "$game_sg_connections" "$admin_sg_connections"
+printf 'core_ready_alive=%s core_alive_active=%s core_active_servers=%s core_partitions=%s\n' \
+  "$core_ready_alive" "$core_alive_active" "$core_active_servers" "$core_partitions"
 
 echo
 echo "== FLS publication health =="

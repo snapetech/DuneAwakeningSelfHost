@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+env_file="${1:-$repo_root/.env}"
+mode="${2:-}"
+if [[ "$env_file" != /* ]]; then env_file="$repo_root/$env_file"; fi
+[[ -f "$env_file" ]] || { printf 'env file does not exist: %s\n' "$env_file" >&2; exit 1; }
+[[ "$mode" == "--execute" || -z "$mode" ]] || { printf 'Usage: %s [ENV_FILE] [--execute]\n' "$0" >&2; exit 2; }
+
+read_env() { sed -n "s/^${1}=//p" "$env_file" | tail -1; }
+required_host="${DUNE_FEATURE_PARITY_ALLOWED_HOST:-$(read_env DUNE_FEATURE_PARITY_ALLOWED_HOST)}"
+required_host="${required_host:-kspls0}"
+current_host="$(hostname -s)"
+
+keys=(
+  DUNE_ADMIN_MUTATIONS_ENABLED DUNE_ADMIN_ITEM_GRANTS_ENABLED
+  DUNE_ADMIN_GM_COMMANDS_ENABLED DUNE_SERVER_NOTIFICATION_SYSTEM_ENABLED
+  DUNE_ADMIN_PLAYER_RUNTIME_MUTATIONS_ENABLED DUNE_ADMIN_VEHICLE_MUTATIONS_ENABLED
+  DUNE_ADMIN_BOOTSTRAP_MUTATIONS_ENABLED DUNE_ADMIN_CATALOG_ENABLED
+  DUNE_ADMIN_TYPED_KNOBS_ENABLED DUNE_ADMIN_EVENT_EXECUTION_ENABLED
+  DUNE_ADMIN_BUNDLE_MUTATIONS_ENABLED DUNE_ADMIN_CARE_PACKAGES_ENABLED
+  DUNE_ADMIN_CARE_PACKAGES_AUTO_ENABLED DUNE_ADMIN_BLUEPRINT_MUTATIONS_ENABLED
+  DUNE_ADMIN_AUGMENT_MUTATIONS_ENABLED DUNE_ADMIN_DATABASE_QUERY_ENABLED
+  DUNE_ADMIN_DATABASE_WRITE_ENABLED DUNE_ADMIN_DATABASE_ROW_MUTATIONS_ENABLED
+  DUNE_ADMIN_DATABASE_PASSWORD_MUTATIONS_ENABLED DUNE_ADMIN_BACKUP_MUTATIONS_ENABLED
+  DUNE_ADMIN_BACKUP_RESTORE_ENABLED DUNE_ADMIN_MEMORY_MUTATIONS_ENABLED
+  DUNE_ADMIN_AUTOSCALER_MUTATIONS_ENABLED DUNE_DISCORD_ADAPTER_ENABLED
+  DUNE_ADMIN_ADDON_MUTATIONS_ENABLED DUNE_ADMIN_SERVICE_CONTROL_ENABLED
+  DUNE_ADMIN_STATEFUL_SERVICE_CONTROL_ENABLED DUNE_ADMIN_UPDATE_MUTATIONS_ENABLED
+  DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED
+  DUNE_ADMIN_FACTION_MUTATIONS_ENABLED DUNE_ADMIN_LANDSRAAD_MUTATIONS_ENABLED
+  DUNE_ADMIN_RESPAWN_MUTATIONS_ENABLED DUNE_ADMIN_GUILD_MUTATIONS_ENABLED
+  DUNE_ADMIN_MARKER_MUTATIONS_ENABLED DUNE_ADMIN_LANDCLAIM_MUTATIONS_ENABLED
+  DUNE_ADMIN_EXCHANGE_MUTATIONS_ENABLED DUNE_ADMIN_PLAYER_TAG_MUTATIONS_ENABLED
+  DUNE_ADMIN_ACCESS_CODE_MUTATIONS_ENABLED DUNE_ADMIN_COMMUNINET_MUTATIONS_ENABLED
+  DUNE_ADMIN_TUTORIAL_MUTATIONS_ENABLED DUNE_ADMIN_PERMISSION_MUTATIONS_ENABLED
+  DUNE_ADMIN_VENDOR_MUTATIONS_ENABLED DUNE_ADMIN_CHARACTER_SWAP_ENABLED
+  DUNE_AUTOSCALER_ENABLED DUNE_METRICS_ENABLED DUNE_PUBLIC_IP_MONITOR_ENABLED
+  DUNE_SIETCH_MUTATIONS_ENABLED DUNE_PLAYER_PRESENCE_PRIVATE_WELCOME_ENABLED
+  DUNE_WEBHOOKS_ENABLED
+  DUNE_COMMUNITY_REWARDS_ENABLED DUNE_COMMUNITY_DELIVERY_ENABLED
+  DUNE_MODERATION_ENABLED DUNE_MODERATION_ENFORCEMENT_ENABLED
+  DUNE_BASE_CREATOR_ENABLED
+  DUNE_GAMEPLAY_PRESETS_ENABLED DUNE_GAMEPLAY_PRESET_MUTATIONS_ENABLED
+  DUNE_COMMAND_CONSOLE_ENABLED
+  DUNE_ADMIN_COSMETIC_MUTATIONS_ENABLED
+  DUNE_ADMIN_FEDERATED_AUTH_ENABLED
+  DUNE_BACKUP_ARCHIVE_ENCRYPTION_ENABLED
+)
+
+if [[ -z "$mode" ]]; then
+  printf 'plan: enable %s feature gates on %s\n' "${#keys[@]}" "$required_host"
+  printf 'plan: autoscaler=balanced always-on=survival,overmap retention=900s overrides=arrakeen/harko/deep-desert warm-cap=4 memory-floor=16GiB\n'
+  printf 'plan: metrics=enabled public-ip-monitor=enabled/dry-run sietch-gate=enabled\n'
+  printf 'no changes made; rerun with --execute\n'
+  exit 0
+fi
+
+[[ "$current_host" == "$required_host" ]] || {
+  printf 'refusing feature activation: hostname=%s required=%s\n' "$current_host" "$required_host" >&2
+  exit 77
+}
+
+stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+backup_dir="$repo_root/backups/admin-panel/feature-parity"
+mkdir -p "$backup_dir"
+backup="$backup_dir/env-before-enable-$stamp"
+install -m 600 "$env_file" "$backup"
+
+set_value() {
+  local key="$1" value="$2" tmp
+  tmp="$(mktemp "$(dirname "$env_file")/.feature-parity-env.XXXXXX")"
+  awk -F= -v key="$key" -v value="$value" '
+    BEGIN { found=0 }
+    $1 == key { print key "=" value; found=1; next }
+    { print }
+    END { if (!found) print key "=" value }
+  ' "$env_file" > "$tmp"
+  chmod --reference="$env_file" "$tmp" 2>/dev/null || chmod 600 "$tmp"
+  mv "$tmp" "$env_file"
+}
+
+for key in "${keys[@]}"; do set_value "$key" true; done
+if [[ ! -f "$repo_root/config/community-rewards.json" ]]; then
+  install -m 600 "$repo_root/config/community-rewards.example.json" "$repo_root/config/community-rewards.json"
+fi
+mkdir -p "$repo_root/config/secrets"
+chmod 700 "$repo_root/config/secrets"
+for provider in vote payment; do
+  secret_file="$repo_root/config/secrets/community-${provider}-webhook.secret"
+  if [[ ! -s "$secret_file" ]]; then
+    command -v openssl >/dev/null 2>&1 || { printf 'openssl is required to generate community webhook secrets\n' >&2; exit 1; }
+    openssl rand -hex 32 > "$secret_file"
+    chmod 600 "$secret_file"
+  fi
+done
+session_secret_file="$repo_root/config/secrets/admin-session.secret"
+if [[ ! -s "$session_secret_file" ]]; then
+  command -v openssl >/dev/null 2>&1 || { printf 'openssl is required to generate the admin session secret\n' >&2; exit 1; }
+  openssl rand -hex 32 > "$session_secret_file"
+  chmod 600 "$session_secret_file"
+fi
+set_value DUNE_FEATURE_PARITY_ALLOWED_HOST "$required_host"
+set_value DUNE_HOST_UID "$(id -u)"
+set_value DUNE_HOST_GID "$(id -g)"
+set_value DUNE_MODERATION_POLL_SECONDS 15
+set_value DUNE_MODERATION_RETENTION_DAYS 90
+set_value DUNE_MODERATION_HEATMAP_CELL_SIZE 25000
+set_value DUNE_MODERATION_KICK_COOLDOWN_SECONDS 60
+set_value DUNE_MODERATION_LOG_SERVICES survival,director,gateway,game-rmq
+set_value DUNE_AUTOSCALER_PROFILE balanced
+set_value DUNE_AUTOSCALER_DEFAULT_MODE dynamic
+set_value DUNE_AUTOSCALER_ALWAYS_ON_SERVICES survival,overmap
+set_value DUNE_AUTOSCALER_IDLE_SECONDS 300
+set_value DUNE_AUTOSCALER_DEMAND_TTL_SECONDS 900
+set_value DUNE_AUTOSCALER_POLL_SECONDS 3
+set_value DUNE_AUTOSCALER_FAST_START true
+set_value DUNE_AUTOSCALER_BALANCED_RETENTION_SECONDS 900
+set_value DUNE_AUTOSCALER_BALANCED_RETENTION_BY_SERVICE arrakeen=2700,harko-village=2700,deep-desert=1800
+set_value DUNE_AUTOSCALER_BALANCED_MAX_WARM_MAPS 4
+set_value DUNE_AUTOSCALER_BALANCED_MIN_AVAILABLE_MEMORY_GIB 16
+set_value DUNE_PUBLIC_IP_MONITOR_ALLOWED_HOST "$required_host"
+set_value DUNE_PUBLIC_IP_MONITOR_INTERVAL_MINUTES 5
+set_value DUNE_PUBLIC_IP_MONITOR_DRY_RUN true
+set_value DUNE_SIETCH_ALLOWED_HOST "$required_host"
+set_value DUNE_DISCORD_ALLOWED_HOST "$required_host"
+admin_host_port="${DUNE_ADMIN_HOST_PORT:-$(read_env DUNE_ADMIN_HOST_PORT)}"
+set_value DUNE_DISCORD_ADAPTER_URL "http://127.0.0.1:${admin_host_port:-18080}"
+
+if [[ -z "$(read_env DUNE_SERVER_COMMANDS_AUTH_TOKEN)" ]]; then
+  command -v openssl >/dev/null 2>&1 || { printf 'openssl is required to generate the command token\n' >&2; exit 1; }
+  set_value DUNE_SERVER_COMMANDS_AUTH_TOKEN "$(openssl rand -hex 32)"
+fi
+
+if [[ -z "$(read_env DUNE_BOT_API_TOKEN)" ]]; then
+  command -v openssl >/dev/null 2>&1 || { printf 'openssl is required to generate the Discord adapter token\n' >&2; exit 1; }
+  set_value DUNE_BOT_API_TOKEN "$(openssl rand -hex 32)"
+fi
+
+printf 'enabled feature parity on %s; env backup=%s; command token=%s; Discord adapter token=%s\n' \
+  "$current_host" "$backup" configured configured
+printf 'public IP monitor remains dry-run until its first successful check\n'

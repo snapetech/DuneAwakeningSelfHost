@@ -68,6 +68,69 @@ for archive in "${archives[@]}"; do
   check_tgz "$archive"
 done
 
+if [[ -f "$backup_dir/community-rewards.sqlite3" ]]; then
+  if python3 - "$backup_dir/community-rewards.sqlite3" <<'PY'
+import sqlite3
+import sys
+
+connection = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
+try:
+    result = connection.execute("pragma integrity_check").fetchone()[0]
+finally:
+    connection.close()
+raise SystemExit(0 if result == "ok" else 1)
+PY
+  then
+    printf 'OK community rewards SQLite snapshot %s\n' "$backup_dir/community-rewards.sqlite3"
+  else
+    printf 'FAIL community rewards SQLite snapshot %s\n' "$backup_dir/community-rewards.sqlite3" >&2
+    ok=false
+  fi
+else
+  printf 'WARN no community-rewards.sqlite3 found in %s\n' "$backup_dir"
+fi
+
+if [[ -f "$backup_dir/moderation.sqlite3" ]]; then
+  if python3 - "$backup_dir/moderation.sqlite3" <<'PY'
+import sqlite3
+import sys
+
+connection = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
+try:
+    result = connection.execute("pragma integrity_check").fetchone()[0]
+finally:
+    connection.close()
+raise SystemExit(0 if result == "ok" else 1)
+PY
+  then
+    printf 'OK moderation SQLite snapshot %s\n' "$backup_dir/moderation.sqlite3"
+  else
+    printf 'FAIL moderation SQLite snapshot %s\n' "$backup_dir/moderation.sqlite3" >&2
+    ok=false
+  fi
+else
+  printf 'WARN no moderation.sqlite3 found in %s\n' "$backup_dir"
+fi
+
+if [[ -f "$backup_dir/base-gallery.sqlite3" ]]; then
+  if python3 - "$backup_dir/base-gallery.sqlite3" <<'PY'
+import sqlite3
+import sys
+connection=sqlite3.connect(f"file:{sys.argv[1]}?mode=ro",uri=True)
+try: result=connection.execute("pragma integrity_check").fetchone()[0]
+finally: connection.close()
+raise SystemExit(0 if result=="ok" else 1)
+PY
+  then
+    printf 'OK base gallery SQLite snapshot %s\n' "$backup_dir/base-gallery.sqlite3"
+  else
+    printf 'FAIL base gallery SQLite snapshot %s\n' "$backup_dir/base-gallery.sqlite3" >&2
+    ok=false
+  fi
+else
+  printf 'WARN no base-gallery.sqlite3 found in %s\n' "$backup_dir"
+fi
+
 if [[ -f "$backup_dir/manifest.json" ]]; then
   if command -v jq >/dev/null 2>&1; then
     jq . "$backup_dir/manifest.json" >/dev/null

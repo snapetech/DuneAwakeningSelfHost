@@ -28,7 +28,9 @@ DRIFT_CHECK_SCRIPT="${DRIFT_CHECK_SCRIPT:-$(dirname "$0")/check-dune-public-site
 
 tmp_status="$(mktemp)"
 tmp_index="$(mktemp)"
-trap 'rm -f "$tmp_status" "$tmp_index"' EXIT
+tmp_source_index="$(mktemp)"
+tmp_status_html="$(mktemp)"
+trap 'rm -f "$tmp_status" "$tmp_index" "$tmp_source_index" "$tmp_status_html"' EXIT
 
 install_output_file() {
   local src="$1"
@@ -89,21 +91,22 @@ asset_version() {
 }
 
 stamp_static_asset_versions() {
+  local target_index="${1:-$INDEX_FILE}"
   local app_file="$STATIC_DIR/app.js"
   local style_file="$STATIC_DIR/style.css"
   local app_version style_version tmp_versioned
-  [[ -f "$INDEX_FILE" && -f "$app_file" && -f "$style_file" ]] || return 0
+  [[ -f "$target_index" && -f "$app_file" && -f "$style_file" ]] || return 0
   app_version="$(asset_version "$app_file")"
   style_version="$(asset_version "$style_file")"
   tmp_versioned="$(mktemp)"
   sed -E \
     -e "s#href=\"style\.css(\\?v=[^\"]*)?\"#href=\"style.css?v=${style_version}\"#g" \
     -e "s#src=\"app\.js(\\?v=[^\"]*)?\"#src=\"app.js?v=${app_version}\"#g" \
-    "$INDEX_FILE" > "$tmp_versioned"
-  if [[ -w "$INDEX_FILE" ]]; then
-    install -m 0644 "$tmp_versioned" "$INDEX_FILE"
+    "$target_index" > "$tmp_versioned"
+  if [[ -w "$target_index" ]]; then
+    install -m 0644 "$tmp_versioned" "$target_index"
   else
-    sudo install -m 0644 "$tmp_versioned" "$INDEX_FILE"
+    sudo install -m 0644 "$tmp_versioned" "$target_index"
   fi
   rm -f "$tmp_versioned"
 }
@@ -112,18 +115,19 @@ seed_static_assets
 require_browser_assets
 
 if [[ -f "$SOURCE_INDEX_FILE" ]]; then
-  if [[ -w "$(dirname "$INDEX_FILE")" ]]; then
-    install -m 0644 "$SOURCE_INDEX_FILE" "$INDEX_FILE"
-  else
-    sudo install -m 0644 "$SOURCE_INDEX_FILE" "$INDEX_FILE"
-  fi
+  install -m 0644 "$SOURCE_INDEX_FILE" "$tmp_source_index"
+elif [[ -f "$INDEX_FILE" ]]; then
+  install -m 0644 "$INDEX_FILE" "$tmp_source_index"
+else
+  echo "missing public site index template: $SOURCE_INDEX_FILE" >&2
+  exit 1
 fi
 
 if [[ -x "$CONFIGURE_SCRIPT" ]]; then
-  STATIC_DIR="$STATIC_DIR" INDEX_FILE="$INDEX_FILE" "$CONFIGURE_SCRIPT"
+  STATIC_DIR="$STATIC_DIR" INDEX_FILE="$tmp_source_index" "$CONFIGURE_SCRIPT"
 fi
 
-stamp_static_asset_versions
+stamp_static_asset_versions "$tmp_source_index"
 
 server_class="status-warn"
 server_text="Unknown"
@@ -135,38 +139,50 @@ runtime_class="status-unknown"
 runtime_text="Unknown"
 runtime_label="Since maintenance"
 runtime_detail_html="Runtime data unavailable."
+status_detail_text="Live status is being checked."
 
 if [[ -d "$DUNE_ROOT" ]] && (cd "$DUNE_ROOT" && timeout "$STATUS_TIMEOUT_SECONDS" ./scripts/status.sh .env) >"$tmp_status" 2>&1; then
   health_line="$(sed -nE 's/^current_ready_alive=([0-9]+) current_alive_active=([0-9]+) active_servers=([0-9]+) partitions=([0-9]+) game_sg_connections=([0-9]+) admin_sg_connections=([0-9]+).*/\1 \2 \3 \4 \5 \6/p' "$tmp_status" | tail -1)"
   read -r current_ready_alive current_alive_active active_servers partitions game_sg_connections admin_sg_connections <<< "${health_line:-0 0 0 0 0 0}"
-  if [[ "$current_ready_alive" =~ ^[0-9]+$ && "$current_alive_active" =~ ^[0-9]+$ \
-      && "$active_servers" =~ ^[0-9]+$ && "$partitions" =~ ^[0-9]+$ \
-      && "$game_sg_connections" =~ ^[0-9]+$ && "$admin_sg_connections" =~ ^[0-9]+$ \
-      && "$partitions" -gt 0 && "$current_alive_active" -eq "$partitions" \
-      && "$active_servers" -eq "$partitions" ]]; then
+  core_health_line="$(sed -nE 's/^core_ready_alive=([0-9]+) core_alive_active=([0-9]+) core_active_servers=([0-9]+) core_partitions=([0-9]+).*/\1 \2 \3 \4/p' "$tmp_status" | tail -1)"
+  read -r core_ready_alive core_alive_active core_active_servers core_partitions <<< "${core_health_line:-0 0 0 0}"
+  fls_healthy=false
+  if grep -q '^FLS publication health: healthy' "$tmp_status"; then
+    fls_healthy=true
+  fi
+  if [[ "$core_ready_alive" =~ ^[0-9]+$ && "$core_alive_active" =~ ^[0-9]+$ \
+      && "$core_active_servers" =~ ^[0-9]+$ && "$core_partitions" =~ ^[0-9]+$ \
+      && "$game_sg_connections" =~ ^[0-9]+$ && "$core_partitions" -gt 0 \
+      && "$core_alive_active" -eq "$core_partitions" \
+      && "$core_active_servers" -eq "$core_partitions" ]]; then
     server_class="status-ok"
     server_text="Online"
-    if [[ "$current_ready_alive" -eq "$partitions" ]]; then
+    if [[ "$core_ready_alive" -eq "$core_partitions" ]]; then
       world_class="status-ok"
       world_text="Healthy"
     else
       world_class="status-warn"
-      world_text="Starting"
+      world_text="Warming"
     fi
-    if [[ "$game_sg_connections" -ge "$partitions" ]]; then
+    if [[ "$core_ready_alive" -eq "$core_partitions" \
+        && "$game_sg_connections" -ge "$core_partitions" \
+        && "$fls_healthy" == "true" ]]; then
       access_class="status-ok"
       access_text="Available"
+      status_detail_text="Core services are ready. Travel destinations start automatically when requested."
     else
       access_class="status-warn"
       access_text="Limited"
+      status_detail_text="The core world is warming. Player access may take a few minutes."
     fi
   else
-    server_class="status-warn"
-    server_text="Partial"
-    world_class="status-warn"
+    server_class="status-down"
+    server_text="Recovering"
+    world_class="status-down"
     world_text="Degraded"
-    access_class="status-warn"
+    access_class="status-down"
     access_text="Limited"
+    status_detail_text="Required core services are recovering. Retry in a few minutes."
   fi
 fi
 
@@ -317,9 +333,10 @@ oldest_uptime = int((now - oldest).total_seconds())
 maintenance = latest_maintenance_restart()
 runtime_label = "Since restart"
 runtime_text = fmt(last_restart)
-runtime_class = "status-ok" if len(rows) == len(services) else "status-warn"
+runtime_class = "status-ok"
 detail = (
-    f"<strong>Running maps</strong> {len(rows)}/{len(services)}<br>"
+    f"<strong>Warm maps</strong> {len(rows)}<br>"
+    f"<strong>Map policy</strong> destinations start on demand<br>"
     f"<strong>Most recent restart</strong> {html.escape(newest.strftime('%Y-%m-%d %H:%M UTC'))}<br>"
     f"<strong>Oldest map uptime</strong> {html.escape(fmt(oldest_uptime))}<br>"
     f"<strong>Container restarts</strong> {restart_count}"
@@ -373,6 +390,7 @@ status_block="$(cat <<EOF
 <dt><span class="status-dot ${access_class}"></span>Player access</dt><dd>${access_text}</dd>
 <dt><span class="status-dot ${runtime_class}"></span>${runtime_label}</dt><dd><span class="status-help" tabindex="0">${runtime_text}<span class="status-popover" role="dialog" aria-label="Uptime details">${runtime_detail_html}</span></span></dd>
 </dl>
+<p class="status-detail">${status_detail_text}</p>
 <p class="status-updated">Last checked ${checked_at}.</p>
 <p class="status-support"><span>Support this server</span><a href="https://www.paypal.com/donate/?business=donations%40snape.tech" target="_blank" rel="noopener noreferrer">PayPal</a><a href="https://ko-fi.com/snapetech" target="_blank" rel="noopener noreferrer">Ko-fi</a></p>
 </section>
@@ -388,12 +406,7 @@ ${status_block}
 EOF
 )"
 
-if [[ -w "$(dirname "$STATUS_FILE")" ]]; then
-  printf '%s\n' "$status_block" > "$STATUS_FILE"
-else
-  printf '%s\n' "$status_block" | sudo tee "$STATUS_FILE" >/dev/null
-  sudo chmod 0644 "$STATUS_FILE"
-fi
+printf '%s\n' "$status_block" > "$tmp_status_html"
 
 awk -v block="$status_marked_block" '
   /<!-- STATUS_BEGIN -->/ {
@@ -406,15 +419,10 @@ awk -v block="$status_marked_block" '
     next
   }
   !skipping { print }
-' "$INDEX_FILE" > "$tmp_index"
+' "$tmp_source_index" > "$tmp_index"
 
-if [[ -w "$(dirname "$INDEX_FILE")" ]]; then
-  install -m 0644 "$tmp_index" "$INDEX_FILE"
-else
-  sudo install -m 0644 "$tmp_index" "$INDEX_FILE"
-fi
-
-stamp_static_asset_versions
+install_output_file "$tmp_status_html" "$STATUS_FILE"
+install_output_file "$tmp_index" "$INDEX_FILE"
 
 snapshot_script="$(dirname "$0")/render-dune-public-snapshot.py"
 if [[ -x "$snapshot_script" ]]; then
@@ -422,7 +430,7 @@ if [[ -x "$snapshot_script" ]]; then
     DUNE_ROOT="$DUNE_ROOT" STATIC_DIR="$STATIC_DIR" "$snapshot_script" || true
   else
     tmp_static="$(mktemp -d)"
-    trap 'rm -f "$tmp_status" "$tmp_index"; rm -rf "$tmp_static"' EXIT
+    trap 'rm -f "$tmp_status" "$tmp_index" "$tmp_source_index" "$tmp_status_html"; rm -rf "$tmp_static"' EXIT
     DUNE_ROOT="$DUNE_ROOT" STATIC_DIR="$tmp_static" "$snapshot_script" || true
     find "$tmp_static" -maxdepth 1 -type f \( \
       -name '*.json' -o \

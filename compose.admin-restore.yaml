@@ -1,0 +1,7 @@
+services:
+  admin-panel:
+    volumes:
+      # The base service mounts data read-only. Add this overlay only during a
+      # reviewed browser restore window so selected saved-state/RabbitMQ layers
+      # can be replaced. Database-only and dry-run restores do not need it.
+      - ./data:/workspace/data

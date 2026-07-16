@@ -1,0 +1,7 @@
+---
+- name: Provision DASH Compose hosts
+  hosts: dash_hosts
+  become: true
+  gather_facts: true
+  roles:
+    - role: dash

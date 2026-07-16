@@ -28,6 +28,8 @@ DUNE_BACKUP_REMOTE_ENV=examples/backup/rclone-offsite.env ./scripts/backup-offsi
 - `ingress/nginx-admin.example`
 - `public-site/caddy.Caddyfile`
 - `public-site/nginx.conf`
+- `public-site/caddy-subpaths.Caddyfile`
+- `public-site/nginx-subpaths.conf`
 - `public-site/compose.yaml`
 - `public-site/rclone-sync.sh`
 

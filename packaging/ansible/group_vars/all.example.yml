@@ -1,0 +1,18 @@
+---
+# Required immutable release identity. Never use a branch or mutable tag.
+dash_release_ref: "0000000000000000000000000000000000000000"
+dash_release_sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+
+# Store the real value in Ansible Vault. This file is an inert example.
+dash_env_content: |
+  DUNE_JWT=replace-me
+  DUNE_IMAGE_TAG=replace-me
+  DUNE_GAME_DB_NAME=dune_sb_1_4_0_0
+
+# Provisioning does not load Funcom images, initialize the database, or start
+# services unless each corresponding gate is explicitly enabled.
+dash_load_images: false
+dash_initialize_database: false
+dash_enable_service: false
+dash_start_service: false
+dash_steam_server_dir: /srv/dune-steam-server

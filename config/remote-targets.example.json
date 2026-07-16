@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "targets": [
+    {
+      "id": "standby",
+      "host": "dash-standby.example.lan",
+      "port": 22,
+      "user": "dash-admin",
+      "expectedHostname": "dash-standby",
+      "identityFile": "/home/operator/.ssh/dash-standby-ed25519",
+      "knownHostsFile": "/home/operator/.ssh/known_hosts.dash",
+      "adminRemotePort": 18080,
+      "adminLocalPort": 18081
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+global_defs {
+    enable_script_security
+    script_user root
+}
+
+vrrp_script dash_authority {
+    script "/usr/local/libexec/dash-vip-health"
+    interval 2
+    timeout 2
+    fall 2
+    rise 2
+    # No weight: script failure puts the instance in FAULT rather than merely
+    # reducing priority and accidentally allowing an unauthorized VIP owner.
+}
+
+vrrp_instance DASH_SERVICE_VIP {
+    state BACKUP
+    interface REPLACE_INTERFACE
+    virtual_router_id 54
+    priority REPLACE_PRIORITY
+    advert_int 1
+    nopreempt
+    unicast_src_ip REPLACE_LOCAL_LAN_IP
+    unicast_peer {
+        REPLACE_PEER_LAN_IP
+    }
+    authentication {
+        auth_type PASS
+        auth_pass REPLACE_8_CHAR_SITE_VALUE
+    }
+    virtual_ipaddress {
+        192.0.2.50/24 dev REPLACE_INTERFACE
+    }
+    track_script {
+        dash_authority
+    }
+}

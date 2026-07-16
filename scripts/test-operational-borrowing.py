@@ -617,6 +617,19 @@ class RestoreStateTests(unittest.TestCase):
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
+            import sqlite3
+            connection = sqlite3.connect(backup_dir / "community-rewards.sqlite3")
+            connection.execute("create table test(id integer primary key)")
+            connection.commit()
+            connection.close()
+            connection = sqlite3.connect(backup_dir / "base-gallery.sqlite3")
+            connection.execute("create table test(id integer primary key)")
+            connection.commit()
+            connection.close()
+            connection = sqlite3.connect(backup_dir / "moderation.sqlite3")
+            connection.execute("create table test(id integer primary key)")
+            connection.commit()
+            connection.close()
 
             result = subprocess.run(
                 [
@@ -626,6 +639,9 @@ class RestoreStateTests(unittest.TestCase):
                     "--server-saved",
                     "--config",
                     "--tls",
+                    "--community-rewards",
+                    "--moderation",
+                    "--base-gallery",
                     str(env_file),
                     str(backup_dir.relative_to(ROOT)),
                 ],
@@ -638,6 +654,9 @@ class RestoreStateTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("restore_config=true", result.stdout)
             self.assertIn("restore_tls=true", result.stdout)
+            self.assertIn("restore_community_rewards=true", result.stdout)
+            self.assertIn("restore_moderation=true", result.stdout)
+            self.assertIn("restore_base_gallery=true", result.stdout)
             self.assertIn("backup_world_unique_name=sh-backed-up", result.stdout)
             self.assertIn("current_world_unique_name=sh-current", result.stdout)
             self.assertIn("differs from current", result.stderr)
@@ -827,7 +846,7 @@ class VerifyBackupTests(unittest.TestCase):
             backup_dir = Path(tmp)
             bin_dir = backup_dir / "bin"
             bin_dir.mkdir()
-            for tool in ("bash", "tar", "gzip", "rg", "grep", "find"):
+            for tool in ("bash", "tar", "gzip", "rg", "grep", "find", "python3"):
                 target = shutil.which(tool)
                 self.assertIsNotNone(target, tool)
                 os.symlink(target, bin_dir / tool)
@@ -841,6 +860,19 @@ class VerifyBackupTests(unittest.TestCase):
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
+            import sqlite3
+            connection = sqlite3.connect(backup_dir / "community-rewards.sqlite3")
+            connection.execute("create table test(id integer primary key)")
+            connection.commit()
+            connection.close()
+            connection = sqlite3.connect(backup_dir / "base-gallery.sqlite3")
+            connection.execute("create table test(id integer primary key)")
+            connection.commit()
+            connection.close()
+            connection = sqlite3.connect(backup_dir / "moderation.sqlite3")
+            connection.execute("create table test(id integer primary key)")
+            connection.commit()
+            connection.close()
 
             env = {**os.environ, "PATH": str(bin_dir)}
             result = subprocess.run(
@@ -856,6 +888,9 @@ class VerifyBackupTests(unittest.TestCase):
             self.assertIn("OK manifest world identity present", result.stdout)
             self.assertIn("OK archive", result.stdout)
             self.assertIn("OK env copy present", result.stdout)
+            self.assertIn("OK community rewards SQLite snapshot", result.stdout)
+            self.assertIn("OK moderation SQLite snapshot", result.stdout)
+            self.assertIn("OK base gallery SQLite snapshot", result.stdout)
 
 
 class FailoverScriptTests(unittest.TestCase):

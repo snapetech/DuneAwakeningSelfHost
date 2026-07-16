@@ -1,0 +1,20 @@
+{
+  "site_name": "YOUR.SERVER",
+  "eyebrow": "Self-hosted game servers",
+  "heading": "Choose your world.",
+  "intro": "Select a game to view its public server dashboard, status, and connection details.",
+  "footer": "Static public information · No account required",
+  "games": [
+    {
+      "slug": "dune-awakening",
+      "name": "Dune: Awakening",
+      "label": "DA",
+      "description": "Live server status, players, rules, and Arrakis maps.",
+      "href": "/dune/",
+      "icon": "assets/dune-awakening.svg",
+      "accent": "#e36c35",
+      "accent_soft": "#efb15f",
+      "ink": "#25130c"
+    }
+  ]
+}

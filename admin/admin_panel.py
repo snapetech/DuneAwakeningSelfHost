@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 import configparser
 import concurrent.futures
+import base64
 import datetime
+import gzip
 import hmac
 import hashlib
 import html
 import importlib.util
 import json
+import math
 import os
 import pathlib
 import re
@@ -16,12 +19,14 @@ import socket
 import subprocess
 import sys
 import tarfile
+import tempfile
 import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from http import HTTPStatus
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import psycopg2
@@ -32,8 +37,22 @@ CODE_ROOT = pathlib.Path(__file__).resolve().parents[1]
 ROOT = pathlib.Path(os.environ.get("ADMIN_WORKSPACE", "/workspace"))
 sys.path.insert(0, str(CODE_ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(CODE_ROOT / "admin"))
 
 from dune_gm_command import build_envelope, publish_command, publish_command_management
+import blueprint_admin
+import augment_admin
+import addon_admin
+import native_command_admin
+import access_control
+import outbound_webhooks
+import community_rewards
+import moderation
+import base_creator
+import gameplay_presets
+import command_console
+import federated_auth
+import cosmetics_admin
 
 GM_CATALOG_PATH = CODE_ROOT / "scripts" / "gm-command-catalog.py"
 GM_CATALOG_SPEC = importlib.util.spec_from_file_location("gm_command_catalog", GM_CATALOG_PATH)
@@ -42,9 +61,16 @@ GM_CATALOG_SPEC.loader.exec_module(gm_command_catalog)
 
 CONFIG_ROOT = ROOT / "config"
 ENV_FILE = ROOT / ".env"
-BACKUP_ROOT = ROOT / "backups" / "admin-panel"
+BACKUPS_ROOT = ROOT / "backups"
+BACKUP_ROOT = BACKUPS_ROOT / "admin-panel"
 STATIC_ROOT = ROOT / "admin" / "static"
 ITEM_CATALOG_FILE = CONFIG_ROOT / "item-catalog.json"
+CARE_PACKAGES_FILE = CONFIG_ROOT / "care-packages.json"
+COMMUNITY_REWARDS_FILE = CONFIG_ROOT / "community-rewards.json"
+GAMEPLAY_PRESETS_FILE = CONFIG_ROOT / "gameplay-presets.json"
+COSMETIC_CATALOG_FILE = CONFIG_ROOT / "cosmetic-catalog.json"
+ADMIN_VEHICLES_FILE = CONFIG_ROOT / "admin-vehicles.json"
+ADMIN_SKILL_MODULES_FILE = CONFIG_ROOT / "admin-skill-modules.json"
 ITEM_ICON_CACHE = BACKUP_ROOT / "item-icons"
 PLAYER_PEAKS_FILE = pathlib.Path(os.environ.get("DUNE_PLAYER_PEAKS_FILE", str(BACKUP_ROOT / "player-peaks.json")))
 ADMIN_PANEL_BUILD_LABEL = "20260522-live-refresh"
@@ -115,8 +141,10 @@ AUDIT_LOG = BACKUP_ROOT / "audit.jsonl"
 STEAM_PROFILE_CACHE_FILE = BACKUP_ROOT / "steam-profiles.json"
 AUDIT_MAX_BYTES = int(os.environ.get("DUNE_ADMIN_AUDIT_MAX_BYTES", str(5 * 1024 * 1024)))
 REQUEST_TIMEOUT_SECONDS = int(os.environ.get("DUNE_ADMIN_REQUEST_TIMEOUT_SECONDS", "10"))
+MAX_CONCURRENT_REQUESTS = max(4, min(int(os.environ.get("DUNE_ADMIN_MAX_CONCURRENT_REQUESTS", "32")), 128))
 MAX_ITEM_STACK_SIZE = int(os.environ.get("DUNE_ADMIN_MAX_ITEM_STACK_SIZE", "1000000"))
 AUDIT_EVENT_LIMIT = int(os.environ.get("DUNE_ADMIN_AUDIT_EVENT_LIMIT", "100"))
+WEBHOOK_DISPATCHER = outbound_webhooks.from_environment(ROOT, BACKUP_ROOT / "webhooks")
 GRANT_PRIVATE_MESSAGE_ENABLED = os.environ.get("DUNE_ADMIN_GRANT_PRIVATE_MESSAGE_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 GRANT_PRIVATE_MESSAGE_TEMPLATE = os.environ.get("DUNE_ADMIN_GRANT_PRIVATE_MESSAGE_TEMPLATE", "{item} has been added for you. Log out and back in before checking your inventory if it does not appear right away.")
 HAGGA_MAP_MIN_X = float(os.environ.get("DUNE_HAGGA_MAP_MIN_X", "-457200"))
@@ -134,11 +162,26 @@ ADMIN_REFERENCE_LIMIT = int(os.environ.get("DUNE_ADMIN_REFERENCE_LIMIT", "200"))
 CHARACTER_SEARCH_LIMIT = int(os.environ.get("DUNE_ADMIN_CHARACTER_SEARCH_LIMIT", "100"))
 STEAM_PROFILE_CACHE_TTL_SECONDS = int(os.environ.get("DUNE_ADMIN_STEAM_PROFILE_CACHE_TTL_SECONDS", str(24 * 60 * 60)))
 STEAM_PROFILE_LOOKUP_ENABLED = os.environ.get("DUNE_ADMIN_STEAM_PROFILE_LOOKUP_ENABLED", "true").lower() in ("1", "true", "yes", "on")
-DATABASE = os.environ.get("DUNE_DATABASE", "dune_sb_1_4_0_0")
+DATABASE = (
+    os.environ.get("DUNE_ADMIN_DB_NAME")
+    or os.environ.get("DUNE_GAME_DB_NAME")
+    or os.environ.get("DUNE_DATABASE")
+    or os.environ.get("DUNE_DB_NAME")
+    or "dune_sb_1_4_0_0"
+)
 ADMIN_TOKEN = os.environ.get("DUNE_ADMIN_TOKEN", "")
+RBAC_ENABLED = os.environ.get("DUNE_ADMIN_RBAC_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+ADMIN_ACCESS_FILE = pathlib.Path(os.environ.get("DUNE_ADMIN_ACCESS_FILE", str(CONFIG_ROOT / "admin-access.json")))
+FEDERATED_AUTH_ENABLED = os.environ.get("DUNE_ADMIN_FEDERATED_AUTH_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+FEDERATED_AUTH_SUBJECTS_FILE = pathlib.Path(os.environ.get("DUNE_ADMIN_AUTH_SUBJECTS_FILE", str(CONFIG_ROOT / "admin-auth-subjects.json")))
+FEDERATED_AUTH_SESSION_SECRET_FILE = pathlib.Path(os.environ.get("DUNE_ADMIN_AUTH_SESSION_SECRET_FILE", str(CONFIG_ROOT / "secrets" / "admin-session.secret")))
+FEDERATED_AUTH_CLIENT_SECRET_FILE = pathlib.Path(os.environ.get("DUNE_ADMIN_AUTH_CLIENT_SECRET_FILE", str(CONFIG_ROOT / "secrets" / "admin-oauth-client.secret")))
+FEDERATED_AUTH_REPLAY_CACHE = federated_auth.ReplayCache()
 MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_MUTATIONS_ENABLED", "true").lower() == "true"
 ITEM_GRANTS_ENABLED = os.environ.get("DUNE_ADMIN_ITEM_GRANTS_ENABLED", "true").lower() == "true"
 MAX_BODY_BYTES = int(os.environ.get("DUNE_ADMIN_MAX_BODY_BYTES", "65536"))
+BLUEPRINT_MAX_BODY_BYTES = int(os.environ.get("DUNE_ADMIN_BLUEPRINT_MAX_BODY_BYTES", str(32 * 1024 * 1024)))
+BACKUP_IMPORT_MAX_BODY_BYTES = int(os.environ.get("DUNE_ADMIN_BACKUP_IMPORT_MAX_BODY_BYTES", str(128 * 1024 * 1024)))
 ALLOWED_HOSTS = {
     host.strip().lower()
     for host in os.environ.get("DUNE_ADMIN_ALLOWED_HOSTS", "127.0.0.1:18080,localhost:18080,admin.example.test,admin-panel:8080").split(",")
@@ -155,6 +198,29 @@ CONFIRM_SET_STACK = "SET STACK"
 CONFIRM_GM_COMMAND = "RUN GM COMMAND"
 CONFIRM_TYPED_KNOBS = "WRITE TYPED KNOBS"
 CONFIRM_BUNDLE_MUTATION = "EXECUTE BUNDLE"
+CONFIRM_CARE_PACKAGE_GRANT = "GRANT CARE PACKAGE"
+CONFIRM_CARE_PACKAGE_SCAN = "RUN CARE PACKAGE SCAN"
+CONFIRM_CARE_PACKAGE_RETRY = "RETRY CARE PACKAGE"
+CONFIRM_CARE_PACKAGE_CLEAR = "CLEAR GRANT HISTORY"
+CONFIRM_BLUEPRINT_IMPORT = "IMPORT BLUEPRINT"
+CONFIRM_BLUEPRINT_DELETE = "DELETE BLUEPRINT"
+CONFIRM_APPLY_AUGMENTS = "APPLY AUGMENTS"
+CONFIRM_GRANT_AUGMENTED_ITEM = "GRANT AUGMENTED ITEM"
+CONFIRM_DATABASE_WRITE = "EXECUTE DATABASE WRITE"
+CONFIRM_DATABASE_ROW_UPDATE = "UPDATE DATABASE ROW"
+CONFIRM_DATABASE_PASSWORD = "ROTATE DATABASE PASSWORD"
+CONFIRM_BACKUP_DELETE = "DELETE BACKUP"
+CONFIRM_BACKUP_RESTORE = "RESTORE BACKUP"
+CONFIRM_BACKUP_IMPORT = "IMPORT BACKUP"
+CONFIRM_SERVICE_CONTROL = "CONTROL SERVICE"
+CONFIRM_GAME_UPDATE = "APPLY GAME UPDATE"
+CONFIRM_STACK_UPDATE = "APPLY STACK UPDATE"
+CONFIRM_RUNTIME_REPAIR = "REPAIR RUNTIME"
+CONFIRM_MEMORY_BALANCER = "CHANGE MEMORY BALANCER"
+CONFIRM_MEMORY_LIMIT = "SET MAP MEMORY"
+CONFIRM_AUTOSCALER = "CHANGE AUTOSCALER"
+CONFIRM_BACKUP_SCHEDULE = "CHANGE BACKUP SCHEDULE"
+CONFIRM_BOOTSTRAP = "RUN BOOTSTRAP"
 CONFIRM_PLAYER_RECOVERY = "MOVE OFFLINE PLAYER"
 CONFIRM_REPUTATION_MUTATION = "WRITE REPUTATION"
 CONFIRM_JOURNEY_MUTATION = "WRITE JOURNEY"
@@ -172,11 +238,64 @@ CONFIRM_COMMUNINET_MUTATION = "WRITE COMMUNINET"
 CONFIRM_TUTORIAL_MUTATION = "WRITE TUTORIAL"
 CONFIRM_PERMISSION_MUTATION = "WRITE PERMISSION"
 CONFIRM_VENDOR_MUTATION = "WRITE VENDOR"
+CONFIRM_COMMUNITY_CREDIT = "CREDIT COMMUNITY WALLET"
+CONFIRM_COMMUNITY_RECONCILIATION = "RESOLVE COMMUNITY DELIVERY"
+CONFIRM_MODERATION_BAN = "CREATE ENFORCED BAN"
+CONFIRM_MODERATION_UNBAN = "REVOKE BAN"
+CONFIRM_MODERATION_ALLOWLIST_POLICY = "CHANGE ALLOWLIST POLICY"
+CONFIRM_GAMEPLAY_PRESET = "APPLY GAMEPLAY PRESET"
+CONFIRM_GAMEPLAY_PRESET_ROLLBACK = "ROLL BACK GAMEPLAY PRESET"
+CONFIRM_COSMETIC_MUTATION = "CHANGE PLAYER COSMETICS"
+CONFIRM_COSMETIC_ROLLBACK = "ROLL BACK PLAYER COSMETICS"
 CONFIRM_CHARACTER_SWAP = "SWAP CHARACTER"
+CONFIRM_RUNTIME_PLAYER_ACTION = native_command_admin.CONFIRM_RUNTIME_ACTION
+CONFIRM_KICK_ALL_PLAYERS = native_command_admin.CONFIRM_KICK_ALL
+CONFIRM_REPAIR_LOGIN_QUEUE = "REPAIR LOGIN QUEUE"
+CONFIRM_REPAIR_GEAR = "REPAIR GEAR"
+CONFIRM_VEHICLE_REPAIR = "REPAIR VEHICLE DECAY"
+CONFIRM_VEHICLE_REFUEL = "REFUEL VEHICLE"
 CATALOG_ENABLED = os.environ.get("DUNE_ADMIN_CATALOG_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 TYPED_KNOBS_ENABLED = os.environ.get("DUNE_ADMIN_TYPED_KNOBS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 EVENT_EXECUTION_ENABLED = os.environ.get("DUNE_ADMIN_EVENT_EXECUTION_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 BUNDLE_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_BUNDLE_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+CARE_PACKAGES_ENABLED = os.environ.get("DUNE_ADMIN_CARE_PACKAGES_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+CARE_PACKAGES_AUTO_ENABLED = os.environ.get("DUNE_ADMIN_CARE_PACKAGES_AUTO_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+BLUEPRINT_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_BLUEPRINT_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+AUGMENT_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_AUGMENT_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+DATABASE_QUERY_ENABLED = os.environ.get("DUNE_ADMIN_DATABASE_QUERY_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+DATABASE_WRITE_ENABLED = os.environ.get("DUNE_ADMIN_DATABASE_WRITE_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+DATABASE_ROW_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_DATABASE_ROW_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+DATABASE_PASSWORD_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_DATABASE_PASSWORD_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+BACKUP_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_BACKUP_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+BACKUP_RESTORE_ENABLED = os.environ.get("DUNE_ADMIN_BACKUP_RESTORE_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+SERVICE_CONTROL_ENABLED = os.environ.get("DUNE_ADMIN_SERVICE_CONTROL_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+STATEFUL_SERVICE_CONTROL_ENABLED = os.environ.get("DUNE_ADMIN_STATEFUL_SERVICE_CONTROL_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+UPDATE_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_UPDATE_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+MEMORY_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_MEMORY_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+AUTOSCALER_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_AUTOSCALER_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+DISCORD_ADAPTER_ENABLED = os.environ.get("DUNE_DISCORD_ADAPTER_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+COMMUNITY_REWARDS_ENABLED = os.environ.get("DUNE_COMMUNITY_REWARDS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+COMMUNITY_DELIVERY_ENABLED = os.environ.get("DUNE_COMMUNITY_DELIVERY_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+COMMUNITY_REWARDS_DATABASE = pathlib.Path(os.environ.get("DUNE_COMMUNITY_REWARDS_DATABASE", str(BACKUPS_ROOT / "community-rewards" / "community.sqlite3")))
+COMMUNITY_POLL_SECONDS = max(5, int(os.environ.get("DUNE_COMMUNITY_POLL_SECONDS", "30")))
+MODERATION_ENABLED = os.environ.get("DUNE_MODERATION_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+MODERATION_ENFORCEMENT_ENABLED = os.environ.get("DUNE_MODERATION_ENFORCEMENT_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+MODERATION_DATABASE = pathlib.Path(os.environ.get("DUNE_MODERATION_DATABASE", str(BACKUPS_ROOT / "moderation" / "moderation.sqlite3")))
+MODERATION_POLL_SECONDS = max(5, min(int(os.environ.get("DUNE_MODERATION_POLL_SECONDS", "15")), 300))
+MODERATION_RETENTION_DAYS = max(1, min(int(os.environ.get("DUNE_MODERATION_RETENTION_DAYS", "90")), 3650))
+MODERATION_HEATMAP_CELL_SIZE = max(1000, min(int(os.environ.get("DUNE_MODERATION_HEATMAP_CELL_SIZE", "25000")), 1000000))
+MODERATION_KICK_COOLDOWN_SECONDS = max(10, min(int(os.environ.get("DUNE_MODERATION_KICK_COOLDOWN_SECONDS", "60")), 3600))
+MODERATION_LOG_SERVICES = tuple(value.strip() for value in os.environ.get("DUNE_MODERATION_LOG_SERVICES", "survival,director,gateway,game-rmq").split(",") if value.strip())
+BASE_CREATOR_ENABLED = os.environ.get("DUNE_BASE_CREATOR_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+BASE_GALLERY_DATABASE = pathlib.Path(os.environ.get("DUNE_BASE_GALLERY_DATABASE", str(BACKUPS_ROOT / "base-gallery" / "gallery.sqlite3")))
+GAMEPLAY_PRESETS_ENABLED = os.environ.get("DUNE_GAMEPLAY_PRESETS_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+GAMEPLAY_PRESET_MUTATIONS_ENABLED = os.environ.get("DUNE_GAMEPLAY_PRESET_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+COMMAND_CONSOLE_ENABLED = os.environ.get("DUNE_COMMAND_CONSOLE_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+COSMETIC_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_COSMETIC_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+ADDON_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_ADDON_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+PLAYER_RUNTIME_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_PLAYER_RUNTIME_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+VEHICLE_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_VEHICLE_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+BOOTSTRAP_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_BOOTSTRAP_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 REPUTATION_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 JOURNEY_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 FACTION_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_FACTION_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
@@ -196,10 +315,56 @@ CHARACTER_SWAP_ENABLED = os.environ.get("DUNE_ADMIN_CHARACTER_SWAP_ENABLED", "fa
 ANNOUNCEMENT_STATE_FILE = BACKUP_ROOT / "announcements.json"
 RESTART_STATE_FILE = BACKUP_ROOT / "restart-jobs.json"
 EVENT_STATE_FILE = BACKUP_ROOT / "events.json"
+CARE_PACKAGE_HISTORY_FILE = BACKUP_ROOT / "care-package-history.jsonl"
+CARE_PACKAGE_CLAIMS_FILE = BACKUP_ROOT / "care-package-first-online-claims.json"
+CARE_PACKAGE_PENDING_FILE = BACKUP_ROOT / "care-package-pending-returns.json"
+CARE_PACKAGE_AUTO_STATE = {"running": False, "lastScanAt": None, "lastResult": None, "lastError": None}
+CARE_PACKAGE_AUTO_THREAD_STARTED = False
+MEMORY_BALANCER_FILE = BACKUP_ROOT / "memory-balancer.json"
+MEMORY_BALANCER_LOCK = threading.Lock()
+MEMORY_BALANCER_THREAD_STARTED = False
+MEMORY_BALANCER_RUNTIME = {"running": False, "lastMessage": "Memory balancer is off.", "lastAction": "", "lastError": "", "updatedAt": None}
+AUTOSCALER_FILE = BACKUP_ROOT / "autoscaler.json"
+AUTOSCALER_LOCK = threading.Lock()
+AUTOSCALER_THREAD_STARTED = False
+AUTOSCALER_RUNTIME = {"running": False, "lastMessage": "Autoscaler is off.", "lastActions": [], "lastError": "", "updatedAt": None}
+BACKUP_SCHEDULE_FILE = BACKUP_ROOT / "backup-schedule.json"
+BACKUP_SCHEDULE_LOCK = threading.Lock()
+BACKUP_SCHEDULE_THREAD_STARTED = False
+DISCORD_ADAPTER_ROUTES = {
+    "/api/integrations/discord/health", "/api/integrations/discord/status",
+    "/api/integrations/discord/readiness", "/api/integrations/discord/services",
+    "/api/integrations/discord/population", "/api/integrations/discord/version",
+    "/api/integrations/discord/servers", "/api/integrations/discord/ports",
+    "/api/integrations/discord/db", "/api/integrations/discord/backups/list",
+    "/api/integrations/discord/announcements", "/api/integrations/discord/broadcast",
+    "/api/integrations/discord/ops", "/api/integrations/discord/events",
+    "/api/integrations/discord/community",
+}
+COMMUNITY_STORE = community_rewards.Store(
+    COMMUNITY_REWARDS_DATABASE, COMMUNITY_REWARDS_FILE,
+    owner_uid=os.environ.get("DUNE_HOST_UID"), owner_gid=os.environ.get("DUNE_HOST_GID"),
+)
+COMMUNITY_STORE_INITIALIZED = False
+COMMUNITY_STORE_LOCK = threading.Lock()
+COMMUNITY_WORKER_STARTED = False
+COMMUNITY_RUNTIME = {"running": False, "lastTickAt": None, "lastError": None, "lastResult": None}
+MODERATION_STORE = moderation.Store(MODERATION_DATABASE, owner_uid=os.environ.get("DUNE_HOST_UID"), owner_gid=os.environ.get("DUNE_HOST_GID"))
+MODERATION_STORE_INITIALIZED = False
+MODERATION_STORE_LOCK = threading.Lock()
+MODERATION_WORKER_STARTED = False
+MODERATION_RUNTIME = {"running": False, "lastTickAt": None, "lastError": None, "lastResult": None}
+BASE_GALLERY = base_creator.Gallery(BASE_GALLERY_DATABASE, os.environ.get("DUNE_HOST_UID"), os.environ.get("DUNE_HOST_GID"))
+BASE_GALLERY_INITIALIZED = False
+BASE_GALLERY_LOCK = threading.Lock()
+ADDON_ROOT = BACKUP_ROOT / "addons"
+CONFIRM_ADDON_INSTALL = "INSTALL COMMUNITY ADDON"
+CONFIRM_ADDON_LIFECYCLE = "CHANGE ADDON STATE"
 ADMIN_DIGEST_STATE_FILE = ROOT / "backups" / "admin-bot" / "player-presence.json"
 ANNOUNCEMENT_LOCK = threading.Lock()
 RESTART_LOCK = threading.Lock()
 EVENT_LOCK = threading.Lock()
+CARE_PACKAGE_LOCK = threading.Lock()
 
 
 def admin_panel_build():
@@ -209,6 +374,16 @@ def admin_panel_build():
 def admin_panel_reload_paths():
     paths = [
         pathlib.Path(__file__).resolve(),
+        CODE_ROOT / "admin" / "community_rewards.py",
+        CODE_ROOT / "admin" / "moderation.py",
+        CODE_ROOT / "admin" / "base_creator.py",
+        CODE_ROOT / "admin" / "gameplay_presets.py",
+        CODE_ROOT / "admin" / "command_console.py",
+        CODE_ROOT / "admin" / "federated_auth.py",
+        CODE_ROOT / "admin" / "cosmetics_admin.py",
+        GAMEPLAY_PRESETS_FILE,
+        COSMETIC_CATALOG_FILE,
+        CODE_ROOT / "admin" / "access_control.py",
         CODE_ROOT / "scripts" / "dune_gm_command.py",
         GM_CATALOG_PATH,
     ]
@@ -322,6 +497,59 @@ GAME_MAP_SERVICES = [
 ]
 if world_partition_count() == 31 and "deep-desert-pvp" not in GAME_MAP_SERVICES:
     GAME_MAP_SERVICES.append("deep-desert-pvp")
+
+
+def env_bool(name, default=False):
+    fallback = "true" if default else "false"
+    return os.environ.get(name, fallback).strip().lower() in ("1", "true", "yes", "on")
+
+
+AUTOSCALER_ENABLED_DEFAULT = env_bool("DUNE_AUTOSCALER_ENABLED", False)
+AUTOSCALER_DEFAULT_MODE = os.environ.get("DUNE_AUTOSCALER_DEFAULT_MODE", "always-on").strip().lower()
+if AUTOSCALER_DEFAULT_MODE not in ("always-on", "dynamic", "disabled"):
+    AUTOSCALER_DEFAULT_MODE = "always-on"
+AUTOSCALER_ALWAYS_ON_SERVICES = {
+    service.strip()
+    for service in os.environ.get("DUNE_AUTOSCALER_ALWAYS_ON_SERVICES", "survival,overmap").split(",")
+    if service.strip() in GAME_MAP_SERVICES
+}
+AUTOSCALER_IDLE_SECONDS_DEFAULT = max(60, min(int(os.environ.get("DUNE_AUTOSCALER_IDLE_SECONDS", "300")), 86400))
+AUTOSCALER_DEMAND_TTL_SECONDS_DEFAULT = max(60, min(int(os.environ.get("DUNE_AUTOSCALER_DEMAND_TTL_SECONDS", "900")), 86400))
+AUTOSCALER_POLL_SECONDS = max(1, min(int(os.environ.get("DUNE_AUTOSCALER_POLL_SECONDS", "3")), 60))
+AUTOSCALER_FAST_START = env_bool("DUNE_AUTOSCALER_FAST_START", True)
+AUTOSCALER_PROFILE_DEFAULT = os.environ.get("DUNE_AUTOSCALER_PROFILE", "balanced").strip().lower()
+if AUTOSCALER_PROFILE_DEFAULT not in ("minimum-footprint", "balanced", "full-warm", "custom"):
+    AUTOSCALER_PROFILE_DEFAULT = "balanced"
+AUTOSCALER_BALANCED_RETENTION_SECONDS = max(60, min(int(os.environ.get("DUNE_AUTOSCALER_BALANCED_RETENTION_SECONDS", "900")), 86400))
+AUTOSCALER_BALANCED_MAX_WARM_MAPS = max(0, min(int(os.environ.get("DUNE_AUTOSCALER_BALANCED_MAX_WARM_MAPS", "4")), len(GAME_MAP_SERVICES)))
+AUTOSCALER_BALANCED_MIN_AVAILABLE_MEMORY_GIB = max(0.0, min(float(os.environ.get("DUNE_AUTOSCALER_BALANCED_MIN_AVAILABLE_MEMORY_GIB", "16")), 1024.0))
+
+
+def parse_autoscaler_retention_overrides(value):
+    result = {}
+    for item in str(value or "").split(","):
+        service, separator, seconds = item.strip().partition("=")
+        if not separator or service not in GAME_MAP_SERVICES:
+            continue
+        try:
+            result[service] = max(60, min(int(seconds), 86400))
+        except ValueError:
+            continue
+    return result
+
+
+AUTOSCALER_BALANCED_RETENTION_BY_SERVICE = parse_autoscaler_retention_overrides(
+    os.environ.get(
+        "DUNE_AUTOSCALER_BALANCED_RETENTION_BY_SERVICE",
+        "arrakeen=2700,harko-village=2700,deep-desert=1800",
+    )
+)
+
+
+def autoscaler_default_mode(service):
+    return "always-on" if service in AUTOSCALER_ALWAYS_ON_SERVICES else AUTOSCALER_DEFAULT_MODE
+
+
 SERVICE_LAYER_SERVICES = ["rmq-auth-shim", "text-router", "gateway", "director"]
 ALL_RESTART_SAFE_SERVICES = GAME_MAP_SERVICES + SERVICE_LAYER_SERVICES
 RESTART_TARGETS = {
@@ -469,6 +697,8 @@ GM_PANEL_PRESETS = (
 )
 
 ALLOWED_CONFIGS = {
+    "care-packages.json": CONFIG_ROOT / "care-packages.json",
+    "community-rewards.json": CONFIG_ROOT / "community-rewards.json",
     "director.ini": CONFIG_ROOT / "director.ini",
     "gateway.ini": CONFIG_ROOT / "gateway.ini",
     "rabbitmq-admin.conf": CONFIG_ROOT / "rabbitmq-admin.conf",
@@ -581,19 +811,125 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_SERVER_DISPLAY_NAME": {"group": "World", "secret": False, "restart": True, "why": "Optional in-engine server display name injected as Bgd.ServerDisplayName. Leave blank to reuse WORLD_NAME."},
     "WORLD_REGION": {"group": "World", "secret": False, "restart": True, "why": "Farm region/datacenter label passed into game services."},
     "EXTERNAL_ADDRESS": {"group": "Network", "secret": False, "restart": True, "why": "Address advertised to clients/FLS for game traffic."},
+    "DUNE_PUBLIC_IP_MONITOR_ENABLED": {"group": "Network", "secret": False, "restart": False, "why": "Enables the installed public-IP timer check; the hostname gate must also match."},
+    "DUNE_PUBLIC_IP_MONITOR_ALLOWED_HOST": {"group": "Network", "secret": False, "restart": False, "why": "Exact short hostname allowed to rewrite the advertised public IPv4 and restart the farm."},
+    "DUNE_PUBLIC_IP_MONITOR_INTERVAL_MINUTES": {"group": "Network", "secret": False, "restart": False, "why": "Timer cadence; reinstall the timer after changing it."},
+    "DUNE_PUBLIC_IP_MONITOR_DRY_RUN": {"group": "Network", "secret": False, "restart": False, "why": "Reports public IPv4 drift without changing .env, certificates, or services."},
+    "DUNE_SIETCH_MUTATIONS_ENABLED": {"group": "World", "secret": False, "restart": False, "why": "Enables guarded creation, settings, start/stop, and reconciliation of additional Survival_1 dimensions."},
+    "DUNE_SIETCH_ALLOWED_HOST": {"group": "World", "secret": False, "restart": False, "why": "Exact short hostname allowed to change Sietch topology or local settings."},
     "DUNE_SERVER_LOGIN_PASSWORD": {"group": "Access", "secret": False, "restart": True, "why": "Optional player login password passed into game server console variables. Visible here so trusted operators can share and rotate it."},
     "FLS_SECRET": {"group": "Secrets", "secret": True, "restart": True, "why": "Funcom Live Services host token. Required for service auth and routing."},
     "POSTGRES_SUPER_PASSWORD": {"group": "Secrets", "secret": True, "restart": True, "why": "Postgres superuser password used during database initialization."},
     "POSTGRES_DUNE_PASSWORD": {"group": "Secrets", "secret": True, "restart": True, "why": "Application database password used by game services and admin tooling."},
     "RMQ_HTTP_TOKEN_AUTH_SECRET": {"group": "Secrets", "secret": True, "restart": True, "why": "RabbitMQ token auth shared secret."},
     "DUNE_ADMIN_TOKEN": {"group": "Admin Panel", "secret": True, "restart": True, "why": "Token required for admin panel APIs."},
+    "DUNE_ADMIN_REQUIRE_TOKEN": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Requires the owner or named RBAC token on every protected API."},
+    "DUNE_ADMIN_RBAC_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Enables hashed multi-user admin tokens and route capability enforcement while retaining the owner recovery token."},
+    "DUNE_ADMIN_ACCESS_FILE": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Container path to the versioned hashed-token admin identity file."},
+    "DUNE_ADMIN_FEDERATED_AUTH_ENABLED": {"group": "Federated Auth", "secret": False, "restart": True, "why": "Enables provider-neutral OIDC or Discord OAuth authorization-code login when all credentials and mappings are configured."},
+    "DUNE_ADMIN_AUTH_PROVIDER": {"group": "Federated Auth", "secret": False, "restart": True, "why": "Federated login provider type: oidc or discord."},
+    "DUNE_ADMIN_AUTH_ISSUER": {"group": "Federated Auth", "secret": False, "restart": True, "why": "Exact HTTPS OIDC issuer; Discord uses https://discord.com."},
+    "DUNE_ADMIN_AUTH_CLIENT_ID": {"group": "Federated Auth", "secret": False, "restart": True, "why": "Registered OAuth/OIDC client or Discord application ID."},
+    "DUNE_ADMIN_AUTH_CLIENT_SECRET_FILE": {"group": "Federated Auth", "secret": False, "restart": True, "why": "Private file containing the OAuth/OIDC client secret."},
+    "DUNE_ADMIN_AUTH_REDIRECT_URI": {"group": "Federated Auth", "secret": False, "restart": True, "why": "Exact registered callback URI ending in /auth/callback."},
+    "DUNE_ADMIN_AUTH_SCOPES": {"group": "Federated Auth", "secret": False, "restart": True, "why": "Space-separated scopes; defaults to OIDC openid/profile/email or Discord identify."},
+    "DUNE_ADMIN_AUTH_ALLOWED_ORIGINS": {"group": "Federated Auth", "secret": False, "restart": True, "why": "Additional exact HTTPS origins permitted for split OIDC endpoints."},
+    "DUNE_ADMIN_AUTH_SUBJECTS_FILE": {"group": "Federated Auth", "secret": False, "restart": True, "why": "Versioned explicit issuer/subject to local RBAC identity mapping."},
+    "DUNE_ADMIN_AUTH_SESSION_SECRET_FILE": {"group": "Federated Auth", "secret": False, "restart": True, "why": "Private HMAC key file for flow and session cookies."},
+    "DUNE_ADMIN_AUTH_SESSION_SECONDS": {"group": "Federated Auth", "secret": False, "restart": True, "why": "Federated session lifetime from 300 seconds to seven days."},
+    "DUNE_ADMIN_AUTH_COOKIE_SECURE": {"group": "Federated Auth", "secret": False, "restart": True, "why": "Requires HTTPS delivery of federated flow/session cookies; keep true outside loopback testing."},
+    "DUNE_WEBHOOKS_ENABLED": {"group": "Webhooks", "secret": False, "restart": True, "why": "Enables asynchronous signed delivery of filtered admin audit events."},
+    "DUNE_WEBHOOK_CONFIG": {"group": "Webhooks", "secret": False, "restart": True, "why": "Container path to the ignored endpoint URL and signing-secret file."},
+    "DUNE_WEBHOOK_TIMEOUT_SECONDS": {"group": "Webhooks", "secret": False, "restart": True, "why": "Per-attempt outbound request timeout, bounded to 30 seconds."},
+    "DUNE_WEBHOOK_MAX_ATTEMPTS": {"group": "Webhooks", "secret": False, "restart": True, "why": "Bounded retry count for transient outbound delivery failures."},
+    "DUNE_WEBHOOK_QUEUE_SIZE": {"group": "Webhooks", "secret": False, "restart": True, "why": "Maximum in-memory event queue before new deliveries are recorded as dropped."},
+    "DUNE_WEBHOOK_ALLOW_HTTP": {"group": "Webhooks", "secret": False, "restart": True, "why": "Allows cleartext HTTP only for controlled local test receivers; leave false for production."},
     "DUNE_ADMIN_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Master gate for writes that mutate game/admin state."},
     "DUNE_ADMIN_ITEM_GRANTS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Item grant feature gate. Defaults to true in this repo."},
-    "DUNE_ADMIN_GM_COMMANDS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for native Dune GM/admin command execution. Execution also stays blocked until the RabbitMQ payload format is verified."},
+    "DUNE_ADMIN_GM_COMMANDS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "General native-command transport gate. Catalog-backed Version 2 player actions use the pinned notification contract; the separate generic GM endpoint still requires payload verification."},
     "DUNE_ADMIN_CATALOG_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for read-only content insertion catalog endpoints."},
     "DUNE_ADMIN_TYPED_KNOBS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for typed config knob writes. Dry-runs remain available."},
     "DUNE_ADMIN_EVENT_EXECUTION_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for event orchestrator execution. Event creation and dry-run planning remain available."},
     "DUNE_ADMIN_BUNDLE_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for economy bundle execution. Bundle planning defaults to dry-run."},
+    "DUNE_ADMIN_CARE_PACKAGES_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for manual grants from reviewed config/care-packages.json presets. Preview remains available."},
+    "DUNE_ADMIN_CARE_PACKAGES_AUTO_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Second gate for automatic first-online and returning-player care-package scans."},
+    "DUNE_ADMIN_BLUEPRINT_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for Solido blueprint imports and deletions. Listing, export, and dry-run remain available."},
+    "DUNE_ADMIN_BLUEPRINT_MAX_BODY_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum JSON request size accepted only by the blueprint endpoint."},
+    "DUNE_ADMIN_AUGMENT_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for structured augment application and pre-augmented item grants. Compatibility reads and previews remain available."},
+    "DUNE_ADMIN_DATABASE_QUERY_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Enables the bounded one-statement browser SQL console."},
+    "DUNE_ADMIN_DATABASE_WRITE_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Separate gate for write SQL; every execution creates a database backup first."},
+    "DUNE_ADMIN_DATABASE_ROW_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Enables primary-key row updates with before/after verification and a pre-write backup."},
+    "DUNE_ADMIN_DATABASE_PASSWORD_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Enables coordinated dune-role and .env password rotation with fresh-login verification."},
+    "DUNE_ADMIN_BACKUP_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Enables browser full-backup creation, hardened imports, and quarantine deletion."},
+    "DUNE_ADMIN_BACKUP_RESTORE_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Enables disruptive browser restore execution; dry-run remains available."},
+    "DUNE_ADMIN_BACKUP_IMPORT_MAX_BODY_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum JSON request size for a base64 full-backup archive import."},
+    "DUNE_BACKUP_ARCHIVE_ENCRYPTION_ENABLED": {"group": "Backup Encryption", "secret": False, "restart": False, "why": "Enables the documented host-side verified OpenPGP archive workflow."},
+    "DUNE_BACKUP_GPG_RECIPIENT": {"group": "Backup Encryption", "secret": False, "restart": False, "why": "Exact 40- or 64-hex OpenPGP recipient fingerprint; never an ambiguous name/email selector."},
+    "DUNE_BACKUP_GPG_HOME": {"group": "Backup Encryption", "secret": False, "restart": False, "why": "Optional absolute host GnuPG home containing the recipient public key and offline recovery private key when decrypting."},
+    "DUNE_BACKUP_GPG_REQUIRE_VERIFY": {"group": "Backup Encryption", "secret": False, "restart": False, "why": "Requires scripts/verify-backup.sh to pass before archive encryption."},
+    "DUNE_BACKUP_SYNC_ENCRYPTED_ONLY": {"group": "Backup Encryption", "secret": False, "restart": False, "why": "When true, rclone/rsync offsite jobs sync only backups/encrypted after a successful recipient-encryption step."},
+    "DUNE_ADMIN_SERVICE_CONTROL_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Enables start, stop, and restart for exact project services through repository post-hook-aware scripts."},
+    "DUNE_ADMIN_STATEFUL_SERVICE_CONTROL_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Second gate for browser Postgres and RabbitMQ service control."},
+    "DUNE_ADMIN_UPDATE_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Enables game update/restart, validated stack fast-forward, runtime repair, and auto-update timer installation."},
+    "DUNE_ADMIN_MEMORY_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Enables live per-map memory limits and the persistent automatic memory balancer."},
+    "DUNE_ADMIN_AUTOSCALER_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Enables dynamic/always-on/disabled map modes, idle scale-down, demand starts, and reconciliation."},
+    "DUNE_AUTOSCALER_ENABLED": {"group": "Autoscaling", "secret": False, "restart": True, "why": "Starts the persistent map lifecycle worker."},
+    "DUNE_AUTOSCALER_PROFILE": {"group": "Autoscaling", "secret": False, "restart": True, "why": "Fresh-state/reboot default: minimum-footprint, balanced, full-warm, or custom."},
+    "DUNE_AUTOSCALER_DEFAULT_MODE": {"group": "Autoscaling", "secret": False, "restart": True, "why": "Fallback mode for maps missing from persistent state."},
+    "DUNE_AUTOSCALER_ALWAYS_ON_SERVICES": {"group": "Autoscaling", "secret": False, "restart": True, "why": "Comma-separated core maps retained by minimum and balanced profiles."},
+    "DUNE_AUTOSCALER_IDLE_SECONDS": {"group": "Autoscaling", "secret": False, "restart": True, "why": "Minimum-profile and legacy default retention seconds."},
+    "DUNE_AUTOSCALER_DEMAND_TTL_SECONDS": {"group": "Autoscaling", "secret": False, "restart": True, "why": "Protection window for a demand that has not yet produced an online player."},
+    "DUNE_AUTOSCALER_POLL_SECONDS": {"group": "Autoscaling", "secret": False, "restart": True, "why": "Director-demand scan/reconciliation cadence, bounded to 1–60 seconds."},
+    "DUNE_AUTOSCALER_FAST_START": {"group": "Autoscaling", "secret": False, "restart": True, "why": "Uses config-aware guarded starts without repeating global farm maintenance."},
+    "DUNE_AUTOSCALER_BALANCED_RETENTION_SECONDS": {"group": "Autoscaling", "secret": False, "restart": True, "why": "Balanced default warm retention seconds."},
+    "DUNE_AUTOSCALER_BALANCED_RETENTION_BY_SERVICE": {"group": "Autoscaling", "secret": False, "restart": True, "why": "Comma-separated service=seconds balanced retention overrides."},
+    "DUNE_AUTOSCALER_BALANCED_MAX_WARM_MAPS": {"group": "Autoscaling", "secret": False, "restart": True, "why": "Maximum empty/non-demanded dynamic maps retained by balanced LRU; zero is unlimited."},
+    "DUNE_AUTOSCALER_BALANCED_MIN_AVAILABLE_MEMORY_GIB": {"group": "Autoscaling", "secret": False, "restart": True, "why": "Host MemAvailable floor for balanced LRU eviction; zero disables it."},
+    "DUNE_DISCORD_ADAPTER_ENABLED": {"group": "Discord", "secret": False, "restart": True, "why": "Enables the permission-mapped, read-only Discord bot adapter routes."},
+    "DUNE_COMMUNITY_REWARDS_ENABLED": {"group": "Community Rewards", "secret": False, "restart": True, "why": "Enables the isolated community-credit, shop, link, playtime, webhook, and reward-track subsystem."},
+    "DUNE_COMMUNITY_DELIVERY_ENABLED": {"group": "Community Rewards", "secret": False, "restart": True, "why": "Allows the worker to deliver queued rewards to offline players through the existing item-grant path."},
+    "DUNE_COMMUNITY_REWARDS_DATABASE": {"group": "Community Rewards", "secret": False, "restart": True, "why": "Dedicated SQLite state path; never point this at the game database."},
+    "DUNE_COMMUNITY_POLL_SECONDS": {"group": "Community Rewards", "secret": False, "restart": True, "why": "Playtime observation and one-at-a-time delivery worker cadence."},
+    "DUNE_COMMUNITY_VOTE_WEBHOOK_SECRET_FILE": {"group": "Community Rewards", "secret": False, "restart": True, "why": "File containing the vote-provider HMAC secret."},
+    "DUNE_COMMUNITY_PAYMENT_WEBHOOK_SECRET_FILE": {"group": "Community Rewards", "secret": False, "restart": True, "why": "File containing the manual-payment-provider HMAC secret."},
+    "DUNE_MODERATION_ENABLED": {"group": "Moderation", "secret": False, "restart": True, "why": "Enables isolated moderation cases, ban/allowlist registries, presence sessions, heatmaps, and normalized security events."},
+    "DUNE_MODERATION_ENFORCEMENT_ENABLED": {"group": "Moderation", "secret": False, "restart": True, "why": "Allows active policy bans to eject online identities through the confirmed native KickPlayer notification."},
+    "DUNE_MODERATION_DATABASE": {"group": "Moderation", "secret": False, "restart": True, "why": "Dedicated SQLite moderation/history path; never point this at the game database."},
+    "DUNE_MODERATION_POLL_SECONDS": {"group": "Moderation", "secret": False, "restart": True, "why": "Presence, enforcement, and security-log normalization worker cadence."},
+    "DUNE_MODERATION_RETENTION_DAYS": {"group": "Moderation", "secret": False, "restart": True, "why": "Retention for ended presence sessions, aggregate heatmap cells, normalized security events, and enforcement telemetry."},
+    "DUNE_MODERATION_HEATMAP_CELL_SIZE": {"group": "Moderation", "secret": False, "restart": True, "why": "World-unit cell size for privacy-preserving aggregate connection heatmaps."},
+    "DUNE_MODERATION_KICK_COOLDOWN_SECONDS": {"group": "Moderation", "secret": False, "restart": True, "why": "Minimum delay between native kick publications for the same active ban and account."},
+    "DUNE_MODERATION_LOG_SERVICES": {"group": "Moderation", "secret": False, "restart": True, "why": "Comma-separated exact Compose services scanned for redacted anti-cheat and security signals."},
+    "DUNE_BASE_CREATOR_ENABLED": {"group": "Creator", "secret": False, "restart": True, "why": "Enables read-only live-base exports and the isolated portable design gallery."},
+    "DUNE_BASE_GALLERY_DATABASE": {"group": "Creator", "secret": False, "restart": True, "why": "Dedicated SQLite design/gallery/rating state path; never point this at the game database."},
+    "DUNE_GAMEPLAY_PRESETS_ENABLED": {"group": "Gameplay Presets", "secret": False, "restart": True, "why": "Loads the validated worm, threat, storm, harvest, day, hydration, and world preset catalog."},
+    "DUNE_GAMEPLAY_PRESET_MUTATIONS_ENABLED": {"group": "Gameplay Presets", "secret": False, "restart": True, "why": "Second gate for backup-first preset apply and rollback. Preview remains available."},
+    "DUNE_COMMAND_CONSOLE_ENABLED": {"group": "Command Console", "secret": False, "restart": True, "why": "Enables the fixed-argv, no-shell diagnostic command console for authenticated operators."},
+    "DUNE_ADMIN_COSMETIC_MUTATIONS_ENABLED": {"group": "Player Cosmetics", "secret": False, "restart": True, "why": "Second gate for backup-first, offline-only, catalog-confined player cosmetic add/remove/bulk unlock and receipt rollback."},
+    "DUNE_ADMIN_ADDON_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Enables SHA-pinned community UI addon install/enable/disable/quarantine-remove operations."},
+    "DUNE_ADMIN_PLAYER_RUNTIME_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Second gate for token-authenticated native player skill, water, kick, and vehicle-spawn commands."},
+    "DUNE_ADMIN_VEHICLE_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Second gate for offline vehicle durability and fuel database repairs."},
+    "DUNE_ADMIN_BOOTSTRAP_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Enables browser first-run certificate, database initialization, and stack-start actions."},
+    "DUNE_SERVER_NOTIFICATION_SYSTEM_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Enables the game-map notification consumer required by native Version 2 player commands."},
+    "DUNE_SERVER_COMMANDS_AUTH_TOKEN": {"group": "Secrets", "secret": True, "restart": True, "why": "Shared token used by game maps to authenticate native Version 2 server-command notifications."},
+    "DUNE_PLAYER_PRESENCE_PRIVATE_WELCOME_ENABLED": {"group": "Announcements", "secret": False, "restart": False, "why": "Enables one private message-of-the-day delivery for each detected player login session."},
+    "DUNE_PLAYER_PRESENCE_PRIVATE_WELCOME_TEMPLATE": {"group": "Announcements", "secret": False, "restart": False, "why": "Message-of-the-day text; supports player-presence template fields such as {playername}, {count}, {server_name}, and {rules_url}."},
+    "DUNE_BOT_API_TOKEN": {"group": "Secrets", "secret": True, "restart": True, "why": "Bearer credential shared only with the Discord bot adapter client."},
+    "DUNE_BOT_API_TOKEN_FILE": {"group": "Discord", "secret": False, "restart": True, "why": "Optional file containing the Discord adapter bearer credential; takes precedence over the env value."},
+    "DUNE_DISCORD_BOT_TOKEN": {"group": "Secrets", "secret": True, "restart": False, "why": "Discord application bot token used only by the host-side first-party slash-command service."},
+    "DUNE_DISCORD_BOT_TOKEN_FILE": {"group": "Discord", "secret": False, "restart": False, "why": "Optional host path containing the Discord bot token; takes precedence over the env value."},
+    "DUNE_DISCORD_APPLICATION_ID": {"group": "Discord", "secret": False, "restart": False, "why": "Discord application snowflake used for slash-command registration."},
+    "DUNE_DISCORD_GUILD_ID": {"group": "Discord", "secret": False, "restart": False, "why": "Single Discord guild allowed to register and invoke DASH commands."},
+    "DUNE_DISCORD_CHANNEL_IDS": {"group": "Discord", "secret": False, "restart": False, "why": "Optional comma-separated channel allowlist for DASH commands."},
+    "DUNE_DISCORD_ADAPTER_URL": {"group": "Discord", "secret": False, "restart": False, "why": "Loopback URL used by the bot to reach the permissioned DASH adapter."},
+    "DUNE_DISCORD_ADAPTER_HOST": {"group": "Discord", "secret": False, "restart": False, "why": "Host header accepted by the private admin adapter."},
+    "DUNE_DISCORD_REGISTER_COMMANDS": {"group": "Discord", "secret": False, "restart": False, "why": "Bulk-upserts the guild-scoped /dune command when the bot service starts."},
+    "DUNE_DISCORD_REQUEST_TIMEOUT_SECONDS": {"group": "Discord", "secret": False, "restart": False, "why": "Bounded local adapter request timeout; capped at ten seconds."},
+    "DUNE_DISCORD_ALLOWED_HOST": {"group": "Discord", "secret": False, "restart": False, "why": "Exact short hostname allowed to install and load the Discord bot systemd unit."},
+    "DISCORD_OBSERVER_ROLE_IDS": {"group": "Discord", "secret": False, "restart": True, "why": "Comma-separated Discord role ids permitted basic status/readiness/service reads."},
+    "DISCORD_MODERATOR_ROLE_IDS": {"group": "Discord", "secret": False, "restart": True, "why": "Comma-separated Discord role ids permitted population/map/backup metadata reads."},
+    "DISCORD_ADMIN_ROLE_IDS": {"group": "Discord", "secret": False, "restart": True, "why": "Comma-separated Discord adapter admin role ids; adapter writes remain disabled."},
+    "DISCORD_OWNER_ROLE_IDS": {"group": "Discord", "secret": False, "restart": True, "why": "Comma-separated Discord adapter owner role ids; adapter writes remain disabled."},
     "DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for raw faction reputation writes. Reputation planning and inspection remain available."},
     "DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for journey reveal/complete/reset/delete server-function calls. Journey planning and inspection remain available."},
     "DUNE_ADMIN_FACTION_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for player faction change server-function calls. Faction planning and inspection remain available."},
@@ -823,6 +1159,7 @@ def audit_event(action, ok=True, **fields):
         with AUDIT_LOCK:
             with AUDIT_LOG.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(event, sort_keys=True, default=json_default) + "\n")
+        WEBHOOK_DISPATCHER.enqueue(event)
     except OSError:
         return
 
@@ -1528,21 +1865,29 @@ def read_loadavg():
         return {}
 
 
-def docker_api(path):
+def docker_http_request(method, path, *, body=b"", timeout=2, max_bytes=8 * 1024 * 1024, accepted=(200,)):
     sock_path = pathlib.Path(DOCKER_SOCKET)
     if not sock_path.exists():
         raise FileNotFoundError(f"Docker socket not found: {sock_path}")
-    request = f"GET {path} HTTP/1.1\r\nHost: docker\r\nConnection: close\r\n\r\n".encode()
+    method = str(method or "GET").upper()
+    if method not in ("GET", "POST"):
+        raise ValueError("unsupported Docker API method")
+    if isinstance(body, dict):
+        body = json.dumps(body, separators=(",", ":")).encode("utf-8")
+        content_type = "application/json"
+    elif isinstance(body, str):
+        body = body.encode("utf-8")
+        content_type = "text/plain"
+    else:
+        body = bytes(body or b"")
+        content_type = "application/octet-stream"
+    request = f"{method} {path} HTTP/1.1\r\nHost: docker\r\nContent-Type: {content_type}\r\nContent-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode() + body
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-        sock.settimeout(2)
+        sock.settimeout(timeout)
         sock.connect(str(sock_path))
         sock.sendall(request)
         chunks = []
-        header = b""
-        body = b""
-        headers = {}
-        content_length = None
-        chunked = False
+        received = 0
         while True:
             try:
                 chunk = sock.recv(65536)
@@ -1551,33 +1896,128 @@ def docker_api(path):
             if not chunk:
                 break
             chunks.append(chunk)
-            raw = b"".join(chunks)
-            if not header and b"\r\n\r\n" in raw:
-                header, _, body = raw.partition(b"\r\n\r\n")
-                for line in header.split(b"\r\n")[1:]:
-                    key, sep, value = line.partition(b":")
-                    if sep:
-                        headers[key.decode("utf-8", errors="replace").strip().lower()] = value.decode("utf-8", errors="replace").strip()
-                if "content-length" in headers:
-                    try:
-                        content_length = int(headers["content-length"])
-                    except ValueError:
-                        content_length = None
-                chunked = headers.get("transfer-encoding", "").lower() == "chunked"
-            elif header:
-                body += chunk
-            if content_length is not None and len(body) >= content_length:
-                body = body[:content_length]
-                break
-            if chunked and b"\r\n0\r\n\r\n" in body:
-                break
-    if not header:
-        raw = b"".join(chunks)
-        header, _, body = raw.partition(b"\r\n\r\n")
-    if b" 200 " not in header.split(b"\r\n", 1)[0]:
-        raise RuntimeError(header.split(b"\r\n", 1)[0].decode("utf-8", errors="replace"))
-    if b"transfer-encoding: chunked" in header.lower():
+            received += len(chunk)
+            if received > max_bytes:
+                raise RuntimeError(f"Docker API response exceeded {max_bytes} bytes")
+    raw = b"".join(chunks)
+    header, separator, body = raw.partition(b"\r\n\r\n")
+    if not separator:
+        raise RuntimeError("Docker API returned an invalid HTTP response")
+    status_line = header.split(b"\r\n", 1)[0]
+    try:
+        status = int(status_line.split()[1])
+    except (IndexError, ValueError) as exc:
+        raise RuntimeError(status_line.decode("utf-8", errors="replace")) from exc
+    if status not in accepted:
+        raise RuntimeError(status_line.decode("utf-8", errors="replace"))
+    headers = {}
+    for line in header.split(b"\r\n")[1:]:
+        key, sep, value = line.partition(b":")
+        if sep:
+            headers[key.decode("utf-8", errors="replace").strip().lower()] = value.decode("utf-8", errors="replace").strip()
+    if headers.get("transfer-encoding", "").lower() == "chunked":
         body = decode_chunked_body(body)
+    content_length = headers.get("content-length")
+    if content_length:
+        try:
+            body = body[:int(content_length)]
+        except ValueError:
+            pass
+    return headers, body
+
+
+def docker_http_get(path, *, timeout=2, max_bytes=8 * 1024 * 1024):
+    return docker_http_request("GET", path, timeout=timeout, max_bytes=max_bytes)
+
+
+def docker_container_action(container_id, action, timeout=120):
+    container_id = str(container_id or "").strip()
+    if not re.fullmatch(r"[A-Fa-f0-9]{12,64}", container_id):
+        raise ValueError("invalid Docker container id")
+    if action == "stop":
+        path = f"/containers/{container_id}/stop?t={max(1, min(int(timeout), 300))}"
+        accepted = (204, 304)
+    elif action == "start":
+        path = f"/containers/{container_id}/start"
+        accepted = (204, 304)
+    else:
+        raise ValueError("Docker container action must be start or stop")
+    docker_http_request("POST", path, timeout=max(5, min(int(timeout) + 5, 310)), max_bytes=1024 * 1024, accepted=accepted)
+    return {"ok": True, "containerId": container_id[:12], "action": action}
+
+
+def docker_container_exec(container_id, argv, timeout=20):
+    """Run one non-interactive command through the mounted Docker socket."""
+    container_id = str(container_id or "").strip()
+    if not re.fullmatch(r"[A-Fa-f0-9]{12,64}", container_id):
+        raise ValueError("invalid Docker container id")
+    if not isinstance(argv, list) or not argv or any(not isinstance(value, str) or "\x00" in value for value in argv):
+        raise ValueError("Docker exec argv must be a non-empty string array")
+    _, created_body = docker_http_request(
+        "POST", f"/containers/{container_id}/exec",
+        body={"AttachStdout": True, "AttachStderr": True, "Tty": False, "Cmd": argv},
+        timeout=5, max_bytes=1024 * 1024, accepted=(201,),
+    )
+    exec_id = str((json.loads(created_body.decode("utf-8") or "{}") or {}).get("Id") or "")
+    if not re.fullmatch(r"[A-Fa-f0-9]{12,64}", exec_id):
+        raise RuntimeError("Docker did not return a valid exec id")
+    _, output_body = docker_http_request(
+        "POST", f"/exec/{exec_id}/start",
+        body={"Detach": False, "Tty": False}, timeout=timeout,
+        max_bytes=2 * 1024 * 1024, accepted=(200,),
+    )
+    output = decode_docker_log_stream(output_body)
+    _, inspect_body = docker_http_get(f"/exec/{exec_id}/json", timeout=5, max_bytes=1024 * 1024)
+    inspected = json.loads(inspect_body.decode("utf-8") or "{}") or {}
+    exit_code = inspected.get("ExitCode")
+    if exit_code not in (0, None):
+        raise RuntimeError((output or f"Docker exec exited {exit_code}")[-4000:])
+    return {"ok": exit_code == 0, "exitCode": exit_code, "output": output[-256 * 1024:]}
+
+
+def docker_service_container(service, running=True):
+    matches = []
+    for container in docker_project_containers():
+        labels = container.get("Labels") or {}
+        candidate = labels.get("com.docker.compose.service") or (container.get("Names") or [""])[0].lstrip("/")
+        if candidate == service and (not running or container.get("State") == "running"):
+            matches.append(container)
+    if not matches:
+        raise RuntimeError(f"Compose service is not {'running' if running else 'available'}: {service}")
+    return sorted(matches, key=lambda row: int(row.get("Created") or 0), reverse=True)[0]
+
+
+def publish_native_player_notification(inner):
+    """Publish the native Version 2 command notification used by game maps."""
+    outer = native_command_admin.build_outer(os.environ.get("DUNE_SERVER_COMMANDS_AUTH_TOKEN", ""), inner)
+    outer_b64 = base64.b64encode(json.dumps(outer, separators=(",", ":")).encode("utf-8")).decode("ascii")
+    label = re.sub(r"[^a-z0-9-]+", "-", str(inner.get("ServerCommand") or "admin-command").lower())[:48]
+    eval_code = (
+        f'Outer = base64:decode(<<"{outer_b64}">>), '
+        'XName = rabbit_misc:r(<<"/">>, exchange, <<"heartbeats">>), '
+        'X = rabbit_exchange:lookup_or_die(XName), '
+        f'MsgId = list_to_binary("dash-{label}-" ++ integer_to_list(erlang:system_time(millisecond))), '
+        'P = {list_to_atom("P_basic"), <<"Content">>, undefined, [], undefined, undefined, undefined, undefined, undefined, MsgId, undefined, undefined, <<"fls">>, <<"fls_backend">>, undefined}, '
+        'Content = rabbit_basic:build_content(P, Outer), '
+        '{ok, Msg} = rabbit_basic:message(XName, <<"notifications">>, Content), '
+        'Result = rabbit_queue_type:publish_at_most_once(X, Msg), '
+        'io:format("publish=~p exchange=heartbeats routing=notifications app_id=fls_backend user_id=fls~n", [Result]).'
+    )
+    container = docker_service_container("game-rmq", running=True)
+    executed = docker_container_exec(str(container.get("Id") or ""), ["rabbitmqctl", "eval", eval_code], timeout=30)
+    if "publish=ok" not in executed.get("output", ""):
+        raise RuntimeError("game RabbitMQ did not report publish=ok")
+    return {
+        "ok": True,
+        "queued": True,
+        "path": "game-rmq:heartbeats/notifications",
+        "command": inner.get("ServerCommand"),
+        "output": re.sub(r"[A-Za-z0-9+/]{80,}={0,2}", "<redacted-base64>", executed.get("output", "")),
+    }
+
+
+def docker_api(path):
+    _, body = docker_http_get(path)
     return json.loads(body.decode("utf-8") or "null")
 
 
@@ -1623,6 +2063,7 @@ def docker_container_stats(live_stats=False):
         base = {
             "service": labels.get("com.docker.compose.service", name),
             "name": name,
+            "containerId": container_id,
             "status": container.get("State"),
         }
         if not live_stats:
@@ -1690,6 +2131,574 @@ def docker_container_stats(live_stats=False):
     return sorted(rows, key=lambda r: str(r.get("service", "")))
 
 
+def parse_memory_bytes(value):
+    match = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*([kmgt]?i?b)?\s*", str(value or ""), re.IGNORECASE)
+    if not match:
+        raise ValueError("memory must be a number followed by MiB, GiB, or a compatible byte unit")
+    amount = float(match.group(1))
+    unit = (match.group(2) or "b").lower()
+    factors = {"b": 1, "kb": 1000, "kib": 1024, "mb": 1000 ** 2, "mib": 1024 ** 2, "gb": 1000 ** 3, "gib": 1024 ** 3, "tb": 1000 ** 4, "tib": 1024 ** 4}
+    result = int(amount * factors[unit])
+    if result < 256 * 1024 * 1024 or result > 1024 ** 4:
+        raise ValueError("memory limit must be from 256 MiB to 1 TiB")
+    return result
+
+
+def map_memory_rows():
+    return [row for row in docker_container_stats(live_stats=True) if row.get("service") in GAME_MAP_SERVICES]
+
+
+def update_container_memory(container_id, limit_bytes):
+    limit_bytes = int(limit_bytes)
+    if limit_bytes != 0 and limit_bytes < 256 * 1024 * 1024:
+        raise ValueError("container memory limit cannot be below 256 MiB")
+    _, response = docker_http_request(
+        "POST", f"/containers/{urllib.parse.quote(str(container_id), safe='')}/update",
+        body={"Memory": limit_bytes, "MemorySwap": limit_bytes, "MemoryReservation": limit_bytes},
+        timeout=20, max_bytes=1024 * 1024, accepted=(200,),
+    )
+    payload = json.loads(response.decode("utf-8") or "{}")
+    warnings = payload.get("Warnings") or []
+    return {"ok": True, "containerId": str(container_id)[:12], "limitBytes": limit_bytes, "warnings": warnings}
+
+
+def read_memory_balancer_state():
+    state = read_care_package_state(MEMORY_BALANCER_FILE, {"enabled": False, "baselineLimits": {}})
+    state["enabled"] = bool(state.get("enabled", False))
+    state["baselineLimits"] = state.get("baselineLimits") if isinstance(state.get("baselineLimits"), dict) else {}
+    return state
+
+
+def write_memory_balancer_state(state):
+    write_care_package_state(MEMORY_BALANCER_FILE, {"enabled": bool(state.get("enabled")), "baselineLimits": state.get("baselineLimits") or {}})
+
+
+def memory_balancer_public_state(include_rows=True):
+    state = read_memory_balancer_state()
+    result = dict(MEMORY_BALANCER_RUNTIME, enabled=state["enabled"], mutationEnabled=MEMORY_MUTATIONS_ENABLED)
+    if include_rows:
+        result["rows"] = map_memory_rows()
+    return result
+
+
+def memory_balancer_tick():
+    with MEMORY_BALANCER_LOCK:
+        state = read_memory_balancer_state()
+        if not state["enabled"]:
+            return dict(memory_balancer_public_state(include_rows=False), skipped=True, reason="memory balancer is disabled")
+        MEMORY_BALANCER_RUNTIME["running"] = True
+        try:
+            rows = [row for row in map_memory_rows() if int(row.get("memoryUsageBytes") or 0) > 0 and int(row.get("memoryLimitBytes") or 0) > 0]
+            baseline = state["baselineLimits"]
+            for row in rows:
+                baseline.setdefault(row["containerId"], int(row["memoryLimitBytes"]))
+            target = next(iter(sorted((row for row in rows if float(row.get("memoryPercent") or 0) >= 90), key=lambda row: float(row.get("memoryPercent") or 0), reverse=True)), None)
+            if not target:
+                MEMORY_BALANCER_RUNTIME.update({"lastMessage": "Memory balancer is monitoring running maps.", "lastAction": "", "lastError": ""})
+            else:
+                chunk = 1024 ** 3
+                candidates = []
+                for row in rows:
+                    if row["containerId"] == target["containerId"]:
+                        continue
+                    used = int(row["memoryUsageBytes"])
+                    limit = int(row["memoryLimitBytes"])
+                    next_limit = limit - chunk
+                    minimum = max(used + chunk, int(used * 1.25), chunk)
+                    after = used / next_limit * 100 if next_limit > 0 else 100
+                    if next_limit >= minimum and after <= 80 and float(row.get("memoryPercent") or 0) <= 70:
+                        candidates.append(row)
+                donor = next(iter(sorted(candidates, key=lambda row: (float(row.get("memoryPercent") or 0), -int(row.get("memoryLimitBytes") or 0)))), None)
+                if not donor:
+                    MEMORY_BALANCER_RUNTIME.update({"lastMessage": f"{target['service']} is above 90% but no map can safely donate 1 GiB.", "lastAction": "", "lastError": ""})
+                else:
+                    target_limit = int(target["memoryLimitBytes"]) + chunk
+                    donor_limit = int(donor["memoryLimitBytes"]) - chunk
+                    update_container_memory(target["containerId"], target_limit)
+                    try:
+                        update_container_memory(donor["containerId"], donor_limit)
+                    except Exception:
+                        update_container_memory(target["containerId"], int(target["memoryLimitBytes"]))
+                        raise
+                    MEMORY_BALANCER_RUNTIME.update({"lastMessage": f"Moved 1 GiB from {donor['service']} to {target['service']}.", "lastAction": f"{donor['service']} -> {target['service']}", "lastError": ""})
+            write_memory_balancer_state(state)
+        except Exception as exc:
+            MEMORY_BALANCER_RUNTIME.update({"lastMessage": "Memory balancer could not rebalance memory.", "lastError": str(exc)})
+        finally:
+            MEMORY_BALANCER_RUNTIME.update({"running": False, "updatedAt": datetime.datetime.now(datetime.timezone.utc).isoformat()})
+        return memory_balancer_public_state(include_rows=False)
+
+
+def set_memory_balancer_enabled(enabled):
+    with MEMORY_BALANCER_LOCK:
+        state = read_memory_balancer_state()
+        rows = map_memory_rows()
+        if enabled:
+            state["enabled"] = True
+            state["baselineLimits"] = {row["containerId"]: int(row.get("memoryLimitBytes") or 0) for row in rows if int(row.get("memoryLimitBytes") or 0) > 0}
+            MEMORY_BALANCER_RUNTIME.update({"lastMessage": "Memory balancer is monitoring running maps.", "lastAction": "", "lastError": ""})
+        else:
+            failures = []
+            by_id = {row["containerId"]: row for row in rows}
+            for container_id, limit in state["baselineLimits"].items():
+                if container_id in by_id and int(limit) > 0:
+                    try:
+                        update_container_memory(container_id, int(limit))
+                    except Exception as exc:
+                        failures.append({"service": by_id[container_id]["service"], "error": str(exc)})
+            if failures:
+                raise RuntimeError(f"failed to restore one or more baseline limits: {failures}")
+            state = {"enabled": False, "baselineLimits": {}}
+            MEMORY_BALANCER_RUNTIME.update({"lastMessage": "Memory balancer is off; baseline limits are restored.", "lastAction": "", "lastError": ""})
+        write_memory_balancer_state(state)
+        MEMORY_BALANCER_RUNTIME["updatedAt"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    return memory_balancer_public_state()
+
+
+def set_map_memory(service, memory):
+    service = str(service or "").strip()
+    rows = {row["service"]: row for row in map_memory_rows()}
+    if service not in rows:
+        raise ValueError("map service is not a running project map")
+    limit = 0 if str(memory or "").strip().lower() in ("", "0", "unset", "default") else parse_memory_bytes(memory)
+    result = update_container_memory(rows[service]["containerId"], limit)
+    with MEMORY_BALANCER_LOCK:
+        state = read_memory_balancer_state()
+        if state["enabled"]:
+            if limit:
+                state["baselineLimits"][rows[service]["containerId"]] = limit
+            else:
+                state["baselineLimits"].pop(rows[service]["containerId"], None)
+            write_memory_balancer_state(state)
+    return dict(result, service=service)
+
+
+def memory_balancer_worker():
+    while True:
+        try:
+            if MUTATIONS_ENABLED and MEMORY_MUTATIONS_ENABLED and read_memory_balancer_state()["enabled"]:
+                memory_balancer_tick()
+        except Exception as exc:
+            MEMORY_BALANCER_RUNTIME.update({"lastError": str(exc), "updatedAt": datetime.datetime.now(datetime.timezone.utc).isoformat()})
+        time.sleep(10)
+
+
+def ensure_memory_balancer_thread():
+    global MEMORY_BALANCER_THREAD_STARTED
+    if MEMORY_BALANCER_THREAD_STARTED:
+        return
+    MEMORY_BALANCER_THREAD_STARTED = True
+    threading.Thread(target=memory_balancer_worker, name="memory-balancer-worker", daemon=True).start()
+
+
+def autoscaler_apply_profile(state, profile):
+    profile = str(profile or "").strip().lower()
+    if profile not in ("minimum-footprint", "balanced", "full-warm", "custom"):
+        raise ValueError("profile must be minimum-footprint, balanced, full-warm, or custom")
+    state["enabled"] = True
+    state["profile"] = profile
+    if profile == "full-warm":
+        state["modes"] = {service: "always-on" for service in GAME_MAP_SERVICES}
+        state["retentionSeconds"] = AUTOSCALER_IDLE_SECONDS_DEFAULT
+        state["retentionByService"] = {}
+        state["maxWarmDynamicMaps"] = 0
+        state["minAvailableMemoryBytes"] = 0
+    elif profile == "minimum-footprint":
+        state["modes"] = {
+            service: ("always-on" if service in AUTOSCALER_ALWAYS_ON_SERVICES else "dynamic")
+            for service in GAME_MAP_SERVICES
+        }
+        state["retentionSeconds"] = AUTOSCALER_IDLE_SECONDS_DEFAULT
+        state["retentionByService"] = {}
+        state["maxWarmDynamicMaps"] = 0
+        state["minAvailableMemoryBytes"] = 0
+    elif profile == "balanced":
+        state["modes"] = {
+            service: ("always-on" if service in AUTOSCALER_ALWAYS_ON_SERVICES else "dynamic")
+            for service in GAME_MAP_SERVICES
+        }
+        state["retentionSeconds"] = AUTOSCALER_BALANCED_RETENTION_SECONDS
+        state["retentionByService"] = dict(AUTOSCALER_BALANCED_RETENTION_BY_SERVICE)
+        state["maxWarmDynamicMaps"] = AUTOSCALER_BALANCED_MAX_WARM_MAPS
+        state["minAvailableMemoryBytes"] = int(AUTOSCALER_BALANCED_MIN_AVAILABLE_MEMORY_GIB * 1024 ** 3)
+    state["idleSeconds"] = int(state.get("retentionSeconds") or AUTOSCALER_IDLE_SECONDS_DEFAULT)
+    state["idleSince"] = {}
+    state["demand"] = {}
+    return state
+
+
+def read_autoscaler_state():
+    default = {
+        "enabled": AUTOSCALER_ENABLED_DEFAULT,
+        "profile": AUTOSCALER_PROFILE_DEFAULT,
+        "idleSeconds": AUTOSCALER_IDLE_SECONDS_DEFAULT,
+        "retentionSeconds": AUTOSCALER_IDLE_SECONDS_DEFAULT,
+        "retentionByService": {},
+        "maxWarmDynamicMaps": 0,
+        "minAvailableMemoryBytes": 0,
+        "demandTtlSeconds": AUTOSCALER_DEMAND_TTL_SECONDS_DEFAULT,
+        "modes": {service: autoscaler_default_mode(service) for service in GAME_MAP_SERVICES},
+        "idleSince": {}, "demand": {}, "demandEvents": {},
+        "lastActivity": {}, "demandCount": {}, "lastEvictionReason": {},
+    }
+    if AUTOSCALER_ENABLED_DEFAULT:
+        autoscaler_apply_profile(default, AUTOSCALER_PROFILE_DEFAULT)
+    state = read_care_package_state(AUTOSCALER_FILE, default)
+    state["enabled"] = bool(state.get("enabled", False))
+    state["profile"] = str(state.get("profile") or "custom")
+    retention = state.get("retentionSeconds", state.get("idleSeconds", AUTOSCALER_IDLE_SECONDS_DEFAULT))
+    state["retentionSeconds"] = max(60, min(int(retention or AUTOSCALER_IDLE_SECONDS_DEFAULT), 86400))
+    state["idleSeconds"] = state["retentionSeconds"]
+    state["maxWarmDynamicMaps"] = max(0, min(int(state.get("maxWarmDynamicMaps") or 0), len(GAME_MAP_SERVICES)))
+    state["minAvailableMemoryBytes"] = max(0, min(int(state.get("minAvailableMemoryBytes") or 0), 1024 ** 4))
+    state["demandTtlSeconds"] = max(60, min(int(state.get("demandTtlSeconds") or AUTOSCALER_DEMAND_TTL_SECONDS_DEFAULT), 86400))
+    for key in ("modes", "idleSince", "demand", "demandEvents", "retentionByService", "lastActivity", "demandCount", "lastEvictionReason"):
+        state[key] = state.get(key) if isinstance(state.get(key), dict) else {}
+    state["retentionByService"] = {
+        service: max(60, min(int(seconds), 86400))
+        for service, seconds in state["retentionByService"].items()
+        if service in GAME_MAP_SERVICES and str(seconds).isdigit()
+    }
+    for service in GAME_MAP_SERVICES:
+        if state["modes"].get(service) not in ("always-on", "dynamic", "disabled"):
+            state["modes"][service] = autoscaler_default_mode(service)
+    return state
+
+
+def write_autoscaler_state(state):
+    write_care_package_state(AUTOSCALER_FILE, state)
+
+
+def autoscaler_player_counts():
+    rows = query("""
+        select wp.partition_id, count(ps.account_id) filter (where ps.online_status::text='Online')::int as players
+        from dune.world_partition wp
+        left join dune.player_state ps on ps.server_id=wp.server_id
+        group by wp.partition_id
+    """)
+    counts = {}
+    for row in rows:
+        partition_id = int(row.get("partition_id") or 0)
+        if 1 <= partition_id <= len(GAME_MAP_SERVICES):
+            service = GAME_MAP_SERVICES[partition_id - 1]
+            counts[service] = int(row.get("players") or 0)
+    return counts
+
+
+def autoscaler_host_memory():
+    values = {}
+    try:
+        with open("/proc/meminfo", "r", encoding="utf-8") as handle:
+            for line in handle:
+                key, separator, raw = line.partition(":")
+                if separator and key in ("MemTotal", "MemAvailable", "SwapTotal", "SwapFree"):
+                    values[key] = int(raw.strip().split()[0]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return {
+        "totalBytes": values.get("MemTotal", 0),
+        "availableBytes": values.get("MemAvailable", 0),
+        "swapTotalBytes": values.get("SwapTotal", 0),
+        "swapFreeBytes": values.get("SwapFree", 0),
+    }
+
+
+def autoscaler_retention_seconds(state, service):
+    return int(state.get("retentionByService", {}).get(service) or state.get("retentionSeconds") or AUTOSCALER_IDLE_SECONDS_DEFAULT)
+
+
+def autoscaler_public_state(include_inventory=True):
+    state = read_autoscaler_state()
+    memory = autoscaler_host_memory()
+    result = dict(
+        AUTOSCALER_RUNTIME,
+        enabled=state["enabled"], profile=state["profile"],
+        idleSeconds=state["retentionSeconds"], retentionSeconds=state["retentionSeconds"],
+        retentionByService=state["retentionByService"],
+        maxWarmDynamicMaps=state["maxWarmDynamicMaps"],
+        minAvailableMemoryBytes=state["minAvailableMemoryBytes"],
+        minAvailableMemoryGiB=round(state["minAvailableMemoryBytes"] / 1024 ** 3, 2),
+        memory=memory,
+        demandTtlSeconds=state["demandTtlSeconds"],
+        pollSeconds=AUTOSCALER_POLL_SECONDS, fastStart=AUTOSCALER_FAST_START,
+        defaultMode=AUTOSCALER_DEFAULT_MODE,
+        alwaysOnServices=sorted(AUTOSCALER_ALWAYS_ON_SERVICES),
+        profiles=["minimum-footprint", "balanced", "full-warm", "custom"],
+        mutationEnabled=AUTOSCALER_MUTATIONS_ENABLED,
+    )
+    if include_inventory:
+        inventory = {row["service"]: row for row in docker_service_inventory() if row["service"] in GAME_MAP_SERVICES}
+        counts = autoscaler_player_counts()
+        now = time.time()
+        maps = []
+        for service in GAME_MAP_SERVICES:
+            mode = state["modes"].get(service, "always-on")
+            runtime_state = inventory.get(service, {}).get("state", "missing")
+            idle_since = state["idleSince"].get(service)
+            retention = autoscaler_retention_seconds(state, service)
+            demanded = float(state["demand"].get(service) or 0) > now - state["demandTtlSeconds"]
+            optional_warm = runtime_state == "running" and mode == "dynamic" and counts.get(service, 0) == 0 and not demanded
+            maps.append({
+                "service": service, "mode": mode, "state": runtime_state,
+                "players": counts.get(service, 0), "idleSince": idle_since,
+                "retentionSeconds": retention,
+                "warmUntil": float(idle_since) + retention if optional_warm and idle_since else None,
+                "optionalWarm": optional_warm,
+                "demandAt": state["demand"].get(service),
+                "lastActivityAt": state["lastActivity"].get(service),
+                "demandCount": int(state["demandCount"].get(service) or 0),
+                "lastEvictionReason": state["lastEvictionReason"].get(service),
+            })
+        result["maps"] = maps
+        result["optionalWarmMaps"] = sum(1 for row in maps if row["optionalWarm"])
+    return result
+
+
+def autoscaler_control(action, service=None, mode=None, idle_seconds=None, body=None):
+    body = body if isinstance(body, dict) else {}
+    with AUTOSCALER_LOCK:
+        state = read_autoscaler_state()
+        action = str(action or "").strip().lower()
+        if action in ("start", "restart"):
+            state["enabled"] = True
+        elif action == "stop":
+            state["enabled"] = False
+        elif action == "set-mode":
+            service = str(service or "").strip()
+            mode = str(mode or "").strip().lower()
+            if service not in GAME_MAP_SERVICES or mode not in ("always-on", "dynamic", "disabled"):
+                raise ValueError("set-mode requires a known map and always-on, dynamic, or disabled")
+            state["modes"][service] = mode
+            state["profile"] = "custom"
+            state["idleSince"].pop(service, None)
+            # A mode change is an operator override. Do not let an older travel
+            # lease immediately undo disabled/dynamic cleanup.
+            state["demand"].pop(service, None)
+        elif action == "demand":
+            service = str(service or "").strip()
+            if service not in GAME_MAP_SERVICES:
+                raise ValueError("demand requires a known map service")
+            state["demand"][service] = time.time()
+            state["lastActivity"][service] = state["demand"][service]
+            state["demandCount"][service] = int(state["demandCount"].get(service) or 0) + 1
+        elif action == "settings":
+            retention = body.get("retention_seconds", body.get("retentionSeconds", idle_seconds))
+            state["retentionSeconds"] = max(60, min(int(retention), 86400))
+            state["idleSeconds"] = state["retentionSeconds"]
+            state["maxWarmDynamicMaps"] = max(0, min(int(body.get("max_warm_dynamic_maps", body.get("maxWarmDynamicMaps", state["maxWarmDynamicMaps"]))), len(GAME_MAP_SERVICES)))
+            minimum_gib = max(0.0, min(float(body.get("min_available_memory_gib", body.get("minAvailableMemoryGiB", state["minAvailableMemoryBytes"] / 1024 ** 3))), 1024.0))
+            state["minAvailableMemoryBytes"] = int(minimum_gib * 1024 ** 3)
+            state["demandTtlSeconds"] = max(60, min(int(body.get("demand_ttl_seconds", body.get("demandTtlSeconds", state["demandTtlSeconds"]))), 86400))
+            state["profile"] = "custom"
+        elif action == "set-retention":
+            service = str(service or "").strip()
+            if service not in GAME_MAP_SERVICES:
+                raise ValueError("set-retention requires a known map service")
+            seconds = body.get("retention_seconds", body.get("retentionSeconds"))
+            if seconds in (None, "", "default"):
+                state["retentionByService"].pop(service, None)
+            else:
+                state["retentionByService"][service] = max(60, min(int(seconds), 86400))
+            state["profile"] = "custom"
+        elif action in ("minimum-footprint", "balanced", "full-warm", "apply-profile"):
+            profile = body.get("profile") if action == "apply-profile" else action
+            autoscaler_apply_profile(state, profile)
+        elif action not in ("tick", "reconcile"):
+            raise ValueError("unsupported autoscaler action")
+        write_autoscaler_state(state)
+    reconcile_actions = ("tick", "reconcile", "restart", "set-mode", "demand", "minimum-footprint", "balanced", "full-warm", "apply-profile", "settings", "set-retention")
+    if action in reconcile_actions:
+        return autoscaler_tick(force=action in ("reconcile", "restart", "minimum-footprint", "balanced", "full-warm", "apply-profile"))
+    return autoscaler_public_state()
+
+
+def parse_director_travel_demand(log_text):
+    patterns = (
+        re.compile(r"Processing travel queue for ClassicalInstancing group ([A-Za-z0-9_]+) \(servers: \[[^\]]*\], num: ([0-9]+)\)"),
+        re.compile(r"Received travel request for ([0-9]+) player\(s\) to ([A-Za-z0-9_]+) \(instancingMode=Dimension\)"),
+        re.compile(r"Processing travel queue for ([A-Za-z0-9_]+) \(.*\bnum\s*[=:]\s*([0-9]+)\)"),
+    )
+    events = []
+    seen = set()
+    for line in str(log_text or "").splitlines():
+        match = patterns[0].search(line)
+        if match:
+            map_name, count = match.group(1), int(match.group(2))
+        else:
+            match = patterns[1].search(line)
+            if match:
+                count, map_name = int(match.group(1)), match.group(2)
+            else:
+                match = patterns[2].search(line)
+                if not match:
+                    continue
+                map_name, count = match.group(1), int(match.group(2))
+        if count <= 0:
+            continue
+        event_id = hashlib.sha1(line.encode("utf-8", errors="replace")).hexdigest()
+        if event_id in seen:
+            continue
+        seen.add(event_id)
+        events.append({"id": event_id, "map": map_name, "count": count})
+    return events
+
+
+def autoscaler_collect_travel_demand(state, now=None):
+    now = now or time.time()
+    try:
+        log_text = docker_service_logs("director", 1000).get("logs", "")
+    except Exception as exc:
+        return [{"action": "travel-scan-warning", "error": str(exc)}]
+    actions = []
+    inventory = {row["service"]: row for row in docker_service_inventory() if row["service"] in GAME_MAP_SERVICES}
+    for event in parse_director_travel_demand(log_text):
+        if event["id"] in state["demandEvents"]:
+            continue
+        partitions = query("select partition_id,map,dimension_index from dune.world_partition where lower(map)=lower(%s) order by dimension_index,partition_id", (event["map"],))
+        services = []
+        for row in partitions:
+            partition_id = int(row.get("partition_id") or 0)
+            if 1 <= partition_id <= len(GAME_MAP_SERVICES):
+                service = GAME_MAP_SERVICES[partition_id - 1]
+                if state["modes"].get(service, "always-on") == "dynamic":
+                    services.append(service)
+        services.sort(key=lambda service: inventory.get(service, {}).get("state") == "running")
+        selected = services[:max(1, int(event["count"]))]
+        for service in selected:
+            state["demand"][service] = now
+            state["lastActivity"][service] = now
+            state["demandCount"][service] = int(state["demandCount"].get(service) or 0) + 1
+            state["lastEvictionReason"].pop(service, None)
+            actions.append({"service": service, "action": "travel-demand", "map": event["map"], "eventId": event["id"][:12]})
+        state["demandEvents"][event["id"]] = now
+    state["demandEvents"] = {key: value for key, value in state["demandEvents"].items() if now - float(value or 0) <= 86400}
+    return actions
+
+
+def autoscaler_service_action(service, action):
+    if action == "stop":
+        container = docker_service_container(service, running=True)
+        result = docker_container_action(str(container.get("Id") or ""), "stop", timeout=120)
+        return dict(result, service=service, action="stop", postHooks=False)
+    return control_docker_service(service, action, fast_dynamic_start=AUTOSCALER_FAST_START and action == "start")
+
+
+def autoscaler_tick(force=False):
+    with AUTOSCALER_LOCK:
+        state = read_autoscaler_state()
+        if not state["enabled"] and not force:
+            return dict(autoscaler_public_state(include_inventory=False), skipped=True, reason="autoscaler is disabled")
+        AUTOSCALER_RUNTIME["running"] = True
+        actions = []
+        try:
+            now = time.time()
+            actions.extend(autoscaler_collect_travel_demand(state, now))
+            inventory = {row["service"]: row for row in docker_service_inventory() if row["service"] in GAME_MAP_SERVICES}
+            counts = autoscaler_player_counts()
+            optional_warm = []
+            stopped_services = set()
+            for service in GAME_MAP_SERVICES:
+                row = inventory.get(service)
+                if not row:
+                    continue
+                mode = state["modes"].get(service, "always-on")
+                running = row.get("state") == "running"
+                players = counts.get(service, 0)
+                demand_at = float(state["demand"].get(service) or 0)
+                demanded = demand_at > 0 and now - demand_at <= state["demandTtlSeconds"]
+                desired_running = mode == "always-on" or (mode == "dynamic" and demanded)
+                if mode == "disabled" and players > 0:
+                    actions.append({"service": service, "action": "refused-stop", "reason": f"{players} online players"})
+                    continue
+                if not running and desired_running:
+                    result = autoscaler_service_action(service, "start")
+                    actions.append({"service": service, "action": "start", "ok": result.get("ok")})
+                    state["idleSince"].pop(service, None)
+                    state["lastEvictionReason"].pop(service, None)
+                    continue
+                if not running:
+                    continue
+                if players > 0:
+                    state["demand"].pop(service, None)
+                    state["idleSince"].pop(service, None)
+                    state["lastActivity"][service] = now
+                    state["lastEvictionReason"].pop(service, None)
+                    continue
+                if mode == "always-on" or demanded:
+                    state["idleSince"].pop(service, None)
+                    continue
+                since = float(state["idleSince"].setdefault(service, now))
+                retention_seconds = autoscaler_retention_seconds(state, service)
+                if mode == "disabled" or now - since >= retention_seconds:
+                    result = autoscaler_service_action(service, "stop")
+                    reason = mode if mode == "disabled" else "retention-expired"
+                    actions.append({"service": service, "action": "stop", "ok": result.get("ok"), "reason": reason})
+                    state["lastEvictionReason"][service] = reason
+                    stopped_services.add(service)
+                    continue
+                if mode == "dynamic":
+                    optional_warm.append({
+                        "service": service,
+                        "lastActivity": float(state["lastActivity"].get(service) or since),
+                        "idleSince": since,
+                    })
+
+            optional_warm.sort(key=lambda row: (row["lastActivity"], row["idleSince"], row["service"]))
+            max_warm = int(state.get("maxWarmDynamicMaps") or 0)
+            if max_warm > 0:
+                excess = max(0, len(optional_warm) - max_warm)
+                for candidate in optional_warm[:excess]:
+                    service = candidate["service"]
+                    result = autoscaler_service_action(service, "stop")
+                    actions.append({"service": service, "action": "stop", "ok": result.get("ok"), "reason": "warm-budget-lru"})
+                    state["lastEvictionReason"][service] = "warm-budget-lru"
+                    stopped_services.add(service)
+
+            minimum_available = int(state.get("minAvailableMemoryBytes") or 0)
+            if minimum_available > 0:
+                memory = autoscaler_host_memory()
+                if int(memory.get("availableBytes") or 0) <= 0:
+                    actions.append({"action": "memory-pressure-warning", "reason": "MemAvailable is unavailable; no maps evicted"})
+                else:
+                    for candidate in optional_warm:
+                        service = candidate["service"]
+                        if int(memory.get("availableBytes") or 0) >= minimum_available:
+                            break
+                        if service in stopped_services:
+                            continue
+                        result = autoscaler_service_action(service, "stop")
+                        actions.append({"service": service, "action": "stop", "ok": result.get("ok"), "reason": "memory-pressure-lru"})
+                        state["lastEvictionReason"][service] = "memory-pressure-lru"
+                        stopped_services.add(service)
+                        memory = autoscaler_host_memory()
+            state["demand"] = {key: value for key, value in state["demand"].items() if now - float(value or 0) <= state["demandTtlSeconds"]}
+            write_autoscaler_state(state)
+            AUTOSCALER_RUNTIME.update({"lastMessage": f"Autoscaler reconciled {len(GAME_MAP_SERVICES)} maps; {len(actions)} actions.", "lastActions": actions, "lastError": ""})
+        except Exception as exc:
+            AUTOSCALER_RUNTIME.update({"lastMessage": "Autoscaler reconciliation failed.", "lastError": str(exc), "lastActions": actions})
+        finally:
+            AUTOSCALER_RUNTIME.update({"running": False, "updatedAt": datetime.datetime.now(datetime.timezone.utc).isoformat()})
+        return autoscaler_public_state(include_inventory=False)
+
+
+def autoscaler_worker():
+    while True:
+        try:
+            if MUTATIONS_ENABLED and AUTOSCALER_MUTATIONS_ENABLED and read_autoscaler_state()["enabled"]:
+                autoscaler_tick()
+        except Exception as exc:
+            AUTOSCALER_RUNTIME.update({"lastError": str(exc), "updatedAt": datetime.datetime.now(datetime.timezone.utc).isoformat()})
+        time.sleep(AUTOSCALER_POLL_SECONDS)
+
+
+def ensure_autoscaler_thread():
+    global AUTOSCALER_THREAD_STARTED
+    if AUTOSCALER_THREAD_STARTED:
+        return
+    AUTOSCALER_THREAD_STARTED = True
+    threading.Thread(target=autoscaler_worker, name="map-autoscaler-worker", daemon=True).start()
+
+
 def parse_docker_time(value):
     if not value:
         return None
@@ -1749,6 +2758,134 @@ def docker_container_runtimes():
             "restartCount": restart_count,
         }
     return rows
+
+
+def docker_project_containers():
+    filters = urllib.parse.quote(json.dumps({"label": [f"com.docker.compose.project={DOCKER_COMPOSE_PROJECT}"]}))
+    return docker_api(f"/containers/json?all=1&filters={filters}")
+
+
+def docker_service_inventory():
+    rows = []
+    for container in docker_project_containers():
+        labels = container.get("Labels") or {}
+        names = container.get("Names") or [""]
+        service = labels.get("com.docker.compose.service") or names[0].lstrip("/")
+        ports = []
+        for port in container.get("Ports") or []:
+            private = port.get("PrivatePort")
+            public = port.get("PublicPort")
+            protocol = port.get("Type") or ""
+            address = port.get("IP") or ""
+            if public:
+                ports.append(f"{address}:{public}->{private}/{protocol}")
+            elif private:
+                ports.append(f"{private}/{protocol}")
+        rows.append({
+            "service": service,
+            "name": names[0].lstrip("/"),
+            "containerId": str(container.get("Id") or "")[:12],
+            "image": container.get("Image") or "",
+            "state": container.get("State") or "",
+            "status": container.get("Status") or "",
+            "ports": ", ".join(ports),
+        })
+    return sorted(rows, key=lambda row: str(row.get("service") or ""))
+
+
+def decode_docker_log_stream(body):
+    """Decode Docker's multiplexed stdout/stderr framing or plain TTY text."""
+    offset = 0
+    payloads = []
+    while offset + 8 <= len(body) and body[offset] in (0, 1, 2, 3):
+        size = int.from_bytes(body[offset + 4:offset + 8], "big")
+        end = offset + 8 + size
+        if end > len(body):
+            break
+        payloads.append(body[offset + 8:end])
+        offset = end
+    data = b"".join(payloads) if payloads and offset == len(body) else body
+    return data.decode("utf-8", errors="replace")
+
+
+def docker_service_logs(service, tail=200):
+    service = str(service or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", service):
+        raise ValueError("invalid service name")
+    try:
+        tail = max(1, min(int(tail), 1000))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("tail must be an integer from 1 to 1000") from exc
+    matches = []
+    for container in docker_project_containers():
+        labels = container.get("Labels") or {}
+        names = container.get("Names") or [""]
+        candidate = labels.get("com.docker.compose.service") or names[0].lstrip("/")
+        if candidate == service:
+            matches.append(container)
+    if not matches:
+        raise ValueError("service is not part of the configured DASH Compose project")
+    container = sorted(matches, key=lambda item: str(item.get("Created") or ""), reverse=True)[0]
+    container_id = str(container.get("Id") or "")
+    path = f"/containers/{urllib.parse.quote(container_id, safe='')}/logs?stdout=1&stderr=1&timestamps=1&tail={tail}"
+    _, body = docker_http_get(path, timeout=4, max_bytes=2 * 1024 * 1024)
+    text = decode_docker_log_stream(body)
+    if len(text) > 512 * 1024:
+        text = text[-512 * 1024:]
+    return {
+        "service": service,
+        "container": (container.get("Names") or [""])[0].lstrip("/"),
+        "tail": tail,
+        "logs": text,
+    }
+
+
+def control_docker_service(service, action, fast_dynamic_start=False):
+    service = str(service or "").strip()
+    action = str(action or "").strip().lower()
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", service):
+        raise ValueError("invalid service name")
+    if action not in ("start", "stop", "restart"):
+        raise ValueError("service action must be start, stop, or restart")
+    services = {row["service"]: row for row in docker_service_inventory()}
+    if service not in services:
+        raise ValueError("service is not part of the configured DASH Compose project")
+    if service == "admin-panel":
+        raise PermissionError("the admin panel cannot stop or restart the process handling its own request")
+    stateful = service in {"postgres", "admin-rmq", "game-rmq"}
+    if stateful and not STATEFUL_SERVICE_CONTROL_ENABLED:
+        raise PermissionError("stateful service control is disabled; set DUNE_ADMIN_STATEFUL_SERVICE_CONTROL_ENABLED=true")
+    script = ROOT / "scripts" / "restart-target.sh"
+    if not script.exists():
+        raise FileNotFoundError("scripts/restart-target.sh is unavailable")
+    env = os.environ.copy()
+    env.update({
+        "ENV_FILE": str(ENV_FILE),
+        "DUNE_RESTART_TARGET": service,
+        "DUNE_RESTART_SERVICES": service,
+        "DUNE_RESTART_ACTION": "shutdown" if action == "stop" else "restart",
+        "DUNE_RESTART_PHASE": action,
+        "DUNE_RESTART_CHECK_STEAM_UPDATE": "false",
+        "DUNE_RESTART_ALLOW_STATEFUL": "true" if stateful else "false",
+        "DUNE_RESTART_FAST_DYNAMIC_START": "true" if fast_dynamic_start else "false",
+    })
+    completed = subprocess.run(
+        [str(script), service], cwd=ROOT, env=env, text=True,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=1800, check=False,
+    )
+    result = {
+        "ok": completed.returncode == 0,
+        "service": service,
+        "action": action,
+        "exitCode": completed.returncode,
+        "stdout": completed.stdout[-256 * 1024:],
+        "stderr": completed.stderr[-256 * 1024:],
+        "postState": next((row for row in docker_service_inventory() if row["service"] == service), None),
+        "postHooks": action in ("start", "restart"),
+    }
+    if not result["ok"]:
+        raise RuntimeError((result["stderr"] or result["stdout"] or f"service action exited {completed.returncode}")[-4000:])
+    return result
 
 
 def db_connect():
@@ -1896,6 +3033,58 @@ def run_workspace_command(args, timeout=45):
         "stderr": command_output_excerpt(result.stderr),
         "args": args,
     }
+
+
+def update_console_status():
+    game = run_workspace_command([str(ROOT / "scripts" / "check-steam-update.sh"), str(ENV_FILE)], timeout=90)
+    game_text = "\n".join([game.get("stdout", ""), game.get("stderr", "")])
+    game["status"] = "update-available" if "status: update available" in game_text or "reload required:" in game_text else "current" if "status: current" in game_text else "attention"
+    git_rows = {}
+    for key, args in {
+        "branch": ["git", "symbolic-ref", "--quiet", "--short", "HEAD"],
+        "current": ["git", "rev-parse", "HEAD"],
+        "upstream": ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+        "upstreamCommit": ["git", "rev-parse", "@{upstream}"],
+        "behind": ["git", "rev-list", "--count", "HEAD..@{upstream}"],
+    }.items():
+        result = run_workspace_command(args, timeout=10)
+        git_rows[key] = result.get("stdout", "").strip() if result.get("ok") else None
+    clean = run_workspace_command(["git", "status", "--porcelain", "--untracked-files=normal"], timeout=10)
+    git_rows["clean"] = clean.get("ok") and not clean.get("stdout", "").strip()
+    try:
+        auto = artificial_exchange_systemd_service("dune-hotfix-auto-update.timer")
+    except Exception as exc:
+        auto = {"available": False, "ok": False, "error": str(exc)}
+    return {
+        "game": game,
+        "stack": git_rows,
+        "automaticGameUpdate": auto,
+        "mutationEnabled": UPDATE_MUTATIONS_ENABLED,
+        "confirm": {"game": CONFIRM_GAME_UPDATE, "stack": CONFIRM_STACK_UPDATE, "repair": CONFIRM_RUNTIME_REPAIR},
+    }
+
+
+def update_console_action(action):
+    action = str(action or "").strip().lower()
+    if action == "game-check":
+        return run_workspace_command([str(ROOT / "scripts" / "check-steam-update.sh"), str(ENV_FILE)], timeout=90)
+    if action == "stack-check":
+        return run_workspace_command([str(ROOT / "scripts" / "admin-stack-update.sh"), "--check"], timeout=180)
+    if action == "game-apply":
+        env = os.environ.copy()
+        env.update({"ENV_FILE": str(ENV_FILE), "DUNE_RESTART_TARGET": "all", "DUNE_RESTART_SERVICES": "all", "DUNE_RESTART_ACTION": "restart", "DUNE_RESTART_PHASE": "restart", "DUNE_RESTART_CHECK_STEAM_UPDATE": "true"})
+        completed = subprocess.run([str(ROOT / "scripts" / "restart-target.sh"), "all"], cwd=ROOT, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=3600, check=False)
+        return {"ok": completed.returncode == 0, "exitCode": completed.returncode, "stdout": completed.stdout[-256 * 1024:], "stderr": completed.stderr[-256 * 1024:], "backupUpdateRestartWorkflow": True}
+    if action == "stack-apply":
+        return run_workspace_command([str(ROOT / "scripts" / "admin-stack-update.sh"), "--apply"], timeout=3600)
+    if action == "runtime-repair":
+        env = os.environ.copy()
+        env["ENV_FILE"] = str(ENV_FILE)
+        completed = subprocess.run([str(ROOT / "scripts" / "restart-post-start-health.sh")], cwd=ROOT, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=900, check=False)
+        return {"ok": completed.returncode == 0, "exitCode": completed.returncode, "stdout": completed.stdout[-256 * 1024:], "stderr": completed.stderr[-256 * 1024:]}
+    if action == "auto-update-install":
+        return run_workspace_command([str(ROOT / "scripts" / "install-hotfix-auto-update-timer.sh"), str(ENV_FILE)], timeout=180)
+    raise ValueError("unknown update action")
 
 
 def parse_last_json(text):
@@ -2421,14 +3610,15 @@ def discovery_payload():
 
 def read_event_state():
     if not EVENT_STATE_FILE.exists():
-        return {"events": [], "lastRun": None}
+        return {"events": [], "runs": [], "lastRun": None}
     try:
         state = json.loads(EVENT_STATE_FILE.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return {"events": [], "lastRun": None}
+        return {"events": [], "runs": [], "lastRun": None}
     if not isinstance(state, dict):
-        return {"events": [], "lastRun": None}
+        return {"events": [], "runs": [], "lastRun": None}
     state.setdefault("events", [])
+    state.setdefault("runs", [])
     state.setdefault("lastRun", None)
     return state
 
@@ -2460,12 +3650,25 @@ def build_event(body):
     if not isinstance(actions, list) or not actions:
         raise ValueError("actions must be a non-empty list")
     plans = [event_action_plan(action) for action in actions]
+    run_at = str(body.get("runAt", body.get("run_at", ""))).strip() or None
+    repeat_seconds = int(body.get("repeatSeconds", body.get("repeat_seconds", 0)) or 0)
+    if repeat_seconds and not 60 <= repeat_seconds <= 365 * 86400:
+        raise ValueError("repeatSeconds must be 0 or between 60 and 31536000")
+    max_runs = int(body.get("maxRuns", body.get("max_runs", 1 if not repeat_seconds else 0)) or 0)
+    if not 0 <= max_runs <= 10000:
+        raise ValueError("maxRuns must be between 0 and 10000; 0 means unlimited")
+    if run_at:
+        event_parse_time(run_at)
     return {
         "id": secrets.token_hex(8),
         "name": str(body.get("name", "admin event")).strip()[:120] or "admin event",
         "status": "scheduled",
         "createdAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "runAt": str(body.get("runAt", body.get("run_at", ""))).strip() or None,
+        "runAt": run_at,
+        "nextRunAt": run_at,
+        "repeatSeconds": repeat_seconds,
+        "maxRuns": max_runs,
+        "runCount": 0,
         "actions": actions,
         "plan": plans,
     }
@@ -2499,7 +3702,23 @@ def cancel_event(event_id):
     return {"ok": True, "cancelled": cancelled}
 
 
-def execute_event(event_id):
+def event_parse_time(value):
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError("event time is required")
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    parsed = datetime.datetime.fromisoformat(text)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+    return parsed.astimezone(datetime.timezone.utc)
+
+
+def event_time(value):
+    return event_parse_time(value).timestamp()
+
+
+def execute_event(event_id, trigger="manual"):
     if not EVENT_EXECUTION_ENABLED:
         raise PermissionError("event execution is disabled; set DUNE_ADMIN_EVENT_EXECUTION_ENABLED=true")
     with EVENT_LOCK:
@@ -2509,19 +3728,90 @@ def execute_event(event_id):
             raise ValueError("event not found")
         if event.get("status") != "scheduled":
             raise ValueError("event is not scheduled")
+        run_id = secrets.token_hex(12)
+        started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         executed = []
         failures = []
         for plan in event.get("plan", []):
             if plan.get("dryRunOnly"):
                 executed.append({"type": plan.get("type"), "ok": True, "dryRun": True, "notes": "plan-only action, no write executed"})
+            elif plan.get("type") == "announcement":
+                try:
+                    job = schedule_announcement(plan.get("payload") or {})
+                    executed.append({"type": "announcement", "ok": True, "jobId": job.get("id")})
+                except Exception as exc:
+                    failures.append({"type": "announcement", "ok": False, "error": str(exc)[:500]})
+            elif plan.get("type") == "restart":
+                try:
+                    payload = dict(plan.get("payload") or {})
+                    payload["execute"] = False
+                    job = schedule_restart(payload)
+                    executed.append({"type": "restart", "ok": True, "jobId": job.get("id"), "execute": False})
+                except Exception as exc:
+                    failures.append({"type": "restart", "ok": False, "error": str(exc)[:500]})
             else:
-                failures.append({"type": plan.get("type"), "ok": False, "error": "direct event primitive execution is not implemented in v1; use the dedicated endpoint"})
-        event["status"] = "failed" if failures else "executed"
-        event["lastRunAt"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        state["lastRun"] = {"eventId": event_id, "executed": executed, "failures": failures, "rollback": "Use per-action audit records and config backups."}
+                failures.append({"type": plan.get("type"), "ok": False, "error": "unsupported event execution primitive"})
+        event["runCount"] = int(event.get("runCount") or 0) + 1
+        event["lastRunAt"] = started_at
+        repeat_seconds = int(event.get("repeatSeconds") or 0)
+        max_runs = int(event.get("maxRuns") or 0)
+        repeats_left = repeat_seconds and (max_runs == 0 or event["runCount"] < max_runs)
+        if not failures and repeats_left:
+            base = event_time(event.get("nextRunAt") or started_at)
+            next_time = max(base + repeat_seconds, time.time() + 1)
+            event["nextRunAt"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(next_time))
+            event["status"] = "scheduled"
+        else:
+            event["nextRunAt"] = None
+            event["status"] = "failed" if failures else "executed"
+        run = {
+            "id": run_id,
+            "eventId": event_id,
+            "eventName": event.get("name"),
+            "trigger": str(trigger)[:40],
+            "startedAt": started_at,
+            "status": "failed" if failures else "executed",
+            "executed": executed,
+            "failures": failures,
+            "runNumber": event["runCount"],
+            "nextRunAt": event.get("nextRunAt"),
+        }
+        state["runs"] = (state.get("runs") or [])[-499:] + [run]
+        state["lastRun"] = run
         write_event_state(state)
-    audit_event("event-run", ok=not failures, event_id=event_id, executed=executed, failures=failures)
-    return {"ok": not failures, "eventId": event_id, "executed": executed, "failures": failures}
+    audit_event("event-run", ok=not failures, event_id=event_id, run_id=run_id, trigger=trigger, executed=executed, failures=failures, next_run_at=event.get("nextRunAt"))
+    return {"ok": not failures, "eventId": event_id, "runId": run_id, "executed": executed, "failures": failures, "nextRunAt": event.get("nextRunAt")}
+
+
+def due_event_ids(now=None):
+    now = time.time() if now is None else float(now)
+    with EVENT_LOCK:
+        state = read_event_state()
+        return [
+            event.get("id")
+            for event in state.get("events", [])
+            if event.get("status") == "scheduled"
+            and event.get("nextRunAt")
+            and event_time(event.get("nextRunAt")) <= now
+        ]
+
+
+def event_scheduler_worker():
+    while True:
+        if EVENT_EXECUTION_ENABLED:
+            try:
+                for event_id in due_event_ids():
+                    execute_event(event_id, trigger="schedule")
+            except Exception as exc:
+                audit_event("event-scheduler", ok=False, error=str(exc)[:500])
+        time.sleep(5)
+
+
+def ensure_event_scheduler_thread():
+    if getattr(ensure_event_scheduler_thread, "started", False):
+        return
+    ensure_event_scheduler_thread.started = True
+    threading.Thread(target=event_scheduler_worker, name="event-scheduler-worker", daemon=True).start()
 
 
 def gm_payload_preview(body):
@@ -2890,8 +4180,8 @@ def write_player_online_state_settings(updates):
     path.write_text("\n".join(rendered) + "\n", encoding="utf-8")
 
 
-def parse_body(handler):
-    length = validate_body_framing(handler)
+def parse_body(handler, max_bytes=MAX_BODY_BYTES):
+    length = validate_body_framing(handler, max_bytes=max_bytes)
     data = handler.rfile.read(length) if length else b"{}"
     content_type = handler.headers.get("Content-Type", "")
     if "application/json" in content_type:
@@ -2903,7 +4193,7 @@ def parse_body(handler):
     return {key: values[-1] if values else "" for key, values in parsed.items()}
 
 
-def validate_body_framing(handler):
+def validate_body_framing(handler, max_bytes=MAX_BODY_BYTES):
     if handler.headers.get("Transfer-Encoding"):
         raise ValueError("transfer-encoding is not supported")
     content_lengths = handler.headers.get_all("Content-Length", [])
@@ -2915,13 +4205,13 @@ def validate_body_framing(handler):
         raise ValueError("invalid content-length") from exc
     if length < 0:
         raise ValueError("invalid content-length")
-    if length > MAX_BODY_BYTES:
+    if length > max_bytes:
         raise ValueError("request body too large")
     return length
 
 
-def validate_json_post(handler):
-    length = validate_body_framing(handler)
+def validate_json_post(handler, max_bytes=MAX_BODY_BYTES):
+    length = validate_body_framing(handler, max_bytes=max_bytes)
     content_type = handler.headers.get("Content-Type", "")
     if content_type and "application/json" not in content_type.lower():
         raise ValueError("POST requests must use application/json")
@@ -2942,6 +4232,967 @@ def query(sql, params=None):
             if cursor.description:
                 return list(cursor.fetchall())
             return []
+
+
+def backup_inventory(limit=200):
+    limit = max(1, min(int(limit), 500))
+    if not BACKUPS_ROOT.exists():
+        return {"root": str(BACKUPS_ROOT), "sets": [], "artifacts": []}
+    sets = []
+    artifacts = []
+    for current_root, dir_names, file_names in os.walk(BACKUPS_ROOT):
+        current = pathlib.Path(current_root)
+        relative = current.relative_to(BACKUPS_ROOT)
+        depth = len(relative.parts)
+        if depth >= 4:
+            dir_names[:] = []
+        if current == BACKUP_ROOT:
+            dir_names[:] = [name for name in dir_names if name == "maintenance"]
+        file_set = set(file_names)
+        looks_like_set = bool(file_set.intersection({"manifest.txt", "manifest.json", "backup-manifest.json"}))
+        looks_like_set = looks_like_set or any(name.endswith((".dump", ".dump.gz")) for name in file_names)
+        if current != BACKUPS_ROOT and looks_like_set:
+            stat = current.stat()
+            sets.append({
+                "path": relative.as_posix(),
+                "modifiedAt": datetime.datetime.fromtimestamp(stat.st_mtime, datetime.timezone.utc).isoformat(),
+                "files": len(file_names),
+                "manifest": next((name for name in ("manifest.txt", "manifest.json", "backup-manifest.json") if name in file_set), ""),
+                "verifiable": (ROOT / "scripts" / "verify-backup.sh").exists(),
+            })
+    if BACKUP_ROOT.exists():
+        for path in BACKUP_ROOT.iterdir():
+            if not path.is_file() or path.name.startswith("."):
+                continue
+            stat = path.stat()
+            artifacts.append({
+                "path": path.relative_to(BACKUPS_ROOT).as_posix(),
+                "sizeBytes": stat.st_size,
+                "modifiedAt": datetime.datetime.fromtimestamp(stat.st_mtime, datetime.timezone.utc).isoformat(),
+            })
+    sets.sort(key=lambda row: row["modifiedAt"], reverse=True)
+    artifacts.sort(key=lambda row: row["modifiedAt"], reverse=True)
+    return {"root": str(BACKUPS_ROOT), "sets": sets[:limit], "artifacts": artifacts[:limit]}
+
+
+def backup_archive_encryption_status():
+    recipient = (os.environ.get("DUNE_BACKUP_GPG_RECIPIENT") or env_file_value("DUNE_BACKUP_GPG_RECIPIENT") or "").strip()
+    enabled = env_bool("DUNE_BACKUP_ARCHIVE_ENCRYPTION_ENABLED", False)
+    encrypted_root = BACKUPS_ROOT / "encrypted"
+    archives = sorted(encrypted_root.glob("*.tar.gz.gpg"), key=lambda path: path.stat().st_mtime, reverse=True)[:100] if encrypted_root.is_dir() else []
+    return {
+        "enabled": enabled,
+        "configured": enabled and bool(re.fullmatch(r"(?:[A-Fa-f0-9]{40}|[A-Fa-f0-9]{64})", recipient)),
+        "recipientConfigured": bool(recipient),
+        "recipientSuffix": recipient[-16:].upper() if len(recipient) >= 16 else "",
+        "requireVerifiedBackup": (os.environ.get("DUNE_BACKUP_GPG_REQUIRE_VERIFY") or env_file_value("DUNE_BACKUP_GPG_REQUIRE_VERIFY") or "true").lower() in ("1", "true", "yes", "on"),
+        "encryptedArchives": [{"path": str(path.relative_to(BACKUPS_ROOT)), "sizeBytes": path.stat().st_size, "receipt": path.with_suffix(path.suffix + ".json").is_file()} for path in archives],
+        "hostCommand": "scripts/encrypt-backup-archive.sh --env-file .env backups/<verified-set>",
+        "decryptCommand": "scripts/decrypt-backup-archive.sh --env-file .env backups/encrypted/<archive>.tar.gz.gpg",
+        "automaticRestore": False,
+        "format": "OpenPGP",
+    }
+
+
+def resolve_backup_set(relative_path):
+    raw = str(relative_path or "").strip()
+    if not raw or pathlib.PurePosixPath(raw).is_absolute():
+        raise ValueError("backup path must be relative to backups/")
+    resolved = (BACKUPS_ROOT / raw).resolve()
+    try:
+        resolved.relative_to(BACKUPS_ROOT.resolve())
+    except ValueError as exc:
+        raise ValueError("backup path escapes backups/") from exc
+    if not resolved.is_dir():
+        raise ValueError("backup set directory does not exist")
+    return resolved
+
+
+def verify_backup_set(relative_path):
+    path = resolve_backup_set(relative_path)
+    verifier = ROOT / "scripts" / "verify-backup.sh"
+    if not verifier.exists():
+        raise FileNotFoundError("scripts/verify-backup.sh is unavailable")
+    completed = subprocess.run(
+        [str(verifier), str(path)],
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=180,
+        check=False,
+    )
+    return {
+        "ok": completed.returncode == 0,
+        "path": path.relative_to(BACKUPS_ROOT).as_posix(),
+        "exitCode": completed.returncode,
+        "stdout": completed.stdout[-256 * 1024:],
+        "stderr": completed.stderr[-256 * 1024:],
+    }
+
+
+def run_backup_command(args, timeout=1800):
+    completed = subprocess.run(
+        [str(value) for value in args], cwd=ROOT, env=os.environ.copy(), text=True,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, check=False,
+    )
+    result = {
+        "ok": completed.returncode == 0,
+        "exitCode": completed.returncode,
+        "stdout": completed.stdout[-256 * 1024:],
+        "stderr": completed.stderr[-256 * 1024:],
+    }
+    if completed.returncode != 0:
+        raise RuntimeError((completed.stderr or completed.stdout or f"backup command exited {completed.returncode}")[-4000:])
+    return result
+
+
+def create_full_backup():
+    result = create_maintenance_backup({"id": f"browser-{secrets.token_hex(4)}", "action": "backup", "target": "all", "services": []})
+    path = pathlib.Path(result["path"])
+    relative = path.relative_to(BACKUPS_ROOT).as_posix()
+    verified = verify_backup_set(relative)
+    if not verified.get("ok"):
+        raise RuntimeError("new backup failed verification")
+    return {"ok": True, "path": relative, "backup": result, "verification": verified}
+
+
+def default_backup_schedule():
+    return {"enabled": False, "time": "05:00", "intervalHours": 24, "retentionDays": 0, "nextRun": None, "lastRun": None, "lastResult": None, "runs": []}
+
+
+def read_backup_schedule():
+    state = read_care_package_state(BACKUP_SCHEDULE_FILE, default_backup_schedule())
+    return {**default_backup_schedule(), **state}
+
+
+def write_backup_schedule(state):
+    write_care_package_state(BACKUP_SCHEDULE_FILE, state)
+
+
+def next_backup_schedule_time(clock_text, now=None):
+    match = re.fullmatch(r"([01]\d|2[0-3]):([0-5]\d)", str(clock_text or ""))
+    if not match:
+        raise ValueError("backup time must use HH:MM in 24-hour local time")
+    now = now or datetime.datetime.now().astimezone()
+    candidate = now.replace(hour=int(match.group(1)), minute=int(match.group(2)), second=0, microsecond=0)
+    if candidate <= now:
+        candidate += datetime.timedelta(days=1)
+    return candidate.timestamp()
+
+
+def configure_backup_schedule(body):
+    enabled = str(body.get("enabled", "false")).lower() in ("1", "true", "yes", "on")
+    clock_text = str(body.get("time", "05:00")).strip()
+    interval_hours = int(body.get("interval_hours", body.get("intervalHours", 24)) or 24)
+    retention_days = int(body.get("retention_days", body.get("retentionDays", 0)) or 0)
+    if not 1 <= interval_hours <= 24 * 31:
+        raise ValueError("interval_hours must be between 1 and 744")
+    if not 0 <= retention_days <= 3650:
+        raise ValueError("retention_days must be between 0 and 3650")
+    next_run = next_backup_schedule_time(clock_text) if enabled else None
+    with BACKUP_SCHEDULE_LOCK:
+        state = read_backup_schedule()
+        state.update({"enabled": enabled, "time": clock_text, "intervalHours": interval_hours, "retentionDays": retention_days, "nextRun": next_run})
+        write_backup_schedule(state)
+    return backup_schedule_public_state(state)
+
+
+def backup_schedule_public_state(state=None):
+    state = state or read_backup_schedule()
+    result = dict(state)
+    for key in ("nextRun", "lastRun"):
+        result[key + "Iso"] = datetime.datetime.fromtimestamp(result[key], datetime.timezone.utc).isoformat() if result.get(key) else None
+    result["mutationEnabled"] = BACKUP_MUTATIONS_ENABLED
+    return result
+
+
+def prune_scheduled_backups(state, now=None):
+    retention_days = int(state.get("retentionDays") or 0)
+    if retention_days <= 0:
+        return []
+    cutoff = (now or time.time()) - retention_days * 86400
+    removed = []
+    retained = []
+    maintenance_root = (BACKUP_ROOT / "maintenance").resolve()
+    for run in state.get("runs") or []:
+        path = (BACKUPS_ROOT / str(run.get("path") or "")).resolve()
+        if float(run.get("createdAt") or 0) < cutoff and path != maintenance_root and maintenance_root in path.parents and path.exists():
+            shutil.rmtree(path)
+            removed.append(str(run.get("path")))
+        else:
+            retained.append(run)
+    state["runs"] = retained[-200:]
+    return removed
+
+
+def backup_schedule_tick(now=None):
+    now = now or time.time()
+    with BACKUP_SCHEDULE_LOCK:
+        state = read_backup_schedule()
+        if not state.get("enabled") or not state.get("nextRun") or now < float(state["nextRun"]):
+            return backup_schedule_public_state(state)
+        state["nextRun"] = now + int(state.get("intervalHours") or 24) * 3600
+        write_backup_schedule(state)
+    try:
+        result = create_full_backup()
+        run = {"createdAt": now, "path": result["path"], "ok": True}
+        last_result = {"ok": True, "path": result["path"], "verification": result.get("verification")}
+    except Exception as exc:
+        run = {"createdAt": now, "ok": False, "error": str(exc)}
+        last_result = {"ok": False, "error": str(exc)}
+    with BACKUP_SCHEDULE_LOCK:
+        state = read_backup_schedule()
+        state["lastRun"] = now
+        state["lastResult"] = last_result
+        state.setdefault("runs", []).append(run)
+        removed = prune_scheduled_backups(state, now)
+        if removed:
+            state["lastPruned"] = removed
+        write_backup_schedule(state)
+    return backup_schedule_public_state(state)
+
+
+def backup_schedule_worker():
+    while True:
+        try:
+            if MUTATIONS_ENABLED and BACKUP_MUTATIONS_ENABLED:
+                backup_schedule_tick()
+        except Exception as exc:
+            with BACKUP_SCHEDULE_LOCK:
+                state = read_backup_schedule()
+                state["lastResult"] = {"ok": False, "error": str(exc)}
+                write_backup_schedule(state)
+        time.sleep(30)
+
+
+def ensure_backup_schedule_thread():
+    global BACKUP_SCHEDULE_THREAD_STARTED
+    if BACKUP_SCHEDULE_THREAD_STARTED:
+        return
+    BACKUP_SCHEDULE_THREAD_STARTED = True
+    threading.Thread(target=backup_schedule_worker, name="backup-schedule-worker", daemon=True).start()
+
+
+def bootstrap_status():
+    env_values = read_env()
+    required = ("DUNE_STEAM_SERVER_DIR", "DUNE_IMAGE_TAG", "WORLD_NAME", "WORLD_UNIQUE_NAME", "WORLD_REGION", "EXTERNAL_ADDRESS", "FLS_SECRET", "POSTGRES_DUNE_PASSWORD", "DUNE_ADMIN_TOKEN")
+    settings = [{"key": key, "configured": bool(env_values.get(key)), "placeholder": str(env_values.get(key) or "").lower().startswith(("change-me", "/path/to/", "sh-example"))} for key in required]
+    database = {"ok": False, "error": "not checked"}
+    try:
+        row = query("select current_database() as database, to_regnamespace('dune') is not null as schema_ready")
+        database = {"ok": bool(row), **((row or [{}])[0])}
+    except Exception as exc:
+        database = {"ok": False, "error": str(exc)}
+    tls_root = CONFIG_ROOT / "tls" / "rabbitmq"
+    return {
+        "ok": all(row["configured"] and not row["placeholder"] for row in settings) and database.get("ok", False),
+        "settings": settings,
+        "database": database,
+        "tls": {name: (tls_root / name).exists() for name in ("ca.crt", "server.crt", "server.key")},
+        "services": docker_service_inventory() if pathlib.Path(DOCKER_SOCKET).exists() else [],
+        "mutationEnabled": BOOTSTRAP_MUTATIONS_ENABLED,
+        "confirm": CONFIRM_BOOTSTRAP,
+        "steps": ["Save required Settings fields", "Run read-only preflight", "Generate RabbitMQ TLS if missing", "Initialize the Dune database", "Start/reconcile the full stack"],
+    }
+
+
+def bootstrap_action(action):
+    action = str(action or "").strip().lower()
+    if action == "preflight":
+        return run_workspace_command([str(ROOT / "scripts" / "preflight.sh"), str(ENV_FILE)], timeout=120)
+    if action == "generate-tls":
+        return run_workspace_command([str(ROOT / "scripts" / "generate-rabbitmq-cert.sh"), str(ENV_FILE)], timeout=120)
+    if action == "init-database":
+        env = os.environ.copy()
+        env["POSTGRES_DUNE_PASSWORD"] = read_env().get("POSTGRES_DUNE_PASSWORD", env.get("DUNE_ADMIN_DB_PASSWORD", ""))
+        completed = subprocess.run([sys.executable, str(ROOT / "scripts" / "bootstrap_db.py")], cwd=ROOT, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=1800, check=False)
+        return {"ok": completed.returncode == 0, "exitCode": completed.returncode, "stdout": completed.stdout[-256 * 1024:], "stderr": completed.stderr[-256 * 1024:]}
+    if action == "start-stack":
+        script = ROOT / "scripts" / "restart-target.sh"
+        env = os.environ.copy()
+        env.update({"ENV_FILE": str(ENV_FILE), "DUNE_RESTART_TARGET": "all", "DUNE_RESTART_ACTION": "restart", "DUNE_RESTART_PHASE": "start", "DUNE_RESTART_CHECK_STEAM_UPDATE": "false"})
+        completed = subprocess.run([str(script), "all"], cwd=ROOT, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=1800, check=False)
+        return {"ok": completed.returncode == 0, "exitCode": completed.returncode, "stdout": completed.stdout[-256 * 1024:], "stderr": completed.stderr[-256 * 1024:]}
+    raise ValueError("bootstrap action must be preflight, generate-tls, init-database, or start-stack")
+
+
+def backup_download_archive(relative_path):
+    source = resolve_backup_set(relative_path)
+    downloads = BACKUP_ROOT / "downloads"
+    downloads.mkdir(parents=True, exist_ok=True)
+    archive = downloads / f"{source.name}-{secrets.token_hex(4)}.tar.gz"
+    with tarfile.open(archive, "w:gz") as handle:
+        handle.add(source, arcname=source.name, recursive=True)
+    return archive
+
+
+def import_backup_archive(name, encoded, expected_sha256=""):
+    safe_name = pathlib.Path(str(name or "backup.tar.gz")).name
+    if not safe_name.lower().endswith((".tar.gz", ".tgz")):
+        raise ValueError("backup import must be a .tar.gz or .tgz archive")
+    try:
+        content = base64.b64decode(str(encoded or ""), validate=True)
+    except Exception as exc:
+        raise ValueError("backup archive is not valid base64") from exc
+    if not content or len(content) > BACKUP_IMPORT_MAX_BODY_BYTES:
+        raise ValueError("backup archive is empty or exceeds the import limit")
+    digest = hashlib.sha256(content).hexdigest()
+    if expected_sha256 and not hmac.compare_digest(digest, str(expected_sha256).lower()):
+        raise ValueError("backup archive SHA-256 does not match")
+    staging_root = BACKUPS_ROOT / ".imports"
+    staging_root.mkdir(parents=True, exist_ok=True)
+    staging = staging_root / f"stage-{secrets.token_hex(8)}"
+    staging.mkdir(mode=0o700)
+    archive = staging / safe_name
+    archive.write_bytes(content)
+    extracted = staging / "extracted"
+    extracted.mkdir()
+    try:
+        with tarfile.open(archive, "r:gz") as handle:
+            members = handle.getmembers()
+            if not members or len(members) > 10000:
+                raise ValueError("backup archive has an invalid member count")
+            total = 0
+            for member in members:
+                path = pathlib.PurePosixPath(member.name)
+                if path.is_absolute() or ".." in path.parts or member.issym() or member.islnk() or member.isdev():
+                    raise ValueError("backup archive contains an unsafe member")
+                total += max(0, member.size)
+                if total > 2 * 1024 * 1024 * 1024:
+                    raise ValueError("backup archive expands beyond 2 GiB")
+            handle.extractall(extracted, members=members, filter="data")
+        roots = [path for path in extracted.iterdir() if path.is_dir()]
+        source = roots[0] if len(roots) == 1 and not [path for path in extracted.iterdir() if path.is_file()] else extracted
+        files = {path.name for path in source.iterdir() if path.is_file()}
+        if not any(name.startswith("postgres-") and name.endswith((".dump", ".dump.gz")) for name in files):
+            raise ValueError("imported backup does not contain a Postgres dump")
+        stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        target = BACKUPS_ROOT / f"imported-{stamp}-{secrets.token_hex(3)}"
+        shutil.move(str(source), target)
+        relative = target.relative_to(BACKUPS_ROOT).as_posix()
+        verification = verify_backup_set(relative)
+        if not verification.get("ok"):
+            shutil.move(str(target), staging / "failed-verification")
+            raise ValueError("imported backup failed verification")
+        return {"ok": True, "path": relative, "sizeBytes": len(content), "sha256": digest, "verification": verification}
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
+def delete_backup_set(relative_path):
+    source = resolve_backup_set(relative_path)
+    quarantine = BACKUP_ROOT / "deleted-backups"
+    quarantine.mkdir(parents=True, exist_ok=True)
+    target = quarantine / f"{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{source.name}-{secrets.token_hex(3)}"
+    shutil.move(str(source), target)
+    return {"ok": True, "path": relative_path, "deleted": True, "recoveryPath": target.relative_to(BACKUPS_ROOT).as_posix()}
+
+
+def restore_backup_artifacts(path, layers):
+    dumps = sorted(list(path.glob("postgres-*.dump")) + list(path.glob("postgres-*.dump.gz")))
+    if len(dumps) != 1:
+        raise ValueError(f"backup must contain exactly one postgres-*.dump or .dump.gz file; found {len(dumps)}")
+    artifacts = {"postgres": dumps[0]}
+    requested = {key: bool(layers.get(key)) for key in ("rabbitmq", "serverSaved", "config", "tls")}
+    if requested["serverSaved"]:
+        artifact = path / "server-saved.tgz"
+        if not artifact.is_file():
+            raise ValueError("selected backup has no server-saved.tgz")
+        artifacts["serverSaved"] = artifact
+    if requested["rabbitmq"]:
+        combined = path / "rabbitmq.tgz"
+        legacy = [path / "rabbitmq-admin.tgz", path / "rabbitmq-game.tgz"]
+        if combined.is_file():
+            artifacts["rabbitmq"] = combined
+        elif all(item.is_file() for item in legacy):
+            artifacts["rabbitmqLegacy"] = legacy
+        else:
+            raise ValueError("selected backup has neither rabbitmq.tgz nor both legacy RabbitMQ archives")
+    config_archive = next((candidate for candidate in (path / "config-and-env.tgz", path / "config.tgz") if candidate.is_file()), None)
+    if requested["config"]:
+        if not config_archive:
+            raise ValueError("selected backup has no config archive")
+        artifacts["config"] = config_archive
+    if requested["tls"]:
+        tls_archive = path / "config-tls.tgz"
+        if tls_archive.is_file():
+            artifacts["tls"] = tls_archive
+        elif config_archive:
+            artifacts["tlsFromConfig"] = config_archive
+        else:
+            raise ValueError("selected backup has no TLS or config archive")
+    return requested, artifacts
+
+
+def safe_extract_restore_archive(archive_path, target):
+    target.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(archive_path, "r:gz") as handle:
+        members = handle.getmembers()
+        if not members or len(members) > 100000:
+            raise ValueError(f"restore archive {archive_path.name} has an invalid member count")
+        expanded = 0
+        for member in members:
+            member_path = pathlib.PurePosixPath(member.name)
+            if member_path.is_absolute() or ".." in member_path.parts or member.issym() or member.islnk() or member.isdev():
+                raise ValueError(f"restore archive {archive_path.name} contains an unsafe member")
+            expanded += max(0, member.size)
+            if expanded > 8 * 1024 * 1024 * 1024:
+                raise ValueError(f"restore archive {archive_path.name} expands beyond 8 GiB")
+        handle.extractall(target, members=members, filter="data")
+    return {"archive": archive_path.name, "members": len(members), "expandedBytes": expanded}
+
+
+def replace_directory_contents(source, destination):
+    source = pathlib.Path(source)
+    destination = pathlib.Path(destination)
+    destination.mkdir(parents=True, exist_ok=True)
+    sentinel = destination / f".dash-restore-write-test-{secrets.token_hex(4)}"
+    try:
+        sentinel.write_text("write-test", encoding="utf-8")
+        sentinel.unlink()
+    except OSError as exc:
+        raise PermissionError(f"restore destination is not writable: {destination}; enable compose.admin-restore.yaml") from exc
+    for child in destination.iterdir():
+        if child.is_dir() and not child.is_symlink():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
+    for child in source.iterdir():
+        target = destination / child.name
+        if child.is_dir():
+            shutil.copytree(child, target)
+        else:
+            shutil.copy2(child, target)
+
+
+def restore_env_preserving_database_password(source):
+    if not source.is_file():
+        return {"restored": False, "reason": "archive contains no .env"}
+    preserved = {key: env_file_value(key) for key in ("POSTGRES_DUNE_PASSWORD", "DUNE_ADMIN_DB_PASSWORD")}
+    content = source.read_text(encoding="utf-8")
+    for key, value in preserved.items():
+        if not value:
+            continue
+        pattern = re.compile(rf"(?m)^{re.escape(key)}=.*$")
+        replacement = f"{key}={value}"
+        content = pattern.sub(replacement, content) if pattern.search(content) else content.rstrip() + "\n" + replacement + "\n"
+    if ENV_FILE.exists():
+        backup_file(ENV_FILE)
+    ENV_FILE.write_text(content.rstrip() + "\n", encoding="utf-8")
+    ENV_FILE.chmod(0o600)
+    return {"restored": True, "preserved": [key for key, value in preserved.items() if value]}
+
+
+def restore_postgres_dump(dump_path):
+    env = os.environ.copy()
+    env["PGPASSWORD"] = os.environ.get("DUNE_ADMIN_DB_PASSWORD", os.environ.get("POSTGRES_DUNE_PASSWORD", ""))
+    command = [
+        "pg_restore", "-h", os.environ.get("DUNE_ADMIN_DB_HOST", "postgres"),
+        "-p", os.environ.get("DUNE_ADMIN_DB_PORT", "5432"),
+        "-U", os.environ.get("DUNE_ADMIN_DB_USER", "dune"), "-d", DATABASE,
+        "--clean", "--if-exists", "--exit-on-error", "--no-owner", "--no-privileges",
+    ]
+    opener = gzip.open if dump_path.name.endswith(".gz") else open
+    with opener(dump_path, "rb") as stream:
+        completed = subprocess.run(command, stdin=stream, env=env, text=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=3600, check=False)
+    result = {"ok": completed.returncode == 0, "exitCode": completed.returncode, "stdout": completed.stdout.decode("utf-8", errors="replace")[-256 * 1024:], "stderr": completed.stderr.decode("utf-8", errors="replace")[-256 * 1024:]}
+    if not result["ok"]:
+        raise RuntimeError((result["stderr"] or result["stdout"] or "pg_restore failed")[-4000:])
+    return result
+
+
+def stop_restore_writers():
+    stopped = []
+    for container in docker_project_containers():
+        labels = container.get("Labels") or {}
+        service = labels.get("com.docker.compose.service") or (container.get("Names") or [""])[0].lstrip("/")
+        if container.get("State") != "running" or service in {"postgres", "admin-panel", "admin-panel-ingress"}:
+            continue
+        docker_container_action(container.get("Id"), "stop", timeout=120)
+        stopped.append({"service": service, "containerId": container.get("Id")})
+    return stopped
+
+
+def start_restore_writers(stopped):
+    priority = {"admin-rmq": 0, "game-rmq": 0, "rmq-auth-shim": 1, "text-router": 2, "gateway": 3, "director": 4}
+    results = []
+    for row in sorted(stopped, key=lambda value: (priority.get(value["service"], 10), value["service"])):
+        try:
+            docker_container_action(row["containerId"], "start", timeout=120)
+            results.append({"ok": True, "service": row["service"]})
+        except Exception as exc:
+            results.append({"ok": False, "service": row["service"], "error": str(exc)})
+    restart_safe_stopped = [row["service"] for row in stopped if row["service"] in ALL_RESTART_SAFE_SERVICES]
+    if restart_safe_stopped:
+        script = ROOT / "scripts" / "restart-target.sh"
+        env = os.environ.copy()
+        env.update({
+            "ENV_FILE": str(ENV_FILE),
+            "DUNE_RESTART_TARGET": "all",
+            "DUNE_RESTART_SERVICES": " ".join(restart_safe_stopped),
+            "DUNE_RESTART_ACTION": "restart",
+            "DUNE_RESTART_PHASE": "start",
+            "DUNE_RESTART_CHECK_STEAM_UPDATE": "false",
+            "DUNE_RESTART_ALLOW_STATEFUL": "false",
+        })
+        completed = subprocess.run([str(script), "all"], cwd=ROOT, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=1800, check=False)
+        results.append({"ok": completed.returncode == 0, "service": "restart-target-post-hooks", "exitCode": completed.returncode, "stdout": completed.stdout[-256 * 1024:], "stderr": completed.stderr[-256 * 1024:]})
+    return results
+
+
+def restore_selected_file_layers(artifacts, requested, staging):
+    results = {}
+    if requested["serverSaved"]:
+        extracted = staging / "server-saved"
+        results["serverSavedArchive"] = safe_extract_restore_archive(artifacts["serverSaved"], extracted)
+        source = extracted / "server-saved" if (extracted / "server-saved").is_dir() else extracted
+        replace_directory_contents(source, ROOT / "data" / "server-saved")
+    if requested["rabbitmq"]:
+        if "rabbitmq" in artifacts:
+            extracted = staging / "rabbitmq"
+            results["rabbitmqArchive"] = safe_extract_restore_archive(artifacts["rabbitmq"], extracted)
+            source = extracted / "rabbitmq" if (extracted / "rabbitmq").is_dir() else extracted
+            replace_directory_contents(source, ROOT / "data" / "rabbitmq")
+        else:
+            for name, archive in zip(("admin", "game"), artifacts["rabbitmqLegacy"]):
+                extracted = staging / f"rabbitmq-{name}"
+                results[f"rabbitmq{name.title()}Archive"] = safe_extract_restore_archive(archive, extracted)
+                replace_directory_contents(extracted, ROOT / "data" / "rabbitmq" / name)
+    config_stage = None
+    config_archive = artifacts.get("config") or artifacts.get("tlsFromConfig")
+    if config_archive:
+        config_stage = staging / "config"
+        results["configArchive"] = safe_extract_restore_archive(config_archive, config_stage)
+    if requested["config"]:
+        source = config_stage / "config" if (config_stage / "config").is_dir() else config_stage
+        replace_directory_contents(source, CONFIG_ROOT)
+        results["environment"] = restore_env_preserving_database_password(config_stage / ".env")
+    if requested["tls"] and not requested["config"]:
+        if "tls" in artifacts:
+            tls_stage = staging / "tls"
+            results["tlsArchive"] = safe_extract_restore_archive(artifacts["tls"], tls_stage)
+            candidates = [tls_stage / "config" / "tls", tls_stage / "tls", tls_stage]
+        else:
+            candidates = [config_stage / "config" / "tls"]
+        source = next((candidate for candidate in candidates if candidate.is_dir()), None)
+        if not source:
+            raise ValueError("selected archive does not contain a config/tls directory")
+        replace_directory_contents(source, CONFIG_ROOT / "tls")
+    return results
+
+
+def restore_backup_set(relative_path, layers=None, dry_run=True):
+    path = resolve_backup_set(relative_path)
+    verification = verify_backup_set(relative_path)
+    if not verification.get("ok"):
+        raise ValueError("backup verification failed; restore was not started")
+    layers = layers if isinstance(layers, dict) else {}
+    requested, artifacts = restore_backup_artifacts(path, layers)
+    plan = {"postgres": artifacts["postgres"].name, **{key: value for key, value in requested.items()}}
+    if dry_run:
+        return {"ok": True, "dryRun": True, "path": relative_path, "layers": requested, "verification": verification, "plan": plan, "executionGate": "DUNE_ADMIN_BACKUP_RESTORE_ENABLED", "confirm": CONFIRM_BACKUP_RESTORE}
+    online = query("select count(*)::int as count from dune.player_state where online_status::text='Online'")[0]["count"]
+    if int(online) > 0:
+        raise PermissionError("restore requires zero online players")
+    stopped = stop_restore_writers()
+    pre_restore = None
+    staging = BACKUP_ROOT / ".restore" / f"stage-{secrets.token_hex(8)}"
+    staging.mkdir(parents=True, mode=0o700)
+    try:
+        pre_restore = create_full_backup()
+        postgres_result = restore_postgres_dump(artifacts["postgres"])
+        layer_result = restore_selected_file_layers(artifacts, requested, staging)
+    except Exception as exc:
+        restart = start_restore_writers(stopped)
+        recovery = (pre_restore or {}).get("path")
+        raise RuntimeError(f"restore failed; writers were restarted; recovery backup={recovery or 'not created'}; error={exc}") from exc
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+    restart = start_restore_writers(stopped)
+    if not all(row.get("ok") for row in restart):
+        raise RuntimeError(f"restore data completed but one or more services/post-start hooks failed; recovery backup={(pre_restore or {}).get('path')}")
+    return {"ok": True, "dryRun": False, "path": relative_path, "layers": requested, "verification": verification, "preRestoreBackup": pre_restore, "postgres": postgres_result, "fileLayers": layer_result, "stoppedServices": [row["service"] for row in stopped], "restart": restart, "worldStartRequired": False}
+
+
+DATABASE_BROWSER_SCHEMAS = ("dune", "public")
+DATABASE_BROWSER_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]{0,62}$")
+DATABASE_BROWSER_REDACTED_COLUMNS = re.compile(r"(^|_)(password|passwd|secret|token|credential|private_key|service_auth)($|_)", re.IGNORECASE)
+
+
+def database_browser_catalog():
+    return {
+        "schemas": list(DATABASE_BROWSER_SCHEMAS),
+        "tables": query("""
+            select table_schema as schema, table_name as name, table_type as type
+            from information_schema.tables
+            where table_schema = any(%s)
+            order by table_schema, table_name
+        """, (list(DATABASE_BROWSER_SCHEMAS),)),
+        "readOnly": True,
+        "maxRows": 200,
+    }
+
+
+def database_table_preview(schema, table, limit=50):
+    schema = str(schema or "").strip()
+    table = str(table or "").strip()
+    if schema not in DATABASE_BROWSER_SCHEMAS:
+        raise ValueError("schema is not allowed")
+    if not DATABASE_BROWSER_IDENTIFIER.fullmatch(table):
+        raise ValueError("invalid table name")
+    try:
+        limit = max(1, min(int(limit), 200))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("limit must be an integer from 1 to 200") from exc
+    exists = query("""
+        select table_type
+        from information_schema.tables
+        where table_schema=%s and table_name=%s
+    """, (schema, table))
+    if not exists:
+        raise ValueError("table or view does not exist")
+    rows = query(f'SELECT * FROM "{schema}"."{table}" LIMIT %s', (limit,))
+    redacted = []
+    for row in rows:
+        redacted.append({
+            key: "[redacted]" if DATABASE_BROWSER_REDACTED_COLUMNS.search(str(key)) and value not in (None, "") else value
+            for key, value in row.items()
+        })
+    columns = query("""
+        select column_name as name, data_type as type, is_nullable as nullable
+        from information_schema.columns
+        where table_schema=%s and table_name=%s
+        order by ordinal_position
+    """, (schema, table))
+    return {
+        "schema": schema,
+        "table": table,
+        "limit": limit,
+        "rowCount": len(redacted),
+        "columns": columns,
+        "rows": redacted,
+        "readOnly": True,
+        "redaction": "password, token, secret, credential, and private-key columns",
+    }
+
+
+def normalize_database_sql(sql):
+    sql = str(sql or "").strip()
+    if not sql:
+        raise ValueError("SQL is required")
+    if len(sql.encode("utf-8")) > 64 * 1024:
+        raise ValueError("SQL exceeds 64 KiB")
+    if "\x00" in sql:
+        raise ValueError("SQL contains a NUL byte")
+    without_trailing = sql[:-1].rstrip() if sql.endswith(";") else sql
+    if ";" in without_trailing:
+        raise ValueError("only one SQL statement is allowed per request")
+    return without_trailing
+
+
+def database_sql_is_read_only(sql):
+    stripped = re.sub(r"^\s*(?:(?:--[^\n]*(?:\n|$))|(?:/\*.*?\*/\s*))*", "", sql, flags=re.DOTALL)
+    keyword = (re.match(r"([A-Za-z]+)", stripped) or [None, ""])[1].upper()
+    return keyword in {"SELECT", "WITH", "SHOW", "EXPLAIN", "VALUES", "TABLE"}
+
+
+def redact_database_rows(rows):
+    return [{
+        key: "[redacted]" if DATABASE_BROWSER_REDACTED_COLUMNS.search(str(key)) and value not in (None, "") else value
+        for key, value in row.items()
+    } for row in rows]
+
+
+def run_database_sql(connect_fn, sql, allow_write=False, max_rows=200):
+    sql = normalize_database_sql(sql)
+    read_only = database_sql_is_read_only(sql)
+    if not read_only and not allow_write:
+        raise PermissionError("write SQL requires the database write gate")
+    max_rows = max(1, min(int(max_rows), 1000))
+    started = time.monotonic()
+    with connect_fn() as conn:
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
+                cursor.execute("set local statement_timeout='10s'")
+                cursor.execute("set local lock_timeout='2s'")
+                cursor.execute("set local idle_in_transaction_session_timeout='15s'")
+                if read_only:
+                    cursor.execute("set transaction read only")
+                cursor.execute(sql)
+                columns = [description.name if hasattr(description, "name") else description[0] for description in (cursor.description or [])]
+                rows = list(cursor.fetchmany(max_rows + 1)) if cursor.description else []
+                truncated = len(rows) > max_rows
+                rows = rows[:max_rows]
+                affected = cursor.rowcount
+            conn.commit()
+            return {
+                "ok": True,
+                "readOnly": read_only,
+                "columns": columns,
+                "rows": redact_database_rows(rows),
+                "rowCount": len(rows),
+                "affectedRows": affected if not columns else None,
+                "truncated": truncated,
+                "maxRows": max_rows,
+                "durationMs": round((time.monotonic() - started) * 1000, 2),
+            }
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def database_search_catalog(term):
+    term = str(term or "").strip()
+    if len(term) < 2:
+        raise ValueError("search term must contain at least two characters")
+    return query("""
+        select table_schema as schema,table_name as table,column_name as column,data_type
+        from information_schema.columns
+        where table_schema=any(%s) and (table_name ilike %s or column_name ilike %s)
+        order by table_schema,table_name,ordinal_position limit 500
+    """, (list(DATABASE_BROWSER_SCHEMAS), f"%{term[:100]}%", f"%{term[:100]}%"))
+
+
+def update_database_row(connect_fn, schema, table, row_ref, values):
+    schema = str(schema or "").strip()
+    table = str(table or "").strip()
+    if schema not in DATABASE_BROWSER_SCHEMAS or not DATABASE_BROWSER_IDENTIFIER.fullmatch(table):
+        raise ValueError("invalid or disallowed database table")
+    if not isinstance(row_ref, dict) or not row_ref:
+        raise ValueError("row_ref must be a non-empty object keyed by the primary key")
+    if not isinstance(values, dict) or not values or len(values) > 50:
+        raise ValueError("values must be a non-empty object with at most 50 columns")
+    with connect_fn() as conn:
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
+                cursor.execute("set local statement_timeout='10s'")
+                cursor.execute("set local lock_timeout='2s'")
+                cursor.execute("""
+                    select a.attname as name
+                    from pg_index i join pg_attribute a on a.attrelid=i.indrelid and a.attnum=any(i.indkey)
+                    where i.indrelid=%s::regclass and i.indisprimary order by array_position(i.indkey,a.attnum)
+                """, (f'"{schema}"."{table}"',))
+                primary = [row["name"] for row in cursor.fetchall()]
+                if not primary or set(row_ref) != set(primary):
+                    raise ValueError(f"row_ref must contain exactly the primary key columns: {', '.join(primary) or 'none'}")
+                cursor.execute("""
+                    select column_name from information_schema.columns where table_schema=%s and table_name=%s
+                """, (schema, table))
+                allowed = {row["column_name"] for row in cursor.fetchall()}
+                if any(not DATABASE_BROWSER_IDENTIFIER.fullmatch(str(key)) or key not in allowed for key in values):
+                    raise ValueError("values contain an unknown or invalid column")
+                if any(key in primary for key in values):
+                    raise ValueError("primary key columns cannot be changed through the row editor")
+                where_sql = " and ".join(f'"{key}"=%s' for key in primary)
+                cursor.execute(f'SELECT * FROM "{schema}"."{table}" WHERE {where_sql} FOR UPDATE', tuple(row_ref[key] for key in primary))
+                before = cursor.fetchone()
+                if not before:
+                    raise ValueError("database row no longer exists")
+                set_sql = ",".join(f'"{key}"=%s' for key in values)
+                cursor.execute(f'UPDATE "{schema}"."{table}" SET {set_sql} WHERE {where_sql} RETURNING *', tuple(values.values()) + tuple(row_ref[key] for key in primary))
+                after = cursor.fetchone()
+                if not after:
+                    raise RuntimeError("database row update verification failed")
+            conn.commit()
+            return {"ok": True, "schema": schema, "table": table, "primaryKey": primary, "rowRef": row_ref, "before": redact_database_rows([before])[0], "after": redact_database_rows([after])[0], "verified": True}
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def validate_database_password(password):
+    password = str(password or "")
+    checks = [len(password) >= 16, re.search(r"[a-z]", password), re.search(r"[A-Z]", password), re.search(r"\d", password), re.search(r"[^A-Za-z0-9]", password)]
+    if not all(checks) or len(password) > 256 or re.search(r"[\r\n\x00]", password):
+        raise ValueError("database password must be 16-256 characters with lowercase, uppercase, number, and symbol")
+    return password
+
+
+def rotate_database_password(connect_fn, password):
+    password = validate_database_password(password)
+    current = os.environ.get("DUNE_ADMIN_DB_PASSWORD", os.environ.get("POSTGRES_DUNE_PASSWORD", ""))
+    env_before = ENV_FILE.read_text(encoding="utf-8")
+    with connect_fn() as recovery_conn:
+        recovery_conn.autocommit = True
+        with recovery_conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
+            cursor.execute("select quote_literal(%s::text) as password", (password,))
+            quoted = cursor.fetchone()["password"]
+            cursor.execute(f"alter role dune with password {quoted}")
+        try:
+            write_safe_env({"POSTGRES_DUNE_PASSWORD": password})
+            os.environ["DUNE_ADMIN_DB_PASSWORD"] = password
+            os.environ["POSTGRES_DUNE_PASSWORD"] = password
+            with db_connect() as verification:
+                with verification.cursor() as cursor:
+                    cursor.execute("select current_user")
+                    verified_user = cursor.fetchone()[0]
+            if verified_user != "dune":
+                raise RuntimeError("new database credential verification returned the wrong role")
+        except Exception:
+            with recovery_conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
+                cursor.execute("select quote_literal(%s::text) as password", (current,))
+                cursor.execute(f"alter role dune with password {cursor.fetchone()['password']}")
+            ENV_FILE.write_text(env_before, encoding="utf-8")
+            os.environ["DUNE_ADMIN_DB_PASSWORD"] = current
+            os.environ["POSTGRES_DUNE_PASSWORD"] = current
+            raise
+    return {"ok": True, "user": "dune", "verified": True, "restartRequired": True, "restartTarget": "all", "password": "[redacted]"}
+
+
+def world_guilds(search=""):
+    search = str(search or "").strip()[:200]
+    params = []
+    where = ""
+    if search:
+        params.append(f"%{search}%")
+        where = "where g.guild_name ilike %s"
+    rows = query(f"""
+        select g.*,
+               (select count(*) from dune.guild_members gm where gm.guild_id=g.guild_id)::int as member_count
+        from dune.guilds g
+        {where}
+        order by lower(coalesce(g.guild_name, '')), g.guild_id
+        limit 500
+    """, tuple(params))
+    return {"rows": rows, "search": search, "maxRows": 500, "readOnly": True}
+
+
+def world_guild_members(guild_id):
+    try:
+        guild_id = int(guild_id)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("guild_id must be a positive integer") from exc
+    if guild_id <= 0:
+        raise ValueError("guild_id must be a positive integer")
+    errors = {}
+    guild = reference_query(errors, "guild", "select * from dune.get_guild_data(%s)", (guild_id,))
+    members = reference_query(errors, "members", "select * from dune.get_guild_members(%s) order by role_id, player_id", (guild_id,))
+    invites = reference_query(errors, "invites", "select * from dune.get_guild_invites(%s) order by invite_sent_timespan desc limit 200", (guild_id,))
+    return {
+        "guildId": guild_id,
+        "guild": guild,
+        "members": members,
+        "invites": invites,
+        "errors": errors,
+        "readOnly": True,
+    }
+
+
+def world_landsraad():
+    errors = {}
+    current = reference_query(errors, "currentTerm", "select * from dune.landsraad_load_current_term()")
+    terms = reference_query(errors, "terms", "select * from dune.landsraad_decree_term order by term_id desc limit 5")
+    term = (current or terms or [None])[0]
+    term_id = term.get("term_id") if isinstance(term, dict) else None
+    decrees = reference_query(errors, "decrees", "select * from dune.landsraad_decrees order by id limit 500")
+    tasks = []
+    rewards = []
+    faction_contributions = []
+    player_contributions = []
+    guild_contributions = []
+    if term_id not in (None, ""):
+        tasks = reference_query(errors, "tasks", "select * from dune.landsraad_tasks where term_id=%s order by board_index, id limit 500", (term_id,))
+        rewards = reference_query(errors, "rewards", """
+            select r.*
+            from dune.landsraad_task_rewards r
+            join dune.landsraad_tasks t on t.id=r.task_id
+            where t.term_id=%s
+            order by t.board_index, r.task_id, r.threshold
+            limit 1000
+        """, (term_id,))
+        faction_contributions = reference_query(errors, "factionContributions", """
+            select c.*
+            from dune.landsraad_task_faction_contributions c
+            join dune.landsraad_tasks t on t.id=c.task_id
+            where t.term_id=%s
+            order by t.board_index, c.task_id
+            limit 1000
+        """, (term_id,))
+        player_contributions = reference_query(errors, "playerContributions", """
+            select c.*
+            from dune.landsraad_task_player_contributions c
+            join dune.landsraad_tasks t on t.id=c.task_id
+            where t.term_id=%s
+            order by t.board_index, c.task_id
+            limit 1000
+        """, (term_id,))
+        guild_contributions = reference_query(errors, "guildContributions", """
+            select c.*
+            from dune.landsraad_task_guild_contributions c
+            join dune.landsraad_tasks t on t.id=c.task_id
+            where t.term_id=%s
+            order by t.board_index, c.task_id
+            limit 1000
+        """, (term_id,))
+    return {
+        "currentTerm": current,
+        "terms": terms,
+        "decrees": decrees,
+        "tasks": tasks,
+        "rewards": rewards,
+        "factionContributions": faction_contributions,
+        "playerContributions": player_contributions,
+        "guildContributions": guild_contributions,
+        "errors": errors,
+        "readOnly": True,
+    }
+
+
+def world_storage():
+    errors = {}
+    rows = reference_query(errors, "storage", """
+        select p.id,
+               coalesce(max(case when pa.actor_name not like '##%' and pa.actor_name <> 'None' then pa.actor_name end), '') as name,
+               p.building_type as class,
+               coalesce(a.map, '') as map,
+               count(i.id)::int as item_count,
+               coalesce(max(ps.character_name), '') as owner_name
+        from dune.placeables p
+        left join dune.actors a on a.id=p.id
+        left join dune.permission_actor pa on pa.actor_id=p.id
+        left join dune.inventories inv on inv.actor_id=p.id
+        left join dune.items i on i.inventory_id=inv.id
+        left join dune.actor_fgl_entities afe on afe.entity_id=p.owner_entity_id
+        left join dune.permission_actor_rank par on par.permission_actor_id=afe.actor_id
+        left join dune.actors player_a on player_a.id=par.player_id
+        left join dune.player_state ps on ps.account_id=player_a.owner_account_id
+        where p.building_type in ('SpiceSilo_Placeable','GenericContainer_Placeable','StorageContainer_Placeable','MediumStorageContainer_Placeable')
+          and p.is_hologram=false
+          and p.owner_entity_id is not null
+          and p.owner_entity_id <> 0
+        group by p.id, p.building_type, a.map
+        order by p.id
+        limit 2000
+    """)
+    return {
+        "rows": rows,
+        "errors": errors,
+        "maxRows": 2000,
+        "readOnly": True,
+        "ownershipNote": "Owner is inferred through placeable entity, permission actor rank, player actor, and player state joins.",
+    }
+
+
+def world_storage_items(actor_id):
+    try:
+        actor_id = int(actor_id)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("actor_id must be a positive integer") from exc
+    if actor_id <= 0:
+        raise ValueError("actor_id must be a positive integer")
+    storage = query("select id,building_type,owner_entity_id from dune.placeables where id=%s", (actor_id,))
+    if not storage:
+        raise ValueError("storage actor was not found")
+    inventories = query("select * from dune.inventories where actor_id=%s order by id", (actor_id,))
+    items = query("""
+        select i.* from dune.items i
+        join dune.inventories inv on inv.id=i.inventory_id
+        where inv.actor_id=%s
+        order by i.inventory_id,i.position_index,i.id
+        limit 5000
+    """, (actor_id,))
+    return {"ok": True, "actorId": actor_id, "storage": storage[0], "inventories": inventories, "items": items, "maxRows": 5000, "readOnly": True}
 
 
 def execute(sql, params=None):
@@ -3342,13 +5593,696 @@ def catalog_item(template_id):
     return next((item for item in load_item_catalog().get("items", []) if item.get("templateId") == template_id), None)
 
 
+def load_care_packages(path=None):
+    path = pathlib.Path(path) if path else CARE_PACKAGES_FILE
+    if not path.exists():
+        return {"schemaVersion": 1, "packages": [], "automatic": {"enabled": False, "intervalSeconds": 60, "rules": []}, "warning": "config/care-packages.json is missing"}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or not isinstance(payload.get("packages"), list):
+        raise ValueError("care-packages.json must contain a packages array")
+    if len(payload["packages"]) > 100:
+        raise ValueError("care-packages.json is limited to 100 packages")
+    seen = set()
+    packages = []
+    for raw in payload["packages"]:
+        if not isinstance(raw, dict):
+            raise ValueError("each care package must be an object")
+        package_id = str(raw.get("id") or "").strip()
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", package_id):
+            raise ValueError(f"invalid care package id: {package_id!r}")
+        if package_id in seen:
+            raise ValueError(f"duplicate care package id: {package_id}")
+        seen.add(package_id)
+        items = raw.get("items") or []
+        currency = raw.get("currency") or []
+        xp = raw.get("xp") or []
+        if not all(isinstance(value, list) for value in (items, currency, xp)):
+            raise ValueError(f"care package {package_id} items, currency, and xp must be arrays")
+        if len(items) > 50 or len(currency) > 20 or len(xp) > 20:
+            raise ValueError(f"care package {package_id} exceeds the per-package action limit")
+        packages.append({
+            "id": package_id,
+            "label": str(raw.get("label") or package_id),
+            "description": str(raw.get("description") or ""),
+            "enabled": bool(raw.get("enabled", False)),
+            "oncePerAccount": bool(raw.get("oncePerAccount", False)),
+            "cooldownHours": max(0, int(raw.get("cooldownHours") or 0)),
+            "items": items,
+            "currency": currency,
+            "xp": xp,
+        })
+    automatic_raw = payload.get("automatic") or {}
+    if not isinstance(automatic_raw, dict):
+        raise ValueError("care-packages.json automatic must be an object")
+    try:
+        interval = int(automatic_raw.get("intervalSeconds") or 60)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("automatic.intervalSeconds must be an integer") from exc
+    if interval < 60 or interval > 3600:
+        raise ValueError("automatic.intervalSeconds must be from 60 to 3600")
+    rules = automatic_raw.get("rules") or []
+    if not isinstance(rules, list) or len(rules) > 24:
+        raise ValueError("automatic.rules must be an array with at most 24 entries")
+    package_ids = {package["id"] for package in packages}
+    automatic_rules = []
+    seen_rules = set()
+    for index, raw in enumerate(rules):
+        if not isinstance(raw, dict):
+            raise ValueError("automatic rules must be objects")
+        rule_id = str(raw.get("id") or f"auto-rule-{index + 1}").strip()
+        if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,80}", rule_id) or rule_id in seen_rules:
+            raise ValueError(f"invalid or duplicate automatic rule id: {rule_id}")
+        seen_rules.add(rule_id)
+        package_id = str(raw.get("packageId") or raw.get("package_id") or "").strip()
+        if package_id not in package_ids:
+            raise ValueError(f"automatic rule {rule_id} references an unknown package")
+        grant_when = str(raw.get("grantWhen") or "first_online").strip().lower()
+        if grant_when not in ("first_online", "last_seen"):
+            raise ValueError(f"automatic rule {rule_id} grantWhen must be first_online or last_seen")
+        days = int(raw.get("lastSeenDays") or 30)
+        if days < 1 or days > 3650:
+            raise ValueError(f"automatic rule {rule_id} lastSeenDays must be from 1 to 3650")
+        automatic_rules.append({"id": rule_id, "enabled": bool(raw.get("enabled", False)), "packageId": package_id, "grantWhen": grant_when, "lastSeenDays": days})
+    return {"schemaVersion": int(payload.get("schemaVersion") or 1), "packages": packages, "automatic": {"enabled": bool(automatic_raw.get("enabled", False)), "intervalSeconds": interval, "rules": automatic_rules}}
+
+
+def care_package_history(limit=200):
+    limit = max(1, min(int(limit), 1000))
+    if not CARE_PACKAGE_HISTORY_FILE.exists():
+        return []
+    rows = []
+    for line in CARE_PACKAGE_HISTORY_FILE.read_text(encoding="utf-8").splitlines()[-limit:]:
+        try:
+            row = json.loads(line)
+            if isinstance(row, dict):
+                rows.append(row)
+        except json.JSONDecodeError:
+            continue
+    return list(reversed(rows))
+
+
+def append_care_package_history(row):
+    BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
+    payload = dict(row)
+    payload["timestamp"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    with CARE_PACKAGE_LOCK:
+        with CARE_PACKAGE_HISTORY_FILE.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, default=json_default, sort_keys=True) + "\n")
+
+
+def care_package_by_id(package_id):
+    package_id = str(package_id or "").strip()
+    return next((package for package in load_care_packages()["packages"] if package["id"] == package_id), None)
+
+
+def read_care_package_state(path, default):
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        return value if isinstance(value, dict) else dict(default)
+    except (OSError, json.JSONDecodeError):
+        return dict(default)
+
+
+def write_care_package_state(path, value):
+    BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(value, indent=2, sort_keys=True, default=json_default), encoding="utf-8")
+    temporary.replace(path)
+
+
+def care_package_auto_scan(dry_run=True):
+    config = load_care_packages()
+    automatic = config.get("automatic") or {}
+    rules = [rule for rule in automatic.get("rules") or [] if rule.get("enabled")]
+    if not automatic.get("enabled"):
+        return {"ok": True, "dryRun": dry_run, "skipped": True, "reason": "automatic care packages are disabled in config", "results": []}
+    if not rules:
+        return {"ok": True, "dryRun": dry_run, "skipped": True, "reason": "no automatic care-package rules are enabled", "results": []}
+    players = query("""
+        select account_id,character_name,online_status::text,player_controller_id,player_pawn_id,last_login_time
+        from dune.player_state order by account_id
+    """)
+    history = care_package_history(1000)
+    with CARE_PACKAGE_LOCK:
+        claims = read_care_package_state(CARE_PACKAGE_CLAIMS_FILE, {"claims": {}})
+        pending = read_care_package_state(CARE_PACKAGE_PENDING_FILE, {"pending": {}})
+    claim_rows = claims.setdefault("claims", {})
+    pending_rows = pending.setdefault("pending", {})
+    results = []
+    packages = {package["id"]: package for package in config["packages"]}
+    now = datetime.datetime.now(datetime.timezone.utc)
+    for rule in rules:
+        package = packages[rule["packageId"]]
+        for player in players:
+            account_id = int(player["account_id"])
+            key = f"{rule['id']}:{package['id']}:{account_id}"
+            previous = any(row.get("ok") and row.get("packageId") == package["id"] and int(row.get("accountId") or 0) == account_id for row in history)
+            online = str(player.get("online_status") or "").lower() == "online"
+            eligible = False
+            reason = ""
+            mark_pending = False
+            if previous or key in claim_rows:
+                reason = "already granted or claimed"
+            elif not package.get("enabled"):
+                reason = "package is disabled"
+            elif rule["grantWhen"] == "first_online":
+                eligible = online
+                reason = "" if online else "not currently online"
+            else:
+                last_seen = player.get("last_login_time")
+                if isinstance(last_seen, str):
+                    try:
+                        last_seen = datetime.datetime.fromisoformat(last_seen.replace("Z", "+00:00"))
+                    except ValueError:
+                        last_seen = None
+                if last_seen and last_seen.tzinfo is None:
+                    last_seen = last_seen.replace(tzinfo=datetime.timezone.utc)
+                stale = bool(last_seen and last_seen <= now - datetime.timedelta(days=int(rule["lastSeenDays"])))
+                if not online and stale:
+                    mark_pending = True
+                    reason = "qualified while offline; waiting for return"
+                elif online and key in pending_rows:
+                    eligible = True
+                else:
+                    reason = "not a qualified returning player"
+            row = {"ruleId": rule["id"], "packageId": package["id"], "accountId": account_id, "characterName": player.get("character_name"), "online": online, "eligible": eligible, "reason": reason, "wouldMarkPending": mark_pending}
+            if dry_run:
+                results.append(row)
+                continue
+            if mark_pending:
+                pending_rows[key] = {"ruleId": rule["id"], "packageId": package["id"], "accountId": account_id, "qualifiedAt": now.isoformat(), "lastSeen": last_seen}
+                results.append(dict(row, status="pending"))
+                continue
+            if not eligible:
+                results.append(dict(row, status="skipped"))
+                continue
+            with CARE_PACKAGE_LOCK:
+                current_claims = read_care_package_state(CARE_PACKAGE_CLAIMS_FILE, {"claims": {}})
+                if key in current_claims.setdefault("claims", {}):
+                    results.append(dict(row, eligible=False, status="skipped", reason="claimed by another scan"))
+                    continue
+                current_claims["claims"][key] = {"reservedAt": now.isoformat(), "ruleId": rule["id"], "packageId": package["id"], "accountId": account_id}
+                write_care_package_state(CARE_PACKAGE_CLAIMS_FILE, current_claims)
+                claim_rows[key] = current_claims["claims"][key]
+            try:
+                handler = object.__new__(Handler)
+                granted = handler.care_package_grant({"package_id": package["id"], "account_id": account_id, "dry_run": False, "confirm": CONFIRM_CARE_PACKAGE_GRANT, "source": "automatic", "rule_id": rule["id"], "grant_when": rule["grantWhen"]})
+                pending_rows.pop(key, None)
+                results.append(dict(row, status="granted", result=granted))
+            except Exception as exc:
+                with CARE_PACKAGE_LOCK:
+                    current_claims = read_care_package_state(CARE_PACKAGE_CLAIMS_FILE, {"claims": {}})
+                    current_claims.setdefault("claims", {}).pop(key, None)
+                    write_care_package_state(CARE_PACKAGE_CLAIMS_FILE, current_claims)
+                    claim_rows.pop(key, None)
+                append_care_package_history({"ok": False, "status": "failed", "source": "automatic", "ruleId": rule["id"], "grantWhen": rule["grantWhen"], "packageId": package["id"], "accountId": account_id, "characterName": player.get("character_name"), "error": str(exc)})
+                results.append(dict(row, status="failed", error=str(exc)))
+    if not dry_run:
+        with CARE_PACKAGE_LOCK:
+            write_care_package_state(CARE_PACKAGE_PENDING_FILE, pending)
+    counts = {status: sum(1 for row in results if row.get("status") == status) for status in ("granted", "pending", "skipped", "failed")}
+    return {"ok": counts["failed"] == 0, "dryRun": dry_run, "rules": len(rules), "players": len(players), "results": results, **counts}
+
+
+def care_package_auto_worker():
+    while True:
+        try:
+            config = load_care_packages()
+            interval = int((config.get("automatic") or {}).get("intervalSeconds") or 60)
+            if MUTATIONS_ENABLED and CARE_PACKAGES_AUTO_ENABLED and CARE_PACKAGES_ENABLED and BUNDLE_MUTATIONS_ENABLED:
+                CARE_PACKAGE_AUTO_STATE["running"] = True
+                result = care_package_auto_scan(dry_run=False)
+                CARE_PACKAGE_AUTO_STATE.update({"lastScanAt": datetime.datetime.now(datetime.timezone.utc).isoformat(), "lastResult": {key: result.get(key) for key in ("ok", "granted", "pending", "skipped", "failed", "reason")}, "lastError": None})
+        except Exception as exc:
+            interval = 60
+            CARE_PACKAGE_AUTO_STATE.update({"lastScanAt": datetime.datetime.now(datetime.timezone.utc).isoformat(), "lastError": str(exc)})
+        finally:
+            CARE_PACKAGE_AUTO_STATE["running"] = False
+        time.sleep(max(60, min(interval, 3600)))
+
+
+def ensure_care_package_auto_thread():
+    global CARE_PACKAGE_AUTO_THREAD_STARTED
+    if CARE_PACKAGE_AUTO_THREAD_STARTED:
+        return
+    CARE_PACKAGE_AUTO_THREAD_STARTED = True
+    threading.Thread(target=care_package_auto_worker, name="care-package-auto-worker", daemon=True).start()
+
+
+def discord_adapter_token():
+    token_file = os.environ.get("DUNE_BOT_API_TOKEN_FILE", "").strip()
+    if token_file:
+        try:
+            return pathlib.Path(token_file).read_text(encoding="utf-8").strip()
+        except OSError:
+            return ""
+    return os.environ.get("DUNE_BOT_API_TOKEN", "").strip()
+
+
+def discord_role_mapping():
+    def values(name):
+        return {value.strip() for value in os.environ.get(name, "").split(",") if value.strip()}
+    return {
+        "observer": values("DISCORD_OBSERVER_ROLE_IDS"),
+        "moderator": values("DISCORD_MODERATOR_ROLE_IDS"),
+        "admin": values("DISCORD_ADMIN_ROLE_IDS"),
+        "owner": values("DISCORD_OWNER_ROLE_IDS"),
+    }
+
+
+def discord_actor_tier(actor):
+    if not isinstance(actor, dict):
+        raise PermissionError("Discord actor context is required")
+    for key in ("guildId", "channelId", "userId", "username"):
+        value = str(actor.get(key) or "").strip()
+        if not value or len(value) > 256:
+            raise PermissionError(f"actor.{key} is required and limited to 256 characters")
+    role_ids = {str(value).strip() for value in (actor.get("roleIds") or []) if str(value).strip()}
+    mapping = discord_role_mapping()
+    for tier in ("owner", "admin", "moderator", "observer"):
+        if role_ids.intersection(mapping[tier]):
+            return tier
+    return "public"
+
+
+def discord_require_tier(actor, minimum):
+    tiers = ("public", "observer", "moderator", "admin", "owner")
+    actual = discord_actor_tier(actor)
+    if tiers.index(actual) < tiers.index(minimum):
+        raise PermissionError(f"Discord actor requires {minimum} role capability")
+    return actual
+
+
+def discord_sanitize(value):
+    if isinstance(value, dict):
+        result = {}
+        for key, item in value.items():
+            if re.search(r"password|passwd|secret|token|credential|private.?key|authorization", str(key), re.IGNORECASE):
+                result[key] = "[redacted]"
+            else:
+                result[key] = discord_sanitize(item)
+        return result
+    if isinstance(value, list):
+        return [discord_sanitize(item) for item in value[:500]]
+    if isinstance(value, str):
+        return value[:4000]
+    return value
+
+
+def discord_ops_result(domain):
+    domain = str(domain or "").strip().lower()
+    if domain not in ("activity", "combat", "resources", "economy", "inventory", "location", "soc", "prometheus", "dashboard", "cooldowns"):
+        raise ValueError("unsupported Discord ops domain")
+    errors = {}
+    if domain == "activity":
+        return reference_query(errors, "activity", """
+            select count(*) filter(where last_avatar_activity > now()-interval '1 hour')::int as active_last_1h,
+                   count(*) filter(where last_avatar_activity > now()-interval '24 hours')::int as active_last_24h,
+                   count(*) filter(where last_avatar_activity > now()-interval '7 days')::int as active_last_7d
+            from dune.player_state
+        """)[0]
+    if domain == "combat":
+        return {"recentDeaths": reference_query(errors, "deaths", "select * from dune.player_death_history order by death_time desc limit 50"), "errors": errors}
+    if domain == "resources":
+        return {"spiceFields": reference_query(errors, "spice", "select count(*)::int as count from dune.spicefield_server_availability"), "errors": errors}
+    if domain == "economy":
+        return {"currencies": reference_query(errors, "currencies", "select currency_id,count(*)::int as holders,sum(balance)::bigint as total from dune.player_currencies group by currency_id order by currency_id"), "errors": errors}
+    if domain == "inventory":
+        return {"summary": reference_query(errors, "inventory", """
+            select count(distinct inv.id)::int as inventories, count(i.id)::int as items,
+                   count(*) filter(where i.position_index >= inv.max_item_count)::int as over_capacity
+            from dune.inventories inv left join dune.items i on i.inventory_id=inv.id
+        """), "errors": errors}
+    if domain == "location":
+        return {"maps": reference_query(errors, "location", """
+            select coalesce(fs.map,'offline') as map,
+                   count(*) filter(where ps.online_status::text='Online')::int as online
+            from dune.player_state ps left join dune.farm_state fs on fs.server_id=ps.server_id
+            group by 1 order by 1
+        """), "errors": errors}
+    if domain == "soc":
+        return {"farm": reference_query(errors, "soc", """
+            select count(*)::int as servers, count(*) filter(where ready)::int as ready,
+                   count(*) filter(where alive)::int as alive,
+                   coalesce(sum(incoming_s2s_connections),0)::int as incoming_s2s,
+                   coalesce(sum(outgoing_s2s_connections),0)::int as outgoing_s2s
+            from dune.farm_state
+        """), "errors": errors}
+    if domain == "prometheus":
+        return {"configured": (ROOT / "compose.metrics.yaml").exists(), "private": True, "retentionTime": os.environ.get("DUNE_METRICS_RETENTION_TIME", "7d"), "retentionSize": os.environ.get("DUNE_METRICS_RETENTION_SIZE", "2GB")}
+    if domain == "dashboard":
+        return {"configured": True, "private": True, "server": server_metadata(), "notes": "Use the private DASH LAN/VPN URL; it is not disclosed through Discord."}
+    with ANNOUNCEMENT_LOCK:
+        announcements = read_announcement_state().get("jobs", [])
+    with RESTART_LOCK:
+        restarts = read_restart_state().get("jobs", [])
+    return {
+        "announcements": {"active": sum(item.get("status") in ("scheduled", "delivering") for item in announcements), "total": len(announcements)},
+        "restarts": {"active": sum(item.get("status") in ("scheduled", "executing", "awaiting_reboot") for item in restarts), "total": len(restarts)},
+    }
+
+
+def community_store():
+    global COMMUNITY_STORE_INITIALIZED
+    if COMMUNITY_STORE_INITIALIZED:
+        return COMMUNITY_STORE
+    with COMMUNITY_STORE_LOCK:
+        if not COMMUNITY_STORE_INITIALIZED:
+            COMMUNITY_STORE.initialize()
+            COMMUNITY_STORE_INITIALIZED = True
+    return COMMUNITY_STORE
+
+
+def community_config():
+    return community_rewards.load_config(COMMUNITY_REWARDS_FILE)
+
+
+def community_secret(name):
+    env_key = f"DUNE_COMMUNITY_{name.upper()}_WEBHOOK_SECRET"
+    direct = os.environ.get(env_key, "")
+    if direct:
+        return direct.strip()
+    path = pathlib.Path(os.environ.get(env_key + "_FILE", str(CONFIG_ROOT / "secrets" / f"community-{name.lower()}-webhook.secret")))
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def read_private_text(path, minimum_length=1):
+    try:
+        path = pathlib.Path(path)
+        if path.stat().st_mode & 0o077:
+            raise PermissionError(f"private credential file is not mode 0600: {path.name}")
+        value = path.read_text(encoding="utf-8").strip()
+        return value if len(value) >= minimum_length else ""
+    except OSError:
+        return ""
+
+
+def federated_auth_runtime():
+    try:
+        settings = federated_auth.load_settings(os.environ)
+        client_secret = read_private_text(FEDERATED_AUTH_CLIENT_SECRET_FILE)
+        session_secret = read_private_text(FEDERATED_AUTH_SESSION_SECRET_FILE, 32)
+        subjects = federated_auth.load_subjects(FEDERATED_AUTH_SUBJECTS_FILE) if FEDERATED_AUTH_SUBJECTS_FILE.is_file() else []
+        ready = FEDERATED_AUTH_ENABLED and federated_auth.configured(settings, client_secret, session_secret, FEDERATED_AUTH_SUBJECTS_FILE) and ADMIN_ACCESS_FILE.is_file()
+        return {"ok": True, "enabled": FEDERATED_AUTH_ENABLED, "configured": ready, "provider": settings.get("kind") or None, "issuer": settings.get("issuer") or None, "redirectUri": settings.get("redirectUri") or None, "mappedSubjects": sum(1 for row in subjects if row.get("enabled")), "cookieSecure": settings.get("cookieSecure", True), "sessionSeconds": settings.get("sessionSeconds"), "recoveryTokenAvailable": bool(ADMIN_TOKEN), "settings": settings, "clientSecret": client_secret, "sessionSecret": session_secret}
+    except Exception as exc:
+        return {"ok": False, "enabled": FEDERATED_AUTH_ENABLED, "configured": False, "provider": None, "error": str(exc)[:500], "recoveryTokenAvailable": bool(ADMIN_TOKEN), "settings": {}, "clientSecret": "", "sessionSecret": ""}
+
+
+def federated_auth_public_status():
+    state = federated_auth_runtime()
+    return {key: state.get(key) for key in ("ok", "enabled", "configured", "provider", "issuer", "redirectUri", "mappedSubjects", "cookieSecure", "sessionSeconds", "recoveryTokenAvailable", "error") if key in state}
+
+
+def community_webhook_request(handler, provider):
+    if not COMMUNITY_REWARDS_ENABLED:
+        raise FileNotFoundError("community rewards are disabled")
+    config = community_config()
+    settings = (config.get("webhooks") or {}).get(provider) or {}
+    if not settings.get("enabled"):
+        raise FileNotFoundError(f"community {provider} webhooks are disabled")
+    secret = community_secret(provider)
+    if not secret:
+        raise PermissionError(f"community {provider} webhook secret is not configured")
+    length = validate_json_post(handler, max_bytes=MAX_BODY_BYTES)
+    raw = handler.rfile.read(length) if length else b"{}"
+    if not community_rewards.verify_webhook(
+        secret, handler.headers.get("X-DASH-Timestamp", ""), raw,
+        handler.headers.get("X-DASH-Signature", ""),
+        tolerance_seconds=int(settings.get("toleranceSeconds", 300)),
+    ):
+        raise PermissionError("invalid or expired community webhook signature")
+    body = json.loads(raw.decode("utf-8") or "{}")
+    if not isinstance(body, dict):
+        raise ValueError("community webhook body must be an object")
+    amount = int(body.get("amount", settings.get("credits", 0)))
+    maximum = int(settings.get("maxCredits", 0))
+    if maximum <= 0 or amount <= 0 or amount > maximum:
+        raise ValueError(f"community {provider} credit amount exceeds the configured limit")
+    result = community_store().ingest_webhook(
+        provider, body.get("eventId", body.get("event_id")),
+        body.get("duneAccountId", body.get("dune_account_id")), amount, body,
+    )
+    track_id = str(settings.get("trackId") or "").strip()
+    track_xp = int(settings.get("trackXp", 0) or 0)
+    if track_id and track_xp > 0:
+        result["track"] = community_store().add_track_progress(
+            result["duneAccountId"], track_id, track_xp, f"{provider}:{result['eventId']}"
+        )
+    return result
+
+
+def community_delivery_tick(handler=None):
+    store = community_store()
+    config = community_config()
+    if not COMMUNITY_REWARDS_ENABLED or not config.get("enabled"):
+        return {"ok": True, "enabled": False, "message": "community rewards are disabled"}
+    result = {"ok": True, "playtime": [], "delivery": None}
+    playtime = config.get("playtime") or {}
+    if playtime.get("enabled"):
+        observed = int(time.time())
+        interval_seconds = int(playtime.get("intervalSeconds", 900))
+        for account in store.linked_accounts():
+            account_id = int(account["dune_account_id"])
+            rows = query("select online_status::text as online_status from dune.player_state where account_id=%s", (account_id,))
+            online = bool(rows and str(rows[0].get("online_status") or "").lower() == "online")
+            accrued = store.observe_playtime(
+                account_id, online, observed, interval_seconds,
+                int(playtime.get("creditsPerInterval", 1)),
+                int(playtime.get("maxObservationGapSeconds", 600)),
+            )
+            if accrued.get("intervals") and playtime.get("trackId") and int(playtime.get("trackXpPerInterval", 0)) > 0:
+                accrued["track"] = store.add_track_progress(
+                    account_id, playtime["trackId"],
+                    int(accrued["intervals"]) * int(playtime["trackXpPerInterval"]),
+                    f"playtime:{observed // interval_seconds}",
+                )
+            if accrued.get("credited"):
+                result["playtime"].append(dict(accrued, duneAccountId=account_id))
+    if not COMMUNITY_DELIVERY_ENABLED:
+        result["delivery"] = {"status": "paused", "reason": "DUNE_COMMUNITY_DELIVERY_ENABLED=false"}
+        return result
+    if not MUTATIONS_ENABLED or not ITEM_GRANTS_ENABLED:
+        result["delivery"] = {"status": "paused", "reason": "admin mutation/item-grant gates are disabled"}
+        return result
+    claim = store.claim_delivery()
+    if not claim:
+        result["delivery"] = {"status": "idle"}
+        return result
+    account_id = int(claim["dune_account_id"])
+    players = query("select account_id,character_name,online_status::text from dune.player_state where account_id=%s", (account_id,))
+    if not players:
+        result["delivery"] = store.fail_delivery(claim["id"], claim["claim_token"], "Dune account no longer exists", definitive=True)
+        return result
+    if str(players[0].get("online_status") or "").lower() == "online":
+        result["delivery"] = store.release_delivery(claim["id"], claim["claim_token"], "player is online; waiting for a safe offline delivery window")
+        return result
+    target = handler or object.__new__(Handler)
+    plans = []
+    try:
+        for reward in claim["rewards"]:
+            plans.append(target.grant_item({"account_id": account_id, "inventory_type": 0,
+                "template_id": reward["templateId"], "stack_size": reward["count"],
+                "quality_level": reward.get("qualityLevel", 0), "dry_run": True}))
+    except Exception as exc:
+        result["delivery"] = store.fail_delivery(claim["id"], claim["claim_token"], f"delivery preflight failed: {exc}", definitive=True)
+        return result
+    receipts = []
+    try:
+        for reward in claim["rewards"]:
+            receipts.append(target.grant_item({"account_id": account_id, "inventory_type": 0,
+                "template_id": reward["templateId"], "stack_size": reward["count"],
+                "quality_level": reward.get("qualityLevel", 0), "dry_run": False}))
+    except Exception as exc:
+        result["delivery"] = store.fail_delivery(
+            claim["id"], claim["claim_token"],
+            f"delivery outcome requires reconciliation after {len(receipts)} confirmed grants: {exc}", definitive=False,
+        )
+        result["delivery"]["confirmedReceipts"] = receipts
+        return result
+    result["delivery"] = store.complete_delivery(claim["id"], claim["claim_token"], {"items": receipts, "preflight": plans})
+    return result
+
+
+def ensure_community_worker_thread():
+    global COMMUNITY_WORKER_STARTED
+    if COMMUNITY_WORKER_STARTED:
+        return
+    COMMUNITY_WORKER_STARTED = True
+
+    def worker():
+        COMMUNITY_RUNTIME["running"] = True
+        while True:
+            try:
+                COMMUNITY_RUNTIME["lastResult"] = community_delivery_tick()
+                COMMUNITY_RUNTIME["lastError"] = None
+            except Exception as exc:
+                COMMUNITY_RUNTIME["lastError"] = str(exc)[:2000]
+            COMMUNITY_RUNTIME["lastTickAt"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            time.sleep(COMMUNITY_POLL_SECONDS)
+
+    threading.Thread(target=worker, name="community-rewards", daemon=True).start()
+
+
+def moderation_store():
+    global MODERATION_STORE_INITIALIZED
+    if not MODERATION_ENABLED:
+        raise FileNotFoundError("moderation is disabled")
+    with MODERATION_STORE_LOCK:
+        if not MODERATION_STORE_INITIALIZED:
+            MODERATION_STORE.initialize()
+            MODERATION_STORE_INITIALIZED = True
+    return MODERATION_STORE
+
+
+def base_gallery():
+    global BASE_GALLERY_INITIALIZED
+    if not BASE_CREATOR_ENABLED:
+        raise FileNotFoundError("base creator is disabled")
+    with BASE_GALLERY_LOCK:
+        if not BASE_GALLERY_INITIALIZED:
+            BASE_GALLERY.initialize()
+            BASE_GALLERY_INITIALIZED = True
+    return BASE_GALLERY
+
+
+def moderation_online_players():
+    return query("""
+        select ps.account_id,ps.character_name,ps.online_status::text,ps.server_id,
+               acc.funcom_id,acc.platform_id,fs.map as farm_map,wp.partition_id,
+               a.map as actor_map,((a.transform).location).x::float8 as x,
+               ((a.transform).location).y::float8 as y
+        from dune.player_state ps
+        left join dune.accounts acc on acc.id=ps.account_id
+        left join dune.farm_state fs on fs.server_id=ps.server_id
+        left join dune.world_partition wp on wp.server_id=ps.server_id
+        left join dune.actors a on a.id=ps.player_pawn_id
+        where ps.online_status::text='Online'
+        order by ps.account_id
+    """)
+
+
+def moderation_tick():
+    store = moderation_store()
+    players = moderation_online_players()
+    presence = store.record_presence(players, cell_size=MODERATION_HEATMAP_CELL_SIZE)
+    expired = store.expire_bans()
+    enforcement = []
+    enforcement_ready = MODERATION_ENFORCEMENT_ENABLED and MUTATIONS_ENABLED and PLAYER_RUNTIME_MUTATIONS_ENABLED and GM_COMMANDS_ENABLED
+    allowlist_enforcement = store.allowlist_enforcement_enabled()
+    for player in players:
+        ban = store.active_ban(player.get("account_id"), player.get("funcom_id"), player.get("platform_id"))
+        allowlist_block = allowlist_enforcement and not store.allowlisted(player.get("account_id"), player.get("funcom_id"), player.get("platform_id"))
+        if not ban and not allowlist_block:
+            continue
+        if ban and store.recently_enforced(ban["id"], player["account_id"], MODERATION_KICK_COOLDOWN_SECONDS):
+            continue
+        if allowlist_block and not ban and store.recently_policy_enforced(player["account_id"], MODERATION_KICK_COOLDOWN_SECONDS):
+            continue
+        if not enforcement_ready:
+            enforcement.append({"accountId": player["account_id"], "banId": ban.get("id") if ban else None, "policy": "ban" if ban else "allowlist", "ok": False, "skipped": "enforcement gates are not all enabled"})
+            continue
+        funcom_id = str(player.get("funcom_id") or "").strip()
+        if not funcom_id:
+            if ban:
+                store.record_enforcement(ban["id"], player["account_id"], False, "account has no Funcom player id")
+            else:
+                store.record_policy_enforcement(player["account_id"], False, "account has no Funcom player id")
+            enforcement.append({"accountId": player["account_id"], "banId": ban.get("id") if ban else None, "policy": "ban" if ban else "allowlist", "ok": False, "error": "missing Funcom player id"})
+            continue
+        try:
+            result = publish_native_player_notification({"ServerCommand": "KickPlayer", "PlayerId": funcom_id})
+            if ban:
+                store.record_enforcement(ban["id"], player["account_id"], True, "queued through game-rmq")
+            else:
+                store.record_policy_enforcement(player["account_id"], True, "queued through game-rmq")
+            enforcement.append({"accountId": player["account_id"], "banId": ban.get("id") if ban else None, "policy": "ban" if ban else "allowlist", "ok": True, "queued": result.get("queued")})
+        except Exception as exc:
+            if ban:
+                store.record_enforcement(ban["id"], player["account_id"], False, str(exc))
+            else:
+                store.record_policy_enforcement(player["account_id"], False, str(exc))
+            enforcement.append({"accountId": player["account_id"], "banId": ban.get("id") if ban else None, "policy": "ban" if ban else "allowlist", "ok": False, "error": str(exc)[:500]})
+    security_events = []
+    log_errors = []
+    for service in MODERATION_LOG_SERVICES:
+        try:
+            log_data = docker_service_logs(service, 500)
+            security_events.extend(filter(None, (moderation.normalize_security_line(service, line) for line in log_data.get("logs", "").splitlines())))
+        except Exception as exc:
+            log_errors.append({"service": service, "error": str(exc)[:300]})
+    inserted = store.ingest_security(security_events)
+    pruned = store.prune(MODERATION_RETENTION_DAYS)
+    return {"ok": True, "presence": presence, "expiredBans": expired, "enforcementReady": enforcement_ready, "allowlistEnforcement": allowlist_enforcement, "enforcement": enforcement, "securityMatched": len(security_events), "securityInserted": inserted, "logErrors": log_errors, "pruned": pruned}
+
+
+def ensure_moderation_worker_thread():
+    global MODERATION_WORKER_STARTED
+    if MODERATION_WORKER_STARTED or not MODERATION_ENABLED:
+        return
+    MODERATION_WORKER_STARTED = True
+
+    def worker():
+        MODERATION_RUNTIME["running"] = True
+        while True:
+            try:
+                MODERATION_RUNTIME["lastResult"] = moderation_tick()
+                MODERATION_RUNTIME["lastError"] = None
+            except Exception as exc:
+                MODERATION_RUNTIME["lastError"] = str(exc)[:2000]
+            MODERATION_RUNTIME["lastTickAt"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            time.sleep(MODERATION_POLL_SECONDS)
+
+    threading.Thread(target=worker, name="moderation-history", daemon=True).start()
+
+
 class Handler(BaseHTTPRequestHandler):
-    server_version = "dune-admin-panel"
+    server_version = "DASH"
+    sys_version = ""
     protocol_version = "HTTP/1.0"
 
     def setup(self):
         super().setup()
         self.connection.settimeout(REQUEST_TIMEOUT_SECONDS)
+
+    def cookie_value(self, name):
+        try:
+            cookie = SimpleCookie(self.headers.get("Cookie", ""))
+            return cookie[name].value if name in cookie else ""
+        except Exception:
+            return ""
+
+    @staticmethod
+    def auth_cookie(name, value, max_age, path="/"):
+        state = federated_auth_runtime()
+        secure = bool((state.get("settings") or {}).get("cookieSecure", True))
+        parts = [f"{name}={value}", f"Path={path}", f"Max-Age={max(0, int(max_age))}", "HttpOnly", "SameSite=Lax"]
+        if secure:
+            parts.append("Secure")
+        return "; ".join(parts)
+
+    def federated_principal(self):
+        state = federated_auth_runtime()
+        if not state.get("configured"):
+            return None
+        session = federated_auth.verify_payload(self.cookie_value("dash_admin_session"), state["sessionSecret"], "session")
+        local_user = federated_auth.mapped_local_user(FEDERATED_AUTH_SUBJECTS_FILE, session["issuer"], session["subject"])
+        principal = access_control.principal_by_id(ADMIN_ACCESS_FILE, local_user)
+        if principal:
+            principal["authMethod"] = "federated"
+        return principal
+
+    def redirect(self, location, cookies=()):
+        self.send_response(HTTPStatus.SEE_OTHER)
+        self.send_header("Location", str(location))
+        for cookie in cookies:
+            self.send_header("Set-Cookie", cookie)
+        self.security_headers()
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def handle_one_request(self):
         try:
@@ -3365,13 +6299,140 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         try:
             self.validate_host()
-            if self.is_app_route(parsed.path):
+            if parsed.path == "/api/auth/federated/status":
+                status = federated_auth_public_status()
+                try:
+                    principal = self.federated_principal()
+                except Exception:
+                    principal = None
+                status["sessionActive"] = bool(principal)
+                status["principal"] = access_control.public_principal(principal)
+                self.json(status)
+            elif parsed.path == "/auth/login":
+                state = federated_auth_runtime()
+                if not state.get("configured"):
+                    raise PermissionError("federated authentication is not configured")
+                started = federated_auth.begin(state["settings"], state["sessionSecret"], federated_auth.http_json)
+                self.audit("federated-login-start", ok=True, provider=state.get("provider"))
+                self.redirect(started["url"], [self.auth_cookie("dash_auth_flow", started["flowCookie"], 600, "/auth")])
+            elif parsed.path == "/auth/callback":
+                state = federated_auth_runtime()
+                if not state.get("configured"):
+                    raise PermissionError("federated authentication is not configured")
+                params = urllib.parse.parse_qs(parsed.query)
+                if (params.get("error") or [""])[0]:
+                    raise PermissionError("identity provider rejected the authorization request")
+                completed = federated_auth.complete(state["settings"], self.cookie_value("dash_auth_flow"), (params.get("state") or [""])[0], (params.get("code") or [""])[0], state["sessionSecret"], state["clientSecret"], federated_auth.http_json, federated_auth.post_form, FEDERATED_AUTH_REPLAY_CACHE)
+                local_user = federated_auth.mapped_local_user(FEDERATED_AUTH_SUBJECTS_FILE, completed["issuer"], completed["subject"])
+                principal = access_control.principal_by_id(ADMIN_ACCESS_FILE, local_user)
+                if not principal:
+                    raise PermissionError("federated subject is not mapped to an enabled local identity")
+                self.audit("federated-login", ok=True, provider=state.get("provider"), principal_id=principal["id"])
+                session_seconds = int((state.get("settings") or {}).get("sessionSeconds") or 28800)
+                self.redirect("/", [self.auth_cookie("dash_admin_session", completed["sessionCookie"], session_seconds), self.auth_cookie("dash_auth_flow", "", 0, "/auth")])
+            elif self.is_app_route(parsed.path):
                 self.html(INDEX)
             elif parsed.path == "/static/hagga-basin.webp":
                 self.static_file(STATIC_ROOT / "hagga-basin.webp", "image/webp")
             elif parsed.path == "/static/hagga-basin-south.webp":
                 self.static_file(STATIC_ROOT / "hagga-basin-south.webp", "image/webp")
+            elif parsed.path == "/healthz":
+                self.json({"ok": True, "service": "dune-admin-panel"})
+            elif parsed.path in ("/api/integrations/discord/health", "/api/integrations/discord/version", "/api/integrations/discord/backups/list"):
+                self.require_discord_token()
+                if parsed.path.endswith("/health"):
+                    mapping = discord_role_mapping()
+                    self.json({"ok": True, "service": "dash-discord-adapter", "enabled": True, "experimental": True, "readOnly": False, "adminWritesEnabled": False, "communityWritesEnabled": COMMUNITY_REWARDS_ENABLED, "gameDeliveryEnabled": COMMUNITY_DELIVERY_ENABLED, "routes": sorted(DISCORD_ADAPTER_ROUTES), "rolePolicy": {f"{tier}Configured": bool(values) for tier, values in mapping.items()}})
+                elif parsed.path.endswith("/version"):
+                    self.json({"ok": True, "version": admin_panel_build(), "label": ADMIN_PANEL_BUILD_LABEL})
+                else:
+                    self.json({"ok": True, "backups": discord_sanitize(backup_inventory(50).get("sets", [])), "metadataOnly": True})
+            elif parsed.path == "/api/addons/community":
+                self.require_token()
+                self.json(addon_admin.fetch_index())
+            elif parsed.path == "/api/addons/installed":
+                self.require_token()
+                self.json(dict(addon_admin.list_installed(ADDON_ROOT), mutationEnabled=ADDON_MUTATIONS_ENABLED))
+            elif parsed.path == "/api/community/rewards":
+                self.require_token()
+                params = urllib.parse.parse_qs(parsed.query)
+                account_id = (params.get("account_id") or params.get("accountId") or [None])[0]
+                payload = community_store().status(account_id=account_id, limit=(params.get("limit") or [100])[0])
+                payload.update({
+                    "featureEnabled": COMMUNITY_REWARDS_ENABLED,
+                    "deliveryEnabled": COMMUNITY_DELIVERY_ENABLED,
+                    "runtime": dict(COMMUNITY_RUNTIME),
+                    "webhooks": {
+                        name: {"enabled": bool(((community_config().get("webhooks") or {}).get(name) or {}).get("enabled")), "secretConfigured": bool(community_secret(name))}
+                        for name in ("vote", "payment")
+                    },
+                })
+                self.json(payload)
+            elif parsed.path == "/api/moderation":
+                self.require_token()
+                params = urllib.parse.parse_qs(parsed.query)
+                account_id = (params.get("account_id") or params.get("accountId") or [None])[0]
+                account_id = int(account_id) if account_id not in (None, "") else None
+                payload = moderation_store().status(account_id=account_id, limit=(params.get("limit") or [200])[0])
+                payload.update({
+                    "featureEnabled": MODERATION_ENABLED,
+                    "enforcementEnabled": MODERATION_ENFORCEMENT_ENABLED,
+                    "enforcementReady": MODERATION_ENFORCEMENT_ENABLED and MUTATIONS_ENABLED and PLAYER_RUNTIME_MUTATIONS_ENABLED and GM_COMMANDS_ENABLED,
+                    "nativePersistentBanAvailable": False,
+                    "enforcementContract": "policy registry plus repeated native KickPlayer ejection while online",
+                    "allowlistContract": "registry only; the current game build exposes no confirmed login-rejection contract",
+                    "heatmapCellSize": MODERATION_HEATMAP_CELL_SIZE,
+                    "retentionDays": MODERATION_RETENTION_DAYS,
+                    "runtime": dict(MODERATION_RUNTIME),
+                    "confirm": {"ban": CONFIRM_MODERATION_BAN, "unban": CONFIRM_MODERATION_UNBAN, "allowlistPolicy": CONFIRM_MODERATION_ALLOWLIST_POLICY},
+                })
+                self.json(payload)
+            elif parsed.path == "/api/creator/bases":
+                self.require_token()
+                params = urllib.parse.parse_qs(parsed.query)
+                export_id = (params.get("export") or [None])[0]
+                design_id = (params.get("design") or [None])[0]
+                if export_id:
+                    self.json({"ok": True, "archive": base_creator.export_live_base(query, export_id), "mutation": False})
+                elif design_id:
+                    self.json({"ok": True, "design": base_gallery().get(design_id)})
+                else:
+                    self.json({"ok": True, "featureEnabled": BASE_CREATOR_ENABLED, "liveBases": base_creator.list_live_bases(query), "designs": base_gallery().list(), "format": base_creator.FORMAT, "gameRestoreSupported": False, "restoreNote": "Surveyed peer base-import is documented experimental/unfinished; no atomic live placement contract is proven. Export and portable reconstruction are complete."})
+            elif parsed.path == "/api/presets/gameplay":
+                self.require_token()
+                catalog = gameplay_presets.load_catalog(GAMEPLAY_PRESETS_FILE)
+                backup_root = BACKUP_ROOT / "gameplay-presets"
+                backups = [{"path": str(path), "target": path.name, "created": path.parent.name, "sizeBytes": path.stat().st_size} for path in sorted(backup_root.glob("*/*.ini"), reverse=True)[:200]] if backup_root.exists() else []
+                self.json({"ok": True, "featureEnabled": GAMEPLAY_PRESETS_ENABLED, "mutationEnabled": GAMEPLAY_PRESET_MUTATIONS_ENABLED, "catalog": catalog, "targets": sorted(gameplay_presets.TARGETS), "backups": backups, "confirmApply": CONFIRM_GAMEPLAY_PRESET, "confirmRollback": CONFIRM_GAMEPLAY_PRESET_ROLLBACK, "restartAutomatic": False, "landsraadInvariant": "UserGame.ini and UserGame.deep-desert-coriolis.ini must keep m_CycleDurationInDays=7"})
+            elif parsed.path == "/api/admin/cosmetics":
+                self.require_token()
+                params = urllib.parse.parse_qs(parsed.query)
+                catalog = cosmetics_admin.load_catalog(COSMETIC_CATALOG_FILE)
+                pawn_id = (params.get("pawn_id") or params.get("pawnId") or [""])[0]
+                payload = {
+                    "ok": True,
+                    "featureEnabled": True,
+                    "mutationEnabled": COSMETIC_MUTATIONS_ENABLED,
+                    "catalog": catalog,
+                    "receipts": cosmetics_admin.list_receipts(BACKUP_ROOT),
+                    "confirmMutation": CONFIRM_COSMETIC_MUTATION,
+                    "confirmRollback": CONFIRM_COSMETIC_ROLLBACK,
+                    "requiredCapability": "players.write",
+                    "storage": "dune.actors.properties/CustomizationLibraryActorComponent",
+                    "firstPartyMutationRoutine": False,
+                    "offlineRequired": True,
+                    "backupRequired": True,
+                    "restartRequired": False,
+                    "relogRequired": True,
+                }
+                if pawn_id:
+                    payload["player"] = cosmetics_admin.inspect_player(query, pawn_id, catalog)
+                self.json(payload)
+            elif re.fullmatch(r"/api/addons/installed/[a-z0-9][a-z0-9-]{1,63}/content/.+", parsed.path):
+                parts = parsed.path.split("/")
+                self.addon_content(addon_admin.content_path(ADDON_ROOT, parts[4], urllib.parse.unquote("/".join(parts[6:]))))
             elif parsed.path == "/api/status":
+                self.require_token()
                 self.json({
                     "build": admin_panel_build(),
                     "buildLabel": ADMIN_PANEL_BUILD_LABEL,
@@ -3380,14 +6441,36 @@ class Handler(BaseHTTPRequestHandler):
                     "server": server_metadata(),
                     "mutationsEnabled": MUTATIONS_ENABLED,
                     "itemGrantsEnabled": ITEM_GRANTS_ENABLED,
-                    "adminTokenConfigured": bool(ADMIN_TOKEN),
+                    "adminTokenConfigured": bool(ADMIN_TOKEN) or (RBAC_ENABLED and ADMIN_ACCESS_FILE.exists()),
                     "adminTokenRequired": os.environ.get("DUNE_ADMIN_REQUIRE_TOKEN", "false").lower() in ("1", "true", "yes", "on"),
+                    "rbacEnabled": RBAC_ENABLED,
+                    "webhooks": {
+                        "enabled": WEBHOOK_DISPATCHER.enabled,
+                        "configured": WEBHOOK_DISPATCHER.config_path.exists(),
+                    },
                     "safeEnvKeys": sorted(SAFE_ENV_KEYS),
                     "configs": sorted(ALLOWED_CONFIGS),
                 })
+            elif parsed.path == "/api/auth/me":
+                self.require_token()
+                self.json({"ok": True, "principal": access_control.public_principal(getattr(self, "auth_principal", None))})
             elif parsed.path == "/api/admin/item-catalog":
                 self.require_token()
                 self.json(load_item_catalog())
+            elif parsed.path == "/api/admin/player-runtime-catalog":
+                self.require_token()
+                self.json({
+                    "ok": True,
+                    "actions": sorted(native_command_admin.COMMANDS),
+                    "skillModules": native_command_admin.load_catalog(ADMIN_SKILL_MODULES_FILE),
+                    "vehicles": native_command_admin.load_catalog(ADMIN_VEHICLES_FILE),
+                    "mutationEnabled": PLAYER_RUNTIME_MUTATIONS_ENABLED,
+                    "transportEnabled": GM_COMMANDS_ENABLED,
+                    "tokenConfigured": bool(os.environ.get("DUNE_SERVER_COMMANDS_AUTH_TOKEN", "")),
+                })
+            elif parsed.path == "/api/bootstrap":
+                self.require_token()
+                self.json(bootstrap_status())
             elif parsed.path == "/api/admin/item-icon":
                 self.item_icon(parsed)
             elif parsed.path == "/api/server/state":
@@ -3409,6 +6492,9 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/ops/audit":
                 self.require_token()
                 self.json({"events": recent_audit_events()})
+            elif parsed.path == "/api/ops/webhooks":
+                self.require_token()
+                self.json(WEBHOOK_DISPATCHER.status())
             elif parsed.path == "/api/ops/optimization":
                 self.require_token()
                 self.json(self.optimization_signals())
@@ -3416,9 +6502,81 @@ class Handler(BaseHTTPRequestHandler):
                 self.require_token()
                 params = urllib.parse.parse_qs(parsed.query)
                 self.json(self.resource_snapshot(live_stats=(params.get("live") or ["0"])[0] == "1"))
+            elif parsed.path == "/api/ops/services":
+                self.require_token()
+                self.json({"composeProject": DOCKER_COMPOSE_PROJECT, "services": docker_service_inventory(), "controlEnabled": SERVICE_CONTROL_ENABLED, "statefulControlEnabled": STATEFUL_SERVICE_CONTROL_ENABLED, "confirm": CONFIRM_SERVICE_CONTROL})
+            elif parsed.path == "/api/ops/logs":
+                self.require_token()
+                params = urllib.parse.parse_qs(parsed.query)
+                self.json(docker_service_logs((params.get("service") or [""])[0], (params.get("tail") or ["200"])[0]))
+            elif parsed.path == "/api/ops/backups":
+                self.require_token()
+                params = urllib.parse.parse_qs(parsed.query)
+                self.json(dict(backup_inventory((params.get("limit") or ["200"])[0]), mutationEnabled=BACKUP_MUTATIONS_ENABLED, restoreEnabled=BACKUP_RESTORE_ENABLED, importMaxBodyBytes=BACKUP_IMPORT_MAX_BODY_BYTES, deleteConfirm=CONFIRM_BACKUP_DELETE, restoreConfirm=CONFIRM_BACKUP_RESTORE, importConfirm=CONFIRM_BACKUP_IMPORT, schedule=backup_schedule_public_state(), archiveEncryption=backup_archive_encryption_status()))
+            elif parsed.path == "/api/ops/backups/download":
+                self.require_token()
+                params = urllib.parse.parse_qs(parsed.query)
+                archive = backup_download_archive((params.get("path") or [""])[0])
+                try:
+                    self.download_file(archive, archive.name, "application/gzip")
+                finally:
+                    archive.unlink(missing_ok=True)
+            elif parsed.path == "/api/ops/database":
+                self.require_token()
+                self.json(dict(database_browser_catalog(), queryEnabled=DATABASE_QUERY_ENABLED, writeEnabled=DATABASE_WRITE_ENABLED, rowMutationsEnabled=DATABASE_ROW_MUTATIONS_ENABLED, passwordMutationsEnabled=DATABASE_PASSWORD_MUTATIONS_ENABLED, writeConfirm=CONFIRM_DATABASE_WRITE, rowConfirm=CONFIRM_DATABASE_ROW_UPDATE, passwordConfirm=CONFIRM_DATABASE_PASSWORD))
+            elif parsed.path == "/api/ops/database/table":
+                self.require_token()
+                params = urllib.parse.parse_qs(parsed.query)
+                self.json(database_table_preview(
+                    (params.get("schema") or [""])[0],
+                    (params.get("table") or [""])[0],
+                    (params.get("limit") or ["50"])[0],
+                ))
+            elif parsed.path == "/api/ops/database/search":
+                self.require_token()
+                params = urllib.parse.parse_qs(parsed.query)
+                self.json({"rows": database_search_catalog((params.get("q") or [""])[0])})
+            elif parsed.path == "/api/ops/updates":
+                self.require_token()
+                self.json(update_console_status())
+            elif parsed.path == "/api/ops/memory":
+                self.require_token()
+                self.json(memory_balancer_public_state())
+            elif parsed.path == "/api/ops/autoscaler":
+                self.require_token()
+                self.json(autoscaler_public_state())
+            elif parsed.path == "/api/world/guilds":
+                self.require_token()
+                params = urllib.parse.parse_qs(parsed.query)
+                self.json(world_guilds((params.get("q") or [""])[0]))
+            elif parsed.path == "/api/world/guild-members":
+                self.require_token()
+                params = urllib.parse.parse_qs(parsed.query)
+                self.json(world_guild_members((params.get("guild_id") or params.get("guildId") or [""])[0]))
+            elif parsed.path == "/api/world/landsraad":
+                self.require_token()
+                self.json(world_landsraad())
+            elif parsed.path == "/api/world/storage":
+                self.require_token()
+                self.json(world_storage())
+            elif parsed.path == "/api/world/storage-items":
+                self.require_token()
+                params = urllib.parse.parse_qs(parsed.query)
+                self.json(world_storage_items((params.get("actor_id") or params.get("actorId") or [""])[0]))
             elif parsed.path == "/api/ops/runbook":
                 self.require_token()
                 self.json(self.ops_runbook())
+            elif parsed.path == "/api/ops/console":
+                self.require_token()
+                self.json({
+                    "ok": True,
+                    "featureEnabled": COMMAND_CONSOLE_ENABLED,
+                    "commands": command_console.catalog(),
+                    "shell": False,
+                    "argumentsAccepted": False,
+                    "requiredCapability": "operations.write",
+                    "outputLimitBytes": command_console.MAX_OUTPUT_BYTES,
+                })
             elif parsed.path == "/api/ops/announcement":
                 self.require_token()
                 with ANNOUNCEMENT_LOCK:
@@ -3538,6 +6696,60 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/admin/reference":
                 self.require_token()
                 self.json(self.admin_reference())
+            elif parsed.path == "/api/admin/care-packages":
+                self.require_token()
+                self.json({
+                    "enabled": CARE_PACKAGES_ENABLED,
+                    "automaticExecutionEnabled": CARE_PACKAGES_AUTO_ENABLED,
+                    "automaticState": dict(CARE_PACKAGE_AUTO_STATE),
+                    "catalog": load_care_packages(),
+                    "history": care_package_history(),
+                    "confirmPhrase": CONFIRM_CARE_PACKAGE_GRANT,
+                    "scanConfirmPhrase": CONFIRM_CARE_PACKAGE_SCAN,
+                    "retryConfirmPhrase": CONFIRM_CARE_PACKAGE_RETRY,
+                    "clearConfirmPhrase": CONFIRM_CARE_PACKAGE_CLEAR,
+                    "executionRequires": [
+                        "DUNE_ADMIN_MUTATIONS_ENABLED=true",
+                        "DUNE_ADMIN_BUNDLE_MUTATIONS_ENABLED=true",
+                        "DUNE_ADMIN_CARE_PACKAGES_ENABLED=true",
+                    ],
+                })
+            elif parsed.path == "/api/admin/blueprints":
+                self.require_token()
+                params = urllib.parse.parse_qs(parsed.query)
+                export_ids = (params.get("export") or [""])[0]
+                capability = blueprint_admin.capabilities(query)
+                if export_ids:
+                    ids = [value for value in export_ids.split(",") if value.strip()][:100]
+                    self.json({"schemaVersion": 1, "blueprints": [blueprint_admin.export_blueprint(query, value) for value in ids]})
+                else:
+                    self.json({
+                        "capability": capability,
+                        "rows": blueprint_admin.list_blueprints(query) if capability.get("supported") else [],
+                        "mutationEnabled": BLUEPRINT_MUTATIONS_ENABLED,
+                        "maxBodyBytes": BLUEPRINT_MAX_BODY_BYTES,
+                        "importConfirm": CONFIRM_BLUEPRINT_IMPORT,
+                        "deleteConfirm": CONFIRM_BLUEPRINT_DELETE,
+                    })
+            elif parsed.path == "/api/admin/augments":
+                self.require_token()
+                params = urllib.parse.parse_qs(parsed.query)
+                template_id = str((params.get("template_id") or params.get("templateId") or [""])[0]).strip()
+                if not template_id:
+                    raise ValueError("template_id is required")
+                metadata = catalog_item(template_id) or {"templateId": template_id, "name": template_id}
+                self.json({
+                    "item": metadata,
+                    "compatibility": augment_admin.compatible_augments(metadata),
+                    "mutationEnabled": AUGMENT_MUTATIONS_ENABLED,
+                    "applyConfirm": CONFIRM_APPLY_AUGMENTS,
+                    "grantConfirm": CONFIRM_GRANT_AUGMENTED_ITEM,
+                    "executionRequires": [
+                        "DUNE_ADMIN_MUTATIONS_ENABLED=true",
+                        "DUNE_ADMIN_ITEM_GRANTS_ENABLED=true",
+                        "DUNE_ADMIN_AUGMENT_MUTATIONS_ENABLED=true",
+                    ],
+                })
             elif parsed.path == "/api/admin/gm/reference":
                 self.require_token()
                 self.json(gm_command_catalog())
@@ -3560,7 +6772,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.static_file(STATIC_ROOT / "hagga-basin.webp", "image/webp", head_only=True)
             elif parsed.path == "/static/hagga-basin-south.webp":
                 self.static_file(STATIC_ROOT / "hagga-basin-south.webp", "image/webp", head_only=True)
+            elif parsed.path == "/healthz":
+                self.json({}, head_only=True)
             elif parsed.path.startswith("/api/"):
+                self.require_token()
                 self.json({}, head_only=True)
             else:
                 self.error(HTTPStatus.NOT_FOUND, "not found", head_only=True)
@@ -3572,25 +6787,342 @@ class Handler(BaseHTTPRequestHandler):
             self.error(HTTPStatus.BAD_REQUEST, str(exc), head_only=True)
 
     def do_OPTIONS(self):
-        self.validate_host()
-        self.send_response(HTTPStatus.NO_CONTENT)
-        self.security_headers()
-        self.send_header("Allow", "GET, HEAD, POST, OPTIONS")
-        self.end_headers()
+        try:
+            self.validate_host()
+            self.validate_same_origin()
+            self.send_response(HTTPStatus.NO_CONTENT)
+            self.security_headers()
+            self.send_header("Allow", "GET, HEAD, POST, OPTIONS")
+            self.end_headers()
+        except PermissionError as exc:
+            self.error(HTTPStatus.UNAUTHORIZED, str(exc))
+        except Exception as exc:
+            self.error(HTTPStatus.BAD_REQUEST, str(exc))
+
+    def method_not_allowed(self):
+        try:
+            self.validate_host()
+            self.send_response(HTTPStatus.METHOD_NOT_ALLOWED)
+            self.security_headers()
+            self.send_header("Allow", "GET, HEAD, POST, OPTIONS")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+        except Exception as exc:
+            self.error(HTTPStatus.BAD_REQUEST, str(exc))
+
+    do_PUT = method_not_allowed
+    do_PATCH = method_not_allowed
+    do_DELETE = method_not_allowed
+    do_TRACE = method_not_allowed
+    do_CONNECT = method_not_allowed
 
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
         try:
             self.validate_host()
+            webhook_match = re.fullmatch(r"/api/community/webhooks/(vote|payment)", parsed.path)
+            if webhook_match:
+                result = community_webhook_request(self, webhook_match.group(1))
+                self.audit("community-webhook", ok=True, provider=webhook_match.group(1), event_id=result.get("eventId"), account_id=result.get("duneAccountId"), amount=result.get("amount"), idempotent=result.get("idempotent"))
+                self.json(result)
+                return
             self.validate_same_origin()
-            validate_json_post(self)
-            if parsed.path.startswith("/api/settings/configs/"):
+            request_limit = BLUEPRINT_MAX_BODY_BYTES if parsed.path == "/api/admin/blueprints" else BACKUP_IMPORT_MAX_BODY_BYTES if parsed.path == "/api/ops/backups/import" else MAX_BODY_BYTES
+            validate_json_post(self, max_bytes=request_limit)
+            if parsed.path == "/api/auth/logout":
+                self.require_token()
+                principal = access_control.public_principal(getattr(self, "auth_principal", None)) or {}
+                self.audit("admin-logout", ok=True, principal_id=principal.get("id"), auth_method=principal.get("authMethod", "token"))
+                self.json({"ok": True}, cookies=[self.auth_cookie("dash_admin_session", "", 0), self.auth_cookie("dash_auth_flow", "", 0, "/auth")])
+            elif parsed.path.startswith("/api/settings/configs/"):
                 self.require_token()
                 name = parsed.path.rsplit("/", 1)[-1]
                 body = parse_body(self)
                 self.write_config(name, body.get("content", ""))
                 self.audit("config-write", config=name)
                 self.json({"ok": True})
+            elif parsed.path in DISCORD_ADAPTER_ROUTES:
+                self.require_discord_token()
+                body = parse_body(self)
+                actor = body.get("actor")
+                minimum = "public" if parsed.path.endswith("/community") else "moderator" if parsed.path.endswith(("/population", "/servers", "/ops")) else "observer"
+                tier = discord_require_tier(actor, minimum)
+                if parsed.path.endswith("/status"):
+                    result = self.ops_health()
+                elif parsed.path.endswith("/readiness"):
+                    health = self.ops_health()
+                    result = {"ready": bool(health.get("ok", health.get("summary", {}).get("ready", False))), "overall": health.get("state", health.get("summary", {}).get("state", "unknown")), "summary": health.get("summary", {})}
+                elif parsed.path.endswith("/services"):
+                    result = {"services": docker_service_inventory()}
+                elif parsed.path.endswith("/population"):
+                    rows = query("select count(*) filter (where online_status::text='Online')::int as online, count(*)::int as total from dune.player_state")
+                    result = {"onlinePlayers": rows[0]["online"], "totalPlayers": rows[0]["total"], "aggregate": True, "detailsSuppressed": True}
+                elif parsed.path.endswith("/servers"):
+                    result = {"partitions": query("select partition_id,map,dimension_index,label,blocked,(server_id is not null) as assigned from dune.world_partition order by partition_id")}
+                elif parsed.path.endswith("/ports"):
+                    result = {"services": [{"service": row["service"], "state": row["state"], "ports": row["ports"]} for row in docker_service_inventory()]}
+                elif parsed.path.endswith("/db"):
+                    result = query("select current_database() as database, now() as checked_at, count(*)::int as players from dune.player_state")[0]
+                elif parsed.path.endswith("/announcements"):
+                    with ANNOUNCEMENT_LOCK:
+                        state = read_announcement_state()
+                    result = {"jobs": state.get("jobs", [])[-50:]}
+                elif parsed.path.endswith("/events"):
+                    with EVENT_LOCK:
+                        state = read_event_state()
+                    result = {"events": state.get("events", [])[-50:], "runs": state.get("runs", [])[-50:]}
+                elif parsed.path.endswith("/ops"):
+                    domain = str(body.get("domain") or "").strip().lower()
+                    result = self.ops_health() if domain == "doctor" else discord_ops_result(domain)
+                elif parsed.path.endswith("/community"):
+                    if not COMMUNITY_REWARDS_ENABLED:
+                        raise FileNotFoundError("community rewards are disabled")
+                    action = str(body.get("action") or "").strip().lower()
+                    arguments = body.get("arguments") or {}
+                    if not isinstance(arguments, dict):
+                        raise ValueError("community arguments must be an object")
+                    store = community_store()
+                    account = store.account_for_discord(actor["userId"])
+                    if action == "howtolink":
+                        result = {"message": "Ask an administrator to create a one-time link code in DASH, then run `/dune shop link code:<code>`. Codes expire and can be used once."}
+                    elif action == "link":
+                        result = store.redeem_link_code(actor["userId"], arguments.get("code"))
+                        result["message"] = f"Linked Discord user to Dune account {result['duneAccountId']}."
+                    elif action in ("catalog", "kits"):
+                        offers = [row for row in store.status()["offers"] if row.get("enabled") and (action != "kits" or row.get("kind") == "kit")]
+                        result = {"currency": community_config().get("currency"), "offers": offers, "message": "\n".join(
+                            f"`{row['id']}` — {row['name']}: {row['price']} credits · stock {row['stock'] if row['stock'] is not None else 'unlimited'}" for row in offers
+                        ) or "No offers are currently available."}
+                    else:
+                        if not account:
+                            raise PermissionError("Discord user is not linked; use /dune shop howtolink")
+                        account_id = int(account["dune_account_id"])
+                        if action == "balance":
+                            result = {"balance": int(account["balance"]), "message": f"Community-credit balance: **{int(account['balance'])}**"}
+                        elif action == "buy":
+                            request_id = str(actor.get("requestId") or "").strip()
+                            if not request_id:
+                                raise ValueError("Discord interaction request id is required")
+                            result = store.purchase(account_id, arguments.get("offer"), arguments.get("quantity", 1), f"discord:{request_id}")
+                            result["message"] = f"Purchase `{result['id']}` queued. Delivery waits for a safe offline window."
+                        elif action == "track":
+                            status = store.status(account_id)
+                            result = {"progress": status.get("progress", []), "tracks": status.get("tracks", []), "message": json.dumps(status.get("progress", []), sort_keys=True)[:1800] or "No reward-track progress yet."}
+                        elif action == "claim":
+                            result = store.claim_track_level(account_id, arguments.get("track"), arguments.get("level"))
+                            result["message"] = f"Reward claim queued as delivery `{result['deliveryId']}`."
+                        else:
+                            raise ValueError("unsupported Discord community action")
+                elif parsed.path.endswith("/broadcast"):
+                    raise PermissionError("Discord adapter write operations are disabled")
+                else:
+                    raise ValueError("unsupported Discord adapter route")
+                safe = discord_sanitize(result)
+                self.audit("discord-adapter-read", ok=True, discord_route=parsed.path, discord_user_id=str(actor.get("userId"))[:128], discord_tier=tier)
+                self.json({"ok": True, "result": safe})
+            elif parsed.path == "/api/addons/community/install":
+                self.require_token()
+                self.require_mutations()
+                if not ADDON_MUTATIONS_ENABLED:
+                    raise PermissionError("addon mutations are disabled; set DUNE_ADMIN_ADDON_MUTATIONS_ENABLED=true")
+                body = parse_body(self)
+                require_confirmation(body, CONFIRM_ADDON_INSTALL)
+                result = addon_admin.install(ADDON_ROOT, str(body.get("id") or ""), body.get("approvedPermissions") or [])
+                self.audit("addon-install", ok=True, addon_id=result["addon"]["id"], version=result["addon"]["version"], sha256=result["sha256"], permissions=result["addon"].get("approvedPermissions"))
+                self.json(result)
+            elif parsed.path == "/api/community/rewards":
+                self.require_token()
+                if not COMMUNITY_REWARDS_ENABLED:
+                    raise PermissionError("community rewards are disabled; set DUNE_COMMUNITY_REWARDS_ENABLED=true")
+                body = parse_body(self)
+                action = str(body.get("action") or "").strip().lower()
+                store = community_store()
+                if action == "sync":
+                    result = store.sync_config()
+                elif action == "link-code":
+                    account_id = int(body.get("duneAccountId", body.get("dune_account_id")))
+                    if not query("select 1 from dune.accounts where id=%s", (account_id,)):
+                        raise ValueError("Dune account does not exist")
+                    result = store.create_link_code(account_id, body.get("ttlSeconds", 900))
+                elif action == "redeem-link":
+                    result = store.redeem_link_code(body.get("discordUserId"), body.get("code"))
+                elif action == "credit":
+                    self.require_mutations()
+                    require_confirmation(body, CONFIRM_COMMUNITY_CREDIT)
+                    result = store.credit(body.get("duneAccountId", body.get("dune_account_id")), body.get("amount"),
+                                          str(body.get("kind") or "manual"), body.get("reference"),
+                                          {"operator": access_control.public_principal(getattr(self, "auth_principal", None)), "note": str(body.get("note") or "")[:1000]})
+                elif action == "purchase":
+                    result = store.purchase(body.get("duneAccountId", body.get("dune_account_id")), body.get("offerId"),
+                                            body.get("quantity", 1), body.get("idempotencyKey"))
+                elif action == "track-progress":
+                    self.require_mutations()
+                    result = store.add_track_progress(body.get("duneAccountId", body.get("dune_account_id")), body.get("trackId"), body.get("amount"), body.get("reference"))
+                elif action == "claim-track":
+                    result = store.claim_track_level(body.get("duneAccountId", body.get("dune_account_id")), body.get("trackId"), body.get("level"))
+                elif action == "tick":
+                    result = community_delivery_tick(self)
+                elif action == "reconcile":
+                    self.require_mutations()
+                    require_confirmation(body, CONFIRM_COMMUNITY_RECONCILIATION)
+                    result = store.resolve_reconciliation(body.get("deliveryId"), bool(body.get("delivered")), body.get("receipt"), body.get("reason", "manual reconciliation"))
+                else:
+                    raise ValueError("community action must be sync, link-code, redeem-link, credit, purchase, track-progress, claim-track, tick, or reconcile")
+                self.audit("community-rewards", ok=result.get("ok", True), community_action=action, account_id=body.get("duneAccountId", body.get("dune_account_id")), delivery_id=result.get("deliveryId"), idempotent=result.get("idempotent"))
+                self.json(result)
+            elif parsed.path == "/api/moderation":
+                self.require_token()
+                self.require_mutations()
+                if not MODERATION_ENABLED:
+                    raise PermissionError("moderation is disabled; set DUNE_MODERATION_ENABLED=true")
+                body = parse_body(self)
+                action = str(body.get("action") or "").strip().lower()
+                store = moderation_store()
+                principal = access_control.public_principal(getattr(self, "auth_principal", None)) or {}
+                actor = str(principal.get("id") or principal.get("displayName") or "owner-token")[:128]
+                if action in ("case-create", "ban"):
+                    account_id = body.get("accountId", body.get("account_id"))
+                    if account_id not in (None, ""):
+                        rows = query("select ps.account_id,ps.character_name,a.funcom_id,a.platform_id from dune.player_state ps left join dune.accounts a on a.id=ps.account_id where ps.account_id=%s", (int(account_id),))
+                        if not rows:
+                            raise ValueError("Dune account does not exist")
+                        identity = rows[0]
+                        body.setdefault("characterName", identity.get("character_name"))
+                        body.setdefault("funcomId", identity.get("funcom_id"))
+                        body.setdefault("platformId", identity.get("platform_id"))
+                if action == "case-create":
+                    result = store.create_case(body, actor)
+                elif action == "case-update":
+                    result = store.update_case(body.get("caseId"), body, actor)
+                elif action == "case-note":
+                    result = store.add_note(body.get("caseId"), body.get("note"), actor, body.get("metadata"))
+                elif action == "ban":
+                    require_confirmation(body, CONFIRM_MODERATION_BAN)
+                    case_id = str(body.get("caseId") or "").strip()
+                    if not case_id:
+                        created = store.create_case({**body, "summary": body.get("summary") or body.get("reason") or "Policy ban", "category": body.get("category") or "ban"}, actor)
+                        case_id = created["id"]
+                    result = store.ban(case_id, body, actor)
+                    result["worker"] = moderation_tick()
+                elif action == "unban":
+                    require_confirmation(body, CONFIRM_MODERATION_UNBAN)
+                    result = store.unban(body.get("banId"), actor, body.get("reason"))
+                elif action in ("allowlist-add", "allowlist-remove"):
+                    result = store.set_allowlist(body.get("identityType"), body.get("identityValue"), body.get("label"), actor, remove=action.endswith("remove"), expires_at=body.get("expiresAt"))
+                elif action == "allowlist-policy":
+                    require_confirmation(body, CONFIRM_MODERATION_ALLOWLIST_POLICY)
+                    result = store.set_allowlist_enforcement(bool(body.get("enabled")))
+                elif action == "tick":
+                    result = moderation_tick()
+                elif action == "prune":
+                    result = store.prune(body.get("retentionDays", MODERATION_RETENTION_DAYS))
+                else:
+                    raise ValueError("moderation action must be case-create, case-update, case-note, ban, unban, allowlist-add, allowlist-remove, allowlist-policy, tick, or prune")
+                self.audit("moderation", ok=result.get("ok", True), moderation_action=action, account_id=body.get("accountId", body.get("account_id")), case_id=body.get("caseId", result.get("id")), ban_id=body.get("banId"))
+                self.json(result)
+            elif parsed.path == "/api/creator/bases":
+                self.require_token()
+                if not BASE_CREATOR_ENABLED:
+                    raise PermissionError("base creator is disabled; set DUNE_BASE_CREATOR_ENABLED=true")
+                body = parse_body(self)
+                action = str(body.get("action") or "").strip().lower()
+                principal = access_control.public_principal(getattr(self, "auth_principal", None)) or {}
+                actor = str(principal.get("id") or "owner-token")[:128]
+                if action == "publish":
+                    result = base_gallery().publish(body.get("name"), body.get("description"), actor, body.get("archive"), body.get("visibility"), body.get("designId"))
+                elif action == "rate":
+                    result = base_gallery().rate(body.get("designId"), actor, body.get("rating"))
+                else:
+                    raise ValueError("creator action must be publish or rate")
+                self.audit("base-creator", ok=True, creator_action=action, design_id=result.get("id"), visibility=result.get("visibility"))
+                self.json({"ok": True, "design": result})
+            elif parsed.path == "/api/presets/gameplay":
+                self.require_token()
+                if not GAMEPLAY_PRESETS_ENABLED:
+                    raise PermissionError("gameplay presets are disabled; set DUNE_GAMEPLAY_PRESETS_ENABLED=true")
+                body = parse_body(self)
+                action = str(body.get("action") or "preview").strip().lower()
+                if action == "preview":
+                    result = gameplay_presets.plan(CONFIG_ROOT, GAMEPLAY_PRESETS_FILE, body.get("presetId"), body.get("target"))
+                elif action == "apply":
+                    self.require_mutations()
+                    if not GAMEPLAY_PRESET_MUTATIONS_ENABLED:
+                        raise PermissionError("gameplay preset mutations are disabled; set DUNE_GAMEPLAY_PRESET_MUTATIONS_ENABLED=true")
+                    require_confirmation(body, CONFIRM_GAMEPLAY_PRESET)
+                    result = gameplay_presets.apply(CONFIG_ROOT, GAMEPLAY_PRESETS_FILE, body.get("presetId"), body.get("target"), BACKUP_ROOT)
+                elif action == "rollback":
+                    self.require_mutations()
+                    if not GAMEPLAY_PRESET_MUTATIONS_ENABLED:
+                        raise PermissionError("gameplay preset mutations are disabled; set DUNE_GAMEPLAY_PRESET_MUTATIONS_ENABLED=true")
+                    require_confirmation(body, CONFIRM_GAMEPLAY_PRESET_ROLLBACK)
+                    result = gameplay_presets.rollback(CONFIG_ROOT, body.get("backup"), BACKUP_ROOT)
+                else:
+                    raise ValueError("gameplay preset action must be preview, apply, or rollback")
+                self.audit("gameplay-preset", ok=True, preset_action=action, preset_id=body.get("presetId"), target=result.get("target"), backup=result.get("backup", result.get("restoredFrom")), restart_required=result.get("restartRequired"))
+                self.json(result)
+            elif parsed.path in ("/api/admin/cosmetics/preview", "/api/admin/cosmetics"):
+                self.require_token()
+                body = parse_body(self)
+                catalog = cosmetics_admin.load_catalog(COSMETIC_CATALOG_FILE)
+                action = str(body.get("action") or "").strip().lower()
+                pawn_id = body.get("pawnId", body.get("pawn_id"))
+                cosmetic_id = body.get("cosmeticId", body.get("cosmetic_id"))
+                if parsed.path.endswith("/preview"):
+                    result = cosmetics_admin.preview(query, pawn_id, catalog, action, cosmetic_id)
+                    result.update({"mutationEnabled": COSMETIC_MUTATIONS_ENABLED, "confirm": CONFIRM_COSMETIC_MUTATION})
+                    self.audit("cosmetic-preview", ok=True, cosmetic_action=action, pawn_id=pawn_id, cosmetic_id=cosmetic_id, changed=result.get("changed"), added=len(result.get("added") or []), removed=len(result.get("removed") or []))
+                    self.json(result)
+                else:
+                    self.require_mutations()
+                    if not COSMETIC_MUTATIONS_ENABLED:
+                        raise PermissionError("cosmetic mutations are disabled; set DUNE_ADMIN_COSMETIC_MUTATIONS_ENABLED=true")
+                    principal = access_control.public_principal(getattr(self, "auth_principal", None)) or {"id": "owner-token"}
+                    if action == "rollback":
+                        require_confirmation(body, CONFIRM_COSMETIC_ROLLBACK)
+                        prior = cosmetics_admin.load_receipt(BACKUP_ROOT, body.get("receiptId", body.get("receipt_id")))
+                        if prior.get("database") != DATABASE:
+                            raise PermissionError("cosmetic receipt database does not match the active admin database")
+                        backup = create_db_backup()
+                        result = cosmetics_admin.rollback(db_connect, BACKUP_ROOT, prior["receiptId"])
+                        result["database"] = DATABASE
+                        inverse = dict(result)
+                        inverse.update({
+                            "before": prior["after"], "after": prior["before"],
+                            "beforeHash": prior["afterHash"], "afterHash": prior["beforeHash"],
+                            "cosmeticId": prior.get("cosmeticId"),
+                        })
+                        receipt = cosmetics_admin.write_receipt(BACKUP_ROOT, inverse, backup, principal)
+                    else:
+                        require_confirmation(body, CONFIRM_COSMETIC_MUTATION)
+                        if action not in {"add", "remove", "unlock-all"}:
+                            raise ValueError("cosmetic action must be add, remove, unlock-all, or rollback")
+                        backup = create_db_backup()
+                        result = cosmetics_admin.apply(db_connect, pawn_id, catalog, action, cosmetic_id)
+                        result["database"] = DATABASE
+                        receipt = cosmetics_admin.write_receipt(BACKUP_ROOT, result, backup, principal)
+                    public_result = {key: value for key, value in result.items() if key not in {"before", "after"}}
+                    public_result.update({"backup": backup, "receipt": receipt, "relogRequired": True, "restartRequired": False})
+                    self.audit("cosmetic-mutation", ok=True, cosmetic_action=action, pawn_id=(result.get("player") or {}).get("player_pawn_id"), cosmetic_id=cosmetic_id, changed=result.get("changed", True), backup=backup.get("path"), receipt_id=receipt.get("id"), after_hash=result.get("afterHash"))
+                    self.json(public_result)
+            elif re.fullmatch(r"/api/addons/installed/[a-z0-9][a-z0-9-]{1,63}/(enable|disable|remove)", parsed.path):
+                self.require_token()
+                self.require_mutations()
+                if not ADDON_MUTATIONS_ENABLED:
+                    raise PermissionError("addon mutations are disabled; set DUNE_ADMIN_ADDON_MUTATIONS_ENABLED=true")
+                body = parse_body(self)
+                require_confirmation(body, CONFIRM_ADDON_LIFECYCLE)
+                parts = parsed.path.split("/")
+                addon_id, action = parts[4], parts[5]
+                result = addon_admin.remove(ADDON_ROOT, addon_id) if action == "remove" else addon_admin.set_enabled(ADDON_ROOT, addon_id, action == "enable")
+                self.audit(f"addon-{action}", ok=True, addon_id=addon_id, recovery_path=result.get("recoveryPath"))
+                self.json(result)
+            elif re.fullmatch(r"/api/addons/installed/[a-z0-9][a-z0-9-]{1,63}/bridge", parsed.path):
+                self.require_token()
+                body = parse_body(self)
+                addon_id = parsed.path.split("/")[4]
+                result = self.addon_bridge(addon_id, str(body.get("action") or ""), body.get("payload") or {})
+                self.audit("addon-bridge", ok=True, addon_id=addon_id, bridge_action=body.get("action"))
+                self.json({"ok": True, "result": result})
             elif parsed.path == "/api/settings/env":
                 self.require_token()
                 body = parse_body(self)
@@ -3598,6 +7130,189 @@ class Handler(BaseHTTPRequestHandler):
                 write_safe_env(updates)
                 self.audit("env-write", keys=sorted(updates))
                 self.json({"ok": True})
+            elif parsed.path == "/api/bootstrap":
+                self.require_token()
+                body = parse_body(self)
+                action = str(body.get("action") or "").strip().lower()
+                if action != "preflight":
+                    if not BOOTSTRAP_MUTATIONS_ENABLED:
+                        raise PermissionError("browser bootstrap is disabled; set DUNE_ADMIN_BOOTSTRAP_MUTATIONS_ENABLED=true")
+                    require_confirmation(body, CONFIRM_BOOTSTRAP)
+                result = bootstrap_action(action)
+                self.audit("bootstrap-action", ok=result.get("ok"), bootstrap_action=action, exit_code=result.get("exitCode", result.get("returncode")))
+                self.json({"result": result, "status": bootstrap_status()})
+            elif parsed.path == "/api/ops/console":
+                self.require_token()
+                if not COMMAND_CONSOLE_ENABLED:
+                    raise PermissionError("command console is disabled; set DUNE_COMMAND_CONSOLE_ENABLED=true")
+                body = parse_body(self)
+                result = command_console.run(body.get("commandId"), self.command_console_operation)
+                principal = access_control.public_principal(getattr(self, "auth_principal", None)) or {}
+                self.audit("command-console", ok=result["ok"], command_id=result["commandId"], principal_id=principal.get("id"), returncode=result["returncode"], timed_out=result["timedOut"], duration_ms=result["durationMs"])
+                self.json(result)
+            elif parsed.path == "/api/ops/backups/verify":
+                self.require_token()
+                body = parse_body(self)
+                result = verify_backup_set(body.get("path"))
+                self.audit("backup-verify", ok=result.get("ok", False), path=result.get("path"), exit_code=result.get("exitCode"))
+                self.json(result)
+            elif parsed.path == "/api/ops/services/control":
+                self.require_token()
+                self.require_mutations()
+                if not SERVICE_CONTROL_ENABLED:
+                    raise PermissionError("browser service control is disabled; set DUNE_ADMIN_SERVICE_CONTROL_ENABLED=true")
+                body = parse_body(self)
+                require_confirmation(body, CONFIRM_SERVICE_CONTROL)
+                result = control_docker_service(body.get("service"), body.get("action"))
+                self.audit("service-control", ok=result.get("ok"), service=result.get("service"), service_action=result.get("action"), exit_code=result.get("exitCode"), post_state=(result.get("postState") or {}).get("state"))
+                self.json(result)
+            elif parsed.path == "/api/ops/updates":
+                self.require_token()
+                body = parse_body(self)
+                action = str(body.get("action", "")).strip().lower()
+                if action not in ("game-check", "stack-check"):
+                    self.require_mutations()
+                    if not UPDATE_MUTATIONS_ENABLED:
+                        raise PermissionError("browser updates are disabled; set DUNE_ADMIN_UPDATE_MUTATIONS_ENABLED=true")
+                    phrase = CONFIRM_GAME_UPDATE if action in ("game-apply", "auto-update-install") else CONFIRM_STACK_UPDATE if action == "stack-apply" else CONFIRM_RUNTIME_REPAIR
+                    require_confirmation(body, phrase)
+                result = update_console_action(action)
+                self.audit("update-console", ok=result.get("ok"), update_action=action, exit_code=result.get("exitCode", result.get("returncode")))
+                self.json(result)
+            elif parsed.path == "/api/ops/memory":
+                self.require_token()
+                self.require_mutations()
+                if not MEMORY_MUTATIONS_ENABLED:
+                    raise PermissionError("memory mutations are disabled; set DUNE_ADMIN_MEMORY_MUTATIONS_ENABLED=true")
+                body = parse_body(self)
+                action = str(body.get("action") or "").strip().lower()
+                if action == "set-enabled":
+                    require_confirmation(body, CONFIRM_MEMORY_BALANCER)
+                    result = set_memory_balancer_enabled(bool(body.get("enabled")))
+                elif action == "tick":
+                    require_confirmation(body, CONFIRM_MEMORY_BALANCER)
+                    result = memory_balancer_tick()
+                elif action in ("set", "unset"):
+                    require_confirmation(body, CONFIRM_MEMORY_LIMIT)
+                    result = set_map_memory(body.get("service"), "unset" if action == "unset" else body.get("memory"))
+                else:
+                    raise ValueError("memory action must be set-enabled, tick, set, or unset")
+                self.audit("memory-control", ok=result.get("ok", True), memory_action=action, service=result.get("service"), enabled=result.get("enabled"), limit_bytes=result.get("limitBytes"))
+                self.json(result)
+            elif parsed.path == "/api/ops/autoscaler":
+                self.require_token()
+                self.require_mutations()
+                if not AUTOSCALER_MUTATIONS_ENABLED:
+                    raise PermissionError("autoscaler mutations are disabled; set DUNE_ADMIN_AUTOSCALER_MUTATIONS_ENABLED=true")
+                body = parse_body(self)
+                require_confirmation(body, CONFIRM_AUTOSCALER)
+                action = str(body.get("action") or "").strip().lower()
+                result = autoscaler_control(
+                    action, body.get("service"), body.get("mode"),
+                    body.get("idle_seconds", body.get("idleSeconds")), body,
+                )
+                self.audit(
+                    "autoscaler-control", ok=not bool(result.get("lastError")),
+                    autoscaler_action=action, service=body.get("service"), mode=body.get("mode"),
+                    profile=result.get("profile"), enabled=result.get("enabled"),
+                    retention_seconds=result.get("retentionSeconds"),
+                    max_warm_maps=result.get("maxWarmDynamicMaps"),
+                    min_available_memory_bytes=result.get("minAvailableMemoryBytes"),
+                )
+                self.json(result)
+            elif parsed.path == "/api/ops/backups/create":
+                self.require_token()
+                if not BACKUP_MUTATIONS_ENABLED:
+                    raise PermissionError("browser backup mutations are disabled; set DUNE_ADMIN_BACKUP_MUTATIONS_ENABLED=true")
+                parse_body(self)
+                result = create_full_backup()
+                self.audit("backup-create-full", ok=result.get("ok"), path=result.get("path"))
+                self.json(result)
+            elif parsed.path == "/api/ops/backups/schedule":
+                self.require_token()
+                self.require_mutations()
+                if not BACKUP_MUTATIONS_ENABLED:
+                    raise PermissionError("browser backup mutations are disabled; set DUNE_ADMIN_BACKUP_MUTATIONS_ENABLED=true")
+                body = parse_body(self)
+                require_confirmation(body, CONFIRM_BACKUP_SCHEDULE)
+                result = configure_backup_schedule(body)
+                self.audit("backup-schedule", ok=True, enabled=result.get("enabled"), time=result.get("time"), interval_hours=result.get("intervalHours"), retention_days=result.get("retentionDays"))
+                self.json(result)
+            elif parsed.path == "/api/ops/backups/import":
+                self.require_token()
+                if not BACKUP_MUTATIONS_ENABLED:
+                    raise PermissionError("browser backup mutations are disabled; set DUNE_ADMIN_BACKUP_MUTATIONS_ENABLED=true")
+                body = parse_body(self, max_bytes=BACKUP_IMPORT_MAX_BODY_BYTES)
+                require_confirmation(body, CONFIRM_BACKUP_IMPORT)
+                result = import_backup_archive(body.get("name"), body.get("archive_base64", body.get("archiveBase64")), body.get("sha256", ""))
+                self.audit("backup-import", ok=result.get("ok"), path=result.get("path"), size=result.get("sizeBytes"), sha256=result.get("sha256"))
+                self.json(result)
+            elif parsed.path == "/api/ops/backups/delete":
+                self.require_token()
+                if not BACKUP_MUTATIONS_ENABLED:
+                    raise PermissionError("browser backup mutations are disabled; set DUNE_ADMIN_BACKUP_MUTATIONS_ENABLED=true")
+                body = parse_body(self)
+                require_confirmation(body, CONFIRM_BACKUP_DELETE)
+                result = delete_backup_set(body.get("path"))
+                self.audit("backup-delete", ok=result.get("ok"), path=result.get("path"), recovery_path=result.get("recoveryPath"))
+                self.json(result)
+            elif parsed.path == "/api/ops/backups/restore":
+                self.require_token()
+                body = parse_body(self)
+                dry_run = str(body.get("dry_run", body.get("dryRun", "true"))).lower() not in ("0", "false", "no", "off")
+                if not dry_run:
+                    self.require_mutations()
+                    if not BACKUP_RESTORE_ENABLED:
+                        raise PermissionError("browser restore is disabled; set DUNE_ADMIN_BACKUP_RESTORE_ENABLED=true")
+                    require_confirmation(body, CONFIRM_BACKUP_RESTORE)
+                result = restore_backup_set(body.get("path"), body.get("layers"), dry_run=dry_run)
+                self.audit("backup-restore", ok=result.get("ok"), dry_run=dry_run, path=result.get("path"), layers=result.get("layers"), pre_restore=(result.get("preRestoreBackup") or {}).get("path"))
+                self.json(result)
+            elif parsed.path == "/api/ops/database/query":
+                self.require_token()
+                if not DATABASE_QUERY_ENABLED:
+                    raise PermissionError("database query console is disabled; set DUNE_ADMIN_DATABASE_QUERY_ENABLED=true")
+                body = parse_body(self)
+                sql = normalize_database_sql(body.get("sql", body.get("query", "")))
+                read_only = database_sql_is_read_only(sql)
+                backup = None
+                if not read_only:
+                    self.require_mutations()
+                    if not DATABASE_WRITE_ENABLED:
+                        raise PermissionError("database write SQL is disabled; set DUNE_ADMIN_DATABASE_WRITE_ENABLED=true")
+                    require_confirmation(body, CONFIRM_DATABASE_WRITE)
+                    backup = create_db_backup()
+                result = run_database_sql(db_connect, sql, allow_write=not read_only, max_rows=body.get("max_rows", body.get("maxRows", 200)))
+                result["backup"] = backup
+                self.audit("database-query", ok=result.get("ok"), read_only=read_only, sql_sha256=hashlib.sha256(sql.encode("utf-8")).hexdigest(), rows=result.get("rowCount"), affected=result.get("affectedRows"))
+                self.json(result)
+            elif parsed.path == "/api/ops/database/row":
+                self.require_token()
+                self.require_mutations()
+                if not DATABASE_ROW_MUTATIONS_ENABLED:
+                    raise PermissionError("database row mutations are disabled; set DUNE_ADMIN_DATABASE_ROW_MUTATIONS_ENABLED=true")
+                body = parse_body(self)
+                require_confirmation(body, CONFIRM_DATABASE_ROW_UPDATE)
+                backup = create_db_backup()
+                result = update_database_row(db_connect, body.get("schema"), body.get("table"), body.get("row_ref", body.get("rowRef")), body.get("values"))
+                result["backup"] = backup
+                self.audit("database-row-update", ok=result.get("ok"), schema=result.get("schema"), table=result.get("table"), columns=sorted((body.get("values") or {}).keys()))
+                self.json(result)
+            elif parsed.path == "/api/ops/database/password":
+                self.require_token()
+                self.require_mutations()
+                if not DATABASE_PASSWORD_MUTATIONS_ENABLED:
+                    raise PermissionError("database password rotation is disabled; set DUNE_ADMIN_DATABASE_PASSWORD_MUTATIONS_ENABLED=true")
+                body = parse_body(self)
+                require_confirmation(body, CONFIRM_DATABASE_PASSWORD)
+                online = query("select count(*)::int as count from dune.player_state where online_status::text='Online'")[0]["count"]
+                if int(online) > 0:
+                    raise PermissionError("database password rotation requires zero online players")
+                backup = create_db_backup()
+                result = rotate_database_password(db_connect, body.get("password"))
+                result["backup"] = backup
+                self.audit("database-password-rotation", ok=result.get("ok"), user="dune", password="[redacted]", restart_required=True)
+                self.json(result)
             elif parsed.path == "/api/settings/director-transfer":
                 self.require_token()
                 body = parse_body(self)
@@ -3690,9 +7405,15 @@ class Handler(BaseHTTPRequestHandler):
                 self.require_token()
                 body = parse_body(self)
                 dry_run = str(body.get("dry_run", "")).lower() in ("1", "true", "yes", "on")
+                has_augments = bool(body.get("augments"))
                 if not dry_run:
                     self.require_mutations()
                     self.require_item_grants()
+                    if has_augments:
+                        if not AUGMENT_MUTATIONS_ENABLED:
+                            raise PermissionError("augment mutations are disabled; set DUNE_ADMIN_AUGMENT_MUTATIONS_ENABLED=true")
+                        require_confirmation(body, CONFIRM_GRANT_AUGMENTED_ITEM)
+                        body["_augment_backup"] = create_db_backup()
                 result = self.grant_item(body)
                 if not dry_run:
                     result["privateMessage"] = self.notify_grant_private_message(body, result, result.get("template_id", "item"), result.get("stack_size"))
@@ -3721,6 +7442,128 @@ class Handler(BaseHTTPRequestHandler):
                 body = parse_body(self)
                 result = self.economy_bundle(body)
                 self.audit("economy-bundle", ok=result.get("ok"), dry_run=result.get("dryRun"), steps=len(result.get("plan", [])))
+                self.json(result)
+            elif parsed.path == "/api/admin/care-packages":
+                self.require_token()
+                body = parse_body(self)
+                action = str(body.get("action") or "grant").strip().lower()
+                if action == "scan":
+                    dry_run = str(body.get("dry_run", body.get("dryRun", "true"))).lower() not in ("0", "false", "no", "off")
+                    if not dry_run:
+                        self.require_mutations()
+                        if not CARE_PACKAGES_AUTO_ENABLED:
+                            raise PermissionError("automatic care packages are disabled; set DUNE_ADMIN_CARE_PACKAGES_AUTO_ENABLED=true")
+                        if not CARE_PACKAGES_ENABLED or not BUNDLE_MUTATIONS_ENABLED:
+                            raise PermissionError("automatic scans require the care-package and bundle mutation gates")
+                        require_confirmation(body, CONFIRM_CARE_PACKAGE_SCAN)
+                    result = care_package_auto_scan(dry_run=dry_run)
+                elif action == "retry":
+                    self.require_mutations()
+                    require_confirmation(body, CONFIRM_CARE_PACKAGE_RETRY)
+                    result = self.care_package_grant(dict(body, dry_run=False, confirm=CONFIRM_CARE_PACKAGE_GRANT, source="retry"))
+                elif action == "clear-history":
+                    self.require_mutations()
+                    require_confirmation(body, CONFIRM_CARE_PACKAGE_CLEAR)
+                    removed = len(care_package_history(1000))
+                    BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
+                    if CARE_PACKAGE_HISTORY_FILE.exists():
+                        backup_file(CARE_PACKAGE_HISTORY_FILE)
+                    CARE_PACKAGE_HISTORY_FILE.write_text("", encoding="utf-8")
+                    result = {"ok": True, "removed": removed, "firstOnlineClaimsPreserved": True}
+                elif action == "grant":
+                    result = self.care_package_grant(body)
+                else:
+                    raise ValueError("care package action must be grant, scan, retry, or clear-history")
+                self.audit("care-package", ok=result.get("ok"), care_package_action=action, dry_run=result.get("dryRun"), package_id=result.get("packageId"), account_id=result.get("accountId"), eligible=result.get("eligible"), granted=result.get("granted"), failed=result.get("failed"))
+                self.json(result)
+            elif parsed.path == "/api/admin/blueprints":
+                self.require_token()
+                body = parse_body(self, max_bytes=BLUEPRINT_MAX_BODY_BYTES)
+                action = str(body.get("action", "import")).strip().lower()
+                dry_run = str(body.get("dry_run", body.get("dryRun", "true"))).lower() not in ("0", "false", "no", "off")
+                if action == "import":
+                    plan = blueprint_admin.plan_import(query, body.get("player_pawn_id", body.get("playerPawnId")), body.get("blueprint"), body.get("filename", ""))
+                    if dry_run:
+                        result = dict(plan, executionGate="DUNE_ADMIN_BLUEPRINT_MUTATIONS_ENABLED", confirm=CONFIRM_BLUEPRINT_IMPORT)
+                    else:
+                        self.require_mutations()
+                        self.require_item_grants()
+                        if not BLUEPRINT_MUTATIONS_ENABLED:
+                            raise PermissionError("blueprint mutations are disabled; set DUNE_ADMIN_BLUEPRINT_MUTATIONS_ENABLED=true")
+                        require_confirmation(body, CONFIRM_BLUEPRINT_IMPORT)
+                        backup = create_db_backup()
+                        result = blueprint_admin.import_blueprint(db_connect, plan["playerPawnId"], plan["archive"], plan["archive"]["name"])
+                        result.update({"dryRun": False, "backup": backup})
+                elif action == "delete":
+                    blueprint_id = int(body.get("blueprint_id", body.get("blueprintId")))
+                    archive = blueprint_admin.export_blueprint(query, blueprint_id)
+                    if dry_run:
+                        result = {"ok": True, "dryRun": True, "blueprintId": blueprint_id, "archive": archive, "executionGate": "DUNE_ADMIN_BLUEPRINT_MUTATIONS_ENABLED", "confirm": CONFIRM_BLUEPRINT_DELETE}
+                    else:
+                        self.require_mutations()
+                        self.require_item_grants()
+                        if not BLUEPRINT_MUTATIONS_ENABLED:
+                            raise PermissionError("blueprint mutations are disabled; set DUNE_ADMIN_BLUEPRINT_MUTATIONS_ENABLED=true")
+                        require_confirmation(body, CONFIRM_BLUEPRINT_DELETE)
+                        backup = create_db_backup()
+                        result = blueprint_admin.delete_blueprint(db_connect, blueprint_id)
+                        result.update({"dryRun": False, "backup": backup, "archive": archive})
+                else:
+                    raise ValueError("action must be import or delete")
+                self.audit("blueprint", ok=result.get("ok"), blueprint_action=action, dry_run=result.get("dryRun"), blueprint_id=result.get("blueprintId"), player_pawn_id=result.get("playerPawnId"))
+                self.json(result)
+            elif parsed.path == "/api/admin/augments":
+                self.require_token()
+                body = parse_body(self)
+                action = str(body.get("action", "apply")).strip().lower()
+                if action != "apply":
+                    raise ValueError("action must be apply")
+                item_id = int(body.get("item_id", body.get("itemId")))
+                grade = body.get("grade", body.get("augment_grade", 1))
+                augments = body.get("augments") or []
+                rows = query("""
+                    select i.id,i.template_id,i.stats,ps.account_id,ps.character_name,
+                           ps.player_controller_id,ps.online_status::text
+                    from dune.items i join dune.inventories inv on inv.id=i.inventory_id
+                    left join dune.player_state ps on ps.player_pawn_id=inv.actor_id or ps.player_controller_id=inv.actor_id
+                    where i.id=%s limit 2
+                """, (item_id,))
+                if not rows:
+                    raise ValueError("item not found")
+                item = rows[0]
+                if not item.get("account_id"):
+                    raise ValueError("item is not in a directly owned player inventory")
+                metadata = catalog_item(item["template_id"]) or {"templateId": item["template_id"], "name": item["template_id"]}
+                built = augment_admin.build_stats(query, metadata, augments, grade, item.get("stats"))
+                dry_run = str(body.get("dry_run", body.get("dryRun", "true"))).lower() not in ("0", "false", "no", "off")
+                if dry_run:
+                    result = {
+                        "ok": True,
+                        "dryRun": True,
+                        "itemId": item_id,
+                        "templateId": item["template_id"],
+                        "accountId": item.get("account_id"),
+                        "characterName": item.get("character_name"),
+                        "ownerStatus": item.get("online_status"),
+                        "eligible": str(item.get("online_status") or "").lower() != "online",
+                        "augments": built["augments"],
+                        "grade": built["grade"],
+                        "compatibility": built["compatibility"],
+                        "slotKeystoneIds": augment_admin.slot_keystone_ids(built["compatibility"]),
+                        "before": item.get("stats") or {},
+                        "after": built["stats"],
+                        "confirm": CONFIRM_APPLY_AUGMENTS,
+                    }
+                else:
+                    self.require_mutations()
+                    self.require_item_grants()
+                    if not AUGMENT_MUTATIONS_ENABLED:
+                        raise PermissionError("augment mutations are disabled; set DUNE_ADMIN_AUGMENT_MUTATIONS_ENABLED=true")
+                    require_confirmation(body, CONFIRM_APPLY_AUGMENTS)
+                    backup = create_db_backup()
+                    result = augment_admin.apply_to_item(db_connect, item_id, augments, grade, metadata)
+                    result.update({"dryRun": False, "backup": backup})
+                self.audit("item-augments", ok=result.get("ok"), dry_run=result.get("dryRun"), item_id=item_id, augments=result.get("augments"), grade=result.get("grade"))
                 self.json(result)
             elif parsed.path == "/api/admin/player-recovery/offline-teleport":
                 self.require_token()
@@ -3777,6 +7620,24 @@ class Handler(BaseHTTPRequestHandler):
                 body = parse_body(self)
                 result = self.landsraad_mutation(body)
                 self.audit("landsraad-mutation", ok=result.get("ok"), dry_run=result.get("dryRun"), landsraad_action=result.get("action"), term_id=result.get("termId"))
+                self.json(result)
+            elif parsed.path == "/api/admin/player-runtime-action":
+                self.require_token()
+                body = parse_body(self)
+                result = self.runtime_player_action(body)
+                self.audit("player-runtime-action", ok=result.get("ok"), dry_run=result.get("dryRun"), runtime_action=result.get("action"), account_id=result.get("accountId"), command=(result.get("publish") or {}).get("command"))
+                self.json(result)
+            elif parsed.path == "/api/admin/vehicle":
+                self.require_token()
+                body = parse_body(self)
+                result = self.vehicle_database_mutation(body)
+                self.audit("vehicle-mutation", ok=result.get("ok"), dry_run=result.get("dryRun"), vehicle_action=(result.get("plan") or {}).get("action"), account_id=(result.get("plan") or {}).get("accountId"), vehicle_id=(result.get("plan") or {}).get("vehicleId"))
+                self.json(result)
+            elif parsed.path == "/api/admin/player-maintenance":
+                self.require_token()
+                body = parse_body(self)
+                result = self.player_maintenance_mutation(body)
+                self.audit("player-maintenance", ok=result.get("ok"), dry_run=result.get("dryRun"), maintenance_action=(result.get("plan") or {}).get("action"), account_id=(result.get("plan") or {}).get("accountId"))
                 self.json(result)
             elif parsed.path == "/api/admin/guild":
                 self.require_token()
@@ -4755,6 +8616,8 @@ class Handler(BaseHTTPRequestHandler):
         quality_level = max(0, int(body.get("quality_level", 0)))
         position_index = body.get("position_index", "")
         stats = body.get("stats", {}) or {}
+        augment_ids = body.get("augments") or []
+        augment_grade = body.get("augment_grade", body.get("augmentGrade", 1))
         dry_run = str(body.get("dry_run", "")).lower() in ("1", "true", "yes", "on")
         if isinstance(stats, str):
             stats = json.loads(stats or "{}")
@@ -4786,8 +8649,29 @@ class Handler(BaseHTTPRequestHandler):
             "character_name": inventory.get("character_name"),
             "warnings": self.item_grant_warnings(inventory, template_id),
         }
+        if augment_ids:
+            if not inventory.get("account_id"):
+                raise ValueError("pre-augmented grants require a directly owned player inventory")
+            metadata = catalog_item(template_id) or {"templateId": template_id, "name": template_id}
+            built = augment_admin.build_stats(query, metadata, augment_ids, augment_grade, stats)
+            result.update({
+                "augments": built["augments"],
+                "augment_grade": built["grade"],
+                "stats": built["stats"],
+                "slot_keystone_ids": augment_admin.slot_keystone_ids(built["compatibility"]),
+                "owner_status": inventory.get("online_status"),
+                "eligible": str(inventory.get("online_status") or "").lower() != "online",
+                "confirm": CONFIRM_GRANT_AUGMENTED_ITEM,
+            })
         if dry_run:
             return result
+        if augment_ids:
+            granted = augment_admin.grant_augmented_item(
+                db_connect, inventory_id, template_id, stack_size, quality_level,
+                position_index, augment_ids, augment_grade, metadata,
+            )
+            granted.update({"dry_run": False, "warnings": result["warnings"], "backup": body.get("_augment_backup")})
+            return granted
         item_id = query("select dune.advance_items_id_sequencer(1) as item_id")[0]["item_id"]
         acquisition_time = int(body.get("acquisition_time") or time.time() * 1000)
         execute("""
@@ -5348,6 +9232,40 @@ class Handler(BaseHTTPRequestHandler):
             ],
         }
 
+    def command_console_operation(self, command_id):
+        """Execute one exact read-only console operation without a subprocess."""
+        if command_id == "landsraad-cycle":
+            checked = gameplay_presets.validate_landsraad_cycle(CONFIG_ROOT)
+            return {"ok": True, "weeklyCycleDays": 7, "checked": checked, "message": "Landsraad Coriolis guard OK: weekly cycle=7 days"}
+        if command_id == "stack-status":
+            health = self.ops_health()
+            return {"ok": True, "summary": health.get("summary"), "verdicts": health.get("verdicts"), "services": docker_service_inventory()}
+        if command_id == "rmq-health":
+            services = {row["service"]: row for row in docker_service_inventory()}
+            probes = [self.tcp_probe("admin-rmq", "admin-rmq", 5672), self.tcp_probe("game-rmq", "game-rmq", 5672)]
+            return {"ok": all(row.get("ok") for row in probes), "probes": probes, "services": [services.get("admin-rmq"), services.get("game-rmq"), services.get("rmq-auth-shim"), services.get("text-router")]}
+        if command_id == "inventory-audit":
+            counts = query("""
+                select
+                  (select count(*) from (select 1 from dune.items group by inventory_id,position_index having count(*)>1) duplicate_slots)::int as duplicate_slots,
+                  (select count(*) from dune.items where position_index<0)::int as negative_slots,
+                  (select count(*) from dune.items i join dune.inventories inv on inv.id=i.inventory_id where inv.max_item_count>=0 and i.position_index>=inv.max_item_count)::int as over_capacity_items
+            """)[0]
+            return {"ok": not any(int(value or 0) for value in counts.values()), "readOnly": True, **counts}
+        if command_id == "storage-status":
+            disk = shutil.disk_usage(ROOT)
+            backups = backup_inventory(50)
+            return {"ok": True, "workspace": {"path": str(ROOT), "totalBytes": disk.total, "usedBytes": disk.used, "freeBytes": disk.free, "usedPercent": round(disk.used / disk.total * 100, 1) if disk.total else None}, "backupSetsReturned": len(backups.get("sets") or []), "backupRoot": str(BACKUPS_ROOT), "containers": docker_container_stats(live_stats=False)}
+        if command_id == "cpu-affinity-status":
+            rows = []
+            for container in docker_project_containers():
+                labels = container.get("Labels") or {}
+                service = labels.get("com.docker.compose.service") or (container.get("Names") or [""])[0].lstrip("/")
+                detail = docker_api(f"/containers/{container.get('Id')}/json")
+                rows.append({"service": service, "state": container.get("State"), "cpusetCpus": (detail.get("HostConfig") or {}).get("CpusetCpus") or "unrestricted"})
+            return {"ok": True, "composeProject": DOCKER_COMPOSE_PROJECT, "containers": sorted(rows, key=lambda row: row["service"])}
+        raise ValueError("unknown command-console command id")
+
     def update_currency(self, body):
         controller_id = int(body["player_controller_id"])
         currency_id = int(body["currency_id"])
@@ -5532,6 +9450,117 @@ class Handler(BaseHTTPRequestHandler):
             item_body["dry_run"] = False
             executed.append({"type": "item", "result": self.grant_item(item_body)})
         return {"ok": True, "dryRun": False, "plan": plan, "executed": executed}
+
+    def care_package_grant(self, body):
+        package_id = str(body.get("package_id", body.get("packageId", ""))).strip()
+        account_id = int(body.get("account_id", body.get("accountId")))
+        dry_run = str(body.get("dry_run", body.get("dryRun", "true"))).lower() not in ("0", "false", "no", "off")
+        package = care_package_by_id(package_id)
+        if not package:
+            raise ValueError("care package id was not found")
+        players = query("""
+            select account_id, character_name, online_status::text,
+                   player_controller_id, player_pawn_id
+            from dune.player_state
+            where account_id=%s
+        """, (account_id,))
+        if not players:
+            raise ValueError("account_id not found")
+        player = players[0]
+        controller_id = player.get("player_controller_id")
+        if controller_id in (None, "") and (package["currency"] or package["xp"]):
+            raise ValueError("target player has no player_controller_id for currency or XP actions")
+
+        previous = [
+            row for row in care_package_history(1000)
+            if row.get("ok") and row.get("packageId") == package_id and int(row.get("accountId") or 0) == account_id
+        ]
+        blockers = []
+        if not package["enabled"]:
+            blockers.append("package is disabled in config/care-packages.json")
+        if package["oncePerAccount"] and previous:
+            blockers.append("package is limited to one successful grant per account")
+        cooldown_hours = int(package["cooldownHours"] or 0)
+        if cooldown_hours and previous:
+            try:
+                latest = datetime.datetime.fromisoformat(str(previous[0].get("timestamp") or "").replace("Z", "+00:00"))
+                eligible_at = latest + datetime.timedelta(hours=cooldown_hours)
+                if datetime.datetime.now(datetime.timezone.utc) < eligible_at:
+                    blockers.append(f"package cooldown is active until {eligible_at.isoformat()}")
+            except ValueError:
+                blockers.append("package history timestamp is invalid; refusing cooldown bypass")
+
+        items = []
+        for row in package["items"]:
+            if not isinstance(row, dict):
+                raise ValueError(f"care package {package_id} contains a non-object item action")
+            item = dict(row)
+            item.pop("inventory_id", None)
+            item.pop("inventoryId", None)
+            item["account_id"] = account_id
+            items.append(item)
+        currency = []
+        for row in package["currency"]:
+            if not isinstance(row, dict):
+                raise ValueError(f"care package {package_id} contains a non-object currency action")
+            action = dict(row)
+            action["player_controller_id"] = int(controller_id)
+            action.setdefault("mode", "add")
+            currency.append(action)
+        xp = []
+        for row in package["xp"]:
+            if not isinstance(row, dict):
+                raise ValueError(f"care package {package_id} contains a non-object XP action")
+            action = dict(row)
+            action["player_id"] = int(controller_id)
+            action.setdefault("mode", "add")
+            xp.append(action)
+        if not items and not currency and not xp:
+            raise ValueError("care package has no item, currency, or XP actions")
+
+        bundle = {"dry_run": dry_run, "items": items, "currency": currency, "xp": xp}
+        preview = self.economy_bundle(dict(bundle, dry_run=True))
+        result = {
+            "ok": True,
+            "dryRun": dry_run,
+            "packageId": package_id,
+            "accountId": account_id,
+            "player": player,
+            "package": package,
+            "eligible": not blockers,
+            "blockers": blockers,
+            "previousSuccessfulGrants": len(previous),
+            "bundle": preview,
+            "executionGate": "DUNE_ADMIN_CARE_PACKAGES_ENABLED",
+            "confirm": CONFIRM_CARE_PACKAGE_GRANT,
+        }
+        if dry_run:
+            return result
+
+        self.require_mutations()
+        if not CARE_PACKAGES_ENABLED:
+            raise PermissionError("care package grants are disabled; set DUNE_ADMIN_CARE_PACKAGES_ENABLED=true")
+        if not BUNDLE_MUTATIONS_ENABLED:
+            raise PermissionError("care package grants require DUNE_ADMIN_BUNDLE_MUTATIONS_ENABLED=true")
+        require_confirmation(body, CONFIRM_CARE_PACKAGE_GRANT)
+        if blockers:
+            raise PermissionError("care package is not eligible: " + "; ".join(blockers))
+        backup = create_db_backup()
+        executed = self.economy_bundle(dict(bundle, dry_run=False, confirm=CONFIRM_BUNDLE_MUTATION))
+        append_care_package_history({
+            "ok": bool(executed.get("ok")),
+            "status": "granted" if executed.get("ok") else "failed",
+            "source": str(body.get("source") or "manual"),
+            "ruleId": body.get("rule_id", body.get("ruleId")),
+            "grantWhen": body.get("grant_when", body.get("grantWhen")),
+            "packageId": package_id,
+            "accountId": account_id,
+            "characterName": player.get("character_name"),
+            "backupPath": backup.get("path"),
+            "actions": {"items": len(items), "currency": len(currency), "xp": len(xp)},
+        })
+        result.update({"dryRun": False, "backup": backup, "bundle": executed})
+        return result
 
     def offline_player_recovery(self, body):
         account_id = int(body.get("account_id", body.get("accountId")))
@@ -5725,7 +9754,7 @@ class Handler(BaseHTTPRequestHandler):
                     "defaultDryRun": True,
                     "executionGate": "DUNE_ADMIN_LANDSRAAD_MUTATIONS_ENABLED",
                     "confirm": CONFIRM_LANDSRAAD_MUTATION,
-                    "actions": ["change-end-time", "force-end"],
+                    "actions": ["change-end-time", "force-end", "task-goal", "term-task-goals", "reward-tier", "player-contribution"],
                     "confidence": "moderate",
                 },
                 "guild": {
@@ -6927,6 +10956,384 @@ class Handler(BaseHTTPRequestHandler):
         after = query("select * from dune.player_respawn_locations where account_id=%s order by last_used_timestamp desc nulls last", (account_id,))
         return {"ok": True, "dryRun": False, "accountId": account_id, "respawnId": respawn_id, "action": action, "before": current_rows, "after": after, "rollback": plan["rollback"]}
 
+    def runtime_player_action(self, body):
+        action = str(body.get("action", "")).strip().lower()
+        dry_run = str(body.get("dry_run", body.get("dryRun", "true"))).lower() not in ("0", "false", "no", "off")
+        account_id = None
+        player = {}
+        fls_id = "*"
+        if action != "kick-all":
+            account_id = int(body.get("account_id", body.get("accountId", 0)) or 0)
+            if account_id <= 0:
+                raise ValueError("account_id is required")
+            rows = query("""
+                select ps.account_id, ps.character_name, ps.online_status::text,
+                       ps.player_controller_id, ps.player_pawn_id, a.funcom_id
+                from dune.player_state ps
+                join dune.accounts a on a.id=ps.account_id
+                where ps.account_id=%s
+                limit 1
+            """, (account_id,))
+            if not rows:
+                raise ValueError("account_id was not found")
+            player = rows[0]
+            fls_id = str(player.get("funcom_id") or "").strip()
+            if not fls_id:
+                raise ValueError("target account has no Funcom player id")
+            online = str(player.get("online_status") or "Offline").lower() == "online"
+            if action in native_command_admin.ONLINE_REQUIRED and not online:
+                raise ValueError(f"{action} requires an online player")
+            force = str(body.get("force", "false")).lower() in ("1", "true", "yes", "on")
+            if action == "kick" and not online and not force:
+                raise ValueError("kick refuses an offline target unless force=true")
+        skill_modules = native_command_admin.load_catalog(ADMIN_SKILL_MODULES_FILE)
+        vehicles = native_command_admin.load_catalog(ADMIN_VEHICLES_FILE)
+        inner, metadata = native_command_admin.build_inner(action, fls_id, body, skill_modules, vehicles)
+        configured_token = os.environ.get("DUNE_SERVER_COMMANDS_AUTH_TOKEN", "")
+        preview_outer = native_command_admin.build_outer(configured_token or "<configured-at-execution>", inner)
+        result = {
+            "ok": True, "dryRun": dry_run, "action": action, "accountId": account_id,
+            "player": {key: value for key, value in player.items() if key != "funcom_id"},
+            "payload": native_command_admin.public_preview(preview_outer), "metadata": metadata,
+            "path": "game-rmq:heartbeats/notifications",
+            "executionGate": "DUNE_ADMIN_PLAYER_RUNTIME_MUTATIONS_ENABLED",
+            "confirm": CONFIRM_KICK_ALL_PLAYERS if action == "kick-all" else CONFIRM_RUNTIME_PLAYER_ACTION,
+        }
+        if dry_run:
+            return result
+        self.require_mutations()
+        if not PLAYER_RUNTIME_MUTATIONS_ENABLED:
+            raise PermissionError("player runtime mutations are disabled; set DUNE_ADMIN_PLAYER_RUNTIME_MUTATIONS_ENABLED=true")
+        if not GM_COMMANDS_ENABLED:
+            raise PermissionError("native command transport is disabled; set DUNE_ADMIN_GM_COMMANDS_ENABLED=true")
+        require_confirmation(body, CONFIRM_KICK_ALL_PLAYERS if action == "kick-all" else CONFIRM_RUNTIME_PLAYER_ACTION)
+        before_vehicle_id = 0
+        if action == "spawn-vehicle":
+            maximum = query("select coalesce(max(id),0) as id from dune.vehicles")
+            before_vehicle_id = int((maximum or [{}])[0].get("id") or 0)
+            result["backup"] = create_db_backup()
+        result.update({"dryRun": False, "publish": publish_native_player_notification(inner)})
+        if action == "spawn-vehicle":
+            vehicle = metadata.get("vehicle") or {}
+            result["permissionRepair"] = self.repair_spawned_vehicle_permissions(
+                account_id, str(vehicle.get("actor_class") or ""),
+                float(inner["X"]), float(inner["Y"]), float(inner["Z"]), before_vehicle_id,
+            )
+        return result
+
+    def repair_spawned_vehicle_permissions(self, account_id, actor_class, x, y, z, before_vehicle_id):
+        if not actor_class:
+            return {"ok": False, "warning": "vehicle catalog has no actor class"}
+        for attempt in range(1, 11):
+            candidates = query("""
+                select a.id, ps.player_controller_id, a.class
+                from dune.vehicles v
+                join dune.actors a on a.id=v.id
+                join dune.player_state ps on ps.account_id=%s
+                where v.id > %s and a.class=%s and a.transform is not null
+                  and abs(((a.transform).location).x::float8-%s) <= 5000
+                  and abs(((a.transform).location).y::float8-%s) <= 5000
+                  and abs(((a.transform).location).z::float8-%s) <= 5000
+                order by power(((a.transform).location).x::float8-%s,2)+power(((a.transform).location).y::float8-%s,2)+power(((a.transform).location).z::float8-%s,2), a.id desc
+                limit 1
+            """, (account_id, before_vehicle_id, actor_class, x, y, z, x, y, z))
+            if candidates:
+                candidate = candidates[0]
+                vehicle_id = int(candidate["id"])
+                controller_id = int(candidate["player_controller_id"])
+                actor_name = "##" + re.sub(r"^BP_", "", str(candidate.get("class") or "").split(".")[-1]).removesuffix("_C")
+                with db_connect() as connection:
+                    with connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
+                        cursor.execute("insert into dune.permission_actor(actor_id,actor_name,actor_type,access_level,is_child) values (%s,%s,2,3,false) on conflict (actor_id) do nothing", (vehicle_id, actor_name))
+                        cursor.execute("insert into dune.permission_actor_rank(permission_actor_id,player_id,rank) values (%s,%s,1) on conflict do nothing", (vehicle_id, controller_id))
+                return {"ok": True, "vehicleId": vehicle_id, "playerControllerId": controller_id, "attempt": attempt}
+            time.sleep(1)
+        return {"ok": False, "warning": "no newly spawned matching vehicle was found; inspect permission_actor_rank"}
+
+    def player_maintenance_mutation(self, body):
+        action = str(body.get("action", "")).strip().lower()
+        progression_actions = ("add-intel", "unlock-recipe", "unlock-research", "specialization-max", "specialization-reset", "keystones-grant-all")
+        if action not in progression_actions + ("repair-gear", "repair-login-queue"):
+            raise ValueError("unsupported player maintenance action")
+        account_id = int(body.get("account_id", body.get("accountId", 0)) or 0)
+        if account_id <= 0:
+            raise ValueError("account_id is required")
+        players = query("""
+            select ps.account_id, ps.player_pawn_id, ps.player_controller_id, ps.online_status::text,
+                   ps.character_name, a.funcom_id
+            from dune.player_state ps join dune.accounts a on a.id=ps.account_id
+            where ps.account_id=%s
+        """, (account_id,))
+        if not players:
+            raise ValueError("account_id was not found")
+        player = players[0]
+        online = str(player.get("online_status") or "Offline").lower() == "online"
+        force = str(body.get("force", "false")).lower() in ("1", "true", "yes", "on")
+        dry_run = str(body.get("dry_run", body.get("dryRun", "true"))).lower() not in ("0", "false", "no", "off")
+        if action in progression_actions:
+            if online:
+                raise ValueError(f"{action} requires the player to be offline")
+            pawn_id = int(player.get("player_pawn_id") or 0)
+            if action in ("specialization-max", "specialization-reset"):
+                track = str(body.get("track_type", body.get("trackType", ""))).strip()
+                if not re.fullmatch(r"[A-Za-z0-9_]+", track):
+                    raise ValueError("track_type is invalid")
+                known_track = query("select exists(select 1 from unnest(enum_range(null::dune.specializationtracktype)) value where value::text=%s) as found", (track,))
+                if not known_track or not known_track[0].get("found"):
+                    raise ValueError("track_type was not found")
+                current_track = query("select xp_amount,level from dune.specialization_tracks where player_id=%s and track_type::text=%s", (int(player.get("player_controller_id") or 0), track))
+                plan = {"action": action, "accountId": account_id, "playerId": int(player.get("player_controller_id") or 0), "trackType": track, "before": current_track, "xp": 44182 if action == "specialization-max" else 0, "level": 100 if action == "specialization-max" else 0}
+            elif action == "keystones-grant-all":
+                counts = query("select (select count(*) from dune.specialization_keystones_map) as available,(select count(*) from dune.purchased_specialization_keystones where player_id=%s) as purchased", (int(player.get("player_controller_id") or 0),))
+                plan = {"action": action, "accountId": account_id, "playerId": int(player.get("player_controller_id") or 0), **(counts[0] if counts else {"available": 0, "purchased": 0})}
+            elif action == "add-intel":
+                amount = int(body.get("amount", 0))
+                if not 1 <= amount <= 1000000000:
+                    raise ValueError("amount must be from 1 to 1000000000")
+                current_rows = query("select (properties->'TechKnowledgePlayerComponent'->>'m_TechKnowledgePoints')::bigint as value from dune.actors where id=%s and properties ? 'TechKnowledgePlayerComponent'", (pawn_id,))
+                if not current_rows:
+                    raise ValueError("TechKnowledgePlayerComponent was not found for the player")
+                old_value = int(current_rows[0].get("value") or 0)
+                new_value = min(2779, old_value + amount)
+                plan = {"action": action, "accountId": account_id, "oldValue": old_value, "newValue": new_value, "requested": amount, "cap": 2779}
+            elif action == "unlock-recipe":
+                key = str(body.get("key", body.get("recipe_id", body.get("recipeId", "")))).strip()
+                if not re.fullmatch(r"[A-Za-z0-9_().-]+", key):
+                    raise ValueError("crafting recipe ID is invalid")
+                known = query("select exists(select 1 from dune.actors a cross join lateral jsonb_array_elements(coalesce(a.properties->'CraftingRecipesLibraryActorComponent'->'m_KnownItemRecipes','[]'::jsonb)) recipe where recipe->'BaseRecipeId'->>'Name'=%s) as found", (key,))
+                if not known or not known[0].get("found"):
+                    raise ValueError("crafting recipe was not found in the game database")
+                current_rows = query("select properties->'CraftingRecipesLibraryActorComponent'->'m_KnownItemRecipes' as values from dune.actors where id=%s and properties ? 'CraftingRecipesLibraryActorComponent'", (pawn_id,))
+                if not current_rows:
+                    raise ValueError("CraftingRecipesLibraryActorComponent was not found for the player")
+                values = current_rows[0].get("values") if isinstance(current_rows[0].get("values"), list) else []
+                already = any(isinstance(value, dict) and (value.get("BaseRecipeId") or {}).get("Name") == key for value in values)
+                next_values = values if already else values + [{"m_Source": "SchematicPickup", "m_bIsNew": True, "BaseRecipeId": {"Name": key}, "m_QualityLevel": 0, "m_NumberOfRecipeUses": 0, "m_bIsLimitedUseRecipe": False}]
+                plan = {"action": action, "accountId": account_id, "key": key, "alreadyUnlocked": already, "values": next_values}
+            else:
+                key = str(body.get("key", body.get("item_key", body.get("itemKey", "")))).strip()
+                if not re.fullmatch(r"[A-Za-z0-9_().+\-]+", key):
+                    raise ValueError("research key is invalid")
+                known = query("select exists(select 1 from dune.actors a cross join lateral jsonb_array_elements(coalesce(a.properties->'TechKnowledgePlayerComponent'->'m_TechKnowledge'->'m_TechKnowledgeData','[]'::jsonb)) item where item->>'ItemKey'=%s) as found", (key,))
+                if not known or not known[0].get("found"):
+                    raise ValueError("research key was not found in the game database")
+                current_rows = query("select properties->'TechKnowledgePlayerComponent'->'m_TechKnowledge'->'m_TechKnowledgeData' as values from dune.actors where id=%s and properties ? 'TechKnowledgePlayerComponent'", (pawn_id,))
+                if not current_rows:
+                    raise ValueError("TechKnowledgePlayerComponent was not found for the player")
+                values = current_rows[0].get("values") if isinstance(current_rows[0].get("values"), list) else []
+                found = False
+                next_values = []
+                for value in values:
+                    if isinstance(value, dict) and value.get("ItemKey") == key:
+                        found = True
+                        next_values.append({**value, "bIsNewEntry": False, "UnlockedState": "Purchased"})
+                    else:
+                        next_values.append(value)
+                if not found:
+                    next_values.append({"ItemKey": key, "bIsNewEntry": False, "UnlockedState": "Purchased"})
+                recipe_id = key[4:] if key.startswith("RCP_") else (key[4:] if key.startswith("BLD_") and key[4:].endswith("_Patent") else (f"{key[4:]}_Patent" if key.startswith("BLD_") else ""))
+                recipe_values = None
+                recipe_materialized = False
+                if recipe_id:
+                    recipe_known = query("select exists(select 1 from dune.actors a cross join lateral jsonb_array_elements(coalesce(a.properties->'CraftingRecipesLibraryActorComponent'->'m_KnownItemRecipes','[]'::jsonb)) recipe where recipe->'BaseRecipeId'->>'Name'=%s) as found", (recipe_id,))
+                    if recipe_known and recipe_known[0].get("found"):
+                        recipe_rows = query("select properties->'CraftingRecipesLibraryActorComponent'->'m_KnownItemRecipes' as values from dune.actors where id=%s and properties ? 'CraftingRecipesLibraryActorComponent'", (pawn_id,))
+                        if recipe_rows:
+                            recipe_values = recipe_rows[0].get("values") if isinstance(recipe_rows[0].get("values"), list) else []
+                            if not any(isinstance(value, dict) and (value.get("BaseRecipeId") or {}).get("Name") == recipe_id for value in recipe_values):
+                                recipe_values = recipe_values + [{"m_Source": "SchematicPickup", "m_bIsNew": True, "BaseRecipeId": {"Name": recipe_id}, "m_QualityLevel": 0, "m_NumberOfRecipeUses": 0, "m_bIsLimitedUseRecipe": False}]
+                                recipe_materialized = True
+                plan = {
+                    "action": action, "accountId": account_id, "key": key,
+                    "alreadyUnlocked": found and next(value for value in values if isinstance(value, dict) and value.get("ItemKey") == key).get("UnlockedState") == "Purchased",
+                    "values": next_values, "recipeId": recipe_id or None,
+                    "recipeMaterialized": recipe_materialized, "recipeValues": recipe_values,
+                }
+            if dry_run:
+                return {"ok": True, "dryRun": True, "plan": {key: value for key, value in plan.items() if key not in ("values", "recipeValues")}, "confirm": "WRITE PLAYER PROGRESSION"}
+            self.require_mutations()
+            if not PLAYER_RUNTIME_MUTATIONS_ENABLED:
+                raise PermissionError("player maintenance is disabled; set DUNE_ADMIN_PLAYER_RUNTIME_MUTATIONS_ENABLED=true")
+            require_confirmation(body, "WRITE PLAYER PROGRESSION")
+            backup = create_db_backup()
+            with db_connect() as connection:
+                with connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
+                    cursor.execute("select online_status::text from dune.player_state where account_id=%s for update", (account_id,))
+                    locked = cursor.fetchone()
+                    if not locked or str(locked.get("online_status") or "Offline").lower() == "online":
+                        raise ValueError("player became online; progression was not changed")
+                    if action == "specialization-max":
+                        cursor.execute("select dune.set_specialization_xp_and_level(%s,%s::dune.specializationtracktype,44182,100)", (plan["playerId"], plan["trackType"]))
+                        changed = 1
+                        continue_update_count = False
+                    elif action == "specialization-reset":
+                        cursor.execute("delete from dune.specialization_tracks where player_id=%s and track_type::text=%s", (plan["playerId"], plan["trackType"]))
+                        changed = cursor.rowcount
+                        continue_update_count = False
+                    elif action == "keystones-grant-all":
+                        cursor.execute("insert into dune.purchased_specialization_keystones(player_id,keystone_id) select %s,id from dune.specialization_keystones_map on conflict do nothing", (plan["playerId"],))
+                        changed = cursor.rowcount
+                        continue_update_count = False
+                    elif action == "add-intel":
+                        cursor.execute("update dune.actors set properties=jsonb_set(properties,'{TechKnowledgePlayerComponent,m_TechKnowledgePoints}',to_jsonb(%s::bigint)) where id=%s and properties ? 'TechKnowledgePlayerComponent'", (plan["newValue"], pawn_id))
+                    elif action == "unlock-recipe":
+                        cursor.execute("update dune.actors set properties=jsonb_set(properties,'{CraftingRecipesLibraryActorComponent,m_KnownItemRecipes}',%s::jsonb,true) where id=%s and properties ? 'CraftingRecipesLibraryActorComponent'", (json.dumps(plan["values"]), pawn_id))
+                    else:
+                        cursor.execute("update dune.actors set properties=jsonb_set(properties,'{TechKnowledgePlayerComponent,m_TechKnowledge,m_TechKnowledgeData}',%s::jsonb,true) where id=%s and properties ? 'TechKnowledgePlayerComponent'", (json.dumps(plan["values"]), pawn_id))
+                        research_changed = cursor.rowcount
+                        if research_changed == 1 and plan.get("recipeMaterialized") and isinstance(plan.get("recipeValues"), list):
+                            cursor.execute("update dune.actors set properties=jsonb_set(properties,'{CraftingRecipesLibraryActorComponent,m_KnownItemRecipes}',%s::jsonb,true) where id=%s and properties ? 'CraftingRecipesLibraryActorComponent'", (json.dumps(plan["recipeValues"]), pawn_id))
+                            if cursor.rowcount != 1:
+                                raise ValueError("research recipe component changed concurrently; no row was updated")
+                        changed = research_changed
+                        continue_update_count = False
+                    if action not in ("unlock-research", "specialization-max", "specialization-reset", "keystones-grant-all"):
+                        continue_update_count = True
+                    if continue_update_count:
+                        changed = cursor.rowcount
+                    if action not in ("specialization-reset", "keystones-grant-all") and changed != 1:
+                        raise ValueError("player progression component changed concurrently; no row was updated")
+            return {"ok": True, "dryRun": False, "plan": {key: value for key, value in plan.items() if key not in ("values", "recipeValues")}, "changed": changed, "backup": backup, "relogRequired": True}
+        if action == "repair-gear":
+            if online:
+                raise ValueError("gear repair requires the player to be offline")
+            rows = query("""
+                select i.id, i.template_id, i.stats
+                from dune.items i join dune.inventories inv on inv.id=i.inventory_id
+                where inv.actor_id=%s and inv.inventory_type in (0,1,14,15,27,30)
+                order by i.id
+            """, (int(player.get("player_pawn_id") or 0),))
+            repairable = []
+            for row in rows:
+                stats = row.get("stats") if isinstance(row.get("stats"), dict) else {}
+                values = stats.get("FItemStackAndDurabilityStats")
+                durability = values[1] if isinstance(values, list) and len(values) > 1 and isinstance(values[1], dict) else None
+                if not durability:
+                    continue
+                maximum = float(durability.get("MaxDurability") or 0)
+                current = float(durability.get("CurrentDurability") or 0)
+                decayed = float(durability.get("DecayedDurability") or 0)
+                target = maximum if math.isfinite(maximum) and maximum > 0 else max(current, decayed, 100)
+                if math.isfinite(target) and target > 0 and (current < target or decayed < target):
+                    repairable.append({"id": row["id"], "templateId": row.get("template_id"), "target": target})
+            plan = {"action": action, "accountId": account_id, "scanned": len(rows), "repairable": repairable}
+            if dry_run:
+                return {"ok": True, "dryRun": True, "plan": plan, "confirm": CONFIRM_REPAIR_GEAR}
+            self.require_mutations()
+            if not PLAYER_RUNTIME_MUTATIONS_ENABLED:
+                raise PermissionError("player maintenance is disabled; set DUNE_ADMIN_PLAYER_RUNTIME_MUTATIONS_ENABLED=true")
+            require_confirmation(body, CONFIRM_REPAIR_GEAR)
+            backup = create_db_backup()
+            changed = []
+            with db_connect() as connection:
+                with connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
+                    cursor.execute("select online_status::text from dune.player_state where account_id=%s for update", (account_id,))
+                    locked = cursor.fetchone()
+                    if not locked or str(locked.get("online_status") or "Offline").lower() == "online":
+                        raise ValueError("player became online; no gear was repaired")
+                    for item in repairable:
+                        cursor.execute("""
+                            update dune.items set stats=jsonb_set(
+                              jsonb_set(stats,'{FItemStackAndDurabilityStats,1,CurrentDurability}',to_jsonb(%s::numeric)),
+                              '{FItemStackAndDurabilityStats,1,DecayedDurability}',to_jsonb(%s::numeric))
+                            where id=%s returning id,template_id
+                        """, (item["target"], item["target"], item["id"]))
+                        updated = cursor.fetchone()
+                        if updated:
+                            changed.append(dict(updated))
+            return {"ok": True, "dryRun": False, "plan": plan, "changed": changed, "backup": backup, "relogRequired": True}
+
+        fls_id = str(player.get("funcom_id") or "").strip()
+        if not fls_id or not re.fullmatch(r"[A-Za-z0-9_+.#-]{1,200}", fls_id):
+            raise ValueError("player Funcom id cannot form a safe login queue name")
+        queue_name = f"{fls_id}_queue"
+        container = docker_service_container("game-rmq", running=True)
+        listed = docker_container_exec(str(container.get("Id") or ""), ["rabbitmqctl", "-q", "list_queues", "name", "consumers", "messages", "state"], timeout=30)
+        queue_row = None
+        for line in listed.get("output", "").splitlines():
+            columns = line.split("\t")
+            if columns and columns[0] == queue_name:
+                queue_row = {"name": queue_name, "consumers": int(columns[1] or 0), "messages": int(columns[2] or 0), "state": columns[3] if len(columns) > 3 else "unknown"}
+                break
+        plan = {"action": action, "accountId": account_id, "queue": queue_row, "exists": bool(queue_row), "online": online}
+        if dry_run or not queue_row:
+            return {"ok": True, "dryRun": dry_run, "plan": plan, "confirm": CONFIRM_REPAIR_LOGIN_QUEUE}
+        self.require_mutations()
+        if not PLAYER_RUNTIME_MUTATIONS_ENABLED:
+            raise PermissionError("player maintenance is disabled; set DUNE_ADMIN_PLAYER_RUNTIME_MUTATIONS_ENABLED=true")
+        if online and not force:
+            raise ValueError("player is online; login queue deletion requires force=true")
+        require_confirmation(body, CONFIRM_REPAIR_LOGIN_QUEUE)
+        deleted = docker_container_exec(str(container.get("Id") or ""), ["rabbitmqctl", "-q", "delete_queue", queue_name], timeout=30)
+        return {"ok": True, "dryRun": False, "plan": plan, "deleted": True, "broker": deleted}
+
+    def vehicle_database_mutation(self, body):
+        action = str(body.get("action", "")).strip().lower()
+        if action not in ("repair-decay", "refuel"):
+            raise ValueError("action must be repair-decay or refuel")
+        account_id = int(body.get("account_id", body.get("accountId", 0)) or 0)
+        if account_id <= 0:
+            raise ValueError("account_id is required")
+        players = query("select account_id, character_name, online_status::text from dune.player_state where account_id=%s", (account_id,))
+        if not players:
+            raise ValueError("account_id was not found")
+        if str(players[0].get("online_status") or "Offline").lower() == "online":
+            raise ValueError("vehicle database actions require the player to be offline")
+        threshold = float(body.get("threshold_percent", body.get("thresholdPercent", 50)) or 50)
+        vehicle_id = int(body.get("vehicle_id", body.get("vehicleId", 0)) or 0)
+        if action == "repair-decay" and not 1 <= threshold <= 100:
+            raise ValueError("threshold_percent must be between 1 and 100")
+        if action == "refuel" and vehicle_id <= 0:
+            raise ValueError("vehicle_id is required")
+        vehicles = query("select id, class, owner_account_id from dune.actors where owner_account_id=%s and class ilike '%%Vehicle%%' order by id limit 500", (account_id,))
+        plan = {"action": action, "accountId": account_id, "thresholdPercent": threshold, "vehicleId": vehicle_id or None, "vehicles": vehicles}
+        dry_run = str(body.get("dry_run", body.get("dryRun", "true"))).lower() not in ("0", "false", "no", "off")
+        if dry_run:
+            return {"ok": True, "dryRun": True, "plan": plan, "executionGate": "DUNE_ADMIN_VEHICLE_MUTATIONS_ENABLED", "confirm": CONFIRM_VEHICLE_REPAIR if action == "repair-decay" else CONFIRM_VEHICLE_REFUEL}
+        self.require_mutations()
+        if not VEHICLE_MUTATIONS_ENABLED:
+            raise PermissionError("vehicle mutations are disabled; set DUNE_ADMIN_VEHICLE_MUTATIONS_ENABLED=true")
+        require_confirmation(body, CONFIRM_VEHICLE_REPAIR if action == "repair-decay" else CONFIRM_VEHICLE_REFUEL)
+        backup = create_db_backup()
+        with db_connect() as connection:
+            with connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
+                cursor.execute("select account_id, online_status::text from dune.player_state where account_id=%s for update", (account_id,))
+                locked_player = cursor.fetchone()
+                if not locked_player or str(locked_player.get("online_status") or "Offline").lower() == "online":
+                    raise ValueError("player became online; no vehicle change was applied")
+                if action == "repair-decay":
+                    cursor.execute("""
+                        with eligible as (
+                          select vm.id, vm.vehicle_id, (durability->>'MaxDurability')::numeric as maximum
+                          from dune.vehicle_modules vm
+                          join dune.actors a on a.id=vm.vehicle_id
+                          cross join lateral (select vm.stats->'FVehicleModuleDurabilityStats'->1 as durability) d
+                          where a.owner_account_id=%s
+                            and jsonb_typeof(vm.stats->'FVehicleModuleDurabilityStats')='array'
+                            and jsonb_array_length(vm.stats->'FVehicleModuleDurabilityStats') >= 2
+                            and durability ? 'MaxDurability' and durability ? 'DecayedMaxDurability'
+                            and (durability->>'MaxDurability') ~ '^-?[0-9]+(\\.[0-9]+)?$'
+                            and (durability->>'DecayedMaxDurability') ~ '^-?[0-9]+(\\.[0-9]+)?$'
+                            and (durability->>'MaxDurability')::numeric > 0
+                            and (durability->>'DecayedMaxDurability')::numeric < (durability->>'MaxDurability')::numeric * %s
+                        )
+                        update dune.vehicle_modules vm
+                        set stats=jsonb_set(jsonb_set(vm.stats,'{FVehicleModuleDurabilityStats,1,CurrentDurability}',to_jsonb(eligible.maximum)),'{FVehicleModuleDurabilityStats,1,DecayedMaxDurability}',to_jsonb(eligible.maximum))
+                        from eligible where vm.id=eligible.id returning vm.id, vm.vehicle_id
+                    """, (account_id, threshold / 100))
+                    changed = [dict(row) for row in cursor.fetchall()]
+                else:
+                    cursor.execute("select id, class, owner_account_id from dune.actors where id=%s for update", (vehicle_id,))
+                    vehicle = cursor.fetchone()
+                    if not vehicle or int(vehicle.get("owner_account_id") or 0) != account_id:
+                        raise ValueError("vehicle was not found or is not owned by the selected account")
+                    bp_class = str(vehicle.get("class") or "").split(".")[-1]
+                    if not bp_class:
+                        raise ValueError("vehicle class could not be resolved")
+                    cursor.execute("update dune.actors set properties=jsonb_set(coalesce(properties,'{}'::jsonb),%s::text[],'1.0'::jsonb,true) where id=%s returning id", ([bp_class, "m_InitialFuel"], vehicle_id))
+                    changed = [dict(row) for row in cursor.fetchall()]
+        return {"ok": True, "dryRun": False, "plan": plan, "changed": changed, "backup": backup, "relogRequired": True}
+
     def landsraad_snapshot(self):
         errors = {}
         current = reference_query(errors, "currentTerm", "select * from dune.landsraad_load_current_term()")
@@ -6943,21 +11350,27 @@ class Handler(BaseHTTPRequestHandler):
 
     def landsraad_mutation(self, body):
         action = str(body.get("action", "")).strip().lower()
-        if action not in ("change-end-time", "force-end"):
-            raise ValueError("action must be change-end-time or force-end")
+        if action not in ("change-end-time", "force-end", "task-goal", "term-task-goals", "reward-tier", "player-contribution"):
+            raise ValueError("action must be change-end-time, force-end, task-goal, term-task-goals, reward-tier, or player-contribution")
         dry_run = str(body.get("dry_run", body.get("dryRun", "true"))).lower() not in ("0", "false", "no", "off")
         before = self.landsraad_snapshot()
         current_term = (before.get("currentTerm") or before.get("terms") or [{}])[0] if (before.get("currentTerm") or before.get("terms")) else {}
         term_id = int(body.get("term_id", body.get("termId", current_term.get("term_id") or 0)) or 0)
-        if term_id <= 0:
+        task_id = int(body.get("task_id", body.get("taskId", 0)) or 0)
+        if action in ("change-end-time", "force-end") and term_id <= 0:
+            raise ValueError("term_id is required")
+        if action in ("task-goal", "reward-tier", "player-contribution") and task_id <= 0:
+            raise ValueError("task_id is required")
+        if action == "term-task-goals" and term_id <= 0:
             raise ValueError("term_id is required")
         test_term = str(body.get("test_term", body.get("testTerm", current_term.get("testterm", False)))).lower() in ("1", "true", "yes", "on")
         plan = {
             "action": action,
             "termId": term_id,
+            "taskId": task_id or None,
             "testTerm": test_term,
             "before": before,
-            "function": "dune.landsraad_change_term_end_time" if action == "change-end-time" else "dune.landsraad_force_end_term",
+            "function": "dune.landsraad_change_term_end_time" if action == "change-end-time" else "dune.landsraad_force_end_term" if action == "force-end" else None,
         }
         if action == "change-end-time":
             new_end_time = str(body.get("new_end_time", body.get("newEndTime", ""))).strip()
@@ -6965,20 +11378,182 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("new_end_time is required for change-end-time")
             plan["newEndTime"] = new_end_time
             plan["rollback"] = {"action": "change-end-time", "term_id": term_id, "new_end_time": current_term.get("end_time"), "confirm": CONFIRM_LANDSRAAD_MUTATION}
-        else:
+        elif action == "force-end":
             plan["rollback"] = "force-end is not safely reversible"
+        elif action in ("task-goal", "term-task-goals"):
+            goal_amount = int(body.get("goal_amount", body.get("goalAmount", 0)))
+            if not 0 <= goal_amount <= 2147483647:
+                raise ValueError("goal_amount must be from 0 to 2147483647")
+            if action == "task-goal":
+                previous = query("select id,term_id,goal_amount from dune.landsraad_tasks where id=%s", (task_id,))
+                if not previous:
+                    raise ValueError("Landsraad task was not found")
+            else:
+                previous = query("select id,term_id,goal_amount from dune.landsraad_tasks where term_id=%s order by id", (term_id,))
+            plan.update({"goalAmount": goal_amount, "previous": previous, "rollback": [{"action": "task-goal", "task_id": row.get("id"), "goal_amount": row.get("goal_amount"), "confirm": CONFIRM_LANDSRAAD_MUTATION} for row in previous]})
+        elif action == "reward-tier":
+            old_threshold = int(body.get("threshold", 0))
+            new_threshold = int(body.get("new_threshold", body.get("newThreshold", old_threshold)))
+            template_id = str(body.get("template_id", body.get("templateId", ""))).strip()
+            amount = int(body.get("amount", 0))
+            if min(old_threshold, new_threshold, amount) < 0:
+                raise ValueError("reward thresholds and amount must be zero or greater")
+            if not template_id or len(template_id) > 256:
+                raise ValueError("template_id is required and must be at most 256 characters")
+            previous = query("select task_id, threshold, template_id, amount from dune.landsraad_task_rewards where task_id=%s and threshold=%s", (task_id, old_threshold))
+            if not previous:
+                raise ValueError("Landsraad reward tier was not found")
+            plan.update({"threshold": old_threshold, "newThreshold": new_threshold, "templateId": template_id, "amount": amount, "previous": previous, "rollback": {"action": "reward-tier", "task_id": task_id, "threshold": new_threshold, "new_threshold": old_threshold, "template_id": previous[0].get("template_id"), "amount": previous[0].get("amount"), "confirm": CONFIRM_LANDSRAAD_MUTATION}})
+        else:
+            account_id = int(body.get("account_id", body.get("accountId", 0)) or 0)
+            amount = float(body.get("amount", 0))
+            if account_id <= 0 or not 0 <= amount <= 1000000000:
+                raise ValueError("account_id and an amount from 0 to 1000000000 are required")
+            player_rows = query("select account_id, player_controller_id, player_pawn_id, online_status::text from dune.player_state where account_id=%s", (account_id,))
+            if not player_rows:
+                raise ValueError("account_id was not found")
+            controller_id = int(player_rows[0].get("player_controller_id") or 0)
+            factions = query("select faction_id from dune.player_faction where actor_id=%s order by faction_id limit 1", (controller_id,))
+            if not factions:
+                raise ValueError("player has no faction assignment")
+            previous = query("select * from dune.landsraad_task_player_contributions where player_id=%s and task_id=%s", (controller_id, task_id))
+            plan.update({"accountId": account_id, "playerId": controller_id, "factionId": factions[0].get("faction_id"), "amount": amount, "previous": previous, "rollback": {"action": "player-contribution", "task_id": task_id, "account_id": account_id, "amount": previous[0].get("amount", 0) if previous else 0, "confirm": CONFIRM_LANDSRAAD_MUTATION}})
         if dry_run:
             return {"ok": True, "dryRun": True, "action": action, "termId": term_id, "plan": plan, "executionGate": "DUNE_ADMIN_LANDSRAAD_MUTATIONS_ENABLED", "confirm": CONFIRM_LANDSRAAD_MUTATION}
         self.require_mutations()
         if not LANDSRAAD_MUTATIONS_ENABLED:
             raise PermissionError("landsraad mutations are disabled; set DUNE_ADMIN_LANDSRAAD_MUTATIONS_ENABLED=true")
         require_confirmation(body, CONFIRM_LANDSRAAD_MUTATION)
+        backup = create_db_backup()
         if action == "change-end-time":
             execute("select dune.landsraad_change_term_end_time(%s,%s::timestamp,%s)", (term_id, plan["newEndTime"], test_term))
-        else:
+        elif action == "force-end":
             execute("select dune.landsraad_force_end_term(%s)", (term_id,))
+        elif action in ("task-goal", "term-task-goals"):
+            with db_connect() as connection:
+                with connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
+                    if action == "task-goal":
+                        cursor.execute("update dune.landsraad_tasks set goal_amount=%s where id=%s returning id,term_id,goal_amount", (plan["goalAmount"], task_id))
+                    else:
+                        cursor.execute("update dune.landsraad_tasks set goal_amount=%s where term_id=%s returning id,term_id,goal_amount", (plan["goalAmount"], term_id))
+                    changed = [dict(row) for row in cursor.fetchall()]
+                    if action == "task-goal" and not changed:
+                        raise ValueError("Landsraad task changed concurrently; no row was updated")
+            plan["changed"] = changed
+        elif action == "reward-tier":
+            with db_connect() as connection:
+                with connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
+                    cursor.execute("""
+                        update dune.landsraad_task_rewards
+                        set threshold=%s, template_id=%s, amount=%s
+                        where task_id=%s and threshold=%s
+                        returning task_id, threshold, template_id, amount
+                    """, (plan["newThreshold"], plan["templateId"], plan["amount"], task_id, plan["threshold"]))
+                    if not cursor.fetchone():
+                        raise ValueError("reward tier changed concurrently; no row was updated")
+        else:
+            with db_connect() as connection:
+                with connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
+                    cursor.execute("delete from dune.landsraad_task_player_contributions where player_id=%s and task_id=%s", (plan["playerId"], task_id))
+                    cursor.execute("insert into dune.landsraad_task_player_contributions (player_id,faction_id,task_id,amount) values (%s,%s,%s,%s)", (plan["playerId"], plan["factionId"], task_id, plan["amount"]))
+                    cursor.execute("delete from dune.landsraad_task_faction_contributions where task_id=%s", (task_id,))
+                    cursor.execute("insert into dune.landsraad_task_faction_contributions (faction_id,task_id,amount) select faction_id,task_id,floor(sum(amount))::int from dune.landsraad_task_player_contributions where task_id=%s group by faction_id,task_id", (task_id,))
+                    cursor.execute("select to_regclass('dune.landsraad_task_guild_contributions') is not null and to_regclass('dune.guild_members') is not null as supported")
+                    if cursor.fetchone().get("supported"):
+                        cursor.execute("delete from dune.landsraad_task_guild_contributions where task_id=%s", (task_id,))
+                        cursor.execute("insert into dune.landsraad_task_guild_contributions (guild_id,faction_id,task_id,amount) select gm.guild_id,pc.faction_id,pc.task_id,floor(sum(pc.amount))::int from dune.landsraad_task_player_contributions pc join dune.guild_members gm on gm.player_id=pc.player_id where pc.task_id=%s group by gm.guild_id,pc.faction_id,pc.task_id", (task_id,))
         after = self.landsraad_snapshot()
-        return {"ok": True, "dryRun": False, "action": action, "termId": term_id, "before": before, "after": after, "rollback": plan["rollback"]}
+        return {"ok": True, "dryRun": False, "action": action, "termId": term_id, "taskId": task_id or None, "before": before, "after": after, "rollback": plan["rollback"], "backup": backup}
+
+    def addon_bridge(self, addon_id, action, payload):
+        read_actions = {
+            "leadership.players.list": "players:read",
+            "ops.health.summary": "ops:read", "ops.health.summary.v2": "ops:read",
+            "ops.health.players": "ops:read", "ops.health.farms": "ops:read",
+            "ops.activity.summary": "ops:read", "ops.resources.summary": "ops:read",
+            "ops.combat.deaths": "ops:read", "ops.economy.summary": "ops:read",
+            "ops.inventory.summary": "ops:read", "ops.location.activity": "ops:read",
+            "ops.soc.summary": "ops:read", "ops.health.prometheus": "ops:read",
+        }
+        if action == "database.execute":
+            sql = normalize_database_sql(payload.get("query", payload.get("sql", "")))
+            read_only = database_sql_is_read_only(sql)
+            permission = "database:read" if read_only else "database:write"
+            addon_admin.assert_permission(ADDON_ROOT, addon_id, permission)
+            if not DATABASE_QUERY_ENABLED:
+                raise PermissionError("addon database bridge requires DUNE_ADMIN_DATABASE_QUERY_ENABLED=true")
+            backup = None
+            if not read_only:
+                self.require_mutations()
+                if not DATABASE_WRITE_ENABLED:
+                    raise PermissionError("addon database writes require DUNE_ADMIN_DATABASE_WRITE_ENABLED=true")
+                backup = create_db_backup()
+            result = run_database_sql(db_connect, sql, allow_write=not read_only, max_rows=500)
+            result["backup"] = backup
+            result["command"] = "SELECT" if read_only else "WRITE"
+            return result
+        permission = read_actions.get(action)
+        if not permission:
+            raise ValueError(f"unsupported addon bridge action: {action}")
+        addon_admin.assert_permission(ADDON_ROOT, addon_id, permission)
+        if action == "leadership.players.list":
+            search = str(payload.get("q") or "").strip()
+            pattern = f"%{search}%"
+            rows = query("""
+                select ps.account_id::text as "accountId", ps.player_controller_id::text as "controllerId",
+                       coalesce(ps.character_name, 'Unknown') as name,
+                       coalesce(max(st.level),0)::int as level,
+                       coalesce(ps.online_status::text,'Offline') as status,
+                       coalesce(fs.map,'') as map, ps.last_login_time as "lastSeen"
+                from dune.player_state ps
+                left join dune.specialization_tracks st on st.player_id=ps.player_controller_id
+                left join dune.farm_state fs on fs.server_id=ps.server_id
+                where (%s='' or ps.character_name ilike %s)
+                group by ps.account_id,ps.player_controller_id,ps.character_name,ps.online_status,fs.map,ps.last_login_time
+                order by level desc,lower(coalesce(ps.character_name,'')) limit 500
+            """, (search, pattern))
+            return {"capabilities": {"players": True, "leadership": True}, "rows": rows}
+        player_groups = query("""
+            select coalesce(online_status::text,'Unknown') as online_status,
+                   coalesce(life_state::text,'Unknown') as life_state,
+                   coalesce(character_state::text,'Unknown') as character_state,
+                   count(*)::int as players
+            from dune.player_state group by 1,2,3 order by 1,2,3
+        """)
+        players = {"total": sum(int(row["players"]) for row in player_groups), "combinations": player_groups}
+        farms = query("""
+            select count(*)::int as total,
+                   count(*) filter(where ready)::int as ready,
+                   count(*) filter(where alive)::int as alive,
+                   coalesce(sum(connected_players),0)::int as "connectedPlayers",
+                   coalesce(sum(incoming_s2s_connections),0)::int as "incomingS2SConnections",
+                   coalesce(sum(outgoing_s2s_connections),0)::int as "outgoingS2SConnections"
+            from dune.farm_state
+        """)[0]
+        if action == "ops.health.players":
+            return players
+        if action == "ops.health.farms":
+            return farms
+        if action in ("ops.health.summary", "ops.health.summary.v2"):
+            return {"players": players, "farms": farms}
+        if action == "ops.activity.summary":
+            return query("""
+                select count(*) filter(where last_avatar_activity > now()-interval '1 hour')::int as "activeLast1h",
+                       count(*) filter(where last_avatar_activity > now()-interval '24 hours')::int as "activeLast24h",
+                       count(*) filter(where last_avatar_activity > now()-interval '7 days')::int as "activeLast7d",
+                       count(*) filter(where last_avatar_activity < now()-interval '30 days')::int as "inactivePlayers"
+                from dune.player_state
+            """)[0]
+        if action == "ops.health.prometheus":
+            return {"configured": (ROOT / "compose.metrics.yaml").exists(), "url": "http://prometheus:9090", "retention": {"time": os.environ.get("DUNE_METRICS_RETENTION_TIME", "7d"), "size": os.environ.get("DUNE_METRICS_RETENTION_SIZE", "2GB")}}
+        errors = {}
+        if action == "ops.resources.summary":
+            return {"spiceFields": reference_query(errors, "spice", "select count(*)::int as count from dune.spicefield_server_availability"), "errors": errors}
+        if action == "ops.combat.deaths":
+            return {"rows": reference_query(errors, "deaths", "select * from dune.player_death_history order by death_time desc limit 200"), "errors": errors}
+        if action == "ops.economy.summary":
+            return {"currencies": reference_query(errors, "currencies", "select currency_id,count(*)::int as holders,sum(balance)::bigint as total from dune.player_currencies group by currency_id order by currency_id"), "errors": errors}
+        return {"players": players, "farms": farms, "errors": errors, "action": action}
 
     def write_config(self, name, content):
         if name not in ALLOWED_CONFIGS:
@@ -6987,14 +11562,33 @@ class Handler(BaseHTTPRequestHandler):
         if name.endswith(".ini"):
             parser = configparser.ConfigParser()
             parser.read_string(content)
+        elif name == "care-packages.json":
+            parsed = json.loads(content)
+            if not isinstance(parsed, dict):
+                raise ValueError("care-packages.json must contain a JSON object")
+            temporary = CARE_PACKAGES_FILE.with_suffix(".validate.json")
+            temporary.write_text(json.dumps(parsed), encoding="utf-8")
+            try:
+                load_care_packages(temporary)
+            finally:
+                temporary.unlink(missing_ok=True)
+        elif name == "community-rewards.json":
+            parsed = json.loads(content)
+            temporary = COMMUNITY_REWARDS_FILE.with_suffix(".validate.json")
+            temporary.write_text(json.dumps(parsed), encoding="utf-8")
+            try:
+                with tempfile.TemporaryDirectory(prefix="dash-community-validation-") as directory:
+                    community_rewards.Store(pathlib.Path(directory) / "validation.sqlite3", temporary).initialize()
+            finally:
+                temporary.unlink(missing_ok=True)
         backup_file(path)
         path.write_text(content, encoding="utf-8")
 
     def require_token(self):
         if os.environ.get("DUNE_ADMIN_REQUIRE_TOKEN", "false").lower() not in ("1", "true", "yes", "on"):
             return
-        if not ADMIN_TOKEN:
-            raise PermissionError("DUNE_ADMIN_TOKEN is not configured")
+        if not ADMIN_TOKEN and not RBAC_ENABLED:
+            raise PermissionError("no admin credential source is configured")
         peer = self.client_address[0] if self.client_address else "unknown"
         now = time.time()
         failures = [ts for ts in AUTH_FAILURES.get(peer, []) if now - ts < AUTH_FAILURE_WINDOW_SECONDS]
@@ -7007,12 +11601,40 @@ class Handler(BaseHTTPRequestHandler):
             authorization = self.headers.get("Authorization", "").strip()
             if authorization.lower().startswith("bearer "):
                 provided = authorization[7:].strip()
-        if not hmac.compare_digest(provided, ADMIN_TOKEN):
+        principal = None
+        if ADMIN_TOKEN and hmac.compare_digest(provided, ADMIN_TOKEN):
+            principal = {"id": "owner-recovery", "displayName": "Owner recovery token", "role": "owner", "capabilities": ["*"]}
+        elif RBAC_ENABLED:
+            principal = access_control.authenticate(ADMIN_ACCESS_FILE, provided)
+        if not principal and FEDERATED_AUTH_ENABLED:
+            try:
+                principal = self.federated_principal()
+            except (PermissionError, ValueError, OSError, json.JSONDecodeError):
+                principal = None
+        if not principal:
             failures.append(now)
             AUTH_FAILURES[peer] = failures
             self.audit("auth-failed", ok=False, failures=len(failures))
             raise PermissionError("invalid admin token")
         AUTH_FAILURES.pop(peer, None)
+        required = access_control.required_capability(getattr(self, "command", "GET"), self.path)
+        try:
+            access_control.authorize(principal, required)
+        except PermissionError:
+            self.audit("auth-forbidden", ok=False, principal_id=principal["id"], capability=required, path=self.path)
+            raise
+        self.auth_principal = principal
+
+    def require_discord_token(self):
+        if not DISCORD_ADAPTER_ENABLED:
+            raise FileNotFoundError("Discord adapter is disabled")
+        expected = discord_adapter_token()
+        if not expected:
+            raise PermissionError("Discord adapter credential is not configured")
+        authorization = self.headers.get("Authorization", "").strip().split()
+        actual = authorization[1] if len(authorization) == 2 and authorization[0].lower() == "bearer" else ""
+        if not actual or not hmac.compare_digest(actual, expected):
+            raise PermissionError("invalid Discord adapter credential")
 
     def require_mutations(self):
         if not MUTATIONS_ENABLED:
@@ -7057,7 +11679,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/":
             return True
         route = path.strip("/")
-        return route in {"overview", "ops", "security", "runbook", "characters", "settings", "mutations", "catalog", "discovery"}
+        return route in {"overview", "ops", "infrastructure", "world", "security", "runbook", "console", "characters", "cosmetics", "moderation", "creator", "presets", "blueprints", "care-packages", "rewards", "addons", "bootstrap", "settings", "mutations", "digests", "catalog", "discovery"}
 
     def html(self, body, head_only=False):
         nonce = secrets.token_urlsafe(16)
@@ -7071,10 +11693,12 @@ class Handler(BaseHTTPRequestHandler):
         if not head_only:
             self.wfile.write(data)
 
-    def json(self, value, head_only=False):
+    def json(self, value, head_only=False, cookies=()):
         data = json.dumps(value, default=json_default, indent=2).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        for cookie in cookies:
+            self.send_header("Set-Cookie", cookie)
         self.security_headers()
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
@@ -7096,6 +11720,40 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         if not head_only:
             self.wfile.write(data)
+
+    def addon_content(self, path, head_only=False):
+        content_types = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".webp": "image/webp"}
+        content_type = content_types.get(path.suffix.lower())
+        if not content_type:
+            raise ValueError("addon content type is not allowed")
+        data = path.read_bytes()
+        if len(data) > 8 * 1024 * 1024:
+            raise ValueError("addon content exceeds 8 MiB")
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'; sandbox allow-scripts")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        if not head_only:
+            self.wfile.write(data)
+
+    def download_file(self, path, name, content_type="application/octet-stream", head_only=False):
+        path = pathlib.Path(path)
+        if not path.is_file():
+            self.error(HTTPStatus.NOT_FOUND, "download not found", head_only=head_only)
+            return
+        safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", pathlib.Path(name).name)
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Disposition", f'attachment; filename="{safe_name}"')
+        self.security_headers()
+        self.send_header("Content-Length", str(path.stat().st_size))
+        self.end_headers()
+        if not head_only:
+            with path.open("rb") as handle:
+                shutil.copyfileobj(handle, self.wfile, length=1024 * 1024)
 
     def item_icon(self, parsed, head_only=False):
         template_id = (urllib.parse.parse_qs(parsed.query).get("template") or [""])[0]
@@ -7155,6 +11813,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("Cross-Origin-Resource-Policy", "same-origin")
+        self.send_header("Cross-Origin-Opener-Policy", "same-origin")
+        self.send_header("Origin-Agent-Cluster", "?1")
         self.send_header("X-Permitted-Cross-Domain-Policies", "none")
         self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
         script_src = f"'self' 'nonce-{nonce}'" if nonce else "'self'"
@@ -7165,6 +11825,32 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt, *args):
         return
+
+
+class BoundedThreadingHTTPServer(ThreadingHTTPServer):
+    daemon_threads = True
+    block_on_close = False
+    request_queue_size = 64
+
+    def __init__(self, server_address, request_handler_class):
+        self._request_slots = threading.BoundedSemaphore(MAX_CONCURRENT_REQUESTS)
+        super().__init__(server_address, request_handler_class)
+
+    def process_request(self, request, client_address):
+        if not self._request_slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._request_slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._request_slots.release()
 
 
 INDEX = r"""<!doctype html>
@@ -7425,25 +12111,302 @@ INDEX = r"""<!doctype html>
     @media (max-width: 1180px) { main { grid-template-columns:1fr; min-height:0; align-items:start; } nav { position:static; height:auto; align-self:start; border-right:0; border-bottom:1px solid var(--line); } section { align-self:start; } .tabs { grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); } .overviewTopGrid { grid-template-columns:repeat(3,minmax(0,1fr)); } .sectionHeader { flex-wrap:wrap; } }
     @media (min-width: 1800px) { .overviewTopGrid { grid-template-columns:repeat(6,minmax(0,1fr)); } }
     @media (max-width: 640px) { section { padding:12px; } nav { padding:6px 8px; } nav .tabs { display:flex; gap:4px; overflow-x:auto; padding-bottom:3px; scrollbar-width:thin; } nav .tab { flex:0 0 auto; padding:7px 9px; font-size:12px; } nav .card { display:none; } .overviewTopGrid { grid-template-columns:repeat(2,minmax(0,1fr)); } .mapHealthMeta { flex-wrap:nowrap; } .mapHealthMeta .pill:nth-child(n+4) { display:none; } }
+    .addonFrame { width:100%; min-height:720px; border:1px solid var(--line); border-radius:10px; background:#fff; }
     @media (max-width: 820px) { header { align-items:stretch; flex-direction:column; gap:6px; padding:8px 10px; } #tokenRow input { min-width:0; flex:1 1 150px; } .row { flex-wrap:wrap; } .barRow { grid-template-columns:1fr; gap:4px; } }
+
+    /* Arrakis operations console: shared visual language with the public site. */
+    :root {
+      color-scheme:light;
+      --bg:#e8d6b3;
+      --nav:#20150f;
+      --panel:#fffaf0;
+      --panel2:#f5ead6;
+      --panel3:#edddbf;
+      --muted:#786557;
+      --line:rgba(79,51,33,.20);
+      --text:#2b2019;
+      --accent:#d85e2f;
+      --danger:#b64437;
+      --ok:#247a55;
+      --warn:#a8640e;
+      --paper:#fffaf0;
+      --night:#20150f;
+      --night2:#302018;
+      --spiceSoft:rgba(216,94,47,.11);
+      --shadow:0 16px 44px rgba(68,38,19,.11);
+    }
+    body {
+      min-height:100vh;
+      color:var(--text);
+      background:
+        radial-gradient(circle at 2% 7%,rgba(216,94,47,.17) 0 7rem,transparent 7.1rem),
+        radial-gradient(circle at 2% 7%,transparent 0 10rem,rgba(79,51,33,.08) 10.1rem 10.22rem,transparent 10.32rem),
+        linear-gradient(145deg,#ead8b5 0%,#f8efdd 48%,#e5cfaa 100%);
+      font-family:Aptos,"Segoe UI Variable","Segoe UI",system-ui,sans-serif;
+      -webkit-font-smoothing:antialiased;
+    }
+    body::before {
+      content:"";
+      position:fixed;
+      z-index:-1;
+      inset:0;
+      pointer-events:none;
+      opacity:.16;
+      background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160' viewBox='0 0 160 160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.11'/%3E%3C/svg%3E");
+    }
+    body.highContrast {
+      color-scheme:dark;
+      --bg:#050605;
+      --nav:#050605;
+      --panel:#101410;
+      --panel2:#0b0e0b;
+      --panel3:#171c17;
+      --line:#71806d;
+      --text:#fff;
+      --muted:#d5ded4;
+      --accent:#ffd166;
+      --danger:#ff8a80;
+      --ok:#8cff8a;
+      --warn:#ffe082;
+      --paper:#101410;
+      --night:#050605;
+      --night2:#101410;
+      --spiceSoft:rgba(255,209,102,.12);
+      --shadow:none;
+    }
+    header {
+      min-height:68px;
+      padding:9px clamp(14px,1.4vw,24px);
+      border-bottom:1px solid rgba(255,250,240,.12);
+      color:#f7edda;
+      background:
+        radial-gradient(circle at 12% -80%,rgba(216,94,47,.24),transparent 18rem),
+        var(--night);
+      box-shadow:0 10px 28px rgba(40,21,12,.16);
+    }
+    .brand { align-items:center; gap:11px; min-width:0; }
+    .adminBrandMark {
+      position:relative;
+      display:grid;
+      width:42px;
+      height:42px;
+      flex:0 0 auto;
+      place-items:center;
+      overflow:hidden;
+      border:1px solid rgba(255,250,240,.34);
+      border-radius:50% 50% 50% 10px;
+      background:#130e0b;
+      box-shadow:0 8px 20px rgba(0,0,0,.22);
+    }
+    .adminBrandMark::before,.adminBrandMark::after,.adminBrandMark span { content:""; position:absolute; border-radius:50%; }
+    .adminBrandMark::before { width:25px; height:25px; border:2px solid #e8d6b3; }
+    .adminBrandMark::after { width:6px; height:6px; background:#d85e2f; box-shadow:0 0 0 3px rgba(216,94,47,.24); }
+    .adminBrandMark span { width:33px; height:12px; border-top:1px solid rgba(255,250,240,.55); transform:rotate(-18deg); }
+    .brandCopy { flex:0 0 auto; }
+    .brandCopy h1 { font-size:13px; line-height:1.1; letter-spacing:.12em; }
+    .adminProduct { display:block; margin-top:3px; color:#cdb9a7; font:800 9px/1 ui-monospace,SFMono-Regular,Consolas,monospace; letter-spacing:.18em; }
+    .brand .subtle {
+      display:-webkit-box;
+      max-width:min(54vw,760px);
+      overflow:hidden;
+      padding-left:12px;
+      border-left:1px solid rgba(255,250,240,.16);
+      color:#bda998;
+      font-size:11px;
+      line-height:1.35;
+      -webkit-box-orient:vertical;
+      -webkit-line-clamp:2;
+    }
+    #tokenRow { margin:0; flex:0 1 470px; justify-content:flex-end; }
+    #tokenRow input { min-width:180px; color:#fff; background:rgba(255,250,240,.06); border-color:rgba(255,250,240,.22); }
+    #tokenRow input::placeholder { color:#bda998; }
+    #tokenRow button { color:#ead9c8; background:rgba(255,250,240,.07); border-color:rgba(255,250,240,.19); }
+    #tokenRow button:hover { color:#fff; border-color:#ed8a5e; background:rgba(216,94,47,.14); }
+    main { grid-template-columns:minmax(225px,14.5vw) minmax(0,1fr); min-height:calc(100vh - 68px); }
+    nav {
+      top:68px;
+      height:calc(100vh - 68px);
+      padding:18px 14px;
+      border-right:1px solid rgba(255,250,240,.11);
+      color:#f7edda;
+      background:
+        linear-gradient(180deg,rgba(216,94,47,.07),transparent 16rem),
+        var(--night);
+      scrollbar-color:#76523e transparent;
+    }
+    .navKicker { margin:0 4px 14px; color:#ed8a5e; font:900 10px/1.3 ui-monospace,SFMono-Regular,Consolas,monospace; letter-spacing:.13em; text-transform:uppercase; }
+    .tabs { gap:3px; }
+    .navGroup { display:block; margin:13px 7px 4px; color:#8f7968; font:800 9px/1 ui-monospace,SFMono-Regular,Consolas,monospace; letter-spacing:.14em; text-transform:uppercase; }
+    .navGroup:first-child { margin-top:0; }
+    .tab {
+      min-height:34px;
+      padding:7px 10px;
+      border-color:transparent;
+      border-radius:6px;
+      color:#d9c8b8;
+      background:transparent;
+      font-size:12px;
+      font-weight:650;
+    }
+    .tab:hover { color:#fff; border-color:rgba(255,250,240,.14); background:rgba(255,250,240,.05); }
+    .tab.active {
+      color:#fff;
+      border-color:rgba(237,138,94,.46);
+      background:rgba(216,94,47,.14);
+      box-shadow:inset 3px 0 #ed8a5e;
+    }
+    nav > .card { margin-top:14px; margin-bottom:0; border-color:rgba(255,250,240,.12); color:#f7edda; background:rgba(255,250,240,.045); box-shadow:none; }
+    nav > .card h3 { color:#a99381; }
+    nav > .card button { color:#dcc9b7; border-color:rgba(255,250,240,.14); background:rgba(255,250,240,.06); }
+    nav > .card button:hover { color:#fff; border-color:#ed8a5e; }
+    nav .muted { color:#a99381; }
+    .supportCard { border-color:rgba(216,94,47,.34) !important; background:rgba(216,94,47,.08) !important; }
+    .supportLink { color:#ef9a73; border-color:rgba(216,94,47,.42); background:rgba(216,94,47,.08); }
+    .supportLink:hover { color:#fff; border-color:#ef9a73; background:rgba(216,94,47,.18); }
+    section { padding:clamp(16px,1.6vw,28px); }
+    h2 { font:700 clamp(22px,1.8vw,30px)/1.05 Palatino,"Palatino Linotype","Book Antiqua",Georgia,serif; letter-spacing:-.035em; }
+    h3 { color:var(--muted); font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:10px; font-weight:900; letter-spacing:.1em; }
+    .pageStack { gap:16px; }
+    .card,.panelBand,.vizCard,.metric,.summaryCard,.itemInspect,.modal {
+      border-color:var(--line);
+      border-radius:14px;
+      background:var(--panel);
+      box-shadow:var(--shadow);
+    }
+    .panelBand { padding:clamp(14px,1.25vw,20px); }
+    .panelInset { margin-top:12px; padding:14px; border:1px solid var(--line); border-radius:10px; background:var(--panel2); }
+    .metric,.summaryCard { min-height:78px; box-shadow:0 8px 22px rgba(68,38,19,.06); }
+    .metric .label,.summaryMeta { color:var(--muted); font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:10px; font-weight:750; letter-spacing:.035em; text-transform:uppercase; }
+    .metric .value,.summaryValue { font-family:Palatino,"Palatino Linotype",Georgia,serif; font-weight:800; letter-spacing:-.02em; }
+    .overviewTopGrid { gap:9px; }
+    button,input,select,textarea {
+      min-height:38px;
+      color:var(--text);
+      border-color:var(--line);
+      border-radius:7px;
+      background:var(--panel);
+    }
+    input,select,textarea { box-shadow:inset 0 1px 0 rgba(79,51,33,.03); }
+    button { background:var(--panel2); font-weight:700; }
+    button:hover { border-color:rgba(150,58,28,.48); background:var(--spiceSoft); }
+    button.primary { color:#20150f; border-color:#c74f24; background:var(--accent); box-shadow:0 7px 16px rgba(150,58,28,.14); }
+    button.primary:hover { color:#20150f; border-color:#963a1c; background:#e57748; }
+    button.danger { color:#fff; border-color:#9f3932; background:#b64437; box-shadow:0 7px 16px rgba(120,42,36,.12); }
+    button.danger:hover { border-color:#782a25; background:#a63b31; }
+    .dangerZone { border-color:rgba(182,68,55,.42); background:#fff1ed; }
+    body.highContrast .dangerZone { background:#211816; }
+    .pill,.runtimeBadge { color:var(--muted); border-color:var(--line); background:var(--panel2); }
+    .pill.ok { border-color:rgba(36,122,85,.42); color:var(--ok); background:rgba(36,122,85,.07); }
+    .pill.warn { border-color:rgba(168,100,14,.42); color:var(--warn); background:rgba(168,100,14,.07); }
+    .pill.bad { border-color:rgba(182,68,55,.42); color:var(--danger); background:rgba(182,68,55,.07); }
+    .tableWrap { border-color:var(--line); border-radius:10px; background:var(--panel); }
+    .tableWrap table th { color:var(--muted); background:var(--panel2); font:800 10px/1.3 ui-monospace,SFMono-Regular,Consolas,monospace; letter-spacing:.05em; text-transform:uppercase; }
+    th,td { border-color:var(--line); }
+    tr.selected td { background:var(--spiceSoft); }
+    tbody tr:hover td { background:rgba(216,94,47,.045); }
+    pre,kbd,.spark,.sparkSvg,.barTrack {
+      color:#f7edda;
+      border-color:rgba(255,250,240,.13);
+      background:#17100c;
+    }
+    code { color:var(--spice-dark,#963a1c); }
+    details > summary { cursor:pointer; font-weight:750; }
+    .itemCard,.mapTile,.mapHealthRow,.eventItem,.shortcut { background:var(--panel2); }
+    .itemCard img,.itemInspect img { background:radial-gradient(circle,#f7edd9 0,#e4d1ae 72%); }
+    .itemCard.selected { border-color:var(--accent); box-shadow:0 0 0 2px rgba(216,94,47,.16); }
+    .itemInspect code { color:var(--accent); }
+    .summaryHover,.runtimeHover,.toastItem { border-radius:12px; background:var(--panel); box-shadow:0 20px 60px rgba(68,38,19,.25); }
+    .modalBackdrop { background:rgba(32,21,15,.68); backdrop-filter:blur(3px); }
+    .modal { padding:20px; }
+    .toastItem { border-left:4px solid var(--accent); }
+    .toastItem.ok { border-left-color:var(--ok); }
+    .toastItem.bad { border-left-color:var(--danger); }
+    .overviewMapShell .panelBand {
+      color:#f7edda;
+      border-color:rgba(255,250,240,.12);
+      background:
+        radial-gradient(circle at 92% 0,rgba(216,94,47,.15),transparent 22rem),
+        var(--night);
+      box-shadow:0 24px 64px rgba(54,29,16,.24);
+    }
+    .overviewMapShell .panelBand h2 { color:#fffaf0; }
+    .overviewMapShell .muted { color:#bda998; }
+    .overviewMapShell button,.overviewMapShell input,.overviewMapShell select { color:#ead9c8; border-color:rgba(255,250,240,.18); background:rgba(255,250,240,.06); }
+    .overviewMapShell button:hover { color:#fff; border-color:#ed8a5e; background:rgba(216,94,47,.14); }
+    .overviewMapShell button.primary { color:#20150f; border-color:#c74f24; background:#d85e2f; }
+    .overviewMapShell .pill { color:#cdb9a7; border-color:rgba(255,250,240,.16); background:rgba(255,250,240,.05); }
+    .overviewMapShell .haggaMap,.overviewMapShell .haggaPoiLegend { border-color:rgba(255,250,240,.15); background:#130e0b; }
+    .overviewMapShell .poiToggleBar label { color:#f7edda; }
+    .overviewMapShell .poiToggleBar label:hover { background:rgba(255,250,240,.06); }
+    .overviewMapShell .haggaPoiLegend h3 { color:#f7edda; }
+    .overviewMapShell .poiFilterSummary,.overviewMapShell .poiCount { color:#a99381; }
+    .overviewMapShell .haggaMap { border-radius:11px; box-shadow:inset 0 0 42px rgba(0,0,0,.34); }
+    .overviewMapShell .haggaPoiLegend { border-radius:10px; }
+    @media (max-width:1180px) {
+      main { grid-template-columns:1fr; }
+      nav { position:static; height:auto; padding:10px 12px; border-right:0; border-bottom:1px solid rgba(255,250,240,.12); }
+      .navKicker,.navGroup { display:none; }
+      nav .tabs { display:flex; grid-template-columns:none; gap:5px; overflow-x:auto; padding-bottom:4px; scrollbar-width:thin; }
+      nav .tab { flex:0 0 auto; min-height:38px; }
+      nav > .card { display:none; }
+      nav .supportCard { display:none !important; }
+    }
+    @media (max-width:820px) {
+      header { position:static; flex-direction:row; flex-wrap:wrap; align-items:center; padding:9px 12px; }
+      .brand { flex:1 1 100%; }
+      .brand .subtle { max-width:calc(100vw - 190px); }
+      #tokenRow { flex:1 1 100%; }
+      #tokenRow input { flex:1 1 160px; }
+      section { padding:14px; }
+    }
+    @media (max-width:520px) {
+      .adminBrandMark { width:38px; height:38px; }
+      .brand .subtle { display:none; }
+      #tokenRow { display:grid; grid-template-columns:minmax(0,1fr) auto auto; }
+      #tokenRow input { min-width:0; }
+      #tokenRow button { padding-inline:9px; }
+      .overviewTopGrid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+      .card,.panelBand,.vizCard,.metric,.summaryCard { border-radius:11px; }
+      h2 { font-size:23px; }
+    }
   </style>
 </head>
 <body>
   <a class="skipLink" href="#view">Skip to dashboard</a>
   <header>
-    <div class="brand"><h1>DASH Admin</h1><span class="subtle" id="serverBrand">Dune Awakening Self Host</span></div>
-    <div class="row" id="tokenRow"><input id="token" type="password" placeholder="Admin token"><button id="saveTokenBtn">Use token</button><button id="clearTokenBtn">Clear</button></div>
+    <div class="brand">
+      <span class="adminBrandMark" aria-hidden="true"><span></span></span>
+      <span class="brandCopy"><h1>SNAPE.TECH</h1><span class="adminProduct">DASH ADMIN</span></span>
+      <span class="subtle" id="serverBrand">Dune Awakening Self Host</span>
+    </div>
+    <div class="row" id="tokenRow"><input id="token" type="password" placeholder="Admin token" aria-label="Admin token"><button id="saveTokenBtn">Use token</button><button id="clearTokenBtn">Clear</button><button id="federatedLoginBtn" hidden>Sign in</button><button id="federatedLogoutBtn" hidden>Sign out</button></div>
   </header>
   <main>
     <nav aria-label="Admin panel navigation">
+      <p class="navKicker">Arrakis operations</p>
       <div class="tabs" role="tablist" aria-label="DASH sections">
+        <span class="navGroup" role="presentation" aria-hidden="true">Observe</span>
         <button class="tab active" role="tab" aria-selected="true" data-tab="overview">Overview</button>
-        <button class="tab" role="tab" aria-selected="false" data-tab="ops">Ops</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="ops">Operations</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="infrastructure">Infrastructure</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="world">World</button>
         <button class="tab" role="tab" aria-selected="false" data-tab="security">Security</button>
         <button class="tab" role="tab" aria-selected="false" data-tab="runbook">Runbook</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="console">Command Console</button>
+        <span class="navGroup" role="presentation" aria-hidden="true">Operate</span>
         <button class="tab" role="tab" aria-selected="false" data-tab="characters">Players</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="cosmetics">Cosmetics</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="moderation">Moderation</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="creator">Base Creator</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="presets">Gameplay Presets</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="blueprints">Blueprints</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="care-packages">Care Packages</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="rewards">Community Rewards</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="addons">Addons</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="bootstrap">Bootstrap</button>
         <button class="tab" role="tab" aria-selected="false" data-tab="settings">Settings</button>
         <button class="tab" role="tab" aria-selected="false" data-tab="mutations">Admin Actions</button>
+        <span class="navGroup" role="presentation" aria-hidden="true">Reference</span>
         <button class="tab" role="tab" aria-selected="false" data-tab="digests">Admin Digests</button>
         <button class="tab" role="tab" aria-selected="false" data-tab="catalog">Catalog</button>
         <button class="tab" role="tab" aria-selected="false" data-tab="discovery">Discovery</button>
@@ -7503,7 +12466,7 @@ if (location.hash || (INITIAL_PATH_TAB && INITIAL_PATH_TAB !== 'overview')) {
 }
 let token = (localStorage.getItem('duneAdminToken') || sessionStorage.getItem('duneAdminToken') || '').trim();
 document.getElementById('token').value = token;
-const validTabs = new Set(['overview', 'ops', 'security', 'runbook', 'characters', 'settings', 'mutations', 'digests', 'catalog', 'discovery']);
+const validTabs = new Set(['overview', 'ops', 'infrastructure', 'world', 'security', 'runbook', 'console', 'characters', 'cosmetics', 'moderation', 'creator', 'presets', 'blueprints', 'care-packages', 'rewards', 'addons', 'bootstrap', 'settings', 'mutations', 'digests', 'catalog', 'discovery']);
 const pathTab = validTabs.has(INITIAL_PATH_TAB) ? INITIAL_PATH_TAB : '';
 let current = pathTab || sessionStorage.getItem('duneAdminTab') || 'overview';
 if (!validTabs.has(current)) current = 'overview';
@@ -7558,6 +12521,18 @@ function clearToken(){
   sessionStorage.removeItem('duneAdminToken');
   notify('Admin token cleared');
   load();
+}
+async function configureFederatedAuth(){
+  try {
+    const response=await fetch('/api/auth/federated/status',{cache:'no-store'});const state=await response.json();
+    const login=document.getElementById('federatedLoginBtn'),logout=document.getElementById('federatedLogoutBtn');
+    login.hidden=!state.configured||state.sessionActive;logout.hidden=!state.sessionActive;
+    login.textContent=state.provider==='discord'?'Sign in with Discord':'Sign in with SSO';
+    if(state.sessionActive&&state.principal?.displayName)logout.textContent=`Sign out ${state.principal.displayName}`;
+  } catch (_) {}
+}
+async function federatedLogout(){
+  await api('/api/auth/logout',{method:'POST',body:'{}'});await configureFederatedAuth();notify('Federated session ended');load();
 }
 function announce(message){ document.getElementById('srStatus').textContent = message; }
 function notify(message, tone='ok'){
@@ -9080,8 +14055,12 @@ function actionGrid(actions){
 function syncTabs(){
   document.querySelectorAll('.tab').forEach(b=>{
     const active = b.dataset.tab === current;
+    b.id = b.id || `admin-tab-${b.dataset.tab}`;
     b.classList.toggle('active', active);
     b.setAttribute('aria-selected', active ? 'true' : 'false');
+    b.setAttribute('aria-controls', 'view');
+    b.tabIndex = active ? 0 : -1;
+    if (active) view.setAttribute('aria-labelledby', b.id);
   });
 }
 function show(name){
@@ -9149,7 +14128,7 @@ function wireGlobalAffordances(){
     tab.addEventListener('keydown', e => {
       const tabs = Array.from(document.querySelectorAll('.tab'));
       const index = tabs.indexOf(tab);
-      const next = e.key === 'ArrowDown' || e.key === 'ArrowRight' ? tabs[index + 1] || tabs[0] : e.key === 'ArrowUp' || e.key === 'ArrowLeft' ? tabs[index - 1] || tabs[tabs.length - 1] : null;
+      const next = e.key === 'ArrowDown' || e.key === 'ArrowRight' ? tabs[index + 1] || tabs[0] : e.key === 'ArrowUp' || e.key === 'ArrowLeft' ? tabs[index - 1] || tabs[tabs.length - 1] : e.key === 'Home' ? tabs[0] : e.key === 'End' ? tabs[tabs.length - 1] : null;
       if (next) {
         e.preventDefault();
         next.focus();
@@ -9249,9 +14228,21 @@ async function load(){
   try {
     if (current === 'overview') await overview(serial);
     else if (current === 'ops') await ops(serial);
+    else if (current === 'infrastructure') await infrastructure(serial);
+    else if (current === 'world') await world(serial);
     else if (current === 'security') await security(serial);
     else if (current === 'runbook') await runbook(serial);
+    else if (current === 'console') await commandConsole(serial);
     else if (current === 'characters') await characters(serial);
+    else if (current === 'cosmetics') await cosmeticsConsole(serial);
+    else if (current === 'moderation') await moderationConsole(serial);
+    else if (current === 'creator') await baseCreatorConsole(serial);
+    else if (current === 'presets') await gameplayPresetsConsole(serial);
+    else if (current === 'blueprints') await blueprints(serial);
+    else if (current === 'care-packages') await carePackages(serial);
+    else if (current === 'rewards') await communityRewards(serial);
+    else if (current === 'addons') await addons(serial);
+    else if (current === 'bootstrap') await bootstrapConsole(serial);
     else if (current === 'settings') await settings(serial);
     else if (current === 'mutations') await mutations(serial);
     else if (current === 'digests') await digests(serial);
@@ -9321,6 +14312,352 @@ async function ops(serial=loadSerial){
   }, 5000);
   startHealthRefresh();
 }
+async function infrastructure(serial=loadSerial){
+  const [serviceData, backupData, databaseData, updateData, memoryData, autoscalerData] = await Promise.all([
+    api('/api/ops/services'),
+    api('/api/ops/backups'),
+    api('/api/ops/database'),
+    api('/api/ops/updates', {timeoutMs: 100000}),
+    api('/api/ops/memory', {timeoutMs: 30000}),
+    api('/api/ops/autoscaler', {timeoutMs: 30000})
+  ]);
+  if (serial !== loadSerial) return;
+  const services = serviceData.services || [];
+  const backupSets = backupData.sets || [];
+  const artifacts = backupData.artifacts || [];
+  const databaseTables = databaseData.tables || [];
+  const serviceOptions = services.map(row => `<option value="${esc(row.service)}">${esc(row.service)} · ${esc(row.state || '')}</option>`).join('');
+  const backupOptions = backupSets.map(row => `<option value="${esc(row.path)}">${esc(row.path)}</option>`).join('');
+  const databaseOptions = databaseTables.map(row => `<option value="${esc(row.schema)}.${esc(row.name)}">${esc(row.schema)}.${esc(row.name)} · ${esc(row.type || '')}</option>`).join('');
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Infrastructure</h2><div class="toolbar"><span class="pill">read-only by default</span><span class="pill">Compose ${esc(serviceData.composeProject || '')}</span><button data-jump="ops">Operations</button><button data-jump="runbook">Runbook</button></div></div><div class="panelBand"><p class="muted">This page closes the browser-operations gaps identified by the Red-Blink parity audit. Service inventory, logs, backup inventory/verification, and database previews do not start, stop, restore, delete, or update anything.</p></div><div class="panelBand"><div class="sectionHeader"><h2>Services and Logs</h2><div class="toolbar"><select id="infraLogService">${serviceOptions || '<option value="">No services found</option>'}</select><select id="infraLogTail"><option value="100">100 lines</option><option value="200" selected>200 lines</option><option value="500">500 lines</option><option value="1000">1000 lines</option></select><button id="infraLoadLogsBtn" class="primary">Load logs</button></div></div>${table(services)}<pre id="infraLogsResult">Select a service and load its recent Docker logs.</pre></div><div class="twoCol"><div class="panelBand"><div class="sectionHeader"><h2>Backup Sets</h2><span class="pill">${esc(backupSets.length)} found</span></div>${table(backupSets)}<div class="commandBar"><select id="infraBackupPath">${backupOptions || '<option value="">No verifiable backup sets found</option>'}</select><button id="infraVerifyBackupBtn" class="primary">Verify selected backup</button></div><pre id="infraBackupResult"></pre></div><div class="panelBand"><div class="sectionHeader"><h2>Admin Backup Artifacts</h2><span class="pill">${esc(artifacts.length)} shown</span></div>${table(artifacts)}</div></div><div class="panelBand"><div class="sectionHeader"><h2>Read-Only Database Browser</h2><div class="toolbar"><select id="infraDatabaseTable">${databaseOptions || '<option value="">No tables found</option>'}</select><select id="infraDatabaseLimit"><option value="25">25 rows</option><option value="50" selected>50 rows</option><option value="100">100 rows</option><option value="200">200 rows</option></select><button id="infraLoadTableBtn" class="primary">Preview table</button></div></div><p class="muted">Only the <code>dune</code> and <code>public</code> schemas are available. The server constructs the SELECT statement from an information-schema allowlist, caps results at 200 rows, and redacts credential-like columns.</p><div id="infraDatabaseResult"></div></div></div>`;
+  mountInfrastructureDatabaseConsole(databaseData);
+  mountInfrastructureBackupControls(backupData);
+  mountInfrastructureServiceControls(serviceData);
+  mountInfrastructureUpdateControls(updateData);
+  mountInfrastructureMemoryControls(memoryData);
+  mountInfrastructureAutoscalerControls(autoscalerData);
+  document.getElementById('infraLoadLogsBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Loading...', loadInfrastructureLogs));
+  document.getElementById('infraVerifyBackupBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Verifying...', verifyInfrastructureBackup));
+  document.getElementById('infraLoadTableBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Loading...', loadInfrastructureTable));
+  if (services.length) loadInfrastructureLogs().catch(error => { document.getElementById('infraLogsResult').textContent = error.message; });
+}
+function mountInfrastructureAutoscalerControls(data){
+  const page = document.querySelector('#view .pageStack');
+  if (!page) return;
+  const maps = data.maps || [];
+  const options = maps.map(row => `<option value="${esc(row.service)}">${esc(row.service)} · ${esc(row.mode)} · ${esc(row.state)}</option>`).join('');
+  const availableGiB = Number(data.memory?.availableBytes || 0) / (1024 ** 3);
+  page.insertAdjacentHTML('beforeend', `<div class="panelBand">
+    <div class="sectionHeader"><h2>Dynamic Map Autoscaler</h2><div class="toolbar">
+      <span class="pill ${data.enabled ? 'warn' : 'ok'}">${data.enabled ? 'running' : 'stopped'}</span>
+      <span class="pill">${esc(data.profile || 'custom')}</span><span class="pill">poll ${esc(data.pollSeconds)}s</span>
+      <span class="pill">warm ${esc(data.optionalWarmMaps || 0)}/${esc(data.maxWarmDynamicMaps || 'unlimited')}</span>
+      <span class="pill">available ${esc(availableGiB.toFixed(1))} GiB</span>
+      <span class="pill ${data.mutationEnabled ? 'warn' : 'ok'}">writes ${data.mutationEnabled ? 'enabled' : 'disabled'}</span>
+    </div></div>
+    <p class="muted">Profiles cover the full range: minimum footprint starts maps only on demand, balanced retains recently used maps within an LRU and memory budget, full warm keeps every map running, and custom preserves per-map choices. Players, active demand leases, and always-on maps are never evicted.</p>
+    ${table(maps)}
+    <div class="grid">
+      <label>Map<select id="infraAutoscalerService">${options}</select></label>
+      <label>Mode<select id="infraAutoscalerMode"><option>always-on</option><option>dynamic</option><option>disabled</option></select></label>
+      <label>Selected map retention seconds<input id="infraAutoscalerMapRetention" value=""></label>
+      <label>Default retention seconds<input id="infraAutoscalerIdle" value="${esc(data.retentionSeconds || 900)}"></label>
+      <label>Maximum optional warm maps (0=unlimited)<input id="infraAutoscalerMaxWarm" value="${esc(data.maxWarmDynamicMaps || 0)}"></label>
+      <label>Minimum available memory GiB (0=disabled)<input id="infraAutoscalerMinMemory" value="${esc(data.minAvailableMemoryGiB || 0)}"></label>
+      <label>Demand lease seconds<input id="infraAutoscalerDemandTtl" value="${esc(data.demandTtlSeconds || 900)}"></label>
+    </div>
+    <div class="commandBar"><button id="infraAutoscalerModeBtn">Save map mode</button><button id="infraAutoscalerRetentionBtn">Save map retention</button><button id="infraAutoscalerDemandBtn">Queue demand/start</button><button id="infraAutoscalerSettingsBtn">Save budgets</button></div>
+    <div class="commandBar"><button id="infraAutoscalerMinimumBtn">Minimum footprint</button><button id="infraAutoscalerBalancedBtn" class="primary">Balanced adaptive</button><button id="infraAutoscalerFullBtn" class="danger">Full warm</button><button id="infraAutoscalerReconcileBtn">Reconcile now</button><button id="infraAutoscalerToggleBtn" class="${data.enabled ? 'danger' : 'primary'}">${data.enabled ? 'Stop autoscaler' : 'Start autoscaler'}</button></div>
+    <pre id="infraAutoscalerResult">${esc(JSON.stringify({lastMessage:data.lastMessage,lastActions:data.lastActions,lastError:data.lastError,updatedAt:data.updatedAt}, null, 2))}</pre>
+  </div>`);
+  document.getElementById('infraAutoscalerModeBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Saving...', () => infrastructureAutoscalerAction('set-mode')));
+  document.getElementById('infraAutoscalerRetentionBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Saving...', () => infrastructureAutoscalerAction('set-retention')));
+  document.getElementById('infraAutoscalerDemandBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Queuing...', () => infrastructureAutoscalerAction('demand')));
+  document.getElementById('infraAutoscalerSettingsBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Saving...', () => infrastructureAutoscalerAction('settings')));
+  document.getElementById('infraAutoscalerMinimumBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Applying...', () => infrastructureAutoscalerAction('minimum-footprint')));
+  document.getElementById('infraAutoscalerBalancedBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Applying...', () => infrastructureAutoscalerAction('balanced')));
+  document.getElementById('infraAutoscalerFullBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Applying...', () => infrastructureAutoscalerAction('full-warm')));
+  document.getElementById('infraAutoscalerReconcileBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Reconciling...', () => infrastructureAutoscalerAction('reconcile')));
+  document.getElementById('infraAutoscalerToggleBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Changing...', () => infrastructureAutoscalerAction(data.enabled ? 'stop' : 'start')));
+}
+async function infrastructureAutoscalerAction(action){
+  const body = {action,confirm:'CHANGE AUTOSCALER'};
+  if (['set-mode','set-retention','demand'].includes(action)) body.service=document.getElementById('infraAutoscalerService')?.value || '';
+  if (action === 'set-mode') body.mode=document.getElementById('infraAutoscalerMode')?.value || '';
+  if (action === 'set-retention') body.retention_seconds=document.getElementById('infraAutoscalerMapRetention')?.value || 'default';
+  if (action === 'settings') {
+    body.retention_seconds=document.getElementById('infraAutoscalerIdle')?.value || '';
+    body.max_warm_dynamic_maps=document.getElementById('infraAutoscalerMaxWarm')?.value || '0';
+    body.min_available_memory_gib=document.getElementById('infraAutoscalerMinMemory')?.value || '0';
+    body.demand_ttl_seconds=document.getElementById('infraAutoscalerDemandTtl')?.value || '900';
+  }
+  if (!confirm(`Execute autoscaler action ${action}${body.service ? ` for ${body.service}` : ''}?`)) return;
+  const result = await api('/api/ops/autoscaler', {method:'POST',timeoutMs:1900000,body:JSON.stringify(body)});
+  document.getElementById('infraAutoscalerResult').textContent = JSON.stringify(result, null, 2);
+  notify(`Autoscaler action ${action} complete`, result.lastError ? 'bad' : 'ok');
+  return result;
+}
+function mountInfrastructureMemoryControls(memoryData){
+  const page = document.querySelector('#view .pageStack');
+  if (!page) return;
+  const rows = memoryData.rows || [];
+  const options = rows.map(row => `<option value="${esc(row.service)}">${esc(row.service)} · ${esc(row.memory || '')} · ${esc(row.memoryPercent ?? '')}%</option>`).join('');
+  page.insertAdjacentHTML('beforeend', `<div class="panelBand"><div class="sectionHeader"><h2>Map Memory and Automatic Balancer</h2><div class="toolbar"><span class="pill ${memoryData.enabled ? 'warn' : 'ok'}">balancer ${memoryData.enabled ? 'enabled' : 'disabled'}</span><span class="pill ${memoryData.mutationEnabled ? 'warn' : 'ok'}">writes ${memoryData.mutationEnabled ? 'enabled' : 'disabled'}</span></div></div><p class="muted">Live limits can be changed without a container restart. The balancer samples every 10 seconds, moves 1 GiB from a low-use map to a map above 90%, refuses donors without at least 1 GiB headroom, rolls back a half-completed transfer, and restores captured baseline limits when disabled.</p>${table(rows)}<div class="grid"><label>Map<select id="infraMemoryService">${options || '<option value="">No running map containers</option>'}</select></label><label>Limit (for example 12GiB)<input id="infraMemoryLimit" value="12GiB"></label></div><div class="commandBar"><button id="infraMemorySetBtn">Set live limit</button><button id="infraMemoryUnsetBtn">Remove live limit</button><button id="infraMemoryTickBtn">Run balance now</button><button id="infraMemoryToggleBtn" class="${memoryData.enabled ? 'danger' : 'primary'}">${memoryData.enabled ? 'Disable and restore baselines' : 'Enable balancer'}</button></div><pre id="infraMemoryResult">${esc(JSON.stringify({lastMessage:memoryData.lastMessage,lastAction:memoryData.lastAction,lastError:memoryData.lastError,updatedAt:memoryData.updatedAt}, null, 2))}</pre></div>`);
+  document.getElementById('infraMemorySetBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Setting...', () => infrastructureMemoryAction('set')));
+  document.getElementById('infraMemoryUnsetBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Removing...', () => infrastructureMemoryAction('unset')));
+  document.getElementById('infraMemoryTickBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Balancing...', () => infrastructureMemoryAction('tick')));
+  document.getElementById('infraMemoryToggleBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Changing...', () => infrastructureMemoryAction('set-enabled', !memoryData.enabled)));
+}
+async function infrastructureMemoryAction(action, enabled){
+  const body = {action};
+  if (action === 'set-enabled') { body.enabled=enabled; body.confirm='CHANGE MEMORY BALANCER'; }
+  else if (action === 'tick') body.confirm='CHANGE MEMORY BALANCER';
+  else { body.service=document.getElementById('infraMemoryService')?.value || ''; body.memory=document.getElementById('infraMemoryLimit')?.value || ''; body.confirm='SET MAP MEMORY'; }
+  if (!confirm(`Execute memory action ${action}${body.service ? ` for ${body.service}` : ''}?`)) return;
+  const result = await api('/api/ops/memory', {method:'POST',timeoutMs:60000,body:JSON.stringify(body)});
+  document.getElementById('infraMemoryResult').textContent = JSON.stringify(result, null, 2);
+  notify(`Memory action ${action} complete`, result.lastError ? 'bad' : 'ok');
+  return result;
+}
+function mountInfrastructureUpdateControls(updateData){
+  const page = document.querySelector('#view .pageStack');
+  if (!page) return;
+  const game = updateData.game || {};
+  const stack = updateData.stack || {};
+  page.insertAdjacentHTML('beforeend', `<div class="panelBand"><div class="sectionHeader"><h2>Updates and Runtime Repair</h2><div class="toolbar"><span class="pill ${game.status === 'current' ? 'ok' : 'warn'}">game ${esc(game.status || 'unknown')}</span><span class="pill ${Number(stack.behind || 0) ? 'warn' : 'ok'}">stack behind ${esc(stack.behind ?? 'unknown')}</span><span class="pill ${updateData.mutationEnabled ? 'warn' : 'ok'}">apply ${updateData.mutationEnabled ? 'enabled' : 'disabled'}</span></div></div><div class="twoCol"><div><h3>Game package</h3><pre>${esc((game.stdout || '') + (game.stderr || ''))}</pre><p><button id="infraGameUpdateCheckBtn" class="primary">Check game update</button> <button id="infraGameUpdateApplyBtn" class="danger">Backup, update, restart</button> <button id="infraAutoUpdateInstallBtn">Install auto-update timer</button></p></div><div><h3>DASH stack</h3>${table([stack])}<p><button id="infraStackUpdateCheckBtn" class="primary">Fetch/check stack</button> <button id="infraStackUpdateApplyBtn" class="danger">Validate and fast-forward stack</button></p><h3>Runtime repair</h3><p><button id="infraRuntimeRepairBtn">Run post-start repair</button></p></div></div><pre id="infraUpdateResult"></pre></div>`);
+  document.getElementById('infraGameUpdateCheckBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Checking...', () => infrastructureUpdateAction('game-check')));
+  document.getElementById('infraGameUpdateApplyBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Updating...', () => infrastructureUpdateAction('game-apply')));
+  document.getElementById('infraStackUpdateCheckBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Checking...', () => infrastructureUpdateAction('stack-check')));
+  document.getElementById('infraStackUpdateApplyBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Updating...', () => infrastructureUpdateAction('stack-apply')));
+  document.getElementById('infraRuntimeRepairBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Repairing...', () => infrastructureUpdateAction('runtime-repair')));
+  document.getElementById('infraAutoUpdateInstallBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Installing...', () => infrastructureUpdateAction('auto-update-install')));
+}
+async function infrastructureUpdateAction(action){
+  const mutating = !['game-check','stack-check'].includes(action);
+  if (mutating && !confirm(`Execute ${action}? Review the update status and ensure the maintenance window is ready.`)) return;
+  const confirmPhrase = action === 'game-apply' || action === 'auto-update-install' ? 'APPLY GAME UPDATE' : action === 'stack-apply' ? 'APPLY STACK UPDATE' : action === 'runtime-repair' ? 'REPAIR RUNTIME' : '';
+  const result = await api('/api/ops/updates', {method:'POST',timeoutMs:3700000,body:JSON.stringify({action,confirm:confirmPhrase})});
+  document.getElementById('infraUpdateResult').textContent = JSON.stringify(result, null, 2);
+  notify(result.ok ? `${action} completed` : `${action} reported a failure`, result.ok ? 'ok' : 'bad');
+  return result;
+}
+function mountInfrastructureServiceControls(serviceData){
+  const select = document.getElementById('infraLogService');
+  const toolbar = select?.closest('.toolbar');
+  if (!toolbar) return;
+  toolbar.insertAdjacentHTML('beforeend', `<button id="infraStartServiceBtn" class="primary">Start</button><button id="infraRestartServiceBtn">Restart</button><button id="infraStopServiceBtn" class="danger">Stop</button>`);
+  document.getElementById('infraStartServiceBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Starting...', () => controlInfrastructureService('start')));
+  document.getElementById('infraRestartServiceBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Restarting...', () => controlInfrastructureService('restart')));
+  document.getElementById('infraStopServiceBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Stopping...', () => controlInfrastructureService('stop')));
+}
+async function controlInfrastructureService(action){
+  const service = document.getElementById('infraLogService')?.value || '';
+  if (!service) throw new Error('Select a service first');
+  if (!confirm(`${action[0].toUpperCase()+action.slice(1)} ${service}? Map starts/restarts run the repository post-start hooks.`)) return;
+  const result = await api('/api/ops/services/control', {method:'POST',timeoutMs:1900000,body:JSON.stringify({service,action,confirm:'CONTROL SERVICE'})});
+  document.getElementById('infraLogsResult').textContent = JSON.stringify(result, null, 2);
+  notify(`${service} ${action} completed`);
+  await infrastructure(loadSerial);
+  return result;
+}
+function mountInfrastructureBackupControls(backupData){
+  const pathSelect = document.getElementById('infraBackupPath');
+  const panel = pathSelect?.closest('.panelBand');
+  if (!panel) return;
+  const schedule = backupData.schedule || {};
+  const encryption = backupData.archiveEncryption || {};
+  panel.insertAdjacentHTML('beforeend', `<div class="panelInset"><h3>Backup Lifecycle</h3><p class="muted">Create and import are verified before use. Delete moves the set to a recovery quarantine. Restore always supports a dry run; execution requires zero online players and creates a verified pre-restore backup.</p><div class="commandBar"><button id="infraCreateBackupBtn" class="primary">Create full backup</button><button id="infraDownloadBackupBtn">Download selected</button><button id="infraDeleteBackupBtn" class="danger">Delete selected</button></div><fieldset><legend>Restore layers</legend><label><input id="infraRestoreRabbit" type="checkbox"> RabbitMQ</label> <label><input id="infraRestoreSaved" type="checkbox"> Server saved state</label> <label><input id="infraRestoreConfig" type="checkbox"> Config</label> <label><input id="infraRestoreTls" type="checkbox"> TLS</label></fieldset><div class="commandBar"><button id="infraRestoreDryBtn" class="primary">Preview restore</button><button id="infraRestoreExecuteBtn" class="danger">Execute restore</button></div><label>Import full-backup archive<input id="infraBackupImportFile" type="file" accept=".tgz,.gz,application/gzip"></label><p><button id="infraImportBackupBtn" class="danger">Import and verify</button></p></div>`);
+  document.getElementById('infraCreateBackupBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Creating...', createInfrastructureBackup));
+  document.getElementById('infraDownloadBackupBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Preparing...', downloadInfrastructureBackup));
+  document.getElementById('infraDeleteBackupBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Deleting...', deleteInfrastructureBackup));
+  document.getElementById('infraRestoreDryBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Planning...', () => restoreInfrastructureBackup(true)));
+  document.getElementById('infraRestoreExecuteBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Restoring...', () => restoreInfrastructureBackup(false)));
+  document.getElementById('infraImportBackupBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Importing...', importInfrastructureBackup));
+  panel.insertAdjacentHTML('beforeend', `<div class="panelInset"><div class="sectionHeader"><h3>Automatic Full Backups</h3><span class="pill ${schedule.enabled ? 'warn' : 'ok'}">${schedule.enabled ? 'enabled' : 'disabled'}</span></div><p class="muted">The admin worker creates and verifies the same full backup used by the manual button. Retention deletes only backup paths recorded as automatic schedule runs; zero keeps them indefinitely.</p><div class="grid"><label>Enabled<select id="infraBackupScheduleEnabled"><option value="false"${schedule.enabled ? '' : ' selected'}>false</option><option value="true"${schedule.enabled ? ' selected' : ''}>true</option></select></label><label>First run local time<input id="infraBackupScheduleTime" type="time" value="${esc(schedule.time || '05:00')}"></label><label>Interval hours<input id="infraBackupScheduleInterval" type="number" min="1" max="744" value="${esc(schedule.intervalHours || 24)}"></label><label>Retention days (0=unlimited)<input id="infraBackupScheduleRetention" type="number" min="0" max="3650" value="${esc(schedule.retentionDays || 0)}"></label></div><p><button id="infraBackupScheduleSaveBtn" class="primary">Save automatic schedule</button></p><pre id="infraBackupScheduleResult">${esc(JSON.stringify({nextRun:schedule.nextRunIso,lastRun:schedule.lastRunIso,lastResult:schedule.lastResult,lastPruned:schedule.lastPruned}, null, 2))}</pre></div>`);
+  panel.insertAdjacentHTML('beforeend', `<div class="panelInset"><div class="sectionHeader"><h3>Encrypted Archives</h3><div class="toolbar"><span class="pill ${encryption.enabled?'ok':'warn'}">${encryption.enabled?'gate enabled':'gate disabled'}</span><span class="pill ${encryption.configured?'ok':'warn'}">${encryption.configured?'recipient '+esc(encryption.recipientSuffix):'recipient required'}</span><span class="pill">${esc((encryption.encryptedArchives||[]).length)} shown</span></div></div><p class="muted">Host-side recipient encryption verifies the backup, creates a private temporary tarball, encrypts it as OpenPGP, removes plaintext, writes a ciphertext SHA-256 receipt, and never restores automatically. Private recovery keys do not enter the admin container.</p><pre>${esc(encryption.hostCommand||'')}</pre>${table(encryption.encryptedArchives||[])}<details><summary>Decrypt/stage command</summary><pre>${esc(encryption.decryptCommand||'')}</pre></details></div>`);
+  document.getElementById('infraBackupScheduleSaveBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Saving...', saveInfrastructureBackupSchedule));
+}
+function selectedBackupPath(){
+  const path = document.getElementById('infraBackupPath')?.value || '';
+  if (!path) throw new Error('Select a backup set first');
+  return path;
+}
+async function createInfrastructureBackup(){
+  const result = await api('/api/ops/backups/create', {method:'POST',timeoutMs:1900000,body:'{}'});
+  document.getElementById('infraBackupResult').textContent = JSON.stringify(result, null, 2);
+  notify('Full backup created and verified');
+  await infrastructure(loadSerial);
+  return result;
+}
+async function saveInfrastructureBackupSchedule(){
+  if (!confirm('Save the automatic full-backup schedule?')) return;
+  const result = await api('/api/ops/backups/schedule', {method:'POST',body:JSON.stringify({enabled:infraBackupScheduleEnabled.value === 'true',time:infraBackupScheduleTime.value,interval_hours:infraBackupScheduleInterval.value,retention_days:infraBackupScheduleRetention.value,confirm:'CHANGE BACKUP SCHEDULE'})});
+  infraBackupScheduleResult.textContent = JSON.stringify(result, null, 2);
+  notify('Automatic backup schedule saved');
+  return result;
+}
+async function downloadInfrastructureBackup(){
+  const path = selectedBackupPath();
+  const headers = {};
+  if (token) headers['X-Admin-Token'] = token;
+  const response = await fetch('/api/ops/backups/download?path=' + encodeURIComponent(path), {headers,cache:'no-store'});
+  if (!response.ok) { let message=response.statusText; try { message=(await response.json()).error || message; } catch {} throw new Error(message); }
+  const blob = await response.blob();
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = `${path.split('/').pop()}.tar.gz`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+  return {ok:true,path,sizeBytes:blob.size};
+}
+function infrastructureRestoreLayers(){
+  return {rabbitmq:document.getElementById('infraRestoreRabbit').checked,serverSaved:document.getElementById('infraRestoreSaved').checked,config:document.getElementById('infraRestoreConfig').checked,tls:document.getElementById('infraRestoreTls').checked};
+}
+async function restoreInfrastructureBackup(dryRun=true){
+  const path = selectedBackupPath();
+  if (!dryRun && !confirm(`Restore ${path}? This requires zero online players, creates a pre-restore backup, stops writers, and replaces the selected layers.`)) return;
+  const result = await api('/api/ops/backups/restore', {method:'POST',timeoutMs:3700000,body:JSON.stringify({path,layers:infrastructureRestoreLayers(),dry_run:dryRun,confirm:dryRun ? '' : 'RESTORE BACKUP'})});
+  document.getElementById('infraBackupResult').textContent = JSON.stringify(result, null, 2);
+  notify(dryRun ? 'Restore preview passed' : 'Restore completed; start/reconcile the world', dryRun ? 'ok' : 'warn');
+  return result;
+}
+async function deleteInfrastructureBackup(){
+  const path = selectedBackupPath();
+  if (!confirm(`Remove ${path} from the active backup inventory? It will be moved to recovery quarantine.`)) return;
+  const result = await api('/api/ops/backups/delete', {method:'POST',body:JSON.stringify({path,confirm:'DELETE BACKUP'})});
+  document.getElementById('infraBackupResult').textContent = JSON.stringify(result, null, 2);
+  await infrastructure(loadSerial);
+  return result;
+}
+function arrayBufferBase64(buffer){
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let offset=0; offset<bytes.length; offset+=0x8000) binary += String.fromCharCode(...bytes.subarray(offset, offset+0x8000));
+  return btoa(binary);
+}
+async function importInfrastructureBackup(){
+  const file = document.getElementById('infraBackupImportFile')?.files?.[0];
+  if (!file) throw new Error('Select a .tar.gz or .tgz backup archive');
+  if (!confirm(`Import and verify ${file.name} (${file.size} bytes)?`)) return;
+  const buffer = await file.arrayBuffer();
+  const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', buffer))).map(value => value.toString(16).padStart(2,'0')).join('');
+  const result = await api('/api/ops/backups/import', {method:'POST',timeoutMs:240000,body:JSON.stringify({name:file.name,archive_base64:arrayBufferBase64(buffer),sha256:digest,confirm:'IMPORT BACKUP'})});
+  document.getElementById('infraBackupResult').textContent = JSON.stringify(result, null, 2);
+  await infrastructure(loadSerial);
+  return result;
+}
+function mountInfrastructureDatabaseConsole(databaseData){
+  const result = document.getElementById('infraDatabaseResult');
+  const panel = result?.closest('.panelBand');
+  if (!panel) return;
+  panel.insertAdjacentHTML('afterend', `<div class="panelBand"><div class="sectionHeader"><h2>Database Query Console</h2><div class="toolbar"><span class="pill ${databaseData.queryEnabled ? 'warn' : 'ok'}">query ${databaseData.queryEnabled ? 'enabled' : 'disabled'}</span><span class="pill ${databaseData.writeEnabled ? 'warn' : 'ok'}">writes ${databaseData.writeEnabled ? 'enabled' : 'disabled'}</span></div></div><p class="muted">One statement per request. Read transactions are enforced by PostgreSQL. Every write creates a database backup first. Results are bounded and credential-like columns are redacted.</p><label>SQL<textarea id="infraSql" rows="7">select current_user, current_database(), now()</textarea></label><div class="grid"><label>Mode<select id="infraSqlMode"><option value="read">Read-only</option><option value="write">Allow write</option></select></label><label>Maximum rows<select id="infraSqlRows"><option>50</option><option selected>200</option><option>500</option><option>1000</option></select></label></div><p><button id="infraRunSqlBtn" class="primary">Run query</button> <button id="infraExportSqlBtn">Export result JSON</button></p><div id="infraSqlResult"></div></div><div class="twoCol"><div class="panelBand"><h2>Schema Search and Row Editor</h2><div class="row"><input id="infraDatabaseSearch" placeholder="table or column name"><button id="infraDatabaseSearchBtn">Search schema</button></div><div id="infraDatabaseSearchResult"></div><details><summary>Update one row by primary key</summary><div class="grid"><label>Schema<input id="infraRowSchema" value="dune"></label><label>Table<input id="infraRowTable"></label></div><label>Primary-key object<textarea id="infraRowRef" rows="3">{}</textarea></label><label>Changed values object<textarea id="infraRowValues" rows="4">{}</textarea></label><p><button id="infraUpdateRowBtn" class="danger">Update row</button></p><pre id="infraRowResult"></pre></details></div><div class="panelBand dangerZone"><h2>Rotate Database Password</h2><p class="muted">Requires zero online players. The role and <code>.env</code> are changed together, the new login is verified, and failure restores both. Recreate all database clients afterward.</p><label>New password<input id="infraDatabasePassword" type="password" autocomplete="new-password"></label><p><button id="infraRotateDatabasePasswordBtn" class="danger">Rotate password</button></p><pre id="infraPasswordResult"></pre></div></div>`);
+  document.getElementById('infraRunSqlBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Running...', () => runInfrastructureSql(false)));
+  document.getElementById('infraExportSqlBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Exporting...', () => runInfrastructureSql(true)));
+  document.getElementById('infraDatabaseSearchBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Searching...', searchInfrastructureDatabase));
+  document.getElementById('infraUpdateRowBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Updating...', updateInfrastructureDatabaseRow));
+  document.getElementById('infraRotateDatabasePasswordBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Rotating...', rotateInfrastructureDatabasePassword));
+  document.getElementById('infraDatabaseTable')?.addEventListener('change', event => {
+    const [schema, ...tableParts] = event.target.value.split('.');
+    if (schema) document.getElementById('infraRowSchema').value = schema;
+    if (tableParts.length) document.getElementById('infraRowTable').value = tableParts.join('.');
+  });
+}
+async function runInfrastructureSql(exportOnly=false){
+  const write = document.getElementById('infraSqlMode').value === 'write';
+  if (write && !confirm('Execute this database write? A database backup is created first. Review the SQL exactly before continuing.')) return;
+  const result = await api('/api/ops/database/query', {method:'POST', body:JSON.stringify({sql:document.getElementById('infraSql').value,max_rows:document.getElementById('infraSqlRows').value,confirm:write ? 'EXECUTE DATABASE WRITE' : ''})});
+  document.getElementById('infraSqlResult').innerHTML = `<div class="metricGrid">${metric('Mode', result.readOnly ? 'read-only' : 'write', result.readOnly ? 'ok' : 'warn')}${metric('Rows', result.rowCount ?? result.affectedRows ?? 0)}${metric('Duration', `${result.durationMs} ms`)}${metric('Truncated', result.truncated ? 'yes' : 'no', result.truncated ? 'warn' : 'ok')}</div>${table(result.rows || [])}<details><summary>Execution result</summary><pre>${esc(JSON.stringify(result, null, 2))}</pre></details>`;
+  if (exportOnly) downloadJson('database-query-export.json', result);
+  return result;
+}
+async function searchInfrastructureDatabase(){
+  const q = document.getElementById('infraDatabaseSearch').value;
+  const result = await api('/api/ops/database/search?q=' + encodeURIComponent(q));
+  document.getElementById('infraDatabaseSearchResult').innerHTML = table(result.rows || []);
+  return result;
+}
+async function updateInfrastructureDatabaseRow(){
+  if (!confirm('Update exactly one database row by its primary key? A database backup is created first.')) return;
+  const body = {schema:document.getElementById('infraRowSchema').value,table:document.getElementById('infraRowTable').value,row_ref:JSON.parse(document.getElementById('infraRowRef').value),values:JSON.parse(document.getElementById('infraRowValues').value),confirm:'UPDATE DATABASE ROW'};
+  const result = await api('/api/ops/database/row', {method:'POST', body:JSON.stringify(body)});
+  document.getElementById('infraRowResult').textContent = JSON.stringify(result, null, 2);
+  return result;
+}
+async function rotateInfrastructureDatabasePassword(){
+  if (!confirm('Rotate the dune database password now? All players must be offline and all database clients must be recreated after success.')) return;
+  const password = document.getElementById('infraDatabasePassword').value;
+  const result = await api('/api/ops/database/password', {method:'POST', body:JSON.stringify({password,confirm:'ROTATE DATABASE PASSWORD'})});
+  document.getElementById('infraDatabasePassword').value = '';
+  document.getElementById('infraPasswordResult').textContent = JSON.stringify(result, null, 2);
+  notify('Database password rotated; recreate all services now', 'warn');
+  return result;
+}
+async function loadInfrastructureLogs(){
+  const service = document.getElementById('infraLogService')?.value || '';
+  const tail = document.getElementById('infraLogTail')?.value || '200';
+  if (!service) throw new Error('No DASH Compose service is available.');
+  const result = await api(`/api/ops/logs?service=${encodeURIComponent(service)}&tail=${encodeURIComponent(tail)}`, {timeoutMs: 10000});
+  document.getElementById('infraLogsResult').textContent = result.logs || 'No log lines returned.';
+  updateLastRefresh(`${service} logs loaded`);
+}
+async function verifyInfrastructureBackup(){
+  const path = document.getElementById('infraBackupPath')?.value || '';
+  if (!path) throw new Error('No backup set is available to verify.');
+  const result = await api('/api/ops/backups/verify', {method:'POST', timeoutMs:190000, body:JSON.stringify({path})});
+  document.getElementById('infraBackupResult').textContent = JSON.stringify(result, null, 2);
+  notify(result.ok ? 'Backup verification passed' : 'Backup verification failed', result.ok ? 'ok' : 'bad');
+}
+async function loadInfrastructureTable(){
+  const selected = document.getElementById('infraDatabaseTable')?.value || '';
+  const splitAt = selected.indexOf('.');
+  if (splitAt < 1) throw new Error('Select a database table first.');
+  const schema = selected.slice(0, splitAt);
+  const name = selected.slice(splitAt + 1);
+  const limit = document.getElementById('infraDatabaseLimit')?.value || '50';
+  const result = await api(`/api/ops/database/table?schema=${encodeURIComponent(schema)}&table=${encodeURIComponent(name)}&limit=${encodeURIComponent(limit)}`);
+  document.getElementById('infraDatabaseResult').innerHTML = `<div class="metricGrid">${metric('Table', `${result.schema}.${result.table}`)}${metric('Rows returned', result.rowCount)}${metric('Limit', result.limit)}${metric('Mode', 'read-only', 'ok')}</div>${table(result.rows || [])}<details><summary>Columns and redaction</summary>${table(result.columns || [])}<p class="muted">${esc(result.redaction || '')}</p></details>`;
+  makeSortableTables(document.getElementById('infraDatabaseResult'));
+}
+async function world(serial=loadSerial){
+  const [guildData, landsraad, storage] = await Promise.all([
+    api('/api/world/guilds'),
+    api('/api/world/landsraad'),
+    api('/api/world/storage')
+  ]);
+  if (serial !== loadSerial) return;
+  const guilds = guildData.rows || [];
+  const storageRows = storage.rows || [];
+  const errors = [...Object.entries(landsraad.errors || {}), ...Object.entries(storage.errors || {})].map(([surface,error]) => ({surface,error}));
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>World</h2><div class="toolbar"><span class="pill">read-only</span><span class="pill">${esc(guilds.length)} guilds</span><span class="pill">${esc(storageRows.length)} storage actors</span><button data-jump="characters">Players</button><button data-jump="mutations">Guarded Actions</button></div></div><div class="panelBand"><p class="muted">Guild, Landsraad, and storage data are bounded database reads. This page cannot change guild membership, rewards, task progress, contributions, or container contents.</p></div>${errors.length ? `<div class="panelBand dangerZone"><h2>Unavailable schema surfaces</h2>${table(errors)}</div>` : ''}<div class="panelBand"><div class="sectionHeader"><h2>Guilds</h2><div class="toolbar"><input id="worldGuildSearch" class="filterInput" placeholder="Filter guilds"><button id="worldGuildSearchBtn">Search</button></div></div><div id="worldGuildRows">${table(guilds)}</div><div id="worldGuildDetail" class="panelBand"><span class="muted">Select a guild row to load members and invites.</span></div></div><div class="twoCol"><div class="panelBand"><h2>Current Landsraad Term</h2>${table(landsraad.currentTerm || [])}<details open><summary>Tasks</summary>${table(landsraad.tasks || [])}</details><details><summary>Rewards</summary>${table(landsraad.rewards || [])}</details><details><summary>Faction contributions</summary>${table(landsraad.factionContributions || [])}</details><details><summary>Player contributions</summary>${table(landsraad.playerContributions || [])}</details><details><summary>Guild contributions</summary>${table(landsraad.guildContributions || [])}</details><details><summary>Recent terms and decrees</summary>${table(landsraad.terms || [])}${table(landsraad.decrees || [])}</details></div><div class="panelBand"><h2>Aggregate Storage</h2><p class="muted">${esc(storage.ownershipNote || '')} Empty owner names mean the ownership join did not resolve a character, not that the container is unowned.</p>${table(storageRows)}</div></div></div>`;
+  wireWorldGuildRows();
+  document.getElementById('worldGuildSearchBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Searching...', searchWorldGuilds));
+  document.getElementById('worldGuildSearch')?.addEventListener('keydown', e => { if (e.key === 'Enter') searchWorldGuilds().catch(error => reportClientError(error, 'Search guilds')); });
+  makeSortableTables(view);
+}
+function wireWorldGuildRows(){
+  const root = document.getElementById('worldGuildRows');
+  const headers = [...(root?.querySelectorAll('thead th') || [])].map(header => header.textContent.trim());
+  const guildIdIndex = headers.indexOf('guild_id');
+  root?.querySelectorAll('tbody tr').forEach(row => {
+    row.tabIndex = 0;
+    const open = () => loadWorldGuild(guildIdIndex >= 0 ? row.children[guildIdIndex]?.textContent || '' : '');
+    row.addEventListener('click', open);
+    row.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open(); } });
+  });
+}
+async function searchWorldGuilds(){
+  const q = document.getElementById('worldGuildSearch')?.value || '';
+  const data = await api('/api/world/guilds?q=' + encodeURIComponent(q));
+  document.getElementById('worldGuildRows').innerHTML = table(data.rows || []);
+  wireWorldGuildRows();
+  makeSortableTables(document.getElementById('worldGuildRows'));
+}
+async function loadWorldGuild(guildId){
+  if (!guildId) throw new Error('The selected row has no guild ID.');
+  const data = await api('/api/world/guild-members?guild_id=' + encodeURIComponent(guildId));
+  document.getElementById('worldGuildDetail').innerHTML = `<div class="sectionHeader"><h2>Guild ${esc(data.guildId)}</h2><span class="pill">read-only</span></div>${table(data.guild || [])}<details open><summary>Members</summary>${table(data.members || [])}</details><details><summary>Invites</summary>${table(data.invites || [])}</details>${Object.keys(data.errors || {}).length ? `<details open><summary>Unavailable surfaces</summary>${table(Object.entries(data.errors).map(([surface,error]) => ({surface,error})))}</details>` : ''}`;
+  makeSortableTables(document.getElementById('worldGuildDetail'));
+}
 async function refreshResources(liveStats=false){
   if (resourceRefreshInFlight) return;
   resourceRefreshInFlight = true;
@@ -9385,6 +14722,152 @@ async function digests(serial=loadSerial){
   const publicEntries = entries.filter(e => e.audience === 'public');
   view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Admin Digests</h2><div class="toolbar"><span class="pill">${esc(entries.length)} retained</span><span class="pill">${esc(data.updatedAt || 'not updated')}</span><button data-jump="ops">Ops</button><button data-jump="security">Audit</button></div></div><div class="metricGrid">${metric('Map Health State', data.mapHealthState || 'unknown')}${metric('Daily Peak', (data.dailyPeak || {}).peak ?? 0)}${metric('Online Snapshot', Object.keys(data.onlinePlayers || {}).length)}${metric('State File', data.path || '')}</div><div class="twoCol"><div class="panelBand"><h2>Admin-Only Digests</h2>${digestList(adminEntries)}</div><div class="panelBand"><h2>Public Notices</h2>${digestList(publicEntries)}</div></div><details class="panelBand"><summary>Last Send Markers</summary>${table(Object.entries(data.lastSent || {}).map(([key,value]) => ({key, value})))}</details><details class="panelBand"><summary>Raw Digest State</summary><pre>${esc(JSON.stringify(data, null, 2))}</pre></details></div>`;
 }
+async function carePackages(serial=loadSerial){
+  const [data, roster] = await Promise.all([
+    api('/api/admin/care-packages'),
+    api('/api/characters/roster')
+  ]);
+  if (serial !== loadSerial) return;
+  const packages = (data.catalog || {}).packages || [];
+  const history = data.history || [];
+  const players = [...(roster.online || []), ...(roster.offline || [])];
+  const packageOptions = packages.map(pkg => `<option value="${esc(pkg.id)}">${esc(pkg.label)} · ${pkg.enabled ? 'enabled' : 'disabled'}</option>`).join('');
+  const packageRows = packages.map(pkg => ({
+    id:pkg.id,
+    label:pkg.label,
+    enabled:pkg.enabled,
+    once_per_account:pkg.oncePerAccount,
+    cooldown_hours:pkg.cooldownHours,
+    items:(pkg.items || []).length,
+    currency:(pkg.currency || []).length,
+    xp:(pkg.xp || []).length,
+    description:pkg.description || ''
+  }));
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Care Packages</h2><div class="toolbar"><span class="pill ${data.enabled ? 'warn' : 'ok'}">execution ${data.enabled ? 'enabled' : 'disabled'}</span><span class="pill">${esc(packages.length)} presets</span><button data-jump="mutations">Admin Actions</button><button data-jump="security">Audit</button></div></div><div class="panelBand"><p class="muted">Presets and automatic first-online or returning-player rules are stored in <code>config/care-packages.json</code>. Preview is always available. Execution requires the master mutation, bundle, item-grant when applicable, and care-package gates; an automatic database backup is created before every grant.</p></div><div class="twoCol"><div class="panelBand"><h2>Plan or Grant</h2><div class="grid"><label>Package<select id="carePackageId">${packageOptions || '<option value="">No packages configured</option>'}</select></label><label>Player<select id="carePackageAccount">${characterOptions(players)}</select></label></div><div class="commandBar"><button id="carePackagePreviewBtn" class="primary">Preview package</button><button id="carePackageGrantBtn" class="danger">Grant package</button></div><pre id="carePackageResult"></pre></div><div class="panelBand"><h2>Execution Requirements</h2><ul>${(data.executionRequires || []).map(value => `<li><code>${esc(value)}</code></li>`).join('')}</ul><p>Confirmation: <code>${esc(data.confirmPhrase || '')}</code></p><p class="muted">Packages marked disabled can be inspected and previewed but cannot be granted.</p></div></div>${carePackageAutomationPanel(data)}<div class="panelBand"><h2>Configured Packages</h2>${table(packageRows)}</div><details class="panelBand" open><summary>Grant History</summary>${table(history)}</details></div>`;
+  document.getElementById('carePackagePreviewBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Previewing...', () => runCarePackage(true)));
+  document.getElementById('carePackageGrantBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Granting...', () => runCarePackage(false)));
+  document.getElementById('carePackageScanPreviewBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Scanning...', () => runCarePackageScan(true)));
+  document.getElementById('carePackageScanRunBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Scanning...', () => runCarePackageScan(false)));
+  document.getElementById('carePackageRetryBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Retrying...', () => retryCarePackage(history.find(row => !row.ok), data)));
+  document.getElementById('carePackageClearBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Clearing...', () => clearCarePackageHistory(data)));
+  document.getElementById('carePackageConfigSaveBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Saving...', saveCarePackageConfig));
+}
+function carePackageAutomationPanel(data){
+  const automatic = (data.catalog || {}).automatic || {};
+  const rules = automatic.rules || [];
+  const state = data.automaticState || {};
+  const failed = (data.history || []).find(row => !row.ok);
+  return `<div class="twoCol"><div class="panelBand"><div class="sectionHeader"><h2>Automatic Eligibility</h2><div class="toolbar"><span class="pill ${automatic.enabled ? 'warn' : 'ok'}">config ${automatic.enabled ? 'enabled' : 'disabled'}</span><span class="pill ${data.automaticExecutionEnabled ? 'warn' : 'ok'}">worker ${data.automaticExecutionEnabled ? 'enabled' : 'disabled'}</span></div></div><p class="muted">The worker polls at the configured interval. First-online claims and offline returning-player eligibility are persisted so restarts and overlapping scans cannot duplicate a grant.</p>${table(rules)}<div class="commandBar"><button id="carePackageScanPreviewBtn" class="primary">Preview eligibility scan</button><button id="carePackageScanRunBtn" class="danger">Run eligibility scan</button><button id="carePackageRetryBtn" ${failed ? '' : 'disabled'}>Retry latest failure</button><button id="carePackageClearBtn">Clear grant history</button></div><pre id="carePackageScanResult">${esc(JSON.stringify(state, null, 2))}</pre></div><div class="panelBand"><h2>Package and Rule Configuration</h2><p class="muted">Edit the complete validated catalog. Saving creates a timestamped backup; invalid package references, duplicate ids, oversized action lists, and invalid intervals are refused.</p><textarea id="carePackageConfigText" rows="24">${esc(JSON.stringify(data.catalog || {}, null, 2))}</textarea><div class="commandBar"><button id="carePackageConfigSaveBtn" class="primary">Validate and save configuration</button></div></div></div>`;
+}
+async function runCarePackageScan(dryRun){
+  if (!dryRun && !confirm('Run automatic care-package eligibility now? Eligible online players may receive configured packages.')) return;
+  const body = {action:'scan', dry_run:dryRun};
+  if (!dryRun) body.confirm = 'RUN CARE PACKAGE SCAN';
+  const result = await api('/api/admin/care-packages', {method:'POST', timeoutMs:180000, body:JSON.stringify(body)});
+  document.getElementById('carePackageScanResult').textContent = JSON.stringify(result, null, 2);
+  notify(dryRun ? 'Eligibility preview ready' : 'Eligibility scan complete', result.ok ? 'ok' : 'bad');
+}
+async function retryCarePackage(row, data){
+  if (!row) throw new Error('There is no failed care-package grant to retry.');
+  if (!confirm(`Retry ${row.packageId} for account ${row.accountId}?`)) return;
+  const result = await api('/api/admin/care-packages', {method:'POST', timeoutMs:180000, body:JSON.stringify({action:'retry', package_id:row.packageId, account_id:row.accountId, confirm:data.retryConfirmPhrase || 'RETRY CARE PACKAGE'})});
+  document.getElementById('carePackageScanResult').textContent = JSON.stringify(result, null, 2);
+  notify('Care-package retry complete', result.ok ? 'ok' : 'bad');
+}
+async function clearCarePackageHistory(data){
+  if (!confirm('Clear visible grant history? Persistent first-online claims remain in place to prevent duplicate grants.')) return;
+  const result = await api('/api/admin/care-packages', {method:'POST', body:JSON.stringify({action:'clear-history', confirm:data.clearConfirmPhrase || 'CLEAR GRANT HISTORY'})});
+  document.getElementById('carePackageScanResult').textContent = JSON.stringify(result, null, 2);
+  notify('Care-package history cleared', 'ok');
+}
+async function saveCarePackageConfig(){
+  const text = document.getElementById('carePackageConfigText')?.value || '';
+  JSON.parse(text);
+  await api('/api/settings/configs/care-packages.json', {method:'POST', body:JSON.stringify({content:text})});
+  notify('Care-package configuration saved with backup', 'ok');
+  await carePackages();
+}
+async function runCarePackage(dryRun=true){
+  const packageId = document.getElementById('carePackageId')?.value || '';
+  const accountId = document.getElementById('carePackageAccount')?.value || '';
+  if (!packageId || !accountId) throw new Error('Select both a package and a player.');
+  if (!dryRun && !confirm('Grant this reviewed care package? DASH will create a database backup before applying the bundle.')) return;
+  const body = {package_id:packageId, account_id:accountId, dry_run:dryRun};
+  if (!dryRun) body.confirm = 'GRANT CARE PACKAGE';
+  const result = await api('/api/admin/care-packages', {method:'POST', timeoutMs:dryRun ? 30000 : 180000, body:JSON.stringify(body)});
+  document.getElementById('carePackageResult').textContent = JSON.stringify(result, null, 2);
+  notify(dryRun ? 'Care package preview ready' : 'Care package granted', 'ok');
+}
+function downloadJson(value, filename){
+  const blob = new Blob([JSON.stringify(value, null, 2) + '\n'], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename.replace(/[^A-Za-z0-9_.-]+/g, '_');
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+async function blueprints(serial=loadSerial){
+  const [data, roster] = await Promise.all([api('/api/admin/blueprints'), api('/api/characters/roster')]);
+  if (serial !== loadSerial) return;
+  const rows = data.rows || [];
+  const players = [...(roster.offline || []), ...(roster.online || [])];
+  const options = players.map(player => `<option value="${esc(player.player_pawn_id || '')}">${esc(player.character_name || player.account_id || '')} · pawn ${esc(player.player_pawn_id || '')} · ${esc(player.online_status || '')}</option>`).join('');
+  const body = rows.map(row => `<tr data-blueprint-id="${esc(row.id)}"><td><input type="checkbox" data-blueprint-select value="${esc(row.id)}" aria-label="Select ${esc(row.name || 'blueprint ' + row.id)}"></td><td>${esc(row.name || '')}</td><td>${esc(row.owner_name || row.owner_id || '')}</td><td>${esc(row.pieces)}</td><td>${esc(row.placeables)}</td><td>${esc(row.pentashields)}</td><td>${esc(row.item_id)}</td><td><button data-blueprint-export="${esc(row.id)}">Export</button><button class="danger" data-blueprint-delete="${esc(row.id)}">Delete</button></td></tr>`).join('');
+  const unsupported = !data.capability?.supported;
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Solido Blueprints</h2><div class="toolbar"><span class="pill ${unsupported ? 'bad' : 'ok'}">schema ${unsupported ? 'unavailable' : 'ready'}</span><span class="pill ${data.mutationEnabled ? 'warn' : 'ok'}">writes ${data.mutationEnabled ? 'enabled' : 'disabled'}</span><span class="pill">${esc(rows.length)} blueprints</span><button data-jump="characters">Players</button></div></div><div class="panelBand"><p class="muted">List and export are read-only. Import and delete require an offline owner, master/item/blueprint gates, exact confirmation, an automatic database backup, a database transaction, and post-write verification.</p></div>${unsupported ? `<div class="panelBand dangerZone"><h2>Missing schema</h2>${table(Object.entries(data.capability?.tables || {}).map(([name,present]) => ({name,present})))}</div>` : ''}<div class="panelBand"><h2>Import JSON Archives</h2><div class="grid"><label>Target player<select id="blueprintPlayerPawn">${options || '<option value="">No players with pawn IDs found</option>'}</select></label><label>Blueprint files<input id="blueprintFiles" type="file" accept=".json,application/json" multiple></label></div><div class="commandBar"><button id="blueprintPreviewBtn" class="primary" ${unsupported ? 'disabled' : ''}>Preview files</button><button id="blueprintImportBtn" class="danger" ${unsupported ? 'disabled' : ''}>Import files</button></div><pre id="blueprintImportResult"></pre></div><div class="panelBand"><div class="sectionHeader"><h2>Stored Blueprints</h2><div class="toolbar"><button id="blueprintExportSelectedBtn">Export selected</button><button id="blueprintExportAllBtn">Export all</button></div></div><div class="tableWrap"><table><thead><tr><th>Select</th><th>Name</th><th>Owner</th><th>Pieces</th><th>Placeables</th><th>Pentashields</th><th>Item ID</th><th>Actions</th></tr></thead><tbody>${body || '<tr><td colspan="8" class="muted">No blueprints found.</td></tr>'}</tbody></table></div></div></div>`;
+  document.getElementById('blueprintPreviewBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Previewing...', () => runBlueprintImports(true)));
+  document.getElementById('blueprintImportBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Importing...', () => runBlueprintImports(false)));
+  document.getElementById('blueprintExportSelectedBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Exporting...', () => exportBlueprintIds([...document.querySelectorAll('[data-blueprint-select]:checked')].map(input => input.value))));
+  document.getElementById('blueprintExportAllBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Exporting...', () => exportBlueprintIds(rows.map(row => row.id))));
+  view.querySelectorAll('[data-blueprint-export]').forEach(button => button.addEventListener('click', e => runAction(e.currentTarget, 'Exporting...', () => exportBlueprintIds([button.dataset.blueprintExport]))));
+  view.querySelectorAll('[data-blueprint-delete]').forEach(button => button.addEventListener('click', e => runAction(e.currentTarget, 'Deleting...', () => deleteBlueprint(button.dataset.blueprintDelete))));
+}
+async function exportBlueprintIds(ids){
+  if (!ids.length) throw new Error('Select at least one blueprint.');
+  if (ids.length > 100) throw new Error('Export at most 100 blueprints per archive.');
+  const data = await api('/api/admin/blueprints?export=' + encodeURIComponent(ids.join(',')), {timeoutMs:30000});
+  const first = data.blueprints?.[0];
+  downloadJson(ids.length === 1 ? first : data, ids.length === 1 ? `${first?.name || 'blueprint_' + ids[0]}.json` : 'blueprints.json');
+  notify(`${ids.length} blueprint${ids.length === 1 ? '' : 's'} exported`, 'ok');
+}
+async function readBlueprintFiles(){
+  const files = [...(document.getElementById('blueprintFiles')?.files || [])];
+  if (!files.length) throw new Error('Select at least one JSON blueprint file.');
+  if (files.length > 10) throw new Error('Import at most 10 files per batch.');
+  const parsed = [];
+  for (const file of files) {
+    if (file.size > 32 * 1024 * 1024) throw new Error(`${file.name} exceeds 32 MiB.`);
+    let blueprint;
+    try { blueprint = JSON.parse(await file.text()); } catch (error) { throw new Error(`${file.name}: invalid JSON (${error.message})`); }
+    parsed.push({filename:file.name, blueprint});
+  }
+  return parsed;
+}
+async function runBlueprintImports(dryRun=true){
+  const playerPawnId = document.getElementById('blueprintPlayerPawn')?.value || '';
+  if (!playerPawnId) throw new Error('Select a target player with a pawn ID.');
+  const files = await readBlueprintFiles();
+  if (!dryRun && !confirm(`Import ${files.length} blueprint archive${files.length === 1 ? '' : 's'}? A database backup will be created before every file.`)) return;
+  const results = [];
+  for (const file of files) {
+    const body = {action:'import', dry_run:dryRun, player_pawn_id:playerPawnId, filename:file.filename, blueprint:file.blueprint};
+    if (!dryRun) body.confirm = 'IMPORT BLUEPRINT';
+    try { results.push({file:file.filename, result:await api('/api/admin/blueprints', {method:'POST', timeoutMs:180000, body:JSON.stringify(body)})}); }
+    catch (error) { results.push({file:file.filename, error:error.message}); }
+  }
+  document.getElementById('blueprintImportResult').textContent = JSON.stringify(results, null, 2);
+  if (!dryRun) await blueprints(loadSerial);
+  notify(dryRun ? 'Blueprint previews complete' : 'Blueprint import batch complete', results.some(row => row.error) ? 'bad' : 'ok');
+}
+async function deleteBlueprint(blueprintId){
+  const preview = await api('/api/admin/blueprints', {method:'POST', body:JSON.stringify({action:'delete', blueprint_id:blueprintId, dry_run:true})});
+  if (!confirm(`Delete blueprint ${preview.archive?.name || blueprintId} and its Solido item? A database backup and rollback archive will be retained.`)) return;
+  const result = await api('/api/admin/blueprints', {method:'POST', timeoutMs:180000, body:JSON.stringify({action:'delete', blueprint_id:blueprintId, dry_run:false, confirm:'DELETE BLUEPRINT'})});
+  downloadJson(result.archive, `${result.archive?.name || 'deleted_blueprint_' + blueprintId}.rollback.json`);
+  notify('Blueprint deleted; rollback archive downloaded', 'ok');
+  await blueprints(loadSerial);
+}
 async function characters(serial=loadSerial){
   const lastQuery = sessionStorage.getItem('duneAdminCharacterQuery') || '';
   if (serial !== loadSerial) return;
@@ -9400,6 +14883,74 @@ async function characters(serial=loadSerial){
   });
   await loadCharacterRoster();
   if (lastQuery) await searchCharacters();
+}
+async function cosmeticsConsole(serial=loadSerial){
+  const [data, roster] = await Promise.all([api('/api/admin/cosmetics'), api('/api/characters/roster')]);
+  if (serial !== loadSerial) return;
+  const items = data.catalog?.items || [];
+  const players = [...(roster.offline || []), ...(roster.online || [])].filter(row => row.player_pawn_id);
+  const playerOptions = players.map(row => `<option value="${esc(row.player_pawn_id)}">${esc(row.character_name || row.account_id)} · pawn ${esc(row.player_pawn_id)} · ${esc(row.online_status || '')}</option>`).join('');
+  const categories = [...new Set(items.map(row => row.category))].sort();
+  const receiptOptions = (data.receipts || []).map(row => `<option value="${esc(row.id)}">${esc(row.createdAt || row.id)} · ${esc(row.action)} · pawn ${esc(row.player?.player_pawn_id || '')} · ${esc(row.beforeCount)}→${esc(row.afterCount)}</option>`).join('');
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Character Cosmetics and Skins</h2><div class="toolbar"><span class="pill ok">${esc(items.length)} reviewed IDs</span><span class="pill ${data.mutationEnabled ? 'warn' : 'ok'}">writes ${data.mutationEnabled ? 'enabled' : 'preview only'}</span><span class="pill warn">offline + relog required</span><button data-jump="characters">Players</button></div></div><div class="panelBand"><p class="muted">The game exposes no first-party cosmetic mutation routine. DASH edits only the exact customization-library array for a locked Offline player. Add/remove is catalog-confined; bulk unlock excludes inventory-only swatch tokens. Every write creates a full database backup, uses compare-and-swap verification, and stores a private rollback receipt. No map restart is performed.</p></div><div class="panelBand"><div class="grid"><label>Player<select id="cosmeticPawn">${playerOptions || '<option value="">No player pawn found</option>'}</select></label><label>Search<input id="cosmeticSearch" placeholder="name or exact ID"></label><label>Category<select id="cosmeticCategory"><option value="">All categories</option>${categories.map(value => `<option>${esc(value)}</option>`).join('')}</select></label><label>&nbsp;<button id="cosmeticInspectBtn" class="primary">Inspect unlocks</button></label></div><div id="cosmeticPlayerState" class="muted">Select a player and inspect current state.</div><div class="commandBar"><button id="cosmeticUnlockPreviewBtn">Preview unlock all</button><button id="cosmeticUnlockAllBtn" class="danger" ${data.mutationEnabled ? '' : 'disabled'}>Unlock all reviewed cosmetics</button></div><pre id="cosmeticResult">No operation has run.</pre></div><div class="panelBand"><div class="sectionHeader"><h2>Reviewed Catalog</h2><span id="cosmeticVisibleCount" class="pill">${esc(items.length)}</span></div><div id="cosmeticRows"></div></div><div class="panelBand dangerZone"><h2>Receipt Rollback</h2><p class="muted">Rollback is compare-and-swap guarded: it runs only when the player is Offline and current unlock state still matches the selected receipt's after hash. A new full database backup and inverse receipt are created first.</p><div class="row"><select id="cosmeticReceipt">${receiptOptions || '<option value="">No receipts yet</option>'}</select><button id="cosmeticRollbackBtn" class="danger" ${data.mutationEnabled && receiptOptions ? '' : 'disabled'}>Roll back selected receipt</button></div><pre id="cosmeticRollbackResult"></pre></div><details class="panelBand"><summary>Catalog provenance and safety contract</summary>${table([{source:data.catalog?.source || '',generatedAt:data.catalog?.generatedAt || '',reviewRequired:data.catalog?.reviewRequired,storage:data.storage,firstPartyMutationRoutine:data.firstPartyMutationRoutine,backupRequired:data.backupRequired,offlineRequired:data.offlineRequired,restartRequired:data.restartRequired,relogRequired:data.relogRequired,capability:data.requiredCapability}])}</details></div>`;
+  let owned = new Set();
+  let inspected = false;
+  const resultNode = () => document.getElementById('cosmeticResult');
+  const renderRows = () => {
+    const term = (document.getElementById('cosmeticSearch')?.value || '').trim().toLowerCase();
+    const selectedCategory = document.getElementById('cosmeticCategory')?.value || '';
+    const rows = items.filter(row => (!selectedCategory || row.category === selectedCategory) && (!term || row.id.toLowerCase().includes(term) || row.name.toLowerCase().includes(term)));
+    document.getElementById('cosmeticVisibleCount').textContent = `${rows.length} shown`;
+    document.getElementById('cosmeticRows').innerHTML = `<div class="tableWrap"><table><thead><tr><th>Name</th><th>Exact ID</th><th>Category</th><th>State</th><th>Action</th></tr></thead><tbody>${rows.map(row => {const has=owned.has(row.id);return `<tr><td>${esc(row.name)}</td><td><code>${esc(row.id)}</code></td><td>${esc(row.category)}</td><td><span class="pill ${has ? 'ok' : ''}">${inspected ? (has ? 'unlocked' : 'locked') : 'inspect first'}</span></td><td><button data-cosmetic-id="${esc(row.id)}" data-cosmetic-action="${has ? 'remove' : 'add'}" class="${has ? 'danger' : 'primary'}" ${inspected ? '' : 'disabled'}>${has ? 'Remove' : 'Add'}</button></td></tr>`}).join('') || '<tr><td colspan="5" class="muted">No matching catalog rows.</td></tr>'}</tbody></table></div>`;
+    document.querySelectorAll('[data-cosmetic-id]').forEach(button => button.onclick = e => runAction(e.currentTarget, 'Planning…', () => mutateCosmetic(button.dataset.cosmeticAction, button.dataset.cosmeticId)));
+  };
+  const inspect = async () => {
+    const pawn = document.getElementById('cosmeticPawn').value;
+    if (!pawn) throw new Error('Select a player pawn.');
+    const status = await api('/api/admin/cosmetics?pawn_id=' + encodeURIComponent(pawn));
+    const player = status.player?.player || {};
+    owned = new Set((status.player?.entries || []).map(row => row.id));
+    inspected = true;
+    document.getElementById('cosmeticPlayerState').innerHTML = `<span class="pill ${status.player?.offline ? 'ok' : 'bad'}">${esc(player.online_status || 'unknown')}</span> <span class="pill">${esc(status.player?.count || 0)} unlocked</span> <span class="pill">hash ${esc((status.player?.hash || '').slice(0,16))}</span> <span class="muted">${esc(player.character_name || '')} · pawn ${esc(player.player_pawn_id || '')}</span>`;
+    renderRows();
+    return status.player;
+  };
+  const preview = async (action, cosmeticId='') => {
+    const body = {action, pawnId:document.getElementById('cosmeticPawn').value};
+    if (cosmeticId) body.cosmeticId = cosmeticId;
+    const result = await api('/api/admin/cosmetics/preview', {method:'POST', body:JSON.stringify(body)});
+    resultNode().textContent = JSON.stringify(result, null, 2);
+    return result;
+  };
+  const mutateCosmetic = async (action, cosmeticId='') => {
+    const planned = await preview(action, cosmeticId);
+    if (!data.mutationEnabled) return planned;
+    if (!planned.offline) throw new Error('Player is not Offline; mutation refused.');
+    const label = action === 'unlock-all' ? `unlock ${planned.added.length} reviewed cosmetics` : `${action} ${cosmeticId}`;
+    if (!confirm(`Execute ${label}? DASH will create a full database backup and rollback receipt first.`)) return planned;
+    const body = {action, pawnId:document.getElementById('cosmeticPawn').value, cosmeticId, confirm:data.confirmMutation};
+    const result = await api('/api/admin/cosmetics', {method:'POST', timeoutMs:180000, body:JSON.stringify(body)});
+    resultNode().textContent = JSON.stringify(result, null, 2);
+    await inspect();
+    notify('Cosmetic state changed; player must relog', 'ok');
+    return result;
+  };
+  document.getElementById('cosmeticInspectBtn').onclick = e => runAction(e.currentTarget, 'Inspecting…', inspect);
+  document.getElementById('cosmeticSearch').oninput = renderRows;
+  document.getElementById('cosmeticCategory').onchange = renderRows;
+  document.getElementById('cosmeticPawn').onchange = () => { inspected=false; owned=new Set(); document.getElementById('cosmeticPlayerState').textContent='Player changed; inspect current state.'; renderRows(); };
+  document.getElementById('cosmeticUnlockPreviewBtn').onclick = e => runAction(e.currentTarget, 'Planning…', () => preview('unlock-all'));
+  document.getElementById('cosmeticUnlockAllBtn').onclick = e => runAction(e.currentTarget, 'Applying…', () => mutateCosmetic('unlock-all'));
+  document.getElementById('cosmeticRollbackBtn').onclick = e => runAction(e.currentTarget, 'Rolling back…', async () => {
+    const receiptId = document.getElementById('cosmeticReceipt').value;
+    if (!receiptId) throw new Error('Select a cosmetic receipt.');
+    if (!confirm('Roll back this exact receipt? Current state must still match it; a new full database backup and inverse receipt will be created.')) return;
+    const result = await api('/api/admin/cosmetics', {method:'POST', timeoutMs:180000, body:JSON.stringify({action:'rollback',receiptId,confirm:data.confirmRollback})});
+    document.getElementById('cosmeticRollbackResult').textContent = JSON.stringify(result, null, 2);
+    notify('Cosmetic receipt rolled back; player must relog', 'ok');
+    return result;
+  });
+  renderRows();
 }
 async function loadCharacterRoster(){
   const roster = await api('/api/characters/roster');
@@ -9646,6 +15197,21 @@ function closePlayerModal(){
   document.getElementById('playerModal').classList.remove('open');
   announce('Player detail closed');
 }
+async function bootstrapConsole(serial=loadSerial){
+  const data = await api('/api/bootstrap', {timeoutMs:30000});
+  if (serial !== loadSerial) return;
+  const tlsRows = Object.entries(data.tls || {}).map(([file,present]) => ({file,present}));
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>First-Run Bootstrap</h2><div class="toolbar"><span class="pill ${data.ok ? 'ok' : 'warn'}">${data.ok ? 'ready' : 'incomplete'}</span><span class="pill ${data.mutationEnabled ? 'warn' : 'ok'}">actions ${data.mutationEnabled ? 'enabled' : 'disabled'}</span><button data-jump="settings">Edit required settings</button><button data-jump="infrastructure">Open infrastructure</button></div></div><div class="panelBand"><p class="muted">This wizard uses the same repository scripts as CLI setup. Save identity, network, FLS, database, and admin-token values in Settings first. Existing TLS files are never overwritten. Database initialization is idempotent. Stack startup uses the post-hook-aware restart target.</p><ol>${(data.steps || []).map(step => `<li>${esc(step)}</li>`).join('')}</ol></div><div class="twoCol"><div class="panelBand"><h2>Required settings</h2>${table(data.settings || [])}</div><div class="panelBand"><h2>State readiness</h2><h3>Database</h3>${table([data.database || {}])}<h3>RabbitMQ TLS</h3>${table(tlsRows)}<h3>Compose services</h3>${table(data.services || [])}</div></div><div class="panelBand"><h2>Bootstrap Actions</h2><div class="commandBar"><button data-bootstrap-action="preflight" class="primary">Run read-only preflight</button><button data-bootstrap-action="generate-tls">Generate missing TLS</button><button data-bootstrap-action="init-database">Initialize database</button><button data-bootstrap-action="start-stack" class="danger">Start/reconcile full stack</button></div><pre id="bootstrapResult"></pre></div></div>`;
+  document.querySelectorAll('[data-bootstrap-action]').forEach(button => button.addEventListener('click', e => runAction(e.currentTarget, 'Running...', () => runBootstrapAction(e.currentTarget.dataset.bootstrapAction))));
+}
+async function runBootstrapAction(action){
+  const mutating = action !== 'preflight';
+  if (mutating && !confirm(`Run bootstrap action ${action}?`)) return;
+  const result = await api('/api/bootstrap', {method:'POST',timeoutMs:1900000,body:JSON.stringify({action,confirm:mutating ? 'RUN BOOTSTRAP' : ''})});
+  document.getElementById('bootstrapResult').textContent = JSON.stringify(result, null, 2);
+  notify(`Bootstrap ${action} finished`, result.result?.ok ? 'ok' : 'bad');
+  return result;
+}
 async function settings(serial=loadSerial){
   const [env, transfer, onlineState, artificialExchange, configs] = await Promise.all([
     api('/api/settings/env'),
@@ -9695,6 +15261,175 @@ async function discovery(serial=loadSerial){
   }
 }
 
+async function commandConsole(serial=loadSerial){
+  const data=await api('/api/ops/console');if(serial!==loadSerial)return;const commands=data.commands||[];
+  const rows=commands.map(row=>({id:row.id,label:row.label,category:row.category,available:row.available,timeoutSeconds:row.timeoutSeconds,description:row.description}));
+  view.innerHTML=`<div class="pageStack"><div class="sectionHeader"><h2>Command Console</h2><div class="toolbar"><span class="pill ${data.featureEnabled?'ok':'bad'}">${data.featureEnabled?'enabled':'disabled'}</span><span class="pill ok">native read-only handlers</span><span class="pill ok">no subprocess</span><span class="pill ok">no shell</span><span class="pill">${esc(data.outputLimitBytes)} byte output cap</span></div></div><div class="panelBand"><p class="muted">This is a bounded operator console, not a browser shell. Select one reviewed command ID. User arguments, processes, pipes, redirects, substitutions, environment overrides, arbitrary paths, and interactive stdin are not accepted. Execution requires the <code>operations.write</code> capability; output is time-bounded, capped, redacted, and the receipt is audited.</p></div><div class="twoCol"><div class="panelBand"><h2>Run diagnostic</h2><label>Named command<select id="consoleCommandId">${commands.map(row=>`<option value="${esc(row.id)}" ${row.available?'':'disabled'}>${esc(row.category)} · ${esc(row.label)}${row.available?'':' · unavailable'}</option>`).join('')}</select></label><button id="consoleRunBtn" class="primary" ${data.featureEnabled?'':'disabled'}>Run selected command</button><pre id="consoleResult">No command has run in this browser session.</pre></div><div class="panelBand"><h2>Execution contract</h2><dl class="keyValue"><dt>Backend</dt><dd>native read-only handlers</dd><dt>Subprocess</dt><dd>false</dd><dt>Shell parsing</dt><dd>${esc(data.shell)}</dd><dt>User arguments</dt><dd>${esc(data.argumentsAccepted)}</dd><dt>Capability</dt><dd>${esc(data.requiredCapability)}</dd><dt>Persistence</dt><dd>receipt in admin audit; command output is not stored</dd></dl></div></div><div class="panelBand"><h2>Allowlist</h2>${table(rows)}</div></div>`;
+  document.getElementById('consoleRunBtn').onclick=async()=>{const button=document.getElementById('consoleRunBtn');await runAction(button,'Running…',async()=>{const result=await api('/api/ops/console',{method:'POST',timeoutMs:75000,body:JSON.stringify({commandId:document.getElementById('consoleCommandId').value})});document.getElementById('consoleResult').textContent=JSON.stringify({...result,output:undefined},null,2)+'\n\n'+(result.output||'');notify(result.ok?'Command completed':'Command failed',result.ok?'ok':'bad')})};
+}
+
+async function gameplayPresetsConsole(serial=loadSerial){
+  const data=await api('/api/presets/gameplay');if(serial!==loadSerial)return;const presets=data.catalog?.presets||[],backups=data.backups||[];
+  const presetRows=presets.map(row=>({id:row.id,label:row.label,category:row.category,settings:row.settings.length,description:row.description,source:row.source?.upstreamId||row.source?.project||''}));
+  view.innerHTML=`<div class="pageStack"><div class="sectionHeader"><h2>Gameplay Presets</h2><div class="toolbar"><span class="pill ${data.featureEnabled?'ok':'bad'}">catalog ${data.featureEnabled?'loaded':'disabled'}</span><span class="pill ${data.mutationEnabled?'warn':'ok'}">writes ${data.mutationEnabled?'enabled':'preview only'}</span><span class="pill warn">restart is never automatic</span><button data-jump="ops">Restart planner</button></div></div><div class="panelBand"><p class="muted">Curated worm/threat values are MIT-attributed to pinned Wormageddon source. DASH adds storm, harvest, day, hydration, and world profiles. Every setting is section/key allowlisted and range validated. Apply creates a private timestamped backup, atomically replaces one exact UserGame target, and checks the seven-day Landsraad cycle before and after. It does not restart a map.</p></div>
+  <div class="twoCol"><div class="panelBand"><h2>Plan / apply</h2><div class="grid"><label>Preset<select id="gameplayPresetId">${presets.map(row=>`<option value="${esc(row.id)}">${esc(row.category)} · ${esc(row.label)}</option>`).join('')}</select></label><label>Target<select id="gameplayPresetTarget">${(data.targets||[]).map(row=>`<option>${esc(row)}</option>`).join('')}</select></label></div><div class="commandBar"><button id="gameplayPresetPreviewBtn" class="primary">Preview exact diff</button><button id="gameplayPresetApplyBtn" class="danger">Apply with backup</button></div><pre id="gameplayPresetResult"></pre><div id="gameplayPresetDiff"></div></div><div class="panelBand"><h2>Rollback</h2><label>Verified preset backup<select id="gameplayPresetBackup">${backups.map(row=>`<option value="${esc(row.path)}">${esc(row.created)} · ${esc(row.target)} · ${esc(row.sizeBytes)} bytes</option>`).join('')}</select></label><button id="gameplayPresetRollbackBtn" class="danger" ${backups.length?'':'disabled'}>Restore selected backup</button><pre id="gameplayPresetRollbackResult"></pre><p class="muted">Rollback first preserves the current target as a recovery copy and rechecks the Landsraad invariant. Restart remains manual.</p></div></div>
+  <div class="panelBand"><h2>Catalog</h2>${table(presetRows)}</div><details class="panelBand"><summary>Validated settings by preset</summary>${presets.map(row=>`<h3>${esc(row.label)}</h3>${table(row.settings.map(item=>({group:item.group,key:item.key,value:item.value,section:item.section})))}`).join('')}</details><div class="panelBand"><h2>Invariant</h2><p>${esc(data.landsraadInvariant)}</p><p class="muted">Targets are exact committed files only. Cycle start, duration, seed, wipe, shifting-sands, and restart fields are absent from the preset allowlist.</p></div></div>`;
+  const invoke=async(action,extra={})=>{const body={action,presetId:document.getElementById('gameplayPresetId').value,target:document.getElementById('gameplayPresetTarget').value,...extra};const result=await api('/api/presets/gameplay',{method:'POST',body:JSON.stringify(body)});document.getElementById('gameplayPresetResult').textContent=JSON.stringify(result,null,2);if(result.changes)document.getElementById('gameplayPresetDiff').innerHTML=table(result.changes);return result};
+  document.getElementById('gameplayPresetPreviewBtn').onclick=()=>invoke('preview');document.getElementById('gameplayPresetApplyBtn').onclick=async()=>{if(!confirm('Apply this exact preset to the selected file after a backup? Running maps will not change until a guarded restart.'))return;await invoke('apply',{confirm:'APPLY GAMEPLAY PRESET'});notify('Preset written; restart still required','ok')};document.getElementById('gameplayPresetRollbackBtn').onclick=async()=>{if(!confirm('Restore this preset backup over its matching target?'))return;const result=await api('/api/presets/gameplay',{method:'POST',body:JSON.stringify({action:'rollback',backup:document.getElementById('gameplayPresetBackup').value,confirm:'ROLL BACK GAMEPLAY PRESET'})});document.getElementById('gameplayPresetRollbackResult').textContent=JSON.stringify(result,null,2);notify('Preset rollback written; restart still required')};
+}
+
+function baseDesignPreview(archive){
+  const components=[...(archive?.pieces||[]).map((row,index)=>({kind:'piece',index,type:row.buildingType,p:row.relative||[]})),...(archive?.placeables||[]).map((row,index)=>{const r=row.relative||{};return {kind:'placeable',index,type:row.buildingType,p:[r.x,r.y,r.z,r.qx,r.qy,r.qz,r.qw]}})].filter(row=>Number.isFinite(Number(row.p[0]))&&Number.isFinite(Number(row.p[1])));
+  if(!components.length)return '<div class="muted">No positioned components. Add a piece or load a live export.</div>';
+  const xs=components.map(row=>Number(row.p[0])),ys=components.map(row=>Number(row.p[1])); const minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys),w=760,h=420,pad=35;
+  const px=x=>pad+(maxX===minX?(w-2*pad)/2:(Number(x)-minX)/(maxX-minX)*(w-2*pad)); const py=y=>h-pad-(maxY===minY?(h-2*pad)/2:(Number(y)-minY)/(maxY-minY)*(h-2*pad));
+  const grid=Array.from({length:11},(_,i)=>`<line x1="${pad+i*(w-2*pad)/10}" y1="${pad}" x2="${pad+i*(w-2*pad)/10}" y2="${h-pad}" stroke="var(--border)" stroke-opacity=".45"/><line x1="${pad}" y1="${pad+i*(h-2*pad)/10}" x2="${w-pad}" y2="${pad+i*(h-2*pad)/10}" stroke="var(--border)" stroke-opacity=".45"/>`).join('');
+  const marks=components.map(row=>{const x=px(row.p[0]),y=py(row.p[1]),color=row.kind==='piece'?'var(--accent)':'var(--warn)';return `<g><rect x="${x-7}" y="${y-7}" width="14" height="14" rx="2" fill="${color}" fill-opacity=".82" stroke="var(--text)"><title>${esc(row.kind)} ${esc(row.type)} · (${Number(row.p[0]).toFixed(1)}, ${Number(row.p[1]).toFixed(1)}, ${Number(row.p[2]||0).toFixed(1)})</title></rect></g>`}).join('');
+  return `<div class="vizCard"><svg viewBox="0 0 ${w} ${h}" role="img" aria-label="Top-down portable base design"><rect width="${w}" height="${h}" fill="var(--surface-2)"/>${grid}${marks}</svg><div class="toolbar"><span class="pill">${components.length} components</span><span class="pill">blue building pieces</span><span class="pill warn">amber placeables</span><span class="pill">portable relative coordinates</span></div></div>`;
+}
+async function baseCreatorConsole(serial=loadSerial){
+  const data=await api('/api/creator/bases',{timeoutMs:30000}); if(serial!==loadSerial)return;
+  const blank={format:data.format||'dash-base/1',source:{kind:'designer'},exportedAt:new Date().toISOString(),anchor:{x:0,y:0,z:0},pieceCount:0,placeableCount:0,pieces:[],placeables:[],gameRestoreSupported:false,restoreNote:data.restoreNote};
+  const saved=sessionStorage.getItem('duneBaseCreatorDraft'); let archive=blank; try{if(saved)archive=JSON.parse(saved)}catch(e){}
+  const liveRows=(data.liveBases||[]).map(row=>({...row,export:`<button data-base-export="${esc(row.building_id)}">Load export</button>`}));
+  const galleryRows=(data.designs||[]).map(row=>({...row,rating_average:Number(row.rating_average||0).toFixed(2),actions:`<button data-design-load="${esc(row.id)}">Load</button> <button data-design-rate="${esc(row.id)}">Rate</button>`}));
+  const liveTable=`<div class="tableWrap"><table><thead><tr><th>Base</th><th>Owner</th><th>Pieces</th><th>Placeables</th><th>Sample</th><th></th></tr></thead><tbody>${liveRows.map(row=>`<tr><td>${esc(row.building_id)}</td><td>${esc(row.owner_entity_id)}</td><td>${esc(row.piece_count)}</td><td>${esc(row.placeable_count)}</td><td>${esc(row.sample_type)}</td><td>${row.export}</td></tr>`).join('')}</tbody></table></div>`;
+  const galleryTable=`<div class="tableWrap"><table><thead><tr><th>Name</th><th>Author</th><th>Visibility</th><th>Rating</th><th>Updated</th><th></th></tr></thead><tbody>${galleryRows.map(row=>`<tr><td>${esc(row.name)}</td><td>${esc(row.author)}</td><td>${esc(row.visibility)}</td><td>${esc(row.rating_average)} (${esc(row.rating_count)})</td><td>${esc(row.updated_at)}</td><td>${row.actions}</td></tr>`).join('')}</tbody></table></div>`;
+  view.innerHTML=`<div class="pageStack"><div class="sectionHeader"><h2>Portable Base Creator</h2><div class="toolbar"><span class="pill ${data.featureEnabled?'ok':'bad'}">${data.featureEnabled?'enabled':'disabled'}</span><span class="pill">format ${esc(data.format)}</span><span class="pill warn">live restore not claimed</span></div></div><div class="panelBand"><p class="muted">Live export is read-only and captures exact transforms plus recentered portable coordinates. The surveyed Wormageddon peer documents base import as experimental/unfinished and ships no implementation; DASH does not mislabel an unproven direct database write as restore. Designs can be edited, downloaded, published, rated, and reconstructed through the portable archive.</p></div>
+  <div class="twoCol"><div class="panelBand"><h2>Live bases</h2><div id="baseLiveRows">${liveTable}</div></div><div class="panelBand"><h2>Gallery</h2>${galleryTable}</div></div>
+  <div class="twoCol"><div class="panelBand"><h2>Grid editor</h2><div class="grid"><label>Building type<input id="basePieceType" value="Foundation"></label><label>X<input id="basePieceX" type="number" value="0"></label><label>Y<input id="basePieceY" type="number" value="0"></label><label>Z<input id="basePieceZ" type="number" value="0"></label><label>Yaw degrees<input id="basePieceYaw" type="number" value="0"></label><label>Snap size<input id="baseSnap" type="number" min="1" value="100"></label></div><div class="commandBar"><button id="baseAddPieceBtn" class="primary">Add snapped piece</button><button id="baseRemovePieceBtn">Remove last piece</button><button id="baseNewBtn">New design</button><button id="baseDownloadBtn">Download JSON</button></div><pre id="baseCreatorResult"></pre></div><div class="panelBand"><h2>Publish design</h2><div class="grid"><label>Name<input id="baseDesignName"></label><label>Visibility<select id="baseVisibility"><option>private</option><option>unlisted</option><option>public</option></select></label><label>Existing design ID<input id="baseDesignId" placeholder="blank creates new"></label></div><label>Description<textarea id="baseDescription" rows="3"></textarea></label><button id="basePublishBtn" class="primary">Publish / update gallery</button><hr><label>Rating (1–5)<input id="baseRating" type="number" min="1" max="5" value="5"></label><button id="baseRateBtn">Rate selected design</button></div></div>
+  <div class="panelBand"><h2>Top-down reconstruction preview</h2><div id="basePreview">${baseDesignPreview(archive)}</div></div><details class="panelBand" open><summary>Portable archive JSON</summary><textarea id="baseArchiveText" rows="28">${esc(JSON.stringify(archive,null,2))}</textarea><div class="commandBar"><button id="baseApplyJsonBtn">Validate draft JSON</button></div></details></div>`;
+  const text=document.getElementById('baseArchiveText'); const setArchive=value=>{archive=value; archive.pieceCount=(archive.pieces||[]).length;archive.placeableCount=(archive.placeables||[]).length;text.value=JSON.stringify(archive,null,2);sessionStorage.setItem('duneBaseCreatorDraft',JSON.stringify(archive));document.getElementById('basePreview').innerHTML=baseDesignPreview(archive)};
+  const parse=()=>{const value=JSON.parse(text.value);if(value.format!==(data.format||'dash-base/1'))throw new Error(`format must be ${data.format}`);if(!Array.isArray(value.pieces)||!Array.isArray(value.placeables))throw new Error('pieces and placeables must be arrays');return value};
+  document.getElementById('baseApplyJsonBtn').onclick=()=>{try{setArchive(parse());notify('Design JSON loaded')}catch(e){reportClientError(e,'Invalid design')}};
+  document.getElementById('baseAddPieceBtn').onclick=()=>{try{archive=parse();const snap=Math.max(1,Number(document.getElementById('baseSnap').value)||1),snapv=v=>Math.round((Number(v)||0)/snap)*snap,yaw=(Number(document.getElementById('basePieceYaw').value)||0)*Math.PI/180;archive.pieces.push({instanceId:archive.pieces.length+1,buildingType:document.getElementById('basePieceType').value.trim(),relative:[snapv(document.getElementById('basePieceX').value),snapv(document.getElementById('basePieceY').value),snapv(document.getElementById('basePieceZ').value),0,0,Math.sin(yaw/2),Math.cos(yaw/2)],flags:1,health:0});setArchive(archive)}catch(e){reportClientError(e,'Add piece failed')}};
+  document.getElementById('baseRemovePieceBtn').onclick=()=>{archive=parse();archive.pieces.pop();setArchive(archive)}; document.getElementById('baseNewBtn').onclick=()=>setArchive(structuredClone(blank));
+  document.getElementById('baseDownloadBtn').onclick=()=>{archive=parse();const blob=new Blob([JSON.stringify(archive,null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`dash-base-${archive.source?.buildingId||'design'}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)};
+  view.querySelectorAll('[data-base-export]').forEach(button=>button.onclick=async()=>{const result=await api(`/api/creator/bases?export=${encodeURIComponent(button.dataset.baseExport)}`,{timeoutMs:60000});setArchive(result.archive);notify('Live base exported read-only')});
+  view.querySelectorAll('[data-design-load]').forEach(button=>button.onclick=async()=>{const result=await api(`/api/creator/bases?design=${encodeURIComponent(button.dataset.designLoad)}`);setArchive(result.design.archive);document.getElementById('baseDesignId').value=result.design.id;document.getElementById('baseDesignName').value=result.design.name;document.getElementById('baseDescription').value=result.design.description;document.getElementById('baseVisibility').value=result.design.visibility;notify('Gallery design loaded')});
+  const post=async body=>api('/api/creator/bases',{method:'POST',body:JSON.stringify(body)}); document.getElementById('basePublishBtn').onclick=async()=>{const result=await post({action:'publish',name:document.getElementById('baseDesignName').value,description:document.getElementById('baseDescription').value,visibility:document.getElementById('baseVisibility').value,designId:document.getElementById('baseDesignId').value||undefined,archive:parse()});document.getElementById('baseDesignId').value=result.design.id;document.getElementById('baseCreatorResult').textContent=JSON.stringify(result,null,2);notify('Design published')};
+  const rate=async id=>{const rating=Number(document.getElementById('baseRating').value);const result=await post({action:'rate',designId:id,rating});document.getElementById('baseCreatorResult').textContent=JSON.stringify(result,null,2);notify('Rating saved')}; document.getElementById('baseRateBtn').onclick=()=>rate(document.getElementById('baseDesignId').value);view.querySelectorAll('[data-design-rate]').forEach(button=>button.onclick=()=>rate(button.dataset.designRate));
+}
+
+function moderationHeatmap(rows){
+  if (!rows?.length) return '<div class="muted">No aggregate position samples yet.</div>';
+  const latestMap=rows[0].map;
+  const cells=rows.filter(row=>row.map===latestMap).slice(0,200);
+  const xs=cells.map(row=>Number(row.cell_x)), ys=cells.map(row=>Number(row.cell_y));
+  const minX=Math.min(...xs), maxX=Math.max(...xs), minY=Math.min(...ys), maxY=Math.max(...ys), maxSamples=Math.max(...cells.map(row=>Number(row.samples)||1));
+  const width=720,height=320,pad=24;
+  const px=x=>pad+(maxX===minX?(width-2*pad)/2:(Number(x)-minX)/(maxX-minX)*(width-2*pad));
+  const py=y=>height-pad-(maxY===minY?(height-2*pad)/2:(Number(y)-minY)/(maxY-minY)*(height-2*pad));
+  const marks=cells.map(row=>{const intensity=Math.max(.18,Math.min(1,(Number(row.samples)||1)/maxSamples)); return `<circle cx="${px(row.cell_x)}" cy="${py(row.cell_y)}" r="${Math.max(5,Math.min(22,5+18*intensity))}" fill="var(--accent)" fill-opacity="${intensity.toFixed(2)}"><title>${esc(row.map)} cell ${esc(row.cell_x)},${esc(row.cell_y)} · ${esc(row.samples)} samples · ${esc(row.day)} ${esc(row.hour)}:00</title></circle>`}).join('');
+  return `<div class="vizCard"><h3>${esc(latestMap)} coarse activity</h3><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Privacy-preserving aggregate player connection heatmap"><rect width="${width}" height="${height}" fill="var(--surface-2)"></rect>${marks}</svg><p class="muted">Cells are ${esc(rows.cellSize || '')} coarse world units; dots are aggregate samples, never raw peer IPs.</p></div>`;
+}
+async function moderationConsole(serial=loadSerial){
+  const accountId=sessionStorage.getItem('duneModerationAccountId') || '';
+  const data=await api('/api/moderation'+(accountId?`?account_id=${encodeURIComponent(accountId)}`:''));
+  if(serial!==loadSerial) return;
+  const counts=data.counts||{}, allowlistOn=String(data.settings?.allowlist_enforcement||'false')==='true';
+  const activeBans=(data.bans||[]).filter(row=>row.active && (!row.expires_at || new Date(row.expires_at)>new Date()));
+  const heatmap=(data.heatmap||[]); heatmap.cellSize=data.heatmapCellSize;
+  view.innerHTML=`<div class="pageStack"><div class="sectionHeader"><h2>Moderation and Connection History</h2><div class="toolbar"><span class="pill ${data.featureEnabled?'ok':'bad'}">feature ${data.featureEnabled?'enabled':'disabled'}</span><span class="pill ${data.enforcementReady?'ok':'warn'}">native kick ${data.enforcementReady?'ready':'gated'}</span><span class="pill ${allowlistOn?'bad':'ok'}">allowlist enforcement ${allowlistOn?'ACTIVE':'off'}</span><button id="moderationTickBtn" class="primary">Run worker tick</button></div></div>
+  <div class="panelBand"><p class="muted"><b>Contract:</b> this game build exposes no confirmed persistent-ban table or login-rejection function. Active bans and optional allowlist policy are enforced by repeatedly publishing the confirmed native <code>KickPlayer</code> action whenever a matching identity is observed online. Cases, history, and enforcement receipts are isolated from the game database.</p></div>
+  <div class="metricGrid">${metric('Open cases',counts.open_cases||0)}${metric('Active bans',counts.active_bans||0,counts.active_bans?'bad':'')}${metric('Online sessions',counts.online_sessions||0)}${metric('Security events',counts.security_events||0)}</div>
+  <div class="twoCol"><div class="panelBand"><h2>Open a case / enforce a ban</h2><div class="grid"><label>Account ID<input id="modAccountId" inputmode="numeric" value="${esc(accountId)}"></label><label>Severity<select id="modSeverity"><option>medium</option><option>low</option><option>high</option><option>critical</option><option>info</option></select></label><label>Category<input id="modCategory" value="conduct"></label><label>Temporary hours (blank=permanent)<input id="modDuration" type="number" min="1"></label></div><label>Summary / reason<textarea id="modSummary" rows="3"></textarea></label><div class="commandBar"><button id="modCreateCaseBtn">Create case only</button><button id="modBanBtn" class="danger">Create case + enforced ban</button></div><pre id="modCreateResult"></pre></div>
+  <div class="panelBand"><h2>Case workflow</h2><div class="grid"><label>Case ID<input id="modCaseId"></label><label>Status<select id="modCaseStatus"><option>investigating</option><option>actioned</option><option>appealed</option><option>closed</option><option>open</option></select></label></div><label>Append-only note<textarea id="modCaseNote" rows="3"></textarea></label><div class="commandBar"><button id="modNoteBtn">Add note</button><button id="modUpdateCaseBtn" class="primary">Update status + note</button></div><hr><div class="grid"><label>Ban ID<input id="modUnbanId"></label><label>Revocation reason<input id="modUnbanReason"></label></div><button id="modUnbanBtn" class="danger">Revoke ban</button><pre id="modCaseResult"></pre></div></div>
+  <div class="twoCol"><div class="panelBand"><h2>Allowlist registry</h2><p class="muted">Identity registry supports account, Funcom, or platform IDs. Enabling policy ejects every online identity not present here; it still cannot reject the initial login.</p><div class="grid"><label>Identity type<select id="modAllowType"><option>account</option><option>funcom</option><option>platform</option></select></label><label>Identity value<input id="modAllowValue"></label><label>Label<input id="modAllowLabel"></label></div><div class="commandBar"><button id="modAllowAddBtn">Add / update</button><button id="modAllowRemoveBtn">Remove</button><button id="modAllowPolicyBtn" class="danger">${allowlistOn?'Disable':'Enable'} enforcement</button></div><pre id="modAllowResult"></pre>${table(data.allowlist||[])}</div><div class="panelBand"><h2>Runtime</h2><pre>${esc(JSON.stringify(data.runtime||{},null,2))}</pre><p class="muted">Retention ${esc(data.retentionDays)} days · heatmap cell ${esc(data.heatmapCellSize)} world units · raw IP persistence disabled.</p></div></div>
+  <div class="panelBand"><h2>Cases</h2>${table(data.cases||[])}</div><div class="panelBand"><h2>Append-only case history</h2>${table(data.caseEvents||[])}</div><div class="panelBand"><h2>Bans</h2>${table(data.bans||[])}</div>
+  <div class="panelBand"><h2>Connection heatmap</h2>${moderationHeatmap(heatmap)}${table(heatmap)}</div><div class="panelBand"><h2>Presence sessions</h2>${table(data.sessions||[])}</div>
+  <div class="twoCol"><div class="panelBand"><h2>Normalized security / anti-cheat signals</h2>${table(data.securityEvents||[])}</div><div class="panelBand"><h2>Enforcement receipts</h2>${table([...(data.enforcementEvents||[]),...(data.policyEnforcementEvents||[])])}</div></div></div>`;
+  const act=async(body,target='modCreateResult')=>{const result=await api('/api/moderation',{method:'POST',timeoutMs:180000,body:JSON.stringify(body)}); document.getElementById(target).textContent=JSON.stringify(result,null,2); notify(`Moderation ${body.action} complete`); return result;};
+  document.getElementById('modAccountId').onchange=e=>{const v=e.target.value.trim(); if(v)sessionStorage.setItem('duneModerationAccountId',v);else sessionStorage.removeItem('duneModerationAccountId');};
+  const caseBody=()=>({accountId:document.getElementById('modAccountId').value,severity:document.getElementById('modSeverity').value,category:document.getElementById('modCategory').value,summary:document.getElementById('modSummary').value,reason:document.getElementById('modSummary').value,durationHours:document.getElementById('modDuration').value});
+  document.getElementById('modCreateCaseBtn').onclick=()=>act({action:'case-create',...caseBody()});
+  document.getElementById('modBanBtn').onclick=()=>{if(confirm('Create and actively enforce this policy ban through native KickPlayer?'))act({action:'ban',...caseBody(),confirm:'CREATE ENFORCED BAN'});};
+  document.getElementById('modNoteBtn').onclick=()=>act({action:'case-note',caseId:document.getElementById('modCaseId').value,note:document.getElementById('modCaseNote').value},'modCaseResult');
+  document.getElementById('modUpdateCaseBtn').onclick=()=>act({action:'case-update',caseId:document.getElementById('modCaseId').value,status:document.getElementById('modCaseStatus').value,note:document.getElementById('modCaseNote').value},'modCaseResult');
+  document.getElementById('modUnbanBtn').onclick=()=>{if(confirm('Revoke this policy ban?'))act({action:'unban',banId:document.getElementById('modUnbanId').value,reason:document.getElementById('modUnbanReason').value,confirm:'REVOKE BAN'},'modCaseResult');};
+  document.getElementById('modAllowAddBtn').onclick=()=>act({action:'allowlist-add',identityType:document.getElementById('modAllowType').value,identityValue:document.getElementById('modAllowValue').value,label:document.getElementById('modAllowLabel').value},'modAllowResult');
+  document.getElementById('modAllowRemoveBtn').onclick=()=>act({action:'allowlist-remove',identityType:document.getElementById('modAllowType').value,identityValue:document.getElementById('modAllowValue').value},'modAllowResult');
+  document.getElementById('modAllowPolicyBtn').onclick=()=>{if(confirm(`${allowlistOn?'Disable':'Enable'} allowlist enforcement? Enabling ejects every currently online identity not in the registry.`))act({action:'allowlist-policy',enabled:!allowlistOn,confirm:'CHANGE ALLOWLIST POLICY'},'modAllowResult');};
+  document.getElementById('moderationTickBtn').onclick=()=>act({action:'tick'},'modCreateResult');
+}
+
+async function communityRewards(serial=loadSerial){
+  const accountId = sessionStorage.getItem('duneCommunityAccountId') || '';
+  const [data, configs] = await Promise.all([
+    api('/api/community/rewards' + (accountId ? `?account_id=${encodeURIComponent(accountId)}` : '')),
+    api('/api/settings/configs')
+  ]);
+  if (serial !== loadSerial) return;
+  const offers = (data.offers || []).map(row => ({id:row.id,version:row.version,name:row.name,kind:row.kind,price:row.price,stock:row.stock == null ? 'unlimited' : row.stock,enabled:!!row.enabled,rewards:(row.rewards || []).map(item => `${item.count}× ${item.templateId}`).join(', ')}));
+  const tracks = (data.tracks || []).map(row => ({id:row.id,version:row.version,name:row.name,enabled:!!row.enabled,levels:(row.levels || []).length,startsAt:row.starts_at || '',endsAt:row.ends_at || ''}));
+  const counts = data.deliveryCounts || {};
+  const account = data.account || {};
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Community Rewards</h2><div class="toolbar"><span class="pill ${data.featureEnabled ? 'ok' : 'bad'}">feature ${data.featureEnabled ? 'enabled' : 'disabled'}</span><span class="pill ${data.deliveryEnabled ? 'ok' : 'warn'}">delivery ${data.deliveryEnabled ? 'enabled' : 'paused'}</span><span class="pill ${data.ledger?.ok ? 'ok' : 'bad'}">ledger ${data.ledger?.ok ? 'verified' : 'FAILED'}</span><button id="communitySyncBtn">Sync config</button><button id="communityTickBtn" class="primary">Run one tick</button></div></div>
+  <div class="metricGrid"><div class="metric"><div class="label">Ledger entries</div><div class="value">${esc(data.ledger?.entries || 0)}</div></div><div class="metric"><div class="label">Queued / retry</div><div class="value">${esc((counts.queued || 0) + (counts.retry || 0))}</div></div><div class="metric"><div class="label">Reconciliation</div><div class="value">${esc(counts.reconciliation || 0)}</div></div><div class="metric"><div class="label">Worker</div><div class="value">${esc(data.runtime?.lastError ? 'error' : data.runtime?.running ? 'running' : 'starting')}</div></div></div>
+  <div class="panelBand"><p class="muted">Community credits are isolated from game Solari. Wallet, stock, order, webhook, track, and delivery changes are transactional. Delivery waits for the player to be offline; ambiguous game outcomes require explicit reconciliation and are not automatically refunded.</p><div class="grid"><label>Dune account ID<input id="communityAccountId" inputmode="numeric" value="${esc(accountId)}"></label><label>&nbsp;<button id="communityLoadAccountBtn" class="primary">Load account</button></label></div></div>
+  <div class="threeCol"><div class="panelBand"><h2>Account link</h2><p>Loaded balance: <b>${account.dune_account_id ? esc(account.balance) : 'not loaded'}</b></p><button id="communityLinkCodeBtn" class="primary">Create one-time link code</button><pre id="communityLinkResult"></pre></div><div class="panelBand"><h2>Manual credit</h2><div class="grid"><label>Amount<input id="communityCreditAmount" type="number" min="1" value="10"></label><label>Unique reference<input id="communityCreditReference" value="manual:${Date.now()}"></label></div><label>Audit note<input id="communityCreditNote"></label><button id="communityCreditBtn" class="danger">Credit wallet</button><pre id="communityCreditResult"></pre></div><div class="panelBand"><h2>Purchase / claim</h2><label>Offer<select id="communityOfferId">${offers.filter(row => row.enabled).map(row => `<option value="${esc(row.id)}">${esc(row.name)} · ${esc(row.price)}</option>`).join('')}</select></label><label>Quantity<input id="communityOfferQuantity" type="number" min="1" max="100" value="1"></label><button id="communityPurchaseBtn" class="primary">Queue purchase</button><hr><div class="grid"><label>Track ID<input id="communityTrackId" value="${esc(tracks[0]?.id || '')}"></label><label>Level<input id="communityTrackLevel" type="number" min="1" value="1"></label></div><button id="communityClaimBtn">Claim level</button><pre id="communityPurchaseResult"></pre></div></div>
+  <div class="panelBand"><h2>Offers and kits</h2>${table(offers)}</div><div class="panelBand"><h2>Reward tracks</h2>${table(tracks)}</div>
+  ${account.dune_account_id ? `<div class="twoCol"><div class="panelBand"><h2>Account ledger</h2>${table(data.ledgerEntries || [])}</div><div class="panelBand"><h2>Purchases</h2>${table(data.purchases || [])}<h2>Track progress</h2>${table(data.progress || [])}</div></div><div class="panelBand"><h2>Deliveries</h2>${table(data.deliveries || [])}</div>` : ''}
+  <details class="panelBand"><summary>Resolve ambiguous delivery</summary><div class="grid"><label>Delivery ID<input id="communityReconcileId"></label><label>Observed result<select id="communityReconcileDelivered"><option value="true">Delivered</option><option value="false">Failed — refund purchase</option></select></label></div><label>Evidence / reason<input id="communityReconcileReason"></label><button id="communityReconcileBtn" class="danger">Resolve reconciliation</button><pre id="communityReconcileResult"></pre></details>
+  <details class="panelBand"><summary>Versioned policy and catalog JSON</summary><p class="muted">Saving validates the entire document, backs up the prior file, then synchronizes offers and tracks. Increment an offer version to reset configured stock.</p><textarea id="communityConfigText">${esc(configs['community-rewards.json'] || '')}</textarea><button id="communitySaveConfigBtn" class="danger">Validate and save config</button><pre id="communityConfigResult"></pre></details></div>`;
+  document.getElementById('communityLoadAccountBtn').onclick=()=>{const value=document.getElementById('communityAccountId').value.trim(); if(value) sessionStorage.setItem('duneCommunityAccountId',value); else sessionStorage.removeItem('duneCommunityAccountId'); communityRewards();};
+  document.getElementById('communitySyncBtn').onclick=()=>communityAction({action:'sync'},'communityConfigResult');
+  document.getElementById('communityTickBtn').onclick=()=>communityAction({action:'tick'},'communityConfigResult');
+  document.getElementById('communityLinkCodeBtn').onclick=()=>communityAction({action:'link-code',duneAccountId:document.getElementById('communityAccountId').value},'communityLinkResult');
+  document.getElementById('communityCreditBtn').onclick=()=>{if(confirm('Credit this isolated community wallet?')) communityAction({action:'credit',duneAccountId:document.getElementById('communityAccountId').value,amount:document.getElementById('communityCreditAmount').value,reference:document.getElementById('communityCreditReference').value,note:document.getElementById('communityCreditNote').value,confirm:'CREDIT COMMUNITY WALLET'},'communityCreditResult');};
+  document.getElementById('communityPurchaseBtn').onclick=()=>communityAction({action:'purchase',duneAccountId:document.getElementById('communityAccountId').value,offerId:document.getElementById('communityOfferId').value,quantity:document.getElementById('communityOfferQuantity').value,idempotencyKey:`admin:${crypto.randomUUID()}`},'communityPurchaseResult');
+  document.getElementById('communityClaimBtn').onclick=()=>communityAction({action:'claim-track',duneAccountId:document.getElementById('communityAccountId').value,trackId:document.getElementById('communityTrackId').value,level:document.getElementById('communityTrackLevel').value},'communityPurchaseResult');
+  document.getElementById('communityReconcileBtn').onclick=()=>{if(confirm('Resolve this ambiguous delivery using the selected observed outcome?')) communityAction({action:'reconcile',deliveryId:document.getElementById('communityReconcileId').value,delivered:document.getElementById('communityReconcileDelivered').value==='true',reason:document.getElementById('communityReconcileReason').value,confirm:'RESOLVE COMMUNITY DELIVERY'},'communityReconcileResult');};
+  document.getElementById('communitySaveConfigBtn').onclick=async()=>{if(!confirm('Validate and replace the active community rewards policy?')) return; const content=document.getElementById('communityConfigText').value; await api('/api/settings/configs/community-rewards.json',{method:'POST',body:JSON.stringify({content})}); const result=await api('/api/community/rewards',{method:'POST',body:JSON.stringify({action:'sync'})}); document.getElementById('communityConfigResult').textContent=JSON.stringify(result,null,2); notify('Community rewards config loaded'); await communityRewards();};
+}
+async function communityAction(body,targetId){
+  const result=await api('/api/community/rewards',{method:'POST',timeoutMs:180000,body:JSON.stringify(body)});
+  const target=document.getElementById(targetId); if(target) target.textContent=JSON.stringify(result,null,2);
+  notify(`Community ${body.action} complete`);
+  return result;
+}
+async function addons(serial=loadSerial){
+  const [community, installedData] = await Promise.all([api('/api/addons/community', {timeoutMs:30000}), api('/api/addons/installed')]);
+  if (serial !== loadSerial) return;
+  const installed = installedData.addons || [];
+  const byId = new Map(installed.map(row => [row.id, row]));
+  const communityRows = (community.addons || []).map(row => ({...row,installed:byId.has(row.id),status:byId.get(row.id)?.status || '',permissions:(row.permissions || []).join(', ')}));
+  const installedCards = installed.map(row => `<div class="panelBand"><div class="sectionHeader"><h3>${esc(row.name || row.id)}</h3><div class="toolbar"><span class="pill ${row.enabled ? 'ok' : ''}">${esc(row.status)}</span><span class="pill">${esc(row.version || '')}</span><button data-addon-toggle="${esc(row.id)}" data-enable="${row.enabled ? 'false' : 'true'}">${row.enabled ? 'Disable' : 'Enable'}</button><button class="danger" data-addon-remove="${esc(row.id)}">Remove</button></div></div><p>${esc(row.description || '')}</p><p class="muted">Permissions: ${esc((row.permissions || []).join(', ') || 'none')} · approved: ${esc((row.approvedPermissions || []).join(', ') || 'none')} · SHA-256: ${esc(row.provenance?.sha256 || '')}</p>${row.enabled && row.entryPath ? `<iframe class="addonFrame" data-addon-id="${esc(row.id)}" sandbox="allow-scripts" referrerpolicy="no-referrer" title="${esc(row.name)}" src="/api/addons/installed/${encodeURIComponent(row.id)}/content/${row.entryPath.split('/').map(encodeURIComponent).join('/')}"></iframe>` : ''}</div>`).join('');
+  const installRows = (community.addons || []).map(row => `<option value="${esc(row.id)}">${esc(row.name)} · ${esc(row.version)} · ${esc(row.lifecycle)}</option>`).join('');
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Community UI Addons</h2><div class="toolbar"><span class="pill">index ${esc(community.updatedAt || '')}</span><span class="pill ${installedData.mutationEnabled ? 'warn' : 'ok'}">lifecycle writes ${installedData.mutationEnabled ? 'enabled' : 'disabled'}</span></div></div><div class="panelBand"><p class="muted">Install is staged, bounded, HTTPS host-allowlisted, SHA-256 verified, identity checked, and disabled by default. Permissions require exact approval. Addon content runs in a script-only opaque-origin iframe under a restrictive CSP; it cannot inherit the admin token or navigate the parent.</p><div class="grid"><label>Community addon<select id="addonInstallId">${installRows}</select></label><label>Approved permissions (comma-separated)<input id="addonApprovedPermissions" placeholder="players:read, ops:read"></label></div><div class="commandBar"><button id="addonInstallBtn" class="danger">Install reviewed addon</button></div><pre id="addonResult"></pre></div><details class="panelBand"><summary>Community Catalog</summary>${table(communityRows)}</details><div class="sectionHeader"><h2>Installed Addons</h2><span class="pill">${esc(installed.length)}</span></div>${installedCards || '<div class="panelBand muted">No addons installed.</div>'}</div>`;
+  document.getElementById('addonInstallBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Installing...', installCommunityAddon));
+  view.querySelectorAll('[data-addon-toggle]').forEach(button => button.addEventListener('click', e => runAction(e.currentTarget, 'Changing...', () => changeAddonState(button.dataset.addonToggle, button.dataset.enable === 'true' ? 'enable' : 'disable'))));
+  view.querySelectorAll('[data-addon-remove]').forEach(button => button.addEventListener('click', e => runAction(e.currentTarget, 'Removing...', () => changeAddonState(button.dataset.addonRemove, 'remove'))));
+}
+async function installCommunityAddon(){
+  const id=document.getElementById('addonInstallId')?.value || '';
+  const approvedPermissions=(document.getElementById('addonApprovedPermissions')?.value || '').split(',').map(value=>value.trim()).filter(Boolean);
+  if (!confirm(`Download, verify, stage, and install ${id} with permissions: ${approvedPermissions.join(', ') || 'none'}?`)) return;
+  const result=await api('/api/addons/community/install',{method:'POST',timeoutMs:120000,body:JSON.stringify({id,approvedPermissions,confirm:'INSTALL COMMUNITY ADDON'})});
+  document.getElementById('addonResult').textContent=JSON.stringify(result,null,2);
+  notify('Addon installed disabled', 'ok');
+  await addons();
+}
+async function changeAddonState(id, action){
+  if (!confirm(`${action} addon ${id}? Remove moves its files to recovery quarantine.`)) return;
+  const result=await api(`/api/addons/installed/${encodeURIComponent(id)}/${action}`,{method:'POST',timeoutMs:30000,body:JSON.stringify({confirm:'CHANGE ADDON STATE'})});
+  notify(`Addon ${action} complete`, 'ok');
+  await addons();
+  return result;
+}
+window.addEventListener('message', async event => {
+  const message=event.data || {};
+  if (message.type !== 'dune-addon-request' || !message.requestId || !message.addonId) return;
+  const frame=[...document.querySelectorAll('iframe[data-addon-id]')].find(item => item.contentWindow === event.source && item.dataset.addonId === message.addonId);
+  if (!frame) return;
+  const response={type:'dune-addon-response',requestId:String(message.requestId),addonId:String(message.addonId),ok:false};
+  try {
+    const body=await api(`/api/addons/installed/${encodeURIComponent(message.addonId)}/bridge`,{method:'POST',timeoutMs:30000,body:JSON.stringify({action:message.action,payload:message.payload || {}})});
+    response.ok=true; response.result=body.result;
+  } catch (error) { response.error=String(error.message || error).slice(0,500); }
+  event.source?.postMessage(response, '*');
+});
+
 async function catalog(serial=loadSerial){
   const [surfaces, evidence, validation, knobs, events] = await Promise.all([
     api('/api/catalog/surfaces'),
@@ -9707,7 +15442,8 @@ async function catalog(serial=loadSerial){
   const groups = surfaces.groups || {};
   const groupPanels = Object.entries(groups).map(([name, rows]) => `<details class="panelBand" open><summary>${esc(name)}</summary>${table(rows || [])}</details>`).join('');
   const knobRows = Object.values(knobs.values || {}).map(k => ({id:k.id,label:k.label,value:k.value,confidence:k.confidence,risk:k.risk,restartRequired:k.restart,why:k.why}));
-  const eventRows = (events.events || []).map(e => ({id:e.id,name:e.name,status:e.status,createdAt:e.createdAt,runAt:e.runAt,actions:(e.plan || []).length}));
+  const eventRows = (events.events || []).map(e => ({id:e.id,name:e.name,status:e.status,nextRunAt:e.nextRunAt,repeatSeconds:e.repeatSeconds,runCount:e.runCount,maxRuns:e.maxRuns || 'unlimited',actions:(e.plan || []).length}));
+  const eventRunRows = (events.runs || []).slice().reverse().map(r => ({id:r.id,eventId:r.eventId,eventName:r.eventName,status:r.status,trigger:r.trigger,startedAt:r.startedAt,runNumber:r.runNumber,nextRunAt:r.nextRunAt || ''}));
   view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Content Catalog</h2><div class="toolbar"><span class="pill ${surfaces.enabled ? 'ok' : 'warn'}">catalog ${surfaces.enabled ? 'enabled' : 'disabled'}</span><span class="pill ${knobs.enabled ? 'warn' : 'ok'}">typed writes ${knobs.enabled ? 'enabled' : 'dry-run only'}</span><span class="pill ${events.executionEnabled ? 'warn' : 'ok'}">events ${events.executionEnabled ? 'execute enabled' : 'plan only'}</span><button data-jump="settings">Settings</button><button data-jump="mutations">Admin Actions</button></div></div><div class="panelBand"><p class="muted">Catalog endpoints are read-only. Typed knob writes require the mutation gate, typed-knob gate, backup, and confirmation phrase.</p></div>${groupPanels}<div class="twoCol"><div class="panelBand"><h2>Typed Knob Dry Run</h2><div class="grid"><label>Knob<select id="typedKnobId">${Object.values(knobs.values || {}).map(k=>`<option value="${esc(k.id)}">${esc(k.label || k.id)}</option>`).join('')}</select></label><label>Value<input id="typedKnobValue" placeholder="true, 2.5, or JSON caps"></label></div><p><button id="typedKnobDryRunBtn" class="primary">Preview typed write</button></p><pre id="typedKnobResult"></pre></div><div class="panelBand"><h2>Spice Fields</h2><p><button id="inspectSpiceBtn" class="primary">Inspect spice/resource state</button></p><pre id="spiceInspectResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Progression Inspect</h2><label>Account ID<input id="progressionAccountId"></label><p><button id="progressionInspectBtn" class="primary">Inspect progression surfaces</button></p><pre id="progressionInspectResult"></pre></div><div class="panelBand"><h2>Faction Reputation Dry Run</h2><div class="grid"><label>Account ID<input id="repAccountId"></label><label>Faction ID<input id="repFactionId"></label><label>Amount<input id="repAmount" value="100"></label><label>Mode<select id="repMode"><option>add</option><option>set</option></select></label></div><p><button id="repDryRunBtn" class="primary">Preview reputation write</button></p><pre id="repDryRunResult"></pre></div><div class="panelBand"><h2>Faction Change Dry Run</h2><div class="grid"><label>Account ID<input id="factionAccountId"></label><label>Faction ID<input id="factionId" value="3"></label><label>Neutral faction ID<input id="neutralFactionId" value="3"></label></div><p><button id="factionDryRunBtn" class="primary">Preview faction change</button></p><pre id="factionDryRunResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Journey Dry Run</h2><div class="grid"><label>Account ID<input id="journeyAccountId"></label><label>Action<select id="journeyAction"><option>reveal</option><option>complete</option><option>reset</option><option>delete</option></select></label></div><label>Story node IDs<textarea id="journeyStoryNodes" rows="3" placeholder="comma-separated story node ids"></textarea></label><p><button id="journeyDryRunBtn" class="primary">Preview journey mutation</button></p><pre id="journeyDryRunResult"></pre></div><div class="panelBand"><h2>Economy Bundle Dry Run</h2><label>Bundle JSON<textarea id="bundlePlanJson" rows="7">{"currency":[],"xp":[],"items":[],"dry_run":true}</textarea></label><p><button id="bundleDryRunBtn" class="primary">Preview bundle</button></p><pre id="bundleDryRunResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Event Dry Run</h2><label>Event JSON<textarea id="eventPlanJson" rows="7">{"name":"Deep Desert spice proposal","actions":[{"type":"spice-cap-proposal","caps":{"Medium":{"primed":24,"active":24},"Large":{"primed":3,"active":3}}}]}</textarea></label><p><button id="eventDryRunBtn" class="primary">Preview event</button></p><pre id="eventDryRunResult"></pre></div><div class="panelBand"><h2>Typed Knobs</h2>${table(knobRows)}</div></div><div class="panelBand"><h2>Validation</h2>${table(validation.commands || [])}</div><details class="panelBand"><summary>Evidence Rules</summary><ul>${(evidence.rules || []).map(r=>`<li>${esc(r)}</li>`).join('')}</ul><p class="muted">${esc((evidence.schema || []).join(', '))}</p></details><details class="panelBand"><summary>Scheduled Events</summary>${table(eventRows)}</details></div>`;
   view.querySelector('.pageStack').insertAdjacentHTML('beforeend', `<div class="twoCol"><div class="panelBand"><h2>World State Inspect</h2><div class="grid"><label>Account ID<input id="worldAccountId"></label><label>Player ID<input id="worldPlayerId"></label><label>Guild ID<input id="worldGuildId"></label></div><p><button id="worldInspectBtn" class="primary">Inspect world surfaces</button></p><pre id="worldInspectResult"></pre></div><div class="panelBand"><h2>Guild Dry Run</h2><div class="grid"><label>Action<select id="guildAction"><option>edit-description</option><option>promote-member</option><option>demote-member</option></select></label><label>Guild ID<input id="guildId"></label><label>Player ID<input id="guildPlayerId"></label><label>New role<input id="guildNewRole"></label></div><label>Description<textarea id="guildDescription" rows="3"></textarea></label><p><button id="guildDryRunBtn" class="primary">Preview guild mutation</button></p><pre id="guildDryRunResult"></pre></div></div>`);
   view.querySelector('.pageStack').insertAdjacentHTML('beforeend', `<div class="twoCol"><div class="panelBand"><h2>Marker Delete Dry Run</h2><div class="grid"><label>Action<select id="markerAction"><option>delete-by-id</option><option>delete-static-location</option></select></label><label>Marker IDs<input id="markerIds" placeholder="comma-separated ids"></label><label>Static keys<input id="markerStaticKeys" placeholder="comma-separated keys"></label></div><p><button id="markerDryRunBtn" class="primary">Preview marker deletion</button></p><pre id="markerDryRunResult"></pre></div><div class="panelBand"><h2>Landclaim Dry Run</h2><div class="grid"><label>Totem ID<input id="landclaimTotemId"></label><label>Grid X<input id="landclaimGridX"></label><label>Grid Y<input id="landclaimGridY"></label></div><p><button id="landclaimDryRunBtn" class="primary">Preview landclaim segment</button></p><pre id="landclaimDryRunResult"></pre></div></div>`);
@@ -9717,6 +15453,7 @@ async function catalog(serial=loadSerial){
   view.querySelector('.pageStack').insertAdjacentHTML('beforeend', `<div class="twoCol"><div class="panelBand"><h2>Tutorial Dry Run</h2><div class="grid"><label>Player ID<input id="tutorialPlayerId"></label><label>Tutorial ID<input id="tutorialId"></label><label>State<input id="tutorialState" value="1"></label></div><p><button id="tutorialDryRunBtn" class="primary">Preview tutorial state</button></p><pre id="tutorialDryRunResult"></pre></div></div>`);
   view.querySelector('.pageStack').insertAdjacentHTML('beforeend', `<div class="twoCol"><div class="panelBand"><h2>Permission Dry Run</h2><div class="grid"><label>Action<select id="permissionAction"><option>set-name</option><option>set-access-level</option><option>set-player-rank</option><option>remove-player-rank</option></select></label><label>Actor ID<input id="permissionActorId"></label><label>Name<input id="permissionName"></label><label>Access level<input id="permissionAccessLevel"></label><label>Player ID<input id="permissionPlayerId"></label><label>Rank<input id="permissionRank"></label><label>Map ID<input id="permissionMapId"></label></div><p><button id="permissionDryRunBtn" class="primary">Preview permission change</button></p><pre id="permissionDryRunResult"></pre></div></div>`);
   view.querySelector('.pageStack').insertAdjacentHTML('beforeend', `<div class="twoCol"><div class="panelBand"><h2>Vendor Cycle Dry Run</h2><div class="grid"><label>Vendor ID<input id="vendorId"></label><label>Player ID<input id="vendorPlayerId"></label><label>Timestamp<input id="vendorTimestamp"></label></div><p><button id="vendorDryRunBtn" class="primary">Preview vendor timestamp</button></p><pre id="vendorDryRunResult"></pre></div></div>`);
+  view.querySelector('.pageStack').insertAdjacentHTML('beforeend', `<div class="panelBand"><h2>Recurring Event Controls</h2><p class="muted">Use the Event JSON field above. Add <code>runAt</code>, optional <code>repeatSeconds</code> (minimum 60), and <code>maxRuns</code> (0 means unlimited). Scheduled restarts remain execute=false plans.</p><div class="commandBar"><button id="eventCreateBtn" class="primary">Schedule JSON</button></div><div class="grid"><label>Existing event ID<input id="eventActionId" placeholder="event id"></label></div><div class="commandBar"><button id="eventRunBtn">Run now</button><button id="eventCancelBtn" class="danger">Cancel</button></div><h3>Run ledger</h3>${table(eventRunRows)}</div>`);
   wireCatalogControls();
 }
 
@@ -9744,6 +15481,27 @@ function wireCatalogControls(root=document){
   root.querySelector('#eventDryRunBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Planning...', async () => {
     const result = await api('/api/events/dry-run', {method:'POST', body:JSON.stringify(parseJsonInput('eventPlanJson'))});
     document.getElementById('eventDryRunResult').textContent = JSON.stringify(result, null, 2);
+  }));
+  root.querySelector('#eventCreateBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Scheduling...', async () => {
+    const body=parseJsonInput('eventPlanJson');
+    if (!confirm(`Schedule event ${body.name || 'admin event'}?`)) return;
+    const result=await api('/api/events',{method:'POST',body:JSON.stringify(body)});
+    document.getElementById('eventDryRunResult').textContent=JSON.stringify(result,null,2);
+    await catalog();
+  }));
+  root.querySelector('#eventRunBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Running...', async () => {
+    const id=document.getElementById('eventActionId').value.trim();
+    if (!id || !confirm(`Run scheduled event ${id} now?`)) return;
+    const result=await api('/api/events/run',{method:'POST',body:JSON.stringify({id})});
+    document.getElementById('eventDryRunResult').textContent=JSON.stringify(result,null,2);
+    await catalog();
+  }));
+  root.querySelector('#eventCancelBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Cancelling...', async () => {
+    const id=document.getElementById('eventActionId').value.trim();
+    if (!id || !confirm(`Cancel scheduled event ${id}?`)) return;
+    const result=await api('/api/events/cancel',{method:'POST',body:JSON.stringify({id})});
+    document.getElementById('eventDryRunResult').textContent=JSON.stringify(result,null,2);
+    await catalog();
   }));
   root.querySelector('#bundleDryRunBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Planning...', async () => {
     const body = parseJsonInput('bundlePlanJson');
@@ -9861,16 +15619,65 @@ function wireArtificialExchangeControls(){
     }));
   });
 }
+function runtimeActionPanel(catalog={}){
+  const moduleOptions = (catalog.skillModules || []).map(row => `<option value="${esc(row.id)}">${esc(row.name || row.id)} | ${esc(row.category || '')} | max ${esc(row.maxLevel ?? 1)}</option>`).join('');
+  const vehicleOptions = (catalog.vehicles || []).map(row => `<option value="${esc(row.id)}">${esc(row.id)} | ${esc((row.templates || []).join(', '))}</option>`).join('');
+  return `<div class="twoCol"><div class="panelBand"><div class="sectionHeader"><h2>Native Player Actions</h2><div class="toolbar"><span class="pill ${catalog.mutationEnabled ? 'warn' : 'ok'}">execution ${catalog.mutationEnabled ? 'enabled' : 'disabled'}</span><span class="pill ${catalog.tokenConfigured ? 'ok' : 'warn'}">command token ${catalog.tokenConfigured ? 'configured' : 'missing'}</span></div></div><p class="muted">Token-authenticated Version 2 commands are queued through game RabbitMQ. Water, teleport, and vehicle spawn require an online target. A queued result proves broker acceptance, not client-side completion.</p><div class="grid"><label>Action<select id="runtimeAction"><option value="skill-points">Set skill points</option><option value="skill-module">Set skill module</option><option value="refill-water">Refill water</option><option value="kick">Kick player</option><option value="kick-all">Kick all online</option><option value="teleport">Teleport online player</option><option value="clean-inventory">Clean inventory</option><option value="reset-progression">Reset progression</option><option value="spawn-vehicle">Spawn vehicle at coordinates</option></select></label><label>Skill points<input id="runtimeSkillPoints" type="number" min="0" max="100000" value="1"></label><label>Skill module<select id="runtimeSkillModule">${moduleOptions}</select></label><label>Module level<input id="runtimeSkillLevel" type="number" min="0" value="1"></label><label>Water amount<input id="runtimeWater" type="number" min="1" max="1000000000" value="1000000"></label><label>Vehicle<select id="runtimeVehicle">${vehicleOptions}</select></label><label>Vehicle template<input id="runtimeVehicleTemplate" placeholder="blank uses first valid template"></label><label>X<input id="runtimeX" value="0"></label><label>Y<input id="runtimeY" value="0"></label><label>Z<input id="runtimeZ" value="0"></label><label>Rotation / yaw<input id="runtimeRotation" value="0"></label></div><p><button id="runtimePreviewBtn" class="primary">Preview native action</button> <button id="runtimeExecuteBtn" class="danger">Execute native action</button></p><pre id="runtimeActionResult"></pre></div><div class="panelBand"><h2>Offline Vehicle Maintenance</h2><p class="muted">Repairs persistent vehicle data only while the selected player is offline. Execution creates a database backup and requires relog.</p><div class="grid"><label>Action<select id="vehicleDbAction"><option value="repair-decay">Repair durability red bar</option><option value="refuel">Refuel vehicle</option></select></label><label>Repair threshold %<input id="vehicleThreshold" type="number" min="1" max="100" value="50"></label><label>Vehicle actor ID<input id="vehicleActorId"></label></div><p><button id="vehicleDbPreviewBtn" class="primary">Preview vehicle action</button> <button id="vehicleDbExecuteBtn" class="danger">Execute vehicle action</button></p><pre id="vehicleDbResult"></pre></div></div><div class="panelBand"><h2>Player Recovery and Repair</h2><p class="muted">Gear repair is offline-only and backed up. Login-queue repair deletes only the selected player's exact game-RabbitMQ queue; it refuses an online player unless force is explicitly checked.</p><div class="grid"><label>Action<select id="playerMaintenanceAction"><option value="repair-gear">Repair equipped/carried gear</option><option value="repair-login-queue">Repair stale login queue</option></select></label><label><input id="playerMaintenanceForce" type="checkbox"> Force login-queue delete when DB says Online</label></div><p><button id="playerMaintenancePreviewBtn" class="primary">Preview maintenance</button> <button id="playerMaintenanceExecuteBtn" class="danger">Execute maintenance</button></p><pre id="playerMaintenanceResult"></pre></div>`;
+}
+async function runPlayerRuntimeAction(dryRun=true){
+  const action = runtimeAction.value;
+  const body = {dry_run:dryRun, action, account_id:grantAccount.value, skill_points:runtimeSkillPoints.value, module:runtimeSkillModule.value, level:runtimeSkillLevel.value, water_amount:runtimeWater.value, vehicle:runtimeVehicle.value, template:runtimeVehicleTemplate.value, x:runtimeX.value, y:runtimeY.value, z:runtimeZ.value, rotation:runtimeRotation.value};
+  if (!dryRun) {
+    if (!confirm(action === 'kick-all' ? 'Kick every online player now?' : `Execute ${action} for the selected player?`)) return;
+    body.confirm = action === 'kick-all' ? 'KICK ALL ONLINE PLAYERS' : 'RUN PLAYER ACTION';
+  }
+  const result = await api('/api/admin/player-runtime-action', {method:'POST', body:JSON.stringify(body)});
+  runtimeActionResult.textContent = JSON.stringify(result, null, 2);
+  notify(dryRun ? 'Native action preview ready' : 'Native action queued');
+}
+async function runVehicleDbAction(dryRun=true){
+  const action = vehicleDbAction.value;
+  const body = {dry_run:dryRun, action, account_id:grantAccount.value, threshold_percent:vehicleThreshold.value, vehicle_id:vehicleActorId.value};
+  if (!dryRun) {
+    if (!confirm(`Execute ${action} against persistent vehicle data? The selected player must be offline.`)) return;
+    body.confirm = action === 'repair-decay' ? 'REPAIR VEHICLE DECAY' : 'REFUEL VEHICLE';
+  }
+  const result = await api('/api/admin/vehicle', {method:'POST', body:JSON.stringify(body)});
+  vehicleDbResult.textContent = JSON.stringify(result, null, 2);
+  notify(dryRun ? 'Vehicle preview ready' : 'Vehicle data updated');
+}
+function mountProgressionMaintenanceControls(){
+  const select = document.getElementById('playerMaintenanceAction');
+  if (!select || select.dataset.progressionMounted === '1') return;
+  select.dataset.progressionMounted = '1';
+  select.insertAdjacentHTML('afterbegin', '<option value="add-intel">Add Intel</option><option value="unlock-recipe">Unlock crafting recipe</option><option value="unlock-research">Unlock research item</option><option value="specialization-max">Grant max specialization</option><option value="specialization-reset">Reset specialization</option><option value="keystones-grant-all">Grant all keystones</option>');
+  const grid = select.closest('.grid');
+  grid?.insertAdjacentHTML('beforeend', '<label>Intel amount<input id="playerMaintenanceAmount" type="number" min="1" max="1000000000" value="100"></label><label>Recipe / research key<input id="playerMaintenanceKey" placeholder="RCP_HealthPackRecipe"></label>');
+}
+async function runPlayerMaintenance(dryRun=true){
+  const action = playerMaintenanceAction.value;
+  const body = {dry_run:dryRun, action, account_id:grantAccount.value, force:playerMaintenanceForce.checked, amount:document.getElementById('playerMaintenanceAmount')?.value, key:document.getElementById('playerMaintenanceKey')?.value, track_type:document.getElementById('track')?.value};
+  if (!dryRun) {
+    if (!confirm(`Execute ${action} for the selected player?`)) return;
+    body.confirm = ['add-intel', 'unlock-recipe', 'unlock-research', 'specialization-max', 'specialization-reset', 'keystones-grant-all'].includes(action) ? 'WRITE PLAYER PROGRESSION' : (action === 'repair-gear' ? 'REPAIR GEAR' : 'REPAIR LOGIN QUEUE');
+  }
+  const result = await api('/api/admin/player-maintenance', {method:'POST', body:JSON.stringify(body)});
+  playerMaintenanceResult.textContent = JSON.stringify(result, null, 2);
+  notify(dryRun ? 'Player maintenance preview ready' : 'Player maintenance completed');
+}
 async function mutations(serial=loadSerial){
-  const [ref, characterRows] = await Promise.all([
+  const [ref, characterRows, runtimeCatalog] = await Promise.all([
     adminReference(),
-    api('/api/characters?q=')
+    api('/api/characters?q='),
+    api('/api/admin/player-runtime-catalog')
   ]);
   if (serial !== loadSerial) return;
   const referenceErrors = ref.errors && Object.keys(ref.errors).length ? `<div class="card"><h2>Reference Errors</h2><pre>${esc(JSON.stringify(ref.errors, null, 2))}</pre></div>` : '';
-  view.innerHTML = `<div class="pageStack">${referenceErrors}<div class="sectionHeader"><h2>Admin Actions</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="settings">Settings</button><button data-jump="security">Audit</button></div></div><div class="panelBand"><h2>Target Player</h2><div class="grid"><label>Character<select id="adminCharacterSelect">${characterOptions(characterRows)}</select></label><label>Player controller ID<input id="pcid"></label><label>Account ID<input id="grantAccount" placeholder="auto-select player inventory"></label><label>Character name<input id="grantCharacter" placeholder="auto-select by name"></label></div></div>${offlineTeleportPanel(ref, characterRows)}<div class="panelBand"><h2>Character Slots</h2><div class="grid"><label>Action<select id="slotAction"><option>new-character</option><option>switch-character</option><option>restore-character</option></select></label><label>Target hibernated account ID<input id="slotTargetAccount"></label></div><p><button id="slotInspectBtn" class="primary">Inspect slots</button> <button id="slotPlanBtn" class="primary">Preview swap</button> <button id="slotExecuteBtn" class="danger">Execute swap</button></p><pre id="slotResult"></pre></div><div class="twoCol"><div class="panelBand"><h2>Currency and XP</h2><p class="muted">Select a character first; balances and tracks populate from that player.</p><div class="grid"><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button id="currencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Solari amount<input id="solariAmount" value="20000"></label></div><p><button id="solariInventoryDryRunBtn" class="primary">Preview inventory Solari</button> <button id="solariInventoryGrantBtn" class="danger">Grant inventory Solari</button> <button id="solariBankDryRunBtn" class="primary">Preview bank Solari</button> <button id="solariBankGrantBtn" class="danger">Grant bank Solari</button></p><pre id="solariGrantResult"></pre><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Level for set/new track<input id="xplevel" value="0"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button id="xpBtn" class="primary">Apply XP</button></p></div><div class="panelBand"><h2>Item Grants</h2><p class="muted">Use a known template ID and dry run before writing new items.</p><div class="grid"><label>Known inventory<select id="grantInventorySelect">${inventoryOptions(ref.recentInventories)}</select></label><label>Inventory ID<input id="grantInventory" placeholder="explicit inventory"></label><label class="hidden">Character<select id="grantCharacterSelect">${characterOptions(characterRows)}</select></label><label>Inventory type<select id="grantInventoryType">${inventoryTypeOptions(ref.inventoryTypes)}</select></label><label>Template ID<input id="grantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><details><summary>Advanced stats JSON</summary><textarea id="grantStats">{}</textarea></details><p><button id="dryRunItemBtn" class="primary">Dry run</button> <button id="grantItemBtn" class="danger">Grant item</button></p><pre id="grantResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Item Maintenance</h2><div class="grid"><label class="hidden">Character<select id="itemCharacterSelect">${characterOptions(characterRows)}</select></label><label>Owned item<select id="itemEditSelect"><option value="">Select a character first</option></select></label><label>Item ID<input id="itemEditId"></label><label>New stack size<input id="itemEditStack" value="1"></label><label>Delete count<input id="itemDeleteCount" placeholder="blank/all"></label></div><p><button id="setItemStackBtn" class="primary">Set stack</button> <button id="deleteItemBtn" class="danger">Delete item/count</button></p><pre id="itemEditResult"></pre></div><div class="panelBand"><h2>Specialization Keystones</h2><div class="grid"><label>Player/controller ID<input id="keyPlayer"></label><label>Keystone<select id="keystone">${options(ref.keystones, 'name')}</select></label></div><p><button id="purchaseKeystoneBtn" class="primary">Purchase keystone</button> <button id="resetKeystonesBtn" class="danger">Reset all keystones</button></p><pre id="keystoneResult"></pre></div></div><details class="panelBand"><summary>Backup</summary><p class="muted">Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button id="backupBtn" class="primary">Create DB backup</button><pre id="backupResult"></pre></details><datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><details class="panelBand"><summary>Known Item Templates</summary>${table(ref.knownItemTemplates)}</details><details class="panelBand"><summary>Observed Item Templates</summary>${table(ref.observedItemTemplates)}</details><details class="panelBand"><summary>Recent Inventories</summary>${table(ref.recentInventories)}</details><details class="panelBand"><summary>Inventory Types</summary>${table(ref.inventoryTypes)}</details></div>`;
+  view.innerHTML = `<div class="pageStack">${referenceErrors}<div class="sectionHeader"><h2>Admin Actions</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="settings">Settings</button><button data-jump="security">Audit</button></div></div><div class="panelBand"><h2>Target Player</h2><div class="grid"><label>Character<select id="adminCharacterSelect">${characterOptions(characterRows)}</select></label><label>Player controller ID<input id="pcid"></label><label>Account ID<input id="grantAccount" placeholder="auto-select player inventory"></label><label>Character name<input id="grantCharacter" placeholder="auto-select by name"></label></div></div>${runtimeActionPanel(runtimeCatalog)}${offlineTeleportPanel(ref, characterRows)}<div class="panelBand"><h2>Character Slots</h2><div class="grid"><label>Action<select id="slotAction"><option>new-character</option><option>switch-character</option><option>restore-character</option></select></label><label>Target hibernated account ID<input id="slotTargetAccount"></label></div><p><button id="slotInspectBtn" class="primary">Inspect slots</button> <button id="slotPlanBtn" class="primary">Preview swap</button> <button id="slotExecuteBtn" class="danger">Execute swap</button></p><pre id="slotResult"></pre></div><div class="twoCol"><div class="panelBand"><h2>Currency and XP</h2><p class="muted">Select a character first; balances and tracks populate from that player.</p><div class="grid"><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button id="currencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Solari amount<input id="solariAmount" value="20000"></label></div><p><button id="solariInventoryDryRunBtn" class="primary">Preview inventory Solari</button> <button id="solariInventoryGrantBtn" class="danger">Grant inventory Solari</button> <button id="solariBankDryRunBtn" class="primary">Preview bank Solari</button> <button id="solariBankGrantBtn" class="danger">Grant bank Solari</button></p><pre id="solariGrantResult"></pre><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Level for set/new track<input id="xplevel" value="0"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button id="xpBtn" class="primary">Apply XP</button></p></div><div class="panelBand"><h2>Item Grants</h2><p class="muted">Use a known template ID and dry run before writing new items.</p><div class="grid"><label>Known inventory<select id="grantInventorySelect">${inventoryOptions(ref.recentInventories)}</select></label><label>Inventory ID<input id="grantInventory" placeholder="explicit inventory"></label><label class="hidden">Character<select id="grantCharacterSelect">${characterOptions(characterRows)}</select></label><label>Inventory type<select id="grantInventoryType">${inventoryTypeOptions(ref.inventoryTypes)}</select></label><label>Template ID<input id="grantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><details><summary>Advanced stats JSON</summary><textarea id="grantStats">{}</textarea></details><p><button id="dryRunItemBtn" class="primary">Dry run</button> <button id="grantItemBtn" class="danger">Grant item</button></p><pre id="grantResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Item Maintenance</h2><div class="grid"><label class="hidden">Character<select id="itemCharacterSelect">${characterOptions(characterRows)}</select></label><label>Owned item<select id="itemEditSelect"><option value="">Select a character first</option></select></label><label>Item ID<input id="itemEditId"></label><label>New stack size<input id="itemEditStack" value="1"></label><label>Delete count<input id="itemDeleteCount" placeholder="blank/all"></label></div><p><button id="setItemStackBtn" class="primary">Set stack</button> <button id="deleteItemBtn" class="danger">Delete item/count</button></p><pre id="itemEditResult"></pre></div><div class="panelBand"><h2>Specialization Keystones</h2><div class="grid"><label>Player/controller ID<input id="keyPlayer"></label><label>Keystone<select id="keystone">${options(ref.keystones, 'name')}</select></label></div><p><button id="purchaseKeystoneBtn" class="primary">Purchase keystone</button> <button id="resetKeystonesBtn" class="danger">Reset all keystones</button></p><pre id="keystoneResult"></pre></div></div><details class="panelBand"><summary>Backup</summary><p class="muted">Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button id="backupBtn" class="primary">Create DB backup</button><pre id="backupResult"></pre></details><datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><details class="panelBand"><summary>Known Item Templates</summary>${table(ref.knownItemTemplates)}</details><details class="panelBand"><summary>Observed Item Templates</summary>${table(ref.observedItemTemplates)}</details><details class="panelBand"><summary>Recent Inventories</summary>${table(ref.recentInventories)}</details><details class="panelBand"><summary>Inventory Types</summary>${table(ref.inventoryTypes)}</details></div>`;
+  mountProgressionMaintenanceControls();
   mountVisualItemCatalog();
   const loadCharacterAdminDetails = async (accountId, serial=detailLoadSerial) => {
+    mountAugmentControls();
     const itemSelect = document.getElementById('itemEditSelect');
     const inventorySelect = document.getElementById('grantInventorySelect');
     const currencySelect = document.getElementById('curid');
@@ -9946,6 +15753,8 @@ async function mutations(serial=loadSerial){
     if (option?.dataset.stack) document.getElementById('itemEditStack').value = option.dataset.stack;
     if (option?.dataset.template && document.getElementById('grantTemplate')) document.getElementById('grantTemplate').value = option.dataset.template;
     if (option?.dataset.inventory && document.getElementById('grantInventory')) document.getElementById('grantInventory').value = option.dataset.inventory;
+    const choices = document.getElementById('itemAugmentOptions');
+    if (choices) choices.innerHTML = '<span class="muted">Load compatibility for the newly selected item.</span>';
   });
   document.getElementById('track').addEventListener('change', e => {
     const level = e.target.selectedOptions?.[0]?.dataset.level || '';
@@ -9959,6 +15768,12 @@ async function mutations(serial=loadSerial){
     if (inventoryType) document.getElementById('grantInventoryType').value = inventoryType;
   });
   document.getElementById('backupBtn').addEventListener('click', e => runAction(e.currentTarget, 'Backing up...', backup));
+  document.getElementById('runtimePreviewBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Previewing...', () => runPlayerRuntimeAction(true)));
+  document.getElementById('runtimeExecuteBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Queuing...', () => runPlayerRuntimeAction(false)));
+  document.getElementById('vehicleDbPreviewBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Previewing...', () => runVehicleDbAction(true)));
+  document.getElementById('vehicleDbExecuteBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Applying...', () => runVehicleDbAction(false)));
+  document.getElementById('playerMaintenancePreviewBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Previewing...', () => runPlayerMaintenance(true)));
+  document.getElementById('playerMaintenanceExecuteBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Applying...', () => runPlayerMaintenance(false)));
   renderOfflineTeleportMap();
   ['teleportX','teleportY','teleportZ'].forEach(id => document.getElementById(id)?.addEventListener('input', renderOfflineTeleportMap));
   document.getElementById('teleportPreviewBtn').addEventListener('click', e => runAction(e.currentTarget, 'Previewing...', () => offlineTeleport(true)));
@@ -9987,6 +15802,10 @@ async function mutations(serial=loadSerial){
   document.getElementById('resetKeystonesBtn').addEventListener('click', e => runAction(e.currentTarget, 'Resetting...', resetKeystones));
   document.getElementById('dryRunItemBtn').addEventListener('click', e => runAction(e.currentTarget, 'Checking...', () => grantItem(true)));
   document.getElementById('grantItemBtn').addEventListener('click', e => runAction(e.currentTarget, 'Granting...', () => grantItem(false)));
+  document.getElementById('loadGrantAugmentsBtn').addEventListener('click', e => runAction(e.currentTarget, 'Loading...', loadGrantAugments));
+  document.getElementById('loadItemAugmentsBtn').addEventListener('click', e => runAction(e.currentTarget, 'Loading...', loadItemAugments));
+  document.getElementById('previewItemAugmentsBtn').addEventListener('click', e => runAction(e.currentTarget, 'Checking...', () => applyItemAugments(true)));
+  document.getElementById('applyItemAugmentsBtn').addEventListener('click', e => runAction(e.currentTarget, 'Applying...', () => applyItemAugments(false)));
   document.getElementById('setItemStackBtn').addEventListener('click', e => runAction(e.currentTarget, 'Saving...', setItemStack));
   document.getElementById('deleteItemBtn').addEventListener('click', e => runAction(e.currentTarget, 'Deleting...', deleteItem));
   if (pendingAdminAccountId) {
@@ -10118,13 +15937,73 @@ async function resetKeystones(){
   const result = await api('/api/admin/reset-keystones', {method:'POST', body:JSON.stringify({player_id:keyPlayer.value,confirm:'RESET KEYSTONES'})});
   document.getElementById('keystoneResult').textContent = JSON.stringify(result, null, 2);
 }
+function mountAugmentControls(){
+  const grantStats = document.getElementById('grantStats');
+  const grantDetails = grantStats?.closest('details');
+  if (grantDetails && !document.getElementById('grantAugmentOptions')) {
+    grantDetails.insertAdjacentHTML('beforebegin', `<div class="panelInset"><h3>Structured Augments</h3><p class="muted">Load only compatible augments for the selected template. Clothing accepts two; weapons accept three. Execution also unlocks the required augment-slot keystones.</p><div class="grid"><label>Augment grade<select id="grantAugmentGrade"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></label></div><p><button id="loadGrantAugmentsBtn" type="button" class="primary">Load compatible augments</button></p><div id="grantAugmentOptions"><span class="muted">Choose a template, then load compatibility.</span></div></div>`);
+  }
+  const itemSelect = document.getElementById('itemEditSelect');
+  const maintenance = itemSelect?.closest('.panelBand');
+  const actionRow = maintenance?.querySelector('p');
+  if (actionRow && !document.getElementById('itemAugmentOptions')) {
+    actionRow.insertAdjacentHTML('beforebegin', `<div class="panelInset"><h3>Apply Augments</h3><div class="grid"><label>Augment grade<select id="itemAugmentGrade"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></label></div><p><button id="loadItemAugmentsBtn" type="button" class="primary">Load compatible augments</button></p><div id="itemAugmentOptions"><span class="muted">Select an owned item, then load compatibility.</span></div><p><button id="previewItemAugmentsBtn" type="button" class="primary">Preview augments</button> <button id="applyItemAugmentsBtn" type="button" class="danger">Apply augments</button></p><pre id="itemAugmentResult"></pre></div>`);
+  }
+}
+function selectedAugments(prefix){
+  return Array.from(document.querySelectorAll(`[data-${prefix}-augment]:checked`)).map(input => input.value);
+}
+function renderAugmentChoices(targetId, prefix, payload){
+  const target = document.getElementById(targetId);
+  const compatibility = payload.compatibility || {};
+  const rows = compatibility.augments || [];
+  if (!compatibility.supported || !rows.length) {
+    target.innerHTML = `<p class="dangerText">No proven compatible augments for this template. Kind: ${esc(compatibility.kind || 'unknown')}.</p>`;
+    return payload;
+  }
+  target.dataset.limit = String(compatibility.limit || 0);
+  target.innerHTML = `<p><span class="pill ok">${esc(compatibility.kind)}</span> <span class="pill">maximum ${esc(compatibility.limit)}</span></p><div class="checkList">${rows.map(row => `<label><input type="checkbox" data-${prefix}-augment value="${esc(row.templateId)}"> <b>${esc(row.name)}</b> <code>${esc(row.templateId)}</code><br><span class="muted">${esc(row.effectSummary || '')}</span></label>`).join('')}</div>`;
+  target.querySelectorAll('input[type=checkbox]').forEach(input => input.addEventListener('change', () => {
+    const checked = target.querySelectorAll('input[type=checkbox]:checked');
+    if (checked.length > Number(target.dataset.limit || 0)) {
+      input.checked = false;
+      notify(`This item accepts at most ${target.dataset.limit} augments`, 'bad');
+    }
+  }));
+  return payload;
+}
+async function loadGrantAugments(){
+  if (!grantTemplate.value) throw new Error('Select an item template first');
+  const payload = await api('/api/admin/augments?template_id=' + encodeURIComponent(grantTemplate.value));
+  return renderAugmentChoices('grantAugmentOptions', 'grant', payload);
+}
+async function loadItemAugments(){
+  const option = document.getElementById('itemEditSelect')?.selectedOptions?.[0];
+  const template = option?.dataset.template || '';
+  if (!template) throw new Error('Select an owned item first');
+  const payload = await api('/api/admin/augments?template_id=' + encodeURIComponent(template));
+  return renderAugmentChoices('itemAugmentOptions', 'item', payload);
+}
+async function applyItemAugments(dryRun=true){
+  const itemId = document.getElementById('itemEditId').value;
+  const augments = selectedAugments('item');
+  if (!itemId) throw new Error('Select an owned item first');
+  if (!augments.length) throw new Error('Select at least one compatible augment');
+  if (!dryRun && !confirm(`Apply ${augments.length} augment(s) to item ${itemId}? The owner must be offline; a database backup is created first.`)) return;
+  const result = await api('/api/admin/augments', {method:'POST', body:JSON.stringify({action:'apply',item_id:itemId,augments,grade:document.getElementById('itemAugmentGrade').value,dry_run:dryRun,confirm:dryRun ? '' : 'APPLY AUGMENTS'})});
+  document.getElementById('itemAugmentResult').textContent = JSON.stringify(result, null, 2);
+  notify(dryRun ? 'Augment preview ready' : 'Augments applied');
+  return result;
+}
 async function grantItem(dryRun=false){
+  const augments = selectedAugments('grant');
   if (!dryRun) {
     const item = visualItemCatalog.find(candidate => candidate.templateId === grantTemplate.value);
     const label = item ? `${item.name}\n${item.templateId}` : grantTemplate.value;
-    if (!confirm(`Grant this exact item?\n\n${label}\nStack: ${grantStack.value}\nInventory: ${grantInventory.value || 'auto-selected'}`)) return;
+    const augmentLabel = augments.length ? `\nAugments (${augments.length}): ${augments.join(', ')}\nAugment grade: ${document.getElementById('grantAugmentGrade').value}` : '';
+    if (!confirm(`Grant this exact item?\n\n${label}\nStack: ${grantStack.value}\nInventory: ${grantInventory.value || 'auto-selected'}${augmentLabel}`)) return;
   }
-  const result = await api('/api/admin/item', {method:'POST', body:JSON.stringify({inventory_id:grantInventory.value,account_id:grantAccount.value,character_name:grantCharacter.value,inventory_type:grantInventoryType.value,template_id:grantTemplate.value,stack_size:grantStack.value,quality_level:grantQuality.value,position_index:grantPosition.value,stats:grantStats.value,dry_run:dryRun})});
+  const result = await api('/api/admin/item', {method:'POST', body:JSON.stringify({inventory_id:grantInventory.value,account_id:grantAccount.value,character_name:grantCharacter.value,inventory_type:grantInventoryType.value,template_id:grantTemplate.value,stack_size:grantStack.value,quality_level:grantQuality.value,position_index:grantPosition.value,stats:grantStats.value,augments,augment_grade:document.getElementById('grantAugmentGrade').value,dry_run:dryRun,confirm:(!dryRun && augments.length) ? 'GRANT AUGMENTED ITEM' : ''})});
   document.getElementById('grantResult').textContent = JSON.stringify(result, null, 2);
   if (!dryRun && result.ok) {
     const recent = JSON.parse(localStorage.getItem('duneRecentItemGrants') || '[]').filter(value => value !== grantTemplate.value);
@@ -10165,6 +16044,8 @@ async function deleteDetailItem(){
 }
 document.getElementById('saveTokenBtn').addEventListener('click', saveToken);
 document.getElementById('clearTokenBtn').addEventListener('click', clearToken);
+document.getElementById('federatedLoginBtn').addEventListener('click',()=>{location.assign('/auth/login')});
+document.getElementById('federatedLogoutBtn').addEventListener('click',federatedLogout);
 wireGlobalAffordances();
 document.addEventListener('click', e => {
   const target = e.target.closest('[data-jump]');
@@ -10187,6 +16068,7 @@ window.addEventListener('error', e => reportClientError(e.error || e.message));
 window.addEventListener('unhandledrejection', e => reportClientError(e.reason || e, 'Request failed'));
 setInterval(() => refreshStatus().catch(() => {}), 5000);
 setInterval(() => checkPanelBuild().catch(() => {}), 3000);
+configureFederatedAuth();
 load();
 </script>
 </body>
@@ -10196,9 +16078,16 @@ load();
 
 def main():
     ensure_announcement_thread()
+    ensure_care_package_auto_thread()
+    ensure_memory_balancer_thread()
+    ensure_autoscaler_thread()
+    ensure_backup_schedule_thread()
+    ensure_event_scheduler_thread()
+    ensure_community_worker_thread()
+    ensure_moderation_worker_thread()
     bind = os.environ.get("DUNE_ADMIN_BIND", "0.0.0.0")
     port = int(os.environ.get("DUNE_ADMIN_PORT", "8080"))
-    server = ThreadingHTTPServer((bind, port), Handler)
+    server = BoundedThreadingHTTPServer((bind, port), Handler)
     start_admin_panel_self_reload(server)
     try:
         server.serve_forever()

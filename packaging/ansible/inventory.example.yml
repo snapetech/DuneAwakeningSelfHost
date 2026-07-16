@@ -1,0 +1,7 @@
+all:
+  children:
+    dash_hosts:
+      hosts:
+        dash-01.example.lan:
+          ansible_host: 192.0.2.10
+          ansible_user: dash-admin

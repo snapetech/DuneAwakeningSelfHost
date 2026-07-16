@@ -1,0 +1,21 @@
+[Unit]
+Description=DASH Dune Awakening guarded world lifecycle
+Wants=network-online.target docker.service
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User={{ dash_service_user }}
+Group={{ dash_service_group }}
+WorkingDirectory={{ dash_release_prefix }}/current
+Environment=ENV_FILE={{ dash_state_root }}/.env
+ExecStartPre={{ dash_release_prefix }}/current/scripts/bootstrap-checklist.sh {{ dash_state_root }}/.env
+ExecStart={{ dash_release_prefix }}/current/scripts/start-full-warm-pool.sh {{ dash_state_root }}/.env {{ dash_wait_seconds }}
+ExecStop={{ dash_release_prefix }}/current/scripts/stop-full-warm-pool.sh {{ dash_state_root }}/.env
+TimeoutStartSec=0
+TimeoutStopSec=900
+
+[Install]
+WantedBy=multi-user.target

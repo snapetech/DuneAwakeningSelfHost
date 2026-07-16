@@ -89,6 +89,7 @@ class PrivateMessageRoutingTests(unittest.TestCase):
             "DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_ROUTING_KEY": "",
             "DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_COMMAND": "/bin/echo",
             "DUNE_PLAYER_PRESENCE_ANNOUNCE_TIMEOUT_SECONDS": "10",
+            "DUNE_PLAYER_PRESENCE_PRIVATE_DEDUPE_ENABLED": "false",
         }
 
         with unittest.mock.patch.object(player_presence_announcer, "FILE_ENV", file_env), \

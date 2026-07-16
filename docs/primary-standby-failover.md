@@ -331,3 +331,12 @@ a fast host swap, see `docs/handoff-experiment.md` and:
 make handoff-experiment ENV_FILE=.env ROLE=standby
 CONFIRM_HANDOFF_EXPERIMENT=yes make handoff-experiment ENV_FILE=.env ROLE=standby APPLY=--apply
 ```
+
+## Fenced service VIP
+
+After this runbook works with explicit router cutover, the optional
+`packaging/ha` reference can move a private service VIP through Keepalived. It
+does not replace any database, fencing, seal, promotion, role-service, or
+standby-rebuild step above. Its health check refuses VIP ownership without a
+hostname-bound, epoch-bound, unexpired authority record containing a fencing
+evidence hash. See `packaging/ha/README.md` before enabling it.

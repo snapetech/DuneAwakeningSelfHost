@@ -51,6 +51,7 @@ trap 'rm -f "$tmp"' EXIT
 sed \
   -e "s#^WorkingDirectory=.*#WorkingDirectory=$repo_root#" \
   -e "s#^ExecStart=.*#ExecStart=$repo_root/scripts/start-full-warm-pool.sh $env_path#" \
+  -e "s#^ExecStop=.*#ExecStop=$repo_root/scripts/stop-full-warm-pool.sh $env_path#" \
   -e "s#^User=DUNE_SERVICE_USER_PLACEHOLDER#User=$service_user#" \
   -e "s#^Group=DUNE_SERVICE_USER_PLACEHOLDER#Group=$service_group#" \
   "$template" > "$tmp"

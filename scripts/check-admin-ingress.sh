@@ -55,7 +55,7 @@ load_env
 
 admin_port="${DUNE_ADMIN_HOST_PORT:-18080}"
 direct_host="127.0.0.1:${admin_port}"
-direct_url="http://127.0.0.1:${admin_port}/api/status"
+direct_url="http://127.0.0.1:${admin_port}/healthz"
 direct_code="$(http_code "$direct_url" "$direct_host")"
 if [[ "$direct_code" == "200" ]]; then
   ok "admin panel direct endpoint responds on ${direct_host}"
@@ -63,9 +63,19 @@ else
   fail "admin panel direct endpoint returned ${direct_code:-no response} on ${direct_host}"
 fi
 
+status_code="$(http_code "http://127.0.0.1:${admin_port}/api/status" "$direct_host")"
+if [[ "$status_code" == "401" ]]; then
+  ok "detailed admin status requires authentication"
+else
+  fail "unauthenticated detailed admin status returned ${status_code:-no response}; expected 401"
+fi
+
 lan_url="${DUNE_ADMIN_LAN_URL:-}"
+if [[ "$lan_url" == */api/status ]]; then
+  lan_url="${lan_url%/api/status}/healthz"
+fi
 if [[ -z "$lan_url" && -n "${DUNE_ADMIN_LAN_HOST:-}" ]]; then
-  lan_url="http://${DUNE_ADMIN_LAN_HOST}/api/status"
+  lan_url="http://${DUNE_ADMIN_LAN_HOST}/healthz"
 fi
 
 if [[ -n "$lan_url" ]]; then

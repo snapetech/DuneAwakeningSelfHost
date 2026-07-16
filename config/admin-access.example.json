@@ -1,0 +1,13 @@
+{
+  "users": [
+    {
+      "capabilities": [],
+      "displayName": "Read-only example",
+      "enabled": false,
+      "id": "observer-example",
+      "role": "observer",
+      "tokenSha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ],
+  "version": 1
+}
