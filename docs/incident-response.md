@@ -339,11 +339,13 @@ is bounded to 100 MiB. Symlinks, nested arbitrary files, empty files, oversized
 files, and non-signed suffixes are not archived.
 
 Both backup verifiers require every archive member to be a regular confined
-`operator-evidence/<safe-name>.signed.json` file. They verify every response-plan
-digest, every nested readiness receipt digest, and the outer capsule HMAC
-against the matching key from that backup's config archive. A structurally
-valid capsule signed by the current key cannot make a backup with a different
-key pass.
+`operator-evidence/<safe-name>.signed.json` file. Incident members verify every
+response-plan digest, every nested readiness receipt digest, and the outer
+capsule HMAC against the matching key from that backup's config archive.
+Deployment-assurance members are dispatched to their own strict semantic
+verifier. A structurally valid artifact signed by the current key cannot make a
+backup with a different key pass. See
+[`deployment-assurance.md`](deployment-assurance.md).
 
 The evidence archive is portable, not live mutable state. Recovery is explicit:
 verify the full backup, extract the archive to a private staging directory, and

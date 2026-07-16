@@ -60,6 +60,7 @@ class AccessControlTest(unittest.TestCase):
             ("POST", "/api/ops/slo"): "infrastructure.write",
             ("POST", "/api/ops/capacity"): "infrastructure.write",
             ("POST", "/api/ops/desired-state"): "infrastructure.write",
+            ("POST", "/api/ops/deployment-assurance"): "infrastructure.write",
             ("POST", "/api/settings/env"): "configuration.write",
             ("POST", "/api/admin/currency"): "economy.write",
             ("POST", "/api/admin/guild"): "world.write",

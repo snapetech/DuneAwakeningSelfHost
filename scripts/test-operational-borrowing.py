@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT / "admin"))
 
 import desired_state
 import change_intelligence
+import deployment_assurance
 
 
 def create_desired_state_fixture(backup_dir):
@@ -1006,6 +1007,37 @@ class VerifyBackupTests(unittest.TestCase):
 
             with tarfile.open(backup_dir / "operator-evidence.tgz", "r:gz") as archive:
                 document = json.load(archive.extractfile("operator-evidence/fixture.signed.json"))
+            evidence_dir = backup_dir / "deployment-evidence"
+            assurance = deployment_assurance.Store(
+                backup_dir / "deployment-windows", evidence_dir, backup_dir,
+                change_intelligence.read_secret(backup_dir / "config" / "secrets" / "change-intelligence-hmac.secret"),
+            )
+            policy_path = backup_dir / "config" / "change-intelligence.json"
+            manifest = [{"path": "config/change-intelligence.json", "sha256": deployment_assurance.file_sha256(policy_path)}]
+            snapshot = {"survival": {"containerId": "a" * 64, "state": "running", "startedAt": "2026-07-16T10:00:00Z"}}
+            window = assurance.start(
+                commit="b" * 40, reason="Shell backup deployment evidence fixture", manifest=manifest,
+                principal_id="owner", snapshot=snapshot, protected_services=["survival"], strict_services=["survival"],
+                recovery_backup={"ok": True, "path": "before", "exitCode": 0},
+                source_rollback={"verified": True, "path": "before.tgz", "sha256": "e" * 64, "bytes": 1}, now=1000,
+            )
+            assured = assurance.finish(
+                window["id"], principal_id="owner", snapshot=snapshot,
+                health={"desiredStateAttested": True, "readinessCurrent": True, "sloHealthy": True, "changeIntegrity": True, "prometheusReadiness": True, "adminHealthy": True, "backupVerified": True},
+                backup={"ok": True, "path": "after", "exitCode": 0}, now=1100,
+            )["evidencePath"]
+            fixture_path = backup_dir / "fixture.signed.json"
+            fixture_path.write_text(json.dumps(document), encoding="utf-8")
+            with tarfile.open(backup_dir / "operator-evidence.tgz", "w:gz") as archive:
+                archive.add(fixture_path, arcname="operator-evidence/fixture.signed.json")
+                archive.add(assured, arcname=f"operator-evidence/{Path(assured).name}")
+            mixed = subprocess.run(
+                [str(ROOT / "scripts" / "verify-backup.sh"), str(backup_dir)], cwd=ROOT, env=env,
+                text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+            )
+            self.assertEqual(0, mixed.returncode, mixed.stdout + mixed.stderr)
+            self.assertIn("OK 2 portable signed operator evidence capsule(s)", mixed.stdout)
+
             document["capsule"]["responsePlan"]["title"] = "tampered response plan"
             payload = backup_dir / "fixture.signed.json"
             payload.write_text(json.dumps(document), encoding="utf-8")

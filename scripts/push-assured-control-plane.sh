@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: scripts/push-assured-control-plane.sh --manifest FILE --reason TEXT [--host HOST] [--required-host HOSTNAME] [--remote-workspace DIR] [--remote-env FILE]
+
+Stages exact manifest files over SSH, without overwriting the live tree, then
+runs the production host's two-phase assured deployment from that private stage.
+EOF
+}
+
+manifest=""
+reason=""
+remote_host="kspls0"
+required_host="kspls0"
+remote_workspace="/home/keith/Documents/code/DuneAwakeningSelfHost"
+remote_env=".env"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --manifest) manifest="${2:-}"; shift 2 ;;
+    --reason) reason="${2:-}"; shift 2 ;;
+    --host) remote_host="${2:-}"; shift 2 ;;
+    --required-host) required_host="${2:-}"; shift 2 ;;
+    --remote-workspace) remote_workspace="${2:-}"; shift 2 ;;
+    --remote-env) remote_env="${2:-}"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) printf 'unknown argument: %s\n' "$1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+[[ -f "$manifest" ]] || { printf 'a readable --manifest is required\n' >&2; exit 2; }
+[[ ${#reason} -ge 10 && ${#reason} -le 1000 ]] || { printf -- '--reason must contain 10..1000 characters\n' >&2; exit 2; }
+[[ "$remote_host" =~ ^[A-Za-z0-9_.-]{1,128}$ ]] || { printf 'invalid remote host\n' >&2; exit 2; }
+[[ "$required_host" =~ ^[A-Za-z0-9_.-]{1,128}$ ]] || { printf 'invalid required hostname\n' >&2; exit 2; }
+[[ "$remote_workspace" == /* && "$remote_workspace" != *$'\n'* ]] || { printf 'remote workspace must be absolute\n' >&2; exit 2; }
+[[ "$remote_env" != *$'\n'* ]] || { printf 'invalid remote env path\n' >&2; exit 2; }
+
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+python3 scripts/deployment-assurance.py verify --manifest "$manifest" --workspace "$repo_root" >/dev/null
+
+stage_id="$(python3 -c 'import secrets; print(secrets.token_hex(16))')"
+remote_stage="/tmp/dash-assured-stage-${stage_id}"
+work="$(mktemp -d -p "${TMPDIR:-/tmp}" dash-assured-push.XXXXXX)"
+chmod 700 "$work"
+trap 'rm -rf "$work"' EXIT
+
+python3 - "$manifest" >"$work/files.list" <<'PY'
+import json,sys
+d=json.load(open(sys.argv[1],encoding="utf-8"))
+for row in d["files"]: print(row["path"])
+PY
+for support in admin/deployment_assurance.py scripts/deployment-assurance.py scripts/assured-control-plane-deploy.sh; do
+  grep -Fxq "$support" "$work/files.list" || printf '%s\n' "$support" >>"$work/files.list"
+done
+
+required_q="$(printf '%q' "$required_host")"
+ssh -o BatchMode=yes "$remote_host" "set -e; test \"\$(hostname -s)\" = $required_q; install -d -m 700 '$remote_stage'"
+tar -C "$repo_root" -czf - --files-from="$work/files.list" | ssh -o BatchMode=yes "$remote_host" "tar -C '$remote_stage' -xzf -"
+scp -q -o BatchMode=yes "$manifest" "$remote_host:$remote_stage/deployment-manifest.json"
+
+reason_q="$(printf '%q' "$reason")"
+stage_q="$(printf '%q' "$remote_stage")"
+workspace_q="$(printf '%q' "$remote_workspace")"
+env_q="$(printf '%q' "$remote_env")"
+ssh -o BatchMode=yes "$remote_host" "set -euo pipefail; trap 'rm -rf $stage_q' EXIT; test \"\$(hostname -s)\" = $required_q; DUNE_PRODUCTION_HOST=$required_q PYTHONPATH=$stage_q/admin $stage_q/scripts/assured-control-plane-deploy.sh --manifest $stage_q/deployment-manifest.json --reason $reason_q --stage $stage_q --workspace $workspace_q $env_q"

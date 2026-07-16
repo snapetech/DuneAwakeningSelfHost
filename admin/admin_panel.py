@@ -61,6 +61,7 @@ import operational_slo
 import capacity_intelligence
 import desired_state
 import change_intelligence
+import deployment_assurance
 
 GM_CATALOG_PATH = CODE_ROOT / "scripts" / "gm-command-catalog.py"
 GM_CATALOG_SPEC = importlib.util.spec_from_file_location("gm_command_catalog", GM_CATALOG_PATH)
@@ -238,6 +239,9 @@ CONFIRM_DESIRED_STATE_SEAL = "SEAL DESIRED STATE"
 CONFIRM_DESIRED_STATE_ACK = "ACKNOWLEDGE CONFIGURATION DRIFT"
 CONFIRM_RESPONSE_DRILL = "RUN RESPONSE READINESS DRILL"
 CONFIRM_READINESS_CERTIFICATION = "CERTIFY INCIDENT RESPONSE READINESS"
+CONFIRM_DEPLOYMENT_ASSURANCE_START = "START ASSURED CHANGE WINDOW"
+CONFIRM_DEPLOYMENT_ASSURANCE_FINISH = "FINALIZE ASSURED CHANGE WINDOW"
+CONFIRM_DEPLOYMENT_ASSURANCE_CANCEL = "CANCEL ASSURED CHANGE WINDOW"
 CONFIRM_BOOTSTRAP = "RUN BOOTSTRAP"
 CONFIRM_PLAYER_RECOVERY = "MOVE OFFLINE PLAYER"
 CONFIRM_REPUTATION_MUTATION = "WRITE REPUTATION"
@@ -397,6 +401,11 @@ RESPONSE_DRILLS_ENABLED = os.environ.get("DUNE_RESPONSE_DRILLS_ENABLED", "true")
 CHANGE_INTELLIGENCE_STORE = None
 CHANGE_INTELLIGENCE_STORE_LOCK = threading.Lock()
 CHANGE_INTELLIGENCE_RUNTIME = {"ready": False, "imported": 0, "duplicates": 0, "importErrors": 0, "reconciled": 0, "lastEventAt": None, "lastEventId": None, "lastError": ""}
+DEPLOYMENT_ASSURANCE_ENABLED = os.environ.get("DUNE_DEPLOYMENT_ASSURANCE_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+DEPLOYMENT_ASSURANCE_ROOT = pathlib.Path(os.environ.get("DUNE_DEPLOYMENT_ASSURANCE_STATE_DIR", str(BACKUPS_ROOT / "deployment-assurance")))
+DEPLOYMENT_ASSURANCE_PROMETHEUS_URL = os.environ.get("DUNE_DEPLOYMENT_ASSURANCE_PROMETHEUS_URL", "http://prometheus:9090").rstrip("/")
+DEPLOYMENT_ASSURANCE_STORE = None
+DEPLOYMENT_ASSURANCE_STORE_LOCK = threading.Lock()
 DISCORD_ADAPTER_ROUTES = {
     "/api/integrations/discord/health", "/api/integrations/discord/status",
     "/api/integrations/discord/readiness", "/api/integrations/discord/services",
@@ -457,6 +466,7 @@ def admin_panel_reload_paths():
         DESIRED_STATE_POLICY,
         CODE_ROOT / "admin" / "change_intelligence.py",
         CHANGE_INTELLIGENCE_POLICY,
+        CODE_ROOT / "admin" / "deployment_assurance.py",
         GAMEPLAY_PRESETS_FILE,
         COSMETIC_CATALOG_FILE,
         CODE_ROOT / "admin" / "access_control.py",
@@ -491,8 +501,12 @@ def start_admin_panel_self_reload(server):
     baseline = admin_panel_source_signature(watched)
 
     def watcher():
+        nonlocal baseline
         while not ADMIN_PANEL_RESTART_EVENT.wait(ADMIN_PANEL_SELF_RELOAD_POLL_SECONDS):
             current = admin_panel_source_signature(watched)
+            if (DEPLOYMENT_ASSURANCE_ROOT / "apply.lock").is_file():
+                baseline = current
+                continue
             if current == baseline:
                 continue
             changed = [path for path, signature in current.items() if baseline.get(path) != signature]
@@ -974,6 +988,9 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_CHANGE_INTELLIGENCE_EVIDENCE_DIR": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Container path holding private portable signed incident capsules included in maintenance backups."},
     "DUNE_CHANGE_INTELLIGENCE_HOST_EVIDENCE_DIR": {"group": "Change Intelligence", "secret": False, "restart": False, "why": "Host-relative portable signed capsule path used by full backup-state archives."},
     "DUNE_RESPONSE_DRILLS_ENABLED": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Enables explicit non-disruptive response-plan rehearsals using fixed read-only diagnostics only."},
+    "DUNE_DEPLOYMENT_ASSURANCE_ENABLED": {"group": "Deployment Assurance", "secret": False, "restart": True, "why": "Enables two-phase source, map-continuity, health, readiness, backup, and signed promotion receipts."},
+    "DUNE_DEPLOYMENT_ASSURANCE_STATE_DIR": {"group": "Deployment Assurance", "secret": False, "restart": True, "why": "Private directory for HMAC-authenticated open/completed change-window state."},
+    "DUNE_DEPLOYMENT_ASSURANCE_PROMETHEUS_URL": {"group": "Deployment Assurance", "secret": False, "restart": True, "why": "Internal Prometheus URL used to prove the current readiness certification has been scraped."},
     "DUNE_ADMIN_BACKUP_IMPORT_MAX_BODY_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum JSON request size for a base64 full-backup archive import."},
     "DUNE_BACKUP_ARCHIVE_ENCRYPTION_ENABLED": {"group": "Backup Encryption", "secret": False, "restart": False, "why": "Enables the documented host-side verified OpenPGP archive workflow."},
     "DUNE_BACKUP_GPG_RECIPIENT": {"group": "Backup Encryption", "secret": False, "restart": False, "why": "Exact 40- or 64-hex OpenPGP recipient fingerprint; never an ambiguous name/email selector."},
@@ -5407,6 +5424,177 @@ def change_intelligence_store():
         return CHANGE_INTELLIGENCE_STORE
 
 
+def deployment_assurance_store():
+    global DEPLOYMENT_ASSURANCE_STORE
+    if not DEPLOYMENT_ASSURANCE_ENABLED:
+        raise PermissionError("deployment assurance is disabled; set DUNE_DEPLOYMENT_ASSURANCE_ENABLED=true")
+    with DEPLOYMENT_ASSURANCE_STORE_LOCK:
+        if DEPLOYMENT_ASSURANCE_STORE is None:
+            DEPLOYMENT_ASSURANCE_STORE = deployment_assurance.Store(
+                DEPLOYMENT_ASSURANCE_ROOT,
+                CHANGE_INTELLIGENCE_EVIDENCE_ROOT,
+                ROOT,
+                change_intelligence.read_secret(CHANGE_INTELLIGENCE_SECRET_FILE),
+            )
+            DEPLOYMENT_ASSURANCE_STORE.initialize()
+        return DEPLOYMENT_ASSURANCE_STORE
+
+
+def deployment_assurance_container_snapshot():
+    containers = {}
+    for container in docker_project_containers():
+        labels = container.get("Labels") or {}
+        service = labels.get("com.docker.compose.service") or ""
+        if service not in GAME_MAP_SERVICES:
+            continue
+        existing = containers.get(service)
+        if existing is None or int(container.get("Created") or 0) > int(existing.get("Created") or 0):
+            containers[service] = container
+    snapshot = {}
+    for service in GAME_MAP_SERVICES:
+        container = containers.get(service)
+        if not container:
+            snapshot[service] = {"present": False, "containerId": None, "state": "missing", "startedAt": None}
+            continue
+        container_id = str(container.get("Id") or "")
+        detail = docker_api(f"/containers/{urllib.parse.quote(container_id, safe='')}/json")
+        state = detail.get("State") or {}
+        snapshot[service] = {
+            "present": True, "containerId": container_id,
+            "state": str(state.get("Status") or container.get("State") or "unknown"),
+            "startedAt": state.get("StartedAt") or None,
+        }
+    return snapshot
+
+
+def deployment_assurance_strict_services():
+    state = read_autoscaler_state()
+    if not state.get("enabled"):
+        return list(GAME_MAP_SERVICES)
+    return [service for service in GAME_MAP_SERVICES if (state.get("modes") or {}).get(service) == "always-on"]
+
+
+def deployment_assurance_prometheus_ready():
+    query_text = urllib.parse.urlencode({"query": "dash_incident_readiness_certification_ready"})
+    request = urllib.request.Request(f"{DEPLOYMENT_ASSURANCE_PROMETHEUS_URL}/api/v1/query?{query_text}", method="GET")
+    with urllib.request.urlopen(request, timeout=5) as response:
+        document = json.loads(response.read(1024 * 1024))
+    results = ((document.get("data") or {}).get("result") or []) if document.get("status") == "success" else []
+    return any(float((row.get("value") or [None, "0"])[1]) == 1.0 for row in results)
+
+
+def deployment_assurance_health(backup):
+    desired = desired_state_public_status()
+    change = change_intelligence_public_status()
+    slo = operational_slo_public_status()
+    certification = change.get("readinessCertification") or {}
+    services = {row["service"]: row for row in docker_service_inventory()}
+    try:
+        prometheus_ready = deployment_assurance_prometheus_ready()
+    except (OSError, ValueError, urllib.error.URLError, json.JSONDecodeError):
+        prometheus_ready = False
+    return {
+        "desiredStateAttested": desired.get("state") == "attested" and not (desired.get("openFindings") or []) and bool((desired.get("integrity") or {}).get("ok")),
+        "readinessCurrent": bool(certification.get("currentReady") and certification.get("policyCurrent") and (certification.get("receiptVerification") or {}).get("ok")),
+        "sloHealthy": slo.get("overall") == "healthy" and not (slo.get("openIncidents") or []) and bool((slo.get("integrity") or {}).get("ok")),
+        "changeIntegrity": bool((change.get("integrity") or {}).get("ok")) and not (change.get("openIncidents") or []),
+        "prometheusReadiness": prometheus_ready,
+        "adminHealthy": (services.get("admin-panel") or {}).get("state") == "running",
+        "backupVerified": bool((backup or {}).get("ok")),
+    }
+
+
+def deployment_assurance_public_status():
+    if not DEPLOYMENT_ASSURANCE_ENABLED:
+        return {"ok": False, "enabled": False, "state": "disabled"}
+    status = deployment_assurance_store().status()
+    status.update({
+        "enabled": True, "requiredCapability": "infrastructure.write",
+        "confirmStart": CONFIRM_DEPLOYMENT_ASSURANCE_START,
+        "confirmFinish": CONFIRM_DEPLOYMENT_ASSURANCE_FINISH,
+        "confirmCancel": CONFIRM_DEPLOYMENT_ASSURANCE_CANCEL,
+        "protectedServices": list(GAME_MAP_SERVICES),
+        "strictServices": deployment_assurance_strict_services(),
+    })
+    return status
+
+
+def deployment_assurance_start(body, principal):
+    manifest = body.get("manifest")
+    if isinstance(manifest, dict):
+        if body.get("commit") and manifest.get("commit") and body.get("commit") != manifest.get("commit"):
+            raise ValueError("deployment assurance body and manifest commits differ")
+        commit = body.get("commit") or manifest.get("commit")
+        files = manifest.get("files")
+    else:
+        commit = body.get("commit")
+        files = manifest
+    recovery_backup = verify_backup_set(body.get("preChangeBackupPath"))
+    source_archive_path = str(body.get("sourceRollbackArchive") or "").strip()
+    source_archive_sha = str(body.get("sourceRollbackSha256") or "").strip().lower()
+    if not source_archive_path or pathlib.PurePosixPath(source_archive_path).is_absolute() or not re.fullmatch(r"[0-9a-f]{64}", source_archive_sha):
+        raise ValueError("deployment assurance source rollback archive path or digest is invalid")
+    source_archive = (BACKUPS_ROOT / source_archive_path).resolve()
+    try:
+        source_archive.relative_to(BACKUPS_ROOT.resolve())
+    except ValueError as exc:
+        raise ValueError("deployment assurance source rollback archive escapes backups/") from exc
+    if not source_archive.is_file() or source_archive.is_symlink() or not 1 <= source_archive.stat().st_size <= 100 * 1024 * 1024:
+        raise ValueError("deployment assurance source rollback archive is not a bounded regular file")
+    actual_source_sha = deployment_assurance.file_sha256(source_archive)
+    if not hmac.compare_digest(actual_source_sha, source_archive_sha):
+        raise ValueError("deployment assurance source rollback archive digest does not match")
+    result = deployment_assurance_store().start(
+        commit=commit, reason=body.get("reason"), manifest=files,
+        principal_id=(principal or {}).get("id"), snapshot=deployment_assurance_container_snapshot(),
+        protected_services=GAME_MAP_SERVICES, strict_services=deployment_assurance_strict_services(),
+        recovery_backup=recovery_backup,
+        source_rollback={
+            "verified": True, "path": source_archive_path, "sha256": actual_source_sha,
+            "bytes": source_archive.stat().st_size,
+        },
+        workspace_matches=not bool(body.get("staged")),
+    )
+    audit_event(
+        "deployment-assurance-started", ok=True, window_id=result["id"], commit=result["commit"],
+        manifest_sha256=result["manifestSha256"], files=result["files"], strict_services=result["strictServices"],
+        pre_change_backup_path=recovery_backup["path"],
+        source_rollback_archive=source_archive_path, source_rollback_sha256=actual_source_sha,
+        principal_id=(principal or {}).get("id"),
+    )
+    return result
+
+
+def deployment_assurance_finish(body, principal):
+    backup = verify_backup_set(body.get("backupPath"))
+    health = deployment_assurance_health(backup)
+    result = deployment_assurance_store().finish(
+        body.get("windowId"), principal_id=(principal or {}).get("id"),
+        snapshot=deployment_assurance_container_snapshot(), health=health, backup=backup,
+    )
+    receipt = result["document"]["receipt"]
+    audit_event(
+        "deployment-assurance-finished", ok=receipt["ready"], window_id=receipt["windowId"],
+        receipt_id=receipt["id"], commit=receipt["commit"], manifest_sha256=receipt["manifestSha256"],
+        invariants=receipt["invariants"], backup_path=receipt["backup"]["path"],
+        evidence_file=pathlib.Path(result["evidencePath"]).name,
+        receipt_sha256=receipt["receiptSha256"], principal_id=(principal or {}).get("id"),
+        recovery_executed=False, game_mutation_executed=False,
+    )
+    return result
+
+
+def deployment_assurance_cancel(body, principal):
+    result = deployment_assurance_store().cancel(
+        body.get("windowId"), principal_id=(principal or {}).get("id"), reason=body.get("reason"),
+    )
+    audit_event(
+        "deployment-assurance-cancelled", ok=True, window_id=result["id"],
+        principal_id=(principal or {}).get("id"), cancellation_reason=body.get("reason"),
+    )
+    return result
+
+
 def change_intelligence_import_history():
     store = change_intelligence_store()
     limit = store.policy["historyImportLimit"]
@@ -6699,9 +6887,14 @@ def verify_operator_evidence_archive(archive_path, secret_path):
             handle = archive.extractfile(member)
             if handle is None:
                 raise ValueError(f"unreadable operator evidence member: {member.name}")
-            result = change_intelligence.verify_signed_capsule(json.loads(handle.read(10 * 1024 * 1024 + 1)), secret)
+            document = json.loads(handle.read(10 * 1024 * 1024 + 1))
+            result = (
+                deployment_assurance.verify_signed_document(document, secret)
+                if document.get("schemaVersion") == deployment_assurance.SIGNED_SCHEMA
+                else change_intelligence.verify_signed_capsule(document, secret)
+            )
             if not result.get("ok"):
-                raise ValueError(f"invalid signed capsule {member.name}: {result.get('error')}")
+                raise ValueError(f"invalid signed operator evidence {member.name}: {result.get('error')}")
     return {"ok": True, "files": len(members), "sourceBytes": total}
 
 
@@ -7653,6 +7846,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.text(metrics, "text/plain; version=0.0.4; charset=utf-8")
             elif parsed.path == "/metrics/change-intelligence":
                 metrics = change_intelligence_store().prometheus() if CHANGE_INTELLIGENCE_ENABLED else "dash_change_intelligence_collector_up 0\n"
+                metrics += deployment_assurance_store().prometheus() if DEPLOYMENT_ASSURANCE_ENABLED else "dash_deployment_assurance_collector_up 0\n"
                 self.text(metrics, "text/plain; version=0.0.4; charset=utf-8")
             elif parsed.path in ("/api/integrations/discord/health", "/api/integrations/discord/version", "/api/integrations/discord/backups/list"):
                 self.require_discord_token()
@@ -7868,6 +8062,9 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/ops/change-intelligence":
                 self.require_token()
                 self.json(change_intelligence_public_status())
+            elif parsed.path == "/api/ops/deployment-assurance":
+                self.require_token()
+                self.json(deployment_assurance_public_status())
             elif parsed.path == "/api/ops/change-intelligence/capsule":
                 self.require_token()
                 params = urllib.parse.parse_qs(parsed.query)
@@ -8547,6 +8744,23 @@ class Handler(BaseHTTPRequestHandler):
                 require_confirmation(body, CONFIRM_READINESS_CERTIFICATION)
                 principal = access_control.public_principal(getattr(self, "auth_principal", None)) or {}
                 result = run_incident_readiness_certification(body.get("policySha256"), principal, self.command_console_operation)
+                self.json(result)
+            elif parsed.path == "/api/ops/deployment-assurance":
+                self.require_token()
+                body = parse_body(self, max_bytes=2 * 1024 * 1024)
+                action = str(body.get("action") or "").strip().lower()
+                principal = access_control.public_principal(getattr(self, "auth_principal", None)) or {}
+                if action == "start":
+                    require_confirmation(body, CONFIRM_DEPLOYMENT_ASSURANCE_START)
+                    result = deployment_assurance_start(body, principal)
+                elif action == "finish":
+                    require_confirmation(body, CONFIRM_DEPLOYMENT_ASSURANCE_FINISH)
+                    result = deployment_assurance_finish(body, principal)
+                elif action == "cancel":
+                    require_confirmation(body, CONFIRM_DEPLOYMENT_ASSURANCE_CANCEL)
+                    result = deployment_assurance_cancel(body, principal)
+                else:
+                    raise ValueError("deployment assurance action must be start, finish, or cancel")
                 self.json(result)
             elif parsed.path == "/api/ops/backups/verify":
                 self.require_token()
@@ -15837,7 +16051,7 @@ async function ops(serial=loadSerial){
   startHealthRefresh();
 }
 async function infrastructure(serial=loadSerial){
-  const [serviceData, backupData, databaseData, updateData, memoryData, autoscalerData, restoreDrillData, sloData, capacityData, desiredStateData, changeData] = await Promise.all([
+  const [serviceData, backupData, databaseData, updateData, memoryData, autoscalerData, restoreDrillData, sloData, capacityData, desiredStateData, changeData, deploymentData] = await Promise.all([
     api('/api/ops/services'),
     api('/api/ops/backups'),
     api('/api/ops/database'),
@@ -15848,7 +16062,8 @@ async function infrastructure(serial=loadSerial){
     api('/api/ops/slo', {timeoutMs: 30000}),
     api('/api/ops/capacity', {timeoutMs: 30000}),
     api('/api/ops/desired-state', {timeoutMs: 30000}),
-    api('/api/ops/change-intelligence', {timeoutMs: 30000})
+    api('/api/ops/change-intelligence', {timeoutMs: 30000}),
+    api('/api/ops/deployment-assurance', {timeoutMs: 30000})
   ]);
   if (serial !== loadSerial) return;
   const services = serviceData.services || [];
@@ -15868,6 +16083,7 @@ async function infrastructure(serial=loadSerial){
   mountInfrastructureCapacity(capacityData);
   mountInfrastructureDesiredState(desiredStateData);
   mountInfrastructureChangeIntelligence(changeData);
+  mountInfrastructureDeploymentAssurance(deploymentData);
   mountInfrastructureRestoreDrill(restoreDrillData);
   mountInfrastructureSlo(sloData);
   document.getElementById('infraLoadLogsBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Loading...', loadInfrastructureLogs));
@@ -15970,6 +16186,39 @@ async function infrastructureDesiredAcknowledge(){
   notify('Drift acknowledgement recorded; finding remains open','warn');
   await infrastructure(loadSerial);
   return result;
+}
+function mountInfrastructureDeploymentAssurance(data){
+  const page = document.querySelector('#view .pageStack');
+  if (!page) return;
+  const latest = data.latest || {};
+  const receipts = (data.receipts || []).map(row => ({
+    completedAt: row.completedAt,
+    ready: row.ready && row.verification?.ok,
+    commit: String(row.commit || '').slice(0,12),
+    reason: row.reason,
+    source: row.invariants?.sourceManifestMatches,
+    mapContainers: row.invariants?.protectedContainersUnrecreated,
+    mapProcesses: row.invariants?.runningMapProcessesUnrestarted,
+    strictMaps: row.invariants?.strictMapServicesContinuous,
+    desiredState: row.invariants?.desiredStateAttested,
+    readiness: row.invariants?.readinessCurrent,
+    slo: row.invariants?.sloHealthy,
+    prometheus: row.invariants?.prometheusReadiness,
+    backup: row.backup?.verified,
+    receipt: String(row.receiptSha256 || '').slice(0,12),
+  }));
+  const windows = (data.openWindows || []).map(row => ({
+    id: row.id, commit: String(row.commit || '').slice(0,12), startedAt: row.startedAt,
+    expiresAt: row.expiresAt, principal: row.principalId, reason: row.reason,
+  }));
+  page.insertAdjacentHTML('beforeend', `<div class="panelBand">
+    <div class="sectionHeader"><h2>Assured Change Windows</h2><div class="toolbar"><span class="pill ${data.ok ? 'ok' : 'bad'}">evidence ${data.ok ? 'verified' : 'invalid'}</span><span class="pill ${data.latestReady ? 'ok' : 'warn'}">${latest.id ? (data.latestReady ? 'latest assured' : 'latest failed') : 'no receipt'}</span><span class="pill ${windows.length ? 'warn' : 'ok'}">${windows.length} open</span></div></div>
+    <p class="muted">Two-phase deployment assurance binds an exact commit and source manifest to pre/post Docker identity. It proves protected map containers were not recreated, running map processes were not restarted, always-on maps stayed continuous, desired state was sealed, 12/12 response readiness remained current, SLO and Prometheus were healthy, and a full recovery backup verified. The resulting receipt is nested-digest and HMAC verified and archived with operator evidence.</p>
+    <div class="metricGrid">${metric('Latest commit', latest.commit ? String(latest.commit).slice(0,12) : 'none', data.latestReady ? 'ok' : 'warn')}${metric('Completed', latest.completedAt || 'never')}${metric('Source manifest', latest.invariants?.sourceManifestMatches === true ? 'verified' : '—', latest.invariants?.sourceManifestMatches === true ? 'ok' : '')}${metric('Map continuity', latest.invariants?.strictMapServicesContinuous === true ? 'verified' : '—', latest.invariants?.strictMapServicesContinuous === true ? 'ok' : '')}${metric('Readiness', latest.invariants?.readinessCurrent === true ? 'current' : '—', latest.invariants?.readinessCurrent === true ? 'ok' : '')}${metric('Recovery backup', latest.backup?.verified === true ? 'verified' : '—', latest.backup?.verified === true ? 'ok' : '')}</div>
+    ${windows.length ? `<div class="panelInset"><h3>Open windows</h3>${table(windows)}</div>` : ''}
+    ${receipts.length ? table(receipts) : '<div class="emptyState">No assured deployment receipt has been recorded yet.</div>'}
+    <details><summary>Host workflow and signed evidence</summary><p class="muted">Generate a commit-bound manifest before syncing files, then run <code>scripts/assured-control-plane-deploy.sh --manifest &lt;file&gt; --reason &lt;text&gt; .env</code> on the production host. The workflow requires exact confirmations internally and refuses a failed invariant rather than relabeling it successful.</p><pre>${esc(JSON.stringify({state:data.state,requiredCapability:data.requiredCapability,protectedServices:data.protectedServices,strictServices:data.strictServices,latest:data.latest}, null, 2))}</pre></details>
+  </div>`);
 }
 function mountInfrastructureChangeIntelligence(data){
   const page = document.querySelector('#view .pageStack');

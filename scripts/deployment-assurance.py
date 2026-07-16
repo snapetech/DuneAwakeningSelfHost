@@ -1,0 +1,236 @@
+#!/usr/bin/env python3
+"""Generate and verify exact source manifests for assured DASH deployments."""
+
+import argparse
+import hashlib
+import json
+import os
+import pathlib
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "admin"))
+
+import deployment_assurance
+
+
+SCHEMA = "dune-deployment-manifest/v1"
+SUPPORT_FILES = {
+    "admin/deployment_assurance.py",
+    "scripts/deployment-assurance.py",
+    "scripts/assured-control-plane-deploy.sh",
+}
+
+
+def git(*arguments):
+    completed = subprocess.run(["git", *arguments], cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    if completed.returncode:
+        raise ValueError(completed.stderr.strip() or "git command failed")
+    return completed.stdout.strip()
+
+
+def git_bytes(*arguments):
+    completed = subprocess.run(["git", *arguments], cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    if completed.returncode:
+        raise ValueError(completed.stderr.decode("utf-8", errors="replace").strip() or "git command failed")
+    return completed.stdout
+
+
+def resolve_commit(value):
+    commit = git("rev-parse", "--verify", f"{value}^{{commit}}")
+    if not deployment_assurance.COMMIT_PATTERN.fullmatch(commit):
+        raise ValueError("resolved Git commit id is invalid")
+    return commit
+
+
+def selected_files(commit, base=None, explicit=None):
+    if explicit:
+        raw = explicit
+    else:
+        parent = resolve_commit(base) if base else git("rev-parse", f"{commit}^")
+        raw = git("diff", "--name-only", "--diff-filter=ACMRT", parent, commit).splitlines()
+    files = sorted(set(deployment_assurance.safe_relative_path(value) for value in raw if str(value).strip()) | SUPPORT_FILES)
+    if not files:
+        raise ValueError("deployment manifest selection is empty")
+    return files
+
+
+def generate(commit="HEAD", base=None, explicit=None, reason=""):
+    resolved = resolve_commit(commit)
+    rows = []
+    for relative in selected_files(resolved, base=base, explicit=explicit):
+        path = ROOT / relative
+        if not path.is_file() or path.is_symlink():
+            raise ValueError(f"deployment manifest source is not a regular file: {relative}")
+        committed = git_bytes("show", f"{resolved}:{relative}")
+        committed_sha = hashlib.sha256(committed).hexdigest()
+        current_sha = deployment_assurance.file_sha256(path)
+        if current_sha != committed_sha:
+            raise ValueError(f"workspace file does not match exact deployment commit: {relative}")
+        rows.append({"path": relative, "sha256": committed_sha})
+    normalized = deployment_assurance.normalize_manifest(ROOT, rows)
+    files = [{key: row[key] for key in ("path", "sha256", "bytes")} for row in normalized]
+    return {
+        "schemaVersion": SCHEMA, "commit": resolved, "reason": str(reason or "")[:1000],
+        "files": files, "manifestSha256": deployment_assurance.digest(files),
+    }
+
+
+def verify(document, workspace=ROOT):
+    if not isinstance(document, dict) or set(document) - {"schemaVersion", "commit", "reason", "files", "manifestSha256"}:
+        raise ValueError("deployment manifest fields are invalid")
+    if document.get("schemaVersion") != SCHEMA or not deployment_assurance.COMMIT_PATTERN.fullmatch(str(document.get("commit") or "")):
+        raise ValueError("deployment manifest schema or commit is invalid")
+    normalized = deployment_assurance.normalize_manifest(workspace, document.get("files"))
+    files = [{key: row[key] for key in ("path", "sha256", "bytes")} for row in normalized]
+    expected = deployment_assurance.digest(files)
+    if document.get("manifestSha256") != expected:
+        raise ValueError("deployment manifest digest is invalid")
+    return {"ok": True, "commit": document["commit"], "files": len(files), "manifestSha256": expected}
+
+
+def validate_document(document):
+    if not isinstance(document, dict) or set(document) - {"schemaVersion", "commit", "reason", "files", "manifestSha256"}:
+        raise ValueError("deployment manifest fields are invalid")
+    if document.get("schemaVersion") != SCHEMA or not deployment_assurance.COMMIT_PATTERN.fullmatch(str(document.get("commit") or "")):
+        raise ValueError("deployment manifest schema or commit is invalid")
+    files = deployment_assurance.validate_manifest_rows(document.get("files"), require_bytes=True)
+    expected = deployment_assurance.digest(files)
+    if document.get("manifestSha256") != expected:
+        raise ValueError("deployment manifest digest is invalid")
+    return files
+
+
+def archive_rollback(document, workspace, output):
+    files = validate_document(document)
+    workspace = pathlib.Path(workspace).resolve()
+    output = pathlib.Path(output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    records = []
+    descriptor, temporary = tempfile.mkstemp(prefix=output.name + ".", dir=output.parent)
+    os.close(descriptor)
+    pathlib.Path(temporary).unlink(missing_ok=True)
+    try:
+        with tarfile.open(temporary, "w:gz") as archive:
+            for row in files:
+                target = (workspace / row["path"]).resolve()
+                try:
+                    target.relative_to(workspace)
+                except ValueError as exc:
+                    raise ValueError(f"rollback path escapes workspace: {row['path']}") from exc
+                existed = target.is_file() and not target.is_symlink()
+                record = {"path": row["path"], "existed": existed}
+                if existed:
+                    if target.stat().st_size > deployment_assurance.MAX_FILE_BYTES:
+                        raise ValueError(f"rollback source is oversized: {row['path']}")
+                    record.update({"sha256": deployment_assurance.file_sha256(target), "bytes": target.stat().st_size, "mode": target.stat().st_mode & 0o777})
+                    archive.add(target, arcname=f"files/{row['path']}", recursive=False)
+                records.append(record)
+            metadata = json.dumps({
+                "schemaVersion": "dune-deployment-rollback/v1", "commit": document["commit"],
+                "targetManifestSha256": document["manifestSha256"], "files": records,
+            }, indent=2, sort_keys=True).encode("utf-8")
+            info = tarfile.TarInfo("rollback-manifest.json")
+            info.size = len(metadata)
+            info.mode = 0o600
+            info.mtime = 0
+            import io
+            archive.addfile(info, io.BytesIO(metadata))
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, output)
+    finally:
+        pathlib.Path(temporary).unlink(missing_ok=True)
+    return {"ok": True, "path": str(output), "bytes": output.stat().st_size, "sha256": deployment_assurance.file_sha256(output), "files": len(files)}
+
+
+def apply_manifest(document, source, workspace):
+    files = validate_document(document)
+    source = pathlib.Path(source).resolve()
+    workspace = pathlib.Path(workspace).resolve()
+    verify(document, workspace=source)
+    for row in files:
+        source_path = (source / row["path"]).resolve()
+        target = (workspace / row["path"]).resolve()
+        try:
+            source_path.relative_to(source)
+            target.relative_to(workspace)
+        except ValueError as exc:
+            raise ValueError(f"deployment apply path escapes workspace: {row['path']}") from exc
+        if target.is_symlink():
+            raise ValueError(f"deployment apply target is a symlink: {row['path']}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_name(target.name + ".deploy-" + os.urandom(8).hex())
+        try:
+            with source_path.open("rb") as input_handle, temporary.open("xb") as output_handle:
+                shutil.copyfileobj(input_handle, output_handle, 1024 * 1024)
+                output_handle.flush()
+                os.fsync(output_handle.fileno())
+            mode = source_path.stat().st_mode & 0o111
+            os.chmod(temporary, 0o755 if mode else 0o644)
+            temporary.replace(target)
+        finally:
+            temporary.unlink(missing_ok=True)
+    return verify(document, workspace=workspace)
+
+
+def atomic_write(path, document):
+    path = pathlib.Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(document, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, path)
+    finally:
+        pathlib.Path(temporary).unlink(missing_ok=True)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    manifest = subparsers.add_parser("manifest", help="Generate an exact commit-bound source manifest")
+    manifest.add_argument("--commit", default="HEAD")
+    manifest.add_argument("--base")
+    manifest.add_argument("--file", action="append", dest="files")
+    manifest.add_argument("--reason", default="")
+    manifest.add_argument("--output", required=True)
+    verify_parser = subparsers.add_parser("verify", help="Verify a manifest against the current workspace")
+    verify_parser.add_argument("--manifest", required=True)
+    verify_parser.add_argument("--workspace", default=str(ROOT))
+    archive_parser = subparsers.add_parser("archive", help="Archive current target files for rollback before applying a manifest")
+    archive_parser.add_argument("--manifest", required=True)
+    archive_parser.add_argument("--workspace", default=str(ROOT))
+    archive_parser.add_argument("--output", required=True)
+    apply_parser = subparsers.add_parser("apply", help="Atomically apply staged manifest files into a target workspace")
+    apply_parser.add_argument("--manifest", required=True)
+    apply_parser.add_argument("--source", required=True)
+    apply_parser.add_argument("--workspace", required=True)
+    args = parser.parse_args()
+    try:
+        if args.command == "manifest":
+            document = generate(args.commit, base=args.base, explicit=args.files, reason=args.reason)
+            atomic_write(args.output, document)
+            result = verify(document)
+            result["path"] = str(pathlib.Path(args.output))
+        elif args.command == "verify":
+            result = verify(json.loads(pathlib.Path(args.manifest).read_text(encoding="utf-8")), workspace=args.workspace)
+        elif args.command == "archive":
+            result = archive_rollback(json.loads(pathlib.Path(args.manifest).read_text(encoding="utf-8")), args.workspace, args.output)
+        else:
+            result = apply_manifest(json.loads(pathlib.Path(args.manifest).read_text(encoding="utf-8")), args.source, args.workspace)
+        print(json.dumps(result, indent=2, sort_keys=True))
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise SystemExit(str(exc))
+
+
+if __name__ == "__main__":
+    main()

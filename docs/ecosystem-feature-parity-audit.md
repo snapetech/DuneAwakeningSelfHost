@@ -202,6 +202,7 @@ without reproducing that wrapper.
 | Deterministic evidence-linked incident response plans | No surveyed Dune peer | DASH exceeds | Every default SLO plus desired/generic incidents maps to a policy-digested runbook with machine-evaluated evidence predicates, exact bounded diagnostic IDs, existing capability/gate/confirmation recovery contracts, zero automatic execution, nested plan integrity inside portable signed capsules, UI navigation, CLI, and backup-bound archived-capsule verification; see `docs/incident-response.md` |
 | Non-disruptive incident-response readiness rehearsals | No surveyed Dune peer | DASH exceeds | Stale-plan-bound explicit drills run only fixed native read-only diagnostics, hash/discard output, verify current principal/gate/confirmation recovery contracts, execute no recovery/game mutation, append incident-linked HMAC receipts, feed signed capsule inputs, expose label-free readiness metrics, and alert on failure/staleness; see `docs/incident-response.md` |
 | Fleet-wide incident-response readiness certification | No surveyed Dune peer | DASH exceeds | One policy-digest-bound action deduplicates shared diagnostics, certifies all 12 runbooks and 10 guarded recovery contracts, identifies exact capability/gate/confirmation gaps, executes no recovery/game mutation, appends a semantically verified HMAC receipt, feeds every signed capsule/plan, exposes a dashboard scorecard and label-free coverage metrics, and alerts on failure/staleness; see `docs/incident-response.md` |
+| Two-phase assured deployments and promotion receipts | No surveyed Dune peer | DASH exceeds | Exact Git-blob manifests are verified locally and in an SSH stage before atomic promotion; verified pre/post backups, private source rollback, all-map container/process continuity, desired-state seal, 12/12 readiness, SLO/Change Intelligence integrity, Prometheus scrape proof, semantic nested receipts, mixed evidence backup verification, dashboard/metrics/alerts, and a final receipt-containing backup close the change loop without a map lifecycle call; see `docs/deployment-assurance.md` |
 | Offsite/mirror/failover backup | DST, Reditus | Parity | Replica, snapshot, rsync/rclone/restic examples |
 | Scheduled restart with warnings and backup | adainrivers, Manaiakalani, AMP | Parity | Daily maintenance timer loaded |
 | Authenticated Steam update and Steam Guard bootstrap | Manaiakalani | Parity | Protected owned-account login/password settings, interactive SteamCMD bootstrap for password/Steam Guard, persistent private Steam home, locked unattended hotfix updater, and restart-only-on-change behavior; one-time Steam Guard codes are not retained |
@@ -355,6 +356,13 @@ only when explicitly authorized for a concrete client task, as required by
   verified facts from pending operator work, reuse exact bounded diagnostics,
   preserve every existing recovery gate, execute nothing automatically, and
   remain independently digest- and HMAC-verifiable in backups and escalation.
+- **High confidence:** DASH now also closes the gap between “deployment command
+  returned” and “change is proven safe.” Exact committed blobs are staged before
+  live promotion; source rollback, pre/post/final backups, all-map
+  container/process continuity, desired state, readiness, SLO, Change
+  Intelligence, and Prometheus are bound into a semantically verified HMAC
+  receipt. No surveyed Dune peer provides an equivalent two-phase promotion
+  proof.
 - **High confidence:** local RBAC, outbound events, the first-party Discord bot,
   community rewards/shop/tracks, host tuning, inventory integrity repair,
   recurring event automation, moderation case history, native policy-ban

@@ -230,9 +230,13 @@ assigning new semantics to the old format.
 | `DUNE_CHANGE_INTELLIGENCE_POLICY` | `/workspace/config/change-intelligence.json` | Classification, impact, correlation, and bounds. |
 | `DUNE_CHANGE_INTELLIGENCE_DATABASE` | `/workspace/backups/change-intelligence/change-intelligence.sqlite3` | Private append-only ledger. |
 | `DUNE_CHANGE_INTELLIGENCE_HMAC_SECRET_FILE` | `/workspace/config/secrets/change-intelligence-hmac.secret` | Private authentication key. |
-| `DUNE_CHANGE_INTELLIGENCE_EVIDENCE_DIR` | `/workspace/backups/operator-evidence` | Container path for private portable signed capsules. |
-| `DUNE_CHANGE_INTELLIGENCE_HOST_EVIDENCE_DIR` | `backups/operator-evidence` | Host path archived by full backups. |
+| `DUNE_CHANGE_INTELLIGENCE_EVIDENCE_DIR` | `/workspace/backups/operator-evidence` | Container path for private portable signed incident and deployment evidence. |
+| `DUNE_CHANGE_INTELLIGENCE_HOST_EVIDENCE_DIR` | `backups/operator-evidence` | Mixed signed-evidence host path archived by full backups. |
 | `DUNE_RESPONSE_DRILLS_ENABLED` | `true` | Enables explicit fixed-diagnostic incident rehearsals and fleet-wide policy certification. |
+
+Assured deployment receipts reuse this evidence directory and HMAC key. Their
+independent semantic schema is documented in
+[`deployment-assurance.md`](deployment-assurance.md).
 
 Host CLI overrides are `DUNE_CHANGE_INTELLIGENCE_HOST_DATABASE`,
 `DUNE_CHANGE_INTELLIGENCE_HOST_POLICY`, and

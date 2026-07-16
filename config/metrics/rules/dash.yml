@@ -153,3 +153,23 @@ groups:
         for: 1h
         labels: {severity: warning}
         annotations: {summary: "DASH fleet-wide incident-readiness certification is older than seven days"}
+      - alert: DashDeploymentAssuranceCollectorInvalid
+        expr: dash_deployment_assurance_collector_up == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "DASH deployment-assurance window or signed receipt verification failed"}
+      - alert: DashDeploymentAssuranceNotReady
+        expr: dash_deployment_assurance_latest_ready == 0
+        for: 15m
+        labels: {severity: warning}
+        annotations: {summary: "DASH has no passing assured deployment receipt or the latest change window failed"}
+      - alert: DashDeploymentAssuranceStale
+        expr: time() - dash_deployment_assurance_last_completion_timestamp_seconds > 604800
+        for: 1h
+        labels: {severity: warning}
+        annotations: {summary: "DASH has not completed an assured deployment in seven days"}
+      - alert: DashDeploymentAssuranceWindowOverdue
+        expr: dash_deployment_assurance_overdue_windows > 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "A DASH assured change window expired without a completion or cancellation receipt"}

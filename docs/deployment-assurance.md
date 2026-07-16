@@ -1,0 +1,284 @@
+# Assured Change Windows
+
+DASH can promote a reviewed control-plane commit through one two-phase,
+fail-closed workflow. The outcome is not merely “the deploy command returned
+zero.” A successful receipt proves source provenance, map continuity, current
+health/readiness, and recovery evidence under the same private HMAC trust
+boundary as Change Intelligence.
+
+Confidence: **high** for the implementation, receipt semantics, backup
+verification, and map-continuity invariants covered by tests. Each live receipt
+separately records whether those invariants passed for that change window.
+
+## Outcome
+
+An assured deployment proves all of these facts:
+
+1. The staged file set exactly matches one 40- or 64-hex Git commit and a
+   canonical SHA-256 manifest.
+2. A full pre-change backup passed the normal verifier.
+3. Every replaced live source file was preserved in a private rollback archive,
+   including a record of paths that did not previously exist.
+4. The server captured all configured game-map container IDs, states, and
+   process start times before the live source tree changed.
+5. Only the staged manifest files were atomically promoted.
+6. Admin Panel and ingress passed their existing remote test/health path.
+7. No protected game-map container was recreated.
+8. A game-map process already running at window start was not restarted.
+9. Every `always-on` map stayed running with the same process start time.
+10. Desired State was fully reviewed/sealed and had zero open findings.
+11. The current response policy had a semantically valid 12/12 readiness
+    certification.
+12. Operational SLOs were healthy with zero open incidents.
+13. Change Intelligence integrity passed with zero open incidents.
+14. Prometheus had scraped readiness value `1`; a merely healthy direct
+    collector response is insufficient.
+15. A full post-change backup passed the normal verifier.
+16. The receipt says both `recoveryExecuted=false` and
+    `gameMutationExecuted=false`.
+17. A final full backup created after completion contains the signed receipt.
+
+Any false invariant makes `ready=false`. DASH signs and retains a failed
+receipt when it can safely characterize the failure; it does not rewrite the
+outcome green. An invalid/missing manifest, private path, missing backup,
+tampered window, expired window, or unreadable required source fails before
+finalization.
+
+## Trust And Safety Boundary
+
+The workflow is production-host-gated to `DUNE_PRODUCTION_HOST` (`kspls0` by
+default). The target host verifies `hostname` before any deployment action.
+
+The local push helper stages files under a random mode-`0700` `/tmp` directory.
+It does not overwrite the live tree over `rsync` or `scp`. The production
+workflow validates the staged tree, captures pre-change evidence, creates both
+recovery layers, starts the HMAC-authenticated window, and only then atomically
+applies each manifest file.
+
+Manifest paths:
+
+- must be bounded repository-relative paths;
+- cannot contain `..`, absolute paths, symlinks, or unsafe path components;
+- cannot select `.env`, `config/secrets`, `.git`, `data`, `captures`, or
+  `backups`;
+- are capped at 256 files, 10 MiB per file, and 100 MiB total; and
+- must match the exact committed Git blob before staging and again inside the
+  remote stage.
+
+The host workflow contains no raw `docker compose`, `docker restart`, or map
+lifecycle call. It invokes `scripts/deploy-admin-panel.sh`, which recreates only
+`admin-panel` and `admin-panel-ingress`. It runs the Landsraad/Coriolis validator
+before and after deployment. Normal Desired State sealing, readiness
+certification, backup verification, RBAC, exact confirmations, and audit paths
+remain authoritative.
+
+Dynamic maps may legitimately start from player demand or stop after their idle
+retention expires during a window. That does not fail assurance when the same
+container identity is retained. A container recreation always fails. A process
+that was running before and remains running after must preserve its exact
+`StartedAt`. Every `always-on` service must remain running continuously.
+
+## Generate A Commit-Bound Manifest
+
+Commit the complete change first, then generate the manifest from that exact
+commit. By default, the file set is the committed diff from its first parent:
+
+```bash
+python3 scripts/deployment-assurance.py manifest \
+  --commit HEAD \
+  --reason 'Deploy reviewed control-plane release' \
+  --output /tmp/dash-deployment-manifest.json
+
+python3 scripts/deployment-assurance.py verify \
+  --manifest /tmp/dash-deployment-manifest.json
+```
+
+Use repeated `--file` only for a deliberately narrower deploy. The three staged
+assurance runner/module files are always added, even when unchanged, so no
+unmanifested helper code executes on production. Generation reads each blob
+from the exact commit and refuses when the current workspace file differs. The
+mode-`0600` document contains:
+
+```json
+{
+  "schemaVersion": "dune-deployment-manifest/v1",
+  "commit": "<exact commit>",
+  "reason": "...",
+  "files": [{"path": "admin/admin_panel.py", "sha256": "...", "bytes": 123}],
+  "manifestSha256": "..."
+}
+```
+
+## Push And Promote
+
+Run from the reviewed source checkout:
+
+```bash
+scripts/push-assured-control-plane.sh \
+  --manifest /tmp/dash-deployment-manifest.json \
+  --reason 'Deploy reviewed control-plane release' \
+  --host kspls0
+```
+
+The helper transfers the exact manifest files plus the three assurance runner
+files required to operate from staging. Extra runner files are not promoted
+unless they are also in the manifest.
+
+On an already staged production host, the lower-level entry point is:
+
+```bash
+PYTHONPATH=/tmp/dash-stage/admin \
+  /tmp/dash-stage/scripts/assured-control-plane-deploy.sh \
+  --manifest /tmp/dash-stage/deployment-manifest.json \
+  --reason 'Deploy reviewed control-plane release' \
+  --stage /tmp/dash-stage \
+  --workspace /home/keith/Documents/code/DuneAwakeningSelfHost \
+  .env
+```
+
+The host runner creates three verified backup sets:
+
+- pre-change recovery state referenced by the open window;
+- post-change recovery state referenced by the signed receipt; and
+- final state containing the completed signed receipt in
+  `operator-evidence.tgz`.
+
+It also creates a mode-`0600` source rollback archive under
+`backups/deployments/`. The archive has `rollback-manifest.json` plus every live
+file that existed before promotion. Restore source through a separately
+reviewed maintenance action; assurance never auto-rolls back a running server.
+
+## API
+
+Read status and bounded receipt summaries:
+
+```text
+GET /api/ops/deployment-assurance
+```
+
+Two-phase writes require `infrastructure.write` and exact confirmations:
+
+```text
+POST /api/ops/deployment-assurance
+{
+  "action":"start",
+  "commit":"<exact commit>",
+  "reason":"...",
+  "manifest":{"schemaVersion":"dune-deployment-manifest/v1","files":[...]},
+  "preChangeBackupPath":"<relative backup set>",
+  "sourceRollbackArchive":"deployments/<archive>.tgz",
+  "sourceRollbackSha256":"<64 hex>",
+  "staged":true,
+  "confirm":"START ASSURED CHANGE WINDOW"
+}
+
+POST /api/ops/deployment-assurance
+{"action":"finish","windowId":"deployment-window-...","backupPath":"<relative backup set>","confirm":"FINALIZE ASSURED CHANGE WINDOW"}
+
+POST /api/ops/deployment-assurance
+{"action":"cancel","windowId":"deployment-window-...","reason":"...","confirm":"CANCEL ASSURED CHANGE WINDOW"}
+```
+
+Clients cannot submit container snapshots, health results, readiness outcomes,
+or receipt digests. The server derives those values. Open-window JSON is
+HMAC-authenticated, mode `0600`, expires after six hours, and cannot be reused
+after completion/cancellation.
+
+## Signed Receipt And Backup Verification
+
+Completed artifacts use schema `dune-deployment-assurance/v1` and live under:
+
+```text
+backups/operator-evidence/deployment-assurance-<id>.signed.json
+```
+
+The inner `receiptSha256` covers the complete normalized receipt excluding only
+that digest. Verification then enforces semantic agreement between:
+
+- file rows and `manifestSha256`;
+- per-service continuity rows and their aggregate booleans;
+- health values and matching invariants;
+- backup verification and `backupVerified`;
+- every invariant and top-level `ready`;
+- recovery/game-mutation flags; and
+- receipt identity, commit, window, timestamps, and source rollback proof.
+
+The outer HMAC covers generation time, schema, key fingerprint, and complete
+receipt. Both native/admin and host backup verifiers dispatch mixed
+`operator-evidence.tgz` members by schema, so incident capsules and deployment
+receipts coexist. One invalid artifact fails the whole backup verification.
+
+## Dashboard, Metrics, And Alerts
+
+Open **Infrastructure → Assured Change Windows**. The panel shows the latest
+commit/outcome, source/map/readiness/backup proof, open windows, receipt history,
+and the exact protected/strict service policy. It exposes no token or HMAC key.
+
+The existing label-free Change Intelligence metrics endpoint adds:
+
+```text
+dash_deployment_assurance_collector_up
+dash_deployment_assurance_latest_ready
+dash_deployment_assurance_last_completion_timestamp_seconds
+dash_deployment_assurance_open_windows
+dash_deployment_assurance_overdue_windows
+```
+
+Prometheus alerts on invalid state/evidence, no passing latest receipt, a
+receipt older than seven days, or an expired open window. No commit, path,
+operator, service, backup, or digest is used as a metric label.
+
+## Configuration
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `DUNE_DEPLOYMENT_ASSURANCE_ENABLED` | `true` | Enables API, dashboard, receipts, and metrics. |
+| `DUNE_DEPLOYMENT_ASSURANCE_STATE_DIR` | `/workspace/backups/deployment-assurance` | Private HMAC-authenticated window state. |
+| `DUNE_DEPLOYMENT_ASSURANCE_PROMETHEUS_URL` | `http://prometheus:9090` | Internal query endpoint proving readiness was scraped. |
+
+Deployment receipts intentionally reuse the Change Intelligence HMAC secret and
+operator-evidence directory. Key recovery therefore follows the existing
+matching-key Change Intelligence backup contract.
+
+## Failure Handling
+
+- **manifest generation rejects a file:** commit it first and ensure the
+  workspace byte-for-byte matches that commit. Never edit the manifest digest.
+- **stage verification fails:** discard the stage and transfer it again; no live
+  file has changed.
+- **start fails:** verify the pre-change backup, rollback archive, HMAC key,
+  Docker socket, and manifest bounds. No source apply occurs before success.
+- **workflow aborts after start:** the shell trap attempts an explicit
+  cancellation. If the admin endpoint is unavailable, the window expires and
+  the overdue alert remains visible.
+- **source/map/health invariant fails:** retain the signed failed receipt and
+  diagnose the exact false fields. Do not manually flip them.
+- **desired state is not attested:** review every finding; the host workflow
+  seals the complete snapshot only through the existing exact-confirmation
+  route.
+- **readiness is not 12/12:** repair diagnostics or the named capability/gate
+  contract separately. Assurance never enables a gate.
+- **backup fails:** the window cannot be ready. Preserve both pre-change layers
+  while investigating.
+- **rollback required:** verify the source archive and pre-change backup, plan
+  the rollback separately, and run another assured window for the rollback
+  commit. Automatic rollback could compound a partial external failure and is
+  deliberately not inferred.
+
+## Validation
+
+```bash
+make test-deployment-assurance
+make test-change-intelligence
+make test-admin-panel-safe-surfaces
+make test-operational-borrowing
+docker compose --env-file .env.example config --quiet
+make validate
+```
+
+Coverage includes manifest/path/size bounds, exact Git-blob binding, stage
+verification, source rollback creation, atomic apply, HMAC window tampering,
+expiry/cancellation, dynamic-map starts, protected container recreation,
+running/strict process restart, health/backup failure, nested/outer tampering,
+mixed signed-evidence archives, RBAC/confirmation, dashboard wiring, metrics,
+and production-host/map-lifecycle guards.

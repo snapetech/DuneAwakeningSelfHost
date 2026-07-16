@@ -13,6 +13,9 @@ Change Intelligence emits the latest response-readiness drill result/time and
 the latest fleet-wide readiness certification result/time, runbook coverage,
 shared-diagnostic totals, and recovery-contract totals. Those series have no
 incident, operator, command, runbook, gate, or digest labels.
+The same endpoint emits deployment-assurance verification, latest outcome/time,
+open windows, and overdue windows. It does not label commits, paths, services,
+operators, backups, or receipt digests.
 
 Start it with the normal world Compose files plus the overlay:
 
@@ -65,6 +68,8 @@ fast-burn, exhausted-budget, slow cold-start, desired-state target/unsealed/
 stale/critical-drift, change-ledger target/integrity/candidate-review,
 container-health, memory, disk, Postgres, failed/stale incident drills, and
 missing/failed/stale fleet-wide response certification alerts.
+It also alerts on invalid deployment evidence, a missing/failed latest assured
+deployment, seven-day staleness, and an expired open change window.
 Validate the exact Prometheus version and rules with:
 
 ```bash

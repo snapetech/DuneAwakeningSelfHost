@@ -313,6 +313,7 @@ import sys
 import tarfile
 import tempfile
 import change_intelligence
+import deployment_assurance
 
 evidence_archive, config_archive = sys.argv[1:]
 try:
@@ -342,9 +343,13 @@ try:
                 if extracted is None:
                     raise ValueError(f"unreadable operator evidence member: {item.name}")
                 document = json.loads(extracted.read(10 * 1024 * 1024 + 1))
-                result = change_intelligence.verify_signed_capsule(document, secret)
+                result = (
+                    deployment_assurance.verify_signed_document(document, secret)
+                    if document.get("schemaVersion") == deployment_assurance.SIGNED_SCHEMA
+                    else change_intelligence.verify_signed_capsule(document, secret)
+                )
                 if not result.get("ok"):
-                    raise ValueError(f"invalid signed capsule {item.name}: {result.get('error')}")
+                    raise ValueError(f"invalid signed operator evidence {item.name}: {result.get('error')}")
             print(len(members))
 except (OSError, KeyError, ValueError, json.JSONDecodeError, tarfile.TarError):
     raise SystemExit(1)

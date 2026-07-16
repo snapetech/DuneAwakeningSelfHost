@@ -163,6 +163,14 @@ diagnostics run once, every runbook and guarded recovery contract is scored,
 exact capability/gate/confirmation gaps are displayed, and the global
 tamper-evident receipt becomes part of every subsequent signed incident capsule.
 
+DASH now closes the deployment loop as well. An assured change window binds an
+exact commit and staged file manifest to verified pre/post backups, a private
+source rollback archive, every game-map container identity/start time, desired
+state, 12/12 response readiness, SLO health, and Prometheus evidence. It deploys
+only the control plane through the normal tested path, fails on any unplanned
+map recreation/restart or stale health proof, and emits a semantically verified
+HMAC receipt that the final backup must contain.
+
 See [`docs/ecosystem-feature-parity-audit.md`](docs/ecosystem-feature-parity-audit.md)
 for the pinned peer list, full capability matrix, confidence levels, exclusions,
 and implementation order. See
@@ -978,6 +986,7 @@ Start here:
 - [`docs/desired-state-attestation.md`](docs/desired-state-attestation.md): HMAC-sealed file/container baselines, retained drift, dashboard/API/CLI workflows, metrics, SLO integration, backup-bound key recovery, and failure handling.
 - [`docs/change-intelligence.md`](docs/change-intelligence.md): append-only HMAC operational timeline, authoritative incident reconciliation, privacy-bounded correlation, non-causal evidence capsules, portable ledger-head-bound signed exports with offline verification, metrics, and backup-bound recovery.
 - [`docs/incident-response.md`](docs/incident-response.md): policy-versioned deterministic response plans, evidence predicates, exact bounded diagnostics, guarded recovery contracts, plan/signature verification, UI navigation without execution, and backup-bound portable evidence.
+- [`docs/deployment-assurance.md`](docs/deployment-assurance.md): exact-commit staged promotion, pre/post recovery layers, map-continuity invariants, desired/readiness/SLO/Prometheus gates, signed receipts, dashboard, metrics, and failure recovery.
 - [`docs/operational-identity-handoff.md`](docs/operational-identity-handoff.md): FLS identity, RabbitMQ TLS, backup identity layers, and redacted handoff artifacts.
 - [`docs/postgres-replication.md`](docs/postgres-replication.md): local and remote Postgres standby.
 - [`docs/artificial-exchange.md`](docs/artificial-exchange.md): artificial Exchange catalog, buyer, settlement, populator, and services.

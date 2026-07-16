@@ -173,6 +173,12 @@ server {
   are shown, and no recovery/game mutation executes. See
   [`incident-response.md`](incident-response.md) and
   [`change-intelligence.md`](change-intelligence.md).
+- Assured Change Windows turn reviewed control-plane promotion into a two-phase
+  proof: exact commit/source, pre/post recovery, all-map container/process
+  continuity, desired state, fleet readiness, SLO/Prometheus health, and a
+  semantically verified HMAC receipt. The dashboard is bounded status/history;
+  staging and promotion remain production-host-only. See
+  [`deployment-assurance.md`](deployment-assurance.md).
 - Infrastructure backup controls report recipient-encryption readiness,
   encrypted archive/receipt inventory, and exact host encrypt/decrypt commands.
   The private recovery key stays outside the admin container. See

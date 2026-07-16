@@ -1,0 +1,236 @@
+#!/usr/bin/env python3
+import json
+import pathlib
+import subprocess
+import importlib.util
+import sys
+import tempfile
+import unittest
+from unittest import mock
+
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "admin"))
+
+import deployment_assurance
+
+CLI_SPEC = importlib.util.spec_from_file_location("deployment_assurance_cli", ROOT / "scripts" / "deployment-assurance.py")
+deployment_cli = importlib.util.module_from_spec(CLI_SPEC)
+CLI_SPEC.loader.exec_module(deployment_cli)
+
+
+class DeploymentAssuranceTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = pathlib.Path(self.temp.name)
+        self.workspace = self.root / "workspace"
+        self.workspace.mkdir()
+        (self.workspace / "admin").mkdir()
+        (self.workspace / "admin" / "panel.py").write_text("print('one')\n", encoding="utf-8")
+        self.secret = b"d" * 64
+        self.store = deployment_assurance.Store(
+            self.root / "state", self.root / "evidence", self.workspace, self.secret,
+        )
+        self.before = {
+            "survival": {"containerId": "a" * 64, "state": "running", "startedAt": "2026-07-16T10:00:00Z"},
+            "overmap": {"containerId": "b" * 64, "state": "running", "startedAt": "2026-07-16T10:00:00Z"},
+            "arrakeen": {"containerId": "c" * 64, "state": "exited", "startedAt": "2026-07-16T09:00:00Z"},
+        }
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def manifest(self):
+        path = self.workspace / "admin" / "panel.py"
+        return [{"path": "admin/panel.py", "sha256": deployment_assurance.file_sha256(path)}]
+
+    def health(self, value=True):
+        return {
+            "desiredStateAttested": value, "readinessCurrent": value, "sloHealthy": value,
+            "changeIntegrity": value, "prometheusReadiness": value, "adminHealthy": value,
+            "backupVerified": value,
+        }
+
+    def start(self, now=1000):
+        return self.store.start(
+            commit="a" * 40, reason="Deploy reviewed control-plane update", manifest=self.manifest(),
+            principal_id="owner", snapshot=self.before,
+            protected_services=["survival", "overmap", "arrakeen"], strict_services=["survival", "overmap"],
+            recovery_backup={"ok": True, "path": "20260716T095000Z", "exitCode": 0}, now=now,
+            source_rollback={"verified": True, "path": "deployments/before.tgz", "sha256": "e" * 64, "bytes": 100},
+        )
+
+    def test_complete_receipt_proves_manifest_continuity_health_and_backup(self):
+        window = self.start()
+        result = self.store.finish(
+            window["id"], principal_id="owner", snapshot=self.before,
+            health=self.health(), backup={"ok": True, "path": "20260716T100000Z", "exitCode": 0}, now=1100,
+        )
+        receipt = result["document"]["receipt"]
+        self.assertTrue(receipt["ready"])
+        self.assertTrue(receipt["invariants"]["sourceManifestMatches"])
+        self.assertTrue(receipt["invariants"]["protectedContainersUnrecreated"])
+        self.assertTrue(receipt["invariants"]["runningMapProcessesUnrestarted"])
+        self.assertTrue(receipt["invariants"]["strictMapServicesContinuous"])
+        self.assertFalse(receipt["recoveryExecuted"])
+        self.assertFalse(receipt["gameMutationExecuted"])
+        self.assertTrue(result["verification"]["ok"])
+        evidence = pathlib.Path(result["evidencePath"])
+        self.assertEqual(0o600, evidence.stat().st_mode & 0o777)
+        status = self.store.status(now=1100)
+        self.assertTrue(status["ok"])
+        self.assertTrue(status["latestReady"])
+        self.assertFalse(status["openWindows"])
+        self.assertIn("dash_deployment_assurance_latest_ready 1", self.store.prometheus(now=1100))
+        with self.assertRaisesRegex(ValueError, "already finalized"):
+            self.store.finish(window["id"], principal_id="owner", snapshot=self.before, health=self.health(), backup={"ok": True}, now=1200)
+
+    def test_changed_source_produces_failed_signed_evidence(self):
+        window = self.start()
+        (self.workspace / "admin" / "panel.py").write_text("print('forged')\n", encoding="utf-8")
+        result = self.store.finish(window["id"], principal_id="owner", snapshot=self.before, health=self.health(), backup={"ok": True}, now=1100)
+        self.assertFalse(result["document"]["receipt"]["ready"])
+        self.assertFalse(result["document"]["receipt"]["invariants"]["sourceManifestMatches"])
+        self.assertTrue(result["verification"]["ok"])
+        self.assertFalse(self.store.status(now=1100)["openWindows"])
+
+    def test_recreated_or_restarted_map_and_failed_health_produce_failed_evidence(self):
+        window = self.start()
+        after = json.loads(json.dumps(self.before))
+        after["arrakeen"] = {"containerId": "e" * 64, "state": "running", "startedAt": "2026-07-16T10:01:00Z"}
+        after["survival"]["startedAt"] = "2026-07-16T10:02:00Z"
+        result = self.store.finish(
+            window["id"], principal_id="owner", snapshot=after,
+            health=self.health(False), backup={"ok": False, "path": "bad", "exitCode": 1}, now=1100,
+        )
+        receipt = result["document"]["receipt"]
+        self.assertFalse(receipt["ready"])
+        self.assertFalse(receipt["invariants"]["protectedContainersUnrecreated"])
+        self.assertFalse(receipt["invariants"]["runningMapProcessesUnrestarted"])
+        self.assertFalse(receipt["invariants"]["strictMapServicesContinuous"])
+        self.assertTrue(result["verification"]["ok"])
+        self.assertFalse(self.store.status(now=1100)["latestReady"])
+
+    def test_dynamic_start_without_container_recreate_is_allowed(self):
+        window = self.start()
+        after = json.loads(json.dumps(self.before))
+        after["arrakeen"]["state"] = "running"
+        after["arrakeen"]["startedAt"] = "2026-07-16T10:01:00Z"
+        result = self.store.finish(
+            window["id"], principal_id="owner", snapshot=after,
+            health=self.health(), backup={"ok": True, "path": "one", "exitCode": 0}, now=1100,
+        )
+        self.assertTrue(result["document"]["receipt"]["ready"])
+
+    def test_tampering_wrong_key_invalid_paths_expiry_and_cancel_fail_closed(self):
+        window = self.start()
+        with self.assertRaisesRegex(ValueError, "private or mutable"):
+            self.store.start(
+                commit="a" * 40, reason="Invalid private file manifest", manifest=[{"path": ".env", "sha256": "a" * 64}],
+                principal_id="owner", snapshot=self.before, protected_services=["survival"], strict_services=["survival"],
+                recovery_backup={"ok": True, "path": "one"}, source_rollback={"verified": True, "path": "before.tgz", "sha256": "e" * 64, "bytes": 1}, now=1000,
+            )
+        path = self.root / "state" / f"{window['id']}.json"
+        document = json.loads(path.read_text(encoding="utf-8"))
+        document["window"]["commit"] = "f" * 40
+        path.write_text(json.dumps(document), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "HMAC"):
+            self.store.finish(window["id"], principal_id="owner", snapshot=self.before, health=self.health(), backup={"ok": True}, now=1100)
+
+        second = self.start(now=2000)
+        with self.assertRaisesRegex(ValueError, "expired"):
+            self.store.finish(second["id"], principal_id="owner", snapshot=self.before, health=self.health(), backup={"ok": True}, now=2000 + deployment_assurance.MAX_WINDOW_SECONDS + 1)
+        cancelled = self.store.cancel(second["id"], principal_id="owner", reason="Operator cancelled change", now=2100)
+        self.assertEqual("cancelled", cancelled["status"])
+
+    def test_signed_receipt_detects_nested_and_outer_tampering(self):
+        window = self.start()
+        document = self.store.finish(
+            window["id"], principal_id="owner", snapshot=self.before,
+            health=self.health(), backup={"ok": True, "path": "one", "exitCode": 0}, now=1100,
+        )["document"]
+        nested = json.loads(json.dumps(document))
+        nested["receipt"]["ready"] = False
+        self.assertFalse(deployment_assurance.verify_signed_document(nested, self.secret)["ok"])
+        outer = json.loads(json.dumps(document))
+        outer["generatedAt"] = "2026-07-16T20:00:00Z"
+        self.assertFalse(deployment_assurance.verify_signed_document(outer, self.secret)["ok"])
+        self.assertFalse(deployment_assurance.verify_signed_document(document, b"x" * 64)["ok"])
+
+    def test_manifest_cli_binds_current_bytes_to_exact_commit(self):
+        output = self.root / "manifest.json"
+        committed = (ROOT / "LICENSE").read_bytes()
+        with mock.patch.object(deployment_cli, "resolve_commit", return_value="a" * 40), \
+             mock.patch.object(deployment_cli, "selected_files", return_value=["LICENSE"]), \
+             mock.patch.object(deployment_cli, "git_bytes", return_value=committed):
+            document = deployment_cli.generate("HEAD", explicit=["LICENSE"], reason="Exact committed fixture")
+        deployment_cli.atomic_write(output, document)
+        self.assertEqual("dune-deployment-manifest/v1", document["schemaVersion"])
+        self.assertEqual(40, len(document["commit"]))
+        self.assertEqual(0o600, output.stat().st_mode & 0o777)
+        verified = subprocess.run([
+            sys.executable, str(ROOT / "scripts" / "deployment-assurance.py"), "verify", "--manifest", str(output),
+        ], cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        self.assertEqual(0, verified.returncode, verified.stderr)
+        self.assertTrue(json.loads(verified.stdout)["ok"])
+
+        document["files"][0]["sha256"] = "f" * 64
+        output.write_text(json.dumps(document), encoding="utf-8")
+        tampered = subprocess.run([
+            sys.executable, str(ROOT / "scripts" / "deployment-assurance.py"), "verify", "--manifest", str(output),
+        ], cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        self.assertNotEqual(0, tampered.returncode)
+
+        with mock.patch.object(deployment_cli, "resolve_commit", return_value="a" * 40), \
+             mock.patch.object(deployment_cli, "selected_files", return_value=["LICENSE"]), \
+             mock.patch.object(deployment_cli, "git_bytes", return_value=b"different"):
+            with self.assertRaisesRegex(ValueError, "does not match exact deployment commit"):
+                deployment_cli.generate("HEAD", explicit=["LICENSE"], reason="Mismatch fixture")
+        selected = deployment_cli.selected_files("a" * 40, explicit=["LICENSE"])
+        self.assertTrue(deployment_cli.SUPPORT_FILES.issubset(set(selected)))
+
+    def test_host_workflow_is_production_guarded_post_hook_safe_and_evidence_complete(self):
+        source = (ROOT / "scripts" / "assured-control-plane-deploy.sh").read_text(encoding="utf-8")
+        self.assertIn('required_host="${DUNE_PRODUCTION_HOST:-kspls0}"', source)
+        self.assertIn('[[ "$actual_host" == "$required_host" ]]', source)
+        self.assertIn("./scripts/deploy-admin-panel.sh", source)
+        self.assertNotIn("docker compose", source)
+        self.assertNotIn("docker restart", source)
+        self.assertGreaterEqual(source.count("validate-landsraad-coriolis-cycle.sh"), 2)
+        self.assertGreaterEqual(source.count("verified_backup"), 4)  # definition plus pre/post/final calls
+        for phrase in (
+            "START ASSURED CHANGE WINDOW", "SEAL DESIRED STATE",
+            "CERTIFY INCIDENT RESPONSE READINESS", "FINALIZE ASSURED CHANGE WINDOW",
+        ):
+            self.assertIn(phrase, source)
+        push = (ROOT / "scripts" / "push-assured-control-plane.sh").read_text(encoding="utf-8")
+        self.assertIn("/tmp/dash-assured-stage-", push)
+        self.assertIn("tar -C \"$repo_root\" -czf -", push)
+        self.assertIn("--stage $stage_q", push)
+        self.assertIn("DUNE_PRODUCTION_HOST=$required_q", push)
+
+    def test_staged_apply_is_verified_atomic_and_has_source_rollback(self):
+        stage = self.root / "stage"
+        (stage / "admin").mkdir(parents=True)
+        staged = stage / "admin" / "panel.py"
+        staged.write_text("print('two')\n", encoding="utf-8")
+        files = [{"path": "admin/panel.py", "sha256": deployment_assurance.file_sha256(staged), "bytes": staged.stat().st_size}]
+        document = {
+            "schemaVersion": deployment_cli.SCHEMA, "commit": "a" * 40, "reason": "Staged apply fixture",
+            "files": files, "manifestSha256": deployment_assurance.digest(files),
+        }
+        rollback = self.root / "rollback.tgz"
+        archived = deployment_cli.archive_rollback(document, self.workspace, rollback)
+        self.assertTrue(archived["ok"])
+        self.assertEqual(0o600, rollback.stat().st_mode & 0o777)
+        applied = deployment_cli.apply_manifest(document, stage, self.workspace)
+        self.assertTrue(applied["ok"])
+        self.assertEqual("print('two')\n", (self.workspace / "admin" / "panel.py").read_text(encoding="utf-8"))
+        import tarfile
+        with tarfile.open(rollback, "r:gz") as archive:
+            self.assertIn("rollback-manifest.json", archive.getnames())
+            self.assertIn("files/admin/panel.py", archive.getnames())
+
+
+if __name__ == "__main__":
+    unittest.main()

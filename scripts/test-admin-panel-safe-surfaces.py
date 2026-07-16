@@ -1927,6 +1927,23 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         store.record({"action": "slo-incident-opened", "ts": 1000, "ok": False, "incident_id": "archive", "objective_id": "database_availability", "eventId": "open"}, ingested_at=1001)
         signed = evidence_root / "archive.signed.json"
         signed.write_text(json.dumps(store.signed_capsule("slo:archive", at=1100)), encoding="utf-8")
+        assurance = self.panel.deployment_assurance.Store(
+            self.workspace / "backups" / "deployment-assurance", evidence_root, self.workspace,
+            self.panel.change_intelligence.read_secret(secret),
+        )
+        manifest = [{"path": "config/change-intelligence.json", "sha256": self.panel.deployment_assurance.file_sha256(policy)}]
+        snapshot = {"survival": {"containerId": "a" * 64, "state": "running", "startedAt": "2026-07-16T10:00:00Z"}}
+        window = assurance.start(
+            commit="b" * 40, reason="Verified operator evidence archive fixture", manifest=manifest,
+            principal_id="owner", snapshot=snapshot, protected_services=["survival"], strict_services=["survival"],
+            recovery_backup={"ok": True, "path": "before", "exitCode": 0},
+            source_rollback={"verified": True, "path": "before.tgz", "sha256": "e" * 64, "bytes": 1}, now=1000,
+        )
+        assurance.finish(
+            window["id"], principal_id="owner", snapshot=snapshot,
+            health={"desiredStateAttested": True, "readinessCurrent": True, "sloHealthy": True, "changeIntegrity": True, "prometheusReadiness": True, "adminHealthy": True, "backupVerified": True},
+            backup={"ok": True, "path": "after", "exitCode": 0}, now=1100,
+        )
         (evidence_root / "ignored.txt").write_text("not evidence", encoding="utf-8")
         (evidence_root / "linked.signed.json").symlink_to(signed)
         original_root = self.panel.CHANGE_INTELLIGENCE_EVIDENCE_ROOT
@@ -1936,11 +1953,12 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         archive = self.workspace / "operator-evidence.tgz"
         result = self.panel.archive_operator_evidence(archive)
         verification = self.panel.verify_operator_evidence_archive(archive, secret)
-        self.assertEqual(1, result["files"])
-        self.assertEqual(1, verification["files"])
+        self.assertEqual(2, result["files"])
+        self.assertEqual(2, verification["files"])
         self.assertEqual(0o600, archive.stat().st_mode & 0o777)
         with tarfile.open(archive, "r:gz") as handle:
-            self.assertEqual(["operator-evidence/archive.signed.json"], handle.getnames())
+            self.assertEqual(2, len(handle.getnames()))
+            self.assertIn("operator-evidence/archive.signed.json", handle.getnames())
 
         unsafe_name = evidence_root / "unsafe name.signed.json"
         unsafe_name.write_text(signed.read_text(encoding="utf-8"), encoding="utf-8")
@@ -3226,15 +3244,22 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
     def test_change_intelligence_status_metrics_and_capsule_are_read_only(self):
         original_status = self.panel.change_intelligence_public_status
         original_store = self.panel.change_intelligence_store
+        original_deployment_store = self.panel.deployment_assurance_store
+        original_deployment_status = self.panel.deployment_assurance_public_status
         fake_store = type("Store", (), {
             "prometheus": lambda self: "dash_change_intelligence_collector_up 1\n",
             "capsule": lambda self, key: {"ok": True, "incidentKey": key, "causalityClaimed": False},
             "signed_capsule": lambda self, key: {"schemaVersion": 2, "incidentKey": key, "signature": "a" * 64},
         })()
+        fake_deployment_store = type("DeploymentStore", (), {"prometheus": lambda self: "dash_deployment_assurance_collector_up 1\n"})()
         self.panel.change_intelligence_public_status = lambda: {"ok": True, "state": "active", "eventCount": 3}
         self.panel.change_intelligence_store = lambda: fake_store
+        self.panel.deployment_assurance_store = lambda: fake_deployment_store
+        self.panel.deployment_assurance_public_status = lambda: {"ok": True, "state": "active", "latestReady": True}
         self.addCleanup(lambda: setattr(self.panel, "change_intelligence_public_status", original_status))
         self.addCleanup(lambda: setattr(self.panel, "change_intelligence_store", original_store))
+        self.addCleanup(lambda: setattr(self.panel, "deployment_assurance_store", original_deployment_store))
+        self.addCleanup(lambda: setattr(self.panel, "deployment_assurance_public_status", original_deployment_status))
 
         handler, captured = self.make_route_handler("/api/ops/change-intelligence")
         handler.is_app_route = lambda path: False
@@ -3253,13 +3278,18 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertEqual(2, captured["json"]["schemaVersion"])
         self.assertEqual("a" * 64, captured["json"]["signature"])
 
+        handler, captured = self.make_route_handler("/api/ops/deployment-assurance")
+        handler.is_app_route = lambda path: False
+        handler.do_GET()
+        self.assertTrue(captured["json"]["latestReady"])
+
         handler, captured = self.make_route_handler("/metrics/change-intelligence")
         handler.is_app_route = lambda path: False
         texts = []
         handler.text = lambda value, content_type="", **kwargs: texts.append((value, content_type))
         handler.require_token = lambda: self.fail("bounded change-intelligence metrics must not require an admin credential")
         handler.do_GET()
-        self.assertEqual("dash_change_intelligence_collector_up 1\n", texts[0][0])
+        self.assertEqual("dash_change_intelligence_collector_up 1\ndash_deployment_assurance_collector_up 1\n", texts[0][0])
 
     def test_audit_event_feeds_change_intelligence_and_protects_reserved_fields(self):
         events = []
@@ -3374,6 +3404,9 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn("Fleet-wide response readiness", source)
         self.assertIn("Certify all runbooks", source)
         self.assertIn("/api/ops/change-intelligence/certify", source)
+        self.assertIn("Assured Change Windows", source)
+        self.assertIn("assured-control-plane-deploy.sh", source)
+        self.assertIn("/api/ops/deployment-assurance", source)
 
     def test_response_policy_reuses_only_existing_diagnostics_gates_and_confirmations(self):
         policy = self.panel.change_intelligence.load_policy(ROOT / "config" / "change-intelligence.json")
@@ -3529,6 +3562,29 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertEqual("a" * 64, calls[0][0])
         self.assertIsInstance(calls[0][1], dict)
         self.assertTrue(calls[0][2])
+
+    def test_deployment_assurance_routes_require_exact_confirmations_and_principal(self):
+        originals = {
+            "deployment_assurance_start": self.panel.deployment_assurance_start,
+            "deployment_assurance_finish": self.panel.deployment_assurance_finish,
+            "deployment_assurance_cancel": self.panel.deployment_assurance_cancel,
+        }
+        calls = []
+        self.panel.deployment_assurance_start = lambda body, principal: calls.append(("start", body, principal)) or {"id": "deployment-window-one"}
+        self.panel.deployment_assurance_finish = lambda body, principal: calls.append(("finish", body, principal)) or {"verification": {"ok": True}}
+        self.panel.deployment_assurance_cancel = lambda body, principal: calls.append(("cancel", body, principal)) or {"ok": True}
+        for name, value in originals.items():
+            self.addCleanup(lambda name=name, value=value: setattr(self.panel, name, value))
+
+        rejected = self.invoke_post_route("/api/ops/deployment-assurance", {"action": "start", "confirm": "wrong"})
+        self.assertEqual(401, rejected["errors"][0]["status"])
+        self.assertFalse(calls)
+        accepted = self.invoke_post_route("/api/ops/deployment-assurance", {"action": "start", "confirm": "START ASSURED CHANGE WINDOW"})
+        self.assertEqual("deployment-window-one", accepted["json"]["id"])
+        self.assertIsInstance(calls[-1][2], dict)
+        self.invoke_post_route("/api/ops/deployment-assurance", {"action": "finish", "confirm": "FINALIZE ASSURED CHANGE WINDOW"})
+        self.invoke_post_route("/api/ops/deployment-assurance", {"action": "cancel", "confirm": "CANCEL ASSURED CHANGE WINDOW"})
+        self.assertEqual(["start", "finish", "cancel"], [row[0] for row in calls])
 
     def test_capacity_application_is_evidence_gated_gradual_and_mode_preserving(self):
         fake = type("Store", (), {

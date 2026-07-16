@@ -260,6 +260,20 @@ diagnostic once, evaluates every runbook's current capability/gate/confirmation
 contracts, and displays exact gaps. The certification writes only a bounded
 HMAC evidence receipt; it executes no recovery or game mutation.
 
+## Assured Change Windows
+
+`GET /api/ops/deployment-assurance` returns bounded open-window and signed
+receipt summaries. The Infrastructure dashboard shows exact-commit promotion
+outcomes plus source, protected-map continuity, desired-state, readiness,
+SLO/Prometheus, and backup proof. It does not expose the HMAC key, full Docker
+IDs, or a browser source-upload/deploy button.
+
+The two-phase POST route requires `infrastructure.write` and exact start,
+finish, or cancel confirmation. Source manifests and snapshots are not trusted
+from the browser: the production host stages exact Git blobs, while the server
+derives Docker/health results and verifies backup/source artifacts itself. See
+[`deployment-assurance.md`](deployment-assurance.md).
+
 ## Database Browser and Query Console
 
 `GET /api/ops/database` lists tables and views in the `dune` and `public`
