@@ -130,6 +130,41 @@ Remove the overlay and recreate `admin-panel` afterward. The overlay changes
 only `/workspace/data` to read-write. Config restore preserves the current
 Postgres password because role passwords are not part of a database dump.
 
+## Recovery Proof
+
+The Recovery Proof card is stronger than `verify-backup.sh`. It reports whether
+the newest PostgreSQL dump has actually restored inside a disposable,
+no-network container and whether the measured backup age and `pg_restore`
+duration meet policy.
+
+`GET /api/ops/restore-drill` returns the latest private receipt, recent history,
+hash-verification result, runtime state, RPO/RTO targets, resource bounds, and
+the enforced isolation contract. It is read-only.
+
+`POST /api/ops/restore-drill` queues a background run and immediately returns
+`202 Accepted`. It requires the `infrastructure.write` capability, master
+mutation gate, `DUNE_ADMIN_RESTORE_DRILL_EXECUTION_ENABLED=true`, and exact
+`RUN ISOLATED RESTORE DRILL` confirmation. CLI, timer, and browser runs share a
+nonblocking filesystem lock, so only one can exist at a time.
+
+The source must be a regular `.dump` beneath `backups/`; traversal and symlinks
+fail closed. Docker applies `network=none`, read-only root, UID/GID 70, all
+capabilities dropped, `no-new-privileges`, no published ports, fixed
+CPU/memory/PID bounds, and ephemeral tmpfs PGDATA. DASH copies the selected dump
+to a temporary mode-`0400` file owned by the configured non-root container
+identity, verifies its SHA-256, mounts only that copy read-only, verifies it
+again inside the container, and deletes it during cleanup. Minimal private
+passwd/group files name that numeric identity for PostgreSQL client tools and
+are also read-only and ephemeral. The original dump's permissions never change.
+DASH inspects the container settings and always removes the labeled container.
+
+The receipt proves source archive listing, an error-stopping full restore,
+required Dune tables and native base-backup function, valid indexes and
+constraints, exact reads from core tables, analyze, and a second nonempty
+custom-format dump that `pg_restore` can list. The live database is never
+contacted. Complete configuration, receipt schema, systemd scheduling, and
+failure recovery are in [`restore-drills.md`](restore-drills.md).
+
 ## Database Browser and Query Console
 
 `GET /api/ops/database` lists tables and views in the `dune` and `public`

@@ -133,7 +133,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         handler.validate_host = lambda: None
         handler.validate_same_origin = lambda: None
         handler.require_token = lambda: None
-        handler.json = lambda value, head_only=False: captured.__setitem__("json", value)
+        handler.json = lambda value, head_only=False, status=None: captured.__setitem__("json", value)
 
         def fake_error(status, message, head_only=False):
             captured["errors"].append({"status": status, "message": str(message)})
@@ -2799,6 +2799,53 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertTrue(result["lastResult"]["ok"])
         self.assertGreater(second["nextRun"], 201)
+
+    def test_admin_backup_artifacts_are_private(self):
+        artifact = self.workspace / "backups" / "admin-panel" / "private.dump"
+        artifact.parent.mkdir(parents=True)
+        artifact.write_bytes(b"private")
+        directory = artifact.parent / "maintenance-run"
+        directory.mkdir()
+        self.panel.secure_admin_backup_path(artifact)
+        self.panel.secure_admin_backup_path(directory, directory=True)
+        self.assertEqual(0o600, artifact.stat().st_mode & 0o777)
+        self.assertEqual(0o700, directory.stat().st_mode & 0o777)
+
+    def test_restore_drill_status_is_read_only_and_execution_is_separately_gated(self):
+        original_status = self.panel.restore_drill_public_status
+        original_queue = self.panel.queue_restore_drill
+        self.panel.restore_drill_public_status = lambda: {"ok": True, "latest": {"id": "proof"}}
+        queued = []
+        self.panel.queue_restore_drill = lambda source=None: queued.append(source) or {"ok": True, "queued": True}
+        self.addCleanup(lambda: setattr(self.panel, "restore_drill_public_status", original_status))
+        self.addCleanup(lambda: setattr(self.panel, "queue_restore_drill", original_queue))
+
+        handler, captured = self.make_route_handler("/api/ops/restore-drill")
+        handler.is_app_route = lambda path: False
+        handler.do_GET()
+        self.assertEqual("proof", captured["json"]["latest"]["id"])
+        self.assertEqual([], queued)
+
+        self.patch_flag("RESTORE_DRILL_EXECUTION_ENABLED", False)
+        denied = self.invoke_post_route("/api/ops/restore-drill", {"confirm": "RUN ISOLATED RESTORE DRILL"})
+        self.assertEqual(401, denied["errors"][0]["status"])
+        self.assertEqual([], queued)
+
+    def test_restore_drill_post_requires_exact_confirmation_then_queues(self):
+        original_queue = self.panel.queue_restore_drill
+        queued = []
+        self.panel.queue_restore_drill = lambda source=None: queued.append(source) or {"ok": True, "queued": True}
+        self.addCleanup(lambda: setattr(self.panel, "queue_restore_drill", original_queue))
+        self.patch_flag("RESTORE_DRILL_EXECUTION_ENABLED", True)
+        self.patch_flag("MUTATIONS_ENABLED", True)
+
+        rejected = self.invoke_post_route("/api/ops/restore-drill", {"confirm": "yes"})
+        self.assertEqual(401, rejected["errors"][0]["status"])
+        accepted = self.invoke_post_route("/api/ops/restore-drill", {
+            "source": "backups/current.dump", "confirm": "RUN ISOLATED RESTORE DRILL",
+        })
+        self.assertTrue(accepted["json"]["queued"])
+        self.assertEqual(["backups/current.dump"], queued)
 
     def test_landsraad_reward_and_contribution_plans_preserve_rollback(self):
         def fake_query(sql, params=None):

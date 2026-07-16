@@ -184,6 +184,7 @@ without reproducing that wrapper.
 | --- | --- | --- | --- |
 | Layered backup/list/download/import/restore | Red-Blink, dashboards | Parity | Verified, quarantined restore lifecycle |
 | Scheduled backup and retention | Icehunter, Reditus, Manaiakalani | Parity | Host timers and panel schedule |
+| Automated real restore rehearsal and RPO/RTO evidence | BIGMOS documents manual `pg_restore`; other peers inspect/archive backups | DASH exceeds | Daily no-network disposable PostgreSQL restore, Dune schema/data/index/constraint checks, analyze, round-trip dump, measured RPO/RTO, verified cleanup, private hash-chained receipts, dashboard/API, and hardened timer; see `docs/restore-drills.md` |
 | Offsite/mirror/failover backup | DST, Reditus | Parity | Replica, snapshot, rsync/rclone/restic examples |
 | Scheduled restart with warnings and backup | adainrivers, Manaiakalani, AMP | Parity | Daily maintenance timer loaded |
 | Authenticated Steam update and Steam Guard bootstrap | Manaiakalani | Parity | Protected owned-account login/password settings, interactive SteamCMD bootstrap for password/Steam Guard, persistent private Steam home, locked unattended hotfix updater, and restart-only-on-change behavior; one-time Steam Guard codes are not retained |
@@ -314,7 +315,10 @@ only when explicitly authorized for a concrete client task, as required by
 - **High confidence:** DASH already meets or exceeds the core hosting,
   lifecycle, map, backup, player administration, exchange, addon, metrics,
   public-status, failover, and server-side reverse-engineering outcomes in the
-  surveyed ecosystem.
+  surveyed ecosystem. Backup capability now exceeds the newest peer evidence:
+  DASH automatically proves a real dump restores and records measured,
+  tamper-evident recovery evidence instead of stopping at archive creation or a
+  manual `pg_restore` instruction.
 - **High confidence:** local RBAC, outbound events, the first-party Discord bot,
   community rewards/shop/tracks, host tuning, inventory integrity repair,
   recurring event automation, moderation case history, native policy-ban

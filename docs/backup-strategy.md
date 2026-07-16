@@ -61,6 +61,12 @@ The local backup includes:
   isolated creator/gallery database exists.
 - `manifest.txt` with `WORLD_UNIQUE_NAME`, `DUNE_FLS_ENV`, and `GAME_RMQ_PUBLIC_HOST`.
 
+New CLI backups run with `umask 077`. Admin-panel dump, archive, manifest, and
+layer-report artifacts are mode `0600`, their per-run directory is mode `0700`,
+and root-running containers transfer ownership to `DUNE_HOST_UID` /
+`DUNE_HOST_GID`. This keeps scheduled host restore drills readable by the DASH
+operator without making database dumps world-readable.
+
 Restore with:
 
 ```bash
@@ -154,23 +160,44 @@ Small/private host:
 
 - Local backup before upgrades and config changes.
 - Daily offsite sync.
-- Weekly restore test.
+- Daily automated PostgreSQL restore proof plus periodic full-layer recovery exercise.
 
 Public 30-map host:
 
 - Maintenance backup before scheduled restart, followed by the Steam package image-tag check.
 - Hourly offsite sync or restic backup.
 - Remote Postgres replica with hourly snapshot.
-- Weekly restore test to a throwaway environment.
+- Daily automated PostgreSQL restore proof plus periodic full-layer recovery exercise.
 - Alert when newest local/offsite backup is older than 24 hours.
 
 ## Restore Testing
 
-A backup that has never been restored is only a guess. At minimum:
+A backup that has never been restored is only a guess. The structural verifier
+is fast, but it does not prove that PostgreSQL can restore the archive:
 
 ```bash
 ./scripts/verify-backup.sh backups/<id>
 ```
+
+Run the real isolated database rehearsal against the newest dump:
+
+```bash
+./scripts/backup-restore-drill.py
+./scripts/backup-restore-drill.py --status
+```
+
+Install the daily persistent timer:
+
+```bash
+./scripts/install-backup-restore-drill-timer.sh .env
+```
+
+The rehearsal uses a no-network, read-only-root, capability-free disposable
+PostgreSQL container with bounded CPU, memory, PIDs, and tmpfs. It restores the
+archive, verifies Dune tables/functions/indexes/constraints and core row reads,
+analyzes it, creates and lists a second custom-format dump, removes the
+container, and records a private hash-chained RPO/RTO receipt. It never
+connects to the live database. See [`restore-drills.md`](restore-drills.md).
 
 The private admin panel Infrastructure page lists backup sets below `backups/`
 and invokes the same `scripts/verify-backup.sh` check. It also provides gated
@@ -199,6 +226,10 @@ backup=backups/admin-panel/maintenance/<id>
 ```
 
 For offsite backups, periodically restore to a temporary directory from the remote provider and run the same checks there.
+
+The automated drill proves the PostgreSQL layer. Continue periodic full-layer
+exercises for RabbitMQ, server-saved data, configuration, TLS identity, and an
+artifact downloaded from the actual offsite provider.
 
 ## Retention
 

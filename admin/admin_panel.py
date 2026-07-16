@@ -54,6 +54,7 @@ import gameplay_presets
 import command_console
 import federated_auth
 import cosmetics_admin
+import restore_drill
 
 GM_CATALOG_PATH = CODE_ROOT / "scripts" / "gm-command-catalog.py"
 GM_CATALOG_SPEC = importlib.util.spec_from_file_location("gm_command_catalog", GM_CATALOG_PATH)
@@ -222,6 +223,7 @@ CONFIRM_MEMORY_BALANCER = "CHANGE MEMORY BALANCER"
 CONFIRM_MEMORY_LIMIT = "SET MAP MEMORY"
 CONFIRM_AUTOSCALER = "CHANGE AUTOSCALER"
 CONFIRM_BACKUP_SCHEDULE = "CHANGE BACKUP SCHEDULE"
+CONFIRM_RESTORE_DRILL = "RUN ISOLATED RESTORE DRILL"
 CONFIRM_BOOTSTRAP = "RUN BOOTSTRAP"
 CONFIRM_PLAYER_RECOVERY = "MOVE OFFLINE PLAYER"
 CONFIRM_REPUTATION_MUTATION = "WRITE REPUTATION"
@@ -270,6 +272,8 @@ DATABASE_ROW_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_DATABASE_ROW_MUTATIO
 DATABASE_PASSWORD_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_DATABASE_PASSWORD_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 BACKUP_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_BACKUP_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 BACKUP_RESTORE_ENABLED = os.environ.get("DUNE_ADMIN_BACKUP_RESTORE_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+RESTORE_DRILL_ENABLED = os.environ.get("DUNE_RESTORE_DRILL_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+RESTORE_DRILL_EXECUTION_ENABLED = os.environ.get("DUNE_ADMIN_RESTORE_DRILL_EXECUTION_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 SERVICE_CONTROL_ENABLED = os.environ.get("DUNE_ADMIN_SERVICE_CONTROL_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 STATEFUL_SERVICE_CONTROL_ENABLED = os.environ.get("DUNE_ADMIN_STATEFUL_SERVICE_CONTROL_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 UPDATE_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_UPDATE_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
@@ -335,6 +339,9 @@ AUTOSCALER_RUNTIME = {"running": False, "lastMessage": "Autoscaler is off.", "la
 BACKUP_SCHEDULE_FILE = BACKUP_ROOT / "backup-schedule.json"
 BACKUP_SCHEDULE_LOCK = threading.Lock()
 BACKUP_SCHEDULE_THREAD_STARTED = False
+RESTORE_DRILL_RECEIPT_ROOT = BACKUP_ROOT / "restore-drills"
+RESTORE_DRILL_RUNTIME_LOCK = threading.Lock()
+RESTORE_DRILL_RUNTIME = {"running": False, "queuedAt": None, "startedAt": None, "finishedAt": None, "lastResult": None, "lastError": None}
 DISCORD_ADAPTER_ROUTES = {
     "/api/integrations/discord/health", "/api/integrations/discord/status",
     "/api/integrations/discord/readiness", "/api/integrations/discord/services",
@@ -386,6 +393,7 @@ def admin_panel_reload_paths():
         CODE_ROOT / "admin" / "command_console.py",
         CODE_ROOT / "admin" / "federated_auth.py",
         CODE_ROOT / "admin" / "cosmetics_admin.py",
+        CODE_ROOT / "admin" / "restore_drill.py",
         GAMEPLAY_PRESETS_FILE,
         COSMETIC_CATALOG_FILE,
         CODE_ROOT / "admin" / "access_control.py",
@@ -867,6 +875,15 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ADMIN_DATABASE_PASSWORD_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Enables coordinated dune-role and .env password rotation with fresh-login verification."},
     "DUNE_ADMIN_BACKUP_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Enables browser full-backup creation, hardened imports, and quarantine deletion."},
     "DUNE_ADMIN_BACKUP_RESTORE_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Enables disruptive browser restore execution; dry-run remains available."},
+    "DUNE_RESTORE_DRILL_ENABLED": {"group": "Restore Drills", "secret": False, "restart": True, "why": "Enables isolated recovery-proof status and scheduled restore rehearsals."},
+    "DUNE_ADMIN_RESTORE_DRILL_EXECUTION_ENABLED": {"group": "Restore Drills", "secret": False, "restart": True, "why": "Allows an infrastructure administrator to queue the isolated restore rehearsal from the dashboard."},
+    "DUNE_RESTORE_DRILL_IMAGE": {"group": "Restore Drills", "secret": False, "restart": True, "why": "Local PostgreSQL image used by the disposable no-network drill container; the drill never pulls automatically."},
+    "DUNE_RESTORE_DRILL_MAX_BACKUP_AGE_HOURS": {"group": "Restore Drills", "secret": False, "restart": True, "why": "Maximum acceptable newest-dump age for the recovery-point objective."},
+    "DUNE_RESTORE_DRILL_MAX_RESTORE_SECONDS": {"group": "Restore Drills", "secret": False, "restart": True, "why": "Maximum acceptable isolated pg_restore duration for the recovery-time objective."},
+    "DUNE_RESTORE_DRILL_MEMORY_MIB": {"group": "Restore Drills", "secret": False, "restart": True, "why": "Hard memory limit for the disposable PostgreSQL drill container."},
+    "DUNE_RESTORE_DRILL_PGDATA_MIB": {"group": "Restore Drills", "secret": False, "restart": True, "why": "Ephemeral tmpfs capacity for the restored database; no restored data persists after cleanup."},
+    "DUNE_RESTORE_DRILL_CPUS": {"group": "Restore Drills", "secret": False, "restart": True, "why": "CPU quota for the disposable PostgreSQL drill container."},
+    "DUNE_RESTORE_DRILL_RECEIPT_RETENTION": {"group": "Restore Drills", "secret": False, "restart": True, "why": "Maximum private hash-chained restore receipts retained locally."},
     "DUNE_ADMIN_BACKUP_IMPORT_MAX_BODY_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum JSON request size for a base64 full-backup archive import."},
     "DUNE_BACKUP_ARCHIVE_ENCRYPTION_ENABLED": {"group": "Backup Encryption", "secret": False, "restart": False, "why": "Enables the documented host-side verified OpenPGP archive workflow."},
     "DUNE_BACKUP_GPG_RECIPIENT": {"group": "Backup Encryption", "secret": False, "restart": False, "why": "Exact 40- or 64-hex OpenPGP recipient fingerprint; never an ambiguous name/email selector."},
@@ -4517,6 +4534,113 @@ def ensure_backup_schedule_thread():
     threading.Thread(target=backup_schedule_worker, name="backup-schedule-worker", daemon=True).start()
 
 
+def restore_drill_configuration():
+    host_workspace = os.environ.get("DUNE_RESTORE_DRILL_HOST_WORKSPACE") or os.environ.get("DUNE_RESTART_HOST_WORKSPACE") or ""
+    return {
+        "hostWorkspaceConfigured": bool(host_workspace and pathlib.Path(host_workspace).is_absolute()),
+        "hostWorkspace": host_workspace,
+        "dockerSocket": os.environ.get("DUNE_RESTORE_DRILL_DOCKER_SOCKET", DOCKER_SOCKET),
+        "image": os.environ.get("DUNE_RESTORE_DRILL_IMAGE", restore_drill.DEFAULT_IMAGE),
+        "maxBackupAgeHours": max(1.0, min(float(os.environ.get("DUNE_RESTORE_DRILL_MAX_BACKUP_AGE_HOURS", "36")), 24 * 365)),
+        "maxRestoreSeconds": max(30, min(int(os.environ.get("DUNE_RESTORE_DRILL_MAX_RESTORE_SECONDS", "900")), 24 * 3600)),
+        "memoryMiB": max(256, min(int(os.environ.get("DUNE_RESTORE_DRILL_MEMORY_MIB", "2048")), 65536)),
+        "pgdataMiB": max(256, min(int(os.environ.get("DUNE_RESTORE_DRILL_PGDATA_MIB", "1536")), 65536)),
+        "cpus": max(0.25, min(float(os.environ.get("DUNE_RESTORE_DRILL_CPUS", "2")), 64.0)),
+        "pidsLimit": max(32, min(int(os.environ.get("DUNE_RESTORE_DRILL_PIDS_LIMIT", "128")), 4096)),
+        "runUid": int(os.environ.get("DUNE_HOST_UID", "1000")),
+        "runGid": int(os.environ.get("DUNE_HOST_GID", "1000")),
+        "receiptRetention": max(10, min(int(os.environ.get("DUNE_RESTORE_DRILL_RECEIPT_RETENTION", "1000")), 100000)),
+    }
+
+
+def restore_drill_public_status():
+    result = restore_drill.status(RESTORE_DRILL_RECEIPT_ROOT, limit=20)
+    with RESTORE_DRILL_RUNTIME_LOCK:
+        runtime = dict(RESTORE_DRILL_RUNTIME)
+    config = restore_drill_configuration()
+    result.update({
+        "featureEnabled": RESTORE_DRILL_ENABLED,
+        "executionEnabled": MUTATIONS_ENABLED and RESTORE_DRILL_EXECUTION_ENABLED,
+        "requiredCapability": "infrastructure.write",
+        "confirm": CONFIRM_RESTORE_DRILL,
+        "runtime": runtime,
+        "policy": {
+            "maxBackupAgeHours": config["maxBackupAgeHours"],
+            "maxRestoreSeconds": config["maxRestoreSeconds"],
+        },
+        "resources": {
+            "memoryMiB": config["memoryMiB"], "pgdataMiB": config["pgdataMiB"],
+            "cpus": config["cpus"], "pidsLimit": config["pidsLimit"],
+        },
+        "isolationContract": {
+            "network": "none", "liveDatabaseTouched": False, "readOnlyRootfs": True,
+            "capabilitiesDropped": ["ALL"], "noNewPrivileges": True,
+            "privateStagingCopy": True, "sourceBindReadOnly": True,
+            "sourceMode": "0400", "sourceSha256Verified": True,
+            "ephemeralPgdata": True,
+        },
+        "ready": bool(RESTORE_DRILL_ENABLED and config["hostWorkspaceConfigured"] and pathlib.Path(config["dockerSocket"]).exists()),
+    })
+    return result
+
+
+def queue_restore_drill(source=None):
+    if not RESTORE_DRILL_ENABLED:
+        raise PermissionError("restore drills are disabled; set DUNE_RESTORE_DRILL_ENABLED=true")
+    config = restore_drill_configuration()
+    if not config["hostWorkspaceConfigured"]:
+        raise RuntimeError("DUNE_RESTORE_DRILL_HOST_WORKSPACE or DUNE_RESTART_HOST_WORKSPACE must be an absolute host path")
+    if not pathlib.Path(config["dockerSocket"]).exists():
+        raise RuntimeError(f"Docker socket not found: {config['dockerSocket']}")
+    with RESTORE_DRILL_RUNTIME_LOCK:
+        if RESTORE_DRILL_RUNTIME["running"]:
+            raise RuntimeError("a restore drill is already running")
+        RESTORE_DRILL_RUNTIME.update({
+            "running": True, "queuedAt": time.time(), "startedAt": None,
+            "finishedAt": None, "lastResult": None, "lastError": None,
+        })
+
+    def worker():
+        with RESTORE_DRILL_RUNTIME_LOCK:
+            RESTORE_DRILL_RUNTIME["startedAt"] = time.time()
+        try:
+            result = restore_drill.run_drill(
+                ROOT,
+                host_workspace=config["hostWorkspace"],
+                source=source or None,
+                receipt_root=RESTORE_DRILL_RECEIPT_ROOT,
+                docker_socket=config["dockerSocket"],
+                image=config["image"],
+                max_backup_age_seconds=config["maxBackupAgeHours"] * 3600,
+                max_restore_seconds=config["maxRestoreSeconds"],
+                memory_bytes=config["memoryMiB"] * 1024**2,
+                pgdata_bytes=config["pgdataMiB"] * 1024**2,
+                cpu_count=config["cpus"],
+                pids_limit=config["pidsLimit"],
+                run_uid=config["runUid"], run_gid=config["runGid"],
+                retention_count=config["receiptRetention"],
+            )
+            with RESTORE_DRILL_RUNTIME_LOCK:
+                RESTORE_DRILL_RUNTIME["lastResult"] = result
+            audit_event(
+                "backup-restore-drill-finished", ok=result.get("ok"),
+                receipt=result.get("receiptPath"), source=result.get("sourcePath"),
+                integrity_ok=result.get("integrityOk"), policy_ok=result.get("policyOk"),
+                restore_seconds=(result.get("timings") or {}).get("restoreSeconds"),
+            )
+        except Exception as exc:
+            with RESTORE_DRILL_RUNTIME_LOCK:
+                RESTORE_DRILL_RUNTIME["lastError"] = str(exc)
+            audit_event("backup-restore-drill-finished", ok=False, error=str(exc))
+        finally:
+            with RESTORE_DRILL_RUNTIME_LOCK:
+                RESTORE_DRILL_RUNTIME["running"] = False
+                RESTORE_DRILL_RUNTIME["finishedAt"] = time.time()
+
+    threading.Thread(target=worker, name="backup-restore-drill", daemon=True).start()
+    return {"ok": True, "queued": True, "status": restore_drill_public_status()}
+
+
 def bootstrap_status():
     env_values = read_env()
     required = ("DUNE_STEAM_SERVER_DIR", "DUNE_IMAGE_TAG", "WORLD_NAME", "WORLD_UNIQUE_NAME", "WORLD_REGION", "EXTERNAL_ADDRESS", "FLS_SECRET", "POSTGRES_DUNE_PASSWORD", "DUNE_ADMIN_TOKEN")
@@ -5479,11 +5603,23 @@ def create_db_backup():
     ]
     try:
         subprocess.run(cmd, check=True, env=env, capture_output=True, text=True, timeout=120)
+        secure_admin_backup_path(temp_path)
         temp_path.rename(path)
     except Exception:
         temp_path.unlink(missing_ok=True)
         raise
     return {"path": str(path), "bytes": path.stat().st_size}
+
+
+def secure_admin_backup_path(path, directory=False):
+    """Keep panel-created backup material private and host-operator owned."""
+    path = pathlib.Path(path)
+    uid = int(os.environ.get("DUNE_HOST_UID", str(os.getuid())))
+    gid = int(os.environ.get("DUNE_HOST_GID", str(os.getgid())))
+    os.chmod(path, 0o700 if directory else 0o600)
+    if os.geteuid() == 0:
+        os.chown(path, uid, gid)
+    return path
 
 
 def add_tree_archive(archive_path, entries):
@@ -5500,6 +5636,7 @@ def add_tree_archive(archive_path, entries):
                 added.append({"path": str(source), "archiveName": arcname})
             except (OSError, tarfile.TarError) as exc:
                 skipped.append({"path": str(source), "reason": str(exc)})
+    secure_admin_backup_path(archive_path)
     return {"path": str(archive_path), "bytes": archive_path.stat().st_size, "added": added, "skipped": skipped}
 
 
@@ -5559,6 +5696,7 @@ def create_postgres_layers_report(backup_dir):
 
     status_path = backup_dir / "postgres-layers.json"
     status_path.write_text(json.dumps(report, indent=2, sort_keys=True, default=json_default), encoding="utf-8")
+    secure_admin_backup_path(status_path)
     return {"path": str(status_path), "bytes": status_path.stat().st_size, "report": report}
 
 
@@ -5567,6 +5705,7 @@ def create_maintenance_backup(job):
     job_id = str(job.get("id", "manual"))[:24]
     backup_dir = BACKUP_ROOT / "maintenance" / f"{stamp}-{job_id}"
     backup_dir.mkdir(parents=True, exist_ok=False)
+    secure_admin_backup_path(backup_dir, directory=True)
     result = {
         "path": str(backup_dir),
         "createdAt": time.time(),
@@ -5618,6 +5757,7 @@ def create_maintenance_backup(job):
 
     manifest = backup_dir / "manifest.json"
     manifest.write_text(json.dumps(result, indent=2, sort_keys=True, default=json_default), encoding="utf-8")
+    secure_admin_backup_path(manifest)
     result["artifacts"]["manifest"] = {"path": str(manifest), "bytes": manifest.stat().st_size}
     return result
 
@@ -6606,6 +6746,9 @@ class Handler(BaseHTTPRequestHandler):
                     self.download_file(archive, archive.name, "application/gzip")
                 finally:
                     archive.unlink(missing_ok=True)
+            elif parsed.path == "/api/ops/restore-drill":
+                self.require_token()
+                self.json(restore_drill_public_status())
             elif parsed.path == "/api/ops/database":
                 self.require_token()
                 self.json(dict(database_browser_catalog(), queryEnabled=DATABASE_QUERY_ENABLED, writeEnabled=DATABASE_WRITE_ENABLED, rowMutationsEnabled=DATABASE_ROW_MUTATIONS_ENABLED, passwordMutationsEnabled=DATABASE_PASSWORD_MUTATIONS_ENABLED, writeConfirm=CONFIRM_DATABASE_WRITE, rowConfirm=CONFIRM_DATABASE_ROW_UPDATE, passwordConfirm=CONFIRM_DATABASE_PASSWORD))
@@ -7338,6 +7481,16 @@ class Handler(BaseHTTPRequestHandler):
                 result = create_full_backup()
                 self.audit("backup-create-full", ok=result.get("ok"), path=result.get("path"))
                 self.json(result)
+            elif parsed.path == "/api/ops/restore-drill":
+                self.require_token()
+                self.require_mutations()
+                if not RESTORE_DRILL_EXECUTION_ENABLED:
+                    raise PermissionError("browser restore-drill execution is disabled; set DUNE_ADMIN_RESTORE_DRILL_EXECUTION_ENABLED=true")
+                body = parse_body(self)
+                require_confirmation(body, CONFIRM_RESTORE_DRILL)
+                result = queue_restore_drill(body.get("source"))
+                self.audit("backup-restore-drill-queued", ok=True, source=body.get("source") or "latest")
+                self.json(result, status=HTTPStatus.ACCEPTED)
             elif parsed.path == "/api/ops/backups/schedule":
                 self.require_token()
                 self.require_mutations()
@@ -14460,13 +14613,14 @@ async function ops(serial=loadSerial){
   startHealthRefresh();
 }
 async function infrastructure(serial=loadSerial){
-  const [serviceData, backupData, databaseData, updateData, memoryData, autoscalerData] = await Promise.all([
+  const [serviceData, backupData, databaseData, updateData, memoryData, autoscalerData, restoreDrillData] = await Promise.all([
     api('/api/ops/services'),
     api('/api/ops/backups'),
     api('/api/ops/database'),
     api('/api/ops/updates', {timeoutMs: 100000}),
     api('/api/ops/memory', {timeoutMs: 30000}),
-    api('/api/ops/autoscaler', {timeoutMs: 30000})
+    api('/api/ops/autoscaler', {timeoutMs: 30000}),
+    api('/api/ops/restore-drill', {timeoutMs: 30000})
   ]);
   if (serial !== loadSerial) return;
   const services = serviceData.services || [];
@@ -14483,10 +14637,40 @@ async function infrastructure(serial=loadSerial){
   mountInfrastructureUpdateControls(updateData);
   mountInfrastructureMemoryControls(memoryData);
   mountInfrastructureAutoscalerControls(autoscalerData);
+  mountInfrastructureRestoreDrill(restoreDrillData);
   document.getElementById('infraLoadLogsBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Loading...', loadInfrastructureLogs));
   document.getElementById('infraVerifyBackupBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Verifying...', verifyInfrastructureBackup));
   document.getElementById('infraLoadTableBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Loading...', loadInfrastructureTable));
   if (services.length) loadInfrastructureLogs().catch(error => { document.getElementById('infraLogsResult').textContent = error.message; });
+}
+function mountInfrastructureRestoreDrill(data){
+  const page = document.querySelector('#view .pageStack');
+  if (!page) return;
+  const latest = data.latest || {};
+  const timings = latest.timings || {};
+  const policy = latest.policy || {};
+  const runtime = data.runtime || {};
+  const state = runtime.running ? 'running' : latest.ok ? 'proven' : latest.id ? 'failed' : 'never run';
+  const stateClass = runtime.running ? 'warn' : latest.ok ? 'ok' : 'bad';
+  page.insertAdjacentHTML('beforeend', `<div class="panelBand">
+    <div class="sectionHeader"><h2>Recovery Proof</h2><div class="toolbar"><span class="pill ${stateClass}">${esc(state)}</span><span class="pill">no live DB access</span><span class="pill">network none</span></div></div>
+    <p class="muted">DASH restores a real dump into a disposable, resource-bounded PostgreSQL container, verifies Dune schema and data invariants, analyzes it, creates and lists a second round-trip dump, records a hash-chained private receipt, and removes the container. This is recovery evidence, not a structural archive guess.</p>
+    <div class="metricGrid">${metric('Latest receipt', latest.id || 'none', latest.ok ? 'ok' : latest.id ? 'bad' : 'warn')}${metric('Source age', latest.backupAgeSeconds == null ? '—' : fmtRuntimeSeconds(latest.backupAgeSeconds), policy.backupAgeWithinTarget === false ? 'bad' : '')}${metric('Restore time', timings.restoreSeconds == null ? '—' : fmtRuntimeSeconds(timings.restoreSeconds), policy.restoreWithinTarget === false ? 'bad' : '')}${metric('Total drill', timings.totalSeconds == null ? '—' : fmtRuntimeSeconds(timings.totalSeconds))}${metric('Receipt hash', latest.receiptHashValid === true ? 'verified' : latest.id ? 'invalid' : '—', latest.receiptHashValid === true ? 'ok' : latest.id ? 'bad' : '')}${metric('Isolation', latest.isolation?.verified ? 'verified' : latest.id ? 'unproven' : '—', latest.isolation?.verified ? 'ok' : latest.id ? 'bad' : '')}</div>
+    <div class="commandBar"><button id="infraRunRestoreDrillBtn" class="primary" ${(!data.ready || !data.executionEnabled || runtime.running) ? 'disabled' : ''}>Run latest dump now</button><button id="infraRefreshRestoreDrillBtn">Refresh proof</button></div>
+    <p class="muted">Targets: backup age ≤ ${esc(data.policy?.maxBackupAgeHours)}h; restore ≤ ${esc(data.policy?.maxRestoreSeconds)}s. Limits: ${esc(data.resources?.cpus)} CPU, ${esc(data.resources?.memoryMiB)} MiB RAM, ${esc(data.resources?.pgdataMiB)} MiB ephemeral PGDATA, ${esc(data.resources?.pidsLimit)} PIDs. Browser execution gate: ${data.executionEnabled ? 'enabled' : 'disabled'}.</p>
+    <details><summary>Latest validation and receipt history</summary><pre id="infraRestoreDrillResult">${esc(JSON.stringify({latest, runtime, receipts:data.receipts || []}, null, 2))}</pre></details>
+  </div>`);
+  document.getElementById('infraRunRestoreDrillBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Queuing...', runInfrastructureRestoreDrill));
+  document.getElementById('infraRefreshRestoreDrillBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Refreshing...', () => infrastructure(loadSerial)));
+}
+async function runInfrastructureRestoreDrill(){
+  if (!confirm('Run a no-network isolated restore rehearsal against the newest local PostgreSQL dump? The live database and game services are not touched.')) return;
+  const result = await api('/api/ops/restore-drill', {method:'POST',timeoutMs:30000,body:JSON.stringify({confirm:'RUN ISOLATED RESTORE DRILL'})});
+  const output = document.getElementById('infraRestoreDrillResult');
+  if (output) output.textContent = JSON.stringify(result, null, 2);
+  notify('Isolated restore drill queued');
+  setTimeout(() => { if (current === 'infrastructure') infrastructure(loadSerial).catch(()=>{}); }, 3000);
+  return result;
 }
 function mountInfrastructureAutoscalerControls(data){
   const page = document.querySelector('#view .pageStack');

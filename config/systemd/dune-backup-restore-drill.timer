@@ -1,0 +1,12 @@
+[Unit]
+Description=Prove the newest DASH PostgreSQL backup restores daily
+
+[Timer]
+OnCalendar=*-*-* 04:30:00
+Persistent=true
+RandomizedDelaySec=15m
+AccuracySec=1m
+Unit=dune-backup-restore-drill.service
+
+[Install]
+WantedBy=timers.target
