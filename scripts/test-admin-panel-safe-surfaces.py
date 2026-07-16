@@ -3407,6 +3407,11 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn("Assured Change Windows", source)
         self.assertIn("assured-control-plane-deploy.sh", source)
         self.assertIn("/api/ops/deployment-assurance", source)
+        panel_source = (ROOT / "admin" / "admin_panel.py").read_text(encoding="utf-8")
+        self.assertIn("result = restore_drill.run_drill(\n                ROOT,", panel_source)
+        assurance_block = panel_source.split("def deployment_assurance_store():", 1)[1].split("def deployment_assurance_container_snapshot():", 1)[0]
+        self.assertIn("DEPLOYMENT_ASSURANCE_WORKSPACE", assurance_block)
+        self.assertNotIn("\n                ROOT,", assurance_block)
 
     def test_response_policy_reuses_only_existing_diagnostics_gates_and_confirmations(self):
         policy = self.panel.change_intelligence.load_policy(ROOT / "config" / "change-intelligence.json")

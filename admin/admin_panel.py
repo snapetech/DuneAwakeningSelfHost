@@ -4910,7 +4910,7 @@ def queue_restore_drill(source=None):
             RESTORE_DRILL_RUNTIME["startedAt"] = time.time()
         try:
             result = restore_drill.run_drill(
-                DEPLOYMENT_ASSURANCE_WORKSPACE,
+                ROOT,
                 host_workspace=config["hostWorkspace"],
                 source=source or None,
                 receipt_root=RESTORE_DRILL_RECEIPT_ROOT,
@@ -5435,7 +5435,7 @@ def deployment_assurance_store():
             DEPLOYMENT_ASSURANCE_STORE = deployment_assurance.Store(
                 DEPLOYMENT_ASSURANCE_ROOT,
                 CHANGE_INTELLIGENCE_EVIDENCE_ROOT,
-                ROOT,
+                DEPLOYMENT_ASSURANCE_WORKSPACE,
                 change_intelligence.read_secret(CHANGE_INTELLIGENCE_SECRET_FILE),
                 owner_uid=os.environ.get("DUNE_HOST_UID"), owner_gid=os.environ.get("DUNE_HOST_GID"),
             )
