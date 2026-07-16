@@ -163,7 +163,13 @@ def normalize_container(raw, secret):
         })
     networks = {}
     for name, item in sorted((raw.get("NetworkSettings") or {}).get("Networks", {}).items()):
-        networks[name] = {"ip": item.get("IPAddress") or "", "mac": item.get("MacAddress") or ""}
+        ipam = item.get("IPAMConfig") or {}
+        networks[name] = {
+            "aliases": sorted(str(value) for value in (item.get("Aliases") or []) if value),
+            "configuredIpv4": ipam.get("IPv4Address") or "",
+            "configuredIpv6": ipam.get("IPv6Address") or "",
+            "configuredLinkLocalIps": sorted(str(value) for value in (ipam.get("LinkLocalIPs") or []) if value),
+        }
     labels = config.get("Labels") or {}
     normalized = {
         "service": labels.get("com.docker.compose.service") or str(raw.get("Name") or "").lstrip("/"),

@@ -85,6 +85,23 @@ class DesiredStateTests(unittest.TestCase):
         self.assertEqual(snapshot["fileCount"], 5)
         self.assertIn("TOKEN", snapshot["containers"]["admin-panel"]["envHmacs"])
 
+    def test_container_fingerprint_ignores_ephemeral_network_identity_but_tracks_static_ipam(self):
+        first = container()
+        second = copy.deepcopy(first)
+        second["NetworkSettings"]["Networks"]["project_default"].update({
+            "IPAddress": "172.31.0.99", "MacAddress": "02:42:ac:1f:00:63", "EndpointID": "runtime-two",
+        })
+        self.assertEqual(
+            desired_state.normalize_container(first, self.store.secret)["fingerprint"],
+            desired_state.normalize_container(second, self.store.secret)["fingerprint"],
+        )
+        first["NetworkSettings"]["Networks"]["project_default"]["IPAMConfig"] = {"IPv4Address": "172.31.0.9"}
+        second["NetworkSettings"]["Networks"]["project_default"]["IPAMConfig"] = {"IPv4Address": "172.31.0.10"}
+        self.assertNotEqual(
+            desired_state.normalize_container(first, self.store.secret)["fingerprint"],
+            desired_state.normalize_container(second, self.store.secret)["fingerprint"],
+        )
+
     def test_seal_attest_and_hmac_integrity(self):
         baseline = self.store.seal(self.snapshot(), "operator", "known-good deploy", at=1000)
         result = self.store.observe(self.snapshot(at=1060), at=1060)

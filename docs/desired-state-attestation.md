@@ -36,13 +36,19 @@ normalizes these properties:
 - restart, privilege, read-only-root, network, capability, security, PID,
   memory, CPU, and CPU-set configuration;
 - mount destination/type/write mode;
-- attached networks, IPs, and MACs; and
+- attached network names/aliases and explicitly configured static IPAM
+  addresses; and
 - every environment variable name.
 
 Environment values and host mount sources are stored only as HMAC-SHA256
 fingerprints. File contents are stored only as SHA-256, byte count, type, mode,
 and criticality metadata. The dashboard/API do not return plaintext file
 contents, environment values, host mount sources, or the HMAC key.
+
+Allocator-generated endpoint IDs, dynamic IPs, and MACs are intentionally not
+part of the fingerprint: a same-configuration container replacement may change
+all three. Explicit Compose/IPAM addresses remain attested, so the fixed map and
+control-plane addressing contract still fails on configuration drift.
 
 ## States And Findings
 
