@@ -1742,6 +1742,22 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "uncompressed seekable tar"):
             self.panel.bounded_docker_manifest(compressed_path)
 
+    def test_update_readiness_selects_atomic_backup_leaf_not_aggregate_parent(self):
+        aggregate = self.workspace / "backups" / "admin-panel"
+        historical = aggregate / "maintenance" / "old"
+        atomic = self.workspace / "backups" / "20260716T221526Z"
+        historical.mkdir(parents=True)
+        atomic.mkdir(parents=True)
+        (historical / "historical.dump").write_bytes(b"old")
+        (atomic / "current.dump").write_bytes(b"current")
+        original_inventory = self.panel.backup_inventory
+        self.panel.backup_inventory = lambda limit=100: {
+            "sets": [{"path": "admin-panel"}, {"path": "20260716T221526Z"}]
+        }
+        self.addCleanup(lambda: setattr(self.panel, "backup_inventory", original_inventory))
+        selected = self.panel.latest_full_backup_set()
+        self.assertEqual("20260716T221526Z", selected["path"])
+
     def test_browser_game_update_requires_current_signed_candidate_receipt(self):
         original_required = self.panel.UPDATE_READINESS_REQUIRE_RECEIPT
         original_snapshot = self.panel.update_readiness_snapshot

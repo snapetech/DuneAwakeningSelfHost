@@ -3451,6 +3451,18 @@ def update_readiness_native_candidate():
     }
 
 
+def latest_full_backup_set(limit=100):
+    """Return the newest atomic backup leaf, never an aggregate history root."""
+    for row in backup_inventory(limit).get("sets") or []:
+        path = BACKUPS_ROOT / str(row.get("path") or "")
+        if not path.is_dir() or path.is_symlink():
+            continue
+        direct_dumps = [candidate for candidate in path.glob("*.dump") if candidate.is_file() and not candidate.is_symlink()]
+        if direct_dumps:
+            return row
+    return {}
+
+
 def update_readiness_coriolis_native():
     required_days = str(os.environ.get("DUNE_LANDSRAAD_CORIOLIS_REQUIRED_CYCLE_DAYS") or env_file_value("DUNE_LANDSRAAD_CORIOLIS_REQUIRED_CYCLE_DAYS") or "7")
     failures = []
@@ -3520,6 +3532,7 @@ def update_readiness_snapshot(game=None, force=False):
         with UPDATE_READINESS_SNAPSHOT_LOCK:
             if UPDATE_READINESS_SNAPSHOT_CACHE["value"] is not None and time.time() - UPDATE_READINESS_SNAPSHOT_CACHE["at"] <= UPDATE_READINESS_POLL_SECONDS:
                 return json.loads(json.dumps(UPDATE_READINESS_SNAPSHOT_CACHE["value"]))
+    collection_started = time.monotonic()
     native_root = pathlib.Path(os.environ.get("DUNE_UPDATE_READINESS_STEAM_DIR", "/steam-server"))
     if game is None and native_root.is_dir():
         package_evidence = update_readiness_native_candidate()
@@ -3539,11 +3552,7 @@ def update_readiness_snapshot(game=None, force=False):
         package_evidence = {"packageTags": package_tags, "missing": [], "errors": [], "source": "check-steam-update.sh"}
 
     coriolis = update_readiness_coriolis_native()
-    latest_set = next((
-        row for row in (backup_inventory(100).get("sets") or [])
-        if any((BACKUPS_ROOT / row.get("path", "")).glob("*.dump"))
-        or any((BACKUPS_ROOT / row.get("path", "") / "maintenance").glob("*/*.dump"))
-    ), {})
+    latest_set = latest_full_backup_set()
     backup = {"ok": False, "path": latest_set.get("path"), "exitCode": None}
     if latest_set.get("path"):
         try:
@@ -3614,8 +3623,19 @@ def update_readiness_snapshot(game=None, force=False):
             "readiness": {"current": bool(certification.get("currentReady")), "policyCurrent": bool(certification.get("policyCurrent")), "receiptValid": bool((certification.get("receiptVerification") or {}).get("ok"))},
             "deploymentAssurance": {"id": latest_assurance.get("id"), "commit": latest_assurance.get("commit"), "ready": bool(assurance.get("latestReady")), "verification": bool((latest_assurance.get("verification") or {}).get("ok"))},
             "postStartHooks": {"required": hooks, "missing": missing_hooks},
-            "package": {"tags": package_tags, "missing": package_evidence.get("missing") or [], "errors": package_evidence.get("errors") or [], "source": package_evidence.get("source")},
+            "package": {
+                "tags": package_tags,
+                "missing": package_evidence.get("missing") or [],
+                "errors": package_evidence.get("errors") or [],
+                "source": package_evidence.get("source"),
+                "inspection": package_evidence.get("archiveInspection") or {},
+            },
         },
+    }
+    snapshot["details"]["collection"] = {
+        "durationMs": round((time.monotonic() - collection_started) * 1000, 3),
+        "forced": bool(force),
+        "backupSelection": "newest-direct-dump-leaf",
     }
     with UPDATE_READINESS_SNAPSHOT_LOCK:
         UPDATE_READINESS_SNAPSHOT_CACHE.update({"at": time.time(), "value": json.loads(json.dumps(snapshot))})

@@ -155,7 +155,14 @@ scrape timeout. Explicit certification and game apply always force a fresh colle
 The API's package evidence includes the inspection mode, configured byte
 ceilings, required/successful archive counts, and measured `durationMs`. These
 are diagnostic fields, not part of the candidate fingerprint or authorization
-verdict.
+verdict. Overall collection evidence also reports `durationMs`, whether the
+collection was forced, and the backup-selection policy.
+
+Recovery evidence always selects the newest atomic backup directory containing
+a direct PostgreSQL dump. Aggregate parents such as `backups/admin-panel`,
+which may contain years of nested maintenance history, are never treated as one
+backup set. This keeps forced certification proportional to one recovery set
+without weakening the normal verifier applied to that set.
 
 Compose mounts `DUNE_STEAM_SERVER_DIR` read-only at
 `DUNE_UPDATE_READINESS_STEAM_DIR` for native Python inspection. This fixes the
@@ -218,4 +225,5 @@ docker compose --env-file .env.example config --quiet
 The test suite covers candidate binding, expiry, online-player semantics,
 failed-check refusal, nested/outer tampering, bounded inputs, first/tail tar
 header lookup, corrupt-header and compressed-archive rejection, parsing of
-Steam tag/build output, browser execution enforcement, metrics, and route access.
+Steam tag/build output, atomic-backup selection, browser execution enforcement,
+metrics, and route access.
