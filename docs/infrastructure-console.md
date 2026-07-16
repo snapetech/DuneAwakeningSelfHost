@@ -241,6 +241,11 @@ as investigation evidence and never as a causal conclusion.
 open/resolution events, ranked preceding candidates, and bounded follow-up
 evidence. Both routes are authenticated reads. There is deliberately no manual
 browser insertion route. See [`change-intelligence.md`](change-intelligence.md).
+Add `&signed=true` to freeze the bounded capsule with the verified ledger count
+and head signature under an outer HMAC. The Infrastructure panel can download
+that portable artifact, and the host CLI verifies it offline without the source
+database or policy. Exporting remains a read-only operation; no incident or
+ledger row is created or changed.
 
 ## Database Browser and Query Console
 

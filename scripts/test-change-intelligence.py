@@ -3,6 +3,7 @@ import json
 import os
 import pathlib
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -88,6 +89,61 @@ class ChangeIntelligenceTests(unittest.TestCase):
         self.assertEqual("1970-01-01T00:21:40+00:00", reopened["opened"]["occurredAt"])
         with self.assertRaises(ValueError):
             self.store.capsule("../../invalid")
+
+    def test_signed_capsule_binds_bounded_evidence_to_verified_ledger_head(self):
+        self.record("settings-write", 1000, method="POST")
+        self.record("slo-incident-opened", 1100, incident_id="portable")
+        self.record("slo-incident-resolved", 1200, incident_id="portable")
+        document = self.store.signed_capsule("slo:portable", at=1300)
+        verified = change_intelligence.verify_signed_capsule(document, change_intelligence.read_secret(self.secret))
+        self.assertTrue(verified["ok"])
+        self.assertEqual("slo:portable", verified["incidentKey"])
+        self.assertEqual(self.store.verify()["lastEventSignature"], document["ledger"]["lastEventSignature"])
+        self.assertFalse(document["capsule"]["causalityClaimed"])
+
+        tampered = json.loads(json.dumps(document))
+        tampered["capsule"]["status"] = "open"
+        self.assertFalse(change_intelligence.verify_signed_capsule(tampered, change_intelligence.read_secret(self.secret))["ok"])
+        with_extra = {**document, "unsignedNote": "not covered"}
+        self.assertFalse(change_intelligence.verify_signed_capsule(with_extra, change_intelligence.read_secret(self.secret))["ok"])
+        self.assertFalse(change_intelligence.verify_signed_capsule(document, b"e" * 64)["ok"])
+
+    def test_signed_capsule_uses_one_snapshot_when_writer_appends_mid_export(self):
+        self.record("settings-write", 1000, method="POST")
+        self.record("slo-incident-opened", 1100, incident_id="race")
+        original_verify = self.store._verify_connection
+
+        def verify_then_append(connection):
+            result = original_verify(connection)
+            self.record("slo-incident-resolved", 1200, incident_id="race")
+            return result
+
+        self.store._verify_connection = verify_then_append
+        document = self.store.signed_capsule("slo:race", at=1300)
+        self.assertEqual(2, document["ledger"]["eventCount"])
+        self.assertEqual("open", document["capsule"]["status"])
+        self.assertEqual("resolved", self.store.capsule("slo:race")["status"])
+        self.assertTrue(change_intelligence.verify_signed_capsule(document, change_intelligence.read_secret(self.secret))["ok"])
+
+    def test_cli_exports_private_capsule_and_verifies_without_source_database(self):
+        self.record("settings-write", 1000, method="POST")
+        self.record("desired-state-drift-opened", 1100, finding_id="portable")
+        output = self.root / "exports" / "capsule.json"
+        command = [
+            sys.executable, str(ROOT / "scripts" / "change-intelligence.py"), "export-capsule",
+            "--incident-key", "desired:portable", "--output", str(output),
+            "--database", str(self.database), "--policy", str(self.policy), "--secret-file", str(self.secret),
+        ]
+        exported = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, check=False)
+        self.assertEqual(0, exported.returncode, exported.stderr)
+        self.assertEqual(0o600, output.stat().st_mode & 0o777)
+        verified = subprocess.run([
+            sys.executable, str(ROOT / "scripts" / "change-intelligence.py"), "verify-capsule",
+            "--capsule-file", str(output), "--secret-file", str(self.secret),
+            "--database", str(self.root / "does-not-exist.sqlite3"),
+        ], cwd=ROOT, text=True, capture_output=True, check=False)
+        self.assertEqual(0, verified.returncode, verified.stderr)
+        self.assertTrue(json.loads(verified.stdout)["signatureValid"])
 
     def test_post_fallback_is_change_and_read_is_observation(self):
         write = self.record("new-admin-surface", 1000, method="POST")

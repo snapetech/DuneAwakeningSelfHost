@@ -963,7 +963,7 @@ Start here:
 - [`docs/operational-slo.md`](docs/operational-slo.md): time-weighted objectives, coverage, error budgets, burn alerts, immutable incident events, maintenance exclusions, metrics, and ledger recovery.
 - [`docs/capacity-intelligence.md`](docs/capacity-intelligence.md): map-hours saved, idle cost, warm/cold revisits, request-to-ready timing, forecast/model math, adaptive retention, Prometheus metrics, and ledger recovery.
 - [`docs/desired-state-attestation.md`](docs/desired-state-attestation.md): HMAC-sealed file/container baselines, retained drift, dashboard/API/CLI workflows, metrics, SLO integration, backup-bound key recovery, and failure handling.
-- [`docs/change-intelligence.md`](docs/change-intelligence.md): append-only HMAC operational timeline, privacy-bounded history import, incident/change correlation, non-causal evidence capsules, metrics, and backup-bound recovery.
+- [`docs/change-intelligence.md`](docs/change-intelligence.md): append-only HMAC operational timeline, authoritative incident reconciliation, privacy-bounded correlation, non-causal evidence capsules, portable ledger-head-bound signed exports with offline verification, metrics, and backup-bound recovery.
 - [`docs/operational-identity-handoff.md`](docs/operational-identity-handoff.md): FLS identity, RabbitMQ TLS, backup identity layers, and redacted handoff artifacts.
 - [`docs/postgres-replication.md`](docs/postgres-replication.md): local and remote Postgres standby.
 - [`docs/artificial-exchange.md`](docs/artificial-exchange.md): artificial Exchange catalog, buyer, settlement, populator, and services.

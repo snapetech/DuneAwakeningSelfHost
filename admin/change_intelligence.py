@@ -97,6 +97,44 @@ def read_secret(path):
     return value.encode("utf-8")
 
 
+def verify_signed_capsule(document, secret):
+    """Verify a portable capsule without requiring its source database."""
+    expected_keys = {"schemaVersion", "generatedAt", "incidentKey", "signatureAlgorithm", "signingKeyFingerprint", "ledger", "capsule", "signature"}
+    try:
+        if not isinstance(document, dict) or set(document) != expected_keys:
+            raise ValueError("signed capsule fields are invalid")
+        if document.get("schemaVersion") != 1 or document.get("signatureAlgorithm") != "hmac-sha256":
+            raise ValueError("signed capsule schema or algorithm is unsupported")
+        key = validate_incident_key(document.get("incidentKey"))
+        _epoch(document.get("generatedAt"))
+        ledger = document.get("ledger")
+        capsule = document.get("capsule")
+        if not isinstance(ledger, dict) or not isinstance(capsule, dict):
+            raise ValueError("signed capsule ledger and capsule must be objects")
+        if capsule.get("incidentKey") != key or capsule.get("causalityClaimed") is not False:
+            raise ValueError("signed capsule incident or causality contract is invalid")
+        if not isinstance(ledger.get("eventCount"), int) or ledger["eventCount"] < 1:
+            raise ValueError("signed capsule eventCount is invalid")
+        head = str(ledger.get("lastEventSignature") or "")
+        signature = str(document.get("signature") or "")
+        if not re.fullmatch(r"[0-9a-f]{64}", head) or not re.fullmatch(r"[0-9a-f]{64}", signature):
+            raise ValueError("signed capsule signatures are invalid")
+        fingerprint = hashlib.sha256(secret).hexdigest()
+        if not hmac.compare_digest(str(document.get("signingKeyFingerprint") or ""), fingerprint):
+            raise ValueError("signed capsule key fingerprint does not match")
+        payload = {key: value for key, value in document.items() if key != "signature"}
+        expected = hmac.new(secret, _canonical(payload).encode(), hashlib.sha256).hexdigest()
+        valid = hmac.compare_digest(signature, expected)
+        return {
+            "ok": valid, "schemaVersion": 1, "incidentKey": key,
+            "signatureValid": valid, "signingKeyFingerprint": fingerprint,
+            "payloadSha256": hashlib.sha256(_canonical(payload).encode()).hexdigest(),
+            **({} if valid else {"error": "signed capsule HMAC is invalid"}),
+        }
+    except (ValueError, TypeError, OverflowError, OSError) as exc:
+        return {"ok": False, "signatureValid": False, "error": str(exc)}
+
+
 def _hmac_value(secret, value):
     return hmac.new(secret, str(value).encode("utf-8"), hashlib.sha256).hexdigest()
 
@@ -420,67 +458,105 @@ class Store:
             "signature": row["signature"],
         }
 
+    def _correlate_connection(self, connection, key):
+        incident = connection.execute("select * from events where incident_key=? and kind='incident-open' order by occurred_at desc limit 1", (str(key),)).fetchone()
+        if not incident:
+            return []
+        before = self.policy["correlationWindowBeforeSeconds"]
+        rows = connection.execute(
+            "select * from events where is_change=1 and occurred_at<=? and occurred_at>=? order by occurred_at desc limit 1000",
+            (incident["occurred_at"], incident["occurred_at"] - before),
+        ).fetchall()
+        incident_scope = set(json.loads(incident["scope_json"]))
+        candidates = []
+        for row in rows:
+            age = max(0.0, incident["occurred_at"] - row["occurred_at"])
+            overlap = sorted(incident_scope & set(json.loads(row["scope_json"])))
+            recency = max(0.0, 1.0 - age / before)
+            score = IMPACTS[row["impact"]] * 2.0 + recency * 2.0 + min(3, len(overlap)) * 1.5
+            reasons = [f"{int(age)}s before incident", f"{row['impact']} impact"]
+            if overlap:
+                reasons.append("shared scope: " + ", ".join(overlap[:3]))
+            public = self._public(row)
+            public.pop("data", None)
+            public.pop("signature", None)
+            candidates.append({**public, "ageSeconds": age, "score": round(score, 3), "reasons": reasons})
+        candidates.sort(key=lambda row: (-row["score"], row["ageSeconds"], -row["sequence"]))
+        return candidates[: self.policy["candidateLimit"]]
+
     def correlate(self, key):
         self.initialize_if_needed()
         key = validate_incident_key(key)
         connection = self.connect(readonly=True)
         try:
-            incident = connection.execute("select * from events where incident_key=? and kind='incident-open' order by occurred_at desc limit 1", (str(key),)).fetchone()
-            if not incident:
-                return []
-            before = self.policy["correlationWindowBeforeSeconds"]
-            rows = connection.execute(
-                "select * from events where is_change=1 and occurred_at<=? and occurred_at>=? order by occurred_at desc limit 1000",
-                (incident["occurred_at"], incident["occurred_at"] - before),
-            ).fetchall()
-            incident_scope = set(json.loads(incident["scope_json"]))
-            candidates = []
-            for row in rows:
-                age = max(0.0, incident["occurred_at"] - row["occurred_at"])
-                overlap = sorted(incident_scope & set(json.loads(row["scope_json"])))
-                recency = max(0.0, 1.0 - age / before)
-                score = IMPACTS[row["impact"]] * 2.0 + recency * 2.0 + min(3, len(overlap)) * 1.5
-                reasons = [f"{int(age)}s before incident", f"{row['impact']} impact"]
-                if overlap:
-                    reasons.append("shared scope: " + ", ".join(overlap[:3]))
-                public = self._public(row)
-                public.pop("data", None)
-                public.pop("signature", None)
-                candidates.append({**public, "ageSeconds": age, "score": round(score, 3), "reasons": reasons})
-            candidates.sort(key=lambda row: (-row["score"], row["ageSeconds"], -row["sequence"]))
-            return candidates[: self.policy["candidateLimit"]]
+            return self._correlate_connection(connection, key)
         finally:
             connection.close()
+
+    def _capsule_connection(self, connection, key, now=None):
+        rows = connection.execute("select * from events where incident_key=? order by occurred_at,sequence", (str(key),)).fetchall()
+        if not rows:
+            raise ValueError("change-intelligence incident does not exist")
+        opened = next((row for row in reversed(rows) if row["kind"] == "incident-open"), None)
+        if not opened:
+            raise ValueError("change-intelligence incident has no open event")
+        resolved = next((row for row in reversed(rows) if row["kind"] == "incident-resolved" and row["occurred_at"] >= opened["occurred_at"]), None)
+        end = min(
+            resolved["occurred_at"] if resolved else float(now if now is not None else time.time()),
+            opened["occurred_at"] + self.policy["correlationWindowAfterSeconds"],
+        )
+        followup = connection.execute(
+            "select * from events where occurred_at>? and occurred_at<=? order by occurred_at,sequence limit ?",
+            (opened["occurred_at"], end, self.policy["capsuleEvidenceLimit"]),
+        ).fetchall()
+        return {
+            "ok": True, "incidentKey": key, "status": "resolved" if resolved else "open",
+            "opened": self._public(opened), "resolved": self._public(resolved) if resolved else None,
+            "candidateChanges": self._correlate_connection(connection, key), "followupEvidence": [self._public(row) for row in followup],
+            "causalityClaimed": False,
+            "interpretation": "Candidates are ranked temporal/scope correlations, not proof of causality.",
+        }
 
     def capsule(self, key):
         self.initialize_if_needed()
         key = validate_incident_key(key)
         connection = self.connect(readonly=True)
         try:
-            rows = connection.execute("select * from events where incident_key=? order by occurred_at,sequence", (str(key),)).fetchall()
-            if not rows:
-                raise ValueError("change-intelligence incident does not exist")
-            opened = next((row for row in reversed(rows) if row["kind"] == "incident-open"), None)
-            if not opened:
-                raise ValueError("change-intelligence incident has no open event")
-            resolved = next((row for row in reversed(rows) if row["kind"] == "incident-resolved" and row["occurred_at"] >= opened["occurred_at"]), None)
-            end = min(
-                resolved["occurred_at"] if resolved else time.time(),
-                opened["occurred_at"] + self.policy["correlationWindowAfterSeconds"],
-            )
-            followup = connection.execute(
-                "select * from events where occurred_at>? and occurred_at<=? order by occurred_at,sequence limit ?",
-                (opened["occurred_at"], end, self.policy["capsuleEvidenceLimit"]),
-            ).fetchall()
-            return {
-                "ok": True, "incidentKey": key, "status": "resolved" if resolved else "open",
-                "opened": self._public(opened), "resolved": self._public(resolved) if resolved else None,
-                "candidateChanges": self.correlate(key), "followupEvidence": [self._public(row) for row in followup],
-                "causalityClaimed": False,
-                "interpretation": "Candidates are ranked temporal/scope correlations, not proof of causality.",
-            }
+            return self._capsule_connection(connection, key)
         finally:
             connection.close()
+
+    def signed_capsule(self, key, at=None):
+        """Freeze one bounded capsule and bind it to the verified ledger head."""
+        self.initialize_if_needed()
+        key = validate_incident_key(key)
+        generated = _epoch(at)
+        connection = self.connect(readonly=True)
+        try:
+            connection.execute("begin")
+            integrity = self._verify_connection(connection)
+            if not integrity.get("ok"):
+                raise RuntimeError("cannot export a capsule from an invalid change-intelligence ledger")
+            capsule = self._capsule_connection(connection, key, now=generated)
+        finally:
+            connection.close()
+        payload = {
+            "schemaVersion": 1,
+            "generatedAt": _iso(generated),
+            "incidentKey": capsule["incidentKey"],
+            "signatureAlgorithm": "hmac-sha256",
+            "signingKeyFingerprint": hashlib.sha256(self.secret).hexdigest(),
+            "ledger": {
+                "eventCount": integrity["eventCount"],
+                "lastEventSignature": integrity["lastEventSignature"],
+                "sqlite": integrity["sqlite"],
+                "appendOnlyTriggers": integrity["appendOnlyTriggers"],
+                "eventChainValid": integrity["eventChainValid"],
+            },
+            "capsule": capsule,
+        }
+        signature = hmac.new(self.secret, _canonical(payload).encode(), hashlib.sha256).hexdigest()
+        return {**payload, "signature": signature}
 
     def status(self, limit=None):
         self.initialize_if_needed()
@@ -520,24 +596,27 @@ class Store:
             "policy": self.policy, "integrity": integrity,
         }
 
+    def _verify_connection(self, connection):
+        integrity = connection.execute("pragma integrity_check").fetchone()[0]
+        triggers = {row["name"] for row in connection.execute("select name from sqlite_master where type='trigger'")}
+        required = {"change_events_no_update", "change_events_no_delete"}
+        previous = None
+        valid = True
+        count = 0
+        for row in connection.execute("select * from events order by sequence"):
+            count += 1
+            if row["previous_signature"] != previous or not hmac.compare_digest(self._sign(self._document(row)), row["signature"]):
+                valid = False
+            previous = row["signature"]
+        ok = integrity == "ok" and required.issubset(triggers) and valid
+        return {"ok": ok, "sqlite": integrity, "appendOnlyTriggers": required.issubset(triggers), "eventChainValid": valid, "eventCount": count, "lastEventSignature": previous}
+
     def verify(self):
         if not self.database.exists():
             return {"ok": False, "sqlite": "missing", "eventChainValid": False}
         connection = self.connect(readonly=True)
         try:
-            integrity = connection.execute("pragma integrity_check").fetchone()[0]
-            triggers = {row["name"] for row in connection.execute("select name from sqlite_master where type='trigger'")}
-            required = {"change_events_no_update", "change_events_no_delete"}
-            previous = None
-            valid = True
-            count = 0
-            for row in connection.execute("select * from events order by sequence"):
-                count += 1
-                if row["previous_signature"] != previous or not hmac.compare_digest(self._sign(self._document(row)), row["signature"]):
-                    valid = False
-                previous = row["signature"]
-            ok = integrity == "ok" and required.issubset(triggers) and valid
-            return {"ok": ok, "sqlite": integrity, "appendOnlyTriggers": required.issubset(triggers), "eventChainValid": valid, "eventCount": count, "lastEventSignature": previous}
+            return self._verify_connection(connection)
         except (sqlite3.Error, ValueError, json.JSONDecodeError, OSError) as exc:
             return {"ok": False, "sqlite": "error", "eventChainValid": False, "error": str(exc)}
         finally:

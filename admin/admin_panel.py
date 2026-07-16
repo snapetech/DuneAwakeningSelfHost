@@ -7635,7 +7635,9 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/ops/change-intelligence/capsule":
                 self.require_token()
                 params = urllib.parse.parse_qs(parsed.query)
-                self.json(change_intelligence_store().capsule((params.get("incidentKey") or [""])[0]))
+                incident_key = (params.get("incidentKey") or [""])[0]
+                signed = str((params.get("signed") or [""])[0]).lower() in ("1", "true", "yes", "on")
+                self.json(change_intelligence_store().signed_capsule(incident_key) if signed else change_intelligence_store().capsule(incident_key))
             elif parsed.path == "/api/ops/database":
                 self.require_token()
                 self.json(dict(database_browser_catalog(), queryEnabled=DATABASE_QUERY_ENABLED, writeEnabled=DATABASE_WRITE_ENABLED, rowMutationsEnabled=DATABASE_ROW_MUTATIONS_ENABLED, passwordMutationsEnabled=DATABASE_PASSWORD_MUTATIONS_ENABLED, writeConfirm=CONFIRM_DATABASE_WRITE, rowConfirm=CONFIRM_DATABASE_ROW_UPDATE, passwordConfirm=CONFIRM_DATABASE_PASSWORD))
@@ -15746,12 +15748,13 @@ function mountInfrastructureChangeIntelligence(data){
     <p class="muted">This timeline correlates SLO incidents and desired-state drift with preceding deployments, settings writes, service actions, restarts, restores, and capacity decisions. Ranking uses time, declared impact, and shared scope. A candidate is evidence for investigation—not a claim that the change caused the incident. Player/client identifiers and host paths are HMAC-pseudonymized; credentials are removed.</p>
     <div class="metricGrid">${metric('Ledger', data.integrity?.ok ? 'verified' : 'invalid', data.integrity?.ok ? 'ok' : 'bad')}${metric('Events', data.eventCount || 0)}${metric('Open incidents', open.length, open.length ? 'warn' : 'ok')}${metric('Open with candidates', open.filter(row => (row.candidateChanges || []).length).length, open.some(row => (row.candidateChanges || []).length) ? 'warn' : '')}${metric('Last event', data.recentEvents?.[0]?.occurredAt || 'none')}${metric('Import errors', data.runtime?.importErrors || 0, data.runtime?.importErrors ? 'bad' : 'ok')}</div>
     ${incidentRows.length ? table(incidentRows) : '<div class="emptyState">No retained SLO or desired-state incidents yet.</div>'}
-    <div class="commandBar"><select id="infraChangeIncident">${incidentOptions || '<option value="">No incident capsules</option>'}</select><button id="infraChangeCapsuleBtn" ${incidents.length ? '' : 'disabled'}>Open evidence capsule</button></div>
+    <div class="commandBar"><select id="infraChangeIncident">${incidentOptions || '<option value="">No incident capsules</option>'}</select><button id="infraChangeCapsuleBtn" ${incidents.length ? '' : 'disabled'}>Open evidence capsule</button><button id="infraChangeCapsuleExportBtn" ${incidents.length ? '' : 'disabled'}>Download signed capsule</button></div>
     <pre id="infraChangeCapsuleResult">Select an incident to inspect ranked preceding changes and bounded follow-up evidence.</pre>
     <details><summary>Recent changes, policy, runtime, and verification</summary>${table(changeRows)}<pre>${esc(JSON.stringify({policy:data.policy,runtime:data.runtime,integrity:data.integrity}, null, 2))}</pre></details>
   </div>`);
   document.getElementById('infraChangeRefreshBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Refreshing...', () => infrastructure(loadSerial)));
   document.getElementById('infraChangeCapsuleBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Loading...', infrastructureChangeCapsule));
+  document.getElementById('infraChangeCapsuleExportBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Signing...', infrastructureChangeCapsuleExport));
 }
 async function infrastructureChangeCapsule(){
   const incidentKey = document.getElementById('infraChangeIncident')?.value || '';
@@ -15760,6 +15763,14 @@ async function infrastructureChangeCapsule(){
   const output = document.getElementById('infraChangeCapsuleResult');
   if (output) output.textContent = JSON.stringify(result, null, 2);
   notify(`Evidence capsule loaded for ${incidentKey}`);
+  return result;
+}
+async function infrastructureChangeCapsuleExport(){
+  const incidentKey = document.getElementById('infraChangeIncident')?.value || '';
+  if (!incidentKey) throw new Error('Select a retained incident');
+  const result = await api(`/api/ops/change-intelligence/capsule?incidentKey=${encodeURIComponent(incidentKey)}&signed=true`, {timeoutMs: 60000});
+  downloadJson(result, `dash-incident-${incidentKey}.signed.json`);
+  notify(`Signed evidence capsule downloaded for ${incidentKey}`, 'ok');
   return result;
 }
 function mountInfrastructureSlo(data){

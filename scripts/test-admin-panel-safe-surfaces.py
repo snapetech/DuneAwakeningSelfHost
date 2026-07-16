@@ -3184,6 +3184,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         fake_store = type("Store", (), {
             "prometheus": lambda self: "dash_change_intelligence_collector_up 1\n",
             "capsule": lambda self, key: {"ok": True, "incidentKey": key, "causalityClaimed": False},
+            "signed_capsule": lambda self, key: {"schemaVersion": 1, "incidentKey": key, "signature": "a" * 64},
         })()
         self.panel.change_intelligence_public_status = lambda: {"ok": True, "state": "active", "eventCount": 3}
         self.panel.change_intelligence_store = lambda: fake_store
@@ -3200,6 +3201,12 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         handler.do_GET()
         self.assertEqual("slo:one", captured["json"]["incidentKey"])
         self.assertFalse(captured["json"]["causalityClaimed"])
+
+        handler, captured = self.make_route_handler("/api/ops/change-intelligence/capsule?incidentKey=slo%3Aone&signed=true")
+        handler.is_app_route = lambda path: False
+        handler.do_GET()
+        self.assertEqual(1, captured["json"]["schemaVersion"])
+        self.assertEqual("a" * 64, captured["json"]["signature"])
 
         handler, captured = self.make_route_handler("/metrics/change-intelligence")
         handler.is_app_route = lambda path: False
@@ -3314,6 +3321,8 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn("mountInfrastructureChangeIntelligence(changeData)", source)
         self.assertIn("not a claim that the change caused the incident", source)
         self.assertIn("/api/ops/change-intelligence/capsule", source)
+        self.assertIn("Download signed capsule", source)
+        self.assertIn("infrastructureChangeCapsuleExport", source)
 
     def test_capacity_application_is_evidence_gated_gradual_and_mode_preserving(self):
         fake = type("Store", (), {

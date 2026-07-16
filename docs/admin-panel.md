@@ -164,7 +164,8 @@ server {
 - Change Intelligence correlates SLO/drift incident onset with preceding
   deployments, settings writes, service actions, restarts, restores, and
   capacity decisions in an append-only HMAC timeline. Evidence capsules rank
-  candidates but never claim causality. See
+  candidates but never claim causality. Operators can download a bounded
+  capsule signed over the verified ledger head and verify it offline. See
   [`change-intelligence.md`](change-intelligence.md).
 - Infrastructure backup controls report recipient-encryption readiness,
   encrypted archive/receipt inventory, and exact host encrypt/decrypt commands.

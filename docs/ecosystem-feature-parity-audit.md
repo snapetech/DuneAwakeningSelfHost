@@ -198,7 +198,7 @@ without reproducing that wrapper.
 | Automated real restore rehearsal and RPO/RTO evidence | BIGMOS documents manual `pg_restore`; other peers inspect/archive backups | DASH exceeds | Daily no-network disposable PostgreSQL restore, Dune schema/data/index/constraint checks, analyze, round-trip dump, measured RPO/RTO, verified cleanup, private hash-chained receipts, dashboard/API, and hardened timer; see `docs/restore-drills.md` |
 | Time-weighted reliability objectives and error budgets | Peers expose current health and retained infrastructure metrics | DASH exceeds | Nine service objectives, five time windows, observation coverage, burn rates, remaining budget, debounced incidents, immutable globally hash-chained events, bounded maintenance exclusions, dashboard/API/Prometheus, and transactionally consistent recovery; see `docs/operational-slo.md` |
 | Continuous desired-state attestation and drift ownership | No surveyed Dune peer | DASH exceeds | HMAC-sealed repository/configuration and Compose-container baselines, keyed redaction of environment values and mount sources, retained findings, non-resolving acknowledgement, immutable baseline/event history, private dashboard/API/metrics, SLO integration, and backup-bound key verification; see `docs/desired-state-attestation.md` |
-| Operational change intelligence and incident evidence capsules | No surveyed Dune peer | DASH exceeds | Append-only HMAC event timeline, idempotent legacy audit import, credential stripping, identity/path pseudonymization, policy-classified impact, bounded temporal/scope candidate ranking, explicit non-causality, response evidence, dashboard/API/CLI/metrics, and backup-bound verification; see `docs/change-intelligence.md` |
+| Operational change intelligence and incident evidence capsules | No surveyed Dune peer | DASH exceeds | Append-only HMAC event timeline, authoritative incident reconciliation, credential stripping, identity/path pseudonymization, policy-classified impact, bounded temporal/scope candidate ranking, explicit non-causality, portable ledger-head-bound signed exports with offline verification, dashboard/API/CLI/metrics, and backup-bound verification; see `docs/change-intelligence.md` |
 | Offsite/mirror/failover backup | DST, Reditus | Parity | Replica, snapshot, rsync/rclone/restic examples |
 | Scheduled restart with warnings and backup | adainrivers, Manaiakalani, AMP | Parity | Daily maintenance timer loaded |
 | Authenticated Steam update and Steam Guard bootstrap | Manaiakalani | Parity | Protected owned-account login/password settings, interactive SteamCMD bootstrap for password/Steam Guard, persistent private Steam home, locked unattended hotfix updater, and restart-only-on-change behavior; one-time Steam Guard codes are not retained |
@@ -345,6 +345,8 @@ only when explicitly authorized for a concrete client task, as required by
 - **High confidence:** no surveyed peer correlates retained operator changes
   with SLO/drift incident onset. DASH now adds a privacy-bounded HMAC timeline
   and ranked evidence capsules while explicitly refusing to infer causality.
+  Capsules can also be frozen into portable ledger-head-bound artifacts and
+  verified offline without trusting the live dashboard or source database.
 - **High confidence:** local RBAC, outbound events, the first-party Discord bot,
   community rewards/shop/tracks, host tuning, inventory integrity repair,
   recurring event automation, moderation case history, native policy-ban

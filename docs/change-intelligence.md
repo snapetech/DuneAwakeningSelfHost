@@ -161,7 +161,8 @@ operator's back.
 Open **Infrastructure → Change Intelligence**. The panel shows ledger
 verification, retained event count, open incident count, incidents with
 candidate changes, import errors, incident/candidate summaries, and recent
-changes. Select an incident to load its complete bounded evidence capsule.
+changes. Select an incident to load its complete bounded evidence capsule or
+download a portable signed copy.
 
 Authenticated read routes:
 
@@ -169,11 +170,41 @@ Authenticated read routes:
 GET /api/ops/change-intelligence
 GET /api/ops/change-intelligence/capsule?incidentKey=slo:<id>
 GET /api/ops/change-intelligence/capsule?incidentKey=desired:<id>
+GET /api/ops/change-intelligence/capsule?incidentKey=slo:<id>&signed=true
 ```
 
 They require only normal authenticated `read` capability. There is no browser
 write route: evidence is produced by existing guarded workflows and system
 transitions, not manually fabricated through the UI.
+
+### Portable signed capsules
+
+The `signed=true` form freezes the same privacy-bounded capsule into schema 1
+and HMAC-authenticates the complete export. The signed payload includes:
+
+- its generation time and incident key;
+- the HMAC algorithm and a SHA-256 fingerprint identifying the required key;
+- the verified ledger event count and exact head signature at export time;
+- SQLite, append-only-trigger, and event-chain verification results; and
+- the complete bounded incident, candidate, and follow-up evidence capsule.
+
+The outer signature covers every field except the signature itself. Verification
+rejects missing or extra top-level fields, a different incident key, a changed
+causality contract, malformed head/signature values, a mismatched key
+fingerprint, and any nested payload modification. The browser-generated file
+contains no HMAC key and receives the same pseudonymization, redaction, and row
+bounds as the live API.
+
+Ledger verification, head selection, incident state, candidate ranking, and
+follow-up selection all run in one SQLite read transaction. A concurrent writer
+can append normally under WAL, but that later event cannot leak into only part
+of the export; the capsule consistently represents one database snapshot.
+
+A valid portable signature proves that the holder of the corresponding DASH key
+froze this exact capsule from a ledger whose chain verified at that head. It does
+not prove causality, prove that no later events exist, or replace the independent
+backup containing the source ledger and key. Treat exports as private operator
+evidence even though credentials and player identities are removed.
 
 ## Configuration
 
@@ -209,6 +240,17 @@ make change-intelligence-verify
 make change-intelligence-metrics
 
 ./scripts/change-intelligence.py capsule --incident-key 'slo:<id>'
+
+# Atomic mode-0600 export tied to the current verified ledger head.
+./scripts/change-intelligence.py export-capsule \
+  --incident-key 'slo:<id>' \
+  --output backups/operator-evidence/slo-incident.signed.json
+
+# Offline verification needs only the export and its original private key;
+# the source SQLite database and classification policy are not required.
+./scripts/change-intelligence.py verify-capsule \
+  --capsule-file backups/operator-evidence/slo-incident.signed.json \
+  --secret-file config/secrets/change-intelligence-hmac.secret
 ```
 
 The label-free private endpoint is:
@@ -280,5 +322,6 @@ make validate
 Tests cover policy/key/file modes, credential/identity/path redaction, payload
 bounds, classification fallbacks, temporal ranking, non-causal language,
 resolution/reopen handling, idempotent history import, append-only enforcement,
-HMAC tamper detection, metrics privacy, native/minimal backup verification,
-restore preflight, API authentication, and dashboard wiring.
+HMAC tamper detection, portable signed export/offline verification, metrics
+privacy, native/minimal backup verification, restore preflight, API
+authentication, and dashboard wiring.
