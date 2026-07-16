@@ -195,6 +195,7 @@ STEAM_PROFILE_CACHE_LOCK = threading.Lock()
 CONFIRM_RESET_KEYSTONES = "RESET KEYSTONES"
 CONFIRM_DELETE_ITEM = "DELETE ITEM"
 CONFIRM_SET_STACK = "SET STACK"
+CONFIRM_SET_ITEM_PROPERTIES = "SET ITEM PROPERTIES"
 CONFIRM_GM_COMMAND = "RUN GM COMMAND"
 CONFIRM_TYPED_KNOBS = "WRITE TYPED KNOBS"
 CONFIRM_BUNDLE_MUTATION = "EXECUTE BUNDLE"
@@ -1409,6 +1410,8 @@ def schedule_restart(body):
     ).lower() in ("1", "true", "yes", "on")
     now = time.time()
     run_at = now + ANNOUNCEMENT_DELAYS[delay_key]
+    if announce and message and run_at <= now:
+        run_at = now + 1
     job = {
         "id": secrets.token_urlsafe(12),
         "target": target,
@@ -2603,7 +2606,22 @@ def autoscaler_service_action(service, action):
     return control_docker_service(service, action, fast_dynamic_start=AUTOSCALER_FAST_START and action == "start")
 
 
+def maintenance_restart_is_executing():
+    with RESTART_LOCK:
+        state = read_restart_state()
+    return any(
+        job.get("execute") and job.get("status") in ("executing", "awaiting_reboot")
+        for job in state.get("jobs", [])
+    )
+
+
 def autoscaler_tick(force=False):
+    if maintenance_restart_is_executing():
+        return dict(
+            autoscaler_public_state(include_inventory=False),
+            skipped=True,
+            reason="maintenance restart is executing",
+        )
     with AUTOSCALER_LOCK:
         state = read_autoscaler_state()
         if not state["enabled"] and not force:
@@ -6060,7 +6078,33 @@ def community_delivery_tick(handler=None):
     config = community_config()
     if not COMMUNITY_REWARDS_ENABLED or not config.get("enabled"):
         return {"ok": True, "enabled": False, "message": "community rewards are disabled"}
-    result = {"ok": True, "playtime": [], "delivery": None}
+    result = {"ok": True, "playtime": [], "engagement": [], "delivery": None}
+    engagement = community_rewards.engagement_config(config)
+    if engagement.get("enabled"):
+        observed = int(time.time())
+        rows = query("""
+            select ps.account_id,ps.online_status::text as online_status,
+                   a.map,a.partition_id,
+                   ((a.transform).location).x::float8 as x,
+                   ((a.transform).location).y::float8 as y,
+                   ((a.transform).location).z::float8 as z
+            from dune.player_state ps
+            left join dune.actors a on a.id=ps.player_pawn_id
+            order by ps.account_id
+        """)
+        for row in rows:
+            account_id = int(row["account_id"])
+            online = str(row.get("online_status") or "").lower() == "online"
+            activity = store.observe_engagement(
+                account_id,
+                online,
+                observed,
+                {"map": row.get("map"), "partitionId": row.get("partition_id"),
+                 "x": row.get("x"), "y": row.get("y"), "z": row.get("z")},
+                config.get("engagementRewards"),
+            )
+            if activity.get("activeSeconds") or activity.get("rewards"):
+                result["engagement"].append(dict(activity, duneAccountId=account_id))
     playtime = config.get("playtime") or {}
     if playtime.get("enabled"):
         observed = int(time.time())
@@ -7453,9 +7497,14 @@ class Handler(BaseHTTPRequestHandler):
                 self.require_mutations()
                 self.require_item_grants()
                 body = parse_body(self)
-                require_confirmation(body, CONFIRM_SET_STACK)
-                result = self.set_item_stack(body)
-                self.audit("item-stack", item_id=result.get("item_id"), stack_size=result.get("stack_size"))
+                if body.get("quality_level", body.get("qualityLevel")) not in (None, ""):
+                    require_confirmation(body, CONFIRM_SET_ITEM_PROPERTIES)
+                else:
+                    require_confirmation(body, CONFIRM_SET_STACK)
+                backup = create_db_backup()
+                result = self.set_item_properties(body)
+                result["backup"] = backup
+                self.audit("item-properties", item_id=result.get("item_id"), stack_size=result.get("stack_size"), quality_level=result.get("quality_level"), backup=backup)
                 self.json(result)
             elif parsed.path == "/api/admin/bundle":
                 self.require_token()
@@ -8896,32 +8945,63 @@ class Handler(BaseHTTPRequestHandler):
         remaining = query("select dune.delete_inventory_item(%s,%s) as remaining_stack", (item_id, count))[0]["remaining_stack"]
         return {"ok": True, "item_id": item_id, "count": count, "deleted": False, "remaining_stack": remaining}
 
-    def set_item_stack(self, body):
+    def set_item_properties(self, body):
         item_id = int(body["item_id"])
-        stack_size = max(1, int(body["stack_size"]))
-        if stack_size > MAX_ITEM_STACK_SIZE:
-            raise ValueError(f"stack_size exceeds DUNE_ADMIN_MAX_ITEM_STACK_SIZE={MAX_ITEM_STACK_SIZE}")
-        item = query("select * from dune.load_item(%s)", (item_id,))
-        if not item:
-            raise ValueError("item_id does not exist")
-        row = item[0]
-        execute("""
-            select dune.save_item((
-                %s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s
-            )::dune.inventoryitem)
-        """, (
-            item_id,
-            row["inventory_id"],
-            stack_size,
-            row["position_index"],
-            row["template_id"],
-            row.get("is_new", True),
-            row["acquisition_time"],
-            json.dumps(row.get("stats") or {}),
-            row["quality_level"],
-            row.get("volume_override"),
-        ))
-        return {"ok": True, "item_id": item_id, "stack_size": stack_size, "item": query("select * from dune.load_item(%s)", (item_id,))}
+        with db_connect() as conn:
+            try:
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
+                    cursor.execute("select * from dune.items where id=%s for update", (item_id,))
+                    row = cursor.fetchone()
+                    if not row:
+                        raise ValueError("item_id does not exist")
+                    row = dict(row)
+                    stack_size = max(1, int(body.get("stack_size", body.get("stackSize", row["stack_size"]))))
+                    if stack_size > MAX_ITEM_STACK_SIZE:
+                        raise ValueError(f"stack_size exceeds DUNE_ADMIN_MAX_ITEM_STACK_SIZE={MAX_ITEM_STACK_SIZE}")
+                    quality_level = int(body.get("quality_level", body.get("qualityLevel", row["quality_level"])))
+                    if quality_level < 0 or quality_level > 100:
+                        raise ValueError("quality_level must be between 0 and 100")
+                    cursor.execute("""
+                        select ps.account_id,ps.character_name,eps.online_status::text as online_status
+                        from dune.inventories inv
+                        join dune.player_state ps on ps.player_pawn_id=inv.actor_id or ps.player_controller_id=inv.actor_id
+                        join dune.encrypted_player_state eps on eps.account_id=ps.account_id
+                        where inv.id=%s
+                        for update of eps
+                    """, (row["inventory_id"],))
+                    owner = cursor.fetchone()
+                    if owner and str(owner.get("online_status") or "").lower() != "offline":
+                        raise ValueError("player must be offline before item stack or quality changes")
+                    cursor.execute("""
+                        select dune.save_item((
+                            %s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s
+                        )::dune.inventoryitem)
+                    """, (
+                        item_id,
+                        row["inventory_id"],
+                        stack_size,
+                        row["position_index"],
+                        row["template_id"],
+                        row.get("is_new", True),
+                        row["acquisition_time"],
+                        json.dumps(row.get("stats") or {}),
+                        quality_level,
+                        row.get("volume_override"),
+                    ))
+                    cursor.execute("select * from dune.load_item(%s)", (item_id,))
+                    after_row = cursor.fetchone()
+                    if not after_row or int(after_row["stack_size"]) != stack_size or int(after_row["quality_level"]) != quality_level:
+                        raise RuntimeError("item property verification failed")
+                    after = dict(after_row)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return {"ok": True, "item_id": item_id, "stack_size": stack_size, "quality_level": quality_level,
+                "before": row, "item": [after], "offlineVerified": bool(owner), "transactionVerified": True}
+
+    def set_item_stack(self, body):
+        return self.set_item_properties(body)
 
     def ops_health(self):
         farm = query("select server_id,farm_id,ready,alive,map,revision,game_addr,game_port,igw_addr,igw_port,connected_players from dune.farm_state order by map, server_id")
@@ -12902,10 +12982,11 @@ function inventoryItemOptions(rows){
     const itemId = r.item_id ?? r.id ?? '';
     const template = r.template_id || r.item_template_id || 'item';
     const stack = r.stack_size ?? r.stack_count ?? '';
+    const quality = r.quality_level ?? 0;
     const inventory = r.inventory_id ?? '';
     const position = r.position_index ?? r.slot_index ?? '';
-    const label = `${template} | id ${itemId} | inv ${inventory} | stack ${stack} | pos ${position}`;
-    return `<option value="${esc(itemId)}" data-stack="${esc(stack)}" data-template="${esc(template)}" data-inventory="${esc(inventory)}">${esc(label)}</option>`;
+    const label = `${template} | id ${itemId} | inv ${inventory} | stack ${stack} | quality ${quality} | pos ${position}`;
+    return `<option value="${esc(itemId)}" data-stack="${esc(stack)}" data-quality="${esc(quality)}" data-template="${esc(template)}" data-inventory="${esc(inventory)}">${esc(label)}</option>`;
   }).join('');
 }
 function templateDatalist(ref){
@@ -15384,12 +15465,14 @@ async function communityRewards(serial=loadSerial){
   const tracks = (data.tracks || []).map(row => ({id:row.id,version:row.version,name:row.name,enabled:!!row.enabled,levels:(row.levels || []).length,startsAt:row.starts_at || '',endsAt:row.ends_at || ''}));
   const counts = data.deliveryCounts || {};
   const account = data.account || {};
+  const engagement = data.engagement || {};
+  const engagementPolicy = data.engagementPolicy || {};
   view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Community Rewards</h2><div class="toolbar"><span class="pill ${data.featureEnabled ? 'ok' : 'bad'}">feature ${data.featureEnabled ? 'enabled' : 'disabled'}</span><span class="pill ${data.deliveryEnabled ? 'ok' : 'warn'}">delivery ${data.deliveryEnabled ? 'enabled' : 'paused'}</span><span class="pill ${data.ledger?.ok ? 'ok' : 'bad'}">ledger ${data.ledger?.ok ? 'verified' : 'FAILED'}</span><button id="communitySyncBtn">Sync config</button><button id="communityTickBtn" class="primary">Run one tick</button></div></div>
-  <div class="metricGrid"><div class="metric"><div class="label">Ledger entries</div><div class="value">${esc(data.ledger?.entries || 0)}</div></div><div class="metric"><div class="label">Queued / retry</div><div class="value">${esc((counts.queued || 0) + (counts.retry || 0))}</div></div><div class="metric"><div class="label">Reconciliation</div><div class="value">${esc(counts.reconciliation || 0)}</div></div><div class="metric"><div class="label">Worker</div><div class="value">${esc(data.runtime?.lastError ? 'error' : data.runtime?.running ? 'running' : 'starting')}</div></div></div>
-  <div class="panelBand"><p class="muted">Community credits are isolated from game Solari. Wallet, stock, order, webhook, track, and delivery changes are transactional. Delivery waits for the player to be offline; ambiguous game outcomes require explicit reconciliation and are not automatically refunded.</p><div class="grid"><label>Dune account ID<input id="communityAccountId" inputmode="numeric" value="${esc(accountId)}"></label><label>&nbsp;<button id="communityLoadAccountBtn" class="primary">Load account</button></label></div></div>
+  <div class="metricGrid"><div class="metric"><div class="label">Ledger entries</div><div class="value">${esc(data.ledger?.entries || 0)}</div></div><div class="metric"><div class="label">Queued / retry</div><div class="value">${esc((counts.queued || 0) + (counts.retry || 0))}</div></div><div class="metric"><div class="label">Active today</div><div class="value">${esc(engagement.activeToday || 0)}</div></div><div class="metric"><div class="label">Engagement claims</div><div class="value">${esc(Object.values(engagement.claims || {}).reduce((sum,value)=>sum+Number(value||0),0))}</div></div><div class="metric"><div class="label">Reconciliation</div><div class="value">${esc(counts.reconciliation || 0)}</div></div><div class="metric"><div class="label">Worker</div><div class="value">${esc(data.runtime?.lastError ? 'error' : data.runtime?.running ? 'running' : 'starting')}</div></div></div>
+  <div class="panelBand"><p class="muted">Community credits are isolated from game Solari. Wallet, stock, order, webhook, track, engagement-claim, and delivery changes are transactional. Movement-verified hourly, daily-streak, and weekly-threshold rewards use coarse persisted actor coordinates plus a bounded activity grace window; missing coordinates never imply activity. Item delivery waits for the player to be offline, and ambiguous game outcomes require explicit reconciliation.</p><div class="toolbar"><span class="pill ${engagementPolicy.enabled ? 'ok' : 'warn'}">engagement ${engagementPolicy.enabled ? 'enabled' : 'disabled'}</span><span class="pill">movement ≥ ${esc(engagementPolicy.minimumMovementDistance ?? 0)}</span><span class="pill">coordinate grid ${esc(engagementPolicy.coordinatePrecision ?? 10)}</span><span class="pill">grace ${esc(engagementPolicy.movementGraceSeconds ?? 0)}s</span><span class="pill">tracked ${esc(engagement.trackedAccounts || 0)}</span></div><div class="grid"><label>Dune account ID<input id="communityAccountId" inputmode="numeric" value="${esc(accountId)}"></label><label>&nbsp;<button id="communityLoadAccountBtn" class="primary">Load account</button></label></div></div>
   <div class="threeCol"><div class="panelBand"><h2>Account link</h2><p>Loaded balance: <b>${account.dune_account_id ? esc(account.balance) : 'not loaded'}</b></p><button id="communityLinkCodeBtn" class="primary">Create one-time link code</button><pre id="communityLinkResult"></pre></div><div class="panelBand"><h2>Manual credit</h2><div class="grid"><label>Amount<input id="communityCreditAmount" type="number" min="1" value="10"></label><label>Unique reference<input id="communityCreditReference" value="manual:${Date.now()}"></label></div><label>Audit note<input id="communityCreditNote"></label><button id="communityCreditBtn" class="danger">Credit wallet</button><pre id="communityCreditResult"></pre></div><div class="panelBand"><h2>Purchase / claim</h2><label>Offer<select id="communityOfferId">${offers.filter(row => row.enabled).map(row => `<option value="${esc(row.id)}">${esc(row.name)} · ${esc(row.price)}</option>`).join('')}</select></label><label>Quantity<input id="communityOfferQuantity" type="number" min="1" max="100" value="1"></label><button id="communityPurchaseBtn" class="primary">Queue purchase</button><hr><div class="grid"><label>Track ID<input id="communityTrackId" value="${esc(tracks[0]?.id || '')}"></label><label>Level<input id="communityTrackLevel" type="number" min="1" value="1"></label></div><button id="communityClaimBtn">Claim level</button><pre id="communityPurchaseResult"></pre></div></div>
   <div class="panelBand"><h2>Offers and kits</h2>${table(offers)}</div><div class="panelBand"><h2>Reward tracks</h2>${table(tracks)}</div>
-  ${account.dune_account_id ? `<div class="twoCol"><div class="panelBand"><h2>Account ledger</h2>${table(data.ledgerEntries || [])}</div><div class="panelBand"><h2>Purchases</h2>${table(data.purchases || [])}<h2>Track progress</h2>${table(data.progress || [])}</div></div><div class="panelBand"><h2>Deliveries</h2>${table(data.deliveries || [])}</div>` : ''}
+  ${account.dune_account_id ? `<div class="twoCol"><div class="panelBand"><h2>Account ledger</h2>${table(data.ledgerEntries || [])}</div><div class="panelBand"><h2>Purchases</h2>${table(data.purchases || [])}<h2>Track progress</h2>${table(data.progress || [])}</div></div><div class="panelBand"><h2>Movement-verified engagement</h2>${table(data.engagementCheckpoint ? [data.engagementCheckpoint] : [])}<h3>Daily streak</h3>${table(data.engagementDays || [])}<h3>Weekly active time</h3>${table(data.engagementWeeks || [])}<h3>Append-only reward claims</h3>${table(data.engagementClaims || [])}</div><div class="panelBand"><h2>Deliveries</h2>${table(data.deliveries || [])}</div>` : ''}
   <details class="panelBand"><summary>Resolve ambiguous delivery</summary><div class="grid"><label>Delivery ID<input id="communityReconcileId"></label><label>Observed result<select id="communityReconcileDelivered"><option value="true">Delivered</option><option value="false">Failed — refund purchase</option></select></label></div><label>Evidence / reason<input id="communityReconcileReason"></label><button id="communityReconcileBtn" class="danger">Resolve reconciliation</button><pre id="communityReconcileResult"></pre></details>
   <details class="panelBand"><summary>Versioned policy and catalog JSON</summary><p class="muted">Saving validates the entire document, backs up the prior file, then synchronizes offers and tracks. Increment an offer version to reset configured stock.</p><textarea id="communityConfigText">${esc(configs['community-rewards.json'] || '')}</textarea><button id="communitySaveConfigBtn" class="danger">Validate and save config</button><pre id="communityConfigResult"></pre></details></div>`;
   document.getElementById('communityLoadAccountBtn').onclick=()=>{const value=document.getElementById('communityAccountId').value.trim(); if(value) sessionStorage.setItem('duneCommunityAccountId',value); else sessionStorage.removeItem('duneCommunityAccountId'); communityRewards();};
@@ -15693,7 +15776,7 @@ async function mutations(serial=loadSerial){
   ]);
   if (serial !== loadSerial) return;
   const referenceErrors = ref.errors && Object.keys(ref.errors).length ? `<div class="card"><h2>Reference Errors</h2><pre>${esc(JSON.stringify(ref.errors, null, 2))}</pre></div>` : '';
-  view.innerHTML = `<div class="pageStack">${referenceErrors}<div class="sectionHeader"><h2>Admin Actions</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="settings">Settings</button><button data-jump="security">Audit</button></div></div><div class="panelBand"><h2>Target Player</h2><div class="grid"><label>Character<select id="adminCharacterSelect">${characterOptions(characterRows)}</select></label><label>Player controller ID<input id="pcid"></label><label>Account ID<input id="grantAccount" placeholder="auto-select player inventory"></label><label>Character name<input id="grantCharacter" placeholder="auto-select by name"></label></div></div>${runtimeActionPanel(runtimeCatalog)}${offlineTeleportPanel(ref, characterRows)}<div class="panelBand"><h2>Character Slots</h2><div class="grid"><label>Action<select id="slotAction"><option>new-character</option><option>switch-character</option><option>restore-character</option></select></label><label>Target hibernated account ID<input id="slotTargetAccount"></label></div><p><button id="slotInspectBtn" class="primary">Inspect slots</button> <button id="slotPlanBtn" class="primary">Preview swap</button> <button id="slotExecuteBtn" class="danger">Execute swap</button></p><pre id="slotResult"></pre></div><div class="twoCol"><div class="panelBand"><h2>Currency and XP</h2><p class="muted">Select a character first; balances and tracks populate from that player.</p><div class="grid"><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button id="currencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Solari amount<input id="solariAmount" value="20000"></label></div><p><button id="solariInventoryDryRunBtn" class="primary">Preview inventory Solari</button> <button id="solariInventoryGrantBtn" class="danger">Grant inventory Solari</button> <button id="solariBankDryRunBtn" class="primary">Preview bank Solari</button> <button id="solariBankGrantBtn" class="danger">Grant bank Solari</button></p><pre id="solariGrantResult"></pre><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Level for set/new track<input id="xplevel" value="0"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button id="xpBtn" class="primary">Apply XP</button></p></div><div class="panelBand"><h2>Item Grants</h2><p class="muted">Use a known template ID and dry run before writing new items.</p><div class="grid"><label>Known inventory<select id="grantInventorySelect">${inventoryOptions(ref.recentInventories)}</select></label><label>Inventory ID<input id="grantInventory" placeholder="explicit inventory"></label><label class="hidden">Character<select id="grantCharacterSelect">${characterOptions(characterRows)}</select></label><label>Inventory type<select id="grantInventoryType">${inventoryTypeOptions(ref.inventoryTypes)}</select></label><label>Template ID<input id="grantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><details><summary>Advanced stats JSON</summary><textarea id="grantStats">{}</textarea></details><p><button id="dryRunItemBtn" class="primary">Dry run</button> <button id="grantItemBtn" class="danger">Grant item</button></p><pre id="grantResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Item Maintenance</h2><div class="grid"><label class="hidden">Character<select id="itemCharacterSelect">${characterOptions(characterRows)}</select></label><label>Owned item<select id="itemEditSelect"><option value="">Select a character first</option></select></label><label>Item ID<input id="itemEditId"></label><label>New stack size<input id="itemEditStack" value="1"></label><label>Delete count<input id="itemDeleteCount" placeholder="blank/all"></label></div><p><button id="setItemStackBtn" class="primary">Set stack</button> <button id="deleteItemBtn" class="danger">Delete item/count</button></p><pre id="itemEditResult"></pre></div><div class="panelBand"><h2>Specialization Keystones</h2><div class="grid"><label>Player/controller ID<input id="keyPlayer"></label><label>Keystone<select id="keystone">${options(ref.keystones, 'name')}</select></label></div><p><button id="purchaseKeystoneBtn" class="primary">Purchase keystone</button> <button id="resetKeystonesBtn" class="danger">Reset all keystones</button></p><pre id="keystoneResult"></pre></div></div><details class="panelBand"><summary>Backup</summary><p class="muted">Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button id="backupBtn" class="primary">Create DB backup</button><pre id="backupResult"></pre></details><datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><details class="panelBand"><summary>Known Item Templates</summary>${table(ref.knownItemTemplates)}</details><details class="panelBand"><summary>Observed Item Templates</summary>${table(ref.observedItemTemplates)}</details><details class="panelBand"><summary>Recent Inventories</summary>${table(ref.recentInventories)}</details><details class="panelBand"><summary>Inventory Types</summary>${table(ref.inventoryTypes)}</details></div>`;
+  view.innerHTML = `<div class="pageStack">${referenceErrors}<div class="sectionHeader"><h2>Admin Actions</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="settings">Settings</button><button data-jump="security">Audit</button></div></div><div class="panelBand"><h2>Target Player</h2><div class="grid"><label>Character<select id="adminCharacterSelect">${characterOptions(characterRows)}</select></label><label>Player controller ID<input id="pcid"></label><label>Account ID<input id="grantAccount" placeholder="auto-select player inventory"></label><label>Character name<input id="grantCharacter" placeholder="auto-select by name"></label></div></div>${runtimeActionPanel(runtimeCatalog)}${offlineTeleportPanel(ref, characterRows)}<div class="panelBand"><h2>Character Slots</h2><div class="grid"><label>Action<select id="slotAction"><option>new-character</option><option>switch-character</option><option>restore-character</option></select></label><label>Target hibernated account ID<input id="slotTargetAccount"></label></div><p><button id="slotInspectBtn" class="primary">Inspect slots</button> <button id="slotPlanBtn" class="primary">Preview swap</button> <button id="slotExecuteBtn" class="danger">Execute swap</button></p><pre id="slotResult"></pre></div><div class="twoCol"><div class="panelBand"><h2>Currency and XP</h2><p class="muted">Select a character first; balances and tracks populate from that player.</p><div class="grid"><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button id="currencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Solari amount<input id="solariAmount" value="20000"></label></div><p><button id="solariInventoryDryRunBtn" class="primary">Preview inventory Solari</button> <button id="solariInventoryGrantBtn" class="danger">Grant inventory Solari</button> <button id="solariBankDryRunBtn" class="primary">Preview bank Solari</button> <button id="solariBankGrantBtn" class="danger">Grant bank Solari</button></p><pre id="solariGrantResult"></pre><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Level for set/new track<input id="xplevel" value="0"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button id="xpBtn" class="primary">Apply XP</button></p></div><div class="panelBand"><h2>Item Grants</h2><p class="muted">Use a known template ID and dry run before writing new items.</p><div class="grid"><label>Known inventory<select id="grantInventorySelect">${inventoryOptions(ref.recentInventories)}</select></label><label>Inventory ID<input id="grantInventory" placeholder="explicit inventory"></label><label class="hidden">Character<select id="grantCharacterSelect">${characterOptions(characterRows)}</select></label><label>Inventory type<select id="grantInventoryType">${inventoryTypeOptions(ref.inventoryTypes)}</select></label><label>Template ID<input id="grantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><details><summary>Advanced stats JSON</summary><textarea id="grantStats">{}</textarea></details><p><button id="dryRunItemBtn" class="primary">Dry run</button> <button id="grantItemBtn" class="danger">Grant item</button></p><pre id="grantResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Item Maintenance</h2><p class="muted">Stack/quality changes require the owning player to be offline, create a database backup, preserve every other item field, and verify the saved row. Relog to refresh the client.</p><div class="grid"><label class="hidden">Character<select id="itemCharacterSelect">${characterOptions(characterRows)}</select></label><label>Owned item<select id="itemEditSelect"><option value="">Select a character first</option></select></label><label>Item ID<input id="itemEditId"></label><label>New stack size<input id="itemEditStack" value="1"></label><label>New quality level<input id="itemEditQuality" type="number" min="0" max="100" value="0"></label><label>Delete count<input id="itemDeleteCount" placeholder="blank/all"></label></div><p><button id="setItemStackBtn" class="primary">Set stack + quality</button> <button id="deleteItemBtn" class="danger">Delete item/count</button></p><pre id="itemEditResult"></pre></div><div class="panelBand"><h2>Specialization Keystones</h2><div class="grid"><label>Player/controller ID<input id="keyPlayer"></label><label>Keystone<select id="keystone">${options(ref.keystones, 'name')}</select></label></div><p><button id="purchaseKeystoneBtn" class="primary">Purchase keystone</button> <button id="resetKeystonesBtn" class="danger">Reset all keystones</button></p><pre id="keystoneResult"></pre></div></div><details class="panelBand"><summary>Backup</summary><p class="muted">Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button id="backupBtn" class="primary">Create DB backup</button><pre id="backupResult"></pre></details><datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><details class="panelBand"><summary>Known Item Templates</summary>${table(ref.knownItemTemplates)}</details><details class="panelBand"><summary>Observed Item Templates</summary>${table(ref.observedItemTemplates)}</details><details class="panelBand"><summary>Recent Inventories</summary>${table(ref.recentInventories)}</details><details class="panelBand"><summary>Inventory Types</summary>${table(ref.inventoryTypes)}</details></div>`;
   mountProgressionMaintenanceControls();
   mountVisualItemCatalog();
   const loadCharacterAdminDetails = async (accountId, serial=detailLoadSerial) => {
@@ -15771,6 +15854,7 @@ async function mutations(serial=loadSerial){
     const option = e.target.selectedOptions?.[0];
     document.getElementById('itemEditId').value = e.target.value || '';
     if (option?.dataset.stack) document.getElementById('itemEditStack').value = option.dataset.stack;
+    if (option?.dataset.quality != null) document.getElementById('itemEditQuality').value = option.dataset.quality;
     if (option?.dataset.template && document.getElementById('grantTemplate')) document.getElementById('grantTemplate').value = option.dataset.template;
     if (option?.dataset.inventory && document.getElementById('grantInventory')) document.getElementById('grantInventory').value = option.dataset.inventory;
     const choices = document.getElementById('itemAugmentOptions');
@@ -16037,8 +16121,8 @@ async function grantItemForAccount(accountId, dryRun=false){
   return true;
 }
 async function setItemStack(){
-  if (!confirm('Set this item stack size?')) return;
-  const result = await api('/api/admin/item/stack', {method:'POST', body:JSON.stringify({item_id:itemEditId.value,stack_size:itemEditStack.value,confirm:'SET STACK'})});
+  if (!confirm('Set this offline item stack size and quality after creating a database backup?')) return;
+  const result = await api('/api/admin/item/stack', {method:'POST', body:JSON.stringify({item_id:itemEditId.value,stack_size:itemEditStack.value,quality_level:itemEditQuality.value,confirm:'SET ITEM PROPERTIES'})});
   document.getElementById('itemEditResult').textContent = JSON.stringify(result, null, 2);
 }
 async function deleteItem(){

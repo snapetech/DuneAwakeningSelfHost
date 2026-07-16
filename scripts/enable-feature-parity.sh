@@ -84,7 +84,13 @@ set_value() {
 for key in "${keys[@]}"; do set_value "$key" true; done
 if [[ ! -f "$repo_root/config/community-rewards.json" ]]; then
   install -m 600 "$repo_root/config/community-rewards.example.json" "$repo_root/config/community-rewards.json"
+else
+  python3 "$repo_root/scripts/merge-community-engagement-policy.py" \
+    "$repo_root/config/community-rewards.json" \
+    "$repo_root/config/community-rewards.example.json" \
+    "$repo_root/backups/admin-panel/config-upgrades"
 fi
+chmod 600 "$repo_root/config/community-rewards.json"
 mkdir -p "$repo_root/config/secrets"
 chmod 700 "$repo_root/config/secrets"
 for provider in vote payment; do

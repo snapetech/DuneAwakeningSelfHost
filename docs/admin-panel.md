@@ -270,8 +270,8 @@ server {
 - Asynchronous signed delivery of filtered audit events to generic HTTPS or Discord webhook receivers, with bounded retry/queue/rate controls, recursive redaction, and redirect refusal. Authenticated runtime status is available at `GET /api/ops/webhooks`; see [`outbound-webhooks.md`](outbound-webhooks.md).
 - Known item template, observed item template, inventory, and inventory-type references.
 - Player dropdowns in Admin Actions for currency, carried/bank Solari, XP, keystones, item grant targeting, and item maintenance.
-- Selected players pre-populate controller/account/name fields, current currency and specialization selectors, owned inventories, and owned inventory items for stack edits or deletion.
-- Exact-template item grants, dry-runs, stack edits, and item deletion behind admin gates.
+- Selected players pre-populate controller/account/name fields, current currency and specialization selectors, owned inventories, and owned inventory items for stack/quality edits or deletion.
+- Exact-template item grants, dry-runs, and item deletion behind admin gates. Existing-item stack/quality edits require the player offline, create a database backup, lock the item and owner state in one transaction, recheck offline state under that lock, preserve every other `inventoryitem` field through `dune.save_item`, verify both saved values before commit, and require a relog for the client cache.
 - Visual item-grant catalog with cached same-origin icons, name/template/category search, tier and max-stack metadata, favorites, an inspection tray, and an explicit final confirmation. Refresh committed metadata with `scripts/sync-item-catalog.py`; icon binaries are cached under ignored `backups/admin-panel/item-icons/` on first view.
 
 ## Content Catalog and Safe Expansion

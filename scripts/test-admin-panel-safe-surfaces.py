@@ -1504,6 +1504,21 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertEqual(phases, ["stop", "update", "start"])
         self.assertEqual(result["disconnect"]["skipped"], "soft disconnect not required for this maintenance job")
 
+    def test_immediate_restart_with_announcement_gets_future_timestamp(self):
+        captured = {}
+        self.panel.schedule_announcement = lambda body: captured.update(body) or {"ok": True}
+        job = self.panel.schedule_restart({
+            "target": "all",
+            "action": "restart",
+            "delay": "immediate",
+            "message": "maintenance now",
+            "announce": True,
+            "execute": False,
+        })
+
+        self.assertGreater(job["runAt"], job["createdAt"])
+        self.assertEqual(captured["restart_at"], job["runAt"])
+
     def test_partition_31_adds_deep_desert_pvp_to_restart_targets(self):
         workspace = pathlib.Path(tempfile.mkdtemp())
         self.addCleanup(lambda: __import__("shutil").rmtree(workspace, ignore_errors=True))
@@ -1534,6 +1549,20 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertEqual(result["verificationMode"], "autoscaler-always-on")
         self.assertEqual(result["requiredServices"], ["survival", "overmap"])
         self.assertEqual(captured["params"], ([1, 2],))
+
+    def test_autoscaler_does_not_mutate_maps_during_maintenance(self):
+        self.panel.read_restart_state = lambda: {
+            "jobs": [{"id": "maintenance", "execute": True, "status": "executing"}]
+        }
+        self.panel.autoscaler_public_state = lambda include_inventory=False: {"enabled": True}
+        self.panel.read_autoscaler_state = lambda: (_ for _ in ()).throw(
+            AssertionError("autoscaler state reconciliation must not start during maintenance")
+        )
+
+        result = self.panel.autoscaler_tick()
+
+        self.assertTrue(result["skipped"])
+        self.assertEqual(result["reason"], "maintenance restart is executing")
 
     def test_restart_fails_closed_after_update_check_failure(self):
         command = self.workspace / "scripts" / "restart-target.sh"
@@ -2917,6 +2946,115 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertTrue(result["readOnly"])
         self.assertEqual(result["items"][0]["template_id"], "Water")
         self.assertTrue(all(params == (88,) for _, params in calls))
+
+    def test_item_stack_and_quality_edit_is_offline_preserving_and_verified(self):
+        state = {
+            "id": 500,
+            "inventory_id": 90,
+            "stack_size": 2,
+            "position_index": 3,
+            "template_id": "WaterPack_Consumable",
+            "is_new": True,
+            "acquisition_time": 1234,
+            "stats": {"kept": True},
+            "quality_level": 1,
+            "volume_override": None,
+        }
+        events = []
+
+        class FakeCursor:
+            def __enter__(self): return self
+            def __exit__(self, exc_type, exc, tb): return False
+            def execute(self, sql, params=None):
+                normalized = " ".join(sql.split())
+                events.append(("execute", normalized, params))
+                if "select * from dune.items" in normalized:
+                    self.result = dict(state)
+                elif "from dune.inventories inv" in normalized:
+                    self.result = {"account_id": 42, "character_name": "Tester", "online_status": "Offline"}
+                elif "dune.save_item" in normalized:
+                    state["stack_size"] = params[2]
+                    state["quality_level"] = params[8]
+                    self.result = None
+                elif "dune.load_item" in normalized:
+                    self.result = dict(state)
+            def fetchone(self): return self.result
+
+        class FakeConn:
+            def __enter__(self): return self
+            def __exit__(self, exc_type, exc, tb): return False
+            def cursor(self, cursor_factory=None): return FakeCursor()
+            def commit(self): events.append(("commit",))
+            def rollback(self): events.append(("rollback",))
+
+        self.patch_connect(lambda: FakeConn())
+        handler = object.__new__(self.panel.Handler)
+        result = handler.set_item_properties({"item_id": 500, "stack_size": 7, "quality_level": 4})
+
+        self.assertEqual(7, result["stack_size"])
+        self.assertEqual(4, result["quality_level"])
+        self.assertTrue(result["offlineVerified"])
+        save = next(event for event in events if event[0] == "execute" and "dune.save_item" in event[1])
+        self.assertEqual({"kept": True}, json.loads(save[2][7]))
+        self.assertEqual("WaterPack_Consumable", save[2][4])
+        self.assertIn(("commit",), events)
+        self.assertNotIn(("rollback",), events)
+
+    def test_item_property_edit_rejects_online_owner(self):
+        events = []
+        item = {"id": 500, "inventory_id": 90, "stack_size": 2, "position_index": 3,
+                "template_id": "WaterPack_Consumable", "is_new": True, "acquisition_time": 1234,
+                "stats": {}, "quality_level": 1, "volume_override": None}
+
+        class FakeCursor:
+            def __enter__(self): return self
+            def __exit__(self, exc_type, exc, tb): return False
+            def execute(self, sql, params=None):
+                normalized = " ".join(sql.split())
+                events.append(("execute", normalized, params))
+                self.result = {"account_id": 42, "online_status": "Online"} if "from dune.inventories inv" in normalized else dict(item)
+            def fetchone(self): return self.result
+
+        class FakeConn:
+            def __enter__(self): return self
+            def __exit__(self, exc_type, exc, tb): return False
+            def cursor(self, cursor_factory=None): return FakeCursor()
+            def commit(self): events.append(("commit",))
+            def rollback(self): events.append(("rollback",))
+
+        self.patch_connect(lambda: FakeConn())
+        handler = object.__new__(self.panel.Handler)
+        with self.assertRaisesRegex(ValueError, "must be offline"):
+            handler.set_item_properties({"item_id": 500, "stack_size": 7, "quality_level": 4})
+        self.assertIn(("rollback",), events)
+        self.assertFalse(any("dune.save_item" in event[1] for event in events if event[0] == "execute"))
+
+    def test_item_property_route_requires_new_confirmation_and_creates_backup(self):
+        self.patch_flag("MUTATIONS_ENABLED", True)
+        self.patch_flag("ITEM_GRANTS_ENABLED", True)
+        backups = []
+        original_backup = self.panel.create_db_backup
+        original_edit = self.panel.Handler.set_item_properties
+        self.panel.create_db_backup = lambda: backups.append(True) or {"path": "backup.dump", "bytes": 1}
+        self.panel.Handler.set_item_properties = lambda handler, body: {
+            "ok": True, "item_id": int(body["item_id"]), "stack_size": int(body["stack_size"]),
+            "quality_level": int(body["quality_level"]),
+        }
+        self.addCleanup(lambda: setattr(self.panel, "create_db_backup", original_backup))
+        self.addCleanup(lambda: setattr(self.panel.Handler, "set_item_properties", original_edit))
+
+        rejected = self.invoke_post_route("/api/admin/item/stack", {
+            "item_id": 500, "stack_size": 7, "quality_level": 4, "confirm": "SET STACK",
+        })
+        self.assertEqual(401, rejected["errors"][0]["status"])
+        self.assertEqual([], backups)
+
+        accepted = self.invoke_post_route("/api/admin/item/stack", {
+            "item_id": 500, "stack_size": 7, "quality_level": 4, "confirm": "SET ITEM PROPERTIES",
+        })
+        self.assertEqual([], accepted["errors"])
+        self.assertEqual({"path": "backup.dump", "bytes": 1}, accepted["json"]["backup"])
+        self.assertEqual([True], backups)
 
     def test_community_delivery_uses_offline_grant_path_and_completes_receipt(self):
         config_path = self.workspace / "config" / "community-rewards.json"

@@ -8,6 +8,7 @@ import sqlite3
 import tempfile
 import unittest
 import contextlib
+import datetime as dt
 
 import sys
 
@@ -111,6 +112,156 @@ class CommunityRewardsTest(unittest.TestCase):
         self.assertEqual(0, replay["credited"])
         self.assertEqual(4, capped["credited"])
         self.assertEqual(6, self.store.status(42)["account"]["balance"])
+
+    @staticmethod
+    def engagement_policy(**overrides):
+        policy = {
+            "enabled": True,
+            "maxObservationGapSeconds": 120,
+            "minimumMovementDistance": 50,
+            "movementGraceSeconds": 180,
+            "hourly": {"enabled": False},
+            "daily": {"enabled": False},
+            "weekly": {"enabled": False},
+        }
+        policy.update(overrides)
+        return policy
+
+    @staticmethod
+    def location(x, map_name="HaggaBasin", partition=1):
+        return {"map": map_name, "partitionId": partition, "x": x, "y": 0, "z": 0}
+
+    def test_engagement_requires_movement_then_uses_bounded_grace(self):
+        policy = self.engagement_policy()
+        first = self.store.observe_engagement(42, True, 1000, self.location(0), policy)
+        still = self.store.observe_engagement(42, True, 1060, self.location(0), policy)
+        moved = self.store.observe_engagement(42, True, 1120, self.location(54), policy)
+        grace = self.store.observe_engagement(42, True, 1180, self.location(54), policy)
+        idle = self.store.observe_engagement(42, True, 1361, self.location(54), policy)
+        replay = self.store.observe_engagement(42, True, 1361, self.location(200), policy)
+
+        self.assertTrue(first["firstObservation"])
+        self.assertFalse(still["active"])
+        self.assertTrue(moved["moved"])
+        self.assertEqual(50.0, moved["distance"])
+        self.assertEqual(60, moved["activeSeconds"])
+        self.assertEqual(60, grace["activeSeconds"])
+        self.assertEqual(0, idle["activeSeconds"])
+        self.assertTrue(replay["replay"])
+        self.assertEqual(50.0, self.store.status(42)["engagementCheckpoint"]["x"])
+
+    def test_engagement_does_not_infer_activity_without_coordinates(self):
+        policy = self.engagement_policy()
+        self.store.observe_engagement(42, True, 1000, {"map": "HaggaBasin"}, policy)
+        result = self.store.observe_engagement(42, True, 1060, {"map": "HaggaBasin"}, policy)
+        self.assertFalse(result["active"])
+        self.assertEqual([], result["rewards"])
+
+    def test_daily_streak_rewards_are_idempotent_and_reset_after_gap(self):
+        policy = self.engagement_policy(daily={
+            "enabled": True,
+            "repeatLast": True,
+            "tiers": [
+                {"day": 1, "reward": {"credits": 5}},
+                {"day": 3, "reward": {"credits": 10}},
+            ],
+        })
+        start = int(dt.datetime(2026, 7, 13, 12, tzinfo=dt.timezone.utc).timestamp())
+        x = 0
+        for day in (0, 1, 2, 4):
+            base = start + day * 86400
+            x += 100
+            self.store.observe_engagement(42, True, base, self.location(x), policy)
+            x += 100
+            result = self.store.observe_engagement(42, True, base + 60, self.location(x), policy)
+            self.assertEqual(1, len(result["rewards"]))
+            replay = self.store.observe_engagement(42, True, base + 60, self.location(x + 100), policy)
+            self.assertTrue(replay["replay"])
+
+        status = self.store.status(42)
+        self.assertEqual([1, 1, 2, 3], sorted(row["streak"] for row in status["engagementDays"]))
+        self.assertEqual(25, status["account"]["balance"])
+        self.assertEqual(4, len(status["engagementClaims"]))
+
+    def test_hourly_scaling_and_weekly_thresholds_share_receipted_rewards(self):
+        policy = self.engagement_policy(
+            hourly={
+                "enabled": True,
+                "intervalSeconds": 60,
+                "maxRewardsPerSession": 3,
+                "tiers": [
+                    {"fromHour": 1, "reward": {"credits": 1}},
+                    {"fromHour": 2, "reward": {"credits": 2, "items": [
+                        {"type": "item", "templateId": "WaterPack_Consumable", "count": 1}
+                    ]}},
+                ],
+            },
+            weekly={
+                "enabled": True,
+                "thresholds": [
+                    {"activeSeconds": 60, "reward": {"credits": 3}},
+                    {"activeSeconds": 120, "reward": {"credits": 4}},
+                ],
+            },
+        )
+        self.store.observe_engagement(42, True, 1000, self.location(0), policy)
+        first = self.store.observe_engagement(42, True, 1060, self.location(100), policy)
+        second = self.store.observe_engagement(42, True, 1120, self.location(200), policy)
+
+        self.assertEqual({"hourly", "weekly"}, {row["kind"] for row in first["rewards"]})
+        self.assertEqual({"hourly", "weekly"}, {row["kind"] for row in second["rewards"]})
+        status = self.store.status(42)
+        self.assertEqual(10, status["account"]["balance"])
+        self.assertEqual(4, len(status["engagementClaims"]))
+        self.assertEqual(1, status["deliveryCounts"]["queued"])
+
+    def test_engagement_track_reward_is_idempotent_and_session_resets_offline(self):
+        policy = self.engagement_policy(hourly={
+            "enabled": True,
+            "intervalSeconds": 60,
+            "maxRewardsPerSession": 1,
+            "tiers": [{"fromHour": 1, "reward": {"track": {"id": "season-1", "xp": 7}}}],
+        })
+        self.store.observe_engagement(42, True, 1000, self.location(0), policy)
+        self.store.observe_engagement(42, True, 1060, self.location(100), policy)
+        self.store.observe_engagement(42, False, 1120, self.location(100), policy)
+        self.store.observe_engagement(42, True, 1180, self.location(200), policy)
+        second_session = self.store.observe_engagement(42, True, 1240, self.location(300), policy)
+
+        self.assertEqual(1, len(second_session["rewards"]))
+        status = self.store.status(42)
+        self.assertEqual(14, status["progress"][0]["xp"])
+        self.assertEqual(2, len(status["engagementClaims"]))
+
+    def test_engagement_claims_are_append_only(self):
+        policy = self.engagement_policy(daily={
+            "enabled": True,
+            "repeatLast": True,
+            "tiers": [{"day": 1, "reward": {"credits": 1}}],
+        })
+        self.store.observe_engagement(42, True, 1000, self.location(0), policy)
+        self.store.observe_engagement(42, True, 1060, self.location(100), policy)
+        with contextlib.closing(self.store.connect()) as conn:
+            with self.assertRaises(sqlite3.DatabaseError):
+                conn.execute("update engagement_claims set tier=2")
+            with self.assertRaises(sqlite3.DatabaseError):
+                conn.execute("delete from engagement_claims")
+
+    def test_engagement_config_rejects_unsorted_thresholds(self):
+        with self.assertRaisesRegex(ValueError, "increasing activeSeconds"):
+            community_rewards.engagement_config({"engagementRewards": {
+                "weekly": {"enabled": True, "thresholds": [
+                    {"activeSeconds": 120, "reward": {"credits": 1}},
+                    {"activeSeconds": 60, "reward": {"credits": 1}},
+                ]}
+            }})
+
+    def test_config_rejects_engagement_reward_with_missing_track(self):
+        config = json.loads(self.config.read_text(encoding="utf-8"))
+        config["engagementRewards"]["hourly"]["tiers"][0]["reward"]["track"]["id"] = "missing-track"
+        self.config.write_text(json.dumps(config), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "unavailable tracks: missing-track"):
+            community_rewards.load_config(self.config)
 
     def test_track_progress_and_claim_are_versioned_and_idempotent(self):
         first = self.store.add_track_progress(42, "season-1", 10, "vote:1")

@@ -25,6 +25,7 @@ test-discord-bot:
 
 test-community-rewards:
 	python3 -m unittest scripts/test-community-rewards.py
+	python3 -m unittest scripts/test-merge-community-engagement-policy.py
 
 community-rewards-check:
 	python3 -c 'import pathlib,sys; sys.path.insert(0,"admin"); import community_rewards; s=community_rewards.Store(pathlib.Path("backups/community-rewards/community.sqlite3"),pathlib.Path("config/community-rewards.json")); print(s.initialize())'

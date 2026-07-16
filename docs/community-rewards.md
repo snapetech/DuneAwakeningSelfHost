@@ -24,6 +24,10 @@ separate from Dune's Solari and player-currency tables.
   both a free duplicate and an unjustified debit.
 - Confirmed-presence playtime accrual with interval remainders, a maximum
   observation gap, and idempotent checkpoints.
+- Movement-verified engagement airdrops with bounded grace, scaled active-session
+  rewards, consecutive UTC-day streaks, ISO-week active-time thresholds, and
+  append-only issuance claims. See
+  [`engagement-airdrops.md`](engagement-airdrops.md).
 - Signed vote and manual-payment credit webhooks with timestamp replay windows,
   provider event IDs, payload collision detection, and per-provider credit caps.
 - Versioned reward tracks, monotonic XP thresholds, idempotent progress sources,
@@ -60,7 +64,9 @@ host:
 ./scripts/enable-feature-parity.sh .env --execute
 ```
 
-It copies the example only when no live config exists, generates independent
+It copies the example when no live config exists. For an older private config,
+it atomically merges only the missing engagement-airdrop block after validation
+and a mode-`0600` backup; existing operator policy wins. It generates independent
 256-bit vote/payment HMAC secrets only when missing, locks the files, and enables:
 
 ```dotenv
@@ -179,6 +185,12 @@ Example policy:
 The `maxObservationGapSeconds` value should be at least one interval. It is an
 anti-overcredit ceiling, not a session timeout.
 
+The separate `engagementRewards` policy adds movement proof, hourly scaling,
+daily streaks, weekly thresholds, community credits, reward-track XP, and
+receipted item airdrops. It tracks every Dune account rather than only linked
+Discord accounts. See [`engagement-airdrops.md`](engagement-airdrops.md) for the
+configuration, exact activity model, state schema, and delivery tradeoff.
+
 ## Signed inbound webhooks
 
 Endpoints:
@@ -284,7 +296,9 @@ make validate
 Tests cover hash-only one-time linking, immutable and verifiable ledger entries,
 credit/webhook/purchase/progress/claim replay, payload collision rejection,
 stock version semantics, bounded playtime accrual, delivery success, automatic
-refund, ambiguous reconciliation, Discord command schemas, and RBAC routing.
+refund, ambiguous reconciliation, movement proof and grace, daily/weekly/session
+engagement claims, combined reward types, Discord command schemas, and RBAC
+routing.
 
 ## Recovery
 

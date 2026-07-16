@@ -561,7 +561,11 @@ delete their world rows. Each committed topology change creates a custom-format
 Postgres backup first. Additional processes have isolated saved-data volumes,
 fixed Docker addresses, and deterministic port pairs. All-farm restart,
 shutdown, full-pool start, and systemd `ExecStop` include these managed
-containers.
+containers. The admin panel's Docker-socket fallback now performs the same
+`stop-managed` / `reconcile` lifecycle through its short-lived host helper;
+it no longer loses generated Sietches merely because the panel image lacks a
+Docker CLI. The helper reads `DUNE_GAME_DB_NAME` from the active env file for
+both topology writes and backups instead of assuming a database named `dune`.
 
 ```bash
 ./scripts/sietches.sh .env list

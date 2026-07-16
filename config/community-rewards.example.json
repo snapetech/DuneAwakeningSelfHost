@@ -13,6 +13,88 @@
     "trackId": "season-1",
     "trackXpPerInterval": 1
   },
+  "engagementRewards": {
+    "enabled": true,
+    "maxObservationGapSeconds": 120,
+    "minimumMovementDistance": 50,
+    "coordinatePrecision": 10,
+    "movementGraceSeconds": 180,
+    "hourly": {
+      "enabled": true,
+      "intervalSeconds": 3600,
+      "maxRewardsPerSession": 6,
+      "tiers": [
+        {
+          "fromHour": 1,
+          "reward": {
+            "credits": 2,
+            "track": {"id": "season-1", "xp": 2}
+          }
+        },
+        {
+          "fromHour": 3,
+          "reward": {
+            "credits": 4,
+            "track": {"id": "season-1", "xp": 4}
+          }
+        }
+      ]
+    },
+    "daily": {
+      "enabled": true,
+      "repeatLast": true,
+      "tiers": [
+        {
+          "day": 1,
+          "reward": {
+            "credits": 5,
+            "items": [
+              {"type": "item", "templateId": "WaterPack_Consumable", "count": 1, "qualityLevel": 0}
+            ]
+          }
+        },
+        {
+          "day": 3,
+          "reward": {
+            "credits": 10,
+            "track": {"id": "season-1", "xp": 5}
+          }
+        },
+        {
+          "day": 7,
+          "reward": {
+            "credits": 20,
+            "track": {"id": "season-1", "xp": 10},
+            "items": [
+              {"type": "item", "templateId": "Bloodsack_02", "count": 1, "qualityLevel": 0}
+            ]
+          }
+        }
+      ]
+    },
+    "weekly": {
+      "enabled": true,
+      "thresholds": [
+        {
+          "activeSeconds": 7200,
+          "reward": {
+            "credits": 25,
+            "track": {"id": "season-1", "xp": 10}
+          }
+        },
+        {
+          "activeSeconds": 18000,
+          "reward": {
+            "credits": 50,
+            "track": {"id": "season-1", "xp": 25},
+            "items": [
+              {"type": "item", "templateId": "WaterPack_Consumable", "count": 2, "qualityLevel": 0}
+            ]
+          }
+        }
+      ]
+    }
+  },
   "webhooks": {
     "vote": {
       "enabled": false,

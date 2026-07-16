@@ -16,7 +16,8 @@ or documented operational path.
 
 ## Audit snapshot
 
-- Audit date: **2026-07-15**, remote HEAD refresh **2026-07-16 UTC**
+- Audit date: **2026-07-15**, full GitHub search and remote HEAD refresh
+  **2026-07-16 15:00 UTC**
 - Search scope: GitHub repository search, project documentation, Funcom's
   self-host guide, CubeCoders' Dune template and guide, Nexus Mods' Dune:
   Awakening category, and public community discussions used only to discover
@@ -58,7 +59,7 @@ webhooks, and Dune-specific announcement/player/status commands.
 | Peer | Pinned revision | Distinct operator outcomes | Confidence |
 | --- | --- | --- | --- |
 | [Red-Blink/dune-awakening-selfhost-docker](https://github.com/Red-Blink/dune-awakening-selfhost-docker) | `12ac3b8b30a0dac3d728a37db65cad4a292750b6` | Docker-native install, browser bootstrap, complete console, map/sietch controls, player administration, care packages, addons, metrics, backup/restore, update/repair | high |
-| [Manaiakalani/arrakis-command-nexus](https://github.com/Manaiakalani/arrakis-command-nexus) | `ed4533e0d95b75f48139cb26d4e6cba70ebb0fd4` | Compose profiles, responsive dashboard, player history/heatmaps, scheduled announcements/restarts, Discord event webhooks, inventory-conflict repair, host/CPU/NIC tuning, VM image builds, authenticated Steam updates, and explicitly disabled maps | high |
+| [Manaiakalani/arrakis-command-nexus](https://github.com/Manaiakalani/arrakis-command-nexus) | `f104462007b3ebb4a2df2f4a99e5a8337952bbdc` | Compose profiles, responsive dashboard, player history/heatmaps, race-free daily scheduled restarts, Discord event webhooks, inventory-conflict repair, host/CPU/NIC tuning, VM image builds, authenticated Steam updates, and explicitly disabled maps | high |
 | [Sponge/Dune-Awakening-Server-Tools](https://git.unityailab.com/Sponge/Dune-Awakening-Server-Tools) | `04689ba704a3f6dd2d19db89a8df3b6d6a2424b2` | Ubuntu installer port, server manager/API, curated CVar catalogue, backup/update/network helpers | moderate |
 | [bneff84/dunedocks](https://github.com/bneff84/dunedocks) | `5b1ec7ce728b8cb62539ae3b55388459f44cab0d` | Single privileged container enclosing the Funcom k3s stack, Unraid-oriented persistence and update-on-start | moderate |
 | [n0logic/dune-linux-tools](https://github.com/n0logic/dune-linux-tools) | `089c8d61841c2f77040d644cb81b8db0f4ecdd39` | Bare-metal Debian/k3s guide, dual PvP/PvE Deep Desert, canonical configuration and memory tuning | moderate |
@@ -67,7 +68,9 @@ webhooks, and Dune-specific announcement/player/status commands.
 
 | Peer | Pinned revision | Distinct operator outcomes | Confidence |
 | --- | --- | --- | --- |
-| [Icehunter/dune-admin](https://github.com/Icehunter/dune-admin) | `f8dc94ad5509d6cbf23a4b4fb76d986e5af1caf4` | AMP/kubectl/Docker/local providers; local and Discord login; fine-grained RBAC; player/world/economy administration; welcome/MOTD; market bot; events; battle pass; scheduled operations | high |
+| [Icehunter/dune-admin](https://github.com/Icehunter/dune-admin) | `b1a86b16d4126e5052fb74f6463fe40ec1bce49a` | AMP/kubectl/Docker/local providers; local and Discord login; fine-grained RBAC; player/world/economy administration including offline stack/quality edits; welcome/MOTD; market bot; events; battle pass; scheduled operations | high |
+| [AlphaNineGaming/AlphaNine-Dune-Suite](https://github.com/AlphaNineGaming/AlphaNine-Dune-Suite) | `bf3126ffcd7de563eda128e486009d21a325af3b` | Windows installer/setup wizard, receiver lifecycle, player/item tools, local live maps, market listings, diagnostics, settings portability, VM scheduling, and PWA metadata | moderate; source is present but current release notes outpace live-runtime evidence |
+| [Nerrowake/sietch-console](https://github.com/Nerrowake/sietch-console) | `80897fc5bc3efcbaff8b00f6a2ce57ba1b1e8aee` | Native Windows profiles, Hyper-V/Steam setup, INI editor, backups/cloud sync, remote API/SSE, diagnostics, metrics and player policy UI | moderate overall; source labels join parsing and kick/ban commands TODO/unverified |
 | [adainrivers/dune-dedicated-server-manager](https://github.com/adainrivers/dune-dedicated-server-manager) | `f7dfeb0d1327273299a03802eb16a71d4523e05c` | Cross-platform desktop profiles and SSH tunnels; lifecycle/diagnostics; scheduled maintenance; live RMQ admin commands; welcome packages | high |
 | [xixACExix/Simple-Dune-Awakening-Manager](https://github.com/xixACExix/Simple-Dune-Awakening-Manager) | `483530671c0bf74c61b059da269ad145de8124ad` | Windows/Hyper-V setup and lifecycle GUI; typed settings, reinstall-safe database/config backup/restore, and a keep-running health/repair watchdog | high |
 | [coastal-ms/DST-DuneServerTool](https://github.com/coastal-ms/DST-DuneServerTool) | `7bafc137ca1d356b9fd4918ef9782956b00500ab` | Windows desktop/mobile/remote UI; Hyper-V management; broad gameplay/CVar editor; map spin-up; Coriolis/Landsraad tools; backup mirroring; gameplay bot; portable command console | high |
@@ -76,6 +79,9 @@ webhooks, and Dune-specific announcement/player/status commands.
 | [jdiveley/dune-dashboard](https://github.com/jdiveley/dune-dashboard) | `323f6d120d062c819e66c3cf034df5db9a3afe65` | Player, account, vehicle, building, guild, storage, market, event, package, map and chat views; browser shell; HTTPS | high |
 | [comfuzio/OpenDune-Director](https://github.com/comfuzio/OpenDune-Director) | `f726e539d85332dd5792d58556c4d1b9d3dbfcaf` | Separate public/admin dashboards; player/vehicle/base radar; offline database teleport; vehicle fetch; over-repair; conntrack peer diagnostics; host telemetry | moderate |
 | [Myers-Technologies-Public/arrakis-command-center](https://github.com/Myers-Technologies-Public/arrakis-command-center) | `17c13b9f3103c52096c69846dc09df0399d035fe` | Small PHP dashboard with player/guild/inventory administration, live logs, config editor, backups and PgHero | moderate |
+| [n00bgames/Easy-Dune-Admin](https://github.com/n00bgames/Easy-Dune-Admin) | `b530670f9488c7e1b5454b1e3983d06f4c7e2d4c` | Red-Blink companion UI with live maps, offline player/vehicle teleport, item/progression/repair kits, market automation, VIP self-service, dual Deep Desert and PWA/Android packaging | high for implemented source; experimental progression paths remain labeled |
+| [jaeblaze1989/Kanly-Dune](https://github.com/jaeblaze1989/Kanly-Dune) | `7acf78a980595bb31e1657c87884934678ba03c3` | One-click companion container, server/player status, INI editing and constrained command automation | moderate |
+| [Gizmo3030/dune-web-admin](https://github.com/Gizmo3030/dune-web-admin) | `64cdf052f35eb7f84d0b8266622f3fbee61ae5da` | HTTPS Hyper-V lifecycle/status delegation for trusted non-shell operators | moderate |
 
 ### Deployment and panel packaging
 
@@ -100,12 +106,22 @@ webhooks, and Dune-specific announcement/player/status commands.
 | [n00bgames/eda-exchange-bot](https://github.com/n00bgames/eda-exchange-bot) | `ed471e473fc02b81e8c7557ca6e218e9b28308bc` | Permissioned Red-Blink addon for exchange seeding, grade-aware pricing and buyback | high |
 | [comfuzio/Dune-Awakening-remote-players-fix](https://github.com/comfuzio/Dune-Awakening-remote-players-fix) | `f47f0c0587bb7f43fc510c36ba76b0fcb4cb8646` | Automated k3s external-player routing repair | moderate |
 | [jeffstokes72/duneawakeningselfhost_ini_maker](https://github.com/jeffstokes72/duneawakeningselfhost_ini_maker) | `9d10bb7b31c1ed950a69d11fe2424f25c8a84a43` | Hosted UserGame/UserEngine INI generator | low to moderate; explicitly work in progress |
+| [atobo/dune-airdrop-addon](https://github.com/atobo/dune-airdrop-addon) | `cb13a7c6777edf6f56a3f73411d9e4a41c911aeb` | Movement/XP-aware playtime drops, daily streaks, weekly attendance, configurable tier multipliers and a retrying command-delivery daemon | high for source presence; runtime requires Dune-schema triggers plus Docker-socket companion |
+| [yacketrj/dune-ops-observability-addon](https://github.com/yacketrj/dune-ops-observability-addon) | `271b45e7494646988bec678316659ef85313e710` | Read-only player summaries, active-rate/level/faction/guild KPIs, explicit capability reporting and constrained addon bridge | high |
 
 The deprecated `thebadwolf79` startup gist and the removed
-`valknight/Easy-Dune-Admin` lineage are recorded as historical sources, not
-current peers. Empty repositories, generic game-host marketing pages, cheat/
+`valknight/Easy-Dune-Admin` repository are historical sources; the active
+`n00bgames/Easy-Dune-Admin` continuation is now a pinned peer. Empty
+repositories, generic game-host marketing pages, cheat/
 crack repositories, SEO “mod menu” repositories, and projects for unrelated
 games were rejected.
+
+`comfuzio/Open-Dune-Insurance` at
+`e59aa6077df3648490b9d6be9d4fe4a6e865ac21` was inspected but rejected as
+parity evidence. Its source explicitly uses placeholder `characters`,
+`inventory_data`, `currency_data`, `is_online`, and `spice_melange` fields that
+do not match the shipped Dune schema; the comments say the exact names still
+need adaptation. A non-executable sketch does not create an operator outcome.
 
 ## Aggregate capability matrix
 
@@ -186,6 +202,7 @@ without reproducing that wrapper.
 | --- | --- | --- | --- |
 | Player/account/profile/search/history | All admin peers | Parity | Online/offline roster and deep detail |
 | Inventory, currency, XP, skills, recipes, journey | Icehunter, the4rchangel, Red-Blink | Parity | Guarded native/DB paths |
+| Existing inventory stack and quality editing | Icehunter 0.45 | DASH exceeds | Combined editor requires the owner offline, creates a full DB backup, locks item/owner state and rechecks offline status in one transaction, preserves all other composite fields through `dune.save_item`, verifies both values before commit, audits the receipt, and documents relog cache behavior |
 | Water, teleport, kick, vehicle spawn | adainrivers, DST, Red-Blink | Parity | Native runtime actions loaded |
 | Ban/unban and moderation case history | Manaiakalani, admin feedback | Parity | Source/schema audit found dashboard-local ban state rather than a native Dune ban contract; DASH adds append-only cases plus repeated confirmed native `KickPlayer` enforcement and labels the lack of login-level rejection |
 | Faction, guild and reputation management | Icehunter, Reditus | Parity | First-party function-backed guarded actions |
@@ -207,6 +224,7 @@ without reproducing that wrapper.
 | Discord shop/catalog/kits | shop system | Parity implementation; live purchase canary pending | Eight player-facing `/dune shop` commands, versioned offers/kits, stock, idempotent orders, and private adapter identity binding; see `docs/community-rewards.md` |
 | External wallet and immutable ledger | shop system | Parity | Isolated SQLite wallet, non-negative constraints, append-only triggers, global SHA-256 hash chain, unique references, and full verification; never game Solari |
 | Playtime rewards | shop system, AMP analytics | Parity | Confirmed presence checkpoints, remainder accounting, bounded observation gaps, idempotent credit and optional track XP |
+| Movement/AFK-aware airdrops, daily streaks and weekly rewards | atobo airdrop addon | DASH exceeds | Map/partition/3D movement proof, bounded grace/gaps, scaled active-session rewards, UTC streaks, ISO-week active-time thresholds, combined credits/track XP/items, append-only claims, and receipted offline delivery without Dune-schema triggers or Docker-socket access; see `docs/engagement-airdrops.md` |
 | Vote/manual-payment reward webhooks | shop system | Parity implementation; provider canary pending | Fresh timestamp plus raw-body HMAC-SHA256, provider/event replay identity, collision rejection, credit caps, and secret files; no processor/card data in DASH |
 | Battle pass/custom reward track | Icehunter | Parity | Versioned tracks, monotonic levels, idempotent progress references, unique claims, and the guarded delivery queue |
 | Custom community events | Icehunter | Parity | Persistent recurring scheduler, dry-run plans, bounded execution ledger, manual run/cancel, announcements/restarts, and signed outbound events |
@@ -302,6 +320,11 @@ only when explicitly authorized for a concrete client task, as required by
   curated gameplay presets, federated identity, bounded browser diagnostics,
   encrypted archives, guarded cosmetics administration, and alternate
   deployment packaging are implemented.
+- **High confidence:** the 2026-07-16 live search added seven credible peers and
+  one rejected placeholder project. New executable outcomes were closed in the
+  same refresh: movement-verified engagement airdrops now exceed the trigger +
+  Docker-socket peer design, and existing-item stack/quality edits add offline,
+  backup, composite-preservation, and post-write verification gates.
 - **Unknown:** end-to-end Discord READY/interaction behavior until an operator
   supplies application, guild, and bot credentials. The unit, adapter, and
   protocol paths are locally validated and the service can wait without a

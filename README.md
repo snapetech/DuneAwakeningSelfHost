@@ -68,13 +68,13 @@ Always compare your `.env` image pin with the Steam package installed on your ho
 - Cache-aware, host-local CPU-affinity generation with guarded no-restart live application, Compose persistence, and rollback.
 - Backup-first Linux sysctl/THP/NIC-ring/IRQ tuning that preserves larger existing network maxima and never restarts Docker.
 - Live inventory slot-integrity audit plus hostname-, backup-, capacity-, and transaction-gated no-delete conflict repair.
-- Guarded admin writes for currency, Solari, XP, skills, water, kick/kick-all, vehicle spawn/repair/refuel, Landsraad rewards/contributions, blueprints, augments, items, care packages, and catalog workflows.
+- Guarded admin writes for currency, Solari, XP, skills, water, kick/kick-all, vehicle spawn/repair/refuel, Landsraad rewards/contributions, blueprints, augments, items, offline transaction-verified stack/quality edits, care packages, and catalog workflows.
 - Searchable character cosmetics/skins with an independently observed 391-ID catalog, optional local-pak catalog generation, exact catalog-confined add/remove, customization-only bulk unlock, Offline row locking, automatic database backups, compare-and-swap verification, private receipts, and guarded rollback.
 - Permissioned Discord adapter routes: read/ops remain role-scoped, community writes are identity-bound and narrowly typed, and generic admin/broadcast writes remain blocked; community UI addons use a SHA-pinned permission-review lifecycle.
 - First-party dependency-free Discord Gateway bot with seven groups and 37 guild-scoped `/dune` subcommands, channel restrictions, ephemeral responses, role propagation, and a hardened credential-waiting systemd service.
 - Named hashed-token admin identities with explicit route capabilities and the original owner token retained as a recovery credential.
 - Signed, filtered outbound audit-event delivery for generic HTTPS receivers and Discord webhooks, with asynchronous bounded retries, recursive redaction, redirect refusal, and secret-free delivery records.
-- An isolated community-credit economy with one-time Discord account linking, immutable hash-chained ledger, atomic shop/kit stock and orders, playtime/vote/manual-payment accrual, versioned reward tracks, offline delivery receipts, and failure refunds.
+- An isolated community-credit economy with one-time Discord account linking, immutable hash-chained ledger, atomic shop/kit stock and orders, playtime/vote/manual-payment accrual, movement-verified scaled session airdrops, daily streaks, weekly active-time thresholds, append-only engagement claims, versioned reward tracks, offline delivery receipts, and failure refunds.
 - Persistent one-time/recurring event automation with safe announcement and non-executing restart-plan primitives, dry-run mutation proposals, manual run/cancel, and a bounded execution ledger.
 - Reproducible backend item-grant helper with dry-run, explicit confirmation, and reviewed display-name labels such as `Complex Machinery` -> `T2MachineComponent`.
 - Restart announcements, restart planner hooks, chat-command bridge, player-presence announcer, and admin-bot monitoring.
@@ -113,9 +113,10 @@ DASH maintains an evidence-backed aggregate comparison against the credible
 Dune: Awakening self-hosting, dashboard, deployment, administration, economy,
 community, and modding-tool ecosystem. The current catalogue covers the
 official Funcom baseline, AMP, Red-Blink, Arrakis Command Nexus, dune-admin,
-Dune Dedicated Server Manager, DST, the active community dashboards, Linux/KVM/
-Proxmox/Pelican deployment projects, Discord/economy tools, Wormageddon, and the
-base designer/gallery.
+AlphaNine Dune Suite, Sietch Console, Easy Dune Admin, Dune Dedicated Server
+Manager, DST, the active community dashboards, Linux/KVM/Proxmox/Pelican
+deployment projects, Discord/economy/airdrop tools, Wormageddon, and the base
+designer/gallery.
 
 The earlier Red-Blink-specific tranche and the feasible aggregate ecosystem
 parity build are complete for the pinned audit snapshot. Guarded inventory
@@ -857,6 +858,9 @@ Start here:
 - [`docs/reproducible-loader-packages.md`](docs/reproducible-loader-packages.md):
   deterministic Linux/Windows loader archives, source/build provenance,
   checksum verification, and reproducibility regression coverage.
+- [`docs/engagement-airdrops.md`](docs/engagement-airdrops.md): movement-verified
+  active-play rewards, daily streaks, weekly thresholds, scaled session drops,
+  append-only claims, and safe queued delivery.
 - [`docs/windows-client-loader-canary-2026-07-15.md`](docs/windows-client-loader-canary-2026-07-15.md):
   build-bound live proxy/root/reflection evidence, negative findings, remaining
   dispatch gates, and verified client cleanup.

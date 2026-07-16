@@ -14,8 +14,12 @@ mkdir -p "$(dirname "$config_file")" "$(dirname "$overlay_file")" "$backup_dir"
 
 read_env() { sed -nE "s/^$1=//p" "$env_file" 2>/dev/null | tail -1; }
 bool_true() { case "${1,,}" in 1|true|yes|on) return 0 ;; *) return 1 ;; esac; }
+database="${DUNE_GAME_DB_NAME:-$(read_env DUNE_GAME_DB_NAME)}"
+database="${database:-${DUNE_DATABASE:-$(read_env DUNE_DATABASE)}}"
+database="${database:-dune}"
+[[ "$database" =~ ^[A-Za-z0-9_]+$ ]] || { printf 'invalid Dune database name: %s\n' "$database" >&2; exit 64; }
 compose=(docker compose --env-file "$env_file" -f "$repo_root/compose.yaml" -f "$repo_root/compose.allmaps.yaml")
-psql_q() { "${compose[@]}" exec -T postgres psql -X -v ON_ERROR_STOP=1 -U dune -d dune "$@"; }
+psql_q() { "${compose[@]}" exec -T postgres psql -X -v ON_ERROR_STOP=1 -U dune -d "$database" "$@"; }
 
 require_execute() {
   local execute="${1:-}" allowed current
@@ -27,7 +31,7 @@ require_execute() {
 
 backup_db() {
   local path="$backup_dir/sietches-$(date -u +%Y%m%dT%H%M%SZ).dump"
-  "${compose[@]}" exec -T postgres pg_dump -Fc -U dune -d dune > "$path"
+  "${compose[@]}" exec -T postgres pg_dump -Fc -U dune -d "$database" > "$path"
   chmod 600 "$path"
   printf '%s' "$path"
 }

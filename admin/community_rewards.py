@@ -20,7 +20,7 @@ import threading
 import uuid
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 MAX_LEDGER_AMOUNT = 1_000_000_000
 MAX_PURCHASE_QUANTITY = 100
 MAX_REWARDS = 100
@@ -71,6 +71,109 @@ def _rewards(value):
     return normalized
 
 
+def _engagement_reward(value):
+    if not isinstance(value, dict):
+        raise ValueError("engagement reward must be an object")
+    credits = int(value.get("credits", 0) or 0)
+    if credits < 0 or credits > MAX_LEDGER_AMOUNT:
+        raise ValueError("engagement reward credits are outside the supported range")
+    items = value.get("items") or []
+    if items:
+        items = _rewards(items)
+    track = value.get("track") or {}
+    if not isinstance(track, dict):
+        raise ValueError("engagement reward track must be an object")
+    track_id = str(track.get("id") or "").strip()
+    track_xp = int(track.get("xp", 0) or 0)
+    if track_xp < 0 or track_xp > MAX_LEDGER_AMOUNT:
+        raise ValueError("engagement reward track XP is outside the supported range")
+    if bool(track_id) != bool(track_xp):
+        raise ValueError("engagement reward track requires both id and positive xp")
+    if track_id:
+        track_id = _identifier(track_id, "engagement reward track id", 64)
+    if not credits and not items and not track_xp:
+        raise ValueError("engagement reward must grant credits, track XP, or items")
+    return {
+        "credits": credits,
+        "items": items,
+        "track": {"id": track_id, "xp": track_xp} if track_id else None,
+    }
+
+
+def engagement_config(config):
+    raw = config.get("engagementRewards") or {}
+    if not isinstance(raw, dict):
+        raise ValueError("engagementRewards must be an object")
+    result = {
+        "enabled": bool(raw.get("enabled", False)),
+        "maxObservationGapSeconds": max(1, min(int(raw.get("maxObservationGapSeconds", 120)), 3600)),
+        "minimumMovementDistance": max(0.0, min(float(raw.get("minimumMovementDistance", 100.0)), 1_000_000.0)),
+        "coordinatePrecision": max(1.0, min(float(raw.get("coordinatePrecision", 10.0)), 100_000.0)),
+        "movementGraceSeconds": max(0, min(int(raw.get("movementGraceSeconds", 120)), 3600)),
+        "hourly": {"enabled": False, "intervalSeconds": 3600, "maxRewardsPerSession": 0, "tiers": []},
+        "daily": {"enabled": False, "repeatLast": False, "tiers": []},
+        "weekly": {"enabled": False, "thresholds": []},
+    }
+    hourly = raw.get("hourly") or {}
+    if not isinstance(hourly, dict):
+        raise ValueError("engagementRewards.hourly must be an object")
+    hourly_tiers = []
+    previous = 0
+    for row in hourly.get("tiers") or []:
+        if not isinstance(row, dict):
+            raise ValueError("hourly reward tiers must be objects")
+        from_hour = _positive_int(row.get("fromHour"), "hourly fromHour", 1000)
+        if from_hour <= previous:
+            raise ValueError("hourly reward tiers must have increasing fromHour values")
+        previous = from_hour
+        hourly_tiers.append({"fromHour": from_hour, "reward": _engagement_reward(row.get("reward"))})
+    result["hourly"] = {
+        "enabled": bool(hourly.get("enabled", False)),
+        "intervalSeconds": _positive_int(hourly.get("intervalSeconds", 3600), "hourly intervalSeconds", 86400),
+        "maxRewardsPerSession": max(0, min(int(hourly.get("maxRewardsPerSession", 8)), 1000)),
+        "tiers": hourly_tiers,
+    }
+    daily = raw.get("daily") or {}
+    if not isinstance(daily, dict):
+        raise ValueError("engagementRewards.daily must be an object")
+    daily_tiers = []
+    previous = 0
+    for row in daily.get("tiers") or []:
+        if not isinstance(row, dict):
+            raise ValueError("daily reward tiers must be objects")
+        day = _positive_int(row.get("day"), "daily day", 10000)
+        if day <= previous:
+            raise ValueError("daily reward tiers must have increasing day values")
+        previous = day
+        daily_tiers.append({"day": day, "reward": _engagement_reward(row.get("reward"))})
+    result["daily"] = {
+        "enabled": bool(daily.get("enabled", False)),
+        "repeatLast": bool(daily.get("repeatLast", False)),
+        "tiers": daily_tiers,
+    }
+    weekly = raw.get("weekly") or {}
+    if not isinstance(weekly, dict):
+        raise ValueError("engagementRewards.weekly must be an object")
+    weekly_thresholds = []
+    previous = 0
+    for row in weekly.get("thresholds") or []:
+        if not isinstance(row, dict):
+            raise ValueError("weekly reward thresholds must be objects")
+        active_seconds = _positive_int(row.get("activeSeconds"), "weekly activeSeconds", 604800)
+        if active_seconds <= previous:
+            raise ValueError("weekly reward thresholds must have increasing activeSeconds values")
+        previous = active_seconds
+        weekly_thresholds.append({"activeSeconds": active_seconds, "reward": _engagement_reward(row.get("reward"))})
+    result["weekly"] = {"enabled": bool(weekly.get("enabled", False)), "thresholds": weekly_thresholds}
+    if result["hourly"]["enabled"] and not hourly_tiers:
+        raise ValueError("enabled hourly engagement rewards require tiers")
+    if result["daily"]["enabled"] and not daily_tiers:
+        raise ValueError("enabled daily engagement rewards require tiers")
+    if result["weekly"]["enabled"] and not weekly_thresholds:
+        raise ValueError("enabled weekly engagement rewards require thresholds")
+    return result
+
+
 def load_config(path):
     path = pathlib.Path(path)
     if not path.exists():
@@ -80,6 +183,21 @@ def load_config(path):
         raise ValueError("community rewards config must be a version 1 object")
     if not isinstance(value.get("offers", []), list) or not isinstance(value.get("tracks", []), list):
         raise ValueError("offers and tracks must be arrays")
+    engagement = engagement_config(value)
+    configured_tracks = {
+        str(row.get("id") or "").strip()
+        for row in value.get("tracks", [])
+        if isinstance(row, dict) and bool(row.get("enabled", True))
+    }
+    engagement_tracks = {
+        row["reward"]["track"]["id"]
+        for section in (engagement["hourly"].get("tiers", []), engagement["daily"].get("tiers", []), engagement["weekly"].get("thresholds", []))
+        for row in section
+        if row["reward"].get("track")
+    }
+    missing_tracks = sorted(engagement_tracks - configured_tracks)
+    if missing_tracks:
+        raise ValueError(f"engagement rewards reference unavailable tracks: {', '.join(missing_tracks)}")
     return value
 
 
@@ -247,6 +365,51 @@ class Store:
                     remainder_seconds integer not null default 0,
                     credited_intervals integer not null default 0
                 );
+                create table if not exists engagement_checkpoints(
+                    dune_account_id integer primary key references accounts(dune_account_id),
+                    observed_at integer not null,
+                    was_online integer not null,
+                    map_name text,
+                    partition_id integer,
+                    x real,
+                    y real,
+                    z real,
+                    last_movement_at integer,
+                    session_started_at integer,
+                    session_active_seconds integer not null default 0,
+                    rewarded_hours integer not null default 0
+                );
+                create table if not exists engagement_days(
+                    dune_account_id integer not null references accounts(dune_account_id),
+                    day text not null,
+                    active_seconds integer not null default 0,
+                    streak integer not null default 0,
+                    first_activity_at integer not null,
+                    last_activity_at integer not null,
+                    primary key(dune_account_id,day)
+                );
+                create table if not exists engagement_weeks(
+                    dune_account_id integer not null references accounts(dune_account_id),
+                    week text not null,
+                    active_seconds integer not null default 0,
+                    first_activity_at integer not null,
+                    last_activity_at integer not null,
+                    primary key(dune_account_id,week)
+                );
+                create table if not exists engagement_claims(
+                    id text primary key,
+                    dune_account_id integer not null references accounts(dune_account_id),
+                    kind text not null,
+                    period_key text not null,
+                    tier integer not null,
+                    reward_json text not null,
+                    delivery_id text unique,
+                    ledger_id text,
+                    created_at text not null,
+                    unique(dune_account_id,kind,period_key,tier)
+                );
+                create trigger if not exists engagement_claims_no_update before update on engagement_claims begin select raise(abort, 'engagement claims are append-only'); end;
+                create trigger if not exists engagement_claims_no_delete before delete on engagement_claims begin select raise(abort, 'engagement claims are append-only'); end;
                 create table if not exists tracks(
                     id text not null,
                     version integer not null,
@@ -583,26 +746,186 @@ class Store:
                 balance = self._append_ledger(conn, account_id, credited, "playtime", reference, {"seconds": intervals * interval})["balance"]
             return {"ok": True, "credited": credited, "intervals": intervals, "remainderSeconds": remainder, "balance": balance}
 
-    def add_track_progress(self, dune_account_id, track_id, amount, reference):
+    @staticmethod
+    def _location(value, precision=10.0):
+        if not isinstance(value, dict):
+            return {"map": None, "partitionId": None, "x": None, "y": None, "z": None}
+        result = {
+            "map": str(value.get("map") or "").strip() or None,
+            "partitionId": None,
+            "x": None,
+            "y": None,
+            "z": None,
+        }
+        if value.get("partitionId", value.get("partition_id")) not in (None, ""):
+            result["partitionId"] = int(value.get("partitionId", value.get("partition_id")))
+        for key in ("x", "y", "z"):
+            if value.get(key) not in (None, ""):
+                result[key] = round(float(value[key]) / float(precision)) * float(precision)
+        return result
+
+    @staticmethod
+    def _movement_proven(previous, current, minimum_distance):
+        if not previous.get("map") or not current.get("map"):
+            return False, None
+        if previous.get("map") != current.get("map") or previous.get("partitionId") != current.get("partitionId"):
+            return True, None
+        if any(previous.get(key) is None or current.get(key) is None for key in ("x", "y", "z")):
+            return False, None
+        distance = sum((float(current[key]) - float(previous[key])) ** 2 for key in ("x", "y", "z")) ** 0.5
+        return distance >= float(minimum_distance), distance
+
+    @staticmethod
+    def _tier_for(rows, key, value):
+        selected = None
+        for row in rows:
+            if int(row[key]) <= int(value):
+                selected = row
+            else:
+                break
+        return selected
+
+    def _add_track_progress(self, conn, account_id, track_id, amount, reference):
         amount = _positive_int(amount, "amount")
+        track = conn.execute("select * from tracks where id=? and enabled=1 order by version desc limit 1", (str(track_id),)).fetchone()
+        if not track:
+            raise ValueError(f"reward track {track_id!r} is unavailable")
+        marker = f"track-progress:{track['id']}:{track['version']}:{_identifier(reference, 'reference', 128)}"
+        if conn.execute("select 1 from metadata where key=?", (marker,)).fetchone():
+            progress = conn.execute("select xp from track_progress where dune_account_id=? and track_id=? and track_version=?",
+                                    (account_id, track["id"], track["version"])).fetchone()
+            return {"ok": True, "xp": int(progress["xp"] if progress else 0), "idempotent": True}
+        now = self.now()
+        conn.execute("insert into track_progress values(?,?,?,?,?) on conflict(dune_account_id,track_id,track_version) do update set xp=xp+excluded.xp,updated_at=excluded.updated_at",
+                     (account_id, track["id"], track["version"], amount, now))
+        conn.execute("insert into metadata(key,value) values(?,?)", (marker, now))
+        xp = conn.execute("select xp from track_progress where dune_account_id=? and track_id=? and track_version=?",
+                          (account_id, track["id"], track["version"])).fetchone()["xp"]
+        return {"ok": True, "trackId": track["id"], "version": track["version"], "xp": int(xp), "idempotent": False}
+
+    def _grant_engagement_reward(self, conn, account_id, kind, period_key, tier, reward):
+        existing = conn.execute(
+            "select * from engagement_claims where dune_account_id=? and kind=? and period_key=? and tier=?",
+            (account_id, kind, str(period_key), int(tier)),
+        ).fetchone()
+        if existing:
+            return {"kind": kind, "periodKey": str(period_key), "tier": int(tier), "idempotent": True,
+                    "deliveryId": existing["delivery_id"], "ledgerId": existing["ledger_id"]}
+        source = f"engagement:{kind}:{account_id}:{period_key}:{int(tier)}"
+        ledger_id = None
+        balance = None
+        if int(reward.get("credits", 0)):
+            ledger = self._append_ledger(conn, account_id, int(reward["credits"]), f"engagement-{kind}", source,
+                                         {"periodKey": str(period_key), "tier": int(tier)})
+            ledger_id = ledger["id"]
+            balance = ledger["balance"]
+        track_result = None
+        track = reward.get("track")
+        if track:
+            track_result = self._add_track_progress(conn, account_id, track["id"], track["xp"], source)
+        delivery_id = None
+        items = reward.get("items") or []
+        if items:
+            delivery_id = str(uuid.uuid4())
+            conn.execute(
+                "insert into deliveries(id,source_type,source_id,dune_account_id,rewards_json,status,created_at,updated_at) values(?,?,?,?,?,'queued',?,?)",
+                (delivery_id, f"engagement-{kind}", source, account_id, canonical(items), self.now(), self.now()),
+            )
+        claim_id = str(uuid.uuid4())
+        conn.execute(
+            "insert into engagement_claims values(?,?,?,?,?,?,?,?,?)",
+            (claim_id, account_id, kind, str(period_key), int(tier), canonical(reward), delivery_id, ledger_id, self.now()),
+        )
+        return {"id": claim_id, "kind": kind, "periodKey": str(period_key), "tier": int(tier),
+                "credits": int(reward.get("credits", 0)), "balance": balance, "track": track_result,
+                "deliveryId": delivery_id, "idempotent": False}
+
+    def observe_engagement(self, dune_account_id, online, observed_epoch, location, policy=None):
+        policy = engagement_config({"engagementRewards": policy or {}})
+        observed = int(observed_epoch)
+        current = self._location(location, policy["coordinatePrecision"])
+        max_gap = int(policy["maxObservationGapSeconds"])
+        grace = int(policy["movementGraceSeconds"])
+        minimum_distance = float(policy["minimumMovementDistance"])
         with self.transaction() as conn:
             account_id = self._ensure_account(conn, dune_account_id)
-            track = conn.execute("select * from tracks where id=? and enabled=1 order by version desc limit 1", (str(track_id),)).fetchone()
-            if not track:
-                raise ValueError("reward track is unavailable")
-            # References share the immutable ledger namespace without changing the wallet.
-            marker = f"track-progress:{track['id']}:{track['version']}:{_identifier(reference, 'reference', 128)}"
-            if conn.execute("select 1 from metadata where key=?", (marker,)).fetchone():
-                progress = conn.execute("select xp from track_progress where dune_account_id=? and track_id=? and track_version=?",
-                                        (account_id, track["id"], track["version"])).fetchone()
-                return {"ok": True, "xp": int(progress["xp"] if progress else 0), "idempotent": True}
-            now = self.now()
-            conn.execute("insert into track_progress values(?,?,?,?,?) on conflict(dune_account_id,track_id,track_version) do update set xp=xp+excluded.xp,updated_at=excluded.updated_at",
-                         (account_id, track["id"], track["version"], amount, now))
-            conn.execute("insert into metadata(key,value) values(?,?)", (marker, now))
-            xp = conn.execute("select xp from track_progress where dune_account_id=? and track_id=? and track_version=?",
-                              (account_id, track["id"], track["version"])).fetchone()["xp"]
-            return {"ok": True, "trackId": track["id"], "version": track["version"], "xp": int(xp), "idempotent": False}
+            row = conn.execute("select * from engagement_checkpoints where dune_account_id=?", (account_id,)).fetchone()
+            if not row:
+                conn.execute(
+                    "insert into engagement_checkpoints(dune_account_id,observed_at,was_online,map_name,partition_id,x,y,z,last_movement_at,session_started_at) values(?,?,?,?,?,?,?,?,?,?)",
+                    (account_id, observed, int(bool(online)), current["map"], current["partitionId"], current["x"], current["y"], current["z"], None, observed if online else None),
+                )
+                return {"ok": True, "active": False, "activeSeconds": 0, "firstObservation": True, "rewards": []}
+            if observed <= int(row["observed_at"]):
+                return {"ok": True, "active": False, "activeSeconds": 0, "replay": True, "rewards": []}
+            previous = {"map": row["map_name"], "partitionId": row["partition_id"], "x": row["x"], "y": row["y"], "z": row["z"]}
+            moved, distance = self._movement_proven(previous, current, minimum_distance)
+            last_movement_at = observed if moved else row["last_movement_at"]
+            elapsed_raw = observed - int(row["observed_at"])
+            elapsed = max(0, min(elapsed_raw, max_gap))
+            continuous = bool(online) and bool(row["was_online"]) and elapsed_raw <= max_gap
+            active = continuous and bool(last_movement_at) and observed - int(last_movement_at) <= grace
+            active_seconds = elapsed if active else 0
+            session_started = row["session_started_at"] if continuous else (observed if online else None)
+            session_seconds = int(row["session_active_seconds"] if continuous else 0) + active_seconds
+            rewarded_hours = int(row["rewarded_hours"] if continuous else 0)
+            rewards = []
+            if policy.get("enabled") and active_seconds:
+                moment = dt.datetime.fromtimestamp(observed, dt.timezone.utc)
+                day = moment.date().isoformat()
+                iso = moment.isocalendar()
+                week = f"{iso.year}-W{iso.week:02d}"
+                day_row = conn.execute("select * from engagement_days where dune_account_id=? and day=?", (account_id, day)).fetchone()
+                if day_row:
+                    streak = int(day_row["streak"])
+                    conn.execute("update engagement_days set active_seconds=active_seconds+?,last_activity_at=? where dune_account_id=? and day=?",
+                                 (active_seconds, observed, account_id, day))
+                else:
+                    yesterday = (moment.date() - dt.timedelta(days=1)).isoformat()
+                    prior = conn.execute("select streak from engagement_days where dune_account_id=? and day=?", (account_id, yesterday)).fetchone()
+                    streak = int(prior["streak"] if prior else 0) + 1
+                    conn.execute("insert into engagement_days values(?,?,?,?,?,?)", (account_id, day, active_seconds, streak, observed, observed))
+                    daily = policy["daily"]
+                    if daily["enabled"]:
+                        tier_row = self._tier_for(daily["tiers"], "day", streak)
+                        exact = tier_row and (daily["repeatLast"] or int(tier_row["day"]) == streak)
+                        if exact:
+                            rewards.append(self._grant_engagement_reward(conn, account_id, "daily", day, int(tier_row["day"]), tier_row["reward"]))
+                week_row = conn.execute("select active_seconds from engagement_weeks where dune_account_id=? and week=?", (account_id, week)).fetchone()
+                previous_week_seconds = int(week_row["active_seconds"] if week_row else 0)
+                current_week_seconds = previous_week_seconds + active_seconds
+                if week_row:
+                    conn.execute("update engagement_weeks set active_seconds=?,last_activity_at=? where dune_account_id=? and week=?",
+                                 (current_week_seconds, observed, account_id, week))
+                else:
+                    conn.execute("insert into engagement_weeks values(?,?,?,?,?)", (account_id, week, current_week_seconds, observed, observed))
+                weekly = policy["weekly"]
+                if weekly["enabled"]:
+                    for threshold in weekly["thresholds"]:
+                        seconds = int(threshold["activeSeconds"])
+                        if previous_week_seconds < seconds <= current_week_seconds:
+                            rewards.append(self._grant_engagement_reward(conn, account_id, "weekly", week, seconds, threshold["reward"]))
+                hourly = policy["hourly"]
+                if hourly["enabled"] and hourly["maxRewardsPerSession"]:
+                    earned_hours = min(session_seconds // int(hourly["intervalSeconds"]), int(hourly["maxRewardsPerSession"]))
+                    for hour in range(rewarded_hours + 1, earned_hours + 1):
+                        tier_row = self._tier_for(hourly["tiers"], "fromHour", hour)
+                        if tier_row:
+                            rewards.append(self._grant_engagement_reward(conn, account_id, "hourly", str(session_started), hour, tier_row["reward"]))
+                    rewarded_hours = max(rewarded_hours, earned_hours)
+            conn.execute(
+                "update engagement_checkpoints set observed_at=?,was_online=?,map_name=?,partition_id=?,x=?,y=?,z=?,last_movement_at=?,session_started_at=?,session_active_seconds=?,rewarded_hours=? where dune_account_id=?",
+                (observed, int(bool(online)), current["map"], current["partitionId"], current["x"], current["y"], current["z"],
+                 last_movement_at if online else None, session_started if online else None, session_seconds if online else 0,
+                 rewarded_hours if online else 0, account_id),
+            )
+            return {"ok": True, "active": active, "activeSeconds": active_seconds, "moved": moved, "distance": distance,
+                    "sessionActiveSeconds": session_seconds if online else 0, "rewards": rewards}
+
+    def add_track_progress(self, dune_account_id, track_id, amount, reference):
+        with self.transaction() as conn:
+            account_id = self._ensure_account(conn, dune_account_id)
+            return self._add_track_progress(conn, account_id, track_id, amount, reference)
 
     def claim_track_level(self, dune_account_id, track_id, level):
         level = _positive_int(level, "level", 10_000)
@@ -656,10 +979,16 @@ class Store:
             result = {
                 "ok": True,
                 "enabled": bool(config.get("enabled", False)),
+                "engagementPolicy": engagement_config(config),
                 "currency": config.get("currency") or {"name": "Community Credits", "symbol": "CC"},
                 "offers": [dict(row, rewards=json.loads(row["rewards_json"])) for row in conn.execute("select * from offers order by kind,name")],
                 "tracks": [dict(row, levels=json.loads(row["levels_json"])) for row in conn.execute("select * from tracks order by id,version desc")],
                 "deliveryCounts": {row["status"]: row["count"] for row in conn.execute("select status,count(*) as count from deliveries group by status")},
+                "engagement": {
+                    "trackedAccounts": int(conn.execute("select count(*) from engagement_checkpoints").fetchone()[0]),
+                    "activeToday": int(conn.execute("select count(*) from engagement_days where day=date('now') and active_seconds>0").fetchone()[0]),
+                    "claims": {row["kind"]: int(row["count"]) for row in conn.execute("select kind,count(*) as count from engagement_claims group by kind")},
+                },
                 "ledger": self.verify_ledger(),
             }
             for rows in (result["offers"], result["tracks"]):
@@ -674,4 +1003,12 @@ class Store:
                 result["deliveries"] = [dict(row) for row in conn.execute("select id,source_type,source_id,status,attempts,error,created_at,updated_at,delivered_at from deliveries where dune_account_id=? order by created_at desc limit ?", (account_id, limit))]
                 result["ledgerEntries"] = [dict(row) for row in conn.execute("select id,delta,balance_after,kind,reference,entry_hash,created_at from ledger where dune_account_id=? order by rowid desc limit ?", (account_id, limit))]
                 result["progress"] = [dict(row) for row in conn.execute("select * from track_progress where dune_account_id=? order by track_id,track_version desc", (account_id,))]
+                checkpoint = conn.execute("select * from engagement_checkpoints where dune_account_id=?", (account_id,)).fetchone()
+                result["engagementCheckpoint"] = dict(checkpoint) if checkpoint else None
+                result["engagementDays"] = [dict(row) for row in conn.execute("select * from engagement_days where dune_account_id=? order by day desc limit ?", (account_id, limit))]
+                result["engagementWeeks"] = [dict(row) for row in conn.execute("select * from engagement_weeks where dune_account_id=? order by week desc limit ?", (account_id, limit))]
+                result["engagementClaims"] = [dict(row, reward=json.loads(row["reward_json"])) for row in conn.execute(
+                    "select * from engagement_claims where dune_account_id=? order by created_at desc limit ?", (account_id, limit))]
+                for row in result["engagementClaims"]:
+                    row.pop("reward_json", None)
             return result

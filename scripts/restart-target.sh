@@ -28,7 +28,9 @@ esac
 
 # Additional Survival_1 dimensions are generated services outside the static
 # Compose farm. Include them in all-farm restart/shutdown flows when enabled.
-if [ "$target" = "all" ] && [ "${DUNE_RESTART_DRY_RUN:-false}" != "true" ] && [ "${DUNE_RESTART_DRY_RUN:-0}" != "1" ] && [ -x "$(dirname "$0")/sietches.sh" ]; then
+if [ "$target" = "all" ] && command -v docker >/dev/null 2>&1 && command -v bash >/dev/null 2>&1 \
+    && [ "${DUNE_RESTART_DRY_RUN:-false}" != "true" ] && [ "${DUNE_RESTART_DRY_RUN:-0}" != "1" ] \
+    && [ -x "$(dirname "$0")/sietches.sh" ]; then
   sietch_env="${ENV_FILE:-.env}"
   if grep -Eq '^DUNE_SIETCH_MUTATIONS_ENABLED=(1|true|yes|on)$' "$sietch_env" 2>/dev/null; then
     case "$phase" in
@@ -688,7 +690,7 @@ def run_host_compose(services):
     if fast_dynamic_start:
         shell_command = (
             "set -e; "
-            "apk add --no-cache bash iproute2 util-linux sudo >/dev/null; "
+            "apk add --no-cache bash binutils gdb iproute2 util-linux sudo >/dev/null; "
             "if [ -x /workspace/scripts/validate-landsraad-coriolis-cycle.sh ]; then "
             f"/workspace/scripts/validate-landsraad-coriolis-cycle.sh {shlex.quote(env_file)}; "
             "fi; "
@@ -705,7 +707,7 @@ def run_host_compose(services):
     else:
         shell_command = (
         "set -e; "
-        + "apk add --no-cache bash iproute2 util-linux sudo >/dev/null; "
+        + "apk add --no-cache bash binutils gdb iproute2 util-linux sudo >/dev/null; "
         + ensure_official_images_shell
         + "if [ -x ./scripts/apply-official-db-patches.sh ]; then "
         + f"./scripts/apply-official-db-patches.sh {shlex.quote(env_file)}; "
@@ -828,6 +830,25 @@ def read_env_value(path, key):
         except OSError:
             continue
     return ""
+
+
+def run_host_sietches(command):
+    if target != "all":
+        return {"ok": True, "skipped": True, "reason": "target is not all"}
+    enabled = os.environ.get("DUNE_SIETCH_MUTATIONS_ENABLED") or read_env_value(env_file, "DUNE_SIETCH_MUTATIONS_ENABLED")
+    if str(enabled).lower() not in ("1", "true", "yes", "on"):
+        return {"ok": True, "skipped": True, "reason": "disabled"}
+    shell_command = (
+        "set -e; "
+        "if [ ! -x /workspace/scripts/sietches.sh ]; then "
+        "echo 'Sietch helper is enabled but missing' >&2; exit 1; fi; "
+        + "/workspace/scripts/sietches.sh "
+        + shlex.quote(env_file)
+        + " "
+        + shlex.quote(command)
+        + " --execute"
+    )
+    return run_host_shell("admin-restart-sietches-" + command, shell_command)
 
 
 def run_host_update_check():
@@ -1121,9 +1142,13 @@ if phase in ("start", "restart") and use_host_compose:
     if not fast_dynamic_start:
         map_watchdog_control("stop")
     result = run_host_compose(services)
+    sietch_result = run_host_sietches("reconcile")
+    if not sietch_result.get("ok"):
+        print(sietch_result.get("output") or sietch_result.get("error") or "Sietch reconcile failed", file=sys.stderr)
+        sys.exit(int(sietch_result.get("returncode") or 1))
     if not fast_dynamic_start:
         map_watchdog_control("start")
-    print(json.dumps({"ok": True, "target": target, "action": action, "phase": phase, "hostCompose": True, "affected": services, "result": result}, separators=(",", ":")))
+    print(json.dumps({"ok": True, "target": target, "action": action, "phase": phase, "hostCompose": True, "affected": services, "result": result, "sietches": sietch_result}, separators=(",", ":")))
     sys.exit(0)
 
 
@@ -1135,6 +1160,11 @@ for service in services:
 
 restarted = []
 missing = []
+if phase in ("shutdown", "stop", "restart") and not dry_run:
+    sietch_result = run_host_sietches("stop-managed")
+    if not sietch_result.get("ok"):
+        print(sietch_result.get("output") or sietch_result.get("error") or "Sietch stop failed", file=sys.stderr)
+        sys.exit(int(sietch_result.get("returncode") or 1))
 if phase in ("shutdown", "stop", "start", "restart") and not dry_run:
     map_watchdog_control("stop")
 for service in services:
@@ -1171,6 +1201,10 @@ for service in services:
         restarted.append(service)
 
 if phase in ("start", "restart") and not dry_run:
+    sietch_result = run_host_sietches("reconcile")
+    if not sietch_result.get("ok"):
+        print(sietch_result.get("output") or sietch_result.get("error") or "Sietch reconcile failed", file=sys.stderr)
+        sys.exit(int(sietch_result.get("returncode") or 1))
     map_watchdog_control("start")
 
 print(json.dumps({"ok": True, "target": target, "action": action, "phase": phase, "dryRun": dry_run, "affected": restarted, "missing": missing}, separators=(",", ":")))
