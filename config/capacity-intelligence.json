@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "sampleIntervalSeconds": 30,
+  "maxObservationGapSeconds": 300,
+  "sampleRetentionDays": 90,
+  "eventRetentionDays": 730,
+  "startTimeoutSeconds": 300,
+  "minimumRevisitSamples": 5,
+  "minimumStartSamples": 2,
+  "fallbackColdStartSeconds": 90,
+  "coldStartWaitWeight": 4,
+  "minimumRetentionSeconds": 60,
+  "maximumRetentionSeconds": 3600,
+  "recommendationStepSeconds": 60,
+  "forecastHorizonSeconds": 900,
+  "maximumApplyFraction": 0.5
+}
