@@ -302,16 +302,23 @@ def verify_signed_document(document, secret):
 
 
 class Store:
-    def __init__(self, root, evidence_root, workspace, secret):
+    def __init__(self, root, evidence_root, workspace, secret, owner_uid=None, owner_gid=None):
         self.root = pathlib.Path(root)
         self.evidence_root = pathlib.Path(evidence_root)
         self.workspace = pathlib.Path(workspace)
         self.secret = bytes(secret)
+        self.owner_uid = int(owner_uid) if owner_uid not in (None, "") else None
+        self.owner_gid = int(owner_gid) if owner_gid not in (None, "") else None
+
+    def _secure_owner(self, path):
+        os.chmod(path, 0o700 if pathlib.Path(path).is_dir() else 0o600)
+        if os.geteuid() == 0 and self.owner_uid is not None:
+            os.chown(path, self.owner_uid, self.owner_gid if self.owner_gid is not None else -1)
 
     def initialize(self):
         for path in (self.root, self.evidence_root):
             path.mkdir(parents=True, exist_ok=True)
-            os.chmod(path, 0o700)
+            self._secure_owner(path)
 
     def _window_path(self, window_id):
         if not WINDOW_PATTERN.fullmatch(str(window_id or "")):
@@ -329,7 +336,7 @@ class Store:
                 os.fsync(handle.fileno())
             os.chmod(temporary, 0o600)
             temporary.replace(path)
-            os.chmod(path, 0o600)
+            self._secure_owner(path)
         finally:
             temporary.unlink(missing_ok=True)
 

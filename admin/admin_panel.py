@@ -5435,6 +5435,7 @@ def deployment_assurance_store():
                 CHANGE_INTELLIGENCE_EVIDENCE_ROOT,
                 ROOT,
                 change_intelligence.read_secret(CHANGE_INTELLIGENCE_SECRET_FILE),
+                owner_uid=os.environ.get("DUNE_HOST_UID"), owner_gid=os.environ.get("DUNE_HOST_GID"),
             )
             DEPLOYMENT_ASSURANCE_STORE.initialize()
         return DEPLOYMENT_ASSURANCE_STORE

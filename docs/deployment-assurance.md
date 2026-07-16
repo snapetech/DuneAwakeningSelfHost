@@ -183,7 +183,10 @@ POST /api/ops/deployment-assurance
 Clients cannot submit container snapshots, health results, readiness outcomes,
 or receipt digests. The server derives those values. Open-window JSON is
 HMAC-authenticated, mode `0600`, expires after six hours, and cannot be reused
-after completion/cancellation.
+after completion/cancellation. When Admin Panel runs as root, it transfers the
+mode-`0700` state/evidence directories and mode-`0600` files to
+`DUNE_HOST_UID/GID`, allowing the production host workflow to create and remove
+its self-reload lock without broadening permissions.
 
 ## Signed Receipt And Backup Verification
 

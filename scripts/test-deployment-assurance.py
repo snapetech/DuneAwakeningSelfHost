@@ -233,6 +233,17 @@ class DeploymentAssuranceTests(unittest.TestCase):
             self.assertIn("rollback-manifest.json", archive.getnames())
             self.assertIn("files/admin/panel.py", archive.getnames())
 
+    def test_root_container_transfers_private_state_to_host_operator(self):
+        store = deployment_assurance.Store(
+            self.root / "owned-state", self.root / "owned-evidence", self.workspace, self.secret,
+            owner_uid=1234, owner_gid=5678,
+        )
+        calls = []
+        with mock.patch.object(deployment_assurance.os, "geteuid", return_value=0), \
+             mock.patch.object(deployment_assurance.os, "chown", side_effect=lambda path, uid, gid: calls.append((pathlib.Path(path).name, uid, gid))):
+            store.initialize()
+        self.assertEqual({("owned-state", 1234, 5678), ("owned-evidence", 1234, 5678)}, set(calls))
+
 
 if __name__ == "__main__":
     unittest.main()

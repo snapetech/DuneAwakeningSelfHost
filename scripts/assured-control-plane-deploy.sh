@@ -68,7 +68,7 @@ apply_lock=""
 
 cleanup() {
   local status=$?
-  [[ -z "$apply_lock" ]] || rm -f "$apply_lock"
+  [[ -z "$apply_lock" ]] || rm -f "$apply_lock" || true
   if [[ $status -ne 0 && -n "$window_id" && "$finished" != true ]]; then
     python3 - "$window_id" "$reason" >"$work/cancel.json" <<'PY'
 import json,sys
