@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/restore-state.sh [--dry-run] [--rabbitmq] [--server-saved] [--config] [--tls] [--community-rewards] [--moderation] [--base-gallery] [env-file] <backup-dir>
+Usage: ./scripts/restore-state.sh [--dry-run] [--rabbitmq] [--server-saved] [--config] [--tls] [--community-rewards] [--moderation] [--base-gallery] [--operational-slo] [env-file] <backup-dir>
 
 Restores the Postgres dump from a backup created by scripts/backup-state.sh.
 RabbitMQ and server saved-state archives are restored only when their flags are
@@ -14,7 +14,7 @@ world identity, secrets, local tuning, and RabbitMQ certificate material.
 Examples:
   ./scripts/restore-state.sh --dry-run .env backups/20260519T150000Z
   ./scripts/restore-state.sh .env backups/20260519T150000Z
-  ./scripts/restore-state.sh --rabbitmq --server-saved --config --tls --community-rewards --moderation --base-gallery .env backups/20260519T150000Z
+  ./scripts/restore-state.sh --rabbitmq --server-saved --config --tls --community-rewards --moderation --base-gallery --operational-slo .env backups/20260519T150000Z
 EOF
 }
 
@@ -26,6 +26,7 @@ restore_tls=false
 restore_community_rewards=false
 restore_moderation=false
 restore_base_gallery=false
+restore_operational_slo=false
 
 while [[ "${1:-}" == --* ]]; do
   case "$1" in
@@ -59,6 +60,10 @@ while [[ "${1:-}" == --* ]]; do
       ;;
     --base-gallery)
       restore_base_gallery=true
+      shift
+      ;;
+    --operational-slo)
+      restore_operational_slo=true
       shift
       ;;
     -h|--help)
@@ -177,6 +182,10 @@ if [[ "$restore_base_gallery" == true && ! -f "${backup_dir}/base-gallery.sqlite
   printf 'base gallery snapshot not found: %s\n' "${backup_dir}/base-gallery.sqlite3" >&2
   exit 1
 fi
+if [[ "$restore_operational_slo" == true && ! -f "${backup_dir}/operational-slo.sqlite3" ]]; then
+  printf 'operational SLO snapshot not found: %s\n' "${backup_dir}/operational-slo.sqlite3" >&2
+  exit 1
+fi
 
 backup_world="$(manifest_value world_unique_name)"
 current_world="$(env_value WORLD_UNIQUE_NAME)"
@@ -197,6 +206,7 @@ if [[ "$dry_run" == true ]]; then
   printf 'restore_community_rewards=%s\n' "$restore_community_rewards"
   printf 'restore_moderation=%s\n' "$restore_moderation"
   printf 'restore_base_gallery=%s\n' "$restore_base_gallery"
+  printf 'restore_operational_slo=%s\n' "$restore_operational_slo"
   printf 'backup_world_unique_name=%s\n' "${backup_world:-}"
   printf 'current_world_unique_name=%s\n' "${current_world:-}"
   exit 0
@@ -223,6 +233,12 @@ if [[ "$restore_base_gallery" == true ]]; then
   mkdir -p backups/base-gallery
   rm -f backups/base-gallery/gallery.sqlite3-wal backups/base-gallery/gallery.sqlite3-shm
   install -m 600 "${backup_dir}/base-gallery.sqlite3" backups/base-gallery/gallery.sqlite3
+fi
+if [[ "$restore_operational_slo" == true ]]; then
+  printf 'restoring isolated operational SLO state from %s\n' "${backup_dir}/operational-slo.sqlite3"
+  mkdir -p backups/operational-slo
+  rm -f backups/operational-slo/slo.sqlite3-wal backups/operational-slo/slo.sqlite3-shm
+  install -m 600 "${backup_dir}/operational-slo.sqlite3" backups/operational-slo/slo.sqlite3
 fi
 
 if [[ "$restore_config" == true ]]; then

@@ -55,3 +55,25 @@ groups:
         for: 1m
         labels: {severity: warning}
         annotations: {summary: "A DASH container memory failure counter increased"}
+  - name: dash-reliability-slo
+    rules:
+      - alert: DashSloCollectorStale
+        expr: time() - dash_slo_last_snapshot_timestamp_seconds > 180
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "DASH reliability sampling is stale"}
+      - alert: DashSloCriticalIncident
+        expr: dash_slo_open_incidents{severity="critical"} > 0
+        for: 1m
+        labels: {severity: critical}
+        annotations: {summary: "A critical DASH SLO incident is open"}
+      - alert: DashSloFastBurn
+        expr: dash_slo_error_budget_burn_rate{window_seconds="3600"} > 14.4 and dash_slo_observation_coverage_ratio{window_seconds="3600"} > 0.25
+        for: 5m
+        labels: {severity: critical}
+        annotations: {summary: "A DASH objective is consuming error budget at a fast-burn rate"}
+      - alert: DashSloBudgetExhausted
+        expr: dash_slo_error_budget_remaining_ratio{window_seconds="2592000"} <= 0 and dash_slo_observation_coverage_ratio{window_seconds="2592000"} > 0.1
+        for: 15m
+        labels: {severity: warning}
+        annotations: {summary: "A DASH 30-day SLO error budget is exhausted"}

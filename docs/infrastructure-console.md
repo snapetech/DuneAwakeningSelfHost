@@ -165,6 +165,37 @@ custom-format dump that `pg_restore` can list. The live database is never
 contacted. Complete configuration, receipt schema, systemd scheduling, and
 failure recovery are in [`restore-drills.md`](restore-drills.md).
 
+## Reliability Control Room
+
+`GET /api/ops/slo` reports retained, time-weighted reliability rather than only
+the current health response. Seven default objectives cover the Dune database,
+control plane, currently required maps, backup RPO, verified restore proof,
+memory headroom, and admin authentication. Every objective includes 1h, 6h,
+24h, 7d, and 30d availability, coverage, burn rate, and remaining budget.
+
+The background worker records every 60 seconds by default. Gaps are capped so
+a stopped collector cannot invent unlimited good or bad time. Missing signals
+fail closed. Consecutive failures open one incident per objective; a good
+sample resolves it. Acknowledgements and notes establish operator ownership but
+cannot make a signal healthy.
+
+`POST /api/ops/slo` supports `acknowledge`, `note`, `maintenance-create`, and
+`maintenance-cancel`. It requires `infrastructure.write`, the master mutation
+gate, `DUNE_ADMIN_OPERATIONAL_SLO_MUTATIONS_ENABLED=true`, and one of the exact
+phrases `ACKNOWLEDGE SLO INCIDENT` or `CHANGE SLO MAINTENANCE`.
+
+Planned maintenance lasts at most 24 hours, cannot overlap, cannot be created
+retroactively after an incident, and excludes only opted-in objectives. Backup
+RPO, restore proof, and admin authentication continue measuring during
+maintenance.
+
+Incident events are protected from update/delete by SQLite triggers and linked
+through a global SHA-256 chain. The dashboard, CLI, and backup verifier
+recompute it. Prometheus scrapes `/metrics/slo` inside the private Compose
+network and alerts on collector staleness, critical incidents, fast burn, and
+exhausted 30-day budget. The endpoint contains no identities, notes, paths,
+tokens, or player data. See [`operational-slo.md`](operational-slo.md).
+
 ## Database Browser and Query Console
 
 `GET /api/ops/database` lists tables and views in the `dune` and `public`

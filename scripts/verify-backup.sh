@@ -131,6 +131,32 @@ else
   printf 'WARN no base-gallery.sqlite3 found in %s\n' "$backup_dir"
 fi
 
+if [[ -f "$backup_dir/operational-slo.sqlite3" ]]; then
+  if python3 - "$backup_dir/operational-slo.sqlite3" <<'PY'
+import hashlib,json,sqlite3,sys
+connection=sqlite3.connect(f"file:{sys.argv[1]}?mode=ro",uri=True)
+connection.row_factory=sqlite3.Row
+try:
+    if connection.execute("pragma integrity_check").fetchone()[0]!="ok": raise SystemExit(1)
+    rows=connection.execute("select * from incident_events order by sequence").fetchall()
+finally: connection.close()
+previous=None
+for row in rows:
+    document={"incidentId":row["incident_id"],"objectiveId":row["objective_id"],"eventType":row["event_type"],"createdAt":row["created_at"],"actor":row["actor"],"note":row["note"],"payload":json.loads(row["payload_json"]),"previousHash":row["previous_hash"]}
+    expected=hashlib.sha256(json.dumps(document,sort_keys=True,separators=(",",":"),ensure_ascii=False).encode()).hexdigest()
+    if row["previous_hash"]!=previous or row["event_hash"]!=expected: raise SystemExit(1)
+    previous=row["event_hash"]
+PY
+  then
+    printf 'OK operational SLO SQLite snapshot and incident hash chain %s\n' "$backup_dir/operational-slo.sqlite3"
+  else
+    printf 'FAIL operational SLO SQLite snapshot or incident hash chain %s\n' "$backup_dir/operational-slo.sqlite3" >&2
+    ok=false
+  fi
+else
+  printf 'WARN no operational-slo.sqlite3 found in %s\n' "$backup_dir"
+fi
+
 if [[ -f "$backup_dir/manifest.json" ]]; then
   if command -v jq >/dev/null 2>&1; then
     jq . "$backup_dir/manifest.json" >/dev/null

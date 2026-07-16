@@ -13,6 +13,7 @@ import tarfile
 import time
 import types
 import unittest
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -182,6 +183,25 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
     def test_server_banner_does_not_disclose_python_runtime(self):
         self.assertEqual("DASH", self.panel.Handler.server_version)
         self.assertEqual("", self.panel.Handler.sys_version)
+
+    def test_internal_panel_token_auth_is_disabled_at_runtime(self):
+        handler = object.__new__(self.panel.Handler)
+        with mock.patch.dict(os.environ, {"DUNE_ADMIN_REQUIRE_TOKEN": "true"}):
+            handler.require_token()
+
+    def test_page_navigation_cancels_detached_player_detail_loads(self):
+        source = self.panel.INDEX
+        load_body = source.split("async function load(){", 1)[1].split("async function overview(", 1)[0]
+        self.assertIn("detailLoadSerial += 1;", load_body)
+
+    def test_respawn_queries_use_current_character_id_schema(self):
+        source = pathlib.Path(self.panel.__file__).read_text(encoding="utf-8")
+        self.assertIn("prl.character_id = op.character_id", source)
+        self.assertNotIn("prl.account_id = op.account_id", source)
+
+    def test_route_audits_do_not_reuse_reserved_request_path_field(self):
+        source = pathlib.Path(self.panel.__file__).read_text(encoding="utf-8")
+        self.assertNotRegex(source, r"self\.audit\([^\n]*\bpath=")
 
     def test_admin_http_concurrency_is_bounded(self):
         self.assertGreaterEqual(self.panel.MAX_CONCURRENT_REQUESTS, 4)
@@ -1817,9 +1837,13 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
 
         inventory = self.panel.backup_inventory()
         verified = self.panel.verify_backup_set("20260715T120000Z")
+        with mock.patch.object(self.panel.shutil, "which", return_value=None):
+            native_ok, native_stdout, native_stderr = self.panel.verify_backup_set_native(backup_set)
 
         self.assertEqual(inventory["sets"][0]["path"], "20260715T120000Z")
         self.assertTrue(verified["ok"])
+        self.assertTrue(native_ok, native_stderr)
+        self.assertIn("backup verification complete: OK", native_stdout)
         with self.assertRaises(ValueError):
             self.panel.resolve_backup_set("../outside")
         with self.assertRaises(ValueError):
@@ -2847,6 +2871,86 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         })
         self.assertTrue(accepted["json"]["queued"])
         self.assertEqual(["backups/current.dump"], queued)
+
+    def test_operational_slo_status_and_metrics_are_read_only(self):
+        original_status = self.panel.operational_slo_public_status
+        original_store = self.panel.operational_slo_store
+        self.panel.operational_slo_public_status = lambda: {"ok": True, "overall": "healthy"}
+        self.panel.operational_slo_store = lambda: type("Store", (), {"prometheus": lambda self: "dash_slo_collector_up 1\n"})()
+        self.addCleanup(lambda: setattr(self.panel, "operational_slo_public_status", original_status))
+        self.addCleanup(lambda: setattr(self.panel, "operational_slo_store", original_store))
+
+        handler, captured = self.make_route_handler("/api/ops/slo")
+        handler.is_app_route = lambda path: False
+        handler.do_GET()
+        self.assertEqual("healthy", captured["json"]["overall"])
+
+        handler, captured = self.make_route_handler("/metrics/slo")
+        handler.is_app_route = lambda path: False
+        texts = []
+        handler.text = lambda value, content_type="", **kwargs: texts.append((value, content_type))
+        handler.require_token = lambda: self.fail("bounded Prometheus SLO metrics must not require an admin credential")
+        handler.do_GET()
+        self.assertEqual("dash_slo_collector_up 1\n", texts[0][0])
+        self.assertIn("text/plain", texts[0][1])
+
+    def test_operational_slo_mutations_are_gated_confirmed_and_scoped(self):
+        calls = []
+        fake = type("Store", (), {
+            "acknowledge": lambda self, incident, actor, note: calls.append(("ack", incident, actor, note)) or {"ok": True},
+            "add_note": lambda self, incident, actor, note: calls.append(("note", incident, actor, note)) or {"ok": True},
+            "create_maintenance": lambda self, start, end, reason, actor: calls.append(("create", start, end, reason, actor)) or {"ok": True, "id": "m1"},
+            "cancel_maintenance": lambda self, identifier, actor: calls.append(("cancel", identifier, actor)) or {"ok": True, "id": identifier},
+        })()
+        original_store = self.panel.operational_slo_store
+        self.panel.operational_slo_store = lambda: fake
+        self.addCleanup(lambda: setattr(self.panel, "operational_slo_store", original_store))
+        self.patch_flag("MUTATIONS_ENABLED", True)
+
+        self.patch_flag("OPERATIONAL_SLO_MUTATIONS_ENABLED", False)
+        denied = self.invoke_post_route("/api/ops/slo", {"action": "acknowledge", "incidentId": "i1", "confirm": "ACKNOWLEDGE SLO INCIDENT"})
+        self.assertEqual(401, denied["errors"][0]["status"])
+        self.assertFalse(calls)
+        self.panel.OPERATIONAL_SLO_MUTATIONS_ENABLED = True
+        rejected = self.invoke_post_route("/api/ops/slo", {"action": "acknowledge", "incidentId": "i1", "confirm": "wrong"})
+        self.assertEqual(401, rejected["errors"][0]["status"])
+        accepted = self.invoke_post_route("/api/ops/slo", {"action": "acknowledge", "incidentId": "i1", "note": "working", "confirm": "ACKNOWLEDGE SLO INCIDENT"})
+        self.assertTrue(accepted["json"]["ok"])
+        self.assertEqual(("ack", "i1", "owner-recovery", "working"), calls[-1])
+
+    def test_operational_slo_collector_uses_real_health_surfaces_and_fails_closed(self):
+        original_inventory = self.panel.docker_service_inventory
+        original_restart = self.panel.restart_online_snapshot
+        original_select = self.panel.restore_drill.select_dump
+        original_restore_status = self.panel.restore_drill.status
+        original_meminfo = self.panel.read_meminfo
+        original_token = self.panel.ADMIN_TOKEN
+        dump = self.workspace / "backups" / "latest.dump"
+        dump.parent.mkdir(parents=True)
+        dump.write_bytes(b"dump")
+        self.panel.docker_service_inventory = lambda: [{"service": name, "state": "running"} for name in ("postgres", "director", "gateway", "admin-rmq", "game-rmq", "text-router")]
+        self.panel.restart_online_snapshot = lambda: {"ok": True, "expected": 2, "readyOnline": 2}
+        self.panel.restore_drill.select_dump = lambda root: dump
+        self.panel.restore_drill.status = lambda root, limit=1: {"latest": {"id": "proof", "ok": True, "integrityOk": True, "policyOk": True, "receiptHashValid": True, "finishedAt": self.panel.datetime.datetime.now(self.panel.datetime.timezone.utc).isoformat(), "liveDatabaseTouched": False, "timings": {"restoreSeconds": 1}}}
+        self.panel.read_meminfo = lambda: {"availableBytes": 32 * 1024**3, "totalBytes": 64 * 1024**3}
+        self.panel.ADMIN_TOKEN = "real-token"
+        self.patch_db(lambda sql, params=None: [{"ready": True}])
+        self.addCleanup(lambda: setattr(self.panel, "docker_service_inventory", original_inventory))
+        self.addCleanup(lambda: setattr(self.panel, "restart_online_snapshot", original_restart))
+        self.addCleanup(lambda: setattr(self.panel.restore_drill, "select_dump", original_select))
+        self.addCleanup(lambda: setattr(self.panel.restore_drill, "status", original_restore_status))
+        self.addCleanup(lambda: setattr(self.panel, "read_meminfo", original_meminfo))
+        self.addCleanup(lambda: setattr(self.panel, "ADMIN_TOKEN", original_token))
+        old_auth = self.panel.os.environ.get("DUNE_ADMIN_REQUIRE_TOKEN")
+        self.panel.os.environ["DUNE_ADMIN_REQUIRE_TOKEN"] = "true"
+        self.addCleanup(lambda: self.panel.os.environ.__setitem__("DUNE_ADMIN_REQUIRE_TOKEN", old_auth) if old_auth is not None else self.panel.os.environ.pop("DUNE_ADMIN_REQUIRE_TOKEN", None))
+
+        collected = self.panel.collect_operational_slo_signals()
+        self.assertTrue(all(collected["signals"].values()), collected)
+        self.panel.restart_online_snapshot = lambda: (_ for _ in ()).throw(RuntimeError("farm unavailable"))
+        failed = self.panel.collect_operational_slo_signals()
+        self.assertFalse(failed["signals"]["required_maps_ready"])
+        self.assertIn("farm unavailable", failed["context"]["errors"]["requiredMaps"])
 
     def test_landsraad_reward_and_contribution_plans_preserve_rollback(self):
         def fake_query(sql, params=None):

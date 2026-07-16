@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "sampleIntervalSeconds": 60,
+  "maxSampleGapSeconds": 300,
+  "sampleRetentionDays": 90,
+  "objectives": [
+    {
+      "id": "database_availability",
+      "name": "Game database availability",
+      "description": "A bounded read-only query reaches the live Dune schema.",
+      "signal": "database_ready",
+      "targetAvailability": 0.999,
+      "severity": "critical",
+      "consecutiveFailures": 2,
+      "excludeMaintenance": true
+    },
+    {
+      "id": "control_plane_availability",
+      "name": "Control-plane availability",
+      "description": "Postgres, Director, Gateway, both RabbitMQ brokers, and TextRouter are running.",
+      "signal": "control_plane_ready",
+      "targetAvailability": 0.995,
+      "severity": "critical",
+      "consecutiveFailures": 2,
+      "excludeMaintenance": true
+    },
+    {
+      "id": "required_map_availability",
+      "name": "Required-map availability",
+      "description": "Every always-on map has an alive, ready, active farm registration.",
+      "signal": "required_maps_ready",
+      "targetAvailability": 0.995,
+      "severity": "critical",
+      "consecutiveFailures": 3,
+      "excludeMaintenance": true
+    },
+    {
+      "id": "backup_rpo",
+      "name": "Backup recovery point",
+      "description": "The newest recognized PostgreSQL dump remains inside the configured RPO.",
+      "signal": "backup_rpo_ready",
+      "targetAvailability": 0.99,
+      "severity": "critical",
+      "consecutiveFailures": 2,
+      "excludeMaintenance": false
+    },
+    {
+      "id": "restore_proof",
+      "name": "Verified restore proof",
+      "description": "A recent hash-valid isolated restore receipt passed integrity and RTO policy.",
+      "signal": "restore_proof_ready",
+      "targetAvailability": 0.99,
+      "severity": "critical",
+      "consecutiveFailures": 2,
+      "excludeMaintenance": false
+    },
+    {
+      "id": "memory_headroom",
+      "name": "Host memory headroom",
+      "description": "MemAvailable remains above the configured operational floor.",
+      "signal": "memory_headroom_ready",
+      "targetAvailability": 0.99,
+      "severity": "warning",
+      "consecutiveFailures": 5,
+      "excludeMaintenance": true
+    },
+    {
+      "id": "admin_authentication",
+      "name": "Admin authentication posture",
+      "description": "Token authentication is required and a non-placeholder credential source is configured.",
+      "signal": "admin_auth_ready",
+      "targetAvailability": 0.999,
+      "severity": "critical",
+      "consecutiveFailures": 1,
+      "excludeMaintenance": false
+    }
+  ]
+}

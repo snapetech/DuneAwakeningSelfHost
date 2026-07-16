@@ -630,6 +630,10 @@ class RestoreStateTests(unittest.TestCase):
             connection.execute("create table test(id integer primary key)")
             connection.commit()
             connection.close()
+            connection = sqlite3.connect(backup_dir / "operational-slo.sqlite3")
+            connection.execute("create table incident_events(sequence integer primary key,incident_id text,objective_id text,event_type text,created_at real,actor text,note text,payload_json text,previous_hash text,event_hash text)")
+            connection.commit()
+            connection.close()
 
             result = subprocess.run(
                 [
@@ -642,6 +646,7 @@ class RestoreStateTests(unittest.TestCase):
                     "--community-rewards",
                     "--moderation",
                     "--base-gallery",
+                    "--operational-slo",
                     str(env_file),
                     str(backup_dir.relative_to(ROOT)),
                 ],
@@ -657,6 +662,7 @@ class RestoreStateTests(unittest.TestCase):
             self.assertIn("restore_community_rewards=true", result.stdout)
             self.assertIn("restore_moderation=true", result.stdout)
             self.assertIn("restore_base_gallery=true", result.stdout)
+            self.assertIn("restore_operational_slo=true", result.stdout)
             self.assertIn("backup_world_unique_name=sh-backed-up", result.stdout)
             self.assertIn("current_world_unique_name=sh-current", result.stdout)
             self.assertIn("differs from current", result.stderr)
@@ -873,6 +879,10 @@ class VerifyBackupTests(unittest.TestCase):
             connection.execute("create table test(id integer primary key)")
             connection.commit()
             connection.close()
+            connection = sqlite3.connect(backup_dir / "operational-slo.sqlite3")
+            connection.execute("create table incident_events(sequence integer primary key,incident_id text,objective_id text,event_type text,created_at real,actor text,note text,payload_json text,previous_hash text,event_hash text)")
+            connection.commit()
+            connection.close()
 
             env = {**os.environ, "PATH": str(bin_dir)}
             result = subprocess.run(
@@ -891,6 +901,7 @@ class VerifyBackupTests(unittest.TestCase):
             self.assertIn("OK community rewards SQLite snapshot", result.stdout)
             self.assertIn("OK moderation SQLite snapshot", result.stdout)
             self.assertIn("OK base gallery SQLite snapshot", result.stdout)
+            self.assertIn("OK operational SLO SQLite snapshot and incident hash chain", result.stdout)
 
 
 class FailoverScriptTests(unittest.TestCase):

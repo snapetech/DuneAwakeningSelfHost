@@ -64,7 +64,7 @@ Always compare your `.env` image pin with the Steam package installed on your ho
 - Recovery helpers for dependency loss and stale fixed-partition server IDs.
 - Host-level map watchdog service for unattended recovery.
 - LAN/VPN admin panel with Overview, Ops, Infrastructure, World, Security, Runbook, Players, Cosmetics, Blueprints, Care Packages, Addons, Bootstrap, Settings, Admin Actions, Admin Digests, Catalog, and Discovery surfaces.
-- Browser service/log control, verified manual and automatic backup lifecycle, daily no-network PostgreSQL restore proof with hash-chained RPO/RTO receipts, layered disaster restore, bounded database query/row/password controls, dynamic map autoscaling, live memory balancing, and retained Prometheus metrics.
+- Browser service/log control, verified manual and automatic backup lifecycle, daily no-network PostgreSQL restore proof with hash-chained RPO/RTO receipts, time-weighted SLOs/error budgets and immutable incident history, layered disaster restore, bounded database query/row/password controls, dynamic map autoscaling, live memory balancing, and retained Prometheus metrics.
 - Cache-aware, host-local CPU-affinity generation with guarded no-restart live application, Compose persistence, and rollback.
 - Backup-first Linux sysctl/THP/NIC-ring/IRQ tuning that preserves larger existing network maxima and never restarts Docker.
 - Live inventory slot-integrity audit plus hostname-, backup-, capacity-, and transaction-gated no-delete conflict repair.
@@ -385,7 +385,7 @@ By default the local deployment is configured for a trusted private admin surfac
 | --- | --- |
 | Overview | Readiness metrics, health summary, Hagga Basin player map, map details, and player preview. |
 | Ops | Restart planner, restart announcements, resource telemetry, map health, network checks, farm state, and partition state. |
-| Infrastructure | Compose service/log control, manual/automatic backup lifecycle, isolated recovery proof and restore, database query/row/password tools, autoscaling, memory controls, and update/repair. |
+| Infrastructure | Compose service/log control, manual/automatic backup lifecycle, isolated recovery proof and restore, reliability SLO/error-budget control room, database query/row/password tools, autoscaling, memory controls, and update/repair. |
 | Backup Encryption | Verified recipient OpenPGP archives, ciphertext receipts, safe decrypt staging, encrypted-only rclone/rsync mode, and encrypted restic repositories. |
 | World | Read-only guild/member, Landsraad term/task/reward/contribution, and aggregate storage views; Landsraad writes remain on Admin Actions. |
 | Security | Host/origin checks, auth mode, mutation gates, allowlists, and audit events. |
@@ -412,7 +412,7 @@ If the published local admin port accepts TCP but returns no HTTP bytes after a 
 curl -H 'Host: admin-panel:8080' http://127.0.0.1:${DUNE_ADMIN_HOST_PORT:-18080}/api/status
 ```
 
-More detail: [`docs/admin-panel.md`](docs/admin-panel.md), [`docs/admin-access-control.md`](docs/admin-access-control.md), [`docs/federated-auth.md`](docs/federated-auth.md), [`docs/infrastructure-console.md`](docs/infrastructure-console.md), [`docs/restore-drills.md`](docs/restore-drills.md), [`docs/backup-encryption.md`](docs/backup-encryption.md), [`docs/command-console.md`](docs/command-console.md), [`docs/world-console.md`](docs/world-console.md), [`docs/care-packages.md`](docs/care-packages.md), [`docs/community-rewards.md`](docs/community-rewards.md), [`docs/moderation-history.md`](docs/moderation-history.md), [`docs/base-creator.md`](docs/base-creator.md), [`docs/gameplay-presets.md`](docs/gameplay-presets.md), [`docs/character-cosmetics.md`](docs/character-cosmetics.md), [`docs/outbound-webhooks.md`](docs/outbound-webhooks.md), [`docs/admin-safe-content-api.md`](docs/admin-safe-content-api.md), and [`CONTENT_INSERTION_SURFACES.md`](CONTENT_INSERTION_SURFACES.md).
+More detail: [`docs/admin-panel.md`](docs/admin-panel.md), [`docs/admin-access-control.md`](docs/admin-access-control.md), [`docs/federated-auth.md`](docs/federated-auth.md), [`docs/infrastructure-console.md`](docs/infrastructure-console.md), [`docs/restore-drills.md`](docs/restore-drills.md), [`docs/operational-slo.md`](docs/operational-slo.md), [`docs/backup-encryption.md`](docs/backup-encryption.md), [`docs/command-console.md`](docs/command-console.md), [`docs/world-console.md`](docs/world-console.md), [`docs/care-packages.md`](docs/care-packages.md), [`docs/community-rewards.md`](docs/community-rewards.md), [`docs/moderation-history.md`](docs/moderation-history.md), [`docs/base-creator.md`](docs/base-creator.md), [`docs/gameplay-presets.md`](docs/gameplay-presets.md), [`docs/character-cosmetics.md`](docs/character-cosmetics.md), [`docs/outbound-webhooks.md`](docs/outbound-webhooks.md), [`docs/admin-safe-content-api.md`](docs/admin-safe-content-api.md), and [`CONTENT_INSERTION_SURFACES.md`](CONTENT_INSERTION_SURFACES.md).
 
 ## Operations And Recovery
 
@@ -484,6 +484,21 @@ native functions, reads core data, checks index/constraint validity, analyzes
 the restored database, produces and lists a second round-trip dump, removes
 the container, and writes a private hash-chained RPO/RTO receipt. See
 [`docs/restore-drills.md`](docs/restore-drills.md).
+
+Track reliability and error-budget burn instead of only current health:
+
+```bash
+make slo-status
+make slo-verify
+make slo-metrics
+```
+
+The retained control room measures database/control-plane/required-map
+availability, backup RPO, restore-proof freshness, memory headroom, and admin
+authentication across five windows. It adds debounced incidents, immutable
+hash-chained events, bounded planned maintenance, Prometheus alerts, and
+transactionally consistent backup/restore of the ledger. See
+[`docs/operational-slo.md`](docs/operational-slo.md).
 
 Restore:
 
@@ -782,6 +797,8 @@ Server-browser ordering is deliberately split based on the observed in-game brow
 | `DUNE_ADMIN_BACKUP_MUTATIONS_ENABLED` / `DUNE_ADMIN_BACKUP_RESTORE_ENABLED` | Separate browser gates for backup create/import/delete and disruptive restore execution. |
 | `DUNE_RESTORE_DRILL_ENABLED` / `DUNE_ADMIN_RESTORE_DRILL_EXECUTION_ENABLED` | Enable recovery-proof status/scheduling and separately authorize dashboard queueing of the isolated no-network restore drill. |
 | `DUNE_RESTORE_DRILL_MAX_BACKUP_AGE_HOURS` / `DUNE_RESTORE_DRILL_MAX_RESTORE_SECONDS` | Recovery-point freshness and measured `pg_restore` recovery-time targets. |
+| `DUNE_OPERATIONAL_SLO_ENABLED` / `DUNE_ADMIN_OPERATIONAL_SLO_MUTATIONS_ENABLED` | Enable retained reliability sampling and separately authorize incident acknowledgement/notes and planned-maintenance exclusions. |
+| `DUNE_OPERATIONAL_SLO_POLICY` / `DUNE_OPERATIONAL_SLO_DATABASE` | Versioned objective policy and private SQLite reliability ledger. |
 | `DUNE_ADMIN_DATABASE_QUERY_ENABLED` / `DUNE_ADMIN_DATABASE_WRITE_ENABLED` | Bounded one-statement SQL console and its separately gated write mode. |
 | `DUNE_ADMIN_DATABASE_ROW_MUTATIONS_ENABLED` / `DUNE_ADMIN_DATABASE_PASSWORD_MUTATIONS_ENABLED` | Primary-key row editor and coordinated credential-rotation gates. |
 | `DUNE_ADMIN_SERVICE_CONTROL_ENABLED` / `DUNE_ADMIN_STATEFUL_SERVICE_CONTROL_ENABLED` | Browser start/stop/restart gates; stateful Postgres/RabbitMQ control remains separately disabled by default. |
@@ -906,6 +923,7 @@ Start here:
 - [`docs/private-chat-replies.md`](docs/private-chat-replies.md): verified private whisper route for command replies and player/admin automation.
 - [`docs/backup-strategy.md`](docs/backup-strategy.md): local, onsite, offsite, replica, retention, and restore-test guidance.
 - [`docs/restore-drills.md`](docs/restore-drills.md): no-network disposable PostgreSQL recovery proof, Dune invariants, RPO/RTO policy, private hash-chained receipts, dashboard API, scheduler, and failure recovery.
+- [`docs/operational-slo.md`](docs/operational-slo.md): time-weighted objectives, coverage, error budgets, burn alerts, immutable incident events, maintenance exclusions, metrics, and ledger recovery.
 - [`docs/operational-identity-handoff.md`](docs/operational-identity-handoff.md): FLS identity, RabbitMQ TLS, backup identity layers, and redacted handoff artifacts.
 - [`docs/postgres-replication.md`](docs/postgres-replication.md): local and remote Postgres standby.
 - [`docs/artificial-exchange.md`](docs/artificial-exchange.md): artificial Exchange catalog, buyer, settlement, populator, and services.
@@ -995,6 +1013,7 @@ Root-level research indexes:
 - [`scripts/verify-backup.sh`](scripts/verify-backup.sh): structural backup check.
 - [`scripts/backup-restore-drill.py`](scripts/backup-restore-drill.py): actual isolated PostgreSQL restore, Dune validation, round-trip dump proof, cleanup, and private receipt.
 - [`scripts/install-backup-restore-drill-timer.sh`](scripts/install-backup-restore-drill-timer.sh): hardened daily recovery-proof systemd timer installer.
+- [`scripts/operational-slo.py`](scripts/operational-slo.py): reliability status, integrity/hash-chain verification, Prometheus exposition, and explicit fixture/external signal ingestion.
 - [`scripts/install-backup-offsite-timer.sh`](scripts/install-backup-offsite-timer.sh): portable backup sync timer installer.
 - [`scripts/package-manifest.sh`](scripts/package-manifest.sh): publishable file manifest generator.
 - [`.env.example`](.env.example): documented settings template.

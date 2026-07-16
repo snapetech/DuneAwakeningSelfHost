@@ -59,6 +59,8 @@ The local backup includes:
   case/history database exists.
 - A transactionally consistent `base-gallery.sqlite3` snapshot when the
   isolated creator/gallery database exists.
+- A transactionally consistent `operational-slo.sqlite3` reliability snapshot
+  when the SLO ledger exists; verification also checks its incident hash chain.
 - `manifest.txt` with `WORLD_UNIQUE_NAME`, `DUNE_FLS_ENV`, and `GAME_RMQ_PUBLIC_HOST`.
 
 New CLI backups run with `umask 077`. Admin-panel dump, archive, manifest, and
@@ -77,7 +79,7 @@ Restores are disruptive. Stop game/admin writers first.
 RabbitMQ, saved-state, config, and TLS replacement are opt-in:
 
 ```bash
-./scripts/restore-state.sh --rabbitmq --server-saved --config --tls --community-rewards --moderation --base-gallery .env backups/<UTC timestamp>
+./scripts/restore-state.sh --rabbitmq --server-saved --config --tls --community-rewards --moderation --base-gallery --operational-slo .env backups/<UTC timestamp>
 ```
 
 Run `--dry-run` first. If the manifest `WORLD_UNIQUE_NAME` differs from the current `.env`, restore will warn because that value is the durable FLS battlegroup identity.
@@ -85,7 +87,7 @@ Run `--dry-run` first. If the manifest `WORLD_UNIQUE_NAME` differs from the curr
 The equivalent Make target accepts optional restore layer flags:
 
 ```bash
-make restore-dry-run ENV_FILE=.env BACKUP_DIR=backups/<UTC timestamp> RESTORE_FLAGS='--rabbitmq --server-saved --config --tls --community-rewards --moderation --base-gallery'
+make restore-dry-run ENV_FILE=.env BACKUP_DIR=backups/<UTC timestamp> RESTORE_FLAGS='--rabbitmq --server-saved --config --tls --community-rewards --moderation --base-gallery --operational-slo'
 ```
 
 ## Offsite and Onsite Sync
