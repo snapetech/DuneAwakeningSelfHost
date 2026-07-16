@@ -9,9 +9,10 @@ The private admin service also exposes label-safe `/metrics/slo`,
 reliability/error-budget, autoscaler-efficiency, configuration-attestation, and
 incident/change-correlation evidence without exporting player identities,
 notes, coordinates, paths, candidates, digests, or credentials.
-Change Intelligence also emits only the latest response-readiness drill result
-and timestamp. Those series have no incident, operator, command, runbook, gate,
-or digest labels.
+Change Intelligence emits the latest response-readiness drill result/time and
+the latest fleet-wide readiness certification result/time, runbook coverage,
+shared-diagnostic totals, and recovery-contract totals. Those series have no
+incident, operator, command, runbook, gate, or digest labels.
 
 Start it with the normal world Compose files plus the overlay:
 
@@ -62,7 +63,8 @@ docker compose --env-file .env.example \
 `config/metrics/rules/dash.yml` includes collector-freshness, critical SLO,
 fast-burn, exhausted-budget, slow cold-start, desired-state target/unsealed/
 stale/critical-drift, change-ledger target/integrity/candidate-review,
-container-health, memory, disk, and Postgres alerts.
+container-health, memory, disk, Postgres, failed/stale incident drills, and
+missing/failed/stale fleet-wide response certification alerts.
 Validate the exact Prometheus version and rules with:
 
 ```bash

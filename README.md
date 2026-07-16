@@ -158,6 +158,10 @@ Operators can rehearse a plan without disruption: DASH runs only fixed
 read-only diagnostics, validates current recovery capabilities and gates,
 discards diagnostic output after hashing it, executes no recovery, and appends
 the readiness receipt to the incident's HMAC evidence chain.
+They can also certify the complete response policy in one action. Shared
+diagnostics run once, every runbook and guarded recovery contract is scored,
+exact capability/gate/confirmation gaps are displayed, and the global
+tamper-evident receipt becomes part of every subsequent signed incident capsule.
 
 See [`docs/ecosystem-feature-parity-audit.md`](docs/ecosystem-feature-parity-audit.md)
 for the pinned peer list, full capability matrix, confidence levels, exclusions,

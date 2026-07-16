@@ -238,6 +238,55 @@ It requires `operations.write`, `DUNE_RESPONSE_DRILLS_ENABLED=true`, and
 `DUNE_COMMAND_CONSOLE_ENABLED=true`. It does not use the master game-mutation
 gate because its only write is the private audit/HMAC evidence receipt.
 
+### Fleet-wide readiness certification
+
+An incident drill answers whether one selected plan is executable. **Certify
+all runbooks** answers whether the complete current response policy is
+executable by the authenticated operator now.
+
+One explicit certification request:
+
+1. binds to the displayed `response.policySha256` and rejects a stale policy;
+2. deduplicates every diagnostic reference across all runbooks;
+3. executes each distinct fixed native diagnostic exactly once;
+4. hashes and discards diagnostic output using the same receipt contract as an
+   incident drill;
+5. evaluates every recovery step against the operator's current RBAC
+   capability, configured feature gate, and committed confirmation phrase;
+6. calculates ready/total coverage for runbooks, diagnostics, and recovery
+   contracts; and
+7. appends one `incident-readiness-certification` event to the existing HMAC
+   ledger.
+
+The default policy references nine diagnostic steps, but they collapse to only
+`stack-status`, `rmq-health`, and `storage-status`. The certification therefore
+runs three diagnostics, not nine. It evaluates all 12 runbooks and 10 recovery
+contracts. Review-only runbooks with no recovery contract can be ready when
+their diagnostics pass; this means the machine-executable prerequisites are
+present, not that a human investigation has been completed.
+
+The route is:
+
+```text
+POST /api/ops/change-intelligence/certify
+{"policySha256":"<64 hex>","confirm":"CERTIFY INCIDENT RESPONSE READINESS"}
+```
+
+It requires `operations.write`, `DUNE_RESPONSE_DRILLS_ENABLED=true`, and
+`DUNE_COMMAND_CONSOLE_ENABLED=true`. It never invokes a recovery endpoint,
+executes a game mutation, starts or restarts a service, or changes a feature
+gate. `recoveryExecuted` and `gameMutationExecuted` are always retained as
+`false`.
+
+The Infrastructure scorecard reports the latest policy-wide receipt, shared
+diagnostics, each runbook's readiness, and exact capability/gate/confirmation
+gaps. A certification is a snapshot: run it again after policy, RBAC, feature
+gate, or runtime changes. Every incident capsule includes the latest global
+certification, and its ledger event ID enters the next response-plan input
+digest. Dashboard and metric readiness also require the receipt's retained
+policy digest to match the currently loaded response policy; a previously
+passing certification becomes policy-stale instead of remaining green.
+
 ## CLI
 
 Print only the compiled plan:
@@ -271,9 +320,11 @@ make change-intelligence-verify-capsule \
   CAPSULE_FILE=backups/operator-evidence/incident.signed.json
 ```
 
-The atomic export is mode `0600`. Offline verification reports both
-`signatureValid` and `responsePlanValid` and does not require the source SQLite
-database or policy file.
+The atomic export is mode `0600`. Offline verification reports
+`signatureValid`, `responsePlanValid`, and `readinessReceiptsValid`. It
+recomputes every nested drill and certification receipt digest rather than
+trusting the verification flag embedded in the event. Verification does not
+require the source SQLite database or policy file.
 
 New plan-bearing signed capsules use outer schema 2. Authentic legacy schema-1
 capsules remain valid and report `legacyWithoutResponsePlan=true` plus
@@ -289,18 +340,21 @@ files, and non-signed suffixes are not archived.
 
 Both backup verifiers require every archive member to be a regular confined
 `operator-evidence/<safe-name>.signed.json` file. They verify every response-plan
-digest and outer capsule HMAC against the matching key from that backup's
-config archive. A structurally valid capsule signed by the current key cannot
-make a backup with a different key pass.
+digest, every nested readiness receipt digest, and the outer capsule HMAC
+against the matching key from that backup's config archive. A structurally
+valid capsule signed by the current key cannot make a backup with a different
+key pass.
 
 The evidence archive is portable, not live mutable state. Recovery is explicit:
 verify the full backup, extract the archive to a private staging directory, and
 retain or distribute only the required capsules. Do not overwrite the live
 append-only SQLite ledger with a portable export.
 
-Prometheus exposes the latest drill readiness and timestamp without incident,
-operator, command, runbook, gate, or digest labels. Alerts fire when the latest
-drill is not ready or when an existing drill becomes older than seven days.
+Prometheus exposes latest drill readiness/time plus the latest fleet
+certification readiness/time, runbook coverage, diagnostic totals, and recovery
+contract totals without incident, operator, command, runbook, gate, or digest
+labels. Alerts fire when the latest drill is not ready/stale, or when no current
+passing policy-wide certification exists or it becomes older than seven days.
 
 ## Failure Handling
 
@@ -321,6 +375,11 @@ drill is not ready or when an existing drill becomes older than seven days.
   health observation path; never fabricate a resolution event.
 - **drill not ready:** inspect diagnostic and recovery-contract booleans. Repair
   or enable a missing gate through a separate reviewed change; never bypass it.
+- **certification not ready:** use the runbook scorecard to distinguish shared
+  diagnostic failure from capability, gate, or confirmation gaps. A disabled
+  recovery gate is reported as a gap; certification never enables it.
+- **stale policy rejection:** reload Change Intelligence and review the new
+  policy digest before certifying.
 - **stale plan rejection:** reload the capsule. New evidence changed immutable
   plan inputs as designed.
 
@@ -336,7 +395,9 @@ make validate
 
 Coverage includes every default SLO-to-runbook mapping, desired/generic
 fallbacks, policy bounds, fixed diagnostic catalog membership, mutation-step
-contracts, predicate statuses, policy/input/plan digests, plan tampering, outer
-HMAC tampering, concurrent append snapshot isolation, UI navigation without
-execution, CLI output, private export modes, native/minimal backup verification,
-matching-key enforcement, and tampered archived-capsule rejection.
+contracts, deduplicated policy-wide diagnostics, 12-runbook coverage receipts,
+predicate statuses, policy/input/plan digests, nested readiness-receipt
+tampering, outer HMAC tampering, concurrent append snapshot isolation, UI
+navigation without execution, certification confirmation, CLI output, private
+export modes, native/minimal backup verification, matching-key enforcement, and
+tampered archived-capsule rejection.

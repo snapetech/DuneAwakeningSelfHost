@@ -179,8 +179,10 @@ GET /api/ops/change-intelligence/capsule?incidentKey=slo:<id>&signed=true
 ```
 
 They require only normal authenticated `read` capability. There is no browser
-write route: evidence is produced by existing guarded workflows and system
-transitions, not manually fabricated through the UI.
+route for fabricating arbitrary evidence. Explicit drill and policy-wide
+certification routes can append only their server-derived bounded receipts;
+the client cannot submit diagnostic results, runbook results, receipt IDs, or
+digests.
 
 ### Portable signed capsules
 
@@ -212,8 +214,9 @@ froze this exact capsule from a ledger whose chain verified at that head. It doe
 not prove causality, prove that no later events exist, or replace the independent
 backup containing the source ledger and key. Treat exports as private operator
 evidence even though credentials and player identities are removed.
-Offline verification also recomputes the nested response-plan digest and reports
-`responsePlanValid`.
+Offline verification also recomputes the nested response-plan digest and every
+incident-drill/policy-certification receipt digest. It reports
+`responsePlanValid` and `readinessReceiptsValid`.
 Authentic schema-1 exports created before response plans remain verifiable and
 report `legacyWithoutResponsePlan=true` with `responsePlanValid=null`. A schema-1
 artifact that claims to contain a response plan is rejected instead of silently
@@ -229,7 +232,7 @@ assigning new semantics to the old format.
 | `DUNE_CHANGE_INTELLIGENCE_HMAC_SECRET_FILE` | `/workspace/config/secrets/change-intelligence-hmac.secret` | Private authentication key. |
 | `DUNE_CHANGE_INTELLIGENCE_EVIDENCE_DIR` | `/workspace/backups/operator-evidence` | Container path for private portable signed capsules. |
 | `DUNE_CHANGE_INTELLIGENCE_HOST_EVIDENCE_DIR` | `backups/operator-evidence` | Host path archived by full backups. |
-| `DUNE_RESPONSE_DRILLS_ENABLED` | `true` | Enables explicit fixed-diagnostic response-readiness rehearsals. |
+| `DUNE_RESPONSE_DRILLS_ENABLED` | `true` | Enables explicit fixed-diagnostic incident rehearsals and fleet-wide policy certification. |
 
 Host CLI overrides are `DUNE_CHANGE_INTELLIGENCE_HOST_DATABASE`,
 `DUNE_CHANGE_INTELLIGENCE_HOST_POLICY`, and
@@ -278,10 +281,18 @@ GET /metrics/change-intelligence
 
 It exposes ledger verification, total events, open incidents, open incidents
 with at least one candidate change, last-event time, latest response-drill
-readiness, and last-drill time. Prometheus alerts when
-the target is unreachable, integrity verification fails, or an open incident
-has preceding changes requiring review. The latter is an investigation alert,
-not a root-cause verdict.
+readiness/time, latest fleet-certification readiness/time, ready/total runbooks,
+coverage ratio, ready/total shared diagnostics, and ready/total recovery
+contracts. The series are label-free and expose no identities, incident keys,
+commands, runbook names, gates, or digests. Certification readiness is `1` only
+when the outcome passed, its nested receipt digest verifies, and its retained
+policy digest matches the currently loaded response policy.
+
+Prometheus alerts when the target is unreachable, integrity verification fails,
+an open incident has preceding changes requiring review, the last incident
+drill is failed/stale, or the policy has no current passing fleet-wide
+certification. Candidate correlation remains an investigation signal, not a
+root-cause verdict.
 
 Ledger verification is also the ninth default operational SLO and is not
 maintenance-excludable. Planned work cannot hide lost operational evidence.
@@ -341,5 +352,6 @@ Tests cover policy/key/file modes, credential/identity/path redaction, payload
 bounds, classification fallbacks, temporal ranking, non-causal language,
 resolution/reopen handling, idempotent history import, append-only enforcement,
 HMAC tamper detection, portable signed export/offline verification, metrics
-privacy, native/minimal backup verification, restore preflight, API
-authentication, and dashboard wiring.
+privacy, fixed-diagnostic deduplication, policy-wide runbook/recovery coverage,
+nested readiness-receipt verification, native/minimal backup verification,
+restore preflight, API authentication/confirmation, and dashboard wiring.

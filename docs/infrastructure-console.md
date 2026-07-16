@@ -254,6 +254,12 @@ Console diagnostic but never runs it; recovery suggestions retain their normal
 capability, feature gate, and confirmation. See
 [`incident-response.md`](incident-response.md).
 
+The same panel can run an explicit fleet-wide readiness certification bound to
+the displayed policy digest. DASH executes each distinct fixed read-only
+diagnostic once, evaluates every runbook's current capability/gate/confirmation
+contracts, and displays exact gaps. The certification writes only a bounded
+HMAC evidence receipt; it executes no recovery or game mutation.
+
 ## Database Browser and Query Console
 
 `GET /api/ops/database` lists tables and views in the `dune` and `public`

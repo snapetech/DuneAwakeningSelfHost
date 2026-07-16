@@ -3371,6 +3371,9 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn("deterministic response plan", source)
         self.assertIn("responsePlanJump", source)
         self.assertIn("Response-plan diagnostic", source)
+        self.assertIn("Fleet-wide response readiness", source)
+        self.assertIn("Certify all runbooks", source)
+        self.assertIn("/api/ops/change-intelligence/certify", source)
 
     def test_response_policy_reuses_only_existing_diagnostics_gates_and_confirmations(self):
         policy = self.panel.change_intelligence.load_policy(ROOT / "config" / "change-intelligence.json")
@@ -3456,6 +3459,76 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertEqual("slo:one", calls[0][0])
         self.assertIsInstance(calls[0][2], dict)
         self.assertTrue(calls[0][3])
+
+    def test_policy_wide_readiness_certification_deduplicates_diagnostics_and_records_coverage(self):
+        policy_path = self.workspace / "certification-change-intelligence.json"
+        policy_path.write_text((ROOT / "config" / "change-intelligence.json").read_text(encoding="utf-8"), encoding="utf-8")
+        secret = self.workspace / "certification-change-intelligence.secret"
+        secret.write_text("c" * 64 + "\n", encoding="utf-8")
+        secret.chmod(0o600)
+        store = self.panel.change_intelligence.Store(self.workspace / "certification.sqlite3", policy_path, secret)
+        store.initialize()
+        policy = store.policy["response"]
+        events = []
+        calls = []
+
+        originals = {
+            "RESPONSE_DRILLS_ENABLED": self.panel.RESPONSE_DRILLS_ENABLED,
+            "COMMAND_CONSOLE_ENABLED": self.panel.COMMAND_CONSOLE_ENABLED,
+            "change_intelligence_store": self.panel.change_intelligence_store,
+            "audit_event": self.panel.audit_event,
+        }
+        self.panel.RESPONSE_DRILLS_ENABLED = True
+        self.panel.COMMAND_CONSOLE_ENABLED = True
+        self.panel.change_intelligence_store = lambda: store
+
+        def retain_event(action, ok=True, **data):
+            events.append((action, ok, data))
+            store.record({"action": action, "ts": 1700000000, "ok": ok, **data}, ingested_at=1700000001)
+
+        self.panel.audit_event = retain_event
+        for name, value in originals.items():
+            self.addCleanup(lambda name=name, value=value: setattr(self.panel, name, value))
+
+        def executor(command_id):
+            calls.append(command_id)
+            return {"ok": True, "bounded": True}
+
+        gates = {step["featureGate"]: "true" for runbook in policy["runbooks"] for step in runbook["steps"] if step["mutation"]}
+        with mock.patch.dict(os.environ, gates):
+            result = self.panel.run_incident_readiness_certification(policy["policySha256"], {"id": "owner", "capabilities": ["*"]}, executor)
+        self.assertTrue(result["ready"])
+        self.assertEqual(12, result["summary"]["runbooksReady"])
+        self.assertEqual(12, result["summary"]["runbooksTotal"])
+        self.assertEqual(3, result["summary"]["diagnosticsTotal"])
+        self.assertEqual(10, result["summary"]["recoveryContractsTotal"])
+        self.assertEqual(["stack-status", "rmq-health", "storage-status"], calls)
+        self.assertFalse(result["recoveryExecuted"])
+        self.assertFalse(result["gameMutationExecuted"])
+        self.assertNotIn("output", result["diagnostics"][0])
+        self.assertEqual(64, len(result["receiptSha256"]))
+        self.assertEqual("incident-readiness-certification", events[0][0])
+        self.assertTrue(events[0][1])
+        self.assertTrue(result["ledgerEvent"]["receiptVerification"]["ok"])
+        self.assertEqual(result["id"], result["ledgerEvent"]["data"]["certification_id"])
+        self.assertTrue(store.verify()["ok"])
+        with self.assertRaisesRegex(ValueError, "policy changed"):
+            self.panel.run_incident_readiness_certification("f" * 64, {"id": "owner", "capabilities": ["*"]}, executor)
+        self.assertEqual(3, len(calls))
+
+    def test_readiness_certification_route_requires_confirmation_and_passes_authenticated_principal(self):
+        original = self.panel.run_incident_readiness_certification
+        calls = []
+        self.panel.run_incident_readiness_certification = lambda digest, principal, executor: calls.append((digest, principal, callable(executor))) or {"ready": True, "summary": {"runbooksTotal": 12}}
+        self.addCleanup(lambda: setattr(self.panel, "run_incident_readiness_certification", original))
+        rejected = self.invoke_post_route("/api/ops/change-intelligence/certify", {"policySha256": "a" * 64, "confirm": "wrong"})
+        self.assertEqual(401, rejected["errors"][0]["status"])
+        self.assertFalse(calls)
+        accepted = self.invoke_post_route("/api/ops/change-intelligence/certify", {"policySha256": "a" * 64, "confirm": "CERTIFY INCIDENT RESPONSE READINESS"})
+        self.assertTrue(accepted["json"]["ready"])
+        self.assertEqual("a" * 64, calls[0][0])
+        self.assertIsInstance(calls[0][1], dict)
+        self.assertTrue(calls[0][2])
 
     def test_capacity_application_is_evidence_gated_gradual_and_mode_preserving(self):
         fake = type("Store", (), {

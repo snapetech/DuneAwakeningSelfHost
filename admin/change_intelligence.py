@@ -315,6 +315,16 @@ def verify_signed_capsule(document, secret):
                 raise ValueError("signed capsule response plan is invalid: " + str(plan_verification.get("error") or "digest mismatch"))
             if capsule["responsePlan"].get("incidentKey") != key:
                 raise ValueError("signed capsule response plan incident does not match")
+            drills = capsule.get("responseDrills") or []
+            if not isinstance(drills, list):
+                raise ValueError("signed capsule response drills must be a list")
+            for drill in drills:
+                verification = verify_readiness_receipt(drill)
+                if not verification.get("ok"):
+                    raise ValueError("signed capsule response drill receipt is invalid")
+            certification = capsule.get("readinessCertification")
+            if certification and not verify_readiness_receipt(certification).get("ok"):
+                raise ValueError("signed capsule readiness certification receipt is invalid")
         elif "responsePlan" in capsule:
             raise ValueError("schema 1 signed capsule must not contain a response plan")
         if not isinstance(ledger.get("eventCount"), int) or ledger["eventCount"] < 1:
@@ -332,6 +342,7 @@ def verify_signed_capsule(document, secret):
         return {
             "ok": valid, "schemaVersion": schema, "incidentKey": key,
             "signatureValid": valid, "responsePlanValid": True if schema == 2 else None,
+            "readinessReceiptsValid": True if schema == 2 else None,
             "responsePlanSha256": plan_verification["planSha256"] if plan_verification else None,
             "legacyWithoutResponsePlan": schema == 1, "signingKeyFingerprint": fingerprint,
             "payloadSha256": hashlib.sha256(_canonical(payload).encode()).hexdigest(),
@@ -701,6 +712,18 @@ class Store:
             event["receiptVerification"] = verify_readiness_receipt(event)
         return event
 
+    def _certification_public(self, row):
+        if not row:
+            return None
+        event = self._public(row)
+        policy_current = hmac.compare_digest(
+            str((event.get("data") or {}).get("policy_sha256") or ""),
+            str(self.policy["response"]["policySha256"]),
+        )
+        event["policyCurrent"] = policy_current
+        event["currentReady"] = bool(event.get("ok") and event["receiptVerification"].get("ok") and policy_current)
+        return event
+
     def _correlate_connection(self, connection, key):
         incident = connection.execute("select * from events where incident_key=? and kind='incident-open' order by occurred_at desc limit 1", (str(key),)).fetchone()
         if not incident:
@@ -764,7 +787,7 @@ class Store:
             "opened": self._public(opened), "resolved": self._public(resolved) if resolved else None,
             "candidateChanges": self._correlate_connection(connection, key), "followupEvidence": [self._public(row) for row in followup],
             "responseDrills": [self._public(row) for row in drills],
-            "readinessCertification": self._public(certification) if certification else None,
+            "readinessCertification": self._certification_public(certification),
             "causalityClaimed": False,
             "interpretation": "Candidates are ranked temporal/scope correlations, not proof of causality.",
         }
@@ -821,6 +844,9 @@ class Store:
         try:
             recent = connection.execute("select * from events order by occurred_at desc,sequence desc limit ?", (limit,)).fetchall()
             all_incident_rows = connection.execute("select * from events where incident_key is not null order by occurred_at,sequence").fetchall()
+            certification = connection.execute(
+                "select * from events where action='incident-readiness-certification' order by occurred_at desc,sequence desc limit 1"
+            ).fetchone()
             total = connection.execute("select count(*) from events").fetchone()[0]
         finally:
             connection.close()
@@ -849,6 +875,7 @@ class Store:
             "ok": integrity["ok"], "state": "invalid" if not integrity["ok"] else "active",
             "eventCount": total, "openIncidents": [row for row in relevant if row["status"] == "open"],
             "incidents": relevant[:limit], "recentEvents": [self._public(row) for row in recent],
+            "readinessCertification": self._certification_public(certification),
             "policy": self.policy, "integrity": integrity,
         }
 
@@ -933,6 +960,11 @@ class Store:
             latest_drill = self._public(row) if row else None
         finally:
             connection.close()
+        certification = status.get("readinessCertification")
+        summary = ((certification or {}).get("data") or {}).get("summary") or {}
+        runbooks_total = int(summary.get("runbooksTotal") or 0)
+        runbooks_ready = int(summary.get("runbooksReady") or 0)
+        coverage = runbooks_ready / runbooks_total if runbooks_total else 0
         return "\n".join([
             "# HELP dash_change_intelligence_collector_up Change timeline SQLite, triggers, and HMAC chain verify.",
             "# TYPE dash_change_intelligence_collector_up gauge",
@@ -941,6 +973,15 @@ class Store:
             f"dash_change_intelligence_open_incidents {len(status['openIncidents'])}",
             f"dash_change_intelligence_open_incidents_with_candidate_changes {with_candidates}",
             f"dash_change_intelligence_last_event_timestamp_seconds {latest}",
-            f"dash_incident_response_latest_drill_ready {1 if latest_drill and latest_drill.get('ok') else 0}",
+            f"dash_incident_response_latest_drill_ready {1 if latest_drill and latest_drill.get('ok') and latest_drill.get('receiptVerification', {}).get('ok') else 0}",
             f"dash_incident_response_last_drill_timestamp_seconds {_epoch(latest_drill['occurredAt']) if latest_drill else 'NaN'}",
+            f"dash_incident_readiness_certification_ready {1 if certification and certification.get('currentReady') else 0}",
+            f"dash_incident_readiness_last_certification_timestamp_seconds {_epoch(certification['occurredAt']) if certification else 'NaN'}",
+            f"dash_incident_readiness_runbooks_ready {runbooks_ready}",
+            f"dash_incident_readiness_runbooks_total {runbooks_total}",
+            f"dash_incident_readiness_coverage_ratio {coverage:.12g}",
+            f"dash_incident_readiness_diagnostics_ready {int(summary.get('diagnosticsReady') or 0)}",
+            f"dash_incident_readiness_diagnostics_total {int(summary.get('diagnosticsTotal') or 0)}",
+            f"dash_incident_readiness_recovery_contracts_ready {int(summary.get('recoveryContractsReady') or 0)}",
+            f"dash_incident_readiness_recovery_contracts_total {int(summary.get('recoveryContractsTotal') or 0)}",
         ]) + "\n"

@@ -143,3 +143,13 @@ groups:
         for: 1h
         labels: {severity: warning}
         annotations: {summary: "No successful or failed DASH incident-response readiness drill has been recorded in seven days"}
+      - alert: DashIncidentReadinessNotCertified
+        expr: dash_incident_readiness_certification_ready == 0
+        for: 15m
+        labels: {severity: warning}
+        annotations: {summary: "DASH incident-response policy has no current passing fleet-wide readiness certification"}
+      - alert: DashIncidentReadinessCertificationStale
+        expr: time() - dash_incident_readiness_last_certification_timestamp_seconds > 604800
+        for: 1h
+        labels: {severity: warning}
+        annotations: {summary: "DASH fleet-wide incident-readiness certification is older than seven days"}

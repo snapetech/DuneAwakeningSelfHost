@@ -237,6 +237,7 @@ CONFIRM_CAPACITY_APPLY = "APPLY CAPACITY RECOMMENDATIONS"
 CONFIRM_DESIRED_STATE_SEAL = "SEAL DESIRED STATE"
 CONFIRM_DESIRED_STATE_ACK = "ACKNOWLEDGE CONFIGURATION DRIFT"
 CONFIRM_RESPONSE_DRILL = "RUN RESPONSE READINESS DRILL"
+CONFIRM_READINESS_CERTIFICATION = "CERTIFY INCIDENT RESPONSE READINESS"
 CONFIRM_BOOTSTRAP = "RUN BOOTSTRAP"
 CONFIRM_PLAYER_RECOVERY = "MOVE OFFLINE PLAYER"
 CONFIRM_REPUTATION_MUTATION = "WRITE REPUTATION"
@@ -5501,8 +5502,44 @@ def change_intelligence_public_status():
     if not CHANGE_INTELLIGENCE_ENABLED:
         return {"ok": False, "enabled": False, "state": "disabled", "runtime": dict(CHANGE_INTELLIGENCE_RUNTIME)}
     status = change_intelligence_store().status()
-    status.update({"enabled": True, "runtime": dict(CHANGE_INTELLIGENCE_RUNTIME), "responseDrillsEnabled": RESPONSE_DRILLS_ENABLED, "responseDrillConfirm": CONFIRM_RESPONSE_DRILL})
+    status.update({
+        "enabled": True, "runtime": dict(CHANGE_INTELLIGENCE_RUNTIME),
+        "responseDrillsEnabled": RESPONSE_DRILLS_ENABLED,
+        "responseDrillConfirm": CONFIRM_RESPONSE_DRILL,
+        "readinessCertificationConfirm": CONFIRM_READINESS_CERTIFICATION,
+    })
     return status
+
+
+def _response_diagnostic(command_id, executor, *, step_id=None):
+    result = command_console.run(command_id, executor)
+    output = str(result.pop("output", ""))
+    return {
+        **({"stepId": step_id} if step_id else {}),
+        "commandId": command_id, "ok": result["ok"],
+        "returncode": result["returncode"], "timedOut": result["timedOut"],
+        "durationMs": result["durationMs"], "outputBytes": len(output.encode("utf-8")),
+        "outputSha256": hashlib.sha256(output.encode("utf-8")).hexdigest(),
+        "shell": result["shell"], "subprocess": result["subprocess"],
+        "argumentsAccepted": result["argumentsAccepted"],
+    }
+
+
+def _diagnostic_ready(result):
+    return bool(result["ok"] and not result["shell"] and not result["subprocess"] and not result["argumentsAccepted"])
+
+
+def _response_recovery_contract(step, principal):
+    gate = step.get("featureGate") or ""
+    capability_ready = access_control.has_capability(principal, step["requiredCapability"])
+    gate_enabled = bool(gate and os.environ.get(gate, "false").lower() in ("1", "true", "yes", "on"))
+    confirmation_ready = not step.get("confirmation") or bool(str(step["confirmation"]).strip())
+    return {
+        "stepId": step["id"], "surface": step["surface"], "requiredCapability": step["requiredCapability"],
+        "capabilityReady": capability_ready, "featureGate": gate, "featureGateEnabled": gate_enabled,
+        "confirmation": step.get("confirmation"), "confirmationConfigured": confirmation_ready,
+        "ready": capability_ready and gate_enabled and confirmation_ready,
+    }
 
 
 def run_response_readiness_drill(incident_key, expected_plan_sha256, principal, executor):
@@ -5524,30 +5561,13 @@ def run_response_readiness_drill(incident_key, expected_plan_sha256, principal, 
         if not command_id or command_id in seen:
             continue
         seen.add(command_id)
-        result = command_console.run(command_id, executor)
-        output = str(result.pop("output", ""))
-        diagnostics.append({
-            "stepId": step["id"], "commandId": command_id, "ok": result["ok"],
-            "returncode": result["returncode"], "timedOut": result["timedOut"],
-            "durationMs": result["durationMs"], "outputBytes": len(output.encode("utf-8")),
-            "outputSha256": hashlib.sha256(output.encode("utf-8")).hexdigest(),
-            "shell": result["shell"], "subprocess": result["subprocess"], "argumentsAccepted": result["argumentsAccepted"],
-        })
+        diagnostics.append(_response_diagnostic(command_id, executor, step_id=step["id"]))
     recovery = []
     for step in plan["steps"]:
         if not step["mutation"]:
             continue
-        gate = step.get("featureGate") or ""
-        capability_ready = access_control.has_capability(principal, step["requiredCapability"])
-        gate_enabled = bool(gate and os.environ.get(gate, "false").lower() in ("1", "true", "yes", "on"))
-        confirmation_ready = not step.get("confirmation") or bool(str(step["confirmation"]).strip())
-        recovery.append({
-            "stepId": step["id"], "surface": step["surface"], "requiredCapability": step["requiredCapability"],
-            "capabilityReady": capability_ready, "featureGate": gate, "featureGateEnabled": gate_enabled,
-            "confirmation": step.get("confirmation"), "confirmationConfigured": confirmation_ready,
-            "ready": capability_ready and gate_enabled and confirmation_ready,
-        })
-    diagnostics_ready = all(row["ok"] and not row["shell"] and not row["subprocess"] and not row["argumentsAccepted"] for row in diagnostics)
+        recovery.append(_response_recovery_contract(step, principal))
+    diagnostics_ready = all(_diagnostic_ready(row) for row in diagnostics)
     recovery_ready = all(row["ready"] for row in recovery)
     ready = diagnostics_ready and recovery_ready
     drill_id = "response-drill-" + secrets.token_hex(16)
@@ -5572,6 +5592,72 @@ def run_response_readiness_drill(incident_key, expected_plan_sha256, principal, 
     ledger_event = (refreshed.get("responseDrills") or [None])[0]
     if not ledger_event or (ledger_event.get("data") or {}).get("drill_id") != drill_id:
         raise RuntimeError("response drill completed but its HMAC ledger receipt was not retained")
+    receipt["ledgerEvent"] = ledger_event
+    return receipt
+
+
+def run_incident_readiness_certification(expected_policy_sha256, principal, executor):
+    """Certify every response runbook without executing any recovery mutation."""
+    if not RESPONSE_DRILLS_ENABLED:
+        raise PermissionError("incident readiness certification is disabled; set DUNE_RESPONSE_DRILLS_ENABLED=true")
+    if not COMMAND_CONSOLE_ENABLED:
+        raise PermissionError("incident readiness certification requires DUNE_COMMAND_CONSOLE_ENABLED=true")
+    store = change_intelligence_store()
+    policy = store.policy["response"]
+    expected = str(expected_policy_sha256 or "").strip()
+    if not re.fullmatch(r"[0-9a-f]{64}", expected) or not hmac.compare_digest(expected, policy["policySha256"]):
+        raise ValueError("response policy changed; reload Change Intelligence and review the current policy before certifying")
+
+    command_ids = []
+    seen = set()
+    for steps in [policy.get("commonSteps") or [], *(runbook["steps"] for runbook in policy["runbooks"])]:
+        for step in steps:
+            command_id = step.get("commandId")
+            if command_id and command_id not in seen:
+                seen.add(command_id)
+                command_ids.append(command_id)
+    diagnostics = [_response_diagnostic(command_id, executor) for command_id in command_ids]
+    diagnostic_by_id = {row["commandId"]: row for row in diagnostics}
+
+    runbooks = []
+    for runbook in policy["runbooks"]:
+        steps = [*(policy.get("commonSteps") or []), *runbook["steps"]]
+        runbook_commands = list(dict.fromkeys(step["commandId"] for step in steps if step.get("commandId")))
+        recovery = [_response_recovery_contract(step, principal) for step in steps if step["mutation"]]
+        diagnostics_ready = all(_diagnostic_ready(diagnostic_by_id[command_id]) for command_id in runbook_commands)
+        recovery_ready = all(row["ready"] for row in recovery)
+        runbooks.append({
+            "id": runbook["id"], "title": runbook["title"],
+            "diagnosticCommandIds": runbook_commands, "diagnosticsReady": diagnostics_ready,
+            "recoveryContracts": recovery, "recoveryContractsReady": recovery_ready,
+            "ready": diagnostics_ready and recovery_ready,
+        })
+
+    summary = {
+        "runbooksReady": sum(1 for row in runbooks if row["ready"]), "runbooksTotal": len(runbooks),
+        "diagnosticsReady": sum(1 for row in diagnostics if _diagnostic_ready(row)), "diagnosticsTotal": len(diagnostics),
+        "recoveryContractsReady": sum(1 for row in runbooks for contract in row["recoveryContracts"] if contract["ready"]),
+        "recoveryContractsTotal": sum(len(row["recoveryContracts"]) for row in runbooks),
+    }
+    summary["coverageRatio"] = summary["runbooksReady"] / summary["runbooksTotal"] if summary["runbooksTotal"] else 0
+    ready = summary["runbooksReady"] == summary["runbooksTotal"] and summary["runbooksTotal"] > 0
+    certification_id = "readiness-certification-" + secrets.token_hex(16)
+    receipt = {
+        "id": certification_id, "policySha256": policy["policySha256"],
+        "principalId": str((principal or {}).get("id") or "unknown")[:128],
+        "diagnostics": diagnostics, "runbooks": runbooks, "summary": summary,
+        "ready": ready, "recoveryExecuted": False, "gameMutationExecuted": False,
+    }
+    receipt["receiptSha256"] = hashlib.sha256(json.dumps(receipt, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()).hexdigest()
+    audit_event(
+        "incident-readiness-certification", ok=ready, certification_id=certification_id,
+        policy_sha256=policy["policySha256"], principal_id=receipt["principalId"],
+        diagnostics=diagnostics, runbooks=runbooks, summary=summary,
+        recovery_executed=False, game_mutation_executed=False, receipt_sha256=receipt["receiptSha256"],
+    )
+    ledger_event = store.status(limit=10).get("readinessCertification")
+    if not ledger_event or (ledger_event.get("data") or {}).get("certification_id") != certification_id:
+        raise RuntimeError("readiness certification completed but its HMAC ledger receipt was not retained")
     receipt["ledgerEvent"] = ledger_event
     return receipt
 
@@ -7791,6 +7877,9 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/ops/change-intelligence/drill":
                 self.require_token()
                 raise PermissionError("response readiness drills require POST")
+            elif parsed.path == "/api/ops/change-intelligence/certify":
+                self.require_token()
+                raise PermissionError("incident readiness certification requires POST")
             elif parsed.path == "/api/ops/database":
                 self.require_token()
                 self.json(dict(database_browser_catalog(), queryEnabled=DATABASE_QUERY_ENABLED, writeEnabled=DATABASE_WRITE_ENABLED, rowMutationsEnabled=DATABASE_ROW_MUTATIONS_ENABLED, passwordMutationsEnabled=DATABASE_PASSWORD_MUTATIONS_ENABLED, writeConfirm=CONFIRM_DATABASE_WRITE, rowConfirm=CONFIRM_DATABASE_ROW_UPDATE, passwordConfirm=CONFIRM_DATABASE_PASSWORD))
@@ -8451,6 +8540,13 @@ class Handler(BaseHTTPRequestHandler):
                 require_confirmation(body, CONFIRM_RESPONSE_DRILL)
                 principal = access_control.public_principal(getattr(self, "auth_principal", None)) or {}
                 result = run_response_readiness_drill(body.get("incidentKey"), body.get("planSha256"), principal, self.command_console_operation)
+                self.json(result)
+            elif parsed.path == "/api/ops/change-intelligence/certify":
+                self.require_token()
+                body = parse_body(self)
+                require_confirmation(body, CONFIRM_READINESS_CERTIFICATION)
+                principal = access_control.public_principal(getattr(self, "auth_principal", None)) or {}
+                result = run_incident_readiness_certification(body.get("policySha256"), principal, self.command_console_operation)
                 self.json(result)
             elif parsed.path == "/api/ops/backups/verify":
                 self.require_token()
@@ -15880,6 +15976,11 @@ function mountInfrastructureChangeIntelligence(data){
   if (!page) return;
   const incidents = data.incidents || [];
   const open = data.openIncidents || [];
+  const certification = data.readinessCertification || {};
+  const certificationData = certification.data || {};
+  const certificationSummary = certificationData.summary || {};
+  const certificationRunbooks = certificationData.runbooks || [];
+  const policySha256 = data.policy?.response?.policySha256 || '';
   const changes = (data.recentEvents || []).filter(row => row.isChange).slice(0,100);
   const incidentOptions = incidents.map(row => `<option value="${esc(row.incidentKey)}">${esc(row.status)} · ${esc(row.opened?.action || '')} · ${esc(row.incidentKey)}</option>`).join('');
   const incidentRows = incidents.map(row => {
@@ -15903,18 +16004,36 @@ function mountInfrastructureChangeIntelligence(data){
     ok: row.ok,
     scope: (row.scope || []).join(', '),
   }));
+  const certificationRows = certificationRunbooks.map(row => ({
+    runbook: row.title || row.id,
+    ready: row.ready,
+    diagnostics: row.diagnosticsReady ? (row.diagnosticCommandIds || []).join(', ') || 'review only' : 'failed',
+    recoveryContracts: `${(row.recoveryContracts || []).filter(contract => contract.ready).length}/${(row.recoveryContracts || []).length}`,
+    gaps: (row.recoveryContracts || []).filter(contract => !contract.ready).map(contract => `${contract.stepId}: ${!contract.capabilityReady ? 'capability' : !contract.featureGateEnabled ? contract.featureGate : 'confirmation'}`).join(', ') || '—',
+  }));
   page.insertAdjacentHTML('beforeend', `<div class="panelBand">
-    <div class="sectionHeader"><h2>Change Intelligence</h2><div class="toolbar"><span class="pill ${data.integrity?.ok ? 'ok' : 'bad'}">HMAC chain ${data.integrity?.ok ? 'verified' : 'invalid'}</span><span class="pill ${open.length ? 'warn' : 'ok'}">${esc(open.length)} open incidents</span><span class="pill">${esc(data.eventCount || 0)} retained events</span><button id="infraChangeRefreshBtn">Refresh</button></div></div>
+    <div class="sectionHeader"><h2>Change Intelligence</h2><div class="toolbar"><span class="pill ${data.integrity?.ok ? 'ok' : 'bad'}">HMAC chain ${data.integrity?.ok ? 'verified' : 'invalid'}</span><span class="pill ${open.length ? 'warn' : 'ok'}">${esc(open.length)} open incidents</span><span class="pill ${certification.currentReady ? 'ok' : certification.id ? 'bad' : 'warn'}">${certification.id ? (certification.policyCurrent ? `readiness ${certificationSummary.runbooksReady || 0}/${certificationSummary.runbooksTotal || 0}` : 'readiness policy stale') : 'readiness uncertified'}</span><span class="pill">${esc(data.eventCount || 0)} retained events</span><button id="infraChangeRefreshBtn">Refresh</button></div></div>
     <p class="muted">This timeline correlates SLO incidents and desired-state drift with preceding deployments, settings writes, service actions, restarts, restores, and capacity decisions. Ranking uses time, declared impact, and shared scope. A candidate is evidence for investigation—not a claim that the change caused the incident. Player/client identifiers and host paths are HMAC-pseudonymized; credentials are removed.</p>
-    <div class="metricGrid">${metric('Ledger', data.integrity?.ok ? 'verified' : 'invalid', data.integrity?.ok ? 'ok' : 'bad')}${metric('Events', data.eventCount || 0)}${metric('Open incidents', open.length, open.length ? 'warn' : 'ok')}${metric('Open with candidates', open.filter(row => (row.candidateChanges || []).length).length, open.some(row => (row.candidateChanges || []).length) ? 'warn' : '')}${metric('Last event', data.recentEvents?.[0]?.occurredAt || 'none')}${metric('Import errors', data.runtime?.importErrors || 0, data.runtime?.importErrors ? 'bad' : 'ok')}</div>
+    <div class="metricGrid">${metric('Ledger', data.integrity?.ok ? 'verified' : 'invalid', data.integrity?.ok ? 'ok' : 'bad')}${metric('Events', data.eventCount || 0)}${metric('Open incidents', open.length, open.length ? 'warn' : 'ok')}${metric('Runbooks ready', certification.id ? `${certificationSummary.runbooksReady || 0}/${certificationSummary.runbooksTotal || 0}` : 'not certified', certification.currentReady ? 'ok' : 'bad')}${metric('Diagnostics ready', certification.id ? `${certificationSummary.diagnosticsReady || 0}/${certificationSummary.diagnosticsTotal || 0}` : '—', certification.currentReady ? 'ok' : '')}${metric('Recovery contracts', certification.id ? `${certificationSummary.recoveryContractsReady || 0}/${certificationSummary.recoveryContractsTotal || 0}` : '—', certification.currentReady ? 'ok' : certification.id ? 'bad' : '')}${metric('Policy binding', certification.id ? (certification.policyCurrent ? 'current' : 'stale') : 'uncertified', certification.policyCurrent ? 'ok' : 'bad')}${metric('Last certification', certification.occurredAt || 'never', certification.currentReady ? 'ok' : 'warn')}${metric('Import errors', data.runtime?.importErrors || 0, data.runtime?.importErrors ? 'bad' : 'ok')}</div>
+    <div class="panelInset"><div class="sectionHeader"><div><h3>Fleet-wide response readiness</h3><p class="muted">Runs each fixed read-only diagnostic once, then evaluates all policy runbooks against authenticated capability, feature-gate, and confirmation contracts. It never invokes recovery or mutates game state.</p></div><button id="infraReadinessCertifyBtn" data-policy-sha="${esc(policySha256)}" ${(!data.responseDrillsEnabled || !policySha256) ? 'disabled' : ''}>Certify all runbooks</button></div>${certificationRows.length ? table(certificationRows) : '<div class="emptyState">No policy-wide readiness certification has been recorded.</div>'}${certification.id ? `<details><summary>Certification receipt and shared diagnostics</summary><pre>${esc(JSON.stringify({certificationId:certificationData.certification_id,occurredAt:certification.occurredAt,actor:certification.actor,summary:certificationSummary,diagnostics:certificationData.diagnostics,receiptSha256:certificationData.receipt_sha256,receiptVerification:certification.receiptVerification,recoveryExecuted:certificationData.recovery_executed,gameMutationExecuted:certificationData.game_mutation_executed}, null, 2))}</pre></details>` : ''}</div>
     ${incidentRows.length ? table(incidentRows) : '<div class="emptyState">No retained SLO or desired-state incidents yet.</div>'}
     <div class="commandBar"><select id="infraChangeIncident">${incidentOptions || '<option value="">No incident capsules</option>'}</select><button id="infraChangeCapsuleBtn" ${incidents.length ? '' : 'disabled'}>Open evidence capsule</button><button id="infraChangeCapsuleExportBtn" ${incidents.length ? '' : 'disabled'}>Download signed capsule</button></div>
     <div id="infraChangeCapsuleResult" class="panelInset"><p class="muted">Select an incident to inspect its deterministic response plan, ranked preceding changes, and bounded follow-up evidence.</p></div>
     <details><summary>Recent changes, policy, runtime, and verification</summary>${table(changeRows)}<pre>${esc(JSON.stringify({policy:data.policy,runtime:data.runtime,integrity:data.integrity}, null, 2))}</pre></details>
   </div>`);
   document.getElementById('infraChangeRefreshBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Refreshing...', () => infrastructure(loadSerial)));
+  document.getElementById('infraReadinessCertifyBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Certifying...', infrastructureReadinessCertify));
   document.getElementById('infraChangeCapsuleBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Loading...', infrastructureChangeCapsule));
   document.getElementById('infraChangeCapsuleExportBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Signing...', infrastructureChangeCapsuleExport));
+}
+async function infrastructureReadinessCertify(){
+  const policySha256 = document.getElementById('infraReadinessCertifyBtn')?.dataset.policySha || '';
+  if (!policySha256) throw new Error('Reload and review the current incident-response policy');
+  if (!confirm('Certify all incident-response runbooks now? DASH will run each fixed read-only diagnostic once and validate every recovery contract. No recovery or game mutation will run.')) return;
+  const result = await api('/api/ops/change-intelligence/certify', {method:'POST',timeoutMs:180000,body:JSON.stringify({policySha256,confirm:'CERTIFY INCIDENT RESPONSE READINESS'})});
+  notify(result.ready ? `All ${result.summary.runbooksTotal} response runbooks are ready` : `${result.summary.runbooksReady}/${result.summary.runbooksTotal} response runbooks are ready`, result.ready ? 'ok' : 'warn');
+  await infrastructure(loadSerial);
+  return result;
 }
 async function infrastructureChangeCapsule(){
   const incidentKey = document.getElementById('infraChangeIncident')?.value || '';

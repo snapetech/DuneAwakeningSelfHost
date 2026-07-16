@@ -205,25 +205,82 @@ class ChangeIntelligenceTests(unittest.TestCase):
         self.record("settings-write", 1000, method="POST")
         self.record("slo-incident-opened", 1100, incident_id="drill", objective_id="database_availability")
         before = self.store.capsule("slo:drill")
+        receipt = {
+            "id": "response-drill-one", "incidentKey": "slo:drill", "runbookId": "database-availability",
+            "planSha256": before["responsePlan"]["planSha256"], "policySha256": before["responsePlan"]["policySha256"],
+            "principalId": "owner", "diagnostics": [], "recoveryContracts": [],
+            "diagnosticsReady": True, "recoveryContractsReady": True, "ready": True,
+            "recoveryExecuted": False, "gameMutationExecuted": False,
+        }
+        receipt_sha256 = change_intelligence.hashlib.sha256(change_intelligence._canonical(receipt).encode()).hexdigest()
         event = self.store.record({
             "action": "incident-response-drill", "ts": 1200, "ok": True,
             "response_incident_key": "slo:drill", "runbook_id": "database-availability",
-            "drill_id": "response-drill-one", "diagnostics_ready": True,
+            "drill_id": "response-drill-one", "plan_sha256": before["responsePlan"]["planSha256"],
+            "policy_sha256": before["responsePlan"]["policySha256"], "principal_id": "owner",
+            "diagnostics": [], "recovery_contracts": [], "diagnostics_ready": True,
             "recovery_contracts_ready": True, "recovery_executed": False,
-            "game_mutation_executed": False, "receipt_sha256": "a" * 64,
+            "game_mutation_executed": False, "receipt_sha256": receipt_sha256,
         }, ingested_at=1201)
         after = self.store.capsule("slo:drill")
         self.assertEqual("evidence", event["kind"])
         self.assertEqual("slo:drill", event["incidentKey"])
         self.assertEqual("incident-response-drill", after["responseDrills"][0]["action"])
         self.assertEqual(event["id"], after["responseDrills"][0]["id"])
+        self.assertTrue(after["responseDrills"][0]["receiptVerification"]["ok"])
         self.assertNotEqual(before["responsePlan"]["inputSha256"], after["responsePlan"]["inputSha256"])
         self.assertTrue(change_intelligence.verify_response_plan(after["responsePlan"])["ok"])
         signed = self.store.signed_capsule("slo:drill", at=1300)
-        self.assertTrue(change_intelligence.verify_signed_capsule(signed, change_intelligence.read_secret(self.secret))["ok"])
+        secret = change_intelligence.read_secret(self.secret)
+        self.assertTrue(change_intelligence.verify_signed_capsule(signed, secret)["ok"])
+        tampered = json.loads(json.dumps(signed))
+        tampered["capsule"]["responseDrills"][0]["data"]["diagnostics_ready"] = False
+        tampered.pop("signature")
+        tampered["signature"] = change_intelligence.hmac.new(secret, change_intelligence._canonical(tampered).encode(), change_intelligence.hashlib.sha256).hexdigest()
+        self.assertFalse(change_intelligence.verify_signed_capsule(tampered, secret)["ok"])
         metrics = self.store.prometheus()
         self.assertIn("dash_incident_response_latest_drill_ready 1", metrics)
         self.assertIn("dash_incident_response_last_drill_timestamp_seconds 1200.0", metrics)
+
+    def test_policy_wide_readiness_certification_is_global_verified_evidence(self):
+        self.record("slo-incident-opened", 1100, incident_id="certified", objective_id="database_availability")
+        policy_sha = self.store.policy["response"]["policySha256"]
+        receipt = {
+            "id": "readiness-certification-one", "policySha256": policy_sha, "principalId": "owner",
+            "diagnostics": [{"commandId": "stack-status", "ok": True}],
+            "runbooks": [{"id": "database-availability", "ready": True}],
+            "summary": {"runbooksReady": 12, "runbooksTotal": 12, "diagnosticsReady": 3, "diagnosticsTotal": 3, "recoveryContractsReady": 10, "recoveryContractsTotal": 10, "coverageRatio": 1.0},
+            "ready": True, "recoveryExecuted": False, "gameMutationExecuted": False,
+        }
+        receipt_sha = change_intelligence.hashlib.sha256(change_intelligence._canonical(receipt).encode()).hexdigest()
+        event = self.store.record({
+            "action": "incident-readiness-certification", "ts": 1200, "ok": True,
+            "certification_id": receipt["id"], "policy_sha256": policy_sha, "principal_id": "owner",
+            "diagnostics": receipt["diagnostics"], "runbooks": receipt["runbooks"], "summary": receipt["summary"],
+            "recovery_executed": False, "game_mutation_executed": False, "receipt_sha256": receipt_sha,
+        }, ingested_at=1201)
+        status = self.store.status()
+        self.assertEqual(event["id"], status["readinessCertification"]["id"])
+        self.assertTrue(status["readinessCertification"]["receiptVerification"]["ok"])
+        self.assertTrue(status["readinessCertification"]["policyCurrent"])
+        self.assertTrue(status["readinessCertification"]["currentReady"])
+        capsule = self.store.capsule("slo:certified")
+        self.assertEqual(event["id"], capsule["readinessCertification"]["id"])
+        signed = self.store.signed_capsule("slo:certified", at=1300)
+        verified = change_intelligence.verify_signed_capsule(signed, change_intelligence.read_secret(self.secret))
+        self.assertTrue(verified["ok"])
+        self.assertTrue(verified["readinessReceiptsValid"])
+        metrics = self.store.prometheus()
+        self.assertIn("dash_incident_readiness_certification_ready 1", metrics)
+        self.assertIn("dash_incident_readiness_runbooks_ready 12", metrics)
+        self.assertIn("dash_incident_readiness_runbooks_total 12", metrics)
+        self.assertIn("dash_incident_readiness_coverage_ratio 1", metrics)
+
+        self.store.policy["response"]["policySha256"] = "f" * 64
+        stale = self.store.status()["readinessCertification"]
+        self.assertFalse(stale["policyCurrent"])
+        self.assertFalse(stale["currentReady"])
+        self.assertIn("dash_incident_readiness_certification_ready 0", self.store.prometheus())
 
     def test_signed_capsule_uses_one_snapshot_when_writer_appends_mid_export(self):
         self.record("settings-write", 1000, method="POST")

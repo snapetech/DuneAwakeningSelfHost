@@ -73,8 +73,9 @@ The local backup includes:
   from `config.tgz` and recomputes every event HMAC and chain link.
 - `operator-evidence.tgz` when portable signed incident capsules exist. Both
   verifiers confine and bound every member, recompute its nested deterministic
-  response-plan digest, and verify its outer HMAC with the matching key from
-  this backup rather than the current live key. See
+  response-plan digest plus all nested drill/certification receipt digests, and
+  verify its outer HMAC with the matching key from this backup rather than the
+  current live key. See
   [`incident-response.md`](incident-response.md).
 - `manifest.txt` with `WORLD_UNIQUE_NAME`, `DUNE_FLS_ENV`, and `GAME_RMQ_PUBLIC_HOST`.
 
