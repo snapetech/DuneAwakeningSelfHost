@@ -523,6 +523,11 @@ class Store:
             "# TYPE dash_capacity_collector_up gauge",
             "dash_capacity_collector_up 1",
         ]
+        observed = [
+            _datetime.datetime.fromisoformat(row["observedAt"]).timestamp()
+            for row in status.get("maps", []) if row.get("observedAt")
+        ]
+        lines.append(f"dash_capacity_last_sample_timestamp_seconds {max(observed) if observed else 'NaN'}")
         for window, payload in status["windows"].items():
             fleet = payload["fleet"]
             for metric, key in (("map_hours_saved", "mapHoursSaved"), ("idle_map_hours", "idleMapHours"), ("resource_avoidance_ratio", "resourceAvoidanceRatio"), ("productive_running_ratio", "productiveRunningRatio"), ("observation_coverage_ratio", "coverageRatio")):
@@ -534,4 +539,6 @@ class Store:
             lines.append(f'dash_capacity_recommendation_eligible{{service="{label}"}} {1 if recommendation["eligible"] else 0}')
             lines.append(f'dash_capacity_warm_hits_total{{service="{label}"}} {recommendation["warmHits"]}')
             lines.append(f'dash_capacity_cold_revisits_total{{service="{label}"}} {recommendation["coldRevisits"]}')
+            lines.append(f'dash_capacity_cold_start_p95_seconds{{service="{label}"}} {"NaN" if recommendation["coldStartP95Seconds"] is None else recommendation["coldStartP95Seconds"]}')
+            lines.append(f'dash_capacity_retention_delta_seconds{{service="{label}"}} {recommendation["recommendedRetentionSeconds"] - recommendation["currentRetentionSeconds"]}')
         return "\n".join(lines) + "\n"

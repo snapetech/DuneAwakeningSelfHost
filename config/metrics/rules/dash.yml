@@ -77,3 +77,15 @@ groups:
         for: 15m
         labels: {severity: warning}
         annotations: {summary: "A DASH 30-day SLO error budget is exhausted"}
+  - name: dash-capacity-intelligence
+    rules:
+      - alert: DashCapacityCollectorStale
+        expr: time() - dash_capacity_last_sample_timestamp_seconds > 120
+        for: 2m
+        labels: {severity: warning}
+        annotations: {summary: "DASH capacity intelligence sampling is stale"}
+      - alert: DashCapacityColdStartSlow
+        expr: dash_capacity_cold_start_p95_seconds > 180
+        for: 15m
+        labels: {severity: warning}
+        annotations: {summary: "A dynamic map cold-start p95 exceeds three minutes"}
