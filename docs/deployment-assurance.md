@@ -144,6 +144,10 @@ The host runner creates three verified backup sets:
 - final state containing the completed signed receipt in
   `operator-evidence.tgz`.
 
+Each required backup gets at most three attempts. A live file changing during
+tar creation, failed dump, failed archive, or failed verifier remains a failed
+attempt; the workflow never suppresses the error or relabels a partial set.
+
 It also creates a mode-`0600` source rollback archive under
 `backups/deployments/`. The archive has `rollback-manifest.json` plus every live
 file that existed before promotion. Restore source through a separately

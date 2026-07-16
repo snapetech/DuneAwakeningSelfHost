@@ -90,13 +90,22 @@ api_post_file() {
 }
 
 verified_backup() {
-  local output backup
-  output="$(./scripts/backup-state.sh "$env_file")"
-  printf '%s\n' "$output"
-  backup="$(printf '%s\n' "$output" | sed -n 's/^backup complete: //p' | tail -1)"
-  [[ -n "$backup" && -d "$backup" ]] || { printf 'could not identify created backup set\n' >&2; return 1; }
-  ./scripts/verify-backup.sh "$backup"
-  printf '%s\n' "${backup#backups/}"
+  local output backup attempt
+  for attempt in 1 2 3; do
+    if output="$(./scripts/backup-state.sh "$env_file" 2>&1)"; then
+      printf '%s\n' "$output"
+      backup="$(printf '%s\n' "$output" | sed -n 's/^backup complete: //p' | tail -1)"
+      if [[ -n "$backup" && -d "$backup" ]] && ./scripts/verify-backup.sh "$backup"; then
+        printf '%s\n' "${backup#backups/}"
+        return 0
+      fi
+    else
+      printf 'backup attempt %s/3 failed:\n%s\n' "$attempt" "$output" >&2
+    fi
+    sleep 2
+  done
+  printf 'could not create and verify a complete backup after 3 attempts\n' >&2
+  return 1
 }
 
 if [[ -n "$stage" ]]; then

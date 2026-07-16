@@ -199,6 +199,8 @@ class DeploymentAssuranceTests(unittest.TestCase):
         self.assertIn("docker kill --signal HUP", source)
         self.assertGreaterEqual(source.count("validate-landsraad-coriolis-cycle.sh"), 2)
         self.assertGreaterEqual(source.count("verified_backup"), 4)  # definition plus pre/post/final calls
+        self.assertIn("for attempt in 1 2 3", source)
+        self.assertIn("could not create and verify a complete backup after 3 attempts", source)
         for phrase in (
             "START ASSURED CHANGE WINDOW", "SEAL DESIRED STATE",
             "CERTIFY INCIDENT RESPONSE READINESS", "FINALIZE ASSURED CHANGE WINDOW",
