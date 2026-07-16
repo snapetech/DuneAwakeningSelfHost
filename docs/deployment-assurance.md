@@ -23,20 +23,21 @@ An assured deployment proves all of these facts:
    process start times before the live source tree changed.
 5. Only the staged manifest files were atomically promoted.
 6. Admin Panel and ingress passed their existing remote test/health path.
-7. No protected game-map container was recreated.
-8. A game-map process already running at window start was not restarted.
-9. Every `always-on` map stayed running with the same process start time.
-10. Desired State was fully reviewed/sealed and had zero open findings.
-11. The current response policy had a semantically valid 12/12 readiness
+7. Prometheus reloaded its committed rule/configuration files in place.
+8. No protected game-map container was recreated.
+9. A game-map process already running at window start was not restarted.
+10. Every `always-on` map stayed running with the same process start time.
+11. Desired State was fully reviewed/sealed and had zero open findings.
+12. The current response policy had a semantically valid 12/12 readiness
     certification.
-12. Operational SLOs were healthy with zero open incidents.
-13. Change Intelligence integrity passed with zero open incidents.
-14. Prometheus had scraped readiness value `1`; a merely healthy direct
+13. Operational SLOs were healthy with zero open incidents.
+14. Change Intelligence integrity passed with zero open incidents.
+15. Prometheus had scraped readiness value `1`; a merely healthy direct
     collector response is insufficient.
-15. A full post-change backup passed the normal verifier.
-16. The receipt says both `recoveryExecuted=false` and
+16. A full post-change backup passed the normal verifier.
+17. The receipt says both `recoveryExecuted=false` and
     `gameMutationExecuted=false`.
-17. A final full backup created after completion contains the signed receipt.
+18. A final full backup created after completion contains the signed receipt.
 
 Any false invariant makes `ready=false`. DASH signs and retains a failed
 receipt when it can safely characterize the failure; it does not rewrite the

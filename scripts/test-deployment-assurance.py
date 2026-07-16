@@ -196,6 +196,7 @@ class DeploymentAssuranceTests(unittest.TestCase):
         self.assertIn("./scripts/deploy-admin-panel.sh", source)
         self.assertNotIn("docker compose", source)
         self.assertNotIn("docker restart", source)
+        self.assertIn("docker kill --signal HUP", source)
         self.assertGreaterEqual(source.count("validate-landsraad-coriolis-cycle.sh"), 2)
         self.assertGreaterEqual(source.count("verified_backup"), 4)  # definition plus pre/post/final calls
         for phrase in (

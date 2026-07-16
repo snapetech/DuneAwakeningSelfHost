@@ -145,6 +145,10 @@ if [[ -n "$stage" ]]; then
   apply_lock=""
 fi
 ./scripts/deploy-admin-panel.sh "$env_file"
+prometheus_id="$(docker ps -q --filter "label=com.docker.compose.project=dune_server" --filter "label=com.docker.compose.service=prometheus" | head -1)"
+if [[ -n "$prometheus_id" ]]; then
+  docker kill --signal HUP "$prometheus_id" >/dev/null
+fi
 ./scripts/validate-landsraad-coriolis-cycle.sh "$env_file"
 
 api_get /api/ops/desired-state 60 >"$work/desired.json"
