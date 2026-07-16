@@ -57,6 +57,7 @@ import federated_auth
 import cosmetics_admin
 import restore_drill
 import operational_slo
+import capacity_intelligence
 
 GM_CATALOG_PATH = CODE_ROOT / "scripts" / "gm-command-catalog.py"
 GM_CATALOG_SPEC = importlib.util.spec_from_file_location("gm_command_catalog", GM_CATALOG_PATH)
@@ -228,6 +229,7 @@ CONFIRM_BACKUP_SCHEDULE = "CHANGE BACKUP SCHEDULE"
 CONFIRM_RESTORE_DRILL = "RUN ISOLATED RESTORE DRILL"
 CONFIRM_SLO_INCIDENT = "ACKNOWLEDGE SLO INCIDENT"
 CONFIRM_SLO_MAINTENANCE = "CHANGE SLO MAINTENANCE"
+CONFIRM_CAPACITY_APPLY = "APPLY CAPACITY RECOMMENDATIONS"
 CONFIRM_BOOTSTRAP = "RUN BOOTSTRAP"
 CONFIRM_PLAYER_RECOVERY = "MOVE OFFLINE PLAYER"
 CONFIRM_REPUTATION_MUTATION = "WRITE REPUTATION"
@@ -280,6 +282,8 @@ RESTORE_DRILL_ENABLED = os.environ.get("DUNE_RESTORE_DRILL_ENABLED", "true").low
 RESTORE_DRILL_EXECUTION_ENABLED = os.environ.get("DUNE_ADMIN_RESTORE_DRILL_EXECUTION_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 OPERATIONAL_SLO_ENABLED = os.environ.get("DUNE_OPERATIONAL_SLO_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 OPERATIONAL_SLO_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_OPERATIONAL_SLO_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+CAPACITY_INTELLIGENCE_ENABLED = os.environ.get("DUNE_CAPACITY_INTELLIGENCE_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+CAPACITY_AUTO_APPLY_ENABLED = os.environ.get("DUNE_CAPACITY_AUTO_APPLY_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 SERVICE_CONTROL_ENABLED = os.environ.get("DUNE_ADMIN_SERVICE_CONTROL_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 STATEFUL_SERVICE_CONTROL_ENABLED = os.environ.get("DUNE_ADMIN_STATEFUL_SERVICE_CONTROL_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 UPDATE_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_UPDATE_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
@@ -358,6 +362,14 @@ OPERATIONAL_SLO_STORE = None
 OPERATIONAL_SLO_STORE_LOCK = threading.Lock()
 OPERATIONAL_SLO_THREAD_STARTED = False
 OPERATIONAL_SLO_RUNTIME = {"running": False, "lastSampleAt": None, "lastResult": None, "lastError": None}
+CAPACITY_INTELLIGENCE_POLICY = pathlib.Path(os.environ.get("DUNE_CAPACITY_INTELLIGENCE_POLICY", str(CONFIG_ROOT / "capacity-intelligence.json")))
+CAPACITY_INTELLIGENCE_DATABASE = pathlib.Path(os.environ.get("DUNE_CAPACITY_INTELLIGENCE_DATABASE", str(BACKUPS_ROOT / "capacity-intelligence" / "capacity.sqlite3")))
+CAPACITY_INTELLIGENCE_POLL_SECONDS = max(10, min(int(os.environ.get("DUNE_CAPACITY_INTELLIGENCE_POLL_SECONDS", "30")), 3600))
+CAPACITY_AUTO_APPLY_INTERVAL_HOURS = max(1, min(int(os.environ.get("DUNE_CAPACITY_AUTO_APPLY_INTERVAL_HOURS", "24")), 24 * 30))
+CAPACITY_INTELLIGENCE_STORE = None
+CAPACITY_INTELLIGENCE_STORE_LOCK = threading.Lock()
+CAPACITY_INTELLIGENCE_THREAD_STARTED = False
+CAPACITY_INTELLIGENCE_RUNTIME = {"running": False, "lastSampleAt": None, "lastResult": None, "lastError": None, "lastAutoApplyAt": None, "lastAutoApply": None}
 DISCORD_ADAPTER_ROUTES = {
     "/api/integrations/discord/health", "/api/integrations/discord/status",
     "/api/integrations/discord/readiness", "/api/integrations/discord/services",
@@ -412,6 +424,8 @@ def admin_panel_reload_paths():
         CODE_ROOT / "admin" / "restore_drill.py",
         CODE_ROOT / "admin" / "operational_slo.py",
         OPERATIONAL_SLO_POLICY,
+        CODE_ROOT / "admin" / "capacity_intelligence.py",
+        CAPACITY_INTELLIGENCE_POLICY,
         GAMEPLAY_PRESETS_FILE,
         COSMETIC_CATALOG_FILE,
         CODE_ROOT / "admin" / "access_control.py",
@@ -910,6 +924,12 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_OPERATIONAL_SLO_BACKUP_MAX_AGE_HOURS": {"group": "Reliability SLO", "secret": False, "restart": True, "why": "Newest recognized PostgreSQL dump age that satisfies the backup RPO signal."},
     "DUNE_OPERATIONAL_SLO_RESTORE_PROOF_MAX_AGE_HOURS": {"group": "Reliability SLO", "secret": False, "restart": True, "why": "Maximum age of a hash-valid successful isolated restore receipt."},
     "DUNE_OPERATIONAL_SLO_MEMORY_FLOOR_GIB": {"group": "Reliability SLO", "secret": False, "restart": True, "why": "Host MemAvailable floor used by the memory-headroom objective."},
+    "DUNE_CAPACITY_INTELLIGENCE_ENABLED": {"group": "Capacity Intelligence", "secret": False, "restart": True, "why": "Records time-weighted map use, map-hours saved, warm hits, revisit gaps, and cold-start readiness."},
+    "DUNE_CAPACITY_INTELLIGENCE_POLICY": {"group": "Capacity Intelligence", "secret": False, "restart": True, "why": "Versioned retention-model, evidence threshold, timeout, and bounded-apply policy."},
+    "DUNE_CAPACITY_INTELLIGENCE_DATABASE": {"group": "Capacity Intelligence", "secret": False, "restart": True, "why": "Private isolated SQLite capacity-evidence ledger."},
+    "DUNE_CAPACITY_INTELLIGENCE_POLL_SECONDS": {"group": "Capacity Intelligence", "secret": False, "restart": True, "why": "Read-only map utilization and readiness observation cadence."},
+    "DUNE_CAPACITY_AUTO_APPLY_ENABLED": {"group": "Capacity Intelligence", "secret": False, "restart": True, "why": "Allows evidence-qualified retention recommendations to converge gradually without changing map modes."},
+    "DUNE_CAPACITY_AUTO_APPLY_INTERVAL_HOURS": {"group": "Capacity Intelligence", "secret": False, "restart": True, "why": "Minimum interval between eligible automatic retention-policy applications."},
     "DUNE_ADMIN_BACKUP_IMPORT_MAX_BODY_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum JSON request size for a base64 full-backup archive import."},
     "DUNE_BACKUP_ARCHIVE_ENCRYPTION_ENABLED": {"group": "Backup Encryption", "secret": False, "restart": False, "why": "Enables the documented host-side verified OpenPGP archive workflow."},
     "DUNE_BACKUP_GPG_RECIPIENT": {"group": "Backup Encryption", "secret": False, "restart": False, "why": "Exact 40- or 64-hex OpenPGP recipient fingerprint; never an ambiguous name/email selector."},
@@ -2364,8 +2384,8 @@ def ensure_memory_balancer_thread():
 
 def autoscaler_apply_profile(state, profile):
     profile = str(profile or "").strip().lower()
-    if profile not in ("minimum-footprint", "balanced", "full-warm", "custom"):
-        raise ValueError("profile must be minimum-footprint, balanced, full-warm, or custom")
+    if profile not in ("minimum-footprint", "balanced", "adaptive", "full-warm", "custom"):
+        raise ValueError("profile must be minimum-footprint, balanced, adaptive, full-warm, or custom")
     state["enabled"] = True
     state["profile"] = profile
     if profile == "full-warm":
@@ -2383,7 +2403,7 @@ def autoscaler_apply_profile(state, profile):
         state["retentionByService"] = {}
         state["maxWarmDynamicMaps"] = 0
         state["minAvailableMemoryBytes"] = 0
-    elif profile == "balanced":
+    elif profile in ("balanced", "adaptive"):
         state["modes"] = {
             service: ("always-on" if service in AUTOSCALER_ALWAYS_ON_SERVICES else "dynamic")
             for service in GAME_MAP_SERVICES
@@ -2494,7 +2514,7 @@ def autoscaler_public_state(include_inventory=True):
         pollSeconds=AUTOSCALER_POLL_SECONDS, fastStart=AUTOSCALER_FAST_START,
         defaultMode=AUTOSCALER_DEFAULT_MODE,
         alwaysOnServices=sorted(AUTOSCALER_ALWAYS_ON_SERVICES),
-        profiles=["minimum-footprint", "balanced", "full-warm", "custom"],
+        profiles=["minimum-footprint", "balanced", "adaptive", "full-warm", "custom"],
         mutationEnabled=AUTOSCALER_MUTATIONS_ENABLED,
     )
     if include_inventory:
@@ -2571,15 +2591,15 @@ def autoscaler_control(action, service=None, mode=None, idle_seconds=None, body=
             else:
                 state["retentionByService"][service] = max(60, min(int(seconds), 86400))
             state["profile"] = "custom"
-        elif action in ("minimum-footprint", "balanced", "full-warm", "apply-profile"):
+        elif action in ("minimum-footprint", "balanced", "adaptive", "full-warm", "apply-profile"):
             profile = body.get("profile") if action == "apply-profile" else action
             autoscaler_apply_profile(state, profile)
         elif action not in ("tick", "reconcile"):
             raise ValueError("unsupported autoscaler action")
         write_autoscaler_state(state)
-    reconcile_actions = ("tick", "reconcile", "restart", "set-mode", "demand", "minimum-footprint", "balanced", "full-warm", "apply-profile", "settings", "set-retention")
+    reconcile_actions = ("tick", "reconcile", "restart", "set-mode", "demand", "minimum-footprint", "balanced", "adaptive", "full-warm", "apply-profile", "settings", "set-retention")
     if action in reconcile_actions:
-        return autoscaler_tick(force=action in ("reconcile", "restart", "minimum-footprint", "balanced", "full-warm", "apply-profile"))
+        return autoscaler_tick(force=action in ("reconcile", "restart", "minimum-footprint", "balanced", "adaptive", "full-warm", "apply-profile"))
     return autoscaler_public_state()
 
 
