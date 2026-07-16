@@ -14,7 +14,7 @@ required_host="${required_host:-kspls0}"
 current_host="$(hostname -s)"
 
 keys=(
-  DUNE_ADMIN_MUTATIONS_ENABLED DUNE_ADMIN_ITEM_GRANTS_ENABLED
+  DUNE_ADMIN_REQUIRE_TOKEN DUNE_ADMIN_MUTATIONS_ENABLED DUNE_ADMIN_ITEM_GRANTS_ENABLED
   DUNE_ADMIN_GM_COMMANDS_ENABLED DUNE_SERVER_NOTIFICATION_SYSTEM_ENABLED
   DUNE_ADMIN_PLAYER_RUNTIME_MUTATIONS_ENABLED DUNE_ADMIN_VEHICLE_MUTATIONS_ENABLED
   DUNE_ADMIN_BOOTSTRAP_MUTATIONS_ENABLED DUNE_ADMIN_CATALOG_ENABLED
@@ -83,10 +83,6 @@ set_value() {
 }
 
 for key in "${keys[@]}"; do set_value "$key" true; done
-# This deployment is intentionally hosted only on the trusted internal admin
-# surface. Feature-parity activation must not silently re-enable browser token
-# authentication after the operator has disabled it.
-set_value DUNE_ADMIN_REQUIRE_TOKEN false
 if [[ ! -f "$repo_root/config/community-rewards.json" ]]; then
   install -m 600 "$repo_root/config/community-rewards.example.json" "$repo_root/config/community-rewards.json"
 else
