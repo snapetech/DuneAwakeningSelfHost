@@ -835,6 +835,7 @@ services:
       DUNE_RESPONSE_DRILLS_ENABLED: ${DUNE_RESPONSE_DRILLS_ENABLED:-true}
       DUNE_DEPLOYMENT_ASSURANCE_ENABLED: ${DUNE_DEPLOYMENT_ASSURANCE_ENABLED:-true}
       DUNE_DEPLOYMENT_ASSURANCE_STATE_DIR: ${DUNE_DEPLOYMENT_ASSURANCE_STATE_DIR:-/workspace/backups/deployment-assurance}
+      DUNE_DEPLOYMENT_ASSURANCE_WORKSPACE: ${DUNE_DEPLOYMENT_ASSURANCE_WORKSPACE:-/source-workspace}
       DUNE_DEPLOYMENT_ASSURANCE_PROMETHEUS_URL: ${DUNE_DEPLOYMENT_ASSURANCE_PROMETHEUS_URL:-http://prometheus:9090}
       DUNE_ADMIN_MEMORY_MUTATIONS_ENABLED: ${DUNE_ADMIN_MEMORY_MUTATIONS_ENABLED:-false}
       DUNE_ADMIN_AUTOSCALER_MUTATIONS_ENABLED: ${DUNE_ADMIN_AUTOSCALER_MUTATIONS_ENABLED:-false}
@@ -1064,6 +1065,7 @@ services:
       - *jq-bin-volume
       - *curl-bin-volume
       - ./admin:/workspace/admin:ro
+      - .:/source-workspace:ro
       - ./scripts:/workspace/scripts:ro
       - ./config:/workspace/config
       - ./.env:/workspace/.env

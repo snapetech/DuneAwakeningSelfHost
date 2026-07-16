@@ -158,6 +158,7 @@ set_value DUNE_CHANGE_INTELLIGENCE_HMAC_SECRET_FILE /workspace/config/secrets/ch
 set_value DUNE_CHANGE_INTELLIGENCE_EVIDENCE_DIR /workspace/backups/operator-evidence
 set_value DUNE_CHANGE_INTELLIGENCE_HOST_EVIDENCE_DIR backups/operator-evidence
 set_value DUNE_DEPLOYMENT_ASSURANCE_STATE_DIR /workspace/backups/deployment-assurance
+set_value DUNE_DEPLOYMENT_ASSURANCE_WORKSPACE /source-workspace
 set_value DUNE_DEPLOYMENT_ASSURANCE_PROMETHEUS_URL http://prometheus:9090
 set_value DUNE_MODERATION_POLL_SECONDS 15
 set_value DUNE_MODERATION_RETENTION_DAYS 90

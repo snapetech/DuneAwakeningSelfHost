@@ -66,6 +66,12 @@ Manifest paths:
 - must match the exact committed Git blob before staging and again inside the
   remote stage.
 
+After promotion, Admin independently re-hashes the same files through the
+dedicated read-only `/source-workspace` bind. This is separate from the normal
+read-write `/workspace` state/config submounts. Private and mutable paths remain
+rejected by manifest validation even though the trusted Admin container already
+holds the Docker socket and its normal backup/config authority.
+
 The host workflow contains no raw `docker compose`, `docker restart`, or map
 lifecycle call. It invokes `scripts/deploy-admin-panel.sh`, which recreates only
 `admin-panel` and `admin-panel-ingress`. It runs the Landsraad/Coriolis validator
@@ -242,6 +248,7 @@ operator, service, backup, or digest is used as a metric label.
 | --- | --- | --- |
 | `DUNE_DEPLOYMENT_ASSURANCE_ENABLED` | `true` | Enables API, dashboard, receipts, and metrics. |
 | `DUNE_DEPLOYMENT_ASSURANCE_STATE_DIR` | `/workspace/backups/deployment-assurance` | Private HMAC-authenticated window state. |
+| `DUNE_DEPLOYMENT_ASSURANCE_WORKSPACE` | `/source-workspace` | Complete read-only source tree used for independent post-apply hashing. |
 | `DUNE_DEPLOYMENT_ASSURANCE_PROMETHEUS_URL` | `http://prometheus:9090` | Internal query endpoint proving readiness was scraped. |
 
 Deployment receipts intentionally reuse the Change Intelligence HMAC secret and

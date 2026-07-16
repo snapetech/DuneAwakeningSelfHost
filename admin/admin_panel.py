@@ -403,6 +403,7 @@ CHANGE_INTELLIGENCE_STORE_LOCK = threading.Lock()
 CHANGE_INTELLIGENCE_RUNTIME = {"ready": False, "imported": 0, "duplicates": 0, "importErrors": 0, "reconciled": 0, "lastEventAt": None, "lastEventId": None, "lastError": ""}
 DEPLOYMENT_ASSURANCE_ENABLED = os.environ.get("DUNE_DEPLOYMENT_ASSURANCE_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 DEPLOYMENT_ASSURANCE_ROOT = pathlib.Path(os.environ.get("DUNE_DEPLOYMENT_ASSURANCE_STATE_DIR", str(BACKUPS_ROOT / "deployment-assurance")))
+DEPLOYMENT_ASSURANCE_WORKSPACE = pathlib.Path(os.environ.get("DUNE_DEPLOYMENT_ASSURANCE_WORKSPACE", str(ROOT)))
 DEPLOYMENT_ASSURANCE_PROMETHEUS_URL = os.environ.get("DUNE_DEPLOYMENT_ASSURANCE_PROMETHEUS_URL", "http://prometheus:9090").rstrip("/")
 DEPLOYMENT_ASSURANCE_STORE = None
 DEPLOYMENT_ASSURANCE_STORE_LOCK = threading.Lock()
@@ -990,6 +991,7 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_RESPONSE_DRILLS_ENABLED": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Enables explicit non-disruptive response-plan rehearsals using fixed read-only diagnostics only."},
     "DUNE_DEPLOYMENT_ASSURANCE_ENABLED": {"group": "Deployment Assurance", "secret": False, "restart": True, "why": "Enables two-phase source, map-continuity, health, readiness, backup, and signed promotion receipts."},
     "DUNE_DEPLOYMENT_ASSURANCE_STATE_DIR": {"group": "Deployment Assurance", "secret": False, "restart": True, "why": "Private directory for HMAC-authenticated open/completed change-window state."},
+    "DUNE_DEPLOYMENT_ASSURANCE_WORKSPACE": {"group": "Deployment Assurance", "secret": False, "restart": True, "why": "Read-only complete source-workspace mount used to independently verify every promoted manifest file."},
     "DUNE_DEPLOYMENT_ASSURANCE_PROMETHEUS_URL": {"group": "Deployment Assurance", "secret": False, "restart": True, "why": "Internal Prometheus URL used to prove the current readiness certification has been scraped."},
     "DUNE_ADMIN_BACKUP_IMPORT_MAX_BODY_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum JSON request size for a base64 full-backup archive import."},
     "DUNE_BACKUP_ARCHIVE_ENCRYPTION_ENABLED": {"group": "Backup Encryption", "secret": False, "restart": False, "why": "Enables the documented host-side verified OpenPGP archive workflow."},
@@ -4908,7 +4910,7 @@ def queue_restore_drill(source=None):
             RESTORE_DRILL_RUNTIME["startedAt"] = time.time()
         try:
             result = restore_drill.run_drill(
-                ROOT,
+                DEPLOYMENT_ASSURANCE_WORKSPACE,
                 host_workspace=config["hostWorkspace"],
                 source=source or None,
                 receipt_root=RESTORE_DRILL_RECEIPT_ROOT,
