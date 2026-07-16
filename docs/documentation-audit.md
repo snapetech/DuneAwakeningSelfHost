@@ -18,6 +18,7 @@ This page records documentation coverage gaps found during repo review and the c
 | Improvement plan | Roadmap text still described only the isolated `survival` launch as current work. | Updated `docs/improvements.md` with warm-pool, admin map health, transfer-policy, and live-validation boundaries. |
 | README docs index | README had a flat file list and did not cover every markdown document or root research index. | Replaced it with grouped documentation, research-index, and key-file sections. |
 | Discovery burn-down | Build drift, manual knob discovery, thin fixtures, and browser-ping diagnostics were spread across research notes and operator context. | Added `docs/discovery-burndown-plan.md` and implemented build-scoped discovery, fixture coverage, experiment harnessing, RMQ/build diffs, admin Discovery, and non-disruptive ping diagnosis. |
+| Admin progression mutations | Recipe unlock documentation still said writes were intentionally absent after guarded Intel, recipe, and research actions had been implemented. | Documented the live API/UI contract, compare-and-swap verification, private receipts, and receipt-bound rollback in `docs/player-progression-receipts.md`. |
 
 ## Remaining Gaps
 
@@ -25,7 +26,6 @@ This page records documentation coverage gaps found during repo review and the c
 | --- | --- | --- |
 | Live client validation | `docs/validation.md` is still a checklist with `TODO` route rows. | Fill each row after live-client testing and link failed-transition capture directories. |
 | Route behavior | Deep Desert, Arrakeen, Harko Village, and testing-station travel remain documented as investigation surfaces. | Keep `docs/routing-investigation.md` current with exact client symptoms and first failing service boundary. |
-| Admin mutations | Recipe unlocks and journey/skill-like unlocks are intentionally not implemented. | Extend `docs/admin-mutation-map.md` only after safe DB contracts and refresh semantics are proven. |
 | Image/version drift | README and teardown pin observations to image tag `1963158-0-shipping`. | Re-run `scripts/inspect-images.sh`, `scripts/discover-player-state.sh`, and validation after every Steam tool update. |
 | Discovery automation | Surface discovery now has repo-side automation; remaining proof requires external/client runs. | Run browser-probe capture and client-driven fixtures, then promote only validated surfaces from the JSONL ledger. |
 | Kubernetes manifests | The Kubernetes doc is currently design documentation only. | Add generated manifests or a Helm chart only after the Compose topology is stable enough to avoid duplicating service definitions by hand. |

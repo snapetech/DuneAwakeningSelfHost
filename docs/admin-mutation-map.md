@@ -210,15 +210,26 @@ Exploration_ExplorationKeystone_PlayerInventorySlots50
 
 ## Recipe Unlocks
 
-Recipe grants are not implemented.
+Recipe grants are implemented through `POST /api/admin/player-maintenance`
+with `action=unlock-recipe`. The action validates the requested recipe against
+recipe IDs observed in the active game database and appends the reviewed native
+known-recipe JSON shape only when it is absent.
 
 Mapped evidence:
 
 - `dune.remove_items_and_recipes(...)` can remove recipes.
 - Actor JSON includes `CraftingRecipesLibraryActorComponent.m_KnownItemRecipes`.
-- No safe grant/upsert function for recipes has been mapped yet.
+- No first-party grant/upsert function for recipes has been mapped.
 
-Until a supported function or fully understood JSON contract is found, the panel will not write recipe unlocks.
+The JSON path therefore uses the stricter non-native contract: Offline target,
+locked player and actor rows, full-properties compare-and-swap, affected-state
+post-write verification, a pre-write database backup, and a private self-hashed
+receipt. `rollback-progression` restores only the receipt's affected recipe
+state and refuses to run unless the current state still matches the receipt's
+after hash. A relog is required; a game-server restart is not.
+
+Confidence: `moderate` for persistent storage and rollback semantics, `low` for
+immediate client refresh without relog.
 
 ## Journey and Skill-Like Unlocks
 

@@ -117,8 +117,19 @@ The six progression actions require `WRITE PLAYER PROGRESSION`, an offline
 target, the master and player-runtime gates, an automatic database backup, a
 locked recheck, one transaction, and a relog. Their dry-run bodies accept
 `amount` for Intel, `key` for recipe/research, or `track_type` for a
-specialization operation. All six are available in
-the Admin Actions browser panel as well as the JSON API.
+specialization operation. All six are available in the Admin Actions browser
+panel as well as the JSON API.
+
+The three actor-JSON actions (`add-intel`, `unlock-recipe`, and
+`unlock-research`) additionally compare-and-swap the complete actor properties,
+post-verify the exact affected state, and write a private self-hashed receipt.
+`rollback-progression` requires `ROLL BACK PLAYER PROGRESSION`, matches the
+receipt to the active database and player, requires the player to remain
+Offline, and restores only when the current affected-state hash still equals
+the receipt after hash. It creates both a new database backup and an inverse
+receipt. Specialization and keystone actions retain their first-party
+table/function mutation paths and are not claimed as receipt-reversible. See
+[`player-progression-receipts.md`](player-progression-receipts.md).
 
 ## Landsraad additions
 

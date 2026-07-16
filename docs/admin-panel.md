@@ -1567,7 +1567,13 @@ Current mutation support is intentionally narrow:
 
 Item grants require an exact server `template_id`. You can enter an inventory ID directly, or let the panel resolve a player-owned inventory from account ID or character name. The mutation page now offers exact local template IDs from item, Landsraad reward, vendor, vehicle, and exchange tables. Public databases such as `https://dune.gaming.tools/items` and `https://dune.geno.gg/items/` are still useful for names and research, but dry-run and verify against local server data before bulk grants.
 
-Recipe unlocks are not implemented yet. Those need validated unlock tables and server refresh semantics before writes are safe.
+Recipe and research unlocks are available under Admin Actions. They validate
+keys against data observed in the active database, require an Offline player,
+create a database backup, lock and compare-and-swap the complete actor JSON,
+verify the affected state after the write, and create a self-hashed receipt.
+The same panel can preview and execute a receipt-bound rollback; rollback is
+refused if the player is Online or the affected state has changed since the
+receipt. See `docs/player-progression-receipts.md`.
 
 See `docs/admin-mutation-map.md` for the current DB contract map.
 

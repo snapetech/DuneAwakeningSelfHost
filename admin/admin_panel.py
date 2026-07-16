@@ -57,6 +57,7 @@ import gameplay_presets
 import command_console
 import federated_auth
 import cosmetics_admin
+import progression_admin
 import restore_drill
 import operational_slo
 import capacity_intelligence
@@ -273,6 +274,8 @@ CONFIRM_GAMEPLAY_PRESET = "APPLY GAMEPLAY PRESET"
 CONFIRM_GAMEPLAY_PRESET_ROLLBACK = "ROLL BACK GAMEPLAY PRESET"
 CONFIRM_COSMETIC_MUTATION = "CHANGE PLAYER COSMETICS"
 CONFIRM_COSMETIC_ROLLBACK = "ROLL BACK PLAYER COSMETICS"
+CONFIRM_PLAYER_PROGRESSION = "WRITE PLAYER PROGRESSION"
+CONFIRM_PLAYER_PROGRESSION_ROLLBACK = "ROLL BACK PLAYER PROGRESSION"
 CONFIRM_CHARACTER_SWAP = "SWAP CHARACTER"
 CONFIRM_RUNTIME_PLAYER_ACTION = native_command_admin.CONFIRM_RUNTIME_ACTION
 CONFIRM_KICK_ALL_PLAYERS = native_command_admin.CONFIRM_KICK_ALL
@@ -8544,6 +8547,9 @@ class Handler(BaseHTTPRequestHandler):
                     "skillModules": native_command_admin.load_catalog(ADMIN_SKILL_MODULES_FILE),
                     "vehicles": native_command_admin.load_catalog(ADMIN_VEHICLES_FILE),
                     "mutationEnabled": PLAYER_RUNTIME_MUTATIONS_ENABLED,
+                    "progressionReceipts": progression_admin.list_receipts(BACKUP_ROOT),
+                    "progressionConfirm": CONFIRM_PLAYER_PROGRESSION,
+                    "progressionRollbackConfirm": CONFIRM_PLAYER_PROGRESSION_ROLLBACK,
                     "transportEnabled": GM_COMMANDS_ENABLED,
                     "tokenConfigured": bool(os.environ.get("DUNE_SERVER_COMMANDS_AUTH_TOKEN", "")),
                 })
@@ -9886,8 +9892,9 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/admin/player-maintenance":
                 self.require_token()
                 body = parse_body(self)
-                result = self.player_maintenance_mutation(body)
-                self.audit("player-maintenance", ok=result.get("ok"), dry_run=result.get("dryRun"), maintenance_action=(result.get("plan") or {}).get("action"), account_id=(result.get("plan") or {}).get("accountId"))
+                principal = access_control.public_principal(getattr(self, "auth_principal", None)) or {"id": "owner-token"}
+                result = self.player_maintenance_mutation(body, principal=principal)
+                self.audit("player-maintenance", ok=result.get("ok"), dry_run=result.get("dryRun"), maintenance_action=(result.get("plan") or {}).get("action"), account_id=(result.get("plan") or {}).get("accountId"), receipt_id=(result.get("receipt") or {}).get("id"), rollback_of=result.get("rollbackOf"))
                 self.json(result)
             elif parsed.path == "/api/admin/guild":
                 self.require_token()
@@ -13338,11 +13345,39 @@ class Handler(BaseHTTPRequestHandler):
             time.sleep(1)
         return {"ok": False, "warning": "no newly spawned matching vehicle was found; inspect permission_actor_rank"}
 
-    def player_maintenance_mutation(self, body):
+    def player_maintenance_mutation(self, body, principal=None):
         action = str(body.get("action", "")).strip().lower()
         progression_actions = ("add-intel", "unlock-recipe", "unlock-research", "specialization-max", "specialization-reset", "keystones-grant-all")
-        if action not in progression_actions + ("repair-gear", "repair-login-queue"):
+        if action not in progression_actions + ("rollback-progression", "repair-gear", "repair-login-queue"):
             raise ValueError("unsupported player maintenance action")
+        dry_run = str(body.get("dry_run", body.get("dryRun", "true"))).lower() not in ("0", "false", "no", "off")
+        if action == "rollback-progression":
+            receipt_id = body.get("receipt_id", body.get("receiptId"))
+            plan = progression_admin.preview_rollback(db_connect, BACKUP_ROOT, receipt_id, DATABASE)
+            plan.update({"action": action, "accountId": int((plan.get("player") or {}).get("account_id") or 0)})
+            supplied_account = int(body.get("account_id", body.get("accountId", 0)) or 0)
+            if supplied_account and supplied_account != plan["accountId"]:
+                raise ValueError("selected account does not match the progression receipt")
+            if dry_run:
+                return {"ok": True, "dryRun": True, "plan": plan, "confirm": CONFIRM_PLAYER_PROGRESSION_ROLLBACK}
+            self.require_mutations()
+            if not PLAYER_RUNTIME_MUTATIONS_ENABLED:
+                raise PermissionError("player maintenance is disabled; set DUNE_ADMIN_PLAYER_RUNTIME_MUTATIONS_ENABLED=true")
+            require_confirmation(body, CONFIRM_PLAYER_PROGRESSION_ROLLBACK)
+            if not plan.get("eligible"):
+                raise RuntimeError("progression rollback requires an Offline player and an unchanged receipt after-state")
+            backup = create_db_backup()
+            result = progression_admin.rollback(db_connect, BACKUP_ROOT, receipt_id, DATABASE)
+            receipt = progression_admin.write_receipt(
+                BACKUP_ROOT, result, DATABASE, result.get("target"), backup,
+                principal=principal, rollback_of=receipt_id,
+            )
+            public_result = {key: value for key, value in result.items() if key not in ("before", "after")}
+            public_result.update({
+                "plan": plan, "backup": backup, "receipt": receipt,
+                "rollbackOf": receipt_id, "relogRequired": True, "restartRequired": False,
+            })
+            return public_result
         account_id = int(body.get("account_id", body.get("accountId", 0)) or 0)
         if account_id <= 0:
             raise ValueError("account_id is required")
@@ -13357,7 +13392,6 @@ class Handler(BaseHTTPRequestHandler):
         player = players[0]
         online = str(player.get("online_status") or "Offline").lower() == "online"
         force = str(body.get("force", "false")).lower() in ("1", "true", "yes", "on")
-        dry_run = str(body.get("dry_run", body.get("dryRun", "true"))).lower() not in ("0", "false", "no", "off")
         if action in progression_actions:
             if online:
                 raise ValueError(f"{action} requires the player to be offline")
@@ -13383,7 +13417,12 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("TechKnowledgePlayerComponent was not found for the player")
                 old_value = int(current_rows[0].get("value") or 0)
                 new_value = min(2779, old_value + amount)
-                plan = {"action": action, "accountId": account_id, "oldValue": old_value, "newValue": new_value, "requested": amount, "cap": 2779}
+                plan = {
+                    "action": action, "accountId": account_id, "oldValue": old_value,
+                    "newValue": new_value, "requested": amount, "cap": 2779,
+                    "beforeState": {"intelPoints": old_value},
+                    "afterState": {"intelPoints": new_value}, "includeRecipe": False,
+                }
             elif action == "unlock-recipe":
                 key = str(body.get("key", body.get("recipe_id", body.get("recipeId", "")))).strip()
                 if not re.fullmatch(r"[A-Za-z0-9_().-]+", key):
@@ -13397,7 +13436,12 @@ class Handler(BaseHTTPRequestHandler):
                 values = current_rows[0].get("values") if isinstance(current_rows[0].get("values"), list) else []
                 already = any(isinstance(value, dict) and (value.get("BaseRecipeId") or {}).get("Name") == key for value in values)
                 next_values = values if already else values + [{"m_Source": "SchematicPickup", "m_bIsNew": True, "BaseRecipeId": {"Name": key}, "m_QualityLevel": 0, "m_NumberOfRecipeUses": 0, "m_bIsLimitedUseRecipe": False}]
-                plan = {"action": action, "accountId": account_id, "key": key, "alreadyUnlocked": already, "values": next_values}
+                plan = {
+                    "action": action, "accountId": account_id, "key": key,
+                    "alreadyUnlocked": already, "values": next_values,
+                    "beforeState": {"recipes": values},
+                    "afterState": {"recipes": next_values}, "includeRecipe": False,
+                }
             else:
                 key = str(body.get("key", body.get("item_key", body.get("itemKey", "")))).strip()
                 if not re.fullmatch(r"[A-Za-z0-9_().+\-]+", key):
@@ -13421,6 +13465,7 @@ class Handler(BaseHTTPRequestHandler):
                     next_values.append({"ItemKey": key, "bIsNewEntry": False, "UnlockedState": "Purchased"})
                 recipe_id = key[4:] if key.startswith("RCP_") else (key[4:] if key.startswith("BLD_") and key[4:].endswith("_Patent") else (f"{key[4:]}_Patent" if key.startswith("BLD_") else ""))
                 recipe_values = None
+                recipe_before_values = None
                 recipe_materialized = False
                 if recipe_id:
                     recipe_known = query("select exists(select 1 from dune.actors a cross join lateral jsonb_array_elements(coalesce(a.properties->'CraftingRecipesLibraryActorComponent'->'m_KnownItemRecipes','[]'::jsonb)) recipe where recipe->'BaseRecipeId'->>'Name'=%s) as found", (recipe_id,))
@@ -13428,6 +13473,7 @@ class Handler(BaseHTTPRequestHandler):
                         recipe_rows = query("select properties->'CraftingRecipesLibraryActorComponent'->'m_KnownItemRecipes' as values from dune.actors where id=%s and properties ? 'CraftingRecipesLibraryActorComponent'", (pawn_id,))
                         if recipe_rows:
                             recipe_values = recipe_rows[0].get("values") if isinstance(recipe_rows[0].get("values"), list) else []
+                            recipe_before_values = list(recipe_values)
                             if not any(isinstance(value, dict) and (value.get("BaseRecipeId") or {}).get("Name") == recipe_id for value in recipe_values):
                                 recipe_values = recipe_values + [{"m_Source": "SchematicPickup", "m_bIsNew": True, "BaseRecipeId": {"Name": recipe_id}, "m_QualityLevel": 0, "m_NumberOfRecipeUses": 0, "m_bIsLimitedUseRecipe": False}]
                                 recipe_materialized = True
@@ -13436,14 +13482,35 @@ class Handler(BaseHTTPRequestHandler):
                     "alreadyUnlocked": found and next(value for value in values if isinstance(value, dict) and value.get("ItemKey") == key).get("UnlockedState") == "Purchased",
                     "values": next_values, "recipeId": recipe_id or None,
                     "recipeMaterialized": recipe_materialized, "recipeValues": recipe_values,
+                    "beforeState": {"research": values, **({"recipes": recipe_before_values} if recipe_materialized else {})},
+                    "afterState": {"research": next_values, **({"recipes": recipe_values} if recipe_materialized else {})},
+                    "includeRecipe": recipe_materialized,
                 }
             if dry_run:
-                return {"ok": True, "dryRun": True, "plan": {key: value for key, value in plan.items() if key not in ("values", "recipeValues")}, "confirm": "WRITE PLAYER PROGRESSION"}
+                private = ("values", "recipeValues", "beforeState", "afterState")
+                return {"ok": True, "dryRun": True, "plan": {key: value for key, value in plan.items() if key not in private}, "confirm": CONFIRM_PLAYER_PROGRESSION}
             self.require_mutations()
             if not PLAYER_RUNTIME_MUTATIONS_ENABLED:
                 raise PermissionError("player maintenance is disabled; set DUNE_ADMIN_PLAYER_RUNTIME_MUTATIONS_ENABLED=true")
-            require_confirmation(body, "WRITE PLAYER PROGRESSION")
+            require_confirmation(body, CONFIRM_PLAYER_PROGRESSION)
             backup = create_db_backup()
+            if action in progression_admin.JSON_ACTIONS:
+                result = progression_admin.apply(
+                    db_connect, pawn_id, action, plan["beforeState"], plan["afterState"],
+                    include_recipe=bool(plan.get("includeRecipe")),
+                )
+                target = str(plan.get("key") or f"intel:+{plan.get('requested', 0)}")
+                receipt = progression_admin.write_receipt(
+                    BACKUP_ROOT, result, DATABASE, target, backup, principal=principal,
+                )
+                private = ("values", "recipeValues", "beforeState", "afterState")
+                public_result = {key: value for key, value in result.items() if key not in ("before", "after")}
+                public_result.update({
+                    "plan": {key: value for key, value in plan.items() if key not in private},
+                    "backup": backup, "receipt": receipt,
+                    "relogRequired": True, "restartRequired": False,
+                })
+                return public_result
             with db_connect() as connection:
                 with connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
                     cursor.execute("select online_status::text from dune.player_state where account_id=%s for update", (account_id,))
@@ -13462,20 +13529,7 @@ class Handler(BaseHTTPRequestHandler):
                         cursor.execute("insert into dune.purchased_specialization_keystones(player_id,keystone_id) select %s,id from dune.specialization_keystones_map on conflict do nothing", (plan["playerId"],))
                         changed = cursor.rowcount
                         continue_update_count = False
-                    elif action == "add-intel":
-                        cursor.execute("update dune.actors set properties=jsonb_set(properties,'{TechKnowledgePlayerComponent,m_TechKnowledgePoints}',to_jsonb(%s::bigint)) where id=%s and properties ? 'TechKnowledgePlayerComponent'", (plan["newValue"], pawn_id))
-                    elif action == "unlock-recipe":
-                        cursor.execute("update dune.actors set properties=jsonb_set(properties,'{CraftingRecipesLibraryActorComponent,m_KnownItemRecipes}',%s::jsonb,true) where id=%s and properties ? 'CraftingRecipesLibraryActorComponent'", (json.dumps(plan["values"]), pawn_id))
-                    else:
-                        cursor.execute("update dune.actors set properties=jsonb_set(properties,'{TechKnowledgePlayerComponent,m_TechKnowledge,m_TechKnowledgeData}',%s::jsonb,true) where id=%s and properties ? 'TechKnowledgePlayerComponent'", (json.dumps(plan["values"]), pawn_id))
-                        research_changed = cursor.rowcount
-                        if research_changed == 1 and plan.get("recipeMaterialized") and isinstance(plan.get("recipeValues"), list):
-                            cursor.execute("update dune.actors set properties=jsonb_set(properties,'{CraftingRecipesLibraryActorComponent,m_KnownItemRecipes}',%s::jsonb,true) where id=%s and properties ? 'CraftingRecipesLibraryActorComponent'", (json.dumps(plan["recipeValues"]), pawn_id))
-                            if cursor.rowcount != 1:
-                                raise ValueError("research recipe component changed concurrently; no row was updated")
-                        changed = research_changed
-                        continue_update_count = False
-                    if action not in ("unlock-research", "specialization-max", "specialization-reset", "keystones-grant-all"):
+                    if action not in ("specialization-max", "specialization-reset", "keystones-grant-all"):
                         continue_update_count = True
                     if continue_update_count:
                         changed = cursor.rowcount
@@ -18308,7 +18362,7 @@ function wireArtificialExchangeControls(){
 function runtimeActionPanel(catalog={}){
   const moduleOptions = (catalog.skillModules || []).map(row => `<option value="${esc(row.id)}">${esc(row.name || row.id)} | ${esc(row.category || '')} | max ${esc(row.maxLevel ?? 1)}</option>`).join('');
   const vehicleOptions = (catalog.vehicles || []).map(row => `<option value="${esc(row.id)}">${esc(row.id)} | ${esc((row.templates || []).join(', '))}</option>`).join('');
-  return `<div class="twoCol"><div class="panelBand"><div class="sectionHeader"><h2>Native Player Actions</h2><div class="toolbar"><span class="pill ${catalog.mutationEnabled ? 'warn' : 'ok'}">execution ${catalog.mutationEnabled ? 'enabled' : 'disabled'}</span><span class="pill ${catalog.tokenConfigured ? 'ok' : 'warn'}">command token ${catalog.tokenConfigured ? 'configured' : 'missing'}</span></div></div><p class="muted">Token-authenticated Version 2 commands are queued through game RabbitMQ. Water, teleport, and vehicle spawn require an online target. A queued result proves broker acceptance, not client-side completion.</p><div class="grid"><label>Action<select id="runtimeAction"><option value="skill-points">Set skill points</option><option value="skill-module">Set skill module</option><option value="refill-water">Refill water</option><option value="kick">Kick player</option><option value="kick-all">Kick all online</option><option value="teleport">Teleport online player</option><option value="clean-inventory">Clean inventory</option><option value="reset-progression">Reset progression</option><option value="spawn-vehicle">Spawn vehicle at coordinates</option></select></label><label>Skill points<input id="runtimeSkillPoints" type="number" min="0" max="100000" value="1"></label><label>Skill module<select id="runtimeSkillModule">${moduleOptions}</select></label><label>Module level<input id="runtimeSkillLevel" type="number" min="0" value="1"></label><label>Water amount<input id="runtimeWater" type="number" min="1" max="1000000000" value="1000000"></label><label>Vehicle<select id="runtimeVehicle">${vehicleOptions}</select></label><label>Vehicle template<input id="runtimeVehicleTemplate" placeholder="blank uses first valid template"></label><label>X<input id="runtimeX" value="0"></label><label>Y<input id="runtimeY" value="0"></label><label>Z<input id="runtimeZ" value="0"></label><label>Rotation / yaw<input id="runtimeRotation" value="0"></label></div><p><button id="runtimePreviewBtn" class="primary">Preview native action</button> <button id="runtimeExecuteBtn" class="danger">Execute native action</button></p><pre id="runtimeActionResult"></pre></div><div class="panelBand"><h2>Offline Vehicle Maintenance</h2><p class="muted">Repairs persistent vehicle data only while the selected player is offline. Execution creates a database backup and requires relog.</p><div class="grid"><label>Action<select id="vehicleDbAction"><option value="repair-decay">Repair durability red bar</option><option value="refuel">Refuel vehicle</option></select></label><label>Repair threshold %<input id="vehicleThreshold" type="number" min="1" max="100" value="50"></label><label>Vehicle actor ID<input id="vehicleActorId"></label></div><p><button id="vehicleDbPreviewBtn" class="primary">Preview vehicle action</button> <button id="vehicleDbExecuteBtn" class="danger">Execute vehicle action</button></p><pre id="vehicleDbResult"></pre></div></div><div class="panelBand"><h2>Player Recovery and Repair</h2><p class="muted">Gear repair is offline-only and backed up. Login-queue repair deletes only the selected player's exact game-RabbitMQ queue; it refuses an online player unless force is explicitly checked.</p><div class="grid"><label>Action<select id="playerMaintenanceAction"><option value="repair-gear">Repair equipped/carried gear</option><option value="repair-login-queue">Repair stale login queue</option></select></label><label><input id="playerMaintenanceForce" type="checkbox"> Force login-queue delete when DB says Online</label></div><p><button id="playerMaintenancePreviewBtn" class="primary">Preview maintenance</button> <button id="playerMaintenanceExecuteBtn" class="danger">Execute maintenance</button></p><pre id="playerMaintenanceResult"></pre></div>`;
+  return `<div class="twoCol"><div class="panelBand"><div class="sectionHeader"><h2>Native Player Actions</h2><div class="toolbar"><span class="pill ${catalog.mutationEnabled ? 'warn' : 'ok'}">execution ${catalog.mutationEnabled ? 'enabled' : 'disabled'}</span><span class="pill ${catalog.tokenConfigured ? 'ok' : 'warn'}">command token ${catalog.tokenConfigured ? 'configured' : 'missing'}</span></div></div><p class="muted">Token-authenticated Version 2 commands are queued through game RabbitMQ. Water, teleport, and vehicle spawn require an online target. A queued result proves broker acceptance, not client-side completion.</p><div class="grid"><label>Action<select id="runtimeAction"><option value="skill-points">Set skill points</option><option value="skill-module">Set skill module</option><option value="refill-water">Refill water</option><option value="kick">Kick player</option><option value="kick-all">Kick all online</option><option value="teleport">Teleport online player</option><option value="clean-inventory">Clean inventory</option><option value="reset-progression">Reset progression</option><option value="spawn-vehicle">Spawn vehicle at coordinates</option></select></label><label>Skill points<input id="runtimeSkillPoints" type="number" min="0" max="100000" value="1"></label><label>Skill module<select id="runtimeSkillModule">${moduleOptions}</select></label><label>Module level<input id="runtimeSkillLevel" type="number" min="0" value="1"></label><label>Water amount<input id="runtimeWater" type="number" min="1" max="1000000000" value="1000000"></label><label>Vehicle<select id="runtimeVehicle">${vehicleOptions}</select></label><label>Vehicle template<input id="runtimeVehicleTemplate" placeholder="blank uses first valid template"></label><label>X<input id="runtimeX" value="0"></label><label>Y<input id="runtimeY" value="0"></label><label>Z<input id="runtimeZ" value="0"></label><label>Rotation / yaw<input id="runtimeRotation" value="0"></label></div><p><button id="runtimePreviewBtn" class="primary">Preview native action</button> <button id="runtimeExecuteBtn" class="danger">Execute native action</button></p><pre id="runtimeActionResult"></pre></div><div class="panelBand"><h2>Offline Vehicle Maintenance</h2><p class="muted">Repairs persistent vehicle data only while the selected player is offline. Execution creates a database backup and requires relog.</p><div class="grid"><label>Action<select id="vehicleDbAction"><option value="repair-decay">Repair durability red bar</option><option value="refuel">Refuel vehicle</option></select></label><label>Repair threshold %<input id="vehicleThreshold" type="number" min="1" max="100" value="50"></label><label>Vehicle actor ID<input id="vehicleActorId"></label></div><p><button id="vehicleDbPreviewBtn" class="primary">Preview vehicle action</button> <button id="vehicleDbExecuteBtn" class="danger">Execute vehicle action</button></p><pre id="vehicleDbResult"></pre></div></div><div class="panelBand"><h2>Player Recovery and Repair</h2><p class="muted">Intel, recipe, and research JSON writes are offline-only, compare-and-swap verified, backed up, and receipted for exact rollback. Specialization, keystone, and gear maintenance use their first-party table/function paths. Login-queue repair deletes only the selected player's exact game-RabbitMQ queue.</p><div class="grid"><label>Action<select id="playerMaintenanceAction"><option value="repair-gear">Repair equipped/carried gear</option><option value="repair-login-queue">Repair stale login queue</option></select></label><label><input id="playerMaintenanceForce" type="checkbox"> Force login-queue delete when DB says Online</label></div><p><button id="playerMaintenancePreviewBtn" class="primary">Preview maintenance</button> <button id="playerMaintenanceExecuteBtn" class="danger">Execute maintenance</button></p><pre id="playerMaintenanceResult"></pre></div>`;
 }
 async function runPlayerRuntimeAction(dryRun=true){
   const action = runtimeAction.value;
@@ -18332,20 +18386,21 @@ async function runVehicleDbAction(dryRun=true){
   vehicleDbResult.textContent = JSON.stringify(result, null, 2);
   notify(dryRun ? 'Vehicle preview ready' : 'Vehicle data updated');
 }
-function mountProgressionMaintenanceControls(){
+function mountProgressionMaintenanceControls(runtimeCatalog={}){
   const select = document.getElementById('playerMaintenanceAction');
   if (!select || select.dataset.progressionMounted === '1') return;
   select.dataset.progressionMounted = '1';
-  select.insertAdjacentHTML('afterbegin', '<option value="add-intel">Add Intel</option><option value="unlock-recipe">Unlock crafting recipe</option><option value="unlock-research">Unlock research item</option><option value="specialization-max">Grant max specialization</option><option value="specialization-reset">Reset specialization</option><option value="keystones-grant-all">Grant all keystones</option>');
+  select.insertAdjacentHTML('afterbegin', '<option value="add-intel">Add Intel</option><option value="unlock-recipe">Unlock crafting recipe</option><option value="unlock-research">Unlock research item</option><option value="rollback-progression">Roll back receipted progression write</option><option value="specialization-max">Grant max specialization</option><option value="specialization-reset">Reset specialization</option><option value="keystones-grant-all">Grant all keystones</option>');
   const grid = select.closest('.grid');
-  grid?.insertAdjacentHTML('beforeend', '<label>Intel amount<input id="playerMaintenanceAmount" type="number" min="1" max="1000000000" value="100"></label><label>Recipe / research key<input id="playerMaintenanceKey" placeholder="RCP_HealthPackRecipe"></label>');
+  const receiptOptions = (runtimeCatalog.progressionReceipts || []).map(row => `<option value="${esc(row.id)}">${esc(row.createdAt || '')} | ${esc(row.action || '')} | ${esc(row.target || '')} | ${esc((row.player || {}).character_name || (row.player || {}).account_id || '')}</option>`).join('');
+  grid?.insertAdjacentHTML('beforeend', `<label>Intel amount<input id="playerMaintenanceAmount" type="number" min="1" max="1000000000" value="100"></label><label>Recipe / research key<input id="playerMaintenanceKey" placeholder="RCP_HealthPackRecipe"></label><label>Progression receipt<select id="playerProgressionReceipt"><option value="">Select a receipt</option>${receiptOptions}</select></label>`);
 }
 async function runPlayerMaintenance(dryRun=true){
   const action = playerMaintenanceAction.value;
-  const body = {dry_run:dryRun, action, account_id:grantAccount.value, force:playerMaintenanceForce.checked, amount:document.getElementById('playerMaintenanceAmount')?.value, key:document.getElementById('playerMaintenanceKey')?.value, track_type:document.getElementById('track')?.value};
+  const body = {dry_run:dryRun, action, account_id:grantAccount.value, force:playerMaintenanceForce.checked, amount:document.getElementById('playerMaintenanceAmount')?.value, key:document.getElementById('playerMaintenanceKey')?.value, track_type:document.getElementById('track')?.value, receipt_id:document.getElementById('playerProgressionReceipt')?.value};
   if (!dryRun) {
     if (!confirm(`Execute ${action} for the selected player?`)) return;
-    body.confirm = ['add-intel', 'unlock-recipe', 'unlock-research', 'specialization-max', 'specialization-reset', 'keystones-grant-all'].includes(action) ? 'WRITE PLAYER PROGRESSION' : (action === 'repair-gear' ? 'REPAIR GEAR' : 'REPAIR LOGIN QUEUE');
+    body.confirm = action === 'rollback-progression' ? 'ROLL BACK PLAYER PROGRESSION' : (['add-intel', 'unlock-recipe', 'unlock-research', 'specialization-max', 'specialization-reset', 'keystones-grant-all'].includes(action) ? 'WRITE PLAYER PROGRESSION' : (action === 'repair-gear' ? 'REPAIR GEAR' : 'REPAIR LOGIN QUEUE'));
   }
   const result = await api('/api/admin/player-maintenance', {method:'POST', body:JSON.stringify(body)});
   playerMaintenanceResult.textContent = JSON.stringify(result, null, 2);
@@ -18360,7 +18415,7 @@ async function mutations(serial=loadSerial){
   if (serial !== loadSerial) return;
   const referenceErrors = ref.errors && Object.keys(ref.errors).length ? `<div class="card"><h2>Reference Errors</h2><pre>${esc(JSON.stringify(ref.errors, null, 2))}</pre></div>` : '';
   view.innerHTML = `<div class="pageStack">${referenceErrors}<div class="sectionHeader"><h2>Admin Actions</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="settings">Settings</button><button data-jump="security">Audit</button></div></div><div class="panelBand"><h2>Target Player</h2><div class="grid"><label>Character<select id="adminCharacterSelect">${characterOptions(characterRows)}</select></label><label>Player controller ID<input id="pcid"></label><label>Account ID<input id="grantAccount" placeholder="auto-select player inventory"></label><label>Character name<input id="grantCharacter" placeholder="auto-select by name"></label></div></div>${runtimeActionPanel(runtimeCatalog)}${offlineTeleportPanel(ref, characterRows)}<div class="panelBand"><h2>Character Slots</h2><div class="grid"><label>Action<select id="slotAction"><option>new-character</option><option>switch-character</option><option>restore-character</option></select></label><label>Target hibernated account ID<input id="slotTargetAccount"></label></div><p><button id="slotInspectBtn" class="primary">Inspect slots</button> <button id="slotPlanBtn" class="primary">Preview swap</button> <button id="slotExecuteBtn" class="danger">Execute swap</button></p><pre id="slotResult"></pre></div><div class="twoCol"><div class="panelBand"><h2>Currency and XP</h2><p class="muted">Select a character first; balances and tracks populate from that player.</p><div class="grid"><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button id="currencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Solari amount<input id="solariAmount" value="20000"></label></div><p><button id="solariInventoryDryRunBtn" class="primary">Preview inventory Solari</button> <button id="solariInventoryGrantBtn" class="danger">Grant inventory Solari</button> <button id="solariBankDryRunBtn" class="primary">Preview bank Solari</button> <button id="solariBankGrantBtn" class="danger">Grant bank Solari</button></p><pre id="solariGrantResult"></pre><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Level for set/new track<input id="xplevel" value="0"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button id="xpBtn" class="primary">Apply XP</button></p></div><div class="panelBand"><h2>Item Grants</h2><p class="muted">Use a known template ID and dry run before writing new items.</p><div class="grid"><label>Known inventory<select id="grantInventorySelect">${inventoryOptions(ref.recentInventories)}</select></label><label>Inventory ID<input id="grantInventory" placeholder="explicit inventory"></label><label class="hidden">Character<select id="grantCharacterSelect">${characterOptions(characterRows)}</select></label><label>Inventory type<select id="grantInventoryType">${inventoryTypeOptions(ref.inventoryTypes)}</select></label><label>Template ID<input id="grantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><details><summary>Advanced stats JSON</summary><textarea id="grantStats">{}</textarea></details><p><button id="dryRunItemBtn" class="primary">Dry run</button> <button id="grantItemBtn" class="danger">Grant item</button></p><pre id="grantResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Item Maintenance</h2><p class="muted">Stack/quality changes require the owning player to be offline, create a database backup, preserve every other item field, and verify the saved row. Relog to refresh the client.</p><div class="grid"><label class="hidden">Character<select id="itemCharacterSelect">${characterOptions(characterRows)}</select></label><label>Owned item<select id="itemEditSelect"><option value="">Select a character first</option></select></label><label>Item ID<input id="itemEditId"></label><label>New stack size<input id="itemEditStack" value="1"></label><label>New quality level<input id="itemEditQuality" type="number" min="0" max="100" value="0"></label><label>Delete count<input id="itemDeleteCount" placeholder="blank/all"></label></div><p><button id="setItemStackBtn" class="primary">Set stack + quality</button> <button id="deleteItemBtn" class="danger">Delete item/count</button></p><pre id="itemEditResult"></pre></div><div class="panelBand"><h2>Specialization Keystones</h2><div class="grid"><label>Player/controller ID<input id="keyPlayer"></label><label>Keystone<select id="keystone">${options(ref.keystones, 'name')}</select></label></div><p><button id="purchaseKeystoneBtn" class="primary">Purchase keystone</button> <button id="resetKeystonesBtn" class="danger">Reset all keystones</button></p><pre id="keystoneResult"></pre></div></div><details class="panelBand"><summary>Backup</summary><p class="muted">Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button id="backupBtn" class="primary">Create DB backup</button><pre id="backupResult"></pre></details><datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><details class="panelBand"><summary>Known Item Templates</summary>${table(ref.knownItemTemplates)}</details><details class="panelBand"><summary>Observed Item Templates</summary>${table(ref.observedItemTemplates)}</details><details class="panelBand"><summary>Recent Inventories</summary>${table(ref.recentInventories)}</details><details class="panelBand"><summary>Inventory Types</summary>${table(ref.inventoryTypes)}</details></div>`;
-  mountProgressionMaintenanceControls();
+  mountProgressionMaintenanceControls(runtimeCatalog);
   mountVisualItemCatalog();
   const loadCharacterAdminDetails = async (accountId, serial=detailLoadSerial) => {
     mountAugmentControls();
