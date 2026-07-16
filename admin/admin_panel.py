@@ -48,6 +48,7 @@ import augment_admin
 import addon_admin
 import native_command_admin
 import access_control
+import change_approvals
 import outbound_webhooks
 import community_rewards
 import moderation
@@ -185,6 +186,12 @@ ADMIN_TOKEN = os.environ.get("DUNE_ADMIN_TOKEN", "")
 ADMIN_REQUIRE_TOKEN = os.environ.get("DUNE_ADMIN_REQUIRE_TOKEN", "true").lower() in ("1", "true", "yes", "on")
 RBAC_ENABLED = os.environ.get("DUNE_ADMIN_RBAC_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 ADMIN_ACCESS_FILE = pathlib.Path(os.environ.get("DUNE_ADMIN_ACCESS_FILE", str(CONFIG_ROOT / "admin-access.json")))
+DUAL_CONTROL_ENABLED = os.environ.get("DUNE_ADMIN_DUAL_CONTROL_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+DUAL_CONTROL_POLICY = os.environ.get("DUNE_ADMIN_DUAL_CONTROL_POLICY", "critical").strip().lower()
+if DUAL_CONTROL_POLICY not in change_approvals.MODE_MINIMUM:
+    raise RuntimeError("DUNE_ADMIN_DUAL_CONTROL_POLICY must be critical, high, or all")
+DUAL_CONTROL_TTL_SECONDS = max(60, min(int(os.environ.get("DUNE_ADMIN_DUAL_CONTROL_TTL_SECONDS", "900")), 3600))
+CHANGE_APPROVAL_DATABASE = pathlib.Path(os.environ.get("DUNE_ADMIN_DUAL_CONTROL_DATABASE", str(BACKUP_ROOT / "change-approvals.sqlite3")))
 FEDERATED_AUTH_ENABLED = os.environ.get("DUNE_ADMIN_FEDERATED_AUTH_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 FEDERATED_AUTH_SUBJECTS_FILE = pathlib.Path(os.environ.get("DUNE_ADMIN_AUTH_SUBJECTS_FILE", str(CONFIG_ROOT / "admin-auth-subjects.json")))
 FEDERATED_AUTH_SESSION_SECRET_FILE = pathlib.Path(os.environ.get("DUNE_ADMIN_AUTH_SESSION_SECRET_FILE", str(CONFIG_ROOT / "secrets" / "admin-session.secret")))
@@ -459,6 +466,23 @@ ANNOUNCEMENT_LOCK = threading.Lock()
 RESTART_LOCK = threading.Lock()
 EVENT_LOCK = threading.Lock()
 CARE_PACKAGE_LOCK = threading.Lock()
+CHANGE_APPROVAL_LOCK = threading.Lock()
+CHANGE_APPROVAL_STORE = None
+
+
+def change_approval_store():
+    global CHANGE_APPROVAL_STORE
+    with CHANGE_APPROVAL_LOCK:
+        if CHANGE_APPROVAL_STORE is None:
+            store = change_approvals.Store(
+                CHANGE_APPROVAL_DATABASE,
+                ttl_seconds=DUAL_CONTROL_TTL_SECONDS,
+                owner_uid=os.environ.get("DUNE_HOST_UID"),
+                owner_gid=os.environ.get("DUNE_HOST_GID"),
+            )
+            store.initialize()
+            CHANGE_APPROVAL_STORE = store
+        return CHANGE_APPROVAL_STORE
 
 
 def admin_panel_build():
@@ -489,6 +513,7 @@ def admin_panel_reload_paths():
         GAMEPLAY_PRESETS_FILE,
         COSMETIC_CATALOG_FILE,
         CODE_ROOT / "admin" / "access_control.py",
+        CODE_ROOT / "admin" / "change_approvals.py",
         CODE_ROOT / "scripts" / "dune_gm_command.py",
         GM_CATALOG_PATH,
     ]
@@ -935,6 +960,9 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ADMIN_REQUIRE_TOKEN": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Requires the owner or named RBAC token on every protected API."},
     "DUNE_ADMIN_RBAC_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Enables hashed multi-user admin tokens and route capability enforcement while retaining the owner recovery token."},
     "DUNE_ADMIN_ACCESS_FILE": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Container path to the versioned hashed-token admin identity file."},
+    "DUNE_ADMIN_DUAL_CONTROL_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Requires a second named operator approval for governed high-impact mutations."},
+    "DUNE_ADMIN_DUAL_CONTROL_POLICY": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Four-eyes enforcement scope: critical, high, or all governed mutation rules."},
+    "DUNE_ADMIN_DUAL_CONTROL_TTL_SECONDS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Lifetime of a body-bound change approval, limited to 60-3600 seconds."},
     "DUNE_ADMIN_FEDERATED_AUTH_ENABLED": {"group": "Federated Auth", "secret": False, "restart": True, "why": "Enables provider-neutral OIDC or Discord OAuth authorization-code login when all credentials and mappings are configured."},
     "DUNE_ADMIN_AUTH_PROVIDER": {"group": "Federated Auth", "secret": False, "restart": True, "why": "Federated login provider type: oidc or discord."},
     "DUNE_ADMIN_AUTH_ISSUER": {"group": "Federated Auth", "secret": False, "restart": True, "why": "Exact HTTPS OIDC issuer; Discord uses https://discord.com."},
@@ -4915,6 +4943,9 @@ def write_player_online_state_settings(updates):
 
 
 def parse_body(handler, max_bytes=MAX_BODY_BYTES):
+    cached = getattr(handler, "_parsed_body", None)
+    if cached is not None:
+        return cached
     length = validate_body_framing(handler, max_bytes=max_bytes)
     data = handler.rfile.read(length) if length else b"{}"
     content_type = handler.headers.get("Content-Type", "")
@@ -4922,9 +4953,12 @@ def parse_body(handler, max_bytes=MAX_BODY_BYTES):
         body = json.loads(data.decode("utf-8") or "{}")
         if not isinstance(body, dict):
             raise ValueError("JSON request body must be an object")
+        handler._parsed_body = body
         return body
     parsed = urllib.parse.parse_qs(data.decode("utf-8"), keep_blank_values=True)
-    return {key: values[-1] if values else "" for key, values in parsed.items()}
+    body = {key: values[-1] if values else "" for key, values in parsed.items()}
+    handler._parsed_body = body
+    return body
 
 
 def validate_body_framing(handler, max_bytes=MAX_BODY_BYTES):
@@ -8395,6 +8429,7 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/metrics/change-intelligence":
                 metrics = change_intelligence_store().prometheus() if CHANGE_INTELLIGENCE_ENABLED else "dash_change_intelligence_collector_up 0\n"
                 metrics += deployment_assurance_store().prometheus() if DEPLOYMENT_ASSURANCE_ENABLED else "dash_deployment_assurance_collector_up 0\n"
+                metrics += change_approval_store().prometheus(enabled=DUAL_CONTROL_ENABLED)
                 if UPDATE_READINESS_ENABLED:
                     try:
                         update_snapshot = update_readiness_metrics_snapshot()
@@ -8536,6 +8571,24 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/auth/me":
                 self.require_token()
                 self.json({"ok": True, "principal": access_control.public_principal(getattr(self, "auth_principal", None))})
+            elif parsed.path == "/api/security/approvals":
+                self.require_token()
+                principal = access_control.public_principal(getattr(self, "auth_principal", None)) or {}
+                store = change_approval_store()
+                self.json({
+                    "ok": True,
+                    "enabled": DUAL_CONTROL_ENABLED,
+                    "policy": DUAL_CONTROL_POLICY,
+                    "ttlSeconds": DUAL_CONTROL_TTL_SECONDS,
+                    "rbacEnabled": RBAC_ENABLED,
+                    "ready": DUAL_CONTROL_ENABLED and RBAC_ENABLED and bool(principal.get("id")),
+                    "principal": principal,
+                    "policies": change_approvals.public_policies(DUAL_CONTROL_POLICY),
+                    "requests": store.list(200),
+                    "status": store.status(),
+                    "approvalHeader": "X-DASH-Approval-ID",
+                    "executionSemantics": "one approved request authorizes one exact requester-bound attempt",
+                })
             elif parsed.path == "/api/admin/item-catalog":
                 self.require_token()
                 self.json(load_item_catalog())
@@ -8938,6 +8991,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
+        self._parsed_body = None
         try:
             self.validate_host()
             webhook_match = re.fullmatch(r"/api/community/webhooks/(vote|payment)", parsed.path)
@@ -8949,7 +9003,68 @@ class Handler(BaseHTTPRequestHandler):
             self.validate_same_origin()
             request_limit = BLUEPRINT_MAX_BODY_BYTES if parsed.path == "/api/admin/blueprints" else BACKUP_IMPORT_MAX_BODY_BYTES if parsed.path == "/api/ops/backups/import" else MAX_BODY_BYTES
             validate_json_post(self, max_bytes=request_limit)
-            if parsed.path == "/api/auth/logout":
+            if DUAL_CONTROL_ENABLED and parsed.path in change_approvals.GOVERNED_PATHS:
+                self.require_token()
+                governed_body = parse_body(self, max_bytes=request_limit)
+                governed_policy = change_approvals.policy_for(parsed.path, governed_body)
+                if governed_policy and change_approvals.policy_enabled(DUAL_CONTROL_POLICY, governed_policy["risk"]):
+                    if not RBAC_ENABLED:
+                        raise PermissionError("dual control requires DUNE_ADMIN_RBAC_ENABLED=true and two named identities")
+                    principal = access_control.public_principal(getattr(self, "auth_principal", None)) or {}
+                    approval_id = self.headers.get("X-DASH-Approval-ID", "").strip() or str(governed_body.get("approvalId", governed_body.get("approval_id", ""))).strip()
+                    if not approval_id:
+                        raise PermissionError(
+                            f"dual-control approval required for {governed_policy['risk']} mutation {parsed.path}; "
+                            "create and approve an exact request under Security, then send X-DASH-Approval-ID"
+                        )
+                    required_capability = access_control.required_capability("POST", parsed.path)
+                    consumed = change_approval_store().consume(
+                        approval_id, principal, parsed.path, governed_body,
+                        required_capability, governed_policy["risk"],
+                    )
+                    self.change_approval = consumed
+                    self.audit(
+                        "change-approval-consume", ok=True, approval_id=approval_id,
+                        principal_id=principal.get("id"), target_path=parsed.path,
+                        risk=governed_policy["risk"], body_hmac_sha256=consumed.get("bodyHmacSha256"),
+                    )
+            if parsed.path == "/api/security/approvals":
+                self.require_token()
+                if not DUAL_CONTROL_ENABLED:
+                    raise PermissionError("dual control is disabled; set DUNE_ADMIN_DUAL_CONTROL_ENABLED=true")
+                if not RBAC_ENABLED:
+                    raise PermissionError("dual control requires DUNE_ADMIN_RBAC_ENABLED=true and two named identities")
+                body = parse_body(self)
+                action = str(body.get("action") or "").strip().lower()
+                principal = access_control.public_principal(getattr(self, "auth_principal", None)) or {}
+                store = change_approval_store()
+                if action == "request":
+                    target_path = str(body.get("targetPath", body.get("target_path", ""))).strip()
+                    target_body = body.get("requestBody", body.get("request_body"))
+                    policy = change_approvals.policy_for(target_path, target_body)
+                    if not policy or not change_approvals.policy_enabled(DUAL_CONTROL_POLICY, policy["risk"]):
+                        raise ValueError("target is not enforced by the active dual-control policy")
+                    capability = access_control.required_capability("POST", target_path)
+                    access_control.authorize(principal, capability)
+                    result = store.create(
+                        principal, target_path, target_body, capability, policy["risk"],
+                        body.get("summary", policy["label"]), body.get("ttlSeconds", body.get("ttl_seconds")),
+                    )
+                elif action in {"approve", "reject", "cancel"}:
+                    approval_id = body.get("approvalId", body.get("approval_id"))
+                    prior = store.get(approval_id)
+                    if action != "cancel":
+                        access_control.authorize(principal, prior["requiredCapability"])
+                    result = store.approve(approval_id, principal) if action == "approve" else store.reject(approval_id, principal, body.get("reason")) if action == "reject" else store.cancel(approval_id, principal)
+                else:
+                    raise ValueError("change approval action must be request, approve, reject, or cancel")
+                self.audit(
+                    "change-approval-" + action, ok=True, approval_id=result.get("id"),
+                    principal_id=principal.get("id"), target_path=result.get("targetPath"),
+                    risk=result.get("risk"), state=result.get("state"), body_hmac_sha256=result.get("bodyHmacSha256"),
+                )
+                self.json({"ok": True, "request": result})
+            elif parsed.path == "/api/auth/logout":
                 self.require_token()
                 principal = access_control.public_principal(getattr(self, "auth_principal", None)) or {}
                 self.audit("admin-logout", ok=True, principal_id=principal.get("id"), auth_method=principal.get("authMethod", "token"))
@@ -11416,6 +11531,7 @@ class Handler(BaseHTTPRequestHandler):
             (RBAC_ENABLED and ADMIN_ACCESS_FILE.exists()) or
             FEDERATED_AUTH_ENABLED
         )
+        approval_status = change_approval_store().status() if DUAL_CONTROL_ENABLED else {"ledger": {"ok": True}}
         checks = [
             {"name": "admin auth mode", "ok": token_required, "value": "authentication required" if token_required else "unlocked"},
             {"name": "admin credential source configured", "ok": credential_configured if token_required else False, "value": "owner/RBAC/federated" if credential_configured else "missing"},
@@ -11432,6 +11548,8 @@ class Handler(BaseHTTPRequestHandler):
             {"name": "character search response limit", "ok": 1 <= CHARACTER_SEARCH_LIMIT <= 1000, "value": CHARACTER_SEARCH_LIMIT},
             {"name": "JSON-only POST enforcement", "ok": True},
             {"name": "destructive action confirmation", "ok": True, "value": "server-side"},
+            {"name": "four-eyes change control", "ok": not DUAL_CONTROL_ENABLED or RBAC_ENABLED, "value": f"{DUAL_CONTROL_POLICY} policy" if DUAL_CONTROL_ENABLED else "optional/off"},
+            {"name": "change approval HMAC ledger", "ok": not DUAL_CONTROL_ENABLED or approval_status["ledger"].get("ok", False), "value": approval_status["ledger"].get("headHmacSha256", "disabled")},
             {"name": "FLS token represented in admin settings", "ok": "FLS_SECRET" in SAFE_ENV_KEYS},
             {"name": "server login password editable", "ok": "DUNE_SERVER_LOGIN_PASSWORD" in SAFE_ENV_KEYS},
             {"name": "director transfer settings editable", "ok": "director.ini" in ALLOWED_CONFIGS and bool(DIRECTOR_TRANSFER_SETTINGS)},
@@ -11449,6 +11567,7 @@ class Handler(BaseHTTPRequestHandler):
                 "Keep the panel on trusted LAN/VPN only.",
                 "Do not expose RabbitMQ, Postgres, or this panel directly to the internet.",
                 "Take a backup before broad admin mutations or config surgery.",
+                "When four-eyes control is enabled, requester and approver must be distinct named identities; approvals are exact-body-bound and single-use.",
             ],
         }
 
@@ -14853,6 +14972,7 @@ let overviewRosterCounts = {};
 let overviewHealthSnapshot = null;
 let overviewResourceSnapshot = null;
 let overviewResourcePrevious = null;
+const approvalDrafts = new Map();
 const view = document.getElementById('view');
 const HEALTH_REQUEST_TIMEOUT_MS = 30000;
 
@@ -14930,7 +15050,13 @@ async function api(path, opts={}) {
   opts.headers = Object.assign({'Content-Type':'application/json'}, opts.headers || {});
   opts.cache = opts.cache || 'no-store';
   if (token) opts.headers['X-Admin-Token'] = token;
-  if (!opts.method || String(opts.method).toUpperCase() === 'GET') {
+  const method = String(opts.method || 'GET').toUpperCase();
+  let armedApproval = null;
+  try { armedApproval = JSON.parse(sessionStorage.getItem('duneAdminArmedApproval') || 'null'); } catch (e) { armedApproval = null; }
+  const requestPath = path.split('?', 1)[0];
+  const usesApproval = method === 'POST' && requestPath !== '/api/security/approvals' && armedApproval?.id && armedApproval?.targetPath === requestPath;
+  if (usesApproval) opts.headers['X-DASH-Approval-ID'] = armedApproval.id;
+  if (method === 'GET') {
     const separator = path.includes('?') ? '&' : '?';
     path = `${path}${separator}_=${Date.now()}`;
   }
@@ -14955,6 +15081,7 @@ async function api(path, opts={}) {
     if (e.name === 'AbortError') throw new Error(`request timed out after ${Math.round(timeoutMs / 1000)}s`);
     throw e;
   } finally {
+    if (usesApproval) sessionStorage.removeItem('duneAdminArmedApproval');
     clearTimeout(timer);
   }
 }
@@ -17423,15 +17550,78 @@ async function refreshResources(liveStats=false){
     resourceRefreshInFlight = false;
   }
 }
+function changeApprovalPanel(data){
+  const principal = data.principal || {};
+  const capabilities = new Set(principal.capabilities || []);
+  const can = capability => capabilities.has('*') || capabilities.has(capability);
+  const counts = data.status?.counts || {};
+  const policies = (data.policies || []).filter(row => row.enforced);
+  const options = policies.map(row => `<option value="${esc(row.path)}">${esc(row.risk)} · ${esc(row.label)} · ${esc(row.path)}</option>`).join('');
+  let armed = null;
+  try { armed = JSON.parse(sessionStorage.getItem('duneAdminArmedApproval') || 'null'); } catch (e) { armed = null; }
+  const rows = (data.requests || []).map(row => {
+    const mine = row.requester?.id === principal.id;
+    const approve = row.state === 'pending' && !mine && can(row.requiredCapability);
+    const cancel = ['pending','approved'].includes(row.state) && mine;
+    const execute = row.state === 'approved' && mine;
+    const localDraft = approvalDrafts.has(row.id);
+    return `<div class="eventItem"><div class="eventItemHead"><b>${esc(row.summary)}</b><span class="pill ${row.risk === 'critical' ? 'bad' : row.risk === 'high' ? 'warn' : ''}">${esc(row.risk)}</span><span class="pill">${esc(row.state)}</span></div><div class="muted">${esc(row.id)} · ${esc(row.targetPath)} · requester ${esc(row.requester?.displayName || row.requester?.id)} · expires ${esc(row.expiresAt)}</div><details><summary>Review exact request (secrets redacted)</summary><pre>${esc(JSON.stringify(row.reviewBody, null, 2))}</pre><div class="muted">Body HMAC: ${esc(row.bodyHmacSha256)} · capability: ${esc(row.requiredCapability)}${row.approver ? ` · approved by ${esc(row.approver.displayName || row.approver.id)}` : ''}</div></details><div class="commandBar">${approve ? `<button data-approval-action="approve" data-id="${esc(row.id)}" class="primary">Approve</button><button data-approval-action="reject" data-id="${esc(row.id)}" class="danger">Reject</button>` : ''}${cancel ? `<button data-approval-action="cancel" data-id="${esc(row.id)}">Cancel</button>` : ''}${execute ? `<button data-approval-action="arm" data-id="${esc(row.id)}" data-path="${esc(row.targetPath)}" class="primary">Arm next matching request</button>${localDraft ? `<button data-approval-action="execute" data-id="${esc(row.id)}" data-path="${esc(row.targetPath)}" class="danger">Execute retained local draft</button>` : ''}` : ''}</div></div>`;
+  }).join('');
+  return `<div class="panelBand"><div class="sectionHeader"><div><h2>Four-eyes Change Control</h2><p class="muted">Exact request bodies are HMAC-bound to one requester, one distinct approver, one route, one capability, one short expiry, and one execution attempt. Review bodies redact secrets; the server never stores the executable plaintext body.</p></div><div class="toolbar"><span class="pill ${data.enabled ? 'ok' : 'warn'}">${data.enabled ? 'enforced' : 'disabled'}</span><span class="pill">policy ${esc(data.policy)}</span><span class="pill ${data.status?.ledger?.ok ? 'ok' : 'bad'}">ledger ${data.status?.ledger?.ok ? 'valid' : 'invalid'}</span></div></div>${armed ? `<div class="notice warn">Armed approval <code>${esc(armed.id)}</code> will be attached only to the next POST for <code>${esc(armed.targetPath)}</code>. <button id="approvalDisarmBtn">Disarm</button></div>` : ''}<div class="metricGrid">${metric('Pending',counts.pending||0)}${metric('Approved',counts.approved||0)}${metric('Consumed',counts.consumed||0)}${metric('Expired',counts.expired||0)}</div><div class="twoCol"><div><h3>Request approval</h3><div class="grid"><label>Governed target<select id="approvalTarget">${options || '<option value="">No enforced policies</option>'}</select></label><label>Summary<input id="approvalSummary" maxlength="1000" placeholder="What changes and why"></label><label>Lifetime seconds<input id="approvalTtl" type="number" min="60" max="3600" value="${esc(data.ttlSeconds || 900)}"></label></div><label>Exact JSON request body<textarea id="approvalBody" rows="10">{}</textarea></label><button id="approvalRequestBtn" class="primary" ${data.ready && options ? '' : 'disabled'}>Request second approval</button><pre id="approvalResult">No approval action has run.</pre></div><div><h3>Enforced policy</h3>${table(policies.map(row => ({risk:row.risk,target:row.path,change:row.label})))}</div></div></div><div class="panelBand"><div class="sectionHeader"><h2>Approval Queue</h2><span class="pill">${esc((data.requests || []).length)} retained</span></div><div class="eventList">${rows || '<div class="muted">No approval requests yet.</div>'}</div></div>`;
+}
+function bindChangeApprovalControls(data){
+  document.getElementById('approvalDisarmBtn')?.addEventListener('click', () => { sessionStorage.removeItem('duneAdminArmedApproval'); security(loadSerial).catch(e => reportClientError(e, 'Refresh approvals')); });
+  document.getElementById('approvalRequestBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Requesting...', async () => {
+    let requestBody;
+    try { requestBody = JSON.parse(document.getElementById('approvalBody').value || '{}'); } catch (error) { throw new Error('Exact request body must be valid JSON'); }
+    if (!requestBody || Array.isArray(requestBody) || typeof requestBody !== 'object') throw new Error('Exact request body must be a JSON object');
+    const targetPath = document.getElementById('approvalTarget').value;
+    const result = await api('/api/security/approvals', {method:'POST',body:JSON.stringify({action:'request',targetPath,requestBody,summary:document.getElementById('approvalSummary').value,ttlSeconds:document.getElementById('approvalTtl').value})});
+    approvalDrafts.set(result.request.id, {targetPath, requestBody});
+    await security(loadSerial);
+    document.getElementById('approvalResult').textContent = JSON.stringify(result, null, 2);
+    notify('Change approval requested');
+  }));
+  document.querySelectorAll('[data-approval-action]').forEach(button => button.addEventListener('click', e => runAction(e.currentTarget, 'Working...', async () => {
+    const action = e.currentTarget.dataset.approvalAction;
+    const id = e.currentTarget.dataset.id;
+    const targetPath = e.currentTarget.dataset.path;
+    if (action === 'arm') {
+      sessionStorage.setItem('duneAdminArmedApproval', JSON.stringify({id,targetPath}));
+      await security(loadSerial);
+      notify('Approval armed for the next exact matching POST');
+      return;
+    }
+    if (action === 'execute') {
+      const draft = approvalDrafts.get(id);
+      if (!draft) throw new Error('Executable plaintext is not retained after page reload; arm the approval and reproduce the exact request in its feature UI or API client');
+      if (!confirm(`Execute approved ${targetPath} request now? This consumes the approval even if downstream execution fails.`)) return;
+      sessionStorage.setItem('duneAdminArmedApproval', JSON.stringify({id,targetPath}));
+      const result = await api(targetPath, {method:'POST',body:JSON.stringify(draft.requestBody),timeoutMs:120000});
+      approvalDrafts.delete(id);
+      await security(loadSerial);
+      document.getElementById('approvalResult').textContent = JSON.stringify(result, null, 2);
+      notify('Approved change executed');
+      return;
+    }
+    if (action === 'reject' && !confirm('Reject this exact change request?')) return;
+    if (action === 'cancel' && !confirm('Cancel this change request?')) return;
+    await api('/api/security/approvals', {method:'POST',body:JSON.stringify({action,approvalId:id,reason:action === 'reject' ? 'Rejected by reviewing operator' : ''})});
+    await security(loadSerial);
+    notify(`Change approval ${action}d`);
+  })));
+}
 async function security(serial=loadSerial){
-  const [audit, events] = await Promise.all([
+  const [audit, events, approvals] = await Promise.all([
     api('/api/ops/security'),
-    api('/api/ops/audit')
+    api('/api/ops/audit'),
+    api('/api/security/approvals')
   ]);
   if (serial !== loadSerial) return;
   const failed = (audit.checks || []).filter(c => !c.ok).length;
   const failedChecks = (audit.checks || []).filter(c => !c.ok);
-  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Security</h2><div class="toolbar"><span class="pill ${failed ? 'warn' : 'ok'}">${failed ? failed + ' checks need attention' : 'checks OK'}</span><button data-jump="settings">Settings</button><button data-jump="mutations">Admin Actions</button></div></div>${failed ? `<div class="panelBand dangerZone"><h2>Needs Attention</h2>${checks(failedChecks)}</div>` : ''}<div class="twoCol"><div class="panelBand"><h2>Security Checks</h2>${checks(audit.checks)}</div><div class="panelBand"><h2>Recent Audit Events</h2>${auditEventsTable(events.events)}<details><summary>Raw audit events</summary>${table(events.events)}</details></div></div><div class="panelBand"><h2>Operating Notes</h2><ul>${audit.notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul></div><details class="panelBand"><summary>Editable Env Keys</summary><div class="toolbar">${audit.safeEnvKeys.map(k => `<span class="pill">${esc(k)}</span>`).join('')}</div></details><details class="panelBand"><summary>Editable Config Files</summary><div class="toolbar">${audit.allowedConfigFiles.map(k => `<span class="pill">${esc(k)}</span>`).join('')}</div></details></div>`;
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Security</h2><div class="toolbar"><span class="pill ${failed ? 'warn' : 'ok'}">${failed ? failed + ' checks need attention' : 'checks OK'}</span><button data-jump="settings">Settings</button><button data-jump="mutations">Admin Actions</button></div></div>${failed ? `<div class="panelBand dangerZone"><h2>Needs Attention</h2>${checks(failedChecks)}</div>` : ''}${changeApprovalPanel(approvals)}<div class="twoCol"><div class="panelBand"><h2>Security Checks</h2>${checks(audit.checks)}</div><div class="panelBand"><h2>Recent Audit Events</h2>${auditEventsTable(events.events)}<details><summary>Raw audit events</summary>${table(events.events)}</details></div></div><div class="panelBand"><h2>Operating Notes</h2><ul>${audit.notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul></div><details class="panelBand"><summary>Editable Env Keys</summary><div class="toolbar">${audit.safeEnvKeys.map(k => `<span class="pill">${esc(k)}</span>`).join('')}</div></details><details class="panelBand"><summary>Editable Config Files</summary><div class="toolbar">${audit.allowedConfigFiles.map(k => `<span class="pill">${esc(k)}</span>`).join('')}</div></details></div>`;
+  bindChangeApprovalControls(approvals);
 }
 async function runbook(serial=loadSerial){
   const data = await api('/api/ops/runbook');

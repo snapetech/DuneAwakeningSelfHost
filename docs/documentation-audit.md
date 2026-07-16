@@ -19,6 +19,7 @@ This page records documentation coverage gaps found during repo review and the c
 | README docs index | README had a flat file list and did not cover every markdown document or root research index. | Replaced it with grouped documentation, research-index, and key-file sections. |
 | Discovery burn-down | Build drift, manual knob discovery, thin fixtures, and browser-ping diagnostics were spread across research notes and operator context. | Added `docs/discovery-burndown-plan.md` and implemented build-scoped discovery, fixture coverage, experiment harnessing, RMQ/build diffs, admin Discovery, and non-disruptive ping diagnosis. |
 | Admin progression mutations | Recipe unlock documentation still said writes were intentionally absent after guarded Intel, recipe, and research actions had been implemented. | Documented the live API/UI contract, compare-and-swap verification, private receipts, and receipt-bound rollback in `docs/player-progression-receipts.md`. |
+| Privileged change approval | Named RBAC identities existed, but no documented mechanism required an independent reviewer for a specific high-impact request. | Added `docs/change-approvals.md` covering cumulative policy levels, exact-body HMAC binding, redacted review, state/event integrity, single-use execution, recovery, metrics, and validation. |
 
 ## Remaining Gaps
 

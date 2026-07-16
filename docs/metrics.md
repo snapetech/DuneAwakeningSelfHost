@@ -23,6 +23,9 @@ not label image tags, Steam build IDs, candidate fingerprints, operators,
 backup paths, or receipt identities.
 Steam/archive/full-backup collection runs as a single cached background refresh;
 the Prometheus request path never performs those expensive checks inline.
+The same endpoint exports label-free four-eyes approval enablement, ledger
+validity, state totals, and oldest-pending age. It never labels an operator,
+route, capability, request ID, body HMAC, summary, or request value.
 
 Start it with the normal world Compose files plus the overlay:
 
@@ -82,6 +85,8 @@ blocked by safety checks, and an available candidate without a current signed
 receipt. They also enforce 15-second full-collection and five-second
 package-inspection performance budgets, both with five-minute debounce, so a
 regression toward maintenance-window-scale control-plane latency is visible.
+Four-eyes approval alerts fail only when the feature is enabled and the
+immutable request, mutable state, or transition-event HMAC verification fails.
 Validate the exact Prometheus version and rules with:
 
 ```bash

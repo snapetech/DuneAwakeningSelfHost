@@ -207,6 +207,54 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         handler.headers = {}
         handler.require_token()
 
+    def test_dual_control_blocks_without_approval_and_consumes_before_dispatch(self):
+        body = {"action": "add-intel", "account_id": 7, "amount": 10, "dry_run": False, "confirm": "WRITE PLAYER PROGRESSION"}
+        consumed = []
+
+        class FakeStore:
+            def consume(self, *args):
+                consumed.append(args)
+                return {"id": args[0], "bodyHmacSha256": "a" * 64}
+
+        original_store = self.panel.change_approval_store
+        original_validate = self.panel.validate_json_post
+        original_parse = self.panel.parse_body
+        self.panel.change_approval_store = lambda: FakeStore()
+        self.panel.validate_json_post = lambda handler, **kwargs: None
+        self.panel.parse_body = lambda handler, **kwargs: body
+        self.addCleanup(lambda: setattr(self.panel, "change_approval_store", original_store))
+        self.addCleanup(lambda: setattr(self.panel, "validate_json_post", original_validate))
+        self.addCleanup(lambda: setattr(self.panel, "parse_body", original_parse))
+        self.patch_flag("DUAL_CONTROL_ENABLED", True)
+        self.patch_flag("DUAL_CONTROL_POLICY", "high")
+        self.patch_flag("RBAC_ENABLED", True)
+
+        blocked, blocked_capture = self.make_route_handler("/api/admin/player-maintenance")
+        blocked.headers = {}
+        blocked.require_token = lambda: setattr(blocked, "auth_principal", {"id": "requester", "capabilities": ["players.write"]})
+        blocked.player_maintenance_mutation = lambda *_args, **_kwargs: self.fail("dispatch must not run without approval")
+        blocked.do_POST()
+        self.assertIn("dual-control approval required", blocked_capture["errors"][0]["message"])
+
+        handler, captured = self.make_route_handler("/api/admin/player-maintenance")
+        handler.headers = {"X-DASH-Approval-ID": "approval-20260716T000000Z-0123456789abcdef"}
+        handler.require_token = lambda: setattr(handler, "auth_principal", {"id": "requester", "displayName": "Requester", "capabilities": ["players.write"]})
+        handler.player_maintenance_mutation = lambda request, principal=None: {"ok": True, "dryRun": False, "plan": {"action": request["action"], "accountId": 7}}
+        handler.do_POST()
+        self.assertTrue(captured["json"]["ok"])
+        self.assertEqual(1, len(consumed))
+        self.assertEqual("requester", consumed[0][1]["id"])
+        self.assertEqual("/api/admin/player-maintenance", consumed[0][2])
+        self.assertTrue(any(row["action"] == "change-approval-consume" for row in captured["audits"]))
+
+    def test_dual_control_dashboard_and_metrics_contract_are_exposed(self):
+        self.assertIn("Four-eyes Change Control", self.panel.INDEX)
+        self.assertIn("X-DASH-Approval-ID", self.panel.INDEX)
+        self.assertIn("approvalDrafts", self.panel.INDEX)
+        rules = (ROOT / "config" / "metrics" / "rules" / "dash.yml").read_text(encoding="utf-8")
+        self.assertIn("DashChangeApprovalLedgerInvalid", rules)
+        self.assertIn("dash_change_approval_ledger_valid", rules)
+
     def test_page_navigation_cancels_detached_player_detail_loads(self):
         source = self.panel.INDEX
         load_body = source.split("async function load(){", 1)[1].split("async function overview(", 1)[0]
@@ -3490,7 +3538,11 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         handler.text = lambda value, content_type="", **kwargs: texts.append((value, content_type))
         handler.require_token = lambda: self.fail("bounded change-intelligence metrics must not require an admin credential")
         handler.do_GET()
-        self.assertEqual("dash_change_intelligence_collector_up 1\ndash_deployment_assurance_collector_up 1\ndash_update_readiness_collector_up 1\n", texts[0][0])
+        self.assertIn("dash_change_intelligence_collector_up 1\n", texts[0][0])
+        self.assertIn("dash_deployment_assurance_collector_up 1\n", texts[0][0])
+        self.assertIn("dash_change_approval_enabled 0\n", texts[0][0])
+        self.assertIn("dash_change_approval_ledger_valid 1\n", texts[0][0])
+        self.assertIn("dash_update_readiness_collector_up 1\n", texts[0][0])
 
     def test_update_readiness_metrics_never_run_expensive_collection_inline(self):
         original_cache = dict(self.panel.UPDATE_READINESS_SNAPSHOT_CACHE)

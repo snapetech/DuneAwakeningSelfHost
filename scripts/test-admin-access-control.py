@@ -68,6 +68,7 @@ class AccessControlTest(unittest.TestCase):
             ("POST", "/api/admin/item"): "players.write",
             ("POST", "/api/community/rewards"): "community.write",
             ("POST", "/api/auth/logout"): "read",
+            ("POST", "/api/security/approvals"): "read",
         }
         for route, expected in cases.items():
             self.assertEqual(access_control.required_capability(*route), expected, route)

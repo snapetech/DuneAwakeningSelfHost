@@ -1603,6 +1603,14 @@ Recreate affected game-server containers after saving so `scripts/run_server_saf
 
 ## Security Notes
 
+The Security page includes the optional four-eyes approval queue. A requester
+submits an exact governed JSON body; a distinct named operator with the same
+target capability reviews a secret-redacted representation and approves or
+rejects it. Approved requests expire, bind to the original requester and route,
+and can be consumed once through `X-DASH-Approval-ID`. See
+`docs/change-approvals.md` for policy levels, browser/API workflows, storage,
+metrics, recovery, and fail-closed behavior.
+
 - Do not expose this service to the public internet.
 - Use a long random `DUNE_ADMIN_TOKEN` whenever `DUNE_ADMIN_REQUIRE_TOKEN=true`.
 - `DUNE_ADMIN_MUTATIONS_ENABLED=false` is the example default. Enable it only after backup/restore validation and operator access controls are in place.

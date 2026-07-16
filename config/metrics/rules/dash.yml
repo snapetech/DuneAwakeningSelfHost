@@ -128,6 +128,11 @@ groups:
         for: 2m
         labels: {severity: critical}
         annotations: {summary: "DASH operational change HMAC chain or append-only enforcement failed"}
+      - alert: DashChangeApprovalLedgerInvalid
+        expr: dash_change_approval_enabled == 1 and dash_change_approval_ledger_valid == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "DASH four-eyes approval request or event HMAC verification failed"}
       - alert: DashIncidentHasCandidateChange
         expr: dash_change_intelligence_open_incidents_with_candidate_changes > 0
         for: 2m

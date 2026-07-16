@@ -77,6 +77,7 @@ Always compare your `.env` image pin with the Steam package installed on your ho
 - Permissioned Discord adapter routes: read/ops remain role-scoped, community writes are identity-bound and narrowly typed, and generic admin/broadcast writes remain blocked; community UI addons use a SHA-pinned permission-review lifecycle.
 - First-party dependency-free Discord Gateway bot with seven groups and 37 guild-scoped `/dune` subcommands, channel restrictions, ephemeral responses, role propagation, and a hardened credential-waiting systemd service.
 - Named hashed-token admin identities with explicit route capabilities and the original owner token retained as a recovery credential.
+- Optional four-eyes change control for governed critical/high/standard mutations: distinct named requester/approver identities, target-capability rechecks, exact secret-preserving body HMACs, redacted review, 60–3,600-second expiry, atomic one-attempt consumption, tamper-evident request/state/event ledgers, dashboard workflow, and label-free integrity metrics.
 - Signed, filtered outbound audit-event delivery for generic HTTPS receivers and Discord webhooks, with asynchronous bounded retries, recursive redaction, redirect refusal, and secret-free delivery records.
 - An isolated community-credit economy with one-time Discord account linking, immutable hash-chained ledger, atomic shop/kit stock and orders, playtime/vote/manual-payment accrual, movement-verified scaled session airdrops, daily streaks, weekly active-time thresholds, append-only engagement claims, versioned reward tracks, offline delivery receipts, and failure refunds.
 - Persistent one-time/recurring event automation with safe announcement and non-executing restart-plan primitives, dry-run mutation proposals, manual run/cancel, and a bounded execution ledger.
@@ -449,7 +450,7 @@ The admin surface requires authentication by default. Set a high-entropy `DUNE_A
 | Infrastructure | Compose service/log control, manual/automatic backup lifecycle, isolated recovery proof and restore, reliability SLO/error-budget control room, database query/row/password tools, autoscaling, memory controls, candidate-bound game-update certification, and update/repair. |
 | Backup Encryption | Verified recipient OpenPGP archives, ciphertext receipts, safe decrypt staging, encrypted-only rclone/rsync mode, and encrypted restic repositories. |
 | World | Read-only guild/member, Landsraad term/task/reward/contribution, and aggregate storage views; Landsraad writes remain on Admin Actions. |
-| Security | Host/origin checks, auth mode, mutation gates, allowlists, and audit events. |
+| Security | Host/origin checks, auth mode, mutation gates, allowlists, audit events, and optional HMAC-bound two-person change approvals. |
 | Federated Login | Provider-neutral OIDC or Discord OAuth code+PKCE login, explicit subject-to-local-RBAC mapping, signed HttpOnly sessions, logout, and owner-token recovery. |
 | Runbook | Copy/paste operational commands for health, backups, restores, logs, profiling, and routing capture. |
 | Command Console | Six reviewed native read-only diagnostics with no subprocess/shell/arguments, bounded timeout/output, redaction, operator RBAC, and receipt-only audit. |
@@ -473,7 +474,7 @@ If the published local admin port accepts TCP but returns no HTTP bytes after a 
 curl -H 'Host: admin-panel:8080' http://127.0.0.1:${DUNE_ADMIN_HOST_PORT:-18080}/api/status
 ```
 
-More detail: [`docs/admin-panel.md`](docs/admin-panel.md), [`docs/admin-access-control.md`](docs/admin-access-control.md), [`docs/federated-auth.md`](docs/federated-auth.md), [`docs/infrastructure-console.md`](docs/infrastructure-console.md), [`docs/restore-drills.md`](docs/restore-drills.md), [`docs/operational-slo.md`](docs/operational-slo.md), [`docs/backup-encryption.md`](docs/backup-encryption.md), [`docs/command-console.md`](docs/command-console.md), [`docs/world-console.md`](docs/world-console.md), [`docs/player-progression-receipts.md`](docs/player-progression-receipts.md), [`docs/care-packages.md`](docs/care-packages.md), [`docs/community-rewards.md`](docs/community-rewards.md), [`docs/moderation-history.md`](docs/moderation-history.md), [`docs/base-creator.md`](docs/base-creator.md), [`docs/gameplay-presets.md`](docs/gameplay-presets.md), [`docs/character-cosmetics.md`](docs/character-cosmetics.md), [`docs/outbound-webhooks.md`](docs/outbound-webhooks.md), [`docs/admin-safe-content-api.md`](docs/admin-safe-content-api.md), and [`CONTENT_INSERTION_SURFACES.md`](CONTENT_INSERTION_SURFACES.md).
+More detail: [`docs/admin-panel.md`](docs/admin-panel.md), [`docs/admin-access-control.md`](docs/admin-access-control.md), [`docs/change-approvals.md`](docs/change-approvals.md), [`docs/federated-auth.md`](docs/federated-auth.md), [`docs/infrastructure-console.md`](docs/infrastructure-console.md), [`docs/restore-drills.md`](docs/restore-drills.md), [`docs/operational-slo.md`](docs/operational-slo.md), [`docs/backup-encryption.md`](docs/backup-encryption.md), [`docs/command-console.md`](docs/command-console.md), [`docs/world-console.md`](docs/world-console.md), [`docs/player-progression-receipts.md`](docs/player-progression-receipts.md), [`docs/care-packages.md`](docs/care-packages.md), [`docs/community-rewards.md`](docs/community-rewards.md), [`docs/moderation-history.md`](docs/moderation-history.md), [`docs/base-creator.md`](docs/base-creator.md), [`docs/gameplay-presets.md`](docs/gameplay-presets.md), [`docs/character-cosmetics.md`](docs/character-cosmetics.md), [`docs/outbound-webhooks.md`](docs/outbound-webhooks.md), [`docs/admin-safe-content-api.md`](docs/admin-safe-content-api.md), and [`CONTENT_INSERTION_SURFACES.md`](CONTENT_INSERTION_SURFACES.md).
 
 ## Operations And Recovery
 
@@ -853,6 +854,7 @@ Start from [`.env.example`](.env.example). It is the source of truth for the ful
 | `DUNE_ADMIN_BIND_ADDRESS` / `DUNE_ADMIN_HOST_PORT` | Admin panel bind and host port; keep private. |
 | `DUNE_ADMIN_ALLOWED_HOSTS` | Host header allowlist for the admin panel. |
 | `DUNE_ADMIN_TOKEN` / `DUNE_ADMIN_REQUIRE_TOKEN` | Owner recovery credential and authentication-required switch; authentication defaults on. |
+| `DUNE_ADMIN_DUAL_CONTROL_ENABLED` / `DUNE_ADMIN_DUAL_CONTROL_POLICY` / `DUNE_ADMIN_DUAL_CONTROL_TTL_SECONDS` | Optional named two-person approvals for exact governed mutation bodies; choose critical/high/all scope and a 60–3,600-second lifetime. |
 | `DUNE_ADMIN_MUTATIONS_ENABLED` | Master gate for admin writes; example default is fail-closed. |
 | `DUNE_ADMIN_ITEM_GRANTS_ENABLED` | Separate gate for item grants, stack edits, and deletion; example default is fail-closed. |
 | `DUNE_ADMIN_GM_COMMANDS_ENABLED` / `DUNE_GM_COMMAND_PAYLOAD_VERIFIED` | Generic legacy GM/RPC gates. The catalog-backed player actions use the first gate plus their dedicated runtime gate, not the legacy payload-verified flag. |
@@ -992,6 +994,7 @@ Start here:
 - [`docs/inventory-integrity.md`](docs/inventory-integrity.md): live duplicate-slot audit and guarded, backup-first transactional repair.
 - [`docs/player-runtime-actions.md`](docs/player-runtime-actions.md): native skill/water/kick/vehicle actions, offline vehicle maintenance, and Landsraad writes.
 - [`docs/player-progression-receipts.md`](docs/player-progression-receipts.md): bounded Intel/recipe/research JSON writes, self-hashed receipts, and compare-and-swap rollback.
+- [`docs/change-approvals.md`](docs/change-approvals.md): HMAC-bound, capability-aware, expiring two-person approvals and single-use execution.
 - [`docs/world-console.md`](docs/world-console.md): read-only guild, Landsraad, and aggregate storage views plus separately gated Landsraad reward/contribution actions.
 - [`docs/care-packages.md`](docs/care-packages.md): reviewed manual/automatic package schema, eligibility, persistent claims, gates, backup, and history.
 - [`docs/discord-adapter.md`](docs/discord-adapter.md): permission-mapped Discord bot API, narrowly typed community actions, and setup.

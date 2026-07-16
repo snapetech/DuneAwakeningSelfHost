@@ -182,6 +182,7 @@ without reproducing that wrapper.
 | Single owner token, host/origin checks, audit | Red-Blink, Manaiakalani | Parity | Existing hardened LAN/VPN mode |
 | Multiple local users | Icehunter, AMP | Parity | Named identities, one-time high-entropy tokens, SHA-256-only storage, rotate/disable/enable/remove lifecycle, and owner recovery token |
 | Fine-grained RBAC/capabilities | Icehunter, AMP | Parity | Protected routes map to read, operations, player, economy, world, configuration, infrastructure, and community capabilities; unknown writes fail closed |
+| Two-person approval for high-impact changes | No surveyed Dune peer | DASH exceeds | Optional critical/high/all policies bind one exact secret-preserving body HMAC to a named requester, distinct capable approver, route, risk, short expiry, and atomic one-attempt consumption; immutable request, mutable state and global event-chain HMACs, redacted dashboard review, metrics and alerting fail closed; see `docs/change-approvals.md` |
 | Discord OAuth/OIDC SSO | Icehunter, AMP | Parity implementation; provider canary pending | Authorization code + PKCE, OIDC discovery/RS256/issuer/audience/nonce validation, Discord `identify`, exact subject-to-local-RBAC mapping, signed HttpOnly sessions, replay defense, logout, and owner-token recovery; external application credentials and an HTTPS callback are required for a live canary; see `docs/federated-auth.md` |
 | TLS/reverse-proxy guidance | Reditus, AMP | Parity | Private VPN/authenticated proxy patterns, exact host/origin handling, TLS/identity boundary, verification, and Caddy example; see `docs/remote-admin-access.md` |
 | SSH key rotation/tunnels | adainrivers, Reditus | Parity | Named strict-host-key profiles, expected-hostname check, loopback-only admin forwarding, fixed-program two-phase Ed25519 rotation, remote backups, retained recovery key, and private receipts; see `docs/remote-targets.md` |
@@ -364,6 +365,12 @@ only when explicitly authorized for a concrete client task, as required by
   Intelligence, and Prometheus are bound into a semantically verified HMAC
   receipt. No surveyed Dune peer provides an equivalent two-phase promotion
   proof.
+- **High confidence:** DASH now exceeds every surveyed Dune operator-access
+  model with optional four-eyes control. Critical/high/standard policy levels
+  preserve every existing gate while adding distinct capable identities, exact
+  secret-preserving body binding, redacted review, short expiry, atomic replay
+  refusal, independently HMAC-protected request and state records, a global
+  transition chain, dashboard execution, metrics, and fail-closed alerts.
 - **High confidence:** local RBAC, outbound events, the first-party Discord bot,
   community rewards/shop/tracks, host tuning, inventory integrity repair,
   recurring event automation, moderation case history, native policy-ban

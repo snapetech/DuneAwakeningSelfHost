@@ -8,6 +8,8 @@ Confidence is **high** for token hashing, fail-closed config validation,
 capability enforcement, throttling, owner-token compatibility, and federated
 sessions resolving through the current local identity. OIDC and Discord OAuth
 setup is documented in [`federated-auth.md`](federated-auth.md).
+High-impact routes can additionally require a distinct second operator through
+[`change-approvals.md`](change-approvals.md).
 
 ## Enable RBAC
 
@@ -61,6 +63,11 @@ Route authorization is fail-closed:
 
 Unknown POST routes default to `infrastructure.write` rather than inheriting a
 weaker permission.
+
+When four-eyes control is enabled, both requester and approver are checked
+against the governed route's normal capability. The requester cannot approve
+their own request, and approval does not elevate either identity or replace the
+route's feature gate, confirmation, backup, or runtime safety checks.
 
 ## Manage identities
 
