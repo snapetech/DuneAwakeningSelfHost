@@ -17,9 +17,10 @@ The same endpoint emits deployment-assurance verification, latest outcome/time,
 open windows, and overdue windows. It does not label commits, paths, services,
 operators, backups, or receipt digests.
 It also emits game-update readiness, exact-candidate receipt currency,
-candidate-update-required state, online-player count, and last-certification
-time. It does not label image tags, Steam build IDs, candidate fingerprints,
-operators, backup paths, or receipt identities.
+candidate-update-required state, online-player count, last-certification time,
+complete evidence-collection latency, and package-inspection latency. It does
+not label image tags, Steam build IDs, candidate fingerprints, operators,
+backup paths, or receipt identities.
 Steam/archive/full-backup collection runs as a single cached background refresh;
 the Prometheus request path never performs those expensive checks inline.
 
@@ -78,7 +79,9 @@ It also alerts on invalid deployment evidence, a missing/failed latest assured
 deployment, seven-day staleness, and an expired open change window.
 Game-update alerts cover invalid readiness evidence, an available candidate
 blocked by safety checks, and an available candidate without a current signed
-receipt.
+receipt. They also enforce 15-second full-collection and five-second
+package-inspection performance budgets, both with five-minute debounce, so a
+regression toward maintenance-window-scale control-plane latency is visible.
 Validate the exact Prometheus version and rules with:
 
 ```bash

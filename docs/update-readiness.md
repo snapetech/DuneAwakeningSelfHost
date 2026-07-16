@@ -188,12 +188,18 @@ automatic stage/load/restart behavior and is intentionally explicit.
 - `dash_update_readiness_candidate_update_required`
 - `dash_update_readiness_receipt_current`
 - `dash_update_readiness_online_players`
+- `dash_update_readiness_collection_duration_seconds`
+- `dash_update_readiness_package_inspection_duration_seconds`
 - `dash_update_readiness_last_certification_timestamp_seconds`
 
 Metrics intentionally omit build IDs, image tags, fingerprints, operators,
 backup paths, receipt IDs, and digests. Prometheus alerts when evidence is
 invalid, an available candidate is blocked, or an available candidate remains
-uncertified.
+uncertified. Performance-budget alerts fire when the last complete evidence
+collection remains above 15 seconds for five minutes or package inspection
+remains above five seconds for five minutes. The production baseline recorded
+on 2026-07-16 was 4.502 seconds end-to-end and 0.567 seconds for all six Funcom
+archives.
 
 ## Failure And Recovery
 

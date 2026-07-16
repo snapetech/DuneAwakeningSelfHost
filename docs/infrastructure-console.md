@@ -331,6 +331,8 @@ mutation gate.
 `POST /api/ops/update-readiness` recollects all server-side inputs and requires
 `CERTIFY GAME UPDATE READINESS`. It writes a private HMAC receipt but executes
 no update, restart, or game mutation. See [`update-readiness.md`](update-readiness.md).
+The evaluation and dashboard show total evidence-collection and package-scan
+latency. Prometheus warns above the documented 15-second/five-second budgets.
 
 Steam package inspection is native Python over a read-only mount; it does not
 depend on Bash, jq, Docker CLI, or a host-only path inside the minimal Admin

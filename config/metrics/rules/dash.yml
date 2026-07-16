@@ -178,6 +178,16 @@ groups:
         for: 2m
         labels: {severity: critical}
         annotations: {summary: "DASH game-update readiness evidence or collector verification failed"}
+      - alert: DashUpdateReadinessCollectionSlow
+        expr: dash_update_readiness_collection_duration_seconds > 15
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "DASH game-update readiness evidence collection exceeds 15 seconds"}
+      - alert: DashUpdateReadinessPackageInspectionSlow
+        expr: dash_update_readiness_package_inspection_duration_seconds > 5
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "DASH staged game package inspection exceeds five seconds"}
       - alert: DashGameUpdateCandidateBlocked
         expr: dash_update_readiness_candidate_update_required == 1 and dash_update_readiness_scheduled_ready == 0
         for: 5m

@@ -5,6 +5,7 @@ import datetime
 import hashlib
 import hmac
 import json
+import math
 import os
 import pathlib
 import re
@@ -51,6 +52,14 @@ def epoch(value):
     if text.endswith("Z"):
         text = text[:-1] + "+00:00"
     return datetime.datetime.fromisoformat(text).timestamp()
+
+
+def bounded_metric_seconds(value):
+    try:
+        seconds = float(value) / 1000.0
+    except (TypeError, ValueError):
+        return 0.0
+    return seconds if math.isfinite(seconds) and 0 <= seconds <= 86400 else 0.0
 
 
 def normalize_candidate(candidate):
@@ -273,6 +282,9 @@ class Store:
         evaluation = status["evaluation"]
         latest = status.get("latest") or {}
         timestamp = epoch(latest["certifiedAt"]) if latest.get("certifiedAt") else "NaN"
+        details = evaluation.get("details") or {}
+        collection_seconds = bounded_metric_seconds((details.get("collection") or {}).get("durationMs"))
+        package_seconds = bounded_metric_seconds((((details.get("package") or {}).get("inspection") or {}).get("durationMs")))
         return "\n".join([
             f"dash_update_readiness_collector_up {1 if status['ok'] else 0}",
             f"dash_update_readiness_scheduled_ready {1 if evaluation['scheduledReady'] else 0}",
@@ -280,5 +292,7 @@ class Store:
             f"dash_update_readiness_candidate_update_required {1 if evaluation['candidate']['updateRequired'] else 0}",
             f"dash_update_readiness_receipt_current {1 if status['currentReceiptReady'] else 0}",
             f"dash_update_readiness_online_players {evaluation['onlinePlayers']}",
+            f"dash_update_readiness_collection_duration_seconds {collection_seconds}",
+            f"dash_update_readiness_package_inspection_duration_seconds {package_seconds}",
             f"dash_update_readiness_last_certification_timestamp_seconds {timestamp}",
         ]) + "\n"

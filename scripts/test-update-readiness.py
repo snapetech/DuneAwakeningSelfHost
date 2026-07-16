@@ -81,6 +81,18 @@ class UpdateReadinessTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "128 KiB"):
             update_readiness.normalize_snapshot(snapshot)
 
+    def test_prometheus_exports_bounded_control_plane_latency(self):
+        snapshot = self.snapshot()
+        snapshot["details"] = {
+            "collection": {"durationMs": 4488.203},
+            "package": {"inspection": {"durationMs": 566.542}},
+        }
+        metrics = self.store.prometheus(snapshot, now=1100)
+        self.assertIn("dash_update_readiness_collection_duration_seconds 4.488203", metrics)
+        self.assertIn("dash_update_readiness_package_inspection_duration_seconds 0.566542", metrics)
+        snapshot["details"]["collection"]["durationMs"] = "nan"
+        self.assertIn("dash_update_readiness_collection_duration_seconds 0.0", self.store.prometheus(snapshot, now=1100))
+
 
 if __name__ == "__main__":
     unittest.main()

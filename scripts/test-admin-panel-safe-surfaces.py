@@ -3506,6 +3506,15 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertTrue(thread.call_args.kwargs["daemon"])
         self.assertEqual("update-readiness-refresh", thread.call_args.kwargs["name"])
 
+    def test_update_readiness_latency_budget_is_visible_and_alerted(self):
+        self.assertIn("evidenceCollection:readinessCollection.durationMs", self.panel.INDEX)
+        self.assertIn("packageInspection:packageInspection.durationMs", self.panel.INDEX)
+        rules = (ROOT / "config" / "metrics" / "rules" / "dash.yml").read_text(encoding="utf-8")
+        self.assertIn("DashUpdateReadinessCollectionSlow", rules)
+        self.assertIn("dash_update_readiness_collection_duration_seconds > 15", rules)
+        self.assertIn("DashUpdateReadinessPackageInspectionSlow", rules)
+        self.assertIn("dash_update_readiness_package_inspection_duration_seconds > 5", rules)
+
     def test_audit_event_feeds_change_intelligence_and_protects_reserved_fields(self):
         events = []
         original_record = self.panel.change_intelligence_record_event

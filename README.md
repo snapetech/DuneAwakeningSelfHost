@@ -189,6 +189,8 @@ last 16 MiB of each uncompressed Docker-save tar, validates the manifest header,
 and seeks directly to bounded JSON instead of streaming image-layer payloads.
 Recovery gating verifies the newest atomic manifest/config/direct-dump backup,
 never an aggregate maintenance-history parent or loose admin dump directory.
+Label-free Prometheus latency budgets and dashboard timings make regressions in
+that evidence path visible before an update window.
 
 See [`docs/ecosystem-feature-parity-audit.md`](docs/ecosystem-feature-parity-audit.md)
 for the pinned peer list, full capability matrix, confidence levels, exclusions,
