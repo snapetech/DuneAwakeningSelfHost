@@ -29,6 +29,7 @@ def source_row(**overrides):
         "piece_count": 80,
         "placeable_count": 5,
         "existing_backup_count": 0,
+        "last_backup_timestamp": 123456,
         "native_function_available": True,
         "piece_hash": "a" * 32,
         "placeable_hash": "b" * 32,
@@ -57,6 +58,10 @@ class FakeCursor:
         self.calls.append((self.sql, tuple(params)))
 
     def fetchone(self):
+        if self.sql.startswith("update dune.totems"):
+            return (0,)
+        if self.sql.startswith("select last_backup_timestamp from dune.totems"):
+            return (0,)
         if "from dune.totems" in self.sql:
             return (44,)
         if "base_backup_save_from_totem" in self.sql:
@@ -142,6 +147,76 @@ class BaseRetirementTests(unittest.TestCase):
         row = source_row(owners=[])
         with self.assertRaisesRegex(ValueError, "choose one current offline"):
             MODULE.plan(self.query(row), 44)
+
+    def test_cooldown_plan_requires_stopped_map_offline_owner_and_recorded_timestamp(self):
+        ready = MODULE.cooldown_plan(self.query(), 44)
+        self.assertTrue(ready["canExecute"])
+        self.assertEqual("RESET BASE COOLDOWN 44", ready["confirm"])
+        self.assertFalse(ready["remainingSecondsKnown"])
+        blocked = MODULE.cooldown_plan(self.query(source_row(
+            active_server_id="server-1",
+            owners=[{"playerId": 46, "rank": 1, "accountId": 9, "characterName": "Chani", "onlineStatus": "Online"}],
+            last_backup_timestamp=0,
+        )), 44)
+        self.assertFalse(blocked["canExecute"])
+        self.assertEqual(3, len(blocked["blockers"]))
+
+    def test_cooldown_reset_is_backup_first_compare_and_swap_verified_and_receipted(self):
+        conn = FakeConnection()
+        plan = MODULE.cooldown_plan(self.query(), 44)
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(MODULE, "cooldown_plan", return_value=plan):
+            result = MODULE.reset_cooldown(
+                lambda: conn,
+                lambda: {"path": "/safe/full.dump", "bytes": 1234},
+                pathlib.Path(tmp),
+                totem_id=44,
+                expected_fingerprint=plan["expectedFingerprint"],
+                confirm="RESET BASE COOLDOWN 44",
+                principal="operator-a",
+            )
+            receipt = pathlib.Path(result["receipt"])
+            payload = json.loads(receipt.read_text())
+            self.assertEqual("base-packup-cooldown-reset", payload["operation"])
+            self.assertEqual(123456, payload["verification"]["previousTimestamp"])
+            self.assertEqual(0, payload["verification"]["lastBackupTimestamp"])
+            self.assertFalse(result["mapLifecycleInvoked"])
+            self.assertEqual(stat.S_IMODE(receipt.stat().st_mode), 0o600)
+            self.assertFalse(list(pathlib.Path(tmp).glob("pending-cooldown-*.json")))
+        self.assertTrue(conn.committed)
+        self.assertTrue(any(sql.startswith("update dune.totems") for sql, _ in conn.calls))
+        self.assertTrue(any(sql == "set transaction isolation level serializable" for sql, _ in conn.calls))
+
+    def test_cooldown_reset_rejects_stale_preview_before_backup(self):
+        conn = FakeConnection()
+        backup = mock.Mock(return_value={"path": "/unsafe.dump", "bytes": 1})
+        locked = MODULE.cooldown_plan(self.query(source_row(piece_hash="d" * 32)), 44)
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(MODULE, "cooldown_plan", return_value=locked):
+            with self.assertRaisesRegex(RuntimeError, "changed after preview"):
+                MODULE.reset_cooldown(lambda: conn, backup, tmp, totem_id=44, expected_fingerprint="f" * 64, confirm="RESET BASE COOLDOWN 44")
+        backup.assert_not_called()
+        self.assertTrue(conn.rolled_back)
+
+    def test_cooldown_reset_requires_totem_specific_confirmation(self):
+        with self.assertRaisesRegex(PermissionError, "RESET BASE COOLDOWN 44"):
+            MODULE.reset_cooldown(
+                lambda: FakeConnection(), lambda: {}, "/tmp/nope",
+                totem_id=44, expected_fingerprint="f" * 64,
+                confirm="RESET BASE COOLDOWN",
+            )
+
+    def test_cooldown_reset_rejects_empty_backup_before_receipt_or_write(self):
+        conn = FakeConnection()
+        plan = MODULE.cooldown_plan(self.query(), 44)
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(MODULE, "cooldown_plan", return_value=plan):
+            with self.assertRaisesRegex(RuntimeError, "non-empty artifact"):
+                MODULE.reset_cooldown(
+                    lambda: conn, lambda: {"path": "/empty.dump", "bytes": 0}, tmp,
+                    totem_id=44, expected_fingerprint=plan["expectedFingerprint"],
+                    confirm="RESET BASE COOLDOWN 44",
+                )
+            self.assertFalse(list(pathlib.Path(tmp).iterdir()))
+        self.assertTrue(conn.rolled_back)
+        self.assertFalse(any(sql.startswith("update dune.totems") for sql, _ in conn.calls))
 
     def ready_plan(self, fingerprint="f" * 64):
         return {

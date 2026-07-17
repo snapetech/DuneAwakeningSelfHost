@@ -141,7 +141,7 @@ repair, multi-user local RBAC, host/CPU tuning, signed outbound events,
 recurring event execution, the first-party Discord bot, community rewards/shop,
 OIDC/Discord federated login, base creator, encrypted backup archives, bounded
 diagnostics, gameplay presets, guarded cosmetics administration, recoverable
-base retirement, and alternate
+base retirement, guarded base pack-up cooldown reset, and alternate
 deployment packaging are implemented. Discord and federated login still need
 operator application credentials for external canaries. Client loader/Pak
 deployment remains separately authorization-gated, and self-host voice remains
@@ -542,7 +542,7 @@ The admin surface requires authentication by default. Set a high-entropy `DUNE_A
 | Command Console | Six reviewed native read-only diagnostics with no subprocess/shell/arguments, bounded timeout/output, redaction, operator RBAC, and receipt-only audit. |
 | Players | Canonical online/offline roster, duplicate/orphan identity diagnostics, guarded cleanup/native deletion, player detail, account/controller/pawn context, currency, XP, inventory, and location views. |
 | Moderation | Case workflow, enforced policy bans/unban, allowlist registry/policy, presence sessions, coarse heatmaps, normalized security signals, and enforcement receipts. |
-| Base Creator | Read-only exact/recentered live-base export, snapping/yaw grid editor, reconstruction preview, JSON download, isolated visibility/rating gallery, and fingerprint-bound native retirement into Dune's recoverable base-backup system. |
+| Base Creator | Read-only exact/recentered live-base export, snapping/yaw grid editor, reconstruction preview, JSON download, isolated visibility/rating gallery, fingerprint-bound native retirement into Dune's recoverable base-backup system, and guarded base pack-up cooldown inspection/reset. |
 | Gameplay Presets | Nine curated worm/threat/storm/harvest/day/hydration/world profiles with exact preview, fixed allowlists, backup-first atomic apply, confined rollback, Landsraad-cycle enforcement, and manual guarded restart handoff. |
 | Blueprints | Validated Solido list/export/import/delete/deduplicate workflow with rollback archives. |
 | Care Packages | Reviewed manual and automatic first-online/returning-player presets, persisted eligibility/claims, retry controls, backups, and history. |
@@ -1137,6 +1137,9 @@ Start here:
 - [`docs/base-retirement.md`](docs/base-retirement.md): stopped-map, offline-owner,
   fingerprint-bound native base retirement with a full database dump, private
   receipt, transactional verification, and in-game recovery ownership.
+- [`docs/base-packup-cooldown.md`](docs/base-packup-cooldown.md): raw totem
+  cooldown inspection and stopped-map, offline-owner, backup-first,
+  compare-and-swap reset with private receipts and no automatic map lifecycle.
 - [`docs/windows-client-loader-canary-2026-07-15.md`](docs/windows-client-loader-canary-2026-07-15.md):
   build-bound live proxy/root/reflection evidence, negative findings, remaining
   dispatch gates, and verified client cleanup.

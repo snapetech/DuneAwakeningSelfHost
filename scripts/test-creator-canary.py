@@ -44,7 +44,7 @@ class CreatorCanaryTests(unittest.TestCase):
         self.assertEqual(receipt["evidence"]["galleryRatings"], 1)
         self.assertGreater(receipt["evidence"]["cosmeticCatalogItems"], 300)
         self.assertEqual(receipt["evidence"]["addonPermissions"], 1)
-        self.assertGreaterEqual(receipt["evidence"]["retirementBlockedConditions"], 5)
+        self.assertGreaterEqual(receipt["evidence"]["retirementBlockedConditions"], 8)
         self.assertTrue(receipt["isolation"]["temporaryStateCreated"])
         self.assertTrue(receipt["isolation"]["temporaryStateRemoved"])
         for key in (
@@ -169,6 +169,7 @@ class CreatorCanaryTests(unittest.TestCase):
         feature = next(row for row in catalog["features"] if row["id"] == "creator-modding")
         self.assertEqual("operator-canary-pending", feature["canary"])
         self.assertEqual("creator-modding", feature["probe"])
+        self.assertIn("DUNE_ADMIN_BASE_COOLDOWN_MUTATIONS_ENABLED", feature["gates"])
         self.assertIn({"path": "admin/creator_canary.py", "minimumBytes": 1000}, feature["files"])
         for source in (panel, verifier):
             self.assertIn("creator_canary.verify_signed_document", source)

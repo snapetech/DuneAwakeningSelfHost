@@ -5890,15 +5890,22 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         original_receipts = self.panel.base_retirement.list_receipts
         original_plan = self.panel.base_retirement.plan
         original_archive = self.panel.base_retirement.archive
-        self.panel.base_retirement.scan = lambda query_fn, limit=500: [{"totemId": 44, "status": "owned"}]
+        original_cooldown_plan = self.panel.base_retirement.cooldown_plan
+        original_reset_cooldown = self.panel.base_retirement.reset_cooldown
+        self.panel.base_retirement.scan = lambda query_fn, limit=500: [{"totemId": 44, "status": "owned", "lastBackupTimestamp": 123456}]
         self.panel.base_retirement.list_receipts = lambda root: [{"status": "committed", "baseBackupId": 77}]
         self.panel.base_retirement.plan = lambda query_fn, totem, recovery=None: {"ok": True, "canExecute": True, "expectedFingerprint": "f" * 64, "base": {"totemId": int(totem)}}
+        self.panel.base_retirement.cooldown_plan = lambda query_fn, totem: {"ok": True, "canExecute": True, "expectedFingerprint": "c" * 64, "confirm": f"RESET BASE COOLDOWN {totem}", "base": {"totemId": int(totem)}, "remainingSecondsKnown": False}
         archive_calls = []
+        cooldown_calls = []
         self.panel.base_retirement.archive = lambda *args, **kwargs: archive_calls.append(kwargs) or {"ok": True, "baseBackupId": 77}
+        self.panel.base_retirement.reset_cooldown = lambda *args, **kwargs: cooldown_calls.append(kwargs) or {"ok": True, "verification": {"lastBackupTimestamp": 0}, "mapLifecycleInvoked": False}
         self.addCleanup(lambda: setattr(self.panel.base_retirement, "scan", original_scan))
         self.addCleanup(lambda: setattr(self.panel.base_retirement, "list_receipts", original_receipts))
         self.addCleanup(lambda: setattr(self.panel.base_retirement, "plan", original_plan))
         self.addCleanup(lambda: setattr(self.panel.base_retirement, "archive", original_archive))
+        self.addCleanup(lambda: setattr(self.panel.base_retirement, "cooldown_plan", original_cooldown_plan))
+        self.addCleanup(lambda: setattr(self.panel.base_retirement, "reset_cooldown", original_reset_cooldown))
 
         handler, captured = self.make_route_handler("/api/admin/base-retirement")
         handler.is_app_route = lambda path: False
@@ -5906,6 +5913,8 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertEqual("owned", captured["json"]["bases"][0]["status"])
         self.assertTrue(captured["json"]["gameRecoverable"])
         self.assertFalse(captured["json"]["destructiveDelete"])
+        self.assertEqual("dune.totems.last_backup_timestamp", captured["json"]["cooldownColumn"])
+        self.assertFalse(captured["json"]["cooldownRemainingSecondsKnown"])
 
         preview = self.invoke_post_route("/api/admin/base-retirement", {"action": "preview", "totemId": 44, "recoveryPlayerId": 46})
         self.assertEqual([], preview["errors"])
@@ -5923,11 +5932,31 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertEqual(77, accepted["json"]["baseBackupId"])
         self.assertEqual(44, archive_calls[0]["totem_id"])
 
+        cooldown_preview = self.invoke_post_route("/api/admin/base-retirement", {"action": "cooldown-preview", "totemId": 44})
+        self.assertEqual([], cooldown_preview["errors"])
+        self.assertEqual("RESET BASE COOLDOWN 44", cooldown_preview["json"]["confirm"])
+
+        self.patch_flag("BASE_COOLDOWN_MUTATIONS_ENABLED", False)
+        cooldown_blocked = self.invoke_post_route("/api/admin/base-retirement", {"action": "cooldown-reset", "totemId": 44, "expectedFingerprint": "c" * 64, "confirm": "RESET BASE COOLDOWN 44"})
+        self.assertEqual(401, cooldown_blocked["errors"][0]["status"])
+        self.assertEqual([], cooldown_calls)
+
+        self.patch_flag("BASE_COOLDOWN_MUTATIONS_ENABLED", True)
+        cooldown_accepted = self.invoke_post_route("/api/admin/base-retirement", {"action": "cooldown-reset", "totemId": 44, "expectedFingerprint": "c" * 64, "confirm": "RESET BASE COOLDOWN 44"})
+        self.assertEqual([], cooldown_accepted["errors"])
+        self.assertEqual(0, cooldown_accepted["json"]["verification"]["lastBackupTimestamp"])
+        self.assertFalse(cooldown_accepted["json"]["mapLifecycleInvoked"])
+        self.assertEqual(44, cooldown_calls[0]["totem_id"])
+
     def test_base_retirement_ui_names_native_recovery_safety_contract(self):
         self.assertIn("Recoverable Base Retirement", self.panel.INDEX)
         self.assertIn("base_backup_save_from_totem", self.panel.INDEX)
         self.assertIn("expectedFingerprint", self.panel.INDEX)
         self.assertIn("no destructive delete", self.panel.INDEX)
+        self.assertIn("Base Pack-Up Cooldown", self.panel.INDEX)
+        self.assertIn("last_backup_timestamp", self.panel.INDEX)
+        self.assertIn("cooldown-preview", self.panel.INDEX)
+        self.assertIn("cooldown-reset", self.panel.INDEX)
 
     def test_community_delivery_uses_offline_grant_path_and_completes_receipt(self):
         config_path = self.workspace / "config" / "community-rewards.json"

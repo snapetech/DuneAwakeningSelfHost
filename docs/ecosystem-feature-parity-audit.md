@@ -17,7 +17,7 @@ or documented operational path.
 ## Audit snapshot
 
 - Audit date: **2026-07-17**, full GitHub search and remote HEAD refresh
-  **2026-07-17 11:33 UTC**
+  **2026-07-17 14:06 UTC**
 - Search scope: GitHub repository search, project documentation, Funcom's
   self-host guide, CubeCoders' Dune template and guide, Nexus Mods' Dune:
   Awakening category, and public community discussions used only to discover
@@ -68,6 +68,18 @@ remote HEAD. Only atobo advanced, from `75af45e` to `2ceb418`; version 1.3.3
 removes 813 lines of legacy container-management UI/tests and adds no operator
 outcome. DASH therefore keeps the movement-aware reward comparison but updates
 the provenance pin. No new credible implementation entered the peer catalogue.
+
+The 14:06 UTC refresh again repeated the searches and remote-HEAD comparison.
+No new credible repository appeared. `bsmr/dapdsm` was the only pinned peer to
+advance, from `9d0673e` to `900915e` (`v0.5.0`). Its v0.4/v0.5 snapshots add
+world-layout generation, battlegroup update/context controls, join-password and
+player TUI workflows, and base-totem pack-up cooldown inspection/reset. DASH
+already covered the first four outcomes. This refresh closed the remaining
+cooldown outcome with raw `last_backup_timestamp` inventory and a separately
+gated, stopped-map/offline-owner, fingerprint-bound, backup-first,
+compare-and-swap reset. dapdsm's world-time query is explicitly a placeholder;
+DASH therefore does not claim a remaining-seconds value without a verified
+current-build time source.
 
 Confidence labels in this document use the repository standard:
 
@@ -129,7 +141,7 @@ webhooks, and Dune-specific announcement/player/status commands.
 | Peer | Pinned revision | Distinct operator outcomes | Confidence |
 | --- | --- | --- | --- |
 | [CubeCoders/AMPTemplates](https://github.com/CubeCoders/AMPTemplates) | `5101df5b04716e42051d456f5be5e3e9dfc6690a` | Turnkey AMP instance, graphical Dune settings, scheduler, backups, file/SFTP, plugins, webhooks, users/RBAC/OIDC | high for AMP; moderate for Dune runtime |
-| [bsmr/dapdsm](https://github.com/bsmr/dapdsm) | `9d0673ef80ccc66f0020e2e2f0ba7f88e97d0e89` | Go CLI/TUI for image distribution, battlegroup creation and reconcile loops on a multi-node RKE2/HAProxy/Keepalived topology | high |
+| [bsmr/dapdsm](https://github.com/bsmr/dapdsm) | `900915eb35bb11708d85add4b86090709d34519c` | Go CLI/TUI for image distribution, world-layout generation, battlegroup creation/update/context/reconcile, join-password and player workflows, and base-totem cooldown inspection/reset on a multi-node RKE2/HAProxy/Keepalived topology | high |
 | [jegger42/dune-awakening-kvm](https://github.com/jegger42/dune-awakening-kvm) | `b89415df4891e8f6ee796b6427422663f00cf5ac` | Clean-room KVM launcher for Funcom's appliance; bridge/macvtap, unique SSH keys, lifecycle and status helpers | high |
 | [comfuzio/dune-awakening-proxmox-self-hosting](https://github.com/comfuzio/dune-awakening-proxmox-self-hosting) | `bed0831d6ad0036aa7699cd970193e8d0b8fe547` | Proxmox import and VM setup path | moderate |
 | [IEquilibriumI/dune-selfhost-ansible](https://github.com/IEquilibriumI/dune-selfhost-ansible) | `f59b74d826c821d4860e353c2b440066d292af27` | Ansible provisioning of a Dune Linux VM on Proxmox | moderate |
@@ -281,6 +293,7 @@ without reproducing that wrapper.
 | Base export/reconstruction/restore | Wormageddon, Icehunter | Parity for evidenced outcome | Exact plus recentered portable export and reconstruction are implemented. Wormageddon's source ships export but no import command and calls restore unfinished/experimental; DASH labels direct live restore unproven instead of claiming it |
 | Base designer/gallery/ratings | dune-base-market | Parity | Browser snapping/yaw grid editor, top-down preview, JSON lifecycle, isolated private/unlisted/public gallery, per-identity ratings, backups, and RBAC; see `docs/base-creator.md` |
 | Orphan/owned-base cleanup or retirement | AlphaNine | DASH exceeds; disposable live canary pending | Instead of permanently deleting a narrow row set, DASH classifies ownership, requires a stopped map and explicitly offline owners/recovery player, binds execution to a SHA-256 content preview under advisory/row locks, creates a full database dump and private receipt, calls the current build's native `base_backup_save_from_totem`, verifies the resulting player-owned linked-actor backup and permission removal before commit, and preserves in-game recovery; see `docs/base-retirement.md` |
+| Base/totem pack-up cooldown inspection/reset | bsmr dapdsm v0.5.0 | DASH exceeds | Bounded inventory exposes the raw `dune.totems.last_backup_timestamp` and zero/cleared state without inventing an unproven countdown. Reset requires a stopped map, explicitly offline owners, exact content fingerprint and confirmation, advisory/row locks, a non-empty full dump, compare-and-swap to zero, readback verification, private receipts, RBAC/audit governance, and a separate guarded restart handoff; see `docs/base-packup-cooldown.md` |
 | Welcome kits and per-session MOTD | Icehunter, adainrivers | Parity | Care packages and presence automations |
 | Configurable item packages | DST, shop system | Parity | Care-package library and grant history |
 
@@ -377,6 +390,11 @@ only when explicitly authorized for a concrete client task, as required by
   peer catalogue have a shipped DASH parity path. The remaining non-parity
   status is the external Funcom/Tencent voice credential contract; live Discord
   and payment/provider canaries likewise require provider-issued credentials.
+- **High confidence:** the dapdsm v0.5.0 refresh is closed. DASH preserves its
+  existing world-layout, battlegroup, join-password, and player outcomes and now
+  exceeds dapdsm's base-cooldown path with a full backup, stopped-map and
+  offline-owner admission, content fingerprint, compare-and-swap, verified
+  readback, private evidence, and explicit unknown-countdown semantics.
 - **High confidence:** DASH already meets or exceeds the core hosting,
   lifecycle, map, backup, player administration, exchange, addon, metrics,
   public-status, failover, and server-side reverse-engineering outcomes in the
@@ -437,7 +455,8 @@ only when explicitly authorized for a concrete client task, as required by
   community rewards/shop/tracks, host tuning, inventory integrity repair,
   recurring event automation, moderation case history, native policy-ban
   ejection, normalized security signals, coarse heatmaps, base creator tooling,
-  recoverable native base retirement, curated gameplay presets, federated identity, bounded browser diagnostics,
+  recoverable native base retirement, guarded base pack-up cooldown reset,
+  curated gameplay presets, federated identity, bounded browser diagnostics,
   encrypted archives, guarded cosmetics administration, and alternate
   deployment packaging are implemented.
 - **High confidence:** the 2026-07-16 live search added eight credible peers and

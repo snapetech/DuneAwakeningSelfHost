@@ -339,6 +339,7 @@ def _retirement_plan(*, blocked=False):
         "partition_server_id": "server" if blocked else "", "active_server_id": "server" if blocked else "",
         "building_count": 1, "piece_count": 2, "placeable_count": 1,
         "existing_backup_count": 1 if blocked else 0,
+        "last_backup_timestamp": 0 if blocked else 123456,
         "native_function_available": not blocked,
         "piece_hash": "a" * 32, "placeable_hash": "b" * 32, "permission_hash": "c" * 32,
         "owners": [{"playerId": 46, "rank": 1, "accountId": 9, "characterName": "Canary", "onlineStatus": "Online" if blocked else "Offline"}],
@@ -350,6 +351,24 @@ def _retirement_plan(*, blocked=False):
             return [{"player_controller_id": 46, "account_id": 9, "character_name": "Canary", "online_status": "Online" if blocked else "Offline"}]
         raise AssertionError("unexpected retirement query")
     return base_retirement.plan(query, 44, 46)
+
+
+def _cooldown_plan(*, blocked=False):
+    row = {
+        "totem_id": 44, "owner_entity_id": 99, "fgl_entity_count": 1,
+        "actor_name": "Canary Base", "map": "Canary", "partition_id": 1,
+        "partition_server_id": "server" if blocked else "", "active_server_id": "server" if blocked else "",
+        "building_count": 1, "piece_count": 2, "placeable_count": 1,
+        "existing_backup_count": 0, "last_backup_timestamp": 0 if blocked else 123456,
+        "native_function_available": True,
+        "piece_hash": "a" * 32, "placeable_hash": "b" * 32, "permission_hash": "c" * 32,
+        "owners": [{"playerId": 46, "rank": 1, "accountId": 9, "characterName": "Canary", "onlineStatus": "Online" if blocked else "Offline"}],
+    }
+    def query(sql, params=()):
+        if "with base as" in sql:
+            return [row]
+        raise AssertionError("unexpected cooldown query")
+    return base_retirement.cooldown_plan(query, 44)
 
 
 def _addon_fixture():
@@ -436,12 +455,21 @@ def run_canary(root, receipt_store, *, principal_id="system", now=time.time):
 
             ready_plan = _retirement_plan(blocked=False)
             blocked_plan = _retirement_plan(blocked=True)
-            evidence["retirementBlockedConditions"] = len(blocked_plan.get("blockers") or [])
+            ready_cooldown = _cooldown_plan(blocked=False)
+            blocked_cooldown = _cooldown_plan(blocked=True)
+            evidence["retirementBlockedConditions"] = (
+                len(blocked_plan.get("blockers") or []) + len(blocked_cooldown.get("blockers") or [])
+            )
             checks["retirementGuards"] = bool(
                 ready_plan.get("canExecute") and ready_plan.get("gameRecoverable")
                 and ready_plan.get("destructiveDelete") is False
                 and not blocked_plan.get("canExecute")
-                and evidence["retirementBlockedConditions"] >= 5
+                and ready_cooldown.get("canExecute")
+                and ready_cooldown.get("databaseColumn") == "dune.totems.last_backup_timestamp"
+                and ready_cooldown.get("remainingSecondsKnown") is False
+                and ready_cooldown.get("mapLifecycleInvoked") is False
+                and not blocked_cooldown.get("canExecute")
+                and evidence["retirementBlockedConditions"] >= 8
             )
 
             config_stage = stage / "config"

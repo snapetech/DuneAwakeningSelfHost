@@ -77,6 +77,8 @@ def _normalize(row):
         "matchedOwnerCount": matched,
         "onlineOwnerCount": online,
         "existingBackupCount": int(row.get("existing_backup_count") or 0),
+        "lastBackupTimestamp": int(row.get("last_backup_timestamp") or 0),
+        "packupCooldownReady": int(row.get("last_backup_timestamp") or 0) == 0,
         "nativeFunctionAvailable": bool(row.get("native_function_available")),
         "status": status,
         "contentHashes": {
@@ -96,7 +98,7 @@ def scan(query, limit=500, totem_id=None):
     totem = _positive(totem_id, "totem id") if totem_id is not None else None
     rows = query("""
         with base as (
-          select t.id as totem_id,afe.owner_entity_id,afe.fgl_entity_count,
+          select t.id as totem_id,t.last_backup_timestamp,afe.owner_entity_id,afe.fgl_entity_count,
                  coalesce(nullif(pa.actor_name,''),'Base ' || t.id::text) as actor_name,
                  a.map,a.partition_id,wp.server_id as partition_server_id,asi.server_id as active_server_id,
                  (select count(distinct bi.building_id) from dune.building_instances bi where bi.owner_entity_id=afe.owner_entity_id) as building_count,
@@ -126,7 +128,7 @@ def scan(query, limit=500, totem_id=None):
         from base b
         left join dune.permission_actor_rank par on par.permission_actor_id=b.totem_id
         left join dune.player_state ps on ps.player_controller_id=par.player_id
-        group by b.totem_id,b.owner_entity_id,b.fgl_entity_count,b.actor_name,b.map,b.partition_id,b.partition_server_id,
+        group by b.totem_id,b.last_backup_timestamp,b.owner_entity_id,b.fgl_entity_count,b.actor_name,b.map,b.partition_id,b.partition_server_id,
                  b.active_server_id,
                  b.building_count,b.piece_count,b.placeable_count,b.existing_backup_count,
                  b.native_function_available,b.piece_hash,b.placeable_hash,b.permission_hash
@@ -199,6 +201,37 @@ def plan(query, totem_id, recovery_player_id=None):
     }
 
 
+def cooldown_plan(query, totem_id):
+    rows = scan(query, limit=1, totem_id=totem_id)
+    if not rows:
+        raise ValueError("base totem was not found")
+    base = rows[0]
+    blockers = []
+    if base["partitionActive"]:
+        blockers.append("target partition still has an assigned server; stop that map before resetting the pack-up cooldown")
+    if base["onlineOwnerCount"]:
+        blockers.append("one or more matched base owners are not explicitly offline")
+    if base["packupCooldownReady"]:
+        blockers.append("base pack-up cooldown is already cleared")
+    return {
+        "ok": True,
+        "dryRun": True,
+        "canExecute": not blockers,
+        "base": base,
+        "blockers": blockers,
+        "expectedFingerprint": base["fingerprint"],
+        "confirm": f"RESET BASE COOLDOWN {base['totemId']}",
+        "databaseColumn": "dune.totems.last_backup_timestamp",
+        "previousTimestamp": base["lastBackupTimestamp"],
+        "resultTimestamp": 0,
+        "remainingSecondsKnown": False,
+        "backupRequired": True,
+        "mapMustBeStopped": True,
+        "mapRestartRequired": True,
+        "mapLifecycleInvoked": False,
+    }
+
+
 def _connection_query(conn, sql, params=()):
     with conn.cursor() as cursor:
         cursor.execute(sql, params)
@@ -261,6 +294,7 @@ def archive(connect_fn, backup_fn, receipt_root, *, totem_id, recovery_player_id
     try:
         conn.autocommit = False
         with conn.cursor() as cursor:
+            cursor.execute("set transaction isolation level serializable")
             cursor.execute("set local statement_timeout = '120s'")
             cursor.execute("select pg_advisory_xact_lock(%s)", (totem_id,))
             cursor.execute("select id from dune.totems where id=%s for update", (totem_id,))
@@ -349,6 +383,99 @@ def archive(connect_fn, backup_fn, receipt_root, *, totem_id, recovery_player_id
             "gameRecoverable": True,
             "destructiveDelete": False,
             "mapRestartRequired": True,
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def reset_cooldown(connect_fn, backup_fn, receipt_root, *, totem_id,
+                   expected_fingerprint, confirm, principal="owner-token"):
+    totem_id = _positive(totem_id, "totem id")
+    expected_fingerprint = str(expected_fingerprint or "").strip().lower()
+    if len(expected_fingerprint) != 64 or any(char not in "0123456789abcdef" for char in expected_fingerprint):
+        raise ValueError("a valid preview fingerprint is required")
+    if str(confirm or "").strip() != f"RESET BASE COOLDOWN {totem_id}":
+        raise PermissionError(f"confirmation must be RESET BASE COOLDOWN {totem_id}")
+    conn = connect_fn()
+    pending = None
+    try:
+        conn.autocommit = False
+        with conn.cursor() as cursor:
+            cursor.execute("set transaction isolation level serializable")
+            cursor.execute("set local statement_timeout = '120s'")
+            cursor.execute("select pg_advisory_xact_lock(%s)", (totem_id,))
+            cursor.execute("select id from dune.totems where id=%s for update", (totem_id,))
+            if cursor.fetchone() is None:
+                raise ValueError("base totem was not found")
+            cursor.execute("select id from dune.actors where id=%s for update", (totem_id,))
+            cursor.execute("select wp.partition_id from dune.actors a join dune.world_partition wp on wp.partition_id=a.partition_id where a.id=%s for update of wp", (totem_id,))
+            cursor.execute("select permission_actor_id from dune.permission_actor_rank where permission_actor_id=%s for update", (totem_id,))
+            cursor.execute("select ps.player_controller_id from dune.player_state ps join dune.permission_actor_rank par on par.player_id=ps.player_controller_id where par.permission_actor_id=%s for update of ps", (totem_id,))
+        locked_plan = cooldown_plan(lambda sql, params=(): _connection_query(conn, sql, params), totem_id)
+        if locked_plan["expectedFingerprint"] != expected_fingerprint:
+            raise RuntimeError("base changed after preview; refresh and review the new fingerprint")
+        if not locked_plan["canExecute"]:
+            raise PermissionError("base cooldown reset is blocked: " + "; ".join(locked_plan["blockers"]))
+        backup = backup_fn()
+        if not backup or not backup.get("path") or int(backup.get("bytes") or 0) <= 0:
+            raise RuntimeError("full database backup did not produce a non-empty artifact")
+        receipt_root = pathlib.Path(receipt_root)
+        receipt_id = secrets.token_hex(12)
+        pending = receipt_root / f"pending-cooldown-{receipt_id}.json"
+        receipt = {
+            "version": 1,
+            "receiptId": receipt_id,
+            "operation": "base-packup-cooldown-reset",
+            "status": "pending",
+            "createdAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "principal": str(principal)[:128],
+            "plan": locked_plan,
+            "databaseBackup": backup,
+        }
+        _write_receipt(pending, receipt)
+        before = int(locked_plan["previousTimestamp"])
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "update dune.totems set last_backup_timestamp=0 where id=%s and last_backup_timestamp=%s returning last_backup_timestamp",
+                (totem_id, before),
+            )
+            updated = cursor.fetchone()
+            if updated is None or int(updated[0]) != 0:
+                raise RuntimeError("base cooldown changed after locked preview; transaction was rolled back")
+            cursor.execute("select last_backup_timestamp from dune.totems where id=%s", (totem_id,))
+            verified = cursor.fetchone()
+            if verified is None or int(verified[0]) != 0:
+                raise RuntimeError("base cooldown reset verification failed; transaction was rolled back")
+        conn.commit()
+        verification = {"totemId": totem_id, "previousTimestamp": before, "lastBackupTimestamp": 0}
+        receipt["status"] = "committed"
+        receipt["committedAt"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        receipt["verification"] = verification
+        final = receipt_root / f"base-{totem_id}-cooldown-{receipt_id}.json"
+        receipt_finalize_error = None
+        try:
+            _write_receipt(final, receipt)
+            pending.unlink(missing_ok=True)
+            receipt_path = final
+            receipt_status = "committed"
+        except Exception as exc:
+            receipt_path = pending
+            receipt_status = "pending-finalization-failed"
+            receipt_finalize_error = str(exc)[:500]
+        return {
+            "ok": True,
+            "committed": True,
+            "totemId": totem_id,
+            "databaseBackup": backup,
+            "receipt": str(receipt_path),
+            "receiptStatus": receipt_status,
+            "receiptFinalizeError": receipt_finalize_error,
+            "verification": verification,
+            "mapRestartRequired": True,
+            "mapLifecycleInvoked": False,
         }
     except Exception:
         conn.rollback()

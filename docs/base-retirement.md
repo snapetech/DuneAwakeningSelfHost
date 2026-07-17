@@ -77,8 +77,9 @@ change.
 
 Execution performs the following ordered sequence:
 
-1. Open a database transaction and take a transaction-scoped advisory lock for
-   the totem actor.
+1. Open a serializable database transaction and take a transaction-scoped
+   advisory lock for the totem actor, so conflicting lifecycle/base/player
+   changes abort instead of committing from stale evidence.
 2. Lock the totem, FGL link, permission records, and recovery player state.
 3. Rebuild the preview and reject a changed fingerprint or new blocker.
 4. Create a non-empty full custom-format PostgreSQL dump with the existing
@@ -112,6 +113,11 @@ backups/admin-panel/base-retirement/base-<totem>-backup-<id>-<receipt>.json
 
 The full dump remains the authoritative rollback path. The native base backup
 is the preferred in-game recovery path after the map starts.
+
+Pack-up cooldown inspection/reset is a separate operation with an independent
+gate and confirmation phrase. It changes only
+`dune.totems.last_backup_timestamp`, never archives or deletes the base, and is
+documented in [`base-packup-cooldown.md`](base-packup-cooldown.md).
 
 ## API
 

@@ -264,8 +264,13 @@ server {
   requires the target map stopped, owners/recovery player offline, a current
   SHA-256 preview fingerprint, a full PostgreSQL dump, transaction locks,
   post-call verification, and a private receipt; it does not directly delete
-  base rows. See [`base-creator.md`](base-creator.md) and
-  [`base-retirement.md`](base-retirement.md).
+  base rows. The same inventory exposes the raw pack-up timestamp and a
+  separately gated, stopped-map/offline-owner, fingerprint-bound reset-to-zero
+  workflow with a full dump, compare-and-swap, readback verification, private
+  receipt, and no automatic map lifecycle. See
+  [`base-creator.md`](base-creator.md),
+  [`base-retirement.md`](base-retirement.md), and
+  [`base-packup-cooldown.md`](base-packup-cooldown.md).
 - Gameplay Presets page with nine curated worm, threat, storm, harvest, day,
   hydration, and world profiles; exact per-setting preview; fixed target and
   key/type/range allowlists; private backups; atomic apply; confined rollback;

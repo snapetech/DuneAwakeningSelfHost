@@ -33,8 +33,10 @@ Against those inputs, the canary runs these real implementation paths:
    centroid recentering, content digest, and `gameRestoreSupported=false`.
 2. Initializes a temporary gallery, publishes a private design, rates it,
    updates it to public, and lists it through the normal gallery API.
-3. Plans recoverable retirement from ready and blocked query fixtures, proving
-   the offline/stopped-map/native-function/backup guards refuse the unsafe row.
+3. Plans recoverable retirement and pack-up cooldown reset from ready and
+   blocked query fixtures, proving the offline/stopped-map/native-function,
+   already-cleared, backup, raw-timestamp, and no-automatic-lifecycle contracts
+   refuse unsafe rows.
 4. Copies all three active `UserGame` targets, finds an effective checked-in
    preset, previews it, applies it atomically, rolls it back, and compares the
    final bytes with the original.
