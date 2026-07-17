@@ -15,6 +15,14 @@ container's `/tmp` and `/var/tmp` mounts are intentionally `noexec`. The unique
 per-run directory is removed before verdict creation and the parent remains
 mode `0700` and empty between runs.
 
+Each command executes in a short-lived helper using an already-loaded server
+image that supplies Bash and OpenSSL. The helper has `network=none`, a read-only
+root, all capabilities dropped, `no-new-privileges`, bounded memory/CPU/PIDs,
+`noexec` tmpfs mounts, and exactly one read-write bind: the private per-run
+runtime root. It receives a fixed environment-key allowlist with no Admin or
+game secrets, no Docker socket, no live workspace/configuration/TLS mount, and
+no published port. Every helper is force-removed after its bounded command.
+
 ## What is proven
 
 One run must pass all 12 checks:
@@ -50,6 +58,7 @@ broken proof cannot disappear as if it never ran.
 Readiness is tied to the SHA-256 manifest of:
 
 ```text
+admin/admin_panel.py
 admin/public_ip_canary.py
 scripts/public-ip-monitor.sh
 scripts/generate-rabbitmq-cert.sh
@@ -120,10 +129,15 @@ Configuration defaults:
 ```env
 DUNE_PUBLIC_IP_CANARY_MAX_AGE_HOURS=168
 DUNE_PUBLIC_IP_CANARY_RETENTION=200
+DUNE_PUBLIC_IP_CANARY_HELPER_IMAGE=registry.funcom.com/funcom/self-hosting/seabass-server:<current-tag>
 ```
 
 Age is bounded to 1-2160 hours. Retention is bounded to 10-2000 receipts.
 Receipt files are mode `0600`; their directory is mode `0700`.
+The helper image must already be loaded; Docker create does not pull it. By
+default it follows `DUNE_IMAGE_TAG`, keeping the proof toolchain aligned with
+the running server package while the input manifest separately binds every DASH
+script and unit under test.
 
 ## Arming the live monitor
 

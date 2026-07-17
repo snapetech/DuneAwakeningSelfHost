@@ -992,6 +992,7 @@ Server-browser ordering is deliberately split based on the observed in-game brow
 | `DUNE_CREATOR_CANARY_MAX_AGE_HOURS` / `DUNE_CREATOR_CANARY_RETENTION` | Input-bound Creator/Modding lifecycle proof lifetime and portable signed receipt retention. |
 | `DUNE_PUBLIC_IP_MONITOR_*` | Optional hostname-gated, dry-run-first public IPv4 drift detection, TLS rotation, and orderly farm restart. |
 | `DUNE_PUBLIC_IP_CANARY_MAX_AGE_HOURS` / `DUNE_PUBLIC_IP_CANARY_RETENTION` | Input-bound advertised-address/TLS/restart/timer proof lifetime and portable signed receipt retention. |
+| `DUNE_PUBLIC_IP_CANARY_HELPER_IMAGE` | Already-loaded Bash/OpenSSL image for the no-network, read-only, single-mount disposable repair proof; defaults to the current server image tag. |
 | `DUNE_SIETCH_MUTATIONS_ENABLED` / `DUNE_SIETCH_ALLOWED_HOST` | Separate gate and exact-host binding for additional Survival dimension topology/settings writes. |
 
 Most service settings require recreating or restarting affected containers before running processes pick them up. The admin panel documents runtime-only settings where applicable.

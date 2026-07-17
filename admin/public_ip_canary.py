@@ -23,6 +23,7 @@ HASH_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 OLD_ADDRESS = "198.51.100.10"
 NEW_ADDRESS = "198.51.100.20"
 INPUT_FILES = (
+    "admin/admin_panel.py",
     "admin/public_ip_canary.py",
     "scripts/public-ip-monitor.sh",
     "scripts/generate-rabbitmq-cert.sh",
@@ -301,12 +302,16 @@ class Store:
         ]) + "\n"
 
 
-def _run(arguments, *, cwd, environment, timeout=60, check=True):
-    completed = subprocess.run(
-        [str(value) for value in arguments], cwd=str(cwd), env=environment,
-        text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        timeout=timeout, check=False,
-    )
+def _run(arguments, *, cwd, environment, timeout=60, check=True, runner=None):
+    normalized = [str(value) for value in arguments]
+    if runner is None:
+        completed = subprocess.run(
+            normalized, cwd=str(cwd), env=environment,
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            timeout=timeout, check=False,
+        )
+    else:
+        completed = runner(normalized, cwd=str(cwd), environment=dict(environment), timeout=timeout)
     if check and completed.returncode:
         detail = (completed.stderr or completed.stdout or "subprocess failed")[-2000:]
         raise ValueError(f"public-IP canary subprocess failed ({completed.returncode}): {detail}")
@@ -344,7 +349,7 @@ def _copy_workspace(root, stage):
         os.chmod(stage / relative, 0o700)
 
 
-def run_canary(root, receipt_store, *, principal_id="system", now=time.time, work_root=None):
+def run_canary(root, receipt_store, *, principal_id="system", now=time.time, work_root=None, runner=None):
     root = pathlib.Path(root).resolve(strict=True)
     inputs = input_manifest(root)
     temporary_parent = None
@@ -410,19 +415,19 @@ def run_canary(root, receipt_store, *, principal_id="system", now=time.time, wor
                 encoding="utf-8",
             )
             os.chmod(announce, 0o700)
-            environment = os.environ.copy()
-            environment.update({
-                "PATH": str(bin_dir) + os.pathsep + environment.get("PATH", ""),
+            environment = {
+                "HOME": str(stage), "LANG": "C", "LC_ALL": "C",
+                "PATH": str(bin_dir) + os.pathsep + "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
                 "DUNE_PUBLIC_IP_CANARY_COMMAND_LOG": str(command_log),
                 "DUNE_PUBLIC_IP_CANARY_ANNOUNCE_LOG": str(announce_log),
                 "DUNE_RESTART_DRY_RUN": "true",
                 "DUNE_RESTART_CHECK_STEAM_UPDATE": "false",
                 "DUNE_MAP_WATCHDOG_CONTROL": "false",
-            })
+            }
 
             dry_state = stage / "dry-state"
             dry_environment = {**environment, "DUNE_PUBLIC_IP_MONITOR_STATE_DIR": str(dry_state), "DUNE_PUBLIC_IP_MONITOR_DETECTED_IP": NEW_ADDRESS}
-            planned = _run([stage / "scripts/public-ip-monitor.sh", fixture_env, "check"], cwd=stage, environment=dry_environment)
+            planned = _run([stage / "scripts/public-ip-monitor.sh", fixture_env, "check"], cwd=stage, environment=dry_environment, runner=runner)
             checks["dryRunPlan"] = bool(
                 "dry-run: would update EXTERNAL_ADDRESS" in planned.stdout
                 and _state(dry_state).get("status") == "dry-run"
@@ -435,7 +440,7 @@ def run_canary(root, receipt_store, *, principal_id="system", now=time.time, wor
             guarded = _run(
                 [stage / "scripts/public-ip-monitor.sh", guard_env, "check"], cwd=stage,
                 environment={**environment, "DUNE_PUBLIC_IP_MONITOR_STATE_DIR": str(guard_state), "DUNE_PUBLIC_IP_MONITOR_DETECTED_IP": NEW_ADDRESS},
-                check=False,
+                check=False, runner=runner,
             )
             checks["hostnameGuard"] = guarded.returncode == 77 and _state(guard_state).get("status") == "refused"
 
@@ -445,6 +450,7 @@ def run_canary(root, receipt_store, *, principal_id="system", now=time.time, wor
             current = _run(
                 [stage / "scripts/public-ip-monitor.sh", current_env, "check"], cwd=stage,
                 environment={**environment, "DUNE_PUBLIC_IP_MONITOR_STATE_DIR": str(current_state), "DUNE_PUBLIC_IP_MONITOR_DETECTED_IP": OLD_ADDRESS},
+                runner=runner,
             )
             checks["currentNoop"] = bool(
                 "public IP unchanged" in current.stdout and _state(current_state).get("status") == "current"
@@ -458,7 +464,7 @@ def run_canary(root, receipt_store, *, principal_id="system", now=time.time, wor
                 (tls / name).write_text("old-" + name + "\n", encoding="utf-8")
             full_state = stage / "full-state"
             full_environment = {**environment, "DUNE_PUBLIC_IP_MONITOR_STATE_DIR": str(full_state), "DUNE_PUBLIC_IP_MONITOR_DETECTED_IP": NEW_ADDRESS}
-            repaired = _run([stage / "scripts/public-ip-monitor.sh", fixture_env, "check"], cwd=stage, environment=full_environment, timeout=120)
+            repaired = _run([stage / "scripts/public-ip-monitor.sh", fixture_env, "check"], cwd=stage, environment=full_environment, timeout=120, runner=runner)
             values = _read_values(fixture_env)
             checks["fullAddressRewrite"] = values.get("EXTERNAL_ADDRESS") == NEW_ADDRESS and values.get("GAME_RMQ_PUBLIC_HOST") == NEW_ADDRESS and _state(full_state).get("status") == "restarted"
 
@@ -473,7 +479,7 @@ def run_canary(root, receipt_store, *, principal_id="system", now=time.time, wor
             backup_files = list(tls_backups[0].iterdir()) if len(tls_backups) == 1 else []
             evidence["tlsBackupFiles"] = len(backup_files)
             certificate = tls / "server.crt"
-            certificate_text = _run(["openssl", "x509", "-in", certificate, "-noout", "-ext", "subjectAltName"], cwd=stage, environment=environment).stdout
+            certificate_text = _run(["openssl", "x509", "-in", certificate, "-noout", "-ext", "subjectAltName"], cwd=stage, environment=environment, runner=runner).stdout
             sans = [item.strip() for item in certificate_text.replace("\n", " ").split(",") if ":" in item]
             evidence["tlsSans"] = len(sans)
             evidence["certificateSha256"] = _file_sha256(certificate)
@@ -506,7 +512,7 @@ def run_canary(root, receipt_store, *, principal_id="system", now=time.time, wor
             state_path = full_state / "public-ip-monitor.state"
             state_values = _read_values(state_path)
             _write_env(state_path, {**state_values, "status": "restarting"})
-            retried = _run([stage / "scripts/public-ip-monitor.sh", fixture_env, "check"], cwd=stage, environment=full_environment)
+            retried = _run([stage / "scripts/public-ip-monitor.sh", fixture_env, "check"], cwd=stage, environment=full_environment, runner=runner)
             checks["restartRetry"] = "retrying the incomplete farm restart" in retried.stdout and _state(full_state).get("status") == "restarted"
 
             units = stage / "units"
@@ -514,6 +520,7 @@ def run_canary(root, receipt_store, *, principal_id="system", now=time.time, wor
             installer = _run(
                 [stage / "scripts/install-public-ip-monitor.sh", fixture_env, units], cwd=stage,
                 environment={**environment, "DUNE_SERVICE_USER": "canary-user", "DUNE_SERVICE_GROUP": "canary-group"},
+                runner=runner,
             )
             service_text = (units / "dune-public-ip-monitor.service").read_text(encoding="utf-8")
             timer_text = (units / "dune-public-ip-monitor.timer").read_text(encoding="utf-8")

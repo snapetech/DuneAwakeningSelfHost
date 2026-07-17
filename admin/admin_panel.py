@@ -380,6 +380,10 @@ CREATOR_CANARY_MAX_AGE_HOURS = max(1, min(int(os.environ.get("DUNE_CREATOR_CANAR
 CREATOR_CANARY_RETENTION = max(10, min(int(os.environ.get("DUNE_CREATOR_CANARY_RETENTION", "200")), 2000))
 PUBLIC_IP_CANARY_MAX_AGE_HOURS = max(1, min(int(os.environ.get("DUNE_PUBLIC_IP_CANARY_MAX_AGE_HOURS", "168")), 2160))
 PUBLIC_IP_CANARY_RETENTION = max(10, min(int(os.environ.get("DUNE_PUBLIC_IP_CANARY_RETENTION", "200")), 2000))
+PUBLIC_IP_CANARY_HELPER_IMAGE = os.environ.get(
+    "DUNE_PUBLIC_IP_CANARY_HELPER_IMAGE",
+    f"registry.funcom.com/funcom/self-hosting/seabass-server:{os.environ.get('DUNE_IMAGE_TAG', '2036754-0-shipping')}",
+)
 MODERATION_ENABLED = os.environ.get("DUNE_MODERATION_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 MODERATION_ENFORCEMENT_ENABLED = os.environ.get("DUNE_MODERATION_ENFORCEMENT_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 MODERATION_DATABASE = pathlib.Path(os.environ.get("DUNE_MODERATION_DATABASE", str(BACKUPS_ROOT / "moderation" / "moderation.sqlite3")))
@@ -1531,6 +1535,7 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_PUBLIC_IP_MONITOR_DRY_RUN": {"group": "Network", "secret": False, "restart": False, "why": "Reports public IPv4 drift without changing .env, certificates, or services."},
     "DUNE_PUBLIC_IP_CANARY_MAX_AGE_HOURS": {"group": "Network", "secret": False, "restart": True, "why": "Maximum age of an input-current signed public-IP repair proof before readiness returns to pending."},
     "DUNE_PUBLIC_IP_CANARY_RETENTION": {"group": "Network", "secret": False, "restart": True, "why": "Number of private signed public-IP repair receipts retained in operator evidence."},
+    "DUNE_PUBLIC_IP_CANARY_HELPER_IMAGE": {"group": "Network", "secret": False, "restart": True, "why": "Already-loaded Bash/OpenSSL image used for the networkless, read-only, mount-confined disposable repair proof."},
     "DUNE_SIETCH_MUTATIONS_ENABLED": {"group": "World", "secret": False, "restart": False, "why": "Enables guarded creation, settings, start/stop, and reconciliation of additional Survival_1 dimensions."},
     "DUNE_SIETCH_ALLOWED_HOST": {"group": "World", "secret": False, "restart": False, "why": "Exact short hostname allowed to change Sietch topology or local settings."},
     "DUNE_SERVER_LOGIN_PASSWORD": {"group": "Access", "secret": False, "restart": True, "why": "Optional player login password passed into game server console variables. Visible here so trusted operators can share and rotate it."},
@@ -4564,11 +4569,113 @@ def public_ip_canary_public_status(limit=20):
     return status
 
 
+def public_ip_canary_container_runner(arguments, *, cwd, environment, timeout):
+    runtime_root = (BACKUPS_ROOT / ".public-ip-canary-runtime").resolve(strict=True)
+    working_directory = pathlib.Path(cwd).resolve(strict=True)
+    try:
+        working_directory.relative_to(runtime_root)
+    except ValueError as exc:
+        raise ValueError("public-IP canary helper working directory escapes its runtime root") from exc
+    arguments = [str(value) for value in arguments]
+    if not arguments or len(arguments) > 64 or any(not value or "\x00" in value or "\n" in value for value in arguments):
+        raise ValueError("public-IP canary helper arguments are invalid")
+    executable = arguments[0]
+    if "/" in executable:
+        executable_path = pathlib.Path(executable).resolve(strict=True)
+        try:
+            executable_path.relative_to(runtime_root)
+        except ValueError as exc:
+            raise ValueError("public-IP canary helper executable escapes its runtime root") from exc
+    elif executable != "openssl":
+        raise ValueError("public-IP canary helper executable is not allowlisted")
+    allowed_environment = {
+        "HOME", "LANG", "LC_ALL", "PATH", "DUNE_PUBLIC_IP_CANARY_COMMAND_LOG",
+        "DUNE_PUBLIC_IP_CANARY_ANNOUNCE_LOG", "DUNE_RESTART_DRY_RUN",
+        "DUNE_RESTART_CHECK_STEAM_UPDATE", "DUNE_MAP_WATCHDOG_CONTROL",
+        "DUNE_PUBLIC_IP_MONITOR_STATE_DIR", "DUNE_PUBLIC_IP_MONITOR_DETECTED_IP",
+        "DUNE_SERVICE_USER", "DUNE_SERVICE_GROUP",
+    }
+    if set(environment) - allowed_environment:
+        raise ValueError("public-IP canary helper environment contains a non-allowlisted key")
+    environment_rows = []
+    for key, value in sorted(environment.items()):
+        value = str(value)
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]{0,127}", key) or "\x00" in value or "\n" in value or len(value) > 4096:
+            raise ValueError("public-IP canary helper environment is invalid")
+        environment_rows.append(f"{key}={value}")
+    if sum(len(row) for row in environment_rows) > 64 * 1024:
+        raise ValueError("public-IP canary helper environment exceeds its byte bound")
+    image = str(PUBLIC_IP_CANARY_HELPER_IMAGE or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_./:@+-]{1,511}", image):
+        raise ValueError("public-IP canary helper image is invalid")
+    host_workspace = str(os.environ.get("DUNE_RESTART_HOST_WORKSPACE") or "").strip()
+    if not re.fullmatch(r"/[A-Za-z0-9._/-]{1,1000}", host_workspace) or "//" in host_workspace or "/../" in host_workspace + "/":
+        raise ValueError("public-IP canary helper requires a canonical absolute host workspace")
+    relative_runtime = runtime_root.relative_to(ROOT)
+    host_runtime = pathlib.PurePosixPath(host_workspace).joinpath(*relative_runtime.parts)
+    helper_name = "dash-public-ip-canary-" + secrets.token_hex(12)
+    run_uid = int(os.environ.get("DUNE_HOST_UID", os.getuid()))
+    run_gid = int(os.environ.get("DUNE_HOST_GID", os.getgid()))
+    body = {
+        "Image": image,
+        "Hostname": os.uname().nodename.split(".", 1)[0],
+        "WorkingDir": str(working_directory),
+        "Entrypoint": [executable],
+        "Cmd": arguments[1:],
+        "Env": environment_rows,
+        "User": f"{run_uid}:{run_gid}",
+        "AttachStdout": True,
+        "AttachStderr": True,
+        "NetworkDisabled": True,
+        "Labels": {"com.snapetech.dune.role": "public-ip-repair-canary", "com.snapetech.dune.disposable": "true"},
+        "HostConfig": {
+            "AutoRemove": False,
+            "Binds": [f"{host_runtime}:{runtime_root}:rw"],
+            "NetworkMode": "none",
+            "ReadonlyRootfs": True,
+            "CapDrop": ["ALL"],
+            "SecurityOpt": ["no-new-privileges:true"],
+            "PidsLimit": 128,
+            "Memory": 512 * 1024 * 1024,
+            "NanoCpus": 2_000_000_000,
+            "Tmpfs": {
+                "/tmp": "rw,noexec,nosuid,nodev,size=32m,mode=1777",
+                "/var/tmp": "rw,noexec,nosuid,nodev,size=16m,mode=1777",
+            },
+        },
+    }
+    container_id = ""
+    try:
+        _, created = docker_http_request(
+            "POST", "/containers/create?name=" + urllib.parse.quote(helper_name),
+            body=body, timeout=10, accepted=(201,),
+        )
+        container_id = str((json.loads(created.decode("utf-8") or "{}") or {}).get("Id") or "")
+        if not re.fullmatch(r"[A-Fa-f0-9]{12,64}", container_id):
+            raise RuntimeError("Docker did not return a valid public-IP canary helper id")
+        docker_http_request("POST", f"/containers/{container_id}/start", timeout=20, max_bytes=1024 * 1024, accepted=(204, 304))
+        _, waited = docker_http_request("POST", f"/containers/{container_id}/wait", timeout=max(10, int(timeout)), max_bytes=1024 * 1024, accepted=(200,))
+        return_code = int((json.loads(waited.decode("utf-8") or "{}") or {}).get("StatusCode", 1))
+        _, raw_logs = docker_http_get(
+            f"/containers/{container_id}/logs?stdout=1&stderr=1&timestamps=0&tail=10000",
+            timeout=30, max_bytes=4 * 1024 * 1024,
+        )
+        output = decode_docker_log_stream(raw_logs)[-2 * 1024 * 1024:]
+        return subprocess.CompletedProcess(arguments, return_code, stdout=output, stderr="")
+    finally:
+        if container_id:
+            try:
+                docker_http_request("DELETE", f"/containers/{container_id}?force=true&v=true", timeout=20, max_bytes=1024 * 1024, accepted=(204, 404))
+            except Exception:
+                pass
+
+
 def run_public_ip_canary(principal):
     result = public_ip_canary.run_canary(
         ROOT, public_ip_canary_store(),
         principal_id=(principal or {}).get("id") or "owner-recovery",
         work_root=BACKUPS_ROOT / ".public-ip-canary-runtime",
+        runner=public_ip_canary_container_runner,
     )
     with FEATURE_READINESS_CACHE_LOCK:
         FEATURE_READINESS_CACHE["value"] = None

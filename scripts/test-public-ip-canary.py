@@ -143,10 +143,22 @@ class PublicIpCanaryTests(unittest.TestCase):
 
     def test_explicit_execution_capable_runtime_root_is_private_and_emptied(self):
         runtime = pathlib.Path(self.temporary.name) / "runtime"
+        invocations = []
+
+        def runner(arguments, *, cwd, environment, timeout):
+            invocations.append((list(arguments), cwd, dict(environment), timeout))
+            self.assertNotIn("DUNE_ADMIN_TOKEN", environment)
+            return subprocess.run(
+                arguments, cwd=cwd, env=environment, timeout=timeout,
+                text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+            )
+
         result = public_ip_canary.run_canary(
             ROOT, self.store, principal_id="test-runtime-root", work_root=runtime,
+            runner=runner,
         )
         self.assertTrue(result["document"]["receipt"]["ready"])
+        self.assertEqual(7, len(invocations))
         self.assertEqual(0o700, runtime.stat().st_mode & 0o777)
         self.assertEqual([], list(runtime.iterdir()))
         linked = pathlib.Path(self.temporary.name) / "linked-runtime"
@@ -179,6 +191,13 @@ class PublicIpCanaryTests(unittest.TestCase):
         self.assertIn("DashPublicIpCanaryCollectorInvalid", alerts)
         self.assertIn("DashPublicIpCanaryNotCurrent", alerts)
         self.assertIn("DashPublicIpMonitorNotArmed", alerts)
+        for safeguard in (
+            '"NetworkMode": "none"', '"ReadonlyRootfs": True',
+            '"CapDrop": ["ALL"]', '"no-new-privileges:true"',
+            '"PidsLimit": 128', '"NetworkDisabled": True',
+        ):
+            self.assertIn(safeguard, panel)
+        self.assertNotIn('f"{DOCKER_SOCKET}:/var/run/docker.sock"', panel[panel.index("def public_ip_canary_container_runner"):panel.index("def run_public_ip_canary")])
         self.assertEqual(
             "infrastructure.write",
             access_control.required_capability("POST", "/api/ops/public-ip-canary"),
