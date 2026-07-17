@@ -209,7 +209,11 @@ def _extract_exact(archive_path, member_name, destination, maximum=1024 * 1024):
 def _node_hostname(state_root):
     candidates = []
     for path in (pathlib.Path(state_root) / "mnesia").iterdir():
-        if path.is_dir() and path.name.startswith("rabbit@"):
+        node_type = path / "node-type.txt"
+        if (
+            path.is_dir() and not path.is_symlink() and path.name.startswith("rabbit@")
+            and node_type.is_file() and not node_type.is_symlink()
+        ):
             value = path.name.split("@", 1)[1]
             if HOST_RE.fullmatch(value):
                 candidates.append(value)

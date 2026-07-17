@@ -109,6 +109,7 @@ class RabbitMQRestoreDrillTests(unittest.TestCase):
                 f"mnesia/rabbit@{hostname}/rabbit_vhost.DCD": b"fixture-vhost-state",
                 f"mnesia/rabbit@{hostname}/rabbit_user.DCD": b"fixture-user-state",
                 f"mnesia/rabbit@{hostname}.pid": "123\n",
+                f"mnesia/rabbit@{hostname}-plugins-expand/plugin.marker": "expanded\n",
                 ".erlang.cookie": "fixture-cookie",
             })
 
