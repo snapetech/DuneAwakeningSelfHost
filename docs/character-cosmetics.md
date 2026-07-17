@@ -200,3 +200,9 @@ preview an idempotent add, execute it, confirm `changed=false`, inspect the
 unchanged state hash, and verify that a backup plus receipt were still recorded.
 This validates the production gates and transaction path without changing game
 state.
+
+For non-player implementation proof, the Creator/Modding canary loads the exact
+active catalog and runs add/replay/remove/unlock-all planning against synthetic
+entries. It proves preservation and inventory-token exclusion without opening
+the game database or writing a pawn; see
+[`creator-modding-canary.md`](creator-modding-canary.md).

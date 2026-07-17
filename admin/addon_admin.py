@@ -90,8 +90,9 @@ def _fetch(url, max_bytes, timeout=10):
     return content
 
 
-def fetch_index(index_url=INDEX_URL):
-    data = json.loads(_fetch(index_url, 2 * 1024 * 1024))
+def fetch_index(index_url=INDEX_URL, fetcher=None):
+    fetcher = fetcher or _fetch
+    data = json.loads(fetcher(index_url, 2 * 1024 * 1024))
     if not isinstance(data, dict) or int(data.get("schemaVersion", 0)) != 1 or not isinstance(data.get("addons"), list) or len(data["addons"]) > 200:
         raise ValueError("invalid community addon index")
     seen = set()
@@ -104,7 +105,7 @@ def fetch_index(index_url=INDEX_URL):
         row = {"id": addon_id, "name": _text(raw.get("name"), "name"), "description": _text(raw.get("description"), "description", True), "author": _text(raw.get("author"), "author", True), "version": _text(raw.get("version"), "version"), "manifestUrl": _url(raw.get("manifestUrl"), "manifestUrl"), "lifecycle": _text(raw.get("lifecycle") or "active", "lifecycle"), "lifecycleMessage": _text(raw.get("lifecycleMessage") or raw.get("lifecycleReason"), "lifecycleMessage", True), "permissions": _permissions(raw.get("permissions") or [])}
         if not row["permissions"]:
             try:
-                manifest = normalize_manifest(json.loads(_fetch(row["manifestUrl"], 1024 * 1024)), remote=True)
+                manifest = normalize_manifest(json.loads(fetcher(row["manifestUrl"], 1024 * 1024)), remote=True)
                 if manifest["id"] == row["id"]:
                     row.update({"permissions": manifest["permissions"], "sourceUrl": manifest["sourceUrl"]})
             except Exception:
@@ -153,21 +154,22 @@ def list_installed(root):
     return {"addons": rows}
 
 
-def install(root, addon_id, approved_permissions, index_url=INDEX_URL):
-    index = fetch_index(index_url)
+def install(root, addon_id, approved_permissions, index_url=INDEX_URL, fetcher=None):
+    fetcher = fetcher or _fetch
+    index = fetch_index(index_url, fetcher=fetcher)
     summary = next((row for row in index["addons"] if row["id"] == addon_id), None)
     if not summary:
         raise ValueError("community addon not found")
     if summary["lifecycle"] in BLOCKED_LIFECYCLES:
         raise PermissionError(f"addon lifecycle blocks installation: {summary['lifecycle']}")
-    remote = normalize_manifest(json.loads(_fetch(summary["manifestUrl"], 1024 * 1024)), remote=True)
+    remote = normalize_manifest(json.loads(fetcher(summary["manifestUrl"], 1024 * 1024)), remote=True)
     if remote["id"] != summary["id"] or remote["version"] != summary["version"]:
         raise ValueError("community index and manifest identity do not match")
     approved = _permissions(approved_permissions or [])
     missing = set(remote["permissions"]) - set(approved)
     if missing:
         raise PermissionError(f"permissions require explicit approval: {sorted(missing)}")
-    archive = _fetch(remote["downloadUrl"], 50 * 1024 * 1024, timeout=30)
+    archive = fetcher(remote["downloadUrl"], 50 * 1024 * 1024, timeout=30)
     digest = hashlib.sha256(archive).hexdigest()
     if digest != remote["sha256"]:
         raise ValueError("addon archive SHA-256 does not match manifest")

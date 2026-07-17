@@ -56,3 +56,9 @@ are refused.
 
 The implementation adapts Red-Blink's MIT addon lifecycle contract. Attribution
 is recorded in [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md).
+
+The signed Creator/Modding canary exercises the real installer, enable,
+permission, content-resolution, remove, and recovery functions using a bounded
+in-memory index/manifest/ZIP. The normal network fetcher remains the default;
+the injected fixture fetcher exists only to produce a deterministic no-network
+proof. See [`creator-modding-canary.md`](creator-modding-canary.md).

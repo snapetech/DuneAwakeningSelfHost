@@ -54,6 +54,7 @@ import change_contracts
 import outbound_webhooks
 import community_rewards
 import community_canary
+import creator_canary
 import moderation
 import base_creator
 import base_retirement
@@ -319,6 +320,7 @@ CONFIRM_VENDOR_MUTATION = "WRITE VENDOR"
 CONFIRM_COMMUNITY_CREDIT = "CREDIT COMMUNITY WALLET"
 CONFIRM_COMMUNITY_RECONCILIATION = "RESOLVE COMMUNITY DELIVERY"
 CONFIRM_COMMUNITY_CANARY = "RUN COMMUNITY REWARDS CANARY"
+CONFIRM_CREATOR_CANARY = "RUN CREATOR MODDING CANARY"
 CONFIRM_MODERATION_BAN = "CREATE ENFORCED BAN"
 CONFIRM_MODERATION_UNBAN = "REVOKE BAN"
 CONFIRM_MODERATION_ALLOWLIST_POLICY = "CHANGE ALLOWLIST POLICY"
@@ -372,6 +374,8 @@ COMMUNITY_REWARDS_DATABASE = pathlib.Path(os.environ.get("DUNE_COMMUNITY_REWARDS
 COMMUNITY_POLL_SECONDS = max(5, int(os.environ.get("DUNE_COMMUNITY_POLL_SECONDS", "30")))
 COMMUNITY_CANARY_MAX_AGE_HOURS = max(1, min(int(os.environ.get("DUNE_COMMUNITY_CANARY_MAX_AGE_HOURS", "168")), 2160))
 COMMUNITY_CANARY_RETENTION = max(10, min(int(os.environ.get("DUNE_COMMUNITY_CANARY_RETENTION", "200")), 2000))
+CREATOR_CANARY_MAX_AGE_HOURS = max(1, min(int(os.environ.get("DUNE_CREATOR_CANARY_MAX_AGE_HOURS", "168")), 2160))
+CREATOR_CANARY_RETENTION = max(10, min(int(os.environ.get("DUNE_CREATOR_CANARY_RETENTION", "200")), 2000))
 MODERATION_ENABLED = os.environ.get("DUNE_MODERATION_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 MODERATION_ENFORCEMENT_ENABLED = os.environ.get("DUNE_MODERATION_ENFORCEMENT_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 MODERATION_DATABASE = pathlib.Path(os.environ.get("DUNE_MODERATION_DATABASE", str(BACKUPS_ROOT / "moderation" / "moderation.sqlite3")))
@@ -513,6 +517,8 @@ COMMUNITY_WORKER_STARTED = False
 COMMUNITY_RUNTIME = {"running": False, "lastTickAt": None, "lastError": None, "lastResult": None}
 COMMUNITY_CANARY_STORE = None
 COMMUNITY_CANARY_STORE_LOCK = threading.Lock()
+CREATOR_CANARY_STORE = None
+CREATOR_CANARY_STORE_LOCK = threading.Lock()
 MODERATION_STORE = moderation.Store(MODERATION_DATABASE, owner_uid=os.environ.get("DUNE_HOST_UID"), owner_gid=os.environ.get("DUNE_HOST_GID"))
 MODERATION_STORE_INITIALIZED = False
 MODERATION_STORE_LOCK = threading.Lock()
@@ -737,6 +743,31 @@ def _feature_readiness_community_probe():
     return {"ready": True, "state": "canary-pending", "detail": reason[:500]}
 
 
+def _feature_readiness_creator_probe():
+    try:
+        status = creator_canary_public_status(limit=1)
+    except Exception as exc:
+        return {"ready": False, "state": "canary-evidence-invalid", "detail": str(exc)[:500]}
+    latest = status.get("latest") or {}
+    verification = latest.get("verification") or {}
+    if status.get("currentReady"):
+        return {
+            "ready": True, "state": "canary-proven",
+            "detail": f"isolated creator/modding lifecycle verified; receipt={latest.get('id')}",
+        }
+    if latest and not status.get("ok"):
+        return {"ready": False, "state": "canary-evidence-invalid", "detail": str(verification.get("error") or "creator canary evidence failed verification")[:500]}
+    reason = "no isolated creator/modding canary receipt exists"
+    if latest and not verification.get("inputsCurrent", True):
+        reason = "latest creator/modding canary predates the active modules or catalogs"
+    elif latest and not verification.get("ageCurrent", True):
+        reason = "latest creator/modding canary is stale"
+    elif latest and not latest.get("ready"):
+        failed = [name for name, value in (latest.get("checks") or {}).items() if not value]
+        reason = "latest isolated creator/modding canary failed: " + ", ".join(failed[:6])
+    return {"ready": True, "state": "canary-pending", "detail": reason[:500]}
+
+
 def _feature_readiness_autoscaler_probe():
     status = autoscaler_public_state(include_inventory=False)
     ready = bool(status.get("enabled") and not status.get("lastError"))
@@ -889,6 +920,7 @@ def feature_readiness_public_status(force=False):
         },
         "moderation": _feature_readiness_probe("moderation", lambda: _feature_readiness_store_probe(MODERATION_STORE, MODERATION_STORE_INITIALIZED, MODERATION_RUNTIME, "moderation")),
         "community-rewards": _feature_readiness_probe("community-rewards", _feature_readiness_community_probe),
+        "creator-modding": _feature_readiness_probe("creator-modding", _feature_readiness_creator_probe),
         "discord-adapter": {
             "ready": bool(DISCORD_ADAPTER_ENABLED and values.get("DUNE_BOT_API_TOKEN")),
             "state": "ready" if DISCORD_ADAPTER_ENABLED and values.get("DUNE_BOT_API_TOKEN") else "credential-missing",
@@ -1621,6 +1653,8 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_COMMUNITY_POLL_SECONDS": {"group": "Community Rewards", "secret": False, "restart": True, "why": "Playtime observation and one-at-a-time delivery worker cadence."},
     "DUNE_COMMUNITY_CANARY_MAX_AGE_HOURS": {"group": "Community Rewards", "secret": False, "restart": True, "why": "Maximum age of a policy-bound isolated Community Rewards canary receipt."},
     "DUNE_COMMUNITY_CANARY_RETENTION": {"group": "Community Rewards", "secret": False, "restart": True, "why": "Maximum portable signed Community Rewards canary receipts retained locally."},
+    "DUNE_CREATOR_CANARY_MAX_AGE_HOURS": {"group": "Creator", "secret": False, "restart": True, "why": "Maximum age of an input-bound isolated Creator/Modding canary receipt."},
+    "DUNE_CREATOR_CANARY_RETENTION": {"group": "Creator", "secret": False, "restart": True, "why": "Maximum portable signed Creator/Modding canary receipts retained locally."},
     "DUNE_COMMUNITY_VOTE_WEBHOOK_SECRET_FILE": {"group": "Community Rewards", "secret": False, "restart": True, "why": "File containing the vote-provider HMAC secret."},
     "DUNE_COMMUNITY_PAYMENT_WEBHOOK_SECRET_FILE": {"group": "Community Rewards", "secret": False, "restart": True, "why": "File containing the manual-payment-provider HMAC secret."},
     "DUNE_MODERATION_ENABLED": {"group": "Moderation", "secret": False, "restart": True, "why": "Enables isolated moderation cases, ban/allowlist registries, presence sessions, heatmaps, and normalized security events."},
@@ -4399,6 +4433,50 @@ def community_canary_public_status(limit=20):
 def run_community_canary(principal):
     result = community_canary.run_canary(
         COMMUNITY_REWARDS_FILE, community_canary_store(),
+        principal_id=(principal or {}).get("id") or "owner-recovery",
+    )
+    with FEATURE_READINESS_CACHE_LOCK:
+        FEATURE_READINESS_CACHE["value"] = None
+        FEATURE_READINESS_CACHE["updated_at"] = 0.0
+    return result
+
+
+def creator_canary_store():
+    global CREATOR_CANARY_STORE
+    with CREATOR_CANARY_STORE_LOCK:
+        if CREATOR_CANARY_STORE is None:
+            CREATOR_CANARY_STORE = creator_canary.Store(
+                CHANGE_INTELLIGENCE_EVIDENCE_ROOT,
+                change_intelligence.read_secret(CHANGE_INTELLIGENCE_SECRET_FILE),
+                retention=CREATOR_CANARY_RETENTION,
+                max_age_seconds=CREATOR_CANARY_MAX_AGE_HOURS * 3600,
+                owner_uid=os.environ.get("DUNE_HOST_UID"), owner_gid=os.environ.get("DUNE_HOST_GID"),
+            )
+            CREATOR_CANARY_STORE.initialize()
+        return CREATOR_CANARY_STORE
+
+
+def creator_canary_public_status(limit=20):
+    inputs = creator_canary.input_manifest(ROOT)
+    status = creator_canary_store().status(inputs["sha256"], limit=limit)
+    status.update({
+        "enabled": BASE_CREATOR_ENABLED,
+        "inputsSha256": inputs["sha256"],
+        "inputFiles": inputs["files"],
+        "confirmation": CONFIRM_CREATOR_CANARY,
+        "liveGalleryOpened": False,
+        "liveConfigWritten": False,
+        "gameDatabaseTouched": False,
+        "playerDataTouched": False,
+        "gameMapLifecycleInvoked": False,
+        "externalNetworkCalled": False,
+    })
+    return status
+
+
+def run_creator_canary(principal):
+    result = creator_canary.run_canary(
+        ROOT, creator_canary_store(),
         principal_id=(principal or {}).get("id") or "owner-recovery",
     )
     with FEATURE_READINESS_CACHE_LOCK:
@@ -8720,6 +8798,8 @@ def verify_operator_evidence_archive(archive_path, secret_path):
                 if schema == maintenance_outcomes.SCHEMA
                 else community_canary.verify_signed_document(document, secret)
                 if schema == community_canary.SCHEMA
+                else creator_canary.verify_signed_document(document, secret)
+                if schema == creator_canary.SCHEMA
                 else change_intelligence.verify_signed_capsule(document, secret)
             )
             if not result.get("ok"):
@@ -9828,6 +9908,14 @@ class Handler(BaseHTTPRequestHandler):
                         metrics += "dash_community_canary_enabled 0\ndash_community_canary_collector_up 1\ndash_community_canary_current_ready 0\n"
                 except Exception:
                     metrics += f"dash_community_canary_enabled {1 if COMMUNITY_REWARDS_ENABLED else 0}\ndash_community_canary_collector_up 0\ndash_community_canary_current_ready 0\n"
+                try:
+                    if BASE_CREATOR_ENABLED:
+                        metrics += "dash_creator_canary_enabled 1\n"
+                        metrics += creator_canary_store().prometheus(creator_canary.input_manifest(ROOT)["sha256"])
+                    else:
+                        metrics += "dash_creator_canary_enabled 0\ndash_creator_canary_collector_up 1\ndash_creator_canary_current_ready 0\n"
+                except Exception:
+                    metrics += f"dash_creator_canary_enabled {1 if BASE_CREATOR_ENABLED else 0}\ndash_creator_canary_collector_up 0\ndash_creator_canary_current_ready 0\n"
                 metrics += maintenance_planner_prometheus()
                 self.text(metrics, "text/plain; version=0.0.4; charset=utf-8")
             elif parsed.path in ("/api/integrations/discord/health", "/api/integrations/discord/version", "/api/integrations/discord/backups/list"):
@@ -9890,7 +9978,7 @@ class Handler(BaseHTTPRequestHandler):
                 elif design_id:
                     self.json({"ok": True, "design": base_gallery().get(design_id)})
                 else:
-                    self.json({"ok": True, "featureEnabled": BASE_CREATOR_ENABLED, "liveBases": base_creator.list_live_bases(query), "designs": base_gallery().list(), "format": base_creator.FORMAT, "gameRestoreSupported": False, "restoreNote": "Surveyed peer base-import is documented experimental/unfinished; no atomic live placement contract is proven. Export and portable reconstruction are complete."})
+                    self.json({"ok": True, "featureEnabled": BASE_CREATOR_ENABLED, "liveBases": base_creator.list_live_bases(query), "designs": base_gallery().list(), "format": base_creator.FORMAT, "gameRestoreSupported": False, "restoreNote": "Surveyed peer base-import is documented experimental/unfinished; no atomic live placement contract is proven. Export and portable reconstruction are complete.", "canary": creator_canary_public_status(limit=20)})
             elif parsed.path == "/api/admin/base-retirement":
                 self.require_token()
                 params = urllib.parse.parse_qs(parsed.query)
@@ -10838,10 +10926,15 @@ class Handler(BaseHTTPRequestHandler):
                     result = base_gallery().publish(body.get("name"), body.get("description"), actor, body.get("archive"), body.get("visibility"), body.get("designId"))
                 elif action == "rate":
                     result = base_gallery().rate(body.get("designId"), actor, body.get("rating"))
+                elif action == "canary":
+                    self.require_mutations()
+                    require_confirmation(body, CONFIRM_CREATOR_CANARY)
+                    result = run_creator_canary(principal)
                 else:
-                    raise ValueError("creator action must be publish or rate")
-                self.audit("base-creator", ok=True, creator_action=action, design_id=result.get("id"), visibility=result.get("visibility"))
-                self.json({"ok": True, "design": result})
+                    raise ValueError("creator action must be publish, rate, or canary")
+                receipt = ((result.get("document") or {}).get("receipt") or {}) if action == "canary" else {}
+                self.audit("base-creator", ok=receipt.get("ready", True), creator_action=action, design_id=result.get("id"), visibility=result.get("visibility"), receipt_id=receipt.get("id"), game_data_mutation_executed=False if action == "canary" else None)
+                self.json(result if action == "canary" else {"ok": True, "design": result})
             elif parsed.path == "/api/admin/base-retirement":
                 self.require_token()
                 body = parse_body(self)
@@ -20242,7 +20335,8 @@ async function baseCreatorConsole(serial=loadSerial){
   const galleryTable=`<div class="tableWrap"><table><thead><tr><th>Name</th><th>Author</th><th>Visibility</th><th>Rating</th><th>Updated</th><th></th></tr></thead><tbody>${galleryRows.map(row=>`<tr><td>${esc(row.name)}</td><td>${esc(row.author)}</td><td>${esc(row.visibility)}</td><td>${esc(row.rating_average)} (${esc(row.rating_count)})</td><td>${esc(row.updated_at)}</td><td>${row.actions}</td></tr>`).join('')}</tbody></table></div>`;
   const retirementRows=(retirement.bases||[]).map(row=>`<tr><td><b>${esc(row.actorName)}</b><br><code>${esc(row.totemId)}</code></td><td><span class="pill ${row.status==='owned'?'ok':row.status==='orphaned'?'warn':'bad'}">${esc(row.status)}</span><br>${esc((row.owners||[]).map(owner=>owner.characterName||owner.playerId).join(', ')||'no verified player')}</td><td>${esc(row.map)} #${esc(row.partitionId??'')}<br><span class="pill ${row.partitionActive?'bad':'ok'}">${row.partitionActive?'running':'stopped'}</span></td><td>${esc(row.pieceCount)} / ${esc(row.placeableCount)}</td><td><button data-retire-select="${esc(row.totemId)}" data-retire-owner="${esc((row.owners||[]).find(owner=>owner.rank===1&&owner.accountId)?.playerId||'')}">Select</button></td></tr>`).join('');
   const retirementTable=`<div class="tableWrap"><table><thead><tr><th>Totem</th><th>Ownership</th><th>Map</th><th>Pieces / placeables</th><th></th></tr></thead><tbody>${retirementRows||'<tr><td colspan="5" class="muted">No active base totems found.</td></tr>'}</tbody></table></div>`;
-  view.innerHTML=`<div class="pageStack"><div class="sectionHeader"><h2>Portable Base Creator</h2><div class="toolbar"><span class="pill ${data.featureEnabled?'ok':'bad'}">${data.featureEnabled?'enabled':'disabled'}</span><span class="pill">format ${esc(data.format)}</span><span class="pill warn">live restore not claimed</span></div></div><div class="panelBand"><p class="muted">Live export is read-only and captures exact transforms plus recentered portable coordinates. The surveyed Wormageddon peer documents base import as experimental/unfinished and ships no implementation; DASH does not mislabel an unproven direct database write as restore. Designs can be edited, downloaded, published, rated, and reconstructed through the portable archive.</p></div>
+  const canary=data.canary||{}, latestCanary=canary.latest||{};
+  view.innerHTML=`<div class="pageStack"><div class="sectionHeader"><h2>Portable Base Creator</h2><div class="toolbar"><span class="pill ${data.featureEnabled?'ok':'bad'}">${data.featureEnabled?'enabled':'disabled'}</span><span class="pill ${canary.currentReady?'ok':'warn'}">canary ${canary.currentReady?'proven':'required'}</span><span class="pill">format ${esc(data.format)}</span><span class="pill warn">live restore not claimed</span><button id="creatorCanaryBtn" class="primary">Run isolated canary</button></div></div><div class="panelBand"><p class="muted">Live export is read-only and captures exact transforms plus recentered portable coordinates. The surveyed Wormageddon peer documents base import as experimental/unfinished and ships no implementation; DASH does not mislabel an unproven direct database write as restore. Designs can be edited, downloaded, published, rated, and reconstructed through the portable archive.</p><details><summary>Creator and modding proof</summary><p class="muted">Exercises base export, gallery, retirement guards, preset apply/rollback, Landsraad protection, cosmetics planning, and addon install/permission/removal against disposable state. It does not open the live gallery or game database, write live configuration/player data, invoke map lifecycle, or call the network.</p><pre id="creatorCanaryResult">${esc(JSON.stringify({currentReady:canary.currentReady,maxAgeSeconds:canary.maxAgeSeconds,latest:latestCanary},null,2))}</pre></details></div>
   <div class="twoCol"><div class="panelBand"><h2>Live bases</h2><div id="baseLiveRows">${liveTable}</div></div><div class="panelBand"><h2>Gallery</h2>${galleryTable}</div></div>
   <div class="panelBand dangerZone"><div class="sectionHeader"><h2>Recoverable Base Retirement</h2><div class="toolbar"><span class="pill ${retirement.mutationEnabled?'warn':'ok'}">writes ${retirement.mutationEnabled?'enabled':'preview only'}</span><span class="pill ok">native game backup</span><span class="pill ok">no destructive delete</span></div></div><p class="muted">Retire an abandoned or operator-selected base into Dune's own recoverable <code>base_backups</code> system through <code>dune.base_backup_save_from_totem</code>. DASH requires the target map stopped, every matched owner and recovery player explicitly offline, a fresh fingerprint-bound preview, an advisory/row lock, a non-empty full database dump, native post-call verification, and a private receipt. This does not imitate peers that directly delete structural rows.</p>${retirementTable}<div class="grid"><label>Totem actor ID<input id="baseRetireTotem" inputmode="numeric"></label><label>Recovery player controller ID<input id="baseRetirePlayer" inputmode="numeric" placeholder="required for orphaned bases"></label><label>Typed confirmation<input id="baseRetireConfirm" placeholder="preview first" autocomplete="off"></label></div><div class="commandBar"><button id="baseRetirePreviewBtn" class="primary">Generate locked-state preview</button><button id="baseRetireArchiveBtn" class="danger" disabled>Archive into game recovery</button></div><pre id="baseRetireResult">Select a base and preview. No write has run.</pre><details><summary>Retirement receipts</summary>${table(retirement.receipts||[])}</details></div>
   <div class="twoCol"><div class="panelBand"><h2>Grid editor</h2><div class="grid"><label>Building type<input id="basePieceType" value="Foundation"></label><label>X<input id="basePieceX" type="number" value="0"></label><label>Y<input id="basePieceY" type="number" value="0"></label><label>Z<input id="basePieceZ" type="number" value="0"></label><label>Yaw degrees<input id="basePieceYaw" type="number" value="0"></label><label>Snap size<input id="baseSnap" type="number" min="1" value="100"></label></div><div class="commandBar"><button id="baseAddPieceBtn" class="primary">Add snapped piece</button><button id="baseRemovePieceBtn">Remove last piece</button><button id="baseNewBtn">New design</button><button id="baseDownloadBtn">Download JSON</button></div><pre id="baseCreatorResult"></pre></div><div class="panelBand"><h2>Publish design</h2><div class="grid"><label>Name<input id="baseDesignName"></label><label>Visibility<select id="baseVisibility"><option>private</option><option>unlisted</option><option>public</option></select></label><label>Existing design ID<input id="baseDesignId" placeholder="blank creates new"></label></div><label>Description<textarea id="baseDescription" rows="3"></textarea></label><button id="basePublishBtn" class="primary">Publish / update gallery</button><hr><label>Rating (1–5)<input id="baseRating" type="number" min="1" max="5" value="5"></label><button id="baseRateBtn">Rate selected design</button></div></div>
@@ -20256,6 +20350,7 @@ async function baseCreatorConsole(serial=loadSerial){
   view.querySelectorAll('[data-base-export]').forEach(button=>button.onclick=async()=>{const result=await api(`/api/creator/bases?export=${encodeURIComponent(button.dataset.baseExport)}`,{timeoutMs:60000});setArchive(result.archive);notify('Live base exported read-only')});
   view.querySelectorAll('[data-design-load]').forEach(button=>button.onclick=async()=>{const result=await api(`/api/creator/bases?design=${encodeURIComponent(button.dataset.designLoad)}`);setArchive(result.design.archive);document.getElementById('baseDesignId').value=result.design.id;document.getElementById('baseDesignName').value=result.design.name;document.getElementById('baseDescription').value=result.design.description;document.getElementById('baseVisibility').value=result.design.visibility;notify('Gallery design loaded')});
   const post=async body=>api('/api/creator/bases',{method:'POST',body:JSON.stringify(body)}); document.getElementById('basePublishBtn').onclick=async()=>{const result=await post({action:'publish',name:document.getElementById('baseDesignName').value,description:document.getElementById('baseDescription').value,visibility:document.getElementById('baseVisibility').value,designId:document.getElementById('baseDesignId').value||undefined,archive:parse()});document.getElementById('baseDesignId').value=result.design.id;document.getElementById('baseCreatorResult').textContent=JSON.stringify(result,null,2);notify('Design published')};
+  document.getElementById('creatorCanaryBtn').onclick=async()=>{if(!confirm('Run every Creator/Modding lifecycle against disposable state and record a signed receipt? No live gallery, configuration, database, player, map, or network state is touched.'))return;const result=await post({action:'canary',confirm:'RUN CREATOR MODDING CANARY'});document.getElementById('creatorCanaryResult').textContent=JSON.stringify(result,null,2);notify(result.document?.receipt?.ready?'Creator/Modding canary proven':'Creator/Modding canary failed',result.document?.receipt?.ready?'ok':'bad');await baseCreatorConsole();};
   const rate=async id=>{const rating=Number(document.getElementById('baseRating').value);const result=await post({action:'rate',designId:id,rating});document.getElementById('baseCreatorResult').textContent=JSON.stringify(result,null,2);notify('Rating saved')}; document.getElementById('baseRateBtn').onclick=()=>rate(document.getElementById('baseDesignId').value);view.querySelectorAll('[data-design-rate]').forEach(button=>button.onclick=()=>rate(button.dataset.designRate));
   let retirementPlan=null; const retirementResult=document.getElementById('baseRetireResult'),archiveButton=document.getElementById('baseRetireArchiveBtn');
   view.querySelectorAll('[data-retire-select]').forEach(button=>button.onclick=()=>{document.getElementById('baseRetireTotem').value=button.dataset.retireSelect;document.getElementById('baseRetirePlayer').value=button.dataset.retireOwner;document.getElementById('baseRetireConfirm').value='';retirementPlan=null;archiveButton.disabled=true;retirementResult.textContent='Base selected. Generate a current preview before archiving.';});

@@ -94,6 +94,9 @@ Always compare your `.env` image pin with the Steam package installed on your ho
 - Local backups, hardened disposable PostgreSQL and dual-broker RabbitMQ recovery drills, restore helpers, optional streaming Postgres replica, optional remote replica snapshots, and portable offsite/onsite backup sync examples.
 - Optional public static site package with status, settings, player list, Hagga Basin map, an opt-in Ed25519-signed public descriptor, and a self-hosted federated server directory whose browser re-verifies every listing.
 - Authenticated feature-readiness control center that separates disabled, partial, blocked, degraded, external-credential, pending-canary, and proven-ready states using live gates, artifacts, services, dependencies, and runtime probes without returning secret values; deduplicated state changes enter an append-only HMAC transition ledger with deployment correlation, regression/recovery history, backup verification, metrics, and alerts.
+- Signed, input-bound Creator/Modding lifecycle proof that exercises the real
+  base, gallery, retirement-guard, preset rollback, Landsraad, cosmetics, and
+  addon paths entirely against disposable state and expires on input drift.
 - Artificial Exchange as a first-class economy feature: reviewed price catalog, artificial buyer, validated seller settlement, optional buyer funding, controlled seeded listings, readiness checks, smoke tests, admin-panel controls, optional systemd services, and watchdog timer.
 - Publication and validation guardrails for keeping local state and secrets out of shared artifacts.
 - Receipt-bound, transactional deployment for reviewed Windows client loader,
@@ -986,6 +989,7 @@ Server-browser ordering is deliberately split based on the observed in-game brow
 | `DUNE_DISCORD_ADAPTER_ENABLED` / `DUNE_ADMIN_ADDON_MUTATIONS_ENABLED` | Permissioned bot adapter (role-scoped reads plus typed community actions) and community addon lifecycle gates. |
 | `DUNE_COMMUNITY_REWARDS_ENABLED` / `DUNE_COMMUNITY_DELIVERY_ENABLED` | Isolated wallet/shop/playtime/webhook/reward-track APIs and the separately gated offline game-item delivery worker. |
 | `DUNE_COMMUNITY_CANARY_MAX_AGE_HOURS` / `DUNE_COMMUNITY_CANARY_RETENTION` | Policy-bound synthetic transaction proof lifetime and portable signed receipt retention. |
+| `DUNE_CREATOR_CANARY_MAX_AGE_HOURS` / `DUNE_CREATOR_CANARY_RETENTION` | Input-bound Creator/Modding lifecycle proof lifetime and portable signed receipt retention. |
 | `DUNE_PUBLIC_IP_MONITOR_*` | Optional hostname-gated, dry-run-first public IPv4 drift detection, TLS rotation, and orderly farm restart. |
 | `DUNE_SIETCH_MUTATIONS_ENABLED` / `DUNE_SIETCH_ALLOWED_HOST` | Separate gate and exact-host binding for additional Survival dimension topology/settings writes. |
 
@@ -1095,6 +1099,7 @@ Start here:
 - [`docs/discord-bot.md`](docs/discord-bot.md): first-party slash-command bot, Discord application setup, command/role matrix, systemd lifecycle, Gateway safety, and validation.
 - [`docs/community-rewards.md`](docs/community-rewards.md): account linking, community wallets, immutable ledger, shop/kits, signed inbound rewards, playtime accrual, reward tracks, delivery/refund state machine, and recovery.
 - [`docs/community-rewards-canary.md`](docs/community-rewards-canary.md): policy-bound disposable end-to-end transaction proof, strict no-live-data boundary, signed portable receipts, readiness expiry, metrics, and failure handling.
+- [`docs/creator-modding-canary.md`](docs/creator-modding-canary.md): input-bound disposable creator/modding lifecycle proof, strict no-live-state boundary, signed receipts, readiness expiry, metrics, and recovery.
 - [`docs/addons.md`](docs/addons.md): SHA-pinned community UI addon lifecycle, permission approval, quarantine, and sandbox contract.
 - [`compose.admin-restore.yaml`](compose.admin-restore.yaml): temporary read-write data overlay for reviewed browser filesystem restores.
 - [`docs/red-blink-feature-parity-audit.md`](docs/red-blink-feature-parity-audit.md): pinned source comparison, completed operator-feature parity matrix, provenance, and validation limits.

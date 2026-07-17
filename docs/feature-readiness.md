@@ -81,6 +81,13 @@ transaction. Policy drift or receipt expiry removes proof without altering live
 community or game state; see
 [`community-rewards-canary.md`](community-rewards-canary.md).
 
+Creator/Modding also uses the evidence rule. Its probe binds the active
+implementation modules, both catalogs, and all three `UserGame` targets, then requires a current signed
+disposable lifecycle covering base export/gallery, retirement guards, preset
+apply/rollback, Landsraad protection, cosmetic planning, and confined addon
+install/removal. Input drift or expiry returns the row to `canary-pending`; see
+[`creator-modding-canary.md`](creator-modding-canary.md).
+
 `overall=attention` means at least one active feature is `partial`, `blocked`,
 `degraded`, or `external-blocked`. Disabled optional integrations and explicitly
 visible pending canaries do not masquerade as runtime failures.

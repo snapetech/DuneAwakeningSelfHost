@@ -332,3 +332,13 @@ groups:
         for: 15m
         labels: {severity: warning}
         annotations: {summary: "The active Community Rewards policy lacks a current passing isolated transaction canary"}
+      - alert: DashCreatorCanaryCollectorInvalid
+        expr: dash_creator_canary_enabled == 1 and dash_creator_canary_collector_up == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "DASH Creator/Modding canary evidence failed cryptographic or semantic verification"}
+      - alert: DashCreatorCanaryNotCurrent
+        expr: dash_creator_canary_enabled == 1 and dash_creator_canary_current_ready == 0
+        for: 15m
+        labels: {severity: warning}
+        annotations: {summary: "The active Creator/Modding inputs lack a current passing isolated lifecycle canary"}

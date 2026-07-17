@@ -68,11 +68,24 @@ GET  /api/creator/bases
 GET  /api/creator/bases?design=<uuid>
 POST /api/creator/bases {"action":"publish",...}
 POST /api/creator/bases {"action":"rate",...}
+POST /api/creator/bases {"action":"canary","confirm":"RUN CREATOR MODDING CANARY"}
 ```
 
 Writes map to `creator.write`. Moderator, administrator, and owner roles receive
 that capability by default. The gallery does not expose an unauthenticated
 upload path.
+
+## Creator and modding proof
+
+The same page reports whether the current Creator/Modding input set has a
+passing signed lifecycle receipt and can run the disposable proof. It exercises
+base export, gallery publish/rate/update, recoverable-retirement guards, preset
+apply/rollback, the seven-day Landsraad invariant, cosmetic planning, and the
+SHA-pinned addon lifecycle without opening live creator/game state or invoking
+a map or network operation. See
+[`creator-modding-canary.md`](creator-modding-canary.md) for its exact input
+binding, isolation contract, receipt verification, expiry, metrics, and backup
+handling.
 
 ## Configuration
 
@@ -97,6 +110,7 @@ The restore removes stale WAL/SHM files and installs mode `0600` state.
 
 ```bash
 make test-base-creator
+make test-creator-canary
 make validate
 ```
 

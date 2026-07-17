@@ -200,17 +200,17 @@
       "id": "creator-modding",
       "title": "Creator and server modding tools",
       "group": "Creator",
-      "description": "Base design/gallery, recoverable base retirement, presets, cosmetics, and confined addon lifecycle are loaded.",
-      "documentation": "docs/base-creator.md",
+      "description": "Base design/gallery, recoverable base retirement, presets, cosmetics, and confined addon lifecycle are loaded and proven against disposable state.",
+      "documentation": "docs/creator-modding-canary.md",
       "primaryGate": "DUNE_BASE_CREATOR_ENABLED",
       "gates": ["DUNE_BASE_CREATOR_ENABLED", "DUNE_ADMIN_BASE_RETIREMENT_MUTATIONS_ENABLED", "DUNE_GAMEPLAY_PRESETS_ENABLED", "DUNE_GAMEPLAY_PRESET_MUTATIONS_ENABLED", "DUNE_ADMIN_COSMETIC_MUTATIONS_ENABLED", "DUNE_ADMIN_ADDON_MUTATIONS_ENABLED"],
       "credentials": [],
-      "files": [{"path": "config/gameplay-presets.json", "minimumBytes": 100}, {"path": "config/cosmetic-catalog.json", "minimumBytes": 100}],
+      "files": [{"path": "admin/creator_canary.py", "minimumBytes": 1000}, {"path": "config/gameplay-presets.json", "minimumBytes": 100}, {"path": "config/cosmetic-catalog.json", "minimumBytes": 100}],
       "services": ["admin-panel"],
-      "probe": "database",
+      "probe": "creator-modding",
       "dependencies": ["mutation-governance"],
       "canary": "operator-canary-pending",
-      "remediation": {"surface": "creator", "summary": "Use previews and disposable canaries; direct live base placement remains intentionally unclaimed."}
+      "remediation": {"surface": "creator", "summary": "Run the isolated Creator/Modding canary after any bound module, catalog, or UserGame target changes; direct live base placement remains separately unclaimed."}
     },
     {
       "id": "moderation-history",

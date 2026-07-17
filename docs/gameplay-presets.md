@@ -145,3 +145,9 @@ The focused suite covers every committed catalog profile, type/range
 validation, comment-preserving merge behavior, read-only preview, invariant
 refusal, backup-first apply, idempotence, rollback, and rollback path
 confinement.
+
+The signed Creator/Modding canary additionally copies all three active targets,
+selects an effective catalog preset, applies and rolls it back through these
+same functions, verifies exact final bytes, and proves the seven-day Landsraad
+cycle remained intact. It never changes the live files; see
+[`creator-modding-canary.md`](creator-modding-canary.md).

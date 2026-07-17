@@ -5182,6 +5182,39 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn("Run isolated canary", self.panel.INDEX)
         self.assertIn("never opens the live community database", self.panel.INDEX)
 
+    def test_creator_canary_route_requires_mutations_and_exact_confirmation(self):
+        original_run = self.panel.run_creator_canary
+        calls = []
+        self.panel.run_creator_canary = lambda principal: calls.append(principal) or {
+            "document": {"receipt": {"id": "creator-canary-" + "a" * 32, "ready": True}},
+            "verification": {"ok": True},
+        }
+        self.addCleanup(lambda: setattr(self.panel, "run_creator_canary", original_run))
+        self.patch_flag("BASE_CREATOR_ENABLED", True)
+        self.patch_flag("MUTATIONS_ENABLED", False)
+
+        gated = self.invoke_post_route(
+            "/api/creator/bases",
+            {"action": "canary", "confirm": "RUN CREATOR MODDING CANARY"},
+        )
+        self.assertEqual(401, gated["errors"][0]["status"])
+        self.assertFalse(calls)
+        self.patch_flag("MUTATIONS_ENABLED", True)
+        rejected = self.invoke_post_route(
+            "/api/creator/bases", {"action": "canary", "confirm": "wrong"},
+        )
+        self.assertEqual(401, rejected["errors"][0]["status"])
+        self.assertFalse(calls)
+        accepted = self.invoke_post_route(
+            "/api/creator/bases",
+            {"action": "canary", "confirm": "RUN CREATOR MODDING CANARY"},
+        )
+        self.assertEqual([], accepted["errors"])
+        self.assertTrue(accepted["json"]["document"]["receipt"]["ready"])
+        self.assertEqual(1, len(calls))
+        self.assertIn("Creator and modding proof", self.panel.INDEX)
+        self.assertIn("No live gallery, configuration, database, player, map, or network state is touched", self.panel.INDEX)
+
 
 if __name__ == "__main__":
     unittest.main()

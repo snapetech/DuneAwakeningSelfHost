@@ -115,6 +115,12 @@ readiness matrix returns to canary-pending immediately after catalog changes or
 when the configured evidence lifetime expires. Rules alert on invalid canary
 evidence after two minutes and missing/stale/policy-mismatched proof after
 fifteen minutes.
+Creator/Modding exports the equivalent label-free collector, current-proof,
+age, completion-time, and retention gauges. Its proof binds exact module,
+catalog, and active `UserGame` hashes, so code/config drift or expiry returns readiness to
+canary-pending. Rules alert after two minutes on invalid evidence and after
+fifteen minutes on missing, stale, failed, or input-mismatched proof. See
+[`creator-modding-canary.md`](creator-modding-canary.md).
 Game-update alerts cover invalid readiness evidence, an available candidate
 blocked by safety checks, and an available candidate without a current signed
 receipt. They also enforce 15-second full-collection and five-second

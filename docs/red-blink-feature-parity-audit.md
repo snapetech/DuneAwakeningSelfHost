@@ -62,6 +62,7 @@ production enablement; that validation boundary is not an omitted feature.
 | Metrics | Prometheus, node, container, Postgres and RabbitMQ metrics | Optional `compose.metrics.yaml` with Prometheus retention plus node exporter, cAdvisor, Postgres and RabbitMQ targets | Added/parity |
 | Discord | Documented adapter route family | Same read-only Red route family, readiness and permission mapping; Red's write routes are also hard-disabled at the pinned revision | Added/parity |
 | Community addons | Discovery/install/enable/remove and permission grants | Discovery, immutable hashes, staging, install/enable/remove, permission review, quarantine, iframe sandbox and constrained bridge | Added/DASH exceeds |
+| Creator/modding runtime proof | No unified input-bound lifecycle proof | HMAC-signed disposable canary binds exact base/gallery/retirement/preset/cosmetics/addon inputs and exercises their real supported lifecycles without live database, config, map, or network state | DASH exceeds |
 | Security/release | Non-root service and release/security checks | Secret scan, publication checks, mutation gates, audit log, target safety and validation suite | Parity |
 | Failover/replication | Local single-host operation | Streaming replica, snapshots, promotion/cutback, bidirectional audit and identity bundles | DASH exceeds |
 | Reverse engineering | Operational/admin emphasis | Build-pinned Ghidra, evidence catalogs, loader canaries and safe promotion contracts | DASH exceeds |
@@ -93,6 +94,8 @@ The parity tranche added or expanded these documented surfaces:
   privacy-bounded publication and self-hosted static pull federation.
 - [`discord-adapter.md`](discord-adapter.md): pinned Red-compatible adapter.
 - [`addons.md`](addons.md): community addon lifecycle and containment contract.
+- [`creator-modding-canary.md`](creator-modding-canary.md): signed,
+  input-bound, no-live-state lifecycle proof across creator and modding tools.
 - `scripts/storage-cleanup.sh`: scoped obsolete-image cleanup.
 - `scripts/public-ip-monitor.sh`: automatic advertised-address/TLS lifecycle.
 - `scripts/sietches.sh`: guarded multi-Sietch topology, settings and generated

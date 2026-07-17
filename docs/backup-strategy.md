@@ -58,6 +58,9 @@ The local backup includes:
 - Policy-bound Community Rewards canary receipts inside `operator-evidence.tgz`;
   the matching config archive supplies the HMAC key and the verifier applies
   the canary's strict no-live-data semantics.
+- Input-bound Creator/Modding lifecycle receipts in the same archive; both
+  backup verifiers dispatch their schema and enforce the signed isolation and
+  semantic verdict before accepting the archive.
 - A transactionally consistent `moderation.sqlite3` snapshot when the isolated
   case/history database exists, including the identity-free aggregate
   population buckets used by the player-impact maintenance planner.
