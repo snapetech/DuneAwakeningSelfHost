@@ -390,6 +390,13 @@ only when explicitly authorized for a concrete client task, as required by
   peer catalogue have a shipped DASH parity path. The remaining non-parity
   status is the external Funcom/Tencent voice credential contract; live Discord
   and payment/provider canaries likewise require provider-issued credentials.
+- **High confidence:** DASH now detects when this catalogue itself becomes
+  stale. The default-on peer watcher polls only fixed read-only endpoints for
+  these pinned primary repositories, isolates source failures, retains
+  drift/error/pin transitions, and surfaces them through Discovery, readiness,
+  the signed briefing, verified backups, and label-free alerts. It never changes
+  a pin or treats a commit as a feature before source review; see
+  `docs/peer-watch.md`.
 - **High confidence:** the dapdsm v0.5.0 refresh is closed. DASH preserves its
   existing world-layout, battlegroup, join-password, and player outcomes and now
   exceeds dapdsm's base-cooldown path with a full backup, stopped-map and

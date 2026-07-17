@@ -237,7 +237,7 @@ label-free metrics, and alerts expose every decision without claiming scheduler
 metadata as proof. See [`docs/canary-autopilot.md`](docs/canary-autopilot.md).
 
 The same evidence now has a single operator-facing synthesis. The Overview
-briefing scores 17 authoritative sources, separates critical/warning/provider
+briefing scores 18 authoritative sources, separates critical/warning/provider
 follow-ups, links each action to its existing control surface, and retains only
 meaningful categorical changes in signed private receipts. It cannot execute a
 recommendation or touch maps, players, providers, or clients. See
@@ -258,6 +258,13 @@ acknowledgement without silencing the source, and emits only state transitions
 through the existing signed webhook path. Failed polls resolve nothing, and
 the SQLite history is included in verified backups. See
 [`docs/alert-inbox.md`](docs/alert-inbox.md).
+
+The aggregate ecosystem audit is now continuously checked against its own
+primary-source pins. Discovery shows current, drifted, and unreachable peers;
+the retained watcher isolates failures, wakes the signed briefing on regression
+or recovery, survives verified backup/restore, and exports label-free alerts.
+It never writes upstream or updates an audit pin automatically. See
+[`docs/peer-watch.md`](docs/peer-watch.md).
 
 Game-build upgrades now have their own candidate-bound safety gate. DASH binds
 the exact Steam build and Funcom image tag to a verified backup, isolated
@@ -552,6 +559,7 @@ The admin surface requires authentication by default. Set a high-entropy `DUNE_A
 | Admin Actions | Guarded runtime skill/water/kick/vehicle actions, persistent vehicle maintenance, Landsraad writes, currency/Solari/XP, augments, grants, keystones, stack edits, and deletion. |
 | Admin Digests | Private operator summaries derived from existing presence and operations state. |
 | Catalog | Content insertion evidence, typed knob dry-runs/writes, resource and progression inspection, event planning, economy bundle planning, and gated world/player/economy mutator families. |
+| Discovery | Build/surface evidence plus retained, read-only revision drift against every pinned ecosystem peer repository. |
 
 If the published local admin port accepts TCP but returns no HTTP bytes after a container recreate, refresh the observed Docker bridge neighbor entries:
 
@@ -1168,6 +1176,7 @@ Start here:
 - [`docs/operations-briefing.md`](docs/operations-briefing.md): signed change-aware synthesis of operational evidence into a prioritized Overview queue, with scoring, freshness, backups, metrics, alerts, and a strict non-execution contract.
 - [`docs/operations-calendar.md`](docs/operations-calendar.md): unified scheduler horizon, deterministic conflict/SLO-coverage findings, admission guard, shared-lock maintenance deferral, metrics, alerts, and live validation.
 - [`docs/alert-inbox.md`](docs/alert-inbox.md): durable Prometheus alert ingestion, deduplication, re-fire generations, acknowledgement, signed transition delivery, backups, metrics, readiness, and recovery.
+- [`docs/peer-watch.md`](docs/peer-watch.md): allowlisted primary-repository revision drift, retained transitions, Discovery/API workflow, readiness, briefing, backups, metrics, alerts, and review-only pin closure.
 - [`docs/addons.md`](docs/addons.md): SHA-pinned community UI addon lifecycle, permission approval, quarantine, and sandbox contract.
 - [`compose.admin-restore.yaml`](compose.admin-restore.yaml): temporary read-write data overlay for reviewed browser filesystem restores.
 - [`docs/red-blink-feature-parity-audit.md`](docs/red-blink-feature-parity-audit.md): pinned source comparison, completed operator-feature parity matrix, provenance, and validation limits.

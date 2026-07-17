@@ -194,7 +194,7 @@ Production verification is read-only:
 3. Confirm all `dash_alert_inbox_*` series are scraped.
 4. Confirm both shipped meta-alert rules are loaded and healthy.
 5. Confirm feature readiness reports `alert-inbox` as `ready`.
-6. Confirm the next signed Operator Briefing contains 17 sources and a current
+6. Confirm the next signed Operator Briefing contains 18 sources and a current
    alert-inbox verdict.
 
 Do not create a fake production alert merely to exercise acknowledgement or

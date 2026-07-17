@@ -62,6 +62,7 @@ import canary_autopilot
 import operations_briefing
 import operations_calendar
 import alert_inbox
+import peer_watch
 import moderation
 import base_creator
 import base_retirement
@@ -535,6 +536,16 @@ ALERT_INBOX_POLL_SECONDS = max(10, min(int(os.environ.get("DUNE_ALERT_INBOX_POLL
 ALERT_INBOX_TIMEOUT_SECONDS = max(1.0, min(float(os.environ.get("DUNE_ALERT_INBOX_TIMEOUT_SECONDS", "5")), 30.0))
 ALERT_INBOX_RETENTION_DAYS = max(1, min(int(os.environ.get("DUNE_ALERT_INBOX_RETENTION_DAYS", "90")), 3650))
 ALERT_INBOX_HISTORY_LIMIT = max(100, min(int(os.environ.get("DUNE_ALERT_INBOX_HISTORY_LIMIT", "2000")), 10000))
+PEER_WATCH_ENABLED = os.environ.get("DUNE_PEER_WATCH_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+PEER_WATCH_DATABASE = pathlib.Path(os.environ.get("DUNE_PEER_WATCH_DATABASE", str(BACKUPS_ROOT / "peer-watch" / "watch.sqlite3")))
+PEER_WATCH_CATALOG = pathlib.Path(os.environ.get(
+    "DUNE_PEER_WATCH_CATALOG",
+    str(pathlib.Path(os.environ.get("DUNE_DEPLOYMENT_ASSURANCE_WORKSPACE", str(pathlib.Path(__file__).resolve().parents[1]))) / "docs" / "ecosystem-feature-parity-audit.md"),
+))
+PEER_WATCH_GITHUB_TOKEN_FILE = pathlib.Path(os.environ["DUNE_PEER_WATCH_GITHUB_TOKEN_FILE"]) if os.environ.get("DUNE_PEER_WATCH_GITHUB_TOKEN_FILE") else None
+PEER_WATCH_POLL_SECONDS = max(3600, min(int(os.environ.get("DUNE_PEER_WATCH_POLL_SECONDS", "21600")), 604800))
+PEER_WATCH_TIMEOUT_SECONDS = max(1, min(int(os.environ.get("DUNE_PEER_WATCH_TIMEOUT_SECONDS", "15")), 60))
+PEER_WATCH_HISTORY_LIMIT = max(100, min(int(os.environ.get("DUNE_PEER_WATCH_HISTORY_LIMIT", "5000")), 50000))
 DEPLOYMENT_ASSURANCE_ENABLED = os.environ.get("DUNE_DEPLOYMENT_ASSURANCE_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 DEPLOYMENT_ASSURANCE_ROOT = pathlib.Path(os.environ.get("DUNE_DEPLOYMENT_ASSURANCE_STATE_DIR", str(BACKUPS_ROOT / "deployment-assurance")))
 DEPLOYMENT_ASSURANCE_WORKSPACE = pathlib.Path(os.environ.get("DUNE_DEPLOYMENT_ASSURANCE_WORKSPACE", str(ROOT)))
@@ -602,6 +613,11 @@ ALERT_INBOX_STORE_LOCK = threading.Lock()
 ALERT_INBOX_POLL_LOCK = threading.Lock()
 ALERT_INBOX_WORKER_STARTED = False
 ALERT_INBOX_RUNTIME = {"running": False, "lastPollAt": None, "lastResult": None, "lastError": None}
+PEER_WATCH_STORE = None
+PEER_WATCH_STORE_LOCK = threading.Lock()
+PEER_WATCH_POLL_LOCK = threading.Lock()
+PEER_WATCH_WORKER_STARTED = False
+PEER_WATCH_RUNTIME = {"running": False, "lastPollAt": None, "lastResult": None, "lastError": None}
 MODERATION_STORE = moderation.Store(MODERATION_DATABASE, owner_uid=os.environ.get("DUNE_HOST_UID"), owner_gid=os.environ.get("DUNE_HOST_GID"))
 MODERATION_STORE_INITIALIZED = False
 MODERATION_STORE_LOCK = threading.Lock()
@@ -1012,6 +1028,25 @@ def _feature_readiness_alert_inbox_probe():
     }
 
 
+def _feature_readiness_peer_watch_probe():
+    status = peer_watch_public_status(limit=1)
+    summary = status.get("summary") or {}
+    collector = status.get("collector") or {}
+    ready = bool(
+        status.get("enabled") and status.get("ok") and PEER_WATCH_WORKER_STARTED
+        and status.get("schemaVersion") == peer_watch.SCHEMA
+    )
+    return {
+        "ready": ready,
+        "state": "ready" if ready else "collector-error",
+        "detail": (
+            f"peers={summary.get('total', 0)}; drifted={summary.get('drifted', 0)}; "
+            f"source errors={summary.get('error', 0)}; poll age="
+            f"{collector.get('ageSeconds') if collector.get('ageSeconds') is not None else 'unknown'}s"
+        )[:500],
+    }
+
+
 def _feature_readiness_autoscaler_probe():
     status = autoscaler_public_state(include_inventory=False)
     ready = bool(status.get("enabled") and not status.get("lastError"))
@@ -1190,6 +1225,7 @@ def feature_readiness_public_status(force=False):
         "operations-briefing": _feature_readiness_probe("operations-briefing", _feature_readiness_operations_briefing_probe),
         "operations-calendar": _feature_readiness_probe("operations-calendar", _feature_readiness_operations_calendar_probe),
         "alert-inbox": _feature_readiness_probe("alert-inbox", _feature_readiness_alert_inbox_probe),
+        "peer-watch": _feature_readiness_probe("peer-watch", _feature_readiness_peer_watch_probe),
         "backup-encryption": {
             "ready": bool(encryption.get("enabled") and encryption.get("configured")),
             "state": "ready" if encryption.get("configured") else "recipient-missing",
@@ -1755,6 +1791,14 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ALERT_INBOX_PROMETHEUS_URL": {"group": "Operations", "secret": False, "restart": True, "why": "Private Prometheus origin used for authoritative active-alert polling."},
     "DUNE_ALERT_INBOX_DATABASE": {"group": "Operations", "secret": False, "restart": True, "why": "Container path for private durable alert and acknowledgement state."},
     "DUNE_ALERT_INBOX_HOST_DATABASE": {"group": "Backups", "secret": False, "restart": False, "why": "Host path used by backup and isolated alert-inbox restore helpers."},
+    "DUNE_PEER_WATCH_ENABLED": {"group": "Discovery", "secret": False, "restart": True, "why": "Polls only the pinned primary peer repositories and retains revision drift as operator evidence."},
+    "DUNE_PEER_WATCH_DATABASE": {"group": "Discovery", "secret": False, "restart": True, "why": "Container path for private peer observation and transition state."},
+    "DUNE_PEER_WATCH_HOST_DATABASE": {"group": "Backups", "secret": False, "restart": False, "why": "Host path used to snapshot peer-watch state into full backups."},
+    "DUNE_PEER_WATCH_CATALOG": {"group": "Discovery", "secret": False, "restart": True, "why": "Checked-in aggregate parity audit parsed as the authoritative peer and pin catalogue."},
+    "DUNE_PEER_WATCH_GITHUB_TOKEN_FILE": {"group": "Discovery", "secret": False, "restart": True, "why": "Optional private GitHub token file for a larger API rate limit; token values are never returned."},
+    "DUNE_PEER_WATCH_POLL_SECONDS": {"group": "Discovery", "secret": False, "restart": True, "why": "Bounded interval for primary-repository default-branch observation."},
+    "DUNE_PEER_WATCH_TIMEOUT_SECONDS": {"group": "Discovery", "secret": False, "restart": True, "why": "Per-peer HTTPS timeout; one failed source cannot abort other observations."},
+    "DUNE_PEER_WATCH_HISTORY_LIMIT": {"group": "Discovery", "secret": False, "restart": True, "why": "Hard cap on retained peer drift/error/pin-update transitions."},
     "DUNE_CANARY_AUTOPILOT_POLL_SECONDS": {"group": "Operations", "secret": False, "restart": True, "why": "Bounded cadence for checking isolated proof freshness; it does not set the canary execution frequency."},
     "DUNE_CANARY_AUTOPILOT_REFRESH_BEFORE_HOURS": {"group": "Operations", "secret": False, "restart": True, "why": "Refresh lead time before an otherwise current signed canary receipt expires."},
     "DUNE_CANARY_AUTOPILOT_FAILURE_BACKOFF_SECONDS": {"group": "Operations", "secret": False, "restart": True, "why": "Initial retry delay after an isolated canary fails."},
@@ -5487,6 +5531,19 @@ def operations_briefing_sources():
             f"delivery signed={bool((status.get('delivery') or {}).get('signedWebhooksEnabled'))}",
         )
 
+    def peer_watch_summary():
+        status = peer_watch_public_status(limit=1); summary = status.get("summary") or {}; collector = status.get("collector") or {}
+        drifted = int(summary.get("drifted") or 0)
+        errors = int(summary.get("error") or 0)
+        healthy = bool(status.get("enabled") and status.get("ok") and not drifted and not errors)
+        state = "collector-error" if not status.get("ok") else f"drifted-{drifted}" if drifted else f"source-errors-{errors}" if errors else "current"
+        return (
+            state, healthy,
+            f"current={int(summary.get('current') or 0)}/{int(summary.get('total') or 0)}; "
+            f"drifted={drifted}; source errors={errors}; automatic pin updates=false; "
+            f"collector age={collector.get('ageSeconds') if collector.get('ageSeconds') is not None else 'unknown'}s",
+        )
+
     def restore_summary():
         status = restore_drill_public_status(); latest = status.get("latest") or {}; healthy = bool(status.get("ready") and status.get("ok") and latest)
         return ("proven" if healthy else "proof-required", healthy, f"configured={bool(status.get('ready'))}; latest isolated PostgreSQL restore passed={bool(status.get('ok'))}; receipt={latest.get('id') or 'none'}")
@@ -5527,6 +5584,7 @@ def operations_briefing_sources():
     add("backup-automation", "Automatic full-backup reliability", "critical", "infrastructure:backups", backup_automation_summary)
     add("operations-calendar", "Conflict-aware operations calendar", "critical", "ops:operations-calendar", operations_calendar_summary)
     add("alert-inbox", "Prometheus on-call alert inbox", "critical", "ops:alert-inbox", alert_inbox_summary)
+    add("peer-watch", "Ecosystem peer revision watch", "warning", "discovery:peer-watch", peer_watch_summary)
     add("postgres-recovery", "PostgreSQL recovery proof", "warning", "infrastructure:restore-drill", restore_summary)
     add("rabbitmq-recovery", "RabbitMQ recovery proof", "warning", "infrastructure:rabbitmq-restore-drill", rabbit_summary)
     add("capacity-intelligence", "Capacity and scaling intelligence", "warning", "infrastructure:capacity", capacity_summary)
@@ -5810,6 +5868,154 @@ def ensure_alert_inbox_thread():
         return
     ALERT_INBOX_WORKER_STARTED = True
     threading.Thread(target=alert_inbox_worker, name="alert-inbox-worker", daemon=True).start()
+
+
+def peer_watch_store():
+    global PEER_WATCH_STORE
+    with PEER_WATCH_STORE_LOCK:
+        if PEER_WATCH_STORE is None:
+            PEER_WATCH_STORE = peer_watch.Store(
+                PEER_WATCH_DATABASE,
+                history_limit=PEER_WATCH_HISTORY_LIMIT,
+                owner_uid=os.environ.get("DUNE_HOST_UID"),
+                owner_gid=os.environ.get("DUNE_HOST_GID"),
+            ).initialize()
+        return PEER_WATCH_STORE
+
+
+def peer_watch_token():
+    if PEER_WATCH_GITHUB_TOKEN_FILE is None:
+        return None
+    path = PEER_WATCH_GITHUB_TOKEN_FILE
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("peer-watch GitHub token path must be a regular non-symlink file")
+    if stat.S_IMODE(path.stat().st_mode) & 0o077:
+        raise ValueError("peer-watch GitHub token file must not be group/world accessible")
+    value = path.read_text(encoding="utf-8").strip()
+    if not 20 <= len(value) <= 512 or any(ord(char) < 33 or ord(char) > 126 for char in value):
+        raise ValueError("peer-watch GitHub token file is empty or invalid")
+    return value
+
+
+def peer_watch_poll():
+    if not PEER_WATCH_ENABLED:
+        raise PermissionError("peer watch is disabled; set DUNE_PEER_WATCH_ENABLED=true")
+    if not PEER_WATCH_POLL_LOCK.acquire(blocking=False):
+        raise RuntimeError("peer-watch collection is already in progress")
+    PEER_WATCH_RUNTIME["running"] = True
+    try:
+        peers = peer_watch.parse_catalog(PEER_WATCH_CATALOG)
+        observations = peer_watch.collect(
+            peers, token=peer_watch_token(), timeout=PEER_WATCH_TIMEOUT_SECONDS,
+        )
+        result = peer_watch_store().sync(peers, observations)
+        for transition in result.get("transitions") or []:
+            audit_event(
+                "peer-watch-" + transition["transition"], ok=transition["state"] == "current",
+                peer_id=transition["peerId"], peer_state=transition["state"],
+                game_data_mutation_executed=False, map_lifecycle_invoked=False,
+                external_repository_written=False, client_machine_touched=False,
+            )
+        problems = sum(row["state"] in ("drifted", "error") for row in observations)
+        if result.get("transitions"):
+            request_operations_briefing_refresh("peer-watch:state-change")
+        PEER_WATCH_RUNTIME.update({
+            "lastPollAt": peer_watch.iso(), "lastResult": {
+                "ok": True, "observed": len(observations), "problems": problems,
+                "transitions": len(result.get("transitions") or []),
+            }, "lastError": None,
+        })
+        with FEATURE_READINESS_CACHE_LOCK:
+            FEATURE_READINESS_CACHE.update({"value": None, "updated_at": 0.0})
+        return result
+    except Exception as exc:
+        try:
+            peer_watch_store().record_poll_error(exc)
+        except Exception:
+            pass
+        PEER_WATCH_RUNTIME.update({"lastPollAt": peer_watch.iso(), "lastResult": None, "lastError": str(exc)[:1000]})
+        raise
+    finally:
+        PEER_WATCH_RUNTIME["running"] = False
+        PEER_WATCH_POLL_LOCK.release()
+
+
+def peer_watch_public_status(limit=200):
+    if not PEER_WATCH_ENABLED:
+        return {
+            "ok": True, "enabled": False, "schemaVersion": peer_watch.SCHEMA,
+            "summary": {"total": 0, "current": 0, "drifted": 0, "error": 0, "transitions": 0},
+            "peers": [], "history": [], "runtime": dict(PEER_WATCH_RUNTIME),
+        }
+    try:
+        current_catalog = peer_watch.parse_catalog(PEER_WATCH_CATALOG)
+        current_sha = peer_watch.catalog_sha256(current_catalog)
+        status = peer_watch_store().status(limit=limit)
+        status["catalogCurrent"] = status.get("catalogSha256") == current_sha
+        status["catalogPeers"] = len(current_catalog)
+        if not status["catalogCurrent"]:
+            status["ok"] = False
+            status["error"] = "peer catalogue changed after the last completed observation"
+    except Exception as exc:
+        status = {
+            "ok": False, "schemaVersion": peer_watch.SCHEMA,
+            "summary": {"total": 0, "current": 0, "drifted": 0, "error": 1, "transitions": 0},
+            "peers": [], "history": [], "error": str(exc)[:1000], "catalogCurrent": False,
+        }
+    stale_after = max(7200, PEER_WATCH_POLL_SECONDS * 3)
+    collector = status.get("collector") or {}
+    age = collector.get("ageSeconds")
+    collector["staleAfterSeconds"] = stale_after
+    if age is None or age > stale_after:
+        status["ok"] = False
+        status.setdefault("error", "peer watch has no current successful primary-source poll")
+    status["collector"] = collector
+    status.update({
+        "enabled": True, "pollSeconds": PEER_WATCH_POLL_SECONDS,
+        "timeoutSeconds": PEER_WATCH_TIMEOUT_SECONDS,
+        "runtime": dict(PEER_WATCH_RUNTIME),
+        "executionContract": {
+            "catalogIsAuthority": True, "allowedHosts": sorted(peer_watch.ALLOWED_HOSTS),
+            "redirectsAllowed": False, "upstreamWrites": False,
+            "automaticPinUpdates": False, "secretValuesReturned": False,
+        },
+    })
+    return status
+
+
+def peer_watch_prometheus():
+    if not PEER_WATCH_ENABLED:
+        return "dash_peer_watch_enabled 0\ndash_peer_watch_collector_up 1\ndash_peer_watch_worker_running 0\ndash_peer_watch_peers_total 0\ndash_peer_watch_current 0\ndash_peer_watch_drifted 0\ndash_peer_watch_errors 0\ndash_peer_watch_transitions_total 0\ndash_peer_watch_last_success_timestamp_seconds 0\ndash_peer_watch_age_seconds 0\n"
+    try:
+        output = peer_watch_store().prometheus(
+            enabled=True, worker_running=PEER_WATCH_WORKER_STARTED,
+            stale_after_seconds=max(7200, PEER_WATCH_POLL_SECONDS * 3),
+        )
+        if not peer_watch_public_status(limit=1).get("ok"):
+            output = re.sub(r"(?m)^dash_peer_watch_collector_up 1$", "dash_peer_watch_collector_up 0", output)
+        return output
+    except Exception:
+        return "dash_peer_watch_enabled 1\ndash_peer_watch_collector_up 0\ndash_peer_watch_worker_running 0\ndash_peer_watch_peers_total 0\ndash_peer_watch_current 0\ndash_peer_watch_drifted 0\ndash_peer_watch_errors 1\ndash_peer_watch_transitions_total 0\ndash_peer_watch_last_success_timestamp_seconds 0\ndash_peer_watch_age_seconds 0\n"
+
+
+def peer_watch_worker():
+    while True:
+        try:
+            peer_watch_poll()
+        except RuntimeError as exc:
+            if "already in progress" not in str(exc):
+                PEER_WATCH_RUNTIME["lastError"] = str(exc)[:1000]
+        except Exception as exc:
+            PEER_WATCH_RUNTIME["lastError"] = str(exc)[:1000]
+        time.sleep(PEER_WATCH_POLL_SECONDS)
+
+
+def ensure_peer_watch_thread():
+    global PEER_WATCH_WORKER_STARTED
+    if not PEER_WATCH_ENABLED or PEER_WATCH_WORKER_STARTED:
+        return
+    PEER_WATCH_WORKER_STARTED = True
+    threading.Thread(target=peer_watch_worker, name="peer-watch-worker", daemon=True).start()
 
 
 def maintenance_outcome_public_status(limit=100):
@@ -7561,7 +7767,7 @@ def verify_backup_set_native(path):
             errors.append(f"FAIL canary autopilot scheduler state {canary_state}: {exc}")
     else:
         output.append(f"WARN no canary-autopilot.json found in {path}")
-    for name in ("community-rewards.sqlite3", "moderation.sqlite3", "base-gallery.sqlite3", "operational-slo.sqlite3", "capacity-intelligence.sqlite3", "desired-state.sqlite3", "change-intelligence.sqlite3", "feature-readiness-history.sqlite3", "alert-inbox.sqlite3", "credential-lifecycle.sqlite3", "change-approvals.sqlite3"):
+    for name in ("community-rewards.sqlite3", "moderation.sqlite3", "base-gallery.sqlite3", "operational-slo.sqlite3", "capacity-intelligence.sqlite3", "desired-state.sqlite3", "change-intelligence.sqlite3", "feature-readiness-history.sqlite3", "alert-inbox.sqlite3", "peer-watch.sqlite3", "credential-lifecycle.sqlite3", "change-approvals.sqlite3"):
         database = path / name
         if not database.is_file():
             output.append(f"WARN no {name} found in {path}")
@@ -7590,6 +7796,14 @@ def verify_backup_set_native(path):
             output.append(f"OK alert-inbox schema {alert_database}")
         except (sqlite3.Error, ValueError) as exc:
             errors.append(f"FAIL alert-inbox schema {alert_database}: {exc}")
+    peer_database = path / "peer-watch.sqlite3"
+    if peer_database.exists():
+        try:
+            if not peer_watch.verify_database(peer_database).get("ok"):
+                raise ValueError("required peer-watch schema is missing")
+            output.append(f"OK peer-watch schema {peer_database}")
+        except Exception as exc:
+            errors.append(f"FAIL peer-watch schema {peer_database}: {exc}")
     capacity_database = path / "capacity-intelligence.sqlite3"
     if capacity_database.is_file():
         capacity_check = capacity_intelligence.Store(capacity_database, CAPACITY_INTELLIGENCE_POLICY).verify()
@@ -10873,6 +11087,7 @@ def create_maintenance_backup(job):
         ("baseGallery", BASE_CREATOR_ENABLED, BASE_GALLERY_DATABASE, "base-gallery.sqlite3", base_gallery),
         ("featureReadinessHistory", FEATURE_READINESS_HISTORY_ENABLED, FEATURE_READINESS_HISTORY_DATABASE, "feature-readiness-history.sqlite3", feature_readiness_history_store),
         ("alertInbox", ALERT_INBOX_ENABLED, ALERT_INBOX_DATABASE, "alert-inbox.sqlite3", alert_inbox_store),
+        ("peerWatch", PEER_WATCH_ENABLED, PEER_WATCH_DATABASE, "peer-watch.sqlite3", peer_watch_store),
     )
     for artifact, enabled, source, name, initialize in sqlite_artifacts:
         if not enabled:
@@ -11849,6 +12064,7 @@ class Handler(BaseHTTPRequestHandler):
                 metrics += backup_schedule_prometheus()
                 metrics += operations_calendar_prometheus()
                 metrics += alert_inbox_prometheus()
+                metrics += peer_watch_prometheus()
                 metrics += rabbitmq_restore_drill_prometheus()
                 if UPDATE_READINESS_ENABLED:
                     try:
@@ -12180,6 +12396,16 @@ class Handler(BaseHTTPRequestHandler):
                         if "already in progress" not in str(exc):
                             raise
                 self.json(alert_inbox_public_status(limit=(params.get("limit") or ["200"])[0]))
+            elif parsed.path == "/api/ops/peer-watch":
+                self.require_token()
+                params = urllib.parse.parse_qs(parsed.query)
+                if str((params.get("refresh") or [""])[0]).lower() in ("1", "true", "yes", "on"):
+                    try:
+                        peer_watch_poll()
+                    except RuntimeError as exc:
+                        if "already in progress" not in str(exc):
+                            raise
+                self.json(peer_watch_public_status(limit=(params.get("limit") or ["200"])[0]))
             elif parsed.path == "/api/ops/backups/download":
                 self.require_token()
                 params = urllib.parse.parse_qs(parsed.query)
@@ -22501,7 +22727,7 @@ async function settings(serial=loadSerial){
 }
 
 async function discovery(serial=loadSerial){
-  const data = await api('/api/discovery');
+  const [data,peerWatch] = await Promise.all([api('/api/discovery'),api('/api/ops/peer-watch')]);
   if (serial !== loadSerial) return;
   const surfaces = data.surfaces || [];
   const builds = data.builds || [];
@@ -22524,7 +22750,9 @@ async function discovery(serial=loadSerial){
     risk: s.risk
   })));
   const buildRows = builds.map(b => ({build:b.build, files:(b.files || []).length, path:b.path}));
-  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Discovery</h2><div class="toolbar"><span class="pill ${data.ok ? 'ok' : 'warn'}">ledger ${data.ok ? 'clean' : 'check'}</span><span class="pill">surfaces ${surfaces.length}</span><span class="pill">builds ${builds.length}</span><button data-jump="catalog">Catalog</button><button data-jump="settings">Settings</button></div></div><div class="panelBand"><p class="muted">Discovery is read-only here. Generated build ledgers live under <code>build/&lt;image-tag&gt;</code>; JSONL source lives under <code>research/surfaces</code>.</p></div><div class="twoCol"><div class="panelBand"><h2>Promotion Queue</h2>${table(queueRows)}</div><div class="panelBand"><h2>Build Ledgers</h2>${table(buildRows)}</div></div><div class="panelBand"><h2>Evidence Ledger</h2>${table(surfaceRows)}</div><details class="panelBand"><summary>Raw discovery payload</summary><pre>${esc(JSON.stringify(data, null, 2))}</pre></details></div>`;
+  const peerSummary=peerWatch.summary||{}, peerRows=(peerWatch.peers||[]).map(row=>({peer:row.name,id:row.peerId,state:row.state,pinned:String(row.pinned||'').slice(0,12),observed:String(row.observedHead||'').slice(0,12),lastObserved:row.lastObservedAt,error:row.error||''}));
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Discovery</h2><div class="toolbar"><span class="pill ${data.ok ? 'ok' : 'warn'}">ledger ${data.ok ? 'clean' : 'check'}</span><span class="pill">surfaces ${surfaces.length}</span><span class="pill">builds ${builds.length}</span><span class="pill ${peerWatch.ok?'ok':'bad'}">peer watch ${peerWatch.ok?'current':'check'}</span><button data-jump="catalog">Catalog</button><button data-jump="settings">Settings</button></div></div><div class="panelBand"><p class="muted">Discovery is read-only here. Generated build ledgers live under <code>build/&lt;image-tag&gt;</code>; JSONL source lives under <code>research/surfaces</code>.</p></div><div class="panelBand"><div class="sectionHeader"><h2>Ecosystem Peer Watch</h2><div class="toolbar"><span class="pill ${Number(peerSummary.drifted||0)?'warn':'ok'}">drifted ${esc(peerSummary.drifted||0)}</span><span class="pill ${Number(peerSummary.error||0)?'bad':'ok'}">source errors ${esc(peerSummary.error||0)}</span><span class="pill">current ${esc(peerSummary.current||0)} / ${esc(peerSummary.total||0)}</span><button id="peerWatchRefreshBtn">Poll primary repositories now</button></div></div><p class="muted">The checked-in aggregate parity audit is the authority. DASH polls only allowlisted pinned GitHub/Forgejo primary repositories, retains revision transitions, never changes a pin automatically, never writes upstream, and never treats a new commit as a feature until its diff is reviewed.</p>${table(peerRows)}<details><summary>Recent peer transitions</summary>${table(peerWatch.history||[])}</details><pre id="peerWatchResult">${esc(peerWatch.error||'No collector error.')}</pre></div><div class="twoCol"><div class="panelBand"><h2>Promotion Queue</h2>${table(queueRows)}</div><div class="panelBand"><h2>Build Ledgers</h2>${table(buildRows)}</div></div><div class="panelBand"><h2>Evidence Ledger</h2>${table(surfaceRows)}</div><details class="panelBand"><summary>Raw discovery payload</summary><pre>${esc(JSON.stringify(data, null, 2))}</pre></details></div>`;
+  document.getElementById('peerWatchRefreshBtn').onclick=async()=>{const button=document.getElementById('peerWatchRefreshBtn');await runAction(button,'Polling…',async()=>{const result=await api('/api/ops/peer-watch?refresh=1',{timeoutMs:120000});document.getElementById('peerWatchResult').textContent=JSON.stringify({summary:result.summary,collector:result.collector,error:result.error},null,2);notify(Number(result.summary?.drifted||0)?'Peer revision drift requires review':'Peer catalogue is current',Number(result.summary?.drifted||0)?'warn':'ok');await discovery();})};
   if ((data.errors || []).length) {
     view.querySelector('.pageStack').insertAdjacentHTML('afterbegin', `<div class="panelBand"><h2>Discovery Errors</h2><pre>${esc((data.errors || []).join('\\n'))}</pre></div>`);
   }
@@ -23390,6 +23618,7 @@ def main():
     ensure_moderation_worker_thread()
     ensure_canary_autopilot_thread()
     ensure_alert_inbox_thread()
+    ensure_peer_watch_thread()
     ensure_operations_briefing_thread()
     bind = os.environ.get("DUNE_ADMIN_BIND", "0.0.0.0")
     port = int(os.environ.get("DUNE_ADMIN_PORT", "8080"))

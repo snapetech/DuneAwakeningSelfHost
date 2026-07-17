@@ -184,6 +184,11 @@ fingerprints, operators, and notes remain in the authenticated API. Meta-alerts
 cover an invalid collector and stopped worker; DASH does not alert on its own
 unacknowledged metric because that could create a self-latching alert. See
 [`alert-inbox.md`](alert-inbox.md).
+Ecosystem Peer Watch adds label-free enablement, collector/worker health,
+current/drifted/error peer totals, transition count, last-success time, and
+collector age. Repository identity, URL, commit pins/heads, and error detail
+remain in the authenticated Discovery API. Rules distinguish collector failure,
+revision drift, and isolated source errors; see [`peer-watch.md`](peer-watch.md).
 Validate the exact Prometheus version and rules with:
 
 ```bash

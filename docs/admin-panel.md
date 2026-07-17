@@ -303,6 +303,11 @@ server {
 - Typed logout/reconnect timer editor for `config/UserGame.ini` under Settings -> Logout and Reconnect Timers.
 - Typed Director character-transfer settings editor for `config/director.ini`.
 - Catalog tab for content-insertion surfaces, evidence levels, validation commands, typed knob dry-runs, spice/resource inspection, event dry-runs, and economy bundle dry-runs.
+- Discovery tab for build/surface evidence and the retained ecosystem peer
+  revision watch. `GET /api/ops/peer-watch` reports allowlisted primary-source
+  pin drift, source failures, collector freshness, and transition history;
+  `?refresh=1` performs an authenticated immediate poll but never updates a pin
+  or writes upstream. See [`peer-watch.md`](peer-watch.md).
 - Read-only content catalog APIs:
   - `GET /api/catalog/surfaces`
   - `GET /api/catalog/evidence`

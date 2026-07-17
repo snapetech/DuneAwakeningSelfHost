@@ -730,6 +730,22 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
             self.assertEqual([], captured["errors"], route)
             self.assertIsNotNone(captured["json"], route)
 
+    def test_peer_watch_route_and_discovery_ui_expose_non_mutating_drift_contract(self):
+        original = self.panel.peer_watch_public_status
+        self.panel.peer_watch_public_status = lambda limit=200: {
+            "ok": True, "enabled": True, "schemaVersion": "dash-peer-watch/v1",
+            "summary": {"total": 32, "current": 31, "drifted": 1, "error": 0, "transitions": 2},
+            "peers": [], "history": [], "collector": {"ageSeconds": 10},
+        }
+        self.addCleanup(lambda: setattr(self.panel, "peer_watch_public_status", original))
+        handler, captured = self.make_route_handler("/api/ops/peer-watch")
+        handler.do_GET()
+        self.assertEqual([], captured["errors"])
+        self.assertEqual(1, captured["json"]["summary"]["drifted"])
+        self.assertIn("Ecosystem Peer Watch", self.panel.INDEX)
+        self.assertIn("never changes a pin automatically", self.panel.INDEX)
+        self.assertIn("/api/ops/peer-watch?refresh=1", self.panel.INDEX)
+
     def test_read_only_inspectors_expose_safe_mutator_metadata(self):
         def fake_query(sql, params=None):
             if "from dune.player_state" in sql:

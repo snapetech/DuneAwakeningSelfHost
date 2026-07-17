@@ -397,6 +397,33 @@ else
   fi
 fi
 
+if [[ -f "$backup_dir/peer-watch.sqlite3" ]]; then
+  if PYTHONPATH="$repo_root/admin" python3 - "$backup_dir/peer-watch.sqlite3" <<'PY'
+import pathlib
+import sys
+import peer_watch
+
+database = pathlib.Path(sys.argv[1])
+try:
+    raise SystemExit(0 if peer_watch.verify_database(database).get("ok") else 1)
+except (OSError, ValueError):
+    raise SystemExit(1)
+PY
+  then
+    printf 'OK peer-watch SQLite snapshot and schema %s\n' "$backup_dir/peer-watch.sqlite3"
+  else
+    printf 'FAIL peer-watch SQLite snapshot or schema %s\n' "$backup_dir/peer-watch.sqlite3" >&2
+    ok=false
+  fi
+else
+  if [[ -f "$backup_dir/manifest.txt" ]] && rg -q '^peer_watch_required=true$' "$backup_dir/manifest.txt"; then
+    printf 'FAIL enabled peer-watch snapshot is missing from %s\n' "$backup_dir" >&2
+    ok=false
+  else
+    printf 'WARN no peer-watch.sqlite3 found in %s\n' "$backup_dir"
+  fi
+fi
+
 credential_lifecycle_artifacts=0
 for artifact in credential-lifecycle.sqlite3 credential-lifecycle.anchor.json; do
   [[ -f "$backup_dir/$artifact" ]] && credential_lifecycle_artifacts=$((credential_lifecycle_artifacts + 1))

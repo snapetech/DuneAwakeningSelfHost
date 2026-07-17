@@ -31,6 +31,13 @@ administration, creator tooling, moderation, community rewards, Discord,
 federated login, webhooks, public discovery, multi-Sietch topology, public-IP
 repair, encrypted backups, and networkless RabbitMQ recovery proof.
 
+Ecosystem Peer Watch is a distinct Discovery feature. Its runtime probe proves
+that the retained SQLite store is valid, the worker started, the authoritative
+checked-in peer catalogue matches the last completed observation, and the poll
+is fresh. Revision drift and isolated source errors remain explicit operational
+findings; they do not masquerade as missing implementation. See
+[`peer-watch.md`](peer-watch.md).
+
 Credential Lifecycle is a distinct Trust feature. Its probe evaluates 19
 activation-aware sources, private permissions, observed rotation history, and
 newest-backup coverage without returning values or fingerprints. External

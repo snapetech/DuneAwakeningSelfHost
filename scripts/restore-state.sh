@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/restore-state.sh [--dry-run] [--rabbitmq] [--server-saved] [--config] [--tls] [--community-rewards] [--moderation] [--base-gallery] [--operational-slo] [--capacity-intelligence] [--desired-state] [--change-intelligence] [--alert-inbox] [--credential-lifecycle] [--change-approvals] [--audit-ledger] [env-file] <backup-dir>
+Usage: ./scripts/restore-state.sh [--dry-run] [--rabbitmq] [--server-saved] [--config] [--tls] [--community-rewards] [--moderation] [--base-gallery] [--operational-slo] [--capacity-intelligence] [--desired-state] [--change-intelligence] [--alert-inbox] [--peer-watch] [--credential-lifecycle] [--change-approvals] [--audit-ledger] [env-file] <backup-dir>
 
 Restores the Postgres dump from a backup created by scripts/backup-state.sh.
 RabbitMQ and server saved-state archives are restored only when their flags are
@@ -14,7 +14,7 @@ world identity, secrets, local tuning, and RabbitMQ certificate material.
 Examples:
   ./scripts/restore-state.sh --dry-run .env backups/20260519T150000Z
   ./scripts/restore-state.sh .env backups/20260519T150000Z
-  ./scripts/restore-state.sh --rabbitmq --server-saved --config --tls --community-rewards --moderation --base-gallery --operational-slo --capacity-intelligence --desired-state --change-intelligence --alert-inbox --credential-lifecycle --change-approvals --audit-ledger .env backups/20260519T150000Z
+  ./scripts/restore-state.sh --rabbitmq --server-saved --config --tls --community-rewards --moderation --base-gallery --operational-slo --capacity-intelligence --desired-state --change-intelligence --alert-inbox --peer-watch --credential-lifecycle --change-approvals --audit-ledger .env backups/20260519T150000Z
 EOF
 }
 
@@ -31,6 +31,7 @@ restore_capacity_intelligence=false
 restore_desired_state=false
 restore_change_intelligence=false
 restore_alert_inbox=false
+restore_peer_watch=false
 restore_credential_lifecycle=false
 restore_change_approvals=false
 restore_audit_ledger=false
@@ -87,6 +88,10 @@ while [[ "${1:-}" == --* ]]; do
       ;;
     --alert-inbox)
       restore_alert_inbox=true
+      shift
+      ;;
+    --peer-watch)
+      restore_peer_watch=true
       shift
       ;;
     --credential-lifecycle)
@@ -252,6 +257,20 @@ finally:
     db.close()
 if integrity != "ok" or not {"alerts","transitions","metadata"} <= tables or alert_inbox.SCHEMA != "dash-alert-inbox/v1":
     raise SystemExit("alert-inbox snapshot verification failed")
+PY
+fi
+if [[ "$restore_peer_watch" == true ]]; then
+  if [[ ! -f "${backup_dir}/peer-watch.sqlite3" ]]; then
+    printf 'peer-watch snapshot not found: %s\n' "${backup_dir}/peer-watch.sqlite3" >&2
+    exit 1
+  fi
+  PYTHONPATH=admin python3 - "${backup_dir}/peer-watch.sqlite3" <<'PY'
+import pathlib
+import sys
+import peer_watch
+path=pathlib.Path(sys.argv[1])
+if not peer_watch.verify_database(path).get("ok"):
+    raise SystemExit("peer-watch snapshot verification failed")
 PY
 fi
 if [[ "$restore_credential_lifecycle" == true ]]; then
@@ -443,6 +462,14 @@ if [[ "$restore_alert_inbox" == true ]]; then
   chmod 700 "$(dirname "$alert_inbox_target")"
   rm -f "${alert_inbox_target}-wal" "${alert_inbox_target}-shm"
   install -m 600 "${backup_dir}/alert-inbox.sqlite3" "$alert_inbox_target"
+fi
+if [[ "$restore_peer_watch" == true ]]; then
+  peer_watch_target="${DUNE_PEER_WATCH_HOST_DATABASE:-backups/peer-watch/watch.sqlite3}"
+  printf 'restoring verified ecosystem peer-watch state from %s\n' "${backup_dir}/peer-watch.sqlite3"
+  mkdir -p "$(dirname "$peer_watch_target")"
+  chmod 700 "$(dirname "$peer_watch_target")"
+  rm -f "${peer_watch_target}-wal" "${peer_watch_target}-shm"
+  install -m 600 "${backup_dir}/peer-watch.sqlite3" "$peer_watch_target"
 fi
 if [[ "$restore_credential_lifecycle" == true ]]; then
   printf 'restoring HMAC-verified credential lifecycle ledger and authenticated head from %s\n' "$backup_dir"

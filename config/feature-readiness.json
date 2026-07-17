@@ -149,6 +149,22 @@
       "remediation": {"surface": "operations", "summary": "Repair the named Prometheus poll or private SQLite state failure; never treat a failed poll or acknowledgement as source resolution."}
     },
     {
+      "id": "peer-watch",
+      "title": "Ecosystem peer revision watch",
+      "group": "Discovery",
+      "description": "The checked-in parity catalogue is machine-read, every allowlisted primary repository is polled, and revision drift/error transitions are retained and alertable.",
+      "documentation": "docs/peer-watch.md",
+      "primaryGate": "DUNE_PEER_WATCH_ENABLED",
+      "gates": ["DUNE_PEER_WATCH_ENABLED"],
+      "credentials": [],
+      "files": [{"path": "admin/peer_watch.py", "minimumBytes": 1000}, {"path": "docs/ecosystem-feature-parity-audit.md", "minimumBytes": 1000}],
+      "services": ["admin-panel"],
+      "probe": "peer-watch",
+      "dependencies": [],
+      "canary": "runtime-proven",
+      "remediation": {"surface": "discovery", "summary": "Review drifted primary revisions against the pinned feature matrix; repair named source/API errors without changing pins blindly."}
+    },
+    {
       "id": "metrics-history",
       "title": "Retained metrics and history",
       "group": "Observability",

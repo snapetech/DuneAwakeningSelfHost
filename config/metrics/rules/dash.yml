@@ -467,3 +467,18 @@ groups:
         for: 5m
         labels: {severity: critical}
         annotations: {summary: "The DASH on-call alert inbox is enabled but its polling worker is not running"}
+      - alert: DashPeerWatchCollectorInvalid
+        expr: dash_peer_watch_enabled == 1 and dash_peer_watch_collector_up == 0
+        for: 15m
+        labels: {severity: warning}
+        annotations: {summary: "DASH cannot currently verify the pinned ecosystem peer catalogue"}
+      - alert: DashPeerRevisionDrift
+        expr: dash_peer_watch_drifted > 0
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "One or more pinned Dune hosting peers have advanced and require a feature review"}
+      - alert: DashPeerWatchSourceErrors
+        expr: dash_peer_watch_errors > 0
+        for: 30m
+        labels: {severity: warning}
+        annotations: {summary: "One or more pinned peer repositories cannot be observed"}

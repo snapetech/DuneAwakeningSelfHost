@@ -98,6 +98,18 @@ if [[ "$alert_inbox_required" == true && -z "$alert_inbox_snapshot" && "$dry_run
   printf 'enabled alert inbox is unavailable to host backup: %s\n' "$alert_inbox_db" >&2
   exit 1
 fi
+peer_watch_db="${DUNE_PEER_WATCH_HOST_DATABASE:-backups/peer-watch/watch.sqlite3}"
+peer_watch_snapshot=""
+[[ -f "$peer_watch_db" ]] && peer_watch_snapshot="peer-watch.sqlite3"
+peer_watch_enabled="$(env_value DUNE_PEER_WATCH_ENABLED)"
+case "${peer_watch_enabled,,}" in
+  ""|1|true|yes|on) peer_watch_required=true ;;
+  *) peer_watch_required=false ;;
+esac
+if [[ "$peer_watch_required" == true && -z "$peer_watch_snapshot" && "$dry_run" == false ]]; then
+  printf 'enabled peer watch is unavailable to host backup: %s\n' "$peer_watch_db" >&2
+  exit 1
+fi
 canary_autopilot_state="${DUNE_CANARY_AUTOPILOT_HOST_STATE_FILE:-backups/admin-panel/canary-autopilot.json}"
 canary_autopilot_snapshot=""
 [[ -f "$canary_autopilot_state" ]] && canary_autopilot_snapshot="canary-autopilot.json"
@@ -239,6 +251,13 @@ if [[ "$dry_run" == true ]]; then
     printf 'alert_inbox_snapshot=<required but unavailable %s>\n' "$alert_inbox_db"
   else
     printf 'alert_inbox_snapshot=<not initialized>\n'
+  fi
+  if [[ -f "$peer_watch_db" ]]; then
+    printf 'peer_watch_snapshot=peer-watch.sqlite3\n'
+  elif [[ "$peer_watch_required" == true ]]; then
+    printf 'peer_watch_snapshot=<required but unavailable %s>\n' "$peer_watch_db"
+  else
+    printf 'peer_watch_snapshot=<not initialized>\n'
   fi
   if [[ -f "$canary_autopilot_state" ]]; then
     printf 'canary_autopilot_snapshot=canary-autopilot.json\n'
@@ -474,6 +493,21 @@ PY
   chmod 600 "${backup_dir}/alert-inbox.sqlite3"
 fi
 
+if [[ -f "$peer_watch_db" ]]; then
+  python3 - "$peer_watch_db" "${backup_dir}/peer-watch.sqlite3" <<'PY'
+import sqlite3
+import sys
+source=sqlite3.connect(f"file:{sys.argv[1]}?mode=ro",uri=True)
+target=sqlite3.connect(sys.argv[2])
+try:
+    source.backup(target)
+    if target.execute("pragma integrity_check").fetchone()[0]!="ok": raise SystemExit("peer-watch snapshot failed integrity_check")
+finally:
+    target.close(); source.close()
+PY
+  chmod 600 "${backup_dir}/peer-watch.sqlite3"
+fi
+
 if [[ -f "$canary_autopilot_state" ]]; then
   PYTHONPATH="$repo_root/admin" python3 - "$canary_autopilot_state" "${backup_dir}/canary-autopilot.json" <<'PY'
 import json
@@ -621,6 +655,8 @@ change_intelligence_snapshot=${change_intelligence_snapshot}
 feature_readiness_history_snapshot=${feature_readiness_history_snapshot}
 alert_inbox_snapshot=${alert_inbox_snapshot}
 alert_inbox_required=${alert_inbox_required}
+peer_watch_snapshot=${peer_watch_snapshot}
+peer_watch_required=${peer_watch_required}
 canary_autopilot_snapshot=${canary_autopilot_snapshot}
 credential_lifecycle_snapshot=${credential_lifecycle_snapshot}
 credential_lifecycle_anchor=${credential_lifecycle_anchor_snapshot}
