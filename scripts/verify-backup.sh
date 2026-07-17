@@ -596,11 +596,31 @@ else
 fi
 
 if [[ -f "$backup_dir/manifest.json" ]]; then
-  if command -v jq >/dev/null 2>&1; then
-    jq . "$backup_dir/manifest.json" >/dev/null
+  if python3 - "$backup_dir/manifest.json" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+document = json.loads(path.read_text(encoding="utf-8"))
+coverage = document.get("coverage")
+if coverage is not None:
+    required = coverage.get("required") or []
+    captured = coverage.get("captured") or []
+    missing = coverage.get("missing") or []
+    if (
+        coverage.get("schemaVersion") != "dash-full-backup-coverage/v1"
+        or not coverage.get("complete") or missing or set(required) != set(captured)
+        or any(name not in (document.get("artifacts") or {}) for name in required)
+    ):
+        raise SystemExit(1)
+    print(f"OK full-backup coverage {len(required)}/{len(required)} required artifacts")
+PY
+  then
     printf 'OK manifest %s\n' "$backup_dir/manifest.json"
   else
-    printf 'SKIP jq not available for %s\n' "$backup_dir/manifest.json"
+    printf 'FAIL manifest or full-backup coverage declaration %s\n' "$backup_dir/manifest.json" >&2
+    ok=false
   fi
 elif [[ -f "$backup_dir/manifest.txt" ]]; then
   printf 'OK manifest %s\n' "$backup_dir/manifest.txt"

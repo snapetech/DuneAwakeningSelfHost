@@ -417,3 +417,23 @@ groups:
         for: 5m
         labels: {severity: critical}
         annotations: {summary: "The current signed DASH operator briefing contains one or more critical actions"}
+      - alert: DashBackupScheduleCollectorInvalid
+        expr: dash_backup_schedule_collector_up == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "DASH cannot read the automatic full-backup scheduler state"}
+      - alert: DashBackupScheduleWorkerStopped
+        expr: dash_backup_schedule_enabled == 1 and dash_backup_schedule_worker_running == 0
+        for: 5m
+        labels: {severity: critical}
+        annotations: {summary: "Automatic full backups are enabled but the DASH scheduler worker is not running"}
+      - alert: DashBackupScheduleRunFailed
+        expr: dash_backup_schedule_enabled == 1 and dash_backup_schedule_last_run_timestamp_seconds > 0 and dash_backup_schedule_last_run_ok == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "The latest automatic full backup failed coverage or verification"}
+      - alert: DashBackupScheduleOverdue
+        expr: dash_backup_schedule_enabled == 1 and dash_backup_schedule_overdue_seconds > 900
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "An automatic full backup remains overdue beyond its lock/failure retry window"}

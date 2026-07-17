@@ -63,7 +63,7 @@ for support in \
   admin/creator_canary.py admin/public_ip_canary.py admin/canary_autopilot.py admin/operations_briefing.py admin/addon_admin.py admin/base_creator.py admin/base_retirement.py admin/cosmetics_admin.py admin/gameplay_presets.py \
   admin/feature_readiness_history.py admin/maintenance_planner.py admin/maintenance_outcomes.py admin/rabbitmq_restore_drill.py admin/restore_drill.py \
   admin/update_readiness.py scripts/deployment-assurance.py \
-  scripts/assured-control-plane-deploy.sh scripts/verify-backup.sh scripts/public-ip-monitor.sh scripts/generate-rabbitmq-cert.sh \
+  scripts/assured-control-plane-deploy.sh scripts/backup-state.sh scripts/verify-backup.sh scripts/public-ip-monitor.sh scripts/generate-rabbitmq-cert.sh \
   scripts/check-rabbitmq-cert-sans.sh scripts/restart-target.sh scripts/install-public-ip-monitor.sh \
   config/systemd/dune-public-ip-monitor.service config/systemd/dune-public-ip-monitor.timer; do
   grep -Fxq "$support" "$work/files.list" || printf '%s\n' "$support" >>"$work/files.list"

@@ -723,6 +723,13 @@ It writes:
 
 The helper intentionally writes only under `backups/`, which is ignored by git. Restore also refuses backup directories outside `backups/` so local artifacts do not drift into publishable paths.
 
+Host backups serialize with Admin-panel manual/scheduled backups and the entire
+assured deployment workflow through `backups/admin-panel/operation.lock`.
+Standalone callers wait up to `DUNE_OPERATION_LOCK_WAIT_SECONDS`; scheduled
+panel runs record a deferral and retry without counting lock contention as a
+backup failure. Configure coverage-checked schedules, retries, retention, and
+monitoring as described in [`automatic-backups.md`](automatic-backups.md).
+
 Manual Postgres dump:
 
 ```bash

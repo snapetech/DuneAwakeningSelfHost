@@ -196,6 +196,14 @@ The host runner creates three verified backup sets:
 - final state containing the completed signed receipt in
   `operator-evidence.tgz`.
 
+Before it creates or validates the pre-change set, the runner acquires
+`backups/admin-panel/operation.lock` and holds it through final verification.
+Panel backups and standalone `scripts/backup-state.sh` use the same inode.
+Scheduled runs therefore defer instead of snapshotting a changing deployment;
+standalone host backups wait up to `DUNE_OPERATION_LOCK_WAIT_SECONDS`. Nested
+backups in this workflow inherit the lock and do not deadlock by reacquiring
+it. See [`automatic-backups.md`](automatic-backups.md).
+
 Each required backup gets at most three attempts. A live file changing during
 tar creation, failed dump, failed archive, or failed verifier remains a failed
 attempt; the workflow never suppresses the error or relabels a partial set.

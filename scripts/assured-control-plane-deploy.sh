@@ -57,6 +57,19 @@ read_env() {
   awk -F= -v key="$1" '$1 == key {sub(/^[^=]*=/, ""); print}' "$env_file" | tail -1 | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//"
 }
 
+command -v flock >/dev/null 2>&1 || { printf 'flock is required for assured deployment serialization\n' >&2; exit 1; }
+operation_lock="${DUNE_OPERATION_LOCK_FILE:-backups/admin-panel/operation.lock}"
+operation_lock_wait="${DUNE_OPERATION_LOCK_WAIT_SECONDS:-$(read_env DUNE_OPERATION_LOCK_WAIT_SECONDS)}"
+operation_lock_wait="${operation_lock_wait:-1800}"
+[[ "$operation_lock_wait" =~ ^[0-9]+$ ]] || { printf 'DUNE_OPERATION_LOCK_WAIT_SECONDS must be a non-negative integer\n' >&2; exit 1; }
+mkdir -p "$(dirname -- "$operation_lock")"
+exec 8>"$operation_lock"
+if ! flock -w "$operation_lock_wait" 8; then
+  printf 'timed out waiting for the shared backup/deployment operation lock: %s\n' "$operation_lock" >&2
+  exit 1
+fi
+export DUNE_OPERATION_LOCK_HELD=true
+
 token="$(read_env DUNE_ADMIN_TOKEN)"
 [[ -n "$token" ]] || { printf 'DUNE_ADMIN_TOKEN is required\n' >&2; exit 1; }
 admin_port="$(read_env DUNE_ADMIN_HOST_PORT)"

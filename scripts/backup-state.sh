@@ -272,6 +272,26 @@ if ! command -v "$container_runtime" >/dev/null 2>&1; then
   exit 1
 fi
 
+if [[ "${DUNE_OPERATION_LOCK_HELD:-false}" != true ]]; then
+  if ! command -v flock >/dev/null 2>&1; then
+    printf 'flock is required to serialize backups with assured deployments\n' >&2
+    exit 1
+  fi
+  operation_lock="${DUNE_OPERATION_LOCK_FILE:-backups/admin-panel/operation.lock}"
+  operation_lock_wait="${DUNE_OPERATION_LOCK_WAIT_SECONDS:-$(env_value DUNE_OPERATION_LOCK_WAIT_SECONDS)}"
+  operation_lock_wait="${operation_lock_wait:-1800}"
+  [[ "$operation_lock_wait" =~ ^[0-9]+$ ]] || {
+    printf 'DUNE_OPERATION_LOCK_WAIT_SECONDS must be a non-negative integer\n' >&2
+    exit 1
+  }
+  mkdir -p "$(dirname -- "$operation_lock")"
+  exec 8>"$operation_lock"
+  if ! flock -w "$operation_lock_wait" 8; then
+    printf 'timed out waiting for the shared backup/deployment operation lock: %s\n' "$operation_lock" >&2
+    exit 1
+  fi
+fi
+
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 backup_dir="backups/${timestamp}"
 

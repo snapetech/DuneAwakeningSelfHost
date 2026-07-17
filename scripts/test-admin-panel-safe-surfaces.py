@@ -3312,6 +3312,27 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertTrue(result["layers"]["serverSaved"])
         self.assertEqual(result["confirm"], "RESTORE BACKUP")
 
+    def test_native_backup_verifier_enforces_full_coverage_manifest(self):
+        backup_set = self.panel.BACKUPS_ROOT / "coverage-fixture"
+        backup_set.mkdir(parents=True)
+        (backup_set / "postgres.dump").write_bytes(b"fixture")
+        (backup_set / "manifest.json").write_text(json.dumps({
+            "artifacts": {"postgres": {"path": "postgres.dump"}},
+            "coverage": {
+                "schemaVersion": "dash-full-backup-coverage/v1",
+                "required": ["postgres", "config"], "captured": ["postgres"],
+                "missing": ["config"], "complete": False,
+            },
+        }), encoding="utf-8")
+        original_which = self.panel.shutil.which
+        self.panel.shutil.which = lambda name: None if name == "pg_restore" else original_which(name)
+        self.addCleanup(lambda: setattr(self.panel.shutil, "which", original_which))
+
+        ok, _stdout, stderr = self.panel.verify_backup_set_native(backup_set)
+
+        self.assertFalse(ok)
+        self.assertIn("coverage declaration is incomplete", stderr)
+
     def test_native_restore_stops_writers_backs_up_restores_and_restarts(self):
         backup_set = self.panel.BACKUPS_ROOT / "fixture"
         backup_set.mkdir(parents=True)
@@ -4125,6 +4146,20 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertEqual("verified", sources["verified-backup"]["state"])
         self.assertIn("verified=True", sources["verified-backup"]["detail"])
 
+    def test_operations_briefing_surfaces_automatic_backup_failures(self):
+        original = self.panel.backup_schedule_public_state
+        self.panel.backup_schedule_public_state = lambda state=None: {
+            "enabled": True, "lastResult": {"ok": False}, "lastSuccess": 50,
+            "consecutiveFailures": 2, "deferrals": 1, "nextRunIso": "2026-07-17T12:00:00Z",
+        }
+        self.addCleanup(lambda: setattr(self.panel, "backup_schedule_public_state", original))
+
+        sources = {row["id"]: row for row in self.panel.operations_briefing_sources()}
+
+        self.assertFalse(sources["backup-automation"]["healthy"])
+        self.assertEqual("failed-2", sources["backup-automation"]["state"])
+        self.assertEqual("critical", sources["backup-automation"]["severity"])
+
     def test_operations_briefing_readiness_excludes_its_own_probe(self):
         original = self.panel.feature_readiness_public_status
         self.panel.feature_readiness_public_status = lambda force=False: {
@@ -4266,13 +4301,127 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.panel.write_backup_schedule(state)
         original_create = self.panel.create_full_backup
         calls = []
-        self.panel.create_full_backup = lambda: calls.append(True) or {"ok": True, "path": "admin-panel/maintenance/test", "verification": {"ok": True}}
+        self.panel.create_full_backup = lambda verification_attempts=3: calls.append(verification_attempts) or {"ok": True, "path": "admin-panel/maintenance/test", "verification": {"ok": True}, "verificationAttempts": 1}
         self.addCleanup(lambda: setattr(self.panel, "create_full_backup", original_create))
         result = self.panel.backup_schedule_tick(now=200)
         second = self.panel.backup_schedule_tick(now=201)
         self.assertEqual(len(calls), 1)
+        self.assertEqual(3, calls[0])
         self.assertTrue(result["lastResult"]["ok"])
         self.assertGreater(second["nextRun"], 201)
+
+    def test_backup_schedule_failure_retains_verifier_detail_and_retries_soon(self):
+        self.panel.BACKUP_SCHEDULE_FILE = self.workspace / "backups" / "admin-panel" / "backup-schedule.json"
+        self.panel.configure_backup_schedule({
+            "enabled": True, "time": "05:00", "interval_hours": 24,
+            "retry_minutes": 7, "verification_attempts": 2, "retention_days": 0,
+        })
+        state = self.panel.read_backup_schedule()
+        state["nextRun"] = 100
+        self.panel.write_backup_schedule(state)
+        original_create = self.panel.create_full_backup
+        verification = {"ok": False, "path": "admin-panel/maintenance/failed", "exitCode": 1, "stdout": "OK dump\n", "stderr": "FAIL authenticated head\n"}
+        self.panel.create_full_backup = lambda verification_attempts=3: (_ for _ in ()).throw(
+            self.panel.BackupVerificationError("admin-panel/maintenance/failed", verification, verification_attempts)
+        )
+        self.addCleanup(lambda: setattr(self.panel, "create_full_backup", original_create))
+
+        result = self.panel.backup_schedule_tick(now=200)
+
+        self.assertFalse(result["lastResult"]["ok"])
+        self.assertEqual("BackupVerificationError", result["lastResult"]["errorType"])
+        self.assertEqual("FAIL authenticated head\n", result["lastResult"]["verification"]["stderr"])
+        self.assertEqual(2, result["lastResult"]["verificationAttempts"])
+        self.assertEqual(1, result["consecutiveFailures"])
+        self.assertEqual(200 + 7 * 60, result["nextRun"])
+
+    def test_backup_schedule_defers_for_operation_lock_without_recording_failure(self):
+        self.panel.BACKUP_SCHEDULE_FILE = self.workspace / "backups" / "admin-panel" / "backup-schedule.json"
+        self.panel.configure_backup_schedule({"enabled": True, "time": "05:00", "retry_minutes": 9})
+        state = self.panel.read_backup_schedule()
+        state["nextRun"] = 100
+        self.panel.write_backup_schedule(state)
+        original_create = self.panel.create_full_backup
+        self.panel.create_full_backup = lambda verification_attempts=3: (_ for _ in ()).throw(self.panel.BackupOperationBusy("deployment active"))
+        self.addCleanup(lambda: setattr(self.panel, "create_full_backup", original_create))
+
+        result = self.panel.backup_schedule_tick(now=200)
+
+        self.assertIsNone(result["lastRun"])
+        self.assertIsNone(result["lastResult"])
+        self.assertEqual(1, result["deferrals"])
+        self.assertEqual("deployment active", result["lastDeferral"])
+        self.assertEqual(200 + 9 * 60, result["nextRun"])
+
+    def test_full_backup_retries_verification_without_recreating_snapshot(self):
+        backup_dir = self.panel.BACKUP_ROOT / "maintenance" / "retry-fixture"
+        backup_dir.mkdir(parents=True)
+        original_create = self.panel.create_maintenance_backup
+        original_verify = self.panel.verify_backup_set
+        original_lock = self.panel.backup_operation_lock
+        original_delay = self.panel.BACKUP_VERIFY_RETRY_SECONDS
+        created = []
+        checks = []
+        self.panel.create_maintenance_backup = lambda job: created.append(job) or {
+            "path": str(backup_dir), "coverage": {"complete": True}, "warnings": [],
+        }
+        self.panel.verify_backup_set = lambda path: checks.append(path) or {
+            "ok": len(checks) == 2, "path": path, "exitCode": 0 if len(checks) == 2 else 1,
+            "stdout": "verified" if len(checks) == 2 else "", "stderr": "transient" if len(checks) == 1 else "",
+        }
+        self.panel.backup_operation_lock = self.panel.contextlib.nullcontext
+        self.panel.BACKUP_VERIFY_RETRY_SECONDS = 0
+        self.addCleanup(lambda: setattr(self.panel, "create_maintenance_backup", original_create))
+        self.addCleanup(lambda: setattr(self.panel, "verify_backup_set", original_verify))
+        self.addCleanup(lambda: setattr(self.panel, "backup_operation_lock", original_lock))
+        self.addCleanup(lambda: setattr(self.panel, "BACKUP_VERIFY_RETRY_SECONDS", original_delay))
+
+        result = self.panel.create_full_backup(verification_attempts=3)
+
+        self.assertEqual(1, len(created))
+        self.assertEqual(2, len(checks))
+        self.assertEqual(2, result["verificationAttempts"])
+        self.assertEqual([False, True], [row["ok"] for row in result["verificationHistory"]])
+
+    def test_backup_schedule_metrics_are_label_free_and_expose_failure_posture(self):
+        self.panel.BACKUP_SCHEDULE_FILE = self.workspace / "backups" / "admin-panel" / "backup-schedule.json"
+        state = self.panel.default_backup_schedule()
+        state.update({
+            "enabled": True, "nextRun": 100, "lastRun": 80, "lastSuccess": 50,
+            "lastResult": {"ok": False}, "consecutiveFailures": 2, "deferrals": 3,
+        })
+        self.panel.write_backup_schedule(state)
+        original_runtime = dict(self.panel.BACKUP_SCHEDULE_RUNTIME)
+        self.panel.BACKUP_SCHEDULE_RUNTIME.update({"running": True, "active": False})
+        self.addCleanup(lambda: self.panel.BACKUP_SCHEDULE_RUNTIME.clear() or self.panel.BACKUP_SCHEDULE_RUNTIME.update(original_runtime))
+
+        metrics = self.panel.backup_schedule_prometheus(now=200)
+
+        self.assertIn("dash_backup_schedule_last_run_ok 0\n", metrics)
+        self.assertIn("dash_backup_schedule_consecutive_failures 2\n", metrics)
+        self.assertIn("dash_backup_schedule_overdue_seconds 100.0\n", metrics)
+        self.assertNotIn("{", metrics)
+
+    def test_backup_schedule_retention_never_deletes_failed_evidence(self):
+        self.panel.BACKUP_SCHEDULE_FILE = self.workspace / "backups" / "admin-panel" / "backup-schedule.json"
+        successful = self.panel.BACKUP_ROOT / "maintenance" / "successful"
+        failed = self.panel.BACKUP_ROOT / "maintenance" / "failed"
+        successful.mkdir(parents=True)
+        failed.mkdir(parents=True)
+        state = self.panel.default_backup_schedule()
+        state.update({
+            "retentionDays": 1,
+            "runs": [
+                {"createdAt": 1, "ok": True, "path": successful.relative_to(self.panel.BACKUPS_ROOT).as_posix()},
+                {"createdAt": 1, "ok": False, "path": failed.relative_to(self.panel.BACKUPS_ROOT).as_posix()},
+            ],
+        })
+
+        removed = self.panel.prune_scheduled_backups(state, now=200000)
+
+        self.assertFalse(successful.exists())
+        self.assertTrue(failed.exists())
+        self.assertEqual(["admin-panel/maintenance/successful"], removed)
 
     def test_admin_backup_artifacts_are_private(self):
         artifact = self.workspace / "backups" / "admin-panel" / "private.dump"
@@ -4284,6 +4433,16 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.panel.secure_admin_backup_path(directory, directory=True)
         self.assertEqual(0o600, artifact.stat().st_mode & 0o777)
         self.assertEqual(0o700, directory.stat().st_mode & 0o777)
+
+    def test_backup_operation_lock_is_cross_open_exclusive_and_private(self):
+        self.panel.BACKUP_OPERATION_LOCK_FILE = self.workspace / "backups" / "admin-panel" / "operation.lock"
+
+        with self.panel.backup_operation_lock():
+            with self.assertRaisesRegex(self.panel.BackupOperationBusy, "owns the operation lock"):
+                with self.panel.backup_operation_lock():
+                    self.fail("a second open must not acquire the operation lock")
+
+        self.assertEqual(0o600, self.panel.BACKUP_OPERATION_LOCK_FILE.stat().st_mode & 0o777)
 
     def test_restore_drill_status_is_read_only_and_execution_is_separately_gated(self):
         original_status = self.panel.restore_drill_public_status

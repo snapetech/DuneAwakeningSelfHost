@@ -395,7 +395,7 @@ class Store:
                     if target.execute("pragma integrity_check").fetchone()[0] != "ok":
                         raise RuntimeError("audit ledger backup failed SQLite integrity_check")
                 for destination in destinations:
-                    os.chmod(destination, 0o600)
+                    self._private_path(destination, 0o600)
                 copied = Store(
                     destination_database, key_path=destination_key, anchor_path=destination_anchor
                 ).verify()

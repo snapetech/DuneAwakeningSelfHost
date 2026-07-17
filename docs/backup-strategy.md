@@ -14,6 +14,13 @@ Use layered backups. No single backup mechanism covers every failure mode.
 
 The maintenance restart flow creates an authoritative local maintenance backup before it checks the Steam package for updated Funcom image tarballs and starts services again. That backup includes a Postgres dump, config/env archive, RabbitMQ archives, server saved data, and a manifest. See [`docs/maintenance-updates.md`](maintenance-updates.md).
 
+Manual and scheduled Admin-panel full backups additionally declare the exact
+enabled durable-store coverage in `manifest.json` and fail if any required
+layer is absent. They share an OS lock with host backups and assured deployments
+so a deployment cannot replace the Admin process or change recovery inputs
+mid-snapshot. Failure retries, retention, metrics, alerts, and the production
+canary are documented in [`automatic-backups.md`](automatic-backups.md).
+
 ## Local Backup
 
 Run:
@@ -117,6 +124,12 @@ layer-report artifacts are mode `0600`, their per-run directory is mode `0700`,
 and root-running containers transfer ownership to `DUNE_HOST_UID` /
 `DUNE_HOST_GID`. This keeps scheduled host restore drills readable by the DASH
 operator without making database dumps world-readable.
+
+`scripts/backup-state.sh`, panel-created backups, and the complete assured
+deployment workflow serialize through `backups/admin-panel/operation.lock`.
+Standalone host callers wait up to `DUNE_OPERATION_LOCK_WAIT_SECONDS` (1,800
+seconds by default); scheduled panel runs defer to their short retry window
+without recording a false backup failure.
 
 Restore with:
 

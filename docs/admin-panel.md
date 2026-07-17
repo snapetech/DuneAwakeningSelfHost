@@ -180,7 +180,7 @@ server {
   bound-input drift. It shows every scheduling reason and retry deadline and
   offers an `infrastructure.write` force-all action that still uses only
   disposable state. See [`canary-autopilot.md`](canary-autopilot.md).
-- Operator Briefing on Overview synthesizes 14 existing governance, readiness,
+- Operator Briefing on Overview synthesizes 15 existing governance, readiness,
   reliability, recovery, deployment, scaling, credential, proof, and update
   authorities into one signed priority queue. It shows categorical deltas and
   links to the existing control surfaces without executing recommendations.
@@ -485,7 +485,10 @@ documented host scripts, exact-host checks, dry-run previews, and backups in
 - `DUNE_ADMIN_BOOTSTRAP_MUTATIONS_ENABLED`: controls browser TLS generation,
   database initialization, and stack reconcile.
 - `DUNE_ADMIN_BACKUP_MUTATIONS_ENABLED`: controls full backup creation,
-  imports, quarantine delete, and the automatic schedule.
+  imports, quarantine delete, and the automatic coverage-checked schedule. The
+  schedule serializes with host backups and assured deployments, retains exact
+  failure diagnostics, and retries earlier than its normal interval; see
+  [`automatic-backups.md`](automatic-backups.md).
 - `DUNE_ADMIN_ADDON_MUTATIONS_ENABLED`: controls community addon install,
   enable/disable, and quarantine removal.
 - `DUNE_DISCORD_ADAPTER_ENABLED`: exposes the separately authenticated,
@@ -1556,6 +1559,14 @@ docker compose exec -T admin-chat-commands /workspace/scripts/admin-chat-command
 The listener service is separate from the web panel so a command-loop failure does not take down the admin panel hostname. It uses `restart: unless-stopped`, has a Docker healthcheck for the command queue consumer, and reads `/workspace/.env` at runtime for chat-command and announcement credentials, matching the announcement hook behavior. The service runs on host networking and uses the host-published Postgres/RabbitMQ ports for command ingestion and replies, so Paul can recover even when the compose bridge path is degraded.
 
 ## Scheduled Restarts And Shutdowns
+
+The Infrastructure page also owns a separate automatic full-backup schedule.
+It snapshots every enabled durable store, writes and verifies a coverage
+declaration, shares `backups/admin-panel/operation.lock` with host backups and
+assured deployments, and never invokes map lifecycle. Lock collisions defer;
+creation/coverage/verification failures retain bounded diagnostics and use the
+configured short retry. Only successful schedule-owned paths are eligible for
+its retention policy. See [`automatic-backups.md`](automatic-backups.md).
 
 The Ops tab can also schedule restart or shutdown jobs for restart-safe components, the service layer, all game maps, or key individual maps such as Survival, Overmap, Arrakeen, Harko Village, and Deep Desert. It does not stop or restart Postgres or RabbitMQ by default because replacing those services disconnects all running map servers. It also does not include `admin-panel` in the admin-triggered `all` target, because stopping the container running the scheduler would interrupt the stop-backup-update-start workflow.
 

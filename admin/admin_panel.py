@@ -3,7 +3,9 @@ import configparser
 import concurrent.futures
 import collections
 import base64
+import contextlib
 import datetime
+import fcntl
 import gzip
 import hmac
 import hashlib
@@ -454,8 +456,11 @@ AUTOSCALER_THREAD_STARTED = False
 AUTOSCALER_RUNTIME = {"running": False, "lastMessage": "Autoscaler is off.", "lastActions": [], "lastError": "", "updatedAt": None}
 AUTOSCALER_DIRECTOR_CACHE = {}
 BACKUP_SCHEDULE_FILE = BACKUP_ROOT / "backup-schedule.json"
+BACKUP_OPERATION_LOCK_FILE = pathlib.Path(os.environ.get("DUNE_OPERATION_LOCK_FILE", str(BACKUP_ROOT / "operation.lock")))
+BACKUP_VERIFY_RETRY_SECONDS = max(0.0, min(float(os.environ.get("DUNE_BACKUP_VERIFY_RETRY_SECONDS", "1")), 30.0))
 BACKUP_SCHEDULE_LOCK = threading.Lock()
 BACKUP_SCHEDULE_THREAD_STARTED = False
+BACKUP_SCHEDULE_RUNTIME = {"running": False, "active": False, "lastTickAt": None, "lastError": None}
 RESTORE_DRILL_RECEIPT_ROOT = BACKUP_ROOT / "restore-drills"
 RESTORE_DRILL_RUNTIME_LOCK = threading.Lock()
 RESTORE_DRILL_RUNTIME = {"running": False, "queuedAt": None, "startedAt": None, "finishedAt": None, "lastResult": None, "lastError": None}
@@ -1747,6 +1752,8 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ADMIN_DATABASE_ROW_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Enables primary-key row updates with before/after verification and a pre-write backup."},
     "DUNE_ADMIN_DATABASE_PASSWORD_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Enables coordinated dune-role and .env password rotation with fresh-login verification."},
     "DUNE_ADMIN_BACKUP_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Enables browser full-backup creation, hardened imports, and quarantine deletion."},
+    "DUNE_BACKUP_VERIFY_RETRY_SECONDS": {"group": "Backups", "secret": False, "restart": True, "why": "Delay between bounded verification retries against one newly created full-backup snapshot."},
+    "DUNE_OPERATION_LOCK_WAIT_SECONDS": {"group": "Backups", "secret": False, "restart": False, "why": "Maximum host-side wait for the shared backup/assured-deployment operation lock."},
     "DUNE_ADMIN_BACKUP_RESTORE_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Enables disruptive browser restore execution; dry-run remains available."},
     "DUNE_RESTORE_DRILL_ENABLED": {"group": "Restore Drills", "secret": False, "restart": True, "why": "Enables isolated recovery-proof status and scheduled restore rehearsals."},
     "DUNE_ADMIN_RESTORE_DRILL_EXECUTION_ENABLED": {"group": "Restore Drills", "secret": False, "restart": True, "why": "Allows an infrastructure administrator to queue the isolated restore rehearsal from the dashboard."},
@@ -2125,6 +2132,7 @@ OPERATIONS_BRIEFING_INVALIDATING_ACTIONS = {
     "slo-incident-opened", "slo-incident-resolved",
     "desired-state-drift-opened", "desired-state-drift-resolved",
     "backup-restore-drill-finished", "rabbitmq-restore-drill-finished",
+    "scheduled-backup-finished", "backup-schedule",
     "canary-autopilot-run", "canary-autopilot-poll",
     "public-ip-repair-canary", "incident-readiness-certification",
 }
@@ -5258,6 +5266,18 @@ def operations_briefing_sources():
         healthy = bool(latest.get("ready") and verified)
         return ("verified" if healthy else "unverified", healthy, f"latest assured deployment backup verified={verified}; path={backup.get('path') or backup.get('backupPath') or 'none'}")
 
+    def backup_automation_summary():
+        status = backup_schedule_public_state(); result = status.get("lastResult") or {}
+        enabled = bool(status.get("enabled")); failures = int(status.get("consecutiveFailures") or 0)
+        healthy = bool(enabled and result.get("ok") and status.get("lastSuccess"))
+        state = "verified" if healthy else "disabled" if not enabled else f"failed-{failures}" if failures else "awaiting-first-run"
+        return (
+            state, healthy,
+            f"enabled={enabled}; latest scheduled backup verified={bool(result.get('ok'))}; "
+            f"consecutive failures={failures}; deferrals={int(status.get('deferrals') or 0)}; "
+            f"next={status.get('nextRunIso') or 'none'}",
+        )
+
     def restore_summary():
         status = restore_drill_public_status(); latest = status.get("latest") or {}; healthy = bool(status.get("ready") and status.get("ok") and latest)
         return ("proven" if healthy else "proof-required", healthy, f"configured={bool(status.get('ready'))}; latest isolated PostgreSQL restore passed={bool(status.get('ok'))}; receipt={latest.get('id') or 'none'}")
@@ -5295,6 +5315,7 @@ def operations_briefing_sources():
     add("change-intelligence", "Change and incident intelligence", "critical", "infrastructure:change-intelligence", change_summary)
     add("deployment-assurance", "Assured deployment evidence", "warning", "infrastructure:deployment-assurance", deployment_summary)
     add("verified-backup", "Latest assured recovery backup", "critical", "infrastructure:backups", backup_summary)
+    add("backup-automation", "Automatic full-backup reliability", "critical", "infrastructure:backups", backup_automation_summary)
     add("postgres-recovery", "PostgreSQL recovery proof", "warning", "infrastructure:restore-drill", restore_summary)
     add("rabbitmq-recovery", "RabbitMQ recovery proof", "warning", "infrastructure:rabbitmq-restore-drill", rabbit_summary)
     add("capacity-intelligence", "Capacity and scaling intelligence", "warning", "infrastructure:capacity", capacity_summary)
@@ -7166,6 +7187,17 @@ def verify_backup_set_native(path):
             output.append(f"OK archive {archive}")
         except (OSError, tarfile.TarError) as exc:
             errors.append(f"FAIL archive {archive}: {exc}")
+    canary_state = path / "canary-autopilot.json"
+    if canary_state.is_file():
+        try:
+            if canary_state.is_symlink() or not 1 <= canary_state.stat().st_size <= 4 * 1024 * 1024:
+                raise ValueError("state file is unsafe or outside its size bound")
+            canary_autopilot.validate_state(json.loads(canary_state.read_text(encoding="utf-8")))
+            output.append(f"OK canary autopilot scheduler state {canary_state}")
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            errors.append(f"FAIL canary autopilot scheduler state {canary_state}: {exc}")
+    else:
+        output.append(f"WARN no canary-autopilot.json found in {path}")
     for name in ("community-rewards.sqlite3", "moderation.sqlite3", "base-gallery.sqlite3", "operational-slo.sqlite3", "capacity-intelligence.sqlite3", "desired-state.sqlite3", "change-intelligence.sqlite3", "feature-readiness-history.sqlite3", "credential-lifecycle.sqlite3", "change-approvals.sqlite3"):
         database = path / name
         if not database.is_file():
@@ -7403,14 +7435,26 @@ def verify_backup_set_native(path):
     manifest_text = path / "manifest.txt"
     try:
         if manifest_json.is_file():
-            json.loads(manifest_json.read_text(encoding="utf-8"))
+            manifest = json.loads(manifest_json.read_text(encoding="utf-8"))
+            coverage = manifest.get("coverage")
+            if coverage is not None:
+                required = coverage.get("required") or []
+                captured = coverage.get("captured") or []
+                missing = coverage.get("missing") or []
+                if (
+                    coverage.get("schemaVersion") != "dash-full-backup-coverage/v1"
+                    or not coverage.get("complete") or missing or set(required) != set(captured)
+                    or any(name not in (manifest.get("artifacts") or {}) for name in required)
+                ):
+                    raise ValueError("full-backup coverage declaration is incomplete or inconsistent")
+                output.append(f"OK full-backup coverage {len(required)}/{len(required)} required artifacts")
             output.append(f"OK manifest {manifest_json}")
         elif manifest_text.is_file():
             manifest_text.read_text(encoding="utf-8")
             output.append(f"OK manifest {manifest_text}")
         else:
             output.append(f"WARN no manifest found in {path}")
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
         errors.append(f"FAIL manifest in {path}: {exc}")
     if errors:
         errors.append("backup verification complete: FAILED")
@@ -7435,18 +7479,107 @@ def run_backup_command(args, timeout=1800):
     return result
 
 
-def create_full_backup():
-    result = create_maintenance_backup({"id": f"browser-{secrets.token_hex(4)}", "action": "backup", "target": "all", "services": []})
-    path = pathlib.Path(result["path"])
-    relative = path.relative_to(BACKUPS_ROOT).as_posix()
-    verified = verify_backup_set(relative)
-    if not verified.get("ok"):
-        raise RuntimeError("new backup failed verification")
-    return {"ok": True, "path": relative, "backup": result, "verification": verified}
+class BackupOperationBusy(RuntimeError):
+    pass
+
+
+class BackupVerificationError(RuntimeError):
+    def __init__(self, path, verification, attempts):
+        self.path = str(path)
+        self.verification = verification
+        self.attempts = attempts
+        detail = str(verification.get("stderr") or verification.get("stdout") or "verification returned no detail").strip()
+        detail = detail.splitlines()[-1] if detail else "verification returned no detail"
+        super().__init__(f"new backup failed verification after {attempts} attempt(s): {detail[:500]}")
+
+
+class BackupCoverageError(RuntimeError):
+    def __init__(self, path, coverage, warnings=None):
+        self.path = str(path)
+        self.coverage = coverage
+        self.warnings = warnings or []
+        super().__init__("full backup is incomplete; missing required artifacts: " + ", ".join(coverage.get("missing") or ["unknown"]))
+
+
+@contextlib.contextmanager
+def backup_operation_lock():
+    """Serialize host and container operations that require a stable recovery view."""
+    BACKUP_OPERATION_LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(BACKUP_OPERATION_LOCK_FILE, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        secure_admin_backup_path(BACKUP_OPERATION_LOCK_FILE)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise BackupOperationBusy("another backup or assured deployment owns the operation lock") from exc
+        try:
+            yield
+        finally:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+    finally:
+        os.close(descriptor)
+
+
+def compact_backup_verification(value):
+    if not isinstance(value, dict):
+        return None
+    return {
+        "ok": bool(value.get("ok")),
+        "path": value.get("path"),
+        "exitCode": value.get("exitCode"),
+        "stdout": str(value.get("stdout") or "")[-8192:],
+        "stderr": str(value.get("stderr") or "")[-8192:],
+    }
+
+
+def backup_failure_result(exc):
+    result = {"ok": False, "error": str(exc)[:2000], "errorType": type(exc).__name__}
+    if isinstance(exc, BackupVerificationError):
+        result.update({
+            "path": exc.path,
+            "verificationAttempts": exc.attempts,
+            "verification": compact_backup_verification(exc.verification),
+        })
+    elif isinstance(exc, BackupCoverageError):
+        result.update({
+            "path": exc.path,
+            "coverage": exc.coverage,
+            "warnings": exc.warnings[-20:],
+        })
+    return result
+
+
+def create_full_backup(verification_attempts=3):
+    verification_attempts = max(1, min(int(verification_attempts), 5))
+    with backup_operation_lock():
+        result = create_maintenance_backup({"id": f"browser-{secrets.token_hex(4)}", "action": "backup", "target": "all", "services": []})
+        path = pathlib.Path(result["path"])
+        relative = path.relative_to(BACKUPS_ROOT).as_posix()
+        if not (result.get("coverage") or {}).get("complete"):
+            raise BackupCoverageError(relative, result.get("coverage") or {}, result.get("warnings"))
+        history = []
+        for attempt in range(1, verification_attempts + 1):
+            verified = verify_backup_set(relative)
+            history.append(compact_backup_verification(verified))
+            if verified.get("ok"):
+                return {
+                    "ok": True, "path": relative, "backup": result,
+                    "verification": verified, "verificationAttempts": attempt,
+                    "verificationHistory": history,
+                }
+            if attempt < verification_attempts and BACKUP_VERIFY_RETRY_SECONDS:
+                time.sleep(BACKUP_VERIFY_RETRY_SECONDS)
+        raise BackupVerificationError(relative, verified, verification_attempts)
 
 
 def default_backup_schedule():
-    return {"enabled": False, "time": "05:00", "intervalHours": 24, "retentionDays": 0, "nextRun": None, "lastRun": None, "lastResult": None, "runs": []}
+    return {
+        "enabled": False, "time": "05:00", "intervalHours": 24,
+        "retentionDays": 0, "retryMinutes": 15, "verificationAttempts": 3,
+        "nextRun": None, "lastRun": None, "lastSuccess": None,
+        "lastResult": None, "consecutiveFailures": 0, "deferrals": 0,
+        "lastDeferredAt": None, "lastDeferral": None, "runs": [],
+    }
 
 
 def read_backup_schedule():
@@ -7474,14 +7607,24 @@ def configure_backup_schedule(body):
     clock_text = str(body.get("time", "05:00")).strip()
     interval_hours = int(body.get("interval_hours", body.get("intervalHours", 24)) or 24)
     retention_days = int(body.get("retention_days", body.get("retentionDays", 0)) or 0)
+    retry_minutes = int(body.get("retry_minutes", body.get("retryMinutes", 15)) or 15)
+    verification_attempts = int(body.get("verification_attempts", body.get("verificationAttempts", 3)) or 3)
     if not 1 <= interval_hours <= 24 * 31:
         raise ValueError("interval_hours must be between 1 and 744")
     if not 0 <= retention_days <= 3650:
         raise ValueError("retention_days must be between 0 and 3650")
+    if not 1 <= retry_minutes <= 1440:
+        raise ValueError("retry_minutes must be between 1 and 1440")
+    if not 1 <= verification_attempts <= 5:
+        raise ValueError("verification_attempts must be between 1 and 5")
     next_run = next_backup_schedule_time(clock_text) if enabled else None
     with BACKUP_SCHEDULE_LOCK:
         state = read_backup_schedule()
-        state.update({"enabled": enabled, "time": clock_text, "intervalHours": interval_hours, "retentionDays": retention_days, "nextRun": next_run})
+        state.update({
+            "enabled": enabled, "time": clock_text, "intervalHours": interval_hours,
+            "retentionDays": retention_days, "retryMinutes": retry_minutes,
+            "verificationAttempts": verification_attempts, "nextRun": next_run,
+        })
         write_backup_schedule(state)
     return backup_schedule_public_state(state)
 
@@ -7489,9 +7632,10 @@ def configure_backup_schedule(body):
 def backup_schedule_public_state(state=None):
     state = state or read_backup_schedule()
     result = dict(state)
-    for key in ("nextRun", "lastRun"):
+    for key in ("nextRun", "lastRun", "lastSuccess", "lastDeferredAt"):
         result[key + "Iso"] = datetime.datetime.fromtimestamp(result[key], datetime.timezone.utc).isoformat() if result.get(key) else None
     result["mutationEnabled"] = BACKUP_MUTATIONS_ENABLED
+    result["runtime"] = dict(BACKUP_SCHEDULE_RUNTIME)
     return result
 
 
@@ -7505,7 +7649,7 @@ def prune_scheduled_backups(state, now=None):
     maintenance_root = (BACKUP_ROOT / "maintenance").resolve()
     for run in state.get("runs") or []:
         path = (BACKUPS_ROOT / str(run.get("path") or "")).resolve()
-        if float(run.get("createdAt") or 0) < cutoff and path != maintenance_root and maintenance_root in path.parents and path.exists():
+        if run.get("ok") is True and float(run.get("createdAt") or 0) < cutoff and path != maintenance_root and maintenance_root in path.parents and path.exists():
             shutil.rmtree(path)
             removed.append(str(run.get("path")))
         else:
@@ -7520,38 +7664,102 @@ def backup_schedule_tick(now=None):
         state = read_backup_schedule()
         if not state.get("enabled") or not state.get("nextRun") or now < float(state["nextRun"]):
             return backup_schedule_public_state(state)
-        state["nextRun"] = now + int(state.get("intervalHours") or 24) * 3600
-        write_backup_schedule(state)
+        attempts = int(state.get("verificationAttempts") or 3)
+        retry_seconds = int(state.get("retryMinutes") or 15) * 60
+    BACKUP_SCHEDULE_RUNTIME.update({"active": True, "lastError": None})
     try:
-        result = create_full_backup()
-        run = {"createdAt": now, "path": result["path"], "ok": True}
-        last_result = {"ok": True, "path": result["path"], "verification": result.get("verification")}
+        result = create_full_backup(verification_attempts=attempts)
+        run = {
+            "createdAt": now, "path": result["path"], "ok": True,
+            "verificationAttempts": result.get("verificationAttempts"),
+        }
+        last_result = {
+            "ok": True, "path": result["path"],
+            "verificationAttempts": result.get("verificationAttempts"),
+            "verification": compact_backup_verification(result.get("verification")),
+        }
+    except BackupOperationBusy as exc:
+        with BACKUP_SCHEDULE_LOCK:
+            state = read_backup_schedule()
+            state["nextRun"] = now + retry_seconds
+            state["lastDeferredAt"] = now
+            state["lastDeferral"] = str(exc)
+            state["deferrals"] = int(state.get("deferrals") or 0) + 1
+            write_backup_schedule(state)
+        BACKUP_SCHEDULE_RUNTIME.update({"active": False, "lastTickAt": now, "lastError": None})
+        return backup_schedule_public_state(state)
     except Exception as exc:
-        run = {"createdAt": now, "ok": False, "error": str(exc)}
-        last_result = {"ok": False, "error": str(exc)}
+        last_result = backup_failure_result(exc)
+        run = {"createdAt": now, **last_result}
     with BACKUP_SCHEDULE_LOCK:
         state = read_backup_schedule()
         state["lastRun"] = now
         state["lastResult"] = last_result
+        if last_result.get("ok"):
+            state["nextRun"] = now + int(state.get("intervalHours") or 24) * 3600
+            state["lastSuccess"] = now
+            state["consecutiveFailures"] = 0
+        else:
+            state["nextRun"] = now + int(state.get("retryMinutes") or 15) * 60
+            state["consecutiveFailures"] = int(state.get("consecutiveFailures") or 0) + 1
         state.setdefault("runs", []).append(run)
         removed = prune_scheduled_backups(state, now)
         if removed:
             state["lastPruned"] = removed
         write_backup_schedule(state)
+    BACKUP_SCHEDULE_RUNTIME.update({
+        "active": False, "lastTickAt": now,
+        "lastError": None if last_result.get("ok") else str(last_result.get("error") or "backup failed")[:2000],
+    })
+    try:
+        audit_event(
+            "scheduled-backup-finished", ok=bool(last_result.get("ok")),
+            backup_path=last_result.get("path"),
+            verification_attempts=last_result.get("verificationAttempts"),
+            error=last_result.get("error"),
+        )
+    except Exception:
+        pass
     return backup_schedule_public_state(state)
 
 
 def backup_schedule_worker():
+    BACKUP_SCHEDULE_RUNTIME["running"] = True
     while True:
         try:
             if MUTATIONS_ENABLED and BACKUP_MUTATIONS_ENABLED:
                 backup_schedule_tick()
         except Exception as exc:
+            BACKUP_SCHEDULE_RUNTIME.update({"lastTickAt": time.time(), "lastError": str(exc)[:2000], "active": False})
             with BACKUP_SCHEDULE_LOCK:
                 state = read_backup_schedule()
                 state["lastResult"] = {"ok": False, "error": str(exc)}
                 write_backup_schedule(state)
         time.sleep(30)
+
+
+def backup_schedule_prometheus(now=None):
+    now = float(now or time.time())
+    try:
+        state = read_backup_schedule()
+        last_result = state.get("lastResult") or {}
+        next_run = float(state.get("nextRun") or 0)
+        values = {
+            "dash_backup_schedule_collector_up": 1,
+            "dash_backup_schedule_enabled": int(bool(state.get("enabled"))),
+            "dash_backup_schedule_worker_running": int(bool(BACKUP_SCHEDULE_RUNTIME.get("running"))),
+            "dash_backup_schedule_active": int(bool(BACKUP_SCHEDULE_RUNTIME.get("active"))),
+            "dash_backup_schedule_last_run_ok": int(bool(last_result.get("ok"))),
+            "dash_backup_schedule_last_run_timestamp_seconds": float(state.get("lastRun") or 0),
+            "dash_backup_schedule_last_success_timestamp_seconds": float(state.get("lastSuccess") or 0),
+            "dash_backup_schedule_next_run_timestamp_seconds": next_run,
+            "dash_backup_schedule_overdue_seconds": max(0.0, now - next_run) if state.get("enabled") and next_run else 0.0,
+            "dash_backup_schedule_consecutive_failures": int(state.get("consecutiveFailures") or 0),
+            "dash_backup_schedule_deferrals_total": int(state.get("deferrals") or 0),
+        }
+    except Exception:
+        values = {"dash_backup_schedule_collector_up": 0}
+    return "".join(f"{key} {value}\n" for key, value in values.items())
 
 
 def ensure_backup_schedule_thread():
@@ -9896,6 +10104,107 @@ def create_postgres_layers_report(backup_dir):
     return {"path": str(status_path), "bytes": status_path.stat().st_size, "report": report}
 
 
+def snapshot_sqlite_artifact(source, destination):
+    source = pathlib.Path(source)
+    destination = pathlib.Path(destination)
+    if source.is_symlink() or not source.is_file():
+        raise FileNotFoundError(f"SQLite source is missing or unsafe: {source}")
+    destination.unlink(missing_ok=True)
+    source_connection = sqlite3.connect(f"file:{source}?mode=ro", uri=True, timeout=30)
+    target_connection = sqlite3.connect(destination, timeout=30)
+    try:
+        source_connection.execute("pragma busy_timeout=30000")
+        source_connection.backup(target_connection)
+        if target_connection.execute("pragma integrity_check").fetchone()[0] != "ok":
+            raise RuntimeError(f"SQLite snapshot failed integrity_check: {source}")
+    finally:
+        target_connection.close()
+        source_connection.close()
+    secure_admin_backup_path(destination)
+    return {"path": str(destination), "bytes": destination.stat().st_size}
+
+
+def copy_private_backup_artifact(source, destination):
+    source = pathlib.Path(source)
+    destination = pathlib.Path(destination)
+    if source.is_symlink() or not source.is_file():
+        raise FileNotFoundError(f"private backup source is missing or unsafe: {source}")
+    shutil.copyfile(source, destination)
+    secure_admin_backup_path(destination)
+    return {"path": str(destination), "bytes": destination.stat().st_size}
+
+
+def snapshot_credential_lifecycle(backup_dir):
+    target_database = backup_dir / "credential-lifecycle.sqlite3"
+    target_anchor = backup_dir / "credential-lifecycle.anchor.json"
+    last_error = None
+    for _attempt in range(5):
+        target_database.unlink(missing_ok=True)
+        target_anchor.unlink(missing_ok=True)
+        try:
+            snapshot_sqlite_artifact(CREDENTIAL_LIFECYCLE_DATABASE, target_database)
+            copy_private_backup_artifact(CREDENTIAL_LIFECYCLE_ANCHOR_FILE, target_anchor)
+            verification = credential_lifecycle.verify_database(
+                target_database, CREDENTIAL_LIFECYCLE_SECRET_FILE, target_anchor,
+            )
+            return {
+                "database": {"path": str(target_database), "bytes": target_database.stat().st_size},
+                "anchor": {"path": str(target_anchor), "bytes": target_anchor.stat().st_size},
+                "verification": verification,
+            }
+        except (OSError, RuntimeError, ValueError, sqlite3.Error) as exc:
+            last_error = exc
+            time.sleep(0.05)
+    target_database.unlink(missing_ok=True)
+    target_anchor.unlink(missing_ok=True)
+    raise RuntimeError(f"credential lifecycle snapshot did not reach a consistent authenticated head: {last_error}")
+
+
+def snapshot_change_approvals(backup_dir):
+    store = change_approval_store()
+    target_database = backup_dir / "change-approvals.sqlite3"
+    target_key = backup_dir / "change-approvals.key"
+    snapshot_sqlite_artifact(store.path, target_database)
+    copy_private_backup_artifact(store.key_path, target_key)
+    verification = change_approvals.Store(target_database, key_path=target_key).verify()
+    return {
+        "database": {"path": str(target_database), "bytes": target_database.stat().st_size},
+        "key": {"path": str(target_key), "bytes": target_key.stat().st_size},
+        "verification": verification,
+    }
+
+
+def backup_coverage(result):
+    artifacts = result.get("artifacts") or {}
+    requirements = {
+        "postgres": True,
+        "config": True,
+        "serverSaved": (ROOT / "data" / "server-saved").exists(),
+        "rabbitmq": (ROOT / "data" / "rabbitmq").exists(),
+        "operationalSlo": OPERATIONAL_SLO_ENABLED,
+        "capacityIntelligence": CAPACITY_INTELLIGENCE_ENABLED,
+        "desiredState": DESIRED_STATE_ENABLED,
+        "changeIntelligence": CHANGE_INTELLIGENCE_ENABLED,
+        "featureReadinessHistory": FEATURE_READINESS_HISTORY_ENABLED,
+        "credentialLifecycle": CREDENTIAL_LIFECYCLE_ENABLED,
+        "auditLedger": AUDIT_LEDGER_ENABLED,
+        "changeApprovals": DUAL_CONTROL_ENABLED,
+        "communityRewards": COMMUNITY_REWARDS_ENABLED,
+        "moderation": MODERATION_ENABLED,
+        "baseGallery": BASE_CREATOR_ENABLED,
+        "canaryAutopilot": CANARY_AUTOPILOT_ENABLED and CANARY_AUTOPILOT_STATE_FILE.exists(),
+    }
+    required = sorted(name for name, enabled in requirements.items() if enabled)
+    captured = sorted(name for name in required if name in artifacts)
+    return {
+        "schemaVersion": "dash-full-backup-coverage/v1",
+        "required": required,
+        "captured": captured,
+        "missing": sorted(set(required) - set(captured)),
+        "complete": len(required) == len(captured),
+    }
+
+
 def create_maintenance_backup(job):
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     job_id = str(job.get("id", "manual"))[:24]
@@ -9981,6 +10290,44 @@ def create_maintenance_backup(job):
         except Exception as exc:
             result["warnings"].append({"artifact": "operatorEvidence", "error": str(exc)})
 
+    sqlite_artifacts = (
+        ("communityRewards", COMMUNITY_REWARDS_ENABLED, COMMUNITY_REWARDS_DATABASE, "community-rewards.sqlite3", community_store),
+        ("moderation", MODERATION_ENABLED, MODERATION_DATABASE, "moderation.sqlite3", moderation_store),
+        ("baseGallery", BASE_CREATOR_ENABLED, BASE_GALLERY_DATABASE, "base-gallery.sqlite3", base_gallery),
+        ("featureReadinessHistory", FEATURE_READINESS_HISTORY_ENABLED, FEATURE_READINESS_HISTORY_DATABASE, "feature-readiness-history.sqlite3", feature_readiness_history_store),
+    )
+    for artifact, enabled, source, name, initialize in sqlite_artifacts:
+        if not enabled:
+            continue
+        try:
+            initialize()
+            result["artifacts"][artifact] = snapshot_sqlite_artifact(source, backup_dir / name)
+        except Exception as exc:
+            result["warnings"].append({"artifact": artifact, "error": str(exc)})
+
+    if CREDENTIAL_LIFECYCLE_ENABLED:
+        try:
+            credential_lifecycle_public_status(force=True)
+            result["artifacts"]["credentialLifecycle"] = snapshot_credential_lifecycle(backup_dir)
+        except Exception as exc:
+            result["warnings"].append({"artifact": "credentialLifecycle", "error": str(exc)})
+
+    if DUAL_CONTROL_ENABLED:
+        try:
+            result["artifacts"]["changeApprovals"] = snapshot_change_approvals(backup_dir)
+        except Exception as exc:
+            result["warnings"].append({"artifact": "changeApprovals", "error": str(exc)})
+
+    if CANARY_AUTOPILOT_ENABLED and CANARY_AUTOPILOT_STATE_FILE.exists():
+        try:
+            state = json.loads(CANARY_AUTOPILOT_STATE_FILE.read_text(encoding="utf-8"))
+            canary_autopilot.validate_state(state)
+            result["artifacts"]["canaryAutopilot"] = copy_private_backup_artifact(
+                CANARY_AUTOPILOT_STATE_FILE, backup_dir / "canary-autopilot.json",
+            )
+        except Exception as exc:
+            result["warnings"].append({"artifact": "canaryAutopilot", "error": str(exc)})
+
     if RABBITMQ_RESTORE_DRILL_ENABLED:
         try:
             receipt = copy_latest_rabbitmq_restore_receipt(backup_dir / "rabbitmq-restore-drill.json")
@@ -9994,6 +10341,8 @@ def create_maintenance_backup(job):
             result["artifacts"]["auditLedger"] = admin_audit_ledger().backup(backup_dir / "audit-ledger.sqlite3")
         except Exception as exc:
             result["warnings"].append({"artifact": "auditLedger", "error": str(exc)})
+
+    result["coverage"] = backup_coverage(result)
 
     manifest = backup_dir / "manifest.json"
     manifest.write_text(json.dumps(result, indent=2, sort_keys=True, default=json_default), encoding="utf-8")
@@ -10919,6 +11268,7 @@ class Handler(BaseHTTPRequestHandler):
                 metrics += player_identity_prometheus()
                 metrics += feature_readiness_prometheus()
                 metrics += credential_lifecycle_prometheus()
+                metrics += backup_schedule_prometheus()
                 metrics += rabbitmq_restore_drill_prometheus()
                 if UPDATE_READINESS_ENABLED:
                     try:
@@ -12387,7 +12737,11 @@ class Handler(BaseHTTPRequestHandler):
                 body = parse_body(self)
                 require_confirmation(body, CONFIRM_BACKUP_SCHEDULE)
                 result = configure_backup_schedule(body)
-                self.audit("backup-schedule", ok=True, enabled=result.get("enabled"), time=result.get("time"), interval_hours=result.get("intervalHours"), retention_days=result.get("retentionDays"))
+                self.audit(
+                    "backup-schedule", ok=True, enabled=result.get("enabled"), time=result.get("time"),
+                    interval_hours=result.get("intervalHours"), retry_minutes=result.get("retryMinutes"),
+                    verification_attempts=result.get("verificationAttempts"), retention_days=result.get("retentionDays"),
+                )
                 self.json(result)
             elif parsed.path == "/api/ops/backups/import":
                 self.require_token()
@@ -20596,7 +20950,7 @@ function mountInfrastructureBackupControls(backupData){
   document.getElementById('infraRestoreDryBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Planning...', () => restoreInfrastructureBackup(true)));
   document.getElementById('infraRestoreExecuteBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Restoring...', () => restoreInfrastructureBackup(false)));
   document.getElementById('infraImportBackupBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Importing...', importInfrastructureBackup));
-  panel.insertAdjacentHTML('beforeend', `<div class="panelInset"><div class="sectionHeader"><h3>Automatic Full Backups</h3><span class="pill ${schedule.enabled ? 'warn' : 'ok'}">${schedule.enabled ? 'enabled' : 'disabled'}</span></div><p class="muted">The admin worker creates and verifies the same full backup used by the manual button. Retention deletes only backup paths recorded as automatic schedule runs; zero keeps them indefinitely.</p><div class="grid"><label>Enabled<select id="infraBackupScheduleEnabled"><option value="false"${schedule.enabled ? '' : ' selected'}>false</option><option value="true"${schedule.enabled ? ' selected' : ''}>true</option></select></label><label>First run local time<input id="infraBackupScheduleTime" type="time" value="${esc(schedule.time || '05:00')}"></label><label>Interval hours<input id="infraBackupScheduleInterval" type="number" min="1" max="744" value="${esc(schedule.intervalHours || 24)}"></label><label>Retention days (0=unlimited)<input id="infraBackupScheduleRetention" type="number" min="0" max="3650" value="${esc(schedule.retentionDays || 0)}"></label></div><p><button id="infraBackupScheduleSaveBtn" class="primary">Save automatic schedule</button></p><pre id="infraBackupScheduleResult">${esc(JSON.stringify({nextRun:schedule.nextRunIso,lastRun:schedule.lastRunIso,lastResult:schedule.lastResult,lastPruned:schedule.lastPruned}, null, 2))}</pre></div>`);
+  panel.insertAdjacentHTML('beforeend', `<div class="panelInset"><div class="sectionHeader"><h3>Automatic Full Backups</h3><div class="toolbar"><span class="pill ${!schedule.enabled ? 'ok' : schedule.lastResult?.ok ? 'ok' : schedule.lastRun ? 'bad' : 'warn'}">${!schedule.enabled ? 'disabled' : schedule.lastResult?.ok ? 'verified' : schedule.lastRun ? 'failed' : 'awaiting first run'}</span><span class="pill ${schedule.runtime?.active ? 'warn' : 'ok'}">${schedule.runtime?.active ? 'creating' : 'idle'}</span><span class="pill">failures ${esc(schedule.consecutiveFailures || 0)}</span><span class="pill">deferrals ${esc(schedule.deferrals || 0)}</span></div></div><p class="muted">Manual backups, scheduled backups, and assured deployments share one operation lock, so recovery snapshots cannot race a deployment. Every run captures all enabled durable stores, retries bounded verification failures, retains verifier output, and retries failures sooner than the normal interval. Retention deletes only paths recorded as successful automatic runs; zero keeps them indefinitely.</p><div class="grid"><label>Enabled<select id="infraBackupScheduleEnabled"><option value="false"${schedule.enabled ? '' : ' selected'}>false</option><option value="true"${schedule.enabled ? ' selected' : ''}>true</option></select></label><label>First run local time<input id="infraBackupScheduleTime" type="time" value="${esc(schedule.time || '05:00')}"></label><label>Interval hours<input id="infraBackupScheduleInterval" type="number" min="1" max="744" value="${esc(schedule.intervalHours || 24)}"></label><label>Failure/lock retry minutes<input id="infraBackupScheduleRetry" type="number" min="1" max="1440" value="${esc(schedule.retryMinutes || 15)}"></label><label>Verification attempts<input id="infraBackupScheduleAttempts" type="number" min="1" max="5" value="${esc(schedule.verificationAttempts || 3)}"></label><label>Retention days (0=unlimited)<input id="infraBackupScheduleRetention" type="number" min="0" max="3650" value="${esc(schedule.retentionDays || 0)}"></label></div><p><button id="infraBackupScheduleSaveBtn" class="primary">Save automatic schedule</button></p><pre id="infraBackupScheduleResult">${esc(JSON.stringify({nextRun:schedule.nextRunIso,lastRun:schedule.lastRunIso,lastSuccess:schedule.lastSuccessIso,lastDeferredAt:schedule.lastDeferredAtIso,lastDeferral:schedule.lastDeferral,lastResult:schedule.lastResult,lastPruned:schedule.lastPruned}, null, 2))}</pre></div>`);
   panel.insertAdjacentHTML('beforeend', `<div class="panelInset"><div class="sectionHeader"><h3>Encrypted Archives</h3><div class="toolbar"><span class="pill ${encryption.enabled?'ok':'warn'}">${encryption.enabled?'gate enabled':'gate disabled'}</span><span class="pill ${encryption.configured?'ok':'warn'}">${encryption.configured?'recipient '+esc(encryption.recipientSuffix):'recipient required'}</span><span class="pill">${esc((encryption.encryptedArchives||[]).length)} shown</span></div></div><p class="muted">Host-side recipient encryption verifies the backup, creates a private temporary tarball, encrypts it as OpenPGP, removes plaintext, writes a ciphertext SHA-256 receipt, and never restores automatically. Private recovery keys do not enter the admin container.</p><pre>${esc(encryption.hostCommand||'')}</pre>${table(encryption.encryptedArchives||[])}<details><summary>Decrypt/stage command</summary><pre>${esc(encryption.decryptCommand||'')}</pre></details></div>`);
   document.getElementById('infraBackupScheduleSaveBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Saving...', saveInfrastructureBackupSchedule));
 }
@@ -20614,7 +20968,7 @@ async function createInfrastructureBackup(){
 }
 async function saveInfrastructureBackupSchedule(){
   if (!confirm('Save the automatic full-backup schedule?')) return;
-  const result = await api('/api/ops/backups/schedule', {method:'POST',body:JSON.stringify({enabled:infraBackupScheduleEnabled.value === 'true',time:infraBackupScheduleTime.value,interval_hours:infraBackupScheduleInterval.value,retention_days:infraBackupScheduleRetention.value,confirm:'CHANGE BACKUP SCHEDULE'})});
+  const result = await api('/api/ops/backups/schedule', {method:'POST',body:JSON.stringify({enabled:infraBackupScheduleEnabled.value === 'true',time:infraBackupScheduleTime.value,interval_hours:infraBackupScheduleInterval.value,retry_minutes:infraBackupScheduleRetry.value,verification_attempts:infraBackupScheduleAttempts.value,retention_days:infraBackupScheduleRetention.value,confirm:'CHANGE BACKUP SCHEDULE'})});
   infraBackupScheduleResult.textContent = JSON.stringify(result, null, 2);
   notify('Automatic backup schedule saved');
   return result;

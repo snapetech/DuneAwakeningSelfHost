@@ -13,7 +13,7 @@ stores, and its recommendations never execute automatically.
 
 ## What it reads
 
-The worker collects categorical verdicts from 14 existing DASH authorities:
+The worker collects categorical verdicts from 15 existing DASH authorities:
 
 | Source | Severity when unhealthy | Authority |
 | --- | --- | --- |
@@ -25,6 +25,7 @@ The worker collects categorical verdicts from 14 existing DASH authorities:
 | Change and incident intelligence | Critical | Incident ledger and response-readiness certification |
 | Assured deployments | Warning | Latest promotion receipt and open/overdue windows |
 | Latest assured recovery backup | Critical | Backup verdict inside the latest passing deployment receipt |
+| Automatic full-backup reliability | Critical | Scheduler worker, latest verified run, consecutive failures, lock deferrals, and next-run state |
 | PostgreSQL recovery | Warning | Latest disposable no-network restore receipt |
 | RabbitMQ recovery | Warning | Latest dual-broker networkless recovery receipt |
 | Capacity and scaling | Warning | Capacity ledger integrity and worker health |
@@ -33,7 +34,7 @@ The worker collects categorical verdicts from 14 existing DASH authorities:
 | Game update readiness | Warning | Candidate evaluation and current certification receipt |
 
 The collector catches each source independently. One broken subsystem becomes
-one explicit `collector-error` action instead of suppressing the other 13
+one explicit `collector-error` action instead of suppressing the other 14
 verdicts. Detail is whitespace-normalized, bounded to 500 characters, and does
 not include credential values.
 

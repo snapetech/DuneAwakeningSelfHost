@@ -50,6 +50,7 @@ SUPPORT_FILES = {
     "admin/update_readiness.py",
     "scripts/deployment-assurance.py",
     "scripts/assured-control-plane-deploy.sh",
+    "scripts/backup-state.sh",
     "scripts/verify-backup.sh",
     "scripts/public-ip-monitor.sh",
     "scripts/generate-rabbitmq-cert.sh",

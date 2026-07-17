@@ -91,7 +91,7 @@ Always compare your `.env` image pin with the Steam package installed on your ho
 - Chat spam protection with repeat-message detection, public action announcements, and a blocked-by-default kick backend.
 - Verified targeted network-timeout teleport research: a scoped `UNetConnection` timeout plus the shipped offline move helper moved a test player, and reconnect loaded the moved pawn. This is a working teleport mechanism, not a soft disconnect; see `docs/soft-disconnect-teleport.md`.
 - Player-presence automation for first-time welcomes, returning-player welcome-backs, leaves, first-seen private messages, Hagga/Deep Desert milestones, base-cap reminders, reconnect help, restart warnings, map-health notices, population digests, incident notices, starter Base Reconstruction Tool grants, and Vermilius Gap celebration.
-- Local backups, hardened disposable PostgreSQL and dual-broker RabbitMQ recovery drills, restore helpers, optional streaming Postgres replica, optional remote replica snapshots, and portable offsite/onsite backup sync examples.
+- Coverage-declared manual and automatic full backups with a shared host/container deployment lock, complete enabled-store snapshots, bounded verification retry, short failure retry, diagnostic retention, schedule-only retention, metrics/alerts, and signed-briefing posture; hardened disposable PostgreSQL and dual-broker RabbitMQ recovery drills, restore helpers, optional streaming Postgres replica, optional remote replica snapshots, and portable offsite/onsite sync examples.
 - Optional public static site package with status, settings, player list, Hagga Basin map, an opt-in Ed25519-signed public descriptor, and a self-hosted federated server directory whose browser re-verifies every listing.
 - Authenticated feature-readiness control center that separates disabled, partial, blocked, degraded, external-credential, pending-canary, and proven-ready states using live gates, artifacts, services, dependencies, and runtime probes without returning secret values; deduplicated state changes enter an append-only HMAC transition ledger with deployment correlation, regression/recovery history, backup verification, metrics, and alerts.
 - Isolated Proof Autopilot that keeps Community, Creator/Modding, and public-IP signed lifecycle evidence current before expiry or after bound-input drift, with serialized execution, exponential retry, dashboard/API state, backup verification, metrics, and alerts—without touching maps, players, providers, or clients.
@@ -237,7 +237,7 @@ label-free metrics, and alerts expose every decision without claiming scheduler
 metadata as proof. See [`docs/canary-autopilot.md`](docs/canary-autopilot.md).
 
 The same evidence now has a single operator-facing synthesis. The Overview
-briefing scores 14 authoritative sources, separates critical/warning/provider
+briefing scores 15 authoritative sources, separates critical/warning/provider
 follow-ups, links each action to its existing control surface, and retains only
 meaningful categorical changes in signed private receipts. It cannot execute a
 recommendation or touch maps, players, providers, or clients. See
@@ -1237,6 +1237,7 @@ Root-level research indexes:
 - [`scripts/seed-gateway-neighbor.sh`](scripts/seed-gateway-neighbor.sh): Docker bridge neighbor refresh helper.
 - [`scripts/backup-offsite.sh`](scripts/backup-offsite.sh): local backup plus rclone, rsync, restic, or local-only sync helper.
 - [`scripts/backup-state.sh`](scripts/backup-state.sh): local Postgres/RabbitMQ/saved-state/env/config/TLS and private-ledger backup helper.
+- [`docs/automatic-backups.md`](docs/automatic-backups.md): coverage-checked manual/scheduled backups, cross-process deployment serialization, retries, retention, diagnostics, metrics, alerts, and production canary procedure.
 - [`scripts/snapshot-audit-ledger.py`](scripts/snapshot-audit-ledger.py): retrying consistent SQLite/key/anchor flight-recorder snapshot.
 - [`scripts/restore-state.sh`](scripts/restore-state.sh): disruptive restore helper with opt-in state, configuration, private-ledger, and TLS layers.
 - [`scripts/verify-backup.sh`](scripts/verify-backup.sh): structural plus HMAC/anchor backup verification.
