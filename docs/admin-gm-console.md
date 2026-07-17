@@ -282,10 +282,15 @@ Implemented:
 - `&gm where` is the namespaced form of `&where`.
 - `&gm unstuck` prepares or sends a gated `TeleportToExact` for a target player. It uses the named saved marker, defaulting to `location0`; if no marker exists it falls back to the admin's current location.
 - `&where` reports current known state and location.
-- `&teleport` moves an offline target to the admin's current position only when offline teleport execution is explicitly enabled. The shipped `dune.admin_move_offline_player_to_partition(...)` helper updates the pawn row, which is the row consumed by the verified network-disconnect/rejoin test.
+- `&teleport` previews or moves an offline target to the admin's current
+  position only when chat execution plus the master and dedicated offline
+  teleport gates are enabled. Chat calls the loopback guarded Admin endpoint;
+  it has no direct database mutation path. Execution therefore inherits the
+  exact preview fingerprint, dual Offline checks, full backup, transaction
+  locks, native helper, persisted readback, approval/audit, and private receipt.
 - `&teleport set <slot> [name]` saves the issuing admin's current location as a shared numbered slot under `backups/admin-panel/teleport-slots.json`, but refuses to overwrite an occupied slot. Use `&teleport replace <slot> [name]` to overwrite intentionally.
 - `&teleport list` shows shared slots in numeric order, and `&teleport delete <slot>` removes one.
-- `&teleport <playername> <slot>` moves an offline target to a saved shared slot through `dune.admin_move_offline_player_to_partition(...)`. Online targets are still refused.
+- `&teleport <playername> <slot>` moves an offline target to a saved shared slot through the same guarded Admin contract. Online targets are still refused.
 - `&teleport <slot>` prepares or sends a gated native `TeleportToExact` for the issuing admin to go to that slot. It remains a preview until the native GM execution gates are enabled.
 - Recommended shared city setup is manual: stand in Arrakeen and run `&teleport set 0 arrakeen`; stand in Harko Village and run `&teleport set 1 harko`.
 - Direct online database movement is not a live teleport path. A same-partition test moved the test player's controller, player-state, and pawn actor rows together by `+750` X; the live Survival server later saved the old in-memory position back to the database.

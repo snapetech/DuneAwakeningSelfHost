@@ -149,6 +149,23 @@ dash_offline_teleport_errors_total
 Execution counters are process-local operational counters. Durable evidence is
 the audit ledger, full backup, and private teleport receipt.
 
+## In-game chat surface
+
+`&teleport <playername>` and `&teleport <playername> <slot>` use this exact
+endpoint. The chat listener first requests a read-only preview, then—only when
+`DUNE_CHAT_COMMAND_DRY_RUN=false` and
+`DUNE_CHAT_COMMAND_EXECUTE_TELEPORT=true`—submits the same account, target, and
+coordinates with the returned fingerprint and confirmation. It accepts success
+only when the Admin response contains `verified=true` and a receipt. The chat
+service has no direct native-function or raw actor-write fallback, and its
+public result omits the FLS identity.
+
+The bridge connects only to `127.0.0.1` at
+`DUNE_CHAT_COMMAND_ADMIN_PORT` (defaulting to `DUNE_ADMIN_HOST_PORT`) and caps
+the response at 1 MiB. The owner token is never sent to a configured hostname
+or URL. Dual-control approval, RBAC, audit, mutation gates, and backup policy
+therefore remain centralized in Admin.
+
 ## Verification
 
 ```bash

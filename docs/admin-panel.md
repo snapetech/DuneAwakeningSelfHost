@@ -1349,6 +1349,8 @@ DUNE_CHAT_COMMAND_ADMINS=AdminUser
 DUNE_CHAT_COMMAND_ADMIN_FLS_IDS=TEST_FLS_ID
 DUNE_CHAT_COMMAND_DRY_RUN=true
 DUNE_CHAT_COMMAND_EXECUTE_TELEPORT=false
+DUNE_CHAT_COMMAND_ADMIN_PORT=18080
+DUNE_CHAT_COMMAND_ADMIN_TIMEOUT_SECONDS=180
 DUNE_CHAT_COMMAND_EXECUTE_ONLINE_GM_TELEPORT=false
 DUNE_CHAT_COMMAND_EXECUTE_PLAYER_DISCONNECT=false
 DUNE_CHAT_COMMAND_AUCTION_ENABLED=false
@@ -1449,9 +1451,18 @@ Implemented commands:
 
 `&exchange_cashout` claims the sender's completed seller Solari settlements through the same validated settlement path used by `scripts/artificial-exchange-bot.py`: it locks each completed seller-claim row, credits the sender's Solaris balance by `item_price * stack_size`, deletes the completed claim order, and validates that the order is gone and the credited amount matches. It previews by default; set `DUNE_CHAT_COMMAND_EXCHANGE_CASHOUT_ENABLED=true` to execute from chat. The batch size defaults to `DUNE_CHAT_COMMAND_EXCHANGE_CASHOUT_LIMIT=50`.
 
-`&where` reports the resolved player's current online/offline state and last known location. `&teleport <playername>` moves an offline target to the admin's current partition and location. Live actor transforms are owned by the running map server and can be overwritten, so raw online actor updates are not a teleport path.
+`&where` reports the resolved player's current online/offline state and last
+known location. `&teleport <playername>` previews or moves an offline target to
+the admin's current partition and location. The chat bridge no longer calls the
+database helper directly: it invokes the loopback Admin API for a fresh guarded
+preview and, when enabled, an execution bound to that exact fingerprint. The
+Admin path performs the dual Offline checks, coordinate bounds, full backup,
+locks, native call, transform readback, audit, and private receipt documented
+in [offline-player-teleport.md](offline-player-teleport.md). Live actor
+transforms are owned by the running map server and can be overwritten, so raw
+online actor updates are not a teleport path.
 
-Shared numbered teleport slots live in `backups/admin-panel/teleport-slots.json`. `&teleport set <slot> [name]` saves the issuing admin's current location only when the slot is empty; if occupied, it reports the current slot and next free number. Use `&teleport replace <slot> [name]` to overwrite, `&teleport list` to show slots in numeric order, and `&teleport delete <slot>` to remove a slot. `&teleport <playername> <slot>` moves a strict-offline target to the saved slot through `dune.admin_move_offline_player_to_partition(...)`; `&teleport <slot>` prepares or sends a gated native `TeleportToExact` for the issuing admin.
+Shared numbered teleport slots live in `backups/admin-panel/teleport-slots.json`. `&teleport set <slot> [name]` saves the issuing admin's current location only when the slot is empty; if occupied, it reports the current slot and next free number. Use `&teleport replace <slot> [name]` to overwrite, `&teleport list` to show slots in numeric order, and `&teleport delete <slot>` to remove a slot. `&teleport <playername> <slot>` moves a strict-offline target to the saved slot through the same guarded Admin contract; `&teleport <slot>` prepares or sends a gated native `TeleportToExact` for the issuing admin.
 
 Recommended city slots are operator-created, not seeded: stand in Arrakeen and run `&teleport set 0 arrakeen`; stand in Harko Village and run `&teleport set 1 harko`.
 
@@ -1571,12 +1582,21 @@ Teleport starts in dry-run mode. To apply the movement write, set:
 ```env
 DUNE_CHAT_COMMAND_DRY_RUN=false
 DUNE_CHAT_COMMAND_EXECUTE_TELEPORT=true
+DUNE_ADMIN_MUTATIONS_ENABLED=true
+DUNE_ADMIN_OFFLINE_TELEPORT_ENABLED=true
 ```
+
+`DUNE_CHAT_COMMAND_ADMIN_PORT` must point to the loopback-bound Admin host port
+and defaults to `DUNE_ADMIN_HOST_PORT`. The bridge refuses a missing Admin
+token, non-loopback transport, blocked preview, stale fingerprint, execution
+without a verified receipt, and any high-risk approval response that has not
+actually executed. Under dual control, rerun the same command after the exact
+request receives approval and while the preview evidence remains unchanged.
 
 Dry-run verification from the live admin container:
 
 ```bash
-docker compose exec -T admin-panel /workspace/scripts/admin-chat-commands.py \
+docker compose exec -T admin-chat-commands /workspace/scripts/admin-chat-commands.py \
   --dry-run-command '&teleport Cletus' \
   --sender-name SamplePlayer \
   --sender-fls-id TEST_FLS_ID

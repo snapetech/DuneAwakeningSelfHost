@@ -5,6 +5,7 @@ import csv
 import difflib
 import importlib.util
 import inspect
+import http.client
 import json
 import os
 import pathlib
@@ -755,25 +756,84 @@ def send_player_disconnect(command_text, target_player, admin_player, route):
     return publish_command(command_text, route, target_player=target_player, admin_player=admin_player)
 
 
-def move_offline_player_to_partition(conn, fls_id, partition_id, x, y, z):
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            select dune.admin_move_offline_player_to_partition(
-                %s,
-                %s,
-                row(%s::real, %s::real, %s::real)::dune.vector
-            )
-            """,
-            (fls_id, partition_id, x, y, z),
-        )
-        cur.fetchall()
-    return {
-        "function": "dune.admin_move_offline_player_to_partition",
-        "flsId": fls_id,
-        "partitionId": partition_id,
-        "location": {"x": x, "y": y, "z": z},
+def _admin_json_request(path, payload):
+    """Call only the loopback Admin API; never send the owner token elsewhere."""
+    try:
+        port = int(env("DUNE_CHAT_COMMAND_ADMIN_PORT", env("DUNE_ADMIN_HOST_PORT", "18080")))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("DUNE_CHAT_COMMAND_ADMIN_PORT must be an integer") from exc
+    if port < 1 or port > 65535:
+        raise RuntimeError("DUNE_CHAT_COMMAND_ADMIN_PORT must be within 1..65535")
+    token = str(env("DUNE_ADMIN_TOKEN", "") or "").strip()
+    if not token:
+        raise RuntimeError("guarded chat teleport requires DUNE_ADMIN_TOKEN")
+    try:
+        timeout = int(env("DUNE_CHAT_COMMAND_ADMIN_TIMEOUT_SECONDS", "180"))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("DUNE_CHAT_COMMAND_ADMIN_TIMEOUT_SECONDS must be an integer") from exc
+    timeout = max(5, min(timeout, 300))
+    body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
+    try:
+        connection.request("POST", path, body=body, headers={
+            "Content-Type": "application/json",
+            "X-Admin-Token": token,
+            "Host": "127.0.0.1",
+        })
+        response = connection.getresponse()
+        raw = response.read(1024 * 1024 + 1)
+        if len(raw) > 1024 * 1024:
+            raise RuntimeError("Admin teleport response exceeded 1 MiB")
+        try:
+            result = json.loads(raw.decode("utf-8")) if raw else {}
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"Admin teleport API returned invalid JSON with HTTP {response.status}") from exc
+        if response.status < 200 or response.status >= 300:
+            detail = result.get("error") or result.get("message") or f"HTTP {response.status}"
+            raise RuntimeError(f"guarded Admin teleport request refused: {str(detail)[:500]}")
+        return result
+    finally:
+        connection.close()
+
+
+def guarded_offline_player_teleport(account_id, partition_id, x, y, z, execute=False):
+    payload = {
+        "dryRun": True,
+        "accountId": int(account_id),
+        "partitionId": int(partition_id),
+        "location": {"x": float(x), "y": float(y), "z": float(z)},
     }
+    preview = _admin_json_request("/api/admin/player-recovery/offline-teleport", payload)
+    if not execute:
+        return preview
+    if not preview.get("canExecute"):
+        blockers = ((preview.get("plan") or {}).get("blockers") or ["preview is not executable"])
+        raise RuntimeError("guarded offline teleport is blocked: " + "; ".join(map(str, blockers)))
+    execute_payload = {
+        **payload,
+        "dryRun": False,
+        "expectedFingerprint": preview.get("expectedFingerprint"),
+        "confirm": preview.get("confirm"),
+    }
+    result = _admin_json_request("/api/admin/player-recovery/offline-teleport", execute_payload)
+    if not (result.get("ok") and result.get("verified") and result.get("receipt")):
+        detail = result.get("error") or result.get("message") or "execution did not return verified receipt evidence"
+        raise RuntimeError(f"guarded offline teleport did not execute: {str(detail)[:500]}")
+    return result
+
+
+def chat_guarded_offline_teleport(conn, target, partition_id, x, y, z, execute=False):
+    rollback_quietly(conn)
+    try:
+        result = guarded_offline_player_teleport(
+            target["account_id"], partition_id, x, y, z, execute=execute,
+        )
+    except Exception as exc:
+        return None, f"guarded teleport refused: {str(exc)[:400]}"
+    if not execute and not result.get("canExecute"):
+        blockers = ((result.get("plan") or {}).get("blockers") or ["preview is not executable"])
+        return result, "guarded teleport blocked: " + "; ".join(map(str, blockers))
+    return result, None
 
 
 def player_disconnect_command(target_name):
@@ -3594,14 +3654,18 @@ def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=F
                 return {"ok": False, "error": response, "target": dict(target), "reply": announce_result}
             execute = env_bool("DUNE_CHAT_COMMAND_EXECUTE_TELEPORT", False)
             dry_run = env_bool("DUNE_CHAT_COMMAND_DRY_RUN", True) or not execute
-            response = f"would move {target['character_name']} to {format_teleport_slot(location)}"
-            move_result = None
+            move_result, teleport_error = chat_guarded_offline_teleport(
+                conn, target, location["partitionId"],
+                location["x"], location["y"], location["z"], execute=not dry_run,
+            )
+            if teleport_error:
+                announce_result = maybe_reply(teleport_error, reply)
+                return {"ok": False, "blocked": True, "action": "teleport.player-slot", "dryRun": dry_run, "error": teleport_error, "moveResult": move_result, "location": location, "target": {"characterName": target["character_name"], "status": target["online_status"], "location": compact_location(target)}, "reply": announce_result}
+            response = f"would move {target['character_name']} to {format_teleport_slot(location)} through the guarded Admin contract"
             if not dry_run:
-                move_result = move_offline_player_to_partition(conn, target["fls_id"], location["partitionId"], location["x"], location["y"], location["z"])
-                conn.commit()
                 response = f"moved {target['character_name']} to {format_teleport_slot(location)} via dune.admin_move_offline_player_to_partition"
             announce_result = maybe_reply(response, reply)
-            return {"ok": True, "action": "teleport.player-slot", "dryRun": dry_run, "message": response, "moveResult": move_result, "location": location, "target": {"characterName": target["character_name"], "flsId": target["fls_id"], "status": target["online_status"], "location": compact_location(target)}, "reply": announce_result}
+            return {"ok": bool(move_result.get("ok")), "action": "teleport.player-slot", "dryRun": dry_run, "message": response, "moveResult": move_result, "location": location, "target": {"characterName": target["character_name"], "status": target["online_status"], "location": compact_location(target)}, "reply": announce_result}
 
         if len(parts) != 2:
             response = "usage: &teleport <playername>|<slot>|list|set <slot> [name]|replace <slot> [name]|delete <slot>|<playername> <slot>"
@@ -3625,28 +3689,25 @@ def handle_command(conn, command_text, sender_name="", sender_fls_id="", reply=F
 
         execute = env_bool("DUNE_CHAT_COMMAND_EXECUTE_TELEPORT", False)
         dry_run = env_bool("DUNE_CHAT_COMMAND_DRY_RUN", True) or not execute
-        response = f"would move {target['character_name']} to {resolved_admin} at {format_location(admin)}"
-        move_result = None
+        move_result, teleport_error = chat_guarded_offline_teleport(
+            conn, target, admin["partition_id"], admin["x"], admin["y"], admin["z"],
+            execute=not dry_run,
+        )
+        if teleport_error:
+            announce_result = maybe_reply(teleport_error, reply)
+            return {"ok": False, "blocked": True, "action": "teleport", "dryRun": dry_run, "error": teleport_error, "moveResult": move_result, "admin": {"characterName": resolved_admin, "location": compact_location(admin)}, "target": {"characterName": target["character_name"], "status": target["online_status"], "location": compact_location(target)}, "reply": announce_result}
+        response = f"would move {target['character_name']} to {resolved_admin} at {format_location(admin)} through the guarded Admin contract"
         if not dry_run:
-            move_result = move_offline_player_to_partition(
-                conn,
-                target["fls_id"],
-                admin["partition_id"],
-                admin["x"],
-                admin["y"],
-                admin["z"],
-            )
-            conn.commit()
             response = f"moved {target['character_name']} to {resolved_admin} at {format_location(admin)} via dune.admin_move_offline_player_to_partition"
         announce_result = maybe_reply(response, reply)
         return {
-            "ok": True,
+            "ok": bool(move_result.get("ok")),
             "action": "teleport",
             "dryRun": dry_run,
             "message": response,
             "moveResult": move_result,
             "admin": {"characterName": resolved_admin, "location": compact_location(admin)},
-            "target": {"characterName": target["character_name"], "flsId": target["fls_id"], "status": target["online_status"], "location": compact_location(target)},
+            "target": {"characterName": target["character_name"], "status": target["online_status"], "location": compact_location(target)},
             "reply": announce_result,
         }
 

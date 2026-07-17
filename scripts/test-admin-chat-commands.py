@@ -1084,30 +1084,49 @@ class OfflineTeleportCommandTests(unittest.TestCase):
             "z": 30.0,
         }
 
-    def test_offline_teleport_execute_uses_first_party_helper(self):
+    def test_guarded_teleport_binds_execute_to_immediate_preview(self):
+        preview = {
+            "ok": True, "dryRun": True, "canExecute": True,
+            "expectedFingerprint": "a" * 64, "confirm": "MOVE OFFLINE PLAYER",
+        }
+        executed = {"ok": True, "dryRun": False, "verified": True, "receipt": {"id": "test"}}
+        with unittest.mock.patch.object(admin_chat_commands, "_admin_json_request", side_effect=[preview, executed]) as request:
+            result = admin_chat_commands.guarded_offline_player_teleport(42, 7, 1, 2, 3, execute=True)
+
+        self.assertTrue(result["verified"])
+        self.assertEqual(2, request.call_count)
+        first = request.call_args_list[0].args[1]
+        second = request.call_args_list[1].args[1]
+        self.assertTrue(first["dryRun"])
+        self.assertFalse(second["dryRun"])
+        self.assertEqual(preview["expectedFingerprint"], second["expectedFingerprint"])
+        self.assertEqual("MOVE OFFLINE PLAYER", second["confirm"])
+        self.assertEqual(first["location"], second["location"])
+
+    def test_guarded_teleport_refuses_unverified_execute_response(self):
+        preview = {
+            "ok": True, "dryRun": True, "canExecute": True,
+            "expectedFingerprint": "a" * 64, "confirm": "MOVE OFFLINE PLAYER",
+        }
+        with unittest.mock.patch.object(admin_chat_commands, "_admin_json_request", side_effect=[preview, {"ok": True, "approvalRequired": True}]):
+            with self.assertRaisesRegex(RuntimeError, "did not execute"):
+                admin_chat_commands.guarded_offline_player_teleport(42, 7, 1, 2, 3, execute=True)
+
+    def test_admin_request_requires_token_before_opening_loopback(self):
+        with unittest.mock.patch.object(admin_chat_commands, "env", lambda name, default="": "" if name == "DUNE_ADMIN_TOKEN" else default), \
+             unittest.mock.patch.object(admin_chat_commands.http.client, "HTTPConnection") as connection:
+            with self.assertRaisesRegex(RuntimeError, "requires DUNE_ADMIN_TOKEN"):
+                admin_chat_commands._admin_json_request("/test", {})
+        connection.assert_not_called()
+
+    def test_offline_teleport_execute_uses_guarded_admin_contract(self):
         admin = self.row("Admin", partition_id=7, status="Online", x=100.0)
         target = self.row("Tester", partition_id=7, status="Offline", x=1.0)
         events = []
 
-        class FakeCursor:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, exc_type, exc, tb):
-                return False
-
-            def execute(self, sql, params=None):
-                events.append(("execute", sql, params))
-
-            def fetchall(self):
-                return [(None,)]
-
         class FakeConn:
-            def cursor(self):
-                return FakeCursor()
-
-            def commit(self):
-                events.append(("commit",))
+            def rollback(self):
+                events.append(("rollback",))
 
         def fake_character_row(conn, name):
             return (admin if name == "Admin" else target), []
@@ -1122,19 +1141,17 @@ class OfflineTeleportCommandTests(unittest.TestCase):
         with unittest.mock.patch.object(admin_chat_commands, "is_admin", lambda conn, sender_name, sender_fls_id: (True, "Admin")), \
              unittest.mock.patch.object(admin_chat_commands, "character_row", fake_character_row), \
              unittest.mock.patch.object(admin_chat_commands, "env", fake_env), \
+             unittest.mock.patch.object(admin_chat_commands, "guarded_offline_player_teleport", return_value={"ok": True, "verified": True, "receipt": {"id": "test"}}) as guarded, \
              unittest.mock.patch.object(admin_chat_commands, "run_announce", lambda message, **kwargs: {"ok": True, "message": message}):
             result = admin_chat_commands.handle_command(FakeConn(), "&teleport Tester", sender_name="Admin")
 
-        helper_calls = [event for event in events if event[0] == "execute" and "dune.admin_move_offline_player_to_partition" in event[1]]
         self.assertTrue(result["ok"])
         self.assertFalse(result["dryRun"])
-        self.assertEqual(len(helper_calls), 1)
-        self.assertEqual(helper_calls[0][2], ("fls-Tester", 7, 100.0, 20.0, 30.0))
-        self.assertEqual(result["moveResult"]["function"], "dune.admin_move_offline_player_to_partition")
-        self.assertIn(("commit",), events)
-        self.assertFalse(any(event[0] == "execute" and "update dune.actors" in event[1].lower() for event in events))
+        guarded.assert_called_once_with(1, 7, 100.0, 20.0, 30.0, execute=True)
+        self.assertEqual([("rollback",)], events)
+        self.assertNotIn("flsId", result["target"])
 
-    def test_offline_teleport_dry_run_does_not_call_helper(self):
+    def test_offline_teleport_dry_run_calls_guarded_preview_only(self):
         admin = self.row("Admin", partition_id=7, status="Online", x=100.0)
         target = self.row("Tester", partition_id=7, status="Offline", x=1.0)
 
@@ -1143,12 +1160,12 @@ class OfflineTeleportCommandTests(unittest.TestCase):
 
         with unittest.mock.patch.object(admin_chat_commands, "is_admin", lambda conn, sender_name, sender_fls_id: (True, "Admin")), \
              unittest.mock.patch.object(admin_chat_commands, "character_row", fake_character_row), \
-             unittest.mock.patch.object(admin_chat_commands, "move_offline_player_to_partition") as move:
+             unittest.mock.patch.object(admin_chat_commands, "guarded_offline_player_teleport", return_value={"ok": True, "dryRun": True, "canExecute": True}) as guarded:
             result = admin_chat_commands.handle_command(object(), "&teleport Tester", sender_name="Admin")
 
         self.assertTrue(result["ok"])
         self.assertTrue(result["dryRun"])
-        move.assert_not_called()
+        guarded.assert_called_once_with(1, 7, 100.0, 20.0, 30.0, execute=False)
 
     def test_teleport_set_creates_empty_slot_from_admin_location(self):
         admin = self.row("Admin", partition_id=7, status="Online", x=100.0)
@@ -1235,7 +1252,7 @@ class OfflineTeleportCommandTests(unittest.TestCase):
 
         self.assertEqual([location["slot"] for location in result["locations"]], [2, 10])
 
-    def test_offline_teleport_to_slot_uses_first_party_helper(self):
+    def test_offline_teleport_to_slot_uses_guarded_admin_contract(self):
         admin = self.row("Admin", partition_id=7, status="Online", x=100.0)
         target = self.row("Tester", partition_id=1, status="Offline", x=1.0)
 
@@ -1255,9 +1272,12 @@ class OfflineTeleportCommandTests(unittest.TestCase):
                  unittest.mock.patch.object(admin_chat_commands, "is_admin", lambda conn, sender_name, sender_fls_id: (True, "Admin")), \
                  unittest.mock.patch.object(admin_chat_commands, "character_row", fake_character_row), \
                  unittest.mock.patch.object(admin_chat_commands, "env", fake_env), \
-                 unittest.mock.patch.object(admin_chat_commands, "move_offline_player_to_partition", return_value={"function": "dune.admin_move_offline_player_to_partition"}) as move:
+                 unittest.mock.patch.object(admin_chat_commands, "guarded_offline_player_teleport", return_value={"ok": True, "verified": True, "receipt": {"id": "test"}}) as guarded:
                 class FakeConn:
                     def commit(self):
+                        pass
+
+                    def rollback(self):
                         pass
 
                 admin_chat_commands.handle_command(FakeConn(), "&teleport set 0 arrakeen", sender_name="Admin")
@@ -1265,7 +1285,7 @@ class OfflineTeleportCommandTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertFalse(result["dryRun"])
-        move.assert_called_once_with(unittest.mock.ANY, "fls-Tester", 7, 100.0, 20.0, 30.0)
+        guarded.assert_called_once_with(1, 7, 100.0, 20.0, 30.0, execute=True)
 
     def test_teleport_slot_returns_gated_native_preview(self):
         admin = self.row("Admin", partition_id=7, status="Online", x=100.0)

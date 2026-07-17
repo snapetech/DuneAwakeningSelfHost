@@ -473,6 +473,8 @@ only when explicitly authorized for a concrete client task, as required by
   partition locks, native-function-only mutation, persisted transform
   verification, private receipts, and a transactionally rolled-back semantic
   proof in every current isolated restore drill.
+  The in-game `&teleport` surface is also unified through that loopback Admin
+  contract; no secondary chat-to-database write bypass remains.
 - **High confidence:** the 2026-07-16 live search added eight credible peers and
   one rejected placeholder project. New executable outcomes were closed in the
   same refresh: movement-verified engagement airdrops now exceed the trigger +
