@@ -55,6 +55,16 @@
       "excludeMaintenance": false
     },
     {
+      "id": "rabbitmq_restore_proof",
+      "name": "Verified RabbitMQ recovery proof",
+      "description": "A recent authenticated receipt proves both copied broker states booted with enforced network isolation and without touching live RabbitMQ.",
+      "signal": "rabbitmq_restore_proof_ready",
+      "targetAvailability": 0.99,
+      "severity": "critical",
+      "consecutiveFailures": 2,
+      "excludeMaintenance": false
+    },
+    {
       "id": "memory_headroom",
       "name": "Host memory headroom",
       "description": "MemAvailable remains above the configured operational floor.",

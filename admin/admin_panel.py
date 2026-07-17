@@ -431,6 +431,7 @@ OPERATIONAL_SLO_DATABASE = pathlib.Path(os.environ.get("DUNE_OPERATIONAL_SLO_DAT
 OPERATIONAL_SLO_POLL_SECONDS = max(10, min(int(os.environ.get("DUNE_OPERATIONAL_SLO_POLL_SECONDS", "60")), 3600))
 OPERATIONAL_SLO_BACKUP_MAX_AGE_HOURS = max(1.0, min(float(os.environ.get("DUNE_OPERATIONAL_SLO_BACKUP_MAX_AGE_HOURS", "36")), 24 * 365))
 OPERATIONAL_SLO_RESTORE_PROOF_MAX_AGE_HOURS = max(1.0, min(float(os.environ.get("DUNE_OPERATIONAL_SLO_RESTORE_PROOF_MAX_AGE_HOURS", "48")), 24 * 365))
+OPERATIONAL_SLO_RABBITMQ_RESTORE_PROOF_MAX_AGE_HOURS = max(1.0, min(float(os.environ.get("DUNE_OPERATIONAL_SLO_RABBITMQ_RESTORE_PROOF_MAX_AGE_HOURS", "192")), 24 * 365))
 OPERATIONAL_SLO_MEMORY_FLOOR_GIB = max(0.25, min(float(os.environ.get("DUNE_OPERATIONAL_SLO_MEMORY_FLOOR_GIB", "8")), 1024.0))
 OPERATIONAL_SLO_STORE = None
 OPERATIONAL_SLO_STORE_LOCK = threading.Lock()
@@ -1457,6 +1458,7 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_OPERATIONAL_SLO_POLL_SECONDS": {"group": "Reliability SLO", "secret": False, "restart": True, "why": "Reliability observation cadence from 10 to 3600 seconds."},
     "DUNE_OPERATIONAL_SLO_BACKUP_MAX_AGE_HOURS": {"group": "Reliability SLO", "secret": False, "restart": True, "why": "Newest recognized PostgreSQL dump age that satisfies the backup RPO signal."},
     "DUNE_OPERATIONAL_SLO_RESTORE_PROOF_MAX_AGE_HOURS": {"group": "Reliability SLO", "secret": False, "restart": True, "why": "Maximum age of a hash-valid successful isolated restore receipt."},
+    "DUNE_OPERATIONAL_SLO_RABBITMQ_RESTORE_PROOF_MAX_AGE_HOURS": {"group": "Reliability SLO", "secret": False, "restart": True, "why": "Maximum age of an authenticated successful dual-broker networkless recovery receipt."},
     "DUNE_OPERATIONAL_SLO_MEMORY_FLOOR_GIB": {"group": "Reliability SLO", "secret": False, "restart": True, "why": "Host MemAvailable floor used by the memory-headroom objective."},
     "DUNE_CAPACITY_INTELLIGENCE_ENABLED": {"group": "Capacity Intelligence", "secret": False, "restart": True, "why": "Records time-weighted map use, map-hours saved, warm hits, revisit gaps, and cold-start readiness."},
     "DUNE_CAPACITY_INTELLIGENCE_POLICY": {"group": "Capacity Intelligence", "secret": False, "restart": True, "why": "Versioned retention-model, evidence threshold, timeout, and bounded-apply policy."},
@@ -4093,6 +4095,11 @@ def update_readiness_snapshot(game=None, force=False):
     except Exception as exc:
         proof, restore_ready = {"error": str(exc)[:1000]}, False
     try:
+        rabbitmq_proof = _slo_rabbitmq_restore_proof()
+        rabbitmq_restore_ready = _rabbitmq_restore_proof_ready(rabbitmq_proof)
+    except Exception as exc:
+        rabbitmq_proof, rabbitmq_restore_ready = {"error": str(exc)[:1000]}, False
+    try:
         desired = desired_state_public_status()
     except Exception as exc:
         desired = {"state": "error", "error": str(exc)[:1000]}
@@ -4133,6 +4140,7 @@ def update_readiness_snapshot(game=None, force=False):
         "packageIdentified": package_identified,
         "postStartHooksReady": not missing_hooks,
         "readinessCurrent": bool(certification.get("currentReady") and certification.get("policyCurrent") and (certification.get("receiptVerification") or {}).get("ok")),
+        "rabbitmqRestoreProofReady": rabbitmq_restore_ready,
         "restoreProofReady": restore_ready,
         "sloHealthy": slo.get("overall") == "healthy" and not (slo.get("openIncidents") or []) and bool((slo.get("integrity") or {}).get("ok")),
         "steamSettled": steam_settled,
@@ -4142,6 +4150,7 @@ def update_readiness_snapshot(game=None, force=False):
         "details": {
             "backup": {"path": backup.get("path"), "verified": bool(backup.get("ok")), "exitCode": backup.get("exitCode")},
             "restoreProof": {key: proof.get(key) for key in ("id", "ok", "integrityOk", "policyOk", "receiptHashValid", "ageSeconds", "restoreSeconds", "liveDatabaseTouched")},
+            "rabbitmqRestoreProof": {key: rabbitmq_proof.get(key) for key in ("id", "ok", "integrityOk", "policyOk", "receiptHashValid", "receiptChainValid", "historyValid", "ageSeconds", "liveRabbitMQTouched", "networkCreated", "brokerCopiesReady")},
             "compose": {"ok": compose_valid, "evidence": "latest verified assured deployment ran the normal Compose validation/deploy path", "commit": latest_assurance.get("commit")},
             "coriolis": coriolis,
             "desiredState": {"state": desired.get("state"), "openFindings": len(desired.get("openFindings") or []), "integrity": bool((desired.get("integrity") or {}).get("ok"))},
@@ -6269,27 +6278,67 @@ def _slo_latest_backup():
     }
 
 
-def _slo_restore_proof():
-    state = restore_drill.status(RESTORE_DRILL_RECEIPT_ROOT, limit=1)
-    latest = state.get("latest") or {}
-    finished = str(latest.get("finishedAt") or "")
+def _receipt_age_seconds(finished_at):
+    finished = str(finished_at or "")
     if finished.endswith("Z"):
         finished = finished[:-1] + "+00:00"
     try:
         finished_epoch = datetime.datetime.fromisoformat(finished).timestamp()
     except (TypeError, ValueError):
         finished_epoch = 0.0
-    age = max(0.0, time.time() - finished_epoch) if finished_epoch else None
+    return max(0.0, time.time() - finished_epoch) if finished_epoch else None
+
+
+def _slo_restore_proof():
+    state = restore_drill.status(RESTORE_DRILL_RECEIPT_ROOT, limit=1)
+    latest = state.get("latest") or {}
     return {
         "id": latest.get("id"),
         "ok": bool(latest.get("ok")),
         "integrityOk": bool(latest.get("integrityOk")),
         "policyOk": bool(latest.get("policyOk")),
         "receiptHashValid": bool(latest.get("receiptHashValid")),
-        "ageSeconds": age,
+        "ageSeconds": _receipt_age_seconds(latest.get("finishedAt")),
         "restoreSeconds": (latest.get("timings") or {}).get("restoreSeconds"),
         "liveDatabaseTouched": latest.get("liveDatabaseTouched"),
     }
+
+
+def _slo_rabbitmq_restore_proof():
+    state = rabbitmq_restore_drill.status(RABBITMQ_RESTORE_DRILL_RECEIPT_ROOT, limit=1)
+    latest = state.get("latest") or {}
+    history = state.get("history") or {}
+    brokers = latest.get("brokers") or {}
+    broker_copies_ready = bool(
+        set(brokers) == {"admin", "game"}
+        and all(row.get("ok") and (row.get("isolation") or {}).get("verified") for row in brokers.values())
+    )
+    return {
+        "id": latest.get("id"),
+        "ok": bool(state.get("ok") and latest.get("ok")),
+        "integrityOk": bool(latest.get("integrityOk")),
+        "policyOk": bool(latest.get("policyOk")),
+        "receiptHashValid": bool(latest.get("receiptHashValid")),
+        "receiptChainValid": bool(latest.get("receiptChainValid")),
+        "historyValid": bool(history.get("ok")),
+        "ageSeconds": _receipt_age_seconds(latest.get("finishedAt")),
+        "liveRabbitMQTouched": latest.get("liveRabbitMQTouched"),
+        "networkCreated": latest.get("networkCreated"),
+        "brokerCopiesReady": broker_copies_ready,
+    }
+
+
+def _rabbitmq_restore_proof_ready(proof):
+    age = proof.get("ageSeconds")
+    return bool(
+        proof.get("ok") and proof.get("integrityOk") and proof.get("policyOk")
+        and proof.get("receiptHashValid") and proof.get("receiptChainValid")
+        and proof.get("historyValid") and proof.get("brokerCopiesReady")
+        and age is not None
+        and age <= OPERATIONAL_SLO_RABBITMQ_RESTORE_PROOF_MAX_AGE_HOURS * 3600
+        and proof.get("liveRabbitMQTouched") is False
+        and proof.get("networkCreated") is False
+    )
 
 
 def collect_operational_slo_signals():
@@ -6335,6 +6384,13 @@ def collect_operational_slo_signals():
     except Exception as exc:
         restore_proof_ready = False
         errors["restoreProof"] = str(exc)[:1000]
+    try:
+        rabbitmq_proof = _slo_rabbitmq_restore_proof()
+        rabbitmq_restore_proof_ready = _rabbitmq_restore_proof_ready(rabbitmq_proof)
+        context["rabbitmqRestoreProof"] = rabbitmq_proof
+    except Exception as exc:
+        rabbitmq_restore_proof_ready = False
+        errors["rabbitmqRestoreProof"] = str(exc)[:1000]
     memory = read_meminfo()
     available = int(memory.get("availableBytes") or 0)
     memory_headroom_ready = available >= int(OPERATIONAL_SLO_MEMORY_FLOOR_GIB * 1024 ** 3)
@@ -6378,6 +6434,7 @@ def collect_operational_slo_signals():
             "required_maps_ready": required_maps_ready,
             "backup_rpo_ready": backup_rpo_ready,
             "restore_proof_ready": restore_proof_ready,
+            "rabbitmq_restore_proof_ready": rabbitmq_restore_proof_ready,
             "memory_headroom_ready": memory_headroom_ready,
             "admin_auth_ready": admin_auth_ready,
             "desired_state_attested": desired_state_attested,

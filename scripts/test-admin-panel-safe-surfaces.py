@@ -3764,8 +3764,13 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
             "latest": {
                 "id": "rabbit-proof", "ok": True, "integrityOk": True,
                 "policyOk": True, "receiptHashValid": True,
+                "receiptChainValid": True,
                 "finishedAt": self.panel.datetime.datetime.now(self.panel.datetime.timezone.utc).isoformat(),
                 "liveRabbitMQTouched": False, "networkCreated": False,
+                "brokers": {
+                    "admin": {"ok": True, "isolation": {"verified": True}},
+                    "game": {"ok": True, "isolation": {"verified": True}},
+                },
             },
         }
         self.panel.read_meminfo = lambda: {"availableBytes": 32 * 1024**3, "totalBytes": 64 * 1024**3}
@@ -3794,10 +3799,27 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.addCleanup(lambda: setattr(self.panel, "ADMIN_TOKEN", original_token))
         collected = self.panel.collect_operational_slo_signals()
         self.assertTrue(all(collected["signals"].values()), collected)
+        self.assertTrue(collected["signals"]["rabbitmq_restore_proof_ready"])
+        self.assertTrue(collected["context"]["rabbitmqRestoreProof"]["brokerCopiesReady"])
+        proof = collected["context"]["rabbitmqRestoreProof"]
+        self.assertTrue(self.panel._rabbitmq_restore_proof_ready(proof))
+        for key in ("integrityOk", "policyOk", "receiptHashValid", "receiptChainValid", "historyValid", "brokerCopiesReady"):
+            invalid = dict(proof)
+            invalid[key] = False
+            self.assertFalse(self.panel._rabbitmq_restore_proof_ready(invalid), key)
+        stale = dict(proof)
+        stale["ageSeconds"] = self.panel.OPERATIONAL_SLO_RABBITMQ_RESTORE_PROOF_MAX_AGE_HOURS * 3600 + 1
+        self.assertFalse(self.panel._rabbitmq_restore_proof_ready(stale))
         self.panel.restart_online_snapshot = lambda: (_ for _ in ()).throw(RuntimeError("farm unavailable"))
         failed = self.panel.collect_operational_slo_signals()
         self.assertFalse(failed["signals"]["required_maps_ready"])
         self.assertIn("farm unavailable", failed["context"]["errors"]["requiredMaps"])
+        self.panel.rabbitmq_restore_drill.status = lambda root, limit=1: {
+            "ok": True, "history": {"ok": False},
+            "latest": {"ok": True, "integrityOk": True, "policyOk": True, "receiptHashValid": True},
+        }
+        failed = self.panel.collect_operational_slo_signals()
+        self.assertFalse(failed["signals"]["rabbitmq_restore_proof_ready"])
 
     def test_capacity_status_metrics_and_apply_route(self):
         original_status = self.panel.capacity_intelligence_public_status

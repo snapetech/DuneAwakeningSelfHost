@@ -213,7 +213,8 @@ admin restart cannot turn a transient stale sample into a failed receipt.
 
 Game-build upgrades now have their own candidate-bound safety gate. DASH binds
 the exact Steam build and Funcom image tag to a verified backup, isolated
-restore proof, Compose/Coriolis/post-start hooks, desired state, SLO/change
+PostgreSQL restore proof, authenticated dual-broker RabbitMQ recovery proof,
+Compose/Coriolis/post-start hooks, desired state, SLO/change
 integrity, fleet readiness, deployment assurance, and online-player state.
 The signed receipt expires and invalidates on candidate drift; browser update
 execution fails closed without a current receipt. Certification itself runs no
@@ -602,8 +603,8 @@ make slo-metrics
 ```
 
 The retained control room measures database/control-plane/required-map
-availability, backup RPO, restore-proof freshness, memory headroom, and admin
-authentication across five windows. It adds debounced incidents, immutable
+availability, backup RPO, PostgreSQL and dual-broker RabbitMQ recovery-proof
+freshness, memory headroom, and admin authentication across five windows. It adds debounced incidents, immutable
 hash-chained events, bounded planned maintenance, Prometheus alerts, and
 transactionally consistent backup/restore of the ledger. See
 [`docs/operational-slo.md`](docs/operational-slo.md).

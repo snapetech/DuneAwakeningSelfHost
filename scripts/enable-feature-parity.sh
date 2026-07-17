@@ -162,6 +162,7 @@ set_value DUNE_OPERATIONAL_SLO_DATABASE /workspace/backups/operational-slo/slo.s
 set_value DUNE_OPERATIONAL_SLO_POLL_SECONDS 60
 set_value DUNE_OPERATIONAL_SLO_BACKUP_MAX_AGE_HOURS 36
 set_value DUNE_OPERATIONAL_SLO_RESTORE_PROOF_MAX_AGE_HOURS 48
+set_value DUNE_OPERATIONAL_SLO_RABBITMQ_RESTORE_PROOF_MAX_AGE_HOURS 192
 set_value DUNE_OPERATIONAL_SLO_MEMORY_FLOOR_GIB 8
 set_value DUNE_CAPACITY_INTELLIGENCE_POLICY /workspace/config/capacity-intelligence.json
 set_value DUNE_CAPACITY_INTELLIGENCE_DATABASE /workspace/backups/capacity-intelligence/capacity.sqlite3

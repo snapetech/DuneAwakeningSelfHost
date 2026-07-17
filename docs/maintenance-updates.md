@@ -4,7 +4,7 @@ This page documents the daily restart, backup, Steam-package update check, and r
 
 For operator-initiated browser updates, DASH adds a candidate-bound signed
 readiness gate before this existing workflow. It verifies recovery, current
-restore proof, Compose/Coriolis/post-start hooks, Desired State, SLO/change
+PostgreSQL and RabbitMQ recovery proofs, Compose/Coriolis/post-start hooks, Desired State, SLO/change
 integrity, response readiness, and the latest assured deployment without
 executing an update. The browser stages Steam separately, certifies that exact
 local candidate, then disables further acquisition during apply so the build

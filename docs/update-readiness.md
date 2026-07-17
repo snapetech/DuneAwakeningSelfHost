@@ -41,14 +41,17 @@ A scheduled-update receipt is issued only when every check is true:
 4. the newest recognized full backup passes the normal mixed-evidence verifier;
 5. the newest isolated restore drill has valid integrity/policy/hash results,
    meets the configured proof-freshness policy, and confirms no live DB access;
-6. the effective Compose model validates;
-7. the Landsraad/Coriolis guard passes with the required seven-day cycle;
-8. every required post-start/update recovery hook exists and is executable;
-9. Desired State is attested with zero open findings and valid integrity;
-10. Change Intelligence has a valid ledger and zero open incidents;
-11. Operational SLOs are healthy with zero open incidents;
-12. fleet-wide incident response readiness is current and verified; and
-13. the latest assured deployment receipt is ready, verified, and has no open
+6. the newest RabbitMQ recovery receipt and its authenticated history are
+   valid and current, both copied brokers passed inspected networkless boot,
+   and the proof confirms no live broker access or created network;
+7. the effective Compose model validates;
+8. the Landsraad/Coriolis guard passes with the required seven-day cycle;
+9. every required post-start/update recovery hook exists and is executable;
+10. Desired State is attested with zero open findings and valid integrity;
+11. Change Intelligence has a valid ledger and zero open incidents;
+12. Operational SLOs are healthy with zero open incidents;
+13. fleet-wide incident response readiness is current and verified; and
+14. the latest assured deployment receipt is ready, verified, and has no open
     or overdue change window.
 
 `scheduledReady` allows online players because the existing update path has a

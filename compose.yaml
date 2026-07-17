@@ -133,7 +133,7 @@ services:
       - "127.0.0.1:15672:15672"
       - "127.0.0.1:5673:5672"
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -165,7 +165,7 @@ services:
       - "${GAME_RMQ_HTTP_BIND_ADDRESS:-127.0.0.1}:${GAME_RMQ_PUBLIC_HTTP_PORT:-15673}:15672"
       - "${GAME_RMQ_BIND_ADDRESS:-0.0.0.0}:${GAME_RMQ_PUBLIC_PORT:-31982}:5672"
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -833,6 +833,7 @@ services:
       DUNE_OPERATIONAL_SLO_POLL_SECONDS: ${DUNE_OPERATIONAL_SLO_POLL_SECONDS:-60}
       DUNE_OPERATIONAL_SLO_BACKUP_MAX_AGE_HOURS: ${DUNE_OPERATIONAL_SLO_BACKUP_MAX_AGE_HOURS:-36}
       DUNE_OPERATIONAL_SLO_RESTORE_PROOF_MAX_AGE_HOURS: ${DUNE_OPERATIONAL_SLO_RESTORE_PROOF_MAX_AGE_HOURS:-48}
+      DUNE_OPERATIONAL_SLO_RABBITMQ_RESTORE_PROOF_MAX_AGE_HOURS: ${DUNE_OPERATIONAL_SLO_RABBITMQ_RESTORE_PROOF_MAX_AGE_HOURS:-192}
       DUNE_OPERATIONAL_SLO_MEMORY_FLOOR_GIB: ${DUNE_OPERATIONAL_SLO_MEMORY_FLOOR_GIB:-8}
       DUNE_CAPACITY_INTELLIGENCE_ENABLED: ${DUNE_CAPACITY_INTELLIGENCE_ENABLED:-true}
       DUNE_CAPACITY_INTELLIGENCE_POLICY: ${DUNE_CAPACITY_INTELLIGENCE_POLICY:-/workspace/config/capacity-intelligence.json}

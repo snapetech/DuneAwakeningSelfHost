@@ -21,12 +21,13 @@ The versioned policy is [`config/operational-slo.json`](../config/operational-sl
 | Required-map availability | Every currently `always-on` map has a ready, alive, active registration. With autoscaling disabled, the complete farm is required. | 99.5% | 3 failures | yes |
 | Backup recovery point | The newest confined PostgreSQL dump is no older than the configured RPO. | 99.0% | 2 failures | no |
 | Verified restore proof | A recent receipt has a valid hash, passed integrity and policy, met RTO, and confirms no live DB access. | 99.0% | 2 failures | no |
+| Verified RabbitMQ recovery proof | A recent authenticated receipt proves both copied brokers booted networkless with inspected isolation and no live-broker access. | 99.0% | 2 failures | no |
 | Host memory headroom | `MemAvailable` remains above the configured floor. | 99.0% | 5 failures | yes |
 | Admin authentication | Authentication is required and a real owner/RBAC credential source exists. | 99.9% | 1 failure | no |
 | Desired-state attestation | An HMAC-sealed file/container baseline exists, has no open drift, and its complete ledger verifies. | 99.9% | 2 failures | yes |
 | Operational evidence integrity | The append-only Change Intelligence SQLite, triggers, and complete HMAC event chain verify. | 99.9% | 2 failures | no |
 
-Backup, restore-proof, and authentication objectives deliberately continue through planned
+Backup, database/RabbitMQ restore-proof, and authentication objectives deliberately continue through planned
 maintenance: a maintenance window is not permission to lose recovery coverage
 or expose the panel. Operators can edit the committed policy, but validation
 rejects duplicate/invalid identifiers, invalid targets, unknown severities,
@@ -235,6 +236,7 @@ installs the snapshot mode `0600`.
 | `DUNE_OPERATIONAL_SLO_POLL_SECONDS` | `60` | Observation cadence, bounded to 10–3600 seconds. |
 | `DUNE_OPERATIONAL_SLO_BACKUP_MAX_AGE_HOURS` | `36` | Backup RPO threshold. |
 | `DUNE_OPERATIONAL_SLO_RESTORE_PROOF_MAX_AGE_HOURS` | `48` | Restore-proof freshness threshold. |
+| `DUNE_OPERATIONAL_SLO_RABBITMQ_RESTORE_PROOF_MAX_AGE_HOURS` | `192` | Dual-broker networkless recovery-proof freshness threshold; eight days covers the weekly timer plus bounded scheduling delay. |
 | `DUNE_OPERATIONAL_SLO_MEMORY_FLOOR_GIB` | `8` | Memory-headroom threshold. |
 
 The policy carries sample retention, maximum unobserved gap, objective targets,

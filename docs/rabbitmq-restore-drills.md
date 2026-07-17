@@ -219,6 +219,11 @@ dash_rabbitmq_restore_drill_last_finished_timestamp_seconds
 Prometheus alerts when configuration is invalid, the latest proof or
 authenticated history fails, or no run has completed within eight days.
 
+The same authenticated proof is a non-maintenance-excludable Operational SLO
+objective and a mandatory game-update readiness check. A missing, stale,
+tampered, non-isolated, or failed dual-broker receipt therefore blocks update
+certification instead of leaving recovery coverage as advisory telemetry.
+
 ## Failure recovery
 
 - **No complete backup:** run `scripts/backup-state.sh .env`, verify the new

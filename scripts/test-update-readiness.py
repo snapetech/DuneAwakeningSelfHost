@@ -57,6 +57,13 @@ class UpdateReadinessTests(unittest.TestCase):
             self.store.certify(snapshot, "owner", now=1000)
         self.assertFalse(update_readiness.normalize_snapshot(snapshot)["scheduledReady"])
 
+    def test_rabbitmq_recovery_proof_is_a_required_check(self):
+        snapshot = self.snapshot()
+        snapshot["checks"]["rabbitmqRestoreProofReady"] = False
+        with self.assertRaisesRegex(ValueError, "rabbitmqRestoreProofReady"):
+            self.store.certify(snapshot, "owner", now=1000)
+        self.assertFalse(update_readiness.normalize_snapshot(snapshot)["scheduledReady"])
+
     def test_candidate_change_and_expiry_invalidate_receipt(self):
         self.store.certify(self.snapshot(), "owner", now=1000)
         self.assertFalse(self.store.status(self.snapshot(tag="dune_sb_1_4_11_0"), now=1100)["currentReceiptReady"])

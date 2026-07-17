@@ -124,6 +124,7 @@ generic fallback must be last.
 | Required-map availability | `required-map-availability` | map/farm readiness, logs, post-hook-aware map recovery |
 | Backup RPO | `backup-rpo` | backup inventory, storage diagnosis, verified full backup |
 | Restore proof | `restore-proof` | receipt review, storage diagnosis, isolated restore drill |
+| RabbitMQ recovery proof | `rabbitmq-restore-proof` | authenticated receipt/history review, broker diagnosis, networkless dual-broker drill |
 | Memory headroom | `memory-headroom` | stack/capacity evidence, gradual eligible recommendation apply |
 | Admin authentication | `admin-authentication` | access posture, auth events, guarded settings repair |
 | Desired-state attestation | `desired-state-attestation` | drift/provenance review, revert or complete-snapshot reseal |

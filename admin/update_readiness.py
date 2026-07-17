@@ -32,6 +32,7 @@ REQUIRED_CHECKS = (
     "packageIdentified",
     "postStartHooksReady",
     "readinessCurrent",
+    "rabbitmqRestoreProofReady",
     "restoreProofReady",
     "sloHealthy",
     "steamSettled",

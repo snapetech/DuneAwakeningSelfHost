@@ -216,9 +216,9 @@ integrity, timer installation, configuration, and recovery are documented in
 ## Reliability Control Room
 
 `GET /api/ops/slo` reports retained, time-weighted reliability rather than only
-the current health response. Nine default objectives cover the Dune database,
-control plane, currently required maps, backup RPO, verified restore proof,
-memory headroom, admin authentication, desired-state attestation, and operational
+the current health response. Ten default objectives cover the Dune database,
+control plane, currently required maps, backup RPO, verified PostgreSQL and
+RabbitMQ recovery proofs, memory headroom, admin authentication, desired-state attestation, and operational
 evidence integrity. Every objective includes 1h, 6h,
 24h, 7d, and 30d availability, coverage, burn rate, and remaining budget.
 
@@ -235,7 +235,7 @@ phrases `ACKNOWLEDGE SLO INCIDENT` or `CHANGE SLO MAINTENANCE`.
 
 Planned maintenance lasts at most 24 hours, cannot overlap, cannot be created
 retroactively after an incident, and excludes only opted-in objectives. Backup
-RPO, restore proof, and admin authentication continue measuring during
+RPO, both recovery proofs, and admin authentication continue measuring during
 maintenance.
 
 Incident events are protected from update/delete by SQLite triggers and linked
