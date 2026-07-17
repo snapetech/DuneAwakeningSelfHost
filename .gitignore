@@ -15,6 +15,7 @@ build/
 dist/linux-server-loader/
 dist/linux-client-loader/
 dist/windows-client-loader/
+dist/release/
 experiments/runs/
 research/fixtures/
 config/tls/

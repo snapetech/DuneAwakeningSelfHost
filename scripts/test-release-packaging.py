@@ -137,6 +137,8 @@ class ReleasePackagingTests(unittest.TestCase):
         self.assertRegex(workflow, r"actions/attest@[0-9a-f]{40}")
         self.assertIn("scripts/publish-github-release.sh", workflow)
         self.assertNotIn("environment:", workflow)
+        ignored = (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+        self.assertIn("dist/release/", ignored)
 
 
 if __name__ == "__main__":
