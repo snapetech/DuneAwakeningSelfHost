@@ -102,6 +102,7 @@ POLICIES = {
     "/api/admin/access-code": ("high", "Change a player access code", _non_dry),
     "/api/admin/respawn-location": ("high", "Change a player respawn location", _non_dry),
     "/api/moderation": ("high", "Change moderation enforcement state", _actions("ban", "unban", "allowlist-policy")),
+    "/api/ops/audit/reconcile": ("high", "Resolve an investigated incomplete privileged request", _always),
     # Standard: operational mutations that are normally reversible or scheduled.
     "/api/ops/services/control": ("standard", "Control a service", _always),
     "/api/ops/memory": ("standard", "Change map memory policy", _always),

@@ -133,6 +133,7 @@ def required_capability(method, path):
         "/api/ops/capacity",
         "/api/ops/desired-state",
         "/api/ops/deployment-assurance",
+        "/api/ops/audit/reconcile",
         "/api/ops/update-readiness",
         "/api/ops/public-ip-canary",
         "/api/ops/canary-autopilot",

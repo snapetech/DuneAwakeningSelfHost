@@ -83,6 +83,15 @@ unknown: the process may have stopped, the connection may have failed before
 response construction, or evidence append may have failed. It does not prove
 that the game/database mutation ran or did not run.
 
+After investigating authoritative domain evidence, an infrastructure
+administrator can close that ambiguity without editing history. The governed
+reconciliation route appends `privileged-request-reconciled` against the
+original request ID with one of `succeeded`, `failed`, `cancelled`, or
+`no-effect`, a required reason, and optional bounded evidence. It rejects an
+unknown or already terminal request. The reconciliation POST receives its own
+normal admission/completion pair, so resolving one gap cannot create an
+unrecorded governance mutation.
+
 Community reward webhooks and the Discord service adapter keep their separate
 signature/service-token boundaries and domain ledgers. Four-eyes approvals
 remain cumulative: approval consumption does not replace flight-recorder
@@ -112,6 +121,19 @@ curl -H "X-Admin-Token: $TOKEN" \
 The response contains `ledger`, `sealedEvents`, and legacy/current `events`.
 Neither status nor metrics exports request bodies.
 
+Open requests are returned as bounded metadata under
+`ledger.requests.openRequests`. Reconcile only after checking the referenced
+route's authoritative receipt, transaction, window, or domain state:
+
+```bash
+curl -H "X-Admin-Token: $TOKEN" -H 'Content-Type: application/json' \
+  --data '{"requestId":"request-...","outcome":"cancelled","reason":"Investigated authoritative change-window state.","evidence":"deployment-window-... cancelled","confirm":"RECONCILE PRIVILEGED REQUEST"}' \
+  http://127.0.0.1:18080/api/ops/audit/reconcile
+```
+
+This route requires `infrastructure.write` and is classified as a high-risk
+governed change for change-contract and optional two-person approval policy.
+
 ## Metrics and alerts
 
 `/metrics/change-intelligence` also exports label-free series:
@@ -124,6 +146,7 @@ dash_admin_audit_ledger_head_sequence
 dash_admin_audit_ledger_append_failures_total
 dash_admin_audit_privileged_requests_admitted_total
 dash_admin_audit_privileged_requests_completed_total
+dash_admin_audit_privileged_requests_reconciled_total
 dash_admin_audit_privileged_requests_open
 dash_admin_audit_privileged_request_oldest_open_age_seconds
 ```

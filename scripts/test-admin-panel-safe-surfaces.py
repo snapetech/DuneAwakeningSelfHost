@@ -4110,6 +4110,67 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn("dash_admin_metrics_document_cache_misses_total 2\n", telemetry)
         self.assertNotIn("{", telemetry)
 
+    def test_operations_briefing_accepts_assured_backup_verified_field(self):
+        original = self.panel.deployment_assurance_public_status
+        self.panel.deployment_assurance_public_status = lambda: {
+            "enabled": True, "ok": True, "latestReady": True,
+            "openWindows": [], "overdueWindows": [],
+            "latest": {"ready": True, "backup": {"verified": True, "path": "backup-1"}},
+        }
+        self.addCleanup(lambda: setattr(self.panel, "deployment_assurance_public_status", original))
+
+        sources = {row["id"]: row for row in self.panel.operations_briefing_sources()}
+
+        self.assertTrue(sources["verified-backup"]["healthy"])
+        self.assertEqual("verified", sources["verified-backup"]["state"])
+        self.assertIn("verified=True", sources["verified-backup"]["detail"])
+
+    def test_operations_briefing_readiness_excludes_its_own_probe(self):
+        original = self.panel.feature_readiness_public_status
+        self.panel.feature_readiness_public_status = lambda force=False: {
+            "features": [
+                {"id": "database", "state": "ready"},
+                {"id": "operations-briefing", "state": "degraded"},
+                {"id": "public-directory", "state": "external-blocked"},
+            ],
+            "summary": {"ready": 1, "degraded": 1, "external-blocked": 1, "total": 3},
+        }
+        self.addCleanup(lambda: setattr(self.panel, "feature_readiness_public_status", original))
+
+        sources = {row["id"]: row for row in self.panel.operations_briefing_sources()}
+
+        self.assertTrue(sources["feature-readiness"]["healthy"])
+        self.assertEqual("ready", sources["feature-readiness"]["state"])
+        self.assertIn("excluding briefing self-check", sources["feature-readiness"]["detail"])
+        self.assertEqual("1-provider-blocked", sources["external-integrations"]["state"])
+
+    def test_privileged_request_reconciliation_is_append_only_and_terminal(self):
+        calls = []
+        states = iter([
+            {"id": "request-" + "a" * 32, "open": True, "admissionEventId": "audit-" + "b" * 32, "path": "/api/ops/deployment-assurance", "capability": "infrastructure.write"},
+            {"id": "request-" + "a" * 32, "open": False},
+        ])
+        fake_store = type("Store", (), {"request_state": lambda self, request_id: next(states)})()
+        original_store = self.panel.admin_audit_ledger
+        original_event = self.panel.audit_event
+        self.panel.admin_audit_ledger = lambda: fake_store
+        self.panel.audit_event = lambda action, ok=True, **fields: calls.append((action, ok, fields)) or {"event": {"eventId": "audit-" + "c" * 32}}
+        self.addCleanup(lambda: setattr(self.panel, "admin_audit_ledger", original_store))
+        self.addCleanup(lambda: setattr(self.panel, "audit_event", original_event))
+
+        result = self.panel.reconcile_privileged_request({
+            "requestId": "request-" + "a" * 32,
+            "outcome": "cancelled",
+            "reason": "The abandoned change window was inspected and cancelled.",
+            "evidence": "deployment-window-test",
+        }, {"id": "infra-owner"})
+
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["request"]["open"])
+        self.assertEqual("privileged-request-reconciled", calls[0][0])
+        self.assertEqual("cancelled", calls[0][2]["outcome"])
+        self.assertTrue(calls[0][2]["_ledger_required"])
+
     def test_minimum_footprint_profile_keeps_only_core_always_on(self):
         original_inventory = self.panel.docker_service_inventory
         original_counts = self.panel.autoscaler_player_counts

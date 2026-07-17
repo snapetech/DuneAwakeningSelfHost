@@ -301,6 +301,7 @@ CONFIRM_READINESS_CERTIFICATION = "CERTIFY INCIDENT RESPONSE READINESS"
 CONFIRM_DEPLOYMENT_ASSURANCE_START = "START ASSURED CHANGE WINDOW"
 CONFIRM_DEPLOYMENT_ASSURANCE_FINISH = "FINALIZE ASSURED CHANGE WINDOW"
 CONFIRM_DEPLOYMENT_ASSURANCE_CANCEL = "CANCEL ASSURED CHANGE WINDOW"
+CONFIRM_AUDIT_RECONCILIATION = "RECONCILE PRIVILEGED REQUEST"
 CONFIRM_UPDATE_READINESS = "CERTIFY GAME UPDATE READINESS"
 CONFIRM_BOOTSTRAP = "RUN BOOTSTRAP"
 CONFIRM_PLAYER_RECOVERY = "MOVE OFFLINE PLAYER"
@@ -586,6 +587,7 @@ CARE_PACKAGE_LOCK = threading.Lock()
 CHANGE_APPROVAL_LOCK = threading.Lock()
 CHANGE_APPROVAL_STORE = None
 AUDIT_LEDGER_LOCK = threading.Lock()
+AUDIT_RECONCILIATION_LOCK = threading.Lock()
 AUDIT_LEDGER_STORE = None
 AUDIT_LEDGER_RUNTIME = {"ready": False, "lastError": "", "lastAppendAt": None, "lastSequence": 0}
 CHANGE_CONTRACT_RUNTIME = {"issued": 0, "admitted": 0, "refused": 0, "lastIssuedAt": None, "lastAdmittedAt": None, "lastRefusalAt": None, "lastError": ""}
@@ -612,7 +614,7 @@ def audit_ledger_public_status():
             "enabled": False,
             "requiredForMutations": False,
             "ledger": {"ok": True, "events": 0, "headSequence": 0, "headHmacSha256": ""},
-            "requests": {"admitted": 0, "completed": 0, "open": 0, "oldestOpenAgeSeconds": 0},
+            "requests": {"admitted": 0, "completed": 0, "reconciled": 0, "open": 0, "oldestOpenAgeSeconds": 0, "openRequests": []},
             "runtime": dict(AUDIT_LEDGER_RUNTIME),
         }
     try:
@@ -623,7 +625,7 @@ def audit_ledger_public_status():
         status = {
             "ok": False,
             "ledger": {"ok": False, "events": 0, "headSequence": 0, "headHmacSha256": ""},
-            "requests": {"admitted": 0, "completed": 0, "open": 0, "oldestOpenAgeSeconds": 0},
+            "requests": {"admitted": 0, "completed": 0, "reconciled": 0, "open": 0, "oldestOpenAgeSeconds": 0, "openRequests": []},
             "appendFailures": 0,
             "error": str(exc)[:1000],
         }
@@ -642,6 +644,41 @@ def audit_ledger_prometheus():
         return admin_audit_ledger().prometheus(enabled=True)
     except Exception:
         return "dash_admin_audit_ledger_enabled 1\ndash_admin_audit_ledger_valid 0\n"
+
+
+def reconcile_privileged_request(body, principal):
+    request_id = str(body.get("requestId", body.get("request_id", ""))).strip()
+    outcome = str(body.get("outcome") or "").strip().lower()
+    reason = re.sub(r"\s+", " ", str(body.get("reason") or "")).strip()
+    evidence = re.sub(r"\s+", " ", str(body.get("evidence") or "")).strip()
+    if outcome not in {"succeeded", "failed", "cancelled", "no-effect"}:
+        raise ValueError("reconciliation outcome must be succeeded, failed, cancelled, or no-effect")
+    if not 20 <= len(reason) <= 1000:
+        raise ValueError("reconciliation reason must contain 20–1000 characters")
+    if len(evidence) > 1000:
+        raise ValueError("reconciliation evidence must be at most 1000 characters")
+    with AUDIT_RECONCILIATION_LOCK:
+        store = admin_audit_ledger()
+        prior = store.request_state(request_id)
+        if not prior.get("open"):
+            raise ValueError("privileged request is already completed or reconciled")
+        actor = access_control.public_principal(principal) or {}
+        result = audit_event(
+            "privileged-request-reconciled", ok=True, _ledger_required=True,
+            request_id=request_id, admission_event_id=prior.get("admissionEventId"),
+            principal_id=actor.get("id"), outcome=outcome, reason=reason,
+            evidence=evidence or None, original_path=prior.get("path"),
+            original_capability=prior.get("capability"),
+        )
+        current = store.request_state(request_id)
+    with FEATURE_READINESS_CACHE_LOCK:
+        FEATURE_READINESS_CACHE.update({"value": None, "updated_at": 0.0})
+    return {
+        "ok": True, "requestId": request_id, "outcome": outcome,
+        "reason": reason, "evidence": evidence or None,
+        "reconciliationEventId": result["event"]["eventId"],
+        "request": current,
+    }
 
 
 def change_contract_prometheus():
@@ -5123,11 +5160,21 @@ def operations_briefing_sources():
             })
 
     def readiness_internal():
-        summary = feature_readiness_public_status(force=False).get("summary") or {}
-        problems = sum(int(summary.get(key) or 0) for key in ("partial", "blocked", "degraded"))
-        pending = int(summary.get("canary-pending") or 0)
+        readiness = feature_readiness_public_status(force=False)
+        rows = [row for row in (readiness.get("features") or []) if row.get("id") != "operations-briefing"]
+        if rows:
+            problems = sum(1 for row in rows if row.get("state") in {"partial", "blocked", "degraded"})
+            pending = sum(1 for row in rows if row.get("state") == "canary-pending")
+            ready = sum(1 for row in rows if row.get("state") == "ready")
+            total = len(rows)
+        else:
+            summary = readiness.get("summary") or {}
+            problems = sum(int(summary.get(key) or 0) for key in ("partial", "blocked", "degraded"))
+            pending = int(summary.get("canary-pending") or 0)
+            ready = int(summary.get("ready") or 0)
+            total = int(summary.get("total") or 0)
         healthy = problems == 0 and pending == 0
-        return ("ready" if healthy else f"{problems}-gaps-{pending}-canaries", healthy, f"{summary.get('ready', 0)}/{summary.get('total', 0)} ready; {problems} internal gaps; {pending} canaries pending")
+        return ("ready" if healthy else f"{problems}-gaps-{pending}-canaries", healthy, f"{ready}/{total} ready excluding briefing self-check; {problems} internal gaps; {pending} canaries pending")
 
     def readiness_external():
         summary = feature_readiness_public_status(force=False).get("summary") or {}
@@ -5161,8 +5208,9 @@ def operations_briefing_sources():
 
     def backup_summary():
         latest = deployment_assurance_public_status().get("latest") or {}; backup = latest.get("backup") or {}
-        healthy = bool(latest.get("ready") and backup.get("ok"))
-        return ("verified" if healthy else "unverified", healthy, f"latest assured deployment backup verified={bool(backup.get('ok'))}; path={backup.get('path') or backup.get('backupPath') or 'none'}")
+        verified = bool(backup.get("verified", backup.get("ok")))
+        healthy = bool(latest.get("ready") and verified)
+        return ("verified" if healthy else "unverified", healthy, f"latest assured deployment backup verified={verified}; path={backup.get('path') or backup.get('backupPath') or 'none'}")
 
     def restore_summary():
         status = restore_drill_public_status(); latest = status.get("latest") or {}; healthy = bool(status.get("ready") and status.get("ok") and latest)
@@ -11077,6 +11125,11 @@ class Handler(BaseHTTPRequestHandler):
                     "events": recent_audit_events(),
                     "sealedEvents": sealed_events,
                     "ledger": ledger_status,
+                    "reconciliation": {
+                        "confirm": CONFIRM_AUDIT_RECONCILIATION,
+                        "outcomes": ["succeeded", "failed", "cancelled", "no-effect"],
+                        "requiredCapability": "infrastructure.write",
+                    },
                     "changeContracts": {
                         "enabled": CHANGE_CONTRACTS_ENABLED,
                         "required": CHANGE_CONTRACTS_REQUIRED,
@@ -12053,6 +12106,12 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     raise ValueError("deployment assurance action must be start, finish, or cancel")
                 self.json(result)
+            elif parsed.path == "/api/ops/audit/reconcile":
+                self.require_token()
+                body = parse_body(self)
+                require_confirmation(body, CONFIRM_AUDIT_RECONCILIATION)
+                principal = access_control.public_principal(getattr(self, "auth_principal", None)) or {}
+                self.json(reconcile_privileged_request(body, principal))
             elif parsed.path == "/api/ops/update-readiness":
                 self.require_token()
                 body = parse_body(self)

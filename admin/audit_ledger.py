@@ -416,26 +416,81 @@ class Store:
     def _request_status(self):
         with closing(self._connect()) as connection:
             rows = connection.execute(
-                """select request_id,action,occurred_at from events
-                   where request_id is not null and action in ('privileged-request-admitted','privileged-request-completed')
+                """select request_id,action,occurred_at,event_json from events
+                   where request_id is not null and action in (
+                     'privileged-request-admitted','privileged-request-completed','privileged-request-reconciled'
+                   )
                    order by sequence"""
             ).fetchall()
         requests = {}
         for row in rows:
-            request = requests.setdefault(row["request_id"], {"admittedAt": None, "completedAt": None})
+            request = requests.setdefault(row["request_id"], {
+                "id": row["request_id"], "admittedAt": None, "completedAt": None,
+                "resolution": None, "path": None, "capability": None, "principalId": None,
+                "admissionEventId": None,
+            })
             if row["action"] == "privileged-request-admitted":
                 request["admittedAt"] = row["occurred_at"]
+                event = json.loads(row["event_json"])
+                request.update({
+                    "path": event.get("path"), "capability": event.get("capability"),
+                    "principalId": event.get("principal_id"), "admissionEventId": event.get("eventId"),
+                })
             else:
                 request["completedAt"] = row["occurred_at"]
+                request["resolution"] = "reconciled" if row["action"] == "privileged-request-reconciled" else "completed"
         open_rows = [value for value in requests.values() if value["admittedAt"] and not value["completedAt"]]
         admitted_times = [value for value in (_parse_time(row["admittedAt"]) for row in open_rows) if value is not None]
         now = datetime.datetime.now(datetime.timezone.utc).timestamp()
+        public_open = []
+        for row in sorted(open_rows, key=lambda value: value["admittedAt"] or "")[:100]:
+            admitted_at = _parse_time(row["admittedAt"])
+            public_open.append({
+                **row,
+                "ageSeconds": max(0, int(now - admitted_at)) if admitted_at is not None else 0,
+            })
         return {
             "admitted": sum(1 for value in requests.values() if value["admittedAt"]),
             "completed": sum(1 for value in requests.values() if value["completedAt"]),
+            "reconciled": sum(1 for value in requests.values() if value["resolution"] == "reconciled"),
             "open": len(open_rows),
             "oldestOpenAgeSeconds": max(0, int(now - min(admitted_times))) if admitted_times else 0,
+            "openRequests": public_open,
         }
+
+    def request_state(self, request_id):
+        request_id = str(request_id or "").strip()
+        if not REQUEST_ID_PATTERN.fullmatch(request_id):
+            raise ValueError("request ID must be request-<32 lowercase hex>")
+        self.verify()
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """select action,occurred_at,event_json from events
+                   where request_id=? and action in (
+                     'privileged-request-admitted','privileged-request-completed','privileged-request-reconciled'
+                   ) order by sequence""",
+                (request_id,),
+            ).fetchall()
+        admission = next((row for row in rows if row["action"] == "privileged-request-admitted"), None)
+        if admission is None:
+            raise ValueError("privileged request admission does not exist")
+        event = json.loads(admission["event_json"])
+        terminal = next((row for row in reversed(rows) if row["action"] != "privileged-request-admitted"), None)
+        result = {
+            "id": request_id,
+            "open": terminal is None,
+            "admittedAt": admission["occurred_at"],
+            "path": event.get("path"),
+            "capability": event.get("capability"),
+            "principalId": event.get("principal_id"),
+            "admissionEventId": event.get("eventId"),
+        }
+        if terminal is not None:
+            result.update({
+                "completedAt": terminal["occurred_at"],
+                "resolution": "reconciled" if terminal["action"] == "privileged-request-reconciled" else "completed",
+            })
+        return result
 
     def status(self):
         try:
@@ -447,7 +502,7 @@ class Store:
         try:
             requests = self._request_status()
         except (OSError, sqlite3.Error, ValueError):
-            requests = {"admitted": 0, "completed": 0, "open": 0, "oldestOpenAgeSeconds": 0}
+            requests = {"admitted": 0, "completed": 0, "reconciled": 0, "open": 0, "oldestOpenAgeSeconds": 0, "openRequests": []}
         return {
             "ok": bool(integrity["ok"]),
             "ledger": integrity,
@@ -470,6 +525,7 @@ class Store:
             f"dash_admin_audit_ledger_append_failures_total {int(status['appendFailures'])}\n",
             f"dash_admin_audit_privileged_requests_admitted_total {int(requests['admitted'])}\n",
             f"dash_admin_audit_privileged_requests_completed_total {int(requests['completed'])}\n",
+            f"dash_admin_audit_privileged_requests_reconciled_total {int(requests['reconciled'])}\n",
             f"dash_admin_audit_privileged_requests_open {int(requests['open'])}\n",
             f"dash_admin_audit_privileged_request_oldest_open_age_seconds {int(requests['oldestOpenAgeSeconds'])}\n",
         ])

@@ -66,6 +66,10 @@ IMPACTS = {
         "backup-proof", "rabbitmq-copied-state", "disposable-container", backup="none",
         reversibility="automatic-cleanup",
         safeguards=("network none", "no published ports", "no live broker mounts", "sequential brokers", "mandatory cleanup")),
+    "/api/ops/audit/reconcile": _impact(
+        "audit-evidence", "privileged-request-lifecycle", backup="none",
+        reversibility="append-only-correction",
+        safeguards=("verified ledger chain", "open-request check", "explicit outcome", "append-only reconciliation evidence")),
     "/api/settings/env": _impact(
         "configuration", "credentials", "service-runtime", backup="required",
         reversibility="file-backup", restart="deferred-dependent-services",

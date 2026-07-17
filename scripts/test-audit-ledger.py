@@ -138,6 +138,17 @@ class AuditLedgerTests(unittest.TestCase):
         self.assertEqual(status["completed"], 1)
         self.assertEqual(status["open"], 1)
         self.assertGreater(status["oldestOpenAgeSeconds"], 0)
+        self.assertEqual(status["openRequests"][0]["id"], request_two)
+
+        self.store.append(self.event(
+            "privileged-request-reconciled", request_id=request_two,
+            outcome="no-effect", reason="authoritative state showed no effect",
+        ))
+        reconciled = self.store.status()["requests"]
+        self.assertEqual(reconciled["completed"], 2)
+        self.assertEqual(reconciled["reconciled"], 1)
+        self.assertEqual(reconciled["open"], 0)
+        self.assertFalse(self.store.request_state(request_two)["open"])
 
     def test_same_store_concurrent_appends_are_serialized(self):
         barrier = threading.Barrier(8)
@@ -162,6 +173,23 @@ class AuditLedgerTests(unittest.TestCase):
             thread.join()
         self.assertEqual(errors, [])
         self.assertEqual(self.store.verify()["events"], 8)
+
+    def test_request_state_finds_open_request_beyond_public_list_limit(self):
+        target = None
+        for index in range(101):
+            target = f"request-{index:032x}"
+            self.store.append(self.event(
+                "privileged-request-admitted", request_id=target,
+                ts="2026-07-16T20:00:00Z", path="/api/test",
+                capability="infrastructure.write", principal_id="tester",
+            ))
+
+        status = self.store.status()["requests"]
+        self.assertEqual(101, status["open"])
+        self.assertEqual(100, len(status["openRequests"]))
+        state = self.store.request_state(target)
+        self.assertTrue(state["open"])
+        self.assertEqual("/api/test", state["path"])
 
     def test_append_only_triggers_refuse_update_delete_and_are_verified(self):
         self.store.append(self.event())

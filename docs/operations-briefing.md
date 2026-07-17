@@ -37,6 +37,11 @@ one explicit `collector-error` action instead of suppressing the other 13
 verdicts. Detail is whitespace-normalized, bounded to 500 characters, and does
 not include credential values.
 
+The internal-readiness source excludes the Operator Briefing feature's own
+probe. This prevents the preceding briefing receipt from feeding back into the
+health verdict of the receipt currently being built; the briefing remains
+visible in the main feature-readiness matrix.
+
 ## Receipt and priority model
 
 Every source has an ID, title, categorical state, healthy verdict, severity,
