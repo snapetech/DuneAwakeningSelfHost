@@ -467,6 +467,12 @@ only when explicitly authorized for a concrete client task, as required by
   curated gameplay presets, federated identity, bounded browser diagnostics,
   encrypted archives, guarded cosmetics administration, and alternate
   deployment packaging are implemented.
+- **High confidence:** native Offline teleport now exceeds the surveyed player
+  movement tools with exact preview binding, two independent Offline
+  predicates, finite coordinate bounds, a full backup, advisory/player/pawn/
+  partition locks, native-function-only mutation, persisted transform
+  verification, private receipts, and a transactionally rolled-back semantic
+  proof in every current isolated restore drill.
 - **High confidence:** the 2026-07-16 live search added eight credible peers and
   one rejected placeholder project. New executable outcomes were closed in the
   same refresh: movement-verified engagement airdrops now exceed the trigger +

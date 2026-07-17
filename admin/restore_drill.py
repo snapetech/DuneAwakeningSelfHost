@@ -31,6 +31,7 @@ REQUIRED_TABLES = (
 )
 REQUIRED_FUNCTIONS = (
     "base_backup_save_from_totem", "get_player_pawn", "update_death_location",
+    "admin_move_offline_player_to_partition",
 )
 COUNTED_TABLES = (
     "actors", "player_state", "world_partition", "farm_state", "items",
@@ -390,6 +391,69 @@ ROLLBACK;
 """.strip()
 
 
+def _sql_offline_teleport_contract():
+    """Prove a native persisted pawn move without retaining the write."""
+    return r"""
+BEGIN;
+CREATE TEMP TABLE dash_teleport_candidate ON COMMIT DROP AS
+SELECT eps.account_id, eps.player_pawn_id, ea."user" AS fls_id,
+       pawn.partition_id, pawn.map AS original_map,
+       pawn.dimension_index AS original_dimension_index,
+       ((pawn.transform).location).x AS original_x,
+       ((pawn.transform).location).y AS original_y,
+       ((pawn.transform).location).z AS original_z,
+       wp.map AS partition_map, wp.dimension_index AS partition_dimension_index,
+       dune.upgrade_map_name(wp.map) AS expected_pawn_map
+FROM dune.encrypted_player_state eps
+JOIN dune.encrypted_accounts ea ON ea.id=eps.account_id
+JOIN dune.actors pawn ON pawn.id=eps.player_pawn_id
+JOIN dune.world_partition wp ON wp.partition_id=pawn.partition_id
+WHERE eps.online_status::text='Offline'
+  AND dune.is_player_offline(ea."user")
+  AND NOT wp.blocked
+ORDER BY eps.account_id
+LIMIT 1;
+
+DO $dash$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM dash_teleport_candidate) THEN
+    RAISE EXCEPTION 'no explicitly Offline player with a persisted pawn and active partition is available';
+  END IF;
+END
+$dash$;
+
+SELECT dune.admin_move_offline_player_to_partition(
+  fls_id,
+  partition_id,
+  row(original_x + 1.0, original_y, original_z)::dune.vector
+)
+FROM dash_teleport_candidate;
+
+SELECT json_build_object(
+  'transactionRolledBack', true,
+  'candidateFound', EXISTS (SELECT 1 FROM dash_teleport_candidate),
+  'moveVerified', EXISTS (
+    SELECT 1
+    FROM dash_teleport_candidate candidate
+    JOIN dune.encrypted_player_state eps USING (account_id)
+    JOIN dune.actors pawn ON pawn.id=eps.player_pawn_id
+    WHERE eps.online_status::text='Offline'
+      AND dune.is_player_offline(candidate.fls_id)
+      AND pawn.id=candidate.player_pawn_id
+      AND pawn.partition_id=candidate.partition_id
+      AND pawn.dimension_index=candidate.partition_dimension_index
+      AND pawn.map=candidate.expected_pawn_map
+      AND abs(((pawn.transform).location).x - (candidate.original_x + 1.0)) <= 0.00001
+      AND abs(((pawn.transform).location).y - candidate.original_y) <= 0.00001
+      AND abs(((pawn.transform).location).z - candidate.original_z) <= 0.00001
+  ),
+  'nativeFunction', 'dune.admin_move_offline_player_to_partition(text,bigint,vector)',
+  'testedAccountCount', (SELECT count(*) FROM dash_teleport_candidate)
+)::text;
+ROLLBACK;
+""".strip()
+
+
 def _parse_json_output(output, label):
     lines = [line.strip() for line in str(output).splitlines() if line.strip()]
     if not lines:
@@ -740,6 +804,20 @@ def run_drill(workspace, *, host_workspace=None, source=None, receipt_root=None,
                     + json.dumps(life_contract, sort_keys=True)
                 )
 
+            teleport_contract_output = _run_checked(
+                docker, container_id,
+                ["psql", "-qXAt", "--username=dune", "--set", "ON_ERROR_STOP=1", "-d", "drill", "-c", _sql_offline_teleport_contract()],
+                timeout=command_timeout_seconds, label="native offline teleport contract",
+            )
+            teleport_contract = _parse_json_output(teleport_contract_output, "native offline teleport contract")
+            if not all(bool(teleport_contract.get(key)) for key in (
+                "transactionRolledBack", "candidateFound", "moveVerified",
+            )):
+                raise RestoreDrillError(
+                    "native offline teleport contract failed: "
+                    + json.dumps(teleport_contract, sort_keys=True)
+                )
+
             _run_checked(docker, container_id, ["vacuumdb", "--analyze-only", "--username=dune", "--dbname=drill"],
                          timeout=command_timeout_seconds, label="restored database analyze")
             _run_checked(docker, container_id, ["pg_dump", "--format=custom", "--no-owner", "--username=dune", "--file=/tmp/roundtrip.dump", "drill"],
@@ -755,6 +833,7 @@ def run_drill(workspace, *, host_workspace=None, source=None, receipt_root=None,
                 "schema": catalog,
                 "rowCounts": counts,
                 "playerLifeRecoveryContract": life_contract,
+                "offlineTeleportContract": teleport_contract,
                 "analyzeCompleted": True,
                 "roundTripArchiveListed": True,
                 "roundTripBytes": roundtrip_size,

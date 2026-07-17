@@ -296,13 +296,19 @@ Execution requires:
 
 ```env
 DUNE_ADMIN_MUTATIONS_ENABLED=true
+DUNE_ADMIN_OFFLINE_TELEPORT_ENABLED=true
 ```
 
-and confirmation:
+and the unchanged preview fingerprint plus confirmation:
 
 ```text
 MOVE OFFLINE PLAYER
 ```
+
+The guarded implementation creates a full backup, takes account/player/pawn/
+partition transaction locks, invokes the shipped native helper, verifies the
+persisted transform and both Offline predicates, and produces a private
+receipt. See `docs/offline-player-teleport.md`.
 
 The panel resolves `account_id` to `dune.accounts.user` and refuses players whose `online_status` is `Online`. Confidence is moderate: the DB function is mapped, but recovery should be validated on a disposable/offline character before use on valuable characters.
 

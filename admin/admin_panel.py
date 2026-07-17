@@ -84,6 +84,7 @@ import maintenance_planner
 import public_directory
 import player_identity
 import player_life_recovery
+import offline_teleport
 import env_file_store
 import feature_readiness
 import feature_readiness_history
@@ -426,6 +427,7 @@ COSMETIC_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_COSMETIC_MUTATIONS_ENABL
 ADDON_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_ADDON_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 PLAYER_RUNTIME_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_PLAYER_RUNTIME_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 PLAYER_LIFE_RECOVERY_ENABLED = os.environ.get("DUNE_ADMIN_PLAYER_LIFE_RECOVERY_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+OFFLINE_TELEPORT_ENABLED = os.environ.get("DUNE_ADMIN_OFFLINE_TELEPORT_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 VEHICLE_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_VEHICLE_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 BOOTSTRAP_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_BOOTSTRAP_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 REPUTATION_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
@@ -449,6 +451,8 @@ CHARACTER_DELETE_ENABLED = os.environ.get("DUNE_ADMIN_CHARACTER_DELETE_ENABLED",
 PLAYER_IDENTITY_RECEIPTS = BACKUP_ROOT / "player-identity"
 PLAYER_LIFE_RECOVERY_RECEIPTS = BACKUP_ROOT / "player-life-recovery"
 PLAYER_LIFE_RECOVERY_RUNTIME = {"previews": 0, "executions": 0, "refusals": 0, "errors": 0}
+OFFLINE_TELEPORT_RECEIPTS = BACKUP_ROOT / "offline-teleport"
+OFFLINE_TELEPORT_RUNTIME = {"previews": 0, "executions": 0, "refusals": 0, "errors": 0}
 ANNOUNCEMENT_STATE_FILE = BACKUP_ROOT / "announcements.json"
 RESTART_STATE_FILE = BACKUP_ROOT / "restart-jobs.json"
 EVENT_STATE_FILE = BACKUP_ROOT / "events.json"
@@ -814,6 +818,27 @@ def player_life_recovery_prometheus():
     return "".join(f"{name} {value}\n" for name, value in values.items())
 
 
+def offline_teleport_prometheus():
+    try:
+        probe = _feature_readiness_offline_teleport_probe()
+        values = {
+            "dash_offline_teleport_collector_up": 1,
+            "dash_offline_teleport_enabled": 1 if MUTATIONS_ENABLED and OFFLINE_TELEPORT_ENABLED else 0,
+            "dash_offline_teleport_ready": 1 if probe.get("ready") else 0,
+            "dash_offline_teleport_previews_total": int(OFFLINE_TELEPORT_RUNTIME["previews"]),
+            "dash_offline_teleport_executions_total": int(OFFLINE_TELEPORT_RUNTIME["executions"]),
+            "dash_offline_teleport_refusals_total": int(OFFLINE_TELEPORT_RUNTIME["refusals"]),
+            "dash_offline_teleport_errors_total": int(OFFLINE_TELEPORT_RUNTIME["errors"]),
+        }
+    except Exception:
+        values = {
+            "dash_offline_teleport_collector_up": 0,
+            "dash_offline_teleport_enabled": 1 if MUTATIONS_ENABLED and OFFLINE_TELEPORT_ENABLED else 0,
+            "dash_offline_teleport_ready": 0,
+        }
+    return "".join(f"{name} {value}\n" for name, value in values.items())
+
+
 def _feature_readiness_probe(name, callback):
     try:
         result = callback()
@@ -1106,6 +1131,41 @@ def _feature_readiness_player_life_recovery_probe():
     }
 
 
+def _feature_readiness_offline_teleport_probe():
+    rows = query("""
+        select to_regprocedure(
+          'dune.admin_move_offline_player_to_partition(text,bigint,dune.vector)'
+        ) is not null as native_function
+    """)
+    function_ready = bool(rows and rows[0].get("native_function"))
+    restore_status = restore_drill.status(RESTORE_DRILL_RECEIPT_ROOT, limit=1)
+    latest = restore_status.get("latest") or {}
+    contract = ((latest.get("validation") or {}).get("offlineTeleportContract") or {})
+    semantic_ready = bool(
+        latest.get("receiptHashValid") and latest.get("integrityOk")
+        and contract.get("transactionRolledBack")
+        and contract.get("candidateFound")
+        and contract.get("moveVerified")
+    )
+    ready = bool(MUTATIONS_ENABLED and OFFLINE_TELEPORT_ENABLED and function_ready and semantic_ready)
+    if not (MUTATIONS_ENABLED and OFFLINE_TELEPORT_ENABLED):
+        state = "gated"
+    elif not function_ready:
+        state = "native-contract-missing"
+    elif not semantic_ready:
+        state = "semantic-proof-missing"
+    else:
+        state = "ready"
+    return {
+        "ready": ready,
+        "state": state,
+        "detail": (
+            f"native function={function_ready}; isolated move rollback proof={semantic_ready}; "
+            f"master gate={MUTATIONS_ENABLED}; feature gate={OFFLINE_TELEPORT_ENABLED}"
+        ),
+    }
+
+
 def _feature_readiness_autoscaler_probe():
     status = autoscaler_public_state(include_inventory=False)
     ready = bool(status.get("enabled") and not status.get("lastError"))
@@ -1257,6 +1317,7 @@ def feature_readiness_public_status(force=False):
             "detail": "native command gates, private token, and admin-rmq transport checked",
         },
         "player-life-recovery": _feature_readiness_probe("player-life-recovery", _feature_readiness_player_life_recovery_probe),
+        "offline-player-teleport": _feature_readiness_probe("offline-player-teleport", _feature_readiness_offline_teleport_probe),
         "moderation": _feature_readiness_probe("moderation", lambda: _feature_readiness_store_probe(MODERATION_STORE, MODERATION_STORE_INITIALIZED, MODERATION_RUNTIME, "moderation")),
         "community-rewards": _feature_readiness_probe("community-rewards", _feature_readiness_community_probe),
         "creator-modding": _feature_readiness_probe("creator-modding", _feature_readiness_creator_probe),
@@ -1387,6 +1448,7 @@ def admin_panel_reload_paths():
         CODE_ROOT / "admin" / "public_directory.py",
         CODE_ROOT / "admin" / "player_identity.py",
         CODE_ROOT / "admin" / "player_life_recovery.py",
+        CODE_ROOT / "admin" / "offline_teleport.py",
         CODE_ROOT / "admin" / "credential_lifecycle.py",
         CREDENTIAL_LIFECYCLE_FILE,
         CODE_ROOT / "scripts" / "dune_gm_command.py",
@@ -2090,6 +2152,7 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ADMIN_LANDSRAAD_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for Landsraad term administration server-function calls. Landsraad inspection and dry-runs remain available."},
     "DUNE_ADMIN_RESPAWN_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for respawn-location deletion through update_respawn_locations. Respawn inspection and dry-runs remain available."},
     "DUNE_ADMIN_PLAYER_LIFE_RECOVERY_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for fingerprint-bound native recovery of an explicitly Offline dead player's persisted life state. Preview remains available."},
+    "DUNE_ADMIN_OFFLINE_TELEPORT_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for fingerprint-bound, backup-first native teleport of an explicitly Offline player's persisted pawn. Preview remains available."},
     "DUNE_ADMIN_GUILD_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for guild description and role server-function calls. Guild inspection and dry-runs remain available."},
     "DUNE_ADMIN_MARKER_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for marker deletion server-function calls. Marker inspection and dry-runs remain available."},
     "DUNE_ADMIN_LANDCLAIM_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for landclaim segment server-function calls. Landclaim inspection and dry-runs remain available."},
@@ -12123,6 +12186,7 @@ class Handler(BaseHTTPRequestHandler):
                 metrics += public_directory_prometheus()
                 metrics += player_identity_prometheus()
                 metrics += player_life_recovery_prometheus()
+                metrics += offline_teleport_prometheus()
                 metrics += feature_readiness_prometheus()
                 metrics += credential_lifecycle_prometheus()
                 metrics += backup_schedule_prometheus()
@@ -14020,7 +14084,13 @@ class Handler(BaseHTTPRequestHandler):
                 self.require_token()
                 body = parse_body(self)
                 result = self.offline_player_recovery(body)
-                self.audit("offline-player-recovery", ok=result.get("ok"), dry_run=result.get("dryRun"), account_id=result.get("accountId"), partition_id=result.get("partitionId"))
+                self.audit(
+                    "offline-player-recovery", ok=result.get("ok"),
+                    dry_run=result.get("dryRun"), account_id=result.get("accountId"),
+                    partition_id=result.get("partitionId"),
+                    receipt_id=(result.get("receipt") or {}).get("id"),
+                    native_function=result.get("nativeFunction"), verified=result.get("verified"),
+                )
                 self.json(result)
             elif parsed.path == "/api/admin/spice-fields/inspect":
                 self.require_token()
@@ -16223,97 +16293,40 @@ class Handler(BaseHTTPRequestHandler):
             raise
 
     def offline_player_recovery(self, body):
-        account_id = int(body.get("account_id", body.get("accountId")))
-        partition_id = int(body.get("partition_id", body.get("partitionId")))
+        account_id = int(body.get("account_id", body.get("accountId", 0)) or 0)
+        partition_id = int(body.get("partition_id", body.get("partitionId", 0)) or 0)
         dry_run = str(body.get("dry_run", body.get("dryRun", "true"))).lower() not in ("0", "false", "no", "off")
-        player = query("""
-            select ps.account_id, ps.character_name, ps.online_status::text, ps.server_id,
-                   ps.previous_server_partition_id, a.funcom_id, a."user" as fls_id
-            from dune.player_state ps
-            left join dune.accounts a on a.id = ps.account_id
-            where ps.account_id=%s
-        """, (account_id,))
-        partition = query("select partition_id, server_id, map, dimension_index, label, blocked from dune.world_partition where partition_id=%s", (partition_id,))
-        if not player:
-            raise ValueError("account_id not found")
-        if not partition:
-            raise ValueError("partition_id not found")
-        if str(player[0].get("online_status") or "").lower() == "online":
-            raise ValueError("player is online; offline recovery refuses to move online players")
         location = body.get("location", body.get("target_location", body.get("targetLocation", {})))
-        if not isinstance(location, dict):
-            raise ValueError("location must be an object with x, y, and z")
-        target_location = {
-            "x": float(location.get("x", 0)),
-            "y": float(location.get("y", 0)),
-            "z": float(location.get("z", 0)),
-        }
-        fls_id = str(player[0].get("fls_id") or player[0].get("funcom_id") or "").strip()
-        if not fls_id:
-            raise ValueError("player account has no FLS/user id for offline player recovery")
-        offline_check = query("select dune.is_player_offline(%s) as offline", (fls_id,))
-        is_offline = bool(offline_check and offline_check[0].get("offline"))
-        actor_snapshot = query("""
-            select a.id as actor_id, a.class, a.map, a.partition_id, a.dimension_index,
-                   ((a.transform).location).x as x,
-                   ((a.transform).location).y as y,
-                   ((a.transform).location).z as z
-            from dune.player_state ps
-            join dune.actors a
-              on a.id in (ps.player_controller_id, ps.player_state_id, ps.player_pawn_id)
-            where ps.account_id=%s
-            order by a.id
-        """, (account_id,))
-        plan = {
-            "function": "dune.admin_move_offline_player_to_partition",
-            "args": [fls_id, partition_id, target_location],
-            "player": player[0],
-            "targetPartition": partition[0],
-            "currentActors": actor_snapshot,
-            "executable": is_offline,
-            "blockers": [] if is_offline else ["dune.is_player_offline(fls_id) is false; wait for Offline before moving"],
-            "note": "Strict-offline teleport uses the first-party pawn-row move helper. Online/network-timeout automation is intentionally separate and not hidden behind this endpoint.",
-        }
-        if dry_run:
-            return {"ok": True, "dryRun": True, "accountId": account_id, "partitionId": partition_id, "plan": plan}
-        self.require_mutations()
-        require_confirmation(body, CONFIRM_PLAYER_RECOVERY)
-        if not is_offline:
-            raise ValueError("player is not fully Offline according to dune.is_player_offline")
-        query("""
-            select dune.admin_move_offline_player_to_partition(
-                %s,
-                %s,
-                row(%s,%s,%s)::dune.vector
+        try:
+            if dry_run:
+                OFFLINE_TELEPORT_RUNTIME["previews"] += 1
+                result = offline_teleport.plan(query, account_id, partition_id, location)
+                result.update({
+                    "mutationEnabled": bool(MUTATIONS_ENABLED and OFFLINE_TELEPORT_ENABLED),
+                    "receipts": offline_teleport.list_receipts(OFFLINE_TELEPORT_RECEIPTS, 20),
+                })
+                return result
+            self.require_mutations()
+            if not OFFLINE_TELEPORT_ENABLED:
+                raise PermissionError(
+                    "offline player teleport is disabled; "
+                    "set DUNE_ADMIN_OFFLINE_TELEPORT_ENABLED=true"
+                )
+            principal = access_control.public_principal(getattr(self, "auth_principal", None)) or {"id": "owner-recovery"}
+            result = offline_teleport.execute(
+                db_connect, create_db_backup, OFFLINE_TELEPORT_RECEIPTS,
+                account_id, partition_id, location,
+                body.get("expected_fingerprint", body.get("expectedFingerprint")),
+                body.get("confirm"), principal=principal.get("id"),
             )
-        """, (
-            fls_id,
-            partition_id,
-            target_location["x"], target_location["y"], target_location["z"],
-        ))
-        rows = query("""
-            select a.id as actor_id, a.class, a.map, a.partition_id, a.dimension_index,
-                   ((a.transform).location).x as x,
-                   ((a.transform).location).y as y,
-                   ((a.transform).location).z as z
-            from dune.player_state ps
-            join dune.actors a
-              on a.id in (ps.player_controller_id, ps.player_state_id, ps.player_pawn_id)
-            where ps.account_id=%s
-            order by a.id
-        """, (account_id,))
-        return {
-            "ok": True,
-            "dryRun": False,
-            "accountId": account_id,
-            "partitionId": partition_id,
-            "result": rows,
-            "rollback": {
-                "previousServerPartitionId": player[0].get("previous_server_partition_id"),
-                "previousServerId": player[0].get("server_id"),
-                "previousActors": actor_snapshot,
-            },
-        }
+            OFFLINE_TELEPORT_RUNTIME["executions"] += 1
+            return result
+        except (PermissionError, ValueError, RuntimeError):
+            OFFLINE_TELEPORT_RUNTIME["refusals"] += 1
+            raise
+        except Exception:
+            OFFLINE_TELEPORT_RUNTIME["errors"] += 1
+            raise
 
     def spice_field_inspect(self):
         errors = {}
@@ -19225,6 +19238,7 @@ let haggaMapAutoRefresh = localStorage.getItem('duneAdminHaggaMapAutoRefresh') !
 let activeOverviewMap = ['hagga-basin', 'deep-desert', 'map-health'].includes(sessionStorage.getItem('duneAdminOverviewMap')) ? sessionStorage.getItem('duneAdminOverviewMap') : 'hagga-basin';
 let haggaMapLastGoodHtml = '';
 let haggaMapZoomState = {scale:1, x:0, y:0};
+let offlineTeleportPlan = null;
 let haggaMapSuppressMarkerClick = false;
 let haggaPoiGroups = {};
 let deepDesertMarkerGroups = {};
@@ -20138,7 +20152,7 @@ function offlineTeleportPanel(ref, characterRows){
   const partitions = ref.worldPartitions || [];
   const calibration = ref.haggaCalibration || {};
   const haggaPartition = partitions.find(p => String(p.map || '').toLowerCase().includes('survival')) || partitions[0] || {};
-  return `${lifeStateRecoveryPanel(characterRows)}<div class="panelBand" id="offlineTeleportPanel"><div class="sectionHeader"><h2>Offline Teleport</h2><div class="toolbar"><span class="pill warn">requires Offline</span><span class="pill warn">targeted timeout is manual</span></div></div><p class="muted">Moves the selected player's stored pawn with <code>dune.admin_move_offline_player_to_partition</code>. Online players must first be disconnected by the documented targeted timeout mechanism or a future native kick path.</p><div class="grid"><label>Player<select id="teleportAccount">${characterOptions(characterRows)}</select></label><label>Partition<select id="teleportPartition">${partitionOptions(partitions)}</select></label><label>X<input id="teleportX" inputmode="decimal" value="0"></label><label>Y<input id="teleportY" inputmode="decimal" value="0"></label><label>Z<input id="teleportZ" inputmode="decimal" value="9000"></label></div><div class="commandBar"><button id="teleportPreviewBtn" class="primary">Preview teleport</button><button id="teleportExecuteBtn" class="danger">Execute offline teleport</button><button id="teleportUseSelectedBtn">Use selected player position</button></div><div id="offlineTeleportMap" class="haggaMap teleportMap" data-default-partition="${esc(haggaPartition.partition_id || '')}" data-calibration="${esc(JSON.stringify(calibration))}"></div><pre id="teleportResult"></pre></div>`;
+  return `${lifeStateRecoveryPanel(characterRows)}<div class="panelBand dangerZone" id="offlineTeleportPanel"><div class="sectionHeader"><div><h2>Native Offline Teleport</h2><p class="muted">Moves the selected player's persisted pawn with <code>dune.admin_move_offline_player_to_partition</code>. Execution is bound to the exact preview, takes a full database backup, locks and rechecks the player and target, verifies the saved transform, and issues a private receipt.</p></div><div class="toolbar"><span class="pill warn">Offline only</span><span class="pill ok">native function</span><span class="pill ok">fingerprint + backup + receipt</span><span class="pill">no restart</span></div></div><div class="grid"><label>Player<select id="teleportAccount">${characterOptions(characterRows)}</select></label><label>Partition<select id="teleportPartition">${partitionOptions(partitions)}</select></label><label>X<input id="teleportX" inputmode="decimal" value="0"></label><label>Y<input id="teleportY" inputmode="decimal" value="0"></label><label>Z<input id="teleportZ" inputmode="decimal" value="9000"></label><label>Typed confirmation<input id="teleportConfirm" autocomplete="off" placeholder="preview first"></label></div><div class="commandBar"><button id="teleportPreviewBtn" class="primary">Inspect and preview</button><button id="teleportExecuteBtn" class="danger" disabled>Execute offline teleport</button><button id="teleportUseSelectedBtn">Use selected player position</button></div><div id="offlineTeleportMap" class="haggaMap teleportMap" data-default-partition="${esc(haggaPartition.partition_id || '')}" data-calibration="${esc(JSON.stringify(calibration))}"></div><pre id="teleportResult">Select an offline player and preview. No write has run.</pre></div>`;
 }
 function lifeStateRecoveryPanel(characterRows){
   return `<div class="panelBand dangerZone" id="lifeStateRecoveryPanel"><div class="sectionHeader"><div><h2>Native Offline Life-State Recovery</h2><p class="muted">Clears a dead offline character's persisted death state through Dune's shipped <code>dune.update_death_location</code> routine. It does not change health, inventory, position, progression, or respawn locations.</p></div><div class="toolbar"><span class="pill warn">Offline only</span><span class="pill ok">native function</span><span class="pill ok">backup + receipt</span><span class="pill">no restart</span></div></div><div class="grid"><label>Player<select id="lifeRecoveryAccount">${characterOptions(characterRows)}</select></label><label>Typed confirmation<input id="lifeRecoveryConfirm" autocomplete="off" placeholder="preview first"></label></div><div class="commandBar"><button id="lifeRecoveryPreviewBtn" class="primary">Inspect and preview</button><button id="lifeRecoveryExecuteBtn" class="danger" disabled>Recover persisted life state</button></div><pre id="lifeRecoveryResult">Select an offline dead character and preview. No write has run.</pre></div>`;
@@ -23436,7 +23450,16 @@ async function mutations(serial=loadSerial){
     return result;
   }));
   renderOfflineTeleportMap();
-  ['teleportX','teleportY','teleportZ'].forEach(id => document.getElementById(id)?.addEventListener('input', renderOfflineTeleportMap));
+  offlineTeleportPlan = null;
+  const teleportExecute = document.getElementById('teleportExecuteBtn');
+  const invalidateTeleport = () => {
+    offlineTeleportPlan = null;
+    if (teleportExecute) teleportExecute.disabled = true;
+    const typed = document.getElementById('teleportConfirm');
+    if (typed) { typed.value = ''; typed.placeholder = 'preview again'; }
+  };
+  ['teleportX','teleportY','teleportZ'].forEach(id => document.getElementById(id)?.addEventListener('input', () => { renderOfflineTeleportMap(); invalidateTeleport(); }));
+  ['teleportAccount','teleportPartition'].forEach(id => document.getElementById(id)?.addEventListener('change', invalidateTeleport));
   document.getElementById('teleportPreviewBtn').addEventListener('click', e => runAction(e.currentTarget, 'Previewing...', () => offlineTeleport(true)));
   document.getElementById('teleportExecuteBtn').addEventListener('click', e => runAction(e.currentTarget, 'Teleporting...', () => offlineTeleport(false)));
   document.getElementById('teleportUseSelectedBtn').addEventListener('click', e => runAction(e.currentTarget, 'Loading position...', useSelectedTeleportPosition));
@@ -23525,14 +23548,33 @@ function teleportPayload(dryRun=true){
       y: document.getElementById('teleportY')?.value || '0',
       z: document.getElementById('teleportZ')?.value || '0'
     },
-    confirm: dryRun ? '' : 'MOVE OFFLINE PLAYER'
+    expectedFingerprint: dryRun ? '' : (offlineTeleportPlan?.expectedFingerprint || ''),
+    confirm: dryRun ? '' : (document.getElementById('teleportConfirm')?.value.trim() || '')
   };
 }
 async function offlineTeleport(dryRun=true){
-  if (!dryRun && !confirm('Execute offline teleport for the selected player? The target must already be Offline.')) return;
-  const result = await api('/api/admin/player-recovery/offline-teleport', {method:'POST', body:JSON.stringify(teleportPayload(dryRun))});
+  const executeButton = document.getElementById('teleportExecuteBtn');
+  if (!dryRun) {
+    if (!offlineTeleportPlan?.canExecute) throw new Error('Generate an executable teleport preview first');
+    const typed = document.getElementById('teleportConfirm')?.value.trim() || '';
+    if (typed !== offlineTeleportPlan.confirm) throw new Error(`Type ${offlineTeleportPlan.confirm} exactly`);
+    const player = offlineTeleportPlan.plan?.player || {};
+    if (!confirm(`Move ${player.characterName || 'the selected player'} to partition ${offlineTeleportPlan.partitionId}?\n\nDASH will take a full database backup, lock and recheck the Offline player and target partition, invoke the native game function, verify the saved transform, and issue a private receipt.`)) return;
+  }
+  const result = await api('/api/admin/player-recovery/offline-teleport', {method:'POST', timeoutMs:180000, body:JSON.stringify(teleportPayload(dryRun))});
   document.getElementById('teleportResult').textContent = JSON.stringify(result, null, 2);
-  notify(dryRun ? 'Teleport preview ready' : 'Offline teleport executed');
+  if (dryRun) {
+    offlineTeleportPlan = result;
+    const typed = document.getElementById('teleportConfirm');
+    if (typed) { typed.value = ''; typed.placeholder = result.confirm || 'preview blocked'; }
+    if (executeButton) executeButton.disabled = !(result.mutationEnabled && result.canExecute);
+    notify(result.canExecute ? 'Offline teleport preview ready' : 'Offline teleport is blocked', result.canExecute ? 'ok' : 'bad');
+  } else {
+    offlineTeleportPlan = null;
+    if (executeButton) executeButton.disabled = true;
+    notify('Native offline teleport verified', 'ok');
+  }
+  return result;
 }
 async function useSelectedTeleportPosition(){
   const accountId = document.getElementById('teleportAccount')?.value || document.getElementById('grantAccount')?.value || '';
@@ -23545,6 +23587,9 @@ async function useSelectedTeleportPosition(){
   document.getElementById('teleportY').value = Number(actor.y || 0).toFixed(3);
   document.getElementById('teleportZ').value = Number(actor.z || 0).toFixed(3);
   if (actor.partition_id && document.getElementById('teleportPartition')) document.getElementById('teleportPartition').value = actor.partition_id;
+  offlineTeleportPlan = null;
+  if (document.getElementById('teleportExecuteBtn')) document.getElementById('teleportExecuteBtn').disabled = true;
+  if (document.getElementById('teleportConfirm')) { document.getElementById('teleportConfirm').value = ''; document.getElementById('teleportConfirm').placeholder = 'preview again'; }
   renderOfflineTeleportMap();
   document.getElementById('teleportResult').textContent = JSON.stringify({source:'stored actor transform', actor}, null, 2);
 }

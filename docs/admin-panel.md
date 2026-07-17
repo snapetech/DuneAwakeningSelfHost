@@ -329,7 +329,7 @@ server {
   gates, exact confirmation, and an automatic database backup. See
   [`care-packages.md`](care-packages.md).
 - Targeted Solari grants through `POST /api/admin/solari/inventory` for carried `SolarisCoin` stacks and `POST /api/admin/solari/bank` for Exchange/bank balance.
-- Offline player recovery preview through `POST /api/admin/player-recovery/offline-teleport`. Execution refuses online players, requires `MOVE OFFLINE PLAYER`, and calls the shipped `dune.admin_move_offline_player_to_partition(...)` pawn move helper.
+- Native offline player teleport through `POST /api/admin/player-recovery/offline-teleport`. Execution is fingerprint-bound, backup-first, advisory/row locked, privately receipted, and transform-verified through the shipped `dune.admin_move_offline_player_to_partition(...)` helper; see [offline-player-teleport.md](offline-player-teleport.md).
 - Native offline dead-state recovery through `POST /api/admin/player-recovery/life-state`. Execution is fingerprint-bound, backup-first, advisory/row locked, privately receipted, and verified through the shipped `dune.update_death_location(...)` function; see [offline-player-life-state-recovery.md](offline-player-life-state-recovery.md).
 - Spice/resource field inspection through `POST /api/admin/spice-fields/inspect`.
 - Progression surface inspection through `POST /api/admin/progression/inspect`; this discovers faction, reputation, journey, recipe, vehicle, and related DB function/table evidence without executing discovered functions.
@@ -442,6 +442,7 @@ DUNE_ADMIN_PLAYER_IDENTITY_MUTATIONS_ENABLED=false
 DUNE_ADMIN_CHARACTER_DELETE_ENABLED=false
 DUNE_ADMIN_PLAYER_RUNTIME_MUTATIONS_ENABLED=false
 DUNE_ADMIN_PLAYER_LIFE_RECOVERY_ENABLED=false
+DUNE_ADMIN_OFFLINE_TELEPORT_ENABLED=false
 DUNE_ADMIN_VEHICLE_MUTATIONS_ENABLED=false
 DUNE_ADMIN_MEMORY_MUTATIONS_ENABLED=false
 DUNE_ADMIN_AUTOSCALER_MUTATIONS_ENABLED=false
@@ -488,6 +489,9 @@ documented host scripts, exact-host checks, dry-run previews, and backups in
 - `DUNE_ADMIN_PLAYER_LIFE_RECOVERY_ENABLED`: controls fingerprint-bound native
   recovery of an explicitly Offline `Dead`, `DeadByCoriolis`, or
   `DeadBySandworm` character to persisted `Alive`. Preview remains available.
+- `DUNE_ADMIN_OFFLINE_TELEPORT_ENABLED`: controls fingerprint-bound,
+  backup-first native movement of an explicitly Offline player's persisted
+  pawn. Preview remains available.
 - `DUNE_ADMIN_VEHICLE_MUTATIONS_ENABLED`: controls offline persistent vehicle
   durability and fuel repair.
 - `DUNE_ADMIN_MEMORY_MUTATIONS_ENABLED`: controls live container limits and
@@ -659,12 +663,24 @@ Dry-run body:
 }
 ```
 
-The endpoint refuses online players. Execution requires:
+The endpoint requires both the explicit persisted `Offline` state and
+`dune.is_player_offline(fls_id)`, a valid pawn, an unblocked partition, the
+native function, and finite coordinates bounded to +/-10,000,000 on every
+axis. Execution requires:
 
 - `DUNE_ADMIN_MUTATIONS_ENABLED=true`
+- `DUNE_ADMIN_OFFLINE_TELEPORT_ENABLED=true`
+- the unchanged preview `expectedFingerprint`
 - `confirm: "MOVE OFFLINE PLAYER"`
 
-Rollback is another offline move using the previous partition/location recorded in the audit context. Confidence is moderate because the function contract is mapped, but live recovery should still be validated on a non-critical character first.
+Execution takes a full backup, writes a pending receipt, locks the account,
+player-state, pawn, and target partition, rechecks the fingerprint, invokes the
+native helper, and requires persisted pawn actor/map/dimension/partition/XYZ
+readback plus both Offline predicates before commit. Rollback is a newly
+previewed native move to the receipted prior partition/location or restoration
+of the referenced full backup. No map restart is required; the player relogs.
+The exact contract, private evidence, metrics, and networkless rolled-back
+semantic proof are documented in [offline-player-teleport.md](offline-player-teleport.md).
 
 ### Native persisted life-state recovery
 

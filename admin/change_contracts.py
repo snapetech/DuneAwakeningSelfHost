@@ -109,7 +109,7 @@ IMPACTS = {
     "/api/admin/player-recovery/offline-teleport": _impact(
         "player-state", "location", "database", backup="required",
         reversibility="manual-teleport", player_disruption=True,
-        safeguards=("offline player", "bounded coordinates", "database backup", "transaction")),
+        safeguards=("explicitly offline player", "bounded finite coordinates", "fingerprint-bound preview", "advisory and row locks", "full database backup", "native game function", "post-write verification", "private receipt", "isolated semantic restore proof")),
     "/api/admin/player-recovery/life-state": _impact(
         "player-state", "life-state", "database", backup="required",
         reversibility="backup-restore", player_disruption=True,

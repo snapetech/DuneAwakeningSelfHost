@@ -181,6 +181,22 @@
       "remediation": {"surface": "infrastructure", "summary": "Load the metrics overlay and restore the exact failed collector or scrape target."}
     },
     {
+      "id": "offline-player-teleport",
+      "title": "Native offline player teleport",
+      "group": "Administration",
+      "description": "Fingerprint-bound persisted pawn movement uses Dune's native offline teleport function under dual Offline checks, transaction locks, a full backup, post-write transform verification, and a private receipt.",
+      "documentation": "docs/offline-player-teleport.md",
+      "primaryGate": "DUNE_ADMIN_OFFLINE_TELEPORT_ENABLED",
+      "gates": ["DUNE_ADMIN_MUTATIONS_ENABLED", "DUNE_ADMIN_OFFLINE_TELEPORT_ENABLED"],
+      "credentials": [],
+      "files": [{"path": "admin/offline_teleport.py", "minimumBytes": 1000}, {"path": "docs/offline-player-teleport.md", "minimumBytes": 1000}],
+      "services": ["admin-panel", "postgres"],
+      "probe": "offline-player-teleport",
+      "dependencies": ["mutation-governance", "operational-evidence"],
+      "canary": "runtime-proven",
+      "remediation": {"surface": "mutations", "summary": "Run a current isolated PostgreSQL restore drill, repair only the exact missing native function or failed pawn-move assertion, and preserve the Offline-only execution gate."}
+    },
+    {
       "id": "offline-player-life-recovery",
       "title": "Native offline player life-state recovery",
       "group": "Administration",

@@ -1548,30 +1548,19 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertEqual(captured["audits"][0]["action"], "character-slot-execute")
         self.assertTrue(captured["audits"][0]["executable"])
 
-    def test_offline_teleport_dry_run_uses_first_party_helper(self):
-        calls = []
-
-        def fake_query(sql, params=None):
-            calls.append((sql, params))
-            if "from dune.player_state ps" in sql and "left join dune.accounts" in sql:
-                return [{
-                    "account_id": 10,
-                    "character_name": "Target",
-                    "online_status": "Offline",
-                    "server_id": 1,
-                    "previous_server_partition_id": 5,
-                    "funcom_id": "funcom-user",
-                    "fls_id": "fls-user",
-                }]
-            if "from dune.world_partition" in sql:
-                return [{"partition_id": 12, "server_id": 1, "map": "Survival_1", "dimension_index": 0, "label": "Hagga Basin", "blocked": False}]
-            if "dune.is_player_offline" in sql:
-                return [{"offline": False}]
-            if "join dune.actors" in sql:
-                return [{"actor_id": 200, "class": "Pawn", "partition_id": 5, "x": 1, "y": 2, "z": 3}]
-            return []
-
-        self.patch_db(fake_query, lambda sql, params=None: (_ for _ in ()).throw(AssertionError("dry-run executed SQL write")))
+    def test_offline_teleport_preview_is_fingerprint_bound_and_exposes_gate(self):
+        original_plan = self.panel.offline_teleport.plan
+        original_receipts = self.panel.offline_teleport.list_receipts
+        self.panel.offline_teleport.plan = lambda query, account_id, partition_id, location: {
+            "ok": True, "dryRun": True, "canExecute": True,
+            "accountId": account_id, "partitionId": partition_id,
+            "plan": {"function": self.panel.offline_teleport.NATIVE_FUNCTION, "executable": True, "blockers": []},
+            "expectedFingerprint": "a" * 64, "confirm": self.panel.offline_teleport.CONFIRM,
+            "executionGate": "DUNE_ADMIN_OFFLINE_TELEPORT_ENABLED",
+        }
+        self.panel.offline_teleport.list_receipts = lambda root, limit=20: []
+        self.addCleanup(lambda: setattr(self.panel.offline_teleport, "plan", original_plan))
+        self.addCleanup(lambda: setattr(self.panel.offline_teleport, "list_receipts", original_receipts))
         result = self.handler.offline_player_recovery({
             "dry_run": True,
             "account_id": 10,
@@ -1580,52 +1569,51 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         })
 
         self.assertTrue(result["dryRun"])
-        self.assertEqual(result["plan"]["function"], "dune.admin_move_offline_player_to_partition")
-        self.assertFalse(result["plan"]["executable"])
-        self.assertIn("dune.is_player_offline", result["plan"]["blockers"][0])
-        self.assertFalse(any("update dune.actors" in sql.lower() for sql, _ in calls))
+        self.assertTrue(result["canExecute"])
+        self.assertEqual("DUNE_ADMIN_OFFLINE_TELEPORT_ENABLED", result["executionGate"])
+        self.assertFalse(result["mutationEnabled"])
 
-    def test_offline_teleport_execute_calls_first_party_helper_once(self):
+    def test_offline_teleport_execute_uses_dedicated_gate_and_audited_route(self):
         calls = []
-
-        def fake_query(sql, params=None):
-            calls.append((sql, params))
-            if "from dune.player_state ps" in sql and "left join dune.accounts" in sql:
-                return [{
-                    "account_id": 10,
-                    "character_name": "Target",
-                    "online_status": "Offline",
-                    "server_id": 1,
-                    "previous_server_partition_id": 5,
-                    "funcom_id": "funcom-user",
-                    "fls_id": "fls-user",
-                }]
-            if "from dune.world_partition" in sql:
-                return [{"partition_id": 12, "server_id": 1, "map": "Survival_1", "dimension_index": 0, "label": "Hagga Basin", "blocked": False}]
-            if "dune.is_player_offline" in sql:
-                return [{"offline": True}]
-            if "dune.admin_move_offline_player_to_partition" in sql:
-                return [{"admin_move_offline_player_to_partition": None}]
-            if "join dune.actors" in sql:
-                return [{"actor_id": 200, "class": "Pawn", "partition_id": 12, "x": 100, "y": 200, "z": 9000}]
-            return []
-
-        self.patch_db(fake_query, lambda sql, params=None: (_ for _ in ()).throw(AssertionError("unexpected raw execute")))
+        original_execute = self.panel.offline_teleport.execute
+        self.panel.offline_teleport.execute = lambda *args, **kwargs: calls.append((args, kwargs)) or {
+            "ok": True, "dryRun": False, "accountId": 10, "partitionId": 12,
+            "nativeFunction": self.panel.offline_teleport.NATIVE_FUNCTION,
+            "verified": True, "receipt": {"id": "offline-teleport-test"},
+        }
+        self.addCleanup(lambda: setattr(self.panel.offline_teleport, "execute", original_execute))
         self.patch_flag("MUTATIONS_ENABLED", True)
-        result = self.handler.offline_player_recovery({
+        self.patch_flag("OFFLINE_TELEPORT_ENABLED", True)
+        captured = self.invoke_post_route("/api/admin/player-recovery/offline-teleport", {
             "dry_run": False,
             "account_id": 10,
             "partition_id": 12,
             "location": {"x": 100, "y": 200, "z": 9000},
-            "confirm": "MOVE OFFLINE PLAYER",
+            "expectedFingerprint": "a" * 64,
+            "confirm": self.panel.offline_teleport.CONFIRM,
         })
+        self.assertFalse(captured["errors"])
+        self.assertTrue(captured["json"]["verified"])
+        self.assertEqual(1, len(calls))
+        self.assertEqual(10, calls[0][0][3])
+        self.assertEqual(12, calls[0][0][4])
+        self.assertEqual("offline-player-recovery", captured["audits"][0]["action"])
+        self.assertEqual("offline-teleport-test", captured["audits"][0]["receipt_id"])
 
-        helper_calls = [call for call in calls if "dune.admin_move_offline_player_to_partition" in call[0]]
-        self.assertFalse(result["dryRun"])
-        self.assertEqual(len(helper_calls), 1)
-        self.assertEqual(helper_calls[0][1], ("fls-user", 12, 100.0, 200.0, 9000.0))
-        self.assertIn("previousActors", result["rollback"])
-        self.assertFalse(any("update dune.actors" in sql.lower() for sql, _ in calls))
+    def test_offline_teleport_execution_fails_closed_without_feature_gate(self):
+        self.patch_flag("MUTATIONS_ENABLED", True)
+        self.patch_flag("OFFLINE_TELEPORT_ENABLED", False)
+        with self.assertRaisesRegex(PermissionError, "OFFLINE_TELEPORT_ENABLED"):
+            self.handler.offline_player_recovery({
+                "dryRun": False, "accountId": 10, "partitionId": 12,
+                "location": {"x": 1, "y": 2, "z": 3},
+            })
+
+    def test_admin_ui_binds_offline_teleport_execution_to_preview(self):
+        html = self.panel.INDEX
+        self.assertIn("Native Offline Teleport", html)
+        self.assertIn("teleportExecuteBtn\" class=\"danger\" disabled", html)
+        self.assertIn("expectedFingerprint: dryRun ? '' : (offlineTeleportPlan?.expectedFingerprint", html)
 
     def test_offline_life_state_recovery_preview_is_read_only_and_exposes_gate(self):
         original_plan = self.panel.player_life_recovery.plan

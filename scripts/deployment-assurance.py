@@ -38,6 +38,7 @@ SUPPORT_FILES = {
     "admin/alert_inbox.py",
     "admin/peer_watch.py",
     "admin/player_life_recovery.py",
+    "admin/offline_teleport.py",
     "docs/ecosystem-feature-parity-audit.md",
     "admin/addon_admin.py",
     "admin/base_creator.py",

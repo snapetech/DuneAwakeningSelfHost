@@ -82,6 +82,18 @@ class FakeDocker:
                 "nativeFunction": "dune.update_death_location(actordescription,serverinfo,playerlifestate)",
                 "testedAccountCount": 1,
             }) + "\n"
+        if argv and argv[0] == "psql" and "dash_teleport_candidate" in joined:
+            if self.failure == "teleport-contract":
+                return 0, json.dumps({
+                    "transactionRolledBack": True, "candidateFound": True,
+                    "moveVerified": False, "testedAccountCount": 1,
+                }) + "\n"
+            return 0, json.dumps({
+                "transactionRolledBack": True, "candidateFound": True,
+                "moveVerified": True,
+                "nativeFunction": "dune.admin_move_offline_player_to_partition(text,bigint,vector)",
+                "testedAccountCount": 1,
+            }) + "\n"
         if argv and argv[0] == "psql":
             return 0, json.dumps({
                 "actors": 30, "player_state": 4, "world_partition": 30,
@@ -198,7 +210,9 @@ class RestoreDrillTests(unittest.TestCase):
         self.assertTrue(any(command and command[0] == "vacuumdb" for command in docker.commands))
         self.assertTrue(any(command and command[0] == "pg_dump" for command in docker.commands))
         self.assertTrue(result["validation"]["playerLifeRecoveryContract"]["aliveTransitionVerified"])
+        self.assertTrue(result["validation"]["offlineTeleportContract"]["moveVerified"])
         self.assertTrue(any(command and command[0] == "psql" and "dash_life_candidate" in " ".join(command) for command in docker.commands))
+        self.assertTrue(any(command and command[0] == "psql" and "dash_teleport_candidate" in " ".join(command) for command in docker.commands))
         for command in docker.commands:
             connects = command and (command[0] in {"psql", "vacuumdb", "pg_dump"} or (command[0] == "pg_restore" and "--dbname=drill" in command))
             if connects:
@@ -232,6 +246,12 @@ class RestoreDrillTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertFalse(result["integrityOk"])
         self.assertIn("life-state recovery contract failed", result["error"])
+
+    def test_native_offline_teleport_contract_failure_fails_integrity(self):
+        result = self.run_success(FakeDocker(failure="teleport-contract"))
+        self.assertFalse(result["ok"])
+        self.assertFalse(result["integrityOk"])
+        self.assertIn("offline teleport contract failed", result["error"])
 
     def test_cleanup_failure_fails_closed(self):
         result = self.run_success(FakeDocker(cleanup_failure=True))

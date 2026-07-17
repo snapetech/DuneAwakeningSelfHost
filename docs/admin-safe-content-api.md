@@ -250,9 +250,11 @@ Dry-run request:
 
 Behavior:
 
-- Resolves `account_id` to `dune.accounts.user` or `funcom_id`.
-- Refuses players whose `online_status` is `Online`.
-- Plans or executes the strict-offline pawn move through `dune.admin_move_offline_player_to_partition(...)`.
+- Resolves the active encrypted player state and keeps the FLS identity private.
+- Requires both persisted `Offline` and `dune.is_player_offline(fls_id)`.
+- Fingerprints the account, pawn, current transform, target partition, target coordinates, Offline predicates, and native-function availability.
+- Bounds every finite coordinate to +/-10,000,000.
+- Plans or executes the strict-offline pawn move through `dune.admin_move_offline_player_to_partition(...)` only.
 - Separate from this endpoint, the shipped `dune.admin_move_offline_player_to_partition(fls_id, partition_id, location)` helper is now verified as the correct pawn-row primitive for network-disconnect teleport once Survival has marked the player `Offline`. See `docs/soft-disconnect-teleport.md`.
 
 Execution request:
@@ -261,6 +263,7 @@ Execution request:
 {
   "dry_run": false,
   "confirm": "MOVE OFFLINE PLAYER",
+  "expectedFingerprint": "<fingerprint from preview>",
   "account_id": 456,
   "partition_id": 12,
   "location": {"x": 0, "y": 0, "z": 0}
@@ -270,9 +273,16 @@ Execution request:
 Execution requirements:
 
 - `DUNE_ADMIN_MUTATIONS_ENABLED=true`
-- confirmation phrase
+- `DUNE_ADMIN_OFFLINE_TELEPORT_ENABLED=true`
+- unchanged preview fingerprint
+- exact confirmation phrase
 
-Rollback: use the previous partition/server context in the response/audit record and perform another offline move.
+Execution creates a full backup and private pending receipt, locks/rechecks the
+account/player/pawn/partition inside one transaction, verifies the persisted
+target transform and Offline state before commit, and finalizes the receipt.
+Rollback: preview a new move to the receipted previous partition/location or
+restore the referenced full backup. See
+[offline-player-teleport.md](offline-player-teleport.md).
 
 ## Progression Inspect
 
