@@ -134,6 +134,7 @@ def required_capability(method, path):
         "/api/ops/desired-state",
         "/api/ops/deployment-assurance",
         "/api/ops/update-readiness",
+        "/api/ops/public-ip-canary",
         "/api/ops/updates",
     }:
         return "infrastructure.write"

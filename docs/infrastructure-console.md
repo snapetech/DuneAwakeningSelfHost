@@ -293,6 +293,17 @@ diagnostic once, evaluates every runbook's current capability/gate/confirmation
 contracts, and displays exact gaps. The certification writes only a bounded
 HMAC evidence receipt; it executes no recovery or game mutation.
 
+## Public-IP Repair Proof
+
+The Infrastructure page includes an authenticated proof card for the complete
+advertised-address repair lifecycle. It distinguishes monitor enablement,
+dry-run/armed state, and cryptographically current lifecycle proof. Running the
+proof requires `infrastructure.write`, the global mutation gate, and exact
+confirmation, but writes only a private signed receipt: all environment, TLS,
+restart, retry, and timer behavior executes against disposable state with fake
+service control. See
+[`public-ip-repair-canary.md`](public-ip-repair-canary.md).
+
 ## Assured Change Windows
 
 `GET /api/ops/deployment-assurance` returns bounded open-window and signed

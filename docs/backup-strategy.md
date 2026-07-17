@@ -61,6 +61,9 @@ The local backup includes:
 - Input-bound Creator/Modding lifecycle receipts in the same archive; both
   backup verifiers dispatch their schema and enforce the signed isolation and
   semantic verdict before accepting the archive.
+- Input-bound Public-IP Repair lifecycle receipts in the same archive; both
+  verifiers reject tampered/inconsistent evidence and require the signed
+  no-live-environment/TLS/systemd/Docker/map/network isolation verdict.
 - A transactionally consistent `moderation.sqlite3` snapshot when the isolated
   case/history database exists, including the identity-free aggregate
   population buckets used by the player-impact maintenance planner.

@@ -54,6 +54,12 @@ completion time. It never labels a broker, vhost, user, queue, exchange,
 binding, container, image, backup path, or receipt ID. Alert rules fail on
 invalid configuration, the latest failed or tampered proof, and eight-day
 staleness.
+Public-IP Repair Proof adds label-free monitor enablement/arming, receipt
+verification/current state, completion time, age, and retained count. It never
+labels the public address, hostname, certificate, service, operator, path, or
+receipt. Alerts distinguish invalid evidence, missing/stale/input-drifted proof,
+and an enabled monitor left in dry-run mode; see
+[`public-ip-repair-canary.md`](public-ip-repair-canary.md).
 
 Start it with the normal world Compose files plus the overlay:
 

@@ -88,6 +88,14 @@ apply/rollback, Landsraad protection, cosmetic planning, and confined addon
 install/removal. Input drift or expiry returns the row to `canary-pending`; see
 [`creator-modding-canary.md`](creator-modding-canary.md).
 
+Public-IP Repair uses the same rule plus an explicit live arming condition. Its
+signed canary runs the real environment rewrite, OpenSSL SAN rotation, restart
+handoff/retry, and timer rendering in disposable state. The row remains
+`canary-pending` when the proof is missing/stale/input-drifted or the monitor is
+still dry-run. Invalid signed evidence degrades it. It reaches `ready` only with
+a current passing proof and `DUNE_PUBLIC_IP_MONITOR_DRY_RUN=false`; see
+[`public-ip-repair-canary.md`](public-ip-repair-canary.md).
+
 `overall=attention` means at least one active feature is `partial`, `blocked`,
 `degraded`, or `external-blocked`. Disabled optional integrations and explicitly
 visible pending canaries do not masquerade as runtime failures.

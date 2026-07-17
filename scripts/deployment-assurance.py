@@ -31,6 +31,7 @@ SUPPORT_FILES = {
     "admin/community_canary.py",
     "admin/community_rewards.py",
     "admin/creator_canary.py",
+    "admin/public_ip_canary.py",
     "admin/addon_admin.py",
     "admin/base_creator.py",
     "admin/base_retirement.py",
@@ -48,6 +49,13 @@ SUPPORT_FILES = {
     "scripts/deployment-assurance.py",
     "scripts/assured-control-plane-deploy.sh",
     "scripts/verify-backup.sh",
+    "scripts/public-ip-monitor.sh",
+    "scripts/generate-rabbitmq-cert.sh",
+    "scripts/check-rabbitmq-cert-sans.sh",
+    "scripts/restart-target.sh",
+    "scripts/install-public-ip-monitor.sh",
+    "config/systemd/dune-public-ip-monitor.service",
+    "config/systemd/dune-public-ip-monitor.timer",
 }
 
 

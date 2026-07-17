@@ -332,16 +332,16 @@
       "title": "Advertised-address and routing repair",
       "group": "Networking",
       "description": "The hostname-gated public-IP monitor and LAN reflection tooling detect and safely repair advertised-address drift.",
-      "documentation": "docs/infrastructure-console.md",
+      "documentation": "docs/public-ip-repair-canary.md",
       "primaryGate": "DUNE_PUBLIC_IP_MONITOR_ENABLED",
       "gates": ["DUNE_PUBLIC_IP_MONITOR_ENABLED"],
       "credentials": [],
-      "files": [{"path": "scripts/public-ip-monitor.sh", "minimumBytes": 1000}],
+      "files": [{"path": "scripts/public-ip-monitor.sh", "minimumBytes": 1000}, {"path": "admin/public_ip_canary.py", "minimumBytes": 1000}],
       "services": ["gateway"],
       "probe": "public-ip-monitor",
       "dependencies": ["infrastructure-control"],
       "canary": "operator-canary-pending",
-      "remediation": {"surface": "infrastructure", "summary": "Review dry-run evidence first, then apply through the hostname-gated address/TLS lifecycle."}
+      "remediation": {"surface": "infrastructure", "summary": "Run the isolated signed repair canary, verify the live current-address no-op, then arm the hostname-gated monitor."}
     },
     {
       "id": "encrypted-backups",

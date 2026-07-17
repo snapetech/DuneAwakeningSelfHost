@@ -96,6 +96,8 @@ The parity tranche added or expanded these documented surfaces:
 - [`addons.md`](addons.md): community addon lifecycle and containment contract.
 - [`creator-modding-canary.md`](creator-modding-canary.md): signed,
   input-bound, no-live-state lifecycle proof across creator and modding tools.
+- [`public-ip-repair-canary.md`](public-ip-repair-canary.md): signed,
+  input-bound proof of the complete address/TLS/restart/retry/timer lifecycle.
 - `scripts/storage-cleanup.sh`: scoped obsolete-image cleanup.
 - `scripts/public-ip-monitor.sh`: automatic advertised-address/TLS lifecycle.
 - `scripts/sietches.sh`: guarded multi-Sietch topology, settings and generated
@@ -175,6 +177,7 @@ make test-public-directory
 bash -n scripts/storage-cleanup.sh scripts/test-storage-cleanup.sh scripts/watch-maps.sh
 ./scripts/test-storage-cleanup.sh
 ./scripts/test-public-ip-monitor.sh
+make test-public-ip-canary
 ./scripts/test-sietches.sh
 python3 -m json.tool config/care-packages.json >/dev/null
 python3 -m json.tool config/augment-compatibility.json >/dev/null

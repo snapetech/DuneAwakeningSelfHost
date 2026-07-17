@@ -236,6 +236,9 @@ server {
   preset, Landsraad, cosmetics, and addon paths with signed portable receipts
   and no live database/configuration/map/network access. See
   [`creator-modding-canary.md`](creator-modding-canary.md).
+- Public-IP Repair Proof executes the full address/TLS/restart/retry/timer path
+  in disposable state and records an input-bound signed receipt; see
+  [`public-ip-repair-canary.md`](public-ip-repair-canary.md).
 - Moderation page with isolated case and policy-ban state, append-only case
   history, confirmed native `KickPlayer` ejection, optional explicit allowlist
   enforcement, presence sessions, privacy-bounded heatmaps, redacted security

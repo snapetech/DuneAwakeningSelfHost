@@ -55,6 +55,7 @@ import outbound_webhooks
 import community_rewards
 import community_canary
 import creator_canary
+import public_ip_canary
 import moderation
 import base_creator
 import base_retirement
@@ -321,6 +322,7 @@ CONFIRM_COMMUNITY_CREDIT = "CREDIT COMMUNITY WALLET"
 CONFIRM_COMMUNITY_RECONCILIATION = "RESOLVE COMMUNITY DELIVERY"
 CONFIRM_COMMUNITY_CANARY = "RUN COMMUNITY REWARDS CANARY"
 CONFIRM_CREATOR_CANARY = "RUN CREATOR MODDING CANARY"
+CONFIRM_PUBLIC_IP_CANARY = "RUN PUBLIC IP REPAIR CANARY"
 CONFIRM_MODERATION_BAN = "CREATE ENFORCED BAN"
 CONFIRM_MODERATION_UNBAN = "REVOKE BAN"
 CONFIRM_MODERATION_ALLOWLIST_POLICY = "CHANGE ALLOWLIST POLICY"
@@ -376,6 +378,8 @@ COMMUNITY_CANARY_MAX_AGE_HOURS = max(1, min(int(os.environ.get("DUNE_COMMUNITY_C
 COMMUNITY_CANARY_RETENTION = max(10, min(int(os.environ.get("DUNE_COMMUNITY_CANARY_RETENTION", "200")), 2000))
 CREATOR_CANARY_MAX_AGE_HOURS = max(1, min(int(os.environ.get("DUNE_CREATOR_CANARY_MAX_AGE_HOURS", "168")), 2160))
 CREATOR_CANARY_RETENTION = max(10, min(int(os.environ.get("DUNE_CREATOR_CANARY_RETENTION", "200")), 2000))
+PUBLIC_IP_CANARY_MAX_AGE_HOURS = max(1, min(int(os.environ.get("DUNE_PUBLIC_IP_CANARY_MAX_AGE_HOURS", "168")), 2160))
+PUBLIC_IP_CANARY_RETENTION = max(10, min(int(os.environ.get("DUNE_PUBLIC_IP_CANARY_RETENTION", "200")), 2000))
 MODERATION_ENABLED = os.environ.get("DUNE_MODERATION_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 MODERATION_ENFORCEMENT_ENABLED = os.environ.get("DUNE_MODERATION_ENFORCEMENT_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 MODERATION_DATABASE = pathlib.Path(os.environ.get("DUNE_MODERATION_DATABASE", str(BACKUPS_ROOT / "moderation" / "moderation.sqlite3")))
@@ -519,6 +523,8 @@ COMMUNITY_CANARY_STORE = None
 COMMUNITY_CANARY_STORE_LOCK = threading.Lock()
 CREATOR_CANARY_STORE = None
 CREATOR_CANARY_STORE_LOCK = threading.Lock()
+PUBLIC_IP_CANARY_STORE = None
+PUBLIC_IP_CANARY_STORE_LOCK = threading.Lock()
 MODERATION_STORE = moderation.Store(MODERATION_DATABASE, owner_uid=os.environ.get("DUNE_HOST_UID"), owner_gid=os.environ.get("DUNE_HOST_GID"))
 MODERATION_STORE_INITIALIZED = False
 MODERATION_STORE_LOCK = threading.Lock()
@@ -768,6 +774,44 @@ def _feature_readiness_creator_probe():
     return {"ready": True, "state": "canary-pending", "detail": reason[:500]}
 
 
+def _feature_readiness_public_ip_probe():
+    values = {**os.environ, **read_env()}
+    enabled = str(values.get("DUNE_PUBLIC_IP_MONITOR_ENABLED", "")).lower() in ("1", "true", "yes", "on")
+    allowed_host = str(values.get("DUNE_PUBLIC_IP_MONITOR_ALLOWED_HOST") or "").strip()
+    armed = str(values.get("DUNE_PUBLIC_IP_MONITOR_DRY_RUN", "true")).lower() not in ("1", "true", "yes", "on")
+    if not enabled or not allowed_host:
+        return {
+            "ready": False, "state": "configuration-failed",
+            "detail": "the monitor must be enabled with an exact allowed hostname",
+        }
+    try:
+        status = public_ip_canary_public_status(limit=1)
+    except Exception as exc:
+        return {"ready": False, "state": "canary-evidence-invalid", "detail": str(exc)[:500]}
+    latest = status.get("latest") or {}
+    verification = latest.get("verification") or {}
+    if status.get("currentReady") and armed:
+        return {
+            "ready": True, "state": "canary-proven",
+            "detail": f"armed monitor and isolated address/TLS/restart/timer lifecycle verified; receipt={latest.get('id')}",
+        }
+    if latest and not status.get("ok"):
+        return {"ready": False, "state": "canary-evidence-invalid", "detail": str(verification.get("error") or "public-IP canary evidence failed verification")[:500]}
+    if status.get("currentReady") and not armed:
+        return {"ready": True, "state": "canary-pending", "detail": "isolated repair proof passes, but the live monitor remains in dry-run mode"}
+    reason = "no isolated public-IP repair canary receipt exists"
+    if latest and not verification.get("inputsCurrent", True):
+        reason = "latest public-IP repair canary predates the active repair inputs"
+    elif latest and not verification.get("ageCurrent", True):
+        reason = "latest public-IP repair canary is stale"
+    elif latest and not latest.get("ready"):
+        failed = [name for name, value in (latest.get("checks") or {}).items() if not value]
+        reason = "latest isolated public-IP repair canary failed: " + ", ".join(failed[:6])
+    if not armed:
+        reason += "; live monitor remains in dry-run mode"
+    return {"ready": True, "state": "canary-pending", "detail": reason[:500]}
+
+
 def _feature_readiness_autoscaler_probe():
     status = autoscaler_public_state(include_inventory=False)
     ready = bool(status.get("enabled") and not status.get("lastError"))
@@ -941,11 +985,7 @@ def feature_readiness_public_status(force=False):
             "state": str(directory.get("state") or "invalid"),
             "detail": str(directory.get("error") or "signed descriptor is valid and current"),
         },
-        "public-ip-monitor": {
-            "ready": bool(str(values.get("DUNE_PUBLIC_IP_MONITOR_ENABLED", "")).lower() in ("1", "true", "yes", "on") and values.get("DUNE_PUBLIC_IP_MONITOR_ALLOWED_HOST")),
-            "state": "dry-run" if str(values.get("DUNE_PUBLIC_IP_MONITOR_DRY_RUN", "true")).lower() in ("1", "true", "yes", "on") else "armed",
-            "detail": "hostname-gated monitor configuration is present",
-        },
+        "public-ip-monitor": _feature_readiness_probe("public-ip-monitor", _feature_readiness_public_ip_probe),
         "backup-encryption": {
             "ready": bool(encryption.get("enabled") and encryption.get("configured")),
             "state": "ready" if encryption.get("configured") else "recipient-missing",
@@ -1489,6 +1529,8 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_PUBLIC_IP_MONITOR_ALLOWED_HOST": {"group": "Network", "secret": False, "restart": False, "why": "Exact short hostname allowed to rewrite the advertised public IPv4 and restart the farm."},
     "DUNE_PUBLIC_IP_MONITOR_INTERVAL_MINUTES": {"group": "Network", "secret": False, "restart": False, "why": "Timer cadence; reinstall the timer after changing it."},
     "DUNE_PUBLIC_IP_MONITOR_DRY_RUN": {"group": "Network", "secret": False, "restart": False, "why": "Reports public IPv4 drift without changing .env, certificates, or services."},
+    "DUNE_PUBLIC_IP_CANARY_MAX_AGE_HOURS": {"group": "Network", "secret": False, "restart": True, "why": "Maximum age of an input-current signed public-IP repair proof before readiness returns to pending."},
+    "DUNE_PUBLIC_IP_CANARY_RETENTION": {"group": "Network", "secret": False, "restart": True, "why": "Number of private signed public-IP repair receipts retained in operator evidence."},
     "DUNE_SIETCH_MUTATIONS_ENABLED": {"group": "World", "secret": False, "restart": False, "why": "Enables guarded creation, settings, start/stop, and reconciliation of additional Survival_1 dimensions."},
     "DUNE_SIETCH_ALLOWED_HOST": {"group": "World", "secret": False, "restart": False, "why": "Exact short hostname allowed to change Sietch topology or local settings."},
     "DUNE_SERVER_LOGIN_PASSWORD": {"group": "Access", "secret": False, "restart": True, "why": "Optional player login password passed into game server console variables. Visible here so trusted operators can share and rotate it."},
@@ -4477,6 +4519,54 @@ def creator_canary_public_status(limit=20):
 def run_creator_canary(principal):
     result = creator_canary.run_canary(
         ROOT, creator_canary_store(),
+        principal_id=(principal or {}).get("id") or "owner-recovery",
+    )
+    with FEATURE_READINESS_CACHE_LOCK:
+        FEATURE_READINESS_CACHE["value"] = None
+        FEATURE_READINESS_CACHE["updated_at"] = 0.0
+    return result
+
+
+def public_ip_canary_store():
+    global PUBLIC_IP_CANARY_STORE
+    with PUBLIC_IP_CANARY_STORE_LOCK:
+        if PUBLIC_IP_CANARY_STORE is None:
+            PUBLIC_IP_CANARY_STORE = public_ip_canary.Store(
+                CHANGE_INTELLIGENCE_EVIDENCE_ROOT,
+                change_intelligence.read_secret(CHANGE_INTELLIGENCE_SECRET_FILE),
+                retention=PUBLIC_IP_CANARY_RETENTION,
+                max_age_seconds=PUBLIC_IP_CANARY_MAX_AGE_HOURS * 3600,
+                owner_uid=os.environ.get("DUNE_HOST_UID"), owner_gid=os.environ.get("DUNE_HOST_GID"),
+            )
+            PUBLIC_IP_CANARY_STORE.initialize()
+        return PUBLIC_IP_CANARY_STORE
+
+
+def public_ip_canary_public_status(limit=20):
+    inputs = public_ip_canary.input_manifest(ROOT)
+    values = {**os.environ, **read_env()}
+    enabled = str(values.get("DUNE_PUBLIC_IP_MONITOR_ENABLED", "")).lower() in ("1", "true", "yes", "on")
+    armed = str(values.get("DUNE_PUBLIC_IP_MONITOR_DRY_RUN", "true")).lower() not in ("1", "true", "yes", "on")
+    status = public_ip_canary_store().status(inputs["sha256"], limit=limit)
+    status.update({
+        "enabled": enabled,
+        "armed": armed,
+        "inputsSha256": inputs["sha256"],
+        "inputFiles": inputs["files"],
+        "confirmation": CONFIRM_PUBLIC_IP_CANARY,
+        "liveEnvironmentWritten": False,
+        "liveTlsWritten": False,
+        "liveSystemdWritten": False,
+        "liveStateDirectoryOpened": False,
+        "gameMapLifecycleInvoked": False,
+        "externalNetworkCalled": False,
+    })
+    return status
+
+
+def run_public_ip_canary(principal):
+    result = public_ip_canary.run_canary(
+        ROOT, public_ip_canary_store(),
         principal_id=(principal or {}).get("id") or "owner-recovery",
     )
     with FEATURE_READINESS_CACHE_LOCK:
@@ -8800,6 +8890,8 @@ def verify_operator_evidence_archive(archive_path, secret_path):
                 if schema == community_canary.SCHEMA
                 else creator_canary.verify_signed_document(document, secret)
                 if schema == creator_canary.SCHEMA
+                else public_ip_canary.verify_signed_document(document, secret)
+                if schema == public_ip_canary.SCHEMA
                 else change_intelligence.verify_signed_capsule(document, secret)
             )
             if not result.get("ok"):
@@ -9916,6 +10008,16 @@ class Handler(BaseHTTPRequestHandler):
                         metrics += "dash_creator_canary_enabled 0\ndash_creator_canary_collector_up 1\ndash_creator_canary_current_ready 0\n"
                 except Exception:
                     metrics += f"dash_creator_canary_enabled {1 if BASE_CREATOR_ENABLED else 0}\ndash_creator_canary_collector_up 0\ndash_creator_canary_current_ready 0\n"
+                try:
+                    public_ip_status = public_ip_canary_public_status(limit=1)
+                    metrics += f"dash_public_ip_canary_enabled {1 if public_ip_status.get('enabled') else 0}\n"
+                    metrics += f"dash_public_ip_monitor_armed {1 if public_ip_status.get('armed') else 0}\n"
+                    metrics += public_ip_canary_store().prometheus(public_ip_status["inputsSha256"])
+                except Exception:
+                    values = {**os.environ, **read_env()}
+                    public_ip_enabled = str(values.get("DUNE_PUBLIC_IP_MONITOR_ENABLED", "")).lower() in ("1", "true", "yes", "on")
+                    public_ip_armed = str(values.get("DUNE_PUBLIC_IP_MONITOR_DRY_RUN", "true")).lower() not in ("1", "true", "yes", "on")
+                    metrics += f"dash_public_ip_canary_enabled {1 if public_ip_enabled else 0}\ndash_public_ip_monitor_armed {1 if public_ip_armed else 0}\ndash_public_ip_canary_collector_up 0\ndash_public_ip_canary_current_ready 0\n"
                 metrics += maintenance_planner_prometheus()
                 self.text(metrics, "text/plain; version=0.0.4; charset=utf-8")
             elif parsed.path in ("/api/integrations/discord/health", "/api/integrations/discord/version", "/api/integrations/discord/backups/list"):
@@ -10202,6 +10304,10 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/ops/public-directory":
                 self.require_token()
                 self.json(public_directory_public_status())
+            elif parsed.path == "/api/ops/public-ip-canary":
+                self.require_token()
+                params = urllib.parse.parse_qs(parsed.query)
+                self.json(public_ip_canary_public_status(limit=(params.get("limit") or ["20"])[0]))
             elif parsed.path == "/api/ops/feature-readiness":
                 self.require_token()
                 params = urllib.parse.parse_qs(parsed.query)
@@ -11111,6 +11217,24 @@ class Handler(BaseHTTPRequestHandler):
                 require_confirmation(body, CONFIRM_UPDATE_READINESS)
                 principal = access_control.public_principal(getattr(self, "auth_principal", None)) or {}
                 self.json(certify_update_readiness(principal))
+            elif parsed.path == "/api/ops/public-ip-canary":
+                self.require_token()
+                self.require_mutations()
+                values = {**os.environ, **read_env()}
+                if str(values.get("DUNE_PUBLIC_IP_MONITOR_ENABLED", "")).lower() not in ("1", "true", "yes", "on"):
+                    raise PermissionError("public-IP monitor is disabled; set DUNE_PUBLIC_IP_MONITOR_ENABLED=true")
+                body = parse_body(self)
+                require_confirmation(body, CONFIRM_PUBLIC_IP_CANARY)
+                principal = access_control.public_principal(getattr(self, "auth_principal", None)) or {}
+                result = run_public_ip_canary(principal)
+                receipt = (result.get("document") or {}).get("receipt") or {}
+                self.audit(
+                    "public-ip-repair-canary", ok=receipt.get("ready", False),
+                    receipt_id=receipt.get("id"), game_data_mutation_executed=False,
+                    live_environment_written=False, live_tls_written=False,
+                    live_systemd_written=False, external_network_called=False,
+                )
+                self.json(result)
             elif parsed.path == "/api/ops/backups/verify":
                 self.require_token()
                 body = parse_body(self)
@@ -18708,7 +18832,7 @@ async function ops(serial=loadSerial){
   startHealthRefresh();
 }
 async function infrastructure(serial=loadSerial){
-  const [serviceData, backupData, databaseData, updateData, memoryData, autoscalerData, restoreDrillData, rabbitmqDrillData, sloData, capacityData, desiredStateData, changeData, deploymentData, publicDirectoryData, featureReadinessData] = await Promise.all([
+  const [serviceData, backupData, databaseData, updateData, memoryData, autoscalerData, restoreDrillData, rabbitmqDrillData, sloData, capacityData, desiredStateData, changeData, deploymentData, publicDirectoryData, featureReadinessData, publicIpCanaryData] = await Promise.all([
     api('/api/ops/services'),
     api('/api/ops/backups'),
     api('/api/ops/database'),
@@ -18723,7 +18847,8 @@ async function infrastructure(serial=loadSerial){
     api('/api/ops/change-intelligence', {timeoutMs: 30000}),
     api('/api/ops/deployment-assurance', {timeoutMs: 30000}),
     api('/api/ops/public-directory', {timeoutMs: 30000}),
-    api('/api/ops/feature-readiness', {timeoutMs: 30000})
+    api('/api/ops/feature-readiness', {timeoutMs: 30000}),
+    api('/api/ops/public-ip-canary', {timeoutMs: 30000})
   ]);
   if (serial !== loadSerial) return;
   const services = serviceData.services || [];
@@ -18746,6 +18871,7 @@ async function infrastructure(serial=loadSerial){
   mountInfrastructureDeploymentAssurance(deploymentData);
   mountInfrastructurePublicDirectory(publicDirectoryData);
   mountInfrastructureFeatureReadiness(featureReadinessData);
+  mountInfrastructurePublicIpCanary(publicIpCanaryData);
   mountInfrastructureRestoreDrill(restoreDrillData);
   mountInfrastructureRabbitMQRestoreDrill(rabbitmqDrillData);
   mountInfrastructureSlo(sloData);
@@ -18753,6 +18879,29 @@ async function infrastructure(serial=loadSerial){
   document.getElementById('infraVerifyBackupBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Verifying...', verifyInfrastructureBackup));
   document.getElementById('infraLoadTableBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Loading...', loadInfrastructureTable));
   if (services.length) loadInfrastructureLogs().catch(error => { document.getElementById('infraLogsResult').textContent = error.message; });
+}
+function mountInfrastructurePublicIpCanary(data){
+  const page = document.querySelector('#view .pageStack');
+  if (!page) return;
+  const latest = data.latest || {};
+  const verification = latest.verification || {};
+  const checks = latest.checks || {};
+  const failed = Object.entries(checks).filter(([,value])=>!value).map(([name])=>name);
+  const html = `<div class="panelBand" id="infraPublicIpCanary">
+    <div class="sectionHeader"><div><h2>Public-IP Repair Proof</h2><p class="muted">Runs the real address rewrite, RabbitMQ certificate SAN rotation, guarded farm-restart handoff and retry, and timer installer against disposable files and fake service-control commands. It never opens the live environment, TLS directory, monitor state, Docker lifecycle, or network.</p></div><div class="toolbar"><span class="pill ${data.enabled?'ok':'bad'}">monitor ${data.enabled?'enabled':'disabled'}</span><span class="pill ${data.armed?'ok':'warn'}">${data.armed?'armed':'dry-run'}</span><span class="pill ${data.currentReady?'ok':'warn'}">proof ${data.currentReady?'current':'required'}</span><button id="infraPublicIpCanaryBtn" class="primary" ${data.enabled && can('infrastructure.write')?'':'disabled'}>Run isolated repair canary</button></div></div>
+    <div class="metricGrid">${metric('Checks passed', Object.values(checks).filter(Boolean).length, data.currentReady?'ok':'warn')}${metric('Checks total', Object.keys(checks).length)}${metric('Receipt age', verification.ageSeconds == null?'—':fmtDuration(Number(verification.ageSeconds)*1000))}${metric('Execution', latest.durationMs == null?'—':fmtDuration(latest.durationMs))}</div>
+    <p class="muted">The signed receipt is current only while every bound implementation input is unchanged and the receipt is younger than ${esc(data.maxAgeSeconds || 0)} seconds. Arming the live timer remains a separate, hostname-gated operator action.</p>
+    <pre id="infraPublicIpCanaryResult">${esc(JSON.stringify({currentReady:data.currentReady,armed:data.armed,latest:{id:latest.id,completedAt:latest.completedAt,ready:latest.ready,receiptSha256:latest.receiptSha256,failedChecks:failed,evidence:latest.evidence,isolation:latest.isolation,verification}},null,2))}</pre>
+  </div>`;
+  const readiness = document.getElementById('infraFeatureReadiness');
+  if (readiness) readiness.insertAdjacentHTML('afterend', html); else page.insertAdjacentHTML('afterbegin', html);
+  document.getElementById('infraPublicIpCanaryBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Proving...', async()=>{
+    if (!confirm('Run the complete public-IP repair lifecycle against disposable state and store a signed receipt? No live environment, TLS, systemd, Docker, map, or network state is touched.')) return {cancelled:true};
+    const result = await api('/api/ops/public-ip-canary',{method:'POST',timeoutMs:180000,body:JSON.stringify({confirm:'RUN PUBLIC IP REPAIR CANARY'})});
+    document.getElementById('infraPublicIpCanaryResult').textContent=JSON.stringify(result,null,2);
+    notify(result.document?.receipt?.ready?'Public-IP repair proof passed':'Public-IP repair proof failed',result.document?.receipt?.ready?'ok':'bad');
+    return result;
+  }));
 }
 function mountInfrastructureFeatureReadiness(data){
   const page = document.querySelector('#view .pageStack');

@@ -342,3 +342,18 @@ groups:
         for: 15m
         labels: {severity: warning}
         annotations: {summary: "The active Creator/Modding inputs lack a current passing isolated lifecycle canary"}
+      - alert: DashPublicIpCanaryCollectorInvalid
+        expr: dash_public_ip_canary_enabled == 1 and dash_public_ip_canary_collector_up == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "DASH public-IP repair canary evidence failed cryptographic or semantic verification"}
+      - alert: DashPublicIpCanaryNotCurrent
+        expr: dash_public_ip_canary_enabled == 1 and dash_public_ip_canary_current_ready == 0
+        for: 15m
+        labels: {severity: warning}
+        annotations: {summary: "The active public-IP repair inputs lack a current passing isolated lifecycle canary"}
+      - alert: DashPublicIpMonitorNotArmed
+        expr: dash_public_ip_canary_enabled == 1 and dash_public_ip_monitor_armed == 0
+        for: 15m
+        labels: {severity: warning}
+        annotations: {summary: "The hostname-gated DASH public-IP monitor remains in dry-run mode"}

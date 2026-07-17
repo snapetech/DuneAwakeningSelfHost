@@ -460,10 +460,19 @@ invokes the normal target-aware full-farm restart. A failed restart remains in
 address already matches. Status is stored under
 `backups/admin-panel/public-ip-monitor.state`.
 
+Before arming it, run the signed disposable repair proof from **Infrastructure
+→ Public-IP Repair Proof**. It executes the real rewrite, OpenSSL SAN rotation,
+restart handoff/retry, and timer rendering against temporary state without
+opening live configuration, TLS, systemd, Docker, map, or network state. The
+Feature Readiness row promotes only when that input-bound receipt is current
+and the live monitor is armed. See
+[`public-ip-repair-canary.md`](public-ip-repair-canary.md).
+
 ```bash
 hostname -s
 ./scripts/public-ip-monitor.sh .env status
 ./scripts/public-ip-monitor.sh .env check
+make test-public-ip-canary
 make install-public-ip-monitor ENV_FILE=.env
 systemctl status dune-public-ip-monitor.timer
 ```

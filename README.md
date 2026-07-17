@@ -991,6 +991,7 @@ Server-browser ordering is deliberately split based on the observed in-game brow
 | `DUNE_COMMUNITY_CANARY_MAX_AGE_HOURS` / `DUNE_COMMUNITY_CANARY_RETENTION` | Policy-bound synthetic transaction proof lifetime and portable signed receipt retention. |
 | `DUNE_CREATOR_CANARY_MAX_AGE_HOURS` / `DUNE_CREATOR_CANARY_RETENTION` | Input-bound Creator/Modding lifecycle proof lifetime and portable signed receipt retention. |
 | `DUNE_PUBLIC_IP_MONITOR_*` | Optional hostname-gated, dry-run-first public IPv4 drift detection, TLS rotation, and orderly farm restart. |
+| `DUNE_PUBLIC_IP_CANARY_MAX_AGE_HOURS` / `DUNE_PUBLIC_IP_CANARY_RETENTION` | Input-bound advertised-address/TLS/restart/timer proof lifetime and portable signed receipt retention. |
 | `DUNE_SIETCH_MUTATIONS_ENABLED` / `DUNE_SIETCH_ALLOWED_HOST` | Separate gate and exact-host binding for additional Survival dimension topology/settings writes. |
 
 Most service settings require recreating or restarting affected containers before running processes pick them up. The admin panel documents runtime-only settings where applicable.
@@ -1000,11 +1001,16 @@ enabled for the first check, and install its timer:
 
 ```bash
 ./scripts/public-ip-monitor.sh .env check
+make test-public-ip-canary
 make install-public-ip-monitor ENV_FILE=.env
 ```
 
 The monitor refuses address changes unless
 `DUNE_PUBLIC_IP_MONITOR_ALLOWED_HOST` exactly matches `hostname -s`.
+Run the disposable signed proof before arming it; the proof exercises the real
+rewrite, OpenSSL SAN rotation, restart retry, and timer renderer without touching
+live environment, TLS, systemd, Docker, map, or network state. See
+[`docs/public-ip-repair-canary.md`](docs/public-ip-repair-canary.md).
 
 Additional Survival/Sietch dimensions are dry-run-first and separately gated:
 
@@ -1100,6 +1106,7 @@ Start here:
 - [`docs/community-rewards.md`](docs/community-rewards.md): account linking, community wallets, immutable ledger, shop/kits, signed inbound rewards, playtime accrual, reward tracks, delivery/refund state machine, and recovery.
 - [`docs/community-rewards-canary.md`](docs/community-rewards-canary.md): policy-bound disposable end-to-end transaction proof, strict no-live-data boundary, signed portable receipts, readiness expiry, metrics, and failure handling.
 - [`docs/creator-modding-canary.md`](docs/creator-modding-canary.md): input-bound disposable creator/modding lifecycle proof, strict no-live-state boundary, signed receipts, readiness expiry, metrics, and recovery.
+- [`docs/public-ip-repair-canary.md`](docs/public-ip-repair-canary.md): input-bound disposable advertised-address/TLS/restart/timer proof, live-state isolation, signed receipts, readiness arming, metrics, and recovery.
 - [`docs/addons.md`](docs/addons.md): SHA-pinned community UI addon lifecycle, permission approval, quarantine, and sandbox contract.
 - [`compose.admin-restore.yaml`](compose.admin-restore.yaml): temporary read-write data overlay for reviewed browser filesystem restores.
 - [`docs/red-blink-feature-parity-audit.md`](docs/red-blink-feature-parity-audit.md): pinned source comparison, completed operator-feature parity matrix, provenance, and validation limits.
