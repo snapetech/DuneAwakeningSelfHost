@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 import fcntl
+import contextlib
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import pathlib
@@ -13,6 +15,10 @@ MODULE_PATH = pathlib.Path(__file__).resolve().parents[1] / "admin" / "restore_d
 SPEC = importlib.util.spec_from_file_location("restore_drill", MODULE_PATH)
 restore_drill = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(restore_drill)
+
+CLI_SPEC = importlib.util.spec_from_file_location("backup_restore_drill_cli", pathlib.Path(__file__).resolve().parent / "backup-restore-drill.py")
+restore_drill_cli = importlib.util.module_from_spec(CLI_SPEC)
+CLI_SPEC.loader.exec_module(restore_drill_cli)
 
 
 class FakeDocker:
@@ -146,6 +152,22 @@ class RestoreDrillTests(unittest.TestCase):
         self.assertEqual(["/drill/source.dump", "/etc/passwd", "/etc/group"], [item["Target"] for item in host["Mounts"]])
         self.assertEqual("1234:1235", spec["User"])
         self.assertNotIn("ExposedPorts", spec)
+
+    def test_cli_resolves_relative_workspace_before_building_receipt_path(self):
+        captured = {}
+        original = restore_drill_cli.restore_drill.run_drill
+        previous = pathlib.Path.cwd()
+        try:
+            restore_drill_cli.restore_drill.run_drill = lambda workspace, **kwargs: captured.update({"workspace": workspace, **kwargs}) or {"ok": True}
+            os.chdir(self.workspace)
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(0, restore_drill_cli.main(["--workspace", "."]))
+        finally:
+            os.chdir(previous)
+            restore_drill_cli.restore_drill.run_drill = original
+        self.assertTrue(pathlib.Path(captured["workspace"]).is_absolute())
+        self.assertTrue(pathlib.Path(captured["receipt_root"]).is_absolute())
+        self.assertEqual(self.workspace.resolve(), pathlib.Path(captured["workspace"]))
 
     def run_success(self, docker=None, **kwargs):
         run_uid = os.getuid() or 70

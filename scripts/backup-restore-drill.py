@@ -39,8 +39,8 @@ def parser():
 
 def main(argv=None):
     args = parser().parse_args(argv)
-    workspace = pathlib.Path(args.workspace)
-    receipt_root = pathlib.Path(args.receipt_root) if args.receipt_root else workspace / "backups" / "admin-panel" / "restore-drills"
+    workspace = pathlib.Path(args.workspace).resolve()
+    receipt_root = pathlib.Path(args.receipt_root).resolve() if args.receipt_root else workspace / "backups" / "admin-panel" / "restore-drills"
     if args.status:
         payload = restore_drill.status(receipt_root, args.limit)
         print(json.dumps(payload, indent=2, sort_keys=True))
