@@ -72,6 +72,7 @@ import public_directory
 import env_file_store
 import feature_readiness
 import feature_readiness_history
+import credential_lifecycle
 
 GM_CATALOG_PATH = CODE_ROOT / "scripts" / "gm-command-catalog.py"
 GM_CATALOG_SPEC = importlib.util.spec_from_file_location("gm_command_catalog", GM_CATALOG_PATH)
@@ -107,6 +108,15 @@ FEATURE_READINESS_HISTORY_DATABASE = pathlib.Path(os.environ.get("DUNE_FEATURE_R
 FEATURE_READINESS_HISTORY_SECRET_FILE = pathlib.Path(os.environ.get("DUNE_FEATURE_READINESS_HISTORY_HMAC_SECRET_FILE", str(CONFIG_ROOT / "secrets" / "feature-readiness-history-hmac.secret")))
 FEATURE_READINESS_HISTORY_STORE = None
 FEATURE_READINESS_HISTORY_STORE_LOCK = threading.Lock()
+CREDENTIAL_LIFECYCLE_ENABLED = os.environ.get("DUNE_CREDENTIAL_LIFECYCLE_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+CREDENTIAL_LIFECYCLE_FILE = CONFIG_ROOT / "credential-lifecycle.json"
+CREDENTIAL_LIFECYCLE_DATABASE = pathlib.Path(os.environ.get("DUNE_CREDENTIAL_LIFECYCLE_DATABASE", str(BACKUPS_ROOT / "credential-lifecycle" / "history.sqlite3")))
+CREDENTIAL_LIFECYCLE_SECRET_FILE = pathlib.Path(os.environ.get("DUNE_CREDENTIAL_LIFECYCLE_HMAC_SECRET_FILE", str(CONFIG_ROOT / "secrets" / "credential-lifecycle-hmac.secret")))
+CREDENTIAL_LIFECYCLE_ANCHOR_FILE = pathlib.Path(os.environ.get("DUNE_CREDENTIAL_LIFECYCLE_ANCHOR_FILE", str(BACKUPS_ROOT / "credential-lifecycle" / "history.anchor.json")))
+CREDENTIAL_LIFECYCLE_STORE = None
+CREDENTIAL_LIFECYCLE_STORE_LOCK = threading.Lock()
+CREDENTIAL_LIFECYCLE_CACHE = {"value": None, "updated_at": 0.0}
+CREDENTIAL_LIFECYCLE_CACHE_LOCK = threading.Lock()
 try:
     FEATURE_READINESS_CACHE_TTL_SECONDS = max(5, min(int(os.environ.get("DUNE_FEATURE_READINESS_CACHE_TTL_SECONDS", "30")), 300))
 except ValueError:
@@ -675,6 +685,58 @@ def feature_readiness_history_public_status(limit=100):
     return status
 
 
+def credential_lifecycle_store():
+    global CREDENTIAL_LIFECYCLE_STORE
+    with CREDENTIAL_LIFECYCLE_STORE_LOCK:
+        if CREDENTIAL_LIFECYCLE_STORE is None:
+            CREDENTIAL_LIFECYCLE_STORE = credential_lifecycle.ObservationStore(
+                CREDENTIAL_LIFECYCLE_DATABASE,
+                CREDENTIAL_LIFECYCLE_SECRET_FILE,
+                anchor_path=CREDENTIAL_LIFECYCLE_ANCHOR_FILE,
+            )
+        return CREDENTIAL_LIFECYCLE_STORE
+
+
+def credential_lifecycle_public_status(force=False):
+    if not CREDENTIAL_LIFECYCLE_ENABLED:
+        return {"ok": True, "enabled": False, "state": "disabled", "summary": {"total": 0, "problems": 0}, "credentials": []}
+    now = time.time()
+    with CREDENTIAL_LIFECYCLE_CACHE_LOCK:
+        if not force and CREDENTIAL_LIFECYCLE_CACHE["value"] is not None and now - CREDENTIAL_LIFECYCLE_CACHE["updated_at"] <= FEATURE_READINESS_CACHE_TTL_SECONDS:
+            return json.loads(json.dumps(CREDENTIAL_LIFECYCLE_CACHE["value"]))
+    catalog = credential_lifecycle.load_catalog(CREDENTIAL_LIFECYCLE_FILE)
+    result = credential_lifecycle.evaluate(
+        catalog,
+        ROOT,
+        {**os.environ, **read_env()},
+        ENV_FILE,
+        BACKUPS_ROOT,
+        credential_lifecycle_store(),
+        now=now,
+    )
+    result.update({
+        "enabled": True,
+        "catalog": str(CREDENTIAL_LIFECYCLE_FILE.relative_to(ROOT)),
+        "database": str(CREDENTIAL_LIFECYCLE_DATABASE),
+        "hmacKeyConfigured": CREDENTIAL_LIFECYCLE_SECRET_FILE.is_file(),
+        "authenticatedHeadConfigured": CREDENTIAL_LIFECYCLE_ANCHOR_FILE.is_file(),
+        "secretValuesReturned": False,
+        "materialFingerprintsReturned": False,
+    })
+    with CREDENTIAL_LIFECYCLE_CACHE_LOCK:
+        CREDENTIAL_LIFECYCLE_CACHE.update({"value": json.loads(json.dumps(result)), "updated_at": now})
+    return result
+
+
+def credential_lifecycle_prometheus():
+    if not CREDENTIAL_LIFECYCLE_ENABLED:
+        return "dash_credential_lifecycle_enabled 0\ndash_credential_lifecycle_ok 1\n"
+    try:
+        return "dash_credential_lifecycle_enabled 1\n" + credential_lifecycle.metrics(credential_lifecycle_public_status())
+    except Exception:
+        return "dash_credential_lifecycle_enabled 1\ndash_credential_lifecycle_ok 0\ndash_credential_lifecycle_problems 1\ndash_credential_lifecycle_history_valid 0\n"
+
+
 def _feature_readiness_history_commit():
     try:
         deployment = deployment_assurance_store().status()
@@ -701,6 +763,10 @@ def feature_readiness_public_status(force=False):
         history_status = feature_readiness_history_public_status(limit=1)
     except Exception as exc:
         history_status = {"ok": False, "enabled": FEATURE_READINESS_HISTORY_ENABLED, "error": str(exc)[:500]}
+    try:
+        credential_status = credential_lifecycle_public_status(force=force)
+    except Exception as exc:
+        credential_status = {"ok": False, "enabled": CREDENTIAL_LIFECYCLE_ENABLED, "summary": {"problems": 1}, "error": str(exc)[:500]}
     probes = {
         "database": _feature_readiness_probe("database", _feature_readiness_database_probe),
         "mutation-governance": _feature_readiness_probe("mutation-governance", _feature_readiness_governance_probe),
@@ -752,6 +818,11 @@ def feature_readiness_public_status(force=False):
             "ready": bool(not FEATURE_READINESS_HISTORY_ENABLED or history_status.get("ok")),
             "state": "ready" if history_status.get("ok") else "ledger-invalid",
             "detail": "transition ledger integrity verified" if history_status.get("ok") else str(history_status.get("error") or "transition ledger integrity verification failed"),
+        },
+        "credential-lifecycle": {
+            "ready": bool(credential_status.get("ok")),
+            "state": "ready" if credential_status.get("ok") else "posture-gap",
+            "detail": str(credential_status.get("error") or f"{(credential_status.get('summary') or {}).get('problems', 0)} credential posture problems")[:500],
         },
     }
     catalog = feature_readiness.load_catalog(FEATURE_READINESS_FILE)
@@ -835,6 +906,8 @@ def admin_panel_reload_paths():
         CODE_ROOT / "admin" / "change_approvals.py",
         CODE_ROOT / "admin" / "change_contracts.py",
         CODE_ROOT / "admin" / "public_directory.py",
+        CODE_ROOT / "admin" / "credential_lifecycle.py",
+        CREDENTIAL_LIFECYCLE_FILE,
         CODE_ROOT / "scripts" / "dune_gm_command.py",
         GM_CATALOG_PATH,
     ]
@@ -1375,6 +1448,10 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_FEATURE_READINESS_HISTORY_ENABLED": {"group": "Feature Readiness", "secret": False, "restart": True, "why": "Records state-vector changes in a private append-only HMAC transition ledger."},
     "DUNE_FEATURE_READINESS_HISTORY_DATABASE": {"group": "Feature Readiness", "secret": False, "restart": True, "why": "Private SQLite readiness regression, recovery, and deployment-correlation history."},
     "DUNE_FEATURE_READINESS_HISTORY_HMAC_SECRET_FILE": {"group": "Feature Readiness", "secret": False, "restart": True, "why": "Private HMAC key authenticating every readiness transition and chain link."},
+    "DUNE_CREDENTIAL_LIFECYCLE_ENABLED": {"group": "Credential Lifecycle", "secret": False, "restart": True, "why": "Evaluates secret-safe presence, permissions, rotation age, consumers, and backup coverage."},
+    "DUNE_CREDENTIAL_LIFECYCLE_DATABASE": {"group": "Credential Lifecycle", "secret": False, "restart": True, "why": "Append-only private material-change observation ledger."},
+    "DUNE_CREDENTIAL_LIFECYCLE_HMAC_SECRET_FILE": {"group": "Credential Lifecycle", "secret": False, "restart": True, "why": "Private HMAC key for keyed material fingerprints and observation-chain authentication."},
+    "DUNE_CREDENTIAL_LIFECYCLE_ANCHOR_FILE": {"group": "Credential Lifecycle", "secret": False, "restart": True, "why": "Separately authenticated chain head that detects ledger tail truncation."},
     "DUNE_DEPLOYMENT_ASSURANCE_STATE_DIR": {"group": "Deployment Assurance", "secret": False, "restart": True, "why": "Private directory for HMAC-authenticated open/completed change-window state."},
     "DUNE_DEPLOYMENT_ASSURANCE_WORKSPACE": {"group": "Deployment Assurance", "secret": False, "restart": True, "why": "Read-only complete source-workspace mount used to independently verify every promoted manifest file."},
     "DUNE_DEPLOYMENT_ASSURANCE_PROMETHEUS_URL": {"group": "Deployment Assurance", "secret": False, "restart": True, "why": "Internal Prometheus URL used to prove the current readiness certification has been scraped."},
@@ -5520,7 +5597,7 @@ def verify_backup_set_native(path):
             output.append(f"OK archive {archive}")
         except (OSError, tarfile.TarError) as exc:
             errors.append(f"FAIL archive {archive}: {exc}")
-    for name in ("community-rewards.sqlite3", "moderation.sqlite3", "base-gallery.sqlite3", "operational-slo.sqlite3", "capacity-intelligence.sqlite3", "desired-state.sqlite3", "change-intelligence.sqlite3"):
+    for name in ("community-rewards.sqlite3", "moderation.sqlite3", "base-gallery.sqlite3", "operational-slo.sqlite3", "capacity-intelligence.sqlite3", "desired-state.sqlite3", "change-intelligence.sqlite3", "feature-readiness-history.sqlite3", "credential-lifecycle.sqlite3", "change-approvals.sqlite3"):
         database = path / name
         if not database.is_file():
             output.append(f"WARN no {name} found in {path}")
@@ -5609,6 +5686,83 @@ def verify_backup_set_native(path):
                     errors.append(f"FAIL change-intelligence HMAC event chain {change_database}: {change_check}")
             except (OSError, KeyError, ValueError, tarfile.TarError) as exc:
                 errors.append(f"FAIL change-intelligence matching policy/HMAC material in {archive}: {exc}")
+    for database_name, member_name, label, verifier in (
+        ("feature-readiness-history.sqlite3", "config/secrets/feature-readiness-history-hmac.secret", "feature-readiness history", feature_readiness_history.verify_database),
+    ):
+        database = path / database_name
+        if not database.is_file():
+            continue
+        archive = next((candidate for candidate in (path / "config.tgz", path / "config-and-env.tgz") if candidate.is_file()), None)
+        if archive is None:
+            errors.append(f"FAIL {label} HMAC verification requires matching config archive in {path}")
+            continue
+        try:
+            with tarfile.open(archive, "r:gz") as handle, tempfile.TemporaryDirectory(prefix="dash-ledger-verify-") as directory:
+                member = handle.getmember(member_name)
+                if not member.isfile() or not 32 <= member.size <= 16 * 1024:
+                    raise ValueError(f"invalid {label} HMAC key backup member")
+                extracted = handle.extractfile(member)
+                if extracted is None:
+                    raise ValueError(f"unreadable {label} HMAC key backup member")
+                secret = pathlib.Path(directory) / "ledger-hmac.secret"
+                secret.write_bytes(extracted.read(16 * 1024 + 1))
+                os.chmod(secret, 0o600)
+                check = verifier(database, secret)
+            if check.get("ok"):
+                output.append(f"OK {label} backup-bound HMAC chain {database}")
+            else:
+                errors.append(f"FAIL {label} backup-bound HMAC chain {database}: {check}")
+        except (OSError, KeyError, ValueError, tarfile.TarError) as exc:
+            errors.append(f"FAIL {label} matching HMAC material in {archive}: {exc}")
+    credential_database = path / "credential-lifecycle.sqlite3"
+    credential_anchor = path / "credential-lifecycle.anchor.json"
+    credential_artifacts = sum(candidate.is_file() for candidate in (credential_database, credential_anchor))
+    if credential_artifacts == 2:
+        archive = next((candidate for candidate in (path / "config.tgz", path / "config-and-env.tgz") if candidate.is_file()), None)
+        if archive is None:
+            errors.append(f"FAIL credential lifecycle HMAC verification requires matching config archive in {path}")
+        else:
+            try:
+                with tarfile.open(archive, "r:gz") as handle, tempfile.TemporaryDirectory(prefix="dash-credential-verify-") as directory:
+                    member = handle.getmember("config/secrets/credential-lifecycle-hmac.secret")
+                    if not member.isfile() or not 32 <= member.size <= 16 * 1024:
+                        raise ValueError("invalid credential lifecycle HMAC key backup member")
+                    extracted = handle.extractfile(member)
+                    if extracted is None:
+                        raise ValueError("unreadable credential lifecycle HMAC key backup member")
+                    secret = pathlib.Path(directory) / "credential-lifecycle-hmac.secret"
+                    value = extracted.read(16 * 1024 + 1)
+                    if len(value) > 16 * 1024:
+                        raise ValueError("oversized credential lifecycle HMAC key backup member")
+                    secret.write_bytes(value)
+                    os.chmod(secret, 0o600)
+                    check = credential_lifecycle.verify_database(credential_database, secret, credential_anchor)
+                if check.get("ok"):
+                    output.append(f"OK credential lifecycle backup-bound HMAC chain and authenticated head {credential_database}")
+                else:
+                    errors.append(f"FAIL credential lifecycle backup-bound HMAC chain or authenticated head {credential_database}: {check}")
+            except (OSError, KeyError, ValueError, tarfile.TarError) as exc:
+                errors.append(f"FAIL credential lifecycle matching HMAC material in {archive}: {exc}")
+    elif credential_artifacts:
+        errors.append("FAIL credential lifecycle backup requires its SQLite ledger and authenticated head together")
+    else:
+        output.append(f"WARN no credential lifecycle snapshot found in {path}")
+    approval_database = path / "change-approvals.sqlite3"
+    approval_key = path / "change-approvals.key"
+    approval_artifacts = sum(candidate.is_file() for candidate in (approval_database, approval_key))
+    if approval_artifacts == 2:
+        try:
+            approval_check = change_approvals.Store(approval_database, key_path=approval_key).verify()
+            if approval_check.get("ok"):
+                output.append(f"OK change-approval backup-bound HMAC chain {approval_database}")
+            else:
+                errors.append(f"FAIL change-approval backup-bound HMAC chain {approval_database}: {approval_check}")
+        except (OSError, RuntimeError, sqlite3.Error, ValueError) as exc:
+            errors.append(f"FAIL change-approval backup-bound HMAC chain {approval_database}: {exc}")
+    elif approval_artifacts:
+        errors.append("FAIL change-approval backup requires its SQLite ledger and HMAC key together")
+    else:
+        output.append(f"WARN no change-approval snapshot found in {path}")
     audit_database = path / "audit-ledger.sqlite3"
     audit_key = path / "audit-ledger.hmac.key"
     audit_anchor = path / "audit-ledger.anchor.json"
@@ -8839,6 +8993,7 @@ class Handler(BaseHTTPRequestHandler):
                 metrics += change_contract_prometheus()
                 metrics += public_directory_prometheus()
                 metrics += feature_readiness_prometheus()
+                metrics += credential_lifecycle_prometheus()
                 if UPDATE_READINESS_ENABLED:
                     try:
                         update_snapshot = update_readiness_metrics_snapshot()
@@ -9055,6 +9210,10 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/ops/security":
                 self.require_token()
                 self.json(self.security_audit())
+            elif parsed.path == "/api/ops/credential-lifecycle":
+                self.require_token()
+                params = urllib.parse.parse_qs(parsed.query)
+                self.json(credential_lifecycle_public_status(force=(params.get("refresh") or [""])[0].lower() in ("1", "true", "yes", "on")))
             elif parsed.path == "/api/ops/audit":
                 self.require_token()
                 ledger_status = audit_ledger_public_status()
@@ -18337,10 +18496,11 @@ function bindChangeApprovalControls(data){
   })));
 }
 async function security(serial=loadSerial){
-  const [audit, events, approvals] = await Promise.all([
+  const [audit, events, approvals, credentials] = await Promise.all([
     api('/api/ops/security'),
     api('/api/ops/audit'),
-    api('/api/security/approvals')
+    api('/api/security/approvals'),
+    api('/api/ops/credential-lifecycle')
   ]);
   if (serial !== loadSerial) return;
   const failed = (audit.checks || []).filter(c => !c.ok).length;
@@ -18349,9 +18509,23 @@ async function security(serial=loadSerial){
   const ledgerHead = ledger.ledger || {};
   const ledgerRequests = ledger.requests || {};
   const contracts = events.changeContracts || {};
+  const credentialSummary = credentials.summary || {};
+  const credentialRows = (credentials.credentials || []).map(row => ({
+    credential: row.title,
+    category: row.category,
+    required: row.required,
+    state: row.state,
+    source: `${row.sourceKind}: ${row.sourceReference}`,
+    permissions: row.configured ? (row.privatePermissions ? 'private' : 'unsafe') : '—',
+    rotation: row.maximumAgeDays ? `${row.observedAgeDays ?? 'new'} / ${row.maximumAgeDays} days` : row.rotationPolicy,
+    backup: row.configured ? (row.backupCovered ? 'covered' : 'missing') : '—',
+    consumers: (row.consumers || []).join(', '),
+    findings: (row.findings || []).join(', ') || 'none'
+  }));
   const displayedEvents = (events.sealedEvents || []).length ? events.sealedEvents : (events.events || []);
-  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Security</h2><div class="toolbar"><span class="pill ${failed ? 'warn' : 'ok'}">${failed ? failed + ' checks need attention' : 'checks OK'}</span><button data-jump="settings">Settings</button><button data-jump="mutations">Admin Actions</button></div></div>${failed ? `<div class="panelBand dangerZone"><h2>Needs Attention</h2>${checks(failedChecks)}</div>` : ''}${changeApprovalPanel(approvals)}<div class="twoCol"><div class="panelBand"><h2>Security Checks</h2>${checks(audit.checks)}</div><div class="panelBand"><div class="sectionHeader"><h2>Mutation Flight Recorder</h2><div class="toolbar"><span class="pill ${ledger.ok ? 'ok' : 'bad'}">${ledger.ok ? 'chain valid' : 'chain invalid'}</span><span class="pill">${esc(ledgerHead.events || 0)} sealed</span><span class="pill ${Number(ledgerRequests.open || 0) ? 'warn' : 'ok'}">${esc(ledgerRequests.open || 0)} open</span></div></div><p class="muted">Each privileged POST is admitted only after a secret-free exact body digest is HMAC-sealed. A separately authenticated head detects tail deletion; admitted requests without a completion receipt expose interrupted or unknown outcomes.</p>${table([{headSequence:ledgerHead.headSequence || 0,headHmac:ledgerHead.headHmacSha256 || 'none',anchorUpdated:ledgerHead.anchorUpdatedAt || '—',oldestOpenSeconds:ledgerRequests.oldestOpenAgeSeconds || 0,requiredForMutations:!!ledger.requiredForMutations}])}<h3>Recent Sealed Audit Events</h3>${auditEventsTable(displayedEvents)}<details><summary>Raw current JSONL events</summary>${table(events.events || [])}</details></div></div><div class="panelBand"><div class="sectionHeader"><div><h2>Blast-Radius Change Contracts</h2><p class="muted">Before a governed write, DASH compiles and signs the exact operator, route, capability, request digest, risk, backup expectation, reversibility, restart impact, player disruption, map-lifecycle exposure, and safeguards. The browser makes that contract visible before dispatch.</p></div><div class="toolbar"><span class="pill ${contracts.enabled ? 'ok' : 'warn'}">${contracts.enabled ? 'enabled' : 'disabled'}</span><span class="pill ${contracts.required ? 'ok' : 'warn'}">${contracts.required ? 'enforced' : 'advisory'}</span><span class="pill">${esc(contracts.governedPaths || 0)} governed paths</span></div></div>${table([{ttlSeconds:contracts.ttlSeconds||0,issued:contracts.runtime?.issued||0,admitted:contracts.runtime?.admitted||0,refused:contracts.runtime?.refused||0,policyRevision:contracts.policyRevision||'—'}])}</div><div class="panelBand"><h2>Operating Notes</h2><ul>${audit.notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul></div><details class="panelBand"><summary>Editable Env Keys</summary><div class="toolbar">${audit.safeEnvKeys.map(k => `<span class="pill">${esc(k)}</span>`).join('')}</div></details><details class="panelBand"><summary>Editable Config Files</summary><div class="toolbar">${audit.allowedConfigFiles.map(k => `<span class="pill">${esc(k)}</span>`).join('')}</div></details></div>`;
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Security</h2><div class="toolbar"><span class="pill ${failed ? 'warn' : 'ok'}">${failed ? failed + ' checks need attention' : 'checks OK'}</span><button data-jump="settings">Settings</button><button data-jump="mutations">Admin Actions</button></div></div>${failed ? `<div class="panelBand dangerZone"><h2>Needs Attention</h2>${checks(failedChecks)}</div>` : ''}<div class="panelBand"><div class="sectionHeader"><div><h2>Credential Lifecycle Control Center</h2><p class="muted">Secret values and fingerprints never leave the server. DASH checks activation-aware presence, placeholder material, source permissions, minimum material length, tracked rotations, declared consumers, and newest-backup coverage.</p></div><div class="toolbar"><span class="pill ${credentials.ok?'ok':'bad'}">${credentials.ok?'posture ready':'attention required'}</span><span class="pill">${esc(credentialSummary.configured||0)}/${esc(credentialSummary.total||0)} configured</span><span class="pill ${Number(credentialSummary.overdue||0)?'bad':'ok'}">${esc(credentialSummary.overdue||0)} overdue</span><button id="credentialLifecycleRefreshBtn">Recheck now</button></div></div><div class="metricGrid">${metric('Required',credentialSummary.required||0)}${metric('Problems',credentialSummary.problems||0,credentialSummary.problems?'bad':'')}${metric('Missing',credentialSummary.missing||0,credentialSummary.missing?'bad':'')}${metric('Backup gaps',credentialSummary.backupUncovered||0,credentialSummary.backupUncovered?'warn':'')}${metric('Rotations observed',credentials.history?.rotations||0)}</div>${table(credentialRows)}<p class="muted">Age starts at the first keyed observation and becomes an observed rotation timestamp after material changes. Stable public-identity and ledger keys rotate only with their dependent history or trust transition.</p></div>${changeApprovalPanel(approvals)}<div class="twoCol"><div class="panelBand"><h2>Security Checks</h2>${checks(audit.checks)}</div><div class="panelBand"><div class="sectionHeader"><h2>Mutation Flight Recorder</h2><div class="toolbar"><span class="pill ${ledger.ok ? 'ok' : 'bad'}">${ledger.ok ? 'chain valid' : 'chain invalid'}</span><span class="pill">${esc(ledgerHead.events || 0)} sealed</span><span class="pill ${Number(ledgerRequests.open || 0) ? 'warn' : 'ok'}">${esc(ledgerRequests.open || 0)} open</span></div></div><p class="muted">Each privileged POST is admitted only after a secret-free exact body digest is HMAC-sealed. A separately authenticated head detects tail deletion; admitted requests without a completion receipt expose interrupted or unknown outcomes.</p>${table([{headSequence:ledgerHead.headSequence || 0,headHmac:ledgerHead.headHmacSha256 || 'none',anchorUpdated:ledgerHead.anchorUpdatedAt || '—',oldestOpenSeconds:ledgerRequests.oldestOpenAgeSeconds || 0,requiredForMutations:!!ledger.requiredForMutations}])}<h3>Recent Sealed Audit Events</h3>${auditEventsTable(displayedEvents)}<details><summary>Raw current JSONL events</summary>${table(events.events || [])}</details></div></div><div class="panelBand"><div class="sectionHeader"><div><h2>Blast-Radius Change Contracts</h2><p class="muted">Before a governed write, DASH compiles and signs the exact operator, route, capability, request digest, risk, backup expectation, reversibility, restart impact, player disruption, map-lifecycle exposure, and safeguards. The browser makes that contract visible before dispatch.</p></div><div class="toolbar"><span class="pill ${contracts.enabled ? 'ok' : 'warn'}">${contracts.enabled ? 'enabled' : 'disabled'}</span><span class="pill ${contracts.required ? 'ok' : 'warn'}">${contracts.required ? 'enforced' : 'advisory'}</span><span class="pill">${esc(contracts.governedPaths || 0)} governed paths</span></div></div>${table([{ttlSeconds:contracts.ttlSeconds||0,issued:contracts.runtime?.issued||0,admitted:contracts.runtime?.admitted||0,refused:contracts.runtime?.refused||0,policyRevision:contracts.policyRevision||'—'}])}</div><div class="panelBand"><h2>Operating Notes</h2><ul>${audit.notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul></div><details class="panelBand"><summary>Editable Env Keys</summary><div class="toolbar">${audit.safeEnvKeys.map(k => `<span class="pill">${esc(k)}</span>`).join('')}</div></details><details class="panelBand"><summary>Editable Config Files</summary><div class="toolbar">${audit.allowedConfigFiles.map(k => `<span class="pill">${esc(k)}</span>`).join('')}</div></details></div>`;
   bindChangeApprovalControls(approvals);
+  document.getElementById('credentialLifecycleRefreshBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Checking...', async () => { await api('/api/ops/credential-lifecycle?refresh=true'); await security(loadSerial); }));
 }
 async function runbook(serial=loadSerial){
   const data = await api('/api/ops/runbook');

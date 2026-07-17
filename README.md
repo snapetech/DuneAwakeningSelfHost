@@ -145,6 +145,14 @@ credential presence, artifacts, services, dependencies, runtime probes, and
 explicit canary state. See
 [`docs/feature-readiness.md`](docs/feature-readiness.md).
 
+Credential posture is equally explicit. The Security page evaluates 19
+activation-aware credential contracts for presence, placeholders, private
+permissions, minimum material, declared consumers, observed rotation age, and
+newest-backup coverage without returning values or fingerprints. Keyed material
+changes are sealed into an append-only HMAC history, and full backups now carry
+both that history and the previously omitted two-person approval ledger/key.
+See [`docs/credential-lifecycle.md`](docs/credential-lifecycle.md).
+
 Red-Blink's centralized public-directory outcome is also covered. DASH publishes
 short-lived, privacy-bounded descriptors signed by a per-server Ed25519 key and
 builds a static pull-federated catalog with bounded parallel collection, DNS
@@ -1063,6 +1071,7 @@ Start here:
 - [`docs/public-static-site.md`](docs/public-static-site.md): optional public static status site.
 - [`docs/federated-public-directory.md`](docs/federated-public-directory.md): signed descriptor protocol, hardened pull federation, public directory UI, deployment, metrics, and key recovery.
 - [`docs/feature-readiness.md`](docs/feature-readiness.md): secret-safe activation/runtime matrix, complete parity-gate coverage, tamper-evident regression/recovery history, API, dashboard, backups, metrics, state semantics, and recovery workflow.
+- [`docs/credential-lifecycle.md`](docs/credential-lifecycle.md): activation-aware secret-safe posture, keyed rotation history, consumer/backup contracts, API/dashboard, metrics, alerts, and recovery.
 - [`docs/maintenance-updates.md`](docs/maintenance-updates.md): 06:00 restart/backup/update timeline and Steam hotfix handling.
 - [`docs/troubleshooting.md`](docs/troubleshooting.md): common failures and checks.
 - [`docs/publication.md`](docs/publication.md): release safety checklist.

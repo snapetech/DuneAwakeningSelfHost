@@ -66,6 +66,22 @@
       "remediation": {"surface": "infrastructure", "summary": "Preserve the database and HMAC key, verify backups, and restore the last known valid pair before recording more transitions."}
     },
     {
+      "id": "credential-lifecycle",
+      "title": "Credential lifecycle posture",
+      "group": "Trust",
+      "description": "Activation-aware credential presence, private permissions, material-change age, declared consumers, backup coverage, and a tamper-evident rotation history are loaded without returning values or fingerprints.",
+      "documentation": "docs/credential-lifecycle.md",
+      "primaryGate": "DUNE_CREDENTIAL_LIFECYCLE_ENABLED",
+      "gates": ["DUNE_CREDENTIAL_LIFECYCLE_ENABLED"],
+      "credentials": [],
+      "files": [{"path": "config/credential-lifecycle.json", "minimumBytes": 1000}, {"path": "admin/credential_lifecycle.py", "minimumBytes": 1000}],
+      "services": ["admin-panel"],
+      "probe": "credential-lifecycle",
+      "dependencies": ["mutation-governance"],
+      "canary": "runtime-proven",
+      "remediation": {"surface": "security", "summary": "Repair only the named source, permission, rotation, or backup finding; preserve ledger keys with their dependent history."}
+    },
+    {
       "id": "adaptive-map-farm",
       "title": "Adaptive map farm",
       "group": "Maps",

@@ -178,6 +178,31 @@ groups:
         for: 1m
         labels: {severity: warning}
         annotations: {summary: "A DASH feature regressed since the preceding readiness state vector"}
+      - alert: DashCredentialLifecycleHistoryInvalid
+        expr: dash_credential_lifecycle_enabled == 1 and dash_credential_lifecycle_history_valid == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "DASH credential material-change observation SQLite or HMAC chain is invalid"}
+      - alert: DashCredentialRequiredMissing
+        expr: dash_credential_lifecycle_enabled == 1 and dash_credential_lifecycle_missing > 0
+        for: 5m
+        labels: {severity: critical}
+        annotations: {summary: "One or more credentials required by active DASH features are missing"}
+      - alert: DashCredentialSourcePermissionsUnsafe
+        expr: dash_credential_lifecycle_enabled == 1 and dash_credential_lifecycle_insecure_permissions > 0
+        for: 5m
+        labels: {severity: critical}
+        annotations: {summary: "One or more configured DASH credential sources have unsafe permissions"}
+      - alert: DashCredentialBackupCoverageGap
+        expr: dash_credential_lifecycle_enabled == 1 and dash_credential_lifecycle_backup_uncovered > 0
+        for: 15m
+        labels: {severity: warning}
+        annotations: {summary: "The newest DASH full backup does not cover one or more configured credentials"}
+      - alert: DashCredentialRotationOverdue
+        expr: dash_credential_lifecycle_enabled == 1 and dash_credential_lifecycle_rotation_overdue > 0
+        for: 15m
+        labels: {severity: warning}
+        annotations: {summary: "One or more scheduled or provider-managed DASH credentials are overdue for rotation"}
       - alert: DashIncidentHasCandidateChange
         expr: dash_change_intelligence_open_incidents_with_candidate_changes > 0
         for: 2m

@@ -38,6 +38,12 @@ Opt-in public-directory publication adds label-free enabled/configured,
 entry-valid/current, and seconds-to-expiry series. It never labels a public
 URL, region, server identity, build, player count, signing key, or signature;
 the signed descriptor remains the authoritative public detail surface.
+Credential Lifecycle adds label-free enabled/overall state, totals for required,
+missing, unsafe-permission, backup-uncovered, due-soon, and overdue credentials,
+plus observation-chain validity and observed rotation count. It never labels a
+credential ID, environment key, path, consumer, value, fingerprint, or backup
+name. Alert rules fail on an invalid HMAC history, missing active material,
+unsafe source permissions, newest-backup gaps, and overdue rotation.
 
 Start it with the normal world Compose files plus the overlay:
 

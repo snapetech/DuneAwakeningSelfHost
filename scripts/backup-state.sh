@@ -84,6 +84,39 @@ change_intelligence_snapshot=""
 feature_readiness_history_db="${DUNE_FEATURE_READINESS_HISTORY_HOST_DATABASE:-backups/feature-readiness/history.sqlite3}"
 feature_readiness_history_snapshot=""
 [[ -f "$feature_readiness_history_db" ]] && feature_readiness_history_snapshot="feature-readiness-history.sqlite3"
+credential_lifecycle_db="${DUNE_CREDENTIAL_LIFECYCLE_HOST_DATABASE:-backups/credential-lifecycle/history.sqlite3}"
+credential_lifecycle_anchor="${DUNE_CREDENTIAL_LIFECYCLE_HOST_ANCHOR:-backups/credential-lifecycle/history.anchor.json}"
+credential_lifecycle_key="${DUNE_CREDENTIAL_LIFECYCLE_HOST_HMAC_SECRET_FILE:-config/secrets/credential-lifecycle-hmac.secret}"
+credential_lifecycle_artifacts=0
+for artifact in "$credential_lifecycle_db" "$credential_lifecycle_anchor"; do
+  [[ -f "$artifact" ]] && credential_lifecycle_artifacts=$((credential_lifecycle_artifacts + 1))
+done
+if [[ "$credential_lifecycle_artifacts" -eq 1 ]]; then
+  printf 'credential lifecycle backup requires its SQLite ledger and authenticated head together\n' >&2
+  exit 1
+fi
+credential_lifecycle_snapshot=""
+credential_lifecycle_anchor_snapshot=""
+if [[ "$credential_lifecycle_artifacts" -eq 2 ]]; then
+  credential_lifecycle_snapshot="credential-lifecycle.sqlite3"
+  credential_lifecycle_anchor_snapshot="credential-lifecycle.anchor.json"
+fi
+change_approval_db="${DUNE_ADMIN_DUAL_CONTROL_HOST_DATABASE:-backups/admin-panel/change-approvals.sqlite3}"
+change_approval_key="${DUNE_ADMIN_DUAL_CONTROL_HOST_KEY:-backups/admin-panel/change-approvals.key}"
+change_approval_artifacts=0
+for artifact in "$change_approval_db" "$change_approval_key"; do
+  [[ -f "$artifact" ]] && change_approval_artifacts=$((change_approval_artifacts + 1))
+done
+if [[ "$change_approval_artifacts" -eq 1 ]]; then
+  printf 'change approval backup requires its SQLite ledger and HMAC key together\n' >&2
+  exit 1
+fi
+change_approval_snapshot=""
+change_approval_key_snapshot=""
+if [[ "$change_approval_artifacts" -eq 2 ]]; then
+  change_approval_snapshot="change-approvals.sqlite3"
+  change_approval_key_snapshot="change-approvals.key"
+fi
 audit_ledger_db="${DUNE_ADMIN_AUDIT_LEDGER_HOST_DATABASE:-backups/admin-panel/audit-ledger.sqlite3}"
 audit_ledger_key="${DUNE_ADMIN_AUDIT_LEDGER_HOST_KEY:-backups/admin-panel/audit-ledger.hmac.key}"
 audit_ledger_anchor="${DUNE_ADMIN_AUDIT_LEDGER_HOST_ANCHOR:-backups/admin-panel/audit-ledger.anchor.json}"
@@ -160,6 +193,18 @@ if [[ "$dry_run" == true ]]; then
     printf 'feature_readiness_history_snapshot=feature-readiness-history.sqlite3\n'
   else
     printf 'feature_readiness_history_snapshot=<missing %s>\n' "$feature_readiness_history_db"
+  fi
+  if [[ "$credential_lifecycle_artifacts" -eq 2 ]]; then
+    printf 'credential_lifecycle_snapshot=credential-lifecycle.sqlite3\n'
+    printf 'credential_lifecycle_anchor=credential-lifecycle.anchor.json\n'
+  else
+    printf 'credential_lifecycle_snapshot=<not initialized>\n'
+  fi
+  if [[ "$change_approval_artifacts" -eq 2 ]]; then
+    printf 'change_approval_snapshot=change-approvals.sqlite3\n'
+    printf 'change_approval_key=change-approvals.key\n'
+  else
+    printf 'change_approval_snapshot=<not initialized>\n'
   fi
   if [[ "$audit_ledger_artifacts" -eq 3 ]]; then
     printf 'audit_ledger_snapshot=audit-ledger.sqlite3\n'
@@ -338,6 +383,55 @@ PY
   chmod 600 "${backup_dir}/feature-readiness-history.sqlite3"
 fi
 
+if [[ "$credential_lifecycle_artifacts" -eq 2 ]]; then
+  PYTHONPATH=admin python3 - "$credential_lifecycle_db" "$credential_lifecycle_anchor" "$credential_lifecycle_key" "${backup_dir}/credential-lifecycle.sqlite3" "${backup_dir}/credential-lifecycle.anchor.json" <<'PY'
+import pathlib
+import shutil
+import sqlite3
+import sys
+import time
+import credential_lifecycle
+source_db, source_anchor, key, target_db, target_anchor = map(pathlib.Path, sys.argv[1:])
+for attempt in range(5):
+    target_db.unlink(missing_ok=True)
+    source=sqlite3.connect(f"file:{source_db}?mode=ro",uri=True)
+    target=sqlite3.connect(target_db)
+    try:
+        source.backup(target)
+        if target.execute("pragma integrity_check").fetchone()[0]!="ok": raise RuntimeError("credential lifecycle snapshot failed integrity_check")
+    finally:
+        target.close(); source.close()
+    shutil.copyfile(source_anchor, target_anchor)
+    target_db.chmod(0o600); target_anchor.chmod(0o600)
+    try:
+        credential_lifecycle.verify_database(target_db, key, target_anchor)
+        break
+    except (OSError, ValueError, sqlite3.Error):
+        if attempt == 4: raise
+        time.sleep(0.05)
+PY
+  chmod 600 "${backup_dir}/credential-lifecycle.sqlite3" "${backup_dir}/credential-lifecycle.anchor.json"
+fi
+
+if [[ "$change_approval_artifacts" -eq 2 ]]; then
+  python3 - "$change_approval_db" "$change_approval_key" "${backup_dir}/change-approvals.sqlite3" "${backup_dir}/change-approvals.key" <<'PY'
+import pathlib
+import shutil
+import sqlite3
+import sys
+source_db, source_key, target_db, target_key = map(pathlib.Path, sys.argv[1:])
+source=sqlite3.connect(f"file:{source_db}?mode=ro",uri=True)
+target=sqlite3.connect(target_db)
+try:
+    source.backup(target)
+    if target.execute("pragma integrity_check").fetchone()[0]!="ok": raise SystemExit("change approval snapshot failed integrity_check")
+finally:
+    target.close(); source.close()
+shutil.copyfile(source_key, target_key)
+PY
+  chmod 600 "${backup_dir}/change-approvals.sqlite3" "${backup_dir}/change-approvals.key"
+fi
+
 if [[ "$audit_ledger_artifacts" -eq 3 ]]; then
   python3 scripts/snapshot-audit-ledger.py \
     "$audit_ledger_db" "$audit_ledger_key" "$audit_ledger_anchor" "$backup_dir"
@@ -413,6 +507,10 @@ capacity_intelligence_snapshot=${capacity_snapshot}
 desired_state_snapshot=${desired_state_snapshot}
 change_intelligence_snapshot=${change_intelligence_snapshot}
 feature_readiness_history_snapshot=${feature_readiness_history_snapshot}
+credential_lifecycle_snapshot=${credential_lifecycle_snapshot}
+credential_lifecycle_anchor=${credential_lifecycle_anchor_snapshot}
+change_approval_snapshot=${change_approval_snapshot}
+change_approval_key=${change_approval_key_snapshot}
 audit_ledger_snapshot=${audit_ledger_snapshot}
 audit_ledger_key=${audit_ledger_key_snapshot}
 audit_ledger_anchor=${audit_ledger_anchor_snapshot}

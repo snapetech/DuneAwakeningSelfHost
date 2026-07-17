@@ -343,6 +343,86 @@ else
   printf 'WARN no feature-readiness-history.sqlite3 found in %s\n' "$backup_dir"
 fi
 
+credential_lifecycle_artifacts=0
+for artifact in credential-lifecycle.sqlite3 credential-lifecycle.anchor.json; do
+  [[ -f "$backup_dir/$artifact" ]] && credential_lifecycle_artifacts=$((credential_lifecycle_artifacts + 1))
+done
+if [[ "$credential_lifecycle_artifacts" -eq 2 ]]; then
+  credential_archive=""
+  for candidate in "$backup_dir/config.tgz" "$backup_dir/config-and-env.tgz"; do
+    if [[ -f "$candidate" ]]; then credential_archive="$candidate"; break; fi
+  done
+  if [[ -z "$credential_archive" ]]; then
+    printf 'FAIL credential-lifecycle verification requires the matching config archive and HMAC key\n' >&2
+    ok=false
+  else
+    if PYTHONPATH="$repo_root/admin" python3 - "$backup_dir/credential-lifecycle.sqlite3" "$backup_dir/credential-lifecycle.anchor.json" "$credential_archive" <<'PY'
+import os
+import pathlib
+import sys
+import tarfile
+import tempfile
+import credential_lifecycle
+
+database, anchor, archive = sys.argv[1:]
+try:
+    with tarfile.open(archive, "r:gz") as source, tempfile.TemporaryDirectory(prefix="dash-credential-lifecycle-verify-") as directory:
+        member = source.getmember("config/secrets/credential-lifecycle-hmac.secret")
+        if not member.isfile() or member.size < 32 or member.size > 16 * 1024:
+            raise ValueError("invalid credential lifecycle HMAC key backup member")
+        handle = source.extractfile(member)
+        if handle is None:
+            raise ValueError("unreadable credential lifecycle HMAC key backup member")
+        value = handle.read(16 * 1024 + 1)
+        if len(value) > 16 * 1024:
+            raise ValueError("oversized credential lifecycle HMAC key backup member")
+        secret = pathlib.Path(directory) / "credential-lifecycle-hmac.secret"
+        secret.write_bytes(value)
+        os.chmod(secret, 0o600)
+        result = credential_lifecycle.verify_database(database, secret, anchor)
+        raise SystemExit(0 if result.get("ok") else 1)
+except (OSError, KeyError, ValueError, tarfile.TarError):
+    raise SystemExit(1)
+PY
+    then
+      printf 'OK credential-lifecycle SQLite snapshot, HMAC observation chain, and authenticated head %s\n' "$backup_dir/credential-lifecycle.sqlite3"
+    else
+      printf 'FAIL credential-lifecycle SQLite snapshot, matching HMAC chain, or authenticated head %s\n' "$backup_dir/credential-lifecycle.sqlite3" >&2
+      ok=false
+    fi
+  fi
+elif [[ "$credential_lifecycle_artifacts" -eq 1 ]]; then
+  printf 'FAIL credential-lifecycle backup requires its SQLite ledger and authenticated head together\n' >&2
+  ok=false
+else
+  printf 'WARN no credential-lifecycle.sqlite3 found in %s\n' "$backup_dir"
+fi
+
+change_approval_artifacts=0
+for artifact in change-approvals.sqlite3 change-approvals.key; do
+  [[ -f "$backup_dir/$artifact" ]] && change_approval_artifacts=$((change_approval_artifacts + 1))
+done
+if [[ "$change_approval_artifacts" -eq 2 ]]; then
+  if PYTHONPATH="$repo_root/admin" python3 - "$backup_dir/change-approvals.sqlite3" "$backup_dir/change-approvals.key" <<'PY'
+import sys
+import change_approvals
+
+result = change_approvals.Store(sys.argv[1], key_path=sys.argv[2]).verify()
+raise SystemExit(0 if result.get("ok") else 1)
+PY
+  then
+    printf 'OK change-approval SQLite snapshot and HMAC event chain %s\n' "$backup_dir/change-approvals.sqlite3"
+  else
+    printf 'FAIL change-approval SQLite snapshot or HMAC event chain %s\n' "$backup_dir/change-approvals.sqlite3" >&2
+    ok=false
+  fi
+elif [[ "$change_approval_artifacts" -eq 0 ]]; then
+  printf 'WARN no change-approval snapshot found in %s\n' "$backup_dir"
+else
+  printf 'FAIL change-approval backup must contain its SQLite ledger and HMAC key together\n' >&2
+  ok=false
+fi
+
 audit_ledger_artifacts=0
 for artifact in audit-ledger.sqlite3 audit-ledger.hmac.key audit-ledger.anchor.json; do
   [[ -f "$backup_dir/$artifact" ]] && audit_ledger_artifacts=$((audit_ledger_artifacts + 1))

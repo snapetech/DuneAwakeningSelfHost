@@ -75,6 +75,14 @@ The local backup includes:
   `audit-ledger.anchor.json` set when the mutation flight recorder exists. The
   backup retries around concurrent admin events until the copied SQLite chain
   and authenticated head verify together.
+- A consistent `credential-lifecycle.sqlite3` and
+  `credential-lifecycle.anchor.json` pair whose observation chain and
+  authenticated head are verified with the matching
+  `config/secrets/credential-lifecycle-hmac.secret` from `config.tgz`. The
+  backup retries around concurrent observations until all three agree.
+- A paired `change-approvals.sqlite3` and `change-approvals.key` snapshot when
+  two-person approval state has been initialized. A partial pair fails backup
+  creation and verification.
 - `operator-evidence.tgz` when portable signed evidence exists. Both verifiers
   confine and bound every member, dispatch by schema, recompute incident-plan
   and drill/certification digests or deployment manifest/continuity/health
@@ -102,7 +110,7 @@ Restores are disruptive. Stop game/admin writers first.
 RabbitMQ, saved-state, config, and TLS replacement are opt-in:
 
 ```bash
-./scripts/restore-state.sh --rabbitmq --server-saved --config --tls --community-rewards --moderation --base-gallery --operational-slo --capacity-intelligence --desired-state --change-intelligence --audit-ledger .env backups/<UTC timestamp>
+./scripts/restore-state.sh --rabbitmq --server-saved --config --tls --community-rewards --moderation --base-gallery --operational-slo --capacity-intelligence --desired-state --change-intelligence --credential-lifecycle --change-approvals --audit-ledger .env backups/<UTC timestamp>
 ```
 
 Run `--dry-run` first. If the manifest `WORLD_UNIQUE_NAME` differs from the current `.env`, restore will warn because that value is the durable FLS battlegroup identity.
@@ -110,7 +118,7 @@ Run `--dry-run` first. If the manifest `WORLD_UNIQUE_NAME` differs from the curr
 The equivalent Make target accepts optional restore layer flags:
 
 ```bash
-make restore-dry-run ENV_FILE=.env BACKUP_DIR=backups/<UTC timestamp> RESTORE_FLAGS='--rabbitmq --server-saved --config --tls --community-rewards --moderation --base-gallery --operational-slo --capacity-intelligence --desired-state --change-intelligence --audit-ledger'
+make restore-dry-run ENV_FILE=.env BACKUP_DIR=backups/<UTC timestamp> RESTORE_FLAGS='--rabbitmq --server-saved --config --tls --community-rewards --moderation --base-gallery --operational-slo --capacity-intelligence --desired-state --change-intelligence --credential-lifecycle --change-approvals --audit-ledger'
 ```
 
 ## Offsite and Onsite Sync

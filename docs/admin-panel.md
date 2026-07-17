@@ -199,6 +199,12 @@ server {
   semantically verified HMAC receipt. The dashboard is bounded status/history;
   staging and promotion remain production-host-only. See
   [`deployment-assurance.md`](deployment-assurance.md).
+- Security includes a Credential Lifecycle Control Center covering 19
+  activation-aware first-party credentials. It reports presence, placeholder
+  rejection, source permissions, minimum material, consumers, observed
+  rotation age, and newest-backup coverage without returning values or keyed
+  fingerprints. Its append-only HMAC observation history and recovery workflow
+  are documented in [`credential-lifecycle.md`](credential-lifecycle.md).
 - Infrastructure backup controls report recipient-encryption readiness,
   encrypted archive/receipt inventory, and exact host encrypt/decrypt commands.
   The private recovery key stays outside the admin container. See

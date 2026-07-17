@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/restore-state.sh [--dry-run] [--rabbitmq] [--server-saved] [--config] [--tls] [--community-rewards] [--moderation] [--base-gallery] [--operational-slo] [--capacity-intelligence] [--desired-state] [--change-intelligence] [--audit-ledger] [env-file] <backup-dir>
+Usage: ./scripts/restore-state.sh [--dry-run] [--rabbitmq] [--server-saved] [--config] [--tls] [--community-rewards] [--moderation] [--base-gallery] [--operational-slo] [--capacity-intelligence] [--desired-state] [--change-intelligence] [--credential-lifecycle] [--change-approvals] [--audit-ledger] [env-file] <backup-dir>
 
 Restores the Postgres dump from a backup created by scripts/backup-state.sh.
 RabbitMQ and server saved-state archives are restored only when their flags are
@@ -14,7 +14,7 @@ world identity, secrets, local tuning, and RabbitMQ certificate material.
 Examples:
   ./scripts/restore-state.sh --dry-run .env backups/20260519T150000Z
   ./scripts/restore-state.sh .env backups/20260519T150000Z
-  ./scripts/restore-state.sh --rabbitmq --server-saved --config --tls --community-rewards --moderation --base-gallery --operational-slo --capacity-intelligence --desired-state --change-intelligence --audit-ledger .env backups/20260519T150000Z
+  ./scripts/restore-state.sh --rabbitmq --server-saved --config --tls --community-rewards --moderation --base-gallery --operational-slo --capacity-intelligence --desired-state --change-intelligence --credential-lifecycle --change-approvals --audit-ledger .env backups/20260519T150000Z
 EOF
 }
 
@@ -30,6 +30,8 @@ restore_operational_slo=false
 restore_capacity_intelligence=false
 restore_desired_state=false
 restore_change_intelligence=false
+restore_credential_lifecycle=false
+restore_change_approvals=false
 restore_audit_ledger=false
 
 while [[ "${1:-}" == --* ]]; do
@@ -80,6 +82,14 @@ while [[ "${1:-}" == --* ]]; do
       ;;
     --change-intelligence)
       restore_change_intelligence=true
+      shift
+      ;;
+    --credential-lifecycle)
+      restore_credential_lifecycle=true
+      shift
+      ;;
+    --change-approvals)
+      restore_change_approvals=true
       shift
       ;;
     --audit-ledger)
@@ -218,6 +228,29 @@ if [[ "$restore_change_intelligence" == true && ! -f "${backup_dir}/change-intel
   printf 'change-intelligence snapshot not found: %s\n' "${backup_dir}/change-intelligence.sqlite3" >&2
   exit 1
 fi
+if [[ "$restore_credential_lifecycle" == true ]]; then
+  for artifact in credential-lifecycle.sqlite3 credential-lifecycle.anchor.json; do
+    if [[ ! -f "${backup_dir}/${artifact}" ]]; then
+      printf 'credential-lifecycle backup artifact not found: %s\n' "${backup_dir}/${artifact}" >&2
+      exit 1
+    fi
+  done
+fi
+if [[ "$restore_change_approvals" == true ]]; then
+  for artifact in change-approvals.sqlite3 change-approvals.key; do
+    if [[ ! -f "${backup_dir}/${artifact}" ]]; then
+      printf 'change-approval backup artifact not found: %s\n' "${backup_dir}/${artifact}" >&2
+      exit 1
+    fi
+  done
+  PYTHONPATH=admin python3 - "${backup_dir}/change-approvals.sqlite3" "${backup_dir}/change-approvals.key" <<'PY'
+import sys
+import change_approvals
+result = change_approvals.Store(sys.argv[1], key_path=sys.argv[2]).verify()
+if not result.get("ok"):
+    raise SystemExit(f"change-approval HMAC verification failed: {result}")
+PY
+fi
 if [[ "$restore_audit_ledger" == true ]]; then
   for artifact in audit-ledger.sqlite3 audit-ledger.hmac.key audit-ledger.anchor.json; do
     if [[ ! -f "${backup_dir}/${artifact}" ]]; then
@@ -280,6 +313,25 @@ if not result.get("ok"):
 PY
 fi
 
+if [[ "$restore_credential_lifecycle" == true ]]; then
+  credential_secret="config/secrets/credential-lifecycle-hmac.secret"
+  credential_verify_tmp=""
+  if [[ "$restore_config" == true ]]; then
+    credential_verify_tmp="$(mktemp -d)"
+    trap 'rm -rf "${desired_verify_tmp:-}" "${change_verify_tmp:-}" "${credential_verify_tmp:-}"' EXIT
+    tar -xOf "${backup_dir}/config.tgz" config/secrets/credential-lifecycle-hmac.secret > "$credential_verify_tmp/credential-lifecycle-hmac.secret"
+    chmod 600 "$credential_verify_tmp/credential-lifecycle-hmac.secret"
+    credential_secret="$credential_verify_tmp/credential-lifecycle-hmac.secret"
+  fi
+  PYTHONPATH=admin python3 - "${backup_dir}/credential-lifecycle.sqlite3" "$credential_secret" "${backup_dir}/credential-lifecycle.anchor.json" <<'PY'
+import sys
+import credential_lifecycle
+result=credential_lifecycle.verify_database(sys.argv[1],sys.argv[2],sys.argv[3])
+if not result.get("ok"):
+    raise SystemExit(f"credential lifecycle HMAC/head verification failed: {result}")
+PY
+fi
+
 backup_world="$(manifest_value world_unique_name)"
 current_world="$(env_value WORLD_UNIQUE_NAME)"
 if [[ -n "$backup_world" && -n "$current_world" && "$backup_world" != "$current_world" ]]; then
@@ -303,6 +355,8 @@ if [[ "$dry_run" == true ]]; then
   printf 'restore_capacity_intelligence=%s\n' "$restore_capacity_intelligence"
   printf 'restore_desired_state=%s\n' "$restore_desired_state"
   printf 'restore_change_intelligence=%s\n' "$restore_change_intelligence"
+  printf 'restore_credential_lifecycle=%s\n' "$restore_credential_lifecycle"
+  printf 'restore_change_approvals=%s\n' "$restore_change_approvals"
   printf 'restore_audit_ledger=%s\n' "$restore_audit_ledger"
   printf 'backup_world_unique_name=%s\n' "${backup_world:-}"
   printf 'current_world_unique_name=%s\n' "${current_world:-}"
@@ -354,6 +408,22 @@ if [[ "$restore_change_intelligence" == true ]]; then
   mkdir -p backups/change-intelligence
   rm -f backups/change-intelligence/change-intelligence.sqlite3-wal backups/change-intelligence/change-intelligence.sqlite3-shm
   install -m 600 "${backup_dir}/change-intelligence.sqlite3" backups/change-intelligence/change-intelligence.sqlite3
+fi
+if [[ "$restore_credential_lifecycle" == true ]]; then
+  printf 'restoring HMAC-verified credential lifecycle ledger and authenticated head from %s\n' "$backup_dir"
+  mkdir -p backups/credential-lifecycle
+  chmod 700 backups/credential-lifecycle
+  rm -f backups/credential-lifecycle/history.sqlite3-wal backups/credential-lifecycle/history.sqlite3-shm
+  install -m 600 "${backup_dir}/credential-lifecycle.sqlite3" backups/credential-lifecycle/history.sqlite3
+  install -m 600 "${backup_dir}/credential-lifecycle.anchor.json" backups/credential-lifecycle/history.anchor.json
+fi
+if [[ "$restore_change_approvals" == true ]]; then
+  printf 'restoring HMAC-verified change-approval ledger and key from %s\n' "$backup_dir"
+  mkdir -p backups/admin-panel
+  chmod 700 backups/admin-panel
+  rm -f backups/admin-panel/change-approvals.sqlite3-wal backups/admin-panel/change-approvals.sqlite3-shm
+  install -m 600 "${backup_dir}/change-approvals.sqlite3" backups/admin-panel/change-approvals.sqlite3
+  install -m 600 "${backup_dir}/change-approvals.key" backups/admin-panel/change-approvals.key
 fi
 if [[ "$restore_audit_ledger" == true ]]; then
   printf 'restoring HMAC-verified admin audit ledger and authenticated head from %s\n' "$backup_dir"

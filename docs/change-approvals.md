@@ -132,6 +132,13 @@ change-approvals.sqlite3
 change-approvals.key
 ```
 
+Full backups preserve these as an inseparable pair and verify the complete
+request/event HMAC history. Restore them together with
+`scripts/restore-state.sh --change-approvals`; a database without its matching
+key, or a key without its database, fails closed. Credential Lifecycle also
+reports their presence, private permissions, consumers, and newest-backup
+coverage. See [`credential-lifecycle.md`](credential-lifecycle.md).
+
 The directory is mode `0700`; database and 256-bit HMAC key are mode `0600`.
 The key protects four separate contracts:
 

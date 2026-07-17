@@ -31,6 +31,12 @@ administration, creator tooling, moderation, community rewards, Discord,
 federated login, webhooks, public discovery, multi-Sietch topology, public-IP
 repair, and encrypted backups.
 
+Credential Lifecycle is a distinct Trust feature. Its probe evaluates 19
+activation-aware sources, private permissions, observed rotation history, and
+newest-backup coverage without returning values or fingerprints. External
+provider material remains an explicit pending state. See
+[`credential-lifecycle.md`](credential-lifecycle.md).
+
 The catalog is [`config/feature-readiness.json`](../config/feature-readiness.json).
 Evaluation is implemented by
 [`admin/feature_readiness.py`](../admin/feature_readiness.py). Runtime probes and

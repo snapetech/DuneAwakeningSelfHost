@@ -519,6 +519,45 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.panel.write_safe_env({"DUNE_FEATURE_READINESS_CACHE_TTL_SECONDS": "5"})
         self.assertEqual("5", self.panel.read_env()["DUNE_FEATURE_READINESS_CACHE_TTL_SECONDS"])
 
+    def test_credential_lifecycle_api_ui_metrics_and_alerts_are_secret_safe(self):
+        self.assertIn("Credential Lifecycle Control Center", self.panel.INDEX)
+        self.assertIn("/api/ops/credential-lifecycle", self.panel.INDEX)
+        for key in (
+            "DUNE_CREDENTIAL_LIFECYCLE_ENABLED", "DUNE_CREDENTIAL_LIFECYCLE_DATABASE",
+            "DUNE_CREDENTIAL_LIFECYCLE_HMAC_SECRET_FILE", "DUNE_CREDENTIAL_LIFECYCLE_ANCHOR_FILE",
+        ):
+            self.assertIn(key, self.panel.ENV_KEY_DEFINITIONS)
+        fixture = {
+            "ok": False,
+            "enabled": True,
+            "summary": {"total": 2, "configured": 1, "required": 2, "problems": 1, "missing": 1, "insecurePermissions": 0, "backupUncovered": 0, "overdue": 0, "dueSoon": 0},
+            "credentials": [{"id": "fixture", "title": "Fixture", "findings": ["missing"]}],
+            "history": {"ok": True, "events": 1, "rotations": 0},
+            "secretValuesReturned": False,
+            "materialFingerprintsReturned": False,
+        }
+        original = dict(self.panel.CREDENTIAL_LIFECYCLE_CACHE)
+        self.panel.CREDENTIAL_LIFECYCLE_CACHE.update({"value": fixture, "updated_at": time.time()})
+        self.addCleanup(lambda: self.panel.CREDENTIAL_LIFECYCLE_CACHE.update(original))
+
+        handler, captured = self.make_route_handler("/api/ops/credential-lifecycle")
+        handler.is_app_route = lambda path: False
+        handler.do_GET()
+        self.assertEqual([], captured["errors"])
+        self.assertFalse(captured["json"]["secretValuesReturned"])
+        self.assertFalse(captured["json"]["materialFingerprintsReturned"])
+
+        metrics = self.panel.credential_lifecycle_prometheus()
+        self.assertIn("dash_credential_lifecycle_enabled 1\n", metrics)
+        self.assertIn("dash_credential_lifecycle_missing 1\n", metrics)
+        self.assertNotIn("{", metrics)
+        rules = (ROOT / "config" / "metrics" / "rules" / "dash.yml").read_text(encoding="utf-8")
+        self.assertIn("DashCredentialLifecycleHistoryInvalid", rules)
+        self.assertIn("DashCredentialRequiredMissing", rules)
+        self.assertIn("DashCredentialSourcePermissionsUnsafe", rules)
+        self.assertIn("DashCredentialBackupCoverageGap", rules)
+        self.assertIn("DashCredentialRotationOverdue", rules)
+
     def test_federated_public_directory_settings_fail_closed_then_accept_complete_contract(self):
         with self.assertRaisesRegex(ValueError, "entry URL"):
             self.panel.write_safe_env({"DUNE_PUBLIC_DIRECTORY_ENABLED": "true"})
@@ -2450,6 +2489,50 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
             ok, stdout, stderr = self.panel.verify_backup_set_native(backup_set)
         self.assertFalse(ok)
         self.assertIn("requires database, HMAC key, and authenticated anchor together", stderr)
+
+    def test_native_backup_verifier_checks_credential_and_change_approval_hmac_pairs(self):
+        backup_set = self.workspace / "backups" / "20260716T221000Z"
+        backup_set.mkdir(parents=True)
+        (backup_set / "manifest.txt").write_text("WORLD_NAME=test\n", encoding="utf-8")
+        (backup_set / "postgres.dump").write_bytes(b"test")
+        secret_dir = self.workspace / "config" / "secrets"
+        secret_dir.mkdir(parents=True, exist_ok=True)
+        credential_key = secret_dir / "credential-lifecycle-hmac.secret"
+        credential_key.write_bytes(b"c" * 32)
+        credential_key.chmod(0o600)
+        credential_store = self.panel.credential_lifecycle.ObservationStore(
+            backup_set / "credential-lifecycle.sqlite3", credential_key, clock=lambda: 1000
+        )
+        credential_store.observe("fixture", b"private fixture material")
+        approval_store = self.panel.change_approvals.Store(
+            backup_set / "change-approvals.sqlite3",
+            key_path=backup_set / "change-approvals.key",
+        )
+        approval_store.initialize()
+        with tarfile.open(backup_set / "config.tgz", "w:gz") as archive:
+            archive.add(credential_key, arcname="config/secrets/credential-lifecycle-hmac.secret")
+
+        with mock.patch.object(self.panel.shutil, "which", return_value=None):
+            ok, stdout, stderr = self.panel.verify_backup_set_native(backup_set)
+        self.assertTrue(ok, stderr)
+        self.assertIn("OK credential lifecycle backup-bound HMAC chain and authenticated head", stdout)
+        self.assertIn("OK change-approval backup-bound HMAC chain", stdout)
+
+        credential_anchor = backup_set / "credential-lifecycle.anchor.json"
+        credential_anchor_value = credential_anchor.read_bytes()
+        credential_anchor.unlink()
+        with mock.patch.object(self.panel.shutil, "which", return_value=None):
+            ok, stdout, stderr = self.panel.verify_backup_set_native(backup_set)
+        self.assertFalse(ok)
+        self.assertIn("credential lifecycle backup requires its SQLite ledger and authenticated head together", stderr)
+        credential_anchor.write_bytes(credential_anchor_value)
+        credential_anchor.chmod(0o600)
+
+        (backup_set / "change-approvals.key").unlink()
+        with mock.patch.object(self.panel.shutil, "which", return_value=None):
+            ok, stdout, stderr = self.panel.verify_backup_set_native(backup_set)
+        self.assertFalse(ok)
+        self.assertIn("change-approval backup requires its SQLite ledger and HMAC key together", stderr)
 
     def test_operator_evidence_archive_is_confined_private_and_fully_verified(self):
         evidence_root = self.workspace / "backups" / "operator-evidence"
