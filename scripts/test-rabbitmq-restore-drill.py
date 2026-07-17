@@ -206,6 +206,8 @@ class RabbitMQRestoreDrillTests(unittest.TestCase):
             [["rabbitmq-diagnostics", "-q", "check_running"]] * 2,
             readiness_commands,
         )
+        user_commands = [command for command in docker.commands if "list_users" in command]
+        self.assertEqual([["rabbitmqctl", "-q", "list_users"]] * 2, user_commands)
         for name in ("admin", "game"):
             row = result["brokers"][name]
             self.assertTrue(row["isolation"]["verified"])

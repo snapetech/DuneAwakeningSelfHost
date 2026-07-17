@@ -375,7 +375,9 @@ def _bounded_lines(value, limit=512):
 
 def _topology(docker, container):
     vhosts = _bounded_lines(_exec(docker, container, ["rabbitmqctl", "-q", "list_vhosts", "name"], "vhost inventory"), 128)
-    users = _bounded_lines(_exec(docker, container, ["rabbitmqctl", "-q", "list_users", "user"], "user inventory"), 256)
+    # RabbitMQ's list_users command has a fixed user/tags result shape and does
+    # not accept a column selector (unlike the other list_* commands).
+    users = _bounded_lines(_exec(docker, container, ["rabbitmqctl", "-q", "list_users"], "user inventory"), 256)
     if not vhosts or not users:
         raise RabbitMQRestoreDrillError("restored RabbitMQ lacks required vhost or user state")
     totals = {"vhosts": len(vhosts), "users": len(users), "queues": 0, "exchanges": 0, "bindings": 0, "messages": 0}
