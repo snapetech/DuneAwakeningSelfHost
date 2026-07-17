@@ -173,7 +173,12 @@ def verify_tar_metadata(path: pathlib.Path, tag: str, commit: str) -> None:
                 or path == ".env"
                 or path.startswith("config/tls/")
                 or path.startswith("config/secrets/")
-                or (relative.parts[0] == "data" and not path.startswith("data/exchange-price-snapshots/"))
+                or (
+                    relative.parts[0] == "data"
+                    and path != "data"
+                    and not (member.isdir() and path == "data/exchange-price-snapshots")
+                    and not path.startswith("data/exchange-price-snapshots/")
+                )
             ):
                 raise ValueError(f"primary archive contains private/runtime path: {path}")
         target = archive.getmember(f"{expected_root}/RELEASE-METADATA.json")

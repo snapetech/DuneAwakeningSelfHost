@@ -39,6 +39,8 @@ class ReleasePackagingTests(unittest.TestCase):
         (self.repo / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
         (self.repo / ".env.example").write_text("DUNE_TEST=release\n", encoding="utf-8")
         (self.repo / "config" / "UserGame.ini").write_text("[Config]\nValue=release\n", encoding="utf-8")
+        (self.repo / "data" / "exchange-price-snapshots").mkdir(parents=True)
+        (self.repo / "data" / "exchange-price-snapshots" / "fixture.json").write_text("{}\n", encoding="utf-8")
         (self.repo / "README.md").write_text("# DASH fixture\n", encoding="utf-8")
         (self.repo / "LICENSE").write_text("MIT fixture\n", encoding="utf-8")
         run("git", "init", "-q", cwd=self.repo)

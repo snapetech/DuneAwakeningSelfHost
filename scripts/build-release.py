@@ -55,14 +55,16 @@ def utc(epoch: int) -> str:
     return dt.datetime.fromtimestamp(epoch, dt.timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def assert_publishable_path(relative: pathlib.PurePosixPath) -> None:
+def assert_publishable_path(relative: pathlib.PurePosixPath, *, is_directory: bool = False) -> None:
     if not relative.parts:
         return
     path = relative.as_posix()
     blocked_roots = {"backups", "captures", "build", "dist"}
     if relative.parts[0] in blocked_roots or path == ".env" or path.startswith("config/tls/") or path.startswith("config/secrets/"):
         raise ValueError(f"private/runtime path is not publishable: {path}")
-    if relative.parts[0] == "data" and not path.startswith("data/exchange-price-snapshots/"):
+    if relative.parts[0] == "data" and path != "data" and not (
+        is_directory and path == "data/exchange-price-snapshots"
+    ) and not path.startswith("data/exchange-price-snapshots/"):
         raise ValueError(f"runtime data path is not publishable: {path}")
 
 
@@ -120,7 +122,7 @@ def source_members(root: pathlib.Path, tag: str, commit: str, epoch: int):
             if path.is_absolute() or ".." in path.parts or not path.parts or path.parts[0] != package_root:
                 raise ValueError(f"unsafe source archive path: {member.name}")
             relative = pathlib.PurePosixPath(*path.parts[1:])
-            assert_publishable_path(relative)
+            assert_publishable_path(relative, is_directory=member.isdir())
             if member.issym() or member.islnk() or member.isdev() or not (member.isfile() or member.isdir()):
                 raise ValueError(f"unsupported source archive member: {member.name}")
             data = b""
