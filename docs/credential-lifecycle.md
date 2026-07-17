@@ -104,8 +104,11 @@ backups/credential-lifecycle/history.anchor.json
 config/secrets/credential-lifecycle-hmac.secret
 ```
 
-The HMAC key is at least 32 bytes and mode `0600`. For each valid configured
-credential, DASH derives an HMAC fingerprint with domain separation, the
+The HMAC key is at least 32 bytes and mode `0600`. When Admin runs as root in
+the container, it applies `DUNE_HOST_UID`/`DUNE_HOST_GID` to the key, database,
+WAL/SHM companions, anchor, and their private directories so the host-side
+backup verifier can read the recovery unit without weakening permissions. For
+each valid configured credential, DASH derives an HMAC fingerprint with domain separation, the
 credential ID, and the private master key. Fingerprints never leave the store.
 This prevents an offline dictionary test against a copied database unless the
 separate HMAC key is also compromised.

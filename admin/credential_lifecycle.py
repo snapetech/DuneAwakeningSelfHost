@@ -195,26 +195,39 @@ def _backup_covered(entry, evidence, source_meta):
 
 
 class ObservationStore:
-    def __init__(self, database, key_path, anchor_path=None, *, clock=None):
+    def __init__(self, database, key_path, anchor_path=None, *, owner_uid=None, owner_gid=None, clock=None):
         self.database = pathlib.Path(database)
         self.key_path = pathlib.Path(key_path)
         self.anchor_path = pathlib.Path(anchor_path) if anchor_path else self.database.with_suffix(".anchor.json")
+        self.owner_uid = int(owner_uid) if owner_uid not in (None, "") else None
+        self.owner_gid = int(owner_gid) if owner_gid not in (None, "") else None
         self.clock = clock or __import__("time").time
         self.lock = threading.RLock()
+
+    def _secure(self, path, mode):
+        path = pathlib.Path(path)
+        os.chmod(path, mode)
+        if os.geteuid() == 0 and (self.owner_uid is not None or self.owner_gid is not None):
+            os.chown(path, self.owner_uid if self.owner_uid is not None else -1, self.owner_gid if self.owner_gid is not None else -1)
 
     def _key(self, create=True):
         if self.key_path.is_symlink():
             raise ValueError("credential lifecycle HMAC key must not be a symlink")
+        created = False
         if not self.key_path.exists():
             if not create:
                 raise ValueError("credential lifecycle HMAC key is missing")
             self.key_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-            os.chmod(self.key_path.parent, 0o700)
+            self._secure(self.key_path.parent, 0o700)
             fd = os.open(self.key_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(fd, "wb") as handle:
                 handle.write(os.urandom(32))
                 handle.flush()
                 os.fsync(handle.fileno())
+            created = True
+        if created or self.owner_uid is not None or self.owner_gid is not None:
+            self._secure(self.key_path.parent, 0o700)
+            self._secure(self.key_path, 0o600)
         if not self.key_path.is_file() or self.key_path.stat().st_mode & 0o077:
             raise ValueError("credential lifecycle HMAC key must be a private regular file")
         value = self.key_path.read_bytes()
@@ -226,7 +239,7 @@ class ObservationStore:
         if self.database.is_symlink():
             raise ValueError("credential lifecycle database must not be a symlink")
         self.database.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        os.chmod(self.database.parent, 0o700)
+        self._secure(self.database.parent, 0o700)
         connection = sqlite3.connect(self.database, timeout=10)
         connection.row_factory = sqlite3.Row
         connection.executescript("""
@@ -244,7 +257,11 @@ class ObservationStore:
             create trigger if not exists credential_observations_no_update before update on observations begin select raise(abort, 'credential observations are append-only'); end;
             create trigger if not exists credential_observations_no_delete before delete on observations begin select raise(abort, 'credential observations are append-only'); end;
         """)
-        os.chmod(self.database, 0o600)
+        self._secure(self.database, 0o600)
+        for suffix in ("-wal", "-shm"):
+            companion = pathlib.Path(str(self.database) + suffix)
+            if companion.exists() and not companion.is_symlink():
+                self._secure(companion, 0o600)
         return connection
 
     @staticmethod
@@ -265,7 +282,7 @@ class ObservationStore:
         if self.anchor_path.is_symlink():
             raise ValueError("credential lifecycle head anchor must not be a symlink")
         self.anchor_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        os.chmod(self.anchor_path.parent, 0o700)
+        self._secure(self.anchor_path.parent, 0o700)
         document = self._anchor_document(sequence, event_hmac, updated_at)
         payload = {**document, "anchorHmac": self._anchor_hmac(key, document)}
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8") + b"\n"
@@ -280,7 +297,7 @@ class ObservationStore:
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(temporary, self.anchor_path)
-            os.chmod(self.anchor_path, 0o600)
+            self._secure(self.anchor_path, 0o600)
             directory = os.open(self.anchor_path.parent, os.O_RDONLY)
             try:
                 os.fsync(directory)
@@ -305,7 +322,7 @@ class ObservationStore:
             raise ValueError("credential lifecycle head anchor values are invalid")
         if document["headEventHmac"] is not None and (not isinstance(document["headEventHmac"], str) or not re.fullmatch(r"[0-9a-f]{64}", document["headEventHmac"])):
             raise ValueError("credential lifecycle head anchor event HMAC is invalid")
-        if not isinstance(document["updatedAt"], (int, float)) or not hmac.compare_digest(str(payload["anchorHmac"]), self._anchor_hmac(key, document)):
+        if isinstance(document["updatedAt"], bool) or not isinstance(document["updatedAt"], (int, float)) or not hmac.compare_digest(str(payload["anchorHmac"]), self._anchor_hmac(key, document)):
             raise ValueError("credential lifecycle head anchor authentication failed")
         return document
 

@@ -693,6 +693,8 @@ def credential_lifecycle_store():
                 CREDENTIAL_LIFECYCLE_DATABASE,
                 CREDENTIAL_LIFECYCLE_SECRET_FILE,
                 anchor_path=CREDENTIAL_LIFECYCLE_ANCHOR_FILE,
+                owner_uid=os.environ.get("DUNE_HOST_UID"),
+                owner_gid=os.environ.get("DUNE_HOST_GID"),
             )
         return CREDENTIAL_LIFECYCLE_STORE
 

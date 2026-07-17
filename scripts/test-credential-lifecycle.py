@@ -8,6 +8,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "admin"))
@@ -134,6 +135,13 @@ class CredentialLifecycleTests(unittest.TestCase):
             lifecycle.verify_database(store.database, store.key_path)
         self.assertFalse(store.key_path.exists())
 
+    def test_read_only_verification_does_not_rewrite_key_mode(self):
+        store = self.store(lambda: 1000)
+        store.observe("test-credential", b"first material long enough")
+        store.key_path.chmod(0o400)
+        self.assertTrue(lifecycle.verify_database(store.database, store.key_path, store.anchor_path)["ok"])
+        self.assertEqual(0o400, store.key_path.stat().st_mode & 0o777)
+
     def test_file_permissions_and_symlinks_fail_closed(self):
         secret = self.root / "config" / "secrets" / "test.secret"
         secret.parent.mkdir(parents=True)
@@ -150,6 +158,17 @@ class CredentialLifecycleTests(unittest.TestCase):
         secret.symlink_to(outside)
         result = lifecycle.evaluate(self.catalog(row), self.root, {}, self.env_file, self.backups, None, now=1000)
         self.assertEqual(result["credentials"][0]["state"], "invalid-source")
+
+    def test_root_store_repairs_private_artifacts_to_backup_owner(self):
+        database = self.root / "backups" / "credential" / "history.sqlite3"
+        key = self.root / "config" / "secrets" / "credential.secret"
+        anchor = self.root / "backups" / "credential" / "history.anchor.json"
+        calls = []
+        with mock.patch.object(lifecycle.os, "geteuid", return_value=0), mock.patch.object(lifecycle.os, "chown", side_effect=lambda path, uid, gid: calls.append((pathlib.Path(path), uid, gid))):
+            store = lifecycle.ObservationStore(database, key, anchor, owner_uid="1000", owner_gid="1001", clock=lambda: 1000)
+            store.observe("fixture", b"private fixture material")
+        owned = {path for path, uid, gid in calls if uid == 1000 and gid == 1001}
+        self.assertTrue({database, key, anchor, database.parent, key.parent}.issubset(owned))
 
     def test_backup_contracts_are_evaluated_without_reading_values(self):
         secret = self.root / "config" / "secrets" / "test.secret"
