@@ -38,11 +38,19 @@ Always compare your `.env` image pin with the Steam package installed on your ho
 
 ### Overview
 
-![DASH Admin overview showing 30/30 maps and Hagga Basin player positions](docs/assets/admin-overview.png)
+![DASH Admin overview showing current health summaries, the signed operator briefing, and player-map controls](docs/assets/admin-overview.png)
 
 ### Operations
 
-![DASH Admin operations page showing health, resources, and map status](docs/assets/admin-ops.png)
+![DASH Admin operations page showing current player-health metrics, the on-call alert inbox, and the conflict-aware operations calendar](docs/assets/admin-ops.png)
+
+These images are headless captures of the checked-in admin frontend using
+sanitized deterministic fixtures; they contain no live server, player,
+credential, log, or host data. Regenerate them with `make readme-screenshots`.
+Regeneration requires Chromium and the Python `websocket-client` package.
+`make validate` checks their hashes, dimensions, capture-tool revision, and
+binding to the current `admin/admin_panel.py` source so stale screenshots fail
+the publication gate.
 
 ## Choose Your Path
 
