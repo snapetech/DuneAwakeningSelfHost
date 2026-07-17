@@ -74,6 +74,13 @@ the implementation can be fully loaded without claiming recovery until both
 copied broker states boot successfully and the HMAC-anchored receipt history
 verifies.
 
+Community Rewards uses the same evidence rule. Its probe remains pending until
+the active policy has a current, semantically valid HMAC receipt from the
+disposable link→webhook→wallet→purchase→delivery→engagement→track→ledger
+transaction. Policy drift or receipt expiry removes proof without altering live
+community or game state; see
+[`community-rewards-canary.md`](community-rewards-canary.md).
+
 `overall=attention` means at least one active feature is `partial`, `blocked`,
 `degraded`, or `external-blocked`. Disabled optional integrations and explicitly
 visible pending canaries do not masquerade as runtime failures.

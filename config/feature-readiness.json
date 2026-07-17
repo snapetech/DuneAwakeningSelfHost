@@ -237,12 +237,15 @@
       "primaryGate": "DUNE_COMMUNITY_REWARDS_ENABLED",
       "gates": ["DUNE_COMMUNITY_REWARDS_ENABLED", "DUNE_COMMUNITY_DELIVERY_ENABLED"],
       "credentials": [],
-      "files": [{"path": "config/community-rewards.json", "minimumBytes": 100}],
+      "files": [
+        {"path": "config/community-rewards.json", "minimumBytes": 100},
+        {"path": "admin/community_canary.py", "minimumBytes": 1000}
+      ],
       "services": ["admin-panel", "admin-chat-commands"],
       "probe": "community-rewards",
       "dependencies": ["player-administration"],
       "canary": "operator-canary-pending",
-      "remediation": {"surface": "rewards", "summary": "Verify the isolated ledger and run an identity-bound purchase/delivery canary."}
+      "remediation": {"surface": "rewards", "summary": "Run the policy-bound isolated canary; repair only its named wallet, webhook, purchase, delivery, engagement, track, ledger, or evidence failure."}
     },
     {
       "id": "discord-operations",

@@ -5154,6 +5154,34 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         with self.assertRaises(PermissionError):
             self.panel.community_webhook_request(request("0" * 64), "vote")
 
+    def test_community_canary_route_requires_mutations_and_exact_confirmation(self):
+        original_store = self.panel.community_store
+        original_run = self.panel.run_community_canary
+        calls = []
+        self.panel.community_store = lambda: object()
+        self.panel.run_community_canary = lambda principal: calls.append(principal) or {
+            "document": {"receipt": {"id": "community-canary-" + "a" * 32, "ready": True}},
+            "verification": {"ok": True},
+        }
+        self.addCleanup(lambda: setattr(self.panel, "community_store", original_store))
+        self.addCleanup(lambda: setattr(self.panel, "run_community_canary", original_run))
+        self.patch_flag("COMMUNITY_REWARDS_ENABLED", True)
+        self.patch_flag("MUTATIONS_ENABLED", False)
+
+        gated = self.invoke_post_route("/api/community/rewards", {"action": "canary", "confirm": "RUN COMMUNITY REWARDS CANARY"})
+        self.assertEqual(401, gated["errors"][0]["status"])
+        self.assertFalse(calls)
+        self.patch_flag("MUTATIONS_ENABLED", True)
+        rejected = self.invoke_post_route("/api/community/rewards", {"action": "canary", "confirm": "wrong"})
+        self.assertEqual(401, rejected["errors"][0]["status"])
+        self.assertFalse(calls)
+        accepted = self.invoke_post_route("/api/community/rewards", {"action": "canary", "confirm": "RUN COMMUNITY REWARDS CANARY"})
+        self.assertEqual([], accepted["errors"])
+        self.assertTrue(accepted["json"]["document"]["receipt"]["ready"])
+        self.assertEqual(1, len(calls))
+        self.assertIn("Run isolated canary", self.panel.INDEX)
+        self.assertIn("never opens the live community database", self.panel.INDEX)
+
 
 if __name__ == "__main__":
     unittest.main()

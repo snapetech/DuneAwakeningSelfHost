@@ -985,6 +985,7 @@ Server-browser ordering is deliberately split based on the observed in-game brow
 | `DUNE_ADMIN_BOOTSTRAP_MUTATIONS_ENABLED` | Browser TLS/database/full-stack bootstrap action gate. |
 | `DUNE_DISCORD_ADAPTER_ENABLED` / `DUNE_ADMIN_ADDON_MUTATIONS_ENABLED` | Permissioned bot adapter (role-scoped reads plus typed community actions) and community addon lifecycle gates. |
 | `DUNE_COMMUNITY_REWARDS_ENABLED` / `DUNE_COMMUNITY_DELIVERY_ENABLED` | Isolated wallet/shop/playtime/webhook/reward-track APIs and the separately gated offline game-item delivery worker. |
+| `DUNE_COMMUNITY_CANARY_MAX_AGE_HOURS` / `DUNE_COMMUNITY_CANARY_RETENTION` | Policy-bound synthetic transaction proof lifetime and portable signed receipt retention. |
 | `DUNE_PUBLIC_IP_MONITOR_*` | Optional hostname-gated, dry-run-first public IPv4 drift detection, TLS rotation, and orderly farm restart. |
 | `DUNE_SIETCH_MUTATIONS_ENABLED` / `DUNE_SIETCH_ALLOWED_HOST` | Separate gate and exact-host binding for additional Survival dimension topology/settings writes. |
 
@@ -1093,6 +1094,7 @@ Start here:
 - [`docs/discord-adapter.md`](docs/discord-adapter.md): permission-mapped Discord bot API, narrowly typed community actions, and setup.
 - [`docs/discord-bot.md`](docs/discord-bot.md): first-party slash-command bot, Discord application setup, command/role matrix, systemd lifecycle, Gateway safety, and validation.
 - [`docs/community-rewards.md`](docs/community-rewards.md): account linking, community wallets, immutable ledger, shop/kits, signed inbound rewards, playtime accrual, reward tracks, delivery/refund state machine, and recovery.
+- [`docs/community-rewards-canary.md`](docs/community-rewards-canary.md): policy-bound disposable end-to-end transaction proof, strict no-live-data boundary, signed portable receipts, readiness expiry, metrics, and failure handling.
 - [`docs/addons.md`](docs/addons.md): SHA-pinned community UI addon lifecycle, permission approval, quarantine, and sandbox contract.
 - [`compose.admin-restore.yaml`](compose.admin-restore.yaml): temporary read-write data overlay for reviewed browser filesystem restores.
 - [`docs/red-blink-feature-parity-audit.md`](docs/red-blink-feature-parity-audit.md): pinned source comparison, completed operator-feature parity matrix, provenance, and validation limits.

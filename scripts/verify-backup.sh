@@ -466,6 +466,7 @@ import sys
 import tarfile
 import tempfile
 import change_intelligence
+import community_canary
 import deployment_assurance
 import maintenance_outcomes
 import update_readiness
@@ -506,6 +507,8 @@ try:
                     if schema in update_readiness.SCHEMAS
                     else maintenance_outcomes.verify_signed_document(document, secret)
                     if schema == maintenance_outcomes.SCHEMA
+                    else community_canary.verify_signed_document(document, secret)
+                    if schema == community_canary.SCHEMA
                     else change_intelligence.verify_signed_capsule(document, secret)
                 )
                 if not result.get("ok"):

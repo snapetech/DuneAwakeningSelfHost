@@ -109,6 +109,12 @@ missing/failed/stale fleet-wide response certification alerts.
 They also cover invalid, failed, and stale networkless RabbitMQ recovery proof.
 It also alerts on invalid deployment evidence, a missing/failed latest assured
 deployment, seven-day staleness, and an expired open change window.
+Community Rewards exports label-free synthetic-canary collector, current-proof,
+age, completion-time, and retention gauges. The proof is policy-bound, so the
+readiness matrix returns to canary-pending immediately after catalog changes or
+when the configured evidence lifetime expires. Rules alert on invalid canary
+evidence after two minutes and missing/stale/policy-mismatched proof after
+fifteen minutes.
 Game-update alerts cover invalid readiness evidence, an available candidate
 blocked by safety checks, and an available candidate without a current signed
 receipt. They also enforce 15-second full-collection and five-second

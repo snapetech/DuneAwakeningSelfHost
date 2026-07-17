@@ -53,6 +53,7 @@ import change_approvals
 import change_contracts
 import outbound_webhooks
 import community_rewards
+import community_canary
 import moderation
 import base_creator
 import base_retirement
@@ -317,6 +318,7 @@ CONFIRM_PERMISSION_MUTATION = "WRITE PERMISSION"
 CONFIRM_VENDOR_MUTATION = "WRITE VENDOR"
 CONFIRM_COMMUNITY_CREDIT = "CREDIT COMMUNITY WALLET"
 CONFIRM_COMMUNITY_RECONCILIATION = "RESOLVE COMMUNITY DELIVERY"
+CONFIRM_COMMUNITY_CANARY = "RUN COMMUNITY REWARDS CANARY"
 CONFIRM_MODERATION_BAN = "CREATE ENFORCED BAN"
 CONFIRM_MODERATION_UNBAN = "REVOKE BAN"
 CONFIRM_MODERATION_ALLOWLIST_POLICY = "CHANGE ALLOWLIST POLICY"
@@ -368,6 +370,8 @@ COMMUNITY_REWARDS_ENABLED = os.environ.get("DUNE_COMMUNITY_REWARDS_ENABLED", "fa
 COMMUNITY_DELIVERY_ENABLED = os.environ.get("DUNE_COMMUNITY_DELIVERY_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 COMMUNITY_REWARDS_DATABASE = pathlib.Path(os.environ.get("DUNE_COMMUNITY_REWARDS_DATABASE", str(BACKUPS_ROOT / "community-rewards" / "community.sqlite3")))
 COMMUNITY_POLL_SECONDS = max(5, int(os.environ.get("DUNE_COMMUNITY_POLL_SECONDS", "30")))
+COMMUNITY_CANARY_MAX_AGE_HOURS = max(1, min(int(os.environ.get("DUNE_COMMUNITY_CANARY_MAX_AGE_HOURS", "168")), 2160))
+COMMUNITY_CANARY_RETENTION = max(10, min(int(os.environ.get("DUNE_COMMUNITY_CANARY_RETENTION", "200")), 2000))
 MODERATION_ENABLED = os.environ.get("DUNE_MODERATION_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 MODERATION_ENFORCEMENT_ENABLED = os.environ.get("DUNE_MODERATION_ENFORCEMENT_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 MODERATION_DATABASE = pathlib.Path(os.environ.get("DUNE_MODERATION_DATABASE", str(BACKUPS_ROOT / "moderation" / "moderation.sqlite3")))
@@ -507,6 +511,8 @@ COMMUNITY_STORE_INITIALIZED = False
 COMMUNITY_STORE_LOCK = threading.Lock()
 COMMUNITY_WORKER_STARTED = False
 COMMUNITY_RUNTIME = {"running": False, "lastTickAt": None, "lastError": None, "lastResult": None}
+COMMUNITY_CANARY_STORE = None
+COMMUNITY_CANARY_STORE_LOCK = threading.Lock()
 MODERATION_STORE = moderation.Store(MODERATION_DATABASE, owner_uid=os.environ.get("DUNE_HOST_UID"), owner_gid=os.environ.get("DUNE_HOST_GID"))
 MODERATION_STORE_INITIALIZED = False
 MODERATION_STORE_LOCK = threading.Lock()
@@ -703,6 +709,34 @@ def _feature_readiness_rabbitmq_restore_probe():
     return {"ready": False, "state": "recovery-failed", "detail": str(latest.get("error") or "latest RabbitMQ recovery receipt failed")[:500]}
 
 
+def _feature_readiness_community_probe():
+    base = _feature_readiness_store_probe(COMMUNITY_STORE, COMMUNITY_STORE_INITIALIZED, COMMUNITY_RUNTIME, "community rewards")
+    if not base.get("ready"):
+        return base
+    try:
+        status = community_canary_public_status(limit=1)
+    except Exception as exc:
+        return {"ready": False, "state": "canary-evidence-invalid", "detail": str(exc)[:500]}
+    latest = status.get("latest") or {}
+    verification = latest.get("verification") or {}
+    if status.get("currentReady"):
+        return {
+            "ready": True, "state": "canary-proven",
+            "detail": f"isolated wallet/shop/delivery/engagement/track canary verified; receipt={latest.get('id')}",
+        }
+    if latest and not status.get("ok"):
+        return {"ready": False, "state": "canary-evidence-invalid", "detail": str(verification.get("error") or "community canary evidence failed verification")[:500]}
+    reason = "no isolated community canary receipt exists"
+    if latest and not verification.get("policyCurrent", True):
+        reason = "latest community canary predates the active policy"
+    elif latest and not verification.get("ageCurrent", True):
+        reason = "latest community canary is stale"
+    elif latest and not latest.get("ready"):
+        failed = [name for name, value in (latest.get("checks") or {}).items() if not value]
+        reason = "latest isolated community canary failed: " + ", ".join(failed[:6])
+    return {"ready": True, "state": "canary-pending", "detail": reason[:500]}
+
+
 def _feature_readiness_autoscaler_probe():
     status = autoscaler_public_state(include_inventory=False)
     ready = bool(status.get("enabled") and not status.get("lastError"))
@@ -854,7 +888,7 @@ def feature_readiness_public_status(force=False):
             "detail": "native command gates, private token, and admin-rmq transport checked",
         },
         "moderation": _feature_readiness_probe("moderation", lambda: _feature_readiness_store_probe(MODERATION_STORE, MODERATION_STORE_INITIALIZED, MODERATION_RUNTIME, "moderation")),
-        "community-rewards": _feature_readiness_probe("community-rewards", lambda: _feature_readiness_store_probe(COMMUNITY_STORE, COMMUNITY_STORE_INITIALIZED, COMMUNITY_RUNTIME, "community rewards")),
+        "community-rewards": _feature_readiness_probe("community-rewards", _feature_readiness_community_probe),
         "discord-adapter": {
             "ready": bool(DISCORD_ADAPTER_ENABLED and values.get("DUNE_BOT_API_TOKEN")),
             "state": "ready" if DISCORD_ADAPTER_ENABLED and values.get("DUNE_BOT_API_TOKEN") else "credential-missing",
@@ -1585,6 +1619,8 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_COMMUNITY_DELIVERY_ENABLED": {"group": "Community Rewards", "secret": False, "restart": True, "why": "Allows the worker to deliver queued rewards to offline players through the existing item-grant path."},
     "DUNE_COMMUNITY_REWARDS_DATABASE": {"group": "Community Rewards", "secret": False, "restart": True, "why": "Dedicated SQLite state path; never point this at the game database."},
     "DUNE_COMMUNITY_POLL_SECONDS": {"group": "Community Rewards", "secret": False, "restart": True, "why": "Playtime observation and one-at-a-time delivery worker cadence."},
+    "DUNE_COMMUNITY_CANARY_MAX_AGE_HOURS": {"group": "Community Rewards", "secret": False, "restart": True, "why": "Maximum age of a policy-bound isolated Community Rewards canary receipt."},
+    "DUNE_COMMUNITY_CANARY_RETENTION": {"group": "Community Rewards", "secret": False, "restart": True, "why": "Maximum portable signed Community Rewards canary receipts retained locally."},
     "DUNE_COMMUNITY_VOTE_WEBHOOK_SECRET_FILE": {"group": "Community Rewards", "secret": False, "restart": True, "why": "File containing the vote-provider HMAC secret."},
     "DUNE_COMMUNITY_PAYMENT_WEBHOOK_SECRET_FILE": {"group": "Community Rewards", "secret": False, "restart": True, "why": "File containing the manual-payment-provider HMAC secret."},
     "DUNE_MODERATION_ENABLED": {"group": "Moderation", "secret": False, "restart": True, "why": "Enables isolated moderation cases, ban/allowlist registries, presence sessions, heatmaps, and normalized security events."},
@@ -4328,6 +4364,47 @@ def maintenance_outcome_store():
             )
             MAINTENANCE_OUTCOME_STORE.initialize()
         return MAINTENANCE_OUTCOME_STORE
+
+
+def community_canary_store():
+    global COMMUNITY_CANARY_STORE
+    with COMMUNITY_CANARY_STORE_LOCK:
+        if COMMUNITY_CANARY_STORE is None:
+            COMMUNITY_CANARY_STORE = community_canary.Store(
+                CHANGE_INTELLIGENCE_EVIDENCE_ROOT,
+                change_intelligence.read_secret(CHANGE_INTELLIGENCE_SECRET_FILE),
+                retention=COMMUNITY_CANARY_RETENTION,
+                max_age_seconds=COMMUNITY_CANARY_MAX_AGE_HOURS * 3600,
+                owner_uid=os.environ.get("DUNE_HOST_UID"), owner_gid=os.environ.get("DUNE_HOST_GID"),
+            )
+            COMMUNITY_CANARY_STORE.initialize()
+        return COMMUNITY_CANARY_STORE
+
+
+def community_canary_public_status(limit=20):
+    policy_sha = community_canary.file_sha256(COMMUNITY_REWARDS_FILE)
+    status = community_canary_store().status(policy_sha, limit=limit)
+    status.update({
+        "enabled": COMMUNITY_REWARDS_ENABLED,
+        "policySha256": policy_sha,
+        "confirmation": CONFIRM_COMMUNITY_CANARY,
+        "liveCommunityDatabaseTouched": False,
+        "gameDatabaseTouched": False,
+        "gameDeliveryInvoked": False,
+        "externalProviderCalled": False,
+    })
+    return status
+
+
+def run_community_canary(principal):
+    result = community_canary.run_canary(
+        COMMUNITY_REWARDS_FILE, community_canary_store(),
+        principal_id=(principal or {}).get("id") or "owner-recovery",
+    )
+    with FEATURE_READINESS_CACHE_LOCK:
+        FEATURE_READINESS_CACHE["value"] = None
+        FEATURE_READINESS_CACHE["updated_at"] = 0.0
+    return result
 
 
 def maintenance_outcome_public_status(limit=100):
@@ -8641,6 +8718,8 @@ def verify_operator_evidence_archive(archive_path, secret_path):
                 if schema in update_readiness.SCHEMAS
                 else maintenance_outcomes.verify_signed_document(document, secret)
                 if schema == maintenance_outcomes.SCHEMA
+                else community_canary.verify_signed_document(document, secret)
+                if schema == community_canary.SCHEMA
                 else change_intelligence.verify_signed_capsule(document, secret)
             )
             if not result.get("ok"):
@@ -9741,6 +9820,14 @@ class Handler(BaseHTTPRequestHandler):
                     metrics += maintenance_outcome_store().prometheus()
                 except Exception:
                     metrics += "dash_maintenance_outcome_collector_up 0\n"
+                try:
+                    if COMMUNITY_REWARDS_ENABLED:
+                        metrics += "dash_community_canary_enabled 1\n"
+                        metrics += community_canary_store().prometheus(community_canary.file_sha256(COMMUNITY_REWARDS_FILE))
+                    else:
+                        metrics += "dash_community_canary_enabled 0\ndash_community_canary_collector_up 1\ndash_community_canary_current_ready 0\n"
+                except Exception:
+                    metrics += f"dash_community_canary_enabled {1 if COMMUNITY_REWARDS_ENABLED else 0}\ndash_community_canary_collector_up 0\ndash_community_canary_current_ready 0\n"
                 metrics += maintenance_planner_prometheus()
                 self.text(metrics, "text/plain; version=0.0.4; charset=utf-8")
             elif parsed.path in ("/api/integrations/discord/health", "/api/integrations/discord/version", "/api/integrations/discord/backups/list"):
@@ -9767,6 +9854,7 @@ class Handler(BaseHTTPRequestHandler):
                     "featureEnabled": COMMUNITY_REWARDS_ENABLED,
                     "deliveryEnabled": COMMUNITY_DELIVERY_ENABLED,
                     "runtime": dict(COMMUNITY_RUNTIME),
+                    "canary": community_canary_public_status(limit=20),
                     "webhooks": {
                         name: {"enabled": bool(((community_config().get("webhooks") or {}).get(name) or {}).get("enabled")), "secretConfigured": bool(community_secret(name))}
                         for name in ("vote", "payment")
@@ -10649,7 +10737,12 @@ class Handler(BaseHTTPRequestHandler):
                 body = parse_body(self)
                 action = str(body.get("action") or "").strip().lower()
                 store = community_store()
-                if action == "sync":
+                if action == "canary":
+                    self.require_mutations()
+                    require_confirmation(body, CONFIRM_COMMUNITY_CANARY)
+                    principal = access_control.public_principal(getattr(self, "auth_principal", None)) or {}
+                    result = run_community_canary(principal)
+                elif action == "sync":
                     result = store.sync_config()
                 elif action == "link-code":
                     account_id = int(body.get("duneAccountId", body.get("dune_account_id")))
@@ -10679,8 +10772,9 @@ class Handler(BaseHTTPRequestHandler):
                     require_confirmation(body, CONFIRM_COMMUNITY_RECONCILIATION)
                     result = store.resolve_reconciliation(body.get("deliveryId"), bool(body.get("delivered")), body.get("receipt"), body.get("reason", "manual reconciliation"))
                 else:
-                    raise ValueError("community action must be sync, link-code, redeem-link, credit, purchase, track-progress, claim-track, tick, or reconcile")
-                self.audit("community-rewards", ok=result.get("ok", True), community_action=action, account_id=body.get("duneAccountId", body.get("dune_account_id")), delivery_id=result.get("deliveryId"), idempotent=result.get("idempotent"))
+                    raise ValueError("community action must be canary, sync, link-code, redeem-link, credit, purchase, track-progress, claim-track, tick, or reconcile")
+                canary_receipt = ((result.get("document") or {}).get("receipt") or {}) if action == "canary" else {}
+                self.audit("community-rewards", ok=canary_receipt.get("ready", result.get("ok", True)), community_action=action, account_id=body.get("duneAccountId", body.get("dune_account_id")), delivery_id=result.get("deliveryId"), idempotent=result.get("idempotent"), receipt_id=canary_receipt.get("id"), game_data_mutation_executed=False if action == "canary" else None)
                 self.json(result)
             elif parsed.path == "/api/moderation":
                 self.require_token()
@@ -20224,15 +20318,18 @@ async function communityRewards(serial=loadSerial){
   const account = data.account || {};
   const engagement = data.engagement || {};
   const engagementPolicy = data.engagementPolicy || {};
-  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Community Rewards</h2><div class="toolbar"><span class="pill ${data.featureEnabled ? 'ok' : 'bad'}">feature ${data.featureEnabled ? 'enabled' : 'disabled'}</span><span class="pill ${data.deliveryEnabled ? 'ok' : 'warn'}">delivery ${data.deliveryEnabled ? 'enabled' : 'paused'}</span><span class="pill ${data.ledger?.ok ? 'ok' : 'bad'}">ledger ${data.ledger?.ok ? 'verified' : 'FAILED'}</span><button id="communitySyncBtn">Sync config</button><button id="communityTickBtn" class="primary">Run one tick</button></div></div>
+  const canary = data.canary || {};
+  const latestCanary = canary.latest || {};
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Community Rewards</h2><div class="toolbar"><span class="pill ${data.featureEnabled ? 'ok' : 'bad'}">feature ${data.featureEnabled ? 'enabled' : 'disabled'}</span><span class="pill ${data.deliveryEnabled ? 'ok' : 'warn'}">delivery ${data.deliveryEnabled ? 'enabled' : 'paused'}</span><span class="pill ${data.ledger?.ok ? 'ok' : 'bad'}">ledger ${data.ledger?.ok ? 'verified' : 'FAILED'}</span><span class="pill ${canary.currentReady ? 'ok' : 'warn'}">canary ${canary.currentReady ? 'proven' : 'required'}</span><button id="communityCanaryBtn" class="primary">Run isolated canary</button><button id="communitySyncBtn">Sync config</button><button id="communityTickBtn">Run one tick</button></div></div>
   <div class="metricGrid"><div class="metric"><div class="label">Ledger entries</div><div class="value">${esc(data.ledger?.entries || 0)}</div></div><div class="metric"><div class="label">Queued / retry</div><div class="value">${esc((counts.queued || 0) + (counts.retry || 0))}</div></div><div class="metric"><div class="label">Active today</div><div class="value">${esc(engagement.activeToday || 0)}</div></div><div class="metric"><div class="label">Engagement claims</div><div class="value">${esc(Object.values(engagement.claims || {}).reduce((sum,value)=>sum+Number(value||0),0))}</div></div><div class="metric"><div class="label">Reconciliation</div><div class="value">${esc(counts.reconciliation || 0)}</div></div><div class="metric"><div class="label">Worker</div><div class="value">${esc(data.runtime?.lastError ? 'error' : data.runtime?.running ? 'running' : 'starting')}</div></div></div>
-  <div class="panelBand"><p class="muted">Community credits are isolated from game Solari. Wallet, stock, order, webhook, track, engagement-claim, and delivery changes are transactional. Movement-verified hourly, daily-streak, and weekly-threshold rewards use coarse persisted actor coordinates plus a bounded activity grace window; missing coordinates never imply activity. Item delivery waits for the player to be offline, and ambiguous game outcomes require explicit reconciliation.</p><div class="toolbar"><span class="pill ${engagementPolicy.enabled ? 'ok' : 'warn'}">engagement ${engagementPolicy.enabled ? 'enabled' : 'disabled'}</span><span class="pill">movement ≥ ${esc(engagementPolicy.minimumMovementDistance ?? 0)}</span><span class="pill">coordinate grid ${esc(engagementPolicy.coordinatePrecision ?? 10)}</span><span class="pill">grace ${esc(engagementPolicy.movementGraceSeconds ?? 0)}s</span><span class="pill">tracked ${esc(engagement.trackedAccounts || 0)}</span></div><div class="grid"><label>Dune account ID<input id="communityAccountId" inputmode="numeric" value="${esc(accountId)}"></label><label>&nbsp;<button id="communityLoadAccountBtn" class="primary">Load account</button></label></div></div>
+  <div class="panelBand"><p class="muted">Community credits are isolated from game Solari. Wallet, stock, order, webhook, track, engagement-claim, and delivery changes are transactional. Movement-verified hourly, daily-streak, and weekly-threshold rewards use coarse persisted actor coordinates plus a bounded activity grace window; missing coordinates never imply activity. Item delivery waits for the player to be offline, and ambiguous game outcomes require explicit reconciliation.</p><div class="toolbar"><span class="pill ${engagementPolicy.enabled ? 'ok' : 'warn'}">engagement ${engagementPolicy.enabled ? 'enabled' : 'disabled'}</span><span class="pill">movement ≥ ${esc(engagementPolicy.minimumMovementDistance ?? 0)}</span><span class="pill">coordinate grid ${esc(engagementPolicy.coordinatePrecision ?? 10)}</span><span class="pill">grace ${esc(engagementPolicy.movementGraceSeconds ?? 0)}s</span><span class="pill">tracked ${esc(engagement.trackedAccounts || 0)}</span></div><div class="grid"><label>Dune account ID<input id="communityAccountId" inputmode="numeric" value="${esc(accountId)}"></label><label>&nbsp;<button id="communityLoadAccountBtn" class="primary">Load account</button></label></div><details><summary>Isolated canary evidence</summary><p class="muted">Uses the active policy with a temporary SQLite database and synthetic delivery adapter. It never opens the live community database or game database, invokes item grants, or calls an external provider.</p><pre id="communityCanaryResult">${esc(JSON.stringify({currentReady:canary.currentReady,maxAgeSeconds:canary.maxAgeSeconds,latest:latestCanary},null,2))}</pre></details></div>
   <div class="threeCol"><div class="panelBand"><h2>Account link</h2><p>Loaded balance: <b>${account.dune_account_id ? esc(account.balance) : 'not loaded'}</b></p><button id="communityLinkCodeBtn" class="primary">Create one-time link code</button><pre id="communityLinkResult"></pre></div><div class="panelBand"><h2>Manual credit</h2><div class="grid"><label>Amount<input id="communityCreditAmount" type="number" min="1" value="10"></label><label>Unique reference<input id="communityCreditReference" value="manual:${Date.now()}"></label></div><label>Audit note<input id="communityCreditNote"></label><button id="communityCreditBtn" class="danger">Credit wallet</button><pre id="communityCreditResult"></pre></div><div class="panelBand"><h2>Purchase / claim</h2><label>Offer<select id="communityOfferId">${offers.filter(row => row.enabled).map(row => `<option value="${esc(row.id)}">${esc(row.name)} · ${esc(row.price)}</option>`).join('')}</select></label><label>Quantity<input id="communityOfferQuantity" type="number" min="1" max="100" value="1"></label><button id="communityPurchaseBtn" class="primary">Queue purchase</button><hr><div class="grid"><label>Track ID<input id="communityTrackId" value="${esc(tracks[0]?.id || '')}"></label><label>Level<input id="communityTrackLevel" type="number" min="1" value="1"></label></div><button id="communityClaimBtn">Claim level</button><pre id="communityPurchaseResult"></pre></div></div>
   <div class="panelBand"><h2>Offers and kits</h2>${table(offers)}</div><div class="panelBand"><h2>Reward tracks</h2>${table(tracks)}</div>
   ${account.dune_account_id ? `<div class="twoCol"><div class="panelBand"><h2>Account ledger</h2>${table(data.ledgerEntries || [])}</div><div class="panelBand"><h2>Purchases</h2>${table(data.purchases || [])}<h2>Track progress</h2>${table(data.progress || [])}</div></div><div class="panelBand"><h2>Movement-verified engagement</h2>${table(data.engagementCheckpoint ? [data.engagementCheckpoint] : [])}<h3>Daily streak</h3>${table(data.engagementDays || [])}<h3>Weekly active time</h3>${table(data.engagementWeeks || [])}<h3>Append-only reward claims</h3>${table(data.engagementClaims || [])}</div><div class="panelBand"><h2>Deliveries</h2>${table(data.deliveries || [])}</div>` : ''}
   <details class="panelBand"><summary>Resolve ambiguous delivery</summary><div class="grid"><label>Delivery ID<input id="communityReconcileId"></label><label>Observed result<select id="communityReconcileDelivered"><option value="true">Delivered</option><option value="false">Failed — refund purchase</option></select></label></div><label>Evidence / reason<input id="communityReconcileReason"></label><button id="communityReconcileBtn" class="danger">Resolve reconciliation</button><pre id="communityReconcileResult"></pre></details>
   <details class="panelBand"><summary>Versioned policy and catalog JSON</summary><p class="muted">Saving validates the entire document, backs up the prior file, then synchronizes offers and tracks. Increment an offer version to reset configured stock.</p><textarea id="communityConfigText">${esc(configs['community-rewards.json'] || '')}</textarea><button id="communitySaveConfigBtn" class="danger">Validate and save config</button><pre id="communityConfigResult"></pre></details></div>`;
   document.getElementById('communityLoadAccountBtn').onclick=()=>{const value=document.getElementById('communityAccountId').value.trim(); if(value) sessionStorage.setItem('duneCommunityAccountId',value); else sessionStorage.removeItem('duneCommunityAccountId'); communityRewards();};
+  document.getElementById('communityCanaryBtn').onclick=async()=>{if(!confirm('Run the full Community Rewards flow against disposable state and record a signed receipt? No player, live wallet, game database, item grant, or external provider is touched.'))return;await communityAction({action:'canary',confirm:'RUN COMMUNITY REWARDS CANARY'},'communityCanaryResult');await communityRewards();};
   document.getElementById('communitySyncBtn').onclick=()=>communityAction({action:'sync'},'communityConfigResult');
   document.getElementById('communityTickBtn').onclick=()=>communityAction({action:'tick'},'communityConfigResult');
   document.getElementById('communityLinkCodeBtn').onclick=()=>communityAction({action:'link-code',duneAccountId:document.getElementById('communityAccountId').value},'communityLinkResult');

@@ -28,6 +28,8 @@ SUPPORT_FILES = {
     "admin/audit_ledger.py",
     "admin/change_approvals.py",
     "admin/change_intelligence.py",
+    "admin/community_canary.py",
+    "admin/community_rewards.py",
     "admin/credential_lifecycle.py",
     "admin/deployment_assurance.py",
     "admin/desired_state.py",

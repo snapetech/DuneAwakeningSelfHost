@@ -229,6 +229,9 @@ server {
   and signed-provider accrual, reward tracks/claims, delivery receipts, and
   ambiguous-outcome reconciliation. See
   [`community-rewards.md`](community-rewards.md).
+- A policy-bound disposable Community Rewards transaction proof with signed
+  portable receipts and an explicit no-live-data contract. See
+  [`community-rewards-canary.md`](community-rewards-canary.md).
 - Moderation page with isolated case and policy-ban state, append-only case
   history, confirmed native `KickPlayer` ejection, optional explicit allowlist
   enforcement, presence sessions, privacy-bounded heatmaps, redacted security

@@ -262,7 +262,7 @@ without reproducing that wrapper.
 | Capability | Peer evidence | DASH status | Gap/action |
 | --- | --- | --- | --- |
 | NPC exchange seeding/buyback/pricing | Icehunter, EDA addon | Parity | Artificial Exchange with watchdog and audit |
-| Discord shop/catalog/kits | shop system | Parity implementation; live purchase canary pending | Eight player-facing `/dune shop` commands, versioned offers/kits, stock, idempotent orders, and private adapter identity binding; see `docs/community-rewards.md` |
+| Discord shop/catalog/kits | shop system | DASH exceeds | Eight player-facing `/dune shop` commands, versioned offers/kits, stock, idempotent orders, private adapter identity binding, plus a policy/age-bound disposable link→webhook→wallet→purchase→delivery→engagement→track→ledger synthetic transaction with strict no-live-data semantics and portable HMAC receipts; see `docs/community-rewards.md` and `docs/community-rewards-canary.md` |
 | External wallet and immutable ledger | shop system | Parity | Isolated SQLite wallet, non-negative constraints, append-only triggers, global SHA-256 hash chain, unique references, and full verification; never game Solari |
 | Playtime rewards | shop system, AMP analytics | Parity | Confirmed presence checkpoints, remainder accounting, bounded observation gaps, idempotent credit and optional track XP |
 | Movement/AFK-aware airdrops, daily streaks and weekly rewards | atobo airdrop addon | DASH exceeds | Map/partition/3D movement proof, bounded grace/gaps, scaled active-session rewards, UTC streaks, ISO-week active-time thresholds, combined credits/track XP/items, append-only claims, and receipted offline delivery without Dune-schema triggers or Docker-socket access; see `docs/engagement-airdrops.md` |

@@ -1,9 +1,9 @@
 # Community rewards, shop, and reward tracks
 
 Confidence: high for the isolated wallet/order state, idempotency, HMAC receiver,
-playtime accounting, and delivery/refund state machine. Confidence: moderate for
-the game-item delivery bridge until representative catalog purchases have been
-canaried on the live server.
+playtime accounting, delivery/refund state machine, and policy-bound synthetic
+transaction proof. A synthetic canary does not claim a real player inventory
+write; the separately gated game-item delivery bridge retains its own receipt.
 
 This subsystem provides the community economy features exposed by the pinned
 `neophrythe/Dune-Awakening-Shop-System` peer while keeping community credits
@@ -34,6 +34,10 @@ separate from Dune's Solari and player-currency tables.
   one-time level claims, and delivery through the same queue.
 - Admin API/status, RBAC mapping, audit events, a background worker, tests, and
   player-facing Discord commands.
+- A disposable end-to-end transaction canary covering link, webhook, wallet,
+  shop, delivery, playtime, engagement, track, and ledger behavior, with a
+  policy-bound HMAC receipt; see
+  [`community-rewards-canary.md`](community-rewards-canary.md).
 
 It does not change game Solari, take payment-card data, call a payment processor,
 or write Dune tables except when the separately gated delivery worker invokes the
@@ -48,6 +52,7 @@ existing item-grant function for an offline player.
 | `config/secrets/community-vote-webhook.secret` | Vote receiver HMAC key | ignored; mode `0600` |
 | `config/secrets/community-payment-webhook.secret` | Manual-payment receiver HMAC key | ignored; mode `0600` |
 | `backups/community-rewards/community.sqlite3` | Wallet, ledger, orders, deliveries, stock, links, and tracks | ignored; mode `0600` |
+| `backups/operator-evidence/community-canary-*.signed.json` | Policy-bound synthetic transaction receipts | ignored; mode `0600`, included in full backups |
 
 SQLite runs in WAL mode with foreign keys, `synchronous=FULL`, a busy timeout,
 and `BEGIN IMMEDIATE` for state changes. `scripts/backup-state.sh` uses SQLite's
@@ -74,6 +79,8 @@ DUNE_COMMUNITY_REWARDS_ENABLED=true
 DUNE_COMMUNITY_DELIVERY_ENABLED=true
 DUNE_COMMUNITY_REWARDS_DATABASE=/workspace/backups/community-rewards/community.sqlite3
 DUNE_COMMUNITY_POLL_SECONDS=30
+DUNE_COMMUNITY_CANARY_MAX_AGE_HOURS=168
+DUNE_COMMUNITY_CANARY_RETENTION=200
 ```
 
 Recreate only the admin surface after changing container environment values:
@@ -257,8 +264,12 @@ retains confirmed receipts. Inspect the target inventory and then resolve it as
 delivered or failed. Resolving failed applies the refund/stock restoration once.
 
 The worker processes at most one delivery per poll. This bounds load and makes
-receipts easy to audit. The manual `tick` action is available for a controlled
-canary.
+receipts easy to audit. The manual `tick` action remains available for a
+controlled player-delivery check. For a representative proof that does not use
+a player or mutate live wallet, stock, or game state, use the signed synthetic
+transaction canary described in
+[`community-rewards-canary.md`](community-rewards-canary.md). It is the evidence
+source for the Feature Readiness row.
 
 ## Admin API
 
@@ -271,6 +282,7 @@ GET /api/community/rewards?account_id=42&limit=100
 Write actions use `POST /api/community/rewards` with an `action` field:
 
 - `sync`
+- `canary` (requires `RUN COMMUNITY REWARDS CANARY`)
 - `link-code`
 - `redeem-link`
 - `credit` (requires `CREDIT COMMUNITY WALLET`)
@@ -293,7 +305,8 @@ make test-admin-panel-safe-surfaces
 make validate
 ```
 
-Tests cover hash-only one-time linking, immutable and verifiable ledger entries,
+Tests cover the policy-bound isolated canary, hash-only one-time linking,
+immutable and verifiable ledger entries,
 credit/webhook/purchase/progress/claim replay, payload collision rejection,
 stock version semantics, bounded playtime accrual, delivery success, automatic
 refund, ambiguous reconciliation, movement proof and grace, daily/weekly/session
