@@ -592,7 +592,12 @@ def _run_one(docker, name, state, stage, host_stage, image, run_uid, run_gid,
         isolation = _verify_isolation(docker.inspect_container(container), spec)
         ready = False
         while time.monotonic() - started < readiness_seconds:
-            code, _ = docker.exec(container, ["rabbitmq-diagnostics", "-q", "ping"], timeout=15)
+            # `ping` only proves that the Erlang VM is reachable.  The RabbitMQ
+            # application can still be completing its boot sequence, in which
+            # case `rabbitmqctl status` and every topology query will fail.
+            # `check_running` does not succeed until the recovered `rabbit`
+            # application itself is running.
+            code, _ = docker.exec(container, ["rabbitmq-diagnostics", "-q", "check_running"], timeout=15)
             if code == 0:
                 ready = True; break
             sleep(1)

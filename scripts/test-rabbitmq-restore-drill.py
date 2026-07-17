@@ -198,6 +198,14 @@ class RabbitMQRestoreDrillTests(unittest.TestCase):
         self.assertFalse(result["networkCreated"])
         self.assertEqual(2, len(docker.specs))
         self.assertEqual(set(docker.specs), set(docker.removed))
+        readiness_commands = [
+            command for command in docker.commands
+            if command[:2] == ["rabbitmq-diagnostics", "-q"]
+        ]
+        self.assertEqual(
+            [["rabbitmq-diagnostics", "-q", "check_running"]] * 2,
+            readiness_commands,
+        )
         for name in ("admin", "game"):
             row = result["brokers"][name]
             self.assertTrue(row["isolation"]["verified"])

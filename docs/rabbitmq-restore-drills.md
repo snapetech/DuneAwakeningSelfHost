@@ -77,7 +77,8 @@ For each copied broker, the receipt records:
 - source archive SHA-256 and bounded extraction counts;
 - original node identity and stale-PID removal result;
 - inspected isolation controls and resource ceilings;
-- time until `rabbitmq-diagnostics -q ping` succeeds;
+- time until `rabbitmq-diagnostics -q check_running` proves the recovered
+  `rabbit` application is running (an Erlang-node-only `ping` is insufficient);
 - a successful `rabbitmqctl -q status`; and
 - counts of vhosts, users, queues, exchanges, bindings, and messages.
 
