@@ -50,6 +50,22 @@
       "remediation": {"surface": "infrastructure", "summary": "Open the failed evidence subsystem, preserve its ledger, and follow the generated deterministic response plan."}
     },
     {
+      "id": "readiness-regression-history",
+      "title": "Readiness regression history",
+      "group": "Operations",
+      "description": "Every feature-state vector change is deduplicated, deployment-correlated, classified, and sealed into an append-only HMAC chain.",
+      "documentation": "docs/feature-readiness.md",
+      "primaryGate": "DUNE_FEATURE_READINESS_HISTORY_ENABLED",
+      "gates": ["DUNE_FEATURE_READINESS_HISTORY_ENABLED"],
+      "credentials": [],
+      "files": [{"path": "admin/feature_readiness_history.py", "minimumBytes": 1000}],
+      "services": ["admin-panel"],
+      "probe": "feature-readiness-history",
+      "dependencies": ["operational-evidence"],
+      "canary": "runtime-proven",
+      "remediation": {"surface": "infrastructure", "summary": "Preserve the database and HMAC key, verify backups, and restore the last known valid pair before recording more transitions."}
+    },
+    {
       "id": "adaptive-map-farm",
       "title": "Adaptive map farm",
       "group": "Maps",

@@ -71,6 +71,7 @@ import update_readiness
 import public_directory
 import env_file_store
 import feature_readiness
+import feature_readiness_history
 
 GM_CATALOG_PATH = CODE_ROOT / "scripts" / "gm-command-catalog.py"
 GM_CATALOG_SPEC = importlib.util.spec_from_file_location("gm_command_catalog", GM_CATALOG_PATH)
@@ -101,6 +102,11 @@ FLS_HEALTH_CACHE = {"payload": None, "updated_at": 0.0, "refreshing": False}
 FLS_HEALTH_CACHE_LOCK = threading.Lock()
 FEATURE_READINESS_CACHE = {"value": None, "updated_at": 0.0}
 FEATURE_READINESS_CACHE_LOCK = threading.Lock()
+FEATURE_READINESS_HISTORY_ENABLED = os.environ.get("DUNE_FEATURE_READINESS_HISTORY_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+FEATURE_READINESS_HISTORY_DATABASE = pathlib.Path(os.environ.get("DUNE_FEATURE_READINESS_HISTORY_DATABASE", str(BACKUPS_ROOT / "feature-readiness" / "history.sqlite3")))
+FEATURE_READINESS_HISTORY_SECRET_FILE = pathlib.Path(os.environ.get("DUNE_FEATURE_READINESS_HISTORY_HMAC_SECRET_FILE", str(CONFIG_ROOT / "secrets" / "feature-readiness-history-hmac.secret")))
+FEATURE_READINESS_HISTORY_STORE = None
+FEATURE_READINESS_HISTORY_STORE_LOCK = threading.Lock()
 try:
     FEATURE_READINESS_CACHE_TTL_SECONDS = max(5, min(int(os.environ.get("DUNE_FEATURE_READINESS_CACHE_TTL_SECONDS", "30")), 300))
 except ValueError:
@@ -647,6 +653,38 @@ def _feature_readiness_store_probe(store, initialized, runtime, label):
     return {"ready": ready, "state": "ready" if ready else "ledger-or-worker-error", "detail": f"{label} store initialized" if ready else str(runtime.get("lastError") or "ledger verification failed")}
 
 
+def feature_readiness_history_store():
+    global FEATURE_READINESS_HISTORY_STORE
+    with FEATURE_READINESS_HISTORY_STORE_LOCK:
+        if FEATURE_READINESS_HISTORY_STORE is None:
+            FEATURE_READINESS_HISTORY_STORE = feature_readiness_history.Store(
+                FEATURE_READINESS_HISTORY_DATABASE,
+                FEATURE_READINESS_HISTORY_SECRET_FILE,
+                owner_uid=os.environ.get("DUNE_HOST_UID"),
+                owner_gid=os.environ.get("DUNE_HOST_GID"),
+            )
+            FEATURE_READINESS_HISTORY_STORE.initialize()
+        return FEATURE_READINESS_HISTORY_STORE
+
+
+def feature_readiness_history_public_status(limit=100):
+    if not FEATURE_READINESS_HISTORY_ENABLED:
+        return {"ok": True, "enabled": False, "state": "disabled", "events": []}
+    status = feature_readiness_history_store().status(limit=limit)
+    status.update({"enabled": True, "database": str(FEATURE_READINESS_HISTORY_DATABASE), "secretConfigured": FEATURE_READINESS_HISTORY_SECRET_FILE.is_file()})
+    return status
+
+
+def _feature_readiness_history_commit():
+    try:
+        deployment = deployment_assurance_store().status()
+        open_windows = deployment.get("openWindows") or []
+        latest = deployment.get("latest") or {}
+        return str((open_windows[0] if open_windows else latest).get("commit") or "unknown")
+    except Exception:
+        return "unknown"
+
+
 def feature_readiness_public_status(force=False):
     now = time.time()
     with FEATURE_READINESS_CACHE_LOCK:
@@ -659,6 +697,10 @@ def feature_readiness_public_status(force=False):
     directory = public_directory_public_status()
     federated = federated_auth_public_status()
     encryption = backup_archive_encryption_status()
+    try:
+        history_status = feature_readiness_history_public_status(limit=1)
+    except Exception as exc:
+        history_status = {"ok": False, "enabled": FEATURE_READINESS_HISTORY_ENABLED, "error": str(exc)[:500]}
     probes = {
         "database": _feature_readiness_probe("database", _feature_readiness_database_probe),
         "mutation-governance": _feature_readiness_probe("mutation-governance", _feature_readiness_governance_probe),
@@ -706,14 +748,27 @@ def feature_readiness_public_status(force=False):
             "state": "ready" if encryption.get("configured") else "recipient-missing",
             "detail": "OpenPGP recipient is selected and syntax-valid" if encryption.get("configured") else "no verified OpenPGP recipient is selected",
         },
+        "feature-readiness-history": {
+            "ready": bool(not FEATURE_READINESS_HISTORY_ENABLED or history_status.get("ok")),
+            "state": "ready" if history_status.get("ok") else "ledger-invalid",
+            "detail": "transition ledger integrity verified" if history_status.get("ok") else str(history_status.get("error") or "transition ledger integrity verification failed"),
+        },
     }
     catalog = feature_readiness.load_catalog(FEATURE_READINESS_FILE)
     result = feature_readiness.evaluate(catalog, values, root=DEPLOYMENT_ASSURANCE_WORKSPACE, services=services, probes=probes)
+    if FEATURE_READINESS_HISTORY_ENABLED:
+        try:
+            recorded = feature_readiness_history_store().record(result, commit=_feature_readiness_history_commit())
+            history_status = feature_readiness_history_public_status(limit=100)
+            history_status["recording"] = recorded
+        except Exception as exc:
+            history_status = {"ok": False, "enabled": True, "error": str(exc)[:500], "events": []}
     result.update({
         "catalog": str(FEATURE_READINESS_FILE.relative_to(ROOT)),
         "cacheTtlSeconds": FEATURE_READINESS_CACHE_TTL_SECONDS,
         "confidence": "high for gates, artifact presence, service state, and explicit runtime probes; canary state remains separately visible",
         "secretValuesReturned": False,
+        "history": history_status,
     })
     with FEATURE_READINESS_CACHE_LOCK:
         FEATURE_READINESS_CACHE.update({"value": json.loads(json.dumps(result)), "updated_at": now})
@@ -722,9 +777,14 @@ def feature_readiness_public_status(force=False):
 
 def feature_readiness_prometheus():
     try:
-        return feature_readiness.prometheus(feature_readiness_public_status())
+        metrics = feature_readiness.prometheus(feature_readiness_public_status())
+        if FEATURE_READINESS_HISTORY_ENABLED:
+            metrics += feature_readiness_history_store().prometheus()
+        else:
+            metrics += "dash_feature_readiness_history_valid 1\ndash_feature_readiness_history_events_total 0\ndash_feature_readiness_history_regressions_total 0\ndash_feature_readiness_history_improvements_total 0\ndash_feature_readiness_history_head_sequence 0\ndash_feature_readiness_history_last_regression_timestamp_seconds 0\n"
+        return metrics
     except Exception:
-        return "dash_feature_readiness_ok 0\ndash_feature_readiness_total 0\ndash_feature_readiness_active 0\ndash_feature_readiness_active_problems 1\n"
+        return "dash_feature_readiness_ok 0\ndash_feature_readiness_total 0\ndash_feature_readiness_active 0\ndash_feature_readiness_active_problems 1\ndash_feature_readiness_history_valid 0\n"
 
 
 def change_approval_store():
@@ -1312,6 +1372,9 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_RESPONSE_DRILLS_ENABLED": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Enables explicit non-disruptive response-plan rehearsals using fixed read-only diagnostics only."},
     "DUNE_DEPLOYMENT_ASSURANCE_ENABLED": {"group": "Deployment Assurance", "secret": False, "restart": True, "why": "Enables two-phase source, map-continuity, health, readiness, backup, and signed promotion receipts."},
     "DUNE_FEATURE_READINESS_CACHE_TTL_SECONDS": {"group": "Feature Readiness", "secret": False, "restart": True, "why": "Bounds the authenticated feature-readiness matrix cache to 5-300 seconds."},
+    "DUNE_FEATURE_READINESS_HISTORY_ENABLED": {"group": "Feature Readiness", "secret": False, "restart": True, "why": "Records state-vector changes in a private append-only HMAC transition ledger."},
+    "DUNE_FEATURE_READINESS_HISTORY_DATABASE": {"group": "Feature Readiness", "secret": False, "restart": True, "why": "Private SQLite readiness regression, recovery, and deployment-correlation history."},
+    "DUNE_FEATURE_READINESS_HISTORY_HMAC_SECRET_FILE": {"group": "Feature Readiness", "secret": False, "restart": True, "why": "Private HMAC key authenticating every readiness transition and chain link."},
     "DUNE_DEPLOYMENT_ASSURANCE_STATE_DIR": {"group": "Deployment Assurance", "secret": False, "restart": True, "why": "Private directory for HMAC-authenticated open/completed change-window state."},
     "DUNE_DEPLOYMENT_ASSURANCE_WORKSPACE": {"group": "Deployment Assurance", "secret": False, "restart": True, "why": "Read-only complete source-workspace mount used to independently verify every promoted manifest file."},
     "DUNE_DEPLOYMENT_ASSURANCE_PROMETHEUS_URL": {"group": "Deployment Assurance", "secret": False, "restart": True, "why": "Internal Prometheus URL used to prove the current readiness certification has been scraped."},
@@ -9065,6 +9128,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.require_token()
                 params = urllib.parse.parse_qs(parsed.query)
                 self.json(feature_readiness_public_status(force=str((params.get("refresh") or [""])[0]).lower() in ("1", "true", "yes", "on")))
+            elif parsed.path == "/api/ops/feature-readiness/history":
+                self.require_token()
+                params = urllib.parse.parse_qs(parsed.query)
+                self.json(feature_readiness_history_public_status(limit=(params.get("limit") or ["100"])[0]))
             elif parsed.path == "/api/ops/update-readiness":
                 self.require_token()
                 params = urllib.parse.parse_qs(parsed.query)
@@ -17424,6 +17491,17 @@ function mountInfrastructureFeatureReadiness(data){
   const page = document.querySelector('#view .pageStack');
   if (!page) return;
   const summary = data.summary || {};
+  const history = data.history || {};
+  const historySummary = history.summary || {};
+  const transitionRows = (history.events || []).map(event => ({
+    sequence:event.sequence,
+    recorded:event.recordedAt,
+    deployment:String(event.commit || 'unknown').slice(0,12),
+    kind:event.kind,
+    ready:event.summary?.ready ?? '—',
+    problems:event.summary?.activeProblems ?? '—',
+    changes:(event.changes || []).map(change=>`${change.id}: ${change.from} → ${change.to} (${change.direction})`).join(', ') || 'initial baseline'
+  }));
   const rows = (data.features || []).map(feature => {
     const gates = feature.gateChecks || [];
     const enabled = gates.filter(row => row.enabled).length;
@@ -17452,6 +17530,8 @@ function mountInfrastructureFeatureReadiness(data){
     <div class="sectionHeader"><div><h2>Feature Readiness Control Center</h2><p class="muted">One secret-safe matrix proves activation gates, required artifacts, service state, dependencies, explicit runtime probes, external credentials, and remaining canaries. A disabled optional integration is different from a broken active feature.</p></div><div class="toolbar"><span class="pill ${data.ok?'ok':'bad'}">${esc(data.overall || 'unknown')}</span><span class="pill">${esc(summary.active || 0)}/${esc(summary.total || 0)} active</span><span class="pill ${Number(summary.activeProblems||0)?'bad':'ok'}">${esc(summary.activeProblems || 0)} active problems</span><button id="infraFeatureReadinessRefreshBtn">Recheck now</button></div></div>
     <div class="metricGrid">${metric('Ready', summary.ready || 0, 'ok')}${metric('Canary pending', summary['canary-pending'] || 0, Number(summary['canary-pending']||0)?'warn':'')}${metric('Disabled optional', summary.disabled || 0)}${metric('Partial', summary.partial || 0, Number(summary.partial||0)?'bad':'')}${metric('Blocked', summary.blocked || 0, Number(summary.blocked||0)?'bad':'')}${metric('Degraded', summary.degraded || 0, Number(summary.degraded||0)?'bad':'')}${metric('External credentials', summary['external-blocked'] || 0, Number(summary['external-blocked']||0)?'warn':'')}</div>
     ${table(rows)}
+    <div class="sectionHeader"><div><h3>Tamper-evident transition history</h3><p class="muted">Only state-vector changes are retained. Each event is HMAC-linked to the previous event and correlated to the active assured-deployment commit when available.</p></div><div class="toolbar"><span class="pill ${history.ok?'ok':'bad'}">ledger ${history.ok?'verified':'invalid'}</span><span class="pill">${esc(historySummary.events || 0)} transitions</span><span class="pill ${Number(historySummary.regression||0)+Number(historySummary.mixed||0)?'warn':'ok'}">${esc(Number(historySummary.regression||0)+Number(historySummary.mixed||0))} regressions</span><span class="pill ok">${esc(Number(historySummary.improvement||0)+Number(historySummary.mixed||0))} improvements</span></div></div>
+    ${table(transitionRows)}
     <p class="muted">${esc(data.confidence || '')} Secret values returned: ${data.secretValuesReturned ? 'YES' : 'no'}.</p>
     <details><summary>Exact gate, credential-presence, artifact, service, dependency, and probe evidence</summary><pre>${esc(JSON.stringify(data, null, 2))}</pre></details>
   </div>`;

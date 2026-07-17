@@ -28,7 +28,10 @@ confined artifacts, current service state, dependencies, explicit runtime
 probes, external blockers, and honest live-canary state. `?refresh=1` bypasses
 the bounded cache. It is read-only and never returns credential values. See
 [`feature-readiness.md`](feature-readiness.md) for the catalog, state machine,
-metrics, alerts, recovery workflow, and validation contract.
+tamper-evident deployment-correlated transition history, backup verification,
+metrics, alerts, recovery workflow, and validation contract. The bounded
+history feed is available at
+`GET /api/ops/feature-readiness/history?limit=100`.
 
 ## Service Inventory
 

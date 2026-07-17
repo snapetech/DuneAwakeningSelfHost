@@ -31,6 +31,7 @@ keys=(
   DUNE_CAPACITY_AUTO_APPLY_ENABLED DUNE_DESIRED_STATE_ENABLED
   DUNE_ADMIN_DESIRED_STATE_MUTATIONS_ENABLED DUNE_CHANGE_INTELLIGENCE_ENABLED
   DUNE_RESPONSE_DRILLS_ENABLED DUNE_DEPLOYMENT_ASSURANCE_ENABLED
+  DUNE_FEATURE_READINESS_HISTORY_ENABLED
   DUNE_ADMIN_MEMORY_MUTATIONS_ENABLED
   DUNE_ADMIN_AUTOSCALER_MUTATIONS_ENABLED DUNE_DISCORD_ADAPTER_ENABLED
   DUNE_ADMIN_ADDON_MUTATIONS_ENABLED DUNE_ADMIN_SERVICE_CONTROL_ENABLED
@@ -115,6 +116,12 @@ if [[ ! -s "$change_intelligence_secret_file" ]]; then
   openssl rand -hex 32 > "$change_intelligence_secret_file"
   chmod 600 "$change_intelligence_secret_file"
 fi
+feature_readiness_history_secret_file="$repo_root/config/secrets/feature-readiness-history-hmac.secret"
+if [[ ! -s "$feature_readiness_history_secret_file" ]]; then
+  command -v openssl >/dev/null 2>&1 || { printf 'openssl is required to generate the feature-readiness history HMAC secret\n' >&2; exit 1; }
+  openssl rand -hex 32 > "$feature_readiness_history_secret_file"
+  chmod 600 "$feature_readiness_history_secret_file"
+fi
 set_value DUNE_FEATURE_PARITY_ALLOWED_HOST "$required_host"
 set_value DUNE_HOST_UID "$(id -u)"
 set_value DUNE_HOST_GID "$(id -g)"
@@ -147,6 +154,8 @@ set_value DUNE_CHANGE_INTELLIGENCE_DATABASE /workspace/backups/change-intelligen
 set_value DUNE_CHANGE_INTELLIGENCE_HMAC_SECRET_FILE /workspace/config/secrets/change-intelligence-hmac.secret
 set_value DUNE_CHANGE_INTELLIGENCE_EVIDENCE_DIR /workspace/backups/operator-evidence
 set_value DUNE_CHANGE_INTELLIGENCE_HOST_EVIDENCE_DIR backups/operator-evidence
+set_value DUNE_FEATURE_READINESS_HISTORY_DATABASE /workspace/backups/feature-readiness/history.sqlite3
+set_value DUNE_FEATURE_READINESS_HISTORY_HMAC_SECRET_FILE /workspace/config/secrets/feature-readiness-history-hmac.secret
 set_value DUNE_DEPLOYMENT_ASSURANCE_STATE_DIR /workspace/backups/deployment-assurance
 set_value DUNE_DEPLOYMENT_ASSURANCE_WORKSPACE /source-workspace
 set_value DUNE_DEPLOYMENT_ASSURANCE_PROMETHEUS_URL http://prometheus:9090

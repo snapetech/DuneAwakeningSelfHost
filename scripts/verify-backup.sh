@@ -295,6 +295,54 @@ else
   printf 'WARN no change-intelligence.sqlite3 found in %s\n' "$backup_dir"
 fi
 
+if [[ -f "$backup_dir/feature-readiness-history.sqlite3" ]]; then
+  readiness_archive=""
+  for candidate in "$backup_dir/config.tgz" "$backup_dir/config-and-env.tgz"; do
+    if [[ -f "$candidate" ]]; then readiness_archive="$candidate"; break; fi
+  done
+  if [[ -z "$readiness_archive" ]]; then
+    printf 'FAIL feature-readiness history verification requires the matching config archive and HMAC key\n' >&2
+    ok=false
+  else
+    if PYTHONPATH="$repo_root/admin" python3 - "$backup_dir/feature-readiness-history.sqlite3" "$readiness_archive" <<'PY'
+import os
+import pathlib
+import sys
+import tarfile
+import tempfile
+import feature_readiness_history
+
+database, archive = sys.argv[1:]
+try:
+    with tarfile.open(archive, "r:gz") as source, tempfile.TemporaryDirectory(prefix="dash-readiness-history-verify-") as directory:
+        member = source.getmember("config/secrets/feature-readiness-history-hmac.secret")
+        if not member.isfile() or member.size < 32 or member.size > 16 * 1024:
+            raise ValueError("invalid feature-readiness history HMAC key backup member")
+        handle = source.extractfile(member)
+        if handle is None:
+            raise ValueError("unreadable feature-readiness history HMAC key backup member")
+        value = handle.read(16 * 1024 + 1)
+        if len(value) > 16 * 1024:
+            raise ValueError("oversized feature-readiness history HMAC key backup member")
+        secret = pathlib.Path(directory) / "feature-readiness-history-hmac.secret"
+        secret.write_bytes(value)
+        os.chmod(secret, 0o600)
+        result = feature_readiness_history.verify_database(database, secret)
+        raise SystemExit(0 if result.get("ok") else 1)
+except (OSError, KeyError, ValueError, tarfile.TarError):
+    raise SystemExit(1)
+PY
+    then
+      printf 'OK feature-readiness history SQLite snapshot and HMAC transition chain %s\n' "$backup_dir/feature-readiness-history.sqlite3"
+    else
+      printf 'FAIL feature-readiness history SQLite snapshot or matching HMAC chain %s\n' "$backup_dir/feature-readiness-history.sqlite3" >&2
+      ok=false
+    fi
+  fi
+else
+  printf 'WARN no feature-readiness-history.sqlite3 found in %s\n' "$backup_dir"
+fi
+
 audit_ledger_artifacts=0
 for artifact in audit-ledger.sqlite3 audit-ledger.hmac.key audit-ledger.anchor.json; do
   [[ -f "$backup_dir/$artifact" ]] && audit_ledger_artifacts=$((audit_ledger_artifacts + 1))

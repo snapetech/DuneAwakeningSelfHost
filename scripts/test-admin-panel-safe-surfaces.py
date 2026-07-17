@@ -463,7 +463,13 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
     def test_feature_readiness_api_ui_and_label_free_metrics_are_exposed(self):
         self.assertIn("Feature Readiness Control Center", self.panel.INDEX)
         self.assertIn("/api/ops/feature-readiness", self.panel.INDEX)
+        self.assertIn("Tamper-evident transition history", self.panel.INDEX)
         self.assertIn("DUNE_FEATURE_READINESS_CACHE_TTL_SECONDS", self.panel.ENV_KEY_DEFINITIONS)
+        for key in (
+            "DUNE_FEATURE_READINESS_HISTORY_ENABLED", "DUNE_FEATURE_READINESS_HISTORY_DATABASE",
+            "DUNE_FEATURE_READINESS_HISTORY_HMAC_SECRET_FILE",
+        ):
+            self.assertIn(key, self.panel.ENV_KEY_DEFINITIONS)
         fixture = {
             "ok": False,
             "overall": "attention",
@@ -486,13 +492,25 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertEqual("attention", captured["json"]["overall"])
         self.assertFalse(captured["json"]["secretValuesReturned"])
 
+        history_fixture = {"ok": True, "enabled": True, "summary": {"events": 2}, "events": [{"sequence": 2}]}
+        with mock.patch.object(self.panel, "feature_readiness_history_public_status", return_value=history_fixture):
+            handler, captured = self.make_route_handler("/api/ops/feature-readiness/history?limit=10")
+            handler.is_app_route = lambda path: False
+            handler.do_GET()
+        self.assertEqual([], captured["errors"])
+        self.assertEqual(2, captured["json"]["summary"]["events"])
+
         metrics = self.panel.feature_readiness_prometheus()
         self.assertIn("dash_feature_readiness_ok 0\n", metrics)
         self.assertIn("dash_feature_readiness_active_problems 1\n", metrics)
+        self.assertIn("dash_feature_readiness_history_valid 1\n", metrics)
+        self.assertIn("dash_feature_readiness_history_events_total", metrics)
         self.assertNotIn("{", metrics)
         rules = (ROOT / "config" / "metrics" / "rules" / "dash.yml").read_text(encoding="utf-8")
         self.assertIn("DashFeatureReadinessCollectorInvalid", rules)
         self.assertIn("DashFeatureReadinessActiveProblems", rules)
+        self.assertIn("DashFeatureReadinessHistoryInvalid", rules)
+        self.assertIn("DashFeatureReadinessRegression", rules)
 
     def test_feature_readiness_cache_ttl_settings_are_bounded(self):
         for value in ("4", "301", "not-a-number"):

@@ -81,6 +81,9 @@ desired_state_snapshot=""
 change_intelligence_db="${DUNE_CHANGE_INTELLIGENCE_HOST_DATABASE:-backups/change-intelligence/change-intelligence.sqlite3}"
 change_intelligence_snapshot=""
 [[ -f "$change_intelligence_db" ]] && change_intelligence_snapshot="change-intelligence.sqlite3"
+feature_readiness_history_db="${DUNE_FEATURE_READINESS_HISTORY_HOST_DATABASE:-backups/feature-readiness/history.sqlite3}"
+feature_readiness_history_snapshot=""
+[[ -f "$feature_readiness_history_db" ]] && feature_readiness_history_snapshot="feature-readiness-history.sqlite3"
 audit_ledger_db="${DUNE_ADMIN_AUDIT_LEDGER_HOST_DATABASE:-backups/admin-panel/audit-ledger.sqlite3}"
 audit_ledger_key="${DUNE_ADMIN_AUDIT_LEDGER_HOST_KEY:-backups/admin-panel/audit-ledger.hmac.key}"
 audit_ledger_anchor="${DUNE_ADMIN_AUDIT_LEDGER_HOST_ANCHOR:-backups/admin-panel/audit-ledger.anchor.json}"
@@ -152,6 +155,11 @@ if [[ "$dry_run" == true ]]; then
     printf 'change_intelligence_snapshot=change-intelligence.sqlite3\n'
   else
     printf 'change_intelligence_snapshot=<missing %s>\n' "$change_intelligence_db"
+  fi
+  if [[ -f "$feature_readiness_history_db" ]]; then
+    printf 'feature_readiness_history_snapshot=feature-readiness-history.sqlite3\n'
+  else
+    printf 'feature_readiness_history_snapshot=<missing %s>\n' "$feature_readiness_history_db"
   fi
   if [[ "$audit_ledger_artifacts" -eq 3 ]]; then
     printf 'audit_ledger_snapshot=audit-ledger.sqlite3\n'
@@ -315,6 +323,21 @@ PY
   chmod 600 "${backup_dir}/change-intelligence.sqlite3"
 fi
 
+if [[ -f "$feature_readiness_history_db" ]]; then
+  python3 - "$feature_readiness_history_db" "${backup_dir}/feature-readiness-history.sqlite3" <<'PY'
+import sqlite3
+import sys
+source=sqlite3.connect(f"file:{sys.argv[1]}?mode=ro",uri=True)
+target=sqlite3.connect(sys.argv[2])
+try:
+    source.backup(target)
+    if target.execute("pragma integrity_check").fetchone()[0]!="ok": raise SystemExit("feature-readiness history snapshot failed integrity_check")
+finally:
+    target.close(); source.close()
+PY
+  chmod 600 "${backup_dir}/feature-readiness-history.sqlite3"
+fi
+
 if [[ "$audit_ledger_artifacts" -eq 3 ]]; then
   python3 scripts/snapshot-audit-ledger.py \
     "$audit_ledger_db" "$audit_ledger_key" "$audit_ledger_anchor" "$backup_dir"
@@ -389,6 +412,7 @@ operational_slo_snapshot=${slo_snapshot}
 capacity_intelligence_snapshot=${capacity_snapshot}
 desired_state_snapshot=${desired_state_snapshot}
 change_intelligence_snapshot=${change_intelligence_snapshot}
+feature_readiness_history_snapshot=${feature_readiness_history_snapshot}
 audit_ledger_snapshot=${audit_ledger_snapshot}
 audit_ledger_key=${audit_ledger_key_snapshot}
 audit_ledger_anchor=${audit_ledger_anchor_snapshot}

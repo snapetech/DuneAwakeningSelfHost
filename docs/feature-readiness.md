@@ -79,6 +79,7 @@ The authenticated read endpoint is:
 ```text
 GET /api/ops/feature-readiness
 GET /api/ops/feature-readiness?refresh=1
+GET /api/ops/feature-readiness/history?limit=100
 ```
 
 The normal response is cached for 30 seconds to keep dashboard loads and
@@ -98,6 +99,48 @@ token, database password, Admin token, or native-command token.
 
 The response explicitly returns `secretValuesReturned=false`.
 
+## Tamper-Evident Transition History
+
+Point-in-time readiness cannot answer whether a deployment introduced a
+regression, whether an operator actually recovered it, or whether somebody
+rewrote the evidence afterward. When
+`DUNE_FEATURE_READINESS_HISTORY_ENABLED=true`, every newly observed feature
+state vector is canonicalized and compared with the preceding vector. Exact
+duplicates create no row. A real change is classified as `regression`,
+`improvement`, `mixed`, or neutral `change`; the first vector is `baseline`.
+
+Each append-only SQLite event contains only feature IDs, readiness states,
+active booleans, summary counts, the exact per-feature transitions, observation
+time, source, and the active assured-deployment commit when available. It does
+not retain gate values, environment values, credential contents, player data,
+host paths, or probe error text. The event HMAC covers its sequence, complete
+canonical snapshot, transition set, deployment correlation, and previous HMAC.
+The store verifies the full chain before appending, and SQLite triggers reject
+updates and deletes.
+
+Configuration defaults are:
+
+```env
+DUNE_FEATURE_READINESS_HISTORY_ENABLED=true
+DUNE_FEATURE_READINESS_HISTORY_DATABASE=/workspace/backups/feature-readiness/history.sqlite3
+DUNE_FEATURE_READINESS_HISTORY_HMAC_SECRET_FILE=/workspace/config/secrets/feature-readiness-history-hmac.secret
+```
+
+The parity activator generates the 32-byte secret with mode `0600`. The store
+can also initialize it atomically for a clean default deployment. Keep the
+database and key together: a replacement key does not repair or re-authorize an
+existing chain.
+
+The Infrastructure card shows transition sequence, time, deployment commit,
+classification, ready/problem counts, and exact state changes. The dedicated
+authenticated history endpoint returns at most 1,000 newest events. Query
+limits do not weaken verification: the complete chain is always checked.
+
+Full backups take a SQLite online snapshot and include the matching HMAC key in
+the private config archive. `scripts/verify-backup.sh` extracts only that
+bounded member into a private temporary directory and verifies the complete
+snapshot chain before accepting the backup.
+
 ## Metrics
 
 The existing private `/metrics/change-intelligence` scrape now also exports:
@@ -114,6 +157,12 @@ dash_feature_readiness_partial
 dash_feature_readiness_blocked
 dash_feature_readiness_degraded
 dash_feature_readiness_external_blocked
+dash_feature_readiness_history_valid
+dash_feature_readiness_history_events_total
+dash_feature_readiness_history_regressions_total
+dash_feature_readiness_history_improvements_total
+dash_feature_readiness_history_head_sequence
+dash_feature_readiness_history_last_regression_timestamp_seconds
 ```
 
 Metrics are deliberately label-free. Feature IDs, credential names, service
@@ -123,6 +172,9 @@ API rather than becoming public/high-cardinality labels.
 `DashFeatureReadinessCollectorInvalid` alerts when evaluation returns no
 catalog, and `DashFeatureReadinessActiveProblems` alerts when an active feature
 remains partial, blocked, degraded, or externally blocked for five minutes.
+`DashFeatureReadinessHistoryInvalid` alerts on SQLite/HMAC failure, and
+`DashFeatureReadinessRegression` reports a newly observed regression without
+putting feature IDs into Prometheus labels.
 
 ## Catalog Contract
 
@@ -158,6 +210,13 @@ untracked toggle.
    backup, hostname, post-start hook, and change-contract controls.
 5. Recheck the matrix and the subsystem's own detailed status.
 
+If transition integrity fails, stop recording, preserve both files, and restore
+the newest backup whose `feature-readiness-history.sqlite3` verifies against
+the HMAC key inside its matching config archive. Never delete a bad row, edit a
+classification, or rotate the key in place. A deliberate clean-slate history
+requires archiving the old database/key pair together and initializing a new
+pair with an explicit operational record outside this ledger.
+
 Do not turn a disabled optional external integration into a false outage. Do
 not treat `canary-pending` as failure or as proof. Do not repair a failed
 evidence ledger by generating a new key; follow its backup-specific recovery
@@ -169,12 +228,15 @@ Run the focused tests with:
 
 ```bash
 make test-feature-readiness
+make test-feature-readiness-history
 make test-admin-panel-safe-surfaces
 ```
 
 The tests cover every state, dependency failure, secret non-disclosure,
-catalog confinement/validation, label-free metrics, documentation links, and
-complete parity-activator gate coverage. `make validate` includes both suites.
+catalog confinement/validation, canonical state snapshots, deduplication,
+regression/improvement/mixed classification, append-only enforcement, tamper
+failure, label-free metrics, documentation links, and complete parity-activator
+gate coverage. `make validate` includes all three suites.
 
 Production activation requires only an assured Admin/control-plane deployment.
 The feature itself has no mutation gate and does not require or perform a game

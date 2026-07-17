@@ -166,7 +166,10 @@ server {
   catalog against live gates, credential presence, confined artifacts, Compose
   services, dependencies, runtime probes, and explicit canary state. It returns
   no secret values and separates intentionally disabled optional integrations
-  from active failures; see [`feature-readiness.md`](feature-readiness.md).
+  from active failures. Distinct state vectors enter an append-only HMAC ledger
+  correlated with assured deployments, so the same card shows regressions and
+  recoveries rather than only current state; see
+  [`feature-readiness.md`](feature-readiness.md).
 - Capacity Intelligence beside the autoscaler: retained map-hours saved,
   idle-running cost, productive-running ratio, warm/cold revisits,
   demand-to-ready cold-start distributions, empirical next-visit forecasts,

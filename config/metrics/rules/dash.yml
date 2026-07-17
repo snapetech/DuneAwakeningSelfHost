@@ -168,6 +168,16 @@ groups:
         for: 5m
         labels: {severity: warning}
         annotations: {summary: "One or more active DASH features are partial, blocked, degraded, or externally blocked"}
+      - alert: DashFeatureReadinessHistoryInvalid
+        expr: dash_feature_readiness_history_valid == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "DASH feature-readiness transition SQLite or HMAC chain verification failed"}
+      - alert: DashFeatureReadinessRegression
+        expr: increase(dash_feature_readiness_history_regressions_total[10m]) > 0
+        for: 1m
+        labels: {severity: warning}
+        annotations: {summary: "A DASH feature regressed since the preceding readiness state vector"}
       - alert: DashIncidentHasCandidateChange
         expr: dash_change_intelligence_open_incidents_with_candidate_changes > 0
         for: 2m
