@@ -18,8 +18,22 @@ repository="${3:-${GITHUB_REPOSITORY:-snapetech/DuneAwakeningSelfHost}}"
 [[ -d "$asset_dir" ]] || { printf 'asset directory not found: %s\n' "$asset_dir" >&2; exit 1; }
 command -v gh >/dev/null || { printf 'gh is required\n' >&2; exit 1; }
 
-enabled="$(gh api -H 'X-GitHub-Api-Version: 2026-03-10' "repos/$repository/immutable-releases" --jq .enabled)"
-[[ "$enabled" == true ]] || { printf 'repository immutable releases are not enabled\n' >&2; exit 1; }
+immutable_error="$(mktemp)"
+trap 'rm -f -- "$immutable_error"' EXIT
+if enabled="$(gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
+  "repos/$repository/immutable-releases" --jq .enabled 2>"$immutable_error")"; then
+  [[ "$enabled" == true ]] || {
+    printf 'repository immutable releases are not enabled\n' >&2
+    exit 1
+  }
+elif [[ "${GITHUB_ACTIONS:-}" == true ]] && grep -q '(HTTP 403)' "$immutable_error"; then
+  # GITHUB_TOKEN has contents:write but cannot read repository administration
+  # settings. The published release's immutable field is still asserted below.
+  printf 'immutable-release preflight unavailable to GITHUB_TOKEN; enforcing post-publication assertion\n'
+else
+  cat "$immutable_error" >&2
+  exit 1
+fi
 gh api "repos/$repository/git/ref/tags/$tag" >/dev/null
 if gh release view "$tag" --repo "$repository" >/dev/null 2>&1; then
   printf 'release already exists: %s\n' "$tag" >&2
@@ -41,7 +55,7 @@ gh release upload "$tag" --repo "$repository" "${assets[@]}"
 
 release_id="$(gh api "repos/$repository/releases/tags/$tag" --jq .id)"
 remote_json="$(mktemp)"
-trap 'rm -f -- "$remote_json"' EXIT
+trap 'rm -f -- "$immutable_error" "$remote_json"' EXIT
 gh api --paginate "repos/$repository/releases/$release_id/assets?per_page=100" > "$remote_json"
 python3 - "$asset_dir" "$remote_json" <<'PY'
 import hashlib,json,pathlib,sys

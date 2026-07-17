@@ -31,6 +31,13 @@ normal release workflow. GitHub also creates an immutable-release attestation.
 The workflow separately uses GitHub's OIDC/Sigstore-backed artifact attestation
 service for the built files.
 
+GitHub's per-workflow `GITHUB_TOKEN` cannot read repository administration
+settings, including the immutable-release setting. In Actions only, the
+publisher accepts that specific 403 response during the preflight check. It
+still asserts the published release's `immutable` field and fails the job if
+GitHub did not lock the release. Interactive/local publication continues to
+require the setting preflight to succeed before a draft is created.
+
 ## Supported packages
 
 | Asset | Target | Status |
@@ -181,7 +188,9 @@ separately before tagging; the GitHub workflow always does both.
 
 `scripts/publish-github-release.sh` is the noninteractive draft/upload/digest
 verification/publish implementation used by Actions. It refuses an existing
-release or a repository without release immutability.
+release. Local publication refuses a repository without release immutability;
+Actions enforces immutability using the post-publication assertion described
+above because its token cannot read repository settings.
 
 ## Rollback
 

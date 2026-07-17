@@ -129,6 +129,7 @@ class ReleasePackagingTests(unittest.TestCase):
 
     def test_release_workflow_is_pinned_and_noninteractive(self):
         workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+        publisher = (ROOT / "scripts" / "publish-github-release.sh").read_text(encoding="utf-8")
         self.assertIn('tags:\n      - "v*"', workflow)
         self.assertIn("contents: write", workflow)
         self.assertIn("id-token: write", workflow)
@@ -137,6 +138,9 @@ class ReleasePackagingTests(unittest.TestCase):
         self.assertRegex(workflow, r"actions/attest@[0-9a-f]{40}")
         self.assertIn("scripts/publish-github-release.sh", workflow)
         self.assertNotIn("environment:", workflow)
+        self.assertIn('"${GITHUB_ACTIONS:-}" == true', publisher)
+        self.assertIn("grep -q '(HTTP 403)'", publisher)
+        self.assertIn('[[ "$immutable" == true ]]', publisher)
         ignored = (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
         self.assertIn("dist/release/", ignored)
 
