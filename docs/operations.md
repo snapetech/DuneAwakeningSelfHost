@@ -727,8 +727,12 @@ Host backups serialize with Admin-panel manual/scheduled backups and the entire
 assured deployment workflow through `backups/admin-panel/operation.lock`.
 Standalone callers wait up to `DUNE_OPERATION_LOCK_WAIT_SECONDS`; scheduled
 panel runs record a deferral and retry without counting lock contention as a
-backup failure. Configure coverage-checked schedules, retries, retention, and
-monitoring as described in [`automatic-backups.md`](automatic-backups.md).
+backup failure. Executing browser maintenance owns that same lock across
+preflight, disconnect, stop, backup, update, start, recovery, and online proof;
+a busy lock defers before player impact. Configure coverage-checked schedules,
+retries, retention, and monitoring as described in
+[`automatic-backups.md`](automatic-backups.md), and review cross-scheduler
+admission in [`operations-calendar.md`](operations-calendar.md).
 
 Manual Postgres dump:
 

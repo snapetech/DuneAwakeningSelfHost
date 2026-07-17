@@ -4363,6 +4363,217 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertTrue(result["lastResult"]["ok"])
         self.assertGreater(second["nextRun"], 201)
 
+    def test_operations_calendar_combines_backup_restart_and_slo_windows(self):
+        self.panel.BACKUP_SCHEDULE_FILE = self.workspace / "backups" / "admin-panel" / "backup-schedule.json"
+        self.panel.RESTART_STATE_FILE = self.workspace / "backups" / "admin-panel" / "restart-jobs.json"
+        self.panel.EVENT_STATE_FILE = self.workspace / "backups" / "admin-panel" / "events.json"
+        state = self.panel.default_backup_schedule()
+        state.update({"enabled": True, "nextRun": 1200, "intervalHours": 24})
+        self.panel.write_backup_schedule(state)
+        self.panel.write_restart_state({
+            "jobs": [{
+                "id": "maintenance", "status": "scheduled", "runAt": 1250,
+                "target": "all", "targetLabel": "All maps", "action": "restart",
+                "execute": True, "backup": True, "updatePolicy": "current",
+            }],
+            "lastExecution": None,
+        })
+        original_slo = self.panel.operational_slo_public_status
+        self.panel.operational_slo_public_status = lambda: {
+            "maintenanceWindows": [{
+                "id": "window", "starts_at": 1100, "ends_at": 8000,
+                "reason": "planned update", "cancelled_at": None,
+            }],
+        }
+        self.addCleanup(lambda: setattr(self.panel, "operational_slo_public_status", original_slo))
+
+        status = self.panel.operations_calendar_public_status(now=1000, horizon_days=1)
+
+        self.assertEqual(3, status["summary"]["windows"])
+        self.assertEqual(1, status["summary"]["criticalConflicts"])
+        self.assertEqual(0, status["summary"]["uncoveredDisruptive"])
+        self.assertEqual("slo-maintenance:window", status["next"]["id"])
+
+    def test_operations_calendar_surfaces_slo_collector_failure(self):
+        self.panel.BACKUP_SCHEDULE_FILE = self.workspace / "backups" / "admin-panel" / "backup-schedule.json"
+        self.panel.RESTART_STATE_FILE = self.workspace / "backups" / "admin-panel" / "restart-jobs.json"
+        self.panel.EVENT_STATE_FILE = self.workspace / "backups" / "admin-panel" / "events.json"
+        original_slo = self.panel.operational_slo_public_status
+        self.panel.operational_slo_public_status = lambda: (_ for _ in ()).throw(RuntimeError("SLO database unavailable"))
+        self.addCleanup(lambda: setattr(self.panel, "operational_slo_public_status", original_slo))
+
+        status = self.panel.operations_calendar_public_status(now=1000, horizon_days=1)
+        metrics = self.panel.operations_calendar.prometheus(status, now=1000)
+
+        self.assertFalse(status["ok"])
+        self.assertEqual(1, status["summary"]["sourceErrors"])
+        self.assertEqual("slo-maintenance", status["errors"][0]["source"])
+        self.assertIn("dash_operations_calendar_collector_up 0\n", metrics)
+
+        with self.assertRaisesRegex(RuntimeError, "admission failed closed"):
+            self.panel.operations_calendar_restart_conflicts(1200, "all")
+
+    def test_operations_calendar_does_not_hide_corrupt_scheduler_state(self):
+        self.panel.BACKUP_SCHEDULE_FILE = self.workspace / "backups" / "admin-panel" / "backup-schedule.json"
+        self.panel.RESTART_STATE_FILE = self.workspace / "backups" / "admin-panel" / "restart-jobs.json"
+        self.panel.EVENT_STATE_FILE = self.workspace / "backups" / "admin-panel" / "events.json"
+        self.panel.BACKUP_SCHEDULE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        self.panel.BACKUP_SCHEDULE_FILE.write_text("{broken", encoding="utf-8")
+        original_slo = self.panel.operational_slo_public_status
+        self.panel.operational_slo_public_status = lambda: {"maintenanceWindows": []}
+        self.addCleanup(lambda: setattr(self.panel, "operational_slo_public_status", original_slo))
+
+        status = self.panel.operations_calendar_public_status(now=1000, horizon_days=1)
+
+        self.assertFalse(status["ok"])
+        self.assertEqual("backup-schedule", status["errors"][0]["source"])
+
+    def test_operations_calendar_keeps_overdue_work_due_now(self):
+        self.panel.BACKUP_SCHEDULE_FILE = self.workspace / "backups" / "admin-panel" / "backup-schedule.json"
+        self.panel.RESTART_STATE_FILE = self.workspace / "backups" / "admin-panel" / "restart-jobs.json"
+        self.panel.EVENT_STATE_FILE = self.workspace / "backups" / "admin-panel" / "events.json"
+        state = self.panel.default_backup_schedule()
+        state.update({"enabled": True, "nextRun": 100, "intervalHours": 24})
+        self.panel.write_backup_schedule(state)
+        original_slo = self.panel.operational_slo_public_status
+        self.panel.operational_slo_public_status = lambda: {"maintenanceWindows": []}
+        self.addCleanup(lambda: setattr(self.panel, "operational_slo_public_status", original_slo))
+
+        status = self.panel.operations_calendar_public_status(now=1000, horizon_days=1)
+
+        backup = next(row for row in status["windows"] if row["source"] == "backup-schedule")
+        self.assertEqual(1000, backup["startsAt"])
+        self.assertIn(backup, status["current"])
+
+    def test_restart_schedule_rejects_calendar_conflict_without_exact_override(self):
+        self.panel.BACKUP_SCHEDULE_FILE = self.workspace / "backups" / "admin-panel" / "backup-schedule.json"
+        self.panel.RESTART_STATE_FILE = self.workspace / "backups" / "admin-panel" / "restart-jobs.json"
+        self.panel.EVENT_STATE_FILE = self.workspace / "backups" / "admin-panel" / "events.json"
+        now = self.panel.time.time()
+        state = self.panel.default_backup_schedule()
+        state.update({"enabled": True, "nextRun": now + 600, "intervalHours": 24})
+        self.panel.write_backup_schedule(state)
+        original_slo = self.panel.operational_slo_public_status
+        self.panel.operational_slo_public_status = lambda: {"maintenanceWindows": []}
+        self.addCleanup(lambda: setattr(self.panel, "operational_slo_public_status", original_slo))
+        body = {
+            "target": "all", "action": "restart", "execute": True,
+            "announce": False, "runAt": self.panel.operations_calendar.iso(now + 650),
+        }
+
+        with self.assertRaisesRegex(ValueError, "operations calendar"):
+            self.panel.schedule_restart(body)
+
+        with self.assertRaisesRegex(ValueError, "exact confirmation"):
+            self.panel.schedule_restart(dict(body, allowCalendarConflict=True))
+
+        job = self.panel.schedule_restart(dict(
+            body, allowCalendarConflict=True,
+            calendarConflictConfirm=self.panel.CONFIRM_CALENDAR_CONFLICT_OVERRIDE,
+        ))
+        self.assertTrue(job["calendarConflictOverride"])
+        self.assertEqual(1, len(job["calendarConflicts"]))
+
+    def test_restart_schedule_retains_warning_findings_without_blocking(self):
+        self.panel.BACKUP_SCHEDULE_FILE = self.workspace / "backups" / "admin-panel" / "backup-schedule.json"
+        self.panel.RESTART_STATE_FILE = self.workspace / "backups" / "admin-panel" / "restart-jobs.json"
+        self.panel.EVENT_STATE_FILE = self.workspace / "backups" / "admin-panel" / "events.json"
+        now = self.panel.time.time()
+        self.panel.write_event_state({
+            "events": [{
+                "id": "prewarm", "name": "Prewarm Arrakeen", "status": "scheduled",
+                "nextRunAt": self.panel.operations_calendar.iso(now + 600),
+                "repeatSeconds": 0, "runCount": 0, "maxRuns": 1,
+                "plan": [{"type": "map-prewarm", "payload": {"service": "arrakeen"}}],
+            }],
+            "runs": [], "lastRun": None,
+        })
+        original_slo = self.panel.operational_slo_public_status
+        self.panel.operational_slo_public_status = lambda: {"maintenanceWindows": []}
+        self.addCleanup(lambda: setattr(self.panel, "operational_slo_public_status", original_slo))
+
+        job = self.panel.schedule_restart({
+            "target": "all", "action": "restart", "execute": True,
+            "announce": False, "runAt": self.panel.operations_calendar.iso(now + 650),
+        })
+
+        self.assertFalse(job["calendarConflictOverride"])
+        self.assertEqual("warning", job["calendarConflicts"][0]["severity"])
+        self.assertEqual(1, len(job["calendarCoverageFindings"]))
+
+    def test_disruptive_restart_defers_when_operation_lock_is_owned(self):
+        original_lock = self.panel.backup_operation_lock
+
+        @self.panel.contextlib.contextmanager
+        def busy_lock():
+            raise self.panel.BackupOperationBusy("assured deployment active")
+            yield
+
+        self.panel.backup_operation_lock = busy_lock
+        self.addCleanup(lambda: setattr(self.panel, "backup_operation_lock", original_lock))
+
+        result = self.panel.execute_restart({"id": "restart", "execute": True, "action": "restart"})
+
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["operationDeferred"])
+        self.assertEqual(self.panel.RESTART_OPERATION_RETRY_SECONDS, result["retrySeconds"])
+
+    def test_operation_lock_deferral_is_persisted_as_a_retry(self):
+        self.panel.RESTART_STATE_FILE = self.workspace / "backups" / "admin-panel" / "restart-jobs.json"
+        self.panel.write_restart_state({
+            "jobs": [{
+                "id": "maintenance", "status": "executing", "runAt": 900,
+                "lastError": "transient", "operationDeferrals": 2,
+            }],
+            "lastExecution": None,
+        })
+        result = {
+            "ok": False, "operationDeferred": True, "retrySeconds": 300,
+            "error": "assured deployment active",
+        }
+
+        persisted = self.panel.defer_restart_operation("maintenance", result, now=1000)
+        state = self.panel.read_restart_state()
+        job = state["jobs"][0]
+
+        self.assertEqual("scheduled", job["status"])
+        self.assertEqual(1300, job["runAt"])
+        self.assertEqual(3, job["operationDeferrals"])
+        self.assertEqual(1000, job["lastDeferredAt"])
+        self.assertIsNone(job["lastError"])
+        self.assertIsNone(state["lastExecution"])
+        self.assertEqual(result, state["lastDeferral"]["result"])
+        self.assertEqual(1300, state["lastDeferral"]["retryAt"])
+        self.assertEqual(job["id"], persisted["job"]["id"])
+
+    def test_executing_restart_cannot_be_superseded_or_cancelled(self):
+        self.panel.RESTART_STATE_FILE = self.workspace / "backups" / "admin-panel" / "restart-jobs.json"
+        self.panel.BACKUP_SCHEDULE_FILE = self.workspace / "backups" / "admin-panel" / "backup-schedule.json"
+        self.panel.EVENT_STATE_FILE = self.workspace / "backups" / "admin-panel" / "events.json"
+        self.panel.write_restart_state({
+            "jobs": [{
+                "id": "in-flight", "status": "executing", "runAt": self.panel.time.time() - 10,
+                "target": "all", "targetLabel": "All maps", "action": "restart",
+                "execute": True, "backup": True, "updatePolicy": "current",
+            }],
+            "lastExecution": None,
+        })
+        original_slo = self.panel.operational_slo_public_status
+        self.panel.operational_slo_public_status = lambda: {"maintenanceWindows": []}
+        self.addCleanup(lambda: setattr(self.panel, "operational_slo_public_status", original_slo))
+
+        with self.assertRaisesRegex(RuntimeError, "cannot replace maintenance job in-flight"):
+            self.panel.schedule_restart({
+                "target": "all", "action": "restart", "execute": False,
+                "announce": False, "delay": "30min",
+            })
+        with self.assertRaisesRegex(RuntimeError, "cannot cancel maintenance job in-flight"):
+            self.panel.cancel_restart("in-flight")
+
+        state = self.panel.read_restart_state()
+        self.assertEqual("executing", state["jobs"][0]["status"])
+        self.assertEqual(1, len(state["jobs"]))
+
     def test_backup_schedule_failure_retains_verifier_detail_and_retries_soon(self):
         self.panel.BACKUP_SCHEDULE_FILE = self.workspace / "backups" / "admin-panel" / "backup-schedule.json"
         self.panel.configure_backup_schedule({

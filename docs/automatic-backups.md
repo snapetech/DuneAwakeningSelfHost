@@ -37,7 +37,7 @@ read them without widening permissions.
 
 ## Collision prevention
 
-Panel backups, `scripts/backup-state.sh`, and
+Panel backups, executing browser maintenance, `scripts/backup-state.sh`, and
 `scripts/assured-control-plane-deploy.sh` coordinate through:
 
 ```text
@@ -52,6 +52,14 @@ host backup waits up to `DUNE_OPERATION_LOCK_WAIT_SECONDS` (default 1,800
 seconds). The panel uses a nonblocking acquisition: a scheduled run records a
 deferral, moves `nextRun` to the configured retry window, and does not count the
 collision as a failed backup.
+
+Executing maintenance owns the same lock across preflight, player disconnect,
+stop, verified backup, update, restart, recovery, and online proof. A due job
+that finds the lock occupied returns to its scheduled state and retries after a
+bounded delay without disconnecting players or recording a false maintenance
+failure. The conflict-aware Operations Calendar separately rejects predictable
+backup/maintenance overlap before the job is stored; see
+[`operations-calendar.md`](operations-calendar.md).
 
 Do not configure different lock paths for host and container execution. Doing
 so removes the serialization guarantee.

@@ -437,3 +437,23 @@ groups:
         for: 5m
         labels: {severity: warning}
         annotations: {summary: "An automatic full backup remains overdue beyond its lock/failure retry window"}
+      - alert: DashOperationsCalendarCollectorInvalid
+        expr: dash_operations_calendar_collector_up == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "DASH cannot build the unified operations calendar"}
+      - alert: DashOperationsCalendarCriticalConflict
+        expr: dash_operations_calendar_critical_conflicts > 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "A disruptive operation overlaps recovery work or another disruptive operation"}
+      - alert: DashOperationsCalendarWarningConflict
+        expr: dash_operations_calendar_warning_conflicts > 0
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "The operations calendar contains overlapping recovery or preparation work"}
+      - alert: DashOperationsCalendarMaintenanceUncovered
+        expr: dash_operations_calendar_uncovered_disruptive_windows > 0
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "Executing maintenance is not fully covered by a planned SLO maintenance exclusion"}

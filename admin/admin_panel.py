@@ -60,6 +60,7 @@ import creator_canary
 import public_ip_canary
 import canary_autopilot
 import operations_briefing
+import operations_calendar
 import moderation
 import base_creator
 import base_retirement
@@ -291,6 +292,7 @@ CONFIRM_MEMORY_BALANCER = "CHANGE MEMORY BALANCER"
 CONFIRM_MEMORY_LIMIT = "SET MAP MEMORY"
 CONFIRM_AUTOSCALER = "CHANGE AUTOSCALER"
 CONFIRM_BACKUP_SCHEDULE = "CHANGE BACKUP SCHEDULE"
+CONFIRM_CALENDAR_CONFLICT_OVERRIDE = "OVERRIDE SCHEDULE CONFLICT"
 CONFIRM_RESTORE_DRILL = "RUN ISOLATED RESTORE DRILL"
 CONFIRM_RABBITMQ_RESTORE_DRILL = "RUN NETWORKLESS RABBITMQ RESTORE DRILL"
 CONFIRM_SLO_INCIDENT = "ACKNOWLEDGE SLO INCIDENT"
@@ -461,6 +463,10 @@ BACKUP_VERIFY_RETRY_SECONDS = max(0.0, min(float(os.environ.get("DUNE_BACKUP_VER
 BACKUP_SCHEDULE_LOCK = threading.Lock()
 BACKUP_SCHEDULE_THREAD_STARTED = False
 BACKUP_SCHEDULE_RUNTIME = {"running": False, "active": False, "lastTickAt": None, "lastError": None}
+OPERATIONS_CALENDAR_HORIZON_DAYS = max(1, min(int(os.environ.get("DUNE_OPERATIONS_CALENDAR_HORIZON_DAYS", "14")), 31))
+OPERATIONS_CALENDAR_BACKUP_WINDOW_SECONDS = max(60, min(int(os.environ.get("DUNE_OPERATIONS_CALENDAR_BACKUP_WINDOW_SECONDS", "1800")), 86400))
+OPERATIONS_CALENDAR_RESTART_WINDOW_SECONDS = max(300, min(int(os.environ.get("DUNE_OPERATIONS_CALENDAR_RESTART_WINDOW_SECONDS", "5400")), 86400))
+RESTART_OPERATION_RETRY_SECONDS = max(30, min(int(os.environ.get("DUNE_ADMIN_RESTART_OPERATION_RETRY_SECONDS", "300")), 3600))
 RESTORE_DRILL_RECEIPT_ROOT = BACKUP_ROOT / "restore-drills"
 RESTORE_DRILL_RUNTIME_LOCK = threading.Lock()
 RESTORE_DRILL_RUNTIME = {"running": False, "queuedAt": None, "startedAt": None, "finishedAt": None, "lastResult": None, "lastError": None}
@@ -952,6 +958,24 @@ def _feature_readiness_operations_briefing_probe():
     return {"ready": False, "state": "collector-error", "detail": "; ".join(gaps)[:500]}
 
 
+def _feature_readiness_operations_calendar_probe():
+    status = operations_calendar_public_status()
+    summary = status.get("summary") or {}
+    contract = status.get("executionContract") or {}
+    ready = bool(
+        status.get("schemaVersion") == operations_calendar.SCHEMA
+        and not status.get("errors")
+        and contract.get("disruptiveRestartSerialized")
+        and contract.get("automaticBackupSerialized")
+        and contract.get("assuredDeploymentSerialized")
+    )
+    findings = int(summary.get("criticalConflicts") or 0) + int(summary.get("warningConflicts") or 0) + int(summary.get("uncoveredDisruptive") or 0)
+    detail = f"{summary.get('windows', 0)} windows; {findings} schedule finding(s); shared operation lock={status.get('operationLock')}"
+    if status.get("errors"):
+        detail += f"; source errors={len(status['errors'])}"
+    return {"ready": ready, "state": "ready" if ready else "collector-error", "detail": detail[:500]}
+
+
 def _feature_readiness_autoscaler_probe():
     status = autoscaler_public_state(include_inventory=False)
     ready = bool(status.get("enabled") and not status.get("lastError"))
@@ -1128,6 +1152,7 @@ def feature_readiness_public_status(force=False):
         "public-ip-monitor": _feature_readiness_probe("public-ip-monitor", _feature_readiness_public_ip_probe),
         "canary-autopilot": _feature_readiness_probe("canary-autopilot", _feature_readiness_canary_autopilot_probe),
         "operations-briefing": _feature_readiness_probe("operations-briefing", _feature_readiness_operations_briefing_probe),
+        "operations-calendar": _feature_readiness_probe("operations-calendar", _feature_readiness_operations_calendar_probe),
         "backup-encryption": {
             "ready": bool(encryption.get("enabled") and encryption.get("configured")),
             "state": "ready" if encryption.get("configured") else "recipient-missing",
@@ -1755,6 +1780,10 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ADMIN_BACKUP_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Enables browser full-backup creation, hardened imports, and quarantine deletion."},
     "DUNE_BACKUP_VERIFY_RETRY_SECONDS": {"group": "Backups", "secret": False, "restart": True, "why": "Delay between bounded verification retries against one newly created full-backup snapshot."},
     "DUNE_OPERATION_LOCK_WAIT_SECONDS": {"group": "Backups", "secret": False, "restart": False, "why": "Maximum host-side wait for the shared backup/assured-deployment operation lock."},
+    "DUNE_OPERATIONS_CALENDAR_HORIZON_DAYS": {"group": "Operations", "secret": False, "restart": True, "why": "Bounded future horizon used by the unified operations calendar."},
+    "DUNE_OPERATIONS_CALENDAR_BACKUP_WINDOW_SECONDS": {"group": "Operations", "secret": False, "restart": True, "why": "Reserved duration used when detecting automatic-backup schedule collisions."},
+    "DUNE_OPERATIONS_CALENDAR_RESTART_WINDOW_SECONDS": {"group": "Operations", "secret": False, "restart": True, "why": "Reserved duration used for executing-maintenance collision and SLO-coverage analysis."},
+    "DUNE_ADMIN_RESTART_OPERATION_RETRY_SECONDS": {"group": "Operations", "secret": False, "restart": True, "why": "Delay before a due disruptive maintenance job retries after another backup or assured deployment owns the operation lock."},
     "DUNE_ADMIN_BACKUP_RESTORE_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Enables disruptive browser restore execution; dry-run remains available."},
     "DUNE_RESTORE_DRILL_ENABLED": {"group": "Restore Drills", "secret": False, "restart": True, "why": "Enables isolated recovery-proof status and scheduled restore rehearsals."},
     "DUNE_ADMIN_RESTORE_DRILL_EXECUTION_ENABLED": {"group": "Restore Drills", "secret": False, "restart": True, "why": "Allows an infrastructure administrator to queue the isolated restore rehearsal from the dashboard."},
@@ -2134,6 +2163,8 @@ OPERATIONS_BRIEFING_INVALIDATING_ACTIONS = {
     "desired-state-drift-opened", "desired-state-drift-resolved",
     "backup-restore-drill-finished", "rabbitmq-restore-drill-finished",
     "scheduled-backup-finished", "backup-schedule",
+    "restart-schedule", "restart-cancel", "restart-operation-deferred", "restart-execution",
+    "event-create", "event-cancel", "event-run", "operational-slo",
     "canary-autopilot-run", "canary-autopilot-poll",
     "public-ip-repair-canary", "incident-readiness-certification",
 }
@@ -2362,7 +2393,10 @@ def cancel_announcement(job_id=None):
 
 
 def restart_default_state():
-    return {"jobs": [], "lastExecution": None, "command": RESTART_COMMAND, "targets": RESTART_TARGETS}
+    return {
+        "jobs": [], "lastExecution": None, "lastDeferral": None,
+        "command": RESTART_COMMAND, "targets": RESTART_TARGETS,
+    }
 
 
 def read_restart_state():
@@ -2376,6 +2410,7 @@ def read_restart_state():
         return restart_default_state()
     state.setdefault("jobs", [])
     state.setdefault("lastExecution", None)
+    state.setdefault("lastDeferral", None)
     state["command"] = RESTART_COMMAND
     state["targets"] = RESTART_TARGETS
     return state
@@ -2471,6 +2506,21 @@ def schedule_restart(body):
         run_at = now + ANNOUNCEMENT_DELAYS[delay_key]
     if announce and message and run_at <= now:
         run_at = now + 1
+    calendar_admission = operations_calendar_restart_admission(run_at, target) if execute else {
+        "conflicts": [], "criticalConflicts": [], "coverageFindings": [],
+    }
+    calendar_conflicts = calendar_admission["conflicts"]
+    blocking_conflicts = calendar_admission["criticalConflicts"]
+    conflict_override = str(body.get("allowCalendarConflict", body.get("allow_calendar_conflict", "false"))).lower() in ("1", "true", "yes", "on")
+    if blocking_conflicts and conflict_override:
+        if str(body.get("calendarConflictConfirm", body.get("calendar_conflict_confirm", ""))) != CONFIRM_CALENDAR_CONFLICT_OVERRIDE:
+            raise ValueError(f"calendar conflict override requires exact confirmation: {CONFIRM_CALENDAR_CONFLICT_OVERRIDE}")
+    elif blocking_conflicts:
+        summary = "; ".join(str(row.get("reason") or "calendar conflict") for row in blocking_conflicts[:3])
+        raise ValueError(
+            f"executing maintenance conflicts with the operations calendar: {summary}; "
+            f"reschedule or use the explicit {CONFIRM_CALENDAR_CONFLICT_OVERRIDE} override"
+        )
     job = {
         "id": secrets.token_urlsafe(12),
         "target": target,
@@ -2491,10 +2541,24 @@ def schedule_restart(body):
         "principalId": str(body.get("principal_id", body.get("principalId", "system")) or "system")[:128],
         "status": "scheduled",
         "lastError": None,
+        "calendarConflicts": calendar_conflicts,
+        "calendarCoverageFindings": calendar_admission["coverageFindings"],
+        "calendarConflictOverride": bool(blocking_conflicts and conflict_override),
     }
     with RESTART_LOCK:
         state = read_restart_state()
-        for existing in active_restart_jobs(state):
+        in_flight = [
+            existing for existing in state.get("jobs", [])
+            if existing.get("status") in ("executing", "awaiting_reboot")
+        ]
+        if in_flight:
+            raise RuntimeError(
+                f"cannot replace maintenance job {in_flight[0].get('id')}: "
+                f"state is {in_flight[0].get('status')}"
+            )
+        for existing in state.get("jobs", []):
+            if existing.get("status") != "scheduled":
+                continue
             existing["status"] = "superseded"
         state.setdefault("jobs", []).append(job)
         write_restart_state(state)
@@ -2525,13 +2589,24 @@ def cancel_restart(job_id=None):
     with RESTART_LOCK:
         state = read_restart_state()
         changed = 0
-        for job in active_restart_jobs(state):
+        protected = []
+        for job in state.get("jobs", []):
             if job_id and job.get("id") != job_id:
+                continue
+            if job.get("status") in ("executing", "awaiting_reboot"):
+                protected.append({"id": job.get("id"), "status": job.get("status")})
+                continue
+            if job.get("status") != "scheduled":
                 continue
             job["status"] = "cancelled"
             job["cancelledAt"] = time.time()
             cancelled_ids.append(job.get("id"))
             changed += 1
+        if job_id and protected:
+            raise RuntimeError(
+                f"cannot cancel maintenance job {protected[0]['id']}: "
+                f"state is {protected[0]['status']}"
+            )
         write_restart_state(state)
     cancelled_announcements = 0
     if cancelled_ids:
@@ -2544,7 +2619,11 @@ def cancel_restart(job_id=None):
                 job["cancelledAt"] = time.time()
                 cancelled_announcements += 1
             write_announcement_state(announcement_state)
-    return {"ok": True, "cancelled": changed, "cancelledAnnouncements": cancelled_announcements}
+    return {
+        "ok": True, "cancelled": changed,
+        "cancelledAnnouncements": cancelled_announcements,
+        "protected": protected,
+    }
 
 
 def run_restart_command(command, job, phase):
@@ -2767,7 +2846,7 @@ def restart_update_preflight(job):
     }
 
 
-def execute_restart(job):
+def _execute_restart_locked(job):
     if not job.get("execute"):
         return {"ok": True, "dryRun": True, "output": f"scheduled {job.get('action', 'restart')} reached run time; execute=false so no command was run"}
     command = pathlib.Path(RESTART_COMMAND)
@@ -2923,6 +3002,48 @@ def execute_restart(job):
     return result
 
 
+def execute_restart(job):
+    """Run disruptive maintenance only while owning the shared operation lock."""
+    if not job.get("execute"):
+        return _execute_restart_locked(job)
+    try:
+        with backup_operation_lock():
+            return _execute_restart_locked(job)
+    except BackupOperationBusy as exc:
+        return {
+            "ok": False, "deferred": True, "operationDeferred": True,
+            "action": job.get("action", "restart"), "error": str(exc),
+            "output": str(exc), "retrySeconds": RESTART_OPERATION_RETRY_SECONDS,
+            "serviceRecovered": False,
+        }
+
+
+def defer_restart_operation(job_id, result, *, now=None):
+    """Persist a lock-contention retry without recording a false execution failure."""
+    deferred_at = time.time() if now is None else float(now)
+    retry_seconds = max(30, min(int(result.get("retrySeconds") or RESTART_OPERATION_RETRY_SECONDS), 3600))
+    retry_at = deferred_at + retry_seconds
+    updated = None
+    with RESTART_LOCK:
+        restart_state = read_restart_state()
+        for job in restart_state.get("jobs", []):
+            if job.get("id") != job_id or job.get("status") != "executing":
+                continue
+            job["status"] = "scheduled"
+            job["runAt"] = retry_at
+            job["runAtIso"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(retry_at))
+            job["operationDeferrals"] = int(job.get("operationDeferrals") or 0) + 1
+            job["lastDeferredAt"] = deferred_at
+            job["lastError"] = None
+            updated = dict(job)
+        restart_state["lastDeferral"] = {
+            "deferredAt": deferred_at, "retryAt": retry_at,
+            "retrySeconds": retry_seconds, "result": result,
+        }
+        write_restart_state(restart_state)
+    return {"job": updated, "retryAt": retry_at, "retrySeconds": retry_seconds}
+
+
 def dashboard_announcement_message(message):
     message = str(message or "").strip()
     if message.startswith("!!! ") and message.endswith(" !!!"):
@@ -3049,6 +3170,13 @@ def announcement_worker():
                     "serviceRecovered": False,
                 }
             completed_at = time.time()
+            if result.get("operationDeferred"):
+                deferral = defer_restart_operation(due.get("id"), result, now=completed_at)
+                audit_event(
+                    "restart-operation-deferred", ok=True, job_id=due.get("id"), target=due.get("target"),
+                    retry_at=deferral["retryAt"], retry_seconds=deferral["retrySeconds"], reason=result.get("error"),
+                )
+                continue
             receipt_summary = None
             try:
                 recorded = maintenance_outcome_store().record(due, result, started_at, completed_at)
@@ -5284,6 +5412,20 @@ def operations_briefing_sources():
             f"next={status.get('nextRunIso') or 'none'}",
         )
 
+    def operations_calendar_summary():
+        status = operations_calendar_public_status(); summary = status.get("summary") or {}
+        critical = int(summary.get("criticalConflicts") or 0)
+        warnings = int(summary.get("warningConflicts") or 0) + int(summary.get("uncoveredDisruptive") or 0)
+        errors = int(summary.get("sourceErrors") or 0)
+        healthy = not critical and not warnings and not errors
+        state = f"collector-errors-{errors}" if errors else f"critical-{critical}" if critical else f"review-{warnings}" if warnings else "clear"
+        return (
+            state, healthy,
+            f"horizon={status.get('horizonDays')}d; windows={int(summary.get('windows') or 0)}; "
+            f"critical conflicts={critical}; warnings={warnings}; active={int(summary.get('current') or 0)}; "
+            f"next={(status.get('next') or {}).get('startsAtIso') or 'none'}",
+        )
+
     def restore_summary():
         status = restore_drill_public_status(); latest = status.get("latest") or {}; healthy = bool(status.get("ready") and status.get("ok") and latest)
         return ("proven" if healthy else "proof-required", healthy, f"configured={bool(status.get('ready'))}; latest isolated PostgreSQL restore passed={bool(status.get('ok'))}; receipt={latest.get('id') or 'none'}")
@@ -5322,6 +5464,7 @@ def operations_briefing_sources():
     add("deployment-assurance", "Assured deployment evidence", "warning", "infrastructure:deployment-assurance", deployment_summary)
     add("verified-backup", "Latest assured recovery backup", "critical", "infrastructure:backups", backup_summary)
     add("backup-automation", "Automatic full-backup reliability", "critical", "infrastructure:backups", backup_automation_summary)
+    add("operations-calendar", "Conflict-aware operations calendar", "critical", "ops:operations-calendar", operations_calendar_summary)
     add("postgres-recovery", "PostgreSQL recovery proof", "warning", "infrastructure:restore-drill", restore_summary)
     add("rabbitmq-recovery", "RabbitMQ recovery proof", "warning", "infrastructure:rabbitmq-restore-drill", rabbit_summary)
     add("capacity-intelligence", "Capacity and scaling intelligence", "warning", "infrastructure:capacity", capacity_summary)
@@ -7523,7 +7666,7 @@ def backup_operation_lock():
         try:
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
-            raise BackupOperationBusy("another backup or assured deployment owns the operation lock") from exc
+            raise BackupOperationBusy("another backup, maintenance job, or assured deployment owns the operation lock") from exc
         try:
             yield
         finally:
@@ -7780,6 +7923,206 @@ def ensure_backup_schedule_thread():
         return
     BACKUP_SCHEDULE_THREAD_STARTED = True
     threading.Thread(target=backup_schedule_worker, name="backup-schedule-worker", daemon=True).start()
+
+
+def append_calendar_recurrence(windows, template, start, interval, horizon_end, *, maximum=128, remaining=None):
+    start = float(start)
+    interval = int(interval or 0)
+    index = 0
+    while start < horizon_end and index < maximum and (remaining is None or index < remaining):
+        row = dict(template)
+        row["id"] = f"{template['id']}:{index + 1}"
+        row["startsAt"] = start
+        row["endsAt"] = start + int(template["durationSeconds"])
+        row["recurring"] = bool(interval)
+        windows.append(row)
+        index += 1
+        if interval <= 0:
+            break
+        start += interval
+
+
+def operations_calendar_state_file_error(path):
+    """Return a bounded parse error instead of silently treating corrupt state as empty."""
+    if not path.exists():
+        return None
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return str(exc)[:500]
+    if not isinstance(state, dict):
+        return "state root must be an object"
+    return None
+
+
+def operations_calendar_source_windows(*, now=None, horizon_days=None, exclude_sources=None):
+    now = time.time() if now is None else float(now)
+    horizon_days = OPERATIONS_CALENDAR_HORIZON_DAYS if horizon_days is None else max(1, min(int(horizon_days), 31))
+    horizon_end = now + horizon_days * 86400
+    exclude_sources = set(exclude_sources or ())
+    windows = []
+    source_errors = []
+
+    if "backup-schedule" not in exclude_sources:
+        state_error = operations_calendar_state_file_error(BACKUP_SCHEDULE_FILE)
+        if state_error:
+            source_errors.append({"source": "backup-schedule", "error": state_error})
+        else:
+            try:
+                schedule = read_backup_schedule()
+                if schedule.get("enabled") and schedule.get("nextRun"):
+                    append_calendar_recurrence(
+                        windows,
+                        {
+                            "id": "backup-schedule", "source": "backup-schedule",
+                            "title": "Automatic full backup", "impact": "recovery",
+                            "durationSeconds": OPERATIONS_CALENDAR_BACKUP_WINDOW_SECONDS,
+                            "target": "all durable state",
+                            "metadata": {"verificationAttempts": int(schedule.get("verificationAttempts") or 3)},
+                        },
+                        max(now, float(schedule["nextRun"])),
+                        int(schedule.get("intervalHours") or 24) * 3600, horizon_end,
+                    )
+            except Exception as exc:
+                source_errors.append({"source": "backup-schedule", "error": str(exc)[:500]})
+
+    if "restart" not in exclude_sources:
+        state_error = operations_calendar_state_file_error(RESTART_STATE_FILE)
+        if state_error:
+            source_errors.append({"source": "restart", "error": state_error})
+        else:
+            try:
+                for job in active_restart_jobs(read_restart_state()):
+                    scheduled_start = float(job.get("runAt") or 0)
+                    if scheduled_start <= 0:
+                        continue
+                    start = max(now, scheduled_start)
+                    execute = bool(job.get("execute"))
+                    duration = OPERATIONS_CALENDAR_RESTART_WINDOW_SECONDS if execute else 300
+                    windows.append({
+                        "id": f"restart:{job.get('id')}", "source": "restart",
+                        "title": f"{job.get('action', 'restart').title()} {job.get('targetLabel') or job.get('target')}",
+                        "impact": "disruptive" if execute else "planning", "startsAt": start,
+                        "endsAt": start + duration, "target": str(job.get("target") or ""),
+                        "metadata": {
+                            "execute": execute, "backup": bool(job.get("backup")),
+                            "updatePolicy": job.get("updatePolicy"), "status": job.get("status"),
+                            "operationDeferrals": int(job.get("operationDeferrals") or 0),
+                        },
+                    })
+            except Exception as exc:
+                source_errors.append({"source": "restart", "error": str(exc)[:500]})
+
+    if "event" not in exclude_sources:
+        state_error = operations_calendar_state_file_error(EVENT_STATE_FILE)
+        if state_error:
+            source_errors.append({"source": "event", "error": state_error})
+        else:
+            try:
+                with EVENT_LOCK:
+                    event_state = read_event_state()
+                for event in event_state.get("events", []):
+                    if event.get("status") != "scheduled" or not event.get("nextRunAt"):
+                        continue
+                    plan_types = {str(row.get("type") or "") for row in event.get("plan", [])}
+                    impact = "preparatory" if "map-prewarm" in plan_types else "communication" if plan_types == {"announcement"} else "planning"
+                    duration = 1800 if impact == "preparatory" else 300
+                    max_runs = int(event.get("maxRuns") or 0)
+                    run_count = int(event.get("runCount") or 0)
+                    remaining = None if max_runs == 0 else max(0, max_runs - run_count)
+                    append_calendar_recurrence(
+                        windows,
+                        {
+                            "id": f"event:{event.get('id')}", "source": "event",
+                            "title": str(event.get("name") or "Scheduled event"), "impact": impact,
+                            "durationSeconds": duration, "target": ", ".join(sorted(plan_types)),
+                            "metadata": {"planTypes": sorted(plan_types), "runCount": run_count, "maxRuns": max_runs},
+                        },
+                        max(now, event_time(event.get("nextRunAt"))),
+                        int(event.get("repeatSeconds") or 0), horizon_end,
+                        remaining=remaining,
+                    )
+            except Exception as exc:
+                source_errors.append({"source": "event", "error": str(exc)[:500]})
+
+    if "slo-maintenance" not in exclude_sources and OPERATIONAL_SLO_ENABLED:
+        try:
+            for row in operational_slo_public_status().get("maintenanceWindows") or []:
+                if row.get("cancelled_at"):
+                    continue
+                windows.append({
+                    "id": f"slo-maintenance:{row.get('id')}", "source": "slo-maintenance",
+                    "title": str(row.get("reason") or "Planned SLO maintenance"), "impact": "exclusion",
+                    "startsAt": row.get("starts_at"), "endsAt": row.get("ends_at"),
+                    "target": "maintenance-sensitive SLOs",
+                    "metadata": {"maintenanceExclusion": True},
+                })
+        except Exception as exc:
+            source_errors.append({"source": "slo-maintenance", "error": str(exc)[:500]})
+    return windows, source_errors
+
+
+def operations_calendar_public_status(*, now=None, horizon_days=None, extra_windows=None, exclude_sources=None):
+    now = time.time() if now is None else float(now)
+    horizon_days = OPERATIONS_CALENDAR_HORIZON_DAYS if horizon_days is None else max(1, min(int(horizon_days), 31))
+    windows, source_errors = operations_calendar_source_windows(
+        now=now, horizon_days=horizon_days, exclude_sources=exclude_sources,
+    )
+    windows.extend(extra_windows or [])
+    status = operations_calendar.analyze(
+        windows, now=now, horizon_seconds=horizon_days * 86400, source_errors=source_errors,
+    )
+    status.update({
+        "horizonDays": horizon_days,
+        "operationLock": str(BACKUP_OPERATION_LOCK_FILE.relative_to(ROOT)) if ROOT in BACKUP_OPERATION_LOCK_FILE.parents else str(BACKUP_OPERATION_LOCK_FILE),
+        "restartOperationRetrySeconds": RESTART_OPERATION_RETRY_SECONDS,
+        "executionContract": {
+            "disruptiveRestartSerialized": True, "automaticBackupSerialized": True,
+            "assuredDeploymentSerialized": True, "calendarMutatesSchedules": False,
+        },
+    })
+    return status
+
+
+def operations_calendar_restart_admission(run_at, target):
+    candidate_id = "restart-candidate"
+    candidate = {
+        "id": candidate_id, "source": "restart-candidate", "title": f"Proposed restart {target}",
+        "impact": "disruptive", "startsAt": float(run_at),
+        "endsAt": float(run_at) + OPERATIONS_CALENDAR_RESTART_WINDOW_SECONDS,
+        "target": str(target), "metadata": {"execute": True},
+    }
+    status = operations_calendar_public_status(extra_windows=[candidate], exclude_sources={"restart"})
+    if status.get("errors"):
+        detail = "; ".join(
+            f"{row.get('source', 'input')}: {row.get('error', 'collector failed')}"
+            for row in status["errors"][:3]
+        )
+        raise RuntimeError(f"operations calendar is incomplete; executing maintenance admission failed closed: {detail}")
+    conflicts = [
+        row for row in status.get("conflicts") or []
+        if candidate_id in {row.get("leftId"), row.get("rightId")}
+    ]
+    coverage = [
+        row for row in status.get("coverageFindings") or []
+        if row.get("windowId") == candidate_id
+    ]
+    return {
+        "conflicts": conflicts,
+        "criticalConflicts": [row for row in conflicts if row.get("severity") == "critical"],
+        "coverageFindings": coverage,
+    }
+
+
+def operations_calendar_restart_conflicts(run_at, target):
+    return operations_calendar_restart_admission(run_at, target)["conflicts"]
+
+
+def operations_calendar_prometheus():
+    try:
+        return operations_calendar.prometheus(operations_calendar_public_status())
+    except Exception:
+        return "dash_operations_calendar_collector_up 0\n"
 
 
 def restore_drill_configuration():
@@ -11281,6 +11624,7 @@ class Handler(BaseHTTPRequestHandler):
                 metrics += feature_readiness_prometheus()
                 metrics += credential_lifecycle_prometheus()
                 metrics += backup_schedule_prometheus()
+                metrics += operations_calendar_prometheus()
                 metrics += rabbitmq_restore_drill_prometheus()
                 if UPDATE_READINESS_ENABLED:
                     try:
@@ -11594,6 +11938,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.require_token()
                 params = urllib.parse.parse_qs(parsed.query)
                 self.json(dict(backup_inventory((params.get("limit") or ["200"])[0]), mutationEnabled=BACKUP_MUTATIONS_ENABLED, restoreEnabled=BACKUP_RESTORE_ENABLED, importMaxBodyBytes=BACKUP_IMPORT_MAX_BODY_BYTES, deleteConfirm=CONFIRM_BACKUP_DELETE, restoreConfirm=CONFIRM_BACKUP_RESTORE, importConfirm=CONFIRM_BACKUP_IMPORT, schedule=backup_schedule_public_state(), archiveEncryption=backup_archive_encryption_status()))
+            elif parsed.path == "/api/ops/calendar":
+                self.require_token()
+                params = urllib.parse.parse_qs(parsed.query)
+                self.json(operations_calendar_public_status(horizon_days=(params.get("horizonDays") or [OPERATIONS_CALENDAR_HORIZON_DAYS])[0]))
             elif parsed.path == "/api/ops/backups/download":
                 self.require_token()
                 params = urllib.parse.parse_qs(parsed.query)
@@ -13302,7 +13650,14 @@ class Handler(BaseHTTPRequestHandler):
                 body = parse_body(self)
                 body["principalId"] = (getattr(self, "auth_principal", None) or {}).get("id", "system")
                 result = schedule_restart(body)
-                self.audit("restart-schedule", job_id=result.get("id"), target=result.get("target"), delay=result.get("delay"), execute=result.get("execute"), update_policy=result.get("updatePolicy"))
+                self.audit(
+                    "restart-schedule", job_id=result.get("id"), target=result.get("target"),
+                    delay=result.get("delay"), execute=result.get("execute"),
+                    update_policy=result.get("updatePolicy"),
+                    calendar_conflicts=len(result.get("calendarConflicts") or []),
+                    calendar_coverage_findings=len(result.get("calendarCoverageFindings") or []),
+                    calendar_conflict_override=bool(result.get("calendarConflictOverride")),
+                )
                 self.json({"ok": True, "job": result})
             elif parsed.path == "/api/ops/restart/cancel":
                 self.require_token()
@@ -20125,6 +20480,33 @@ function operationsBriefingPanel(data={}){
   const verdict=data.currentReady?(actions.length?`<h3>Prioritized next actions</h3>${table(actions)}`:'<div class="notice ok">No critical or warning action is currently required.</div>'):`<div class="notice warn">Authoritative evidence changed. The previous signed receipt is shown for history only; an event-driven refresh is queued${runtime.lastInvalidationReason?` after <code>${esc(runtime.lastInvalidationReason)}</code>`:''}.</div>`;
   return `<div class="panelBand" id="operationsBriefing"><div class="sectionHeader"><div><h2>Operator Briefing</h2><p class="muted">One signed, change-aware answer to what needs attention next. It synthesizes existing evidence and never executes a recommendation.</p></div><div class="toolbar"><span class="pill ${tone}">${esc(state)}</span><span class="pill ${data.currentReady?'ok':'warn'}">${data.currentReady?'current':'refresh pending'}</span><span class="pill">score ${esc(latest.score??'—')}/100</span>${destinations.map(tab=>`<button data-jump="${esc(tab)}">Open ${esc(tab)}</button>`).join('')}</div></div><div class="metricGrid">${metric('Healthy sources',`${summary.healthy||0}/${summary.sources||0}`,tone)}${metric('Critical',summary.critical||0,Number(summary.critical||0)?'dangerText':'ok')}${metric('Attention',summary.attention||0,Number(summary.attention||0)?'warn':'ok')}${metric('Provider follow-ups',summary.informational||0)}${metric('Event refreshes',runtime.eventGenerations||0)}${metric('Event coalescing',`${data.eventDebounceSeconds||0}s / ${data.changeMinimumIntervalSeconds||0}s minimum`)}${metric('Signed age',verification.ageSeconds==null?'—':fmtRuntimeSeconds(verification.ageSeconds))}</div>${data.error?`<div class="notice bad">${esc(data.error)}</div>`:''}${verdict}${changes.length?`<details open><summary>What changed since the previous briefing</summary>${table(changes)}</details>`:''}<details><summary>Evidence and non-execution contract</summary><pre>${esc(JSON.stringify({receiptId:latest.id,generatedAt:latest.generatedAt,receiptSha256:latest.receiptSha256,verification,retained:data.summary?.retained||0,executionContract:data.executionContract,runtime:data.runtime},null,2))}</pre></details></div>`;
 }
+function operationsCalendarPanel(data={}){
+  const summary=data.summary||{}, conflicts=data.conflicts||[], coverage=data.coverageFindings||[], errors=data.errors||[];
+  const byId=Object.fromEntries((data.windows||[]).map(row=>[row.id,row]));
+  const windows=(data.windows||[]).map(row=>({
+    start:new Date(Number(row.startsAt)*1000).toLocaleString(),
+    end:new Date(Number(row.endsAt)*1000).toLocaleString(),
+    impact:row.impact, operation:row.title, target:row.target||'', source:row.source,
+    recurring:row.recurring?'yes':'no'
+  }));
+  const findings=[...conflicts.map(row=>({
+    severity:row.severity, start:new Date(Number(row.startsAt)*1000).toLocaleString(),
+    left:byId[row.leftId]?.title||row.leftId, right:byId[row.rightId]?.title||row.rightId,
+    finding:row.reason, overlap:fmtRuntimeSeconds(row.overlapSeconds)
+  })),...coverage.map(row=>({
+    severity:row.severity, start:new Date(Number(row.startsAt)*1000).toLocaleString(),
+    left:byId[row.windowId]?.title||row.windowId, right:'SLO maintenance exclusion',
+    finding:row.reason, overlap:'—'
+  })),...errors.map(row=>({
+    severity:'critical', start:'—', left:row.source||`input ${row.index??'unknown'}`,
+    right:'collector', finding:row.error||'calendar source failed', overlap:'—'
+  }))];
+  const scheduleFindings=conflicts.length+coverage.length;
+  const tone=errors.length||Number(summary.criticalConflicts||0)?'bad':Number(summary.warningConflicts||0)||Number(summary.uncoveredDisruptive||0)?'warn':'ok';
+  const state=errors.length?'collector failed':Number(summary.criticalConflicts||0)?'conflict':findings.length?'review':'clear';
+  const verdict=errors.length?`<div class="notice bad">One or more calendar authorities failed. The remaining rows are retained, but this is not a complete scheduling view.</div>${table(findings)}`:findings.length?`<div class="notice ${tone}">Schedule findings require operator review before the affected window.</div>${table(findings)}`:'<div class="notice ok">No conflicting or uncovered disruptive windows were found in the current horizon.</div>';
+  return `<div class="panelBand" id="operationsCalendar"><div class="sectionHeader"><div><h2>Conflict-Aware Operations Calendar</h2><p class="muted">One UTC-normalized horizon for automatic backups, executing maintenance, recurring events, prewarming, and SLO exclusions. Executing maintenance is rejected when it overlaps recovery work unless the API caller supplies the exact audited override. At runtime it also waits for the same cross-process operation lock used by backups and assured deployments.</p></div><div class="toolbar"><span class="pill ${tone}">${state}</span><span class="pill">${esc(summary.windows||0)} windows</span><span class="pill">${esc(data.horizonDays||0)} days</span><button id="opsCalendarRefreshBtn">Refresh</button></div></div><div class="metricGrid">${metric('Next operation',data.next?.title||'none',data.next?'':'ok')}${metric('Next start',data.next?.startsAtIso||'—')}${metric('Active now',summary.current||0,Number(summary.current||0)?'warn':'ok')}${metric('Critical conflicts',summary.criticalConflicts||0,Number(summary.criticalConflicts||0)?'dangerText':'ok')}${metric('Warnings',Number(summary.warningConflicts||0)+Number(summary.uncoveredDisruptive||0),scheduleFindings?'warn':'ok')}${metric('Source errors',errors.length,errors.length?'dangerText':'ok')}${metric('Calendar fingerprint',String(data.fingerprint||'').slice(0,12)||'—')}</div>${verdict}<details open><summary>Upcoming operations</summary>${table(windows)}</details><details><summary>Coordination contract</summary><pre>${esc(JSON.stringify({operationLock:data.operationLock,retrySeconds:data.restartOperationRetrySeconds,executionContract:data.executionContract,errors:data.errors,fingerprint:data.fingerprint},null,2))}</pre></details></div>`;
+}
 async function overview(serial=loadSerial){
   const [health, roster, briefing] = await Promise.all([
     api('/api/ops/health', {timeoutMs: HEALTH_REQUEST_TIMEOUT_MS}),
@@ -20153,16 +20535,17 @@ async function overview(serial=loadSerial){
   startHealthRefresh();
 }
 async function ops(serial=loadSerial){
-  const [health, opt, announcement, restart, maintenanceHistory, maintenancePlanner] = await Promise.all([
+  const [health, opt, announcement, restart, maintenanceHistory, maintenancePlanner, operationsCalendar] = await Promise.all([
     api('/api/ops/health', {timeoutMs: HEALTH_REQUEST_TIMEOUT_MS}),
     api('/api/ops/optimization'),
     api('/api/ops/announcement'),
     api('/api/ops/restart'),
     api('/api/ops/maintenance-history?limit=100'),
-    api('/api/ops/maintenance-planner')
+    api('/api/ops/maintenance-planner'),
+    api('/api/ops/calendar?horizonDays=14')
   ]);
   if (serial !== loadSerial) return;
-  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Operations</h2><div class="toolbar"><button data-jump="overview">Overview</button><button data-jump="characters">Players</button><button data-jump="runbook">Runbook</button><button data-jump="settings">Settings</button></div></div><div id="opsRealtimeMetrics" class="metricGrid" aria-live="polite">${opsRealtimeMetricsHtml(health)}</div>${maintenancePlannerPanel(maintenancePlanner)}<div class="twoCol">${restartPanel(restart)}${announcementPanel(announcement)}</div>${maintenanceHistoryPanel(maintenanceHistory)}<div class="twoCol"><div id="opsHealthViz">${healthViz(health)}</div><div class="panelBand"><h2>Health Verdict</h2><div id="opsHealthVerdicts">${checks(health.verdicts)}</div></div></div><details class="panelBand" open><summary>Map Online/Offline</summary><div id="opsMapStatus">${mapTiles(health.mapStatus)}${mapStatusTable(health.mapStatus)}</div></details><details class="panelBand"><summary>Host Resources</summary><div id="resources"><div class="muted">Loading resource stats...</div></div></details><details class="panelBand"><summary>Local and Upstream Network</summary><div data-network-panel><div class="muted">Loading network probes...</div></div></details><details class="panelBand"><summary>Raw Farm State</summary><div id="opsRawFarmState">${table(health.farmState)}</div></details><details class="panelBand"><summary>Partitions</summary><div id="opsPartitions">${table(health.partitions)}</div></details><details class="panelBand"><summary>Optimization Signals</summary>${signalList(opt)}</details></div>`;
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Operations</h2><div class="toolbar"><button data-jump="overview">Overview</button><button data-jump="characters">Players</button><button data-jump="runbook">Runbook</button><button data-jump="settings">Settings</button></div></div><div id="opsRealtimeMetrics" class="metricGrid" aria-live="polite">${opsRealtimeMetricsHtml(health)}</div>${operationsCalendarPanel(operationsCalendar)}${maintenancePlannerPanel(maintenancePlanner)}<div class="twoCol">${restartPanel(restart)}${announcementPanel(announcement)}</div>${maintenanceHistoryPanel(maintenanceHistory)}<div class="twoCol"><div id="opsHealthViz">${healthViz(health)}</div><div class="panelBand"><h2>Health Verdict</h2><div id="opsHealthVerdicts">${checks(health.verdicts)}</div></div></div><details class="panelBand" open><summary>Map Online/Offline</summary><div id="opsMapStatus">${mapTiles(health.mapStatus)}${mapStatusTable(health.mapStatus)}</div></details><details class="panelBand"><summary>Host Resources</summary><div id="resources"><div class="muted">Loading resource stats...</div></div></details><details class="panelBand"><summary>Local and Upstream Network</summary><div data-network-panel><div class="muted">Loading network probes...</div></div></details><details class="panelBand"><summary>Raw Farm State</summary><div id="opsRawFarmState">${table(health.farmState)}</div></details><details class="panelBand"><summary>Partitions</summary><div id="opsPartitions">${table(health.partitions)}</div></details><details class="panelBand"><summary>Optimization Signals</summary>${signalList(opt)}</details></div>`;
   wireResourceControls(view);
   bindResourceFilters(view);
   refreshResources().catch(e => {
@@ -20176,6 +20559,7 @@ async function ops(serial=loadSerial){
   document.getElementById('cancelAnnouncementBtn').addEventListener('click', e => runAction(e.currentTarget, 'Canceling...', cancelAnnouncement));
   document.getElementById('scheduleRestartBtn').addEventListener('click', e => runAction(e.currentTarget, 'Scheduling...', scheduleRestart));
   document.getElementById('cancelRestartBtn').addEventListener('click', e => runAction(e.currentTarget, 'Canceling...', cancelRestart));
+  document.getElementById('opsCalendarRefreshBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Refreshing...', () => ops(loadSerial)));
   document.querySelectorAll('[data-maintenance-slot]').forEach(button => button.addEventListener('click', () => {
     const date=new Date(button.dataset.maintenanceSlot);
     const pad=value=>String(value).padStart(2,'0');

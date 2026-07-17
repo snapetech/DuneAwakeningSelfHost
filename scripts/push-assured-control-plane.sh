@@ -60,7 +60,7 @@ PY
 for support in \
   admin/admin_panel.py admin/audit_ledger.py admin/change_approvals.py admin/change_intelligence.py \
   admin/community_canary.py admin/community_rewards.py admin/credential_lifecycle.py admin/deployment_assurance.py admin/desired_state.py \
-  admin/creator_canary.py admin/public_ip_canary.py admin/canary_autopilot.py admin/operations_briefing.py admin/addon_admin.py admin/base_creator.py admin/base_retirement.py admin/cosmetics_admin.py admin/gameplay_presets.py \
+  admin/creator_canary.py admin/public_ip_canary.py admin/canary_autopilot.py admin/operations_briefing.py admin/operations_calendar.py admin/addon_admin.py admin/base_creator.py admin/base_retirement.py admin/cosmetics_admin.py admin/gameplay_presets.py \
   admin/feature_readiness_history.py admin/maintenance_planner.py admin/maintenance_outcomes.py admin/rabbitmq_restore_drill.py admin/restore_drill.py \
   admin/update_readiness.py scripts/deployment-assurance.py \
   scripts/assured-control-plane-deploy.sh scripts/backup-state.sh scripts/verify-backup.sh scripts/public-ip-monitor.sh scripts/generate-rabbitmq-cert.sh \

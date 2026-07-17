@@ -237,11 +237,19 @@ label-free metrics, and alerts expose every decision without claiming scheduler
 metadata as proof. See [`docs/canary-autopilot.md`](docs/canary-autopilot.md).
 
 The same evidence now has a single operator-facing synthesis. The Overview
-briefing scores 15 authoritative sources, separates critical/warning/provider
+briefing scores 16 authoritative sources, separates critical/warning/provider
 follow-ups, links each action to its existing control surface, and retains only
 meaningful categorical changes in signed private receipts. It cannot execute a
 recommendation or touch maps, players, providers, or clients. See
 [`docs/operations-briefing.md`](docs/operations-briefing.md).
+
+DASH also has one conflict-aware operational horizon instead of isolated
+scheduler screens. Automatic backups, executing maintenance, recurring events,
+map prewarming, and SLO exclusions are normalized into deterministic windows;
+critical overlaps block maintenance admission, uncovered disruptive work is
+flagged, and the complete disruptive runtime defers behind the same
+cross-process lock as backups and assured deployments. See
+[`docs/operations-calendar.md`](docs/operations-calendar.md).
 
 Game-build upgrades now have their own candidate-bound safety gate. DASH binds
 the exact Steam build and Funcom image tag to a verified backup, isolated
@@ -588,7 +596,14 @@ cryptographically verified private receipt. Operations shows recent outcomes,
 backup integrity, effective update policy, timings, and service recovery; see
 [`docs/maintenance-intelligence.md`](docs/maintenance-intelligence.md).
 
-Detailed runbooks: [`docs/operations.md`](docs/operations.md), [`docs/maintenance-updates.md`](docs/maintenance-updates.md), and [`docs/troubleshooting.md`](docs/troubleshooting.md).
+Operations also combines automatic backups, executing maintenance, recurring
+events/map prewarming, and SLO maintenance exclusions into a deterministic
+conflict-aware calendar. Critical collisions are rejected before persistence,
+uncovered disruptive windows remain visible, and the shared operation lock
+defers a due job before player disconnect or service control. See
+[`docs/operations-calendar.md`](docs/operations-calendar.md).
+
+Detailed runbooks: [`docs/operations.md`](docs/operations.md), [`docs/operations-calendar.md`](docs/operations-calendar.md), [`docs/maintenance-updates.md`](docs/maintenance-updates.md), and [`docs/troubleshooting.md`](docs/troubleshooting.md).
 
 ## Backups, Replication, And Restore
 
@@ -1026,6 +1041,9 @@ make test-public-ip-canary
 make install-public-ip-monitor ENV_FILE=.env
 ```
 
+The explicit `.env` argument wins over an inherited `ENV_FILE`; omit it only
+when the environment variable is intentionally authoritative.
+
 The monitor refuses address changes unless
 `DUNE_PUBLIC_IP_MONITOR_ALLOWED_HOST` exactly matches `hostname -s`.
 Run the disposable signed proof before arming it; the proof exercises the real
@@ -1130,6 +1148,7 @@ Start here:
 - [`docs/public-ip-repair-canary.md`](docs/public-ip-repair-canary.md): input-bound disposable advertised-address/TLS/restart/timer proof, live-state isolation, signed receipts, readiness arming, metrics, and recovery.
 - [`docs/canary-autopilot.md`](docs/canary-autopilot.md): automatic pre-expiry/input-drift refresh for all isolated signed proofs, serialized execution, retry/backoff, dashboard/API, readiness, backups, metrics, alerts, and recovery.
 - [`docs/operations-briefing.md`](docs/operations-briefing.md): signed change-aware synthesis of operational evidence into a prioritized Overview queue, with scoring, freshness, backups, metrics, alerts, and a strict non-execution contract.
+- [`docs/operations-calendar.md`](docs/operations-calendar.md): unified scheduler horizon, deterministic conflict/SLO-coverage findings, admission guard, shared-lock maintenance deferral, metrics, alerts, and live validation.
 - [`docs/addons.md`](docs/addons.md): SHA-pinned community UI addon lifecycle, permission approval, quarantine, and sandbox contract.
 - [`compose.admin-restore.yaml`](compose.admin-restore.yaml): temporary read-write data overlay for reviewed browser filesystem restores.
 - [`docs/red-blink-feature-parity-audit.md`](docs/red-blink-feature-parity-audit.md): pinned source comparison, completed operator-feature parity matrix, provenance, and validation limits.

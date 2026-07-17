@@ -360,6 +360,22 @@
       "remediation": {"surface": "infrastructure", "summary": "Inspect the named proof reason and retained scheduler error; repair its isolated canary, then let the bounded retry or force-all action refresh it."}
     },
     {
+      "id": "operations-calendar",
+      "title": "Conflict-aware operations calendar",
+      "group": "Operations",
+      "description": "Backups, executing maintenance, recurring events, prewarming, and SLO exclusions share one analyzed horizon while disruptive execution is serialized with backups and assured deployments.",
+      "documentation": "docs/operations-calendar.md",
+      "primaryGate": "",
+      "gates": [],
+      "credentials": [],
+      "files": [{"path": "admin/operations_calendar.py", "minimumBytes": 1000}],
+      "services": ["admin-panel"],
+      "probe": "operations-calendar",
+      "dependencies": [],
+      "canary": "runtime-proven",
+      "remediation": {"surface": "ops", "summary": "Resolve the named overlap or SLO-coverage finding; if a live lock owner exists, leave the maintenance job queued for its bounded retry."}
+    },
+    {
       "id": "operations-briefing",
       "title": "Signed operator briefing",
       "group": "Operations",

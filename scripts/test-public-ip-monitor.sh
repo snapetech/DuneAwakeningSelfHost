@@ -14,6 +14,7 @@ printf '%s\n' \
   'DUNE_PUBLIC_IP_MONITOR_INTERVAL_MINUTES=5' \
   'DUNE_PUBLIC_IP_MONITOR_DRY_RUN=true' > "$env_file"
 
+ENV_FILE="$tmp/ignored.env" \
 DUNE_PUBLIC_IP_MONITOR_STATE_DIR="$tmp/state" \
 DUNE_PUBLIC_IP_MONITOR_DETECTED_IP=198.51.100.20 \
   "$repo_root/scripts/public-ip-monitor.sh" "$env_file" check > "$tmp/output"

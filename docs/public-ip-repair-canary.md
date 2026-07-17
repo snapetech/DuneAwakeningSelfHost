@@ -156,6 +156,11 @@ systemctl is-enabled dune-public-ip-monitor.timer
 systemctl is-active dune-public-ip-monitor.timer
 ```
 
+An explicit environment-file argument takes precedence over an inherited
+`ENV_FILE`; omitting the argument falls back to `ENV_FILE`, then repository
+`.env`. This prevents a caller or validation harness from silently checking a
+different configuration than the path shown on its command line.
+
 Proceed only when the short hostname is the configured
 `DUNE_PUBLIC_IP_MONITOR_ALLOWED_HOST` and the check reports the current-address
 no-op. Set `DUNE_PUBLIC_IP_MONITOR_DRY_RUN=false` through the repository's

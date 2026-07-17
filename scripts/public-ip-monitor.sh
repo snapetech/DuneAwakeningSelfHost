@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-env_file="${ENV_FILE:-${1:-$repo_root/.env}}"
+env_file="${1:-${ENV_FILE:-$repo_root/.env}}"
 command="${2:-check}"
 if [[ "$env_file" != /* ]]; then env_file="$repo_root/$env_file"; fi
 state_dir="${DUNE_PUBLIC_IP_MONITOR_STATE_DIR:-$repo_root/backups/admin-panel}"

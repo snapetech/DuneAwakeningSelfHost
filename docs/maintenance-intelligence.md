@@ -19,6 +19,7 @@ An executed restart follows this state machine:
 
 ```text
 candidate preflight
+  [while holding the shared operation lock]
   -> clean player disconnect
   -> stop
   -> create backup
@@ -29,6 +30,15 @@ candidate preflight
   -> bounded recovery and second online proof when needed
   -> signed outcome
 ```
+
+The lock is acquired before candidate preflight and held through the final
+online proof. It is the same `backups/admin-panel/operation.lock` used by
+automatic/manual backups, standalone host backups, and assured deployments. A
+busy lock returns the job to `scheduled` for a bounded retry before player
+disconnect or service control. Lock contention is audited as
+`restart-operation-deferred` and does not create a maintenance-outcome receipt,
+because no disruptive execution began. Calendar admission and runtime locking
+are complementary; see [`operations-calendar.md`](operations-calendar.md).
 
 Backup verification is an admission gate, not a warning. A candidate can be
 applied only after the new stopped-world backup passes the same mixed-data
@@ -108,6 +118,12 @@ Scheduling remains an `operations.write` action:
   "update_policy": "certified"
 }
 ```
+
+Before persisting an executing job, the conflict-aware calendar rejects
+critical overlaps with backup/recovery or other disruptive windows. Exceptional
+API callers must provide both `allowCalendarConflict=true` and the exact
+`OVERRIDE SCHEDULE CONFLICT` confirmation. Accepted overrides remain in the job
+and audit record and never bypass the shared operation lock or execution gates.
 
 Admin injects the authenticated principal server-side. A caller cannot forge
 receipt attribution through the request body. System plans use `system`.

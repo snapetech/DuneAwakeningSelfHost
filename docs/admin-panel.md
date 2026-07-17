@@ -1568,9 +1568,25 @@ creation/coverage/verification failures retain bounded diagnostics and use the
 configured short retry. Only successful schedule-owned paths are eligible for
 its retention policy. See [`automatic-backups.md`](automatic-backups.md).
 
+Operations combines that schedule with active restart jobs, recurring Event
+Automation work, map prewarming, and Operational SLO maintenance exclusions in
+a bounded conflict-aware calendar. Executing restart admission fails closed on
+critical overlaps unless an API caller provides the exact exceptional override;
+the browser never supplies it. The override cannot bypass runtime serialization.
+Queued jobs can be superseded or cancelled, but an `executing` or
+`awaiting_reboot` job cannot be replaced while its worker owns the outcome.
+See [`operations-calendar.md`](operations-calendar.md) for the conflict table,
+API, metrics, alerts, configuration, and operator runbook.
+
 The Ops tab can also schedule restart or shutdown jobs for restart-safe components, the service layer, all game maps, or key individual maps such as Survival, Overmap, Arrakeen, Harko Village, and Deep Desert. It does not stop or restart Postgres or RabbitMQ by default because replacing those services disconnects all running map servers. It also does not include `admin-panel` in the admin-triggered `all` target, because stopping the container running the scheduler would interrupt the stop-backup-update-start workflow.
 
 Scheduled maintenance defaults to dry-run mode. In dry-run mode, the job matures, records that it would have run, and does not touch containers. Executed restart jobs now use a stop-backup-update-start sequence: stop the selected game services, take the maintenance backup while they are down, check the local Steam package for a newer Funcom image tag, then start/recreate the selected services. Executed shutdown jobs stop the selected services, take the maintenance backup, run the same Steam-package update check, and leave them stopped. If the stop step fails, no backup, update check, or start is attempted. If the backup step fails during a restart, the failure is recorded as a warning and the selected services are still started so a backup issue does not strand the farm offline.
+
+An executing job owns `backups/admin-panel/operation.lock` across preflight,
+player disconnect, stop, backup, update, start, recovery, and online proof. If a
+backup or assured deployment already owns the lock, the job is returned to
+`scheduled` for a bounded retry without disconnecting a player, invoking a
+service command, or creating a failed maintenance receipt.
 
 Maintenance announcements automatically append the live time remaining, or fill `{remaining}` / `{time_remaining}` if either token appears in the configured message. At the zero mark, the announcement worker sends a final "starting now" notice before execution begins. Announcement jobs also support an optional cadence list, using `remaining_seconds` and `interval_seconds` entries, so unattended maintenance can announce every 5 minutes during the 30-minute warning window and every 1 minute during the final 5 minutes.
 
