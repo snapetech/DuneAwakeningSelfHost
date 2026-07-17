@@ -778,7 +778,6 @@ def _admin_json_request(path, payload):
         connection.request("POST", path, body=body, headers={
             "Content-Type": "application/json",
             "X-Admin-Token": token,
-            "Host": "127.0.0.1",
         })
         response = connection.getresponse()
         raw = response.read(1024 * 1024 + 1)
