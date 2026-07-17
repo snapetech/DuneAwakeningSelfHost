@@ -57,6 +57,7 @@ import community_canary
 import creator_canary
 import public_ip_canary
 import canary_autopilot
+import operations_briefing
 import moderation
 import base_creator
 import base_retirement
@@ -494,6 +495,12 @@ RESPONSE_DRILLS_ENABLED = os.environ.get("DUNE_RESPONSE_DRILLS_ENABLED", "true")
 CHANGE_INTELLIGENCE_STORE = None
 CHANGE_INTELLIGENCE_STORE_LOCK = threading.Lock()
 CHANGE_INTELLIGENCE_RUNTIME = {"ready": False, "imported": 0, "duplicates": 0, "importErrors": 0, "reconciled": 0, "lastEventAt": None, "lastEventId": None, "lastError": ""}
+OPERATIONS_BRIEFING_ENABLED = os.environ.get("DUNE_OPERATIONS_BRIEFING_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+OPERATIONS_BRIEFING_POLL_SECONDS = max(60, min(int(os.environ.get("DUNE_OPERATIONS_BRIEFING_POLL_SECONDS", "300")), 86400))
+OPERATIONS_BRIEFING_REFRESH_HOURS = max(1, min(int(os.environ.get("DUNE_OPERATIONS_BRIEFING_REFRESH_HOURS", "24")), 720))
+OPERATIONS_BRIEFING_MAX_AGE_HOURS = max(1, min(int(os.environ.get("DUNE_OPERATIONS_BRIEFING_MAX_AGE_HOURS", "36")), 720))
+OPERATIONS_BRIEFING_MIN_INTERVAL_SECONDS = max(60, min(int(os.environ.get("DUNE_OPERATIONS_BRIEFING_MIN_INTERVAL_SECONDS", "300")), 86400))
+OPERATIONS_BRIEFING_RETENTION = max(10, min(int(os.environ.get("DUNE_OPERATIONS_BRIEFING_RETENTION", "100")), 5000))
 DEPLOYMENT_ASSURANCE_ENABLED = os.environ.get("DUNE_DEPLOYMENT_ASSURANCE_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 DEPLOYMENT_ASSURANCE_ROOT = pathlib.Path(os.environ.get("DUNE_DEPLOYMENT_ASSURANCE_STATE_DIR", str(BACKUPS_ROOT / "deployment-assurance")))
 DEPLOYMENT_ASSURANCE_WORKSPACE = pathlib.Path(os.environ.get("DUNE_DEPLOYMENT_ASSURANCE_WORKSPACE", str(ROOT)))
@@ -543,6 +550,11 @@ CANARY_AUTOPILOT_STORE_LOCK = threading.Lock()
 CANARY_AUTOPILOT_RUN_LOCK = threading.Lock()
 CANARY_AUTOPILOT_WORKER_STARTED = False
 CANARY_AUTOPILOT_RUNTIME = {"running": False, "lastPollAt": None, "lastError": None, "lastResult": None}
+OPERATIONS_BRIEFING_STORE = None
+OPERATIONS_BRIEFING_STORE_LOCK = threading.Lock()
+OPERATIONS_BRIEFING_RUN_LOCK = threading.Lock()
+OPERATIONS_BRIEFING_WORKER_STARTED = False
+OPERATIONS_BRIEFING_RUNTIME = {"running": False, "lastPollAt": None, "lastGeneratedAt": None, "lastError": None, "lastResult": None, "currentFingerprint": None}
 MODERATION_STORE = moderation.Store(MODERATION_DATABASE, owner_uid=os.environ.get("DUNE_HOST_UID"), owner_gid=os.environ.get("DUNE_HOST_GID"))
 MODERATION_STORE_INITIALIZED = False
 MODERATION_STORE_LOCK = threading.Lock()
@@ -855,6 +867,31 @@ def _feature_readiness_canary_autopilot_probe():
     return {"ready": False, "state": "worker-error" if not status.get("ok") else "proof-refresh-pending", "detail": "; ".join(gaps)[:500]}
 
 
+def _feature_readiness_operations_briefing_probe():
+    status = operations_briefing_public_status(refresh_sources=False, limit=1)
+    latest = status.get("latest") or {}
+    runtime = status.get("runtime") or {}
+    starting = bool(status.get("enabled") and status.get("running") and not latest and not runtime.get("lastError"))
+    ready = bool(starting or (status.get("ok") and status.get("currentReady") and status.get("running") and not runtime.get("lastError")))
+    if ready:
+        detail = "briefing collector is starting" if starting else f"signed operator briefing current; receipt={latest.get('id')}"
+        return {"ready": True, "state": "collector-starting" if starting else "ready", "detail": detail}
+    gaps = []
+    if not status.get("enabled"):
+        gaps.append("briefing disabled")
+    if not status.get("running"):
+        gaps.append("worker not started")
+    if latest and not status.get("ok"):
+        gaps.append(str((latest.get("verification") or {}).get("error") or "evidence verification failed"))
+    elif latest and not status.get("currentReady"):
+        gaps.append("latest signed briefing is stale or its source state changed")
+    elif not latest:
+        gaps.append("no signed briefing exists")
+    if runtime.get("lastError"):
+        gaps.append(str(runtime["lastError"]))
+    return {"ready": False, "state": "collector-error", "detail": "; ".join(gaps)[:500]}
+
+
 def _feature_readiness_autoscaler_probe():
     status = autoscaler_public_state(include_inventory=False)
     ready = bool(status.get("enabled") and not status.get("lastError"))
@@ -1030,6 +1067,7 @@ def feature_readiness_public_status(force=False):
         },
         "public-ip-monitor": _feature_readiness_probe("public-ip-monitor", _feature_readiness_public_ip_probe),
         "canary-autopilot": _feature_readiness_probe("canary-autopilot", _feature_readiness_canary_autopilot_probe),
+        "operations-briefing": _feature_readiness_probe("operations-briefing", _feature_readiness_operations_briefing_probe),
         "backup-encryption": {
             "ready": bool(encryption.get("enabled") and encryption.get("configured")),
             "state": "ready" if encryption.get("configured") else "recipient-missing",
@@ -1577,6 +1615,10 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_PUBLIC_IP_CANARY_RETENTION": {"group": "Network", "secret": False, "restart": True, "why": "Number of private signed public-IP repair receipts retained in operator evidence."},
     "DUNE_PUBLIC_IP_CANARY_HELPER_IMAGE": {"group": "Network", "secret": False, "restart": True, "why": "Already-loaded Bash/OpenSSL image used for the networkless, read-only, mount-confined disposable repair proof."},
     "DUNE_CANARY_AUTOPILOT_ENABLED": {"group": "Operations", "secret": False, "restart": True, "why": "Automatically refreshes only the isolated Community, Creator/Modding, and public-IP signed proofs before expiry or after input drift."},
+    "DUNE_OPERATIONS_BRIEFING_ENABLED": {"group": "Operations", "secret": False, "restart": True, "why": "Compiles existing operational evidence into a signed, prioritized, non-executing operator briefing."},
+    "DUNE_OPERATIONS_BRIEFING_POLL_SECONDS": {"group": "Operations", "secret": False, "restart": True, "why": "Controls how often the briefing worker checks for source-state changes."},
+    "DUNE_OPERATIONS_BRIEFING_REFRESH_HOURS": {"group": "Operations", "secret": False, "restart": True, "why": "Refreshes unchanged signed briefings before they become stale."},
+    "DUNE_OPERATIONS_BRIEFING_MAX_AGE_HOURS": {"group": "Operations", "secret": False, "restart": True, "why": "Sets the maximum accepted age of a signed briefing."},
     "DUNE_CANARY_AUTOPILOT_POLL_SECONDS": {"group": "Operations", "secret": False, "restart": True, "why": "Bounded cadence for checking isolated proof freshness; it does not set the canary execution frequency."},
     "DUNE_CANARY_AUTOPILOT_REFRESH_BEFORE_HOURS": {"group": "Operations", "secret": False, "restart": True, "why": "Refresh lead time before an otherwise current signed canary receipt expires."},
     "DUNE_CANARY_AUTOPILOT_FAILURE_BACKOFF_SECONDS": {"group": "Operations", "secret": False, "restart": True, "why": "Initial retry delay after an isolated canary fails."},
@@ -4895,6 +4937,232 @@ def ensure_canary_autopilot_thread():
         return
     CANARY_AUTOPILOT_WORKER_STARTED = True
     threading.Thread(target=canary_autopilot_worker, name="canary-autopilot-worker", daemon=True).start()
+
+
+def operations_briefing_store():
+    global OPERATIONS_BRIEFING_STORE
+    if not OPERATIONS_BRIEFING_ENABLED:
+        raise PermissionError("operations briefing is disabled; set DUNE_OPERATIONS_BRIEFING_ENABLED=true")
+    with OPERATIONS_BRIEFING_STORE_LOCK:
+        if OPERATIONS_BRIEFING_STORE is None:
+            OPERATIONS_BRIEFING_STORE = operations_briefing.Store(
+                CHANGE_INTELLIGENCE_EVIDENCE_ROOT,
+                change_intelligence.read_secret(CHANGE_INTELLIGENCE_SECRET_FILE),
+                retention=OPERATIONS_BRIEFING_RETENTION,
+                max_age_seconds=OPERATIONS_BRIEFING_MAX_AGE_HOURS * 3600,
+                owner_uid=os.environ.get("DUNE_HOST_UID"), owner_gid=os.environ.get("DUNE_HOST_GID"),
+            )
+            OPERATIONS_BRIEFING_STORE.initialize()
+        return OPERATIONS_BRIEFING_STORE
+
+
+def _operations_briefing_text(value, fallback="No additional detail"):
+    text = re.sub(r"\s+", " ", str(value or fallback)).strip()
+    return (text or fallback)[:500]
+
+
+def operations_briefing_sources():
+    rows = []
+
+    def add(source_id, title, severity, surface, callback):
+        try:
+            state, healthy, detail = callback()
+            rows.append({
+                "id": source_id, "title": title, "state": _operations_briefing_text(state, "unknown")[:100],
+                "healthy": bool(healthy), "severity": severity,
+                "detail": _operations_briefing_text(detail), "surface": surface,
+            })
+        except Exception as exc:
+            rows.append({
+                "id": source_id, "title": title, "state": "collector-error", "healthy": False,
+                "severity": severity, "detail": _operations_briefing_text(exc, "collector failed"), "surface": surface,
+            })
+
+    def readiness_internal():
+        summary = feature_readiness_public_status(force=False).get("summary") or {}
+        problems = sum(int(summary.get(key) or 0) for key in ("partial", "blocked", "degraded"))
+        pending = int(summary.get("canary-pending") or 0)
+        healthy = problems == 0 and pending == 0
+        return ("ready" if healthy else f"{problems}-gaps-{pending}-canaries", healthy, f"{summary.get('ready', 0)}/{summary.get('total', 0)} ready; {problems} internal gaps; {pending} canaries pending")
+
+    def readiness_external():
+        summary = feature_readiness_public_status(force=False).get("summary") or {}
+        blocked = int(summary.get("external-blocked") or 0)
+        return ("configured" if not blocked else f"{blocked}-provider-blocked", blocked == 0, f"{blocked} optional integrations await external provider credentials")
+
+    def audit_state():
+        status = audit_ledger_public_status(); ledger = status.get("ledger") or {}; requests = status.get("requests") or {}
+        healthy = bool(status.get("enabled") and status.get("ok") and ledger.get("ok") and int(requests.get("open") or 0) == 0)
+        return ("verified" if healthy else f"open-{int(requests.get('open') or 0)}", healthy, f"ledger events={ledger.get('events', 0)}; open privileged requests={requests.get('open', 0)}")
+
+    def slo_state():
+        status = operational_slo_public_status(); incidents = status.get("openIncidents") or []
+        healthy = bool(status.get("enabled") and status.get("overall") == "healthy" and (status.get("integrity") or {}).get("ok") and not incidents and not (status.get("runtime") or {}).get("lastError"))
+        return (str(status.get("overall") or "unknown"), healthy, f"overall={status.get('overall')}; open incidents={len(incidents)}; evidence integrity={bool((status.get('integrity') or {}).get('ok'))}")
+
+    def desired_state_summary():
+        status = desired_state_public_status(); findings = status.get("openFindings") or []
+        healthy = bool(status.get("enabled") and status.get("state") == "attested" and (status.get("integrity") or {}).get("ok") and not findings and not (status.get("runtime") or {}).get("lastError"))
+        return (str(status.get("state") or "unknown"), healthy, f"state={status.get('state')}; open findings={len(findings)}; evidence integrity={bool((status.get('integrity') or {}).get('ok'))}")
+
+    def change_summary():
+        status = change_intelligence_public_status(); incidents = status.get("openIncidents") or []; certification = status.get("readinessCertification") or {}
+        healthy = bool(status.get("enabled") and status.get("ok") and (status.get("integrity") or {}).get("ok") and not incidents and certification.get("currentReady") and not (status.get("runtime") or {}).get("lastError"))
+        return ("ready" if healthy else f"incidents-{len(incidents)}-cert-{int(bool(certification.get('currentReady')))}", healthy, f"open incidents={len(incidents)}; response certification current={bool(certification.get('currentReady'))}; evidence integrity={bool((status.get('integrity') or {}).get('ok'))}")
+
+    def deployment_summary():
+        status = deployment_assurance_public_status(); opened = status.get("openWindows") or []; overdue = status.get("overdueWindows") or []
+        healthy = bool(status.get("enabled") and status.get("ok") and status.get("latestReady") and not opened and not overdue)
+        return ("ready" if healthy else f"open-{len(opened)}-overdue-{len(overdue)}", healthy, f"latest assured change ready={bool(status.get('latestReady'))}; open windows={len(opened)}; overdue={len(overdue)}")
+
+    def backup_summary():
+        latest = deployment_assurance_public_status().get("latest") or {}; backup = latest.get("backup") or {}
+        healthy = bool(latest.get("ready") and backup.get("ok"))
+        return ("verified" if healthy else "unverified", healthy, f"latest assured deployment backup verified={bool(backup.get('ok'))}; path={backup.get('path') or backup.get('backupPath') or 'none'}")
+
+    def restore_summary():
+        status = restore_drill_public_status(); latest = status.get("latest") or {}; healthy = bool(status.get("ready") and status.get("ok") and latest)
+        return ("proven" if healthy else "proof-required", healthy, f"configured={bool(status.get('ready'))}; latest isolated PostgreSQL restore passed={bool(status.get('ok'))}; receipt={latest.get('id') or 'none'}")
+
+    def rabbit_summary():
+        status = rabbitmq_restore_drill_public_status(); latest = status.get("latest") or {}; healthy = bool(status.get("ready") and status.get("ok") and latest)
+        return ("proven" if healthy else "proof-required", healthy, f"configured={bool(status.get('ready'))}; latest networkless dual-broker recovery passed={bool(status.get('ok'))}; receipt={latest.get('id') or 'none'}")
+
+    def capacity_summary():
+        status = capacity_intelligence_public_status(); recommendations = status.get("recommendations") or {}
+        healthy = bool(status.get("enabled") and (status.get("integrity") or {}).get("ok") and not (status.get("runtime") or {}).get("lastError"))
+        return ("healthy" if healthy else "collector-error", healthy, f"evidence integrity={bool((status.get('integrity') or {}).get('ok'))}; dynamic-map recommendations={len(recommendations)}; worker error={bool((status.get('runtime') or {}).get('lastError'))}")
+
+    def credentials_summary():
+        status = credential_lifecycle_public_status(force=False); summary = status.get("summary") or {}; problems = int(summary.get("problems") or 0)
+        healthy = bool(status.get("enabled") and status.get("ok") and problems == 0)
+        return ("ready" if healthy else f"{problems}-problems", healthy, f"{summary.get('ready', 0)}/{summary.get('total', 0)} credential contracts ready; problems={problems}; values returned=false")
+
+    def canary_summary():
+        status = canary_autopilot_public_status(); summary = status.get("summary") or {}
+        healthy = bool(status.get("enabled") and status.get("ok") and status.get("running") and int(summary.get("due") or 0) == 0 and int(summary.get("current") or 0) == int(summary.get("targets") or 0))
+        return ("current" if healthy else f"due-{int(summary.get('due') or 0)}", healthy, f"{summary.get('current', 0)}/{summary.get('targets', 0)} isolated proofs current; due={summary.get('due', 0)}; backoff={summary.get('backoff', 0)}")
+
+    def update_summary():
+        status = update_readiness_public_status(force=False); evaluation = status.get("evaluation") or {}; candidate = evaluation.get("candidate") or {}; update_required = bool(candidate.get("updateRequired"))
+        healthy = bool(status.get("ok") and (not update_required or (evaluation.get("scheduledReady") and status.get("currentReceiptReady"))))
+        state = "no-update" if not update_required else "certified" if healthy else "candidate-blocked"
+        return (state, healthy, f"update required={update_required}; scheduled ready={bool(evaluation.get('scheduledReady'))}; current receipt={bool(status.get('currentReceiptReady'))}")
+
+    add("feature-readiness", "Internal feature readiness", "critical", "infrastructure:feature-readiness", readiness_internal)
+    add("external-integrations", "Optional external integrations", "informational", "infrastructure:feature-readiness", readiness_external)
+    add("mutation-governance", "Privileged mutation governance", "critical", "security:audit-ledger", audit_state)
+    add("reliability-slo", "Reliability objectives", "critical", "infrastructure:slo", slo_state)
+    add("desired-state", "Desired-state attestation", "critical", "infrastructure:desired-state", desired_state_summary)
+    add("change-intelligence", "Change and incident intelligence", "critical", "infrastructure:change-intelligence", change_summary)
+    add("deployment-assurance", "Assured deployment evidence", "warning", "infrastructure:deployment-assurance", deployment_summary)
+    add("verified-backup", "Latest assured recovery backup", "critical", "infrastructure:backups", backup_summary)
+    add("postgres-recovery", "PostgreSQL recovery proof", "warning", "infrastructure:restore-drill", restore_summary)
+    add("rabbitmq-recovery", "RabbitMQ recovery proof", "warning", "infrastructure:rabbitmq-restore-drill", rabbit_summary)
+    add("capacity-intelligence", "Capacity and scaling intelligence", "warning", "infrastructure:capacity", capacity_summary)
+    add("credential-lifecycle", "Credential lifecycle posture", "warning", "security:credential-lifecycle", credentials_summary)
+    add("isolated-proof-autopilot", "Isolated proof freshness", "warning", "infrastructure:canary-autopilot", canary_summary)
+    add("game-update-readiness", "Game update readiness", "warning", "infrastructure:updates", update_summary)
+    return rows
+
+
+def operations_briefing_public_status(*, refresh_sources=True, limit=20):
+    if not OPERATIONS_BRIEFING_ENABLED:
+        return {"ok": True, "enabled": False, "state": "disabled", "currentReady": False, "briefings": [], "runtime": dict(OPERATIONS_BRIEFING_RUNTIME)}
+    fingerprint = OPERATIONS_BRIEFING_RUNTIME.get("currentFingerprint")
+    source_error = None
+    if refresh_sources:
+        try:
+            fingerprint = operations_briefing.source_fingerprint(operations_briefing_sources())
+            OPERATIONS_BRIEFING_RUNTIME["currentFingerprint"] = fingerprint
+        except Exception as exc:
+            source_error = str(exc)[:1000]
+    try:
+        status = operations_briefing_store().status(fingerprint, limit=limit)
+        if fingerprint is None and status.get("latest"):
+            status["currentReady"] = False
+            verification = status["latest"].setdefault("verification", {})
+            verification.update({"sourcesCurrent": False, "currentReady": False})
+    except Exception as exc:
+        status = {"ok": False, "currentReady": False, "latest": None, "briefings": [], "summary": {"retained": 0}, "error": str(exc)[:1000]}
+    status.update({
+        "enabled": True, "running": OPERATIONS_BRIEFING_WORKER_STARTED,
+        "pollSeconds": OPERATIONS_BRIEFING_POLL_SECONDS,
+        "refreshSeconds": OPERATIONS_BRIEFING_REFRESH_HOURS * 3600,
+        "minimumIntervalSeconds": OPERATIONS_BRIEFING_MIN_INTERVAL_SECONDS,
+        "runtime": dict(OPERATIONS_BRIEFING_RUNTIME), "sourceError": source_error,
+        "executionContract": {
+            "mapLifecycleInvoked": False, "gameDataMutationExecuted": False,
+            "externalProviderCalled": False, "clientMachineTouched": False,
+            "recommendationsExecuteAutomatically": False,
+        },
+    })
+    return status
+
+
+def run_operations_briefing(*, force=False, actor="system:operations-briefing"):
+    if not OPERATIONS_BRIEFING_ENABLED:
+        raise PermissionError("operations briefing is disabled; set DUNE_OPERATIONS_BRIEFING_ENABLED=true")
+    if not OPERATIONS_BRIEFING_RUN_LOCK.acquire(blocking=False):
+        raise RuntimeError("operations briefing collection is already in progress")
+    OPERATIONS_BRIEFING_RUNTIME["running"] = True
+    try:
+        now = time.time()
+        sources = operations_briefing_sources()
+        fingerprint = operations_briefing.source_fingerprint(sources)
+        OPERATIONS_BRIEFING_RUNTIME["currentFingerprint"] = fingerprint
+        store = operations_briefing_store()
+        status = store.status(fingerprint, limit=1, now=now)
+        latest = status.get("latest") or {}
+        latest_age = max(0.0, now - operations_briefing.epoch(latest["generatedAt"])) if latest.get("generatedAt") else None
+        due = bool(not latest or not status.get("currentReady") or latest_age is None or latest_age >= OPERATIONS_BRIEFING_REFRESH_HOURS * 3600)
+        cooldown = bool(latest_age is not None and latest_age < OPERATIONS_BRIEFING_MIN_INTERVAL_SECONDS)
+        generated = bool(force or (due and not cooldown))
+        result = {"ok": True, "generated": generated, "due": due, "cooldown": cooldown, "sourceFingerprint": fingerprint}
+        if generated:
+            recorded = store.record(sources, actor=actor, now=now)
+            receipt = (recorded.get("document") or {}).get("receipt") or {}
+            result.update({
+                "receipt": receipt, "verification": recorded.get("verification"),
+                "evidenceFile": pathlib.Path(recorded["evidencePath"]).name,
+            })
+            OPERATIONS_BRIEFING_RUNTIME["lastGeneratedAt"] = receipt.get("generatedAt")
+            audit_event(
+                "operations-briefing-generated", ok=bool((recorded.get("verification") or {}).get("ok")),
+                receipt_id=receipt.get("id"), state=receipt.get("state"), score=receipt.get("score"),
+                actions=len(receipt.get("actions") or []), game_data_mutation_executed=False,
+                map_lifecycle_invoked=False, external_provider_called=False, client_machine_touched=False,
+            )
+            with FEATURE_READINESS_CACHE_LOCK:
+                FEATURE_READINESS_CACHE.update({"value": None, "updated_at": 0.0})
+        OPERATIONS_BRIEFING_RUNTIME.update({"lastPollAt": operations_briefing.iso(now), "lastError": None, "lastResult": result})
+        return result
+    except Exception as exc:
+        OPERATIONS_BRIEFING_RUNTIME.update({"lastPollAt": operations_briefing.iso(), "lastError": str(exc)[:1000], "lastResult": None})
+        raise
+    finally:
+        OPERATIONS_BRIEFING_RUNTIME["running"] = False
+        OPERATIONS_BRIEFING_RUN_LOCK.release()
+
+
+def operations_briefing_worker():
+    while True:
+        try:
+            run_operations_briefing(force=False)
+        except RuntimeError as exc:
+            if "already in progress" not in str(exc):
+                OPERATIONS_BRIEFING_RUNTIME["lastError"] = str(exc)[:1000]
+        except Exception as exc:
+            OPERATIONS_BRIEFING_RUNTIME["lastError"] = str(exc)[:1000]
+        time.sleep(OPERATIONS_BRIEFING_POLL_SECONDS)
+
+
+def ensure_operations_briefing_thread():
+    global OPERATIONS_BRIEFING_WORKER_STARTED
+    if not OPERATIONS_BRIEFING_ENABLED or OPERATIONS_BRIEFING_WORKER_STARTED:
+        return
+    OPERATIONS_BRIEFING_WORKER_STARTED = True
+    threading.Thread(target=operations_briefing_worker, name="operations-briefing-worker", daemon=True).start()
 
 
 def maintenance_outcome_public_status(limit=100):
@@ -9214,6 +9482,8 @@ def verify_operator_evidence_archive(archive_path, secret_path):
                 if schema == creator_canary.SCHEMA
                 else public_ip_canary.verify_signed_document(document, secret)
                 if schema == public_ip_canary.SCHEMA
+                else operations_briefing.verify_signed_document(document, secret)
+                if schema == operations_briefing.SCHEMA
                 else change_intelligence.verify_signed_capsule(document, secret)
             )
             if not result.get("ok"):
@@ -10344,6 +10614,15 @@ class Handler(BaseHTTPRequestHandler):
                     metrics += canary_autopilot.prometheus(canary_autopilot_public_status())
                 except Exception:
                     metrics += f"dash_canary_autopilot_enabled {1 if CANARY_AUTOPILOT_ENABLED else 0}\ndash_canary_autopilot_collector_up 0\ndash_canary_autopilot_worker_running 0\ndash_canary_autopilot_targets 0\ndash_canary_autopilot_current 0\ndash_canary_autopilot_due 0\ndash_canary_autopilot_backoff 0\ndash_canary_autopilot_attempts_total 0\ndash_canary_autopilot_failures_total 0\ndash_canary_autopilot_last_attempt_timestamp_seconds 0\ndash_canary_autopilot_last_success_timestamp_seconds 0\n"
+                try:
+                    metrics += operations_briefing.prometheus(
+                        operations_briefing_public_status(refresh_sources=False, limit=1),
+                        enabled=OPERATIONS_BRIEFING_ENABLED,
+                        worker_running=OPERATIONS_BRIEFING_WORKER_STARTED,
+                        last_error=bool(OPERATIONS_BRIEFING_RUNTIME.get("lastError")),
+                    )
+                except Exception:
+                    metrics += f"dash_operations_briefing_enabled {1 if OPERATIONS_BRIEFING_ENABLED else 0}\ndash_operations_briefing_collector_up 0\ndash_operations_briefing_worker_running 0\ndash_operations_briefing_current 0\ndash_operations_briefing_score 0\ndash_operations_briefing_critical 0\ndash_operations_briefing_attention 0\ndash_operations_briefing_actions 0\ndash_operations_briefing_last_generation_timestamp_seconds 0\ndash_operations_briefing_age_seconds 0\ndash_operations_briefing_retained 0\n"
                 metrics += maintenance_planner_prometheus()
                 self.text(metrics, "text/plain; version=0.0.4; charset=utf-8")
             elif parsed.path in ("/api/integrations/discord/health", "/api/integrations/discord/version", "/api/integrations/discord/backups/list"):
@@ -10637,6 +10916,10 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/ops/canary-autopilot":
                 self.require_token()
                 self.json(canary_autopilot_public_status())
+            elif parsed.path == "/api/ops/operations-briefing":
+                self.require_token()
+                params = urllib.parse.parse_qs(parsed.query)
+                self.json(operations_briefing_public_status(limit=(params.get("limit") or ["20"])[0]))
             elif parsed.path == "/api/ops/feature-readiness":
                 self.require_token()
                 params = urllib.parse.parse_qs(parsed.query)
@@ -19105,15 +19388,25 @@ async function load(){
   announce(`${current} loaded`);
   view.setAttribute('aria-busy', 'false');
 }
+function operationsBriefingPanel(data={}){
+  const latest=data.latest||{}, summary=latest.summary||{}, verification=latest.verification||{};
+  const state=latest.state||(!data.enabled?'disabled':'collecting');
+  const tone=state==='ready'&&data.currentReady?'ok':state==='critical'?'bad':'warn';
+  const actions=(latest.actions||[]).map(row=>({priority:row.priority,area:row.title,state:(latest.sources||[]).find(source=>source.id===row.source)?.state||'attention',next:row.detail,surface:row.surface}));
+  const changes=(latest.changes||[]).map(row=>({area:row.source,from:row.fromState,to:row.toState,direction:row.direction}));
+  const destinations=[...new Set((latest.actions||[]).map(row=>String(row.surface||'').split(':')[0]).filter(value=>['infrastructure','security','ops','settings'].includes(value)))];
+  return `<div class="panelBand" id="operationsBriefing"><div class="sectionHeader"><div><h2>Operator Briefing</h2><p class="muted">One signed, change-aware answer to what needs attention next. It synthesizes existing evidence and never executes a recommendation.</p></div><div class="toolbar"><span class="pill ${tone}">${esc(state)}</span><span class="pill ${data.currentReady?'ok':'warn'}">${data.currentReady?'current':'refresh pending'}</span><span class="pill">score ${esc(latest.score??'—')}/100</span>${destinations.map(tab=>`<button data-jump="${esc(tab)}">Open ${esc(tab)}</button>`).join('')}</div></div><div class="metricGrid">${metric('Healthy sources',`${summary.healthy||0}/${summary.sources||0}`,tone)}${metric('Critical',summary.critical||0,Number(summary.critical||0)?'dangerText':'ok')}${metric('Attention',summary.attention||0,Number(summary.attention||0)?'warn':'ok')}${metric('Provider follow-ups',summary.informational||0)}${metric('Changes',summary.changes||0)}${metric('Signed age',verification.ageSeconds==null?'—':fmtRuntimeSeconds(verification.ageSeconds))}</div>${data.error?`<div class="notice bad">${esc(data.error)}</div>`:''}${actions.length?`<h3>Prioritized next actions</h3>${table(actions)}`:'<div class="notice ok">No critical or warning action is currently required.</div>'}${changes.length?`<details open><summary>What changed since the previous briefing</summary>${table(changes)}</details>`:''}<details><summary>Evidence and non-execution contract</summary><pre>${esc(JSON.stringify({receiptId:latest.id,generatedAt:latest.generatedAt,receiptSha256:latest.receiptSha256,verification,retained:data.summary?.retained||0,executionContract:data.executionContract,runtime:data.runtime},null,2))}</pre></details></div>`;
+}
 async function overview(serial=loadSerial){
-  const [health, roster] = await Promise.all([
+  const [health, roster, briefing] = await Promise.all([
     api('/api/ops/health', {timeoutMs: HEALTH_REQUEST_TIMEOUT_MS}),
-    api('/api/characters/roster')
+    api('/api/characters/roster'),
+    api('/api/ops/operations-briefing?limit=20', {timeoutMs: 30000}).catch(error=>({ok:false,enabled:true,currentReady:false,error:error.message,briefings:[],runtime:{}}))
   ]);
   if (serial !== loadSerial) return;
   overviewRosterCounts = roster.counts || {};
   overviewHealthSnapshot = health;
-  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Overview</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="ops">Operations</button><button data-jump="mutations" class="primary">Admin Actions</button></div></div><div id="overviewRealtime" class="overviewTopGrid" aria-live="polite">${overviewRealtimeHtml(health, overviewRosterCounts, overviewResourceSnapshot)}</div><div id="haggaBasinMap" class="overviewMapShell"><div class="panelBand"><div class="sectionHeader"><h2>Player Map</h2></div>${overviewMapTabsHtml()}<div class="muted">Loading player positions...</div></div></div>${actionGrid([{tab:'characters',label:'Open player roster',className:'primary'},{tab:'ops',label:'Restart / backup / map health'},{tab:'mutations',label:'Grant currency, XP, or items'},{tab:'settings',label:'Server settings'}])}<details class="panelBand"><summary>Player Roster Preview</summary><div id="overviewRoster">${characterRosterPanel(roster)}</div></details><div id="detail"></div></div>`;
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Overview</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="ops">Operations</button><button data-jump="mutations" class="primary">Admin Actions</button></div></div><div id="overviewRealtime" class="overviewTopGrid" aria-live="polite">${overviewRealtimeHtml(health, overviewRosterCounts, overviewResourceSnapshot)}</div>${operationsBriefingPanel(briefing)}<div id="haggaBasinMap" class="overviewMapShell"><div class="panelBand"><div class="sectionHeader"><h2>Player Map</h2></div>${overviewMapTabsHtml()}<div class="muted">Loading player positions...</div></div></div>${actionGrid([{tab:'characters',label:'Open player roster',className:'primary'},{tab:'ops',label:'Restart / backup / map health'},{tab:'mutations',label:'Grant currency, XP, or items'},{tab:'settings',label:'Server settings'}])}<details class="panelBand"><summary>Player Roster Preview</summary><div id="overviewRoster">${characterRosterPanel(roster)}</div></details><div id="detail"></div></div>`;
   wireOverviewMapTabs(view);
   document.querySelectorAll('#overviewRoster tbody tr').forEach(row => row.onclick = () => pickCharacter(row));
   makeRowsKeyboardFriendly(view);
@@ -21681,6 +21974,7 @@ def main():
     ensure_community_worker_thread()
     ensure_moderation_worker_thread()
     ensure_canary_autopilot_thread()
+    ensure_operations_briefing_thread()
     bind = os.environ.get("DUNE_ADMIN_BIND", "0.0.0.0")
     port = int(os.environ.get("DUNE_ADMIN_PORT", "8080"))
     server = BoundedThreadingHTTPServer((bind, port), Handler)

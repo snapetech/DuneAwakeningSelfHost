@@ -33,6 +33,7 @@ SUPPORT_FILES = {
     "admin/creator_canary.py",
     "admin/public_ip_canary.py",
     "admin/canary_autopilot.py",
+    "admin/operations_briefing.py",
     "admin/addon_admin.py",
     "admin/base_creator.py",
     "admin/base_retirement.py",

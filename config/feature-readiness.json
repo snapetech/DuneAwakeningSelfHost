@@ -360,6 +360,22 @@
       "remediation": {"surface": "infrastructure", "summary": "Inspect the named proof reason and retained scheduler error; repair its isolated canary, then let the bounded retry or force-all action refresh it."}
     },
     {
+      "id": "operations-briefing",
+      "title": "Signed operator briefing",
+      "group": "Operations",
+      "description": "Existing readiness, recovery, reliability, drift, deployment, capacity, credential, proof, and update evidence is reduced to one signed change-aware priority queue without executing recommendations.",
+      "documentation": "docs/operations-briefing.md",
+      "primaryGate": "DUNE_OPERATIONS_BRIEFING_ENABLED",
+      "gates": ["DUNE_OPERATIONS_BRIEFING_ENABLED"],
+      "credentials": [],
+      "files": [{"path": "admin/operations_briefing.py", "minimumBytes": 1000}],
+      "services": ["admin-panel"],
+      "probe": "operations-briefing",
+      "dependencies": ["operational-evidence", "readiness-regression-history"],
+      "canary": "runtime-proven",
+      "remediation": {"surface": "overview", "summary": "Inspect the named source and its linked control surface; repair the authoritative subsystem, then let the briefing worker sign the changed state."}
+    },
+    {
       "id": "encrypted-backups",
       "title": "Encrypted backup archives",
       "group": "Recovery",

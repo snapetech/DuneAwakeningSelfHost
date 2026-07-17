@@ -68,6 +68,13 @@ evidence, a worker that did not start, and proof refresh that remains overdue.
 Target IDs and failure text stay in the authenticated API; see
 [`canary-autopilot.md`](canary-autopilot.md).
 
+Operator Briefing adds label-free enablement, collector/worker health,
+current-input/age verdict, score, critical/warning/action counts, generation
+time, age, and retained receipt count. Alerts cover invalid evidence, a stopped
+worker, a briefing that remains non-current, and critical queued actions. Source
+IDs and action detail stay in the authenticated API; see
+[`operations-briefing.md`](operations-briefing.md).
+
 Start it with the normal world Compose files plus the overlay:
 
 ```bash

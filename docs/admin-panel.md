@@ -180,6 +180,11 @@ server {
   bound-input drift. It shows every scheduling reason and retry deadline and
   offers an `infrastructure.write` force-all action that still uses only
   disposable state. See [`canary-autopilot.md`](canary-autopilot.md).
+- Operator Briefing on Overview synthesizes 14 existing governance, readiness,
+  reliability, recovery, deployment, scaling, credential, proof, and update
+  authorities into one signed priority queue. It shows categorical deltas and
+  links to the existing control surfaces without executing recommendations.
+  See [`operations-briefing.md`](operations-briefing.md).
 - Capacity Intelligence beside the autoscaler: retained map-hours saved,
   idle-running cost, productive-running ratio, warm/cold revisits,
   demand-to-ready cold-start distributions, empirical next-visit forecasts,

@@ -68,6 +68,10 @@ The local backup includes:
   its strict schema at copy time and again by the backup verifier. This file is
   diagnostic scheduler state; the signed receipts in `operator-evidence.tgz`
   remain the proof authority.
+- Signed Operator Briefing receipts in `operator-evidence.tgz`. Both backup
+  verifiers use the matching Change Intelligence key to recompute signature,
+  source fingerprint, score/state/summary, action mapping, receipt digest, and
+  timestamp semantics before accepting the mixed evidence archive.
 - A transactionally consistent `moderation.sqlite3` snapshot when the isolated
   case/history database exists, including the identity-free aggregate
   population buckets used by the player-impact maintenance planner.

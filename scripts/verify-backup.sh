@@ -490,6 +490,7 @@ import change_intelligence
 import community_canary
 import creator_canary
 import public_ip_canary
+import operations_briefing
 import deployment_assurance
 import maintenance_outcomes
 import update_readiness
@@ -536,6 +537,8 @@ try:
                     if schema == creator_canary.SCHEMA
                     else public_ip_canary.verify_signed_document(document, secret)
                     if schema == public_ip_canary.SCHEMA
+                    else operations_briefing.verify_signed_document(document, secret)
+                    if schema == operations_briefing.SCHEMA
                     else change_intelligence.verify_signed_capsule(document, secret)
                 )
                 if not result.get("ok"):

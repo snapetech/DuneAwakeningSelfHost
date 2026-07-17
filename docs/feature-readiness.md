@@ -207,6 +207,14 @@ due. It does not substitute scheduler state for the Community, Creator/Modding,
 or public-IP signed receipt verifier. See
 [`canary-autopilot.md`](canary-autopilot.md).
 
+The `operations-briefing` row proves that the change-aware synthesis worker is
+running and its latest HMAC receipt remains valid, age-current, and bound to the
+current categorical source fingerprint. Initial startup is explicitly
+`collector-starting`; a retained stale, tampered, or input-drifted receipt fails
+the runtime probe. The briefing consumes Feature Readiness but its probe reads
+only cached receipt/runtime state, preventing recursive evaluation. See
+[`operations-briefing.md`](operations-briefing.md).
+
 The catalog includes `player-impact-maintenance`. Its runtime probe verifies
 that the shared moderation database accepted aggregate observations and that
 the planner can produce a bounded recommendation. `policy-fallback-learning`
@@ -277,6 +285,7 @@ Run the focused tests with:
 ```bash
 make test-feature-readiness
 make test-feature-readiness-history
+make test-operations-briefing
 make test-admin-panel-safe-surfaces
 ```
 
