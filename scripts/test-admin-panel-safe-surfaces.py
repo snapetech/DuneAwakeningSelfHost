@@ -4179,6 +4179,26 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn("excluding briefing self-check", sources["feature-readiness"]["detail"])
         self.assertEqual("1-provider-blocked", sources["external-integrations"]["state"])
 
+    def test_operations_briefing_alert_source_uses_feedback_safe_summary(self):
+        original = self.panel.alert_inbox_public_status
+        self.panel.alert_inbox_public_status = lambda limit=1: {
+            "enabled": True, "ok": True,
+            "summary": {"active": 1, "critical": 1, "unacknowledged": 1},
+            "briefingSummary": {
+                "active": 0, "critical": 0, "unacknowledged": 0,
+                "warning": 0, "feedbackExcluded": 1,
+            },
+            "collector": {"ageSeconds": 5},
+            "delivery": {"signedWebhooksEnabled": True},
+        }
+        self.addCleanup(lambda: setattr(self.panel, "alert_inbox_public_status", original))
+
+        source = {row["id"]: row for row in self.panel.operations_briefing_sources()}["alert-inbox"]
+
+        self.assertTrue(source["healthy"])
+        self.assertEqual("clear", source["state"])
+        self.assertIn("briefing meta-alerts excluded=1", source["detail"])
+
     def test_operations_briefing_invalidation_is_immediate_and_coalesced(self):
         original_enabled = self.panel.OPERATIONS_BRIEFING_ENABLED
         original_runtime = dict(self.panel.OPERATIONS_BRIEFING_RUNTIME)

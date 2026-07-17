@@ -131,6 +131,16 @@ Briefing treats collector failure, critical active alerts, and unacknowledged
 active alerts as a critical source verdict. Alert transitions invalidate the
 prior briefing and wake its bounded refresh worker.
 
+Alerts in the reserved `DashOperationsBriefing*` namespace remain fully
+visible, durable, measurable, deliverable, and acknowledgeable in the inbox,
+but are excluded from the alert-inbox verdict used to score the Operator
+Briefing itself. This one-way boundary prevents the
+`DashOperationsBriefingCriticalActions` meta-alert from feeding its own state
+back into the next briefing and self-latching after the original condition
+clears. The API reports the excluded active count as
+`briefingSummary.feedbackExcluded`; the ordinary `summary` and all inbox
+metrics continue to include those alerts.
+
 ## Backup And Recovery
 
 `scripts/backup-state.sh` takes an online SQLite backup through SQLite's backup

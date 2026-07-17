@@ -45,6 +45,13 @@ probe. This prevents the preceding briefing receipt from feeding back into the
 health verdict of the receipt currently being built; the briefing remains
 visible in the main feature-readiness matrix.
 
+The alert-inbox source similarly excludes the reserved
+`DashOperationsBriefing*` Prometheus meta-alert namespace from briefing
+scoring. Those alerts remain visible and actionable in the inbox and its
+metrics, but cannot recursively keep the briefing critical after the original
+source condition clears. The source detail records how many active meta-alerts
+were excluded.
+
 ## Receipt and priority model
 
 Every source has an ID, title, categorical state, healthy verdict, severity,

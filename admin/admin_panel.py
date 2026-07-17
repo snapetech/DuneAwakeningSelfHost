@@ -5471,7 +5471,7 @@ def operations_briefing_sources():
         )
 
     def alert_inbox_summary():
-        status = alert_inbox_public_status(limit=1); summary = status.get("summary") or {}; collector = status.get("collector") or {}
+        status = alert_inbox_public_status(limit=1); summary = status.get("briefingSummary") or status.get("summary") or {}; collector = status.get("collector") or {}
         critical = int(summary.get("critical") or 0)
         unacknowledged = int(summary.get("unacknowledged") or 0)
         healthy = bool(status.get("enabled") and status.get("ok") and not critical and not unacknowledged)
@@ -5479,6 +5479,7 @@ def operations_briefing_sources():
         return (
             state, healthy,
             f"active={int(summary.get('active') or 0)}; critical={critical}; unacknowledged={unacknowledged}; "
+            f"briefing meta-alerts excluded={int(summary.get('feedbackExcluded') or 0)}; "
             f"collector age={collector.get('ageSeconds') if collector.get('ageSeconds') is not None else 'unknown'}s; "
             f"delivery signed={bool((status.get('delivery') or {}).get('signedWebhooksEnabled'))}",
         )
@@ -5737,15 +5738,20 @@ def alert_inbox_poll():
 
 def alert_inbox_public_status(limit=200):
     if not ALERT_INBOX_ENABLED:
+        empty_briefing = {"active": 0, "unacknowledged": 0, "critical": 0, "warning": 0, "feedbackExcluded": 0}
         return {
             "ok": True, "enabled": False, "schemaVersion": alert_inbox.SCHEMA,
             "summary": {"active": 0, "firing": 0, "pending": 0, "unacknowledged": 0, "critical": 0, "warning": 0, "history": 0},
+            "briefingSummary": empty_briefing,
             "alerts": [], "history": [], "runtime": dict(ALERT_INBOX_RUNTIME),
         }
     try:
         status = alert_inbox_store().status(limit=limit)
     except Exception as exc:
-        status = {"ok": False, "schemaVersion": alert_inbox.SCHEMA, "summary": {}, "alerts": [], "history": [], "error": str(exc)[:1000]}
+        status = {
+            "ok": False, "schemaVersion": alert_inbox.SCHEMA, "summary": {}, "briefingSummary": {},
+            "alerts": [], "history": [], "error": str(exc)[:1000],
+        }
     stale_after = max(60, ALERT_INBOX_POLL_SECONDS * 3)
     collector = status.get("collector") or {}
     age = collector.get("ageSeconds")

@@ -16,6 +16,7 @@ import time
 
 SCHEMA = "dash-alert-inbox/v1"
 ACTIVE_STATES = {"pending", "firing"}
+BRIEFING_FEEDBACK_GLOB = "DashOperationsBriefing*"
 SENSITIVE_KEY = re.compile(r"password|passwd|secret|token|credential|private.?key|authorization|cookie", re.I)
 MAX_LABELS = 64
 MAX_ANNOTATIONS = 32
@@ -329,6 +330,15 @@ class Store:
                   count(*) filter(where state!='resolved' and severity='warning') as warning
                 from alerts
             """).fetchone())
+            briefing_counts = dict(db.execute("""
+                select
+                  count(*) filter(where state!='resolved' and name not glob ?) as active,
+                  count(*) filter(where state!='resolved' and acknowledged_at is null and name not glob ?) as unacknowledged,
+                  count(*) filter(where state!='resolved' and severity='critical' and name not glob ?) as critical,
+                  count(*) filter(where state!='resolved' and severity='warning' and name not glob ?) as warning,
+                  count(*) filter(where state!='resolved' and name glob ?) as feedback_excluded
+                from alerts
+            """, (BRIEFING_FEEDBACK_GLOB,) * 5).fetchone())
             history_count = int(db.execute("select count(*) from transitions").fetchone()[0])
             active = [self._public_alert(row) for row in db.execute(
                 "select * from alerts where state!='resolved' order by case severity when 'critical' then 0 when 'warning' then 1 else 2 end, first_seen asc limit ?",
@@ -348,9 +358,16 @@ class Store:
             "critical": int(counts["critical"] or 0), "warning": int(counts["warning"] or 0),
             "history": history_count,
         }
+        briefing_summary = {
+            "active": int(briefing_counts["active"] or 0),
+            "unacknowledged": int(briefing_counts["unacknowledged"] or 0),
+            "critical": int(briefing_counts["critical"] or 0),
+            "warning": int(briefing_counts["warning"] or 0),
+            "feedbackExcluded": int(briefing_counts["feedback_excluded"] or 0),
+        }
         return {
             "ok": bool(last_success and not metadata.get("lastError")), "schemaVersion": SCHEMA,
-            "summary": summary, "alerts": active, "history": history,
+            "summary": summary, "briefingSummary": briefing_summary, "alerts": active, "history": history,
             "collector": {
                 "lastPollAt": iso(last_poll) if last_poll else None,
                 "lastSuccessAt": iso(last_success) if last_success else None,
@@ -364,6 +381,7 @@ class Store:
             "executionContract": {
                 "failedPollsResolveNothing": True, "transitionNotificationsOnly": True,
                 "acknowledgementDoesNotSilencePrometheus": True, "gameMutation": False,
+                "briefingMetaAlertsExcludedFromBriefingScore": True,
             },
         }
 

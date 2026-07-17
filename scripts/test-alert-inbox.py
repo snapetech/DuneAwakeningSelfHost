@@ -106,6 +106,22 @@ class AlertInboxTest(unittest.TestCase):
         self.assertIn("dash_alert_inbox_critical 1\n", metrics)
         self.assertNotIn("{", metrics)
 
+    def test_briefing_summary_excludes_its_meta_alert_namespace(self):
+        self.store.sync(response(
+            alert("DashOperationsBriefingCriticalActions"),
+            alert("Lag", severity="warning", instance="gateway"),
+        ), now=1000)
+        status = self.store.status(now=1000)
+        self.assertEqual({
+            "active": 2, "firing": 2, "pending": 0, "unacknowledged": 2,
+            "critical": 1, "warning": 1, "history": 2,
+        }, status["summary"])
+        self.assertEqual({
+            "active": 1, "unacknowledged": 1, "critical": 0,
+            "warning": 1, "feedbackExcluded": 1,
+        }, status["briefingSummary"])
+        self.assertTrue(status["executionContract"]["briefingMetaAlertsExcludedFromBriefingScore"])
+
     def test_database_symlink_is_rejected(self):
         real = pathlib.Path(self.tmp.name) / "real.sqlite3"
         link = pathlib.Path(self.tmp.name) / "link.sqlite3"
