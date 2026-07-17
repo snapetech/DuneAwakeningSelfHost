@@ -114,6 +114,10 @@ IMPACTS = {
         "player-state", "life-state", "database", backup="required",
         reversibility="backup-restore", player_disruption=True,
         safeguards=("explicitly offline player", "dead-state allowlist", "fingerprint-bound preview", "advisory and row locks", "full database backup", "native game function", "post-write verification", "private receipt", "isolated semantic restore proof")),
+    "/api/admin/character-backups": _impact(
+        "player-state", "account", "character-transfer", "database", backup="required-for-restore",
+        reversibility="backup-restore", player_disruption=True,
+        safeguards=("dual offline evidence", "private SHA-256 snapshot", "patch checksum binding", "fingerprint-bound preview", "advisory and row locks", "full database backup before restore", "native game functions", "exact orphan cleanup", "post-write identity verification", "private receipt", "isolated semantic restore proof")),
     "/api/admin/vehicle": _impact(
         "vehicle-state", "database", backup="required", reversibility="backup-restore",
         player_disruption=True, safeguards=("ownership validation", "database backup", "transaction")),

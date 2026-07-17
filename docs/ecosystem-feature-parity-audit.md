@@ -17,7 +17,7 @@ or documented operational path.
 ## Audit snapshot
 
 - Audit date: **2026-07-17**, full GitHub search and remote HEAD refresh
-  **2026-07-17 14:06 UTC**
+  **2026-07-17 18:30 UTC**
 - Search scope: GitHub repository search, project documentation, Funcom's
   self-host guide, CubeCoders' Dune template and guide, Nexus Mods' Dune:
   Awakening category, and public community discussions used only to discover
@@ -81,6 +81,19 @@ compare-and-swap reset. dapdsm's world-time query is explicitly a placeholder;
 DASH therefore does not claim a remaining-seconds value without a verified
 current-build time source.
 
+The 18:30 UTC refresh checked all 36 pinned primary repositories and repeated
+the four GitHub discovery searches. Thirty-five pins were unchanged and no new
+credible peer appeared. Icehunter advanced from `a10c39c` to `35ee67b`
+(`v0.46.0`) with native full-character transfer snapshot capture/list/download/
+delete/restore and asynchronous database-restore progress. DASH already had a
+stronger stopped-world database restore and recovery-evidence path, but the
+portable character snapshot was a real Build row. It is now closed with private
+SHA-256 snapshots, dual Offline evidence, patch/fingerprint binding, a full dump
+before destructive import, advisory/account/state/actor locks, exact old-player
+orphan cleanup, post-import identity verification, private receipts, and a
+rolled-back native export/import proof in the networkless restore drill; see
+`docs/character-backups.md`.
+
 Confidence labels in this document use the repository standard:
 
 - **high**: code/configuration and documentation agree, or DASH has tests and
@@ -121,7 +134,7 @@ webhooks, and Dune-specific announcement/player/status commands.
 
 | Peer | Pinned revision | Distinct operator outcomes | Confidence |
 | --- | --- | --- | --- |
-| [Icehunter/dune-admin](https://github.com/Icehunter/dune-admin) | `a10c39c7e977947f6b8524433b99be82c02b547a` | AMP/kubectl/Docker/local providers; local and Discord login; fine-grained RBAC; player/world/economy administration including offline stack/quality edits and orphan-safe native character deletion; welcome/MOTD; market bot; events; battle pass; scheduled operations | high |
+| [Icehunter/dune-admin](https://github.com/Icehunter/dune-admin) | `35ee67b3bc8f8019671745295b0dd0a5b7ab9a74` | AMP/kubectl/Docker/local providers; local and Discord login; fine-grained RBAC; player/world/economy administration including offline stack/quality edits, orphan-safe native character deletion, portable native character backup/restore, and database-restore progress; welcome/MOTD; market bot; events; battle pass; scheduled operations | high |
 | [AlphaNineGaming/AlphaNine-Dune-Suite](https://github.com/AlphaNineGaming/AlphaNine-Dune-Suite) | `340040a7d200a0aa9d92f3b1c8fc7f2349feed14` | Windows installer/setup wizard, receiver lifecycle, player/item tools, unified item/schematic/research/recipe catalogs, local live maps, market listings, orphan/owned-base cleanup, diagnostics, settings portability, VM scheduling, PWA metadata, and a role/MFA-gated Cloudflare Internet portal | moderate; source is present but current release notes outpace live-runtime evidence |
 | [Nerrowake/sietch-console](https://github.com/Nerrowake/sietch-console) | `80897fc5bc3efcbaff8b00f6a2ce57ba1b1e8aee` | Native Windows profiles, Hyper-V/Steam setup, INI editor, backups/cloud sync, remote API/SSE, diagnostics, metrics and player policy UI | moderate overall; source labels join parsing and kick/ban commands TODO/unverified |
 | [adainrivers/dune-dedicated-server-manager](https://github.com/adainrivers/dune-dedicated-server-manager) | `f7dfeb0d1327273299a03802eb16a71d4523e05c` | Cross-platform desktop profiles and SSH tunnels; lifecycle/diagnostics; scheduled maintenance; live RMQ admin commands; welcome packages | high |
@@ -280,6 +293,7 @@ without reproducing that wrapper.
 | Player/account/profile/search/history | All admin peers | Parity | Online/offline roster and deep detail |
 | Canonical post-1.5 player identity and orphan-safe character deletion | Icehunter `a10c39c` | DASH exceeds | Canonical valid-account reads prevent duplicate/stale roster, detail, inventory, and action resolution. The Players page exposes duplicate/orphan/actor-reference evidence; true-orphan cleanup and native deletion are fingerprint-bound, backup-first, offline/advisory/row locked, transactionally verified, privately receipted, and critically governed. Duplicate valid rows are reported but never guessed away; see `docs/player-identity-integrity.md` |
 | Offline persisted dead-state recovery | Admin-feedback peers document unavailable/unproven heal/revive commands; no surveyed peer couples the shipped database function to a rollback-only semantic recovery proof | DASH exceeds | Explicit `Dead`, `DeadByCoriolis`, and `DeadBySandworm` states are previewed without writing; execution requires dual Offline evidence, exact fingerprint and confirmation, a full dump, advisory/player/pawn locks, the shipped `get_player_pawn` + `update_death_location` path, persisted Alive/death-location readback, private receipt, and relog. The networkless restore drill proves Dead then Alive inside a rolled-back transaction before readiness is green; see `docs/offline-player-life-state-recovery.md` |
+| Native portable character backup/restore | Icehunter 0.46 | DASH exceeds | Private SHA-256 transfer snapshots support bounded list, verified authenticated download, exact deletion, dual-Offline capture, and patch/fingerprint-bound restore. Destructive import takes a full dump first, locks private identity/current account/state/actor rows, calls the shipped transfer functions, narrowly removes only fingerprinted old player orphans, verifies the reconstructed account/controller/name, issues a private receipt, requires relog but no restart, and stays non-ready without a rolled-back native export/import proof in the networkless restore drill; see `docs/character-backups.md` |
 | Inventory, currency, XP, skills, recipes, journey | Icehunter, the4rchangel, Red-Blink | Parity | Guarded native/DB paths |
 | Unified item, schematic, research/recipe, and patent catalog | AlphaNine `c319695` | DASH exceeds | One 2,265-row source feeds browsing and grant metadata with case-insensitive template identity, deterministic rich-row deduplication, inferred item/schematic/patent kinds, group/category/tier/name ordering, search/favorites/inspection, and progressive access to every match instead of a fixed first-page truncation; see `docs/player-identity-integrity.md` |
 | Existing inventory stack and quality editing | Icehunter 0.45 | DASH exceeds | Combined editor requires the owner offline, creates a full DB backup, locks item/owner state and rechecks offline status in one transaction, preserves all other composite fields through `dune.save_item`, verifies both values before commit, audits the receipt, and documents relog cache behavior |
@@ -475,6 +489,12 @@ only when explicitly authorized for a concrete client task, as required by
   proof in every current isolated restore drill.
   The in-game `&teleport` surface is also unified through that loopback Admin
   contract; no secondary chat-to-database write bypass remains.
+- **High confidence:** Icehunter 0.46's native character snapshot outcome is
+  closed. DASH adds private whole-payload SHA-256, dual Offline evidence,
+  current patch and exact-state binding, a full database dump before import,
+  transaction locks, narrowly scoped old-player orphan cleanup, post-import
+  account/controller/name verification, critical governance, private receipts,
+  and a networkless rolled-back export/import proof before readiness is green.
 - **High confidence:** the 2026-07-16 live search added eight credible peers and
   one rejected placeholder project. New executable outcomes were closed in the
   same refresh: movement-verified engagement airdrops now exceed the trigger +

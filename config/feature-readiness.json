@@ -213,6 +213,22 @@
       "remediation": {"surface": "mutations", "summary": "Run a current isolated PostgreSQL restore drill, repair only the exact missing native function or failed Dead/Alive semantic assertion, and preserve the Offline-only execution gate."}
     },
     {
+      "id": "character-backups",
+      "title": "Native character backup and restore",
+      "group": "Administration",
+      "description": "Private SHA-256 character-transfer snapshots use the shipped export/import functions with dual Offline checks, patch binding, exact preview fingerprints, a full database backup before destructive restore, transaction locks, narrow orphan cleanup, identity readback, and private receipts.",
+      "documentation": "docs/character-backups.md",
+      "primaryGate": "DUNE_ADMIN_CHARACTER_BACKUPS_ENABLED",
+      "gates": ["DUNE_ADMIN_MUTATIONS_ENABLED", "DUNE_ADMIN_CHARACTER_BACKUPS_ENABLED"],
+      "credentials": [],
+      "files": [{"path": "admin/character_backups.py", "minimumBytes": 1000}, {"path": "docs/character-backups.md", "minimumBytes": 1000}],
+      "services": ["admin-panel", "postgres"],
+      "probe": "character-backups",
+      "dependencies": ["mutation-governance", "operational-evidence"],
+      "canary": "runtime-proven",
+      "remediation": {"surface": "mutations", "summary": "Run a current isolated PostgreSQL restore drill, repair only the exact native export/import, checksum, or semantic assertion failure, and preserve the Offline-only restore gate."}
+    },
+    {
       "id": "player-administration",
       "title": "Player and progression administration",
       "group": "Administration",

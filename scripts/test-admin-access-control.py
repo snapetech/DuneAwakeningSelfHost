@@ -68,6 +68,8 @@ class AccessControlTest(unittest.TestCase):
             ("POST", "/api/admin/base-retirement"): "world.write",
             ("POST", "/api/admin/item"): "players.write",
             ("POST", "/api/admin/player-recovery/life-state"): "players.write",
+            ("POST", "/api/admin/character-backups/preview"): "read",
+            ("POST", "/api/admin/character-backups"): "players.write",
             ("POST", "/api/community/rewards"): "community.write",
             ("POST", "/api/auth/logout"): "read",
             ("POST", "/api/security/approvals"): "read",

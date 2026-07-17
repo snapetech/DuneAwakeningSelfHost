@@ -1673,6 +1673,56 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn("/api/admin/player-recovery/life-state", html)
         self.assertIn("expectedFingerprint:lifeRecoveryPlan.expectedFingerprint", html)
 
+    def test_character_backup_preview_exposes_fingerprint_and_gate(self):
+        original = self.panel.character_backups.plan_capture
+        self.panel.character_backups.plan_capture = lambda query, account_id: {
+            "ok": True, "dryRun": True, "action": "capture", "canExecute": True,
+            "accountId": int(account_id), "expectedFingerprint": "b" * 64,
+            "confirm": self.panel.character_backups.CAPTURE_CONFIRM,
+            "executionGate": "DUNE_ADMIN_CHARACTER_BACKUPS_ENABLED",
+        }
+        self.addCleanup(lambda: setattr(self.panel.character_backups, "plan_capture", original))
+        captured = self.invoke_post_route("/api/admin/character-backups/preview", {"action": "capture", "accountId": 42})
+        self.assertFalse(captured["errors"])
+        self.assertTrue(captured["json"]["canExecute"])
+        self.assertFalse(captured["json"]["mutationEnabled"])
+        self.assertEqual("b" * 64, captured["json"]["expectedFingerprint"])
+        self.assertEqual("character-backup-preview", captured["audits"][0]["action"])
+
+    def test_character_backup_capture_uses_dedicated_gate_and_audited_route(self):
+        original = self.panel.character_backups.capture
+        calls = []
+        self.panel.character_backups.capture = lambda *args, **kwargs: calls.append((args, kwargs)) or {
+            "ok": True, "dryRun": False,
+            "snapshot": {"id": "character-test", "accountIdAtCapture": 42},
+            "nativeFunction": self.panel.character_backups.CAPTURE_FUNCTION,
+        }
+        self.addCleanup(lambda: setattr(self.panel.character_backups, "capture", original))
+        self.patch_flag("MUTATIONS_ENABLED", True)
+        self.patch_flag("CHARACTER_BACKUPS_ENABLED", True)
+        captured = self.invoke_post_route("/api/admin/character-backups", {
+            "action": "capture", "accountId": 42, "reason": "test",
+            "expectedFingerprint": "b" * 64, "confirm": self.panel.character_backups.CAPTURE_CONFIRM,
+        })
+        self.assertFalse(captured["errors"])
+        self.assertEqual(1, len(calls))
+        self.assertEqual("character-test", captured["json"]["snapshot"]["id"])
+        self.assertEqual("character-backup", captured["audits"][0]["action"])
+        self.assertEqual("character-test", captured["audits"][0]["snapshot_id"])
+
+    def test_character_backup_execution_fails_closed_without_gate(self):
+        self.patch_flag("MUTATIONS_ENABLED", True)
+        self.patch_flag("CHARACTER_BACKUPS_ENABLED", False)
+        with self.assertRaisesRegex(PermissionError, "CHARACTER_BACKUPS_ENABLED"):
+            self.handler.character_backup_action({"action": "capture", "accountId": 42})
+
+    def test_admin_ui_contains_native_character_backup_controls(self):
+        html = self.panel.INDEX
+        self.assertIn("Native Character Backups", html)
+        self.assertIn("characterBackupCaptureBtn\" class=\"danger\" disabled", html)
+        self.assertIn("/api/admin/character-backups/preview", html)
+        self.assertIn("expectedFingerprint:characterBackupPlan.expectedFingerprint", html)
+
     def test_communinet_tutorial_vendor_dry_runs_are_plan_only(self):
         def fake_query(sql, params=None):
             if "load_communinet_player_data" in sql:

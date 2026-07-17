@@ -85,6 +85,7 @@ import public_directory
 import player_identity
 import player_life_recovery
 import offline_teleport
+import character_backups
 import env_file_store
 import feature_readiness
 import feature_readiness_history
@@ -428,6 +429,7 @@ ADDON_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_ADDON_MUTATIONS_ENABLED", "
 PLAYER_RUNTIME_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_PLAYER_RUNTIME_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 PLAYER_LIFE_RECOVERY_ENABLED = os.environ.get("DUNE_ADMIN_PLAYER_LIFE_RECOVERY_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 OFFLINE_TELEPORT_ENABLED = os.environ.get("DUNE_ADMIN_OFFLINE_TELEPORT_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+CHARACTER_BACKUPS_ENABLED = os.environ.get("DUNE_ADMIN_CHARACTER_BACKUPS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 VEHICLE_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_VEHICLE_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 BOOTSTRAP_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_BOOTSTRAP_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 REPUTATION_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
@@ -453,6 +455,8 @@ PLAYER_LIFE_RECOVERY_RECEIPTS = BACKUP_ROOT / "player-life-recovery"
 PLAYER_LIFE_RECOVERY_RUNTIME = {"previews": 0, "executions": 0, "refusals": 0, "errors": 0}
 OFFLINE_TELEPORT_RECEIPTS = BACKUP_ROOT / "offline-teleport"
 OFFLINE_TELEPORT_RUNTIME = {"previews": 0, "executions": 0, "refusals": 0, "errors": 0}
+CHARACTER_BACKUPS_ROOT = BACKUP_ROOT / "character-backups"
+CHARACTER_BACKUPS_RUNTIME = {"previews": 0, "captures": 0, "restores": 0, "deletes": 0, "refusals": 0, "errors": 0}
 ANNOUNCEMENT_STATE_FILE = BACKUP_ROOT / "announcements.json"
 RESTART_STATE_FILE = BACKUP_ROOT / "restart-jobs.json"
 EVENT_STATE_FILE = BACKUP_ROOT / "events.json"
@@ -839,6 +843,26 @@ def offline_teleport_prometheus():
     return "".join(f"{name} {value}\n" for name, value in values.items())
 
 
+def character_backups_prometheus():
+    try:
+        probe = _feature_readiness_character_backups_probe()
+        values = {
+            "dash_character_backups_collector_up": 1,
+            "dash_character_backups_enabled": 1 if MUTATIONS_ENABLED and CHARACTER_BACKUPS_ENABLED else 0,
+            "dash_character_backups_ready": 1 if probe.get("ready") else 0,
+            "dash_character_backups_snapshots": len(character_backups.list_snapshots(CHARACTER_BACKUPS_ROOT, limit=1000)),
+            "dash_character_backups_previews_total": int(CHARACTER_BACKUPS_RUNTIME["previews"]),
+            "dash_character_backups_captures_total": int(CHARACTER_BACKUPS_RUNTIME["captures"]),
+            "dash_character_backups_restores_total": int(CHARACTER_BACKUPS_RUNTIME["restores"]),
+            "dash_character_backups_deletes_total": int(CHARACTER_BACKUPS_RUNTIME["deletes"]),
+            "dash_character_backups_refusals_total": int(CHARACTER_BACKUPS_RUNTIME["refusals"]),
+            "dash_character_backups_errors_total": int(CHARACTER_BACKUPS_RUNTIME["errors"]),
+        }
+    except Exception:
+        values = {"dash_character_backups_collector_up": 0, "dash_character_backups_ready": 0}
+    return "".join(f"{name} {value}\n" for name, value in values.items())
+
+
 def _feature_readiness_probe(name, callback):
     try:
         result = callback()
@@ -1166,6 +1190,26 @@ def _feature_readiness_offline_teleport_probe():
     }
 
 
+def _feature_readiness_character_backups_probe():
+    rows = query("""
+        select to_regprocedure('dune.character_transfer_export(text)') is not null as export_function,
+               to_regprocedure('dune.character_transfer_import(jsonb,text,text)') is not null as import_function,
+               to_regprocedure('dune._character_transfer_get_patches_checksum()') is not null as checksum_function
+    """)
+    native_ready = bool(rows and all(rows[0].values()))
+    restore_status = restore_drill.status(RESTORE_DRILL_RECEIPT_ROOT, limit=1)
+    latest = restore_status.get("latest") or {}
+    contract = ((latest.get("validation") or {}).get("characterTransferContract") or {})
+    semantic_ready = bool(
+        latest.get("receiptHashValid") and latest.get("integrityOk")
+        and contract.get("transactionRolledBack") and contract.get("candidateFound")
+        and contract.get("exportVerified") and contract.get("importVerified")
+    )
+    ready = bool(MUTATIONS_ENABLED and CHARACTER_BACKUPS_ENABLED and native_ready and semantic_ready)
+    state = "ready" if ready else "gated" if not (MUTATIONS_ENABLED and CHARACTER_BACKUPS_ENABLED) else "native-contract-missing" if not native_ready else "semantic-proof-missing"
+    return {"ready": ready, "state": state, "detail": f"native functions={native_ready}; isolated export/import rollback proof={semantic_ready}; master gate={MUTATIONS_ENABLED}; feature gate={CHARACTER_BACKUPS_ENABLED}"}
+
+
 def _feature_readiness_autoscaler_probe():
     status = autoscaler_public_state(include_inventory=False)
     ready = bool(status.get("enabled") and not status.get("lastError"))
@@ -1318,6 +1362,7 @@ def feature_readiness_public_status(force=False):
         },
         "player-life-recovery": _feature_readiness_probe("player-life-recovery", _feature_readiness_player_life_recovery_probe),
         "offline-player-teleport": _feature_readiness_probe("offline-player-teleport", _feature_readiness_offline_teleport_probe),
+        "character-backups": _feature_readiness_probe("character-backups", _feature_readiness_character_backups_probe),
         "moderation": _feature_readiness_probe("moderation", lambda: _feature_readiness_store_probe(MODERATION_STORE, MODERATION_STORE_INITIALIZED, MODERATION_RUNTIME, "moderation")),
         "community-rewards": _feature_readiness_probe("community-rewards", _feature_readiness_community_probe),
         "creator-modding": _feature_readiness_probe("creator-modding", _feature_readiness_creator_probe),
@@ -1449,6 +1494,7 @@ def admin_panel_reload_paths():
         CODE_ROOT / "admin" / "player_identity.py",
         CODE_ROOT / "admin" / "player_life_recovery.py",
         CODE_ROOT / "admin" / "offline_teleport.py",
+        CODE_ROOT / "admin" / "character_backups.py",
         CODE_ROOT / "admin" / "credential_lifecycle.py",
         CREDENTIAL_LIFECYCLE_FILE,
         CODE_ROOT / "scripts" / "dune_gm_command.py",
@@ -2153,6 +2199,7 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ADMIN_RESPAWN_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for respawn-location deletion through update_respawn_locations. Respawn inspection and dry-runs remain available."},
     "DUNE_ADMIN_PLAYER_LIFE_RECOVERY_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for fingerprint-bound native recovery of an explicitly Offline dead player's persisted life state. Preview remains available."},
     "DUNE_ADMIN_OFFLINE_TELEPORT_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for fingerprint-bound, backup-first native teleport of an explicitly Offline player's persisted pawn. Preview remains available."},
+    "DUNE_ADMIN_CHARACTER_BACKUPS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for native portable character snapshot capture and fingerprint-bound, full-backup-first destructive restore. Preview/list/download remain available."},
     "DUNE_ADMIN_GUILD_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for guild description and role server-function calls. Guild inspection and dry-runs remain available."},
     "DUNE_ADMIN_MARKER_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for marker deletion server-function calls. Marker inspection and dry-runs remain available."},
     "DUNE_ADMIN_LANDCLAIM_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for landclaim segment server-function calls. Landclaim inspection and dry-runs remain available."},
@@ -12191,6 +12238,7 @@ class Handler(BaseHTTPRequestHandler):
                 metrics += player_identity_prometheus()
                 metrics += player_life_recovery_prometheus()
                 metrics += offline_teleport_prometheus()
+                metrics += character_backups_prometheus()
                 metrics += feature_readiness_prometheus()
                 metrics += credential_lifecycle_prometheus()
                 metrics += backup_schedule_prometheus()
@@ -12693,6 +12741,24 @@ class Handler(BaseHTTPRequestHandler):
                 params = urllib.parse.parse_qs(parsed.query)
                 account_id = (params.get("account_id") or params.get("accountId") or [""])[0]
                 self.json(self.character_slots(account_id))
+            elif parsed.path == "/api/admin/character-backups":
+                self.require_token()
+                params = urllib.parse.parse_qs(parsed.query)
+                snapshot_id = (params.get("download") or [""])[0]
+                if snapshot_id:
+                    data, name, digest = character_backups.download(CHARACTER_BACKUPS_ROOT, snapshot_id)
+                    self.audit("character-backup-download", ok=True, snapshot_id=snapshot_id, sha256=digest, bytes=len(data))
+                    self.download_bytes(data, name, "application/json; charset=utf-8")
+                else:
+                    account_id = (params.get("account_id") or params.get("accountId") or [""])[0]
+                    self.json({
+                        "ok": True,
+                        "mutationEnabled": bool(MUTATIONS_ENABLED and CHARACTER_BACKUPS_ENABLED),
+                        "snapshots": character_backups.list_snapshots(CHARACTER_BACKUPS_ROOT, account_id=account_id or None),
+                        "confirmCapture": character_backups.CAPTURE_CONFIRM,
+                        "confirmRestore": character_backups.RESTORE_CONFIRM,
+                        "confirmDelete": character_backups.DELETE_CONFIRM,
+                    })
             elif parsed.path == "/api/admin/player-identity-integrity":
                 self.require_token()
                 params = urllib.parse.parse_qs(parsed.query)
@@ -14094,6 +14160,22 @@ class Handler(BaseHTTPRequestHandler):
                     partition_id=result.get("partitionId"),
                     receipt_id=(result.get("receipt") or {}).get("id"),
                     native_function=result.get("nativeFunction"), verified=result.get("verified"),
+                )
+                self.json(result)
+            elif parsed.path == "/api/admin/character-backups/preview":
+                self.require_token()
+                body = parse_body(self)
+                result = self.character_backup_preview(body)
+                self.audit("character-backup-preview", ok=result.get("ok"), backup_action=result.get("action"), account_id=result.get("accountId"), snapshot_id=(result.get("snapshot") or {}).get("id"))
+                self.json(result)
+            elif parsed.path == "/api/admin/character-backups":
+                self.require_token()
+                body = parse_body(self)
+                result = self.character_backup_action(body)
+                self.audit(
+                    "character-backup", ok=result.get("ok"), backup_action=str(body.get("action") or ""),
+                    account_id=result.get("accountId"), snapshot_id=((result.get("snapshot") or result.get("deleted") or {}).get("id")),
+                    receipt_id=(result.get("receipt") or {}).get("id"), native_function=result.get("nativeFunction"),
                 )
                 self.json(result)
             elif parsed.path == "/api/admin/spice-fields/inspect":
@@ -16332,6 +16414,56 @@ class Handler(BaseHTTPRequestHandler):
             OFFLINE_TELEPORT_RUNTIME["errors"] += 1
             raise
 
+    def character_backup_preview(self, body):
+        action = str(body.get("action") or "capture").strip().lower()
+        CHARACTER_BACKUPS_RUNTIME["previews"] += 1
+        if action == "capture":
+            result = character_backups.plan_capture(query, body.get("account_id", body.get("accountId")))
+        elif action == "restore":
+            result = character_backups.plan_restore(query, CHARACTER_BACKUPS_ROOT, body.get("snapshot_id", body.get("snapshotId")))
+        else:
+            raise ValueError("character backup preview action must be capture or restore")
+        result["mutationEnabled"] = bool(MUTATIONS_ENABLED and CHARACTER_BACKUPS_ENABLED)
+        return result
+
+    def character_backup_action(self, body):
+        self.require_mutations()
+        if not CHARACTER_BACKUPS_ENABLED:
+            raise PermissionError("character backups are disabled; set DUNE_ADMIN_CHARACTER_BACKUPS_ENABLED=true")
+        action = str(body.get("action") or "").strip().lower()
+        principal = access_control.public_principal(getattr(self, "auth_principal", None)) or {"id": "owner-recovery"}
+        try:
+            if action == "capture":
+                result = character_backups.capture(
+                    db_connect, CHARACTER_BACKUPS_ROOT, body.get("account_id", body.get("accountId")),
+                    body.get("expected_fingerprint", body.get("expectedFingerprint")), body.get("confirm"),
+                    principal=principal.get("id"), reason=body.get("reason", "manual"),
+                )
+                CHARACTER_BACKUPS_RUNTIME["captures"] += 1
+                return result
+            if action == "restore":
+                result = character_backups.restore(
+                    db_connect, create_db_backup, CHARACTER_BACKUPS_ROOT,
+                    body.get("snapshot_id", body.get("snapshotId")),
+                    body.get("expected_fingerprint", body.get("expectedFingerprint")), body.get("confirm"),
+                    principal=principal.get("id"),
+                )
+                CHARACTER_BACKUPS_RUNTIME["restores"] += 1
+                return result
+            if action == "delete":
+                result = character_backups.delete_snapshot(
+                    CHARACTER_BACKUPS_ROOT, body.get("snapshot_id", body.get("snapshotId")), body.get("confirm"),
+                )
+                CHARACTER_BACKUPS_RUNTIME["deletes"] += 1
+                return result
+            raise ValueError("character backup action must be capture, restore, or delete")
+        except (PermissionError, ValueError, RuntimeError):
+            CHARACTER_BACKUPS_RUNTIME["refusals"] += 1
+            raise
+        except Exception:
+            CHARACTER_BACKUPS_RUNTIME["errors"] += 1
+            raise
+
     def spice_field_inspect(self):
         errors = {}
         return {
@@ -18492,6 +18624,19 @@ class Handler(BaseHTTPRequestHandler):
         if not head_only:
             with path.open("rb") as handle:
                 shutil.copyfileobj(handle, self.wfile, length=1024 * 1024)
+
+    def download_bytes(self, data, name, content_type="application/octet-stream", head_only=False):
+        data = bytes(data)
+        safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", pathlib.Path(name).name)
+        self.complete_privileged_audit(HTTPStatus.OK)
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Disposition", f'attachment; filename="{safe_name}"')
+        self.security_headers()
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        if not head_only:
+            self.wfile.write(data)
 
     def item_icon(self, parsed, head_only=False):
         template_id = (urllib.parse.parse_qs(parsed.query).get("template") or [""])[0]
@@ -23273,6 +23418,9 @@ function runtimeActionPanel(catalog={}){
   const vehicleOptions = (catalog.vehicles || []).map(row => `<option value="${esc(row.id)}">${esc(row.id)} | ${esc((row.templates || []).join(', '))}</option>`).join('');
   return `<div class="twoCol"><div class="panelBand"><div class="sectionHeader"><h2>Native Player Actions</h2><div class="toolbar"><span class="pill ${catalog.mutationEnabled ? 'warn' : 'ok'}">execution ${catalog.mutationEnabled ? 'enabled' : 'disabled'}</span><span class="pill ${catalog.tokenConfigured ? 'ok' : 'warn'}">command token ${catalog.tokenConfigured ? 'configured' : 'missing'}</span></div></div><p class="muted">Token-authenticated Version 2 commands are queued through game RabbitMQ. Water, teleport, and vehicle spawn require an online target. A queued result proves broker acceptance, not client-side completion.</p><div class="grid"><label>Action<select id="runtimeAction"><option value="skill-points">Set skill points</option><option value="skill-module">Set skill module</option><option value="refill-water">Refill water</option><option value="kick">Kick player</option><option value="kick-all">Kick all online</option><option value="teleport">Teleport online player</option><option value="clean-inventory">Clean inventory</option><option value="reset-progression">Reset progression</option><option value="spawn-vehicle">Spawn vehicle at coordinates</option></select></label><label>Skill points<input id="runtimeSkillPoints" type="number" min="0" max="100000" value="1"></label><label>Skill module<select id="runtimeSkillModule">${moduleOptions}</select></label><label>Module level<input id="runtimeSkillLevel" type="number" min="0" value="1"></label><label>Water amount<input id="runtimeWater" type="number" min="1" max="1000000000" value="1000000"></label><label>Vehicle<select id="runtimeVehicle">${vehicleOptions}</select></label><label>Vehicle template<input id="runtimeVehicleTemplate" placeholder="blank uses first valid template"></label><label>X<input id="runtimeX" value="0"></label><label>Y<input id="runtimeY" value="0"></label><label>Z<input id="runtimeZ" value="0"></label><label>Rotation / yaw<input id="runtimeRotation" value="0"></label></div><p><button id="runtimePreviewBtn" class="primary">Preview native action</button> <button id="runtimeExecuteBtn" class="danger">Execute native action</button></p><pre id="runtimeActionResult"></pre></div><div class="panelBand"><h2>Offline Vehicle Maintenance</h2><p class="muted">Repairs persistent vehicle data only while the selected player is offline. Execution creates a database backup and requires relog.</p><div class="grid"><label>Action<select id="vehicleDbAction"><option value="repair-decay">Repair durability red bar</option><option value="refuel">Refuel vehicle</option></select></label><label>Repair threshold %<input id="vehicleThreshold" type="number" min="1" max="100" value="50"></label><label>Vehicle actor ID<input id="vehicleActorId"></label></div><p><button id="vehicleDbPreviewBtn" class="primary">Preview vehicle action</button> <button id="vehicleDbExecuteBtn" class="danger">Execute vehicle action</button></p><pre id="vehicleDbResult"></pre></div></div><div class="panelBand"><h2>Player Recovery and Repair</h2><p class="muted">Intel, recipe, and research JSON writes are offline-only, compare-and-swap verified, backed up, and receipted for exact rollback. Specialization, keystone, and gear maintenance use their first-party table/function paths. Login-queue repair deletes only the selected player's exact game-RabbitMQ queue.</p><div class="grid"><label>Action<select id="playerMaintenanceAction"><option value="repair-gear">Repair equipped/carried gear</option><option value="repair-login-queue">Repair stale login queue</option></select></label><label><input id="playerMaintenanceForce" type="checkbox"> Force login-queue delete when DB says Online</label></div><p><button id="playerMaintenancePreviewBtn" class="primary">Preview maintenance</button> <button id="playerMaintenanceExecuteBtn" class="danger">Execute maintenance</button></p><pre id="playerMaintenanceResult"></pre></div>`;
 }
+function characterBackupsPanel(){
+  return `<div class="panelBand"><div class="sectionHeader"><h2>Native Character Backups</h2><div class="toolbar"><span class="pill">Offline only</span><span class="pill warn">restore fully replaces character</span></div></div><p class="muted">Capture and restore the game's portable character-transfer payload: character, inventory, progression, and already packed base/vehicle backups. Placed bases and parked world vehicles are not included. Restore takes a full database dump first and requires relog, not a server restart.</p><div class="grid"><label>Snapshot<select id="characterBackupSnapshot"><option value="">No snapshots loaded</option></select></label><label>Reason<input id="characterBackupReason" value="manual operator snapshot"></label><label>Exact confirmation<input id="characterBackupConfirm" placeholder="preview first"></label></div><p><button id="characterBackupRefreshBtn" class="primary">Refresh snapshots</button> <button id="characterBackupCapturePreviewBtn" class="primary">Preview capture</button> <button id="characterBackupCaptureBtn" class="danger" disabled>Capture snapshot</button> <button id="characterBackupRestorePreviewBtn" class="primary">Preview restore</button> <button id="characterBackupRestoreBtn" class="danger" disabled>Restore snapshot</button> <button id="characterBackupDownloadBtn">Download</button> <button id="characterBackupDeleteBtn" class="danger">Delete snapshot</button></p><pre id="characterBackupResult"></pre></div>`;
+}
 async function runPlayerRuntimeAction(dryRun=true){
   const action = runtimeAction.value;
   const body = {dry_run:dryRun, action, account_id:grantAccount.value, skill_points:runtimeSkillPoints.value, module:runtimeSkillModule.value, level:runtimeSkillLevel.value, water_amount:runtimeWater.value, vehicle:runtimeVehicle.value, template:runtimeVehicleTemplate.value, x:runtimeX.value, y:runtimeY.value, z:runtimeZ.value, rotation:runtimeRotation.value};
@@ -23324,6 +23472,7 @@ async function mutations(serial=loadSerial){
   if (serial !== loadSerial) return;
   const referenceErrors = ref.errors && Object.keys(ref.errors).length ? `<div class="card"><h2>Reference Errors</h2><pre>${esc(JSON.stringify(ref.errors, null, 2))}</pre></div>` : '';
   view.innerHTML = `<div class="pageStack">${referenceErrors}<div class="sectionHeader"><h2>Admin Actions</h2><div class="toolbar"><button data-jump="characters">Players</button><button data-jump="settings">Settings</button><button data-jump="security">Audit</button></div></div><div class="panelBand"><h2>Target Player</h2><div class="grid"><label>Character<select id="adminCharacterSelect">${characterOptions(characterRows)}</select></label><label>Player controller ID<input id="pcid"></label><label>Account ID<input id="grantAccount" placeholder="auto-select player inventory"></label><label>Character name<input id="grantCharacter" placeholder="auto-select by name"></label></div></div>${runtimeActionPanel(runtimeCatalog)}${offlineTeleportPanel(ref, characterRows)}<div class="panelBand"><h2>Character Slots</h2><div class="grid"><label>Action<select id="slotAction"><option>new-character</option><option>switch-character</option><option>restore-character</option></select></label><label>Target hibernated account ID<input id="slotTargetAccount"></label></div><p><button id="slotInspectBtn" class="primary">Inspect slots</button> <button id="slotPlanBtn" class="primary">Preview swap</button> <button id="slotExecuteBtn" class="danger">Execute swap</button></p><pre id="slotResult"></pre></div><div class="twoCol"><div class="panelBand"><h2>Currency and XP</h2><p class="muted">Select a character first; balances and tracks populate from that player.</p><div class="grid"><label>Currency ID<select id="curid">${options(ref.currencyIds, 'currency_id', '1')}</select></label><label>Amount<input id="amount" value="1000"></label><label>Mode<select id="mode"><option>add</option><option>set</option></select></label></div><p><button id="currencyBtn" class="primary">Apply currency</button></p><div class="grid"><label>Solari amount<input id="solariAmount" value="20000"></label></div><p><button id="solariInventoryDryRunBtn" class="primary">Preview inventory Solari</button> <button id="solariInventoryGrantBtn" class="danger">Grant inventory Solari</button> <button id="solariBankDryRunBtn" class="primary">Preview bank Solari</button> <button id="solariBankGrantBtn" class="danger">Grant bank Solari</button></p><pre id="solariGrantResult"></pre><div class="grid"><label>Player/controller ID<input id="xpid"></label><label>Track type<select id="track">${options(ref.specializationTrackTypes, 'track_type')}</select></label><label>XP amount<input id="xpamount" value="1000"></label><label>Level for set/new track<input id="xplevel" value="0"></label><label>Mode<select id="xpmode"><option>add</option><option>set</option></select></label></div><p><button id="xpBtn" class="primary">Apply XP</button></p></div><div class="panelBand"><h2>Item Grants</h2><p class="muted">Use a known template ID and dry run before writing new items.</p><div class="grid"><label>Known inventory<select id="grantInventorySelect">${inventoryOptions(ref.recentInventories)}</select></label><label>Inventory ID<input id="grantInventory" placeholder="explicit inventory"></label><label class="hidden">Character<select id="grantCharacterSelect">${characterOptions(characterRows)}</select></label><label>Inventory type<select id="grantInventoryType">${inventoryTypeOptions(ref.inventoryTypes)}</select></label><label>Template ID<input id="grantTemplate" list="itemTemplateList" placeholder="SMG_Unique_LargeMag_06"></label><label>Stack size<input id="grantStack" value="1"></label><label>Quality level<input id="grantQuality" value="0"></label><label>Position index<input id="grantPosition" placeholder="auto"></label></div><details><summary>Advanced stats JSON</summary><textarea id="grantStats">{}</textarea></details><p><button id="dryRunItemBtn" class="primary">Dry run</button> <button id="grantItemBtn" class="danger">Grant item</button></p><pre id="grantResult"></pre></div></div><div class="twoCol"><div class="panelBand"><h2>Item Maintenance</h2><p class="muted">Stack/quality changes require the owning player to be offline, create a database backup, preserve every other item field, and verify the saved row. Relog to refresh the client.</p><div class="grid"><label class="hidden">Character<select id="itemCharacterSelect">${characterOptions(characterRows)}</select></label><label>Owned item<select id="itemEditSelect"><option value="">Select a character first</option></select></label><label>Item ID<input id="itemEditId"></label><label>New stack size<input id="itemEditStack" value="1"></label><label>New quality level<input id="itemEditQuality" type="number" min="0" max="100" value="0"></label><label>Delete count<input id="itemDeleteCount" placeholder="blank/all"></label></div><p><button id="setItemStackBtn" class="primary">Set stack + quality</button> <button id="deleteItemBtn" class="danger">Delete item/count</button></p><pre id="itemEditResult"></pre></div><div class="panelBand"><h2>Specialization Keystones</h2><div class="grid"><label>Player/controller ID<input id="keyPlayer"></label><label>Keystone<select id="keystone">${options(ref.keystones, 'name')}</select></label></div><p><button id="purchaseKeystoneBtn" class="primary">Purchase keystone</button> <button id="resetKeystonesBtn" class="danger">Reset all keystones</button></p><pre id="keystoneResult"></pre></div></div><details class="panelBand"><summary>Backup</summary><p class="muted">Creates a Postgres custom-format dump under <code>backups/admin-panel</code>.</p><button id="backupBtn" class="primary">Create DB backup</button><pre id="backupResult"></pre></details><datalist id="itemTemplateList">${templateDatalist(ref)}</datalist><details class="panelBand"><summary>Known Item Templates</summary>${table(ref.knownItemTemplates)}</details><details class="panelBand"><summary>Observed Item Templates</summary>${table(ref.observedItemTemplates)}</details><details class="panelBand"><summary>Recent Inventories</summary>${table(ref.recentInventories)}</details><details class="panelBand"><summary>Inventory Types</summary>${table(ref.inventoryTypes)}</details></div>`;
+  view.insertAdjacentHTML('beforeend', characterBackupsPanel());
   mountProgressionMaintenanceControls(runtimeCatalog);
   mountVisualItemCatalog();
   const loadCharacterAdminDetails = async (accountId, serial=detailLoadSerial) => {
@@ -23453,6 +23602,77 @@ async function mutations(serial=loadSerial){
     notify('Native offline life-state recovery verified', 'ok');
     return result;
   }));
+  let characterBackupPlan = null;
+  const characterBackupCapture = document.getElementById('characterBackupCaptureBtn');
+  const characterBackupRestore = document.getElementById('characterBackupRestoreBtn');
+  const refreshCharacterBackups = async () => {
+    const data = await api('/api/admin/character-backups');
+    const select = document.getElementById('characterBackupSnapshot');
+    select.innerHTML = '<option value="">Select a snapshot</option>' + (data.snapshots || []).map(row => `<option value="${esc(row.id)}">${esc(row.createdAt || '')} | ${esc(row.characterName || row.accountIdAtCapture || '')} | ${esc(row.id)}</option>`).join('');
+    document.getElementById('characterBackupResult').textContent = JSON.stringify(data, null, 2);
+    return data;
+  };
+  document.getElementById('characterBackupRefreshBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Refreshing...', refreshCharacterBackups));
+  document.getElementById('characterBackupCapturePreviewBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Previewing...', async () => {
+    characterBackupPlan = await api('/api/admin/character-backups/preview', {method:'POST', body:JSON.stringify({action:'capture', accountId:grantAccount.value})});
+    characterBackupConfirm.value = '';
+    characterBackupConfirm.placeholder = characterBackupPlan.confirm || 'preview blocked';
+    characterBackupCapture.disabled = !(characterBackupPlan.mutationEnabled && characterBackupPlan.canExecute);
+    characterBackupRestore.disabled = true;
+    characterBackupResult.textContent = JSON.stringify(characterBackupPlan, null, 2);
+    return characterBackupPlan;
+  }));
+  characterBackupCapture?.addEventListener('click', e => runAction(e.currentTarget, 'Capturing...', async () => {
+    if (characterBackupPlan?.action !== 'capture' || !characterBackupPlan.canExecute) throw new Error('Preview an executable capture first');
+    const typed = characterBackupConfirm.value.trim();
+    if (typed !== characterBackupPlan.confirm) throw new Error(`Type ${characterBackupPlan.confirm} exactly`);
+    const result = await api('/api/admin/character-backups', {method:'POST', timeoutMs:180000, body:JSON.stringify({action:'capture', accountId:characterBackupPlan.accountId, reason:characterBackupReason.value, expectedFingerprint:characterBackupPlan.expectedFingerprint, confirm:typed})});
+    characterBackupPlan = null; characterBackupCapture.disabled = true;
+    characterBackupResult.textContent = JSON.stringify(result, null, 2);
+    await refreshCharacterBackups();
+    notify('Native character snapshot captured and SHA-256 verified', 'ok');
+    return result;
+  }));
+  document.getElementById('characterBackupRestorePreviewBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Previewing...', async () => {
+    const snapshotId = characterBackupSnapshot.value;
+    if (!snapshotId) throw new Error('Select a character snapshot');
+    characterBackupPlan = await api('/api/admin/character-backups/preview', {method:'POST', body:JSON.stringify({action:'restore', snapshotId})});
+    characterBackupConfirm.value = '';
+    characterBackupConfirm.placeholder = characterBackupPlan.confirm || 'preview blocked';
+    characterBackupRestore.disabled = !(characterBackupPlan.mutationEnabled && characterBackupPlan.canExecute);
+    characterBackupCapture.disabled = true;
+    characterBackupResult.textContent = JSON.stringify(characterBackupPlan, null, 2);
+    return characterBackupPlan;
+  }));
+  characterBackupRestore?.addEventListener('click', e => runAction(e.currentTarget, 'Restoring...', async () => {
+    if (characterBackupPlan?.action !== 'restore' || !characterBackupPlan.canExecute) throw new Error('Preview an executable restore first');
+    const typed = characterBackupConfirm.value.trim();
+    if (typed !== characterBackupPlan.confirm) throw new Error(`Type ${characterBackupPlan.confirm} exactly`);
+    if (!confirm(`Fully replace the current character with snapshot ${characterBackupPlan.snapshot.id}?\n\nDASH will take a full database dump, lock and recheck the Offline identity, invoke the native import, verify the new account/controller, and issue a private receipt. Placed world property is not in the snapshot.`)) return;
+    const result = await api('/api/admin/character-backups', {method:'POST', timeoutMs:240000, body:JSON.stringify({action:'restore', snapshotId:characterBackupPlan.snapshot.id, expectedFingerprint:characterBackupPlan.expectedFingerprint, confirm:typed})});
+    characterBackupPlan = null; characterBackupRestore.disabled = true;
+    characterBackupResult.textContent = JSON.stringify(result, null, 2);
+    notify('Native character restore committed and identity-verified; player must relog', 'ok');
+    return result;
+  }));
+  document.getElementById('characterBackupDeleteBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Deleting...', async () => {
+    const snapshotId = characterBackupSnapshot.value;
+    if (!snapshotId) throw new Error('Select a character snapshot');
+    if (characterBackupConfirm.value.trim() !== 'DELETE CHARACTER BACKUP') throw new Error('Type DELETE CHARACTER BACKUP exactly');
+    const result = await api('/api/admin/character-backups', {method:'POST', body:JSON.stringify({action:'delete', snapshotId, confirm:'DELETE CHARACTER BACKUP'})});
+    await refreshCharacterBackups(); notify('Character snapshot deleted', 'ok'); return result;
+  }));
+  document.getElementById('characterBackupDownloadBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Downloading...', async () => {
+    const snapshotId = characterBackupSnapshot.value;
+    if (!snapshotId) throw new Error('Select a character snapshot');
+    const headers = token ? {'X-Admin-Token':token} : {};
+    const response = await fetch('/api/admin/character-backups?download=' + encodeURIComponent(snapshotId), {headers, cache:'no-store'});
+    if (!response.ok) throw new Error(await response.text());
+    const blob = await response.blob(), url = URL.createObjectURL(blob), link = document.createElement('a');
+    link.href = url; link.download = snapshotId + '.json'; link.click(); URL.revokeObjectURL(url);
+    return {ok:true, snapshotId};
+  }));
+  refreshCharacterBackups().catch(error => { characterBackupResult.textContent = error.message; });
   renderOfflineTeleportMap();
   offlineTeleportPlan = null;
   const teleportExecute = document.getElementById('teleportExecuteBtn');

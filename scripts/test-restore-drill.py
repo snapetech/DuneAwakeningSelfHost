@@ -94,6 +94,20 @@ class FakeDocker:
                 "nativeFunction": "dune.admin_move_offline_player_to_partition(text,bigint,vector)",
                 "testedAccountCount": 1,
             }) + "\n"
+        if argv and argv[0] == "psql" and "dash_transfer_candidate" in joined:
+            if self.failure == "transfer-contract":
+                return 0, json.dumps({
+                    "transactionRolledBack": True, "candidateFound": True,
+                    "exportVerified": True, "importVerified": False,
+                    "testedAccountCount": 1,
+                }) + "\n"
+            return 0, json.dumps({
+                "transactionRolledBack": True, "candidateFound": True,
+                "exportVerified": True, "importVerified": True,
+                "nativeExportFunction": "dune.character_transfer_export(text)",
+                "nativeImportFunction": "dune.character_transfer_import(jsonb,text,text)",
+                "testedAccountCount": 1,
+            }) + "\n"
         if argv and argv[0] == "psql":
             return 0, json.dumps({
                 "actors": 30, "player_state": 4, "world_partition": 30,
@@ -211,8 +225,10 @@ class RestoreDrillTests(unittest.TestCase):
         self.assertTrue(any(command and command[0] == "pg_dump" for command in docker.commands))
         self.assertTrue(result["validation"]["playerLifeRecoveryContract"]["aliveTransitionVerified"])
         self.assertTrue(result["validation"]["offlineTeleportContract"]["moveVerified"])
+        self.assertTrue(result["validation"]["characterTransferContract"]["importVerified"])
         self.assertTrue(any(command and command[0] == "psql" and "dash_life_candidate" in " ".join(command) for command in docker.commands))
         self.assertTrue(any(command and command[0] == "psql" and "dash_teleport_candidate" in " ".join(command) for command in docker.commands))
+        self.assertTrue(any(command and command[0] == "psql" and "dash_transfer_candidate" in " ".join(command) for command in docker.commands))
         for command in docker.commands:
             connects = command and (command[0] in {"psql", "vacuumdb", "pg_dump"} or (command[0] == "pg_restore" and "--dbname=drill" in command))
             if connects:

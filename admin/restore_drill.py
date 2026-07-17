@@ -31,7 +31,8 @@ REQUIRED_TABLES = (
 )
 REQUIRED_FUNCTIONS = (
     "base_backup_save_from_totem", "get_player_pawn", "update_death_location",
-    "admin_move_offline_player_to_partition",
+    "admin_move_offline_player_to_partition", "character_transfer_export",
+    "character_transfer_import", "_character_transfer_get_patches_checksum",
 )
 COUNTED_TABLES = (
     "actors", "player_state", "world_partition", "farm_state", "items",
@@ -454,6 +455,79 @@ ROLLBACK;
 """.strip()
 
 
+def _sql_character_transfer_contract():
+    """Prove native full-character export/import while rolling back all writes."""
+    return r"""
+BEGIN;
+CREATE TEMP TABLE dash_transfer_candidate ON COMMIT DROP AS
+SELECT eps.account_id AS original_account_id, eps.id AS original_player_state_row_id,
+       eps.player_controller_id AS original_player_controller_id,
+       ea."user" AS fls_id,
+       dune.decrypt_user_data(eps.encrypted_character_name) AS character_name,
+       dune._character_transfer_get_patches_checksum() AS patches_checksum,
+       null::jsonb AS transfer_data,
+       null::bigint AS imported_player_controller_id
+FROM dune.encrypted_player_state eps
+JOIN dune.encrypted_accounts ea ON ea.id=eps.account_id
+WHERE eps.online_status::text='Offline'
+  AND dune.is_player_offline(ea."user")
+ORDER BY eps.account_id
+LIMIT 1;
+
+DO $dash$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM dash_transfer_candidate) THEN
+    RAISE EXCEPTION 'no explicitly Offline character is available for transfer proof';
+  END IF;
+END
+$dash$;
+
+UPDATE dash_transfer_candidate
+SET transfer_data=dune.character_transfer_export(fls_id);
+
+DO $dash$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM dash_transfer_candidate
+    WHERE transfer_data->>'_patches_checksum'=patches_checksum
+      AND jsonb_typeof(transfer_data->'entries')='array'
+      AND jsonb_array_length(transfer_data->'entries') > 0
+  ) THEN
+    RAISE EXCEPTION 'native transfer export failed shape/checksum validation';
+  END IF;
+END
+$dash$;
+
+DROP TABLE IF EXISTS pg_temp.export_data;
+
+UPDATE dash_transfer_candidate
+SET imported_player_controller_id=dune.character_transfer_import(transfer_data, fls_id, character_name);
+
+SELECT json_build_object(
+  'transactionRolledBack', true,
+  'candidateFound', EXISTS (SELECT 1 FROM dash_transfer_candidate),
+  'exportVerified', EXISTS (
+    SELECT 1 FROM dash_transfer_candidate
+    WHERE transfer_data->>'_patches_checksum'=patches_checksum
+      AND jsonb_typeof(transfer_data->'entries')='array'
+      AND jsonb_array_length(transfer_data->'entries') > 0
+  ),
+  'importVerified', EXISTS (
+    SELECT 1
+    FROM dash_transfer_candidate candidate
+    JOIN dune.encrypted_accounts ea ON ea."user"=candidate.fls_id
+    JOIN dune.encrypted_player_state eps ON eps.account_id=ea.id
+    WHERE eps.player_controller_id=candidate.imported_player_controller_id
+      AND dune.decrypt_user_data(eps.encrypted_character_name)=candidate.character_name
+  ),
+  'nativeExportFunction', 'dune.character_transfer_export(text)',
+  'nativeImportFunction', 'dune.character_transfer_import(jsonb,text,text)',
+  'testedAccountCount', (SELECT count(*) FROM dash_transfer_candidate)
+)::text;
+ROLLBACK;
+""".strip()
+
+
 def _parse_json_output(output, label):
     lines = [line.strip() for line in str(output).splitlines() if line.strip()]
     if not lines:
@@ -818,6 +892,20 @@ def run_drill(workspace, *, host_workspace=None, source=None, receipt_root=None,
                     + json.dumps(teleport_contract, sort_keys=True)
                 )
 
+            transfer_contract_output = _run_checked(
+                docker, container_id,
+                ["psql", "-qXAt", "--username=dune", "--set", "ON_ERROR_STOP=1", "-d", "drill", "-c", _sql_character_transfer_contract()],
+                timeout=command_timeout_seconds, label="native character transfer contract",
+            )
+            transfer_contract = _parse_json_output(transfer_contract_output, "native character transfer contract")
+            if not all(bool(transfer_contract.get(key)) for key in (
+                "transactionRolledBack", "candidateFound", "exportVerified", "importVerified",
+            )):
+                raise RestoreDrillError(
+                    "native character transfer contract failed: "
+                    + json.dumps(transfer_contract, sort_keys=True)
+                )
+
             _run_checked(docker, container_id, ["vacuumdb", "--analyze-only", "--username=dune", "--dbname=drill"],
                          timeout=command_timeout_seconds, label="restored database analyze")
             _run_checked(docker, container_id, ["pg_dump", "--format=custom", "--no-owner", "--username=dune", "--file=/tmp/roundtrip.dump", "drill"],
@@ -834,6 +922,7 @@ def run_drill(workspace, *, host_workspace=None, source=None, receipt_root=None,
                 "rowCounts": counts,
                 "playerLifeRecoveryContract": life_contract,
                 "offlineTeleportContract": teleport_contract,
+                "characterTransferContract": transfer_contract,
                 "analyzeCompleted": True,
                 "roundTripArchiveListed": True,
                 "roundTripBytes": roundtrip_size,

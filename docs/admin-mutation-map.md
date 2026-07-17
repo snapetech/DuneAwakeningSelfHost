@@ -534,6 +534,33 @@ Fail-closed rules:
 - Non-dry-run execution requires `DUNE_ADMIN_MUTATIONS_ENABLED=true`, `DUNE_ADMIN_CHARACTER_SWAP_ENABLED=true`, and `confirm: "SWAP CHARACTER"`.
 - Even with gates enabled, execution stops before backup/write when the plan is not executable.
 
+## Native Character Backup And Restore
+
+This is separate from character-slot identity takeover. The panel calls the
+current build's exact portable transfer functions:
+
+```sql
+dune.character_transfer_export(in_fls_id text) returns jsonb
+dune.character_transfer_import(in_data jsonb, in_fls_id text, in_character_name text) returns bigint
+```
+
+Capture requires explicit persisted `Offline` plus
+`dune.is_player_offline(fls_id)`, locks and rechecks the fingerprinted state,
+rolls back the export transaction after receiving the JSON, and writes a
+private whole-payload SHA-256 snapshot. Restore additionally binds the current
+`_character_transfer_get_patches_checksum()`, creates a full database dump,
+locks the private identity's current account/state/exact player actors, and
+commits only after the native return value matches one reconstructed persisted
+controller and the decrypted character name matches the snapshot.
+
+The native import internally calls `delete_account` and some builds can retain
+the destroyed account's player-state or player actor rows. Cleanup is confined
+to the exact old row/actor IDs from the accepted fingerprint, requires the old
+account to be absent, and permits only PlayerCharacter, PlayerController, and
+PlayerState actor classes. It never deletes all actors by historical owner ID.
+See [`character-backups.md`](character-backups.md) for the API, artifact,
+receipt, rollback, and isolated semantic-proof contracts.
+
 ## Player Identity Integrity And Character Deletion
 
 `GET/POST /api/admin/player-identity-integrity` closes the post-1.5 duplicate

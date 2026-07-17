@@ -330,6 +330,7 @@ server {
   [`care-packages.md`](care-packages.md).
 - Targeted Solari grants through `POST /api/admin/solari/inventory` for carried `SolarisCoin` stacks and `POST /api/admin/solari/bank` for Exchange/bank balance.
 - Native offline player teleport through `POST /api/admin/player-recovery/offline-teleport`. Execution is fingerprint-bound, backup-first, advisory/row locked, privately receipted, and transform-verified through the shipped `dune.admin_move_offline_player_to_partition(...)` helper; see [offline-player-teleport.md](offline-player-teleport.md).
+- Native portable character snapshots through `GET/POST /api/admin/character-backups` and read-only planning through `/api/admin/character-backups/preview`. Capture uses the shipped transfer export without retaining a database write; restore is patch/fingerprint-bound, full-backup-first, locked, native-import-only, identity-verified, and privately receipted; see [character-backups.md](character-backups.md).
 - Native offline dead-state recovery through `POST /api/admin/player-recovery/life-state`. Execution is fingerprint-bound, backup-first, advisory/row locked, privately receipted, and verified through the shipped `dune.update_death_location(...)` function; see [offline-player-life-state-recovery.md](offline-player-life-state-recovery.md).
 - Spice/resource field inspection through `POST /api/admin/spice-fields/inspect`.
 - Progression surface inspection through `POST /api/admin/progression/inspect`; this discovers faction, reputation, journey, recipe, vehicle, and related DB function/table evidence without executing discovered functions.
@@ -443,6 +444,7 @@ DUNE_ADMIN_CHARACTER_DELETE_ENABLED=false
 DUNE_ADMIN_PLAYER_RUNTIME_MUTATIONS_ENABLED=false
 DUNE_ADMIN_PLAYER_LIFE_RECOVERY_ENABLED=false
 DUNE_ADMIN_OFFLINE_TELEPORT_ENABLED=false
+DUNE_ADMIN_CHARACTER_BACKUPS_ENABLED=false
 DUNE_ADMIN_VEHICLE_MUTATIONS_ENABLED=false
 DUNE_ADMIN_MEMORY_MUTATIONS_ENABLED=false
 DUNE_ADMIN_AUTOSCALER_MUTATIONS_ENABLED=false
@@ -492,6 +494,11 @@ documented host scripts, exact-host checks, dry-run previews, and backups in
 - `DUNE_ADMIN_OFFLINE_TELEPORT_ENABLED`: controls fingerprint-bound,
   backup-first native movement of an explicitly Offline player's persisted
   pawn. Preview remains available.
+- `DUNE_ADMIN_CHARACTER_BACKUPS_ENABLED`: controls private native transfer
+  snapshot capture and destructive character restore/delete. Preview, bounded
+  metadata listing, integrity verification, and authenticated download remain
+  available while disabled; restore also requires a current isolated native
+  export/import proof. See [character-backups.md](character-backups.md).
 - `DUNE_ADMIN_VEHICLE_MUTATIONS_ENABLED`: controls offline persistent vehicle
   durability and fuel repair.
 - `DUNE_ADMIN_MEMORY_MUTATIONS_ENABLED`: controls live container limits and

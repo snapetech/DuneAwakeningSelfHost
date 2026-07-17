@@ -118,6 +118,7 @@ def required_capability(method, path):
         "/api/ops/backups/verify",
         "/api/events/dry-run",
         "/api/admin/character-slots/plan",
+        "/api/admin/character-backups/preview",
         "/api/auth/logout",
         "/api/security/approvals",
         "/api/security/change-contract",
