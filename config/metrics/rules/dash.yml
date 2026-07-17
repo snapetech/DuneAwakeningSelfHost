@@ -288,3 +288,13 @@ groups:
         for: 15m
         labels: {severity: warning}
         annotations: {summary: "A game update is available without a current candidate-bound readiness receipt"}
+      - alert: DashMaintenanceOutcomeCollectorInvalid
+        expr: dash_maintenance_outcome_collector_up == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "DASH maintenance outcome evidence failed cryptographic or semantic verification"}
+      - alert: DashMaintenanceOutcomeFailed
+        expr: dash_maintenance_outcome_retained_receipts > 0 and dash_maintenance_outcome_latest_ready == 0
+        for: 2m
+        labels: {severity: warning}
+        annotations: {summary: "The latest DASH restart or shutdown maintenance contract failed"}

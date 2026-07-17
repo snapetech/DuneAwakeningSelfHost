@@ -1989,13 +1989,17 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
             "latest": {"id": "update-readiness-" + "a" * 32, "receiptSha256": "b" * 64},
         })
         observed.clear()
+        backup_dir = self.workspace / "backups" / "admin-panel" / "maintenance" / "certified"
+        backup_dir.mkdir(parents=True)
+        self.panel.create_maintenance_backup = lambda job: {"path": str(backup_dir), "output": "backup"}
+        self.panel.verify_backup_set = lambda path: {"ok": True, "path": path, "exitCode": 0, "stdout": "OK", "stderr": ""}
         self.panel.run_restart_command = lambda command, job, phase: observed.append(
             (phase, job.get("_checkSteamUpdate"), job.get("_steamUpdateMode"))
         ) or {"ok": True, "phase": phase, "returncode": 0, "output": phase}
         self.panel.wait_for_restart_online = lambda: {"ok": True}
         allowed = self.panel.execute_restart({
             "id": "allowed-certified", "execute": True, "action": "restart", "target": "all",
-            "services": [], "backup": False, "updatePolicy": "certified",
+            "services": [], "backup": True, "updatePolicy": "certified",
         })
         self.assertTrue(allowed["ok"])
         self.assertEqual([("stop", True, "none"), ("update", True, "none"), ("start", True, "none")], observed)
@@ -2101,7 +2105,8 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         })
 
         self.assertFalse(result["ok"])
-        self.assertEqual(phases, ["stop", "update"])
+        self.assertTrue(result["serviceRecovered"])
+        self.assertEqual(phases, ["stop", "update", "start"])
         self.assertEqual(result["error"], "Steam package update check failed")
         self.assertIn("missing helper image", result["output"])
 
@@ -2363,10 +2368,60 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
             "backup": True,
         })
 
-        self.assertTrue(result["ok"])
-        self.assertEqual(phases, ["stop", "update", "start"])
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["serviceRecovered"])
+        self.assertTrue(result["updateSuppressedByBackupFailure"] is False)
+        self.assertEqual(phases, ["stop", "start"])
         self.assertIn("maintenance backup failed", result["warning"])
         self.assertIn("backup path unavailable", result["output"])
+
+    def test_certified_update_is_suppressed_when_backup_verification_fails(self):
+        command = self.workspace / "scripts" / "restart-target.sh"
+        command.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        command.chmod(0o755)
+        self.panel.RESTART_COMMAND = str(command)
+        self.panel.MAINTENANCE_BACKUP_ENABLED = True
+        self.panel.soft_disconnect_online_players = lambda job: {"ok": True}
+        candidate = {
+            "imageTag": "dune_sb_1_4_11_0", "currentImageTag": "dune_sb_1_4_10_0",
+            "status": "update-available", "updateRequired": True, "fingerprint": "f" * 64,
+        }
+        self.panel.update_readiness_snapshot = lambda force=False: {"candidate": candidate}
+        self.panel.update_readiness_store = lambda: types.SimpleNamespace(status=lambda snapshot: {
+            "applyReady": True, "currentReceiptReady": True,
+            "evaluation": {"candidate": candidate, "failedChecks": []},
+            "latest": {"id": "update-readiness-" + "a" * 32, "receiptSha256": "b" * 64},
+        })
+        backup_dir = self.workspace / "backups" / "admin-panel" / "maintenance" / "bad"
+        backup_dir.mkdir(parents=True)
+        self.panel.create_maintenance_backup = lambda job: {"path": str(backup_dir), "output": "created"}
+        self.panel.verify_backup_set = lambda path: {"ok": False, "path": path, "exitCode": 1, "stdout": "", "stderr": "corrupt"}
+        phases = []
+        self.panel.run_restart_command = lambda command, job, phase: phases.append(
+            (phase, job.get("_checkSteamUpdate"), job.get("_steamUpdateMode"))
+        ) or {"ok": True, "phase": phase, "returncode": 0, "output": phase}
+        self.panel.wait_for_restart_online = lambda: {"ok": True}
+
+        result = self.panel.execute_restart({
+            "id": "bad-verified-backup", "execute": True, "action": "restart", "target": "all",
+            "services": [], "backup": True, "updatePolicy": "certified",
+        })
+
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["serviceRecovered"])
+        self.assertTrue(result["updateSuppressedByBackupFailure"])
+        self.assertFalse(result["backup"]["verification"]["ok"])
+        self.assertEqual([("stop", True, "none"), ("start", False, "none")], phases)
+
+    def test_maintenance_history_api_ui_and_metrics_are_exposed(self):
+        self.assertIn("/api/ops/maintenance-history?limit=100", self.panel.INDEX)
+        self.assertIn("Maintenance Intelligence", self.panel.INDEX)
+        self.assertIn("restartUpdatePolicy", self.panel.INDEX)
+        handler, captured = self.make_route_handler("/api/ops/maintenance-history")
+        handler.do_GET()
+        self.assertEqual([], captured["errors"])
+        self.assertIn("receipts", captured["json"])
+        self.assertIn("dash_maintenance_outcome_collector_up", (ROOT / "admin" / "admin_panel.py").read_text(encoding="utf-8"))
 
     def test_restart_runs_recovery_when_farm_readiness_is_incomplete(self):
         command = self.workspace / "scripts" / "restart-target.sh"
@@ -2670,6 +2725,14 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         (evidence_root / f"{legacy_receipt['id']}.signed.json").write_text(
             json.dumps(legacy_document), encoding="utf-8",
         )
+        maintenance_store = self.panel.maintenance_outcomes.Store(
+            evidence_root, self.panel.change_intelligence.read_secret(secret), retention=10,
+        )
+        maintenance_store.record({
+            "id": "archive_job", "target": "all", "action": "restart",
+            "updatePolicy": "current", "runAt": 1160, "execute": False,
+            "backup": True, "principalId": "owner",
+        }, {"ok": True, "dryRun": True, "serviceRecovered": False}, 1160, 1161)
         (evidence_root / "ignored.txt").write_text("not evidence", encoding="utf-8")
         (evidence_root / "linked.signed.json").symlink_to(signed)
         original_root = self.panel.CHANGE_INTELLIGENCE_EVIDENCE_ROOT
@@ -2679,13 +2742,14 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         archive = self.workspace / "operator-evidence.tgz"
         result = self.panel.archive_operator_evidence(archive)
         verification = self.panel.verify_operator_evidence_archive(archive, secret)
-        self.assertEqual(4, result["files"])
-        self.assertEqual(4, verification["files"])
+        self.assertEqual(5, result["files"])
+        self.assertEqual(5, verification["files"])
         self.assertEqual(0o600, archive.stat().st_mode & 0o777)
         with tarfile.open(archive, "r:gz") as handle:
-            self.assertEqual(4, len(handle.getnames()))
+            self.assertEqual(5, len(handle.getnames()))
             self.assertIn("operator-evidence/archive.signed.json", handle.getnames())
             self.assertTrue(any(name.startswith("operator-evidence/update-readiness-") for name in handle.getnames()))
+            self.assertTrue(any(name.startswith("operator-evidence/maintenance-outcome-") for name in handle.getnames()))
 
         unsafe_name = evidence_root / "unsafe name.signed.json"
         unsafe_name.write_text(signed.read_text(encoding="utf-8"), encoding="utf-8")
@@ -4078,6 +4142,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         original_update_store = self.panel.update_readiness_store
         original_update_snapshot = self.panel.update_readiness_metrics_snapshot
         original_update_status = self.panel.update_readiness_public_status
+        original_maintenance_store = self.panel.maintenance_outcome_store
         fake_store = type("Store", (), {
             "prometheus": lambda self: "dash_change_intelligence_collector_up 1\n",
             "capsule": lambda self, key: {"ok": True, "incidentKey": key, "causalityClaimed": False},
@@ -4085,6 +4150,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         })()
         fake_deployment_store = type("DeploymentStore", (), {"prometheus": lambda self: "dash_deployment_assurance_collector_up 1\n"})()
         fake_update_store = type("UpdateStore", (), {"prometheus": lambda self, snapshot: "dash_update_readiness_collector_up 1\n"})()
+        fake_maintenance_store = type("MaintenanceStore", (), {"prometheus": lambda self: "dash_maintenance_outcome_collector_up 1\n"})()
         self.panel.change_intelligence_public_status = lambda: {"ok": True, "state": "active", "eventCount": 3}
         self.panel.change_intelligence_store = lambda: fake_store
         self.panel.deployment_assurance_store = lambda: fake_deployment_store
@@ -4092,6 +4158,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.panel.update_readiness_store = lambda: fake_update_store
         self.panel.update_readiness_metrics_snapshot = lambda: {}
         self.panel.update_readiness_public_status = lambda **kwargs: {"ok": True, "currentReceiptReady": True, "applyReady": True}
+        self.panel.maintenance_outcome_store = lambda: fake_maintenance_store
         self.addCleanup(lambda: setattr(self.panel, "change_intelligence_public_status", original_status))
         self.addCleanup(lambda: setattr(self.panel, "change_intelligence_store", original_store))
         self.addCleanup(lambda: setattr(self.panel, "deployment_assurance_store", original_deployment_store))
@@ -4099,6 +4166,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.addCleanup(lambda: setattr(self.panel, "update_readiness_store", original_update_store))
         self.addCleanup(lambda: setattr(self.panel, "update_readiness_metrics_snapshot", original_update_snapshot))
         self.addCleanup(lambda: setattr(self.panel, "update_readiness_public_status", original_update_status))
+        self.addCleanup(lambda: setattr(self.panel, "maintenance_outcome_store", original_maintenance_store))
 
         handler, captured = self.make_route_handler("/api/ops/change-intelligence")
         handler.is_app_route = lambda path: False
@@ -4144,6 +4212,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn("dash_public_directory_enabled 0\n", texts[0][0])
         self.assertIn("dash_public_directory_entry_current 0\n", texts[0][0])
         self.assertIn("dash_update_readiness_collector_up 1\n", texts[0][0])
+        self.assertIn("dash_maintenance_outcome_collector_up 1\n", texts[0][0])
 
     def test_update_readiness_metrics_never_run_expensive_collection_inline(self):
         original_cache = dict(self.panel.UPDATE_READINESS_SNAPSHOT_CACHE)
@@ -4167,6 +4236,8 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn("dash_update_readiness_collection_duration_seconds > 15", rules)
         self.assertIn("DashUpdateReadinessPackageInspectionSlow", rules)
         self.assertIn("dash_update_readiness_package_inspection_duration_seconds > 5", rules)
+        self.assertIn("DashMaintenanceOutcomeCollectorInvalid", rules)
+        self.assertIn("DashMaintenanceOutcomeFailed", rules)
 
     def test_audit_event_feeds_change_intelligence_and_protects_reserved_fields(self):
         events = []

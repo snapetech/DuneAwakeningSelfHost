@@ -69,6 +69,7 @@ import desired_state
 import change_intelligence
 import deployment_assurance
 import update_readiness
+import maintenance_outcomes
 import public_directory
 import env_file_store
 import feature_readiness
@@ -478,6 +479,9 @@ UPDATE_READINESS_SNAPSHOT_CACHE = {"at": 0.0, "value": None}
 UPDATE_READINESS_SNAPSHOT_LOCK = threading.Lock()
 UPDATE_READINESS_REFRESH_RUNTIME = {"running": False, "lastAt": None, "lastError": ""}
 UPDATE_READINESS_REFRESH_LOCK = threading.Lock()
+MAINTENANCE_OUTCOME_RETENTION = max(10, min(int(os.environ.get("DUNE_MAINTENANCE_OUTCOME_RETENTION", "400")), 5000))
+MAINTENANCE_OUTCOME_STORE = None
+MAINTENANCE_OUTCOME_STORE_LOCK = threading.Lock()
 DISCORD_ADAPTER_ROUTES = {
     "/api/integrations/discord/health", "/api/integrations/discord/status",
     "/api/integrations/discord/readiness", "/api/integrations/discord/services",
@@ -1478,6 +1482,7 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_CHANGE_INTELLIGENCE_DATABASE": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Private append-only HMAC-chained operational event ledger."},
     "DUNE_CHANGE_INTELLIGENCE_HMAC_SECRET_FILE": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Private HMAC key authenticating the operational change timeline."},
     "DUNE_CHANGE_INTELLIGENCE_EVIDENCE_DIR": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Container path holding private portable signed incident capsules included in maintenance backups."},
+    "DUNE_MAINTENANCE_OUTCOME_RETENTION": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Maximum signed restart/shutdown outcome receipts retained in private operator evidence."},
     "DUNE_CHANGE_INTELLIGENCE_HOST_EVIDENCE_DIR": {"group": "Change Intelligence", "secret": False, "restart": False, "why": "Host-relative portable signed capsule path used by full backup-state archives."},
     "DUNE_RESPONSE_DRILLS_ENABLED": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Enables explicit non-disruptive response-plan rehearsals using fixed read-only diagnostics only."},
     "DUNE_DEPLOYMENT_ASSURANCE_ENABLED": {"group": "Deployment Assurance", "secret": False, "restart": True, "why": "Enables two-phase source, map-continuity, health, readiness, backup, and signed promotion receipts."},
@@ -2103,6 +2108,7 @@ def schedule_restart(body):
         "backup": backup,
         "requireSoftDisconnect": require_soft_disconnect,
         "updatePolicy": update_policy,
+        "principalId": str(body.get("principal_id", body.get("principalId", "system")) or "system")[:128],
         "status": "scheduled",
         "lastError": None,
     }
@@ -2154,6 +2160,7 @@ def cancel_restart(job_id=None):
 
 def run_restart_command(command, job, phase):
     command = pathlib.Path(RESTART_COMMAND)
+    started = time.monotonic()
     env = os.environ.copy()
     env.update({
         "DUNE_RESTART_JOB_ID": job.get("id", ""),
@@ -2179,11 +2186,14 @@ def run_restart_command(command, job, phase):
             check=False,
         )
     except Exception as exc:
-        return {"ok": False, "phase": phase, "error": str(exc)}
+        return {"ok": False, "phase": phase, "error": str(exc), "durationMs": int(round((time.monotonic() - started) * 1000))}
     output = (result.stdout + result.stderr).strip()
     if len(output) > AUDIT_FIELD_LIMIT:
         output = output[:AUDIT_FIELD_LIMIT] + "...[truncated]"
-    return {"ok": result.returncode == 0, "phase": phase, "returncode": result.returncode, "output": output}
+    return {
+        "ok": result.returncode == 0, "phase": phase, "returncode": result.returncode,
+        "output": output, "durationMs": int(round((time.monotonic() - started) * 1000)),
+    }
 
 
 def restart_online_snapshot():
@@ -2258,11 +2268,12 @@ def wait_for_restart_online():
 
 
 def run_restart_recovery(job):
+    started = time.monotonic()
     if not RESTART_RECOVERY_ENABLED:
-        return {"ok": True, "skipped": True, "reason": "disabled"}
+        return {"ok": True, "skipped": True, "reason": "disabled", "durationMs": 0}
     command = pathlib.Path(RESTART_RECOVERY_COMMAND)
     if not command.exists() or not os.access(command, os.X_OK):
-        return {"ok": False, "skipped": True, "error": f"restart recovery command is not executable: {command}"}
+        return {"ok": False, "skipped": True, "error": f"restart recovery command is not executable: {command}", "durationMs": 0}
     if command.suffix == ".sh" and shutil.which("bash") is None and pathlib.Path("/sbin/apk").exists():
         try:
             subprocess.run(
@@ -2293,11 +2304,14 @@ def run_restart_recovery(job):
             check=False,
         )
     except Exception as exc:
-        return {"ok": False, "error": str(exc)}
+        return {"ok": False, "error": str(exc), "durationMs": int(round((time.monotonic() - started) * 1000))}
     output = (result.stdout + result.stderr).strip()
     if len(output) > AUDIT_FIELD_LIMIT:
         output = output[:AUDIT_FIELD_LIMIT] + "...[truncated]"
-    return {"ok": result.returncode == 0, "returncode": result.returncode, "output": output}
+    return {
+        "ok": result.returncode == 0, "returncode": result.returncode, "output": output,
+        "durationMs": int(round((time.monotonic() - started) * 1000)),
+    }
 
 
 def append_restart_warning(result, warning):
@@ -2371,7 +2385,9 @@ def execute_restart(job):
     if not command.exists() or not os.access(command, os.X_OK):
         return {"ok": False, "error": f"restart command is not executable: {command}"}
 
+    phase_started = time.monotonic()
     update_preflight = restart_update_preflight(job)
+    update_preflight["durationMs"] = int(round((time.monotonic() - phase_started) * 1000))
     if not update_preflight.get("ok"):
         return {
             "ok": False, "action": job.get("action", "restart"), "updatePreflight": update_preflight,
@@ -2384,7 +2400,9 @@ def execute_restart(job):
 
     action = job.get("action", "restart")
     if job.get("requireSoftDisconnect", True):
+        phase_started = time.monotonic()
         disconnect_result = soft_disconnect_online_players(job)
+        disconnect_result["durationMs"] = int(round((time.monotonic() - phase_started) * 1000))
         if not disconnect_result.get("ok"):
             return {
                 "ok": False,
@@ -2398,41 +2416,76 @@ def execute_restart(job):
             "ok": True,
             "enabled": False,
             "skipped": "soft disconnect not required for this maintenance job",
+            "durationMs": 0,
         }
     stop_phase = "shutdown" if action == "shutdown" else "stop"
     stop_result = run_restart_command(command, execution_job, stop_phase)
-    result = {"ok": False, "action": action, "updatePreflight": update_preflight, "disconnect": disconnect_result, "stop": stop_result, "backup": None, "update": None, "start": None}
+    result = {
+        "ok": False, "action": action, "updatePreflight": update_preflight,
+        "disconnect": disconnect_result, "stop": stop_result, "backup": None,
+        "update": None, "start": None, "serviceRecovered": False,
+        "updateApplied": False,
+    }
     if not stop_result.get("ok"):
         result["output"] = stop_result.get("output", stop_result.get("error", ""))
         return result
 
+    maintenance_failure = None
     if job.get("backup", True) and MAINTENANCE_BACKUP_ENABLED:
+        phase_started = time.monotonic()
         try:
-            result["backup"] = create_maintenance_backup(job)
+            backup_result = create_maintenance_backup(job)
+            backup_path = pathlib.Path(backup_result["path"]).resolve().relative_to(BACKUPS_ROOT.resolve()).as_posix()
+            verification = verify_backup_set(backup_path)
+            backup_result["verification"] = verification
+            backup_result["verified"] = bool(verification.get("ok"))
+            backup_result["ok"] = bool(verification.get("ok"))
+            backup_result["durationMs"] = int(round((time.monotonic() - phase_started) * 1000))
+            result["backup"] = backup_result
+            if not verification.get("ok"):
+                maintenance_failure = "maintenance backup verification failed"
         except Exception as exc:
-            backup_warning = f"maintenance backup failed: {exc}"
-            result["backup"] = {"ok": False, "error": str(exc), "output": backup_warning}
-            append_restart_warning(result, backup_warning)
+            maintenance_failure = f"maintenance backup failed: {exc}"
+            backup_warning = maintenance_failure
+            result["backup"] = {
+                "ok": False, "verified": False, "error": str(exc), "output": backup_warning,
+                "durationMs": int(round((time.monotonic() - phase_started) * 1000)),
+            }
             result["output"] = f"{stop_result.get('output', '')}\nbackup failed: {exc}".strip()
-            if action == "shutdown":
-                result["error"] = str(exc)
-                return result
+    elif execution_job.get("_checkSteamUpdate"):
+        maintenance_failure = (
+            "a verified maintenance backup is required before applying an update; "
+            + ("this job disabled backups" if not job.get("backup", True) else "maintenance backups are disabled")
+        )
 
-    update_result = run_restart_command(command, execution_job, "update")
+    if maintenance_failure:
+        append_restart_warning(result, maintenance_failure)
+        result["updateSuppressedByBackupFailure"] = bool(execution_job.get("_checkSteamUpdate"))
+        execution_job["_checkSteamUpdate"] = False
+        execution_job["_steamUpdateMode"] = "none"
+        update_result = {
+            "ok": True, "skipped": True, "returncode": None, "durationMs": 0,
+            "reason": "update suppressed because no verified recovery backup was available",
+            "output": "update suppressed; restarting the current build to recover service" if action == "restart" else "update suppressed",
+        }
+    else:
+        update_result = run_restart_command(command, execution_job, "update")
     result["update"] = update_result
     if not update_result.get("ok"):
         update_warning = update_result.get("error") or "Steam package update check failed"
         append_restart_warning(result, update_warning)
         result["output"] = "\n".join(part for part in [stop_result.get("output", ""), update_result.get("output", ""), update_warning] if part)
-        result["error"] = update_warning
-        return result
+        maintenance_failure = update_warning
+    result["updateApplied"] = steam_update_was_applied(update_result)
 
     if action == "shutdown":
-        result["ok"] = True
+        result["ok"] = not maintenance_failure and bool(update_result.get("ok"))
+        if maintenance_failure:
+            result["error"] = maintenance_failure
         result["output"] = "\n".join(part for part in [stop_result.get("output", ""), update_result.get("output", "")] if part)
         return result
 
-    if REBOOT_AFTER_STEAM_UPDATE and job.get("target") == "all" and steam_update_was_applied(update_result):
+    if not maintenance_failure and REBOOT_AFTER_STEAM_UPDATE and job.get("target") == "all" and result["updateApplied"]:
         set_restart_job_status(job.get("id", ""), "awaiting_reboot")
         reboot_result = run_restart_command(command, execution_job, "reboot")
         result["reboot"] = reboot_result
@@ -2444,18 +2497,27 @@ def execute_restart(job):
             result["error"] = reboot_result.get("error") or "failed to request update-triggered host reboot"
         return result
 
+    if maintenance_failure:
+        execution_job["_checkSteamUpdate"] = False
+        execution_job["_steamUpdateMode"] = "none"
     start_result = run_restart_command(command, execution_job, "start")
     result["start"] = start_result
+    phase_started = time.monotonic()
     online_result = wait_for_restart_online()
+    online_result["durationMs"] = int(round((time.monotonic() - phase_started) * 1000))
     recovery_result = None
     if not online_result.get("ok"):
         recovery_result = run_restart_recovery(job)
         result["recovery"] = recovery_result
         if recovery_result.get("ok"):
+            phase_started = time.monotonic()
             online_result = wait_for_restart_online()
+            online_result["durationMs"] = int(round((time.monotonic() - phase_started) * 1000))
     result["online"] = online_result
     start_ok = bool(start_result.get("ok")) or (start_result.get("returncode") == 141 and bool(online_result.get("ok")))
-    result["ok"] = start_ok and bool(online_result.get("ok"))
+    service_recovered = start_ok and bool(online_result.get("ok"))
+    result["serviceRecovered"] = service_recovered
+    result["ok"] = service_recovered and not maintenance_failure
     result["returncode"] = start_result.get("returncode")
     if start_result.get("returncode") == 141 and online_result.get("ok"):
         append_restart_warning(result, "restart start hook returned 141, but farm reported fully online after verification")
@@ -2463,6 +2525,8 @@ def execute_restart(job):
         result["error"] = start_result.get("error") or f"restart start hook failed with return code {start_result.get('returncode')}"
     elif not online_result.get("ok"):
         result["error"] = "restart start hook completed, but farm did not report fully online before timeout"
+    elif maintenance_failure:
+        result["error"] = maintenance_failure
     backup_output = result["backup"].get("output") if isinstance(result.get("backup"), dict) else ""
     result["output"] = "\n".join(part for part in [stop_result.get("output", ""), backup_output, update_result.get("output", ""), start_result.get("output", "")] if part)
     if len(result["output"]) > AUDIT_FIELD_LIMIT:
@@ -2585,7 +2649,30 @@ def announcement_worker():
                 write_announcement_state(state)
             audit_event("announcement-delivery", ok=result.get("ok"), job_id=due.get("id"), returncode=result.get("returncode"), error=result.get("error"), output=result.get("output"))
         for due in due_restarts:
-            result = execute_restart(due)
+            started_at = time.time()
+            try:
+                result = execute_restart(due)
+            except Exception as exc:
+                result = {
+                    "ok": False, "action": due.get("action", "restart"),
+                    "error": f"unhandled maintenance execution failure: {exc}",
+                    "output": f"unhandled maintenance execution failure: {exc}",
+                    "serviceRecovered": False,
+                }
+            completed_at = time.time()
+            receipt_summary = None
+            try:
+                recorded = maintenance_outcome_store().record(due, result, started_at, completed_at)
+                receipt = recorded["document"]["receipt"]
+                receipt_summary = {
+                    "id": receipt["id"], "receiptSha256": receipt["receiptSha256"],
+                    "outcome": receipt["outcome"], "ready": receipt["ready"],
+                    "evidenceFile": pathlib.Path(recorded["evidencePath"]).name,
+                    "verification": recorded["verification"],
+                }
+                result["maintenanceReceipt"] = receipt_summary
+            except Exception as exc:
+                result["maintenanceReceipt"] = {"ready": False, "error": str(exc)}
             with RESTART_LOCK:
                 restart_state = read_restart_state()
                 for job in restart_state.get("jobs", []):
@@ -2604,6 +2691,9 @@ def announcement_worker():
                 update_policy=due.get("updatePolicy", "current"), effective_update_policy=update_preflight.get("effectivePolicy", update_preflight.get("policy")),
                 update_receipt_id=update_preflight.get("receiptId"), dry_run=result.get("dryRun"),
                 returncode=result.get("returncode"), error=result.get("error"), output=result.get("output"),
+                maintenance_receipt_id=(receipt_summary or {}).get("id"),
+                maintenance_receipt_sha256=(receipt_summary or {}).get("receiptSha256"),
+                service_recovered=result.get("serviceRecovered"),
             )
         time.sleep(ANNOUNCEMENT_POLL_SECONDS)
 
@@ -4141,6 +4231,32 @@ def update_readiness_store():
             )
             UPDATE_READINESS_STORE.initialize()
         return UPDATE_READINESS_STORE
+
+
+def maintenance_outcome_store():
+    global MAINTENANCE_OUTCOME_STORE
+    with MAINTENANCE_OUTCOME_STORE_LOCK:
+        if MAINTENANCE_OUTCOME_STORE is None:
+            MAINTENANCE_OUTCOME_STORE = maintenance_outcomes.Store(
+                CHANGE_INTELLIGENCE_EVIDENCE_ROOT,
+                change_intelligence.read_secret(CHANGE_INTELLIGENCE_SECRET_FILE),
+                retention=MAINTENANCE_OUTCOME_RETENTION,
+                owner_uid=os.environ.get("DUNE_HOST_UID"), owner_gid=os.environ.get("DUNE_HOST_GID"),
+            )
+            MAINTENANCE_OUTCOME_STORE.initialize()
+        return MAINTENANCE_OUTCOME_STORE
+
+
+def maintenance_outcome_public_status(limit=100):
+    try:
+        status = maintenance_outcome_store().status(limit=limit)
+        status.update({"enabled": True, "evidenceDirectory": str(CHANGE_INTELLIGENCE_EVIDENCE_ROOT)})
+        return status
+    except Exception as exc:
+        return {
+            "ok": False, "enabled": True, "latest": None, "receipts": [],
+            "summary": {"retained": 0, "passed": 0, "failed": 0}, "error": str(exc),
+        }
 
 
 def update_readiness_snapshot(game=None, force=False):
@@ -8339,6 +8455,8 @@ def verify_operator_evidence_archive(archive_path, secret_path):
                 if schema == deployment_assurance.SIGNED_SCHEMA
                 else update_readiness.verify_signed_document(document, secret)
                 if schema in update_readiness.SCHEMAS
+                else maintenance_outcomes.verify_signed_document(document, secret)
+                if schema == maintenance_outcomes.SCHEMA
                 else change_intelligence.verify_signed_capsule(document, secret)
             )
             if not result.get("ok"):
@@ -9338,6 +9456,10 @@ class Handler(BaseHTTPRequestHandler):
                         metrics += "dash_update_readiness_collector_up 0\n"
                 else:
                     metrics += "dash_update_readiness_collector_up 0\n"
+                try:
+                    metrics += maintenance_outcome_store().prometheus()
+                except Exception:
+                    metrics += "dash_maintenance_outcome_collector_up 0\n"
                 self.text(metrics, "text/plain; version=0.0.4; charset=utf-8")
             elif parsed.path in ("/api/integrations/discord/health", "/api/integrations/discord/version", "/api/integrations/discord/backups/list"):
                 self.require_discord_token()
@@ -9635,6 +9757,10 @@ class Handler(BaseHTTPRequestHandler):
                 params = urllib.parse.parse_qs(parsed.query)
                 refresh = str((params.get("refresh") or [""])[0]).lower() in ("1", "true", "yes", "on")
                 self.json(update_readiness_public_status(force=refresh))
+            elif parsed.path == "/api/ops/maintenance-history":
+                self.require_token()
+                params = urllib.parse.parse_qs(parsed.query)
+                self.json(maintenance_outcome_public_status(limit=(params.get("limit") or ["100"])[0]))
             elif parsed.path == "/api/ops/change-intelligence/capsule":
                 self.require_token()
                 params = urllib.parse.parse_qs(parsed.query)
@@ -11179,6 +11305,7 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/ops/restart":
                 self.require_token()
                 body = parse_body(self)
+                body["principalId"] = (getattr(self, "auth_principal", None) or {}).get("id", "system")
                 result = schedule_restart(body)
                 self.audit("restart-schedule", job_id=result.get("id"), target=result.get("target"), delay=result.get("delay"), execute=result.get("execute"), update_policy=result.get("updatePolicy"))
                 self.json({"ok": True, "job": result})
@@ -17541,6 +17668,17 @@ function announcementPanel(state){
   const delivery = state.lastDelivery ? `<pre>${esc(JSON.stringify(state.lastDelivery, null, 2))}</pre>` : '<div class="muted">No delivery attempts yet.</div>';
   return `<div class="card"><h2>Announcement Only</h2><p class="muted">Sends warning messages without restarting anything.</p><div class="grid"><label>Message until<select id="announceDelay">${delayOptions}</select></label><label>Repeat every<select id="announceRepeat"><option value="0">Do not repeat</option><option value="30">30 sec</option><option value="60" selected>60 sec</option><option value="300">5 min</option><option value="600">10 min</option><option value="900">15 min</option><option value="1800">30 min</option><option value="3600">60 min</option></select></label></div><label>Message<textarea id="announceMessage" rows="3" class="compactTextarea">Server restart soon. Please get to a safe place.</textarea></label><p><button id="scheduleAnnouncementBtn" class="primary">Schedule announcement</button> <button id="cancelAnnouncementBtn" class="danger">Cancel active announcement</button></p><details><summary>Current announcement state</summary>${jobSummary}</details><details><summary>Last delivery</summary>${delivery}</details></div>`;
 }
+function maintenanceHistoryPanel(history){
+  const summary = history.summary || {};
+  const rows = (history.receipts || []).map(row => ({
+    completedAt: row.completedAt || '', target: row.target || '', action: row.action || '',
+    outcome: row.outcome || '', duration: row.durationMs == null ? '' : `${(Number(row.durationMs) / 1000).toFixed(1)}s`,
+    updatePolicy: row.effectiveUpdatePolicy || row.requestedUpdatePolicy || '',
+    backupVerified: !!(row.backup || {}).verified, serviceRecovered: !!row.serviceRecovered,
+    receiptValid: !!(row.verification || {}).ok,
+  }));
+  return `<details class="panelBand" open><summary>Maintenance Intelligence</summary><div class="metricGrid">${metric('Retained receipts', summary.retained || 0)}${metric('Passing outcomes', summary.passed || 0)}${metric('Failed or invalid', summary.failed || 0, Number(summary.failed || 0) ? 'dangerText' : '')}${metric('Evidence integrity', history.ok ? 'verified' : 'failed', history.ok ? '' : 'dangerText')}</div><p class="muted">Every attempted maintenance job produces an HMAC-signed, semantically verified outcome receipt with stage timings, backup proof, effective update policy, recovery status, and an explicit no-game-data-mutation assertion.</p>${rows.length ? table(rows) : '<div class="muted">No maintenance executions have been recorded yet.</div>'}</details>`;
+}
 function restartPanel(state){
   const active = (state.jobs || []).filter(j => ['scheduled','executing'].includes(j.status));
   const latest = active[active.length - 1] || (state.jobs || []).slice(-1)[0] || null;
@@ -17554,7 +17692,7 @@ function restartPanel(state){
   ].map(([value,label]) => `<option value="${value}">${label}</option>`).join('');
   const jobSummary = latest ? `<pre>${esc(JSON.stringify(latest, null, 2))}</pre>` : '<div class="muted">No scheduled restart.</div>';
   const execution = state.lastExecution ? `<pre>${esc(JSON.stringify(state.lastExecution, null, 2))}</pre>` : '<div class="muted">No restart execution attempts yet.</div>';
-  return `<div class="card"><h2>Maintenance Job</h2><p class="muted">Stops the selected services, takes the maintenance backup, checks the Steam package image tag, starts them again, and waits for map readiness.</p><div class="grid"><label>Target<select id="restartTarget">${targetOptions}</select></label><label>Action<select id="restartAction"><option value="restart" selected>Restart target</option><option value="shutdown">Shutdown target</option></select></label><label>Run after<select id="restartDelay">${delayOptions}</select></label><label>Repeat notice every<select id="restartRepeat"><option value="0">Do not repeat</option><option value="30">30 sec</option><option value="60" selected>60 sec</option><option value="300">5 min</option><option value="600">10 min</option><option value="900">15 min</option><option value="1800">30 min</option><option value="3600">60 min</option></select></label><label>Execution<select id="restartExecute"><option value="false" selected>Dry-run schedule</option><option value="true">Execute hook</option></select></label></div><div class="toolbar checkToolbar"><label><input id="restartBackup" type="checkbox" checked> Backup before execution</label><label><input id="restartAnnounce" type="checkbox" checked> Send in-game warnings</label></div><label>Warning message<textarea id="restartMessage" rows="3" class="compactTextarea">Server maintenance soon. Please get to a safe place.</textarea></label><p><button id="scheduleRestartBtn" class="primary">Schedule maintenance</button> <button id="cancelRestartBtn" class="danger">Cancel active job</button></p><details><summary>Current job state</summary>${jobSummary}</details><details><summary>Last execution</summary>${execution}</details></div>`;
+  return `<div class="card"><h2>Maintenance Job</h2><p class="muted">Cleanly disconnects players, stops the selected services, creates and verifies the recovery backup, applies only an allowed update policy, restores service, and proves map readiness. A failed backup suppresses the update and forces current-build recovery.</p><div class="grid"><label>Target<select id="restartTarget">${targetOptions}</select></label><label>Action<select id="restartAction"><option value="restart" selected>Restart target</option><option value="shutdown">Shutdown target</option></select></label><label>Update policy<select id="restartUpdatePolicy"><option value="certified" selected>Certified candidate or current</option><option value="current">Current build only</option><option value="automatic">Legacy automatic (if allowed)</option></select></label><label>Run after<select id="restartDelay">${delayOptions}</select></label><label>Repeat notice every<select id="restartRepeat"><option value="0">Do not repeat</option><option value="30">30 sec</option><option value="60" selected>60 sec</option><option value="300">5 min</option><option value="600">10 min</option><option value="900">15 min</option><option value="1800">30 min</option><option value="3600">60 min</option></select></label><label>Execution<select id="restartExecute"><option value="false" selected>Dry-run schedule</option><option value="true">Execute hook</option></select></label></div><div class="toolbar checkToolbar"><label><input id="restartBackup" type="checkbox" checked> Create and verify backup</label><label><input id="restartAnnounce" type="checkbox" checked> Send in-game warnings</label></div><label>Warning message<textarea id="restartMessage" rows="3" class="compactTextarea">Server maintenance soon. Please get to a safe place.</textarea></label><p><button id="scheduleRestartBtn" class="primary">Schedule maintenance</button> <button id="cancelRestartBtn" class="danger">Cancel active job</button></p><details><summary>Current job state</summary>${jobSummary}</details><details><summary>Last execution</summary>${execution}</details></div>`;
 }
 function signalList(groups){
   return Object.entries(groups || {}).map(([group, rows]) => `<div class="card"><h2>${esc(group)}</h2><table><thead><tr><th>Name</th><th>Value</th><th>Why</th></tr></thead><tbody>${(rows || []).map(r=>`<tr><td>${esc(r.name)}</td><td>${esc(Array.isArray(r.value) ? r.value.join(', ') : r.value)}</td><td>${esc(r.why)}</td></tr>`).join('')}</tbody></table></div>`).join('');
@@ -17924,14 +18062,15 @@ async function overview(serial=loadSerial){
   startHealthRefresh();
 }
 async function ops(serial=loadSerial){
-  const [health, opt, announcement, restart] = await Promise.all([
+  const [health, opt, announcement, restart, maintenanceHistory] = await Promise.all([
     api('/api/ops/health', {timeoutMs: HEALTH_REQUEST_TIMEOUT_MS}),
     api('/api/ops/optimization'),
     api('/api/ops/announcement'),
-    api('/api/ops/restart')
+    api('/api/ops/restart'),
+    api('/api/ops/maintenance-history?limit=100')
   ]);
   if (serial !== loadSerial) return;
-  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Operations</h2><div class="toolbar"><button data-jump="overview">Overview</button><button data-jump="characters">Players</button><button data-jump="runbook">Runbook</button><button data-jump="settings">Settings</button></div></div><div id="opsRealtimeMetrics" class="metricGrid" aria-live="polite">${opsRealtimeMetricsHtml(health)}</div><div class="twoCol">${restartPanel(restart)}${announcementPanel(announcement)}</div><div class="twoCol"><div id="opsHealthViz">${healthViz(health)}</div><div class="panelBand"><h2>Health Verdict</h2><div id="opsHealthVerdicts">${checks(health.verdicts)}</div></div></div><details class="panelBand" open><summary>Map Online/Offline</summary><div id="opsMapStatus">${mapTiles(health.mapStatus)}${mapStatusTable(health.mapStatus)}</div></details><details class="panelBand"><summary>Host Resources</summary><div id="resources"><div class="muted">Loading resource stats...</div></div></details><details class="panelBand"><summary>Local and Upstream Network</summary><div data-network-panel><div class="muted">Loading network probes...</div></div></details><details class="panelBand"><summary>Raw Farm State</summary><div id="opsRawFarmState">${table(health.farmState)}</div></details><details class="panelBand"><summary>Partitions</summary><div id="opsPartitions">${table(health.partitions)}</div></details><details class="panelBand"><summary>Optimization Signals</summary>${signalList(opt)}</details></div>`;
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Operations</h2><div class="toolbar"><button data-jump="overview">Overview</button><button data-jump="characters">Players</button><button data-jump="runbook">Runbook</button><button data-jump="settings">Settings</button></div></div><div id="opsRealtimeMetrics" class="metricGrid" aria-live="polite">${opsRealtimeMetricsHtml(health)}</div><div class="twoCol">${restartPanel(restart)}${announcementPanel(announcement)}</div>${maintenanceHistoryPanel(maintenanceHistory)}<div class="twoCol"><div id="opsHealthViz">${healthViz(health)}</div><div class="panelBand"><h2>Health Verdict</h2><div id="opsHealthVerdicts">${checks(health.verdicts)}</div></div></div><details class="panelBand" open><summary>Map Online/Offline</summary><div id="opsMapStatus">${mapTiles(health.mapStatus)}${mapStatusTable(health.mapStatus)}</div></details><details class="panelBand"><summary>Host Resources</summary><div id="resources"><div class="muted">Loading resource stats...</div></div></details><details class="panelBand"><summary>Local and Upstream Network</summary><div data-network-panel><div class="muted">Loading network probes...</div></div></details><details class="panelBand"><summary>Raw Farm State</summary><div id="opsRawFarmState">${table(health.farmState)}</div></details><details class="panelBand"><summary>Partitions</summary><div id="opsPartitions">${table(health.partitions)}</div></details><details class="panelBand"><summary>Optimization Signals</summary>${signalList(opt)}</details></div>`;
   wireResourceControls(view);
   bindResourceFilters(view);
   refreshResources().catch(e => {
@@ -17945,6 +18084,13 @@ async function ops(serial=loadSerial){
   document.getElementById('cancelAnnouncementBtn').addEventListener('click', e => runAction(e.currentTarget, 'Canceling...', cancelAnnouncement));
   document.getElementById('scheduleRestartBtn').addEventListener('click', e => runAction(e.currentTarget, 'Scheduling...', scheduleRestart));
   document.getElementById('cancelRestartBtn').addEventListener('click', e => runAction(e.currentTarget, 'Canceling...', cancelRestart));
+  const syncRestartPolicy = () => {
+    const targeted = restartTarget.value !== 'all';
+    if (targeted) restartUpdatePolicy.value = 'current';
+    restartUpdatePolicy.disabled = targeted;
+  };
+  restartTarget.addEventListener('change', syncRestartPolicy);
+  syncRestartPolicy();
   resourceTimer = setInterval(() => {
     if (autoRefresh && current === 'ops') refreshResources().catch(() => {});
   }, 5000);
@@ -20135,9 +20281,10 @@ async function scheduleRestart(){
   const targetLabel = restartTarget.options[restartTarget.selectedIndex]?.textContent || restartTarget.value;
   const delayLabel = restartDelay.options[restartDelay.selectedIndex]?.textContent || restartDelay.value;
   const repeatLabel = restartRepeat.options[restartRepeat.selectedIndex]?.textContent || restartRepeat.value;
+  const updatePolicyLabel = restartUpdatePolicy.options[restartUpdatePolicy.selectedIndex]?.textContent || restartUpdatePolicy.value;
   const actionLabel = execute ? 'execute the restart hook' : 'dry-run only';
   const backupLabel = restartBackup.checked ? 'backup first' : 'no backup';
-  if (!confirm(`Schedule ${targetLabel} ${action} after ${delayLabel}?\nNotice repeat: ${repeatLabel}\nAction: ${actionLabel}\nBackup: ${backupLabel}`)) return;
+  if (!confirm(`Schedule ${targetLabel} ${action} after ${delayLabel}?\nNotice repeat: ${repeatLabel}\nAction: ${actionLabel}\nUpdate policy: ${updatePolicyLabel}\nBackup: ${backupLabel}`)) return;
   await api('/api/ops/restart', {method:'POST', body:JSON.stringify({
     target: restartTarget.value,
     action,
@@ -20146,7 +20293,8 @@ async function scheduleRestart(){
     message: restartMessage.value,
     announce: restartAnnounce.checked,
     execute,
-    backup: restartBackup.checked
+    backup: restartBackup.checked,
+    update_policy: restartUpdatePolicy.value
   })});
   notify('Maintenance scheduled');
   await ops();

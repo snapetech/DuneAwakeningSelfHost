@@ -44,7 +44,7 @@ The 06:00 target is deliberately after Funcom's nightly maintenance window. If S
 06:00  exact staged candidate and signed receipt are revalidated
 06:00  affected online players are soft-disconnected if the disconnect gates are enabled
 06:00  selected services are stopped
-06:00  maintenance backup is written
+06:00  maintenance backup is written and independently verified
 06:00  certified package images are loaded, or update is skipped on the current build
 06:00  if a newer Steam build was installed, kspls0 reboots and arms boot-time resume
 06:00  official DB upgrade patches are applied
@@ -94,7 +94,8 @@ DUNE_RESTART_CLEAR_PLAYER_RMQ_SESSIONS=true
 
 The scheduler's first readiness check avoids announcing an update that cannot
 run. The server-side second check is authoritative and happens before player
-disconnect, map stop, or backup. Targeted map restarts are always `current`;
+disconnect, map stop, or backup. The stopped-world backup must then pass the
+normal mixed-evidence verifier before any candidate can be applied. Targeted map restarts are always `current`;
 only an all-farm job can change the build. Jobs persisted by an older DASH
 release have no policy field and are treated as `current`.
 
@@ -160,13 +161,13 @@ the scheduler fails before making the request.
 Executed restart jobs use this sequence:
 
 ```text
-candidate/receipt preflight -> soft-disconnect -> stop -> backup -> staged-only update -> start -> online wait
+candidate/receipt preflight -> soft-disconnect -> stop -> backup -> verify -> staged-only update -> start -> online wait -> signed outcome
 ```
 
 With update-triggered reboot enabled and a new build detected, the sequence is:
 
 ```text
-candidate/receipt preflight -> soft-disconnect -> stop -> backup -> staged-only update -> durable checkpoint -> host reboot
+candidate/receipt preflight -> soft-disconnect -> stop -> backup -> verify -> staged-only update -> durable checkpoint -> host reboot
 -> boot-time start -> post-start hooks and farm readiness verification
 ```
 
@@ -178,12 +179,17 @@ checkpoint only after the normal `restart-target.sh` start phase succeeds.
 Executed shutdown jobs use this sequence:
 
 ```text
-candidate/receipt preflight -> soft-disconnect -> stop -> backup -> staged-only update
+candidate/receipt preflight -> soft-disconnect -> stop -> backup -> verify -> staged-only update -> signed outcome
 ```
 
 Shutdown jobs leave services offline after the backup and update check.
 
-If the stop phase fails, no backup, update check, or start is attempted. If the backup phase fails, services are left stopped so the failed backup can be investigated before the world is brought back online.
+If the stop phase fails, no backup, update check, or start is attempted. If
+backup creation or verification fails during a restart, DASH suppresses the
+update, restores the current build, verifies readiness, and reports the job as
+failed even when service recovery succeeds. For an intentional shutdown, the
+target remains offline. Every execution produces a signed stage-by-stage
+outcome; see [`maintenance-intelligence.md`](maintenance-intelligence.md).
 
 ## Update Logic
 

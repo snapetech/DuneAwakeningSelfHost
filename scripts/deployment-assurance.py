@@ -32,6 +32,7 @@ SUPPORT_FILES = {
     "admin/deployment_assurance.py",
     "admin/desired_state.py",
     "admin/feature_readiness_history.py",
+    "admin/maintenance_outcomes.py",
     "admin/rabbitmq_restore_drill.py",
     "admin/restore_drill.py",
     "admin/update_readiness.py",

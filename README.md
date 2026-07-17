@@ -64,7 +64,7 @@ Always compare your `.env` image pin with the Steam package installed on your ho
 - Recovery helpers for dependency loss and stale fixed-partition server IDs.
 - Host-level map watchdog service for unattended recovery.
 - LAN/VPN admin panel with Overview, Ops, Infrastructure, World, Security, Runbook, Players, Cosmetics, Blueprints, Care Packages, Addons, Bootstrap, Settings, Admin Actions, Admin Digests, Catalog, and Discovery surfaces.
-- Browser service/log control, verified manual and automatic backup lifecycle, certified daily maintenance that revalidates an exact staged update before player disruption and otherwise stays on the current build, daily no-network PostgreSQL restore proof with hash-chained RPO/RTO receipts, time-weighted SLOs/error budgets and immutable incident history, HMAC-sealed file/container desired-state attestation, tamper-evident operational change intelligence with non-causal incident correlation, deterministic evidence-linked response plans, portable signed escalation capsules, layered disaster restore, bounded database query/row/password controls, dynamic map autoscaling, retained capacity intelligence with evidence-driven adaptive retention, live memory balancing, and retained Prometheus metrics.
+- Browser service/log control, verified manual and automatic backup lifecycle, certified daily maintenance that revalidates an exact staged update before player disruption, requires a newly verified stopped-world backup before apply, restores the current build on proof/update failure, and emits a signed stage-by-stage outcome, daily no-network PostgreSQL restore proof with hash-chained RPO/RTO receipts, time-weighted SLOs/error budgets and immutable incident history, HMAC-sealed file/container desired-state attestation, tamper-evident operational change intelligence with non-causal incident correlation, deterministic evidence-linked response plans, portable signed escalation capsules, layered disaster restore, bounded database query/row/password controls, dynamic map autoscaling, retained capacity intelligence with evidence-driven adaptive retention, live memory balancing, and retained Prometheus metrics.
 - Staged game-build acquisition and exact candidate-bound update certification
   with recovery/configuration/health gates, expiring HMAC receipts, candidate
   drift invalidation, fail-closed browser apply enforcement, and constant-I/O
@@ -546,6 +546,11 @@ Install it as a host service:
 sudo systemctl enable --now dune-map-watchdog.service
 ```
 
+Every scheduled restart/shutdown execution now produces a semantically and
+cryptographically verified private receipt. Operations shows recent outcomes,
+backup integrity, effective update policy, timings, and service recovery; see
+[`docs/maintenance-intelligence.md`](docs/maintenance-intelligence.md).
+
 Detailed runbooks: [`docs/operations.md`](docs/operations.md), [`docs/maintenance-updates.md`](docs/maintenance-updates.md), and [`docs/troubleshooting.md`](docs/troubleshooting.md).
 
 ## Backups, Replication, And Restore
@@ -703,7 +708,10 @@ make install-artificial-exchange-buyer-service ENV_FILE=.env
 make install-artificial-exchange-populator-service ENV_FILE=.env
 ```
 
-The daily maintenance flow targets a 06:00 local restart with warning announcements, stopped-world backup, optional Steam package update check, service recreate/start, and post-start health checks. See [`docs/maintenance-updates.md`](docs/maintenance-updates.md).
+The daily maintenance flow targets a 06:00 local restart with warning
+announcements, stopped-world backup plus verification, certified staged-only
+update admission, service recreate/start, post-start health checks, and a
+signed outcome receipt. See [`docs/maintenance-updates.md`](docs/maintenance-updates.md).
 
 Paul/Admin automation is split across two scripts:
 
@@ -949,6 +957,7 @@ Server-browser ordering is deliberately split based on the observed in-game brow
 | `DUNE_ADMIN_UPDATE_MUTATIONS_ENABLED` | Game update/restart, candidate-validated stack fast-forward, runtime repair, and auto-update timer installation gate. |
 | `DUNE_UPDATE_READINESS_ENABLED` / `DUNE_UPDATE_REQUIRE_READINESS_RECEIPT` / `DUNE_UPDATE_READINESS_TTL_SECONDS` / `DUNE_UPDATE_READINESS_POLL_SECONDS` | Candidate-bound signed game-update certification, browser and scheduled-maintenance apply enforcement, bounded receipt lifetime, and cached read-only collection cadence. |
 | `DUNE_DAILY_RESTART_UPDATE_POLICY` | `certified` applies only an already staged, freshly revalidated candidate; `current` never changes the build; `automatic` is rejected while readiness receipts are required. |
+| `DUNE_MAINTENANCE_OUTCOME_RETENTION` | Retained private HMAC-signed restart/shutdown outcome receipts; default `400`, bounded `10..5000`. |
 | `DUNE_UPDATE_READINESS_STEAM_DIR` / `DUNE_UPDATE_READINESS_REQUIRED_HOST` | Read-only staged-package inspection mount and exact Docker-host gate for short-lived stage/apply helpers. |
 | `DUNE_HOTFIX_AUTO_APPLY_WITHOUT_READINESS` | Explicit legacy opt-out from stage-only unattended hotfix behavior; keep false to require certification before load/restart. |
 | `DUNE_ADMIN_PLAYER_RUNTIME_MUTATIONS_ENABLED` / `DUNE_SERVER_NOTIFICATION_SYSTEM_ENABLED` / `DUNE_SERVER_COMMANDS_AUTH_TOKEN` | Native skill/water/kick/vehicle action gate, game notification consumer, and shared Version 2 token. |
@@ -1084,6 +1093,7 @@ Start here:
 - [`docs/incident-response.md`](docs/incident-response.md): policy-versioned deterministic response plans, evidence predicates, exact bounded diagnostics, guarded recovery contracts, plan/signature verification, UI navigation without execution, and backup-bound portable evidence.
 - [`docs/deployment-assurance.md`](docs/deployment-assurance.md): exact-commit staged promotion, pre/post recovery layers, map-continuity invariants, desired/readiness/SLO/Prometheus gates, signed receipts, dashboard, metrics, and failure recovery.
 - [`docs/update-readiness.md`](docs/update-readiness.md): exact Steam/image candidate certification, recovery and health gates, signed expiry-bound receipts, browser update enforcement, metrics, and failure recovery.
+- [`docs/maintenance-intelligence.md`](docs/maintenance-intelligence.md): verified pre-update backups, current-build recovery semantics, signed stage outcomes, Operations history, API, metrics, backup verification, and recovery.
 - [`docs/operational-identity-handoff.md`](docs/operational-identity-handoff.md): FLS identity, RabbitMQ TLS, backup identity layers, and redacted handoff artifacts.
 - [`docs/postgres-replication.md`](docs/postgres-replication.md): local and remote Postgres standby.
 - [`docs/artificial-exchange.md`](docs/artificial-exchange.md): artificial Exchange catalog, buyer, settlement, populator, and services.
@@ -1091,7 +1101,7 @@ Start here:
 - [`docs/federated-public-directory.md`](docs/federated-public-directory.md): signed descriptor protocol, hardened pull federation, public directory UI, deployment, metrics, and key recovery.
 - [`docs/feature-readiness.md`](docs/feature-readiness.md): secret-safe activation/runtime matrix, complete parity-gate coverage, tamper-evident regression/recovery history, API, dashboard, backups, metrics, state semantics, and recovery workflow.
 - [`docs/credential-lifecycle.md`](docs/credential-lifecycle.md): activation-aware secret-safe posture, keyed rotation history, consumer/backup contracts, API/dashboard, metrics, alerts, and recovery.
-- [`docs/maintenance-updates.md`](docs/maintenance-updates.md): 06:00 restart/backup/update timeline and Steam hotfix handling.
+- [`docs/maintenance-updates.md`](docs/maintenance-updates.md): 06:00 restart/verified-backup/update timeline and Steam hotfix handling.
 - [`docs/troubleshooting.md`](docs/troubleshooting.md): common failures and checks.
 - [`docs/publication.md`](docs/publication.md): release safety checklist.
 

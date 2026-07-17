@@ -27,7 +27,10 @@ The daily scheduler uses the same staged-only apply contract. It performs an
 early check before warnings, downgrades an uncertified candidate to a
 current-build restart, and makes Admin force a second candidate/receipt
 collection before any disconnect or stop. Targeted map restarts cannot change
-the farm build. See [`maintenance-updates.md`](maintenance-updates.md).
+the farm build. Even a certified candidate is suppressed unless the new
+stopped-world backup passes the full verifier. The execution is captured in a
+signed maintenance receipt; see [`maintenance-updates.md`](maintenance-updates.md)
+and [`maintenance-intelligence.md`](maintenance-intelligence.md).
 
 Admin Panel's minimal image intentionally contains no Bash or Docker CLI. Stage
 and apply therefore run in a short-lived, uniquely named
