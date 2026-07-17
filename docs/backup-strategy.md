@@ -130,8 +130,8 @@ complete stopped-world recovery path.
 
 New CLI backups run with `umask 077`. Admin-panel dump, archive, manifest, and
 layer-report artifacts are mode `0600`, their per-run directory is mode `0700`,
-and root-running containers transfer ownership to `DUNE_HOST_UID` /
-`DUNE_HOST_GID`. This keeps scheduled host restore drills readable by the DASH
+and root-running containers, including the Prometheus alert inbox, transfer
+ownership to `DUNE_HOST_UID` / `DUNE_HOST_GID`. This keeps scheduled host restore drills readable by the DASH
 operator without making database dumps world-readable.
 
 `scripts/backup-state.sh`, panel-created backups, and the complete assured

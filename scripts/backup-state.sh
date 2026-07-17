@@ -89,6 +89,15 @@ feature_readiness_history_snapshot=""
 alert_inbox_db="${DUNE_ALERT_INBOX_HOST_DATABASE:-backups/alert-inbox/inbox.sqlite3}"
 alert_inbox_snapshot=""
 [[ -f "$alert_inbox_db" ]] && alert_inbox_snapshot="alert-inbox.sqlite3"
+alert_inbox_enabled="$(env_value DUNE_ALERT_INBOX_ENABLED)"
+case "${alert_inbox_enabled,,}" in
+  ""|1|true|yes|on) alert_inbox_required=true ;;
+  *) alert_inbox_required=false ;;
+esac
+if [[ "$alert_inbox_required" == true && -z "$alert_inbox_snapshot" && "$dry_run" == false ]]; then
+  printf 'enabled alert inbox is unavailable to host backup: %s\n' "$alert_inbox_db" >&2
+  exit 1
+fi
 canary_autopilot_state="${DUNE_CANARY_AUTOPILOT_HOST_STATE_FILE:-backups/admin-panel/canary-autopilot.json}"
 canary_autopilot_snapshot=""
 [[ -f "$canary_autopilot_state" ]] && canary_autopilot_snapshot="canary-autopilot.json"
@@ -226,6 +235,8 @@ if [[ "$dry_run" == true ]]; then
   fi
   if [[ -f "$alert_inbox_db" ]]; then
     printf 'alert_inbox_snapshot=alert-inbox.sqlite3\n'
+  elif [[ "$alert_inbox_required" == true ]]; then
+    printf 'alert_inbox_snapshot=<required but unavailable %s>\n' "$alert_inbox_db"
   else
     printf 'alert_inbox_snapshot=<not initialized>\n'
   fi
@@ -609,6 +620,7 @@ desired_state_snapshot=${desired_state_snapshot}
 change_intelligence_snapshot=${change_intelligence_snapshot}
 feature_readiness_history_snapshot=${feature_readiness_history_snapshot}
 alert_inbox_snapshot=${alert_inbox_snapshot}
+alert_inbox_required=${alert_inbox_required}
 canary_autopilot_snapshot=${canary_autopilot_snapshot}
 credential_lifecycle_snapshot=${credential_lifecycle_snapshot}
 credential_lifecycle_anchor=${credential_lifecycle_anchor_snapshot}

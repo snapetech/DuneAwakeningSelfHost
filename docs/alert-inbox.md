@@ -146,7 +146,11 @@ metrics continue to include those alerts.
 `scripts/backup-state.sh` takes an online SQLite backup through SQLite's backup
 API and stores it as `alert-inbox.sqlite3`. `scripts/verify-backup.sh` requires
 an intact SQLite database with the `alerts`, `transitions`, and `metadata`
-tables. The source database and backup artifact use mode `0600`.
+tables. The source database and backup artifact use mode `0600`; the parent
+uses mode `0700`. A root-running Admin container transfers both artifacts to
+`DUNE_HOST_UID` / `DUNE_HOST_GID`, so the unprivileged host backup path can
+read them. Host backup creation and verification fail closed if the inbox is
+enabled but its snapshot is absent.
 
 If only the inbox database is lost, use the dedicated non-map restore path. It
 verifies first, defaults to a dry-run plan, hostname-gates execution, stops and

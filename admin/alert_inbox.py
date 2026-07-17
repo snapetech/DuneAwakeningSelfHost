@@ -7,6 +7,7 @@ import datetime
 import contextlib
 import hashlib
 import json
+import os
 import pathlib
 import re
 import sqlite3
@@ -91,22 +92,38 @@ def normalize_alert(raw):
 
 
 class Store:
-    def __init__(self, database, *, retention_days=90, history_limit=2000):
+    def __init__(self, database, *, retention_days=90, history_limit=2000, owner_uid=None, owner_gid=None):
         self.database = pathlib.Path(database)
         self.retention_days = max(1, min(int(retention_days), 3650))
         self.history_limit = max(100, min(int(history_limit), 10000))
+        self.owner_uid = int(owner_uid) if owner_uid not in (None, "") else None
+        self.owner_gid = int(owner_gid) if owner_gid not in (None, "") else None
         self._lock = threading.RLock()
 
-    def connect(self):
+    def _secure(self):
         if self.database.is_symlink():
             raise ValueError("alert inbox database must not be a symlink")
         self.database.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.database.parent.chmod(0o700)
+        private_files = (self.database, pathlib.Path(str(self.database) + "-wal"), pathlib.Path(str(self.database) + "-shm"))
+        for path in private_files:
+            if path.is_symlink():
+                raise ValueError("alert inbox database artifacts must not be symlinks")
+            if path.exists():
+                path.chmod(0o600)
+        if os.geteuid() == 0 and self.owner_uid is not None:
+            os.chown(self.database.parent, self.owner_uid, self.owner_gid if self.owner_gid is not None else -1)
+            for path in private_files:
+                if path.exists():
+                    os.chown(path, self.owner_uid, self.owner_gid if self.owner_gid is not None else -1)
+
+    def connect(self):
+        self._secure()
         connection = sqlite3.connect(self.database, timeout=10)
-        self.database.chmod(0o600)
         connection.row_factory = sqlite3.Row
         connection.execute("pragma journal_mode=WAL")
         connection.execute("pragma foreign_keys=ON")
+        self._secure()
         return connection
 
     @contextlib.contextmanager
@@ -120,6 +137,7 @@ class Store:
             raise
         finally:
             connection.close()
+            self._secure()
 
     def initialize(self):
         with self._lock, self.transaction() as db:

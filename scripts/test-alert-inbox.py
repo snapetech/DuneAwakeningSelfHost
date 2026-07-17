@@ -3,6 +3,7 @@ import pathlib
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -129,6 +130,13 @@ class AlertInboxTest(unittest.TestCase):
         link.symlink_to(real)
         with self.assertRaisesRegex(ValueError, "must not be a symlink"):
             alert_inbox.Store(link).initialize()
+
+    def test_root_container_transfers_database_ownership_to_host_identity(self):
+        database = pathlib.Path(self.tmp.name) / "host-readable" / "inbox.sqlite3"
+        with mock.patch.object(alert_inbox.os, "geteuid", return_value=0), mock.patch.object(alert_inbox.os, "chown") as chown:
+            alert_inbox.Store(database, owner_uid="1234", owner_gid="5678").initialize()
+        self.assertIn(mock.call(database.parent, 1234, 5678), chown.call_args_list)
+        self.assertIn(mock.call(database, 1234, 5678), chown.call_args_list)
 
 
 if __name__ == "__main__":

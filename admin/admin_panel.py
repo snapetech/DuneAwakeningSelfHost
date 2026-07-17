@@ -5671,6 +5671,8 @@ def alert_inbox_store():
                 ALERT_INBOX_DATABASE,
                 retention_days=ALERT_INBOX_RETENTION_DAYS,
                 history_limit=ALERT_INBOX_HISTORY_LIMIT,
+                owner_uid=os.environ.get("DUNE_HOST_UID"),
+                owner_gid=os.environ.get("DUNE_HOST_GID"),
             ).initialize()
         return ALERT_INBOX_STORE
 

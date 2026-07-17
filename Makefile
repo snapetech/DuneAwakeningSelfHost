@@ -60,6 +60,7 @@ test-operations-calendar:
 test-alert-inbox:
 	python3 -W error::ResourceWarning -m unittest scripts/test-alert-inbox.py
 	python3 -m py_compile admin/alert_inbox.py scripts/test-alert-inbox.py
+	./scripts/test-alert-inbox-backup.sh
 
 test-restore-alert-inbox:
 	./scripts/test-restore-alert-inbox.sh

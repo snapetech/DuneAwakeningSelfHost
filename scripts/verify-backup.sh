@@ -389,7 +389,12 @@ PY
     ok=false
   fi
 else
-  printf 'WARN no alert-inbox.sqlite3 found in %s\n' "$backup_dir"
+  if [[ -f "$backup_dir/manifest.txt" ]] && rg -q '^alert_inbox_required=true$' "$backup_dir/manifest.txt"; then
+    printf 'FAIL enabled alert-inbox snapshot is missing from %s\n' "$backup_dir" >&2
+    ok=false
+  else
+    printf 'WARN no alert-inbox.sqlite3 found in %s\n' "$backup_dir"
+  fi
 fi
 
 credential_lifecycle_artifacts=0
