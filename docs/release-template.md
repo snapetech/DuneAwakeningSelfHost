@@ -1,6 +1,8 @@
 # Release Template
 
 Use this as the release-note body for a tagged DASH package or handoff build.
+The authoritative automated publication contract is [`releases.md`](releases.md);
+version-specific public notes belong at `docs/releases/<tag>.md`.
 
 ## Summary
 
@@ -23,6 +25,7 @@ Paste command results:
 
 ```bash
 make validate
+make release-package
 ./scripts/bootstrap-checklist.sh .env
 ./scripts/status.sh .env
 ```
@@ -51,6 +54,8 @@ Backup validation:
 - `docs/operations.md`
 - `docs/troubleshooting.md`
 - `docs/packaging.md`
+- `docs/releases.md`
+- `CHANGELOG.md`
 
 ## Private Data Excluded
 
@@ -70,7 +75,7 @@ Confirm these are not in the release:
 - Linux Docker Compose is the supported runtime path.
 - Windows/macOS are operator workstation paths, not native server targets.
 - Podman is best-effort.
-- Native GM/cheat routes remain gated until verified against the live server build.
+- Proprietary Funcom/Tencent integrations still require their external tokens or contracts.
 - Client travel must be validated from the live game client after server-side health is green.
 
 ## Upgrade Notes

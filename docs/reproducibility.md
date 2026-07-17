@@ -23,7 +23,7 @@ The current Compose files are pinned by `.env` values, not by local machine name
 
 ## Fresh Host Procedure
 
-1. Clone this repository.
+1. Install an immutable published release (preferred) or clone this repository.
 2. Install Docker Engine and the Compose plugin.
 3. Install the official Steam tool on that host.
 4. Generate local secrets:
@@ -117,10 +117,16 @@ Run these before sharing changes:
 
 ```bash
 make validate
+make release-package
 rg -n "192\\.168\\.|/home/[^d]|/Users/|C:\\\\Users\\\\" README.md docs .env.example compose.yaml compose.allmaps.yaml config scripts admin
 ```
 
 Expected result: `make validate` exits cleanly, and the second command finds no real LAN IPs or personal home paths. Also check for any real hostnames, usernames, world names, or organization names before publishing. The Compose subnet `172.31.240.0/24`, `127.0.0.1`, `localhost`, and container path `/home/dune` are intentional generic runtime values.
+
+The source release archive is deterministic for one commit and release-builder
+version. Experimental loader archives are deterministic for the pinned source,
+toolchain, build type, and `SOURCE_DATE_EPOCH`. See [`releases.md`](releases.md)
+and [`reproducible-loader-packages.md`](reproducible-loader-packages.md).
 
 ## Version Drift
 

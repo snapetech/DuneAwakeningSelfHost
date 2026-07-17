@@ -11,7 +11,8 @@ Usage:
 
 The install path never starts or restarts DASH. A ref must be a full 40-hex Git
 commit and the archive checksum is mandatory. The default URL is the official
-snapetech GitHub source archive for that exact commit.
+snapetech GitHub source archive for that exact commit. Official GitHub Release
+asset URLs are accepted when their checksum and embedded commit metadata match.
 EOF
 }
 
@@ -159,6 +160,34 @@ extracted="$stage/$archive_root"
   printf 'archive is not a DASH source release\n' >&2; exit 1;
 }
 
+release_version=""
+if [[ -f "$extracted/RELEASE-METADATA.json" ]]; then
+  release_version="$(python3 - "$extracted/RELEASE-METADATA.json" "$ref" <<'PY'
+import json,re,sys
+path, expected_commit = sys.argv[1:]
+with open(path, encoding="utf-8") as handle:
+    value=json.load(handle)
+if value.get("schemaVersion") != "dash-release-metadata/v1":
+    raise SystemExit("release metadata schema mismatch")
+if value.get("commit") != expected_commit:
+    raise SystemExit("release metadata commit does not match --ref")
+version=value.get("version")
+tag=value.get("tag")
+if not isinstance(version, str) or not re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?", version):
+    raise SystemExit("release metadata version is invalid")
+if tag != "v" + version:
+    raise SystemExit("release metadata tag/version mismatch")
+platform=value.get("platform") or {}
+if platform.get("serverOperatingSystem") != "linux" or platform.get("architecture") != "x86_64" or platform.get("requiredCpuFeature") != "avx2":
+    raise SystemExit("release metadata platform contract mismatch")
+contents=value.get("contents") or {}
+if contents.get("funcomArtifactsIncluded") is not False or contents.get("runtimeStateIncluded") is not False or contents.get("secretsIncluded") is not False:
+    raise SystemExit("release metadata private/proprietary exclusion contract mismatch")
+print(version)
+PY
+)"
+fi
+
 if [[ -e "$release_dir" ]]; then
   recorded="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("sha256",""))' "$release_dir/.dash-release.json" 2>/dev/null || true)"
   [[ "$recorded" == "$expected_sha" ]] || { printf 'existing release directory does not match requested checksum\n' >&2; exit 1; }
@@ -197,8 +226,10 @@ for name in "${mutable_configs[@]}"; do
 done
 
 installed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+release_version_json="null"
+if [[ -n "$release_version" ]]; then release_version_json="$(json_string "$release_version")"; fi
 printf '%s\n' \
-  "{\"version\":1,\"commit\":$(json_string "$ref"),\"sha256\":$(json_string "$expected_sha"),\"source\":$(json_string "${archive:-$url}"),\"installedAt\":$(json_string "$installed_at")}" \
+  "{\"version\":1,\"releaseVersion\":${release_version_json},\"commit\":$(json_string "$ref"),\"sha256\":$(json_string "$expected_sha"),\"source\":$(json_string "${archive:-$url}"),\"installedAt\":$(json_string "$installed_at")}" \
   > "$release_dir/.dash-release.json.tmp"
 chmod 0644 "$release_dir/.dash-release.json.tmp"
 mv -f -- "$release_dir/.dash-release.json.tmp" "$release_dir/.dash-release.json"

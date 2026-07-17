@@ -20,6 +20,7 @@ Always compare your `.env` image pin with the Steam package installed on your ho
 - [Requirements](#requirements)
 - [Quick Start](#quick-start)
 - [Install And Deployment Paths](#install-and-deployment-paths)
+- [Releases](#releases)
 - [Admin Panel](#admin-panel)
 - [Operations And Recovery](#operations-and-recovery)
 - [Backups, Replication, And Restore](#backups-replication-and-restore)
@@ -399,6 +400,21 @@ State and operator config remain under `/var/lib/dash`; releases live under
 fenced active/passive deployment packages live under `packaging/`. See
 [`docs/deployment-packaging.md`](docs/deployment-packaging.md) before using any
 automated path.
+
+## Releases
+
+DASH publishes immutable Semantic Version releases for the supported Linux
+x86_64/AVX2 Docker Compose server target. Each release carries a deterministic
+source package, SPDX 2.3 SBOM, SHA-256 manifest, in-toto/SLSA provenance,
+GitHub artifact attestations, and separately verified experimental Linux and
+Windows loader packages. Funcom/Steam artifacts and private runtime data are
+never included.
+
+The current version is recorded in [`VERSION`](VERSION). Download and verify
+published packages from the
+[GitHub Releases page](https://github.com/snapetech/DuneAwakeningSelfHost/releases).
+See [`docs/releases.md`](docs/releases.md) for the platform matrix, installation,
+integrity verification, local build, publication, and rollback contract.
 
 ### Minimal Single-Map Test
 

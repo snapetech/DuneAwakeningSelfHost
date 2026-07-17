@@ -54,6 +54,7 @@ make validate
 make public-site-check
 git diff --check
 ./scripts/package-manifest.sh /tmp/dash-package-manifest.md
+make release-package
 ```
 
 Then inspect:
@@ -71,6 +72,9 @@ rg -n "FLS_SECRET[=].+|BEGIN .*PRIVATE[ ]KEY|PRIVATE[ ]KEY|password|token|secret
 The broad secret scan will produce some expected documentation/example hits. Confirm they are placeholders or warnings, not real values.
 
 Use [`docs/release-template.md`](docs/release-template.md) for release notes or another-operator handoff notes.
+The automated version/tag/assets/immutability contract is documented in
+[`releases.md`](releases.md); version-specific notes live under
+`docs/releases/`.
 
 ## New Host Bootstrap Package
 

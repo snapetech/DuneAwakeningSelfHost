@@ -1,5 +1,24 @@
 # Third-Party Notices
 
+## Vendored static command-line tools
+
+DASH distributes four static x86_64 helpers under `vendor/bin/` for official
+container images that do not provide the commands required by guarded startup
+and diagnostics. Exact versions, upstream artifacts, hashes, corresponding
+source, and rebuild instructions are recorded in [`vendor/README.md`](vendor/README.md).
+
+- BusyBox 1.36.1 is GPL-2.0-only. The complete corresponding source archive,
+  exact `.config`, build script, and GPL text accompany the binary under
+  `vendor/source/`, `vendor/build-busybox.sh`, and `vendor/licenses/`.
+- curl 8.17.0 uses the curl license. The static upstream artifact reports
+  OpenSSL 3.5.4, zlib 1.3.1, libssh2 1.11.1, nghttp2 1.65.0, and musl; their
+  license texts accompany the binary.
+- jq 1.7.1 is distributed under its MIT license.
+- ripgrep 15.1.0 is distributed under the user's choice of MIT or the Unlicense.
+
+These components and their linked libraries are not relicensed under DASH's
+MIT license. See the complete texts in `vendor/licenses/`.
+
 ## Sponge Dune Awakening Server Tools
 
 The static console-variable registration-call extraction approach in

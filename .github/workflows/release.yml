@@ -1,0 +1,60 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.repository == 'snapetech/DuneAwakeningSelfHost'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Validate tag identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="v$(tr -d '\r\n' < VERSION)"
+          test "$GITHUB_REF_NAME" = "$expected"
+          test "$(git rev-parse "$GITHUB_REF_NAME^{commit}")" = "$(git rev-parse HEAD)"
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+      - name: Install validation and cross-build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential ca-certificates clang cmake curl jq lld mingw-w64 \
+            ninja-build python3-psycopg2 ripgrep
+          sudo install -m 0755 public-site/scripts/render-dune-static-status.sh /usr/local/sbin/render-dune-static-status.sh
+
+      - name: Validate the complete repository
+        run: make validate
+
+      - name: Build and smoke-test release assets
+        run: scripts/build-release-assets.sh --version "$GITHUB_REF_NAME" --ref "$(git rev-parse HEAD)"
+
+      - name: Attest release assets
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4
+        with:
+          subject-path: "dist/release/*"
+
+      - name: Publish immutable GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/publish-github-release.sh "$GITHUB_REF_NAME" dist/release "$GITHUB_REPOSITORY"

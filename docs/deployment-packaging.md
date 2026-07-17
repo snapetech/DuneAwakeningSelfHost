@@ -43,6 +43,11 @@ sudo ./scripts/install-release.sh install \
   --activate
 ```
 
+For a published version, prefer the project-built release asset over GitHub's
+automatically generated source archive. Published assets contain embedded
+commit/platform/exclusion metadata, an SPDX SBOM, checksums, provenance, and
+GitHub attestations. See [`releases.md`](releases.md).
+
 Default layout:
 
 ```text
@@ -186,9 +191,9 @@ For a real clean host, also prove:
 
 ## Known limits
 
-- Release archives are checksum-pinned, not signed by a project release key.
-  Verify the checksum over a separate trusted channel when supply-chain risk
-  requires it.
+- Published release assets are checksum-pinned, GitHub OIDC/Sigstore-attested,
+  and locked by immutable releases. Locally built or raw GitHub commit archives
+  retain only their explicit SHA-256 trust boundary.
 - The Ansible Docker package names target current Ubuntu/Debian repositories;
   override `dash_docker_apt_packages` for another distribution/repository.
 - The Proxmox playbook is a reviewed template, not permission to alter a live
