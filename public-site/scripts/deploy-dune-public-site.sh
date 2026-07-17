@@ -74,9 +74,10 @@ install_render_scripts() {
     install -m 0755 "$repo_root/public-site/scripts/validate-dune-public-site.sh" "$dst_dir/validate-dune-public-site.sh"
     install -m 0755 "$repo_root/public-site/scripts/check-dune-public-site-drift.sh" "$dst_dir/check-dune-public-site-drift.sh"
     install -m 0755 "$repo_root/public-site/scripts/build-federated-directory.py" "$dst_dir/build-federated-directory.py"
+    install -m 0755 "$repo_root/public-site/scripts/configure-federated-directory-sources.py" "$dst_dir/configure-federated-directory-sources.py"
   else
     run_privileged install -d -m 0755 "$dst_dir"
-    for script in render-dune-static-status.sh render-dune-public-snapshot.py configure-dune-public-site.sh validate-dune-public-site.sh check-dune-public-site-drift.sh build-federated-directory.py; do
+    for script in render-dune-static-status.sh render-dune-public-snapshot.py configure-dune-public-site.sh validate-dune-public-site.sh check-dune-public-site-drift.sh build-federated-directory.py configure-federated-directory-sources.py; do
       run_privileged install -m 0755 "$repo_root/public-site/scripts/$script" "$dst_dir/$script"
     done
   fi

@@ -460,7 +460,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
     def test_federated_public_directory_settings_fail_closed_then_accept_complete_contract(self):
         with self.assertRaisesRegex(ValueError, "entry URL"):
             self.panel.write_safe_env({"DUNE_PUBLIC_DIRECTORY_ENABLED": "true"})
-        with self.assertRaisesRegex(ValueError, "private or reserved"):
+        with self.assertRaisesRegex(ValueError, "public DNS hostname"):
             self.panel.write_safe_env({
                 "DUNE_PUBLIC_DIRECTORY_ENABLED": "true",
                 "DUNE_PUBLIC_DIRECTORY_ENTRY_URL": "https://127.0.0.1/directory-entry.json",

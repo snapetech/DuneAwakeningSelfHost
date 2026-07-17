@@ -7,8 +7,8 @@ screenshots, or branding.
 
 | Repository | Pinned revision | Audit date |
 | --- | --- | --- |
-| `Red-Blink/dune-awakening-selfhost-docker` | `12ac3b8b30a0dac3d728a37db65cad4a292750b6` (`v1.3.58`) | 2026-07-15 |
-| `snapetech/DuneAwakeningSelfHost` | `56b98a29acc91fa6689d955272550022ac39f317` before this parity tranche | 2026-07-15 |
+| `Red-Blink/dune-awakening-selfhost-docker` | `7ae3e7738897c0ca5cf902e4dcb6387d67d443dc` (`v1.3.59`) | 2026-07-16 |
+| `snapetech/DuneAwakeningSelfHost` | `8e04154e16b8d77e4492b4e71b923da6432f041e` before this polish tranche | 2026-07-16 |
 
 The comparison covered Red-Blink's README/release notes, React console, API
 routes and service modules, runtime scripts and state contracts, all Compose
@@ -57,6 +57,7 @@ production enablement; that validation boundary is not an omitted feature.
 | Updates/repair | Game/stack updates, schedule, runtime repair | Steam update flow, candidate-validated Git fast-forward, hotfix timer, reboot resume, image verification and post-start repair | DASH exceeds |
 | Host lifecycle | Clean host-shutdown protection and automatic advertised-address changes | Full-farm systemd `ExecStop` runs the ordered shutdown path; a hostname-gated, dry-run-first timer detects IPv4 drift, archives configuration/TLS, rotates the advertised address and certificate, and invokes the target-aware restart | Added/parity |
 | Docker storage | Safe obsolete-image/cache cleanup | Dry-run-first known-repository cleanup with current/in-use protection and separate cache opt-in | Added/DASH exceeds |
+| Public server directory | Account-backed centralized listing with heartbeat/status, region, population, Sietches, Discord, and visitor latency | Opt-in short-lived Ed25519 descriptor plus self-hosted pull federation; bounded DNS-pinned collection, no shared secret or registration API, independent browser verification, explicit visitor latency scan, metrics and stale/invalid alerts | Added/DASH exceeds |
 | Game storage | Aggregate/detail storage browsing, JSON export and grants | Aggregate base-storage view, bounded per-actor item detail/JSON, player inventory and separately guarded base-storage discovery/grants | Added/parity |
 | Metrics | Prometheus, node, container, Postgres and RabbitMQ metrics | Optional `compose.metrics.yaml` with Prometheus retention plus node exporter, cAdvisor, Postgres and RabbitMQ targets | Added/parity |
 | Discord | Documented adapter route family | Same read-only Red route family, readiness and permission mapping; Red's write routes are also hard-disabled at the pinned revision | Added/parity |
@@ -88,6 +89,8 @@ The parity tranche added or expanded these documented surfaces:
 - [`capacity-intelligence.md`](capacity-intelligence.md): retained scaling
   efficiency, cold-start/revisit evidence, forecasts, and adaptive retention.
 - [`metrics.md`](metrics.md): retained Prometheus metrics stack.
+- [`federated-public-directory.md`](federated-public-directory.md): signed,
+  privacy-bounded publication and self-hosted static pull federation.
 - [`discord-adapter.md`](discord-adapter.md): pinned Red-compatible adapter.
 - [`addons.md`](addons.md): community addon lifecycle and containment contract.
 - `scripts/storage-cleanup.sh`: scoped obsolete-image cleanup.
@@ -165,6 +168,7 @@ python3 -m py_compile admin/admin_panel.py admin/addon_admin.py \
   admin/augment_admin.py admin/blueprint_admin.py admin/native_command_admin.py \
   scripts/test-admin-panel-safe-surfaces.py
 python3 scripts/test-admin-panel-safe-surfaces.py
+make test-public-directory
 bash -n scripts/storage-cleanup.sh scripts/test-storage-cleanup.sh scripts/watch-maps.sh
 ./scripts/test-storage-cleanup.sh
 ./scripts/test-public-ip-monitor.sh

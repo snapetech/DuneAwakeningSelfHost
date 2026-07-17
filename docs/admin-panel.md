@@ -150,6 +150,12 @@ server {
   limits, the automatic memory balancer, retained Prometheus metrics, updates,
   and runtime repair. See [`autoscaling-memory.md`](autoscaling-memory.md) and
   [`metrics.md`](metrics.md).
+- Public Directory status on Infrastructure reports whether opt-in publication
+  is private, valid/current, or invalid; it shows coarse signed profile state,
+  expiry and truncated identity, links to the descriptor/public site, and
+  exports label-free health metrics. Configuration stays in the safe Settings
+  editor and the public renderer owns key generation/publication. See
+  [`federated-public-directory.md`](federated-public-directory.md).
 - Capacity Intelligence beside the autoscaler: retained map-hours saved,
   idle-running cost, productive-running ratio, warm/cold revisits,
   demand-to-ready cold-start distributions, empirical next-visit forecasts,

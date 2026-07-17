@@ -68,6 +68,7 @@ install -m 0755 "$repo_root/public-site/scripts/render-dune-static-status.sh" "$
 install -m 0755 "$repo_root/public-site/scripts/render-dune-public-snapshot.py" "$prefix/sbin/render-dune-public-snapshot.py"
 install -m 0755 "$repo_root/public-site/scripts/register-deep-desert-background.py" "$prefix/sbin/register-deep-desert-background.py"
 install -m 0755 "$repo_root/public-site/scripts/build-federated-directory.py" "$prefix/sbin/build-federated-directory.py"
+install -m 0755 "$repo_root/public-site/scripts/configure-federated-directory-sources.py" "$prefix/sbin/configure-federated-directory-sources.py"
 install -m 0755 "$repo_root/public-site/scripts/configure-dune-public-site.sh" "$prefix/sbin/configure-dune-public-site.sh"
 install -m 0755 "$repo_root/public-site/scripts/validate-dune-public-site.sh" "$prefix/sbin/validate-dune-public-site.sh"
 install -m 0755 "$repo_root/public-site/scripts/check-dune-public-site-drift.sh" "$prefix/sbin/check-dune-public-site-drift.sh"

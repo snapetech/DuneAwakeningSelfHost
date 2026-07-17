@@ -16,8 +16,8 @@ or documented operational path.
 
 ## Audit snapshot
 
-- Audit date: **2026-07-15**, full GitHub search and remote HEAD refresh
-  **2026-07-16 18:13 UTC**
+- Audit date: **2026-07-16**, full GitHub search and remote HEAD refresh
+  **2026-07-17 00:48 UTC**
 - Search scope: GitHub repository search, project documentation, Funcom's
   self-host guide, CubeCoders' Dune template and guide, Nexus Mods' Dune:
   Awakening category, and public community discussions used only to discover
@@ -27,12 +27,15 @@ or documented operational path.
   a feature works.
 - Target source: the current DASH worktree, including the completed Red-Blink
   parity, adaptive-autoscaler, recovery-proof, SLO, capacity-intelligence, and
-  desired-state-attestation and change-intelligence tranches.
+  desired-state-attestation, change-intelligence, and signed federated public
+  directory tranches.
 
-The 18:13 UTC refresh repeated all four repository searches below. The active
-credible results introduced no new peer, and current default-branch HEAD still
+The refresh repeated all four repository searches below. The active credible
+results introduced no new peer. Red-Blink advanced to `v1.3.59` and added a
+centralized public server directory; DASH implemented and then exceeded that
+operator outcome with signed pull federation. Current default-branch HEAD still
 matches every pinned fast-moving peer checked directly: Red-Blink
-`12ac3b8b`, Manaiakalani `f1044620`, DST `7bafc137`, Sietch Console
+`7ae3e773`, Manaiakalani `f1044620`, DST `7bafc137`, Sietch Console
 `80897fc5`, adainrivers `f7dfeb0d`, Easy Dune Admin `b530670f`,
 the4rchangel `749e77b8`, and BIGMOS `18ba6bc6`. Search-result-only cheat-guide
 and placeholder repositories remain excluded because they contain no credible
@@ -68,7 +71,7 @@ webhooks, and Dune-specific announcement/player/status commands.
 
 | Peer | Pinned revision | Distinct operator outcomes | Confidence |
 | --- | --- | --- | --- |
-| [Red-Blink/dune-awakening-selfhost-docker](https://github.com/Red-Blink/dune-awakening-selfhost-docker) | `12ac3b8b30a0dac3d728a37db65cad4a292750b6` | Docker-native install, browser bootstrap, complete console, map/sietch controls, player administration, care packages, addons, metrics, backup/restore, update/repair | high |
+| [Red-Blink/dune-awakening-selfhost-docker](https://github.com/Red-Blink/dune-awakening-selfhost-docker) | `7ae3e7738897c0ca5cf902e4dcb6387d67d443dc` | Docker-native install, browser bootstrap, complete console, map/sietch controls, player administration, care packages, addons, metrics, backup/restore, update/repair, and centralized public server directory | high |
 | [Manaiakalani/arrakis-command-nexus](https://github.com/Manaiakalani/arrakis-command-nexus) | `f104462007b3ebb4a2df2f4a99e5a8337952bbdc` | Compose profiles, responsive dashboard, player history/heatmaps, race-free daily scheduled restarts, Discord event webhooks, inventory-conflict repair, host/CPU/NIC tuning, VM image builds, authenticated Steam updates, and explicitly disabled maps | high |
 | [Sponge/Dune-Awakening-Server-Tools](https://git.unityailab.com/Sponge/Dune-Awakening-Server-Tools) | `04689ba704a3f6dd2d19db89a8df3b6d6a2424b2` | Ubuntu installer port, server manager/API, curated CVar catalogue, backup/update/network helpers | moderate |
 | [bneff84/dunedocks](https://github.com/bneff84/dunedocks) | `5b1ec7ce728b8cb62539ae3b55388459f44cab0d` | Single privileged container enclosing the Funcom k3s stack, Unraid-oriented persistence and update-on-start | moderate |
@@ -174,6 +177,7 @@ without reproducing that wrapper.
 | Memory telemetry/balancing | Red-Blink, Manaiakalani | Parity | DASH adds pressure-aware LRU eviction |
 | Metrics and retained history | Red-Blink, AMP | Parity | Prometheus/node/cAdvisor/Postgres/RMQ overlay |
 | Public read-only status | OpenDune, Manaiakalani | Parity | Separate static-site package |
+| Public server discovery and visitor latency | Red-Blink | DASH exceeds | Opt-in Ed25519-signed descriptors and self-hosted pull federation preserve the population/region/Sietch/Discord/latency outcome without a vendor account, shared heartbeat secret, inbound registration API, or public control plane; collectors pin validated public DNS addresses and browsers independently verify every row before rendering; see `docs/federated-public-directory.md` |
 
 ### Security and operator access
 
@@ -346,6 +350,12 @@ only when explicitly authorized for a concrete client task, as required by
   warm-idle cost, warm/cold outcomes, empirical revisit gaps, and routable-ready
   start latency feed gradual per-map recommendations while LRU/memory budgets
   and operator-selected modes remain authoritative.
+- **High confidence:** DASH exceeds Red-Blink `v1.3.59` public discovery. Each
+  server owns a short-lived Ed25519 identity; federation is a bounded static
+  pull, source failures are isolated, and the browser independently rechecks
+  schema, digest, identity, signature, and freshness before displaying a row.
+  Visitor latency scans are explicit rather than automatic cross-origin
+  traffic, and no central account or shared write credential exists.
 - **High confidence:** DASH now also exceeds surveyed configuration-management
   evidence with continuous HMAC-sealed file/container desired-state
   attestation, retained drift ownership, immutable baseline history, private

@@ -10,9 +10,60 @@
     summary: document.getElementById('summary'),
     updated: document.getElementById('updated'),
     verified: document.getElementById('verified-count'),
+    scan: document.getElementById('scan'),
   };
   let catalog = { servers: [], stats: {} };
   const latencies = new Map();
+  const regions = new Set(['Africa', 'Asia', 'Europe', 'Middle East', 'North America', 'Oceania', 'South America']);
+
+  function isRecord(value) {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
+  }
+
+  function hasExactKeys(value, keys) {
+    return isRecord(value) && Object.keys(value).sort().join('\0') === [...keys].sort().join('\0');
+  }
+
+  function boundedInteger(value, low, high) {
+    return Number.isInteger(value) && value >= low && value <= high;
+  }
+
+  function boundedText(value, limit, required = false) {
+    return typeof value === 'string' && value.length <= limit && (!required || value.trim().length > 0) && !/[\u0000-\u001f]/u.test(value);
+  }
+
+  function safeHttps(value, discord = false) {
+    if (value === '' && discord) return true;
+    if (typeof value !== 'string') return false;
+    try {
+      const parsed = new URL(value);
+      if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.port || parsed.search || parsed.hash) return false;
+      const host = parsed.hostname.toLocaleLowerCase().replace(/\.$/u, '');
+      if (!host || host === 'localhost' || host.endsWith('.local') || /^\d{1,3}(?:\.\d{1,3}){3}$/u.test(host) || host.includes(':')) return false;
+      if (!discord) return parsed.hostname.length > 0;
+      return /^(discord\.gg\/[A-Za-z0-9_-]{2,100}|(?:www\.)?discord\.com\/invite\/[A-Za-z0-9_-]{2,100})$/u.test(`${parsed.hostname}${parsed.pathname}`);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function validateServerShape(server) {
+    const entryKeys = ['schemaVersion', 'serverId', 'generatedAt', 'expiresAt', 'sourceUrl', 'profile', 'status', 'signingKey', 'signature'];
+    const profileKeys = ['name', 'description', 'region', 'websiteUrl', 'discordInvite', 'game', 'software', 'features'];
+    const statusKeys = ['state', 'playersOnline', 'capacity', 'build', 'sietches', 'maps'];
+    if (!hasExactKeys(server, entryKeys) || !/^dash-[0-9a-f]{64}$/u.test(server.serverId) || !safeHttps(server.sourceUrl)) return false;
+    if (!hasExactKeys(server.profile, profileKeys) || !boundedText(server.profile.name, 120, true) || !boundedText(server.profile.description, 500)) return false;
+    if (!regions.has(server.profile.region) || server.profile.game !== 'Dune: Awakening' || !['DASH', 'Dune Docker Console', 'Other'].includes(server.profile.software)) return false;
+    if (!safeHttps(server.profile.websiteUrl) || !safeHttps(server.profile.discordInvite, true)) return false;
+    if (!Array.isArray(server.profile.features) || server.profile.features.length > 32 || server.profile.features.some((value) => typeof value !== 'string' || !/^[a-z0-9-]{1,64}$/u.test(value))) return false;
+    if (!hasExactKeys(server.status, statusKeys) || !['online', 'degraded', 'offline'].includes(server.status.state) || !boundedText(server.status.build, 120, true)) return false;
+    if (!boundedInteger(server.status.capacity, 1, 1000) || !boundedInteger(server.status.playersOnline, 0, server.status.capacity) || !boundedInteger(server.status.sietches, 0, 1000)) return false;
+    if (!hasExactKeys(server.status.maps, ['online', 'warming', 'onDemand', 'offline', 'total']) || Object.values(server.status.maps).some((value) => !boundedInteger(value, 0, 1000))) return false;
+    if (!hasExactKeys(server.signingKey, ['algorithm', 'publicKeyDerBase64']) || !hasExactKeys(server.signature, ['algorithm', 'payloadSha256', 'valueBase64'])) return false;
+    return /^[A-Za-z0-9+/]{1,1368}={0,2}$/u.test(server.signingKey.publicKeyDerBase64)
+      && /^[A-Za-z0-9+/]{1,1368}={0,2}$/u.test(server.signature.valueBase64)
+      && /^[0-9a-f]{64}$/u.test(server.signature.payloadSha256);
+  }
 
   function canonical(value) {
     if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
@@ -32,7 +83,8 @@
   }
 
   async function verifyServer(server) {
-    if (!window.crypto?.subtle || server.schemaVersion !== 'dash-public-directory-entry/v1') throw new Error('browser signature verification unavailable');
+    if (!window.crypto?.subtle) throw new Error('browser signature verification unavailable');
+    if (server?.schemaVersion !== 'dash-public-directory-entry/v1' || !validateServerShape(server)) throw new Error('listing schema is invalid');
     const signature = server.signature || {};
     const signingKey = server.signingKey || {};
     if (signature.algorithm !== 'Ed25519' || signingKey.algorithm !== 'Ed25519') throw new Error('unsupported listing signature');
@@ -77,7 +129,7 @@
 
   function latencyLabel(id) {
     const value = latencies.get(id);
-    if (value === undefined) return 'scanning';
+    if (value === undefined) return 'not scanned';
     if (value === null) return 'unreachable';
     return `${value} ms`;
   }
@@ -153,7 +205,9 @@
       const response = await fetch('directory.json', { cache: 'no-store' });
       if (!response.ok) throw new Error(`directory HTTP ${response.status}`);
       const data = await response.json();
-      if (data.schemaVersion !== 'dash-public-directory-catalog/v1' || !Array.isArray(data.servers)) throw new Error('directory schema is invalid');
+      if (!hasExactKeys(data, ['schemaVersion', 'generatedAt', 'refreshAfter', 'stats', 'servers', 'rejected']) || data.schemaVersion !== 'dash-public-directory-catalog/v1' || !Array.isArray(data.servers)) throw new Error('directory schema is invalid');
+      const generated = Date.parse(data.generatedAt);
+      if (!Number.isFinite(generated) || generated > Date.now() + 300000) throw new Error('directory timestamp is invalid');
       const verified = await Promise.allSettled(data.servers.map(verifyServer));
       const servers = verified.filter((row) => row.status === 'fulfilled').map((row) => row.value);
       catalog = { ...data, servers };
@@ -166,7 +220,7 @@
         return option;
       }));
       render();
-      servers.forEach((server) => { void measure(server); });
+      nodes.scan.hidden = servers.length === 0;
     } catch (error) {
       nodes.summary.textContent = `Directory unavailable: ${error.message}`;
       nodes.empty.hidden = false;
@@ -175,5 +229,16 @@
   }
 
   [nodes.search, nodes.region, nodes.state, nodes.sort].forEach((node) => node.addEventListener('input', render));
+  nodes.scan.addEventListener('click', async () => {
+    nodes.scan.disabled = true;
+    nodes.scan.textContent = 'Scanning…';
+    try {
+      await Promise.all(catalog.servers.map(measure));
+      render();
+    } finally {
+      nodes.scan.disabled = false;
+      nodes.scan.textContent = 'Measure again';
+    }
+  });
   void load();
 })();

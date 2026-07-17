@@ -47,6 +47,7 @@ These endpoints turn evidence into operator decisions without writing state.
 | Economy | `POST /api/admin/economy/inspect` | moderate | Discover exchange, vehicle backup/recovery, base backup state. |
 | Player lifecycle | `POST /api/admin/player-lifecycle/inspect` | moderate | Discover account/player, tags, access codes, Communinet, party, tutorial, vendor state. |
 | Events | `POST /api/events/dry-run` | high for fail-closed planning | Compose announcements, restart plans, config proposals, and dry-run-only actions. |
+| Public directory | `GET /api/ops/public-directory` | high | Inspect opt-in publication configuration, signature validity/currentness, expiry, coarse public profile, and the exact public descriptor without exposing its private key. |
 
 ## Evidence Only
 

@@ -90,7 +90,7 @@ Always compare your `.env` image pin with the Steam package installed on your ho
 - Verified targeted network-timeout teleport research: a scoped `UNetConnection` timeout plus the shipped offline move helper moved a test player, and reconnect loaded the moved pawn. This is a working teleport mechanism, not a soft disconnect; see `docs/soft-disconnect-teleport.md`.
 - Player-presence automation for first-time welcomes, returning-player welcome-backs, leaves, first-seen private messages, Hagga/Deep Desert milestones, base-cap reminders, reconnect help, restart warnings, map-health notices, population digests, incident notices, starter Base Reconstruction Tool grants, and Vermilius Gap celebration.
 - Local backups, hardened disposable restore drills, restore helpers, optional streaming Postgres replica, optional remote replica snapshots, and portable offsite/onsite backup sync examples.
-- Optional public static site package with status, settings, player list, and Hagga Basin map.
+- Optional public static site package with status, settings, player list, Hagga Basin map, an opt-in Ed25519-signed public descriptor, and a self-hosted federated server directory whose browser re-verifies every listing.
 - Artificial Exchange as a first-class economy feature: reviewed price catalog, artificial buyer, validated seller settlement, optional buyer funding, controlled seeded listings, readiness checks, smoke tests, admin-panel controls, optional systemd services, and watchdog timer.
 - Publication and validation guardrails for keeping local state and secrets out of shared artifacts.
 - Receipt-bound, transactional deployment for reviewed Windows client loader,
@@ -125,8 +125,8 @@ Manager, DST, the active community dashboards, Linux/KVM/Proxmox/Pelican
 deployment projects, Discord/economy/airdrop tools, Wormageddon, and the base
 designer/gallery.
 
-The earlier Red-Blink-specific tranche and the feasible aggregate ecosystem
-parity build are complete for the pinned audit snapshot. Guarded inventory
+The Red-Blink-specific tranche and the feasible aggregate ecosystem parity
+build are complete through Red-Blink `v1.3.59` (`7ae3e7738897`). Guarded inventory
 repair, multi-user local RBAC, host/CPU tuning, signed outbound events,
 recurring event execution, the first-party Discord bot, community rewards/shop,
 OIDC/Discord federated login, base creator, encrypted backup archives, bounded
@@ -137,6 +137,15 @@ operator application credentials for external canaries. Client loader/Pak
 deployment remains separately authorization-gated, and self-host voice remains
 blocked on the proprietary Funcom-compatible Tencent GME contract rather than
 a missing peer implementation.
+
+Red-Blink's centralized public-directory outcome is also covered. DASH publishes
+short-lived, privacy-bounded descriptors signed by a per-server Ed25519 key and
+builds a static pull-federated catalog with bounded parallel collection, DNS
+pinning, redirect refusal, duplicate-identity rejection, and failure isolation.
+The public browser independently checks each schema, digest, identity,
+signature, and expiry before rendering; personalized cross-origin latency scans
+run only after an explicit visitor action. No vendor account, shared directory
+secret, inbound registration API, or public control-plane access is required.
 
 Beyond the pinned peers, DASH also retains map-hours saved, idle warm cost,
 warm/cold revisit outcomes, demand-to-ready cold-start distributions,
@@ -687,6 +696,9 @@ The optional public site publishes static files only:
 /hagga-basin.webp
 /deep-desert-map.svg
 /deep-desert.webp
+/directory-entry.json       # only when opt-in publication is enabled
+/directory/index.html       # optional self-hosted federation UI
+/directory/directory.json   # generated verified catalog
 ```
 
 The renderer runs locally on the DASH host. The public web server does not need Docker, Postgres, RabbitMQ, `.env`, admin-token, or admin-panel access.
@@ -708,6 +720,13 @@ make public-site-check
 ```
 
 More detail: [`docs/public-static-site.md`](docs/public-static-site.md).
+
+To publish a signed entry or host a federated directory, follow
+[`docs/federated-public-directory.md`](docs/federated-public-directory.md). The
+entry publisher is disabled by default; directory aggregation is a separate
+hardened oneshot/timer and never needs Admin Panel or game-database access. Its
+installer accepts repeated reviewed `--source` URLs, writes the exact manifest
+atomically, and refuses to enable a shipped placeholder.
 
 Optional GitLab CI jobs can validate, manually deploy, and observe the public static site and LAN admin panel from a protected home-lab runner. This is not the default install path; direct shell/systemd/Compose operation remains the normal path. See [`docs/public-static-site.md`](docs/public-static-site.md) and [`docs/admin-panel.md`](docs/admin-panel.md).
 
@@ -869,6 +888,8 @@ Start from [`.env.example`](.env.example). It is the source of truth for the ful
 | `DUNE_ADMIN_*_ENABLED` write gates | Per-family gates for typed knobs, events, bundles, progression, faction, Landsraad, respawn, guild, markers, landclaim, Exchange, tags, access codes, Communinet, tutorial, permission, vendor, and character-slot operations. |
 | `DUNE_ADMIN_AUDIT_LEDGER_ENABLED` / `DUNE_ADMIN_AUDIT_LEDGER_REQUIRED_FOR_MUTATIONS` | Seal sanitized audit events and require a verified admission receipt before privileged POST dispatch. |
 | `DUNE_ADMIN_CHANGE_CONTRACTS_ENABLED` / `DUNE_ADMIN_CHANGE_CONTRACTS_REQUIRED` / `DUNE_ADMIN_CHANGE_CONTRACT_TTL_SECONDS` | Compile and enforce exact-body blast-radius reviews for governed mutations; the freshness window is bounded to 30–300 seconds. |
+| `DUNE_PUBLIC_DIRECTORY_ENABLED` / `DUNE_PUBLIC_DIRECTORY_ENTRY_URL` / `DUNE_PUBLIC_SITE_URL` | Opt in to a short-lived Ed25519-signed public descriptor at the exact public HTTPS URL; publication remains disabled until the full public contract validates. |
+| `DUNE_PUBLIC_DIRECTORY_REGION` / `DUNE_PUBLIC_DIRECTORY_CAPACITY` / `DUNE_PUBLIC_DIRECTORY_DISCORD_INVITE` / `DUNE_PUBLIC_DIRECTORY_TTL_SECONDS` | Privacy-bounded directory profile, population capacity, optional canonical Discord invite, and a 60–900-second descriptor lifetime. |
 
 Server-browser ordering is deliberately split based on the observed in-game browser. `config/gateway.ini` `[gateway].display_name` is the parent/top row and must stay the branded server title. `WORLD_NAME` and `DUNE_SERVER_DISPLAY_NAME` are the nested/details row and must stay the feature-list description. Do not copy the branded title into `WORLD_NAME` or `DUNE_SERVER_DISPLAY_NAME`.
 | `DUNE_ADMIN_RESTART_COMMAND` | Hook used by scheduled restart jobs. |
@@ -1032,6 +1053,7 @@ Start here:
 - [`docs/postgres-replication.md`](docs/postgres-replication.md): local and remote Postgres standby.
 - [`docs/artificial-exchange.md`](docs/artificial-exchange.md): artificial Exchange catalog, buyer, settlement, populator, and services.
 - [`docs/public-static-site.md`](docs/public-static-site.md): optional public static status site.
+- [`docs/federated-public-directory.md`](docs/federated-public-directory.md): signed descriptor protocol, hardened pull federation, public directory UI, deployment, metrics, and key recovery.
 - [`docs/maintenance-updates.md`](docs/maintenance-updates.md): 06:00 restart/backup/update timeline and Steam hotfix handling.
 - [`docs/troubleshooting.md`](docs/troubleshooting.md): common failures and checks.
 - [`docs/publication.md`](docs/publication.md): release safety checklist.

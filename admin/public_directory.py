@@ -31,6 +31,9 @@ MAX_CLOCK_SKEW_SECONDS = 300
 MAX_ENTRY_BYTES = 128 * 1024
 MAX_SOURCES = 500
 MAX_TEXT = 2000
+ED25519_SPKI_PREFIX = bytes.fromhex("302a300506032b6570032100")
+ED25519_PUBLIC_DER_BYTES = 44
+ED25519_SIGNATURE_BYTES = 64
 REGIONS = (
     "Africa",
     "Asia",
@@ -94,6 +97,12 @@ def bounded_int(value, low, high, label):
     return number
 
 
+def bounded_json_int(value, low, high, label):
+    if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+        raise ValueError(f"{label} must be a JSON integer from {low} to {high}")
+    return value
+
+
 def clean_text(value, limit, label, required=False):
     text = " ".join(str(value or "").split())
     if required and not text:
@@ -122,8 +131,8 @@ def normalize_https_url(value, label, required=False):
         address = ipaddress.ip_address(host.strip("[]"))
     except ValueError:
         address = None
-    if address is not None and not address.is_global:
-        raise ValueError(f"{label} must not target a private or reserved address")
+    if address is not None:
+        raise ValueError(f"{label} must use a public DNS hostname, not an IP literal")
     path = parsed.path or "/"
     return urllib.parse.urlunsplit(("https", host, path, "", ""))
 
@@ -308,6 +317,8 @@ def verify_entry(document, expected_url=None, now=None, openssl="openssl"):
     if len(canonical(document)) > MAX_ENTRY_BYTES:
         raise ValueError("directory entry exceeds the size bound")
     source_url = normalize_https_url(document.get("sourceUrl"), "directory source URL", required=True)
+    if document["sourceUrl"] != source_url:
+        raise ValueError("directory entry source URL is not canonical")
     if expected_url and source_url != normalize_https_url(expected_url, "expected directory source URL", required=True):
         raise ValueError("directory entry source URL does not match its catalog source")
     profile = document.get("profile")
@@ -327,7 +338,14 @@ def verify_entry(document, expected_url=None, now=None, openssl="openssl"):
         signature = base64.b64decode(signature_info["valueBase64"], validate=True)
     except (ValueError, TypeError) as exc:
         raise ValueError("directory key or signature encoding is invalid") from exc
-    if len(public_der) > 1024 or len(signature) > 1024 or document["serverId"] != server_id_from_key(public_der):
+    if (
+        len(public_der) != ED25519_PUBLIC_DER_BYTES
+        or not public_der.startswith(ED25519_SPKI_PREFIX)
+        or len(signature) != ED25519_SIGNATURE_BYTES
+        or key_info["publicKeyDerBase64"] != base64.b64encode(public_der).decode("ascii")
+        or signature_info["valueBase64"] != base64.b64encode(signature).decode("ascii")
+        or document["serverId"] != server_id_from_key(public_der)
+    ):
         raise ValueError("directory server identity does not match its public key")
     unsigned = {key: value for key, value in document.items() if key != "signature"}
     payload = canonical(unsigned)
@@ -345,27 +363,37 @@ def verify_entry(document, expected_url=None, now=None, openssl="openssl"):
         raise ValueError("directory entry lifetime is outside policy")
     if expires <= now:
         raise ValueError("directory entry is expired")
-    clean_text(profile["name"], 120, "directory name", required=True)
-    clean_text(profile["description"], 500, "directory description")
+    if profile["name"] != clean_text(profile["name"], 120, "directory name", required=True):
+        raise ValueError("directory name is not canonical")
+    if profile["description"] != clean_text(profile["description"], 500, "directory description"):
+        raise ValueError("directory description is not canonical")
     if profile["region"] not in REGIONS or profile["game"] != "Dune: Awakening":
         raise ValueError("directory profile region or game is invalid")
-    normalize_https_url(profile["websiteUrl"], "directory website", required=True)
-    normalize_discord_invite(profile["discordInvite"])
+    if profile["websiteUrl"] != normalize_https_url(profile["websiteUrl"], "directory website", required=True):
+        raise ValueError("directory website is not canonical")
+    if profile["discordInvite"] != normalize_discord_invite(profile["discordInvite"]):
+        raise ValueError("directory Discord invite is not canonical")
     if profile["software"] not in ("DASH", "Dune Docker Console", "Other"):
         raise ValueError("directory software label is invalid")
     features = profile["features"]
-    if not isinstance(features, list) or len(features) > 32 or any(not re.fullmatch(r"[a-z0-9-]{1,64}", str(value)) for value in features):
+    if (
+        not isinstance(features, list)
+        or len(features) > 32
+        or any(not isinstance(value, str) or not re.fullmatch(r"[a-z0-9-]{1,64}", value) for value in features)
+        or len(set(features)) != len(features)
+    ):
         raise ValueError("directory features are invalid")
     if status["state"] not in ("online", "degraded", "offline"):
         raise ValueError("directory status state is invalid")
-    capacity = bounded_int(status["capacity"], 1, 1000, "directory capacity")
-    bounded_int(status["playersOnline"], 0, capacity, "directory players online")
-    bounded_int(status["sietches"], 0, 1000, "directory sietches")
+    capacity = bounded_json_int(status["capacity"], 1, 1000, "directory capacity")
+    bounded_json_int(status["playersOnline"], 0, capacity, "directory players online")
+    bounded_json_int(status["sietches"], 0, 1000, "directory sietches")
     if not isinstance(status["maps"], dict) or set(status["maps"]) != {"online", "warming", "onDemand", "offline", "total"}:
         raise ValueError("directory map summary is invalid")
     for key, value in status["maps"].items():
-        bounded_int(value, 0, 1000, f"directory {key} maps")
-    clean_text(status["build"], 120, "directory build", required=True)
+        bounded_json_int(value, 0, 1000, f"directory {key} maps")
+    if status["build"] != clean_text(status["build"], 120, "directory build", required=True):
+        raise ValueError("directory build is not canonical")
     return document
 
 

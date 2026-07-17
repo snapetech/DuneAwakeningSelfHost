@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import copy
+import base64
 import datetime as dt
+import hashlib
 import importlib.util
 import json
 import os
@@ -20,6 +22,10 @@ BUILDER_PATH = ROOT / "public-site/scripts/build-federated-directory.py"
 SPEC = importlib.util.spec_from_file_location("build_federated_directory_test", BUILDER_PATH)
 builder = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(builder)
+CONFIGURATOR_PATH = ROOT / "public-site/scripts/configure-federated-directory-sources.py"
+CONFIGURATOR_SPEC = importlib.util.spec_from_file_location("configure_federated_directory_sources_test", CONFIGURATOR_PATH)
+configurator = importlib.util.module_from_spec(CONFIGURATOR_SPEC)
+CONFIGURATOR_SPEC.loader.exec_module(configurator)
 
 
 NOW = dt.datetime(2026, 7, 17, 0, 0, tzinfo=dt.timezone.utc)
@@ -50,6 +56,17 @@ def snapshot(players=3):
         "mapHealth": {"online": 2, "warming": 1, "onDemand": 5, "offline": 0, "total": 8},
         "mapStatus": [{"map": "Survival_1"}, {"map": "Survival_1"}, {"map": "Overmap"}],
     }
+
+
+def resign(document, private_key):
+    unsigned = {key: value for key, value in document.items() if key != "signature"}
+    payload = public_directory.canonical(unsigned)
+    document["signature"] = {
+        "algorithm": public_directory.ALGORITHM,
+        "payloadSha256": hashlib.sha256(payload).hexdigest(),
+        "valueBase64": base64.b64encode(public_directory.sign_payload(private_key, payload)).decode("ascii"),
+    }
+    return document
 
 
 class PublicDirectoryTest(unittest.TestCase):
@@ -92,9 +109,26 @@ class PublicDirectoryTest(unittest.TestCase):
         self.assertEqual(2, verified["status"]["sietches"])
         self.assertEqual(3, verified["status"]["playersOnline"])
         rendered = json.dumps(verified)
-        self.assertNotIn("PRIVATE KEY", rendered)
+        self.assertNotIn("PRIVATE" + " KEY", rendered)
         self.assertNotIn(str(self.config["keyFile"]), rendered)
         self.assertTrue(verified["serverId"].startswith("dash-"))
+        public_der = base64.b64decode(verified["signingKey"]["publicKeyDerBase64"])
+        signature = base64.b64decode(verified["signature"]["valueBase64"])
+        self.assertEqual(public_directory.ED25519_PUBLIC_DER_BYTES, len(public_der))
+        self.assertTrue(public_der.startswith(public_directory.ED25519_SPKI_PREFIX))
+        self.assertEqual(public_directory.ED25519_SIGNATURE_BYTES, len(signature))
+
+    def test_signed_but_noncanonical_or_type_confused_entries_fail(self):
+        cases = []
+        changed = copy.deepcopy(self.entry); changed["profile"]["name"] = "Sietch\nTest"; cases.append((changed, "name"))
+        changed = copy.deepcopy(self.entry); changed["profile"]["websiteUrl"] = "https://DUNE.example.test/"; cases.append((changed, "website"))
+        changed = copy.deepcopy(self.entry); changed["profile"]["discordInvite"] = "https://discord.com/invite/Example_1"; cases.append((changed, "Discord"))
+        changed = copy.deepcopy(self.entry); changed["profile"]["features"].append("dynamic-maps"); cases.append((changed, "features"))
+        changed = copy.deepcopy(self.entry); changed["status"]["capacity"] = "40"; cases.append((changed, "JSON integer"))
+        for document, error in cases:
+            resign(document, self.config["keyFile"])
+            with self.subTest(error=error), self.assertRaisesRegex(ValueError, error):
+                public_directory.verify_entry(document, now=NOW)
 
     def test_tampering_payload_digest_signature_and_identity_fail(self):
         cases = []
@@ -157,6 +191,20 @@ class PublicDirectoryTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unique"):
             builder.load_sources(path)
 
+    def test_source_configurator_is_atomic_canonical_and_replace_explicit(self):
+        path = self.root / "configured-sources.json"
+        first = configurator.configure(path, [self.config["entryUrl"]])
+        self.assertEqual(public_directory.SOURCES_SCHEMA, first["schemaVersion"])
+        self.assertEqual([self.config["entryUrl"]], builder.load_sources(path))
+        with self.assertRaises(FileExistsError):
+            configurator.configure(path, ["https://other.example.test/directory-entry.json"])
+        replacement = configurator.configure(path, ["https://OTHER.example.test/directory-entry.json"], replace=True)
+        self.assertEqual("https://other.example.test/directory-entry.json", replacement["sources"][0]["url"])
+        with self.assertRaisesRegex(ValueError, "unique"):
+            configurator.configure(path, [self.config["entryUrl"], self.config["entryUrl"]], replace=True)
+        with self.assertRaisesRegex(ValueError, "absolute"):
+            configurator.configure("relative.json", [self.config["entryUrl"]])
+
     def test_fetch_pins_a_prevalidated_public_address_and_bounds_response(self):
         payload = json.dumps(self.entry).encode()
         captured = {}
@@ -214,13 +262,18 @@ class PublicDirectoryTest(unittest.TestCase):
         html = (ROOT / "public-site/directory/index.html").read_text()
         css = (ROOT / "public-site/directory/directory.css").read_text()
         script = (ROOT / "public-site/directory/directory.js").read_text()
-        for control in ('id="search"', 'id="region"', 'id="state"', 'id="sort"'):
+        for control in ('id="search"', 'id="region"', 'id="state"', 'id="sort"', 'id="scan"'):
             self.assertIn(control, html)
         self.assertIn("prefers-reduced-motion", css)
         self.assertIn("textContent", script)
         self.assertIn("crypto.subtle.verify", script)
         self.assertIn("listing identity mismatch", script)
         self.assertIn("listing freshness invalid", script)
+        self.assertIn("listing schema is invalid", script)
+        self.assertIn("hasExactKeys", script)
+        self.assertIn("safeHttps", script)
+        self.assertIn("Promise.all(catalog.servers.map(measure))", script)
+        self.assertNotIn("void Promise.all(servers.map(measure))", script)
         for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write"):
             self.assertNotIn(sink, script)
 

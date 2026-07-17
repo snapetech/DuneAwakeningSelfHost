@@ -68,7 +68,7 @@ test-change-contracts:
 
 test-public-directory:
 	python3 -W error::ResourceWarning -m unittest scripts/test-public-directory.py
-	python3 -m py_compile admin/public_directory.py public-site/scripts/build-federated-directory.py scripts/test-public-directory.py
+	python3 -m py_compile admin/public_directory.py public-site/scripts/build-federated-directory.py public-site/scripts/configure-federated-directory-sources.py scripts/test-public-directory.py
 	node --check public-site/directory/directory.js
 
 test-audit-ledger:
@@ -1021,7 +1021,7 @@ update-hagga-pois:
 
 public-site-check:
 	bash -n public-site/scripts/*.sh examples/public-site/rclone-sync.sh
-	python3 -m py_compile public-site/scripts/render-dune-public-snapshot.py public-site/scripts/build-federated-directory.py public-site/scripts/generate-game-landing.py scripts/update-hagga-poi-markers.py
+	python3 -m py_compile public-site/scripts/render-dune-public-snapshot.py public-site/scripts/build-federated-directory.py public-site/scripts/configure-federated-directory-sources.py public-site/scripts/generate-game-landing.py scripts/update-hagga-poi-markers.py
 	node --check public-site/directory/directory.js
 	python3 -m unittest public-site/scripts/test_render_dune_static_status.py
 	python3 -m unittest public-site/scripts/test_render_dune_public_snapshot.py

@@ -38,7 +38,9 @@ The browser independently repeats Ed25519, SHA-256 identity/digest, and expiry
 verification with WebCrypto before showing a card. The static directory host
 therefore cannot turn an unsigned catalog row into a visible “verified”
 contact. Player-relative reachability timing uses an uncredentialed HTTPS GET
-to each published descriptor.
+to each published descriptor only after the visitor explicitly selects
+**Measure my latency**; loading the directory itself sends no cross-origin
+probe.
 
 ## Why Pull Federation
 
@@ -78,8 +80,9 @@ DUNE_PUBLIC_DIRECTORY_TTL_SECONDS=180
 ```
 
 Supported regions are `Africa`, `Asia`, `Europe`, `Middle East`,
-`North America`, `Oceania`, and `South America`. URLs must be public HTTPS URLs
-without credentials, non-default ports, queries, or fragments. Discord accepts
+`North America`, `Oceania`, and `South America`. URLs must use public DNS
+hostnames and HTTPS without credentials, non-default ports, queries, or
+fragments; IP literals are refused. Discord accepts
 only `discord.gg/<code>` or `discord.com/invite/<code>` and publishes the
 canonical `discord.gg` form.
 
@@ -114,6 +117,8 @@ paths. `directory-entry.json` receives:
 ```text
 Access-Control-Allow-Origin: *
 Cross-Origin-Resource-Policy: cross-origin
+Cache-Control: no-store
+X-Content-Type-Options: nosniff
 ```
 
 The descriptor is explicitly public and contains no credential. Those headers
@@ -121,9 +126,10 @@ permit browser-relative signal timing and optional direct verification. The
 Admin Panel, database, Docker socket, RabbitMQ, and generated player snapshot
 remain governed by their existing exposure rules.
 
-The directory page needs `connect-src https:` to time independently hosted
-descriptors. It sends no cookie, authorization header, request body, or stable
-browser identifier.
+The directory page needs `connect-src 'self' https:` to load its catalog and,
+after explicit visitor action, time independently hosted descriptors. The
+cross-origin request sends no cookie, authorization header, request body, or
+stable browser identifier.
 
 ## Build A Directory
 
@@ -151,12 +157,28 @@ Install the hardened one-minute builder:
 
 ```bash
 sudo DUNE_PUBLIC_SITE_USER="$USER" \
-  ./public-site/scripts/install-federated-directory.sh
-sudoedit /etc/dash-directory-sources.json
-sudoedit /etc/dash-directory.env
-sudo systemctl enable --now build-dash-federated-directory.timer
+  ./public-site/scripts/install-federated-directory.sh \
+  --source https://dune-one.example/directory-entry.json \
+  --source https://dune-two.example/directory-entry.json \
+  --enable
+```
+
+The installer refuses `--enable` while the manifest still contains the shipped
+`.example.test` placeholder. To replace an existing reviewed manifest
+atomically, make replacement explicit:
+
+```bash
+sudo ./public-site/scripts/configure-federated-directory-sources.py \
+  --output /etc/dash-directory-sources.json \
+  --source https://dune-one.example/directory-entry.json \
+  --source https://dune-two.example/directory-entry.json \
+  --replace
 sudo systemctl start build-dash-federated-directory.service
 ```
+
+Edit `/etc/dash-directory.env` only to change the output path, timeout, or
+bounded worker count. Source configuration never accepts credentials, queries,
+fragments, local names, or IP literals.
 
 The service is a oneshot with `NoNewPrivileges`, private temporary storage,
 read-only home/system views, and a single configured writable directory. Each
@@ -166,8 +188,8 @@ most 500 unique URLs, and concurrency is bounded to 1–32 workers.
 The generated page lives at `/directory/`. It supports callsign/description
 search, region and state filters, signal/activity/name ordering, live player
 and map counts, public site/Discord links, truncated signing identity, and
-player-relative HTTPS latency. It is keyboard accessible, mobile responsive,
-and honors reduced-motion preferences.
+opt-in player-relative HTTPS latency. It is keyboard accessible, mobile
+responsive, and honors reduced-motion preferences.
 
 ## Trust And Failure Semantics
 
@@ -186,7 +208,7 @@ The builder refuses:
 - expired descriptors or lifetimes outside 60–900 seconds;
 - a signed `sourceUrl` different from the reviewed manifest URL;
 - HTTP, credentials, queries, fragments, non-default ports, local hostnames,
-  or private/reserved literal addresses;
+  or any IP literal;
 - DNS answers containing any private/reserved address;
 - redirects, certificate failures, non-JSON content, oversize bodies, and
   non-200 responses;
@@ -200,7 +222,9 @@ network.
 
 Rejected sources appear only as their already-reviewed public URL plus a
 bounded error. Valid entries still publish. The browser drops a catalog row if
-its independent signature, identity, digest, or freshness check fails.
+its independent exact schema/bounds/HTTPS policy, signature, identity, digest,
+or freshness check fails. Public links are created through DOM APIs after those
+checks; the directory script has no HTML-string insertion sink.
 
 ## Rotation And Recovery
 

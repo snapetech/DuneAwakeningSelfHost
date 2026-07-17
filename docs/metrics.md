@@ -34,6 +34,10 @@ Blast-radius change contracts add label-free enabled/required state and
 process-local issued/admitted/refused counters. They never label an operator,
 route, capability, body digest, contract ID, policy revision, or impact value;
 the sealed audit ledger retains those correlations privately.
+Opt-in public-directory publication adds label-free enabled/configured,
+entry-valid/current, and seconds-to-expiry series. It never labels a public
+URL, region, server identity, build, player count, signing key, or signature;
+the signed descriptor remains the authoritative public detail surface.
 
 Start it with the normal world Compose files plus the overlay:
 
@@ -101,6 +105,10 @@ five minutes.
 The change-contract rule warns when more than five governed requests are
 refused inside ten minutes, which surfaces stale/malformed API automation or a
 repeated bypass attempt without exposing its target.
+Public-directory alerts remain inactive while publication is disabled. Once
+enabled, they warn if the signed descriptor is invalid or remains non-current
+for five minutes, covering renderer/config/key failures without exporting its
+identity or URL as a metric label.
 Validate the exact Prometheus version and rules with:
 
 ```bash

@@ -4,8 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' https:; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' https:; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>Sietch Signal Directory</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2307131d'/%3E%3Cpath d='M9 29l38-11-12 12 20 5-39 11 12-12z' fill='%23f2bb62'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="directory.css">
 </head>
 <body>
@@ -53,7 +54,10 @@
 
     <section class="band-status" aria-live="polite">
       <p id="summary">Acquiring signed contacts…</p>
-      <p id="updated"></p>
+      <div class="band-actions">
+        <p id="updated"></p>
+        <button id="scan" type="button">Measure my latency</button>
+      </div>
     </section>
     <section id="servers" class="server-grid" aria-label="Public servers"></section>
     <section id="empty" class="empty" hidden>
@@ -64,7 +68,7 @@
   </main>
 
   <footer>
-    <p>Signatures prove listing identity and freshness—not operator endorsement. Latency is measured from this browser.</p>
+    <p>Signatures prove listing identity and freshness—not operator endorsement. When requested, latency is measured from this browser.</p>
     <p><a href="https://github.com/snapetech/DuneAwakeningSelfHost">Host or federate a directory</a></p>
   </footer>
   <script src="directory.js" defer></script>

@@ -1,6 +1,6 @@
 # Documentation Audit
 
-Last audited: 2026-05-19.
+Last audited: 2026-07-16.
 
 This page records documentation coverage gaps found during repo review and the current status of each.
 
@@ -22,6 +22,7 @@ This page records documentation coverage gaps found during repo review and the c
 | Privileged change approval | Named RBAC identities existed, but no documented mechanism required an independent reviewer for a specific high-impact request. | Added `docs/change-approvals.md` covering cumulative policy levels, exact-body HMAC binding, redacted review, state/event integrity, single-use execution, recovery, metrics, and validation. |
 | Primary admin audit integrity | Rotated JSONL events were readable and fed optional Change Intelligence, but their own payload/order/tail integrity and mutation-admission coverage were not independently provable. | Added `docs/audit-ledger.md` and a default-on mutation flight recorder with full-chain HMAC verification, authenticated head, fail-closed admission, correlated completion, UI, metrics, alerts, tests, and recovery. |
 | Mutation blast-radius review | Confirmation phrases and optional dual control proved intent/approval but did not present or bind machine-readable backup, reversibility, restart, player, and map impact immediately before execution. | Added `docs/change-contracts.md` and a default-on exact-body signed review/admission gate with current-policy invalidation, browser/API workflows, audit correlation, metrics, and focused fault tests. |
+| Public server discovery | The static site exposed one server but had no reviewed multi-server discovery outcome after Red-Blink added its centralized directory. | Added `docs/federated-public-directory.md`, opt-in signed descriptors, a hardened static pull-federation builder/timer, independent browser verification, explicit visitor latency scans, Admin status, metrics, and alerts. |
 
 ## Remaining Gaps
 
