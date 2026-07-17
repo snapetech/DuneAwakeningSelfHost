@@ -575,6 +575,7 @@ OPERATIONS_BRIEFING_RUNTIME = {
     "running": False, "lastPollAt": None, "lastGeneratedAt": None,
     "lastError": None, "lastResult": None, "currentFingerprint": None,
     "refreshPending": False, "invalidations": 0, "wakeups": 0,
+    "forceRefreshPending": False,
     "eventGenerations": 0, "lastInvalidatedAt": None,
     "lastInvalidationReason": None, "lastWakeAt": None,
 }
@@ -2137,9 +2138,10 @@ OPERATIONS_BRIEFING_INVALIDATING_ACTIONS = {
     "public-ip-repair-canary", "incident-readiness-certification",
 }
 OPERATIONS_BRIEFING_INVALIDATING_PREFIXES = ("deployment-assurance-",)
+OPERATIONS_BRIEFING_FORCE_REFRESH_ACTIONS = {"scheduled-backup-finished", "backup-schedule"}
 
 
-def request_operations_briefing_refresh(reason):
+def request_operations_briefing_refresh(reason, *, force=False):
     if not OPERATIONS_BRIEFING_ENABLED:
         return False
     reason = re.sub(r"[^a-zA-Z0-9_.:-]+", "-", str(reason or "source-change")).strip("-")[:128] or "source-change"
@@ -2150,6 +2152,8 @@ def request_operations_briefing_refresh(reason):
         "lastInvalidationReason": reason,
         "invalidations": int(OPERATIONS_BRIEFING_RUNTIME.get("invalidations") or 0) + 1,
     })
+    if force:
+        OPERATIONS_BRIEFING_RUNTIME["forceRefreshPending"] = True
     OPERATIONS_BRIEFING_WAKE_EVENT.set()
     return True
 
@@ -2197,7 +2201,9 @@ def audit_event(action, ok=True, _ledger_required=False, **fields):
             CHANGE_INTELLIGENCE_RUNTIME["lastError"] = str(exc)[:2000]
     WEBHOOK_DISPATCHER.enqueue(event)
     if audit_action_invalidates_operations_briefing(action):
-        request_operations_briefing_refresh(f"audit:{action}")
+        request_operations_briefing_refresh(
+            f"audit:{action}", force=action in OPERATIONS_BRIEFING_FORCE_REFRESH_ACTIONS,
+        )
     return {"event": event, "ledger": ledger_receipt}
 
 
@@ -5371,6 +5377,7 @@ def run_operations_briefing(*, force=False, actor="system:operations-briefing"):
         now = time.time()
         invalidations_at_start = int(OPERATIONS_BRIEFING_RUNTIME.get("invalidations") or 0)
         event_triggered = bool(OPERATIONS_BRIEFING_RUNTIME.get("refreshPending"))
+        force_triggered = bool(OPERATIONS_BRIEFING_RUNTIME.get("forceRefreshPending"))
         sources = operations_briefing_sources()
         fingerprint = operations_briefing.source_fingerprint(sources)
         OPERATIONS_BRIEFING_RUNTIME["currentFingerprint"] = fingerprint
@@ -5382,9 +5389,12 @@ def run_operations_briefing(*, force=False, actor="system:operations-briefing"):
             refresh_seconds=OPERATIONS_BRIEFING_REFRESH_HOURS * 3600,
             minimum_interval_seconds=OPERATIONS_BRIEFING_MIN_INTERVAL_SECONDS,
             change_minimum_interval_seconds=OPERATIONS_BRIEFING_CHANGE_MIN_INTERVAL_SECONDS,
-            force=force,
+            force=force or force_triggered,
         )
-        result = {"ok": True, **decision, "sourceFingerprint": fingerprint, "eventTriggered": event_triggered}
+        result = {
+            "ok": True, **decision, "sourceFingerprint": fingerprint,
+            "eventTriggered": event_triggered, "forceTriggered": force_triggered,
+        }
         if decision["generated"]:
             recorded = store.record(sources, actor=actor, now=now)
             receipt = (recorded.get("document") or {}).get("receipt") or {}
@@ -5407,6 +5417,8 @@ def run_operations_briefing(*, force=False, actor="system:operations-briefing"):
             OPERATIONS_BRIEFING_RUNTIME["refreshPending"] = True
         elif int(OPERATIONS_BRIEFING_RUNTIME.get("invalidations") or 0) == invalidations_at_start:
             OPERATIONS_BRIEFING_RUNTIME["refreshPending"] = False
+            if force_triggered:
+                OPERATIONS_BRIEFING_RUNTIME["forceRefreshPending"] = False
         OPERATIONS_BRIEFING_RUNTIME.update({"lastPollAt": operations_briefing.iso(now), "lastError": None, "lastResult": result})
         return result
     except Exception as exc:

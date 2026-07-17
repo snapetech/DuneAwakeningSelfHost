@@ -4199,6 +4199,9 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertEqual(original_runtime.get("invalidations", 0) + 1, runtime["invalidations"])
         self.assertEqual("audit:desired-state-drift-opened", runtime["lastInvalidationReason"])
         self.assertTrue(self.panel.OPERATIONS_BRIEFING_WAKE_EVENT.is_set())
+        self.assertFalse(runtime["forceRefreshPending"])
+        self.assertTrue(self.panel.request_operations_briefing_refresh("audit:backup-schedule", force=True))
+        self.assertTrue(runtime["forceRefreshPending"])
         self.assertTrue(self.panel.audit_action_invalidates_operations_briefing("privileged-request-completed"))
         self.assertTrue(self.panel.audit_action_invalidates_operations_briefing("deployment-assurance-finished"))
         self.assertFalse(self.panel.audit_action_invalidates_operations_briefing("operations-briefing-generated"))
@@ -4238,6 +4241,56 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertFalse(result["generated"])
         self.assertGreater(result["retryAfterSeconds"], 0)
         self.assertTrue(self.panel.OPERATIONS_BRIEFING_RUNTIME["refreshPending"])
+
+    def test_operations_briefing_forced_detail_refresh_records_unchanged_state(self):
+        original_sources = self.panel.operations_briefing_sources
+        original_store = self.panel.operations_briefing_store
+        original_audit = self.panel.audit_event
+        original_runtime = dict(self.panel.OPERATIONS_BRIEFING_RUNTIME)
+        source = {
+            "id": "backup-automation", "title": "Automatic backups", "state": "verified",
+            "healthy": True, "severity": "critical", "detail": "next=05:00",
+            "surface": "infrastructure:backups",
+        }
+        fingerprint = self.panel.operations_briefing.source_fingerprint([source])
+        latest = {
+            "generatedAt": self.panel.operations_briefing.iso(self.panel.time.time()),
+            "sourceFingerprint": fingerprint,
+        }
+        panel = self.panel
+
+        class FakeStore:
+            def status(self, current_fingerprint, limit=1, now=None):
+                return {"ok": True, "currentReady": True, "latest": dict(latest)}
+
+            def record(self, sources, actor, now):
+                return {
+                    "document": {"receipt": {
+                        "id": "operations-briefing-" + "a" * 32,
+                        "generatedAt": panel.operations_briefing.iso(now),
+                        "state": "ready", "score": 100, "actions": [],
+                    }},
+                    "verification": {"ok": True},
+                    "evidencePath": "operations-briefing-test.signed.json",
+                }
+
+        self.panel.operations_briefing_sources = lambda: [source]
+        self.panel.operations_briefing_store = lambda: FakeStore()
+        self.panel.audit_event = lambda *args, **kwargs: None
+        self.panel.OPERATIONS_BRIEFING_RUNTIME.update({
+            "refreshPending": True, "forceRefreshPending": True, "invalidations": 1,
+        })
+        self.addCleanup(lambda: setattr(self.panel, "operations_briefing_sources", original_sources))
+        self.addCleanup(lambda: setattr(self.panel, "operations_briefing_store", original_store))
+        self.addCleanup(lambda: setattr(self.panel, "audit_event", original_audit))
+        self.addCleanup(lambda: self.panel.OPERATIONS_BRIEFING_RUNTIME.clear() or self.panel.OPERATIONS_BRIEFING_RUNTIME.update(original_runtime))
+
+        result = self.panel.run_operations_briefing()
+
+        self.assertTrue(result["generated"])
+        self.assertTrue(result["forceTriggered"])
+        self.assertFalse(self.panel.OPERATIONS_BRIEFING_RUNTIME["refreshPending"])
+        self.assertFalse(self.panel.OPERATIONS_BRIEFING_RUNTIME["forceRefreshPending"])
 
     def test_privileged_request_reconciliation_is_append_only_and_terminal(self):
         calls = []

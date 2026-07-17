@@ -99,6 +99,12 @@ continues to govern unchanged scheduled refreshes. A changed source makes the
 current receipt non-current synchronously, before collection starts. The
 maximum accepted receipt age defaults to 36 hours.
 
+Automatic-backup completion and schedule changes are detail-authoritative
+invalidations. They force one coalesced replacement receipt even when backup
+health remains `verified`, ensuring the signed next-run detail reflects the
+current schedule rather than the preceding run time. Other detail-only changes
+remain deduplicated by the categorical fingerprint.
+
 The Feature Readiness probe treats the worker's first collection as a bounded
 `collector-starting` state. After the first receipt, readiness requires a
 running worker, valid evidence, a current source fingerprint, acceptable age,

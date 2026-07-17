@@ -109,7 +109,10 @@ Prometheus alerts on unreadable scheduler state, a stopped enabled worker, a
 failed latest run, and a run overdue beyond the retry window. The signed
 Operator Briefing includes automatic backup reliability as an independent
 critical source; schedule changes and completed attempts invalidate the prior
-briefing and wake its coalescing worker.
+briefing and wake its coalescing worker. These two low-frequency backup events
+force a replacement signed receipt even when the categorical health state did
+not change, so timestamps and the next-run detail cannot remain stale behind a
+still-`verified` source fingerprint.
 
 ## Troubleshooting
 
