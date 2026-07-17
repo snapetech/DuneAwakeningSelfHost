@@ -74,7 +74,10 @@ build, a changed image tag, same-tag hotfix, or status transition invalidates
 the old receipt. Receipts default to a one-hour lifetime and can be configured
 from five minutes to 24 hours.
 
-The signed schema is `dune-update-readiness/v1`. Semantic verification checks
+New certifications use signed schema `dune-update-readiness/v2`; the verifier
+continues to authenticate archived `v1` receipts against their original
+13-check contract so adding the RabbitMQ gate does not invalidate historical
+backup evidence. Semantic verification checks
 the nested candidate fingerprint, exact check set, scheduled/immediate verdict
 derivation, expiration, receipt SHA-256, outer HMAC, and the explicit
 `updateExecuted=false` / `gameMutationExecuted=false` claims. Evidence files

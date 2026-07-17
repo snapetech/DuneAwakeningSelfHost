@@ -8251,7 +8251,7 @@ def verify_operator_evidence_archive(archive_path, secret_path):
                 deployment_assurance.verify_signed_document(document, secret)
                 if schema == deployment_assurance.SIGNED_SCHEMA
                 else update_readiness.verify_signed_document(document, secret)
-                if schema == update_readiness.SCHEMA
+                if schema in update_readiness.SCHEMAS
                 else change_intelligence.verify_signed_capsule(document, secret)
             )
             if not result.get("ok"):

@@ -200,6 +200,8 @@ class DeploymentAssuranceTests(unittest.TestCase):
         self.assertGreaterEqual(source.count("validate-landsraad-coriolis-cycle.sh"), 2)
         self.assertGreaterEqual(source.count("verified_backup"), 4)  # definition plus pre/post/final calls
         self.assertIn("for attempt in 1 2 3", source)
+        self.assertIn('verifier="$stage/scripts/verify-backup.sh"', source)
+        self.assertIn('"$verifier" "$backup"', source)
         self.assertIn("could not create and verify a complete backup after 3 attempts", source)
         self.assertIn("wait_for_assurance_health", source)
         self.assertIn("consecutive healthy samples", source)
@@ -220,6 +222,8 @@ class DeploymentAssuranceTests(unittest.TestCase):
         self.assertIn("--stage $stage_q", push)
         self.assertIn("DUNE_PRODUCTION_HOST=$required_q", push)
         self.assertIn('remote_env="${remote_workspace%/}/$remote_env"', push)
+        for support in deployment_cli.SUPPORT_FILES:
+            self.assertIn(support, push)
 
     def test_staged_apply_is_verified_atomic_and_has_source_rollback(self):
         stage = self.root / "stage"

@@ -14,8 +14,10 @@ import threading
 import time
 
 
-SCHEMA = "dune-update-readiness/v1"
-RECEIPT_SCHEMA = 1
+LEGACY_SCHEMA = "dune-update-readiness/v1"
+SCHEMA = "dune-update-readiness/v2"
+SCHEMAS = frozenset((LEGACY_SCHEMA, SCHEMA))
+RECEIPT_SCHEMA = 2
 RECEIPT_PATTERN = re.compile(r"^update-readiness-[0-9a-f]{32}$")
 HASH_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 TAG_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
@@ -37,6 +39,9 @@ REQUIRED_CHECKS = (
     "sloHealthy",
     "steamSettled",
 )
+LEGACY_REQUIRED_CHECKS = tuple(key for key in REQUIRED_CHECKS if key != "rabbitmqRestoreProofReady")
+DOCUMENT_SCHEMA_BY_RECEIPT = {1: LEGACY_SCHEMA, RECEIPT_SCHEMA: SCHEMA}
+REQUIRED_CHECKS_BY_RECEIPT = {1: LEGACY_REQUIRED_CHECKS, RECEIPT_SCHEMA: REQUIRED_CHECKS}
 
 
 def canonical(value):
@@ -116,9 +121,12 @@ def receipt_hash(receipt):
 
 def signed_document(receipt, secret, generated_at=None):
     receipt = json.loads(canonical(receipt))
+    schema = DOCUMENT_SCHEMA_BY_RECEIPT.get(receipt.get("schemaVersion"))
+    if not schema:
+        raise ValueError("update readiness receipt schema is invalid")
     receipt["receiptSha256"] = receipt_hash(receipt)
     payload = {
-        "schemaVersion": SCHEMA,
+        "schemaVersion": schema,
         "generatedAt": iso(generated_at),
         "signingKeyFingerprint": hashlib.sha256(secret).hexdigest(),
         "receipt": receipt,
@@ -130,7 +138,7 @@ def verify_signed_document(document, secret, now=None):
     try:
         if not isinstance(document, dict) or set(document) != {"schemaVersion", "generatedAt", "signingKeyFingerprint", "receipt", "signature"}:
             raise ValueError("update readiness signed document fields are invalid")
-        if document.get("schemaVersion") != SCHEMA:
+        if document.get("schemaVersion") not in SCHEMAS:
             raise ValueError("update readiness schema is invalid")
         payload = {key: value for key, value in document.items() if key != "signature"}
         expected_signature = hmac.new(secret, canonical(payload).encode(), hashlib.sha256).hexdigest()
@@ -140,7 +148,13 @@ def verify_signed_document(document, secret, now=None):
         if not hmac.compare_digest(str(document.get("signingKeyFingerprint") or ""), hashlib.sha256(secret).hexdigest()):
             raise ValueError("update readiness signing key fingerprint does not match")
         receipt = document.get("receipt")
-        if not isinstance(receipt, dict) or receipt.get("schemaVersion") != RECEIPT_SCHEMA or not RECEIPT_PATTERN.fullmatch(str(receipt.get("id") or "")):
+        receipt_schema = receipt.get("schemaVersion") if isinstance(receipt, dict) else None
+        required_checks = REQUIRED_CHECKS_BY_RECEIPT.get(receipt_schema)
+        if (
+            not isinstance(receipt, dict) or required_checks is None
+            or document.get("schemaVersion") != DOCUMENT_SCHEMA_BY_RECEIPT.get(receipt_schema)
+            or not RECEIPT_PATTERN.fullmatch(str(receipt.get("id") or ""))
+        ):
             raise ValueError("update readiness receipt identity is invalid")
         expected_fields = {
             "schemaVersion", "id", "candidate", "checks", "scheduledReady", "immediateReady",
@@ -153,7 +167,7 @@ def verify_signed_document(document, secret, now=None):
         if candidate != receipt.get("candidate"):
             raise ValueError("update readiness candidate is not canonical")
         checks = receipt.get("checks")
-        if not isinstance(checks, dict) or set(checks) != set(REQUIRED_CHECKS) or any(type(value) is not bool for value in checks.values()):
+        if not isinstance(checks, dict) or set(checks) != set(required_checks) or any(type(value) is not bool for value in checks.values()):
             raise ValueError("update readiness checks are invalid")
         online_players = int(receipt.get("onlinePlayers") or 0)
         if online_players < 0 or online_players > 100000:

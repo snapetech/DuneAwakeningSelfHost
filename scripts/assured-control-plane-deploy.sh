@@ -90,12 +90,15 @@ api_post_file() {
 }
 
 verified_backup() {
-  local output backup attempt
+  local output backup attempt verifier="./scripts/verify-backup.sh"
+  if [[ -n "$stage" && -x "$stage/scripts/verify-backup.sh" ]]; then
+    verifier="$stage/scripts/verify-backup.sh"
+  fi
   for attempt in 1 2 3; do
     if output="$(./scripts/backup-state.sh "$env_file" 2>&1)"; then
       printf '%s\n' "$output"
       backup="$(printf '%s\n' "$output" | sed -n 's/^backup complete: //p' | tail -1)"
-      if [[ -n "$backup" && -d "$backup" ]] && ./scripts/verify-backup.sh "$backup"; then
+      if [[ -n "$backup" && -d "$backup" ]] && "$verifier" "$backup"; then
         printf '%s\n' "${backup#backups/}"
         return 0
       fi

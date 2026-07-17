@@ -112,9 +112,12 @@ python3 scripts/deployment-assurance.py verify \
   --manifest /tmp/dash-deployment-manifest.json
 ```
 
-Use repeated `--file` only for a deliberately narrower deploy. The three staged
-assurance runner/module files are always added, even when unchanged, so no
-unmanifested helper code executes on production. Generation reads each blob
+Use repeated `--file` only for a deliberately narrower deploy. The staged
+assurance runner plus the complete native backup-verifier dependency closure
+are always added, even when unchanged, so no unmanifested helper code executes
+on production. This lets a verifier/schema migration authenticate the
+pre-change backup with exact commit-bound code before that code is promoted,
+without weakening or bypassing recovery verification. Generation reads each blob
 from the exact commit and refuses when the current workspace file differs. The
 mode-`0600` document contains:
 
@@ -139,9 +142,10 @@ scripts/push-assured-control-plane.sh \
   --host kspls0
 ```
 
-The helper transfers the exact manifest files plus the three assurance runner
-files required to operate from staging. Extra runner files are not promoted
-unless they are also in the manifest.
+The helper transfers the exact manifest files, including the assurance runner
+and backup-verifier closure required to operate from staging. Every executable
+support file is manifest-bound and promoted from the same commit; no loose
+helper is accepted from the stage.
 
 On an already staged production host, the lower-level entry point is:
 

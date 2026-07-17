@@ -64,6 +64,20 @@ class UpdateReadinessTests(unittest.TestCase):
             self.store.certify(snapshot, "owner", now=1000)
         self.assertFalse(update_readiness.normalize_snapshot(snapshot)["scheduledReady"])
 
+    def test_v2_adds_rabbitmq_gate_without_invalidating_signed_v1_evidence(self):
+        current = self.store.certify(self.snapshot(), "owner", source_commit="a" * 40, now=1000)["document"]
+        self.assertEqual("dune-update-readiness/v2", current["schemaVersion"])
+        self.assertEqual(2, current["receipt"]["schemaVersion"])
+        legacy_receipt = json.loads(json.dumps(current["receipt"]))
+        legacy_receipt["schemaVersion"] = 1
+        legacy_receipt["checks"].pop("rabbitmqRestoreProofReady")
+        legacy = update_readiness.signed_document(legacy_receipt, b"u" * 64, generated_at=1000)
+        self.assertEqual("dune-update-readiness/v1", legacy["schemaVersion"])
+        self.assertTrue(update_readiness.verify_signed_document(legacy, b"u" * 64, now=1001)["ok"])
+        mismatched = json.loads(json.dumps(legacy))
+        mismatched["schemaVersion"] = "dune-update-readiness/v2"
+        self.assertFalse(update_readiness.verify_signed_document(mismatched, b"u" * 64, now=1001)["ok"])
+
     def test_candidate_change_and_expiry_invalidate_receipt(self):
         self.store.certify(self.snapshot(), "owner", now=1000)
         self.assertFalse(self.store.status(self.snapshot(tag="dune_sb_1_4_11_0"), now=1100)["currentReceiptReady"])

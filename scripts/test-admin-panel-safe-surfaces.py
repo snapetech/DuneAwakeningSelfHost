@@ -2569,7 +2569,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         update_store = self.panel.update_readiness.Store(
             evidence_root, self.panel.change_intelligence.read_secret(secret), ttl_seconds=600,
         )
-        update_store.certify({
+        current_update = update_store.certify({
             "candidate": {
                 "imageTag": "dune_sb_1_4_10_0", "currentImageTag": "dune_sb_1_4_9_0",
                 "status": "update-available", "installedBuildId": "24146567",
@@ -2577,7 +2577,17 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
             },
             "checks": {key: True for key in self.panel.update_readiness.REQUIRED_CHECKS},
             "onlinePlayers": 0, "details": {"fixture": True},
-        }, "owner", source_commit="b" * 40, now=1150)
+        }, "owner", source_commit="b" * 40, now=1150)["document"]
+        legacy_receipt = json.loads(json.dumps(current_update["receipt"]))
+        legacy_receipt["schemaVersion"] = 1
+        legacy_receipt["id"] = "update-readiness-" + "f" * 32
+        legacy_receipt["checks"].pop("rabbitmqRestoreProofReady")
+        legacy_document = self.panel.update_readiness.signed_document(
+            legacy_receipt, self.panel.change_intelligence.read_secret(secret), generated_at=1150,
+        )
+        (evidence_root / f"{legacy_receipt['id']}.signed.json").write_text(
+            json.dumps(legacy_document), encoding="utf-8",
+        )
         (evidence_root / "ignored.txt").write_text("not evidence", encoding="utf-8")
         (evidence_root / "linked.signed.json").symlink_to(signed)
         original_root = self.panel.CHANGE_INTELLIGENCE_EVIDENCE_ROOT
@@ -2587,11 +2597,11 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         archive = self.workspace / "operator-evidence.tgz"
         result = self.panel.archive_operator_evidence(archive)
         verification = self.panel.verify_operator_evidence_archive(archive, secret)
-        self.assertEqual(3, result["files"])
-        self.assertEqual(3, verification["files"])
+        self.assertEqual(4, result["files"])
+        self.assertEqual(4, verification["files"])
         self.assertEqual(0o600, archive.stat().st_mode & 0o777)
         with tarfile.open(archive, "r:gz") as handle:
-            self.assertEqual(3, len(handle.getnames()))
+            self.assertEqual(4, len(handle.getnames()))
             self.assertIn("operator-evidence/archive.signed.json", handle.getnames())
             self.assertTrue(any(name.startswith("operator-evidence/update-readiness-") for name in handle.getnames()))
 

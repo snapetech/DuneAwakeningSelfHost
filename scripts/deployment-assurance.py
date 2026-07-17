@@ -21,9 +21,19 @@ import deployment_assurance
 
 SCHEMA = "dune-deployment-manifest/v1"
 SUPPORT_FILES = {
+    "admin/audit_ledger.py",
+    "admin/change_approvals.py",
+    "admin/change_intelligence.py",
+    "admin/credential_lifecycle.py",
     "admin/deployment_assurance.py",
+    "admin/desired_state.py",
+    "admin/feature_readiness_history.py",
+    "admin/rabbitmq_restore_drill.py",
+    "admin/restore_drill.py",
+    "admin/update_readiness.py",
     "scripts/deployment-assurance.py",
     "scripts/assured-control-plane-deploy.sh",
+    "scripts/verify-backup.sh",
 }
 
 
