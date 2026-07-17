@@ -195,6 +195,8 @@ class PublicIpCanaryTests(unittest.TestCase):
             '"NetworkMode": "none"', '"ReadonlyRootfs": True',
             '"CapDrop": ["ALL"]', '"no-new-privileges:true"',
             '"PidsLimit": 128', '"NetworkDisabled": True',
+            'os.chown(path, run_uid, run_gid)',
+            'runtime tree cannot contain symlinks',
         ):
             self.assertIn(safeguard, panel)
         self.assertNotIn('f"{DOCKER_SOCKET}:/var/run/docker.sock"', panel[panel.index("def public_ip_canary_container_runner"):panel.index("def run_public_ip_canary")])

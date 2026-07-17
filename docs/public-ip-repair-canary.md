@@ -22,6 +22,11 @@ root, all capabilities dropped, `no-new-privileges`, bounded memory/CPU/PIDs,
 runtime root. It receives a fixed environment-key allowlist with no Admin or
 game secrets, no Docker socket, no live workspace/configuration/TLS mount, and
 no published port. Every helper is force-removed after its bounded command.
+Before each command, Admin rejects symlinks anywhere in the disposable tree and
+hands only that tree to the configured numeric host UID/GID. This keeps the
+helper non-root while allowing it to traverse the private `0700` runtime root;
+Admin never changes ownership beneath the live workspace, configuration, TLS,
+monitor-state, or evidence directories.
 
 ## What is proven
 

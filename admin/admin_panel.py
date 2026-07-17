@@ -4616,6 +4616,15 @@ def public_ip_canary_container_runner(arguments, *, cwd, environment, timeout):
     helper_name = "dash-public-ip-canary-" + secrets.token_hex(12)
     run_uid = int(os.environ.get("DUNE_HOST_UID", os.getuid()))
     run_gid = int(os.environ.get("DUNE_HOST_GID", os.getgid()))
+    runtime_paths = [runtime_root, *runtime_root.rglob("*")]
+    for path in runtime_paths:
+        if path.is_symlink():
+            raise ValueError("public-IP canary runtime tree cannot contain symlinks")
+    if os.geteuid() == 0:
+        for path in runtime_paths:
+            os.chown(path, run_uid, run_gid)
+    elif any(path.stat().st_uid != run_uid or path.stat().st_gid != run_gid for path in runtime_paths):
+        raise PermissionError("public-IP canary cannot hand its runtime tree to the confined helper")
     body = {
         "Image": image,
         "Hostname": os.uname().nodename.split(".", 1)[0],
