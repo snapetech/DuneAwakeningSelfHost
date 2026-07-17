@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' https:; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'">
+  <title>Sietch Signal Directory</title>
+  <link rel="stylesheet" href="directory.css">
+</head>
+<body>
+  <div class="sky" aria-hidden="true"><span></span></div>
+  <header class="masthead">
+    <a class="mark" href="./" aria-label="Sietch Signal Directory home"><span class="mark-glyph">⌁</span><span>Sietch Signal</span></a>
+    <p class="trust-line"><span id="verified-count">—</span> independently signed contacts</p>
+  </header>
+
+  <main>
+    <section class="hero" aria-labelledby="directory-title">
+      <p class="eyebrow">Dune: Awakening · public server band</p>
+      <h1 id="directory-title">Find a signal<br>worth crossing for.</h1>
+      <p class="lede">Live communities, verified at their own source. No central account owns these listings; every contact signs its current status.</p>
+      <div class="sweep" aria-hidden="true"><span></span><i></i></div>
+    </section>
+
+    <section class="console" aria-label="Directory controls">
+      <label class="search-field">
+        <span>Callsign or description</span>
+        <input id="search" type="search" autocomplete="off" placeholder="Search the band">
+      </label>
+      <label>
+        <span>Region</span>
+        <select id="region"><option value="">All regions</option></select>
+      </label>
+      <label>
+        <span>Signal</span>
+        <select id="state">
+          <option value="">Any state</option>
+          <option value="online">Online</option>
+          <option value="degraded">Warming</option>
+          <option value="offline">Offline</option>
+        </select>
+      </label>
+      <label>
+        <span>Order</span>
+        <select id="sort">
+          <option value="signal">Best signal</option>
+          <option value="players">Most active</option>
+          <option value="name">Callsign</option>
+        </select>
+      </label>
+    </section>
+
+    <section class="band-status" aria-live="polite">
+      <p id="summary">Acquiring signed contacts…</p>
+      <p id="updated"></p>
+    </section>
+    <section id="servers" class="server-grid" aria-label="Public servers"></section>
+    <section id="empty" class="empty" hidden>
+      <p class="empty-code">NO CONTACT</p>
+      <h2>No signed server matches this scan.</h2>
+      <p>Clear a filter or wait for an entry to publish a fresh descriptor.</p>
+    </section>
+  </main>
+
+  <footer>
+    <p>Signatures prove listing identity and freshness—not operator endorsement. Latency is measured from this browser.</p>
+    <p><a href="https://github.com/snapetech/DuneAwakeningSelfHost">Host or federate a directory</a></p>
+  </footer>
+  <script src="directory.js" defer></script>
+</body>
+</html>

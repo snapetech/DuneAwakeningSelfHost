@@ -431,6 +431,56 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertEqual("false", values["DUNE_ADMIN_CHANGE_CONTRACTS_REQUIRED"])
         self.assertEqual("30", values["DUNE_ADMIN_CHANGE_CONTRACT_TTL_SECONDS"])
 
+    def test_federated_public_directory_api_ui_metrics_and_alerts_are_exposed(self):
+        self.assertIn("Federated Public Directory", self.panel.INDEX)
+        self.assertIn("/api/ops/public-directory", self.panel.INDEX)
+        self.assertIn("Ed25519-signed descriptor", self.panel.INDEX)
+        for key in (
+            "DUNE_PUBLIC_DIRECTORY_ENABLED", "DUNE_PUBLIC_DIRECTORY_ENTRY_URL",
+            "DUNE_PUBLIC_SITE_URL", "DUNE_PUBLIC_DIRECTORY_REGION",
+            "DUNE_PUBLIC_DIRECTORY_CAPACITY", "DUNE_PUBLIC_DIRECTORY_DISCORD_INVITE",
+            "DUNE_PUBLIC_DIRECTORY_TTL_SECONDS",
+        ):
+            self.assertIn(key, self.panel.ENV_KEY_DEFINITIONS)
+
+        handler, captured = self.make_route_handler("/api/ops/public-directory")
+        handler.is_app_route = lambda path: False
+        handler.do_GET()
+        self.assertEqual([], captured["errors"])
+        self.assertFalse(captured["json"]["enabled"])
+        self.assertEqual("disabled", captured["json"]["state"])
+
+        metrics = self.panel.public_directory_prometheus()
+        self.assertIn("dash_public_directory_enabled 0\n", metrics)
+        self.assertIn("dash_public_directory_entry_valid 0\n", metrics)
+        rules = (ROOT / "config" / "metrics" / "rules" / "dash.yml").read_text(encoding="utf-8")
+        self.assertIn("DashPublicDirectoryEntryInvalid", rules)
+        self.assertIn("DashPublicDirectoryEntryStale", rules)
+
+    def test_federated_public_directory_settings_fail_closed_then_accept_complete_contract(self):
+        with self.assertRaisesRegex(ValueError, "entry URL"):
+            self.panel.write_safe_env({"DUNE_PUBLIC_DIRECTORY_ENABLED": "true"})
+        with self.assertRaisesRegex(ValueError, "private or reserved"):
+            self.panel.write_safe_env({
+                "DUNE_PUBLIC_DIRECTORY_ENABLED": "true",
+                "DUNE_PUBLIC_DIRECTORY_ENTRY_URL": "https://127.0.0.1/directory-entry.json",
+                "DUNE_PUBLIC_SITE_URL": "https://127.0.0.1/",
+                "DUNE_PUBLIC_DIRECTORY_REGION": "North America",
+                "WORLD_NAME": "Test",
+            })
+        self.panel.write_safe_env({
+            "DUNE_PUBLIC_DIRECTORY_ENABLED": "true",
+            "DUNE_PUBLIC_DIRECTORY_ENTRY_URL": "https://dune.example.test/directory-entry.json",
+            "DUNE_PUBLIC_SITE_URL": "https://dune.example.test/",
+            "DUNE_PUBLIC_DIRECTORY_REGION": "North America",
+            "DUNE_PUBLIC_DIRECTORY_CAPACITY": "40",
+            "DUNE_PUBLIC_DIRECTORY_TTL_SECONDS": "180",
+            "WORLD_NAME": "Test Sietch",
+        })
+        values = self.panel.read_env()
+        self.assertEqual("true", values["DUNE_PUBLIC_DIRECTORY_ENABLED"])
+        self.assertEqual("https://dune.example.test/directory-entry.json", values["DUNE_PUBLIC_DIRECTORY_ENTRY_URL"])
+
     def test_page_navigation_cancels_detached_player_detail_loads(self):
         source = self.panel.INDEX
         load_body = source.split("async function load(){", 1)[1].split("async function overview(", 1)[0]
@@ -3751,6 +3801,8 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn("dash_admin_audit_ledger_valid 1\n", texts[0][0])
         self.assertIn("dash_change_contract_enabled 1\n", texts[0][0])
         self.assertIn("dash_change_contract_refused_total", texts[0][0])
+        self.assertIn("dash_public_directory_enabled 0\n", texts[0][0])
+        self.assertIn("dash_public_directory_entry_current 0\n", texts[0][0])
         self.assertIn("dash_update_readiness_collector_up 1\n", texts[0][0])
 
     def test_update_readiness_metrics_never_run_expensive_collection_inline(self):

@@ -148,6 +148,16 @@ groups:
         for: 2m
         labels: {severity: warning}
         annotations: {summary: "DASH repeatedly refused stale, malformed, or mismatched governed change contracts"}
+      - alert: DashPublicDirectoryEntryInvalid
+        expr: dash_public_directory_enabled == 1 and dash_public_directory_entry_valid == 0
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "DASH public directory descriptor is invalid or missing"}
+      - alert: DashPublicDirectoryEntryStale
+        expr: dash_public_directory_enabled == 1 and dash_public_directory_entry_current == 0
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "DASH public directory descriptor has expired"}
       - alert: DashIncidentHasCandidateChange
         expr: dash_change_intelligence_open_incidents_with_candidate_changes > 0
         for: 2m

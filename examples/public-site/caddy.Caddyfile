@@ -10,7 +10,7 @@ https://dune.example.com {
 		Cache-Control "no-store, max-age=0, must-revalidate, no-transform"
 		Pragma "no-cache"
 		Expires "0"
-		Content-Security-Policy "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:"
+		Content-Security-Policy "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; style-src 'self'; script-src 'self'; connect-src 'self' https:; img-src 'self' data:"
 		Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=(), serial=(), bluetooth=(), browsing-topics=()"
 		Cross-Origin-Opener-Policy "same-origin"
 		Cross-Origin-Resource-Policy "same-origin"
@@ -21,7 +21,11 @@ https://dune.example.com {
 	}
 
 	@allowed_methods method GET HEAD
-	@public_files path / /*.html /*.css /*.js /*.json /*.svg /*.webp
+	@directory_entry path /directory-entry.json
+	header @directory_entry Cross-Origin-Resource-Policy "cross-origin"
+	header @directory_entry Access-Control-Allow-Origin "*"
+
+	@public_files path / /*.html /*.css /*.js /*.json /*.svg /*.webp /directory /directory/ /directory/index.html /directory/directory.css /directory/directory.js /directory/directory.json
 
 	handle @allowed_methods {
 		handle @public_files {

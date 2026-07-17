@@ -12,6 +12,11 @@ import sys
 
 DUNE_ROOT = pathlib.Path(os.environ.get("DUNE_ROOT", "/opt/DuneAwakeningSelfHost"))
 STATIC_DIR = pathlib.Path(os.environ.get("STATIC_DIR", "/srv/dash-public-site"))
+for module_root in (DUNE_ROOT / "admin", pathlib.Path(__file__).resolve().parents[2] / "admin"):
+    if str(module_root) not in sys.path:
+        sys.path.insert(0, str(module_root))
+import public_directory
+
 WIDTH = 1600
 HEIGHT = 1600
 PUBLIC_VIEWBOX_WIDTH = 2133.333
@@ -730,7 +735,18 @@ def main():
     (STATIC_DIR / "players.json").write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
     (STATIC_DIR / "hagga-map.svg").write_text(render_svg(players, generated, map_image_href(source_map)), encoding="utf-8")
     (STATIC_DIR / "deep-desert-map.svg").write_text(render_deep_desert_svg(players, deep_desert_markers, generated, deep_desert_layout, deep_desert_observations), encoding="utf-8")
-    return 0 if ok else 1
+    try:
+        directory_config = public_directory.public_config({**ENV, **os.environ}, root=DUNE_ROOT)
+        public_directory.publish(
+            snapshot,
+            directory_config,
+            output_file=STATIC_DIR / "directory-entry.json",
+            now=generated_dt,
+        )
+    except Exception as exc:
+        errors["publicDirectory"] = str(exc)
+        print(f"public directory publication failed: {exc}", file=sys.stderr)
+    return 0 if ok and not errors else 1
 
 
 if __name__ == "__main__":

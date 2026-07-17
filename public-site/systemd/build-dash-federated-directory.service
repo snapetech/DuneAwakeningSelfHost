@@ -1,0 +1,15 @@
+[Unit]
+Description=Build verified DASH federated public directory
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=dune
+EnvironmentFile=-/etc/dash-directory.env
+ExecStart=/usr/bin/env /usr/local/sbin/run-federated-directory.sh
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/srv/dash-public-site/directory

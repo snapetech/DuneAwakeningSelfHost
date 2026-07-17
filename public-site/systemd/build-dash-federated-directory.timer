@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh verified DASH federated public directory
+
+[Timer]
+OnCalendar=*:0/1
+Persistent=true
+RandomizedDelaySec=12s
+Unit=build-dash-federated-directory.service
+
+[Install]
+WantedBy=timers.target

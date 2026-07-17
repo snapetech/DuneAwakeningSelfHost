@@ -53,6 +53,15 @@ install_static_assets() {
       esac
       install_file "$asset" "$static_dir/$(basename "$asset")"
     done
+  if [[ -d "$static_dir/directory" && -w "$static_dir/directory" ]]; then
+    install -d -m 0755 "$static_dir/directory"
+  else
+    run_privileged install -d -m 0755 "$static_dir/directory"
+  fi
+  find "$repo_root/public-site/directory" -maxdepth 1 -type f \( -name '*.html' -o -name '*.css' -o -name '*.js' \) -print0 |
+    while IFS= read -r -d '' asset; do
+      install_file "$asset" "$static_dir/directory/$(basename "$asset")"
+    done
 }
 
 install_render_scripts() {
@@ -64,9 +73,10 @@ install_render_scripts() {
     install -m 0755 "$repo_root/public-site/scripts/configure-dune-public-site.sh" "$dst_dir/configure-dune-public-site.sh"
     install -m 0755 "$repo_root/public-site/scripts/validate-dune-public-site.sh" "$dst_dir/validate-dune-public-site.sh"
     install -m 0755 "$repo_root/public-site/scripts/check-dune-public-site-drift.sh" "$dst_dir/check-dune-public-site-drift.sh"
+    install -m 0755 "$repo_root/public-site/scripts/build-federated-directory.py" "$dst_dir/build-federated-directory.py"
   else
     run_privileged install -d -m 0755 "$dst_dir"
-    for script in render-dune-static-status.sh render-dune-public-snapshot.py configure-dune-public-site.sh validate-dune-public-site.sh check-dune-public-site-drift.sh; do
+    for script in render-dune-static-status.sh render-dune-public-snapshot.py configure-dune-public-site.sh validate-dune-public-site.sh check-dune-public-site-drift.sh build-federated-directory.py; do
       run_privileged install -m 0755 "$repo_root/public-site/scripts/$script" "$dst_dir/$script"
     done
   fi

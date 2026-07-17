@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "dash-public-directory-sources/v1",
+  "sources": [
+    {
+      "url": "https://dune.example.test/directory-entry.json"
+    }
+  ]
+}

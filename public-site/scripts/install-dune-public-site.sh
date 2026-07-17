@@ -67,9 +67,16 @@ install -d -m 0755 "$prefix/sbin"
 install -m 0755 "$repo_root/public-site/scripts/render-dune-static-status.sh" "$prefix/sbin/render-dune-static-status.sh"
 install -m 0755 "$repo_root/public-site/scripts/render-dune-public-snapshot.py" "$prefix/sbin/render-dune-public-snapshot.py"
 install -m 0755 "$repo_root/public-site/scripts/register-deep-desert-background.py" "$prefix/sbin/register-deep-desert-background.py"
+install -m 0755 "$repo_root/public-site/scripts/build-federated-directory.py" "$prefix/sbin/build-federated-directory.py"
 install -m 0755 "$repo_root/public-site/scripts/configure-dune-public-site.sh" "$prefix/sbin/configure-dune-public-site.sh"
 install -m 0755 "$repo_root/public-site/scripts/validate-dune-public-site.sh" "$prefix/sbin/validate-dune-public-site.sh"
 install -m 0755 "$repo_root/public-site/scripts/check-dune-public-site-drift.sh" "$prefix/sbin/check-dune-public-site-drift.sh"
+
+install -d -m 0755 "$static_dir/directory"
+find "$repo_root/public-site/directory" -maxdepth 1 -type f \( -name '*.html' -o -name '*.css' -o -name '*.js' \) -print0 |
+  while IFS= read -r -d '' asset; do
+    install -m 0644 "$asset" "$static_dir/directory/$(basename "$asset")"
+  done
 
 if [[ ! -f "$env_file" ]]; then
   install -m 0644 "$repo_root/public-site/dune-public-site.env.example" "$env_file"

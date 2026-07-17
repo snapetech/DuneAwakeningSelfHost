@@ -68,6 +68,7 @@ import desired_state
 import change_intelligence
 import deployment_assurance
 import update_readiness
+import public_directory
 
 GM_CATALOG_PATH = CODE_ROOT / "scripts" / "gm-command-catalog.py"
 GM_CATALOG_SPEC = importlib.util.spec_from_file_location("gm_command_catalog", GM_CATALOG_PATH)
@@ -550,6 +551,26 @@ def change_contract_prometheus():
     ])
 
 
+def public_directory_public_status():
+    values = {**os.environ, **read_env()}
+    try:
+        config = public_directory.public_config(values, root=ROOT)
+        return {"ok": True, **public_directory.status(config)}
+    except Exception as exc:
+        enabled = str(values.get("DUNE_PUBLIC_DIRECTORY_ENABLED", "false")).strip().lower() in ("1", "true", "yes", "on")
+        return {
+            "ok": False, "enabled": enabled, "configured": False,
+            "valid": False, "current": False, "state": "invalid", "error": str(exc)[:1000],
+        }
+
+
+def public_directory_prometheus():
+    try:
+        return public_directory.prometheus(public_directory_public_status())
+    except Exception:
+        return "dash_public_directory_enabled 0\ndash_public_directory_configured 0\ndash_public_directory_entry_valid 0\ndash_public_directory_entry_current 0\ndash_public_directory_entry_expires_in_seconds 0\n"
+
+
 def change_approval_store():
     global CHANGE_APPROVAL_STORE
     with CHANGE_APPROVAL_LOCK:
@@ -597,6 +618,7 @@ def admin_panel_reload_paths():
         CODE_ROOT / "admin" / "access_control.py",
         CODE_ROOT / "admin" / "change_approvals.py",
         CODE_ROOT / "admin" / "change_contracts.py",
+        CODE_ROOT / "admin" / "public_directory.py",
         CODE_ROOT / "scripts" / "dune_gm_command.py",
         GM_CATALOG_PATH,
     ]
@@ -1051,6 +1073,13 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ADMIN_CHANGE_CONTRACTS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Issues exact-body, operator-bound blast-radius previews for governed mutations."},
     "DUNE_ADMIN_CHANGE_CONTRACTS_REQUIRED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Refuses governed mutations without a fresh signed change contract reviewed against the current policy."},
     "DUNE_ADMIN_CHANGE_CONTRACT_TTL_SECONDS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Freshness window for signed mutation impact contracts, bounded to 30-300 seconds."},
+    "DUNE_PUBLIC_DIRECTORY_ENABLED": {"group": "Public Directory", "secret": False, "restart": False, "why": "Publishes a short-lived Ed25519-signed public server descriptor through the static site renderer."},
+    "DUNE_PUBLIC_DIRECTORY_ENTRY_URL": {"group": "Public Directory", "secret": False, "restart": False, "why": "Exact public HTTPS URL where directory-entry.json is served; it is signature-bound to prevent relocation."},
+    "DUNE_PUBLIC_SITE_URL": {"group": "Public Directory", "secret": False, "restart": False, "why": "Public HTTPS landing page opened from a directory listing."},
+    "DUNE_PUBLIC_DIRECTORY_REGION": {"group": "Public Directory", "secret": False, "restart": False, "why": "Coarse public region from the documented allowlist; no host or datacenter location is published."},
+    "DUNE_PUBLIC_DIRECTORY_CAPACITY": {"group": "Public Directory", "secret": False, "restart": False, "why": "Public player capacity reported with the live online count, bounded to 1-1000."},
+    "DUNE_PUBLIC_DIRECTORY_DISCORD_INVITE": {"group": "Public Directory", "secret": False, "restart": False, "why": "Optional canonical discord.gg community invite published in the signed descriptor."},
+    "DUNE_PUBLIC_DIRECTORY_TTL_SECONDS": {"group": "Public Directory", "secret": False, "restart": False, "why": "Descriptor freshness lifetime, bounded to 60-900 seconds; stale listings disappear without a delete credential."},
     "DUNE_ADMIN_FEDERATED_AUTH_ENABLED": {"group": "Federated Auth", "secret": False, "restart": True, "why": "Enables provider-neutral OIDC or Discord OAuth authorization-code login when all credentials and mappings are configured."},
     "DUNE_ADMIN_AUTH_PROVIDER": {"group": "Federated Auth", "secret": False, "restart": True, "why": "Federated login provider type: oidc or discord."},
     "DUNE_ADMIN_AUTH_ISSUER": {"group": "Federated Auth", "secret": False, "restart": True, "why": "Exact HTTPS OIDC issuer; Discord uses https://discord.com."},
@@ -3354,6 +3383,10 @@ def write_safe_env(updates):
             raise ValueError("change-contract TTL must be an integer from 30 to 300 seconds") from exc
         if not change_contracts.MIN_TTL_SECONDS <= ttl <= change_contracts.MAX_TTL_SECONDS:
             raise ValueError("change-contract TTL must be from 30 to 300 seconds")
+    if any(key.startswith("DUNE_PUBLIC_DIRECTORY_") or key == "DUNE_PUBLIC_SITE_URL" for key in updates):
+        projected = {**os.environ, **read_env()}
+        projected.update({key: str(value) for key, value in updates.items()})
+        public_directory.public_config(projected, root=ROOT)
     original = ENV_FILE.read_text(encoding="utf-8").splitlines()
     seen = set()
     rendered = []
@@ -8592,6 +8625,7 @@ class Handler(BaseHTTPRequestHandler):
                 metrics += change_approval_store().prometheus(enabled=DUAL_CONTROL_ENABLED)
                 metrics += audit_ledger_prometheus()
                 metrics += change_contract_prometheus()
+                metrics += public_directory_prometheus()
                 if UPDATE_READINESS_ENABLED:
                     try:
                         update_snapshot = update_readiness_metrics_snapshot()
@@ -8874,6 +8908,9 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/ops/deployment-assurance":
                 self.require_token()
                 self.json(deployment_assurance_public_status())
+            elif parsed.path == "/api/ops/public-directory":
+                self.require_token()
+                self.json(public_directory_public_status())
             elif parsed.path == "/api/ops/update-readiness":
                 self.require_token()
                 params = urllib.parse.parse_qs(parsed.query)
@@ -17185,7 +17222,7 @@ async function ops(serial=loadSerial){
   startHealthRefresh();
 }
 async function infrastructure(serial=loadSerial){
-  const [serviceData, backupData, databaseData, updateData, memoryData, autoscalerData, restoreDrillData, sloData, capacityData, desiredStateData, changeData, deploymentData] = await Promise.all([
+  const [serviceData, backupData, databaseData, updateData, memoryData, autoscalerData, restoreDrillData, sloData, capacityData, desiredStateData, changeData, deploymentData, publicDirectoryData] = await Promise.all([
     api('/api/ops/services'),
     api('/api/ops/backups'),
     api('/api/ops/database'),
@@ -17197,7 +17234,8 @@ async function infrastructure(serial=loadSerial){
     api('/api/ops/capacity', {timeoutMs: 30000}),
     api('/api/ops/desired-state', {timeoutMs: 30000}),
     api('/api/ops/change-intelligence', {timeoutMs: 30000}),
-    api('/api/ops/deployment-assurance', {timeoutMs: 30000})
+    api('/api/ops/deployment-assurance', {timeoutMs: 30000}),
+    api('/api/ops/public-directory', {timeoutMs: 30000})
   ]);
   if (serial !== loadSerial) return;
   const services = serviceData.services || [];
@@ -17218,12 +17256,30 @@ async function infrastructure(serial=loadSerial){
   mountInfrastructureDesiredState(desiredStateData);
   mountInfrastructureChangeIntelligence(changeData);
   mountInfrastructureDeploymentAssurance(deploymentData);
+  mountInfrastructurePublicDirectory(publicDirectoryData);
   mountInfrastructureRestoreDrill(restoreDrillData);
   mountInfrastructureSlo(sloData);
   document.getElementById('infraLoadLogsBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Loading...', loadInfrastructureLogs));
   document.getElementById('infraVerifyBackupBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Verifying...', verifyInfrastructureBackup));
   document.getElementById('infraLoadTableBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Loading...', loadInfrastructureTable));
   if (services.length) loadInfrastructureLogs().catch(error => { document.getElementById('infraLogsResult').textContent = error.message; });
+}
+function mountInfrastructurePublicDirectory(data){
+  const page = document.querySelector('#view .pageStack');
+  if (!page) return;
+  const entry = data.entry || {};
+  const profile = entry.profile || {};
+  const status = entry.status || {};
+  const maps = status.maps || {};
+  const good = !data.enabled || (data.configured && data.valid && data.current);
+  page.insertAdjacentHTML('beforeend', `<div class="panelBand">
+    <div class="sectionHeader"><div><h2>Federated Public Directory</h2><p class="muted">Opt-in discovery without a vendor account or central heartbeat secret.</p></div><div class="toolbar"><span class="pill ${data.enabled ? (good ? 'ok' : 'bad') : 'ok'}">${data.enabled ? (good ? 'published' : 'needs attention') : 'private'}</span><span class="pill ${data.valid ? 'ok' : data.enabled ? 'bad' : ''}">signature ${data.valid ? 'verified' : data.enabled ? 'invalid' : 'not issued'}</span><button data-jump="settings">Directory settings</button></div></div>
+    <p class="muted">The public renderer emits a short-lived Ed25519-signed descriptor containing only the server name, coarse region, public links, player count, capacity, build, Sietch count, and coarse map health. Any community can aggregate those HTTPS descriptors into a static directory; expiry removes a listing without a delete credential. The game database, Admin Panel, Docker socket, host address, FLS identity, and private player identifiers never enter the descriptor.</p>
+    <div class="metricGrid">${metric('Publication', data.enabled ? data.state || 'invalid' : 'disabled', good ? 'ok' : 'bad')}${metric('Region', data.region || 'not configured')}${metric('Players', status.capacity ? `${status.playersOnline || 0}/${status.capacity}` : '—')}${metric('Maps live', maps.total == null ? '—' : `${maps.online || 0}/${maps.total}`)}${metric('Expires', entry.expiresAt || '—', data.current ? 'ok' : data.enabled ? 'bad' : '')}${metric('Identity', entry.serverId ? String(entry.serverId).slice(5,17) : 'not issued')}</div>
+    ${data.error ? `<div class="notice bad">${esc(data.error)}</div>` : ''}
+    <div class="commandBar">${data.entryUrl ? `<a class="button" href="${esc(data.entryUrl)}" target="_blank" rel="noopener noreferrer">Open signed descriptor</a>` : ''}${profile.websiteUrl ? `<a class="button" href="${esc(profile.websiteUrl)}" target="_blank" rel="noopener noreferrer">Open public server page</a>` : ''}</div>
+    <details><summary>Published identity and protocol state</summary><pre>${esc(JSON.stringify({enabled:data.enabled,configured:data.configured,state:data.state,entryUrl:data.entryUrl,region:data.region,ttlSeconds:data.ttlSeconds,capacity:data.capacity,entry:data.entry}, null, 2))}</pre></details>
+  </div>`);
 }
 function mountInfrastructureCapacity(data){
   const page = document.querySelector('#view .pageStack');

@@ -100,4 +100,14 @@ if ! grep -Eq 'hagga-basin\.webp|data:image/webp;base64' "$static_dir/hagga-map.
   exit 1
 fi
 
+if [[ -s "$static_dir/directory-entry.json" ]]; then
+  DUNE_ROOT="$(cd "$(dirname "$0")/../.." && pwd)" python3 - "$static_dir/directory-entry.json" <<'PY'
+import json, os, pathlib, sys
+root = pathlib.Path(os.environ["DUNE_ROOT"])
+sys.path.insert(0, str(root / "admin"))
+import public_directory
+public_directory.verify_entry(json.load(open(sys.argv[1], encoding="utf-8")))
+PY
+fi
+
 echo "OK: public Dune static site files validate in $static_dir"
