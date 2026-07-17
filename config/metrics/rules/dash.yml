@@ -158,6 +158,21 @@ groups:
         for: 5m
         labels: {severity: warning}
         annotations: {summary: "DASH public directory descriptor has expired"}
+      - alert: DashPlayerIdentityCollectorDown
+        expr: dash_player_identity_collector_up == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "DASH cannot audit player/account identity integrity"}
+      - alert: DashPlayerIdentityOrphans
+        expr: dash_player_identity_orphan_rows > 0
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "DASH found player-state rows with no matching account"}
+      - alert: DashPlayerIdentityDuplicates
+        expr: dash_player_identity_duplicate_accounts > 0
+        for: 15m
+        labels: {severity: warning}
+        annotations: {summary: "DASH found accounts with multiple player-state rows"}
       - alert: DashFeatureReadinessCollectorInvalid
         expr: dash_feature_readiness_total == 0
         for: 2m

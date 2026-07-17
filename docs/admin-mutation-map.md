@@ -518,6 +518,28 @@ Fail-closed rules:
 - Non-dry-run execution requires `DUNE_ADMIN_MUTATIONS_ENABLED=true`, `DUNE_ADMIN_CHARACTER_SWAP_ENABLED=true`, and `confirm: "SWAP CHARACTER"`.
 - Even with gates enabled, execution stops before backup/write when the plan is not executable.
 
+## Player Identity Integrity And Character Deletion
+
+`GET/POST /api/admin/player-identity-integrity` closes the post-1.5 duplicate
+and orphan player-state gap. Roster, search, detail, and account-based action
+resolution select the newest `last_login_time`, then highest `id`, for a valid
+account. The audit reports duplicates and true orphans separately.
+
+`cleanup-orphans` requires the global and
+`DUNE_ADMIN_PLAYER_IDENTITY_MUTATIONS_ENABLED` gates, an evidence fingerprint,
+full database backup, exact `CLEAN ORPHAN PLAYER STATE` confirmation, one
+transaction, a `NOT EXISTS` account predicate, and zero-orphan post-write proof.
+
+`delete-character` additionally requires
+`DUNE_ADMIN_CHARACTER_DELETE_ENABLED`, exact target confirmation `DELETE
+CHARACTER <account-id>`, a reason, every target state row explicitly offline,
+an account advisory lock plus underlying account/state row locks, and a fresh
+preview fingerprint. It calls only native `dune.delete_account(text,text)`,
+cleans the orphan that function can leave, proves the account/state/orphans are
+absent before commit, and records a private receipt. It performs no restart.
+Rollback requires the recorded database backup. See
+[`player-identity-integrity.md`](player-identity-integrity.md).
+
 Safe tests currently cover direct planner behavior plus handler-route behavior for GET, plan POST, dry-run execute POST, and rejected live execute POST. They intentionally do not fake `safeNativeSwapPath=true`, because that would normalize an execution path that has not been proven against native Dune lifecycle semantics.
 
 ## Landsraad Term Administration

@@ -318,6 +318,7 @@ server {
 - Player tag planning through `POST /api/admin/player-tags`, default `dry_run=true`. Execution requires `DUNE_ADMIN_PLAYER_TAG_MUTATIONS_ENABLED=true` and confirmation `WRITE PLAYER TAGS`.
 - Access-code planning through `POST /api/admin/access-code`, default `dry_run=true`. Execution requires `DUNE_ADMIN_ACCESS_CODE_MUTATIONS_ENABLED=true` and confirmation `WRITE ACCESS CODES`.
 - Character slot inspection and planning through `GET /api/admin/character-slots?account_id=...`, `POST /api/admin/character-slots/plan`, and `POST /api/admin/character-slots/execute`, default `dry_run=true`. Execution requires `DUNE_ADMIN_CHARACTER_SWAP_ENABLED=true`, confirmation `SWAP CHARACTER`, offline targets, a DB backup, and a proven native lifecycle contract; current builds are inspect/plan-only when that contract is absent.
+- Canonical player identity and orphan-safe native deletion through `GET/POST /api/admin/player-identity-integrity`. Roster/detail/action resolution chooses the newest valid player-state row per account; the Players page reports duplicates and true orphans. Cleanup and deletion are fingerprint-bound, backup-first, transaction-locked, post-write verified, privately receipted, and governed as critical changes. See [`player-identity-integrity.md`](player-identity-integrity.md).
 - Communinet planning through `POST /api/admin/communinet`, default `dry_run=true`. Execution requires `DUNE_ADMIN_COMMUNINET_MUTATIONS_ENABLED=true` and confirmation `WRITE COMMUNINET`.
 - Tutorial entry planning through `POST /api/admin/tutorial`, default `dry_run=true`. Execution requires `DUNE_ADMIN_TUTORIAL_MUTATIONS_ENABLED=true` and confirmation `WRITE TUTORIAL`.
 - Permission actor planning through `POST /api/admin/permission`, default `dry_run=true`. Execution requires `DUNE_ADMIN_PERMISSION_MUTATIONS_ENABLED=true` and confirmation `WRITE PERMISSION`.
@@ -336,7 +337,7 @@ server {
 - Player dropdowns in Admin Actions for currency, carried/bank Solari, XP, keystones, item grant targeting, and item maintenance.
 - Selected players pre-populate controller/account/name fields, current currency and specialization selectors, owned inventories, and owned inventory items for stack/quality edits or deletion.
 - Exact-template item grants, dry-runs, and item deletion behind admin gates. Existing-item stack/quality edits require the player offline, create a database backup, lock the item and owner state in one transaction, recheck offline state under that lock, preserve every other `inventoryitem` field through `dune.save_item`, verify both saved values before commit, and require a relog for the client cache.
-- Visual item-grant catalog with cached same-origin icons, name/template/category search, tier and max-stack metadata, favorites, an inspection tray, and an explicit final confirmation. Refresh committed metadata with `scripts/sync-item-catalog.py`; icon binaries are cached under ignored `backups/admin-panel/item-icons/` on first view.
+- Unified visual item/schematic/patent grant catalog with case-insensitive template identity, deterministic rich-row deduplication, group/category/kind search, tier/name ordering, complete progressive loading, cached same-origin icons, favorites, an inspection tray, and an explicit final confirmation. Refresh committed metadata with `scripts/sync-item-catalog.py`; icon binaries are cached under ignored `backups/admin-panel/item-icons/` on first view.
 
 ## Content Catalog and Safe Expansion
 
@@ -403,6 +404,8 @@ DUNE_ADMIN_TUTORIAL_MUTATIONS_ENABLED=false
 DUNE_ADMIN_PERMISSION_MUTATIONS_ENABLED=false
 DUNE_ADMIN_VENDOR_MUTATIONS_ENABLED=false
 DUNE_ADMIN_CHARACTER_SWAP_ENABLED=false
+DUNE_ADMIN_PLAYER_IDENTITY_MUTATIONS_ENABLED=false
+DUNE_ADMIN_CHARACTER_DELETE_ENABLED=false
 DUNE_ADMIN_PLAYER_RUNTIME_MUTATIONS_ENABLED=false
 DUNE_ADMIN_VEHICLE_MUTATIONS_ENABLED=false
 DUNE_ADMIN_MEMORY_MUTATIONS_ENABLED=false
@@ -442,6 +445,8 @@ documented host scripts, exact-host checks, dry-run previews, and backups in
 - `DUNE_ADMIN_PERMISSION_MUTATIONS_ENABLED`: controls permission actor name/access/rank server-function calls. World-state dry-runs still work.
 - `DUNE_ADMIN_VENDOR_MUTATIONS_ENABLED`: controls vendor stock-cycle timestamp server-function calls. Lifecycle dry-runs still work.
 - `DUNE_ADMIN_CHARACTER_SWAP_ENABLED`: controls character slot hibernation/switch execution. Slot inspection and planning still work; execution remains blocked unless the plan returns `executable: true`.
+- `DUNE_ADMIN_PLAYER_IDENTITY_MUTATIONS_ENABLED`: controls fingerprint-bound cleanup of player-state rows whose account no longer exists. Integrity inspection and cleanup preview remain available.
+- `DUNE_ADMIN_CHARACTER_DELETE_ENABLED`: second gate for offline, backup-first native character deletion. It also requires the player identity gate; deletion preview remains available.
 - `DUNE_ADMIN_PLAYER_RUNTIME_MUTATIONS_ENABLED`: second gate for native
   skill/water/kick/vehicle commands; also requires the general GM gate and
   shared server-command token.

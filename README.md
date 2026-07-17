@@ -74,6 +74,8 @@ Always compare your `.env` image pin with the Steam package installed on your ho
 - Live inventory slot-integrity audit plus hostname-, backup-, capacity-, and transaction-gated no-delete conflict repair.
 - Guarded admin writes for currency, Solari, XP, skills, water, kick/kick-all, vehicle spawn/repair/refuel, Landsraad rewards/contributions, blueprints, augments, items, offline transaction-verified stack/quality edits, care packages, and catalog workflows.
 - Searchable character cosmetics/skins with an independently observed 391-ID catalog, optional local-pak catalog generation, exact catalog-confined add/remove, customization-only bulk unlock, Offline row locking, automatic database backups, compare-and-swap verification, private receipts, and guarded rollback.
+- Canonical post-1.5 player identity handling with duplicate/orphan diagnostics, newest-valid-row roster/detail/action resolution, fingerprint-bound orphan cleanup, and offline backup-first native character deletion with advisory/row locks, exact target confirmation, post-write proof, private receipts, and critical change governance.
+- One case-insensitive item/schematic/patent catalog shared by browsing and grant metadata, with deterministic rich-row deduplication, group/category/kind facets, tier/name ordering, and progressive access to the complete catalog.
 - Permissioned Discord adapter routes: read/ops remain role-scoped, community writes are identity-bound and narrowly typed, and generic admin/broadcast writes remain blocked; community UI addons use a SHA-pinned permission-review lifecycle.
 - First-party dependency-free Discord Gateway bot with seven groups and 37 guild-scoped `/dune` subcommands, channel restrictions, ephemeral responses, role propagation, and a hardened credential-waiting systemd service.
 - Named hashed-token admin identities with explicit route capabilities and the original owner token retained as a recovery credential.
@@ -487,7 +489,7 @@ The admin surface requires authentication by default. Set a high-entropy `DUNE_A
 | Federated Login | Provider-neutral OIDC or Discord OAuth code+PKCE login, explicit subject-to-local-RBAC mapping, signed HttpOnly sessions, logout, and owner-token recovery. |
 | Runbook | Copy/paste operational commands for health, backups, restores, logs, profiling, and routing capture. |
 | Command Console | Six reviewed native read-only diagnostics with no subprocess/shell/arguments, bounded timeout/output, redaction, operator RBAC, and receipt-only audit. |
-| Players | Online/offline roster, player detail, account/controller/pawn context, currency, XP, inventory, and location views. |
+| Players | Canonical online/offline roster, duplicate/orphan identity diagnostics, guarded cleanup/native deletion, player detail, account/controller/pawn context, currency, XP, inventory, and location views. |
 | Moderation | Case workflow, enforced policy bans/unban, allowlist registry/policy, presence sessions, coarse heatmaps, normalized security signals, and enforcement receipts. |
 | Base Creator | Read-only exact/recentered live-base export, snapping/yaw grid editor, reconstruction preview, JSON download, isolated visibility/rating gallery, and fingerprint-bound native retirement into Dune's recoverable base-backup system. |
 | Gameplay Presets | Nine curated worm/threat/storm/harvest/day/hydration/world profiles with exact preview, fixed allowlists, backup-first atomic apply, confined rollback, Landsraad-cycle enforcement, and manual guarded restart handoff. |
@@ -507,7 +509,7 @@ If the published local admin port accepts TCP but returns no HTTP bytes after a 
 curl -H 'Host: admin-panel:8080' http://127.0.0.1:${DUNE_ADMIN_HOST_PORT:-18080}/api/status
 ```
 
-More detail: [`docs/admin-panel.md`](docs/admin-panel.md), [`docs/admin-access-control.md`](docs/admin-access-control.md), [`docs/change-approvals.md`](docs/change-approvals.md), [`docs/federated-auth.md`](docs/federated-auth.md), [`docs/infrastructure-console.md`](docs/infrastructure-console.md), [`docs/restore-drills.md`](docs/restore-drills.md), [`docs/operational-slo.md`](docs/operational-slo.md), [`docs/backup-encryption.md`](docs/backup-encryption.md), [`docs/command-console.md`](docs/command-console.md), [`docs/world-console.md`](docs/world-console.md), [`docs/player-progression-receipts.md`](docs/player-progression-receipts.md), [`docs/care-packages.md`](docs/care-packages.md), [`docs/community-rewards.md`](docs/community-rewards.md), [`docs/moderation-history.md`](docs/moderation-history.md), [`docs/base-creator.md`](docs/base-creator.md), [`docs/gameplay-presets.md`](docs/gameplay-presets.md), [`docs/character-cosmetics.md`](docs/character-cosmetics.md), [`docs/outbound-webhooks.md`](docs/outbound-webhooks.md), [`docs/admin-safe-content-api.md`](docs/admin-safe-content-api.md), and [`CONTENT_INSERTION_SURFACES.md`](CONTENT_INSERTION_SURFACES.md).
+More detail: [`docs/admin-panel.md`](docs/admin-panel.md), [`docs/player-identity-integrity.md`](docs/player-identity-integrity.md), [`docs/admin-access-control.md`](docs/admin-access-control.md), [`docs/change-approvals.md`](docs/change-approvals.md), [`docs/federated-auth.md`](docs/federated-auth.md), [`docs/infrastructure-console.md`](docs/infrastructure-console.md), [`docs/restore-drills.md`](docs/restore-drills.md), [`docs/operational-slo.md`](docs/operational-slo.md), [`docs/backup-encryption.md`](docs/backup-encryption.md), [`docs/command-console.md`](docs/command-console.md), [`docs/world-console.md`](docs/world-console.md), [`docs/player-progression-receipts.md`](docs/player-progression-receipts.md), [`docs/care-packages.md`](docs/care-packages.md), [`docs/community-rewards.md`](docs/community-rewards.md), [`docs/moderation-history.md`](docs/moderation-history.md), [`docs/base-creator.md`](docs/base-creator.md), [`docs/gameplay-presets.md`](docs/gameplay-presets.md), [`docs/character-cosmetics.md`](docs/character-cosmetics.md), [`docs/outbound-webhooks.md`](docs/outbound-webhooks.md), [`docs/admin-safe-content-api.md`](docs/admin-safe-content-api.md), and [`CONTENT_INSERTION_SURFACES.md`](CONTENT_INSERTION_SURFACES.md).
 
 ## Operations And Recovery
 
@@ -923,7 +925,7 @@ Start from [`.env.example`](.env.example). It is the source of truth for the ful
 | `DUNE_ADMIN_MUTATIONS_ENABLED` | Master gate for admin writes; example default is fail-closed. |
 | `DUNE_ADMIN_ITEM_GRANTS_ENABLED` | Separate gate for item grants, stack edits, and deletion; example default is fail-closed. |
 | `DUNE_ADMIN_GM_COMMANDS_ENABLED` / `DUNE_GM_COMMAND_PAYLOAD_VERIFIED` | Generic legacy GM/RPC gates. The catalog-backed player actions use the first gate plus their dedicated runtime gate, not the legacy payload-verified flag. |
-| `DUNE_ADMIN_*_ENABLED` write gates | Per-family gates for typed knobs, events, bundles, progression, faction, Landsraad, respawn, guild, markers, landclaim, Exchange, tags, access codes, Communinet, tutorial, permission, vendor, and character-slot operations. |
+| `DUNE_ADMIN_*_ENABLED` write gates | Per-family gates for typed knobs, events, bundles, progression, faction, Landsraad, respawn, guild, markers, landclaim, Exchange, tags, access codes, Communinet, tutorial, permission, vendor, character slots, player-identity cleanup, and native character deletion. |
 | `DUNE_ADMIN_AUDIT_LEDGER_ENABLED` / `DUNE_ADMIN_AUDIT_LEDGER_REQUIRED_FOR_MUTATIONS` | Seal sanitized audit events and require a verified admission receipt before privileged POST dispatch. |
 | `DUNE_ADMIN_CHANGE_CONTRACTS_ENABLED` / `DUNE_ADMIN_CHANGE_CONTRACTS_REQUIRED` / `DUNE_ADMIN_CHANGE_CONTRACT_TTL_SECONDS` | Compile and enforce exact-body blast-radius reviews for governed mutations; the freshness window is bounded to 30–300 seconds. |
 | `DUNE_PUBLIC_DIRECTORY_ENABLED` / `DUNE_PUBLIC_DIRECTORY_ENTRY_URL` / `DUNE_PUBLIC_SITE_URL` | Opt in to a short-lived Ed25519-signed public descriptor at the exact public HTTPS URL; publication remains disabled until the full public contract validates. |
@@ -1114,6 +1116,7 @@ Operator references:
 - [`docs/admin-bot.md`](docs/admin-bot.md): Paul/DASH Admin automation, player-presence announcements, and service install.
 - [`docs/access-control.md`](docs/access-control.md): login password and access limits.
 - [`docs/character-transfers.md`](docs/character-transfers.md): Director transfer policy.
+- [`docs/player-identity-integrity.md`](docs/player-identity-integrity.md): canonical post-1.5 player-state reads, duplicate/orphan diagnostics, fingerprint-bound repair, and guarded native character deletion.
 - [`docs/validation.md`](docs/validation.md): live-client route validation checklist.
 
 Architecture and research:

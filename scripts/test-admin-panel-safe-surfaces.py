@@ -1001,6 +1001,67 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         with self.assertRaises(PermissionError):
             self.handler.character_slot_execute({"dry_run": False, "account_id": 10, "action": "new-character"})
 
+    def test_player_identity_get_route_is_read_only_and_returns_gate_state(self):
+        handler, captured = self.make_route_handler("/api/admin/player-identity-integrity")
+        handler.is_app_route = lambda path: False
+        integrity = {"ok": True, "summary": {"healthy": False, "orphan_rows": 2}}
+        cleanup = {"ok": True, "canExecute": True, "expectedFingerprint": "f" * 64}
+        with mock.patch.object(self.panel.player_identity, "integrity", return_value=integrity), \
+             mock.patch.object(self.panel.player_identity, "cleanup_plan", return_value=cleanup):
+            handler.do_GET()
+        self.assertEqual(2, captured["json"]["summary"]["orphan_rows"])
+        self.assertIn("mutationEnabled", captured["json"])
+
+    def test_player_identity_preview_route_does_not_require_mutation_gate(self):
+        plan = {"ok": True, "dryRun": True, "canExecute": True, "accountId": 42, "confirm": "DELETE CHARACTER 42"}
+        with mock.patch.object(self.panel.player_identity, "character_plan", return_value=plan):
+            captured = self.invoke_post_route("/api/admin/player-identity-integrity", {"action": "preview-delete", "accountId": 42})
+        self.assertEqual(plan, captured["json"])
+        self.assertEqual("preview-delete", captured["audits"][-1]["identity_action"])
+
+    def test_player_identity_live_delete_fails_closed_when_feature_gate_is_off(self):
+        self.patch_flag("PLAYER_IDENTITY_MUTATIONS_ENABLED", False)
+        self.patch_flag("CHARACTER_DELETE_ENABLED", False)
+        captured = self.invoke_post_route("/api/admin/player-identity-integrity", {
+            "action": "delete-character", "accountId": 42, "reason": "test",
+            "expectedFingerprint": "f" * 64, "confirm": "DELETE CHARACTER 42",
+        })
+        self.assertEqual(401, captured["errors"][0]["status"])
+        self.assertIsNone(captured["json"])
+
+    def test_player_identity_metrics_are_label_free_and_fail_closed(self):
+        payload = {"summary": {
+            "healthy": False, "account_rows": 4, "player_state_rows": 7,
+            "duplicate_accounts": 1, "duplicate_excess_rows": 2, "orphan_rows": 1,
+            "missing_pawn_references": 1, "missing_controller_references": 0,
+        }}
+        with mock.patch.object(self.panel.player_identity, "integrity", return_value=payload):
+            metrics = self.panel.player_identity_prometheus()
+        self.assertIn("dash_player_identity_orphan_rows 1\n", metrics)
+        self.assertIn("dash_player_identity_duplicate_accounts 1\n", metrics)
+        self.assertNotIn("{", metrics)
+        with mock.patch.object(self.panel.player_identity, "integrity", side_effect=RuntimeError("db down")):
+            failed = self.panel.player_identity_prometheus()
+        self.assertIn("dash_player_identity_collector_up 0\n", failed)
+
+    def test_item_catalog_is_case_insensitive_deduplicated_and_kind_grouped(self):
+        self.panel.ITEM_CATALOG_FILE.write_text(json.dumps({
+            "schemaVersion": 1,
+            "items": [
+                {"templateId": "Rifle_A", "name": "Rifle A", "category": "weapons/ranged"},
+                {"templateId": "rifle_a", "name": "Rifle A Rich", "category": "weapons/ranged", "imageUrl": "https://example.test/a.png", "description": "rich"},
+                {"templateId": "Rifle_A_Schematic", "name": "Rifle A Schematic", "category": "schematics/weapons", "tier": "3"},
+                {"templateId": "Chair_Patent", "name": "Chair", "category": "building/patents"},
+            ],
+        }), encoding="utf-8")
+        catalog = self.panel.load_item_catalog()
+        self.assertEqual(3, len(catalog["items"]))
+        self.assertEqual(1, catalog["catalog"]["duplicatesDropped"])
+        self.assertEqual("Rifle A Rich", self.panel.catalog_item("RIFLE_A")["name"])
+        kinds = {row["templateId"]: row["kind"] for row in catalog["items"]}
+        self.assertEqual("schematic", kinds["Rifle_A_Schematic"])
+        self.assertEqual("patent", kinds["Chair_Patent"])
+
     def test_character_slot_switch_requires_native_owned_target(self):
         def fake_query(sql, params=None):
             if "where ps.account_id=%s" in sql and "left join dune.accounts" in sql:

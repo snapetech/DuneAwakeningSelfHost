@@ -871,7 +871,12 @@ secret-scan:
 test-watch-maps:
 	./scripts/test-watch-maps.sh
 
-test-admin-panel-safe-surfaces:
+.PHONY: test-player-identity
+
+test-player-identity:
+	python3 scripts/test-player-identity.py
+
+test-admin-panel-safe-surfaces: test-player-identity
 	python3 scripts/test-admin-panel-safe-surfaces.py
 
 test-storage-cleanup:

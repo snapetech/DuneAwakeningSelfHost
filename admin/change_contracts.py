@@ -79,6 +79,10 @@ IMPACTS = {
         "player-state", "account", "database", backup="required",
         reversibility="receipted-rollback", player_disruption=True,
         safeguards=("offline accounts", "locked recheck", "database backup", "rollback receipt")),
+    "/api/admin/player-identity-integrity": _impact(
+        "player-state", "account", "database", backup="required",
+        reversibility="backup-restore", player_disruption=True,
+        safeguards=("canonical identity preview", "offline row locks", "fingerprint-bound target", "native delete function", "orphan-only cleanup predicate", "database backup", "post-write verification", "private receipt")),
     "/api/admin/blueprints": _impact(
         "player-state", "blueprint", "database", backup="required",
         reversibility="rollback-archive", player_disruption=True,
@@ -343,6 +347,10 @@ def verify(token, path, body, principal, capability, secret, *, now=None):
         signature = _b64decode(encoded_signature)
     except (ValueError, TypeError, binascii.Error) as exc:
         raise PermissionError("change contract token is malformed") from exc
+    if _b64encode(payload) != encoded_payload:
+        raise PermissionError("change contract token payload encoding is non-canonical")
+    if _b64encode(signature) != encoded_signature:
+        raise PermissionError("change contract signature is invalid")
     expected = hmac.new(bytes(secret), payload, hashlib.sha256).digest()
     if len(signature) != 32 or not hmac.compare_digest(signature, expected):
         raise PermissionError("change contract signature is invalid")

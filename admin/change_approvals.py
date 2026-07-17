@@ -74,6 +74,7 @@ POLICIES = {
     "/api/settings/env": ("critical", "Change environment configuration", _always),
     "/api/admin/base-retirement": ("critical", "Archive and retire a player base", _actions("archive")),
     "/api/admin/character-slots/execute": ("critical", "Swap or restore a character slot", _non_dry),
+    "/api/admin/player-identity-integrity": ("critical", "Clean orphan identity state or delete a character", _actions("cleanup-orphans", "delete-character")),
     "/api/admin/blueprints": ("critical", "Import or delete a Solido blueprint", _actions_non_dry("import", "delete")),
     "/api/admin/cosmetics": ("critical", "Change or roll back persistent cosmetic state", _always),
     "/api/presets/gameplay": ("critical", "Apply or roll back a gameplay preset", _actions("apply", "rollback")),

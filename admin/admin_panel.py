@@ -71,6 +71,7 @@ import deployment_assurance
 import update_readiness
 import maintenance_outcomes
 import public_directory
+import player_identity
 import env_file_store
 import feature_readiness
 import feature_readiness_history
@@ -402,6 +403,9 @@ TUTORIAL_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_TUTORIAL_MUTATIONS_ENABL
 PERMISSION_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_PERMISSION_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 VENDOR_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_VENDOR_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 CHARACTER_SWAP_ENABLED = os.environ.get("DUNE_ADMIN_CHARACTER_SWAP_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+PLAYER_IDENTITY_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_PLAYER_IDENTITY_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+CHARACTER_DELETE_ENABLED = os.environ.get("DUNE_ADMIN_CHARACTER_DELETE_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+PLAYER_IDENTITY_RECEIPTS = BACKUP_ROOT / "player-identity"
 ANNOUNCEMENT_STATE_FILE = BACKUP_ROOT / "announcements.json"
 RESTART_STATE_FILE = BACKUP_ROOT / "restart-jobs.json"
 EVENT_STATE_FILE = BACKUP_ROOT / "events.json"
@@ -606,6 +610,29 @@ def public_directory_prometheus():
         return public_directory.prometheus(public_directory_public_status())
     except Exception:
         return "dash_public_directory_enabled 0\ndash_public_directory_configured 0\ndash_public_directory_entry_valid 0\ndash_public_directory_entry_current 0\ndash_public_directory_entry_expires_in_seconds 0\n"
+
+
+def player_identity_prometheus():
+    try:
+        summary = player_identity.integrity(query, sample_limit=1)["summary"]
+        values = {
+            "dash_player_identity_collector_up": 1,
+            "dash_player_identity_healthy": 1 if summary.get("healthy") else 0,
+            "dash_player_identity_accounts": int(summary.get("account_rows") or 0),
+            "dash_player_identity_state_rows": int(summary.get("player_state_rows") or 0),
+            "dash_player_identity_duplicate_accounts": int(summary.get("duplicate_accounts") or 0),
+            "dash_player_identity_duplicate_excess_rows": int(summary.get("duplicate_excess_rows") or 0),
+            "dash_player_identity_orphan_rows": int(summary.get("orphan_rows") or 0),
+            "dash_player_identity_missing_pawn_references": int(summary.get("missing_pawn_references") or 0),
+            "dash_player_identity_missing_controller_references": int(summary.get("missing_controller_references") or 0),
+        }
+    except Exception:
+        values = {"dash_player_identity_collector_up": 0, "dash_player_identity_healthy": 0}
+    values.update({
+        "dash_player_identity_cleanup_enabled": 1 if MUTATIONS_ENABLED and PLAYER_IDENTITY_MUTATIONS_ENABLED else 0,
+        "dash_player_identity_character_delete_enabled": 1 if MUTATIONS_ENABLED and PLAYER_IDENTITY_MUTATIONS_ENABLED and CHARACTER_DELETE_ENABLED else 0,
+    })
+    return "".join(f"{name} {value}\n" for name, value in values.items())
 
 
 def _feature_readiness_probe(name, callback):
@@ -1589,6 +1616,8 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ADMIN_PERMISSION_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for permission actor name/access/rank server-function calls. World-state inspection and dry-runs remain available."},
     "DUNE_ADMIN_VENDOR_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for vendor player timestamp server-function calls. Player lifecycle inspection and dry-runs remain available."},
     "DUNE_ADMIN_CHARACTER_SWAP_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for validated native character hibernation/switch execution. Character slot inspection and dry-runs remain available."},
+    "DUNE_ADMIN_PLAYER_IDENTITY_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for fingerprint-bound cleanup of player-state rows whose account no longer exists. Integrity inspection remains read-only."},
+    "DUNE_ADMIN_CHARACTER_DELETE_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for backup-first native character deletion with offline locking, exact target confirmation, orphan cleanup, and post-write proof."},
     "DUNE_ADMIN_MAX_BODY_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Maximum accepted request body size."},
     "DUNE_ADMIN_AUDIT_MAX_BYTES": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Audit log rotation threshold."},
     "DUNE_ADMIN_REQUEST_TIMEOUT_SECONDS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Socket timeout to limit slow client abuse."},
@@ -8649,13 +8678,58 @@ def load_item_catalog():
         payload = json.loads(ITEM_CATALOG_FILE.read_text(encoding="utf-8"))
         if not isinstance(payload.get("items"), list):
             raise ValueError("items must be a list")
+        deduplicated = {}
+        duplicates = 0
+        for raw in payload["items"]:
+            if not isinstance(raw, dict):
+                continue
+            template_id = str(raw.get("templateId") or "").strip()
+            if not template_id:
+                continue
+            key = template_id.casefold()
+            item = dict(raw, templateId=template_id)
+            category = str(item.get("category") or "unknown").strip() or "unknown"
+            item["category"] = category
+            if not str(item.get("kind") or "").strip():
+                if category.startswith("schematics/"):
+                    item["kind"] = "schematic"
+                elif category == "building/patents":
+                    item["kind"] = "patent"
+                else:
+                    item["kind"] = "item"
+            item["catalogGroup"] = category.split("/", 1)[0].replace("_", " ").title()
+            current = deduplicated.get(key)
+            if current is not None:
+                duplicates += 1
+                current_score = sum(bool(current.get(field)) for field in ("name", "imageUrl", "description", "tier", "maxStack"))
+                item_score = sum(bool(item.get(field)) for field in ("name", "imageUrl", "description", "tier", "maxStack"))
+                if item_score <= current_score:
+                    continue
+            deduplicated[key] = item
+        def catalog_sort_key(item):
+            try:
+                tier = int(item.get("tier"))
+            except (TypeError, ValueError):
+                tier = 999
+            return (str(item.get("catalogGroup") or "").casefold(), str(item.get("category") or "").casefold(), tier, str(item.get("name") or item["templateId"]).casefold(), item["templateId"].casefold())
+        payload["items"] = sorted(deduplicated.values(), key=catalog_sort_key)
+        payload["catalog"] = {
+            "items": len(payload["items"]),
+            "duplicatesDropped": duplicates,
+            "groups": sorted({item["catalogGroup"] for item in payload["items"]}),
+            "categories": sorted({item["category"] for item in payload["items"]}),
+            "kinds": {kind: sum(1 for item in payload["items"] if item["kind"] == kind) for kind in sorted({item["kind"] for item in payload["items"]})},
+            "canonicalTemplateIds": "case-insensitive",
+            "sort": "group, category, tier, name, template id",
+        }
         return payload
     except FileNotFoundError:
         return {"schemaVersion": 1, "generatedAt": None, "source": {}, "items": [], "warning": "item catalog has not been generated"}
 
 
 def catalog_item(template_id):
-    return next((item for item in load_item_catalog().get("items", []) if item.get("templateId") == template_id), None)
+    wanted = str(template_id or "").casefold()
+    return next((item for item in load_item_catalog().get("items", []) if str(item.get("templateId") or "").casefold() == wanted), None)
 
 
 def load_care_packages(path=None):
@@ -9445,6 +9519,7 @@ class Handler(BaseHTTPRequestHandler):
                 metrics += audit_ledger_prometheus()
                 metrics += change_contract_prometheus()
                 metrics += public_directory_prometheus()
+                metrics += player_identity_prometheus()
                 metrics += feature_readiness_prometheus()
                 metrics += credential_lifecycle_prometheus()
                 metrics += rabbitmq_restore_drill_prometheus()
@@ -9853,6 +9928,19 @@ class Handler(BaseHTTPRequestHandler):
                 params = urllib.parse.parse_qs(parsed.query)
                 account_id = (params.get("account_id") or params.get("accountId") or [""])[0]
                 self.json(self.character_slots(account_id))
+            elif parsed.path == "/api/admin/player-identity-integrity":
+                self.require_token()
+                params = urllib.parse.parse_qs(parsed.query)
+                account_id = (params.get("account_id") or params.get("accountId") or [""])[0]
+                payload = player_identity.integrity(query)
+                payload.update({
+                    "mutationEnabled": bool(MUTATIONS_ENABLED and PLAYER_IDENTITY_MUTATIONS_ENABLED),
+                    "characterDeleteEnabled": bool(MUTATIONS_ENABLED and PLAYER_IDENTITY_MUTATIONS_ENABLED and CHARACTER_DELETE_ENABLED),
+                    "cleanupPlan": player_identity.cleanup_plan(query),
+                })
+                if account_id not in ("", None):
+                    payload["characterDeletePlan"] = player_identity.character_plan(query, account_id)
+                self.json(payload)
             elif parsed.path == "/api/players/hagga-basin":
                 self.require_token()
                 self.json(self.hagga_basin_players())
@@ -11272,6 +11360,39 @@ class Handler(BaseHTTPRequestHandler):
                 result = self.character_slot_execute(body)
                 self.audit("character-slot-execute", ok=result.get("ok"), dry_run=result.get("dryRun"), account_id=result.get("accountId"), slot_action=result.get("action"), executable=result.get("executable"))
                 self.json(result)
+            elif parsed.path == "/api/admin/player-identity-integrity":
+                self.require_token()
+                body = parse_body(self)
+                action = str(body.get("action") or "preview-cleanup").strip().lower()
+                if action == "preview-cleanup":
+                    result = player_identity.cleanup_plan(query)
+                elif action == "preview-delete":
+                    result = player_identity.character_plan(query, body.get("accountId", body.get("account_id")))
+                elif action == "cleanup-orphans":
+                    self.require_mutations()
+                    if not PLAYER_IDENTITY_MUTATIONS_ENABLED:
+                        raise PermissionError("player identity mutations are disabled; set DUNE_ADMIN_PLAYER_IDENTITY_MUTATIONS_ENABLED=true")
+                    principal = access_control.public_principal(getattr(self, "auth_principal", None)) or {}
+                    result = player_identity.cleanup_orphans(
+                        db_connect, create_db_backup, PLAYER_IDENTITY_RECEIPTS,
+                        body.get("expectedFingerprint", body.get("expected_fingerprint")), body.get("confirm"),
+                        principal.get("id", "owner-recovery"),
+                    )
+                elif action == "delete-character":
+                    self.require_mutations()
+                    if not PLAYER_IDENTITY_MUTATIONS_ENABLED or not CHARACTER_DELETE_ENABLED:
+                        raise PermissionError("character deletion is disabled; enable the player identity and character delete gates")
+                    principal = access_control.public_principal(getattr(self, "auth_principal", None)) or {}
+                    result = player_identity.delete_character(
+                        db_connect, create_db_backup, PLAYER_IDENTITY_RECEIPTS,
+                        body.get("accountId", body.get("account_id")), body.get("reason"),
+                        body.get("expectedFingerprint", body.get("expected_fingerprint")), body.get("confirm"),
+                        principal.get("id", "owner-recovery"),
+                    )
+                else:
+                    raise ValueError("player identity action must be preview-cleanup, preview-delete, cleanup-orphans, or delete-character")
+                self.audit("player-identity-integrity", ok=result.get("ok"), identity_action=action, account_id=result.get("accountId", body.get("accountId", body.get("account_id"))), deleted_rows=result.get("deletedRows"), orphan_rows_cleaned=result.get("orphanRowsCleaned"), receipt_id=(result.get("receipt") or {}).get("id"))
+                self.json(result)
             elif parsed.path == "/api/admin/gm/preview":
                 self.require_token()
                 body = parse_body(self)
@@ -11355,12 +11476,21 @@ class Handler(BaseHTTPRequestHandler):
     def characters(self, term):
         like = f"%{term}%"
         sql = """
+            with canonical_player_state as (
+              select ps.*,row_number() over (
+                partition by ps.account_id
+                order by ps.last_login_time desc nulls last,ps.id desc
+              ) as identity_rank
+              from dune.player_state ps
+              join dune.accounts valid_account on valid_account.id=ps.account_id
+            )
             select ps.account_id, ps.character_name, ps.online_status::text, ps.life_state::text,
                    ps.server_id, ps.player_controller_id, ps.player_pawn_id, ps.player_state_id,
                    ps.last_login_time, a.funcom_id, a.platform_name, a.platform_id
-            from dune.player_state ps
+            from canonical_player_state ps
             left join dune.accounts a on a.id = ps.account_id
-            where (%s = '' or ps.character_name ilike %s or a.funcom_id ilike %s or a.platform_id ilike %s)
+            where ps.identity_rank=1
+              and (%s = '' or ps.character_name ilike %s or a.funcom_id ilike %s or a.platform_id ilike %s)
             order by ps.last_login_time desc nulls last, ps.account_id
             limit %s
         """
@@ -11368,14 +11498,23 @@ class Handler(BaseHTTPRequestHandler):
 
     def character_roster(self):
         sql = """
+            with canonical_player_state as (
+              select ps.*,row_number() over (
+                partition by ps.account_id
+                order by ps.last_login_time desc nulls last,ps.id desc
+              ) as identity_rank
+              from dune.player_state ps
+              join dune.accounts valid_account on valid_account.id=ps.account_id
+            )
             select ps.account_id, ps.character_name, ps.online_status::text, ps.life_state::text,
                    ps.server_id, fs.map, fs.game_addr, fs.game_port,
                    ps.player_controller_id, ps.player_pawn_id,
                    ps.last_login_time, ps.logoff_persistence_end_time, ps.reconnect_grace_period_end,
                    a.funcom_id, a.platform_name, a.platform_id
-            from dune.player_state ps
+            from canonical_player_state ps
             left join dune.accounts a on a.id = ps.account_id
             left join dune.farm_state fs on fs.server_id = ps.server_id
+            where ps.identity_rank=1
             order by ps.last_login_time desc nulls last, ps.character_name nulls last, ps.account_id
         """
         rows = enrich_steam_profiles([dict(row) for row in query(sql)])
@@ -11777,7 +11916,13 @@ class Handler(BaseHTTPRequestHandler):
         }
 
     def character_detail(self, account_id):
-        player = query("select * from dune.player_state where account_id=%s", (account_id,))
+        player = query("""
+            select ps.* from dune.player_state ps
+            join dune.accounts a on a.id=ps.account_id
+            where ps.account_id=%s
+            order by ps.last_login_time desc nulls last,ps.id desc
+            limit 1
+        """, (account_id,))
         if not player:
             self.error(HTTPStatus.NOT_FOUND, "character not found")
             return {}
@@ -11905,6 +12050,11 @@ class Handler(BaseHTTPRequestHandler):
             from dune.player_state ps
             left join dune.accounts a on a.id=ps.account_id
             where ps.account_id=%s
+              and ps.id=(
+                select ps2.id from dune.player_state ps2
+                where ps2.account_id=ps.account_id
+                order by ps2.last_login_time desc nulls last,ps2.id desc limit 1
+              )
         """, (account_id,))
         if not active_rows:
             raise ValueError("account_id not found in dune.player_state")
@@ -11932,6 +12082,11 @@ class Handler(BaseHTTPRequestHandler):
                 or (a.platform_name is not distinct from ta.platform_name and a.platform_id is not distinct from ta.platform_id)
               )
             join dune.player_state ps on ps.account_id=a.id
+              and ps.id=(
+                select ps2.id from dune.player_state ps2
+                where ps2.account_id=a.id
+                order by ps2.last_login_time desc nulls last,ps2.id desc limit 1
+              )
             order by ps.last_login_time desc nulls last, ps.account_id
             limit %s
         """, (account_id, ADMIN_REFERENCE_LIMIT))
@@ -12127,7 +12282,11 @@ class Handler(BaseHTTPRequestHandler):
             "recentInventories": reference_query(errors, "recentInventories", """
                 with recent_players as (
                     select account_id, character_name, player_pawn_id, player_controller_id
-                    from dune.player_state
+                    from (
+                      select ps.*,row_number() over (partition by ps.account_id order by ps.last_login_time desc nulls last,ps.id desc) identity_rank
+                      from dune.player_state ps join dune.accounts a on a.id=ps.account_id
+                    ) canonical
+                    where identity_rank=1
                     order by last_login_time desc nulls last, account_id
                     limit %s
                 )
@@ -12374,9 +12533,24 @@ class Handler(BaseHTTPRequestHandler):
 
     def resolve_player(self, account_id=None, character_name=""):
         if account_id not in ("", None):
-            rows = query("select * from dune.player_state where account_id=%s", (int(account_id),))
+            rows = query("""
+                select ps.* from dune.player_state ps
+                join dune.accounts a on a.id=ps.account_id
+                where ps.account_id=%s
+                order by ps.last_login_time desc nulls last,ps.id desc
+                limit 1
+            """, (int(account_id),))
         else:
-            rows = query("select * from dune.player_state where character_name ilike %s order by last_login_time desc nulls last limit 2", (character_name,))
+            rows = query("""
+                with ranked as (
+                  select ps.*,row_number() over (partition by ps.account_id order by ps.last_login_time desc nulls last,ps.id desc) identity_rank
+                  from dune.player_state ps join dune.accounts a on a.id=ps.account_id
+                )
+                select * from ranked
+                where identity_rank=1 and character_name ilike %s
+                order by last_login_time desc nulls last
+                limit 2
+            """, (character_name,))
             if len(rows) > 1:
                 raise ValueError("character_name matched multiple players; use account_id")
         if not rows:
@@ -12385,12 +12559,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def inventory_for_grant(self, inventory_id):
         rows = query("""
+            with canonical_player_state as (
+              select ps.*,row_number() over (partition by ps.account_id order by ps.last_login_time desc nulls last,ps.id desc) identity_rank
+              from dune.player_state ps join dune.accounts a on a.id=ps.account_id
+            )
             select inv.id as inventory_id, inv.actor_id, inv.item_id, inv.inventory_type,
                    inv.max_item_count, inv.max_item_volume, count(i.id) as item_count,
                    ps.account_id, ps.character_name, ps.online_status::text
             from dune.inventories inv
             left join dune.items i on i.inventory_id = inv.id
-            left join dune.player_state ps on ps.player_pawn_id = inv.actor_id or ps.player_controller_id = inv.actor_id
+            left join canonical_player_state ps on ps.identity_rank=1 and (ps.player_pawn_id = inv.actor_id or ps.player_controller_id = inv.actor_id)
             where inv.id=%s
             group by inv.id, ps.account_id, ps.character_name, ps.online_status
         """, (inventory_id,))
@@ -12456,14 +12634,20 @@ class Handler(BaseHTTPRequestHandler):
                     if quality_level < 0 or quality_level > 100:
                         raise ValueError("quality_level must be between 0 and 100")
                     cursor.execute("""
+                        with canonical_player_state as (
+                          select ps.*,row_number() over (partition by ps.account_id order by ps.last_login_time desc nulls last,ps.id desc) identity_rank
+                          from dune.player_state ps join dune.accounts a on a.id=ps.account_id
+                        )
                         select ps.account_id,ps.character_name,eps.online_status::text as online_status
                         from dune.inventories inv
-                        join dune.player_state ps on ps.player_pawn_id=inv.actor_id or ps.player_controller_id=inv.actor_id
-                        join dune.encrypted_player_state eps on eps.account_id=ps.account_id
+                        join canonical_player_state ps on ps.identity_rank=1 and (ps.player_pawn_id=inv.actor_id or ps.player_controller_id=inv.actor_id)
+                        join dune.encrypted_player_state eps on eps.id=ps.id
                         where inv.id=%s
                         for update of eps
                     """, (row["inventory_id"],))
                     owner = cursor.fetchone()
+                    if not owner:
+                        raise ValueError("item inventory is not owned by the canonical player-state row; inspect identity integrity before editing")
                     if owner and str(owner.get("online_status") or "").lower() != "offline":
                         raise ValueError("player must be offline before item stack or quality changes")
                     cursor.execute("""
@@ -15598,6 +15782,7 @@ INDEX = r"""<!doctype html>
     .itemWorkbench { display:grid; grid-template-columns:minmax(0,1fr) 260px; gap:12px; margin:12px 0; }
     .itemCatalogTools { display:grid; grid-template-columns:2fr 1fr; gap:8px; margin-bottom:8px; }
     .itemCatalog { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:8px; max-height:430px; overflow:auto; padding:2px; }
+    .itemCatalogGroup { grid-column:1/-1; display:flex; justify-content:space-between; align-items:center; padding:10px 4px 3px; border-bottom:1px solid var(--line); color:var(--muted); }
     .itemCard { min-width:0; text-align:left; padding:8px; background:var(--panel2); white-space:normal; }
     .itemCard.selected { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
     .itemCard img, .itemInspect img { width:100%; aspect-ratio:1; object-fit:contain; background:radial-gradient(circle,#30352b 0,#11140f 70%); border-radius:5px; }
@@ -16654,6 +16839,7 @@ function templateDatalist(ref){
 }
 let visualItemCatalog = [];
 let selectedVisualItem = null;
+let visualItemLimit = 120;
 function itemIcon(item){ return item.imageUrl ? `/api/admin/item-icon?template=${encodeURIComponent(item.templateId)}` : ''; }
 function selectVisualItem(item){
   selectedVisualItem = item;
@@ -16677,8 +16863,19 @@ function renderVisualItems(){
   const query = (document.getElementById('itemCatalogSearch')?.value || '').toLowerCase();
   const category = document.getElementById('itemCatalogCategory')?.value || '';
   const favorites = new Set(JSON.parse(localStorage.getItem('duneItemFavorites') || '[]'));
-  const filtered = visualItemCatalog.filter(item => (!category || item.category === category) && (!query || `${item.name} ${item.templateId} ${item.category}`.toLowerCase().includes(query))).slice(0, 240);
-  root.innerHTML = filtered.map(item => `<button type="button" class="itemCard${selectedVisualItem?.templateId === item.templateId ? ' selected' : ''}" data-template="${esc(item.templateId)}">${itemIcon(item) ? `<img loading="lazy" src="${esc(itemIcon(item))}" alt="">` : ''}<strong>${favorites.has(item.templateId) ? '★ ' : ''}${esc(item.name)}</strong><small>${esc(item.templateId)}</small><small>${esc(item.category)}${item.tier ? ` · T${esc(item.tier)}` : ''}</small></button>`).join('') || '<p class="muted">No matching items.</p>';
+  const filtered = visualItemCatalog.filter(item => (!category || item.category === category) && (!query || `${item.name} ${item.templateId} ${item.category} ${item.kind || ''}`.toLowerCase().includes(query)));
+  const visible = filtered.slice(0, visualItemLimit);
+  let priorGroup = '';
+  root.innerHTML = visible.map(item => {
+    const group = `${item.catalogGroup || 'Items'} · ${item.category}`;
+    const heading = group === priorGroup ? '' : `<div class="itemCatalogGroup"><strong>${esc(group)}</strong><span>${esc(filtered.filter(row => `${row.catalogGroup || 'Items'} · ${row.category}` === group).length)} entries</span></div>`;
+    priorGroup = group;
+    return `${heading}<button type="button" class="itemCard${selectedVisualItem?.templateId === item.templateId ? ' selected' : ''}" data-template="${esc(item.templateId)}">${itemIcon(item) ? `<img loading="lazy" src="${esc(itemIcon(item))}" alt="">` : ''}<strong>${favorites.has(item.templateId) ? '★ ' : ''}${esc(item.name)}</strong><small>${esc(item.templateId)}</small><small>${esc(item.kind || 'item')} · ${esc(item.category)}${item.tier ? ` · T${esc(item.tier)}` : ''}</small></button>`;
+  }).join('') || '<p class="muted">No matching items.</p>';
+  const status = document.getElementById('itemCatalogStatus');
+  if (status) status.textContent = `${Math.min(visible.length, filtered.length)} of ${filtered.length} matches · ${visualItemCatalog.length} canonical templates`;
+  const more = document.getElementById('itemCatalogMore');
+  if (more) more.hidden = visible.length >= filtered.length;
   root.querySelectorAll('.itemCard').forEach(card => card.addEventListener('click', () => selectVisualItem(visualItemCatalog.find(item => item.templateId === card.dataset.template))));
 }
 async function loadVisualItemCatalog(){
@@ -16686,8 +16883,9 @@ async function loadVisualItemCatalog(){
   visualItemCatalog = payload.items || [];
   const select = document.getElementById('itemCatalogCategory');
   if (select) select.innerHTML = '<option value="">All categories</option>' + [...new Set(visualItemCatalog.map(item => item.category))].sort().map(value => `<option>${esc(value)}</option>`).join('');
-  document.getElementById('itemCatalogSearch')?.addEventListener('input', renderVisualItems);
-  select?.addEventListener('change', renderVisualItems);
+  document.getElementById('itemCatalogSearch')?.addEventListener('input', () => { visualItemLimit=120; renderVisualItems(); });
+  select?.addEventListener('change', () => { visualItemLimit=120; renderVisualItems(); });
+  document.getElementById('itemCatalogMore')?.addEventListener('click', () => { visualItemLimit += 120; renderVisualItems(); });
   renderVisualItems();
 }
 function mountVisualItemCatalog(){
@@ -16696,7 +16894,7 @@ function mountVisualItemCatalog(){
   const grid = template?.closest('.grid');
   if (!panel || !grid || document.getElementById('itemWorkbench')) return;
   panel.querySelector('.muted').textContent = 'Browse verified game items, inspect the exact template, then dry run before granting.';
-  grid.insertAdjacentHTML('beforebegin', `<div id="itemWorkbench" class="itemWorkbench"><div><div class="itemCatalogTools"><input id="itemCatalogSearch" type="search" placeholder="Search name, template, or category" aria-label="Search item catalog"><select id="itemCatalogCategory" aria-label="Filter item category"><option>Loading catalog…</option></select></div><div id="itemCatalog" class="itemCatalog"><p class="muted">Loading visual catalog…</p></div><p class="muted">Item data and icons: <a href="https://awakening.wiki/" target="_blank" rel="noreferrer">Dune: Awakening Community Wiki</a>. Showing up to 240 matches.</p></div><aside id="itemInspect" class="itemInspect"><h3>Inspection tray</h3><p class="muted">Select a card to verify its image, template, tier, and stack limit.</p></aside></div>`);
+  grid.insertAdjacentHTML('beforebegin', `<div id="itemWorkbench" class="itemWorkbench"><div><div class="itemCatalogTools"><input id="itemCatalogSearch" type="search" placeholder="Search name, template, category, or kind" aria-label="Search item catalog"><select id="itemCatalogCategory" aria-label="Filter item category"><option>Loading catalog…</option></select></div><div id="itemCatalog" class="itemCatalog"><p class="muted">Loading unified catalog…</p></div><div class="splitHeader"><p id="itemCatalogStatus" class="muted">Loading catalog metadata…</p><button id="itemCatalogMore" type="button" hidden>Load 120 more</button></div><p class="muted">Item data and icons: <a href="https://awakening.wiki/" target="_blank" rel="noreferrer">Dune: Awakening Community Wiki</a>. Inventory grants and this browser use the same case-insensitive canonical source.</p></div><aside id="itemInspect" class="itemInspect"><h3>Inspection tray</h3><p class="muted">Select a card to verify its image, exact template, catalog kind, tier, and stack limit.</p></aside></div>`);
   loadVisualItemCatalog().catch(error => { document.getElementById('itemCatalog').innerHTML = `<p class="dangerText">${esc(error.message)}</p>`; });
 }
 function checks(rows){
@@ -19231,7 +19429,7 @@ async function deleteBlueprint(blueprintId){
 async function characters(serial=loadSerial){
   const lastQuery = sessionStorage.getItem('duneAdminCharacterQuery') || '';
   if (serial !== loadSerial) return;
-  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Players</h2><div class="toolbar"><span class="pill">online and offline roster</span><button id="refreshRosterBtn">Refresh roster</button><button data-jump="mutations" class="primary">Admin Actions</button><button data-jump="settings">Settings</button></div></div><div id="roster"></div><div class="panelBand"><h2>Player Search</h2><div class="row"><input id="q" placeholder="Character, Funcom ID, platform ID" value="${esc(lastQuery)}"><button id="characterSearchBtn" class="primary">Search</button><button id="characterListAllBtn">List all</button></div><div id="results"></div></div><div id="detail"></div></div>`;
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Players</h2><div class="toolbar"><span class="pill">canonical online and offline roster</span><button id="refreshRosterBtn">Refresh roster</button><button data-jump="mutations" class="primary">Admin Actions</button><button data-jump="settings">Settings</button></div></div><div id="playerIdentityIntegrity"><div class="panelBand"><h2>Player Identity Integrity</h2><p class="muted">Inspecting account/player-state consistency…</p></div></div><div id="roster"></div><div class="panelBand"><h2>Player Search</h2><div class="row"><input id="q" placeholder="Character, Funcom ID, platform ID" value="${esc(lastQuery)}"><button id="characterSearchBtn" class="primary">Search</button><button id="characterListAllBtn">List all</button></div><div id="results"></div></div><div id="detail"></div></div>`;
   document.getElementById('refreshRosterBtn').addEventListener('click', e => runAction(e.currentTarget, 'Refreshing...', loadCharacterRoster));
   document.getElementById('characterSearchBtn').addEventListener('click', e => runAction(e.currentTarget, 'Searching...', searchCharacters));
   document.getElementById('characterListAllBtn').addEventListener('click', () => {
@@ -19241,8 +19439,23 @@ async function characters(serial=loadSerial){
   document.getElementById('q').addEventListener('keydown', e => {
     if (e.key === 'Enter') searchCharacters().catch(err => reportClientError(err, 'Search players'));
   });
-  await loadCharacterRoster();
+  await Promise.all([loadCharacterRoster(), loadPlayerIdentityIntegrity()]);
   if (lastQuery) await searchCharacters();
+}
+async function loadPlayerIdentityIntegrity(){
+  const data = await api('/api/admin/player-identity-integrity');
+  const root = document.getElementById('playerIdentityIntegrity');
+  if (!root) return;
+  const summary = data.summary || {};
+  const cleanup = data.cleanupPlan || {};
+  root.innerHTML = `<div class="panelBand ${summary.healthy ? '' : 'dangerZone'}"><div class="sectionHeader"><div><h2>Player Identity Integrity</h2><p class="muted">Roster, player detail, inventory resolution, and deletion select the newest valid player-state row per account. True orphans are separately repairable; duplicate valid rows remain visible for diagnosis and are never guessed away.</p></div><div class="toolbar"><span class="pill ${summary.healthy ? 'ok' : 'bad'}">${summary.healthy ? 'clean' : 'attention'}</span><button id="identityRefreshBtn">Recheck</button></div></div><div class="metricGrid">${metric('Accounts',summary.account_rows||0)}${metric('Player-state rows',summary.player_state_rows||0)}${metric('Duplicate accounts',summary.duplicate_accounts||0,summary.duplicate_accounts?'warn':'')}${metric('Orphan rows',summary.orphan_rows||0,summary.orphan_rows?'bad':'ok')}${metric('Missing pawn refs',summary.missing_pawn_references||0,summary.missing_pawn_references?'warn':'')}${metric('Missing controller refs',summary.missing_controller_references||0,summary.missing_controller_references?'warn':'')}</div><div class="grid"><label>Exact cleanup confirmation<input id="identityCleanupConfirm" placeholder="${esc(cleanup.confirm || '')}" autocomplete="off"></label><label>&nbsp;<span class="muted">Backup-first; deletes only rows with no matching account.</span></label></div><div class="commandBar"><button id="identityCleanupPreviewBtn">Preview orphan cleanup</button><button id="identityCleanupBtn" class="danger" ${data.mutationEnabled && cleanup.canExecute ? '' : 'disabled'}>Clean ${esc(cleanup.evidence?.orphanRows||0)} orphan rows</button></div><pre id="identityResult">${esc(JSON.stringify(cleanup,null,2))}</pre><details><summary>Duplicate valid account rows</summary>${table(data.duplicates||[])}</details><details><summary>Orphan row sample</summary>${table(data.orphans||[])}</details></div>`;
+  root.querySelector('.panelBand').insertAdjacentHTML('beforeend', `<details class="dangerZone"><summary>Native Character Deletion</summary><p class="muted">This calls the game's own <code>dune.delete_account</code> only after an exact-player preview, an offline recheck, a full database backup, advisory and row locks, and fingerprint verification. It then removes only player-state rows whose account no longer exists and proves the selected account and orphan rows are gone.</p><div class="grid"><label>Account ID<input id="identityDeleteAccount" inputmode="numeric"></label><label>Reason<input id="identityDeleteReason" maxlength="500" placeholder="Operator reason retained by native account-removal log"></label><label>Exact target confirmation<input id="identityDeleteConfirm" placeholder="Preview first" autocomplete="off"></label></div><div class="commandBar"><button id="identityDeletePreviewBtn">Preview selected character</button><button id="identityDeleteBtn" class="danger" disabled>Delete selected character</button></div><pre id="identityDeleteResult">No character deletion preview has run.</pre></details>`);
+  let identityDeletePlan=null;
+  document.getElementById('identityRefreshBtn').onclick=e=>runAction(e.currentTarget,'Checking…',loadPlayerIdentityIntegrity);
+  document.getElementById('identityCleanupPreviewBtn').onclick=e=>runAction(e.currentTarget,'Planning…',async()=>{const plan=await api('/api/admin/player-identity-integrity',{method:'POST',body:JSON.stringify({action:'preview-cleanup'})});document.getElementById('identityResult').textContent=JSON.stringify(plan,null,2);return plan;});
+  document.getElementById('identityCleanupBtn').onclick=e=>runAction(e.currentTarget,'Cleaning…',async()=>{const typed=document.getElementById('identityCleanupConfirm').value.trim();if(typed!==cleanup.confirm)throw new Error(`Type ${cleanup.confirm} exactly`);if(!confirm(`Delete exactly ${cleanup.evidence?.orphanRows||0} player-state rows that have no account? DASH will create a full database backup first.`))return;const result=await api('/api/admin/player-identity-integrity',{method:'POST',timeoutMs:180000,body:JSON.stringify({action:'cleanup-orphans',expectedFingerprint:cleanup.expectedFingerprint,confirm:typed})});document.getElementById('identityResult').textContent=JSON.stringify(result,null,2);await Promise.all([loadPlayerIdentityIntegrity(),loadCharacterRoster()]);notify('Orphan player-state cleanup verified','ok');return result;});
+  document.getElementById('identityDeletePreviewBtn').onclick=e=>runAction(e.currentTarget,'Planning…',async()=>{const accountId=document.getElementById('identityDeleteAccount').value;identityDeletePlan=await api('/api/admin/player-identity-integrity',{method:'POST',body:JSON.stringify({action:'preview-delete',accountId})});document.getElementById('identityDeleteConfirm').placeholder=identityDeletePlan.confirm;document.getElementById('identityDeleteResult').textContent=JSON.stringify(identityDeletePlan,null,2);document.getElementById('identityDeleteBtn').disabled=!(data.characterDeleteEnabled&&identityDeletePlan.canExecute);return identityDeletePlan;});
+  document.getElementById('identityDeleteBtn').onclick=e=>runAction(e.currentTarget,'Deleting…',async()=>{if(!identityDeletePlan?.canExecute)throw new Error('Preview an executable offline character first');const typed=document.getElementById('identityDeleteConfirm').value.trim();if(typed!==identityDeletePlan.confirm)throw new Error(`Type ${identityDeletePlan.confirm} exactly`);const reason=document.getElementById('identityDeleteReason').value.trim();if(reason.length<3)throw new Error('Enter a deletion reason');const c=identityDeletePlan.character||{};if(!confirm(`Permanently delete ${c.characterName||'character'} (account ${identityDeletePlan.accountId}) through the native game function?\n\nDASH will take a full database backup first. Recovery requires restoring that backup.`))return;const result=await api('/api/admin/player-identity-integrity',{method:'POST',timeoutMs:180000,body:JSON.stringify({action:'delete-character',accountId:identityDeletePlan.accountId,reason,expectedFingerprint:identityDeletePlan.expectedFingerprint,confirm:typed})});document.getElementById('identityDeleteResult').textContent=JSON.stringify(result,null,2);identityDeletePlan=null;await Promise.all([loadPlayerIdentityIntegrity(),loadCharacterRoster()]);notify('Native character deletion verified','ok');return result;});
 }
 async function cosmeticsConsole(serial=loadSerial){
   const [data, roster] = await Promise.all([api('/api/admin/cosmetics'), api('/api/characters/roster')]);

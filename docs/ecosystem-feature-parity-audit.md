@@ -16,8 +16,8 @@ or documented operational path.
 
 ## Audit snapshot
 
-- Audit date: **2026-07-16**, full GitHub search and remote HEAD refresh
-  **2026-07-17 00:48 UTC**
+- Audit date: **2026-07-17**, full GitHub search and remote HEAD refresh
+  **2026-07-17 06:15 UTC**
 - Search scope: GitHub repository search, project documentation, Funcom's
   self-host guide, CubeCoders' Dune template and guide, Nexus Mods' Dune:
   Awakening category, and public community discussions used only to discover
@@ -30,14 +30,15 @@ or documented operational path.
   desired-state-attestation, change-intelligence, and signed federated public
   directory tranches.
 
-The refresh repeated all four repository searches below. The active credible
-results introduced no new peer. Red-Blink advanced to `v1.3.59` and added a
-centralized public server directory; DASH implemented and then exceeded that
-operator outcome with signed pull federation. Current default-branch HEAD still
-matches every pinned fast-moving peer checked directly: Red-Blink
-`7ae3e773`, Manaiakalani `f1044620`, DST `7bafc137`, Sietch Console
-`80897fc5`, adainrivers `f7dfeb0d`, Easy Dune Admin `b530670f`,
-the4rchangel `749e77b8`, and BIGMOS `18ba6bc6`. Search-result-only cheat-guide
+The refresh repeated all four repository searches below and checked every
+pinned remote HEAD. No new credible peer appeared. Three sources advanced:
+Icehunter added canonical player-state joins and orphan cleanup after native
+character deletion (`a10c39c`); AlphaNine unified and reorganized item,
+schematic, research, recipe, and patent catalogs (`c319695`); atobo added
+permission/recovery/test hardening without a new operator outcome (`75af45e`).
+DASH implemented the first two outcomes with stronger fingerprint, backup,
+transaction, receipt, governance, and full-catalog contracts. Every other
+pinned peer still matched its recorded revision. Search-result-only cheat-guide
 and placeholder repositories remain excluded because they contain no credible
 self-host operator implementation.
 
@@ -81,8 +82,8 @@ webhooks, and Dune-specific announcement/player/status commands.
 
 | Peer | Pinned revision | Distinct operator outcomes | Confidence |
 | --- | --- | --- | --- |
-| [Icehunter/dune-admin](https://github.com/Icehunter/dune-admin) | `b1a86b16d4126e5052fb74f6463fe40ec1bce49a` | AMP/kubectl/Docker/local providers; local and Discord login; fine-grained RBAC; player/world/economy administration including offline stack/quality edits; welcome/MOTD; market bot; events; battle pass; scheduled operations | high |
-| [AlphaNineGaming/AlphaNine-Dune-Suite](https://github.com/AlphaNineGaming/AlphaNine-Dune-Suite) | `bf3126ffcd7de563eda128e486009d21a325af3b` | Windows installer/setup wizard, receiver lifecycle, player/item tools, local live maps, market listings, orphan/owned-base cleanup, diagnostics, settings portability, VM scheduling, and PWA metadata | moderate; source is present but current release notes outpace live-runtime evidence |
+| [Icehunter/dune-admin](https://github.com/Icehunter/dune-admin) | `a10c39c7e977947f6b8524433b99be82c02b547a` | AMP/kubectl/Docker/local providers; local and Discord login; fine-grained RBAC; player/world/economy administration including offline stack/quality edits and orphan-safe native character deletion; welcome/MOTD; market bot; events; battle pass; scheduled operations | high |
+| [AlphaNineGaming/AlphaNine-Dune-Suite](https://github.com/AlphaNineGaming/AlphaNine-Dune-Suite) | `c3196951919695b25112c570994ea88e18552203` | Windows installer/setup wizard, receiver lifecycle, player/item tools, unified item/schematic/research/recipe catalogs, local live maps, market listings, orphan/owned-base cleanup, diagnostics, settings portability, VM scheduling, and PWA metadata | moderate; source is present but current release notes outpace live-runtime evidence |
 | [Nerrowake/sietch-console](https://github.com/Nerrowake/sietch-console) | `80897fc5bc3efcbaff8b00f6a2ce57ba1b1e8aee` | Native Windows profiles, Hyper-V/Steam setup, INI editor, backups/cloud sync, remote API/SSE, diagnostics, metrics and player policy UI | moderate overall; source labels join parsing and kick/ban commands TODO/unverified |
 | [adainrivers/dune-dedicated-server-manager](https://github.com/adainrivers/dune-dedicated-server-manager) | `f7dfeb0d1327273299a03802eb16a71d4523e05c` | Cross-platform desktop profiles and SSH tunnels; lifecycle/diagnostics; scheduled maintenance; live RMQ admin commands; welcome packages | high |
 | [xixACExix/Simple-Dune-Awakening-Manager](https://github.com/xixACExix/Simple-Dune-Awakening-Manager) | `483530671c0bf74c61b059da269ad145de8124ad` | Windows/Hyper-V setup and lifecycle GUI; typed settings, reinstall-safe database/config backup/restore, and a keep-running health/repair watchdog | high |
@@ -119,7 +120,7 @@ webhooks, and Dune-specific announcement/player/status commands.
 | [n00bgames/eda-exchange-bot](https://github.com/n00bgames/eda-exchange-bot) | `ed471e473fc02b81e8c7557ca6e218e9b28308bc` | Permissioned Red-Blink addon for exchange seeding, grade-aware pricing and buyback | high |
 | [comfuzio/Dune-Awakening-remote-players-fix](https://github.com/comfuzio/Dune-Awakening-remote-players-fix) | `f47f0c0587bb7f43fc510c36ba76b0fcb4cb8646` | Automated k3s external-player routing repair | moderate |
 | [jeffstokes72/duneawakeningselfhost_ini_maker](https://github.com/jeffstokes72/duneawakeningselfhost_ini_maker) | `9d10bb7b31c1ed950a69d11fe2424f25c8a84a43` | Hosted UserGame/UserEngine INI generator | low to moderate; explicitly work in progress |
-| [atobo/dune-airdrop-addon](https://github.com/atobo/dune-airdrop-addon) | `cb13a7c6777edf6f56a3f73411d9e4a41c911aeb` | Movement/XP-aware playtime drops, daily streaks, weekly attendance, configurable tier multipliers and a retrying command-delivery daemon | high for source presence; runtime requires Dune-schema triggers plus Docker-socket companion |
+| [atobo/dune-airdrop-addon](https://github.com/atobo/dune-airdrop-addon) | `75af45ee3264dd6cc12bc1ccbd8692179a090a03` | Movement/XP-aware playtime drops, daily streaks, weekly attendance, configurable tier multipliers and a retrying command-delivery daemon | high for source presence; runtime requires Dune-schema triggers plus Docker-socket companion |
 | [yacketrj/dune-ops-observability-addon](https://github.com/yacketrj/dune-ops-observability-addon) | `271b45e7494646988bec678316659ef85313e710` | Read-only player summaries, active-rate/level/faction/guild KPIs, explicit capability reporting and constrained addon bridge | high |
 | [BIGMOS/Dune-Dash-tools](https://github.com/BIGMOS/Dune-Dash-tools) | `18ba6bc654ccfb4f7758d3887c2aa20bd141567d` | Interactive/noninteractive Windows backup of game database, k3s resources, DASH configuration and server PVC configuration with destination selection and keep-last retention | high for source presence; restore is documented as a manual `pg_restore` command |
 
@@ -233,7 +234,9 @@ without reproducing that wrapper.
 | Capability | Peer evidence | DASH status | Gap/action |
 | --- | --- | --- | --- |
 | Player/account/profile/search/history | All admin peers | Parity | Online/offline roster and deep detail |
+| Canonical post-1.5 player identity and orphan-safe character deletion | Icehunter `a10c39c` | DASH exceeds | Canonical valid-account reads prevent duplicate/stale roster, detail, inventory, and action resolution. The Players page exposes duplicate/orphan/actor-reference evidence; true-orphan cleanup and native deletion are fingerprint-bound, backup-first, offline/advisory/row locked, transactionally verified, privately receipted, and critically governed. Duplicate valid rows are reported but never guessed away; see `docs/player-identity-integrity.md` |
 | Inventory, currency, XP, skills, recipes, journey | Icehunter, the4rchangel, Red-Blink | Parity | Guarded native/DB paths |
+| Unified item, schematic, research/recipe, and patent catalog | AlphaNine `c319695` | DASH exceeds | One 2,265-row source feeds browsing and grant metadata with case-insensitive template identity, deterministic rich-row deduplication, inferred item/schematic/patent kinds, group/category/tier/name ordering, search/favorites/inspection, and progressive access to every match instead of a fixed first-page truncation; see `docs/player-identity-integrity.md` |
 | Existing inventory stack and quality editing | Icehunter 0.45 | DASH exceeds | Combined editor requires the owner offline, creates a full DB backup, locks item/owner state and rechecks offline status in one transaction, preserves all other composite fields through `dune.save_item`, verifies both values before commit, audits the receipt, and documents relog cache behavior |
 | Water, teleport, kick, vehicle spawn | adainrivers, DST, Red-Blink | Parity | Native runtime actions loaded |
 | Ban/unban and moderation case history | Manaiakalani, admin feedback | Parity | Source/schema audit found dashboard-local ban state rather than a native Dune ban contract; DASH adds append-only cases plus repeated confirmed native `KickPlayer` enforcement and labels the lack of login-level rejection |
