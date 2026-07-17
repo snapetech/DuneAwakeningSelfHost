@@ -1,6 +1,6 @@
 # Maintenance Updates
 
-This page documents the daily restart, backup, Steam-package update check, and return-online flow.
+This page documents the daily restart, backup, candidate-certified Steam-package update, and return-online flow.
 
 For operator-initiated browser updates, DASH adds a candidate-bound signed
 readiness gate before this existing workflow. It verifies recovery, current
@@ -17,6 +17,14 @@ operator certifies and applies the candidate in Infrastructure. The legacy
 fully automatic behavior requires the explicit
 `DUNE_HOTFIX_AUTO_APPLY_WITHOUT_READINESS=true` opt-out.
 
+Daily maintenance uses the same trust boundary. The default `certified` policy
+checks readiness before warning players and revalidates the exact staged
+candidate immediately before any disconnect or stop. When no update is staged,
+or a staged candidate lacks a current passing receipt, the useful daily restart
+continues on the currently loaded build without acquiring or ingesting package
+content. Candidate drift therefore cannot turn a scheduled current-build
+restart into an unreviewed update.
+
 ## Why 06:00
 
 The daily maintenance target is 06:00 local host time. The timer schedules the job at 05:30 so players receive a 30-minute warning window before the restart begins.
@@ -28,15 +36,16 @@ The 06:00 target is deliberately after Funcom's nightly maintenance window. If S
 ```text
 05:30  dune-daily-maintenance-schedule.timer fires
 05:30  scripts/schedule-daily-maintenance.sh posts a restart job to the admin panel
+05:30  staged candidate receives an early readiness check; uncertified falls back to current
 05:30  first in-game warning is sent immediately
 05:30-05:55  warnings repeat every 5 minutes
 05:55-06:00  warnings repeat every 1 minute
 06:00  final "starting now" warning is sent
+06:00  exact staged candidate and signed receipt are revalidated
 06:00  affected online players are soft-disconnected if the disconnect gates are enabled
 06:00  selected services are stopped
 06:00  maintenance backup is written
-06:00  SteamCMD is asked to update the local self-hosted server tool
-06:00  Steam package image tag is checked and updated if safe
+06:00  certified package images are loaded, or update is skipped on the current build
 06:00  if a newer Steam build was installed, kspls0 reboots and arms boot-time resume
 06:00  official DB upgrade patches are applied
 06:00  operator DB patch markers and stale player RabbitMQ sessions are cleaned
@@ -69,8 +78,31 @@ DUNE_DAILY_RESTART_ALLOW_OUTSIDE_WINDOW=false
 DUNE_DAILY_RESTART_DELAY=30min
 DUNE_DAILY_RESTART_REPEAT_SECONDS=600
 DUNE_DAILY_RESTART_MESSAGE=Daily maintenance restart at 6:00 AM. Please get to a safe place.
+DUNE_DAILY_RESTART_UPDATE_POLICY=certified
 DUNE_RESTART_CLEAR_PLAYER_RMQ_SESSIONS=true
 ```
+
+## Certified Maintenance Policy
+
+`DUNE_DAILY_RESTART_UPDATE_POLICY` has three explicit modes:
+
+| Policy | Acquisition during the job | Update behavior |
+| --- | --- | --- |
+| `current` | Never | Restart only the currently loaded build. |
+| `certified` | Never | Apply an already staged candidate only when its current signed readiness receipt passes immediately before shutdown; otherwise schedule a current-build restart. |
+| `automatic` | Legacy acquisition path | Refresh and ingest during maintenance. Rejected while `DUNE_UPDATE_REQUIRE_READINESS_RECEIPT=true`. |
+
+The scheduler's first readiness check avoids announcing an update that cannot
+run. The server-side second check is authoritative and happens before player
+disconnect, map stop, or backup. Targeted map restarts are always `current`;
+only an all-farm job can change the build. Jobs persisted by an older DASH
+release have no policy field and are treated as `current`.
+
+For certified apply, Admin passes
+`DUNE_RESTART_STEAM_UPDATE_MODE=none` into the exact restart job. Both the host
+and Docker-socket execution paths handle `none` before any Steam client or
+SteamCMD branch, so this mode cannot trigger a desktop client, acquire a
+different build, or race the signed candidate.
 
 ## Install The Timer
 
@@ -128,13 +160,13 @@ the scheduler fails before making the request.
 Executed restart jobs use this sequence:
 
 ```text
-soft-disconnect -> stop -> backup -> update -> start -> online wait
+candidate/receipt preflight -> soft-disconnect -> stop -> backup -> staged-only update -> start -> online wait
 ```
 
 With update-triggered reboot enabled and a new build detected, the sequence is:
 
 ```text
-soft-disconnect -> stop -> backup -> update -> durable checkpoint -> host reboot
+candidate/receipt preflight -> soft-disconnect -> stop -> backup -> staged-only update -> durable checkpoint -> host reboot
 -> boot-time start -> post-start hooks and farm readiness verification
 ```
 
@@ -146,7 +178,7 @@ checkpoint only after the normal `restart-target.sh` start phase succeeds.
 Executed shutdown jobs use this sequence:
 
 ```text
-soft-disconnect -> stop -> backup -> update
+candidate/receipt preflight -> soft-disconnect -> stop -> backup -> staged-only update
 ```
 
 Shutdown jobs leave services offline after the backup and update check.
@@ -155,14 +187,15 @@ If the stop phase fails, no backup, update check, or start is attempted. If the 
 
 ## Update Logic
 
-The update phase first refreshes or waits for the official self-hosted server
-Steam app:
+Only the explicit legacy `automatic` policy refreshes or waits for the official
+self-hosted server Steam app during the maintenance job:
 
 ```bash
 ./scripts/update-steam-tool.sh .env
 ```
 
-By default `DUNE_RESTART_STEAM_UPDATE_MODE=auto`. On desktop Steam hosts, where
+With that opt-out, `DUNE_RESTART_STEAM_UPDATE_MODE=auto` uses the desktop Steam
+path when available. On desktop Steam hosts, where
 the Steam client is already running and owns the library, DASH sends
 `steam://validate/4754530` to the client and waits for the local appmanifest
 download/staging state to settle before image ingest. This avoids running a

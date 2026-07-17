@@ -6,8 +6,9 @@ image tag and Steam build identity to current recovery, configuration,
 reliability, and post-start evidence. It then emits a private HMAC-signed
 receipt without downloading, loading, restarting, or mutating the game.
 
-This capability is enabled by default. Browser `game-apply` is fail-closed by
-default until the current candidate has a valid, unexpired receipt.
+This capability is enabled by default. Browser `game-apply` and certified
+scheduled maintenance are fail-closed by default until the current candidate
+has a valid, unexpired receipt.
 
 The browser flow is deliberately split:
 
@@ -21,6 +22,12 @@ state. After certification, `game-apply` revalidates the live candidate and
 sets `DUNE_RESTART_STEAM_UPDATE_MODE=none` for the guarded restart workflow.
 The restart can load and activate the already-staged candidate, but it cannot
 silently fetch a different Steam build after certification.
+
+The daily scheduler uses the same staged-only apply contract. It performs an
+early check before warnings, downgrades an uncertified candidate to a
+current-build restart, and makes Admin force a second candidate/receipt
+collection before any disconnect or stop. Targeted map restarts cannot change
+the farm build. See [`maintenance-updates.md`](maintenance-updates.md).
 
 Admin Panel's minimal image intentionally contains no Bash or Docker CLI. Stage
 and apply therefore run in a short-lived, uniquely named
@@ -137,6 +144,7 @@ DUNE_UPDATE_READINESS_POLL_SECONDS=300
 DUNE_UPDATE_READINESS_STEAM_DIR=/steam-server
 DUNE_UPDATE_READINESS_REQUIRED_HOST=kspls0
 DUNE_HOTFIX_AUTO_APPLY_WITHOUT_READINESS=false
+DUNE_DAILY_RESTART_UPDATE_POLICY=certified
 ```
 
 Changing these container settings requires recreating Admin Panel. Disabling
@@ -184,6 +192,11 @@ Steam package, then exits before image load, active-tag writes, or restart. The
 candidate metrics/alerts request operator review. Setting
 `DUNE_HOTFIX_AUTO_APPLY_WITHOUT_READINESS=true` restores the previous fully
 automatic stage/load/restart behavior and is intentionally explicit.
+
+The scheduled-maintenance `automatic` policy is likewise rejected while
+receipt enforcement is enabled. Certified jobs set acquisition mode to `none`
+in both restart execution implementations, so neither a desktop Steam client
+nor SteamCMD can run between certification and image ingest.
 
 ## Metrics And Alerts
 
@@ -239,5 +252,6 @@ docker compose --env-file .env.example config --quiet
 The test suite covers candidate binding, expiry, online-player semantics,
 failed-check refusal, nested/outer tampering, bounded inputs, first/tail tar
 header lookup, corrupt-header and compressed-archive rejection, parsing of
-Steam tag/build output, atomic-backup selection, browser execution enforcement,
+Steam tag/build output, atomic-backup selection, browser and scheduled
+execution enforcement, current-build fallback, acquisition-mode isolation,
 metrics, and route access.

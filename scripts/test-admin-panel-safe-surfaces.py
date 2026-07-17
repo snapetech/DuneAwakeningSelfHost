@@ -1933,6 +1933,88 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
 
         self.assertGreater(job["runAt"], job["createdAt"])
         self.assertEqual(captured["restart_at"], job["runAt"])
+        self.assertEqual("certified", job["updatePolicy"])
+
+    def test_restart_update_policy_is_target_safe_and_cannot_bypass_receipts(self):
+        targeted = self.panel.schedule_restart({
+            "target": "survival", "action": "restart", "delay": "immediate",
+            "announce": False, "execute": False,
+        })
+        self.assertEqual("current", targeted["updatePolicy"])
+        with self.assertRaisesRegex(ValueError, "targeted restarts"):
+            self.panel.schedule_restart({
+                "target": "survival", "action": "restart", "delay": "immediate",
+                "announce": False, "execute": False, "update_policy": "certified",
+            })
+        self.panel.UPDATE_READINESS_REQUIRE_RECEIPT = True
+        with self.assertRaisesRegex(ValueError, "RECEIPT"):
+            self.panel.schedule_restart({
+                "target": "all", "action": "restart", "delay": "immediate",
+                "announce": False, "execute": False, "update_policy": "automatic",
+            })
+
+    def test_certified_restart_revalidates_and_safely_falls_back_or_binds_staged_only_mode(self):
+        command = self.workspace / "scripts" / "restart-target.sh"
+        command.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        command.chmod(0o755)
+        self.panel.RESTART_COMMAND = str(command)
+        candidate = {
+            "imageTag": "dune_sb_1_4_11_0", "currentImageTag": "dune_sb_1_4_10_0",
+            "status": "update-available", "updateRequired": True, "fingerprint": "f" * 64,
+        }
+        self.panel.update_readiness_snapshot = lambda force=False: {"candidate": candidate}
+        self.panel.update_readiness_store = lambda: types.SimpleNamespace(status=lambda snapshot: {
+            "applyReady": False, "currentReceiptReady": False,
+            "evaluation": {"candidate": candidate, "failedChecks": ["backupVerified"]},
+        })
+        self.panel.soft_disconnect_online_players = lambda job: {"ok": True}
+        observed = []
+        self.panel.run_restart_command = lambda command, job, phase: observed.append(
+            (phase, job.get("_checkSteamUpdate"), job.get("_steamUpdateMode"))
+        ) or {"ok": True, "phase": phase, "returncode": 0, "output": phase}
+        self.panel.wait_for_restart_online = lambda: {"ok": True}
+        fallback = self.panel.execute_restart({
+            "id": "uncertified-candidate", "execute": True, "action": "restart", "target": "all",
+            "services": [], "backup": False, "updatePolicy": "certified",
+        })
+        self.assertTrue(fallback["ok"])
+        self.assertEqual("current", fallback["updatePreflight"]["effectivePolicy"])
+        self.assertTrue(fallback["updatePreflight"]["candidateUpdateBlocked"])
+        self.assertEqual(["backupVerified"], fallback["updatePreflight"]["failedChecks"])
+        self.assertEqual([("stop", False, "none"), ("update", False, "none"), ("start", False, "none")], observed)
+
+        self.panel.update_readiness_store = lambda: types.SimpleNamespace(status=lambda snapshot: {
+            "applyReady": True, "currentReceiptReady": True,
+            "evaluation": {"candidate": candidate, "failedChecks": []},
+            "latest": {"id": "update-readiness-" + "a" * 32, "receiptSha256": "b" * 64},
+        })
+        observed.clear()
+        self.panel.run_restart_command = lambda command, job, phase: observed.append(
+            (phase, job.get("_checkSteamUpdate"), job.get("_steamUpdateMode"))
+        ) or {"ok": True, "phase": phase, "returncode": 0, "output": phase}
+        self.panel.wait_for_restart_online = lambda: {"ok": True}
+        allowed = self.panel.execute_restart({
+            "id": "allowed-certified", "execute": True, "action": "restart", "target": "all",
+            "services": [], "backup": False, "updatePolicy": "certified",
+        })
+        self.assertTrue(allowed["ok"])
+        self.assertEqual([("stop", True, "none"), ("update", True, "none"), ("start", True, "none")], observed)
+        self.assertEqual("certified", allowed["updatePreflight"]["effectivePolicy"])
+
+    def test_restart_command_exports_the_job_bound_update_contract(self):
+        command = self.workspace / "scripts" / "restart-env.sh"
+        command.write_text(
+            '#!/bin/sh\nprintf "%s %s\\n" "$DUNE_RESTART_CHECK_STEAM_UPDATE" "$DUNE_RESTART_STEAM_UPDATE_MODE"\n',
+            encoding="utf-8",
+        )
+        command.chmod(0o755)
+        self.panel.RESTART_COMMAND = str(command)
+        result = self.panel.run_restart_command(command, {
+            "id": "bound-env", "target": "all", "services": [], "action": "restart",
+            "_checkSteamUpdate": True, "_steamUpdateMode": "none",
+        }, "update")
+        self.assertTrue(result["ok"])
+        self.assertEqual("true none", result["output"])
 
     def test_partition_31_adds_deep_desert_pvp_to_restart_targets(self):
         workspace = pathlib.Path(tempfile.mkdtemp())

@@ -240,7 +240,9 @@ run_steam_update_check() {
     steamcmd_command="${steamcmd_command:-steamcmd}"
     steam_mode="$(env_file_value DUNE_RESTART_STEAM_UPDATE_MODE "$env_file")"
     steam_mode="${steam_mode:-auto}"
-    if [ "$steam_mode" != "steamcmd" ]; then
+    if [ "$steam_mode" = "none" ]; then
+      printf 'Steam package acquisition disabled; using only the already staged candidate\n'
+    elif [ "$steam_mode" != "steamcmd" ]; then
       ./scripts/update-steam-tool.sh "$env_file"
     elif command -v "$steamcmd_command" >/dev/null 2>&1; then
       ./scripts/update-steam-tool.sh "$env_file"
@@ -1037,7 +1039,9 @@ def run_host_update_check():
         "apk add --no-cache bash python3 util-linux >/dev/null 2>&1 || true; "
         "if [ -x ./scripts/update-steam-tool.sh ]; then "
         "steam_mode=${DUNE_RESTART_STEAM_UPDATE_MODE:-" + shlex.quote(read_env_value(env_file, "DUNE_RESTART_STEAM_UPDATE_MODE") or "auto") + "}; "
-        "if [ \"$steam_mode\" = client ]; then "
+        "if [ \"$steam_mode\" = none ]; then "
+        "echo 'Steam package acquisition disabled; using only the already staged candidate'; "
+        "elif [ \"$steam_mode\" = client ]; then "
         + steam_client_host_trigger + " || echo 'Steam client package refresh skipped: no host Steam client visible from helper' >&2; "
         "elif [ \"$steam_mode\" != steamcmd ] && ( " + steam_client_host_trigger + " ); then "
         "true; "

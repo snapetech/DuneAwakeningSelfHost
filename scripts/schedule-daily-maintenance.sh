@@ -20,6 +20,8 @@ Environment:
   DUNE_DAILY_RESTART_REQUIRE_SOFT_DISCONNECT
                                         Require targeted player disconnect before stop.
                                         Default: false
+  DUNE_DAILY_RESTART_UPDATE_POLICY       current, certified, or automatic. Default: certified.
+                                        Certified candidates are revalidated before disconnect.
   DUNE_DAILY_RESTART_MESSAGE            Announcement text.
 USAGE
 }
@@ -112,16 +114,80 @@ require_soft_disconnect="$(env_or_file DUNE_DAILY_RESTART_REQUIRE_SOFT_DISCONNEC
 require_soft_disconnect="${require_soft_disconnect:-false}"
 message="$(env_or_file DUNE_DAILY_RESTART_MESSAGE)"
 message="${message:-Daily maintenance restart at 6:00 AM. Please get to a safe place.}"
-
 token="$(read_env DUNE_ADMIN_TOKEN || true)"
 require_token="$(read_env DUNE_ADMIN_REQUIRE_TOKEN || true)"
+require_readiness="$(read_env DUNE_UPDATE_REQUIRE_READINESS_RECEIPT || true)"
+require_readiness="${require_readiness:-true}"
+update_policy="$(env_or_file DUNE_DAILY_RESTART_UPDATE_POLICY)"
+update_policy="${update_policy:-certified}"
+case "$update_policy" in
+  current|certified|automatic) ;;
+  *)
+    printf 'invalid DUNE_DAILY_RESTART_UPDATE_POLICY: %s\n' "$update_policy" >&2
+    exit 2
+    ;;
+esac
+
+if [[ -z "$token" ]]; then
+  case "${require_token,,}" in
+    1|true|yes|on)
+      printf 'DUNE_ADMIN_REQUIRE_TOKEN is enabled but DUNE_ADMIN_TOKEN is empty\n' >&2
+      exit 1
+      ;;
+  esac
+fi
+if [[ "$update_policy" == automatic ]]; then
+  case "${require_readiness,,}" in
+    1|true|yes|on)
+      printf 'automatic daily updates are blocked while DUNE_UPDATE_REQUIRE_READINESS_RECEIPT=true\n' >&2
+      exit 2
+      ;;
+  esac
+fi
+
+auth_args=()
+if [[ -n "$token" ]]; then
+  auth_args=(-H "Authorization: Bearer $token")
+fi
+
+# Check before warning players, then let Admin revalidate immediately before
+# any disconnect or stop. An uncertified candidate never prevents the useful
+# daily restart; that job is pinned to the currently loaded build instead.
+effective_update_policy="$update_policy"
+if [[ "$update_policy" == certified ]]; then
+  readiness_json=""
+  if readiness_json="$(curl -fsS --max-time 180 "${auth_args[@]}" "http://${admin_host}:${admin_port}/api/ops/update-readiness?refresh=true" 2>/dev/null)"; then
+    parsed_update_policy=""
+    if parsed_update_policy="$(python3 -c '
+import json,sys
+d=json.load(sys.stdin); e=d.get("evaluation") or {}; c=e.get("candidate") or {}
+if c.get("status") == "current" and not c.get("updateRequired"):
+    print("current")
+elif c.get("updateRequired") and d.get("applyReady") and d.get("currentReceiptReady"):
+    print("certified")
+else:
+    print("current")
+' <<<"$readiness_json")"; then
+      effective_update_policy="$parsed_update_policy"
+    else
+      effective_update_policy="current"
+      printf 'update readiness response was invalid; daily restart is pinned to the current build\n' >&2
+    fi
+  else
+    effective_update_policy="current"
+    printf 'update readiness preflight unavailable; daily restart is pinned to the current build\n' >&2
+  fi
+  if [[ "$effective_update_policy" == current ]]; then
+    printf 'no certified staged update will be applied; daily restart is pinned to the current build\n' >&2
+  fi
+fi
 
 body="$(
-  python3 - "$restart_delay" "$repeat_seconds" "$require_soft_disconnect" "$message" <<'PY'
+  python3 - "$restart_delay" "$repeat_seconds" "$require_soft_disconnect" "$message" "$effective_update_policy" <<'PY'
 import json
 import sys
 
-delay, repeat_seconds, require_soft_disconnect, message = sys.argv[1:5]
+delay, repeat_seconds, require_soft_disconnect, message, update_policy = sys.argv[1:6]
 require_soft_disconnect = require_soft_disconnect.strip().lower() in ("1", "true", "yes", "on")
 print(json.dumps({
     "target": "all",
@@ -137,21 +203,13 @@ print(json.dumps({
     "execute": True,
     "backup": True,
     "require_soft_disconnect": require_soft_disconnect,
+    "update_policy": update_policy,
 }))
 PY
 )"
 
-args=(-fsS -H "Content-Type: application/json" -X POST --data "$body")
-if [[ -n "$token" ]]; then
-  args+=(-H "Authorization: Bearer $token")
-else
-  case "${require_token,,}" in
-    1|true|yes|on)
-      printf 'DUNE_ADMIN_REQUIRE_TOKEN is enabled but DUNE_ADMIN_TOKEN is empty\n' >&2
-      exit 1
-      ;;
-  esac
-fi
+args=(-fsS -H "Content-Type: application/json" -X POST --data "$body" "${auth_args[@]}")
 
 curl "${args[@]}" "http://${admin_host}:${admin_port}/api/ops/restart"
 printf '\n'
+printf 'daily maintenance update policy: %s\n' "$effective_update_policy"

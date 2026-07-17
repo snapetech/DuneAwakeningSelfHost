@@ -1345,6 +1345,7 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_STEAM_SERVER_DIR": {"group": "Install", "secret": False, "restart": False, "why": "Local Steam tool path used by image loading and preflight scripts."},
     "DUNE_IMAGE_TAG": {"group": "Install", "secret": False, "restart": True, "why": "Funcom container image tag used by Compose services."},
     "DUNE_RESTART_STEAM_UPDATE_MODE": {"group": "Install", "secret": False, "restart": False, "why": "Steam package refresh mode during maintenance: auto uses the running Steam client first, steamcmd is for headless hosts, none disables refresh."},
+    "DUNE_DAILY_RESTART_UPDATE_POLICY": {"group": "Install", "secret": False, "restart": False, "why": "Binds daily maintenance to current-only, candidate-certified, or explicitly legacy automatic update behavior."},
     "DUNE_RESTART_STEAM_CLIENT_TRIGGER": {"group": "Install", "secret": False, "restart": False, "why": "When a Steam client is running, ask it to validate/update the self-hosted server app before DASH ingests images."},
     "DUNE_RESTART_STEAM_CLIENT_WAIT_SECONDS": {"group": "Install", "secret": False, "restart": False, "why": "Maximum time maintenance waits for the Steam client appmanifest/download state to settle before image ingest."},
     "DUNE_RESTART_STEAM_CLIENT_MIN_WAIT_SECONDS": {"group": "Install", "secret": False, "restart": False, "why": "Minimum wait after asking the Steam client to validate/update, so queued client work can begin."},
@@ -2074,6 +2075,14 @@ def schedule_restart(body):
     require_soft_disconnect = str(
         body.get("require_soft_disconnect", body.get("requireSoftDisconnect", "true"))
     ).lower() in ("1", "true", "yes", "on")
+    default_update_policy = "current" if target != "all" else "certified" if UPDATE_READINESS_REQUIRE_RECEIPT else "automatic"
+    update_policy = str(body.get("update_policy", body.get("updatePolicy", default_update_policy))).strip().lower()
+    if update_policy not in {"current", "certified", "automatic"}:
+        raise ValueError("invalid restart update policy")
+    if target != "all" and update_policy != "current":
+        raise ValueError("targeted restarts must use the current-build update policy")
+    if update_policy == "automatic" and UPDATE_READINESS_REQUIRE_RECEIPT:
+        raise ValueError("automatic restart updates require DUNE_UPDATE_REQUIRE_READINESS_RECEIPT=false")
     now = time.time()
     run_at = now + ANNOUNCEMENT_DELAYS[delay_key]
     if announce and message and run_at <= now:
@@ -2093,6 +2102,7 @@ def schedule_restart(body):
         "execute": execute,
         "backup": backup,
         "requireSoftDisconnect": require_soft_disconnect,
+        "updatePolicy": update_policy,
         "status": "scheduled",
         "lastError": None,
     }
@@ -2153,6 +2163,10 @@ def run_restart_command(command, job, phase):
         "DUNE_RESTART_PHASE": phase,
         "COMPOSE_FILES": resolve_compose_files("compose.yaml:compose.allmaps.yaml"),
     })
+    if "_checkSteamUpdate" in job:
+        env["DUNE_RESTART_CHECK_STEAM_UPDATE"] = "true" if job.get("_checkSteamUpdate") else "false"
+    if job.get("_steamUpdateMode"):
+        env["DUNE_RESTART_STEAM_UPDATE_MODE"] = str(job["_steamUpdateMode"])
     try:
         result = subprocess.run(
             [str(command), job.get("target", "")],
@@ -2294,12 +2308,79 @@ def append_restart_warning(result, warning):
     result["warning"] = "; ".join(warnings)
 
 
+def restart_update_preflight(job):
+    """Bind a restart to the current build or an exact certified candidate."""
+    target = str(job.get("target") or "")
+    # Jobs persisted by older releases have no policy. Treat them as current-
+    # only instead of silently inheriting an update-capable default.
+    policy = str(job.get("updatePolicy") or "current").strip().lower()
+    if policy not in {"current", "certified", "automatic"}:
+        return {"ok": False, "policy": policy, "error": "invalid restart update policy"}
+    if target != "all" and policy != "current":
+        return {"ok": False, "policy": policy, "error": "targeted restarts cannot change the farm build"}
+    if policy == "current":
+        return {
+            "ok": True, "policy": policy, "checkSteamUpdate": False, "steamUpdateMode": "none",
+            "reason": "maintenance is bound to the currently loaded build",
+        }
+    if policy == "automatic":
+        if UPDATE_READINESS_REQUIRE_RECEIPT:
+            return {"ok": False, "policy": policy, "error": "automatic update acquisition is blocked while readiness receipts are required"}
+        return {
+            "ok": True, "policy": policy, "checkSteamUpdate": True, "steamUpdateMode": None,
+            "reason": "legacy automatic acquisition was explicitly enabled",
+        }
+    def current_fallback(reason, *, candidate=None, failed_checks=None):
+        return {
+            "ok": True, "policy": policy, "effectivePolicy": "current", "checkSteamUpdate": False,
+            "steamUpdateMode": "none", "candidate": candidate or {},
+            "candidateUpdateBlocked": bool((candidate or {}).get("updateRequired")),
+            "failedChecks": failed_checks or [], "reason": str(reason)[:1000],
+        }
+    if not UPDATE_READINESS_ENABLED:
+        return current_fallback("update readiness is disabled; maintenance is pinned to the current build")
+    try:
+        readiness = update_readiness_store().status(update_readiness_snapshot(force=True))
+    except Exception as exc:
+        return current_fallback(f"update readiness preflight failed; maintenance is pinned to the current build: {str(exc)[:800]}")
+    evaluation = readiness.get("evaluation") or {}
+    candidate = evaluation.get("candidate") or {}
+    candidate_status = str(candidate.get("status") or "unknown")
+    if candidate_status == "current" and not candidate.get("updateRequired"):
+        return current_fallback("the staged package already matches the loaded build", candidate=candidate)
+    if not candidate.get("updateRequired"):
+        return current_fallback("the staged update candidate is not identifiable; maintenance is pinned to the current build", candidate=candidate)
+    if not readiness.get("applyReady") or not readiness.get("currentReceiptReady"):
+        return current_fallback(
+            "the staged update candidate does not have a current passing readiness receipt; maintenance is pinned to the current build",
+            candidate=candidate, failed_checks=evaluation.get("failedChecks") or [],
+        )
+    latest = readiness.get("latest") or {}
+    return {
+        "ok": True, "policy": policy, "effectivePolicy": "certified", "checkSteamUpdate": True,
+        "steamUpdateMode": "none", "candidate": candidate,
+        "receiptId": latest.get("id"), "receiptSha256": latest.get("receiptSha256"),
+        "reason": "the exact staged candidate has a current passing readiness receipt",
+    }
+
+
 def execute_restart(job):
     if not job.get("execute"):
         return {"ok": True, "dryRun": True, "output": f"scheduled {job.get('action', 'restart')} reached run time; execute=false so no command was run"}
     command = pathlib.Path(RESTART_COMMAND)
     if not command.exists() or not os.access(command, os.X_OK):
         return {"ok": False, "error": f"restart command is not executable: {command}"}
+
+    update_preflight = restart_update_preflight(job)
+    if not update_preflight.get("ok"):
+        return {
+            "ok": False, "action": job.get("action", "restart"), "updatePreflight": update_preflight,
+            "error": update_preflight.get("error", "restart update preflight failed"),
+            "output": update_preflight.get("error", "restart update preflight failed"),
+        }
+    execution_job = dict(job)
+    execution_job["_checkSteamUpdate"] = bool(update_preflight.get("checkSteamUpdate"))
+    execution_job["_steamUpdateMode"] = update_preflight.get("steamUpdateMode")
 
     action = job.get("action", "restart")
     if job.get("requireSoftDisconnect", True):
@@ -2319,8 +2400,8 @@ def execute_restart(job):
             "skipped": "soft disconnect not required for this maintenance job",
         }
     stop_phase = "shutdown" if action == "shutdown" else "stop"
-    stop_result = run_restart_command(command, job, stop_phase)
-    result = {"ok": False, "action": action, "disconnect": disconnect_result, "stop": stop_result, "backup": None, "update": None, "start": None}
+    stop_result = run_restart_command(command, execution_job, stop_phase)
+    result = {"ok": False, "action": action, "updatePreflight": update_preflight, "disconnect": disconnect_result, "stop": stop_result, "backup": None, "update": None, "start": None}
     if not stop_result.get("ok"):
         result["output"] = stop_result.get("output", stop_result.get("error", ""))
         return result
@@ -2337,7 +2418,7 @@ def execute_restart(job):
                 result["error"] = str(exc)
                 return result
 
-    update_result = run_restart_command(command, job, "update")
+    update_result = run_restart_command(command, execution_job, "update")
     result["update"] = update_result
     if not update_result.get("ok"):
         update_warning = update_result.get("error") or "Steam package update check failed"
@@ -2353,7 +2434,7 @@ def execute_restart(job):
 
     if REBOOT_AFTER_STEAM_UPDATE and job.get("target") == "all" and steam_update_was_applied(update_result):
         set_restart_job_status(job.get("id", ""), "awaiting_reboot")
-        reboot_result = run_restart_command(command, job, "reboot")
+        reboot_result = run_restart_command(command, execution_job, "reboot")
         result["reboot"] = reboot_result
         result["ok"] = bool(reboot_result.get("ok"))
         result["deferred"] = True
@@ -2363,7 +2444,7 @@ def execute_restart(job):
             result["error"] = reboot_result.get("error") or "failed to request update-triggered host reboot"
         return result
 
-    start_result = run_restart_command(command, job, "start")
+    start_result = run_restart_command(command, execution_job, "start")
     result["start"] = start_result
     online_result = wait_for_restart_online()
     recovery_result = None
@@ -2517,7 +2598,13 @@ def announcement_worker():
                     job["lastError"] = None if result.get("ok") else result.get("error") or result.get("output")
                 restart_state["lastExecution"] = result
                 write_restart_state(restart_state)
-            audit_event("restart-execution", ok=result.get("ok"), job_id=due.get("id"), target=due.get("target"), dry_run=result.get("dryRun"), returncode=result.get("returncode"), error=result.get("error"), output=result.get("output"))
+            update_preflight = result.get("updatePreflight") or {}
+            audit_event(
+                "restart-execution", ok=result.get("ok"), job_id=due.get("id"), target=due.get("target"),
+                update_policy=due.get("updatePolicy", "current"), effective_update_policy=update_preflight.get("effectivePolicy", update_preflight.get("policy")),
+                update_receipt_id=update_preflight.get("receiptId"), dry_run=result.get("dryRun"),
+                returncode=result.get("returncode"), error=result.get("error"), output=result.get("output"),
+            )
         time.sleep(ANNOUNCEMENT_POLL_SECONDS)
 
 
@@ -11093,7 +11180,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.require_token()
                 body = parse_body(self)
                 result = schedule_restart(body)
-                self.audit("restart-schedule", job_id=result.get("id"), target=result.get("target"), delay=result.get("delay"), execute=result.get("execute"))
+                self.audit("restart-schedule", job_id=result.get("id"), target=result.get("target"), delay=result.get("delay"), execute=result.get("execute"), update_policy=result.get("updatePolicy"))
                 self.json({"ok": True, "job": result})
             elif parsed.path == "/api/ops/restart/cancel":
                 self.require_token()

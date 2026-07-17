@@ -156,7 +156,9 @@ test-deployment-assurance:
 
 test-update-readiness:
 	python3 scripts/test-update-readiness.py
+	python3 -m unittest scripts/test-daily-maintenance-scheduler.py
 	python3 -m py_compile admin/update_readiness.py scripts/test-update-readiness.py
+	bash -n scripts/schedule-daily-maintenance.sh scripts/restart-target.sh
 
 test-hotfix-update-readiness:
 	bash scripts/test-hotfix-update-readiness.sh
