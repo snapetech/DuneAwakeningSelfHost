@@ -6,7 +6,8 @@
         "backup-*",
         "service-control",
         "update-*",
-        "event-*"
+        "event-*",
+        "prometheus-alert-*"
       ],
       "format": "dash",
       "id": "operations",

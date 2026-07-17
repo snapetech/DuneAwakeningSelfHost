@@ -184,6 +184,6 @@ make validate
 ```
 
 A production canary verifies the authenticated calendar API, all eight metrics,
-loaded inactive alerts, a current 16-source signed briefing, and unchanged game
+loaded inactive alerts, a current 17-source signed briefing, and unchanged game
 map container identities/start times across the admin-only deployment. It does
 not schedule or execute a live restart.

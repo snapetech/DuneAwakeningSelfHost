@@ -13,7 +13,7 @@ stores, and its recommendations never execute automatically.
 
 ## What it reads
 
-The worker collects categorical verdicts from 16 existing DASH authorities:
+The worker collects categorical verdicts from 17 existing DASH authorities:
 
 | Source | Severity when unhealthy | Authority |
 | --- | --- | --- |
@@ -27,6 +27,7 @@ The worker collects categorical verdicts from 16 existing DASH authorities:
 | Latest assured recovery backup | Critical | Backup verdict inside the latest passing deployment receipt |
 | Automatic full-backup reliability | Critical | Scheduler worker, latest verified run, consecutive failures, lock deferrals, and next-run state |
 | Conflict-aware operations calendar | Critical | Unified future windows, deterministic conflicts, SLO coverage, and source integrity |
+| Prometheus on-call alert inbox | Critical | Collector authority, active severity, acknowledgement ownership, and transition delivery state |
 | PostgreSQL recovery | Warning | Latest disposable no-network restore receipt |
 | RabbitMQ recovery | Warning | Latest dual-broker networkless recovery receipt |
 | Capacity and scaling | Warning | Capacity ledger integrity and worker health |
@@ -35,7 +36,7 @@ The worker collects categorical verdicts from 16 existing DASH authorities:
 | Game update readiness | Warning | Candidate evaluation and current certification receipt |
 
 The collector catches each source independently. One broken subsystem becomes
-one explicit `collector-error` action instead of suppressing the other 15
+one explicit `collector-error` action instead of suppressing the other 16
 verdicts. Detail is whitespace-normalized, bounded to 500 characters, and does
 not include credential values.
 
@@ -82,7 +83,7 @@ backups/operator-evidence/operations-briefing-*.signed.json
 ## Freshness and worker behavior
 
 The Admin Panel starts one daemon worker. Source-affecting privileged-request
-completion, deployment, SLO, desired-state, recovery-proof, canary, and
+completion, deployment, Prometheus alert transitions, SLO, desired-state, recovery-proof, canary, and
 readiness events invalidate the cached fingerprint immediately and wake the
 worker. The five-minute poll remains a safety net for external or unobserved
 changes. A new receipt is generated only when:

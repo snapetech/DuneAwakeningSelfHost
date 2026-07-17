@@ -734,6 +734,13 @@ retries, retention, and monitoring as described in
 [`automatic-backups.md`](automatic-backups.md), and review cross-scheduler
 admission in [`operations-calendar.md`](operations-calendar.md).
 
+The Operations page also provides the durable Prometheus on-call inbox.
+Successful source polls alone advance or resolve alert state; failed polls
+retain the last active set. Repeated state is deduplicated, re-fires create a
+new generation, and authenticated acknowledgement records ownership without
+silencing Prometheus. Only transitions enter signed webhook delivery. See
+[`alert-inbox.md`](alert-inbox.md).
+
 Manual Postgres dump:
 
 ```bash

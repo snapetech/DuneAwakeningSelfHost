@@ -96,6 +96,15 @@ The local backup includes:
 - A transactionally consistent `change-intelligence.sqlite3` snapshot when the
   operational timeline exists. Verification extracts the matching policy/key
   from `config.tgz` and recomputes every event HMAC and chain link.
+- A transactionally consistent `alert-inbox.sqlite3` snapshot when the
+  Prometheus on-call inbox has initialized. Verification requires SQLite
+  integrity and the alerts, transitions, and metadata schema; the source and
+  backup stay private at mode `0600`.
+
+For an isolated alert-inbox recovery, use
+`scripts/restore-alert-inbox.sh --execute`; it does not target maps, Postgres,
+or RabbitMQ. The `restore-state.sh --alert-inbox` flag below is only for the
+complete stopped-world recovery path.
 - A consistent `audit-ledger.sqlite3`, `audit-ledger.hmac.key`, and
   `audit-ledger.anchor.json` set when the mutation flight recorder exists. The
   backup retries around concurrent admin events until the copied SQLite chain
@@ -141,7 +150,7 @@ Restores are disruptive. Stop game/admin writers first.
 RabbitMQ, saved-state, config, and TLS replacement are opt-in:
 
 ```bash
-./scripts/restore-state.sh --rabbitmq --server-saved --config --tls --community-rewards --moderation --base-gallery --operational-slo --capacity-intelligence --desired-state --change-intelligence --credential-lifecycle --change-approvals --audit-ledger .env backups/<UTC timestamp>
+./scripts/restore-state.sh --rabbitmq --server-saved --config --tls --community-rewards --moderation --base-gallery --operational-slo --capacity-intelligence --desired-state --change-intelligence --alert-inbox --credential-lifecycle --change-approvals --audit-ledger .env backups/<UTC timestamp>
 ```
 
 Run `--dry-run` first. If the manifest `WORLD_UNIQUE_NAME` differs from the current `.env`, restore will warn because that value is the durable FLS battlegroup identity.
@@ -149,7 +158,7 @@ Run `--dry-run` first. If the manifest `WORLD_UNIQUE_NAME` differs from the curr
 The equivalent Make target accepts optional restore layer flags:
 
 ```bash
-make restore-dry-run ENV_FILE=.env BACKUP_DIR=backups/<UTC timestamp> RESTORE_FLAGS='--rabbitmq --server-saved --config --tls --community-rewards --moderation --base-gallery --operational-slo --capacity-intelligence --desired-state --change-intelligence --credential-lifecycle --change-approvals --audit-ledger'
+make restore-dry-run ENV_FILE=.env BACKUP_DIR=backups/<UTC timestamp> RESTORE_FLAGS='--rabbitmq --server-saved --config --tls --community-rewards --moderation --base-gallery --operational-slo --capacity-intelligence --desired-state --change-intelligence --alert-inbox --credential-lifecycle --change-approvals --audit-ledger'
 ```
 
 ## Offsite and Onsite Sync

@@ -177,6 +177,13 @@ Public-directory alerts remain inactive while publication is disabled. Once
 enabled, they warn if the signed descriptor is invalid or remains non-current
 for five minutes, covering renderer/config/key failures without exporting its
 identity or URL as a metric label.
+Prometheus On-Call Alert Inbox adds label-free collector/worker state, active
+firing/pending/unacknowledged/critical/warning totals, consecutive failures,
+transition count, and last-success age. Source labels, annotations,
+fingerprints, operators, and notes remain in the authenticated API. Meta-alerts
+cover an invalid collector and stopped worker; DASH does not alert on its own
+unacknowledged metric because that could create a self-latching alert. See
+[`alert-inbox.md`](alert-inbox.md).
 Validate the exact Prometheus version and rules with:
 
 ```bash

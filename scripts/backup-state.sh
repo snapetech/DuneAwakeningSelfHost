@@ -86,6 +86,9 @@ change_intelligence_snapshot=""
 feature_readiness_history_db="${DUNE_FEATURE_READINESS_HISTORY_HOST_DATABASE:-backups/feature-readiness/history.sqlite3}"
 feature_readiness_history_snapshot=""
 [[ -f "$feature_readiness_history_db" ]] && feature_readiness_history_snapshot="feature-readiness-history.sqlite3"
+alert_inbox_db="${DUNE_ALERT_INBOX_HOST_DATABASE:-backups/alert-inbox/inbox.sqlite3}"
+alert_inbox_snapshot=""
+[[ -f "$alert_inbox_db" ]] && alert_inbox_snapshot="alert-inbox.sqlite3"
 canary_autopilot_state="${DUNE_CANARY_AUTOPILOT_HOST_STATE_FILE:-backups/admin-panel/canary-autopilot.json}"
 canary_autopilot_snapshot=""
 [[ -f "$canary_autopilot_state" ]] && canary_autopilot_snapshot="canary-autopilot.json"
@@ -220,6 +223,11 @@ if [[ "$dry_run" == true ]]; then
     printf 'feature_readiness_history_snapshot=feature-readiness-history.sqlite3\n'
   else
     printf 'feature_readiness_history_snapshot=<missing %s>\n' "$feature_readiness_history_db"
+  fi
+  if [[ -f "$alert_inbox_db" ]]; then
+    printf 'alert_inbox_snapshot=alert-inbox.sqlite3\n'
+  else
+    printf 'alert_inbox_snapshot=<not initialized>\n'
   fi
   if [[ -f "$canary_autopilot_state" ]]; then
     printf 'canary_autopilot_snapshot=canary-autopilot.json\n'
@@ -440,6 +448,21 @@ PY
   chmod 600 "${backup_dir}/feature-readiness-history.sqlite3"
 fi
 
+if [[ -f "$alert_inbox_db" ]]; then
+  python3 - "$alert_inbox_db" "${backup_dir}/alert-inbox.sqlite3" <<'PY'
+import sqlite3
+import sys
+source=sqlite3.connect(f"file:{sys.argv[1]}?mode=ro",uri=True)
+target=sqlite3.connect(sys.argv[2])
+try:
+    source.backup(target)
+    if target.execute("pragma integrity_check").fetchone()[0]!="ok": raise SystemExit("alert inbox snapshot failed integrity_check")
+finally:
+    target.close(); source.close()
+PY
+  chmod 600 "${backup_dir}/alert-inbox.sqlite3"
+fi
+
 if [[ -f "$canary_autopilot_state" ]]; then
   PYTHONPATH="$repo_root/admin" python3 - "$canary_autopilot_state" "${backup_dir}/canary-autopilot.json" <<'PY'
 import json
@@ -585,6 +608,7 @@ capacity_intelligence_snapshot=${capacity_snapshot}
 desired_state_snapshot=${desired_state_snapshot}
 change_intelligence_snapshot=${change_intelligence_snapshot}
 feature_readiness_history_snapshot=${feature_readiness_history_snapshot}
+alert_inbox_snapshot=${alert_inbox_snapshot}
 canary_autopilot_snapshot=${canary_autopilot_snapshot}
 credential_lifecycle_snapshot=${credential_lifecycle_snapshot}
 credential_lifecycle_anchor=${credential_lifecycle_anchor_snapshot}

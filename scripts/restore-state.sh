@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/restore-state.sh [--dry-run] [--rabbitmq] [--server-saved] [--config] [--tls] [--community-rewards] [--moderation] [--base-gallery] [--operational-slo] [--capacity-intelligence] [--desired-state] [--change-intelligence] [--credential-lifecycle] [--change-approvals] [--audit-ledger] [env-file] <backup-dir>
+Usage: ./scripts/restore-state.sh [--dry-run] [--rabbitmq] [--server-saved] [--config] [--tls] [--community-rewards] [--moderation] [--base-gallery] [--operational-slo] [--capacity-intelligence] [--desired-state] [--change-intelligence] [--alert-inbox] [--credential-lifecycle] [--change-approvals] [--audit-ledger] [env-file] <backup-dir>
 
 Restores the Postgres dump from a backup created by scripts/backup-state.sh.
 RabbitMQ and server saved-state archives are restored only when their flags are
@@ -14,7 +14,7 @@ world identity, secrets, local tuning, and RabbitMQ certificate material.
 Examples:
   ./scripts/restore-state.sh --dry-run .env backups/20260519T150000Z
   ./scripts/restore-state.sh .env backups/20260519T150000Z
-  ./scripts/restore-state.sh --rabbitmq --server-saved --config --tls --community-rewards --moderation --base-gallery --operational-slo --capacity-intelligence --desired-state --change-intelligence --credential-lifecycle --change-approvals --audit-ledger .env backups/20260519T150000Z
+  ./scripts/restore-state.sh --rabbitmq --server-saved --config --tls --community-rewards --moderation --base-gallery --operational-slo --capacity-intelligence --desired-state --change-intelligence --alert-inbox --credential-lifecycle --change-approvals --audit-ledger .env backups/20260519T150000Z
 EOF
 }
 
@@ -30,6 +30,7 @@ restore_operational_slo=false
 restore_capacity_intelligence=false
 restore_desired_state=false
 restore_change_intelligence=false
+restore_alert_inbox=false
 restore_credential_lifecycle=false
 restore_change_approvals=false
 restore_audit_ledger=false
@@ -82,6 +83,10 @@ while [[ "${1:-}" == --* ]]; do
       ;;
     --change-intelligence)
       restore_change_intelligence=true
+      shift
+      ;;
+    --alert-inbox)
+      restore_alert_inbox=true
       shift
       ;;
     --credential-lifecycle)
@@ -228,6 +233,27 @@ if [[ "$restore_change_intelligence" == true && ! -f "${backup_dir}/change-intel
   printf 'change-intelligence snapshot not found: %s\n' "${backup_dir}/change-intelligence.sqlite3" >&2
   exit 1
 fi
+if [[ "$restore_alert_inbox" == true ]]; then
+  if [[ ! -f "${backup_dir}/alert-inbox.sqlite3" ]]; then
+    printf 'alert-inbox snapshot not found: %s\n' "${backup_dir}/alert-inbox.sqlite3" >&2
+    exit 1
+  fi
+  PYTHONPATH=admin python3 - "${backup_dir}/alert-inbox.sqlite3" <<'PY'
+import pathlib
+import sqlite3
+import sys
+import alert_inbox
+path=pathlib.Path(sys.argv[1])
+db=sqlite3.connect(f"file:{path}?mode=ro",uri=True)
+try:
+    integrity=db.execute("pragma integrity_check").fetchone()[0]
+    tables={row[0] for row in db.execute("select name from sqlite_master where type='table'")}
+finally:
+    db.close()
+if integrity != "ok" or not {"alerts","transitions","metadata"} <= tables or alert_inbox.SCHEMA != "dash-alert-inbox/v1":
+    raise SystemExit("alert-inbox snapshot verification failed")
+PY
+fi
 if [[ "$restore_credential_lifecycle" == true ]]; then
   for artifact in credential-lifecycle.sqlite3 credential-lifecycle.anchor.json; do
     if [[ ! -f "${backup_dir}/${artifact}" ]]; then
@@ -355,6 +381,7 @@ if [[ "$dry_run" == true ]]; then
   printf 'restore_capacity_intelligence=%s\n' "$restore_capacity_intelligence"
   printf 'restore_desired_state=%s\n' "$restore_desired_state"
   printf 'restore_change_intelligence=%s\n' "$restore_change_intelligence"
+  printf 'restore_alert_inbox=%s\n' "$restore_alert_inbox"
   printf 'restore_credential_lifecycle=%s\n' "$restore_credential_lifecycle"
   printf 'restore_change_approvals=%s\n' "$restore_change_approvals"
   printf 'restore_audit_ledger=%s\n' "$restore_audit_ledger"
@@ -408,6 +435,14 @@ if [[ "$restore_change_intelligence" == true ]]; then
   mkdir -p backups/change-intelligence
   rm -f backups/change-intelligence/change-intelligence.sqlite3-wal backups/change-intelligence/change-intelligence.sqlite3-shm
   install -m 600 "${backup_dir}/change-intelligence.sqlite3" backups/change-intelligence/change-intelligence.sqlite3
+fi
+if [[ "$restore_alert_inbox" == true ]]; then
+  alert_inbox_target="${DUNE_ALERT_INBOX_HOST_DATABASE:-backups/alert-inbox/inbox.sqlite3}"
+  printf 'restoring verified Prometheus alert inbox from %s\n' "${backup_dir}/alert-inbox.sqlite3"
+  mkdir -p "$(dirname "$alert_inbox_target")"
+  chmod 700 "$(dirname "$alert_inbox_target")"
+  rm -f "${alert_inbox_target}-wal" "${alert_inbox_target}-shm"
+  install -m 600 "${backup_dir}/alert-inbox.sqlite3" "$alert_inbox_target"
 fi
 if [[ "$restore_credential_lifecycle" == true ]]; then
   printf 'restoring HMAC-verified credential lifecycle ledger and authenticated head from %s\n' "$backup_dir"

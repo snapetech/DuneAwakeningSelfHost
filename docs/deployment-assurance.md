@@ -207,6 +207,11 @@ lock and do not deadlock by reacquiring it. See
 [`automatic-backups.md`](automatic-backups.md) and
 [`operations-calendar.md`](operations-calendar.md).
 
+The manifest-bound control plane also includes `admin/alert_inbox.py`; the
+post-recreation convergence proof requires its Prometheus series and the final
+verified backup contains its SQLite history. See
+[`alert-inbox.md`](alert-inbox.md).
+
 Each required backup gets at most three attempts. A live file changing during
 tar creation, failed dump, failed archive, or failed verifier remains a failed
 attempt; the workflow never suppresses the error or relabels a partial set.

@@ -364,6 +364,34 @@ else
   printf 'WARN no feature-readiness-history.sqlite3 found in %s\n' "$backup_dir"
 fi
 
+if [[ -f "$backup_dir/alert-inbox.sqlite3" ]]; then
+  if PYTHONPATH="$repo_root/admin" python3 - "$backup_dir/alert-inbox.sqlite3" <<'PY'
+import pathlib
+import sqlite3
+import sys
+import alert_inbox
+
+database = pathlib.Path(sys.argv[1])
+try:
+    connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
+    integrity = connection.execute("pragma integrity_check").fetchone()[0]
+    tables = {row[0] for row in connection.execute("select name from sqlite_master where type='table'")}
+    connection.close()
+    required = {"alerts", "transitions", "metadata"}
+    raise SystemExit(0 if integrity == "ok" and required <= tables and alert_inbox.SCHEMA == "dash-alert-inbox/v1" else 1)
+except (OSError, sqlite3.Error):
+    raise SystemExit(1)
+PY
+  then
+    printf 'OK alert-inbox SQLite snapshot and schema %s\n' "$backup_dir/alert-inbox.sqlite3"
+  else
+    printf 'FAIL alert-inbox SQLite snapshot or schema %s\n' "$backup_dir/alert-inbox.sqlite3" >&2
+    ok=false
+  fi
+else
+  printf 'WARN no alert-inbox.sqlite3 found in %s\n' "$backup_dir"
+fi
+
 credential_lifecycle_artifacts=0
 for artifact in credential-lifecycle.sqlite3 credential-lifecycle.anchor.json; do
   [[ -f "$backup_dir/$artifact" ]] && credential_lifecycle_artifacts=$((credential_lifecycle_artifacts + 1))

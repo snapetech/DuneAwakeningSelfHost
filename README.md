@@ -237,7 +237,7 @@ label-free metrics, and alerts expose every decision without claiming scheduler
 metadata as proof. See [`docs/canary-autopilot.md`](docs/canary-autopilot.md).
 
 The same evidence now has a single operator-facing synthesis. The Overview
-briefing scores 16 authoritative sources, separates critical/warning/provider
+briefing scores 17 authoritative sources, separates critical/warning/provider
 follow-ups, links each action to its existing control surface, and retains only
 meaningful categorical changes in signed private receipts. It cannot execute a
 recommendation or touch maps, players, providers, or clients. See
@@ -250,6 +250,14 @@ critical overlaps block maintenance admission, uncovered disruptive work is
 flagged, and the complete disruptive runtime defers behind the same
 cross-process lock as backups and assured deployments. See
 [`docs/operations-calendar.md`](docs/operations-calendar.md).
+
+Prometheus alerts now reach an operator instead of ending at a rules page. The
+Operations inbox continuously imports the authoritative active set, retains
+deduplicated pending/firing/resolved/re-fire generations, attributes
+acknowledgement without silencing the source, and emits only state transitions
+through the existing signed webhook path. Failed polls resolve nothing, and
+the SQLite history is included in verified backups. See
+[`docs/alert-inbox.md`](docs/alert-inbox.md).
 
 Game-build upgrades now have their own candidate-bound safety gate. DASH binds
 the exact Steam build and Funcom image tag to a verified backup, isolated
@@ -603,7 +611,12 @@ uncovered disruptive windows remain visible, and the shared operation lock
 defers a due job before player disconnect or service control. See
 [`docs/operations-calendar.md`](docs/operations-calendar.md).
 
-Detailed runbooks: [`docs/operations.md`](docs/operations.md), [`docs/operations-calendar.md`](docs/operations-calendar.md), [`docs/maintenance-updates.md`](docs/maintenance-updates.md), and [`docs/troubleshooting.md`](docs/troubleshooting.md).
+The same Operations page includes the durable on-call inbox. It separates
+collector failure from source-alert state, provides authenticated refresh and
+acknowledgement, and exposes label-free metrics plus collector/worker
+meta-alerts. See [`docs/alert-inbox.md`](docs/alert-inbox.md).
+
+Detailed runbooks: [`docs/operations.md`](docs/operations.md), [`docs/operations-calendar.md`](docs/operations-calendar.md), [`docs/alert-inbox.md`](docs/alert-inbox.md), [`docs/maintenance-updates.md`](docs/maintenance-updates.md), and [`docs/troubleshooting.md`](docs/troubleshooting.md).
 
 ## Backups, Replication, And Restore
 
@@ -1004,6 +1017,8 @@ Server-browser ordering is deliberately split based on the observed in-game brow
 | `DUNE_CAPACITY_INTELLIGENCE_ENABLED` / `DUNE_CAPACITY_INTELLIGENCE_POLICY` / `DUNE_CAPACITY_INTELLIGENCE_DATABASE` | Retained map-efficiency/cold-start evidence, versioned model policy, and private SQLite ledger. |
 | `DUNE_CAPACITY_AUTO_APPLY_ENABLED` / `DUNE_CAPACITY_AUTO_APPLY_INTERVAL_HOURS` | Evidence-qualified gradual per-map retention convergence and its minimum interval. |
 | `DUNE_MAINTENANCE_PLANNER_ENABLED` / `DUNE_MAINTENANCE_PLANNER_POLICY` | Zero-inclusive aggregate population learning and the bounded policy used to rank exact low-impact maintenance windows. |
+| `DUNE_ALERT_INBOX_ENABLED` / `DUNE_ADMIN_ALERT_INBOX_MUTATIONS_ENABLED` | Enable authoritative Prometheus alert ingestion and separately admit operator acknowledgement; acknowledgement never silences or resolves the source. |
+| `DUNE_ALERT_INBOX_PROMETHEUS_URL` / `DUNE_ALERT_INBOX_POLL_SECONDS` / `DUNE_ALERT_INBOX_RETENTION_DAYS` | Private Prometheus origin, bounded collection cadence, and durable resolved-transition retention. |
 | `DUNE_ADMIN_DATABASE_QUERY_ENABLED` / `DUNE_ADMIN_DATABASE_WRITE_ENABLED` | Bounded one-statement SQL console and its separately gated write mode. |
 | `DUNE_ADMIN_DATABASE_ROW_MUTATIONS_ENABLED` / `DUNE_ADMIN_DATABASE_PASSWORD_MUTATIONS_ENABLED` | Primary-key row editor and coordinated credential-rotation gates. |
 | `DUNE_ADMIN_SERVICE_CONTROL_ENABLED` / `DUNE_ADMIN_STATEFUL_SERVICE_CONTROL_ENABLED` | Browser start/stop/restart gates; stateful Postgres/RabbitMQ control remains separately disabled by default. |
@@ -1149,6 +1164,7 @@ Start here:
 - [`docs/canary-autopilot.md`](docs/canary-autopilot.md): automatic pre-expiry/input-drift refresh for all isolated signed proofs, serialized execution, retry/backoff, dashboard/API, readiness, backups, metrics, alerts, and recovery.
 - [`docs/operations-briefing.md`](docs/operations-briefing.md): signed change-aware synthesis of operational evidence into a prioritized Overview queue, with scoring, freshness, backups, metrics, alerts, and a strict non-execution contract.
 - [`docs/operations-calendar.md`](docs/operations-calendar.md): unified scheduler horizon, deterministic conflict/SLO-coverage findings, admission guard, shared-lock maintenance deferral, metrics, alerts, and live validation.
+- [`docs/alert-inbox.md`](docs/alert-inbox.md): durable Prometheus alert ingestion, deduplication, re-fire generations, acknowledgement, signed transition delivery, backups, metrics, readiness, and recovery.
 - [`docs/addons.md`](docs/addons.md): SHA-pinned community UI addon lifecycle, permission approval, quarantine, and sandbox contract.
 - [`compose.admin-restore.yaml`](compose.admin-restore.yaml): temporary read-write data overlay for reviewed browser filesystem restores.
 - [`docs/red-blink-feature-parity-audit.md`](docs/red-blink-feature-parity-audit.md): pinned source comparison, completed operator-feature parity matrix, provenance, and validation limits.
@@ -1259,6 +1275,7 @@ Root-level research indexes:
 - [`docs/automatic-backups.md`](docs/automatic-backups.md): coverage-checked manual/scheduled backups, cross-process deployment serialization, retries, retention, diagnostics, metrics, alerts, and production canary procedure.
 - [`scripts/snapshot-audit-ledger.py`](scripts/snapshot-audit-ledger.py): retrying consistent SQLite/key/anchor flight-recorder snapshot.
 - [`scripts/restore-state.sh`](scripts/restore-state.sh): disruptive restore helper with opt-in state, configuration, private-ledger, and TLS layers.
+- [`scripts/restore-alert-inbox.sh`](scripts/restore-alert-inbox.sh): hostname-gated, admin-only alert history restore with integrity preflight, private rollback copy, and automatic health rollback.
 - [`scripts/verify-backup.sh`](scripts/verify-backup.sh): structural plus HMAC/anchor backup verification.
 - [`scripts/backup-restore-drill.py`](scripts/backup-restore-drill.py): actual isolated PostgreSQL restore, Dune validation, round-trip dump proof, cleanup, and private receipt.
 - [`scripts/install-backup-restore-drill-timer.sh`](scripts/install-backup-restore-drill-timer.sh): hardened daily recovery-proof systemd timer installer.

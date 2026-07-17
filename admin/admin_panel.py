@@ -61,6 +61,7 @@ import public_ip_canary
 import canary_autopilot
 import operations_briefing
 import operations_calendar
+import alert_inbox
 import moderation
 import base_creator
 import base_retirement
@@ -293,6 +294,7 @@ CONFIRM_MEMORY_LIMIT = "SET MAP MEMORY"
 CONFIRM_AUTOSCALER = "CHANGE AUTOSCALER"
 CONFIRM_BACKUP_SCHEDULE = "CHANGE BACKUP SCHEDULE"
 CONFIRM_CALENDAR_CONFLICT_OVERRIDE = "OVERRIDE SCHEDULE CONFLICT"
+CONFIRM_ALERT_ACKNOWLEDGEMENT = "ACKNOWLEDGE ALERT"
 CONFIRM_RESTORE_DRILL = "RUN ISOLATED RESTORE DRILL"
 CONFIRM_RABBITMQ_RESTORE_DRILL = "RUN NETWORKLESS RABBITMQ RESTORE DRILL"
 CONFIRM_SLO_INCIDENT = "ACKNOWLEDGE SLO INCIDENT"
@@ -523,6 +525,14 @@ OPERATIONS_BRIEFING_MIN_INTERVAL_SECONDS = max(60, min(int(os.environ.get("DUNE_
 OPERATIONS_BRIEFING_CHANGE_MIN_INTERVAL_SECONDS = max(5, min(int(os.environ.get("DUNE_OPERATIONS_BRIEFING_CHANGE_MIN_INTERVAL_SECONDS", "15")), 300))
 OPERATIONS_BRIEFING_EVENT_DEBOUNCE_SECONDS = max(1, min(int(os.environ.get("DUNE_OPERATIONS_BRIEFING_EVENT_DEBOUNCE_SECONDS", "5")), 60))
 OPERATIONS_BRIEFING_RETENTION = max(10, min(int(os.environ.get("DUNE_OPERATIONS_BRIEFING_RETENTION", "100")), 5000))
+ALERT_INBOX_ENABLED = os.environ.get("DUNE_ALERT_INBOX_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+ALERT_INBOX_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_ALERT_INBOX_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+ALERT_INBOX_DATABASE = pathlib.Path(os.environ.get("DUNE_ALERT_INBOX_DATABASE", str(BACKUPS_ROOT / "alert-inbox" / "inbox.sqlite3")))
+ALERT_INBOX_PROMETHEUS_URL = os.environ.get("DUNE_ALERT_INBOX_PROMETHEUS_URL", "http://prometheus:9090").rstrip("/")
+ALERT_INBOX_POLL_SECONDS = max(10, min(int(os.environ.get("DUNE_ALERT_INBOX_POLL_SECONDS", "30")), 3600))
+ALERT_INBOX_TIMEOUT_SECONDS = max(1.0, min(float(os.environ.get("DUNE_ALERT_INBOX_TIMEOUT_SECONDS", "5")), 30.0))
+ALERT_INBOX_RETENTION_DAYS = max(1, min(int(os.environ.get("DUNE_ALERT_INBOX_RETENTION_DAYS", "90")), 3650))
+ALERT_INBOX_HISTORY_LIMIT = max(100, min(int(os.environ.get("DUNE_ALERT_INBOX_HISTORY_LIMIT", "2000")), 10000))
 DEPLOYMENT_ASSURANCE_ENABLED = os.environ.get("DUNE_DEPLOYMENT_ASSURANCE_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 DEPLOYMENT_ASSURANCE_ROOT = pathlib.Path(os.environ.get("DUNE_DEPLOYMENT_ASSURANCE_STATE_DIR", str(BACKUPS_ROOT / "deployment-assurance")))
 DEPLOYMENT_ASSURANCE_WORKSPACE = pathlib.Path(os.environ.get("DUNE_DEPLOYMENT_ASSURANCE_WORKSPACE", str(ROOT)))
@@ -585,6 +595,11 @@ OPERATIONS_BRIEFING_RUNTIME = {
     "eventGenerations": 0, "lastInvalidatedAt": None,
     "lastInvalidationReason": None, "lastWakeAt": None,
 }
+ALERT_INBOX_STORE = None
+ALERT_INBOX_STORE_LOCK = threading.Lock()
+ALERT_INBOX_POLL_LOCK = threading.Lock()
+ALERT_INBOX_WORKER_STARTED = False
+ALERT_INBOX_RUNTIME = {"running": False, "lastPollAt": None, "lastResult": None, "lastError": None}
 MODERATION_STORE = moderation.Store(MODERATION_DATABASE, owner_uid=os.environ.get("DUNE_HOST_UID"), owner_gid=os.environ.get("DUNE_HOST_GID"))
 MODERATION_STORE_INITIALIZED = False
 MODERATION_STORE_LOCK = threading.Lock()
@@ -976,6 +991,25 @@ def _feature_readiness_operations_calendar_probe():
     return {"ready": ready, "state": "ready" if ready else "collector-error", "detail": detail[:500]}
 
 
+def _feature_readiness_alert_inbox_probe():
+    status = alert_inbox_public_status(limit=1)
+    summary = status.get("summary") or {}
+    collector = status.get("collector") or {}
+    ready = bool(
+        status.get("enabled") and status.get("ok") and ALERT_INBOX_WORKER_STARTED
+        and status.get("schemaVersion") == alert_inbox.SCHEMA
+    )
+    return {
+        "ready": ready,
+        "state": "ready" if ready else "collector-error",
+        "detail": (
+            f"active={summary.get('active', 0)}; unacknowledged={summary.get('unacknowledged', 0)}; "
+            f"poll age={collector.get('ageSeconds') if collector.get('ageSeconds') is not None else 'unknown'}s; "
+            f"transition-only delivery={bool((status.get('executionContract') or {}).get('transitionNotificationsOnly'))}"
+        )[:500],
+    }
+
+
 def _feature_readiness_autoscaler_probe():
     status = autoscaler_public_state(include_inventory=False)
     ready = bool(status.get("enabled") and not status.get("lastError"))
@@ -1153,6 +1187,7 @@ def feature_readiness_public_status(force=False):
         "canary-autopilot": _feature_readiness_probe("canary-autopilot", _feature_readiness_canary_autopilot_probe),
         "operations-briefing": _feature_readiness_probe("operations-briefing", _feature_readiness_operations_briefing_probe),
         "operations-calendar": _feature_readiness_probe("operations-calendar", _feature_readiness_operations_calendar_probe),
+        "alert-inbox": _feature_readiness_probe("alert-inbox", _feature_readiness_alert_inbox_probe),
         "backup-encryption": {
             "ready": bool(encryption.get("enabled") and encryption.get("configured")),
             "state": "ready" if encryption.get("configured") else "recipient-missing",
@@ -1709,6 +1744,15 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_OPERATIONS_BRIEFING_CHANGE_MIN_INTERVAL_SECONDS": {"group": "Operations", "secret": False, "restart": True, "why": "Short anti-storm interval for event-driven categorical source changes."},
     "DUNE_OPERATIONS_BRIEFING_EVENT_DEBOUNCE_SECONDS": {"group": "Operations", "secret": False, "restart": True, "why": "Coalesces related evidence invalidations before rebuilding a signed briefing."},
     "DUNE_OPERATIONS_BRIEFING_RETENTION": {"group": "Operations", "secret": False, "restart": True, "why": "Number of private signed Operator Briefing receipts retained."},
+    "DUNE_ALERT_INBOX_ENABLED": {"group": "Operations", "secret": False, "restart": True, "why": "Continuously ingests Prometheus alert state into the private durable on-call inbox."},
+    "DUNE_ADMIN_ALERT_INBOX_MUTATIONS_ENABLED": {"group": "Operations", "secret": False, "restart": True, "why": "Allows authenticated operators to acknowledge active alerts without silencing Prometheus."},
+    "DUNE_ALERT_INBOX_POLL_SECONDS": {"group": "Operations", "secret": False, "restart": True, "why": "Bounded cadence for authoritative Prometheus alert polling and resolution detection."},
+    "DUNE_ALERT_INBOX_TIMEOUT_SECONDS": {"group": "Operations", "secret": False, "restart": True, "why": "Bounded Prometheus request timeout; failed polls retain the last active alert set."},
+    "DUNE_ALERT_INBOX_RETENTION_DAYS": {"group": "Operations", "secret": False, "restart": True, "why": "Retention for resolved alert rows and transition history."},
+    "DUNE_ALERT_INBOX_HISTORY_LIMIT": {"group": "Operations", "secret": False, "restart": True, "why": "Hard cap on retained alert transitions independent of age retention."},
+    "DUNE_ALERT_INBOX_PROMETHEUS_URL": {"group": "Operations", "secret": False, "restart": True, "why": "Private Prometheus origin used for authoritative active-alert polling."},
+    "DUNE_ALERT_INBOX_DATABASE": {"group": "Operations", "secret": False, "restart": True, "why": "Container path for private durable alert and acknowledgement state."},
+    "DUNE_ALERT_INBOX_HOST_DATABASE": {"group": "Backups", "secret": False, "restart": False, "why": "Host path used by backup and isolated alert-inbox restore helpers."},
     "DUNE_CANARY_AUTOPILOT_POLL_SECONDS": {"group": "Operations", "secret": False, "restart": True, "why": "Bounded cadence for checking isolated proof freshness; it does not set the canary execution frequency."},
     "DUNE_CANARY_AUTOPILOT_REFRESH_BEFORE_HOURS": {"group": "Operations", "secret": False, "restart": True, "why": "Refresh lead time before an otherwise current signed canary receipt expires."},
     "DUNE_CANARY_AUTOPILOT_FAILURE_BACKOFF_SECONDS": {"group": "Operations", "secret": False, "restart": True, "why": "Initial retry delay after an isolated canary fails."},
@@ -2168,7 +2212,7 @@ OPERATIONS_BRIEFING_INVALIDATING_ACTIONS = {
     "canary-autopilot-run", "canary-autopilot-poll",
     "public-ip-repair-canary", "incident-readiness-certification",
 }
-OPERATIONS_BRIEFING_INVALIDATING_PREFIXES = ("deployment-assurance-",)
+OPERATIONS_BRIEFING_INVALIDATING_PREFIXES = ("deployment-assurance-", "prometheus-alert-")
 OPERATIONS_BRIEFING_FORCE_REFRESH_ACTIONS = {"scheduled-backup-finished", "backup-schedule"}
 
 
@@ -5426,6 +5470,19 @@ def operations_briefing_sources():
             f"next={(status.get('next') or {}).get('startsAtIso') or 'none'}",
         )
 
+    def alert_inbox_summary():
+        status = alert_inbox_public_status(limit=1); summary = status.get("summary") or {}; collector = status.get("collector") or {}
+        critical = int(summary.get("critical") or 0)
+        unacknowledged = int(summary.get("unacknowledged") or 0)
+        healthy = bool(status.get("enabled") and status.get("ok") and not critical and not unacknowledged)
+        state = "collector-error" if not status.get("ok") else f"critical-{critical}" if critical else f"unacknowledged-{unacknowledged}" if unacknowledged else "clear"
+        return (
+            state, healthy,
+            f"active={int(summary.get('active') or 0)}; critical={critical}; unacknowledged={unacknowledged}; "
+            f"collector age={collector.get('ageSeconds') if collector.get('ageSeconds') is not None else 'unknown'}s; "
+            f"delivery signed={bool((status.get('delivery') or {}).get('signedWebhooksEnabled'))}",
+        )
+
     def restore_summary():
         status = restore_drill_public_status(); latest = status.get("latest") or {}; healthy = bool(status.get("ready") and status.get("ok") and latest)
         return ("proven" if healthy else "proof-required", healthy, f"configured={bool(status.get('ready'))}; latest isolated PostgreSQL restore passed={bool(status.get('ok'))}; receipt={latest.get('id') or 'none'}")
@@ -5465,6 +5522,7 @@ def operations_briefing_sources():
     add("verified-backup", "Latest assured recovery backup", "critical", "infrastructure:backups", backup_summary)
     add("backup-automation", "Automatic full-backup reliability", "critical", "infrastructure:backups", backup_automation_summary)
     add("operations-calendar", "Conflict-aware operations calendar", "critical", "ops:operations-calendar", operations_calendar_summary)
+    add("alert-inbox", "Prometheus on-call alert inbox", "critical", "ops:alert-inbox", alert_inbox_summary)
     add("postgres-recovery", "PostgreSQL recovery proof", "warning", "infrastructure:restore-drill", restore_summary)
     add("rabbitmq-recovery", "RabbitMQ recovery proof", "warning", "infrastructure:rabbitmq-restore-drill", rabbit_summary)
     add("capacity-intelligence", "Capacity and scaling intelligence", "warning", "infrastructure:capacity", capacity_summary)
@@ -5602,6 +5660,145 @@ def ensure_operations_briefing_thread():
         return
     OPERATIONS_BRIEFING_WORKER_STARTED = True
     threading.Thread(target=operations_briefing_worker, name="operations-briefing-worker", daemon=True).start()
+
+
+def alert_inbox_store():
+    global ALERT_INBOX_STORE
+    with ALERT_INBOX_STORE_LOCK:
+        if ALERT_INBOX_STORE is None:
+            ALERT_INBOX_STORE = alert_inbox.Store(
+                ALERT_INBOX_DATABASE,
+                retention_days=ALERT_INBOX_RETENTION_DAYS,
+                history_limit=ALERT_INBOX_HISTORY_LIMIT,
+            ).initialize()
+        return ALERT_INBOX_STORE
+
+
+def alert_inbox_fetch():
+    parsed = urllib.parse.urlparse(ALERT_INBOX_PROMETHEUS_URL)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password or parsed.path not in ("", "/") or parsed.query or parsed.fragment:
+        raise ValueError("DUNE_ALERT_INBOX_PROMETHEUS_URL must be an http(s) origin without path, query, fragment, or URL userinfo")
+    request = urllib.request.Request(
+        ALERT_INBOX_PROMETHEUS_URL + "/api/v1/alerts",
+        headers={"Accept": "application/json", "User-Agent": "DASH-Alert-Inbox/1"},
+    )
+    opener = urllib.request.build_opener(outbound_webhooks.NoRedirect())
+    with opener.open(request, timeout=ALERT_INBOX_TIMEOUT_SECONDS) as response:
+        payload = response.read(5 * 1024 * 1024 + 1)
+    if len(payload) > 5 * 1024 * 1024:
+        raise ValueError("Prometheus alerts response exceeds 5 MiB")
+    return json.loads(payload.decode("utf-8"))
+
+
+def alert_inbox_poll():
+    if not ALERT_INBOX_ENABLED:
+        raise PermissionError("alert inbox is disabled; set DUNE_ALERT_INBOX_ENABLED=true")
+    if not ALERT_INBOX_POLL_LOCK.acquire(blocking=False):
+        raise RuntimeError("alert inbox collection is already in progress")
+    ALERT_INBOX_RUNTIME["running"] = True
+    try:
+        store = alert_inbox_store()
+        prior = store.status(limit=1)
+        result = store.sync(alert_inbox_fetch())
+        for transition in result.get("transitions") or []:
+            audit_event(
+                "prometheus-alert-" + transition["transition"],
+                ok=transition["transition"] == "resolved",
+                alert_fingerprint=transition["fingerprint"],
+                alert_generation=transition["generation"],
+                alert_name=transition["name"],
+                alert_severity=transition["severity"],
+                alert_state=transition["state"],
+                alert_summary=transition["summary"],
+                game_data_mutation_executed=False,
+                map_lifecycle_invoked=False,
+                client_machine_touched=False,
+            )
+        if not prior.get("ok") or not (prior.get("collector") or {}).get("lastSuccessAt"):
+            request_operations_briefing_refresh("alert-inbox:collector-recovered")
+        ALERT_INBOX_RUNTIME.update({
+            "lastPollAt": alert_inbox.iso(), "lastResult": {
+                "ok": True, "observed": result.get("observed", 0),
+                "transitions": len(result.get("transitions") or []),
+            }, "lastError": None,
+        })
+        return result
+    except Exception as exc:
+        try:
+            alert_inbox_store().record_poll_error(exc)
+        except Exception:
+            pass
+        ALERT_INBOX_RUNTIME.update({"lastPollAt": alert_inbox.iso(), "lastResult": None, "lastError": str(exc)[:1000]})
+        raise
+    finally:
+        ALERT_INBOX_RUNTIME["running"] = False
+        ALERT_INBOX_POLL_LOCK.release()
+
+
+def alert_inbox_public_status(limit=200):
+    if not ALERT_INBOX_ENABLED:
+        return {
+            "ok": True, "enabled": False, "schemaVersion": alert_inbox.SCHEMA,
+            "summary": {"active": 0, "firing": 0, "pending": 0, "unacknowledged": 0, "critical": 0, "warning": 0, "history": 0},
+            "alerts": [], "history": [], "runtime": dict(ALERT_INBOX_RUNTIME),
+        }
+    try:
+        status = alert_inbox_store().status(limit=limit)
+    except Exception as exc:
+        status = {"ok": False, "schemaVersion": alert_inbox.SCHEMA, "summary": {}, "alerts": [], "history": [], "error": str(exc)[:1000]}
+    stale_after = max(60, ALERT_INBOX_POLL_SECONDS * 3)
+    collector = status.get("collector") or {}
+    age = collector.get("ageSeconds")
+    collector["staleAfterSeconds"] = stale_after
+    if age is None or age > stale_after:
+        status["ok"] = False
+        status.setdefault("error", "alert inbox has no current successful Prometheus poll")
+    status["collector"] = collector
+    status.update({
+        "enabled": True,
+        "mutationEnabled": bool(MUTATIONS_ENABLED and ALERT_INBOX_MUTATIONS_ENABLED),
+        "pollSeconds": ALERT_INBOX_POLL_SECONDS,
+        "retentionDays": ALERT_INBOX_RETENTION_DAYS,
+        "runtime": dict(ALERT_INBOX_RUNTIME),
+        "delivery": {
+            "signedWebhooksEnabled": WEBHOOK_DISPATCHER.enabled,
+            "transitionEvents": ["pending", "firing", "refiring", "resolved", "acknowledged"],
+        },
+    })
+    return status
+
+
+def alert_inbox_prometheus():
+    if not ALERT_INBOX_ENABLED:
+        return "dash_alert_inbox_enabled 0\ndash_alert_inbox_collector_up 1\ndash_alert_inbox_worker_running 0\ndash_alert_inbox_active 0\ndash_alert_inbox_firing 0\ndash_alert_inbox_pending 0\ndash_alert_inbox_unacknowledged 0\ndash_alert_inbox_critical 0\ndash_alert_inbox_warning 0\ndash_alert_inbox_consecutive_failures 0\ndash_alert_inbox_transitions_total 0\ndash_alert_inbox_last_success_timestamp_seconds 0\ndash_alert_inbox_age_seconds 0\n"
+    try:
+        return alert_inbox_store().prometheus(
+            enabled=True,
+            worker_running=ALERT_INBOX_WORKER_STARTED,
+            stale_after_seconds=max(60, ALERT_INBOX_POLL_SECONDS * 3),
+        )
+    except Exception:
+        return "dash_alert_inbox_enabled 1\ndash_alert_inbox_collector_up 0\ndash_alert_inbox_worker_running 0\ndash_alert_inbox_active 0\ndash_alert_inbox_firing 0\ndash_alert_inbox_pending 0\ndash_alert_inbox_unacknowledged 0\ndash_alert_inbox_critical 0\ndash_alert_inbox_warning 0\ndash_alert_inbox_consecutive_failures 1\ndash_alert_inbox_transitions_total 0\ndash_alert_inbox_last_success_timestamp_seconds 0\ndash_alert_inbox_age_seconds 0\n"
+
+
+def alert_inbox_worker():
+    while True:
+        try:
+            alert_inbox_poll()
+        except RuntimeError as exc:
+            if "already in progress" not in str(exc):
+                ALERT_INBOX_RUNTIME["lastError"] = str(exc)[:1000]
+        except Exception as exc:
+            ALERT_INBOX_RUNTIME["lastError"] = str(exc)[:1000]
+        time.sleep(ALERT_INBOX_POLL_SECONDS)
+
+
+def ensure_alert_inbox_thread():
+    global ALERT_INBOX_WORKER_STARTED
+    if not ALERT_INBOX_ENABLED or ALERT_INBOX_WORKER_STARTED:
+        return
+    ALERT_INBOX_WORKER_STARTED = True
+    threading.Thread(target=alert_inbox_worker, name="alert-inbox-worker", daemon=True).start()
 
 
 def maintenance_outcome_public_status(limit=100):
@@ -7353,7 +7550,7 @@ def verify_backup_set_native(path):
             errors.append(f"FAIL canary autopilot scheduler state {canary_state}: {exc}")
     else:
         output.append(f"WARN no canary-autopilot.json found in {path}")
-    for name in ("community-rewards.sqlite3", "moderation.sqlite3", "base-gallery.sqlite3", "operational-slo.sqlite3", "capacity-intelligence.sqlite3", "desired-state.sqlite3", "change-intelligence.sqlite3", "feature-readiness-history.sqlite3", "credential-lifecycle.sqlite3", "change-approvals.sqlite3"):
+    for name in ("community-rewards.sqlite3", "moderation.sqlite3", "base-gallery.sqlite3", "operational-slo.sqlite3", "capacity-intelligence.sqlite3", "desired-state.sqlite3", "change-intelligence.sqlite3", "feature-readiness-history.sqlite3", "alert-inbox.sqlite3", "credential-lifecycle.sqlite3", "change-approvals.sqlite3"):
         database = path / name
         if not database.is_file():
             output.append(f"WARN no {name} found in {path}")
@@ -7369,6 +7566,19 @@ def verify_backup_set_native(path):
             output.append(f"OK SQLite snapshot {database}")
         except (sqlite3.Error, ValueError) as exc:
             errors.append(f"FAIL SQLite snapshot {database}: {exc}")
+    alert_database = path / "alert-inbox.sqlite3"
+    if alert_database.is_file():
+        try:
+            connection = sqlite3.connect(f"file:{alert_database}?mode=ro", uri=True)
+            try:
+                tables = {row[0] for row in connection.execute("select name from sqlite_master where type='table'")}
+            finally:
+                connection.close()
+            if not {"alerts", "transitions", "metadata"} <= tables or alert_inbox.SCHEMA != "dash-alert-inbox/v1":
+                raise ValueError("required alert-inbox schema is missing")
+            output.append(f"OK alert-inbox schema {alert_database}")
+        except (sqlite3.Error, ValueError) as exc:
+            errors.append(f"FAIL alert-inbox schema {alert_database}: {exc}")
     capacity_database = path / "capacity-intelligence.sqlite3"
     if capacity_database.is_file():
         capacity_check = capacity_intelligence.Store(capacity_database, CAPACITY_INTELLIGENCE_POLICY).verify()
@@ -10541,6 +10751,7 @@ def backup_coverage(result):
         "desiredState": DESIRED_STATE_ENABLED,
         "changeIntelligence": CHANGE_INTELLIGENCE_ENABLED,
         "featureReadinessHistory": FEATURE_READINESS_HISTORY_ENABLED,
+        "alertInbox": ALERT_INBOX_ENABLED,
         "credentialLifecycle": CREDENTIAL_LIFECYCLE_ENABLED,
         "auditLedger": AUDIT_LEDGER_ENABLED,
         "changeApprovals": DUAL_CONTROL_ENABLED,
@@ -10650,6 +10861,7 @@ def create_maintenance_backup(job):
         ("moderation", MODERATION_ENABLED, MODERATION_DATABASE, "moderation.sqlite3", moderation_store),
         ("baseGallery", BASE_CREATOR_ENABLED, BASE_GALLERY_DATABASE, "base-gallery.sqlite3", base_gallery),
         ("featureReadinessHistory", FEATURE_READINESS_HISTORY_ENABLED, FEATURE_READINESS_HISTORY_DATABASE, "feature-readiness-history.sqlite3", feature_readiness_history_store),
+        ("alertInbox", ALERT_INBOX_ENABLED, ALERT_INBOX_DATABASE, "alert-inbox.sqlite3", alert_inbox_store),
     )
     for artifact, enabled, source, name, initialize in sqlite_artifacts:
         if not enabled:
@@ -11625,6 +11837,7 @@ class Handler(BaseHTTPRequestHandler):
                 metrics += credential_lifecycle_prometheus()
                 metrics += backup_schedule_prometheus()
                 metrics += operations_calendar_prometheus()
+                metrics += alert_inbox_prometheus()
                 metrics += rabbitmq_restore_drill_prometheus()
                 if UPDATE_READINESS_ENABLED:
                     try:
@@ -11942,6 +12155,16 @@ class Handler(BaseHTTPRequestHandler):
                 self.require_token()
                 params = urllib.parse.parse_qs(parsed.query)
                 self.json(operations_calendar_public_status(horizon_days=(params.get("horizonDays") or [OPERATIONS_CALENDAR_HORIZON_DAYS])[0]))
+            elif parsed.path == "/api/ops/alerts":
+                self.require_token()
+                params = urllib.parse.parse_qs(parsed.query)
+                if str((params.get("refresh") or [""])[0]).lower() in ("1", "true", "yes", "on"):
+                    try:
+                        alert_inbox_poll()
+                    except RuntimeError as exc:
+                        if "already in progress" not in str(exc):
+                            raise
+                self.json(alert_inbox_public_status(limit=(params.get("limit") or ["200"])[0]))
             elif parsed.path == "/api/ops/backups/download":
                 self.require_token()
                 params = urllib.parse.parse_qs(parsed.query)
@@ -12917,6 +13140,32 @@ class Handler(BaseHTTPRequestHandler):
                     live_environment_written=False, live_tls_written=False,
                     live_systemd_written=False, external_network_called=False,
                 )
+                self.json(result)
+            elif parsed.path == "/api/ops/alerts":
+                self.require_token()
+                self.require_mutations()
+                if not ALERT_INBOX_ENABLED or not ALERT_INBOX_MUTATIONS_ENABLED:
+                    raise PermissionError("alert acknowledgement is disabled; enable the alert inbox and DUNE_ADMIN_ALERT_INBOX_MUTATIONS_ENABLED")
+                body = parse_body(self)
+                if str(body.get("action") or "acknowledge").strip().lower() != "acknowledge":
+                    raise ValueError("alert inbox action must be acknowledge")
+                require_confirmation(body, CONFIRM_ALERT_ACKNOWLEDGEMENT)
+                principal = access_control.public_principal(getattr(self, "auth_principal", None)) or {}
+                result = alert_inbox_store().acknowledge(
+                    body.get("fingerprint"), principal.get("id") or "unknown", body.get("note") or "",
+                )
+                transition = result.get("transition") or {}
+                if not result.get("idempotent"):
+                    self.audit(
+                        "prometheus-alert-acknowledged", ok=True,
+                        alert_fingerprint=(result.get("alert") or {}).get("fingerprint"),
+                        alert_generation=(result.get("alert") or {}).get("generation"),
+                        alert_name=(result.get("alert") or {}).get("name"),
+                        alert_severity=(result.get("alert") or {}).get("severity"),
+                        principal_id=principal.get("id"), acknowledgement_note=body.get("note") or "",
+                        transition_id=transition.get("id"), game_data_mutation_executed=False,
+                        map_lifecycle_invoked=False,
+                    )
                 self.json(result)
             elif parsed.path == "/api/ops/canary-autopilot":
                 self.require_token()
@@ -20507,6 +20756,15 @@ function operationsCalendarPanel(data={}){
   const verdict=errors.length?`<div class="notice bad">One or more calendar authorities failed. The remaining rows are retained, but this is not a complete scheduling view.</div>${table(findings)}`:findings.length?`<div class="notice ${tone}">Schedule findings require operator review before the affected window.</div>${table(findings)}`:'<div class="notice ok">No conflicting or uncovered disruptive windows were found in the current horizon.</div>';
   return `<div class="panelBand" id="operationsCalendar"><div class="sectionHeader"><div><h2>Conflict-Aware Operations Calendar</h2><p class="muted">One UTC-normalized horizon for automatic backups, executing maintenance, recurring events, prewarming, and SLO exclusions. Executing maintenance is rejected when it overlaps recovery work unless the API caller supplies the exact audited override. At runtime it also waits for the same cross-process operation lock used by backups and assured deployments.</p></div><div class="toolbar"><span class="pill ${tone}">${state}</span><span class="pill">${esc(summary.windows||0)} windows</span><span class="pill">${esc(data.horizonDays||0)} days</span><button id="opsCalendarRefreshBtn">Refresh</button></div></div><div class="metricGrid">${metric('Next operation',data.next?.title||'none',data.next?'':'ok')}${metric('Next start',data.next?.startsAtIso||'—')}${metric('Active now',summary.current||0,Number(summary.current||0)?'warn':'ok')}${metric('Critical conflicts',summary.criticalConflicts||0,Number(summary.criticalConflicts||0)?'dangerText':'ok')}${metric('Warnings',Number(summary.warningConflicts||0)+Number(summary.uncoveredDisruptive||0),scheduleFindings?'warn':'ok')}${metric('Source errors',errors.length,errors.length?'dangerText':'ok')}${metric('Calendar fingerprint',String(data.fingerprint||'').slice(0,12)||'—')}</div>${verdict}<details open><summary>Upcoming operations</summary>${table(windows)}</details><details><summary>Coordination contract</summary><pre>${esc(JSON.stringify({operationLock:data.operationLock,retrySeconds:data.restartOperationRetrySeconds,executionContract:data.executionContract,errors:data.errors,fingerprint:data.fingerprint},null,2))}</pre></details></div>`;
 }
+function alertInboxPanel(data={}){
+  const summary=data.summary||{}, collector=data.collector||{}, alerts=data.alerts||[], history=data.history||[];
+  const collectorBad=data.enabled&&!data.ok;
+  const tone=collectorBad||Number(summary.critical||0)?'bad':Number(summary.unacknowledged||0)?'warn':'ok';
+  const cards=alerts.map(row=>`<article class="panelInset"><div class="sectionHeader"><div><h3>${esc(row.name)}</h3><p>${esc(row.summary||'No summary supplied')}</p></div><div class="toolbar"><span class="pill ${row.severity==='critical'?'bad':row.severity==='warning'?'warn':''}">${esc(row.severity)}</span><span class="pill">${esc(row.state)}</span><span class="pill">generation ${esc(row.generation)}</span>${row.acknowledged?`<span class="pill ok">acknowledged by ${esc(row.acknowledgedBy||'operator')}</span>`:data.mutationEnabled?`<button class="primary" data-alert-ack="${esc(row.fingerprint)}">Acknowledge</button>`:''}</div></div>${row.description?`<p class="muted">${esc(row.description)}</p>`:''}<div class="toolbar"><span class="pill">active ${esc(row.firstSeenAt||'—')}</span><code>${esc(String(row.fingerprint||'').slice(0,16))}</code></div>${row.acknowledgementNote?`<div class="notice ok">${esc(row.acknowledgementNote)}</div>`:''}</article>`).join('');
+  const recent=history.map(row=>({time:row.occurredAt,transition:row.transition,alert:row.name,severity:row.severity,generation:row.generation,actor:row.actor||'',note:row.note||''}));
+  const verdict=collectorBad?`<div class="notice bad">Prometheus alert collection is not authoritative: ${esc(collector.lastError||data.error||'no successful poll')}</div>`:alerts.length?`<div class="notice ${tone}">${esc(summary.unacknowledged||0)} active alert(s) still need acknowledgement. Resolution remains controlled only by Prometheus.</div>`:'<div class="notice ok">No active Prometheus alerts.</div>';
+  return `<div class="panelBand" id="alertInbox"><div class="sectionHeader"><div><h2>On-Call Alert Inbox</h2><p class="muted">Durable, deduplicated Prometheus state with operator-attributed acknowledgement and transition-only signed delivery. Failed polls never resolve alerts; acknowledgement never silences Prometheus.</p></div><div class="toolbar"><span class="pill ${tone}">${collectorBad?'collector failed':alerts.length?'attention':'clear'}</span><span class="pill">${esc(summary.active||0)} active</span><span class="pill">${esc(summary.unacknowledged||0)} unacknowledged</span><button id="alertInboxRefreshBtn">Poll now</button></div></div><div class="metricGrid">${metric('Critical',summary.critical||0,Number(summary.critical||0)?'dangerText':'ok')}${metric('Warning',summary.warning||0,Number(summary.warning||0)?'warn':'ok')}${metric('Pending',summary.pending||0)}${metric('Transitions',collector.transitionsTotal||0)}${metric('Poll age',collector.ageSeconds==null?'—':fmtRuntimeSeconds(collector.ageSeconds),collectorBad?'dangerText':'ok')}${metric('Delivery',data.delivery?.signedWebhooksEnabled?'signed webhooks':'inbox only')}</div>${verdict}${cards||''}<details><summary>Recent alert transitions</summary>${table(recent)}</details><details><summary>Collection contract</summary><pre>${esc(JSON.stringify({collector,executionContract:data.executionContract,delivery:data.delivery,runtime:data.runtime,retentionDays:data.retentionDays},null,2))}</pre></details></div>`;
+}
 async function overview(serial=loadSerial){
   const [health, roster, briefing] = await Promise.all([
     api('/api/ops/health', {timeoutMs: HEALTH_REQUEST_TIMEOUT_MS}),
@@ -20535,17 +20793,18 @@ async function overview(serial=loadSerial){
   startHealthRefresh();
 }
 async function ops(serial=loadSerial){
-  const [health, opt, announcement, restart, maintenanceHistory, maintenancePlanner, operationsCalendar] = await Promise.all([
+  const [health, opt, announcement, restart, maintenanceHistory, maintenancePlanner, operationsCalendar, alertInbox] = await Promise.all([
     api('/api/ops/health', {timeoutMs: HEALTH_REQUEST_TIMEOUT_MS}),
     api('/api/ops/optimization'),
     api('/api/ops/announcement'),
     api('/api/ops/restart'),
     api('/api/ops/maintenance-history?limit=100'),
     api('/api/ops/maintenance-planner'),
-    api('/api/ops/calendar?horizonDays=14')
+    api('/api/ops/calendar?horizonDays=14'),
+    api('/api/ops/alerts?limit=200')
   ]);
   if (serial !== loadSerial) return;
-  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Operations</h2><div class="toolbar"><button data-jump="overview">Overview</button><button data-jump="characters">Players</button><button data-jump="runbook">Runbook</button><button data-jump="settings">Settings</button></div></div><div id="opsRealtimeMetrics" class="metricGrid" aria-live="polite">${opsRealtimeMetricsHtml(health)}</div>${operationsCalendarPanel(operationsCalendar)}${maintenancePlannerPanel(maintenancePlanner)}<div class="twoCol">${restartPanel(restart)}${announcementPanel(announcement)}</div>${maintenanceHistoryPanel(maintenanceHistory)}<div class="twoCol"><div id="opsHealthViz">${healthViz(health)}</div><div class="panelBand"><h2>Health Verdict</h2><div id="opsHealthVerdicts">${checks(health.verdicts)}</div></div></div><details class="panelBand" open><summary>Map Online/Offline</summary><div id="opsMapStatus">${mapTiles(health.mapStatus)}${mapStatusTable(health.mapStatus)}</div></details><details class="panelBand"><summary>Host Resources</summary><div id="resources"><div class="muted">Loading resource stats...</div></div></details><details class="panelBand"><summary>Local and Upstream Network</summary><div data-network-panel><div class="muted">Loading network probes...</div></div></details><details class="panelBand"><summary>Raw Farm State</summary><div id="opsRawFarmState">${table(health.farmState)}</div></details><details class="panelBand"><summary>Partitions</summary><div id="opsPartitions">${table(health.partitions)}</div></details><details class="panelBand"><summary>Optimization Signals</summary>${signalList(opt)}</details></div>`;
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Operations</h2><div class="toolbar"><button data-jump="overview">Overview</button><button data-jump="characters">Players</button><button data-jump="runbook">Runbook</button><button data-jump="settings">Settings</button></div></div><div id="opsRealtimeMetrics" class="metricGrid" aria-live="polite">${opsRealtimeMetricsHtml(health)}</div>${alertInboxPanel(alertInbox)}${operationsCalendarPanel(operationsCalendar)}${maintenancePlannerPanel(maintenancePlanner)}<div class="twoCol">${restartPanel(restart)}${announcementPanel(announcement)}</div>${maintenanceHistoryPanel(maintenanceHistory)}<div class="twoCol"><div id="opsHealthViz">${healthViz(health)}</div><div class="panelBand"><h2>Health Verdict</h2><div id="opsHealthVerdicts">${checks(health.verdicts)}</div></div></div><details class="panelBand" open><summary>Map Online/Offline</summary><div id="opsMapStatus">${mapTiles(health.mapStatus)}${mapStatusTable(health.mapStatus)}</div></details><details class="panelBand"><summary>Host Resources</summary><div id="resources"><div class="muted">Loading resource stats...</div></div></details><details class="panelBand"><summary>Local and Upstream Network</summary><div data-network-panel><div class="muted">Loading network probes...</div></div></details><details class="panelBand"><summary>Raw Farm State</summary><div id="opsRawFarmState">${table(health.farmState)}</div></details><details class="panelBand"><summary>Partitions</summary><div id="opsPartitions">${table(health.partitions)}</div></details><details class="panelBand"><summary>Optimization Signals</summary>${signalList(opt)}</details></div>`;
   wireResourceControls(view);
   bindResourceFilters(view);
   refreshResources().catch(e => {
@@ -20560,6 +20819,14 @@ async function ops(serial=loadSerial){
   document.getElementById('scheduleRestartBtn').addEventListener('click', e => runAction(e.currentTarget, 'Scheduling...', scheduleRestart));
   document.getElementById('cancelRestartBtn').addEventListener('click', e => runAction(e.currentTarget, 'Canceling...', cancelRestart));
   document.getElementById('opsCalendarRefreshBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Refreshing...', () => ops(loadSerial)));
+  document.getElementById('alertInboxRefreshBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Polling...', async()=>{ await api('/api/ops/alerts?refresh=true&limit=200'); await ops(loadSerial); }));
+  document.querySelectorAll('[data-alert-ack]').forEach(button=>button.addEventListener('click',e=>runAction(e.currentTarget,'Acknowledging...',async()=>{
+    const note=prompt('Operator note for this acknowledgement (optional):','') ?? null;
+    if(note===null)return;
+    await api('/api/ops/alerts',{method:'POST',body:JSON.stringify({action:'acknowledge',fingerprint:e.currentTarget.dataset.alertAck,note,confirm:'ACKNOWLEDGE ALERT'})});
+    notify('Alert acknowledged');
+    await ops(loadSerial);
+  })));
   document.querySelectorAll('[data-maintenance-slot]').forEach(button => button.addEventListener('click', () => {
     const date=new Date(button.dataset.maintenanceSlot);
     const pad=value=>String(value).padStart(2,'0');
@@ -23086,6 +23353,7 @@ def main():
     ensure_community_worker_thread()
     ensure_moderation_worker_thread()
     ensure_canary_autopilot_thread()
+    ensure_alert_inbox_thread()
     ensure_operations_briefing_thread()
     bind = os.environ.get("DUNE_ADMIN_BIND", "0.0.0.0")
     port = int(os.environ.get("DUNE_ADMIN_PORT", "8080"))

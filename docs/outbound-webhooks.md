@@ -13,6 +13,10 @@ general hosting panels without giving a receiver any inbound admin authority.
 `admin/admin_panel.py` already records semantic audit events for backups,
 updates, service control, announcement/restart schedules, event plans, and
 guarded player, inventory, economy, world, configuration, and database actions.
+Prometheus inbox state changes add `prometheus-alert-pending`,
+`prometheus-alert-firing`, `prometheus-alert-refiring`,
+`prometheus-alert-resolved`, and `prometheus-alert-acknowledged`. Duplicate
+polls emit nothing, and a failed poll cannot manufacture a resolved event.
 The dispatcher consumes that event object after it has been written to
 `backups/admin-panel/audit.jsonl`.
 
@@ -29,6 +33,7 @@ set followed by exclusions prefixed with `!`. Examples:
 backup-*,update-*,service-control
 *,!auth-*,!database-query
 player-*,currency-update,item-*
+prometheus-alert-*
 ```
 
 Sensitive dictionary keys matching password, token, secret, credential,

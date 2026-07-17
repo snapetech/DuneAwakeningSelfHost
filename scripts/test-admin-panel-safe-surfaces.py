@@ -6046,6 +6046,43 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn("Creator and modding proof", self.panel.INDEX)
         self.assertIn("No live gallery, configuration, database, player, map, or network state is touched", self.panel.INDEX)
 
+    def test_alert_inbox_public_status_rejects_stale_success(self):
+        database = self.workspace / "backups" / "alert-inbox" / "inbox.sqlite3"
+        store = self.panel.alert_inbox.Store(database).initialize()
+        payload = {"status": "success", "data": {"alerts": []}}
+        store.sync(payload, now=time.time() - 1000)
+        self.patch_flag("ALERT_INBOX_ENABLED", True)
+        self.patch_flag("ALERT_INBOX_STORE", store)
+        self.patch_flag("ALERT_INBOX_POLL_SECONDS", 30)
+        stale = self.panel.alert_inbox_public_status(limit=1)
+        self.assertFalse(stale["ok"])
+        self.assertEqual(90, stale["collector"]["staleAfterSeconds"])
+        store.sync(payload, now=time.time())
+        current = self.panel.alert_inbox_public_status(limit=1)
+        self.assertTrue(current["ok"])
+
+    def test_alert_acknowledgement_route_emits_only_the_first_transition(self):
+        database = self.workspace / "backups" / "alert-inbox" / "ack.sqlite3"
+        store = self.panel.alert_inbox.Store(database).initialize()
+        created = store.sync({"status": "success", "data": {"alerts": [{
+            "labels": {"alertname": "TestAlert", "severity": "warning"},
+            "annotations": {"summary": "test"}, "state": "firing",
+            "activeAt": "2026-07-17T12:00:00Z",
+        }]}}, now=time.time())
+        fingerprint = created["transitions"][0]["fingerprint"]
+        self.patch_flag("ALERT_INBOX_ENABLED", True)
+        self.patch_flag("ALERT_INBOX_MUTATIONS_ENABLED", True)
+        self.patch_flag("MUTATIONS_ENABLED", True)
+        self.patch_flag("ALERT_INBOX_STORE", store)
+        body = {"action": "acknowledge", "fingerprint": fingerprint, "note": "owned", "confirm": "ACKNOWLEDGE ALERT"}
+        first = self.invoke_post_route("/api/ops/alerts", body)
+        second = self.invoke_post_route("/api/ops/alerts", body)
+        self.assertEqual([], first["errors"])
+        self.assertFalse(first["json"]["idempotent"])
+        self.assertEqual(["prometheus-alert-acknowledged"], [row["action"] for row in first["audits"]])
+        self.assertTrue(second["json"]["idempotent"])
+        self.assertEqual([], second["audits"])
+
 
 if __name__ == "__main__":
     unittest.main()

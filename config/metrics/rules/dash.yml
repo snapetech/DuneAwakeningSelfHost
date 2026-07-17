@@ -457,3 +457,13 @@ groups:
         for: 5m
         labels: {severity: warning}
         annotations: {summary: "Executing maintenance is not fully covered by a planned SLO maintenance exclusion"}
+      - alert: DashAlertInboxCollectorInvalid
+        expr: dash_alert_inbox_enabled == 1 and dash_alert_inbox_collector_up == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "DASH cannot authoritatively poll or persist Prometheus alert state"}
+      - alert: DashAlertInboxWorkerStopped
+        expr: dash_alert_inbox_enabled == 1 and dash_alert_inbox_worker_running == 0
+        for: 5m
+        labels: {severity: critical}
+        annotations: {summary: "The DASH on-call alert inbox is enabled but its polling worker is not running"}

@@ -18,7 +18,7 @@ config/environment archive. Server saved state and RabbitMQ are required when
 their mounted sources exist. Enabled durable control-plane stores are also
 required, including:
 
-- Community Rewards, moderation, and Base Gallery SQLite state;
+- Community Rewards, moderation, Base Gallery, and the Prometheus alert-inbox SQLite state;
 - Operational SLO, Capacity Intelligence, Desired State, and Change
   Intelligence ledgers;
 - Feature Readiness history and its config-bound HMAC key;

@@ -133,6 +133,22 @@
       "remediation": {"surface": "operations", "summary": "Inspect collector coverage and policy bounds; keep using the named fallback until enough complete windows exist."}
     },
     {
+      "id": "alert-inbox",
+      "title": "Prometheus on-call alert inbox",
+      "group": "Observability",
+      "description": "Authoritative Prometheus alert polling, durable deduplication, re-fire generations, operator-attributed acknowledgement, and transition-only signed delivery are active.",
+      "documentation": "docs/alert-inbox.md",
+      "primaryGate": "DUNE_ALERT_INBOX_ENABLED",
+      "gates": ["DUNE_ALERT_INBOX_ENABLED", "DUNE_ADMIN_ALERT_INBOX_MUTATIONS_ENABLED"],
+      "credentials": [],
+      "files": [{"path": "admin/alert_inbox.py", "minimumBytes": 1000}],
+      "services": ["admin-panel", "prometheus"],
+      "probe": "alert-inbox",
+      "dependencies": ["metrics-history", "mutation-governance"],
+      "canary": "runtime-proven",
+      "remediation": {"surface": "operations", "summary": "Repair the named Prometheus poll or private SQLite state failure; never treat a failed poll or acknowledgement as source resolution."}
+    },
+    {
       "id": "metrics-history",
       "title": "Retained metrics and history",
       "group": "Observability",
