@@ -199,6 +199,42 @@ PY
   return 1
 }
 
+finalize_assurance_when_healthy() {
+  local timeout interval deadline state failed_health
+  timeout="$(read_env DUNE_DEPLOYMENT_ASSURANCE_CONVERGENCE_TIMEOUT_SECONDS)"
+  interval="$(read_env DUNE_DEPLOYMENT_ASSURANCE_CONVERGENCE_POLL_SECONDS)"
+  timeout="${timeout:-300}"
+  interval="${interval:-5}"
+  deadline=$((SECONDS + timeout))
+  while (( SECONDS <= deadline )); do
+    api_post_file "$work/finish.json" 600 >"$work/finish-response.json"
+    state="$(python3 - "$work/finish-response.json" <<'PY'
+import json,sys
+d=json.load(open(sys.argv[1],encoding="utf-8"))
+if isinstance((d.get("document") or {}).get("receipt"), dict):
+    print("finalized")
+elif d.get("finalized") is False and d.get("state") == "waiting-for-health":
+    print("waiting")
+else:
+    raise SystemExit("deployment assurance finish returned an invalid response")
+PY
+)"
+    if [[ "$state" == "finalized" ]]; then
+      return 0
+    fi
+    failed_health="$(python3 - "$work/finish-response.json" <<'PY'
+import json,sys
+d=json.load(open(sys.argv[1],encoding="utf-8"))
+print(", ".join(d.get("failedHealth") or ["unknown health gate"]))
+PY
+)"
+    printf 'deployment assurance finalization deferred: %s\n' "$failed_health" >&2
+    sleep "$interval"
+  done
+  printf 'deployment assurance finalization remained unhealthy for %s seconds\n' "$timeout" >&2
+  return 1
+}
+
 if [[ -n "$stage" ]]; then
   python3 "$code_root/scripts/deployment-assurance.py" verify --manifest "$manifest" --workspace "$stage" >"$work/manifest-verification.json"
 else
@@ -308,7 +344,7 @@ python3 - "$window_id" "$post_backup" >"$work/finish.json" <<'PY'
 import json,sys
 print(json.dumps({"action":"finish","windowId":sys.argv[1],"backupPath":sys.argv[2],"confirm":"FINALIZE ASSURED CHANGE WINDOW"}))
 PY
-api_post_file "$work/finish.json" 600 >"$work/finish-response.json"
+finalize_assurance_when_healthy
 python3 - "$work/finish-response.json" <<'PY'
 import json,sys
 d=json.load(open(sys.argv[1])); receipt=(d.get("document") or {}).get("receipt") or {}; verification=d.get("verification") or {}

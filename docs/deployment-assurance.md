@@ -200,6 +200,13 @@ Each required backup gets at most three attempts. A live file changing during
 tar creation, failed dump, failed archive, or failed verifier remains a failed
 attempt; the workflow never suppresses the error or relabels a partial set.
 
+The runner requires consecutive healthy samples before finalization. The
+final API sample remains authoritative: if a health gate changes afterward,
+the API returns `waiting-for-health`, names the failed gates, and leaves the
+signed change window open. The runner retries within the bounded convergence
+timeout. Source-manifest and map-continuity failures are not retried; they
+still produce a signed failed receipt for operator review.
+
 It also creates a mode-`0600` source rollback archive under
 `backups/deployments/`. The archive has `rollback-manifest.json` plus every live
 file that existed before promotion. Restore source through a separately

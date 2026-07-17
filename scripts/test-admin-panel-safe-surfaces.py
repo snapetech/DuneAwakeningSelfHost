@@ -4701,6 +4701,36 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.invoke_post_route("/api/ops/deployment-assurance", {"action": "cancel", "confirm": "CANCEL ASSURED CHANGE WINDOW"})
         self.assertEqual(["start", "finish", "cancel"], [row[0] for row in calls])
 
+    def test_deployment_assurance_finish_defers_without_sealing_unhealthy_receipt(self):
+        originals = {
+            "verify_backup_set": self.panel.verify_backup_set,
+            "deployment_assurance_health": self.panel.deployment_assurance_health,
+            "deployment_assurance_store": self.panel.deployment_assurance_store,
+            "audit_event": self.panel.audit_event,
+        }
+        store_calls = []
+        self.panel.verify_backup_set = lambda path: {"ok": True, "path": path, "exitCode": 0}
+        self.panel.deployment_assurance_health = lambda backup: {
+            "desiredStateAttested": True, "readinessCurrent": True, "sloHealthy": True,
+            "changeIntegrity": True, "prometheusReadiness": False,
+            "adminHealthy": True, "backupVerified": True,
+        }
+        self.panel.deployment_assurance_store = lambda: type("Store", (), {
+            "finish": lambda *args, **kwargs: store_calls.append((args, kwargs)),
+        })()
+        self.panel.audit_event = lambda *args, **kwargs: None
+        for name, value in originals.items():
+            self.addCleanup(lambda name=name, value=value: setattr(self.panel, name, value))
+
+        result = self.panel.deployment_assurance_finish(
+            {"windowId": "deployment-window-one", "backupPath": "backup-one"},
+            {"id": "owner"},
+        )
+        self.assertFalse(result["finalized"])
+        self.assertEqual("waiting-for-health", result["state"])
+        self.assertEqual(["prometheusReadiness"], result["failedHealth"])
+        self.assertFalse(store_calls)
+
     def test_update_readiness_route_requires_exact_confirmation_and_principal(self):
         original = self.panel.certify_update_readiness
         calls = []

@@ -7301,10 +7301,22 @@ def deployment_assurance_start(body, principal):
 def deployment_assurance_finish(body, principal):
     backup = verify_backup_set(body.get("backupPath"))
     health = deployment_assurance_health(backup)
+    failed_health = sorted(key for key, value in health.items() if not value)
+    if failed_health:
+        audit_event(
+            "deployment-assurance-finish-deferred", ok=False,
+            window_id=body.get("windowId"), failed_health=failed_health,
+            principal_id=(principal or {}).get("id"),
+        )
+        return {
+            "ok": False, "finalized": False, "state": "waiting-for-health",
+            "health": health, "failedHealth": failed_health,
+        }
     result = deployment_assurance_store().finish(
         body.get("windowId"), principal_id=(principal or {}).get("id"),
         snapshot=deployment_assurance_container_snapshot(), health=health, backup=backup,
     )
+    result["finalized"] = True
     receipt = result["document"]["receipt"]
     audit_event(
         "deployment-assurance-finished", ok=receipt["ready"], window_id=receipt["windowId"],
