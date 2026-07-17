@@ -202,6 +202,8 @@ class DeploymentAssuranceTests(unittest.TestCase):
         self.assertIn("for attempt in 1 2 3", source)
         self.assertIn('verifier="$stage/scripts/verify-backup.sh"', source)
         self.assertIn('"$verifier" "$backup"', source)
+        self.assertIn('verified_existing_backup "$pre_change_backup"', source)
+        self.assertIn('pre-change backup must be an existing directory beneath workspace/backups', source)
         self.assertIn("could not create and verify a complete backup after 3 attempts", source)
         self.assertIn("wait_for_assurance_health", source)
         self.assertIn("consecutive healthy samples", source)
@@ -222,6 +224,7 @@ class DeploymentAssuranceTests(unittest.TestCase):
         self.assertIn("--stage $stage_q", push)
         self.assertIn("DUNE_PRODUCTION_HOST=$required_q", push)
         self.assertIn('remote_env="${remote_workspace%/}/$remote_env"', push)
+        self.assertIn('--pre-change-backup', push)
         for support in deployment_cli.SUPPORT_FILES:
             self.assertIn(support, push)
 

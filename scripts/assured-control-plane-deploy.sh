@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: scripts/assured-control-plane-deploy.sh --manifest FILE --reason TEXT [--stage DIR] [--workspace DIR] [env-file]
+Usage: scripts/assured-control-plane-deploy.sh --manifest FILE --reason TEXT [--stage DIR] [--workspace DIR] [--pre-change-backup DIR] [env-file]
 
 Runs a production-host-only two-phase control-plane deployment. The workflow:
   1. verifies the exact commit/source manifest and a fresh pre-change backup;
@@ -23,12 +23,14 @@ reason=""
 env_file=".env"
 stage=""
 workspace=""
+pre_change_backup=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --manifest) manifest="${2:-}"; shift 2 ;;
     --reason) reason="${2:-}"; shift 2 ;;
     --stage) stage="${2:-}"; shift 2 ;;
     --workspace) workspace="${2:-}"; shift 2 ;;
+    --pre-change-backup) pre_change_backup="${2:-}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     --*) printf 'unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
     *) env_file="$1"; shift ;;
@@ -111,6 +113,30 @@ verified_backup() {
   return 1
 }
 
+verified_existing_backup() {
+  local requested="$1" resolved relative verifier="./scripts/verify-backup.sh"
+  [[ -n "$requested" && "$requested" != *$'\n'* ]] || {
+    printf 'pre-change backup path is invalid\n' >&2
+    return 1
+  }
+  if [[ "$requested" == /* ]]; then
+    resolved="$requested"
+  else
+    resolved="$workspace/$requested"
+  fi
+  resolved="$(realpath -e -- "$resolved")"
+  [[ -d "$resolved" && "$resolved" == "$workspace/backups/"* ]] || {
+    printf 'pre-change backup must be an existing directory beneath workspace/backups\n' >&2
+    return 1
+  }
+  if [[ -n "$stage" && -x "$stage/scripts/verify-backup.sh" ]]; then
+    verifier="$stage/scripts/verify-backup.sh"
+  fi
+  "$verifier" "$resolved"
+  relative="${resolved#"$workspace/backups/"}"
+  printf '%s\n' "$relative"
+}
+
 wait_for_assurance_health() {
   local timeout interval required_samples deadline consecutive=0
   timeout="$(read_env DUNE_DEPLOYMENT_ASSURANCE_CONVERGENCE_TIMEOUT_SECONDS)"
@@ -172,7 +198,11 @@ else
 fi
 ./scripts/validate-landsraad-coriolis-cycle.sh "$env_file"
 
-pre_backup_output="$(verified_backup)"
+if [[ -n "$pre_change_backup" ]]; then
+  pre_backup_output="$(verified_existing_backup "$pre_change_backup")"
+else
+  pre_backup_output="$(verified_backup)"
+fi
 printf '%s\n' "$pre_backup_output"
 pre_backup="$(printf '%s\n' "$pre_backup_output" | tail -1)"
 

@@ -147,6 +147,31 @@ and backup-verifier closure required to operate from staging. Every executable
 support file is manifest-bound and promoted from the same commit; no loose
 helper is accepted from the stage.
 
+### Verifier-schema migration bridge
+
+Normal deployments must let the workflow create its own pre-change backup. A
+verifier-schema migration has one bootstrap problem: the running Admin process
+may reject historical evidence that the reviewed staged verifier knows how to
+authenticate. For that case only, create and independently verify a fresh
+recovery-complete backup, preserve the original full evidence backup, and pass
+the confined bridge set explicitly:
+
+```bash
+scripts/push-assured-control-plane.sh \
+  --manifest /tmp/dash-deployment-manifest.json \
+  --reason 'Migrate the signed evidence verifier' \
+  --host kspls0 \
+  --pre-change-backup backups/<bridge-id>
+```
+
+The runner resolves the path beneath `workspace/backups`, rejects escapes and
+missing directories, and re-verifies it with the exact manifest-bound staged
+verifier. The running Admin process still performs its own admission check.
+Only the pre-change recovery layer may use the bridge; post-change and final
+receipt backups are always newly created and must pass the complete promoted
+verifier. This option does not skip source rollback, map continuity, health,
+evidence, or final-backup gates.
+
 On an already staged production host, the lower-level entry point is:
 
 ```bash
