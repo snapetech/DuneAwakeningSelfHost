@@ -89,6 +89,14 @@ default and requires its documented gate and exact confirmation.
 
 The Ops tab also has restart-announcement and scheduled restart planners. The daily maintenance target is 06:00 local host time, with the host timer firing at 05:30 to create a 30-minute warning window. Executed maintenance uses a stopped-world backup, then checks the current Steam package for updated Funcom image tarballs before recreating services. See [`docs/maintenance-updates.md`](maintenance-updates.md) for the full timeline, update logic, and timer install path.
 
+The same page ranks exact future maintenance windows from zero-inclusive,
+identity-free population observations. Selecting a recommendation fills the
+exact-time field; it does not bypass the execution selector, backup, certified
+update, disconnect, announcement, or change-governance contracts. Until enough
+complete historical windows exist, the planner visibly retains the configured
+`06:00` fallback. See
+[`player-impact-maintenance.md`](player-impact-maintenance.md).
+
 Inspect Docker storage and preview obsolete Dune image cleanup with:
 
 ```bash

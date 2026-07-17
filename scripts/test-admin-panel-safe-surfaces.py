@@ -76,6 +76,18 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         (self.workspace / "config" / "gateway.ini").write_text("", encoding="utf-8")
         (self.workspace / "config" / "rabbitmq-admin.conf").write_text("", encoding="utf-8")
         (self.workspace / "config" / "rabbitmq-game.conf").write_text("", encoding="utf-8")
+        (self.workspace / "config" / "maintenance-planner.json").write_text(
+            json.dumps({
+                "schemaVersion": 1, "timezone": "America/Regina", "lookbackDays": 28,
+                "retentionDays": 90, "horizonDays": 7, "bucketSeconds": 300,
+                "slotMinutes": 30, "durationMinutes": 30, "eligibleLocalStart": "02:00",
+                "eligibleLocalEnd": "09:00", "defaultLocalTime": "06:00",
+                "minimumNoticeMinutes": 30, "minimumWindowCoverage": 0.8,
+                "minimumSampleDays": 2, "weekdayWeightingMinimumDays": 2,
+                "recommendationCount": 8,
+            }),
+            encoding="utf-8",
+        )
         (self.workspace / "research" / "surfaces").mkdir(parents=True)
         (self.workspace / "research" / "surfaces" / "test.jsonl").write_text(
             json.dumps({
@@ -2058,6 +2070,29 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
                 "announce": False, "execute": False, "update_policy": "automatic",
             })
 
+    def test_restart_accepts_exact_bounded_time_and_delays_first_warning(self):
+        now = time.time()
+        run_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now + 7200))
+        captured = {}
+        original = self.panel.schedule_announcement
+        self.panel.schedule_announcement = lambda body: captured.update(body) or {"id": "notice"}
+        self.addCleanup(lambda: setattr(self.panel, "schedule_announcement", original))
+
+        job = self.panel.schedule_restart({
+            "target": "all", "action": "restart", "runAt": run_at,
+            "message": "planned maintenance", "announce": True, "execute": False,
+        })
+
+        self.assertEqual("custom", job["delay"])
+        self.assertAlmostEqual(now + 7200, job["runAt"], delta=2)
+        self.assertAlmostEqual(job["runAt"] - 1800, captured["next_send_at"], delta=1)
+        self.assertEqual(2, len(captured["cadence"]))
+        with self.assertRaisesRegex(ValueError, "within 30 days"):
+            self.panel.schedule_restart({
+                "target": "all", "action": "restart", "runAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now + 31 * 86400)),
+                "announce": False, "execute": False,
+            })
+
     def test_certified_restart_revalidates_and_safely_falls_back_or_binds_staged_only_mode(self):
         command = self.workspace / "scripts" / "restart-target.sh"
         command.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
@@ -2527,6 +2562,19 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertEqual([], captured["errors"])
         self.assertIn("receipts", captured["json"])
         self.assertIn("dash_maintenance_outcome_collector_up", (ROOT / "admin" / "admin_panel.py").read_text(encoding="utf-8"))
+
+    def test_player_impact_maintenance_api_ui_and_metrics_are_exposed(self):
+        self.assertIn("/api/ops/maintenance-planner", self.panel.INDEX)
+        self.assertIn("Player-Impact Maintenance Planner", self.panel.INDEX)
+        self.assertIn("restartRunAt", self.panel.INDEX)
+        self.panel.MAINTENANCE_PLANNER_RUNTIME.update({"running": True, "lastError": None})
+        handler, captured = self.make_route_handler("/api/ops/maintenance-planner")
+        handler.do_GET()
+        self.assertEqual([], captured["errors"])
+        self.assertTrue(captured["json"]["ok"])
+        self.assertEqual("policy-fallback-learning", captured["json"]["source"])
+        metrics = self.panel.maintenance_planner_prometheus()
+        self.assertIn("dash_maintenance_planner_collector_up 1", metrics)
 
     def test_restart_runs_recovery_when_farm_readiness_is_incomplete(self):
         command = self.workspace / "scripts" / "restart-target.sh"

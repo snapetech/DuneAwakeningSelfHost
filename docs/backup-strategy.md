@@ -56,7 +56,8 @@ The local backup includes:
 - A transactionally consistent `community-rewards.sqlite3` snapshot when the
   isolated wallet/shop database exists.
 - A transactionally consistent `moderation.sqlite3` snapshot when the isolated
-  case/history database exists.
+  case/history database exists, including the identity-free aggregate
+  population buckets used by the player-impact maintenance planner.
 - A transactionally consistent `base-gallery.sqlite3` snapshot when the
   isolated creator/gallery database exists.
 - A transactionally consistent `operational-slo.sqlite3` reliability snapshot

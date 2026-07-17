@@ -114,6 +114,25 @@
       "remediation": {"surface": "infrastructure:autoscaler", "summary": "Inspect the persisted profile, map modes, demand sources, warm schedules, memory floor, and last worker error."}
     },
     {
+      "id": "player-impact-maintenance",
+      "title": "Player-impact-aware maintenance",
+      "group": "Operations",
+      "description": "Zero-inclusive aggregate population observations rank exact future maintenance windows and quantify expected disruption against the fixed daily baseline.",
+      "documentation": "docs/player-impact-maintenance.md",
+      "primaryGate": "DUNE_MAINTENANCE_PLANNER_ENABLED",
+      "gates": ["DUNE_MAINTENANCE_PLANNER_ENABLED"],
+      "credentials": [],
+      "files": [
+        {"path": "admin/maintenance_planner.py", "minimumBytes": 1000},
+        {"path": "config/maintenance-planner.json", "minimumBytes": 100}
+      ],
+      "services": ["admin-panel"],
+      "probe": "maintenance-planner",
+      "dependencies": ["operational-evidence"],
+      "canary": "runtime-proven",
+      "remediation": {"surface": "operations", "summary": "Inspect collector coverage and policy bounds; keep using the named fallback until enough complete windows exist."}
+    },
+    {
       "id": "metrics-history",
       "title": "Retained metrics and history",
       "group": "Observability",

@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "timezone": "America/Regina",
+  "lookbackDays": 28,
+  "retentionDays": 90,
+  "horizonDays": 7,
+  "bucketSeconds": 300,
+  "slotMinutes": 30,
+  "durationMinutes": 30,
+  "eligibleLocalStart": "02:00",
+  "eligibleLocalEnd": "09:00",
+  "defaultLocalTime": "06:00",
+  "minimumNoticeMinutes": 30,
+  "minimumWindowCoverage": 0.8,
+  "minimumSampleDays": 2,
+  "weekdayWeightingMinimumDays": 2,
+  "recommendationCount": 8
+}

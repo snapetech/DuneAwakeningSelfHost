@@ -93,6 +93,11 @@ groups:
         expr: increase(dash_capacity_prewarm_failures_total[15m]) > 0
         labels: {severity: warning}
         annotations: {summary: "A scheduled just-in-time map warm failed"}
+      - alert: DashMaintenancePlannerCollectorDown
+        expr: dash_maintenance_planner_enabled == 1 and dash_maintenance_planner_collector_up == 0
+        for: 10m
+        labels: {severity: warning}
+        annotations: {summary: "Player-impact maintenance planning is unavailable"}
   - name: dash-desired-state
     rules:
       - alert: DashDesiredStateCollectorDown

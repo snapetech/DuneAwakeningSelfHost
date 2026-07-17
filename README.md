@@ -170,6 +170,14 @@ observation coverage, and per-map retention recommendations. The adaptive mode
 can apply only evidence-qualified recommendations, moves gradually, preserves
 map modes and pressure budgets, and writes tamper-evident receipts.
 
+DASH also learns when maintenance is least disruptive. Zero-inclusive,
+identity-free population buckets rank exact future windows, quantify expected
+player-minutes and p95 peak impact against the fixed `06:00` baseline, expose
+learning instead of pretending sparse evidence is certainty, and load the
+selected timestamp into the existing backup/readiness/announcement-governed
+restart planner. See
+[`docs/player-impact-maintenance.md`](docs/player-impact-maintenance.md).
+
 DASH also continuously compares the repository's operational configuration and
 Compose runtime with an operator-reviewed, HMAC-sealed desired state. It keeps
 immutable baseline history, retained drift ownership/resolution, signed
@@ -958,6 +966,7 @@ Server-browser ordering is deliberately split based on the observed in-game brow
 | `DUNE_OPERATIONAL_SLO_POLICY` / `DUNE_OPERATIONAL_SLO_DATABASE` | Versioned objective policy and private SQLite reliability ledger. |
 | `DUNE_CAPACITY_INTELLIGENCE_ENABLED` / `DUNE_CAPACITY_INTELLIGENCE_POLICY` / `DUNE_CAPACITY_INTELLIGENCE_DATABASE` | Retained map-efficiency/cold-start evidence, versioned model policy, and private SQLite ledger. |
 | `DUNE_CAPACITY_AUTO_APPLY_ENABLED` / `DUNE_CAPACITY_AUTO_APPLY_INTERVAL_HOURS` | Evidence-qualified gradual per-map retention convergence and its minimum interval. |
+| `DUNE_MAINTENANCE_PLANNER_ENABLED` / `DUNE_MAINTENANCE_PLANNER_POLICY` | Zero-inclusive aggregate population learning and the bounded policy used to rank exact low-impact maintenance windows. |
 | `DUNE_ADMIN_DATABASE_QUERY_ENABLED` / `DUNE_ADMIN_DATABASE_WRITE_ENABLED` | Bounded one-statement SQL console and its separately gated write mode. |
 | `DUNE_ADMIN_DATABASE_ROW_MUTATIONS_ENABLED` / `DUNE_ADMIN_DATABASE_PASSWORD_MUTATIONS_ENABLED` | Primary-key row editor and coordinated credential-rotation gates. |
 | `DUNE_ADMIN_SERVICE_CONTROL_ENABLED` / `DUNE_ADMIN_STATEFUL_SERVICE_CONTROL_ENABLED` | Browser start/stop/restart gates; stateful Postgres/RabbitMQ control remains separately disabled by default. |

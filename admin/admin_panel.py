@@ -70,6 +70,7 @@ import change_intelligence
 import deployment_assurance
 import update_readiness
 import maintenance_outcomes
+import maintenance_planner
 import public_directory
 import player_identity
 import env_file_store
@@ -370,6 +371,8 @@ COMMUNITY_POLL_SECONDS = max(5, int(os.environ.get("DUNE_COMMUNITY_POLL_SECONDS"
 MODERATION_ENABLED = os.environ.get("DUNE_MODERATION_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 MODERATION_ENFORCEMENT_ENABLED = os.environ.get("DUNE_MODERATION_ENFORCEMENT_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 MODERATION_DATABASE = pathlib.Path(os.environ.get("DUNE_MODERATION_DATABASE", str(BACKUPS_ROOT / "moderation" / "moderation.sqlite3")))
+MAINTENANCE_PLANNER_ENABLED = os.environ.get("DUNE_MAINTENANCE_PLANNER_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+MAINTENANCE_PLANNER_POLICY = pathlib.Path(os.environ.get("DUNE_MAINTENANCE_PLANNER_POLICY", str(CONFIG_ROOT / "maintenance-planner.json")))
 MODERATION_POLL_SECONDS = max(5, min(int(os.environ.get("DUNE_MODERATION_POLL_SECONDS", "15")), 300))
 MODERATION_RETENTION_DAYS = max(1, min(int(os.environ.get("DUNE_MODERATION_RETENTION_DAYS", "90")), 3650))
 MODERATION_HEATMAP_CELL_SIZE = max(1000, min(int(os.environ.get("DUNE_MODERATION_HEATMAP_CELL_SIZE", "25000")), 1000000))
@@ -509,6 +512,10 @@ MODERATION_STORE_INITIALIZED = False
 MODERATION_STORE_LOCK = threading.Lock()
 MODERATION_WORKER_STARTED = False
 MODERATION_RUNTIME = {"running": False, "lastTickAt": None, "lastError": None, "lastResult": None}
+MAINTENANCE_PLANNER_STORE = maintenance_planner.Store(MODERATION_DATABASE, MAINTENANCE_PLANNER_POLICY)
+MAINTENANCE_PLANNER_INITIALIZED = False
+MAINTENANCE_PLANNER_LOCK = threading.Lock()
+MAINTENANCE_PLANNER_RUNTIME = {"running": False, "lastObservationAt": None, "lastError": None, "lastResult": None}
 BASE_GALLERY = base_creator.Gallery(BASE_GALLERY_DATABASE, os.environ.get("DUNE_HOST_UID"), os.environ.get("DUNE_HOST_GID"))
 BASE_GALLERY_INITIALIZED = False
 BASE_GALLERY_LOCK = threading.Lock()
@@ -705,6 +712,16 @@ def _feature_readiness_autoscaler_probe():
     return {"ready": ready, "state": "ready" if ready else "worker-error", "detail": detail}
 
 
+def _feature_readiness_maintenance_planner_probe():
+    status = maintenance_planner_public_status()
+    runtime = status.get("runtime") or {}
+    ready = bool(status.get("enabled") and status.get("ok") and runtime.get("running") and not runtime.get("lastError"))
+    detail = f"source={status.get('source')}; buckets={(status.get('evidence') or {}).get('observationBuckets', 0)}; identitiesStored=false"
+    if runtime.get("lastError"):
+        detail += f"; error={runtime.get('lastError')}"
+    return {"ready": ready, "state": str(status.get("source") or "collector-starting") if ready else "collector-starting", "detail": detail}
+
+
 def _feature_readiness_store_probe(store, initialized, runtime, label):
     if not initialized:
         return {"ready": False, "state": "not-initialized", "detail": f"{label} store is not initialized"}
@@ -825,6 +842,7 @@ def feature_readiness_public_status(force=False):
         "mutation-governance": _feature_readiness_probe("mutation-governance", _feature_readiness_governance_probe),
         "operational-evidence": _feature_readiness_probe("operational-evidence", _feature_readiness_operational_evidence_probe),
         "autoscaler": _feature_readiness_probe("autoscaler", _feature_readiness_autoscaler_probe),
+        "maintenance-planner": _feature_readiness_probe("maintenance-planner", _feature_readiness_maintenance_planner_probe),
         "metrics": {
             "ready": all(str((service_by_name.get(name) or {}).get("state") or "").lower() == "running" for name in ("prometheus", "node-exporter", "cadvisor", "postgres-exporter")),
             "state": "ready" if all(str((service_by_name.get(name) or {}).get("state") or "").lower() == "running" for name in ("prometheus", "node-exporter", "cadvisor", "postgres-exporter")) else "collector-missing",
@@ -1504,6 +1522,8 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_CAPACITY_INTELLIGENCE_POLL_SECONDS": {"group": "Capacity Intelligence", "secret": False, "restart": True, "why": "Read-only map utilization and readiness observation cadence."},
     "DUNE_CAPACITY_AUTO_APPLY_ENABLED": {"group": "Capacity Intelligence", "secret": False, "restart": True, "why": "Allows evidence-qualified retention recommendations to converge gradually without changing map modes."},
     "DUNE_CAPACITY_AUTO_APPLY_INTERVAL_HOURS": {"group": "Capacity Intelligence", "secret": False, "restart": True, "why": "Minimum interval between eligible automatic retention-policy applications."},
+    "DUNE_MAINTENANCE_PLANNER_ENABLED": {"group": "Maintenance Intelligence", "secret": False, "restart": True, "why": "Records zero-inclusive aggregate population buckets and ranks low-impact future maintenance windows."},
+    "DUNE_MAINTENANCE_PLANNER_POLICY": {"group": "Maintenance Intelligence", "secret": False, "restart": True, "why": "Timezone, eligible hours, evidence coverage, horizon, duration, and ranking policy."},
     "DUNE_DESIRED_STATE_ENABLED": {"group": "Desired State", "secret": False, "restart": True, "why": "Continuously verifies approved source/configuration and project-container fingerprints."},
     "DUNE_ADMIN_DESIRED_STATE_MUTATIONS_ENABLED": {"group": "Desired State", "secret": False, "restart": True, "why": "Allows infrastructure administrators to seal a reviewed baseline and acknowledge retained drift findings."},
     "DUNE_DESIRED_STATE_POLICY": {"group": "Desired State", "secret": False, "restart": True, "why": "Versioned file scope, criticality, bounds, cadence, and retention policy."},
@@ -2105,7 +2125,8 @@ def schedule_restart(body):
     if action not in ("restart", "shutdown"):
         raise ValueError("invalid restart action")
     delay_key = str(body.get("delay", "immediate")).strip()
-    if delay_key not in ANNOUNCEMENT_DELAYS:
+    requested_run_at = body.get("runAt", body.get("run_at"))
+    if requested_run_at in (None, "") and delay_key not in ANNOUNCEMENT_DELAYS:
         raise ValueError("invalid restart delay")
     message = str(body.get("message", "")).strip()
     repeat_seconds = int(body.get("repeat_seconds", body.get("repeatSeconds", 60)) or 0)
@@ -2124,7 +2145,15 @@ def schedule_restart(body):
     if update_policy == "automatic" and UPDATE_READINESS_REQUIRE_RECEIPT:
         raise ValueError("automatic restart updates require DUNE_UPDATE_REQUIRE_READINESS_RECEIPT=false")
     now = time.time()
-    run_at = now + ANNOUNCEMENT_DELAYS[delay_key]
+    if requested_run_at not in (None, ""):
+        run_at = event_parse_time(requested_run_at).timestamp()
+        if run_at < now + 30:
+            raise ValueError("custom restart runAt must be at least 30 seconds in the future")
+        if run_at > now + 30 * 86400:
+            raise ValueError("custom restart runAt must be within 30 days")
+        delay_key = "custom"
+    else:
+        run_at = now + ANNOUNCEMENT_DELAYS[delay_key]
     if announce and message and run_at <= now:
         run_at = now + 1
     job = {
@@ -2136,6 +2165,7 @@ def schedule_restart(body):
         "delay": delay_key,
         "createdAt": now,
         "runAt": run_at,
+        "runAtIso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(run_at)),
         "message": message,
         "announce": announce,
         "repeatSeconds": repeat_seconds,
@@ -2154,12 +2184,21 @@ def schedule_restart(body):
         state.setdefault("jobs", []).append(job)
         write_restart_state(state)
     if announce and message:
+        announcement_lead = int(body.get("announcementLeadSeconds", body.get("announcement_lead_seconds", 1800)) or 1800)
+        announcement_lead = max(30, min(announcement_lead, 86400))
+        cadence = body.get("announcement_cadence", body.get("announcementCadence"))
+        if cadence is None:
+            cadence = [
+                {"remaining_seconds": 1800, "interval_seconds": 300},
+                {"remaining_seconds": 300, "interval_seconds": 60},
+            ]
         schedule_announcement({
             "delay": "immediate",
             "repeat_seconds": repeat_seconds,
-            "cadence": body.get("announcement_cadence", body.get("announcementCadence", [])),
+            "cadence": cadence,
             "message": message,
             "restart_at": run_at,
+            "next_send_at": max(now, run_at - announcement_lead),
             "action": action,
             "restart_job_id": job["id"],
         })
@@ -9407,6 +9446,40 @@ def moderation_store():
     return MODERATION_STORE
 
 
+def maintenance_planner_store():
+    global MAINTENANCE_PLANNER_INITIALIZED
+    if not MAINTENANCE_PLANNER_ENABLED:
+        raise FileNotFoundError("maintenance planner is disabled")
+    with MAINTENANCE_PLANNER_LOCK:
+        if not MAINTENANCE_PLANNER_INITIALIZED:
+            MAINTENANCE_PLANNER_STORE.initialize()
+            MAINTENANCE_PLANNER_INITIALIZED = True
+    return MAINTENANCE_PLANNER_STORE
+
+
+def maintenance_planner_public_status():
+    if not MAINTENANCE_PLANNER_ENABLED:
+        return {"ok": True, "enabled": False, "state": "disabled", "recommendations": []}
+    try:
+        status = maintenance_planner_store().status()
+        status.update({"enabled": True, "runtime": dict(MAINTENANCE_PLANNER_RUNTIME)})
+        return status
+    except Exception as exc:
+        return {
+            "ok": False, "enabled": True, "state": "failed", "recommendations": [],
+            "error": str(exc)[:1000], "runtime": dict(MAINTENANCE_PLANNER_RUNTIME),
+        }
+
+
+def maintenance_planner_prometheus():
+    if not MAINTENANCE_PLANNER_ENABLED:
+        return "dash_maintenance_planner_collector_up 1\ndash_maintenance_planner_enabled 0\n"
+    try:
+        return "dash_maintenance_planner_enabled 1\n" + maintenance_planner_store().prometheus()
+    except Exception:
+        return "dash_maintenance_planner_enabled 1\ndash_maintenance_planner_collector_up 0\n"
+
+
 def base_gallery():
     global BASE_GALLERY_INITIALIZED
     if not BASE_CREATOR_ENABLED:
@@ -9438,6 +9511,23 @@ def moderation_tick():
     store = moderation_store()
     players = moderation_online_players()
     presence = store.record_presence(players, cell_size=MODERATION_HEATMAP_CELL_SIZE)
+    planner_observation = None
+    if MAINTENANCE_PLANNER_ENABLED:
+        try:
+            maps = {
+                str(player.get("farm_map") or player.get("actor_map") or player.get("server_id") or "").strip()
+                for player in players
+                if str(player.get("farm_map") or player.get("actor_map") or player.get("server_id") or "").strip()
+            }
+            planner_observation = maintenance_planner_store().record(len(players), len(maps))
+            MAINTENANCE_PLANNER_RUNTIME.update({
+                "running": True,
+                "lastObservationAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "lastError": None,
+                "lastResult": planner_observation,
+            })
+        except Exception as exc:
+            MAINTENANCE_PLANNER_RUNTIME.update({"running": False, "lastError": str(exc)[:2000]})
     expired = store.expire_bans()
     enforcement = []
     enforcement_ready = MODERATION_ENFORCEMENT_ENABLED and MUTATIONS_ENABLED and PLAYER_RUNTIME_MUTATIONS_ENABLED and GM_COMMANDS_ENABLED
@@ -9485,7 +9575,7 @@ def moderation_tick():
             log_errors.append({"service": service, "error": str(exc)[:300]})
     inserted = store.ingest_security(security_events)
     pruned = store.prune(MODERATION_RETENTION_DAYS)
-    return {"ok": True, "presence": presence, "expiredBans": expired, "enforcementReady": enforcement_ready, "allowlistEnforcement": allowlist_enforcement, "enforcement": enforcement, "securityMatched": len(security_events), "securityInserted": inserted, "logErrors": log_errors, "pruned": pruned}
+    return {"ok": True, "presence": presence, "maintenancePlanner": planner_observation, "expiredBans": expired, "enforcementReady": enforcement_ready, "allowlistEnforcement": allowlist_enforcement, "enforcement": enforcement, "securityMatched": len(security_events), "securityInserted": inserted, "logErrors": log_errors, "pruned": pruned}
 
 
 def ensure_moderation_worker_thread():
@@ -9639,6 +9729,7 @@ class Handler(BaseHTTPRequestHandler):
                     metrics += maintenance_outcome_store().prometheus()
                 except Exception:
                     metrics += "dash_maintenance_outcome_collector_up 0\n"
+                metrics += maintenance_planner_prometheus()
                 self.text(metrics, "text/plain; version=0.0.4; charset=utf-8")
             elif parsed.path in ("/api/integrations/discord/health", "/api/integrations/discord/version", "/api/integrations/discord/backups/list"):
                 self.require_discord_token()
@@ -9940,6 +10031,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.require_token()
                 params = urllib.parse.parse_qs(parsed.query)
                 self.json(maintenance_outcome_public_status(limit=(params.get("limit") or ["100"])[0]))
+            elif parsed.path == "/api/ops/maintenance-planner":
+                self.require_token()
+                self.json(maintenance_planner_public_status())
             elif parsed.path == "/api/ops/change-intelligence/capsule":
                 self.require_token()
                 params = urllib.parse.parse_qs(parsed.query)
@@ -17981,6 +18075,14 @@ function maintenanceHistoryPanel(history){
   }));
   return `<details class="panelBand" open><summary>Maintenance Intelligence</summary><div class="metricGrid">${metric('Retained receipts', summary.retained || 0)}${metric('Passing outcomes', summary.passed || 0)}${metric('Failed or invalid', summary.failed || 0, Number(summary.failed || 0) ? 'dangerText' : '')}${metric('Evidence integrity', history.ok ? 'verified' : 'failed', history.ok ? '' : 'dangerText')}</div><p class="muted">Every attempted maintenance job produces an HMAC-signed, semantically verified outcome receipt with stage timings, backup proof, effective update policy, recovery status, and an explicit no-game-data-mutation assertion.</p>${rows.length ? table(rows) : '<div class="muted">No maintenance executions have been recorded yet.</div>'}</details>`;
 }
+function maintenancePlannerPanel(data){
+  const recommendation=data.recommendation||{};
+  const evidence=data.evidence||{};
+  const comparison=data.comparison||{};
+  const choices=(data.recommendations||[]).map((row,index)=>`<button type="button" data-maintenance-slot="${esc(row.startAt||'')}" class="${index===0?'primary':''}">${esc(row.localLabel||row.startAt||'window')} · expected ${esc(row.expectedConcurrentPlayers??'—')} · p95 ${esc(row.p95PeakPlayers??'—')}</button>`).join('');
+  const reduction=comparison.expectedImpactReduction==null?'learning':`${(Number(comparison.expectedImpactReduction)*100).toFixed(0)}%`;
+  return `<div class="panelBand"><div class="sectionHeader"><div><h2>Player-Impact Maintenance Planner</h2><p class="muted">Ranks exact future windows from zero-inclusive aggregate population samples. It stores counts only—never player identities, coordinates, or IP addresses.</p></div><div class="toolbar"><span class="pill ${data.source==='measured-presence'?'ok':'warn'}">${esc(data.source||data.state||'unavailable')}</span><span class="pill">${esc(data.confidence||'unknown')} confidence</span></div></div><div class="metricGrid">${metric('Recommended',recommendation.localLabel||'learning')}${metric('Expected online',recommendation.expectedConcurrentPlayers??'—')}${metric('P95 peak',recommendation.p95PeakPlayers??'—')}${metric('Impact reduction',reduction,data.source==='measured-presence'?'ok':'')}${metric('Evidence buckets',evidence.observationBuckets||0)}</div><div class="commandBar">${choices||'<span class="muted">No bounded candidate window is available.</span>'}</div><details><summary>Policy, evidence, baseline, and ranking</summary><pre>${esc(JSON.stringify(data,null,2))}</pre></details></div>`;
+}
 function restartPanel(state){
   const active = (state.jobs || []).filter(j => ['scheduled','executing'].includes(j.status));
   const latest = active[active.length - 1] || (state.jobs || []).slice(-1)[0] || null;
@@ -17994,7 +18096,7 @@ function restartPanel(state){
   ].map(([value,label]) => `<option value="${value}">${label}</option>`).join('');
   const jobSummary = latest ? `<pre>${esc(JSON.stringify(latest, null, 2))}</pre>` : '<div class="muted">No scheduled restart.</div>';
   const execution = state.lastExecution ? `<pre>${esc(JSON.stringify(state.lastExecution, null, 2))}</pre>` : '<div class="muted">No restart execution attempts yet.</div>';
-  return `<div class="card"><h2>Maintenance Job</h2><p class="muted">Cleanly disconnects players, stops the selected services, creates and verifies the recovery backup, applies only an allowed update policy, restores service, and proves map readiness. A failed backup suppresses the update and forces current-build recovery.</p><div class="grid"><label>Target<select id="restartTarget">${targetOptions}</select></label><label>Action<select id="restartAction"><option value="restart" selected>Restart target</option><option value="shutdown">Shutdown target</option></select></label><label>Update policy<select id="restartUpdatePolicy"><option value="certified" selected>Certified candidate or current</option><option value="current">Current build only</option><option value="automatic">Legacy automatic (if allowed)</option></select></label><label>Run after<select id="restartDelay">${delayOptions}</select></label><label>Repeat notice every<select id="restartRepeat"><option value="0">Do not repeat</option><option value="30">30 sec</option><option value="60" selected>60 sec</option><option value="300">5 min</option><option value="600">10 min</option><option value="900">15 min</option><option value="1800">30 min</option><option value="3600">60 min</option></select></label><label>Execution<select id="restartExecute"><option value="false" selected>Dry-run schedule</option><option value="true">Execute hook</option></select></label></div><div class="toolbar checkToolbar"><label><input id="restartBackup" type="checkbox" checked> Create and verify backup</label><label><input id="restartAnnounce" type="checkbox" checked> Send in-game warnings</label></div><label>Warning message<textarea id="restartMessage" rows="3" class="compactTextarea">Server maintenance soon. Please get to a safe place.</textarea></label><p><button id="scheduleRestartBtn" class="primary">Schedule maintenance</button> <button id="cancelRestartBtn" class="danger">Cancel active job</button></p><details><summary>Current job state</summary>${jobSummary}</details><details><summary>Last execution</summary>${execution}</details></div>`;
+  return `<div class="card" id="maintenanceJobPlanner"><h2>Maintenance Job</h2><p class="muted">Cleanly disconnects players, stops the selected services, creates and verifies the recovery backup, applies only an allowed update policy, restores service, and proves map readiness. A failed backup suppresses the update and forces current-build recovery.</p><div class="grid"><label>Target<select id="restartTarget">${targetOptions}</select></label><label>Action<select id="restartAction"><option value="restart" selected>Restart target</option><option value="shutdown">Shutdown target</option></select></label><label>Update policy<select id="restartUpdatePolicy"><option value="certified" selected>Certified candidate or current</option><option value="current">Current build only</option><option value="automatic">Legacy automatic (if allowed)</option></select></label><label>Exact run time (optional)<input id="restartRunAt" type="datetime-local"></label><label>Fallback run after<select id="restartDelay">${delayOptions}</select></label><label>Repeat notice every<select id="restartRepeat"><option value="0">Do not repeat</option><option value="30">30 sec</option><option value="60" selected>60 sec</option><option value="300">5 min</option><option value="600">10 min</option><option value="900">15 min</option><option value="1800">30 min</option><option value="3600">60 min</option></select></label><label>Execution<select id="restartExecute"><option value="false" selected>Dry-run schedule</option><option value="true">Execute hook</option></select></label></div><div class="toolbar checkToolbar"><label><input id="restartBackup" type="checkbox" checked> Create and verify backup</label><label><input id="restartAnnounce" type="checkbox" checked> Send in-game warnings</label></div><label>Warning message<textarea id="restartMessage" rows="3" class="compactTextarea">Server maintenance soon. Please get to a safe place.</textarea></label><p><button id="scheduleRestartBtn" class="primary">Schedule maintenance</button> <button id="cancelRestartBtn" class="danger">Cancel active job</button></p><details><summary>Current job state</summary>${jobSummary}</details><details><summary>Last execution</summary>${execution}</details></div>`;
 }
 function signalList(groups){
   return Object.entries(groups || {}).map(([group, rows]) => `<div class="card"><h2>${esc(group)}</h2><table><thead><tr><th>Name</th><th>Value</th><th>Why</th></tr></thead><tbody>${(rows || []).map(r=>`<tr><td>${esc(r.name)}</td><td>${esc(Array.isArray(r.value) ? r.value.join(', ') : r.value)}</td><td>${esc(r.why)}</td></tr>`).join('')}</tbody></table></div>`).join('');
@@ -18364,15 +18466,16 @@ async function overview(serial=loadSerial){
   startHealthRefresh();
 }
 async function ops(serial=loadSerial){
-  const [health, opt, announcement, restart, maintenanceHistory] = await Promise.all([
+  const [health, opt, announcement, restart, maintenanceHistory, maintenancePlanner] = await Promise.all([
     api('/api/ops/health', {timeoutMs: HEALTH_REQUEST_TIMEOUT_MS}),
     api('/api/ops/optimization'),
     api('/api/ops/announcement'),
     api('/api/ops/restart'),
-    api('/api/ops/maintenance-history?limit=100')
+    api('/api/ops/maintenance-history?limit=100'),
+    api('/api/ops/maintenance-planner')
   ]);
   if (serial !== loadSerial) return;
-  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Operations</h2><div class="toolbar"><button data-jump="overview">Overview</button><button data-jump="characters">Players</button><button data-jump="runbook">Runbook</button><button data-jump="settings">Settings</button></div></div><div id="opsRealtimeMetrics" class="metricGrid" aria-live="polite">${opsRealtimeMetricsHtml(health)}</div><div class="twoCol">${restartPanel(restart)}${announcementPanel(announcement)}</div>${maintenanceHistoryPanel(maintenanceHistory)}<div class="twoCol"><div id="opsHealthViz">${healthViz(health)}</div><div class="panelBand"><h2>Health Verdict</h2><div id="opsHealthVerdicts">${checks(health.verdicts)}</div></div></div><details class="panelBand" open><summary>Map Online/Offline</summary><div id="opsMapStatus">${mapTiles(health.mapStatus)}${mapStatusTable(health.mapStatus)}</div></details><details class="panelBand"><summary>Host Resources</summary><div id="resources"><div class="muted">Loading resource stats...</div></div></details><details class="panelBand"><summary>Local and Upstream Network</summary><div data-network-panel><div class="muted">Loading network probes...</div></div></details><details class="panelBand"><summary>Raw Farm State</summary><div id="opsRawFarmState">${table(health.farmState)}</div></details><details class="panelBand"><summary>Partitions</summary><div id="opsPartitions">${table(health.partitions)}</div></details><details class="panelBand"><summary>Optimization Signals</summary>${signalList(opt)}</details></div>`;
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Operations</h2><div class="toolbar"><button data-jump="overview">Overview</button><button data-jump="characters">Players</button><button data-jump="runbook">Runbook</button><button data-jump="settings">Settings</button></div></div><div id="opsRealtimeMetrics" class="metricGrid" aria-live="polite">${opsRealtimeMetricsHtml(health)}</div>${maintenancePlannerPanel(maintenancePlanner)}<div class="twoCol">${restartPanel(restart)}${announcementPanel(announcement)}</div>${maintenanceHistoryPanel(maintenanceHistory)}<div class="twoCol"><div id="opsHealthViz">${healthViz(health)}</div><div class="panelBand"><h2>Health Verdict</h2><div id="opsHealthVerdicts">${checks(health.verdicts)}</div></div></div><details class="panelBand" open><summary>Map Online/Offline</summary><div id="opsMapStatus">${mapTiles(health.mapStatus)}${mapStatusTable(health.mapStatus)}</div></details><details class="panelBand"><summary>Host Resources</summary><div id="resources"><div class="muted">Loading resource stats...</div></div></details><details class="panelBand"><summary>Local and Upstream Network</summary><div data-network-panel><div class="muted">Loading network probes...</div></div></details><details class="panelBand"><summary>Raw Farm State</summary><div id="opsRawFarmState">${table(health.farmState)}</div></details><details class="panelBand"><summary>Partitions</summary><div id="opsPartitions">${table(health.partitions)}</div></details><details class="panelBand"><summary>Optimization Signals</summary>${signalList(opt)}</details></div>`;
   wireResourceControls(view);
   bindResourceFilters(view);
   refreshResources().catch(e => {
@@ -18386,6 +18489,13 @@ async function ops(serial=loadSerial){
   document.getElementById('cancelAnnouncementBtn').addEventListener('click', e => runAction(e.currentTarget, 'Canceling...', cancelAnnouncement));
   document.getElementById('scheduleRestartBtn').addEventListener('click', e => runAction(e.currentTarget, 'Scheduling...', scheduleRestart));
   document.getElementById('cancelRestartBtn').addEventListener('click', e => runAction(e.currentTarget, 'Canceling...', cancelRestart));
+  document.querySelectorAll('[data-maintenance-slot]').forEach(button => button.addEventListener('click', () => {
+    const date=new Date(button.dataset.maintenanceSlot);
+    const pad=value=>String(value).padStart(2,'0');
+    document.getElementById('restartRunAt').value=`${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+    document.getElementById('maintenanceJobPlanner')?.scrollIntoView({behavior:'smooth',block:'center'});
+    notify('Recommended maintenance window loaded into the exact-time planner','ok');
+  }));
   const syncRestartPolicy = () => {
     const targeted = restartTarget.value !== 'all';
     if (targeted) restartUpdatePolicy.value = 'current';
@@ -20646,15 +20756,19 @@ async function scheduleRestart(){
   const action = restartAction.value || 'restart';
   const targetLabel = restartTarget.options[restartTarget.selectedIndex]?.textContent || restartTarget.value;
   const delayLabel = restartDelay.options[restartDelay.selectedIndex]?.textContent || restartDelay.value;
+  const exactValue = document.getElementById('restartRunAt')?.value || '';
+  const runAt = exactValue ? new Date(exactValue).toISOString() : null;
+  const timingLabel = runAt ? new Date(runAt).toLocaleString() : delayLabel;
   const repeatLabel = restartRepeat.options[restartRepeat.selectedIndex]?.textContent || restartRepeat.value;
   const updatePolicyLabel = restartUpdatePolicy.options[restartUpdatePolicy.selectedIndex]?.textContent || restartUpdatePolicy.value;
   const actionLabel = execute ? 'execute the restart hook' : 'dry-run only';
   const backupLabel = restartBackup.checked ? 'backup first' : 'no backup';
-  if (!confirm(`Schedule ${targetLabel} ${action} after ${delayLabel}?\nNotice repeat: ${repeatLabel}\nAction: ${actionLabel}\nUpdate policy: ${updatePolicyLabel}\nBackup: ${backupLabel}`)) return;
+  if (!confirm(`Schedule ${targetLabel} ${action} for ${timingLabel}?\nNotice repeat: ${repeatLabel}\nAction: ${actionLabel}\nUpdate policy: ${updatePolicyLabel}\nBackup: ${backupLabel}`)) return;
   await api('/api/ops/restart', {method:'POST', body:JSON.stringify({
     target: restartTarget.value,
     action,
     delay: restartDelay.value,
+    runAt,
     repeat_seconds: restartRepeat.value,
     message: restartMessage.value,
     announce: restartAnnounce.checked,

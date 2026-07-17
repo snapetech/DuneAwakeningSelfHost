@@ -17,7 +17,7 @@ or documented operational path.
 ## Audit snapshot
 
 - Audit date: **2026-07-17**, full GitHub search and remote HEAD refresh
-  **2026-07-17 06:35 UTC**
+  **2026-07-17 07:16 UTC**
 - Search scope: GitHub repository search, project documentation, Funcom's
   self-host guide, CubeCoders' Dune template and guide, Nexus Mods' Dune:
   Awakening category, and public community discussions used only to discover
@@ -31,7 +31,8 @@ or documented operational path.
   directory tranches.
 
 The refresh repeated all four repository searches below and checked every
-pinned remote HEAD. No new credible peer appeared. Three sources advanced:
+pinned remote HEAD. A second post-prewarming refresh found every pin unchanged
+and no new credible peer. Three sources had advanced in the earlier pass:
 Icehunter added canonical player-state joins and orphan cleanup after native
 character deletion (`a10c39c`); AlphaNine unified and reorganized item,
 schematic, research, recipe, and patent catalogs (`c319695`); atobo added
@@ -219,6 +220,7 @@ without reproducing that wrapper.
 | Two-phase assured deployments and promotion receipts | No surveyed Dune peer | DASH exceeds | Exact Git-blob manifests are verified locally and in an SSH stage before atomic promotion; verified pre/post backups, private source rollback, all-map container/process continuity, desired-state seal, 13/13 readiness, SLO/Change Intelligence integrity, Prometheus scrape proof, semantic nested receipts, mixed evidence backup verification, dashboard/metrics/alerts, and a final receipt-containing backup close the change loop without a map lifecycle call; see `docs/deployment-assurance.md` |
 | Candidate-bound game-update readiness certification | No surveyed Dune peer | DASH exceeds | Steam acquisition is split from activation; exact build/image identity is bound to verified backup plus independently current PostgreSQL and dual-broker RabbitMQ recovery proofs, Compose/Coriolis/post-start hooks, desired state, SLO/change integrity, fleet readiness, deployment assurance, and online-player semantics. Nested HMAC receipts expire/invalidate on candidate drift, browser and scheduled apply disable reacquisition and fail closed without a current receipt, unattended hotfixes stage-only by default, mixed backups reverify evidence, and constant-I/O package inspection plus label-free latency budgets expose blocked, uncertified, or regressed candidates; see `docs/update-readiness.md` |
 | Signed maintenance outcome intelligence | No surveyed Dune peer | DASH exceeds | Every scheduled restart/shutdown execution records exact stage requirements, attempts, verdicts and latency; independently verifies the new stopped-world backup before update admission; suppresses candidates and restores the current build without misreporting success on backup/update failure; binds principal, effective policy, readiness identity, recovery and no-game-data-mutation semantics into a private HMAC receipt; exposes verified history in Operations/API/metrics; and re-verifies the schema inside mixed backups; see `docs/maintenance-intelligence.md` |
+| Player-impact-aware maintenance window optimization | No surveyed Dune peer | DASH exceeds | Zero-inclusive identity-free population buckets rank bounded exact-time windows by expected concurrent players, player-minutes, p95 peak, occupied probability and evidence coverage; sparse history stays an explicit policy fallback, selected windows feed the governed restart planner, warning cadence begins near execution instead of days early, and label-free metrics/alerts retain collector health; see `docs/player-impact-maintenance.md` |
 | Offsite/mirror/failover backup | DST, Reditus | Parity | Replica, snapshot, rsync/rclone/restic examples |
 | Scheduled restart with warnings and backup | adainrivers, Manaiakalani, AMP | DASH exceeds | Daily maintenance checks certification before warning players, revalidates the exact staged candidate before disconnect/stop, forbids build changes on targeted restarts, verifies the new stopped-world backup before apply, restores the current build on proof/update failure, and signs the complete execution outcome |
 | Authenticated Steam update and Steam Guard bootstrap | Manaiakalani | Parity | Protected owned-account login/password settings, interactive SteamCMD bootstrap for password/Steam Guard, persistent private Steam home, locked unattended hotfix updater, and restart-only-on-change behavior; one-time Steam Guard codes are not retained |

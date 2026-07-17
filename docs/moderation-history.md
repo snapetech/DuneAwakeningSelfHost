@@ -30,6 +30,7 @@ stored in the Funcom Postgres schema.
 | Bans | Permanent or expiring policy rows matched against account, Funcom, or platform identity |
 | Allowlist | Account, Funcom, or platform identity registry with optional expiry |
 | Presence sessions | Join/last-seen/leave intervals, map, partition, and sample count |
+| Maintenance population observations | Zero-inclusive five-minute count aggregates used for low-impact scheduling; no identities, coordinates, or IP addresses |
 | Heatmap cells | Daily/hourly/map aggregates in coarse world-coordinate cells |
 | Security events | Deduplicated and redacted anti-cheat, authentication, disconnect, tamper, and rate-limit signals |
 | Enforcement receipts | Native kick publish result, account, policy/ban, timestamp, and bounded redacted detail |

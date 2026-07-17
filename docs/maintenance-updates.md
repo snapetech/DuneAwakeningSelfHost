@@ -29,6 +29,12 @@ restart into an unreviewed update.
 
 The daily maintenance target is 06:00 local host time. The timer schedules the job at 05:30 so players receive a 30-minute warning window before the restart begins.
 
+`06:00` remains the unattended timer default and the comparison/fallback
+baseline. The Operations page can instead schedule an exact future timestamp
+recommended by the player-impact planner. Exact-time warnings begin at the
+configured lead time rather than immediately when a job is created. See
+[`player-impact-maintenance.md`](player-impact-maintenance.md).
+
 The 06:00 target is deliberately after Funcom's nightly maintenance window. If Steam receives a self-hosted server hotfix during Funcom maintenance, the local Steam package has time to update before DASH stops the world, takes the stopped-world backup, loads the new image tarballs, and starts the farm again.
 
 ## Default Timeline

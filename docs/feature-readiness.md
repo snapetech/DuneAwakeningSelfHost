@@ -178,6 +178,12 @@ dash_feature_readiness_history_head_sequence
 dash_feature_readiness_history_last_regression_timestamp_seconds
 ```
 
+The catalog includes `player-impact-maintenance`. Its runtime probe verifies
+that the shared moderation database accepted aggregate observations and that
+the planner can produce a bounded recommendation. `policy-fallback-learning`
+is a ready runtime state with low evidence confidence, not a false measured
+claim; the Operations page exposes the distinction.
+
 Metrics are deliberately label-free. Feature IDs, credential names, service
 names, operator identities, paths, and failure text remain in the authenticated
 API rather than becoming public/high-cardinality labels.

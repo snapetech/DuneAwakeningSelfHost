@@ -1549,7 +1549,18 @@ Maintenance backups are written under `backups/admin-panel/maintenance/<utc-stam
 
 After a restart start hook returns, the admin panel waits for farm DB readiness before marking the job successful. With autoscaling disabled, the gate requires every current `world_partition` row to have an alive farm row and an `active_server_ids` entry. With autoscaling enabled, it requires only maps whose configured mode is `always-on`; dynamic, warm, and retained maps may correctly remain stopped until demand. The execution details identify the decision as `verificationMode=full-farm` or `verificationMode=autoscaler-always-on`, include the exact `requiredServices`, and record the stricter ready/alive count as `readyOnline`. If the autoscaler state cannot be read or has no `always-on` services, verification fails safe to the full farm. If readiness is incomplete, the panel runs one guarded recovery pass through `DUNE_ADMIN_RESTART_RECOVERY_COMMAND` before waiting again. The default recovery command is `scripts/watch-maps.sh .env --once` with startup grace disabled, so a required map that is running but not alive/active in the DB is recovered instead of leaving the baseline farm unhealthy. A start hook return code of `141` is treated as recoverable only if the required farm subset subsequently reports fully online, because that code commonly means a broken output pipe rather than a confirmed container startup failure.
 
-When the restart form's announcement checkbox is enabled, the admin panel schedules the first warning immediately and repeats it until the maintenance run time. The standalone announcement card is separate: it only schedules chat notices and does not stop, start, or back up services.
+When the restart form's announcement checkbox is enabled, relative-delay jobs
+schedule the first warning immediately. Exact-time jobs default to beginning
+warnings 30 minutes before execution, every five minutes until five minutes
+remain, then every minute. The standalone announcement card is separate: it
+only schedules chat notices and does not stop, start, or back up services.
+
+The Ops tab also provides a player-impact maintenance planner. It records
+zero-inclusive five-minute population buckets with no identities, ranks exact
+future windows against the `06:00` baseline, and loads a selected timestamp into
+the normal restart form. Learning/fallback mode remains visible until complete
+historical windows satisfy policy. See
+[`player-impact-maintenance.md`](player-impact-maintenance.md).
 
 Actual execution is delegated to:
 

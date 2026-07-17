@@ -26,6 +26,10 @@ the Prometheus request path never performs those expensive checks inline.
 The same endpoint exports label-free four-eyes approval enablement, ledger
 validity, state totals, and oldest-pending age. It never labels an operator,
 route, capability, request ID, body HMAC, summary, or request value.
+It also exports the player-impact maintenance collector state, learning versus
+measured mode, aggregate evidence-bucket count, recommended and baseline
+expected population, and expected player-minutes saved. These series never
+contain player identities, local timestamps, candidate labels, or coordinates.
 It also exports mutation flight-recorder enablement, full-chain/head validity,
 event/head counts, append failures, privileged admissions/completions, open
 requests, and oldest-open age. It never labels a principal, path, capability,
