@@ -2,7 +2,11 @@
 
 This document answers which cataloged evidence is actionable now. Confidence levels are `high`, `moderate`, `low`, or `unknown`.
 
-Default posture: every listed execution path still requires `DUNE_ADMIN_MUTATIONS_ENABLED=true`, its specific feature gate, its exact confirmation phrase, and an audit record. Dry-runs and inspectors are the default operating mode.
+Default posture: every listed execution path still requires
+`DUNE_ADMIN_MUTATIONS_ENABLED=true`, its specific feature gate, its exact
+confirmation phrase, a fresh signed blast-radius change contract when the
+route is governed, and an audit record. Dry-runs and inspectors are the default
+operating mode. See [`change-contracts.md`](change-contracts.md).
 
 ## Actionable Now
 

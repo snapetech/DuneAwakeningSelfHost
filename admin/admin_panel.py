@@ -50,6 +50,7 @@ import native_command_admin
 import access_control
 import audit_ledger
 import change_approvals
+import change_contracts
 import outbound_webhooks
 import community_rewards
 import moderation
@@ -196,6 +197,13 @@ if DUAL_CONTROL_POLICY not in change_approvals.MODE_MINIMUM:
     raise RuntimeError("DUNE_ADMIN_DUAL_CONTROL_POLICY must be critical, high, or all")
 DUAL_CONTROL_TTL_SECONDS = max(60, min(int(os.environ.get("DUNE_ADMIN_DUAL_CONTROL_TTL_SECONDS", "900")), 3600))
 CHANGE_APPROVAL_DATABASE = pathlib.Path(os.environ.get("DUNE_ADMIN_DUAL_CONTROL_DATABASE", str(BACKUP_ROOT / "change-approvals.sqlite3")))
+CHANGE_CONTRACTS_ENABLED = os.environ.get("DUNE_ADMIN_CHANGE_CONTRACTS_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+CHANGE_CONTRACTS_REQUIRED = os.environ.get("DUNE_ADMIN_CHANGE_CONTRACTS_REQUIRED", "true").lower() in ("1", "true", "yes", "on")
+CHANGE_CONTRACT_TTL_SECONDS = max(change_contracts.MIN_TTL_SECONDS, min(int(os.environ.get("DUNE_ADMIN_CHANGE_CONTRACT_TTL_SECONDS", "120")), change_contracts.MAX_TTL_SECONDS))
+CHANGE_CONTRACT_SECRET = secrets.token_bytes(32)
+CHANGE_CONTRACT_REPLAY_GUARD = change_contracts.ReplayGuard()
+if CHANGE_CONTRACTS_REQUIRED and not CHANGE_CONTRACTS_ENABLED:
+    raise RuntimeError("DUNE_ADMIN_CHANGE_CONTRACTS_REQUIRED=true requires DUNE_ADMIN_CHANGE_CONTRACTS_ENABLED=true")
 FEDERATED_AUTH_ENABLED = os.environ.get("DUNE_ADMIN_FEDERATED_AUTH_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 FEDERATED_AUTH_SUBJECTS_FILE = pathlib.Path(os.environ.get("DUNE_ADMIN_AUTH_SUBJECTS_FILE", str(CONFIG_ROOT / "admin-auth-subjects.json")))
 FEDERATED_AUTH_SESSION_SECRET_FILE = pathlib.Path(os.environ.get("DUNE_ADMIN_AUTH_SESSION_SECRET_FILE", str(CONFIG_ROOT / "secrets" / "admin-session.secret")))
@@ -475,6 +483,7 @@ CHANGE_APPROVAL_STORE = None
 AUDIT_LEDGER_LOCK = threading.Lock()
 AUDIT_LEDGER_STORE = None
 AUDIT_LEDGER_RUNTIME = {"ready": False, "lastError": "", "lastAppendAt": None, "lastSequence": 0}
+CHANGE_CONTRACT_RUNTIME = {"issued": 0, "admitted": 0, "refused": 0, "lastIssuedAt": None, "lastAdmittedAt": None, "lastRefusalAt": None, "lastError": ""}
 
 
 def admin_audit_ledger():
@@ -530,6 +539,17 @@ def audit_ledger_prometheus():
         return "dash_admin_audit_ledger_enabled 1\ndash_admin_audit_ledger_valid 0\n"
 
 
+def change_contract_prometheus():
+    return "\n".join([
+        f"dash_change_contract_enabled {1 if CHANGE_CONTRACTS_ENABLED else 0}",
+        f"dash_change_contract_required {1 if CHANGE_CONTRACTS_REQUIRED else 0}",
+        f"dash_change_contract_issued_total {int(CHANGE_CONTRACT_RUNTIME['issued'])}",
+        f"dash_change_contract_admitted_total {int(CHANGE_CONTRACT_RUNTIME['admitted'])}",
+        f"dash_change_contract_refused_total {int(CHANGE_CONTRACT_RUNTIME['refused'])}",
+        "",
+    ])
+
+
 def change_approval_store():
     global CHANGE_APPROVAL_STORE
     with CHANGE_APPROVAL_LOCK:
@@ -576,6 +596,7 @@ def admin_panel_reload_paths():
         COSMETIC_CATALOG_FILE,
         CODE_ROOT / "admin" / "access_control.py",
         CODE_ROOT / "admin" / "change_approvals.py",
+        CODE_ROOT / "admin" / "change_contracts.py",
         CODE_ROOT / "scripts" / "dune_gm_command.py",
         GM_CATALOG_PATH,
     ]
@@ -1027,6 +1048,9 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ADMIN_DUAL_CONTROL_TTL_SECONDS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Lifetime of a body-bound change approval, limited to 60-3600 seconds."},
     "DUNE_ADMIN_AUDIT_LEDGER_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "HMAC-seals sanitized admin events and authenticates the current chain head."},
     "DUNE_ADMIN_AUDIT_LEDGER_REQUIRED_FOR_MUTATIONS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Refuses privileged POST admission unless its intent can be durably sealed first."},
+    "DUNE_ADMIN_CHANGE_CONTRACTS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Issues exact-body, operator-bound blast-radius previews for governed mutations."},
+    "DUNE_ADMIN_CHANGE_CONTRACTS_REQUIRED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Refuses governed mutations without a fresh signed change contract reviewed against the current policy."},
+    "DUNE_ADMIN_CHANGE_CONTRACT_TTL_SECONDS": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Freshness window for signed mutation impact contracts, bounded to 30-300 seconds."},
     "DUNE_ADMIN_FEDERATED_AUTH_ENABLED": {"group": "Federated Auth", "secret": False, "restart": True, "why": "Enables provider-neutral OIDC or Discord OAuth authorization-code login when all credentials and mappings are configured."},
     "DUNE_ADMIN_AUTH_PROVIDER": {"group": "Federated Auth", "secret": False, "restart": True, "why": "Federated login provider type: oidc or discord."},
     "DUNE_ADMIN_AUTH_ISSUER": {"group": "Federated Auth", "secret": False, "restart": True, "why": "Exact HTTPS OIDC issuer; Discord uses https://discord.com."},
@@ -3307,6 +3331,29 @@ def server_metadata():
 
 
 def write_safe_env(updates):
+    for key, value in updates.items():
+        text = str(value)
+        if any(char in text for char in ("\r", "\n", "\x00")):
+            raise ValueError(f"environment value for {key} contains a forbidden control character")
+        if len(text.encode("utf-8")) > 65536:
+            raise ValueError(f"environment value for {key} exceeds 64 KiB")
+    if any(key in updates for key in {
+        "DUNE_ADMIN_CHANGE_CONTRACTS_ENABLED",
+        "DUNE_ADMIN_CHANGE_CONTRACTS_REQUIRED",
+        "DUNE_ADMIN_CHANGE_CONTRACT_TTL_SECONDS",
+    }):
+        projected = read_env()
+        projected.update({key: str(value) for key, value in updates.items()})
+        enabled = projected.get("DUNE_ADMIN_CHANGE_CONTRACTS_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
+        required = projected.get("DUNE_ADMIN_CHANGE_CONTRACTS_REQUIRED", "true").strip().lower() in ("1", "true", "yes", "on")
+        if required and not enabled:
+            raise ValueError("change-contract enforcement cannot remain required while change contracts are disabled")
+        try:
+            ttl = int(projected.get("DUNE_ADMIN_CHANGE_CONTRACT_TTL_SECONDS", "120"))
+        except ValueError as exc:
+            raise ValueError("change-contract TTL must be an integer from 30 to 300 seconds") from exc
+        if not change_contracts.MIN_TTL_SECONDS <= ttl <= change_contracts.MAX_TTL_SECONDS:
+            raise ValueError("change-contract TTL must be from 30 to 300 seconds")
     original = ENV_FILE.read_text(encoding="utf-8").splitlines()
     seen = set()
     rendered = []
@@ -8544,6 +8591,7 @@ class Handler(BaseHTTPRequestHandler):
                 metrics += deployment_assurance_store().prometheus() if DEPLOYMENT_ASSURANCE_ENABLED else "dash_deployment_assurance_collector_up 0\n"
                 metrics += change_approval_store().prometheus(enabled=DUAL_CONTROL_ENABLED)
                 metrics += audit_ledger_prometheus()
+                metrics += change_contract_prometheus()
                 if UPDATE_READINESS_ENABLED:
                     try:
                         update_snapshot = update_readiness_metrics_snapshot()
@@ -8675,6 +8723,12 @@ class Handler(BaseHTTPRequestHandler):
                     "adminTokenConfigured": bool(ADMIN_TOKEN) or (RBAC_ENABLED and ADMIN_ACCESS_FILE.exists()),
                     "adminTokenRequired": ADMIN_REQUIRE_TOKEN,
                     "rbacEnabled": RBAC_ENABLED,
+                    "changeContracts": {
+                        "enabled": CHANGE_CONTRACTS_ENABLED,
+                        "required": CHANGE_CONTRACTS_REQUIRED,
+                        "ttlSeconds": CHANGE_CONTRACT_TTL_SECONDS,
+                        "governedPaths": len(change_contracts.IMPACTS),
+                    },
                     "webhooks": {
                         "enabled": WEBHOOK_DISPATCHER.enabled,
                         "configured": WEBHOOK_DISPATCHER.config_path.exists(),
@@ -8702,6 +8756,19 @@ class Handler(BaseHTTPRequestHandler):
                     "status": store.status(),
                     "approvalHeader": "X-DASH-Approval-ID",
                     "executionSemantics": "one approved request authorizes one exact requester-bound attempt",
+                })
+            elif parsed.path == "/api/security/change-contract":
+                self.require_token()
+                self.json({
+                    "ok": True,
+                    "enabled": CHANGE_CONTRACTS_ENABLED,
+                    "required": CHANGE_CONTRACTS_REQUIRED,
+                    "ttlSeconds": CHANGE_CONTRACT_TTL_SECONDS,
+                    "header": "X-DASH-Change-Contract",
+                    "policyRevision": change_contracts.policy_revision(),
+                    "policies": change_contracts.public_policies(),
+                    "runtime": dict(CHANGE_CONTRACT_RUNTIME),
+                    "restartSemantics": "outstanding contracts are invalid after an Admin Panel process restart",
                 })
             elif parsed.path == "/api/admin/item-catalog":
                 self.require_token()
@@ -8747,7 +8814,19 @@ class Handler(BaseHTTPRequestHandler):
                 sealed_events = []
                 if AUDIT_LEDGER_ENABLED and ledger_status.get("ok"):
                     sealed_events = admin_audit_ledger().list(AUDIT_EVENT_LIMIT)
-                self.json({"events": recent_audit_events(), "sealedEvents": sealed_events, "ledger": ledger_status})
+                self.json({
+                    "events": recent_audit_events(),
+                    "sealedEvents": sealed_events,
+                    "ledger": ledger_status,
+                    "changeContracts": {
+                        "enabled": CHANGE_CONTRACTS_ENABLED,
+                        "required": CHANGE_CONTRACTS_REQUIRED,
+                        "ttlSeconds": CHANGE_CONTRACT_TTL_SECONDS,
+                        "policyRevision": change_contracts.policy_revision(),
+                        "governedPaths": len(change_contracts.IMPACTS),
+                        "runtime": dict(CHANGE_CONTRACT_RUNTIME),
+                    },
+                })
             elif parsed.path == "/api/ops/webhooks":
                 self.require_token()
                 self.json(WEBHOOK_DISPATCHER.status())
@@ -9111,6 +9190,7 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         self._parsed_body = None
         self._privileged_audit = None
+        self._change_contract = None
         try:
             self.validate_host()
             webhook_match = re.fullmatch(r"/api/community/webhooks/(vote|payment)", parsed.path)
@@ -9120,9 +9200,38 @@ class Handler(BaseHTTPRequestHandler):
                 self.json(result)
                 return
             self.validate_same_origin()
-            request_limit = BLUEPRINT_MAX_BODY_BYTES if parsed.path == "/api/admin/blueprints" else BACKUP_IMPORT_MAX_BODY_BYTES if parsed.path == "/api/ops/backups/import" else MAX_BODY_BYTES
+            request_limit = BLUEPRINT_MAX_BODY_BYTES if parsed.path in ("/api/admin/blueprints", "/api/security/change-contract") else BACKUP_IMPORT_MAX_BODY_BYTES if parsed.path == "/api/ops/backups/import" else MAX_BODY_BYTES
             validate_json_post(self, max_bytes=request_limit)
             required_capability = access_control.required_capability("POST", parsed.path)
+            if CHANGE_CONTRACTS_ENABLED and parsed.path in change_approvals.GOVERNED_PATHS:
+                governed_body = parse_body(self, max_bytes=request_limit)
+                governed_policy = change_approvals.policy_for(parsed.path, governed_body)
+                if governed_policy:
+                    self.require_token()
+                    principal = access_control.public_principal(getattr(self, "auth_principal", None)) or {}
+                    if CHANGE_CONTRACTS_REQUIRED:
+                        token = self.headers.get("X-DASH-Change-Contract", "").strip()
+                        try:
+                            contract = change_contracts.verify(
+                                token, parsed.path, governed_body, principal, required_capability,
+                                CHANGE_CONTRACT_SECRET,
+                            )
+                            CHANGE_CONTRACT_REPLAY_GUARD.consume(contract)
+                        except Exception as exc:
+                            CHANGE_CONTRACT_RUNTIME["refused"] += 1
+                            CHANGE_CONTRACT_RUNTIME["lastRefusalAt"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                            CHANGE_CONTRACT_RUNTIME["lastError"] = str(exc)[:1000]
+                            audit_event(
+                                "change-contract-refused", ok=False,
+                                principal_id=principal.get("id"), path=parsed.path,
+                                capability=required_capability, risk=governed_policy["risk"],
+                                body_sha256=canonical_json_sha256(governed_body), error=str(exc)[:500],
+                            )
+                            raise PermissionError(f"governed mutation refused: {exc}") from exc
+                        self._change_contract = contract
+                        CHANGE_CONTRACT_RUNTIME["admitted"] += 1
+                        CHANGE_CONTRACT_RUNTIME["lastAdmittedAt"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                        CHANGE_CONTRACT_RUNTIME["lastError"] = ""
             if (
                 AUDIT_LEDGER_ENABLED
                 and AUDIT_LEDGER_REQUIRED_FOR_MUTATIONS
@@ -9143,6 +9252,9 @@ class Handler(BaseHTTPRequestHandler):
                     capability=required_capability,
                     body_sha256=canonical_json_sha256(privileged_body),
                     approval_id=getattr(self, "headers", {}).get("X-DASH-Approval-ID", "").strip() or None,
+                    change_contract_id=(self._change_contract or {}).get("contractId"),
+                    change_contract_risk=((self._change_contract or {}).get("change") or {}).get("risk"),
+                    change_contract_policy_revision=(self._change_contract or {}).get("policyRevision"),
                 )
                 self._privileged_audit = {
                     "requestId": request_id,
@@ -9177,7 +9289,43 @@ class Handler(BaseHTTPRequestHandler):
                         principal_id=principal.get("id"), target_path=parsed.path,
                         risk=governed_policy["risk"], body_hmac_sha256=consumed.get("bodyHmacSha256"),
                     )
-            if parsed.path == "/api/security/approvals":
+            if parsed.path == "/api/security/change-contract":
+                self.require_token()
+                body = parse_body(self, max_bytes=request_limit)
+                target_path = str(body.get("targetPath", body.get("target_path", ""))).split("?", 1)[0].strip()
+                target_body = body.get("requestBody", body.get("request_body"))
+                if not target_path.startswith("/api/") or target_path == "/api/security/change-contract":
+                    raise ValueError("change contract target must be another admin API path")
+                if not isinstance(target_body, dict):
+                    raise ValueError("change contract requestBody must be an object")
+                principal = access_control.public_principal(getattr(self, "auth_principal", None)) or {}
+                target_capability = access_control.required_capability("POST", target_path)
+                access_control.authorize(principal, target_capability)
+                if not CHANGE_CONTRACTS_ENABLED:
+                    self.json({"ok": True, "enabled": False, "required": False, "contract": {"schemaVersion": 1, "governed": False, "path": target_path}, "token": None})
+                else:
+                    issued = change_contracts.issue(
+                        target_path, target_body, principal, target_capability,
+                        CHANGE_CONTRACT_SECRET, ttl_seconds=CHANGE_CONTRACT_TTL_SECONDS,
+                    )
+                    contract = issued["contract"]
+                    if contract.get("governed"):
+                        CHANGE_CONTRACT_RUNTIME["issued"] += 1
+                        CHANGE_CONTRACT_RUNTIME["lastIssuedAt"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                        CHANGE_CONTRACT_RUNTIME["lastError"] = ""
+                        audit_event(
+                            "change-contract-issued", ok=True,
+                            contract_id=contract.get("contractId"), principal_id=principal.get("id"),
+                            target_path=target_path, capability=target_capability,
+                            risk=(contract.get("change") or {}).get("risk"),
+                            body_sha256=(contract.get("target") or {}).get("bodySha256"),
+                            expires_at=contract.get("expiresAt"), policy_revision=contract.get("policyRevision"),
+                        )
+                    self.json({
+                        "ok": True, "enabled": True, "required": CHANGE_CONTRACTS_REQUIRED,
+                        "header": "X-DASH-Change-Contract", **issued,
+                    })
+            elif parsed.path == "/api/security/approvals":
                 self.require_token()
                 if not DUAL_CONTROL_ENABLED:
                     raise PermissionError("dual control is disabled; set DUNE_ADMIN_DUAL_CONTROL_ENABLED=true")
@@ -11693,6 +11841,7 @@ class Handler(BaseHTTPRequestHandler):
             {"name": "audit log rotation limit", "ok": 0 < AUDIT_MAX_BYTES <= 50 * 1024 * 1024, "value": AUDIT_MAX_BYTES},
             {"name": "audit HMAC ledger", "ok": not AUDIT_LEDGER_ENABLED or audit_ledger_status.get("ok", False), "value": f"{audit_ledger_status.get('ledger', {}).get('events', 0)} sealed events" if AUDIT_LEDGER_ENABLED else "disabled"},
             {"name": "privileged request flight recorder", "ok": not AUDIT_LEDGER_REQUIRED_FOR_MUTATIONS or AUDIT_LEDGER_ENABLED, "value": "fail-closed admission" if AUDIT_LEDGER_REQUIRED_FOR_MUTATIONS and AUDIT_LEDGER_ENABLED else "best-effort"},
+            {"name": "governed change contracts", "ok": not CHANGE_CONTRACTS_REQUIRED or CHANGE_CONTRACTS_ENABLED, "value": f"{len(change_contracts.IMPACTS)} routes · {CHANGE_CONTRACT_TTL_SECONDS}s exact-body contracts" if CHANGE_CONTRACTS_ENABLED else "disabled"},
             {"name": "incomplete privileged requests", "ok": not AUDIT_LEDGER_ENABLED or audit_ledger_status.get("requests", {}).get("oldestOpenAgeSeconds", 0) < 300, "value": audit_ledger_status.get("requests", {}).get("open", 0)},
             {"name": "request timeout bounded", "ok": 1 <= REQUEST_TIMEOUT_SECONDS <= 60, "value": REQUEST_TIMEOUT_SECONDS},
             {"name": "item stack mutation limit", "ok": 1 <= MAX_ITEM_STACK_SIZE <= 10000000, "value": MAX_ITEM_STACK_SIZE},
@@ -11721,6 +11870,7 @@ class Handler(BaseHTTPRequestHandler):
                 "Do not expose RabbitMQ, Postgres, or this panel directly to the internet.",
                 "Take a backup before broad admin mutations or config surgery.",
                 "The mutation flight recorder seals an intent before dispatch and a completion after response construction; an unmatched old intent means execution outcome is unknown and must be investigated.",
+                "Governed mutations require a current-process signed change contract that binds operator, route, capability, exact body digest, risk policy, blast radius, and expiry before admission.",
                 "When four-eyes control is enabled, requester and approver must be distinct named identities; approvals are exact-body-bound and single-use.",
             ],
         }
@@ -11745,6 +11895,8 @@ class Handler(BaseHTTPRequestHandler):
                 path=context["path"],
                 capability=context["capability"],
                 status_code=int(status),
+                change_contract_id=(getattr(self, "_change_contract", None) or {}).get("contractId"),
+                change_contract_risk=((getattr(self, "_change_contract", None) or {}).get("change") or {}).get("risk"),
             )
         except Exception as exc:
             AUDIT_LEDGER_RUNTIME.update({"ready": False, "lastError": str(exc)[:2000]})
@@ -14318,7 +14470,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def html(self, body, head_only=False):
         nonce = secrets.token_urlsafe(16)
-        body = body.replace("__NONCE__", nonce).replace("__ADMIN_PANEL_BUILD__", admin_panel_build())
+        body = body.replace("__NONCE__", nonce).replace("__ADMIN_PANEL_BUILD__", admin_panel_build()).replace(
+            "__CHANGE_CONTRACT_PATHS__", json.dumps(sorted(change_contracts.IMPACTS)),
+        )
         data = body.encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -15108,8 +15262,16 @@ INDEX = r"""<!doctype html>
       <div id="playerModalBody"><div class="muted">No player selected.</div></div>
     </div>
   </div>
+  <div id="changeContractModal" class="modalBackdrop" role="dialog" aria-modal="true" aria-labelledby="changeContractTitle">
+    <div class="modal">
+      <div class="sectionHeader"><div><h2 id="changeContractTitle">Review Change Contract</h2><p class="muted">Fresh, exact-request blast radius</p></div><span id="changeContractRisk" class="pill">risk</span></div>
+      <div id="changeContractBody"></div>
+      <div class="commandBar"><button id="cancelChangeContractBtn">Cancel</button><button id="executeChangeContractBtn" class="danger">Execute reviewed change</button></div>
+    </div>
+  </div>
 <script nonce="__NONCE__">
 const ADMIN_PANEL_BUILD = '__ADMIN_PANEL_BUILD__';
+const GOVERNED_CHANGE_PATHS = new Set(__CHANGE_CONTRACT_PATHS__);
 const INITIAL_PATH_TAB = location.pathname.replace(/^\/+|\/+$/g, '');
 if (location.hash || (INITIAL_PATH_TAB && INITIAL_PATH_TAB !== 'overview')) {
   history.replaceState({tab: INITIAL_PATH_TAB || 'overview'}, '', '/');
@@ -15128,6 +15290,7 @@ let haggaMapTimer = null;
 let loadSerial = 0;
 let currentBuild = ADMIN_PANEL_BUILD;
 let buildReloading = false;
+let changeContractReviewResolve = null;
 let detailLoadSerial = 0;
 let playerModalAccountId = '';
 let playerModalTimer = null;
@@ -15220,10 +15383,33 @@ async function runAction(button, label, fn){
 function updateLastRefresh(label='Refreshed'){
   document.getElementById('lastRefresh').textContent = `${label}: ${new Date().toLocaleTimeString()}`;
 }
+function closeChangeContractReview(accepted=false){
+  const modal=document.getElementById('changeContractModal');
+  modal.classList.remove('open');
+  const resolve=changeContractReviewResolve;
+  changeContractReviewResolve=null;
+  if(resolve) resolve(Boolean(accepted));
+  announce(accepted?'Change contract accepted':'Change contract cancelled');
+}
+function reviewChangeContract(contract){
+  if(!contract?.governed) return Promise.resolve(true);
+  if(changeContractReviewResolve) return Promise.reject(new Error('another change contract is already awaiting review'));
+  const impact=contract.impact||{},change=contract.change||{},target=contract.target||{};
+  const risk=document.getElementById('changeContractRisk');
+  risk.textContent=`${change.risk||'unknown'} risk`;
+  risk.className=`pill ${change.risk==='critical'?'bad':change.risk==='high'?'warn':''}`;
+  const safeguards=(impact.safeguards||[]).map(value=>`<li>${esc(value)}</li>`).join('');
+  const warnings=(contract.warnings||[]).map(value=>`<li>${esc(value)}</li>`).join('');
+  document.getElementById('changeContractBody').innerHTML=`<div class="notice ${change.risk==='critical'?'bad':'warn'}"><b>${esc(change.label||'Governed mutation')}</b><br><code>${esc(target.path||'')}</code></div><div class="metricGrid">${metric('Risk',change.risk||'unknown')}${metric('Backup',impact.backup||'unknown')}${metric('Reversibility',impact.reversibility||'unknown')}${metric('Restart',impact.restartImpact||'none')}</div><h3>Blast radius</h3><div class="toolbar">${(impact.scopes||[]).map(value=>`<span class="pill">${esc(value)}</span>`).join('')}</div><p class="muted">Operator <b>${esc(contract.principalId||'')}</b> · capability <code>${esc(target.capability||'')}</code> · expires ${esc(contract.expiresAt||'')} · body SHA-256 <code>${esc(target.bodySha256||'')}</code></p>${warnings?`<h3>Warnings</h3><ul>${warnings}</ul>`:''}<h3>Enforced safeguards</h3><ul>${safeguards||'<li>Route-specific server validation</li>'}</ul><details><summary>Machine contract</summary><pre>${esc(JSON.stringify(contract,null,2))}</pre></details>`;
+  document.getElementById('changeContractModal').classList.add('open');
+  document.getElementById('cancelChangeContractBtn').focus();
+  announce(`${change.risk||'unknown'} risk change contract ready for review`);
+  return new Promise(resolve=>{changeContractReviewResolve=resolve;});
+}
 async function api(path, opts={}) {
   const timeoutMs = opts.timeoutMs ?? 15000;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let timer = setTimeout(() => controller.abort(), timeoutMs);
   delete opts.timeoutMs;
   opts.signal = opts.signal || controller.signal;
   opts.headers = Object.assign({'Content-Type':'application/json'}, opts.headers || {});
@@ -15240,6 +15426,23 @@ async function api(path, opts={}) {
     path = `${path}${separator}_=${Date.now()}`;
   }
   try {
+    if(method==='POST'&&GOVERNED_CHANGE_PATHS.has(requestPath)){
+      let requestBody={};
+      try{requestBody=typeof opts.body==='string'?JSON.parse(opts.body||'{}'):(opts.body||{});}catch(error){throw new Error('governed mutation body must be valid JSON before impact review');}
+      if(!requestBody||Array.isArray(requestBody)||typeof requestBody!=='object') throw new Error('governed mutation body must be a JSON object');
+      const preflight=await fetch('/api/security/change-contract',{method:'POST',headers:Object.assign({},opts.headers),cache:'no-store',signal:opts.signal,body:JSON.stringify({targetPath:requestPath,requestBody})});
+      const preflightText=await preflight.text();
+      let issued={};
+      try{issued=preflightText?JSON.parse(preflightText):{};}catch(error){throw new Error(`${preflight.status} ${preflight.statusText}: invalid change contract response`);}
+      if(!preflight.ok) throw new Error(issued.error||preflight.statusText||`change contract HTTP ${preflight.status}`);
+      if(issued.contract?.governed){
+        clearTimeout(timer);
+        if(!await reviewChangeContract(issued.contract)) throw new Error('change cancelled after impact review');
+        if(issued.required&&!issued.token) throw new Error('server requires a signed change contract but did not issue one');
+        if(issued.token) opts.headers[issued.header||'X-DASH-Change-Contract']=issued.token;
+        timer=setTimeout(()=>controller.abort(),timeoutMs);
+      }
+    }
     const res = await fetch(path, opts);
     const text = await res.text();
     let data = {};
@@ -16776,12 +16979,17 @@ function wireGlobalAffordances(){
   document.getElementById('helpBtn')?.addEventListener('click', () => modal(true));
   document.getElementById('closeHelpBtn')?.addEventListener('click', () => modal(false));
   document.getElementById('closePlayerModalBtn')?.addEventListener('click', closePlayerModal);
+  document.getElementById('cancelChangeContractBtn')?.addEventListener('click', () => closeChangeContractReview(false));
+  document.getElementById('executeChangeContractBtn')?.addEventListener('click', () => closeChangeContractReview(true));
   document.getElementById('refreshPlayerModalBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Refreshing...', () => loadPlayerModal(playerModalAccountId)));
   document.getElementById('helpModal')?.addEventListener('click', e => {
     if (e.target.id === 'helpModal') modal(false);
   });
   document.getElementById('playerModal')?.addEventListener('click', e => {
     if (e.target.id === 'playerModal') closePlayerModal();
+  });
+  document.getElementById('changeContractModal')?.addEventListener('click', e => {
+    if (e.target.id === 'changeContractModal') closeChangeContractReview(false);
   });
   document.querySelectorAll('.tab').forEach(tab => {
     tab.addEventListener('keydown', e => {
@@ -16798,6 +17006,7 @@ function wireGlobalAffordances(){
   document.addEventListener('keydown', e => {
     const tag = e.target.tagName;
     const typing = ['INPUT','TEXTAREA','SELECT'].includes(tag);
+    if (e.key === 'Escape' && document.getElementById('changeContractModal').classList.contains('open')) { closeChangeContractReview(false); return; }
     if (e.key === 'Escape' && document.getElementById('playerModal').classList.contains('open')) { closePlayerModal(); return; }
     if (e.key === 'Escape' && document.getElementById('helpModal').classList.contains('open')) { modal(false); return; }
     if (typing && e.key !== 'Escape') return;
@@ -16823,6 +17032,7 @@ function renderStatus(data){
     server.name ? `<span class="pill">${esc(server.name)}</span>` : '',
     data.adminTokenRequired ? statusPill('admin token configured', data.adminTokenConfigured) : '<span class="pill ok">local admin: unlocked</span>',
     statusPill('item grants', data.itemGrantsEnabled),
+    `<span class="pill ${data.changeContracts?.required ? 'ok' : 'warn'}">change review: ${data.changeContracts?.required ? 'enforced' : 'advisory'}</span>`,
     `<span class="pill ${data.mutationsEnabled ? 'warn' : 'ok'}">mutations: ${data.mutationsEnabled ? 'enabled' : 'off'}</span>`,
     `<span class="pill">db: ${esc(data.database)}</span>`
   ].join('');
@@ -17802,8 +18012,9 @@ async function security(serial=loadSerial){
   const ledger = events.ledger || {};
   const ledgerHead = ledger.ledger || {};
   const ledgerRequests = ledger.requests || {};
+  const contracts = events.changeContracts || {};
   const displayedEvents = (events.sealedEvents || []).length ? events.sealedEvents : (events.events || []);
-  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Security</h2><div class="toolbar"><span class="pill ${failed ? 'warn' : 'ok'}">${failed ? failed + ' checks need attention' : 'checks OK'}</span><button data-jump="settings">Settings</button><button data-jump="mutations">Admin Actions</button></div></div>${failed ? `<div class="panelBand dangerZone"><h2>Needs Attention</h2>${checks(failedChecks)}</div>` : ''}${changeApprovalPanel(approvals)}<div class="twoCol"><div class="panelBand"><h2>Security Checks</h2>${checks(audit.checks)}</div><div class="panelBand"><div class="sectionHeader"><h2>Mutation Flight Recorder</h2><div class="toolbar"><span class="pill ${ledger.ok ? 'ok' : 'bad'}">${ledger.ok ? 'chain valid' : 'chain invalid'}</span><span class="pill">${esc(ledgerHead.events || 0)} sealed</span><span class="pill ${Number(ledgerRequests.open || 0) ? 'warn' : 'ok'}">${esc(ledgerRequests.open || 0)} open</span></div></div><p class="muted">Each privileged POST is admitted only after a secret-free exact body digest is HMAC-sealed. A separately authenticated head detects tail deletion; admitted requests without a completion receipt expose interrupted or unknown outcomes.</p>${table([{headSequence:ledgerHead.headSequence || 0,headHmac:ledgerHead.headHmacSha256 || 'none',anchorUpdated:ledgerHead.anchorUpdatedAt || '—',oldestOpenSeconds:ledgerRequests.oldestOpenAgeSeconds || 0,requiredForMutations:!!ledger.requiredForMutations}])}<h3>Recent Sealed Audit Events</h3>${auditEventsTable(displayedEvents)}<details><summary>Raw current JSONL events</summary>${table(events.events || [])}</details></div></div><div class="panelBand"><h2>Operating Notes</h2><ul>${audit.notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul></div><details class="panelBand"><summary>Editable Env Keys</summary><div class="toolbar">${audit.safeEnvKeys.map(k => `<span class="pill">${esc(k)}</span>`).join('')}</div></details><details class="panelBand"><summary>Editable Config Files</summary><div class="toolbar">${audit.allowedConfigFiles.map(k => `<span class="pill">${esc(k)}</span>`).join('')}</div></details></div>`;
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Security</h2><div class="toolbar"><span class="pill ${failed ? 'warn' : 'ok'}">${failed ? failed + ' checks need attention' : 'checks OK'}</span><button data-jump="settings">Settings</button><button data-jump="mutations">Admin Actions</button></div></div>${failed ? `<div class="panelBand dangerZone"><h2>Needs Attention</h2>${checks(failedChecks)}</div>` : ''}${changeApprovalPanel(approvals)}<div class="twoCol"><div class="panelBand"><h2>Security Checks</h2>${checks(audit.checks)}</div><div class="panelBand"><div class="sectionHeader"><h2>Mutation Flight Recorder</h2><div class="toolbar"><span class="pill ${ledger.ok ? 'ok' : 'bad'}">${ledger.ok ? 'chain valid' : 'chain invalid'}</span><span class="pill">${esc(ledgerHead.events || 0)} sealed</span><span class="pill ${Number(ledgerRequests.open || 0) ? 'warn' : 'ok'}">${esc(ledgerRequests.open || 0)} open</span></div></div><p class="muted">Each privileged POST is admitted only after a secret-free exact body digest is HMAC-sealed. A separately authenticated head detects tail deletion; admitted requests without a completion receipt expose interrupted or unknown outcomes.</p>${table([{headSequence:ledgerHead.headSequence || 0,headHmac:ledgerHead.headHmacSha256 || 'none',anchorUpdated:ledgerHead.anchorUpdatedAt || '—',oldestOpenSeconds:ledgerRequests.oldestOpenAgeSeconds || 0,requiredForMutations:!!ledger.requiredForMutations}])}<h3>Recent Sealed Audit Events</h3>${auditEventsTable(displayedEvents)}<details><summary>Raw current JSONL events</summary>${table(events.events || [])}</details></div></div><div class="panelBand"><div class="sectionHeader"><div><h2>Blast-Radius Change Contracts</h2><p class="muted">Before a governed write, DASH compiles and signs the exact operator, route, capability, request digest, risk, backup expectation, reversibility, restart impact, player disruption, map-lifecycle exposure, and safeguards. The browser makes that contract visible before dispatch.</p></div><div class="toolbar"><span class="pill ${contracts.enabled ? 'ok' : 'warn'}">${contracts.enabled ? 'enabled' : 'disabled'}</span><span class="pill ${contracts.required ? 'ok' : 'warn'}">${contracts.required ? 'enforced' : 'advisory'}</span><span class="pill">${esc(contracts.governedPaths || 0)} governed paths</span></div></div>${table([{ttlSeconds:contracts.ttlSeconds||0,issued:contracts.runtime?.issued||0,admitted:contracts.runtime?.admitted||0,refused:contracts.runtime?.refused||0,policyRevision:contracts.policyRevision||'—'}])}</div><div class="panelBand"><h2>Operating Notes</h2><ul>${audit.notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul></div><details class="panelBand"><summary>Editable Env Keys</summary><div class="toolbar">${audit.safeEnvKeys.map(k => `<span class="pill">${esc(k)}</span>`).join('')}</div></details><details class="panelBand"><summary>Editable Config Files</summary><div class="toolbar">${audit.allowedConfigFiles.map(k => `<span class="pill">${esc(k)}</span>`).join('')}</div></details></div>`;
   bindChangeApprovalControls(approvals);
 }
 async function runbook(serial=loadSerial){

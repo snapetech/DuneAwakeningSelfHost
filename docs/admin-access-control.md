@@ -112,6 +112,13 @@ recorder, sanitized events are independently HMAC-sealed and every non-read
 POST requires a verified identity/capability/path/body-digest-bound admission
 before dispatch. See [`audit-ledger.md`](audit-ledger.md).
 
+Governed high-impact writes add a second admission layer: the same identity
+must request and review a short-lived signed blast-radius contract for the
+exact body, then return it in `X-DASH-Change-Contract`. The contract cannot
+elevate capability and fails on operator, route, body, capability, policy,
+expiry, or process-generation drift. See
+[`change-contracts.md`](change-contracts.md).
+
 ## Recovery
 
 If the identity file is missing or invalid, named-token authentication fails

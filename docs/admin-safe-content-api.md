@@ -14,6 +14,12 @@ All `POST` requests must use:
 Content-Type: application/json
 ```
 
+Governed live writes also require a fresh `X-DASH-Change-Contract` issued for
+the exact operator, route, capability, and JSON body. Browser clients perform
+this review automatically; API clients follow
+[`change-contracts.md`](change-contracts.md). Dry-run and non-mutating policy
+branches do not require a contract.
+
 ## Gates
 
 | Env var | Default | Effect |

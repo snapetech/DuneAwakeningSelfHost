@@ -1618,6 +1618,14 @@ capability/body-digest admission. Response construction appends a correlated
 completion and returns `X-DASH-Request-ID`; old unmatched admissions are
 explicit unknown outcomes. See [`audit-ledger.md`](audit-ledger.md).
 
+Every governed high-impact mutation also passes through the default-on
+blast-radius change-contract gate. DASH signs the exact operator, target route,
+RBAC capability, canonical body digest, current risk/impact policy, and short
+expiry. The browser displays backup, reversibility, restart, player, and map
+impact before dispatch; API clients use `X-DASH-Change-Contract`. A changed
+body, route, operator, capability, policy, expired lifetime, or Admin Panel
+restart fails closed. See [`change-contracts.md`](change-contracts.md).
+
 - Do not expose this service to the public internet.
 - Use a long random `DUNE_ADMIN_TOKEN` whenever `DUNE_ADMIN_REQUIRE_TOKEN=true`.
 - `DUNE_ADMIN_MUTATIONS_ENABLED=false` is the example default. Enable it only after backup/restore validation and operator access controls are in place.
@@ -1630,6 +1638,7 @@ explicit unknown outcomes. See [`audit-ledger.md`](audit-ledger.md).
 - Keep `DUNE_ADMIN_MAX_BODY_BYTES` small unless editing unusually large config files; the default is `65536`.
 - Keep `DUNE_ADMIN_AUDIT_MAX_BYTES` bounded; the default rotates the JSONL audit log at 5 MiB.
 - Keep `DUNE_ADMIN_AUDIT_LEDGER_ENABLED=true` and `DUNE_ADMIN_AUDIT_LEDGER_REQUIRED_FOR_MUTATIONS=true`; restore the ledger database, HMAC key, and authenticated anchor as one backup unit if verification fails.
+- Keep `DUNE_ADMIN_CHANGE_CONTRACTS_ENABLED=true` and `DUNE_ADMIN_CHANGE_CONTRACTS_REQUIRED=true`; the default 120-second contract lifetime is long enough for review without allowing stale reviews to linger.
 - Keep `config/outbound-webhooks.json` ignored and mode `0600`; its URL paths and HMAC keys are credentials. Leave `DUNE_WEBHOOK_ALLOW_HTTP=false` outside controlled local receiver tests.
 - Keep `DUNE_ADMIN_REQUEST_TIMEOUT_SECONDS` bounded; the default is `10` seconds to limit slow-body and idle connection abuse.
 - Keep `DUNE_ADMIN_MAX_ITEM_STACK_SIZE` bounded; the default is `1000000` to prevent accidental enormous stack writes.

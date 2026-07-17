@@ -30,6 +30,10 @@ It also exports mutation flight-recorder enablement, full-chain/head validity,
 event/head counts, append failures, privileged admissions/completions, open
 requests, and oldest-open age. It never labels a principal, path, capability,
 request/approval ID, request-body digest, event HMAC, or event value.
+Blast-radius change contracts add label-free enabled/required state and
+process-local issued/admitted/refused counters. They never label an operator,
+route, capability, body digest, contract ID, policy revision, or impact value;
+the sealed audit ledger retains those correlations privately.
 
 Start it with the normal world Compose files plus the overlay:
 
@@ -94,6 +98,9 @@ immutable request, mutable state, or transition-event HMAC verification fails.
 Audit-ledger rules alert when its event chain/authenticated head is invalid and
 when a privileged admission remains without a completion receipt for more than
 five minutes.
+The change-contract rule warns when more than five governed requests are
+refused inside ten minutes, which surfaces stale/malformed API automation or a
+repeated bypass attempt without exposing its target.
 Validate the exact Prometheus version and rules with:
 
 ```bash

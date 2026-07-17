@@ -105,6 +105,9 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         )
         (self.workspace / ".env").write_text("", encoding="utf-8")
         self.panel = load_admin_panel(self.workspace)
+        # Existing route tests isolate their route-specific gate. Focused tests
+        # below exercise the additional exact-body change-contract admission.
+        self.panel.CHANGE_CONTRACTS_REQUIRED = False
         self.handler = object.__new__(self.panel.Handler)
 
     def tearDown(self):
@@ -317,6 +320,116 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn("DashPrivilegedRequestOutcomeUnknown", rules)
         self.assertIn("dash_admin_audit_ledger_valid", rules)
         self.assertIn("dash_admin_audit_privileged_request_oldest_open_age_seconds", rules)
+
+    def test_change_contract_gate_refuses_missing_or_stale_contract_and_admits_exact_request(self):
+        body = {"action": "add-intel", "account_id": 7, "amount": 10, "dry_run": False, "confirm": "WRITE PLAYER PROGRESSION"}
+        principal = {"id": "operator", "displayName": "Operator", "capabilities": ["players.write"]}
+        original_validate = self.panel.validate_json_post
+        original_parse = self.panel.parse_body
+        original_audit_event = self.panel.audit_event
+        self.panel.validate_json_post = lambda handler, **kwargs: None
+        self.panel.parse_body = lambda handler, **kwargs: body
+        self.panel.audit_event = lambda action, ok=True, **fields: {"event": {"eventId": "audit-" + "a" * 32}, "ledger": None}
+        self.addCleanup(lambda: setattr(self.panel, "validate_json_post", original_validate))
+        self.addCleanup(lambda: setattr(self.panel, "parse_body", original_parse))
+        self.addCleanup(lambda: setattr(self.panel, "audit_event", original_audit_event))
+        self.patch_flag("CHANGE_CONTRACTS_REQUIRED", True)
+        self.patch_flag("AUDIT_LEDGER_REQUIRED_FOR_MUTATIONS", False)
+        self.patch_flag("DUAL_CONTROL_ENABLED", False)
+
+        blocked, blocked_capture = self.make_route_handler("/api/admin/player-maintenance")
+        blocked.headers = {}
+        blocked.require_token = lambda: setattr(blocked, "auth_principal", principal)
+        blocked.player_maintenance_mutation = lambda *_args, **_kwargs: self.fail("missing contract must block dispatch")
+        blocked.do_POST()
+        self.assertEqual(self.panel.HTTPStatus.UNAUTHORIZED, blocked_capture["errors"][0]["status"])
+        self.assertIn("change contract", blocked_capture["errors"][0]["message"])
+
+        issued = self.panel.change_contracts.issue(
+            "/api/admin/player-maintenance", body, principal, "players.write",
+            self.panel.CHANGE_CONTRACT_SECRET, ttl_seconds=120,
+        )
+        handler, captured = self.make_route_handler("/api/admin/player-maintenance")
+        handler.headers = {"X-DASH-Change-Contract": issued["token"]}
+        handler.require_token = lambda: setattr(handler, "auth_principal", principal)
+        dispatched = []
+        handler.player_maintenance_mutation = lambda request, principal=None: dispatched.append(request) or {"ok": True, "dryRun": False}
+        handler.do_POST()
+        self.assertEqual([], captured["errors"])
+        self.assertEqual([body], dispatched)
+        self.assertEqual(issued["contract"]["contractId"], handler._change_contract["contractId"])
+
+        replay, replay_capture = self.make_route_handler("/api/admin/player-maintenance")
+        replay.headers = {"X-DASH-Change-Contract": issued["token"]}
+        replay.require_token = lambda: setattr(replay, "auth_principal", principal)
+        replay.player_maintenance_mutation = lambda *_args, **_kwargs: self.fail("consumed contract must not dispatch twice")
+        replay.do_POST()
+        self.assertEqual(self.panel.HTTPStatus.UNAUTHORIZED, replay_capture["errors"][0]["status"])
+        self.assertIn("already consumed", replay_capture["errors"][0]["message"])
+
+        changed = {**body, "amount": 11}
+        self.panel.parse_body = lambda handler, **kwargs: changed
+        stale, stale_capture = self.make_route_handler("/api/admin/player-maintenance")
+        stale.headers = {"X-DASH-Change-Contract": issued["token"]}
+        stale.require_token = lambda: setattr(stale, "auth_principal", principal)
+        stale.player_maintenance_mutation = lambda *_args, **_kwargs: self.fail("stale contract must block dispatch")
+        stale.do_POST()
+        self.assertEqual(self.panel.HTTPStatus.UNAUTHORIZED, stale_capture["errors"][0]["status"])
+        self.assertIn("no longer matches target", stale_capture["errors"][0]["message"])
+
+    def test_change_contract_dashboard_api_and_metrics_contract_are_exposed(self):
+        self.assertIn("Blast-Radius Change Contracts", self.panel.INDEX)
+        self.assertIn("X-DASH-Change-Contract", self.panel.INDEX)
+        self.assertIn("reviewChangeContract", self.panel.INDEX)
+        self.assertIn("change review: ${data.changeContracts?.required ? 'enforced' : 'advisory'}", self.panel.INDEX)
+        metrics = self.panel.change_contract_prometheus()
+        self.assertIn("dash_change_contract_enabled 1\n", metrics)
+        self.assertIn("dash_change_contract_required 0\n", metrics)
+        self.assertEqual("read", self.panel.access_control.required_capability("POST", "/api/security/change-contract"))
+        rules = (ROOT / "config" / "metrics" / "rules" / "dash.yml").read_text(encoding="utf-8")
+        self.assertIn("DashChangeContractRefusalBurst", rules)
+        self.assertIn("dash_change_contract_refused_total", rules)
+
+    def test_change_contract_preflight_route_issues_exact_operator_token(self):
+        target_body = {"action": "add-intel", "account_id": 7, "amount": 10, "dry_run": False, "confirm": "WRITE PLAYER PROGRESSION"}
+        outer = {"targetPath": "/api/admin/player-maintenance", "requestBody": target_body}
+        principal = {"id": "operator", "displayName": "Operator", "capabilities": ["players.write", "read"]}
+        original_validate = self.panel.validate_json_post
+        original_parse = self.panel.parse_body
+        original_audit_event = self.panel.audit_event
+        self.panel.validate_json_post = lambda handler, **kwargs: None
+        self.panel.parse_body = lambda handler, **kwargs: outer
+        self.panel.audit_event = lambda action, ok=True, **fields: {"event": {"eventId": "audit-" + "b" * 32}, "ledger": None}
+        self.addCleanup(lambda: setattr(self.panel, "validate_json_post", original_validate))
+        self.addCleanup(lambda: setattr(self.panel, "parse_body", original_parse))
+        self.addCleanup(lambda: setattr(self.panel, "audit_event", original_audit_event))
+
+        handler, captured = self.make_route_handler("/api/security/change-contract")
+        handler.require_token = lambda: setattr(handler, "auth_principal", principal)
+        handler.do_POST()
+        self.assertEqual([], captured["errors"])
+        self.assertTrue(captured["json"]["contract"]["governed"])
+        self.assertEqual("operator", captured["json"]["contract"]["principalId"])
+        self.assertEqual("players.write", captured["json"]["contract"]["target"]["capability"])
+        self.assertTrue(captured["json"]["token"].startswith("dash-change-v1."))
+
+    def test_change_contract_env_settings_reject_bricking_pairs_ttl_and_injection(self):
+        with self.assertRaisesRegex(ValueError, "cannot remain required"):
+            self.panel.write_safe_env({"DUNE_ADMIN_CHANGE_CONTRACTS_ENABLED": "false"})
+        for value in ("29", "301", "not-a-number"):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "TTL"):
+                self.panel.write_safe_env({"DUNE_ADMIN_CHANGE_CONTRACT_TTL_SECONDS": value})
+        with self.assertRaisesRegex(ValueError, "control character"):
+            self.panel.write_safe_env({"WORLD_NAME": "safe\nINJECTED=true"})
+        self.panel.write_safe_env({
+            "DUNE_ADMIN_CHANGE_CONTRACTS_ENABLED": "false",
+            "DUNE_ADMIN_CHANGE_CONTRACTS_REQUIRED": "false",
+            "DUNE_ADMIN_CHANGE_CONTRACT_TTL_SECONDS": "30",
+        })
+        values = self.panel.read_env()
+        self.assertEqual("false", values["DUNE_ADMIN_CHANGE_CONTRACTS_ENABLED"])
+        self.assertEqual("false", values["DUNE_ADMIN_CHANGE_CONTRACTS_REQUIRED"])
+        self.assertEqual("30", values["DUNE_ADMIN_CHANGE_CONTRACT_TTL_SECONDS"])
 
     def test_page_navigation_cancels_detached_player_detail_loads(self):
         source = self.panel.INDEX
@@ -3636,6 +3749,8 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn("dash_change_approval_ledger_valid 1\n", texts[0][0])
         self.assertIn("dash_admin_audit_ledger_enabled 1\n", texts[0][0])
         self.assertIn("dash_admin_audit_ledger_valid 1\n", texts[0][0])
+        self.assertIn("dash_change_contract_enabled 1\n", texts[0][0])
+        self.assertIn("dash_change_contract_refused_total", texts[0][0])
         self.assertIn("dash_update_readiness_collector_up 1\n", texts[0][0])
 
     def test_update_readiness_metrics_never_run_expensive_collection_inline(self):

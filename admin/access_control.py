@@ -120,6 +120,7 @@ def required_capability(method, path):
         "/api/admin/character-slots/plan",
         "/api/auth/logout",
         "/api/security/approvals",
+        "/api/security/change-contract",
     }:
         return "read"
     if path.startswith("/api/ops/database/") or path in {

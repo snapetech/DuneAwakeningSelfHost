@@ -143,6 +143,11 @@ groups:
         for: 2m
         labels: {severity: warning}
         annotations: {summary: "A DASH privileged request was admitted but has no completion receipt"}
+      - alert: DashChangeContractRefusalBurst
+        expr: increase(dash_change_contract_refused_total[10m]) > 5
+        for: 2m
+        labels: {severity: warning}
+        annotations: {summary: "DASH repeatedly refused stale, malformed, or mismatched governed change contracts"}
       - alert: DashIncidentHasCandidateChange
         expr: dash_change_intelligence_open_incidents_with_candidate_changes > 0
         for: 2m
