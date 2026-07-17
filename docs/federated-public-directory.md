@@ -139,6 +139,25 @@ after explicit visitor action, time independently hosted descriptors. The
 cross-origin request sends no cookie, authorization header, request body, or
 stable browser identifier.
 
+For an existing SNAPE-style Caddy `dune_static_site` snippet, preview and apply
+the exact reviewed allowlist/header change with:
+
+```bash
+sudo ./scripts/patch-dune-directory-caddy.py \
+  --file /srv/hostapps/ingress/Caddyfile
+sudo ./scripts/patch-dune-directory-caddy.py \
+  --file /srv/hostapps/ingress/Caddyfile \
+  --backup-dir /srv/hostapps/ingress/backups \
+  --required-host kspls0 \
+  --execute
+```
+
+The helper is idempotent and fail-closed: it patches only one exact reviewed
+snippet shape, refuses partial/drifted copies, creates a timestamped backup,
+preserves file owner/mode, and adds only the descriptor and six directory
+routes. Always validate the resulting Caddyfile before reload. If validation
+fails, restore the reported backup and do not reload Caddy.
+
 ## Build A Directory
 
 Create a reviewed source file:
