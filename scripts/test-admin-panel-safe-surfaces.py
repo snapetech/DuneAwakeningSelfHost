@@ -2663,24 +2663,27 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
     def test_service_logs_only_accept_project_service_names(self):
         original_containers = self.panel.docker_project_containers
         original_http = self.panel.docker_http_get
-        self.panel.docker_project_containers = lambda: [{
-            "Id": "a" * 64,
-            "Names": ["/dune_server-director-1"],
-            "Labels": {"com.docker.compose.service": "director"},
-            "Created": 10,
+        inventory = [{
+            "service": "director",
+            "name": "dune_server-director-1",
+            "containerId": "a" * 12,
         }]
-        self.panel.docker_http_get = lambda path, **kwargs: ({}, b"director ready\n")
+        self.panel.docker_project_containers = lambda: (_ for _ in ()).throw(AssertionError("provided inventory must be reused"))
+        requested = []
+        self.panel.docker_http_get = lambda path, **kwargs: requested.append(path) or ({}, b"director ready\n")
         self.addCleanup(lambda: setattr(self.panel, "docker_project_containers", original_containers))
         self.addCleanup(lambda: setattr(self.panel, "docker_http_get", original_http))
 
-        result = self.panel.docker_service_logs("director", 250)
+        result = self.panel.docker_service_logs("director", 250, since=1234, inventory=inventory)
 
         self.assertEqual(result["tail"], 250)
+        self.assertEqual(result["since"], 1234)
         self.assertEqual(result["logs"], "director ready\n")
+        self.assertIn("&since=1234", requested[0])
         with self.assertRaises(ValueError):
             self.panel.docker_service_logs("../../postgres", 10)
         with self.assertRaises(ValueError):
-            self.panel.docker_service_logs("not-in-project", 10)
+            self.panel.docker_service_logs("not-in-project", 10, inventory=[])
 
     def test_backup_inventory_and_verifier_reject_path_traversal(self):
         backup_set = self.workspace / "backups" / "20260715T120000Z"
@@ -3369,7 +3372,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
             "containerId": "a" * 12,
         }]
         self.panel.autoscaler_player_counts = lambda: {"deep-desert": 0}
-        self.panel.autoscaler_collect_travel_demand = lambda state, now=None: []
+        self.panel.autoscaler_collect_travel_demand = lambda state, now=None, inventory=None: []
         actions = []
         def control(service, action):
             actions.append((service, action))
@@ -3448,7 +3451,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         services = ["arrakeen", "harko-village", "testing-hephaestus"]
         self.panel.docker_service_inventory = lambda: [{"service": service, "state": "running"} for service in services]
         self.panel.autoscaler_player_counts = lambda: {}
-        self.panel.autoscaler_collect_travel_demand = lambda state, now=None: []
+        self.panel.autoscaler_collect_travel_demand = lambda state, now=None, inventory=None: []
         actions = []
         self.panel.autoscaler_service_action = lambda service, action: actions.append((service, action)) or {"ok": True}
         self.addCleanup(lambda: setattr(self.panel, "docker_service_inventory", original_inventory))
@@ -3484,7 +3487,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         services = ["arrakeen", "harko-village"]
         self.panel.docker_service_inventory = lambda: [{"service": service, "state": "running"} for service in services]
         self.panel.autoscaler_player_counts = lambda: {}
-        self.panel.autoscaler_collect_travel_demand = lambda state, now=None: []
+        self.panel.autoscaler_collect_travel_demand = lambda state, now=None, inventory=None: []
         actions = []
         self.panel.autoscaler_service_action = lambda service, action: actions.append((service, action)) or {"ok": True}
         available = [8 * 1024 ** 3, 20 * 1024 ** 3]
@@ -3847,6 +3850,67 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
             [("SH_Arrakeen", 2), ("DeepDesert_1", 1), ("DeepDesert_1", 3)],
         )
         self.assertEqual(len({row["id"] for row in events}), 3)
+
+    def test_autoscaler_director_scan_uses_overlap_cursor_and_shared_inventory(self):
+        line = "Processing travel queue for ClassicalInstancing group SH_Arrakeen (servers: [], num: 1)"
+        requested_since = []
+        original_logs = self.panel.docker_service_logs
+        original_inventory = self.panel.docker_service_inventory
+        original_query = self.panel.query
+        previous_scan = self.panel.AUTOSCALER_RUNTIME.pop("travelScanAt", None)
+        self.panel.docker_service_logs = lambda service, tail=200, since=None, inventory=None: requested_since.append(since) or {"logs": line}
+        self.panel.docker_service_inventory = lambda: (_ for _ in ()).throw(AssertionError("shared inventory must be reused"))
+        partition_id = self.panel.GAME_MAP_SERVICES.index("arrakeen") + 1
+        self.panel.query = lambda sql, params=None: [{"partition_id": partition_id, "map": "SH_Arrakeen", "dimension_index": 0}]
+        self.addCleanup(lambda: setattr(self.panel, "docker_service_logs", original_logs))
+        self.addCleanup(lambda: setattr(self.panel, "docker_service_inventory", original_inventory))
+        self.addCleanup(lambda: setattr(self.panel, "query", original_query))
+        self.addCleanup(lambda: self.panel.AUTOSCALER_RUNTIME.pop("travelScanAt", None) if previous_scan is None else self.panel.AUTOSCALER_RUNTIME.__setitem__("travelScanAt", previous_scan))
+        state = self.panel.read_autoscaler_state()
+        state["modes"]["arrakeen"] = "dynamic"
+        state["demandEvents"] = {}
+        inventory = {"arrakeen": {"service": "arrakeen", "state": "exited"}}
+
+        first = self.panel.autoscaler_collect_travel_demand(state, now=1000, inventory=inventory)
+        second = self.panel.autoscaler_collect_travel_demand(state, now=1003, inventory=inventory)
+
+        self.assertEqual(requested_since, [None, 999])
+        self.assertEqual([(row["service"], row["action"]) for row in first], [("arrakeen", "travel-demand")])
+        self.assertEqual(second, [])
+
+    def test_autoscaler_idle_tick_skips_unchanged_state_write(self):
+        import copy
+        originals = {
+            "maintenance_restart_is_executing": self.panel.maintenance_restart_is_executing,
+            "read_autoscaler_state": self.panel.read_autoscaler_state,
+            "write_autoscaler_state": self.panel.write_autoscaler_state,
+            "docker_service_inventory": self.panel.docker_service_inventory,
+            "autoscaler_collect_travel_demand": self.panel.autoscaler_collect_travel_demand,
+            "autoscaler_player_counts": self.panel.autoscaler_player_counts,
+            "autoscaler_public_state": self.panel.autoscaler_public_state,
+        }
+        state = self.panel.read_autoscaler_state()
+        state.update({
+            "enabled": True,
+            "modes": {service: "always-on" for service in self.panel.GAME_MAP_SERVICES},
+            "idleSince": {}, "demand": {}, "demandSource": {}, "demandEvents": {},
+            "lastActivity": {}, "demandCount": {}, "lastEvictionReason": {},
+        })
+        writes = []
+        self.panel.maintenance_restart_is_executing = lambda: False
+        self.panel.read_autoscaler_state = lambda: copy.deepcopy(state)
+        self.panel.write_autoscaler_state = lambda value: writes.append(copy.deepcopy(value))
+        self.panel.docker_service_inventory = lambda: [{"service": "survival", "state": "running"}]
+        self.panel.autoscaler_collect_travel_demand = lambda value, now=None, inventory=None: []
+        self.panel.autoscaler_player_counts = lambda: {}
+        self.panel.autoscaler_public_state = lambda include_inventory=False: {"enabled": True}
+        for name, value in originals.items():
+            self.addCleanup(lambda name=name, value=value: setattr(self.panel, name, value))
+
+        result = self.panel.autoscaler_tick()
+
+        self.assertTrue(result["enabled"])
+        self.assertEqual(writes, [])
 
     def test_minimum_footprint_profile_keeps_only_core_always_on(self):
         original_inventory = self.panel.docker_service_inventory

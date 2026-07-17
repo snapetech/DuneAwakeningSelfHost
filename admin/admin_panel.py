@@ -3698,14 +3698,20 @@ def parse_director_travel_demand(log_text):
     return events
 
 
-def autoscaler_collect_travel_demand(state, now=None):
+def autoscaler_collect_travel_demand(state, now=None, inventory=None):
     now = now or time.time()
+    last_scan = float(AUTOSCALER_RUNTIME.get("travelScanAt") or 0)
+    since = max(0, int(last_scan) - 1) if 0 < last_scan <= now + 5 else None
+    inventory_rows = inventory if isinstance(inventory, list) else None
     try:
-        log_text = docker_service_logs("director", 1000).get("logs", "")
+        log_text = docker_service_logs("director", 1000, since=since, inventory=inventory_rows).get("logs", "")
     except Exception as exc:
         return [{"action": "travel-scan-warning", "error": str(exc)}]
+    AUTOSCALER_RUNTIME["travelScanAt"] = now
     actions = []
-    inventory = {row["service"]: row for row in docker_service_inventory() if row["service"] in GAME_MAP_SERVICES}
+    if not isinstance(inventory, dict):
+        rows = inventory_rows if inventory_rows is not None else docker_service_inventory()
+        inventory = {row["service"]: row for row in rows if row["service"] in GAME_MAP_SERVICES}
     for event in parse_director_travel_demand(log_text):
         if event["id"] in state["demandEvents"]:
             continue
@@ -3763,8 +3769,10 @@ def autoscaler_tick(force=False):
         actions = []
         try:
             now = time.time()
-            actions.extend(autoscaler_collect_travel_demand(state, now))
-            inventory = {row["service"]: row for row in docker_service_inventory() if row["service"] in GAME_MAP_SERVICES}
+            inventory_rows = docker_service_inventory()
+            inventory = {row["service"]: row for row in inventory_rows if row["service"] in GAME_MAP_SERVICES}
+            before = json.dumps(state, sort_keys=True, separators=(",", ":"))
+            actions.extend(autoscaler_collect_travel_demand(state, now, inventory=inventory_rows))
             counts = autoscaler_player_counts()
             optional_warm = []
             stopped_services = set()
@@ -3863,7 +3871,9 @@ def autoscaler_tick(force=False):
                         memory = autoscaler_host_memory()
             state["demand"] = {key: value for key, value in state["demand"].items() if now - float(value or 0) <= state["demandTtlSeconds"]}
             state["demandSource"] = {key: value for key, value in state["demandSource"].items() if key in state["demand"]}
-            write_autoscaler_state(state)
+            after = json.dumps(state, sort_keys=True, separators=(",", ":"))
+            if after != before:
+                write_autoscaler_state(state)
             AUTOSCALER_RUNTIME.update({"lastMessage": f"Autoscaler reconciled {len(GAME_MAP_SERVICES)} maps; {len(actions)} actions.", "lastActions": actions, "lastError": ""})
         except Exception as exc:
             AUTOSCALER_RUNTIME.update({"lastMessage": "Autoscaler reconciliation failed.", "lastError": str(exc), "lastActions": actions})
@@ -3999,7 +4009,7 @@ def decode_docker_log_stream(body):
     return data.decode("utf-8", errors="replace")
 
 
-def docker_service_logs(service, tail=200):
+def docker_service_logs(service, tail=200, since=None, inventory=None):
     service = str(service or "").strip()
     if not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", service):
         raise ValueError("invalid service name")
@@ -4007,18 +4017,30 @@ def docker_service_logs(service, tail=200):
         tail = max(1, min(int(tail), 1000))
     except (TypeError, ValueError) as exc:
         raise ValueError("tail must be an integer from 1 to 1000") from exc
+    if since is not None:
+        try:
+            since = max(0, min(int(since), 2 ** 63 - 1))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("since must be a non-negative Unix timestamp") from exc
     matches = []
-    for container in docker_project_containers():
-        labels = container.get("Labels") or {}
-        names = container.get("Names") or [""]
-        candidate = labels.get("com.docker.compose.service") or names[0].lstrip("/")
-        if candidate == service:
-            matches.append(container)
+    if isinstance(inventory, list):
+        for row in inventory:
+            if row.get("service") == service:
+                matches.append({"Id": row.get("containerId"), "Names": [f"/{row.get('name') or service}"], "Created": 0})
+    else:
+        for container in docker_project_containers():
+            labels = container.get("Labels") or {}
+            names = container.get("Names") or [""]
+            candidate = labels.get("com.docker.compose.service") or names[0].lstrip("/")
+            if candidate == service:
+                matches.append(container)
     if not matches:
         raise ValueError("service is not part of the configured DASH Compose project")
     container = sorted(matches, key=lambda item: str(item.get("Created") or ""), reverse=True)[0]
     container_id = str(container.get("Id") or "")
     path = f"/containers/{urllib.parse.quote(container_id, safe='')}/logs?stdout=1&stderr=1&timestamps=1&tail={tail}"
+    if since is not None:
+        path += f"&since={since}"
     _, body = docker_http_get(path, timeout=4, max_bytes=2 * 1024 * 1024)
     text = decode_docker_log_stream(body)
     if len(text) > 512 * 1024:
@@ -4027,6 +4049,7 @@ def docker_service_logs(service, tail=200):
         "service": service,
         "container": (container.get("Names") or [""])[0].lstrip("/"),
         "tail": tail,
+        "since": since,
         "logs": text,
     }
 

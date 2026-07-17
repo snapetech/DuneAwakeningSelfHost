@@ -17,6 +17,15 @@ The worker runs every `DUNE_AUTOSCALER_POLL_SECONDS` (3 seconds by default). It
 reads recent Director logs and recognizes all current travel-demand forms,
 including the generic dimension queue emitted for Deep Desert and Overmap:
 
+The fast loop is incremental. After its first bounded 1,000-line Director
+scan, it requests only logs since the previous scan with a one-second overlap
+and deduplicates the overlapping event fingerprints. Travel selection and map
+lifecycle decisions share one Docker inventory snapshot per reconciliation,
+and the retained state file is rewritten only when its semantic content
+changes. This preserves the three-second demand-response target without
+repeatedly parsing the same log history, enumerating containers twice, or
+churning the state file while idle.
+
 ```text
 Processing travel queue for ClassicalInstancing group <Map> (servers: [...], num: N)
 Received travel request for N player(s) to <Map> (instancingMode=Dimension)
