@@ -141,6 +141,21 @@ class PublicIpCanaryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "cannot be a symlink"):
             public_ip_canary.input_manifest(workspace)
 
+    def test_explicit_execution_capable_runtime_root_is_private_and_emptied(self):
+        runtime = pathlib.Path(self.temporary.name) / "runtime"
+        result = public_ip_canary.run_canary(
+            ROOT, self.store, principal_id="test-runtime-root", work_root=runtime,
+        )
+        self.assertTrue(result["document"]["receipt"]["ready"])
+        self.assertEqual(0o700, runtime.stat().st_mode & 0o777)
+        self.assertEqual([], list(runtime.iterdir()))
+        linked = pathlib.Path(self.temporary.name) / "linked-runtime"
+        linked.symlink_to(runtime, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, "cannot be a symlink"):
+            public_ip_canary.run_canary(
+                ROOT, self.store, principal_id="test-runtime-root", work_root=linked,
+            )
+
     def test_readiness_api_metrics_alerts_backup_and_deployment_are_bound(self):
         panel = (ROOT / "admin/admin_panel.py").read_text(encoding="utf-8")
         verifier = (ROOT / "scripts/verify-backup.sh").read_text(encoding="utf-8")

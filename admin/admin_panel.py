@@ -4568,6 +4568,7 @@ def run_public_ip_canary(principal):
     result = public_ip_canary.run_canary(
         ROOT, public_ip_canary_store(),
         principal_id=(principal or {}).get("id") or "owner-recovery",
+        work_root=BACKUPS_ROOT / ".public-ip-canary-runtime",
     )
     with FEATURE_READINESS_CACHE_LOCK:
         FEATURE_READINESS_CACHE["value"] = None

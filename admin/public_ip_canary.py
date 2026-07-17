@@ -344,9 +344,18 @@ def _copy_workspace(root, stage):
         os.chmod(stage / relative, 0o700)
 
 
-def run_canary(root, receipt_store, *, principal_id="system", now=time.time):
+def run_canary(root, receipt_store, *, principal_id="system", now=time.time, work_root=None):
     root = pathlib.Path(root).resolve(strict=True)
     inputs = input_manifest(root)
+    temporary_parent = None
+    if work_root is not None:
+        temporary_parent = pathlib.Path(work_root)
+        if temporary_parent.is_symlink():
+            raise ValueError("public-IP canary work root cannot be a symlink")
+        temporary_parent.mkdir(parents=True, exist_ok=True)
+        if temporary_parent.is_symlink() or not temporary_parent.is_dir():
+            raise ValueError("public-IP canary work root must be a directory")
+        os.chmod(temporary_parent, 0o700)
     started_epoch = float(now())
     checks = {name: False for name in CHECK_NAMES}
     evidence = {
@@ -359,7 +368,10 @@ def run_canary(root, receipt_store, *, principal_id="system", now=time.time):
     temporary_removed = False
     failure = None
     try:
-        with tempfile.TemporaryDirectory(prefix="dash-public-ip-canary-") as directory:
+        with tempfile.TemporaryDirectory(
+            prefix="dash-public-ip-canary-",
+            dir=str(temporary_parent) if temporary_parent is not None else None,
+        ) as directory:
             stage = pathlib.Path(directory) / "workspace"
             stage.mkdir(mode=0o700)
             temporary_created = True

@@ -9,6 +9,11 @@ The proof is deliberately stronger than a syntax check. It performs a real
 environment rewrite and real OpenSSL certificate rotation using the reserved
 documentation addresses `198.51.100.10` and `198.51.100.20`. Docker, systemd,
 the live workspace, game maps, and the network remain outside the canary.
+Inside the hardened Admin container, disposable executables live under the
+private `/workspace/backups/.public-ip-canary-runtime` directory because the
+container's `/tmp` and `/var/tmp` mounts are intentionally `noexec`. The unique
+per-run directory is removed before verdict creation and the parent remains
+mode `0700` and empty between runs.
 
 ## What is proven
 
@@ -194,5 +199,6 @@ docker compose --env-file .env.example config --quiet
 
 The focused suite covers the complete disposable lifecycle, signature and
 semantic tampering, future timestamps, input drift, expiry, forced failure
-cleanup, manifest symlink rejection, capability classification, metrics/alert
-binding, deployment support, and real backup-verifier dispatch.
+cleanup, executable runtime-root cleanup/symlink rejection, manifest symlink
+rejection, capability classification, metrics/alert binding, deployment
+support, and real backup-verifier dispatch.
