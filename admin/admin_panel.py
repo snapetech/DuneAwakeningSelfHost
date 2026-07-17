@@ -3202,8 +3202,21 @@ def fmt_bytes(value):
     return f"{value:.1f} {units[unit]}" if unit else f"{int(value)} {units[unit]}"
 
 
-def docker_container_stats(live_stats=False):
+def docker_container_stats(live_stats=False, services=None, running_only=False):
     containers = docker_api(f"/containers/json?all=1&filters={urllib.parse.quote(json.dumps({'label': [f'com.docker.compose.project={DOCKER_COMPOSE_PROJECT}']}))}")
+    service_filter = {str(value) for value in (services or []) if str(value)}
+    if service_filter or running_only:
+        filtered = []
+        for container in containers:
+            labels = container.get("Labels") or {}
+            name = (container.get("Names") or [""])[0].lstrip("/")
+            service = labels.get("com.docker.compose.service", name)
+            if service_filter and service not in service_filter:
+                continue
+            if running_only and str(container.get("State") or "").lower() != "running":
+                continue
+            filtered.append(container)
+        containers = filtered
     rows = []
 
     def container_row(container):
@@ -3295,7 +3308,7 @@ def parse_memory_bytes(value):
 
 
 def map_memory_rows():
-    return [row for row in docker_container_stats(live_stats=True) if row.get("service") in GAME_MAP_SERVICES]
+    return docker_container_stats(live_stats=True, services=GAME_MAP_SERVICES, running_only=True)
 
 
 def update_container_memory(container_id, limit_bytes):

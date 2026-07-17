@@ -301,6 +301,12 @@ seconds it:
 4. removes 1 GiB from the donor;
 5. restores the target if the donor update fails.
 
+Each observation requests live Docker stats only for currently running game
+maps. Stopped maps and control-plane, database, broker, monitoring, and web
+containers are excluded before the bounded stats fan-out begins. Memory
+protection therefore stays active without surveying every Compose container
+on every balance tick.
+
 Disabling restores all still-running captured baselines. Manual set/unset
 operations update the captured baseline while balancing is enabled. Live
 limits use equal memory, swap, and reservation values and accept byte units

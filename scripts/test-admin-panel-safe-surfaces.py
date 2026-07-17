@@ -2660,6 +2660,31 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertEqual(self.panel.decode_docker_log_stream(framed), "stdout line\nstderr line\n")
         self.assertEqual(self.panel.decode_docker_log_stream(b"plain tty log\n"), "plain tty log\n")
 
+    def test_map_memory_stats_fanout_excludes_stopped_and_non_map_containers(self):
+        original_api = self.panel.docker_api
+        requests = []
+        containers = [
+            {"Id": "a" * 64, "Names": ["/survival"], "State": "running", "Labels": {"com.docker.compose.service": "survival"}},
+            {"Id": "b" * 64, "Names": ["/arrakeen"], "State": "exited", "Labels": {"com.docker.compose.service": "arrakeen"}},
+            {"Id": "c" * 64, "Names": ["/postgres"], "State": "running", "Labels": {"com.docker.compose.service": "postgres"}},
+        ]
+        stats = {
+            "memory_stats": {"usage": 1024, "limit": 4096},
+            "cpu_stats": {}, "precpu_stats": {}, "networks": {},
+            "blkio_stats": {}, "pids_stats": {"current": 3},
+        }
+        def fake_api(path):
+            requests.append(path)
+            return containers if path.startswith("/containers/json") else stats
+        self.panel.docker_api = fake_api
+        self.addCleanup(lambda: setattr(self.panel, "docker_api", original_api))
+
+        rows = self.panel.map_memory_rows()
+
+        self.assertEqual([row["service"] for row in rows], ["survival"])
+        stats_requests = [path for path in requests if "/stats?stream=false" in path]
+        self.assertEqual(stats_requests, [f"/containers/{'a' * 64}/stats?stream=false"])
+
     def test_service_logs_only_accept_project_service_names(self):
         original_containers = self.panel.docker_project_containers
         original_http = self.panel.docker_http_get
