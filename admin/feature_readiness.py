@@ -210,6 +210,13 @@ def evaluate(catalog, environment, *, root, services=None, probes=None, generate
             state = "external-blocked"
         elif not credentials_ready or not artifacts_ready:
             state = "blocked"
+        elif (
+            feature["canary"] == "external-credential-pending"
+            and probe_check is not None
+            and not probe_ready
+            and probe_check["state"] in {"credential-missing", "destination-missing", "provider-configuration-missing", "recipient-missing"}
+        ):
+            state = "external-blocked"
         elif not services_ready or not probe_ready:
             state = "degraded"
         elif feature["canary"] in {"operator-canary-pending", "external-credential-pending"}:

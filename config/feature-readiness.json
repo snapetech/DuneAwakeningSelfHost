@@ -222,7 +222,7 @@
       "services": ["admin-panel"],
       "probe": "webhooks",
       "dependencies": [],
-      "canary": "operator-canary-pending",
+      "canary": "external-credential-pending",
       "remediation": {"surface": "settings", "summary": "Configure a reviewed HTTPS destination and secret, then run its receiver canary."}
     },
     {

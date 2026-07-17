@@ -90,6 +90,14 @@ class FeatureReadinessTests(unittest.TestCase):
         self.assertEqual("external-blocked", states["external"])
         self.assertEqual("canary-pending", states["canary"])
 
+    def test_external_probe_configuration_gap_is_external_blocked(self):
+        catalog = self.catalog(feature("webhook", canary="external-credential-pending", probe="webhook"))
+        result = MODULE.evaluate(
+            catalog, {"DUNE_ALPHA_ENABLED": "true"}, root=self.root,
+            probes={"webhook": {"ready": False, "state": "destination-missing", "detail": "reviewed endpoints=0"}},
+        )
+        self.assertEqual("external-blocked", result["features"][0]["state"])
+
     def test_dependency_failure_blocks_otherwise_ready_feature(self):
         catalog = self.catalog(
             feature("parent"),

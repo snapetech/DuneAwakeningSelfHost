@@ -36,6 +36,19 @@ Evaluation is implemented by
 [`admin/feature_readiness.py`](../admin/feature_readiness.py). Runtime probes and
 the authenticated API live in the Admin Panel.
 
+Repository artifacts are checked through the complete read-only
+`DUNE_DEPLOYMENT_ASSURANCE_WORKSPACE` mount (normally `/source-workspace` in
+the Admin container). Runtime state remains under `/workspace`; this prevents
+the deliberately partial runtime mounts from falsely reporting committed
+Compose overlays as absent.
+
+Directory verification uses OpenSSL when the executable is available. The
+minimal vendor Admin image does not currently ship that executable, so DASH
+also includes a strict RFC 8032 Ed25519 verification fallback. It rejects
+non-canonical points, non-prime-order points, identity points, out-of-range
+scalars, and altered payloads/signatures; signing and key generation remain on
+the private host-side renderer.
+
 ## States
 
 | State | Exact meaning |

@@ -119,6 +119,18 @@ class PublicDirectoryTest(unittest.TestCase):
         self.assertTrue(public_der.startswith(public_directory.ED25519_SPKI_PREFIX))
         self.assertEqual(public_directory.ED25519_SIGNATURE_BYTES, len(signature))
 
+    def test_python_verifier_fallback_matches_rfc8032_and_rejects_tampering(self):
+        public_key = bytes.fromhex("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")
+        signature = bytes.fromhex(
+            "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e06522490155"
+            "5fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b"
+        )
+        public_der = public_directory.ED25519_SPKI_PREFIX + public_key
+        self.assertTrue(public_directory.verify_signature(public_der, b"", signature, openssl="/missing/openssl"))
+        self.assertFalse(public_directory.verify_signature(public_der, b"changed", signature, openssl="/missing/openssl"))
+        changed_signature = signature[:-1] + bytes([signature[-1] ^ 1])
+        self.assertFalse(public_directory.verify_signature(public_der, b"", changed_signature, openssl="/missing/openssl"))
+
     def test_signed_but_noncanonical_or_type_confused_entries_fail(self):
         cases = []
         changed = copy.deepcopy(self.entry); changed["profile"]["name"] = "Sietch\nTest"; cases.append((changed, "name"))

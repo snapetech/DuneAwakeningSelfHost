@@ -34,6 +34,10 @@ MAX_TEXT = 2000
 ED25519_SPKI_PREFIX = bytes.fromhex("302a300506032b6570032100")
 ED25519_PUBLIC_DER_BYTES = 44
 ED25519_SIGNATURE_BYTES = 64
+ED25519_FIELD = 2**255 - 19
+ED25519_ORDER = 2**252 + 27742317777372353535851937790883648493
+ED25519_D = (-121665 * pow(121666, ED25519_FIELD - 2, ED25519_FIELD)) % ED25519_FIELD
+ED25519_I = pow(2, (ED25519_FIELD - 1) // 4, ED25519_FIELD)
 REGIONS = (
     "Africa",
     "Asia",
@@ -243,6 +247,86 @@ def sign_payload(private_key, payload, openssl="openssl"):
         return _run([openssl, "pkeyutl", "-sign", "-rawin", "-inkey", str(private_key), "-in", source.name])
 
 
+def _ed25519_decode_point(encoded):
+    if len(encoded) != 32:
+        return None
+    value = int.from_bytes(encoded, "little")
+    sign = value >> 255
+    y = value & ((1 << 255) - 1)
+    if y >= ED25519_FIELD:
+        return None
+    y_squared = y * y % ED25519_FIELD
+    x_squared = (y_squared - 1) * pow(ED25519_D * y_squared + 1, ED25519_FIELD - 2, ED25519_FIELD) % ED25519_FIELD
+    x = pow(x_squared, (ED25519_FIELD + 3) // 8, ED25519_FIELD)
+    if (x * x - x_squared) % ED25519_FIELD:
+        x = x * ED25519_I % ED25519_FIELD
+    if (x * x - x_squared) % ED25519_FIELD or (x == 0 and sign):
+        return None
+    if x & 1 != sign:
+        x = ED25519_FIELD - x
+    return (x, y, 1, x * y % ED25519_FIELD)
+
+
+def _ed25519_add(left, right):
+    x1, y1, z1, t1 = left
+    x2, y2, z2, t2 = right
+    a = (y1 - x1) * (y2 - x2) % ED25519_FIELD
+    b = (y1 + x1) * (y2 + x2) % ED25519_FIELD
+    c = 2 * ED25519_D * t1 * t2 % ED25519_FIELD
+    d = 2 * z1 * z2 % ED25519_FIELD
+    e, f, g, h = b - a, d - c, d + c, b + a
+    return (e * f % ED25519_FIELD, g * h % ED25519_FIELD, f * g % ED25519_FIELD, e * h % ED25519_FIELD)
+
+
+def _ed25519_multiply(point, scalar):
+    result = (0, 1, 1, 0)
+    addend = point
+    while scalar:
+        if scalar & 1:
+            result = _ed25519_add(result, addend)
+        addend = _ed25519_add(addend, addend)
+        scalar >>= 1
+    return result
+
+
+def _ed25519_equal(left, right):
+    return (
+        (left[0] * right[2] - right[0] * left[2]) % ED25519_FIELD == 0
+        and (left[1] * right[2] - right[1] * left[2]) % ED25519_FIELD == 0
+    )
+
+
+def _verify_ed25519_python(public_der, payload, signature):
+    """Strict RFC 8032 verification fallback for minimal vendor containers."""
+    if (
+        len(public_der) != ED25519_PUBLIC_DER_BYTES
+        or not public_der.startswith(ED25519_SPKI_PREFIX)
+        or len(signature) != ED25519_SIGNATURE_BYTES
+    ):
+        return False
+    public_key = public_der[len(ED25519_SPKI_PREFIX):]
+    encoded_r, encoded_s = signature[:32], signature[32:]
+    scalar_s = int.from_bytes(encoded_s, "little")
+    public_point = _ed25519_decode_point(public_key)
+    point_r = _ed25519_decode_point(encoded_r)
+    base_point = _ed25519_decode_point(bytes.fromhex("58" + "66" * 31))
+    identity = (0, 1, 1, 0)
+    if public_point is None or point_r is None or base_point is None or scalar_s >= ED25519_ORDER:
+        return False
+    if (
+        not _ed25519_equal(_ed25519_multiply(public_point, ED25519_ORDER), identity)
+        or not _ed25519_equal(_ed25519_multiply(point_r, ED25519_ORDER), identity)
+        or _ed25519_equal(public_point, identity)
+        or _ed25519_equal(point_r, identity)
+    ):
+        return False
+    challenge = int.from_bytes(hashlib.sha512(encoded_r + public_key + payload).digest(), "little") % ED25519_ORDER
+    return _ed25519_equal(
+        _ed25519_multiply(base_point, scalar_s),
+        _ed25519_add(point_r, _ed25519_multiply(public_point, challenge)),
+    )
+
+
 def verify_signature(public_der, payload, signature, openssl="openssl"):
     with tempfile.TemporaryDirectory(prefix="dash-directory-verify.") as temporary:
         root = pathlib.Path(temporary)
@@ -258,7 +342,9 @@ def verify_signature(public_der, payload, signature, openssl="openssl"):
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 timeout=10, check=False,
             )
-        except (OSError, subprocess.TimeoutExpired):
+        except OSError:
+            return _verify_ed25519_python(public_der, payload, signature)
+        except subprocess.TimeoutExpired:
             return False
         return result.returncode == 0
 

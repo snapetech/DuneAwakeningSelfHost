@@ -708,7 +708,7 @@ def feature_readiness_public_status(force=False):
         },
     }
     catalog = feature_readiness.load_catalog(FEATURE_READINESS_FILE)
-    result = feature_readiness.evaluate(catalog, values, root=ROOT, services=services, probes=probes)
+    result = feature_readiness.evaluate(catalog, values, root=DEPLOYMENT_ASSURANCE_WORKSPACE, services=services, probes=probes)
     result.update({
         "catalog": str(FEATURE_READINESS_FILE.relative_to(ROOT)),
         "cacheTtlSeconds": FEATURE_READINESS_CACHE_TTL_SECONDS,
