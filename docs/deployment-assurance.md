@@ -113,9 +113,10 @@ python3 scripts/deployment-assurance.py verify \
 ```
 
 Use repeated `--file` only for a deliberately narrower deploy. The staged
-assurance runner plus the complete native backup-verifier dependency closure
-are always added, even when unchanged, so no unmanifested helper code executes
-on production. This lets a verifier/schema migration authenticate the
+assurance runner plus the complete native backup-verifier dependency closure,
+including the Admin entrypoint that dispatches signed evidence schemas, are
+always added, even when unchanged, so no unmanifested helper code executes on
+production. This lets a verifier/schema migration authenticate the
 pre-change backup with exact commit-bound code before that code is promoted,
 without weakening or bypassing recovery verification. Generation reads each blob
 from the exact commit and refuses when the current workspace file differs. The

@@ -58,7 +58,7 @@ d=json.load(open(sys.argv[1],encoding="utf-8"))
 for row in d["files"]: print(row["path"])
 PY
 for support in \
-  admin/audit_ledger.py admin/change_approvals.py admin/change_intelligence.py \
+  admin/admin_panel.py admin/audit_ledger.py admin/change_approvals.py admin/change_intelligence.py \
   admin/credential_lifecycle.py admin/deployment_assurance.py admin/desired_state.py \
   admin/feature_readiness_history.py admin/rabbitmq_restore_drill.py admin/restore_drill.py \
   admin/update_readiness.py scripts/deployment-assurance.py \

@@ -21,6 +21,10 @@ import deployment_assurance
 
 SCHEMA = "dune-deployment-manifest/v1"
 SUPPORT_FILES = {
+    # Admin owns the server-side backup verifier dispatch. Keep the entrypoint
+    # manifest-bound with every assured deployment so a verifier schema update
+    # cannot promote its helpers without promoting the running caller.
+    "admin/admin_panel.py",
     "admin/audit_ledger.py",
     "admin/change_approvals.py",
     "admin/change_intelligence.py",

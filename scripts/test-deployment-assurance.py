@@ -187,6 +187,7 @@ class DeploymentAssuranceTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "does not match exact deployment commit"):
                 deployment_cli.generate("HEAD", explicit=["LICENSE"], reason="Mismatch fixture")
         selected = deployment_cli.selected_files("a" * 40, explicit=["LICENSE"])
+        self.assertIn("admin/admin_panel.py", selected)
         self.assertTrue(deployment_cli.SUPPORT_FILES.issubset(set(selected)))
 
     def test_host_workflow_is_production_guarded_post_hook_safe_and_evidence_complete(self):
