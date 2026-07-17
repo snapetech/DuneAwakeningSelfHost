@@ -94,6 +94,7 @@ Always compare your `.env` image pin with the Steam package installed on your ho
 - Local backups, hardened disposable PostgreSQL and dual-broker RabbitMQ recovery drills, restore helpers, optional streaming Postgres replica, optional remote replica snapshots, and portable offsite/onsite backup sync examples.
 - Optional public static site package with status, settings, player list, Hagga Basin map, an opt-in Ed25519-signed public descriptor, and a self-hosted federated server directory whose browser re-verifies every listing.
 - Authenticated feature-readiness control center that separates disabled, partial, blocked, degraded, external-credential, pending-canary, and proven-ready states using live gates, artifacts, services, dependencies, and runtime probes without returning secret values; deduplicated state changes enter an append-only HMAC transition ledger with deployment correlation, regression/recovery history, backup verification, metrics, and alerts.
+- Isolated Proof Autopilot that keeps Community, Creator/Modding, and public-IP signed lifecycle evidence current before expiry or after bound-input drift, with serialized execution, exponential retry, dashboard/API state, backup verification, metrics, and alerts—without touching maps, players, providers, or clients.
 - Signed, input-bound Creator/Modding lifecycle proof that exercises the real
   base, gallery, retirement-guard, preset rollback, Landsraad, cosmetics, and
   addon paths entirely against disposable state and expires on input drift.
@@ -223,6 +224,14 @@ map recreation/restart or stale health proof, and emits a semantically verified
 HMAC receipt that the final backup must contain.
 Finalization requires multiple consecutive healthy collector samples, so an
 admin restart cannot turn a transient stale sample into a failed receipt.
+
+The signed proof layer is self-maintaining as well. Canary Autopilot derives
+work from the three authoritative receipt verifiers, refreshes only disposable
+Community, Creator/Modding, and public-IP proofs before expiry or immediately
+after input drift, serializes runs, and applies bounded exponential backoff.
+Its scheduler state, API, Infrastructure card, readiness row, backup verifier,
+label-free metrics, and alerts expose every decision without claiming scheduler
+metadata as proof. See [`docs/canary-autopilot.md`](docs/canary-autopilot.md).
 
 Game-build upgrades now have their own candidate-bound safety gate. DASH binds
 the exact Steam build and Funcom image tag to a verified backup, isolated
@@ -1108,6 +1117,7 @@ Start here:
 - [`docs/community-rewards-canary.md`](docs/community-rewards-canary.md): policy-bound disposable end-to-end transaction proof, strict no-live-data boundary, signed portable receipts, readiness expiry, metrics, and failure handling.
 - [`docs/creator-modding-canary.md`](docs/creator-modding-canary.md): input-bound disposable creator/modding lifecycle proof, strict no-live-state boundary, signed receipts, readiness expiry, metrics, and recovery.
 - [`docs/public-ip-repair-canary.md`](docs/public-ip-repair-canary.md): input-bound disposable advertised-address/TLS/restart/timer proof, live-state isolation, signed receipts, readiness arming, metrics, and recovery.
+- [`docs/canary-autopilot.md`](docs/canary-autopilot.md): automatic pre-expiry/input-drift refresh for all isolated signed proofs, serialized execution, retry/backoff, dashboard/API, readiness, backups, metrics, alerts, and recovery.
 - [`docs/addons.md`](docs/addons.md): SHA-pinned community UI addon lifecycle, permission approval, quarantine, and sandbox contract.
 - [`compose.admin-restore.yaml`](compose.admin-restore.yaml): temporary read-write data overlay for reviewed browser filesystem restores.
 - [`docs/red-blink-feature-parity-audit.md`](docs/red-blink-feature-parity-audit.md): pinned source comparison, completed operator-feature parity matrix, provenance, and validation limits.

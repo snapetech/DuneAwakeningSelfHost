@@ -56,6 +56,7 @@ import community_rewards
 import community_canary
 import creator_canary
 import public_ip_canary
+import canary_autopilot
 import moderation
 import base_creator
 import base_retirement
@@ -323,6 +324,7 @@ CONFIRM_COMMUNITY_RECONCILIATION = "RESOLVE COMMUNITY DELIVERY"
 CONFIRM_COMMUNITY_CANARY = "RUN COMMUNITY REWARDS CANARY"
 CONFIRM_CREATOR_CANARY = "RUN CREATOR MODDING CANARY"
 CONFIRM_PUBLIC_IP_CANARY = "RUN PUBLIC IP REPAIR CANARY"
+CONFIRM_CANARY_AUTOPILOT = "RUN ALL ISOLATED CANARIES"
 CONFIRM_MODERATION_BAN = "CREATE ENFORCED BAN"
 CONFIRM_MODERATION_UNBAN = "REVOKE BAN"
 CONFIRM_MODERATION_ALLOWLIST_POLICY = "CHANGE ALLOWLIST POLICY"
@@ -384,6 +386,13 @@ PUBLIC_IP_CANARY_HELPER_IMAGE = os.environ.get(
     "DUNE_PUBLIC_IP_CANARY_HELPER_IMAGE",
     f"registry.funcom.com/funcom/self-hosting/seabass-server:{os.environ.get('DUNE_IMAGE_TAG', '2036754-0-shipping')}",
 )
+CANARY_AUTOPILOT_ENABLED = os.environ.get("DUNE_CANARY_AUTOPILOT_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+CANARY_AUTOPILOT_POLL_SECONDS = max(60, min(int(os.environ.get("DUNE_CANARY_AUTOPILOT_POLL_SECONDS", "300")), 86400))
+CANARY_AUTOPILOT_REFRESH_BEFORE_HOURS = max(1, min(int(os.environ.get("DUNE_CANARY_AUTOPILOT_REFRESH_BEFORE_HOURS", "24")), 720))
+CANARY_AUTOPILOT_FAILURE_BACKOFF_SECONDS = max(60, min(int(os.environ.get("DUNE_CANARY_AUTOPILOT_FAILURE_BACKOFF_SECONDS", "900")), 86400))
+CANARY_AUTOPILOT_MAX_BACKOFF_SECONDS = max(CANARY_AUTOPILOT_FAILURE_BACKOFF_SECONDS, min(int(os.environ.get("DUNE_CANARY_AUTOPILOT_MAX_BACKOFF_SECONDS", "86400")), 7 * 86400))
+CANARY_AUTOPILOT_RETENTION = max(10, min(int(os.environ.get("DUNE_CANARY_AUTOPILOT_RETENTION", "200")), 5000))
+CANARY_AUTOPILOT_STATE_FILE = pathlib.Path(os.environ.get("DUNE_CANARY_AUTOPILOT_STATE_FILE", str(BACKUP_ROOT / "canary-autopilot.json")))
 MODERATION_ENABLED = os.environ.get("DUNE_MODERATION_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 MODERATION_ENFORCEMENT_ENABLED = os.environ.get("DUNE_MODERATION_ENFORCEMENT_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 MODERATION_DATABASE = pathlib.Path(os.environ.get("DUNE_MODERATION_DATABASE", str(BACKUPS_ROOT / "moderation" / "moderation.sqlite3")))
@@ -529,6 +538,11 @@ CREATOR_CANARY_STORE = None
 CREATOR_CANARY_STORE_LOCK = threading.Lock()
 PUBLIC_IP_CANARY_STORE = None
 PUBLIC_IP_CANARY_STORE_LOCK = threading.Lock()
+CANARY_AUTOPILOT_STORE = None
+CANARY_AUTOPILOT_STORE_LOCK = threading.Lock()
+CANARY_AUTOPILOT_RUN_LOCK = threading.Lock()
+CANARY_AUTOPILOT_WORKER_STARTED = False
+CANARY_AUTOPILOT_RUNTIME = {"running": False, "lastPollAt": None, "lastError": None, "lastResult": None}
 MODERATION_STORE = moderation.Store(MODERATION_DATABASE, owner_uid=os.environ.get("DUNE_HOST_UID"), owner_gid=os.environ.get("DUNE_HOST_GID"))
 MODERATION_STORE_INITIALIZED = False
 MODERATION_STORE_LOCK = threading.Lock()
@@ -816,6 +830,31 @@ def _feature_readiness_public_ip_probe():
     return {"ready": True, "state": "canary-pending", "detail": reason[:500]}
 
 
+def _feature_readiness_canary_autopilot_probe():
+    status = canary_autopilot_public_status()
+    summary = status.get("summary") or {}
+    ready = bool(
+        status.get("enabled") and status.get("ok") and status.get("running")
+        and int(summary.get("targets") or 0) > 0
+        and int(summary.get("due") or 0) == 0
+    )
+    if ready:
+        detail = f"{summary.get('current')}/{summary.get('targets')} isolated proofs current; refresh lead={status.get('refreshBeforeSeconds')}s"
+        return {"ready": True, "state": "ready", "detail": detail}
+    gaps = []
+    if not status.get("enabled"):
+        gaps.append("autopilot disabled")
+    if not status.get("ok"):
+        gaps.append(str(status.get("lastError") or "collector failed")[:300])
+    if not status.get("running"):
+        gaps.append("worker not started")
+    if not int(summary.get("targets") or 0):
+        gaps.append("no enabled isolated proof target")
+    if int(summary.get("due") or 0):
+        gaps.append(f"{summary.get('due')} proof(s) due; {summary.get('backoff')} in backoff")
+    return {"ready": False, "state": "worker-error" if not status.get("ok") else "proof-refresh-pending", "detail": "; ".join(gaps)[:500]}
+
+
 def _feature_readiness_autoscaler_probe():
     status = autoscaler_public_state(include_inventory=False)
     ready = bool(status.get("enabled") and not status.get("lastError"))
@@ -990,6 +1029,7 @@ def feature_readiness_public_status(force=False):
             "detail": str(directory.get("error") or "signed descriptor is valid and current"),
         },
         "public-ip-monitor": _feature_readiness_probe("public-ip-monitor", _feature_readiness_public_ip_probe),
+        "canary-autopilot": _feature_readiness_probe("canary-autopilot", _feature_readiness_canary_autopilot_probe),
         "backup-encryption": {
             "ready": bool(encryption.get("enabled") and encryption.get("configured")),
             "state": "ready" if encryption.get("configured") else "recipient-missing",
@@ -1536,6 +1576,13 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_PUBLIC_IP_CANARY_MAX_AGE_HOURS": {"group": "Network", "secret": False, "restart": True, "why": "Maximum age of an input-current signed public-IP repair proof before readiness returns to pending."},
     "DUNE_PUBLIC_IP_CANARY_RETENTION": {"group": "Network", "secret": False, "restart": True, "why": "Number of private signed public-IP repair receipts retained in operator evidence."},
     "DUNE_PUBLIC_IP_CANARY_HELPER_IMAGE": {"group": "Network", "secret": False, "restart": True, "why": "Already-loaded Bash/OpenSSL image used for the networkless, read-only, mount-confined disposable repair proof."},
+    "DUNE_CANARY_AUTOPILOT_ENABLED": {"group": "Operations", "secret": False, "restart": True, "why": "Automatically refreshes only the isolated Community, Creator/Modding, and public-IP signed proofs before expiry or after input drift."},
+    "DUNE_CANARY_AUTOPILOT_POLL_SECONDS": {"group": "Operations", "secret": False, "restart": True, "why": "Bounded cadence for checking isolated proof freshness; it does not set the canary execution frequency."},
+    "DUNE_CANARY_AUTOPILOT_REFRESH_BEFORE_HOURS": {"group": "Operations", "secret": False, "restart": True, "why": "Refresh lead time before an otherwise current signed canary receipt expires."},
+    "DUNE_CANARY_AUTOPILOT_FAILURE_BACKOFF_SECONDS": {"group": "Operations", "secret": False, "restart": True, "why": "Initial retry delay after an isolated canary fails."},
+    "DUNE_CANARY_AUTOPILOT_MAX_BACKOFF_SECONDS": {"group": "Operations", "secret": False, "restart": True, "why": "Maximum exponential retry delay for a repeatedly failing isolated canary."},
+    "DUNE_CANARY_AUTOPILOT_RETENTION": {"group": "Operations", "secret": False, "restart": True, "why": "Number of scheduler attempt summaries retained; signed proof receipts have their own retention."},
+    "DUNE_CANARY_AUTOPILOT_STATE_FILE": {"group": "Operations", "secret": False, "restart": True, "why": "Private durable retry/history state; signed canary receipts remain the readiness authority."},
     "DUNE_SIETCH_MUTATIONS_ENABLED": {"group": "World", "secret": False, "restart": False, "why": "Enables guarded creation, settings, start/stop, and reconciliation of additional Survival_1 dimensions."},
     "DUNE_SIETCH_ALLOWED_HOST": {"group": "World", "secret": False, "restart": False, "why": "Exact short hostname allowed to change Sietch topology or local settings."},
     "DUNE_SERVER_LOGIN_PASSWORD": {"group": "Access", "secret": False, "restart": True, "why": "Optional player login password passed into game server console variables. Visible here so trusted operators can share and rotate it."},
@@ -4690,6 +4737,164 @@ def run_public_ip_canary(principal):
         FEATURE_READINESS_CACHE["value"] = None
         FEATURE_READINESS_CACHE["updated_at"] = 0.0
     return result
+
+
+def canary_autopilot_store():
+    global CANARY_AUTOPILOT_STORE
+    with CANARY_AUTOPILOT_STORE_LOCK:
+        if CANARY_AUTOPILOT_STORE is None:
+            CANARY_AUTOPILOT_STORE = canary_autopilot.Store(
+                CANARY_AUTOPILOT_STATE_FILE, retention=CANARY_AUTOPILOT_RETENTION,
+                owner_uid=os.environ.get("DUNE_HOST_UID"), owner_gid=os.environ.get("DUNE_HOST_GID"),
+            )
+            CANARY_AUTOPILOT_STORE.initialize()
+        return CANARY_AUTOPILOT_STORE
+
+
+def canary_autopilot_evidence():
+    evidence = {}
+    errors = []
+    collectors = (
+        ("community", COMMUNITY_REWARDS_ENABLED, community_canary_public_status),
+        ("creator-modding", BASE_CREATOR_ENABLED, creator_canary_public_status),
+        ("public-ip-repair", True, public_ip_canary_public_status),
+    )
+    enabled = {}
+    for target, configured, collector in collectors:
+        try:
+            value = collector(limit=1)
+            evidence[target] = value
+            enabled[target] = bool(value.get("enabled", configured))
+        except Exception as exc:
+            evidence[target] = {"ok": False, "currentReady": False, "maxAgeSeconds": 7 * 86400, "latest": {"verification": {"ok": False, "error": str(exc)[:500]}}}
+            enabled[target] = bool(configured)
+            errors.append(f"{target}: {exc}")
+    return evidence, enabled, errors
+
+
+def canary_autopilot_public_status():
+    try:
+        state = canary_autopilot_store().load()
+        evidence, enabled, errors = canary_autopilot_evidence()
+        status = canary_autopilot.public_status(
+            state, evidence, enabled, enabled=CANARY_AUTOPILOT_ENABLED,
+            running=CANARY_AUTOPILOT_WORKER_STARTED,
+            refresh_before_seconds=CANARY_AUTOPILOT_REFRESH_BEFORE_HOURS * 3600,
+        )
+        if errors:
+            status["ok"] = False
+            status["lastError"] = "; ".join(errors)[:1000]
+        status.update({
+            "pollSeconds": CANARY_AUTOPILOT_POLL_SECONDS,
+            "executing": CANARY_AUTOPILOT_RUNTIME["running"],
+            "failureBackoffSeconds": CANARY_AUTOPILOT_FAILURE_BACKOFF_SECONDS,
+            "maxBackoffSeconds": CANARY_AUTOPILOT_MAX_BACKOFF_SECONDS,
+            "stateFile": str(CANARY_AUTOPILOT_STATE_FILE),
+            "confirmation": CONFIRM_CANARY_AUTOPILOT,
+            "isolation": {
+                "liveGameDatabaseTouched": False, "playerDataTouched": False,
+                "gameMapLifecycleInvoked": False, "externalProviderCalled": False,
+                "clientMachineTouched": False,
+            },
+        })
+        return status
+    except Exception as exc:
+        return {
+            "ok": False, "enabled": CANARY_AUTOPILOT_ENABLED,
+            "running": CANARY_AUTOPILOT_WORKER_STARTED, "executing": CANARY_AUTOPILOT_RUNTIME["running"], "lastError": str(exc)[:1000],
+            "pollSeconds": CANARY_AUTOPILOT_POLL_SECONDS,
+            "refreshBeforeSeconds": CANARY_AUTOPILOT_REFRESH_BEFORE_HOURS * 3600,
+            "summary": {"targets": 0, "current": 0, "due": 0, "runnable": 0, "backoff": 0},
+            "targets": [], "history": [], "confirmation": CONFIRM_CANARY_AUTOPILOT,
+        }
+
+
+def run_canary_autopilot(*, force=False, principal=None, trigger="automatic"):
+    if not CANARY_AUTOPILOT_ENABLED:
+        raise PermissionError("canary autopilot is disabled; set DUNE_CANARY_AUTOPILOT_ENABLED=true")
+    if not CANARY_AUTOPILOT_RUN_LOCK.acquire(blocking=False):
+        raise RuntimeError("another isolated canary run is already in progress")
+    CANARY_AUTOPILOT_RUNTIME["running"] = True
+    started = time.time()
+    attempted = []
+    try:
+        store = canary_autopilot_store()
+        state = store.poll(started)
+        evidence, enabled, errors = canary_autopilot_evidence()
+        if errors:
+            raise RuntimeError("; ".join(errors))
+        plan = canary_autopilot.public_status(
+            state, evidence, enabled, enabled=True, running=True,
+            refresh_before_seconds=CANARY_AUTOPILOT_REFRESH_BEFORE_HOURS * 3600, now=started,
+        )
+        runners = {
+            "community": run_community_canary,
+            "creator-modding": run_creator_canary,
+            "public-ip-repair": run_public_ip_canary,
+        }
+        principal = principal or {"id": "system:canary-autopilot"}
+        for target in plan["targets"]:
+            if not target["enabled"] or not (force or target["runnable"]):
+                continue
+            target_started = time.time()
+            receipt_id = None
+            error = None
+            ready = False
+            try:
+                result = runners[target["id"]](principal)
+                receipt = (result.get("document") or {}).get("receipt") or {}
+                receipt_id = receipt.get("id")
+                ready = bool(receipt.get("ready") and (result.get("verification") or {}).get("ok"))
+                error = result.get("error") or (None if ready else "isolated canary did not produce a ready receipt")
+            except Exception as exc:
+                error = str(exc)[:1000]
+            completed = time.time()
+            store.record(
+                target["id"], trigger=trigger, started_at=target_started, completed_at=completed,
+                ready=ready, receipt_id=receipt_id, error=error,
+                base_backoff_seconds=CANARY_AUTOPILOT_FAILURE_BACKOFF_SECONDS,
+                max_backoff_seconds=CANARY_AUTOPILOT_MAX_BACKOFF_SECONDS,
+            )
+            row = {"target": target["id"], "ready": ready, "receiptId": receipt_id, "error": error}
+            attempted.append(row)
+            audit_event(
+                "canary-autopilot-run", ok=ready, target=target["id"], trigger=trigger,
+                receipt_id=receipt_id, error=error,
+                game_data_mutation_executed=False, map_lifecycle_invoked=False,
+                external_provider_called=False, client_machine_touched=False,
+            )
+        status = canary_autopilot_public_status()
+        result = {"ok": all(row["ready"] for row in attempted), "attempted": attempted, "status": status}
+        CANARY_AUTOPILOT_RUNTIME.update({"lastPollAt": canary_autopilot.iso(), "lastError": None, "lastResult": result})
+        return result
+    except Exception as exc:
+        CANARY_AUTOPILOT_RUNTIME.update({"lastPollAt": canary_autopilot.iso(), "lastError": str(exc)[:1000], "lastResult": None})
+        audit_event("canary-autopilot-poll", ok=False, error=str(exc)[:1000], game_data_mutation_executed=False, map_lifecycle_invoked=False)
+        raise
+    finally:
+        CANARY_AUTOPILOT_RUNTIME["running"] = False
+        CANARY_AUTOPILOT_RUN_LOCK.release()
+
+
+def canary_autopilot_worker():
+    while True:
+        try:
+            result = run_canary_autopilot(force=False, trigger="automatic")
+            CANARY_AUTOPILOT_RUNTIME["lastResult"] = result
+        except RuntimeError as exc:
+            if "already in progress" not in str(exc):
+                CANARY_AUTOPILOT_RUNTIME["lastError"] = str(exc)[:1000]
+        except Exception as exc:
+            CANARY_AUTOPILOT_RUNTIME["lastError"] = str(exc)[:1000]
+        time.sleep(CANARY_AUTOPILOT_POLL_SECONDS)
+
+
+def ensure_canary_autopilot_thread():
+    global CANARY_AUTOPILOT_WORKER_STARTED
+    if not CANARY_AUTOPILOT_ENABLED or CANARY_AUTOPILOT_WORKER_STARTED:
+        return
+    CANARY_AUTOPILOT_WORKER_STARTED = True
+    threading.Thread(target=canary_autopilot_worker, name="canary-autopilot-worker", daemon=True).start()
 
 
 def maintenance_outcome_public_status(limit=100):
@@ -10135,6 +10340,10 @@ class Handler(BaseHTTPRequestHandler):
                     public_ip_enabled = str(values.get("DUNE_PUBLIC_IP_MONITOR_ENABLED", "")).lower() in ("1", "true", "yes", "on")
                     public_ip_armed = str(values.get("DUNE_PUBLIC_IP_MONITOR_DRY_RUN", "true")).lower() not in ("1", "true", "yes", "on")
                     metrics += f"dash_public_ip_canary_enabled {1 if public_ip_enabled else 0}\ndash_public_ip_monitor_armed {1 if public_ip_armed else 0}\ndash_public_ip_canary_collector_up 0\ndash_public_ip_canary_current_ready 0\n"
+                try:
+                    metrics += canary_autopilot.prometheus(canary_autopilot_public_status())
+                except Exception:
+                    metrics += f"dash_canary_autopilot_enabled {1 if CANARY_AUTOPILOT_ENABLED else 0}\ndash_canary_autopilot_collector_up 0\ndash_canary_autopilot_worker_running 0\ndash_canary_autopilot_targets 0\ndash_canary_autopilot_current 0\ndash_canary_autopilot_due 0\ndash_canary_autopilot_backoff 0\ndash_canary_autopilot_attempts_total 0\ndash_canary_autopilot_failures_total 0\ndash_canary_autopilot_last_attempt_timestamp_seconds 0\ndash_canary_autopilot_last_success_timestamp_seconds 0\n"
                 metrics += maintenance_planner_prometheus()
                 self.text(metrics, "text/plain; version=0.0.4; charset=utf-8")
             elif parsed.path in ("/api/integrations/discord/health", "/api/integrations/discord/version", "/api/integrations/discord/backups/list"):
@@ -10425,6 +10634,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.require_token()
                 params = urllib.parse.parse_qs(parsed.query)
                 self.json(public_ip_canary_public_status(limit=(params.get("limit") or ["20"])[0]))
+            elif parsed.path == "/api/ops/canary-autopilot":
+                self.require_token()
+                self.json(canary_autopilot_public_status())
             elif parsed.path == "/api/ops/feature-readiness":
                 self.require_token()
                 params = urllib.parse.parse_qs(parsed.query)
@@ -11350,6 +11562,20 @@ class Handler(BaseHTTPRequestHandler):
                     receipt_id=receipt.get("id"), game_data_mutation_executed=False,
                     live_environment_written=False, live_tls_written=False,
                     live_systemd_written=False, external_network_called=False,
+                )
+                self.json(result)
+            elif parsed.path == "/api/ops/canary-autopilot":
+                self.require_token()
+                self.require_mutations()
+                body = parse_body(self)
+                require_confirmation(body, CONFIRM_CANARY_AUTOPILOT)
+                principal = access_control.public_principal(getattr(self, "auth_principal", None)) or {}
+                result = run_canary_autopilot(force=True, principal=principal, trigger="manual")
+                self.audit(
+                    "canary-autopilot-force-all", ok=result.get("ok", False),
+                    attempted=len(result.get("attempted") or []),
+                    game_data_mutation_executed=False, map_lifecycle_invoked=False,
+                    external_provider_called=False, client_machine_touched=False,
                 )
                 self.json(result)
             elif parsed.path == "/api/ops/backups/verify":
@@ -18949,7 +19175,7 @@ async function ops(serial=loadSerial){
   startHealthRefresh();
 }
 async function infrastructure(serial=loadSerial){
-  const [serviceData, backupData, databaseData, updateData, memoryData, autoscalerData, restoreDrillData, rabbitmqDrillData, sloData, capacityData, desiredStateData, changeData, deploymentData, publicDirectoryData, featureReadinessData, publicIpCanaryData] = await Promise.all([
+  const [serviceData, backupData, databaseData, updateData, memoryData, autoscalerData, restoreDrillData, rabbitmqDrillData, sloData, capacityData, desiredStateData, changeData, deploymentData, publicDirectoryData, featureReadinessData, publicIpCanaryData, canaryAutopilotData] = await Promise.all([
     api('/api/ops/services'),
     api('/api/ops/backups'),
     api('/api/ops/database'),
@@ -18965,7 +19191,8 @@ async function infrastructure(serial=loadSerial){
     api('/api/ops/deployment-assurance', {timeoutMs: 30000}),
     api('/api/ops/public-directory', {timeoutMs: 30000}),
     api('/api/ops/feature-readiness', {timeoutMs: 30000}),
-    api('/api/ops/public-ip-canary', {timeoutMs: 30000})
+    api('/api/ops/public-ip-canary', {timeoutMs: 30000}),
+    api('/api/ops/canary-autopilot', {timeoutMs: 30000})
   ]);
   if (serial !== loadSerial) return;
   const services = serviceData.services || [];
@@ -18989,6 +19216,7 @@ async function infrastructure(serial=loadSerial){
   mountInfrastructurePublicDirectory(publicDirectoryData);
   mountInfrastructureFeatureReadiness(featureReadinessData);
   mountInfrastructurePublicIpCanary(publicIpCanaryData);
+  mountInfrastructureCanaryAutopilot(canaryAutopilotData);
   mountInfrastructureRestoreDrill(restoreDrillData);
   mountInfrastructureRabbitMQRestoreDrill(rabbitmqDrillData);
   mountInfrastructureSlo(sloData);
@@ -19017,6 +19245,43 @@ function mountInfrastructurePublicIpCanary(data){
     const result = await api('/api/ops/public-ip-canary',{method:'POST',timeoutMs:180000,body:JSON.stringify({confirm:'RUN PUBLIC IP REPAIR CANARY'})});
     document.getElementById('infraPublicIpCanaryResult').textContent=JSON.stringify(result,null,2);
     notify(result.document?.receipt?.ready?'Public-IP repair proof passed':'Public-IP repair proof failed',result.document?.receipt?.ready?'ok':'bad');
+    return result;
+  }));
+}
+function mountInfrastructureCanaryAutopilot(data){
+  const page = document.querySelector('#view .pageStack');
+  if (!page) return;
+  const summary = data.summary || {};
+  const rows = (data.targets || []).filter(row=>row.enabled).map(row=>({
+    proof:row.id,
+    state:row.currentReady?'current':row.backoff?'retry backoff':row.reason,
+    age:row.ageSeconds == null?'—':fmtRuntimeSeconds(row.ageSeconds),
+    remaining:row.remainingSeconds == null?'—':fmtRuntimeSeconds(row.remainingSeconds),
+    attempts:row.attempts,
+    failures:row.failures,
+    nextAttempt:row.nextAttemptAt || '—',
+    lastReceipt:row.lastReceiptId || '—',
+    error:row.lastError || ''
+  }));
+  const history = (data.history || []).slice(0,50).map(row=>({completedAt:row.completedAt,target:row.target,trigger:row.trigger,ready:row.ready,receipt:row.receiptId||'',error:row.error||''}));
+  const healthy = data.enabled && data.ok && data.running && Number(summary.due||0)===0;
+  const html = `<div class="panelBand" id="infraCanaryAutopilot">
+    <div class="sectionHeader"><div><h2>Isolated Proof Autopilot</h2><p class="muted">Keeps Community, Creator/Modding, and public-IP signed lifecycle proofs current before expiry or immediately after their bound inputs change. Runs are serialized and repeated failures use bounded exponential backoff.</p></div><div class="toolbar"><span class="pill ${data.enabled?'ok':'warn'}">${data.enabled?'enabled':'disabled'}</span><span class="pill ${data.running?'ok':'bad'}">worker ${data.running?'running':'stopped'}</span><span class="pill ${healthy?'ok':Number(summary.due||0)?'warn':'bad'}">${esc(summary.current||0)}/${esc(summary.targets||0)} current</span><span class="pill ${Number(summary.backoff||0)?'warn':'ok'}">${esc(summary.backoff||0)} backoff</span><button id="infraCanaryAutopilotBtn" class="primary" ${data.enabled && can('infrastructure.write')?'':'disabled'}>Run all isolated proofs now</button></div></div>
+    <p class="muted">This control never opens the game database, changes player data, invokes map lifecycle, calls an external provider, or touches a client machine. Signed receipts remain the readiness authority; this scheduler stores only retry and attempt history.</p>
+    <div class="metricGrid">${metric('Current proofs', `${summary.current||0}/${summary.targets||0}`, healthy?'ok':'warn')}${metric('Due', summary.due||0, Number(summary.due||0)?'warn':'ok')}${metric('Runnable now', summary.runnable||0)}${metric('Poll cadence', fmtRuntimeSeconds(data.pollSeconds||0))}${metric('Refresh lead', fmtRuntimeSeconds(data.refreshBeforeSeconds||0))}${metric('Attempts', data.attemptsTotal||0)}</div>
+    ${table(rows)}
+    ${data.lastError?`<div class="notice bad">${esc(data.lastError)}</div>`:''}
+    <details><summary>Attempt history, retry policy, and isolation contract</summary>${table(history)}<pre id="infraCanaryAutopilotResult">${esc(JSON.stringify({failureBackoffSeconds:data.failureBackoffSeconds,maxBackoffSeconds:data.maxBackoffSeconds,stateFile:data.stateFile,isolation:data.isolation},null,2))}</pre></details>
+  </div>`;
+  const anchor = document.getElementById('infraPublicIpCanary');
+  if (anchor) anchor.insertAdjacentHTML('afterend', html); else page.insertAdjacentHTML('beforeend', html);
+  document.getElementById('infraCanaryAutopilotBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Running proofs...', async()=>{
+    if (!confirm('Run every enabled isolated proof now? These use disposable state only and do not touch maps, players, providers, or client machines.')) return {cancelled:true};
+    const result=await api('/api/ops/canary-autopilot',{method:'POST',timeoutMs:900000,body:JSON.stringify({confirm:'RUN ALL ISOLATED CANARIES'})});
+    const output=document.getElementById('infraCanaryAutopilotResult');
+    if (output) output.textContent=JSON.stringify(result,null,2);
+    notify(result.ok?`All ${result.attempted?.length||0} isolated proofs passed`:'One or more isolated proofs failed',result.ok?'ok':'bad');
+    await infrastructure(loadSerial);
     return result;
   }));
 }
@@ -21415,6 +21680,7 @@ def main():
     ensure_event_scheduler_thread()
     ensure_community_worker_thread()
     ensure_moderation_worker_thread()
+    ensure_canary_autopilot_thread()
     bind = os.environ.get("DUNE_ADMIN_BIND", "0.0.0.0")
     port = int(os.environ.get("DUNE_ADMIN_PORT", "8080"))
     server = BoundedThreadingHTTPServer((bind, port), Handler)

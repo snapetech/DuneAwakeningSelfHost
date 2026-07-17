@@ -61,6 +61,13 @@ receipt. Alerts distinguish invalid evidence, missing/stale/input-drifted proof,
 and an enabled monitor left in dry-run mode; see
 [`public-ip-repair-canary.md`](public-ip-repair-canary.md).
 
+Isolated Proof Autopilot adds label-free enablement, collector/worker health,
+active/current/due/backoff target counts, cumulative attempts/failures, and
+last-attempt/last-success timestamps. Alerts cover invalid scheduler or target
+evidence, a worker that did not start, and proof refresh that remains overdue.
+Target IDs and failure text stay in the authenticated API; see
+[`canary-autopilot.md`](canary-autopilot.md).
+
 Start it with the normal world Compose files plus the overlay:
 
 ```bash

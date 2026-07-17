@@ -175,6 +175,11 @@ server {
   correlated with assured deployments, so the same card shows regressions and
   recoveries rather than only current state; see
   [`feature-readiness.md`](feature-readiness.md).
+- Isolated Proof Autopilot on Infrastructure keeps the Community,
+  Creator/Modding, and public-IP signed receipts current before expiry or after
+  bound-input drift. It shows every scheduling reason and retry deadline and
+  offers an `infrastructure.write` force-all action that still uses only
+  disposable state. See [`canary-autopilot.md`](canary-autopilot.md).
 - Capacity Intelligence beside the autoscaler: retained map-hours saved,
   idle-running cost, productive-running ratio, warm/cold revisits,
   demand-to-ready cold-start distributions, empirical next-visit forecasts,

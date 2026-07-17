@@ -86,6 +86,9 @@ change_intelligence_snapshot=""
 feature_readiness_history_db="${DUNE_FEATURE_READINESS_HISTORY_HOST_DATABASE:-backups/feature-readiness/history.sqlite3}"
 feature_readiness_history_snapshot=""
 [[ -f "$feature_readiness_history_db" ]] && feature_readiness_history_snapshot="feature-readiness-history.sqlite3"
+canary_autopilot_state="${DUNE_CANARY_AUTOPILOT_HOST_STATE_FILE:-backups/admin-panel/canary-autopilot.json}"
+canary_autopilot_snapshot=""
+[[ -f "$canary_autopilot_state" ]] && canary_autopilot_snapshot="canary-autopilot.json"
 credential_lifecycle_db="${DUNE_CREDENTIAL_LIFECYCLE_HOST_DATABASE:-backups/credential-lifecycle/history.sqlite3}"
 credential_lifecycle_anchor="${DUNE_CREDENTIAL_LIFECYCLE_HOST_ANCHOR:-backups/credential-lifecycle/history.anchor.json}"
 credential_lifecycle_key="${DUNE_CREDENTIAL_LIFECYCLE_HOST_HMAC_SECRET_FILE:-config/secrets/credential-lifecycle-hmac.secret}"
@@ -217,6 +220,11 @@ if [[ "$dry_run" == true ]]; then
     printf 'feature_readiness_history_snapshot=feature-readiness-history.sqlite3\n'
   else
     printf 'feature_readiness_history_snapshot=<missing %s>\n' "$feature_readiness_history_db"
+  fi
+  if [[ -f "$canary_autopilot_state" ]]; then
+    printf 'canary_autopilot_snapshot=canary-autopilot.json\n'
+  else
+    printf 'canary_autopilot_snapshot=<not initialized>\n'
   fi
   if [[ "$credential_lifecycle_artifacts" -eq 2 ]]; then
     printf 'credential_lifecycle_snapshot=credential-lifecycle.sqlite3\n'
@@ -412,6 +420,23 @@ PY
   chmod 600 "${backup_dir}/feature-readiness-history.sqlite3"
 fi
 
+if [[ -f "$canary_autopilot_state" ]]; then
+  PYTHONPATH="$repo_root/admin" python3 - "$canary_autopilot_state" "${backup_dir}/canary-autopilot.json" <<'PY'
+import json
+import os
+import pathlib
+import sys
+import canary_autopilot
+source, target = map(pathlib.Path, sys.argv[1:])
+if source.is_symlink() or not source.is_file() or not 1 <= source.stat().st_size <= 4 * 1024 * 1024:
+    raise SystemExit("canary autopilot source state is invalid")
+raw = source.read_bytes()
+canary_autopilot.validate_state(json.loads(raw.decode("utf-8")))
+target.write_bytes(raw)
+os.chmod(target, 0o600)
+PY
+fi
+
 if [[ "$credential_lifecycle_artifacts" -eq 2 ]]; then
   PYTHONPATH=admin python3 - "$credential_lifecycle_db" "$credential_lifecycle_anchor" "$credential_lifecycle_key" "${backup_dir}/credential-lifecycle.sqlite3" "${backup_dir}/credential-lifecycle.anchor.json" <<'PY'
 import pathlib
@@ -540,6 +565,7 @@ capacity_intelligence_snapshot=${capacity_snapshot}
 desired_state_snapshot=${desired_state_snapshot}
 change_intelligence_snapshot=${change_intelligence_snapshot}
 feature_readiness_history_snapshot=${feature_readiness_history_snapshot}
+canary_autopilot_snapshot=${canary_autopilot_snapshot}
 credential_lifecycle_snapshot=${credential_lifecycle_snapshot}
 credential_lifecycle_anchor=${credential_lifecycle_anchor_snapshot}
 change_approval_snapshot=${change_approval_snapshot}

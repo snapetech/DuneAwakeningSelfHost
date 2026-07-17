@@ -357,3 +357,18 @@ groups:
         for: 15m
         labels: {severity: warning}
         annotations: {summary: "The hostname-gated DASH public-IP monitor remains in dry-run mode"}
+      - alert: DashCanaryAutopilotCollectorInvalid
+        expr: dash_canary_autopilot_enabled == 1 and dash_canary_autopilot_collector_up == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "DASH isolated-proof autopilot state or a target evidence collector is invalid"}
+      - alert: DashCanaryAutopilotWorkerStopped
+        expr: dash_canary_autopilot_enabled == 1 and dash_canary_autopilot_worker_running == 0
+        for: 5m
+        labels: {severity: critical}
+        annotations: {summary: "DASH isolated-proof autopilot is enabled but its worker is not running"}
+      - alert: DashCanaryAutopilotRefreshOverdue
+        expr: dash_canary_autopilot_enabled == 1 and dash_canary_autopilot_due > 0
+        for: 30m
+        labels: {severity: warning}
+        annotations: {summary: "One or more isolated DASH proofs remain due after the automatic refresh window"}

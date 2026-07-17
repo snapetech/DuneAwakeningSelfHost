@@ -76,6 +76,27 @@ for archive in "${archives[@]}"; do
   check_tgz "$archive"
 done
 
+if [[ -f "$backup_dir/canary-autopilot.json" ]]; then
+  if PYTHONPATH="$repo_root/admin" python3 - "$backup_dir/canary-autopilot.json" <<'PY'
+import json
+import pathlib
+import sys
+import canary_autopilot
+path = pathlib.Path(sys.argv[1])
+if path.is_symlink() or not path.is_file() or not 1 <= path.stat().st_size <= 4 * 1024 * 1024:
+    raise SystemExit(1)
+canary_autopilot.validate_state(json.loads(path.read_text(encoding="utf-8")))
+PY
+  then
+    printf 'OK canary autopilot scheduler state %s\n' "$backup_dir/canary-autopilot.json"
+  else
+    printf 'FAIL canary autopilot scheduler state %s\n' "$backup_dir/canary-autopilot.json" >&2
+    ok=false
+  fi
+else
+  printf 'WARN no canary-autopilot.json found in %s\n' "$backup_dir"
+fi
+
 if [[ -f "$backup_dir/community-rewards.sqlite3" ]]; then
   if python3 - "$backup_dir/community-rewards.sqlite3" <<'PY'
 import sqlite3

@@ -64,6 +64,10 @@ The local backup includes:
 - Input-bound Public-IP Repair lifecycle receipts in the same archive; both
   verifiers reject tampered/inconsistent evidence and require the signed
   no-live-environment/TLS/systemd/Docker/map/network isolation verdict.
+- The private `canary-autopilot.json` retry/attempt history, validated against
+  its strict schema at copy time and again by the backup verifier. This file is
+  diagnostic scheduler state; the signed receipts in `operator-evidence.tgz`
+  remain the proof authority.
 - A transactionally consistent `moderation.sqlite3` snapshot when the isolated
   case/history database exists, including the identity-free aggregate
   population buckets used by the player-impact maintenance planner.

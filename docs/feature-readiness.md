@@ -200,6 +200,13 @@ dash_feature_readiness_history_head_sequence
 dash_feature_readiness_history_last_regression_timestamp_seconds
 ```
 
+The `canary-autopilot` catalog row additionally proves that the automatic
+isolated-proof worker is loaded, its strict scheduler state and target evidence
+collectors are valid, at least one target is active, and no active proof remains
+due. It does not substitute scheduler state for the Community, Creator/Modding,
+or public-IP signed receipt verifier. See
+[`canary-autopilot.md`](canary-autopilot.md).
+
 The catalog includes `player-impact-maintenance`. Its runtime probe verifies
 that the shared moderation database accepted aggregate observations and that
 the planner can produce a bounded recommendation. `policy-fallback-learning`

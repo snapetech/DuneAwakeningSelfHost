@@ -344,6 +344,22 @@
       "remediation": {"surface": "infrastructure", "summary": "Run the isolated signed repair canary, verify the live current-address no-op, then arm the hostname-gated monitor."}
     },
     {
+      "id": "canary-autopilot",
+      "title": "Isolated proof autopilot",
+      "group": "Operations",
+      "description": "Community, Creator/Modding, and public-IP signed proofs refresh before expiry or after bound-input drift with serialized execution and bounded exponential retry.",
+      "documentation": "docs/canary-autopilot.md",
+      "primaryGate": "DUNE_CANARY_AUTOPILOT_ENABLED",
+      "gates": ["DUNE_CANARY_AUTOPILOT_ENABLED"],
+      "credentials": [],
+      "files": [{"path": "admin/canary_autopilot.py", "minimumBytes": 1000}],
+      "services": ["admin-panel"],
+      "probe": "canary-autopilot",
+      "dependencies": ["operational-evidence"],
+      "canary": "runtime-proven",
+      "remediation": {"surface": "infrastructure", "summary": "Inspect the named proof reason and retained scheduler error; repair its isolated canary, then let the bounded retry or force-all action refresh it."}
+    },
+    {
       "id": "encrypted-backups",
       "title": "Encrypted backup archives",
       "group": "Recovery",
