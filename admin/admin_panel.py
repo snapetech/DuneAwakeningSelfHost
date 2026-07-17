@@ -62,6 +62,7 @@ import federated_auth
 import cosmetics_admin
 import progression_admin
 import restore_drill
+import rabbitmq_restore_drill
 import operational_slo
 import capacity_intelligence
 import desired_state
@@ -281,6 +282,7 @@ CONFIRM_MEMORY_LIMIT = "SET MAP MEMORY"
 CONFIRM_AUTOSCALER = "CHANGE AUTOSCALER"
 CONFIRM_BACKUP_SCHEDULE = "CHANGE BACKUP SCHEDULE"
 CONFIRM_RESTORE_DRILL = "RUN ISOLATED RESTORE DRILL"
+CONFIRM_RABBITMQ_RESTORE_DRILL = "RUN NETWORKLESS RABBITMQ RESTORE DRILL"
 CONFIRM_SLO_INCIDENT = "ACKNOWLEDGE SLO INCIDENT"
 CONFIRM_SLO_MAINTENANCE = "CHANGE SLO MAINTENANCE"
 CONFIRM_CAPACITY_APPLY = "APPLY CAPACITY RECOMMENDATIONS"
@@ -344,6 +346,8 @@ BACKUP_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_BACKUP_MUTATIONS_ENABLED",
 BACKUP_RESTORE_ENABLED = os.environ.get("DUNE_ADMIN_BACKUP_RESTORE_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 RESTORE_DRILL_ENABLED = os.environ.get("DUNE_RESTORE_DRILL_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 RESTORE_DRILL_EXECUTION_ENABLED = os.environ.get("DUNE_ADMIN_RESTORE_DRILL_EXECUTION_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+RABBITMQ_RESTORE_DRILL_ENABLED = os.environ.get("DUNE_RABBITMQ_RESTORE_DRILL_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+RABBITMQ_RESTORE_DRILL_EXECUTION_ENABLED = os.environ.get("DUNE_ADMIN_RABBITMQ_RESTORE_DRILL_EXECUTION_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 OPERATIONAL_SLO_ENABLED = os.environ.get("DUNE_OPERATIONAL_SLO_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 OPERATIONAL_SLO_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_OPERATIONAL_SLO_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 CAPACITY_INTELLIGENCE_ENABLED = os.environ.get("DUNE_CAPACITY_INTELLIGENCE_ENABLED", "true").lower() in ("1", "true", "yes", "on")
@@ -419,6 +423,9 @@ BACKUP_SCHEDULE_THREAD_STARTED = False
 RESTORE_DRILL_RECEIPT_ROOT = BACKUP_ROOT / "restore-drills"
 RESTORE_DRILL_RUNTIME_LOCK = threading.Lock()
 RESTORE_DRILL_RUNTIME = {"running": False, "queuedAt": None, "startedAt": None, "finishedAt": None, "lastResult": None, "lastError": None}
+RABBITMQ_RESTORE_DRILL_RECEIPT_ROOT = BACKUP_ROOT / "rabbitmq-restore-drills"
+RABBITMQ_RESTORE_DRILL_RUNTIME_LOCK = threading.Lock()
+RABBITMQ_RESTORE_DRILL_RUNTIME = {"running": False, "queuedAt": None, "startedAt": None, "finishedAt": None, "lastResult": None, "lastError": None}
 OPERATIONAL_SLO_POLICY = pathlib.Path(os.environ.get("DUNE_OPERATIONAL_SLO_POLICY", str(CONFIG_ROOT / "operational-slo.json")))
 OPERATIONAL_SLO_DATABASE = pathlib.Path(os.environ.get("DUNE_OPERATIONAL_SLO_DATABASE", str(BACKUPS_ROOT / "operational-slo" / "slo.sqlite3")))
 OPERATIONAL_SLO_POLL_SECONDS = max(10, min(int(os.environ.get("DUNE_OPERATIONAL_SLO_POLL_SECONDS", "60")), 3600))
@@ -645,6 +652,18 @@ def _feature_readiness_operational_evidence_probe():
     return {"ready": not failed, "state": "ready" if not failed else "subsystem-failure", "detail": "failed: " + ", ".join(failed) if failed else "all retained evidence stores are loaded and valid"}
 
 
+def _feature_readiness_rabbitmq_restore_probe():
+    status = rabbitmq_restore_drill_public_status()
+    latest = status.get("latest") or {}
+    if not status.get("ready"):
+        return {"ready": False, "state": "configuration-failed", "detail": "host workspace or Docker socket is unavailable"}
+    if not latest:
+        return {"ready": True, "state": "canary-pending", "detail": "networkless recovery implementation is loaded; no broker recovery receipt exists yet"}
+    if status.get("ok"):
+        return {"ready": True, "state": "canary-proven", "detail": "both copied broker states booted networkless and their private receipt verifies"}
+    return {"ready": False, "state": "recovery-failed", "detail": str(latest.get("error") or "latest RabbitMQ recovery receipt failed")[:500]}
+
+
 def _feature_readiness_autoscaler_probe():
     status = autoscaler_public_state(include_inventory=False)
     ready = bool(status.get("enabled") and not status.get("lastError"))
@@ -826,6 +845,7 @@ def feature_readiness_public_status(force=False):
             "state": "ready" if credential_status.get("ok") else "posture-gap",
             "detail": str(credential_status.get("error") or f"{(credential_status.get('summary') or {}).get('problems', 0)} credential posture problems")[:500],
         },
+        "rabbitmq-restore-drill": _feature_readiness_probe("rabbitmq-restore-drill", _feature_readiness_rabbitmq_restore_probe),
     }
     catalog = feature_readiness.load_catalog(FEATURE_READINESS_FILE)
     result = feature_readiness.evaluate(catalog, values, root=DEPLOYMENT_ASSURANCE_WORKSPACE, services=services, probes=probes)
@@ -893,6 +913,7 @@ def admin_panel_reload_paths():
         CODE_ROOT / "admin" / "progression_admin.py",
         CODE_ROOT / "admin" / "audit_ledger.py",
         CODE_ROOT / "admin" / "restore_drill.py",
+        CODE_ROOT / "admin" / "rabbitmq_restore_drill.py",
         CODE_ROOT / "admin" / "operational_slo.py",
         OPERATIONAL_SLO_POLICY,
         CODE_ROOT / "admin" / "capacity_intelligence.py",
@@ -1418,6 +1439,17 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_RESTORE_DRILL_PGDATA_MIB": {"group": "Restore Drills", "secret": False, "restart": True, "why": "Ephemeral tmpfs capacity for the restored database; no restored data persists after cleanup."},
     "DUNE_RESTORE_DRILL_CPUS": {"group": "Restore Drills", "secret": False, "restart": True, "why": "CPU quota for the disposable PostgreSQL drill container."},
     "DUNE_RESTORE_DRILL_RECEIPT_RETENTION": {"group": "Restore Drills", "secret": False, "restart": True, "why": "Maximum private hash-chained restore receipts retained locally."},
+    "DUNE_RABBITMQ_RESTORE_DRILL_ENABLED": {"group": "Restore Drills", "secret": False, "restart": True, "why": "Loads networkless recovery proof for copied admin/game RabbitMQ Mnesia state."},
+    "DUNE_ADMIN_RABBITMQ_RESTORE_DRILL_EXECUTION_ENABLED": {"group": "Restore Drills", "secret": False, "restart": True, "why": "Allows an infrastructure administrator to queue the explicitly confirmed RabbitMQ recovery rehearsal."},
+    "DUNE_RABBITMQ_RESTORE_DRILL_HOST_WORKSPACE": {"group": "Restore Drills", "secret": False, "restart": True, "why": "Absolute host workspace used only for private copied-state bind mounts."},
+    "DUNE_RABBITMQ_RESTORE_DRILL_DOCKER_SOCKET": {"group": "Restore Drills", "secret": False, "restart": True, "why": "Local Docker socket used to create bounded no-network recovery containers."},
+    "DUNE_RABBITMQ_RESTORE_DRILL_IMAGE": {"group": "Restore Drills", "secret": False, "restart": True, "why": "Already-loaded exact Funcom RabbitMQ image; the drill never pulls."},
+    "DUNE_RABBITMQ_RESTORE_DRILL_MAX_BACKUP_AGE_HOURS": {"group": "Restore Drills", "secret": False, "restart": True, "why": "Maximum backup-set age accepted by RabbitMQ recovery policy."},
+    "DUNE_RABBITMQ_RESTORE_DRILL_READINESS_SECONDS": {"group": "Restore Drills", "secret": False, "restart": True, "why": "Bounded startup budget for each sequential recovered broker."},
+    "DUNE_RABBITMQ_RESTORE_DRILL_MEMORY_MIB": {"group": "Restore Drills", "secret": False, "restart": True, "why": "Hard memory/swap ceiling for each disposable broker."},
+    "DUNE_RABBITMQ_RESTORE_DRILL_CPUS": {"group": "Restore Drills", "secret": False, "restart": True, "why": "CPU quota for each disposable broker."},
+    "DUNE_RABBITMQ_RESTORE_DRILL_PIDS_LIMIT": {"group": "Restore Drills", "secret": False, "restart": True, "why": "Process ceiling for each disposable broker."},
+    "DUNE_RABBITMQ_RESTORE_DRILL_RECEIPT_RETENTION": {"group": "Restore Drills", "secret": False, "restart": True, "why": "Maximum private hash-chained RabbitMQ recovery receipts retained locally."},
     "DUNE_OPERATIONAL_SLO_ENABLED": {"group": "Reliability SLO", "secret": False, "restart": True, "why": "Starts time-weighted reliability sampling, error budgets, and incident transitions."},
     "DUNE_ADMIN_OPERATIONAL_SLO_MUTATIONS_ENABLED": {"group": "Reliability SLO", "secret": False, "restart": True, "why": "Allows infrastructure administrators to acknowledge incidents and manage planned-maintenance exclusions."},
     "DUNE_OPERATIONAL_SLO_POLICY": {"group": "Reliability SLO", "secret": False, "restart": True, "why": "Versioned objective, target, severity, debounce, retention, and maintenance-exclusion policy."},
@@ -5807,6 +5839,31 @@ def verify_backup_set_native(path):
                 errors.append(f"FAIL portable signed operator evidence capsules or matching HMAC key {evidence_archive}: {exc}")
     else:
         output.append(f"WARN no operator-evidence.tgz found in {path}")
+    rabbitmq_receipt = path / "rabbitmq-restore-drill.json"
+    declared_rabbitmq_receipt = False
+    manifest_text_path = path / "manifest.txt"
+    if manifest_text_path.is_file():
+        try:
+            declared_rabbitmq_receipt = any(
+                line.startswith("rabbitmq_restore_receipt=") and line.split("=", 1)[1].strip()
+                for line in manifest_text_path.read_text(encoding="utf-8").splitlines()
+            )
+        except OSError as exc:
+            errors.append(f"FAIL RabbitMQ recovery receipt manifest declaration in {manifest_text_path}: {exc}")
+    if rabbitmq_receipt.is_file() and not rabbitmq_receipt.is_symlink():
+        try:
+            if not 1 <= rabbitmq_receipt.stat().st_size <= 2 * 1024 * 1024:
+                raise ValueError("receipt is outside its size bound")
+            document = json.loads(rabbitmq_receipt.read_text(encoding="utf-8"))
+            if not rabbitmq_restore_drill.verify_receipt_document(document):
+                raise ValueError("receipt hash or schema is invalid")
+            output.append(f"OK portable RabbitMQ recovery receipt {rabbitmq_receipt}")
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            errors.append(f"FAIL portable RabbitMQ recovery receipt {rabbitmq_receipt}: {exc}")
+    elif declared_rabbitmq_receipt:
+        errors.append("FAIL manifest declares a RabbitMQ recovery receipt but the artifact is missing")
+    else:
+        output.append(f"WARN no RabbitMQ recovery receipt found in {path}")
     manifest_json = path / "manifest.json"
     manifest_text = path / "manifest.txt"
     try:
@@ -6075,6 +6132,116 @@ def queue_restore_drill(source=None):
 
     threading.Thread(target=worker, name="backup-restore-drill", daemon=True).start()
     return {"ok": True, "queued": True, "status": restore_drill_public_status()}
+
+
+def rabbitmq_restore_drill_configuration():
+    host_workspace = os.environ.get("DUNE_RABBITMQ_RESTORE_DRILL_HOST_WORKSPACE") or os.environ.get("DUNE_RESTORE_DRILL_HOST_WORKSPACE") or os.environ.get("DUNE_RESTART_HOST_WORKSPACE") or ""
+    return {
+        "hostWorkspaceConfigured": bool(host_workspace and pathlib.Path(host_workspace).is_absolute()),
+        "hostWorkspace": host_workspace,
+        "dockerSocket": os.environ.get("DUNE_RABBITMQ_RESTORE_DRILL_DOCKER_SOCKET", DOCKER_SOCKET),
+        "image": os.environ.get("DUNE_RABBITMQ_RESTORE_DRILL_IMAGE", rabbitmq_restore_drill.DEFAULT_IMAGE),
+        "maxBackupAgeHours": max(1.0, min(float(os.environ.get("DUNE_RABBITMQ_RESTORE_DRILL_MAX_BACKUP_AGE_HOURS", "36")), 24 * 365)),
+        "readinessSeconds": max(10, min(int(os.environ.get("DUNE_RABBITMQ_RESTORE_DRILL_READINESS_SECONDS", "180")), 1800)),
+        "memoryMiB": max(256, min(int(os.environ.get("DUNE_RABBITMQ_RESTORE_DRILL_MEMORY_MIB", "1024")), 16384)),
+        "cpus": max(0.25, min(float(os.environ.get("DUNE_RABBITMQ_RESTORE_DRILL_CPUS", "1")), 16.0)),
+        "pidsLimit": max(64, min(int(os.environ.get("DUNE_RABBITMQ_RESTORE_DRILL_PIDS_LIMIT", "256")), 4096)),
+        "runUid": int(os.environ.get("DUNE_HOST_UID", "1000")),
+        "runGid": int(os.environ.get("DUNE_HOST_GID", "1000")),
+        "receiptRetention": max(10, min(int(os.environ.get("DUNE_RABBITMQ_RESTORE_DRILL_RECEIPT_RETENTION", "1000")), 100000)),
+    }
+
+
+def rabbitmq_restore_drill_public_status():
+    result = rabbitmq_restore_drill.status(RABBITMQ_RESTORE_DRILL_RECEIPT_ROOT, limit=20)
+    with RABBITMQ_RESTORE_DRILL_RUNTIME_LOCK:
+        runtime = dict(RABBITMQ_RESTORE_DRILL_RUNTIME)
+    config = rabbitmq_restore_drill_configuration()
+    ready = bool(RABBITMQ_RESTORE_DRILL_ENABLED and config["hostWorkspaceConfigured"] and pathlib.Path(config["dockerSocket"]).exists())
+    result.update({
+        "featureEnabled": RABBITMQ_RESTORE_DRILL_ENABLED,
+        "executionEnabled": MUTATIONS_ENABLED and RABBITMQ_RESTORE_DRILL_EXECUTION_ENABLED,
+        "requiredCapability": "infrastructure.write",
+        "confirm": CONFIRM_RABBITMQ_RESTORE_DRILL,
+        "runtime": runtime,
+        "ready": ready,
+        "policy": {"maxBackupAgeHours": config["maxBackupAgeHours"]},
+        "resources": {"memoryMiB": config["memoryMiB"], "cpus": config["cpus"], "pidsLimit": config["pidsLimit"], "readinessSeconds": config["readinessSeconds"]},
+        "isolationContract": {
+            "network": "none", "publishedPorts": False, "liveRabbitMQTouched": False,
+            "copiedStateOnly": True, "brokersSequential": True, "readOnlyRootfs": True,
+            "capabilitiesDropped": ["ALL"], "noNewPrivileges": True,
+            "topologyNamesReturned": False, "automaticImagePull": False,
+        },
+    })
+    return result
+
+
+def rabbitmq_restore_drill_prometheus():
+    status = rabbitmq_restore_drill_public_status()
+    latest = status.get("latest") or {}
+    runtime = status.get("runtime") or {}
+    finished = latest.get("finishedAt") or ""
+    try:
+        finished_epoch = datetime.datetime.fromisoformat(finished.replace("Z", "+00:00")).timestamp() if finished else 0
+    except (TypeError, ValueError):
+        finished_epoch = 0
+    values = {
+        "dash_rabbitmq_restore_drill_enabled": int(bool(status.get("featureEnabled"))),
+        "dash_rabbitmq_restore_drill_configured": int(bool(status.get("ready"))),
+        "dash_rabbitmq_restore_drill_receipt_present": int(bool(latest)),
+        "dash_rabbitmq_restore_drill_ok": int(bool(status.get("ok"))),
+        "dash_rabbitmq_restore_drill_integrity_ok": int(bool(latest.get("integrityOk") and (status.get("history") or {}).get("ok"))),
+        "dash_rabbitmq_restore_drill_running": int(bool(runtime.get("running"))),
+        "dash_rabbitmq_restore_drill_backup_age_seconds": float(latest.get("backupAgeSeconds") or 0),
+        "dash_rabbitmq_restore_drill_last_finished_timestamp_seconds": finished_epoch,
+    }
+    return "".join(f"{key} {value}\n" for key, value in values.items())
+
+
+def queue_rabbitmq_restore_drill(backup_set=None):
+    if not RABBITMQ_RESTORE_DRILL_ENABLED:
+        raise PermissionError("RabbitMQ restore drills are disabled; set DUNE_RABBITMQ_RESTORE_DRILL_ENABLED=true")
+    config = rabbitmq_restore_drill_configuration()
+    if not config["hostWorkspaceConfigured"]:
+        raise RuntimeError("DUNE_RABBITMQ_RESTORE_DRILL_HOST_WORKSPACE or DUNE_RESTORE_DRILL_HOST_WORKSPACE must be an absolute host path")
+    if not pathlib.Path(config["dockerSocket"]).exists():
+        raise RuntimeError(f"Docker socket not found: {config['dockerSocket']}")
+    with RABBITMQ_RESTORE_DRILL_RUNTIME_LOCK:
+        if RABBITMQ_RESTORE_DRILL_RUNTIME["running"]:
+            raise RuntimeError("a RabbitMQ restore drill is already running")
+        RABBITMQ_RESTORE_DRILL_RUNTIME.update({"running": True, "queuedAt": time.time(), "startedAt": None, "finishedAt": None, "lastResult": None, "lastError": None})
+
+    def worker():
+        with RABBITMQ_RESTORE_DRILL_RUNTIME_LOCK:
+            RABBITMQ_RESTORE_DRILL_RUNTIME["startedAt"] = time.time()
+        try:
+            result = rabbitmq_restore_drill.run_drill(
+                ROOT, host_workspace=config["hostWorkspace"], backup_set=backup_set or None,
+                receipt_root=RABBITMQ_RESTORE_DRILL_RECEIPT_ROOT, docker_socket=config["dockerSocket"],
+                image=config["image"], max_backup_age_seconds=config["maxBackupAgeHours"] * 3600,
+                readiness_seconds=config["readinessSeconds"], memory_bytes=config["memoryMiB"] * 1024**2,
+                cpu_count=config["cpus"], pids_limit=config["pidsLimit"], run_uid=config["runUid"],
+                run_gid=config["runGid"], retention=config["receiptRetention"],
+            )
+            with RABBITMQ_RESTORE_DRILL_RUNTIME_LOCK:
+                RABBITMQ_RESTORE_DRILL_RUNTIME["lastResult"] = result
+            audit_event(
+                "rabbitmq-restore-drill-finished", ok=result.get("ok"), backup_set=result.get("backupSet"),
+                integrity_ok=result.get("integrityOk"), policy_ok=result.get("policyOk"),
+                duration_seconds=result.get("durationSeconds"), live_rabbitmq_touched=False,
+            )
+        except Exception as exc:
+            with RABBITMQ_RESTORE_DRILL_RUNTIME_LOCK:
+                RABBITMQ_RESTORE_DRILL_RUNTIME["lastError"] = str(exc)
+            audit_event("rabbitmq-restore-drill-finished", ok=False, error=str(exc), live_rabbitmq_touched=False)
+        finally:
+            with RABBITMQ_RESTORE_DRILL_RUNTIME_LOCK:
+                RABBITMQ_RESTORE_DRILL_RUNTIME["running"] = False
+                RABBITMQ_RESTORE_DRILL_RUNTIME["finishedAt"] = time.time()
+
+    threading.Thread(target=worker, name="rabbitmq-restore-drill", daemon=True).start()
+    return {"ok": True, "queued": True, "status": rabbitmq_restore_drill_public_status()}
 
 
 def operational_slo_store():
@@ -8035,6 +8202,20 @@ def verify_operator_evidence_archive(archive_path, secret_path):
     return {"ok": True, "files": len(members), "sourceBytes": total}
 
 
+def copy_latest_rabbitmq_restore_receipt(target):
+    rows = rabbitmq_restore_drill.list_receipts(RABBITMQ_RESTORE_DRILL_RECEIPT_ROOT, 100000)
+    if not rows:
+        return None
+    history = rabbitmq_restore_drill.verify_history(RABBITMQ_RESTORE_DRILL_RECEIPT_ROOT)
+    if not history.get("ok") or any(not row.get("receiptHashValid") or not row.get("receiptChainValid") for row in rows):
+        raise ValueError("RabbitMQ recovery receipt history is invalid")
+    source = RABBITMQ_RESTORE_DRILL_RECEIPT_ROOT / f"{rows[0]['id']}.json"
+    target = pathlib.Path(target)
+    shutil.copyfile(source, target)
+    secure_admin_backup_path(target)
+    return {"path": str(target), "bytes": target.stat().st_size, "receiptId": rows[0]["id"], "ok": bool(rows[0].get("ok"))}
+
+
 def create_postgres_layers_report(backup_dir):
     report = {
         "streamingReplication": {"checked": False, "slots": [], "senders": [], "error": None},
@@ -8179,6 +8360,14 @@ def create_maintenance_backup(job):
                 result["artifacts"]["operatorEvidence"] = evidence
         except Exception as exc:
             result["warnings"].append({"artifact": "operatorEvidence", "error": str(exc)})
+
+    if RABBITMQ_RESTORE_DRILL_ENABLED:
+        try:
+            receipt = copy_latest_rabbitmq_restore_receipt(backup_dir / "rabbitmq-restore-drill.json")
+            if receipt:
+                result["artifacts"]["rabbitmqRestoreDrill"] = receipt
+        except Exception as exc:
+            result["warnings"].append({"artifact": "rabbitmqRestoreDrill", "error": str(exc)})
 
     if AUDIT_LEDGER_ENABLED:
         try:
@@ -8996,6 +9185,7 @@ class Handler(BaseHTTPRequestHandler):
                 metrics += public_directory_prometheus()
                 metrics += feature_readiness_prometheus()
                 metrics += credential_lifecycle_prometheus()
+                metrics += rabbitmq_restore_drill_prometheus()
                 if UPDATE_READINESS_ENABLED:
                     try:
                         update_snapshot = update_readiness_metrics_snapshot()
@@ -9267,6 +9457,9 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/ops/restore-drill":
                 self.require_token()
                 self.json(restore_drill_public_status())
+            elif parsed.path == "/api/ops/rabbitmq-restore-drill":
+                self.require_token()
+                self.json(rabbitmq_restore_drill_public_status())
             elif parsed.path == "/api/ops/slo":
                 self.require_token()
                 self.json(operational_slo_public_status())
@@ -10250,6 +10443,16 @@ class Handler(BaseHTTPRequestHandler):
                 require_confirmation(body, CONFIRM_RESTORE_DRILL)
                 result = queue_restore_drill(body.get("source"))
                 self.audit("backup-restore-drill-queued", ok=True, source=body.get("source") or "latest")
+                self.json(result, status=HTTPStatus.ACCEPTED)
+            elif parsed.path == "/api/ops/rabbitmq-restore-drill":
+                self.require_token()
+                self.require_mutations()
+                if not RABBITMQ_RESTORE_DRILL_EXECUTION_ENABLED:
+                    raise PermissionError("browser RabbitMQ restore-drill execution is disabled; set DUNE_ADMIN_RABBITMQ_RESTORE_DRILL_EXECUTION_ENABLED=true")
+                body = parse_body(self)
+                require_confirmation(body, CONFIRM_RABBITMQ_RESTORE_DRILL)
+                result = queue_rabbitmq_restore_drill(body.get("backupSet"))
+                self.audit("rabbitmq-restore-drill-queued", ok=True, backup_set=body.get("backupSet") or "latest", live_rabbitmq_touched=False)
                 self.json(result, status=HTTPStatus.ACCEPTED)
             elif parsed.path == "/api/ops/slo":
                 self.require_token()
@@ -17604,7 +17807,7 @@ async function ops(serial=loadSerial){
   startHealthRefresh();
 }
 async function infrastructure(serial=loadSerial){
-  const [serviceData, backupData, databaseData, updateData, memoryData, autoscalerData, restoreDrillData, sloData, capacityData, desiredStateData, changeData, deploymentData, publicDirectoryData, featureReadinessData] = await Promise.all([
+  const [serviceData, backupData, databaseData, updateData, memoryData, autoscalerData, restoreDrillData, rabbitmqDrillData, sloData, capacityData, desiredStateData, changeData, deploymentData, publicDirectoryData, featureReadinessData] = await Promise.all([
     api('/api/ops/services'),
     api('/api/ops/backups'),
     api('/api/ops/database'),
@@ -17612,6 +17815,7 @@ async function infrastructure(serial=loadSerial){
     api('/api/ops/memory', {timeoutMs: 30000}),
     api('/api/ops/autoscaler', {timeoutMs: 30000}),
     api('/api/ops/restore-drill', {timeoutMs: 30000}),
+    api('/api/ops/rabbitmq-restore-drill', {timeoutMs: 30000}),
     api('/api/ops/slo', {timeoutMs: 30000}),
     api('/api/ops/capacity', {timeoutMs: 30000}),
     api('/api/ops/desired-state', {timeoutMs: 30000}),
@@ -17642,6 +17846,7 @@ async function infrastructure(serial=loadSerial){
   mountInfrastructurePublicDirectory(publicDirectoryData);
   mountInfrastructureFeatureReadiness(featureReadinessData);
   mountInfrastructureRestoreDrill(restoreDrillData);
+  mountInfrastructureRabbitMQRestoreDrill(rabbitmqDrillData);
   mountInfrastructureSlo(sloData);
   document.getElementById('infraLoadLogsBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Loading...', loadInfrastructureLogs));
   document.getElementById('infraVerifyBackupBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Verifying...', verifyInfrastructureBackup));
@@ -17844,7 +18049,7 @@ function mountInfrastructureDeploymentAssurance(data){
   }));
   page.insertAdjacentHTML('beforeend', `<div class="panelBand">
     <div class="sectionHeader"><h2>Assured Change Windows</h2><div class="toolbar"><span class="pill ${data.ok ? 'ok' : 'bad'}">evidence ${data.ok ? 'verified' : 'invalid'}</span><span class="pill ${data.latestReady ? 'ok' : 'warn'}">${latest.id ? (data.latestReady ? 'latest assured' : 'latest failed') : 'no receipt'}</span><span class="pill ${windows.length ? 'warn' : 'ok'}">${windows.length} open</span></div></div>
-    <p class="muted">Two-phase deployment assurance binds an exact commit and source manifest to pre/post Docker identity. It proves protected map containers were not recreated, running map processes were not restarted, always-on maps stayed continuous, desired state was sealed, 12/12 response readiness remained current, SLO and Prometheus were healthy, and a full recovery backup verified. The resulting receipt is nested-digest and HMAC verified and archived with operator evidence.</p>
+    <p class="muted">Two-phase deployment assurance binds an exact commit and source manifest to pre/post Docker identity. It proves protected map containers were not recreated, running map processes were not restarted, always-on maps stayed continuous, desired state was sealed, every current response runbook remained ready, SLO and Prometheus were healthy, and a full recovery backup verified. The resulting receipt is nested-digest and HMAC verified and archived with operator evidence.</p>
     <div class="metricGrid">${metric('Latest commit', latest.commit ? String(latest.commit).slice(0,12) : 'none', data.latestReady ? 'ok' : 'warn')}${metric('Completed', latest.completedAt || 'never')}${metric('Source manifest', latest.invariants?.sourceManifestMatches === true ? 'verified' : '—', latest.invariants?.sourceManifestMatches === true ? 'ok' : '')}${metric('Map continuity', latest.invariants?.strictMapServicesContinuous === true ? 'verified' : '—', latest.invariants?.strictMapServicesContinuous === true ? 'ok' : '')}${metric('Readiness', latest.invariants?.readinessCurrent === true ? 'current' : '—', latest.invariants?.readinessCurrent === true ? 'ok' : '')}${metric('Recovery backup', latest.backup?.verified === true ? 'verified' : '—', latest.backup?.verified === true ? 'ok' : '')}</div>
     ${windows.length ? `<div class="panelInset"><h3>Open windows</h3>${table(windows)}</div>` : ''}
     ${receipts.length ? table(receipts) : '<div class="emptyState">No assured deployment receipt has been recorded yet.</div>'}
@@ -18061,6 +18266,47 @@ async function runInfrastructureRestoreDrill(){
   if (output) output.textContent = JSON.stringify(result, null, 2);
   notify('Isolated restore drill queued');
   setTimeout(() => { if (current === 'infrastructure') infrastructure(loadSerial).catch(()=>{}); }, 3000);
+  return result;
+}
+function mountInfrastructureRabbitMQRestoreDrill(data){
+  const page = document.querySelector('#view .pageStack');
+  if (!page) return;
+  const latest = data.latest || {};
+  const runtime = data.runtime || {};
+  const policy = latest.policy || {};
+  const brokers = latest.brokers || {};
+  const state = runtime.running ? 'running' : data.ok ? 'proven' : latest.id ? 'failed' : 'canary pending';
+  const stateClass = runtime.running ? 'warn' : data.ok ? 'ok' : latest.id ? 'bad' : 'warn';
+  const brokerRows = ['admin','game'].map(name => ({
+    broker:name,
+    recovered:!!brokers[name]?.ok,
+    readySeconds:brokers[name]?.readySeconds ?? '—',
+    isolation:brokers[name]?.isolation?.verified ? 'verified' : '—',
+    vhosts:brokers[name]?.topology?.vhosts ?? '—',
+    users:brokers[name]?.topology?.users ?? '—',
+    queues:brokers[name]?.topology?.queues ?? '—',
+    exchanges:brokers[name]?.topology?.exchanges ?? '—',
+    bindings:brokers[name]?.topology?.bindings ?? '—',
+    messages:brokers[name]?.topology?.messages ?? '—'
+  }));
+  page.insertAdjacentHTML('beforeend', `<div class="panelBand">
+    <div class="sectionHeader"><div><h2>RabbitMQ Recovery Proof</h2><p class="muted">DASH safely extracts copied admin/game Mnesia state, removes only stale PID files in the copies, boots each original node identity sequentially in a no-network container, verifies broker health and name-free topology counts, then destroys the container and staging tree. Live brokers, queues, traffic, networks, and ports are never touched.</p></div><div class="toolbar"><span class="pill ${stateClass}">${esc(state)}</span><span class="pill">network none</span><span class="pill">copied state only</span><span class="pill">names withheld</span></div></div>
+    <div class="metricGrid">${metric('Latest receipt',latest.id||'none',data.ok?'ok':latest.id?'bad':'warn')}${metric('Backup age',latest.backupAgeSeconds==null?'—':fmtRuntimeSeconds(latest.backupAgeSeconds),policy.backupAgeWithinTarget===false?'bad':'')}${metric('Total drill',latest.durationSeconds==null?'—':fmtRuntimeSeconds(latest.durationSeconds))}${metric('Receipt history',data.history?.ok?'HMAC anchored':latest.id?'invalid':'—',data.history?.ok?'ok':latest.id?'bad':'')}${metric('Live brokers touched',latest.liveRabbitMQTouched===false?'no':'—',latest.liveRabbitMQTouched===false?'ok':'')}${metric('Network created',latest.networkCreated===false?'no':'—',latest.networkCreated===false?'ok':'')}</div>
+    ${table(brokerRows)}
+    <div class="commandBar"><button id="infraRunRabbitMQRestoreDrillBtn" class="primary" ${(!data.ready || !data.executionEnabled || runtime.running) ? 'disabled' : ''}>Recover newest broker copies</button><button id="infraRefreshRabbitMQRestoreDrillBtn">Refresh proof</button></div>
+    <p class="muted">Each broker gets at most ${esc(data.resources?.memoryMiB)} MiB RAM, ${esc(data.resources?.cpus)} CPU, ${esc(data.resources?.pidsLimit)} PIDs, and ${esc(data.resources?.readinessSeconds)} seconds to become ready. The exact already-loaded image is used; automatic pulls are refused.</p>
+    <details><summary>Latest private receipt</summary><pre id="infraRabbitMQRestoreDrillResult">${esc(JSON.stringify({latest,runtime},null,2))}</pre></details>
+  </div>`);
+  document.getElementById('infraRunRabbitMQRestoreDrillBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Queuing...', runInfrastructureRabbitMQRestoreDrill));
+  document.getElementById('infraRefreshRabbitMQRestoreDrillBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Refreshing...', () => infrastructure(loadSerial)));
+}
+async function runInfrastructureRabbitMQRestoreDrill(){
+  if (!confirm('Boot copied admin and game RabbitMQ backup state sequentially in disposable no-network containers? Live brokers and game services are not touched.')) return;
+  const result=await api('/api/ops/rabbitmq-restore-drill',{method:'POST',timeoutMs:30000,body:JSON.stringify({confirm:'RUN NETWORKLESS RABBITMQ RESTORE DRILL'})});
+  const output=document.getElementById('infraRabbitMQRestoreDrillResult');
+  if(output) output.textContent=JSON.stringify(result,null,2);
+  notify('Networkless RabbitMQ recovery drill queued');
+  setTimeout(()=>{if(current==='infrastructure') infrastructure(loadSerial).catch(()=>{});},3000);
   return result;
 }
 function mountInfrastructureAutoscalerControls(data){

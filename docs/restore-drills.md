@@ -10,6 +10,10 @@ the stronger test: it starts a disposable PostgreSQL container, restores the
 archive, exercises the Dune schema, creates another custom-format dump, and
 destroys the container.
 
+This document covers PostgreSQL recovery. DASH separately proves both RabbitMQ
+Mnesia backups by booting copied broker state in sequential no-network
+containers; see [`rabbitmq-restore-drills.md`](rabbitmq-restore-drills.md).
+
 ## Quick Start
 
 Run the newest regular `.dump` beneath `backups/`:

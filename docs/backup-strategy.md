@@ -193,14 +193,16 @@ Small/private host:
 
 - Local backup before upgrades and config changes.
 - Daily offsite sync.
-- Daily automated PostgreSQL restore proof plus periodic full-layer recovery exercise.
+- Daily automated PostgreSQL restore proof, weekly networkless RabbitMQ
+  recovery proof, plus periodic full-layer recovery exercise.
 
 Public 30-map host:
 
 - Maintenance backup before scheduled restart, followed by the Steam package image-tag check.
 - Hourly offsite sync or restic backup.
 - Remote Postgres replica with hourly snapshot.
-- Daily automated PostgreSQL restore proof plus periodic full-layer recovery exercise.
+- Daily automated PostgreSQL restore proof, weekly networkless RabbitMQ
+  recovery proof, plus periodic full-layer recovery exercise.
 - Alert when newest local/offsite backup is older than 24 hours.
 
 ## Restore Testing
@@ -231,6 +233,21 @@ archive, verifies Dune tables/functions/indexes/constraints and core row reads,
 analyzes it, creates and lists a second custom-format dump, removes the
 container, and records a private hash-chained RPO/RTO receipt. It never
 connects to the live database. See [`restore-drills.md`](restore-drills.md).
+
+Prove both copied RabbitMQ Mnesia layers start under their original node
+identities without networking or live mounts:
+
+```bash
+./scripts/rabbitmq-restore-drill.py
+./scripts/rabbitmq-restore-drill.py --status
+./scripts/install-rabbitmq-restore-drill-timer.sh .env
+```
+
+The drill runs the admin and game brokers sequentially with fixed resources,
+verifies health and name-free topology counts, inspects Docker isolation,
+requires cleanup, and records HMAC-anchored private receipts. Full backups copy
+the latest self-verifying receipt and both backup verifiers validate it. See
+[`rabbitmq-restore-drills.md`](rabbitmq-restore-drills.md).
 
 The private admin panel Infrastructure page lists backup sets below `backups/`
 and invokes the same `scripts/verify-backup.sh` check. It also provides gated

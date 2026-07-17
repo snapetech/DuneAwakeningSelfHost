@@ -146,6 +146,15 @@ class FeatureReadinessTests(unittest.TestCase):
         cataloged = {gate for row in catalog["features"] for gate in row["gates"]}
         self.assertEqual(set(), activated - cataloged)
 
+    def test_operator_canary_promotes_only_from_explicit_runtime_proof(self):
+        row = feature(canary="operator-canary-pending", probe="alpha-proof")
+        catalog = self.catalog(row)
+        environment = {"DUNE_ALPHA_ENABLED": "true"}
+        pending = MODULE.evaluate(catalog, environment, root=self.root, probes={"alpha-proof": {"ready": True, "state": "canary-pending"}})
+        self.assertEqual("canary-pending", pending["features"][0]["state"])
+        proven = MODULE.evaluate(catalog, environment, root=self.root, probes={"alpha-proof": {"ready": True, "state": "canary-proven"}})
+        self.assertEqual("ready", proven["features"][0]["state"])
+
     def test_parity_activator_batches_every_env_update_and_executes_cleanly(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)

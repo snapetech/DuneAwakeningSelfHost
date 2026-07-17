@@ -128,6 +128,7 @@ def required_capability(method, path):
         "/api/ops/backups/delete",
         "/api/ops/backups/restore",
         "/api/ops/restore-drill",
+        "/api/ops/rabbitmq-restore-drill",
         "/api/ops/slo",
         "/api/ops/capacity",
         "/api/ops/desired-state",

@@ -151,6 +151,9 @@ server {
   and an allowlisted `dune`/`public` database console with query, row, export,
   and password controls. See [`infrastructure-console.md`](infrastructure-console.md).
 - Infrastructure controls for automatic verified full backups, layered restore,
+  disposable PostgreSQL restore proof, sequential networkless admin/game
+  RabbitMQ copied-state recovery proof with name-free topology counts and
+  HMAC-anchored receipts,
   minimum-footprint/balanced/adaptive/full-warm/custom map profiles, per-map retention,
   Director travel-demand starts, LRU and memory-floor eviction, live map
   limits, the automatic memory balancer, retained Prometheus metrics, updates,

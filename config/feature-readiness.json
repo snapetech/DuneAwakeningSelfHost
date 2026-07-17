@@ -66,6 +66,22 @@
       "remediation": {"surface": "infrastructure", "summary": "Preserve the database and HMAC key, verify backups, and restore the last known valid pair before recording more transitions."}
     },
     {
+      "id": "rabbitmq-recovery-proof",
+      "title": "RabbitMQ recovery proof",
+      "group": "Recovery",
+      "description": "Copied admin and game broker states boot under their original node identities in sequential, disposable, networkless containers with bounded resources and name-free topology proof.",
+      "documentation": "docs/rabbitmq-restore-drills.md",
+      "primaryGate": "DUNE_RABBITMQ_RESTORE_DRILL_ENABLED",
+      "gates": ["DUNE_RABBITMQ_RESTORE_DRILL_ENABLED", "DUNE_ADMIN_RABBITMQ_RESTORE_DRILL_EXECUTION_ENABLED"],
+      "credentials": [],
+      "files": [{"path": "admin/rabbitmq_restore_drill.py", "minimumBytes": 1000}, {"path": "scripts/rabbitmq-restore-drill.py", "minimumBytes": 1000}],
+      "services": ["admin-panel"],
+      "probe": "rabbitmq-restore-drill",
+      "dependencies": ["operational-evidence"],
+      "canary": "operator-canary-pending",
+      "remediation": {"surface": "infrastructure", "summary": "Inspect the private recovery receipt, repair only the named backup/image/configuration failure, then repeat the isolated canary."}
+    },
+    {
       "id": "credential-lifecycle",
       "title": "Credential lifecycle posture",
       "group": "Trust",

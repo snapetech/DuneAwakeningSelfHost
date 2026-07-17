@@ -59,6 +59,13 @@ IMPACTS = {
         reversibility="release-rollback", restart="candidate-dependent",
         player_disruption=True, map_lifecycle=True,
         safeguards=("candidate-bound readiness receipt", "verified backup", "deployment assurance")),
+    "/api/ops/restore-drill": _impact(
+        "backup-proof", "disposable-container", backup="none", reversibility="automatic-cleanup",
+        safeguards=("network none", "copied source", "bounded resources", "mandatory cleanup")),
+    "/api/ops/rabbitmq-restore-drill": _impact(
+        "backup-proof", "rabbitmq-copied-state", "disposable-container", backup="none",
+        reversibility="automatic-cleanup",
+        safeguards=("network none", "no published ports", "no live broker mounts", "sequential brokers", "mandatory cleanup")),
     "/api/settings/env": _impact(
         "configuration", "credentials", "service-runtime", backup="required",
         reversibility="file-backup", restart="deferred-dependent-services",

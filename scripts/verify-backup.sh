@@ -522,6 +522,43 @@ else
   printf 'WARN no operator-evidence.tgz found in %s\n' "$backup_dir"
 fi
 
+rabbitmq_receipt_expected=""
+if [[ -f "$backup_dir/manifest.txt" ]]; then
+  while IFS= read -r manifest_line || [[ -n "$manifest_line" ]]; do
+    if [[ "$manifest_line" == rabbitmq_restore_receipt=* ]]; then
+      rabbitmq_receipt_expected="${manifest_line#rabbitmq_restore_receipt=}"
+    fi
+  done < "$backup_dir/manifest.txt"
+fi
+if [[ -f "$backup_dir/rabbitmq-restore-drill.json" ]]; then
+  if PYTHONPATH="$repo_root/admin" python3 - "$backup_dir/rabbitmq-restore-drill.json" <<'PY'
+import json
+import pathlib
+import sys
+import rabbitmq_restore_drill
+
+path = pathlib.Path(sys.argv[1])
+if path.is_symlink() or not path.is_file() or not 1 <= path.stat().st_size <= 2 * 1024 * 1024:
+    raise SystemExit(1)
+try:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError):
+    raise SystemExit(1)
+raise SystemExit(0 if rabbitmq_restore_drill.verify_receipt_document(payload) else 1)
+PY
+  then
+    printf 'OK portable RabbitMQ recovery receipt %s\n' "$backup_dir/rabbitmq-restore-drill.json"
+  else
+    printf 'FAIL portable RabbitMQ recovery receipt %s\n' "$backup_dir/rabbitmq-restore-drill.json" >&2
+    ok=false
+  fi
+elif [[ -n "$rabbitmq_receipt_expected" ]]; then
+  printf 'FAIL manifest declares a RabbitMQ recovery receipt but the artifact is missing\n' >&2
+  ok=false
+else
+  printf 'WARN no RabbitMQ recovery receipt found in %s\n' "$backup_dir"
+fi
+
 if [[ -f "$backup_dir/manifest.json" ]]; then
   if command -v jq >/dev/null 2>&1; then
     jq . "$backup_dir/manifest.json" >/dev/null

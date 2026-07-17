@@ -219,7 +219,9 @@ def evaluate(catalog, environment, *, root, services=None, probes=None, generate
             state = "external-blocked"
         elif not services_ready or not probe_ready:
             state = "degraded"
-        elif feature["canary"] in {"operator-canary-pending", "external-credential-pending"}:
+        elif feature["canary"] in {"operator-canary-pending", "external-credential-pending"} and not (
+            probe_check is not None and probe_ready and probe_check["state"] == "canary-proven"
+        ):
             state = "canary-pending"
         else:
             state = "ready"

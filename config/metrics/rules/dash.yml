@@ -203,6 +203,21 @@ groups:
         for: 15m
         labels: {severity: warning}
         annotations: {summary: "One or more scheduled or provider-managed DASH credentials are overdue for rotation"}
+      - alert: DashRabbitMQRecoveryDrillConfigurationInvalid
+        expr: dash_rabbitmq_restore_drill_enabled == 1 and dash_rabbitmq_restore_drill_configured == 0
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "The DASH networkless RabbitMQ recovery drill lacks a valid host workspace or Docker socket"}
+      - alert: DashRabbitMQRecoveryDrillFailed
+        expr: dash_rabbitmq_restore_drill_enabled == 1 and dash_rabbitmq_restore_drill_receipt_present == 1 and dash_rabbitmq_restore_drill_ok == 0
+        for: 5m
+        labels: {severity: critical}
+        annotations: {summary: "The latest DASH networkless RabbitMQ recovery rehearsal failed or its receipt hash is invalid"}
+      - alert: DashRabbitMQRecoveryDrillStale
+        expr: dash_rabbitmq_restore_drill_enabled == 1 and dash_rabbitmq_restore_drill_last_finished_timestamp_seconds > 0 and time() - dash_rabbitmq_restore_drill_last_finished_timestamp_seconds > 691200
+        for: 1h
+        labels: {severity: warning}
+        annotations: {summary: "DASH has not recorded a RabbitMQ recovery rehearsal in eight days"}
       - alert: DashIncidentHasCandidateChange
         expr: dash_change_intelligence_open_incidents_with_candidate_changes > 0
         for: 2m

@@ -106,6 +106,8 @@ POLICIES = {
     "/api/ops/memory": ("standard", "Change map memory policy", _always),
     "/api/ops/autoscaler": ("standard", "Change autoscaler policy", _always),
     "/api/ops/restart": ("standard", "Schedule an executable restart", lambda body: _truthy(body.get("execute", False))),
+    "/api/ops/restore-drill": ("standard", "Queue an isolated PostgreSQL recovery rehearsal", _always),
+    "/api/ops/rabbitmq-restore-drill": ("standard", "Queue an isolated RabbitMQ recovery rehearsal", _always),
     "/api/admin/gm/execute": ("standard", "Execute a generic GM command", _always),
 }
 GOVERNED_PATHS = frozenset(POLICIES)

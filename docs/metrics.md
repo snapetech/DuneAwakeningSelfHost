@@ -44,6 +44,12 @@ plus observation-chain validity and observed rotation count. It never labels a
 credential ID, environment key, path, consumer, value, fingerprint, or backup
 name. Alert rules fail on an invalid HMAC history, missing active material,
 unsafe source permissions, newest-backup gaps, and overdue rotation.
+RabbitMQ Recovery Proof adds label-free enabled/configured/running state,
+receipt presence, recovery/integrity outcome, source-backup age, and latest
+completion time. It never labels a broker, vhost, user, queue, exchange,
+binding, container, image, backup path, or receipt ID. Alert rules fail on
+invalid configuration, the latest failed or tampered proof, and eight-day
+staleness.
 
 Start it with the normal world Compose files plus the overlay:
 
@@ -96,6 +102,7 @@ fast-burn, exhausted-budget, slow cold-start, desired-state target/unsealed/
 stale/critical-drift, change-ledger target/integrity/candidate-review,
 container-health, memory, disk, Postgres, failed/stale incident drills, and
 missing/failed/stale fleet-wide response certification alerts.
+They also cover invalid, failed, and stale networkless RabbitMQ recovery proof.
 It also alerts on invalid deployment evidence, a missing/failed latest assured
 deployment, seven-day staleness, and an expired open change window.
 Game-update alerts cover invalid readiness evidence, an available candidate

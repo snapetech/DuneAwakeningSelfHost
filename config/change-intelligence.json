@@ -78,6 +78,14 @@
         ]
       },
       {
+        "id": "rabbitmq-restore-proof", "title": "RabbitMQ recovery-proof response", "match": {"incidentPrefix": "slo:", "objectivePattern": "rabbitmq_restore_proof", "actionPattern": "*"},
+        "steps": [
+          {"id": "diagnose-rabbitmq-live-health", "title": "Run bounded live broker diagnosis", "description": "Establish whether the current control-plane brokers are healthy without publishing, consuming, deleting, or rebinding messages.", "kind": "diagnostic", "predicate": "always-pending", "surface": "command-console:rmq-health", "commandId": "rmq-health", "requiredCapability": "operations.write", "mutation": false},
+          {"id": "review-rabbitmq-recovery-receipt", "title": "Review copied-state recovery evidence", "description": "Inspect backup age, original node identities, per-broker readiness, name-free topology counts, isolation inspection, cleanup, and HMAC-anchored receipt history.", "kind": "review", "predicate": "always-pending", "surface": "infrastructure:rabbitmq-restore-drill", "requiredCapability": "read", "mutation": false},
+          {"id": "run-rabbitmq-restore-drill", "title": "Run the networkless dual-broker recovery rehearsal", "description": "Boot only copied admin/game Mnesia state sequentially in disposable no-network containers; this never mounts or connects to live RabbitMQ.", "kind": "recovery", "predicate": "always-pending", "surface": "infrastructure:rabbitmq-restore-drill", "requiredCapability": "infrastructure.write", "mutation": true, "featureGate": "DUNE_ADMIN_RABBITMQ_RESTORE_DRILL_EXECUTION_ENABLED", "confirmation": "RUN NETWORKLESS RABBITMQ RESTORE DRILL"}
+        ]
+      },
+      {
         "id": "memory-headroom", "title": "Memory-headroom response", "match": {"incidentPrefix": "slo:", "objectivePattern": "memory_headroom", "actionPattern": "*"},
         "steps": [
           {"id": "diagnose-memory-pressure", "title": "Inspect host and map memory pressure", "description": "Use stack-status and retained capacity evidence to identify the actual consumers and current map-demand state.", "kind": "diagnostic", "predicate": "always-pending", "surface": "command-console:stack-status", "commandId": "stack-status", "requiredCapability": "operations.write", "mutation": false},

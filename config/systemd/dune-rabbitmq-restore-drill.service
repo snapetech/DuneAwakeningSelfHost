@@ -1,0 +1,27 @@
+[Unit]
+Description=DASH networkless RabbitMQ backup recovery rehearsal
+Documentation=file:///path/to/DuneAwakeningSelfHost/docs/rabbitmq-restore-drills.md
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=dash
+Group=dash
+SupplementaryGroups=docker
+WorkingDirectory=/path/to/DuneAwakeningSelfHost
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/path/to/DuneAwakeningSelfHost/scripts/rabbitmq-restore-drill.py --workspace /path/to/DuneAwakeningSelfHost --host-workspace /path/to/DuneAwakeningSelfHost --image @RABBITMQ_IMAGE@
+TimeoutStartSec=20min
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadOnlyPaths=/path/to/DuneAwakeningSelfHost
+ReadWritePaths=/path/to/DuneAwakeningSelfHost/backups
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native

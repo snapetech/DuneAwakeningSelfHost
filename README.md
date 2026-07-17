@@ -89,7 +89,7 @@ Always compare your `.env` image pin with the Steam package installed on your ho
 - Chat spam protection with repeat-message detection, public action announcements, and a blocked-by-default kick backend.
 - Verified targeted network-timeout teleport research: a scoped `UNetConnection` timeout plus the shipped offline move helper moved a test player, and reconnect loaded the moved pawn. This is a working teleport mechanism, not a soft disconnect; see `docs/soft-disconnect-teleport.md`.
 - Player-presence automation for first-time welcomes, returning-player welcome-backs, leaves, first-seen private messages, Hagga/Deep Desert milestones, base-cap reminders, reconnect help, restart warnings, map-health notices, population digests, incident notices, starter Base Reconstruction Tool grants, and Vermilius Gap celebration.
-- Local backups, hardened disposable restore drills, restore helpers, optional streaming Postgres replica, optional remote replica snapshots, and portable offsite/onsite backup sync examples.
+- Local backups, hardened disposable PostgreSQL and dual-broker RabbitMQ recovery drills, restore helpers, optional streaming Postgres replica, optional remote replica snapshots, and portable offsite/onsite backup sync examples.
 - Optional public static site package with status, settings, player list, Hagga Basin map, an opt-in Ed25519-signed public descriptor, and a self-hosted federated server directory whose browser re-verifies every listing.
 - Authenticated feature-readiness control center that separates disabled, partial, blocked, degraded, external-credential, pending-canary, and proven-ready states using live gates, artifacts, services, dependencies, and runtime probes without returning secret values; deduplicated state changes enter an append-only HMAC transition ledger with deployment correlation, regression/recovery history, backup verification, metrics, and alerts.
 - Artificial Exchange as a first-class economy feature: reviewed price catalog, artificial buyer, validated seller settlement, optional buyer funding, controlled seeded listings, readiness checks, smoke tests, admin-panel controls, optional systemd services, and watchdog timer.
@@ -203,7 +203,7 @@ tamper-evident receipt becomes part of every subsequent signed incident capsule.
 DASH now closes the deployment loop as well. An assured change window binds an
 exact commit and staged file manifest to verified pre/post backups, a private
 source rollback archive, every game-map container identity/start time, desired
-state, 12/12 response readiness, converged SLO/change health, and Prometheus
+state, complete response readiness, converged SLO/change health, and Prometheus
 evidence. It deploys
 only the control plane through the normal tested path, fails on any unplanned
 map recreation/restart or stale health proof, and emits a semantically verified
@@ -579,6 +579,20 @@ the restored database, produces and lists a second round-trip dump, removes
 the container, and writes a private hash-chained RPO/RTO receipt. See
 [`docs/restore-drills.md`](docs/restore-drills.md).
 
+Prove both RabbitMQ backup layers boot from copied Mnesia state under their
+original node identities in sequential, disposable no-network containers:
+
+```bash
+./scripts/rabbitmq-restore-drill.py
+./scripts/rabbitmq-restore-drill.py --status
+./scripts/install-rabbitmq-restore-drill-timer.sh .env
+```
+
+The drill publishes no ports, creates no network, mounts no live broker state,
+records only name-free topology counts, requires verified cleanup, and writes
+an HMAC-anchored private receipt chain. See
+[`docs/rabbitmq-restore-drills.md`](docs/rabbitmq-restore-drills.md).
+
 Track reliability and error-budget burn instead of only current health:
 
 ```bash
@@ -922,6 +936,8 @@ Server-browser ordering is deliberately split based on the observed in-game brow
 | `DUNE_ADMIN_BACKUP_MUTATIONS_ENABLED` / `DUNE_ADMIN_BACKUP_RESTORE_ENABLED` | Separate browser gates for backup create/import/delete and disruptive restore execution. |
 | `DUNE_RESTORE_DRILL_ENABLED` / `DUNE_ADMIN_RESTORE_DRILL_EXECUTION_ENABLED` | Enable recovery-proof status/scheduling and separately authorize dashboard queueing of the isolated no-network restore drill. |
 | `DUNE_RESTORE_DRILL_MAX_BACKUP_AGE_HOURS` / `DUNE_RESTORE_DRILL_MAX_RESTORE_SECONDS` | Recovery-point freshness and measured `pg_restore` recovery-time targets. |
+| `DUNE_RABBITMQ_RESTORE_DRILL_ENABLED` / `DUNE_ADMIN_RABBITMQ_RESTORE_DRILL_EXECUTION_ENABLED` | Load dual-broker networkless recovery proof and separately authorize dashboard queueing. |
+| `DUNE_RABBITMQ_RESTORE_DRILL_IMAGE` / `DUNE_RABBITMQ_RESTORE_DRILL_MAX_BACKUP_AGE_HOURS` / `DUNE_RABBITMQ_RESTORE_DRILL_READINESS_SECONDS` | Exact already-loaded broker image plus recovery-point and per-broker readiness targets. |
 | `DUNE_OPERATIONAL_SLO_ENABLED` / `DUNE_ADMIN_OPERATIONAL_SLO_MUTATIONS_ENABLED` | Enable retained reliability sampling and separately authorize incident acknowledgement/notes and planned-maintenance exclusions. |
 | `DUNE_OPERATIONAL_SLO_POLICY` / `DUNE_OPERATIONAL_SLO_DATABASE` | Versioned objective policy and private SQLite reliability ledger. |
 | `DUNE_CAPACITY_INTELLIGENCE_ENABLED` / `DUNE_CAPACITY_INTELLIGENCE_POLICY` / `DUNE_CAPACITY_INTELLIGENCE_DATABASE` | Retained map-efficiency/cold-start evidence, versioned model policy, and private SQLite ledger. |
@@ -1058,6 +1074,7 @@ Start here:
 - [`docs/private-chat-replies.md`](docs/private-chat-replies.md): verified private whisper route for command replies and player/admin automation.
 - [`docs/backup-strategy.md`](docs/backup-strategy.md): local, onsite, offsite, replica, retention, and restore-test guidance.
 - [`docs/restore-drills.md`](docs/restore-drills.md): no-network disposable PostgreSQL recovery proof, Dune invariants, RPO/RTO policy, private hash-chained receipts, dashboard API, scheduler, and failure recovery.
+- [`docs/rabbitmq-restore-drills.md`](docs/rabbitmq-restore-drills.md): dual-broker copied-state recovery proof, bounded extraction, inspected Docker isolation, name-free topology evidence, HMAC-anchored receipts, dashboard/API/metrics, weekly timer, and failure recovery.
 - [`docs/operational-slo.md`](docs/operational-slo.md): time-weighted objectives, coverage, error budgets, burn alerts, immutable incident events, maintenance exclusions, metrics, and ledger recovery.
 - [`docs/capacity-intelligence.md`](docs/capacity-intelligence.md): map-hours saved, idle cost, warm/cold revisits, request-to-ready timing, forecast/model math, adaptive retention, Prometheus metrics, and ledger recovery.
 - [`docs/desired-state-attestation.md`](docs/desired-state-attestation.md): HMAC-sealed file/container baselines, retained drift, dashboard/API/CLI workflows, metrics, SLO integration, backup-bound key recovery, and failure handling.
@@ -1158,6 +1175,8 @@ Root-level research indexes:
 - [`scripts/verify-backup.sh`](scripts/verify-backup.sh): structural plus HMAC/anchor backup verification.
 - [`scripts/backup-restore-drill.py`](scripts/backup-restore-drill.py): actual isolated PostgreSQL restore, Dune validation, round-trip dump proof, cleanup, and private receipt.
 - [`scripts/install-backup-restore-drill-timer.sh`](scripts/install-backup-restore-drill-timer.sh): hardened daily recovery-proof systemd timer installer.
+- [`scripts/rabbitmq-restore-drill.py`](scripts/rabbitmq-restore-drill.py): networkless copied-state recovery proof for both RabbitMQ brokers.
+- [`scripts/install-rabbitmq-restore-drill-timer.sh`](scripts/install-rabbitmq-restore-drill-timer.sh): hardened weekly RabbitMQ recovery-proof timer installer.
 - [`scripts/operational-slo.py`](scripts/operational-slo.py): reliability status, integrity/hash-chain verification, Prometheus exposition, and explicit fixture/external signal ingestion.
 - [`scripts/capacity-intelligence.py`](scripts/capacity-intelligence.py): retained capacity status, receipt integrity verification, Prometheus exposition, and controlled fixture ingestion.
 - [`scripts/install-backup-offsite-timer.sh`](scripts/install-backup-offsite-timer.sh): portable backup sync timer installer.

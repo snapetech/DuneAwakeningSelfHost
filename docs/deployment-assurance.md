@@ -30,8 +30,8 @@ An assured deployment proves all of these facts:
 11. Credential lifecycle trust state was initialized and its HMAC chain plus
     authenticated head verified before Desired State review.
 12. Desired State was fully reviewed/sealed and had zero open findings.
-13. The current response policy had a semantically valid 12/12 readiness
-    certification.
+13. The current fleet-wide response certification semantically covered every
+    runbook and recovery contract in the committed policy.
 14. Operational SLOs were healthy with zero open incidents.
 15. Change Intelligence integrity passed with zero open incidents.
 16. Prometheus had scraped readiness value `1`; a merely healthy direct
@@ -286,7 +286,7 @@ matching-key Change Intelligence backup contract.
 - **desired state is not attested:** review every finding; the host workflow
   seals the complete snapshot only through the existing exact-confirmation
   route.
-- **readiness is not 12/12:** repair diagnostics or the named capability/gate
+- **response readiness is incomplete:** repair diagnostics or the named capability/gate
   contract separately. Assurance never enables a gate.
 - **backup fails:** the window cannot be ready. Preserve both pre-change layers
   while investigating.

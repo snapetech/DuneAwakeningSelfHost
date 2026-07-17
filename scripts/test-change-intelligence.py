@@ -39,7 +39,7 @@ class ChangeIntelligenceTests(unittest.TestCase):
         self.assertEqual(0o700, self.database.parent.stat().st_mode & 0o777)
         self.assertEqual(0o600, self.database.stat().st_mode & 0o777)
         self.assertEqual(3600, self.store.policy["correlationWindowBeforeSeconds"])
-        self.assertEqual(12, len(self.store.policy["response"]["runbooks"]))
+        self.assertEqual(13, len(self.store.policy["response"]["runbooks"]))
         self.assertEqual(64, len(self.store.policy["response"]["policySha256"]))
         self.secret.chmod(0o644)
         with self.assertRaises(PermissionError):

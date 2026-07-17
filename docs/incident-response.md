@@ -260,7 +260,7 @@ One explicit certification request:
 
 The default policy references nine diagnostic steps, but they collapse to only
 `stack-status`, `rmq-health`, and `storage-status`. The certification therefore
-runs three diagnostics, not nine. It evaluates all 12 runbooks and 10 recovery
+runs three diagnostics, not nine. It evaluates all 13 runbooks and 11 recovery
 contracts. Review-only runbooks with no recovery contract can be ready when
 their diagnostics pass; this means the machine-executable prerequisites are
 present, not that a human investigation has been completed.

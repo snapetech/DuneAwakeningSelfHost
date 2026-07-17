@@ -193,6 +193,26 @@ custom-format dump that `pg_restore` can list. The live database is never
 contacted. Complete configuration, receipt schema, systemd scheduling, and
 failure recovery are in [`restore-drills.md`](restore-drills.md).
 
+## RabbitMQ Recovery Proof
+
+`GET /api/ops/rabbitmq-restore-drill` returns configuration readiness, bounded
+runtime state, latest and recent private receipts, HMAC-anchored history
+integrity, name-free topology counts, and the inspected no-network isolation
+contract for copied admin/game broker state.
+
+`POST /api/ops/rabbitmq-restore-drill` queues the two sequential disposable
+broker boots and returns `202 Accepted`. It requires `infrastructure.write`, the
+master mutation gate, `DUNE_ADMIN_RABBITMQ_RESTORE_DRILL_EXECUTION_ENABLED=true`,
+and exact `RUN NETWORKLESS RABBITMQ RESTORE DRILL` confirmation. The Admin UI
+does not mount or connect to either live broker; it supplies only the full
+backup path and private staging paths to no-network containers.
+
+The Infrastructure card shows per-broker readiness time, inspected isolation,
+and counts of vhosts, users, queues, exchanges, bindings, and messages. It never
+returns their names. Complete extraction bounds, isolation details, receipt
+integrity, timer installation, configuration, and recovery are documented in
+[`rabbitmq-restore-drills.md`](rabbitmq-restore-drills.md).
+
 ## Reliability Control Room
 
 `GET /api/ops/slo` reports retained, time-weighted reliability rather than only

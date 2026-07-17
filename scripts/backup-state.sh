@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 umask 077
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/.." && pwd)"
 
 usage() {
   cat <<'EOF'
@@ -144,6 +146,28 @@ if [[ -d "$operator_evidence_dir" ]]; then
 fi
 operator_evidence_archive=""
 [[ "$operator_evidence_count" -gt 0 ]] && operator_evidence_archive="operator-evidence.tgz"
+rabbitmq_restore_receipt_dir="${DUNE_RABBITMQ_RESTORE_DRILL_HOST_RECEIPT_DIR:-backups/admin-panel/rabbitmq-restore-drills}"
+rabbitmq_restore_receipt_source=""
+rabbitmq_restore_receipt_snapshot=""
+if [[ -d "$rabbitmq_restore_receipt_dir" ]]; then
+  rabbitmq_restore_receipt_source="$(PYTHONPATH="$repo_root/admin" python3 - "$rabbitmq_restore_receipt_dir" <<'PY'
+import pathlib
+import sys
+import rabbitmq_restore_drill
+
+root = pathlib.Path(sys.argv[1])
+rows = rabbitmq_restore_drill.list_receipts(root, 100000)
+if not rows:
+    raise SystemExit(0)
+history = rabbitmq_restore_drill.verify_history(root)
+if not history.get("ok") or any(not row.get("receiptHashValid") or not row.get("receiptChainValid") for row in rows):
+    raise SystemExit("RabbitMQ recovery receipt history is invalid")
+path = root / f"{rows[0]['id']}.json"
+print(path)
+PY
+)"
+  [[ -z "$rabbitmq_restore_receipt_source" ]] || rabbitmq_restore_receipt_snapshot="rabbitmq-restore-drill.json"
+fi
 db="${DUNE_GAME_DB_NAME:-$(env_value DUNE_GAME_DB_NAME)}"
 db="${db:-${DUNE_DATABASE:-$(env_value DUNE_DATABASE)}}"
 db="${db:-${DUNE_DB_NAME:-$(env_value DUNE_DB_NAME)}}"
@@ -218,6 +242,11 @@ if [[ "$dry_run" == true ]]; then
     printf 'operator_evidence_files=%s\n' "$operator_evidence_count"
   else
     printf 'operator_evidence_archive=<no signed capsules under %s>\n' "$operator_evidence_dir"
+  fi
+  if [[ -n "$rabbitmq_restore_receipt_source" ]]; then
+    printf 'rabbitmq_restore_receipt=rabbitmq-restore-drill.json\n'
+  else
+    printf 'rabbitmq_restore_receipt=<no receipt under %s>\n' "$rabbitmq_restore_receipt_dir"
   fi
   if [[ -d config/tls ]]; then
     printf 'config_tls_archive=config-tls.tgz\n'
@@ -465,6 +494,10 @@ PY
   chmod 600 "${backup_dir}/operator-evidence.tgz"
 fi
 
+if [[ -n "$rabbitmq_restore_receipt_source" ]]; then
+  install -m 600 "$rabbitmq_restore_receipt_source" "${backup_dir}/rabbitmq-restore-drill.json"
+fi
+
 "${compose[@]}" exec -T postgres \
   pg_dump -U dune -d "$db" -Fc \
   > "${backup_dir}/postgres-${db}.dump"
@@ -516,6 +549,7 @@ audit_ledger_key=${audit_ledger_key_snapshot}
 audit_ledger_anchor=${audit_ledger_anchor_snapshot}
 operator_evidence_archive=${operator_evidence_archive}
 operator_evidence_files=${operator_evidence_count}
+rabbitmq_restore_receipt=${rabbitmq_restore_receipt_snapshot}
 world_unique_name=${world_unique_name}
 dune_fls_env=${dune_fls_env:-retail}
 game_rmq_public_host=${game_rmq_public_host}

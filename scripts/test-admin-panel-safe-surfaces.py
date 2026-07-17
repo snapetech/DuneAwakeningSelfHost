@@ -3627,6 +3627,74 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertTrue(accepted["json"]["queued"])
         self.assertEqual(["backups/current.dump"], queued)
 
+    def test_rabbitmq_restore_drill_status_is_read_only_and_execution_is_separately_gated(self):
+        original_status = self.panel.rabbitmq_restore_drill_public_status
+        original_queue = self.panel.queue_rabbitmq_restore_drill
+        self.panel.rabbitmq_restore_drill_public_status = lambda: {"ok": True, "latest": {"id": "rabbit-proof"}}
+        queued = []
+        self.panel.queue_rabbitmq_restore_drill = lambda backup_set=None: queued.append(backup_set) or {"ok": True, "queued": True}
+        self.addCleanup(lambda: setattr(self.panel, "rabbitmq_restore_drill_public_status", original_status))
+        self.addCleanup(lambda: setattr(self.panel, "queue_rabbitmq_restore_drill", original_queue))
+
+        handler, captured = self.make_route_handler("/api/ops/rabbitmq-restore-drill")
+        handler.is_app_route = lambda path: False
+        handler.do_GET()
+        self.assertEqual("rabbit-proof", captured["json"]["latest"]["id"])
+        self.assertEqual([], queued)
+
+        self.patch_flag("RABBITMQ_RESTORE_DRILL_EXECUTION_ENABLED", False)
+        denied = self.invoke_post_route(
+            "/api/ops/rabbitmq-restore-drill",
+            {"confirm": "RUN NETWORKLESS RABBITMQ RESTORE DRILL"},
+        )
+        self.assertEqual(401, denied["errors"][0]["status"])
+        self.assertEqual([], queued)
+
+    def test_rabbitmq_restore_drill_post_requires_exact_confirmation_then_queues(self):
+        self.assertEqual(
+            "infrastructure.write",
+            self.panel.access_control.required_capability("POST", "/api/ops/rabbitmq-restore-drill"),
+        )
+        original_queue = self.panel.queue_rabbitmq_restore_drill
+        queued = []
+        self.panel.queue_rabbitmq_restore_drill = lambda backup_set=None: queued.append(backup_set) or {"ok": True, "queued": True}
+        self.addCleanup(lambda: setattr(self.panel, "queue_rabbitmq_restore_drill", original_queue))
+        self.patch_flag("RABBITMQ_RESTORE_DRILL_EXECUTION_ENABLED", True)
+        self.patch_flag("MUTATIONS_ENABLED", True)
+
+        rejected = self.invoke_post_route("/api/ops/rabbitmq-restore-drill", {"confirm": "yes"})
+        self.assertEqual(401, rejected["errors"][0]["status"])
+        accepted = self.invoke_post_route("/api/ops/rabbitmq-restore-drill", {
+            "backupSet": "backups/complete", "confirm": "RUN NETWORKLESS RABBITMQ RESTORE DRILL",
+        })
+        self.assertTrue(accepted["json"]["queued"])
+        self.assertEqual(["backups/complete"], queued)
+
+    def test_rabbitmq_restore_drill_metrics_are_label_free_and_anchor_aware(self):
+        original_status = self.panel.rabbitmq_restore_drill_public_status
+        self.panel.rabbitmq_restore_drill_public_status = lambda: {
+            "ok": True,
+            "featureEnabled": True,
+            "ready": True,
+            "runtime": {"running": False},
+            "history": {"ok": True},
+            "latest": {
+                "id": "private-receipt-id",
+                "ok": True,
+                "integrityOk": True,
+                "receiptHashValid": True,
+                "backupAgeSeconds": 42,
+                "finishedAt": "2026-07-17T04:00:00Z",
+            },
+        }
+        self.addCleanup(lambda: setattr(self.panel, "rabbitmq_restore_drill_public_status", original_status))
+        metrics = self.panel.rabbitmq_restore_drill_prometheus()
+        self.assertIn("dash_rabbitmq_restore_drill_ok 1\n", metrics)
+        self.assertIn("dash_rabbitmq_restore_drill_integrity_ok 1\n", metrics)
+        self.assertIn("dash_rabbitmq_restore_drill_backup_age_seconds 42.0\n", metrics)
+        self.assertNotIn("private-receipt-id", metrics)
+        self.assertNotIn("{", metrics)
+
     def test_operational_slo_status_and_metrics_are_read_only(self):
         original_status = self.panel.operational_slo_public_status
         original_store = self.panel.operational_slo_store
@@ -3678,6 +3746,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         original_restart = self.panel.restart_online_snapshot
         original_select = self.panel.restore_drill.select_dump
         original_restore_status = self.panel.restore_drill.status
+        original_rabbitmq_restore_status = self.panel.rabbitmq_restore_drill.status
         original_meminfo = self.panel.read_meminfo
         original_desired_state_store = self.panel.desired_state_store
         original_change_intelligence_store = self.panel.change_intelligence_store
@@ -3689,6 +3758,16 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.panel.restart_online_snapshot = lambda: {"ok": True, "expected": 2, "readyOnline": 2}
         self.panel.restore_drill.select_dump = lambda root: dump
         self.panel.restore_drill.status = lambda root, limit=1: {"latest": {"id": "proof", "ok": True, "integrityOk": True, "policyOk": True, "receiptHashValid": True, "finishedAt": self.panel.datetime.datetime.now(self.panel.datetime.timezone.utc).isoformat(), "liveDatabaseTouched": False, "timings": {"restoreSeconds": 1}}}
+        self.panel.rabbitmq_restore_drill.status = lambda root, limit=1: {
+            "ok": True,
+            "history": {"ok": True},
+            "latest": {
+                "id": "rabbit-proof", "ok": True, "integrityOk": True,
+                "policyOk": True, "receiptHashValid": True,
+                "finishedAt": self.panel.datetime.datetime.now(self.panel.datetime.timezone.utc).isoformat(),
+                "liveRabbitMQTouched": False, "networkCreated": False,
+            },
+        }
         self.panel.read_meminfo = lambda: {"availableBytes": 32 * 1024**3, "totalBytes": 64 * 1024**3}
         self.panel.desired_state_store = lambda: type("Store", (), {
             "status": lambda self, **kwargs: {
@@ -3708,6 +3787,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.addCleanup(lambda: setattr(self.panel, "restart_online_snapshot", original_restart))
         self.addCleanup(lambda: setattr(self.panel.restore_drill, "select_dump", original_select))
         self.addCleanup(lambda: setattr(self.panel.restore_drill, "status", original_restore_status))
+        self.addCleanup(lambda: setattr(self.panel.rabbitmq_restore_drill, "status", original_rabbitmq_restore_status))
         self.addCleanup(lambda: setattr(self.panel, "read_meminfo", original_meminfo))
         self.addCleanup(lambda: setattr(self.panel, "desired_state_store", original_desired_state_store))
         self.addCleanup(lambda: setattr(self.panel, "change_intelligence_store", original_change_intelligence_store))
@@ -4090,6 +4170,10 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn("Assured Change Windows", source)
         self.assertIn("assured-control-plane-deploy.sh", source)
         self.assertIn("/api/ops/deployment-assurance", source)
+        self.assertIn("mountInfrastructureRabbitMQRestoreDrill(rabbitmqDrillData)", source)
+        self.assertIn("/api/ops/rabbitmq-restore-drill", source)
+        self.assertIn("RUN NETWORKLESS RABBITMQ RESTORE DRILL", source)
+        self.assertIn("names withheld", source)
         panel_source = (ROOT / "admin" / "admin_panel.py").read_text(encoding="utf-8")
         self.assertIn("result = restore_drill.run_drill(\n                ROOT,", panel_source)
         assurance_block = panel_source.split("def deployment_assurance_store():", 1)[1].split("def deployment_assurance_container_snapshot():", 1)[0]
@@ -4101,6 +4185,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         confirmations = {
             self.panel.CONFIRM_SERVICE_CONTROL,
             self.panel.CONFIRM_RESTORE_DRILL,
+            self.panel.CONFIRM_RABBITMQ_RESTORE_DRILL,
             self.panel.CONFIRM_CAPACITY_APPLY,
             self.panel.CONFIRM_DESIRED_STATE_SEAL,
             self.panel.CONFIRM_BACKUP_RESTORE,
@@ -4219,10 +4304,10 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         with mock.patch.dict(os.environ, gates):
             result = self.panel.run_incident_readiness_certification(policy["policySha256"], {"id": "owner", "capabilities": ["*"]}, executor)
         self.assertTrue(result["ready"])
-        self.assertEqual(12, result["summary"]["runbooksReady"])
-        self.assertEqual(12, result["summary"]["runbooksTotal"])
+        self.assertEqual(13, result["summary"]["runbooksReady"])
+        self.assertEqual(13, result["summary"]["runbooksTotal"])
         self.assertEqual(3, result["summary"]["diagnosticsTotal"])
-        self.assertEqual(10, result["summary"]["recoveryContractsTotal"])
+        self.assertEqual(11, result["summary"]["recoveryContractsTotal"])
         self.assertEqual(["stack-status", "rmq-health", "storage-status"], calls)
         self.assertFalse(result["recoveryExecuted"])
         self.assertFalse(result["gameMutationExecuted"])
@@ -4240,7 +4325,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
     def test_readiness_certification_route_requires_confirmation_and_passes_authenticated_principal(self):
         original = self.panel.run_incident_readiness_certification
         calls = []
-        self.panel.run_incident_readiness_certification = lambda digest, principal, executor: calls.append((digest, principal, callable(executor))) or {"ready": True, "summary": {"runbooksTotal": 12}}
+        self.panel.run_incident_readiness_certification = lambda digest, principal, executor: calls.append((digest, principal, callable(executor))) or {"ready": True, "summary": {"runbooksTotal": 13}}
         self.addCleanup(lambda: setattr(self.panel, "run_incident_readiness_certification", original))
         rejected = self.invoke_post_route("/api/ops/change-intelligence/certify", {"policySha256": "a" * 64, "confirm": "wrong"})
         self.assertEqual(401, rejected["errors"][0]["status"])

@@ -29,7 +29,7 @@ The current catalog groups the complete activation set into trust,
 infrastructure, retained evidence, adaptive maps, metrics, player/world/content
 administration, creator tooling, moderation, community rewards, Discord,
 federated login, webhooks, public discovery, multi-Sietch topology, public-IP
-repair, and encrypted backups.
+repair, encrypted backups, and networkless RabbitMQ recovery proof.
 
 Credential Lifecycle is a distinct Trust feature. Its probe evaluates 19
 activation-aware sources, private permissions, observed rotation history, and
@@ -66,6 +66,13 @@ the private host-side renderer.
 | `blocked` | An active feature is missing a required artifact, local credential, or dependency. |
 | `degraded` | Configuration is present, but a required service or explicit runtime probe is unhealthy. |
 | `external-blocked` | An active integration still needs an operator-owned external provider credential. |
+
+An `operator-canary-pending` catalog row promotes to `ready` only when its
+allowlisted runtime probe explicitly returns `state=canary-proven`. A merely
+healthy/configured probe remains pending. RabbitMQ recovery uses this contract:
+the implementation can be fully loaded without claiming recovery until both
+copied broker states boot successfully and the HMAC-anchored receipt history
+verifies.
 
 `overall=attention` means at least one active feature is `partial`, `blocked`,
 `degraded`, or `external-blocked`. Disabled optional integrations and explicitly

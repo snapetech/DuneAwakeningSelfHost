@@ -1,0 +1,12 @@
+[Unit]
+Description=Prove DASH RabbitMQ backups recover every week
+
+[Timer]
+OnCalendar=Sun *-*-* 05:30:00
+Persistent=true
+RandomizedDelaySec=30m
+AccuracySec=1m
+Unit=dune-rabbitmq-restore-drill.service
+
+[Install]
+WantedBy=timers.target
