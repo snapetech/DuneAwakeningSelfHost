@@ -41,14 +41,7 @@ get_env() {
 set_env_value() {
   local key="$1"
   local value="$2"
-  local escaped
-
-  escaped="$(printf '%s\n' "$value" | sed -e 's/[\/&]/\\&/g')"
-  if grep -Eq "^[[:space:]]*${key}=" "$env_file"; then
-    sed -i -E "s|^[[:space:]]*${key}=.*|${key}=${escaped}|" "$env_file"
-  else
-    printf '\n%s=%s\n' "$key" "$value" >>"$env_file"
-  fi
+  python3 "$repo_root/scripts/update-env-file.py" "$env_file" --quiet --set "$key" "$value"
 }
 
 database_exists() {

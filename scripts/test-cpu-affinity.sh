@@ -74,8 +74,10 @@ if "$ROOT_DIR/scripts/cpu-affinity.sh" --env-file "$ENV_FILE" --overlay "$OVERLA
 fi
 
 export TEST_HOSTNAME=kspls0 DUNE_CPU_AFFINITY_BACKUP_ROOT="$TMP_DIR/backups"
+inode_before="$(stat -c '%d:%i' "$ENV_FILE")"
 result="$($ROOT_DIR/scripts/cpu-affinity.sh --env-file "$ENV_FILE" --overlay "$OVERLAY" --project test apply \
   --execute --persist --confirm 'APPLY DUNE CPU AFFINITY')"
+[[ "$(stat -c '%d:%i' "$ENV_FILE")" == "$inode_before" ]]
 grep -q '1 container(s) updated' <<<"$result"
 grep -q '^update --cpuset-cpus 0,1,4,5 aaa$' "$LOG"
 grep -q '^DUNE_CPU_AFFINITY_ENABLED=true$' "$ENV_FILE"

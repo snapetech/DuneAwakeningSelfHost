@@ -2,6 +2,12 @@
 
 The admin helper panel is a LAN-only web UI for local server operators. It is not exposed publicly by default.
 
+Admin settings and every bundled runtime configuration helper share a locked,
+inode-preserving `.env` writer. This prevents file-bind mounts from becoming
+attached to a deleted inode and prevents settings from disappearing on container
+recreation. Operational proof and recovery steps are in
+[configuration-durability.md](configuration-durability.md).
+
 ## Start
 
 The shipped example requires the owner token and keeps mutations disabled:

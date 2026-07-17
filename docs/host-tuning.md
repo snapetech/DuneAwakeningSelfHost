@@ -53,7 +53,7 @@ all IRQs matching the selected NIC to the CPU-affinity background pool. If
 irqbalance is active, IRQ pinning is skipped instead of fighting the daemon.
 Ring tuning can still apply. The script never disables irqbalance.
 
-With `--persist`, the command atomically records these values in `.env`:
+With `--persist`, the command durably records these values in `.env`:
 
 ```dotenv
 DUNE_HOST_TUNING_ENABLED=true
@@ -90,6 +90,10 @@ sudo sysctl --system
 Restore the THP mode and IRQ affinities recorded in `status.before.txt` if an
 immediate runtime rollback is required. Clearing CPU container affinity is a
 separate operation documented in [cpu-affinity.md](cpu-affinity.md).
+
+Persistent values use the locked inode-preserving configuration writer. This
+keeps the Admin container's `.env` bind mount live; see
+[configuration-durability.md](configuration-durability.md).
 
 ## Validation
 

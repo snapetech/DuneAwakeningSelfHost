@@ -218,11 +218,8 @@ echo "  docker compose --env-file $env_file config --quiet"
 echo "  ./scripts/backup-state.sh $env_file"
 
 if [[ "$write_env" == true ]]; then
-  if rg -q '^DUNE_IMAGE_TAG=' "$env_file"; then
-    sed -i "s/^DUNE_IMAGE_TAG=.*/DUNE_IMAGE_TAG=$package_tag/" "$env_file"
-  else
-    printf '\nDUNE_IMAGE_TAG=%s\n' "$package_tag" >>"$env_file"
-  fi
+  python3 "$repo_root/scripts/update-env-file.py" "$env_file" --quiet \
+    --set DUNE_IMAGE_TAG "$package_tag"
   echo "updated $env_file: DUNE_IMAGE_TAG=$package_tag"
   exit 0
 fi

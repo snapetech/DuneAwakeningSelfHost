@@ -194,6 +194,10 @@ Use `adaptive` to start from balanced bounds and enable the retained model:
 ./scripts/configure-autoscaler-profile.sh .env adaptive --execute
 ```
 
+Profile changes use the shared locked, inode-preserving `.env` writer. They are
+immediately visible to the running Admin container and survive its next
+recreation. See [configuration-durability.md](configuration-durability.md).
+
 ### Persistent state fields
 
 | Field | Meaning |

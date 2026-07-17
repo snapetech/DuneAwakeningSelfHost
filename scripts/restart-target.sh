@@ -707,7 +707,7 @@ def run_host_compose(services):
     else:
         shell_command = (
         "set -e; "
-        + "apk add --no-cache bash binutils gdb iproute2 util-linux sudo >/dev/null; "
+        + "apk add --no-cache bash binutils gdb iproute2 python3 util-linux sudo >/dev/null; "
         + ensure_official_images_shell
         + "if [ -x ./scripts/apply-official-db-patches.sh ]; then "
         + f"./scripts/apply-official-db-patches.sh {shlex.quote(env_file)}; "
@@ -1028,14 +1028,13 @@ def run_host_update_check():
         "docker load -i \"$path\"; "
         "done; "
         "if [ -n \"$installed_buildid\" ]; then mkdir -p \"$(dirname \"$loaded_buildid_file\")\"; printf '%s\\n' \"$installed_buildid\" > \"$loaded_buildid_file\"; fi; "
-        "if grep -q '^DUNE_IMAGE_TAG=' \"$env_file\"; then sed -i \"s/^DUNE_IMAGE_TAG=.*/DUNE_IMAGE_TAG=$package_tag/\" \"$env_file\"; "
-        "else printf '\\nDUNE_IMAGE_TAG=%s\\n' \"$package_tag\" >> \"$env_file\"; fi; "
+        "python3 ./scripts/update-env-file.py \"$env_file\" --quiet --set DUNE_IMAGE_TAG \"$package_tag\"; "
         "echo \"updated $env_file: DUNE_IMAGE_TAG=$package_tag\"; "
         "rm -f \"$tag_file\""
     )
     shell_command = (
         "set -e; "
-        "apk add --no-cache bash util-linux >/dev/null 2>&1 || true; "
+        "apk add --no-cache bash python3 util-linux >/dev/null 2>&1 || true; "
         "if [ -x ./scripts/update-steam-tool.sh ]; then "
         "steam_mode=${DUNE_RESTART_STEAM_UPDATE_MODE:-" + shlex.quote(read_env_value(env_file, "DUNE_RESTART_STEAM_UPDATE_MODE") or "auto") + "}; "
         "if [ \"$steam_mode\" = client ]; then "

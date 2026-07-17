@@ -69,6 +69,7 @@ import change_intelligence
 import deployment_assurance
 import update_readiness
 import public_directory
+import env_file_store
 
 GM_CATALOG_PATH = CODE_ROOT / "scripts" / "gm-command-catalog.py"
 GM_CATALOG_SPEC = importlib.util.spec_from_file_location("gm_command_catalog", GM_CATALOG_PATH)
@@ -3389,25 +3390,8 @@ def write_safe_env(updates):
         projected = {**os.environ, **read_env()}
         projected.update({key: str(value) for key, value in updates.items()})
         public_directory.public_config(projected, root=ROOT)
-    original = ENV_FILE.read_text(encoding="utf-8").splitlines()
-    seen = set()
-    rendered = []
-    for line in original:
-        if not line or line.lstrip().startswith("#") or "=" not in line:
-            rendered.append(line)
-            continue
-        key, _ = line.split("=", 1)
-        key = key.strip()
-        if key in SAFE_ENV_KEYS and key in updates:
-            rendered.append(f"{key}={updates[key]}")
-            seen.add(key)
-        else:
-            rendered.append(line)
-    for key in sorted(SAFE_ENV_KEYS - seen):
-        if key in updates:
-            rendered.append(f"{key}={updates[key]}")
     backup_file(ENV_FILE)
-    ENV_FILE.write_text("\n".join(rendered) + "\n", encoding="utf-8")
+    env_file_store.update_values(ENV_FILE, [(key, updates[key]) for key in sorted(updates)])
     try:
         ENV_FILE.chmod(0o600)
     except OSError:
@@ -6823,7 +6807,7 @@ def restore_env_preserving_database_password(source):
         content = pattern.sub(replacement, content) if pattern.search(content) else content.rstrip() + "\n" + replacement + "\n"
     if ENV_FILE.exists():
         backup_file(ENV_FILE)
-    ENV_FILE.write_text(content.rstrip() + "\n", encoding="utf-8")
+    env_file_store.replace_contents(ENV_FILE, content.rstrip() + "\n")
     ENV_FILE.chmod(0o600)
     return {"restored": True, "preserved": [key for key, value in preserved.items() if value]}
 
@@ -7177,7 +7161,7 @@ def rotate_database_password(connect_fn, password):
             with recovery_conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
                 cursor.execute("select quote_literal(%s::text) as password", (current,))
                 cursor.execute(f"alter role dune with password {cursor.fetchone()['password']}")
-            ENV_FILE.write_text(env_before, encoding="utf-8")
+            env_file_store.replace_contents(ENV_FILE, env_before)
             os.environ["DUNE_ADMIN_DB_PASSWORD"] = current
             os.environ["POSTGRES_DUNE_PASSWORD"] = current
             raise

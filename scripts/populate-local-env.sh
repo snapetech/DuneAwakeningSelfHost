@@ -14,11 +14,12 @@ else
   rmq_secret="$(openssl rand -hex 64)"
   world_suffix="$(openssl rand -hex 3)"
 
-  sed -i "s/^POSTGRES_SUPER_PASSWORD=.*/POSTGRES_SUPER_PASSWORD=$postgres_super_password/" "$env_file"
-  sed -i "s/^POSTGRES_DUNE_PASSWORD=.*/POSTGRES_DUNE_PASSWORD=$postgres_dune_password/" "$env_file"
-  sed -i "s/^POSTGRES_REPLICATION_PASSWORD=.*/POSTGRES_REPLICATION_PASSWORD=$postgres_replication_password/" "$env_file"
-  sed -i "s/^RMQ_HTTP_TOKEN_AUTH_SECRET=.*/RMQ_HTTP_TOKEN_AUTH_SECRET=$rmq_secret/" "$env_file"
-  sed -i "s/^WORLD_UNIQUE_NAME=.*/WORLD_UNIQUE_NAME=sh-example-$world_suffix/" "$env_file"
+  python3 ./scripts/update-env-file.py "$env_file" --quiet \
+    --set POSTGRES_SUPER_PASSWORD "$postgres_super_password" \
+    --set POSTGRES_DUNE_PASSWORD "$postgres_dune_password" \
+    --set POSTGRES_REPLICATION_PASSWORD "$postgres_replication_password" \
+    --set RMQ_HTTP_TOKEN_AUTH_SECRET "$rmq_secret" \
+    --set WORLD_UNIQUE_NAME "sh-example-$world_suffix"
 fi
 
 mkdir -p "$tls_dir"

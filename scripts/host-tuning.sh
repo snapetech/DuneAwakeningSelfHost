@@ -212,16 +212,11 @@ show_status >"$backup_dir/status.before.txt"
 render_sysctl >"$SYSCTL_CONF"
 
 if [[ "$PERSIST" == true ]]; then
-  temporary="$(mktemp "$(dirname "$ENV_FILE")/.host-tuning-env.XXXXXX")"
-  awk -F= -v nic_enabled="$NIC_ENABLED" -v nic="$nic" -v cpuset="$irq_cpuset" '
-    BEGIN { wanted["DUNE_HOST_TUNING_ENABLED"]="true"; wanted["DUNE_HOST_TUNING_NIC_ENABLED"]=nic_enabled; wanted["DUNE_HOST_TUNING_NIC"]=nic; wanted["DUNE_HOST_TUNING_NIC_IRQ_CPUSET"]=cpuset }
-    $1 in wanted { print $1 "=" wanted[$1]; seen[$1]=1; next }
-    { print }
-    END { for (key in wanted) if (!seen[key]) print key "=" wanted[key] }
-  ' "$ENV_FILE" >"$temporary"
-  chmod --reference="$ENV_FILE" "$temporary" 2>/dev/null || chmod 600 "$temporary"
-  chown --reference="$ENV_FILE" "$temporary" 2>/dev/null || true
-  mv "$temporary" "$ENV_FILE"
+  python3 "$ROOT_DIR/scripts/update-env-file.py" "$ENV_FILE" --quiet \
+    --set DUNE_HOST_TUNING_ENABLED true \
+    --set DUNE_HOST_TUNING_NIC_ENABLED "$NIC_ENABLED" \
+    --set DUNE_HOST_TUNING_NIC "$nic" \
+    --set DUNE_HOST_TUNING_NIC_IRQ_CPUSET "$irq_cpuset"
   cat >"$SYSTEMD_UNIT" <<EOF
 [Unit]
 Description=DASH host sysctl, THP, NIC ring and IRQ tuning

@@ -414,6 +414,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertTrue(captured["json"]["token"].startswith("dash-change-v1."))
 
     def test_change_contract_env_settings_reject_bricking_pairs_ttl_and_injection(self):
+        env_identity = (self.panel.ENV_FILE.stat().st_dev, self.panel.ENV_FILE.stat().st_ino)
         with self.assertRaisesRegex(ValueError, "cannot remain required"):
             self.panel.write_safe_env({"DUNE_ADMIN_CHANGE_CONTRACTS_ENABLED": "false"})
         for value in ("29", "301", "not-a-number"):
@@ -430,6 +431,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertEqual("false", values["DUNE_ADMIN_CHANGE_CONTRACTS_ENABLED"])
         self.assertEqual("false", values["DUNE_ADMIN_CHANGE_CONTRACTS_REQUIRED"])
         self.assertEqual("30", values["DUNE_ADMIN_CHANGE_CONTRACT_TTL_SECONDS"])
+        self.assertEqual(env_identity, (self.panel.ENV_FILE.stat().st_dev, self.panel.ENV_FILE.stat().st_ino))
 
     def test_federated_public_directory_api_ui_metrics_and_alerts_are_exposed(self):
         self.assertIn("Federated Public Directory", self.panel.INDEX)

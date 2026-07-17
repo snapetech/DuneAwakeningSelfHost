@@ -134,15 +134,8 @@ done
 if [[ "$PERSIST" == true ]]; then
   enabled=true
   [[ "$COMMAND" != "clear" ]] || enabled=false
-  temporary="$(mktemp "$(dirname "$ENV_FILE")/.cpu-affinity-env.XXXXXX")"
-  awk -F= -v value="$enabled" '
-    BEGIN { found=0 }
-    $1 == "DUNE_CPU_AFFINITY_ENABLED" { print "DUNE_CPU_AFFINITY_ENABLED=" value; found=1; next }
-    { print }
-    END { if (!found) print "DUNE_CPU_AFFINITY_ENABLED=" value }
-  ' "$ENV_FILE" >"$temporary"
-  chmod --reference="$ENV_FILE" "$temporary" 2>/dev/null || chmod 600 "$temporary"
-  mv "$temporary" "$ENV_FILE"
+  python3 "$ROOT_DIR/scripts/update-env-file.py" "$ENV_FILE" --quiet \
+    --set DUNE_CPU_AFFINITY_ENABLED "$enabled"
 fi
 printf 'created_utc=%s\nhostname=%s\nproject=%s\ncommand=%s\nchanged=%s\n' \
   "$timestamp" "$current_host" "$PROJECT" "$COMMAND" "$changed" >"$backup_dir/manifest.txt"

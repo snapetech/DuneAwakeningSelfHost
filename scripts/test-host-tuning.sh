@@ -67,8 +67,10 @@ preview="$($ROOT_DIR/scripts/host-tuning.sh --env-file "$ENV_FILE" plan --nic)"
 grep -q 'Dry-run only' <<<"$preview"
 [[ ! -e "$ETC/sysctl.d/99-dune-selfhost.conf" ]]
 
+inode_before="$(stat -c '%d:%i' "$ENV_FILE")"
 result="$($ROOT_DIR/scripts/host-tuning.sh --env-file "$ENV_FILE" apply --execute --persist --nic \
   --confirm 'APPLY DUNE HOST TUNING')"
+[[ "$(stat -c '%d:%i' "$ENV_FILE")" == "$inode_before" ]]
 grep -q 'Host tuning applied' <<<"$result"
 grep -q '^never$' "$SYS/kernel/mm/transparent_hugepage/enabled"
 grep -q '^8-15$' "$PROC/irq/200/smp_affinity_list"

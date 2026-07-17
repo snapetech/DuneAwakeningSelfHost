@@ -61,19 +61,8 @@ backup_dir="${DUNE_AUTOSCALER_CONFIG_BACKUP_DIR:-$repo_root/backups/admin-panel/
 mkdir -p "$backup_dir"
 cp -a "$env_file" "$backup_dir/env-before-$stamp"
 
-set_value() {
-  local key="$1" value="$2" tmp
-  tmp="$(mktemp "${env_file}.tmp.XXXXXX")"
-  awk -v key="$key" -v value="$value" '
-    BEGIN { done=0 }
-    $0 ~ "^" key "=" { if (!done) print key "=" value; done=1; next }
-    { print }
-    END { if (!done) print key "=" value }
-  ' "$env_file" > "$tmp"
-  chmod --reference="$env_file" "$tmp" 2>/dev/null || chmod 600 "$tmp"
-  mv "$tmp" "$env_file"
-}
-
-while IFS= read -r key; do set_value "$key" "${values[$key]}"; done < <(printf '%s\n' "${!values[@]}" | sort)
+update_command=(python3 "$repo_root/scripts/update-env-file.py" "$env_file" --quiet)
+while IFS= read -r key; do update_command+=(--set "$key" "${values[$key]}"); done < <(printf '%s\n' "${!values[@]}" | sort)
+"${update_command[@]}"
 printf 'configured %s; backup=%s\n' "$profile" "$backup_dir/env-before-$stamp"
 printf 'recreate admin-panel, then apply/reconcile the same profile in Infrastructure\n'

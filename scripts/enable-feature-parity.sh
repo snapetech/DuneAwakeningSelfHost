@@ -75,20 +75,9 @@ mkdir -p "$backup_dir"
 backup="$backup_dir/env-before-enable-$stamp"
 install -m 600 "$env_file" "$backup"
 
-set_value() {
-  local key="$1" value="$2" tmp
-  tmp="$(mktemp "$(dirname "$env_file")/.feature-parity-env.XXXXXX")"
-  awk -F= -v key="$key" -v value="$value" '
-    BEGIN { found=0 }
-    $1 == key { print key "=" value; found=1; next }
-    { print }
-    END { if (!found) print key "=" value }
-  ' "$env_file" > "$tmp"
-  chmod --reference="$env_file" "$tmp" 2>/dev/null || chmod 600 "$tmp"
-  mv "$tmp" "$env_file"
-}
-
-for key in "${keys[@]}"; do set_value "$key" true; done
+feature_update=(python3 "$repo_root/scripts/update-env-file.py" "$env_file" --quiet)
+for key in "${keys[@]}"; do feature_update+=(--set "$key" true); done
+"${feature_update[@]}"
 if [[ ! -f "$repo_root/config/community-rewards.json" ]]; then
   install -m 600 "$repo_root/config/community-rewards.example.json" "$repo_root/config/community-rewards.json"
 else

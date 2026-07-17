@@ -1022,6 +1022,7 @@ Start here:
 - [`docs/autoscaling-memory.md`](docs/autoscaling-memory.md): map modes, Director travel demand, idle scale-down, live limits, and memory balancing.
 - [`docs/cpu-affinity.md`](docs/cpu-affinity.md): cache/topology-aware foreground and background CPU pools for dynamic-map hosts.
 - [`docs/host-tuning.md`](docs/host-tuning.md): guarded memory/UDP/THP/NIC/IRQ tuning, persistence, evidence, and recovery.
+- [`docs/configuration-durability.md`](docs/configuration-durability.md): locked, verified, inode-preserving live `.env` updates that remain attached to Admin's bind mount.
 - [`docs/inventory-integrity.md`](docs/inventory-integrity.md): live duplicate-slot audit and guarded, backup-first transactional repair.
 - [`docs/player-runtime-actions.md`](docs/player-runtime-actions.md): native skill/water/kick/vehicle actions, offline vehicle maintenance, and Landsraad writes.
 - [`docs/player-progression-receipts.md`](docs/player-progression-receipts.md): bounded Intel/recipe/research JSON writes, self-hashed receipts, and compare-and-swap rollback.

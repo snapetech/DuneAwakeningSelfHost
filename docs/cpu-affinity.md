@@ -58,7 +58,7 @@ hostname
 ```
 
 Activation uses `docker update --cpuset-cpus`; it does not restart a container.
-`--persist` atomically writes `DUNE_CPU_AFFINITY_ENABLED=true` after saving the
+`--persist` durably writes `DUNE_CPU_AFFINITY_ENABLED=true` after saving the
 previous env file. `scripts/compose-files.sh` then includes the host-local
 overlay whenever Compose creates or recreates a service, including dynamic map
 starts.
@@ -72,6 +72,10 @@ game maps.
 Every execution records the previous and target CPU sets, overlay, env backup
 when applicable, hostname, and changed count under
 `backups/cpu-affinity/<UTC timestamp>/`.
+
+The persistent update uses the locked inode-preserving configuration writer, so
+an already-running Admin container continues to see the authoritative file. See
+[configuration-durability.md](configuration-durability.md).
 
 ## Disable and recover
 

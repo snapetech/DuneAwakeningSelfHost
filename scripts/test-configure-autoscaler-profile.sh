@@ -12,7 +12,9 @@ before="$(sha256sum "$env_file" | awk '{print $1}')"
 after="$(sha256sum "$env_file" | awk '{print $1}')"
 [[ "$before" == "$after" ]]
 
+inode_before="$(stat -c '%d:%i' "$env_file")"
 DUNE_AUTOSCALER_CONFIG_BACKUP_DIR="$tmp/backups" "$repo_root/scripts/configure-autoscaler-profile.sh" "$env_file" balanced --execute >/dev/null
+[[ "$(stat -c '%d:%i' "$env_file")" == "$inode_before" ]]
 grep -qx 'UNRELATED=keep' "$env_file"
 grep -qx 'DUNE_AUTOSCALER_PROFILE=balanced' "$env_file"
 grep -qx 'DUNE_AUTOSCALER_DEFAULT_MODE=dynamic' "$env_file"
