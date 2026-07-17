@@ -156,8 +156,10 @@ server {
   HMAC-anchored receipts,
   minimum-footprint/balanced/adaptive/full-warm/custom map profiles, per-map retention,
   Director travel-demand starts, LRU and memory-floor eviction, live map
-  limits, the automatic memory balancer, retained Prometheus metrics, updates,
-  and runtime repair. See [`autoscaling-memory.md`](autoscaling-memory.md) and
+  limits, p95-based ready-by map warming, the automatic memory balancer,
+  retained Prometheus metrics, updates, and runtime repair. See
+  [`autoscaling-memory.md`](autoscaling-memory.md),
+  [`anticipatory-map-warming.md`](anticipatory-map-warming.md), and
   [`metrics.md`](metrics.md).
 - Public Directory status on Infrastructure reports whether opt-in publication
   is private, valid/current, or invalid; it shows coarse signed profile state,
@@ -177,8 +179,9 @@ server {
   idle-running cost, productive-running ratio, warm/cold revisits,
   demand-to-ready cold-start distributions, empirical next-visit forecasts,
   evidence-qualified gradual per-map retention, append-only application
-  receipts, private metrics, and recovery. See
-  [`capacity-intelligence.md`](capacity-intelligence.md).
+  receipts, measured-p95 just-in-time warm scheduling, private metrics, and
+  recovery. See [`capacity-intelligence.md`](capacity-intelligence.md) and
+  [`anticipatory-map-warming.md`](anticipatory-map-warming.md).
 - Desired-State Attestation beside reliability and capacity: HMAC-sealed
   repository/configuration and project-container baselines, retained drift,
   non-resolving ownership acknowledgements, baseline/event history, private

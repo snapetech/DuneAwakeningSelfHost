@@ -81,6 +81,12 @@ Its adaptive recommendations are separately confirmed, evidence-thresholded,
 gradual, and mode-preserving. See
 [`capacity-intelligence.md`](capacity-intelligence.md).
 
+The same card can schedule a map by **ready by** time. It subtracts measured
+cold-start p95 plus a bounded safety margin and stores a one-time, daily, or
+weekly guarded demand event. This covers predictable play windows without
+changing the selected profile or retaining every map continuously. See
+[`anticipatory-map-warming.md`](anticipatory-map-warming.md).
+
 ### Balanced profile
 
 Fresh installations can configure the balanced defaults entirely through
@@ -239,6 +245,10 @@ Applying a profile afterward copies the loaded defaults into persistent state.
 Changing only `.env` does not overwrite an existing state file automatically.
 Adaptive application changes only the persistent per-service retention map; it
 does not rewrite `.env`, map modes, warm-map caps, or the memory floor.
+
+`adaptive` is a first-class process-start default. Fresh state, deleted state,
+and migrated installations no longer normalize an adaptive `.env` selection
+back to balanced.
 
 This lifecycle controller is what reduces CPU and resident memory. Docker
 memory limits do not reserve memory and lowering a limit does not make a game

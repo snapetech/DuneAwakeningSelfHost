@@ -89,6 +89,10 @@ groups:
         for: 15m
         labels: {severity: warning}
         annotations: {summary: "A dynamic map cold-start p95 exceeds three minutes"}
+      - alert: DashCapacityPrewarmFailed
+        expr: increase(dash_capacity_prewarm_failures_total[15m]) > 0
+        labels: {severity: warning}
+        annotations: {summary: "A scheduled just-in-time map warm failed"}
   - name: dash-desired-state
     rules:
       - alert: DashDesiredStateCollectorDown

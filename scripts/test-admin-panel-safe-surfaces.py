@@ -862,6 +862,50 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertEqual(state["events"][0]["runCount"], 2)
         self.assertEqual(len(state["runs"]), 2)
 
+    def test_scheduled_map_prewarm_uses_guarded_autoscaler_demand(self):
+        self.patch_flag("EVENT_EXECUTION_ENABLED", True)
+        self.patch_flag("MUTATIONS_ENABLED", True)
+        self.patch_flag("AUTOSCALER_MUTATIONS_ENABLED", True)
+        original_read = self.panel.read_autoscaler_state
+        original_control = self.panel.autoscaler_control
+        calls = []
+        self.panel.read_autoscaler_state = lambda: {"enabled": True, "modes": {"arrakeen": "dynamic"}}
+        self.panel.autoscaler_control = lambda action, service=None, demand_source=None, **kwargs: calls.append((action, service, demand_source)) or {"lastError": ""}
+        self.addCleanup(lambda: setattr(self.panel, "read_autoscaler_state", original_read))
+        self.addCleanup(lambda: setattr(self.panel, "autoscaler_control", original_control))
+        event = self.panel.create_event({
+            "name": "arrakeen warm",
+            "runAt": "2026-07-18T01:00:00Z",
+            "actions": [{"type": "map-prewarm", "service": "arrakeen"}],
+        })
+        self.assertEqual(self.panel.scheduled_map_prewarms()[0]["services"], ["arrakeen"])
+
+        result = self.panel.execute_event(event["id"], trigger="schedule")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(calls, [("demand", "arrakeen", "scheduled-prewarm")])
+        self.assertEqual(result["executed"][0]["type"], "map-prewarm")
+        schedules = self.panel.scheduled_map_prewarms()
+        self.assertEqual(schedules, [])
+        metrics = self.panel.map_prewarm_prometheus()
+        self.assertIn("dash_capacity_prewarm_runs_total 1", metrics)
+        self.assertIn("dash_capacity_prewarm_failures_total 0", metrics)
+
+    def test_scheduled_map_prewarm_refuses_disabled_map(self):
+        self.patch_flag("EVENT_EXECUTION_ENABLED", True)
+        self.patch_flag("MUTATIONS_ENABLED", True)
+        self.patch_flag("AUTOSCALER_MUTATIONS_ENABLED", True)
+        original_read = self.panel.read_autoscaler_state
+        self.panel.read_autoscaler_state = lambda: {"enabled": True, "modes": {"arrakeen": "disabled"}}
+        self.addCleanup(lambda: setattr(self.panel, "read_autoscaler_state", original_read))
+        event = self.panel.create_event({"actions": [{"type": "map-prewarm", "service": "arrakeen"}]})
+
+        result = self.panel.execute_event(event["id"])
+
+        self.assertFalse(result["ok"])
+        self.assertIn("disabled map", result["failures"][0]["error"])
+        self.assertIn("dash_capacity_prewarm_failures_total 1", self.panel.map_prewarm_prometheus())
+
     def test_event_recurrence_bounds_fail_closed(self):
         with self.assertRaises(ValueError):
             self.panel.event_dry_run({"repeatSeconds": 10, "actions": [{"type": "typed-knob-plan", "updates": {}}]})
@@ -3345,6 +3389,8 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertEqual(balanced["maxWarmDynamicMaps"], self.panel.AUTOSCALER_BALANCED_MAX_WARM_MAPS)
         self.assertEqual(balanced["retentionByService"]["arrakeen"], 2700)
         self.assertTrue(all(mode == "always-on" for mode in full["modes"].values()))
+        self.assertEqual(self.panel.normalize_autoscaler_profile("adaptive"), "adaptive")
+        self.assertEqual(self.panel.normalize_autoscaler_profile("invalid"), "balanced")
 
     def test_autoscaler_balanced_budget_evicts_oldest_optional_warm_map(self):
         original_inventory = self.panel.docker_service_inventory
@@ -4061,7 +4107,9 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         handler.text = lambda value, content_type="", **kwargs: texts.append((value, content_type))
         handler.require_token = lambda: self.fail("bounded capacity metrics must not require an admin credential")
         handler.do_GET()
-        self.assertEqual("dash_capacity_collector_up 1\n", texts[0][0])
+        self.assertIn("dash_capacity_collector_up 1\n", texts[0][0])
+        self.assertIn("dash_capacity_prewarm_schedules 0\n", texts[0][0])
+        self.assertIn("dash_capacity_prewarm_failures_total 0\n", texts[0][0])
 
         self.patch_flag("MUTATIONS_ENABLED", True)
         self.patch_flag("AUTOSCALER_MUTATIONS_ENABLED", True)

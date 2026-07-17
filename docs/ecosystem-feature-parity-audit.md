@@ -17,7 +17,7 @@ or documented operational path.
 ## Audit snapshot
 
 - Audit date: **2026-07-17**, full GitHub search and remote HEAD refresh
-  **2026-07-17 06:15 UTC**
+  **2026-07-17 06:35 UTC**
 - Search scope: GitHub repository search, project documentation, Funcom's
   self-host guide, CubeCoders' Dune template and guide, Nexus Mods' Dune:
   Awakening category, and public community discussions used only to discover
@@ -41,6 +41,12 @@ transaction, receipt, governance, and full-catalog contracts. Every other
 pinned peer still matched its recorded revision. Search-result-only cheat-guide
 and placeholder repositories remain excluded because they contain no credible
 self-host operator implementation.
+
+Coastal DST briefly advanced with a force-remove abandoned-base change and
+then reverted it in the same four-commit sequence. Its current head
+`50778e0` has no net file change from the prior pin and therefore adds no
+operator outcome. DASH retains the recoverable native base-retirement path
+instead of adopting the reverted destructive behavior.
 
 Confidence labels in this document use the repository standard:
 
@@ -87,7 +93,7 @@ webhooks, and Dune-specific announcement/player/status commands.
 | [Nerrowake/sietch-console](https://github.com/Nerrowake/sietch-console) | `80897fc5bc3efcbaff8b00f6a2ce57ba1b1e8aee` | Native Windows profiles, Hyper-V/Steam setup, INI editor, backups/cloud sync, remote API/SSE, diagnostics, metrics and player policy UI | moderate overall; source labels join parsing and kick/ban commands TODO/unverified |
 | [adainrivers/dune-dedicated-server-manager](https://github.com/adainrivers/dune-dedicated-server-manager) | `f7dfeb0d1327273299a03802eb16a71d4523e05c` | Cross-platform desktop profiles and SSH tunnels; lifecycle/diagnostics; scheduled maintenance; live RMQ admin commands; welcome packages | high |
 | [xixACExix/Simple-Dune-Awakening-Manager](https://github.com/xixACExix/Simple-Dune-Awakening-Manager) | `483530671c0bf74c61b059da269ad145de8124ad` | Windows/Hyper-V setup and lifecycle GUI; typed settings, reinstall-safe database/config backup/restore, and a keep-running health/repair watchdog | high |
-| [coastal-ms/DST-DuneServerTool](https://github.com/coastal-ms/DST-DuneServerTool) | `7bafc137ca1d356b9fd4918ef9782956b00500ab` | Windows desktop/mobile/remote UI; Hyper-V management; broad gameplay/CVar editor; map spin-up; Coriolis/Landsraad tools; backup mirroring; gameplay bot; portable command console | high |
+| [coastal-ms/DST-DuneServerTool](https://github.com/coastal-ms/DST-DuneServerTool) | `50778e047630a82b87835bbe75f9f2940e667e05` | Windows desktop/mobile/remote UI; Hyper-V management; broad gameplay/CVar editor; map spin-up; Coriolis/Landsraad tools; backup mirroring; gameplay bot; portable command console | high; latest abandoned-base removal change was reverted with no net source change |
 | [the4rchangel/dune-awakening-server-manager](https://github.com/the4rchangel/dune-awakening-server-manager) | `749e77b8cdff7277460ef245eb0eccb858622a93` | Six-step Hyper-V setup wizard; VM security/networking; WebSocket console; database import/export; character stats, recipes, specialization, economy, faction and cosmetics editor | high |
 | [ReditusDraco/dune-dashboard](https://github.com/ReditusDraco/dune-dashboard) | `306ebcc87106a2cc3a312211da9134b93b3ac9e9` | Player/guild/vehicle/building views; chat; SSH file browser and shell; safe pod controls; encrypted/scheduled backups; TLS; SSH key rotation | high |
 | [jdiveley/dune-dashboard](https://github.com/jdiveley/dune-dashboard) | `323f6d120d062c819e66c3cf034df5db9a3afe65` | Player, account, vehicle, building, guild, storage, market, event, package, map and chat views; browser shell; HTTPS | high |
@@ -143,9 +149,6 @@ need adaptation. A non-executable sketch does not create an operator outcome.
 Status meanings:
 
 - **Parity**: DASH provides the operator outcome now.
-- **Authorization required**: implementation would mutate a game client and is
-  paused under `AGENTS.md` until the operator explicitly authorizes client-side
-  work for that task.
 - **External contract**: no implementation can create the required third-party
   credential or proprietary service contract.
 
@@ -169,7 +172,7 @@ without reproducing that wrapper.
 | Compose profiles and per-map policies | Red-Blink, Manaiakalani | Parity | Adaptive profiles exceed static peer layouts |
 | Start/stop/restart/update/status | All full stacks/managers | Parity | Guarded target-aware paths are loaded |
 | Per-map start/stop/restart/recovery | Red-Blink, Manaiakalani, DST | Parity | Native post-start hooks preserved |
-| Dynamic maps and warm retention | Red-Blink | DASH exceeds | Minimum/balanced/adaptive/full/custom supported |
+| Dynamic maps and warm retention | Red-Blink | DASH exceeds | Minimum/balanced/adaptive/full/custom plus measured-p95 ready-by prewarming supported; adaptive is preserved as a fresh-state process default |
 | Measured scaling efficiency and evidence-driven retention | No surveyed Dune peer | DASH exceeds | Private time-weighted ledger measures map-hours saved, idle warm cost, productive running, warm/cold revisits, request-to-ready p50/p95, coverage and forecasts; adaptive recommendations are evidence-gated, gradual, mode-preserving, receipted, backed up, and alertable; see `docs/capacity-intelligence.md` |
 | Explicitly disabled maps survive update/restart | Manaiakalani | Parity | Persisted custom autoscaler modes and selective startup keep stopped/dynamic maps out of normal startup; full-warm remains an explicit operator choice |
 | Multi-Sietch management | Red-Blink, the4rchangel | Parity | Up to 64 guarded dimensions |
@@ -220,7 +223,7 @@ without reproducing that wrapper.
 | Scheduled restart with warnings and backup | adainrivers, Manaiakalani, AMP | DASH exceeds | Daily maintenance checks certification before warning players, revalidates the exact staged candidate before disconnect/stop, forbids build changes on targeted restarts, verifies the new stopped-world backup before apply, restores the current build on proof/update failure, and signs the complete execution outcome |
 | Authenticated Steam update and Steam Guard bootstrap | Manaiakalani | Parity | Protected owned-account login/password settings, interactive SteamCMD bootstrap for password/Steam Guard, persistent private Steam home, locked unattended hotfix updater, and restart-only-on-change behavior; one-time Steam Guard codes are not retained |
 | One-time/repeating announcements | Manaiakalani, AMP | Parity | Panel scheduler and verified RMQ hook |
-| General event automation | Icehunter, AMP | Parity | Persistent five-second scheduler, ISO times, bounded recurrence/max-runs, safe announcement/restart-plan primitives, dry-run-only mutation proposals, 500-run ledger, manual run/cancel, UI/API, and webhook audit emission; see `docs/event-automation.md` |
+| General event automation | Icehunter, AMP | DASH exceeds | Persistent five-second scheduler, ISO times, bounded recurrence/max-runs, safe announcement/restart-plan primitives, measured just-in-time map warming, dry-run-only mutation proposals, 500-run ledger, manual run/cancel, UI/API, and webhook audit emission; see `docs/event-automation.md` and `docs/anticipatory-map-warming.md` |
 | Outbound Discord event webhooks | Manaiakalani, AMP | Parity | Filtered generic or Discord payloads, HMAC-SHA256 signatures, recursive redaction, bounded asynchronous queue/retry/rate limits, redirect refusal, and secret-free delivery records; see `docs/outbound-webhooks.md` |
 | Full Discord bot/status cards | yacketrj, Icehunter | Parity implementation; credential canary pending | First-party dependency-free Gateway v10 bot, all 29 named peer subcommands plus eight identity-bound community commands (37 across seven groups), guild/channel restrictions, ephemeral bounded output, role propagation, heartbeat/resume/reconnect, hardened systemd service, credential-wait state, tests, and permissioned adapter isolation; a real Discord READY/interaction requires operator credentials; see `docs/discord-bot.md` |
 | Inventory slot-conflict detection/repair | Manaiakalani | Parity | `scripts/inventory-conflicts.sh` audits live state and provides hostname-, backup-, capacity-, and transaction-gated no-delete repair |
@@ -342,9 +345,9 @@ only when explicitly authorized for a concrete client task, as required by
 ## Current conclusion
 
 - **High confidence:** all feasible operator-visible outcomes in the pinned
-  peer catalogue have a shipped DASH parity path. The only non-parity statuses
-  are an explicitly unauthorized client-mutation scope and the external
-  Funcom/Tencent voice credential contract.
+  peer catalogue have a shipped DASH parity path. The remaining non-parity
+  status is the external Funcom/Tencent voice credential contract; live Discord
+  and payment/provider canaries likewise require provider-issued credentials.
 - **High confidence:** DASH already meets or exceeds the core hosting,
   lifecycle, map, backup, player administration, exchange, addon, metrics,
   public-status, failover, and server-side reverse-engineering outcomes in the
@@ -357,6 +360,11 @@ only when explicitly authorized for a concrete client task, as required by
   warm-idle cost, warm/cold outcomes, empirical revisit gaps, and routable-ready
   start latency feed gradual per-map recommendations while LRU/memory budgets
   and operator-selected modes remain authoritative.
+- **High confidence:** DASH also covers predictable demand without paying a
+  full-day warm cost. Operators choose a ready-by time; retained per-map p95
+  startup evidence plus bounded safety computes the start time, and the
+  recurring event ledger invokes only the guarded demand/start path. Disabled
+  maps, closed gates, a stopped worker, and start failures fail explicitly.
 - **High confidence:** DASH exceeds Red-Blink `v1.3.59` public discovery. Each
   server owns a short-lived Ed25519 identity; federation is a bounded static
   pull, source failures are isolated, and the browser independently rechecks

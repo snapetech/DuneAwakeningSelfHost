@@ -44,6 +44,7 @@ cancel it, show next-run/run-count fields, and inspect the execution ledger.
 | --- | --- |
 | `announcement` | Creates a job through the existing bounded announcement scheduler. |
 | `restart` | Creates a restart plan with `execute=false`; recurring events never turn a plan into an automatic restart. |
+| `map-prewarm` | Creates a guarded autoscaler demand lease for one known map. It requires the live autoscaler gates, refuses disabled maps, and uses the normal post-start hooks. |
 | `typed-knob-plan` | Records a dry-run-only plan. |
 | `economy-bundle` | Records a dry-run-only bundle with `dry_run=true`. |
 | `spice-cap-proposal` | Records a dry-run-only typed-knob proposal. |
@@ -51,6 +52,11 @@ cancel it, show next-run/run-count fields, and inspect the execution ledger.
 Event execution requires `DUNE_ADMIN_EVENT_EXECUTION_ENABLED=true`. The master
 player/world mutation gates are not bypassed. Action types outside the fixed
 catalog fail closed.
+
+The Infrastructure → Capacity Intelligence panel builds `map-prewarm` events
+from a **ready by** time and the map's measured cold-start p95. This supports
+one-time, daily, and weekly just-in-time warming without keeping the map live
+all day. See [`anticipatory-map-warming.md`](anticipatory-map-warming.md).
 
 ## API
 
@@ -82,5 +88,6 @@ python3 scripts/test-admin-panel-safe-surfaces.py
 ```
 
 The tests cover recurrence bounds, invalid timestamps, due-event selection,
-announcement dispatch, forced `execute=false` restart planning, dry-run action
-handling, run-ledger persistence, max-run termination, and the disabled gate.
+announcement dispatch, forced `execute=false` restart planning, guarded map
+prewarming and disabled-map refusal, dry-run action handling, run-ledger
+persistence, max-run termination, and the disabled gate.

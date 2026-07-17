@@ -101,17 +101,17 @@
       "id": "adaptive-map-farm",
       "title": "Adaptive map farm",
       "group": "Maps",
-      "description": "Dynamic demand, warm retention, memory-aware eviction, and evidence-qualified gradual retention recommendations are active.",
-      "documentation": "docs/autoscaling-memory.md",
+      "description": "Dynamic demand, warm retention, memory-aware eviction, evidence-qualified gradual retention, and measured just-in-time warm scheduling are active.",
+      "documentation": "docs/anticipatory-map-warming.md",
       "primaryGate": "DUNE_AUTOSCALER_ENABLED",
-      "gates": ["DUNE_AUTOSCALER_ENABLED", "DUNE_ADMIN_AUTOSCALER_MUTATIONS_ENABLED", "DUNE_ADMIN_MEMORY_MUTATIONS_ENABLED", "DUNE_CAPACITY_INTELLIGENCE_ENABLED", "DUNE_CAPACITY_AUTO_APPLY_ENABLED"],
+      "gates": ["DUNE_AUTOSCALER_ENABLED", "DUNE_ADMIN_AUTOSCALER_MUTATIONS_ENABLED", "DUNE_ADMIN_MEMORY_MUTATIONS_ENABLED", "DUNE_CAPACITY_INTELLIGENCE_ENABLED", "DUNE_CAPACITY_AUTO_APPLY_ENABLED", "DUNE_ADMIN_EVENT_EXECUTION_ENABLED"],
       "credentials": [],
       "files": [{"path": "config/capacity-intelligence.json", "minimumBytes": 100}],
       "services": ["admin-panel", "director", "gateway", "survival", "overmap"],
       "probe": "autoscaler",
       "dependencies": ["operational-evidence"],
       "canary": "runtime-proven",
-      "remediation": {"surface": "infrastructure:autoscaler", "summary": "Inspect the persisted profile, map modes, demand leases, memory floor, and last worker error."}
+      "remediation": {"surface": "infrastructure:autoscaler", "summary": "Inspect the persisted profile, map modes, demand sources, warm schedules, memory floor, and last worker error."}
     },
     {
       "id": "metrics-history",

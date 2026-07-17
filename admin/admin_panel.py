@@ -1100,9 +1100,15 @@ AUTOSCALER_IDLE_SECONDS_DEFAULT = max(60, min(int(os.environ.get("DUNE_AUTOSCALE
 AUTOSCALER_DEMAND_TTL_SECONDS_DEFAULT = max(60, min(int(os.environ.get("DUNE_AUTOSCALER_DEMAND_TTL_SECONDS", "900")), 86400))
 AUTOSCALER_POLL_SECONDS = max(1, min(int(os.environ.get("DUNE_AUTOSCALER_POLL_SECONDS", "3")), 60))
 AUTOSCALER_FAST_START = env_bool("DUNE_AUTOSCALER_FAST_START", True)
-AUTOSCALER_PROFILE_DEFAULT = os.environ.get("DUNE_AUTOSCALER_PROFILE", "balanced").strip().lower()
-if AUTOSCALER_PROFILE_DEFAULT not in ("minimum-footprint", "balanced", "full-warm", "custom"):
-    AUTOSCALER_PROFILE_DEFAULT = "balanced"
+AUTOSCALER_PROFILES = ("minimum-footprint", "balanced", "adaptive", "full-warm", "custom")
+
+
+def normalize_autoscaler_profile(value):
+    profile = str(value or "").strip().lower()
+    return profile if profile in AUTOSCALER_PROFILES else "balanced"
+
+
+AUTOSCALER_PROFILE_DEFAULT = normalize_autoscaler_profile(os.environ.get("DUNE_AUTOSCALER_PROFILE", "balanced"))
 AUTOSCALER_BALANCED_RETENTION_SECONDS = max(60, min(int(os.environ.get("DUNE_AUTOSCALER_BALANCED_RETENTION_SECONDS", "900")), 86400))
 AUTOSCALER_BALANCED_MAX_WARM_MAPS = max(0, min(int(os.environ.get("DUNE_AUTOSCALER_BALANCED_MAX_WARM_MAPS", "4")), len(GAME_MAP_SERVICES)))
 AUTOSCALER_BALANCED_MIN_AVAILABLE_MEMORY_GIB = max(0.0, min(float(os.environ.get("DUNE_AUTOSCALER_BALANCED_MIN_AVAILABLE_MEMORY_GIB", "16")), 1024.0))
@@ -3188,7 +3194,7 @@ def ensure_memory_balancer_thread():
 
 def autoscaler_apply_profile(state, profile):
     profile = str(profile or "").strip().lower()
-    if profile not in ("minimum-footprint", "balanced", "adaptive", "full-warm", "custom"):
+    if profile not in AUTOSCALER_PROFILES:
         raise ValueError("profile must be minimum-footprint, balanced, adaptive, full-warm, or custom")
     state["enabled"] = True
     state["profile"] = profile
@@ -3219,6 +3225,7 @@ def autoscaler_apply_profile(state, profile):
     state["idleSeconds"] = int(state.get("retentionSeconds") or AUTOSCALER_IDLE_SECONDS_DEFAULT)
     state["idleSince"] = {}
     state["demand"] = {}
+    state["demandSource"] = {}
     return state
 
 
@@ -3233,7 +3240,7 @@ def read_autoscaler_state():
         "minAvailableMemoryBytes": 0,
         "demandTtlSeconds": AUTOSCALER_DEMAND_TTL_SECONDS_DEFAULT,
         "modes": {service: autoscaler_default_mode(service) for service in GAME_MAP_SERVICES},
-        "idleSince": {}, "demand": {}, "demandEvents": {},
+        "idleSince": {}, "demand": {}, "demandSource": {}, "demandEvents": {},
         "lastActivity": {}, "demandCount": {}, "lastEvictionReason": {},
     }
     if AUTOSCALER_ENABLED_DEFAULT:
@@ -3247,7 +3254,7 @@ def read_autoscaler_state():
     state["maxWarmDynamicMaps"] = max(0, min(int(state.get("maxWarmDynamicMaps") or 0), len(GAME_MAP_SERVICES)))
     state["minAvailableMemoryBytes"] = max(0, min(int(state.get("minAvailableMemoryBytes") or 0), 1024 ** 4))
     state["demandTtlSeconds"] = max(60, min(int(state.get("demandTtlSeconds") or AUTOSCALER_DEMAND_TTL_SECONDS_DEFAULT), 86400))
-    for key in ("modes", "idleSince", "demand", "demandEvents", "retentionByService", "lastActivity", "demandCount", "lastEvictionReason"):
+    for key in ("modes", "idleSince", "demand", "demandSource", "demandEvents", "retentionByService", "lastActivity", "demandCount", "lastEvictionReason"):
         state[key] = state.get(key) if isinstance(state.get(key), dict) else {}
     state["retentionByService"] = {
         service: max(60, min(int(seconds), 86400))
@@ -3318,7 +3325,7 @@ def autoscaler_public_state(include_inventory=True):
         pollSeconds=AUTOSCALER_POLL_SECONDS, fastStart=AUTOSCALER_FAST_START,
         defaultMode=AUTOSCALER_DEFAULT_MODE,
         alwaysOnServices=sorted(AUTOSCALER_ALWAYS_ON_SERVICES),
-        profiles=["minimum-footprint", "balanced", "adaptive", "full-warm", "custom"],
+        profiles=list(AUTOSCALER_PROFILES),
         mutationEnabled=AUTOSCALER_MUTATIONS_ENABLED,
     )
     if include_inventory:
@@ -3340,6 +3347,7 @@ def autoscaler_public_state(include_inventory=True):
                 "warmUntil": float(idle_since) + retention if optional_warm and idle_since else None,
                 "optionalWarm": optional_warm,
                 "demandAt": state["demand"].get(service),
+                "demandSource": state["demandSource"].get(service),
                 "lastActivityAt": state["lastActivity"].get(service),
                 "demandCount": int(state["demandCount"].get(service) or 0),
                 "lastEvictionReason": state["lastEvictionReason"].get(service),
@@ -3349,7 +3357,7 @@ def autoscaler_public_state(include_inventory=True):
     return result
 
 
-def autoscaler_control(action, service=None, mode=None, idle_seconds=None, body=None):
+def autoscaler_control(action, service=None, mode=None, idle_seconds=None, body=None, demand_source=None):
     body = body if isinstance(body, dict) else {}
     with AUTOSCALER_LOCK:
         state = read_autoscaler_state()
@@ -3369,11 +3377,14 @@ def autoscaler_control(action, service=None, mode=None, idle_seconds=None, body=
             # A mode change is an operator override. Do not let an older travel
             # lease immediately undo disabled/dynamic cleanup.
             state["demand"].pop(service, None)
+            state["demandSource"].pop(service, None)
         elif action == "demand":
             service = str(service or "").strip()
             if service not in GAME_MAP_SERVICES:
                 raise ValueError("demand requires a known map service")
             state["demand"][service] = time.time()
+            source = str(demand_source or "operator").strip().lower()
+            state["demandSource"][service] = source if source in ("operator", "scheduled-prewarm") else "operator"
             state["lastActivity"][service] = state["demand"][service]
             state["demandCount"][service] = int(state["demandCount"].get(service) or 0) + 1
         elif action == "settings":
@@ -3461,6 +3472,7 @@ def autoscaler_collect_travel_demand(state, now=None):
         selected = services[:max(1, int(event["count"]))]
         for service in selected:
             state["demand"][service] = now
+            state["demandSource"][service] = "director-travel"
             state["lastActivity"][service] = now
             state["demandCount"][service] = int(state["demandCount"].get(service) or 0) + 1
             state["lastEvictionReason"].pop(service, None)
@@ -3516,6 +3528,7 @@ def autoscaler_tick(force=False):
                 players = counts.get(service, 0)
                 demand_at = float(state["demand"].get(service) or 0)
                 demanded = demand_at > 0 and now - demand_at <= state["demandTtlSeconds"]
+                demand_source = str(state["demandSource"].get(service) or "autoscaler")
                 desired_running = mode == "always-on" or (mode == "dynamic" and demanded)
                 if mode == "disabled" and players > 0:
                     actions.append({"service": service, "action": "refused-stop", "reason": f"{players} online players"})
@@ -3526,9 +3539,9 @@ def autoscaler_tick(force=False):
                         try:
                             capacity_intelligence_store().record_start(
                                 service,
-                                source="autoscaler",
+                                source=demand_source,
                                 at=now,
-                                details={"mode": mode, "demanded": demanded, "players": players},
+                                details={"mode": mode, "demanded": demanded, "demandSource": demand_source, "players": players},
                             )
                             capacity_start_recorded = True
                         except Exception as exc:
@@ -3547,6 +3560,7 @@ def autoscaler_tick(force=False):
                     continue
                 if players > 0:
                     state["demand"].pop(service, None)
+                    state["demandSource"].pop(service, None)
                     state["idleSince"].pop(service, None)
                     state["lastActivity"][service] = now
                     state["lastEvictionReason"].pop(service, None)
@@ -3599,6 +3613,7 @@ def autoscaler_tick(force=False):
                         stopped_services.add(service)
                         memory = autoscaler_host_memory()
             state["demand"] = {key: value for key, value in state["demand"].items() if now - float(value or 0) <= state["demandTtlSeconds"]}
+            state["demandSource"] = {key: value for key, value in state["demandSource"].items() if key in state["demand"]}
             write_autoscaler_state(state)
             AUTOSCALER_RUNTIME.update({"lastMessage": f"Autoscaler reconciled {len(GAME_MAP_SERVICES)} maps; {len(actions)} actions.", "lastActions": actions, "lastError": ""})
         except Exception as exc:
@@ -5130,6 +5145,16 @@ def event_action_plan(action):
         return {"type": kind, "endpoint": "/api/ops/announcement", "payload": {"message": action.get("message", ""), "delay": action.get("delay", "immediate"), "repeat_seconds": int(action.get("repeat_seconds", 0) or 0)}, "safePrimitive": True}
     if kind == "restart":
         return {"type": kind, "endpoint": "/api/ops/restart", "payload": {"target": action.get("target", "deep-desert"), "action": action.get("action", "restart"), "delay": action.get("delay", "immediate"), "execute": False}, "safePrimitive": True}
+    if kind == "map-prewarm":
+        service = str(action.get("service") or "").strip()
+        if service not in GAME_MAP_SERVICES:
+            raise ValueError("map-prewarm requires a known map service")
+        return {
+            "type": kind,
+            "endpoint": "/api/ops/autoscaler",
+            "payload": {"action": "demand", "service": service, "source": "scheduled-prewarm"},
+            "safePrimitive": True,
+        }
     if kind == "typed-knob-plan":
         return {"type": kind, "endpoint": "/api/settings/typed-knobs", "payload": {"updates": action.get("updates", {})}, "safePrimitive": True, "dryRunOnly": True}
     if kind == "economy-bundle":
@@ -5243,6 +5268,28 @@ def execute_event(event_id, trigger="manual"):
                     executed.append({"type": "restart", "ok": True, "jobId": job.get("id"), "execute": False})
                 except Exception as exc:
                     failures.append({"type": "restart", "ok": False, "error": str(exc)[:500]})
+            elif plan.get("type") == "map-prewarm":
+                service = str((plan.get("payload") or {}).get("service") or "")
+                try:
+                    if not MUTATIONS_ENABLED or not AUTOSCALER_MUTATIONS_ENABLED:
+                        raise PermissionError("scheduled map warming requires the master and autoscaler mutation gates")
+                    autoscaler = read_autoscaler_state()
+                    if not autoscaler.get("enabled"):
+                        raise RuntimeError("scheduled map warming requires the autoscaler to be running")
+                    mode = autoscaler.get("modes", {}).get(service)
+                    if mode == "disabled":
+                        raise RuntimeError(f"scheduled map warming refuses disabled map {service}")
+                    if mode == "always-on":
+                        executed.append({"type": "map-prewarm", "ok": True, "service": service, "noOp": True, "reason": "map is always-on"})
+                    elif mode == "dynamic":
+                        result = autoscaler_control("demand", service=service, demand_source="scheduled-prewarm")
+                        if result.get("lastError"):
+                            raise RuntimeError(str(result["lastError"]))
+                        executed.append({"type": "map-prewarm", "ok": True, "service": service, "noOp": False})
+                    else:
+                        raise RuntimeError(f"scheduled map warming found invalid mode for {service}")
+                except Exception as exc:
+                    failures.append({"type": "map-prewarm", "service": service, "ok": False, "error": str(exc)[:500]})
             else:
                 failures.append({"type": plan.get("type"), "ok": False, "error": "unsupported event execution primitive"})
         event["runCount"] = int(event.get("runCount") or 0) + 1
@@ -5288,6 +5335,61 @@ def due_event_ids(now=None):
             and event.get("nextRunAt")
             and event_time(event.get("nextRunAt")) <= now
         ]
+
+
+def scheduled_map_prewarms():
+    with EVENT_LOCK:
+        state = read_event_state()
+        rows = []
+        for event in state.get("events", []):
+            if event.get("status") != "scheduled":
+                continue
+            services = sorted({
+                str((plan.get("payload") or {}).get("service") or "")
+                for plan in event.get("plan", [])
+                if plan.get("type") == "map-prewarm"
+            } - {""})
+            if not services:
+                continue
+            rows.append({
+                "id": event.get("id"),
+                "name": event.get("name"),
+                "services": services,
+                "nextRunAt": event.get("nextRunAt"),
+                "repeatSeconds": int(event.get("repeatSeconds") or 0),
+                "runCount": int(event.get("runCount") or 0),
+                "maxRuns": int(event.get("maxRuns") or 0),
+            })
+        return sorted(rows, key=lambda row: (str(row.get("nextRunAt") or ""), str(row.get("id") or "")))
+
+
+def map_prewarm_prometheus():
+    with EVENT_LOCK:
+        state = read_event_state()
+        scheduled = 0
+        runs = 0
+        failures = 0
+        last_run = 0.0
+        for event in state.get("events", []):
+            if event.get("status") == "scheduled" and any(plan.get("type") == "map-prewarm" for plan in event.get("plan", [])):
+                scheduled += 1
+        for run in state.get("runs", []):
+            executed = any(row.get("type") == "map-prewarm" for row in run.get("executed", []))
+            failed = any(row.get("type") == "map-prewarm" for row in run.get("failures", []))
+            if not executed and not failed:
+                continue
+            runs += 1
+            failures += int(failed)
+            try:
+                last_run = max(last_run, event_time(run.get("startedAt")))
+            except (TypeError, ValueError):
+                pass
+        return (
+            f"dash_capacity_prewarm_schedules {scheduled}\n"
+            f"dash_capacity_prewarm_runs_total {runs}\n"
+            f"dash_capacity_prewarm_failures_total {failures}\n"
+            f"dash_capacity_prewarm_last_run_timestamp_seconds {last_run}\n"
+        )
 
 
 def event_scheduler_worker():
@@ -6859,6 +6961,8 @@ def capacity_intelligence_public_status():
         "autoApplyEnabled": MUTATIONS_ENABLED and AUTOSCALER_MUTATIONS_ENABLED and CAPACITY_AUTO_APPLY_ENABLED,
         "autoApplyIntervalHours": CAPACITY_AUTO_APPLY_INTERVAL_HOURS,
         "confirmApply": CONFIRM_CAPACITY_APPLY,
+        "prewarmSchedules": scheduled_map_prewarms(),
+        "eventExecutionEnabled": EVENT_EXECUTION_ENABLED,
     })
     return status
 
@@ -9507,7 +9611,7 @@ class Handler(BaseHTTPRequestHandler):
                 metrics = operational_slo_store().prometheus() if OPERATIONAL_SLO_ENABLED else "dash_slo_collector_up 0\n"
                 self.text(metrics, "text/plain; version=0.0.4; charset=utf-8")
             elif parsed.path == "/metrics/capacity":
-                metrics = capacity_intelligence_store().prometheus() if CAPACITY_INTELLIGENCE_ENABLED else "dash_capacity_collector_up 0\n"
+                metrics = capacity_intelligence_store().prometheus() + map_prewarm_prometheus() if CAPACITY_INTELLIGENCE_ENABLED else "dash_capacity_collector_up 0\n"
                 self.text(metrics, "text/plain; version=0.0.4; charset=utf-8")
             elif parsed.path == "/metrics/desired-state":
                 metrics = desired_state_store().prometheus() if DESIRED_STATE_ENABLED else "dash_desired_state_collector_up 0\n"
@@ -18419,6 +18523,7 @@ function mountInfrastructureCapacity(data){
   const page = document.querySelector('#view .pageStack');
   if (!page) return;
   const fleet = data.windows?.['604800']?.fleet || {};
+  const recommendationData = data.recommendations || {};
   const recommendations = Object.entries(data.recommendations || {}).map(([service,row]) => ({
     service,
     confidence:row.confidence,
@@ -18429,6 +18534,8 @@ function mountInfrastructureCapacity(data){
     startSamples:row.startSamples,
     revisitP75:row.revisitGapP75Seconds == null ? '—' : fmtRuntimeSeconds(row.revisitGapP75Seconds),
     coldStartP95:row.coldStartP95Seconds == null ? '—' : fmtRuntimeSeconds(row.coldStartP95Seconds),
+    prewarmLead:fmtRuntimeSeconds(row.prewarmLeadSeconds),
+    leadSource:row.prewarmLeadSource,
     warmHits:row.warmHits,
     coldRevisits:row.coldRevisits,
     next15m:row.nextVisitProbability == null ? '—' : `${(Number(row.nextVisitProbability)*100).toFixed(1)}%`,
@@ -18437,17 +18544,31 @@ function mountInfrastructureCapacity(data){
   const avoidance = fleet.resourceAvoidanceRatio == null ? '—' : `${(Number(fleet.resourceAvoidanceRatio)*100).toFixed(1)}%`;
   const productive = fleet.productiveRunningRatio == null ? '—' : `${(Number(fleet.productiveRunningRatio)*100).toFixed(1)}%`;
   const coverage = fleet.coverageRatio == null ? '—' : `${(Number(fleet.coverageRatio)*100).toFixed(1)}%`;
+  const prewarmOptions = Object.entries(recommendationData).map(([service,row]) => `<option value="${esc(service)}" data-lead="${esc(row.prewarmLeadSeconds || data.policy?.minimumPrewarmLeadSeconds || 60)}">${esc(service)} · lead ${esc(fmtRuntimeSeconds(row.prewarmLeadSeconds || 60))} · ${esc(row.prewarmLeadSource || 'policy')}</option>`).join('');
+  const prewarmSchedules = data.prewarmSchedules || [];
+  const prewarmScheduleOptions = prewarmSchedules.map(row => `<option value="${esc(row.id)}">${esc(row.services?.join(', ') || row.name)} · ${esc(row.nextRunAt || '')}</option>`).join('');
   page.insertAdjacentHTML('beforeend', `<div class="panelBand">
-    <div class="sectionHeader"><h2>Capacity Intelligence</h2><div class="toolbar"><span class="pill ${data.integrity?.ok?'ok':'bad'}">ledger ${data.integrity?.ok?'verified':'invalid'}</span><span class="pill">${esc(eligible)} eligible recommendations</span><span class="pill ${data.autoApplyEnabled?'warn':'ok'}">auto-apply ${data.autoApplyEnabled?'enabled':'off'}</span><button id="infraCapacityRefreshBtn">Refresh</button></div></div>
+    <div class="sectionHeader"><h2>Capacity Intelligence</h2><div class="toolbar"><span class="pill ${data.integrity?.ok?'ok':'bad'}">ledger ${data.integrity?.ok?'verified':'invalid'}</span><span class="pill">${esc(eligible)} eligible recommendations</span><span class="pill ${data.autoApplyEnabled?'warn':'ok'}">auto-apply ${data.autoApplyEnabled?'enabled':'off'}</span><span class="pill ${data.eventExecutionEnabled?'ok':'warn'}">prewarm runner ${data.eventExecutionEnabled?'enabled':'off'}</span><button id="infraCapacityRefreshBtn">Refresh</button></div></div>
     <p class="muted">This is the evidence layer behind the middle ground between fully cold and full warm. It measures map-hours avoided against an all-running baseline, idle warm cost, productive running time, warm versus cold revisits, and request-to-ready latency. Retention recommendations minimize observed idle seconds plus a policy-weighted player wait cost; they never change map modes and each application moves at most ${esc(Math.round(Number(data.policy?.maximumApplyFraction || 0)*100))}%.</p>
     <div class="metricGrid">${metric('7d map-hours saved', Number(fleet.mapHoursSaved || 0).toFixed(2), Number(fleet.mapHoursSaved || 0)>0?'ok':'')}${metric('7d idle map-hours', Number(fleet.idleMapHours || 0).toFixed(2))}${metric('Resource avoidance', avoidance)}${metric('Productive running', productive)}${metric('Observation coverage', coverage)}${metric('Last sample', data.runtime?.lastSampleAt ? new Date(Number(data.runtime.lastSampleAt)*1000).toLocaleString() : 'none', data.runtime?.lastError?'bad':'ok')}</div>
     ${table(recommendations)}
     <div class="commandBar"><button id="infraCapacityApplyBtn" class="primary" ${(!data.mutationEnabled || !eligible)?'disabled':''}>Apply eligible recommendations</button></div>
     <p class="muted">Application is gradual, append-only receipted, and preserves always-on/dynamic/disabled choices. Low-confidence rows remain advisory until the policy's revisit and measured-start thresholds are met.</p>
+    <div class="panelInset"><div class="sectionHeader"><div><h3>Just-in-time map warming</h3><p class="muted">Choose when a map must be routable. DASH subtracts its measured cold-start p95 plus the policy safety margin, then schedules one guarded demand lease through the existing event ledger. Daily and weekly recurrence avoid 24/7 map cost while covering predictable play or community-event windows.</p></div><span class="pill">${esc(prewarmSchedules.length)} scheduled</span></div>
+      <div class="grid"><label>Map<select id="infraPrewarmService">${prewarmOptions || '<option value="">No dynamic-map evidence</option>'}</select></label><label>Ready by<input id="infraPrewarmNeededAt" type="datetime-local"></label><label>Repeat<select id="infraPrewarmRepeat"><option value="0">once</option><option value="86400">daily</option><option value="604800">weekly</option></select></label><label>Maximum runs (0=unlimited)<input id="infraPrewarmMaxRuns" type="number" min="0" max="10000" value="1"></label></div>
+      <div class="commandBar"><button id="infraPrewarmScheduleBtn" class="primary" ${(!data.mutationEnabled || !data.eventExecutionEnabled || !prewarmOptions)?'disabled':''}>Preview and schedule warm</button></div>
+      ${table(prewarmSchedules)}
+      <div class="grid"><label>Scheduled warm<select id="infraPrewarmCancelId">${prewarmScheduleOptions || '<option value="">No scheduled warms</option>'}</select></label><label>&nbsp;<button id="infraPrewarmCancelBtn" class="danger" ${prewarmSchedules.length?'':'disabled'}>Cancel schedule</button></label></div>
+      <pre id="infraPrewarmResult">${esc(JSON.stringify({policy:{prewarmSafetySeconds:data.policy?.prewarmSafetySeconds,minimumPrewarmLeadSeconds:data.policy?.minimumPrewarmLeadSeconds,maximumPrewarmLeadSeconds:data.policy?.maximumPrewarmLeadSeconds}}, null, 2))}</pre>
+    </div>
     <details><summary>Cold starts, applications, policy, and runtime</summary>${table(data.recentStarts || [])}${table(data.applications || [])}<pre id="infraCapacityResult">${esc(JSON.stringify({policy:data.policy,runtime:data.runtime,integrity:data.integrity}, null, 2))}</pre></details>
   </div>`);
+  const neededAt = document.getElementById('infraPrewarmNeededAt');
+  if (neededAt) { const local=new Date(Date.now()+60*60*1000-new Date().getTimezoneOffset()*60000); neededAt.value=local.toISOString().slice(0,16); }
   document.getElementById('infraCapacityRefreshBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Refreshing...', () => infrastructure(loadSerial)));
   document.getElementById('infraCapacityApplyBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Applying...', infrastructureCapacityApply));
+  document.getElementById('infraPrewarmScheduleBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Scheduling...', infrastructurePrewarmSchedule));
+  document.getElementById('infraPrewarmCancelBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Cancelling...', infrastructurePrewarmCancel));
 }
 async function infrastructureCapacityApply(){
   if (!confirm('Apply evidence-qualified retention recommendations? Map modes will not change and each retention moves only within the configured fractional bound.')) return;
@@ -18455,6 +18576,38 @@ async function infrastructureCapacityApply(){
   const output=document.getElementById('infraCapacityResult');
   if (output) output.textContent=JSON.stringify(result,null,2);
   notify(result.applied ? `Applied ${result.changes.length} capacity recommendations` : result.reason, result.applied?'warn':'ok');
+  await infrastructure(loadSerial);
+  return result;
+}
+async function infrastructurePrewarmSchedule(){
+  const select=document.getElementById('infraPrewarmService');
+  const service=select?.value || '';
+  const neededText=document.getElementById('infraPrewarmNeededAt')?.value || '';
+  const repeatSeconds=Number(document.getElementById('infraPrewarmRepeat')?.value || 0);
+  const maxRuns=Number(document.getElementById('infraPrewarmMaxRuns')?.value || 0);
+  const leadSeconds=Number(select?.selectedOptions?.[0]?.dataset?.lead || 0);
+  const neededAt=new Date(neededText);
+  if (!service || !neededText || !Number.isFinite(neededAt.getTime()) || !Number.isFinite(leadSeconds) || leadSeconds<1) throw new Error('Map, valid ready-by time, and capacity lead evidence are required');
+  if (!Number.isInteger(maxRuns) || maxRuns<0 || maxRuns>10000) throw new Error('Maximum runs must be 0–10000');
+  const runAt=new Date(neededAt.getTime()-leadSeconds*1000);
+  if (runAt.getTime()<=Date.now()+5000) throw new Error(`Ready-by time must leave more than the ${leadSeconds}s measured prewarm lead`);
+  const body={name:`Just-in-time warm: ${service}`,runAt:runAt.toISOString(),repeatSeconds,maxRuns:repeatSeconds ? maxRuns : 1,actions:[{type:'map-prewarm',service}]};
+  const preview=await api('/api/events/dry-run',{method:'POST',body:JSON.stringify(body)});
+  const summary={service,neededAt:neededAt.toISOString(),scheduledStartAt:runAt.toISOString(),leadSeconds,leadSource:select.selectedOptions?.[0]?.textContent || '',repeatSeconds,maxRuns:body.maxRuns,event:preview.event};
+  document.getElementById('infraPrewarmResult').textContent=JSON.stringify(summary,null,2);
+  if (!confirm(`Schedule ${service} to begin warming ${leadSeconds}s before ${neededAt.toLocaleString()}?`)) return preview;
+  const created=await api('/api/events',{method:'POST',body:JSON.stringify(body)});
+  document.getElementById('infraPrewarmResult').textContent=JSON.stringify({...summary,created:created.event},null,2);
+  notify(`Just-in-time warm scheduled for ${service}`,'ok');
+  await infrastructure(loadSerial);
+  return created;
+}
+async function infrastructurePrewarmCancel(){
+  const id=document.getElementById('infraPrewarmCancelId')?.value || '';
+  if (!id) throw new Error('Select a scheduled warm');
+  if (!confirm(`Cancel scheduled warm ${id}?`)) return;
+  const result=await api('/api/events/cancel',{method:'POST',body:JSON.stringify({id})});
+  notify(result.cancelled ? 'Scheduled warm cancelled' : 'Schedule was no longer active',result.cancelled?'ok':'warn');
   await infrastructure(loadSerial);
   return result;
 }

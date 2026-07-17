@@ -52,6 +52,12 @@ Per-map summaries include warm hits, cold revisits, revisit-gap p50/p75/p90,
 cold-start p50/p95, and the empirical chance of another visit within the next
 15 minutes given the current idle age.
 
+They also expose a bounded just-in-time warm lead: measured cold-start p95 plus
+the policy safety margin, or the explicit fallback until a start completes.
+The Infrastructure panel can schedule that lead against a ready-by time through
+the persistent event ledger. See
+[`anticipatory-map-warming.md`](anticipatory-map-warming.md).
+
 ## Recommendation Model
 
 For every dynamic map, DASH evaluates retention candidates between the policy
@@ -133,8 +139,9 @@ GET /metrics/capacity
 Metrics include collector freshness, map-hours saved, idle map-hours,
 resource-avoidance/productive-running/coverage ratios, eligible recommendations,
 recommended retention, retention delta, warm/cold revisit counts, and cold-start
-p95. Prometheus alerts when collection is stale or a measured cold-start p95
-exceeds three minutes.
+p95. They also include label-free scheduled-prewarm counts, run/failure totals,
+and the latest run timestamp. Prometheus alerts when collection is stale, a
+measured cold-start p95 exceeds three minutes, or a scheduled warm fails.
 
 The metric endpoint contains no player identities, coordinates, tokens, notes,
 database rows, or paths.
@@ -173,9 +180,13 @@ Restore is explicit and must happen while the admin writer is stopped:
 | `DUNE_CAPACITY_AUTO_APPLY_ENABLED` | `false` | Enable evidence-qualified gradual application. |
 | `DUNE_CAPACITY_AUTO_APPLY_INTERVAL_HOURS` | `24` | Minimum automatic-application interval. |
 
+`config/capacity-intelligence.json` also bounds `prewarmSafetySeconds`,
+`minimumPrewarmLeadSeconds`, and `maximumPrewarmLeadSeconds`. These values
+affect schedule planning only; they do not start maps automatically.
+
 Policy validation bounds sample/event retention, collector gaps, start timeout,
 sample thresholds, fallback latency, wait weight, retention range/step, forecast
-horizon, and maximum per-application movement.
+horizon, prewarm lead/safety bounds, and maximum per-application movement.
 
 ## CLI And Validation
 

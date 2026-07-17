@@ -55,12 +55,17 @@ def load_policy(path):
         "maximumRetentionSeconds": _number(payload.get("maximumRetentionSeconds", 3600), "maximumRetentionSeconds", 60, 86400, integer=True),
         "recommendationStepSeconds": _number(payload.get("recommendationStepSeconds", 60), "recommendationStepSeconds", 10, 3600, integer=True),
         "forecastHorizonSeconds": _number(payload.get("forecastHorizonSeconds", 900), "forecastHorizonSeconds", 60, 86400, integer=True),
+        "prewarmSafetySeconds": _number(payload.get("prewarmSafetySeconds", 30), "prewarmSafetySeconds", 0, 900, integer=True),
+        "minimumPrewarmLeadSeconds": _number(payload.get("minimumPrewarmLeadSeconds", 60), "minimumPrewarmLeadSeconds", 10, 3600, integer=True),
+        "maximumPrewarmLeadSeconds": _number(payload.get("maximumPrewarmLeadSeconds", 600), "maximumPrewarmLeadSeconds", 60, 3600, integer=True),
         "maximumApplyFraction": _number(payload.get("maximumApplyFraction", 0.5), "maximumApplyFraction", 0.05, 1.0),
     }
     if policy["maximumRetentionSeconds"] < policy["minimumRetentionSeconds"]:
         raise ValueError("maximumRetentionSeconds must be at least minimumRetentionSeconds")
     if policy["maxObservationGapSeconds"] < policy["sampleIntervalSeconds"]:
         raise ValueError("maxObservationGapSeconds must be at least sampleIntervalSeconds")
+    if policy["maximumPrewarmLeadSeconds"] < policy["minimumPrewarmLeadSeconds"]:
+        raise ValueError("maximumPrewarmLeadSeconds must be at least minimumPrewarmLeadSeconds")
     return policy
 
 
@@ -372,6 +377,8 @@ class Store:
         horizon = policy["forecastHorizonSeconds"]
         probability = (sum(1 for gap in survivors if gap <= idle_age + horizon) / len(survivors)) if survivors else None
         confidence = "high" if len(gaps) >= 20 and len(ready_starts) >= 5 else "moderate" if eligible else "low"
+        measured_lead = (_quantile(ready_starts, 0.95) or float(policy["fallbackColdStartSeconds"])) + policy["prewarmSafetySeconds"]
+        prewarm_lead = max(policy["minimumPrewarmLeadSeconds"], min(policy["maximumPrewarmLeadSeconds"], math.ceil(measured_lead)))
         return {
             "eligible": eligible,
             "confidence": confidence,
@@ -384,6 +391,8 @@ class Store:
             "revisitGapP90Seconds": _quantile(gaps, 0.9),
             "coldStartP50Seconds": _quantile(ready_starts, 0.5),
             "coldStartP95Seconds": _quantile(ready_starts, 0.95),
+            "prewarmLeadSeconds": int(prewarm_lead),
+            "prewarmLeadSource": "measured-p95" if ready_starts else "policy-fallback",
             "warmHits": sum(1 for row in revisits if row["outcome"] == "warm"),
             "coldRevisits": sum(1 for row in revisits if row["outcome"] == "cold"),
             "nextVisitProbability": probability,

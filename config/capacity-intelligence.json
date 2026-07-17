@@ -13,5 +13,8 @@
   "maximumRetentionSeconds": 3600,
   "recommendationStepSeconds": 60,
   "forecastHorizonSeconds": 900,
+  "prewarmSafetySeconds": 30,
+  "minimumPrewarmLeadSeconds": 60,
+  "maximumPrewarmLeadSeconds": 600,
   "maximumApplyFraction": 0.5
 }

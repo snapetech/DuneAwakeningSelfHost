@@ -38,10 +38,21 @@ class CapacityIntelligenceTests(unittest.TestCase):
     def test_policy_and_private_modes(self):
         policy = capacity_intelligence.load_policy(self.policy)
         self.assertEqual(policy["schemaVersion"], 1)
+        self.assertEqual(policy["prewarmSafetySeconds"], 30)
+        self.assertEqual(policy["minimumPrewarmLeadSeconds"], 60)
+        self.assertEqual(policy["maximumPrewarmLeadSeconds"], 600)
         self.assertEqual(self.database.stat().st_mode & 0o777, 0o600)
         self.assertEqual(self.database.parent.stat().st_mode & 0o777, 0o700)
         payload = json.loads(self.policy.read_text())
         payload["maximumRetentionSeconds"] = 30
+        self.policy.write_text(json.dumps(payload))
+        with self.assertRaises(ValueError):
+            capacity_intelligence.load_policy(self.policy)
+
+    def test_prewarm_policy_bounds_fail_closed(self):
+        payload = json.loads(self.policy.read_text())
+        payload["minimumPrewarmLeadSeconds"] = 700
+        payload["maximumPrewarmLeadSeconds"] = 600
         self.policy.write_text(json.dumps(payload))
         with self.assertRaises(ValueError):
             capacity_intelligence.load_policy(self.policy)
@@ -55,6 +66,12 @@ class CapacityIntelligenceTests(unittest.TestCase):
         status = self.store.status(now=1100)
         self.assertEqual(status["recentStarts"][0]["id"], event_id)
         self.assertEqual(status["recentStarts"][0]["outcome"], "ready")
+
+    def test_prewarm_lead_uses_bounded_fallback_without_start_evidence(self):
+        self.store.observe([map_row()], observed_at=1000)
+        recommendation = self.store.status(now=1001)["recommendations"]["arrakeen"]
+        self.assertEqual(recommendation["prewarmLeadSource"], "policy-fallback")
+        self.assertEqual(recommendation["prewarmLeadSeconds"], 120)
 
     def test_start_failure_and_timeout(self):
         self.store.observe([map_row()], observed_at=1000)
@@ -110,6 +127,9 @@ class CapacityIntelligenceTests(unittest.TestCase):
         self.assertEqual(rec["confidence"], "moderate")
         self.assertGreaterEqual(rec["recommendedRetentionSeconds"], 60)
         self.assertLessEqual(rec["recommendedRetentionSeconds"], 3600)
+        self.assertEqual(rec["prewarmLeadSource"], "measured-p95")
+        self.assertGreaterEqual(rec["prewarmLeadSeconds"], 60)
+        self.assertLessEqual(rec["prewarmLeadSeconds"], 600)
 
     def test_application_is_tamper_evident_and_append_only(self):
         receipt = self.store.record_application("operator", "manual", [{"service": "arrakeen", "before": 900, "after": 600}], applied_at=1000)

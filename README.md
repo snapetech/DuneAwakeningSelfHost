@@ -64,7 +64,7 @@ Always compare your `.env` image pin with the Steam package installed on your ho
 - Recovery helpers for dependency loss and stale fixed-partition server IDs.
 - Host-level map watchdog service for unattended recovery.
 - LAN/VPN admin panel with Overview, Ops, Infrastructure, World, Security, Runbook, Players, Cosmetics, Blueprints, Care Packages, Addons, Bootstrap, Settings, Admin Actions, Admin Digests, Catalog, and Discovery surfaces.
-- Browser service/log control, verified manual and automatic backup lifecycle, certified daily maintenance that revalidates an exact staged update before player disruption, requires a newly verified stopped-world backup before apply, restores the current build on proof/update failure, and emits a signed stage-by-stage outcome, daily no-network PostgreSQL restore proof with hash-chained RPO/RTO receipts, time-weighted SLOs/error budgets and immutable incident history, HMAC-sealed file/container desired-state attestation, tamper-evident operational change intelligence with non-causal incident correlation, deterministic evidence-linked response plans, portable signed escalation capsules, layered disaster restore, bounded database query/row/password controls, dynamic map autoscaling, retained capacity intelligence with evidence-driven adaptive retention, live memory balancing, and retained Prometheus metrics.
+- Browser service/log control, verified manual and automatic backup lifecycle, certified daily maintenance that revalidates an exact staged update before player disruption, requires a newly verified stopped-world backup before apply, restores the current build on proof/update failure, and emits a signed stage-by-stage outcome, daily no-network PostgreSQL restore proof with hash-chained RPO/RTO receipts, time-weighted SLOs/error budgets and immutable incident history, HMAC-sealed file/container desired-state attestation, tamper-evident operational change intelligence with non-causal incident correlation, deterministic evidence-linked response plans, portable signed escalation capsules, layered disaster restore, bounded database query/row/password controls, dynamic map autoscaling, retained capacity intelligence with evidence-driven adaptive retention and p95-based just-in-time warm scheduling, live memory balancing, and retained Prometheus metrics.
 - Staged game-build acquisition and exact candidate-bound update certification
   with recovery/configuration/health gates, expiring HMAC receipts, candidate
   drift invalidation, fail-closed browser apply enforcement, and constant-I/O
@@ -84,7 +84,7 @@ Always compare your `.env` image pin with the Steam package installed on your ho
 - Default-on blast-radius change contracts for every governed high-impact write: exact operator/route/capability/body binding, current-policy signatures, short expiry, backup/reversibility/restart/player/map impact, enforced browser review, fail-closed API admission, audit correlation, and label-free metrics.
 - Signed, filtered outbound audit-event delivery for generic HTTPS receivers and Discord webhooks, with asynchronous bounded retries, recursive redaction, redirect refusal, and secret-free delivery records.
 - An isolated community-credit economy with one-time Discord account linking, immutable hash-chained ledger, atomic shop/kit stock and orders, playtime/vote/manual-payment accrual, movement-verified scaled session airdrops, daily streaks, weekly active-time thresholds, append-only engagement claims, versioned reward tracks, offline delivery receipts, and failure refunds.
-- Persistent one-time/recurring event automation with safe announcement and non-executing restart-plan primitives, dry-run mutation proposals, manual run/cancel, and a bounded execution ledger.
+- Persistent one-time/recurring event automation with safe announcement, non-executing restart-plan, and guarded map-prewarm primitives, dry-run mutation proposals, manual run/cancel, and a bounded execution ledger.
 - Reproducible backend item-grant helper with dry-run, explicit confirmation, and reviewed display-name labels such as `Complex Machinery` -> `T2MachineComponent`.
 - Restart announcements, restart planner hooks, chat-command bridge, player-presence announcer, and admin-bot monitoring.
 - Private whisper replies for admin chat commands, auction confirmations, player-presence messages, and admin-only digests through the verified `chat.whispers` route.
@@ -414,7 +414,9 @@ DUNE_AUTOSCALER_BALANCED_MIN_AVAILABLE_MEMORY_GIB=16
 ```
 
 The Infrastructure page can switch between `minimum-footprint`, `balanced`,
-`adaptive`, `full-warm`, and `custom`, and can edit per-map retention and global budgets.
+`adaptive`, `full-warm`, and `custom`, edit per-map retention and global
+budgets, and schedule a dynamic map by ready-by time using its measured
+cold-start p95 plus a bounded safety margin.
 For file-based installation, preview and apply a profile without touching
 unrelated `.env` keys:
 
@@ -425,6 +427,9 @@ unrelated `.env` keys:
 
 See [`docs/autoscaling-memory.md`](docs/autoscaling-memory.md) for lifecycle,
 reboot, migration, safety, and measured startup details.
+See [`docs/anticipatory-map-warming.md`](docs/anticipatory-map-warming.md) for
+one-time/daily/weekly just-in-time warm scheduling, gates, evidence, and
+failure behavior.
 
 Live-client login and travel still depend on a valid FLS token, public reachability, router/firewall state, and LAN reflection when joining from inside the same network. See [`docs/full-farm.md`](docs/full-farm.md), [`docs/operations.md`](docs/operations.md), and [`docs/lan-reflection.md`](docs/lan-reflection.md).
 
@@ -1064,6 +1069,7 @@ Start here:
 - [`docs/infrastructure-console.md`](docs/infrastructure-console.md): scoped service control/logs, verified backup lifecycle, database query/row/password controls, and update/repair workflows.
 - [`docs/bootstrap-console.md`](docs/bootstrap-console.md): browser first-run settings, preflight, TLS, database initialization, and stack reconcile.
 - [`docs/autoscaling-memory.md`](docs/autoscaling-memory.md): map modes, Director travel demand, idle scale-down, live limits, and memory balancing.
+- [`docs/anticipatory-map-warming.md`](docs/anticipatory-map-warming.md): measured-p95 ready-by scheduling through guarded recurring demand leases.
 - [`docs/cpu-affinity.md`](docs/cpu-affinity.md): cache/topology-aware foreground and background CPU pools for dynamic-map hosts.
 - [`docs/host-tuning.md`](docs/host-tuning.md): guarded memory/UDP/THP/NIC/IRQ tuning, persistence, evidence, and recovery.
 - [`docs/configuration-durability.md`](docs/configuration-durability.md): locked, verified, inode-preserving live `.env` updates that remain attached to Admin's bind mount.
