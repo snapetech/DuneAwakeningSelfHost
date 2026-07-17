@@ -29,7 +29,9 @@ REQUIRED_TABLES = (
     "inventories", "buildings", "building_instances", "base_backups",
     "permission_actor",
 )
-REQUIRED_FUNCTIONS = ("base_backup_save_from_totem",)
+REQUIRED_FUNCTIONS = (
+    "base_backup_save_from_totem", "get_player_pawn", "update_death_location",
+)
 COUNTED_TABLES = (
     "actors", "player_state", "world_partition", "farm_state", "items",
     "inventories", "building_instances", "base_backups",
@@ -329,6 +331,63 @@ SELECT json_build_object(
 def _sql_counts():
     entries = ",\n  ".join("'%s', (SELECT count(*) FROM dune.%s)" % (name, name) for name in COUNTED_TABLES)
     return f"SELECT json_build_object(\n  {entries}\n)::text;"
+
+
+def _sql_player_life_recovery_contract():
+    """Prove the native dead/alive round trip without retaining either write."""
+    return r"""
+BEGIN;
+CREATE TEMP TABLE dash_life_candidate ON COMMIT DROP AS
+SELECT eps.account_id, eps.player_pawn_id, eps.life_state::text AS original_life_state,
+       eps.death_location::text AS original_death_location,
+       gp.description AS pawn, gp.server_info
+FROM dune.encrypted_player_state eps
+CROSS JOIN LATERAL dune.get_player_pawn(eps.account_id) gp
+WHERE eps.life_state::text = 'Alive'
+  AND eps.player_pawn_id IS NOT NULL
+ORDER BY eps.account_id
+LIMIT 1;
+
+DO $dash$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM dash_life_candidate) THEN
+    RAISE EXCEPTION 'no alive player with a native pawn/server-info tuple is available';
+  END IF;
+END
+$dash$;
+
+SELECT dune.update_death_location(pawn, server_info, 'Dead'::dune.playerlifestate)
+FROM dash_life_candidate;
+
+CREATE TEMP TABLE dash_life_dead_observed ON COMMIT DROP AS
+SELECT eps.account_id, eps.life_state::text AS life_state,
+       eps.death_location IS NOT NULL AS death_location_present
+FROM dune.encrypted_player_state eps
+JOIN dash_life_candidate candidate USING (account_id);
+
+SELECT dune.update_death_location(pawn, server_info, 'Alive'::dune.playerlifestate)
+FROM dash_life_candidate;
+
+SELECT json_build_object(
+  'transactionRolledBack', true,
+  'candidateFound', EXISTS (SELECT 1 FROM dash_life_candidate),
+  'deadTransitionVerified', EXISTS (
+    SELECT 1 FROM dash_life_dead_observed
+    WHERE life_state='Dead' AND death_location_present
+  ),
+  'aliveTransitionVerified', EXISTS (
+    SELECT 1
+    FROM dune.encrypted_player_state eps
+    JOIN dash_life_candidate candidate USING (account_id)
+    WHERE eps.life_state::text='Alive'
+      AND eps.death_location IS NULL
+      AND eps.player_pawn_id=candidate.player_pawn_id
+  ),
+  'nativeFunction', 'dune.update_death_location(actordescription,serverinfo,playerlifestate)',
+  'testedAccountCount', (SELECT count(*) FROM dash_life_candidate)
+)::text;
+ROLLBACK;
+""".strip()
 
 
 def _parse_json_output(output, label):
@@ -667,6 +726,20 @@ def run_drill(workspace, *, host_workspace=None, source=None, receipt_root=None,
             if int(counts.get("player_state") or 0) > int(counts.get("actors") or 0):
                 raise RestoreDrillError("restored player_state count exceeds actor count")
 
+            life_contract_output = _run_checked(
+                docker, container_id,
+                ["psql", "-qXAt", "--username=dune", "--set", "ON_ERROR_STOP=1", "-d", "drill", "-c", _sql_player_life_recovery_contract()],
+                timeout=command_timeout_seconds, label="native player life-state recovery contract",
+            )
+            life_contract = _parse_json_output(life_contract_output, "native player life-state recovery contract")
+            if not all(bool(life_contract.get(key)) for key in (
+                "transactionRolledBack", "candidateFound", "deadTransitionVerified", "aliveTransitionVerified",
+            )):
+                raise RestoreDrillError(
+                    "native player life-state recovery contract failed: "
+                    + json.dumps(life_contract, sort_keys=True)
+                )
+
             _run_checked(docker, container_id, ["vacuumdb", "--analyze-only", "--username=dune", "--dbname=drill"],
                          timeout=command_timeout_seconds, label="restored database analyze")
             _run_checked(docker, container_id, ["pg_dump", "--format=custom", "--no-owner", "--username=dune", "--file=/tmp/roundtrip.dump", "drill"],
@@ -681,6 +754,7 @@ def run_drill(workspace, *, host_workspace=None, source=None, receipt_root=None,
                 "archiveListed": True,
                 "schema": catalog,
                 "rowCounts": counts,
+                "playerLifeRecoveryContract": life_contract,
                 "analyzeCompleted": True,
                 "roundTripArchiveListed": True,
                 "roundTripBytes": roundtrip_size,

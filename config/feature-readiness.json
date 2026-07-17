@@ -181,10 +181,26 @@
       "remediation": {"surface": "infrastructure", "summary": "Load the metrics overlay and restore the exact failed collector or scrape target."}
     },
     {
+      "id": "offline-player-life-recovery",
+      "title": "Native offline player life-state recovery",
+      "group": "Administration",
+      "description": "Fingerprint-bound Dead-to-Alive persisted recovery uses Dune's native pawn/life-state function under an offline recheck, transaction locks, a full backup, post-write verification, and a private receipt.",
+      "documentation": "docs/offline-player-life-state-recovery.md",
+      "primaryGate": "DUNE_ADMIN_PLAYER_LIFE_RECOVERY_ENABLED",
+      "gates": ["DUNE_ADMIN_MUTATIONS_ENABLED", "DUNE_ADMIN_PLAYER_LIFE_RECOVERY_ENABLED"],
+      "credentials": [],
+      "files": [{"path": "admin/player_life_recovery.py", "minimumBytes": 1000}, {"path": "docs/offline-player-life-state-recovery.md", "minimumBytes": 1000}],
+      "services": ["admin-panel", "postgres"],
+      "probe": "player-life-recovery",
+      "dependencies": ["mutation-governance", "operational-evidence"],
+      "canary": "runtime-proven",
+      "remediation": {"surface": "mutations", "summary": "Run a current isolated PostgreSQL restore drill, repair only the exact missing native function or failed Dead/Alive semantic assertion, and preserve the Offline-only execution gate."}
+    },
+    {
       "id": "player-administration",
       "title": "Player and progression administration",
       "group": "Administration",
-      "description": "Guarded items, native runtime actions, vehicles, progression, reputation, journeys, faction, character-slot, canonical identity, orphan cleanup, and native deletion workflows are loaded.",
+      "description": "Guarded items, native runtime actions, vehicles, progression, reputation, journeys, faction, character-slot, canonical identity, orphan cleanup, native deletion, and offline life-state recovery workflows are loaded.",
       "documentation": "docs/player-identity-integrity.md",
       "primaryGate": "DUNE_ADMIN_MUTATIONS_ENABLED",
       "gates": ["DUNE_ADMIN_MUTATIONS_ENABLED", "DUNE_ADMIN_ITEM_GRANTS_ENABLED", "DUNE_ADMIN_GM_COMMANDS_ENABLED", "DUNE_SERVER_NOTIFICATION_SYSTEM_ENABLED", "DUNE_ADMIN_PLAYER_RUNTIME_MUTATIONS_ENABLED", "DUNE_ADMIN_VEHICLE_MUTATIONS_ENABLED", "DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED", "DUNE_ADMIN_JOURNEY_MUTATIONS_ENABLED", "DUNE_ADMIN_FACTION_MUTATIONS_ENABLED", "DUNE_ADMIN_CHARACTER_SWAP_ENABLED", "DUNE_ADMIN_PLAYER_IDENTITY_MUTATIONS_ENABLED", "DUNE_ADMIN_CHARACTER_DELETE_ENABLED", "DUNE_PLAYER_PRESENCE_PRIVATE_WELCOME_ENABLED"],

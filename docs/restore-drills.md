@@ -84,17 +84,22 @@ The engine performs these stages in order:
 5. Run `pg_restore --list` on the source.
 6. Run `pg_restore --exit-on-error --no-owner --no-privileges` into a fresh
    `drill` database.
-7. Require the core Dune tables, the native
-   `dune.base_backup_save_from_totem` function, zero invalid indexes, and zero
-   unvalidated constraints.
+7. Require the core Dune tables, native `dune.base_backup_save_from_totem`,
+   `dune.get_player_pawn`, and `dune.update_death_location` functions, zero
+   invalid indexes, and zero unvalidated constraints.
 8. Read exact counts from actors, player state, world partitions, farm state,
    items, inventories, building instances, and recoverable base backups. Actor
    and partition populations must be nonzero, and player-state rows may not
    exceed actor rows.
-9. Run `vacuumdb --analyze-only` to read and analyze the restored relations.
-10. Create a second custom-format `pg_dump`, list it with `pg_restore`, and
+9. Inside one transaction, select an Alive pawn, invoke the native life-state
+   path to `Dead`, verify the death location materialized, invoke it back to
+   `Alive`, verify the death location cleared, and roll the whole transaction
+   back. This is the semantic canary for guarded offline recovery; no tested
+   state remains even in the disposable clone.
+10. Run `vacuumdb --analyze-only` to read and analyze the restored relations.
+11. Create a second custom-format `pg_dump`, list it with `pg_restore`, and
     require a nonempty archive.
-11. Remove the container and write a private receipt.
+12. Remove the container and write a private receipt.
 
 This proves the PostgreSQL layer and Dune database invariants. It does not
 claim that RabbitMQ, server-saved files, configuration archives, TLS identity,
@@ -120,7 +125,8 @@ dashboard share one lock and receipt chain. Each receipt includes:
 - PostgreSQL image and measured ready/restore/total durations;
 - the applied isolation evidence;
 - required-schema results, core row counts, database size, index/constraint
-  state, analyze result, and round-trip archive size;
+  state, rolled-back native player life-state semantic proof, analyze result,
+  and round-trip archive size;
 - cleanup outcome and stale-container removals;
 - separate integrity and RPO/RTO policy verdicts;
 - the prior receipt hash and its own canonical SHA-256.

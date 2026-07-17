@@ -110,6 +110,10 @@ IMPACTS = {
         "player-state", "location", "database", backup="required",
         reversibility="manual-teleport", player_disruption=True,
         safeguards=("offline player", "bounded coordinates", "database backup", "transaction")),
+    "/api/admin/player-recovery/life-state": _impact(
+        "player-state", "life-state", "database", backup="required",
+        reversibility="backup-restore", player_disruption=True,
+        safeguards=("explicitly offline player", "dead-state allowlist", "fingerprint-bound preview", "advisory and row locks", "full database backup", "native game function", "post-write verification", "private receipt", "isolated semantic restore proof")),
     "/api/admin/vehicle": _impact(
         "vehicle-state", "database", backup="required", reversibility="backup-restore",
         player_disruption=True, safeguards=("ownership validation", "database backup", "transaction")),

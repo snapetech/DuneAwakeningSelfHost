@@ -82,6 +82,7 @@ POLICIES = {
     "/api/admin/player-maintenance": ("high", "Change or roll back player progression/recovery state", _non_dry),
     "/api/admin/player-runtime-action": ("high", "Execute a native player runtime action", _non_dry),
     "/api/admin/player-recovery/offline-teleport": ("high", "Move an offline player", _non_dry),
+    "/api/admin/player-recovery/life-state": ("high", "Recover an offline player's persisted life state", _non_dry),
     "/api/admin/vehicle": ("high", "Change persistent vehicle state", _non_dry),
     "/api/admin/item": ("high", "Grant or modify an item", lambda body: not _dry_run(body, default=False)),
     "/api/admin/item/delete": ("high", "Delete an owned item", _always),

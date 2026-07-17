@@ -1627,6 +1627,64 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn("previousActors", result["rollback"])
         self.assertFalse(any("update dune.actors" in sql.lower() for sql, _ in calls))
 
+    def test_offline_life_state_recovery_preview_is_read_only_and_exposes_gate(self):
+        original_plan = self.panel.player_life_recovery.plan
+        original_receipts = self.panel.player_life_recovery.list_receipts
+        self.panel.player_life_recovery.plan = lambda query, account_id: {
+            "ok": True, "dryRun": True, "canExecute": True, "accountId": account_id,
+            "player": {"lifeState": "Dead", "onlineStatus": "Offline"},
+            "expectedFingerprint": "a" * 64, "confirm": self.panel.player_life_recovery.CONFIRM,
+            "executionGate": "DUNE_ADMIN_PLAYER_LIFE_RECOVERY_ENABLED",
+            "nativeFunction": self.panel.player_life_recovery.NATIVE_FUNCTION,
+        }
+        self.panel.player_life_recovery.list_receipts = lambda root, limit=20: []
+        self.addCleanup(lambda: setattr(self.panel.player_life_recovery, "plan", original_plan))
+        self.addCleanup(lambda: setattr(self.panel.player_life_recovery, "list_receipts", original_receipts))
+
+        result = self.handler.offline_player_life_recovery({"dryRun": True, "accountId": 42})
+
+        self.assertTrue(result["dryRun"])
+        self.assertTrue(result["canExecute"])
+        self.assertEqual("DUNE_ADMIN_PLAYER_LIFE_RECOVERY_ENABLED", result["executionGate"])
+        self.assertFalse(result["mutationEnabled"])
+
+    def test_offline_life_state_recovery_execution_uses_dedicated_gate_and_audited_route(self):
+        original_execute = self.panel.player_life_recovery.execute
+        calls = []
+        self.panel.player_life_recovery.execute = lambda *args, **kwargs: calls.append((args, kwargs)) or {
+            "ok": True, "dryRun": False, "accountId": 42,
+            "nativeFunction": self.panel.player_life_recovery.NATIVE_FUNCTION,
+            "verified": True, "receipt": {"id": "player-life-recovery-test"},
+        }
+        self.addCleanup(lambda: setattr(self.panel.player_life_recovery, "execute", original_execute))
+        self.patch_flag("MUTATIONS_ENABLED", True)
+        self.patch_flag("PLAYER_LIFE_RECOVERY_ENABLED", True)
+
+        captured = self.invoke_post_route("/api/admin/player-recovery/life-state", {
+            "dryRun": False, "accountId": 42, "expectedFingerprint": "a" * 64,
+            "confirm": self.panel.player_life_recovery.CONFIRM,
+        })
+
+        self.assertFalse(captured["errors"])
+        self.assertTrue(captured["json"]["verified"])
+        self.assertEqual(1, len(calls))
+        self.assertEqual(42, calls[0][0][3])
+        self.assertEqual("offline-player-life-recovery", captured["audits"][0]["action"])
+        self.assertEqual("player-life-recovery-test", captured["audits"][0]["receipt_id"])
+
+    def test_offline_life_state_recovery_execution_fails_closed_without_feature_gate(self):
+        self.patch_flag("MUTATIONS_ENABLED", True)
+        self.patch_flag("PLAYER_LIFE_RECOVERY_ENABLED", False)
+        with self.assertRaisesRegex(PermissionError, "PLAYER_LIFE_RECOVERY_ENABLED"):
+            self.handler.offline_player_life_recovery({"dryRun": False, "accountId": 42})
+
+    def test_admin_ui_contains_native_offline_life_state_recovery_controls(self):
+        html = self.panel.INDEX
+        self.assertIn("Native Offline Life-State Recovery", html)
+        self.assertIn("lifeRecoveryPreviewBtn", html)
+        self.assertIn("/api/admin/player-recovery/life-state", html)
+        self.assertIn("expectedFingerprint:lifeRecoveryPlan.expectedFingerprint", html)
+
     def test_communinet_tutorial_vendor_dry_runs_are_plan_only(self):
         def fake_query(sql, params=None):
             if "load_communinet_player_data" in sql:

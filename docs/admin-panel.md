@@ -330,6 +330,7 @@ server {
   [`care-packages.md`](care-packages.md).
 - Targeted Solari grants through `POST /api/admin/solari/inventory` for carried `SolarisCoin` stacks and `POST /api/admin/solari/bank` for Exchange/bank balance.
 - Offline player recovery preview through `POST /api/admin/player-recovery/offline-teleport`. Execution refuses online players, requires `MOVE OFFLINE PLAYER`, and calls the shipped `dune.admin_move_offline_player_to_partition(...)` pawn move helper.
+- Native offline dead-state recovery through `POST /api/admin/player-recovery/life-state`. Execution is fingerprint-bound, backup-first, advisory/row locked, privately receipted, and verified through the shipped `dune.update_death_location(...)` function; see [offline-player-life-state-recovery.md](offline-player-life-state-recovery.md).
 - Spice/resource field inspection through `POST /api/admin/spice-fields/inspect`.
 - Progression surface inspection through `POST /api/admin/progression/inspect`; this discovers faction, reputation, journey, recipe, vehicle, and related DB function/table evidence without executing discovered functions.
 - Faction reputation planning through `POST /api/admin/faction-reputation`, default `dry_run=true`. Execution requires `DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED=true` and confirmation `WRITE REPUTATION`.
@@ -440,6 +441,7 @@ DUNE_ADMIN_CHARACTER_SWAP_ENABLED=false
 DUNE_ADMIN_PLAYER_IDENTITY_MUTATIONS_ENABLED=false
 DUNE_ADMIN_CHARACTER_DELETE_ENABLED=false
 DUNE_ADMIN_PLAYER_RUNTIME_MUTATIONS_ENABLED=false
+DUNE_ADMIN_PLAYER_LIFE_RECOVERY_ENABLED=false
 DUNE_ADMIN_VEHICLE_MUTATIONS_ENABLED=false
 DUNE_ADMIN_MEMORY_MUTATIONS_ENABLED=false
 DUNE_ADMIN_AUTOSCALER_MUTATIONS_ENABLED=false
@@ -483,6 +485,9 @@ documented host scripts, exact-host checks, dry-run previews, and backups in
 - `DUNE_ADMIN_PLAYER_RUNTIME_MUTATIONS_ENABLED`: second gate for native
   skill/water/kick/vehicle commands; also requires the general GM gate and
   shared server-command token.
+- `DUNE_ADMIN_PLAYER_LIFE_RECOVERY_ENABLED`: controls fingerprint-bound native
+  recovery of an explicitly Offline `Dead`, `DeadByCoriolis`, or
+  `DeadBySandworm` character to persisted `Alive`. Preview remains available.
 - `DUNE_ADMIN_VEHICLE_MUTATIONS_ENABLED`: controls offline persistent vehicle
   durability and fuel repair.
 - `DUNE_ADMIN_MEMORY_MUTATIONS_ENABLED`: controls live container limits and
@@ -660,6 +665,12 @@ The endpoint refuses online players. Execution requires:
 - `confirm: "MOVE OFFLINE PLAYER"`
 
 Rollback is another offline move using the previous partition/location recorded in the audit context. Confidence is moderate because the function contract is mapped, but live recovery should still be validated on a non-critical character first.
+
+### Native persisted life-state recovery
+
+`POST /api/admin/player-recovery/life-state` is a separate recovery contract. It does not teleport and does not issue an unverified heal/revive command. Preview fingerprints the exact active player-state, pawn, Offline predicate, current dead state, death-location digest, and native function availability. Execution requires `DUNE_ADMIN_PLAYER_LIFE_RECOVERY_ENABLED=true`, an unchanged fingerprint, and `RECOVER OFFLINE PLAYER LIFE STATE`.
+
+The execution path creates a full dump, takes account advisory plus player-state/pawn row locks, rechecks eligibility, calls `dune.get_player_pawn` and `dune.update_death_location(..., 'Alive')`, then requires persisted `Alive` with no death location before commit. It produces a private receipt and requires relog but no restart. Exact semantics, rollback, metrics, API examples, and the networkless disposable Dead/Alive proof are documented in [offline-player-life-state-recovery.md](offline-player-life-state-recovery.md).
 
 ## Spice and Resource Inspection
 

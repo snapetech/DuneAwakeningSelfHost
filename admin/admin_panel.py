@@ -83,6 +83,7 @@ import maintenance_outcomes
 import maintenance_planner
 import public_directory
 import player_identity
+import player_life_recovery
 import env_file_store
 import feature_readiness
 import feature_readiness_history
@@ -424,6 +425,7 @@ COMMAND_CONSOLE_ENABLED = os.environ.get("DUNE_COMMAND_CONSOLE_ENABLED", "true")
 COSMETIC_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_COSMETIC_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 ADDON_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_ADDON_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 PLAYER_RUNTIME_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_PLAYER_RUNTIME_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+PLAYER_LIFE_RECOVERY_ENABLED = os.environ.get("DUNE_ADMIN_PLAYER_LIFE_RECOVERY_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 VEHICLE_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_VEHICLE_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 BOOTSTRAP_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_BOOTSTRAP_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 REPUTATION_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_REPUTATION_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
@@ -445,6 +447,8 @@ CHARACTER_SWAP_ENABLED = os.environ.get("DUNE_ADMIN_CHARACTER_SWAP_ENABLED", "fa
 PLAYER_IDENTITY_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_PLAYER_IDENTITY_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 CHARACTER_DELETE_ENABLED = os.environ.get("DUNE_ADMIN_CHARACTER_DELETE_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 PLAYER_IDENTITY_RECEIPTS = BACKUP_ROOT / "player-identity"
+PLAYER_LIFE_RECOVERY_RECEIPTS = BACKUP_ROOT / "player-life-recovery"
+PLAYER_LIFE_RECOVERY_RUNTIME = {"previews": 0, "executions": 0, "refusals": 0, "errors": 0}
 ANNOUNCEMENT_STATE_FILE = BACKUP_ROOT / "announcements.json"
 RESTART_STATE_FILE = BACKUP_ROOT / "restart-jobs.json"
 EVENT_STATE_FILE = BACKUP_ROOT / "events.json"
@@ -789,6 +793,27 @@ def player_identity_prometheus():
     return "".join(f"{name} {value}\n" for name, value in values.items())
 
 
+def player_life_recovery_prometheus():
+    try:
+        probe = _feature_readiness_player_life_recovery_probe()
+        values = {
+            "dash_player_life_recovery_collector_up": 1,
+            "dash_player_life_recovery_enabled": 1 if MUTATIONS_ENABLED and PLAYER_LIFE_RECOVERY_ENABLED else 0,
+            "dash_player_life_recovery_ready": 1 if probe.get("ready") else 0,
+            "dash_player_life_recovery_previews_total": int(PLAYER_LIFE_RECOVERY_RUNTIME["previews"]),
+            "dash_player_life_recovery_executions_total": int(PLAYER_LIFE_RECOVERY_RUNTIME["executions"]),
+            "dash_player_life_recovery_refusals_total": int(PLAYER_LIFE_RECOVERY_RUNTIME["refusals"]),
+            "dash_player_life_recovery_errors_total": int(PLAYER_LIFE_RECOVERY_RUNTIME["errors"]),
+        }
+    except Exception:
+        values = {
+            "dash_player_life_recovery_collector_up": 0,
+            "dash_player_life_recovery_enabled": 1 if MUTATIONS_ENABLED and PLAYER_LIFE_RECOVERY_ENABLED else 0,
+            "dash_player_life_recovery_ready": 0,
+        }
+    return "".join(f"{name} {value}\n" for name, value in values.items())
+
+
 def _feature_readiness_probe(name, callback):
     try:
         result = callback()
@@ -1047,6 +1072,40 @@ def _feature_readiness_peer_watch_probe():
     }
 
 
+def _feature_readiness_player_life_recovery_probe():
+    rows = query("""
+        select to_regprocedure('dune.get_player_pawn(bigint)') is not null as get_player_pawn,
+               to_regprocedure('dune.update_death_location(dune.actordescription,dune.serverinfo,dune.playerlifestate)') is not null as update_death_location
+    """)
+    functions_ready = bool(rows and rows[0].get("get_player_pawn") and rows[0].get("update_death_location"))
+    restore_status = restore_drill.status(RESTORE_DRILL_RECEIPT_ROOT, limit=1)
+    latest = restore_status.get("latest") or {}
+    contract = ((latest.get("validation") or {}).get("playerLifeRecoveryContract") or {})
+    semantic_ready = bool(
+        latest.get("receiptHashValid") and latest.get("integrityOk")
+        and contract.get("transactionRolledBack")
+        and contract.get("deadTransitionVerified")
+        and contract.get("aliveTransitionVerified")
+    )
+    ready = bool(MUTATIONS_ENABLED and PLAYER_LIFE_RECOVERY_ENABLED and functions_ready and semantic_ready)
+    if not (MUTATIONS_ENABLED and PLAYER_LIFE_RECOVERY_ENABLED):
+        state = "gated"
+    elif not functions_ready:
+        state = "native-contract-missing"
+    elif not semantic_ready:
+        state = "semantic-proof-missing"
+    else:
+        state = "ready"
+    return {
+        "ready": ready,
+        "state": state,
+        "detail": (
+            f"native functions={functions_ready}; isolated Dead/Alive rollback proof={semantic_ready}; "
+            f"master gate={MUTATIONS_ENABLED}; feature gate={PLAYER_LIFE_RECOVERY_ENABLED}"
+        ),
+    }
+
+
 def _feature_readiness_autoscaler_probe():
     status = autoscaler_public_state(include_inventory=False)
     ready = bool(status.get("enabled") and not status.get("lastError"))
@@ -1197,6 +1256,7 @@ def feature_readiness_public_status(force=False):
             "state": "ready" if GM_COMMANDS_ENABLED and PLAYER_RUNTIME_MUTATIONS_ENABLED else "gated",
             "detail": "native command gates, private token, and admin-rmq transport checked",
         },
+        "player-life-recovery": _feature_readiness_probe("player-life-recovery", _feature_readiness_player_life_recovery_probe),
         "moderation": _feature_readiness_probe("moderation", lambda: _feature_readiness_store_probe(MODERATION_STORE, MODERATION_STORE_INITIALIZED, MODERATION_RUNTIME, "moderation")),
         "community-rewards": _feature_readiness_probe("community-rewards", _feature_readiness_community_probe),
         "creator-modding": _feature_readiness_probe("creator-modding", _feature_readiness_creator_probe),
@@ -1325,6 +1385,8 @@ def admin_panel_reload_paths():
         CODE_ROOT / "admin" / "change_approvals.py",
         CODE_ROOT / "admin" / "change_contracts.py",
         CODE_ROOT / "admin" / "public_directory.py",
+        CODE_ROOT / "admin" / "player_identity.py",
+        CODE_ROOT / "admin" / "player_life_recovery.py",
         CODE_ROOT / "admin" / "credential_lifecycle.py",
         CREDENTIAL_LIFECYCLE_FILE,
         CODE_ROOT / "scripts" / "dune_gm_command.py",
@@ -2027,6 +2089,7 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_ADMIN_FACTION_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for player faction change server-function calls. Faction planning and inspection remain available."},
     "DUNE_ADMIN_LANDSRAAD_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for Landsraad term administration server-function calls. Landsraad inspection and dry-runs remain available."},
     "DUNE_ADMIN_RESPAWN_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for respawn-location deletion through update_respawn_locations. Respawn inspection and dry-runs remain available."},
+    "DUNE_ADMIN_PLAYER_LIFE_RECOVERY_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for fingerprint-bound native recovery of an explicitly Offline dead player's persisted life state. Preview remains available."},
     "DUNE_ADMIN_GUILD_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for guild description and role server-function calls. Guild inspection and dry-runs remain available."},
     "DUNE_ADMIN_MARKER_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for marker deletion server-function calls. Marker inspection and dry-runs remain available."},
     "DUNE_ADMIN_LANDCLAIM_MUTATIONS_ENABLED": {"group": "Admin Panel", "secret": False, "restart": True, "why": "Feature gate for landclaim segment server-function calls. Landclaim inspection and dry-runs remain available."},
@@ -12059,6 +12122,7 @@ class Handler(BaseHTTPRequestHandler):
                 metrics += change_contract_prometheus()
                 metrics += public_directory_prometheus()
                 metrics += player_identity_prometheus()
+                metrics += player_life_recovery_prometheus()
                 metrics += feature_readiness_prometheus()
                 metrics += credential_lifecycle_prometheus()
                 metrics += backup_schedule_prometheus()
@@ -13940,6 +14004,17 @@ class Handler(BaseHTTPRequestHandler):
                     result = augment_admin.apply_to_item(db_connect, item_id, augments, grade, metadata)
                     result.update({"dryRun": False, "backup": backup})
                 self.audit("item-augments", ok=result.get("ok"), dry_run=result.get("dryRun"), item_id=item_id, augments=result.get("augments"), grade=result.get("grade"))
+                self.json(result)
+            elif parsed.path == "/api/admin/player-recovery/life-state":
+                self.require_token()
+                body = parse_body(self)
+                result = self.offline_player_life_recovery(body)
+                self.audit(
+                    "offline-player-life-recovery", ok=result.get("ok"),
+                    dry_run=result.get("dryRun"), account_id=result.get("accountId"),
+                    receipt_id=(result.get("receipt") or {}).get("id"),
+                    native_function=result.get("nativeFunction"), verified=result.get("verified"),
+                )
                 self.json(result)
             elif parsed.path == "/api/admin/player-recovery/offline-teleport":
                 self.require_token()
@@ -16112,6 +16187,40 @@ class Handler(BaseHTTPRequestHandler):
         })
         result.update({"dryRun": False, "backup": backup, "bundle": executed})
         return result
+
+    def offline_player_life_recovery(self, body):
+        account_id = int(body.get("account_id", body.get("accountId", 0)) or 0)
+        dry_run = str(body.get("dry_run", body.get("dryRun", "true"))).lower() not in ("0", "false", "no", "off")
+        try:
+            if dry_run:
+                PLAYER_LIFE_RECOVERY_RUNTIME["previews"] += 1
+                result = player_life_recovery.plan(query, account_id)
+                result.update({
+                    "mutationEnabled": bool(MUTATIONS_ENABLED and PLAYER_LIFE_RECOVERY_ENABLED),
+                    "receipts": player_life_recovery.list_receipts(PLAYER_LIFE_RECOVERY_RECEIPTS, 20),
+                })
+                return result
+            self.require_mutations()
+            if not PLAYER_LIFE_RECOVERY_ENABLED:
+                raise PermissionError(
+                    "offline player life-state recovery is disabled; "
+                    "set DUNE_ADMIN_PLAYER_LIFE_RECOVERY_ENABLED=true"
+                )
+            principal = access_control.public_principal(getattr(self, "auth_principal", None)) or {"id": "owner-recovery"}
+            result = player_life_recovery.execute(
+                db_connect, create_db_backup, PLAYER_LIFE_RECOVERY_RECEIPTS,
+                account_id,
+                body.get("expected_fingerprint", body.get("expectedFingerprint")),
+                body.get("confirm"), principal=principal.get("id"),
+            )
+            PLAYER_LIFE_RECOVERY_RUNTIME["executions"] += 1
+            return result
+        except (PermissionError, ValueError, RuntimeError):
+            PLAYER_LIFE_RECOVERY_RUNTIME["refusals"] += 1
+            raise
+        except Exception:
+            PLAYER_LIFE_RECOVERY_RUNTIME["errors"] += 1
+            raise
 
     def offline_player_recovery(self, body):
         account_id = int(body.get("account_id", body.get("accountId")))
@@ -20029,7 +20138,10 @@ function offlineTeleportPanel(ref, characterRows){
   const partitions = ref.worldPartitions || [];
   const calibration = ref.haggaCalibration || {};
   const haggaPartition = partitions.find(p => String(p.map || '').toLowerCase().includes('survival')) || partitions[0] || {};
-  return `<div class="panelBand" id="offlineTeleportPanel"><div class="sectionHeader"><h2>Offline Teleport</h2><div class="toolbar"><span class="pill warn">requires Offline</span><span class="pill warn">targeted timeout is manual</span></div></div><p class="muted">Moves the selected player's stored pawn with <code>dune.admin_move_offline_player_to_partition</code>. Online players must first be disconnected by the documented targeted timeout mechanism or a future native kick path.</p><div class="grid"><label>Player<select id="teleportAccount">${characterOptions(characterRows)}</select></label><label>Partition<select id="teleportPartition">${partitionOptions(partitions)}</select></label><label>X<input id="teleportX" inputmode="decimal" value="0"></label><label>Y<input id="teleportY" inputmode="decimal" value="0"></label><label>Z<input id="teleportZ" inputmode="decimal" value="9000"></label></div><div class="commandBar"><button id="teleportPreviewBtn" class="primary">Preview teleport</button><button id="teleportExecuteBtn" class="danger">Execute offline teleport</button><button id="teleportUseSelectedBtn">Use selected player position</button></div><div id="offlineTeleportMap" class="haggaMap teleportMap" data-default-partition="${esc(haggaPartition.partition_id || '')}" data-calibration="${esc(JSON.stringify(calibration))}"></div><pre id="teleportResult"></pre></div>`;
+  return `${lifeStateRecoveryPanel(characterRows)}<div class="panelBand" id="offlineTeleportPanel"><div class="sectionHeader"><h2>Offline Teleport</h2><div class="toolbar"><span class="pill warn">requires Offline</span><span class="pill warn">targeted timeout is manual</span></div></div><p class="muted">Moves the selected player's stored pawn with <code>dune.admin_move_offline_player_to_partition</code>. Online players must first be disconnected by the documented targeted timeout mechanism or a future native kick path.</p><div class="grid"><label>Player<select id="teleportAccount">${characterOptions(characterRows)}</select></label><label>Partition<select id="teleportPartition">${partitionOptions(partitions)}</select></label><label>X<input id="teleportX" inputmode="decimal" value="0"></label><label>Y<input id="teleportY" inputmode="decimal" value="0"></label><label>Z<input id="teleportZ" inputmode="decimal" value="9000"></label></div><div class="commandBar"><button id="teleportPreviewBtn" class="primary">Preview teleport</button><button id="teleportExecuteBtn" class="danger">Execute offline teleport</button><button id="teleportUseSelectedBtn">Use selected player position</button></div><div id="offlineTeleportMap" class="haggaMap teleportMap" data-default-partition="${esc(haggaPartition.partition_id || '')}" data-calibration="${esc(JSON.stringify(calibration))}"></div><pre id="teleportResult"></pre></div>`;
+}
+function lifeStateRecoveryPanel(characterRows){
+  return `<div class="panelBand dangerZone" id="lifeStateRecoveryPanel"><div class="sectionHeader"><div><h2>Native Offline Life-State Recovery</h2><p class="muted">Clears a dead offline character's persisted death state through Dune's shipped <code>dune.update_death_location</code> routine. It does not change health, inventory, position, progression, or respawn locations.</p></div><div class="toolbar"><span class="pill warn">Offline only</span><span class="pill ok">native function</span><span class="pill ok">backup + receipt</span><span class="pill">no restart</span></div></div><div class="grid"><label>Player<select id="lifeRecoveryAccount">${characterOptions(characterRows)}</select></label><label>Typed confirmation<input id="lifeRecoveryConfirm" autocomplete="off" placeholder="preview first"></label></div><div class="commandBar"><button id="lifeRecoveryPreviewBtn" class="primary">Inspect and preview</button><button id="lifeRecoveryExecuteBtn" class="danger" disabled>Recover persisted life state</button></div><pre id="lifeRecoveryResult">Select an offline dead character and preview. No write has run.</pre></div>`;
 }
 function renderOfflineTeleportMap(){
   const box = document.getElementById('offlineTeleportMap');
@@ -23251,6 +23363,7 @@ async function mutations(serial=loadSerial){
     });
     if (document.getElementById('grantAccount')) document.getElementById('grantAccount').value = option.value;
     if (document.getElementById('teleportAccount')) document.getElementById('teleportAccount').value = option.value;
+    if (document.getElementById('lifeRecoveryAccount')) document.getElementById('lifeRecoveryAccount').value = option.value;
     if (document.getElementById('grantCharacter')) document.getElementById('grantCharacter').value = option.dataset.name || '';
     if (document.getElementById('pcid')) document.getElementById('pcid').value = option.dataset.controller || '';
     if (document.getElementById('xpid')) document.getElementById('xpid').value = option.dataset.controller || '';
@@ -23295,6 +23408,33 @@ async function mutations(serial=loadSerial){
   document.getElementById('vehicleDbExecuteBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Applying...', () => runVehicleDbAction(false)));
   document.getElementById('playerMaintenancePreviewBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Previewing...', () => runPlayerMaintenance(true)));
   document.getElementById('playerMaintenanceExecuteBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Applying...', () => runPlayerMaintenance(false)));
+  let lifeRecoveryPlan = null;
+  const lifeRecoveryExecute = document.getElementById('lifeRecoveryExecuteBtn');
+  document.getElementById('lifeRecoveryPreviewBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Inspecting...', async () => {
+    lifeRecoveryPlan = null;
+    lifeRecoveryExecute.disabled = true;
+    document.getElementById('lifeRecoveryConfirm').value = '';
+    const result = await api('/api/admin/player-recovery/life-state', {method:'POST', body:JSON.stringify({dryRun:true, accountId:document.getElementById('lifeRecoveryAccount').value})});
+    lifeRecoveryPlan = result;
+    document.getElementById('lifeRecoveryConfirm').placeholder = result.confirm || 'preview blocked';
+    document.getElementById('lifeRecoveryResult').textContent = JSON.stringify(result, null, 2);
+    lifeRecoveryExecute.disabled = !(result.mutationEnabled && result.canExecute);
+    notify(result.canExecute ? 'Offline life-state recovery preview ready' : 'Life-state recovery is blocked', result.canExecute ? 'ok' : 'bad');
+    return result;
+  }));
+  lifeRecoveryExecute?.addEventListener('click', e => runAction(e.currentTarget, 'Recovering...', async () => {
+    if (!lifeRecoveryPlan?.canExecute) throw new Error('Generate an executable recovery preview first');
+    const typed = document.getElementById('lifeRecoveryConfirm').value.trim();
+    if (typed !== lifeRecoveryPlan.confirm) throw new Error(`Type ${lifeRecoveryPlan.confirm} exactly`);
+    const player = lifeRecoveryPlan.player || {};
+    if (!confirm(`Recover ${player.characterName || 'the selected character'} from ${player.lifeState} to Alive?\n\nDASH will take a full database backup, lock and recheck the Offline player, invoke the native game function, verify the saved result, and issue a private receipt.`)) return;
+    const result = await api('/api/admin/player-recovery/life-state', {method:'POST', timeoutMs:180000, body:JSON.stringify({dryRun:false, accountId:lifeRecoveryPlan.accountId, expectedFingerprint:lifeRecoveryPlan.expectedFingerprint, confirm:typed})});
+    document.getElementById('lifeRecoveryResult').textContent = JSON.stringify(result, null, 2);
+    lifeRecoveryPlan = null;
+    lifeRecoveryExecute.disabled = true;
+    notify('Native offline life-state recovery verified', 'ok');
+    return result;
+  }));
   renderOfflineTeleportMap();
   ['teleportX','teleportY','teleportZ'].forEach(id => document.getElementById(id)?.addEventListener('input', renderOfflineTeleportMap));
   document.getElementById('teleportPreviewBtn').addEventListener('click', e => runAction(e.currentTarget, 'Previewing...', () => offlineTeleport(true)));
