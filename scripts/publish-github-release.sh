@@ -39,6 +39,12 @@ if gh release view "$tag" --repo "$repository" >/dev/null 2>&1; then
   printf 'release already exists: %s\n' "$tag" >&2
   exit 1
 fi
+existing_draft_id="$(gh api "repos/$repository/releases?per_page=100" \
+  --jq ".[] | select(.draft == true and .tag_name == \"$tag\") | .id")"
+if [[ -n "$existing_draft_id" ]]; then
+  printf 'draft release already exists for %s: %s\n' "$tag" "$existing_draft_id" >&2
+  exit 1
+fi
 
 notes="$asset_dir/RELEASE_NOTES.md"
 [[ -f "$notes" ]] || { printf 'release notes are missing\n' >&2; exit 1; }
@@ -53,7 +59,14 @@ mapfile -d '' assets < <(find "$asset_dir" -maxdepth 1 -type f -print0 | sort -z
 [[ ${#assets[@]} -gt 0 ]] || { printf 'no release assets found\n' >&2; exit 1; }
 gh release upload "$tag" --repo "$repository" "${assets[@]}"
 
-release_id="$(gh api "repos/$repository/releases/tags/$tag" --jq .id)"
+# Draft releases are intentionally absent from the releases-by-tag endpoint.
+# Discover the one draft created above through the repository release list.
+release_id="$(gh api "repos/$repository/releases?per_page=100" \
+  --jq ".[] | select(.draft == true and .tag_name == \"$tag\") | .id")"
+[[ "$release_id" =~ ^[0-9]+$ ]] || {
+  printf 'could not resolve exactly one draft release for %s\n' "$tag" >&2
+  exit 1
+}
 remote_json="$(mktemp)"
 trap 'rm -f -- "$immutable_error" "$remote_json"' EXIT
 gh api --paginate "repos/$repository/releases/$release_id/assets?per_page=100" > "$remote_json"
@@ -72,7 +85,13 @@ if expected != observed:
 print(f"verified {len(expected)} uploaded asset digests")
 PY
 
-gh release edit "$tag" --repo "$repository" --draft=false "${prerelease[@]}" "${latest[@]}"
+publish_fields=(-F draft=false)
+if [[ "$tag" == *-* ]]; then
+  publish_fields+=(-F prerelease=true -f make_latest=false)
+else
+  publish_fields+=(-F prerelease=false -f make_latest=true)
+fi
+gh api --method PATCH "repos/$repository/releases/$release_id" "${publish_fields[@]}" >/dev/null
 immutable="$(gh api -H 'X-GitHub-Api-Version: 2026-03-10' "repos/$repository/releases/tags/$tag" --jq .immutable)"
 [[ "$immutable" == true ]] || { printf 'published release is not immutable\n' >&2; exit 1; }
 gh release verify "$tag" --repo "$repository"

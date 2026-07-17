@@ -140,6 +140,8 @@ class ReleasePackagingTests(unittest.TestCase):
         self.assertNotIn("environment:", workflow)
         self.assertIn('"${GITHUB_ACTIONS:-}" == true', publisher)
         self.assertIn("grep -q '(HTTP 403)'", publisher)
+        self.assertIn("select(.draft == true and .tag_name", publisher)
+        self.assertIn('releases/$release_id', publisher)
         self.assertIn('[[ "$immutable" == true ]]', publisher)
         ignored = (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
         self.assertIn("dist/release/", ignored)

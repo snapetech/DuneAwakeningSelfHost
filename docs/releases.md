@@ -38,6 +38,12 @@ still asserts the published release's `immutable` field and fails the job if
 GitHub did not lock the release. Interactive/local publication continues to
 require the setting preflight to succeed before a draft is created.
 
+Draft releases are not available through GitHub's release-by-tag API. The
+publisher therefore resolves the newly created draft through the repository
+release list, requires exactly one numeric release ID for the tag, uses that ID
+for remote digest verification and publication, and returns to tag-based lookup
+only after the release is public.
+
 ## Supported packages
 
 | Asset | Target | Status |
