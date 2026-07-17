@@ -179,6 +179,7 @@ set_value DUNE_CHANGE_INTELLIGENCE_DATABASE /workspace/backups/change-intelligen
 set_value DUNE_CHANGE_INTELLIGENCE_HMAC_SECRET_FILE /workspace/config/secrets/change-intelligence-hmac.secret
 set_value DUNE_CHANGE_INTELLIGENCE_EVIDENCE_DIR /workspace/backups/operator-evidence
 set_value DUNE_CHANGE_INTELLIGENCE_HOST_EVIDENCE_DIR backups/operator-evidence
+set_value DUNE_CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS 10
 set_value DUNE_OPERATIONS_BRIEFING_POLL_SECONDS 300
 set_value DUNE_OPERATIONS_BRIEFING_REFRESH_HOURS 24
 set_value DUNE_OPERATIONS_BRIEFING_MAX_AGE_HOURS 36

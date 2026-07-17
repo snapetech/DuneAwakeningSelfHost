@@ -495,6 +495,9 @@ RESPONSE_DRILLS_ENABLED = os.environ.get("DUNE_RESPONSE_DRILLS_ENABLED", "true")
 CHANGE_INTELLIGENCE_STORE = None
 CHANGE_INTELLIGENCE_STORE_LOCK = threading.Lock()
 CHANGE_INTELLIGENCE_RUNTIME = {"ready": False, "imported": 0, "duplicates": 0, "importErrors": 0, "reconciled": 0, "lastEventAt": None, "lastEventId": None, "lastError": ""}
+CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS = max(1, min(int(os.environ.get("DUNE_CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS", "10")), 60))
+CHANGE_INTELLIGENCE_STATUS_CACHE = {"value": None, "updatedAt": 0.0}
+CHANGE_INTELLIGENCE_STATUS_CACHE_LOCK = threading.Lock()
 OPERATIONS_BRIEFING_ENABLED = os.environ.get("DUNE_OPERATIONS_BRIEFING_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 OPERATIONS_BRIEFING_POLL_SECONDS = max(60, min(int(os.environ.get("DUNE_OPERATIONS_BRIEFING_POLL_SECONDS", "300")), 86400))
 OPERATIONS_BRIEFING_REFRESH_HOURS = max(1, min(int(os.environ.get("DUNE_OPERATIONS_BRIEFING_REFRESH_HOURS", "24")), 720))
@@ -1733,6 +1736,7 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_DESIRED_STATE_HMAC_SECRET_FILE": {"group": "Desired State", "secret": False, "restart": True, "why": "Private HMAC key used to authenticate baselines, observations, and the event chain."},
     "DUNE_DESIRED_STATE_POLL_SECONDS": {"group": "Desired State", "secret": False, "restart": True, "why": "Continuous file/runtime attestation cadence from 15 to 3600 seconds."},
     "DUNE_CHANGE_INTELLIGENCE_ENABLED": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Records a tamper-evident operational timeline and correlates incidents with preceding changes."},
+    "DUNE_CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Single-flight reuse window for a fully verified ledger status; assured promotion still forces fresh verification."},
     "DUNE_CHANGE_INTELLIGENCE_POLICY": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Versioned event bounds, classification, impact, and correlation windows."},
     "DUNE_CHANGE_INTELLIGENCE_DATABASE": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Private append-only HMAC-chained operational event ledger."},
     "DUNE_CHANGE_INTELLIGENCE_HMAC_SECRET_FILE": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Private HMAC key authenticating the operational change timeline."},
@@ -8053,7 +8057,7 @@ def deployment_assurance_prometheus_ready():
 
 def deployment_assurance_health(backup):
     desired = desired_state_public_status()
-    change = change_intelligence_public_status()
+    change = change_intelligence_public_status(force=True)
     slo = operational_slo_public_status()
     certification = change.get("readinessCertification") or {}
     services = {row["service"]: row for row in docker_service_inventory()}
@@ -8218,7 +8222,7 @@ def change_intelligence_reconcile_incidents():
     """Close imported incident opens that authoritative stores already resolved."""
     if not CHANGE_INTELLIGENCE_ENABLED:
         return {"ok": True, "reconciled": 0, "skipped": True}
-    open_incidents = change_intelligence_store().status().get("openIncidents") or []
+    open_incidents = change_intelligence_cached_status(force=True).get("openIncidents") or []
     desired_open = set()
     slo_open = set()
     if DESIRED_STATE_ENABLED:
@@ -8266,12 +8270,25 @@ def change_intelligence_record_event(event):
     return result
 
 
-def change_intelligence_public_status():
+def change_intelligence_cached_status(force=False):
+    now = time.time()
+    with CHANGE_INTELLIGENCE_STATUS_CACHE_LOCK:
+        cached = CHANGE_INTELLIGENCE_STATUS_CACHE.get("value")
+        age = now - float(CHANGE_INTELLIGENCE_STATUS_CACHE.get("updatedAt") or 0)
+        if cached is not None and not force and age <= CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS:
+            return json.loads(json.dumps(cached))
+        status = change_intelligence_store().status()
+        CHANGE_INTELLIGENCE_STATUS_CACHE.update({"value": json.loads(json.dumps(status)), "updatedAt": time.time()})
+        return status
+
+
+def change_intelligence_public_status(force=False):
     if not CHANGE_INTELLIGENCE_ENABLED:
         return {"ok": False, "enabled": False, "state": "disabled", "runtime": dict(CHANGE_INTELLIGENCE_RUNTIME)}
-    status = change_intelligence_store().status()
+    status = change_intelligence_cached_status(force=force)
     status.update({
         "enabled": True, "runtime": dict(CHANGE_INTELLIGENCE_RUNTIME),
+        "cacheSeconds": CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS,
         "responseDrillsEnabled": RESPONSE_DRILLS_ENABLED,
         "responseDrillConfirm": CONFIRM_RESPONSE_DRILL,
         "readinessCertificationConfirm": CONFIRM_READINESS_CERTIFICATION,
@@ -10562,7 +10579,7 @@ class Handler(BaseHTTPRequestHandler):
                 metrics = desired_state_store().prometheus() if DESIRED_STATE_ENABLED else "dash_desired_state_collector_up 0\n"
                 self.text(metrics, "text/plain; version=0.0.4; charset=utf-8")
             elif parsed.path == "/metrics/change-intelligence":
-                metrics = change_intelligence_store().prometheus() if CHANGE_INTELLIGENCE_ENABLED else "dash_change_intelligence_collector_up 0\n"
+                metrics = change_intelligence_store().prometheus(change_intelligence_public_status()) if CHANGE_INTELLIGENCE_ENABLED else "dash_change_intelligence_collector_up 0\n"
                 metrics += deployment_assurance_store().prometheus() if DEPLOYMENT_ASSURANCE_ENABLED else "dash_deployment_assurance_collector_up 0\n"
                 metrics += change_approval_store().prometheus(enabled=DUAL_CONTROL_ENABLED)
                 metrics += audit_ledger_prometheus()

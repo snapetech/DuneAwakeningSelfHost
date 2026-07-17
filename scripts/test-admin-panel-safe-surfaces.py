@@ -4301,7 +4301,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         original_update_status = self.panel.update_readiness_public_status
         original_maintenance_store = self.panel.maintenance_outcome_store
         fake_store = type("Store", (), {
-            "prometheus": lambda self: "dash_change_intelligence_collector_up 1\n",
+            "prometheus": lambda self, status=None: "dash_change_intelligence_collector_up 1\n",
             "capsule": lambda self, key: {"ok": True, "incidentKey": key, "causalityClaimed": False},
             "signed_capsule": lambda self, key: {"schemaVersion": 2, "incidentKey": key, "signature": "a" * 64},
         })()
@@ -4370,6 +4370,29 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn("dash_public_directory_entry_current 0\n", texts[0][0])
         self.assertIn("dash_update_readiness_collector_up 1\n", texts[0][0])
         self.assertIn("dash_maintenance_outcome_collector_up 1\n", texts[0][0])
+
+    def test_change_intelligence_verified_status_is_single_flight_cached_and_forceable(self):
+        original_store = self.panel.change_intelligence_store
+        original_cache = dict(self.panel.CHANGE_INTELLIGENCE_STATUS_CACHE)
+        calls = []
+        fake_store = type("Store", (), {
+            "status": lambda self: calls.append("status") or {
+                "ok": True, "state": "active", "eventCount": 10000,
+                "openIncidents": [], "recentEvents": [], "integrity": {"ok": True},
+                "readinessCertification": None,
+            },
+        })()
+        self.panel.change_intelligence_store = lambda: fake_store
+        self.panel.CHANGE_INTELLIGENCE_STATUS_CACHE.update({"value": None, "updatedAt": 0.0})
+        self.addCleanup(lambda: setattr(self.panel, "change_intelligence_store", original_store))
+        self.addCleanup(lambda: self.panel.CHANGE_INTELLIGENCE_STATUS_CACHE.update(original_cache))
+
+        first = self.panel.change_intelligence_public_status()
+        second = self.panel.change_intelligence_public_status()
+        forced = self.panel.change_intelligence_public_status(force=True)
+        self.assertTrue(first["integrity"]["ok"] and second["integrity"]["ok"] and forced["integrity"]["ok"])
+        self.assertEqual(["status", "status"], calls)
+        self.assertEqual(self.panel.CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS, first["cacheSeconds"])
 
     def test_update_readiness_metrics_never_run_expensive_collection_inline(self):
         original_cache = dict(self.panel.UPDATE_READINESS_SNAPSHOT_CACHE)

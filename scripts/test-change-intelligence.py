@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -393,7 +394,9 @@ class ChangeIntelligenceTests(unittest.TestCase):
     def test_metrics_are_label_free_and_bounded(self):
         self.record("settings-write", 1000, method="POST")
         self.record("slo-incident-opened", 1100, incident_id="private-incident")
-        metrics = self.store.prometheus()
+        verified = self.store.status()
+        with mock.patch.object(self.store, "status", side_effect=AssertionError("verified status must be reused")):
+            metrics = self.store.prometheus(verified)
         self.assertIn("dash_change_intelligence_collector_up 1", metrics)
         self.assertIn("dash_change_intelligence_events_total 2", metrics)
         self.assertIn("dash_change_intelligence_open_incidents 1", metrics)

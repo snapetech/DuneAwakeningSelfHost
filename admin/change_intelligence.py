@@ -949,8 +949,8 @@ class Store:
                 digest.update(chunk)
         return {"path": str(target), "bytes": target.stat().st_size, "sha256": digest.hexdigest(), "integrity": verification}
 
-    def prometheus(self):
-        status = self.status(limit=10)
+    def prometheus(self, status=None):
+        status = status or self.status(limit=10)
         events = status["recentEvents"]
         latest = _epoch(events[0]["occurredAt"]) if events else "NaN"
         with_candidates = sum(1 for row in status["openIncidents"] if row["candidateChanges"])
