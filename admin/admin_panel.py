@@ -70,6 +70,7 @@ import deployment_assurance
 import update_readiness
 import public_directory
 import env_file_store
+import feature_readiness
 
 GM_CATALOG_PATH = CODE_ROOT / "scripts" / "gm-command-catalog.py"
 GM_CATALOG_SPEC = importlib.util.spec_from_file_location("gm_command_catalog", GM_CATALOG_PATH)
@@ -86,6 +87,7 @@ CARE_PACKAGES_FILE = CONFIG_ROOT / "care-packages.json"
 COMMUNITY_REWARDS_FILE = CONFIG_ROOT / "community-rewards.json"
 GAMEPLAY_PRESETS_FILE = CONFIG_ROOT / "gameplay-presets.json"
 COSMETIC_CATALOG_FILE = CONFIG_ROOT / "cosmetic-catalog.json"
+FEATURE_READINESS_FILE = CONFIG_ROOT / "feature-readiness.json"
 ADMIN_VEHICLES_FILE = CONFIG_ROOT / "admin-vehicles.json"
 ADMIN_SKILL_MODULES_FILE = CONFIG_ROOT / "admin-skill-modules.json"
 ITEM_ICON_CACHE = BACKUP_ROOT / "item-icons"
@@ -97,6 +99,12 @@ ADMIN_PANEL_SELF_RELOAD_DEBOUNCE_SECONDS = float(os.environ.get("DUNE_ADMIN_SELF
 FLS_HEALTH_CACHE_TTL_SECONDS = float(os.environ.get("DUNE_ADMIN_FLS_HEALTH_CACHE_TTL_SECONDS", "120"))
 FLS_HEALTH_CACHE = {"payload": None, "updated_at": 0.0, "refreshing": False}
 FLS_HEALTH_CACHE_LOCK = threading.Lock()
+FEATURE_READINESS_CACHE = {"value": None, "updated_at": 0.0}
+FEATURE_READINESS_CACHE_LOCK = threading.Lock()
+try:
+    FEATURE_READINESS_CACHE_TTL_SECONDS = max(5, min(int(os.environ.get("DUNE_FEATURE_READINESS_CACHE_TTL_SECONDS", "30")), 300))
+except ValueError:
+    FEATURE_READINESS_CACHE_TTL_SECONDS = 30
 
 
 def resolve_compose_files(default="compose.yaml:compose.allmaps.yaml"):
@@ -570,6 +578,153 @@ def public_directory_prometheus():
         return public_directory.prometheus(public_directory_public_status())
     except Exception:
         return "dash_public_directory_enabled 0\ndash_public_directory_configured 0\ndash_public_directory_entry_valid 0\ndash_public_directory_entry_current 0\ndash_public_directory_entry_expires_in_seconds 0\n"
+
+
+def _feature_readiness_probe(name, callback):
+    try:
+        result = callback()
+        if isinstance(result, dict):
+            return {
+                "ready": bool(result.get("ready", result.get("ok"))),
+                "state": str(result.get("state") or ("ready" if result.get("ready", result.get("ok")) else "failed"))[:80],
+                "detail": str(result.get("detail") or result.get("error") or "")[:500],
+            }
+        return {"ready": bool(result), "state": "ready" if result else "failed", "detail": ""}
+    except Exception as exc:
+        return {"ready": False, "state": "error", "detail": f"{name}: {exc}"[:500]}
+
+
+def _feature_readiness_database_probe():
+    row = query("select current_database() as database, to_regnamespace('dune') is not null as schema_ready")
+    ready = bool(row and row[0].get("schema_ready"))
+    return {"ready": ready, "state": "ready" if ready else "schema-missing", "detail": "Dune schema is reachable" if ready else "Dune schema is not reachable"}
+
+
+def _feature_readiness_governance_probe():
+    ledger = audit_ledger_public_status()
+    ready = bool(ADMIN_REQUIRE_TOKEN and ledger.get("ok") and CHANGE_CONTRACTS_ENABLED and CHANGE_CONTRACTS_REQUIRED)
+    gaps = []
+    if not ADMIN_REQUIRE_TOKEN:
+        gaps.append("admin authentication is not required")
+    if not ledger.get("ok"):
+        gaps.append("audit ledger is not valid")
+    if not CHANGE_CONTRACTS_ENABLED or not CHANGE_CONTRACTS_REQUIRED:
+        gaps.append("change contracts are not enabled and required")
+    return {"ready": ready, "state": "ready" if ready else "governance-gap", "detail": "; ".join(gaps)}
+
+
+def _feature_readiness_operational_evidence_probe():
+    checks = []
+    slo = operational_slo_public_status()
+    checks.append(("slo", bool(slo.get("enabled") and (slo.get("integrity") or {}).get("ok") and not (slo.get("runtime") or {}).get("lastError"))))
+    capacity = capacity_intelligence_public_status()
+    checks.append(("capacity", bool(capacity.get("enabled") and (capacity.get("integrity") or {}).get("ok") and not (capacity.get("runtime") or {}).get("lastError"))))
+    desired = desired_state_public_status()
+    checks.append(("desired-state", bool(desired.get("enabled") and (desired.get("integrity") or {}).get("ok") and not (desired.get("runtime") or {}).get("lastError"))))
+    change = change_intelligence_public_status()
+    checks.append(("change-intelligence", bool(change.get("enabled") and (change.get("integrity") or {}).get("ok") and not (change.get("runtime") or {}).get("lastError"))))
+    assurance = deployment_assurance_public_status()
+    checks.append(("deployment-assurance", bool(assurance.get("enabled") and assurance.get("ok") and not assurance.get("error"))))
+    failed = [name for name, ready in checks if not ready]
+    return {"ready": not failed, "state": "ready" if not failed else "subsystem-failure", "detail": "failed: " + ", ".join(failed) if failed else "all retained evidence stores are loaded and valid"}
+
+
+def _feature_readiness_autoscaler_probe():
+    status = autoscaler_public_state(include_inventory=False)
+    ready = bool(status.get("enabled") and not status.get("lastError"))
+    detail = f"profile={status.get('profile')}; poll={status.get('pollSeconds')}s"
+    if status.get("lastError"):
+        detail += f"; error={status.get('lastError')}"
+    return {"ready": ready, "state": "ready" if ready else "worker-error", "detail": detail}
+
+
+def _feature_readiness_store_probe(store, initialized, runtime, label):
+    if not initialized:
+        return {"ready": False, "state": "not-initialized", "detail": f"{label} store is not initialized"}
+    status = store.status(limit=1)
+    ledger = status.get("ledger") or status.get("integrity") or {}
+    ready = bool(not runtime.get("lastError") and (ledger.get("ok", True)))
+    return {"ready": ready, "state": "ready" if ready else "ledger-or-worker-error", "detail": f"{label} store initialized" if ready else str(runtime.get("lastError") or "ledger verification failed")}
+
+
+def feature_readiness_public_status(force=False):
+    now = time.time()
+    with FEATURE_READINESS_CACHE_LOCK:
+        if not force and FEATURE_READINESS_CACHE["value"] is not None and now - FEATURE_READINESS_CACHE["updated_at"] <= FEATURE_READINESS_CACHE_TTL_SECONDS:
+            return json.loads(json.dumps(FEATURE_READINESS_CACHE["value"]))
+    values = {**os.environ, **read_env()}
+    services = docker_service_inventory() if pathlib.Path(DOCKER_SOCKET).exists() else []
+    service_by_name = {row.get("service"): row for row in services}
+    webhooks = WEBHOOK_DISPATCHER.status()
+    directory = public_directory_public_status()
+    federated = federated_auth_public_status()
+    encryption = backup_archive_encryption_status()
+    probes = {
+        "database": _feature_readiness_probe("database", _feature_readiness_database_probe),
+        "mutation-governance": _feature_readiness_probe("mutation-governance", _feature_readiness_governance_probe),
+        "operational-evidence": _feature_readiness_probe("operational-evidence", _feature_readiness_operational_evidence_probe),
+        "autoscaler": _feature_readiness_probe("autoscaler", _feature_readiness_autoscaler_probe),
+        "metrics": {
+            "ready": all(str((service_by_name.get(name) or {}).get("state") or "").lower() == "running" for name in ("prometheus", "node-exporter", "cadvisor", "postgres-exporter")),
+            "state": "ready" if all(str((service_by_name.get(name) or {}).get("state") or "").lower() == "running" for name in ("prometheus", "node-exporter", "cadvisor", "postgres-exporter")) else "collector-missing",
+            "detail": "required metrics collectors are running",
+        },
+        "native-actions": {
+            "ready": bool(GM_COMMANDS_ENABLED and PLAYER_RUNTIME_MUTATIONS_ENABLED and values.get("DUNE_SERVER_COMMANDS_AUTH_TOKEN") and str((service_by_name.get("admin-rmq") or {}).get("state") or "").lower() == "running"),
+            "state": "ready" if GM_COMMANDS_ENABLED and PLAYER_RUNTIME_MUTATIONS_ENABLED else "gated",
+            "detail": "native command gates, private token, and admin-rmq transport checked",
+        },
+        "moderation": _feature_readiness_probe("moderation", lambda: _feature_readiness_store_probe(MODERATION_STORE, MODERATION_STORE_INITIALIZED, MODERATION_RUNTIME, "moderation")),
+        "community-rewards": _feature_readiness_probe("community-rewards", lambda: _feature_readiness_store_probe(COMMUNITY_STORE, COMMUNITY_STORE_INITIALIZED, COMMUNITY_RUNTIME, "community rewards")),
+        "discord-adapter": {
+            "ready": bool(DISCORD_ADAPTER_ENABLED and values.get("DUNE_BOT_API_TOKEN")),
+            "state": "ready" if DISCORD_ADAPTER_ENABLED and values.get("DUNE_BOT_API_TOKEN") else "credential-missing",
+            "detail": "permissioned Admin adapter is loaded; Discord Gateway credentials are evaluated separately",
+        },
+        "federated-auth": {
+            "ready": bool(federated.get("enabled") and federated.get("configured") and federated.get("ok")),
+            "state": "ready" if federated.get("configured") else "provider-configuration-missing",
+            "detail": str(federated.get("error") or f"provider={federated.get('provider') or 'unset'}; mappedSubjects={federated.get('mappedSubjects') or 0}"),
+        },
+        "webhooks": {
+            "ready": bool(webhooks.get("enabled") and webhooks.get("configExists") and not webhooks.get("configError") and webhooks.get("endpoints")),
+            "state": "ready" if webhooks.get("enabled") and webhooks.get("endpoints") else "destination-missing",
+            "detail": str(webhooks.get("configError") or f"reviewed endpoints={len(webhooks.get('endpoints') or [])}"),
+        },
+        "public-directory": {
+            "ready": bool(directory.get("enabled") and directory.get("configured") and directory.get("valid") and directory.get("current")),
+            "state": str(directory.get("state") or "invalid"),
+            "detail": str(directory.get("error") or "signed descriptor is valid and current"),
+        },
+        "public-ip-monitor": {
+            "ready": bool(str(values.get("DUNE_PUBLIC_IP_MONITOR_ENABLED", "")).lower() in ("1", "true", "yes", "on") and values.get("DUNE_PUBLIC_IP_MONITOR_ALLOWED_HOST")),
+            "state": "dry-run" if str(values.get("DUNE_PUBLIC_IP_MONITOR_DRY_RUN", "true")).lower() in ("1", "true", "yes", "on") else "armed",
+            "detail": "hostname-gated monitor configuration is present",
+        },
+        "backup-encryption": {
+            "ready": bool(encryption.get("enabled") and encryption.get("configured")),
+            "state": "ready" if encryption.get("configured") else "recipient-missing",
+            "detail": "OpenPGP recipient is selected and syntax-valid" if encryption.get("configured") else "no verified OpenPGP recipient is selected",
+        },
+    }
+    catalog = feature_readiness.load_catalog(FEATURE_READINESS_FILE)
+    result = feature_readiness.evaluate(catalog, values, root=ROOT, services=services, probes=probes)
+    result.update({
+        "catalog": str(FEATURE_READINESS_FILE.relative_to(ROOT)),
+        "cacheTtlSeconds": FEATURE_READINESS_CACHE_TTL_SECONDS,
+        "confidence": "high for gates, artifact presence, service state, and explicit runtime probes; canary state remains separately visible",
+        "secretValuesReturned": False,
+    })
+    with FEATURE_READINESS_CACHE_LOCK:
+        FEATURE_READINESS_CACHE.update({"value": json.loads(json.dumps(result)), "updated_at": now})
+    return result
+
+
+def feature_readiness_prometheus():
+    try:
+        return feature_readiness.prometheus(feature_readiness_public_status())
+    except Exception:
+        return "dash_feature_readiness_ok 0\ndash_feature_readiness_total 0\ndash_feature_readiness_active 0\ndash_feature_readiness_active_problems 1\n"
 
 
 def change_approval_store():
@@ -1156,6 +1311,7 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_CHANGE_INTELLIGENCE_HOST_EVIDENCE_DIR": {"group": "Change Intelligence", "secret": False, "restart": False, "why": "Host-relative portable signed capsule path used by full backup-state archives."},
     "DUNE_RESPONSE_DRILLS_ENABLED": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Enables explicit non-disruptive response-plan rehearsals using fixed read-only diagnostics only."},
     "DUNE_DEPLOYMENT_ASSURANCE_ENABLED": {"group": "Deployment Assurance", "secret": False, "restart": True, "why": "Enables two-phase source, map-continuity, health, readiness, backup, and signed promotion receipts."},
+    "DUNE_FEATURE_READINESS_CACHE_TTL_SECONDS": {"group": "Feature Readiness", "secret": False, "restart": True, "why": "Bounds the authenticated feature-readiness matrix cache to 5-300 seconds."},
     "DUNE_DEPLOYMENT_ASSURANCE_STATE_DIR": {"group": "Deployment Assurance", "secret": False, "restart": True, "why": "Private directory for HMAC-authenticated open/completed change-window state."},
     "DUNE_DEPLOYMENT_ASSURANCE_WORKSPACE": {"group": "Deployment Assurance", "secret": False, "restart": True, "why": "Read-only complete source-workspace mount used to independently verify every promoted manifest file."},
     "DUNE_DEPLOYMENT_ASSURANCE_PROMETHEUS_URL": {"group": "Deployment Assurance", "secret": False, "restart": True, "why": "Internal Prometheus URL used to prove the current readiness certification has been scraped."},
@@ -3386,6 +3542,13 @@ def write_safe_env(updates):
             raise ValueError("change-contract TTL must be an integer from 30 to 300 seconds") from exc
         if not change_contracts.MIN_TTL_SECONDS <= ttl <= change_contracts.MAX_TTL_SECONDS:
             raise ValueError("change-contract TTL must be from 30 to 300 seconds")
+    if "DUNE_FEATURE_READINESS_CACHE_TTL_SECONDS" in updates:
+        try:
+            ttl = int(str(updates["DUNE_FEATURE_READINESS_CACHE_TTL_SECONDS"]).strip())
+        except ValueError as exc:
+            raise ValueError("feature-readiness cache TTL must be an integer from 5 to 300 seconds") from exc
+        if not 5 <= ttl <= 300:
+            raise ValueError("feature-readiness cache TTL must be from 5 to 300 seconds")
     if any(key.startswith("DUNE_PUBLIC_DIRECTORY_") or key == "DUNE_PUBLIC_SITE_URL" for key in updates):
         projected = {**os.environ, **read_env()}
         projected.update({key: str(value) for key, value in updates.items()})
@@ -8612,6 +8775,7 @@ class Handler(BaseHTTPRequestHandler):
                 metrics += audit_ledger_prometheus()
                 metrics += change_contract_prometheus()
                 metrics += public_directory_prometheus()
+                metrics += feature_readiness_prometheus()
                 if UPDATE_READINESS_ENABLED:
                     try:
                         update_snapshot = update_readiness_metrics_snapshot()
@@ -8897,6 +9061,10 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/ops/public-directory":
                 self.require_token()
                 self.json(public_directory_public_status())
+            elif parsed.path == "/api/ops/feature-readiness":
+                self.require_token()
+                params = urllib.parse.parse_qs(parsed.query)
+                self.json(feature_readiness_public_status(force=str((params.get("refresh") or [""])[0]).lower() in ("1", "true", "yes", "on")))
             elif parsed.path == "/api/ops/update-readiness":
                 self.require_token()
                 params = urllib.parse.parse_qs(parsed.query)
@@ -17208,7 +17376,7 @@ async function ops(serial=loadSerial){
   startHealthRefresh();
 }
 async function infrastructure(serial=loadSerial){
-  const [serviceData, backupData, databaseData, updateData, memoryData, autoscalerData, restoreDrillData, sloData, capacityData, desiredStateData, changeData, deploymentData, publicDirectoryData] = await Promise.all([
+  const [serviceData, backupData, databaseData, updateData, memoryData, autoscalerData, restoreDrillData, sloData, capacityData, desiredStateData, changeData, deploymentData, publicDirectoryData, featureReadinessData] = await Promise.all([
     api('/api/ops/services'),
     api('/api/ops/backups'),
     api('/api/ops/database'),
@@ -17221,7 +17389,8 @@ async function infrastructure(serial=loadSerial){
     api('/api/ops/desired-state', {timeoutMs: 30000}),
     api('/api/ops/change-intelligence', {timeoutMs: 30000}),
     api('/api/ops/deployment-assurance', {timeoutMs: 30000}),
-    api('/api/ops/public-directory', {timeoutMs: 30000})
+    api('/api/ops/public-directory', {timeoutMs: 30000}),
+    api('/api/ops/feature-readiness', {timeoutMs: 30000})
   ]);
   if (serial !== loadSerial) return;
   const services = serviceData.services || [];
@@ -17243,12 +17412,57 @@ async function infrastructure(serial=loadSerial){
   mountInfrastructureChangeIntelligence(changeData);
   mountInfrastructureDeploymentAssurance(deploymentData);
   mountInfrastructurePublicDirectory(publicDirectoryData);
+  mountInfrastructureFeatureReadiness(featureReadinessData);
   mountInfrastructureRestoreDrill(restoreDrillData);
   mountInfrastructureSlo(sloData);
   document.getElementById('infraLoadLogsBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Loading...', loadInfrastructureLogs));
   document.getElementById('infraVerifyBackupBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Verifying...', verifyInfrastructureBackup));
   document.getElementById('infraLoadTableBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Loading...', loadInfrastructureTable));
   if (services.length) loadInfrastructureLogs().catch(error => { document.getElementById('infraLogsResult').textContent = error.message; });
+}
+function mountInfrastructureFeatureReadiness(data){
+  const page = document.querySelector('#view .pageStack');
+  if (!page) return;
+  const summary = data.summary || {};
+  const rows = (data.features || []).map(feature => {
+    const gates = feature.gateChecks || [];
+    const enabled = gates.filter(row => row.enabled).length;
+    const failedServices = (feature.serviceChecks || []).filter(row => !row.ready).map(row => `${row.service}:${row.state}`);
+    const failedArtifacts = (feature.fileChecks || []).filter(row => !row.ready).map(row => row.path);
+    const dependencyGaps = (feature.dependencyChecks || []).filter(row => !row.ready).map(row => `${row.id}:${row.state}`);
+    const gaps = [
+      ...(feature.missingCredentials || []).map(key => `${key}:missing`),
+      ...failedServices,
+      ...failedArtifacts,
+      ...dependencyGaps,
+      ...(feature.probeCheck && !feature.probeCheck.ready ? [`${feature.probeCheck.id}:${feature.probeCheck.state}`] : [])
+    ];
+    return {
+      group: feature.group,
+      feature: feature.title,
+      state: feature.state,
+      gates: gates.length ? `${enabled}/${gates.length}` : 'built-in',
+      canary: feature.canary,
+      evidence: gaps.length ? gaps.join(', ') : (feature.probeCheck?.detail || 'configuration and runtime checks passed'),
+      next: feature.remediation?.summary || '',
+      docs: feature.documentation
+    };
+  });
+  const html = `<div class="panelBand" id="infraFeatureReadiness">
+    <div class="sectionHeader"><div><h2>Feature Readiness Control Center</h2><p class="muted">One secret-safe matrix proves activation gates, required artifacts, service state, dependencies, explicit runtime probes, external credentials, and remaining canaries. A disabled optional integration is different from a broken active feature.</p></div><div class="toolbar"><span class="pill ${data.ok?'ok':'bad'}">${esc(data.overall || 'unknown')}</span><span class="pill">${esc(summary.active || 0)}/${esc(summary.total || 0)} active</span><span class="pill ${Number(summary.activeProblems||0)?'bad':'ok'}">${esc(summary.activeProblems || 0)} active problems</span><button id="infraFeatureReadinessRefreshBtn">Recheck now</button></div></div>
+    <div class="metricGrid">${metric('Ready', summary.ready || 0, 'ok')}${metric('Canary pending', summary['canary-pending'] || 0, Number(summary['canary-pending']||0)?'warn':'')}${metric('Disabled optional', summary.disabled || 0)}${metric('Partial', summary.partial || 0, Number(summary.partial||0)?'bad':'')}${metric('Blocked', summary.blocked || 0, Number(summary.blocked||0)?'bad':'')}${metric('Degraded', summary.degraded || 0, Number(summary.degraded||0)?'bad':'')}${metric('External credentials', summary['external-blocked'] || 0, Number(summary['external-blocked']||0)?'warn':'')}</div>
+    ${table(rows)}
+    <p class="muted">${esc(data.confidence || '')} Secret values returned: ${data.secretValuesReturned ? 'YES' : 'no'}.</p>
+    <details><summary>Exact gate, credential-presence, artifact, service, dependency, and probe evidence</summary><pre>${esc(JSON.stringify(data, null, 2))}</pre></details>
+  </div>`;
+  const intro = page.querySelector('.panelBand');
+  if (intro) intro.insertAdjacentHTML('afterend', html); else page.insertAdjacentHTML('beforeend', html);
+  document.getElementById('infraFeatureReadinessRefreshBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Checking...', async()=>{
+    const refreshed=await api('/api/ops/feature-readiness?refresh=1',{timeoutMs:30000});
+    document.getElementById('infraFeatureReadiness')?.remove();
+    mountInfrastructureFeatureReadiness(refreshed);
+    return refreshed;
+  }));
 }
 function mountInfrastructurePublicDirectory(data){
   const page = document.querySelector('#view .pageStack');

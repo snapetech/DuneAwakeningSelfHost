@@ -20,6 +20,16 @@ http://127.0.0.1:${DUNE_ADMIN_HOST_PORT:-18080}/infrastructure
 The page uses the same host allowlist, optional `X-Admin-Token`, same-origin
 checks, request-size limit, CSP, and audit behavior as the rest of DASH Admin.
 
+## Feature Readiness
+
+`GET /api/ops/feature-readiness` is the page's activation/runtime control
+center. It evaluates every parity-activator gate with credential presence,
+confined artifacts, current service state, dependencies, explicit runtime
+probes, external blockers, and honest live-canary state. `?refresh=1` bypasses
+the bounded cache. It is read-only and never returns credential values. See
+[`feature-readiness.md`](feature-readiness.md) for the catalog, state machine,
+metrics, alerts, recovery workflow, and validation contract.
+
 ## Service Inventory
 
 `GET /api/ops/services` reads the Docker Engine Unix socket and returns only

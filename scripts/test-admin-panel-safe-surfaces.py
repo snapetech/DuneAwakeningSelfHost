@@ -460,6 +460,47 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn("DashPublicDirectoryEntryInvalid", rules)
         self.assertIn("DashPublicDirectoryEntryStale", rules)
 
+    def test_feature_readiness_api_ui_and_label_free_metrics_are_exposed(self):
+        self.assertIn("Feature Readiness Control Center", self.panel.INDEX)
+        self.assertIn("/api/ops/feature-readiness", self.panel.INDEX)
+        self.assertIn("DUNE_FEATURE_READINESS_CACHE_TTL_SECONDS", self.panel.ENV_KEY_DEFINITIONS)
+        fixture = {
+            "ok": False,
+            "overall": "attention",
+            "summary": {
+                "ready": 1, "canary-pending": 1, "disabled": 1, "partial": 0,
+                "blocked": 1, "degraded": 0, "external-blocked": 0,
+                "total": 4, "active": 3, "activeProblems": 1,
+            },
+            "features": [],
+            "secretValuesReturned": False,
+        }
+        original = dict(self.panel.FEATURE_READINESS_CACHE)
+        self.panel.FEATURE_READINESS_CACHE.update({"value": fixture, "updated_at": time.time()})
+        self.addCleanup(lambda: self.panel.FEATURE_READINESS_CACHE.update(original))
+
+        handler, captured = self.make_route_handler("/api/ops/feature-readiness")
+        handler.is_app_route = lambda path: False
+        handler.do_GET()
+        self.assertEqual([], captured["errors"])
+        self.assertEqual("attention", captured["json"]["overall"])
+        self.assertFalse(captured["json"]["secretValuesReturned"])
+
+        metrics = self.panel.feature_readiness_prometheus()
+        self.assertIn("dash_feature_readiness_ok 0\n", metrics)
+        self.assertIn("dash_feature_readiness_active_problems 1\n", metrics)
+        self.assertNotIn("{", metrics)
+        rules = (ROOT / "config" / "metrics" / "rules" / "dash.yml").read_text(encoding="utf-8")
+        self.assertIn("DashFeatureReadinessCollectorInvalid", rules)
+        self.assertIn("DashFeatureReadinessActiveProblems", rules)
+
+    def test_feature_readiness_cache_ttl_settings_are_bounded(self):
+        for value in ("4", "301", "not-a-number"):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "feature-readiness cache TTL"):
+                self.panel.write_safe_env({"DUNE_FEATURE_READINESS_CACHE_TTL_SECONDS": value})
+        self.panel.write_safe_env({"DUNE_FEATURE_READINESS_CACHE_TTL_SECONDS": "5"})
+        self.assertEqual("5", self.panel.read_env()["DUNE_FEATURE_READINESS_CACHE_TTL_SECONDS"])
+
     def test_federated_public_directory_settings_fail_closed_then_accept_complete_contract(self):
         with self.assertRaisesRegex(ValueError, "entry URL"):
             self.panel.write_safe_env({"DUNE_PUBLIC_DIRECTORY_ENABLED": "true"})

@@ -91,6 +91,7 @@ Always compare your `.env` image pin with the Steam package installed on your ho
 - Player-presence automation for first-time welcomes, returning-player welcome-backs, leaves, first-seen private messages, Hagga/Deep Desert milestones, base-cap reminders, reconnect help, restart warnings, map-health notices, population digests, incident notices, starter Base Reconstruction Tool grants, and Vermilius Gap celebration.
 - Local backups, hardened disposable restore drills, restore helpers, optional streaming Postgres replica, optional remote replica snapshots, and portable offsite/onsite backup sync examples.
 - Optional public static site package with status, settings, player list, Hagga Basin map, an opt-in Ed25519-signed public descriptor, and a self-hosted federated server directory whose browser re-verifies every listing.
+- Authenticated feature-readiness control center that separates disabled, partial, blocked, degraded, external-credential, pending-canary, and proven-ready states using live gates, artifacts, services, dependencies, and runtime probes without returning secret values.
 - Artificial Exchange as a first-class economy feature: reviewed price catalog, artificial buyer, validated seller settlement, optional buyer funding, controlled seeded listings, readiness checks, smoke tests, admin-panel controls, optional systemd services, and watchdog timer.
 - Publication and validation guardrails for keeping local state and secrets out of shared artifacts.
 - Receipt-bound, transactional deployment for reviewed Windows client loader,
@@ -137,6 +138,12 @@ operator application credentials for external canaries. Client loader/Pak
 deployment remains separately authorization-gated, and self-host voice remains
 blocked on the proprietary Funcom-compatible Tencent GME contract rather than
 a missing peer implementation.
+
+Parity activation is auditable rather than inferred from a large `.env`: the
+Infrastructure page evaluates every parity-activator gate alongside required
+credential presence, artifacts, services, dependencies, runtime probes, and
+explicit canary state. See
+[`docs/feature-readiness.md`](docs/feature-readiness.md).
 
 Red-Blink's centralized public-directory outcome is also covered. DASH publishes
 short-lived, privacy-bounded descriptors signed by a per-server Ed25519 key and
@@ -1055,6 +1062,7 @@ Start here:
 - [`docs/artificial-exchange.md`](docs/artificial-exchange.md): artificial Exchange catalog, buyer, settlement, populator, and services.
 - [`docs/public-static-site.md`](docs/public-static-site.md): optional public static status site.
 - [`docs/federated-public-directory.md`](docs/federated-public-directory.md): signed descriptor protocol, hardened pull federation, public directory UI, deployment, metrics, and key recovery.
+- [`docs/feature-readiness.md`](docs/feature-readiness.md): secret-safe activation/runtime matrix, complete parity-gate coverage, API, dashboard, metrics, state semantics, and recovery workflow.
 - [`docs/maintenance-updates.md`](docs/maintenance-updates.md): 06:00 restart/backup/update timeline and Steam hotfix handling.
 - [`docs/troubleshooting.md`](docs/troubleshooting.md): common failures and checks.
 - [`docs/publication.md`](docs/publication.md): release safety checklist.

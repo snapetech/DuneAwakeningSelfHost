@@ -162,6 +162,11 @@ server {
   exports label-free health metrics. Configuration stays in the safe Settings
   editor and the public renderer owns key generation/publication. See
   [`federated-public-directory.md`](federated-public-directory.md).
+- Feature Readiness on Infrastructure evaluates the complete parity activation
+  catalog against live gates, credential presence, confined artifacts, Compose
+  services, dependencies, runtime probes, and explicit canary state. It returns
+  no secret values and separates intentionally disabled optional integrations
+  from active failures; see [`feature-readiness.md`](feature-readiness.md).
 - Capacity Intelligence beside the autoscaler: retained map-hours saved,
   idle-running cost, productive-running ratio, warm/cold revisits,
   demand-to-ready cold-start distributions, empirical next-visit forecasts,

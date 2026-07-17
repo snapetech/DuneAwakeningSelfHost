@@ -158,6 +158,16 @@ groups:
         for: 5m
         labels: {severity: warning}
         annotations: {summary: "DASH public directory descriptor has expired"}
+      - alert: DashFeatureReadinessCollectorInvalid
+        expr: dash_feature_readiness_total == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "DASH feature-readiness catalog or runtime evaluation failed"}
+      - alert: DashFeatureReadinessActiveProblems
+        expr: dash_feature_readiness_active_problems > 0
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "One or more active DASH features are partial, blocked, degraded, or externally blocked"}
       - alert: DashIncidentHasCandidateChange
         expr: dash_change_intelligence_open_incidents_with_candidate_changes > 0
         for: 2m
