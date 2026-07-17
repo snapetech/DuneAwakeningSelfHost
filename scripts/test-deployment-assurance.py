@@ -207,6 +207,8 @@ class DeploymentAssuranceTests(unittest.TestCase):
         self.assertIn("DUNE_DEPLOYMENT_ASSURANCE_CONVERGENCE_POLL_SECONDS", source)
         self.assertIn("DUNE_DEPLOYMENT_ASSURANCE_CONVERGENCE_SAMPLES", source)
         self.assertLess(source.index("wait_for_assurance_health\n"), source.index('"$work/finish.json"'))
+        self.assertIn("credential lifecycle trust-state initialization failed", source)
+        self.assertLess(source.index("/api/ops/credential-lifecycle?refresh=true"), source.index("/api/ops/desired-state 60"))
         for phrase in (
             "START ASSURED CHANGE WINDOW", "SEAL DESIRED STATE",
             "CERTIFY INCIDENT RESPONSE READINESS", "FINALIZE ASSURED CHANGE WINDOW",

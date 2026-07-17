@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 import importlib.util
 import json
+import os
 import pathlib
 import re
+import shutil
+import subprocess
 import tempfile
 import unittest
 
@@ -142,6 +145,34 @@ class FeatureReadinessTests(unittest.TestCase):
         activated = set(re.findall(r"\bDUNE_[A-Z0-9_]+\b", body))
         cataloged = {gate for row in catalog["features"] for gate in row["gates"]}
         self.assertEqual(set(), activated - cataloged)
+
+    def test_parity_activator_batches_every_env_update_and_executes_cleanly(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / "scripts").mkdir()
+            (root / "config").mkdir()
+            (root / "admin").mkdir()
+            shutil.copy2(ROOT / "scripts" / "enable-feature-parity.sh", root / "scripts" / "enable-feature-parity.sh")
+            shutil.copy2(ROOT / "scripts" / "update-env-file.py", root / "scripts" / "update-env-file.py")
+            shutil.copy2(ROOT / "admin" / "env_file_store.py", root / "admin" / "env_file_store.py")
+            shutil.copy2(ROOT / "config" / "community-rewards.example.json", root / "config" / "community-rewards.example.json")
+            env_file = root / ".env"
+            env_file.write_text("DUNE_ADMIN_HOST_PORT=18080\n", encoding="utf-8")
+            env_file.chmod(0o600)
+            environment = dict(os.environ)
+            environment["DUNE_FEATURE_PARITY_ALLOWED_HOST"] = subprocess.check_output(["hostname", "-s"], text=True).strip()
+            completed = subprocess.run(
+                ["bash", str(root / "scripts" / "enable-feature-parity.sh"), str(env_file), "--execute"],
+                env=environment, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+            )
+            self.assertEqual(0, completed.returncode, completed.stderr)
+            values = dict(line.split("=", 1) for line in env_file.read_text(encoding="utf-8").splitlines() if "=" in line)
+            self.assertEqual("true", values["DUNE_CREDENTIAL_LIFECYCLE_ENABLED"])
+            self.assertEqual("/workspace/backups/credential-lifecycle/history.anchor.json", values["DUNE_CREDENTIAL_LIFECYCLE_ANCHOR_FILE"])
+            self.assertEqual("adaptive", values["DUNE_AUTOSCALER_PROFILE"])
+            self.assertGreaterEqual(len(values["DUNE_SERVER_COMMANDS_AUTH_TOKEN"]), 64)
+            self.assertGreaterEqual(len(values["DUNE_BOT_API_TOKEN"]), 64)
+            self.assertEqual(0o600, (root / "config" / "secrets" / "credential-lifecycle-hmac.secret").stat().st_mode & 0o777)
 
 
 if __name__ == "__main__":

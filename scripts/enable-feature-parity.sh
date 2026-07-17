@@ -79,7 +79,10 @@ install -m 600 "$env_file" "$backup"
 
 feature_update=(python3 "$repo_root/scripts/update-env-file.py" "$env_file" --quiet)
 for key in "${keys[@]}"; do feature_update+=(--set "$key" true); done
-"${feature_update[@]}"
+set_value() {
+  [[ $# -eq 2 && -n "$1" ]] || { printf 'set_value requires a key and value\n' >&2; exit 2; }
+  feature_update+=(--set "$1" "$2")
+}
 if [[ ! -f "$repo_root/config/community-rewards.json" ]]; then
   install -m 600 "$repo_root/config/community-rewards.example.json" "$repo_root/config/community-rewards.json"
 else
@@ -203,6 +206,8 @@ if [[ -z "$(read_env DUNE_BOT_API_TOKEN)" ]]; then
   command -v openssl >/dev/null 2>&1 || { printf 'openssl is required to generate the Discord adapter token\n' >&2; exit 1; }
   set_value DUNE_BOT_API_TOKEN "$(openssl rand -hex 32)"
 fi
+
+"${feature_update[@]}"
 
 printf 'enabled feature parity on %s; env backup=%s; command token=%s; Discord adapter token=%s\n' \
   "$current_host" "$backup" configured configured

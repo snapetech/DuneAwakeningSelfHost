@@ -27,20 +27,22 @@ An assured deployment proves all of these facts:
 8. No protected game-map container was recreated.
 9. A game-map process already running at window start was not restarted.
 10. Every `always-on` map stayed running with the same process start time.
-11. Desired State was fully reviewed/sealed and had zero open findings.
-12. The current response policy had a semantically valid 12/12 readiness
+11. Credential lifecycle trust state was initialized and its HMAC chain plus
+    authenticated head verified before Desired State review.
+12. Desired State was fully reviewed/sealed and had zero open findings.
+13. The current response policy had a semantically valid 12/12 readiness
     certification.
-13. Operational SLOs were healthy with zero open incidents.
-14. Change Intelligence integrity passed with zero open incidents.
-15. Prometheus had scraped readiness value `1`; a merely healthy direct
+14. Operational SLOs were healthy with zero open incidents.
+15. Change Intelligence integrity passed with zero open incidents.
+16. Prometheus had scraped readiness value `1`; a merely healthy direct
     collector response is insufficient.
-16. A full post-change backup passed the normal verifier.
-17. Desired State, Change Intelligence/readiness, and Operational SLO
+17. A full post-change backup passed the normal verifier.
+18. Desired State, Change Intelligence/readiness, and Operational SLO
     collectors produced at least two consecutive healthy samples after the
     admin-only recreation.
-18. The receipt says both `recoveryExecuted=false` and
+19. The receipt says both `recoveryExecuted=false` and
     `gameMutationExecuted=false`.
-19. A final full backup created after completion contains the signed receipt.
+20. A final full backup created after completion contains the signed receipt.
 
 Any false invariant makes `ready=false`. DASH signs and retains a failed
 receipt when it can safely characterize the failure; it does not rewrite the

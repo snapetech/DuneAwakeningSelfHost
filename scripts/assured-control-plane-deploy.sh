@@ -214,6 +214,23 @@ if [[ -n "$prometheus_id" ]]; then
 fi
 ./scripts/validate-landsraad-coriolis-cycle.sh "$env_file"
 
+# Initialize and verify the credential observation trust state before Desired
+# State is reviewed. Otherwise the first readiness certification could create
+# the HMAC key/database/anchor after sealing and immediately cause source drift.
+api_get '/api/ops/credential-lifecycle?refresh=true' 60 >"$work/credential-lifecycle.json"
+python3 - "$work/credential-lifecycle.json" <<'PY'
+import json,sys
+d=json.load(open(sys.argv[1],encoding="utf-8")); history=d.get("history") or {}
+checks={
+    "enabled": bool(d.get("enabled")),
+    "hmacKeyConfigured": bool(d.get("hmacKeyConfigured")),
+    "authenticatedHeadConfigured": bool(d.get("authenticatedHeadConfigured")),
+    "historyValid": bool(history.get("ok")),
+}
+if not all(checks.values()): raise SystemExit("credential lifecycle trust-state initialization failed: " + json.dumps(checks,sort_keys=True))
+print(f"credential lifecycle initialized: {history.get('events',0)} events; authenticated head valid")
+PY
+
 api_get /api/ops/desired-state 60 >"$work/desired.json"
 desired_state="$(python3 - "$work/desired.json" <<'PY'
 import json,sys
