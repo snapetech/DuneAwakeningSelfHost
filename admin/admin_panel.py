@@ -1076,6 +1076,8 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_PUBLIC_DIRECTORY_ENABLED": {"group": "Public Directory", "secret": False, "restart": False, "why": "Publishes a short-lived Ed25519-signed public server descriptor through the static site renderer."},
     "DUNE_PUBLIC_DIRECTORY_ENTRY_URL": {"group": "Public Directory", "secret": False, "restart": False, "why": "Exact public HTTPS URL where directory-entry.json is served; it is signature-bound to prevent relocation."},
     "DUNE_PUBLIC_SITE_URL": {"group": "Public Directory", "secret": False, "restart": False, "why": "Public HTTPS landing page opened from a directory listing."},
+    "DUNE_PUBLIC_DIRECTORY_NAME": {"group": "Public Directory", "secret": False, "restart": False, "why": "Public directory callsign, independently bounded to 120 characters so in-game browser text does not need to change."},
+    "DUNE_PUBLIC_DIRECTORY_DESCRIPTION": {"group": "Public Directory", "secret": False, "restart": False, "why": "Optional public community summary, independently bounded to 500 characters."},
     "DUNE_PUBLIC_DIRECTORY_REGION": {"group": "Public Directory", "secret": False, "restart": False, "why": "Coarse public region from the documented allowlist; no host or datacenter location is published."},
     "DUNE_PUBLIC_DIRECTORY_CAPACITY": {"group": "Public Directory", "secret": False, "restart": False, "why": "Public player capacity reported with the live online count, bounded to 1-1000."},
     "DUNE_PUBLIC_DIRECTORY_DISCORD_INVITE": {"group": "Public Directory", "secret": False, "restart": False, "why": "Optional canonical discord.gg community invite published in the signed descriptor."},

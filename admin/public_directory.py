@@ -172,6 +172,8 @@ def public_config(env=None, root=None):
     state_file = pathlib.Path(values.get("DUNE_PUBLIC_DIRECTORY_STATE_FILE") or root / "backups/public-directory/directory-entry.json")
     if not key_file.is_absolute() or not state_file.is_absolute():
         raise ValueError("directory key and state paths must be absolute")
+    name_source = values.get("DUNE_PUBLIC_DIRECTORY_NAME") or values.get("PUBLIC_SERVER_NAME") or values.get("WORLD_NAME")
+    description_source = values.get("DUNE_PUBLIC_DIRECTORY_DESCRIPTION") or values.get("PUBLIC_SERVER_DESCRIPTION") or values.get("DUNE_SERVER_DISPLAY_NAME")
     return {
         "enabled": enabled,
         "entryUrl": entry_url,
@@ -180,8 +182,8 @@ def public_config(env=None, root=None):
         "capacity": capacity,
         "ttlSeconds": ttl,
         "discordInvite": normalize_discord_invite(values.get("DUNE_PUBLIC_DIRECTORY_DISCORD_INVITE", "")),
-        "name": clean_text(values.get("PUBLIC_SERVER_NAME") or values.get("WORLD_NAME"), 120, "directory name", required=enabled),
-        "description": clean_text(values.get("PUBLIC_SERVER_DESCRIPTION") or values.get("DUNE_SERVER_DISPLAY_NAME"), 500, "directory description"),
+        "name": clean_text(name_source, 120, "directory name", required=True) if enabled else "",
+        "description": clean_text(description_source, 500, "directory description") if enabled else "",
         "build": clean_text(values.get("DUNE_IMAGE_TAG", "unknown"), 120, "directory build") or "unknown",
         "keyFile": key_file,
         "stateFile": state_file,

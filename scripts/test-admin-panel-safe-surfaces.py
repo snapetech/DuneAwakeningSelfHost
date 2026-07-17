@@ -438,6 +438,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         for key in (
             "DUNE_PUBLIC_DIRECTORY_ENABLED", "DUNE_PUBLIC_DIRECTORY_ENTRY_URL",
             "DUNE_PUBLIC_SITE_URL", "DUNE_PUBLIC_DIRECTORY_REGION",
+            "DUNE_PUBLIC_DIRECTORY_NAME", "DUNE_PUBLIC_DIRECTORY_DESCRIPTION",
             "DUNE_PUBLIC_DIRECTORY_CAPACITY", "DUNE_PUBLIC_DIRECTORY_DISCORD_INVITE",
             "DUNE_PUBLIC_DIRECTORY_TTL_SECONDS",
         ):
@@ -473,9 +474,10 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
             "DUNE_PUBLIC_DIRECTORY_ENTRY_URL": "https://dune.example.test/directory-entry.json",
             "DUNE_PUBLIC_SITE_URL": "https://dune.example.test/",
             "DUNE_PUBLIC_DIRECTORY_REGION": "North America",
+            "DUNE_PUBLIC_DIRECTORY_NAME": "Test Sietch",
+            "DUNE_PUBLIC_DIRECTORY_DESCRIPTION": "A test community.",
             "DUNE_PUBLIC_DIRECTORY_CAPACITY": "40",
             "DUNE_PUBLIC_DIRECTORY_TTL_SECONDS": "180",
-            "WORLD_NAME": "Test Sietch",
         })
         values = self.panel.read_env()
         self.assertEqual("true", values["DUNE_PUBLIC_DIRECTORY_ENABLED"])

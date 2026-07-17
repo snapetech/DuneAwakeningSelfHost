@@ -80,8 +80,9 @@ class PublicDirectoryTest(unittest.TestCase):
         self.temporary.cleanup()
 
     def test_config_defaults_private_and_requires_complete_public_contract_when_enabled(self):
-        private = public_directory.public_config({}, root=self.root)
+        private = public_directory.public_config({"WORLD_NAME": "x" * 1000}, root=self.root)
         self.assertFalse(private["enabled"])
+        self.assertEqual("", private["name"])
         with self.assertRaisesRegex(ValueError, "entry URL"):
             public_directory.public_config(environment(self.root, DUNE_PUBLIC_DIRECTORY_ENTRY_URL=""), root=self.root)
         with self.assertRaisesRegex(ValueError, "region"):

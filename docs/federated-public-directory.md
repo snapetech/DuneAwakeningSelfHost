@@ -73,6 +73,8 @@ in the DASH `.env` or `/etc/dune-public-site.env`:
 DUNE_PUBLIC_DIRECTORY_ENABLED=true
 DUNE_PUBLIC_DIRECTORY_ENTRY_URL=https://dune.example.com/directory-entry.json
 DUNE_PUBLIC_SITE_URL=https://dune.example.com/
+DUNE_PUBLIC_DIRECTORY_NAME=Example Sietch
+DUNE_PUBLIC_DIRECTORY_DESCRIPTION=Adaptive maps and a friendly PvE community.
 DUNE_PUBLIC_DIRECTORY_REGION=North America
 DUNE_PUBLIC_DIRECTORY_CAPACITY=40
 DUNE_PUBLIC_DIRECTORY_DISCORD_INVITE=https://discord.gg/example
@@ -85,6 +87,12 @@ hostnames and HTTPS without credentials, non-default ports, queries, or
 fragments; IP literals are refused. Discord accepts
 only `discord.gg/<code>` or `discord.com/invite/<code>` and publishes the
 canonical `discord.gg` form.
+
+The dedicated name and description keep public discovery independent of
+`WORLD_NAME` and `DUNE_SERVER_DISPLAY_NAME`; changing the listing never changes
+the in-game server browser rows. If omitted, an enabled publisher falls back to
+the existing public-site text and then the game identity fields. Disabled
+publication does not validate or expose those fallbacks.
 
 Render and verify:
 
