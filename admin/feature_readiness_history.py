@@ -42,7 +42,7 @@ def _bounded_text(value, label, limit):
 
 
 def _snapshot(status):
-    if not isinstance(status, dict) or status.get("schemaVersion") != "dash-feature-readiness/v1":
+    if not isinstance(status, dict) or status.get("schemaVersion") != 1:
         raise ValueError("feature readiness status schema is invalid")
     features = status.get("features")
     if not isinstance(features, list) or not 1 <= len(features) <= 512:
@@ -108,7 +108,7 @@ def _validate_snapshot(document):
     if not isinstance(document, dict) or set(document) != {"schemaVersion", "overall", "summary", "states", "sha256"}:
         raise ValueError("feature readiness history snapshot schema is invalid")
     expected = _snapshot({
-        "schemaVersion": "dash-feature-readiness/v1",
+        "schemaVersion": 1,
         "features": document.get("states"),
     })
     if not hmac.compare_digest(_canonical(document), _canonical(expected)):

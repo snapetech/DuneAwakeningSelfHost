@@ -20,7 +20,7 @@ def readiness(*states):
         for feature_id, state, active in states
     ]
     return {
-        "schemaVersion": "dash-feature-readiness/v1",
+        "schemaVersion": 1,
         "features": features,
         "secretValuesReturned": False,
     }
