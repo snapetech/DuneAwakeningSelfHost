@@ -51,7 +51,11 @@ tampered window, expired window, or unreadable required source fails before
 finalization.
 
 The convergence gate defaults to two healthy samples five seconds apart and a
-300-second deadline. Installations can tune it with
+300-second deadline. It samples desired-state attestation, change-intelligence
+integrity, the current readiness certification, SLO health, and the
+Prometheus-scraped readiness metric. Waiting for the scraped metric prevents a
+false failed receipt immediately after Admin Panel recreation or a Prometheus
+reload. Installations can tune the gate with
 `DUNE_DEPLOYMENT_ASSURANCE_CONVERGENCE_TIMEOUT_SECONDS` (30..1800),
 `DUNE_DEPLOYMENT_ASSURANCE_CONVERGENCE_POLL_SECONDS` (1..60), and
 `DUNE_DEPLOYMENT_ASSURANCE_CONVERGENCE_SAMPLES` (2..10). These settings change

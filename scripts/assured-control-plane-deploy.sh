@@ -62,6 +62,9 @@ token="$(read_env DUNE_ADMIN_TOKEN)"
 admin_port="$(read_env DUNE_ADMIN_HOST_PORT)"
 admin_port="${admin_port:-18080}"
 admin_url="http://127.0.0.1:${admin_port}"
+prometheus_port="$(read_env DUNE_METRICS_PROMETHEUS_PORT)"
+prometheus_port="${prometheus_port:-19090}"
+prometheus_url="http://127.0.0.1:${prometheus_port}"
 work="$(mktemp -d -p "${TMPDIR:-/tmp}" dash-assured-deploy.XXXXXX)"
 chmod 700 "$work"
 window_id=""
@@ -157,16 +160,21 @@ wait_for_assurance_health() {
   while (( SECONDS <= deadline )); do
     if api_get /api/ops/desired-state 30 >"$work/convergence-desired.json" \
       && api_get /api/ops/change-intelligence 30 >"$work/convergence-change.json" \
-      && api_get /api/ops/slo 30 >"$work/convergence-slo.json"; then
-      if python3 - "$work/convergence-desired.json" "$work/convergence-change.json" "$work/convergence-slo.json" >"$work/convergence.json" <<'PY'
+      && api_get /api/ops/slo 30 >"$work/convergence-slo.json" \
+      && curl -fsS --max-time 30 --get \
+        --data-urlencode 'query=dash_incident_readiness_certification_ready' \
+        "$prometheus_url/api/v1/query" >"$work/convergence-prometheus.json"; then
+      if python3 - "$work/convergence-desired.json" "$work/convergence-change.json" "$work/convergence-slo.json" "$work/convergence-prometheus.json" >"$work/convergence.json" <<'PY'
 import json, sys
-desired, change, slo = (json.load(open(path, encoding="utf-8")) for path in sys.argv[1:])
+desired, change, slo, prometheus = (json.load(open(path, encoding="utf-8")) for path in sys.argv[1:])
 certification = change.get("readinessCertification") or {}
+prometheus_results = ((prometheus.get("data") or {}).get("result") or []) if prometheus.get("status") == "success" else []
 checks = {
     "desiredStateAttested": desired.get("state") == "attested" and not (desired.get("openFindings") or []) and bool((desired.get("integrity") or {}).get("ok")),
     "changeIntegrity": bool((change.get("integrity") or {}).get("ok")) and not (change.get("openIncidents") or []),
     "readinessCurrent": bool(certification.get("currentReady") and certification.get("policyCurrent") and (certification.get("receiptVerification") or {}).get("ok")),
     "sloHealthy": slo.get("overall") == "healthy" and not (slo.get("openIncidents") or []) and bool((slo.get("integrity") or {}).get("ok")),
+    "prometheusReadiness": any(float((row.get("value") or [None, "0"])[1]) == 1.0 for row in prometheus_results),
 }
 print(json.dumps({"ready": all(checks.values()), "checks": checks}, sort_keys=True))
 raise SystemExit(0 if all(checks.values()) else 1)
