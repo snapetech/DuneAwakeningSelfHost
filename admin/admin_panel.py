@@ -5066,7 +5066,7 @@ def operations_briefing_sources():
     return rows
 
 
-def operations_briefing_public_status(*, refresh_sources=True, limit=20):
+def operations_briefing_public_status(*, refresh_sources=False, limit=20):
     if not OPERATIONS_BRIEFING_ENABLED:
         return {"ok": True, "enabled": False, "state": "disabled", "currentReady": False, "briefings": [], "runtime": dict(OPERATIONS_BRIEFING_RUNTIME)}
     fingerprint = OPERATIONS_BRIEFING_RUNTIME.get("currentFingerprint")
@@ -10919,7 +10919,7 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/ops/operations-briefing":
                 self.require_token()
                 params = urllib.parse.parse_qs(parsed.query)
-                self.json(operations_briefing_public_status(limit=(params.get("limit") or ["20"])[0]))
+                self.json(operations_briefing_public_status(refresh_sources=False, limit=(params.get("limit") or ["20"])[0]))
             elif parsed.path == "/api/ops/feature-readiness":
                 self.require_token()
                 params = urllib.parse.parse_qs(parsed.query)

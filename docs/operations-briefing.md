@@ -104,9 +104,11 @@ Authenticated API:
 GET /api/ops/operations-briefing?limit=20
 ```
 
-This endpoint refreshes the in-memory source fingerprint and returns verified
-receipts. There is deliberately no browser action that executes or automatically
-chains a recommendation into a recovery mutation.
+This endpoint returns the worker's cached source fingerprint and verified
+receipts without synchronously re-running the potentially expensive update,
+recovery, and readiness collectors. There is deliberately no browser action
+that executes or automatically chains a recommendation into a recovery
+mutation.
 
 ## Configuration
 

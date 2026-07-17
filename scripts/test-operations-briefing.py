@@ -102,6 +102,7 @@ class OperationsBriefingTests(unittest.TestCase):
         push = (ROOT / "scripts/push-assured-control-plane.sh").read_text(encoding="utf-8")
         verify = (ROOT / "scripts/verify-backup.sh").read_text(encoding="utf-8")
         self.assertIn('"/api/ops/operations-briefing"', admin)
+        self.assertIn("operations_briefing_public_status(refresh_sources=False", admin)
         self.assertIn("ensure_operations_briefing_thread()", admin)
         self.assertIn("operationsBriefingPanel", admin)
         self.assertIn("operations_briefing.verify_signed_document", admin)
