@@ -4144,6 +4144,66 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn("excluding briefing self-check", sources["feature-readiness"]["detail"])
         self.assertEqual("1-provider-blocked", sources["external-integrations"]["state"])
 
+    def test_operations_briefing_invalidation_is_immediate_and_coalesced(self):
+        original_enabled = self.panel.OPERATIONS_BRIEFING_ENABLED
+        original_runtime = dict(self.panel.OPERATIONS_BRIEFING_RUNTIME)
+        def restore_runtime():
+            self.panel.OPERATIONS_BRIEFING_RUNTIME.clear()
+            self.panel.OPERATIONS_BRIEFING_RUNTIME.update(original_runtime)
+        self.panel.OPERATIONS_BRIEFING_ENABLED = True
+        self.panel.OPERATIONS_BRIEFING_WAKE_EVENT.clear()
+        self.addCleanup(lambda: setattr(self.panel, "OPERATIONS_BRIEFING_ENABLED", original_enabled))
+        self.addCleanup(restore_runtime)
+        self.addCleanup(self.panel.OPERATIONS_BRIEFING_WAKE_EVENT.clear)
+
+        self.assertTrue(self.panel.request_operations_briefing_refresh("audit:desired-state-drift-opened"))
+
+        runtime = self.panel.OPERATIONS_BRIEFING_RUNTIME
+        self.assertTrue(runtime["refreshPending"])
+        self.assertIsNone(runtime["currentFingerprint"])
+        self.assertEqual(original_runtime.get("invalidations", 0) + 1, runtime["invalidations"])
+        self.assertEqual("audit:desired-state-drift-opened", runtime["lastInvalidationReason"])
+        self.assertTrue(self.panel.OPERATIONS_BRIEFING_WAKE_EVENT.is_set())
+        self.assertTrue(self.panel.audit_action_invalidates_operations_briefing("privileged-request-completed"))
+        self.assertTrue(self.panel.audit_action_invalidates_operations_briefing("deployment-assurance-finished"))
+        self.assertFalse(self.panel.audit_action_invalidates_operations_briefing("operations-briefing-generated"))
+
+    def test_operations_briefing_changed_source_cooldown_keeps_refresh_pending(self):
+        original_sources = self.panel.operations_briefing_sources
+        original_store = self.panel.operations_briefing_store
+        original_runtime = dict(self.panel.OPERATIONS_BRIEFING_RUNTIME)
+        def restore_runtime():
+            self.panel.OPERATIONS_BRIEFING_RUNTIME.clear()
+            self.panel.OPERATIONS_BRIEFING_RUNTIME.update(original_runtime)
+        source = {
+            "id": "test-source", "title": "Test source", "state": "ready",
+            "healthy": True, "severity": "warning", "detail": "ready",
+            "surface": "infrastructure:test",
+        }
+        latest = {
+            "generatedAt": self.panel.operations_briefing.iso(self.panel.time.time() - 5),
+            "sourceFingerprint": "a" * 64,
+        }
+        fake_store = type("Store", (), {
+            "status": lambda self, fingerprint, limit=1, now=None: {
+                "ok": True, "currentReady": False, "latest": dict(latest),
+            },
+        })()
+        self.panel.operations_briefing_sources = lambda: [source]
+        self.panel.operations_briefing_store = lambda: fake_store
+        self.panel.OPERATIONS_BRIEFING_RUNTIME.update({"refreshPending": True, "invalidations": 1})
+        self.addCleanup(lambda: setattr(self.panel, "operations_briefing_sources", original_sources))
+        self.addCleanup(lambda: setattr(self.panel, "operations_briefing_store", original_store))
+        self.addCleanup(restore_runtime)
+
+        result = self.panel.run_operations_briefing()
+
+        self.assertTrue(result["due"])
+        self.assertTrue(result["sourceChanged"])
+        self.assertFalse(result["generated"])
+        self.assertGreater(result["retryAfterSeconds"], 0)
+        self.assertTrue(self.panel.OPERATIONS_BRIEFING_RUNTIME["refreshPending"])
+
     def test_privileged_request_reconciliation_is_append_only_and_terminal(self):
         calls = []
         states = iter([

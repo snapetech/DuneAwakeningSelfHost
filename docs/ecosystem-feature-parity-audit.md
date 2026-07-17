@@ -17,7 +17,7 @@ or documented operational path.
 ## Audit snapshot
 
 - Audit date: **2026-07-17**, full GitHub search and remote HEAD refresh
-  **2026-07-17 10:36 UTC**
+  **2026-07-17 11:33 UTC**
 - Search scope: GitHub repository search, project documentation, Funcom's
   self-host guide, CubeCoders' Dune template and guide, Nexus Mods' Dune:
   Awakening category, and public community discussions used only to discover
@@ -62,6 +62,12 @@ claim release while the battlegroup is running because the map process can
 rewrite its in-memory claim. DASH's recoverable base-retirement transaction
 already requires the affected map stopped before native backup/removal, so the
 new peer rule confirms an existing invariant rather than creating a gap.
+
+The 11:33 UTC refresh repeated all four discovery searches and every GitHub
+remote HEAD. Only atobo advanced, from `75af45e` to `2ceb418`; version 1.3.3
+removes 813 lines of legacy container-management UI/tests and adds no operator
+outcome. DASH therefore keeps the movement-aware reward comparison but updates
+the provenance pin. No new credible implementation entered the peer catalogue.
 
 Confidence labels in this document use the repository standard:
 
@@ -141,7 +147,7 @@ webhooks, and Dune-specific announcement/player/status commands.
 | [n00bgames/eda-exchange-bot](https://github.com/n00bgames/eda-exchange-bot) | `ed471e473fc02b81e8c7557ca6e218e9b28308bc` | Permissioned Red-Blink addon for exchange seeding, grade-aware pricing and buyback | high |
 | [comfuzio/Dune-Awakening-remote-players-fix](https://github.com/comfuzio/Dune-Awakening-remote-players-fix) | `f47f0c0587bb7f43fc510c36ba76b0fcb4cb8646` | Automated k3s external-player routing repair | moderate |
 | [jeffstokes72/duneawakeningselfhost_ini_maker](https://github.com/jeffstokes72/duneawakeningselfhost_ini_maker) | `9d10bb7b31c1ed950a69d11fe2424f25c8a84a43` | Hosted UserGame/UserEngine INI generator | low to moderate; explicitly work in progress |
-| [atobo/dune-airdrop-addon](https://github.com/atobo/dune-airdrop-addon) | `75af45ee3264dd6cc12bc1ccbd8692179a090a03` | Movement/XP-aware playtime drops, daily streaks, weekly attendance, configurable tier multipliers and a retrying command-delivery daemon | high for source presence; runtime requires Dune-schema triggers plus Docker-socket companion |
+| [atobo/dune-airdrop-addon](https://github.com/atobo/dune-airdrop-addon) | `2ceb4183390492db0df484f384d21707b38373a9` | Movement/XP-aware playtime drops, daily streaks, weekly attendance, configurable tier multipliers and a retrying command-delivery daemon; 1.3.3 removed its legacy container-management UI | high for source presence; runtime requires Dune-schema triggers plus Docker-socket companion |
 | [yacketrj/dune-ops-observability-addon](https://github.com/yacketrj/dune-ops-observability-addon) | `271b45e7494646988bec678316659ef85313e710` | Read-only player summaries, active-rate/level/faction/guild KPIs, explicit capability reporting and constrained addon bridge | high |
 | [BIGMOS/Dune-Dash-tools](https://github.com/BIGMOS/Dune-Dash-tools) | `18ba6bc654ccfb4f7758d3887c2aa20bd141567d` | Interactive/noninteractive Windows backup of game database, k3s resources, DASH configuration and server PVC configuration with destination selection and keep-last retention | high for source presence; restore is documented as a manual `pg_restore` command |
 
@@ -229,6 +235,7 @@ without reproducing that wrapper.
 | Signed advertised-address repair rehearsal | Surveyed peers expose address rewrite/restart automation but no signed full-lifecycle disposable proof | DASH exceeds | Real environment rewrite, OpenSSL RabbitMQ SAN rotation, guarded restart handoff/retry, and timer installation run against disposable state; source-input binding, strict live-state/network isolation, HMAC receipts, dashboard/API/readiness, metrics/alerts, backup verification, and assured deployment support; see `docs/public-ip-repair-canary.md` |
 | Automatic signed-proof freshness and input-drift response | No surveyed Dune peer | DASH exceeds | One serialized worker derives work from the authoritative Community, Creator/Modding, and public-IP receipt verifiers, refreshes before expiry or immediately after input drift, applies per-target bounded exponential backoff, and exposes strict private state, force-all API/UI, readiness, verified backup, label-free metrics, and alerts without maps, players, providers, or clients; see `docs/canary-autopilot.md` |
 | Signed change-aware operator briefing | Surveyed peers expose dashboards, logs, health cards, or bots but no retained cross-system signed decision queue | DASH exceeds | Fourteen authoritative readiness/governance/SLO/drift/deployment/backup/recovery/capacity/credential/proof/update verdicts compile into a deterministic score, severity-ranked action queue, categorical regression/improvement deltas, current-input/age verification, private HMAC receipts, Overview/API, verified mixed backups, readiness, label-free metrics, and alerts; recommendations never execute; see `docs/operations-briefing.md` |
+| Event-driven evidence invalidation and bounded signed recovery verdicts | No surveyed Dune peer | DASH exceeds | Source-affecting privileged, deployment, SLO, drift, recovery, canary, and readiness events synchronously mark the prior briefing non-current, wake a coalescing worker, and issue changed-state receipts behind a 15-second anti-storm bound; the dashboard never presents the old action list as authoritative while refresh is pending, and polling remains a safety net; see `docs/operations-briefing.md` |
 | Time-weighted reliability objectives and error budgets | Peers expose current health and retained infrastructure metrics | DASH exceeds | Ten service objectives—including independently fresh PostgreSQL and dual-broker RabbitMQ recovery proofs—five time windows, observation coverage, burn rates, remaining budget, debounced incidents, immutable globally hash-chained events, bounded maintenance exclusions, dashboard/API/Prometheus, and transactionally consistent recovery; see `docs/operational-slo.md` |
 | Continuous desired-state attestation and drift ownership | No surveyed Dune peer | DASH exceeds | HMAC-sealed repository/configuration and Compose-container baselines, keyed redaction of environment values and mount sources, retained findings, non-resolving acknowledgement, immutable baseline/event history, private dashboard/API/metrics, SLO integration, and backup-bound key verification; see `docs/desired-state-attestation.md` |
 | Operational change intelligence and incident evidence capsules | No surveyed Dune peer | DASH exceeds | Append-only HMAC event timeline, authoritative incident reconciliation, credential stripping, identity/path pseudonymization, policy-classified impact, bounded temporal/scope candidate ranking, explicit non-causality, portable ledger-head-bound signed exports with offline verification, dashboard/API/CLI/metrics, and backup-bound verification; see `docs/change-intelligence.md` |

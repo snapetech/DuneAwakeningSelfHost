@@ -407,6 +407,11 @@ groups:
         for: 30m
         labels: {severity: warning}
         annotations: {summary: "The latest signed DASH operator briefing is stale or predates the current source state"}
+      - alert: DashOperationsBriefingRefreshPending
+        expr: dash_operations_briefing_enabled == 1 and dash_operations_briefing_refresh_pending == 1
+        for: 2m
+        labels: {severity: warning}
+        annotations: {summary: "An event-driven DASH operator briefing refresh remained pending beyond its bounded change interval"}
       - alert: DashOperationsBriefingCriticalActions
         expr: dash_operations_briefing_enabled == 1 and dash_operations_briefing_critical > 0
         for: 5m

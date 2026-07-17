@@ -86,10 +86,53 @@ class OperationsBriefingTests(unittest.TestCase):
     def test_metrics_are_label_free(self):
         result = self.store.record([source("slo"), source("backup")], actor="test", now=1000)
         status = self.store.status(result["document"]["receipt"]["sourceFingerprint"], now=1001)
-        metrics = operations_briefing.prometheus(status, enabled=True, worker_running=True)
+        metrics = operations_briefing.prometheus(
+            status, enabled=True, worker_running=True,
+            runtime={"refreshPending": True, "invalidations": 4, "wakeups": 3, "eventGenerations": 2},
+        )
         self.assertIn("dash_operations_briefing_score 100", metrics)
         self.assertIn("dash_operations_briefing_current 1", metrics)
+        self.assertIn("dash_operations_briefing_refresh_pending 1", metrics)
+        self.assertIn("dash_operations_briefing_invalidations_total 4", metrics)
+        self.assertIn("dash_operations_briefing_wakeups_total 3", metrics)
+        self.assertIn("dash_operations_briefing_event_generations_total 2", metrics)
         self.assertNotIn("{", metrics)
+
+    def test_changed_source_uses_short_event_interval_and_reports_retry(self):
+        latest = {
+            "generatedAt": operations_briefing.iso(1000),
+            "sourceFingerprint": "a" * 64,
+        }
+        waiting = operations_briefing.generation_policy(
+            latest, "b" * 64, False, now=1005,
+            refresh_seconds=86400, minimum_interval_seconds=300,
+            change_minimum_interval_seconds=15,
+        )
+        self.assertTrue(waiting["sourceChanged"])
+        self.assertTrue(waiting["cooldown"])
+        self.assertFalse(waiting["generated"])
+        self.assertEqual(10, waiting["retryAfterSeconds"])
+        ready = operations_briefing.generation_policy(
+            latest, "b" * 64, False, now=1015,
+            refresh_seconds=86400, minimum_interval_seconds=300,
+            change_minimum_interval_seconds=15,
+        )
+        self.assertTrue(ready["generated"])
+        self.assertFalse(ready["cooldown"])
+
+    def test_unchanged_current_receipt_is_deduplicated(self):
+        latest = {
+            "generatedAt": operations_briefing.iso(1000),
+            "sourceFingerprint": "a" * 64,
+        }
+        decision = operations_briefing.generation_policy(
+            latest, "a" * 64, True, now=5000,
+            refresh_seconds=86400, minimum_interval_seconds=300,
+            change_minimum_interval_seconds=15,
+        )
+        self.assertFalse(decision["due"])
+        self.assertFalse(decision["generated"])
+        self.assertFalse(decision["sourceChanged"])
 
     def test_repository_integration_is_complete(self):
         admin = (ROOT / "admin/admin_panel.py").read_text(encoding="utf-8")
@@ -105,11 +148,19 @@ class OperationsBriefingTests(unittest.TestCase):
         self.assertIn("operations_briefing_public_status(refresh_sources=False", admin)
         self.assertIn("ensure_operations_briefing_thread()", admin)
         self.assertIn("operationsBriefingPanel", admin)
+        self.assertIn("previous signed receipt is shown for history only", admin)
+        self.assertIn("request_operations_briefing_refresh", admin)
         self.assertIn("operations_briefing.verify_signed_document", admin)
         self.assertIn("DUNE_OPERATIONS_BRIEFING_ENABLED", compose)
+        self.assertIn("DUNE_OPERATIONS_BRIEFING_CHANGE_MIN_INTERVAL_SECONDS", compose)
+        self.assertIn("DUNE_OPERATIONS_BRIEFING_EVENT_DEBOUNCE_SECONDS", compose)
         self.assertIn("DUNE_OPERATIONS_BRIEFING_ENABLED=true", env)
+        self.assertIn("DUNE_OPERATIONS_BRIEFING_CHANGE_MIN_INTERVAL_SECONDS=15", env)
+        self.assertIn("DUNE_OPERATIONS_BRIEFING_EVENT_DEBOUNCE_SECONDS=5", env)
         self.assertIn("DUNE_OPERATIONS_BRIEFING_ENABLED", activator)
+        self.assertIn("DUNE_OPERATIONS_BRIEFING_CHANGE_MIN_INTERVAL_SECONDS", activator)
         self.assertIn("DashOperationsBriefingNotCurrent", rules)
+        self.assertIn("DashOperationsBriefingRefreshPending", rules)
         self.assertIn("operations-briefing", {row["id"] for row in feature["features"]})
         self.assertIn('"admin/operations_briefing.py"', deploy)
         self.assertIn("admin/operations_briefing.py", push)

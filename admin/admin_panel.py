@@ -509,6 +509,8 @@ OPERATIONS_BRIEFING_POLL_SECONDS = max(60, min(int(os.environ.get("DUNE_OPERATIO
 OPERATIONS_BRIEFING_REFRESH_HOURS = max(1, min(int(os.environ.get("DUNE_OPERATIONS_BRIEFING_REFRESH_HOURS", "24")), 720))
 OPERATIONS_BRIEFING_MAX_AGE_HOURS = max(1, min(int(os.environ.get("DUNE_OPERATIONS_BRIEFING_MAX_AGE_HOURS", "36")), 720))
 OPERATIONS_BRIEFING_MIN_INTERVAL_SECONDS = max(60, min(int(os.environ.get("DUNE_OPERATIONS_BRIEFING_MIN_INTERVAL_SECONDS", "300")), 86400))
+OPERATIONS_BRIEFING_CHANGE_MIN_INTERVAL_SECONDS = max(5, min(int(os.environ.get("DUNE_OPERATIONS_BRIEFING_CHANGE_MIN_INTERVAL_SECONDS", "15")), 300))
+OPERATIONS_BRIEFING_EVENT_DEBOUNCE_SECONDS = max(1, min(int(os.environ.get("DUNE_OPERATIONS_BRIEFING_EVENT_DEBOUNCE_SECONDS", "5")), 60))
 OPERATIONS_BRIEFING_RETENTION = max(10, min(int(os.environ.get("DUNE_OPERATIONS_BRIEFING_RETENTION", "100")), 5000))
 DEPLOYMENT_ASSURANCE_ENABLED = os.environ.get("DUNE_DEPLOYMENT_ASSURANCE_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 DEPLOYMENT_ASSURANCE_ROOT = pathlib.Path(os.environ.get("DUNE_DEPLOYMENT_ASSURANCE_STATE_DIR", str(BACKUPS_ROOT / "deployment-assurance")))
@@ -562,8 +564,15 @@ CANARY_AUTOPILOT_RUNTIME = {"running": False, "lastPollAt": None, "lastError": N
 OPERATIONS_BRIEFING_STORE = None
 OPERATIONS_BRIEFING_STORE_LOCK = threading.Lock()
 OPERATIONS_BRIEFING_RUN_LOCK = threading.Lock()
+OPERATIONS_BRIEFING_WAKE_EVENT = threading.Event()
 OPERATIONS_BRIEFING_WORKER_STARTED = False
-OPERATIONS_BRIEFING_RUNTIME = {"running": False, "lastPollAt": None, "lastGeneratedAt": None, "lastError": None, "lastResult": None, "currentFingerprint": None}
+OPERATIONS_BRIEFING_RUNTIME = {
+    "running": False, "lastPollAt": None, "lastGeneratedAt": None,
+    "lastError": None, "lastResult": None, "currentFingerprint": None,
+    "refreshPending": False, "invalidations": 0, "wakeups": 0,
+    "eventGenerations": 0, "lastInvalidatedAt": None,
+    "lastInvalidationReason": None, "lastWakeAt": None,
+}
 MODERATION_STORE = moderation.Store(MODERATION_DATABASE, owner_uid=os.environ.get("DUNE_HOST_UID"), owner_gid=os.environ.get("DUNE_HOST_GID"))
 MODERATION_STORE_INITIALIZED = False
 MODERATION_STORE_LOCK = threading.Lock()
@@ -1665,6 +1674,10 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_OPERATIONS_BRIEFING_POLL_SECONDS": {"group": "Operations", "secret": False, "restart": True, "why": "Controls how often the briefing worker checks for source-state changes."},
     "DUNE_OPERATIONS_BRIEFING_REFRESH_HOURS": {"group": "Operations", "secret": False, "restart": True, "why": "Refreshes unchanged signed briefings before they become stale."},
     "DUNE_OPERATIONS_BRIEFING_MAX_AGE_HOURS": {"group": "Operations", "secret": False, "restart": True, "why": "Sets the maximum accepted age of a signed briefing."},
+    "DUNE_OPERATIONS_BRIEFING_MIN_INTERVAL_SECONDS": {"group": "Operations", "secret": False, "restart": True, "why": "Minimum interval for unchanged scheduled briefing refreshes."},
+    "DUNE_OPERATIONS_BRIEFING_CHANGE_MIN_INTERVAL_SECONDS": {"group": "Operations", "secret": False, "restart": True, "why": "Short anti-storm interval for event-driven categorical source changes."},
+    "DUNE_OPERATIONS_BRIEFING_EVENT_DEBOUNCE_SECONDS": {"group": "Operations", "secret": False, "restart": True, "why": "Coalesces related evidence invalidations before rebuilding a signed briefing."},
+    "DUNE_OPERATIONS_BRIEFING_RETENTION": {"group": "Operations", "secret": False, "restart": True, "why": "Number of private signed Operator Briefing receipts retained."},
     "DUNE_CANARY_AUTOPILOT_POLL_SECONDS": {"group": "Operations", "secret": False, "restart": True, "why": "Bounded cadence for checking isolated proof freshness; it does not set the canary execution frequency."},
     "DUNE_CANARY_AUTOPILOT_REFRESH_BEFORE_HOURS": {"group": "Operations", "secret": False, "restart": True, "why": "Refresh lead time before an otherwise current signed canary receipt expires."},
     "DUNE_CANARY_AUTOPILOT_FAILURE_BACKOFF_SECONDS": {"group": "Operations", "secret": False, "restart": True, "why": "Initial retry delay after an isolated canary fails."},
@@ -2107,6 +2120,37 @@ def canonical_json_sha256(value):
     return digest.hexdigest()
 
 
+OPERATIONS_BRIEFING_INVALIDATING_ACTIONS = {
+    "privileged-request-completed", "privileged-request-reconciled",
+    "slo-incident-opened", "slo-incident-resolved",
+    "desired-state-drift-opened", "desired-state-drift-resolved",
+    "backup-restore-drill-finished", "rabbitmq-restore-drill-finished",
+    "canary-autopilot-run", "canary-autopilot-poll",
+    "public-ip-repair-canary", "incident-readiness-certification",
+}
+OPERATIONS_BRIEFING_INVALIDATING_PREFIXES = ("deployment-assurance-",)
+
+
+def request_operations_briefing_refresh(reason):
+    if not OPERATIONS_BRIEFING_ENABLED:
+        return False
+    reason = re.sub(r"[^a-zA-Z0-9_.:-]+", "-", str(reason or "source-change")).strip("-")[:128] or "source-change"
+    OPERATIONS_BRIEFING_RUNTIME.update({
+        "currentFingerprint": None,
+        "refreshPending": True,
+        "lastInvalidatedAt": operations_briefing.iso(),
+        "lastInvalidationReason": reason,
+        "invalidations": int(OPERATIONS_BRIEFING_RUNTIME.get("invalidations") or 0) + 1,
+    })
+    OPERATIONS_BRIEFING_WAKE_EVENT.set()
+    return True
+
+
+def audit_action_invalidates_operations_briefing(action):
+    action = str(action or "")
+    return action in OPERATIONS_BRIEFING_INVALIDATING_ACTIONS or action.startswith(OPERATIONS_BRIEFING_INVALIDATING_PREFIXES)
+
+
 def audit_event(action, ok=True, _ledger_required=False, **fields):
     event = {
         "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -2144,6 +2188,8 @@ def audit_event(action, ok=True, _ledger_required=False, **fields):
         except Exception as exc:
             CHANGE_INTELLIGENCE_RUNTIME["lastError"] = str(exc)[:2000]
     WEBHOOK_DISPATCHER.enqueue(event)
+    if audit_action_invalidates_operations_briefing(action):
+        request_operations_briefing_refresh(f"audit:{action}")
     return {"event": event, "ledger": ledger_receipt}
 
 
@@ -5282,6 +5328,8 @@ def operations_briefing_public_status(*, refresh_sources=False, limit=20):
         "pollSeconds": OPERATIONS_BRIEFING_POLL_SECONDS,
         "refreshSeconds": OPERATIONS_BRIEFING_REFRESH_HOURS * 3600,
         "minimumIntervalSeconds": OPERATIONS_BRIEFING_MIN_INTERVAL_SECONDS,
+        "changeMinimumIntervalSeconds": OPERATIONS_BRIEFING_CHANGE_MIN_INTERVAL_SECONDS,
+        "eventDebounceSeconds": OPERATIONS_BRIEFING_EVENT_DEBOUNCE_SECONDS,
         "runtime": dict(OPERATIONS_BRIEFING_RUNTIME), "sourceError": source_error,
         "executionContract": {
             "mapLifecycleInvoked": False, "gameDataMutationExecuted": False,
@@ -5300,18 +5348,23 @@ def run_operations_briefing(*, force=False, actor="system:operations-briefing"):
     OPERATIONS_BRIEFING_RUNTIME["running"] = True
     try:
         now = time.time()
+        invalidations_at_start = int(OPERATIONS_BRIEFING_RUNTIME.get("invalidations") or 0)
+        event_triggered = bool(OPERATIONS_BRIEFING_RUNTIME.get("refreshPending"))
         sources = operations_briefing_sources()
         fingerprint = operations_briefing.source_fingerprint(sources)
         OPERATIONS_BRIEFING_RUNTIME["currentFingerprint"] = fingerprint
         store = operations_briefing_store()
         status = store.status(fingerprint, limit=1, now=now)
         latest = status.get("latest") or {}
-        latest_age = max(0.0, now - operations_briefing.epoch(latest["generatedAt"])) if latest.get("generatedAt") else None
-        due = bool(not latest or not status.get("currentReady") or latest_age is None or latest_age >= OPERATIONS_BRIEFING_REFRESH_HOURS * 3600)
-        cooldown = bool(latest_age is not None and latest_age < OPERATIONS_BRIEFING_MIN_INTERVAL_SECONDS)
-        generated = bool(force or (due and not cooldown))
-        result = {"ok": True, "generated": generated, "due": due, "cooldown": cooldown, "sourceFingerprint": fingerprint}
-        if generated:
+        decision = operations_briefing.generation_policy(
+            latest, fingerprint, status.get("currentReady"), now=now,
+            refresh_seconds=OPERATIONS_BRIEFING_REFRESH_HOURS * 3600,
+            minimum_interval_seconds=OPERATIONS_BRIEFING_MIN_INTERVAL_SECONDS,
+            change_minimum_interval_seconds=OPERATIONS_BRIEFING_CHANGE_MIN_INTERVAL_SECONDS,
+            force=force,
+        )
+        result = {"ok": True, **decision, "sourceFingerprint": fingerprint, "eventTriggered": event_triggered}
+        if decision["generated"]:
             recorded = store.record(sources, actor=actor, now=now)
             receipt = (recorded.get("document") or {}).get("receipt") or {}
             result.update({
@@ -5319,6 +5372,8 @@ def run_operations_briefing(*, force=False, actor="system:operations-briefing"):
                 "evidenceFile": pathlib.Path(recorded["evidencePath"]).name,
             })
             OPERATIONS_BRIEFING_RUNTIME["lastGeneratedAt"] = receipt.get("generatedAt")
+            if event_triggered:
+                OPERATIONS_BRIEFING_RUNTIME["eventGenerations"] = int(OPERATIONS_BRIEFING_RUNTIME.get("eventGenerations") or 0) + 1
             audit_event(
                 "operations-briefing-generated", ok=bool((recorded.get("verification") or {}).get("ok")),
                 receipt_id=receipt.get("id"), state=receipt.get("state"), score=receipt.get("score"),
@@ -5327,6 +5382,10 @@ def run_operations_briefing(*, force=False, actor="system:operations-briefing"):
             )
             with FEATURE_READINESS_CACHE_LOCK:
                 FEATURE_READINESS_CACHE.update({"value": None, "updated_at": 0.0})
+        if decision["due"] and not decision["generated"]:
+            OPERATIONS_BRIEFING_RUNTIME["refreshPending"] = True
+        elif int(OPERATIONS_BRIEFING_RUNTIME.get("invalidations") or 0) == invalidations_at_start:
+            OPERATIONS_BRIEFING_RUNTIME["refreshPending"] = False
         OPERATIONS_BRIEFING_RUNTIME.update({"lastPollAt": operations_briefing.iso(now), "lastError": None, "lastResult": result})
         return result
     except Exception as exc:
@@ -5338,15 +5397,27 @@ def run_operations_briefing(*, force=False, actor="system:operations-briefing"):
 
 
 def operations_briefing_worker():
+    delay = 0
     while True:
+        if delay > 0:
+            woke = OPERATIONS_BRIEFING_WAKE_EVENT.wait(delay)
+            if woke:
+                OPERATIONS_BRIEFING_WAKE_EVENT.clear()
+                OPERATIONS_BRIEFING_RUNTIME.update({
+                    "wakeups": int(OPERATIONS_BRIEFING_RUNTIME.get("wakeups") or 0) + 1,
+                    "lastWakeAt": operations_briefing.iso(),
+                })
+                time.sleep(OPERATIONS_BRIEFING_EVENT_DEBOUNCE_SECONDS)
         try:
-            run_operations_briefing(force=False)
+            result = run_operations_briefing(force=False)
+            delay = int(result.get("retryAfterSeconds") or OPERATIONS_BRIEFING_POLL_SECONDS)
         except RuntimeError as exc:
             if "already in progress" not in str(exc):
                 OPERATIONS_BRIEFING_RUNTIME["lastError"] = str(exc)[:1000]
+            delay = OPERATIONS_BRIEFING_POLL_SECONDS
         except Exception as exc:
             OPERATIONS_BRIEFING_RUNTIME["lastError"] = str(exc)[:1000]
-        time.sleep(OPERATIONS_BRIEFING_POLL_SECONDS)
+            delay = OPERATIONS_BRIEFING_POLL_SECONDS
 
 
 def ensure_operations_briefing_thread():
@@ -10897,9 +10968,10 @@ class Handler(BaseHTTPRequestHandler):
                         enabled=OPERATIONS_BRIEFING_ENABLED,
                         worker_running=OPERATIONS_BRIEFING_WORKER_STARTED,
                         last_error=bool(OPERATIONS_BRIEFING_RUNTIME.get("lastError")),
+                        runtime=OPERATIONS_BRIEFING_RUNTIME,
                     )
                 except Exception:
-                    metrics += f"dash_operations_briefing_enabled {1 if OPERATIONS_BRIEFING_ENABLED else 0}\ndash_operations_briefing_collector_up 0\ndash_operations_briefing_worker_running 0\ndash_operations_briefing_current 0\ndash_operations_briefing_score 0\ndash_operations_briefing_critical 0\ndash_operations_briefing_attention 0\ndash_operations_briefing_actions 0\ndash_operations_briefing_last_generation_timestamp_seconds 0\ndash_operations_briefing_age_seconds 0\ndash_operations_briefing_retained 0\n"
+                    metrics += f"dash_operations_briefing_enabled {1 if OPERATIONS_BRIEFING_ENABLED else 0}\ndash_operations_briefing_collector_up 0\ndash_operations_briefing_worker_running 0\ndash_operations_briefing_current 0\ndash_operations_briefing_score 0\ndash_operations_briefing_critical 0\ndash_operations_briefing_attention 0\ndash_operations_briefing_actions 0\ndash_operations_briefing_last_generation_timestamp_seconds 0\ndash_operations_briefing_age_seconds 0\ndash_operations_briefing_retained 0\ndash_operations_briefing_refresh_pending 0\ndash_operations_briefing_invalidations_total 0\ndash_operations_briefing_wakeups_total 0\ndash_operations_briefing_event_generations_total 0\n"
                 metrics += maintenance_planner_prometheus()
                 metrics_document_cache_put("change-intelligence", metrics)
                 self.text(metrics + metrics_document_cache_prometheus(), "text/plain; version=0.0.4; charset=utf-8")
@@ -19678,13 +19750,14 @@ async function load(){
   view.setAttribute('aria-busy', 'false');
 }
 function operationsBriefingPanel(data={}){
-  const latest=data.latest||{}, summary=latest.summary||{}, verification=latest.verification||{};
+  const latest=data.latest||{}, summary=latest.summary||{}, verification=latest.verification||{}, runtime=data.runtime||{};
   const state=latest.state||(!data.enabled?'disabled':'collecting');
   const tone=state==='ready'&&data.currentReady?'ok':state==='critical'?'bad':'warn';
   const actions=(latest.actions||[]).map(row=>({priority:row.priority,area:row.title,state:(latest.sources||[]).find(source=>source.id===row.source)?.state||'attention',next:row.detail,surface:row.surface}));
   const changes=(latest.changes||[]).map(row=>({area:row.source,from:row.fromState,to:row.toState,direction:row.direction}));
   const destinations=[...new Set((latest.actions||[]).map(row=>String(row.surface||'').split(':')[0]).filter(value=>['infrastructure','security','ops','settings'].includes(value)))];
-  return `<div class="panelBand" id="operationsBriefing"><div class="sectionHeader"><div><h2>Operator Briefing</h2><p class="muted">One signed, change-aware answer to what needs attention next. It synthesizes existing evidence and never executes a recommendation.</p></div><div class="toolbar"><span class="pill ${tone}">${esc(state)}</span><span class="pill ${data.currentReady?'ok':'warn'}">${data.currentReady?'current':'refresh pending'}</span><span class="pill">score ${esc(latest.score??'—')}/100</span>${destinations.map(tab=>`<button data-jump="${esc(tab)}">Open ${esc(tab)}</button>`).join('')}</div></div><div class="metricGrid">${metric('Healthy sources',`${summary.healthy||0}/${summary.sources||0}`,tone)}${metric('Critical',summary.critical||0,Number(summary.critical||0)?'dangerText':'ok')}${metric('Attention',summary.attention||0,Number(summary.attention||0)?'warn':'ok')}${metric('Provider follow-ups',summary.informational||0)}${metric('Changes',summary.changes||0)}${metric('Signed age',verification.ageSeconds==null?'—':fmtRuntimeSeconds(verification.ageSeconds))}</div>${data.error?`<div class="notice bad">${esc(data.error)}</div>`:''}${actions.length?`<h3>Prioritized next actions</h3>${table(actions)}`:'<div class="notice ok">No critical or warning action is currently required.</div>'}${changes.length?`<details open><summary>What changed since the previous briefing</summary>${table(changes)}</details>`:''}<details><summary>Evidence and non-execution contract</summary><pre>${esc(JSON.stringify({receiptId:latest.id,generatedAt:latest.generatedAt,receiptSha256:latest.receiptSha256,verification,retained:data.summary?.retained||0,executionContract:data.executionContract,runtime:data.runtime},null,2))}</pre></details></div>`;
+  const verdict=data.currentReady?(actions.length?`<h3>Prioritized next actions</h3>${table(actions)}`:'<div class="notice ok">No critical or warning action is currently required.</div>'):`<div class="notice warn">Authoritative evidence changed. The previous signed receipt is shown for history only; an event-driven refresh is queued${runtime.lastInvalidationReason?` after <code>${esc(runtime.lastInvalidationReason)}</code>`:''}.</div>`;
+  return `<div class="panelBand" id="operationsBriefing"><div class="sectionHeader"><div><h2>Operator Briefing</h2><p class="muted">One signed, change-aware answer to what needs attention next. It synthesizes existing evidence and never executes a recommendation.</p></div><div class="toolbar"><span class="pill ${tone}">${esc(state)}</span><span class="pill ${data.currentReady?'ok':'warn'}">${data.currentReady?'current':'refresh pending'}</span><span class="pill">score ${esc(latest.score??'—')}/100</span>${destinations.map(tab=>`<button data-jump="${esc(tab)}">Open ${esc(tab)}</button>`).join('')}</div></div><div class="metricGrid">${metric('Healthy sources',`${summary.healthy||0}/${summary.sources||0}`,tone)}${metric('Critical',summary.critical||0,Number(summary.critical||0)?'dangerText':'ok')}${metric('Attention',summary.attention||0,Number(summary.attention||0)?'warn':'ok')}${metric('Provider follow-ups',summary.informational||0)}${metric('Event refreshes',runtime.eventGenerations||0)}${metric('Event coalescing',`${data.eventDebounceSeconds||0}s / ${data.changeMinimumIntervalSeconds||0}s minimum`)}${metric('Signed age',verification.ageSeconds==null?'—':fmtRuntimeSeconds(verification.ageSeconds))}</div>${data.error?`<div class="notice bad">${esc(data.error)}</div>`:''}${verdict}${changes.length?`<details open><summary>What changed since the previous briefing</summary>${table(changes)}</details>`:''}<details><summary>Evidence and non-execution contract</summary><pre>${esc(JSON.stringify({receiptId:latest.id,generatedAt:latest.generatedAt,receiptSha256:latest.receiptSha256,verification,retained:data.summary?.retained||0,executionContract:data.executionContract,runtime:data.runtime},null,2))}</pre></details></div>`;
 }
 async function overview(serial=loadSerial){
   const [health, roster, briefing] = await Promise.all([

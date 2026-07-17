@@ -5,6 +5,7 @@ import datetime
 import hashlib
 import hmac
 import json
+import math
 import os
 import pathlib
 import re
@@ -86,6 +87,32 @@ def normalize_sources(rows):
 def source_fingerprint(sources):
     stable = [{key: row[key] for key in ("id", "state", "healthy", "severity")} for row in normalize_sources(sources)]
     return hashlib.sha256(canonical(stable).encode()).hexdigest()
+
+
+def generation_policy(latest, current_source_fingerprint, current_ready, *, now=None,
+                      refresh_seconds=24 * 3600, minimum_interval_seconds=300,
+                      change_minimum_interval_seconds=15, force=False):
+    """Choose whether to record now without hiding a changed source for a full poll cycle."""
+    now = time.time() if now is None else float(now)
+    latest = latest or {}
+    generated_at = latest.get("generatedAt")
+    latest_age = max(0.0, now - epoch(generated_at)) if generated_at else None
+    previous_fingerprint = str(latest.get("sourceFingerprint") or "")
+    current_fingerprint = str(current_source_fingerprint or "")
+    source_changed = bool(
+        latest and previous_fingerprint and current_fingerprint
+        and not hmac.compare_digest(previous_fingerprint, current_fingerprint)
+    )
+    due = bool(not latest or not current_ready or latest_age is None or latest_age >= float(refresh_seconds))
+    minimum = float(change_minimum_interval_seconds if source_changed else minimum_interval_seconds)
+    cooldown = bool(latest_age is not None and latest_age < minimum)
+    generate = bool(force or (due and not cooldown))
+    retry_after = max(1, int(math.ceil(minimum - latest_age))) if due and cooldown and latest_age is not None else 0
+    return {
+        "due": due, "generated": generate, "cooldown": cooldown,
+        "sourceChanged": source_changed, "latestAgeSeconds": latest_age,
+        "minimumIntervalSeconds": int(minimum), "retryAfterSeconds": retry_after,
+    }
 
 
 def _direction(previous, current):
@@ -361,7 +388,8 @@ class Store:
         }
 
 
-def prometheus(status, *, enabled=True, worker_running=False, last_error=False):
+def prometheus(status, *, enabled=True, worker_running=False, last_error=False, runtime=None):
+    runtime = runtime or {}
     latest = status.get("latest") or {}
     summary = latest.get("summary") or {}
     verification = latest.get("verification") or {}
@@ -378,4 +406,8 @@ def prometheus(status, *, enabled=True, worker_running=False, last_error=False):
         f"dash_operations_briefing_last_generation_timestamp_seconds {generated}",
         f"dash_operations_briefing_age_seconds {float(verification.get('ageSeconds') or 0):.3f}",
         f"dash_operations_briefing_retained {int((status.get('summary') or {}).get('retained') or 0)}",
+        f"dash_operations_briefing_refresh_pending {1 if runtime.get('refreshPending') else 0}",
+        f"dash_operations_briefing_invalidations_total {int(runtime.get('invalidations') or 0)}",
+        f"dash_operations_briefing_wakeups_total {int(runtime.get('wakeups') or 0)}",
+        f"dash_operations_briefing_event_generations_total {int(runtime.get('eventGenerations') or 0)}",
     ]) + "\n"

@@ -79,17 +79,24 @@ backups/operator-evidence/operations-briefing-*.signed.json
 
 ## Freshness and worker behavior
 
-The Admin Panel starts one daemon worker. It checks sources every five minutes
-by default and generates a new receipt only when:
+The Admin Panel starts one daemon worker. Source-affecting privileged-request
+completion, deployment, SLO, desired-state, recovery-proof, canary, and
+readiness events invalidate the cached fingerprint immediately and wake the
+worker. The five-minute poll remains a safety net for external or unobserved
+changes. A new receipt is generated only when:
 
 - no receipt exists;
 - the categorical source fingerprint changed; or
 - an unchanged receipt reached its scheduled 24-hour refresh.
 
-A five-minute minimum interval suppresses repeated receipts during rapid source
-flapping. A changed source makes the current receipt non-current immediately;
-the API and metric expose that distinction while the bounded cooldown applies.
-The maximum accepted receipt age defaults to 36 hours.
+Related events are coalesced for five seconds. A categorical fingerprint change
+uses a separate 15-second minimum interval, so a just-issued receipt can be
+superseded quickly without allowing an unbounded receipt storm. If that short
+interval is still active, the worker schedules the exact remaining retry rather
+than falling back to the five-minute poll. The legacy five-minute minimum
+continues to govern unchanged scheduled refreshes. A changed source makes the
+current receipt non-current synchronously, before collection starts. The
+maximum accepted receipt age defaults to 36 hours.
 
 The Feature Readiness probe treats the worker's first collection as a bounded
 `collector-starting` state. After the first receipt, readiness requires a
@@ -111,9 +118,13 @@ GET /api/ops/operations-briefing?limit=20
 
 This endpoint returns the worker's cached source fingerprint and verified
 receipts without synchronously re-running the potentially expensive update,
-recovery, and readiness collectors. There is deliberately no browser action
-that executes or automatically chains a recommendation into a recovery
-mutation.
+recovery, and readiness collectors. An invalidation clears that fingerprint,
+so the endpoint cannot present the preceding receipt as current while the
+event-driven rebuild is pending. The Overview card labels the receipt as
+historical, exposes the bounded wake target and invalidation reason, and does
+not present its old empty action list as a current verdict. There is
+deliberately no browser action that executes or automatically chains a
+recommendation into a recovery mutation.
 
 ## Configuration
 
@@ -123,6 +134,8 @@ DUNE_OPERATIONS_BRIEFING_POLL_SECONDS=300
 DUNE_OPERATIONS_BRIEFING_REFRESH_HOURS=24
 DUNE_OPERATIONS_BRIEFING_MAX_AGE_HOURS=36
 DUNE_OPERATIONS_BRIEFING_MIN_INTERVAL_SECONDS=300
+DUNE_OPERATIONS_BRIEFING_CHANGE_MIN_INTERVAL_SECONDS=15
+DUNE_OPERATIONS_BRIEFING_EVENT_DEBOUNCE_SECONDS=5
 DUNE_OPERATIONS_BRIEFING_RETENTION=100
 ```
 
@@ -147,10 +160,15 @@ dash_operations_briefing_actions
 dash_operations_briefing_last_generation_timestamp_seconds
 dash_operations_briefing_age_seconds
 dash_operations_briefing_retained
+dash_operations_briefing_refresh_pending
+dash_operations_briefing_invalidations_total
+dash_operations_briefing_wakeups_total
+dash_operations_briefing_event_generations_total
 ```
 
 Alert rules cover invalid evidence/source collection, a stopped worker, a
-briefing that remains non-current for 30 minutes, and retained critical actions.
+briefing that remains non-current for 30 minutes, an event-driven refresh still
+pending after two minutes, and retained critical actions.
 Source IDs, details, operators, paths, receipt IDs, and credential names remain
 in the authenticated API rather than Prometheus labels.
 
