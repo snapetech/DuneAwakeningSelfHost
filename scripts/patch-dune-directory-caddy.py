@@ -16,8 +16,11 @@ import tempfile
 
 
 MARKER = "# DASH signed federated directory"
+PORTAL_MARKER = "# DASH signed federated directory portal aliases"
 START = "(dune_static_site) {"
 END = "\n}\n\n(snape_game_portal) {"
+PORTAL_START = "(snape_game_portal) {"
+PORTAL_END = "\n}\n\nhttps://palworld.snape.tech {"
 
 CSP_BEFORE = "connect-src 'self'; img-src 'self' data:"
 CSP_AFTER = "connect-src 'self' https:; img-src 'self' data:"
@@ -53,6 +56,38 @@ DIRECTORY_REDIRECT = """\
 
 """
 
+PORTAL_CACHED_BEFORE = "path /landing.css /landing-generated.css /assets/*.svg /assets/*.webp /assets/*.png /assets/*.jpg /assets/*.jpeg /palworld/style.css /palworld/app.js /palworld/palpagos-map.webp /dune/style.css /dune/app.js /dune/hagga-map.svg /dune/hagga-basin.webp /dune/deep-desert-map.svg /dune/deep-desert.webp"
+PORTAL_CACHED_AFTER = PORTAL_CACHED_BEFORE + " /dune/directory/directory.css /dune/directory/directory.js /duneawakening/directory/directory.css /duneawakening/directory/directory.js /da/directory/directory.css /da/directory/directory.js"
+PORTAL_SHORT_BEFORE = "path /palworld/status.json /palworld/locations.json /dune/players.json /dune/hagga-pois.json"
+PORTAL_SHORT_AFTER = PORTAL_SHORT_BEFORE + " /dune/directory-entry.json /dune/directory/directory.json /duneawakening/directory-entry.json /duneawakening/directory/directory.json /da/directory-entry.json /da/directory/directory.json"
+ALIAS_FILES_BEFORE = "path / /style.css /app.js /status.html /players.json /hagga-pois.json /hagga-map.svg /hagga-basin.webp /deep-desert-map.svg /deep-desert.webp"
+ALIAS_FILES_AFTER = ALIAS_FILES_BEFORE + " /directory-entry.json /directory/ /directory/index.html /directory/directory.css /directory/directory.js /directory/directory.json"
+
+PORTAL_HEADERS = """\
+		# DASH signed federated directory portal aliases
+		@directory_descriptors {
+			path /dune/directory-entry.json /duneawakening/directory-entry.json /da/directory-entry.json
+		}
+		header @directory_descriptors {
+			Access-Control-Allow-Origin "*"
+			Cross-Origin-Resource-Policy "cross-origin"
+			Cache-Control "no-store"
+			CDN-Cache-Control "no-store"
+			Cloudflare-CDN-Cache-Control "no-store"
+			-Pragma
+			-Expires
+		}
+
+"""
+
+PORTAL_REDIRECT = """\
+		@directory_alias_bare {
+			path /dune/directory /duneawakening/directory /da/directory
+		}
+		redir @directory_alias_bare {path}/ 308
+
+"""
+
 
 class PatchError(ValueError):
     pass
@@ -82,9 +117,7 @@ def verify_patched(snippet: str) -> None:
             raise PatchError(f"existing directory patch omits {path}")
 
 
-def patch_text(text: str) -> tuple[str, bool]:
-    if text.count(START) != 1 or text.count(END) != 1:
-        raise PatchError("reviewed dune_static_site/snape_game_portal boundary was not found exactly once")
+def patch_direct(text: str) -> tuple[str, bool]:
     start = text.index(START)
     end = text.index(END, start) + 3
     snippet = text[start:end]
@@ -100,6 +133,48 @@ def patch_text(text: str) -> tuple[str, bool]:
     snippet = replace_once(snippet, "\t\t@static_files {", DIRECTORY_REDIRECT + "\t\t@static_files {", "static matcher insertion point")
     verify_patched(snippet)
     return text[:start] + snippet + text[end:], True
+
+
+def verify_portal_patched(snippet: str) -> None:
+    required = (
+        PORTAL_MARKER, CSP_AFTER, PORTAL_CACHED_AFTER, PORTAL_SHORT_AFTER,
+        'Access-Control-Allow-Origin "*"', 'Cross-Origin-Resource-Policy "cross-origin"',
+        "redir @directory_alias_bare {path}/ 308",
+    )
+    for label in ("dune", "duneawakening", "da"):
+        required += (f"@{label}_files {ALIAS_FILES_AFTER}",)
+    missing = [value for value in required if value not in snippet]
+    if missing:
+        raise PatchError("existing portal directory patch is incomplete: " + ", ".join(missing))
+
+
+def patch_portal(text: str) -> tuple[str, bool]:
+    start = text.index(PORTAL_START)
+    end = text.index(PORTAL_END, start) + 3
+    snippet = text[start:end]
+    if PORTAL_MARKER in snippet:
+        verify_portal_patched(snippet)
+        return text, False
+    snippet = replace_once(snippet, CSP_BEFORE, CSP_AFTER, "portal connect-src policy")
+    snippet = replace_once(snippet, PORTAL_CACHED_BEFORE, PORTAL_CACHED_AFTER, "portal cached-asset matcher")
+    snippet = replace_once(snippet, PORTAL_SHORT_BEFORE, PORTAL_SHORT_AFTER, "portal short-lived-data matcher")
+    for label in ("dune", "duneawakening", "da"):
+        snippet = replace_once(
+            snippet, f"@{label}_files {ALIAS_FILES_BEFORE}", f"@{label}_files {ALIAS_FILES_AFTER}",
+            f"{label} alias file matcher",
+        )
+    snippet = replace_once(snippet, "\t\t@unexpected_methods {", PORTAL_HEADERS + "\t\t@unexpected_methods {", "portal method matcher insertion point")
+    snippet = replace_once(snippet, "\t\thandle_path /dune/* {", PORTAL_REDIRECT + "\t\thandle_path /dune/* {", "portal Dune handler insertion point")
+    verify_portal_patched(snippet)
+    return text[:start] + snippet + text[end:], True
+
+
+def patch_text(text: str) -> tuple[str, bool]:
+    if text.count(START) != 1 or text.count(END) != 1 or text.count(PORTAL_START) != 1 or text.count(PORTAL_END) != 1:
+        raise PatchError("reviewed Dune static/portal snippet boundaries were not found exactly once")
+    text, direct_changed = patch_direct(text)
+    text, portal_changed = patch_portal(text)
+    return text, direct_changed or portal_changed
 
 
 def atomic_write(path: pathlib.Path, payload: str, details: os.stat_result) -> None:
@@ -159,7 +234,9 @@ def main() -> int:
         raise SystemExit(f"backup already exists: {backup}")
     shutil.copy2(args.file, backup)
     atomic_write(args.file, rendered, details)
-    verify_patched(args.file.read_text(encoding="utf-8")[args.file.read_text(encoding="utf-8").index(START):])
+    installed = args.file.read_text(encoding="utf-8")
+    verify_patched(installed[installed.index(START):installed.index(END, installed.index(START)) + 3])
+    verify_portal_patched(installed[installed.index(PORTAL_START):installed.index(PORTAL_END, installed.index(PORTAL_START)) + 3])
     print(json.dumps({"ok": True, "changed": True, "file": str(args.file), "backup": str(backup)}, sort_keys=True))
     return 0
 

@@ -152,11 +152,14 @@ sudo ./scripts/patch-dune-directory-caddy.py \
   --execute
 ```
 
-The helper is idempotent and fail-closed: it patches only one exact reviewed
-snippet shape, refuses partial/drifted copies, creates a timestamped backup,
-preserves file owner/mode, and adds only the descriptor and six directory
-routes. Always validate the resulting Caddyfile before reload. If validation
-fails, restore the reported backup and do not reload Caddy.
+The helper is idempotent and fail-closed: it patches only the exact reviewed
+direct-site and portal snippet shapes, refuses partial/drifted copies, creates a
+timestamped backup, preserves file owner/mode, and adds only the descriptor and
+directory routes. The portal integration serves the complete feature under all
+three existing aliases: `/dune`, `/duneawakening`, and `/da`. Always validate
+the resulting Caddyfile before reload. If validation fails, restore the reported
+backup and do not reload Caddy. An ingress configured with Caddy `admin off`
+must restart only its standalone Caddy service/container after validation.
 
 ## Build A Directory
 

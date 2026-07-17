@@ -36,7 +36,32 @@ FIXTURE = """\
 }
 
 (snape_game_portal) {
-	route {}
+	route {
+		header {
+			Content-Security-Policy "default-src 'none'; connect-src 'self'; img-src 'self' data:"
+		}
+		@cached_assets {
+			path /landing.css /landing-generated.css /assets/*.svg /assets/*.webp /assets/*.png /assets/*.jpg /assets/*.jpeg /palworld/style.css /palworld/app.js /palworld/palpagos-map.webp /dune/style.css /dune/app.js /dune/hagga-map.svg /dune/hagga-basin.webp /dune/deep-desert-map.svg /dune/deep-desert.webp
+		}
+		@short_lived_data {
+			path /palworld/status.json /palworld/locations.json /dune/players.json /dune/hagga-pois.json
+		}
+		@unexpected_methods {
+			not method GET HEAD
+		}
+		handle_path /dune/* {
+			@dune_files path / /style.css /app.js /status.html /players.json /hagga-pois.json /hagga-map.svg /hagga-basin.webp /deep-desert-map.svg /deep-desert.webp
+		}
+		handle_path /duneawakening/* {
+			@duneawakening_files path / /style.css /app.js /status.html /players.json /hagga-pois.json /hagga-map.svg /hagga-basin.webp /deep-desert-map.svg /deep-desert.webp
+		}
+		handle_path /da/* {
+			@da_files path / /style.css /app.js /status.html /players.json /hagga-pois.json /hagga-map.svg /hagga-basin.webp /deep-desert-map.svg /deep-desert.webp
+		}
+	}
+}
+
+https://palworld.snape.tech {
 }
 """
 
@@ -49,6 +74,10 @@ class CaddyPatchTests(unittest.TestCase):
         self.assertIn('Access-Control-Allow-Origin "*"', rendered)
         self.assertIn("/directory/directory.json", rendered)
         self.assertIn("redir @directory_bare /directory/ 308", rendered)
+        self.assertIn("redir @directory_alias_bare {path}/ 308", rendered)
+        self.assertIn("/dune/directory-entry.json", rendered)
+        self.assertIn("/duneawakening/directory/directory.js", rendered)
+        self.assertIn("/da/directory/directory.json", rendered)
         again, changed_again = MODULE.patch_text(rendered)
         self.assertFalse(changed_again)
         self.assertEqual(rendered, again)
