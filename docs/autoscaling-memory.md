@@ -13,18 +13,24 @@ one mode:
 - `dynamic`: start it on demand and stop it after the zero-player idle window;
 - `disabled`: keep it stopped, but refuse a stop while players remain online.
 
-The worker runs every `DUNE_AUTOSCALER_POLL_SECONDS` (3 seconds by default). It
-reads recent Director logs and recognizes all current travel-demand forms,
-including the generic dimension queue emitted for Deep Desert and Overmap:
+The worker scans for demand every `DUNE_AUTOSCALER_POLL_SECONDS` (3 seconds by
+default) and performs the full Docker/player/lifecycle reconciliation every
+`DUNE_AUTOSCALER_RECONCILE_SECONDS` (30 seconds by default). A newly detected
+demand bypasses that slower cadence and triggers an immediate reconciliation.
+The fast path reads recent Director logs and recognizes all current
+travel-demand forms, including the generic dimension queue emitted for Deep
+Desert and Overmap:
 
 The fast loop is incremental. After its first bounded 1,000-line Director
 scan, it requests only logs since the previous scan with a one-second overlap
 and deduplicates the overlapping event fingerprints. Travel selection and map
 lifecycle decisions share one Docker inventory snapshot per reconciliation,
 and the retained state file is rewritten only when its semantic content
-changes. This preserves the three-second demand-response target without
-repeatedly parsing the same log history, enumerating containers twice, or
-churning the state file while idle.
+changes. Between full reconciliations it reuses the known Director container
+identity, touches no player table, and enumerates Docker only after a new demand
+event or a Director-container replacement. This preserves the three-second
+demand-response target without running the heavier 31-map lifecycle survey on
+every scan.
 
 ```text
 Processing travel queue for ClassicalInstancing group <Map> (servers: [...], num: N)
@@ -109,6 +115,7 @@ DUNE_AUTOSCALER_DEFAULT_MODE=dynamic
 DUNE_AUTOSCALER_ALWAYS_ON_SERVICES=survival,overmap
 DUNE_AUTOSCALER_DEMAND_TTL_SECONDS=900
 DUNE_AUTOSCALER_POLL_SECONDS=3
+DUNE_AUTOSCALER_RECONCILE_SECONDS=30
 DUNE_AUTOSCALER_FAST_START=true
 
 DUNE_AUTOSCALER_BALANCED_RETENTION_SECONDS=900
@@ -242,7 +249,8 @@ autoscaler lock.
 | `DUNE_AUTOSCALER_ALWAYS_ON_SERVICES` | `survival,overmap` | Core maps for minimum and balanced profiles. |
 | `DUNE_AUTOSCALER_IDLE_SECONDS` | `300` | Minimum-profile retention and legacy fallback. |
 | `DUNE_AUTOSCALER_DEMAND_TTL_SECONDS` | `900` | Maximum protection for a demand with no observed player. |
-| `DUNE_AUTOSCALER_POLL_SECONDS` | `3` | Director scan and reconciliation cadence, bounded to 1–60. |
+| `DUNE_AUTOSCALER_POLL_SECONDS` | `3` | Incremental Director-demand scan cadence, bounded to 1–60. |
+| `DUNE_AUTOSCALER_RECONCILE_SECONDS` | `30` | Full Docker/player/lifecycle cadence, bounded to at least the demand cadence and at most 300 seconds. New demand reconciles immediately. |
 | `DUNE_AUTOSCALER_FAST_START` | `true` | Use guarded config-aware dynamic starts. |
 | `DUNE_AUTOSCALER_BALANCED_RETENTION_SECONDS` | `900` | Balanced default retention. |
 | `DUNE_AUTOSCALER_BALANCED_RETENTION_BY_SERVICE` | Arrakeen/Harko `2700`, Deep Desert `1800` | Comma-separated `service=seconds` overrides. Unknown services and invalid values are ignored. |

@@ -9,6 +9,12 @@ The private admin service also exposes label-safe `/metrics/slo`,
 reliability/error-budget, autoscaler-efficiency, configuration-attestation, and
 incident/change-correlation evidence without exporting player identities,
 notes, coordinates, paths, candidates, digests, or credentials.
+The capacity endpoint also exposes label-free autoscaler enablement, configured
+demand/reconcile cadences, process-lifetime scan/reconcile totals, latest scan
+times, and separate demand/reconcile error gauges. Alerts distinguish failed or
+stale three-second demand detection from the lower-priority full lifecycle
+reconcile path, suppress intentional maintenance pauses, and ensure a
+resource-saving cadence change cannot silently lengthen a cold-map request.
 Change Intelligence emits the latest response-readiness drill result/time and
 the latest fleet-wide readiness certification result/time, runbook coverage,
 shared-diagnostic totals, and recovery-contract totals. Those series have no
@@ -126,6 +132,8 @@ fast-burn, exhausted-budget, slow cold-start, desired-state target/unsealed/
 stale/critical-drift, change-ledger target/integrity/candidate-review,
 container-health, memory, disk, Postgres, failed/stale incident drills, and
 missing/failed/stale fleet-wide response certification alerts.
+It also alerts independently when autoscaler demand scans or full lifecycle
+reconciliations fail or become stale.
 They also cover invalid, failed, and stale networkless RabbitMQ recovery proof.
 It also alerts on invalid deployment evidence, a missing/failed latest assured
 deployment, seven-day staleness, and an expired open change window.

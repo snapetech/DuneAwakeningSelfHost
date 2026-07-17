@@ -93,6 +93,26 @@ groups:
         expr: increase(dash_capacity_prewarm_failures_total[15m]) > 0
         labels: {severity: warning}
         annotations: {summary: "A scheduled just-in-time map warm failed"}
+      - alert: DashAutoscalerDemandScanFailed
+        expr: dash_autoscaler_enabled == 1 and dash_autoscaler_mutations_enabled == 1 and dash_autoscaler_maintenance_paused == 0 and dash_autoscaler_demand_scan_error == 1
+        for: 1m
+        labels: {severity: critical}
+        annotations: {summary: "DASH dynamic-map demand detection is failing"}
+      - alert: DashAutoscalerDemandScanStale
+        expr: dash_autoscaler_enabled == 1 and dash_autoscaler_mutations_enabled == 1 and dash_autoscaler_maintenance_paused == 0 and time() - dash_autoscaler_last_demand_scan_timestamp_seconds > 30
+        for: 1m
+        labels: {severity: critical}
+        annotations: {summary: "DASH dynamic-map demand detection is stale"}
+      - alert: DashAutoscalerReconcileFailed
+        expr: dash_autoscaler_enabled == 1 and dash_autoscaler_mutations_enabled == 1 and dash_autoscaler_maintenance_paused == 0 and dash_autoscaler_reconcile_error == 1
+        for: 1m
+        labels: {severity: warning}
+        annotations: {summary: "DASH dynamic-map lifecycle reconciliation is failing"}
+      - alert: DashAutoscalerReconcileStale
+        expr: dash_autoscaler_enabled == 1 and dash_autoscaler_mutations_enabled == 1 and dash_autoscaler_maintenance_paused == 0 and time() - dash_autoscaler_last_reconcile_timestamp_seconds > 120
+        for: 2m
+        labels: {severity: warning}
+        annotations: {summary: "DASH dynamic-map lifecycle reconciliation is stale"}
       - alert: DashMaintenancePlannerCollectorDown
         expr: dash_maintenance_planner_enabled == 1 and dash_maintenance_planner_collector_up == 0
         for: 10m

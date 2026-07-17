@@ -451,6 +451,7 @@ AUTOSCALER_FILE = BACKUP_ROOT / "autoscaler.json"
 AUTOSCALER_LOCK = threading.Lock()
 AUTOSCALER_THREAD_STARTED = False
 AUTOSCALER_RUNTIME = {"running": False, "lastMessage": "Autoscaler is off.", "lastActions": [], "lastError": "", "updatedAt": None}
+AUTOSCALER_DIRECTOR_CACHE = {}
 BACKUP_SCHEDULE_FILE = BACKUP_ROOT / "backup-schedule.json"
 BACKUP_SCHEDULE_LOCK = threading.Lock()
 BACKUP_SCHEDULE_THREAD_STARTED = False
@@ -1308,6 +1309,7 @@ AUTOSCALER_ALWAYS_ON_SERVICES = {
 AUTOSCALER_IDLE_SECONDS_DEFAULT = max(60, min(int(os.environ.get("DUNE_AUTOSCALER_IDLE_SECONDS", "300")), 86400))
 AUTOSCALER_DEMAND_TTL_SECONDS_DEFAULT = max(60, min(int(os.environ.get("DUNE_AUTOSCALER_DEMAND_TTL_SECONDS", "900")), 86400))
 AUTOSCALER_POLL_SECONDS = max(1, min(int(os.environ.get("DUNE_AUTOSCALER_POLL_SECONDS", "3")), 60))
+AUTOSCALER_RECONCILE_SECONDS = max(AUTOSCALER_POLL_SECONDS, min(int(os.environ.get("DUNE_AUTOSCALER_RECONCILE_SECONDS", "30")), 300))
 AUTOSCALER_FAST_START = env_bool("DUNE_AUTOSCALER_FAST_START", True)
 AUTOSCALER_PROFILES = ("minimum-footprint", "balanced", "adaptive", "full-warm", "custom")
 
@@ -1780,7 +1782,8 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_AUTOSCALER_ALWAYS_ON_SERVICES": {"group": "Autoscaling", "secret": False, "restart": True, "why": "Comma-separated core maps retained by minimum and balanced profiles."},
     "DUNE_AUTOSCALER_IDLE_SECONDS": {"group": "Autoscaling", "secret": False, "restart": True, "why": "Minimum-profile and legacy default retention seconds."},
     "DUNE_AUTOSCALER_DEMAND_TTL_SECONDS": {"group": "Autoscaling", "secret": False, "restart": True, "why": "Protection window for a demand that has not yet produced an online player."},
-    "DUNE_AUTOSCALER_POLL_SECONDS": {"group": "Autoscaling", "secret": False, "restart": True, "why": "Director-demand scan/reconciliation cadence, bounded to 1–60 seconds."},
+    "DUNE_AUTOSCALER_POLL_SECONDS": {"group": "Autoscaling", "secret": False, "restart": True, "why": "Incremental Director-demand scan cadence, bounded to 1–60 seconds."},
+    "DUNE_AUTOSCALER_RECONCILE_SECONDS": {"group": "Autoscaling", "secret": False, "restart": True, "why": "Full Docker/player/lifecycle reconciliation cadence, bounded to the demand scan cadence through 300 seconds."},
     "DUNE_AUTOSCALER_FAST_START": {"group": "Autoscaling", "secret": False, "restart": True, "why": "Uses config-aware guarded starts without repeating global farm maintenance."},
     "DUNE_AUTOSCALER_BALANCED_RETENTION_SECONDS": {"group": "Autoscaling", "secret": False, "restart": True, "why": "Balanced default warm retention seconds."},
     "DUNE_AUTOSCALER_BALANCED_RETENTION_BY_SERVICE": {"group": "Autoscaling", "secret": False, "restart": True, "why": "Comma-separated service=seconds balanced retention overrides."},
@@ -3584,7 +3587,9 @@ def autoscaler_public_state(include_inventory=True):
         minAvailableMemoryGiB=round(state["minAvailableMemoryBytes"] / 1024 ** 3, 2),
         memory=memory,
         demandTtlSeconds=state["demandTtlSeconds"],
-        pollSeconds=AUTOSCALER_POLL_SECONDS, fastStart=AUTOSCALER_FAST_START,
+        pollSeconds=AUTOSCALER_POLL_SECONDS,
+        reconcileSeconds=AUTOSCALER_RECONCILE_SECONDS,
+        fastStart=AUTOSCALER_FAST_START,
         defaultMode=AUTOSCALER_DEFAULT_MODE,
         alwaysOnServices=sorted(AUTOSCALER_ALWAYS_ON_SERVICES),
         profiles=list(AUTOSCALER_PROFILES),
@@ -3716,18 +3721,40 @@ def autoscaler_collect_travel_demand(state, now=None, inventory=None):
     last_scan = float(AUTOSCALER_RUNTIME.get("travelScanAt") or 0)
     since = max(0, int(last_scan) - 1) if 0 < last_scan <= now + 5 else None
     inventory_rows = inventory if isinstance(inventory, list) else None
+    log_inventory = inventory_rows
+    if log_inventory is None:
+        cached_director = AUTOSCALER_DIRECTOR_CACHE.get("inventory")
+        if isinstance(cached_director, dict):
+            log_inventory = [cached_director]
     try:
-        log_text = docker_service_logs("director", 1000, since=since, inventory=inventory_rows).get("logs", "")
+        log_result = docker_service_logs("director", 1000, since=since, inventory=log_inventory)
     except Exception as exc:
-        return [{"action": "travel-scan-warning", "error": str(exc)}]
+        if log_inventory is not None and inventory_rows is None:
+            AUTOSCALER_DIRECTOR_CACHE.clear()
+            try:
+                log_result = docker_service_logs("director", 1000, since=since)
+            except Exception as retry_exc:
+                return [{"action": "travel-scan-warning", "error": str(retry_exc)}]
+        else:
+            return [{"action": "travel-scan-warning", "error": str(exc)}]
+    log_text = log_result.get("logs", "")
+    if log_result.get("containerId"):
+        AUTOSCALER_DIRECTOR_CACHE["inventory"] = {
+            "service": "director",
+            "name": log_result.get("container") or "director",
+            "containerId": log_result["containerId"],
+            "state": "running",
+        }
     AUTOSCALER_RUNTIME["travelScanAt"] = now
     actions = []
+    new_events = [event for event in parse_director_travel_demand(log_text) if event["id"] not in state["demandEvents"]]
+    if not new_events:
+        state["demandEvents"] = {key: value for key, value in state["demandEvents"].items() if now - float(value or 0) <= 86400}
+        return actions
     if not isinstance(inventory, dict):
         rows = inventory_rows if inventory_rows is not None else docker_service_inventory()
         inventory = {row["service"]: row for row in rows if row["service"] in GAME_MAP_SERVICES}
-    for event in parse_director_travel_demand(log_text):
-        if event["id"] in state["demandEvents"]:
-            continue
+    for event in new_events:
         partitions = query("select partition_id,map,dimension_index from dune.world_partition where lower(map)=lower(%s) order by dimension_index,partition_id", (event["map"],))
         services = []
         for row in partitions:
@@ -3767,8 +3794,9 @@ def maintenance_restart_is_executing():
     )
 
 
-def autoscaler_tick(force=False):
+def autoscaler_tick(force=False, collect_demand=True):
     if maintenance_restart_is_executing():
+        AUTOSCALER_RUNTIME["maintenancePaused"] = True
         return dict(
             autoscaler_public_state(include_inventory=False),
             skipped=True,
@@ -3784,8 +3812,14 @@ def autoscaler_tick(force=False):
             now = time.time()
             inventory_rows = docker_service_inventory()
             inventory = {row["service"]: row for row in inventory_rows if row["service"] in GAME_MAP_SERVICES}
+            director = next((row for row in inventory_rows if row.get("service") == "director" and row.get("state") == "running"), None)
+            if director and director.get("containerId"):
+                AUTOSCALER_DIRECTOR_CACHE["inventory"] = dict(director)
+            elif not director:
+                AUTOSCALER_DIRECTOR_CACHE.clear()
             before = json.dumps(state, sort_keys=True, separators=(",", ":"))
-            actions.extend(autoscaler_collect_travel_demand(state, now, inventory=inventory_rows))
+            if collect_demand:
+                actions.extend(autoscaler_collect_travel_demand(state, now, inventory=inventory_rows))
             counts = autoscaler_player_counts()
             optional_warm = []
             stopped_services = set()
@@ -3887,7 +3921,14 @@ def autoscaler_tick(force=False):
             after = json.dumps(state, sort_keys=True, separators=(",", ":"))
             if after != before:
                 write_autoscaler_state(state)
-            AUTOSCALER_RUNTIME.update({"lastMessage": f"Autoscaler reconciled {len(GAME_MAP_SERVICES)} maps; {len(actions)} actions.", "lastActions": actions, "lastError": ""})
+            AUTOSCALER_RUNTIME.update({
+                "lastMessage": f"Autoscaler reconciled {len(GAME_MAP_SERVICES)} maps; {len(actions)} actions.",
+                "lastActions": actions,
+                "lastError": "",
+                "maintenancePaused": False,
+                "lastReconcileAt": now,
+                "reconcileCount": int(AUTOSCALER_RUNTIME.get("reconcileCount") or 0) + 1,
+            })
         except Exception as exc:
             AUTOSCALER_RUNTIME.update({"lastMessage": "Autoscaler reconciliation failed.", "lastError": str(exc), "lastActions": actions})
         finally:
@@ -3895,11 +3936,68 @@ def autoscaler_tick(force=False):
         return autoscaler_public_state(include_inventory=False)
 
 
+def autoscaler_demand_tick():
+    if maintenance_restart_is_executing():
+        now = time.time()
+        AUTOSCALER_RUNTIME.update({
+            "maintenancePaused": True,
+            "lastDemandScanAt": now,
+            "demandScanCount": int(AUTOSCALER_RUNTIME.get("demandScanCount") or 0) + 1,
+            "lastDemandActions": [],
+            "lastDemandError": "",
+        })
+        return {"ok": True, "skipped": True, "reason": "maintenance restart is executing", "demandDetected": False, "actions": []}
+    with AUTOSCALER_LOCK:
+        now = time.time()
+        try:
+            state = read_autoscaler_state()
+            if not state["enabled"]:
+                return {"ok": True, "skipped": True, "reason": "autoscaler is disabled", "demandDetected": False, "actions": []}
+            before = json.dumps(state, sort_keys=True, separators=(",", ":"))
+            actions = autoscaler_collect_travel_demand(state, now)
+            after = json.dumps(state, sort_keys=True, separators=(",", ":"))
+            if after != before:
+                write_autoscaler_state(state)
+            warnings = [row for row in actions if row.get("action") == "travel-scan-warning"]
+            detected = any(row.get("action") == "travel-demand" for row in actions)
+            error = str((warnings[0] if warnings else {}).get("error") or "")[:1000]
+        except Exception as exc:
+            actions = []
+            detected = False
+            error = str(exc)[:1000]
+        AUTOSCALER_RUNTIME.update({
+            "maintenancePaused": False,
+            "lastDemandScanAt": now,
+            "demandScanCount": int(AUTOSCALER_RUNTIME.get("demandScanCount") or 0) + 1,
+            "lastDemandActions": actions,
+            "lastDemandError": error,
+        })
+        return {"ok": not error, "skipped": False, "demandDetected": detected, "actions": actions, "error": error}
+
+
+def autoscaler_worker_iteration(last_reconcile_monotonic=0.0, now_monotonic=None):
+    now_monotonic = time.monotonic() if now_monotonic is None else float(now_monotonic)
+    if not (MUTATIONS_ENABLED and AUTOSCALER_MUTATIONS_ENABLED and read_autoscaler_state()["enabled"]):
+        return float(last_reconcile_monotonic or 0.0)
+    if not last_reconcile_monotonic or now_monotonic - float(last_reconcile_monotonic) >= AUTOSCALER_RECONCILE_SECONDS:
+        result = autoscaler_tick()
+        if result.get("skipped") or result.get("lastError"):
+            return float(last_reconcile_monotonic or 0.0)
+        return now_monotonic
+    demand = autoscaler_demand_tick()
+    if demand.get("demandDetected"):
+        result = autoscaler_tick(collect_demand=False)
+        if result.get("skipped") or result.get("lastError"):
+            return 0.0
+        return now_monotonic
+    return float(last_reconcile_monotonic)
+
+
 def autoscaler_worker():
+    last_reconcile = 0.0
     while True:
         try:
-            if MUTATIONS_ENABLED and AUTOSCALER_MUTATIONS_ENABLED and read_autoscaler_state()["enabled"]:
-                autoscaler_tick()
+            last_reconcile = autoscaler_worker_iteration(last_reconcile)
         except Exception as exc:
             AUTOSCALER_RUNTIME.update({"lastError": str(exc), "updatedAt": datetime.datetime.now(datetime.timezone.utc).isoformat()})
         time.sleep(AUTOSCALER_POLL_SECONDS)
@@ -4061,6 +4159,7 @@ def docker_service_logs(service, tail=200, since=None, inventory=None):
     return {
         "service": service,
         "container": (container.get("Names") or [""])[0].lstrip("/"),
+        "containerId": container_id[:64],
         "tail": tail,
         "since": since,
         "logs": text,
@@ -6304,6 +6403,24 @@ def map_prewarm_prometheus():
             f"dash_capacity_prewarm_failures_total {failures}\n"
             f"dash_capacity_prewarm_last_run_timestamp_seconds {last_run}\n"
         )
+
+
+def autoscaler_prometheus():
+    runtime = dict(AUTOSCALER_RUNTIME)
+    state = read_autoscaler_state()
+    return (
+        f"dash_autoscaler_enabled {int(bool(state.get('enabled')))}\n"
+        f"dash_autoscaler_mutations_enabled {int(bool(MUTATIONS_ENABLED and AUTOSCALER_MUTATIONS_ENABLED))}\n"
+        f"dash_autoscaler_demand_scan_interval_seconds {AUTOSCALER_POLL_SECONDS}\n"
+        f"dash_autoscaler_reconcile_interval_seconds {AUTOSCALER_RECONCILE_SECONDS}\n"
+        f"dash_autoscaler_demand_scans_total {int(runtime.get('demandScanCount') or 0)}\n"
+        f"dash_autoscaler_reconciliations_total {int(runtime.get('reconcileCount') or 0)}\n"
+        f"dash_autoscaler_last_demand_scan_timestamp_seconds {float(runtime.get('lastDemandScanAt') or 0):.3f}\n"
+        f"dash_autoscaler_last_reconcile_timestamp_seconds {float(runtime.get('lastReconcileAt') or 0):.3f}\n"
+        f"dash_autoscaler_maintenance_paused {int(bool(runtime.get('maintenancePaused')))}\n"
+        f"dash_autoscaler_demand_scan_error {int(bool(runtime.get('lastDemandError')))}\n"
+        f"dash_autoscaler_reconcile_error {int(bool(runtime.get('lastError')))}\n"
+    )
 
 
 def event_scheduler_worker():
@@ -10609,7 +10726,11 @@ class Handler(BaseHTTPRequestHandler):
                 metrics = operational_slo_store().prometheus() if OPERATIONAL_SLO_ENABLED else "dash_slo_collector_up 0\n"
                 self.text(metrics, "text/plain; version=0.0.4; charset=utf-8")
             elif parsed.path == "/metrics/capacity":
-                metrics = capacity_intelligence_store().prometheus() + map_prewarm_prometheus() if CAPACITY_INTELLIGENCE_ENABLED else "dash_capacity_collector_up 0\n"
+                metrics = (
+                    capacity_intelligence_store().prometheus() + map_prewarm_prometheus()
+                    if CAPACITY_INTELLIGENCE_ENABLED
+                    else "dash_capacity_collector_up 0\n"
+                ) + autoscaler_prometheus()
                 self.text(metrics, "text/plain; version=0.0.4; charset=utf-8")
             elif parsed.path == "/metrics/desired-state":
                 metrics = desired_state_store().prometheus() if DESIRED_STATE_ENABLED else "dash_desired_state_collector_up 0\n"

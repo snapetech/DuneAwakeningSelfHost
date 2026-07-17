@@ -17,7 +17,7 @@ or documented operational path.
 ## Audit snapshot
 
 - Audit date: **2026-07-17**, full GitHub search and remote HEAD refresh
-  **2026-07-17 07:16 UTC**
+  **2026-07-17 10:36 UTC**
 - Search scope: GitHub repository search, project documentation, Funcom's
   self-host guide, CubeCoders' Dune template and guide, Nexus Mods' Dune:
   Awakening category, and public community discussions used only to discover
@@ -48,6 +48,20 @@ then reverted it in the same four-commit sequence. Its current head
 `50778e0` has no net file change from the prior pin and therefore adds no
 operator outcome. DASH retains the recoverable native base-retirement path
 instead of adopting the reverted destructive behavior.
+
+A third same-day HEAD refresh found two new revisions. AlphaNine `340040a`
+added a Cloudflare-backed Internet portal with remote roles, optional MFA,
+local-only route exclusions, write reconfirmation, auditing, and idle tunnel
+shutdown. DASH already provides the stable authenticated-tunnel outcome through
+loopback-only Admin ingress, named Cloudflare Tunnel guidance/automation,
+Cloudflare Access MFA, local RBAC or explicit OIDC subject mapping, host/origin
+enforcement, owner-token recovery, bounded workspaces, mutation contracts, and
+tamper-evident auditing; quick anonymous tunnel URLs remain intentionally
+outside the supported production path. Coastal DST `2b89afe` now disables land
+claim release while the battlegroup is running because the map process can
+rewrite its in-memory claim. DASH's recoverable base-retirement transaction
+already requires the affected map stopped before native backup/removal, so the
+new peer rule confirms an existing invariant rather than creating a gap.
 
 Confidence labels in this document use the repository standard:
 
@@ -90,11 +104,11 @@ webhooks, and Dune-specific announcement/player/status commands.
 | Peer | Pinned revision | Distinct operator outcomes | Confidence |
 | --- | --- | --- | --- |
 | [Icehunter/dune-admin](https://github.com/Icehunter/dune-admin) | `a10c39c7e977947f6b8524433b99be82c02b547a` | AMP/kubectl/Docker/local providers; local and Discord login; fine-grained RBAC; player/world/economy administration including offline stack/quality edits and orphan-safe native character deletion; welcome/MOTD; market bot; events; battle pass; scheduled operations | high |
-| [AlphaNineGaming/AlphaNine-Dune-Suite](https://github.com/AlphaNineGaming/AlphaNine-Dune-Suite) | `c3196951919695b25112c570994ea88e18552203` | Windows installer/setup wizard, receiver lifecycle, player/item tools, unified item/schematic/research/recipe catalogs, local live maps, market listings, orphan/owned-base cleanup, diagnostics, settings portability, VM scheduling, and PWA metadata | moderate; source is present but current release notes outpace live-runtime evidence |
+| [AlphaNineGaming/AlphaNine-Dune-Suite](https://github.com/AlphaNineGaming/AlphaNine-Dune-Suite) | `340040a7d200a0aa9d92f3b1c8fc7f2349feed14` | Windows installer/setup wizard, receiver lifecycle, player/item tools, unified item/schematic/research/recipe catalogs, local live maps, market listings, orphan/owned-base cleanup, diagnostics, settings portability, VM scheduling, PWA metadata, and a role/MFA-gated Cloudflare Internet portal | moderate; source is present but current release notes outpace live-runtime evidence |
 | [Nerrowake/sietch-console](https://github.com/Nerrowake/sietch-console) | `80897fc5bc3efcbaff8b00f6a2ce57ba1b1e8aee` | Native Windows profiles, Hyper-V/Steam setup, INI editor, backups/cloud sync, remote API/SSE, diagnostics, metrics and player policy UI | moderate overall; source labels join parsing and kick/ban commands TODO/unverified |
 | [adainrivers/dune-dedicated-server-manager](https://github.com/adainrivers/dune-dedicated-server-manager) | `f7dfeb0d1327273299a03802eb16a71d4523e05c` | Cross-platform desktop profiles and SSH tunnels; lifecycle/diagnostics; scheduled maintenance; live RMQ admin commands; welcome packages | high |
 | [xixACExix/Simple-Dune-Awakening-Manager](https://github.com/xixACExix/Simple-Dune-Awakening-Manager) | `483530671c0bf74c61b059da269ad145de8124ad` | Windows/Hyper-V setup and lifecycle GUI; typed settings, reinstall-safe database/config backup/restore, and a keep-running health/repair watchdog | high |
-| [coastal-ms/DST-DuneServerTool](https://github.com/coastal-ms/DST-DuneServerTool) | `50778e047630a82b87835bbe75f9f2940e667e05` | Windows desktop/mobile/remote UI; Hyper-V management; broad gameplay/CVar editor; map spin-up; Coriolis/Landsraad tools; backup mirroring; gameplay bot; portable command console | high; latest abandoned-base removal change was reverted with no net source change |
+| [coastal-ms/DST-DuneServerTool](https://github.com/coastal-ms/DST-DuneServerTool) | `2b89afe2e10dd5e37e17e67e94b39a415c5fa58a` | Windows desktop/mobile/remote UI; Hyper-V management; broad gameplay/CVar editor; map spin-up; Coriolis/Landsraad tools; stopped-battlegroup claim release; backup mirroring; gameplay bot; portable command console | high |
 | [the4rchangel/dune-awakening-server-manager](https://github.com/the4rchangel/dune-awakening-server-manager) | `749e77b8cdff7277460ef245eb0eccb858622a93` | Six-step Hyper-V setup wizard; VM security/networking; WebSocket console; database import/export; character stats, recipes, specialization, economy, faction and cosmetics editor | high |
 | [ReditusDraco/dune-dashboard](https://github.com/ReditusDraco/dune-dashboard) | `306ebcc87106a2cc3a312211da9134b93b3ac9e9` | Player/guild/vehicle/building views; chat; SSH file browser and shell; safe pod controls; encrypted/scheduled backups; TLS; SSH key rotation | high |
 | [jdiveley/dune-dashboard](https://github.com/jdiveley/dune-dashboard) | `323f6d120d062c819e66c3cf034df5db9a3afe65` | Player, account, vehicle, building, guild, storage, market, event, package, map and chat views; browser shell; HTTPS | high |
@@ -198,6 +212,7 @@ without reproducing that wrapper.
 | Two-person approval for high-impact changes | No surveyed Dune peer | DASH exceeds | Optional critical/high/all policies bind one exact secret-preserving body HMAC to a named requester, distinct capable approver, route, risk, short expiry, and atomic one-attempt consumption; immutable request, mutable state and global event-chain HMACs, redacted dashboard review, metrics and alerting fail closed; see `docs/change-approvals.md` |
 | Discord OAuth/OIDC SSO | Icehunter, AMP | Parity implementation; provider canary pending | Authorization code + PKCE, OIDC discovery/RS256/issuer/audience/nonce validation, Discord `identify`, exact subject-to-local-RBAC mapping, signed HttpOnly sessions, replay defense, logout, and owner-token recovery; external application credentials and an HTTPS callback are required for a live canary; see `docs/federated-auth.md` |
 | TLS/reverse-proxy guidance | Reditus, AMP | Parity | Private VPN/authenticated proxy patterns, exact host/origin handling, TLS/identity boundary, verification, and Caddy example; see `docs/remote-admin-access.md` |
+| Internet admin portal through an authenticated tunnel | AlphaNine `340040a` | Parity by hardened operator outcome | Loopback-only Admin origin, named Cloudflare Tunnel deployment, deny-by-default Access/MFA, DASH token/RBAC/OIDC enforcement, exact host/origin checks, bounded workspaces, owner recovery, signed mutation contracts, and tamper-evident audit preserve the remote mobile/PWA outcome without enabling anonymous quick-tunnel publication; see `docs/remote-admin-access.md` and `docs/public-static-site.md` |
 | SSH key rotation/tunnels | adainrivers, Reditus | Parity | Named strict-host-key profiles, expected-hostname check, loopback-only admin forwarding, fixed-program two-phase Ed25519 rotation, remote backups, retained recovery key, and private receipts; see `docs/remote-targets.md` |
 | Browser file manager/SFTP | Funcom, AMP, Reditus | Parity by outcome | Bounded config/log/backup/database/addon workspaces cover operator outcomes without arbitrary host filesystem authority; see `docs/remote-admin-access.md` |
 | Browser shell/terminal | Reditus, jdiveley, DST | Parity by safe operator outcome | Six named native read-only diagnostics expose the operator outcome with no subprocess/shell/arguments/stdin, bounded timeout/output, redaction, operator RBAC, and receipt-only audit; see `docs/command-console.md` |

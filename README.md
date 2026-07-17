@@ -64,7 +64,7 @@ Always compare your `.env` image pin with the Steam package installed on your ho
 - Recovery helpers for dependency loss and stale fixed-partition server IDs.
 - Host-level map watchdog service for unattended recovery.
 - LAN/VPN admin panel with Overview, Ops, Infrastructure, World, Security, Runbook, Players, Cosmetics, Blueprints, Care Packages, Addons, Bootstrap, Settings, Admin Actions, Admin Digests, Catalog, and Discovery surfaces.
-- Browser service/log control, verified manual and automatic backup lifecycle, certified daily maintenance that revalidates an exact staged update before player disruption, requires a newly verified stopped-world backup before apply, restores the current build on proof/update failure, and emits a signed stage-by-stage outcome, daily no-network PostgreSQL restore proof with hash-chained RPO/RTO receipts, time-weighted SLOs/error budgets and immutable incident history, HMAC-sealed file/container desired-state attestation, tamper-evident operational change intelligence with non-causal incident correlation, deterministic evidence-linked response plans, portable signed escalation capsules, layered disaster restore, bounded database query/row/password controls, three-second dynamic map autoscaling with incremental Director-log cursors and one shared Docker inventory per reconciliation, retained capacity intelligence with evidence-driven adaptive retention and p95-based just-in-time warm scheduling, map-scoped live memory balancing, and retained Prometheus metrics.
+- Browser service/log control, verified manual and automatic backup lifecycle, certified daily maintenance that revalidates an exact staged update before player disruption, requires a newly verified stopped-world backup before apply, restores the current build on proof/update failure, and emits a signed stage-by-stage outcome, daily no-network PostgreSQL restore proof with hash-chained RPO/RTO receipts, time-weighted SLOs/error budgets and immutable incident history, HMAC-sealed file/container desired-state attestation, tamper-evident operational change intelligence with non-causal incident correlation, deterministic evidence-linked response plans, portable signed escalation capsules, layered disaster restore, bounded database query/row/password controls, dual-cadence dynamic map autoscaling with three-second incremental Director detection, immediate demand promotion, and lower-frequency full Docker/player reconciliation, retained capacity intelligence with evidence-driven adaptive retention and p95-based just-in-time warm scheduling, map-scoped live memory balancing, and retained Prometheus metrics.
 - Staged game-build acquisition and exact candidate-bound update certification
   with recovery/configuration/health gates, expiring HMAC receipts, candidate
   drift invalidation, fail-closed browser apply enforcement, and constant-I/O
@@ -113,7 +113,9 @@ Always compare your `.env` image pin with the Steam package installed on your ho
   constrained Pelican/Pterodactyl remote control, and fenced active/passive VIP
   packaging.
 - Strict remote SSH profiles with loopback tunnels and verified two-phase key
-  rotation; privacy-bounded on-demand conntrack peer diagnostics; and a
+  rotation; a stable named-tunnel Admin pattern layered behind deny-by-default
+  edge identity/MFA plus DASH RBAC/OIDC and Host/Origin enforcement;
+  privacy-bounded on-demand conntrack peer diagnostics; and a
   searchable, binary-hash-bound 7,028-entry console catalogue alongside the
   2,242-key shipped INI index.
 - Transactional client loader, sidecar, Lua runtime, and confined Pak-overlay
@@ -1001,7 +1003,7 @@ Server-browser ordering is deliberately split based on the observed in-game brow
 | `DUNE_ADMIN_MEMORY_MUTATIONS_ENABLED` / `DUNE_ADMIN_AUTOSCALER_MUTATIONS_ENABLED` | Live map memory/balancer and dynamic map-mode/travel-demand gates. |
 | `DUNE_AUTOSCALER_PROFILE` / `DUNE_AUTOSCALER_ALWAYS_ON_SERVICES` | Select minimum-footprint, balanced, adaptive, full-warm, or custom startup policy and its core maps. |
 | `DUNE_AUTOSCALER_BALANCED_RETENTION_*` | Balanced default/per-map warm retention, optional warm-map LRU cap, and available-memory eviction floor. |
-| `DUNE_AUTOSCALER_DEMAND_TTL_SECONDS` / `DUNE_AUTOSCALER_POLL_SECONDS` / `DUNE_AUTOSCALER_FAST_START` | Demand protection, detection cadence, and guarded cold-start optimization. |
+| `DUNE_AUTOSCALER_DEMAND_TTL_SECONDS` / `DUNE_AUTOSCALER_POLL_SECONDS` / `DUNE_AUTOSCALER_RECONCILE_SECONDS` / `DUNE_AUTOSCALER_FAST_START` | Demand protection, three-second incremental detection, lower-frequency full lifecycle reconciliation, and guarded cold-start optimization. |
 | `DUNE_ADMIN_BOOTSTRAP_MUTATIONS_ENABLED` | Browser TLS/database/full-stack bootstrap action gate. |
 | `DUNE_DISCORD_ADAPTER_ENABLED` / `DUNE_ADMIN_ADDON_MUTATIONS_ENABLED` | Permissioned bot adapter (role-scoped reads plus typed community actions) and community addon lifecycle gates. |
 | `DUNE_COMMUNITY_REWARDS_ENABLED` / `DUNE_COMMUNITY_DELIVERY_ENABLED` | Isolated wallet/shop/playtime/webhook/reward-track APIs and the separately gated offline game-item delivery worker. |

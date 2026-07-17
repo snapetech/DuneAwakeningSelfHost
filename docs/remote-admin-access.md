@@ -13,6 +13,22 @@ Docker socket, or the raw admin-panel container port.
 3. An authenticated tunnel/reverse proxy forwarding the original `Host` header
    to the loopback port.
 
+The supported Internet-portal form is a stable named tunnel protected by a
+deny-by-default identity application and MFA. The repository's Cloudflare
+tunnel tooling manages reviewed public host routes, and the same named-tunnel
+architecture may carry an explicit Admin hostname only after its Cloudflare
+Access application and MFA policy exist. DASH then applies its own token/RBAC
+or explicitly mapped OIDC identity, Host/Origin checks, secure sessions,
+capability enforcement, mutation contracts, optional two-person approval, and
+tamper-evident audit behind that edge. Do not treat possession of a tunnel URL
+or an upstream identity header as DASH authorization.
+
+Temporary anonymous quick-tunnel URLs are not the production Admin path. They
+create a new public origin before an operator has proved DNS, Access policy,
+allowed-host, callback, recovery, and audit behavior. Use the private
+LAN/VPN/SSH tunnel for initial setup, then promote only a stable authenticated
+hostname.
+
 For every pattern:
 
 - keep `DUNE_ADMIN_REQUIRE_TOKEN=true`;
@@ -63,3 +79,7 @@ curl -fsS -H 'Host: admin-panel:8080' \
 Then verify that unauthenticated protected routes return `401`, an observer
 cannot invoke writes, the owner recovery token still works, and public firewall
 rules expose only intended game UDP and authenticated HTTPS/VPN entry points.
+For an Internet hostname, also prove the edge denies an unmapped identity,
+requires MFA, preserves the exact HTTPS `Host`/Origin, sends no Admin response
+through the direct origin address, and leaves local owner-token recovery usable
+when the identity provider or tunnel is unavailable.

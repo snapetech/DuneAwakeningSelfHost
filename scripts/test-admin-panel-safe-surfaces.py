@@ -3937,6 +3937,157 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertTrue(result["enabled"])
         self.assertEqual(writes, [])
 
+    def test_autoscaler_fast_demand_tick_reuses_director_without_inventory_scan(self):
+        import copy
+        originals = {
+            "maintenance_restart_is_executing": self.panel.maintenance_restart_is_executing,
+            "read_autoscaler_state": self.panel.read_autoscaler_state,
+            "write_autoscaler_state": self.panel.write_autoscaler_state,
+            "docker_service_logs": self.panel.docker_service_logs,
+            "docker_service_inventory": self.panel.docker_service_inventory,
+        }
+        state = self.panel.read_autoscaler_state()
+        state["enabled"] = True
+        state["demandEvents"] = {}
+        cached = {"service": "director", "name": "director-1", "containerId": "a" * 12, "state": "running"}
+        previous_cache = copy.deepcopy(self.panel.AUTOSCALER_DIRECTOR_CACHE)
+        self.panel.AUTOSCALER_DIRECTOR_CACHE.clear()
+        self.panel.AUTOSCALER_DIRECTOR_CACHE["inventory"] = cached
+        seen = []
+        self.panel.maintenance_restart_is_executing = lambda: False
+        self.panel.read_autoscaler_state = lambda: copy.deepcopy(state)
+        self.panel.write_autoscaler_state = lambda value: (_ for _ in ()).throw(AssertionError("unchanged scan must not write state"))
+        self.panel.docker_service_logs = lambda service, tail=200, since=None, inventory=None: seen.append(inventory) or {
+            "logs": "", "container": "director-1", "containerId": "a" * 12,
+        }
+        self.panel.docker_service_inventory = lambda: (_ for _ in ()).throw(AssertionError("idle fast scan must not enumerate Docker"))
+        for name, value in originals.items():
+            self.addCleanup(lambda name=name, value=value: setattr(self.panel, name, value))
+        self.addCleanup(lambda: self.panel.AUTOSCALER_DIRECTOR_CACHE.clear() or self.panel.AUTOSCALER_DIRECTOR_CACHE.update(previous_cache))
+
+        result = self.panel.autoscaler_demand_tick()
+
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["demandDetected"])
+        self.assertEqual(seen, [[cached]])
+
+    def test_autoscaler_worker_separates_fast_scan_from_full_reconcile(self):
+        originals = {
+            "MUTATIONS_ENABLED": self.panel.MUTATIONS_ENABLED,
+            "AUTOSCALER_MUTATIONS_ENABLED": self.panel.AUTOSCALER_MUTATIONS_ENABLED,
+            "AUTOSCALER_RECONCILE_SECONDS": self.panel.AUTOSCALER_RECONCILE_SECONDS,
+            "read_autoscaler_state": self.panel.read_autoscaler_state,
+            "autoscaler_tick": self.panel.autoscaler_tick,
+            "autoscaler_demand_tick": self.panel.autoscaler_demand_tick,
+        }
+        self.panel.MUTATIONS_ENABLED = True
+        self.panel.AUTOSCALER_MUTATIONS_ENABLED = True
+        self.panel.AUTOSCALER_RECONCILE_SECONDS = 30
+        self.panel.read_autoscaler_state = lambda: {"enabled": True}
+        calls = []
+        demand = {"value": False}
+        self.panel.autoscaler_tick = lambda force=False, collect_demand=True: calls.append(("reconcile", collect_demand)) or {"ok": True}
+        self.panel.autoscaler_demand_tick = lambda: calls.append(("demand", None)) or {"demandDetected": demand["value"]}
+        for name, value in originals.items():
+            self.addCleanup(lambda name=name, value=value: setattr(self.panel, name, value))
+
+        first = self.panel.autoscaler_worker_iteration(0, now_monotonic=100)
+        second = self.panel.autoscaler_worker_iteration(first, now_monotonic=103)
+        demand["value"] = True
+        third = self.panel.autoscaler_worker_iteration(second, now_monotonic=106)
+
+        self.assertEqual((first, second, third), (100, 100, 106))
+        self.assertEqual(calls, [
+            ("reconcile", True),
+            ("demand", None),
+            ("demand", None),
+            ("reconcile", False),
+        ])
+
+    def test_autoscaler_worker_retries_failed_reconcile_on_next_poll(self):
+        originals = {
+            "MUTATIONS_ENABLED": self.panel.MUTATIONS_ENABLED,
+            "AUTOSCALER_MUTATIONS_ENABLED": self.panel.AUTOSCALER_MUTATIONS_ENABLED,
+            "AUTOSCALER_RECONCILE_SECONDS": self.panel.AUTOSCALER_RECONCILE_SECONDS,
+            "read_autoscaler_state": self.panel.read_autoscaler_state,
+            "autoscaler_tick": self.panel.autoscaler_tick,
+            "autoscaler_demand_tick": self.panel.autoscaler_demand_tick,
+        }
+        self.panel.MUTATIONS_ENABLED = True
+        self.panel.AUTOSCALER_MUTATIONS_ENABLED = True
+        self.panel.AUTOSCALER_RECONCILE_SECONDS = 30
+        self.panel.read_autoscaler_state = lambda: {"enabled": True}
+        outcomes = [{"lastError": "docker unavailable"}, {"lastError": ""}]
+        calls = []
+        self.panel.autoscaler_tick = lambda force=False, collect_demand=True: calls.append(collect_demand) or outcomes.pop(0)
+        self.panel.autoscaler_demand_tick = lambda: (_ for _ in ()).throw(AssertionError("a due reconcile must retry before a fast scan"))
+        for name, value in originals.items():
+            self.addCleanup(lambda name=name, value=value: setattr(self.panel, name, value))
+
+        failed = self.panel.autoscaler_worker_iteration(0, now_monotonic=100)
+        retried = self.panel.autoscaler_worker_iteration(failed, now_monotonic=103)
+
+        self.assertEqual((failed, retried), (0, 103))
+        self.assertEqual(calls, [True, True])
+
+    def test_autoscaler_demand_tick_records_internal_failure_for_retry_and_metrics(self):
+        original_maintenance = self.panel.maintenance_restart_is_executing
+        original_read = self.panel.read_autoscaler_state
+        original_runtime = dict(self.panel.AUTOSCALER_RUNTIME)
+        self.panel.maintenance_restart_is_executing = lambda: False
+        self.panel.read_autoscaler_state = lambda: (_ for _ in ()).throw(RuntimeError("state unavailable"))
+        self.addCleanup(lambda: setattr(self.panel, "maintenance_restart_is_executing", original_maintenance))
+        self.addCleanup(lambda: setattr(self.panel, "read_autoscaler_state", original_read))
+        self.addCleanup(lambda: self.panel.AUTOSCALER_RUNTIME.clear() or self.panel.AUTOSCALER_RUNTIME.update(original_runtime))
+
+        result = self.panel.autoscaler_demand_tick()
+
+        self.assertFalse(result["ok"])
+        self.assertFalse(result["demandDetected"])
+        self.assertIn("state unavailable", result["error"])
+        self.assertIn("state unavailable", self.panel.AUTOSCALER_RUNTIME["lastDemandError"])
+        self.assertGreater(self.panel.AUTOSCALER_RUNTIME["lastDemandScanAt"], 0)
+
+    def test_autoscaler_metrics_expose_dual_cadence_and_health_without_labels(self):
+        import copy
+        original_state = self.panel.read_autoscaler_state
+        original_runtime = copy.deepcopy(self.panel.AUTOSCALER_RUNTIME)
+        original_values = {
+            "AUTOSCALER_POLL_SECONDS": self.panel.AUTOSCALER_POLL_SECONDS,
+            "AUTOSCALER_RECONCILE_SECONDS": self.panel.AUTOSCALER_RECONCILE_SECONDS,
+            "MUTATIONS_ENABLED": self.panel.MUTATIONS_ENABLED,
+            "AUTOSCALER_MUTATIONS_ENABLED": self.panel.AUTOSCALER_MUTATIONS_ENABLED,
+        }
+        self.panel.read_autoscaler_state = lambda: {"enabled": True}
+        self.panel.AUTOSCALER_POLL_SECONDS = 3
+        self.panel.AUTOSCALER_RECONCILE_SECONDS = 30
+        self.panel.MUTATIONS_ENABLED = True
+        self.panel.AUTOSCALER_MUTATIONS_ENABLED = True
+        self.panel.AUTOSCALER_RUNTIME.update({
+            "demandScanCount": 12,
+            "reconcileCount": 3,
+            "lastDemandScanAt": 1_700_000_003.25,
+            "lastReconcileAt": 1_700_000_000.5,
+            "lastDemandError": "",
+            "lastError": "docker unavailable",
+            "maintenancePaused": False,
+        })
+        self.addCleanup(lambda: setattr(self.panel, "read_autoscaler_state", original_state))
+        self.addCleanup(lambda: self.panel.AUTOSCALER_RUNTIME.clear() or self.panel.AUTOSCALER_RUNTIME.update(original_runtime))
+        for name, value in original_values.items():
+            self.addCleanup(lambda name=name, value=value: setattr(self.panel, name, value))
+
+        metrics = self.panel.autoscaler_prometheus()
+
+        self.assertIn("dash_autoscaler_demand_scan_interval_seconds 3\n", metrics)
+        self.assertIn("dash_autoscaler_reconcile_interval_seconds 30\n", metrics)
+        self.assertIn("dash_autoscaler_demand_scans_total 12\n", metrics)
+        self.assertIn("dash_autoscaler_reconciliations_total 3\n", metrics)
+        self.assertIn("dash_autoscaler_demand_scan_error 0\n", metrics)
+        self.assertIn("dash_autoscaler_reconcile_error 1\n", metrics)
+        self.assertIn("dash_autoscaler_maintenance_paused 0\n", metrics)
+        self.assertNotIn("{", metrics)
+
     def test_minimum_footprint_profile_keeps_only_core_always_on(self):
         original_inventory = self.panel.docker_service_inventory
         original_counts = self.panel.autoscaler_player_counts
