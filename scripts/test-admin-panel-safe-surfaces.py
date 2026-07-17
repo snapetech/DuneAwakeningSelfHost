@@ -4088,6 +4088,28 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn("dash_autoscaler_maintenance_paused 0\n", metrics)
         self.assertNotIn("{", metrics)
 
+    def test_metrics_document_cache_reuses_only_within_bounded_window(self):
+        original_seconds = self.panel.METRICS_DOCUMENT_CACHE_SECONDS
+        original_cache = dict(self.panel.METRICS_DOCUMENT_CACHE)
+        original_runtime = dict(self.panel.METRICS_DOCUMENT_CACHE_RUNTIME)
+        self.panel.METRICS_DOCUMENT_CACHE_SECONDS = 30
+        self.panel.METRICS_DOCUMENT_CACHE.clear()
+        self.panel.METRICS_DOCUMENT_CACHE_RUNTIME.update({"hits": 0, "misses": 0})
+        self.addCleanup(lambda: setattr(self.panel, "METRICS_DOCUMENT_CACHE_SECONDS", original_seconds))
+        self.addCleanup(lambda: self.panel.METRICS_DOCUMENT_CACHE.clear() or self.panel.METRICS_DOCUMENT_CACHE.update(original_cache))
+        self.addCleanup(lambda: self.panel.METRICS_DOCUMENT_CACHE_RUNTIME.clear() or self.panel.METRICS_DOCUMENT_CACHE_RUNTIME.update(original_runtime))
+
+        self.assertIsNone(self.panel.metrics_document_cache_get("slo", now=100))
+        self.panel.metrics_document_cache_put("slo", "dash_slo_collector_up 1\n", now=100)
+        self.assertEqual("dash_slo_collector_up 1\n", self.panel.metrics_document_cache_get("slo", now=130))
+        self.assertIsNone(self.panel.metrics_document_cache_get("slo", now=130.001))
+
+        telemetry = self.panel.metrics_document_cache_prometheus()
+        self.assertIn("dash_admin_metrics_document_cache_entries 1\n", telemetry)
+        self.assertIn("dash_admin_metrics_document_cache_hits_total 1\n", telemetry)
+        self.assertIn("dash_admin_metrics_document_cache_misses_total 2\n", telemetry)
+        self.assertNotIn("{", telemetry)
+
     def test_minimum_footprint_profile_keeps_only_core_always_on(self):
         original_inventory = self.panel.docker_service_inventory
         original_counts = self.panel.autoscaler_player_counts
@@ -4265,7 +4287,8 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         handler.text = lambda value, content_type="", **kwargs: texts.append((value, content_type))
         handler.require_token = lambda: self.fail("bounded Prometheus SLO metrics must not require an admin credential")
         handler.do_GET()
-        self.assertEqual("dash_slo_collector_up 1\n", texts[0][0])
+        self.assertIn("dash_slo_collector_up 1\n", texts[0][0])
+        self.assertIn("dash_admin_metrics_document_cache_seconds 30\n", texts[0][0])
         self.assertIn("text/plain", texts[0][1])
 
     def test_operational_slo_mutations_are_gated_confirmed_and_scoped(self):
@@ -4457,7 +4480,8 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         handler.text = lambda value, content_type="", **kwargs: texts.append((value, content_type))
         handler.require_token = lambda: self.fail("bounded desired-state metrics must not require an admin credential")
         handler.do_GET()
-        self.assertEqual("dash_desired_state_collector_up 1\n", texts[0][0])
+        self.assertIn("dash_desired_state_collector_up 1\n", texts[0][0])
+        self.assertIn("dash_admin_metrics_document_cache_seconds 30\n", texts[0][0])
 
         self.patch_flag("MUTATIONS_ENABLED", True)
         self.patch_flag("DESIRED_STATE_MUTATIONS_ENABLED", False)

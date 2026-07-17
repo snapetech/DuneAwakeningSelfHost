@@ -15,6 +15,15 @@ times, and separate demand/reconcile error gauges. Alerts distinguish failed or
 stale three-second demand detection from the lower-priority full lifecycle
 reconcile path, suppress intentional maintenance pauses, and ensure a
 resource-saving cadence change cannot silently lengthen a cold-map request.
+The SLO, capacity-history, Desired State, and combined Change Intelligence
+documents reuse an authenticated result for 30 seconds by default. Their
+SQLite/HMAC source refreshes are substantially more expensive than serving the
+text exposition, while their underlying collectors run on 30–60 second
+cadences. Live autoscaler enablement, timestamps, counters, and error gauges are
+appended after the cache and therefore remain current on every capacity scrape.
+Set `DUNE_ADMIN_METRICS_CACHE_SECONDS=0` to disable reuse or a value through
+`300` to tune it. Label-free cache entry/hit/miss counters make the behavior
+observable.
 Change Intelligence emits the latest response-readiness drill result/time and
 the latest fleet-wide readiness certification result/time, runbook coverage,
 shared-diagnostic totals, and recovery-contract totals. Those series have no
@@ -106,6 +115,7 @@ DUNE_METRICS_BIND_ADDRESS=127.0.0.1
 DUNE_METRICS_PROMETHEUS_PORT=19090
 DUNE_METRICS_RETENTION_TIME=7d
 DUNE_METRICS_RETENTION_SIZE=2GB
+DUNE_ADMIN_METRICS_CACHE_SECONDS=30
 DUNE_METRICS_ENABLED=true
 ```
 

@@ -499,6 +499,10 @@ CHANGE_INTELLIGENCE_RUNTIME = {"ready": False, "imported": 0, "duplicates": 0, "
 CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS = max(1, min(int(os.environ.get("DUNE_CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS", "10")), 60))
 CHANGE_INTELLIGENCE_STATUS_CACHE = {"value": None, "updatedAt": 0.0}
 CHANGE_INTELLIGENCE_STATUS_CACHE_LOCK = threading.Lock()
+METRICS_DOCUMENT_CACHE_SECONDS = max(0, min(int(os.environ.get("DUNE_ADMIN_METRICS_CACHE_SECONDS", "30")), 300))
+METRICS_DOCUMENT_CACHE = {}
+METRICS_DOCUMENT_CACHE_LOCK = threading.Lock()
+METRICS_DOCUMENT_CACHE_RUNTIME = {"hits": 0, "misses": 0}
 OPERATIONS_BRIEFING_ENABLED = os.environ.get("DUNE_OPERATIONS_BRIEFING_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 OPERATIONS_BRIEFING_POLL_SECONDS = max(60, min(int(os.environ.get("DUNE_OPERATIONS_BRIEFING_POLL_SECONDS", "300")), 86400))
 OPERATIONS_BRIEFING_REFRESH_HOURS = max(1, min(int(os.environ.get("DUNE_OPERATIONS_BRIEFING_REFRESH_HOURS", "24")), 720))
@@ -1739,6 +1743,7 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_DESIRED_STATE_POLL_SECONDS": {"group": "Desired State", "secret": False, "restart": True, "why": "Continuous file/runtime attestation cadence from 15 to 3600 seconds."},
     "DUNE_CHANGE_INTELLIGENCE_ENABLED": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Records a tamper-evident operational timeline and correlates incidents with preceding changes."},
     "DUNE_CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Single-flight reuse window for a fully verified ledger status; assured promotion still forces fresh verification."},
+    "DUNE_ADMIN_METRICS_CACHE_SECONDS": {"group": "Metrics", "secret": False, "restart": True, "why": "Reuse window for expensive label-safe metrics documents, bounded to 0–300 seconds; live autoscaler safety gauges bypass it."},
     "DUNE_CHANGE_INTELLIGENCE_POLICY": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Versioned event bounds, classification, impact, and correlation windows."},
     "DUNE_CHANGE_INTELLIGENCE_DATABASE": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Private append-only HMAC-chained operational event ledger."},
     "DUNE_CHANGE_INTELLIGENCE_HMAC_SECRET_FILE": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Private HMAC key authenticating the operational change timeline."},
@@ -6423,6 +6428,43 @@ def autoscaler_prometheus():
     )
 
 
+def metrics_document_cache_get(name, now=None):
+    if METRICS_DOCUMENT_CACHE_SECONDS <= 0:
+        return None
+    now = time.monotonic() if now is None else float(now)
+    with METRICS_DOCUMENT_CACHE_LOCK:
+        entry = METRICS_DOCUMENT_CACHE.get(str(name)) or {}
+        value = entry.get("value")
+        age = now - float(entry.get("updatedAt") or 0)
+        if isinstance(value, str) and 0 <= age <= METRICS_DOCUMENT_CACHE_SECONDS:
+            METRICS_DOCUMENT_CACHE_RUNTIME["hits"] = int(METRICS_DOCUMENT_CACHE_RUNTIME.get("hits") or 0) + 1
+            return value
+        METRICS_DOCUMENT_CACHE_RUNTIME["misses"] = int(METRICS_DOCUMENT_CACHE_RUNTIME.get("misses") or 0) + 1
+        return None
+
+
+def metrics_document_cache_put(name, value, now=None):
+    if METRICS_DOCUMENT_CACHE_SECONDS <= 0:
+        return value
+    now = time.monotonic() if now is None else float(now)
+    with METRICS_DOCUMENT_CACHE_LOCK:
+        METRICS_DOCUMENT_CACHE[str(name)] = {"value": str(value), "updatedAt": now}
+    return value
+
+
+def metrics_document_cache_prometheus():
+    with METRICS_DOCUMENT_CACHE_LOCK:
+        hits = int(METRICS_DOCUMENT_CACHE_RUNTIME.get("hits") or 0)
+        misses = int(METRICS_DOCUMENT_CACHE_RUNTIME.get("misses") or 0)
+        entries = len(METRICS_DOCUMENT_CACHE)
+    return (
+        f"dash_admin_metrics_document_cache_seconds {METRICS_DOCUMENT_CACHE_SECONDS}\n"
+        f"dash_admin_metrics_document_cache_entries {entries}\n"
+        f"dash_admin_metrics_document_cache_hits_total {hits}\n"
+        f"dash_admin_metrics_document_cache_misses_total {misses}\n"
+    )
+
+
 def event_scheduler_worker():
     while True:
         if EVENT_EXECUTION_ENABLED:
@@ -10723,19 +10765,32 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/healthz":
                 self.json({"ok": True, "service": "dune-admin-panel"})
             elif parsed.path == "/metrics/slo":
-                metrics = operational_slo_store().prometheus() if OPERATIONAL_SLO_ENABLED else "dash_slo_collector_up 0\n"
-                self.text(metrics, "text/plain; version=0.0.4; charset=utf-8")
+                metrics = metrics_document_cache_get("slo")
+                if metrics is None:
+                    metrics = operational_slo_store().prometheus() if OPERATIONAL_SLO_ENABLED else "dash_slo_collector_up 0\n"
+                    metrics_document_cache_put("slo", metrics)
+                self.text(metrics + metrics_document_cache_prometheus(), "text/plain; version=0.0.4; charset=utf-8")
             elif parsed.path == "/metrics/capacity":
-                metrics = (
-                    capacity_intelligence_store().prometheus() + map_prewarm_prometheus()
-                    if CAPACITY_INTELLIGENCE_ENABLED
-                    else "dash_capacity_collector_up 0\n"
-                ) + autoscaler_prometheus()
-                self.text(metrics, "text/plain; version=0.0.4; charset=utf-8")
+                metrics = metrics_document_cache_get("capacity")
+                if metrics is None:
+                    metrics = (
+                        capacity_intelligence_store().prometheus() + map_prewarm_prometheus()
+                        if CAPACITY_INTELLIGENCE_ENABLED
+                        else "dash_capacity_collector_up 0\n"
+                    )
+                    metrics_document_cache_put("capacity", metrics)
+                self.text(metrics + autoscaler_prometheus() + metrics_document_cache_prometheus(), "text/plain; version=0.0.4; charset=utf-8")
             elif parsed.path == "/metrics/desired-state":
-                metrics = desired_state_store().prometheus() if DESIRED_STATE_ENABLED else "dash_desired_state_collector_up 0\n"
-                self.text(metrics, "text/plain; version=0.0.4; charset=utf-8")
+                metrics = metrics_document_cache_get("desired-state")
+                if metrics is None:
+                    metrics = desired_state_store().prometheus() if DESIRED_STATE_ENABLED else "dash_desired_state_collector_up 0\n"
+                    metrics_document_cache_put("desired-state", metrics)
+                self.text(metrics + metrics_document_cache_prometheus(), "text/plain; version=0.0.4; charset=utf-8")
             elif parsed.path == "/metrics/change-intelligence":
+                cached_metrics = metrics_document_cache_get("change-intelligence")
+                if cached_metrics is not None:
+                    self.text(cached_metrics + metrics_document_cache_prometheus(), "text/plain; version=0.0.4; charset=utf-8")
+                    return
                 metrics = change_intelligence_store().prometheus(change_intelligence_public_status()) if CHANGE_INTELLIGENCE_ENABLED else "dash_change_intelligence_collector_up 0\n"
                 metrics += deployment_assurance_store().prometheus() if DEPLOYMENT_ASSURANCE_ENABLED else "dash_deployment_assurance_collector_up 0\n"
                 metrics += change_approval_store().prometheus(enabled=DUAL_CONTROL_ENABLED)
@@ -10798,7 +10853,8 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception:
                     metrics += f"dash_operations_briefing_enabled {1 if OPERATIONS_BRIEFING_ENABLED else 0}\ndash_operations_briefing_collector_up 0\ndash_operations_briefing_worker_running 0\ndash_operations_briefing_current 0\ndash_operations_briefing_score 0\ndash_operations_briefing_critical 0\ndash_operations_briefing_attention 0\ndash_operations_briefing_actions 0\ndash_operations_briefing_last_generation_timestamp_seconds 0\ndash_operations_briefing_age_seconds 0\ndash_operations_briefing_retained 0\n"
                 metrics += maintenance_planner_prometheus()
-                self.text(metrics, "text/plain; version=0.0.4; charset=utf-8")
+                metrics_document_cache_put("change-intelligence", metrics)
+                self.text(metrics + metrics_document_cache_prometheus(), "text/plain; version=0.0.4; charset=utf-8")
             elif parsed.path in ("/api/integrations/discord/health", "/api/integrations/discord/version", "/api/integrations/discord/backups/list"):
                 self.require_discord_token()
                 if parsed.path.endswith("/health"):
