@@ -10,6 +10,7 @@ import tempfile
 import threading
 import unittest
 from contextlib import closing
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -32,6 +33,19 @@ class AuditLedgerTests(unittest.TestCase):
         self.store = audit_ledger.Store(self.database)
         self.store.initialize()
         self.counter = 0
+
+    def test_verification_cache_extends_on_append_and_invalidates_on_artifact_change(self):
+        first = self.event("cached")
+        self.store.append(first)
+        with mock.patch.object(self.store, "_verify_connection", wraps=self.store._verify_connection) as verify:
+            self.assertTrue(self.store.status()["ok"])
+            self.assertEqual(0, verify.call_count)
+            self.store.append(self.event("extended"))
+            self.assertTrue(self.store.status()["ok"])
+            self.assertEqual(0, verify.call_count)
+            os.utime(self.database, None)
+            self.assertTrue(self.store.status()["ok"])
+            self.assertEqual(1, verify.call_count)
 
     def tearDown(self):
         self.temporary.cleanup()

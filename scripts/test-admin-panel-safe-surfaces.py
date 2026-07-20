@@ -214,15 +214,16 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         with self.assertRaisesRegex(PermissionError, "invalid admin token"):
             handler.require_token()
         handler.headers = {"X-Admin-Token": "real-owner-token"}
-        self.panel.AUTH_FAILURES["127.0.0.1"] = [time.time()] * self.panel.AUTH_FAILURE_LIMIT
+        bucket = hashlib.sha256(b"bad").hexdigest()[:16]
+        self.panel.AUTH_FAILURES[("127.0.0.1", bucket)] = [time.time()] * self.panel.AUTH_FAILURE_LIMIT
         handler.require_token()
         self.assertEqual(handler.auth_principal["id"], "owner-recovery")
-        self.assertNotIn("127.0.0.1", self.panel.AUTH_FAILURES)
+        self.assertIn(("127.0.0.1", bucket), self.panel.AUTH_FAILURES)
         self.panel.ADMIN_REQUIRE_TOKEN = False
         handler.headers = {}
         handler.require_token()
 
-    def test_invalid_token_audit_is_bounded_per_peer(self):
+    def test_invalid_token_audit_is_bounded_per_peer_and_credential(self):
         handler = object.__new__(self.panel.Handler)
         handler.path = "/api/status"
         handler.command = "GET"
@@ -234,11 +235,16 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.patch_flag("ADMIN_TOKEN", "real-owner-token")
         self.patch_flag("RBAC_ENABLED", False)
         self.patch_flag("FEDERATED_AUTH_ENABLED", False)
-        self.panel.AUTH_FAILURES.pop("192.0.2.10", None)
+        self.panel.AUTH_FAILURES.clear()
         self.panel.AUTH_FAILURE_AUDIT.clear()
         for _ in range(3):
             with self.assertRaises(PermissionError):
                 handler.require_token()
+        handler.headers = {"X-Admin-Token": "real-owner-token"}
+        handler.require_token()
+        handler.headers = {}
+        with self.assertRaises(PermissionError):
+            handler.require_token()
         self.assertEqual(["auth-failed"], events)
 
     def test_dual_control_blocks_without_approval_and_consumes_before_dispatch(self):

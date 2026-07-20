@@ -14,6 +14,7 @@ import shutil
 import sqlite3
 import stat
 import threading
+import time
 from contextlib import closing
 
 
@@ -22,6 +23,7 @@ ZERO_HMAC = "0" * 64
 EVENT_ID_PATTERN = re.compile(r"^audit-[0-9a-f]{32}$")
 REQUEST_ID_PATTERN = re.compile(r"^request-[0-9a-f]{32}$")
 MAX_EVENT_BYTES = 64 * 1024
+VERIFY_CACHE_SECONDS = 60
 
 
 def _canonical(value) -> bytes:
@@ -48,6 +50,42 @@ class Store:
         self.owner_gid = int(owner_gid) if owner_gid not in (None, "") else None
         self.lock = threading.RLock()
         self.append_failures = 0
+        self._verified_integrity = None
+        self._verified_artifacts = None
+        self._verified_at = 0.0
+
+    def _artifact_signature(self):
+        signature = []
+        for path in (self.database.parent, self.database, self.key_path, self.anchor_path):
+            stat_result = path.lstat()
+            signature.append((
+                stat_result.st_dev, stat_result.st_ino, stat_result.st_mode,
+                stat_result.st_uid, stat_result.st_gid, stat_result.st_size,
+                stat_result.st_mtime_ns,
+            ))
+        return tuple(signature)
+
+    def _remember_verification(self, integrity):
+        self._verified_integrity = dict(integrity)
+        self._verified_artifacts = self._artifact_signature()
+        self._verified_at = time.monotonic()
+
+    def _cached_verification(self):
+        if self._verified_integrity is None or self._verified_artifacts is None:
+            return None
+        if time.monotonic() - self._verified_at > VERIFY_CACHE_SECONDS:
+            return None
+        try:
+            if self._artifact_signature() != self._verified_artifacts:
+                return None
+        except OSError:
+            return None
+        return dict(self._verified_integrity)
+
+    def _forget_verification(self):
+        self._verified_integrity = None
+        self._verified_artifacts = None
+        self._verified_at = 0.0
 
     def _chown(self, path):
         if self.owner_uid is not None or self.owner_gid is not None:
@@ -246,12 +284,14 @@ class Store:
         normalized, encoded, event_id, occurred_at, action, ok, request_id = self._normalize_event(event)
         event_sha256 = _sha256(encoded)
         with self.lock:
+            cached_integrity = self._cached_verification()
+            verified_integrity = None
             try:
                 with closing(self._connect()) as connection:
                     connection.execute("begin immediate")
                     try:
                         if verify_chain:
-                            self._verify_connection(connection)
+                            verified_integrity = self._verify_connection(connection)
                         sequence, previous = self._assert_head(connection)
                         existing = connection.execute(
                             "select sequence,event_sha256,event_hmac_sha256 from events where event_id=?", (event_id,)
@@ -284,6 +324,18 @@ class Store:
                         raise
                 self._write_anchor(sequence, event_hmac)
                 self._private_path(self.database, 0o600)
+                chain_integrity = verified_integrity or cached_integrity
+                if chain_integrity is not None:
+                    anchor = self._read_anchor()
+                    chain_integrity.update({
+                        "events": sequence,
+                        "headSequence": sequence,
+                        "headHmacSha256": event_hmac,
+                        "anchorUpdatedAt": anchor["updatedAt"],
+                    })
+                    self._remember_verification(chain_integrity)
+                else:
+                    self._forget_verification()
                 return {
                     "ok": True,
                     "idempotent": False,
@@ -292,6 +344,7 @@ class Store:
                     "eventSha256": event_sha256,
                 }
             except Exception:
+                self._forget_verification()
                 self.append_failures += 1
                 raise
 
@@ -358,9 +411,16 @@ class Store:
             "anchorUpdatedAt": anchor["updatedAt"],
         }
 
-    def verify(self):
-        with self.lock, closing(self._connect()) as connection:
-            return self._verify_connection(connection)
+    def verify(self, *, force=False):
+        with self.lock:
+            if not force:
+                cached = self._cached_verification()
+                if cached is not None:
+                    return cached
+            with closing(self._connect()) as connection:
+                integrity = self._verify_connection(connection)
+            self._remember_verification(integrity)
+            return dict(integrity)
 
     def list(self, limit=100):
         limit = max(1, min(int(limit), 1000))
@@ -382,7 +442,7 @@ class Store:
         destination_anchor = destination_database.with_name("audit-ledger.anchor.json")
         destinations = (destination_database, destination_key, destination_anchor)
         with self.lock:
-            verified = self.verify()
+            verified = self.verify(force=True)
             destination_database.parent.mkdir(parents=True, exist_ok=True)
             os.chmod(destination_database.parent, 0o700)
             for destination in destinations:

@@ -56,6 +56,14 @@ last rows; comparing it with a separately authenticated head does. DASH checks
 the complete chain before every fail-closed privileged admission and exposes
 continuous verification through the dashboard and metrics.
 
+Read-only status and Prometheus scrapes reuse a verified result for at most 60
+seconds while the database directory, database, key, and anchor identity,
+ownership, mode, size, and modification time remain unchanged. A successful
+append extends that known-good head without rescanning historical rows. Any
+artifact change or cache expiry forces a full verification. Governed writes
+and backup capture always force the complete scan, so the optimization cannot
+weaken admission or recovery evidence as the ledger grows.
+
 An attacker who can roll back the database, key, and anchor to one internally
 consistent historical snapshot can evade purely local detection. Preserve
 successive full backups or external metric history when rollback detection
@@ -192,11 +200,13 @@ a new chain. Record that evidence discontinuity externally. Never delete only
 the database, key, or anchor to make a check green.
 
 Repeated invalid-token polling is bounded before it reaches the ledger. DASH
-still rejects every request and maintains the in-memory failure window, but it
-emits at most one `auth-failed` and one `auth-throttled` event per peer per
-minute. Successful authentication clears that peer's aggregation state. This
-prevents a stale dashboard refresh loop from causing unbounded signed-ledger
-growth.
+still rejects every request and maintains an in-memory failure window, but it
+emits at most one `auth-failed` and one `auth-throttled` event per ingress peer
+and secret-safe credential bucket per minute. A successful credential clears
+only its own failure window; it cannot reset the bucket for a stale credential
+sharing the same reverse-proxy peer. This prevents one stale dashboard refresh
+loop from causing unbounded signed-ledger growth or starving valid Admin API
+traffic.
 
 ## Validation
 
@@ -212,4 +222,5 @@ idempotency and collision refusal, concurrent serialization, enforced
 append-only triggers, payload/HMAC/anchor modification, tail deletion,
 missing-anchor refusal, consistent three-artifact snapshots, request
 correlation, fail-closed admission ordering, response completion, UI/metrics/
-alert contracts, and label-free exposition.
+alert contracts, credential-isolated failure aggregation, cache extension and
+artifact-change invalidation, and label-free exposition.

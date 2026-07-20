@@ -18503,13 +18503,15 @@ class Handler(BaseHTTPRequestHandler):
             raise PermissionError("no admin credential source is configured")
         peer = self.client_address[0] if self.client_address else "unknown"
         now = time.time()
-        failures = [ts for ts in AUTH_FAILURES.get(peer, []) if now - ts < AUTH_FAILURE_WINDOW_SECONDS]
-        AUTH_FAILURES[peer] = failures
         provided = self.headers.get("X-Admin-Token", "").strip()
         if not provided:
             authorization = self.headers.get("Authorization", "").strip()
             if authorization.lower().startswith("bearer "):
                 provided = authorization[7:].strip()
+        credential_bucket = hashlib.sha256(provided.encode("utf-8")).hexdigest()[:16]
+        failure_key = (peer, credential_bucket)
+        failures = [ts for ts in AUTH_FAILURES.get(failure_key, []) if now - ts < AUTH_FAILURE_WINDOW_SECONDS]
+        AUTH_FAILURES[failure_key] = failures
         principal = None
         if ADMIN_TOKEN and hmac.compare_digest(provided, ADMIN_TOKEN):
             principal = {"id": "owner-recovery", "displayName": "Owner recovery token", "role": "owner", "capabilities": ["*"]}
@@ -18522,21 +18524,19 @@ class Handler(BaseHTTPRequestHandler):
                 principal = None
         if not principal:
             if len(failures) >= AUTH_FAILURE_LIMIT:
-                audit_key = (peer, "auth-throttled")
+                audit_key = (peer, credential_bucket, "auth-throttled")
                 if now - float(AUTH_FAILURE_AUDIT.get(audit_key) or 0) >= AUTH_FAILURE_AUDIT_INTERVAL_SECONDS:
                     self.audit("auth-throttled", ok=False, failures=len(failures))
                     AUTH_FAILURE_AUDIT[audit_key] = now
                 raise PermissionError("too many failed admin token attempts")
             failures.append(now)
-            AUTH_FAILURES[peer] = failures
-            audit_key = (peer, "auth-failed")
+            AUTH_FAILURES[failure_key] = failures
+            audit_key = (peer, credential_bucket, "auth-failed")
             if now - float(AUTH_FAILURE_AUDIT.get(audit_key) or 0) >= AUTH_FAILURE_AUDIT_INTERVAL_SECONDS:
                 self.audit("auth-failed", ok=False, failures=len(failures))
                 AUTH_FAILURE_AUDIT[audit_key] = now
             raise PermissionError("invalid admin token")
-        AUTH_FAILURES.pop(peer, None)
-        AUTH_FAILURE_AUDIT.pop((peer, "auth-failed"), None)
-        AUTH_FAILURE_AUDIT.pop((peer, "auth-throttled"), None)
+        AUTH_FAILURES.pop(failure_key, None)
         required = access_control.required_capability(getattr(self, "command", "GET"), self.path)
         try:
             access_control.authorize(principal, required)
