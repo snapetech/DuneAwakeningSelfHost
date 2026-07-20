@@ -4439,6 +4439,10 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertTrue(runtime["forceRefreshPending"])
         self.assertTrue(self.panel.audit_action_invalidates_operations_briefing("privileged-request-completed"))
         self.assertTrue(self.panel.audit_action_invalidates_operations_briefing("deployment-assurance-finished"))
+        self.assertTrue(self.panel.audit_action_invalidates_operations_briefing("prometheus-alert-firing"))
+        self.assertTrue(self.panel.audit_action_invalidates_operations_briefing("prometheus-alert-resolved"))
+        self.assertTrue(self.panel.audit_action_invalidates_operations_briefing("prometheus-alert-acknowledged"))
+        self.assertFalse(self.panel.audit_action_invalidates_operations_briefing("prometheus-alert-refiring"))
         self.assertFalse(self.panel.audit_action_invalidates_operations_briefing("operations-briefing-generated"))
 
     def test_operations_briefing_changed_source_cooldown_keeps_refresh_pending(self):

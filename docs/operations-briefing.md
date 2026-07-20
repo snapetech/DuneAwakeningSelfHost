@@ -91,7 +91,8 @@ backups/operator-evidence/operations-briefing-*.signed.json
 ## Freshness and worker behavior
 
 The Admin Panel starts one daemon worker. Source-affecting privileged-request
-completion, deployment, Prometheus alert transitions, SLO, desired-state, recovery-proof, canary, and
+completion, deployment, Prometheus pending/firing/resolved/acknowledged alert
+transitions, SLO, desired-state, recovery-proof, canary, and
 readiness events invalidate the cached fingerprint immediately and wake the
 worker. The five-minute poll remains a safety net for external or unobserved
 changes. A new receipt is generated only when:
@@ -108,6 +109,12 @@ than falling back to the five-minute poll. The legacy five-minute minimum
 continues to govern unchanged scheduled refreshes. A changed source makes the
 current receipt non-current synchronously, before collection starts. The
 maximum accepted receipt age defaults to 36 hours.
+
+Alert `refiring` events remain retained in the audit ledger and outbound
+delivery history, but do not wake the briefing worker. A refire repeats an
+unchanged active alert and cannot change the briefing's categorical alert
+source; rebuilding all retained integrity sources for every 30-second refire
+would create work without new operator information.
 
 Automatic-backup completion and schedule changes are detail-authoritative
 invalidations. They force one coalesced replacement receipt even when backup

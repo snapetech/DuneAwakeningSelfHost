@@ -2451,8 +2451,10 @@ OPERATIONS_BRIEFING_INVALIDATING_ACTIONS = {
     "event-create", "event-cancel", "event-run", "operational-slo",
     "canary-autopilot-run", "canary-autopilot-poll",
     "public-ip-repair-canary", "incident-readiness-certification",
+    "prometheus-alert-pending", "prometheus-alert-firing",
+    "prometheus-alert-resolved", "prometheus-alert-acknowledged",
 }
-OPERATIONS_BRIEFING_INVALIDATING_PREFIXES = ("deployment-assurance-", "prometheus-alert-")
+OPERATIONS_BRIEFING_INVALIDATING_PREFIXES = ("deployment-assurance-",)
 OPERATIONS_BRIEFING_FORCE_REFRESH_ACTIONS = {"scheduled-backup-finished", "backup-schedule"}
 
 
@@ -2475,6 +2477,11 @@ def request_operations_briefing_refresh(reason, *, force=False):
 
 def audit_action_invalidates_operations_briefing(action):
     action = str(action or "")
+    # A refire is delivery evidence for an unchanged active alert. Waking the
+    # expensive 18-source briefing collector for every poll creates a feedback
+    # loop without changing its categorical alert verdict.
+    if action == "prometheus-alert-refiring":
+        return False
     return action in OPERATIONS_BRIEFING_INVALIDATING_ACTIONS or action.startswith(OPERATIONS_BRIEFING_INVALIDATING_PREFIXES)
 
 
