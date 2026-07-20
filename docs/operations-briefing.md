@@ -46,6 +46,15 @@ probe. This prevents the preceding briefing receipt from feeding back into the
 health verdict of the receipt currently being built; the briefing remains
 visible in the main feature-readiness matrix.
 
+Unrelated alert lifecycle events reuse the last evaluated feature-readiness
+matrix and desired-state categorical verdict. Those snapshots already carry
+their authenticated integrity result. Feature-specific invalidation, a newly
+opened/resolved desired-state finding, sealing a baseline, or acknowledging a
+finding clears the relevant snapshot and forces the next collection to rebuild
+it. Routine signed desired-state observations and alert transitions therefore
+do not rehash the complete retained histories when their categorical verdict
+cannot have changed.
+
 The alert-inbox source similarly excludes the reserved
 `DashOperationsBriefing*` Prometheus meta-alert namespace from briefing
 scoring. Those alerts remain visible and actionable in the inbox and its

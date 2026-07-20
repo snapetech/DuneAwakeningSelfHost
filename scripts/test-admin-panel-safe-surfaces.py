@@ -4377,7 +4377,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
 
     def test_operations_briefing_readiness_excludes_its_own_probe(self):
         original = self.panel.feature_readiness_public_status
-        self.panel.feature_readiness_public_status = lambda force=False: {
+        self.panel.feature_readiness_public_status = lambda force=False, allow_stale=False: {
             "features": [
                 {"id": "database", "state": "ready"},
                 {"id": "operations-briefing", "state": "degraded"},
@@ -4393,6 +4393,36 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertEqual("ready", sources["feature-readiness"]["state"])
         self.assertIn("excluding briefing self-check", sources["feature-readiness"]["detail"])
         self.assertEqual("1-provider-blocked", sources["external-integrations"]["state"])
+
+    def test_desired_state_briefing_reuses_last_verified_categorical_status(self):
+        original_enabled = self.panel.DESIRED_STATE_ENABLED
+        original_store = self.panel.desired_state_store
+        original_cache = dict(self.panel.DESIRED_STATE_STATUS_CACHE)
+        calls = []
+        fake_store = type("Store", (), {
+            "policy": {"pollSeconds": 60},
+            "status": lambda self, limit=300: calls.append(limit) or {
+                "ok": True, "state": "attested", "integrity": {"ok": True},
+                "openFindings": [],
+            },
+        })()
+        self.panel.DESIRED_STATE_ENABLED = True
+        self.panel.desired_state_store = lambda: fake_store
+        self.panel.DESIRED_STATE_STATUS_CACHE.clear()
+        self.panel.DESIRED_STATE_STATUS_CACHE.update({"value": None, "updatedAt": 0.0})
+        self.addCleanup(lambda: setattr(self.panel, "DESIRED_STATE_ENABLED", original_enabled))
+        self.addCleanup(lambda: setattr(self.panel, "desired_state_store", original_store))
+        self.addCleanup(lambda: self.panel.DESIRED_STATE_STATUS_CACHE.clear() or self.panel.DESIRED_STATE_STATUS_CACHE.update(original_cache))
+
+        first = self.panel.desired_state_public_status()
+        self.panel.DESIRED_STATE_STATUS_CACHE["updatedAt"] = 0.0
+        stale = self.panel.desired_state_public_status(allow_stale=True)
+        self.assertEqual("attested", first["state"])
+        self.assertEqual("attested", stale["state"])
+        self.assertEqual([300], calls)
+        self.panel.invalidate_desired_state_status_cache()
+        self.panel.desired_state_public_status(allow_stale=True)
+        self.assertEqual([300, 300], calls)
 
     def test_operations_briefing_alert_source_uses_feedback_safe_summary(self):
         original = self.panel.alert_inbox_public_status

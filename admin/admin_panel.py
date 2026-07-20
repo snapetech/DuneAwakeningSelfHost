@@ -525,6 +525,8 @@ DESIRED_STATE_STORE = None
 DESIRED_STATE_STORE_LOCK = threading.Lock()
 DESIRED_STATE_THREAD_STARTED = False
 DESIRED_STATE_RUNTIME = {"running": False, "lastSampleAt": None, "lastResult": None, "lastError": None}
+DESIRED_STATE_STATUS_CACHE = {"value": None, "updatedAt": 0.0}
+DESIRED_STATE_STATUS_CACHE_LOCK = threading.Lock()
 CHANGE_INTELLIGENCE_POLICY = pathlib.Path(os.environ.get("DUNE_CHANGE_INTELLIGENCE_POLICY", str(CONFIG_ROOT / "change-intelligence.json")))
 CHANGE_INTELLIGENCE_DATABASE = pathlib.Path(os.environ.get("DUNE_CHANGE_INTELLIGENCE_DATABASE", str(BACKUPS_ROOT / "change-intelligence" / "change-intelligence.sqlite3")))
 CHANGE_INTELLIGENCE_SECRET_FILE = pathlib.Path(os.environ.get("DUNE_CHANGE_INTELLIGENCE_HMAC_SECRET_FILE", str(CONFIG_ROOT / "secrets" / "change-intelligence-hmac.secret")))
@@ -1333,10 +1335,12 @@ def _feature_readiness_history_commit():
         return "unknown"
 
 
-def feature_readiness_public_status(force=False):
+def feature_readiness_public_status(force=False, allow_stale=False):
     now = time.time()
     with FEATURE_READINESS_CACHE_LOCK:
-        if not force and FEATURE_READINESS_CACHE["value"] is not None and now - FEATURE_READINESS_CACHE["updated_at"] <= FEATURE_READINESS_CACHE_TTL_SECONDS:
+        if not force and FEATURE_READINESS_CACHE["value"] is not None and (
+            allow_stale or now - FEATURE_READINESS_CACHE["updated_at"] <= FEATURE_READINESS_CACHE_TTL_SECONDS
+        ):
             return json.loads(json.dumps(FEATURE_READINESS_CACHE["value"]))
     values = {**os.environ, **read_env()}
     services = docker_service_inventory() if pathlib.Path(DOCKER_SOCKET).exists() else []
@@ -5650,7 +5654,7 @@ def operations_briefing_sources():
             })
 
     def readiness_internal():
-        readiness = feature_readiness_public_status(force=False)
+        readiness = feature_readiness_public_status(force=False, allow_stale=True)
         rows = [row for row in (readiness.get("features") or []) if row.get("id") != "operations-briefing"]
         if rows:
             problems = sum(1 for row in rows if row.get("state") in {"partial", "blocked", "degraded"})
@@ -5667,7 +5671,7 @@ def operations_briefing_sources():
         return ("ready" if healthy else f"{problems}-gaps-{pending}-canaries", healthy, f"{ready}/{total} ready excluding briefing self-check; {problems} internal gaps; {pending} canaries pending")
 
     def readiness_external():
-        summary = feature_readiness_public_status(force=False).get("summary") or {}
+        summary = feature_readiness_public_status(force=False, allow_stale=True).get("summary") or {}
         blocked = int(summary.get("external-blocked") or 0)
         return ("configured" if not blocked else f"{blocked}-provider-blocked", blocked == 0, f"{blocked} optional integrations await external provider credentials")
 
@@ -5885,8 +5889,6 @@ def run_operations_briefing(*, force=False, actor="system:operations-briefing"):
                 actions=len(receipt.get("actions") or []), game_data_mutation_executed=False,
                 map_lifecycle_invoked=False, external_provider_called=False, client_machine_touched=False,
             )
-            with FEATURE_READINESS_CACHE_LOCK:
-                FEATURE_READINESS_CACHE.update({"value": None, "updated_at": 0.0})
         if decision["due"] and not decision["generated"]:
             OPERATIONS_BRIEFING_RUNTIME["refreshPending"] = True
         elif int(OPERATIONS_BRIEFING_RUNTIME.get("invalidations") or 0) == invalidations_at_start:
@@ -9499,6 +9501,8 @@ def desired_state_tick():
             audit_event("desired-state-drift-opened", ok=False, finding_id=finding_id)
         for finding_id in result.get("findingsResolved") or []:
             audit_event("desired-state-drift-resolved", ok=True, finding_id=finding_id)
+        if result.get("findingsOpened") or result.get("findingsResolved"):
+            invalidate_desired_state_status_cache()
         return result
     except Exception as exc:
         DESIRED_STATE_RUNTIME["lastError"] = str(exc)[:2000]
@@ -9507,21 +9511,34 @@ def desired_state_tick():
         DESIRED_STATE_RUNTIME["running"] = False
 
 
-def desired_state_public_status():
+def invalidate_desired_state_status_cache():
+    with DESIRED_STATE_STATUS_CACHE_LOCK:
+        DESIRED_STATE_STATUS_CACHE.update({"value": None, "updatedAt": 0.0})
+
+
+def desired_state_public_status(*, force=False, allow_stale=False):
     if not DESIRED_STATE_ENABLED:
         return {"ok": False, "enabled": False, "state": "disabled", "runtime": dict(DESIRED_STATE_RUNTIME)}
-    status = desired_state_store().status(limit=300)
-    status.update({
-        "enabled": True,
-        "runtime": dict(DESIRED_STATE_RUNTIME),
-        "pollSeconds": DESIRED_STATE_POLL_SECONDS,
-        "mutationEnabled": MUTATIONS_ENABLED and DESIRED_STATE_MUTATIONS_ENABLED,
-        "requiredCapability": "infrastructure.write",
-        "confirmSeal": CONFIRM_DESIRED_STATE_SEAL,
-        "confirmAcknowledge": CONFIRM_DESIRED_STATE_ACK,
-        "policy": desired_state_store().policy,
-        "secretConfigured": DESIRED_STATE_SECRET_FILE.is_file(),
-    })
+    now = time.monotonic()
+    with DESIRED_STATE_STATUS_CACHE_LOCK:
+        cached = DESIRED_STATE_STATUS_CACHE.get("value")
+        age = now - float(DESIRED_STATE_STATUS_CACHE.get("updatedAt") or 0)
+        if not force and cached is not None and (allow_stale or 0 <= age <= max(60, DESIRED_STATE_POLL_SECONDS)):
+            status = json.loads(json.dumps(cached))
+        else:
+            status = desired_state_store().status(limit=300)
+            status.update({
+                "enabled": True,
+                "pollSeconds": DESIRED_STATE_POLL_SECONDS,
+                "mutationEnabled": MUTATIONS_ENABLED and DESIRED_STATE_MUTATIONS_ENABLED,
+                "requiredCapability": "infrastructure.write",
+                "confirmSeal": CONFIRM_DESIRED_STATE_SEAL,
+                "confirmAcknowledge": CONFIRM_DESIRED_STATE_ACK,
+                "policy": desired_state_store().policy,
+                "secretConfigured": DESIRED_STATE_SECRET_FILE.is_file(),
+            })
+            DESIRED_STATE_STATUS_CACHE.update({"value": json.loads(json.dumps(status)), "updatedAt": now})
+    status["runtime"] = dict(DESIRED_STATE_RUNTIME)
     return status
 
 
@@ -9531,6 +9548,7 @@ def desired_state_seal(actor, reason):
     open_findings = [row["id"] for row in store.status(limit=1000).get("openFindings") or []]
     result = store.seal(snapshot, actor, reason)
     store.observe(snapshot, maintenance_active=desired_state_maintenance_active())
+    invalidate_desired_state_status_cache()
     for finding_id in open_findings:
         audit_event("desired-state-drift-resolved", ok=True, finding_id=finding_id, resolution_source="baseline-sealed")
     return result
@@ -13876,6 +13894,7 @@ class Handler(BaseHTTPRequestHandler):
                 elif action == "acknowledge":
                     require_confirmation(body, CONFIRM_DESIRED_STATE_ACK)
                     result = desired_state_store().acknowledge(body.get("findingId"), actor, body.get("note", ""))
+                    invalidate_desired_state_status_cache()
                 else:
                     raise ValueError("desired-state action must be seal or acknowledge")
                 self.audit("desired-state", ok=True, desired_state_action=action, baseline_id=result.get("baselineId"), finding_id=result.get("id"), reason=body.get("reason"))
