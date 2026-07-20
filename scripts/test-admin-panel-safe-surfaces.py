@@ -5393,6 +5393,28 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertEqual(["status", "status"], calls)
         self.assertEqual(self.panel.CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS, first["cacheSeconds"])
 
+    def test_operational_slo_status_is_single_flight_cached_and_forceable(self):
+        original_store = self.panel.operational_slo_store
+        original_cache = dict(self.panel.OPERATIONAL_SLO_STATUS_CACHE)
+        calls = []
+        fake_store = type("Store", (), {
+            "status": lambda self, limit=200: calls.append("status") or {
+                "ok": True, "overall": "healthy", "openIncidents": [], "objectives": [],
+            },
+            "integrity_check": lambda self: calls.append("integrity") or {"ok": True},
+        })()
+        self.panel.operational_slo_store = lambda: fake_store
+        self.panel.OPERATIONAL_SLO_STATUS_CACHE.update({"value": None, "updatedAt": 0.0})
+        self.addCleanup(lambda: setattr(self.panel, "operational_slo_store", original_store))
+        self.addCleanup(lambda: self.panel.OPERATIONAL_SLO_STATUS_CACHE.update(original_cache))
+
+        first = self.panel.operational_slo_public_status()
+        second = self.panel.operational_slo_public_status()
+        forced = self.panel.operational_slo_public_status(force=True)
+        self.assertTrue(first["integrity"]["ok"] and second["integrity"]["ok"] and forced["integrity"]["ok"])
+        self.assertEqual(["status", "integrity", "status", "integrity"], calls)
+        self.assertEqual(self.panel.OPERATIONAL_SLO_STATUS_CACHE_SECONDS, first["cacheSeconds"])
+
     def test_update_readiness_metrics_never_run_expensive_collection_inline(self):
         original_cache = dict(self.panel.UPDATE_READINESS_SNAPSHOT_CACHE)
         original_runtime = dict(self.panel.UPDATE_READINESS_REFRESH_RUNTIME)

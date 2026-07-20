@@ -30,6 +30,11 @@ ownership and mode remain part of the security check, but unrelated Admin state
 renames do not invalidate an 80,000+ event verification. A ledger artifact,
 permission, owner, size, or timestamp change still forces full verification;
 governed backups and signed exports always force it independently.
+The SLO public view also uses a single-flight cache because its five rolling
+windows aggregate the retained sample history and pair it with an integrity
+scan. A new collector sample, incident note/acknowledgement, or maintenance
+mutation invalidates the view immediately; concurrent dashboards, assurance
+checks, readiness probes, and Prometheus scrapes reuse one calculation.
 Change Intelligence emits the latest response-readiness drill result/time and
 the latest fleet-wide readiness certification result/time, runbook coverage,
 shared-diagnostic totals, and recovery-contract totals. Those series have no

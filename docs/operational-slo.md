@@ -234,6 +234,7 @@ installs the snapshot mode `0600`.
 | `DUNE_OPERATIONAL_SLO_POLICY` | `/workspace/config/operational-slo.json` | Versioned policy. |
 | `DUNE_OPERATIONAL_SLO_DATABASE` | `/workspace/backups/operational-slo/slo.sqlite3` | Private ledger. |
 | `DUNE_OPERATIONAL_SLO_POLL_SECONDS` | `60` | Observation cadence, bounded to 10–3600 seconds. |
+| `DUNE_OPERATIONAL_SLO_STATUS_CACHE_SECONDS` | `30` | Single-flight reuse for the 30-day aggregate plus integrity view, bounded to 1–300 seconds. Each new SLO sample and every SLO mutation invalidates it. |
 | `DUNE_OPERATIONAL_SLO_BACKUP_MAX_AGE_HOURS` | `36` | Backup RPO threshold. |
 | `DUNE_OPERATIONAL_SLO_RESTORE_PROOF_MAX_AGE_HOURS` | `48` | Restore-proof freshness threshold. |
 | `DUNE_OPERATIONAL_SLO_RABBITMQ_RESTORE_PROOF_MAX_AGE_HOURS` | `192` | Dual-broker networkless recovery-proof freshness threshold; eight days covers the weekly timer plus bounded scheduling delay. |

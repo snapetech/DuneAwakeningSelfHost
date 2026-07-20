@@ -498,6 +498,7 @@ RABBITMQ_RESTORE_DRILL_RUNTIME = {"running": False, "queuedAt": None, "startedAt
 OPERATIONAL_SLO_POLICY = pathlib.Path(os.environ.get("DUNE_OPERATIONAL_SLO_POLICY", str(CONFIG_ROOT / "operational-slo.json")))
 OPERATIONAL_SLO_DATABASE = pathlib.Path(os.environ.get("DUNE_OPERATIONAL_SLO_DATABASE", str(BACKUPS_ROOT / "operational-slo" / "slo.sqlite3")))
 OPERATIONAL_SLO_POLL_SECONDS = max(10, min(int(os.environ.get("DUNE_OPERATIONAL_SLO_POLL_SECONDS", "60")), 3600))
+OPERATIONAL_SLO_STATUS_CACHE_SECONDS = max(1, min(int(os.environ.get("DUNE_OPERATIONAL_SLO_STATUS_CACHE_SECONDS", "30")), 300))
 OPERATIONAL_SLO_BACKUP_MAX_AGE_HOURS = max(1.0, min(float(os.environ.get("DUNE_OPERATIONAL_SLO_BACKUP_MAX_AGE_HOURS", "36")), 24 * 365))
 OPERATIONAL_SLO_RESTORE_PROOF_MAX_AGE_HOURS = max(1.0, min(float(os.environ.get("DUNE_OPERATIONAL_SLO_RESTORE_PROOF_MAX_AGE_HOURS", "48")), 24 * 365))
 OPERATIONAL_SLO_RABBITMQ_RESTORE_PROOF_MAX_AGE_HOURS = max(1.0, min(float(os.environ.get("DUNE_OPERATIONAL_SLO_RABBITMQ_RESTORE_PROOF_MAX_AGE_HOURS", "192")), 24 * 365))
@@ -506,6 +507,8 @@ OPERATIONAL_SLO_STORE = None
 OPERATIONAL_SLO_STORE_LOCK = threading.Lock()
 OPERATIONAL_SLO_THREAD_STARTED = False
 OPERATIONAL_SLO_RUNTIME = {"running": False, "lastSampleAt": None, "lastResult": None, "lastError": None}
+OPERATIONAL_SLO_STATUS_CACHE = {"value": None, "updatedAt": 0.0}
+OPERATIONAL_SLO_STATUS_CACHE_LOCK = threading.Lock()
 CAPACITY_INTELLIGENCE_POLICY = pathlib.Path(os.environ.get("DUNE_CAPACITY_INTELLIGENCE_POLICY", str(CONFIG_ROOT / "capacity-intelligence.json")))
 CAPACITY_INTELLIGENCE_DATABASE = pathlib.Path(os.environ.get("DUNE_CAPACITY_INTELLIGENCE_DATABASE", str(BACKUPS_ROOT / "capacity-intelligence" / "capacity.sqlite3")))
 CAPACITY_INTELLIGENCE_POLL_SECONDS = max(10, min(int(os.environ.get("DUNE_CAPACITY_INTELLIGENCE_POLL_SECONDS", "30")), 3600))
@@ -2080,6 +2083,7 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_OPERATIONAL_SLO_POLICY": {"group": "Reliability SLO", "secret": False, "restart": True, "why": "Versioned objective, target, severity, debounce, retention, and maintenance-exclusion policy."},
     "DUNE_OPERATIONAL_SLO_DATABASE": {"group": "Reliability SLO", "secret": False, "restart": True, "why": "Private isolated SQLite sample, incident, maintenance, and hash-chain ledger."},
     "DUNE_OPERATIONAL_SLO_POLL_SECONDS": {"group": "Reliability SLO", "secret": False, "restart": True, "why": "Reliability observation cadence from 10 to 3600 seconds."},
+    "DUNE_OPERATIONAL_SLO_STATUS_CACHE_SECONDS": {"group": "Reliability SLO", "secret": False, "restart": True, "why": "Single-flight reuse window for the expensive 30-day SLO aggregation and integrity view, bounded to 1–300 seconds."},
     "DUNE_OPERATIONAL_SLO_BACKUP_MAX_AGE_HOURS": {"group": "Reliability SLO", "secret": False, "restart": True, "why": "Newest recognized PostgreSQL dump age that satisfies the backup RPO signal."},
     "DUNE_OPERATIONAL_SLO_RESTORE_PROOF_MAX_AGE_HOURS": {"group": "Reliability SLO", "secret": False, "restart": True, "why": "Maximum age of a hash-valid successful isolated restore receipt."},
     "DUNE_OPERATIONAL_SLO_RABBITMQ_RESTORE_PROOF_MAX_AGE_HOURS": {"group": "Reliability SLO", "secret": False, "restart": True, "why": "Maximum age of an authenticated successful dual-broker networkless recovery receipt."},
@@ -9172,6 +9176,8 @@ def operational_slo_tick():
     try:
         collected = collect_operational_slo_signals()
         result = operational_slo_store().record(collected["signals"], context=collected["context"])
+        with OPERATIONAL_SLO_STATUS_CACHE_LOCK:
+            OPERATIONAL_SLO_STATUS_CACHE.update({"value": None, "updatedAt": 0.0})
         OPERATIONAL_SLO_RUNTIME.update({"lastSampleAt": time.time(), "lastResult": result, "lastError": ""})
         for incident_id in result.get("incidentsOpened") or []:
             objective_id = incident_id[4:].rsplit("-", 1)[0] if str(incident_id).startswith("slo-") else "unknown"
@@ -9187,21 +9193,29 @@ def operational_slo_tick():
         OPERATIONAL_SLO_RUNTIME["running"] = False
 
 
-def operational_slo_public_status():
+def operational_slo_public_status(force=False):
     if not OPERATIONAL_SLO_ENABLED:
         return {"ok": False, "overall": "disabled", "enabled": False, "mutationEnabled": False, "runtime": dict(OPERATIONAL_SLO_RUNTIME)}
-    result = operational_slo_store().status(limit=200)
-    result.update({
-        "enabled": True,
-        "mutationEnabled": MUTATIONS_ENABLED and OPERATIONAL_SLO_MUTATIONS_ENABLED,
-        "runtime": dict(OPERATIONAL_SLO_RUNTIME),
-        "confirmIncident": CONFIRM_SLO_INCIDENT,
-        "confirmMaintenance": CONFIRM_SLO_MAINTENANCE,
-        "requiredCapability": "infrastructure.write",
-        "integrity": operational_slo_store().integrity_check(),
-        "pollSeconds": OPERATIONAL_SLO_POLL_SECONDS,
-    })
-    return result
+    now = time.time()
+    with OPERATIONAL_SLO_STATUS_CACHE_LOCK:
+        cached = OPERATIONAL_SLO_STATUS_CACHE.get("value")
+        age = now - float(OPERATIONAL_SLO_STATUS_CACHE.get("updatedAt") or 0)
+        if cached is not None and not force and age <= OPERATIONAL_SLO_STATUS_CACHE_SECONDS:
+            return json.loads(json.dumps(cached))
+        result = operational_slo_store().status(limit=200)
+        result.update({
+            "enabled": True,
+            "mutationEnabled": MUTATIONS_ENABLED and OPERATIONAL_SLO_MUTATIONS_ENABLED,
+            "runtime": dict(OPERATIONAL_SLO_RUNTIME),
+            "confirmIncident": CONFIRM_SLO_INCIDENT,
+            "confirmMaintenance": CONFIRM_SLO_MAINTENANCE,
+            "requiredCapability": "infrastructure.write",
+            "integrity": operational_slo_store().integrity_check(),
+            "pollSeconds": OPERATIONAL_SLO_POLL_SECONDS,
+            "cacheSeconds": OPERATIONAL_SLO_STATUS_CACHE_SECONDS,
+        })
+        OPERATIONAL_SLO_STATUS_CACHE.update({"value": json.loads(json.dumps(result)), "updatedAt": time.time()})
+        return result
 
 
 def operational_slo_worker():
@@ -13796,6 +13810,8 @@ class Handler(BaseHTTPRequestHandler):
                     result = operational_slo_store().cancel_maintenance(body.get("id"), actor)
                 else:
                     raise ValueError("SLO action must be acknowledge, note, maintenance-create, or maintenance-cancel")
+                with OPERATIONAL_SLO_STATUS_CACHE_LOCK:
+                    OPERATIONAL_SLO_STATUS_CACHE.update({"value": None, "updatedAt": 0.0})
                 self.audit("operational-slo", ok=True, slo_action=action, incident_id=body.get("incidentId"), maintenance_id=result.get("id"))
                 self.json(result)
             elif parsed.path == "/api/ops/capacity":
