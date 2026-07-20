@@ -339,12 +339,12 @@ select
    from dune.world_partition wp
    join dune.farm_state fs on fs.server_id=wp.server_id
    join dune.active_server_ids asi on asi.server_id=wp.server_id
-   where fs.ready and fs.alive and wp.partition_id in ($required_partition_csv));
+   where fs.alive and wp.partition_id in ($required_partition_csv));
 ")"
 IFS='|' read -r partition_count active_count ready_alive_count <<< "$db_health"
 required_count="${#REQUIRED_MAPS[@]}"
 if [[ "$required_count" == "$active_count" && "$required_count" == "$ready_alive_count" ]]; then
-  ok "lifecycle-required farm ready/alive/active ${ready_alive_count}/${required_count}; configured partitions=$partition_count"
+  ok "lifecycle-required farm alive/active ${ready_alive_count}/${required_count}; configured partitions=$partition_count"
 else
   fail "farm health required=$required_count partitions=$partition_count active=$active_count ready_alive=$ready_alive_count"
 fi
@@ -371,8 +371,8 @@ while IFS='|' read -r partition map dimension label players ready alive active; 
   [[ -n "$partition" ]] || continue
   service="deep-desert"; [[ "$partition" == 31 ]] && service="deep-desert-pvp"
   if map_required "$service"; then
-    if [[ "$ready" =~ ^(t|true)$ && "$alive" =~ ^(t|true)$ && "$active" =~ ^(t|true)$ ]]; then
-      ok "$service lifecycle-required and ready/alive/active"
+    if [[ "$alive" =~ ^(t|true)$ && "$active" =~ ^(t|true)$ ]]; then
+      ok "$service lifecycle-required and alive/active (ready flag=${ready:-false})"
     else
       fail "$service lifecycle-required but not ready/alive/active"
     fi

@@ -152,6 +152,12 @@ and backup-verifier closure required to operate from staging. Every executable
 support file is manifest-bound and promoted from the same commit; no loose
 helper is accepted from the stage.
 
+Start and finish operations are durable even when a long verification closes
+the HTTP response before the client receives JSON. The runner polls the signed
+window/receipt store, requires one exact commit-and-reason match, and resumes
+only that window. It never opens a replacement window merely because response
+transport failed.
+
 ### Verifier-schema migration bridge
 
 Normal deployments must let the workflow create its own pre-change backup. A

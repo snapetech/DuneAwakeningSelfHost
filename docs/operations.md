@@ -50,7 +50,9 @@ map that has not registered is unhealthy. The response retains whole-farm
 counts for capacity visibility and adds `requiredMaps`, `requiredReadyAlive`,
 and per-map `mode`, `expectedOnline`, and `policySatisfied` fields. Some live
 builds can leave `farm_state.ready=false` briefly after the game log reports
-`Server farm is READY`.
+`Server farm is READY`, and observed builds can retain that false flag. Required
+map health therefore gates on `alive` plus `active`; ready-flag coverage remains
+visible as advisory telemetry.
 
 For RabbitMQ-specific checks, use:
 

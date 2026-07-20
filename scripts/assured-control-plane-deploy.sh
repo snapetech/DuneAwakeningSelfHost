@@ -107,6 +107,28 @@ api_post_file() {
   curl -fsS --max-time "${2:-300}" -H "Authorization: Bearer $token" -H 'Content-Type: application/json' --data-binary "@$1" "$admin_url/api/ops/deployment-assurance"
 }
 
+recover_start_response() {
+  local deadline=$((SECONDS + 300))
+  while (( SECONDS <= deadline )); do
+    if api_get /api/ops/deployment-assurance 60 >"$work/deployment-status.json" \
+      && python3 - "$work/deployment-status.json" "$manifest" "$reason" >"$work/start-response.json" <<'PY'
+import json, sys
+status=json.load(open(sys.argv[1], encoding="utf-8"))
+manifest=json.load(open(sys.argv[2], encoding="utf-8"))
+matches=[row for row in status.get("openWindows") or [] if row.get("commit") == manifest.get("commit") and row.get("reason") == sys.argv[3]]
+if len(matches) != 1:
+    raise SystemExit(1)
+print(json.dumps(matches[0]))
+PY
+    then
+      printf 'recovered durable assured change window after empty/failed start response\n' >&2
+      return 0
+    fi
+    sleep 5
+  done
+  return 1
+}
+
 verified_backup() {
   local output backup attempt verifier="./scripts/verify-backup.sh"
   if [[ -n "$stage" && -x "$stage/scripts/verify-backup.sh" ]]; then
@@ -220,7 +242,30 @@ finalize_assurance_when_healthy() {
   interval="${interval:-5}"
   deadline=$((SECONDS + timeout))
   while (( SECONDS <= deadline )); do
-    api_post_file "$work/finish.json" 600 >"$work/finish-response.json"
+    if ! api_post_file "$work/finish.json" 600 >"$work/finish-response.json"; then
+      if api_get /api/ops/deployment-assurance 60 >"$work/deployment-status.json" \
+        && python3 - "$work/deployment-status.json" "$window_id" "$reason" >"$work/finish-response.json" <<'PY'
+import json, sys
+status=json.load(open(sys.argv[1], encoding="utf-8"))
+window_id, reason=sys.argv[2:4]
+window=next((row for row in status.get("windows") or [] if row.get("id") == window_id), None)
+latest=status.get("latest") or {}
+if not window or window.get("status") != "completed" or not latest.get("ready") or latest.get("reason") != reason:
+    raise SystemExit(1)
+receipt={
+    "id": latest.get("id"), "commit": latest.get("commit"), "reason": latest.get("reason"),
+    "ready": latest.get("ready"), "receiptSha256": latest.get("receiptSha256"),
+    "invariants": latest.get("invariants") or {},
+}
+print(json.dumps({"finalized": True, "document": {"receipt": receipt}, "verification": latest.get("verification") or {}}))
+PY
+      then
+        printf 'recovered finalized assurance receipt after empty/failed finish response\n' >&2
+        return 0
+      fi
+      sleep "$interval"
+      continue
+    fi
     state="$(python3 - "$work/finish-response.json" <<'PY'
 import json,sys
 d=json.load(open(sys.argv[1],encoding="utf-8"))
@@ -279,7 +324,10 @@ import json,sys
 document=json.load(open(sys.argv[1],encoding="utf-8"))
 print(json.dumps({"action":"start","commit":document["commit"],"reason":sys.argv[2],"manifest":document,"preChangeBackupPath":sys.argv[3],"sourceRollbackArchive":sys.argv[4],"sourceRollbackSha256":sys.argv[5],"staged":sys.argv[6]=="true","confirm":"START ASSURED CHANGE WINDOW"}))
 PY
-api_post_file "$work/start.json" 300 >"$work/start-response.json"
+if ! api_post_file "$work/start.json" 300 >"$work/start-response.json" \
+  || ! python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$work/start-response.json"; then
+  recover_start_response
+fi
 window_id="$(python3 - "$work/start-response.json" <<'PY'
 import json,sys
 d=json.load(open(sys.argv[1])); value=d.get("id","")

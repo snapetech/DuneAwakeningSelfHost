@@ -3597,6 +3597,12 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual(calls, [("arrakeen", "start", True)])
+        restart_source = (ROOT / "scripts" / "restart-target.sh").read_text(encoding="utf-8")
+        patch_source = (ROOT / "scripts" / "patch-logoff-timers-runtime.sh").read_text(encoding="utf-8")
+        self.assertIn("target_logoff_containers", restart_source)
+        self.assertIn("required logoff timer runtime patch did not verify", restart_source)
+        self.assertIn("processed_containers", patch_source)
+        self.assertIn("selected running containers", patch_source)
 
     def test_autoscaler_mode_change_clears_stale_demand(self):
         state = self.panel.read_autoscaler_state()

@@ -15715,7 +15715,10 @@ class Handler(BaseHTTPRequestHandler):
         player_peak = update_daily_player_peak(current_players)
         verdicts = [
             {"name": "required maps have alive active farm rows", "ok": required_expected > 0 and required_alive_active == required_expected, "value": f"{required_alive_active}/{required_expected}"},
-            {"name": "required maps have ready/alive farm rows", "ok": required_expected > 0 and required_ready_alive == required_expected, "value": f"{required_ready_alive}/{required_expected}"},
+            # farm_state.ready is advisory on current game builds: a map can
+            # log "Server farm is READY" and remain ready=false indefinitely.
+            # alive + active is the authoritative lifecycle health gate.
+            {"name": "required map ready-flag coverage (alive/active authoritative)", "ok": required_expected > 0 and required_alive_active == required_expected, "value": f"{required_ready_alive}/{required_expected}"},
             {"name": "required active server ids match policy", "ok": required_expected > 0 and required_active == required_expected, "value": f"{required_active}/{required_expected}"},
             {"name": "map lifecycle policy", "ok": expected > 0 and all(row.get("policySatisfied") for row in map_status), "value": f"{sum(1 for row in map_status if row.get('policySatisfied'))}/{len(map_status)}"},
             {"name": "RabbitMQ-backed required farm registration", "ok": required_expected > 0 and required_alive_active == required_expected and required_active == required_expected, "value": "inferred from lifecycle-required world_partition rows, farm_state, and active_server_ids"},

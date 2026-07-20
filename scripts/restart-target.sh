@@ -1293,6 +1293,33 @@ if [ "$phase" = "start" ]; then
       elif [ -x ./scripts/verify-rmq-auth-path.sh ]; then
         ./scripts/verify-rmq-auth-path.sh
       fi
+      case "${DUNE_LOGOFF_TIMER_RUNTIME_PATCH_ENABLED:-true}" in
+        1|true|yes|on|TRUE|True|YES|ON)
+          # The generic post-start hook can run before a newly started game
+          # process exists and still succeed after patching older maps. Retry
+          # against only the requested containers and require readback.
+          target_logoff_containers=""
+          for service in $services; do
+            container_name="$("$@" ps --format '{{.Name}}' "$service" 2>/dev/null | head -1)"
+            [ -z "$container_name" ] || target_logoff_containers="$target_logoff_containers $container_name"
+          done
+          target_logoff_containers="${target_logoff_containers# }"
+          patched=false
+          for _ in $(seq 1 36); do
+            if [ -n "$target_logoff_containers" ] \
+              && DUNE_LOGOFF_TIMER_CONTAINERS="$target_logoff_containers" ./scripts/patch-logoff-timers-runtime.sh --local \
+              && DUNE_LOGOFF_TIMER_CONTAINERS="$target_logoff_containers" ./scripts/patch-logoff-timers-runtime.sh --local --dry-run; then
+              patched=true
+              break
+            fi
+            sleep 5
+          done
+          if [ "$patched" != true ]; then
+            echo "required logoff timer runtime patch did not verify for: $target_logoff_containers" >&2
+            exit 1
+          fi
+          ;;
+      esac
       exit 0
       ;;
   esac

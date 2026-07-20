@@ -618,6 +618,7 @@ if [[ "${#containers[@]}" -eq 0 ]]; then
   exit 1
 fi
 
+processed_containers=0
 for container in "${containers[@]}"; do
   pid="$(docker top "$container" -eo pid,args | awk '/DuneSandboxServer-Linux-Shipping/ {print $1; exit}')"
   if [[ -z "$pid" ]]; then
@@ -775,5 +776,11 @@ for container in "${containers[@]}"; do
   if [[ -n "$addr_dialog" ]]; then
     patch_dialog_triple "$pid" "$addr_dialog"
   fi
+  processed_containers=$((processed_containers + 1))
 done
+
+if [[ "$processed_containers" -ne "${#containers[@]}" ]]; then
+  echo "patched/verified $processed_containers of ${#containers[@]} selected running containers" >&2
+  exit 1
+fi
 REMOTE

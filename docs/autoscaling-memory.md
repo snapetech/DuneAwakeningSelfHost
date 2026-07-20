@@ -268,6 +268,11 @@ Every automatic evaluation, including a no-op, records an append-only receipt.
 The configured apply interval therefore survives admin-panel restarts; a
 process restart cannot cause repeated retention reductions.
 
+Fast starts retry the process-local logoff patch against only the newly started
+map containers and require a successful dry-run readback. The generic post-start
+health hook can complete before a new game process exists, so its earlier
+best-effort patch is not treated as proof for the requested map.
+
 `adaptive` is a first-class process-start default. Fresh state, deleted state,
 and migrated installations no longer normalize an adaptive `.env` selection
 back to balanced.
