@@ -16,14 +16,17 @@ stale three-second demand detection from the lower-priority full lifecycle
 reconcile path, suppress intentional maintenance pauses, and ensure a
 resource-saving cadence change cannot silently lengthen a cold-map request.
 The SLO, capacity-history, Desired State, and combined Change Intelligence
-documents reuse an authenticated result for 30 seconds by default. Their
+documents reuse an authenticated result for 60 seconds by default. Their
 SQLite/HMAC source refreshes are substantially more expensive than serving the
 text exposition, while their underlying collectors run on 30–60 second
-cadences. Live autoscaler enablement, timestamps, counters, and error gauges are
-appended after the cache and therefore remain current on every capacity scrape.
+cadences. Refresh is single-flight: the first request rebuilds an expired
+document, concurrent scrapes receive the prior authenticated document, and a
+first-start caller waits for the in-flight build instead of starting another
+full-chain verification. Live autoscaler enablement, timestamps, counters, and
+error gauges are appended after the cache and therefore remain current on every capacity scrape.
 Set `DUNE_ADMIN_METRICS_CACHE_SECONDS=0` to disable reuse or a value through
-`300` to tune it. Label-free cache entry/hit/miss counters make the behavior
-observable.
+`300` to tune it. Label-free cache entry, hit, miss, stale-hit, and initial-wait
+counters make the behavior observable.
 The audit-ledger and Change Intelligence verification caches bind to their own
 database, WAL, anchor, policy, and key metadata. The shared parent directory's
 ownership and mode remain part of the security check, but unrelated Admin state
@@ -127,7 +130,7 @@ DUNE_METRICS_BIND_ADDRESS=127.0.0.1
 DUNE_METRICS_PROMETHEUS_PORT=19090
 DUNE_METRICS_RETENTION_TIME=7d
 DUNE_METRICS_RETENTION_SIZE=2GB
-DUNE_ADMIN_METRICS_CACHE_SECONDS=30
+DUNE_ADMIN_METRICS_CACHE_SECONDS=60
 DUNE_METRICS_ENABLED=true
 ```
 

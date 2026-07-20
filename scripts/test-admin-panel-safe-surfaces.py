@@ -11,6 +11,7 @@ import pathlib
 import sys
 import tempfile
 import tarfile
+import threading
 import time
 import types
 import unittest
@@ -4286,7 +4287,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         original_runtime = dict(self.panel.METRICS_DOCUMENT_CACHE_RUNTIME)
         self.panel.METRICS_DOCUMENT_CACHE_SECONDS = 30
         self.panel.METRICS_DOCUMENT_CACHE.clear()
-        self.panel.METRICS_DOCUMENT_CACHE_RUNTIME.update({"hits": 0, "misses": 0})
+        self.panel.METRICS_DOCUMENT_CACHE_RUNTIME.update({"hits": 0, "misses": 0, "staleHits": 0, "waits": 0})
         self.addCleanup(lambda: setattr(self.panel, "METRICS_DOCUMENT_CACHE_SECONDS", original_seconds))
         self.addCleanup(lambda: self.panel.METRICS_DOCUMENT_CACHE.clear() or self.panel.METRICS_DOCUMENT_CACHE.update(original_cache))
         self.addCleanup(lambda: self.panel.METRICS_DOCUMENT_CACHE_RUNTIME.clear() or self.panel.METRICS_DOCUMENT_CACHE_RUNTIME.update(original_runtime))
@@ -4300,7 +4301,50 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn("dash_admin_metrics_document_cache_entries 1\n", telemetry)
         self.assertIn("dash_admin_metrics_document_cache_hits_total 1\n", telemetry)
         self.assertIn("dash_admin_metrics_document_cache_misses_total 2\n", telemetry)
+        self.assertIn("dash_admin_metrics_document_cache_stale_hits_total 0\n", telemetry)
+        self.assertIn("dash_admin_metrics_document_cache_waits_total 0\n", telemetry)
         self.assertNotIn("{", telemetry)
+
+    def test_metrics_document_cache_single_flight_serves_stale_during_refresh(self):
+        original_seconds = self.panel.METRICS_DOCUMENT_CACHE_SECONDS
+        original_cache = dict(self.panel.METRICS_DOCUMENT_CACHE)
+        original_runtime = dict(self.panel.METRICS_DOCUMENT_CACHE_RUNTIME)
+        self.panel.METRICS_DOCUMENT_CACHE_SECONDS = 30
+        self.panel.METRICS_DOCUMENT_CACHE.clear()
+        self.panel.METRICS_DOCUMENT_CACHE_RUNTIME.update({"hits": 0, "misses": 0, "staleHits": 0, "waits": 0})
+        self.addCleanup(lambda: setattr(self.panel, "METRICS_DOCUMENT_CACHE_SECONDS", original_seconds))
+        self.addCleanup(lambda: self.panel.METRICS_DOCUMENT_CACHE.clear() or self.panel.METRICS_DOCUMENT_CACHE.update(original_cache))
+        self.addCleanup(lambda: self.panel.METRICS_DOCUMENT_CACHE_RUNTIME.clear() or self.panel.METRICS_DOCUMENT_CACHE_RUNTIME.update(original_runtime))
+
+        self.assertIsNone(self.panel.metrics_document_cache_get("change", now=100))
+        self.panel.metrics_document_cache_put("change", "old\n", now=100)
+        self.assertIsNone(self.panel.metrics_document_cache_get("change", now=131))
+        self.assertEqual("old\n", self.panel.metrics_document_cache_get("change", now=131.1))
+        self.panel.metrics_document_cache_put("change", "new\n", now=132)
+        self.assertEqual("new\n", self.panel.metrics_document_cache_get("change", now=132.1))
+        self.assertEqual(1, self.panel.METRICS_DOCUMENT_CACHE_RUNTIME["staleHits"])
+
+    def test_metrics_document_cache_single_flight_waits_for_initial_document(self):
+        original_seconds = self.panel.METRICS_DOCUMENT_CACHE_SECONDS
+        original_cache = dict(self.panel.METRICS_DOCUMENT_CACHE)
+        original_runtime = dict(self.panel.METRICS_DOCUMENT_CACHE_RUNTIME)
+        self.panel.METRICS_DOCUMENT_CACHE_SECONDS = 30
+        self.panel.METRICS_DOCUMENT_CACHE.clear()
+        self.panel.METRICS_DOCUMENT_CACHE_RUNTIME.update({"hits": 0, "misses": 0, "staleHits": 0, "waits": 0})
+        self.addCleanup(lambda: setattr(self.panel, "METRICS_DOCUMENT_CACHE_SECONDS", original_seconds))
+        self.addCleanup(lambda: self.panel.METRICS_DOCUMENT_CACHE.clear() or self.panel.METRICS_DOCUMENT_CACHE.update(original_cache))
+        self.addCleanup(lambda: self.panel.METRICS_DOCUMENT_CACHE_RUNTIME.clear() or self.panel.METRICS_DOCUMENT_CACHE_RUNTIME.update(original_runtime))
+
+        self.assertIsNone(self.panel.metrics_document_cache_get("desired", now=100))
+        result = []
+        waiter = threading.Thread(target=lambda: result.append(self.panel.metrics_document_cache_get("desired")))
+        waiter.start()
+        time.sleep(0.02)
+        self.panel.metrics_document_cache_put("desired", "ready\n")
+        waiter.join(timeout=1)
+        self.assertFalse(waiter.is_alive())
+        self.assertEqual(["ready\n"], result)
+        self.assertEqual(1, self.panel.METRICS_DOCUMENT_CACHE_RUNTIME["waits"])
 
     def test_operations_briefing_accepts_assured_backup_verified_field(self):
         original = self.panel.deployment_assurance_public_status
@@ -5023,7 +5067,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         handler.require_token = lambda: self.fail("bounded Prometheus SLO metrics must not require an admin credential")
         handler.do_GET()
         self.assertIn("dash_slo_collector_up 1\n", texts[0][0])
-        self.assertIn("dash_admin_metrics_document_cache_seconds 30\n", texts[0][0])
+        self.assertIn("dash_admin_metrics_document_cache_seconds 60\n", texts[0][0])
         self.assertIn("text/plain", texts[0][1])
 
     def test_operational_slo_mutations_are_gated_confirmed_and_scoped(self):
@@ -5216,7 +5260,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         handler.require_token = lambda: self.fail("bounded desired-state metrics must not require an admin credential")
         handler.do_GET()
         self.assertIn("dash_desired_state_collector_up 1\n", texts[0][0])
-        self.assertIn("dash_admin_metrics_document_cache_seconds 30\n", texts[0][0])
+        self.assertIn("dash_admin_metrics_document_cache_seconds 60\n", texts[0][0])
 
         self.patch_flag("MUTATIONS_ENABLED", True)
         self.patch_flag("DESIRED_STATE_MUTATIONS_ENABLED", False)

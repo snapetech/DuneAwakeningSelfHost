@@ -536,10 +536,11 @@ CHANGE_INTELLIGENCE_RUNTIME = {"ready": False, "imported": 0, "duplicates": 0, "
 CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS = max(1, min(int(os.environ.get("DUNE_CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS", "60")), 300))
 CHANGE_INTELLIGENCE_STATUS_CACHE = {"value": None, "updatedAt": 0.0}
 CHANGE_INTELLIGENCE_STATUS_CACHE_LOCK = threading.Lock()
-METRICS_DOCUMENT_CACHE_SECONDS = max(0, min(int(os.environ.get("DUNE_ADMIN_METRICS_CACHE_SECONDS", "30")), 300))
+METRICS_DOCUMENT_CACHE_SECONDS = max(0, min(int(os.environ.get("DUNE_ADMIN_METRICS_CACHE_SECONDS", "60")), 300))
 METRICS_DOCUMENT_CACHE = {}
 METRICS_DOCUMENT_CACHE_LOCK = threading.Lock()
-METRICS_DOCUMENT_CACHE_RUNTIME = {"hits": 0, "misses": 0}
+METRICS_DOCUMENT_CACHE_CONDITION = threading.Condition(METRICS_DOCUMENT_CACHE_LOCK)
+METRICS_DOCUMENT_CACHE_RUNTIME = {"hits": 0, "misses": 0, "staleHits": 0, "waits": 0}
 OPERATIONS_BRIEFING_ENABLED = os.environ.get("DUNE_OPERATIONS_BRIEFING_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 OPERATIONS_BRIEFING_POLL_SECONDS = max(60, min(int(os.environ.get("DUNE_OPERATIONS_BRIEFING_POLL_SECONDS", "300")), 86400))
 OPERATIONS_BRIEFING_REFRESH_HOURS = max(1, min(int(os.environ.get("DUNE_OPERATIONS_BRIEFING_REFRESH_HOURS", "24")), 720))
@@ -7344,23 +7345,43 @@ def metrics_document_cache_get(name, now=None):
     if METRICS_DOCUMENT_CACHE_SECONDS <= 0:
         return None
     now = time.monotonic() if now is None else float(now)
-    with METRICS_DOCUMENT_CACHE_LOCK:
-        entry = METRICS_DOCUMENT_CACHE.get(str(name)) or {}
-        value = entry.get("value")
-        age = now - float(entry.get("updatedAt") or 0)
-        if isinstance(value, str) and 0 <= age <= METRICS_DOCUMENT_CACHE_SECONDS:
-            METRICS_DOCUMENT_CACHE_RUNTIME["hits"] = int(METRICS_DOCUMENT_CACHE_RUNTIME.get("hits") or 0) + 1
-            return value
-        METRICS_DOCUMENT_CACHE_RUNTIME["misses"] = int(METRICS_DOCUMENT_CACHE_RUNTIME.get("misses") or 0) + 1
-        return None
+    name = str(name)
+    with METRICS_DOCUMENT_CACHE_CONDITION:
+        while True:
+            entry = METRICS_DOCUMENT_CACHE.get(name) or {}
+            value = entry.get("value")
+            age = now - float(entry.get("updatedAt") or 0)
+            if isinstance(value, str) and 0 <= age <= METRICS_DOCUMENT_CACHE_SECONDS:
+                METRICS_DOCUMENT_CACHE_RUNTIME["hits"] = int(METRICS_DOCUMENT_CACHE_RUNTIME.get("hits") or 0) + 1
+                return value
+            if entry.get("building"):
+                # One expired request refreshes the document. Concurrent
+                # scrapes reuse the last authenticated document instead of
+                # repeating full retained SQLite/HMAC verification.
+                if isinstance(value, str):
+                    METRICS_DOCUMENT_CACHE_RUNTIME["staleHits"] = int(METRICS_DOCUMENT_CACHE_RUNTIME.get("staleHits") or 0) + 1
+                    return value
+                METRICS_DOCUMENT_CACHE_RUNTIME["waits"] = int(METRICS_DOCUMENT_CACHE_RUNTIME.get("waits") or 0) + 1
+                METRICS_DOCUMENT_CACHE_CONDITION.wait(timeout=30)
+                now = time.monotonic()
+                entry = METRICS_DOCUMENT_CACHE.get(name) or {}
+                if entry.get("building") and now - float(entry.get("buildingAt") or 0) >= 30:
+                    entry["building"] = False
+                continue
+            entry["building"] = True
+            entry["buildingAt"] = now
+            METRICS_DOCUMENT_CACHE[name] = entry
+            METRICS_DOCUMENT_CACHE_RUNTIME["misses"] = int(METRICS_DOCUMENT_CACHE_RUNTIME.get("misses") or 0) + 1
+            return None
 
 
 def metrics_document_cache_put(name, value, now=None):
     if METRICS_DOCUMENT_CACHE_SECONDS <= 0:
         return value
     now = time.monotonic() if now is None else float(now)
-    with METRICS_DOCUMENT_CACHE_LOCK:
-        METRICS_DOCUMENT_CACHE[str(name)] = {"value": str(value), "updatedAt": now}
+    with METRICS_DOCUMENT_CACHE_CONDITION:
+        METRICS_DOCUMENT_CACHE[str(name)] = {"value": str(value), "updatedAt": now, "building": False, "buildingAt": 0.0}
+        METRICS_DOCUMENT_CACHE_CONDITION.notify_all()
     return value
 
 
@@ -7368,12 +7389,16 @@ def metrics_document_cache_prometheus():
     with METRICS_DOCUMENT_CACHE_LOCK:
         hits = int(METRICS_DOCUMENT_CACHE_RUNTIME.get("hits") or 0)
         misses = int(METRICS_DOCUMENT_CACHE_RUNTIME.get("misses") or 0)
+        stale_hits = int(METRICS_DOCUMENT_CACHE_RUNTIME.get("staleHits") or 0)
+        waits = int(METRICS_DOCUMENT_CACHE_RUNTIME.get("waits") or 0)
         entries = len(METRICS_DOCUMENT_CACHE)
     return (
         f"dash_admin_metrics_document_cache_seconds {METRICS_DOCUMENT_CACHE_SECONDS}\n"
         f"dash_admin_metrics_document_cache_entries {entries}\n"
         f"dash_admin_metrics_document_cache_hits_total {hits}\n"
         f"dash_admin_metrics_document_cache_misses_total {misses}\n"
+        f"dash_admin_metrics_document_cache_stale_hits_total {stale_hits}\n"
+        f"dash_admin_metrics_document_cache_waits_total {waits}\n"
     )
 
 

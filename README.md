@@ -1075,7 +1075,7 @@ Server-browser ordering is deliberately split based on the observed in-game brow
 | `DUNE_AUTOSCALER_SIMULATION_REQUIRED_SERVICES` | Force maps with persistent crafting/production to remain live under every selective profile; production should list every populated map that needs background simulation. |
 | `DUNE_AUTOSCALER_BALANCED_RETENTION_*` | Balanced default/per-map warm retention, optional warm-map LRU cap, and available-memory eviction floor. |
 | `DUNE_AUTOSCALER_DEMAND_TTL_SECONDS` / `DUNE_AUTOSCALER_POLL_SECONDS` / `DUNE_AUTOSCALER_RECONCILE_SECONDS` / `DUNE_AUTOSCALER_FAST_START` | Demand protection, three-second incremental detection, lower-frequency full lifecycle reconciliation, and guarded cold-start optimization. |
-| `DUNE_ADMIN_METRICS_CACHE_SECONDS` | Bounded reuse for expensive retained-metrics documents; live autoscaler safety gauges bypass the cache. |
+| `DUNE_ADMIN_METRICS_CACHE_SECONDS` | Single-flight bounded reuse for expensive retained-metrics documents; concurrent refreshes reuse the prior authenticated document, while live autoscaler safety gauges bypass the cache. |
 | `DUNE_ADMIN_BOOTSTRAP_MUTATIONS_ENABLED` | Browser TLS/database/full-stack bootstrap action gate. |
 | `DUNE_DISCORD_ADAPTER_ENABLED` / `DUNE_ADMIN_ADDON_MUTATIONS_ENABLED` | Permissioned bot adapter (role-scoped reads plus typed community actions) and community addon lifecycle gates. |
 | `DUNE_COMMUNITY_REWARDS_ENABLED` / `DUNE_COMMUNITY_DELIVERY_ENABLED` | Isolated wallet/shop/playtime/webhook/reward-track APIs and the separately gated offline game-item delivery worker. |
