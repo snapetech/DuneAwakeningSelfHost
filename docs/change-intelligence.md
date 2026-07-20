@@ -231,13 +231,23 @@ assigning new semantics to the old format.
 | `DUNE_CHANGE_INTELLIGENCE_DATABASE` | `/workspace/backups/change-intelligence/change-intelligence.sqlite3` | Private append-only ledger. |
 | `DUNE_CHANGE_INTELLIGENCE_HMAC_SECRET_FILE` | `/workspace/config/secrets/change-intelligence-hmac.secret` | Private authentication key. |
 | `DUNE_CHANGE_INTELLIGENCE_EVIDENCE_DIR` | `/workspace/backups/operator-evidence` | Container path for private portable signed incident and deployment evidence. |
-| `DUNE_CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS` | `10` | Single-flight verified-status reuse window preventing concurrent API/readiness/metrics scans from re-walking the complete ledger. Assured deployment finalization forces a fresh verification. |
+| `DUNE_CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS` | `60` | Single-flight public-status reuse window preventing concurrent API/readiness/metrics scans from rebuilding incident correlation views. Valid range is 1–300 seconds. |
 | `DUNE_CHANGE_INTELLIGENCE_HOST_EVIDENCE_DIR` | `backups/operator-evidence` | Mixed signed-evidence host path archived by full backups. |
 | `DUNE_RESPONSE_DRILLS_ENABLED` | `true` | Enables explicit fixed-diagnostic incident rehearsals and fleet-wide policy certification. |
 
 Assured deployment receipts reuse this evidence directory and HMAC key. Their
 independent semantic schema is documented in
 [`deployment-assurance.md`](deployment-assurance.md).
+
+The in-process store also retains a verified integrity head while the database,
+WAL, policy, key, and parent-directory identity and metadata remain unchanged.
+A normal append extends that known-good HMAC head after its SQLite transaction;
+an unexpected artifact change discards the cache and forces the complete event
+walk. New processes, backup copies, portable signed capsule export, and offline
+verification start without this cache and independently verify the entire
+chain. Assured health uses the bounded verified public status already checked
+during convergence instead of starting a redundant 100k-row scan that could
+starve its own Prometheus scrape.
 
 Host CLI overrides are `DUNE_CHANGE_INTELLIGENCE_HOST_DATABASE`,
 `DUNE_CHANGE_INTELLIGENCE_HOST_POLICY`, and

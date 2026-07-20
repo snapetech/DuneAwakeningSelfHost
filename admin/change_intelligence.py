@@ -13,6 +13,7 @@ import os
 import pathlib
 import re
 import sqlite3
+import threading
 import time
 import uuid
 
@@ -469,6 +470,42 @@ class Store:
         self.secret = read_secret(self.secret_path)
         self.owner_uid = int(owner_uid) if owner_uid not in (None, "") else None
         self.owner_gid = int(owner_gid) if owner_gid not in (None, "") else None
+        self.lock = threading.RLock()
+        self._verified_integrity = None
+        self._verified_artifacts = None
+
+    def _artifact_signature(self):
+        signature = []
+        for path in (self.database.parent, self.database, self.database.with_name(self.database.name + "-wal"), self.policy_path, self.secret_path):
+            try:
+                stat_result = path.lstat()
+            except FileNotFoundError:
+                signature.append(None)
+                continue
+            signature.append((
+                stat_result.st_dev, stat_result.st_ino, stat_result.st_mode,
+                stat_result.st_uid, stat_result.st_gid, stat_result.st_size,
+                stat_result.st_mtime_ns,
+            ))
+        return tuple(signature)
+
+    def _cached_verification(self):
+        if self._verified_integrity is None or self._verified_artifacts is None:
+            return None
+        try:
+            if self._artifact_signature() != self._verified_artifacts:
+                return None
+        except OSError:
+            return None
+        return dict(self._verified_integrity)
+
+    def _remember_verification(self, integrity):
+        self._verified_integrity = dict(integrity)
+        self._verified_artifacts = self._artifact_signature()
+
+    def _forget_verification(self):
+        self._verified_integrity = None
+        self._verified_artifacts = None
 
     def _secure(self):
         self.database.parent.mkdir(parents=True, exist_ok=True)
@@ -530,7 +567,7 @@ class Store:
         finally:
             connection.close()
         self._secure()
-        return self.verify()
+        return self.verify(force=True)
 
     def initialize_if_needed(self):
         if not self.database.exists():
@@ -627,27 +664,35 @@ class Store:
 
     def record(self, raw_event, *, source="admin-audit", ingested_at=None):
         prepared = self._prepare(raw_event, source, ingested_at)
-        connection = self.connect()
-        try:
-            connection.execute("begin immediate")
-            duplicate = connection.execute("select * from events where source_fingerprint=?", (prepared["sourceFingerprint"],)).fetchone()
-            if duplicate:
+        with self.lock:
+            cached_integrity = self._cached_verification()
+            connection = self.connect()
+            try:
+                connection.execute("begin immediate")
+                duplicate = connection.execute("select * from events where source_fingerprint=?", (prepared["sourceFingerprint"],)).fetchone()
+                if duplicate:
+                    connection.rollback()
+                    result = self._public(duplicate)
+                    result.update({"duplicate": True, "pattern": prepared["classification"]["pattern"]})
+                    return result
+                count = connection.execute("select count(*) from events").fetchone()[0]
+                if count >= self.policy["maxEvents"]:
+                    raise RuntimeError("change-intelligence maxEvents reached; archive and rotate the ledger")
+                prior = connection.execute("select signature from events order by sequence desc limit 1").fetchone()
+                previous = prior["signature"] if prior else None
+                result = self._insert_prepared(connection, prepared, previous)
+                connection.commit()
+            except Exception:
                 connection.rollback()
-                result = self._public(duplicate)
-                result.update({"duplicate": True, "pattern": prepared["classification"]["pattern"]})
-                return result
-            count = connection.execute("select count(*) from events").fetchone()[0]
-            if count >= self.policy["maxEvents"]:
-                raise RuntimeError("change-intelligence maxEvents reached; archive and rotate the ledger")
-            prior = connection.execute("select signature from events order by sequence desc limit 1").fetchone()
-            previous = prior["signature"] if prior else None
-            result = self._insert_prepared(connection, prepared, previous)
-            connection.commit()
-        except Exception:
-            connection.rollback()
-            raise
-        finally:
-            connection.close()
+                self._forget_verification()
+                raise
+            finally:
+                connection.close()
+            if cached_integrity is not None:
+                cached_integrity.update({"eventCount": count + 1, "lastEventSignature": result["signature"]})
+                self._remember_verification(cached_integrity)
+            else:
+                self._forget_verification()
         if prepared["classification"]["kind"] == "incident-open":
             result["candidates"] = self.correlate(prepared["key"])
         return result
@@ -665,37 +710,45 @@ class Store:
                 if not skip_invalid:
                     raise
                 errors += 1
-        connection = self.connect()
-        inserted = []
-        duplicates = 0
-        try:
-            connection.execute("begin immediate")
-            count = connection.execute("select count(*) from events").fetchone()[0]
-            prior = connection.execute("select signature from events order by sequence desc limit 1").fetchone()
-            previous = prior["signature"] if prior else None
-            fingerprints = list(dict.fromkeys(row["sourceFingerprint"] for row in prepared_rows))
-            known = set()
-            for offset in range(0, len(fingerprints), 500):
-                chunk = fingerprints[offset:offset + 500]
-                placeholders = ",".join("?" for _ in chunk)
-                known.update(row["source_fingerprint"] for row in connection.execute(f"select source_fingerprint from events where source_fingerprint in ({placeholders})", chunk))
-            for prepared in prepared_rows:
-                if prepared["sourceFingerprint"] in known:
-                    duplicates += 1
-                    continue
-                if count >= self.policy["maxEvents"]:
-                    raise RuntimeError("change-intelligence maxEvents reached; archive and rotate the ledger")
-                result = self._insert_prepared(connection, prepared, previous)
-                inserted.append(result)
-                known.add(prepared["sourceFingerprint"])
-                previous = result["signature"]
-                count += 1
-            connection.commit()
-        except Exception:
-            connection.rollback()
-            raise
-        finally:
-            connection.close()
+        with self.lock:
+            cached_integrity = self._cached_verification()
+            connection = self.connect()
+            inserted = []
+            duplicates = 0
+            try:
+                connection.execute("begin immediate")
+                count = connection.execute("select count(*) from events").fetchone()[0]
+                prior = connection.execute("select signature from events order by sequence desc limit 1").fetchone()
+                previous = prior["signature"] if prior else None
+                fingerprints = list(dict.fromkeys(row["sourceFingerprint"] for row in prepared_rows))
+                known = set()
+                for offset in range(0, len(fingerprints), 500):
+                    chunk = fingerprints[offset:offset + 500]
+                    placeholders = ",".join("?" for _ in chunk)
+                    known.update(row["source_fingerprint"] for row in connection.execute(f"select source_fingerprint from events where source_fingerprint in ({placeholders})", chunk))
+                for prepared in prepared_rows:
+                    if prepared["sourceFingerprint"] in known:
+                        duplicates += 1
+                        continue
+                    if count >= self.policy["maxEvents"]:
+                        raise RuntimeError("change-intelligence maxEvents reached; archive and rotate the ledger")
+                    result = self._insert_prepared(connection, prepared, previous)
+                    inserted.append(result)
+                    known.add(prepared["sourceFingerprint"])
+                    previous = result["signature"]
+                    count += 1
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                self._forget_verification()
+                raise
+            finally:
+                connection.close()
+            if cached_integrity is not None and inserted:
+                cached_integrity.update({"eventCount": count, "lastEventSignature": previous})
+                self._remember_verification(cached_integrity)
+            elif cached_integrity is None:
+                self._forget_verification()
         return {"ok": errors == 0, "inserted": inserted, "insertedCount": len(inserted), "duplicates": duplicates, "errors": errors}
 
     @staticmethod
@@ -894,16 +947,27 @@ class Store:
         ok = integrity == "ok" and required.issubset(triggers) and valid
         return {"ok": ok, "sqlite": integrity, "appendOnlyTriggers": required.issubset(triggers), "eventChainValid": valid, "eventCount": count, "lastEventSignature": previous}
 
-    def verify(self):
+    def verify(self, *, force=False):
         if not self.database.exists():
             return {"ok": False, "sqlite": "missing", "eventChainValid": False}
-        connection = self.connect(readonly=True)
-        try:
-            return self._verify_connection(connection)
-        except (sqlite3.Error, ValueError, json.JSONDecodeError, OSError) as exc:
-            return {"ok": False, "sqlite": "error", "eventChainValid": False, "error": str(exc)}
-        finally:
-            connection.close()
+        with self.lock:
+            if not force:
+                cached = self._cached_verification()
+                if cached is not None:
+                    return cached
+            connection = self.connect(readonly=True)
+            try:
+                integrity = self._verify_connection(connection)
+                if integrity.get("ok"):
+                    self._remember_verification(integrity)
+                else:
+                    self._forget_verification()
+                return integrity
+            except (sqlite3.Error, ValueError, json.JSONDecodeError, OSError) as exc:
+                self._forget_verification()
+                return {"ok": False, "sqlite": "error", "eventChainValid": False, "error": str(exc)}
+            finally:
+                connection.close()
 
     def metadata(self, key, default=None):
         self.initialize_if_needed()
@@ -939,7 +1003,7 @@ class Store:
         os.chmod(target, 0o600)
         if os.geteuid() == 0 and self.owner_uid is not None:
             os.chown(target, self.owner_uid, self.owner_gid if self.owner_gid is not None else -1)
-        verification = Store(target, self.policy_path, self.secret_path, self.owner_uid, self.owner_gid).verify()
+        verification = Store(target, self.policy_path, self.secret_path, self.owner_uid, self.owner_gid).verify(force=True)
         if not verification.get("ok"):
             target.unlink(missing_ok=True)
             raise RuntimeError(f"change-intelligence backup verification failed: {verification}")

@@ -36,6 +36,19 @@ class ChangeIntelligenceTests(unittest.TestCase):
     def record(self, action, epoch, **fields):
         return self.store.record({"action": action, "ts": epoch, "ok": True, **fields}, ingested_at=epoch + 0.5)
 
+    def test_integrity_cache_extends_valid_chain_and_invalidates_on_artifact_change(self):
+        self.record("settings-write", 1000, path="/api/settings/env")
+        with mock.patch.object(self.store, "_verify_connection", wraps=self.store._verify_connection) as verify:
+            self.assertTrue(self.store.verify()["ok"])
+            self.assertEqual(0, verify.call_count)
+            self.record("service-control", 1001, service="director")
+            self.assertEqual(2, self.store.verify()["eventCount"])
+            self.assertEqual(0, verify.call_count)
+            stat_result = self.database.stat()
+            os.utime(self.database, ns=(stat_result.st_atime_ns, stat_result.st_mtime_ns + 1))
+            self.assertTrue(self.store.verify()["ok"])
+            self.assertEqual(1, verify.call_count)
+
     def test_private_modes_policy_and_secret_validation(self):
         self.assertEqual(0o700, self.database.parent.stat().st_mode & 0o777)
         self.assertEqual(0o600, self.database.stat().st_mode & 0o777)

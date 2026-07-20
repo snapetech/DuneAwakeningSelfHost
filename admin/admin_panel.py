@@ -527,7 +527,7 @@ RESPONSE_DRILLS_ENABLED = os.environ.get("DUNE_RESPONSE_DRILLS_ENABLED", "true")
 CHANGE_INTELLIGENCE_STORE = None
 CHANGE_INTELLIGENCE_STORE_LOCK = threading.Lock()
 CHANGE_INTELLIGENCE_RUNTIME = {"ready": False, "imported": 0, "duplicates": 0, "importErrors": 0, "reconciled": 0, "lastEventAt": None, "lastEventId": None, "lastError": ""}
-CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS = max(1, min(int(os.environ.get("DUNE_CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS", "10")), 60))
+CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS = max(1, min(int(os.environ.get("DUNE_CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS", "60")), 300))
 CHANGE_INTELLIGENCE_STATUS_CACHE = {"value": None, "updatedAt": 0.0}
 CHANGE_INTELLIGENCE_STATUS_CACHE_LOCK = threading.Lock()
 METRICS_DOCUMENT_CACHE_SECONDS = max(0, min(int(os.environ.get("DUNE_ADMIN_METRICS_CACHE_SECONDS", "30")), 300))
@@ -2096,7 +2096,7 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_DESIRED_STATE_HMAC_SECRET_FILE": {"group": "Desired State", "secret": False, "restart": True, "why": "Private HMAC key used to authenticate baselines, observations, and the event chain."},
     "DUNE_DESIRED_STATE_POLL_SECONDS": {"group": "Desired State", "secret": False, "restart": True, "why": "Continuous file/runtime attestation cadence from 15 to 3600 seconds."},
     "DUNE_CHANGE_INTELLIGENCE_ENABLED": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Records a tamper-evident operational timeline and correlates incidents with preceding changes."},
-    "DUNE_CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Single-flight reuse window for a fully verified ledger status; assured promotion still forces fresh verification."},
+    "DUNE_CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Single-flight reuse window for a verified ledger status and correlation view; artifact changes invalidate the integrity cache."},
     "DUNE_ADMIN_METRICS_CACHE_SECONDS": {"group": "Metrics", "secret": False, "restart": True, "why": "Reuse window for expensive label-safe metrics documents, bounded to 0–300 seconds; live autoscaler safety gauges bypass it."},
     "DUNE_CHANGE_INTELLIGENCE_POLICY": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Versioned event bounds, classification, impact, and correlation windows."},
     "DUNE_CHANGE_INTELLIGENCE_DATABASE": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Private append-only HMAC-chained operational event ledger."},
@@ -9574,7 +9574,7 @@ def deployment_assurance_prometheus_ready():
 
 def deployment_assurance_health(backup):
     desired = desired_state_public_status()
-    change = change_intelligence_public_status(force=True)
+    change = change_intelligence_public_status(force=False)
     slo = operational_slo_public_status()
     certification = change.get("readinessCertification") or {}
     services = {row["service"]: row for row in docker_service_inventory()}
