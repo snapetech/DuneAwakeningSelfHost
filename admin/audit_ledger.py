@@ -56,12 +56,18 @@ class Store:
 
     def _artifact_signature(self):
         signature = []
-        for path in (self.database.parent, self.database, self.key_path, self.anchor_path):
+        for index, path in enumerate((self.database.parent, self.database, self.key_path, self.anchor_path)):
             stat_result = path.lstat()
-            signature.append((
+            stable = (
                 stat_result.st_dev, stat_result.st_ino, stat_result.st_mode,
-                stat_result.st_uid, stat_result.st_gid, stat_result.st_size,
-                stat_result.st_mtime_ns,
+                stat_result.st_uid, stat_result.st_gid,
+            )
+            # The shared parent contains unrelated, frequently rewritten Admin
+            # state. Its ownership/mode are security-relevant; its directory
+            # size and mtime are not ledger artifacts and must not invalidate a
+            # verified 80k+ event chain on every autoscaler state rename.
+            signature.append(stable if index == 0 else stable + (
+                stat_result.st_size, stat_result.st_mtime_ns,
             ))
         return tuple(signature)
 

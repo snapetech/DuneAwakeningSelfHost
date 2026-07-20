@@ -24,6 +24,12 @@ appended after the cache and therefore remain current on every capacity scrape.
 Set `DUNE_ADMIN_METRICS_CACHE_SECONDS=0` to disable reuse or a value through
 `300` to tune it. Label-free cache entry/hit/miss counters make the behavior
 observable.
+The audit-ledger and Change Intelligence verification caches bind to their own
+database, WAL, anchor, policy, and key metadata. The shared parent directory's
+ownership and mode remain part of the security check, but unrelated Admin state
+renames do not invalidate an 80,000+ event verification. A ledger artifact,
+permission, owner, size, or timestamp change still forces full verification;
+governed backups and signed exports always force it independently.
 Change Intelligence emits the latest response-readiness drill result/time and
 the latest fleet-wide readiness certification result/time, runbook coverage,
 shared-diagnostic totals, and recovery-contract totals. Those series have no

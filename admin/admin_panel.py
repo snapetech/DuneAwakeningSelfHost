@@ -472,6 +472,9 @@ MEMORY_BALANCER_LOCK = threading.Lock()
 MEMORY_BALANCER_THREAD_STARTED = False
 MEMORY_BALANCER_RUNTIME = {"running": False, "lastMessage": "Memory balancer is off.", "lastAction": "", "lastError": "", "updatedAt": None}
 AUTOSCALER_FILE = BACKUP_ROOT / "autoscaler.json"
+AUTOSCALER_MAINTENANCE_MARKER = pathlib.Path(
+    os.environ.get("DUNE_AUTOSCALER_MAINTENANCE_MARKER", str(BACKUP_ROOT / "autoscaler-maintenance.lock"))
+)
 AUTOSCALER_LOCK = threading.Lock()
 AUTOSCALER_THREAD_STARTED = False
 AUTOSCALER_RUNTIME = {"running": False, "lastMessage": "Autoscaler is off.", "lastActions": [], "lastError": "", "updatedAt": None}
@@ -4303,13 +4306,19 @@ def maintenance_restart_is_executing():
     )
 
 
+def autoscaler_maintenance_requested():
+    return AUTOSCALER_MAINTENANCE_MARKER.exists()
+
+
 def autoscaler_tick(force=False, collect_demand=True):
-    if maintenance_restart_is_executing():
+    restart_executing = maintenance_restart_is_executing()
+    marker_held = autoscaler_maintenance_requested()
+    if restart_executing or marker_held:
         AUTOSCALER_RUNTIME["maintenancePaused"] = True
         return dict(
             autoscaler_public_state(include_inventory=False),
             skipped=True,
-            reason="maintenance restart is executing",
+            reason="maintenance restart is executing" if restart_executing else "control-plane maintenance is executing",
         )
     with AUTOSCALER_LOCK:
         state = read_autoscaler_state()
@@ -4446,7 +4455,9 @@ def autoscaler_tick(force=False, collect_demand=True):
 
 
 def autoscaler_demand_tick():
-    if maintenance_restart_is_executing():
+    restart_executing = maintenance_restart_is_executing()
+    marker_held = autoscaler_maintenance_requested()
+    if restart_executing or marker_held:
         now = time.time()
         AUTOSCALER_RUNTIME.update({
             "maintenancePaused": True,
@@ -4455,7 +4466,7 @@ def autoscaler_demand_tick():
             "lastDemandActions": [],
             "lastDemandError": "",
         })
-        return {"ok": True, "skipped": True, "reason": "maintenance restart is executing", "demandDetected": False, "actions": []}
+        return {"ok": True, "skipped": True, "reason": "maintenance restart is executing" if restart_executing else "control-plane maintenance is executing", "demandDetected": False, "actions": []}
     with AUTOSCALER_LOCK:
         now = time.time()
         try:

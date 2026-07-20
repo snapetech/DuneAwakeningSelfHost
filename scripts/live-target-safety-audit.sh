@@ -403,11 +403,34 @@ else
 fi
 
 brt_backup_id="${DUNE_TARGET_AUDIT_BRT_BACKUP_ID:-}"
+player_id="$(env_or_file DUNE_TARGET_AUDIT_RESTORE_PLAYER_ID "$(env_or_file DUNE_CHAT_COMMAND_DD1_BRT_RESTORE_ALLOWED_PLAYER_IDS)")"
+player_id="${player_id%%,*}"
 if [[ -z "$brt_backup_id" && -n "$backup_dir" ]]; then
   brt_backup_id="$(manifest_value "$backup_dir/manifest.txt" brt_backup_id)"
 fi
 if [[ -z "$brt_backup_id" && -n "$backup_dir" && -f "$backup_dir/brt-source-backup-id.txt" ]]; then
   brt_backup_id="$(tr -dc '0-9' < "$backup_dir/brt-source-backup-id.txt")"
+fi
+brt_available_count="unknown"
+if [[ -z "$brt_backup_id" && -n "$player_id" ]]; then
+  brt_list_out="$(tmp_path live-target-brt-list.json)"
+  if "$script_dir/dd1-brt-emulator.py" list-backups --player-id "$player_id" >"$brt_list_out" 2>&1; then
+    read -r brt_available_count discovered_backup_id < <(python3 - "$brt_list_out" <<'PY'
+import json, sys
+document=json.load(open(sys.argv[1], encoding="utf-8"))
+rows=document.get("backups") or []
+ids=[str(row.get("id")) for row in rows if row.get("id") is not None]
+print(len(rows), ids[0] if len(ids) == 1 else "")
+PY
+    )
+    if [[ -n "$discovered_backup_id" ]]; then
+      brt_backup_id="$discovered_backup_id"
+      ok "resolved the only available BRT backup for restore player $player_id"
+    fi
+  else
+    fail "could not enumerate BRT backups for restore player $player_id"
+    cat "$brt_list_out" | indent
+  fi
 fi
 
 if [[ -n "$brt_backup_id" ]]; then
@@ -419,11 +442,15 @@ if [[ -n "$brt_backup_id" ]]; then
   fi
   cat "$brt_inspect_out" | indent
 else
-  fail "BRT backup id not resolved"
+  if [[ "$brt_available_count" == 0 ]]; then
+    warn "restore player $player_id has no BRT backup yet; restore correctly remains unavailable until &DD1_backup creates one"
+  elif [[ "$brt_available_count" =~ ^[0-9]+$ && "$brt_available_count" -gt 1 ]]; then
+    fail "$brt_available_count BRT backups exist; set DUNE_TARGET_AUDIT_BRT_BACKUP_ID to select the canary fixture"
+  else
+    fail "BRT backup id not resolved"
+  fi
 fi
 
-player_id="$(env_or_file DUNE_TARGET_AUDIT_RESTORE_PLAYER_ID "$(env_or_file DUNE_CHAT_COMMAND_DD1_BRT_RESTORE_ALLOWED_PLAYER_IDS)")"
-player_id="${player_id%%,*}"
 if [[ -n "$player_id" ]]; then
   player_row="$(psql_at "
     select id || '|' || map || '|' || partition_id || '|' || dimension_index

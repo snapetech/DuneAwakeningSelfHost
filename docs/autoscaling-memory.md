@@ -273,6 +273,15 @@ map containers and require a successful dry-run readback. The generic post-start
 health hook can complete before a new game process exists, so its earlier
 best-effort patch is not treated as proof for the requested map.
 
+Control-plane deploys additionally
+create `DUNE_AUTOSCALER_MAINTENANCE_MARKER` in the shared backup volume before
+recreating Admin, wait for any in-flight autoscaler action to drain, and keep new
+ticks paused until Admin ingress is healthy. They then apply and verify the
+runtime logoff patch against every running Survival/DD process before releasing
+the marker. This closes the case where recreating Admin killed its autoscaler
+subprocess after Docker had started a dynamic map but before post-start hooks
+completed.
+
 `adaptive` is a first-class process-start default. Fresh state, deleted state,
 and migrated installations no longer normalize an adaptive `.env` selection
 back to balanced.

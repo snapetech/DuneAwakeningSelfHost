@@ -428,6 +428,12 @@ commands can be used first to inspect the shape.
 
    CONFIRM='CREATE BRT DB BACKUP' \
      scripts/brt-dd-synthetic-db-backup.sh --player-id 17 --totem-id 5903 --commit
+
+The live target audit resolves a single real available backup automatically. If
+the allowlisted restore player has no backup, it reports a warning because the
+restore command is correctly unavailable until `&DD1_backup` creates one. If
+multiple backups exist, set `DUNE_TARGET_AUDIT_BRT_BACKUP_ID`; the audit fails
+instead of guessing which restore fixture is authoritative.
    ```
 
 3. List and inspect available backups:

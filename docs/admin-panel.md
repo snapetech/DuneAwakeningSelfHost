@@ -120,7 +120,13 @@ The deploy path is:
 scripts/deploy-admin-panel.sh .env
 ```
 
-That script validates the Python entry points, runs `scripts/test-admin-panel-safe-surfaces.py`, recreates `admin-panel` with `docker compose up -d --no-deps --force-recreate admin-panel`, then checks direct and LAN ingress. It does not restart Postgres, RabbitMQ, game maps, Director, Gateway, or admin-panel-ingress.
+That script validates the Python entry points, runs the focused Admin tests,
+pauses new autoscaler lifecycle ticks through the shared maintenance marker,
+waits for an in-flight tick to drain, recreates Admin and its ingress, and checks
+direct and LAN ingress. It does not restart Postgres, RabbitMQ, game maps,
+Director, or Gateway. Before releasing the marker it reapplies and verifies the
+process-local logoff patch on every running Survival/DD map. This makes an Admin
+redeploy safe even when a dynamic map request arrived immediately beforehand.
 
 Keep scheduled GitLab jobs read-only. Admin-panel deploys should stay manual because the panel is a live control surface for mutations, restarts, backups, config writes, and player operations. Do not give a public/shared runner Docker access to the Dune host.
 

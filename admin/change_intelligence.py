@@ -476,16 +476,21 @@ class Store:
 
     def _artifact_signature(self):
         signature = []
-        for path in (self.database.parent, self.database, self.database.with_name(self.database.name + "-wal"), self.policy_path, self.secret_path):
+        for index, path in enumerate((self.database.parent, self.database, self.database.with_name(self.database.name + "-wal"), self.policy_path, self.secret_path)):
             try:
                 stat_result = path.lstat()
             except FileNotFoundError:
                 signature.append(None)
                 continue
-            signature.append((
+            stable = (
                 stat_result.st_dev, stat_result.st_ino, stat_result.st_mode,
-                stat_result.st_uid, stat_result.st_gid, stat_result.st_size,
-                stat_result.st_mtime_ns,
+                stat_result.st_uid, stat_result.st_gid,
+            )
+            # Sibling Admin state changes the shared directory mtime. Preserve
+            # parent ownership/mode validation without turning unrelated writes
+            # into full retained-chain verification work.
+            signature.append(stable if index == 0 else stable + (
+                stat_result.st_size, stat_result.st_mtime_ns,
             ))
         return tuple(signature)
 
